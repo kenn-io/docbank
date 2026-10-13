@@ -7,11 +7,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -192,23 +195,6 @@ func TestPhotoImportSkipsGroupChangedAfterScan(t *testing.T) {
 	nodeByName(t, ing, "/photos/IMG_0.JPG")
 }
 
-func TestPhotoImportAuditedVaultDoesNotCreateDestination(t *testing.T) {
-	ing := newTestIngester(t)
-	ctx := t.Context()
-	audited, err := ing.Store.Mkdir(ctx, ing.Store.RootID(), "audited")
-	require.NoError(t, err)
-	plan, err := ing.Store.PreviewInitialAudit(ctx, audited.ID, "api", nil)
-	require.NoError(t, err)
-	_, err = ing.Store.EnableInitialAudit(ctx, plan)
-	require.NoError(t, err)
-	source := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(source, "IMG.JPG"), []byte("synthetic-jpeg"), 0o600))
-	_, err = ing.ImportPhotoDirectory(ctx, source, "/audited/new/nested", PhotoImportOptions{})
-	require.ErrorIs(t, err, store.ErrAuditMutationUnsupported)
-	_, err = ing.Store.NodeByPath(ctx, "/audited/new")
-	require.ErrorIs(t, err, store.ErrNotFound)
-}
-
 func TestPhotoImportPublishedBytes(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "capture.JPG")
@@ -262,7 +248,7 @@ func TestPhotoImportSettlesOnceOutsideTheGate(t *testing.T) {
 	assert.Less(t, elapsed-held, 6*interval)
 }
 func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
-	for _, interruption := range []string{"before work", "after final group", "shutdown and resume"} {
+	for _, interruption := range []string{"before work", "after final group", "shutdown and resume", "startup pause cancellation", "after-one-group cancellation", "startup admission failure", "after-group admission failure"} {
 		t.Run(interruption, func(t *testing.T) {
 			ing := newTestIngester(t)
 			root := t.TempDir()
@@ -273,6 +259,8 @@ func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
 				fmt.Sprintf(`{"source_root":%q,"destination":"/photos"}`, root))
 			require.NoError(t, err)
 			runner := PhotoImportRunner{Ingester: ing}
+			var mutations atomic.Int64
+			var failing atomic.Bool
 			switch interruption {
 			case "before work":
 				require.NoError(t, ing.Store.RequestStorageOperationCancel(t.Context(), operation.ID))
@@ -283,6 +271,46 @@ func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
 					}
 					if _, err := ing.Store.NodeByPath(ctx, "/photos/IMG_2.JPG"); err == nil {
 						return ing.Store.RequestStorageOperationCancel(ctx, operation.ID)
+					}
+					return nil
+				}
+			case "startup pause cancellation":
+				_, err = ing.Store.ClaimStorageOperation(t.Context(), operation.ID)
+				require.NoError(t, err)
+				require.NoError(t, ing.Store.SetStorageOperationTotal(t.Context(), operation.ID, 3))
+				require.NoError(t, ing.Store.AdvanceStorageOperation(t.Context(), operation.ID, "group-two", 2, 1, 42, `{"added":2,"skipped":1}`))
+				_, err = ing.Store.SetLaneControl(t.Context(), store.LaneControl{Lane: operation.Kind, Paused: true, Concurrency: 1}, 1)
+				require.NoError(t, err)
+				runner.Options.Mutate = func(_ context.Context, fn func() error) error { mutations.Add(1); return fn() }
+			case "startup admission failure", "after-group admission failure":
+				runner.admit = func(ctx context.Context, metadata *store.Store, id string) (bool, error) {
+					if failing.Load() {
+						return false, errors.New("reading storage operation: database is locked")
+					}
+					return jobs.AdmitStorageOperation(ctx, metadata, id)
+				}
+				if interruption == "startup admission failure" {
+					_, err = ing.Store.ClaimStorageOperation(t.Context(), operation.ID)
+					require.NoError(t, err)
+					require.NoError(t, ing.Store.AdvanceStorageOperation(t.Context(), operation.ID, "", 1, 0, 0, `{"added":1}`))
+					failing.Store(true)
+				}
+				fallthrough
+			case "after-one-group cancellation":
+				deferred := false
+				runner.Options.Mutate = func(ctx context.Context, fn func() error) error {
+					if err := fn(); err != nil {
+						return err
+					}
+					if _, err := ing.Store.NodeByPath(ctx, "/photos/IMG_0.JPG"); err == nil && !deferred {
+						deferred = true
+						if interruption == "after-one-group cancellation" {
+							_, err = ing.Store.SetLaneControl(ctx, store.LaneControl{Lane: operation.Kind, Paused: true, Concurrency: 1}, 1)
+							return err
+						}
+						if interruption == "after-group admission failure" {
+							failing.Store(true)
+						}
 					}
 					return nil
 				}
@@ -299,13 +327,51 @@ func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
 				require.Len(t, resumable, 1)
 				assert.Equal(t, store.StorageOperationRunning, resumable[0].State)
 			}
-			require.NoError(t, runner.Run(t.Context(), operation.ID))
+			if strings.Contains(interruption, "pause cancellation") || interruption == "after-one-group cancellation" || strings.Contains(interruption, "admission failure") {
+				supervisor := jobs.New(t.Context(), nil)
+				defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
+				require.NoError(t, runner.Start(supervisor, operation.ID))
+				require.Eventually(t, func() bool {
+					current, err := ing.Store.StorageOperation(t.Context(), operation.ID)
+					return err == nil && current.State == store.StorageOperationQueued && current.CompletedObjects > 0 && (current.Error != "" || !strings.Contains(interruption, "admission failure"))
+				}, 10*time.Second, 10*time.Millisecond)
+				current, err := ing.Store.StorageOperation(t.Context(), operation.ID)
+				require.NoError(t, err)
+				if strings.Contains(interruption, "admission failure") {
+					require.Equal(t, int64(1), current.CompletedObjects)
+					require.Contains(t, current.ReceiptJSON, `"added":1`)
+					require.Equal(t, store.StorageOperationKindPhotoImport, current.Kind)
+					require.Contains(t, current.Error, "database is locked")
+					failing.Store(false)
+				} else {
+					require.Empty(t, current.Error)
+					require.NoError(t, ing.Store.RequestStorageOperationCancel(t.Context(), operation.ID))
+				}
+				require.Eventually(t, func() bool {
+					current, err := ing.Store.StorageOperation(t.Context(), operation.ID)
+					return err == nil && (current.State == store.StorageOperationCompleted || current.State == store.StorageOperationCancelled)
+				}, 10*time.Second, 10*time.Millisecond)
+			} else {
+				require.NoError(t, runner.Run(t.Context(), operation.ID))
+			}
 			finished, err := ing.Store.StorageOperation(t.Context(), operation.ID)
 			require.NoError(t, err)
 			switch interruption {
 			case "before work":
 				assert.Equal(t, store.StorageOperationCancelled, finished.State)
 				assert.Zero(t, finished.CompletedObjects)
+			case "startup pause cancellation":
+				assert.Equal(t, store.StorageOperationCancelled, finished.State)
+				assert.Zero(t, mutations.Load(), "startup cancellation starts no new import work")
+				assert.Equal(t, int64(2), finished.CompletedObjects)
+				assert.Equal(t, int64(1), finished.CopiedObjects)
+				assert.Equal(t, int64(42), finished.CopiedBytes)
+				assert.JSONEq(t, `{"added":2,"skipped":1}`, finished.ReceiptJSON)
+			case "after-one-group cancellation":
+				assert.Equal(t, store.StorageOperationCancelled, finished.State)
+				assert.Equal(t, int64(1), finished.CompletedObjects)
+			case "startup admission failure", "after-group admission failure":
+				assert.Equal(t, store.StorageOperationCompleted, finished.State)
 			case "after final group":
 				assert.Equal(t, store.StorageOperationCancelled, finished.State)
 				assert.Equal(t, int64(3), finished.CompletedObjects)

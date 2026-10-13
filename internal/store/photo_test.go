@@ -314,6 +314,29 @@ func TestPhotoMetadataRoundTripAndInvalidReferences(t *testing.T) {
 			require.Equal(t, want, storedSource, "%s: %s", variant, file.ID)
 		}
 	}
+	for _, lineType := range []string{"photo_asset", "photo_library_settings"} {
+		t.Run("receipt without "+lineType, func(t *testing.T) {
+			backup := first.String()
+			expectedError := "reference missing assets"
+			if lineType == "photo_library_settings" {
+				preference := "raw"
+				_, err := s.SetPhotoSettings(ctx, 1, &preference)
+				require.NoError(t, err)
+				var exported bytes.Buffer
+				require.NoError(t, s.ExportMetadata(ctx, &exported))
+				backup = exported.String()
+				expectedError = "reference missing assets or settings"
+			}
+			lines := strings.Split(backup, "\n")
+			for index, line := range lines {
+				if strings.Contains(line, `"type":"`+lineType+`"`) || (lineType == "photo_asset" && strings.Contains(line, `"type":"photo_file"`)) {
+					lines[index] = ""
+				}
+			}
+			target := newTestStore(t)
+			require.ErrorContains(t, target.ImportMetadata(ctx, strings.NewReader(strings.Join(lines, "\n"))), expectedError)
+		})
+	}
 }
 
 func TestPhotoMetadataRejectsRoleAndAssetKindMismatch(t *testing.T) {
@@ -361,47 +384,6 @@ func TestPhotoMetadataAcceptsReceiptIndependentRevisionOneState(t *testing.T) {
 	_, err = s.db.ExecContext(ctx, `UPDATE photo_assets SET revision=1 WHERE asset_id=?`, asset.ID)
 	require.NoError(t, err)
 	require.NoError(t, validatePhotoMetadataState(ctx, s.db, currentStorageSchemaVersion))
-}
-
-func TestPhotoMetadataRejectsOrphanReceipts(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	image, err := s.CreateFile(ctx, s.RootID(), "orphan.jpg", fakeHash("0a0a"), 1, "image/jpeg")
-	require.NoError(t, err)
-	asset, err := s.PhotoAssetForNode(ctx, image.ID)
-	require.NoError(t, err)
-	_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
-	require.NoError(t, err)
-	var exported bytes.Buffer
-	require.NoError(t, s.ExportMetadata(ctx, &exported))
-	lines := strings.Split(exported.String(), "\n")
-	for index, line := range lines {
-		if strings.Contains(line, `"type":"photo_asset"`) {
-			lines[index] = ""
-		}
-		if strings.Contains(line, `"type":"photo_file"`) {
-			lines[index] = ""
-		}
-	}
-	target := newTestStore(t)
-	err = target.ImportMetadata(ctx, strings.NewReader(strings.Join(lines, "\n")))
-	require.ErrorContains(t, err, "reference missing assets")
-
-	preference := "image"
-	_, err = s.SetPhotoSettings(ctx, 1, &preference)
-	require.NoError(t, err)
-	exported.Reset()
-	require.NoError(t, s.ExportMetadata(ctx, &exported))
-	lines = strings.Split(exported.String(), "\n")
-	for index, line := range lines {
-		if strings.Contains(line, `"type":"photo_library_settings"`) {
-			lines[index] = ""
-		}
-	}
-	settingsTarget := newTestStore(t)
-	err = settingsTarget.ImportMetadata(ctx, strings.NewReader(strings.Join(lines, "\n")))
-	require.ErrorContains(t, err, "reference missing assets or settings")
 }
 
 func TestPhotoExplicitVideoAdmitsGenericVideo(t *testing.T) {
