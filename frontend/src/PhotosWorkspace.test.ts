@@ -448,7 +448,7 @@ it.each(["density", "album trash"])("keeps the top photo after %s and pages that
   await cache.dispose();
 });
 
-it("opens on touch with empty selection and keeps selection taps before a double-tap", async () => {
+it.each(["with", "without"])("opens on touch with empty selection and toggles membership for clicks %s pointerType before a double-tap", async pointerType => {
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: true })));
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
@@ -460,13 +460,21 @@ it("opens on touch with empty selection and keeps selection taps before a double
   await fireEvent.click(cell); expect(open).not.toHaveBeenCalled(); expect(photos.selection.selectedIDs.has("photo-1")).toBe(true);
   photos.clearSelection();
   await fireEvent.pointerDown(cell, { pointerType: "touch" });
-  const touchEvent = new MouseEvent("click", { bubbles: true, button: 0, detail: 1 }); Object.defineProperty(touchEvent, "pointerType", { value: "touch" });
+  const touchEvent = new MouseEvent("click", { bubbles: true, button: 0, detail: 1 });
+  if (pointerType === "with") Object.defineProperty(touchEvent, "pointerType", { value: "touch" });
   await fireEvent(cell, touchEvent); expect(open).toHaveBeenCalledWith("photo-1", "open"); expect(photos.selection.selectedIDs.size).toBe(0);
   await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
   vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: false })));
   const second = screen.getByRole("button", { name: "Select Photo 2.jpg" });
   let time = 1000;
-  const tap = async (detail = 1, elapsed = 351) => { time += elapsed; await fireEvent.pointerDown(second, { pointerType: "touch" }); const event = new MouseEvent("click", { bubbles: true, button: 0, detail }); Object.defineProperty(event, "pointerType", { value: "touch" }); Object.defineProperty(event, "timeStamp", { value: time }); await fireEvent(second, event); };
+  const tap = async (detail = 1, elapsed = 351) => {
+    time += elapsed;
+    await fireEvent.pointerDown(second, { pointerType: "touch" });
+    const event = new MouseEvent("click", { bubbles: true, button: 0, detail });
+    if (pointerType === "with") Object.defineProperty(event, "pointerType", { value: "touch" });
+    Object.defineProperty(event, "timeStamp", { value: time });
+    await fireEvent(second, event);
+  };
   await tap(); expect([...photos.selection.selectedIDs]).toEqual(["photo-1", "photo-2"]);
   await tap(); expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
   open.mockClear();

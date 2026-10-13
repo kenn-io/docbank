@@ -12,7 +12,7 @@
     bottom: number;
     cache: PhotoPreviewCache;
     selectedIDs: ReadonlySet<string>;
-    onselect: (id: string, event: MouseEvent) => void;
+    onselect: (id: string, event: MouseEvent, touch: boolean) => void;
     onhidden?: (id: string) => void;
     hidden?: boolean;
     onopen: (id: string, element: HTMLElement) => void;
@@ -32,7 +32,7 @@
       {#each cells as cell (cell.photo.asset_id)}
         {@const photo = cell.photo}
         <div class="cell" style:left={`${cell.x}px`} style:top={`${cell.y}px`} style:width={`${cell.width}px`} style:height={`${cell.height}px`}>
-          <PhotoCell {hidden} onhidden={() => onhidden?.(photo.asset_id)} {photo} {cache} selected={selectedIDs.has(photo.asset_id)} onclick={event => onselect(photo.asset_id, event)} oncheck={(checked, range) => oncheck(photo.asset_id, checked, range)} onopen={element => onopen(photo.asset_id, element)} ondragstart={ondragstart ? event => ondragstart?.(photo.asset_id, event) : undefined} {ondragend} />
+          <PhotoCell {hidden} onhidden={() => onhidden?.(photo.asset_id)} {photo} {cache} selected={selectedIDs.has(photo.asset_id)} onclick={(event, touch) => onselect(photo.asset_id, event, touch)} oncheck={(checked, range) => oncheck(photo.asset_id, checked, range)} onopen={element => onopen(photo.asset_id, element)} ondragstart={ondragstart ? event => ondragstart?.(photo.asset_id, event) : undefined} {ondragend} />
         </div>
       {/each}
     </div>

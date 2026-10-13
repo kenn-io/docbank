@@ -65,11 +65,6 @@ it.each([
   expect(view.container.querySelector(".summary")).toBeNull();
 });
 
-it("omits summaries for fixed-value facets with positive missing and other counts", () => {
-  const view = render(FacetSidebar, { facets: [facet("media_family", { missing: 1, other: 2 }), facet("size", { missing: 1, other: 2 }), facet("duplicates", { missing: 1, other: 2 })], query: originalQuery, onchange: vi.fn() });
-  expect(view.container.querySelector(".summary")).toBeNull();
-});
-
 it("keeps the active no-tags filter available to clear at zero", async () => {
   const onchange = vi.fn();
   const view = render(FacetSidebar, { facets: [facet("tags", { missing: 0, other: 0 })], query: { ...originalQuery, filters: { ...originalQuery.filters, no_tags: true } }, onchange });

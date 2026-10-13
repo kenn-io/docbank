@@ -18,7 +18,7 @@
     selected: boolean;
     onhidden?: () => void;
     hidden?: boolean;
-    onclick: (event: MouseEvent) => void;
+    onclick: (event: MouseEvent, touch: boolean) => void;
     compact?: boolean;
     onopen?: (element: HTMLElement) => void;
     oncheck?: (checked: boolean, range: boolean) => void;
@@ -51,7 +51,7 @@
       }
       lastClick = { image: event.currentTarget, time, opened: false };
     } else lastClick = undefined;
-    onclick(event);
+    onclick(event, touchClick);
   }
   function doubleClickImage(event: MouseEvent & { currentTarget: HTMLButtonElement }): void {
     if (compact || lastClick?.image === event.currentTarget && lastClick.opened) return;
