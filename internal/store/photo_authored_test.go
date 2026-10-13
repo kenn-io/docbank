@@ -1124,16 +1124,6 @@ func TestPhotoSidecarProvenanceCorrectionRetriesCachedOutcome(t *testing.T) {
 				path := filepath.Join(root, "capture.xmp")
 				ordinary, err := s.BeginIngest(ctx, "cli", root)
 				require.NoError(t, err)
-				ordinary.record.ID = "40000000-0000-4000-8000-000000000001"
-				run.record.ID = "40000000-0000-4000-8000-000000000002"
-				ordinaryIdentity, err := provenanceIdentity(metadataProvenance{NodeID: 2, IngestID: ordinary.ID(), OriginalPath: path})
-				require.NoError(t, err)
-				importedIdentity, err := provenanceIdentity(metadataProvenance{NodeID: 2, IngestID: run.ID(), OriginalPath: path})
-				require.NoError(t, err)
-				// Make the ordinary origin sort first so the receipt alone determines import authority.
-				if ordinaryIdentity > importedIdentity {
-					ordinary.record.ID, run.record.ID = run.record.ID, ordinary.record.ID
-				}
 				node, err := s.IngestFileExact(ctx, ordinary, s.RootID(), "capture.xmp", fakeHash("c3"), 4, "application/rdf+xml", path, "")
 				require.NoError(t, err)
 				require.Equal(t, int64(2), node.ID)
@@ -1151,7 +1141,7 @@ func TestPhotoSidecarProvenanceCorrectionRetriesCachedOutcome(t *testing.T) {
 			sidecar := fileByRole(asset.Files, PhotoRoleSidecar)
 			if role == "ordinary origin" {
 				var sourceKind string
-				require.NoError(t, s.db.QueryRow(`SELECT i.source_kind FROM provenance p JOIN ingests i ON i.id=p.ingest_id WHERE p.node_id=? ORDER BY p.identity LIMIT 1`, sidecar.NodeID).Scan(&sourceKind))
+				require.NoError(t, s.db.QueryRow(`SELECT i.source_kind FROM photo_files f JOIN provenance p ON p.identity=f.source_provenance_identity JOIN ingests i ON i.id=p.ingest_id WHERE f.file_id=?`, sidecar.ID).Scan(&sourceKind))
 				require.Equal(t, "cli", sourceKind)
 				require.Equal(t, &raw.ID, sidecar.SidecarOfID)
 			}
@@ -1199,6 +1189,15 @@ func TestPhotoSidecarProvenanceCorrectionRetriesCachedOutcome(t *testing.T) {
 				require.NoError(t, err)
 				require.Len(t, pending, 1)
 				assert.Equal(t, asset.Revision, pending[0].AssetRevision)
+				_, err = s.InitializePhotoSidecar(ctx, pending[0])
+				require.NoError(t, err)
+				var consideredMembers string
+				require.NoError(t, s.db.QueryRowContext(ctx, `SELECT member_revisions FROM photo_sidecar_considered WHERE sidecar_file_id=?`, sidecar.ID).Scan(&consideredMembers))
+				require.Equal(t, pending[0].MemberRevisions, consideredMembers)
+				require.NotEqual(t, targets[0].MemberRevisions, consideredMembers)
+				pending, err = s.MissingPhotoSidecarsAfter(ctx, fakeHash("ee"), "", 1)
+				require.NoError(t, err)
+				require.Empty(t, pending)
 				require.NoError(t, s.ValidateMetadata(ctx))
 				return
 			}
