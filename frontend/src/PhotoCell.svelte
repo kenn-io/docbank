@@ -88,7 +88,7 @@
   {#if onhidden}
     <div class="photo-menu"><Menu bind:open={menuOpen} align="end"><MenuTrigger ariaLabel={`Actions for ${photo.name}`}>•••</MenuTrigger><MenuContent ariaLabel="Photo actions"><MenuItem onselect={onhidden}>{hidden ? "Unhide" : "Hide"}</MenuItem></MenuContent></Menu></div>
   {/if}
-  <button type="button" class="open-photo" aria-label={`Open ${photo.name}`} onclick={event => onopen?.(event.currentTarget)}>Open</button>
+  <button type="button" class="open-photo kit-sr-only" aria-label={`Open ${photo.name}`} onclick={event => onopen?.(event.currentTarget)}>Open</button>
   {/if}
   {#if failed}<button type="button" class="retry-preview" aria-label={compact ? `Retry preview for ${photo.name}` : undefined} onclick={() => { if (compact) imageButton?.focus({preventScroll:true}); retry++; }}>{#if compact}<RotateCcw size={14} aria-hidden="true" />{:else}Retry preview{/if}</button>{/if}
 </div>
@@ -103,8 +103,7 @@
   .pending { background: var(--bg-surface-hover); }
   .photo-menu { position: absolute; top: 8px; right: 8px; }
   .photo-check { position: absolute; top: 8px; left: 8px; display: flex; }
-  .open-photo { position: absolute; bottom: 8px; right: 8px; padding: 4px 8px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-surface); color: var(--text-primary); }
-  .open-photo:not(:focus-visible) { clip-path: inset(50%); }
+  .open-photo:focus-visible { position: absolute; bottom: 8px; right: 8px; width: auto; height: auto; margin: 0; padding: 4px 8px; overflow: visible; clip-path: none; white-space: normal; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-surface); color: var(--text-primary); }
   .retry-preview { position: absolute; bottom: 8px; left: 8px; background: var(--bg-surface); color: var(--text-primary); border: 1px solid var(--border-default); border-radius: var(--radius-sm); padding: 4px 8px; font-size: var(--font-size-xs); }
   .compact .retry-preview { bottom: 2px; left: 2px; display: flex; padding: 3px; }
 </style>
