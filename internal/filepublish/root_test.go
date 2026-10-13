@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRootStageNoReplace(t *testing.T) {
+func TestRootStageNoReplaceAndCleanup(t *testing.T) {
 	t.Parallel()
 	root, err := os.OpenRoot(t.TempDir())
 	require.NoError(t, err)

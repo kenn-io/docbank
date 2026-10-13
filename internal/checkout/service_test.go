@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/filepublish"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -234,9 +235,14 @@ func TestCheckoutRecoveryRebuildsCopyObservationsAfterPublicationCrash(t *testin
 	edited := []byte(strings.Repeat("x", int(entries[1].Size)))
 	require.NoError(t, root.WriteFile(filepath.FromSlash(entries[1].Path), edited, 0o600))
 	require.NoError(t, s.Store.PublishPhotoCheckoutEntry(t.Context(), entries[2], func() (bool, error) { return true, nil }))
-	prefix := ".docbank-checkout-"
-	payload := prefix + strings.Repeat("a", 32)
-	require.NoError(t, root.WriteFile(payload, []byte("partial bytes"), 0600))
+	stage, err := filepublish.CreateRootStage(root)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, stage.Cleanup()) }()
+	payload := filepath.Base(stage.File.Name())
+	_, err = stage.File.WriteString("partial bytes")
+	require.NoError(t, err)
+	require.NoError(t, stage.File.Close())
+	stage.File = nil
 	require.NoError(t, s.reconcile(t.Context(), c))
 	_, err = root.Stat(payload)
 	require.ErrorIs(t, err, os.ErrNotExist)

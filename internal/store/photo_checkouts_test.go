@@ -183,6 +183,53 @@ func TestPhotoCheckoutMetadataRestoresUnboundAndValidatesFrozenEntries(t *testin
 			require.Equal(t, entries, actualEntries)
 		})
 	}
+	t.Run("source provenance", func(t *testing.T) {
+		s := newTestStore(t)
+		ctx := t.Context()
+		result, _, _ := seedGroupedCheckoutSources(t, s)
+		raw := fileByRole(result.Asset.Files, PhotoRoleRAW)
+		var backup bytes.Buffer
+		err := s.ExportMetadata(ctx, &backup)
+		require.NoError(t, err)
+		var rawSource string
+		require.NoError(t, s.db.QueryRowContext(ctx, `SELECT source_provenance_identity FROM photo_files WHERE file_id=?`, raw.ID).Scan(&rawSource))
+		for _, variant := range []string{"current", "legacy", "another node"} {
+			lines := bytes.Split(backup.Bytes(), []byte{'\n'})
+			for i, line := range lines {
+				if !bytes.Contains(line, []byte(`"type":"photo_file"`)) {
+					continue
+				}
+				var file metadataPhotoFile
+				require.NoError(t, json.Unmarshal(line, &file))
+				if variant == "legacy" {
+					file.SourceProvenanceIdentity = nil
+				} else if variant == "another node" && file.Role == PhotoRoleImage {
+					file.SourceProvenanceIdentity = &rawSource
+				}
+				lines[i], err = json.Marshal(file)
+				require.NoError(t, err)
+			}
+			restored := newTestStore(t)
+			err = restored.ImportMetadata(ctx, bytes.NewReader(bytes.Join(lines, []byte{'\n'})))
+			if variant == "another node" {
+				require.ErrorContains(t, err, "invalid photo source provenance reference")
+				continue
+			}
+			require.NoError(t, err)
+			frozen, _, err := restored.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "restored", 0)
+			require.NoError(t, err)
+			copied, err := restored.PhotoCheckoutEntries(ctx, frozen.ID)
+			require.NoError(t, err)
+			restoredNames := []string{}
+			for _, entry := range copied {
+				restoredNames = append(restoredNames, filepath.Base(entry.Path))
+			}
+			require.ElementsMatch(t, []string{"IMG.ARW", "IMG.JPG", "IMG.ARW.XMP"}, restoredNames, variant)
+			var storedSource string
+			require.NoError(t, restored.db.QueryRowContext(ctx, `SELECT source_provenance_identity FROM photo_files WHERE file_id=?`, raw.ID).Scan(&storedSource))
+			require.Equal(t, rawSource, storedSource, variant)
+		}
+	})
 }
 
 func TestPhotoCheckoutRejectsByteOverflow(t *testing.T) {
@@ -283,6 +330,74 @@ func TestPhotoCheckoutFreezesGroupedSourcePaths(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
+	result, source, albumID := seedGroupedCheckoutSources(t, s)
+	raw := fileByRole(result.Asset.Files, PhotoRoleRAW)
+	checkout, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}, AlbumIDs: []string{albumID}}, "checkout", 0)
+	require.NoError(t, err)
+	entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
+	require.NoError(t, err)
+	require.Len(t, entries, 3)
+	for _, entry := range entries {
+		require.True(t, strings.HasPrefix(entry.Path, "2024/01/02/"+result.Asset.ID+"/"))
+	}
+	names := []string{}
+	for _, e := range entries {
+		names = append(names, filepath.Base(e.Path))
+	}
+	require.ElementsMatch(t, []string{"IMG.ARW", "IMG.JPG", "IMG.ARW.XMP"}, names)
+	node, err := s.NodeByID(ctx, raw.NodeID)
+	require.NoError(t, err)
+	_, err = s.AppendNodeProvenance(ctx, ProvenanceAppendInput{NodeID: node.ID, IfRevision: node.Revision, SourceKind: "agent", SourceDescription: "synthetic", OriginalPath: filepath.Join(source, "ignored.ARW")})
+	require.NoError(t, err)
+	retained, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "retained", 0)
+	require.NoError(t, err)
+	entries, err = s.PhotoCheckoutEntries(ctx, retained.ID)
+	require.NoError(t, err)
+	rawIndex := slices.IndexFunc(entries, func(entry PhotoCheckoutEntry) bool { return entry.FileID == raw.ID })
+	require.NotEqual(t, -1, rawIndex)
+	require.Equal(t, "IMG.ARW", filepath.Base(entries[rawIndex].Path))
+	fallbackAsset := albumAsset(t, s, "fallback.jpg")
+	node, err = s.NodeByID(ctx, fallbackAsset.Files[0].NodeID)
+	require.NoError(t, err)
+	_, err = s.AppendNodeProvenance(ctx, ProvenanceAppendInput{NodeID: node.ID, IfRevision: node.Revision, SourceKind: "agent", SourceDescription: "synthetic", OriginalPath: filepath.Join(source, "ignored.jpg")})
+	require.NoError(t, err)
+	fallback, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{fallbackAsset.ID}}, "fallback", 0)
+	require.NoError(t, err)
+	entries, err = s.PhotoCheckoutEntries(ctx, fallback.ID)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, node.Name, filepath.Base(entries[0].Path))
+}
+
+func TestPhotoCheckoutNormalizesSourcePaths(t *testing.T) {
+	t.Parallel()
+	for _, sourcePath := range []string{`C:\camera\capture.JPG`, `\\camera\photos\capture.JPG`, `/camera/foo\bar.JPG`} {
+		t.Run(sourcePath, func(t *testing.T) {
+			s := newTestStore(t)
+			run, err := s.BeginIngest(t.Context(), "photo-import", t.TempDir())
+			require.NoError(t, err)
+			member := photoImportTestMember(sourcePath, PhotoRoleImage, browseHash("capture"), "image/jpeg")
+			member.Name = "renamed.JPG"
+			result, err := s.IngestPhotoGroup(t.Context(), run, photoImportTestGroup(member))
+			require.NoError(t, err)
+			checkout, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "checkout", 0)
+			if strings.HasPrefix(sourcePath, "/camera/") {
+				require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
+				require.ErrorContains(t, err, `filename "foo\\bar.JPG"`)
+				return
+			}
+			require.NoError(t, err)
+			entries, err := s.PhotoCheckoutEntries(t.Context(), checkout.ID)
+			require.NoError(t, err)
+			require.Len(t, entries, 1)
+			require.Equal(t, "undated/"+result.Asset.ID+"/capture.JPG", entries[0].Path)
+		})
+	}
+}
+
+func seedGroupedCheckoutSources(t *testing.T, s *Store) (PhotoImportResult, string, string) {
+	t.Helper()
+	ctx := t.Context()
 	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
 	require.NoError(t, err)
 	source := filepath.Join(t.TempDir(), "camera")
@@ -332,101 +447,5 @@ func TestPhotoCheckoutFreezesGroupedSourcePaths(t *testing.T) {
 		_, _, err = s.Move(ctx, node.ID, s.RootID(), fmt.Sprintf("virtual-%d.%s", i, strings.TrimPrefix(filepath.Ext(node.Name), ".")), node.Revision)
 		require.NoError(t, err)
 	}
-	checkout, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}, AlbumIDs: []string{set.ID}}, "checkout", 0)
-	require.NoError(t, err)
-	entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
-	require.NoError(t, err)
-	require.Len(t, entries, 3)
-	for _, entry := range entries {
-		require.True(t, strings.HasPrefix(entry.Path, "2024/01/02/"+result.Asset.ID+"/"))
-	}
-	names := []string{}
-	for _, e := range entries {
-		names = append(names, filepath.Base(e.Path))
-	}
-	require.ElementsMatch(t, []string{"IMG.ARW", "IMG.JPG", "IMG.ARW.XMP"}, names)
-	var backup bytes.Buffer
-	require.NoError(t, s.ExportMetadata(ctx, &backup))
-	var rawSource string
-	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT source_provenance_identity FROM photo_files WHERE file_id=?`, raw.ID).Scan(&rawSource))
-	for _, variant := range []string{"current", "legacy", "another node"} {
-		lines := bytes.Split(backup.Bytes(), []byte{'\n'})
-		for i, line := range lines {
-			if !bytes.Contains(line, []byte(`"type":"photo_file"`)) {
-				continue
-			}
-			var file metadataPhotoFile
-			require.NoError(t, json.Unmarshal(line, &file))
-			if variant == "legacy" {
-				file.SourceProvenanceIdentity = nil
-			} else if variant == "another node" && file.Role == PhotoRoleImage {
-				file.SourceProvenanceIdentity = &rawSource
-			}
-			lines[i], err = json.Marshal(file)
-			require.NoError(t, err)
-		}
-		restored := newTestStore(t)
-		err = restored.ImportMetadata(ctx, bytes.NewReader(bytes.Join(lines, []byte{'\n'})))
-		if variant == "another node" {
-			require.ErrorContains(t, err, "invalid photo source provenance reference")
-			continue
-		}
-		require.NoError(t, err)
-		frozen, _, err := restored.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "restored", 0)
-		require.NoError(t, err)
-		copied, err := restored.PhotoCheckoutEntries(ctx, frozen.ID)
-		require.NoError(t, err)
-		restoredNames := []string{}
-		for _, entry := range copied {
-			restoredNames = append(restoredNames, filepath.Base(entry.Path))
-		}
-		require.ElementsMatch(t, names, restoredNames, variant)
-		var storedSource string
-		require.NoError(t, restored.db.QueryRowContext(ctx, `SELECT source_provenance_identity FROM photo_files WHERE file_id=?`, raw.ID).Scan(&storedSource))
-		require.Equal(t, rawSource, storedSource, variant)
-	}
-	node, err := s.NodeByID(ctx, raw.NodeID)
-	require.NoError(t, err)
-	_, err = s.AppendNodeProvenance(ctx, ProvenanceAppendInput{NodeID: node.ID, IfRevision: node.Revision, SourceKind: "agent", SourceDescription: "synthetic", OriginalPath: filepath.Join(source, "ignored.ARW")})
-	require.NoError(t, err)
-	retained, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "retained", 0)
-	require.NoError(t, err)
-	entries, err = s.PhotoCheckoutEntries(ctx, retained.ID)
-	require.NoError(t, err)
-	rawIndex := slices.IndexFunc(entries, func(entry PhotoCheckoutEntry) bool { return entry.FileID == raw.ID })
-	require.NotEqual(t, -1, rawIndex)
-	require.Equal(t, "IMG.ARW", filepath.Base(entries[rawIndex].Path))
-	fallbackAsset := albumAsset(t, s, "fallback.jpg")
-	node, err = s.NodeByID(ctx, fallbackAsset.Files[0].NodeID)
-	require.NoError(t, err)
-	_, err = s.AppendNodeProvenance(ctx, ProvenanceAppendInput{NodeID: node.ID, IfRevision: node.Revision, SourceKind: "agent", SourceDescription: "synthetic", OriginalPath: filepath.Join(source, "ignored.jpg")})
-	require.NoError(t, err)
-	fallback, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{fallbackAsset.ID}}, "fallback", 0)
-	require.NoError(t, err)
-	entries, err = s.PhotoCheckoutEntries(ctx, fallback.ID)
-	require.NoError(t, err)
-	require.Len(t, entries, 1)
-	require.Equal(t, node.Name, filepath.Base(entries[0].Path))
-	for _, sourcePath := range []string{`C:\camera\capture.JPG`, `\\camera\photos\capture.JPG`, `/camera/foo\bar.JPG`} {
-		t.Run(sourcePath, func(t *testing.T) {
-			s := newTestStore(t)
-			run, err := s.BeginIngest(t.Context(), "photo-import", t.TempDir())
-			require.NoError(t, err)
-			member := photoImportTestMember(sourcePath, PhotoRoleImage, browseHash("capture"), "image/jpeg")
-			member.Name = "renamed.JPG"
-			result, err := s.IngestPhotoGroup(t.Context(), run, photoImportTestGroup(member))
-			require.NoError(t, err)
-			checkout, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "checkout", 0)
-			if strings.HasPrefix(sourcePath, "/camera/") {
-				require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
-				require.ErrorContains(t, err, `filename "foo\\bar.JPG"`)
-				return
-			}
-			require.NoError(t, err)
-			entries, err := s.PhotoCheckoutEntries(t.Context(), checkout.ID)
-			require.NoError(t, err)
-			require.Len(t, entries, 1)
-			require.Equal(t, "undated/"+result.Asset.ID+"/capture.JPG", entries[0].Path)
-		})
-	}
+	return result, source, set.ID
 }
