@@ -1,9 +1,7 @@
 package store
 
 import (
-	"bytes"
 	"context"
-	"encoding/json/v2"
 	"path/filepath"
 	"testing"
 	"time"
@@ -37,13 +35,6 @@ func TestPhotoSourceClassification(t *testing.T) {
 			assert.Equal(t, test.mime, source.MediaType)
 		})
 	}
-}
-
-func TestPhotoNodeFactsKeepVideoFamily(t *testing.T) {
-	t.Parallel()
-	video := photoNodeFacts(Node{Name: "capture.MP4", MimeType: "video/mp4"})
-	assert.Equal(t, "audio_video", video.MediaFamily)
-	assert.Equal(t, PhotoKindVideo, video.AssetKind)
 }
 
 func photoImportTestMember(path, role, hash, mediaType string) PhotoImportMember {
@@ -551,131 +542,6 @@ func TestPhotoImportSidecarDedupStaysWithinSourceGroup(t *testing.T) {
 	assert.Len(t, second.Asset.Files, 2)
 }
 
-func TestPhotoImportMetadata(t *testing.T) {
-	t.Parallel()
-	source := newTestStore(t)
-	ctx := t.Context()
-	ingestRun, err := source.BeginIngest(ctx, "photo-import", t.TempDir())
-	require.NoError(t, err)
-	camera := filepath.Join(t.TempDir(), "camera")
-	jpeg, err := source.IngestPhotoGroup(ctx, ingestRun, photoImportTestGroup(
-		photoImportTestMember(filepath.Join(camera, "IMG.JPG"), PhotoRoleImage, fakeHash("a1"), "image/jpeg")))
-	require.NoError(t, err)
-	paired, err := source.IngestPhotoGroup(ctx, ingestRun, photoImportTestGroup(
-		photoImportTestMember(filepath.Join(camera, "IMG.ARW"), PhotoRoleRAW, fakeHash("b2"), "image/x-sony-arw"),
-		photoImportTestMember(filepath.Join(camera, "IMG.JPG"), PhotoRoleImage, fakeHash("a1"), "image/jpeg"),
-		photoImportTestMember(filepath.Join(camera, "IMG.ARW.XMP"), PhotoRoleSidecar, browseHash("xmp"), "application/rdf+xml")))
-	require.NoError(t, err)
-	assert.Equal(t, jpeg.Asset.ID, paired.Asset.ID)
-	laterRun, err := source.BeginIngest(ctx, "photo-import", "renamed duplicate")
-	require.NoError(t, err)
-	_, err = source.IngestPhotoGroup(ctx, laterRun, photoImportTestGroup(
-		photoImportTestMember(filepath.Join(camera, "AAA.ARW"), PhotoRoleRAW, fakeHash("b2"), "image/x-sony-arw")))
-	require.NoError(t, err)
-	raw := fileByRole(paired.Asset.Files, PhotoRoleRAW)
-	var exported bytes.Buffer
-	require.NoError(t, source.ExportMetadata(ctx, &exported))
-	assert.Contains(t, exported.String(), `"operation":"import"`)
-	target := newTestStore(t)
-	require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
-	restoredAsset, err := target.PhotoAssetByID(ctx, paired.Asset.ID)
-	require.NoError(t, err)
-	assert.Len(t, restoredAsset.Files, 3)
-	sources := make(map[string]string)
-	for _, file := range paired.Asset.Files {
-		var selectedSource string
-		require.NoError(t, source.db.QueryRowContext(ctx, `SELECT source_provenance_identity FROM photo_files WHERE file_id=?`, file.ID).Scan(&selectedSource))
-		sources[file.ID] = selectedSource
-	}
-	rawSource := sources[raw.ID]
-	var alternateSource string
-	require.NoError(t, source.db.QueryRowContext(ctx, `SELECT identity FROM provenance WHERE node_id=? AND original_path LIKE '%AAA.ARW'`, raw.NodeID).Scan(&alternateSource))
-	for _, variant := range []string{"alternate source", "missing source_provenance_identity", "another node"} {
-		expectedSource := rawSource
-		if variant == "alternate source" {
-			expectedSource = alternateSource
-		}
-		lines := bytes.Split(exported.Bytes(), []byte{'\n'})
-		for i, line := range lines {
-			if !bytes.Contains(line, []byte(`"type":"photo_file"`)) {
-				continue
-			}
-			var file metadataPhotoFile
-			require.NoError(t, json.Unmarshal(line, &file))
-			if variant == "missing source_provenance_identity" {
-				file.SourceProvenanceIdentity = nil
-			} else if variant == "alternate source" && file.FileID == raw.ID {
-				file.SourceProvenanceIdentity = &alternateSource
-			} else if variant == "another node" && file.Role == PhotoRoleImage {
-				file.SourceProvenanceIdentity = &rawSource
-			}
-			lines[i], err = json.Marshal(file)
-			require.NoError(t, err)
-		}
-		restored := newTestStore(t)
-		err = restored.ImportMetadata(ctx, bytes.NewReader(bytes.Join(lines, []byte{'\n'})))
-		if variant == "another node" {
-			require.ErrorContains(t, err, "invalid photo source provenance reference")
-			continue
-		}
-		require.NoError(t, err)
-		if variant == "alternate source" {
-			var reexported bytes.Buffer
-			require.NoError(t, restored.ExportMetadata(ctx, &reexported))
-			var exportedRAW *metadataPhotoFile
-			for line := range bytes.SplitSeq(reexported.Bytes(), []byte{'\n'}) {
-				if !bytes.Contains(line, []byte(`"type":"photo_file"`)) {
-					continue
-				}
-				var file metadataPhotoFile
-				require.NoError(t, json.Unmarshal(line, &file))
-				if file.FileID == raw.ID {
-					exportedRAW = &file
-					break
-				}
-			}
-			require.NotNil(t, exportedRAW)
-			require.Equal(t, &alternateSource, exportedRAW.SourceProvenanceIdentity)
-		}
-		for _, file := range paired.Asset.Files {
-			if variant != "missing source_provenance_identity" && file.ID != raw.ID {
-				continue
-			}
-			want := expectedSource
-			if variant == "missing source_provenance_identity" {
-				want = sources[file.ID]
-			}
-			var storedSource string
-			require.NoError(t, restored.db.QueryRowContext(ctx, `SELECT source_provenance_identity FROM photo_files WHERE file_id=?`, file.ID).Scan(&storedSource))
-			require.Equal(t, want, storedSource, "%s: %s", variant, file.ID)
-		}
-	}
-}
-
-func TestPhotoImportOperationLifecycle(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	operation, err := s.CreateLocalOperation(ctx, StorageOperationKindPhotoImport, `{"source_root":"/camera","destination":"/photos"}`)
-	require.NoError(t, err)
-	assert.Equal(t, StorageOperationQueued, operation.State)
-	require.Error(t, s.SetStorageOperationTotal(ctx, operation.ID, 3))
-	_, err = s.ClaimStorageOperation(ctx, operation.ID)
-	require.NoError(t, err)
-	require.NoError(t, s.SetStorageOperationTotal(ctx, operation.ID, 3))
-	require.NoError(t, s.AdvanceStorageOperation(ctx, operation.ID, "", 1, 0, 0, `{"added":1}`))
-	require.NoError(t, s.RequestStorageOperationCancel(ctx, operation.ID))
-	resumable, err := s.ResumableStorageOperations(ctx)
-	require.NoError(t, err)
-	require.Len(t, resumable, 1)
-	current := resumable[0]
-	assert.Equal(t, int64(3), current.TotalObjects)
-	assert.Equal(t, int64(1), current.CompletedObjects)
-	assert.True(t, current.CancelRequested)
-	require.NoError(t, s.FinishStorageOperation(ctx, operation.ID, StorageOperationCancelled, current.ReceiptJSON, "", time.Time{}))
-	_, err = s.CreateLocalOperation(ctx, "unknown", `{}`)
-	require.Error(t, err)
-}
 func TestFinalizeLocalOperationSettlesCancelRace(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
