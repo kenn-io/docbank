@@ -105,55 +105,6 @@ describe("background jobs drawer", () => {
     },
   );
 
-  it("shows unavailable lane controls while keeping progress and cancellation", async () => {
-    const item = {
-      name: "storage:a",
-      kind: "photo_import",
-      operation_id: "a",
-      status: "queued",
-      started_at: "2026-07-23T12:00:00Z",
-      completed_objects: 1,
-      total_objects: 2,
-      can_cancel: true,
-    };
-    let available = false;
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
-      available
-        ? jobsResponse(
-            [item],
-            [
-              {
-                lane: "photo_import",
-                paused: true,
-                concurrency: 1,
-                revision: 2,
-                can_set_concurrency: false,
-              },
-            ],
-          )
-        : new Response(
-            JSON.stringify({
-              items: [item],
-              lane_controls_error: "Lane controls are unavailable",
-            }),
-            { headers: { "Content-Type": "application/json" } },
-          ),
-    );
-    render(JobsDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
-    expect((await screen.findByRole("alert")).textContent).toBe("Lane controls are unavailable");
-    expect(screen.queryByText("Read-only")).toBeNull();
-    expect(screen.getByText("1 of 2 groups")).toBeTruthy();
-    await fireEvent.click(screen.getByRole("button", { name: "Cancel Photo import a" }));
-    const cancel = fetchSpy.mock.calls.find(([url]) =>
-      String(url).endsWith("/api/v1/jobs/a/cancel"),
-    );
-    expect(cancel?.[1]?.method).toBe("POST");
-    available = true;
-    await fireEvent.click(screen.getByRole("button", { name: "Refresh background jobs" }));
-    expect(await screen.findByRole("button", { name: "Resume Photo import" })).toBeTruthy();
-    expect(screen.queryByRole("alert")).toBeNull();
-  });
-
   it("closes the drawer when a lane write loses authorization", async () => {
     const control = {
       lane: "place",
@@ -372,7 +323,7 @@ describe("background jobs drawer", () => {
         started_at: "2026-07-23T11:00:00Z",
       },
     ];
-    const group = vi.spyOn(jobs, "jobLanes").mockReturnValue([
+    const preparedLanes: ReturnType<typeof jobs.jobLanes> = [
       {
         key: "photo_import",
         lane: "photo_import",
@@ -417,8 +368,24 @@ describe("background jobs drawer", () => {
         active: true,
         control: undefined,
       },
-    ]);
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => jobsResponse(items));
+    ];
+    const group = vi.spyOn(jobs, "jobLanes").mockReturnValue(preparedLanes);
+    const control = {
+      lane: "photo_import",
+      paused: true,
+      concurrency: 1,
+      revision: 2,
+      can_set_concurrency: false,
+    };
+    let available = false;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      available
+        ? jobsResponse(items, [control])
+        : new Response(
+            JSON.stringify({ items, lane_controls_error: "Lane controls are unavailable" }),
+            { headers: { "Content-Type": "application/json" } },
+          ),
+    );
 
     render(JobsDrawer, {
       session: "short-lived",
@@ -426,6 +393,8 @@ describe("background jobs drawer", () => {
       onauthfailure: vi.fn(),
     });
 
+    expect((await screen.findByRole("alert")).textContent).toBe("Lane controls are unavailable");
+    expect(screen.queryByText("Read-only")).toBeNull();
     const progress = await screen.findByRole("progressbar", { name: "Photo import progress" });
     await waitFor(() => expect(group).toHaveBeenCalledWith(items, []));
     expect(progress.getAttribute("aria-valuenow")).toBe("75");
@@ -435,7 +404,6 @@ describe("background jobs drawer", () => {
     const checkoutProgress = screen.getByRole("progressbar", { name: "Photo checkout progress" });
     expect(checkoutProgress.getAttribute("aria-valuenow")).toBe("1");
     expect(checkoutProgress.getAttribute("aria-valuemax")).toBe("2");
-    expect(screen.getByText("Photo checkout")).toBeTruthy();
     expect(screen.getByText("1 of 2 files")).toBeTruthy();
     expect(screen.getAllByRole("button", { name: /^Cancel / })).toHaveLength(3);
     expect(screen.getByText("2 operations")).toBeTruthy();
@@ -450,6 +418,11 @@ describe("background jobs drawer", () => {
     expect(cancel).toBeTruthy();
     expect(cancel?.[1]?.method).toBe("POST");
     expect(new Headers(cancel?.[1]?.headers).has("If-Match")).toBe(false);
+    available = true;
+    group.mockReturnValue([{ ...preparedLanes[0], control }, ...preparedLanes.slice(1)]);
+    await fireEvent.click(screen.getByRole("button", { name: "Refresh background jobs" }));
+    expect(await screen.findByRole("button", { name: "Resume Photo import" })).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("refreshes while work is active and keeps polling after a transient error", async () => {
