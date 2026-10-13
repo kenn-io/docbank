@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"go.kenn.io/docbank/internal/filename"
 	"go.kenn.io/docbank/internal/query"
 )
 
@@ -257,17 +258,8 @@ func validateCheckoutFilename(name string) error {
 	if !utf8.ValidString(name) || name == "" || name == "." || name == ".." || strings.ContainsAny(name, `<>:"/\|?*`+"\x00") || strings.HasSuffix(name, ".") || strings.HasSuffix(name, " ") {
 		return fmt.Errorf("%w: original filename is not portable", ErrInvalidPhotoCheckout)
 	}
-	base, _, _ := strings.Cut(name, ".")
-	base = strings.ToUpper(strings.TrimRight(base, " "))
-	switch base {
-	case "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$":
+	if filename.IsWindowsDeviceName(name) {
 		return fmt.Errorf("%w: reserved Windows device filename", ErrInvalidPhotoCheckout)
-	}
-	if strings.HasPrefix(base, "COM") || strings.HasPrefix(base, "LPT") {
-		switch base[3:] {
-		case "1", "2", "3", "4", "5", "6", "7", "8", "9", "¹", "²", "³":
-			return fmt.Errorf("%w: reserved Windows device filename", ErrInvalidPhotoCheckout)
-		}
 	}
 	for _, r := range name {
 		if r >= 1 && r <= 31 {
@@ -356,7 +348,7 @@ func (s *Store) PhotoCheckoutEntries(ctx context.Context, id string) ([]PhotoChe
 	return out, rows.Err()
 }
 
-// PublishPhotoCheckoutEntry holds the visibility decision through filesystem publication.
+// PublishPhotoCheckoutEntry pins visibility because the daemon mutation gate permits concurrent writes.
 func (s *Store) PublishPhotoCheckoutEntry(ctx context.Context, e PhotoCheckoutEntry, publish func() (bool, error)) error {
 	var publicationErr error
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
