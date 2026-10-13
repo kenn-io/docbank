@@ -46,6 +46,9 @@ func TestGetPublishesVerifiedCurrentVersion(t *testing.T) {
 			assert.Equal(t, http.MethodGet, r.Method)
 			requests <- r.URL.Path + "?" + r.URL.Query().Get("path")
 			response := node
+			if r.URL.Query().Get("path") == "/" {
+				response.Kind = "dir"
+			}
 			if r.URL.Path == "/api/v1/nodes/42" {
 				response.TrashedAt = "2026-01-01T00:00:00Z"
 			}
@@ -88,16 +91,13 @@ func TestGetPublishesVerifiedCurrentVersion(t *testing.T) {
 	_, err = runCLI(t, "get", "/inbox/statement.bin", output)
 	require.ErrorContains(t, err, "pass --overwrite")
 	require.Empty(t, requests)
-}
-
-func TestGetRejectsDirectoryAndInvalidProgress(t *testing.T) {
-	_ = setupVaultHome(t)
-	_, err := runCLI(t, "get", "/", filepath.Join(t.TempDir(), "root"))
-	require.ErrorContains(t, err, "not a file")
-
-	_, err = runCLI(t, "get", "/missing", filepath.Join(t.TempDir(), "out"),
-		"--progress", "animated")
+	_, err = runCLI(t, "get", "/missing", filepath.Join(t.TempDir(), "out"), "--progress", "animated")
 	require.ErrorContains(t, err, "invalid --progress value")
+	require.Empty(t, requests)
+	_, err = runCLI(t, "get", "/", filepath.Join(t.TempDir(), "root"))
+	require.ErrorContains(t, err, "not a file")
+	require.Len(t, requests, 1)
+	assert.Equal(t, "/api/v1/path?/", <-requests)
 }
 
 func TestPublishGetFileForwardsOverwriteAndReportsErrors(t *testing.T) {

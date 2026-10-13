@@ -24,8 +24,17 @@ func TestPhotoRoutesEnforceIfMatch(t *testing.T) {
 	asset, err := fixture.PhotoAssetForNode(t.Context(), node.ID)
 	require.NoError(t, err)
 
+	resp, body := get(t, ts, "/api/v1/photos/assets/"+asset.ID, nil)
+	assert.Equal(t, http.StatusOK, resp.StatusCode, body)
+	assert.Equal(t, strconv.Quote(strconv.FormatInt(asset.Revision, 10)), resp.Header.Get("ETag"))
+
+	client := daemonconn.New(ts.URL, testAPIKey)
+	byNode, err := client.PhotoAssetForNode(t.Context(), node.ID)
+	require.NoError(t, err)
+	assert.Equal(t, asset.ID, byNode.ID)
+	assert.Equal(t, asset.Revision, byNode.Revision)
 	path := "/api/v1/photos/assets/" + asset.ID + "/exclude"
-	resp, body := do(t, ts, http.MethodPost, path, nil, map[string]bool{"excluded": true})
+	resp, body = do(t, ts, http.MethodPost, path, nil, map[string]bool{"excluded": true})
 	assert.Equal(t, http.StatusPreconditionRequired, resp.StatusCode, body)
 	assert.Equal(t, "precondition_required", decodeProblem(t, body).Code)
 
@@ -44,21 +53,10 @@ func TestPhotoRoutesEnforceIfMatch(t *testing.T) {
 		map[string]bool{"excluded": true})
 	assert.Equal(t, http.StatusPreconditionFailed, stale.StatusCode, staleBody)
 	assert.Equal(t, "stale_revision", decodeProblem(t, staleBody).Code)
-}
-
-func TestPhotoTrashRouteRevision(t *testing.T) {
-	t.Parallel()
-	ts, fixture := newTestServer(t, nil)
-	hash, size, err := fixture.Blobs.Write(strings.NewReader("synthetic jpeg"))
-	require.NoError(t, err)
-	node, err := fixture.CreateFile(t.Context(), fixture.RootID(), "photo.jpg", hash, size, "image/jpeg")
-	require.NoError(t, err)
-	asset, err := fixture.PhotoAssetForNode(t.Context(), node.ID)
-	require.NoError(t, err)
-	path := "/api/v1/photos/assets/" + asset.ID + "/trash"
-	resp, body := do(t, ts, http.MethodPost, path, map[string]string{"If-Match": "999"}, nil)
+	path = "/api/v1/photos/assets/" + asset.ID + "/trash"
+	resp, body = do(t, ts, http.MethodPost, path, map[string]string{"If-Match": "999"}, nil)
 	assert.Equal(t, http.StatusPreconditionFailed, resp.StatusCode, body)
-	resp, body = do(t, ts, http.MethodPost, path, map[string]string{"If-Match": strconv.FormatInt(asset.Revision, 10)}, nil)
+	resp, body = do(t, ts, http.MethodPost, path, map[string]string{"If-Match": strconv.FormatInt(updated.Revision, 10)}, nil)
 	assert.Equal(t, http.StatusOK, resp.StatusCode, body)
 	var receipt api.PhotoAsset
 	require.NoError(t, json.Unmarshal([]byte(body), &receipt))
@@ -139,7 +137,6 @@ func TestPhotoRoutesCreatePromoteAndConcurrentRevisionWinner(t *testing.T) {
 	}
 	assert.ElementsMatch(t, []int{http.StatusOK, http.StatusPreconditionFailed}, statuses)
 }
-
 func TestPhotoRoutesAndClientTraversal(t *testing.T) {
 	t.Parallel()
 	ts, fixture := newTestServer(t, nil)

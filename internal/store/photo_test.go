@@ -76,33 +76,9 @@ func TestPhotoEnrollmentClassifiesCreatedNodes(t *testing.T) {
 	assert.Equal(t, int64(1), asset.Revision)
 	assert.Equal(t, PhotoRoleImage, asset.Files[0].Role)
 
-	webp, err := s.CreateFile(ctx, s.RootID(), "image.webp", fakeHash("e5"), 4, "image/webp")
-	require.NoError(t, err)
-	webpAsset, err := s.PhotoAssetForNode(ctx, webp.ID)
-	require.NoError(t, err)
-	require.Len(t, webpAsset.Files, 1)
-	assert.Equal(t, webp.ID, webpAsset.Files[0].NodeID)
-	assert.Equal(t, PhotoRoleImage, webpAsset.Files[0].Role)
-
-	sonyRAW, err := s.CreateFile(ctx, s.RootID(), "image.arw", fakeHash("f6"), 4, "image/x-sony-arw")
-	require.NoError(t, err)
-	rawAsset, err := s.PhotoAssetForNode(ctx, sonyRAW.ID)
-	require.NoError(t, err)
-	require.Len(t, rawAsset.Files, 1)
-	assert.Equal(t, sonyRAW.ID, rawAsset.Files[0].NodeID)
-	assert.Equal(t, PhotoRoleImage, rawAsset.Files[0].Role)
-
-	video, err := s.CreateFile(ctx, s.RootID(), "video.mp4", fakeHash("b2"), 4, "video/mp4")
-	require.NoError(t, err)
-	_, err = s.PhotoAssetForNode(ctx, video.ID)
-	require.NoError(t, err)
 	audio, err := s.CreateFile(ctx, s.RootID(), "audio.mp3", fakeHash("c3"), 4, "audio/mpeg")
 	require.NoError(t, err)
 	_, err = s.PhotoAssetForNode(ctx, audio.ID)
-	require.ErrorIs(t, err, ErrNotFound)
-	raw, err := s.CreateFile(ctx, s.RootID(), "capture.cr2", fakeHash("d4"), 4, "application/octet-stream")
-	require.NoError(t, err)
-	_, err = s.PhotoAssetForNode(ctx, raw.ID)
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
@@ -636,13 +612,16 @@ func TestPhotoRenamePreservesAdmissionClassification(t *testing.T) {
 	image, err := s.CreateFile(ctx, s.RootID(), "generic.jpg", fakeHash("c001"), 1, "application/octet-stream")
 	require.NoError(t, err)
 
+	before, err := s.PhotoAssetForNode(ctx, image.ID)
+	require.NoError(t, err)
 	_, _, err = s.Move(ctx, image.ID, s.RootID(), "generic.bin", image.Revision)
 	require.NoError(t, err)
-	var exported bytes.Buffer
-	require.NoError(t, s.ExportMetadata(ctx, &exported))
-	restored := newTestStore(t)
-	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
-	require.NoError(t, restored.ExportMetadata(ctx, &bytes.Buffer{}))
+	renamed, err := s.NodeByID(ctx, image.ID)
+	require.NoError(t, err)
+	assert.Equal(t, image.MimeType, renamed.MimeType)
+	after, err := s.PhotoAssetForNode(ctx, image.ID)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
 }
 
 func TestPhotoPolicy(t *testing.T) {

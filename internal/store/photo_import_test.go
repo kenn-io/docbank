@@ -240,18 +240,21 @@ func TestPhotoImportSeparatePhotosAreReported(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, rawResult.Asset.ID, imageResult.Asset.ID)
 
-	rerun, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(raw, image))
-	require.NoError(t, err)
-	assert.True(t, rerun.Skipped)
-	require.NotNil(t, rerun.Ambiguity)
-	assert.Equal(t, PhotoImportSeparatePhotos, rerun.Ambiguity.Reason)
-	assert.ElementsMatch(t, []string{rawResult.Asset.ID, imageResult.Asset.ID},
-		[]string{rerun.Ambiguity.Files[0].AssetID, rerun.Ambiguity.Files[1].AssetID})
-	for _, id := range []string{rawResult.Asset.ID, imageResult.Asset.ID} {
-		asset, err := s.PhotoAssetByID(ctx, id)
+	duplicate := raw
+	duplicate.OriginalPath = filepath.Join(filepath.Dir(elsewhere.OriginalPath), "IMG.ARW")
+	for _, candidates := range [][]PhotoImportMember{{raw, image}, {duplicate, elsewhere}} {
+		rerun, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(candidates...))
 		require.NoError(t, err)
-		assert.Len(t, asset.Files, 1)
-		assert.Equal(t, int64(1), asset.Revision)
+		assert.True(t, rerun.Skipped)
+		require.NotNil(t, rerun.Ambiguity)
+		assert.Equal(t, PhotoImportSeparatePhotos, rerun.Ambiguity.Reason)
+		assert.ElementsMatch(t, []string{rawResult.Asset.ID, imageResult.Asset.ID},
+			[]string{rerun.Ambiguity.Files[0].AssetID, rerun.Ambiguity.Files[1].AssetID})
+		for _, original := range []PhotoAsset{rawResult.Asset, imageResult.Asset} {
+			asset, err := s.PhotoAssetByID(ctx, original.ID)
+			require.NoError(t, err)
+			assert.Equal(t, original, asset)
+		}
 	}
 }
 
@@ -431,12 +434,11 @@ func TestPhotoImportEditedSourceBecomesNewVersion(t *testing.T) {
 	}
 	first, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(raw, jpg("jpg-v1"), xmp("xmp-v1")))
 	require.NoError(t, err)
-	sidecar := first.Nodes[2]
 
 	edited, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(raw, jpg("jpg-v1"), xmp("xmp-v2")))
 	require.NoError(t, err)
 	assert.True(t, edited.Added)
-	_, err = s.IngestPhotoGroup(ctx, run, photoImportTestGroup(raw, jpg("jpg-v2"), xmp("xmp-v2")))
+	jpegEdited, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(raw, jpg("jpg-v2"), xmp("xmp-v2")))
 	require.NoError(t, err)
 
 	asset := mustPhotoAsset(t, s, first.Nodes[0].ID)
@@ -448,57 +450,36 @@ func TestPhotoImportEditedSourceBecomesNewVersion(t *testing.T) {
 	var files int
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE kind='file'`).Scan(&files))
 	assert.Equal(t, 3, files)
-	current, err := s.NodeByID(ctx, sidecar.ID)
-	require.NoError(t, err)
-	assert.Equal(t, fakeHash("xmp-v2"), current.BlobHash)
-}
+	for index, hash := range map[int]string{1: "jpg-v2", 2: "xmp-v2"} {
+		current, err := s.NodeByID(ctx, first.Nodes[index].ID)
+		require.NoError(t, err)
+		assert.Equal(t, first.Nodes[index].ID, jpegEdited.Nodes[index].ID)
+		assert.NotEqual(t, first.Nodes[index].CurrentVersionID, current.CurrentVersionID)
+		assert.Equal(t, fakeHash(hash), current.BlobHash)
+	}
+	t.Run("shared source", func(t *testing.T) {
+		s := newTestStore(t)
+		ctx := t.Context()
+		run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
+		require.NoError(t, err)
+		first := photoImportTestMember(filepath.Join(t.TempDir(), "a", "IMG.ARW"), PhotoRoleRAW, fakeHash("raw-v1"), "image/x-sony-arw")
+		second := photoImportTestMember(filepath.Join(t.TempDir(), "b", "IMG.ARW"), PhotoRoleRAW, fakeHash("raw-v1"), "image/x-sony-arw")
+		original, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(first))
+		require.NoError(t, err)
+		shared, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(second))
+		require.NoError(t, err)
+		require.Equal(t, original.Nodes[0].ID, shared.Nodes[0].ID)
 
-func TestPhotoImportEditedSourceLeavesSharedNodeAlone(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
-	require.NoError(t, err)
-	first := photoImportTestMember(filepath.Join(t.TempDir(), "a", "IMG.ARW"), PhotoRoleRAW, fakeHash("raw-v1"), "image/x-sony-arw")
-	second := photoImportTestMember(filepath.Join(t.TempDir(), "b", "IMG.ARW"), PhotoRoleRAW, fakeHash("raw-v1"), "image/x-sony-arw")
-	original, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(first))
-	require.NoError(t, err)
-	shared, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(second))
-	require.NoError(t, err)
-	require.Equal(t, original.Nodes[0].ID, shared.Nodes[0].ID)
-
-	first.BlobHash = fakeHash("raw-v2")
-	edited, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(first))
-	require.NoError(t, err)
-	assert.NotEqual(t, original.Nodes[0].ID, edited.Nodes[0].ID)
-	kept, err := s.NodeByID(ctx, original.Nodes[0].ID)
-	require.NoError(t, err)
-	assert.Equal(t, fakeHash("raw-v1"), kept.BlobHash)
-}
-
-func TestPhotoImportDuplicateRawNextToSeparateJPEGIsReported(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
-	require.NoError(t, err)
-	first := filepath.Join(t.TempDir(), "first")
-	second := filepath.Join(t.TempDir(), "second")
-	raw := photoImportTestMember(filepath.Join(first, "IMG.ARW"), PhotoRoleRAW, fakeHash("same-raw"), "image/x-sony-arw")
-	jpeg := photoImportTestMember(filepath.Join(second, "IMG.JPG"), PhotoRoleImage, fakeHash("same-jpg"), "image/jpeg")
-	_, err = s.IngestPhotoGroup(ctx, run, photoImportTestGroup(raw))
-	require.NoError(t, err)
-	jpegResult, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(jpeg))
-	require.NoError(t, err)
-	duplicate := photoImportTestMember(filepath.Join(second, "IMG.ARW"), PhotoRoleRAW, raw.BlobHash, raw.MediaType)
-	reported, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(duplicate, jpeg))
-	require.NoError(t, err)
-	assert.True(t, reported.Skipped)
-	require.NotNil(t, reported.Ambiguity)
-	assert.Equal(t, PhotoImportSeparatePhotos, reported.Ambiguity.Reason)
-	jpegAsset, err := s.PhotoAssetByID(ctx, jpegResult.Asset.ID)
-	require.NoError(t, err)
-	assert.Len(t, jpegAsset.Files, 1)
+		first.BlobHash = fakeHash("raw-v2")
+		edited, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(first))
+		require.NoError(t, err)
+		assert.NotEqual(t, original.Nodes[0].ID, edited.Nodes[0].ID)
+		kept, err := s.NodeByID(ctx, original.Nodes[0].ID)
+		require.NoError(t, err)
+		assert.Equal(t, fakeHash("raw-v1"), kept.BlobHash)
+		assert.Equal(t, original.Nodes[0].CurrentVersionID, kept.CurrentVersionID)
+		assert.Equal(t, first.BlobHash, edited.Nodes[0].BlobHash)
+	})
 }
 
 func TestPhotoImportVideoWithSameNameJPEG(t *testing.T) {

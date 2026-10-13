@@ -21,13 +21,12 @@ func TestPhotoImportRoutes(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "capture.JPG"), []byte("photo"), 0o600))
-	ts, catalog := newTestServer(t, func(d *api.Deps) {
-		d.Jobs = jobs.New(t.Context(), nil)
-		t.Cleanup(func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			require.NoError(t, d.Jobs.Shutdown(ctx))
-		})
+	supervisor := jobs.New(t.Context(), nil)
+	ts, catalog := newTestServer(t, func(d *api.Deps) { d.Jobs = supervisor })
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		require.NoError(t, supervisor.Shutdown(ctx))
 	})
 	submitted := api.PhotoImportStartRequest{SourceRoot: root, Destination: "/photos"}
 	body, err := json.Marshal(submitted)
@@ -44,6 +43,9 @@ func TestPhotoImportRoutes(t *testing.T) {
 	require.NotEmpty(t, started.ID)
 	assert.Equal(t, store.StorageOperationKindPhotoImport, started.Kind)
 	assert.Equal(t, "queued", started.State)
+	registered := supervisor.Snapshot()
+	require.Len(t, registered, 1)
+	assert.Equal(t, "storage:"+started.ID, registered[0].Name)
 
 	stored, err := catalog.StorageOperation(t.Context(), started.ID)
 	require.NoError(t, err)
@@ -282,4 +284,34 @@ func TestPhotoImportGate(t *testing.T) {
 	var after bytes.Buffer
 	require.NoError(t, catalog.ExportMetadata(t.Context(), &after))
 	assert.Contains(t, after.String(), "IMG.ARW")
+}
+
+func TestPhotoImportGateAndActivity(t *testing.T) {
+	t.Parallel()
+	gate := api.NewOperationGate()
+	tracker := api.NewActivityTracker()
+	supervisor := jobs.New(t.Context(), nil)
+	ts, catalog := newTestServer(t, func(d *api.Deps) {
+		d.Gate, d.Tracker, d.Jobs = gate, tracker, supervisor
+	})
+	t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "IMG.ARW"), []byte("raw"), 0o600))
+	require.NoError(t, gate.MaintainContext(t.Context(), func() error {
+		response, body := do(t, ts, http.MethodPost, "/api/v1/photos/imports", nil,
+			api.PhotoImportStartRequest{SourceRoot: root, Destination: "/photos"})
+		require.Equal(t, http.StatusAccepted, response.StatusCode, body)
+		require.Eventually(t, func() bool { return tracker.IdleFor() == 0 }, time.Second, time.Millisecond)
+		assert.Never(t, func() bool {
+			_, err := catalog.NodeByPath(t.Context(), "/photos")
+			return err == nil
+		}, 2*time.Second, 10*time.Millisecond)
+		require.Len(t, supervisor.Snapshot(), 1)
+		assert.Nil(t, supervisor.Snapshot()[0].FinishedAt)
+		return nil
+	}))
+	require.Eventually(t, func() bool { return supervisor.Snapshot()[0].FinishedAt != nil }, 5*time.Second, 10*time.Millisecond)
+	_, err := catalog.NodeByPath(t.Context(), "/photos/IMG.ARW")
+	require.NoError(t, err)
+	assert.Positive(t, tracker.IdleFor())
 }

@@ -1357,6 +1357,9 @@ func TestTrashEmpty(t *testing.T) {
 	t.Cleanup(server.Close)
 	_, err := daemonconn.RuntimeStore(vault).Write(daemonconn.NewRecord(strings.TrimPrefix(server.URL, "http://"), "synthetic-key", token, ""))
 	require.NoError(t, err)
+	_, err = runCLI(t, "trash", "empty", "--older-than=-1h")
+	require.ErrorContains(t, err, "negative")
+	require.Empty(t, runs)
 	out, err := runCLI(t, "trash", "empty")
 	require.NoError(t, err, out)
 	assert.Contains(t, out, "1 trashed root")
@@ -1379,24 +1382,6 @@ func TestTreeRejectsFileWithoutOutput(t *testing.T) {
 	out, err := runCLI(t, "tree", "/inbox/a.txt")
 	require.ErrorIs(t, err, store.ErrNotDir)
 	assert.Empty(t, out, "tree must not emit partial output before failing")
-}
-
-func TestTrashEmptyRejectsNegativeAge(t *testing.T) {
-	setupVaultHome(t)
-	src := writeSourceFile(t, "a.txt", "alpha")
-	_, err := runCLI(t, "add", src, "--dest", "/inbox")
-	require.NoError(t, err)
-	_, err = runCLI(t, "rm", "/inbox/a.txt")
-	require.NoError(t, err)
-
-	_, err = runCLI(t, "trash", "empty", "--older-than=-1h")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "negative")
-
-	// Nothing was deleted.
-	out, err := runCLI(t, "trash", "list")
-	require.NoError(t, err)
-	assert.Contains(t, out, "a.txt")
 }
 
 func TestGcReclaimsUnreachableBlobs(t *testing.T) {
