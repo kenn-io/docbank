@@ -316,7 +316,7 @@ func TestPhotoCheckoutFreezesGroupedSourcePaths(t *testing.T) {
 	require.Equal(t, node.Name, filepath.Base(entries[0].Path))
 }
 
-func TestPhotoSourceProvenanceMetadata(t *testing.T) {
+func TestPhotoSourceMetadataRestoreAndMissingIdentityBackfill(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -334,7 +334,7 @@ func TestPhotoSourceProvenanceMetadata(t *testing.T) {
 	rawSource := sources[raw.ID]
 	var alternateSource string
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT identity FROM provenance WHERE node_id=? AND original_path LIKE '%AAA.ARW'`, raw.NodeID).Scan(&alternateSource))
-	for _, variant := range []string{"current", "legacy", "another node"} {
+	for _, variant := range []string{"current", "missing source_provenance_identity", "another node"} {
 		expectedSource := rawSource
 		if variant == "current" {
 			expectedSource = alternateSource
@@ -346,7 +346,7 @@ func TestPhotoSourceProvenanceMetadata(t *testing.T) {
 			}
 			var file metadataPhotoFile
 			require.NoError(t, json.Unmarshal(line, &file))
-			if variant == "legacy" {
+			if variant == "missing source_provenance_identity" {
 				file.SourceProvenanceIdentity = nil
 			} else if variant == "current" && file.FileID == raw.ID {
 				file.SourceProvenanceIdentity = &alternateSource
@@ -364,11 +364,11 @@ func TestPhotoSourceProvenanceMetadata(t *testing.T) {
 		}
 		require.NoError(t, err)
 		for _, file := range result.Asset.Files {
-			if variant != "legacy" && file.ID != raw.ID {
+			if variant != "missing source_provenance_identity" && file.ID != raw.ID {
 				continue
 			}
 			want := expectedSource
-			if variant == "legacy" {
+			if variant == "missing source_provenance_identity" {
 				want = sources[file.ID]
 			}
 			var storedSource string
