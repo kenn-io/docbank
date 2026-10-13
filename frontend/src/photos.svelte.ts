@@ -12,6 +12,7 @@ import { captureDateQuery, type CaptureDayFacet } from "./photoTimeline.js";
 
 export const photoQuery = parseQuery('{"syntax":"simple","sort":{"field":"capture_time","direction":"desc"}}');
 export const mapPhotoLimit = 20_000;
+const mapPageLimit = 20;
 const photoFacets = ["camera", "lens", "year", "location", "set"] as const;
 // One move can audit-trash up to 1,000 files in a single writer transaction.
 const photoRejectsTimeout = 300_000;
@@ -80,7 +81,7 @@ export class Photos {
   private expired = false;
   private replacement: "refresh" | "expiry" | "date" | undefined;
   private replacementDate: string | undefined;
-  staged: { candidate: Map<string, PhotoRow>; cursor?: string; total: number; complete: boolean } | undefined;
+  staged: { candidate: Map<string, PhotoRow>; cursor?: string; total: number; complete: boolean; pages: number } | undefined;
   private controller = new AbortController();
   private facetsController = new AbortController();
   private needsFacets = false;
@@ -224,7 +225,7 @@ export class Photos {
 
   async loadMore(preserve?: () => (() => Promise<void>) | undefined): Promise<void> {
     if (this.disposed || this.hiding || this.loading || this.trashing || this.error) return;
-    if (this.projection && this.replacement) return this.retry(preserve);
+    if (this.projection && this.replacement) { await this.retry(preserve); return; }
     if (this.projection === "map" && this.items.length >= mapPhotoLimit) return;
     if (this.started && !this.cursor) return;
     this.loading = true;
@@ -232,10 +233,12 @@ export class Photos {
     let signal = controller.signal;
     try {
       const first = !this.started;
+      let pages = 0;
       do {
         signal = this.projection ? AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]) : controller.signal;
         const page = await this.page(this.query, signal, this.cursor);
         if (signal.aborted) throw signal.reason;
+        pages++;
         const seen = this.seenIDs ??= new Set(this.items.map(item => item.asset_id));
         const added: PhotoRow[] = [];
         let capped = false;
@@ -254,7 +257,7 @@ export class Photos {
         this.cursor = capped ? this.cursor : page.next_cursor;
         this.started = true;
         await restore?.();
-      } while (this.projection && this.cursor && this.items.length < mapPhotoLimit && !controller.signal.aborted);
+      } while (this.projection && this.cursor && pages < mapPageLimit && this.items.length < mapPhotoLimit && !controller.signal.aborted);
       if (first && !controller.signal.aborted) { this.needsFacets = true; void this.retryFacets(); }
     } catch (cause) {
       if (controller.signal.aborted) return;
@@ -331,7 +334,7 @@ export class Photos {
   }
 
   async retry(preserve?: () => (() => Promise<void>) | undefined) {
-    if (this.replacement || this.expired) { await this.replace(this.replacement ?? "expiry", preserve, this.replacementDate, this.projection === "map"); return; }
+    if (this.replacement || this.expired) return this.replace(this.replacement ?? "expiry", preserve, this.replacementDate, this.projection === "map");
     this.error = "";
     this.expired = false;
     return this.loadMore(preserve);
@@ -460,7 +463,7 @@ export class Photos {
     this.error = "";
     const count = this.items.length;
     const tail = this.items.at(-1)?.asset_id;
-    const staged = this.staged = resume && this.staged ? this.staged : { candidate: new Map<string, PhotoRow>(), cursor: undefined, total: 0, complete: false };
+    const staged = this.staged = resume && this.staged ? this.staged : { candidate: new Map<string, PhotoRow>(), cursor: undefined, total: 0, complete: false, pages: 0 };
     const candidate = staged.candidate;
     let cursor = staged.cursor;
     let total = staged.total;
@@ -471,13 +474,18 @@ export class Photos {
         const page = await this.page(query, signal, cursor);
         if (signal.aborted) throw signal.reason;
         const reachedPreviously = reachedPrefix;
-        for (const item of page.items) candidate.set(item.asset_id, item);
+        staged.pages++;
+        let capped = false;
+        for (const item of page.items) {
+          if (this.projection === "map" && !candidate.has(item.asset_id) && candidate.size >= mapPhotoLimit) { capped = true; break; }
+          candidate.set(item.asset_id, item);
+        }
         reachedPrefix ||= (!!tail && candidate.has(tail)) || candidate.size >= count;
         total = page.total;
-        cursor = page.next_cursor;
+        cursor = capped ? cursor : page.next_cursor;
         staged.cursor = cursor;
         staged.total = total;
-        staged.complete = !cursor || !!this.projection && candidate.size >= mapPhotoLimit || !this.projection && (mode === "date" || reachedPrefix && (mode === "refresh" || reachedPreviously));
+        staged.complete = !cursor || !!this.projection && (candidate.size >= mapPhotoLimit || staged.pages >= mapPageLimit) || !this.projection && (mode === "date" || reachedPrefix && (mode === "refresh" || reachedPreviously));
       }
       const eligible = mode === "date" ? new Set(candidate.keys()) : await this.eligibleSelection(candidate.keys(), query, controller.signal);
       if (controller.signal.aborted) return false;

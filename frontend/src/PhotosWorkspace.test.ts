@@ -789,20 +789,6 @@ it("keeps Library recovery below its toolbar and inside the grid", async () => {
   photos.dispose();
 });
 
-it.each([false, true])("enables viewer paging before the first page only for Map, map=%s", async mapMode => {
-  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
-  const photos = new Photos("scoped", vi.fn(), false, photoQuery, mapMode ? "map" : undefined);
-  photos.items = [photo(1)]; photos.loading = true;
-  photos.viewerReturn = { contextID: photos.contextID, assetID: "photo-1", control: "open", scrollTop: 0 };
-  vi.spyOn(photos, "resume").mockResolvedValue();
-  vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
-  render(PhotosWorkspace, { photos, mapMode, tiles: { tile_url: "https://tiles.example.org/{z}/{x}/{y}", attribution: "Example", max_zoom: 19 }, cache: { get: vi.fn() } as unknown as PhotoPreviewCache, photoID: "photo-1" });
-  await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
-  photos.loading = false; await tick();
-  expect(screen.getAllByRole("button", { name: "Next photo" }).every(button => (button as HTMLButtonElement).disabled)).toBe(!mapMode);
-  photos.dispose();
-});
-
 it("renders disabled maps without fetching and keeps the Library selection on Escape", async () => {
  const fetcher=vi.fn();vi.stubGlobal("fetch",fetcher);
  const photos=new Photos("scoped",vi.fn());photos.items=[photo(1)];photos.selectLoaded();
@@ -861,6 +847,21 @@ async function openMapViewer({props,view}: ReturnType<typeof openMapViewerSetup>
  await fireEvent.click(await screen.findByRole("button",{name:"Open Photo 1.jpg"}));
  await view.rerender({...props,photoID:"photo-1"});await screen.findByRole("dialog",{name:"Photo viewer, Photo 1.jpg"});
 }
+it("disables viewer continuation at the Map ceiling while retaining its cursor", async () => {
+ const setup=openMapViewerSetup();const {photos,lookup,props,view}=setup;
+ photos.items=Array.from({length:mapPhotoLimit},(_,index)=>mapPhoto(index+1));photos.total=mapPhotoLimit+1000;photos.cursor="remaining";
+ lookup.mockResolvedValue(photo(mapPhotoLimit));
+ const loadMore=vi.spyOn(photos,"loadMore");
+ await vi.dynamicImportSettled();map.onvisible!([mapPhoto(mapPhotoLimit)]);
+ await fireEvent.click(await screen.findByRole("button",{name:`Open Photo ${mapPhotoLimit}.jpg`}));
+ await view.rerender({...props,photoID:`photo-${mapPhotoLimit}`});await screen.findByRole("dialog",{name:`Photo viewer, Photo ${mapPhotoLimit}.jpg`});
+ expect(screen.getAllByRole("button",{name:"Next photo"}).every(button=>(button as HTMLButtonElement).disabled)).toBe(true);
+ await fireEvent.keyDown(window,{key:"ArrowRight"});expect(loadMore).not.toHaveBeenCalled();expect(props.onphotochange).toHaveBeenCalledOnce();
+ expect(photos.cursor).toBe("remaining");
+ photos.items=photos.items.slice(1);await tick();
+ expect(screen.getAllByRole("button",{name:"Next photo"}).every(button=>(button as HTMLButtonElement).disabled)).toBe(false);
+ photos.dispose();
+});
 it("revalidates the open Map photo after a reload and a list refresh", async () => {
  const setup=openMapViewerSetup();const {photos,lookup,preview}=setup;
  stubPhotoFetch(vi.fn(async()=>Response.json({items:[],map_items:[{...mapPhoto(1),revision:2}],total:1})));

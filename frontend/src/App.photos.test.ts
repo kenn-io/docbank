@@ -671,8 +671,9 @@ it.each([false, true])("keeps direct links and history scoped and conceals a mou
   expect(revoke.mock.calls.length).toBeGreaterThan(before);
 });
 
-it.each(["change", "return", "return before first hide", "interrupted return", "interrupted return before first hide"])("mounts a fresh scoped Map progressively and revalidates it after %s", async cause => {
- history.replaceState(null,"","/photos#web_session=synthetic&web_upload_secret=proof");storage();
+it.each(["change", "return", "return before first hide", "interrupted return", "interrupted return before first hide", "direct return", "direct album return", "direct return before first hide", "direct album return before first hide"])("mounts a fresh scoped Map progressively and revalidates it after %s", async cause => {
+ const album=photoAlbum();const direct=cause.startsWith("direct");
+ history.replaceState(null,"",`${direct?cause.includes("album")?`/photos/map/${album.id}`:"/photos/map":"/photos"}#web_session=synthetic&web_upload_secret=proof`);storage();
  vi.stubGlobal("ResizeObserver",class {observe() {} disconnect() {}});vi.spyOn(HTMLElement.prototype,"clientWidth","get").mockReturnValue(1000);vi.spyOn(HTMLElement.prototype,"clientHeight","get").mockReturnValue(800);
  const meta=document.createElement("meta");meta.name="docbank-map-tiles";meta.content=JSON.stringify({tile_url:"https://tiles.example.org/{z}/{x}/{y}",attribution:"Example",max_zoom:19});document.head.append(meta);
  let finish!:(value:Response)=>void, changed=false, reload=false, pages=0;
@@ -680,6 +681,7 @@ it.each(["change", "return", "return before first hide", "interrupted return", "
  vi.spyOn(globalThis,"setInterval").mockImplementation((callback,delay,...args)=>{if(delay === 2000){poll=callback as ()=>void;return 0 as unknown as ReturnType<typeof setInterval>;}return interval(callback,delay,...args);});
  vi.stubGlobal("fetch",vi.fn(async(url:string,init:RequestInit)=>{
   if(url.endsWith("/photos/hidden")) return Response.json({configured:true,change_id:changed?"second":cause.includes("before first hide")?undefined:"first"});
+  if(url.endsWith("/photos/albums")) return albumResponse([album]);
   if(url.endsWith("/photos/assets/query")) {
    const request=JSON.parse(String(init.body));
    if(!request.projection) return Response.json({items:[photo(1)],total:1});
@@ -688,8 +690,8 @@ it.each(["change", "return", "return before first hide", "interrupted return", "
    return Response.json({items:[],map_items:[mapPhoto(1)],total:2,next_cursor:"second"});
   }
   return Response.json({items:[],nodes:[],tags:[],profiles:[]});
- }));render(App);await screen.findByRole("button",{name:"Open Photo 1.jpg"});
- await fireEvent.click(screen.getByRole("button",{name:"Map"}));
+ }));render(App);
+ if(!direct) {await screen.findByRole("button",{name:"Open Photo 1.jpg"});await fireEvent.click(screen.getByRole("button",{name:"Map"}));}
  await waitFor(()=>expect(finish).toBeTypeOf("function"));await waitFor(()=>expect(map.props?.items.map(row=>row.asset_id)).toEqual(["photo-1"]));
  finish(Response.json({items:[],map_items:[mapPhoto(2)],total:2}));
  await waitFor(()=>expect(map.props?.items).toHaveLength(2));
@@ -699,7 +701,7 @@ it.each(["change", "return", "return before first hide", "interrupted return", "
   visibility.mockReturnValue("visible");await fireEvent(document,new Event("visibilitychange"));
  }
  const previous=finish;reload=true;
- if(cause.startsWith("return")) {
+ if(cause.startsWith("return") || direct) {
   const before=pages;
   await returnToMap();
   await screen.findByRole("heading",{name:"Photos in view"});
@@ -720,6 +722,33 @@ it.each(["change", "return", "return before first hide", "interrupted return", "
  expect(screen.queryByRole("heading",{name:"Photos in view"})).toBeNull();finish(Response.json({detail:"Map unavailable"},{status:503}));await screen.findByText("Map unavailable");expect(screen.queryByRole("heading",{name:"Photos in view"})).toBeNull();
  const failed=finish;await fireEvent.click(screen.getByRole("button",{name:"Retry"}));await waitFor(()=>expect(finish).not.toBe(failed));finish(Response.json({items:[],map_items:[mapPhoto(2)],total:1}));
  await waitFor(()=>expect(map.props?.items.map(row=>row.asset_id)).toEqual(["photo-2"]));
+});
+
+it.each(["retry", "poll", "changed authority"])("retains staged Map pages after a transient access refresh failure, %s", async recovery => {
+ history.replaceState(null,"","/photos/map#web_session=synthetic&web_upload_secret=proof");storage();
+ vi.stubGlobal("ResizeObserver",class {observe() {} disconnect() {}});vi.spyOn(HTMLElement.prototype,"clientWidth","get").mockReturnValue(1000);vi.spyOn(HTMLElement.prototype,"clientHeight","get").mockReturnValue(800);
+ const meta=document.createElement("meta");meta.name="docbank-map-tiles";meta.content=JSON.stringify({tile_url:"https://tiles.example.org/{z}/{x}/{y}",attribution:"Example",max_zoom:19});document.head.append(meta);
+ let changeID="first", failed=false, poll!:()=>void;const cursors:(string|undefined)[]=[];const interval=globalThis.setInterval;
+ vi.spyOn(globalThis,"setInterval").mockImplementation((callback,delay,...args)=>{if(delay===2000){poll=callback as ()=>void;return 0 as unknown as ReturnType<typeof setInterval>;}return interval(callback,delay,...args);});
+ stubPhotoFetch(vi.fn(async(url:string,init:RequestInit)=>{
+  if(url.endsWith("/photos/hidden")) return Response.json({configured:true,change_id:changeID});
+  if(url.endsWith("/photos/assets/query")) {
+   const request=JSON.parse(String(init.body));if(!request.projection)return Response.json({items:[],total:0});
+   cursors.push(request.cursor);
+   if(changeID==="first")return Response.json({items:[],map_items:[mapPhoto(1)],total:1});
+   if(request.cursor==="second" && !failed){failed=true;return Response.json({detail:"Map unavailable"},{status:503});}
+   return Response.json({items:[],map_items:[mapPhoto(request.cursor?3:2)],total:2,next_cursor:request.cursor?undefined:"second"});
+  }
+  return Response.json({items:[],nodes:[],tags:[],profiles:[]});
+ }));render(App);await waitFor(()=>expect(map.props?.items.map(row=>row.asset_id)).toEqual(["photo-1"]));
+ changeID="second";await act(()=>poll());await screen.findByText("Map unavailable");
+ expect(screen.queryByRole("heading",{name:"Photos in view"})).toBeNull();
+ expect(cursors).toEqual([undefined,undefined,"second"]);
+ if(recovery==="changed authority")changeID="third";
+ if(recovery==="retry")await fireEvent.click(screen.getByRole("button",{name:"Retry"}));else await act(()=>poll());
+ await screen.findByRole("heading",{name:"Photos in view"});
+ expect(map.props?.items.map(row=>row.asset_id)).toEqual(["photo-2","photo-3"]);
+ expect(cursors).toEqual(recovery==="changed authority"?[undefined,undefined,"second",undefined,"second"]:[undefined,undefined,"second","second"]);
 });
 
 it("re-pages Library on return with an unchanged hidden change ID", async () => {

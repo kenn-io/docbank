@@ -109,7 +109,7 @@
     const id = current.asset_id;
     const index = ordered.findIndex(item => item.asset_id === id);
     if (index < 0) return;
-    if (photos.cursor && direction === 1 && index === ordered.length - 1) {
+    if (photos.cursor && (!mapMode || photos.items.length < mapPhotoLimit) && direction === 1 && index === ordered.length - 1) {
       await photos.loadMore(preserve);
     }
     if (controller.signal.aborted || photoID !== id) return;
@@ -311,7 +311,7 @@
   {:else}{@render libraryGrid()}{/if}
   </div>
   {/if}
-  {#if photoID}<PhotoLoupe photo={current} error={detailError} note={membershipNote} reloading={detailLoading} {reloadRevision} onreload={() => reload = {id:photoID}} onretry={retryNavigation} {photos} {cache} items={fromGrid ? ordered : []} canLoadMore={fromGrid && (mapMode && !photos.started || !!photos.cursor)} onmove={move} onchoose={id => onphotochange(id, "step")} onclose={() => onphotochange("", "close")} />{/if}
+  {#if photoID}<PhotoLoupe photo={current} error={detailError} note={membershipNote} reloading={detailLoading} {reloadRevision} onreload={() => reload = {id:photoID}} onretry={retryNavigation} {photos} {cache} items={fromGrid ? ordered : []} canLoadMore={fromGrid && (!mapMode || photos.items.length < mapPhotoLimit) && !!photos.cursor} onmove={move} onchoose={id => onphotochange(id, "step")} onclose={() => onphotochange("", "close")} />{/if}
 </main>
 {#if modal && modalAlbum && albums}
   <Modal title={modal === "delete" ? "Delete album" : "Duplicate album"} onclose={() => { if (!albums.busy) modal = undefined; }}>

@@ -9,16 +9,16 @@ afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clea
 const response = (items: PhotoRow[], cursor?: string, mapProjection = items.some(row => !("content_version_id" in row))) => new Response(JSON.stringify({ ...(mapProjection ? { items: [], map_items: items } : { items }), total: 3, next_cursor: cursor }));
 const stubPhotoFetch = (fetcher: (url: string, init: RequestInit) => Promise<Response>, facets: unknown[] = []) => vi.stubGlobal("fetch", (url: string, init: RequestInit) => url.endsWith("/photos/assets/query") && JSON.parse(init.body as string).facets?.length ? Promise.resolve(new Response(JSON.stringify({ facets }))) : fetcher(url, init));
 
-it("updates Library totals on each page without a page timeout", async () => {
+it("keeps Library continuation totals without a page timeout", async () => {
   const timeout = vi.spyOn(AbortSignal, "timeout");
   const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ items: [photo(1)], total: 2, next_cursor: "next" }))
-    .mockResolvedValueOnce(Response.json({ items: [photo(2)], total: 4 }));
+    .mockResolvedValueOnce(Response.json({ items: [photo(2)], total: 2 }));
   stubPhotoFetch(fetcher);
   const photos = new Photos("scoped", vi.fn());
   await photos.loadMore();
   expect(photos.total).toBe(2);
   await photos.loadMore();
-  expect(photos.total).toBe(4);
+  expect(photos.total).toBe(2);
   expect(timeout).not.toHaveBeenCalled();
   expect(fetcher.mock.calls.map(([, init]) => JSON.parse(init.body).page_size)).toEqual([250, 250]);
   photos.dispose();
@@ -43,7 +43,7 @@ it.each([false, true])("loads more after an interrupted refresh, map=%s", async 
 it("keeps the first Map count and bounds each page", async () => {
   const timeout = vi.spyOn(AbortSignal, "timeout");
   const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ items: [], map_items: [mapPhoto(1)], total: 2, next_cursor: "next" }))
-    .mockResolvedValueOnce(Response.json({ items: [], map_items: [mapPhoto(2)], total: 4 }));
+    .mockResolvedValueOnce(Response.json({ items: [], map_items: [mapPhoto(2)], total: 2 }));
   stubPhotoFetch(fetcher);
   const photos = new Photos("scoped", vi.fn(), false, photoQuery, "map");
   await photos.loadMore();
@@ -69,6 +69,38 @@ it("stops Map loadMore and resume at the located photo limit", async () => {
   expect(photos.mapCapped).toBe(true);
   await photos.loadMore(); await photos.resume();
   expect(fetcher).toHaveBeenCalledTimes(20);
+  photos.dispose();
+});
+
+it.each(["initial", "refresh", "expiry"])("bounds Map requests with duplicate rows and retains partial pages, %s", async mode => {
+  const cursors: (string | undefined)[] = [];
+  const fetcher = vi.fn(async (_url: string, init: RequestInit) => {
+    const request = JSON.parse(init.body as string);
+    if (request.cursor === "expired") return Response.json({ code: "cursor_expired" }, { status: 410 });
+    cursors.push(request.cursor);
+    const start = Number(request.cursor ?? 0);
+    const rows = Array.from({ length: 1000 }, (_, index) => mapPhoto(start + index + 1));
+    if (start === 1000) rows[0] = mapPhoto(1);
+    return Response.json({ items: [], map_items: rows, total: mapPhotoLimit + 2000, next_cursor: String(start + 1000) });
+  });
+  stubPhotoFetch(fetcher);
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, "map");
+  if (mode !== "initial") { photos.items = [mapPhoto(99_999)]; photos.started = true; }
+  if (mode === "refresh") await photos.refresh();
+  else if (mode === "expiry") { photos.cursor = "expired"; await photos.loadMore(); await photos.retry(); }
+  else await photos.loadMore();
+  expect(cursors).toHaveLength(20);
+  expect(photos.items).toHaveLength(mapPhotoLimit - 1);
+  expect(photos.cursor).toBe(String(mapPhotoLimit));
+  await photos.resume();
+  expect(photos.items).toHaveLength(mapPhotoLimit);
+  expect(photos.items.at(-1)?.asset_id).toBe(`photo-${mapPhotoLimit + 1}`);
+  expect(photos.cursor).toBe(String(mapPhotoLimit));
+  photos.items = photos.items.slice(1);
+  await photos.resume();
+  expect(photos.items).toHaveLength(mapPhotoLimit);
+  expect(photos.items.at(-1)?.asset_id).toBe(`photo-${mapPhotoLimit + 2}`);
+  expect(cursors.slice(-2)).toEqual([String(mapPhotoLimit), String(mapPhotoLimit)]);
   photos.dispose();
 });
 

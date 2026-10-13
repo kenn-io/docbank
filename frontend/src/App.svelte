@@ -315,6 +315,7 @@
     }
     if (version !== photoAccessVersion || document.visibilityState !== "visible") return;
     photoState ??= { photos: new Photos(webSession, handleFailure), cache: new PhotoPreviewCache(webSession, handleFailure) };
+    revalidatedChangeID = result.change_id;
     photoConcealed = false;
     photoValidated = true;
     photoAccessError = "";
@@ -378,11 +379,10 @@
         if (current && !controller.signal.aborted) await acceptPhotoAccess(result);
       } catch (cause) {
         if (!current || controller.signal.aborted) return;
-        revalidatedChangeID = null;
         const denied = cause instanceof APIError && (cause.status === 401 || cause.status === 403);
         // Library photos are not secret; conceal on denial, or once transient failures persist.
         if (!denied && ++failures < maxPhotoAccessFailures && photoValidated) return;
-        void invalidateLibrary(denied);
+        if (denied || !photoConcealed || !mapPhotos?.staged) void invalidateLibrary(denied);
         photoAccessError = cause instanceof Error ? cause.message : String(cause);
         if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
       } finally { pending = false; }

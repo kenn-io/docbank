@@ -22,7 +22,7 @@ async function replacePhotoPreviewCache(workspace: PhotoWorkspace, session: stri
   await tick();
   if (!valid()) return false;
   if (refresh) {
-    const refreshed = await workspace.photos.refresh();
+    const refreshed = workspace.photos.projection === "map" && workspace.photos.staged ? await workspace.photos.retry() : await workspace.photos.refresh();
     if (!valid() || workspace.photos.hiding || workspace.photos.trashing) return false;
     const error = workspace.photos.error;
     if (error) throw new Error(error);
