@@ -314,8 +314,16 @@ func TestPhotoCheckoutFreezesGroupedSourcePaths(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.Equal(t, node.Name, filepath.Base(entries[0].Path))
+}
+
+func TestPhotoSourceProvenanceMetadata(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	result, source := seedGroupedCheckoutSources(t, s)
+	raw := fileByRole(result.Asset.Files, PhotoRoleRAW)
 	var backup bytes.Buffer
-	err = s.ExportMetadata(ctx, &backup)
+	err := s.ExportMetadata(ctx, &backup)
 	require.NoError(t, err)
 	sources := make(map[string]string)
 	for _, file := range result.Asset.Files {
@@ -330,16 +338,10 @@ func TestPhotoCheckoutFreezesGroupedSourcePaths(t *testing.T) {
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT identity FROM provenance WHERE node_id=? AND original_path LIKE '%AAA.ARW'`, raw.NodeID).Scan(&alternateSource))
 	for _, variant := range []string{"current", "legacy", "another node"} {
 		expectedSource := rawSource
-		metadata := backup.Bytes()
 		if variant == "current" {
-			_, err = s.db.ExecContext(ctx, `UPDATE photo_files SET source_provenance_identity=? WHERE file_id=?`, alternateSource, raw.ID)
-			require.NoError(t, err)
-			var current bytes.Buffer
-			require.NoError(t, s.ExportMetadata(ctx, &current))
-			metadata = current.Bytes()
 			expectedSource = alternateSource
 		}
-		lines := bytes.Split(metadata, []byte{'\n'})
+		lines := bytes.Split(backup.Bytes(), []byte{'\n'})
 		for i, line := range lines {
 			if !bytes.Contains(line, []byte(`"type":"photo_file"`)) {
 				continue
@@ -348,6 +350,8 @@ func TestPhotoCheckoutFreezesGroupedSourcePaths(t *testing.T) {
 			require.NoError(t, json.Unmarshal(line, &file))
 			if variant == "legacy" {
 				file.SourceProvenanceIdentity = nil
+			} else if variant == "current" && file.FileID == raw.ID {
+				file.SourceProvenanceIdentity = &alternateSource
 			} else if variant == "another node" && file.Role == PhotoRoleImage {
 				file.SourceProvenanceIdentity = &rawSource
 			}
