@@ -85,9 +85,9 @@ func TestPhotoImportAtomicGroup(t *testing.T) {
 	require.NoError(t, err)
 	root := filepath.Join(t.TempDir(), "camera")
 	group := photoImportTestGroup(
-		photoImportTestMember(filepath.Join(root, "IMG_0001.ARW"), PhotoRoleRAW, fakeHash("raw"), "image/x-sony-arw"),
-		photoImportTestMember(filepath.Join(root, "IMG_0001.JPG"), PhotoRoleImage, fakeHash("jpg"), "image/jpeg"),
-		photoImportTestMember(filepath.Join(root, "IMG_0001.XMP"), PhotoRoleSidecar, fakeHash("xmp"), "application/rdf+xml"),
+		photoImportTestMember(filepath.Join(root, "IMG_0001.ARW"), PhotoRoleRAW, browseHash("raw"), "image/x-sony-arw"),
+		photoImportTestMember(filepath.Join(root, "IMG_0001.JPG"), PhotoRoleImage, browseHash("jpg"), "image/jpeg"),
+		photoImportTestMember(filepath.Join(root, "IMG_0001.XMP"), PhotoRoleSidecar, browseHash("xmp"), "application/rdf+xml"),
 	)
 	result, err := s.IngestPhotoGroup(ctx, run, group)
 	require.NoError(t, err)
@@ -98,22 +98,31 @@ func TestPhotoImportAtomicGroup(t *testing.T) {
 	var nodes int
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE kind='file'`).Scan(&nodes))
 	bad := photoImportTestGroup(
-		photoImportTestMember(filepath.Join(root, "IMG_0002.ARW"), PhotoRoleRAW, fakeHash("raw2"), "image/x-sony-arw"),
-		photoImportTestMember(filepath.Join(root, "IMG_0002.JPG"), PhotoRoleImage, fakeHash("jpg2"), "image/jpeg"),
-		photoImportTestMember(filepath.Join(root, "IMG_0002.XMP"), PhotoRoleSidecar, "", "application/rdf+xml"),
+		photoImportTestMember(filepath.Join(root, "IMG_0002.ARW"), PhotoRoleRAW, browseHash("raw2"), "image/x-sony-arw"),
+		photoImportTestMember(filepath.Join(root, "IMG_0002.JPG"), PhotoRoleImage, browseHash("jpg2"), "image/jpeg"),
+		photoImportTestMember(filepath.Join(root, "IMG_0002.XMP"), PhotoRoleSidecar, browseHash("xmp2"), "application/rdf+xml"),
 	)
-	plan, err := s.PreparePhotoImportDestination(ctx, "/new/photos")
+n, err := s.PreparePhotoImportDestination(ctx, "/new/photos")
 	require.NoError(t, err)
 	beforePlan := plan
 	bad.DestinationPlan = &plan
+	_, err = s.db.Exec(`CREATE TRIGGER reject_final_photo_member BEFORE INSERT ON nodes
+		WHEN NEW.name='IMG_0002.XMP' BEGIN SELECT RAISE(ABORT, 'injected final photo member failure'); END`)
+	require.NoError(t, err)
 	_, err = s.IngestPhotoGroup(ctx, run, bad)
-	require.Error(t, err)
+	require.ErrorContains(t, err, "injected final photo member failure")
 	assert.Equal(t, beforePlan, plan)
 	_, err = s.NodeByPath(ctx, "/new")
 	require.ErrorIs(t, err, ErrNotFound)
 	var after int
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE kind='file'`).Scan(&after))
 	assert.Equal(t, nodes, after)
+	unchanged, err := s.PhotoAssetByID(ctx, result.Asset.ID)
+	require.NoError(t, err)
+	assert.Equal(t, result.Asset, unchanged)
+	var assets int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_assets`).Scan(&assets))
+	assert.Equal(t, 1, assets)
 
 	rerun, err := s.IngestPhotoGroup(ctx, run, group)
 	require.NoError(t, err)
