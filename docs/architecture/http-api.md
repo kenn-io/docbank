@@ -1188,7 +1188,9 @@ constructs and checks the complete final topology in Go before applying it, so
 file and directory swaps and nested reorganizations do not depend on unsafe
 intermediate names. A failure rejects the whole plan. The response preserves
 request order and returns each node's prior path plus its complete final node
-projection and path.
+projection and path. Receipts reuse the validated final paths and read updated
+node metadata inside the same transaction, avoiding a second ancestry walk for
+each requested move.
 
 ### Backup repository endpoints
 

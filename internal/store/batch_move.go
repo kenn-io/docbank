@@ -467,16 +467,16 @@ func (s *Store) batchMoveResults(
 ) ([]BatchMoveResult, error) {
 	results := make([]BatchMoveResult, len(plan.moves))
 	for _, move := range plan.moves {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		node, err := nodeByIDTx(tx, move.nodeID)
 		if err != nil {
 			return nil, err
 		}
-		path, err := pathOf(ctx, tx, move.nodeID)
-		if err != nil {
-			return nil, err
-		}
+		// The validated plan supplies canonical paths for this same transaction.
 		results[move.requestIndex] = BatchMoveResult{
-			Node: node, FromPath: plan.priorPaths[move.nodeID], Path: path,
+			Node: node, FromPath: plan.priorPaths[move.nodeID], Path: plan.finalPaths[move.nodeID],
 		}
 	}
 	return results, nil
