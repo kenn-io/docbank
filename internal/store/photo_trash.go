@@ -12,42 +12,60 @@ import (
 func (s *Store) TrashPhotoAsset(ctx context.Context, assetID string, revision int64) (PhotoAsset, error) {
 	var asset PhotoAsset
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		var err error
-		asset, err = s.photoAssetForMutationTx(ctx, tx, assetID, revision)
+		current, err := s.photoAssetForMutationTx(ctx, tx, assetID, revision)
 		if err != nil {
 			return err
 		}
-		active, err := auditAuthorityActiveTx(ctx, tx)
+		nodes := make([]Node, 0, len(current.Files))
+		for _, file := range current.Files {
+			node, err := nodeByIDTx(tx, file.NodeID)
+			if err != nil {
+				return err
+			}
+			nodes = append(nodes, node)
+		}
+		audited, err := auditAuthorityActiveTx(ctx, tx)
 		if err != nil {
 			return err
 		}
-		changed := false
-		now := nowRFC3339()
-		for _, file := range asset.Files {
-			n, err := nodeByIDTx(tx, file.NodeID)
-			if err != nil {
-				return err
-			}
-			if n.TrashedAt != nil {
-				continue
-			}
-			if active {
-				_, _, err = s.trashAuditedTx(ctx, tx, n, n.Revision)
-			} else {
-				err = s.trashNodeTx(tx, n, now)
-			}
-			if err != nil {
-				return err
-			}
-			changed = true
-		}
-		if !changed {
+		var trashed int
+		asset, trashed, err = s.trashPhotoAssetTx(ctx, tx, current, nodes, audited)
+		if err == nil && trashed == 0 {
 			return fmt.Errorf("%w: photo has no live files to trash", ErrInvalidPhotoAsset)
 		}
-		asset, err = commitPhotoAssetTx(ctx, tx, asset, asset, "trash")
 		return err
 	})
 	return asset, err
+}
+
+// trashPhotoAssetTx trashes the live nodes, through audited trash when the
+// caller found audit authority active in this transaction.
+func (s *Store) trashPhotoAssetTx(
+	ctx context.Context, tx *sql.Tx, asset PhotoAsset, nodes []Node, audited bool,
+) (PhotoAsset, int, error) {
+	var err error
+	trashed := 0
+	now := nowRFC3339()
+	for _, n := range nodes {
+		if n.TrashedAt != nil {
+			continue
+		}
+		if audited {
+			_, _, err = s.trashAuditedTx(ctx, tx, n, n.Revision)
+		} else {
+			err = s.trashNodeTx(tx, n, now)
+		}
+		if err != nil {
+			err = fmt.Errorf("photo %s, file %q: %w", asset.ID, n.Name, err)
+			return PhotoAsset{}, 0, err
+		}
+		trashed++
+	}
+	if trashed == 0 {
+		return PhotoAsset{}, 0, nil
+	}
+	result, err := commitPhotoAssetTx(ctx, tx, asset, asset, "trash")
+	return result, trashed, err
 }
 
 type photoTrashGroup struct {

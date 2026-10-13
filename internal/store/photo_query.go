@@ -114,10 +114,9 @@ func (s *Store) ListPhotoAssets(
 		if !ok && sortField != "relevance" {
 			return fmt.Errorf("%w: unsupported sort", ErrInvalidPhotoQuery)
 		}
-		if coverage.Configuration == photoBrowseConfiguredCoverage {
-			if err := validateSnapshotCoverageProfile(ctx, q, coverage); err != nil {
-				return err
-			}
+		scope, err := newPhotoBrowseScope(ctx, q, compiled, generation.ID, coverage, request.Hidden)
+		if err != nil {
+			return err
 		}
 		canonical, err := query.Canonical(compiled.Query)
 		if err != nil {
@@ -143,18 +142,9 @@ func (s *Store) ListPhotoAssets(
 				return ErrInvalidPhotoCursor
 			}
 		}
-		match, err := photoBrowseMatch(compiled, generation.ID, coverage)
-		if err != nil {
-			return err
-		}
-		bind := func(sql string, args []any) (string, []any, error) {
-			return bindQueryPopulation(compiledQueryFragment{
-				sql: sql, args: args, relations: match.relations,
-			}, coverage, generation.ID)
-		}
 		if boundary == nil {
-			countSQL, countArgs, err := bind(`SELECT COUNT(*) FROM `+photoBrowseDisplayFrom+
-				` WHERE `+photoBrowseLiveDisplay+` AND `+photoVisibilityPredicate(request.Hidden)+` AND `+match.sql, match.args)
+			countSQL, countArgs, err := scope.bind(`SELECT COUNT(*) FROM ` + photoBrowseDisplayFrom +
+				` WHERE ` + scope.where())
 			if err != nil {
 				return err
 			}
@@ -191,7 +181,7 @@ func (s *Store) ListPhotoAssets(
 			pageFrom, key := from, sortKey
 			order := key + ` ` + primary + `,a.asset_id ASC`
 			where := key + `>''`
-			args := append([]any(nil), match.args...)
+			var args []any
 			if sortField == "added_time" {
 				where = `sm.set_id=? AND ` + where
 				args = append(args, compiled.Query.Filters.SetIDs[0])
@@ -216,9 +206,8 @@ func (s *Store) ListPhotoAssets(
 				args = append(args, boundary.Key, boundary.Key, boundary.Key, boundary.AssetID)
 			}
 			args = append(args, request.PageSize+1-len(page.Items))
-			pageSQL, pageArgs, err := bind(`SELECT `+photoBrowseSelect+`,`+key+` FROM `+pageFrom+` WHERE `+
-				photoBrowseLiveDisplay+` AND `+photoVisibilityPredicate(request.Hidden)+` AND `+match.sql+` AND `+where+
-				` ORDER BY `+order+` LIMIT ?`, args)
+			pageSQL, pageArgs, err := scope.bind(`SELECT `+photoBrowseSelect+`,`+key+` FROM `+pageFrom+` WHERE `+scope.where()+` AND `+where+
+				` ORDER BY `+order+` LIMIT ?`, args...)
 			if err != nil {
 				return err
 			}
@@ -313,6 +302,47 @@ func photoBrowseMissingKey(field string) string {
 	}
 	_, key, _ := photoBrowseOrder(field)
 	return key
+}
+
+// photoBrowseScope selects the live, visible assets that match a compiled
+// photo query in one collection generation.
+type photoBrowseScope struct {
+	match      compiledQueryFragment
+	coverage   CoverageSelection
+	generation string
+	hidden     bool
+}
+
+// newPhotoBrowseScope checks a configured coverage profile and binds the
+// match predicate. The caller normalizes coverage and checks hidden access.
+func newPhotoBrowseScope(
+	ctx context.Context, q metadataQuerier, compiled CompiledQuery,
+	generation string, coverage CoverageSelection, hidden bool,
+) (photoBrowseScope, error) {
+	if coverage.Configuration == photoBrowseConfiguredCoverage {
+		if err := validateSnapshotCoverageProfile(ctx, q, coverage); err != nil {
+			return photoBrowseScope{}, err
+		}
+	}
+	match, err := photoBrowseMatch(compiled, generation, coverage)
+	if err != nil {
+		return photoBrowseScope{}, err
+	}
+	return photoBrowseScope{match: match, coverage: coverage, generation: generation, hidden: hidden}, nil
+}
+
+// where filters rows selected from photoBrowseDisplayFrom to the scope.
+func (s photoBrowseScope) where() string {
+	return photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(s.hidden) + ` AND ` + s.match.sql
+}
+
+// bind supplies the shared relations the match needs. The statement must use
+// where() before any placeholder for extra.
+func (s photoBrowseScope) bind(statement string, extra ...any) (string, []any, error) {
+	args := append(append([]any(nil), s.match.args...), extra...)
+	return bindQueryPopulation(compiledQueryFragment{
+		sql: statement, args: args, relations: s.match.relations,
+	}, s.coverage, s.generation)
 }
 
 func photoBrowsePopulation(compiled CompiledQuery, generation string, coverage CoverageSelection) (compiledQueryFragment, error) {

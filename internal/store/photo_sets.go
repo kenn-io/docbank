@@ -385,20 +385,16 @@ func (s *Store) photoSetSelectionIDs(ctx context.Context, tx *sql.Tx, selection 
 	if err != nil {
 		return nil, err
 	}
-	if coverage.Configuration == photoBrowseConfiguredCoverage {
-		if err := validateSnapshotCoverageProfile(ctx, tx, coverage); err != nil {
-			return nil, err
-		}
-	}
 	generation, err := collectionGenerationTx(ctx, tx)
 	if err != nil {
 		return nil, err
 	}
-	match, err := photoBrowseMatch(compiled, generation, coverage)
+	scope, err := newPhotoBrowseScope(ctx, tx, compiled, generation, coverage, false)
 	if err != nil {
 		return nil, err
 	}
-	sql, args, err := bindQueryPopulation(compiledQueryFragment{sql: `SELECT a.asset_id FROM ` + photoBrowseDisplayFrom + ` WHERE ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(false) + ` AND ` + match.sql + ` ORDER BY a.asset_id`, args: match.args, relations: match.relations}, coverage, generation)
+	sql, args, err := scope.bind(`SELECT a.asset_id FROM ` + photoBrowseDisplayFrom + ` WHERE ` + scope.where() +
+		` ORDER BY a.asset_id`)
 	if err != nil {
 		return nil, err
 	}
