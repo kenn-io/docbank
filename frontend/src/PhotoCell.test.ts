@@ -1,19 +1,73 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import userEvent from "@testing-library/user-event";
 import PhotoCell from "./PhotoCell.svelte";
 import { photo } from "./photo-test-fixtures.js";
 import type { PhotoPreviewCache } from "./photoPreviewCache.js";
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
-it("keeps a hidden Open button for click-only assistive input", async () => {
+it("keeps Open accessible by name, Tab, and plain click", async () => {
   const onopen = vi.fn();
   render(PhotoCell, { photo: photo(1), cache: { get: vi.fn() } as unknown as PhotoPreviewCache, selected: false, onclick: vi.fn(), onopen });
   const button = screen.getByRole("button", { name: "Open Photo 1.jpg" });
-  expect(button.classList.contains("kit-sr-only")).toBe(true);
-  expect(button.getAttribute("tabindex")).toBe("-1");
-  await fireEvent.click(button);
+  const user = userEvent.setup();
+  await user.tab();
+  await user.tab();
+  await user.tab();
+  expect(document.activeElement).toBe(button);
+  await user.click(button);
   expect(onopen).toHaveBeenCalledExactlyOnceWith(button);
+});
+
+it.each([false, true])("opens a detail-1 pair once with selected=%s even if dblclick follows", async selected => {
+  const onclick = vi.fn(), oncheck = vi.fn(), onopen = vi.fn();
+  render(PhotoCell, { photo: photo(1), cache: { get: vi.fn() } as unknown as PhotoPreviewCache, selected, onclick, oncheck, onopen });
+  const button = screen.getByRole("button", { name: "Select Photo 1.jpg" });
+  await fireEvent.click(button, { detail: 1 });
+  await fireEvent.click(button, { detail: 1 });
+  await fireEvent.doubleClick(button);
+  expect(onclick).toHaveBeenCalledOnce();
+  if (selected) expect(oncheck).not.toHaveBeenCalled();
+  else expect(oncheck).toHaveBeenCalledExactlyOnceWith(true, false);
+  expect(onopen).toHaveBeenCalledExactlyOnceWith(button);
+});
+
+it("breaks a detail-1 pair when the checkbox is clicked between images", async () => {
+  const onclick = vi.fn(), onopen = vi.fn();
+  render(PhotoCell, { photo: photo(1), cache: { get: vi.fn() } as unknown as PhotoPreviewCache, selected: false, onclick, onopen });
+  const button = screen.getByRole("button", { name: "Select Photo 1.jpg" });
+  await fireEvent.click(button, { detail: 1 });
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
+  await fireEvent.click(button, { detail: 1 });
+  expect(onclick).toHaveBeenCalledTimes(2);
+  expect(onopen).not.toHaveBeenCalled();
+});
+
+it("breaks a detail-1 pair when another tile is clicked", async () => {
+  const onclick = vi.fn(), onopen = vi.fn();
+  const props = { cache: { get: vi.fn() } as unknown as PhotoPreviewCache, selected: false, onclick, onopen };
+  render(PhotoCell, { ...props, photo: photo(1) });
+  render(PhotoCell, { ...props, photo: photo(2) });
+  const button = screen.getByRole("button", { name: "Select Photo 1.jpg" });
+  await fireEvent.click(button, { detail: 1 });
+  await fireEvent.click(screen.getByRole("button", { name: "Select Photo 2.jpg" }), { detail: 1 });
+  await fireEvent.click(button, { detail: 1 });
+  expect(onclick).toHaveBeenCalledTimes(3);
+  expect(onopen).not.toHaveBeenCalled();
+});
+
+it("keeps detail-1 clicks over 350 ms apart as single clicks", async () => {
+  const onclick = vi.fn(), onopen = vi.fn();
+  render(PhotoCell, { photo: photo(1), cache: { get: vi.fn() } as unknown as PhotoPreviewCache, selected: false, onclick, onopen });
+  const button = screen.getByRole("button", { name: "Select Photo 1.jpg" });
+  for (const time of [1000, 1351]) {
+    const event = new MouseEvent("click", { bubbles: true, detail: 1 });
+    Object.defineProperty(event, "timeStamp", { value: time });
+    await fireEvent(button, event);
+  }
+  expect(onclick).toHaveBeenCalledTimes(2);
+  expect(onopen).not.toHaveBeenCalled();
 });
 
 it.each([false, true])("selects and opens a touch double-tap once with selected=%s", async selected => {

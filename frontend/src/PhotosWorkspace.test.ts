@@ -448,7 +448,7 @@ it.each(["density", "album trash"])("keeps the top photo after %s and pages that
   await cache.dispose();
 });
 
-it("opens on touch with empty selection and keeps selection taps after checking a photo", async () => {
+it.each(["native", "detail-1"])("opens on touch with empty selection and keeps selection taps before a %s double-tap", async mode => {
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: true })));
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
@@ -464,11 +464,12 @@ it("opens on touch with empty selection and keeps selection taps after checking 
   await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
   vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: false })));
   const second = screen.getByRole("button", { name: "Select Photo 2.jpg" });
-  const tap = async (detail = 1) => { const event = new MouseEvent("click", { bubbles: true, button: 0, detail }); Object.defineProperty(event, "pointerType", { value: "touch" }); await fireEvent(second, event); };
+  let time = 1000;
+  const tap = async (detail = 1, elapsed = 351) => { time += elapsed; const event = new MouseEvent("click", { bubbles: true, button: 0, detail }); Object.defineProperty(event, "pointerType", { value: "touch" }); Object.defineProperty(event, "timeStamp", { value: time }); await fireEvent(second, event); };
   await tap(); expect([...photos.selection.selectedIDs]).toEqual(["photo-1", "photo-2"]);
   await tap(); expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
   open.mockClear();
-  await tap(); await tap(2); await fireEvent.doubleClick(second);
+  await tap(); await tap(mode === "native" ? 2 : 1, 100); await fireEvent.doubleClick(second);
   expect(open).toHaveBeenCalledExactlyOnceWith("photo-2", "open");
   expect([...photos.selection.selectedIDs]).toEqual(["photo-1", "photo-2"]);
   await fireEvent.keyDown(cell, { key: "Enter" }); expect(open).toHaveBeenCalledTimes(2);

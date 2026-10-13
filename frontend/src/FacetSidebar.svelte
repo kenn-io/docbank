@@ -20,6 +20,7 @@
     collections: "Collections", tags: "Tags", media_family: "Media family", extension: "Extension",
     modified: "Modified", size: "Size", text_coverage: "Text coverage", duplicates: "Duplicates",
   };
+  // internal/store/query_snapshot_facets.go never reports missing or other for media_family, size, text_coverage, or duplicates.
   const summary: Partial<Record<Facet["dimension"], { missing: string; other?: (count: number) => string }>> = {
     camera: { missing: "with no camera", other: n => `${n} ${n === 1 ? "use" : "uses"} of unlisted camera names` },
     lens: { missing: "with no lens", other: n => `${n} ${n === 1 ? "use" : "uses"} of unlisted lens names` },

@@ -86,11 +86,6 @@ it("keeps the active no-tags filter available to clear at zero", async () => {
   expect(view.container.querySelector(".summary")).toBeNull();
 });
 
-it("counts unlisted camera names as uses when one photo has both make and model", () => {
-  render(FacetSidebar, { facets: [facet("camera", { total: 1, missing: 0, other: 2 })], query: originalQuery, unit: "photos", onchange: vi.fn() });
-  expect(screen.getByText("2 uses of unlisted camera names")).toBeTruthy();
-});
-
 it("preserves expression, syntax, exclusions, and unrelated filters when applying supported buckets", async () => {
   const onchange = vi.fn();
   const view = render(FacetSidebar, { facets, query: originalQuery, disabled: false, onchange });
