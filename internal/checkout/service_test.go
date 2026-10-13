@@ -285,7 +285,7 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 	require.Equal(t, int32(1), ended.Load())
 }
 
-func TestCheckoutFailedRunKeepsPartialCopies(t *testing.T) {
+func TestCheckoutInterruptedRunKeepsPartialCopies(t *testing.T) {
 	t.Parallel()
 	for _, failure := range []string{"daemon shutdown", "destination moved before completion", "collision", "became-invisible"} {
 		t.Run(failure, func(t *testing.T) {
@@ -336,9 +336,10 @@ func TestCheckoutFailedRunKeepsPartialCopies(t *testing.T) {
 			}
 			runErr := s.Run(ctx, c, root)
 			require.Error(t, runErr)
-			if failure == "daemon shutdown" {
+			switch failure {
+			case "daemon shutdown":
 				require.ErrorIs(t, runErr, context.Canceled)
-			} else if failure == "destination moved before completion" {
+			case "destination moved before completion":
 				require.ErrorIs(t, runErr, store.ErrInvalidPhotoCheckout)
 			}
 			actual, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)

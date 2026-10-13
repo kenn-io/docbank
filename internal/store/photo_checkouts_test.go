@@ -70,15 +70,15 @@ func TestPhotoCheckoutSelections(t *testing.T) {
 
 func TestPhotoCheckoutPublication(t *testing.T) {
 	t.Parallel()
-	for _, column := range []string{"hidden_at", "excluded_at", "trashed", "writer reservation"} {
-		t.Run(column, func(t *testing.T) {
+	for _, scenario := range []string{"hidden_at", "excluded_at", "trashed", "writer reservation"} {
+		t.Run(scenario, func(t *testing.T) {
 			s := newTestStore(t)
 			a := albumAsset(t, s, "photo.jpg")
 			c, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, "checkout", 0)
 			require.NoError(t, err)
 			entries, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
 			require.NoError(t, err)
-			if column == "writer reservation" {
+			if scenario == "writer reservation" {
 				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 				defer cancel()
 				mutation := make(chan error, 1)
@@ -102,15 +102,15 @@ func TestPhotoCheckoutPublication(t *testing.T) {
 				require.True(t, entries[0].Published)
 				return
 			}
-			if column == "trashed" {
+			if scenario == "trashed" {
 				_, err = s.TrashPhotoAsset(t.Context(), a.ID, a.Revision)
 			} else {
-				_, err = s.db.ExecContext(t.Context(), `UPDATE photo_assets SET `+column+`=? WHERE asset_id=?`, nowRFC3339(), a.ID)
+				_, err = s.db.ExecContext(t.Context(), `UPDATE photo_assets SET `+scenario+`=? WHERE asset_id=?`, nowRFC3339(), a.ID)
 			}
 			require.NoError(t, err)
 			called := false
 			err = s.PublishPhotoCheckoutEntry(t.Context(), entries[0], func() (bool, error) { called = true; return true, nil })
-			require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
+			require.ErrorIs(t, err, ErrPhotoCheckoutSourceUnavailable)
 			require.False(t, called)
 		})
 	}
@@ -328,10 +328,54 @@ func TestPhotoSourceMetadataRestoreAndMissingIdentityBackfill(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
-	result, _ := seedGroupedPhotoSources(t, s)
+	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
+	require.NoError(t, err)
+	source := filepath.Join(t.TempDir(), "camera")
+	result, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(
+		photoImportTestMember(filepath.Join(source, "IMG.ARW"), PhotoRoleRAW, browseHash("raw"), "image/x-sony-arw"),
+		photoImportTestMember(filepath.Join(source, "IMG.JPG"), PhotoRoleImage, browseHash("jpeg"), "image/jpeg"),
+		photoImportTestMember(filepath.Join(source, "IMG.ARW.XMP"), PhotoRoleSidecar, browseHash("xmp"), "application/rdf+xml"),
+	))
+	require.NoError(t, err)
+	laterRun, err := s.BeginIngest(ctx, "photo-import", "renamed duplicates")
+	require.NoError(t, err)
+	for _, observation := range []struct {
+		run  IngestRun
+		name string
+	}{{run, "AAA"}, {laterRun, "RENAMED"}} {
+		duplicate, err := s.IngestPhotoGroup(ctx, observation.run, photoImportTestGroup(
+			photoImportTestMember(filepath.Join(source, observation.name+".ARW"), PhotoRoleRAW, browseHash("raw"), "image/x-sony-arw"),
+			photoImportTestMember(filepath.Join(source, observation.name+".JPG"), PhotoRoleImage, browseHash("jpeg"), "image/jpeg"),
+		))
+		require.NoError(t, err)
+		require.Equal(t, result.Asset.ID, duplicate.Asset.ID)
+	}
 	raw := fileByRole(result.Asset.Files, PhotoRoleRAW)
+	rawNode, err := s.NodeByID(ctx, raw.NodeID)
+	require.NoError(t, err)
+	rawNode, _, err = s.ReplaceContent(ctx, rawNode.ID, rawNode.Revision, browseHash("replacement raw"), 20, "image/x-sony-arw")
+	require.NoError(t, err)
+	_, err = s.PruneContentVersions(ctx, rawNode.ID, rawNode.Revision, VersionPruneSelector{AllPrior: true}, true)
+	require.NoError(t, err)
+	for i, node := range result.Nodes {
+		node, err = s.NodeByID(ctx, node.ID)
+		require.NoError(t, err)
+		_, _, err = s.Move(ctx, node.ID, s.RootID(), fmt.Sprintf("virtual-%d.%s", i, strings.TrimPrefix(filepath.Ext(node.Name), ".")), node.Revision)
+		require.NoError(t, err)
+	}
+	node, err := s.NodeByID(ctx, raw.NodeID)
+	require.NoError(t, err)
+	_, err = s.AppendNodeProvenance(ctx, ProvenanceAppendInput{NodeID: node.ID, IfRevision: node.Revision, SourceKind: "agent", SourceDescription: "synthetic", OriginalPath: filepath.Join(source, "ignored.ARW")})
+	require.NoError(t, err)
+	retained, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "retained", 0)
+	require.NoError(t, err)
+	entries, err := s.PhotoCheckoutEntries(ctx, retained.ID)
+	require.NoError(t, err)
+	rawIndex := slices.IndexFunc(entries, func(entry PhotoCheckoutEntry) bool { return entry.FileID == raw.ID })
+	require.NotEqual(t, -1, rawIndex)
+	require.Equal(t, "IMG.ARW", filepath.Base(entries[rawIndex].Path))
 	var backup bytes.Buffer
-	err := s.ExportMetadata(ctx, &backup)
+	err = s.ExportMetadata(ctx, &backup)
 	require.NoError(t, err)
 	sources := make(map[string]string)
 	for _, file := range result.Asset.Files {
@@ -502,69 +546,16 @@ func TestPhotoCheckoutSourcePathBasenames(t *testing.T) {
 	}
 	s := newTestStore(t)
 	ctx := t.Context()
-	result, source := seedGroupedPhotoSources(t, s)
-	raw := fileByRole(result.Asset.Files, PhotoRoleRAW)
-	node, err := s.NodeByID(ctx, raw.NodeID)
-	require.NoError(t, err)
-	_, err = s.AppendNodeProvenance(ctx, ProvenanceAppendInput{NodeID: node.ID, IfRevision: node.Revision, SourceKind: "agent", SourceDescription: "synthetic", OriginalPath: filepath.Join(source, "ignored.ARW")})
-	require.NoError(t, err)
-	retained, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "retained", 0)
-	require.NoError(t, err)
-	entries, err := s.PhotoCheckoutEntries(ctx, retained.ID)
-	require.NoError(t, err)
-	rawIndex := slices.IndexFunc(entries, func(entry PhotoCheckoutEntry) bool { return entry.FileID == raw.ID })
-	require.NotEqual(t, -1, rawIndex)
-	require.Equal(t, "IMG.ARW", filepath.Base(entries[rawIndex].Path))
+	source := t.TempDir()
 	fallbackAsset := albumAsset(t, s, "fallback.jpg")
-	node, err = s.NodeByID(ctx, fallbackAsset.Files[0].NodeID)
+	node, err := s.NodeByID(ctx, fallbackAsset.Files[0].NodeID)
 	require.NoError(t, err)
 	_, err = s.AppendNodeProvenance(ctx, ProvenanceAppendInput{NodeID: node.ID, IfRevision: node.Revision, SourceKind: "agent", SourceDescription: "synthetic", OriginalPath: filepath.Join(source, "ignored.jpg")})
 	require.NoError(t, err)
 	fallback, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{fallbackAsset.ID}}, "fallback", 0)
 	require.NoError(t, err)
-	entries, err = s.PhotoCheckoutEntries(ctx, fallback.ID)
+	entries, err := s.PhotoCheckoutEntries(ctx, fallback.ID)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.Equal(t, node.Name, filepath.Base(entries[0].Path))
-}
-
-func seedGroupedPhotoSources(t *testing.T, s *Store) (PhotoImportResult, string) {
-	t.Helper()
-	ctx := t.Context()
-	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
-	require.NoError(t, err)
-	source := filepath.Join(t.TempDir(), "camera")
-	result, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(
-		photoImportTestMember(filepath.Join(source, "IMG.ARW"), PhotoRoleRAW, browseHash("raw"), "image/x-sony-arw"),
-		photoImportTestMember(filepath.Join(source, "IMG.JPG"), PhotoRoleImage, browseHash("jpeg"), "image/jpeg"),
-		photoImportTestMember(filepath.Join(source, "IMG.ARW.XMP"), PhotoRoleSidecar, browseHash("xmp"), "application/rdf+xml"),
-	))
-	require.NoError(t, err)
-	laterRun, err := s.BeginIngest(ctx, "photo-import", "renamed duplicates")
-	require.NoError(t, err)
-	for _, observation := range []struct {
-		run  IngestRun
-		name string
-	}{{run, "AAA"}, {laterRun, "RENAMED"}} {
-		duplicate, err := s.IngestPhotoGroup(ctx, observation.run, photoImportTestGroup(
-			photoImportTestMember(filepath.Join(source, observation.name+".ARW"), PhotoRoleRAW, browseHash("raw"), "image/x-sony-arw"),
-			photoImportTestMember(filepath.Join(source, observation.name+".JPG"), PhotoRoleImage, browseHash("jpeg"), "image/jpeg"),
-		))
-		require.NoError(t, err)
-		require.Equal(t, result.Asset.ID, duplicate.Asset.ID)
-	}
-	raw := fileByRole(result.Asset.Files, PhotoRoleRAW)
-	rawNode, err := s.NodeByID(ctx, raw.NodeID)
-	require.NoError(t, err)
-	rawNode, _, err = s.ReplaceContent(ctx, rawNode.ID, rawNode.Revision, browseHash("replacement raw"), 20, "image/x-sony-arw")
-	require.NoError(t, err)
-	_, err = s.PruneContentVersions(ctx, rawNode.ID, rawNode.Revision, VersionPruneSelector{AllPrior: true}, true)
-	require.NoError(t, err)
-	for i, node := range result.Nodes {
-		node, err = s.NodeByID(ctx, node.ID)
-		require.NoError(t, err)
-		_, _, err = s.Move(ctx, node.ID, s.RootID(), fmt.Sprintf("virtual-%d.%s", i, strings.TrimPrefix(filepath.Ext(node.Name), ".")), node.Revision)
-		require.NoError(t, err)
-	}
-	return result, source
 }
