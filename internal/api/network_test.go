@@ -12,22 +12,24 @@ import (
 
 func TestNetworkHostGuardPrecedesAuthentication(t *testing.T) {
 	t.Parallel()
-	cfg := config.Default().Server
-	cfg.BindAddr = "0.0.0.0"
-	cfg.APIKey = "synthetic-key"
-	cfg.AllowedHosts = []string{"docbank:8485"}
-	handler := hostMiddleware(authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }), cfg.APIKey, nil, ""), cfg, "http://docbank-synthetic.localhost:1234/", nil)
+	cfg := config.Default()
+	cfg.Server.BindAddr = "0.0.0.0"
+	cfg.Server.APIKey = "synthetic-key"
+	cfg.Server.AllowedHosts = []string{"docbank:8485"}
+	server := NewServer(Deps{Cfg: cfg, WebURL: "http://docbank-synthetic.localhost:1234/"})
+	t.Cleanup(server.Close)
+	handler := server.Handler()
 	for _, test := range []struct {
 		host, key string
 		status    int
 	}{
-		{"docbank:8485", "synthetic-key", 204}, {"docbank:8485", "", 401}, {"docbank:8485", "wrong", 401},
-		{"attacker.example:8485", "synthetic-key", 403}, {"0.0.0.0:8485", "synthetic-key", 403},
-		{"docbank:8486", "synthetic-key", 403}, {"docbank-synthetic.localhost:1234", "synthetic-key", 204},
-		{"docbank-other.localhost:1234", "synthetic-key", 403}, {"127.0.0.1:8485", "synthetic-key", 204},
+		{"docbank:8485", "synthetic-key", 404}, {"docbank:8485", "", 401}, {"docbank:8485", "wrong", 401},
+		{"attacker.example:8485", "wrong", 403}, {"0.0.0.0:8485", "synthetic-key", 403},
+		{"docbank:8486", "synthetic-key", 403}, {"docbank-synthetic.localhost:1234", "synthetic-key", 404},
+		{"docbank-other.localhost:1234", "synthetic-key", 403}, {"127.0.0.1:8485", "synthetic-key", 404},
 	} {
 		t.Run(test.host+test.key, func(t *testing.T) {
-			r := httptest.NewRequest(http.MethodGet, "http://localhost/api/v1/info", nil)
+			r := httptest.NewRequest(http.MethodGet, "http://localhost/api/v1/unknown", nil)
 			r.Host = test.host
 			r.Header.Set("X-Api-Key", test.key)
 			w := httptest.NewRecorder()
