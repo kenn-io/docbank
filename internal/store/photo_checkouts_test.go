@@ -9,7 +9,6 @@ import (
 	"math"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -22,36 +21,38 @@ func TestPhotoCheckoutSelections(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
-	a := albumAsset(t, s, "first.jpg")
-	b := albumAsset(t, s, "last.jpg")
-	c := albumAsset(t, s, "outside.jpg")
+	var assets []PhotoAsset
 	for _, v := range []struct {
-		asset PhotoAsset
-		date  string
-	}{{a, "2024-01-01"}, {b, "2024-12-31"}, {c, "2025-01-01"}} {
-		n, err := s.NodeByID(ctx, v.asset.Files[0].NodeID)
+		name, date string
+		size       int64
+	}{{"first.jpg", "2024-01-01", 10}, {"last.jpg", "2024-12-31", 20}, {"outside.jpg", "2025-01-01", 40}} {
+		n, err := s.CreateFile(ctx, s.RootID(), v.name, browseHash(v.name), v.size, "image/jpeg")
 		require.NoError(t, err)
+		asset, err := s.PhotoAssetForNode(ctx, n.ID)
+		require.NoError(t, err)
+		assets = append(assets, asset)
 		browsePhotoMetadata(t, s, n, v.date, photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp(v.date, v.date, document.SourceMetadataPrecisionDate, document.SourceMetadataTimezoneOmitted, "")))
 	}
+	a, b, c := assets[0], assets[1], assets[2]
 	set, err := s.CreatePhotoSet(ctx, "Trip")
 	require.NoError(t, err)
 	_, err = s.ChangePhotoSetMembers(ctx, set.ID, set.Revision, true, PhotoSetSelection{AssetIDs: []string{a.ID, b.ID}})
 	require.NoError(t, err)
 	for _, test := range []struct {
-		selection PhotoCheckoutSelection
-		count     int64
+		selection    PhotoCheckoutSelection
+		count, bytes int64
 	}{
-		{PhotoCheckoutSelection{All: true}, 3},
-		{PhotoCheckoutSelection{AssetIDs: []string{a.ID, a.ID}}, 1},
-		{PhotoCheckoutSelection{AlbumIDs: []string{set.ID}}, 2},
-		{PhotoCheckoutSelection{Years: &PhotoCheckoutYears{From: 2024, To: 2024}}, 2},
-		{PhotoCheckoutSelection{AssetIDs: []string{c.ID}, AlbumIDs: []string{set.ID}, Years: &PhotoCheckoutYears{From: 2024, To: 2024}}, 3},
+		{PhotoCheckoutSelection{All: true}, 3, 70},
+		{PhotoCheckoutSelection{AssetIDs: []string{a.ID, a.ID}}, 1, 10},
+		{PhotoCheckoutSelection{AlbumIDs: []string{set.ID}}, 2, 30},
+		{PhotoCheckoutSelection{Years: &PhotoCheckoutYears{From: 2024, To: 2024}}, 2, 30},
+		{PhotoCheckoutSelection{AssetIDs: []string{c.ID}, AlbumIDs: []string{set.ID}, Years: &PhotoCheckoutYears{From: 2024, To: 2024}}, 3, 70},
 	} {
 		estimate, err := s.EstimatePhotoCheckout(ctx, test.selection)
 		require.NoError(t, err)
 		require.Equal(t, test.count, estimate.Assets)
 		require.Equal(t, test.count, estimate.Files)
-		require.Equal(t, test.count*20, estimate.Bytes)
+		require.Equal(t, test.bytes, estimate.Bytes)
 	}
 	_, err = s.SetPhotoAssetExcluded(ctx, c.ID, c.Revision, true)
 	require.NoError(t, err)
@@ -60,6 +61,7 @@ func TestPhotoCheckoutSelections(t *testing.T) {
 	estimate, err := s.EstimatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{a.ID, b.ID, c.ID}, AlbumIDs: []string{set.ID}})
 	require.NoError(t, err)
 	require.Equal(t, int64(1), estimate.Files)
+	require.Equal(t, int64(10), estimate.Bytes)
 	for _, bad := range []PhotoCheckoutSelection{{}, {AssetIDs: []string{"bad"}}, {AlbumIDs: []string{"bad"}}, {Years: &PhotoCheckoutYears{From: 0, To: 2024}}, {Years: &PhotoCheckoutYears{From: 2025, To: 2024}}, {Years: &PhotoCheckoutYears{From: 2024, To: 10000}}} {
 		_, err := s.EstimatePhotoCheckout(ctx, bad)
 		require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
@@ -363,6 +365,15 @@ func TestPhotoSourceMetadataRestoreAndMissingIdentityBackfill(t *testing.T) {
 		_, _, err = s.Move(ctx, node.ID, s.RootID(), fmt.Sprintf("virtual-%d.%s", i, strings.TrimPrefix(filepath.Ext(node.Name), ".")), node.Revision)
 		require.NoError(t, err)
 	}
+	checkout, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "checkout", 0)
+	require.NoError(t, err)
+	entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
+	require.NoError(t, err)
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, filepath.Base(entry.Path))
+	}
+	require.ElementsMatch(t, []string{"IMG.ARW", "IMG.JPG", "IMG.ARW.XMP"}, names)
 	var backup bytes.Buffer
 	err = s.ExportMetadata(ctx, &backup)
 	require.NoError(t, err)
@@ -421,7 +432,7 @@ func TestPhotoSourceMetadataRestoreAndMissingIdentityBackfill(t *testing.T) {
 
 func TestPhotoCheckoutResolvesCompanionSources(t *testing.T) {
 	t.Parallel()
-	for _, scenario := range []string{"separate ingests", "conflicting pair", "trashed target", "trashed conflicting sidecar", "multiple sidecars", "first observation"} {
+	for _, scenario := range []string{"separate ingests", "conflicting pair", "trashed target", "trashed conflicting sidecar", "multiple sidecars"} {
 		t.Run(scenario, func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
@@ -433,8 +444,6 @@ func TestPhotoCheckoutResolvesCompanionSources(t *testing.T) {
 			switch scenario {
 			case "multiple sidecars":
 				members = append(members, photoImportTestMember(filepath.Join(source, "IMG.XMP"), PhotoRoleSidecar, browseHash("first sidecar"), "application/rdf+xml"))
-			case "first observation":
-				members = append(members, photoImportTestMember(filepath.Join(source, "IMG.ARW.XMP"), PhotoRoleSidecar, browseHash("xmp"), "application/rdf+xml"))
 			}
 			result, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(members...))
 			require.NoError(t, err)
@@ -447,32 +456,6 @@ func TestPhotoCheckoutResolvesCompanionSources(t *testing.T) {
 					result, err = s.IngestPhotoGroup(ctx, run, photoImportTestGroup(
 						photoImportTestMember(filepath.Join(source, "RENAMED.ARW"), PhotoRoleRAW, browseHash("raw"), "image/x-sony-arw"),
 						photoImportTestMember(filepath.Join(source, observation.sidecar), PhotoRoleSidecar, browseHash(observation.hash), "application/rdf+xml")))
-					require.NoError(t, err)
-				}
-			case "first observation":
-				laterRun, err := s.BeginIngest(ctx, "photo-import", "renamed duplicates")
-				require.NoError(t, err)
-				for _, observation := range []struct {
-					run  IngestRun
-					name string
-				}{{run, "AAA"}, {laterRun, "RENAMED"}} {
-					duplicate, err := s.IngestPhotoGroup(ctx, observation.run, photoImportTestGroup(
-						photoImportTestMember(filepath.Join(source, observation.name+".ARW"), PhotoRoleRAW, browseHash("raw"), "image/x-sony-arw"),
-						photoImportTestMember(filepath.Join(source, observation.name+".JPG"), PhotoRoleImage, browseHash("jpeg"), "image/jpeg")))
-					require.NoError(t, err)
-					require.Equal(t, result.Asset.ID, duplicate.Asset.ID)
-				}
-				rawFile := fileByRole(result.Asset.Files, PhotoRoleRAW)
-				node, err := s.NodeByID(ctx, rawFile.NodeID)
-				require.NoError(t, err)
-				node, _, err = s.ReplaceContent(ctx, node.ID, node.Revision, browseHash("replacement raw"), 20, "image/x-sony-arw")
-				require.NoError(t, err)
-				_, err = s.PruneContentVersions(ctx, node.ID, node.Revision, VersionPruneSelector{AllPrior: true}, true)
-				require.NoError(t, err)
-				for i, node := range result.Nodes {
-					node, err = s.NodeByID(ctx, node.ID)
-					require.NoError(t, err)
-					_, _, err = s.Move(ctx, node.ID, s.RootID(), fmt.Sprintf("virtual-%d.%s", i, strings.TrimPrefix(filepath.Ext(node.Name), ".")), node.Revision)
 					require.NoError(t, err)
 				}
 			default:
@@ -513,13 +496,6 @@ func TestPhotoCheckoutResolvesCompanionSources(t *testing.T) {
 			require.NoError(t, err)
 			entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
 			require.NoError(t, err)
-			if scenario == "first observation" {
-				rawID := fileByRole(result.Asset.Files, PhotoRoleRAW).ID
-				rawIndex := slices.IndexFunc(entries, func(entry PhotoCheckoutEntry) bool { return entry.FileID == rawID })
-				require.NotEqual(t, -1, rawIndex)
-				require.Equal(t, "IMG.ARW", filepath.Base(entries[rawIndex].Path))
-				return
-			}
 			expected := []string{"IMG.JPG"}
 			if scenario != "trashed conflicting sidecar" {
 				expected = append(expected, name+".XMP")

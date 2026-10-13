@@ -67,6 +67,12 @@ func TestCheckoutCopiesWritableBases(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "original bytes", string(content))
 	require.NoError(t, root.WriteFile(filepath.FromSlash(entries[0].Path), []byte("edited"), 0o600))
+	stream, _, err := s.Blobs.OpenStreamContext(t.Context(), entries[0].Hash)
+	require.NoError(t, err)
+	source, err := io.ReadAll(stream)
+	require.NoError(t, err)
+	require.NoError(t, stream.Close())
+	require.Equal(t, "original bytes", string(source))
 	finished, err := s.Store.StorageOperation(t.Context(), op.ID)
 	require.NoError(t, err)
 	require.Equal(t, store.StorageOperationCompleted, finished.State)
@@ -167,46 +173,6 @@ func TestCheckoutStartFailurePersistsFailureAndClosesRoot(t *testing.T) {
 	}
 }
 
-func TestCheckoutRecoveryContinuesAfterDestinationBecomesUnusable(t *testing.T) {
-	t.Parallel()
-	for _, kind := range []string{"file", "inaccessible"} {
-		t.Run(kind, func(t *testing.T) {
-			if kind == "inaccessible" && runtime.GOOS == "windows" {
-				t.Skip("Unix directory permissions")
-			}
-			s := checkoutService(t)
-			a := checkoutPhoto(t, s, "photo.jpg", "bytes")
-			c, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, t.TempDir(), 0)
-			require.NoError(t, err)
-			require.NoError(t, root.Close())
-			if kind == "file" {
-				require.NoError(t, os.Remove(c.Destination))
-				require.NoError(t, os.WriteFile(c.Destination, []byte("keep this file"), 0600))
-			} else {
-				require.NoError(t, os.Chmod(c.Destination, 0))
-				defer func() { require.NoError(t, os.Chmod(c.Destination, 0700)) }()
-				probe, err := os.OpenRoot(c.Destination)
-				if err == nil {
-					_ = probe.Close()
-					t.Skip("this user can open directories without read permission")
-				}
-			}
-			require.NoError(t, s.reconcile(t.Context(), c))
-			status, err := s.Store.PhotoCheckout(t.Context(), c.ID)
-			require.NoError(t, err)
-			require.Equal(t, "failed", status.State)
-			require.Contains(t, status.Error, "interrupted")
-			if kind == "file" {
-				content, err := os.ReadFile(c.Destination)
-				require.NoError(t, err)
-				require.Equal(t, "keep this file", string(content))
-			} else {
-				require.Contains(t, status.Error, "reconciliation failed")
-			}
-		})
-	}
-}
-
 func TestCheckoutRecoveryRebuildsCopyObservationsAfterPublicationCrash(t *testing.T) {
 	t.Parallel()
 	s := checkoutService(t)
@@ -260,25 +226,63 @@ func TestCheckoutRecoveryRebuildsCopyObservationsAfterPublicationCrash(t *testin
 
 func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 	t.Parallel()
-	s := checkoutService(t)
-	a := checkoutPhoto(t, s, "photo.jpg", "bytes")
-	c, op, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, t.TempDir(), 0)
-	require.NoError(t, err)
-	require.NoError(t, root.Close())
-	require.NoError(t, s.Store.ClaimPhotoCheckout(t.Context(), c.ID, op.ID))
-	var begun, ended atomic.Int32
-	s.ActivityBegin = func() { begun.Add(1) }
-	s.ActivityEnd = func() { ended.Add(1) }
-	supervisor := jobs.New(t.Context(), nil)
-	defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
-	require.NoError(t, s.Resume(t.Context(), supervisor))
-	require.Eventually(t, func() bool {
-		actual, err := s.Store.PhotoCheckout(t.Context(), c.ID)
-		return err == nil && actual.State == "failed"
-	}, 5*time.Second, 10*time.Millisecond)
-	require.NoError(t, supervisor.Shutdown(context.Background()))
-	require.Equal(t, int32(1), begun.Load())
-	require.Equal(t, int32(1), ended.Load())
+	for _, kind := range []string{"file", "inaccessible"} {
+		t.Run(kind, func(t *testing.T) {
+			if kind == "inaccessible" && runtime.GOOS == "windows" {
+				t.Skip("Unix directory permissions")
+			}
+			s := checkoutService(t)
+			a := checkoutPhoto(t, s, "photo.jpg", "bytes")
+			bad, badOp, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, t.TempDir(), 0)
+			require.NoError(t, err)
+			require.NoError(t, root.Close())
+			require.NoError(t, s.Store.ClaimPhotoCheckout(t.Context(), bad.ID, badOp.ID))
+			c, op, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, t.TempDir(), 0)
+			require.NoError(t, err)
+			require.NoError(t, root.Close())
+			require.NoError(t, s.Store.ClaimPhotoCheckout(t.Context(), c.ID, op.ID))
+			if kind == "file" {
+				require.NoError(t, os.Remove(bad.Destination))
+				require.NoError(t, os.WriteFile(bad.Destination, []byte("keep this file"), 0600))
+			} else {
+				require.NoError(t, os.Chmod(bad.Destination, 0))
+				defer func() { require.NoError(t, os.Chmod(bad.Destination, 0700)) }()
+				probe, err := os.OpenRoot(bad.Destination)
+				if err == nil {
+					_ = probe.Close()
+					t.Skip("this user can open directories without read permission")
+				}
+			}
+			var begun, ended atomic.Int32
+			s.ActivityBegin = func() { begun.Add(1) }
+			s.ActivityEnd = func() { ended.Add(1) }
+			supervisor := jobs.New(t.Context(), nil)
+			defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
+			require.NoError(t, s.Resume(t.Context(), supervisor))
+			require.Eventually(t, func() bool {
+				for _, id := range []string{bad.ID, c.ID} {
+					actual, err := s.Store.PhotoCheckout(t.Context(), id)
+					if err != nil || actual.State != "failed" {
+						return false
+					}
+				}
+				return true
+			}, 5*time.Second, 10*time.Millisecond)
+			require.NoError(t, supervisor.Shutdown(context.Background()))
+			require.Equal(t, int32(2), begun.Load())
+			require.Equal(t, int32(2), ended.Load())
+			status, err := s.Store.PhotoCheckout(t.Context(), bad.ID)
+			require.NoError(t, err)
+			require.Contains(t, status.Error, "interrupted")
+			if kind == "file" {
+				content, err := os.ReadFile(bad.Destination)
+				require.NoError(t, err)
+				require.Equal(t, "keep this file", string(content))
+			} else {
+				require.Contains(t, status.Error, "reconciliation failed")
+			}
+		})
+	}
 }
 
 func TestCheckoutInterruptedRunKeepsPartialCopies(t *testing.T) {

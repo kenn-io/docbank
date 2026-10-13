@@ -20,30 +20,6 @@ import (
 	kitdaemon "go.kenn.io/kit/daemon"
 )
 
-func TestPhotoCheckoutCommandSelections(t *testing.T) {
-	for _, tc := range []struct {
-		args      []string
-		years     *store.PhotoCheckoutYears
-		wantError bool
-	}{
-		{args: []string{"estimate", "--years", "2024:2025"}, years: &store.PhotoCheckoutYears{From: 2024, To: 2025}},
-		{args: []string{"estimate", "--years", "2024"}, years: &store.PhotoCheckoutYears{From: 2024, To: 2024}},
-		{args: []string{"estimate", "--years", "bad"}, wantError: true},
-	} {
-		cmd := newPhotoCheckoutCmd()
-		child, remaining, err := cmd.Find(tc.args)
-		require.NoError(t, err)
-		require.NoError(t, child.ParseFlags(remaining))
-		selection, err := checkoutSelection(child)
-		if tc.wantError {
-			require.Error(t, err)
-		} else {
-			require.NoError(t, err)
-			require.Equal(t, tc.years, selection.Years)
-		}
-	}
-}
-
 func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 	vault := t.TempDir()
 	t.Setenv("DOCBANK_HOME", vault)
@@ -57,6 +33,7 @@ func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 	statusRequests := make(chan struct{}, 1)
 	listRequests := make(chan struct{}, 1)
 	inputs := make(chan api.PhotoCheckoutCreateRequest, 1)
+	estimates := make(chan store.PhotoCheckoutSelection, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -80,6 +57,11 @@ func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 		case "/api/v1/photos/checkouts/" + checkoutID:
 			statusRequests <- struct{}{}
 			assert.NoError(t, json.MarshalWrite(w, api.PhotoCheckoutStatus{Checkout: checkout}))
+		case "/api/v1/photos/checkouts/estimate":
+			var input store.PhotoCheckoutSelection
+			assert.NoError(t, json.UnmarshalRead(r.Body, &input))
+			estimates <- input
+			assert.NoError(t, json.MarshalWrite(w, store.PhotoCheckoutEstimate{}))
 		default:
 			http.NotFound(w, r)
 		}
@@ -100,4 +82,23 @@ func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 	out, err = runCLI(t, "photos", "checkout", "status", checkoutID)
 	require.NoError(t, err, out)
 	require.Len(t, statusRequests, 1)
+	for _, tc := range []struct {
+		years     string
+		expected  *store.PhotoCheckoutYears
+		wantError bool
+	}{
+		{"2024:2025", &store.PhotoCheckoutYears{From: 2024, To: 2025}, false},
+		{"2024", &store.PhotoCheckoutYears{From: 2024, To: 2024}, false},
+		{"bad", nil, true},
+	} {
+		out, err := runCLI(t, "photos", "checkout", "estimate", "--years", tc.years)
+		if tc.wantError {
+			require.Error(t, err, out)
+			require.Empty(t, estimates)
+		} else {
+			require.NoError(t, err, out)
+			require.Len(t, estimates, 1)
+			require.Equal(t, tc.expected, (<-estimates).Years)
+		}
+	}
 }
