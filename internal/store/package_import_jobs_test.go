@@ -468,14 +468,14 @@ func TestRevokePackageImportOwnerCancelsQueuedWork(t *testing.T) {
 	require.Equal(t, "cancelled", revoked.State)
 }
 
-func TestPackageImportDiscardRepairsPhotoAssets(t *testing.T) {
+func TestPackageImportDiscardRepairsOrRetainsPhotoAssets(t *testing.T) {
 	t.Parallel()
 	for _, outcome := range []string{"cancelled", "failed", "checkout-pinned"} {
 		t.Run(outcome, func(t *testing.T) {
 			s := newTestStore(t)
 			request, run, _ := prepareReceivedPackage(t, s, "photo-"+outcome)
 			image, err := s.IngestFileExact(t.Context(), run, s.RootID(), "synthetic.jpg",
-				browseHash("pkg-photo"), 1, "image/jpeg", "synthetic.jpg", "")
+				fakeHash("pkg-photo"), 1, "image/jpeg", "synthetic.jpg", "")
 			require.NoError(t, err)
 			asset, err := s.PhotoAssetForNode(t.Context(), image.ID)
 			require.NoError(t, err)
