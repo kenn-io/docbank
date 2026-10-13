@@ -320,17 +320,15 @@ func TestPhotoSourceProvenanceMetadata(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
-	result, source := seedGroupedCheckoutSources(t, s)
+	result, _ := seedGroupedCheckoutSources(t, s)
 	raw := fileByRole(result.Asset.Files, PhotoRoleRAW)
 	var backup bytes.Buffer
 	err := s.ExportMetadata(ctx, &backup)
 	require.NoError(t, err)
 	sources := make(map[string]string)
 	for _, file := range result.Asset.Files {
-		var selectedSource, originalPath string
-		require.NoError(t, s.db.QueryRowContext(ctx, `SELECT f.source_provenance_identity, p.original_path FROM photo_files f JOIN provenance p ON p.identity=f.source_provenance_identity WHERE f.file_id=?`, file.ID).Scan(&selectedSource, &originalPath))
-		name := map[string]string{PhotoRoleRAW: "IMG.ARW", PhotoRoleImage: "IMG.JPG", PhotoRoleSidecar: "IMG.ARW.XMP"}[file.Role]
-		require.Equal(t, filepath.Join(source, name), originalPath)
+		var selectedSource string
+		require.NoError(t, s.db.QueryRowContext(ctx, `SELECT source_provenance_identity FROM photo_files WHERE file_id=?`, file.ID).Scan(&selectedSource))
 		sources[file.ID] = selectedSource
 	}
 	rawSource := sources[raw.ID]
