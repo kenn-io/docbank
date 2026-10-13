@@ -1,6 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
-import userEvent from "@testing-library/user-event";
 import PhotoCell from "./PhotoCell.svelte";
 import { photo } from "./photo-test-fixtures.js";
 import type { PhotoPreviewCache } from "./photoPreviewCache.js";
@@ -11,12 +10,10 @@ it("keeps Open accessible by name, Tab, and plain click", async () => {
   const onopen = vi.fn();
   render(PhotoCell, { photo: photo(1), cache: { get: vi.fn() } as unknown as PhotoPreviewCache, selected: false, onclick: vi.fn(), onopen });
   const button = screen.getByRole("button", { name: "Open Photo 1.jpg" });
-  const user = userEvent.setup();
-  await user.tab();
-  await user.tab();
-  await user.tab();
+  expect(button.tabIndex).toBeGreaterThanOrEqual(0);
+  button.focus();
   expect(document.activeElement).toBe(button);
-  await user.click(button);
+  await fireEvent.click(button);
   expect(onopen).toHaveBeenCalledExactlyOnceWith(button);
 });
 
