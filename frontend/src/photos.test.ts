@@ -65,10 +65,59 @@ it("stops Map loadMore and resume at the located photo limit", async () => {
   expect(photos.items).toHaveLength(mapPhotoLimit);
   expect(photos.items.at(-1)?.asset_id).toBe(`photo-${mapPhotoLimit}`);
   expect(photos.total).toBe(mapPhotoLimit + 1000);
-  expect(photos.cursor).toBeUndefined();
+  expect(photos.cursor).toBe(String(mapPhotoLimit));
   expect(photos.mapCapped).toBe(true);
   await photos.loadMore(); await photos.resume();
   expect(fetcher).toHaveBeenCalledTimes(20);
+  photos.dispose();
+});
+
+it.each(["trash", "hide"])("refills a capped Map with 20,001 located photos after confirmed %s", async action => {
+  const fetcher = vi.fn(async (url: string, init: RequestInit) => {
+    if (!url.endsWith("/query")) return Response.json({ id: "photo-1", revision: 2 });
+    const request = JSON.parse(init.body as string);
+    const start = Number(request.cursor ?? 0);
+    const count = Math.min(request.page_size, mapPhotoLimit + 1 - start);
+    return Response.json({ items: [], map_items: Array.from({ length: count }, (_, index) => mapPhoto(start + index + 1)), total: mapPhotoLimit + 1, next_cursor: start + count <= mapPhotoLimit ? String(start + count) : undefined });
+  });
+  stubPhotoFetch(fetcher);
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, "map");
+  await photos.loadMore();
+  expect(photos.items).toHaveLength(mapPhotoLimit);
+  expect(photos.cursor).toBe(String(mapPhotoLimit));
+  expect(photos.mapCapped).toBe(true);
+  photos.selectLoaded(["photo-1"]);
+  if (action === "trash") expect(await photos.trashSelected()).toBe(true);
+  else await photos.setHidden("photo-1");
+  await vi.waitFor(() => expect(photos.loading).toBe(false));
+  expect(photos.items).toHaveLength(mapPhotoLimit);
+  expect(photos.items[0].asset_id).toBe("photo-2");
+  expect(photos.items.at(-1)?.asset_id).toBe(`photo-${mapPhotoLimit + 1}`);
+  expect(photos.total).toBe(mapPhotoLimit);
+  expect(photos.cursor).toBeUndefined();
+  expect(photos.mapCapped).toBe(false);
+  expect(JSON.parse(fetcher.mock.calls.at(-1)![1].body as string)).toMatchObject({ cursor: String(mapPhotoLimit), page_size: 1000 });
+  expect(fetcher).toHaveBeenCalledTimes(22);
+  photos.dispose();
+});
+
+it("retains a partly consumed Map page when refilling the ceiling", async () => {
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, "map");
+  photos.items = Array.from({ length: mapPhotoLimit - 1 }, (_, index) => mapPhoto(index + 1));
+  photos.started = true; photos.total = mapPhotoLimit + 1; photos.cursor = "remaining";
+  const fetcher = vi.fn(async () => Response.json({ items: [], map_items: [mapPhoto(mapPhotoLimit), mapPhoto(mapPhotoLimit + 1)], total: mapPhotoLimit + 1 }));
+  stubPhotoFetch(fetcher);
+  await photos.resume();
+  expect(photos.items).toHaveLength(mapPhotoLimit);
+  expect(photos.cursor).toBe("remaining");
+  expect(photos.mapCapped).toBe(true);
+  photos.items = photos.items.slice(1); photos.total--;
+  await photos.resume();
+  expect(photos.items).toHaveLength(mapPhotoLimit);
+  expect(photos.items.at(-1)?.asset_id).toBe(`photo-${mapPhotoLimit + 1}`);
+  expect(photos.cursor).toBeUndefined();
+  expect(photos.mapCapped).toBe(false);
+  expect(fetcher).toHaveBeenCalledTimes(2);
   photos.dispose();
 });
 
@@ -88,7 +137,7 @@ it.each(["refresh", "expiry"])("stops Map replacement at the located photo limit
   expect(photos.items[0].asset_id).toBe("photo-2");
   expect(photos.items.at(-1)?.asset_id).toBe(`photo-${mapPhotoLimit + 1}`);
   expect(photos.total).toBe(mapPhotoLimit + 1000);
-  expect(photos.cursor).toBeUndefined();
+  expect(photos.cursor).toBe(String(mapPhotoLimit));
   expect(photos.mapCapped).toBe(true);
   expect(photos.error).toBe("");
   await photos.loadMore(); await photos.resume();

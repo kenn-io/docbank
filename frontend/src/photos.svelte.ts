@@ -56,7 +56,7 @@ export class Photos {
   set items(value: PhotoRow[]) { this.appendedFrom = undefined; this.seenIDs = undefined; this.rows = value; }
   total = $state(0);
   cursor = $state<string | undefined>();
-  get mapCapped() { return this.projection === "map" && !this.cursor && this.total > this.items.length; }
+  get mapCapped() { return this.projection === "map" && this.items.length >= mapPhotoLimit && this.total > this.items.length; }
   loading = $state(false);
   trashing = $state(false);
   rejects = $state<PhotoRejectsPreflight>();
@@ -111,7 +111,8 @@ export class Photos {
     return this.allResults ? { query: structuredClone(this.query) } : { asset_ids: [...this.selection.selectedIDs] };
   }
 
-  async lookup(assetID: string, signal: AbortSignal, query: Query = photoQuery): Promise<PhotoBrowseRow> {
+  async lookup(assetID: string, signal: AbortSignal): Promise<PhotoBrowseRow> {
+    const query = photoQuery;
     try {
       const page = await listPhotoAssets({ query: { ...query, filters: { ...query.filters, asset_ids: [assetID] } }, page_size: 1, hidden: this.hidden }, { session: this.session, signal });
       if (!page.items[0]) throw new APIError("This photo is no longer in this view.", 404, "not_found");
@@ -224,6 +225,7 @@ export class Photos {
   async loadMore(preserve?: () => (() => Promise<void>) | undefined): Promise<void> {
     if (this.disposed || this.hiding || this.loading || this.trashing || this.error) return;
     if (this.projection && this.replacement) return this.retry(preserve);
+    if (this.projection === "map" && this.items.length >= mapPhotoLimit) return;
     if (this.started && !this.cursor) return;
     this.loading = true;
     const controller = this.controller;
@@ -235,18 +237,24 @@ export class Photos {
         const page = await this.page(this.query, signal, this.cursor);
         if (signal.aborted) throw signal.reason;
         const seen = this.seenIDs ??= new Set(this.items.map(item => item.asset_id));
-        const added = page.items.filter(item => { if (seen.has(item.asset_id)) return false; seen.add(item.asset_id); return true; });
+        const added: PhotoRow[] = [];
+        let capped = false;
+        for (const item of page.items) {
+          if (seen.has(item.asset_id)) continue;
+          if (this.projection === "map" && this.items.length + added.length >= mapPhotoLimit) { capped = true; break; }
+          seen.add(item.asset_id);
+          added.push(item);
+        }
         const restore = preserve?.();
         const previous = this.items;
         this.rows = [...previous, ...added];
         this.appendedFrom = previous;
         if (this.allResults) this.selection = { selectedIDs: new Set(this.items.map(item => item.asset_id)), anchorID: undefined };
         if (!this.started || !this.projection) this.total = page.total;
-        this.cursor = page.next_cursor;
-        if (this.projection === "map" && this.items.length >= mapPhotoLimit) this.cursor = undefined;
+        this.cursor = capped ? this.cursor : page.next_cursor;
         this.started = true;
         await restore?.();
-      } while (this.projection && this.cursor && !controller.signal.aborted);
+      } while (this.projection && this.cursor && this.items.length < mapPhotoLimit && !controller.signal.aborted);
       if (first && !controller.signal.aborted) { this.needsFacets = true; void this.retryFacets(); }
     } catch (cause) {
       if (controller.signal.aborted) return;
@@ -478,7 +486,6 @@ export class Photos {
       this.total = total;
       this.facets = []; this.facetsError = "";
       this.cursor = cursor;
-      if (this.projection === "map" && candidate.size >= mapPhotoLimit) this.cursor = undefined;
       this.started = true;
       if (mode === "date") {
         this.query = query;

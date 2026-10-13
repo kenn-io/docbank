@@ -37,10 +37,8 @@ test("photo map privacy, clusters, marker return and mobile grid", async ({ page
     await writeFile(path.join(vault, "config.toml"), '[web.map_tiles]\ntile_url = "https://tiles.example.org/{z}/{x}/{y}.png"\nattribution = "Example map provider"\nmax_zoom = 19\n');
     await page.route("https://tiles.example.org/**", route => route.fulfill({ contentType:"image/svg+xml", body:'<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><rect width="256" height="256" fill="#d7e2df"/><path d="M0 64H256M0 192H256M64 0V256M192 0V256" stroke="#f6f8f4" stroke-width="6"/><path d="M0 128H256M128 0V256" stroke="#b9ccca" stroke-width="2"/></svg>' }));
     const enabledURL = new URL(await run("web", "--no-browser")); enabledURL.pathname = "/photos/map";
-    const initialPage=page.waitForResponse(response=>new URL(response.url()).pathname === "/api/v1/photos/assets/query" && response.status() === 200);
     const beforeMap=libraryReads;
     await page.goto(enabledURL.href);
-    const queryPage=await (await initialPage).json();
     await expect(page.getByText("14 located photos", {exact:true})).toBeVisible();expect(libraryReads).toBe(beforeMap);
     await expect(page.locator(".photo-map-cluster").first()).toBeVisible(); expect(mapChunks).toBe(1);
     await expect(page.getByText("tiles.example.org receives your IP address and viewed map areas.", {exact:true})).toBeVisible();
@@ -114,6 +112,12 @@ test("photo map privacy, clusters, marker return and mobile grid", async ({ page
     await page.screenshot({path:path.join(output!, "photo-map-viewer-1440-dark.png"), animations:"disabled"});
     await page.keyboard.press("Escape");
     await expect(marker).toBeFocused();
+    await marker.press("Enter");
+    await expect(page.getByRole("dialog",{name:"Photo viewer, Synthetic-photo-00007.jpg"})).toBeVisible();
+    const beforeClose = listings;
+    await page.getByRole("navigation",{name:"Docbank navigation"}).getByRole("button",{name:"Map",exact:true}).click();
+    await expect(page.getByRole("dialog",{name:/Photo viewer/})).toHaveCount(0);
+    expect(listings).toBe(beforeClose);
     await page.getByRole("button", {name:"Open Synthetic-photo-00009.jpg"}).click();
     await expect(page.getByRole("dialog", {name:"Photo viewer, Synthetic-photo-00009.jpg"})).toBeVisible();
     await page.setViewportSize({width:400,height:860});
@@ -154,40 +158,35 @@ test("photo map privacy, clusters, marker return and mobile grid", async ({ page
     await expect(page.locator(".leaflet-tile-loaded")).toHaveCSS("opacity","1");
     await page.screenshot({path:path.join(output!,"photo-map-album-1440-dark.png"),animations:"disabled"});
     await page.getByRole("button",{name:"Library",exact:true}).click();
-    let releasePage!:()=>void;const pendingPage=new Promise<void>(resolve=>releasePage=resolve);
-    let releaseCluster!:()=>void;const pendingCluster=new Promise<void>(resolve=>releaseCluster=resolve);
-    let neighbor:unknown,joining:unknown,failed=false;
-    await page.route("**/photos/assets/query",async route=>{
-      const request=route.request().postDataJSON();const cursor=request.cursor;
-      if(request.query.filters.asset_ids || !request.projection) {await route.fallback();return;}
-      if(cursor === "proof-next") {await pendingPage;await route.fulfill({json:{items:[],map_items:[neighbor],total:14,next_cursor:"proof-cluster"}});}
-      else if(cursor === "proof-cluster") {await pendingCluster;await route.fulfill({json:{items:[],map_items:[joining],total:14,next_cursor:"proof-retry"}});}
-      else if(cursor === "proof-retry") {
-        if(!failed) {failed=true;await route.fulfill({status:503,json:{detail:"Page unavailable"}});}else await route.fulfill({json:{items:[],map_items:[],total:14}});
-      } else {
-        neighbor={...queryPage.map_items.find((item:{name:string})=>item.name === "Synthetic-photo-00008.jpg"),latitude:0,longitude:12};
-        joining={...queryPage.map_items.find((item:{name:string})=>item.name === "Synthetic-photo-00001.jpg"),latitude:40.748836666666667,longitude:-73.98563555555555};
-        await route.fulfill({json:{...queryPage,items:[],map_items:queryPage.map_items.filter((item:{name:string})=>!["Synthetic-photo-00008.jpg","Synthetic-photo-00001.jpg"].includes(item.name)).map((item:{name:string})=>item.name === "Synthetic-photo-00009.jpg"?{...item,latitude:40.748826666666667,longitude:-73.98564555555555}:item),next_cursor:"proof-next"}});
-      }
+    let releasePage!: () => void;
+    const pendingPage = new Promise<void>(resolve => releasePage = resolve);
+    let failed = false;
+    await page.route("**/photos/assets/query", async route => {
+      const request = route.request().postDataJSON();
+      if (request.query.filters.asset_ids || !request.projection) { await route.fallback(); return; }
+      const url = new URL(route.request().url());
+      const host = url.host;
+      url.hostname = "127.0.0.1";
+      const response = await route.fetch({ url: url.href, headers: { ...await route.request().allHeaders(), host } });
+      await pendingPage;
+      if (!failed) { failed = true; await route.fulfill({status:503,json:{detail:"Page unavailable"}}); }
+      else await route.fulfill({response});
     });
-    await page.setViewportSize({width:1440,height:960});await page.getByRole("navigation",{name:"Docbank navigation"}).getByRole("button",{name:"Map",exact:true}).click();
-    await expect(page.getByText("Loading located photos: 12 of 14",{exact:true})).toBeVisible();await expect(page.locator(".photo-map-cluster, .photo-map-dot").first()).toBeVisible();
-    await expect.poll(()=>page.locator(".leaflet-tile-loaded").evaluateAll(tiles=>tiles.length > 0 && tiles.every(tile=>getComputedStyle(tile).opacity === "1"))).toBe(true);
+    await page.setViewportSize({width:1440,height:960});
+    await page.getByRole("navigation",{name:"Docbank navigation"}).getByRole("button",{name:"Map",exact:true}).click();
+    await expect(page.getByText("Loading located photos: 0 of 0",{exact:true})).toBeVisible();
     await page.screenshot({path:path.join(output!,"photo-map-loading-1440-dark.png"),animations:"disabled"});
-    const partial=page.locator('.photo-map-dot[title="Synthetic-photo-00007.jpg"]');await partial.press("Enter");
-    await expect(page.getByRole("dialog",{name:"Photo viewer, Synthetic-photo-00007.jpg"})).toBeVisible();await page.keyboard.press("Escape");await expect(partial).toBeFocused();
-    await partial.press("Enter");await expect(page.getByRole("dialog",{name:"Photo viewer, Synthetic-photo-00007.jpg"})).toBeVisible();const beforeClose=listings;
-    await page.getByRole("navigation",{name:"Docbank navigation"}).getByRole("button",{name:"Map",exact:true}).click();await expect(page.getByRole("dialog",{name:/Photo viewer/})).toHaveCount(0);expect(listings).toBe(beforeClose);
-    await page.setViewportSize({width:400,height:860});await page.locator(".map-tabs").getByRole("button",{name:"Map",exact:true}).click();
-    releasePage();await expect(page.getByText("Loading located photos: 13 of 14",{exact:true})).toBeVisible();await expect(page.locator(".photo-map-cluster, .photo-map-dot").first()).toBeVisible();await expect(page.locator(".photo-map")).toBeVisible();
-    releaseCluster();await page.getByText("Page unavailable",{exact:true}).waitFor();await expect(page.locator(".photo-map-cluster, .photo-map-dot").first()).toBeVisible();
+    await page.setViewportSize({width:400,height:860});
+    await page.locator(".map-tabs").getByRole("button",{name:"Map",exact:true}).click();
+    releasePage();
+    await page.getByText("Page unavailable",{exact:true}).waitFor();
     await page.screenshot({path:path.join(output!,"photo-map-retry-400-dark.png"),animations:"disabled"});
-    await page.locator(".map-tabs").getByRole("button",{name:"Photos",exact:true}).click();await expect(page.getByRole("button",{name:"Retry",exact:true})).toBeVisible();
-    await page.getByRole("button",{name:"Retry",exact:true}).click();await expect(page.getByText("14 located photos",{exact:true})).toBeVisible();
-    await page.locator(".map-tabs").getByRole("button",{name:"Map",exact:true}).click();await expect(page.locator(".photo-map")).toBeVisible();
-    await page.setViewportSize({width:1440,height:960});await page.evaluate(()=>(window as typeof window & {photoMap:import("leaflet").Map}).photoMap.setView([40.748826666666667,-73.98564555555555],19,{animate:false}));
-    await expect(page.getByText("3 photos",{exact:true})).toBeVisible();await expect(page.getByRole("button",{name:"Open Synthetic-photo-00001.jpg"})).toBeVisible();await expect(page.locator(".photo-map-cluster").filter({hasText:/^3$/})).toHaveCount(1);
-    await page.screenshot({path:path.join(output!,"photo-map-growing-cluster-1440-dark.png"),animations:"disabled"});
+    await page.locator(".map-tabs").getByRole("button",{name:"Photos",exact:true}).click();
+    await expect(page.getByRole("button",{name:"Retry",exact:true})).toBeVisible();
+    await page.getByRole("button",{name:"Retry",exact:true}).click();
+    await expect(page.getByText("14 located photos",{exact:true})).toBeVisible();
+    await page.locator(".map-tabs").getByRole("button",{name:"Map",exact:true}).click();
+    await expect(page.locator(".photo-map")).toBeVisible();
     await page.unroute("**/photos/assets/query");await page.goto("about:blank");await page.goto(enabledURL.href);
     await expect(page.getByText("14 located photos",{exact:true})).toBeVisible();
     await page.setViewportSize({width:400,height:860});

@@ -22,10 +22,10 @@ func TestWebMapConfigurationMissingHead(t *testing.T) {
 
 func TestWebMapConfiguration(t *testing.T) {
 	t.Parallel()
-	tiles := config.MapTilesConfig{TileURL: "https://tiles.example.org/{z}/{x}/{y}.png", Attribution: `<img src=x onerror="alert(1)">`, MaxZoom: 19}
+	tiles := config.MapTilesConfig{TileURL: "https://tiles.example.org/{z}/{x}/{y}.png?key=synthetic-provider-key", Attribution: `<img src=x onerror="alert(1)">`, MaxZoom: 19}
 	mux := http.NewServeMux()
 	registerWeb(mux, true, "http://localhost:8080", "", tiles)
-	paths := []string{"/photos/map", "/photos/map/22222222-2222-4222-8222-0000000000aa"}
+	paths := []string{"/", "/photos", "/photos/map", "/photos/map/22222222-2222-4222-8222-0000000000aa"}
 	for _, path := range paths {
 		t.Run(path, func(t *testing.T) {
 			response := httptest.NewRecorder()
@@ -34,7 +34,7 @@ func TestWebMapConfiguration(t *testing.T) {
 			body := response.Body.String()
 			assert.Contains(t, strings.ToLower(body), "<!doctype html>")
 			assert.Contains(t, body, `name="docbank-map-tiles"`)
-			assert.Contains(t, html.UnescapeString(body), `"tile_url":"https://tiles.example.org/{z}/{x}/{y}.png"`)
+			assert.Contains(t, html.UnescapeString(body), `"tile_url":"https://tiles.example.org/{z}/{x}/{y}.png?key=synthetic-provider-key"`)
 			assert.NotContains(t, body, "<img src=x")
 			csp := response.Header().Get("Content-Security-Policy")
 			assert.Contains(t, csp, "img-src 'self' data: blob: https://tiles.example.org;")
