@@ -183,53 +183,71 @@ func TestPhotoCheckoutMetadataRestoresUnboundAndValidatesFrozenEntries(t *testin
 			require.Equal(t, entries, actualEntries)
 		})
 	}
-	t.Run("source provenance", func(t *testing.T) {
-		s := newTestStore(t)
-		ctx := t.Context()
-		result, _, _ := seedGroupedCheckoutSources(t, s)
-		raw := fileByRole(result.Asset.Files, PhotoRoleRAW)
-		var backup bytes.Buffer
-		err := s.ExportMetadata(ctx, &backup)
-		require.NoError(t, err)
-		var rawSource string
-		require.NoError(t, s.db.QueryRowContext(ctx, `SELECT source_provenance_identity FROM photo_files WHERE file_id=?`, raw.ID).Scan(&rawSource))
-		for _, variant := range []string{"current", "legacy", "another node"} {
-			lines := bytes.Split(backup.Bytes(), []byte{'\n'})
-			for i, line := range lines {
-				if !bytes.Contains(line, []byte(`"type":"photo_file"`)) {
-					continue
-				}
-				var file metadataPhotoFile
-				require.NoError(t, json.Unmarshal(line, &file))
-				if variant == "legacy" {
-					file.SourceProvenanceIdentity = nil
-				} else if variant == "another node" && file.Role == PhotoRoleImage {
-					file.SourceProvenanceIdentity = &rawSource
-				}
-				lines[i], err = json.Marshal(file)
-				require.NoError(t, err)
-			}
-			restored := newTestStore(t)
-			err = restored.ImportMetadata(ctx, bytes.NewReader(bytes.Join(lines, []byte{'\n'})))
-			if variant == "another node" {
-				require.ErrorContains(t, err, "invalid photo source provenance reference")
+}
+
+func TestPhotoSourceProvenanceMetadata(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	result, _, _ := seedGroupedCheckoutSources(t, s)
+	raw := fileByRole(result.Asset.Files, PhotoRoleRAW)
+	var backup bytes.Buffer
+	err := s.ExportMetadata(ctx, &backup)
+	require.NoError(t, err)
+	var rawSource string
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT source_provenance_identity FROM photo_files WHERE file_id=?`, raw.ID).Scan(&rawSource))
+	var alternateSource string
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT identity FROM provenance WHERE node_id=? AND original_path LIKE '%AAA.ARW'`, raw.NodeID).Scan(&alternateSource))
+	for _, variant := range []string{"current", "legacy", "another node"} {
+		expectedSource := rawSource
+		metadata := backup.Bytes()
+		if variant == "current" {
+			_, err = s.db.ExecContext(ctx, `UPDATE photo_files SET source_provenance_identity=? WHERE file_id=?`, alternateSource, raw.ID)
+			require.NoError(t, err)
+			var current bytes.Buffer
+			require.NoError(t, s.ExportMetadata(ctx, &current))
+			metadata = current.Bytes()
+			expectedSource = alternateSource
+		}
+		lines := bytes.Split(metadata, []byte{'\n'})
+		for i, line := range lines {
+			if !bytes.Contains(line, []byte(`"type":"photo_file"`)) {
 				continue
 			}
-			require.NoError(t, err)
-			frozen, _, err := restored.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "restored", 0)
-			require.NoError(t, err)
-			copied, err := restored.PhotoCheckoutEntries(ctx, frozen.ID)
-			require.NoError(t, err)
-			restoredNames := []string{}
-			for _, entry := range copied {
-				restoredNames = append(restoredNames, filepath.Base(entry.Path))
+			var file metadataPhotoFile
+			require.NoError(t, json.Unmarshal(line, &file))
+			if variant == "legacy" {
+				file.SourceProvenanceIdentity = nil
+			} else if variant == "another node" && file.Role == PhotoRoleImage {
+				file.SourceProvenanceIdentity = &rawSource
 			}
-			require.ElementsMatch(t, []string{"IMG.ARW", "IMG.JPG", "IMG.ARW.XMP"}, restoredNames, variant)
-			var storedSource string
-			require.NoError(t, restored.db.QueryRowContext(ctx, `SELECT source_provenance_identity FROM photo_files WHERE file_id=?`, raw.ID).Scan(&storedSource))
-			require.Equal(t, rawSource, storedSource, variant)
+			lines[i], err = json.Marshal(file)
+			require.NoError(t, err)
 		}
-	})
+		restored := newTestStore(t)
+		err = restored.ImportMetadata(ctx, bytes.NewReader(bytes.Join(lines, []byte{'\n'})))
+		if variant == "another node" {
+			require.ErrorContains(t, err, "invalid photo source provenance reference")
+			continue
+		}
+		require.NoError(t, err)
+		frozen, _, err := restored.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "restored", 0)
+		require.NoError(t, err)
+		copied, err := restored.PhotoCheckoutEntries(ctx, frozen.ID)
+		require.NoError(t, err)
+		restoredNames := []string{}
+		for _, entry := range copied {
+			restoredNames = append(restoredNames, filepath.Base(entry.Path))
+		}
+		expectedNames := []string{"IMG.ARW", "IMG.JPG", "IMG.ARW.XMP"}
+		if variant == "current" {
+			expectedNames[0] = "AAA.ARW"
+		}
+		require.ElementsMatch(t, expectedNames, restoredNames, variant)
+		var storedSource string
+		require.NoError(t, restored.db.QueryRowContext(ctx, `SELECT source_provenance_identity FROM photo_files WHERE file_id=?`, raw.ID).Scan(&storedSource))
+		require.Equal(t, expectedSource, storedSource, variant)
+	}
 }
 
 func TestPhotoCheckoutRejectsByteOverflow(t *testing.T) {

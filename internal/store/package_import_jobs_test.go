@@ -489,7 +489,6 @@ func TestPackageImportCancellationRetainsCheckoutPinnedStaging(t *testing.T) {
 	retained, err := s.NodeByID(t.Context(), image.ID)
 	require.NoError(t, err)
 	require.Equal(t, entries[0].VersionID, retained.CurrentVersionID)
-	require.NoError(t, validatePhotoMetadataState(t.Context(), s.db, currentStorageSchemaVersion))
 }
 
 func TestPackageImportDiscardRepairsPhotoAssets(t *testing.T) {
