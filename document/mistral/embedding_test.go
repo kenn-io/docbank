@@ -207,7 +207,7 @@ func TestMistralEmbeddingResponseLimitAndTransportExhaustion(t *testing.T) {
 type failingMistralEmbeddingResolver struct{}
 
 func (failingMistralEmbeddingResolver) LookupNetIP(context.Context, string, string) ([]netip.Addr, error) {
-	return nil, errors.New("synthetic DNS failure")
+	return nil, errors.New("failingMistralEmbeddingResolver: synthetic DNS failure")
 }
 
 func TestMistralEmbeddingRequestBoundRedirectAndCancellation(t *testing.T) {

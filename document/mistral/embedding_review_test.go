@@ -164,6 +164,36 @@ func TestMistralEmbeddingAttemptTimeouts(t *testing.T) {
 	}
 }
 
+type stalledMistralEmbeddingResolver struct {
+	calls atomic.Int32
+}
+
+func (resolver *stalledMistralEmbeddingResolver) LookupNetIP(ctx context.Context, _, _ string) ([]netip.Addr, error) {
+	resolver.calls.Add(1)
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestMistralEmbeddingAttemptTimeoutsThroughProductionTransport(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		profile := testEmbeddingProfile(t)
+		profile.RequestTimeout, profile.MaxRetries = 100*time.Millisecond, 3
+		profile.MaxRetryDelay = time.Nanosecond
+		recomputeMistralEmbeddingProfile(t, &profile)
+		resolver := &stalledMistralEmbeddingResolver{}
+		provider, err := newMistralEmbeddingTestProvider(t, profile, embeddingSecretMap{"credential:mistral-embed": "synthetic-secret"}, resolver)
+		require.NoError(t, err)
+		// HTTP keeps abandoned dials alive for reuse; release them inside the time bubble.
+		defer provider.http.CloseIdleConnections()
+		_, err = provider.Embed(t.Context(), []document.EmbeddingInput{{Key: "first", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: "first"}}, embeddingAuthorization(profile.Descriptor))
+		require.ErrorIs(t, err, ErrTransientResponse)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		require.EqualValues(t, 3, resolver.calls.Load())
+		require.Equal(t, RequestMetrics{Requests: 3, Retries: 2}, withoutLatency(MetricsFromError(err)))
+		require.NoError(t, t.Context().Err())
+	})
+}
+
 func TestMistralEmbeddingCapacityCeilings(t *testing.T) {
 	for _, field := range []string{"input", "request", "response", "batch"} {
 		for _, excess := range []int64{0, 1, math.MaxInt64} {
