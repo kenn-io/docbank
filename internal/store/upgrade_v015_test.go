@@ -229,7 +229,7 @@ func TestEveryReleasedSchemaFixtureUpgrades(t *testing.T) {
 				require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(metadata.Bytes())))
 				faces, err := restored.PhotoFaces(t.Context(), currentNode.CurrentVersionID)
 				require.NoError(t, err)
-				require.Equal(t, []PhotoFace{face.Face}, faces)
+				require.Equal(t, []PhotoFace{face}, faces)
 			})
 		}
 	}

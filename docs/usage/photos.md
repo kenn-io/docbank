@@ -40,7 +40,7 @@ docbank photos faces list <content-version-id>
 
 A box is `x,y,width,height`, each measured as a fraction of the unrotated image. Omit `--person` for an unnamed face, or omit `--box` to mark a person in the whole photo. Naming a face records the same `depicted` person link as a whole-photo mark. Multiple faces of one person share that link.
 
-Face boxes and suggestions stay inaccessible while their photo is Hidden and locked. Face writes in an audited vault return `audit_mutation_unsupported`. These commands record observations manually; they do not run face detection.
+Face reads and writes require an unlock while the photo is Hidden. Audited vault writes return `audit_mutation_unsupported`. These commands record observations manually. Face detection, correction and undo are unavailable in this slice.
 
 ## Open and inspect a photo
 

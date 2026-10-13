@@ -251,7 +251,7 @@ func validatePhotoReceiptMetadataRecord(v metadataPhotoReceipt) error {
 	if v.Type != metadataPhotoReceiptType || validateUUIDv4(v.ReceiptID) != nil || v.BeforeRevision < 0 || v.AfterRevision < 0 || len(v.BeforeJSON)+len(v.AfterJSON) > maxBatchTagReceiptJSONBytes {
 		return errors.New("invalid photo receipt metadata")
 	}
-	if slices.Contains([]string{"face_create", "face_update", "face_undo"}, v.Operation) {
+	if slices.Contains([]string{"face_create", "face_mark"}, v.Operation) {
 		return validatePhotoFaceReceipt(v)
 	}
 	if slices.Contains([]string{"authored", "authored_undo", "authored_sidecar"}, v.Operation) {

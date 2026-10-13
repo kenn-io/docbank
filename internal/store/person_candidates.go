@@ -274,24 +274,33 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDec
 		if err != nil {
 			return err
 		}
-		if candidate.Reason == "face_match" {
-			occurrences, err := decodeStoredCandidateEvidence(candidate.Evidence)
-			if err != nil {
-				return err
-			}
-			for _, occurrence := range occurrences {
-				if occurrence.EvidenceKind == "face" {
-					if _, err := s.facePhotoQuery(ctx, tx, occurrence.ContentVersionID); err != nil {
-						return err
-					}
-				}
-			}
-		}
 		if candidate.State != "open" {
 			return ErrPersonCandidateDecided
 		}
 		if candidate.Revision != decision.ExpectedRevision {
 			return ErrStaleRevision
+		}
+		if candidate.Reason == "face_match" {
+			if _, err := s.hiddenSession(ctx, tx); err != nil {
+				var visible bool
+				if err := tx.QueryRowContext(ctx, `SELECT `+personCandidateVisibleSQL+` FROM person_match_candidates WHERE candidate_id=?`, candidate.CandidateID).Scan(&visible); err != nil {
+					return err
+				}
+				if !visible {
+					return ErrHiddenLocked
+				}
+			}
+			if decision.Action != "reject" {
+				occurrences, err := decodeStoredCandidateEvidence(candidate.Evidence)
+				if err != nil {
+					return err
+				}
+				for _, occurrence := range occurrences {
+					if _, err := s.facePhotoQuery(ctx, tx, occurrence.ContentVersionID); err != nil {
+						return err
+					}
+				}
+			}
 		}
 		personID := ""
 		switch decision.Action {
@@ -396,7 +405,7 @@ func (s *Store) AssertDocumentPerson(ctx context.Context, assertion PersonDocume
 			return err
 		}
 		if assertion.Action == "suppress" {
-			if _, err := tx.ExecContext(ctx, `UPDATE persons SET key_face_id=NULL WHERE key_face_id IN (SELECT face_id FROM photo_faces WHERE assertion_id=?)`, assertion.AssertionID); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE persons SET key_face_id=NULL,revision=revision+1,updated_at=? WHERE key_face_id IN (SELECT face_id FROM photo_faces WHERE assertion_id=?)`, nowRFC3339(), assertion.AssertionID); err != nil {
 				return err
 			}
 		}
@@ -480,34 +489,16 @@ func materializeCandidateAssertionsTx(
 				return err
 			}
 		}
-		existing, err := personAssertionByIdentityTx(ctx, tx, occurrence.ContentVersionID, personID, occurrence.Role)
-		if err == nil {
-			if existing.Action != "assert" {
-				return ErrPersonIdentityConflict
-			}
-			if err := attachCandidateFaceTx(ctx, tx, occurrence, existing.AssertionID); err != nil {
-				return err
-			}
-			continue
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
 		if err := requireCandidateVersionTx(ctx, tx, occurrence.ContentVersionID); errors.Is(err, ErrNotFound) {
 			continue
 		} else if err != nil {
 			return err
 		}
-		assertionID, err := newUUIDv4()
+		assertion, _, err := ensurePersonAssertionTx(ctx, tx, occurrence.ContentVersionID, personID, occurrence.Role)
 		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision) VALUES(?,?,?,?,'assert','',?,1)`,
-			assertionID, occurrence.ContentVersionID, personID, occurrence.Role, nowRFC3339())
-		if err != nil {
-			return err
-		}
-		if err := attachCandidateFaceTx(ctx, tx, occurrence, assertionID); err != nil {
+		if err := attachCandidateFaceTx(ctx, tx, occurrence, assertion.AssertionID); err != nil {
 			return err
 		}
 	}
@@ -616,6 +607,9 @@ func attachCandidateFaceTx(ctx context.Context, tx *sql.Tx, occurrence PersonCan
 	if occurrence.EvidenceKind != "face" {
 		return nil
 	}
+	if err := validateFaceAssertion(ctx, tx, occurrence.ContentVersionID, assertionID); err != nil {
+		return err
+	}
 	var existing string
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(assertion_id,'') FROM photo_faces WHERE face_id=? AND content_version_id=?`, occurrence.EvidenceID, occurrence.ContentVersionID).Scan(&existing); err != nil {
 		return err
@@ -628,4 +622,24 @@ func attachCandidateFaceTx(ctx context.Context, tx *sql.Tx, occurrence PersonCan
 	}
 	_, err := tx.ExecContext(ctx, `UPDATE photo_faces SET assertion_id=?,revision=revision+1 WHERE face_id=? AND content_version_id=?`, assertionID, occurrence.EvidenceID, occurrence.ContentVersionID)
 	return err
+}
+
+func ensurePersonAssertionTx(ctx context.Context, tx *sql.Tx, versionID, personID, role string) (PersonDocumentAssertion, bool, error) {
+	existing, err := personAssertionByIdentityTx(ctx, tx, versionID, personID, role)
+	if err == nil {
+		if existing.Action != "assert" {
+			return PersonDocumentAssertion{}, false, ErrPersonIdentityConflict
+		}
+		return existing, false, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return PersonDocumentAssertion{}, false, err
+	}
+	id, err := newUUIDv4()
+	if err != nil {
+		return PersonDocumentAssertion{}, false, err
+	}
+	assertion := PersonDocumentAssertion{AssertionID: id, ContentVersionID: versionID, PersonID: personID, Role: role, Action: "assert", Revision: 1, RecordedAt: nowRFC3339()}
+	_, err = tx.ExecContext(ctx, `INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision) VALUES(?,?,?,?,'assert','',?,1)`, id, versionID, personID, role, assertion.RecordedAt)
+	return assertion, true, err
 }

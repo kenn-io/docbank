@@ -12040,9 +12040,6 @@ components:
           type: string
         face:
           $ref: "#/components/schemas/PhotoFace"
-        receipt_id:
-          format: uuid
-          type: string
       type: object
       x-go-type: api.PhotoFaceResult
       x-go-type-import:

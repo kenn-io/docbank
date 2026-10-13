@@ -18,7 +18,6 @@ type CreatePhotoFaceRequest struct {
 
 type PhotoFaceResult struct {
 	Face        *PhotoFace `json:"face,omitzero"`
-	ReceiptID   string     `json:"receipt_id,omitzero" format:"uuid"`
 	AssertionID string     `json:"assertion_id,omitzero" format:"uuid"`
 }
 
@@ -56,7 +55,7 @@ func registerPhotoFaceRoutes(api huma.API, d Deps, g *gate) {
 				if err != nil {
 					return FromStoreError(err)
 				}
-				result = PhotoFaceResult{Face: &change.Face, ReceiptID: change.ReceiptID, AssertionID: change.Face.AssertionID}
+				result = PhotoFaceResult{Face: &change, AssertionID: change.AssertionID}
 			}
 			return nil
 		})

@@ -5335,7 +5335,6 @@ export interface PhotoFaceResult {
   readonly $schema?: string;
   assertion_id?: string;
   face?: PhotoFace;
-  receipt_id?: string;
 }
 
 export interface PhotoHiddenPasscodeRequest {

@@ -688,7 +688,7 @@ END;
 CREATE TRIGGER IF NOT EXISTS document_event_heads_deleted
 AFTER DELETE ON document_event_heads BEGIN
     UPDATE document_event_state SET publication_epoch=publication_epoch+1,
-        updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE singleton=1;
+        updated_at=strftime('%Y-%m-%dT%H:%M:%f','now')||'000000Z' WHERE singleton=1;
 END;
 
 CREATE TRIGGER IF NOT EXISTS provenance_version_bindings_immutable_update
@@ -2373,8 +2373,7 @@ CREATE TABLE IF NOT EXISTS person_document_assertions (
     note TEXT NOT NULL,
     recorded_at TEXT NOT NULL,
     revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
-    UNIQUE (content_version_id, person_id, role),
-    UNIQUE (assertion_id, content_version_id)
+    UNIQUE (content_version_id, person_id, role)
 );
 
 CREATE TABLE IF NOT EXISTS photo_faces (
@@ -2386,16 +2385,15 @@ CREATE TABLE IF NOT EXISTS photo_faces (
     width REAL NOT NULL,
     height REAL NOT NULL,
     revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
-    assertion_id TEXT,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY (assertion_id, content_version_id) REFERENCES person_document_assertions(assertion_id, content_version_id)
+    assertion_id TEXT REFERENCES person_document_assertions(assertion_id),
+    created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS photo_faces_version ON photo_faces(content_version_id,face_id);
 CREATE INDEX IF NOT EXISTS photo_faces_assertion ON photo_faces(assertion_id,content_version_id);
 CREATE INDEX IF NOT EXISTS persons_key_face ON persons(key_face_id) WHERE key_face_id IS NOT NULL;
 CREATE TRIGGER IF NOT EXISTS photo_faces_delete AFTER DELETE ON photo_faces
 BEGIN
-    UPDATE persons SET key_face_id=NULL WHERE key_face_id=OLD.face_id;
+    UPDATE persons SET key_face_id=NULL,revision=revision+1,updated_at=strftime('%Y-%m-%dT%H:%M:%f','now')||'000000Z' WHERE key_face_id=OLD.face_id;
     UPDATE person_match_candidates SET state='superseded',revision=revision+1
     WHERE state='open' AND reason='face_match' AND EXISTS(SELECT 1 FROM json_each(evidence_json) e
         WHERE json_extract(e.value,'$.evidence_kind')='face' AND json_extract(e.value,'$.evidence_id')=OLD.face_id);
@@ -2480,7 +2478,7 @@ BEFORE DELETE ON content_versions
 WHEN EXISTS (SELECT 1 FROM person_document_assertions WHERE content_version_id=OLD.version_id)
 BEGIN
     UPDATE document_people_state SET binding_epoch=binding_epoch+1,
-        updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE singleton=1;
+        updated_at=strftime('%Y-%m-%dT%H:%M:%f','now')||'000000Z' WHERE singleton=1;
 END;
 
 CREATE TABLE IF NOT EXISTS person_splits (

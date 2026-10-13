@@ -157,10 +157,10 @@ type metadataPersonMatchCandidate struct {
 	DecidedAt         *string `json:"decided_at" db:"decided_at"`
 }
 
-// personMetadataTables exports the person records in dependency order.
-var personMetadataTables = []metadataRecordCodec{
-	newMetadataTable(metadataTable[metadataPerson]{record: metadataPerson{Type: metadataPersonType}, table: "persons",
-		suffix: "ORDER BY person_id", validate: validateMetadataPerson, checkExport: true}),
+var personMetadata = newMetadataTable(metadataTable[metadataPerson]{record: metadataPerson{Type: metadataPersonType}, table: "persons",
+	suffix: "ORDER BY person_id", validate: validateMetadataPerson, checkExport: true})
+
+var sharedPersonMetadataTables = []metadataRecordCodec{
 	newMetadataTable(metadataTable[metadataPersonIdentity]{record: metadataPersonIdentity{Type: metadataPersonIdentityType}, table: "person_identities",
 		suffix: "ORDER BY identity_id", validate: validateMetadataPersonIdentity, checkExport: true}),
 	newMetadataTable(metadataTable[metadataPersonExternalIdentity]{record: metadataPersonExternalIdentity{Type: metadataPersonExternalType}, table: "person_external_identities",
@@ -179,8 +179,11 @@ var personMetadataTables = []metadataRecordCodec{
 		suffix: "ORDER BY assertion_id", validate: validateMetadataPersonAssertion, checkExport: true}),
 	newMetadataTable(metadataTable[metadataPersonMatchCandidate]{record: metadataPersonMatchCandidate{Type: metadataPersonCandidateType}, table: "person_match_candidates",
 		suffix: "ORDER BY candidate_id", validate: validateMetadataPersonCandidate, checkExport: true}),
-	photoFaceMetadata,
 }
+
+// Schema-specific lists keep each person row codec in dependency order.
+var personMetadataTables = slices.Concat([]metadataRecordCodec{personMetadata}, sharedPersonMetadataTables, []metadataRecordCodec{photoFaceMetadata})
+var personMetadataTablesBeforeFaces = slices.Concat([]metadataRecordCodec{personMetadataBeforeFaces}, sharedPersonMetadataTables)
 
 func validateMetadataPerson(r metadataPerson) error {
 	if r.KeyFaceID != nil && validateUUIDv4(*r.KeyFaceID) != nil {
@@ -596,7 +599,5 @@ func personMetadataTablesForSchema(version int) []metadataRecordCodec {
 	if version >= photoFacesStorageSchemaVersion {
 		return personMetadataTables
 	}
-	tables := slices.Clone(personMetadataTables[:len(personMetadataTables)-1])
-	tables[0] = personMetadataBeforeFaces
-	return tables
+	return personMetadataTablesBeforeFaces
 }

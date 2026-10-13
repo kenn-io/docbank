@@ -62,11 +62,11 @@ func (c *Connection) CreatePhotoFace(ctx context.Context, versionID string, requ
 		return api.PhotoFaceResult{}, &responseDecodeError{err: errors.New("invalid photo face mutation response")}
 	}
 	if request.Box == nil {
-		if result.Face != nil || !validUUIDv4(result.AssertionID) || result.ReceiptID != "" {
+		if result.Face != nil || !validUUIDv4(result.AssertionID) {
 			return invalid()
 		}
 	} else {
-		if result.Face == nil || !validUUIDv4(result.ReceiptID) || result.Face.Box != *request.Box || result.Face.AssertionID != result.AssertionID || (request.PersonID != "") != (result.AssertionID != "") {
+		if result.Face == nil || result.Face.Box != *request.Box || result.Face.AssertionID != result.AssertionID || (request.PersonID != "") != (result.AssertionID != "") {
 			return invalid()
 		}
 		if err := validatePhotoFaceResponse(*result.Face, versionID); err != nil {

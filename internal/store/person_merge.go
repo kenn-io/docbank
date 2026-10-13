@@ -137,8 +137,8 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 		if err := fencePersonTx(ctx, tx, absorbedID, absorbedRevision); err != nil {
 			return err
 		}
-		var absorbedName string
-		if err := tx.QueryRowContext(ctx, `SELECT display_name FROM persons WHERE person_id=?`, absorbedID).Scan(&absorbedName); err != nil {
+		var absorbedName, absorbedKeyFace string
+		if err := tx.QueryRowContext(ctx, `SELECT display_name,COALESCE(key_face_id,'') FROM persons WHERE person_id=?`, absorbedID).Scan(&absorbedName, &absorbedKeyFace); err != nil {
 			return err
 		}
 		if err := validatePersonMergeBoundsTx(ctx, tx, survivorID, absorbedID); err != nil {
@@ -171,7 +171,7 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 		if _, err := tx.ExecContext(ctx, `UPDATE custodian_assignments SET person_id=?,revision=revision+1 WHERE person_id=?`, survivorID, absorbedID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE photo_faces SET assertion_id=(SELECT keep.assertion_id FROM person_document_assertions old JOIN person_document_assertions keep ON keep.person_id=? AND keep.content_version_id=old.content_version_id AND keep.role=old.role AND keep.action=old.action WHERE old.assertion_id=photo_faces.assertion_id) WHERE assertion_id IN (SELECT old.assertion_id FROM person_document_assertions old JOIN person_document_assertions keep ON keep.person_id=? AND keep.content_version_id=old.content_version_id AND keep.role=old.role AND keep.action=old.action WHERE old.person_id=?)`, survivorID, survivorID, absorbedID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_faces SET revision=revision+1,assertion_id=(SELECT keep.assertion_id FROM person_document_assertions old JOIN person_document_assertions keep ON keep.person_id=? AND keep.content_version_id=old.content_version_id AND keep.role=old.role AND keep.action=old.action WHERE old.assertion_id=photo_faces.assertion_id) WHERE assertion_id IN (SELECT old.assertion_id FROM person_document_assertions old JOIN person_document_assertions keep ON keep.person_id=? AND keep.content_version_id=old.content_version_id AND keep.role=old.role AND keep.action=old.action WHERE old.person_id=?)`, survivorID, survivorID, absorbedID); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM person_document_assertions WHERE person_id=? AND EXISTS(
@@ -199,7 +199,10 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 		if _, err := tx.ExecContext(ctx, `INSERT INTO person_aliases(retired_person_id,surviving_person_id,reason,retired_at) VALUES(?,?,?,?)`, absorbedID, survivorID, "merged", now); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE persons SET revision=revision+1,updated_at=? WHERE person_id=?`, now, survivorID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE persons SET key_face_id=COALESCE(key_face_id,?),revision=revision+1,updated_at=? WHERE person_id=?`, nullableString(absorbedKeyFace), now, survivorID); err != nil {
+			return err
+		}
+		if err := validatePhotoFaceReferences(ctx, tx); err != nil {
 			return err
 		}
 		mergeID, err := newUUIDv4()

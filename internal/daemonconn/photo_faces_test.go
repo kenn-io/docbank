@@ -29,7 +29,7 @@ func TestPhotoFaceClientRejectsWrongVersionAndMalformedSuccess(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		assert.NoError(t, json.MarshalWrite(w, api.PhotoFaceResult{Face: &face, ReceiptID: "44444444-4444-4444-8444-444444444444"}))
+		assert.NoError(t, json.MarshalWrite(w, api.PhotoFaceResult{Face: &face}))
 	}))
 	t.Cleanup(server.Close)
 	_, err := New(server.URL, "synthetic-key").CreatePhotoFace(t.Context(), version, api.CreatePhotoFaceRequest{Box: &face.Box})
