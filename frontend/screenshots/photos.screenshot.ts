@@ -867,8 +867,9 @@ test("photo loupe opens, upgrades, navigates, restores focus and reloads a direc
     await expect(touch.getByText("1 selected photo", {exact:true})).toBeVisible();
     await touch.getByRole("button", {name:"Clear selection"}).tap();
     await a.getByRole("checkbox").tap();
-    await b.locator(".photo-image").tap();
-    await b.locator(".photo-image").tap();
+    const selectedTapBox = (await b.locator(".photo-image").boundingBox())!;
+    const selectedTapX = selectedTapBox.x + selectedTapBox.width / 2, selectedTapY = selectedTapBox.y + selectedTapBox.height / 2;
+    await touch.touchscreen.tap(selectedTapX, selectedTapY); await touch.touchscreen.tap(selectedTapX, selectedTapY);
     await expect(touch.getByRole("dialog", {name:/^Photo viewer/})).toHaveCount(1);
     await touch.keyboard.press("Escape");
     await expect(b.locator(".photo-image")).toBeFocused();

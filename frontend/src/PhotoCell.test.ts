@@ -31,6 +31,40 @@ it.each([false, true].flatMap(selected => ["native", "detail-1"].map(shape => ({
   expect(onopen).toHaveBeenCalledExactlyOnceWith(button);
 });
 
+it.each([1, 2])("toggles selection after a cancelled scroll even with click detail=%s and dblclick", async detail => {
+  const onopen = vi.fn();
+  const selectedIDs = new Set(["a"]);
+  const onclick = vi.fn(() => { if (selectedIDs.has("b")) selectedIDs.delete("b"); else selectedIDs.add("b"); });
+  const props = { cache: { get: vi.fn() } as unknown as PhotoPreviewCache, onopen };
+  render(PhotoCell, { ...props, photo: photo(1), selected: true, onclick: vi.fn() });
+  const view = render(PhotoCell, { ...props, photo: photo(2), selected: false, onclick });
+  const button = screen.getByRole("button", { name: "Select Photo 2.jpg" });
+  const tap = async (time: number, detail: number) => {
+    await fireEvent.pointerDown(button, { pointerType: "touch" });
+    await fireEvent.pointerUp(button, { pointerType: "touch" });
+    const event = new MouseEvent("click", { bubbles: true, detail });
+    Object.defineProperty(event, "timeStamp", { value: time });
+    await fireEvent(button, event);
+    await view.rerender({ selected: selectedIDs.has("b") });
+  };
+  await tap(1000, 1);
+  expect(button.getAttribute("aria-pressed")).toBe("true");
+  await fireEvent.pointerDown(button, { pointerType: "touch" });
+  await fireEvent.pointerCancel(button, { pointerType: "touch" });
+  await fireEvent.pointerDown(button, { pointerType: "touch" });
+  await fireEvent.pointerUp(button, { pointerType: "touch" });
+  await tap(1100, detail);
+  await fireEvent.doubleClick(button);
+  expect(onclick).toHaveBeenCalledTimes(2);
+  expect(selectedIDs).toEqual(new Set(["a"]));
+  expect(button.getAttribute("aria-pressed")).toBe("false");
+  expect(onopen).not.toHaveBeenCalled();
+  await tap(1500, 1);
+  await tap(1600, detail);
+  await fireEvent.doubleClick(button);
+  expect(onopen).toHaveBeenCalledExactlyOnceWith(button);
+});
+
 it.each(["checkbox", "another tile"])("breaks a detail-1 pair when %s is clicked between images", async target => {
   const onclick = vi.fn(), onopen = vi.fn();
   const props = { cache: { get: vi.fn() } as unknown as PhotoPreviewCache, selected: false, onclick, onopen };

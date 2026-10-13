@@ -29,6 +29,8 @@
   let imageButton = $state<HTMLButtonElement>();
   let touchClick = false;
   let pointerType: string | undefined;
+  let tapCancelled = false;
+  let suppressDoubleClick = false;
   let url = $state("");
   let failed = $state(false);
   let errorMessage = $state("");
@@ -40,9 +42,10 @@
   function clickImage(event: MouseEvent & { currentTarget: HTMLButtonElement }): void {
     touchClick = event.detail > 0 && (pointerType ?? ("pointerType" in event ? event.pointerType : undefined)) === "touch" && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey;
     pointerType = undefined;
-    if (!touchClick) lastClick = undefined;
-    if (!compact && touchClick && event.detail > 1) return;
-    if (!compact && touchClick && event.detail === 1) {
+    suppressDoubleClick = touchClick && tapCancelled;
+    tapCancelled = false;
+    if (!compact && touchClick && event.detail > 1 && !suppressDoubleClick) return;
+    if (!compact && touchClick && (event.detail === 1 || suppressDoubleClick)) {
       const time = event.timeStamp;
       if (lastClick?.image === event.currentTarget && !lastClick.opened && time - lastClick.time <= 350) {
         lastClick = { image: event.currentTarget, time, opened: true };
@@ -54,7 +57,7 @@
     onclick(event, touchClick);
   }
   function doubleClickImage(event: MouseEvent & { currentTarget: HTMLButtonElement }): void {
-    if (compact || lastClick?.image === event.currentTarget && lastClick.opened) return;
+    if (compact || suppressDoubleClick || lastClick?.image === event.currentTarget && lastClick.opened) return;
     lastClick = undefined;
     openImage(event.currentTarget);
   }
@@ -71,7 +74,7 @@
 </script>
 
 <div class="photo-cell" class:selected class:compact data-asset={photo.asset_id}>
-  <button type="button" class="photo-image" bind:this={imageButton} aria-label={`${compact ? "Show" : "Select"} ${photo.name}`} aria-pressed={compact ? undefined : selected} aria-current={compact && selected ? "true" : undefined} onpointerdown={event => pointerType = event.pointerType} onclick={clickImage} ondblclick={doubleClickImage} oncontextmenu={event => { if (onhidden) { event.preventDefault(); menuOpen = true; } }} onkeydown={event => { if (!compact && event.key === "Enter") { event.preventDefault(); onopen?.(event.currentTarget); } }} draggable={!!ondragstart} {ondragstart} {ondragend}>
+  <button type="button" class="photo-image" bind:this={imageButton} aria-label={`${compact ? "Show" : "Select"} ${photo.name}`} aria-pressed={compact ? undefined : selected} aria-current={compact && selected ? "true" : undefined} onpointerdown={event => pointerType = event.pointerType} onpointercancel={() => { lastClick = undefined; tapCancelled = true; pointerType = undefined; }} onclick={clickImage} ondblclick={doubleClickImage} oncontextmenu={event => { if (onhidden) { event.preventDefault(); menuOpen = true; } }} onkeydown={event => { if (!compact && event.key === "Enter") { event.preventDefault(); onopen?.(event.currentTarget); } }} draggable={!!ondragstart} {ondragstart} {ondragend}>
     {#if url}
       <img src={url} alt={photo.name} draggable="false" onerror={() => { url = ""; failed = true; }} />
     {:else}
