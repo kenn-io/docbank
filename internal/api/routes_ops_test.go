@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
@@ -221,7 +222,7 @@ func TestIngestRejectsNonLoopback(t *testing.T) {
 	cfg := config.Default()
 	cfg.Server.APIKey = "test-key"
 	srv := api.NewServer(api.Deps{Store: s, Blobs: blobs, VaultRoot: dir, Cfg: cfg})
-	for _, path := range []string{"/api/v1/ingest", "/api/v1/ingest/stream", "/api/v1/ingest/preflight", "/api/v1/packages/preflights"} {
+	for _, path := range []string{"/api/v1/ingest", "/api/v1/ingest/stream", "/api/v1/ingest/preflight", "/api/v1/packages/preflights", "/api/v1/photos/imports", "/api/v1/photos/checkouts"} {
 		t.Run(path, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "http://localhost"+path, strings.NewReader(`{"paths":["/x"],"dest":"/inbox"}`))
 			req.Header.Set("Content-Type", "application/json")
@@ -231,6 +232,9 @@ func TestIngestRejectsNonLoopback(t *testing.T) {
 			srv.Handler().ServeHTTP(rec, req)
 			assert.Equal(t, http.StatusForbidden, rec.Code)
 			assert.Contains(t, rec.Body.String(), `"code":"loopback_only"`)
+			if path == "/api/v1/photos/checkouts" {
+				assert.Contains(t, rec.Body.String(), "daemon's computer")
+			}
 		})
 	}
 }
@@ -359,14 +363,46 @@ func TestTrashListAndEmpty(t *testing.T) {
 	assert.Equal(t, 1, trash.Total)
 	assert.Equal(t, 1, trash.Limit)
 
+	version := createEmailVersion(t, s, "synthetic-retained.eml", "Subject: Synthetic\r\n\r\nRetained body")
+	response, text := do(t, ts, http.MethodPost, "/api/v1/versions/"+version.ID+"/email", nil, struct{}{})
+	require.Equal(t, http.StatusOK, response.StatusCode, text)
+	view, err := s.EmailMetadata(t.Context(), version.ID)
+	require.NoError(t, err)
+	root, err := s.NodeByID(t.Context(), s.RootID())
+	require.NoError(t, err)
+	_, err = s.PublishEmailDocuments(t.Context(), document.EmailDocumentPublicationRequest{
+		OperationID: "synthetic-retention", Parent: document.EmailDocumentIdentity{NodeID: version.NodeID, VersionID: version.ID, SHA256: version.BlobHash, Size: version.Size},
+		GenerationID: view.Generation.ID, AttachmentID: view.Attachment.ID, DestinationID: root.ID, DestinationRevision: root.Revision,
+	})
+	require.NoError(t, err)
+	_, _, err = s.Trash(t.Context(), version.NodeID, store.UnconditionalRev)
+	require.NoError(t, err)
+
+	rawHash, rawSize, err := s.Blobs.Write(strings.NewReader("synthetic raw"))
+	require.NoError(t, err)
+	raw, err := s.CreateFile(t.Context(), s.RootID(), "capture.raw", rawHash, rawSize, "application/octet-stream")
+	require.NoError(t, err)
+	jpegHash, jpegSize, err := s.Blobs.Write(strings.NewReader("synthetic jpeg"))
+	require.NoError(t, err)
+	jpeg, err := s.CreateFile(t.Context(), s.RootID(), "capture.jpg", jpegHash, jpegSize, "image/jpeg")
+	require.NoError(t, err)
+	auto, err := s.PhotoAssetForNode(t.Context(), jpeg.ID)
+	require.NoError(t, err)
+	_, err = s.DetachPhotoFile(t.Context(), auto.ID, auto.Revision, auto.Files[0].ID, store.PhotoDetachOptions{})
+	require.NoError(t, err)
+	asset, err := s.CreatePhotoAsset(t.Context(), raw.ID, store.PhotoRoleRAW, store.PhotoKindPhoto)
+	require.NoError(t, err)
+	_, err = s.AttachPhotoFile(t.Context(), asset.ID, asset.Revision, jpeg.ID, store.PhotoRoleImage, nil)
+	require.NoError(t, err)
+	_, _, err = s.Trash(t.Context(), raw.ID, store.UnconditionalRev)
+	require.NoError(t, err)
+
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil,
 		map[string]any{"older_than": ""})
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var out api.TrashEmptyReport
 	require.NoError(t, json.Unmarshal([]byte(body), &out))
-	assert.Equal(t, int64(1), out.CandidateRoots)
-	assert.Zero(t, out.Deleted)
-	assert.False(t, out.Run)
+	assert.Equal(t, api.TrashEmptyReport{CandidateRoots: 1, RetainedRoots: 1, HeldRoots: 1}, out)
 
 	// Dry run leaves the node restorable; run performs the deletion.
 	resp, body = get(t, ts, "/api/v1/trash", nil)
@@ -376,8 +412,7 @@ func TestTrashListAndEmpty(t *testing.T) {
 		map[string]any{"older_than": "", "run": true})
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NoError(t, json.Unmarshal([]byte(body), &out))
-	assert.Equal(t, int64(1), out.Deleted)
-	assert.True(t, out.Run)
+	assert.Equal(t, api.TrashEmptyReport{CandidateRoots: 1, Deleted: 1, RetainedRoots: 1, HeldRoots: 1, Run: true}, out)
 
 	// Bad age string → 422.
 	resp, _ = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil,

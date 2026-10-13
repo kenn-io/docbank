@@ -21,7 +21,7 @@ import (
 	kitdaemon "go.kenn.io/kit/daemon"
 )
 
-func TestEmailDocumentsCLIReleasesTrashBlocker(t *testing.T) {
+func TestEmailDocumentsCLIForwardsRequestsAndPrintsResponses(t *testing.T) {
 	vault := t.TempDir()
 	t.Setenv("DOCBANK_HOME", vault)
 	const token = "synthetic-proof-token"
@@ -35,8 +35,7 @@ func TestEmailDocumentsCLIReleasesTrashBlocker(t *testing.T) {
 	}
 	queries := make(chan url.Values, 1)
 	releases := make(chan struct{ id, digest string }, 1)
-	runs := make(chan bool, 2)
-	emptied := 0
+	runs := make(chan bool, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -66,11 +65,7 @@ func TestEmailDocumentsCLIReleasesTrashBlocker(t *testing.T) {
 			}
 			assert.NoError(t, json.UnmarshalRead(r.Body, &input))
 			runs <- input.Run
-			report := api.TrashEmptyReport{RetainedRoots: 1, Run: true}
-			if emptied > 0 {
-				report = api.TrashEmptyReport{CandidateRoots: 1, Deleted: 1, Run: true}
-			}
-			emptied++
+			report := api.TrashEmptyReport{CandidateRoots: 1, Deleted: 1, RetainedRoots: 1, Run: true}
 			assert.NoError(t, json.MarshalWrite(w, report))
 		default:
 			http.NotFound(w, r)
@@ -94,15 +89,11 @@ func TestEmailDocumentsCLIReleasesTrashBlocker(t *testing.T) {
 	out, err = runCLI(t, "trash", "empty", "--run")
 	require.NoError(t, err, out)
 	require.Contains(t, out, "retained 1 trashed root(s) referenced by email publications or photo checkouts")
-	require.Contains(t, out, "deleted 0 trashed root(s)")
+	require.Contains(t, out, "deleted 1 trashed root(s)")
 	out, err = runCLI(t, "email-documents", "release", receipt.OperationID, "--request-digest", receipt.RequestDigest)
 	require.NoError(t, err, out)
 	require.Len(t, releases, 1)
 	require.Equal(t, struct{ id, digest string }{receipt.OperationID, receipt.RequestDigest}, <-releases)
-	out, err = runCLI(t, "trash", "empty", "--run")
-	require.NoError(t, err, out)
-	require.Contains(t, out, "deleted 1 trashed root(s)")
-	require.Len(t, runs, 2)
-	require.True(t, <-runs)
+	require.Len(t, runs, 1)
 	require.True(t, <-runs)
 }

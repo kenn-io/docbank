@@ -422,6 +422,7 @@ describe("background jobs drawer", () => {
     group.mockReturnValue([{ ...preparedLanes[0], control }, ...preparedLanes.slice(1)]);
     await fireEvent.click(screen.getByRole("button", { name: "Refresh background jobs" }));
     expect(await screen.findByRole("button", { name: "Resume Photo import" })).toBeTruthy();
+    expect(group).toHaveBeenCalledWith(items, [control]);
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
