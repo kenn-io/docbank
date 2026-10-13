@@ -266,11 +266,37 @@ func TestTrashPageCountsRootsAcrossPhotoAndDirectoryGroups(t *testing.T) {
 
 func TestPhotoTrashEmptyCompleteGroups(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"bounded", "live peer", "new peer", "retained peer", "folder"} {
+	for _, mode := range []string{"bounded", "live peer", "new peer", "retained peer", "folder", "singleton", "RAW sidecar", "image sidecar"} {
 		t.Run(mode, func(t *testing.T) {
 			s := newTestStore(t)
-			asset, nodes := photoTrashFixture(t, s)
-			if mode == "live peer" {
+			var asset PhotoAsset
+			var nodes []Node
+			if mode == "singleton" || mode == "RAW sidecar" || mode == "image sidecar" {
+				mime, role := "image/jpeg", PhotoRoleImage
+				if mode == "RAW sidecar" {
+					mime, role = "application/octet-stream", PhotoRoleRAW
+				}
+				node, err := s.CreateFile(t.Context(), s.RootID(), "purge.capture", fakeHash("purge-raw"), 1, mime)
+				require.NoError(t, err)
+				nodes = append(nodes, node)
+				if role == PhotoRoleImage {
+					asset, err = s.PhotoAssetForNode(t.Context(), node.ID)
+				} else {
+					asset, err = s.PromotePhotoNode(t.Context(), node.ID, nil, role, "")
+				}
+				require.NoError(t, err)
+				if mode != "singleton" {
+					sidecar, err := s.CreateFile(t.Context(), s.RootID(), "purge.xmp", fakeHash("purge-sidecar"), 1, "application/octet-stream")
+					require.NoError(t, err)
+					targetID := fileByRole(asset.Files, role).ID
+					asset, err = s.AttachPhotoFile(t.Context(), asset.ID, asset.Revision, sidecar.ID, PhotoRoleSidecar, &targetID)
+					require.NoError(t, err)
+					nodes = append(nodes, sidecar)
+				}
+			} else {
+				asset, nodes = photoTrashFixture(t, s)
+			}
+			if mode == "live peer" || mode == "singleton" {
 				_, _, err := s.Trash(t.Context(), nodes[0].ID, UnconditionalRev)
 				require.NoError(t, err)
 			} else {
@@ -314,11 +340,17 @@ func TestPhotoTrashEmptyCompleteGroups(t *testing.T) {
 					require.NoError(t, err)
 				}
 			} else {
-				assert.Equal(t, int64(3), rep.Deleted)
+				assert.Equal(t, int64(len(nodes)), rep.Deleted)
 				for _, node := range nodes {
 					_, err := s.NodeByID(t.Context(), node.ID)
 					require.ErrorIs(t, err, ErrNotFound)
 				}
+				asset, err = s.PhotoAssetByID(t.Context(), asset.ID)
+				require.NoError(t, err)
+				assert.Empty(t, asset.Files)
+				assert.Nil(t, asset.DisplayFileID)
+				assert.Equal(t, PhotoDisplayNone, asset.DisplaySource)
+				require.NoError(t, validatePhotoMetadataState(t.Context(), s.db, currentStorageSchemaVersion))
 			}
 		})
 	}
