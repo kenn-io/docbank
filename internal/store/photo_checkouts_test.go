@@ -375,7 +375,7 @@ func TestPhotoSourceMetadataRestoreAndMissingIdentityBackfill(t *testing.T) {
 
 func TestPhotoCheckoutResolvesCompanionSources(t *testing.T) {
 	t.Parallel()
-	for _, scenario := range []string{"separate legacy ingests", "renamed duplicate", "conflicting pair"} {
+	for _, scenario := range []string{"separate legacy ingests", "renamed duplicate", "conflicting pair", "trashed target"} {
 		t.Run(scenario, func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
@@ -407,7 +407,16 @@ func TestPhotoCheckoutResolvesCompanionSources(t *testing.T) {
 			for i, file := range result.Asset.Files {
 				node, err := s.NodeByID(ctx, file.NodeID)
 				require.NoError(t, err)
-				_, _, err = s.Move(ctx, node.ID, s.RootID(), fmt.Sprintf("virtual-%d.dat", i), node.Revision)
+				node, _, err = s.Move(ctx, node.ID, s.RootID(), fmt.Sprintf("virtual-%d.dat", i), node.Revision)
+				require.NoError(t, err)
+				if scenario == "trashed target" && file.Role == PhotoRoleRAW {
+					_, _, err = s.Trash(ctx, node.ID, node.Revision)
+					require.NoError(t, err)
+				}
+			}
+			if scenario == "trashed target" {
+				jpeg := fileByRole(result.Asset.Files, PhotoRoleImage).ID
+				_, err = s.SetPhotoDisplay(ctx, result.Asset.ID, result.Asset.Revision, &jpeg)
 				require.NoError(t, err)
 			}
 			if scenario == "separate legacy ingests" {
@@ -431,8 +440,15 @@ func TestPhotoCheckoutResolvesCompanionSources(t *testing.T) {
 			require.NoError(t, err)
 			entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
 			require.NoError(t, err)
-			require.Len(t, entries, 3)
-			require.ElementsMatch(t, []string{name, name + ".XMP", "IMG.JPG"}, []string{filepath.Base(entries[0].Path), filepath.Base(entries[1].Path), filepath.Base(entries[2].Path)})
+			expected := []string{name + ".XMP", "IMG.JPG"}
+			if scenario != "trashed target" {
+				expected = append(expected, name)
+			}
+			names := make([]string, 0, len(entries))
+			for _, entry := range entries {
+				names = append(names, filepath.Base(entry.Path))
+			}
+			require.ElementsMatch(t, expected, names)
 		})
 	}
 }

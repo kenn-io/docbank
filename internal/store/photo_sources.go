@@ -36,8 +36,8 @@ func photoSourcesTx(ctx context.Context, tx *sql.Tx, assets string, checkout boo
  FROM photo_files f JOIN nodes n ON n.id=f.node_id LEFT JOIN provenance p ON p.node_id=f.node_id
  AND EXISTS(SELECT 1 FROM ingests origin WHERE origin.id=p.ingest_id AND origin.source_kind NOT LIKE 'embedded:%')
  AND (p.identity=f.source_provenance_identity OR NOT EXISTS(SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity))
- LEFT JOIN ingests i ON i.id=p.ingest_id WHERE (?='' OR f.asset_id IN (SELECT value FROM json_each(?))) AND (?=0 OR n.trashed_at IS NULL) AND (? OR EXISTS(SELECT 1 FROM photo_files missing WHERE missing.source_provenance_identity IS NULL AND (missing.asset_id=f.asset_id OR missing.node_id=f.node_id)))
- ORDER BY observed,i.started_at,p.ingest_id,p.original_path,p.identity`, assets, assets, checkout, checkout)
+ LEFT JOIN ingests i ON i.id=p.ingest_id WHERE (?='' OR f.asset_id IN (SELECT value FROM json_each(?))) AND (? OR EXISTS(SELECT 1 FROM photo_files missing WHERE missing.source_provenance_identity IS NULL AND (missing.asset_id=f.asset_id OR missing.node_id=f.node_id)))
+ ORDER BY observed,i.started_at,p.ingest_id,p.original_path,p.identity`, assets, assets, checkout)
 	if err != nil {
 		return nil, fmt.Errorf("loading photo sources: %w", err)
 	}
