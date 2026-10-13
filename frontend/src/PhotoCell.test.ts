@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import PhotoCell from "./PhotoCell.svelte";
-import { photo } from "./photo-test-fixtures.js";
+import { photo, touchTap } from "./photo-test-fixtures.js";
 import type { PhotoPreviewCache } from "./photoPreviewCache.js";
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
@@ -19,10 +19,7 @@ it.each([false, true].flatMap(selected => ["native", "detail-1"].map(shape => ({
   render(PhotoCell, { photo: photo(1), cache: { get: vi.fn() } as unknown as PhotoPreviewCache, selected, onclick, oncheck, onopen });
   const button = screen.getByRole("button", { name: "Select Photo 1.jpg" });
   for (const [time, detail] of [[1000, 1], [1100, shape === "native" ? 2 : 1]]) {
-    await fireEvent.pointerDown(button, { pointerType: "touch" });
-    const event = new MouseEvent("click", { bubbles: true, detail });
-    Object.defineProperty(event, "timeStamp", { value: time });
-    await fireEvent(button, event);
+    await touchTap(button, time, detail);
   }
   await fireEvent.doubleClick(button);
   expect(onclick).toHaveBeenCalledOnce();
@@ -40,19 +37,13 @@ it.each([1, 2])("toggles selection after a cancelled scroll even with click deta
   const view = render(PhotoCell, { ...props, photo: photo(2), selected: false, onclick });
   const button = screen.getByRole("button", { name: "Select Photo 2.jpg" });
   const tap = async (time: number, detail: number) => {
-    await fireEvent.pointerDown(button, { pointerType: "touch" });
-    await fireEvent.pointerUp(button, { pointerType: "touch" });
-    const event = new MouseEvent("click", { bubbles: true, detail });
-    Object.defineProperty(event, "timeStamp", { value: time });
-    await fireEvent(button, event);
+    await touchTap(button, time, detail);
     await view.rerender({ selected: selectedIDs.has("b") });
   };
   await tap(1000, 1);
   expect(button.getAttribute("aria-pressed")).toBe("true");
   await fireEvent.pointerDown(button, { pointerType: "touch" });
   await fireEvent.pointerCancel(button, { pointerType: "touch" });
-  await fireEvent.pointerDown(button, { pointerType: "touch" });
-  await fireEvent.pointerUp(button, { pointerType: "touch" });
   await tap(1100, detail);
   await fireEvent.doubleClick(button);
   expect(onclick).toHaveBeenCalledTimes(2);
@@ -87,10 +78,7 @@ it("keeps detail-1 clicks over 350 ms apart as single clicks", async () => {
   render(PhotoCell, { photo: photo(1), cache: { get: vi.fn() } as unknown as PhotoPreviewCache, selected: false, onclick, onopen });
   const button = screen.getByRole("button", { name: "Select Photo 1.jpg" });
   for (const time of [1000, 1351]) {
-    await fireEvent.pointerDown(button, { pointerType: "touch" });
-    const event = new MouseEvent("click", { bubbles: true, detail: 1 });
-    Object.defineProperty(event, "timeStamp", { value: time });
-    await fireEvent(button, event);
+    await touchTap(button, time);
   }
   expect(onclick).toHaveBeenCalledTimes(2);
   expect(onopen).not.toHaveBeenCalled();
@@ -101,10 +89,7 @@ it("keeps compact touch clicks and never opens the viewer", async () => {
   render(PhotoCell, { photo: photo(1), cache: { get: vi.fn() } as unknown as PhotoPreviewCache, selected: false, compact: true, onclick, oncheck, onopen });
   const button = screen.getByRole("button", { name: "Show Photo 1.jpg" });
   for (const detail of [1, 2]) {
-    await fireEvent.pointerDown(button, { pointerType: "touch" });
-    const event = new MouseEvent("click", { bubbles: true, detail });
-    Object.defineProperty(event, "pointerType", { value: "touch" });
-    await fireEvent(button, event);
+    await touchTap(button, 1000 + (detail - 1) * 100, detail, "touch");
   }
   await fireEvent.doubleClick(button);
   await fireEvent.keyDown(button, { key: "Enter" });
