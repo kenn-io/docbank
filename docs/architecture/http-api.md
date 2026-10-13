@@ -918,6 +918,10 @@ snapshot rows remain ephemeral: backup and restore retain the receipt but do
 not reconstruct rows or silently rerun the query. Run the saved query again
 after `410 snapshot_gone`.
 
+Each run compares with the preceding committed receipt for the same saved
+query, even when concurrent runs materialize out of order. The predecessor
+lookup uses the saved-query index and reads only that definition's run history.
+
 Snapshot execution supports duplicate and text-coverage constraints.
 Text-coverage predicates require a configured processing profile. Semantic and
 hybrid modes and relevance ordering remain unsupported and return positioned
