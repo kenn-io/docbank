@@ -494,6 +494,9 @@ func TestPhotoCheckoutSourcePathBasenames(t *testing.T) {
 		{`/camera/foo\bar.JPG`, `foo\bar.JPG`},
 		{`/camera/Trip: Day 1.jpg`, "Trip: Day 1.jpg"},
 	} {
+		if runtime.GOOS == "windows" && tc.basename == "Trip: Day 1.jpg" {
+			continue
+		}
 		sourcePath := tc.sourcePath
 		t.Run(sourcePath, func(t *testing.T) {
 			s := newTestStore(t)

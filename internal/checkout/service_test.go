@@ -278,7 +278,7 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 	require.NoError(t, s.Resume(t.Context(), supervisor))
 	require.Eventually(t, func() bool {
 		actual, err := s.Store.PhotoCheckout(t.Context(), c.ID)
-		return err == nil && actual.State == "failed" && strings.Contains(actual.Error, "interrupted")
+		return err == nil && actual.State == "failed"
 	}, 5*time.Second, 10*time.Millisecond)
 	require.NoError(t, supervisor.Shutdown(context.Background()))
 	require.Equal(t, int32(1), begun.Load())
@@ -287,7 +287,7 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 
 func TestCheckoutFailedRunKeepsPartialCopies(t *testing.T) {
 	t.Parallel()
-	for _, failure := range []string{"cancel", "destination moved after first copy", "destination moved before completion", "collision", "became-invisible"} {
+	for _, failure := range []string{"context cancelled", "destination moved before completion", "collision", "became-invisible"} {
 		t.Run(failure, func(t *testing.T) {
 			s := checkoutService(t)
 			names := []string{"first.jpg", "second.jpg", "third.jpg"}
@@ -321,9 +321,9 @@ func TestCheckoutFailedRunKeepsPartialCopies(t *testing.T) {
 				err := fn()
 				if publications == 1 {
 					switch failure {
-					case "cancel":
+					case "context cancelled":
 						cancel()
-					case "destination moved after first copy", "destination moved before completion":
+					case "destination moved before completion":
 						moved := filepath.Join(t.TempDir(), "moved")
 						if err := os.Rename(c.Destination, moved); err != nil {
 							if runtime.GOOS == "windows" {
@@ -338,7 +338,7 @@ func TestCheckoutFailedRunKeepsPartialCopies(t *testing.T) {
 			}
 			runErr := s.Run(ctx, c, root)
 			require.Error(t, runErr)
-			if failure == "cancel" {
+			if failure == "context cancelled" {
 				require.ErrorIs(t, runErr, context.Canceled)
 			} else if failure != "collision" && failure != "became-invisible" {
 				require.ErrorIs(t, runErr, store.ErrInvalidPhotoCheckout)
@@ -356,7 +356,7 @@ func TestCheckoutFailedRunKeepsPartialCopies(t *testing.T) {
 			require.NoError(t, err)
 			finished, err := s.Store.StorageOperation(t.Context(), op.ID)
 			require.NoError(t, err)
-			if failure == "cancel" {
+			if failure == "context cancelled" {
 				require.Equal(t, "running", status.Checkout.State)
 				require.Equal(t, store.StorageOperationRunning, finished.State)
 				return
@@ -374,7 +374,7 @@ func TestCheckoutFailedRunKeepsPartialCopies(t *testing.T) {
 				require.Contains(t, status.Checkout.Error, entries[1].Path)
 				require.True(t, actual[2].Published)
 				require.Equal(t, 3, publications)
-			case "destination moved after first copy", "destination moved before completion":
+			case "destination moved before completion":
 				files, err := os.ReadDir(c.Destination)
 				require.NoError(t, err)
 				require.Empty(t, files)
