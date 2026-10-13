@@ -125,39 +125,42 @@ func TestPhotoCheckoutMetadataRestoresUnboundAndValidatesFrozenEntries(t *testin
 			var roundtrip bytes.Buffer
 			require.NoError(t, restored.ExportMetadata(t.Context(), &roundtrip))
 			require.Equal(t, exported.String(), roundtrip.String())
-			require.Contains(t, exported.String(), `"relative_path":"undated/`)
-			require.Contains(t, exported.String(), `"size":20,"relative_path"`)
 			for _, bad := range []struct {
-				metadata string
-				path     bool
+				name   string
+				mutate func(*metadataPhotoCheckoutEntry)
+				path   bool
 			}{
-				{strings.Replace(exported.String(), `"relative_path":"undated/`, `"relative_path":"../`, 1), true},
-				{strings.Replace(exported.String(), `"size":20,"relative_path"`, `"size":21,"relative_path"`, 1), false},
+				{"unsafe-path", func(entry *metadataPhotoCheckoutEntry) { entry.Path = "../photo.jpg" }, true},
+				{"size", func(entry *metadataPhotoCheckoutEntry) { entry.Size++ }, false},
+				{"file", func(entry *metadataPhotoCheckoutEntry) { entry.FileID = second.Files[0].ID }, false},
+				{"asset", func(entry *metadataPhotoCheckoutEntry) { entry.AssetID = "00000000-0000-4000-8000-000000000001" }, false},
 			} {
-				invalid, err := Open(filepath.Join(t.TempDir(), "invalid.db"), driver.driver)
+				lines := bytes.Split(exported.Bytes(), []byte{'\n'})
+				changed := false
+				for i, line := range lines {
+					if len(line) == 0 {
+						continue
+					}
+					var entry metadataPhotoCheckoutEntry
+					require.NoError(t, json.Unmarshal(line, &entry))
+					if entry.Type == "photo_checkout_entry" {
+						bad.mutate(&entry)
+						lines[i], err = json.Marshal(entry)
+						require.NoError(t, err)
+						changed = true
+					}
+				}
+				require.True(t, changed, bad.name)
+				invalid, err := Open(filepath.Join(t.TempDir(), bad.name+".db"), driver.driver)
 				require.NoError(t, err)
 				t.Cleanup(func() { require.NoError(t, invalid.Close()) })
-				err = invalid.ImportMetadata(t.Context(), strings.NewReader(bad.metadata))
+				err = invalid.ImportMetadata(t.Context(), bytes.NewReader(bytes.Join(lines, []byte{'\n'})))
 				if bad.path {
 					require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
 				} else {
 					require.ErrorContains(t, err, "photo checkout frozen bases do not match content versions")
 				}
 			}
-			original := `"type":"photo_checkout_entry","checkout_id":"` + c.ID + `","file_id":"` + entries[0].FileID + `"`
-			forged := `"type":"photo_checkout_entry","checkout_id":"` + c.ID + `","file_id":"` + second.Files[0].ID + `"`
-			require.Contains(t, exported.String(), original)
-			forgedFile, err := Open(filepath.Join(t.TempDir(), "forged.db"), driver.driver)
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, forgedFile.Close()) })
-			require.ErrorContains(t, forgedFile.ImportMetadata(t.Context(), strings.NewReader(strings.Replace(exported.String(), original, forged, 1))), "photo checkout frozen bases do not match content versions")
-			forgedAsset, err := Open(filepath.Join(t.TempDir(), "missing-asset.db"), driver.driver)
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, forgedAsset.Close()) })
-			originalAsset := `"asset_id":"` + a.ID + `","version_id":`
-			missingAsset := `"asset_id":"00000000-0000-4000-8000-000000000001","version_id":`
-			require.Contains(t, exported.String(), originalAsset)
-			require.ErrorContains(t, forgedAsset.ImportMetadata(t.Context(), strings.NewReader(strings.Replace(exported.String(), originalAsset, missingAsset, 1))), "photo checkout frozen bases do not match content versions")
 			_, err = s.DetachPhotoFile(t.Context(), a.ID, a.Revision, a.Files[0].ID, PhotoDetachOptions{})
 			require.NoError(t, err)
 			exported.Reset()
