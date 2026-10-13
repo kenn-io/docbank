@@ -65,7 +65,7 @@ func TestEmailDocumentsCLIReleasesTrashBlocker(t *testing.T) {
 	require.NoError(t, err)
 	out, err = runCLI(t, "trash", "empty", "--run")
 	require.NoError(t, err)
-	require.Contains(t, out, "retained 1 trashed root(s) referenced by email publications")
+	require.Contains(t, out, "retained 1 trashed root(s) referenced by email publications or photo checkouts")
 	require.Contains(t, out, "deleted 0 trashed root(s)")
 	_, err = runCLI(t, "email-documents", "release", receipt.OperationID,
 		"--request-digest", receipt.RequestDigest)

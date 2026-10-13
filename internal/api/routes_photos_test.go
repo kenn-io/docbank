@@ -181,6 +181,14 @@ func TestTrashEmptyReportsPhotoHeldRoots(t *testing.T) {
 	require.NoError(t, err)
 	_, err = fixture.AttachPhotoFile(t.Context(), asset.ID, asset.Revision, jpeg.ID, store.PhotoRoleImage, nil)
 	require.NoError(t, err)
+	pinned, err := fixture.CreateFile(t.Context(), fixture.RootID(), "pinned.jpg", jpegHash, jpegSize, "image/jpeg")
+	require.NoError(t, err)
+	pinnedAsset, err := fixture.PhotoAssetForNode(t.Context(), pinned.ID)
+	require.NoError(t, err)
+	_, _, err = fixture.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{pinnedAsset.ID}}, "checkout", 0)
+	require.NoError(t, err)
+	_, _, err = fixture.Trash(t.Context(), pinned.ID, store.UnconditionalRev)
+	require.NoError(t, err)
 	_, _, err = fixture.Trash(t.Context(), raw.ID, store.UnconditionalRev)
 	require.NoError(t, err)
 
@@ -188,5 +196,5 @@ func TestTrashEmptyReportsPhotoHeldRoots(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	var report api.TrashEmptyReport
 	require.NoError(t, json.Unmarshal([]byte(body), &report))
-	assert.Equal(t, api.TrashEmptyReport{HeldRoots: 1, Run: true}, report)
+	assert.Equal(t, api.TrashEmptyReport{HeldRoots: 1, RetainedRoots: 1, Run: true}, report)
 }

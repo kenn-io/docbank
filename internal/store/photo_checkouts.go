@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math"
 	"path"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -274,7 +275,13 @@ func (s *Store) CreatePhotoCheckout(ctx context.Context, selection PhotoCheckout
 }
 
 func validateCheckoutFilename(name string) error {
-	if !utf8.ValidString(name) || name == "" || name == "." || name == ".." || strings.ContainsAny(name, `<>:"/\|?*`+"\x00") || strings.HasSuffix(name, ".") || strings.HasSuffix(name, " ") {
+	if !utf8.ValidString(name) || name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\x00") {
+		return fmt.Errorf("%w: invalid original filename", ErrInvalidPhotoCheckout)
+	}
+	if runtime.GOOS != "windows" {
+		return nil
+	}
+	if strings.ContainsAny(name, `<>:"\|?*`) || strings.HasSuffix(name, ".") || strings.HasSuffix(name, " ") {
 		return fmt.Errorf("%w: original filename is not portable", ErrInvalidPhotoCheckout)
 	}
 	if filename.IsWindowsDeviceName(name) {
@@ -380,25 +387,25 @@ func (s *Store) PhotoCheckoutEntries(ctx context.Context, id string) ([]PhotoChe
 	return out, rows.Err()
 }
 
-// PublishPhotoCheckoutEntry pins visibility because the daemon mutation gate permits concurrent writes.
+// PublishPhotoCheckoutEntry reserves the sole writer connection to pin visibility without a transaction across filesystem I/O.
 func (s *Store) PublishPhotoCheckoutEntry(ctx context.Context, e PhotoCheckoutEntry, publish func() (bool, error)) error {
-	var publicationErr error
-	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		var allowed bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_assets a JOIN photo_files f ON f.asset_id=a.asset_id JOIN nodes n ON n.id=f.node_id WHERE a.asset_id=? AND f.file_id=? AND a.hidden_at IS NULL AND a.excluded_at IS NULL AND n.trashed_at IS NULL)`, e.AssetID, e.FileID).Scan(&allowed); err != nil {
-			return err
-		}
-		if !allowed {
-			return ErrPhotoCheckoutSourceUnavailable
-		}
-		published, err := publish()
-		if !published {
-			return err
-		}
-		publicationErr = err
-		_, err = tx.ExecContext(ctx, `UPDATE photo_checkout_entries SET published=1 WHERE checkout_id=? AND file_id=?`, e.CheckoutID, e.FileID)
-		return err
-	})
+	conn, err := s.writeDB.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("reserving checkout writer: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+	var allowed bool
+	if err := conn.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_assets a JOIN photo_files f ON f.asset_id=a.asset_id JOIN nodes n ON n.id=f.node_id WHERE a.asset_id=? AND f.file_id=? AND a.hidden_at IS NULL AND a.excluded_at IS NULL AND n.trashed_at IS NULL)`, e.AssetID, e.FileID).Scan(&allowed); err != nil {
+		return fmt.Errorf("checking checkout visibility: %w", err)
+	}
+	if !allowed {
+		return ErrPhotoCheckoutSourceUnavailable
+	}
+	published, publicationErr := publish()
+	if !published {
+		return publicationErr
+	}
+	_, err = conn.ExecContext(ctx, `UPDATE photo_checkout_entries SET published=1 WHERE checkout_id=? AND file_id=?`, e.CheckoutID, e.FileID)
 	return errors.Join(err, publicationErr)
 }
 

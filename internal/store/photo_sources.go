@@ -17,6 +17,8 @@ type photoSource struct {
 	trashed                       bool
 }
 
+const photoSourceObservedSQL = `COALESCE((SELECT MIN(b.observed_at) FROM provenance_version_bindings b WHERE b.provenance_identity=p.identity),i.started_at,'')`
+
 func backfillPhotoSourcesTx(ctx context.Context, tx *sql.Tx) error {
 	sources, err := photoSourcesTx(ctx, tx, "", false)
 	if err != nil {
@@ -34,7 +36,7 @@ func backfillPhotoSourcesTx(ctx context.Context, tx *sql.Tx) error {
 
 func photoSourcesTx(ctx context.Context, tx *sql.Tx, assets string, checkout bool) (map[string]photoSource, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT COALESCE(f.asset_id,CAST(f.node_id AS TEXT)),f.file_id,COALESCE(p.identity,''),COALESCE(p.ingest_id,''),COALESCE(p.original_path,n.name),
- COALESCE((SELECT MIN(b.observed_at) FROM provenance_version_bindings b WHERE b.provenance_identity=p.identity),i.started_at,'' ) AS observed,
+ `+photoSourceObservedSQL+` AS observed,
  (SELECT COUNT(*) FROM photo_files member WHERE member.asset_id=f.asset_id OR member.node_id=f.node_id),COALESCE(f.source_provenance_identity,''),COALESCE(f.sidecar_of_file_id,''),n.trashed_at IS NOT NULL
  FROM photo_files f JOIN nodes n ON n.id=f.node_id LEFT JOIN provenance p ON p.node_id=f.node_id
  AND EXISTS(SELECT 1 FROM ingests origin WHERE origin.id=p.ingest_id AND origin.source_kind NOT LIKE 'embedded:%')

@@ -361,9 +361,13 @@ func TestTrashEmptyRetainsMediaAuthorityAndDeletesUnrelatedRoots(t *testing.T) {
 			preview, err := s.TrashEmpty(ctx, 0, false)
 			require.NoError(t, err)
 			require.Equal(t, int64(1), preview.Candidates)
+			if authority == "checkout entry" {
+				require.Equal(t, int64(1), preview.Retained)
+			}
 			run, err := s.TrashEmpty(ctx, 0, true)
 			require.NoError(t, err)
 			require.Equal(t, preview.Candidates, run.Candidates)
+			require.Equal(t, preview.Retained, run.Retained)
 			require.Equal(t, int64(1), run.Deleted)
 			_, err = s.NodeByID(ctx, protected.ID)
 			require.NoError(t, err)

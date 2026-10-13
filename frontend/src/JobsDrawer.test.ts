@@ -114,11 +114,12 @@ describe("background jobs drawer", () => {
       total_objects: 2,
       can_cancel: true,
     };
+    const checkout = { ...item, name: "storage:b", kind: "photo_checkout", operation_id: "b" };
     let available = false;
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
       available
         ? jobsResponse(
-            [item],
+            [item, checkout],
             [
               {
                 lane: "photo_import",
@@ -131,7 +132,7 @@ describe("background jobs drawer", () => {
           )
         : new Response(
             JSON.stringify({
-              items: [item],
+              items: [item, checkout],
               lane_controls_error: "Lane controls are unavailable",
             }),
             { headers: { "Content-Type": "application/json" } },
@@ -141,6 +142,7 @@ describe("background jobs drawer", () => {
     expect((await screen.findByRole("alert")).textContent).toBe("Lane controls are unavailable");
     expect(screen.queryByText("Read-only")).toBeNull();
     expect(screen.getByText("1 of 2 groups")).toBeTruthy();
+    expect(screen.getByText("1 of 2 files")).toBeTruthy();
     await fireEvent.click(screen.getByRole("button", { name: "Cancel Photo import a" }));
     const cancel = fetchSpy.mock.calls.find(([url]) =>
       String(url).endsWith("/api/v1/jobs/a/cancel"),

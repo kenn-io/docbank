@@ -2,11 +2,13 @@ package store
 
 import (
 	"bytes"
+	"context"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"math"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -88,6 +90,37 @@ func TestPhotoCheckoutPublicationRechecksVisibility(t *testing.T) {
 			require.False(t, called)
 		})
 	}
+}
+
+func TestPhotoCheckoutPublicationReservesWriterWithoutTransaction(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	a := albumAsset(t, s, "photo.jpg")
+	c, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, "checkout", 0)
+	require.NoError(t, err)
+	entries, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	mutation := make(chan error, 1)
+	require.NoError(t, s.PublishPhotoCheckoutEntry(ctx, entries[0], func() (bool, error) {
+		// An independent connection can write because publication holds no SQLite transaction.
+		_, err := s.db.ExecContext(ctx, `UPDATE storage_operations SET error='' WHERE operation_id=?`, c.OperationID)
+		if err != nil {
+			return false, err
+		}
+		waits := s.writeDB.Stats().WaitCount
+		go func() {
+			_, err := s.SetPhotoAssetExcluded(ctx, a.ID, a.Revision, true)
+			mutation <- err
+		}()
+		require.Eventually(t, func() bool { return s.writeDB.Stats().WaitCount > waits }, time.Second, time.Millisecond)
+		return true, nil
+	}))
+	require.NoError(t, <-mutation)
+	entries, err = s.PhotoCheckoutEntries(t.Context(), c.ID)
+	require.NoError(t, err)
+	require.True(t, entries[0].Published)
 }
 
 func TestPhotoCheckoutMetadataRestoresUnboundAndValidatesFrozenEntries(t *testing.T) {
@@ -195,11 +228,13 @@ func TestPhotoCheckoutRejectedCreateLeavesNoCheckoutOrOperation(t *testing.T) {
 		{"empty all", "", 100}, {"audit refusal", "", 100},
 		{"negative limit", "", -1}, {"all without limit", "", 0}, {"insufficient limit", "", 19},
 	}
-	for _, name := range []string{"CON.jpg", "bad:name.jpg", "trailing.", "trailing ", "control\x01.jpg"} {
-		cases = append(cases, struct {
-			name, filename string
-			limit          int64
-		}{name, name, 100})
+	if runtime.GOOS == "windows" {
+		for _, name := range []string{"CON.jpg", "bad:name.jpg", "trailing.", "trailing ", "control\x01.jpg"} {
+			cases = append(cases, struct {
+				name, filename string
+				limit          int64
+			}{name, name, 100})
+		}
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -480,7 +515,13 @@ func TestPhotoCheckoutResolvesAllSidecarsWithTheirTarget(t *testing.T) {
 
 func TestPhotoCheckoutSourcePathBasenames(t *testing.T) {
 	t.Parallel()
-	for _, sourcePath := range []string{`C:\camera\capture.JPG`, `\\camera\photos\capture.JPG`, `/camera/foo\bar.JPG`} {
+	for _, tc := range []struct{ sourcePath, basename string }{
+		{`C:\camera\capture.JPG`, "capture.JPG"},
+		{`\\camera\photos\capture.JPG`, "capture.JPG"},
+		{`/camera/foo\bar.JPG`, `foo\bar.JPG`},
+		{`/camera/Trip: Day 1.jpg`, "Trip: Day 1.jpg"},
+	} {
+		sourcePath := tc.sourcePath
 		t.Run(sourcePath, func(t *testing.T) {
 			s := newTestStore(t)
 			run, err := s.BeginIngest(t.Context(), "photo-import", t.TempDir())
@@ -490,16 +531,15 @@ func TestPhotoCheckoutSourcePathBasenames(t *testing.T) {
 			result, err := s.IngestPhotoGroup(t.Context(), run, photoImportTestGroup(member))
 			require.NoError(t, err)
 			checkout, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "checkout", 0)
-			if strings.HasPrefix(sourcePath, "/camera/") {
+			if runtime.GOOS == "windows" && strings.HasPrefix(sourcePath, "/camera/") {
 				require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
-				require.ErrorContains(t, err, `filename "foo\\bar.JPG"`)
 				return
 			}
 			require.NoError(t, err)
 			entries, err := s.PhotoCheckoutEntries(t.Context(), checkout.ID)
 			require.NoError(t, err)
 			require.Len(t, entries, 1)
-			require.Equal(t, "undated/"+result.Asset.ID+"/capture.JPG", entries[0].Path)
+			require.Equal(t, "undated/"+result.Asset.ID+"/"+tc.basename, entries[0].Path)
 		})
 	}
 }

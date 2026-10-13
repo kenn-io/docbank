@@ -386,7 +386,7 @@ func (s *Store) insertPhotoFileTx(ctx context.Context, tx *sql.Tx, member PhotoF
 		INSERT INTO photo_files(file_id,asset_id,node_id,role,sidecar_of_file_id,created_at,source_provenance_identity)
 		VALUES(?,?,?,?,?,?,(SELECT p.identity FROM provenance p JOIN ingests i ON i.id=p.ingest_id
  WHERE p.node_id=? AND i.source_kind NOT LIKE 'embedded:%' AND NOT EXISTS(SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
- ORDER BY COALESCE((SELECT MIN(b.observed_at) FROM provenance_version_bindings b WHERE b.provenance_identity=p.identity),i.started_at),i.started_at,i.id,p.original_path,p.identity LIMIT 1))`, fileID, member.AssetID, member.NodeID, member.Role,
+ ORDER BY `+photoSourceObservedSQL+`,i.started_at,i.id,p.original_path,p.identity LIMIT 1))`, fileID, member.AssetID, member.NodeID, member.Role,
 		nullablePhotoString(member.SidecarOfID), member.CreatedAt, member.NodeID); err != nil {
 		return s.classifyPhotoFileInsertError(err)
 	}
