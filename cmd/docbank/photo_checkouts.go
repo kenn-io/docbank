@@ -63,12 +63,6 @@ The folder must be on the daemon's computer. List or inspect saved checkouts.`, 
 					return err
 				}
 				limit, _ := cmd.Flags().GetInt64("byte-limit")
-				if limit < 0 {
-					return usageError(errors.New("--byte-limit must be nonnegative"))
-				}
-				if selection.All && limit == 0 {
-					return usageError(errors.New("all requires a positive --byte-limit"))
-				}
 				request = api.PhotoCheckoutCreateRequest{Selection: selection, Destination: destination, ByteLimit: limit}
 			}
 			connection, err := daemonconn.Ensure(cmd.Context())

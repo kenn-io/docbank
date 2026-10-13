@@ -42,7 +42,7 @@ func checkoutPhoto(t *testing.T, s Service, name, content string) store.PhotoAss
 	return asset
 }
 
-func TestCheckoutCopiesVerifiedWritableBases(t *testing.T) {
+func TestCheckoutCopiesWritableBases(t *testing.T) {
 	t.Parallel()
 	s := checkoutService(t)
 	a := checkoutPhoto(t, s, "photo.jpg", "original bytes")
@@ -332,7 +332,7 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 	require.Equal(t, int32(1), ended.Load())
 }
 
-func TestCheckoutFailedRunKeepsVerifiedPartialCopies(t *testing.T) {
+func TestCheckoutFailedRunKeepsPartialCopies(t *testing.T) {
 	t.Parallel()
 	for _, failure := range []string{"cancel", "destination moved after first copy", "destination moved before completion", "collision", "became-invisible"} {
 		t.Run(failure, func(t *testing.T) {
@@ -448,7 +448,7 @@ func TestCheckoutQueuedDestinationRevalidatedBeforeCopy(t *testing.T) {
 	require.Equal(t, "keep", string(content))
 }
 
-func TestCheckoutAdmissionRetryKeepsVerifiedPartialCopies(t *testing.T) {
+func TestCheckoutAdmissionRetryKeepsPartialCopies(t *testing.T) {
 	t.Parallel()
 	s := checkoutService(t)
 	checkoutPhoto(t, s, "one.jpg", "one")

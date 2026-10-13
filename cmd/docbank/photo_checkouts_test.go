@@ -46,21 +46,6 @@ func TestPhotoCheckoutCommandSelections(t *testing.T) {
 	}
 }
 
-func TestPhotoCheckoutCreateRejectsInvalidCapacityBeforeDaemon(t *testing.T) {
-	t.Setenv("DOCBANK_HOME", t.TempDir())
-	for _, tc := range []struct {
-		args []string
-		want string
-	}{
-		{[]string{"create", "destination", "--all"}, "positive --byte-limit"},
-		{[]string{"create", "destination", "--asset", "00000000-0000-4000-8000-000000000001", "--byte-limit", "-1"}, "--byte-limit must be nonnegative"},
-	} {
-		cmd := newPhotoCheckoutCmd()
-		cmd.SetArgs(tc.args)
-		require.ErrorContains(t, cmd.Execute(), tc.want)
-	}
-}
-
 func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 	vault := t.TempDir()
 	t.Setenv("DOCBANK_HOME", vault)

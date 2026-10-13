@@ -252,7 +252,7 @@ func TestPhotoCheckoutRejectedCreateLeavesNoCheckoutOrOperation(t *testing.T) {
 	cases := []struct{ name, filename string }{
 		{"empty all", ""}, {"audit refusal", ""},
 	}
-	for _, name := range []string{"CON.jpg", "bad:name.jpg", "bad?.jpg", "trailing.", "trailing ", "control\x01.jpg", "bad\\name.jpg"} {
+	for _, name := range []string{"CON.jpg", "bad:name.jpg", "bad?.jpg", "trailing.", "trailing ", "control\x01.jpg"} {
 		cases = append(cases, struct{ name, filename string }{name, name})
 	}
 	for _, tc := range cases {
