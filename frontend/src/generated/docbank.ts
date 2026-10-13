@@ -3770,6 +3770,25 @@ export interface MovePathRequest {
   src_path: string;
 }
 
+export interface PhotoRejectTarget {
+  asset_id: string;
+  /** @minimum 1 */
+  member_revision: number;
+  /** @minimum 1 */
+  revision: number;
+}
+
+export interface MovePhotoRejectsRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  hidden?: boolean;
+  /**
+     * @minItems 1
+     * @maxItems 1000
+     */
+  targets: PhotoRejectTarget[];
+}
+
 export interface NodePage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -5273,6 +5292,44 @@ export interface PhotoImportStartRequest {
      * @maxLength 4096
      */
   source_root: string;
+}
+
+export interface PhotoRejectMember {
+  file_id: string;
+  flag: string;
+  in_trash: boolean;
+  name: string;
+}
+
+export interface PhotoRejectMixed {
+  asset_id: string;
+  members: PhotoRejectMember[];
+}
+
+export interface PhotoRejectsMoved {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  moved: string[];
+}
+
+export interface PhotoRejectsPreflight {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  files: number;
+  mixed: PhotoRejectMixed[];
+  mixed_count: number;
+  photos: number;
+  selection_limit: number;
+  targets: PhotoRejectTarget[];
+  unchanged: number;
+}
+
+export interface PhotoRejectsRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  coverage?: WorkspaceQueryCoverage;
+  hidden?: boolean;
+  query: SavedQueryV1Schema;
 }
 
 /**
@@ -15763,6 +15820,82 @@ return sessionJSON<PhotoAsset>(getPromotePhotoNodeUrl(nodeId),
     method: 'POST',
     headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
     body: JSON.stringify(promotePhotoNodeRequest)
+  }
+);}
+
+
+
+export const getPreflightPhotoRejectsUrl = () => {
+
+
+
+
+  return `/api/v1/photos/rejects/preflight`
+}
+
+/**
+ * @summary Preview rejected photos in the current scope
+ */
+export const preflightPhotoRejects = async (photoRejectsRequest: NonReadonly<PhotoRejectsRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoRejectsPreflight> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoRejectsPreflight>(getPreflightPhotoRejectsUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(photoRejectsRequest)
+  }
+);}
+
+
+
+export const getMovePhotoRejectsUrl = () => {
+
+
+
+
+  return `/api/v1/photos/rejects/trash`
+}
+
+/**
+ * @summary Move previewed rejected photos to trash
+ */
+export const movePhotoRejects = async (movePhotoRejectsRequest: NonReadonly<MovePhotoRejectsRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoRejectsMoved> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoRejectsMoved>(getMovePhotoRejectsUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(movePhotoRejectsRequest)
   }
 );}
 

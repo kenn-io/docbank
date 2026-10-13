@@ -61,6 +61,9 @@ func timeoutExempt(method, path string) bool {
 		}
 	}
 	if method == http.MethodPost {
+		if path == "/api/v1/photos/rejects/trash" || path == "/api/v1/photos/rejects/preflight" {
+			return true
+		}
 		if id, ok := strings.CutPrefix(path, "/api/v1/exports/jobs/"); ok {
 			if id, ok := strings.CutSuffix(id, "/download"); ok && (id == "{id}" || validPageJobPathID(id)) {
 				return true

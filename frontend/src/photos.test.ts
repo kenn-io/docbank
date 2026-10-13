@@ -51,6 +51,96 @@ it.each(["confirmed", "partial", "lost response", "rejected"])("retains trash pr
   photos.dispose();
 });
 
+const rejectsPreview = (id = "photo-1", unchanged = 0) => ({ targets: [{ asset_id: id, revision: 1, member_revision: 1 }], photos: 1, files: 1, unchanged, mixed: [], mixed_count: 0, selection_limit: 64 });
+
+it("ignores a closed rejects preview after reopening with a different selection", async () => {
+  const preview = rejectsPreview("photo-2");
+  let finishOld!: (response: Response) => void;
+  let finishNew!: (response: Response) => void;
+  const fetcher = vi.fn().mockImplementationOnce(() => new Promise(resolve => finishOld = resolve))
+    .mockImplementationOnce(() => new Promise(resolve => finishNew = resolve));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  photos.rejectsSelectionLimit = preview.selection_limit;
+  photos.selection.selectedIDs = new Set(["photo-1"]);
+  const old = photos.previewRejects(true);
+  const signal = fetcher.mock.lastCall![1].signal as AbortSignal;
+  photos.cancelRejects();
+  expect(signal.aborted).toBe(true);
+  photos.selection.selectedIDs = new Set(["photo-2"]);
+  const current = photos.previewRejects(true);
+  finishOld(Response.json({ ...preview, targets: [{ asset_id: "photo-1", revision: 1, member_revision: 1 }] }));
+  await old;
+  expect(photos.rejects).toBeUndefined();
+  expect(photos.rejectsLoading).toBe(true);
+  finishNew(Response.json(preview));
+  await current;
+  expect(photos.rejects).toEqual(preview);
+  expect(photos.rejectsLoading).toBe(false);
+  photos.dispose();
+});
+
+it.each(["Library", "selected", "over limit", "empty selection"])("bounds rejects requests while keeping Library available, scope=%s", async scope => {
+  const preview = { ...rejectsPreview("photo-1", 4), selection_limit: 3 };
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json(preview));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  await photos.previewRejects();
+  expect(photos.rejectsSelectionLimit).toBe(3);
+  fetcher.mockClear();
+  fetcher.mockResolvedValueOnce(Response.json(preview));
+  photos.selection.selectedIDs = new Set(Array.from({ length: 4 }, (_, i) => `photo-${i}`));
+  if (scope === "selected") photos.selection.selectedIDs = new Set(["photo-2", "photo-1"]);
+  if (scope === "empty selection") photos.clearSelection();
+  await photos.previewRejects(scope !== "Library");
+  if (scope === "over limit" || scope === "empty selection") {
+    expect(photos.rejectsError).toContain("3 photos");
+    expect(fetcher).not.toHaveBeenCalled();
+  } else {
+    expect(photos.rejectsSelected).toBe(scope === "selected");
+    expect(JSON.parse(fetcher.mock.calls[0][1].body).query.filters?.asset_ids).toEqual(scope === "selected" ? ["photo-1", "photo-2"] : undefined);
+    expect(photos.rejects).toEqual(preview);
+  }
+  photos.dispose();
+});
+
+it.each(["confirmed", "server", "unknown ID", "missing ID", "maintenance busy", "audit refusal"])("reconciles a rejects move after %s", async outcome => {
+  const preview = rejectsPreview();
+  const auditDetail = 'photo photo-1, file "reject.jpg": audit mutation unsupported';
+  const refused = outcome === "maintenance busy" || outcome === "audit refusal";
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json(preview));
+  if (outcome === "confirmed") fetcher.mockResolvedValueOnce(Response.json({ moved: ["photo-1"] }));
+  else if (outcome === "unknown ID") fetcher.mockResolvedValueOnce(Response.json({ moved: ["photo-2"] }));
+  else if (outcome === "missing ID") fetcher.mockResolvedValueOnce(Response.json({ moved: [] }));
+  else if (outcome === "server") fetcher.mockResolvedValueOnce(Response.json({ detail: "Internal error", code: "internal" }, { status: 500 }));
+  else if (outcome === "maintenance busy") fetcher.mockResolvedValueOnce(Response.json({ detail: "Move refused", code: "maintenance_busy" }, { status: 503 }));
+  else fetcher.mockResolvedValueOnce(Response.json({ detail: auditDetail, code: "audit_mutation_unsupported" }, { status: 409 }));
+  fetcher.mockResolvedValueOnce(Response.json({ detail: "Refresh unavailable" }, { status: 503 }));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1), photo(2)]; photos.total = 7; photos.started = true;
+  photos.selectLoaded();
+  await photos.previewRejects(false);
+  const changed = vi.fn();
+  const restore = vi.fn(async () => {});
+  const preserve = vi.fn(() => restore);
+  expect(await photos.trashRejects(preserve, changed)).toBe(outcome === "confirmed");
+  expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ hidden: false, targets: preview.targets });
+  expect(changed).toHaveBeenCalledTimes(refused ? 0 : 1);
+  expect(photos.rejectsError).toBe(outcome === "confirmed" ? "" : outcome === "maintenance busy" ? "Move refused" : outcome === "audit refusal" ? `${auditDetail} The batch stayed in Docbank. Close this dialog, select up to 64 other photos, and choose Selected photos.` : "The move may have completed. Refresh Photos before trying again.");
+  expect(photos.rejects).toBeUndefined();
+  expect(photos.error).toBe("Refresh unavailable");
+  if (outcome === "confirmed") {
+    expect(photos.items).toEqual([photo(2)]);
+    expect([...photos.selection.selectedIDs]).toEqual(["photo-2"]);
+    expect(preserve).toHaveBeenCalledOnce();
+    expect(restore).toHaveBeenCalledOnce();
+  } else if (refused) {
+    expect([...photos.selection.selectedIDs]).toEqual(["photo-1", "photo-2"]);
+  }
+  photos.dispose();
+});
+
 it("conceals after a confirmed hide while finishing the captured batch and reporting failures", async () => {
   let finish!: (response: Response) => void;
   const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ id: "photo-1", revision: 2 }))

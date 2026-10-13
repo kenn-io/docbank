@@ -1,4 +1,4 @@
-import { getNode, hidePhotoAsset, unhidePhotoAsset, preparePhotoPreview, listPhotoAssets, trashPhotoAsset, type PhotoPreviewSlot, type PhotoBrowseRow, type SavedQueryV1Schema, type PhotoAlbumMembersRequest } from "./generated/docbank.js";
+import { getNode, hidePhotoAsset, unhidePhotoAsset, preparePhotoPreview, listPhotoAssets, trashPhotoAsset, preflightPhotoRejects, movePhotoRejects, type PhotoRejectsPreflight, type PhotoPreviewSlot, type PhotoBrowseRow, type SavedQueryV1Schema, type PhotoAlbumMembersRequest } from "./generated/docbank.js";
 import { readVerifiedPreview } from "./download.js";
 import { selectedSourceFromNode } from "./selectedSource.js";
 import { localPreferenceStorage } from "./browser-storage.js";
@@ -12,6 +12,8 @@ import { captureDateQuery, type CaptureDayFacet } from "./photoTimeline.js";
 
 export const photoQuery = parseQuery('{"syntax":"simple","sort":{"field":"capture_time","direction":"desc"}}');
 const photoFacets = ["camera", "lens", "year", "location", "set"] as const;
+// One move can audit-trash up to 1,000 files in a single writer transaction.
+const photoRejectsTimeout = 300_000;
 const densityKey = "docbank.photos.density";
 
 export function loadDensity(): Density {
@@ -46,6 +48,11 @@ export class Photos {
   cursor = $state<string | undefined>();
   loading = $state(false);
   trashing = $state(false);
+  rejects = $state<PhotoRejectsPreflight>();
+  rejectsLoading = $state(false);
+  rejectsSelectionLimit = $state(0);
+  rejectsError = $state("");
+  rejectsSelected = $state(false);
   hiding = $state(false);
   actionError = $state("");
   trashError = $state("");
@@ -63,6 +70,7 @@ export class Photos {
   private controller = new AbortController();
   private facetsController = new AbortController();
   private needsFacets = false;
+  private rejectsController = new AbortController();
   private disposed = false;
 
   // Album views show no filter counts, so an album-scoped store never requests them.
@@ -184,7 +192,7 @@ export class Photos {
       if (first && !controller.signal.aborted) { this.needsFacets = true; void this.retryFacets(); }
     } catch (cause) {
       if (controller.signal.aborted) return;
-      if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) this.onauthfailure(cause);
+      this.authFailure(cause);
       this.expired = cause instanceof APIError && cause.code === "cursor_expired";
       this.error = cause instanceof Error ? cause.message : String(cause);
     } finally {
@@ -220,7 +228,7 @@ export class Photos {
       failure = cause instanceof APIError && cause.code === "hidden_not_configured" ? "Set a passcode in the Hidden view first."
         : cause instanceof APIError && cause.code === "hidden_locked" && !this.hidden ? "This photo is already hidden."
         : cause instanceof Error ? cause.message : String(cause);
-      if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) { this.onauthfailure(cause); return true; }
+      if (this.authFailure(cause)) return true;
       return false;
     }, async changed => {
       this.actionError = failures ? `${failures} photo${failures === 1 ? "" : "s"} failed: ${failure}` : "";
@@ -238,6 +246,12 @@ export class Photos {
     this.loading = false;
     this.timelineController.abort();
     this.timelineLoading = false;
+    this.cancelRejects();
+  }
+
+  cancelRejects() {
+    this.rejectsController.abort();
+    this.rejectsLoading = false;
   }
 
   resume(preserve?: () => (() => Promise<void>) | undefined) {
@@ -292,6 +306,63 @@ export class Photos {
 
   selectDate(date?: string) {
     return this.replace("date", undefined, date);
+  }
+
+  async previewRejects(selected = false) {
+    if (this.disposed || this.trashing || this.hiding || this.rejectsLoading) return;
+    this.rejects = undefined;
+    this.rejectsError = "";
+    this.rejectsSelected = selected;
+    const query = $state.snapshot(this.query);
+    if (selected) {
+      const ids = [...this.selection.selectedIDs].sort();
+      if (!ids.length || ids.length > this.rejectsSelectionLimit) {
+        this.rejectsError = `Select between 1 and ${this.rejectsSelectionLimit} photos to preview selected rejects.`;
+        return;
+      }
+      query.filters = { ...query.filters, asset_ids: ids };
+    }
+    this.rejectsLoading = true;
+    this.rejectsController.abort();
+    const controller = this.rejectsController = new AbortController();
+    try {
+      const result = await preflightPhotoRejects({ query, hidden: this.hidden }, { session: this.session, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(photoRejectsTimeout)]) });
+      if (!controller.signal.aborted) { this.rejects = result; this.rejectsSelectionLimit = result.selection_limit; }
+    } catch (cause) { if (!controller.signal.aborted) this.rejectsFailure(cause); }
+    finally { if (this.rejectsController === controller) this.rejectsLoading = false; }
+  }
+
+  async trashRejects(preserve?: () => (() => Promise<void>) | undefined, ontrashed?: () => void) {
+    if (this.disposed || this.trashing || this.hiding || !this.rejects?.targets.length) return false;
+    const targets = this.rejects.targets;
+    this.cancelPending();
+    this.trashing = true;
+    this.rejectsError = "";
+    try {
+      const result = await movePhotoRejects({ hidden: this.hidden, targets }, { session: this.session, signal: AbortSignal.timeout(photoRejectsTimeout) });
+      if (result.moved.length !== targets.length || result.moved.some((id, i) => id !== targets[i].asset_id)) throw new Error("Invalid rejects move response");
+      await this.removeConfirmed(result.moved, preserve);
+      this.rejects = undefined;
+      ontrashed?.();
+      await this.refresh(preserve);
+      return true;
+    } catch (cause) {
+      this.rejects = undefined;
+      this.rejectsFailure(cause);
+      if (!(cause instanceof APIError) || cause.status >= 500 && cause.code !== "maintenance_busy") {
+        this.rejectsError = "The move may have completed. Refresh Photos before trying again.";
+        ontrashed?.();
+      }
+      await this.refresh(preserve);
+      return false;
+    } finally { this.trashing = false; }
+  }
+
+  private rejectsFailure(cause: unknown) {
+    if (this.disposed) return;
+    this.rejectsError = cause instanceof Error ? cause.message : String(cause);
+    if (cause instanceof APIError && cause.code === "audit_mutation_unsupported") this.rejectsError += ` The batch stayed in Docbank. Close this dialog, select up to ${this.rejectsSelectionLimit} other photos, and choose Selected photos.`;
+    this.authFailure(cause);
   }
 
   private async replace(mode: "refresh" | "expiry" | "date", preserve?: () => (() => Promise<void>) | undefined, date?: string) {
@@ -361,7 +432,7 @@ export class Photos {
       return !controller.signal.aborted;
     } catch (cause) {
       if (controller.signal.aborted) return false;
-      if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) this.onauthfailure(cause);
+      this.authFailure(cause);
       this.error = signal.aborted || cause instanceof DOMException && cause.name === "TimeoutError" ? "Photo refresh timed out. Retry to keep browsing." : cause instanceof Error ? cause.message : String(cause);
       return false;
     } finally {
@@ -383,7 +454,7 @@ export class Photos {
       const options = { session: this.session, signal: AbortSignal.timeout(60_000) };
       return trashPhotoAsset(item.asset_id, { "If-Match": String(item.revision) }, options);
     }, cause => {
-      if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) { this.onauthfailure(cause); return true; }
+      if (this.authFailure(cause)) return true;
       this.trashError = cause instanceof Error ? cause.message : String(cause);
       return false;
     }, changed => {
@@ -402,9 +473,7 @@ export class Photos {
           if (receipt.id !== item.asset_id || receipt.revision <= item.revision) throw new Error(`Photo${action === "trashing" ? " trash" : ""} response did not confirm the selected photo. Refresh and retry.`);
           this.cancelPending();
           successes++;
-          const restore = preserve?.();
-          this.removeTarget(item.asset_id);
-          await restore?.();
+          await this.removeConfirmed([item.asset_id], preserve);
           await onconfirmed?.();
         } catch (cause) {
           if (!(cause instanceof APIError) || cause.status >= 500) uncertain = true;
@@ -481,6 +550,18 @@ export class Photos {
     return targets;
   }
 
+  private authFailure(cause: unknown) {
+    if (!(cause instanceof APIError) || cause.status !== 401 && !(this.hidden && cause.status === 403)) return false;
+    this.onauthfailure(cause);
+    return true;
+  }
+
+  private async removeConfirmed(ids: string[], preserve?: () => (() => Promise<void>) | undefined) {
+    const restore = preserve?.();
+    for (const id of ids) this.removeTarget(id);
+    await restore?.();
+  }
+
   private removeTarget(id: string) {
     this.items = this.items.filter(item => item.asset_id !== id);
     this.total = Math.max(0, this.total - 1);
@@ -495,5 +576,6 @@ export class Photos {
   clearSelection() { this.allResults = false; this.selection = clearSelection<string>(); this.trashTargets = []; }
   selectLoaded() { this.allResults = false; this.selection = { selectedIDs: new Set(this.items.map(item => item.asset_id)), anchorID: undefined }; this.pruneTrashTargets(); }
   selectAllResults() { this.selectLoaded(); this.allResults = true; }
-  dispose() { this.viewerReturn = undefined; this.disposed = true; this.controller.abort(); this.timelineController.abort(); this.facetsController.abort(); }
+
+  dispose() { this.viewerReturn = undefined; this.disposed = true; this.controller.abort(); this.timelineController.abort(); this.facetsController.abort(); this.rejectsController.abort(); }
 }

@@ -26,9 +26,10 @@ const (
 	maxCanonicalBytes = 64 << 10
 	maxJSONDepth      = 16
 	maxTextRunes      = 8192
-	maxIDValues       = 64
-	maxExtensions     = 32
-	maxSafeInteger    = int64(9007199254740991)
+	// MaxIDValues bounds each set of IDs or paths in a query filter.
+	MaxIDValues    = 64
+	maxExtensions  = 32
+	maxSafeInteger = int64(9007199254740991)
 )
 
 var (
@@ -427,28 +428,28 @@ func normalizeFilters(value Filters) (Filters, error) {
 	if err != nil {
 		return Filters{}, err
 	}
-	if value.Paths, err = normalizeSet(value.Paths, maxIDValues, validVirtualPath, "paths"); err != nil {
+	if value.Paths, err = normalizeSet(value.Paths, MaxIDValues, validVirtualPath, "paths"); err != nil {
 		return Filters{}, err
 	}
-	if value.ExcludePaths, err = normalizeSet(value.ExcludePaths, maxIDValues, validVirtualPath, "exclude_paths"); err != nil {
+	if value.ExcludePaths, err = normalizeSet(value.ExcludePaths, MaxIDValues, validVirtualPath, "exclude_paths"); err != nil {
 		return Filters{}, err
 	}
-	if value.CollectionIDs, err = normalizeSet(value.CollectionIDs, maxIDValues, validUUIDv4, "collection_ids"); err != nil {
+	if value.CollectionIDs, err = normalizeSet(value.CollectionIDs, MaxIDValues, validUUIDv4, "collection_ids"); err != nil {
 		return Filters{}, err
 	}
-	if value.ExcludeCollectionIDs, err = normalizeSet(value.ExcludeCollectionIDs, maxIDValues, validUUIDv4, "exclude_collection_ids"); err != nil {
+	if value.ExcludeCollectionIDs, err = normalizeSet(value.ExcludeCollectionIDs, MaxIDValues, validUUIDv4, "exclude_collection_ids"); err != nil {
 		return Filters{}, err
 	}
-	if value.TagIDs, err = normalizeSet(value.TagIDs, maxIDValues, validUUIDv4, "tag_ids"); err != nil {
+	if value.TagIDs, err = normalizeSet(value.TagIDs, MaxIDValues, validUUIDv4, "tag_ids"); err != nil {
 		return Filters{}, err
 	}
-	if value.ExcludeTagIDs, err = normalizeSet(value.ExcludeTagIDs, maxIDValues, validUUIDv4, "exclude_tag_ids"); err != nil {
+	if value.ExcludeTagIDs, err = normalizeSet(value.ExcludeTagIDs, MaxIDValues, validUUIDv4, "exclude_tag_ids"); err != nil {
 		return Filters{}, err
 	}
 	if value.MediaFamilies, err = normalizeSet(value.MediaFamilies, 13, validMediaFamily, "media_families"); err != nil {
 		return Filters{}, err
 	}
-	if value.MIMETypes, err = normalizeSet(value.MIMETypes, maxIDValues, validConcreteMIME, "mime_types"); err != nil {
+	if value.MIMETypes, err = normalizeSet(value.MIMETypes, MaxIDValues, validConcreteMIME, "mime_types"); err != nil {
 		return Filters{}, err
 	}
 	if value.Extensions, err = normalizeSet(value.Extensions, maxExtensions, extensionPattern.MatchString, "extensions"); err != nil {

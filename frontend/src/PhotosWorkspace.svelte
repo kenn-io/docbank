@@ -16,6 +16,7 @@
   import PhotoAlbumPicker from "./PhotoAlbumPicker.svelte";
   import PhotoAlbumPending from "./PhotoAlbumPending.svelte";
   import { type PhotoAlbums, type PhotoAlbumItem } from "./photoAlbums.svelte.js";
+  import PhotoRejectsModal from "./PhotoRejectsModal.svelte";
 
   let { photos, cache, title = "Library", albums, albumID = "", onnavigate = () => {}, ontrashed, onhidden, onactionerror, oninvalidate, photoID = "", onphotochange = () => {} }: { photos: Photos; cache: PhotoPreviewCache; title?: string; albums?: PhotoAlbums; albumID?: string; onnavigate?: (path: string) => void; ontrashed?: (source: Photos) => void; onhidden?: () => void | Promise<void>; onactionerror?: (error: string) => void; oninvalidate?: () => void | Promise<void>; photoID?: string; onphotochange?: (id: string, mode: "open" | "step" | "close") => void } = $props();
   const album = $derived(albums?.items.find(item => item.id === albumID));
@@ -105,6 +106,7 @@
     else photos.select(id, event, orderedIDs);
   }
   let grid = $state<{ preservePosition: () => (() => Promise<void>) }>();
+  let rejectsOpen = $state(false);
   const preserve = () => grid?.preservePosition();
   export function refresh() { return photos.refresh(preserve); }
   async function setHidden(id: string) {
@@ -197,6 +199,7 @@
         <IconButton ariaLabel={album.starred ? "Unstar album" : "Star album"} title={album.starred ? "Unstar album" : "Star album"} ariaPressed={album.starred} disabled={albums.busy || renaming} onclick={() => void albums!.update(album!, { starred: !album!.starred })}><StarIcon size="16" fill={album.starred ? "currentColor" : "none"} /></IconButton>
         <Menu align="end"><MenuTrigger ariaLabel="Album actions" disabled={albums.busy || renaming}>More</MenuTrigger><MenuContent ariaLabel="Album actions"><MenuItem onselect={beginRename}>Rename</MenuItem><MenuItem onselect={() => openModal("duplicate")}>Duplicate…</MenuItem><MenuItem tone="danger" onselect={() => openModal("delete")}>Delete album…</MenuItem></MenuContent></Menu>
       {/if}<Button size="sm" disabled={photos.loading || photos.hiding || photos.trashing || albums?.busy} onclick={() => void refreshView()}>Refresh previews</Button>
+      <Button size="sm" disabled={photos.loading || photos.hiding || photos.trashing || photos.rejectsLoading} onclick={() => { rejectsOpen = true; void photos.previewRejects(); }}>Move rejects</Button>
     </div>
   </div>
   {#if photos.actionError && !onactionerror}<p role="alert">{photos.actionError}</p>{/if}
@@ -265,6 +268,10 @@
     {#if modal === "duplicate"}<PhotoAlbumPending {albums} onnavigate={path => { modal = undefined; onnavigate(path); }} />{/if}
     <div class="modal-actions"><Button disabled={albums.busy} onclick={() => modal = undefined}>Cancel</Button><Button tone={modal === "delete" ? "danger" : "info"} disabled={albums.busy || modal === "duplicate" && (!!albums.unconfirmed || !duplicateName.trim())} onclick={() => void confirm()}>{modal === "delete" ? "Delete album" : "Duplicate album"}</Button></div>
   </Modal>
+{/if}
+
+{#if rejectsOpen}
+  <PhotoRejectsModal {photos} onclose={() => { photos.cancelRejects(); rejectsOpen = false; }} onmove={async () => { const source = photos; if (await source.trashRejects(preserve, () => ontrashed?.(source))) rejectsOpen = false; }} />
 {/if}
 
 {#if trashOpen}
