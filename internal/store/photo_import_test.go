@@ -559,63 +559,6 @@ func TestPhotoImportSidecarDedupStaysWithinSourceGroup(t *testing.T) {
 	assert.Len(t, second.Asset.Files, 2)
 }
 
-func TestPhotoSidecarImageLifecycle(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	image, err := s.CreateFile(ctx, s.RootID(), "lifecycle.JPG", fakeHash("a1"), 4, "image/jpeg")
-	require.NoError(t, err)
-	asset, err := s.PhotoAssetForNode(ctx, image.ID)
-	require.NoError(t, err)
-	_, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, asset.Files[0].ID, PhotoDetachOptions{})
-	require.NoError(t, err)
-	asset, err = s.PromotePhotoNode(ctx, image.ID, nil, PhotoRoleImage, PhotoKindPhoto)
-	require.NoError(t, err)
-	imageFile := asset.Files[0]
-	sidecarOne, err := s.CreateFile(ctx, s.RootID(), "lifecycle-one.XMP", fakeHash("a2"), 4, "application/rdf+xml")
-	require.NoError(t, err)
-	sidecarTwo, err := s.CreateFile(ctx, s.RootID(), "lifecycle-two.XMP", fakeHash("a3"), 4, "application/rdf+xml")
-	require.NoError(t, err)
-	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, sidecarOne.ID, PhotoRoleSidecar, &imageFile.ID)
-	require.NoError(t, err)
-	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, sidecarTwo.ID, PhotoRoleSidecar, &imageFile.ID)
-	require.NoError(t, err)
-	require.Len(t, asset.Files, 3)
-
-	var exported bytes.Buffer
-	require.NoError(t, s.ExportMetadata(ctx, &exported))
-	restored := newTestStore(t)
-	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
-	restoredAsset, err := restored.PhotoAssetByID(ctx, asset.ID)
-	require.NoError(t, err)
-	require.Len(t, restoredAsset.Files, 3)
-
-	_, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, imageFile.ID, PhotoDetachOptions{})
-	require.ErrorIs(t, err, ErrInvalidPhotoAsset)
-	asset, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, imageFile.ID, PhotoDetachOptions{ClearDependentSidecars: true})
-	require.NoError(t, err)
-	assert.Empty(t, asset.Files)
-
-	purgeImage, err := s.CreateFile(ctx, s.RootID(), "purge.JPG", fakeHash("b1"), 4, "image/jpeg")
-	require.NoError(t, err)
-	purgeAsset, err := s.PhotoAssetForNode(ctx, purgeImage.ID)
-	require.NoError(t, err)
-	purgeFile := purgeAsset.Files[0]
-	purgeSidecar, err := s.CreateFile(ctx, s.RootID(), "purge.XMP", fakeHash("b2"), 4, "application/rdf+xml")
-	require.NoError(t, err)
-	purgeAsset, err = s.AttachPhotoFile(ctx, purgeAsset.ID, purgeAsset.Revision, purgeSidecar.ID, PhotoRoleSidecar, &purgeFile.ID)
-	require.NoError(t, err)
-	_, err = s.TrashPhotoAsset(ctx, purgeAsset.ID, purgeAsset.Revision)
-	require.NoError(t, err)
-	_, err = s.TrashEmpty(ctx, 0, true)
-	require.NoError(t, err)
-	purgedAsset, err := s.PhotoAssetByID(ctx, purgeAsset.ID)
-	require.NoError(t, err)
-	assert.Empty(t, purgedAsset.Files)
-	_, err = s.NodeByID(ctx, purgeSidecar.ID)
-	require.ErrorIs(t, err, ErrNotFound)
-}
-
 func TestPhotoImportNodeStates(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -650,37 +593,6 @@ func TestPhotoImportNodeStates(t *testing.T) {
 	_, err = s.NodeByID(ctx, directory.ID)
 	require.ErrorIs(t, err, ErrNotFound)
 	_, err = s.NodeByID(ctx, file.ID)
-	require.ErrorIs(t, err, ErrNotFound)
-}
-
-func TestPhotoImportVersionStates(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	image, err := s.CreateFile(ctx, s.RootID(), "versions.JPG", fakeHash("version-current"), 4, "image/jpeg")
-	require.NoError(t, err)
-	asset, err := s.PhotoAssetForNode(ctx, image.ID)
-	require.NoError(t, err)
-	original := image.CurrentVersionID
-	updated, replacement, err := s.ReplaceContent(ctx, image.ID, image.Revision, fakeHash("version-replacement"), 4, "image/jpeg")
-	require.NoError(t, err)
-	assert.Equal(t, asset.ID, mustPhotoAsset(t, s, image.ID).ID)
-	_, revert, source, err := s.RevertContent(ctx, image.ID, updated.Revision, original)
-	require.NoError(t, err)
-	assert.Equal(t, original, source.ID)
-	versions, total, err := s.ContentVersions(ctx, image.ID, 10, 0)
-	require.NoError(t, err)
-	assert.Equal(t, 3, total)
-	assert.Len(t, versions, 3)
-	assert.Equal(t, revert.ID, versions[0].ID)
-	assert.Equal(t, replacement.ID, versions[1].ID)
-	preview, err := s.PruneContentVersions(ctx, image.ID, updated.Revision+1, VersionPruneSelector{VersionIDs: []string{replacement.ID}}, false)
-	require.NoError(t, err)
-	assert.False(t, preview.Changed)
-	receipt, err := s.PruneContentVersions(ctx, image.ID, updated.Revision+1, VersionPruneSelector{VersionIDs: []string{replacement.ID}}, true)
-	require.NoError(t, err)
-	assert.True(t, receipt.Changed)
-	_, err = s.ContentVersionByID(ctx, replacement.ID)
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
