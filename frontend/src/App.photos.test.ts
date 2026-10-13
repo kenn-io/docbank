@@ -688,10 +688,10 @@ it.each(["failed", "revalidated"])("mounts a fresh scoped Map progressively afte
   }
   return Response.json({items:[],nodes:[],tags:[],profiles:[]});
  }));render(App);await screen.findByRole("button",{name:"Open Photo 1.jpg"});
- library!.baseQuery={...library!.baseQuery,filters:{gps_bounds:{south:"-1",west:"10",north:"1",east:"15"}}};await library!.selectDate("2024");
+ library!.baseQuery={...library!.baseQuery,text:"beach",sort:{field:"relevance",direction:"desc"},filters:{gps_bounds:{south:"-1",west:"10",north:"1",east:"15"}}};await library!.selectDate("2024");
  await fireEvent.click(screen.getByRole("button",{name:"Map"}));
  await waitFor(()=>expect(finish).toBeTypeOf("function"));await waitFor(()=>expect(map.props?.items.map(row=>row.asset_id)).toEqual(["photo-1"]));
- expect(queries.at(-1)).toMatchObject({projection:"map",query:{filters:{capture_after:"2024-01-01",capture_before:"2025-01-01",gps_bounds:{south:"-1",west:"10",north:"1",east:"15"}}}});
+ expect(queries.at(-1)).toMatchObject({projection:"map",query:{text:"beach",sort:{field:"capture_time",direction:"desc"},filters:{capture_after:"2024-01-01",capture_before:"2025-01-01",gps_bounds:{south:"-1",west:"10",north:"1",east:"15"}}}});
  if(outcome === "failed") {finish(Response.json({detail:"Page unavailable"},{status:503}));await screen.findByText("Page unavailable");expect(map.props?.items.map(row=>row.asset_id)).toEqual(["photo-1"]);retry=true;await fireEvent.click(screen.getByRole("button",{name:"Retry"}));}
  else finish(Response.json({items:[],map_items:[mapPhoto(2)],total:2}));
  await waitFor(()=>expect(map.props?.items).toHaveLength(2));

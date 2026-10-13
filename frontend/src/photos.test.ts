@@ -613,6 +613,22 @@ it("times each replacement page separately", async () => {
   photos.dispose();
 });
 
+it("accepts a refresh when the completed listing timeout expires during eligibility lookup", async () => {
+  const timer = new AbortController();
+  vi.spyOn(AbortSignal, "timeout").mockReturnValueOnce(timer.signal);
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1)]; photos.started = true;
+  photos.trashTargets = [photo(2)]; photos.selectLoaded(["photo-2"]);
+  const fetcher = vi.fn().mockResolvedValueOnce(response([{...photo(1),revision:2}]))
+    .mockImplementationOnce(async () => { timer.abort(new DOMException("Timed out", "TimeoutError")); return response([photo(2)]); });
+  stubPhotoFetch(fetcher);
+  expect(await photos.refresh()).toBe(true);
+  expect(photos.items[0].revision).toBe(2);
+  expect([...photos.selection.selectedIDs]).toEqual(["photo-2"]);
+  expect(photos.error).toBe("");
+  photos.dispose();
+});
+
 it.each([false, true].flatMap(hidden => ["success", "failure", "cancel"].map(outcome => ({ hidden, outcome }))))("revalidates off-prefix captured selections in bounded queries, hidden=$hidden outcome=$outcome", async ({ hidden, outcome }) => {
   const prefix = Array.from({ length: 250 }, (_, index) => photo(index + 1));
   const previous = prefix.map(item => ({ ...item, name: `Earlier ${item.name}` }));

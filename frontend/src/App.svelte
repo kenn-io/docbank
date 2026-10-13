@@ -331,7 +331,7 @@
     const state = photoState;
     if (!mapMode || !tiles.tile_url || !state) { mapPhotos = undefined; return; }
     const inherited = untrack(() => state.photos.query);
-    const photos = new Photos(webSession, handleFailure, false, { ...inherited, filters: { ...inherited.filters, gps_bounds: inherited.filters.gps_bounds ?? { south: "-90", west: "-180", north: "90", east: "180" } } }, "map");
+    const photos = new Photos(webSession, handleFailure, false, { ...inherited, sort: { field: "capture_time", direction: "desc" }, filters: { ...inherited.filters, gps_bounds: inherited.filters.gps_bounds ?? { south: "-90", west: "-180", north: "90", east: "180" } } }, "map");
     photos.date = untrack(() => state.photos.date);
     mapPhotos = photos;
     return () => photos.dispose();

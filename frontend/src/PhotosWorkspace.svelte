@@ -45,7 +45,7 @@
   let detailError = $state("");
   let detailLoading = $state(false);
   let reload = $state.raw<{id:string}>();
-  let consumedReload: typeof reload;
+  let consumedReload = $state.raw<typeof reload>();
   let reloadRevision = $state(0);
   let detailController: AbortController | undefined;
   const fromGrid = $derived(photos.viewerReturn?.contextID === photos.contextID);
@@ -66,11 +66,11 @@
     if (!explicit) { if (untrack(() => direct?.asset_id) !== id) direct = undefined; detailError = ""; }
     if (!explicit && fromGrid && listedDetail) { detailLoading = false; return () => controller.abort(); }
     detailLoading = true;
-    if (explicit) consumedReload = reload;
+    const request = reload;
     const version = untrack(() => current?.content_version_id);
     const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]);
-    void (explicit ? photos.reload(id, signal) : photos.lookup(id, signal)).then(photo => { if (!signal.aborted) { direct = photo; detailError = ""; if (explicit && photo.content_version_id === version) reloadRevision++; } }).catch(cause => { if (!controller.signal.aborted) detailError = cause instanceof Error ? cause.message : String(cause); }).finally(() => { if (!controller.signal.aborted) detailLoading = false; });
-    return () => controller.abort();
+    void (explicit ? photos.reload(id, signal) : photos.lookup(id, signal)).then(photo => { if (!signal.aborted) { direct = photo; detailError = ""; if (explicit) { if (photo.content_version_id === version) reloadRevision++; consumedReload = request; } } }).catch(cause => { if (!controller.signal.aborted) detailError = cause instanceof Error ? cause.message : String(cause); }).finally(() => { if (!controller.signal.aborted) detailLoading = false; });
+    return () => { controller.abort(); if (explicit) consumedReload = request; };
   });
   async function restoreGrid() {
     const record = photos.viewerReturn!;
@@ -130,7 +130,7 @@
     await photos.setHidden(id, preserve, onhidden, onactionerror, oninvalidate);
   }
   const groups = $derived(groupPhotos(shown, photos.query.sort?.field === "relevance" ? "relevance" : albumID && photos.query.sort?.field !== "capture_time" ? "flat" : photos.grouping));
-  // Albums keep their own scope and sort, and Map inherits Library's query, so search and filter counts live in Library and Hidden.
+  // Map keeps Library's text and filters, so search and filter counts live in Library and Hidden.
   const searchable = $derived(!albumID && !mapMode);
   const filtered = $derived(searchable && (Boolean(photos.baseQuery.text.trim()) || Object.values(photos.baseQuery.filters ?? {}).some(value => Array.isArray(value) ? value.length > 0 : value !== undefined && value !== false && value !== "")));
   const ordered = $derived(photos.items);

@@ -229,7 +229,6 @@ export class Photos {
         this.items = [...this.items, ...added];
         if (this.allResults) this.selection = { selectedIDs: new Set(this.items.map(item => item.asset_id)), anchorID: undefined };
         if (!this.started) this.total = page.total;
-        if (page.next_cursor && page.next_cursor === this.cursor) throw new Error("Photo paging did not advance. Refresh to keep browsing.");
         this.cursor = page.next_cursor;
         this.started = true;
         await restore?.();
@@ -458,7 +457,6 @@ export class Photos {
         staged.complete = !cursor || !this.projection && (mode === "date" || reachedPrefix && (mode === "refresh" || reachedPreviously));
       }
       const eligible = mode === "date" ? new Set(candidate.keys()) : await this.eligibleSelection(candidate.keys(), query, controller.signal);
-      if (signal.aborted) throw signal.reason;
       if (controller.signal.aborted) return false;
       const restore = mode === "date" ? undefined : preserve?.();
       this.items = [...candidate.values()];

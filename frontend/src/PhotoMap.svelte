@@ -12,6 +12,7 @@
   let map: L.Map | undefined;
   let cluster: L.MarkerClusterGroup | undefined;
   let frame: number | undefined;
+  let tileError = $state(false);
   const markers = new Map<string, L.Marker>();
   function cancelBuild() { if (frame !== undefined) L.Util.cancelAnimFrame(frame); frame = undefined; }
   function visible() {
@@ -64,7 +65,7 @@
     const bounds: L.LatLngBoundsExpression = [[-90,-180],[90,180]];
     map = L.map(container, { maxZoom: tiles.max_zoom, maxBounds: bounds, maxBoundsViscosity: 1 }).setView(view ? [view.lat, view.lng] : [20,0], view?.zoom ?? 2);
     const attribution = document.createElement("span"); attribution.textContent = tiles.attribution;
-    L.tileLayer(tiles.tile_url, { attribution: attribution.innerHTML, maxZoom: tiles.max_zoom, noWrap: true, bounds }).addTo(map);
+    L.tileLayer(tiles.tile_url, { attribution: attribution.innerHTML, maxZoom: tiles.max_zoom, noWrap: true, bounds }).on("tileerror", () => { tileError = true; }).addTo(map);
     cluster = L.markerClusterGroup({ showCoverageOnHover: false, iconCreateFunction: group => L.divIcon({ className: "photo-map-cluster", html: String(group.getChildCount()), iconSize: [36,36] }) });
     cluster.on("clusterkeypress", event => {
       if ("originalEvent" in event && event.originalEvent instanceof KeyboardEvent && event.originalEvent.key === " ") { event.originalEvent.preventDefault(); cluster?.fire("click", event); }
@@ -75,8 +76,10 @@
     return () => { cancelBuild(); observer.disconnect(); map?.remove(); map = undefined; cluster = undefined; markers.clear(); };
   });
 </script>
+{#if tileError}<div class="photo-error" role="alert">Map tiles from {new URL(tiles.tile_url).host} couldn't load. Check [web.map_tiles], then restart Docbank.</div>{/if}
 <div bind:this={container} class="photo-map" aria-label="Photo map"></div>
 <style>
+  .photo-error { position: absolute; z-index: 1; padding: var(--space-3) var(--space-5); color: var(--text-primary); background: var(--bg-inset); }
   .photo-map { height: 100%; width: 100%; z-index: 0; }
   :global(.photo-map-dot) { background: var(--accent-blue); border: 2px solid white; border-radius: 50%; }
   :global(.photo-map-cluster) { display: flex; align-items: center; justify-content: center; border-radius: 50%; color: var(--text-primary); background: var(--bg-surface); border: 2px solid var(--accent-blue); font-weight: 600; }

@@ -763,7 +763,7 @@ it("reopens the map where it was after a remount", async () => {
 function openMapViewerSetup() {
  vi.stubGlobal("ResizeObserver",class {observe() {} disconnect() {}});
  vi.spyOn(HTMLElement.prototype,"clientWidth","get").mockReturnValue(1000);vi.spyOn(HTMLElement.prototype,"clientHeight","get").mockReturnValue(800);
- const photos=new Photos("scoped",vi.fn());photos.items=[mapPhoto(1),mapPhoto(2)];photos.total=2;photos.started=true;vi.spyOn(photos,"resume").mockResolvedValue();
+ const photos=new Photos("scoped",vi.fn(),false,photoQuery,"map");photos.items=[mapPhoto(1),mapPhoto(2)];photos.total=2;photos.started=true;vi.spyOn(photos,"resume").mockResolvedValue();
  const lookup=vi.spyOn(photos,"lookup").mockResolvedValue(photo(1));const preview=vi.spyOn(photos,"preview").mockResolvedValue({state:"unsupported"});
  const props={photos,mapMode:true,tiles:{tile_url:"https://tiles.example.org/{z}/{x}/{y}",attribution:"Example",max_zoom:19},cache:{get:vi.fn()} as unknown as PhotoPreviewCache,photoID:"",onphotochange:vi.fn()};
  return {photos,lookup,preview,props,view:render(PhotosWorkspace,props)};
@@ -787,10 +787,25 @@ it("revalidates the open Map photo on each list refresh without clearing it", as
 });
 it("finishes a Map reload that advances the photo revision", async () => {
  const setup=openMapViewerSetup();const {photos,lookup,preview}=setup;
+ stubPhotoFetch(vi.fn(async()=>Response.json({items:[],map_items:[{...mapPhoto(1),revision:2}],total:1})));
  preview.mockRejectedValueOnce(new APIError("Photo changed",409,"photo_display_changed"));await openMapViewer(setup);
- await screen.findByText("Photo changed");lookup.mockResolvedValueOnce({...photo(1),revision:2});
+ await screen.findByText("Photo changed");lookup.mockImplementation(async id=>id==="photo-1"?{...photo(1),revision:2}:photo(2));
  await fireEvent.click(screen.getByRole("button",{name:"Reload photo"}));
- await waitFor(()=>expect(preview).toHaveBeenCalledTimes(2));expect(screen.queryByText("Photo changed")).toBeNull();
+ await waitFor(()=>expect(preview.mock.calls.filter(([row])=>row.asset_id==="photo-1")).toHaveLength(2));expect(screen.queryByText("Photo changed")).toBeNull();
+ photos.dispose();
+});
+
+it("revalidates the open Map photo after a reload and a list refresh", async () => {
+ const setup=openMapViewerSetup();const {photos,lookup,preview}=setup;
+ stubPhotoFetch(vi.fn(async()=>Response.json({items:[],map_items:[{...mapPhoto(1),revision:2}],total:1})));
+ preview.mockImplementation(async row=>{if(row.revision===1)throw new APIError("Photo changed",409,"photo_display_changed");return {state:"unsupported"};});
+ await openMapViewer(setup);await screen.findByText("Photo changed");lookup.mockResolvedValue({...photo(1),revision:2});
+ await fireEvent.click(screen.getByRole("button",{name:"Reload photo"}));
+ await waitFor(()=>expect(preview).toHaveBeenCalledWith(expect.objectContaining({revision:2}),"fit",expect.any(AbortSignal)));
+ lookup.mockResolvedValue({...photo(1),revision:3,name:"Refreshed photo.jpg",content_version_id:"refreshed-version"});
+ await photos.refresh();
+ await screen.findByRole("dialog",{name:"Photo viewer, Refreshed photo.jpg"});
+ await waitFor(()=>expect(preview).toHaveBeenCalledWith(expect.objectContaining({content_version_id:"refreshed-version"}),"fit",expect.any(AbortSignal)));
  photos.dispose();
 });
 
