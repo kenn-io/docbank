@@ -110,6 +110,12 @@ func TestBrowserJobListRedactsPrivateBackendErrors(t *testing.T) {
 		time.Now().Add(time.Hour),
 	))
 
+	photoImport, err := live.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport, `{"source_root":"/private/camera","destination":"/photos"}`)
+	require.NoError(t, err)
+	_, err = live.ClaimStorageOperation(t.Context(), photoImport.ID)
+	require.NoError(t, err)
+	require.NoError(t, live.FinishStorageOperation(t.Context(), photoImport.ID, store.StorageOperationFailed, "{}", privateFailure, time.Time{}))
+
 	resp, body := get(t, ts, "/api/v1/jobs", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	assert.Contains(t, body, privateFailure)
@@ -130,8 +136,13 @@ func TestBrowserJobListRedactsPrivateBackendErrors(t *testing.T) {
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	var got api.JobList
 	require.NoError(t, json.UnmarshalRead(resp.Body, &got))
-	require.Len(t, got.Items, 1)
-	assert.NotEmpty(t, got.Items[0].Error)
-	assert.NotContains(t, got.Items[0].Error, "/Users/example")
-	assert.NotContains(t, got.Items[0].Error, "private.example.invalid")
+	require.Len(t, got.Items, 2)
+	var operationIDs []string
+	for _, job := range got.Items {
+		operationIDs = append(operationIDs, job.OperationID)
+		assert.NotEmpty(t, job.Error)
+		assert.NotContains(t, job.Error, "/Users/example")
+		assert.NotContains(t, job.Error, "private.example.invalid")
+	}
+	assert.ElementsMatch(t, []string{operation.ID, photoImport.ID}, operationIDs)
 }

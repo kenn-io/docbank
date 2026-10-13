@@ -24,8 +24,12 @@ func TestPhotoImportGrouping(t *testing.T) {
 		{Path: filepath.Join(root, "IMG_0001.MP4"), Kind: store.PhotoSourceVideo},
 	})
 	require.Len(t, grouped, 2)
-	assert.Len(t, grouped[0].Members, 3)
-	assert.Len(t, grouped[1].Members, 1)
+	assert.ElementsMatch(t, []PhotoImportCandidate{
+		{Path: filepath.Join(root, "IMG_0001.ARW"), Kind: store.PhotoSourceRAW},
+		{Path: filepath.Join(root, "IMG_0001.JPG"), Kind: store.PhotoSourceImage},
+		{Path: filepath.Join(root, "IMG_0001.XMP"), Kind: store.PhotoSourceSidecar},
+	}, grouped[0].Members)
+	assert.Equal(t, []PhotoImportCandidate{{Path: filepath.Join(root, "IMG_0001.MP4"), Kind: store.PhotoSourceVideo}}, grouped[1].Members)
 }
 
 func TestPhotoImportAmbiguity(t *testing.T) {
@@ -257,69 +261,60 @@ func TestPhotoImportSettlesOnceOutsideTheGate(t *testing.T) {
 	}
 	assert.Less(t, elapsed-held, 6*interval)
 }
-func TestPhotoImportRunnerHonorsCancelAfterLastGroup(t *testing.T) {
-	ing := newTestIngester(t)
-	root := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(root, "IMG_0.JPG"), []byte("jpeg"), 0o600))
-	operation, err := ing.Store.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport,
-		fmt.Sprintf(`{"source_root":%q,"destination":"/photos"}`, root))
-	require.NoError(t, err)
-	runner := PhotoImportRunner{Ingester: ing}
-	calls := 0
-	// The second gated call commits the only group; a cancel right after it races the finish.
-	runner.Options.Mutate = func(ctx context.Context, fn func() error) error {
-		if err := fn(); err != nil {
-			return err
-		}
-		calls++
-		if calls == 2 {
-			return ing.Store.RequestStorageOperationCancel(ctx, operation.ID)
-		}
-		return nil
-	}
-	require.NoError(t, runner.Run(t.Context(), operation.ID))
-	finished, err := ing.Store.StorageOperation(t.Context(), operation.ID)
-	require.NoError(t, err)
-	assert.Equal(t, store.StorageOperationCancelled, finished.State)
-	assert.Equal(t, int64(1), finished.CompletedObjects)
-}
-
 func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
-	ing := newTestIngester(t)
-	root := t.TempDir()
-	for i := range 3 {
-		require.NoError(t, os.WriteFile(filepath.Join(root, fmt.Sprintf("IMG_%d.JPG", i)), []byte(fmt.Sprint("jpeg-", i)), 0o600))
+	for _, interruption := range []string{"before work", "after final group", "shutdown and resume"} {
+		t.Run(interruption, func(t *testing.T) {
+			ing := newTestIngester(t)
+			root := t.TempDir()
+			for i := range 3 {
+				require.NoError(t, os.WriteFile(filepath.Join(root, fmt.Sprintf("IMG_%d.JPG", i)), []byte(fmt.Sprint("jpeg-", i)), 0o600))
+			}
+			operation, err := ing.Store.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport,
+				fmt.Sprintf(`{"source_root":%q,"destination":"/photos"}`, root))
+			require.NoError(t, err)
+			runner := PhotoImportRunner{Ingester: ing}
+			switch interruption {
+			case "before work":
+				require.NoError(t, ing.Store.RequestStorageOperationCancel(t.Context(), operation.ID))
+			case "after final group":
+				runner.Options.Mutate = func(ctx context.Context, fn func() error) error {
+					if err := fn(); err != nil {
+						return err
+					}
+					if _, err := ing.Store.NodeByPath(ctx, "/photos/IMG_2.JPG"); err == nil {
+						return ing.Store.RequestStorageOperationCancel(ctx, operation.ID)
+					}
+					return nil
+				}
+			case "shutdown and resume":
+				stopped, stop := context.WithCancel(t.Context())
+				shutdown := runner
+				shutdown.Options.Mutate = func(ctx context.Context, _ func() error) error {
+					stop()
+					return ctx.Err()
+				}
+				require.ErrorIs(t, shutdown.Run(stopped, operation.ID), context.Canceled)
+				resumable, err := ing.Store.ResumableStorageOperations(t.Context())
+				require.NoError(t, err)
+				require.Len(t, resumable, 1)
+				assert.Equal(t, store.StorageOperationRunning, resumable[0].State)
+			}
+			require.NoError(t, runner.Run(t.Context(), operation.ID))
+			finished, err := ing.Store.StorageOperation(t.Context(), operation.ID)
+			require.NoError(t, err)
+			switch interruption {
+			case "before work":
+				assert.Equal(t, store.StorageOperationCancelled, finished.State)
+				assert.Zero(t, finished.CompletedObjects)
+			case "after final group":
+				assert.Equal(t, store.StorageOperationCancelled, finished.State)
+				assert.Equal(t, int64(3), finished.CompletedObjects)
+			case "shutdown and resume":
+				assert.Equal(t, store.StorageOperationCompleted, finished.State)
+				assert.Equal(t, int64(3), finished.TotalObjects)
+				assert.Equal(t, int64(3), finished.CompletedObjects)
+				assert.JSONEq(t, `{"added":3,"skipped":0,"changed":0,"failed":0,"ambiguous":0,"unsupported":0}`, finished.ReceiptJSON)
+			}
+		})
 	}
-	request := fmt.Sprintf(`{"source_root":%q,"destination":"/photos"}`, root)
-	runner := PhotoImportRunner{Ingester: ing}
-
-	stopped, stop := context.WithCancel(t.Context())
-	shutdown := runner
-	shutdown.Options.Mutate = func(ctx context.Context, _ func() error) error {
-		stop()
-		return ctx.Err()
-	}
-	interrupted, err := ing.Store.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport, request)
-	require.NoError(t, err)
-	require.ErrorIs(t, shutdown.Run(stopped, interrupted.ID), context.Canceled)
-	resumable, err := ing.Store.ResumableStorageOperations(t.Context())
-	require.NoError(t, err)
-	require.Len(t, resumable, 1)
-	assert.Equal(t, store.StorageOperationRunning, resumable[0].State)
-	require.NoError(t, runner.Run(t.Context(), interrupted.ID))
-	completed, err := ing.Store.StorageOperation(t.Context(), interrupted.ID)
-	require.NoError(t, err)
-	assert.Equal(t, store.StorageOperationCompleted, completed.State)
-	assert.Equal(t, int64(3), completed.TotalObjects)
-	assert.Equal(t, int64(3), completed.CompletedObjects)
-	assert.JSONEq(t, `{"added":3,"skipped":0,"changed":0,"failed":0,"ambiguous":0,"unsupported":0}`, completed.ReceiptJSON)
-
-	cancelled, err := ing.Store.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport, request)
-	require.NoError(t, err)
-	require.NoError(t, ing.Store.RequestStorageOperationCancel(t.Context(), cancelled.ID))
-	require.NoError(t, runner.Run(t.Context(), cancelled.ID))
-	finished, err := ing.Store.StorageOperation(t.Context(), cancelled.ID)
-	require.NoError(t, err)
-	assert.Equal(t, store.StorageOperationCancelled, finished.State)
-	assert.Zero(t, finished.CompletedObjects)
 }

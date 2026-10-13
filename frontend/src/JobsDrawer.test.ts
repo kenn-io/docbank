@@ -259,12 +259,26 @@ describe("background jobs drawer", () => {
     ).toBe(true);
     const write = fetchSpy.mock.calls.find(([, options]) => options?.method === "PUT")!;
     expect(JSON.parse(String(write[1]?.body))).toEqual({ paused: false, concurrency: 3 });
-    complete(jobsResponse([]));
+    worker.concurrency = 3;
+    worker.control_revision = 2;
+    complete(
+      new Response(
+        JSON.stringify({
+          lane: "derive:visual-previews",
+          paused: false,
+          concurrency: 3,
+          revision: 2,
+          can_set_concurrency: true,
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      ),
+    );
     await waitFor(() =>
       expect(
         screen.getByRole("button", { name: "Pause Visual previews" }).hasAttribute("disabled"),
       ).toBe(false),
     );
+    expect(screen.getByRole("combobox", { name: "Concurrency Visual previews: 3 workers" })).toBeTruthy();
   });
 
   it("distinguishes running work from a terminal failure", async () => {

@@ -162,9 +162,6 @@ func TestPhotoImportJobsReceiptRedactsBrowserSession(t *testing.T) {
 	assert.Contains(t, body, "private error")
 
 	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
-	response, body = do(t, ts, http.MethodGet, "/api/v1/jobs", browser, nil)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	assert.NotContains(t, body, "private")
 	response, body = do(t, ts, http.MethodGet, "/api/v1/jobs/"+failed.ID, browser, nil)
 	assert.Equal(t, http.StatusForbidden, response.StatusCode, body)
 	response, body = do(t, ts, http.MethodPost, "/api/v1/jobs/"+running.ID+"/cancel?force=1", browser, nil)
