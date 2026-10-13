@@ -12,7 +12,10 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
-type photoSource struct{ identity, path, asset, target string }
+type photoSource struct {
+	identity, path, asset, target string
+	trashed                       bool
+}
 
 func backfillPhotoSourcesTx(ctx context.Context, tx *sql.Tx) error {
 	sources, err := photoSourcesTx(ctx, tx, "", false)
@@ -32,7 +35,7 @@ func backfillPhotoSourcesTx(ctx context.Context, tx *sql.Tx) error {
 func photoSourcesTx(ctx context.Context, tx *sql.Tx, assets string, checkout bool) (map[string]photoSource, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT COALESCE(f.asset_id,CAST(f.node_id AS TEXT)),f.file_id,COALESCE(p.identity,''),COALESCE(p.ingest_id,''),COALESCE(p.original_path,n.name),
  COALESCE((SELECT MIN(b.observed_at) FROM provenance_version_bindings b WHERE b.provenance_identity=p.identity),i.started_at,'' ) AS observed,
- (SELECT COUNT(*) FROM photo_files member WHERE member.asset_id=f.asset_id OR member.node_id=f.node_id),COALESCE(f.source_provenance_identity,''),COALESCE(f.sidecar_of_file_id,'')
+ (SELECT COUNT(*) FROM photo_files member WHERE member.asset_id=f.asset_id OR member.node_id=f.node_id),COALESCE(f.source_provenance_identity,''),COALESCE(f.sidecar_of_file_id,''),n.trashed_at IS NOT NULL
  FROM photo_files f JOIN nodes n ON n.id=f.node_id LEFT JOIN provenance p ON p.node_id=f.node_id
  AND EXISTS(SELECT 1 FROM ingests origin WHERE origin.id=p.ingest_id AND origin.source_kind NOT LIKE 'embedded:%')
  AND (p.identity=f.source_provenance_identity OR NOT EXISTS(SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity))
@@ -53,7 +56,7 @@ func photoSourcesTx(ctx context.Context, tx *sql.Tx, assets string, checkout boo
 		var source photoSource
 		var file, ingest, observed, fixed string
 		var members int
-		if err := rows.Scan(&source.asset, &file, &source.identity, &ingest, &source.path, &observed, &members, &fixed, &source.target); err != nil {
+		if err := rows.Scan(&source.asset, &file, &source.identity, &ingest, &source.path, &observed, &members, &fixed, &source.target, &source.trashed); err != nil {
 			return nil, err
 		}
 		source.path = normalizePhotoSourcePath(source.path)
@@ -94,24 +97,57 @@ func photoSourcesTx(ctx context.Context, tx *sql.Tx, assets string, checkout boo
 		a, b := ordered[i], ordered[j]
 		return a.agreement > b.agreement || a.agreement == b.agreement && (a.observed < b.observed || a.observed == b.observed && a.key < b.key)
 	})
-	complete, paired := map[string]bool{}, map[string]bool{}
+	complete := map[string]bool{}
+	byFile := map[string][]*group{}
 	for _, g := range ordered {
+		for file := range g.refs {
+			byFile[file] = append(byFile[file], g)
+		}
 		if len(g.refs) == g.members && !complete[g.asset] {
 			complete[g.asset] = true
 			maps.Copy(sources, g.refs)
 		}
 	}
 	if checkout {
-		for _, g := range ordered {
-			for file, source := range g.refs {
-				if source.target != "" && !complete[g.asset] && !paired[file] && g.refs[source.target].identity != "" && photoSourcePairMatches(source.path, g.refs[source.target].path) {
-					sources[file], sources[source.target], paired[file] = source, g.refs[source.target], true
-				}
+		companions := map[string][]string{}
+		for file, source := range sources {
+			if source.target != "" && !source.trashed {
+				companions[source.target] = append(companions[source.target], file)
 			}
 		}
-		for file, source := range sources {
-			if source.target != "" && !photoSourcePairMatches(source.path, sources[source.target].path) {
-				return nil, fmt.Errorf("%w: incompatible source names for file %s and target %s in asset %s", ErrInvalidPhotoCheckout, file, source.target, source.asset)
+		for target, files := range companions {
+			sort.Strings(files)
+			candidates := []photoSource{sources[target]}
+			for _, g := range byFile[target] {
+				candidates = append(candidates, g.refs[target])
+			}
+			resolved := false
+			for _, candidate := range candidates {
+				choices := map[string]photoSource{}
+				for _, file := range files {
+					source := sources[file]
+					if !photoSourcePairMatches(source.path, candidate.path) {
+						for _, g := range byFile[file] {
+							observed := g.refs[target]
+							if observed.identity != "" && strings.EqualFold(norm.NFC.String(path.Base(observed.path)), norm.NFC.String(path.Base(candidate.path))) && photoSourcePairMatches(g.refs[file].path, candidate.path) {
+								source = g.refs[file]
+								break
+							}
+						}
+					}
+					if photoSourcePairMatches(source.path, candidate.path) {
+						choices[file] = source
+					}
+				}
+				if len(choices) == len(files) {
+					sources[target] = candidate
+					maps.Copy(sources, choices)
+					resolved = true
+					break
+				}
+			}
+			if !resolved {
+				return nil, fmt.Errorf("%w: incompatible source names for file %s and target %s in asset %s", ErrInvalidPhotoCheckout, files[0], target, sources[target].asset)
 			}
 		}
 	}

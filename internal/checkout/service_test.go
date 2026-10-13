@@ -2,6 +2,7 @@ package checkout
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -418,7 +419,7 @@ func TestCheckoutAdmissionRetryKeepsPartialCopies(t *testing.T) {
 		admissions++
 		require.Zero(t, inflight)
 		if admissions == 1 || admissions == 4 {
-			return false, store.ErrLaneControl
+			return false, errors.New("reading storage operation: database is locked")
 		}
 		return false, nil
 	}
