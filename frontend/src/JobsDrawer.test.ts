@@ -400,7 +400,7 @@ describe("background jobs drawer", () => {
         },
       ];
       const group = vi.spyOn(jobs, "jobLanes").mockReturnValue(preparedLanes);
-      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => jobsResponse(items, []));
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ items, lane_controls_error: "Lane controls are unavailable" }), { headers: { "Content-Type": "application/json" } }));
 
       render(JobsDrawer, {
         session: "short-lived",
@@ -409,6 +409,7 @@ describe("background jobs drawer", () => {
       });
 
       await vi.advanceTimersByTimeAsync(0);
+      expect((await screen.findByRole("alert")).textContent).toBe("Lane controls are unavailable");
       const progress = await screen.findByRole("progressbar", { name: "Photo import progress" });
       await waitFor(() => expect(group).toHaveBeenCalledWith(items, []));
       expect(progress.getAttribute("aria-valuenow")).toBe("75");

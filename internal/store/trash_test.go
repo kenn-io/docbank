@@ -415,7 +415,7 @@ func TestVaultEmptyTrashBoundedStore(t *testing.T) {
 				_, _, err = s.Trash(ctx, node.ID, UnconditionalRev)
 				require.NoError(t, err)
 			}
-			recent, err := s.TrashEmptyBounded(ctx, time.Hour, test.limit, false)
+			recent, err := s.TrashEmpty(ctx, time.Hour, false)
 			require.NoError(t, err)
 			assert.Equal(t, TrashEmptyResult{}, recent)
 			for remaining := test.total; remaining > 0; remaining -= test.limit {

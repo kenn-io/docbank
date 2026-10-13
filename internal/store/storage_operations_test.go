@@ -73,6 +73,7 @@ func TestStorageOperationPersistsProgressAndCancellation(t *testing.T) {
 				assert.Equal(t, progressReceipt, current.ReceiptJSON)
 			}
 			assert.Equal(t, cursor, current.Cursor)
+			assert.Equal(t, copied, current.CopiedObjects)
 			assert.Equal(t, int64(1), current.CompletedObjects)
 			assert.Equal(t, copiedBytes, current.CopiedBytes)
 			assert.Equal(t, kind != "completed", current.CancelRequested)
