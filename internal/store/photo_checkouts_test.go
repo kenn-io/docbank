@@ -281,11 +281,9 @@ func TestPhotoCheckoutFreezesGroupedSourcePaths(t *testing.T) {
 	entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
 	require.NoError(t, err)
 	require.Len(t, entries, 3)
-	for _, entry := range entries {
-		require.True(t, strings.HasPrefix(entry.Path, "2024/01/02/"+result.Asset.ID+"/"))
-	}
 	names := []string{}
 	for _, e := range entries {
+		require.True(t, strings.HasPrefix(e.Path, "2024/01/02/"+result.Asset.ID+"/"))
 		names = append(names, filepath.Base(e.Path))
 	}
 	require.ElementsMatch(t, []string{"IMG.ARW", "IMG.JPG", "IMG.ARW.XMP"}, names)
@@ -372,6 +370,70 @@ func TestPhotoSourceMetadataRestoreAndMissingIdentityBackfill(t *testing.T) {
 			require.NoError(t, restored.db.QueryRowContext(ctx, `SELECT source_provenance_identity FROM photo_files WHERE file_id=?`, file.ID).Scan(&storedSource))
 			require.Equal(t, want, storedSource, "%s: %s", variant, file.ID)
 		}
+	}
+}
+
+func TestPhotoCheckoutResolvesCompanionSources(t *testing.T) {
+	t.Parallel()
+	for _, scenario := range []string{"separate legacy ingests", "renamed duplicate", "conflicting pair"} {
+		t.Run(scenario, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			source := t.TempDir()
+			run, err := s.BeginIngest(ctx, "photo-import", source)
+			require.NoError(t, err)
+			raw := photoImportTestMember(filepath.Join(source, "IMG.ARW"), PhotoRoleRAW, browseHash("raw"), "image/x-sony-arw")
+			result, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(raw, photoImportTestMember(filepath.Join(source, "IMG.JPG"), PhotoRoleImage, browseHash("jpeg"), "image/jpeg")))
+			require.NoError(t, err)
+			run, err = s.BeginIngest(ctx, "photo-import", source)
+			require.NoError(t, err)
+			name := "RENAMED.ARW"
+			if scenario != "renamed duplicate" {
+				name = "IMG.ARW"
+				sidecarName := name + ".XMP"
+				if scenario == "conflicting pair" {
+					sidecarName = "unrelated.XMP"
+				}
+				node, err := s.IngestFileExact(ctx, run, s.RootID(), sidecarName, browseHash("sidecar"), 20, "application/rdf+xml", filepath.Join(source, sidecarName), "")
+				require.NoError(t, err)
+				target := fileByRole(result.Asset.Files, PhotoRoleRAW).ID
+				result.Asset, err = s.AttachPhotoFile(ctx, result.Asset.ID, result.Asset.Revision, node.ID, PhotoRoleSidecar, &target)
+				require.NoError(t, err)
+			} else {
+				raw.OriginalPath, raw.Name = filepath.Join(source, name), name
+				result, err = s.IngestPhotoGroup(ctx, run, photoImportTestGroup(raw, photoImportTestMember(filepath.Join(source, name+".XMP"), PhotoRoleSidecar, browseHash("sidecar"), "application/rdf+xml")))
+				require.NoError(t, err)
+			}
+			for i, file := range result.Asset.Files {
+				node, err := s.NodeByID(ctx, file.NodeID)
+				require.NoError(t, err)
+				_, _, err = s.Move(ctx, node.ID, s.RootID(), fmt.Sprintf("virtual-%d.dat", i), node.Revision)
+				require.NoError(t, err)
+			}
+			if scenario == "separate legacy ingests" {
+				_, err = s.db.ExecContext(ctx, `UPDATE photo_files SET source_provenance_identity=NULL WHERE asset_id=?`, result.Asset.ID)
+				require.NoError(t, err)
+				var backup bytes.Buffer
+				require.NoError(t, s.ExportMetadata(ctx, &backup))
+				s = newTestStore(t)
+				require.NoError(t, s.ImportMetadata(ctx, bytes.NewReader(backup.Bytes())))
+			}
+			checkout, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "checkout", 0)
+			if scenario == "conflicting pair" {
+				require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
+				require.Contains(t, err.Error(), result.Asset.ID)
+				require.Contains(t, err.Error(), fileByRole(result.Asset.Files, PhotoRoleSidecar).ID)
+				checkouts, err := s.ListPhotoCheckouts(ctx)
+				require.NoError(t, err)
+				require.Empty(t, checkouts)
+				return
+			}
+			require.NoError(t, err)
+			entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
+			require.NoError(t, err)
+			require.Len(t, entries, 3)
+			require.ElementsMatch(t, []string{name, name + ".XMP", "IMG.JPG"}, []string{filepath.Base(entries[0].Path), filepath.Base(entries[1].Path), filepath.Base(entries[2].Path)})
+		})
 	}
 }
 

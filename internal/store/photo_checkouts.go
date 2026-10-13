@@ -156,7 +156,11 @@ func (s *Store) checkoutEntriesTx(ctx context.Context, tx *sql.Tx, selection Pho
 	if err != nil {
 		return nil, estimate, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT f.file_id,f.asset_id,v.version_id,v.blob_hash,v.size,n.name,COALESCE(`+photoOriginalPathSQL+`,''),COALESCE(p.capture_date,'')
+	sources, err := photoSourcesTx(ctx, tx, string(encodedIDs), true)
+	if err != nil {
+		return nil, estimate, err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT f.file_id,f.asset_id,v.version_id,v.blob_hash,v.size,n.name,COALESCE(p.capture_date,'')
  FROM photo_files f JOIN nodes n ON n.id=f.node_id JOIN content_versions v ON v.version_id=n.current_version_id
  JOIN photo_assets a ON a.asset_id=f.asset_id JOIN photo_files display ON display.file_id=a.display_file_id
  JOIN nodes display_node ON display_node.id=display.node_id JOIN content_versions display_version ON display_version.version_id=display_node.current_version_id
@@ -168,14 +172,13 @@ func (s *Store) checkoutEntriesTx(ctx context.Context, tx *sql.Tx, selection Pho
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var entry PhotoCheckoutEntry
-		var name, originalPath, date string
-		if err := rows.Scan(&entry.FileID, &entry.AssetID, &entry.VersionID, &entry.Hash, &entry.Size, &name, &originalPath, &date); err != nil {
+		var name, date string
+		if err := rows.Scan(&entry.FileID, &entry.AssetID, &entry.VersionID, &entry.Hash, &entry.Size, &name, &date); err != nil {
 			_ = rows.Close()
 			return nil, estimate, err
 		}
-		if originalPath != "" {
-			originalPath = normalizePhotoSourcePath(originalPath)
-			name = path.Base(originalPath)
+		if source := sources[entry.FileID]; source.path != "" {
+			name = path.Base(source.path)
 		}
 		if entry.Size < 0 || entry.Size > math.MaxInt64-estimate.Bytes {
 			_ = rows.Close()
