@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"net/netip"
 	"net/url"
 	"strconv"
@@ -182,12 +183,17 @@ func TestMistralEmbeddingAttemptTimeoutsThroughProductionTransport(t *testing.T)
 			}))
 			profile := testEmbeddingProfile(t)
 			profile.Endpoint, profile.EgressPolicy = endpoint, egress
-			profile.RequestTimeout, profile.MaxRetries = 5*time.Second, 1
+			profile.RequestTimeout, profile.MaxRetries = 2*time.Second, 1
 			recomputeMistralEmbeddingProfile(t, &profile)
 			provider, err := newMistralEmbeddingTestProvider(t, profile, embeddingSecretMap{"credential:mistral-embed": "synthetic-secret"}, resolver)
 			require.NoError(t, err)
-			_, err = provider.Embed(t.Context(), []document.EmbeddingInput{{Key: "first", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: "first"}}, embeddingAuthorization(profile.Descriptor))
+			var responseStarted atomic.Bool
+			ctx := httptrace.WithClientTrace(t.Context(), &httptrace.ClientTrace{
+				GotFirstResponseByte: func() { responseStarted.Store(true) },
+			})
+			_, err = provider.Embed(ctx, []document.EmbeddingInput{{Key: "first", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: "first"}}, embeddingAuthorization(profile.Descriptor))
 			require.True(t, reached.Load(), "attempt timed out before reaching the %s stage", stage)
+			require.Equal(t, stage == "body", responseStarted.Load())
 			require.ErrorIs(t, err, ErrTransientResponse)
 			require.ErrorIs(t, err, context.DeadlineExceeded)
 			require.Equal(t, RequestMetrics{Requests: 1}, withoutLatency(MetricsFromError(err)))
