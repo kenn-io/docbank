@@ -70,7 +70,7 @@
       if ("originalEvent" in event && event.originalEvent instanceof KeyboardEvent && event.originalEvent.key === " ") { event.originalEvent.preventDefault(); cluster?.fire("click", event); }
     });
     cluster.addTo(map); build();
-    map.on("moveend", () => { visible(); const center = map!.getCenter(); onview?.({ lat: center.lat, lng: center.lng, zoom: map!.getZoom() }); });
+    map.on("moveend", () => { if (!map) return; visible(); const center = map.getCenter(); onview?.({ lat: center.lat, lng: center.lng, zoom: map.getZoom() }); });
     const observer = new ResizeObserver(() => { if (container.clientWidth && container.clientHeight) map?.invalidateSize(); }); observer.observe(container);
     return () => { cancelBuild(); observer.disconnect(); map?.remove(); map = undefined; cluster = undefined; markers.clear(); };
   });

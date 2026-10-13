@@ -46,6 +46,7 @@ it("restores and reports the map view", () => {
  expect(mocks.map.setView).toHaveBeenCalledWith([5,6],7);
  const moved = mocks.map.on.mock.calls.find(([name]) => name === "moveend")![1]; moved();
  expect(onview).toHaveBeenCalledWith({lat:10,lng:20,zoom:0});
+ onview.mockClear();cleanup();expect(()=>moved()).not.toThrow();expect(onview).not.toHaveBeenCalled();
 });
 it("restores focus to a visible parent or the map without moving it", () => {
  const second=located(2);const {view}=setup([second]);frame();const child=mocks.marker.mock.results[0]!.value;
