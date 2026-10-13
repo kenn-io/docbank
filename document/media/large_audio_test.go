@@ -54,7 +54,7 @@ func TestAudioCeilingIncludesM4AIdentities(t *testing.T) {
 	}
 	require.Equal(t, int64(1<<30), media.InspectionSourceByteCeiling("image.png", "image/png"))
 	require.Equal(t, int64(1<<30), media.InspectionSourceByteCeiling("video.mp4", "video/mp4"))
-	require.Equal(t, int64(20<<20), media.MaxBytes)
+	require.Equal(t, media.MaxBytes, int64(20<<20))
 }
 
 func TestAudioFourGiBPolicyKeepsDocumentBounds(t *testing.T) {

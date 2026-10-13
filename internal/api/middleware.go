@@ -46,8 +46,11 @@ func (ctx requestTimeoutParentContext) Value(key any) any {
 func withoutRequestTimeout(ctx context.Context) (context.Context, func(), error) {
 	noop := func() {}
 	parent, ok := ctx.Value(requestTimeoutParentKey{}).(context.Context)
-	if !ok || ctx.Err() != nil {
+	if !ok {
 		return ctx, noop, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return ctx, noop, err
 	}
 	if controller, ok := ctx.Value(requestTimeoutControllerKey{}).(*http.ResponseController); ok {
 		if err := controller.SetReadDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {

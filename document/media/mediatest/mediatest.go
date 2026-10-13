@@ -340,13 +340,13 @@ func SizedWAV(size int64) io.Reader {
 		panic("invalid synthetic WAV size")
 	}
 	header := WAV()[:44]
-	binary.LittleEndian.PutUint32(header[4:8], uint32(size-8)) //nolint:gosec // size <= 4 GiB.
+	binary.LittleEndian.PutUint32(header[4:8], uint32(size-8))
 	binary.LittleEndian.PutUint16(header[22:24], 2)
 	binary.LittleEndian.PutUint32(header[24:28], 48_000)
 	binary.LittleEndian.PutUint32(header[28:32], 192_000)
 	binary.LittleEndian.PutUint16(header[32:34], 4)
 	binary.LittleEndian.PutUint16(header[34:36], 16)
-	binary.LittleEndian.PutUint32(header[40:44], uint32(size-44)) //nolint:gosec // size <= 4 GiB.
+	binary.LittleEndian.PutUint32(header[40:44], uint32(size-44))
 	return io.MultiReader(bytes.NewReader(header), io.LimitReader(zeroReader{}, size-44))
 }
 

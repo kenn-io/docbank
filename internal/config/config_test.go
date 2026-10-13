@@ -5,6 +5,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1138,7 +1139,7 @@ func TestMediaSourceCeilingConfig(t *testing.T) {
 	t.Parallel()
 	require.Equal(t, int64(4<<30), Default().Media.MaxSourceBytes)
 	for _, maximum := range []int64{1, 1 << 30, 4 << 30, 0, -1, (4 << 30) + 1} {
-		t.Run(fmt.Sprint(maximum), func(t *testing.T) {
+		t.Run(strconv.FormatInt(maximum, 10), func(t *testing.T) {
 			dir := privateTestConfigDir(t)
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(fmt.Sprintf("[media]\nmax_source_bytes = %d\n", maximum)), 0600))
 			cfg, err := Load(dir)
