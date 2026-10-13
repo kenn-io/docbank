@@ -16,6 +16,40 @@ const job = (fields: Partial<Job>): Job => ({
 
 describe("activity lanes", () => {
   it("compares UTC timestamps at full fractional precision and retains paused idle lanes", () => {
+    const lanes = jobLanes([
+      job({ total_objects: 5, completed_objects: 2 }),
+      job({
+        name: "storage:b",
+        operation_id: "b",
+        status: "queued",
+        total_objects: 7,
+        completed_objects: 1,
+      }),
+      job({
+        name: "storage:c",
+        operation_id: "c",
+        status: "completed",
+        total_objects: 99,
+        completed_objects: 99,
+      }),
+      job({
+        name: "storage:checkout",
+        operation_id: "checkout",
+        kind: "photo_checkout",
+        total_objects: 2,
+        completed_objects: 1,
+      }),
+      job({ name: "watch:inbox", operation_id: undefined, kind: undefined }),
+    ]);
+    expect(lanes).toHaveLength(3);
+    expect(lanes[0]).toMatchObject({ lane: "photo_checkout", title: "Photo checkout", completed: 1, total: 2 });
+    expect(lanes[1]).toMatchObject({ lane: "place", completed: 3, total: 12, status: "running" });
+    expect(lanes[2].key).toBe("watch:inbox");
+    const [unknown] = jobLanes([
+      job({ total_objects: 5 }),
+      job({ name: "storage:b", operation_id: "b", total_objects: 0 }),
+    ]);
+    expect(unknown.total).toBeUndefined();
     const [lane] = jobLanes(
       [
         job({ status: "failed", started_at: "2026-07-23T12:00:00.1Z" }),
@@ -51,42 +85,5 @@ describe("activity lanes", () => {
       ["repair", "repair"],
     ]);
     expect(after.map(({ key }) => key)).toEqual(idle.map(({ key }) => key));
-  });
-
-  it("groups by storage kind and worker name, summing only active progress", () => {
-    const lanes = jobLanes([
-      job({ total_objects: 5, completed_objects: 2 }),
-      job({
-        name: "storage:b",
-        operation_id: "b",
-        status: "queued",
-        total_objects: 7,
-        completed_objects: 1,
-      }),
-      job({
-        name: "storage:c",
-        operation_id: "c",
-        status: "completed",
-        total_objects: 99,
-        completed_objects: 99,
-      }),
-      job({
-        name: "storage:checkout",
-        operation_id: "checkout",
-        kind: "photo_checkout",
-        total_objects: 2,
-        completed_objects: 1,
-      }),
-      job({ name: "watch:inbox", operation_id: undefined, kind: undefined }),
-    ]);
-    expect(lanes).toHaveLength(3);
-    expect(lanes[0]).toMatchObject({ lane: "photo_checkout", title: "Photo checkout", completed: 1, total: 2 });
-    expect(lanes[1]).toMatchObject({ lane: "place", completed: 3, total: 12, status: "running" });
-    expect(lanes[2].key).toBe("watch:inbox");
-    const [unknown] = jobLanes([
-      job({ total_objects: 5 }),
-      job({ name: "storage:b", operation_id: "b", total_objects: 0 }),
-    ]);
-    expect(unknown.total).toBeUndefined();
   });
 });
