@@ -55,30 +55,46 @@ func TestAuthenticatedSnapshotOwnerIsExplicitAndBrowserRevocationCancelsRequest(
 	})
 }
 
-func TestServerShutdownStartsSnapshotCancellationWhenSessionDrainTimesOut(t *testing.T) {
+func TestServerShutdownInvalidatesSnapshotsWithCanceledContext(t *testing.T) {
 	t.Parallel()
-	catalog, err := store.Open(filepath.Join(t.TempDir(), "docbank.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
-	_, err = catalog.CreateFile(t.Context(), catalog.RootID(), "bounded.txt",
-		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 1, "text/plain")
-	require.NoError(t, err)
-	value, err := query.Parse([]byte(`{}`))
-	require.NoError(t, err)
-	snapshots := store.NewQuerySnapshotService(catalog)
-	t.Cleanup(func() { require.NoError(t, snapshots.Close()) })
-	page, err := snapshots.Create(t.Context(), "owner", store.SnapshotRequest{Query: value})
-	require.NoError(t, err)
-	sessions := newWebSessionRegistry()
-	sessions.uploadGroup.Add(1)
-	defer sessions.uploadGroup.Done()
-	server := &Server{snapshots: snapshots, webSessions: sessions}
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the open upload group keeps the session drain from finishing
-	defer cancel()
-	err = server.Shutdown(ctx)
-	require.ErrorIs(t, err, context.DeadlineExceeded)
-	_, err = snapshots.CopyMembers(t.Context(), "owner", page.SnapshotID, page.MemberHash)
-	require.ErrorIs(t, err, store.ErrSnapshotGone)
+	for _, expired := range []bool{false, true} {
+		name := "canceled"
+		if expired {
+			name = "expired"
+		}
+		t.Run(name, func(t *testing.T) {
+			catalog, err := store.Open(filepath.Join(t.TempDir(), "docbank.db"))
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+			_, err = catalog.CreateFile(t.Context(), catalog.RootID(), "bounded.txt",
+				"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 1, "text/plain")
+			require.NoError(t, err)
+			value, err := query.Parse([]byte(`{}`))
+			require.NoError(t, err)
+			snapshots := store.NewQuerySnapshotService(catalog)
+			t.Cleanup(func() { require.NoError(t, snapshots.Close()) })
+			page, err := snapshots.Create(t.Context(), "owner", store.SnapshotRequest{Query: value})
+			require.NoError(t, err)
+			sessions := newWebSessionRegistry()
+			sessions.uploadGroup.Add(1)
+			defer sessions.uploadGroup.Done()
+			server := &Server{snapshots: snapshots, webSessions: sessions}
+			ctx, cancel := context.WithCancel(t.Context())
+			wantErr := context.Canceled
+			if expired {
+				cancel()
+				ctx, cancel = context.WithDeadline(t.Context(), time.Time{})
+				wantErr = context.DeadlineExceeded
+			}
+			cancel()
+			err = server.Shutdown(ctx)
+			require.ErrorIs(t, err, wantErr)
+			_, err = snapshots.CopyMembers(t.Context(), "owner", page.SnapshotID, page.MemberHash)
+			require.ErrorIs(t, err, store.ErrSnapshotGone)
+			_, err = snapshots.Create(t.Context(), "owner", store.SnapshotRequest{Query: value})
+			require.ErrorIs(t, err, store.ErrSnapshotGone)
+		})
+	}
 }
 
 func TestAuthenticatedSnapshotOwnerHasNoMissingContextMasterFallback(t *testing.T) {

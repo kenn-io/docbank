@@ -212,6 +212,8 @@ func TestQuerySnapshotCacheRevokeAndShutdownCancelBuilders(t *testing.T) {
 
 	entered := make(chan string, 2)
 	release := make(chan struct{})
+	releaseBuilder := sync.OnceFunc(func() { close(release) })
+	canceled := make(chan struct{})
 	service := newQuerySnapshotService(s, querySnapshotServiceOptions{
 		HMACKey: bytes.Repeat([]byte{5}, 32),
 		ChargeHook: func(ctx context.Context, owner string, rows, _ int64) error {
@@ -223,9 +225,17 @@ func TestQuerySnapshotCacheRevokeAndShutdownCancelBuilders(t *testing.T) {
 			case <-release:
 				return nil
 			case <-ctx.Done():
+				if owner == "owner-b" {
+					close(canceled)
+					<-release
+				}
 				return ctx.Err()
 			}
 		},
+	})
+	t.Cleanup(func() {
+		releaseBuilder()
+		require.NoError(t, service.Close())
 	})
 	value := snapshotTestQuery(t, `{}`)
 
@@ -245,10 +255,12 @@ func TestQuerySnapshotCacheRevokeAndShutdownCancelBuilders(t *testing.T) {
 		result <- createErr
 	}()
 	require.Equal(t, "owner-b", <-entered)
+	service.Stop()
+	<-canceled
 	deadline, cancel := context.WithCancel(context.Background())
 	cancel()
 	require.ErrorIs(t, service.Shutdown(deadline), context.Canceled)
-	close(release)
+	releaseBuilder()
 	require.ErrorIs(t, <-result, context.Canceled)
 	require.NoError(t, service.Close())
 	require.NoError(t, service.Close())

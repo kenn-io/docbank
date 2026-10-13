@@ -525,13 +525,13 @@ func (s *QuerySnapshotService) Revoke(owner string) {
 }
 
 func (s *QuerySnapshotService) Close() error {
-	s.startShutdown()
+	s.Stop()
 	<-s.done
 	return nil
 }
 
 func (s *QuerySnapshotService) Shutdown(ctx context.Context) error {
-	s.startShutdown()
+	s.Stop()
 	select {
 	case <-s.done:
 		return nil
@@ -540,7 +540,9 @@ func (s *QuerySnapshotService) Shutdown(ctx context.Context) error {
 	}
 }
 
-func (s *QuerySnapshotService) startShutdown() {
+// Stop invalidates cached snapshots, rejects new builds, and cancels active
+// builders without waiting for them to return. Repeated calls have no effect.
+func (s *QuerySnapshotService) Stop() {
 	s.stopOnce.Do(func() {
 		var cancels []context.CancelFunc
 		s.mu.Lock()
