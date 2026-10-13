@@ -45,7 +45,6 @@ func TestNetworkServerPathRoutesIgnoreForwardingHeaders(t *testing.T) {
 		"/api/v1/ingest/preflight",
 		"/api/v1/packages/preflights",
 		"/api/v1/photos/imports",
-		"/api/v1/photos/checkouts",
 	} {
 		r := httptest.NewRequest(http.MethodPost, "http://docbank:8485"+route, nil)
 		r.RemoteAddr = "192.0.2.20:1234"
@@ -54,9 +53,6 @@ func TestNetworkServerPathRoutesIgnoreForwardingHeaders(t *testing.T) {
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)
 		assert.Equal(t, 403, w.Code, route)
-		if route == "/api/v1/photos/checkouts" {
-			assert.Contains(t, w.Body.String(), "daemon's computer")
-		}
 		r.RemoteAddr = "127.0.0.1:1234"
 		w = httptest.NewRecorder()
 		handler.ServeHTTP(w, r)

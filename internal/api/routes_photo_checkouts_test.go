@@ -3,6 +3,7 @@ package api_test
 import (
 	"encoding/json/v2"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,13 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 	supervisor := jobs.New(t.Context(), nil)
 	t.Cleanup(supervisor.Stop)
 	ts, catalog := newTestServer(t, func(d *api.Deps) { d.Jobs = supervisor })
+	remote := httptest.NewRequest(http.MethodPost, "http://localhost/api/v1/photos/checkouts", nil)
+	remote.RemoteAddr = "192.0.2.20:1234"
+	remote.Header.Set("X-Api-Key", testAPIKey)
+	guarded := httptest.NewRecorder()
+	catalog.Server.Handler().ServeHTTP(guarded, remote)
+	require.Equal(t, http.StatusForbidden, guarded.Code)
+	require.Contains(t, guarded.Body.String(), "daemon's computer")
 	hash, size, err := catalog.Blobs.Write(strings.NewReader("photo bytes"))
 	require.NoError(t, err)
 	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "photo.jpg", hash, size, "image/jpeg")

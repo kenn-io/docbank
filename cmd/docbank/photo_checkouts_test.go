@@ -29,7 +29,7 @@ func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 	destination := filepath.Join("relative", "checkout")
 	absoluteDestination, err := filepath.Abs(destination)
 	require.NoError(t, err)
-	checkout := store.PhotoCheckout{ID: checkoutID, OperationID: operationID, State: "queued", Selection: store.PhotoCheckoutSelection{All: true}, Destination: absoluteDestination, ByteLimit: 100000}
+	checkout := store.PhotoCheckout{ID: checkoutID, OperationID: operationID, State: "queued", Selection: store.PhotoCheckoutSelection{All: true, AssetIDs: []string{checkoutID}, AlbumIDs: []string{operationID}}, Destination: absoluteDestination, ByteLimit: 100000}
 	created := api.PhotoCheckoutCreateResult{Checkout: checkout, Operation: api.StorageOperation{ID: operationID, Kind: "photo_checkout", State: "queued"}}
 	listed := []store.PhotoCheckout{checkout}
 	status := api.PhotoCheckoutStatus{Checkout: checkout}
@@ -73,14 +73,14 @@ func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 	t.Cleanup(server.Close)
 	_, err = daemonconn.RuntimeStore(vault).Write(daemonconn.NewRecord(strings.TrimPrefix(server.URL, "http://"), "synthetic-key", token, ""))
 	require.NoError(t, err)
-	out, err := runCLI(t, "photos", "checkout", "create", destination, "--all", "--byte-limit", "100000")
+	out, err := runCLI(t, "photos", "checkout", "create", destination, "--all", "--asset", checkoutID, "--album", operationID, "--byte-limit", "100000")
 	require.NoError(t, err, out)
 	var createdOutput api.PhotoCheckoutCreateResult
 	require.NoError(t, json.Unmarshal([]byte(out), &createdOutput))
 	require.Equal(t, created, createdOutput)
 	require.Len(t, inputs, 1)
 	input := <-inputs
-	require.True(t, input.Selection.All)
+	require.Equal(t, checkout.Selection, input.Selection)
 	require.Equal(t, int64(100000), input.ByteLimit)
 	require.Equal(t, absoluteDestination, input.Destination)
 	out, err = runCLI(t, "photos", "checkout", "list")
