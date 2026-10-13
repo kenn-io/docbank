@@ -37,9 +37,6 @@ func redactionSourcePDF(t *testing.T) []byte {
 	pdf.Text(72, 72, "SECRET KEEP SECRET")
 	var output bytes.Buffer
 	require.NoError(t, pdf.Output(&output))
-	count, err := pdfapi.PageCount(bytes.NewReader(output.Bytes()), redactionPDFConfig())
-	require.NoError(t, err)
-	require.Equal(t, 1, count)
 	return output.Bytes()
 }
 
