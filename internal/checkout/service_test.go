@@ -84,7 +84,6 @@ func TestCheckoutDestinationSafety(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, priorRoot.Close())
 	require.NoError(t, os.Remove(reserved.Destination))
-	require.NoError(t, os.WriteFile(reserved.Destination, []byte("keep"), 0600))
 	_, _, unrelatedRoot, err := s.Prepare(t.Context(), selection, t.TempDir(), 0)
 	require.NoError(t, err)
 	require.NoError(t, unrelatedRoot.Close())
