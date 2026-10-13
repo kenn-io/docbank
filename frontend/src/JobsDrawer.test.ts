@@ -34,6 +34,23 @@ describe("background jobs drawer", () => {
     ["initial load", 503, { detail: "busy" }, "busy"],
     ["lane controls", 200, { items: [], lane_controls_error: "Lane controls are unavailable" }, "Lane controls are unavailable"],
     ["active polling", 503, { detail: "busy" }, "busy"],
+    [
+      "populated lane controls",
+      200,
+      {
+        items: [
+          {
+            name: "storage:import",
+            kind: "photo_import",
+            operation_id: "import",
+            status: "running",
+            started_at: "2026-07-23T12:00:00Z",
+          },
+        ],
+        lane_controls_error: "Lane controls are unavailable",
+      },
+      "Lane controls are unavailable",
+    ],
   ])(
     "recovers unavailable %s responses after retry",
     async (failure, status, body, message) => {
@@ -45,6 +62,16 @@ describe("background jobs drawer", () => {
           started_at: "2026-07-23T12:00:00Z",
         };
         const automatic = failure === "active polling";
+        const populated = failure === "populated lane controls";
+        const items = populated ? (body as { items: Job[] }).items : [];
+        const control = {
+          lane: "photo_import",
+          paused: true,
+          concurrency: 1,
+          revision: 2,
+          can_set_concurrency: false,
+        };
+        const group = vi.spyOn(jobs, "jobLanes");
         const fetchSpy = vi.spyOn(globalThis, "fetch");
         if (automatic) fetchSpy.mockResolvedValueOnce(jobsResponse([active]));
         fetchSpy.mockResolvedValueOnce(
@@ -58,7 +85,9 @@ describe("background jobs drawer", () => {
             jobsResponse([{ ...active, status: "completed", finished_at: "2026-07-23T12:05:00Z" }]),
           );
         } else {
-          fetchSpy.mockReturnValueOnce(new Promise<Response>(() => {})).mockResolvedValueOnce(jobsResponse([]));
+          fetchSpy
+            .mockReturnValueOnce(new Promise<Response>(() => {}))
+            .mockResolvedValueOnce(jobsResponse(items, populated ? [control] : []));
         }
         render(JobsDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
         await vi.advanceTimersByTimeAsync(0);
@@ -78,9 +107,19 @@ describe("background jobs drawer", () => {
           expect(screen.getByRole("alert").textContent).toBe(message);
           expect(screen.queryByText("No background jobs")).toBeNull();
           expect(screen.queryByText("Read-only")).toBeNull();
-          await fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+          if (populated) expect(screen.getByText("1 running · 1 total")).toBeTruthy();
+          await fireEvent.click(
+            screen.getByRole("button", {
+              name: populated ? "Refresh background jobs" : "Try again",
+            }),
+          );
           await vi.advanceTimersByTimeAsync(0);
-          expect(screen.getByText("No background jobs")).toBeTruthy();
+          if (populated) {
+            expect(screen.getByRole("button", { name: "Resume Photo import" })).toBeTruthy();
+            expect(group).toHaveBeenCalledWith(items, [control]);
+          } else {
+            expect(screen.getByText("No background jobs")).toBeTruthy();
+          }
         }
         expect(screen.queryByRole("alert")).toBeNull();
         expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
@@ -361,22 +400,7 @@ describe("background jobs drawer", () => {
         },
       ];
       const group = vi.spyOn(jobs, "jobLanes").mockReturnValue(preparedLanes);
-      const control = {
-        lane: "photo_import",
-        paused: true,
-        concurrency: 1,
-        revision: 2,
-        can_set_concurrency: false,
-      };
-      let available = false;
-      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
-        available
-          ? jobsResponse(items, [control])
-          : new Response(
-              JSON.stringify({ items, lane_controls_error: "Lane controls are unavailable" }),
-              { headers: { "Content-Type": "application/json" } },
-            ),
-      );
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => jobsResponse(items, []));
 
       render(JobsDrawer, {
         session: "short-lived",
@@ -385,8 +409,6 @@ describe("background jobs drawer", () => {
       });
 
       await vi.advanceTimersByTimeAsync(0);
-      expect((await screen.findByRole("alert")).textContent).toBe("Lane controls are unavailable");
-      expect(screen.queryByText("Read-only")).toBeNull();
       const progress = await screen.findByRole("progressbar", { name: "Photo import progress" });
       await waitFor(() => expect(group).toHaveBeenCalledWith(items, []));
       expect(progress.getAttribute("aria-valuenow")).toBe("75");
@@ -403,13 +425,6 @@ describe("background jobs drawer", () => {
       expect(screen.getByRole("button", { name: `Cancel Photo import ${id}` })).toBeTruthy();
       expect(screen.getByRole("button", { name: "Cancel Photo import b" })).toBeTruthy();
 
-      fetchSpy.mockReturnValueOnce(new Promise<Response>(() => {}));
-      await vi.advanceTimersByTimeAsync(2000);
-      expect(fetchSpy).toHaveBeenCalledTimes(2);
-      expect(screen.getByRole("alert").textContent).toBe("Lane controls are unavailable");
-      expect(screen.queryByText("No background jobs")).toBeNull();
-      expect(screen.queryByText("Read-only")).toBeNull();
-
       await fireEvent.click(screen.getByRole("button", { name: /^Cancel Storage placement/ }));
       const cancel = fetchSpy.mock.calls.find(([url]) =>
         String(url).endsWith(`/api/v1/jobs/${placeId}/cancel`),
@@ -417,13 +432,6 @@ describe("background jobs drawer", () => {
       expect(cancel).toBeTruthy();
       expect(cancel?.[1]?.method).toBe("POST");
       expect(new Headers(cancel?.[1]?.headers).has("If-Match")).toBe(false);
-      available = true;
-      group.mockReturnValue([{ ...preparedLanes[0], control }, ...preparedLanes.slice(1)]);
-      await fireEvent.click(screen.getByRole("button", { name: "Refresh background jobs" }));
-      await vi.advanceTimersByTimeAsync(0);
-      expect(await screen.findByRole("button", { name: "Resume Photo import" })).toBeTruthy();
-      expect(group).toHaveBeenCalledWith(items, [control]);
-      expect(screen.queryByRole("alert")).toBeNull();
     } finally {
       cleanup();
       vi.useRealTimers();

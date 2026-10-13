@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -427,20 +428,6 @@ func TestPhotoExplicitVideoAdmitsGenericVideo(t *testing.T) {
 	require.ErrorIs(t, err, ErrPhotoNodeNotEligible)
 }
 
-func TestPhotoMutationsRequireRevision(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	image, err := s.CreateFile(ctx, s.RootID(), "a.jpg", fakeHash("a1"), 1, "image/jpeg")
-	require.NoError(t, err)
-	asset, err := s.PhotoAssetForNode(ctx, image.ID)
-	require.NoError(t, err)
-	_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision+1, true)
-	require.ErrorIs(t, err, ErrStaleRevision)
-	_, err = s.SetPhotoAssetExcluded(ctx, "00000000-0000-4000-8000-000000000001", 0, true)
-	require.ErrorIs(t, err, ErrNotFound)
-}
-
 func TestPhotoSidecarTargetsAndNoDisplayableMember(t *testing.T) {
 	t.Parallel()
 	for _, role := range []string{PhotoRoleRAW, PhotoRoleImage} {
@@ -495,6 +482,10 @@ func TestPhotoExcludePromotePreservesIdentityAndReceipt(t *testing.T) {
 	require.NoError(t, err)
 	asset, err := s.PhotoAssetForNode(ctx, image.ID)
 	require.NoError(t, err)
+	_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision+1, true)
+	require.ErrorIs(t, err, ErrStaleRevision)
+	_, err = s.SetPhotoAssetExcluded(ctx, "00000000-0000-4000-8000-000000000001", 0, true)
+	require.ErrorIs(t, err, ErrNotFound)
 	beforeID := asset.ID
 	updated, err := s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
@@ -515,6 +506,29 @@ func TestPhotoExcludePromotePreservesIdentityAndReceipt(t *testing.T) {
 	stale := promoted.Revision - 1
 	_, err = s.PromotePhotoNode(ctx, image.ID, &stale, "", "")
 	require.ErrorIs(t, err, ErrStaleRevision)
+	var wait sync.WaitGroup
+	results := make(chan error, 2)
+	wait.Add(2)
+	for range 2 {
+		go func() {
+			defer wait.Done()
+			_, err := s.SetPhotoAssetExcluded(ctx, promoted.ID, promoted.Revision, true)
+			results <- err
+		}()
+	}
+	wait.Wait()
+	close(results)
+	var winners, staleWrites int
+	for err := range results {
+		if err == nil {
+			winners++
+		} else {
+			require.ErrorIs(t, err, ErrStaleRevision)
+			staleWrites++
+		}
+	}
+	assert.Equal(t, 1, winners)
+	assert.Equal(t, 1, staleWrites)
 }
 
 func TestPhotoPromoteExistingAssetChecksLiveNode(t *testing.T) {

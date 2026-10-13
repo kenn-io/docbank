@@ -93,9 +93,23 @@ func TestPhotoCheckoutSelections(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.db.ExecContext(ctx, `UPDATE photo_assets SET hidden_at=? WHERE asset_id=?`, nowRFC3339(), b.ID)
 	require.NoError(t, err)
-	estimate, err := s.EstimatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{a.ID, b.ID, c.ID}, AlbumIDs: []string{set.ID}})
+	filtered := PhotoCheckoutSelection{AssetIDs: []string{a.ID, b.ID, c.ID}, AlbumIDs: []string{set.ID}}
+	estimate, err := s.EstimatePhotoCheckout(ctx, filtered)
 	require.NoError(t, err)
 	require.Equal(t, PhotoCheckoutEstimate{Assets: 1, Files: 3, Bytes: 33}, estimate)
+	checkout, _, err := s.CreatePhotoCheckout(ctx, filtered, t.TempDir(), estimate.Bytes)
+	require.NoError(t, err)
+	entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
+	require.NoError(t, err)
+	var selectedFiles []string
+	for _, entry := range entries {
+		selectedFiles = append(selectedFiles, entry.FileID)
+	}
+	var eligibleFiles []string
+	for _, file := range a.Files {
+		eligibleFiles = append(eligibleFiles, file.ID)
+	}
+	require.ElementsMatch(t, eligibleFiles, selectedFiles)
 	for _, bad := range []PhotoCheckoutSelection{{}, {AssetIDs: []string{"bad"}}, {AlbumIDs: []string{"bad"}}, {Years: &PhotoCheckoutYears{From: 0, To: 2024}}, {Years: &PhotoCheckoutYears{From: 2025, To: 2024}}, {Years: &PhotoCheckoutYears{From: 2024, To: 10000}}} {
 		_, err := s.EstimatePhotoCheckout(ctx, bad)
 		require.ErrorIs(t, err, ErrInvalidPhotoCheckout)

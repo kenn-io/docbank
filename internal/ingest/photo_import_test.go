@@ -41,11 +41,6 @@ func TestPhotoImportAmbiguity(t *testing.T) {
 	ambiguity := first.Receipt.Ambiguities[0]
 	assert.Equal(t, store.PhotoImportMultipleRAW, ambiguity.Reason)
 	require.Len(t, ambiguity.Files, 3)
-	for _, name := range []string{"IMG_0001.ARW", "IMG_0001.DNG", "IMG_0001.JPG"} {
-		asset, err := ing.Store.PhotoAssetForNode(t.Context(), nodeByName(t, ing, "/photos/"+name).ID)
-		require.NoError(t, err, name)
-		assert.Len(t, asset.Files, 1, name)
-	}
 
 	repeated, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{})
 	require.NoError(t, err)

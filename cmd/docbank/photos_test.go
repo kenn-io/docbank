@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/hex"
 	"encoding/json/v2"
 	"fmt"
@@ -251,25 +250,6 @@ func TestPhotoImportRejectsEmptySource(t *testing.T) {
 }
 
 func TestPhotoImportOutputPointsToJobs(t *testing.T) {
-	previousJSON := photoImportJSON
-	t.Cleanup(func() { photoImportJSON = previousJSON })
-	operation := api.StorageOperation{ID: "00000000-0000-4000-8000-000000000021", Kind: "photo_import", State: "queued"}
-	var output bytes.Buffer
-	command := &cobra.Command{}
-	command.SetOut(&output)
-	photoImportJSON = false
-	require.NoError(t, writePhotoImportOutput(command, operation))
-	assert.Contains(t, output.String(), "docbank jobs show "+operation.ID+" --json")
-	assert.Contains(t, output.String(), "docbank jobs cancel "+operation.ID)
-	photoImportJSON = true
-	output.Reset()
-	require.NoError(t, writePhotoImportOutput(command, operation))
-	var accepted api.StorageOperation
-	require.NoError(t, json.Unmarshal(output.Bytes(), &accepted))
-	assert.Equal(t, operation, accepted)
-}
-
-func TestPhotoImportAmbiguitiesReachJobsShow(t *testing.T) {
 	vault := t.TempDir()
 	t.Setenv("DOCBANK_HOME", vault)
 	const token = "synthetic-proof-token"
@@ -280,6 +260,8 @@ func TestPhotoImportAmbiguitiesReachJobsShow(t *testing.T) {
 			{SourcePath: "IMG.JPG", NodeID: 44, Role: store.PhotoRoleImage},
 		}}},
 	}}
+	queued := api.StorageOperation{ID: operation.ID, Kind: operation.Kind, State: "queued"}
+	requests := make(chan api.PhotoImportStartRequest, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -289,6 +271,13 @@ func TestPhotoImportAmbiguitiesReachJobsShow(t *testing.T) {
 			nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
 			assert.NoError(t, err)
 			assert.NoError(t, json.MarshalWrite(w, map[string]string{"proof": daemonauth.Proof(token, nonce)}))
+		case "/api/v1/photos/imports":
+			assert.Equal(t, http.MethodPost, r.Method)
+			var request api.PhotoImportStartRequest
+			assert.NoError(t, json.UnmarshalRead(r.Body, &request))
+			requests <- request
+			w.WriteHeader(http.StatusAccepted)
+			assert.NoError(t, json.MarshalWrite(w, queued))
 		case "/api/v1/jobs/" + operation.ID:
 			assert.Equal(t, http.MethodGet, r.Method)
 			assert.NoError(t, json.MarshalWrite(w, operation))
@@ -299,6 +288,25 @@ func TestPhotoImportAmbiguitiesReachJobsShow(t *testing.T) {
 	t.Cleanup(server.Close)
 	_, err := daemonconn.RuntimeStore(vault).Write(daemonconn.NewRecord(strings.TrimPrefix(server.URL, "http://"), "synthetic-key", token, ""))
 	require.NoError(t, err)
+	source := t.TempDir()
+	for _, asJSON := range []bool{false, true} {
+		args := []string{"photos", "import", source, "/photos"}
+		if asJSON {
+			args = append(args, "--json")
+		}
+		output, err := runCLI(t, args...)
+		require.NoError(t, err, output)
+		require.Len(t, requests, 1)
+		assert.Equal(t, api.PhotoImportStartRequest{SourceRoot: source, Destination: "/photos"}, <-requests)
+		if asJSON {
+			var accepted api.StorageOperation
+			require.NoError(t, json.Unmarshal([]byte(output), &accepted))
+			assert.Equal(t, queued, accepted)
+		} else {
+			assert.Contains(t, output, "docbank jobs show "+queued.ID+" --json")
+			assert.Contains(t, output, "docbank jobs cancel "+queued.ID)
+		}
+	}
 	output, err := runCLI(t, "jobs", "show", operation.ID, "--json")
 	require.NoError(t, err, output)
 	expected, err := json.Marshal(operation)

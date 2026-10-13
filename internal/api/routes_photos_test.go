@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -60,9 +59,13 @@ func TestPhotoRoutesEnforceIfMatch(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode, body)
 	var receipt api.PhotoAsset
 	require.NoError(t, json.Unmarshal([]byte(body), &receipt))
+	stored, err := fixture.PhotoAssetByID(t.Context(), asset.ID)
+	require.NoError(t, err)
+	assert.Greater(t, stored.Revision, updated.Revision)
+	assert.Equal(t, stored.Revision, receipt.Revision)
 }
 
-func TestPhotoRoutesCreatePromoteAndConcurrentRevisionWinner(t *testing.T) {
+func TestPhotoRoutesCreateAndPromote(t *testing.T) {
 	t.Parallel()
 	ts, fixture := newTestServer(t, nil)
 	hash, size, err := fixture.Blobs.Write(strings.NewReader("raw"))
@@ -112,30 +115,6 @@ func TestPhotoRoutesCreatePromoteAndConcurrentRevisionWinner(t *testing.T) {
 	assert.Equal(t, http.StatusOK, secondResp.StatusCode, secondBody)
 	var secondAsset api.PhotoAsset
 	require.NoError(t, json.Unmarshal([]byte(secondBody), &secondAsset))
-
-	path := "/api/v1/photos/assets/" + secondAsset.ID + "/exclude"
-	header := map[string]string{"If-Match": strconv.Quote(strconv.FormatInt(secondAsset.Revision, 10))}
-	var wait sync.WaitGroup
-	results := make(chan int, 2)
-	wait.Add(2)
-	for range 2 {
-		go func() {
-			defer wait.Done()
-			response, _, requestErr := try(t, ts, http.MethodPost, path, header, map[string]bool{"excluded": true})
-			if requestErr != nil {
-				results <- 0
-				return
-			}
-			results <- response.StatusCode
-		}()
-	}
-	wait.Wait()
-	close(results)
-	statuses := []int{}
-	for status := range results {
-		statuses = append(statuses, status)
-	}
-	assert.ElementsMatch(t, []int{http.StatusOK, http.StatusPreconditionFailed}, statuses)
 }
 func TestPhotoRoutesAndClientTraversal(t *testing.T) {
 	t.Parallel()
