@@ -358,6 +358,27 @@ func TestPhotoCheckoutStatusTracksOperationAcrossPauseAndFinish(t *testing.T) {
 	}
 }
 
+func TestPhotoCheckoutUsesWindowsProvenanceBasename(t *testing.T) {
+	t.Parallel()
+	for _, source := range []string{`C:\camera\capture.JPG`, `\\camera\photos\capture.JPG`} {
+		t.Run(source, func(t *testing.T) {
+			s := newTestStore(t)
+			run, err := s.BeginIngest(t.Context(), "photo-import", t.TempDir())
+			require.NoError(t, err)
+			member := photoImportTestMember(source, PhotoRoleImage, browseHash("capture"), "image/jpeg")
+			member.Name = "renamed.JPG"
+			result, err := s.IngestPhotoGroup(t.Context(), run, photoImportTestGroup(member))
+			require.NoError(t, err)
+			checkout, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "checkout", 0)
+			require.NoError(t, err)
+			entries, err := s.PhotoCheckoutEntries(t.Context(), checkout.ID)
+			require.NoError(t, err)
+			require.Len(t, entries, 1)
+			require.Equal(t, "undated/"+result.Asset.ID+"/capture.JPG", entries[0].Path)
+		})
+	}
+}
+
 func TestPhotoCheckoutUsesActiveSourceNamesAfterVirtualRename(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

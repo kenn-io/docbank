@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"math"
 	"path"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -174,7 +173,7 @@ func (s *Store) checkoutEntriesTx(ctx context.Context, tx *sql.Tx, selection Pho
 			return nil, estimate, err
 		}
 		if originalPath != "" {
-			name = filepath.Base(originalPath)
+			name = path.Base(strings.ReplaceAll(originalPath, "\\", "/"))
 		}
 		if entry.Size < 0 || entry.Size > math.MaxInt64-estimate.Bytes {
 			_ = rows.Close()
