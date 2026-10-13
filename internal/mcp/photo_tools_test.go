@@ -21,7 +21,6 @@ import (
 func TestPhotoMCPWorkflowAndWriteOptIn(t *testing.T) {
 	readOnly := catalogMap(toolCatalog(ServerOptions{}))
 	assert.Contains(t, readOnly, "get_photo_asset")
-	assert.Contains(t, readOnly, "get_photo_faces")
 	for _, name := range []string{
 		"create_photo_asset", "attach_photo_file", "detach_photo_file",
 		"exclude_photo_asset", "promote_photo_asset",

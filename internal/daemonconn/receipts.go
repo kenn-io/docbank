@@ -184,10 +184,16 @@ func IsRetryableMutationError(err error) bool {
 type problemError struct {
 	code               string
 	observedScopeCount int
+	detail             string
 	err                error
 }
 
-func (e *problemError) Error() string { return e.err.Error() }
+func (e *problemError) Error() string {
+	if e.detail != "" {
+		return e.detail
+	}
+	return e.err.Error()
+}
 func (e *problemError) Unwrap() error { return e.err }
 
 // ProblemCode returns the daemon's stable RFC 7807 extension code when err
@@ -459,6 +465,7 @@ func decodeError(resp *http.Response) error {
 
 func apiProblemError(e api.Error) error {
 	var cause error
+	detail := ""
 	observedScopeCount := 0
 	if e.Code == "scope_too_large" && e.ObservedScopeCount > processing.MaxSourceFenceIDs {
 		cause = &SourceFenceScopeTooLargeError{ObservedScopeCount: e.ObservedScopeCount, detail: e.Detail}
@@ -469,13 +476,18 @@ func apiProblemError(e api.Error) error {
 		if (strings.HasPrefix(e.Code, "hidden_") || e.Code == "invalid_hidden_passcode") &&
 			(e.Detail == "" || target.Error() == e.Detail || strings.HasPrefix(target.Error(), e.Detail+"; ")) {
 			cause = target
+			detail = target.Error()
+		} else if e.Detail == "" {
+			cause = target
+			detail = target.Error()
 		} else {
 			cause = fmt.Errorf("%s: %w", e.Detail, target)
+			detail = e.Detail
 		}
 	} else {
 		cause = fmt.Errorf("daemon error (%d %s): %s", e.Status, e.Code, e.Detail)
 	}
-	return &problemError{code: e.Code, observedScopeCount: observedScopeCount, err: cause}
+	return &problemError{code: e.Code, observedScopeCount: observedScopeCount, detail: detail, err: cause}
 }
 
 // Children fetches every page. Callers that need bounded traversal should use

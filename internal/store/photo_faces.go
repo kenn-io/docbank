@@ -15,6 +15,13 @@ const ManualFaceFingerprint = "manual"
 
 var ErrInvalidPhotoFace = errors.New("invalid photo face")
 
+type photoFaceExistsError struct{}
+
+func (photoFaceExistsError) Error() string {
+	return "face ID is already in use with different face details"
+}
+func (photoFaceExistsError) Is(target error) bool { return target == ErrExists }
+
 type PhotoFace struct {
 	FaceID              string           `json:"face_id"`
 	ContentVersionID    string           `json:"content_version_id"`
@@ -165,7 +172,7 @@ func (s *Store) CreatePhotoFace(ctx context.Context, versionID, faceID string, b
 		existing, err := scanPhotoFace(tx.QueryRowContext(ctx, `SELECT `+photoFaceColumns+` FROM photo_faces WHERE face_id=?`, faceID))
 		if err == nil {
 			if existing.ContentVersionID != versionID || existing.Box != box || existing.DetectorFingerprint != ManualFaceFingerprint {
-				return ErrExists
+				return photoFaceExistsError{}
 			}
 			existingPerson := ""
 			if existing.AssertionID != "" {
@@ -178,7 +185,7 @@ func (s *Store) CreatePhotoFace(ctx context.Context, versionID, faceID string, b
 			}
 			if resolved != "" && existingPerson != resolved {
 				if existingPerson != "" {
-					return ErrExists
+					return photoFaceExistsError{}
 				}
 				saved, created, err := ensurePersonAssertionTx(ctx, tx, versionID, resolved, "depicted")
 				if err != nil {
@@ -191,7 +198,7 @@ func (s *Store) CreatePhotoFace(ctx context.Context, versionID, faceID string, b
 				if changed, err := result.RowsAffected(); err != nil {
 					return err
 				} else if changed != 1 {
-					return ErrExists
+					return photoFaceExistsError{}
 				}
 				existing.AssertionID = saved.AssertionID
 				existing.Revision++
