@@ -786,7 +786,7 @@ func TestOpenAPIPhotoBrowseContract(t *testing.T) {
 	schemas := doc.Components.Schemas.Map()
 	require.True(t, schemas["PhotoBrowseRow"].Properties["capture_time"].Nullable)
 	pageSize := schemas["PhotoBrowseRequest"].Properties["page_size"]
-	require.Equal(t, float64(store.MaxPhotoMapPageSize), *pageSize.Maximum)
+	require.InDelta(t, float64(store.MaxPhotoMapPageSize), *pageSize.Maximum, 0)
 	require.Equal(t, `Maximum 1000 only with projection: "map"; 250 otherwise.`, pageSize.Description)
 	require.ElementsMatch(t, []any{"missing", "ready", "unsupported", "failed"}, schemas["PhotoPreviewSlot"].Properties["state"].Enum)
 	for _, field := range []string{"kinds", "cameras", "lenses", "locations", "iso_min", "iso_max", "capture_after", "capture_before", "gps_bounds", "asset_ids", "set_ids"} {

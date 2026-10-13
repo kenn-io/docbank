@@ -14,7 +14,6 @@ const stubPhotoFetch = (fetcher: (url: string, init: RequestInit) => unknown) =>
 
 const map = vi.hoisted(() => ({onvisible:undefined as ((rows:PhotoMapRow[]) => void) | undefined, props:undefined as {view?:MapView; onview:(view:MapView) => void} | undefined}));
 vi.mock("./PhotoMap.svelte", () => ({default:(_anchor:unknown, props:{onvisible:(rows:PhotoMapRow[]) => void; view?:MapView; onview:(view:MapView) => void}) => { map.onvisible = props.onvisible; map.props = props; return {}; }}));
-vi.mock("./photos.svelte.js", async importOriginal => ({ ...await importOriginal<typeof import("./photos.svelte.js")>(), mapPhotoLimit: 2 }));
 
 const tiles = {tile_url:"",attribution:"",max_zoom:19};
 
@@ -818,18 +817,24 @@ it("shows the Map limit notice only for capped results and bounds loading progre
   photos.items = [mapPhoto(1), mapPhoto(2)]; photos.started = true; photos.total = 3000; photos.cursor = "next"; photos.loading = true;
   vi.spyOn(photos, "resume").mockResolvedValue();
   render(PhotosWorkspace, { photos, mapMode: true, tiles: { tile_url: "https://tiles.example.org/{z}/{x}/{y}", attribution: "Example", max_zoom: 19 }, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
-  const note = "Showing the newest 2 of 3,000 located photos. Narrow your search or date to see the rest.";
-  expect(screen.queryByText(note)).toBeNull();
+  const note = `Showing the newest ${mapPhotoLimit.toLocaleString()} of ${(mapPhotoLimit + 1000).toLocaleString()} located photos. Narrow your search or date to see the rest.`;
+  expect(screen.queryByText(/^Showing the newest /)).toBeNull();
   photos.total = mapPhotoLimit + 1000;
   await screen.findByText(`Loading located photos: 2 of ${mapPhotoLimit.toLocaleString()}`);
-  photos.total = 3000; photos.cursor = undefined; photos.loading = false;
+  photos.items = Array.from({ length: mapPhotoLimit }, (_, index) => mapPhoto(index + 1)); photos.loading = false;
   const notice = await screen.findByText(note);
   expect(notice.getAttribute("role")).toBe("status");
   expect(notice.classList.contains("photo-search-limit")).toBe(true);
+  photos.cursor = undefined;
+  await tick();
+  expect(screen.getByText(note)).toBe(notice);
   photos.total = photos.items.length;
-  await waitFor(() => expect(screen.queryByText(note)).toBeNull());
-  photos.total = 3000; photos.cursor = "next";
-  await waitFor(() => expect(screen.queryByText(note)).toBeNull());
+  await waitFor(() => expect(screen.queryByText(/^Showing the newest /)).toBeNull());
+  photos.items = photos.items.slice(0, -1); photos.total = mapPhotoLimit + 1000; photos.cursor = "next";
+  await waitFor(() => expect(screen.queryByText(/^Showing the newest /)).toBeNull());
+  photos.cursor = undefined;
+  await tick();
+  expect(screen.queryByText(/^Showing the newest /)).toBeNull();
   photos.dispose();
 });
 
