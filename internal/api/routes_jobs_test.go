@@ -118,7 +118,13 @@ func TestBrowserJobListRedactsPrivateBackendErrors(t *testing.T) {
 
 	resp, body := get(t, ts, "/api/v1/jobs", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	assert.Contains(t, body, privateFailure)
+	var operator api.JobList
+	require.NoError(t, json.Unmarshal([]byte(body), &operator))
+	errorsByOperation := make(map[string]string)
+	for _, job := range operator.Items {
+		errorsByOperation[job.OperationID] = job.Error
+	}
+	assert.Equal(t, map[string]string{operation.ID: privateFailure, photoImport.ID: privateFailure}, errorsByOperation)
 
 	resp, body = do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
 	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
