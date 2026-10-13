@@ -385,13 +385,23 @@ func TestPhotoImportDedupObservation(t *testing.T) {
 			var nodes int
 			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE kind='file'`).Scan(&nodes))
 			assert.Equal(t, 1, nodes)
-			result, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(
+			group := photoImportTestGroup(
 				photoImportTestMember(filepath.Join(secondRoot, "IMG.JPG"), PhotoRoleImage, fakeHash("same-jpg"), "image/jpeg"),
-				photoImportTestMember(filepath.Join(secondRoot, "IMG.DNG"), PhotoRoleRAW, hash, "image/x-adobe-dng")))
+				photoImportTestMember(filepath.Join(secondRoot, "IMG.DNG"), PhotoRoleRAW, hash, "image/x-adobe-dng"),
+				photoImportTestMember(filepath.Join(secondRoot, "IMG.XMP"), PhotoRoleSidecar, fakeHash("same-xmp"), "application/rdf+xml"))
+			result, err := s.IngestPhotoGroup(ctx, run, group)
 			require.NoError(t, err)
 			asset, err := s.PhotoAssetForNode(ctx, result.Nodes[0].ID)
 			require.NoError(t, err)
-			assert.Len(t, asset.Files, 2)
+			assert.True(t, result.Added)
+			assert.Len(t, asset.Files, 3)
+			rawAsset, err := s.PhotoAssetForNode(ctx, original.ID)
+			require.NoError(t, err)
+			assert.Equal(t, rawAsset.ID, asset.ID)
+			rerun, err := s.IngestPhotoGroup(ctx, run, group)
+			require.NoError(t, err)
+			assert.True(t, rerun.Skipped)
+			assert.False(t, rerun.Added)
 			var observations int
 			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM provenance WHERE original_path=?`, filepath.Join(secondRoot, "IMG.DNG")).Scan(&observations))
 			assert.Equal(t, 1, observations)
