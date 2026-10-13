@@ -1,6 +1,7 @@
 package media_test
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
@@ -54,4 +55,18 @@ func TestAudioCeilingIncludesM4AIdentities(t *testing.T) {
 	require.Equal(t, int64(1<<30), media.InspectionSourceByteCeiling("image.png", "image/png"))
 	require.Equal(t, int64(1<<30), media.InspectionSourceByteCeiling("video.mp4", "video/mp4"))
 	require.Equal(t, int64(20<<20), media.MaxBytes)
+}
+
+func TestAudioFourGiBPolicyKeepsDocumentBounds(t *testing.T) {
+	t.Parallel()
+	raw := mediatest.WAV()
+	policy := inspectionPolicy(raw, "source.wav", "audio/wav")
+	policy.MaxSourceBytes = 4 << 30
+	policy.MaxDurationMS = 24 * 60 * 60 * 1000
+	record, err := media.InspectCapability(bytes.NewReader(raw), policy)
+	require.NoError(t, err)
+	require.True(t, record.Eligible)
+	policy.Filename, policy.DeclaredMediaType = "source.txt", "text/plain"
+	_, err = media.InspectCapability(bytes.NewReader(raw), policy)
+	require.ErrorContains(t, err, "source byte bounds")
 }
