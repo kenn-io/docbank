@@ -312,7 +312,9 @@ func TestTrashEmptyRetainsMediaAuthorityAndCheckoutEntryPinsAndDeletesUnrelatedR
 			case "checkout entry":
 				asset, lookupErr := s.PhotoAssetForNode(ctx, protected.ID)
 				require.NoError(t, lookupErr)
-				_, _, err = s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+				checkout, operation, createErr := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+				require.NoError(t, createErr)
+				err = s.FinishPhotoCheckout(ctx, checkout.ID, operation.ID, StorageOperationFailed, `{}`, "checkout failed", time.Time{})
 			case "input artifact":
 				_, err = s.db.Exec(`INSERT INTO media_occurrences VALUES(
 					'occurrence','source',NULL,'operator','ref','1','','','','{}',1,?,NULL)`, stamp)

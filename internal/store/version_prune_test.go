@@ -699,8 +699,9 @@ func TestPruneContentVersionsRetainsDependenciesAndCheckpointsAllPrior(t *testin
 			created, err := s.CreateFile(ctx, s.RootID(), name, fakeHash("a1"), 10, mediaType)
 			require.NoError(t, err)
 			if authority == "checkout entry" {
-				_, _, err = s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{All: true}, "checkout", 10)
-				require.NoError(t, err)
+				checkout, operation, createErr := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{All: true}, "checkout", 10)
+				require.NoError(t, createErr)
+				require.NoError(t, s.FinishPhotoCheckout(ctx, checkout.ID, operation.ID, StorageOperationFailed, `{}`, "checkout failed", time.Time{}))
 			}
 			updated, _, err := s.ReplaceContent(ctx, created.ID, created.Revision, fakeHash("b2"), 20, mediaType)
 			require.NoError(t, err)

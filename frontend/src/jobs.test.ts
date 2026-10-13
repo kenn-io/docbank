@@ -80,7 +80,7 @@ describe("activity lanes", () => {
       job({ name: "watch:inbox", operation_id: undefined, kind: undefined }),
     ]);
     expect(lanes).toHaveLength(3);
-    expect(lanes[0]).toMatchObject({ lane: "photo_checkout", title: "Photo checkout" });
+    expect(lanes[0]).toMatchObject({ lane: "photo_checkout", title: "Photo checkout", completed: 1, total: 2 });
     expect(lanes[1]).toMatchObject({ lane: "place", completed: 3, total: 12, status: "running" });
     expect(lanes[2].key).toBe("watch:inbox");
     const [unknown] = jobLanes([

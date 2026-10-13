@@ -76,6 +76,14 @@ func TestPhotoEnrollmentClassifiesCreatedNodes(t *testing.T) {
 	assert.Equal(t, int64(1), asset.Revision)
 	assert.Equal(t, PhotoRoleImage, asset.Files[0].Role)
 
+	webp, err := s.CreateFile(ctx, s.RootID(), "image.webp", fakeHash("e5"), 4, "image/webp")
+	require.NoError(t, err)
+	webpAsset, err := s.PhotoAssetForNode(ctx, webp.ID)
+	require.NoError(t, err)
+	require.Len(t, webpAsset.Files, 1)
+	assert.Equal(t, webp.ID, webpAsset.Files[0].NodeID)
+	assert.Equal(t, PhotoRoleImage, webpAsset.Files[0].Role)
+
 	video, err := s.CreateFile(ctx, s.RootID(), "video.mp4", fakeHash("b2"), 4, "video/mp4")
 	require.NoError(t, err)
 	_, err = s.PhotoAssetForNode(ctx, video.ID)
@@ -244,8 +252,10 @@ func TestPhotoMetadataRoundTripAndInvalidReferences(t *testing.T) {
 	invalidLines := strings.Split(first.String(), "\n")
 	found := false
 	for index, line := range invalidLines {
-		if strings.Contains(line, `"type":"photo_file"`) && strings.Contains(line, `"role":"sidecar"`) {
+		if strings.Contains(line, `"type":"photo_file"`) && strings.Contains(line, fileByRole(paired.Asset.Files, PhotoRoleSidecar).ID) {
+			require.Contains(t, line, `"sidecar_of_file_id":"`+raw.ID+`"`)
 			invalidLines[index] = strings.Replace(line, `"sidecar_of_file_id":"`+raw.ID+`"`, `"sidecar_of_file_id":null`, 1)
+			require.NotEqual(t, line, invalidLines[index])
 			found = true
 			break
 		}

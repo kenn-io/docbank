@@ -17,7 +17,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 )
 
@@ -44,50 +43,29 @@ func TestGetPublishesVerifiedCurrentVersion(t *testing.T) {
 	assert.Equal(t, "synthetic binary\x00content", string(bytes))
 	assert.NotContains(t, out, "download:", "JSON must contain no progress lines")
 	assertNoGetStaging(t, filepath.Dir(output))
-}
-
-func TestGetRefusesExistingDestinationUnlessOverwriteIsExplicit(t *testing.T) {
-	_ = setupVaultHome(t)
-	source := writeSourceFile(t, "report.txt", "authoritative")
-	_, err := runCLI(t, "add", source, "--dest", "/inbox", "--json")
-	require.NoError(t, err)
-
-	output := filepath.Join(t.TempDir(), "report.txt")
 	require.NoError(t, os.WriteFile(output, []byte("keep me"), 0o600))
-	_, err = runCLI(t, "get", "/inbox/report.txt", output)
+	_, err = runCLI(t, "get", "/inbox/statement.bin", output)
 	require.ErrorContains(t, err, "pass --overwrite")
-	bytes, readErr := os.ReadFile(output)
-	require.NoError(t, readErr)
+	bytes, err = os.ReadFile(output)
+	require.NoError(t, err)
 	assert.Equal(t, "keep me", string(bytes))
 	assertNoGetStaging(t, filepath.Dir(output))
-
-	out, err := runCLI(t, "get", "/inbox/report.txt", output, "--overwrite", "--json")
+	out, err = runCLI(t, "get", "/inbox/statement.bin", output, "--overwrite", "--json")
 	require.NoError(t, err)
 	assert.True(t, jsontext.Value([]byte(out)).IsValid(), out)
-	bytes, readErr = os.ReadFile(output)
-	require.NoError(t, readErr)
-	assert.Equal(t, "authoritative", string(bytes))
+	bytes, err = os.ReadFile(output)
+	require.NoError(t, err)
+	assert.Equal(t, "synthetic binary\x00content", string(bytes))
 	assertNoGetStaging(t, filepath.Dir(output))
-}
-
-func TestGetCanRetrieveTrashedFileByStableID(t *testing.T) {
-	_ = setupVaultHome(t)
-	source := writeSourceFile(t, "archived.txt", "retained bytes")
-	_, err := runCLI(t, "add", source, "--dest", "/inbox", "--json")
+	_, err = runCLI(t, "rm", formatNodeSelector(receipt.NodeID), "--json")
 	require.NoError(t, err)
-	statJSON, err := runCLI(t, "stat", "/inbox/archived.txt", "--json")
+	recovered := filepath.Join(filepath.Dir(output), "recovered.bin")
+	_, err = runCLI(t, "get", formatNodeSelector(receipt.NodeID), recovered, "--json")
 	require.NoError(t, err)
-	var node api.Node
-	require.NoError(t, json.Unmarshal([]byte(statJSON), &node))
-	_, err = runCLI(t, "rm", formatNodeSelector(node.ID), "--json")
+	bytes, err = os.ReadFile(recovered)
 	require.NoError(t, err)
-
-	output := filepath.Join(t.TempDir(), "recovered.txt")
-	_, err = runCLI(t, "get", formatNodeSelector(node.ID), output, "--json")
-	require.NoError(t, err)
-	bytes, err := os.ReadFile(output)
-	require.NoError(t, err)
-	assert.Equal(t, "retained bytes", string(bytes))
+	assert.Equal(t, "synthetic binary\x00content", string(bytes))
+	assertNoGetStaging(t, filepath.Dir(recovered))
 }
 
 func TestGetRejectsDirectoryAndInvalidProgress(t *testing.T) {
