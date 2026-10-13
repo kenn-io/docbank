@@ -26,7 +26,7 @@ import (
 	kitdaemon "go.kenn.io/kit/daemon"
 )
 
-func TestGetPublishesVerifiedCurrentVersion(t *testing.T) {
+func TestGetCLIRequestsAndPublishesCurrentVersion(t *testing.T) {
 	vault := t.TempDir()
 	t.Setenv("DOCBANK_HOME", vault)
 	const token = "synthetic-proof-token"
@@ -34,6 +34,7 @@ func TestGetPublishesVerifiedCurrentVersion(t *testing.T) {
 	sum := sha256.Sum256([]byte(content))
 	node := api.Node{ID: 42, Name: "statement.bin", Kind: "file", Revision: 1, CurrentVersionID: "00000000-0000-4000-8000-000000000021", BlobHash: hex.EncodeToString(sum[:]), Size: int64(len(content))}
 	requests := make(chan string, 8)
+	contentRequests := make(chan string, 8)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case kitdaemon.DefaultPingPath:
@@ -55,6 +56,8 @@ func TestGetPublishesVerifiedCurrentVersion(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			assert.NoError(t, json.MarshalWrite(w, response))
 		case "/api/v1/versions/" + node.CurrentVersionID + "/content":
+			assert.Equal(t, http.MethodGet, r.Method)
+			contentRequests <- r.URL.Path
 			w.Header().Set(api.ContentVersionHeader, node.CurrentVersionID)
 			w.Header().Set(api.BlobHashHeader, node.BlobHash)
 			w.Header().Set(api.BlobSizeHeader, strconv.FormatInt(node.Size, 10))
@@ -90,6 +93,7 @@ func TestGetPublishesVerifiedCurrentVersion(t *testing.T) {
 		} else {
 			assert.Equal(t, "/api/v1/path?/inbox/statement.bin", <-requests)
 		}
+		assert.Equal(t, "/api/v1/versions/"+node.CurrentVersionID+"/content", <-contentRequests)
 	}
 	_, err = runCLI(t, "get", "/inbox/statement.bin", output)
 	require.ErrorContains(t, err, "pass --overwrite")
@@ -101,6 +105,7 @@ func TestGetPublishesVerifiedCurrentVersion(t *testing.T) {
 	require.ErrorContains(t, err, "not a file")
 	require.Len(t, requests, 1)
 	assert.Equal(t, "/api/v1/path?/", <-requests)
+	assert.Empty(t, contentRequests)
 }
 
 func TestPublishGetFileForwardsOverwriteAndReportsErrors(t *testing.T) {

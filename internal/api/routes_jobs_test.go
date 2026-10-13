@@ -99,7 +99,7 @@ func TestListJobsWithoutSupervisorReturnsEmptyObject(t *testing.T) {
 func TestBrowserJobListRedactsPrivateBackendErrors(t *testing.T) {
 	t.Parallel()
 	ts, live := newTestServer(t, nil)
-	privateFailure := `opening /Users/example/private/archive: s3 endpoint https://private.example.invalid`
+	privateFailure := `opening /Users/user-a/private/archive: s3 endpoint https://private.example.invalid`
 	operation, err := live.CreateStorageOperation(t.Context(), store.StorageOperationCreate{
 		Kind: "place", RequestDigest: testHash("private operation"),
 		RequestJSON: `{}`, PlanJSON: `{}`, TotalObjects: 0,
@@ -147,7 +147,7 @@ func TestBrowserJobListRedactsPrivateBackendErrors(t *testing.T) {
 	for _, job := range got.Items {
 		operationIDs = append(operationIDs, job.OperationID)
 		assert.NotEmpty(t, job.Error)
-		assert.NotContains(t, job.Error, "/Users/example")
+		assert.NotContains(t, job.Error, "/Users/user-a/private/archive")
 		assert.NotContains(t, job.Error, "private.example.invalid")
 	}
 	assert.ElementsMatch(t, []string{operation.ID, photoImport.ID}, operationIDs)

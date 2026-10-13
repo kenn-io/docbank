@@ -69,16 +69,20 @@ func TestPhotoImportDiscovery(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, candidates, 3)
 		assert.Equal(t, int64(2), unsupported)
-		assert.ElementsMatch(t, []string{keep, linkTarget, hidden}, []string{candidates[0].Path, candidates[1].Path, candidates[2].Path})
+		assert.ElementsMatch(t,
+			[]string{keep, linkTarget, hidden},
+			[]string{candidates[0].Path, candidates[1].Path, candidates[2].Path})
 	})
 	t.Run("root symlink", func(t *testing.T) {
 		rootLink := filepath.Join(t.TempDir(), "camera-link")
 		if err := os.Symlink(root, rootLink); err != nil {
 			t.Skipf("root symbolic links unavailable: %v", err)
 		}
-		candidates, _, err := discoverPhotoCandidates(t.Context(), rootLink)
+		candidates, unsupported, err := discoverPhotoCandidates(t.Context(), rootLink)
 		require.NoError(t, err)
-		assert.NotEmpty(t, candidates)
+		require.Len(t, candidates, 3)
+		assert.Equal(t, int64(2), unsupported)
+		assert.ElementsMatch(t, []string{keep, linkTarget, hidden}, []string{candidates[0].Path, candidates[1].Path, candidates[2].Path})
 	})
 }
 
