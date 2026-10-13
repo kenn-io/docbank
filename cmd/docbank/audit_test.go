@@ -43,11 +43,7 @@ func TestHumanAuditHistoryShowsPhotoDecisions(t *testing.T) {
 			before.Values = store.PhotoAuthored{}
 			after.Values = store.PhotoAuthored{Confirmed: store.PhotoConfirmedCaption}
 			output.Reset()
-			if scope {
-				require.NoError(t, writeAuditScopeHistory(&output, api.AuditScopeEventPage{Items: events, Total: 1}))
-			} else {
-				require.NoError(t, writeAuditHistory(&output, api.AuditEventPage{Node: api.Node{ID: nodeID}, Items: events, Total: 1}))
-			}
+			require.NoError(t, writeAuditHistory(&output, api.AuditEventPage{Node: api.Node{ID: nodeID}, Items: events, Total: 1}))
 			states := strings.Split(output.String(), " -> ")
 			require.Len(t, states, 3)
 			assert.Contains(t, states[1], `caption ""`)
