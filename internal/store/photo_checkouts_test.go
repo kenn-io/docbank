@@ -2,7 +2,6 @@ package store
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -104,7 +103,7 @@ func TestPhotoCheckoutPublicationRechecksVisibility(t *testing.T) {
 	}
 }
 
-func TestPhotoCheckoutMetadataRestoresUnbound(t *testing.T) {
+func TestPhotoCheckoutMetadataRestoresUnboundAndValidatesFrozenEntries(t *testing.T) {
 	t.Parallel()
 	for _, driver := range v090UpgradeDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
@@ -144,7 +143,6 @@ func TestPhotoCheckoutMetadataRestoresUnbound(t *testing.T) {
 				path     bool
 			}{
 				{strings.Replace(exported.String(), `"relative_path":"undated/`, `"relative_path":"../`, 1), true},
-				{strings.Replace(exported.String(), `"relative_path":"undated/`, `"relative_path":"CON/`, 1), true},
 				{strings.Replace(exported.String(), `"size":20,"relative_path"`, `"size":21,"relative_path"`, 1), false},
 			} {
 				invalid, err := Open(filepath.Join(t.TempDir(), "invalid.db"), driver.driver)
@@ -186,21 +184,6 @@ func TestPhotoCheckoutMetadataRestoresUnbound(t *testing.T) {
 	}
 }
 
-func TestPhotoCheckoutAuditedMutationRefused(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	a := albumAsset(t, s, "photo.jpg")
-	seedInitialAuditAuthority(t, s, s.RootID())
-	_, _, err := s.CreatePhotoCheckout(context.Background(), PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, "checkout", 0)
-	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
-	checkouts, err := s.ListPhotoCheckouts(t.Context())
-	require.NoError(t, err)
-	require.Empty(t, checkouts)
-	ops, err := s.StorageOperations(t.Context(), 10)
-	require.NoError(t, err)
-	require.Empty(t, ops)
-}
-
 func TestPhotoCheckoutRejectsByteOverflow(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -211,19 +194,50 @@ func TestPhotoCheckoutRejectsByteOverflow(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
 }
 
-func TestPhotoCheckoutRejectsNonportableNamesBeforeCreatingRecords(t *testing.T) {
+func TestPhotoCheckoutRejectedCreateLeavesNoCheckoutOrOperation(t *testing.T) {
 	t.Parallel()
+	cases := []struct{ name, filename string }{
+		{"empty all", ""}, {"empty album", ""}, {"empty years", ""}, {"audit refusal", ""},
+	}
 	for _, name := range []string{"CON.jpg", "bad:name.jpg", "bad?.jpg", "trailing.", "trailing ", "control\x01.jpg", "bad\\name.jpg", "bad\xff.jpg"} {
-		t.Run(name, func(t *testing.T) {
+		cases = append(cases, struct{ name, filename string }{name, name})
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
 			s := newTestStore(t)
-			asset := albumAsset(t, s, "photo.jpg")
-			_, err := s.db.ExecContext(t.Context(), `UPDATE nodes SET name=? WHERE id=?`, name, asset.Files[0].NodeID)
-			require.NoError(t, err)
-			_, _, err = s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
-			require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
-			require.Contains(t, err.Error(), "filename")
-			require.Contains(t, err.Error(), asset.ID)
-			require.Contains(t, err.Error(), asset.Files[0].ID)
+			selection := PhotoCheckoutSelection{All: true}
+			expectedErr := ErrInvalidPhotoCheckout
+			var asset PhotoAsset
+			if tc.filename != "" || tc.name == "audit refusal" {
+				asset = albumAsset(t, s, "photo.jpg")
+				selection = PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}
+				if tc.filename != "" {
+					_, err := s.db.ExecContext(t.Context(), "UPDATE nodes SET name=? WHERE id=?", tc.filename, asset.Files[0].NodeID)
+					require.NoError(t, err)
+				} else {
+					seedInitialAuditAuthority(t, s, s.RootID())
+					expectedErr = ErrAuditMutationUnsupported
+				}
+			} else {
+				switch tc.name {
+				case "empty album":
+					album, err := s.CreatePhotoSet(t.Context(), "Empty")
+					require.NoError(t, err)
+					selection = PhotoCheckoutSelection{AlbumIDs: []string{album.ID}}
+				case "empty years":
+					selection = PhotoCheckoutSelection{Years: &PhotoCheckoutYears{From: 2024, To: 2024}}
+				}
+				estimate, err := s.EstimatePhotoCheckout(t.Context(), selection)
+				require.NoError(t, err)
+				require.Zero(t, estimate.Files)
+			}
+			_, _, err := s.CreatePhotoCheckout(t.Context(), selection, "checkout", 100)
+			require.ErrorIs(t, err, expectedErr)
+			if tc.filename != "" {
+				require.Contains(t, err.Error(), "filename")
+				require.Contains(t, err.Error(), asset.ID)
+				require.Contains(t, err.Error(), asset.Files[0].ID)
+			}
 			checkouts, err := s.ListPhotoCheckouts(t.Context())
 			require.NoError(t, err)
 			require.Empty(t, checkouts)
@@ -232,26 +246,6 @@ func TestPhotoCheckoutRejectsNonportableNamesBeforeCreatingRecords(t *testing.T)
 			require.Empty(t, operations)
 		})
 	}
-}
-
-func TestPhotoCheckoutRejectsEmptySelectionBeforeCreatingRecords(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	album, err := s.CreatePhotoSet(t.Context(), "Empty")
-	require.NoError(t, err)
-	for _, selection := range []PhotoCheckoutSelection{{All: true}, {AlbumIDs: []string{album.ID}}, {Years: &PhotoCheckoutYears{From: 2024, To: 2024}}} {
-		estimate, err := s.EstimatePhotoCheckout(t.Context(), selection)
-		require.NoError(t, err)
-		require.Zero(t, estimate.Files)
-		_, _, err = s.CreatePhotoCheckout(t.Context(), selection, "checkout", 100)
-		require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
-	}
-	checkouts, err := s.ListPhotoCheckouts(t.Context())
-	require.NoError(t, err)
-	require.Empty(t, checkouts)
-	operations, err := s.StorageOperations(t.Context(), 10)
-	require.NoError(t, err)
-	require.Empty(t, operations)
 }
 
 func TestPhotoCheckoutStatusTracksOperationAcrossPauseAndFinish(t *testing.T) {

@@ -177,8 +177,9 @@ func TestRootStageRejectsMovedParentBeforeRename(t *testing.T) {
 	if err := os.Rename(filepath.Join(root.Name(), filepath.Dir(destination)), outside); err != nil {
 		t.Skip("platform pins an opened directory against rename")
 	}
+	require.NoError(t, root.Mkdir(filepath.Dir(destination), 0700))
 	installed, err := stage.publish(parent, destination)
-	require.Error(t, err)
+	require.ErrorContains(t, err, "checkout destination changed before publication")
 	require.False(t, installed)
 	_, err = os.Stat(filepath.Join(outside, "photo.jpg"))
 	require.ErrorIs(t, err, os.ErrNotExist)

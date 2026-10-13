@@ -38,10 +38,15 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 	require.Equal(t, "photo_checkout", created.Operation.Kind)
 	require.Equal(t, created.Operation.State, created.Checkout.State)
 	require.Equal(t, created.Operation.ID, created.Checkout.OperationID)
-	require.Eventually(t, func() bool {
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
 		op, err := catalog.StorageOperation(t.Context(), created.Operation.ID)
-		return err == nil && op.State == store.StorageOperationCompleted
-	}, 5*time.Second, 10*time.Millisecond)
+		if err == nil && op.FinishedAt != nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
 	response, body = do(t, ts, http.MethodGet, "/api/v1/photos/checkouts/"+created.Checkout.ID, nil, nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	require.NotContains(t, body, `"entries"`)

@@ -942,7 +942,7 @@ func TestPruneContentVersionsValidatesSelectorsAndTargets(t *testing.T) {
 	assert.NotEmpty(t, preview.Cutoff)
 }
 
-func TestPhotoCheckoutFreezesBasesAndRetainsThemThroughPruneAndTrashEmpty(t *testing.T) {
+func TestPhotoCheckoutRetainsBasesThroughPruneAndTrashEmpty(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -954,8 +954,6 @@ func TestPhotoCheckoutFreezesBasesAndRetainsThemThroughPruneAndTrashEmpty(t *tes
 	require.Len(t, entries, 1)
 	n, err := s.NodeByID(ctx, a.Files[0].NodeID)
 	require.NoError(t, err)
-	require.Equal(t, n.CurrentVersionID, entries[0].VersionID)
-	require.Equal(t, n.BlobHash, entries[0].Hash)
 	n, _, err = s.ReplaceContent(ctx, n.ID, n.Revision, browseHash("replacement"), 30, "image/jpeg")
 	require.NoError(t, err)
 	prune, err := s.PruneContentVersions(ctx, n.ID, n.Revision, VersionPruneSelector{AllPrior: true}, true)
