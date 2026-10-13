@@ -229,6 +229,41 @@ func TestPhotoTrashPageUsesLatestMemberTime(t *testing.T) {
 	assert.Equal(t, doc.ID, page[0].ID)
 }
 
+func TestTrashPageCountsRootsAcrossPhotoAndDirectoryGroups(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	asset, nodes := photoTrashFixture(t, s)
+	sidecar := fileByRole(asset.Files, PhotoRoleSidecar)
+	asset, err := s.DetachPhotoFile(t.Context(), asset.ID, asset.Revision, sidecar.ID, PhotoDetachOptions{})
+	require.NoError(t, err)
+	_, err = s.TrashPhotoAsset(t.Context(), asset.ID, asset.Revision)
+	require.NoError(t, err)
+	dir, err := s.Mkdir(t.Context(), s.RootID(), "folder")
+	require.NoError(t, err)
+	_, err = s.CreateFile(t.Context(), dir.ID, "child.txt", fakeHash("b2"), 2, "text/plain")
+	require.NoError(t, err)
+	_, _, err = s.Trash(t.Context(), dir.ID, UnconditionalRev)
+	require.NoError(t, err)
+	// An unattached sidecar has a photo_files row but no asset. It remains
+	// its own trash root, just like the ordinary directory above.
+	_, _, err = s.Trash(t.Context(), nodes[2].ID, UnconditionalRev)
+	require.NoError(t, err)
+	_, err = s.CreateFile(t.Context(), s.RootID(), "live.jpg", fakeHash("d4"), 4, "image/jpeg")
+	require.NoError(t, err)
+
+	page, total, err := s.TrashedRootsPage(t.Context(), 10, 0)
+	require.NoError(t, err)
+	require.Equal(t, 3, total)
+	require.Len(t, page, 3)
+	assert.ElementsMatch(t, []int64{nodes[0].ID, dir.ID, nodes[2].ID},
+		[]int64{page[0].ID, page[1].ID, page[2].ID})
+
+	page, total, err = s.TrashedRootsPage(t.Context(), 10, 3)
+	require.NoError(t, err)
+	assert.Empty(t, page)
+	assert.Equal(t, 3, total)
+}
+
 func TestPhotoTrashEmptyCompleteGroups(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []string{"bounded", "live peer", "new peer", "retained peer", "folder"} {

@@ -275,9 +275,13 @@ records `trash_parent`/`trash_name` on the trash root so restore can put
 it back. The trash root is reparented under `/` at trash time: since
 `parent_id` cascades on delete, this keeps an independently-trashed
 subtree alive even if its original parent is later permanently deleted.
-All nodes trashed in one operation share the same `trashed_at` stamp,
-which is how `trash list` distinguishes trash roots from members of a
-trashed subtree.
+All nodes trashed in one operation share the same `trashed_at` stamp.
+Only roots carry `trash_name`; descendants remain part of their root's subtree.
+
+Paginated trash reads group photo roots by asset and keep each ordinary root
+separate. The total counts those grouping keys directly; selecting a display
+representative and the latest member trash time is only needed for the page.
+Both reads share one transaction so the total and page see the same snapshot.
 
 ## Concurrent first-open
 
