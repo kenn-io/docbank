@@ -57,6 +57,10 @@ func executeReadTool(
 	var links []*sdkmcp.ResourceLink
 	var err error
 	switch name {
+	case textOutlineTool.name:
+		output, err = getTextOutline(ctx, lease, raw)
+	case textSectionTool.name:
+		output, err = readTextSection(ctx, lease, raw)
 	case textCitationTool.name:
 		output, err = resolveTextCitation(ctx, lease, raw)
 	case "get_vault_info":

@@ -283,6 +283,8 @@ func TestResolveTextCitationLifecycle(t *testing.T) {
 			require.NoError(t, err)
 			_, err = f.Service.ResolveTextCitation(t.Context(), f.Citation)
 			require.ErrorIs(t, err, document.ErrCitationUnavailable)
+			_, err = f.Service.GetTextOutline(t.Context(), document.TextOutlineRequest{Citation: f.Citation})
+			require.ErrorIs(t, err, document.ErrCitationUnavailable)
 			if removal == "trash" {
 				_, _, err = f.Catalog.Restore(t.Context(), f.Citation.NodeID, store.UnconditionalRev)
 				require.NoError(t, err)

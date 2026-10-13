@@ -59,7 +59,7 @@ type toolDefinition struct {
 }
 
 var readToolDefinitions = []toolDefinition{
-	textCitationTool,
+	textCitationTool, textOutlineTool, textSectionTool,
 	exportPlanTool, exportProblemsTool,
 	reportSummaryTool, reportDatesTool,
 	{name: "get_export_status", title: "Get export status", description: "Read one retained export job without downloading it.", schemas: getExportStatusSchemas},
@@ -461,7 +461,8 @@ func stableDomainError(err error) (string, int) {
 		return "", 0
 	}
 	switch facts.Code {
-	case "invalid_text_citation", "citation_unavailable", "citation_limit", "invalid_citation_range",
+	case "invalid_text_navigation", "text_navigation_limit",
+		"invalid_text_citation", "citation_unavailable", "citation_limit", "invalid_citation_range",
 		"citation_timeout", "citation_canceled", "citation_integrity", "citation_failed":
 		return facts.Code, 0
 	case "invalid_report_request", "invalid_query", "invalid_profile", "invalid_report_scope",
@@ -506,6 +507,11 @@ func stableDomainError(err error) (string, int) {
 
 func domainErrorMessage(code string) string {
 	switch code {
+	case "invalid_text_navigation":
+		return "Fetch the outline for this rendition and correct the section bounds or offset."
+	case "text_navigation_limit":
+		return "The rendition exceeds navigation limits; use short citations within their limits. " +
+			"Whole-rendition download requires an attachment still active for its version."
 	case "invalid_text_citation":
 		return "Correct the saved citation's identities and Unicode range."
 	case "citation_unavailable":

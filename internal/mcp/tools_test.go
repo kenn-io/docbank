@@ -23,7 +23,7 @@ import (
 func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 	tools := toolCatalog(ServerOptions{})
 	wantNames := []string{
-		"resolve_text_citation",
+		"resolve_text_citation", "get_text_outline", "read_text_section",
 		"get_export_plan", "get_export_problems",
 		"get_report_summary", "get_report_dates",
 		"get_export_status",

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/blob"
@@ -17,8 +18,14 @@ import (
 func TestResolveTextCitationPhysicalRestore(t *testing.T) {
 	t.Parallel()
 	f := processing.NewTextCitationTestFixture(t)
+	outline, err := f.Service.GetTextOutline(t.Context(), document.TextOutlineRequest{Citation: f.Citation})
+	require.NoError(t, err)
+	request := document.TextSectionRequest{Citation: f.Citation, Section: outline.EnclosingSection, MaxChars: 16000}
+	original, err := f.Service.ReadTextSection(t.Context(), request)
+	require.NoError(t, err)
+	require.Contains(t, original.Text, "aé界🙂z")
 	f.ReplaceSource(t)
-	_, err := maintenance.GarbageCollect(t.Context(), f.Catalog, f.Blobs, maintenance.GCOptions{})
+	_, err = maintenance.GarbageCollect(t.Context(), f.Catalog, f.Blobs, maintenance.GCOptions{})
 	require.NoError(t, err)
 	_, err = maintenance.Pack(t.Context(), f.Catalog, f.Blobs, 1<<20)
 	require.NoError(t, err)
@@ -28,6 +35,9 @@ func TestResolveTextCitationPhysicalRestore(t *testing.T) {
 	want, err := f.Service.ResolveTextCitation(t.Context(), f.Citation)
 	require.NoError(t, err)
 	require.Equal(t, "é界🙂", want.Text)
+	packed, err := f.Service.ReadTextSection(t.Context(), request)
+	require.NoError(t, err)
+	require.Equal(t, original, packed)
 	repo, err := backup.Init(filepath.Join(t.TempDir(), "repository"))
 	require.NoError(t, err)
 	_, err = backupapp.Create(t.Context(), repo, "test", f.Catalog, f.Blobs, backup.CreateOptions{Jobs: 2})
@@ -50,4 +60,7 @@ func TestResolveTextCitationPhysicalRestore(t *testing.T) {
 	got, err := service.ResolveTextCitation(t.Context(), f.Citation)
 	require.NoError(t, err)
 	require.Equal(t, want, got)
+	restored, err := service.ReadTextSection(t.Context(), request)
+	require.NoError(t, err)
+	require.Equal(t, original, restored)
 }

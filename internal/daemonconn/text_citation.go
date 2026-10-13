@@ -30,21 +30,13 @@ func (c *Connection) ResolveTextCitation(
 		return document.ResolvedTextCitation{}, err
 	}
 	defer func() { _ = response.Body.Close() }()
-	const maxResponseBytes = 1 << 20
-	encoded, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
-	if err != nil {
-		return document.ResolvedTextCitation{}, fmt.Errorf("reading text citation response: %w", err)
-	}
-	if len(encoded) > maxResponseBytes {
-		return document.ResolvedTextCitation{}, errors.New("text citation response is too large")
-	}
 	var transport struct {
 		document.ResolvedTextCitation
 
 		Schema string `json:"$schema,omitzero"`
 	}
-	if err := json.Unmarshal(encoded, &transport, json.RejectUnknownMembers(true)); err != nil {
-		return document.ResolvedTextCitation{}, fmt.Errorf("decoding text citation response: %w", err)
+	if err := decodeCitationResponse(response, &transport, 1<<20); err != nil {
+		return document.ResolvedTextCitation{}, err
 	}
 	result := transport.ResolvedTextCitation
 	digest := sha256.Sum256([]byte(result.Text))
@@ -55,4 +47,18 @@ func (c *Connection) ResolveTextCitation(
 			errors.New("text citation response does not match its quotation")
 	}
 	return result, nil
+}
+
+func decodeCitationResponse(response *http.Response, output any, maxBytes int64) error {
+	encoded, err := io.ReadAll(io.LimitReader(response.Body, maxBytes+1))
+	if err != nil {
+		return fmt.Errorf("reading retained text response: %w", err)
+	}
+	if int64(len(encoded)) > maxBytes {
+		return errors.New("retained text response is too large")
+	}
+	if err := json.Unmarshal(encoded, output, json.RejectUnknownMembers(true)); err != nil {
+		return fmt.Errorf("decoding retained text response: %w", err)
+	}
+	return nil
 }

@@ -42,34 +42,50 @@ func readTextCitation(
 	if size > MaxRenditionBytes {
 		return document.ResolvedTextCitation{}, document.ErrCitationLimit
 	}
-	stream, actualSize, err := blobs.OpenStreamContext(ctx, citation.RenditionSHA256)
+	stream, err := openCitationStream(ctx, blobs, citation, size)
 	if err != nil {
-		return document.ResolvedTextCitation{}, citationReadError(err)
+		return document.ResolvedTextCitation{}, err
 	}
-	var text string
-	if actualSize != size || size < 0 {
-		err = document.ErrCitationIntegrity
-	} else {
-		text, err = readCitationRange(ctx, io.LimitReader(stream, MaxRenditionBytes+1), citation, size)
-	}
-	// Only report an invalid range once the artifact has verified and closed.
-	invalidRange := errors.Is(err, document.ErrInvalidCitationRange)
-	if invalidRange {
-		err = nil
-	}
-	if err == nil && !stream.Verified() {
-		err = fmt.Errorf("%w: %w", document.ErrCitationIntegrity, pack.ErrVerificationIncomplete)
-	}
-	err = errors.Join(err, stream.Close(), ctx.Err())
-	if err != nil {
-		return document.ResolvedTextCitation{}, citationReadError(err)
-	}
-	if invalidRange {
-		return document.ResolvedTextCitation{}, document.ErrInvalidCitationRange
+	text, readErr := readCitationRange(ctx, io.LimitReader(stream, MaxRenditionBytes+1), citation, size)
+	if err := finishCitationStream(ctx, stream, readErr); err != nil {
+		return document.ResolvedTextCitation{}, err
 	}
 	digest := sha256.Sum256([]byte(text))
 	return document.ResolvedTextCitation{Citation: citation, Text: text,
 		TextSHA256: hex.EncodeToString(digest[:]), TextBytes: len(text)}, nil
+}
+
+func openCitationStream(
+	ctx context.Context, blobs verifiedBlobReader, citation document.TextCitation, size int64,
+) (packstore.VerifiedReadCloser, error) {
+	stream, actualSize, err := blobs.OpenStreamContext(ctx, citation.RenditionSHA256)
+	if err != nil {
+		return nil, citationReadError(err)
+	}
+	if actualSize != size || size < 0 {
+		return nil, citationReadError(errors.Join(document.ErrCitationIntegrity, stream.Close(), ctx.Err()))
+	}
+	return stream, nil
+}
+
+func finishCitationStream(
+	ctx context.Context, stream packstore.VerifiedReadCloser, readErr error,
+) error {
+	// A range refusal is trustworthy only after the full artifact verifies and closes.
+	invalidRange := errors.Is(readErr, document.ErrInvalidCitationRange)
+	if invalidRange {
+		readErr = nil
+	}
+	if readErr == nil && !stream.Verified() {
+		readErr = fmt.Errorf("%w: %w", document.ErrCitationIntegrity, pack.ErrVerificationIncomplete)
+	}
+	if err := errors.Join(readErr, stream.Close(), ctx.Err()); err != nil {
+		return citationReadError(err)
+	}
+	if invalidRange {
+		return document.ErrInvalidCitationRange
+	}
+	return nil
 }
 
 func readCitationRange(

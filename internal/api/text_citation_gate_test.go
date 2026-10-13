@@ -104,57 +104,67 @@ func TestTextCitationCaptureOrdering(t *testing.T) {
 
 func TestTextCitationHTTPDeadline(t *testing.T) {
 	t.Parallel()
-	for _, cancelRead := range []bool{false, true} {
-		name := map[bool]string{false: "daemon timeout", true: "caller cancellation"}[cancelRead]
-		t.Run(name, func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
-				gate := api.NewOperationGate()
-				f := newCitationHTTPFixture(t, gate)
-				f.server.Close()
-				entered, resume := make(chan struct{}), make(chan struct{})
-				release := sync.OnceFunc(func() { close(resume) })
-				defer release()
-				maintenanceDone := make(chan error, 1)
-				go func() {
-					maintenanceDone <- gate.MaintainContext(t.Context(), func() error {
-						close(entered)
-						<-resume
-						return nil
-					})
-				}()
-				<-entered
-				ctx, cancel := context.WithCancel(t.Context())
-				defer cancel()
-				encoded, err := json.Marshal(f.citation)
-				require.NoError(t, err)
-				request := httptest.NewRequestWithContext(ctx, http.MethodPost,
-					f.server.URL+citationPath, bytes.NewReader(encoded))
-				request.Header.Set("X-Api-Key", testAPIKey)
-				request.Header.Set("Content-Type", "application/json")
-				response := httptest.NewRecorder()
-				done := make(chan struct{})
-				go func() { f.store.Server.Handler().ServeHTTP(response, request); close(done) }()
-				synctest.Wait()
-				if cancelRead {
-					cancel()
-				} else {
-					time.Sleep(61 * time.Second)
-				}
-				<-done
-				wantStatus, wantCode := 504, "citation_timeout"
-				if cancelRead {
-					wantStatus, wantCode = 408, "citation_canceled"
-				}
-				require.Equal(t, wantStatus, response.Code, response.Body.String())
-				require.Contains(t, response.Body.String(), `"code":"`+wantCode+`"`)
-				require.NotContains(t, response.Body.String(), `"text":`)
-				release()
-				require.NoError(t, <-maintenanceDone)
-				got, err := f.service.ResolveTextCitation(t.Context(), f.citation)
-				require.NoError(t, err)
-				require.Equal(t, "Verified alpha", got.Text)
+	for _, path := range []string{citationPath, outlinePath, sectionPath} {
+		for _, cancelRead := range []bool{false, true} {
+			name := map[bool]string{false: "daemon timeout", true: "caller cancellation"}[cancelRead]
+			t.Run(path+"/"+name, func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					gate := api.NewOperationGate()
+					f := newCitationHTTPFixture(t, gate)
+					f.server.Close()
+					entered, resume := make(chan struct{}), make(chan struct{})
+					release := sync.OnceFunc(func() { close(resume) })
+					defer release()
+					maintenanceDone := make(chan error, 1)
+					go func() {
+						maintenanceDone <- gate.MaintainContext(t.Context(), func() error {
+							close(entered)
+							<-resume
+							return nil
+						})
+					}()
+					<-entered
+					ctx, cancel := context.WithCancel(t.Context())
+					defer cancel()
+					var input any = f.citation
+					if path == outlinePath {
+						input = document.TextOutlineRequest{Citation: f.citation}
+					}
+					if path == sectionPath {
+						input = document.TextSectionRequest{Citation: f.citation,
+							Section: document.TextSectionRange{Start: 0, End: 15}, MaxChars: 10}
+					}
+					encoded, err := json.Marshal(input)
+					require.NoError(t, err)
+					request := httptest.NewRequestWithContext(ctx, http.MethodPost,
+						f.server.URL+path, bytes.NewReader(encoded))
+					request.Header.Set("X-Api-Key", testAPIKey)
+					request.Header.Set("Content-Type", "application/json")
+					response := httptest.NewRecorder()
+					done := make(chan struct{})
+					go func() { f.store.Server.Handler().ServeHTTP(response, request); close(done) }()
+					synctest.Wait()
+					if cancelRead {
+						cancel()
+					} else {
+						time.Sleep(61 * time.Second)
+					}
+					<-done
+					wantStatus, wantCode := 504, "citation_timeout"
+					if cancelRead {
+						wantStatus, wantCode = 408, "citation_canceled"
+					}
+					require.Equal(t, wantStatus, response.Code, response.Body.String())
+					require.Contains(t, response.Body.String(), `"code":"`+wantCode+`"`)
+					require.NotContains(t, response.Body.String(), `"text":`)
+					release()
+					require.NoError(t, <-maintenanceDone)
+					got, err := f.service.ResolveTextCitation(t.Context(), f.citation)
+					require.NoError(t, err)
+					require.Equal(t, "Verified alpha", got.Text)
+				})
 			})
-		})
+		}
 	}
 }
 

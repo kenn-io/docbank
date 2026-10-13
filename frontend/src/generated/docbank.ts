@@ -6888,6 +6888,134 @@ export interface TermReportHistoryPage {
   total: number;
 }
 
+export interface TextOutlineEntry {
+  /**
+     * @minimum 1
+     * @maximum 2147483647
+     */
+  end: number;
+  /**
+     * @minimum 0
+     * @maximum 6
+     */
+  level: number;
+  /**
+     * @minimum 0
+     * @maximum 2147483647
+     */
+  start: number;
+  /** @maxLength 160 */
+  title_markdown: string;
+  title_truncated: boolean;
+}
+
+export interface TextSectionRange {
+  /**
+     * @minimum 1
+     * @maximum 2147483647
+     */
+  end: number;
+  /**
+     * @minimum 0
+     * @maximum 2147483647
+     */
+  start: number;
+}
+
+export interface TextOutlinePage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  citation: TextCitation;
+  /**
+     * @minimum 1
+     * @maximum 2147483647
+     */
+  document_chars: number;
+  enclosing_section: TextSectionRange;
+  /**
+     * @minimum 1
+     * @maximum 4096
+     */
+  next_offset?: number;
+  /**
+     * @minimum 0
+     * @maximum 4097
+     */
+  offset: number;
+  /** @maxItems 50 */
+  sections: TextOutlineEntry[];
+  /**
+     * @minimum 1
+     * @maximum 4097
+     */
+  total: number;
+}
+
+export interface TextOutlineRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  citation: TextCitation;
+  /**
+     * @minimum 0
+     * @maximum 4097
+     */
+  offset: number;
+}
+
+export interface TextSectionPage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * @minimum 0
+     * @maximum 2147483647
+     */
+  actual_end: number;
+  /**
+     * @minimum 0
+     * @maximum 2147483647
+     */
+  actual_start: number;
+  citation: TextCitation;
+  complete: boolean;
+  /**
+     * @minimum 0
+     * @maximum 2147483647
+     */
+  next_offset: number;
+  /**
+     * @minimum 0
+     * @maximum 2147483647
+     */
+  offset: number;
+  section: TextSectionRange;
+  /** @maxLength 16000 */
+  text: string;
+  /**
+     * @minimum 0
+     * @maximum 64000
+     */
+  text_bytes: number;
+  /** @pattern ^[0-9a-f]{64}$ */
+  text_sha256: string;
+}
+
+export interface TextSectionRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  citation: TextCitation;
+  /**
+     * @minimum 1
+     * @maximum 16000
+     */
+  max_chars: number;
+  /**
+     * @minimum 0
+     * @maximum 2147483647
+     */
+  offset: number;
+  section: TextSectionRange;
+}
+
 export interface TicketOutputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -17718,6 +17846,82 @@ export const listTagNodes = async (tagId: string,
 
 
 
+export const getGetTextOutlineWithJsonUrl = () => {
+
+
+
+
+  return `/api/v1/text-citations/outline`
+}
+
+/**
+ * @summary Read the outline of an exact retained rendition
+ */
+export const getTextOutlineWithJson = async (textOutlineRequest: NonReadonly<TextOutlineRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<TextOutlinePage> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<TextOutlinePage>(getGetTextOutlineWithJsonUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(textOutlineRequest)
+  }
+);}
+
+
+
+export const getGetTextOutlineWithBlobUrl = () => {
+
+
+
+
+  return `/api/v1/text-citations/outline`
+}
+
+/**
+ * @summary Read the outline of an exact retained rendition
+ */
+export const getTextOutlineWithBlob = async (getTextOutlineBody: Blob, options?: Parameters<typeof sessionJSON>[1]): Promise<TextOutlinePage> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<TextOutlinePage>(getGetTextOutlineWithBlobUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream', ...getHeaders(options?.headers) },
+    body: getTextOutlineBody
+  }
+);}
+
+
+
 export const getResolveTextCitationWithJsonUrl = () => {
 
 
@@ -17789,6 +17993,82 @@ return sessionJSON<ResolvedTextCitation>(getResolveTextCitationWithBlobUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/octet-stream', ...getHeaders(options?.headers) },
     body: resolveTextCitationBody
+  }
+);}
+
+
+
+export const getReadTextSectionWithJsonUrl = () => {
+
+
+
+
+  return `/api/v1/text-citations/section`
+}
+
+/**
+ * @summary Read a page of an exact retained text section
+ */
+export const readTextSectionWithJson = async (textSectionRequest: NonReadonly<TextSectionRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<TextSectionPage> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<TextSectionPage>(getReadTextSectionWithJsonUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(textSectionRequest)
+  }
+);}
+
+
+
+export const getReadTextSectionWithBlobUrl = () => {
+
+
+
+
+  return `/api/v1/text-citations/section`
+}
+
+/**
+ * @summary Read a page of an exact retained text section
+ */
+export const readTextSectionWithBlob = async (readTextSectionBody: Blob, options?: Parameters<typeof sessionJSON>[1]): Promise<TextSectionPage> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<TextSectionPage>(getReadTextSectionWithBlobUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream', ...getHeaders(options?.headers) },
+    body: readTextSectionBody
   }
 );}
 

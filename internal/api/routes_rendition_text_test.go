@@ -56,6 +56,13 @@ type renditionTextFixture struct {
 
 func publishRenditionTextFixture(t *testing.T, s *testStore, cfg config.Config, node store.Node) renditionTextFixture {
 	t.Helper()
+	return publishRenditionTextSourceFixture(t, s, cfg, node, "Verified alpha <script>alert('blocked')</script>")
+}
+
+func publishRenditionTextSourceFixture(
+	t *testing.T, s *testStore, cfg config.Config, node store.Node, source string,
+) renditionTextFixture {
+	t.Helper()
 	resolved, err := cfg.ProcessingProfile("archive")
 	require.NoError(t, err)
 	canonicalProfile, fingerprints, err := document.CanonicalProfile(resolved.Document)
@@ -76,7 +83,7 @@ func publishRenditionTextFixture(t *testing.T, s *testStore, cfg config.Config, 
 		ContractVersion: document.SourceEvidenceContractV1, Completeness: document.EvidenceComplete,
 		Family: "pdf", UnitKind: document.EvidenceUnitPage,
 		Units: []document.SourceEvidenceUnitV1{{
-			Order: 0, Text: "Verified alpha <script>alert('blocked')</script>",
+			Order: 0, Text: source,
 			Locator: document.SourceEvidenceLocatorV1{Kind: document.EvidenceLocatorPage,
 				IndexOrigin: document.EvidenceIndexOriginOne, Start: 1, End: 1},
 		}},
