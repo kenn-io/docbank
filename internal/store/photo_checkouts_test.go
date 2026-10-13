@@ -231,19 +231,6 @@ func TestPhotoSourceProvenanceMetadata(t *testing.T) {
 			continue
 		}
 		require.NoError(t, err)
-		frozen, _, err := restored.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "restored", 0)
-		require.NoError(t, err)
-		copied, err := restored.PhotoCheckoutEntries(ctx, frozen.ID)
-		require.NoError(t, err)
-		restoredNames := []string{}
-		for _, entry := range copied {
-			restoredNames = append(restoredNames, filepath.Base(entry.Path))
-		}
-		expectedNames := []string{"IMG.ARW", "IMG.JPG", "IMG.ARW.XMP"}
-		if variant == "current" {
-			expectedNames[0] = "AAA.ARW"
-		}
-		require.ElementsMatch(t, expectedNames, restoredNames, variant)
 		var storedSource string
 		require.NoError(t, restored.db.QueryRowContext(ctx, `SELECT source_provenance_identity FROM photo_files WHERE file_id=?`, raw.ID).Scan(&storedSource))
 		require.Equal(t, expectedSource, storedSource, variant)

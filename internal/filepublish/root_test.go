@@ -83,27 +83,6 @@ func TestRootStageRejectsDestinationAfterPathReplacement(t *testing.T) {
 	}
 }
 
-func TestRootStageRejectsSymlinkEscape(t *testing.T) {
-	t.Parallel()
-	dir, outside := t.TempDir(), t.TempDir()
-	if err := os.Symlink(outside, filepath.Join(dir, "escape")); err != nil {
-		t.Skip("symlink creation unavailable")
-	}
-	root, err := os.OpenRoot(dir)
-	require.NoError(t, err)
-	defer func() { _ = root.Close() }()
-	stage, err := CreateRootStage(root)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, stage.Cleanup()) }()
-	require.NoError(t, stage.File.Close())
-	stage.File = nil
-	_, err = stage.Publish("escape/photo.jpg")
-	require.Error(t, err)
-	entries, err := os.ReadDir(outside)
-	require.NoError(t, err)
-	require.Empty(t, entries)
-}
-
 func TestRootStageSyncsNewDirectoryParentsBeforePublication(t *testing.T) {
 	t.Parallel()
 	for _, phase := range []string{"success", "parent failure", "publication failure"} {

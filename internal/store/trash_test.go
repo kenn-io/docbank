@@ -318,12 +318,16 @@ func TestTrashEmpty(t *testing.T) {
 
 func TestTrashEmptyRetainsMediaAuthorityAndDeletesUnrelatedRoots(t *testing.T) {
 	t.Parallel()
-	for _, authority := range []string{"source version", "input artifact"} {
+	for _, authority := range []string{"source version", "input artifact", "checkout entry"} {
 		t.Run(authority, func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
+			name, mediaType := "protected.bin", "application/octet-stream"
+			if authority == "checkout entry" {
+				name, mediaType = "protected.jpg", "image/jpeg"
+			}
 			protected, err := s.CreateFile(
-				ctx, s.RootID(), "protected.bin", fakeHash("a1"), 10, "application/octet-stream")
+				ctx, s.RootID(), name, fakeHash("a1"), 10, mediaType)
 			require.NoError(t, err)
 			unrelated, err := s.CreateFile(
 				ctx, s.RootID(), "unrelated.bin", fakeHash("b2"), 20, "application/octet-stream")
@@ -336,6 +340,10 @@ func TestTrashEmptyRetainsMediaAuthorityAndDeletesUnrelatedRoots(t *testing.T) {
 			case "source version":
 				_, err = s.db.Exec(`INSERT INTO media_source_versions VALUES(
 					'source-version','source',1,?,?,?)`, protected.CurrentVersionID, `{}`, stamp)
+			case "checkout entry":
+				asset, lookupErr := s.PhotoAssetForNode(ctx, protected.ID)
+				require.NoError(t, lookupErr)
+				_, _, err = s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
 			case "input artifact":
 				_, err = s.db.Exec(`INSERT INTO media_occurrences VALUES(
 					'occurrence','source',NULL,'operator','ref','1','','','','{}',1,?,NULL)`, stamp)
@@ -541,22 +549,4 @@ func TestRestoreAfterParentHardDeleteNeverRetargets(t *testing.T) {
 	p, err := s.Path(ctx, restored.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "/f.txt", p)
-}
-
-func TestPhotoCheckoutRetainsNodesThroughTrashEmpty(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	a := albumAsset(t, s, "photo.jpg")
-	_, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{All: true}, "checkout", 20)
-	require.NoError(t, err)
-	n, err := s.NodeByID(ctx, a.Files[0].NodeID)
-	require.NoError(t, err)
-	_, _, err = s.Trash(ctx, n.ID, n.Revision)
-	require.NoError(t, err)
-	empty, err := s.TrashEmpty(ctx, 0, true)
-	require.NoError(t, err)
-	require.Zero(t, empty.Candidates)
-	_, err = s.NodeByID(ctx, n.ID)
-	require.NoError(t, err)
 }
