@@ -120,24 +120,16 @@ func (s Service) validateDestination(ctx context.Context, root *os.Root, destina
 		if other == "" {
 			continue
 		}
-		overlap, err := ingest.PathsOverlap(destination, other)
-		if overlap {
-			return fmt.Errorf("%w: destination overlaps a vault, storage root, watched folder, or checkout", store.ErrInvalidPhotoCheckout)
+		info, statErr := os.Stat(other)
+		if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+			return statErr
 		}
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
+		var overlap bool
+		if statErr == nil && info.IsDir() {
+			_, overlap, err = ingest.WatchBindingOverlap([]config.WatchConfig{{Name: "checkout protection", Source: other}}, config.StoreBindingConfig{Kind: "filesystem", Path: destination})
+		} else {
+			overlap, err = ingest.PathsOverlap(destination, other)
 		}
-		info, err := os.Stat(other)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		if !info.IsDir() {
-			continue
-		}
-		_, overlap, err = ingest.WatchBindingOverlap([]config.WatchConfig{{Name: "checkout protection", Source: other}}, config.StoreBindingConfig{Kind: "filesystem", Path: destination})
 		if overlap {
 			return fmt.Errorf("%w: destination overlaps a vault, storage root, watched folder, or checkout", store.ErrInvalidPhotoCheckout)
 		}
@@ -457,9 +449,6 @@ func (s Service) copy(ctx context.Context, root *os.Root, destination string, e 
 	stage.File = nil
 	return s.mutate(ctx, func() error {
 		return s.Store.PublishPhotoCheckoutEntry(ctx, e, func() (bool, error) {
-			if err := checkDestinationIdentity(root, destination); err != nil {
-				return false, err
-			}
 			installed, err := stage.Publish(filepath.FromSlash(e.Path))
 			return installed, errors.Join(err, checkDestinationIdentity(root, destination))
 		})
