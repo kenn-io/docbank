@@ -494,3 +494,43 @@ func TestLargeAudioPlanPreservesCallerCancellationCause(t *testing.T) {
 		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(parent, http.MethodPost, "/api/v1/processing/plans", nil))
 	})
 }
+
+func TestLargeAudioPlanPreservesCallerDeadlineCause(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		cause := errors.New("synthetic caller deadline")
+		parent, cancel := context.WithTimeoutCause(t.Context(), 2*time.Minute, cause)
+		defer cancel()
+		handler := timeoutMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			audio, cleanup, err := withoutRequestTimeout(r.Context())
+			require.NoError(t, err)
+			defer cleanup()
+			derived, stop := context.WithCancel(audio)
+			defer stop()
+			time.Sleep(61 * time.Second)
+			require.NoError(t, audio.Err())
+			time.Sleep(time.Minute)
+			synctest.Wait()
+			require.ErrorIs(t, audio.Err(), context.DeadlineExceeded)
+			require.ErrorIs(t, context.Cause(audio), cause)
+			require.ErrorIs(t, derived.Err(), context.DeadlineExceeded)
+			require.ErrorIs(t, context.Cause(derived), cause)
+		}))
+		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(parent, http.MethodPost, "/api/v1/processing/plans", nil))
+	})
+}
+
+func TestLargeAudioPlanDoesNotReviveExpiredHandler(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		handler := timeoutMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			time.Sleep(61 * time.Second)
+			audio, cleanup, err := withoutRequestTimeout(r.Context())
+			require.NoError(t, err)
+			defer cleanup()
+			require.ErrorIs(t, audio.Err(), context.DeadlineExceeded)
+			require.ErrorIs(t, context.Cause(audio), context.DeadlineExceeded)
+		}))
+		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/v1/processing/plans", nil))
+	})
+}

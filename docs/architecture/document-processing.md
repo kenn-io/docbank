@@ -392,9 +392,10 @@ lower it. HTTP envelopes add only 128 KiB for multipart metadata and framing.
 Source staging, aggregate staging reservations, publication and rendition
 inspection use the same configured ceiling. Sequential rendition inspection
 and sealed upload preparation use verified blob streams, including terminal
-verification and a catalog size check, instead of materializing a seekable copy. Audio admission and worker runtime
-preparation intersect it with the selected profile's source limit. The built-in
-supplied-transcript and supplied-captions profiles allow 4 GiB original sources;
+verification and a catalog size check, instead of materializing a seekable copy.
+Audio admission and worker runtime preparation intersect it with the selected
+profile's source limit. The built-in supplied-transcript and supplied-captions
+profiles allow 4 GiB original sources;
 their 16 MiB transcript, caption and response limits remain separate.
 
 Audio retains its 24-hour duration and codec qualification bounds.
@@ -404,8 +405,8 @@ systems. Source lengths never select a sample allocation size. Document
 inspectors retain their existing 1 GiB ceiling because they materialize the
 source. Visual detection and remote MP4 originals remain bounded at 20 MiB.
 M4A identities (`.m4a`, `audio/mp4`, `audio/x-m4a`) select the audio ceiling;
-M4A parser availability follows the registered format support, and its movie
-metadata bound remains independent of source length. Hosted-provider limits
+accepting them still requires M4A format support. Its movie metadata bound
+remains independent of source length. Hosted-provider limits
 continue to apply before uploads to those providers.
 
 Staging reserves the declared length before creating its private file. The
@@ -417,11 +418,11 @@ releases the reservation. Operators can free space and retry the same operation.
 HTTP processing plans for cataloged audio sources above 1 GiB and within the
 configured ceiling lift the server's 60-second handler deadline after bounded
 JSON decoding. They clear the remaining socket read deadline and preserve the
-client's cancellation, original deadline and authentication context. Browser-session
-revocation still cancels the inspection, and cancellation hooks detach when the
-plan finishes. Smaller
-audio plans, documents, video, over-ceiling sources and request-body limits keep
-their existing deadline behavior.
+client's cancellation and its cause, original deadline and authentication context.
+Browser-session revocation still cancels the inspection, and cancellation hooks
+detach when the plan finishes. An expired handler cannot lift its deadline.
+Smaller audio plans, documents, video, over-ceiling sources and request-body
+limits keep their existing deadline behavior.
 
 A source may need both its stage and durable loose copy on disk during
 publication. Provider execution may also hold a sealed spool copy.
