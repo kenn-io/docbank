@@ -40,9 +40,11 @@ func TestPhotosCLIWorkflow(t *testing.T) {
 		{"photos", "settings", "reset"},
 	}
 	for _, path := range paths {
-		command, _, err := rootCmd.Find(path)
+		command, args, err := rootCmd.Find(path)
 		require.NoError(t, err, path)
-		assert.NotNil(t, command, path)
+		require.NotNil(t, command, path)
+		assert.Equal(t, rootCmd.CommandPath()+" "+strings.Join(path, " "), command.CommandPath())
+		assert.Empty(t, args)
 	}
 	for _, path := range [][]string{
 		{"photos", "assets", "attach"}, {"photos", "assets", "detach"},

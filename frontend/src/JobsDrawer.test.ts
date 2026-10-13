@@ -32,6 +32,7 @@ function jobsResponse(
 describe("background jobs drawer", () => {
   it.each([
     ["initial load", 503, { detail: "busy" }, "busy"],
+    ["lane controls", 200, { items: [], lane_controls_error: "Lane controls are unavailable" }, "Lane controls are unavailable"],
     ["active polling", 503, { detail: "busy" }, "busy"],
   ])(
     "recovers unavailable %s responses after retry",

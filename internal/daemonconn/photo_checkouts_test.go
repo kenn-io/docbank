@@ -99,8 +99,12 @@ func TestPhotoCheckoutClients(t *testing.T) {
 	mismatchedFailure := created
 	mismatchedFailure.Checkout.State, mismatchedFailure.Operation.State = "failed", "failed"
 	mismatchedFailure.Checkout.Error = "checkout error"
-	mismatchedFailure.Operation.Error = "different operation error"
+	mismatchedFailure.Operation.Error = mismatchedFailure.Checkout.Error
 	mismatchedFailure.Operation.FinishedAt = "2026-01-01T00:00:00Z"
+	result, err = create(mismatchedFailure)
+	require.NoError(t, err)
+	require.Equal(t, mismatchedFailure, result)
+	mismatchedFailure.Operation.Error = "different operation error"
 	for _, invalid := range []struct {
 		response api.PhotoCheckoutCreateResult
 		message  string

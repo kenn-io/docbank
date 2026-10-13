@@ -25,7 +25,7 @@ func TestPhotoCheckoutSelections(t *testing.T) {
 	for _, v := range []struct {
 		name, date string
 		size       int64
-	}{{"first.jpg", "2024-01-01", 10}, {"last.jpg", "2024-12-31", 20}, {"outside.jpg", "2025-01-01", 40}} {
+	}{{"first.jpg", "2024-01-01", 10}, {"last.jpg", "2025-12-31", 20}, {"outside.jpg", "2026-01-01", 40}} {
 		n, err := s.CreateFile(ctx, s.RootID(), v.name, browseHash(v.name), v.size, "image/jpeg")
 		require.NoError(t, err)
 		asset, err := s.PhotoAssetForNode(ctx, n.ID)
@@ -61,8 +61,8 @@ func TestPhotoCheckoutSelections(t *testing.T) {
 		{PhotoCheckoutSelection{All: true}, 3, 5, 93},
 		{PhotoCheckoutSelection{AssetIDs: []string{a.ID, a.ID}}, 1, 3, 33},
 		{PhotoCheckoutSelection{AlbumIDs: []string{set.ID}}, 2, 4, 53},
-		{PhotoCheckoutSelection{Years: &PhotoCheckoutYears{From: 2024, To: 2024}}, 2, 4, 53},
-		{PhotoCheckoutSelection{AssetIDs: []string{c.ID}, AlbumIDs: []string{set.ID}, Years: &PhotoCheckoutYears{From: 2024, To: 2024}}, 3, 5, 93},
+		{PhotoCheckoutSelection{Years: &PhotoCheckoutYears{From: 2024, To: 2025}}, 2, 4, 53},
+		{PhotoCheckoutSelection{AssetIDs: []string{c.ID}, AlbumIDs: []string{set.ID}, Years: &PhotoCheckoutYears{From: 2024, To: 2025}}, 3, 5, 93},
 	} {
 		estimate, err := s.EstimatePhotoCheckout(ctx, test.selection)
 		require.NoError(t, err)
