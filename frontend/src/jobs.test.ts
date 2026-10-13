@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { Job } from "./generated/docbank.js";
-import { jobLanes } from "./jobs.js";
+import { jobLanes, laneTitle } from "./jobs.js";
 
 const job = (fields: Partial<Job>): Job => ({
   name: "storage:a",
@@ -15,6 +15,7 @@ const job = (fields: Partial<Job>): Job => ({
 });
 
 describe("activity lanes", () => {
+  it("names the checkout lane", () => { expect(laneTitle("photo_checkout")).toBe("Photo checkout"); });
   it("compares UTC timestamps at full fractional precision and retains paused idle lanes", () => {
     const [lane] = jobLanes(
       [

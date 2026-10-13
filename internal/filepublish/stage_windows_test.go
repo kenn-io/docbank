@@ -43,10 +43,12 @@ func TestCreateStageOverridesPermissiveParentDACL(t *testing.T) {
 	root, err := os.OpenRoot(parent)
 	require.NoError(t, err)
 	defer func() { _ = root.Close() }()
-	rootStage, err := CreateRootStage(root, ".")
+	rootStage, err := CreateRootStage(root)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = rootStage.Cleanup() })
-	require.NoError(t, safefileio.ValidatePrivateDir(filepath.Join(parent, rootStage.component)))
+	restricted, err = winsecurity.OpenRestrictedCurrentUserFile(filepath.Join(parent, rootStage.name))
+	require.NoError(t, err)
+	require.NoError(t, restricted.Close())
 }
 
 func TestPublishAcceptsPathsLongerThanMaxPath(t *testing.T) {

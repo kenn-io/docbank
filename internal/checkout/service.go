@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -30,6 +31,14 @@ type Service struct {
 	Mutate        func(context.Context, func() error) error
 	ActivityBegin func()
 	ActivityEnd   func()
+	admit         func(context.Context, *store.Store, string) (bool, error)
+}
+
+func (s Service) admitOperation(ctx context.Context, id string) (bool, error) {
+	if s.admit != nil {
+		return s.admit(ctx, s.Store, id)
+	}
+	return jobs.AdmitStorageOperation(ctx, s.Store, id)
 }
 
 func (s Service) mutate(ctx context.Context, fn func() error) error {
@@ -138,90 +147,126 @@ func (s Service) validateDestination(ctx context.Context, root *os.Root, destina
 	return nil
 }
 
-func (s Service) Start(supervisor *jobs.Supervisor, checkout store.PhotoCheckout, root *os.Root) error {
-	var err error
-	if supervisor == nil {
-		err = errors.New("photo checkout requires a job supervisor")
-	} else {
-		err = supervisor.Start("storage:"+checkout.OperationID, func(ctx context.Context) error {
-			defer func() { _ = root.Close() }()
-			return s.Run(ctx, checkout, root)
-		})
-	}
+func (s Service) Start(supervisor *jobs.Supervisor, c store.PhotoCheckout, root *os.Root) error {
+	err := s.start(supervisor, c, root, false)
 	if err != nil {
-		_ = root.Close()
-		return errors.Join(err, s.finish(context.Background(), checkout, store.StorageOperationFailed, "{}", err.Error()))
+		if root != nil {
+			_ = root.Close()
+		}
+		if !errors.Is(err, jobs.ErrDuplicate) {
+			err = errors.Join(err, s.finish(context.Background(), c, store.StorageOperationFailed, "{}", err.Error()))
+		}
 	}
-	return nil
+	return err
 }
 
-// Recover preserves published copies and removes only recognized private stages.
-func (s Service) Recover(ctx context.Context) error {
+func (s Service) start(supervisor *jobs.Supervisor, c store.PhotoCheckout, root *os.Root, interrupted bool) error {
+	if supervisor == nil {
+		return errors.New("photo checkout requires a job supervisor")
+	}
+	return supervisor.Start("storage:"+c.OperationID, func(ctx context.Context) error {
+		if root != nil {
+			defer func() { _ = root.Close() }()
+		}
+		if interrupted {
+			return s.reconcile(ctx, c)
+		}
+		return jobs.RetryStorageOperation(ctx, time.Second, func() error { return s.Run(ctx, c, root) })
+	})
+}
+
+// Resume registers work without accessing external checkout destinations during startup.
+func (s Service) Resume(ctx context.Context, supervisor *jobs.Supervisor) error {
 	operations, err := s.Store.ResumableStorageOperations(ctx)
 	if err != nil {
 		return err
-	}
-	checkouts, err := s.Store.ListPhotoCheckouts(ctx)
-	if err != nil {
-		return err
-	}
-	byOperation := map[string]store.PhotoCheckout{}
-	for _, c := range checkouts {
-		byOperation[c.OperationID] = c
 	}
 	for _, op := range operations {
 		if op.Kind != store.StorageOperationKindPhotoCheckout {
 			continue
 		}
-		c, exists := byOperation[op.ID]
-		if !exists {
-			return fmt.Errorf("checkout operation %s has no definition", op.ID)
+		var request struct {
+			CheckoutID string `json:"checkout_id"`
 		}
-		failure := "checkout creation was interrupted; partial copies and frozen bases are retained"
-		if c.Destination != "" {
-			canonical, err := filepath.EvalSymlinks(c.Destination)
-			var root *os.Root
-			if err == nil && canonical == c.Destination {
-				root, err = os.OpenRoot(c.Destination)
-			}
-			if root != nil {
-				entries, entriesErr := s.Store.PhotoCheckoutEntries(ctx, c.ID)
-				if entriesErr != nil {
-					_ = root.Close()
-					return entriesErr
-				}
-				var verified []string
-				cleaned := map[string]bool{}
-				for _, e := range entries {
-					parent := filepath.Dir(filepath.FromSlash(e.Path))
-					if !cleaned[parent] {
-						entriesErr = errors.Join(entriesErr, filepublish.CleanupRootStages(root, parent))
-						cleaned[parent] = true
-					}
-					matches, verifyErr := observeCheckoutFile(root, e)
-					entriesErr = errors.Join(entriesErr, verifyErr)
-					if matches {
-						verified = append(verified, e.FileID)
-					}
-				}
-				if err := s.Store.ObservePhotoCheckout(ctx, c.ID, c.OperationID, verified); err != nil {
-					_ = root.Close()
-					return err
-				}
-				err = errors.Join(entriesErr, root.Close())
-			}
-			if err != nil && !errors.Is(err, os.ErrNotExist) {
-				failure += "; staging cleanup failed: " + err.Error()
-			}
+		if err := json.Unmarshal([]byte(op.RequestJSON), &request); err != nil {
+			return err
 		}
-		if err := s.finish(ctx, c, store.StorageOperationFailed, op.ReceiptJSON, failure); err != nil {
+		c, err := s.Store.PhotoCheckout(ctx, request.CheckoutID)
+		if err != nil {
+			return err
+		}
+		started, err := s.Store.PhotoCheckoutStarted(ctx, c.ID)
+		if err != nil {
+			return err
+		}
+		if err := s.start(supervisor, c, nil, started); err != nil && !errors.Is(err, jobs.ErrDuplicate) {
 			return err
 		}
 	}
 	return nil
 }
 
-func observeCheckoutFile(root *os.Root, entry store.PhotoCheckoutEntry) (bool, error) {
+func (s Service) reconcile(ctx context.Context, c store.PhotoCheckout) error {
+	failure := "checkout creation was interrupted; partial copies and frozen bases are retained"
+	canonical, fsErr := filepath.EvalSymlinks(c.Destination)
+	var root *os.Root
+	if fsErr == nil && canonical == c.Destination {
+		root, fsErr = os.OpenRoot(c.Destination)
+	}
+	if root != nil {
+		defer func() { _ = root.Close() }()
+		entries, err := s.Store.PhotoCheckoutEntries(ctx, c.ID)
+		if err != nil {
+			return err
+		}
+		fsErr = filepublish.CleanupRootStages(root)
+		var verified []string
+		seen := map[string]bool{}
+		for _, e := range entries {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if seen[e.Path] {
+				continue
+			}
+			seen[e.Path] = true
+			matches, err := observeCheckoutFile(ctx, root, e)
+			if err != nil {
+				fsErr = errors.Join(fsErr, fmt.Errorf("file %s at %q: %w", e.FileID, e.Path, err))
+			}
+			if matches {
+				verified = append(verified, e.FileID)
+			}
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := s.Store.ObservePhotoCheckout(ctx, c.ID, c.OperationID, verified); err != nil {
+			return err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if fsErr != nil && !errors.Is(fsErr, os.ErrNotExist) {
+		failure += "; reconciliation failed: " + fsErr.Error()
+	}
+	return s.finish(ctx, c, store.StorageOperationFailed, "{}", failure)
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(p)
+}
+
+func observeCheckoutFile(ctx context.Context, root *os.Root, entry store.PhotoCheckoutEntry) (bool, error) {
 	name := filepath.FromSlash(entry.Path)
 	info, err := root.Lstat(name)
 	if errors.Is(err, os.ErrNotExist) {
@@ -238,11 +283,10 @@ func observeCheckoutFile(root *os.Root, entry store.PhotoCheckoutEntry) (bool, e
 		return false, err
 	}
 	digest := sha256.New()
-	size, readErr := io.Copy(digest, file)
+	size, readErr := io.Copy(digest, contextReader{ctx, file})
 	err = errors.Join(readErr, file.Close())
 	return err == nil && size == entry.Size && hex.EncodeToString(digest.Sum(nil)) == entry.Hash, err
 }
-
 func (s Service) finish(ctx context.Context, c store.PhotoCheckout, state store.StorageOperationState, receipt, failure string) error {
 	return s.Store.FinishPhotoCheckout(ctx, c.ID, c.OperationID, state, receipt, failure, time.Now().Add(30*24*time.Hour))
 }
@@ -254,22 +298,43 @@ func (s Service) Run(ctx context.Context, c store.PhotoCheckout, root *os.Root) 
 	if s.ActivityEnd != nil {
 		defer s.ActivityEnd()
 	}
-	cancelled, err := jobs.AdmitStorageOperation(ctx, s.Store, c.OperationID)
+	cancelled, err := s.admitOperation(ctx, c.OperationID)
 	if err != nil {
-		return s.finish(context.WithoutCancel(ctx), c, store.StorageOperationFailed, "{}", err.Error())
+		return jobs.DeferStorageAdmission(ctx, s.Store, c.OperationID, err)
 	}
-	if _, err := s.Store.ClaimStorageOperation(ctx, c.OperationID); err != nil {
+	if err := s.Store.ClaimPhotoCheckout(ctx, c.ID, c.OperationID); err != nil {
 		return err
 	}
-	if err := s.Store.SetPhotoCheckoutState(ctx, c.ID, "running", ""); err != nil {
-		return err
+	if cancelled {
+		return s.finish(ctx, c, store.StorageOperationCancelled, "{}", "")
+	}
+	if root == nil {
+		canonical, err := filepath.EvalSymlinks(c.Destination)
+		if err == nil && canonical != c.Destination {
+			err = errors.New("checkout destination changed")
+		}
+		if err == nil {
+			root, err = os.OpenRoot(c.Destination)
+		}
+		if err != nil {
+			return s.finish(ctx, c, store.StorageOperationFailed, "{}", err.Error())
+		}
+		defer func() { _ = root.Close() }()
 	}
 	entries, copyErr := s.Store.PhotoCheckoutEntries(ctx, c.ID)
 	var copied, bytes int64
 	if copyErr == nil && !cancelled {
 		for _, entry := range entries {
-			cancelled, copyErr = jobs.AdmitStorageOperation(ctx, s.Store, c.OperationID)
-			if copyErr != nil || cancelled {
+			if entry.Published {
+				copied++
+				bytes += entry.Size
+				continue
+			}
+			cancelled, copyErr = s.admitOperation(ctx, c.OperationID)
+			if copyErr != nil {
+				return jobs.DeferStorageAdmission(ctx, s.Store, c.OperationID, copyErr)
+			}
+			if cancelled {
 				break
 			}
 			copyErr = s.copy(ctx, root, c.Destination, entry)
@@ -286,9 +351,6 @@ func (s Service) Run(ctx context.Context, c store.PhotoCheckout, root *os.Root) 
 	}
 	if ctx.Err() != nil {
 		return ctx.Err()
-	}
-	if copyErr == nil && !cancelled {
-		copyErr = checkDestinationIdentity(root, c.Destination)
 	}
 	if !cancelled {
 		cancelled, err = s.Store.FinalizeLocalOperation(ctx, c.OperationID)
@@ -318,11 +380,16 @@ func checkDestinationIdentity(root *os.Root, destination string) error {
 }
 
 func (s Service) copy(ctx context.Context, root *os.Root, destination string, e store.PhotoCheckoutEntry) (retErr error) {
+	defer func() {
+		if retErr != nil {
+			retErr = fmt.Errorf("file %s at %q: %w", e.FileID, e.Path, retErr)
+		}
+	}()
 	parent := filepath.Dir(filepath.FromSlash(e.Path))
 	if err := root.MkdirAll(parent, 0o755); err != nil {
 		return err
 	}
-	stage, err := filepublish.CreateRootStage(root, parent)
+	stage, err := filepublish.CreateRootStage(root)
 	if err != nil {
 		return err
 	}

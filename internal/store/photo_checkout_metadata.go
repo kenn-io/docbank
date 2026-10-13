@@ -46,7 +46,7 @@ var photoCheckoutMetadataTables = []metadataRecordCodec{
 
 func validatePhotoCheckoutReferences(ctx context.Context, q metadataQuerier) error {
 	var invalid int
-	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_checkout_entries e LEFT JOIN content_versions v ON v.version_id=e.version_id LEFT JOIN photo_files f ON f.file_id=e.file_id LEFT JOIN photo_checkouts c ON c.checkout_id=e.checkout_id WHERE v.version_id IS NULL OR f.file_id IS NULL OR c.checkout_id IS NULL OR v.node_id<>f.node_id OR v.blob_hash<>e.blob_hash OR v.size<>e.size`).Scan(&invalid); err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_checkout_entries e LEFT JOIN content_versions v ON v.version_id=e.version_id LEFT JOIN photo_files f ON f.file_id=e.file_id LEFT JOIN photo_assets a ON a.asset_id=e.asset_id LEFT JOIN photo_checkouts c ON c.checkout_id=e.checkout_id WHERE v.version_id IS NULL OR f.file_id IS NULL OR a.asset_id IS NULL OR c.checkout_id IS NULL OR v.node_id<>f.node_id OR v.blob_hash<>e.blob_hash OR v.size<>e.size`).Scan(&invalid); err != nil {
 		return err
 	}
 	if invalid > 0 {

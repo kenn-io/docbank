@@ -138,7 +138,7 @@ func TestPhotoCheckoutMetadataRestoresUnbound(t *testing.T) {
 			entries, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
 			require.NoError(t, err)
 			require.NoError(t, s.PublishPhotoCheckoutEntry(t.Context(), entries[0], func() (bool, error) { return true, nil }))
-			require.NoError(t, s.SetPhotoCheckoutState(t.Context(), c.ID, "failed", "machine-local-error"))
+			require.NoError(t, s.FinishPhotoCheckout(t.Context(), c.ID, c.OperationID, StorageOperationFailed, "{}", "machine-local-error", time.Now().Add(time.Hour)))
 			var exported bytes.Buffer
 			require.NoError(t, s.ExportMetadata(t.Context(), &exported))
 			require.NotContains(t, exported.String(), "machine-local-")
@@ -299,6 +299,13 @@ func TestPhotoCheckoutMetadataRequiresVersionOwnership(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, restored.Close()) })
 			require.Error(t, restored.ImportMetadata(t.Context(), strings.NewReader(strings.Replace(backup.String(), original, forged, 1))))
+			forgedAsset, err := Open(filepath.Join(t.TempDir(), "missing-asset.db"), driver.driver)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, forgedAsset.Close()) })
+			originalAsset := `"asset_id":"` + first.ID + `","version_id":`
+			missingAsset := `"asset_id":"00000000-0000-4000-8000-000000000001","version_id":`
+			require.Contains(t, backup.String(), originalAsset)
+			require.Error(t, forgedAsset.ImportMetadata(t.Context(), strings.NewReader(strings.Replace(backup.String(), originalAsset, missingAsset, 1))))
 			_, err = s.DetachPhotoFile(t.Context(), first.ID, first.Revision, first.Files[0].ID, PhotoDetachOptions{})
 			require.NoError(t, err)
 			backup.Reset()
@@ -324,7 +331,7 @@ func TestPhotoCheckoutStatusTracksOperationAcrossPauseAndFinish(t *testing.T) {
 			require.NoError(t, err)
 			_, err = s.ClaimStorageOperation(t.Context(), op.ID)
 			require.NoError(t, err)
-			require.NoError(t, s.SetPhotoCheckoutState(t.Context(), checkout.ID, "running", ""))
+			require.NoError(t, s.ClaimPhotoCheckout(t.Context(), checkout.ID, op.ID))
 			require.NoError(t, s.DeferStorageOperation(t.Context(), op.ID, errors.New("waiting for readable lane controls")))
 			paused, err := s.PhotoCheckout(t.Context(), checkout.ID)
 			require.NoError(t, err)

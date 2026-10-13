@@ -510,7 +510,7 @@ func runServe(ctx context.Context) (retErr error) {
 		return err
 	}
 	photoCheckouts := api.NewPhotoCheckoutService(api.Deps{Store: s, Blobs: blobs, VaultRoot: layout.Root, Cfg: cfg, Gate: operationGate, Tracker: tracker})
-	if err := photoCheckouts.Recover(sigCtx); err != nil {
+	if err := photoCheckouts.Resume(sigCtx, jobSupervisor); err != nil {
 		return err
 	}
 	if telemetryReporter.Enabled() {

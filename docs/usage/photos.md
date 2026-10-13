@@ -550,6 +550,8 @@ The destination must be an existing empty folder on the daemon's computer, separ
 
 Creation returns the checkout and operation IDs as JSON. Jobs reports progress and accepts cancellation; pause or resume the `photo_checkout` lane to control copying. A failed, cancelled, or interrupted creation keeps its destination reserved until retirement, along with its ID, partial files, error, and frozen source versions. After a daemon restart, an interrupted creation reports failure. It doesn't resume copying. Pruning history or emptying trash keeps the frozen versions available.
 
+Failed or cancelled checkouts keep partial files and frozen bases until checkout retirement is available in slice 15. Status reports file and byte totals, published counts, and any failing relative path and file ID.
+
 Backup includes checkout selections and frozen versions. Restore leaves checkouts unbound and carries no machine paths, job state, or copy observations. Checkout creation is unavailable in audited vaults. Committing edits, retirement, and rebinding aren't available yet.
 
 ## HTTP and JSONL

@@ -1591,7 +1591,7 @@ pending cleanup. `--json` emits `{"items": [...]}` plus optional `lanes` for
 automation.
 The CONTROL column shows `read-only`, `active`, or `paused`; previews add
 `limit=N`, and controllable storage jobs add `lane=NAME` for pause and resume.
-Controllable lanes are `derive:visual-previews`, `photo_import`,
+Controllable lanes are `derive:visual-previews`, `photo_import`, `photo_checkout`,
 `place`, `evacuate`, `repair`, and `salvage`. Pause finishes the current item or
 import group before waiting. Pause and preview concurrency survive restart;
 restored backups start unpaused with concurrency 1. Storage lanes keep their

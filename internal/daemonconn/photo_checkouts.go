@@ -91,10 +91,8 @@ func (c *Connection) PhotoCheckoutStatus(ctx context.Context, id string) (api.Ph
 	if err := validatePhotoCheckoutResponse(out.Checkout, id); err != nil {
 		return api.PhotoCheckoutStatus{}, err
 	}
-	for _, e := range out.Entries {
-		if e.CheckoutID != id || !validUUIDv4(e.FileID) || !validUUIDv4(e.AssetID) || !validUUIDv4(e.VersionID) || e.Size < 0 || !filepath.IsLocal(filepath.FromSlash(e.Path)) {
-			return api.PhotoCheckoutStatus{}, errors.New("invalid photo checkout entry response")
-		}
+	if out.Files < 0 || out.Bytes < 0 || out.PublishedFiles < 0 || out.PublishedFiles > out.Files || out.PublishedBytes < 0 || out.PublishedBytes > out.Bytes {
+		return api.PhotoCheckoutStatus{}, errors.New("invalid photo checkout status counts")
 	}
 	return *out, nil
 }

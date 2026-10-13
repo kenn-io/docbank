@@ -6,6 +6,7 @@ const activeJob = (job: Job): boolean => job.status === "running" || job.status 
 export function laneTitle(lane: string): string {
   const titles: Record<string, string> = {
     photo_import: "Photo import",
+    photo_checkout: "Photo checkout",
     place: "Storage placement",
     evacuate: "Storage evacuation",
     repair: "Storage repair",

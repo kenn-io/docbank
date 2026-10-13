@@ -8,8 +8,8 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func makePrivateRootStage(parent *os.Root, name string) (*os.File, error) {
-	return winsecurity.MkdirPrivatePinnedAt(parent, name)
+func createPrivateRootFile(root *os.Root, name string) (*os.File, error) {
+	return winsecurity.CreatePrivateFileAt(root, name)
 }
 
 func syncRootDirectory(_ *os.Root, _ string) error { return nil }

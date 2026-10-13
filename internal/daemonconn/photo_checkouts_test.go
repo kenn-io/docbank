@@ -37,7 +37,7 @@ func TestPhotoCheckoutClients(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/photos/checkouts":
 			out = api.PhotoCheckoutList{Items: []store.PhotoCheckout{checkout}}
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/photos/checkouts/"+id:
-			out = api.PhotoCheckoutStatus{Checkout: checkout, Entries: []store.PhotoCheckoutEntry{}}
+			out = api.PhotoCheckoutStatus{Checkout: checkout}
 		default:
 			http.NotFound(w, r)
 			return

@@ -63,6 +63,14 @@ type PhotoCheckoutEntry struct {
 	Published  bool   `json:"published"`
 }
 
+type PhotoCheckoutStatus struct {
+	Checkout       PhotoCheckout `json:"checkout"`
+	Files          int64         `json:"files"`
+	Bytes          int64         `json:"bytes"`
+	PublishedFiles int64         `json:"published_files"`
+	PublishedBytes int64         `json:"published_bytes"`
+}
+
 func ValidatePhotoCheckoutSelection(selection PhotoCheckoutSelection) error {
 	if !selection.All && len(selection.AssetIDs)+len(selection.AlbumIDs) == 0 && selection.Years == nil {
 		return fmt.Errorf("%w: select assets, albums, years, or all", ErrInvalidPhotoCheckout)
@@ -244,8 +252,13 @@ func (s *Store) CreatePhotoCheckout(ctx context.Context, selection PhotoCheckout
 		if _, err := tx.ExecContext(ctx, `INSERT INTO photo_checkouts(checkout_id,selection_json,byte_limit,created_at,destination,operation_id,state) VALUES(?,?,?,?,?,?,?)`, id, string(encoded), byteLimit, checkout.CreatedAt, destination, operation.ID, checkout.State); err != nil {
 			return err
 		}
+		insert, err := tx.PrepareContext(ctx, `INSERT INTO photo_checkout_entries(checkout_id,file_id,asset_id,version_id,blob_hash,size,relative_path) VALUES(?,?,?,?,?,?,?)`)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = insert.Close() }()
 		for _, e := range entries {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO photo_checkout_entries(checkout_id,file_id,asset_id,version_id,blob_hash,size,relative_path) VALUES(?,?,?,?,?,?,?)`, id, e.FileID, e.AssetID, e.VersionID, e.Hash, e.Size, e.Path); err != nil {
+			if _, err := insert.ExecContext(ctx, id, e.FileID, e.AssetID, e.VersionID, e.Hash, e.Size, e.Path); err != nil {
 				return err
 			}
 		}
@@ -299,6 +312,19 @@ func (s *Store) PhotoCheckout(ctx context.Context, id string) (PhotoCheckout, er
 	return scanPhotoCheckout(s.db.QueryRowContext(ctx, photoCheckoutSelect+` WHERE c.checkout_id=?`, id))
 }
 
+func (s *Store) PhotoCheckoutStatus(ctx context.Context, id string) (PhotoCheckoutStatus, error) {
+	var out PhotoCheckoutStatus
+	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		out.Checkout, err = scanPhotoCheckout(tx.QueryRowContext(ctx, photoCheckoutSelect+` WHERE c.checkout_id=?`, id))
+		if err != nil {
+			return err
+		}
+		return tx.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(size),0),COALESCE(SUM(published),0),COALESCE(SUM(CASE WHEN published=1 THEN size ELSE 0 END),0) FROM photo_checkout_entries WHERE checkout_id=?`, id).Scan(&out.Files, &out.Bytes, &out.PublishedFiles, &out.PublishedBytes)
+	})
+	return out, err
+}
+
 func (s *Store) PhotoCheckoutOperation(ctx context.Context, id string) (PhotoCheckout, StorageOperation, error) {
 	var checkout PhotoCheckout
 	var operation StorageOperation
@@ -332,7 +358,7 @@ func (s *Store) ListPhotoCheckouts(ctx context.Context) ([]PhotoCheckout, error)
 }
 
 func (s *Store) PhotoCheckoutEntries(ctx context.Context, id string) ([]PhotoCheckoutEntry, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT checkout_id,file_id,asset_id,version_id,blob_hash,size,relative_path,published FROM photo_checkout_entries WHERE checkout_id=? ORDER BY relative_path`, id)
+	rows, err := s.db.QueryContext(ctx, `SELECT checkout_id,file_id,asset_id,version_id,blob_hash,size,relative_path,published FROM photo_checkout_entries WHERE checkout_id=? ORDER BY relative_path,file_id`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -370,9 +396,16 @@ func (s *Store) PublishPhotoCheckoutEntry(ctx context.Context, e PhotoCheckoutEn
 	return errors.Join(err, publicationErr)
 }
 
-func (s *Store) SetPhotoCheckoutState(ctx context.Context, id, state, failure string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE photo_checkouts SET state=?,error=? WHERE checkout_id=?`, state, failure, id)
-	return err
+// ClaimPhotoCheckout keeps the started marker when a paused operation returns to the queue.
+func (s *Store) ClaimPhotoCheckout(ctx context.Context, id, operationID string) error {
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, `UPDATE storage_operations SET state='running',error='',updated_at=? WHERE operation_id=? AND state IN ('queued','running')`, nowRFC3339(), operationID)
+		if err := requireOneStorageOperationRow(result, err, operationID, "claiming checkout"); err != nil {
+			return err
+		}
+		result, err = tx.ExecContext(ctx, `UPDATE photo_checkouts SET state='running',error='' WHERE checkout_id=? AND operation_id=?`, id, operationID)
+		return requireOneStorageOperationRow(result, err, operationID, "claiming checkout")
+	})
 }
 
 func (s *Store) FinishPhotoCheckout(ctx context.Context, id, operationID string, state StorageOperationState, receipt, failure string, retention time.Time) error {
@@ -398,4 +431,11 @@ func (s *Store) ObservePhotoCheckout(ctx context.Context, id, operationID string
 		_, err := tx.ExecContext(ctx, `UPDATE storage_operations SET completed_objects=(SELECT COUNT(*) FROM photo_checkout_entries WHERE checkout_id=? AND published=1),copied_objects=(SELECT COUNT(*) FROM photo_checkout_entries WHERE checkout_id=? AND published=1),copied_bytes=(SELECT COALESCE(SUM(size),0) FROM photo_checkout_entries WHERE checkout_id=? AND published=1) WHERE operation_id=?`, id, id, id, operationID)
 		return err
 	})
+}
+
+// PhotoCheckoutStarted survives operation deferral without marking never-admitted work started.
+func (s *Store) PhotoCheckoutStarted(ctx context.Context, id string) (bool, error) {
+	var started bool
+	err := s.db.QueryRowContext(ctx, `SELECT state='running' FROM photo_checkouts WHERE checkout_id=?`, id).Scan(&started)
+	return started, err
 }

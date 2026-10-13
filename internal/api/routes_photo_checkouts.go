@@ -24,10 +24,7 @@ type PhotoCheckoutList struct {
 	Items []store.PhotoCheckout `json:"items"`
 }
 
-type PhotoCheckoutStatus struct {
-	Checkout store.PhotoCheckout        `json:"checkout"`
-	Entries  []store.PhotoCheckoutEntry `json:"entries"`
-}
+type PhotoCheckoutStatus = store.PhotoCheckoutStatus
 
 func NewPhotoCheckoutService(d Deps) checkout.Service {
 	s := checkout.Service{Store: d.Store, Blobs: d.Blobs, VaultRoot: d.VaultRoot, Config: d.Cfg}
@@ -75,17 +72,13 @@ func registerPhotoCheckoutRoutes(api huma.API, d Deps, g *gate) {
 		}
 		return &struct{ Body PhotoCheckoutList }{PhotoCheckoutList{Items: items}}, nil
 	})
-	huma.Register(api, huma.Operation{OperationID: "getPhotoCheckout", Method: http.MethodGet, Path: "/api/v1/photos/checkouts/{id}", Summary: "Inspect a photo checkout and its frozen files"}, func(ctx context.Context, in *struct {
+	huma.Register(api, huma.Operation{OperationID: "getPhotoCheckout", Method: http.MethodGet, Path: "/api/v1/photos/checkouts/{id}", Summary: "Inspect photo checkout progress"}, func(ctx context.Context, in *struct {
 		ID string `path:"id" format:"uuid"`
 	}) (*struct{ Body PhotoCheckoutStatus }, error) {
-		c, err := d.Store.PhotoCheckout(ctx, in.ID)
+		status, err := d.Store.PhotoCheckoutStatus(ctx, in.ID)
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		entries, err := d.Store.PhotoCheckoutEntries(ctx, in.ID)
-		if err != nil {
-			return nil, FromStoreError(err)
-		}
-		return &struct{ Body PhotoCheckoutStatus }{PhotoCheckoutStatus{Checkout: c, Entries: entries}}, nil
+		return &struct{ Body PhotoCheckoutStatus }{status}, nil
 	})
 }

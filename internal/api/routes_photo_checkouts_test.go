@@ -48,9 +48,11 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var status api.PhotoCheckoutStatus
 	require.NoError(t, json.Unmarshal([]byte(body), &status))
+	require.NotContains(t, body, `"entries"`)
 	require.Equal(t, "completed", status.Checkout.State)
-	require.Len(t, status.Entries, 1)
-	require.True(t, status.Entries[0].Published)
+	require.Equal(t, int64(1), status.Files)
+	require.Equal(t, int64(1), status.PublishedFiles)
+	require.Equal(t, status.Bytes, status.PublishedBytes)
 	response, body = do(t, ts, http.MethodGet, "/api/v1/photos/checkouts", nil, nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var list api.PhotoCheckoutList

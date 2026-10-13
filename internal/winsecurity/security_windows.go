@@ -332,3 +332,35 @@ func ExtendedLengthPath(path string) (string, error) {
 	}
 	return `\\?\` + abs, nil
 }
+
+// CreatePrivateFileAt supplies a protected DACL at creation, before any bytes are written.
+func CreatePrivateFileAt(root *os.Root, component string) (*os.File, error) {
+	parent, err := root.Open(".")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = parent.Close() }()
+	user, err := currentUserSID()
+	if err != nil {
+		return nil, err
+	}
+	descriptor, err := windows.SecurityDescriptorFromString("D:P(A;;GA;;;" + user.String() + ")")
+	if err != nil {
+		return nil, err
+	}
+	name, err := windows.NewNTUnicodeString(component)
+	if err != nil {
+		return nil, err
+	}
+	attributes := &windows.OBJECT_ATTRIBUTES{Length: uint32(unsafe.Sizeof(windows.OBJECT_ATTRIBUTES{})), RootDirectory: windows.Handle(parent.Fd()), ObjectName: name, Attributes: windows.OBJ_CASE_INSENSITIVE | windows.OBJ_DONT_REPARSE, SecurityDescriptor: descriptor}
+	var handle windows.Handle
+	var status windows.IO_STATUS_BLOCK
+	err = windows.NtCreateFile(&handle, windows.FILE_GENERIC_READ|windows.FILE_GENERIC_WRITE, attributes, &status, nil, 0, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, windows.FILE_CREATE, windows.FILE_NON_DIRECTORY_FILE|windows.FILE_SYNCHRONOUS_IO_NONALERT|windows.FILE_OPEN_REPARSE_POINT, 0, 0)
+	if errors.Is(err, windows.STATUS_OBJECT_NAME_COLLISION) {
+		return nil, os.ErrExist
+	}
+	if err != nil {
+		return nil, err
+	}
+	return os.NewFile(uintptr(handle), component), nil
+}

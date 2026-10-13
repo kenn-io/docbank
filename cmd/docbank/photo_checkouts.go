@@ -103,7 +103,7 @@ func newPhotoCheckoutCmd() *cobra.Command {
 		}
 		return writeCLIJSON(cmd.OutOrStdout(), out)
 	}})
-	command.AddCommand(&cobra.Command{Use: "status <checkout-id>", Short: "Inspect frozen files and copy results", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	command.AddCommand(&cobra.Command{Use: "status <checkout-id>", Short: "Inspect photo checkout progress", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		connection, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
