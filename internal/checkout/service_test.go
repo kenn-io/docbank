@@ -285,43 +285,9 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 	require.Equal(t, int32(1), ended.Load())
 }
 
-func TestCheckoutDaemonShutdownKeepsResumablePartialCopies(t *testing.T) {
-	t.Parallel()
-	s := checkoutService(t)
-	for _, name := range []string{"first.jpg", "second.jpg", "third.jpg"} {
-		checkoutPhoto(t, s, name, name)
-	}
-	c, op, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{All: true}, t.TempDir(), 100)
-	require.NoError(t, err)
-	defer func() { _ = root.Close() }()
-	entries, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
-	require.NoError(t, err)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	s.Mutate = func(_ context.Context, fn func() error) error {
-		err := fn()
-		cancel()
-		return err
-	}
-	require.ErrorIs(t, s.Run(ctx, c, root), context.Canceled)
-	actual, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
-	require.NoError(t, err)
-	require.True(t, actual[0].Published)
-	require.False(t, actual[1].Published)
-	content, err := root.ReadFile(filepath.FromSlash(entries[0].Path))
-	require.NoError(t, err)
-	require.NotEmpty(t, content)
-	status, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
-	require.NoError(t, err)
-	operation, err := s.Store.StorageOperation(t.Context(), op.ID)
-	require.NoError(t, err)
-	require.Equal(t, "running", status.Checkout.State)
-	require.Equal(t, store.StorageOperationRunning, operation.State)
-}
-
 func TestCheckoutFailedRunKeepsPartialCopies(t *testing.T) {
 	t.Parallel()
-	for _, failure := range []string{"destination moved before completion", "collision", "became-invisible"} {
+	for _, failure := range []string{"daemon shutdown", "destination moved before completion", "collision", "became-invisible"} {
 		t.Run(failure, func(t *testing.T) {
 			s := checkoutService(t)
 			names := []string{"first.jpg", "second.jpg", "third.jpg"}
@@ -336,7 +302,8 @@ func TestCheckoutFailedRunKeepsPartialCopies(t *testing.T) {
 			defer func() { _ = root.Close() }()
 			entries, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
 			require.NoError(t, err)
-			ctx := t.Context()
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
 			publications := 0
 			if failure == "collision" {
 				collision := filepath.FromSlash(entries[1].Path)
@@ -352,6 +319,9 @@ func TestCheckoutFailedRunKeepsPartialCopies(t *testing.T) {
 					require.NoError(t, err)
 				}
 				err := fn()
+				if failure == "daemon shutdown" {
+					cancel()
+				}
 				if publications == 1 && failure == "destination moved before completion" {
 					moved := filepath.Join(t.TempDir(), "moved")
 					if err := os.Rename(c.Destination, moved); err != nil {
@@ -366,7 +336,9 @@ func TestCheckoutFailedRunKeepsPartialCopies(t *testing.T) {
 			}
 			runErr := s.Run(ctx, c, root)
 			require.Error(t, runErr)
-			if failure == "destination moved before completion" {
+			if failure == "daemon shutdown" {
+				require.ErrorIs(t, runErr, context.Canceled)
+			} else if failure == "destination moved before completion" {
 				require.ErrorIs(t, runErr, store.ErrInvalidPhotoCheckout)
 			}
 			actual, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
@@ -382,6 +354,11 @@ func TestCheckoutFailedRunKeepsPartialCopies(t *testing.T) {
 			require.NoError(t, err)
 			finished, err := s.Store.StorageOperation(t.Context(), op.ID)
 			require.NoError(t, err)
+			if failure == "daemon shutdown" {
+				require.Equal(t, "running", status.Checkout.State)
+				require.Equal(t, store.StorageOperationRunning, finished.State)
+				return
+			}
 			require.Equal(t, "failed", status.Checkout.State)
 			switch failure {
 			case "collision":
