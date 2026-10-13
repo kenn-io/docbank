@@ -105,7 +105,7 @@ func TestClientRetriesHTTPClientTimeout(t *testing.T) {
 		started := time.Now()
 		_, err = client.Process(t.Context(), syntheticPNGSource(t))
 		require.ErrorIs(t, err, context.DeadlineExceeded)
-		assert.NoError(t, t.Context().Err())
+		require.NoError(t, t.Context().Err())
 		assert.Equal(t, ocr.ErrorTransient, ocr.ErrorKindOf(err))
 		assert.Equal(t, 2, ocr.MetricsFromError(err).Requests)
 		assert.Equal(t, 1, ocr.MetricsFromError(err).Retries)
@@ -119,7 +119,7 @@ type timeoutTransport struct {
 }
 
 func (transport *timeoutTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	defer request.Body.Close()
+	defer func() { _ = request.Body.Close() }()
 	transport.requests++
 	<-request.Context().Done()
 	return nil, request.Context().Err()
