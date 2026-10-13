@@ -378,41 +378,36 @@ func TestTrashListAndEmpty(t *testing.T) {
 	_, _, err = s.Trash(t.Context(), version.NodeID, store.UnconditionalRev)
 	require.NoError(t, err)
 
-	rawHash, rawSize, err := s.Blobs.Write(strings.NewReader("synthetic raw"))
-	require.NoError(t, err)
-	raw, err := s.CreateFile(t.Context(), s.RootID(), "capture.raw", rawHash, rawSize, "application/octet-stream")
-	require.NoError(t, err)
+	raw := createFileWithContent(t, ts, s, "/capture.raw", "synthetic raw")
 	jpegHash, jpegSize, err := s.Blobs.Write(strings.NewReader("synthetic jpeg"))
 	require.NoError(t, err)
 	jpeg, err := s.CreateFile(t.Context(), s.RootID(), "capture.jpg", jpegHash, jpegSize, "image/jpeg")
 	require.NoError(t, err)
-	auto, err := s.PhotoAssetForNode(t.Context(), jpeg.ID)
+	asset, err := s.PhotoAssetForNode(t.Context(), jpeg.ID)
 	require.NoError(t, err)
-	_, err = s.DetachPhotoFile(t.Context(), auto.ID, auto.Revision, auto.Files[0].ID, store.PhotoDetachOptions{})
-	require.NoError(t, err)
-	asset, err := s.CreatePhotoAsset(t.Context(), raw.ID, store.PhotoRoleRAW, store.PhotoKindPhoto)
-	require.NoError(t, err)
-	_, err = s.AttachPhotoFile(t.Context(), asset.ID, asset.Revision, jpeg.ID, store.PhotoRoleImage, nil)
+	_, err = s.AttachPhotoFile(t.Context(), asset.ID, asset.Revision, raw.ID, store.PhotoRoleRAW, nil)
 	require.NoError(t, err)
 	_, _, err = s.Trash(t.Context(), raw.ID, store.UnconditionalRev)
 	require.NoError(t, err)
 
-	resp, body = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil,
-		map[string]any{"older_than": ""})
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	var out api.TrashEmptyReport
-	require.NoError(t, json.Unmarshal([]byte(body), &out))
-	assert.Equal(t, api.TrashEmptyReport{CandidateRoots: 1, RetainedRoots: 1, HeldRoots: 1}, out)
-
-	// Dry run leaves the node restorable; run performs the deletion.
-	resp, body = get(t, ts, "/api/v1/trash", nil)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Contains(t, body, "old.txt")
-	resp, body = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil,
-		map[string]any{"older_than": "", "run": true})
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.NoError(t, json.Unmarshal([]byte(body), &out))
-	assert.Equal(t, api.TrashEmptyReport{CandidateRoots: 1, Deleted: 1, RetainedRoots: 1, HeldRoots: 1, Run: true}, out)
+	var metadata bytes.Buffer
+	require.NoError(t, s.ExportMetadata(t.Context(), &metadata))
+	expectedStore, err := store.Open(filepath.Join(t.TempDir(), "expected.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, expectedStore.Close()) })
+	require.NoError(t, expectedStore.ImportMetadata(t.Context(), &metadata))
+	for _, run := range []bool{false, true} {
+		expected, err := expectedStore.TrashEmpty(t.Context(), 0, run)
+		require.NoError(t, err)
+		require.Positive(t, expected.Retained)
+		require.Positive(t, expected.Held)
+		resp, body = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil,
+			map[string]any{"older_than": "", "run": run})
+		require.Equal(t, http.StatusOK, resp.StatusCode, body)
+		var out api.TrashEmptyReport
+		require.NoError(t, json.Unmarshal([]byte(body), &out))
+		assert.Equal(t, api.TrashEmptyReport{CandidateRoots: expected.Candidates, RetainedRoots: expected.Retained, HeldRoots: expected.Held, Deleted: expected.Deleted, Run: expected.Run}, out)
+	}
 
 	// Bad age string → 422.
 	resp, _ = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil,

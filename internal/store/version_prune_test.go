@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestVersionPruneBlobStatsBatchesCandidateHashes(t *testing.T) {
+func TestVersionPruneBlobStatsReturnsCandidateStats(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	hashes := make([]string, 501)
