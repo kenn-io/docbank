@@ -68,6 +68,9 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 	var expectedResponse api.StorageOperation
 	require.NoError(t, json.Unmarshal(expectedJSON, &expectedResponse))
 	require.Equal(t, expectedResponse, created.Operation)
+	entries, err := catalog.PhotoCheckoutEntries(t.Context(), created.Checkout.ID)
+	require.NoError(t, err)
+	require.NoError(t, catalog.PublishPhotoCheckoutEntry(t.Context(), entries[0], func() (bool, error) { return true, nil }))
 	response, body = do(t, ts, http.MethodGet, "/api/v1/photos/checkouts/"+created.Checkout.ID, nil, nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var status api.PhotoCheckoutStatus

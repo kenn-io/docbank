@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestPhotoRoutesEnforceIfMatch(t *testing.T) {
@@ -113,8 +114,11 @@ func TestPhotoRoutesCreateAndPromote(t *testing.T) {
 	secondResp, secondBody := do(t, ts, http.MethodPost, "/api/v1/photos/nodes/"+strconv.FormatInt(secondNode.ID, 10)+"/promote", nil,
 		map[string]any{"role": "raw"})
 	assert.Equal(t, http.StatusOK, secondResp.StatusCode, secondBody)
-	var secondAsset api.PhotoAsset
+	var secondAsset store.PhotoAsset
 	require.NoError(t, json.Unmarshal([]byte(secondBody), &secondAsset))
+	storedSecond, err := fixture.PhotoAssetForNode(t.Context(), secondNode.ID)
+	require.NoError(t, err)
+	assert.Equal(t, storedSecond, secondAsset)
 }
 func TestPhotoRoutesAndClientTraversal(t *testing.T) {
 	t.Parallel()
