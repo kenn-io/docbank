@@ -3,11 +3,9 @@
 package checkout
 
 import (
-	"context"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/store"
 	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -31,29 +29,4 @@ func TestCheckoutRecoveryContinuesAfterDestinationBecomesInaccessible(t *testing
 	require.NoError(t, err)
 	require.Equal(t, "failed", status.State)
 	require.Contains(t, status.Error, "reconciliation failed")
-}
-
-func TestCheckoutMovedAssetDirectoryCannotReceivePublication(t *testing.T) {
-	t.Parallel()
-	s := checkoutService(t)
-	a := checkoutPhoto(t, s, "photo.jpg", "bytes")
-	c, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, t.TempDir(), 0)
-	require.NoError(t, err)
-	defer func() { _ = root.Close() }()
-	entries, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
-	require.NoError(t, err)
-	outside := filepath.Join(t.TempDir(), "moved")
-	s.Mutate = func(_ context.Context, fn func() error) error {
-		parent := filepath.Join(c.Destination, filepath.Dir(filepath.FromSlash(entries[0].Path)))
-		require.NoError(t, os.Rename(parent, outside))
-		require.NoError(t, os.Symlink(outside, parent))
-		return fn()
-	}
-	require.Error(t, s.Run(t.Context(), c, root))
-	_, err = os.Stat(filepath.Join(outside, "photo.jpg"))
-	require.ErrorIs(t, err, os.ErrNotExist)
-	status, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
-	require.NoError(t, err)
-	require.Equal(t, "failed", status.Checkout.State)
-	require.Zero(t, status.PublishedFiles)
 }

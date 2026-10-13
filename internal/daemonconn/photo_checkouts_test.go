@@ -19,20 +19,24 @@ func TestPhotoCheckoutClients(t *testing.T) {
 	selection := store.PhotoCheckoutSelection{All: true}
 	checkout := store.PhotoCheckout{ID: id, Selection: selection, ByteLimit: 100, Destination: filepath.Join(t.TempDir(), "destination"), OperationID: operationID, State: "queued"}
 	created := api.PhotoCheckoutCreateResult{Checkout: checkout, Operation: api.StorageOperation{ID: operationID, Kind: "photo_checkout", State: "queued"}}
+	estimateRequests := make(chan store.PhotoCheckoutSelection, 1)
+	createRequests := make(chan api.PhotoCheckoutCreateRequest, 1)
+	decodeErrors := make(chan error, 1)
+	responses := make(chan api.PhotoCheckoutCreateResult, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		var out any
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/photos/checkouts/estimate":
 			var request store.PhotoCheckoutSelection
-			require.NoError(t, json.UnmarshalRead(r.Body, &request))
-			require.Equal(t, selection, request)
+			decodeErrors <- json.UnmarshalRead(r.Body, &request)
+			estimateRequests <- request
 			out = store.PhotoCheckoutEstimate{Assets: 1, Files: 1, Bytes: 5}
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/photos/checkouts":
 			var request api.PhotoCheckoutCreateRequest
-			require.NoError(t, json.UnmarshalRead(r.Body, &request))
-			require.Equal(t, checkout.Destination, request.Destination)
-			out = created
+			decodeErrors <- json.UnmarshalRead(r.Body, &request)
+			createRequests <- request
+			out = <-responses
 			w.WriteHeader(http.StatusAccepted)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/photos/checkouts":
 			out = api.PhotoCheckoutList{Items: []store.PhotoCheckout{checkout}}
@@ -42,14 +46,26 @@ func TestPhotoCheckoutClients(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		require.NoError(t, json.MarshalWrite(w, out))
+		if err := json.MarshalWrite(w, out); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
 	}))
 	t.Cleanup(server.Close)
 	client := New(server.URL, "synthetic-key")
+	create := func(response api.PhotoCheckoutCreateResult) (api.PhotoCheckoutCreateResult, error) {
+		responses <- response
+		request := api.PhotoCheckoutCreateRequest{Selection: selection, Destination: checkout.Destination, ByteLimit: 100}
+		result, err := client.CreatePhotoCheckout(t.Context(), request)
+		require.NoError(t, <-decodeErrors)
+		require.Equal(t, request, <-createRequests)
+		return result, err
+	}
 	estimate, err := client.EstimatePhotoCheckout(t.Context(), selection)
 	require.NoError(t, err)
 	require.Equal(t, int64(5), estimate.Bytes)
-	result, err := client.CreatePhotoCheckout(t.Context(), api.PhotoCheckoutCreateRequest{Selection: selection, Destination: checkout.Destination, ByteLimit: 100})
+	require.NoError(t, <-decodeErrors)
+	require.Equal(t, selection, <-estimateRequests)
+	result, err := create(created)
 	require.NoError(t, err)
 	require.Equal(t, created, result)
 	list, err := client.PhotoCheckouts(t.Context())
@@ -64,7 +80,7 @@ func TestPhotoCheckoutClients(t *testing.T) {
 		if state != "running" {
 			created.Operation.FinishedAt = "2026-01-01T00:00:00Z"
 		}
-		result, err = client.CreatePhotoCheckout(t.Context(), api.PhotoCheckoutCreateRequest{Selection: selection, Destination: checkout.Destination, ByteLimit: 100})
+		result, err = create(created)
 		require.NoError(t, err)
 		require.Equal(t, created, result)
 	}
@@ -73,12 +89,12 @@ func TestPhotoCheckoutClients(t *testing.T) {
 	created.Operation.State = "failed"
 	created.Operation.Error = created.Checkout.Error
 	created.Operation.FinishedAt = "2026-01-01T00:00:00Z"
-	result, err = client.CreatePhotoCheckout(t.Context(), api.PhotoCheckoutCreateRequest{Selection: selection, Destination: checkout.Destination, ByteLimit: 100})
+	result, err = create(created)
 	require.NoError(t, err)
 	require.Equal(t, created, result)
 	for _, invalid := range []api.PhotoCheckoutCreateResult{{}, {Checkout: checkout, Operation: api.StorageOperation{ID: operationID, Kind: "repair", State: "queued"}}} {
 		created = invalid
-		_, err = client.CreatePhotoCheckout(t.Context(), api.PhotoCheckoutCreateRequest{Selection: selection, Destination: checkout.Destination, ByteLimit: 100})
+		_, err = create(created)
 		require.Error(t, err)
 	}
 	_, err = client.PhotoCheckoutStatus(t.Context(), "bad")
