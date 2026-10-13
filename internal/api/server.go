@@ -327,17 +327,12 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		s.webDownloads.revokeOwner("master")
 		s.webDownloads.revokeOwner(s.masterOwner)
 	}
-	snapshotDone := make(chan error, 1)
+	if s.snapshots != nil {
+		s.snapshots.Stop()
+	}
 	if s.termReports != nil {
 		s.termReports.InvalidateAll()
 	}
-	go func() {
-		if s.snapshots == nil {
-			snapshotDone <- nil
-			return
-		}
-		snapshotDone <- s.snapshots.Close()
-	}()
 	sessionErr := s.webSessions.closeAll(ctx)
 	if s.deps.Processing != nil {
 		sessionErr = errors.Join(sessionErr, s.deps.Processing.Shutdown(ctx))
@@ -345,12 +340,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.termReports != nil {
 		sessionErr = errors.Join(sessionErr, s.termReports.Shutdown(ctx), s.reportBudget.Close())
 	}
-	select {
-	case snapshotErr := <-snapshotDone:
-		return errors.Join(sessionErr, snapshotErr)
-	case <-ctx.Done():
-		return errors.Join(sessionErr, ctx.Err())
+	if s.snapshots != nil {
+		sessionErr = errors.Join(sessionErr, s.snapshots.Shutdown(ctx))
 	}
+	return sessionErr
 }
 
 // markRevisionPreconditionsRequired keeps Huma's runtime parser permissive
