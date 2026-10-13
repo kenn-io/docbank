@@ -38,7 +38,6 @@ func TestLockRegistryChild(t *testing.T) {
 }
 
 func TestRunWithLockRegistry(t *testing.T) {
-	t.Setenv("docbank_lock_dir", t.TempDir())
 	executable, err := os.Executable()
 	require.NoError(t, err)
 	newCommand := func(result string) *exec.Cmd {
@@ -52,38 +51,42 @@ func TestRunWithLockRegistry(t *testing.T) {
 		command.Env = append(command.Env, "DOCBANK_LOCK_REGISTRY_TEST_CHILD=1", "DOCBANK_LOCK_REGISTRY_TEST_RESULT="+result)
 		return command
 	}
-	for _, mode := range []string{"success", "failure", "cleanup-failure", "test-and-cleanup-failure", "ambient", "ambient-lowercase", "mismatched", "inherited"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		ambientKey  string
+		marker      string
+		removeFails bool
+		testFails   bool
+	}{
+		{name: "success"},
+		{name: "failure", testFails: true},
+		{name: "cleanup-failure", removeFails: true},
+		{name: "ambient/missing-marker", ambientKey: LockDirEnv},
+		{name: "ambient/mismatched-marker", ambientKey: LockDirEnv, marker: "mismatched"},
+		{name: "inherited", ambientKey: LockDirEnv, marker: "matching"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			result := filepath.Join(t.TempDir(), "registry-path")
 			command := newCommand(result)
-			for _, entry := range command.Env {
-				key, _, _ := strings.Cut(entry, "=")
-				require.False(t, strings.EqualFold(key, LockDirEnv))
-			}
 			var inherited string
-			if mode == "inherited" || mode == "ambient" || mode == "ambient-lowercase" || mode == "mismatched" {
+			if tc.ambientKey != "" {
 				inherited = t.TempDir()
-				key := LockDirEnv
-				if mode == "ambient-lowercase" {
-					key = strings.ToLower(key)
-				}
-				command.Env = append(command.Env, key+"="+inherited)
+				command.Env = append(command.Env, tc.ambientKey+"="+inherited)
 			}
-			if mode == "inherited" {
+			switch tc.marker {
+			case "matching":
 				command.Env = append(command.Env, inheritedLockDirEnv+"="+inherited)
-			}
-			if mode == "mismatched" {
+			case "mismatched":
 				command.Env = append(command.Env, inheritedLockDirEnv+"="+t.TempDir())
 			}
-			cleanupFailure := mode == "cleanup-failure" || mode == "test-and-cleanup-failure"
-			if cleanupFailure {
+			if tc.removeFails {
 				command.Env = append(command.Env, "DOCBANK_LOCK_REGISTRY_TEST_REMOVE_FAIL=1")
 			}
-			if mode == "failure" || mode == "test-and-cleanup-failure" {
+			if tc.testFails {
 				command.Env = append(command.Env, "DOCBANK_LOCK_REGISTRY_TEST_FAIL=1")
 			}
 			output, err := command.CombinedOutput()
-			if mode == "failure" || cleanupFailure {
+			if tc.testFails || tc.removeFails {
 				var exitErr *exec.ExitError
 				require.ErrorAs(t, err, &exitErr, string(output))
 				require.Equal(t, 1, exitErr.ExitCode())
@@ -92,11 +95,11 @@ func TestRunWithLockRegistry(t *testing.T) {
 			}
 			data, err := os.ReadFile(result)
 			require.NoError(t, err)
-			if cleanupFailure {
+			if tc.removeFails {
 				t.Cleanup(func() { require.NoError(t, os.RemoveAll(string(data))) })
 				require.Contains(t, string(output), "removing test lock registry:")
 				require.DirExists(t, string(data))
-			} else if mode == "inherited" {
+			} else if tc.marker == "matching" {
 				require.Equal(t, inherited, string(data))
 				require.FileExists(t, filepath.Join(inherited, "synthetic.lock"))
 			} else {

@@ -119,35 +119,37 @@ func TestOwnershipTransitionExcludesOrdinaryAcquisition(t *testing.T) {
 }
 
 func TestOwnershipTransitionRejectsRegistryInsideSource(t *testing.T) {
-	source := filepath.Join(t.TempDir(), "vault")
-	require.NoError(t, os.Mkdir(source, 0o700))
-	registry := filepath.Join(source, "state", "target-locks")
-	t.Setenv("DOCBANK_LOCK_DIR", registry)
+	for _, tc := range []struct {
+		name   string
+		exists bool
+	}{
+		{name: "existing", exists: true},
+		{name: "missing"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := filepath.Join(t.TempDir(), "vault")
+			if tc.exists {
+				require.NoError(t, os.Mkdir(source, 0o700))
+			}
+			registry := filepath.Join(source, "state", "target-locks")
+			t.Setenv("DOCBANK_LOCK_DIR", registry)
 
-	transition, err := (Layout{Root: source}).TryLockOwnershipTransition()
-	if transition != nil {
-		t.Cleanup(func() { _ = transition.Release() })
+			transition, err := (Layout{Root: source}).TryLockOwnershipTransition()
+			if transition != nil {
+				t.Cleanup(func() { _ = transition.Release() })
+			}
+
+			require.Nil(t, transition)
+			require.ErrorContains(t, err, "lock registry")
+			if tc.exists {
+				require.NoDirExists(t, registry,
+					"rejecting a movable registry must not mutate the source")
+			} else {
+				require.NoDirExists(t, source,
+					"rejecting a movable registry must not recreate a missing source")
+			}
+		})
 	}
-
-	require.Nil(t, transition)
-	require.ErrorContains(t, err, "lock registry")
-	require.NoDirExists(t, registry,
-		"rejecting a movable registry must not mutate the source")
-}
-
-func TestOwnershipTransitionRejectsRegistryInsideMissingSource(t *testing.T) {
-	source := filepath.Join(t.TempDir(), "missing-vault")
-	t.Setenv("DOCBANK_LOCK_DIR", filepath.Join(source, "state", "target-locks"))
-
-	transition, err := (Layout{Root: source}).TryLockOwnershipTransition()
-	if transition != nil {
-		t.Cleanup(func() { _ = transition.Release() })
-	}
-
-	require.Nil(t, transition)
-	require.ErrorContains(t, err, "lock registry")
-	require.NoDirExists(t, source,
-		"rejecting a movable registry must not recreate a missing source")
 }
 
 func TestOwnershipReplacementExcludesLegacyAcquisitionThroughRename(t *testing.T) {
