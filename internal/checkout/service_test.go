@@ -18,6 +18,7 @@ import (
 	"go.kenn.io/docbank/internal/filepublish"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/kit/packstore"
 )
 
 func checkoutService(t *testing.T) Service {
@@ -236,7 +237,7 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 
 func TestCheckoutInterruptedRunKeepsPartialCopies(t *testing.T) {
 	t.Parallel()
-	for _, failure := range []string{"success", "nonempty destination", "admission retry", "operator cancellation", "daemon shutdown", "destination moved before completion", "collision", "became-invisible"} {
+	for _, failure := range []string{"success", "nonempty destination", "admission retry", "operator cancellation", "daemon shutdown", "destination moved before completion", "collision", "verification failure", "became-invisible"} {
 		t.Run(failure, func(t *testing.T) {
 			s := checkoutService(t)
 			names := []string{"first.jpg", "second.jpg", "third.jpg"}
@@ -383,6 +384,11 @@ func TestCheckoutInterruptedRunKeepsPartialCopies(t *testing.T) {
 				if progress.PublishedFiles != 1 || interrupted {
 					return err
 				}
+				if failure == "verification failure" {
+					interrupted = true
+					hash := entries[1].Hash
+					require.NoError(t, os.WriteFile(filepath.Join(s.VaultRoot, "blobs", hash[:2], hash), []byte(strings.Repeat("x", int(entries[1].Size))), 0o600))
+				}
 				if failure == "operator cancellation" {
 					interrupted = true
 					require.NoError(t, s.Store.RequestStorageOperationCancel(ctx, op.ID))
@@ -414,6 +420,11 @@ func TestCheckoutInterruptedRunKeepsPartialCopies(t *testing.T) {
 			case "collision":
 				require.True(t, interrupted)
 				require.ErrorIs(t, runErr, os.ErrExist)
+			case "verification failure":
+				require.True(t, interrupted)
+				require.ErrorIs(t, runErr, packstore.ErrContentMismatch)
+				_, err := root.Stat(filepath.FromSlash(entries[1].Path))
+				require.ErrorIs(t, err, os.ErrNotExist)
 			case "daemon shutdown":
 				require.ErrorIs(t, runErr, context.Canceled)
 			case "destination moved before completion":
@@ -444,7 +455,7 @@ func TestCheckoutInterruptedRunKeepsPartialCopies(t *testing.T) {
 			}
 			require.Equal(t, "failed", status.Checkout.State)
 			switch failure {
-			case "collision":
+			case "collision", "verification failure":
 				require.False(t, actual[2].Published)
 				require.Equal(t, int64(1), finished.CompletedObjects)
 			case "became-invisible":

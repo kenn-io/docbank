@@ -316,13 +316,13 @@ func TestPhotoMetadataRoundTripAndInvalidReferences(t *testing.T) {
 	}
 }
 
-func TestPhotoMetadataRejectsRoleMediaAndAssetKindMismatch(t *testing.T) {
+func TestPhotoMetadataRejectsRoleAndAssetKindMismatch(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		name   string
 		update string
 	}{
-		{name: "role and media", update: `UPDATE photo_files SET role='video'`},
+		{name: "member role", update: `UPDATE photo_files SET role='video'`},
 		{name: "asset kind", update: `UPDATE photo_assets SET kind='video'`},
 	} {
 		t.Run(test.name, func(t *testing.T) {

@@ -233,22 +233,6 @@ func TestWithPhotoRevisionRetriesOnceOnlyWhenInferred(t *testing.T) {
 	assert.Equal(t, []int64{7}, writes)
 }
 
-func TestPhotoImportCommands(t *testing.T) {
-	command, _, err := rootCmd.Find([]string{"photos", "import"})
-	require.NoError(t, err)
-	assert.NotNil(t, command.Flags().Lookup("json"))
-	command, _, err = rootCmd.Find([]string{"photos", "imports"})
-	require.NoError(t, err)
-	assert.NotEqual(t, "imports", command.Name())
-}
-
-func TestPhotoImportRejectsEmptySource(t *testing.T) {
-	t.Setenv("DOCBANK_HOME", t.TempDir())
-	_, err := runCLI(t, "photos", "import", "")
-	require.Error(t, err)
-	assert.Equal(t, exitUsage, commandExitCode(err, true))
-}
-
 func TestPhotoImportOutputPointsToJobs(t *testing.T) {
 	vault := t.TempDir()
 	t.Setenv("DOCBANK_HOME", vault)
@@ -288,6 +272,12 @@ func TestPhotoImportOutputPointsToJobs(t *testing.T) {
 	t.Cleanup(server.Close)
 	_, err := daemonconn.RuntimeStore(vault).Write(daemonconn.NewRecord(strings.TrimPrefix(server.URL, "http://"), "synthetic-key", token, ""))
 	require.NoError(t, err)
+	command, _, err := rootCmd.Find([]string{"photos", "imports"})
+	require.NoError(t, err)
+	assert.NotEqual(t, "imports", command.Name())
+	_, err = runCLI(t, "photos", "import", "")
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, commandExitCode(err, true))
 	source := t.TempDir()
 	for _, asJSON := range []bool{false, true} {
 		args := []string{"photos", "import", source, "/photos"}
