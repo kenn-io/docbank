@@ -1,11 +1,6 @@
 package store
 
-import (
-	"encoding/json/v2"
-	"errors"
-
-	"go.kenn.io/docbank/document"
-)
+import "go.kenn.io/docbank/document"
 
 type metadataPhotoFace struct {
 	Type                string  `json:"type"`
@@ -31,55 +26,3 @@ var photoFaceMetadata = newMetadataTable(metadataTable[metadataPhotoFace]{record
 	}
 	return validatePhotoFace(face)
 }, checkExport: true})
-
-func validatePhotoFaceReceipt(v metadataPhotoReceipt) error {
-	if v.AssetID == nil || validateUUIDv4(*v.AssetID) != nil || v.SettingsKey != nil || v.SetID != nil || v.BeforeRevision != 0 || v.AfterRevision != 1 {
-		return ErrInvalidPhotoFace
-	}
-	var before, after photoFaceReceipt
-	if err := json.Unmarshal([]byte(v.BeforeJSON), &before, json.RejectUnknownMembers(true)); err != nil {
-		return err
-	}
-	if err := json.Unmarshal([]byte(v.AfterJSON), &after, json.RejectUnknownMembers(true)); err != nil {
-		return err
-	}
-	if before.Face != nil || before.Assertion != nil {
-		return ErrInvalidPhotoFace
-	}
-	if after.Face != nil {
-		if err := validatePhotoFace(*after.Face); err != nil {
-			return err
-		}
-		if after.Face.Revision != 1 {
-			return ErrInvalidPhotoFace
-		}
-	}
-	if after.Assertion != nil {
-		assertion := *after.Assertion
-		if validateUUIDv4(assertion.AssertionID) != nil || assertion.Role != "depicted" || assertion.Action != "assert" || assertion.Revision != 1 {
-			return ErrInvalidPhotoFace
-		}
-		if err := validatePersonAssertion(assertion); err != nil {
-			return err
-		}
-		if err := validateMetadataTime("face assertion recorded_at", assertion.RecordedAt); err != nil {
-			return err
-		}
-		if after.Face != nil && (assertion.AssertionID != after.Face.AssertionID || assertion.ContentVersionID != after.Face.ContentVersionID) {
-			return ErrInvalidPhotoFace
-		}
-	}
-	switch v.Operation {
-	case "face_create":
-		if after.Face == nil {
-			return ErrInvalidPhotoFace
-		}
-	case "face_mark":
-		if after.Face != nil || after.Assertion == nil {
-			return ErrInvalidPhotoFace
-		}
-	default:
-		return errors.New("invalid face receipt operation")
-	}
-	return validateMetadataTime("face receipt created_at", v.CreatedAt)
-}

@@ -17,7 +17,7 @@ func TestPhotoFaceClientRejectsWrongVersionAndMalformedSuccess(t *testing.T) {
 	t.Parallel()
 	const version = "11111111-1111-4111-8111-111111111111"
 	face := api.PhotoFace{FaceID: "22222222-2222-4222-8222-222222222222", ContentVersionID: "33333333-3333-4333-8333-333333333333", Revision: 1, DetectorFingerprint: "manual", Box: document.FaceBox{Width: 0.2, Height: 0.2}}
-	for _, response := range []any{api.PhotoFacePage{Faces: []api.PhotoFace{face}}, map[string]string{}} {
+	for _, response := range []any{api.PhotoFacePage{Faces: []api.PhotoFace{face}, Assertions: []api.PhotoPersonAssertion{}}, map[string]string{}} {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			assert.NoError(t, json.MarshalWrite(w, response))
@@ -32,7 +32,7 @@ func TestPhotoFaceClientRejectsWrongVersionAndMalformedSuccess(t *testing.T) {
 		assert.NoError(t, json.MarshalWrite(w, api.PhotoFaceResult{Face: &face}))
 	}))
 	t.Cleanup(server.Close)
-	_, err := New(server.URL, "synthetic-key").CreatePhotoFace(t.Context(), version, api.CreatePhotoFaceRequest{Box: &face.Box})
+	_, err := New(server.URL, "synthetic-key").CreatePhotoFace(t.Context(), version, api.CreatePhotoFaceRequest{FaceID: face.FaceID, Box: &face.Box})
 	var decode *responseDecodeError
 	require.ErrorAs(t, err, &decode)
 }

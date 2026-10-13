@@ -152,6 +152,9 @@ func (s *Store) OpenPersonCandidate(
 	}
 	for _, occurrence := range occurrences {
 		if occurrence.EvidenceKind == "face" {
+			if err := s.facePhotoQuery(ctx, tx, occurrence.ContentVersionID); err != nil {
+				return PersonMatchCandidate{}, false, err
+			}
 			if err := requireFaceOccurrenceTx(ctx, tx, occurrence); err != nil {
 				return PersonMatchCandidate{}, false, err
 			}
@@ -220,10 +223,8 @@ func (s *Store) PersonCandidates(ctx context.Context, state string, limit, offse
 		return nil, 0, fmt.Errorf("starting person candidate page snapshot: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	visible := personCandidateVisibleSQL
-	if _, err := s.hiddenSession(ctx, tx); err == nil {
-		visible = "1=1"
-	} else if !errors.Is(err, ErrHiddenLocked) {
+	visible, err := s.personCandidateVisibility(ctx, tx)
+	if err != nil {
 		return nil, 0, err
 	}
 	var total int64
@@ -250,12 +251,23 @@ func (s *Store) PersonCandidates(ctx context.Context, state string, limit, offse
 }
 
 func (s *Store) OpenPersonCandidateCount(ctx context.Context) (int64, bool, error) {
-	return openPersonCandidateCount(ctx, s.db)
+	var count int64
+	var full bool
+	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		count, full, err = s.openPersonCandidateCount(ctx, tx)
+		return err
+	})
+	return count, full, err
 }
 
-func openPersonCandidateCount(ctx context.Context, q metadataQuerier) (int64, bool, error) {
+func (s *Store) openPersonCandidateCount(ctx context.Context, q metadataQuerier) (int64, bool, error) {
+	visible, err := s.personCandidateVisibility(ctx, q)
+	if err != nil {
+		return 0, false, err
+	}
 	var count int64
-	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_match_candidates WHERE state='open'`).Scan(&count); err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_match_candidates WHERE state='open' AND `+visible).Scan(&count); err != nil {
 		return 0, false, err
 	}
 	return count, count >= maxOpenPersonCandidates, nil
@@ -281,14 +293,16 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDec
 			return ErrStaleRevision
 		}
 		if candidate.Reason == "face_match" {
-			if _, err := s.hiddenSession(ctx, tx); err != nil {
-				var visible bool
-				if err := tx.QueryRowContext(ctx, `SELECT `+personCandidateVisibleSQL+` FROM person_match_candidates WHERE candidate_id=?`, candidate.CandidateID).Scan(&visible); err != nil {
-					return err
-				}
-				if !visible {
-					return ErrHiddenLocked
-				}
+			visibility, err := s.personCandidateVisibility(ctx, tx)
+			if err != nil {
+				return err
+			}
+			var visible bool
+			if err := tx.QueryRowContext(ctx, `SELECT `+visibility+` FROM person_match_candidates WHERE candidate_id=?`, candidate.CandidateID).Scan(&visible); err != nil {
+				return err
+			}
+			if !visible {
+				return ErrHiddenLocked
 			}
 			if decision.Action != "reject" {
 				occurrences, err := decodeStoredCandidateEvidence(candidate.Evidence)
@@ -296,7 +310,7 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDec
 					return err
 				}
 				for _, occurrence := range occurrences {
-					if _, err := s.facePhotoQuery(ctx, tx, occurrence.ContentVersionID); err != nil {
+					if err := s.facePhotoQuery(ctx, tx, occurrence.ContentVersionID); err != nil {
 						return err
 					}
 				}
@@ -642,4 +656,13 @@ func ensurePersonAssertionTx(ctx context.Context, tx *sql.Tx, versionID, personI
 	assertion := PersonDocumentAssertion{AssertionID: id, ContentVersionID: versionID, PersonID: personID, Role: role, Action: "assert", Revision: 1, RecordedAt: nowRFC3339()}
 	_, err = tx.ExecContext(ctx, `INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision) VALUES(?,?,?,?,'assert','',?,1)`, id, versionID, personID, role, assertion.RecordedAt)
 	return assertion, true, err
+}
+
+func (s *Store) personCandidateVisibility(ctx context.Context, q metadataQuerier) (string, error) {
+	if _, err := s.hiddenSession(ctx, q); err == nil {
+		return "1=1", nil
+	} else if !errors.Is(err, ErrHiddenLocked) {
+		return "", err
+	}
+	return personCandidateVisibleSQL, nil
 }

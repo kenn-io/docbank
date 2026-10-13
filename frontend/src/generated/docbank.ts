@@ -1537,6 +1537,7 @@ export interface CreatePhotoFaceRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   box?: FaceBox;
+  face_id?: string;
   person_id?: string;
 }
 
@@ -5323,9 +5324,21 @@ export interface PhotoFace {
   revision: number;
 }
 
+export interface PhotoPersonAssertion {
+  action: string;
+  assertion_id: string;
+  content_version_id: string;
+  note: string;
+  person_id: string;
+  recorded_at: string;
+  revision: number;
+  role: string;
+}
+
 export interface PhotoFacePage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  assertions: PhotoPersonAssertion[];
   /** @maxItems 1000 */
   faces: PhotoFace[];
 }
@@ -5333,7 +5346,7 @@ export interface PhotoFacePage {
 export interface PhotoFaceResult {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  assertion_id?: string;
+  assertion?: PhotoPersonAssertion;
   face?: PhotoFace;
 }
 
@@ -16055,7 +16068,7 @@ export const getListPhotoFacesUrl = (contentVersionId: string,) => {
 }
 
 /**
- * @summary Read face boxes on one photo version
+ * @summary Read face boxes and people on one photo version
  */
 export const listPhotoFaces = async (contentVersionId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoFacePage> => {
 

@@ -5,7 +5,7 @@ import (
 	"math"
 )
 
-// FaceBox uses normalized coordinates in the unrotated observation image.
+// FaceBox uses normalized coordinates in the EXIF-oriented preview before authored rotation.
 type FaceBox struct {
 	X      float64 `json:"x"`
 	Y      float64 `json:"y"`

@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -219,7 +220,7 @@ func TestEveryReleasedSchemaFixtureUpgrades(t *testing.T) {
 				require.NoError(t, err)
 				currentNode, err := s.NodeByID(t.Context(), node.ID)
 				require.NoError(t, err)
-				face, err := s.CreatePhotoFace(t.Context(), currentNode.CurrentVersionID, document.FaceBox{Width: 0.2, Height: 0.2}, person.PersonID)
+				face, _, err := s.CreatePhotoFace(t.Context(), currentNode.CurrentVersionID, uuid.New().String(), document.FaceBox{Width: 0.2, Height: 0.2}, person.PersonID)
 				require.NoError(t, err)
 				var metadata bytes.Buffer
 				require.NoError(t, s.ExportMetadata(t.Context(), &metadata))
@@ -227,7 +228,7 @@ func TestEveryReleasedSchemaFixtureUpgrades(t *testing.T) {
 				require.NoError(t, err)
 				defer func() { require.NoError(t, restored.Close()) }()
 				require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(metadata.Bytes())))
-				faces, err := restored.PhotoFaces(t.Context(), currentNode.CurrentVersionID)
+				faces, _, err := restored.PhotoFaces(t.Context(), currentNode.CurrentVersionID)
 				require.NoError(t, err)
 				require.Equal(t, []PhotoFace{face}, faces)
 			})

@@ -29,8 +29,17 @@ func (c *Connection) PhotoFaces(ctx context.Context, versionID string, cookies .
 	if err != nil {
 		return api.PhotoFacePage{}, err
 	}
-	if page.Faces == nil || len(page.Faces) > 1000 {
+	if page.Faces == nil || page.Assertions == nil || len(page.Faces) > 1000 {
 		return api.PhotoFacePage{}, errors.New("photo face response exceeds bound")
+	}
+	assertionIDs := make(map[string]bool, len(page.Assertions))
+	people := make(map[string]bool, len(page.Assertions))
+	for _, assertion := range page.Assertions {
+		if validatePhotoAssertionResponse(assertion, versionID) != nil || assertion.Action != "assert" || assertionIDs[assertion.AssertionID] || people[assertion.PersonID] {
+			return api.PhotoFacePage{}, errors.New("invalid photo assertion response")
+		}
+		assertionIDs[assertion.AssertionID] = true
+		people[assertion.PersonID] = true
 	}
 	seen := make(map[string]bool, len(page.Faces))
 	for _, face := range page.Faces {
@@ -46,7 +55,7 @@ func (c *Connection) PhotoFaces(ctx context.Context, versionID string, cookies .
 }
 
 func (c *Connection) CreatePhotoFace(ctx context.Context, versionID string, request api.CreatePhotoFaceRequest, cookies ...string) (api.PhotoFaceResult, error) {
-	if !validUUIDv4(versionID) || (request.Box == nil && request.PersonID == "") || (request.Box != nil && request.Box.Validate() != nil) || (request.PersonID != "" && !validUUIDv4(request.PersonID)) {
+	if !validUUIDv4(versionID) || (request.Box == nil && request.PersonID == "") || (request.Box != nil && (request.Box.Validate() != nil || !validUUIDv4(request.FaceID))) || (request.Box == nil && request.FaceID != "") || (request.PersonID != "" && !validUUIDv4(request.PersonID)) {
 		return api.PhotoFaceResult{}, errors.New("invalid photo face request")
 	}
 	pathID, err := uuid.Parse(versionID)
@@ -61,17 +70,34 @@ func (c *Connection) CreatePhotoFace(ctx context.Context, versionID string, requ
 	invalid := func() (api.PhotoFaceResult, error) {
 		return api.PhotoFaceResult{}, &responseDecodeError{err: errors.New("invalid photo face mutation response")}
 	}
+	if result.Assertion != nil && validatePhotoAssertionResponse(*result.Assertion, versionID) != nil {
+		return invalid()
+	}
 	if request.Box == nil {
-		if result.Face != nil || !validUUIDv4(result.AssertionID) {
+		if result.Face != nil || result.Assertion == nil {
 			return invalid()
 		}
 	} else {
-		if result.Face == nil || result.Face.Box != *request.Box || result.Face.AssertionID != result.AssertionID || (request.PersonID != "") != (result.AssertionID != "") {
+		if result.Face == nil || result.Face.FaceID != request.FaceID || result.Face.Box != *request.Box || (request.PersonID != "" && result.Assertion == nil) {
 			return invalid()
 		}
 		if err := validatePhotoFaceResponse(*result.Face, versionID); err != nil {
 			return invalid()
 		}
+		if result.Assertion == nil {
+			if result.Face.AssertionID != "" {
+				return invalid()
+			}
+		} else if result.Face.AssertionID != result.Assertion.AssertionID {
+			return invalid()
+		}
 	}
 	return *result, nil
+}
+
+func validatePhotoAssertionResponse(assertion api.PhotoPersonAssertion, versionID string) error {
+	if !validUUIDv4(assertion.AssertionID) || !validUUIDv4(assertion.PersonID) || assertion.ContentVersionID != versionID || assertion.Role != "depicted" || (assertion.Action != "assert" && assertion.Action != "suppress") || assertion.Revision < 1 || assertion.RecordedAt == "" {
+		return errors.New("invalid photo assertion response")
+	}
+	return nil
 }

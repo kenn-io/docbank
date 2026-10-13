@@ -26,11 +26,6 @@ type PhotoFace struct {
 	CreatedAt           string           `json:"created_at"`
 }
 
-type photoFaceReceipt struct {
-	Face      *PhotoFace               `json:"face"`
-	Assertion *PersonDocumentAssertion `json:"assertion,omitzero"`
-}
-
 func validatePhotoFace(face PhotoFace) error {
 	if validateUUIDv4(face.FaceID) != nil || validateUUIDv4(face.ContentVersionID) != nil || face.Revision < 1 ||
 		face.DetectorFingerprint == "" || len(face.DetectorFingerprint) > 256 || !document.ValidPersonIdentityText(face.DetectorFingerprint) ||
@@ -69,9 +64,9 @@ func photoFacesQuery(ctx context.Context, q metadataQuerier, versionID string) (
 }
 
 // facePhotoQuery binds observations to a live, current photo member and uses the shared Hidden gate.
-func (s *Store) facePhotoQuery(ctx context.Context, q metadataQuerier, versionID string) (string, error) {
+func (s *Store) facePhotoQuery(ctx context.Context, q metadataQuerier, versionID string) error {
 	if validateUUIDv4(versionID) != nil {
-		return "", ErrInvalidPhotoFace
+		return ErrInvalidPhotoFace
 	}
 	var assetID string
 	err := q.QueryRowContext(ctx, `SELECT member.asset_id FROM content_versions cv
@@ -79,26 +74,42 @@ func (s *Store) facePhotoQuery(ctx context.Context, q metadataQuerier, versionID
  JOIN photo_files member ON member.node_id=cv.node_id
  WHERE cv.version_id=? AND (`+photoBrowseEligibleMemberPredicate(false)+` OR `+photoBrowseEligibleMemberPredicate(true)+`)`, versionID).Scan(&assetID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", ErrNotFound
+		return ErrNotFound
 	}
 	if err != nil {
-		return "", err
+		return err
 	}
 	_, err = s.photoAssetReadQuery(ctx, q, assetID)
-	return assetID, err
+	return err
 }
 
-func (s *Store) PhotoFaces(ctx context.Context, versionID string) ([]PhotoFace, error) {
+func (s *Store) PhotoFaces(ctx context.Context, versionID string) ([]PhotoFace, []PersonDocumentAssertion, error) {
 	var faces []PhotoFace
+	assertions := make([]PersonDocumentAssertion, 0)
 	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
-		if _, err := s.facePhotoQuery(ctx, tx, versionID); err != nil {
+		if err := s.facePhotoQuery(ctx, tx, versionID); err != nil {
 			return err
 		}
 		var err error
 		faces, err = photoFacesQuery(ctx, tx, versionID)
-		return err
+		if err != nil {
+			return err
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision FROM person_document_assertions WHERE content_version_id=? AND role='depicted' AND action='assert' ORDER BY person_id,assertion_id`, versionID)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			assertion, err := scanPersonAssertion(rows)
+			if err != nil {
+				return err
+			}
+			assertions = append(assertions, assertion)
+		}
+		return rows.Err()
 	})
-	return faces, err
+	return faces, assertions, err
 }
 
 func insertPhotoFaceTx(ctx context.Context, tx *sql.Tx, face PhotoFace) error {
@@ -118,14 +129,45 @@ func assertedFacePersonTx(ctx context.Context, tx *sql.Tx, versionID, personID s
 	return ensurePersonAssertionTx(ctx, tx, versionID, resolved, "depicted")
 }
 
-func (s *Store) CreatePhotoFace(ctx context.Context, versionID string, box document.FaceBox, personID string) (PhotoFace, error) {
-	if box.Validate() != nil || (personID != "" && validateUUIDv4(personID) != nil) {
-		return PhotoFace{}, ErrInvalidPhotoFace
+func (s *Store) CreatePhotoFace(ctx context.Context, versionID, faceID string, box document.FaceBox, personID string) (PhotoFace, *PersonDocumentAssertion, error) {
+	if validateUUIDv4(faceID) != nil || box.Validate() != nil || (personID != "" && validateUUIDv4(personID) != nil) {
+		return PhotoFace{}, nil, ErrInvalidPhotoFace
 	}
-	var change PhotoFace
+	var face PhotoFace
+	var assertion *PersonDocumentAssertion
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		assetID, err := s.facePhotoQuery(ctx, tx, versionID)
-		if err != nil {
+		if err := s.facePhotoQuery(ctx, tx, versionID); err != nil {
+			return err
+		}
+		resolved := ""
+		if personID != "" {
+			var err error
+			resolved, err = resolveActiveCandidatePersonTx(ctx, tx, personID)
+			if err != nil {
+				return err
+			}
+		}
+		existing, err := scanPhotoFace(tx.QueryRowContext(ctx, `SELECT `+photoFaceColumns+` FROM photo_faces WHERE face_id=?`, faceID))
+		if err == nil {
+			if existing.ContentVersionID != versionID || existing.Box != box || existing.DetectorFingerprint != ManualFaceFingerprint {
+				return ErrExists
+			}
+			existingPerson := ""
+			if existing.AssertionID != "" {
+				saved, err := personAssertionByIDTx(ctx, tx, existing.AssertionID)
+				if err != nil {
+					return err
+				}
+				assertion = &saved
+				existingPerson = saved.PersonID
+			}
+			if resolved != "" && existingPerson != resolved {
+				return ErrExists
+			}
+			face = existing
+			return nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
 		var count int
@@ -135,39 +177,26 @@ func (s *Store) CreatePhotoFace(ctx context.Context, versionID string, box docum
 		if count >= maxPhotoFaces {
 			return ErrInvalidPhotoFace
 		}
-		id, err := newUUIDv4()
-		if err != nil {
-			return err
-		}
-		face := PhotoFace{FaceID: id, ContentVersionID: versionID, DetectorFingerprint: ManualFaceFingerprint, Box: box, Revision: 1, CreatedAt: nowRFC3339()}
-		after := photoFaceReceipt{Face: &face}
-		if personID != "" {
-			assertion, created, err := assertedFacePersonTx(ctx, tx, versionID, personID)
+		face = PhotoFace{FaceID: faceID, ContentVersionID: versionID, DetectorFingerprint: ManualFaceFingerprint, Box: box, Revision: 1, CreatedAt: nowRFC3339()}
+		created := false
+		if resolved != "" {
+			saved, isNew, err := ensurePersonAssertionTx(ctx, tx, versionID, resolved, "depicted")
 			if err != nil {
 				return err
 			}
-			face.AssertionID = assertion.AssertionID
-			if created {
-				after.Assertion = &assertion
-			}
+			assertion = &saved
+			face.AssertionID = saved.AssertionID
+			created = isNew
 		}
 		if err := insertPhotoFaceTx(ctx, tx, face); err != nil {
 			return err
 		}
-		receiptID, err := newUUIDv4()
-		if err != nil {
-			return err
+		if created {
+			return advancePersonBindingEpochTx(ctx, tx)
 		}
-		if err := writePhotoReceiptTx(ctx, tx, photoReceipt{ReceiptID: receiptID, Operation: "face_create", AssetID: assetID, AfterRevision: 1, Before: photoFaceReceipt{}, After: after}); err != nil {
-			return err
-		}
-		if err := advancePersonBindingEpochTx(ctx, tx); err != nil {
-			return err
-		}
-		change = face
 		return nil
 	})
-	return change, err
+	return face, assertion, err
 }
 
 // MarkPersonInPhoto records a depicted edge without an invented face box.
@@ -177,20 +206,13 @@ func (s *Store) MarkPersonInPhoto(ctx context.Context, versionID, personID strin
 	}
 	var assertion PersonDocumentAssertion
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		assetID, err := s.facePhotoQuery(ctx, tx, versionID)
+		err := s.facePhotoQuery(ctx, tx, versionID)
 		if err != nil {
 			return err
 		}
 		var created bool
 		assertion, created, err = assertedFacePersonTx(ctx, tx, versionID, personID)
 		if err != nil || !created {
-			return err
-		}
-		receiptID, err := newUUIDv4()
-		if err != nil {
-			return err
-		}
-		if err := writePhotoReceiptTx(ctx, tx, photoReceipt{ReceiptID: receiptID, Operation: "face_mark", AssetID: assetID, AfterRevision: 1, Before: photoFaceReceipt{}, After: photoFaceReceipt{Assertion: &assertion}}); err != nil {
 			return err
 		}
 		return advancePersonBindingEpochTx(ctx, tx)
@@ -212,7 +234,7 @@ func (s *Store) ReconcilePhotoFaces(ctx context.Context, versionID, fingerprint 
 	slices.SortFunc(boxes, compareFaceBoxes)
 	var faces []PhotoFace
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		if _, err := s.facePhotoQuery(ctx, tx, versionID); err != nil {
+		if err := s.facePhotoQuery(ctx, tx, versionID); err != nil {
 			return err
 		}
 		old, err := photoFacesQuery(ctx, tx, versionID)

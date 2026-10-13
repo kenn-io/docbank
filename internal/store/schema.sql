@@ -688,7 +688,7 @@ END;
 CREATE TRIGGER IF NOT EXISTS document_event_heads_deleted
 AFTER DELETE ON document_event_heads BEGIN
     UPDATE document_event_state SET publication_epoch=publication_epoch+1,
-        updated_at=strftime('%Y-%m-%dT%H:%M:%f','now')||'000000Z' WHERE singleton=1;
+        updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE singleton=1;
 END;
 
 CREATE TRIGGER IF NOT EXISTS provenance_version_bindings_immutable_update

@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 )
@@ -19,4 +20,21 @@ func TestParsePhotoFaceBox(t *testing.T) {
 		_, err := parsePhotoFaceBox(value)
 		require.Error(t, err, value)
 	}
+}
+
+func TestPhotoFaceCreateRequest(t *testing.T) {
+	t.Parallel()
+	box := &document.FaceBox{Width: 0.2, Height: 0.2}
+	request, err := photoFaceCreateRequest(box, "", "")
+	require.NoError(t, err)
+	id, err := uuid.Parse(request.FaceID)
+	require.NoError(t, err)
+	require.Equal(t, uuid.Version(4), id.Version())
+	retry, err := photoFaceCreateRequest(box, "", request.FaceID)
+	require.NoError(t, err)
+	require.Equal(t, request, retry)
+	_, err = photoFaceCreateRequest(nil, "", request.FaceID)
+	require.Error(t, err)
+	_, err = photoFaceCreateRequest(box, "", "invalid")
+	require.Error(t, err)
 }

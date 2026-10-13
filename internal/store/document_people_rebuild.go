@@ -141,7 +141,7 @@ func (s *Store) DocumentPeopleCoverage(ctx context.Context) (DocumentPeopleCover
 	if err != nil {
 		return coverage, err
 	}
-	coverage.OpenCandidates, coverage.CandidateQueueFull, err = openPersonCandidateCount(ctx, tx)
+	coverage.OpenCandidates, coverage.CandidateQueueFull, err = s.openPersonCandidateCount(ctx, tx)
 	if err != nil {
 		return coverage, err
 	}

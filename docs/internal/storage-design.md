@@ -573,13 +573,18 @@ in history but cannot receive new assignments or assertions. The derived
 rebuild after restore. An audited vault refuses ordinary person mutations
 until audit-aware mutation records exist.
 
+### Photo face authority
+
+`photo_faces` stores a content-version ID, detector fingerprint, normalized box, revision and optional assertion ID. It has no scan generation or head. Naming writes the shared `person_document_assertions` row with role `depicted`; a whole-photo mark uses that row without inventing a face. Face reads return these asserted people and their canonical IDs in the same Hidden-gated transaction. Only a newly created assertion advances the binding epoch. Manual boxed creates use the caller's face UUID for replay; conflicting reuse fails.
+
+`persons.key_face_id` refers to a face asserted for that person. Deletion or suppression clears it and advances the person's revision and timestamp. A merge retains the survivor's key face, inheriting the absorbed person's only when needed, and retargets duplicate assertions before deleting them. Faces and key-face references round-trip through JSONL; validation checks assertion versions, the `depicted` role, key ownership and the 1,000-face bound. Deleting a version invalidates person bindings with the canonical timestamp format so the remaining authority can still export and restore.
+
+The backend reconciliation contract matches boxes across detector fingerprints by intersection over union of at least 0.5, highest overlap first, with face IDs and box order breaking ties. Unmatched manual, named, pending-candidate and rejected faces remain. Other unmatched detector faces are removed. Manual boxes stay intact. Suggestions use `face` evidence and reason `face_match` in the bounded person candidate queue. Opening or accepting one requires current photo membership and Hidden access. A visible stale suggestion can still be rejected. Public queue reads and counts omit locked Hidden suggestions; the internal capacity remains global.
+
+Boxes are fractions of the EXIF-oriented preview before authored rotation. The pure `FaceBox.Rotate` helper defines the quarter-turn display transform; stored geometry stays unchanged. Detection, candidate review routes and rendered overlays have no caller yet. Correction and undo are unavailable.
+
 !!! info "Planned"
-    The People view will join one canonical person to current document edges,
-    operator assertions, and photo face assignments. Document edges are valid
-    only for the current binding epoch and generation. Photo visibility comes
-    from the photo resolver. Review queues use open document match candidates
-    and face-person suggestions. Merge and split will move both evidence kinds
-    when the photo authority lands.
+    The People view will join canonical people to current document edges, operator assertions and photo faces. Document edges require the current binding epoch and generation; photo visibility follows the photo resolver.
 
 ## Released schema policy
 

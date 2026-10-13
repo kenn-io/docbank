@@ -10178,7 +10178,7 @@ func (c *Client) SetPhotoSettings(ctx context.Context, options *SetPhotoSettings
 	return responseParser(ctx, resp)
 }
 
-// ListPhotoFaces Read face boxes on one photo version
+// ListPhotoFaces Read face boxes and people on one photo version
 func (c *Client) ListPhotoFaces(ctx context.Context, options *ListPhotoFacesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPhotoFacesResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
@@ -26658,6 +26658,7 @@ type PhotoMapRow = api.PhotoMapRow
 type PhotoMapRowPreviewsStruct struct {
 	Grid PhotoPreviewSlot `json:"grid"`
 }
+type PhotoPersonAssertion = api.PhotoPersonAssertion
 
 type PhotoPreviewSlot = api.PhotoPreviewSlot
 
