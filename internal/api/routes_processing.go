@@ -16,6 +16,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/retrieval"
 	"go.kenn.io/docbank/internal/store"
@@ -84,6 +85,16 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 	}, func(ctx context.Context, input *planInput) (*planOutput, error) {
 		if d.Processing == nil {
 			return nil, processingUnavailable()
+		}
+		// Large streaming audio needs a complete identity read. Keep the ordinary
+		// deadline for other plans, and preserve client cancellation for this one.
+		if version, err := d.Store.ContentVersionByID(ctx, input.Body.Selector.ContentVersionID); err == nil &&
+			largeAudioProcessingPlan(version, d.Processing.MediaSourceMaxBytes()) {
+			var contextErr error
+			ctx, contextErr = withoutRequestTimeout(ctx)
+			if contextErr != nil {
+				return nil, fromProcessingError(contextErr)
+			}
 		}
 		plan, err := d.Processing.Plan(ctx, processing.Selector{
 			NodeID: input.Body.Selector.NodeID, ContentVersionID: input.Body.Selector.ContentVersionID,
@@ -821,4 +832,9 @@ func fromProcessingError(err error) error {
 		return FromStoreError(err)
 	}
 	return NewError(http.StatusInternalServerError, "processing_failed", "document processing failed")
+}
+
+func largeAudioProcessingPlan(version store.ContentVersion, maximum int64) bool {
+	return version.Size > media.MaxInspectionSourceBytes && version.Size <= maximum &&
+		media.InspectionSourceByteCeiling("", version.MimeType) == media.MaxMediaSourceBytes
 }

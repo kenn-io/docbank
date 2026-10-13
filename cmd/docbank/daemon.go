@@ -304,8 +304,9 @@ func runServe(ctx context.Context) (retErr error) {
 		Catalog: s, Blobs: blobs, Gate: operationGate, Profiles: processingProfiles,
 		RenditionRuntimes: runtimeRegistry,
 		Principal:         "daemon:operator", Scope: "document-processing", SpoolDirectory: layout.BlobTmpDir(),
-		Lifecycle:    sigCtx,
-		MediaOrigins: mediaOrigins, MediaOriginProbes: mediaOriginProbes, MediaTokenKey: mediaTokenKey,
+		Lifecycle:     sigCtx,
+		MediaMaxBytes: cfg.Media.MaxSourceBytes,
+		MediaOrigins:  mediaOrigins, MediaOriginProbes: mediaOriginProbes, MediaTokenKey: mediaTokenKey,
 	})
 	if err != nil {
 		return fmt.Errorf("configuring processing service: %w", err)

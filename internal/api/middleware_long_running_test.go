@@ -17,6 +17,7 @@ import (
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestLongRunningRequestTimeoutBoundary(t *testing.T) {
@@ -368,5 +369,79 @@ func TestMailboxTimeoutBoundary(t *testing.T) {
 				handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(parent, test.method, test.path, nil))
 			})
 		})
+	}
+}
+
+func TestLargeAudioPlanContextOutlivesOnlyServerDeadline(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		parent, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+		defer cancel()
+		wantDeadline, _ := parent.Deadline()
+		handler := timeoutMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			type identityKey struct{}
+			bounded := context.WithValue(r.Context(), identityKey{}, "synthetic:operator")
+			audio, err := withoutRequestTimeout(bounded)
+			require.NoError(t, err)
+			deadline, ok := audio.Deadline()
+			require.True(t, ok)
+			require.Equal(t, wantDeadline, deadline)
+			require.Equal(t, "synthetic:operator", audio.Value(identityKey{}))
+			time.Sleep(61 * time.Second)
+			require.ErrorIs(t, bounded.Err(), context.DeadlineExceeded)
+			require.NoError(t, audio.Err())
+			derived, stop := context.WithCancel(audio)
+			defer stop()
+			cancel()
+			synctest.Wait()
+			require.ErrorIs(t, audio.Err(), context.Canceled)
+			require.ErrorIs(t, derived.Err(), context.Canceled)
+		}))
+		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(parent, http.MethodPost, "/api/v1/processing/plans", nil))
+	})
+}
+
+func TestLargeAudioPlanClearsHandlerReadDeadline(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		mux := http.NewServeMux()
+		humaAPI := humago.New(mux, huma.DefaultConfig("test", "test"))
+		huma.Register(humaAPI, huma.Operation{OperationID: "testLargeAudioPlan", Method: http.MethodPost, Path: "/api/v1/processing/plans"}, func(ctx context.Context, _ *struct{ Body struct{} }) (*struct{ Body string }, error) {
+			long, err := withoutRequestTimeout(ctx)
+			if err != nil {
+				return nil, err
+			}
+			time.Sleep(61 * time.Second)
+			return &struct{ Body string }{Body: "planned"}, long.Err()
+		})
+		server := httptest.NewTestServer(t, timeoutMiddleware(mux))
+		response, err := server.Client().Post(server.URL+"/api/v1/processing/plans", "application/json", strings.NewReader("{}"))
+		require.NoError(t, err)
+		defer func() { require.NoError(t, response.Body.Close()) }()
+		body, err := io.ReadAll(response.Body)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, response.StatusCode, string(body))
+		require.JSONEq(t, `"planned"`, string(body))
+	})
+}
+
+func TestLargeAudioPlanKeepsUnrelatedLimits(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		mediaType     string
+		size, maximum int64
+		long          bool
+	}{
+		{"audio/wav", 1 << 30, 4 << 30, false},
+		{"audio/wav", (1 << 30) + 1, 4 << 30, true},
+		{"audio/wav", 4 << 30, 4 << 30, true},
+		{"audio/wav", (4 << 30) + 1, 4 << 30, false},
+		{"audio/wav", 4 << 30, 3 << 30, false},
+		{"text/plain", 4 << 30, 4 << 30, false},
+		{"video/mp4", 4 << 30, 4 << 30, false},
+		{"audio/mp4", 4 << 30, 4 << 30, true},
+		{"audio/x-m4a", 4 << 30, 4 << 30, true},
+	} {
+		require.Equal(t, test.long, largeAudioProcessingPlan(store.ContentVersion{Size: test.size, MimeType: test.mediaType}, test.maximum))
 	}
 }

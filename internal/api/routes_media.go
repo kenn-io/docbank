@@ -14,6 +14,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -327,7 +328,7 @@ func handleMediaSourceSubmission(w http.ResponseWriter, r *http.Request, d Deps)
 		}
 		writeJSON(w, http.StatusOK, fromMediaReceipt(receipt))
 	case "multipart/form-data":
-		r.Body = http.MaxBytesReader(w, r.Body, (2<<30)+(128<<10))
+		r.Body = http.MaxBytesReader(w, r.Body, d.Processing.MediaSourceMaxBytes()+(128<<10))
 		defer func() { _ = r.Body.Close() }()
 		var metadata MediaSuppliedMetadata
 		part, multipartReader, parseErr := readMediaMultipartMetadata(r, &metadata)
@@ -337,7 +338,7 @@ func handleMediaSourceSubmission(w http.ResponseWriter, r *http.Request, d Deps)
 			return
 		}
 		staged, stageErr := stageCompleteMediaMultipart(r, d.Processing, part, multipartReader,
-			metadata.ByteLength, 2<<30, metadata.SHA256)
+			metadata.ByteLength, d.Processing.MediaSourceMaxBytes(), metadata.SHA256)
 		if stageErr != nil {
 			_ = r.Body.Close()
 			writeError(w, fromMediaError(stageErr))
@@ -364,7 +365,7 @@ func handleMediaArtifactUpload(w http.ResponseWriter, r *http.Request, d Deps) {
 		writeError(w, mediaUnavailable())
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, (2<<30)+(128<<10))
+	r.Body = http.MaxBytesReader(w, r.Body, d.Processing.MediaSourceMaxBytes()+(128<<10))
 	defer func() { _ = r.Body.Close() }()
 	var metadata MediaArtifactMetadata
 	part, multipartReader, parseErr := readMediaMultipartMetadata(r, &metadata)
@@ -410,7 +411,7 @@ func stageCompleteMediaMultipart(
 	r *http.Request, service *processing.Service, part io.Reader, reader *multipart.Reader,
 	expectedSize, maxBytes int64, expectedSHA string,
 ) (*processing.StagedMediaContent, error) {
-	if expectedSize < 1 || expectedSize > maxBytes || maxBytes < 1 || maxBytes > 2<<30 {
+	if expectedSize < 1 || expectedSize > maxBytes || maxBytes < 1 || maxBytes > media.MaxMediaSourceBytes {
 		return nil, errors.New("byte_limit")
 	}
 	staged, err := service.StageMediaContent(r.Context(), part, expectedSize, maxBytes, expectedSHA)
@@ -575,6 +576,7 @@ func fromMediaError(err error) *Error {
 		status int
 		code   string
 	}{
+		{processing.ErrMediaStagingUnavailable, http.StatusServiceUnavailable, "media_staging_unavailable"},
 		{processing.ErrMediaCapabilityUnavailable, http.StatusServiceUnavailable, "capability_unavailable"},
 		{processing.ErrMediaCredentialScope, http.StatusUnprocessableEntity, "credential_cross_origin"},
 		{processing.ErrMediaProcessingUnsupported, http.StatusUnprocessableEntity, "media_processing_unsupported"},

@@ -34,7 +34,8 @@ import (
 
 const (
 	capabilityRecordVersion = 1
-	// MaxInspectionSourceBytes is the largest source byte limit accepted by InspectCapability.
+	// MaxInspectionSourceBytes bounds inspectors that materialize a document.
+	// Streaming audio uses MaxMediaSourceBytes instead.
 	MaxInspectionSourceBytes = int64(1 << 30)
 
 	ooxmlWorksheetType = "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"
@@ -160,7 +161,11 @@ func InspectCapability(reader io.Reader, policy InspectionPolicy) (CapabilityRec
 		ext == ".wav" || ext == ".mp3" {
 		return inspectAudio(reader, policy, baseType, ext)
 	}
-	data, err := io.ReadAll(io.LimitReader(reader, policy.MaxSourceBytes+1))
+	// Unsupported future audio identities must not reach a document-sized allocation.
+	if policy.ExpectedBytes > MaxInspectionSourceBytes {
+		return CapabilityRecord{}, errors.New("media: source exceeds non-streaming inspection bound")
+	}
+	data, err := io.ReadAll(io.LimitReader(reader, min(policy.MaxSourceBytes, MaxInspectionSourceBytes)+1))
 	if err != nil {
 		return CapabilityRecord{}, fmt.Errorf("media: read inspection source: %w", err)
 	}
@@ -333,8 +338,9 @@ func validateInspectionPolicy(policy InspectionPolicy) error {
 	if err != nil || baseType == "" {
 		return errors.New("media: declared media type is invalid")
 	}
-	if policy.ExpectedBytes <= 0 || policy.ExpectedBytes > MaxInspectionSourceBytes ||
-		policy.MaxSourceBytes <= 0 || policy.MaxSourceBytes > MaxInspectionSourceBytes ||
+	ceiling := InspectionSourceByteCeiling(policy.Filename, policy.DeclaredMediaType)
+	if policy.ExpectedBytes <= 0 || policy.ExpectedBytes > ceiling ||
+		policy.MaxSourceBytes <= 0 || policy.MaxSourceBytes > ceiling ||
 		policy.ExpectedBytes > policy.MaxSourceBytes {
 		return errors.New("media: source byte bounds are invalid")
 	}
@@ -1471,7 +1477,7 @@ func inspectWAV(reader *bufio.Reader, policy InspectionPolicy) (CapabilityRecord
 			seenAudio = true
 			audioBytes = chunkSize
 		}
-		if _, err := reader.Discard(int(skip)); err != nil { // #nosec G115 -- skip is bounded by the source limit.
+		if _, err := io.CopyN(io.Discard, reader, skip); err != nil {
 			return record, fmt.Errorf("reading WAV chunk: %w", err)
 		}
 		offset = body + size + size%2

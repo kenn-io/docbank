@@ -22,6 +22,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/embedding"
+	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/pagerender"
 	"go.kenn.io/docbank/internal/httpboundary"
 	"go.kenn.io/docbank/internal/storenamespace"
@@ -209,6 +210,11 @@ type CredentialBindingConfig struct {
 	EnvironmentVariable string `toml:"environment_variable"`
 }
 
+// MediaConfig limits original media sources independently of transcript bytes.
+type MediaConfig struct {
+	MaxSourceBytes int64 `toml:"max_source_bytes"`
+}
+
 type MediaOriginConfig struct {
 	ProviderEgressConfig
 
@@ -321,6 +327,7 @@ type EmailPDFConfig struct {
 
 // Config is the full contents of config.toml.
 type Config struct {
+	Media              MediaConfig                        `toml:"media"`
 	PageRuntime        *pagerender.Profile                `toml:"page_runtime"`
 	EmailPDF           *EmailPDFConfig                    `toml:"email_pdf"`
 	Server             ServerConfig                       `toml:"server"`
@@ -341,6 +348,7 @@ type Config struct {
 // Default returns the configuration used when config.toml is absent.
 func Default() Config {
 	return Config{
+		Media: MediaConfig{MaxSourceBytes: media.MaxMediaSourceBytes},
 		Server: ServerConfig{
 			BindAddr:    "127.0.0.1",
 			IdleTimeout: Duration(30 * time.Minute),
@@ -525,6 +533,9 @@ func resolveBackupRepo(root string, backup *BackupConfig) error {
 // exposes credentials and contents to the selected network; operators must
 // provide a trusted transport or network. Loopback can use an ephemeral key.
 func (c Config) Validate() error {
+	if c.Media.MaxSourceBytes < 0 || c.Media.MaxSourceBytes > media.MaxMediaSourceBytes {
+		return fmt.Errorf("[media] max_source_bytes must be between 1 and %d (or 0 for default)", media.MaxMediaSourceBytes)
+	}
 	if err := validateWebConfig(c); err != nil {
 		return err
 	}

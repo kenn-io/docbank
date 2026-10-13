@@ -360,7 +360,7 @@ func openVaultWithRootOpener(
 	profiles[captionName] = captionProfile
 	processingService, err := internalprocessing.NewService(internalprocessing.ServiceConfig{
 		Catalog: metadata, Blobs: blobs, Gate: embeddedMutationGate{vault: vault},
-		Profiles: profiles, SpoolDirectory: spoolDirectory,
+		Profiles: profiles, SpoolDirectory: spoolDirectory, MediaMaxBytes: config.Processing.MediaMaxBytes,
 	})
 	if err != nil {
 		return nil, err

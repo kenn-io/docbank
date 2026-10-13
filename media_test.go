@@ -541,3 +541,19 @@ func TestStartProcessingFreezesSuppliedInputBeforeRevocation(t *testing.T) {
 	}
 	require.ErrorIs(t, err, ErrNotFound)
 }
+
+func TestEmbeddedMediaSourceCeilingOptions(t *testing.T) {
+	for _, maximum := range []int64{-1, (4 << 30) + 1} {
+		_, err := New(t.Context(), Config{Root: t.TempDir(), Processing: ProcessingOptions{MediaMaxBytes: maximum}})
+		require.ErrorContains(t, err, "media byte limit")
+	}
+	vault, err := New(t.Context(), Config{Root: t.TempDir(), Processing: ProcessingOptions{MediaMaxBytes: 64}})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	raw := mediatest.WAV()
+	identity := contentIdentity(raw)
+	_, err = vault.SubmitSuppliedMedia(t.Context(), SuppliedMediaRequest{
+		OperationID: "00000000-0000-4000-8000-000000000906", Content: bytes.NewReader(raw), Filename: "call.wav", MediaType: "audio/wav", SHA256: identity.SHA256, ByteLength: identity.Size, Occurrence: MediaOccurrenceInput{Ref: "small-ceiling", Revision: "1"},
+	})
+	require.ErrorContains(t, err, "byte_limit")
+}

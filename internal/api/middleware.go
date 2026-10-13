@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json/v2"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -19,6 +20,32 @@ import (
 )
 
 const requestTimeout = 60 * time.Second
+
+type requestTimeoutParentKey struct{}
+type requestTimeoutControllerKey struct{}
+
+// requestTimeoutParentContext preserves handler values while using the original
+// request's cancellation and deadline for a qualified long source inspection.
+type requestTimeoutParentContext struct {
+	context.Context
+
+	values context.Context
+}
+
+func (ctx requestTimeoutParentContext) Value(key any) any { return ctx.values.Value(key) }
+
+func withoutRequestTimeout(ctx context.Context) (context.Context, error) {
+	parent, ok := ctx.Value(requestTimeoutParentKey{}).(context.Context)
+	if !ok {
+		return ctx, nil
+	}
+	if controller, ok := ctx.Value(requestTimeoutControllerKey{}).(*http.ResponseController); ok {
+		if err := controller.SetReadDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
+			return nil, err
+		}
+	}
+	return requestTimeoutParentContext{Context: parent, values: ctx}, nil
+}
 
 type authenticationContextKey struct{}
 type remoteAddressContextKey struct{}
@@ -294,7 +321,9 @@ func timeoutMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
+		parent := context.WithValue(r.Context(), requestTimeoutParentKey{}, r.Context())
+		parent = context.WithValue(parent, requestTimeoutControllerKey{}, http.NewResponseController(w))
+		ctx, cancel := context.WithTimeout(parent, requestTimeout)
 		defer cancel()
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})

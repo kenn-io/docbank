@@ -698,3 +698,6 @@ func mediaTypeMatches(declared, retained string) bool {
 	}
 	return declaredType == retainedType
 }
+
+// MediaSourceMaxBytes exposes the same ceiling used by staging and admission.
+func (service *Service) MediaSourceMaxBytes() int64 { return service.mediaMaxBytes }

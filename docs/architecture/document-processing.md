@@ -382,3 +382,44 @@ own these rules.
 The [Document derivatives](document-derivatives.md) reference describes the
 sanitized Markdown envelope, body-relative navigation, and consumer source
 identity contract.
+
+## How are large audio sources bounded?
+
+`document/media.MaxMediaSourceBytes` is the default and maximum streaming
+media source ceiling: 4 GiB, represented as `int64`. The daemon's
+`[media].max_source_bytes` and embedded `ProcessingOptions.MediaMaxBytes` may
+lower it. HTTP envelopes add only 128 KiB for multipart metadata and framing.
+Source staging, aggregate staging reservations, publication and rendition
+inspection use the same configured ceiling. Sequential rendition inspection
+and sealed upload preparation use verified blob streams, including terminal
+verification and a catalog size check, instead of materializing a seekable copy. Audio admission and worker runtime
+preparation intersect it with the selected profile's source limit. The built-in
+supplied-transcript and supplied-captions profiles allow 4 GiB original sources;
+their 16 MiB transcript, caption and response limits remain separate.
+
+Audio retains its 24-hour duration and codec qualification bounds.
+WAV and MP3 inspection hash every byte while retaining parser headers and a
+fixed copy buffer. WAV chunk skipping uses `int64` counts, including on 32-bit
+systems. Source lengths never select a sample allocation size. Document
+inspectors retain their existing 1 GiB ceiling because they materialize the
+source. Visual detection and remote MP4 originals remain bounded at 20 MiB.
+M4A identities (`.m4a`, `audio/mp4`, `audio/x-m4a`) select the audio ceiling;
+M4A parser availability follows the registered format support, and its movie
+metadata bound remains independent of source length. Hosted-provider limits
+continue to apply before uploads to those providers.
+
+Staging reserves the declared length before creating its private file. The
+reservation is an aggregate service quota, not a claim about filesystem free
+space. Disk or filesystem quota exhaustion during creation, writing or syncing
+returns `ErrMediaStagingUnavailable`; HTTP exposes this as retryable 503
+`media_staging_unavailable`. Failed staging closes and removes its file and
+releases the reservation. Operators can free space and retry the same operation.
+HTTP processing plans for cataloged audio sources above 1 GiB and within the
+configured ceiling lift the server's 60-second handler deadline after bounded
+JSON decoding. They clear the remaining socket read deadline and preserve the
+client's cancellation, original deadline and authentication context. Smaller
+audio plans, documents, video, over-ceiling sources and request-body limits keep
+their existing deadline behavior.
+
+A source may need both its stage and durable loose copy on disk during
+publication. Provider execution may also hold a sealed spool copy.
