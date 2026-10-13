@@ -39,7 +39,7 @@ type PhotoFaceResult struct {
 
 type PhotoFacePage struct {
 	Faces      []PhotoFace            `json:"faces" maxItems:"1000"`
-	Assertions []PhotoPersonAssertion `json:"assertions"`
+	Assertions []PhotoPersonAssertion `json:"assertions" maxItems:"1000"`
 }
 
 func registerPhotoFaceRoutes(api huma.API, d Deps, g *gate) {

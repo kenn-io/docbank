@@ -225,7 +225,7 @@ func TestPhotoFaceHiddenReadsAndDecisions(t *testing.T) {
 		_, _, err := s.OpenPersonCandidate(ctx, tx, candidate)
 		return err
 	})
-	require.ErrorIs(t, err, ErrHiddenLocked)
+	require.NoError(t, err)
 	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
 	require.NoError(t, err)
 	unlocked := WithPhotoHiddenToken(ctx, token)
@@ -800,4 +800,150 @@ func TestPhotoFaceMergeValidatesOnlyAffectedPeople(t *testing.T) {
 	_, err = s.MergePersons(ctx, survivor.PersonID, absorbed.PersonID, uuid.New().String(), 1, 1)
 	require.NoError(t, err)
 	require.ErrorIs(t, s.ValidateMetadata(ctx), ErrInvalidPhotoFace)
+}
+
+func TestPhotoFaceObservationTargetEligibility(t *testing.T) {
+	t.Parallel()
+	for _, change := range []string{"trashed raw", "sidecar", "replaced image", "replaced raw", "excluded"} {
+		t.Run(change, func(t *testing.T) {
+			t.Parallel()
+			s := newTestStore(t)
+			ctx := t.Context()
+			asset, nodes := photoTrashFixture(t, s)
+			imageFile := fileByRole(asset.Files, PhotoRoleImage)
+			asset, err := s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &imageFile.ID)
+			require.NoError(t, err)
+			person, err := s.CreatePerson(ctx, "Ada", "operator")
+			require.NoError(t, err)
+			box := document.FaceBox{Width: 0.2, Height: 0.2}
+			_, _, err = s.CreatePhotoFace(ctx, nodes[0].CurrentVersionID, uuid.New().String(), box, "")
+			require.NoError(t, err)
+			target := nodes[0]
+			switch change {
+			case "trashed raw":
+				_, _, err = s.Trash(ctx, *target.ParentID, UnconditionalRev)
+			case "sidecar":
+				target = nodes[2]
+			case "replaced image", "replaced raw":
+				if change == "replaced image" {
+					target = nodes[1]
+				}
+				target, _, err = s.ReplaceContent(ctx, target.ID, target.Revision, fakeHash("d4"), 4, "text/plain")
+			case "excluded":
+				_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
+			}
+			require.NoError(t, err)
+			_, _, err = s.PhotoFaces(ctx, target.CurrentVersionID)
+			require.ErrorIs(t, err, ErrNotFound)
+			_, _, err = s.CreatePhotoFace(ctx, target.CurrentVersionID, uuid.New().String(), box, person.PersonID)
+			require.ErrorIs(t, err, ErrNotFound)
+			_, err = s.MarkPersonInPhoto(ctx, target.CurrentVersionID, person.PersonID)
+			require.ErrorIs(t, err, ErrNotFound)
+			_, err = s.ReconcilePhotoFaces(ctx, target.CurrentVersionID, "detector-v1", []document.FaceBox{box})
+			require.ErrorIs(t, err, ErrNotFound)
+		})
+	}
+}
+
+func TestPhotoFaceInternalHiddenProducers(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("a1"), "image/jpeg")
+	asset, err := s.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	box := document.FaceBox{Width: 0.2, Height: 0.2}
+	faces, err := s.ReconcilePhotoFaces(ctx, node.CurrentVersionID, "detector-v1", []document.FaceBox{box})
+	require.NoError(t, err)
+	require.Len(t, faces, 1)
+	person, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	candidate := openFaceCandidate(t, s, node.CurrentVersionID, faces[0].FaceID, person.PersonID)
+	_, _, err = s.PhotoFaces(ctx, node.CurrentVersionID)
+	require.ErrorIs(t, err, ErrHiddenLocked)
+	visible, total, err := s.PersonCandidates(ctx, "open", 10, 0)
+	require.NoError(t, err)
+	require.Empty(t, visible)
+	require.Zero(t, total)
+	_, err = s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: candidate.CandidateID, ExpectedRevision: 1, Action: "link", PersonID: person.PersonID})
+	require.ErrorIs(t, err, ErrHiddenLocked)
+	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+	_, err = s.DecidePersonCandidate(WithPhotoHiddenToken(ctx, token), CandidateDecision{CandidateID: candidate.CandidateID, ExpectedRevision: 1, Action: "link", PersonID: person.PersonID})
+	require.NoError(t, err)
+}
+
+func TestPhotoFaceReadIncludesSuppressedReference(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("a1"), "image/jpeg")
+	person, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	face, assertion, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), document.FaceBox{Width: 0.2, Height: 0.2}, person.PersonID)
+	require.NoError(t, err)
+	assertion.Action = "suppress"
+	suppressed, err := s.AssertDocumentPerson(ctx, *assertion)
+	require.NoError(t, err)
+	faces, assertions, err := s.PhotoFaces(ctx, node.CurrentVersionID)
+	require.NoError(t, err)
+	require.Equal(t, []PhotoFace{face}, faces)
+	require.Equal(t, []PersonDocumentAssertion{suppressed}, assertions)
+}
+
+func TestPhotoFaceAssertionCapacityAndRestore(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("a1"), "image/jpeg")
+	_, err := s.db.Exec(`WITH RECURSIVE seq(n) AS (
+		SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n < ?
+	) INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at)
+	SELECT printf('00000000-0000-4000-8000-%012d',n),'Synthetic Person','synthetic person','operator','curated',1,?,? FROM seq`, maxPhotoAssertions-1, nowRFC3339(), nowRFC3339())
+	require.NoError(t, err)
+	_, err = s.db.Exec(`INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision)
+	 SELECT person_id,?,person_id,'depicted','assert','',?,1 FROM persons`, node.CurrentVersionID, nowRFC3339())
+	require.NoError(t, err)
+	person, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	marked, err := s.MarkPersonInPhoto(ctx, node.CurrentVersionID, person.PersonID)
+	require.NoError(t, err)
+	repeated, err := s.MarkPersonInPhoto(ctx, node.CurrentVersionID, person.PersonID)
+	require.NoError(t, err)
+	require.Equal(t, marked, repeated)
+	box := document.FaceBox{Width: 0.2, Height: 0.2}
+	_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), box, person.PersonID)
+	require.NoError(t, err)
+	overflow, err := s.CreatePerson(ctx, "Grace", "operator")
+	require.NoError(t, err)
+	_, err = s.MarkPersonInPhoto(ctx, node.CurrentVersionID, overflow.PersonID)
+	require.ErrorIs(t, err, ErrInvalidPhotoFace)
+	_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), box, overflow.PersonID)
+	require.ErrorIs(t, err, ErrInvalidPhotoFace)
+	unnamed, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), box, "")
+	require.NoError(t, err)
+	candidate := openFaceCandidate(t, s, node.CurrentVersionID, unnamed.FaceID, overflow.PersonID)
+	_, err = s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: candidate.CandidateID, ExpectedRevision: 1, Action: "link", PersonID: overflow.PersonID})
+	require.ErrorIs(t, err, ErrInvalidPhotoFace)
+	overflowAssertion := PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: overflow.PersonID, Role: "depicted", Action: "assert", Revision: 1}
+	_, err = s.AssertDocumentPerson(ctx, overflowAssertion)
+	require.ErrorIs(t, err, ErrInvalidPhotoFace)
+	overflowAssertion.Role = "author"
+	_, err = s.AssertDocumentPerson(ctx, overflowAssertion)
+	require.NoError(t, err)
+	_, assertions, err := s.PhotoFaces(ctx, node.CurrentVersionID)
+	require.NoError(t, err)
+	require.Len(t, assertions, maxPhotoAssertions)
+	var exported bytes.Buffer
+	require.NoError(t, s.ExportMetadata(ctx, &exported))
+	require.NoError(t, newTestStore(t).ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
+	record := metadataPersonDocumentAssertion{Type: metadataPersonAssertionType, AssertionID: uuid.New().String(), ContentVersionID: node.CurrentVersionID, PersonID: overflow.PersonID, Role: "depicted", Action: "suppress", Revision: 1, RecordedAt: nowRFC3339()}
+	raw, err := json.Marshal(record)
+	require.NoError(t, err)
+	exported.Write(raw)
+	exported.WriteByte('\n')
+	require.ErrorIs(t, newTestStore(t).ImportMetadata(ctx, bytes.NewReader(exported.Bytes())), ErrInvalidPhotoFace)
 }

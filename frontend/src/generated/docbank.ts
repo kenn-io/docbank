@@ -5338,6 +5338,7 @@ export interface PhotoPersonAssertion {
 export interface PhotoFacePage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /** @maxItems 1000 */
   assertions: PhotoPersonAssertion[];
   /** @maxItems 1000 */
   faces: PhotoFace[];

@@ -152,7 +152,7 @@ func (s *Store) OpenPersonCandidate(
 	}
 	for _, occurrence := range occurrences {
 		if occurrence.EvidenceKind == "face" {
-			if err := s.facePhotoQuery(ctx, tx, occurrence.ContentVersionID); err != nil {
+			if _, err := facePhotoTargetQuery(ctx, tx, occurrence.ContentVersionID); err != nil {
 				return PersonMatchCandidate{}, false, err
 			}
 			if err := requireFaceOccurrenceTx(ctx, tx, occurrence); err != nil {
@@ -399,6 +399,9 @@ func (s *Store) AssertDocumentPerson(ctx context.Context, assertion PersonDocume
 			}
 			assertion.AssertionID = existing.AssertionID
 		case errors.Is(err, sql.ErrNoRows):
+			if err := requirePhotoAssertionCapacity(ctx, tx, assertion.ContentVersionID, assertion.Role); err != nil {
+				return err
+			}
 			if assertion.Revision != 1 {
 				return ErrStaleRevision
 			}
@@ -647,6 +650,9 @@ func ensurePersonAssertionTx(ctx context.Context, tx *sql.Tx, versionID, personI
 		return existing, false, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
+		return PersonDocumentAssertion{}, false, err
+	}
+	if err := requirePhotoAssertionCapacity(ctx, tx, versionID, role); err != nil {
 		return PersonDocumentAssertion{}, false, err
 	}
 	id, err := newUUIDv4()

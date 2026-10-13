@@ -29,13 +29,13 @@ func (c *Connection) PhotoFaces(ctx context.Context, versionID string, cookies .
 	if err != nil {
 		return api.PhotoFacePage{}, err
 	}
-	if page.Faces == nil || page.Assertions == nil || len(page.Faces) > 1000 {
+	if page.Faces == nil || page.Assertions == nil || len(page.Faces) > 1000 || len(page.Assertions) > 1000 {
 		return api.PhotoFacePage{}, errors.New("photo face response exceeds bound")
 	}
 	assertionIDs := make(map[string]bool, len(page.Assertions))
 	people := make(map[string]bool, len(page.Assertions))
 	for _, assertion := range page.Assertions {
-		if validatePhotoAssertionResponse(assertion, versionID) != nil || assertion.Action != "assert" || assertionIDs[assertion.AssertionID] || people[assertion.PersonID] {
+		if validatePhotoAssertionResponse(assertion, versionID) != nil || assertionIDs[assertion.AssertionID] || people[assertion.PersonID] {
 			return api.PhotoFacePage{}, errors.New("invalid photo assertion response")
 		}
 		assertionIDs[assertion.AssertionID] = true
@@ -45,6 +45,9 @@ func (c *Connection) PhotoFaces(ctx context.Context, versionID string, cookies .
 	for _, face := range page.Faces {
 		if err := validatePhotoFaceResponse(face, versionID); err != nil {
 			return api.PhotoFacePage{}, err
+		}
+		if face.AssertionID != "" && !assertionIDs[face.AssertionID] {
+			return api.PhotoFacePage{}, errors.New("missing photo face assertion")
 		}
 		if seen[face.FaceID] {
 			return api.PhotoFacePage{}, errors.New("duplicate photo face response")

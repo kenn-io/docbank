@@ -12019,6 +12019,7 @@ components:
         assertions:
           items:
             $ref: "#/components/schemas/PhotoPersonAssertion"
+          maxItems: 1000
           type: array
         faces:
           items:

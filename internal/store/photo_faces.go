@@ -13,6 +13,7 @@ import (
 
 const ManualFaceFingerprint = "manual"
 const maxPhotoFaces = 1000
+const maxPhotoAssertions = 1000
 
 var ErrInvalidPhotoFace = errors.New("invalid photo face")
 
@@ -63,19 +64,35 @@ func photoFacesQuery(ctx context.Context, q metadataQuerier, versionID string) (
 	return faces, rows.Err()
 }
 
-// facePhotoQuery binds observations to a live, current photo member and uses the shared Hidden gate.
-func (s *Store) facePhotoQuery(ctx context.Context, q metadataQuerier, versionID string) error {
+// facePhotoTargetQuery checks the addressed observation member without user authorization.
+func facePhotoTargetQuery(ctx context.Context, q metadataQuerier, versionID string) (string, error) {
 	if validateUUIDv4(versionID) != nil {
-		return ErrInvalidPhotoFace
+		return "", ErrInvalidPhotoFace
 	}
-	var assetID string
-	err := q.QueryRowContext(ctx, `SELECT member.asset_id FROM content_versions cv
+	var assetID, role string
+	var node Node
+	err := q.QueryRowContext(ctx, `SELECT member.asset_id,member.role,n.id,n.name,COALESCE(cv.mime_type,'') FROM content_versions cv
  JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id
  JOIN photo_files member ON member.node_id=cv.node_id
- WHERE cv.version_id=? AND (`+photoBrowseEligibleMemberPredicate(false)+` OR `+photoBrowseEligibleMemberPredicate(true)+`)`, versionID).Scan(&assetID)
+ JOIN photo_assets a ON a.asset_id=member.asset_id
+ WHERE cv.version_id=? AND a.kind='photo' AND n.kind='file' AND member.role IN ('image','raw') AND `+liveIncludedDisplayPredicate, versionID).Scan(&assetID, &role, &node.ID, &node.Name, &node.MimeType)
 	if errors.Is(err, sql.ErrNoRows) {
-		return ErrNotFound
+		return "", ErrNotFound
 	}
+	if err != nil {
+		return "", err
+	}
+	facts := photoNodeFacts(node)
+	if validatePhotoFileForAsset(PhotoKindPhoto, role, facts) != nil ||
+		(role == PhotoRoleRAW && facts.MediaType != "" && facts.MediaType != "application/octet-stream" && !isPhotoCameraRawMedia(facts.MediaType)) {
+		return "", ErrNotFound
+	}
+	return assetID, nil
+}
+
+// facePhotoQuery adds the shared Hidden gate to structural observation eligibility.
+func (s *Store) facePhotoQuery(ctx context.Context, q metadataQuerier, versionID string) error {
+	assetID, err := facePhotoTargetQuery(ctx, q, versionID)
 	if err != nil {
 		return err
 	}
@@ -95,7 +112,7 @@ func (s *Store) PhotoFaces(ctx context.Context, versionID string) ([]PhotoFace, 
 		if err != nil {
 			return err
 		}
-		rows, err := tx.QueryContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision FROM person_document_assertions WHERE content_version_id=? AND role='depicted' AND action='assert' ORDER BY person_id,assertion_id`, versionID)
+		rows, err := tx.QueryContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision FROM person_document_assertions WHERE content_version_id=? AND role='depicted' AND (action='assert' OR EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=person_document_assertions.assertion_id)) ORDER BY person_id,assertion_id LIMIT 1001`, versionID)
 		if err != nil {
 			return err
 		}
@@ -104,6 +121,9 @@ func (s *Store) PhotoFaces(ctx context.Context, versionID string) ([]PhotoFace, 
 			assertion, err := scanPersonAssertion(rows)
 			if err != nil {
 				return err
+			}
+			if len(assertions) == maxPhotoAssertions {
+				return ErrInvalidPhotoFace
 			}
 			assertions = append(assertions, assertion)
 		}
@@ -234,7 +254,7 @@ func (s *Store) ReconcilePhotoFaces(ctx context.Context, versionID, fingerprint 
 	slices.SortFunc(boxes, compareFaceBoxes)
 	var faces []PhotoFace
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		if err := s.facePhotoQuery(ctx, tx, versionID); err != nil {
+		if _, err := facePhotoTargetQuery(ctx, tx, versionID); err != nil {
 			return err
 		}
 		old, err := photoFacesQuery(ctx, tx, versionID)
@@ -322,8 +342,8 @@ func (s *Store) ReconcilePhotoFaces(ctx context.Context, versionID, fingerprint 
 
 func protectedCandidatePhotoFaceIDs(ctx context.Context, q metadataQuerier, versionID string) (map[string]bool, error) {
 	rows, err := q.QueryContext(ctx, `SELECT DISTINCT json_extract(e.value,'$.evidence_id')
- FROM person_match_candidates c,json_each(CASE WHEN c.state IN ('open','rejected') AND c.reason='face_match' THEN c.evidence_json ELSE '[]' END) e
- WHERE json_extract(e.value,'$.evidence_kind')='face' AND json_extract(e.value,'$.content_version_id')=?`, versionID)
+ FROM person_match_candidates c,json_each(c.evidence_json) e
+ WHERE c.state IN ('open','rejected') AND c.reason='face_match' AND json_extract(e.value,'$.evidence_kind')='face' AND json_extract(e.value,'$.content_version_id')=?`, versionID)
 	if err != nil {
 		return nil, err
 	}
@@ -356,6 +376,7 @@ const faceAssertionMatchesSQL = `a.content_version_id=f.content_version_id AND a
 func validatePhotoFaceReferences(ctx context.Context, q metadataQuerier) error {
 	var invalid bool
 	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_faces f LEFT JOIN content_versions v ON v.version_id=f.content_version_id LEFT JOIN person_document_assertions a ON a.assertion_id=f.assertion_id WHERE v.version_id IS NULL OR (f.assertion_id IS NOT NULL AND (a.assertion_id IS NULL OR NOT (`+faceAssertionMatchesSQL+`))))
+ OR EXISTS(SELECT 1 FROM person_document_assertions WHERE role='depicted' GROUP BY content_version_id HAVING COUNT(*)>1000)
  OR EXISTS(SELECT 1 FROM photo_faces GROUP BY content_version_id HAVING COUNT(*)>1000)
  OR EXISTS(SELECT 1 FROM person_match_candidates c, json_each(c.evidence_json) e LEFT JOIN photo_faces f ON f.face_id=json_extract(e.value,'$.evidence_id') WHERE c.state='open' AND json_extract(e.value,'$.evidence_kind')='face' AND (f.face_id IS NULL OR f.content_version_id<>json_extract(e.value,'$.content_version_id')))
  OR EXISTS(SELECT 1 FROM persons p LEFT JOIN photo_faces f ON f.face_id=p.key_face_id LEFT JOIN person_document_assertions a ON a.assertion_id=f.assertion_id WHERE p.key_face_id IS NOT NULL AND (f.face_id IS NULL OR a.person_id IS NULL OR a.person_id<>p.person_id OR a.action<>'assert'))`).Scan(&invalid)
@@ -377,6 +398,20 @@ func validateFaceAssertion(ctx context.Context, q metadataQuerier, versionID, as
 		return err
 	}
 	if !valid {
+		return ErrInvalidPhotoFace
+	}
+	return nil
+}
+
+func requirePhotoAssertionCapacity(ctx context.Context, q metadataQuerier, versionID, role string) error {
+	if role != "depicted" {
+		return nil
+	}
+	var count int
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_document_assertions WHERE content_version_id=? AND role='depicted'`, versionID).Scan(&count); err != nil {
+		return err
+	}
+	if count >= maxPhotoAssertions {
 		return ErrInvalidPhotoFace
 	}
 	return nil

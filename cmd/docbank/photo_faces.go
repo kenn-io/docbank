@@ -37,8 +37,8 @@ func parsePhotoFaceBox(value string) (*document.FaceBox, error) {
 }
 
 func photoFacesCommand() *cobra.Command {
-	faces := &cobra.Command{Use: "faces", Short: "Record faces and people in photos", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
-	faces.AddCommand(&cobra.Command{Use: "list <content-version-id>", Short: "List face boxes and people", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	faces := &cobra.Command{Long: "Create a boxed face or mark a person in the whole photo; list reads both.\nUse the current content version ID from docbank inspect. Output: JSON.", Use: "faces", Short: "Record faces and people in photos", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
+	faces.AddCommand(&cobra.Command{Use: "list <content-version-id>", Example: "  docbank photos faces list 11111111-1111-4111-8111-111111111111", Short: "List face boxes and people", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
@@ -50,7 +50,7 @@ func photoFacesCommand() *cobra.Command {
 		return writeCLIJSON(cmd.OutOrStdout(), page)
 	}})
 	var boxText, personID, faceID string
-	create := &cobra.Command{Use: "create <content-version-id>", Short: "Mark a face box or a person in the whole photo", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	create := &cobra.Command{Use: "create <content-version-id>", Example: "  docbank photos faces create 11111111-1111-4111-8111-111111111111 --box 0.1,0.2,0.3,0.4", Short: "Mark a face box or a person in the whole photo", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		box, err := parsePhotoFaceBox(boxText)
 		if err != nil {
 			return err

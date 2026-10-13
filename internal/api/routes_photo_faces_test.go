@@ -64,6 +64,17 @@ func TestPhotoFaceRoutesAndDaemonClient(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, page.Faces, 1)
 	require.ElementsMatch(t, []api.PhotoPersonAssertion{*created.Assertion, *whole.Assertion}, page.Assertions)
+	_, err = s.AssertDocumentPerson(ctx, store.PersonDocumentAssertion{AssertionID: created.Assertion.AssertionID, ContentVersionID: node.CurrentVersionID, PersonID: person.PersonID, Role: "depicted", Action: "suppress", Revision: created.Assertion.Revision})
+	require.NoError(t, err)
+	page, err = c.PhotoFaces(ctx, node.CurrentVersionID)
+	require.NoError(t, err)
+	require.Len(t, page.Assertions, 2)
+	for _, assertion := range page.Assertions {
+		if assertion.AssertionID == created.Face.AssertionID {
+			require.Equal(t, "suppress", assertion.Action)
+			require.Equal(t, int64(2), assertion.Revision)
+		}
+	}
 	path := "/api/v1/photos/versions/" + node.CurrentVersionID + "/faces"
 	response, body := do(t, ts, http.MethodPost, path, nil, map[string]any{})
 	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
