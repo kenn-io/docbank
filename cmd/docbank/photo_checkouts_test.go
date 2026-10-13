@@ -51,7 +51,7 @@ func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 	const operationID = "00000000-0000-4000-8000-000000000002"
 	const token = "synthetic-proof-token"
 	checkout := store.PhotoCheckout{ID: checkoutID, OperationID: operationID, State: "queued", Selection: store.PhotoCheckoutSelection{All: true}, Destination: t.TempDir(), ByteLimit: 100000}
-	statusIDs := make(chan string, 1)
+	statusRequests := make(chan string, 1)
 	listRequests := make(chan string, 1)
 	inputs := make(chan api.PhotoCheckoutCreateRequest, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -75,7 +75,7 @@ func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 				assert.NoError(t, json.MarshalWrite(w, api.PhotoCheckoutList{Items: []store.PhotoCheckout{}}))
 			}
 		case "/api/v1/photos/checkouts/" + checkoutID:
-			statusIDs <- strings.TrimPrefix(r.URL.Path, "/api/v1/photos/checkouts/")
+			statusRequests <- r.Method + " " + r.URL.Path
 			assert.NoError(t, json.MarshalWrite(w, api.PhotoCheckoutStatus{Checkout: checkout}))
 		default:
 			http.NotFound(w, r)
@@ -99,6 +99,6 @@ func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 	require.Equal(t, "GET /api/v1/photos/checkouts", <-listRequests)
 	out, err = runCLI(t, "photos", "checkout", "status", checkoutID)
 	require.NoError(t, err, out)
-	require.Len(t, statusIDs, 1)
-	require.Equal(t, checkoutID, <-statusIDs)
+	require.Len(t, statusRequests, 1)
+	require.Equal(t, "GET /api/v1/photos/checkouts/"+checkoutID, <-statusRequests)
 }
