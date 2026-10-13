@@ -2197,6 +2197,7 @@ CREATE TABLE IF NOT EXISTS photo_assets (
 );
 
 CREATE TABLE IF NOT EXISTS photo_files (
+    source_provenance_identity TEXT REFERENCES provenance(identity) DEFERRABLE INITIALLY DEFERRED,
     file_id              TEXT PRIMARY KEY,
     asset_id             TEXT REFERENCES photo_assets(asset_id)
         ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,

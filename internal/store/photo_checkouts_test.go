@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"math"
@@ -304,6 +305,14 @@ func TestPhotoCheckoutFreezesGroupedSourcePaths(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, result.Asset.ID, duplicate.Asset.ID)
 	}
+	raw := fileByRole(result.Asset.Files, PhotoRoleRAW)
+	rawNode, err := s.NodeByID(ctx, raw.NodeID)
+	require.NoError(t, err)
+	rawNode, _, err = s.ReplaceContent(ctx, rawNode.ID, rawNode.Revision, browseHash("replacement raw"), 20, "image/x-sony-arw")
+	require.NoError(t, err)
+	pruned, err := s.PruneContentVersions(ctx, rawNode.ID, rawNode.Revision, VersionPruneSelector{AllPrior: true}, true)
+	require.NoError(t, err)
+	require.Equal(t, 1, pruned.DeletedVersions)
 	for _, node := range result.Nodes {
 		node, err = s.NodeByID(ctx, node.ID)
 		require.NoError(t, err)
@@ -336,7 +345,46 @@ func TestPhotoCheckoutFreezesGroupedSourcePaths(t *testing.T) {
 		names = append(names, filepath.Base(e.Path))
 	}
 	require.ElementsMatch(t, []string{"IMG.ARW", "IMG.JPG", "IMG.ARW.XMP"}, names)
-	raw := fileByRole(result.Asset.Files, PhotoRoleRAW)
+	var backup bytes.Buffer
+	require.NoError(t, s.ExportMetadata(ctx, &backup))
+	var rawSource string
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT source_provenance_identity FROM photo_files WHERE file_id=?`, raw.ID).Scan(&rawSource))
+	for _, variant := range []string{"current", "legacy", "another node"} {
+		lines := bytes.Split(backup.Bytes(), []byte{'\n'})
+		for i, line := range lines {
+			if !bytes.Contains(line, []byte(`"type":"photo_file"`)) {
+				continue
+			}
+			var file metadataPhotoFile
+			require.NoError(t, json.Unmarshal(line, &file))
+			if variant == "legacy" {
+				file.SourceProvenanceIdentity = nil
+			} else if variant == "another node" && file.Role == PhotoRoleImage {
+				file.SourceProvenanceIdentity = &rawSource
+			}
+			lines[i], err = json.Marshal(file)
+			require.NoError(t, err)
+		}
+		restored := newTestStore(t)
+		err = restored.ImportMetadata(ctx, bytes.NewReader(bytes.Join(lines, []byte{'\n'})))
+		if variant == "another node" {
+			require.ErrorContains(t, err, "invalid photo source provenance reference")
+			continue
+		}
+		require.NoError(t, err)
+		frozen, _, err := restored.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "restored", 0)
+		require.NoError(t, err)
+		copied, err := restored.PhotoCheckoutEntries(ctx, frozen.ID)
+		require.NoError(t, err)
+		restoredNames := []string{}
+		for _, entry := range copied {
+			restoredNames = append(restoredNames, filepath.Base(entry.Path))
+		}
+		require.ElementsMatch(t, names, restoredNames, variant)
+		var storedSource string
+		require.NoError(t, restored.db.QueryRowContext(ctx, `SELECT source_provenance_identity FROM photo_files WHERE file_id=?`, raw.ID).Scan(&storedSource))
+		require.Equal(t, rawSource, storedSource, variant)
+	}
 	node, err := s.NodeByID(ctx, raw.NodeID)
 	require.NoError(t, err)
 	_, err = s.AppendNodeProvenance(ctx, ProvenanceAppendInput{NodeID: node.ID, IfRevision: node.Revision, SourceKind: "agent", SourceDescription: "synthetic", OriginalPath: filepath.Join(source, "ignored.ARW")})

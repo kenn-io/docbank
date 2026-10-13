@@ -35,6 +35,27 @@ type metadataPhotoAssetBeforeHidden struct {
 }
 
 type metadataPhotoFile struct {
+	SourceProvenanceIdentity *string             `json:"source_provenance_identity,omitempty" db:"source_provenance_identity"`
+	Confirmed                PhotoAuthoredFields `json:"confirmed_fields" db:"confirmed_fields"`
+	Revision                 int64               `json:"revision" db:"revision"`
+	Rating                   int                 `json:"rating" db:"rating"`
+	Flag                     string              `json:"flag" db:"flag"`
+	Label                    string              `json:"label" db:"label"`
+	Caption                  string              `json:"caption" db:"caption"`
+	Creator                  string              `json:"creator" db:"creator"`
+	Copyright                string              `json:"copyright" db:"copyright"`
+	Rotation                 int                 `json:"rotation" db:"rotation"`
+
+	Type        string  `json:"type"`
+	FileID      string  `json:"file_id" db:"file_id"`
+	AssetID     *string `json:"asset_id" db:"asset_id"`
+	NodeID      int64   `json:"node_id" db:"node_id"`
+	Role        string  `json:"role" db:"role"`
+	SidecarOfID *string `json:"sidecar_of_file_id" db:"sidecar_of_file_id"`
+	CreatedAt   string  `json:"created_at" db:"created_at"`
+}
+
+type metadataPhotoFileBeforeSource struct {
 	Confirmed PhotoAuthoredFields `json:"confirmed_fields" db:"confirmed_fields"`
 	Revision  int64               `json:"revision" db:"revision"`
 	Rating    int                 `json:"rating" db:"rating"`
@@ -53,6 +74,15 @@ type metadataPhotoFile struct {
 	SidecarOfID *string `json:"sidecar_of_file_id" db:"sidecar_of_file_id"`
 	CreatedAt   string  `json:"created_at" db:"created_at"`
 }
+
+var photoFileBeforeSourceMetadata = newMetadataTable(metadataTable[metadataPhotoFileBeforeSource]{
+	record: metadataPhotoFileBeforeSource{Type: metadataPhotoFileType}, table: "photo_files", suffix: "ORDER BY file_id",
+	validate: func(v metadataPhotoFileBeforeSource) error {
+		return validatePhotoFileMetadataRecord(metadataPhotoFile{Type: v.Type, FileID: v.FileID, AssetID: v.AssetID, NodeID: v.NodeID, Role: v.Role, SidecarOfID: v.SidecarOfID, CreatedAt: v.CreatedAt,
+			Confirmed: v.Confirmed,
+			Revision:  v.Revision, Rating: v.Rating, Flag: v.Flag, Label: v.Label, Caption: v.Caption, Creator: v.Creator, Copyright: v.Copyright, Rotation: v.Rotation})
+	}, checkExport: true,
+})
 
 type metadataPhotoFileBeforeAuthored struct {
 	Type        string  `json:"type"`
@@ -211,6 +241,9 @@ func validatePhotoAssetMetadataRecord(v metadataPhotoAsset) error {
 }
 
 func validatePhotoFileMetadataRecord(v metadataPhotoFile) error {
+	if v.SourceProvenanceIdentity != nil && validateCatalogSHA256(*v.SourceProvenanceIdentity, "photo source provenance identity") != nil {
+		return errors.New("invalid photo source provenance identity")
+	}
 	if v.Type != metadataPhotoFileType || validateUUIDv4(v.FileID) != nil || v.AssetID != nil && validateUUIDv4(*v.AssetID) != nil || v.NodeID < 1 || !photoRoleValid(v.Role) {
 		return errors.New("invalid photo file metadata")
 	}
@@ -226,7 +259,7 @@ func validatePhotoFileMetadataRecord(v metadataPhotoFile) error {
 	if v.Revision < 1 {
 		return errors.New("invalid photo file revision")
 	}
-	values := PhotoAuthored{Confirmed: v.Confirmed, Rating: v.Rating, Flag: v.Flag, Label: v.Label, Caption: v.Caption, Creator: v.Creator, Copyright: v.Copyright, Rotation: v.Rotation}
+	values := PhotoAuthored{Rating: v.Rating, Flag: v.Flag, Label: v.Label, Caption: v.Caption, Creator: v.Creator, Copyright: v.Copyright, Rotation: v.Rotation}
 	if err := ValidatePhotoAuthored(values); err != nil {
 		return err
 	}
@@ -309,6 +342,16 @@ func validatePhotoReceiptMetadataRecord(v metadataPhotoReceipt) error {
 func validatePhotoMetadataState(ctx context.Context, tx metadataQuerier, version int) error {
 	if err := validatePhotoGraph(ctx, tx); err != nil {
 		return err
+	}
+	if version >= photoCheckoutsStorageSchemaVersion {
+		var invalid int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_files f LEFT JOIN provenance p ON p.identity=f.source_provenance_identity LEFT JOIN ingests i ON i.id=p.ingest_id
+ WHERE f.source_provenance_identity IS NOT NULL AND (p.identity IS NULL OR p.node_id<>f.node_id OR i.source_kind LIKE 'embedded:%')`).Scan(&invalid); err != nil {
+			return err
+		}
+		if invalid != 0 {
+			return errors.New("invalid photo source provenance reference")
+		}
 	}
 	var orphans int
 	if err := tx.QueryRowContext(ctx, `
@@ -427,6 +470,9 @@ func photoMetadataTablesForSchema(version int) []metadataRecordCodec {
 	}
 	tables = append([]metadataRecordCodec(nil), tables...)
 	for i, table := range tables {
+		if version >= photoAuthoredStorageSchemaVersion && version < photoCheckoutsStorageSchemaVersion && table.kind() == metadataPhotoFileType {
+			tables[i] = photoFileBeforeSourceMetadata
+		}
 		if version < photoAuthoredStorageSchemaVersion && table.kind() == metadataPhotoFileType {
 			tables[i] = photoFileBeforeAuthoredMetadata
 		}

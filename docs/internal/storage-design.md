@@ -432,7 +432,7 @@ Photo tables index ordinary file nodes; they do not copy blob hashes, sizes,
 MIME data, or content versions. `photo_assets` owns asset kind, exclusion,
 revision, and selected or overridden display pointers. `photo_files` owns the
 role, revision, authored decisions, and same-asset sidecar relationship for each
-node. Detached rows have NULL asset membership and no sidecar pointer; reattachment
+node. Its first operational `source_provenance_identity` preserves original checkout and sidecar filenames through replacement, pruning, and backup. Detached rows have NULL asset membership and no sidecar pointer; reattachment
 reuses their stable identity and decisions. A sidecar never
 becomes a display member, and its source must be a RAW or image member in the
 same asset.

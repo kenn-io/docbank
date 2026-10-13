@@ -987,6 +987,9 @@ func (s *Store) importMetadata(ctx context.Context, r io.Reader) error {
 		if err != nil {
 			return err
 		}
+		if err := backfillPhotoSourcesTx(ctx, tx); err != nil {
+			return err
+		}
 		if err := refreshPhotoTechnicalMetadataTx(ctx, tx); err != nil {
 			return err
 		}

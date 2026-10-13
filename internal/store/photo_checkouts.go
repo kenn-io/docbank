@@ -174,10 +174,7 @@ func (s *Store) checkoutEntriesTx(ctx context.Context, tx *sql.Tx, selection Pho
 			return nil, estimate, err
 		}
 		if originalPath != "" {
-			windowsDrive := len(originalPath) >= 3 && ((originalPath[0] >= 'A' && originalPath[0] <= 'Z') || (originalPath[0] >= 'a' && originalPath[0] <= 'z')) && originalPath[1] == ':' && (originalPath[2] == '\\' || originalPath[2] == '/')
-			if windowsDrive || strings.HasPrefix(originalPath, `\\`) {
-				originalPath = strings.ReplaceAll(originalPath, "\\", "/")
-			}
+			originalPath = normalizePhotoSourcePath(originalPath)
 			name = path.Base(originalPath)
 		}
 		if entry.Size < 0 || entry.Size > math.MaxInt64-estimate.Bytes {
