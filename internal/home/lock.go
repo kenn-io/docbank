@@ -870,18 +870,10 @@ func directoryIdentityChain(target string) ([]string, error) {
 	return identities, nil
 }
 
-// targetLockRegistryTestBase is set only by same-package tests that exercise
-// the process-global launch mutex. Package test binaries run concurrently, so
-// those unit tests must not contend with cmd/docbank's real daemon processes.
-var targetLockRegistryTestBase string
-
 func targetLockRegistryPath() (string, error) {
-	dir := targetLockRegistryTestBase
-	if dir == "" {
-		dir = os.Getenv("DOCBANK_LOCK_DIR")
-		if dir != "" && !filepath.IsAbs(dir) {
-			return "", fmt.Errorf("DOCBANK_LOCK_DIR must be absolute: %q", dir)
-		}
+	dir := os.Getenv("DOCBANK_LOCK_DIR")
+	if dir != "" && !filepath.IsAbs(dir) {
+		return "", fmt.Errorf("DOCBANK_LOCK_DIR must be absolute: %q", dir)
 	}
 	if dir == "" {
 		var err error

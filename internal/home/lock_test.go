@@ -9,7 +9,8 @@ import (
 )
 
 func TestOwnershipTransitionIsPrivateAndHierarchyWide(t *testing.T) {
-	isolateTargetLockRegistry(t)
+	registry := t.TempDir()
+	t.Setenv("DOCBANK_LOCK_DIR", registry)
 	base := t.TempDir()
 	firstPath := filepath.Join(base, "customer-visible-vault-name")
 	secondPath := filepath.Join(base, "other-vault")
@@ -37,7 +38,7 @@ func TestOwnershipTransitionIsPrivateAndHierarchyWide(t *testing.T) {
 	require.NoError(t, err, "disjoint parent hierarchies must remain independent")
 	require.NoError(t, disjoint.Release())
 
-	entries, err := os.ReadDir(targetLockRegistryTestBase)
+	entries, err := os.ReadDir(registry)
 	require.NoError(t, err)
 	require.NotEmpty(t, entries)
 	for _, entry := range entries {
@@ -118,12 +119,10 @@ func TestOwnershipTransitionExcludesOrdinaryAcquisition(t *testing.T) {
 }
 
 func TestOwnershipTransitionRejectsRegistryInsideSource(t *testing.T) {
-	require.Empty(t, targetLockRegistryTestBase,
-		"target-lock registry tests must not run in parallel")
 	source := filepath.Join(t.TempDir(), "vault")
 	require.NoError(t, os.Mkdir(source, 0o700))
-	targetLockRegistryTestBase = filepath.Join(source, "state", "target-locks")
-	t.Cleanup(func() { targetLockRegistryTestBase = "" })
+	registry := filepath.Join(source, "state", "target-locks")
+	t.Setenv("DOCBANK_LOCK_DIR", registry)
 
 	transition, err := (Layout{Root: source}).TryLockOwnershipTransition()
 	if transition != nil {
@@ -132,16 +131,13 @@ func TestOwnershipTransitionRejectsRegistryInsideSource(t *testing.T) {
 
 	require.Nil(t, transition)
 	require.ErrorContains(t, err, "lock registry")
-	require.NoDirExists(t, targetLockRegistryTestBase,
+	require.NoDirExists(t, registry,
 		"rejecting a movable registry must not mutate the source")
 }
 
 func TestOwnershipTransitionRejectsRegistryInsideMissingSource(t *testing.T) {
-	require.Empty(t, targetLockRegistryTestBase,
-		"target-lock registry tests must not run in parallel")
 	source := filepath.Join(t.TempDir(), "missing-vault")
-	targetLockRegistryTestBase = filepath.Join(source, "state", "target-locks")
-	t.Cleanup(func() { targetLockRegistryTestBase = "" })
+	t.Setenv("DOCBANK_LOCK_DIR", filepath.Join(source, "state", "target-locks"))
 
 	transition, err := (Layout{Root: source}).TryLockOwnershipTransition()
 	if transition != nil {
@@ -422,14 +418,6 @@ func TestTryLockLaunchSerializesDifferentVaults(t *testing.T) {
 		"the short-lived per-user launch lock must serialize all daemon starters")
 }
 
-func isolateTargetLockRegistry(t *testing.T) {
-	t.Helper()
-	require.Empty(t, targetLockRegistryTestBase,
-		"target-lock registry tests must not run in parallel")
-	targetLockRegistryTestBase = t.TempDir()
-	t.Cleanup(func() { targetLockRegistryTestBase = "" })
-}
-
 func TestOpenLaunchOutputStaysOutsideVault(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "missing", "vault")
 	f, path, err := (Layout{Root: target}).OpenLaunchOutput()
@@ -454,7 +442,6 @@ func TestTargetLockRegistryIgnoresProcessHomeEnvironment(t *testing.T) {
 }
 
 func TestExplicitTargetLockDirectory(t *testing.T) {
-	require.Empty(t, targetLockRegistryTestBase)
 	registry := filepath.Join(t.TempDir(), "locks")
 	t.Setenv("DOCBANK_LOCK_DIR", registry)
 	t.Setenv("HOME", filepath.Join(t.TempDir(), "unavailable"))
