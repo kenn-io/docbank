@@ -27,11 +27,7 @@ func registerWeb(mux *http.ServeMux, enabled bool, webURL, loginOrigin string, t
 	if err != nil {
 		panic("api: embedded web index is missing")
 	}
-	public, err := json.Marshal(tiles)
-	if err != nil {
-		panic(err)
-	}
-	indexHTML = bytes.Replace(indexHTML, []byte("</head>"), []byte(`<meta name="docbank-map-tiles" content="`+html.EscapeString(string(public))+`"></head>`), 1)
+	indexHTML = configureWebMap(indexHTML, tiles)
 	images := "'self' data: blob:"
 	if tiles.TileURL != "" {
 		images += " " + tiles.Origin()
@@ -67,6 +63,17 @@ func registerWeb(mux *http.ServeMux, enabled bool, webURL, loginOrigin string, t
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		static.ServeHTTP(w, r)
 	}))
+}
+
+func configureWebMap(indexHTML []byte, tiles config.MapTilesConfig) []byte {
+	if !bytes.Contains(indexHTML, []byte("</head>")) {
+		panic("api: embedded web index is missing </head>")
+	}
+	public, err := json.Marshal(tiles)
+	if err != nil {
+		panic(err)
+	}
+	return bytes.Replace(indexHTML, []byte("</head>"), []byte(`<meta name="docbank-map-tiles" content="`+html.EscapeString(string(public))+`"></head>`), 1)
 }
 
 func isPhotoMapPage(path string) bool {

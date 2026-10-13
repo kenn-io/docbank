@@ -11756,7 +11756,7 @@ components:
           type: boolean
         page_size:
           default: 50
-          description: Maximum 250, or 1000 with projection map.
+          description: "Maximum 1000 only with projection: \"map\"; 250 otherwise."
           format: int64
           maximum: 1000
           minimum: 1

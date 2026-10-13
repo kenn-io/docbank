@@ -13,6 +13,13 @@ import (
 	"go.kenn.io/docbank/internal/config"
 )
 
+func TestWebMapConfigurationMissingHead(t *testing.T) {
+	t.Parallel()
+	require.PanicsWithValue(t, "api: embedded web index is missing </head>", func() {
+		configureWebMap([]byte("<!doctype html><html><body></body></html>"), config.MapTilesConfig{})
+	})
+}
+
 func TestWebMapConfiguration(t *testing.T) {
 	t.Parallel()
 	tiles := config.MapTilesConfig{TileURL: "https://tiles.example.org/{z}/{x}/{y}.png", Attribution: `<img src=x onerror="alert(1)">`, MaxZoom: 19}

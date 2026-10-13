@@ -5290,7 +5290,7 @@ export interface PhotoBrowseRequest {
   facets?: PhotoBrowseRequestFacetsItem[];
   hidden?: boolean;
   /**
-     * Maximum 250, or 1000 with projection map.
+     * Maximum 1000 only with projection: "map"; 250 otherwise.
      * @minimum 1
      * @maximum 1000
      */

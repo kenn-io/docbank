@@ -16,9 +16,14 @@ type PhotoBrowseRequest struct {
 	Hidden     bool                   `json:"hidden,omitempty"`
 	Query      QueryPayload           `json:"query"`
 	Coverage   WorkspaceQueryCoverage `json:"coverage,omitzero"`
-	PageSize   int                    `json:"page_size,omitempty,omitzero" minimum:"1" maximum:"1000" default:"50" doc:"Maximum 250, or 1000 with projection map."`
+	PageSize   int                    `json:"page_size,omitempty,omitzero" minimum:"1" default:"50" doc:"Maximum 1000 only with projection: \"map\"; 250 otherwise."`
 	Facets     []string               `json:"facets,omitempty" maxItems:"5" uniqueItems:"true" enum:"camera,lens,year,location,set"`
 	Cursor     string                 `json:"cursor,omitempty" maxLength:"32768"`
+}
+
+func (PhotoBrowseRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Properties["page_size"].Maximum = new(float64(store.MaxPhotoMapPageSize))
+	return schema
 }
 
 type PhotoPreviewSlot struct {

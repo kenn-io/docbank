@@ -780,6 +780,7 @@ it("keeps Library recovery below its toolbar and inside the grid", async () => {
   const photos = new Photos("scoped", vi.fn()); photos.started = true; photos.error = "Page unavailable";
   const retry = vi.spyOn(photos, "retry").mockResolvedValue();
   render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
+  expect(screen.getByRole("button", { name: "Move rejects" })).toBeTruthy();
   const alert = screen.getByRole("alert");
   expect(alert.closest(".library-grid")).toBeTruthy();
   expect(document.querySelector(".photo-toolbar")!.compareDocumentPosition(alert) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -913,5 +914,6 @@ it("distinguishes an empty Map area from no located photos", async () => {
 });
 it("shows the Map date without Library controls", async () => {
  const {photos}=mapRecoverySetup();photos.date="2024";photos.total=1;await vi.dynamicImportSettled();
+ expect(screen.queryByRole("button",{name:"Move rejects"})).toBeNull();
  expect(screen.queryByRole("button",{name:"Timeline"})).toBeNull();expect(screen.queryByRole("button",{name:"Clear date"})).toBeNull();await screen.findByText("1 located photo in 2024");photos.dispose();
 });

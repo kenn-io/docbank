@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestOpenAPIDocumentOffline(t *testing.T) {
@@ -784,6 +785,9 @@ func TestOpenAPIPhotoBrowseContract(t *testing.T) {
 	require.Equal(t, "readPhotoPreview", doc.Paths["/api/v1/photos/assets/{asset_id}/previews/{generation_id}"].Get.OperationID)
 	schemas := doc.Components.Schemas.Map()
 	require.True(t, schemas["PhotoBrowseRow"].Properties["capture_time"].Nullable)
+	pageSize := schemas["PhotoBrowseRequest"].Properties["page_size"]
+	require.Equal(t, float64(store.MaxPhotoMapPageSize), *pageSize.Maximum)
+	require.Equal(t, `Maximum 1000 only with projection: "map"; 250 otherwise.`, pageSize.Description)
 	require.ElementsMatch(t, []any{"missing", "ready", "unsupported", "failed"}, schemas["PhotoPreviewSlot"].Properties["state"].Enum)
 	for _, field := range []string{"kinds", "cameras", "lenses", "locations", "iso_min", "iso_max", "capture_after", "capture_before", "gps_bounds", "asset_ids", "set_ids"} {
 		require.Contains(t, schemas["SavedQueryFiltersSchema"].Properties, field)
