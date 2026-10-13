@@ -42,6 +42,15 @@ authenticated vault principal, never from a supplied owner field.
 | `POST /archives` | Register `id` and `description` for an application-independent source archive. |
 | `POST /transfers` | Stream EML bytes. `X-Docbank-Transfer` is base64url-encoded JSON containing archive ID, stable reference, hash, size, settings, destination ID, name and optional expected revision. |
 
+Job lists select the page's IDs and timestamps before reading its full records
+in the same query. This keeps large retained entry-hash lists out of the
+history-wide sort. Go orders the decoded page, which contains at most 100 jobs.
+Each record passes the same validation as a single-job read;
+an invalid record fails the whole page. Ordering uses descending `started_at`
+then job ID. An `after` cursor is resolved through an owner-scoped job read.
+Listing still scans history; the page limit bounds returned jobs,
+not total database work.
+
 Container manifests hash the canonical JSON object with ordered fields
 `sha256`, `size`, `chunks`. Each chunk has `index`, `sha256`, `size` in that
 order. Clients can independently verify the sealed `manifest_sha256` against

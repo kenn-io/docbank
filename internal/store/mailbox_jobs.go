@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json/v2"
@@ -9,6 +10,7 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/emailmime"
 	"reflect"
+	"slices"
 )
 
 const MailboxSegmentMessages int64 = 100000
@@ -176,20 +178,23 @@ func saveMailboxJob(ctx context.Context, tx *sql.Tx, j MailboxJob, insert bool) 
 	return err
 }
 func loadMailboxJob(ctx context.Context, q metadataQuerier, owner, id string) (MailboxJob, error) {
-	var j MailboxJob
 	var b []byte
 	var state, claim, container string
 	err := q.QueryRowContext(ctx, `SELECT state,claim,container_id,job_json FROM mailbox_jobs WHERE id=? AND owner=?`, id, owner).Scan(&state, &claim, &container, &b)
 	if errors.Is(err, sql.ErrNoRows) {
-		return j, ErrNotFound
+		return MailboxJob{}, ErrNotFound
 	}
 	if err != nil {
-		return j, err
+		return MailboxJob{}, err
 	}
+	return decodeMailboxJob(id, owner, state, claim, container, b)
+}
+func decodeMailboxJob(id, owner, state, claim, container string, b []byte) (MailboxJob, error) {
+	var j MailboxJob
 	if len(b) > 128<<10 {
 		return j, ErrMailboxLimit
 	}
-	if err = json.Unmarshal(b, &j, json.RejectUnknownMembers(true)); err != nil {
+	if err := json.Unmarshal(b, &j, json.RejectUnknownMembers(true)); err != nil {
 		return j, err
 	}
 	if j.ID != id || j.Owner != owner || j.State != state || j.ContainerID != container {
@@ -213,32 +218,38 @@ func (s *Store) MailboxJobs(ctx context.Context, owner, after string, limit int)
 		}
 		started = cursor.StartedAt
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM mailbox_jobs WHERE owner=?
+	// Sort only page keys before loading potentially large retained job records.
+	rows, err := s.db.QueryContext(ctx, `WITH page AS MATERIALIZED (
+		SELECT id,json_extract(job_json, '$.started_at') AS started FROM mailbox_jobs WHERE owner=?
 		AND (?='' OR (json_extract(job_json, '$.started_at'), id) < (?, ?))
-		ORDER BY json_extract(job_json, '$.started_at') DESC, id DESC LIMIT ?`, owner, after, started, after, limit)
+		ORDER BY started DESC, id DESC LIMIT ?
+	)
+	SELECT j.id,j.state,j.claim,j.container_id,j.job_json
+	FROM page JOIN mailbox_jobs j ON j.id=page.id`, owner, after, started, after, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	var ids []string
+	out := []MailboxJob{}
 	for rows.Next() {
-		var id string
-		if err = rows.Scan(&id); err != nil {
+		var id, state, claim, container string
+		var b []byte
+		if err := rows.Scan(&id, &state, &claim, &container, &b); err != nil {
 			return nil, err
 		}
-		ids = append(ids, id)
-	}
-	if err = errors.Join(rows.Err(), rows.Close()); err != nil {
-		return nil, err
-	}
-	out := make([]MailboxJob, 0, len(ids))
-	for _, id := range ids {
-		j, err := s.MailboxJob(ctx, owner, id)
+		j, err := decodeMailboxJob(id, owner, state, claim, container, b)
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, j)
 	}
+	if err = errors.Join(rows.Err(), rows.Close()); err != nil {
+		return nil, err
+	}
+	// Order the bounded page here so SQLite need not sort full JSON records.
+	slices.SortFunc(out, func(a, b MailboxJob) int {
+		return cmp.Or(cmp.Compare(b.StartedAt, a.StartedAt), cmp.Compare(b.ID, a.ID))
+	})
 	return out, nil
 }
 func mailboxJobQuota(ctx context.Context, tx *sql.Tx, owner string) error {
