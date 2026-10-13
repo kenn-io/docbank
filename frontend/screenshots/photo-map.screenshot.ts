@@ -172,6 +172,7 @@ test("photo map privacy, clusters, marker return and mobile grid", async ({ page
     });
     await page.setViewportSize({width:1440,height:960});await page.getByRole("navigation",{name:"Docbank navigation"}).getByRole("button",{name:"Map",exact:true}).click();
     await expect(page.getByText("Loading located photos: 12 of 14",{exact:true})).toBeVisible();await expect(page.locator(".photo-map-cluster, .photo-map-dot").first()).toBeVisible();
+    await expect.poll(()=>page.locator(".leaflet-tile-loaded").evaluateAll(tiles=>tiles.length > 0 && tiles.every(tile=>getComputedStyle(tile).opacity === "1"))).toBe(true);
     await page.screenshot({path:path.join(output!,"photo-map-loading-1440-dark.png"),animations:"disabled"});
     const partial=page.locator('.photo-map-dot[title="Synthetic-photo-00007.jpg"]');await partial.press("Enter");
     await expect(page.getByRole("dialog",{name:"Photo viewer, Synthetic-photo-00007.jpg"})).toBeVisible();await page.keyboard.press("Escape");await expect(partial).toBeFocused();
