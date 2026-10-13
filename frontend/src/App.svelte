@@ -82,7 +82,7 @@
   import { localPreferenceStorage } from "./browser-storage.js";
   import { Photos, type PhotoReturn } from "./photos.svelte.js";
   import { PhotoPreviewCache } from "./photoPreviewCache.js";
-  import { concealPhotoWorkspace, revalidatePhotoWorkspace, type PhotoWorkspace } from "./photoWorkspace.js";
+  import { concealPhotoWorkspace, recreatePhotoPreviewCache, revalidatePhotoWorkspace, type PhotoWorkspace } from "./photoWorkspace.js";
   import ImageIcon from "@lucide/svelte/icons/image";
   import type { SelectionTarget } from "./selection.js";
   import ShortcutHelpModal from "./ShortcutHelpModal.svelte";
@@ -240,6 +240,7 @@
         if (photos.viewerReturn) photos.scrollTop = photos.viewerReturn.scrollTop;
       }
     } else if (isPhotoPath(path) && photos?.viewerReturn) photos.scrollTop = photos.viewerReturn.scrollTop;
+    if (path !== photoPath) revalidatedChangeID = null;
     photoMode = isPhotoPath(path); if (photoMode) photoPath = path; photoID = id;
   }
   function changePhoto(id: string, mode: "open" | "step" | "close") {
@@ -255,12 +256,14 @@
   let photoValidated = $state(false);
   let photoAccessError = $state("");
   let photoChangeID: string | undefined;
+  let revalidatedChangeID: string | undefined | null = null;
   let photoAccessChecked = false;
   let photoConcealed = false;
   let photoAccessVersion = 0;
   const maxPhotoAccessFailures = 3;
   let checkPhotoAccess: (() => Promise<void>) | undefined;
   function discardLibrary() {
+    revalidatedChangeID = null;
     photoAccessVersion++;
     photoState?.photos.dispose();
     const deleting = photoState?.cache.dispose();
@@ -268,6 +271,7 @@
     return deleting;
   }
   function invalidateLibrary(clearViewer = true) {
+    if (clearViewer || mapPhotos?.loading || mapPhotos?.staged) revalidatedChangeID = null;
     if (clearViewer && !hiddenMode) clearPhoto();
     photoValidated = false;
     photoConcealed = true;
@@ -279,11 +283,7 @@
   // Album views share Library's preview cache, so revalidation refreshes whichever list is open.
   async function revalidateLibrary(state: PhotoWorkspace, photos: Photos | undefined, valid: () => boolean) {
     if (!photos) {
-      await state.cache.dispose();
-      await tick();
-      if (!valid()) return false;
-      state.cache = new PhotoPreviewCache(webSession, handleFailure);
-      return true;
+      return recreatePhotoPreviewCache(state, webSession, handleFailure, valid);
     }
     const view = { photos, cache: state.cache };
     const revalidated = await revalidatePhotoWorkspace(view, webSession, handleFailure, valid);
@@ -304,7 +304,14 @@
     if (photos?.hiding || photos?.trashing || photoConcealed && photos?.loading) return;
     const version = photoAccessVersion;
     if (state && photoConcealed) {
-      if (!await revalidateLibrary(state, photos?.projection === "map" && !photos.started ? undefined : photos, () => version === photoAccessVersion)) return;
+      const valid = () => version === photoAccessVersion;
+      if (photos?.projection === "map" && photos.started && !photos.staged && !photos.loading && revalidatedChangeID === result.change_id) {
+        if (!await recreatePhotoPreviewCache(state, webSession, handleFailure, valid)) return;
+      } else {
+        revalidatedChangeID = null;
+        if (!await revalidateLibrary(state, photos?.projection === "map" && !photos.started ? undefined : photos, valid) || !valid()) return;
+        revalidatedChangeID = result.change_id;
+      }
     }
     if (version !== photoAccessVersion || document.visibilityState !== "visible") return;
     photoState ??= { photos: new Photos(webSession, handleFailure), cache: new PhotoPreviewCache(webSession, handleFailure) };
@@ -371,6 +378,7 @@
         if (current && !controller.signal.aborted) await acceptPhotoAccess(result);
       } catch (cause) {
         if (!current || controller.signal.aborted) return;
+        revalidatedChangeID = null;
         const denied = cause instanceof APIError && (cause.status === 401 || cause.status === 403);
         // Library photos are not secret; conceal on denial, or once transient failures persist.
         if (!denied && ++failures < maxPhotoAccessFailures && photoValidated) return;
@@ -393,6 +401,7 @@
     navOpen = false;
     if (photoMode && path === photoPath && path === location.pathname && !photoID) return;
     if (!photoMode || path !== photoPath) void invalidateLibrary(false);
+    if (path !== photoPath) revalidatedChangeID = null;
     hiddenPhotoActionError = "";
     const previous = activePhotos();
     if (previous) previous.viewerReturn = undefined;

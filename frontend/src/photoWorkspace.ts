@@ -9,6 +9,14 @@ export function concealPhotoWorkspace(workspace?: PhotoWorkspace) {
   return workspace?.cache.dispose();
 }
 
+export async function recreatePhotoPreviewCache(workspace: PhotoWorkspace, session: string, onauthfailure: (cause: unknown) => void, valid: () => boolean) {
+  await workspace.cache.dispose();
+  await tick();
+  if (!valid()) return false;
+  workspace.cache = new PhotoPreviewCache(session, onauthfailure, workspace.photos.hidden);
+  return true;
+}
+
 export async function revalidatePhotoWorkspace(workspace: PhotoWorkspace, session: string, onauthfailure: (cause: unknown) => void, valid: () => boolean) {
   await workspace.cache.dispose();
   await tick();

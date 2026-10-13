@@ -77,7 +77,7 @@ export class Photos {
   private expired = false;
   private replacement: "refresh" | "expiry" | "date" | undefined;
   private replacementDate: string | undefined;
-  private staged: { candidate: Map<string, PhotoRow>; cursor?: string; total: number; complete: boolean } | undefined;
+  staged: { candidate: Map<string, PhotoRow>; cursor?: string; total: number; complete: boolean } | undefined;
   private controller = new AbortController();
   private facetsController = new AbortController();
   private needsFacets = false;
@@ -316,7 +316,7 @@ export class Photos {
   }
 
   async retry(preserve?: () => (() => Promise<void>) | undefined) {
-    if (this.replacement || this.expired) { await this.replace(this.replacement ?? "expiry", preserve, this.replacementDate, true); return; }
+    if (this.replacement || this.expired) { await this.replace(this.replacement ?? "expiry", preserve, this.replacementDate, this.projection === "map"); return; }
     this.error = "";
     this.expired = false;
     return this.loadMore(preserve);
@@ -358,7 +358,7 @@ export class Photos {
 
   private async eligibleSelection(ids: Iterable<string>, query: Query, signal: AbortSignal) {
     const eligible = new Set(ids);
-    const absent = [...new Map(this.trashTargets.map(row => [row.asset_id, row])).values()].filter(row => this.selection.selectedIDs.has(row.asset_id) && !eligible.has(row.asset_id));
+    const absent = this.trashTargets.filter(row => this.selection.selectedIDs.has(row.asset_id) && !eligible.has(row.asset_id));
     for (let offset = 0; offset < absent.length; offset += 64) {
       const asset_ids = absent.slice(offset, offset + 64).map(row => row.asset_id);
       const page = await this.page({ ...query, filters: { ...query.filters, asset_ids } }, AbortSignal.any([signal, AbortSignal.timeout(60_000)]));
@@ -490,7 +490,7 @@ export class Photos {
     } catch (cause) {
       if (controller.signal.aborted) return false;
       this.authFailure(cause);
-      if (cause instanceof APIError && cause.code === "cursor_expired") this.staged = undefined;
+      if (cause instanceof APIError && ["cursor_expired", "invalid_photo_cursor"].includes(cause.code)) this.staged = undefined;
       this.error = signal.aborted || cause instanceof Error && cause.name === "TimeoutError" ? "Photo refresh timed out. Retry to keep browsing." : cause instanceof Error ? cause.message : String(cause);
       return false;
     } finally {

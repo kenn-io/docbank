@@ -98,16 +98,31 @@ it("shows one provider notice when tiles fail repeatedly", async () => {
 it("scans only appended rows and recomputes replacements", async () => {
  const first=mapPhoto(1), second=mapPhoto(2), third=mapPhoto(3);
  const {props,view}=setup([first]);
+ frame();
+ const marker = mocks.marker.mock.results[0]!.value;
+ const position = vi.spyOn(marker, "getLatLng");
  mocks.map.project.mockClear();
  const appended = [first,second];
  await view.rerender({items:appended,appendedFrom:props.items});
  expect(mocks.map.project).toHaveBeenCalledTimes(1);
+ expect(position).not.toHaveBeenCalled();
+ frame();expect(mocks.marker).toHaveBeenCalledTimes(2);
  expect(props.onvisible).toHaveBeenLastCalledWith([first,second]);
  mocks.map.project.mockClear();
  const replacement={...first,latitude:3};
  await view.rerender({items:[replacement,third,second],appendedFrom:undefined});
  expect(mocks.map.project).toHaveBeenCalledTimes(3);
+ expect(position).toHaveBeenCalledOnce();
  expect(props.onvisible).toHaveBeenLastCalledWith([third,second]);
+});
+
+it("keeps unfinished marker batches when another page appends", async () => {
+ const items = Array.from({length:250}, (_, index) => mapPhoto(index + 1));
+ const {view} = setup(items);
+ frame();expect(mocks.marker).toHaveBeenCalledTimes(200);
+ await view.rerender({items:[...items,mapPhoto(251)],appendedFrom:items});
+ frame();expect(mocks.marker).toHaveBeenCalledTimes(251);
+ expect(mocks.frames.size).toBe(0);
 });
 
 it.each(["append","hide","trash"])("shows page one before page two resolves and recomputes after %s", async action => {

@@ -17,6 +17,9 @@
   let scanned: PhotoMapRow[] = [];
   let inView: PhotoMapRow[] = [];
   const markers = new Map<string, L.Marker>();
+  let built: PhotoMapRow[] = [];
+  let pending: PhotoMapRow[] = [];
+  let offset = 0;
   function cancelBuild() { if (frame !== undefined) L.Util.cancelAnimFrame(frame); frame = undefined; }
   function visible(incremental = false) {
     if (!map) return;
@@ -30,9 +33,14 @@
   function build(photos = items) {
     if (!cluster || !map) return;
     cancelBuild();
-    const ids = new Set(photos.map(row => row.asset_id)), removed: L.Marker[] = [], pending: PhotoMapRow[] = [];
-    for (const [id, marker] of markers) if (!ids.has(id)) { removed.push(marker); markers.delete(id); }
-    for (const row of photos) {
+    const append = appendedFrom === built;
+    const removed: L.Marker[] = [];
+    if (!append) {
+      pending = []; offset = 0;
+      const ids = new Set(photos.map(row => row.asset_id));
+      for (const [id, marker] of markers) if (!ids.has(id)) { removed.push(marker); markers.delete(id); }
+    }
+    for (const row of append ? photos.slice(built.length) : photos) {
       const marker = markers.get(row.asset_id);
       const position = marker?.getLatLng();
       if (!marker || row.latitude == null || row.longitude == null || position?.lat !== row.latitude || position?.lng !== row.longitude || marker.options.title !== row.name) {
@@ -40,9 +48,9 @@
         pending.push(row);
       }
     }
+    built = photos;
     cluster.removeLayers(removed);
     const target = cluster;
-    let offset = 0;
     function batch() {
       frame = undefined;
       const layers: L.Marker[] = [], end = Math.min(offset + 200, pending.length);
@@ -58,8 +66,9 @@
       }
       target.addLayers(layers);
       if (offset < pending.length) frame = L.Util.requestAnimFrame(batch);
+      else { pending = []; offset = 0; }
     }
-    if (pending.length) frame = L.Util.requestAnimFrame(batch);
+    if (offset < pending.length) frame = L.Util.requestAnimFrame(batch);
     visible(true);
   }
   $effect(() => { void items; untrack(build); return cancelBuild; });

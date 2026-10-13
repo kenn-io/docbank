@@ -671,18 +671,19 @@ it.each([false, true])("keeps direct links and history scoped and conceals a mou
   expect(revoke.mock.calls.length).toBeGreaterThan(before);
 });
 
-it.each(["change", "return", "interrupted return"])("mounts a fresh scoped Map progressively and revalidates it after %s", async cause => {
+it.each(["change", "return", "return before first hide", "interrupted return", "interrupted return before first hide"])("mounts a fresh scoped Map progressively and revalidates it after %s", async cause => {
  history.replaceState(null,"","/photos#web_session=synthetic&web_upload_secret=proof");storage();
  vi.stubGlobal("ResizeObserver",class {observe() {} disconnect() {}});vi.spyOn(HTMLElement.prototype,"clientWidth","get").mockReturnValue(1000);vi.spyOn(HTMLElement.prototype,"clientHeight","get").mockReturnValue(800);
  const meta=document.createElement("meta");meta.name="docbank-map-tiles";meta.content=JSON.stringify({tile_url:"https://tiles.example.org/{z}/{x}/{y}",attribution:"Example",max_zoom:19});document.head.append(meta);
- let finish!:(value:Response)=>void, changed=false, reload=false;
+ let finish!:(value:Response)=>void, changed=false, reload=false, pages=0;
  let poll!:()=>void;const interval=globalThis.setInterval;
  vi.spyOn(globalThis,"setInterval").mockImplementation((callback,delay,...args)=>{if(delay === 2000){poll=callback as ()=>void;return 0 as unknown as ReturnType<typeof setInterval>;}return interval(callback,delay,...args);});
  vi.stubGlobal("fetch",vi.fn(async(url:string,init:RequestInit)=>{
-  if(url.endsWith("/photos/hidden")) return Response.json({configured:true,change_id:changed?"second":"first"});
+  if(url.endsWith("/photos/hidden")) return Response.json({configured:true,change_id:changed?"second":cause.includes("before first hide")?undefined:"first"});
   if(url.endsWith("/photos/assets/query")) {
    const request=JSON.parse(String(init.body));
    if(!request.projection) return Response.json({items:[photo(1)],total:1});
+   pages++;
    if(reload || request.cursor) return new Promise<Response>(resolve=>finish=resolve);
    return Response.json({items:[],map_items:[mapPhoto(1)],total:2,next_cursor:"second"});
   }
@@ -697,10 +698,21 @@ it.each(["change", "return", "interrupted return"])("mounts a fresh scoped Map p
   visibility.mockReturnValue("hidden");await fireEvent(document,new Event("visibilitychange"));
   visibility.mockReturnValue("visible");await fireEvent(document,new Event("visibilitychange"));
  }
- const previous=finish;reload=true;changed=cause === "change";
- if(changed) poll();else await returnToMap();
+ const previous=finish;reload=true;
+ if(cause.startsWith("return")) {
+  const before=pages;
+  await returnToMap();
+  await screen.findByRole("heading",{name:"Photos in view"});
+  expect(pages).toBe(before);
+  await returnToMap();
+  await screen.findByRole("heading",{name:"Photos in view"});
+  expect(pages).toBe(before);
+  return;
+ }
+ if(cause === "change") {changed=true;await returnToMap();}
+ else await fireEvent.click(screen.getByRole("button",{name:"Refresh previews"}));
  await waitFor(()=>expect(finish).not.toBe(previous));
- if(cause === "interrupted return") {
+ if(cause.startsWith("interrupted return")) {
   const interrupted=finish;visibility.mockReturnValue("hidden");await fireEvent(document,new Event("visibilitychange"));
   await act(()=>interrupted(Response.json({items:[],map_items:[mapPhoto(1)],total:1})));
   visibility.mockReturnValue("visible");await fireEvent(document,new Event("visibilitychange"));await waitFor(()=>{poll();expect(finish).not.toBe(interrupted);});
@@ -708,6 +720,34 @@ it.each(["change", "return", "interrupted return"])("mounts a fresh scoped Map p
  expect(screen.queryByRole("heading",{name:"Photos in view"})).toBeNull();finish(Response.json({detail:"Map unavailable"},{status:503}));await screen.findByText("Map unavailable");expect(screen.queryByRole("heading",{name:"Photos in view"})).toBeNull();
  const failed=finish;await fireEvent.click(screen.getByRole("button",{name:"Retry"}));await waitFor(()=>expect(finish).not.toBe(failed));finish(Response.json({items:[],map_items:[mapPhoto(2)],total:1}));
  await waitFor(()=>expect(map.props?.items.map(row=>row.asset_id)).toEqual(["photo-2"]));
+});
+
+it("re-pages Library on return with an unchanged hidden change ID", async () => {
+ history.replaceState(null,"","/photos#web_session=synthetic&web_upload_secret=proof");storage();
+ vi.stubGlobal("ResizeObserver",class {observe() {} disconnect() {}});
+ vi.spyOn(HTMLElement.prototype,"clientWidth","get").mockReturnValue(1000);
+ vi.spyOn(HTMLElement.prototype,"clientHeight","get").mockReturnValue(800);
+ let pages=0, finish!:(value:Response)=>void;
+ const interval=globalThis.setInterval;
+ vi.spyOn(globalThis,"setInterval").mockImplementation((callback,delay,...args)=>delay === 2000?0 as unknown as ReturnType<typeof setInterval>:interval(callback,delay,...args));
+ stubPhotoFetch(vi.fn(async (url:string) => {
+  if(url.endsWith("/photos/hidden")) return Response.json({configured:true,change_id:"first"});
+  if(url.endsWith("/photos/assets/query")) {
+   if(++pages > 1) return new Promise<Response>(resolve=>finish=resolve);
+   return Response.json({items:[photo(1)],total:1});
+  }
+  return Response.json({items:[],nodes:[],tags:[],profiles:[]});
+ }));
+ render(App);await screen.findByRole("button",{name:"Open Photo 1.jpg"});
+ const visibility=vi.spyOn(document,"visibilityState","get");
+ for(let expected=2;expected<=3;expected++) {
+  visibility.mockReturnValue("hidden");await fireEvent(document,new Event("visibilitychange"));
+  visibility.mockReturnValue("visible");await fireEvent(document,new Event("visibilitychange"));
+  await waitFor(()=>expect(pages).toBe(expected));
+  expect(screen.queryByRole("button",{name:"Open Photo 1.jpg"})).toBeNull();
+  finish(Response.json({items:[photo(1)],total:1}));
+  await screen.findByRole("button",{name:"Open Photo 1.jpg"});
+ }
 });
 
 it("shows Album not found for an unknown album Map", async () => {

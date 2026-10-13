@@ -466,9 +466,10 @@ it("stages multiple replacement pages and preserves accepted rows on a failed re
   expect(photos.cursor).toBe("old-tail");
   expect([...photos.selection.selectedIDs]).toEqual(["photo-2"]);
   expect(restore).not.toHaveBeenCalled();
-  photos.cancelPending(); await photos.resume(preserve);
+  await photos.resume(preserve);
   expect(fetcher).toHaveBeenCalledTimes(4);
   await photos.retry(preserve);
+  expect(JSON.parse(fetcher.mock.calls[4][1].body).cursor).toBeUndefined();
   expect(preserve).toHaveBeenCalledTimes(1);
   expect(photos.items.map(item => item.asset_id)).toEqual(["photo-4", "photo-1", "photo-2", "photo-3"]);
   expect(photos.cursor).toBe("new-tail");
@@ -528,6 +529,46 @@ it("stages multiple replacement pages and preserves accepted rows on a failed re
   timer.abort(new DOMException("Timed out", "TimeoutError"));
   await refresh;
   expect(photos.error).toContain("timed out");
+  photos.dispose();
+});
+
+it("restarts Library expiry recovery after its second page fails", async () => {
+  const first = Array.from({ length: 250 }, (_, index) => photo(index + 1));
+  const second = Array.from({ length: 250 }, (_, index) => photo(index + 251));
+  const fetcher = vi.fn().mockResolvedValueOnce(response(first, "expired"))
+    .mockResolvedValueOnce(Response.json({ code: "cursor_expired" }, { status: 422 }))
+    .mockResolvedValueOnce(response(first, "recovery-second"))
+    .mockResolvedValueOnce(Response.json({ detail: "Page unavailable" }, { status: 503 }))
+    .mockResolvedValueOnce(response(first, "recovery-second"))
+    .mockResolvedValueOnce(response(second, "recovery-third"));
+  stubPhotoFetch(fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  await photos.loadMore(); await photos.loadMore(); await photos.retry();
+  expect(photos.items).toEqual(first);
+  expect(photos.error).toBe("Page unavailable");
+  await photos.retry();
+  expect(fetcher.mock.calls.map(([, init]) => JSON.parse(init.body).cursor)).toEqual([undefined, "expired", undefined, "recovery-second", undefined, "recovery-second"]);
+  expect(photos.items).toEqual([...first, ...second]);
+  expect(photos.cursor).toBe("recovery-third");
+  photos.dispose();
+});
+
+it.each(["unavailable", "cursor_expired", "invalid_photo_cursor"])("retries a staged Map refresh after %s", async failure => {
+  const rejected = failure !== "unavailable";
+  const first = mapPhoto(1), second = mapPhoto(2);
+  const fetcher = vi.fn().mockResolvedValueOnce(response([first], "second"))
+    .mockResolvedValueOnce(Response.json({ code: failure, detail: "Page unavailable" }, { status: rejected ? 422 : 503 }));
+  if (rejected) fetcher.mockResolvedValueOnce(response([first], "renewed-second"));
+  fetcher.mockResolvedValueOnce(response([second]));
+  stubPhotoFetch(fetcher);
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, "map");
+  photos.items = [mapPhoto(3)]; photos.started = true;
+  expect(await photos.refresh()).toBe(false);
+  expect(photos.items.map(row => row.asset_id)).toEqual(["photo-3"]);
+  await photos.retry();
+  expect(fetcher.mock.calls.map(([, init]) => JSON.parse(init.body).cursor)).toEqual(rejected ? [undefined, "second", undefined, "renewed-second"] : [undefined, "second", "second"]);
+  expect(photos.items).toEqual([first, second]);
+  expect(photos.staged).toBeUndefined();
   photos.dispose();
 });
 
