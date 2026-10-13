@@ -286,7 +286,7 @@ func TestAuthRequiredWhenKeySet(t *testing.T) {
 
 	resp, _ = get(t, ts, "/api/v1/nodes/1", map[string]string{"X-Api-Key": "sekrit"})
 	assert.NotEqual(t, http.StatusUnauthorized, resp.StatusCode)
-	resp, _ = get(t, ts, "/api/v1/nodes/1", map[string]string{"Authorization": "Bearer sekrit"})
+	resp, _ = get(t, ts, "/api/v1/nodes/1", map[string]string{"Authorization": "Bearer sekrit", "X-Api-Key": ""})
 	assert.NotEqual(t, http.StatusUnauthorized, resp.StatusCode)
 
 	// A wrong key is still unauthorized, not silently accepted.
