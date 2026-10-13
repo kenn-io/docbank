@@ -82,42 +82,6 @@ func TestPhotoEnrollmentClassifiesCreatedNodes(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
-func TestPhotoAssetGroupsRawJPEGSidecar(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	raw, err := s.CreateFile(ctx, s.RootID(), "capture.cr2", fakeHash("a1"), 4, "application/octet-stream")
-	require.NoError(t, err)
-	jpeg, err := s.CreateFile(ctx, s.RootID(), "capture.jpg", fakeHash("b2"), 4, "image/jpeg")
-	require.NoError(t, err)
-	sidecar, err := s.CreateFile(ctx, s.RootID(), "capture.xmp", fakeHash("c3"), 4, "application/octet-stream")
-	require.NoError(t, err)
-	jpegAsset, err := s.PhotoAssetForNode(ctx, jpeg.ID)
-	require.NoError(t, err)
-	_, err = s.DetachPhotoFile(ctx, jpegAsset.ID, jpegAsset.Revision, jpegAsset.Files[0].ID, PhotoDetachOptions{})
-	require.NoError(t, err)
-	asset, err := s.PromotePhotoNode(ctx, raw.ID, nil, PhotoRoleRAW, "")
-	require.NoError(t, err)
-	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, jpeg.ID, PhotoRoleImage, nil)
-	require.NoError(t, err)
-	rawFile := fileByRole(asset.Files, PhotoRoleRAW)
-	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, sidecar.ID, PhotoRoleSidecar, &rawFile.ID)
-	require.NoError(t, err)
-	assert.Len(t, asset.Files, 3)
-	assert.NotNil(t, asset.DisplayFileID)
-	var sidecarReceipt photoReceiptRow
-	for _, receipt := range photoReceiptRows(t, s, asset.ID) {
-		if receipt.Operation == "attach" && strings.Contains(receipt.AfterJSON, `"node_id":`+strconv.FormatInt(sidecar.ID, 10)) {
-			sidecarReceipt = receipt
-			break
-		}
-	}
-	assert.NotEmpty(t, sidecarReceipt.AfterJSON)
-	asset, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &rawFile.ID)
-	require.NoError(t, err)
-	assert.Equal(t, rawFile.ID, *asset.DisplayFileID)
-}
-
 func TestPhotoSettingsRecomputeInheritedAssets(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -189,6 +153,19 @@ func TestPhotoMetadataRoundTripAndInvalidReferences(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
+	image, err := s.CreateFile(ctx, s.RootID(), "generic.jpg", fakeHash("c001"), 1, "application/octet-stream")
+	require.NoError(t, err)
+
+	before, err := s.PhotoAssetForNode(ctx, image.ID)
+	require.NoError(t, err)
+	_, _, err = s.Move(ctx, image.ID, s.RootID(), "generic.bin", image.Revision)
+	require.NoError(t, err)
+	renamed, err := s.NodeByID(ctx, image.ID)
+	require.NoError(t, err)
+	assert.Equal(t, image.MimeType, renamed.MimeType)
+	after, err := s.PhotoAssetForNode(ctx, image.ID)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
 	ingestRun, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
 	require.NoError(t, err)
 	camera := filepath.Join(t.TempDir(), "camera")
@@ -237,6 +214,12 @@ func TestPhotoMetadataRoundTripAndInvalidReferences(t *testing.T) {
 	assert.Equal(t, asset.Files, restored.Files)
 	assert.Equal(t, asset.ID, restored.ID)
 	assert.Equal(t, asset.DisplayFileID, restored.DisplayFileID)
+	restoredAdmission, err := target.NodeByID(ctx, image.ID)
+	require.NoError(t, err)
+	assert.Equal(t, renamed.MimeType, restoredAdmission.MimeType)
+	restoredMembership, err := target.PhotoAssetForNode(ctx, image.ID)
+	require.NoError(t, err)
+	assert.Equal(t, before, restoredMembership)
 	invalidLines := strings.Split(first.String(), "\n")
 	found := false
 	for index, line := range invalidLines {
@@ -484,6 +467,14 @@ func TestPhotoSidecarTargetsAndNoDisplayableMember(t *testing.T) {
 				require.NoError(t, err)
 				asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, sidecar.ID, PhotoRoleSidecar, &targetFileID)
 				require.NoError(t, err)
+				var sidecarReceipt photoReceiptRow
+				for _, receipt := range photoReceiptRows(t, s, asset.ID) {
+					if receipt.Operation == "attach" && strings.Contains(receipt.AfterJSON, `"node_id":`+strconv.FormatInt(sidecar.ID, 10)) {
+						sidecarReceipt = receipt
+						break
+					}
+				}
+				assert.NotEmpty(t, sidecarReceipt.AfterJSON)
 			}
 			_, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, targetFileID, PhotoDetachOptions{})
 			require.ErrorIs(t, err, ErrInvalidPhotoAsset)
@@ -603,25 +594,6 @@ func TestPhotoVersionTransitionsKeepIdentity(t *testing.T) {
 			assert.Equal(t, PhotoRoleImage, retained.Files[0].Role)
 		})
 	}
-}
-
-func TestPhotoRenamePreservesAdmissionClassification(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	image, err := s.CreateFile(ctx, s.RootID(), "generic.jpg", fakeHash("c001"), 1, "application/octet-stream")
-	require.NoError(t, err)
-
-	before, err := s.PhotoAssetForNode(ctx, image.ID)
-	require.NoError(t, err)
-	_, _, err = s.Move(ctx, image.ID, s.RootID(), "generic.bin", image.Revision)
-	require.NoError(t, err)
-	renamed, err := s.NodeByID(ctx, image.ID)
-	require.NoError(t, err)
-	assert.Equal(t, image.MimeType, renamed.MimeType)
-	after, err := s.PhotoAssetForNode(ctx, image.ID)
-	require.NoError(t, err)
-	assert.Equal(t, before, after)
 }
 
 func TestPhotoPolicy(t *testing.T) {

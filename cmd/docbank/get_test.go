@@ -82,6 +82,9 @@ func TestGetPublishesVerifiedCurrentVersion(t *testing.T) {
 		assert.Equal(t, getReceipt{NodeID: node.ID, VersionID: node.CurrentVersionID, BlobHash: node.BlobHash, Size: node.Size, Output: output}, receipt)
 		assert.NotContains(t, out, "download:")
 		assert.Equal(t, selector == "id:42", getOverwrite)
+		stages, err := filepath.Glob(filepath.Join(filepath.Dir(output), "docbank-get-*"))
+		require.NoError(t, err)
+		assert.Empty(t, stages)
 		if selector == "id:42" {
 			assert.Equal(t, "/api/v1/nodes/42?", <-requests)
 		} else {

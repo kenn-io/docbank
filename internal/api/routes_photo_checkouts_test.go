@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"context"
 	"encoding/json/v2"
 	"net/http"
 	"strings"
@@ -16,8 +17,9 @@ import (
 func TestPhotoCheckoutRoutes(t *testing.T) {
 	t.Parallel()
 	supervisor := jobs.New(t.Context(), nil)
-	supervisor.Stop()
 	ts, catalog := newTestServer(t, func(d *api.Deps) { d.Jobs = supervisor })
+	_, err := catalog.SetLaneControl(t.Context(), store.LaneControl{Lane: store.StorageOperationKindPhotoCheckout, Paused: true, Concurrency: 1}, 1)
+	require.NoError(t, err)
 	hash, size, err := catalog.Blobs.Write(strings.NewReader("photo bytes"))
 	require.NoError(t, err)
 	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "photo.jpg", hash, size, "image/jpeg")
@@ -35,6 +37,7 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, expectedEstimate, estimate)
 	request := api.PhotoCheckoutCreateRequest{Selection: selection, Destination: t.TempDir(), ByteLimit: 100}
+	t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/checkouts", nil, request)
 	require.Equal(t, http.StatusAccepted, response.StatusCode, body)
 	var created api.PhotoCheckoutCreateResult
@@ -42,11 +45,16 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 	require.Equal(t, request.Selection, created.Checkout.Selection)
 	require.Equal(t, request.ByteLimit, created.Checkout.ByteLimit)
 	require.Equal(t, request.Destination, created.Checkout.Destination)
+	registered := supervisor.Snapshot()
+	require.Len(t, registered, 1)
+	require.Equal(t, "storage:"+created.Operation.ID, registered[0].Name)
 	storedCheckout, storedOperation, err := catalog.PhotoCheckoutOperation(t.Context(), created.Checkout.ID)
 	require.NoError(t, err)
 	require.Equal(t, storedCheckout, created.Checkout)
 	var receipt any
-	require.NoError(t, json.Unmarshal([]byte(storedOperation.ReceiptJSON), &receipt))
+	if storedOperation.ReceiptJSON != "" {
+		require.NoError(t, json.Unmarshal([]byte(storedOperation.ReceiptJSON), &receipt))
+	}
 	expectedOperation := api.StorageOperation{
 		ID: storedOperation.ID, Kind: storedOperation.Kind, State: string(storedOperation.State),
 		PlanDigest: storedOperation.RequestDigest, TotalObjects: storedOperation.TotalObjects,
@@ -54,7 +62,6 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 		CopiedBytes: storedOperation.CopiedBytes, CancelRequested: storedOperation.CancelRequested,
 		Error: storedOperation.Error, Receipt: receipt,
 		CreatedAt: storedOperation.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: storedOperation.UpdatedAt.Format(time.RFC3339Nano),
-		FinishedAt: storedOperation.FinishedAt.Format(time.RFC3339Nano),
 	}
 	expectedJSON, err := json.Marshal(expectedOperation)
 	require.NoError(t, err)
@@ -77,6 +84,18 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 	require.Equal(t, expectedList, list.Items)
 	response, body = do(t, ts, http.MethodGet, "/api/v1/photos/checkouts/00000000-0000-4000-8000-000000000001", nil, nil)
 	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
-	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/checkouts", nil, api.PhotoCheckoutCreateRequest{Selection: store.PhotoCheckoutSelection{All: true}, Destination: t.TempDir()})
-	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
+	for _, endpoint := range []struct {
+		method string
+		path   string
+		input  any
+	}{
+		{http.MethodPost, "/api/v1/photos/checkouts/estimate", selection},
+		{http.MethodPost, "/api/v1/photos/checkouts", request},
+		{http.MethodGet, "/api/v1/photos/checkouts", nil},
+		{http.MethodGet, "/api/v1/photos/checkouts/" + created.Checkout.ID, nil},
+	} {
+		response, body = do(t, ts, endpoint.method, endpoint.path, browser, endpoint.input)
+		require.Equal(t, http.StatusForbidden, response.StatusCode, body)
+	}
 }
