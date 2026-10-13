@@ -20,6 +20,17 @@
     collections: "Collections", tags: "Tags", media_family: "Media family", extension: "Extension",
     modified: "Modified", size: "Size", text_coverage: "Text coverage", duplicates: "Duplicates",
   };
+  const summary: Partial<Record<Facet["dimension"], { missing: string; other?: (count: number) => string }>> = {
+    camera: { missing: "with no camera", other: n => `${n} ${n === 1 ? "use" : "uses"} of unlisted camera names` },
+    lens: { missing: "with no lens", other: n => `${n} ${n === 1 ? "use" : "uses"} of unlisted lens names` },
+    year: { missing: "with no capture date", other: n => `${n} in unlisted ${n === 1 ? "year" : "years"}` },
+    location: { missing: "with no location", other: n => `${n} in unlisted ${n === 1 ? "location" : "locations"}` },
+    set: { missing: "not in an album", other: n => `${n} ${n === 1 ? "membership" : "memberships"} in unlisted albums` },
+    collections: { missing: "not in a collection", other: n => `${n} ${n === 1 ? "membership" : "memberships"} in unlisted collections` },
+    tags: { missing: "with no tags", other: n => `${n} ${n === 1 ? "use" : "uses"} of unlisted tags` },
+    extension: { missing: "with no extension", other: n => `${n} in unlisted ${n === 1 ? "extension" : "extensions"}` },
+    modified: { missing: "with no modified date", other: n => `${n} in unlisted ${n === 1 ? "month" : "months"}` },
+  };
   const arrayFields = {
     camera: "cameras", lens: "lenses", location: "locations", set: "set_ids",
     collections: "collection_ids", tags: "tag_ids", media_family: "media_families",
@@ -150,13 +161,18 @@
             {/if}
           {/each}
         </div>
-        <div class="summary">
-          {#if facet.dimension === "tags"}
-            <button type="button" class:selected={query.filters.no_tags === true} aria-pressed={query.filters.no_tags === true}
-              disabled={disabled} onclick={toggleMissingTags}>Missing {facet.missing}</button>
-          {:else}<span>Missing {facet.missing}</span>{/if}
-          <span>Other {facet.other}</span>
-        </div>
+        {@const wording = summary[facet.dimension]}
+        {@const missing = wording && (facet.missing ?? 0) > 0 ? `${facet.missing} ${wording.missing}` : ""}
+        {@const other = (facet.other ?? 0) > 0 ? wording?.other?.(facet.other!) : ""}
+        {#if missing || other || (facet.dimension === "tags" && query.filters.no_tags)}
+          <div class="summary">
+            {#if facet.dimension === "tags" && (missing || query.filters.no_tags)}
+              <button type="button" class:selected={query.filters.no_tags === true} aria-pressed={query.filters.no_tags === true}
+                disabled={disabled} onclick={toggleMissingTags}>{missing || "No tags"}</button>
+            {:else if missing}<span>{missing}</span>{/if}
+            {#if other}<span>{other}</span>{/if}
+          </div>
+        {/if}
       {/if}
     </section>
   {/each}

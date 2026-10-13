@@ -6,6 +6,49 @@ import type { PhotoPreviewCache } from "./photoPreviewCache.js";
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
+it("keeps a hidden Open button for click-only assistive input", async () => {
+  const onopen = vi.fn();
+  render(PhotoCell, { photo: photo(1), cache: { get: vi.fn() } as unknown as PhotoPreviewCache, selected: false, onclick: vi.fn(), onopen });
+  const button = screen.getByRole("button", { name: "Open Photo 1.jpg" });
+  expect(button.classList.contains("kit-sr-only")).toBe(true);
+  expect(button.getAttribute("tabindex")).toBe("-1");
+  await fireEvent.click(button);
+  expect(onopen).toHaveBeenCalledExactlyOnceWith(button);
+});
+
+it.each([false, true])("selects and opens a touch double-tap once with selected=%s", async selected => {
+  const onclick = vi.fn(), oncheck = vi.fn(), onopen = vi.fn();
+  render(PhotoCell, { photo: photo(1), cache: { get: vi.fn() } as unknown as PhotoPreviewCache, selected, onclick, oncheck, onopen });
+  const button = screen.getByRole("button", { name: "Select Photo 1.jpg" });
+  for (const detail of [1, 2]) {
+    const event = new MouseEvent("click", { bubbles: true, detail });
+    Object.defineProperty(event, "pointerType", { value: "touch" });
+    await fireEvent(button, event);
+  }
+  await fireEvent.doubleClick(button);
+  expect(onclick).toHaveBeenCalledOnce();
+  if (selected) expect(oncheck).not.toHaveBeenCalled();
+  else expect(oncheck).toHaveBeenCalledExactlyOnceWith(true, false);
+  expect(onopen).toHaveBeenCalledExactlyOnceWith(button);
+});
+
+it("keeps compact touch clicks and never opens the viewer", async () => {
+  const onclick = vi.fn(), oncheck = vi.fn(), onopen = vi.fn();
+  render(PhotoCell, { photo: photo(1), cache: { get: vi.fn() } as unknown as PhotoPreviewCache, selected: false, compact: true, onclick, oncheck, onopen });
+  const button = screen.getByRole("button", { name: "Show Photo 1.jpg" });
+  for (const detail of [1, 2]) {
+    const event = new MouseEvent("click", { bubbles: true, detail });
+    Object.defineProperty(event, "pointerType", { value: "touch" });
+    await fireEvent(button, event);
+  }
+  await fireEvent.doubleClick(button);
+  await fireEvent.keyDown(button, { key: "Enter" });
+  expect(onclick).toHaveBeenCalledTimes(2);
+  expect(oncheck).not.toHaveBeenCalled();
+  expect(onopen).not.toHaveBeenCalled();
+  expect(screen.queryByRole("button", { name: "Open Photo 1.jpg" })).toBeNull();
+});
+
 it("revokes mounted URLs and ignores previews that complete after unmount", async () => {
   Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:synthetic") });
   Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });

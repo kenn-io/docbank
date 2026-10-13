@@ -464,10 +464,13 @@ it("opens on touch with empty selection and keeps selection taps after checking 
   await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
   vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: false })));
   const second = screen.getByRole("button", { name: "Select Photo 2.jpg" });
-  const tap = async () => { const event = new MouseEvent("click", { bubbles: true, button: 0 }); Object.defineProperty(event, "pointerType", { value: "touch" }); await fireEvent(second, event); };
+  const tap = async (detail = 1) => { const event = new MouseEvent("click", { bubbles: true, button: 0, detail }); Object.defineProperty(event, "pointerType", { value: "touch" }); await fireEvent(second, event); };
   await tap(); expect([...photos.selection.selectedIDs]).toEqual(["photo-1", "photo-2"]);
   await tap(); expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
-  await fireEvent.doubleClick(second); expect(open).toHaveBeenCalledOnce();
+  open.mockClear();
+  await tap(); await tap(2); await fireEvent.doubleClick(second);
+  expect(open).toHaveBeenCalledExactlyOnceWith("photo-2", "open");
+  expect([...photos.selection.selectedIDs]).toEqual(["photo-1", "photo-2"]);
   await fireEvent.keyDown(cell, { key: "Enter" }); expect(open).toHaveBeenCalledTimes(2);
 });
 

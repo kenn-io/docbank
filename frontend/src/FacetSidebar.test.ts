@@ -33,11 +33,62 @@ it("shows every requested facet with selected-zero, missing, other, and unavaila
   render(FacetSidebar, { facets, query: originalQuery, disabled: false, onchange: vi.fn() });
   expect(screen.getAllByRole("heading", { level: 3 })).toHaveLength(8);
   expect(screen.getByRole("button", { name: "reviewed, 0 documents, selected" }).getAttribute("aria-pressed")).toBe("true");
-  expect(screen.getAllByText("Missing 1")).toHaveLength(7);
-  expect(screen.getAllByText("Other 2")).toHaveLength(7);
+  expect(screen.getByText("1 not in a collection")).toBeTruthy();
+  expect(screen.getByText("2 memberships in unlisted collections")).toBeTruthy();
+  expect(screen.getByText("1 with no tags")).toBeTruthy();
+  expect(screen.getByText("2 uses of unlisted tags")).toBeTruthy();
   expect(within(screen.getByRole("group", { name: "Text coverage facet" })).getByText(/coverage unconfigured/i)).toBeTruthy();
   expect(screen.queryByRole("button", { name: /unique/i })).toBeNull();
   expect(screen.getByText("unique · 7 · informational")).toBeTruthy();
+});
+
+it.each([
+  ["camera", "with no camera", "uses of unlisted camera names", "use of unlisted camera names"],
+  ["lens", "with no lens", "uses of unlisted lens names", "use of unlisted lens names"],
+  ["year", "with no capture date", "in unlisted years", "in unlisted year"],
+  ["location", "with no location", "in unlisted locations", "in unlisted location"],
+  ["set", "not in an album", "memberships in unlisted albums", "membership in unlisted albums"],
+  ["collections", "not in a collection", "memberships in unlisted collections", "membership in unlisted collections"],
+  ["tags", "with no tags", "uses of unlisted tags", "use of unlisted tags"],
+  ["extension", "with no extension", "in unlisted extensions", "in unlisted extension"],
+  ["modified", "with no modified date", "in unlisted months", "in unlisted month"],
+] as const)("shows positive %s counts in plain words and hides zeros", async (dimension, missing, other, singular) => {
+  const view = render(FacetSidebar, { facets: [facet(dimension, { missing: 6, other: other ? 6 : 0 })], query: originalQuery, onchange: vi.fn() });
+  expect(screen.getByText(`6 ${missing}`)).toBeTruthy();
+  if (other) expect(screen.getByText(`6 ${other}`)).toBeTruthy();
+  await view.rerender({ facets: [facet(dimension, { missing: 1, other: other ? 1 : 0 })] });
+  expect(screen.getByText(`1 ${missing}`)).toBeTruthy();
+  if (singular) expect(screen.getByText(`1 ${singular}`)).toBeTruthy();
+  await view.rerender({ facets: [facet(dimension, { missing: 0, other: other ? 6 : 0 })] });
+  expect(screen.queryByText(`0 ${missing}`)).toBeNull();
+  if (other) expect(screen.getByText(`6 ${other}`)).toBeTruthy();
+  await view.rerender({ facets: [facet(dimension, { missing: 6, other: 0 })] });
+  expect(screen.getByText(`6 ${missing}`)).toBeTruthy();
+  expect(view.container.querySelectorAll(".summary span")).toHaveLength(dimension === "tags" ? 0 : 1);
+  await view.rerender({ facets: [facet(dimension, { missing: 0, other: 0 })] });
+  expect(view.container.querySelector(".summary")).toBeNull();
+});
+
+it("omits empty summaries for fixed-value facets", () => {
+  const view = render(FacetSidebar, { facets: [facet("media_family", { missing: 0, other: 0 }), facet("size", { missing: 0, other: 0 }), facet("duplicates", { missing: 0, other: 0 })], query: originalQuery, onchange: vi.fn() });
+  expect(view.container.querySelector(".summary")).toBeNull();
+});
+
+it("keeps the active no-tags filter available to clear at zero", async () => {
+  const onchange = vi.fn();
+  const view = render(FacetSidebar, { facets: [facet("tags", { missing: 0, other: 0 })], query: { ...originalQuery, filters: { ...originalQuery.filters, no_tags: true } }, onchange });
+  const button = screen.getByRole("button", { name: "No tags" });
+  expect(button.getAttribute("aria-pressed")).toBe("true");
+  await fireEvent.click(button);
+  expect(onchange.mock.calls.at(-1)?.[0].filters.no_tags).toBeUndefined();
+  await view.rerender({ query: onchange.mock.calls.at(-1)?.[0] });
+  expect(screen.queryByRole("button", { name: "No tags" })).toBeNull();
+  expect(view.container.querySelector(".summary")).toBeNull();
+});
+
+it("counts unlisted camera names as uses when one photo has both make and model", () => {
+  render(FacetSidebar, { facets: [facet("camera", { total: 1, missing: 0, other: 2 })], query: originalQuery, unit: "photos", onchange: vi.fn() });
+  expect(screen.getByText("2 uses of unlisted camera names")).toBeTruthy();
 });
 
 it("preserves expression, syntax, exclusions, and unrelated filters when applying supported buckets", async () => {
@@ -67,7 +118,7 @@ it("maps only tags missing and duplicate documents to supported QueryV1 filters"
   const onchange = vi.fn();
   render(FacetSidebar, { facets, query: originalQuery, disabled: false, onchange });
   const tags = screen.getByRole("group", { name: "Tags facet" });
-  await fireEvent.click(within(tags).getByRole("button", { name: "Missing 1" }));
+  await fireEvent.click(within(tags).getByRole("button", { name: "1 with no tags" }));
   expect(onchange.mock.calls.at(-1)?.[0].filters.no_tags).toBe(true);
   await fireEvent.click(screen.getByRole("button", { name: "duplicate, 2 documents" }));
   expect(onchange.mock.calls.at(-1)?.[0].filters.has_duplicates).toBe(true);

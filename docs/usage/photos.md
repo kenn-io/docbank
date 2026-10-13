@@ -30,10 +30,10 @@ atomically, or stores a null display when none remains. Assets are limited to
 
 ## Open and inspect a photo
 
-Double-click a photo to select it and open it above Library. Enter and Open
-open the photo while preserving any separate selection.
+Double-click a photo to select it and open it above Library. Enter
+opens the photo while preserving any separate selection.
 On touch, tap a photo to open it when nothing is selected. Use the checkbox to
-start a selection. Taps then toggle selection.
+start a selection. Taps then toggle selection; double-tap selects and opens a photo.
 
 Use the arrow keys, Previous and Next buttons, or the thumbnail rail to move
 through the current result in query order, across calendar-month groups. Navigation loads the next page at the loaded edge

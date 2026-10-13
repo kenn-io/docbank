@@ -597,7 +597,8 @@ test("photo loupe opens, upgrades, navigates, restores focus and reloads a direc
     await expect(page.getByRole("dialog", { name: /^Photo viewer/ })).toHaveCount(0);
     await expect.poll(() => scroll.evaluate(element => element.scrollTop)).toBeCloseTo(forwardPosition, 0);
     await expect(forwardFocus).toBeFocused();
-    await scroll.locator(`[data-asset="${forwardID}"] .open-photo`).click();
+    await scroll.locator(`[data-asset="${forwardID}"] .open-photo`).focus();
+    await scroll.locator(`[data-asset="${forwardID}"] .open-photo`).press("Enter");
     await expect(page.getByRole("dialog", {name:/^Photo viewer/})).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.getByText("1 selected photo", {exact:true})).toBeVisible();
@@ -608,7 +609,7 @@ test("photo loupe opens, upgrades, navigates, restores focus and reloads a direc
     await scroll.evaluate(element => element.scrollTop = 400);
     const aID = await scroll.evaluate(element => [...element.querySelectorAll<HTMLElement>("[data-asset]")].find(cell => cell.getBoundingClientRect().top >= element.getBoundingClientRect().top)!.dataset.asset!);
     const aOpen = scroll.locator(`[data-asset="${aID}"] .open-photo`);
-    await aOpen.click(); const aPosition = await scroll.evaluate(element => element.scrollTop);
+    await aOpen.focus(); await aOpen.press("Enter"); const aPosition = await scroll.evaluate(element => element.scrollTop);
     await page.getByRole("button", {name:"Background jobs", exact:true}).click();
     await expect(page.getByRole("dialog", {name:"Daemon background jobs"})).toBeVisible();
     const jobsURL = page.url(); await page.keyboard.press("Escape");
@@ -626,7 +627,7 @@ test("photo loupe opens, upgrades, navigates, restores focus and reloads a direc
     await scroll.evaluate(element => element.scrollTop = 1200);
     const cID = await scroll.evaluate(element => [...element.querySelectorAll<HTMLElement>("[data-asset]")].find(cell => cell.getBoundingClientRect().top >= element.getBoundingClientRect().top)!.dataset.asset!);
     const cOpen = scroll.locator(`[data-asset="${cID}"] .open-photo`);
-    await cOpen.click(); const cPosition = await scroll.evaluate(element => element.scrollTop);
+    await cOpen.focus(); await cOpen.press("Enter"); const cPosition = await scroll.evaluate(element => element.scrollTop);
     await page.keyboard.press("Escape");
     await expect.poll(() => scroll.evaluate(element => element.scrollTop)).toBeCloseTo(cPosition, 0); await expect(cOpen).toBeFocused();
     await page.goBack(); await expect(page).not.toHaveURL(/\/photos/);
@@ -867,12 +868,22 @@ test("photo loupe opens, upgrades, navigates, restores focus and reloads a direc
     await touch.getByRole("button", {name:"Clear selection"}).tap();
     await a.getByRole("checkbox").tap();
     await b.locator(".photo-image").tap();
-    await expect(a.getByRole("checkbox")).toBeChecked(); await expect(b.getByRole("checkbox")).toBeChecked();
     await b.locator(".photo-image").tap();
-    await expect(a.getByRole("checkbox")).toBeChecked(); await expect(b.getByRole("checkbox")).not.toBeChecked();
+    await expect(touch.getByRole("dialog", {name:/^Photo viewer/})).toHaveCount(1);
+    await touch.keyboard.press("Escape");
+    await expect(b.locator(".photo-image")).toBeFocused();
+    await expect(a.getByRole("checkbox")).toBeChecked(); await expect(b.getByRole("checkbox")).toBeChecked();
+    await a.locator(".photo-image").tap();
+    await a.getByRole("checkbox").tap();
+    await a.locator(".photo-image").tap();
+    await expect(touch.getByRole("dialog", {name:/^Photo viewer/})).toHaveCount(0);
+    await expect(b.getByRole("checkbox")).toBeChecked(); await expect(a.getByRole("checkbox")).not.toBeChecked();
     await expect(touch.getByText("1 selected photo", { exact: true })).toBeVisible();
     await touch.getByRole("button", { name: "Clear selection" }).tap();
-    await a.locator(".photo-image").tap();
+    const emptyTapBox = (await a.locator(".photo-image").boundingBox())!;
+    const emptyTapX = emptyTapBox.x + emptyTapBox.width / 2, emptyTapY = emptyTapBox.y + emptyTapBox.height / 2;
+    await touch.touchscreen.tap(emptyTapX, emptyTapY); await touch.touchscreen.tap(emptyTapX, emptyTapY);
+    await expect(touch.getByRole("dialog", {name:/^Photo viewer/})).toHaveCount(1);
     await expect(touch.getByText("Fit preview", { exact: true })).toBeVisible({ timeout: 60_000 });
     const swipe = async (direction: -1 | 1) => {
       const box = (await touch.locator(".photo-viewport").boundingBox())!;
