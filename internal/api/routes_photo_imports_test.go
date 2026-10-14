@@ -184,8 +184,9 @@ func TestPhotoImportGate(t *testing.T) {
 	_, catalog := newTestServer(t, nil)
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "IMG.ARW"), []byte("raw"), 0o600))
-	importer := &ingest.Ingester{Store: catalog.Store, Blobs: catalog.Blobs}
 	gate := api.NewOperationGate()
+	runner := api.NewPhotoImportRunner(api.Deps{Store: catalog.Store, Blobs: catalog.Blobs, Gate: gate})
+	require.NotNil(t, runner.Options.Mutate)
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	maintenanceDone := make(chan error, 1)
@@ -201,10 +202,10 @@ func TestPhotoImportGate(t *testing.T) {
 	attempted := make(chan struct{})
 	mutationDone := make(chan error, 1)
 	go func() {
-		_, err := importer.ImportPhotoDirectory(ctx, root, "/photos", ingest.PhotoImportOptions{
+		_, err := runner.Ingester.ImportPhotoDirectory(ctx, root, "/photos", ingest.PhotoImportOptions{
 			Mutate: func(ctx context.Context, fn func() error) error {
 				close(attempted)
-				return gate.MutateContext(ctx, fn)
+				return runner.Options.Mutate(ctx, fn)
 			},
 		})
 		mutationDone <- err
@@ -234,10 +235,10 @@ func TestPhotoImportGate(t *testing.T) {
 	completed := make(chan importResult, 1)
 	go func() {
 		calls := 0
-		report, importErr := importer.ImportPhotoDirectory(t.Context(), root, "/photos", ingest.PhotoImportOptions{
+		report, importErr := runner.Ingester.ImportPhotoDirectory(t.Context(), root, "/photos", ingest.PhotoImportOptions{
 			Mutate: func(ctx context.Context, fn func() error) error {
 				calls++
-				return gate.MutateContext(ctx, func() error {
+				return runner.Options.Mutate(ctx, func() error {
 					if calls == 2 {
 						close(groupReady)
 						<-continueGroup
