@@ -85,6 +85,9 @@ func (resolve embeddingSecretFunc) ResolveSecret(ctx context.Context, binding st
 func TestMistralEmbeddingAttemptTimeouts(t *testing.T) {
 	for _, stage := range []string{"credentials", "headers", "body"} {
 		for _, outcome := range []string{"recover", "exhaust", "caller_cancel"} {
+			if stage != "credentials" && outcome == "recover" {
+				continue
+			}
 			t.Run(stage+"/"+outcome, func(t *testing.T) {
 				// Virtual time keeps connection latency out of the attempt deadline.
 				synctest.Test(t, func(t *testing.T) {

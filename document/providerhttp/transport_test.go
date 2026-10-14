@@ -333,6 +333,7 @@ func TestEgressBoundsTLSHandshake(t *testing.T) {
 		transport := newTransport(t, 5*time.Second)
 		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 		defer cancel()
+		started := time.Now()
 		dialResult := make(chan error, 1)
 		go func() {
 			connection, dialErr := transport.DialTLSContext(ctx, "tcp",
@@ -345,6 +346,7 @@ func TestEgressBoundsTLSHandshake(t *testing.T) {
 		select {
 		case dialErr := <-dialResult:
 			require.ErrorIs(t, dialErr, context.DeadlineExceeded)
+			assert.Less(t, time.Since(started), 3*time.Second)
 		case <-time.After(5 * time.Second):
 			require.Fail(t, "request context did not bound the TLS handshake")
 		}
