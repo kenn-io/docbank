@@ -57,7 +57,7 @@ export interface SnapshotRow {
 
 export interface WorkspaceQueryResponse {
   query: Query;
-  dependencies: { kind: "tag" | "collection" | "saved"; id: string; revision: number }[];
+  dependencies: { kind: "tag" | "collection" | "saved" | "person"; id: string; revision: number }[];
   query_fingerprint: string;
   member_hash: string;
   snapshot_fingerprint: string;
@@ -142,7 +142,7 @@ const coverageStates = new Set<NonNullable<SnapshotRow["coverage_state"]>>([
   "none",
   "unavailable",
 ]);
-const dependencyKinds = new Set(["tag", "collection", "saved"]);
+const dependencyKinds = new Set(["tag", "collection", "saved", "person"]);
 const facetDimensions = new Set<WorkspaceQueryResponse["facets"][number]["dimension"]>([
   "collections",
   "tags",

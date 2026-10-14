@@ -99,7 +99,7 @@ func TestGetPersonMCPFitsAssertionEnvelope(t *testing.T) {
 		Identities: []api.PersonIdentity{}, ExternalIdentities: []api.PersonExternalIdentity{},
 	}
 	for i := range 1000 {
-		detail.Assertions = append(detail.Assertions, api.PhotoPersonAssertion{AssertionID: fmt.Sprintf("00000000-0000-4000-8000-%012d", i+10), ContentVersionID: "00000000-0000-4000-8000-000000000002", PersonID: detail.PersonID, Role: "author", Action: "assert", Note: strings.Repeat("\x01", 1000), Revision: 1, RecordedAt: detail.CreatedAt})
+		detail.Assertions = append(detail.Assertions, api.PhotoPersonAssertion{AssertionID: fmt.Sprintf("00000000-0000-4000-8000-%012d", i+10), ContentVersionID: fmt.Sprintf("00000000-0000-4000-9000-%012d", i+10), PersonID: detail.PersonID, Role: "author", Action: "assert", Note: strings.Repeat("\x01", 1000), Revision: 1, RecordedAt: detail.CreatedAt})
 	}
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		page := detail

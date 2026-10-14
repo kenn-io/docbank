@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json/v2"
+	"strconv"
 	"testing"
 
 	"github.com/google/uuid"
@@ -1263,4 +1264,103 @@ func TestPhotoFaceDecisionUndoRespectsCandidateCapacity(t *testing.T) {
 			require.NoError(t, s.ValidateMetadata(ctx))
 		})
 	}
+}
+
+func TestPhotoFaceDecisionSharedWithdrawalReactivation(t *testing.T) {
+	t.Parallel()
+	for _, existing := range []bool{false, true} {
+		t.Run(strconv.FormatBool(existing), func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			p, err := s.CreatePerson(ctx, "Ada", "operator")
+			require.NoError(t, err)
+			n, first := faceForDecisionTest(t, s, p.PersonID)
+			personID := ""
+			if existing {
+				personID = p.PersonID
+			}
+			other, _, err := s.CreatePhotoFace(ctx, n.CurrentVersionID, uuid.NewString(), document.FaceBox{X: .5, Width: .2, Height: .2}, personID)
+			require.NoError(t, err)
+			assertions, err := s.DocumentPersonAssertions(ctx, n.CurrentVersionID)
+			require.NoError(t, err)
+			assertion := assertions[0]
+			assertion.Action = "withdrawn"
+			_, err = s.AssertDocumentPerson(ctx, assertion)
+			require.NoError(t, err)
+			receipt := decideFaceForTest(t, s, n, other.FaceID, p.PersonID, "name")
+			require.Len(t, receipt.Before.Faces, 2)
+			require.Len(t, receipt.After.Faces, 2)
+			for i, face := range receipt.Before.Faces {
+				require.Greater(t, receipt.After.Faces[i].Revision, face.Revision)
+			}
+			_, err = s.DecidePhotoFace(ctx, n.CurrentVersionID, PhotoFaceDecisionRequest{FaceID: first.FaceID, Action: "retract", Revision: first.Revision})
+			require.ErrorIs(t, err, ErrStaleRevision)
+			undo, err := s.UndoPhotoFaceDecision(ctx, receipt.ReceiptID)
+			require.NoError(t, err)
+			assertions, err = s.DocumentPersonAssertions(ctx, n.CurrentVersionID)
+			require.NoError(t, err)
+			require.Equal(t, "withdrawn", assertions[0].Action)
+			faces, _, err := s.PhotoFaces(ctx, n.CurrentVersionID)
+			require.NoError(t, err)
+			for _, face := range faces {
+				if face.FaceID == first.FaceID {
+					require.Equal(t, first.AssertionID, face.AssertionID)
+				}
+				if face.FaceID == other.FaceID {
+					require.Equal(t, other.AssertionID, face.AssertionID)
+				}
+			}
+			typed := snapshotTestQuery(t, `{}`)
+			typed.Filters.PersonIDs = []string{p.PersonID}
+			require.Empty(t, personMatchNodeIDs(t, s, typed))
+			redo, err := s.UndoPhotoFaceDecision(ctx, undo.ReceiptID)
+			require.NoError(t, err)
+			require.Equal(t, []int64{n.ID}, personMatchNodeIDs(t, s, typed))
+			decideFaceForTest(t, s, n, first.FaceID, "", "retract")
+			_, err = s.UndoPhotoFaceDecision(ctx, redo.ReceiptID)
+			require.ErrorIs(t, err, ErrStaleRevision)
+			require.NoError(t, s.ValidateMetadata(ctx))
+		})
+	}
+}
+
+func TestPhotoFaceDecisionUndoRenamePreservesSharedWithdrawal(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	ada, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	grace, err := s.CreatePerson(ctx, "Grace", "operator")
+	require.NoError(t, err)
+	n, first := faceForDecisionTest(t, s, ada.PersonID)
+	_, _, err = s.CreatePhotoFace(ctx, n.CurrentVersionID, uuid.NewString(), document.FaceBox{X: .5, Width: .2, Height: .2}, ada.PersonID)
+	require.NoError(t, err)
+	assertions, err := s.DocumentPersonAssertions(ctx, n.CurrentVersionID)
+	require.NoError(t, err)
+	assertion := assertions[0]
+	assertion.Action = "withdrawn"
+	_, err = s.AssertDocumentPerson(ctx, assertion)
+	require.NoError(t, err)
+	receipt := decideFaceForTest(t, s, n, first.FaceID, grace.PersonID, "name")
+	undo, err := s.UndoPhotoFaceDecision(ctx, receipt.ReceiptID)
+	require.NoError(t, err)
+	assertions, err = s.DocumentPersonAssertions(ctx, n.CurrentVersionID)
+	require.NoError(t, err)
+	for _, assertion := range assertions {
+		require.Equal(t, "withdrawn", assertion.Action)
+	}
+	typed := snapshotTestQuery(t, `{}`)
+	typed.Filters.PersonIDs = []string{ada.PersonID}
+	require.Empty(t, personMatchNodeIDs(t, s, typed))
+	typed.Filters.PersonIDs = []string{grace.PersonID}
+	require.Empty(t, personMatchNodeIDs(t, s, typed))
+	redo, err := s.UndoPhotoFaceDecision(ctx, undo.ReceiptID)
+	require.NoError(t, err)
+	require.Equal(t, []int64{n.ID}, personMatchNodeIDs(t, s, typed))
+	_, err = s.UndoPhotoFaceDecision(ctx, redo.ReceiptID)
+	require.NoError(t, err)
+	require.Empty(t, personMatchNodeIDs(t, s, typed))
+	typed.Filters.PersonIDs = []string{ada.PersonID}
+	require.Empty(t, personMatchNodeIDs(t, s, typed))
+	require.NoError(t, s.ValidateMetadata(ctx))
 }
