@@ -106,8 +106,7 @@ func addLane(results map[DocumentIdentity]*Result, candidates []Candidate, lane 
 			results[candidate.Document] = result
 		} else if result.Path == "" {
 			// Lanes read on either side of query encoding can see a concurrent
-			// move. The lexical lane goes first, so its path, which name evidence
-			// cites, wins; hybrid revalidation then refreshes the final path.
+			// move. Keep the first lane's path; hybrid revalidation refreshes it.
 			result.Path = candidate.Path
 		}
 		if lane == LaneLexical {

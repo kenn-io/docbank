@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path"
 	"reflect"
 	"slices"
 	"strings"
@@ -170,15 +169,18 @@ func (searcher *Searcher) revalidateReport(ctx context.Context, query Query, rep
 	requested := make([]store.SearchCandidateIdentity, len(report.Results))
 	for i, result := range report.Results {
 		evidence := make([]store.SearchEvidenceIdentity, len(result.Evidence))
+		var nodeName string
 		for j, reference := range result.Evidence {
+			if reference.Kind == "node_name" {
+				nodeName = reference.NodeName
+			}
 			evidence[j] = store.SearchEvidenceIdentity{Kind: reference.Kind,
 				VectorSpaceID: reference.VectorSpaceID, EmbeddingSetID: reference.EmbeddingSetID,
 				InputGenerationID: reference.InputGenerationID, InputID: reference.InputID,
 				InputKind: reference.InputKind, BuildID: reference.BuildID, SegmentID: reference.SegmentID,
 				BlobHash: reference.BlobHash, SourceManifestChecksum: reference.SourceManifestChecksum}
 		}
-		// Lane paths were read with their evidence, so the base is the matched name.
-		requested[i] = store.SearchCandidateIdentity{NodeID: result.Document.NodeID, NodeName: path.Base(result.Path),
+		requested[i] = store.SearchCandidateIdentity{NodeID: result.Document.NodeID, NodeName: nodeName,
 			ContentVersionID: result.Document.ContentVersionID, Evidence: evidence}
 	}
 	semanticProfile, semanticBinding := "", ""
@@ -534,6 +536,9 @@ func (searcher *Searcher) collectLexical(ctx context.Context, query Query) ([]Ca
 		reference := EvidenceReference{Kind: hit.EvidenceKind, VaultID: searcher.backend.VaultID(),
 			NodeID: hit.Node.ID, NodeRevision: hit.Node.Revision, ContentVersionID: hit.Node.CurrentVersionID,
 			BuildID: hit.BuildID, SegmentID: hit.SegmentID, BlobHash: hit.BlobHash}
+		if hit.EvidenceKind == "node_name" {
+			reference.NodeName = hit.Node.Name
+		}
 		span, err := MediaTimeSpanFromLocator(hit.Locator)
 		if err != nil {
 			return nil, false, err

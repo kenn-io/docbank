@@ -389,6 +389,8 @@ func boundedRerankingEvidence(references []EvidenceReference) []EvidenceReferenc
 }
 
 func rerankingEvidenceReference(reference EvidenceReference) EvidenceReference {
+	// The matched name is a local revalidation check, not provider evidence.
+	reference.NodeName = ""
 	if reference.TimeSpan != nil {
 		span := *reference.TimeSpan
 		reference.TimeSpan = &span
