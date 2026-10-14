@@ -459,6 +459,8 @@ func TestEmbeddingOnlyJobSurvivesDisconnectAfterDurableIdentity(t *testing.T) {
 
 func TestProcessingShutdownDrainsAcceptedJobAndPreservesRecovery(t *testing.T) {
 	t.Parallel()
+	// Startup and cleanup include real SQLite and blob I/O.
+	const waitBudget = 10 * time.Second
 	inner := newProcessingTestEmbeddingProvider(t)
 	provider := &shutdownProcessingEmbeddingProvider{
 		EmbeddingProvider: inner, started: make(chan struct{}),
@@ -491,7 +493,7 @@ func TestProcessingShutdownDrainsAcceptedJobAndPreservesRecovery(t *testing.T) {
 	require.Len(t, event.Job.EmbeddingJobIDs, 1)
 	select {
 	case <-provider.started:
-	case <-time.After(3 * time.Second):
+	case <-time.After(waitBudget):
 		t.Fatal("accepted embedding did not reach the provider")
 	}
 	require.NoError(t, response.Body.Close())
@@ -503,7 +505,7 @@ func TestProcessingShutdownDrainsAcceptedJobAndPreservesRecovery(t *testing.T) {
 	require.ErrorIs(t, catalog.Server.Shutdown(shutdownCtx), context.DeadlineExceeded)
 	select {
 	case <-provider.cancelled:
-	case <-time.After(10 * time.Second):
+	case <-time.After(waitBudget):
 		t.Fatal("shutdown did not cancel accepted processing")
 	}
 	closed := make(chan struct{})
@@ -519,7 +521,7 @@ func TestProcessingShutdownDrainsAcceptedJobAndPreservesRecovery(t *testing.T) {
 	closeProcessingSignal(provider.release)
 	select {
 	case <-closed:
-	case <-time.After(3 * time.Second):
+	case <-time.After(waitBudget):
 		t.Fatal("server did not drain accepted processing after provider cleanup")
 	}
 

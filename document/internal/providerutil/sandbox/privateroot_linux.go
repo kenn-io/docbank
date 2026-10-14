@@ -343,7 +343,7 @@ func installLandlockWithWritable(paths, files []string, devices map[string]uint6
 	if version >= 5 {
 		handledAccess |= unix.LANDLOCK_ACCESS_FS_IOCTL_DEV
 	}
-	attribute := unix.LandlockRulesetAttr{Access_fs: handledAccess}
+	attribute := unix.LandlockRulesetAttr{Handled_access_fs: handledAccess}
 	//nolint:gosec // Landlock requires a pointer to this fixed ABI structure.
 	rulesetFD, _, errno := unix.Syscall6(unix.SYS_LANDLOCK_CREATE_RULESET,
 		uintptr(unsafe.Pointer(&attribute)), unsafe.Sizeof(attribute), 0, 0, 0, 0)

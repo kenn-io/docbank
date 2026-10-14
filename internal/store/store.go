@@ -257,21 +257,48 @@ func (s *Store) Checkpoint(ctx context.Context) error {
 // explicit audit implementation in Go.
 func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (retErr error) {
 	defer func() {
-		// database/sql may finish its cancellation rollback before the callback
-		// or Commit observes it. Preserve cancellation alongside ErrTxDone.
+		// Cancellation may roll back before the callback or Commit observes it.
+		// Preserve cancellation alongside ErrTxDone.
 		if errors.Is(retErr, sql.ErrTxDone) && ctx.Err() != nil {
 			retErr = errors.Join(ctx.Err(), retErr)
 		}
 	}()
-	tx, err := s.writeDB.BeginTx(ctx, nil)
+	conn, err := s.writeDB.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("acquiring transaction connection: %w", err)
+	}
+	defer func() { retErr = errors.Join(retErr, conn.Close()) }()
+	// Own cancellation so a mutation cannot return while database/sql is
+	// still rolling back and closing a connection in another goroutine.
+	tx, err := conn.BeginTx(context.WithoutCancel(ctx), nil)
 	if err != nil {
 		return fmt.Errorf("beginning transaction: %w", err)
 	}
+	rollbackDone := make(chan struct{})
+	var rollbackErr error
+	stopRollback := context.AfterFunc(ctx, func() {
+		rollbackErr = tx.Rollback()
+		close(rollbackDone)
+	})
+	defer func() {
+		if !stopRollback() {
+			<-rollbackDone
+			if rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+				retErr = errors.Join(retErr, rollbackErr)
+			}
+		}
+		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			retErr = errors.Join(retErr, err)
+		}
+	}()
 	if err := fn(tx); err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
 			return fmt.Errorf("%w (rollback also failed: %w)", err, rbErr)
 		}
 		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return errors.Join(err, tx.Rollback())
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("committing transaction: %w", err)
