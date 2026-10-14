@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/jobs"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestStorageRegistrationPreviewApplyAndRemoval(t *testing.T) {
@@ -325,4 +327,51 @@ func TestStorageEvacuationPreviewRunsAndDetachesEmptySecondary(t *testing.T) {
 	resp, body = do(t, ts, http.MethodDelete,
 		"/api/v1/storage/stores/"+registered.ID, nil, nil)
 	require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
+}
+
+func TestStorageRegistrationRejectsReservedCheckoutDestination(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name         string
+		state        store.StorageOperationState
+		previewFirst bool
+	}{
+		{"preview", store.StorageOperationCompleted, false},
+		{"apply rechecks reservation", store.StorageOperationCompleted, true},
+		{"released destination", store.StorageOperationFailed, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			destination := t.TempDir()
+			ts, live := newTestServer(t, func(d *api.Deps) {
+				d.Cfg.StoreBindings = map[string]config.StoreBindingConfig{"checkout": {Kind: "filesystem", Path: destination}}
+				d.BlobRegistry = blob.NewRegistry(t.Context(), d.Store.VaultID(), d.Cfg.StoreBindings, nil)
+				t.Cleanup(func() { require.NoError(t, d.BlobRegistry.Close()) })
+			})
+			endpoint := "/api/v1/storage/stores/preview"
+			input := map[string]any{"name": "archive", "binding": "checkout"}
+			if tc.previewFirst {
+				resp, body := do(t, ts, http.MethodPost, endpoint, nil, input)
+				require.Equal(t, http.StatusOK, resp.StatusCode, body)
+				var preview api.BlobStorePreview
+				require.NoError(t, json.Unmarshal([]byte(body), &preview))
+				endpoint = "/api/v1/storage/stores"
+				input = map[string]any{"preview_token": preview.PreviewToken}
+			}
+			node, err := live.CreateFile(t.Context(), live.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
+			require.NoError(t, err)
+			asset, err := live.PhotoAssetForNode(t.Context(), node.ID)
+			require.NoError(t, err)
+			checkout, operation, err := live.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
+			require.NoError(t, err)
+			require.NoError(t, live.FinishPhotoCheckout(t.Context(), checkout.ID, operation.ID, tc.state, "{}", "", time.Now().Add(time.Hour)))
+			resp, body := do(t, ts, http.MethodPost, endpoint, nil, input)
+			if tc.state == store.StorageOperationCompleted {
+				require.Equal(t, http.StatusConflict, resp.StatusCode, body)
+				require.Contains(t, body, checkout.ID)
+				require.Contains(t, body, `"code":"storage_namespace_overlap"`)
+			} else {
+				require.Equal(t, http.StatusOK, resp.StatusCode, body)
+			}
+		})
+	}
 }

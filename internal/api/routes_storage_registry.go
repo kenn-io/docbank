@@ -193,7 +193,7 @@ func previewStorageRegistration(
 		store: candidate, binding: binding, markerAction: "create", takeover: takeover,
 	}
 	if err := validateStorageNamespace(
-		d, bindingName, binding, existingStores,
+		ctx, d, bindingName, binding, existingStores,
 	); err != nil {
 		return storageRegistrationPlan{}, err
 	}
@@ -252,7 +252,7 @@ func applyStorageRegistration(
 		}
 	}
 	if err := validateStorageNamespace(
-		d, plan.store.Binding, plan.binding, stores,
+		ctx, d, plan.store.Binding, plan.binding, stores,
 	); err != nil {
 		return BlobStore{}, err
 	}
@@ -361,7 +361,7 @@ func requireEmptyUnmarkedNamespace(
 }
 
 func validateStorageNamespace(
-	d Deps,
+	ctx context.Context, d Deps,
 	bindingName string,
 	binding config.StoreBindingConfig,
 	stores []store.BlobStore,
@@ -374,7 +374,7 @@ func validateStorageNamespace(
 		}
 	}
 	if binding.Kind == "filesystem" {
-		overlap, err := ingest.PathsOverlap(binding.Path, d.VaultRoot)
+		overlap, err := ingest.PathsOverlapContext(ctx, binding.Path, d.VaultRoot)
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return NewError(
 				http.StatusUnprocessableEntity, "storage_binding_invalid", err.Error(),
@@ -386,8 +386,24 @@ func validateStorageNamespace(
 				fmt.Sprintf("binding %q overlaps the live vault root", bindingName),
 			)
 		}
-		watchName, watchOverlap, err := ingest.WatchBindingOverlap(
-			d.Cfg.Watches, binding,
+		checkouts, err := d.Store.ListPhotoCheckouts(ctx)
+		if err != nil {
+			return FromStoreError(err)
+		}
+		for _, checkout := range checkouts {
+			if checkout.RetentionReleased || checkout.Destination == "" {
+				continue
+			}
+			_, overlap, err := ingest.WatchBindingOverlapContext(ctx, []config.WatchConfig{{Source: checkout.Destination}}, binding)
+			if err != nil {
+				return NewError(http.StatusUnprocessableEntity, "storage_binding_invalid", err.Error())
+			}
+			if overlap {
+				return NewError(http.StatusConflict, "storage_namespace_overlap", fmt.Sprintf("binding %q overlaps reserved checkout %s", bindingName, checkout.ID))
+			}
+		}
+		watchName, watchOverlap, err := ingest.WatchBindingOverlapContext(
+			ctx, d.Cfg.Watches, binding,
 		)
 		if err != nil {
 			return NewError(

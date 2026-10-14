@@ -457,12 +457,9 @@ func (s Service) copy(ctx context.Context, root *os.Root, destination string, e 
 		_ = stream.Close()
 		return false, errors.New("checkout source size differs from frozen base")
 	}
-	n, copyErr := io.Copy(stage.File, stream)
-	if err := errors.Join(copyErr, stream.Verify(), stream.Close()); err != nil {
+	_, copyErr := io.Copy(stage.File, stream)
+	if err := errors.Join(copyErr, stream.Close()); err != nil {
 		return false, err
-	}
-	if n != e.Size {
-		return false, errors.New("checkout bytes differ from frozen base")
 	}
 	if err := stage.File.Sync(); err != nil {
 		return false, err
@@ -472,7 +469,7 @@ func (s Service) copy(ctx context.Context, root *os.Root, destination string, e 
 		return false, err
 	}
 	digest := sha256.New()
-	n, err = io.Copy(digest, blob.ReaderWithContext(ctx, stage.File))
+	n, err := io.Copy(digest, blob.ReaderWithContext(ctx, stage.File))
 	if err != nil {
 		return false, err
 	}

@@ -583,8 +583,13 @@ func (s *Store) mutatePhotoAssetTx(ctx context.Context, tx *sql.Tx, assetID stri
 }
 
 func (s *Store) mutatePhotoAsset(ctx context.Context, assetID string, revision int64, operation string, edit photoMutation) (PhotoAsset, error) {
+	unlock, err := s.lockPhotoPublication(ctx, assetID)
+	if err != nil {
+		return PhotoAsset{}, err
+	}
+	defer unlock()
 	var result PhotoAsset
-	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		var err error
 		result, err = s.mutatePhotoAssetTx(ctx, tx, assetID, revision, operation, edit)
 		return err

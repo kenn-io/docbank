@@ -4,6 +4,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -219,6 +220,8 @@ func TestPhotoImportRejectsEmptySourceAndPointsToJobs(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, exitUsage, commandExitCode(err, true))
 	source := t.TempDir()
+	absoluteSource, err := filepath.Abs(source)
+	require.NoError(t, err)
 	for _, asJSON := range []bool{false, true} {
 		args := []string{"photos", "import", source, "/photos"}
 		if asJSON {
@@ -227,7 +230,7 @@ func TestPhotoImportRejectsEmptySourceAndPointsToJobs(t *testing.T) {
 		output, err := runCLI(t, args...)
 		require.NoError(t, err, output)
 		require.Len(t, requests, 1)
-		assert.Equal(t, api.PhotoImportStartRequest{SourceRoot: source, Destination: "/photos"}, <-requests)
+		assert.Equal(t, api.PhotoImportStartRequest{SourceRoot: absoluteSource, Destination: "/photos"}, <-requests)
 		if asJSON {
 			var accepted api.StorageOperation
 			require.NoError(t, json.Unmarshal([]byte(output), &accepted))

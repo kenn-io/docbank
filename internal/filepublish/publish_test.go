@@ -98,9 +98,9 @@ func TestRootStageRejectsChangedDestinationIdentity(t *testing.T) {
 			var installed bool
 			if tc.parent {
 				// Model a rename between Publish opening the parent and calling publish.
-				installed, err = stage.publish(parent, relativePath)
+				installed, err = stage.install(parent, relativePath)
 			} else {
-				installed, err = stage.Publish(relativePath)
+				installed, err = stage.Install(relativePath)
 			}
 			require.ErrorContains(t, err, "checkout destination changed before publication")
 			require.False(t, installed)
@@ -164,7 +164,7 @@ func TestRootStageHonorsNoReplaceAndReportsPostInstallDurability(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, stage.File.Close())
 	stage.File = nil
-	installed, err := stage.Publish(relativePath)
+	installed, err := stage.Install(relativePath)
 	if runtime.GOOS == "windows" {
 		var status interface{ Errno() syscall.Errno }
 		require.ErrorAs(t, err, &status)
@@ -179,9 +179,10 @@ func TestRootStageHonorsNoReplaceAndReportsPostInstallDurability(t *testing.T) {
 	require.Equal(t, "verified", string(content))
 	stage.syncDirectory = func(*os.Root, string) error { return failure }
 	durablePath := filepath.Join(filepath.Dir(relativePath), "durable.jpg")
-	installed, err = stage.Publish(durablePath)
-	require.ErrorIs(t, err, failure)
+	installed, err = stage.Install(durablePath)
+	require.NoError(t, err)
 	require.True(t, installed)
+	require.ErrorIs(t, stage.SyncParent(), failure)
 	content, err = root.ReadFile(durablePath)
 	require.NoError(t, err)
 	require.Equal(t, "replacement", string(content))
@@ -238,8 +239,13 @@ func TestRootStageCleanupPreservesDecoysAndUserFiles(t *testing.T) {
 	require.NoError(t, root.Mkdir(decoy, 0700))
 	require.NoError(t, root.WriteFile(filepath.Join(decoy, "my-edit.jpg"), []byte("keep"), 0600))
 	require.NoError(t, root.WriteFile(wrongName, []byte("keep"), 0600))
+	probeName := rootProbePrefix + strings.Repeat("d", 32)
+	require.NoError(t, root.Mkdir(probeName, 0700))
+	require.NoError(t, root.WriteFile(filepath.Join(probeName, "photo.jpg"), nil, 0600))
 	require.NoError(t, CleanupRootStages(root))
 	_, err = root.Stat(stage.name)
+	require.ErrorIs(t, err, os.ErrNotExist)
+	_, err = root.Stat(probeName)
 	require.ErrorIs(t, err, os.ErrNotExist)
 	for _, name := range []string{decoy, wrongName} {
 		_, err = root.Stat(name)
@@ -270,6 +276,11 @@ func TestCheckRootPathsUsesDestinationNameEquivalence(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 			}
+			dir, err := root.Open(".")
+			require.NoError(t, err)
+			entries, err := dir.ReadDir(-1)
+			require.NoError(t, errors.Join(err, dir.Close()))
+			require.Empty(t, entries)
 			for _, name := range tc.paths {
 				_, err := root.Lstat(name)
 				require.ErrorIs(t, err, os.ErrNotExist)

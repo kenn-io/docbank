@@ -19,6 +19,8 @@ const maxTrashPageSize = 1000
 // re-parents the node (making the path uncomputable afterwards) and a
 // concurrent ancestor move could stale a path captured beforehand.
 func (s *Store) Trash(ctx context.Context, id, ifRev int64) (Node, string, error) {
+	s.photoPublicationTreeMu.Lock()
+	defer s.photoPublicationTreeMu.Unlock()
 	if id == s.rootID {
 		return Node{}, "", ErrIsRoot
 	}
@@ -71,6 +73,8 @@ func (s *Store) TrashPath(ctx context.Context, path string) (Node, string, error
 func (s *Store) TrashPathRevision(
 	ctx context.Context, path string, ifRev int64,
 ) (Node, string, error) {
+	s.photoPublicationTreeMu.Lock()
+	defer s.photoPublicationTreeMu.Unlock()
 	var trashed Node
 	var origPath string
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
@@ -459,7 +463,7 @@ func (s *Store) trashEmpty(
 		SELECT v.node_id FROM content_versions v
 		WHERE EXISTS(SELECT 1 FROM email_document_publications p WHERE p.parent_version_id=v.version_id)
 		   OR EXISTS(SELECT 1 FROM email_document_relations r WHERE r.child_version_id=v.version_id)
-		   OR EXISTS(SELECT 1 FROM photo_checkout_entries e JOIN photo_checkouts c ON c.checkout_id=e.checkout_id WHERE e.version_id=v.version_id AND c.retention_released=0)
+		   OR EXISTS(SELECT 1 FROM photo_checkout_entries e JOIN photo_checkouts c ON c.checkout_id=e.checkout_id WHERE e.version_id=v.version_id AND (c.retention_released=0 OR e.published=1))
 		UNION
 		SELECT n.parent_id FROM nodes n JOIN retained r ON n.id=r.id WHERE n.parent_id IS NOT NULL
 	) SELECT id FROM retained`

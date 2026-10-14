@@ -19,6 +19,7 @@ import (
 
 	"go.kenn.io/docbank/internal/filename"
 	"go.kenn.io/docbank/internal/query"
+	"golang.org/x/sync/semaphore"
 )
 
 var ErrInvalidPhotoCheckout = errors.New("invalid photo checkout")
@@ -394,8 +395,49 @@ func (s *Store) PhotoCheckoutEntries(ctx context.Context, id string) ([]PhotoChe
 	return out, rows.Err()
 }
 
+type photoPublicationLock struct {
+	gate  *semaphore.Weighted
+	users int
+}
+
+// lockPhotoPublication orders eligibility changes against the no-replace install.
+func (s *Store) lockPhotoPublication(ctx context.Context, assetID string) (func(), error) {
+	s.photoPublicationMu.Lock()
+	if s.photoPublicationLocks == nil {
+		s.photoPublicationLocks = map[string]*photoPublicationLock{}
+	}
+	lock := s.photoPublicationLocks[assetID]
+	if lock == nil {
+		lock = &photoPublicationLock{gate: semaphore.NewWeighted(1)}
+		s.photoPublicationLocks[assetID] = lock
+	}
+	lock.users++
+	s.photoPublicationMu.Unlock()
+	drop := func() {
+		s.photoPublicationMu.Lock()
+		lock.users--
+		if lock.users == 0 {
+			delete(s.photoPublicationLocks, assetID)
+		}
+		s.photoPublicationMu.Unlock()
+	}
+	if err := lock.gate.Acquire(ctx, 1); err != nil {
+		drop()
+		return nil, fmt.Errorf("waiting for photo publication: %w", err)
+	}
+	return func() { lock.gate.Release(1); drop() }, nil
+}
+
 // PublishPhotoCheckoutEntry checks visibility immediately before installing a copy.
 func (s *Store) PublishPhotoCheckoutEntry(ctx context.Context, e PhotoCheckoutEntry, publish func() (bool, error)) error {
+	// Subtree trash can invalidate members of several assets at once.
+	s.photoPublicationTreeMu.RLock()
+	defer s.photoPublicationTreeMu.RUnlock()
+	unlock, err := s.lockPhotoPublication(ctx, e.AssetID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	var allowed bool
 	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_assets a JOIN photo_files f ON f.asset_id=a.asset_id JOIN nodes n ON n.id=f.node_id WHERE a.asset_id=? AND f.file_id=? AND a.hidden_at IS NULL AND a.excluded_at IS NULL AND n.trashed_at IS NULL
  AND f.sidecar_of_file_id IS ? AND (? IS NULL OR EXISTS(
@@ -414,7 +456,7 @@ func (s *Store) PublishPhotoCheckoutEntry(ctx context.Context, e PhotoCheckoutEn
 	if !published {
 		return publicationErr
 	}
-	_, err := s.writeDB.ExecContext(context.WithoutCancel(ctx), `UPDATE photo_checkout_entries SET published=1 WHERE checkout_id=? AND file_id=?`, e.CheckoutID, e.FileID)
+	_, err = s.writeDB.ExecContext(context.WithoutCancel(ctx), `UPDATE photo_checkout_entries SET published=1 WHERE checkout_id=? AND file_id=?`, e.CheckoutID, e.FileID)
 	return errors.Join(err, publicationErr)
 }
 

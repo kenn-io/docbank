@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -602,7 +603,6 @@ func TestPhotoCheckoutReleasedHistorySurvivesPruneAndRestore(t *testing.T) {
 			require.NoError(t, err)
 			entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
 			require.NoError(t, err)
-			require.NoError(t, s.PublishPhotoCheckoutEntry(ctx, entries[0], func() (bool, error) { return true, nil }))
 			updated, _, err := s.ReplaceContent(ctx, node.ID, node.Revision, browseHash("replacement"), 30, "image/jpeg")
 			require.NoError(t, err)
 			held, err := s.PruneContentVersions(ctx, node.ID, updated.Revision, VersionPruneSelector{VersionIDs: []string{node.CurrentVersionID}}, false)
@@ -614,7 +614,7 @@ func TestPhotoCheckoutReleasedHistorySurvivesPruneAndRestore(t *testing.T) {
 			require.True(t, status.Checkout.RetentionReleased)
 			require.Equal(t, string(state), status.Checkout.State)
 			require.Equal(t, "partial checkout", status.Checkout.Error)
-			require.Equal(t, int64(1), status.PublishedFiles)
+			require.Zero(t, status.PublishedFiles)
 			pruned, err := s.PruneContentVersions(ctx, node.ID, updated.Revision, VersionPruneSelector{VersionIDs: []string{node.CurrentVersionID}}, true)
 			require.NoError(t, err)
 			require.Equal(t, 1, pruned.DeletedVersions)
@@ -812,4 +812,116 @@ func TestPhotoCheckoutRecordsInstallAfterCancellation(t *testing.T) {
 	status, err := s.PhotoCheckoutStatus(t.Context(), checkout.ID)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), status.PublishedFiles)
+}
+
+func TestPhotoCheckoutFailedAndCancelledPublishedBasesStayHeldLocally(t *testing.T) {
+	t.Parallel()
+	for _, state := range []StorageOperationState{StorageOperationFailed, StorageOperationCancelled} {
+		t.Run(string(state), func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			asset := albumAsset(t, s, "photo.jpg")
+			node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
+			require.NoError(t, err)
+			checkout, op, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+			require.NoError(t, err)
+			entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
+			require.NoError(t, err)
+			require.NoError(t, s.PublishPhotoCheckoutEntry(ctx, entries[0], func() (bool, error) { return true, nil }))
+			updated, _, err := s.ReplaceContent(ctx, node.ID, node.Revision, browseHash("replacement"), 30, "image/jpeg")
+			require.NoError(t, err)
+			require.NoError(t, s.FinishPhotoCheckout(ctx, checkout.ID, op.ID, state, "{}", "partial", time.Now().Add(time.Hour)))
+			selector := VersionPruneSelector{VersionIDs: []string{node.CurrentVersionID}}
+			held, err := s.PruneContentVersions(ctx, node.ID, updated.Revision, selector, true)
+			require.NoError(t, err)
+			require.Zero(t, held.DeletedVersions)
+			require.Len(t, held.DependencyRetained, 1)
+			var backup bytes.Buffer
+			require.NoError(t, s.ExportMetadata(ctx, &backup))
+			restored := newTestStore(t)
+			require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(backup.Bytes())))
+			pruned, err := restored.PruneContentVersions(ctx, node.ID, updated.Revision, selector, true)
+			require.NoError(t, err)
+			require.Equal(t, 1, pruned.DeletedVersions)
+		})
+	}
+}
+
+func TestPhotoCheckoutPublicationOrdersEligibilityMutationsWithoutReservingWriter(t *testing.T) {
+	t.Parallel()
+	for _, mutation := range []string{"hide", "exclude", "photo trash", "node trash", "subtree trash", "path trash"} {
+		t.Run(mutation, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			asset := albumAsset(t, s, "photo.jpg")
+			other := albumAsset(t, s, "other.jpg")
+			require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+			checkout, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+			require.NoError(t, err)
+			entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
+			require.NoError(t, err)
+			folder, err := s.MkdirAll(ctx, "/photos-to-trash")
+			require.NoError(t, err)
+			if mutation == "subtree trash" || mutation == "path trash" {
+				node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
+				require.NoError(t, err)
+				_, _, err = s.Move(ctx, node.ID, folder.ID, node.Name, node.Revision)
+				require.NoError(t, err)
+			}
+			started, release := make(chan struct{}), make(chan struct{})
+			var once sync.Once
+			releaseInstall := func() { once.Do(func() { close(release) }) }
+			defer releaseInstall()
+			published := make(chan error, 1)
+			go func() {
+				published <- s.PublishPhotoCheckoutEntry(ctx, entries[0], func() (bool, error) { close(started); <-release; return true, nil })
+			}()
+			<-started
+			changed := make(chan error, 1)
+			go func() {
+				var err error
+				switch mutation {
+				case "hide":
+					_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+				case "exclude":
+					_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
+				case "photo trash":
+					_, err = s.TrashPhotoAsset(ctx, asset.ID, asset.Revision)
+				case "node trash":
+					_, _, err = s.Trash(ctx, asset.Files[0].NodeID, UnconditionalRev)
+				case "subtree trash":
+					_, _, err = s.Trash(ctx, folder.ID, UnconditionalRev)
+				case "path trash":
+					_, _, err = s.TrashPath(ctx, "/photos-to-trash")
+				}
+				changed <- err
+			}()
+			require.Eventually(t, func() bool {
+				if mutation == "hide" || mutation == "exclude" || mutation == "photo trash" {
+					s.photoPublicationMu.Lock()
+					defer s.photoPublicationMu.Unlock()
+					return s.photoPublicationLocks[asset.ID].users == 2
+				}
+				if s.photoPublicationTreeMu.TryRLock() {
+					s.photoPublicationTreeMu.RUnlock()
+					return false
+				}
+				return true
+			}, time.Second, time.Millisecond)
+			writeCtx, cancel := context.WithTimeout(ctx, time.Second)
+			defer cancel()
+			_, err = s.SetPhotoAssetExcluded(writeCtx, other.ID, other.Revision, true)
+			require.NoError(t, err)
+			select {
+			case err := <-changed:
+				t.Fatalf("eligibility changed before installation: %v", err)
+			default:
+			}
+			releaseInstall()
+			require.NoError(t, <-published)
+			require.NoError(t, <-changed)
+			err = s.PublishPhotoCheckoutEntry(ctx, entries[0], func() (bool, error) { t.Fatal("ineligible source installed"); return false, nil })
+			require.ErrorIs(t, err, ErrPhotoCheckoutSourceUnavailable)
+		})
+	}
 }

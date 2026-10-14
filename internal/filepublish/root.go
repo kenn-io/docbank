@@ -9,6 +9,7 @@ import (
 )
 
 const rootStagePrefix = ".docbank-checkout-"
+const rootProbePrefix = ".docbank-checkout-probe-"
 
 type RootStage struct {
 	File          *os.File
@@ -70,18 +71,6 @@ func (s *RootStage) MakeParentDirectories(destination string) error {
 	return nil
 }
 
-func (s *RootStage) Publish(destination string) (bool, error) {
-	if !filepath.IsLocal(destination) {
-		return false, errors.New("checkout destination must be root-relative")
-	}
-	parent, err := s.root.OpenRoot(filepath.Dir(destination))
-	if err != nil {
-		return false, err
-	}
-	defer func() { _ = parent.Close() }()
-	return s.publish(parent, destination)
-}
-
 // Install publishes without syncing so its owner can record the installed copy first.
 func (s *RootStage) Install(destination string) (bool, error) {
 	if !filepath.IsLocal(destination) {
@@ -101,14 +90,6 @@ func (s *RootStage) Install(destination string) (bool, error) {
 }
 
 func (s *RootStage) SyncParent() error { return s.syncDirectory(s.parent, ".") }
-
-func (s *RootStage) publish(parent *os.Root, destination string) (bool, error) {
-	installed, err := s.install(parent, destination)
-	if !installed {
-		return false, err
-	}
-	return true, errors.Join(err, s.syncDirectory(parent, "."))
-}
 
 func (s *RootStage) install(parent *os.Root, destination string) (bool, error) {
 	source, err := s.root.Open(".")
@@ -170,7 +151,7 @@ func (s *RootStage) Cleanup() error {
 	return err
 }
 
-// CleanupRootStages removes only exact regular stage files at the checkout root.
+// CleanupRootStages removes exact stage files and isolated probe directories.
 func CleanupRootStages(root *os.Root) error {
 	dir, err := root.Open(".")
 	if err != nil {
@@ -182,7 +163,11 @@ func CleanupRootStages(root *os.Root) error {
 		return err
 	}
 	for _, entry := range entries {
-		if entry.Type().IsRegular() && isStageName(entry.Name(), rootStagePrefix) {
+		if entry.IsDir() && isStageName(entry.Name(), rootProbePrefix) {
+			if err := root.RemoveAll(entry.Name()); err != nil {
+				return err
+			}
+		} else if entry.Type().IsRegular() && isStageName(entry.Name(), rootStagePrefix) {
 			if err := root.Remove(entry.Name()); err != nil {
 				return err
 			}
@@ -191,50 +176,53 @@ func CleanupRootStages(root *os.Root) error {
 	return nil
 }
 
-// CheckRootPaths probes the destination's own name-equivalence rules before copying bytes.
+// CheckRootPaths probes name equivalence in an isolated directory on the destination filesystem.
 func CheckRootPaths(ctx context.Context, root *os.Root, paths []string) (retErr error) {
-	type probe struct {
-		path string
-		info os.FileInfo
+	if len(paths) == 0 {
+		return ctx.Err()
 	}
-	var probes []probe
+	name, err := newStageName(rootProbePrefix)
+	if err != nil {
+		return err
+	}
+	if err := createPrivateRootDirectory(root, name); err != nil {
+		return err
+	}
+	probes, err := root.OpenRoot(name)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, probes.Close()) }()
+	info, err := probes.Stat(".")
+	if err != nil {
+		return err
+	}
 	defer func() {
-		for _, probe := range probes {
-			current, err := root.Lstat(probe.path)
-			if errors.Is(err, os.ErrNotExist) {
-				continue
-			}
-			if err == nil && !os.SameFile(probe.info, current) {
-				err = errors.New("checkout path changed during validation")
-			}
-			if err == nil {
-				err = root.Remove(probe.path)
-			}
-			retErr = errors.Join(retErr, err)
+		current, err := root.Lstat(name)
+		if err == nil && !os.SameFile(info, current) {
+			err = errors.New("checkout probe directory changed during validation")
 		}
+		if err == nil {
+			err = root.RemoveAll(name)
+		}
+		retErr = errors.Join(retErr, err)
 	}()
-	stage := RootStage{root: root, syncDirectory: syncRootDirectory}
-	for _, name := range paths {
+	for _, path := range paths {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := stage.MakeParentDirectories(name); err != nil {
+		if !filepath.IsLocal(path) {
+			return errors.New("checkout destination must be root-relative")
+		}
+		if err := probes.MkdirAll(filepath.Dir(path), 0700); err != nil {
 			return err
 		}
-		probeStage, err := CreateRootStage(root)
+		file, err := probes.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 		if err != nil {
+			return &os.PathError{Op: "reserving checkout path", Path: path, Err: err}
+		}
+		if err := file.Close(); err != nil {
 			return err
-		}
-		installed, installErr := probeStage.Install(name)
-		if installed {
-			probes = append(probes, probe{name, probeStage.info})
-		} else if installErr != nil {
-			if _, err := root.Lstat(name); err == nil {
-				installErr = errors.Join(os.ErrExist, installErr)
-			}
-		}
-		if err := errors.Join(installErr, probeStage.Cleanup()); err != nil {
-			return &os.PathError{Op: "reserving checkout path", Path: name, Err: err}
 		}
 	}
 	return nil

@@ -238,7 +238,7 @@ func retainMediaAuthorityVersionsTx(tx *sql.Tx, candidates, retained map[string]
 		WHERE content_version_id IN (`+placeholders(len(batch))+`)
 		UNION SELECT content_version_id FROM media_input_artifacts
 		WHERE content_version_id IN (`+placeholders(len(batch))+`)
-		UNION SELECT e.version_id FROM photo_checkout_entries e JOIN photo_checkouts c ON c.checkout_id=e.checkout_id WHERE c.retention_released=0
+		UNION SELECT e.version_id FROM photo_checkout_entries e JOIN photo_checkouts c ON c.checkout_id=e.checkout_id WHERE (c.retention_released=0 OR e.published=1)
 		AND e.version_id IN (`+placeholders(len(batch))+`)`, append(append(args, args...), args...)...)
 			if err != nil {
 				return err
