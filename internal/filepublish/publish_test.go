@@ -46,11 +46,17 @@ func TestPublishHonorsNoReplaceAndReportsPostInstallDurability(t *testing.T) {
 }
 
 func TestRootStageRejectsChangedDestinationIdentity(t *testing.T) {
-	for _, method := range []string{"public Publish rejects replaced root", "rejects parent replaced after opening (skips on Windows: opened directory pinned)"} {
-		t.Run(method, func(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		public bool
+	}{
+		{"public Publish rejects replaced root", true},
+		{"rejects parent replaced after opening (skips on Windows: opened directory pinned)", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			destination := t.TempDir()
 			rootPath := destination
-			public := method == "public Publish rejects replaced root"
+			public := tc.public
 			junction := func(path, target string) {
 				t.Helper()
 				out, err := exec.Command("cmd", "/c", "mklink", "/J", filepath.Clean(filepath.FromSlash(path)), filepath.Clean(filepath.FromSlash(target))).CombinedOutput()
