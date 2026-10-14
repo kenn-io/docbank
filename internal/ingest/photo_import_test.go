@@ -126,7 +126,7 @@ func TestPhotoImportSkipsGroupChangedAfterScan(t *testing.T) {
 	nodeByName(t, ing, "/photos/IMG_0.JPG")
 }
 
-func TestPhotoImportReceiptReplayAmbiguityAndPublishedBytes(t *testing.T) {
+func TestPhotoImportPublishesBytesAndPassesThroughReceipts(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "capture.JPG")
 	content := []byte("published photo bytes")
@@ -150,7 +150,7 @@ func TestPhotoImportReceiptReplayAmbiguityAndPublishedBytes(t *testing.T) {
 	assert.Equal(t, int64(1), replayed.Receipt.Skipped)
 	assert.Zero(t, replayed.Receipt.Added)
 
-	t.Run("ambiguous raw group", func(t *testing.T) {
+	t.Run("ambiguity receipt pass-through", func(t *testing.T) {
 		ing := newTestIngester(t)
 		root := t.TempDir()
 		for name, bytes := range map[string]string{"IMG_0001.ARW": "raw-one", "IMG_0001.DNG": "raw-two", "IMG_0001.JPG": "jpeg"} {

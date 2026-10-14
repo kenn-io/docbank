@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -17,26 +16,22 @@ import (
 )
 
 func TestPhotosCLIWorkflow(t *testing.T) {
-	paths := [][]string{
-		{"photos", "assets", "create"},
-		{"photos", "assets", "attach"},
-		{"photos", "assets", "detach"},
-		{"photos", "settings", "set"},
-	}
-	for _, path := range paths {
-		command, args, err := rootCmd.Find(path)
-		require.NoError(t, err, path)
-		require.NotNil(t, command, path)
-		assert.Equal(t, rootCmd.CommandPath()+" "+strings.Join(path, " "), command.CommandPath())
-		assert.Empty(t, args)
-	}
-	for _, path := range [][]string{
-		{"photos", "assets", "attach"}, {"photos", "assets", "detach"},
-		{"photos", "settings", "set"},
+	for _, tc := range []struct {
+		path     []string
+		revision bool
+	}{
+		{[]string{"photos", "assets", "create"}, false},
+		{[]string{"photos", "assets", "attach"}, true},
+		{[]string{"photos", "assets", "detach"}, true},
+		{[]string{"photos", "settings", "set"}, true},
 	} {
-		command, _, err := rootCmd.Find(path)
-		require.NoError(t, err)
-		assert.NotNil(t, command.Flags().Lookup("revision"), path)
+		command, args, err := rootCmd.Find(tc.path)
+		require.NoError(t, err, tc.path)
+		require.NotNil(t, command, tc.path)
+		assert.Empty(t, args)
+		if tc.revision {
+			assert.NotNil(t, command.Flags().Lookup("revision"), tc.path)
+		}
 	}
 
 	const assetID = "00000000-0000-4000-8000-000000000001"
