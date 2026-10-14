@@ -18,7 +18,7 @@ func produceVisualPreviewJPEGDC(ctx context.Context, source io.ReadSeeker, base 
 		return VisualPreviewProduct{}, sourceContentUnavailable(fmt.Errorf("seeking visual preview source: %w", err))
 	}
 	recorder := &visualPreviewReadErrorRecorder{reader: &contextReader{ctx: ctx, reader: source}}
-	decoded, err := decodeVisualPreviewJPEGDC(bufio.NewReaderSize(recorder, 64*1024))
+	decoded, err := decodeVisualPreviewJPEGDC(bufio.NewReaderSize(recorder, 64*1024), config.ColorModel)
 	if recorder.err != nil {
 		err = recorder.err
 	}
@@ -54,15 +54,14 @@ type visualJPEGDCDecoder struct {
 	huffman       [2][4]visualJPEGDCHuffman
 	progressive   bool
 	restart       int
-	adobe, rgb    bool
-	jfif          bool
+	colorModel    color.Model
 	maxH, maxV    int
 	bits          byte
 	nbits         int
 }
 
-func decodeVisualPreviewJPEGDC(reader *bufio.Reader) (image.Image, error) {
-	d := visualJPEGDCDecoder{reader: reader}
+func decodeVisualPreviewJPEGDC(reader *bufio.Reader, model color.Model) (image.Image, error) {
+	d := visualJPEGDCDecoder{reader: reader, colorModel: model}
 	var signature [2]byte
 	if _, err := io.ReadFull(reader, signature[:]); err != nil {
 		return nil, err
@@ -74,6 +73,10 @@ func decodeVisualPreviewJPEGDC(reader *bufio.Reader) (image.Image, error) {
 	for err == nil {
 		if marker == 0xd9 {
 			return d.image()
+		}
+		if marker == 0x01 || marker >= 0xd0 && marker <= 0xd7 {
+			marker, err = readVisualPreviewJPEGMarker(reader)
+			continue
 		}
 		var length [2]byte
 		if _, err = io.ReadFull(reader, length[:]); err != nil {
@@ -106,14 +109,6 @@ func decodeVisualPreviewJPEGDC(reader *bufio.Reader) (image.Image, error) {
 				marker, err = d.skipAC()
 				continue
 			}
-		case 0xe0:
-			if len(payload) >= 14 {
-				d.jfif = string(payload[:5]) == "JFIF\x00"
-			}
-		case 0xee:
-			if len(payload) >= 12 && string(payload[:5]) == "Adobe" {
-				d.adobe, d.rgb = true, payload[11] == 0
-			}
 		default:
 			if marker < 0xe0 || marker > 0xef && marker != 0xfe {
 				err = jpeg.UnsupportedError("JPEG frame or coding mode")
@@ -130,31 +125,14 @@ func (d *visualJPEGDCDecoder) frame(p []byte, progressive bool) error {
 	if len(d.components) != 0 || len(p) < 6 || len(p) != 6+3*int(p[5]) {
 		return jpeg.FormatError("bad frame header")
 	}
-	if p[0] != 8 || p[5] != 1 && p[5] != 3 {
-		return jpeg.UnsupportedError("JPEG precision or components")
-	}
 	d.height, d.width = int(binary.BigEndian.Uint16(p[1:3])), int(binary.BigEndian.Uint16(p[3:5]))
-	if d.width == 0 || d.height == 0 {
-		return jpeg.FormatError("empty frame")
-	}
 	d.progressive = progressive
 	d.components = make([]visualJPEGDCComponent, int(p[5]))
 	for i := range d.components {
 		c := &d.components[i]
 		c.id, c.h, c.v, c.quant = p[6+3*i], p[7+3*i]>>4, p[7+3*i]&15, p[8+3*i]
 		c.precision = -1
-		if c.h == 0 || c.h > 4 || c.v == 0 || c.v > 4 || c.quant > 3 {
-			return jpeg.FormatError("bad component parameters")
-		}
-		if c.h == 3 || c.v == 3 {
-			return jpeg.UnsupportedError("JPEG subsampling")
-		}
 		d.maxH, d.maxV = max(d.maxH, int(c.h)), max(d.maxV, int(c.v))
-		for j := range i {
-			if c.id == d.components[j].id {
-				return jpeg.FormatError("duplicate component")
-			}
-		}
 	}
 	if len(d.components) == 1 {
 		d.components[0].h, d.components[0].v = 1, 1
@@ -162,10 +140,6 @@ func (d *visualJPEGDCDecoder) frame(p []byte, progressive bool) error {
 	}
 	for i := range d.components {
 		c := &d.components[i]
-		// Match sampling validation in go/src/image/jpeg/reader.go, processSOF.
-		if d.maxH%int(c.h) != 0 || d.maxV%int(c.v) != 0 {
-			return jpeg.UnsupportedError("JPEG subsampling")
-		}
 		c.w = (d.width*int(c.h) + 8*d.maxH - 1) / (8 * d.maxH)
 		c.hBlocks = (d.height*int(c.v) + 8*d.maxV - 1) / (8 * d.maxV)
 		c.dc = make([]int16, c.w*c.hBlocks)
@@ -455,18 +429,19 @@ func (d *visualJPEGDCDecoder) image() (image.Image, error) {
 		}
 		return gray, nil
 	}
-	// Match JFIF precedence and RGB detection in go/src/image/jpeg/reader.go, isRGB.
-	rgb := !d.jfif && (d.adobe && d.rgb || d.components[0].id == 'R' && d.components[1].id == 'G' && d.components[2].id == 'B')
 	output := image.NewRGBA(bounds)
 	for y := range bounds.Dy() {
 		for x := range bounds.Dx() {
 			var values [3]byte
 			for i, c := range d.components {
-				cx, cy := x/(d.maxH/int(c.h)), y/(d.maxV/int(c.v))
+				cx, cy := x*int(c.h)/d.maxH, y*int(c.v)/d.maxV
 				values[i] = c.sample(cy*c.w + cx)
+				if d.colorModel == color.YCbCrModel && i > 0 {
+					values[i] = c.chroma(x, y, d.maxH, d.maxV)
+				}
 			}
 			r, g, b := values[0], values[1], values[2]
-			if !rgb {
+			if d.colorModel == color.YCbCrModel {
 				r, g, b = color.YCbCrToRGB(r, g, b)
 			}
 			output.SetRGBA(x, y, color.RGBA{R: r, G: g, B: b, A: 255})
@@ -479,4 +454,16 @@ func (c *visualJPEGDCComponent) sample(i int) byte {
 	// The DC coefficient gives the block mean without a full inverse transform.
 	value := (int64(c.dc[i])*int64(c.quantValue)+4)>>3 + 128
 	return byte(max(0, min(255, value)))
+}
+
+func (c *visualJPEGDCComponent) chroma(x, y, maxH, maxV int) byte {
+	// Align chroma block centres with output pixel centres before interpolating.
+	fx := max(0, min(float64(c.w-1), (float64(x)+0.5)*float64(c.h)/float64(maxH)-0.5))
+	fy := max(0, min(float64(c.hBlocks-1), (float64(y)+0.5)*float64(c.v)/float64(maxV)-0.5))
+	x0, y0 := int(fx), int(fy)
+	x1, y1 := min(x0+1, c.w-1), min(y0+1, c.hBlocks-1)
+	dx, dy := fx-float64(x0), fy-float64(y0)
+	top := float64(c.sample(y0*c.w+x0))*(1-dx) + float64(c.sample(y0*c.w+x1))*dx
+	bottom := float64(c.sample(y1*c.w+x0))*(1-dx) + float64(c.sample(y1*c.w+x1))*dx
+	return byte(top*(1-dy) + bottom*dy + 0.5)
 }

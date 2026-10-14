@@ -127,6 +127,10 @@ and encode as a quality-90 JPEG. Source dimensions must be positive. JPEGs above
 including progressive JPEGs, up to 1,000,000,000 source pixels. JPEGs above that
 ceiling record `failed` with `source_dimensions_exceed_limit` before allocating
 coefficient planes. Fit and large previews stay at most one-eighth scale.
+Oversize progressive previews use DC scans only. AC scans must be marker-framed
+and nonempty; their entropy contents are skipped. Damaged AC data after valid
+DC scans still yields a correct one-eighth preview. Baseline JPEGs decode all
+AC entropy data. Subsampled chroma block averages use bilinear interpolation.
 PNG, GIF, and WebP sources above 100,000,000 pixels record `failed` with
 `source_dimensions_exceed_limit`. Camera RAW files use the JPEG limits for
 their embedded preview.

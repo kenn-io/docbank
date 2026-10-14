@@ -646,9 +646,9 @@ func failedVisualPreview(
 	return VisualPreviewProduct{Preview: base}
 }
 
-func visualPreviewDimensionsAllowed(width, height int) bool {
+func visualPreviewDimensionsAllowed(width, height int, limit int64) bool {
 	return width > 0 && height > 0 &&
-		int64(width) <= visualPreviewMaxSourcePixels/int64(height)
+		int64(width) <= limit/int64(height)
 }
 
 func boundedVisualPreviewDimensionsForEdge(width, height, edge int) (int, int) {
