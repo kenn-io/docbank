@@ -366,6 +366,10 @@ the original is retained, then use processing receipts for that same source
 version. A processing receipt's state comes from its processing job when read.
 A failed retry can leave an earlier successful transcript visible for the same
 version. A transcript from an older version cannot cover newer bytes.
+Source lists page distinct caller-visible source IDs before selecting each
+source's newest visible occurrence. Equal occurrence timestamps use descending
+occurrence ID as the tie-break. Repeated occurrences do not consume page slots
+or repeat the newest-occurrence lookup for the same source.
 Raw URLs and credential bindings never appear in receipts, errors, logs,
 renditions, search results, or portable metadata.
 
