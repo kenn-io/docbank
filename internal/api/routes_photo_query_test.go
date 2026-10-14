@@ -613,3 +613,16 @@ func TestPhotoBrowseBrowserCoordinatesRequireTiles(t *testing.T) {
 		})
 	}
 }
+
+func TestMapTileRouteIsInstalledBehindAuthentication(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, func(d *api.Deps) {
+		d.Cfg.Web.MapTiles = config.MapTilesConfig{TileURL: "https://127.0.0.1:1/{z}/{x}/{y}.png", Attribution: "Example", MaxZoom: 19}
+	})
+	const path = "/api/daemon/web-map-tiles/1/0/0"
+	resp, _ := do(t, ts, http.MethodGet, path, map[string]string{"X-Api-Key": ""}, nil)
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	resp, body := do(t, ts, http.MethodGet, path, map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}, nil)
+	require.Equal(t, http.StatusBadGateway, resp.StatusCode, body)
+	require.Contains(t, body, "map_tile_unavailable")
+}

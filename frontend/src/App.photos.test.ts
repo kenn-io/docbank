@@ -909,7 +909,7 @@ it.each(["change", "return", "return before first hide", "interrupted return", "
  const album=photoAlbum();const direct=cause.startsWith("direct");
  history.replaceState(null,"",`${direct?cause.includes("album")?`/photos/map/${album.id}`:"/photos/map":"/photos"}#web_session=synthetic&web_upload_secret=proof`);storage();
  vi.stubGlobal("ResizeObserver",class {observe() {} disconnect() {}});vi.spyOn(HTMLElement.prototype,"clientWidth","get").mockReturnValue(1000);vi.spyOn(HTMLElement.prototype,"clientHeight","get").mockReturnValue(800);
- const meta=document.createElement("meta");meta.name="docbank-map-tiles";meta.content=JSON.stringify({tile_url:"https://tiles.example.org/{z}/{x}/{y}",attribution:"Example",max_zoom:19});document.head.append(meta);
+ const meta=document.createElement("meta");meta.name="docbank-map-tiles";meta.content=JSON.stringify({tile_url:"/api/daemon/web-map-tiles/{z}/{x}/{y}",host: "tiles.example.org",attribution:"Example",max_zoom:19});document.head.append(meta);
  let finish!:(value:Response)=>void, changed=false, reload=false, pages=0;
  let poll!:()=>void;const interval=globalThis.setInterval;
  vi.spyOn(globalThis,"setInterval").mockImplementation((callback,delay,...args)=>{if(delay === 2000){poll=callback as ()=>void;return 0 as unknown as ReturnType<typeof setInterval>;}return interval(callback,delay,...args);});
@@ -961,7 +961,7 @@ it.each(["change", "return", "return before first hide", "interrupted return", "
 it.each(["retry", "poll", "changed authority"])("retains staged Map pages after a transient access refresh failure, %s", async recovery => {
  history.replaceState(null,"","/photos/map#web_session=synthetic&web_upload_secret=proof");storage();
  vi.stubGlobal("ResizeObserver",class {observe() {} disconnect() {}});vi.spyOn(HTMLElement.prototype,"clientWidth","get").mockReturnValue(1000);vi.spyOn(HTMLElement.prototype,"clientHeight","get").mockReturnValue(800);
- const meta=document.createElement("meta");meta.name="docbank-map-tiles";meta.content=JSON.stringify({tile_url:"https://tiles.example.org/{z}/{x}/{y}",attribution:"Example",max_zoom:19});document.head.append(meta);
+ const meta=document.createElement("meta");meta.name="docbank-map-tiles";meta.content=JSON.stringify({tile_url:"/api/daemon/web-map-tiles/{z}/{x}/{y}",host: "tiles.example.org",attribution:"Example",max_zoom:19});document.head.append(meta);
  let changeID="first", failed=false, poll!:()=>void;const cursors:(string|undefined)[]=[];const interval=globalThis.setInterval;
  vi.spyOn(globalThis,"setInterval").mockImplementation((callback,delay,...args)=>{if(delay===2000){poll=callback as ()=>void;return 0 as unknown as ReturnType<typeof setInterval>;}return interval(callback,delay,...args);});
  stubPhotoFetch(vi.fn(async(url:string,init:RequestInit)=>{
@@ -1015,7 +1015,7 @@ it("re-pages Library on return with an unchanged hidden change ID", async () => 
 
 it("shows Album not found for an unknown album Map", async () => {
  const album=photoAlbum();history.replaceState(null,"",`/photos/map/${album.id}#web_session=synthetic&web_upload_secret=proof`);storage();
- const meta=document.createElement("meta");meta.name="docbank-map-tiles";meta.content=JSON.stringify({tile_url:"https://tiles.example.org/{z}/{x}/{y}",attribution:"Example",max_zoom:19});document.head.append(meta);
+ const meta=document.createElement("meta");meta.name="docbank-map-tiles";meta.content=JSON.stringify({tile_url:"/api/daemon/web-map-tiles/{z}/{x}/{y}",host: "tiles.example.org",attribution:"Example",max_zoom:19});document.head.append(meta);
  stubPhotoFetch(vi.fn(async(url:string)=>{
   if(url.endsWith("/photos/albums")) return albumResponse([]);
   if(url.endsWith("/photos/hidden")) return albumResponse({configured:true});
@@ -1039,7 +1039,7 @@ it.each(["album", "album year", "direct album", "Hidden", "existing gps_bounds"]
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
   const meta = document.createElement("meta");
   meta.name = "docbank-map-tiles";
-  meta.content = JSON.stringify({ tile_url: "https://tiles.example.org/{z}/{x}/{y}", attribution: "Example", max_zoom: 19 });
+  meta.content = JSON.stringify({ tile_url: "/api/daemon/web-map-tiles/{z}/{x}/{y}", host: "tiles.example.org", attribution: "Example", max_zoom: 19 });
   document.head.append(meta);
   const queries: { projection?: string; hidden: boolean; query: Query }[] = [];
   let library: Photos | undefined;

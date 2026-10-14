@@ -92,7 +92,7 @@ export class Photos {
   // Album views and Map show no filter counts, so those stores never request them.
   private readonly withoutCounts: boolean;
 
-  constructor(private session: string, private onauthfailure: (cause: unknown) => void, readonly hidden = false, query: Query = photoQuery, readonly projection?: "map", private readonly hiddenAccess?: HiddenAccess) { this.baseQuery = query; this.query = query; this.withoutCounts = Boolean(query.filters?.set_ids?.length) || projection === "map"; }
+  constructor(readonly session: string, readonly onauthfailure: (cause: unknown) => void, readonly hidden = false, query: Query = photoQuery, readonly projection?: "map", private readonly hiddenAccess?: HiddenAccess) { this.baseQuery = query; this.query = query; this.withoutCounts = Boolean(query.filters?.set_ids?.length) || projection === "map"; }
 
   setSort(sort: QuerySort) {
     if (this.disposed) return;

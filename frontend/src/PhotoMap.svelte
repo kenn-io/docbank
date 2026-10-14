@@ -5,9 +5,10 @@
   import "leaflet.markercluster";
   import "leaflet.markercluster/dist/MarkerCluster.css";
   import { type MapTiles } from "./photoMap.js";
+  import { APIError, sessionResponse } from "./api-transport.js";
   import type { PhotoMapRow } from "./generated/docbank.js";
   import type { MapView, PhotoRow } from "./photos.svelte.js";
-  let { items, appendedFrom, tiles, view, onopen, onvisible, onview }: { items: PhotoMapRow[]; appendedFrom?: PhotoRow[]; tiles: MapTiles; view?: MapView; onopen: (id: string, element: HTMLElement) => void; onvisible: (rows: PhotoMapRow[]) => void; onview?: (view: MapView) => void } = $props();
+  let { items, appendedFrom, tiles, session, onauthfailure, view, onopen, onvisible, onview }: { items: PhotoMapRow[]; appendedFrom?: PhotoRow[]; tiles: MapTiles; session: string; onauthfailure?: (cause: unknown) => void; view?: MapView; onopen: (id: string, element: HTMLElement) => void; onvisible: (rows: PhotoMapRow[]) => void; onview?: (view: MapView) => void } = $props();
   let container: HTMLDivElement;
   let map: L.Map | undefined;
   let cluster: L.MarkerClusterGroup | undefined;
@@ -83,7 +84,33 @@
     const attribution = document.createElement("span"); attribution.textContent = tiles.attribution;
     const tileKey = ({ coords }: L.TileEvent) => `${coords.z}/${coords.x}/${coords.y}`;
     const clearTile = (event: L.TileEvent) => { failedTiles.delete(tileKey(event)); tileError = failedTiles.size > 0; };
-    L.tileLayer(tiles.tile_url, { attribution: attribution.innerHTML, maxZoom: tiles.max_zoom, noWrap: true, bounds }).on("tileerror", event => { failedTiles.add(tileKey(event)); tileError = true; }).on("tileload", clearTile).on("tileunload", clearTile).addTo(map);
+    // Tiles load through the daemon with the browser session, so the provider key stays server-side.
+    const disposers = new Map<HTMLElement, () => void>();
+    const SessionTiles = L.TileLayer.extend({
+      createTile(this: L.TileLayer, coords: L.Coords, done: L.DoneCallback) {
+        const tile = document.createElement("img"), controller = new AbortController();
+        let blobURL = "", disposed = false;
+        const release = () => { if (blobURL) URL.revokeObjectURL(blobURL); blobURL = ""; };
+        disposers.set(tile, () => { disposed = true; controller.abort(); release(); });
+        // Leaflet overwrites onload/onerror when it abandons a tile, so listen instead.
+        tile.alt = "";
+        tile.addEventListener("load", () => { if (!disposed) { release(); done(undefined, tile); } });
+        tile.addEventListener("error", () => { if (!disposed) { release(); done(new Error("tile image failed"), tile); } });
+        sessionResponse(this.getTileUrl(coords), { session, signal: controller.signal, headers: { Accept: "image/*" } })
+          .then(response => response.blob())
+          .then(blob => { if (!disposed) { blobURL = URL.createObjectURL(blob); tile.src = blobURL; } })
+          .catch(cause => {
+            if (disposed) return;
+            if (cause instanceof APIError && (cause.status === 401 || cause.status === 403)) onauthfailure?.(cause);
+            else done(cause as Error, tile);
+          });
+        return tile;
+      },
+    }) as new (url: string, options: L.TileLayerOptions) => L.TileLayer;
+    const dispose = (event: L.TileEvent) => { disposers.get(event.tile)?.(); disposers.delete(event.tile); };
+    new SessionTiles(tiles.tile_url, { attribution: attribution.innerHTML, maxZoom: tiles.max_zoom, noWrap: true, bounds })
+      .on("tileerror", event => { failedTiles.add(tileKey(event)); tileError = true; }).on("tileload", clearTile)
+      .on("tileabort", dispose).on("tileunload", event => { dispose(event); clearTile(event); }).addTo(map);
     cluster = L.markerClusterGroup({ showCoverageOnHover: false, iconCreateFunction: group => L.divIcon({ className: "photo-map-cluster", html: String(group.getChildCount()), iconSize: [36,36] }) });
     cluster.on("clusterkeypress", event => {
       if ("originalEvent" in event && event.originalEvent instanceof KeyboardEvent && event.originalEvent.key === " ") { event.originalEvent.preventDefault(); cluster?.fire("click", event); }
@@ -95,7 +122,7 @@
   });
 </script>
 <div class="photo-map-frame">
-  {#if tileError}<div class="photo-error" role="alert">Map tiles from {new URL(tiles.tile_url).host} couldn't load. Check [web.map_tiles], then restart Docbank.</div>{/if}
+  {#if tileError}<div class="photo-error" role="alert">Map tiles from {tiles.host} couldn't load. Check [web.map_tiles], then restart Docbank.</div>{/if}
   <div bind:this={container} class="photo-map" aria-label="Photo map"></div>
 </div>
 <style>

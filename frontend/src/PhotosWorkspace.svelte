@@ -20,7 +20,7 @@
 
   import type PhotoMap from "./PhotoMap.svelte";
   import type { MapTiles } from "./photoMap.js";
-  let { photos, cache, title = "Library", mapMode = false, tiles = { tile_url: "", attribution: "", max_zoom: 19 }, albums, albumID = "", onnavigate = () => {}, ontrashed, onhidden, onactionerror, oninvalidate, photoID = "", onphotochange = () => {} }: { photos: Photos; cache: PhotoPreviewCache; title?: string; mapMode?: boolean; tiles?: MapTiles; albums?: PhotoAlbums; albumID?: string; onnavigate?: (path: string) => void; ontrashed?: (source: Photos) => void; onhidden?: () => void | Promise<void>; onactionerror?: (error: string) => void; oninvalidate?: () => void | Promise<void>; photoID?: string; onphotochange?: (id: string, mode: "open" | "step" | "close") => void } = $props();
+  let { photos, cache, title = "Library", mapMode = false, tiles = { tile_url: "", host: "", attribution: "", max_zoom: 19 }, albums, albumID = "", onnavigate = () => {}, ontrashed, onhidden, onactionerror, oninvalidate, photoID = "", onphotochange = () => {} }: { photos: Photos; cache: PhotoPreviewCache; title?: string; mapMode?: boolean; tiles?: MapTiles; albums?: PhotoAlbums; albumID?: string; onnavigate?: (path: string) => void; ontrashed?: (source: Photos) => void; onhidden?: () => void | Promise<void>; onactionerror?: (error: string) => void; oninvalidate?: () => void | Promise<void>; photoID?: string; onphotochange?: (id: string, mode: "open" | "step" | "close") => void } = $props();
   const album = $derived(albums?.items.find(item => item.id === albumID));
   let alive = true;
   onDestroy(() => alive = false);
@@ -211,7 +211,7 @@
     <EmptyState title="Maps are disabled" description="Configure [web.map_tiles] in config.toml and restart Docbank." />
   {:else}
   {#if mapMode}
-    <div class="map-disclosure">{new URL(tiles.tile_url).host} receives your IP address and viewed map areas.</div>
+    <div class="map-disclosure">{tiles.host} receives Docbank's IP address and viewed map areas.</div>
     {#if photos.started}<div class="map-controls"><span>{photos.total.toLocaleString()} located photo{photos.total === 1 ? "" : "s"}{photos.date ? ` ${photos.date.length === 10 ? "on" : "in"} ${dateLabel}` : ""}</span></div>{/if}
     {#if photos.mapCapped}<p class="photo-search-limit" role="status">Showing the newest {photos.items.length.toLocaleString()} of {photos.total.toLocaleString()} located photos. Narrow your search or date to see the rest.</p>{/if}
     <div class="map-tabs"><Button size="sm" surface={mobileTab === "map" ? "solid" : "outline"} onclick={() => mobileTab = "map"}>Map</Button><Button size="sm" surface={mobileTab === "photos" ? "solid" : "outline"} onclick={() => mobileTab = "photos"}>Photos</Button></div>
@@ -304,7 +304,7 @@
   {/snippet}
   {#if mapMode}
     {#await import("./PhotoMap.svelte") then { default: PhotoMap }}
-      <div class="map-pane"><PhotoMap bind:this={map} items={photos.items as PhotoMapRow[]} appendedFrom={photos.appendedFrom} {tiles} view={photos.mapView} onopen={open} onvisible={rows => { visible = rows; }} onview={view => { photos.mapView = view; }} /></div>
+      <div class="map-pane"><PhotoMap bind:this={map} items={photos.items as PhotoMapRow[]} appendedFrom={photos.appendedFrom} {tiles} session={photos.session} onauthfailure={photos.onauthfailure} view={photos.mapView} onopen={open} onvisible={rows => { visible = rows; }} onview={view => { photos.mapView = view; }} /></div>
       {@render libraryGrid()}
     {:catch}<EmptyState title="Map couldn't load" description="Reload this page to try again." />{/await}
   {:else}{@render libraryGrid()}{/if}

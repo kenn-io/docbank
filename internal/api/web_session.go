@@ -472,6 +472,9 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	if method != http.MethodGet {
 		return false
 	}
+	if after, ok := strings.CutPrefix(path, webMapTilePath+"/"); ok {
+		return r.URL.RawQuery == "" && len(strings.Split(after, "/")) == 3
+	}
 	if path == "/api/v1/duplicates" {
 		values, err := url.ParseQuery(r.URL.RawQuery)
 		if err != nil {

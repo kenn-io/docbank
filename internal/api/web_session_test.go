@@ -60,7 +60,7 @@ func TestWebSessionAllowsPhotoAlbumRoutes(t *testing.T) {
 func TestPhotoAlbumPages(t *testing.T) {
 	t.Parallel()
 	mux := http.NewServeMux()
-	registerWeb(mux, true, "http://localhost", "", config.MapTilesConfig{})
+	registerWeb(mux, true, "http://localhost", "", config.MapTilesConfig{}, nil)
 	for _, tc := range []struct {
 		path    string
 		allowed bool

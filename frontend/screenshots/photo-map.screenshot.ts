@@ -1,6 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
+import { createServer, type Server } from "node:https";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -8,41 +10,56 @@ const exec = promisify(execFile);
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const binary = process.env.DOCBANK_SCREENSHOT_BINARY ?? path.join(repository, "bin", process.platform === "win32" ? "docbank.exe" : "docbank");
 const output = process.env.DOCBANK_MAP_PROOF_DIR;
+const tilePNG = "iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAIAAADTED8xAAAEEElEQVR42u3YwQmFMBBF0fTfkS2Ie5eCNQRxqSBIOggzc2Aa8F0O/Py2n0fQu+7+X9BPWLb1PftPvAYAAAAIAAAAAgAAgAAAACAAAAAIAAAAAgAAgAAAACAAAAAIAAAAAgAAgAAAACAAAAAIAAAAAgAAgAAAACAAAAAIAAAAAgAAgAAAACAAAAAIAAAAAgAAgAAAACAAAAAAAAAAANgfAADsDwAA9gcAAPsDAID9AQDA/gAAYH8AALA/AADYHwAA7A8AAPYHAAD7AwCA/QEAwP4AAGB/AACwPwAA2B8AAOwPAAD2BwAA+wMAgP0BAMD+AABgfwAAsD8AAAAAAAAAAAAAAAIAAIAAAAAgAAAACAAAAAIAAIAAAAAgAAAACABAQgDjZzhX7QBwADgHgHMVAXgEewT7F0gAAAAQAAAABAAAAAEAAEAAAAAQAAAABAAAAAEAAEAAAAAQAAAABAAAAAEAAEAAAAAQAAAABAAAAAEAAEAAAAAQAAAABAAAAAEAAEAAAAAQAAAABAAAAAEAAAAAAAAAwP4AAGB/AACwPwAA2B8AAOwPAAD2BwAA+wMAgP0BAMD+AABgfwAAsD8AANgfAADsDwAA9gcAAPsDAID9AQDA/gAAYH8AALA/AADYHwAA7A8AAPYHAAD7AwCA/QEAAAAAAAAAAAAAEAAAAAQAAAABAABAAAAAEAAAAAQAAAABAABAAAASAvgaRLwxQNyvsP/cA8DVBuAnkJ9A3gACAACAAAAAIAAAAAgAAAACAACAAAAAIAAAAAgAAAACAACAAAAAIAAAAAgAAAACAACAAAAAIAAAAAgAAAACAACAAAAAIAAAAAgAAAACAACAAAAAIAAAAAgAAAAAAAAAAPYHAAD7AwCA/QEAwP4AAGB/AACwPwAA2B8AAOwPAAD2BwAA+wMAgP0BAMD+AABgfwAAsD8AANgfAADsDwAA9gcAAPsDAID9AQDA/gAAYH8AALA/AADYHwAA7A8AAAAAAAAAAAAAgAAAACAAAAAIAAAAAgAAgAAAACAAAAAIAAAAAgCQEMD4Gc5VOwAcAM4B4FxFAB7BHsH+BRIAAAAEAAAAAQAAQAAAABAAAAAEAAAAAQAAQAAAABAAAAAEAAAAAQAAQAAAABAAAAAEAAAAAQAAQAAAABAAAAAEAAAAAQAAQAAAABAAAAAEAAAAAQAAQAAAAAAAAAAAsD8AANgfAADsDwAA9gcAAPsDAID9AQDA/gAAYH8AALA/AADYHwAA7A8AAPYHAAD7AwCA/QEAwP4AAGB/AACwPwAA2B8AAOwPAAD2BwAA+wMAgP0BAMD+AABgfwAAAAAAAAAAAAAABAAAAAEAAEAAAAAQAAAABAAAAAEAAEAAAAAQAAAABAAgFYAHCWia2leX7zIAAAAASUVORK5CYII=";
 test.skip(!output, "DOCBANK_MAP_PROOF_DIR enables synthetic map proof");
 test("photo map privacy, clusters, marker return and mobile grid", async ({ page }) => {
   test.setTimeout(300_000);
   await mkdir(output!, { recursive: true });
   const workspace = await mkdtemp(path.join(output!, "map-proof-"));
   const vault = path.join(workspace, "vault");
-  const env = { ...process.env, DOCBANK_HOME: vault, DOCBANK_LOCK_DIR: path.join(workspace, "locks"), DOCBANK_TELEMETRY_ENABLED: "0", GOCACHE: process.env.GOCACHE };
+  const env = { ...process.env, DOCBANK_HOME: vault, DOCBANK_LOCK_DIR: path.join(workspace, "locks"), DOCBANK_TELEMETRY_ENABLED: "0", DOCBANK_MAP_TILE_TEST_CA: path.join(workspace, "tls", "ca.pem"), GOCACHE: process.env.GOCACHE };
   const run = async (...args: string[]) => (await exec(binary, args, { cwd: repository, env, timeout: 60_000 })).stdout.trim();
   const errors: string[] = [];
   page.on("pageerror", error => { errors.push(error.message); console.error(error.stack); });
-  let externalRequests = 0, listings = 0, mapChunks = 0, libraryReads = 0;
-  page.on("request", request => { if (/\/assets\/PhotoMap-[^/]+\.js$/.test(new URL(request.url()).pathname)) mapChunks++; if (request.url().endsWith("/photos/assets/query")) { listings++; const filters=request.postDataJSON().query.filters; if(!filters.gps_bounds && !filters.asset_ids) libraryReads++; } if (new URL(request.url()).hostname === "tiles.example.org") externalRequests++; });
+  const browserRequests: string[] = [];
+  let tileRequests = 0, listings = 0, mapChunks = 0, libraryReads = 0;
+  page.on("request", request => { browserRequests.push(request.url()); if (/\/assets\/PhotoMap-[^/]+\.js$/.test(new URL(request.url()).pathname)) mapChunks++; if (request.url().endsWith("/photos/assets/query")) { listings++; const filters=request.postDataJSON().query.filters; if(!filters.gps_bounds && !filters.asset_ids) libraryReads++; } if (new URL(request.url()).pathname.startsWith("/api/daemon/web-map-tiles/")) tileRequests++; });
   await page.addInitScript(() => {
     Object.defineProperty(window, "L", {configurable:true, set(leaflet:typeof import("leaflet")) {
       Object.defineProperty(window, "L", {value:leaflet,writable:true,configurable:true});
       leaflet.Map.addInitHook(function(this:import("leaflet").Map) { (window as typeof window & {photoMap:import("leaflet").Map}).photoMap=this; });
     }});
   });
+  // A synthetic HTTPS provider that the daemon reaches through the real tile route.
+  let provider: Server | undefined, providerRequests = 0, providerFails = false;
   try {
+    await mkdir(path.join(workspace, "tls"));
+    await exec("go", ["run", "./frontend/screenshots/tile-tls.go", path.join(workspace, "tls")], { cwd: repository, env, timeout: 180_000 });
+    provider = createServer({ key: await readFile(path.join(workspace, "tls", "leaf.key")), cert: await readFile(path.join(workspace, "tls", "leaf.pem")) }, (_request, response) => {
+      providerRequests++;
+      if (providerFails) { response.writeHead(404).end(); return; }
+      response.writeHead(200, { "Content-Type": "image/png" }).end(Buffer.from(tilePNG, "base64"));
+    });
+    await new Promise<void>(resolve => provider!.listen(0, "127.0.0.1", resolve));
+    const providerHost = `127.0.0.1:${(provider.address() as AddressInfo).port}`;
     await exec("go", ["run", "-tags", "fts5", "./frontend/screenshots/photos-fixture.go", "-map", vault, "15"], { cwd: repository, env, timeout: 180_000 });
     const disabledURL = new URL(await run("web", "--no-browser")); disabledURL.pathname = "/photos/map";
     await page.goto(disabledURL.href);
     await page.getByText("Maps are disabled", {exact:true}).waitFor();
-    expect(externalRequests).toBe(0); expect(mapChunks).toBe(0);
+    expect(tileRequests).toBe(0); expect(mapChunks).toBe(0);
     await page.screenshot({path:path.join(output!, "photo-map-disabled-1440-dark.png"), animations:"disabled"});
     await run("daemon", "stop");
-    await writeFile(path.join(vault, "config.toml"), '[web.map_tiles]\ntile_url = "https://tiles.example.org/{z}/{x}/{y}.png"\nattribution = "Example map provider"\nmax_zoom = 19\n');
-    await page.route("https://tiles.example.org/**", route => route.fulfill({ contentType:"image/svg+xml", body:'<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><rect width="256" height="256" fill="#d7e2df"/><path d="M0 64H256M0 192H256M64 0V256M192 0V256" stroke="#f6f8f4" stroke-width="6"/><path d="M0 128H256M128 0V256" stroke="#b9ccca" stroke-width="2"/></svg>' }));
+    await writeFile(path.join(vault, "config.toml"), '[web.map_tiles]\ntile_url = "https://' + providerHost + '/{z}/{x}/{y}.png?key=synthetic-provider-key"\nattribution = "Example map provider"\nmax_zoom = 19\n');
     const enabledURL = new URL(await run("web", "--no-browser")); enabledURL.pathname = "/photos/map";
     const beforeMap=libraryReads;
     await page.goto(enabledURL.href);
     await expect(page.getByText("14 located photos", {exact:true})).toBeVisible();expect(libraryReads).toBe(beforeMap);
     await expect(page.locator(".photo-map-cluster").first()).toBeVisible(); expect(mapChunks).toBe(1);
-    await expect(page.getByText("tiles.example.org receives your IP address and viewed map areas.", {exact:true})).toBeVisible();
-    await expect.poll(() => externalRequests).toBeGreaterThan(0);
+    await expect(page.getByText(`${providerHost} receives Docbank's IP address and viewed map areas.`, {exact:true})).toBeVisible();
+    await expect.poll(() => tileRequests).toBeGreaterThan(0);
+    await expect.poll(() => providerRequests).toBeGreaterThan(0);
+    expect(await page.content()).not.toContain("synthetic-provider-key");
+    expect(browserRequests.some(url => url.includes("synthetic-provider-key") || new URL(url).host === providerHost)).toBe(false);
     await expect(page.getByTestId("photo-scroll").locator("img")).toHaveCount(9);
     await page.screenshot({path:path.join(output!, "photo-map-enabled-1440-dark.png"), animations:"disabled"});
     await page.evaluate(() => (window as typeof window & {photoMap:import("leaflet").Map}).photoMap.setView([0,372],2,{animate:false}));
@@ -218,12 +235,15 @@ test("photo map privacy, clusters, marker return and mobile grid", async ({ page
     await page.unroute("**/photos/assets/query");
     await accessError.getByRole("button",{name:"Retry",exact:true}).evaluate(button=>button.addEventListener("click",()=>{Object.defineProperty(document,"visibilityState",{configurable:true,value:"visible"});},{capture:true,once:true}));
     await accessError.getByRole("button",{name:"Retry",exact:true}).click({timeout:15_000});await expect(page.getByText("13 located photos",{exact:true})).toBeVisible();
-    await page.unroute("https://tiles.example.org/**");
-    await page.route("https://tiles.example.org/**",route=>route.fulfill({status:404,body:""}));
+    providerFails = true;
+    // Routing disables the browser cache so requests reach the failing provider.
+    await page.route("**/api/daemon/web-map-tiles/**", route => route.continue());
+    const beforeFailure = providerRequests;
     await page.setViewportSize({width:1440,height:960});await page.goto("about:blank");await page.goto(enabledURL.href);
     await expect(page.getByText("13 located photos",{exact:true})).toBeVisible();
     await expect(page.locator(".photo-map-cluster").first()).toBeVisible();
-    await expect(page.getByRole("alert")).toHaveText("Map tiles from tiles.example.org couldn't load. Check [web.map_tiles], then restart Docbank.");
+    await expect.poll(() => providerRequests).toBeGreaterThan(beforeFailure);
+    await expect(page.getByRole("alert")).toHaveText(`Map tiles from ${providerHost} couldn't load. Check [web.map_tiles], then restart Docbank.`);
     await page.screenshot({path:path.join(output!,"photo-map-tile-error-1440-dark.png"),animations:"disabled"});
     await page.setViewportSize({width:400,height:860});
     await page.locator(".map-tabs").getByRole("button",{name:"Map",exact:true}).click();
@@ -239,6 +259,7 @@ test("photo map privacy, clusters, marker return and mobile grid", async ({ page
     expect(errors).toEqual([]);
     await writeFile(path.join(output!, "preview.json"), JSON.stringify({url:enabledURL.href, workspace, binary}, null, 2));
   } finally {
+    provider?.close();
     if (!process.env.DOCBANK_KEEP_MAP_PREVIEW) { await run("daemon", "stop"); await rm(workspace, {recursive:true,force:true}); }
   }
 });

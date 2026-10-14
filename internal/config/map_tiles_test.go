@@ -11,13 +11,13 @@ import (
 
 func TestMapTiles(t *testing.T) {
 	require.NoError(t, Default().Web.MapTiles.Validate())
-	valid := MapTilesConfig{TileURL: "https://tiles.example.org/{z}/{x}/{y}.png", Attribution: "Example", MaxZoom: 19}
+	valid := MapTilesConfig{TileURL: "https://127.0.0.1/{z}/{x}/{y}.png", Attribution: "Example", MaxZoom: 19}
 	require.NoError(t, valid.Validate())
-	assert.Equal(t, "https://tiles.example.org", valid.Origin())
-	canonical := valid
-	canonical.TileURL = "https://127.0.0.1/{z}/{x}/{y}.png"
-	require.NoError(t, canonical.Validate())
-	assert.Equal(t, "https://127.0.0.1", canonical.Origin())
+	assert.Equal(t, "127.0.0.1", valid.Host())
+	ipv6 := valid
+	ipv6.TileURL = "https://[2001:db8::1]:8443/{z}/{x}/{y}.png"
+	require.NoError(t, ipv6.Validate())
+	assert.Equal(t, "[2001:db8::1]:8443", ipv6.Host())
 	for _, tc := range []struct{ address, message string }{
 		{"https://tiles.example.org/%7Bz%7D/%7Bx%7D/%7By%7D", "tile_url path requires"},
 		{"http://tiles.example.org/{z}/{x}/{y}", "tile_url must use a fixed HTTPS origin"},
@@ -26,7 +26,7 @@ func TestMapTiles(t *testing.T) {
 		{"https://tiles.example.org/{z}/{x}/{y}#fragment", "tile_url must use a fixed HTTPS origin"},
 		{"https://tiles.example.org/{z}/{x}", "tile_url path requires"},
 		{"https://*.example.org/{z}/{x}/{y}", "tile_url requires a fixed ASCII hostname"},
-		{"https://[2001:db8::1]/{z}/{x}/{y}", "tile_url cannot use an IPv6 address"},
+		{"https://[2001:db8::1%25eth0]/{z}/{x}/{y}", "tile_url requires a fixed ASCII hostname"},
 		{"https://127.1/{z}/{x}/{y}.png", "must be a dotted-decimal IPv4 address"},
 		{"https://0177.0.0.1/{z}/{x}/{y}.png", "must be a dotted-decimal IPv4 address"},
 		{"https://0x7f.0.0.1/{z}/{x}/{y}.png", "must be a dotted-decimal IPv4 address"},
