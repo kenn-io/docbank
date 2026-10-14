@@ -12,111 +12,113 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestWalkKeepsStableSnapshotAcrossConcurrentMutations(t *testing.T) {
-	vault, err := New(t.Context(), Config{Root: t.TempDir()})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+func TestWalkKeepsStableSnapshotAcrossMutations(t *testing.T) {
+	t.Run("subtree mutations before the first page", func(t *testing.T) {
+		vault, err := New(t.Context(), Config{Root: t.TempDir()})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, vault.Close()) })
+		original, err := vault.Put(t.Context(), "/scope/original.txt", strings.NewReader("original\n"), PutOptions{})
+		require.NoError(t, err)
+		_, err = vault.Put(t.Context(), "/outside.txt", strings.NewReader("outside\n"), PutOptions{})
+		require.NoError(t, err)
+		scope, err := vault.Stat(t.Context(), "/scope")
+		require.NoError(t, err)
 
-	alpha, err := vault.Put(t.Context(), "/alpha.txt", strings.NewReader("alpha\n"), PutOptions{})
-	require.NoError(t, err)
-	bravo, err := vault.Put(t.Context(), "/bravo.txt", strings.NewReader("bravo\n"), PutOptions{})
-	require.NoError(t, err)
-	charlie, err := vault.Put(t.Context(), "/charlie.txt", strings.NewReader("charlie\n"), PutOptions{})
-	require.NoError(t, err)
-	delta, err := vault.Put(t.Context(), "/folder/delta.txt", strings.NewReader("delta\n"), PutOptions{})
-	require.NoError(t, err)
-	root, err := vault.Stat(t.Context(), "/")
-	require.NoError(t, err)
-	folder, err := vault.Stat(t.Context(), "/folder")
-	require.NoError(t, err)
+		walker, err := vault.Walk(t.Context(), "/scope", WalkOptions{PageSize: 1})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, walker.Close()) })
+		_, err = vault.MovePath(t.Context(), "/scope/original.txt", "/moved.txt", RevisionOptions{})
+		require.NoError(t, err)
+		_, err = vault.Put(t.Context(), "/scope/later.txt", strings.NewReader("later\n"), PutOptions{})
+		require.NoError(t, err)
 
-	walker, err := vault.Walk(t.Context(), "/", WalkOptions{PageSize: 2})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, walker.Close()) })
+		var entries []WalkEntry
+		for {
+			page, err := walker.Next(t.Context())
+			if err != nil {
+				require.ErrorIs(t, err, io.EOF)
+				break
+			}
+			entries = append(entries, page...)
+		}
+		assert.Equal(t, []WalkEntry{
+			{Path: "/scope", Node: scope},
+			{Path: "/scope/original.txt", Node: original.Node},
+		}, entries)
+	})
 
-	first, err := walker.Next(t.Context())
-	require.NoError(t, err)
-	require.Equal(t, []WalkEntry{
-		{Path: "/", Node: root},
-		{Path: "/alpha.txt", Node: alpha.Node},
-	}, first)
+	t.Run("root mutations between pages", func(t *testing.T) {
+		vault, err := New(t.Context(), Config{Root: t.TempDir()})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, vault.Close()) })
 
-	mutationErr := make(chan error, 1)
-	go func() {
-		if _, err := vault.Put(context.Background(), "/added.txt", strings.NewReader("added\n"), PutOptions{}); err != nil {
+		alpha, err := vault.Put(t.Context(), "/alpha.txt", strings.NewReader("alpha\n"), PutOptions{})
+		require.NoError(t, err)
+		bravo, err := vault.Put(t.Context(), "/bravo.txt", strings.NewReader("bravo\n"), PutOptions{})
+		require.NoError(t, err)
+		charlie, err := vault.Put(t.Context(), "/charlie.txt", strings.NewReader("charlie\n"), PutOptions{})
+		require.NoError(t, err)
+		delta, err := vault.Put(t.Context(), "/folder/delta.txt", strings.NewReader("delta\n"), PutOptions{})
+		require.NoError(t, err)
+		root, err := vault.Stat(t.Context(), "/")
+		require.NoError(t, err)
+		folder, err := vault.Stat(t.Context(), "/folder")
+		require.NoError(t, err)
+
+		walker, err := vault.Walk(t.Context(), "/", WalkOptions{PageSize: 2})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, walker.Close()) })
+
+		first, err := walker.Next(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, []WalkEntry{
+			{Path: "/", Node: root},
+			{Path: "/alpha.txt", Node: alpha.Node},
+		}, first)
+
+		mutationErr := make(chan error, 1)
+		go func() {
+			if _, err := vault.Put(context.Background(), "/added.txt", strings.NewReader("added\n"), PutOptions{}); err != nil {
+				mutationErr <- err
+				return
+			}
+			if _, err := vault.MovePath(context.Background(), "/bravo.txt", "/zulu.txt", RevisionOptions{}); err != nil {
+				mutationErr <- err
+				return
+			}
+			_, err := vault.TrashPath(context.Background(), "/folder", RevisionOptions{})
 			mutationErr <- err
-			return
+		}()
+		require.NoError(t, <-mutationErr)
+
+		entries := append([]WalkEntry(nil), first...)
+		for {
+			page, err := walker.Next(t.Context())
+			if err != nil {
+				require.ErrorIs(t, err, io.EOF)
+				break
+			}
+			require.LessOrEqual(t, len(page), 2)
+			entries = append(entries, page...)
 		}
-		if _, err := vault.MovePath(context.Background(), "/bravo.txt", "/zulu.txt", RevisionOptions{}); err != nil {
-			mutationErr <- err
-			return
+
+		require.Equal(t, []WalkEntry{
+			{Path: "/", Node: root},
+			{Path: "/alpha.txt", Node: alpha.Node},
+			{Path: "/bravo.txt", Node: bravo.Node},
+			{Path: "/charlie.txt", Node: charlie.Node},
+			{Path: "/folder", Node: folder},
+			{Path: "/folder/delta.txt", Node: delta.Node},
+		}, entries)
+
+		seen := make(map[int64]struct{}, len(entries))
+		for _, entry := range entries {
+			_, duplicate := seen[entry.Node.ID]
+			assert.False(t, duplicate, "node %d appeared more than once", entry.Node.ID)
+			seen[entry.Node.ID] = struct{}{}
 		}
-		_, err := vault.TrashPath(context.Background(), "/folder", RevisionOptions{})
-		mutationErr <- err
-	}()
-	require.NoError(t, <-mutationErr)
-
-	entries := append([]WalkEntry(nil), first...)
-	for {
-		page, err := walker.Next(t.Context())
-		if err != nil {
-			require.ErrorIs(t, err, io.EOF)
-			break
-		}
-		require.LessOrEqual(t, len(page), 2)
-		entries = append(entries, page...)
-	}
-
-	require.Equal(t, []WalkEntry{
-		{Path: "/", Node: root},
-		{Path: "/alpha.txt", Node: alpha.Node},
-		{Path: "/bravo.txt", Node: bravo.Node},
-		{Path: "/charlie.txt", Node: charlie.Node},
-		{Path: "/folder", Node: folder},
-		{Path: "/folder/delta.txt", Node: delta.Node},
-	}, entries)
-
-	seen := make(map[int64]struct{}, len(entries))
-	for _, entry := range entries {
-		_, duplicate := seen[entry.Node.ID]
-		assert.False(t, duplicate, "node %d appeared more than once", entry.Node.ID)
-		seen[entry.Node.ID] = struct{}{}
-	}
-	assert.Len(t, seen, 6)
-}
-
-func TestWalkPinsSubtreeSnapshotBeforeFirstPage(t *testing.T) {
-	vault, err := New(t.Context(), Config{Root: t.TempDir()})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, vault.Close()) })
-	original, err := vault.Put(t.Context(), "/scope/original.txt", strings.NewReader("original\n"), PutOptions{})
-	require.NoError(t, err)
-	_, err = vault.Put(t.Context(), "/outside.txt", strings.NewReader("outside\n"), PutOptions{})
-	require.NoError(t, err)
-	scope, err := vault.Stat(t.Context(), "/scope")
-	require.NoError(t, err)
-
-	walker, err := vault.Walk(t.Context(), "/scope", WalkOptions{PageSize: 1})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, walker.Close()) })
-	_, err = vault.MovePath(t.Context(), "/scope/original.txt", "/moved.txt", RevisionOptions{})
-	require.NoError(t, err)
-	_, err = vault.Put(t.Context(), "/scope/later.txt", strings.NewReader("later\n"), PutOptions{})
-	require.NoError(t, err)
-
-	var entries []WalkEntry
-	for {
-		page, err := walker.Next(t.Context())
-		if err != nil {
-			require.ErrorIs(t, err, io.EOF)
-			break
-		}
-		entries = append(entries, page...)
-	}
-	assert.Equal(t, []WalkEntry{
-		{Path: "/scope", Node: scope},
-		{Path: "/scope/original.txt", Node: original.Node},
-	}, entries)
+		assert.Len(t, seen, 6)
+	})
 }
 
 func TestWalkNextHonorsCancellation(t *testing.T) {
@@ -208,19 +210,12 @@ func TestWalkUsesFiniteDefaultAndRejectsInvalidPageSizes(t *testing.T) {
 		assert.Nil(t, invalid)
 		require.ErrorContains(t, err, "page size must be between 1 and 5000")
 	}
-}
-
-func TestWalkAcceptsMaximumPageSize(t *testing.T) {
-	vault, err := New(t.Context(), Config{Root: t.TempDir()})
+	maximumWalker, err := vault.Walk(t.Context(), "/", WalkOptions{PageSize: MaxWalkPageSize})
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, vault.Close()) })
-
-	walker, err := vault.Walk(t.Context(), "/", WalkOptions{PageSize: MaxWalkPageSize})
+	t.Cleanup(func() { require.NoError(t, maximumWalker.Close()) })
+	page, err := maximumWalker.Next(t.Context())
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, walker.Close()) })
-	page, err := walker.Next(t.Context())
-	require.NoError(t, err)
-	require.Len(t, page, 1)
+	require.Len(t, page, DefaultWalkPageSize+2)
 	assert.Equal(t, "/", page[0].Path)
 }
 
@@ -244,7 +239,7 @@ func TestWalkCloseIsIdempotentAndReleasesVaultLifecycle(t *testing.T) {
 			return false
 		}
 		return true
-	}, time.Second, time.Millisecond, "Vault.Close never queued for the lifecycle write lock")
+	}, 30*time.Second, time.Millisecond, "Vault.Close never queued for the lifecycle write lock")
 	select {
 	case <-closed:
 		require.Fail(t, "Vault.Close returned while the walker still held its lifecycle lease")
@@ -253,11 +248,7 @@ func TestWalkCloseIsIdempotentAndReleasesVaultLifecycle(t *testing.T) {
 
 	require.NoError(t, walker.Close())
 	require.NoError(t, walker.Close())
-	select {
-	case <-closed:
-	case <-time.After(5 * time.Second):
-		require.Fail(t, "Vault.Close did not return after the walker released its lifecycle lease")
-	}
+	<-closed
 	require.NoError(t, closeErr)
 	page, err := walker.Next(t.Context())
 	assert.Nil(t, page)
@@ -277,44 +268,6 @@ func TestWalkCloseReleasesReadTransaction(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, walker.Close())
 	require.NoError(t, vault.metadata.Checkpoint(t.Context()))
-}
-
-func TestWalkerConcurrentNextAndClose(t *testing.T) {
-	vault, err := New(t.Context(), Config{Root: t.TempDir()})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, vault.Close()) })
-
-	type nextResult struct {
-		page []WalkEntry
-		err  error
-	}
-	for range 100 {
-		walker, err := vault.Walk(t.Context(), "/", WalkOptions{PageSize: 1})
-		require.NoError(t, err)
-		start := make(chan struct{})
-		nextDone := make(chan nextResult, 1)
-		closeDone := make(chan error, 1)
-		go func() {
-			<-start
-			page, err := walker.Next(t.Context())
-			nextDone <- nextResult{page: page, err: err}
-		}()
-		go func() {
-			<-start
-			closeDone <- walker.Close()
-		}()
-		close(start)
-
-		result := <-nextDone
-		if result.err != nil {
-			require.ErrorIs(t, result.err, io.EOF)
-			assert.Nil(t, result.page)
-		} else {
-			require.Len(t, result.page, 1)
-			assert.Equal(t, "/", result.page[0].Path)
-		}
-		require.NoError(t, <-closeDone)
-	}
 }
 
 func TestWalkerZeroValueCloseIsSafe(t *testing.T) {

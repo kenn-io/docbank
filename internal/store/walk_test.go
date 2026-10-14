@@ -41,6 +41,43 @@ func TestBeginWalkAcceptsMaximumPageSize(t *testing.T) {
 	assert.Equal(t, s.RootID(), page[0].Node.ID)
 }
 
+func TestWalkerConcurrentNextAndClose(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+
+	type nextResult struct {
+		page []WalkEntry
+		err  error
+	}
+	for range 100 {
+		walker, err := s.BeginWalk(t.Context(), "/", 1, false)
+		require.NoError(t, err)
+		start := make(chan struct{})
+		nextDone := make(chan nextResult, 1)
+		closeDone := make(chan error, 1)
+		go func() {
+			<-start
+			page, err := walker.Next(t.Context())
+			nextDone <- nextResult{page: page, err: err}
+		}()
+		go func() {
+			<-start
+			closeDone <- walker.Close()
+		}()
+		close(start)
+
+		result := <-nextDone
+		if result.err != nil {
+			require.ErrorIs(t, result.err, io.EOF)
+			assert.Nil(t, result.page)
+		} else {
+			require.Len(t, result.page, 1)
+			assert.Equal(t, s.RootID(), result.page[0].Node.ID)
+		}
+		require.NoError(t, <-closeDone)
+	}
+}
+
 func TestWalkOrdersDuplicatePathsByNodeIDAndOptionallyIncludesTrash(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
