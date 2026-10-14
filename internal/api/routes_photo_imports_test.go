@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -187,6 +186,11 @@ func TestPhotoImportGate(t *testing.T) {
 	gate := api.NewOperationGate()
 	runner := api.NewPhotoImportRunner(api.Deps{Store: catalog.Store, Blobs: catalog.Blobs, Gate: gate})
 	require.NotNil(t, runner.Options.Mutate)
+	mutate := runner.Options.Mutate
+	request, err := json.Marshal(store.PhotoImportRequest{SourceRoot: root, Destination: "/photos"})
+	require.NoError(t, err)
+	operation, err := catalog.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport, string(request))
+	require.NoError(t, err)
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	maintenanceDone := make(chan error, 1)
@@ -201,21 +205,14 @@ func TestPhotoImportGate(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	attempted := make(chan struct{})
 	mutationDone := make(chan error, 1)
+	runner.Options.Mutate = func(ctx context.Context, fn func() error) error {
+		close(attempted)
+		return mutate(ctx, fn)
+	}
 	go func() {
-		_, err := runner.Ingester.ImportPhotoDirectory(ctx, root, "/photos", ingest.PhotoImportOptions{
-			Mutate: func(ctx context.Context, fn func() error) error {
-				close(attempted)
-				return runner.Options.Mutate(ctx, fn)
-			},
-		})
-		mutationDone <- err
+		mutationDone <- runner.Run(ctx, operation.ID)
 	}()
 	<-attempted
-	select {
-	case err := <-mutationDone:
-		t.Fatalf("import crossed maintenance gate: %v", err)
-	default:
-	}
 	var before bytes.Buffer
 	require.NoError(t, catalog.ExportMetadata(t.Context(), &before))
 	assert.NotContains(t, before.String(), "IMG.ARW")
@@ -223,47 +220,46 @@ func TestPhotoImportGate(t *testing.T) {
 	close(release)
 	require.NoError(t, <-maintenanceDone)
 	require.ErrorIs(t, <-mutationDone, context.Canceled)
-	_, err := catalog.NodeByPath(t.Context(), "/photos/IMG.ARW")
+	_, err = catalog.NodeByPath(t.Context(), "/photos/IMG.ARW")
 	require.ErrorIs(t, err, store.ErrNotFound)
 
 	groupReady := make(chan struct{})
 	continueGroup := make(chan struct{})
-	type importResult struct {
-		report ingest.PhotoImportReport
-		err    error
-	}
-	completed := make(chan importResult, 1)
-	go func() {
-		calls := 0
-		report, importErr := runner.Ingester.ImportPhotoDirectory(t.Context(), root, "/photos", ingest.PhotoImportOptions{
-			Mutate: func(ctx context.Context, fn func() error) error {
-				calls++
-				return runner.Options.Mutate(ctx, func() error {
-					if calls == 2 {
-						close(groupReady)
-						<-continueGroup
-					}
-					return fn()
-				})
-			},
+	operation, err = catalog.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport, string(request))
+	require.NoError(t, err)
+	completed := make(chan error, 1)
+	calls := 0
+	runner.Options.Mutate = func(ctx context.Context, fn func() error) error {
+		calls++
+		return mutate(ctx, func() error {
+			if calls == 2 {
+				close(groupReady)
+				<-continueGroup
+			}
+			return fn()
 		})
-		completed <- importResult{report, importErr}
+	}
+	go func() {
+		completed <- runner.Run(t.Context(), operation.ID)
 	}()
 	<-groupReady
 	var captured bytes.Buffer
-	var finished importResult
+	var finishedErr error
 	require.NoError(t, gate.CaptureContext(t.Context(), func() error {
 		if err := catalog.ExportMetadata(t.Context(), &captured); err != nil {
 			return err
 		}
 		close(continueGroup)
-		finished = <-completed
+		finishedErr = <-completed
 		return nil
 	}))
 	assert.NotContains(t, captured.String(), "IMG.ARW")
-	report, err := finished.report, finished.err
+	require.NoError(t, finishedErr)
+	finished, err := catalog.StorageOperation(t.Context(), operation.ID)
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), report.Receipt.Added)
+	var receipt store.PhotoImportReceipt
+	require.NoError(t, json.Unmarshal([]byte(finished.ReceiptJSON), &receipt))
+	assert.Equal(t, int64(1), receipt.Added)
 	var after bytes.Buffer
 	require.NoError(t, catalog.ExportMetadata(t.Context(), &after))
 	assert.Contains(t, after.String(), "IMG.ARW")
