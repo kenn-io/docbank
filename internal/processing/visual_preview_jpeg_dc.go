@@ -66,13 +66,13 @@ func decodeVisualPreviewJPEGDC(reader *bufio.Reader, model color.Model) (image.I
 	if _, err := reader.Discard(2); err != nil {
 		return nil, err
 	}
-	marker, err := readVisualPreviewJPEGMarker(reader)
+	marker, err := d.marker()
 	for err == nil {
 		if marker == 0xd9 {
 			return d.image()
 		}
 		if marker == 0x01 || marker >= 0xd0 && marker <= 0xd7 {
-			marker, err = readVisualPreviewJPEGMarker(reader)
+			marker, err = d.marker()
 			continue
 		}
 		var length [2]byte
@@ -112,10 +112,32 @@ func decodeVisualPreviewJPEGDC(reader *bufio.Reader, model color.Model) (image.I
 			}
 		}
 		if err == nil {
-			marker, err = readVisualPreviewJPEGMarker(reader)
+			marker, err = d.marker()
 		}
 	}
 	return nil, err
+}
+
+func (d *visualJPEGDCDecoder) marker() (byte, error) {
+	for {
+		b, err := d.reader.ReadByte()
+		if err != nil {
+			return 0, err
+		}
+		// Match image/jpeg's tolerance for extraneous bytes before markers.
+		if b != 0xff {
+			continue
+		}
+		for b == 0xff {
+			b, err = d.reader.ReadByte()
+			if err != nil {
+				return 0, err
+			}
+		}
+		if b != 0 {
+			return b, nil
+		}
+	}
 }
 
 func (d *visualJPEGDCDecoder) frame(p []byte, marker byte) error {
@@ -291,7 +313,7 @@ func (d *visualJPEGDCDecoder) scan(p []byte) error {
 	for mcu := range mw * mh {
 		if d.restart > 0 && mcu > 0 && mcu%d.restart == 0 {
 			d.nbits = 0
-			marker, err := readVisualPreviewJPEGMarker(d.reader)
+			marker, err := d.marker()
 			if err != nil {
 				return err
 			}
@@ -434,10 +456,11 @@ func (d *visualJPEGDCDecoder) image() (image.Image, error) {
 		for x := range bounds.Dx() {
 			var values [3]byte
 			for i, c := range d.components {
-				cx, cy := x*int(c.h)/d.maxH, y*int(c.v)/d.maxV
-				values[i] = c.sample(cy*c.w + cx)
 				if d.colorModel == color.YCbCrModel && i > 0 {
 					values[i] = c.chroma(x, y, d.maxH, d.maxV)
+				} else {
+					cx, cy := x*int(c.h)/d.maxH, y*int(c.v)/d.maxV
+					values[i] = c.sample(cy*c.w + cx)
 				}
 			}
 			r, g, b := values[0], values[1], values[2]

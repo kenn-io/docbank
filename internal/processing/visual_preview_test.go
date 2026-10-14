@@ -1111,6 +1111,8 @@ func TestVisualPreviewJPEGDCRegressions(t *testing.T) {
 		wantError bool
 		reference []byte
 	}{
+		{"trailing fill bytes", append(bytes.Clone(baseline[:len(baseline)-2]), 0x00, 0x00, 0xff, 0xd9), false, baseline},
+		{"fill bytes between scans", append(append(bytes.Clone(source[:firstAC]), 0x00, 0x00), source[firstAC:]...), false, source},
 		{"trailing restart", append(bytes.Clone(baseline[:len(baseline)-2]), 0xff, 0xd0, 0xff, 0xd9), false, baseline},
 		{"standalone TEM", append(bytes.Clone(source[:len(source)-2]), 0xff, 0x01, 0xff, 0xd9), false, source},
 		{"RGB IDs with short JFIF", jfif, false, source},
