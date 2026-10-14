@@ -236,15 +236,28 @@ func TestPhotoMetadataRoundTripAndInvalidReferences(t *testing.T) {
 	invalid := newTestStore(t)
 	require.Error(t, invalid.ImportMetadata(ctx, strings.NewReader(strings.Join(invalidLines, "\n"))))
 
-	crossAssetLines := strings.Split(first.String(), "\n")
-	for index, line := range crossAssetLines {
-		if strings.Contains(line, `"type":"photo_file"`) && strings.Contains(line, secondAsset.Files[0].ID) {
-			crossAssetLines[index] = strings.Replace(line, `"`+secondAsset.ID+`"`, `"`+asset.ID+`"`, 1)
+	var sidecarFileID string
+	for _, file := range asset.Files {
+		if file.NodeID == sidecar.ID {
+			sidecarFileID = file.ID
 			break
 		}
 	}
+	require.NotEmpty(t, sidecarFileID)
+	crossAssetLines := strings.Split(first.String(), "\n")
+	found = false
+	for index, line := range crossAssetLines {
+		if strings.Contains(line, `"type":"photo_file"`) && strings.Contains(line, sidecarFileID) {
+			require.Contains(t, line, `"sidecar_of_file_id":"`+imageFileID+`"`)
+			crossAssetLines[index] = strings.Replace(line, `"sidecar_of_file_id":"`+imageFileID+`"`, `"sidecar_of_file_id":"`+secondAsset.Files[0].ID+`"`, 1)
+			require.NotEqual(t, line, crossAssetLines[index])
+			found = true
+			break
+		}
+	}
+	require.True(t, found)
 	crossAsset := newTestStore(t)
-	require.Error(t, crossAsset.ImportMetadata(ctx, strings.NewReader(strings.Join(crossAssetLines, "\n"))))
+	require.ErrorContains(t, crossAsset.ImportMetadata(ctx, strings.NewReader(strings.Join(crossAssetLines, "\n"))), "must point to a same-asset RAW or image")
 	sources := make(map[string]string)
 	for _, file := range asset.Files {
 		var selectedSource string

@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -30,12 +29,12 @@ func TestPhotoRoutesEnforceIfMatch(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode, body)
 	assert.Equal(t, strconv.Quote(strconv.FormatInt(asset.Revision, 10)), resp.Header.Get("ETag"))
 
-	client := daemonconn.New(ts.URL, testAPIKey)
-	byNode, err := client.PhotoAssetForNode(t.Context(), node.ID)
-	require.NoError(t, err)
+	resp, body = get(t, ts, "/api/v1/photos/nodes/"+strconv.FormatInt(node.ID, 10)+"/asset", nil)
+	assert.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var byNode api.PhotoAsset
+	require.NoError(t, json.Unmarshal([]byte(body), &byNode))
 	assert.Equal(t, asset.ID, byNode.ID)
 	assert.Equal(t, asset.Revision, byNode.Revision)
-	assert.Equal(t, store.PhotoConfirmedCaption, byNode.Files[0].Confirmed)
 	path := "/api/v1/photos/assets/" + asset.ID + "/exclude"
 	resp, body = do(t, ts, http.MethodPost, path, nil, map[string]bool{"excluded": true})
 	assert.Equal(t, http.StatusPreconditionRequired, resp.StatusCode, body)

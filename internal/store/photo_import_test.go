@@ -120,6 +120,12 @@ n, err := s.PreparePhotoImportDestination(ctx, "/new/photos")
 	require.NoError(t, err)
 	require.Len(t, single.Nodes, 1)
 	assert.NotEqual(t, result.Nodes[0].ID, single.Nodes[0].ID)
+	video, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(photoImportTestMember(
+		filepath.Join(root, "IMG_0001.MOV"), PhotoRoleVideo, browseHash("mov"), "video/quicktime")))
+	require.NoError(t, err)
+	assert.NotEqual(t, result.Asset.ID, video.Asset.ID)
+	assert.Equal(t, PhotoKindVideo, video.Asset.Kind)
+	assert.Len(t, video.Asset.Files, 1)
 }
 
 func TestPhotoImportQualifiedSidecarTargets(t *testing.T) {
@@ -479,24 +485,6 @@ func TestPhotoImportEditedSourceBecomesNewVersion(t *testing.T) {
 		assert.Equal(t, original.Nodes[0].CurrentVersionID, kept.CurrentVersionID)
 		assert.Equal(t, first.BlobHash, edited.Nodes[0].BlobHash)
 	})
-}
-
-func TestPhotoImportVideoWithSameNameJPEG(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
-	require.NoError(t, err)
-	root := t.TempDir()
-	jpeg := photoImportTestMember(filepath.Join(root, "IMG.JPG"), PhotoRoleImage, fakeHash("jpg"), "image/jpeg")
-	image, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(jpeg))
-	require.NoError(t, err)
-	video := photoImportTestMember(filepath.Join(root, "IMG.MOV"), PhotoRoleVideo, fakeHash("mov"), "video/quicktime")
-	clip, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(video))
-	require.NoError(t, err)
-	assert.NotEqual(t, image.Asset.ID, clip.Asset.ID)
-	assert.Equal(t, PhotoKindVideo, clip.Asset.Kind)
-	assert.Len(t, clip.Asset.Files, 1)
 }
 
 func TestPhotoImportSidecarDedupStaysWithinSourceGroup(t *testing.T) {
