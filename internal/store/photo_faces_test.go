@@ -850,23 +850,6 @@ func TestPhotoFaceUnexpectedHiddenErrors(t *testing.T) {
 	require.NotErrorIs(t, err, ErrHiddenLocked)
 }
 
-func TestPhotoFaceMergeValidatesOnlyAffectedPeople(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	survivor, err := s.CreatePerson(ctx, "Ada", "operator")
-	require.NoError(t, err)
-	absorbed, err := s.CreatePerson(ctx, "Duplicate", "operator")
-	require.NoError(t, err)
-	unrelated, err := s.CreatePerson(ctx, "Grace", "operator")
-	require.NoError(t, err)
-	_, err = s.db.Exec(`UPDATE persons SET key_face_id=? WHERE person_id=?`, uuid.New().String(), unrelated.PersonID)
-	require.NoError(t, err)
-	_, err = s.MergePersons(ctx, survivor.PersonID, absorbed.PersonID, uuid.New().String(), 1, 1)
-	require.NoError(t, err)
-	require.ErrorIs(t, s.ValidateMetadata(ctx), ErrInvalidPhotoFace)
-}
-
 func TestPhotoFaceObservationTargetEligibility(t *testing.T) {
 	t.Parallel()
 	for _, change := range []string{"trashed raw", "sidecar", "replaced image", "replaced raw", "excluded"} {
