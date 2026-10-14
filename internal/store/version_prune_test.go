@@ -735,60 +735,7 @@ func TestPruneContentVersionsRetainsAuthoritiesAndCheckpointsAllPrior(t *testing
 			require.NoError(t, err)
 		})
 	}
-	for _, allPrior := range []bool{false, true} {
-		t.Run(map[bool]string{false: "explicit selection", true: "all prior"}[allPrior], func(t *testing.T) {
-			s := newTestStore(t)
-			ctx := t.Context()
-			created, err := s.CreateFile(ctx, s.RootID(), "recording.mp3", fakeHash("a1"), 10, "audio/mpeg")
-			require.NoError(t, err)
-			replaced, replacement, err := s.ReplaceContent(
-				ctx, created.ID, created.Revision, fakeHash("b2"), 20, "audio/mpeg")
-			require.NoError(t, err)
-			reverted, revertVersion, _, err := s.RevertContent(
-				ctx, created.ID, replaced.Revision, created.CurrentVersionID)
-			require.NoError(t, err)
-			_, err = s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
-				strings.Repeat("c", 64), nowRFC3339())
-			require.NoError(t, err)
-			require.NoError(t, s.PublishMediaSourceVersion(ctx, MediaSourceVersionInput{
-				ID: "source-version", SourceID: "source", Revision: 1,
-				ContentVersionID: revertVersion.ID, CaptureJSON: "{}",
-			}))
-
-			selector := VersionPruneSelector{AllPrior: true}
-			node := reverted
-			selected := []string{created.CurrentVersionID, replacement.ID, revertVersion.ID}
-			if !allPrior {
-				node, _, err = s.ReplaceContent(
-					ctx, created.ID, reverted.Revision, fakeHash("d4"), 40, "audio/mpeg")
-				require.NoError(t, err)
-				selector = VersionPruneSelector{VersionIDs: selected}
-			}
-
-			preview, err := s.PruneContentVersions(ctx, created.ID, node.Revision, selector, false)
-			require.NoError(t, err)
-			require.Equal(t, []string{replacement.ID}, contentVersionIDs(preview.Candidates))
-			require.ElementsMatch(t,
-				[]string{created.CurrentVersionID, revertVersion.ID},
-				contentVersionIDs(preview.DependencyRetained))
-			require.False(t, preview.CheckpointRequired)
-
-			run, err := s.PruneContentVersions(ctx, created.ID, node.Revision, selector, true)
-			require.NoError(t, err)
-			require.Equal(t, preview.Candidates, run.Candidates)
-			require.Equal(t, preview.DependencyRetained, run.DependencyRetained)
-			require.Equal(t, 1, run.DeletedVersions)
-			require.Nil(t, run.Checkpoint)
-			for _, id := range []string{created.CurrentVersionID, revertVersion.ID} {
-				_, err = s.ContentVersionByID(ctx, id)
-				require.NoError(t, err)
-			}
-			_, err = s.ContentVersionByID(ctx, replacement.ID)
-			require.ErrorIs(t, err, ErrNotFound)
-		})
-	}
-
-	t.Run("all prior with historical pinned revert", func(t *testing.T) {
+	t.Run("explicit selection", func(t *testing.T) {
 		s := newTestStore(t)
 		ctx := t.Context()
 		created, err := s.CreateFile(ctx, s.RootID(), "recording.mp3", fakeHash("a1"), 10, "audio/mpeg")
@@ -796,7 +743,7 @@ func TestPruneContentVersionsRetainsAuthoritiesAndCheckpointsAllPrior(t *testing
 		replaced, replacement, err := s.ReplaceContent(
 			ctx, created.ID, created.Revision, fakeHash("b2"), 20, "audio/mpeg")
 		require.NoError(t, err)
-		reverted, pinnedRevert, _, err := s.RevertContent(
+		reverted, revertVersion, _, err := s.RevertContent(
 			ctx, created.ID, replaced.Revision, created.CurrentVersionID)
 		require.NoError(t, err)
 		_, err = s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
@@ -804,40 +751,101 @@ func TestPruneContentVersionsRetainsAuthoritiesAndCheckpointsAllPrior(t *testing
 		require.NoError(t, err)
 		require.NoError(t, s.PublishMediaSourceVersion(ctx, MediaSourceVersionInput{
 			ID: "source-version", SourceID: "source", Revision: 1,
-			ContentVersionID: pinnedRevert.ID, CaptureJSON: "{}",
+			ContentVersionID: revertVersion.ID, CaptureJSON: "{}",
 		}))
-		updated, replacementAfterRevert, err := s.ReplaceContent(
+
+		selected := []string{created.CurrentVersionID, replacement.ID, revertVersion.ID}
+		node, _, err := s.ReplaceContent(
 			ctx, created.ID, reverted.Revision, fakeHash("d4"), 40, "audio/mpeg")
 		require.NoError(t, err)
-		current, currentRevert, _, err := s.RevertContent(
-			ctx, created.ID, updated.Revision, replacement.ID)
-		require.NoError(t, err)
+		selector := VersionPruneSelector{VersionIDs: selected}
 
-		selector := VersionPruneSelector{AllPrior: true}
-		preview, err := s.PruneContentVersions(ctx, created.ID, current.Revision, selector, false)
+		preview, err := s.PruneContentVersions(ctx, created.ID, node.Revision, selector, false)
 		require.NoError(t, err)
+		require.Equal(t, []string{replacement.ID}, contentVersionIDs(preview.Candidates))
 		require.ElementsMatch(t,
-			[]string{currentRevert.ID, replacementAfterRevert.ID, replacement.ID},
-			contentVersionIDs(preview.Candidates))
-		require.ElementsMatch(t,
-			[]string{pinnedRevert.ID, created.CurrentVersionID},
+			[]string{created.CurrentVersionID, revertVersion.ID},
 			contentVersionIDs(preview.DependencyRetained))
-		require.True(t, preview.CheckpointRequired)
+		require.False(t, preview.CheckpointRequired)
 
-		run, err := s.PruneContentVersions(ctx, created.ID, current.Revision, selector, true)
+		run, err := s.PruneContentVersions(ctx, created.ID, node.Revision, selector, true)
 		require.NoError(t, err)
 		require.Equal(t, preview.Candidates, run.Candidates)
 		require.Equal(t, preview.DependencyRetained, run.DependencyRetained)
-		require.Equal(t, 3, run.DeletedVersions)
-		require.NotNil(t, run.Checkpoint)
-		require.Equal(t, replacement.BlobHash, run.Checkpoint.BlobHash)
-		for _, id := range []string{pinnedRevert.ID, created.CurrentVersionID} {
+		require.Equal(t, 1, run.DeletedVersions)
+		require.Nil(t, run.Checkpoint)
+		for _, id := range []string{created.CurrentVersionID, revertVersion.ID} {
 			_, err = s.ContentVersionByID(ctx, id)
 			require.NoError(t, err)
 		}
-		for _, id := range []string{currentRevert.ID, replacementAfterRevert.ID, replacement.ID} {
-			_, err = s.ContentVersionByID(ctx, id)
-			require.ErrorIs(t, err, ErrNotFound)
+		_, err = s.ContentVersionByID(ctx, replacement.ID)
+		require.ErrorIs(t, err, ErrNotFound)
+	})
+
+	t.Run("all prior with pinned revert", func(t *testing.T) {
+		for _, historical := range []bool{false, true} {
+			t.Run(map[bool]string{false: "current pinned revert needs no checkpoint", true: "historical pinned revert requires checkpoint"}[historical], func(t *testing.T) {
+				s := newTestStore(t)
+				ctx := t.Context()
+				created, err := s.CreateFile(ctx, s.RootID(), "recording.mp3", fakeHash("a1"), 10, "audio/mpeg")
+				require.NoError(t, err)
+				replaced, replacement, err := s.ReplaceContent(
+					ctx, created.ID, created.Revision, fakeHash("b2"), 20, "audio/mpeg")
+				require.NoError(t, err)
+				reverted, pinnedRevert, _, err := s.RevertContent(
+					ctx, created.ID, replaced.Revision, created.CurrentVersionID)
+				require.NoError(t, err)
+				_, err = s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
+					strings.Repeat("c", 64), nowRFC3339())
+				require.NoError(t, err)
+				require.NoError(t, s.PublishMediaSourceVersion(ctx, MediaSourceVersionInput{
+					ID: "source-version", SourceID: "source", Revision: 1,
+					ContentVersionID: pinnedRevert.ID, CaptureJSON: "{}",
+				}))
+				current := reverted
+				candidateIDs := []string{replacement.ID}
+				if historical {
+					updated, replacementAfterRevert, err := s.ReplaceContent(
+						ctx, created.ID, reverted.Revision, fakeHash("d4"), 40, "audio/mpeg")
+					require.NoError(t, err)
+					var currentRevert ContentVersion
+					current, currentRevert, _, err = s.RevertContent(
+						ctx, created.ID, updated.Revision, replacement.ID)
+					require.NoError(t, err)
+					candidateIDs = []string{currentRevert.ID, replacementAfterRevert.ID, replacement.ID}
+				}
+
+				selector := VersionPruneSelector{AllPrior: true}
+				preview, err := s.PruneContentVersions(ctx, created.ID, current.Revision, selector, false)
+				require.NoError(t, err)
+				require.ElementsMatch(t,
+					candidateIDs,
+					contentVersionIDs(preview.Candidates))
+				require.ElementsMatch(t,
+					[]string{pinnedRevert.ID, created.CurrentVersionID},
+					contentVersionIDs(preview.DependencyRetained))
+				require.Equal(t, historical, preview.CheckpointRequired)
+
+				run, err := s.PruneContentVersions(ctx, created.ID, current.Revision, selector, true)
+				require.NoError(t, err)
+				require.Equal(t, preview.Candidates, run.Candidates)
+				require.Equal(t, preview.DependencyRetained, run.DependencyRetained)
+				require.Equal(t, len(candidateIDs), run.DeletedVersions)
+				if historical {
+					require.NotNil(t, run.Checkpoint)
+					require.Equal(t, replacement.BlobHash, run.Checkpoint.BlobHash)
+				} else {
+					require.Nil(t, run.Checkpoint)
+				}
+				for _, id := range []string{pinnedRevert.ID, created.CurrentVersionID} {
+					_, err = s.ContentVersionByID(ctx, id)
+					require.NoError(t, err)
+				}
+				for _, id := range candidateIDs {
+					_, err = s.ContentVersionByID(ctx, id)
+					require.ErrorIs(t, err, ErrNotFound)
+				}
+			})
 		}
 	})
 	t.Run("sealed snapshot", func(t *testing.T) {

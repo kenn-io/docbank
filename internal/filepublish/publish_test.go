@@ -46,7 +46,7 @@ func TestPublishHonorsNoReplaceAndReportsPostInstallDurability(t *testing.T) {
 }
 
 func TestRootStageRejectsChangedDestinationIdentity(t *testing.T) {
-	for _, method := range []string{"public Publish rejects replaced root", "parent renamed after public Publish opens it (skips on Windows: opened directory pinned)"} {
+	for _, method := range []string{"public Publish rejects replaced root", "internal stage.publish after parent rename (skips on Windows: opened directory pinned)"} {
 		t.Run(method, func(t *testing.T) {
 			destination := t.TempDir()
 			rootPath := destination
