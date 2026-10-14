@@ -343,46 +343,6 @@ func TestPhotoCheckoutCreateValidation(t *testing.T) {
 			require.Empty(t, operations)
 		})
 	}
-	t.Run("conflicting sidecar becomes valid after trash", func(t *testing.T) {
-		s := newTestStore(t)
-		ctx := t.Context()
-		source := t.TempDir()
-		run, err := s.BeginIngest(ctx, "photo-import", source)
-		require.NoError(t, err)
-		result, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(
-			photoImportTestMember(filepath.Join(source, "IMG.ARW"), PhotoRoleRAW, browseHash("raw"), "image/x-sony-arw"),
-			photoImportTestMember(filepath.Join(source, "IMG.JPG"), PhotoRoleImage, browseHash("jpeg"), "image/jpeg")))
-		require.NoError(t, err)
-		run, err = s.BeginIngest(ctx, "photo-import", source)
-		require.NoError(t, err)
-		node, err := s.IngestFileExact(ctx, run, s.RootID(), "unrelated.XMP", browseHash("sidecar"), 20, "application/rdf+xml", filepath.Join(source, "unrelated.XMP"), "")
-		require.NoError(t, err)
-		target := fileByRole(result.Asset.Files, PhotoRoleRAW).ID
-		asset, err := s.AttachPhotoFile(ctx, result.Asset.ID, result.Asset.Revision, node.ID, PhotoRoleSidecar, &target)
-		require.NoError(t, err)
-		selection := PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}
-		_, _, err = s.CreatePhotoCheckout(ctx, selection, "checkout", 0)
-		require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
-		require.ErrorContains(t, err, asset.ID)
-		require.ErrorContains(t, err, fileByRole(asset.Files, PhotoRoleSidecar).ID)
-		checkouts, err := s.ListPhotoCheckouts(ctx)
-		require.NoError(t, err)
-		require.Empty(t, checkouts)
-		operations, err := s.StorageOperations(ctx, 10)
-		require.NoError(t, err)
-		require.Empty(t, operations)
-		_, _, err = s.Trash(ctx, node.ID, node.Revision)
-		require.NoError(t, err)
-		checkout, _, err := s.CreatePhotoCheckout(ctx, selection, "checkout", 0)
-		require.NoError(t, err)
-		entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
-		require.NoError(t, err)
-		paths := make([]string, 0, len(entries))
-		for _, entry := range entries {
-			paths = append(paths, entry.Path)
-		}
-		require.ElementsMatch(t, []string{"undated/" + asset.ID + "/IMG.ARW", "undated/" + asset.ID + "/IMG.JPG"}, paths)
-	})
 }
 
 func TestPhotoCheckoutStatusTracksOperationAcrossPauseAndFinish(t *testing.T) {
@@ -436,6 +396,7 @@ func TestPhotoCheckoutEntryPaths(t *testing.T) {
 	}{
 		{name: "separate ingests", sidecar: "IMG.ARW.XMP", captureDate: "2024-06-15", paths: map[string]string{"raw": "2024/06/15/%s/IMG.ARW", "jpeg": "2024/06/15/%s/IMG.JPG", "sidecar": "2024/06/15/%s/IMG.ARW.XMP"}},
 		{name: "trashed target", sidecar: "IMG.ARW.XMP", trashRole: PhotoRoleRAW, paths: map[string]string{"jpeg": "undated/%s/IMG.JPG", "sidecar": "undated/%s/IMG.ARW.XMP"}},
+		{name: "trashed conflicting sidecar", sidecar: "unrelated.XMP", trashRole: PhotoRoleSidecar, paths: map[string]string{"raw": "undated/%s/IMG.ARW", "jpeg": "undated/%s/IMG.JPG"}},
 		{name: "multiple sidecars", multipleSidecars: true, paths: map[string]string{"raw": "undated/%s/RENAMED.ARW", "jpeg": "undated/%s/IMG.JPG", "first sidecar": "undated/%s/RENAMED.XMP", "second sidecar": "undated/%s/RENAMED.ARW.XMP"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -470,6 +431,18 @@ func TestPhotoCheckoutEntryPaths(t *testing.T) {
 				target := fileByRole(result.Asset.Files, PhotoRoleRAW).ID
 				result.Asset, err = s.AttachPhotoFile(ctx, result.Asset.ID, result.Asset.Revision, node.ID, PhotoRoleSidecar, &target)
 				require.NoError(t, err)
+				if tc.trashRole == PhotoRoleSidecar {
+					_, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "checkout", 0)
+					require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
+					require.ErrorContains(t, err, result.Asset.ID)
+					require.ErrorContains(t, err, fileByRole(result.Asset.Files, PhotoRoleSidecar).ID)
+					checkouts, err := s.ListPhotoCheckouts(ctx)
+					require.NoError(t, err)
+					require.Empty(t, checkouts)
+					operations, err := s.StorageOperations(ctx, 10)
+					require.NoError(t, err)
+					require.Empty(t, operations)
+				}
 				for i, file := range result.Asset.Files {
 					node, err := s.NodeByID(ctx, file.NodeID)
 					require.NoError(t, err)

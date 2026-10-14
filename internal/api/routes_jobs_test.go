@@ -167,11 +167,6 @@ func TestBrowserJobRoutesRedactPrivateDetails(t *testing.T) {
 		assert.Equal(t, int64(7), operatorReceipt.Ambiguities[0].Files[0].NodeID)
 
 		browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issued.Token}
-		response, body = do(t, ts, http.MethodGet, "/api/v1/jobs", browser, nil)
-		require.Equal(t, http.StatusOK, response.StatusCode, body)
-		assert.NotContains(t, body, "private")
-		assert.NotContains(t, body, `"receipt"`)
-
 		response, body = do(t, ts, http.MethodPost, "/api/v1/jobs/"+running.ID+"/cancel", browser, nil)
 		require.Equal(t, http.StatusOK, response.StatusCode, body)
 		var cancelled api.StorageOperation

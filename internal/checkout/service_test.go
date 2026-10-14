@@ -138,9 +138,9 @@ func TestCheckoutStartFailurePersistsFailureAndClosesRoot(t *testing.T) {
 	}
 }
 
-func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
+func TestCheckoutResumeClearsObservationsForReplacedDestinations(t *testing.T) {
 	t.Parallel()
-	for _, replacement := range []string{"missing", "symlink"} {
+	for _, replacement := range []string{"missing", "file", "symlink"} {
 		t.Run(replacement, func(t *testing.T) {
 			s := checkoutService(t)
 			a := checkoutPhoto(t, s, "photo.jpg", "photo bytes")
@@ -157,9 +157,15 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, int64(1), before.PublishedFiles)
 			require.Positive(t, before.PublishedBytes)
+			beforeOperation, err := s.Store.StorageOperation(t.Context(), op.ID)
+			require.NoError(t, err)
+			require.Equal(t, int64(1), beforeOperation.CopiedObjects)
+			require.Positive(t, beforeOperation.CopiedBytes)
 			require.NoError(t, os.Remove(c.Destination))
 			var keep string
 			switch replacement {
+			case "file":
+				keep = c.Destination
 			case "symlink":
 				destination := t.TempDir()
 				if err := os.Symlink(destination, c.Destination); err != nil {
@@ -182,6 +188,9 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 			require.Equal(t, c.ID, status.Checkout.ID)
 			require.Equal(t, op.ID, status.Checkout.OperationID)
 			require.Contains(t, status.Checkout.Error, "interrupted")
+			if replacement == "file" {
+				require.Contains(t, status.Checkout.Error, "reconciliation failed")
+			}
 			require.Zero(t, status.PublishedFiles)
 			require.Zero(t, status.PublishedBytes)
 			finished, err := s.Store.StorageOperation(t.Context(), op.ID)
@@ -199,21 +208,16 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCheckoutResumeAdoptsVerifiedCopiesAndCleansStagesInSupervisor(t *testing.T) {
+	t.Parallel()
 	s := checkoutService(t)
 	a := checkoutPhoto(t, s, "one.jpg", "one.jpg")
-	bad, badOp, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, t.TempDir(), 0)
+	pending, pendingOp, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, t.TempDir(), 0)
 	require.NoError(t, err)
 	require.NoError(t, root.Close())
-	require.NoError(t, s.Store.ClaimPhotoCheckout(t.Context(), bad.ID, badOp.ID))
-	badEntries, err := s.Store.PhotoCheckoutEntries(t.Context(), bad.ID)
-	require.NoError(t, err)
-	require.Len(t, badEntries, 1)
-	require.NoError(t, s.Store.PublishPhotoCheckoutEntry(t.Context(), badEntries[0], func() (bool, error) { return true, nil }))
-	require.NoError(t, s.Store.ObservePhotoCheckout(t.Context(), bad.ID, badOp.ID, []string{badEntries[0].FileID}))
-	before, err := s.Store.StorageOperation(t.Context(), badOp.ID)
-	require.NoError(t, err)
-	require.Equal(t, int64(1), before.CopiedObjects)
-	require.Positive(t, before.CopiedBytes)
+	require.NoError(t, s.Store.ClaimPhotoCheckout(t.Context(), pending.ID, pendingOp.ID))
 	for _, name := range []string{"two.jpg", "three.jpg"} {
 		checkoutPhoto(t, s, name, name)
 	}
@@ -246,8 +250,6 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 	require.NoError(t, stage.File.Close())
 	stage.File = nil
 
-	require.NoError(t, os.Remove(bad.Destination))
-	require.NoError(t, os.WriteFile(bad.Destination, []byte("keep this file"), 0600))
 	var begun, ended atomic.Int32
 	s.ActivityBegin = func() { begun.Add(1) }
 	s.ActivityEnd = func() { ended.Add(1) }
@@ -255,7 +257,7 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 	defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
 	require.NoError(t, s.Resume(t.Context(), supervisor))
 	require.Eventually(t, func() bool {
-		for _, id := range []string{bad.ID, c.ID} {
+		for _, id := range []string{pending.ID, c.ID} {
 			actual, err := s.Store.PhotoCheckout(t.Context(), id)
 			if err != nil || actual.State != "failed" {
 				return false
@@ -268,7 +270,7 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 	for _, job := range supervisor.Snapshot() {
 		jobNames = append(jobNames, job.Name)
 	}
-	require.ElementsMatch(t, []string{"storage:" + badOp.ID, "storage:" + op.ID}, jobNames)
+	require.ElementsMatch(t, []string{"storage:" + pendingOp.ID, "storage:" + op.ID}, jobNames)
 	require.Equal(t, int32(2), begun.Load())
 	require.Equal(t, int32(2), ended.Load())
 	_, err = root.Stat(payload)
@@ -286,23 +288,6 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 	require.Equal(t, int64(1), finished.CopiedObjects)
 	require.Equal(t, entries[0].Size, finished.CopiedBytes)
 	require.Equal(t, store.StorageOperationFailed, finished.State)
-	status, err := s.Store.PhotoCheckoutStatus(t.Context(), bad.ID)
-	require.NoError(t, err)
-	require.Contains(t, status.Checkout.Error, "interrupted")
-	require.Contains(t, status.Checkout.Error, "reconciliation failed")
-	require.Zero(t, status.PublishedFiles)
-	require.Zero(t, status.PublishedBytes)
-	badFinished, err := s.Store.StorageOperation(t.Context(), badOp.ID)
-	require.NoError(t, err)
-	require.Zero(t, badFinished.CompletedObjects)
-	require.Zero(t, badFinished.CopiedObjects)
-	require.Zero(t, badFinished.CopiedBytes)
-	observedBad, err := s.Store.PhotoCheckoutEntries(t.Context(), bad.ID)
-	require.NoError(t, err)
-	require.Equal(t, badEntries, observedBad)
-	content, err := os.ReadFile(bad.Destination)
-	require.NoError(t, err)
-	require.Equal(t, "keep this file", string(content))
 }
 
 func TestCheckoutRunOutcomes(t *testing.T) {
