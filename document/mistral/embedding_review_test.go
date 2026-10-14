@@ -138,11 +138,13 @@ func TestMistralEmbeddingAttemptTimeouts(t *testing.T) {
 						require.NoError(t, err)
 						require.Len(t, result.Vectors, 1)
 						require.Equal(t, 3, resolutions)
+						require.NoError(t, ctx.Err())
 					case "exhaust":
 						require.ErrorIs(t, err, ErrTransientResponse)
 						require.ErrorIs(t, err, context.DeadlineExceeded)
 						require.Equal(t, 3, resolutions)
 						require.Equal(t, 2, MetricsFromError(err).Retries)
+						require.NoError(t, ctx.Err())
 					case "caller_cancel":
 						require.ErrorIs(t, err, context.Canceled)
 						require.NotErrorIs(t, err, ErrTransientResponse)
@@ -164,6 +166,35 @@ func TestMistralEmbeddingAttemptTimeouts(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestMistralEmbeddingAttemptTimeoutThroughProductionTransport(t *testing.T) {
+	var requests atomic.Int32
+	handlerCanceled := make(chan error, 1)
+	endpoint, egress, resolver := mistralFixture(t, http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+		requests.Add(1)
+		_, _ = io.Copy(io.Discard, request.Body)
+		<-request.Context().Done()
+		handlerCanceled <- request.Context().Err()
+	}))
+	profile := testEmbeddingProfile(t)
+	profile.Endpoint, profile.EgressPolicy = endpoint, egress
+	profile.RequestTimeout, profile.MaxRetries = time.Second, 1
+	recomputeMistralEmbeddingProfile(t, &profile)
+	provider, err := newMistralEmbeddingTestProvider(t, profile, embeddingSecretMap{"credential:mistral-embed": "synthetic-secret"}, resolver)
+	require.NoError(t, err)
+
+	_, err = provider.Embed(t.Context(), []document.EmbeddingInput{{Key: "first", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: "first"}}, embeddingAuthorization(profile.Descriptor))
+	require.ErrorIs(t, err, ErrTransientResponse)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.EqualValues(t, 1, requests.Load())
+	select {
+	case handlerErr := <-handlerCanceled:
+		require.ErrorIs(t, handlerErr, context.Canceled)
+	case <-time.After(time.Second):
+		t.Fatal("provider timeout did not cancel the stalled request")
+	}
+	require.NoError(t, t.Context().Err())
 }
 
 func TestMistralEmbeddingCapacityCeilings(t *testing.T) {

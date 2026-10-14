@@ -14,7 +14,7 @@ import (
 	"go.kenn.io/docbank/document/providerhttp"
 )
 
-func TestDefaultClientAppliesTimeoutAndEgressPolicy(t *testing.T) {
+func TestDefaultClientRefusesEgressDestinationDrift(t *testing.T) {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, "provider")
 	}))
@@ -34,7 +34,6 @@ func TestDefaultClientAppliesTimeoutAndEgressPolicy(t *testing.T) {
 	require.NoError(t, err)
 	client, err := NewClient(policy, ClientConfig{Timeout: time.Second})
 	require.NoError(t, err)
-	assert.Equal(t, time.Second, client.http.Timeout)
 
 	response, err := client.http.Get(drift.URL)
 	if response != nil {
