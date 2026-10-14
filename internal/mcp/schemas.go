@@ -18,6 +18,7 @@ const (
 	schemaStateField          = "state"
 	schemaRevisionField       = "revision"
 	schemaLimitField          = "limit"
+	schemaOffsetField         = "offset"
 	schemaJobIDField          = "job_id"
 	schemaCreatedAtField      = "created_at"
 	jsonSchemaConst           = "const"
@@ -695,9 +696,9 @@ func getDocumentSchemas() (schema, schema) {
 
 func listDocumentVersionsSchemas() (schema, schema) {
 	input := rootObjectSchema(schema{
-		"node_id":        integerSchema(1, 0),
-		schemaLimitField: integerSchema(1, 250),
-		"offset":         integerSchema(0, 1_000_000),
+		"node_id":         integerSchema(1, 0),
+		schemaLimitField:  integerSchema(1, 250),
+		schemaOffsetField: integerSchema(0, 1_000_000),
 	}, "node_id")
 	item := objectSchema(schema{
 		"node_id":            integerSchema(1, 0),
@@ -710,8 +711,8 @@ func listDocumentVersionsSchemas() (schema, schema) {
 	}, "node_id", "content_version_id", "blob_hash", "size", "media_type", "recorded_at", "is_current")
 	output := rootObjectSchema(withPrivateCache(schema{
 		"node_id": integerSchema(1, 0), "items": arraySchema(item, 250),
-		"total": integerSchema(0, 0), schemaLimitField: integerSchema(1, 250), "offset": integerSchema(0, 1_000_000),
-	}), cacheRequired("node_id", "items", "total", schemaLimitField, "offset")...)
+		"total": integerSchema(0, 0), schemaLimitField: integerSchema(1, 250), schemaOffsetField: integerSchema(0, 1_000_000),
+	}), cacheRequired("node_id", "items", "total", schemaLimitField, schemaOffsetField)...)
 	return input, output
 }
 
@@ -721,7 +722,7 @@ func readRenditionTextSchemas() (schema, schema) {
 		"node_id":            integerSchema(1, 0),
 		"content_version_id": uuidSchema(),
 		"attachment_id":      sha256Schema(),
-		"offset":             integerSchema(0, 1<<31-1),
+		schemaOffsetField:    integerSchema(0, 1<<31-1),
 		"max_chars":          schema{"type": "integer", "minimum": 1, "maximum": maxRenditionChars, "default": defaultRenditionChars},
 	}, "vault_id", "node_id", "content_version_id", "attachment_id")
 	output := rootObjectSchema(withPrivateCache(schema{
@@ -913,7 +914,7 @@ func photoPersonAssertionSchema() schema {
 func getPhotoFacesSchemas() (schema, schema) {
 	input := rootObjectSchema(schema{
 		"content_version_id": uuidSchema(),
-		"offset":             integerSchema(0, document.MaxPhotoRecordsPerVersion),
+		schemaOffsetField:    integerSchema(0, document.MaxPhotoRecordsPerVersion),
 		"limit":              integerSchema(1, maxPhotoFacesToolPageSize),
 	}, "content_version_id")
 	output := rootObjectSchema(withPrivateCache(schema{
@@ -921,9 +922,9 @@ func getPhotoFacesSchemas() (schema, schema) {
 		"assertions":       arraySchema(photoPersonAssertionSchema(), maxPhotoFacesToolPageSize),
 		"total_faces":      integerSchema(0, document.MaxPhotoRecordsPerVersion),
 		"total_assertions": integerSchema(0, document.MaxPhotoRecordsPerVersion),
-		"offset":           integerSchema(0, document.MaxPhotoRecordsPerVersion),
+		schemaOffsetField:  integerSchema(0, document.MaxPhotoRecordsPerVersion),
 		"next_offset":      integerSchema(1, document.MaxPhotoRecordsPerVersion),
-	}), "faces", "assertions", "total_faces", "total_assertions", "offset", "ttlMs", "cacheScope")
+	}), "faces", "assertions", "total_faces", "total_assertions", schemaOffsetField, "ttlMs", "cacheScope")
 	return input, output
 }
 

@@ -53,10 +53,11 @@ func TestPhotoFaceRescanRetainsIDsAndDecisions(t *testing.T) {
 	node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("a1"), "image/jpeg")
 	a := document.FaceBox{X: 0.1, Y: 0.1, Width: 0.2, Height: 0.2}
 	b := document.FaceBox{X: 0.6, Y: 0.6, Width: 0.2, Height: 0.2}
-	faces, err := s.ReconcilePhotoFaces(ctx, node.CurrentVersionID, "detector-v1", []document.FaceBox{b, a})
+	c := document.FaceBox{X: 0.1, Y: 0.6, Width: 0.1, Height: 0.1}
+	faces, err := s.ReconcilePhotoFaces(ctx, node.CurrentVersionID, "detector-v1", []document.FaceBox{b, a, c})
 	require.NoError(t, err)
-	require.Len(t, faces, 2)
-	unchanged, err := s.ReconcilePhotoFaces(ctx, node.CurrentVersionID, "detector-v1", []document.FaceBox{a, b})
+	require.Len(t, faces, 3)
+	unchanged, err := s.ReconcilePhotoFaces(ctx, node.CurrentVersionID, "detector-v1", []document.FaceBox{a, b, c})
 	require.NoError(t, err)
 	require.Equal(t, faces, unchanged)
 	ids := map[document.FaceBox]string{}
@@ -71,14 +72,14 @@ func TestPhotoFaceRescanRetainsIDsAndDecisions(t *testing.T) {
 	candidate := openFaceCandidate(t, s, node.CurrentVersionID, ids[b], person.PersonID)
 	_, err = s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: candidate.CandidateID, ExpectedRevision: 1, Action: "reject"})
 	require.NoError(t, err)
+	pending := openFaceCandidate(t, s, node.CurrentVersionID, ids[c], person.PersonID)
 	manual, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), document.FaceBox{X: 0.4, Width: 0.1, Height: 0.1}, "")
 	require.NoError(t, err)
-	pending := openFaceCandidate(t, s, node.CurrentVersionID, manual.FaceID, person.PersonID)
 	shifted := a
 	shifted.X += 0.01
 	faces, err = s.ReconcilePhotoFaces(ctx, node.CurrentVersionID, "detector-v2", []document.FaceBox{shifted, b})
 	require.NoError(t, err)
-	require.Len(t, faces, 3)
+	require.Len(t, faces, 4)
 	for _, face := range faces {
 		switch face.FaceID {
 		case ids[a]:
@@ -86,15 +87,24 @@ func TestPhotoFaceRescanRetainsIDsAndDecisions(t *testing.T) {
 			require.NotEmpty(t, face.AssertionID)
 		case ids[b]:
 			require.Equal(t, b, face.Box)
+		case ids[c]:
+			require.Equal(t, c, face.Box)
+			require.Equal(t, "detector-v1", face.DetectorFingerprint)
+			require.Empty(t, face.AssertionID)
 		case manual.FaceID:
 			require.Equal(t, manual, face)
 		default:
 			t.Fatal("face ID changed")
 		}
 	}
+	open, openTotal, err := s.PersonCandidates(ctx, "open", 10, 0)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), openTotal)
+	require.Len(t, open, 1)
+	require.Equal(t, pending.CandidateID, open[0].CandidateID)
 	faces, err = s.ReconcilePhotoFaces(ctx, node.CurrentVersionID, "detector-v3", nil)
 	require.NoError(t, err)
-	require.Len(t, faces, 3)
+	require.Len(t, faces, 4)
 	decided, err := s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: pending.CandidateID, ExpectedRevision: 1, Action: "reject"})
 	require.NoError(t, err)
 	require.Equal(t, "rejected", decided.State)
@@ -769,7 +779,10 @@ func TestPhotoFaceRescanRecordsEmptyCompletion(t *testing.T) {
 	require.Equal(t, 1, scans)
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
-	require.NotContains(t, exported.String(), "photo_face_scans")
+	restored := newTestStore(t)
+	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
+	require.NoError(t, restored.db.QueryRow(`SELECT COUNT(*) FROM photo_face_scans`).Scan(&scans))
+	require.Zero(t, scans)
 }
 
 func TestPhotoFacePurgeAndPruneRestoreReferences(t *testing.T) {

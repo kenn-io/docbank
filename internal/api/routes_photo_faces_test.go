@@ -43,7 +43,7 @@ func TestPhotoFaceRoutes(t *testing.T) {
 	require.Contains(t, body, "face ID is already in use with different face details")
 	for _, invalid := range []any{
 		map[string]any{},
-		map[string]any{"box": map[string]float64{"x": 0.9, "y": 0, "width": 0.2, "height": 0.1}},
+		map[string]any{"face_id": uuid.NewString(), "box": map[string]float64{"x": 0.9, "y": 0, "width": 0.2, "height": 0.1}},
 		map[string]any{"box": box},
 	} {
 		response, body = do(t, ts, http.MethodPost, path, nil, invalid)

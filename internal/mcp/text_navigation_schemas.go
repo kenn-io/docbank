@@ -23,30 +23,30 @@ func textOutlineSchemas() (schema, schema) {
 		"title_truncated": booleanSchema(),
 	}, "start", "end", "level", "title_markdown", "title_truncated")
 	return rootObjectSchema(schema{
-			"citation": textCitationObjectSchema(),
-			"offset":   integerSchema(0, document.MaxTextNavigationHeadings+1),
-		}, "citation", "offset"), rootObjectSchema(withPrivateCache(schema{
+			"citation":        textCitationObjectSchema(),
+			schemaOffsetField: integerSchema(0, document.MaxTextNavigationHeadings+1),
+		}, "citation", schemaOffsetField), rootObjectSchema(withPrivateCache(schema{
 			"citation": textCitationObjectSchema(), "document_chars": integerSchema(1, math.MaxInt32),
 			"enclosing_section": textSectionRangeSchema(),
-			"offset":            integerSchema(0, document.MaxTextNavigationHeadings+1),
+			schemaOffsetField:   integerSchema(0, document.MaxTextNavigationHeadings+1),
 			schemaTotalField:    integerSchema(1, document.MaxTextNavigationHeadings+1),
 			"sections":          arraySchema(entry, document.TextOutlinePageSize),
 			"next_offset":       integerSchema(1, document.MaxTextNavigationHeadings),
 		}), cacheRequired("citation", "document_chars", "enclosing_section",
-			"offset", schemaTotalField, "sections")...)
+			schemaOffsetField, schemaTotalField, "sections")...)
 }
 
 func textSectionSchemas() (schema, schema) {
 	return rootObjectSchema(schema{
 			"citation": textCitationObjectSchema(), "section": textSectionRangeSchema(),
-			"offset":    integerSchema(0, math.MaxInt32),
-			"max_chars": integerSchema(1, document.MaxTextSectionChars),
-		}, "citation", "section", "offset", "max_chars"), rootObjectSchema(withPrivateCache(schema{
+			schemaOffsetField: integerSchema(0, math.MaxInt32),
+			"max_chars":       integerSchema(1, document.MaxTextSectionChars),
+		}, "citation", "section", schemaOffsetField, "max_chars"), rootObjectSchema(withPrivateCache(schema{
 			"citation": textCitationObjectSchema(), "section": textSectionRangeSchema(),
-			"offset": integerSchema(0, math.MaxInt32), "actual_start": integerSchema(0, math.MaxInt32),
+			schemaOffsetField: integerSchema(0, math.MaxInt32), "actual_start": integerSchema(0, math.MaxInt32),
 			"actual_end": integerSchema(0, math.MaxInt32), "next_offset": integerSchema(0, math.MaxInt32),
 			"complete": booleanSchema(), "text": stringSchema(document.MaxTextSectionChars),
 			"text_sha256": sha256Schema(), "text_bytes": integerSchema(0, 4*document.MaxTextSectionChars),
-		}), cacheRequired("citation", "section", "offset", "actual_start", "actual_end",
+		}), cacheRequired("citation", "section", schemaOffsetField, "actual_start", "actual_end",
 			"next_offset", "complete", "text", "text_sha256", "text_bytes")...)
 }

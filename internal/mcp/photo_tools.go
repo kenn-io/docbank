@@ -35,6 +35,7 @@ type photoAssetToolOutput struct {
 
 type photoFacesToolOutput struct {
 	privateCache
+
 	Faces           []api.PhotoFace            `json:"faces"`
 	Assertions      []api.PhotoPersonAssertion `json:"assertions"`
 	TotalFaces      int                        `json:"total_faces"`
