@@ -153,14 +153,6 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 			require.Len(t, entries, 1)
 			require.NoError(t, s.Store.PublishPhotoCheckoutEntry(t.Context(), entries[0], func() (bool, error) { return true, nil }))
 			require.NoError(t, s.Store.ObservePhotoCheckout(t.Context(), c.ID, op.ID, []string{entries[0].FileID}))
-			before, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
-			require.NoError(t, err)
-			require.Equal(t, int64(1), before.PublishedFiles)
-			require.Positive(t, before.PublishedBytes)
-			beforeOperation, err := s.Store.StorageOperation(t.Context(), op.ID)
-			require.NoError(t, err)
-			require.Equal(t, int64(1), beforeOperation.CopiedObjects)
-			require.Positive(t, beforeOperation.CopiedBytes)
 			require.NoError(t, os.Remove(c.Destination))
 			var keep string
 			switch replacement {

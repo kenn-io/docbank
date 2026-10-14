@@ -30,7 +30,7 @@ func TestWebSessionDeniesPersonRoutes(t *testing.T) {
 	}
 }
 
-func TestWebSessionPhotoAndJobRouteAllowlist(t *testing.T) {
+func TestWebSessionPhotoAllowlistAndJobDenials(t *testing.T) {
 	t.Parallel()
 	album := "/api/v1/photos/albums/11111111-1111-4111-8111-111111111111"
 	for _, route := range []struct{ method, path string }{
