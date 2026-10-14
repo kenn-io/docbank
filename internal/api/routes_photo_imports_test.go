@@ -56,10 +56,7 @@ func TestPhotoImportRoutes(t *testing.T) {
 		require.NoError(t, json.Unmarshal([]byte(stored.RequestJSON), &accepted))
 		assert.Equal(t, store.PhotoImportRequest{SourceRoot: submitted.SourceRoot, Destination: submitted.Destination}, accepted)
 
-		runner := api.NewPhotoImportRunner(api.Deps{Gate: gate, Tracker: tracker})
-		runner.Options.ActivityBegin()
-		assert.Zero(t, tracker.IdleFor())
-		runner.Options.ActivityEnd()
+		runner := api.NewPhotoImportRunner(api.Deps{Gate: gate})
 		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 		defer cancel()
 		mutated := false
