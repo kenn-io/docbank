@@ -78,7 +78,7 @@ func TestPhotoFaceCreateErrorRetryAdvice(t *testing.T) {
 
 func TestPhotoFaceDecisionCommands(t *testing.T) {
 	faces := photoFacesCommand()
-	for _, name := range []string{"name", "retract", "reject", "dismiss", "key", "mark", "retract-mark", "undo"} {
+	for _, name := range []string{"name", "retract", "reject", "dismiss", "key", "withdraw-rejection", "undo"} {
 		command, _, err := faces.Find([]string{name})
 		require.NoError(t, err)
 		require.Equal(t, name, command.Name())

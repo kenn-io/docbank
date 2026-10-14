@@ -21,7 +21,7 @@ var ErrPersonMergeConflict = errors.New("person merge conflict")
 var ErrPersonMergeTooLarge = errors.New("person merge too large")
 
 type PersonMergeMoved struct {
-	RejectedFaceCandidates []PersonMergeRejectedFaceCandidate `json:"rejected_face_candidates,omitzero"`
+	FaceCandidates         []PersonMergeFaceCandidate         `json:"face_candidates,omitzero"`
 	DeduplicatedAssertions []PersonMergeDeduplicatedAssertion `json:"deduplicated_assertions"`
 	AssertionIDs           []string                           `json:"assertion_ids"`
 	SupersededCandidates   []string                           `json:"superseded_candidate_ids"`
@@ -154,7 +154,7 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 		if err != nil {
 			return err
 		}
-		moved.RejectedFaceCandidates, err = moveRejectedFaceCandidatesTx(ctx, tx, survivorID, absorbedID)
+		moved.FaceCandidates, err = moveFaceCandidatesTx(ctx, tx, survivorID, absorbedID)
 		if err != nil {
 			return err
 		}
@@ -181,7 +181,16 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 		if _, err := tx.ExecContext(ctx, `UPDATE custodian_assignments SET person_id=?,revision=revision+1 WHERE person_id=?`, survivorID, absorbedID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE photo_faces SET revision=revision+1,assertion_id=(SELECT keep.assertion_id FROM person_document_assertions old JOIN person_document_assertions keep ON keep.person_id=? AND keep.content_version_id=old.content_version_id AND keep.role=old.role AND keep.action=old.action WHERE old.assertion_id=photo_faces.assertion_id) WHERE assertion_id IN (SELECT old.assertion_id FROM person_document_assertions old JOIN person_document_assertions keep ON keep.person_id=? AND keep.content_version_id=old.content_version_id AND keep.role=old.role AND keep.action=old.action WHERE old.person_id=?)`, survivorID, survivorID, absorbedID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_faces SET revision=revision+1 WHERE assertion_id IN (SELECT assertion_id FROM person_document_assertions WHERE person_id IN (?,?)) OR EXISTS(SELECT 1 FROM person_candidate_faces m JOIN person_match_candidates c ON c.candidate_id=m.candidate_id WHERE m.face_id=photo_faces.face_id AND c.suggested_person_id IN (?,?))`, survivorID, absorbedID, survivorID, absorbedID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET action=COALESCE((SELECT other.action FROM person_document_assertions other WHERE other.person_id IN (?,?) AND other.person_id<>person_document_assertions.person_id AND other.content_version_id=person_document_assertions.content_version_id AND other.role=person_document_assertions.role AND other.action<>'withdrawn'),action),revision=revision+1 WHERE person_id IN (?,?) AND action='withdrawn'`, survivorID, absorbedID, survivorID, absorbedID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE persons SET key_face_id=COALESCE(key_face_id,(SELECT key_face_id FROM persons WHERE person_id=?)) WHERE person_id=?`, absorbedID, survivorID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_faces SET assertion_id=(SELECT keep.assertion_id FROM person_document_assertions old JOIN person_document_assertions keep ON keep.person_id=? AND keep.content_version_id=old.content_version_id AND keep.role=old.role AND keep.action=old.action WHERE old.assertion_id=photo_faces.assertion_id) WHERE assertion_id IN (SELECT old.assertion_id FROM person_document_assertions old JOIN person_document_assertions keep ON keep.person_id=? AND keep.content_version_id=old.content_version_id AND keep.role=old.role AND keep.action=old.action WHERE old.person_id=?)`, survivorID, survivorID, absorbedID); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM person_document_assertions WHERE person_id=? AND EXISTS(
@@ -299,7 +308,7 @@ func collectPersonExternalUIDsTx(ctx context.Context, tx *sql.Tx, personID strin
 func collectPersonMergeDeduplicatedAssertionsTx(ctx context.Context, tx *sql.Tx, survivorID, absorbedID string) (_ []PersonMergeDeduplicatedAssertion, retErr error) {
 	rows, err := tx.QueryContext(ctx, `SELECT a.assertion_id,a.content_version_id,a.person_id,a.role,a.action,a.note,a.recorded_at,a.revision,k.assertion_id
 		FROM person_document_assertions a JOIN person_document_assertions k
-		ON k.person_id=? AND k.content_version_id=a.content_version_id AND k.role=a.role AND k.action=a.action
+		ON k.person_id=? AND k.content_version_id=a.content_version_id AND k.role=a.role AND (k.action=a.action OR k.action='withdrawn' OR a.action='withdrawn')
 		WHERE a.person_id=? ORDER BY a.assertion_id`, survivorID, absorbedID)
 	if err != nil {
 		return nil, err
@@ -382,7 +391,7 @@ func validatePersonMergeBoundsTx(ctx context.Context, tx *sql.Tx, survivorID, ab
 		+ COALESCE((SELECT SUM(length(assignment_id)+2) FROM custodian_assignments WHERE person_id=?),0)
 		+ COALESCE((SELECT SUM(length(assertion_id)+2) FROM person_document_assertions WHERE person_id=?),0)
 		+ COALESCE((SELECT SUM(length(candidate_id)+2) FROM person_match_candidates
-			WHERE suggested_person_id=? AND (state='open' OR (reason='face_match' AND state='rejected'))),0)`,
+			WHERE suggested_person_id=? AND (state='open' OR reason='face_match')),0)`,
 		absorbedID, absorbedID, absorbedID, absorbedID).Scan(&movedBytes); err != nil {
 		return err
 	}
@@ -392,7 +401,7 @@ func validatePersonMergeBoundsTx(ctx context.Context, tx *sql.Tx, survivorID, ab
 	var conflict bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM person_document_assertions a
 		JOIN person_document_assertions s ON s.person_id=? AND a.person_id=?
-		AND s.content_version_id=a.content_version_id AND s.role=a.role AND s.action<>a.action)`, survivorID, absorbedID).Scan(&conflict); err != nil {
+		AND s.content_version_id=a.content_version_id AND s.role=a.role AND s.action<>a.action AND s.action<>'withdrawn' AND a.action<>'withdrawn')`, survivorID, absorbedID).Scan(&conflict); err != nil {
 		return err
 	}
 	if conflict {
@@ -535,4 +544,15 @@ func (s *Store) SplitPerson(ctx context.Context, request PersonSplitRequest) (Pe
 		return err
 	})
 	return receipt, err
+}
+
+func validateMergedPhotoFaces(ctx context.Context, tx *sql.Tx, id string) error {
+	var invalid bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM persons p LEFT JOIN photo_faces f ON f.face_id=p.key_face_id LEFT JOIN person_document_assertions a ON a.assertion_id=f.assertion_id WHERE p.person_id=? AND p.key_face_id IS NOT NULL AND (a.person_id IS NULL OR a.person_id<>p.person_id OR a.action<>'assert'))`, id).Scan(&invalid); err != nil {
+		return err
+	}
+	if invalid {
+		return ErrPersonIdentityConflict
+	}
+	return nil
 }

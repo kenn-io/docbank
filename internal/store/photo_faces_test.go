@@ -100,7 +100,7 @@ func TestPhotoFaceReplaysNamedFaceAfterPersonRetires(t *testing.T) {
 	unnamed, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), box, "")
 	require.NoError(t, err)
 	_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, unnamed.FaceID, box, person.PersonID)
-	require.ErrorIs(t, err, ErrNotFound)
+	require.ErrorIs(t, err, ErrExists)
 }
 
 func TestPhotoFaceReplaysMergedPersonAfterSurvivorRetires(t *testing.T) {
@@ -352,18 +352,10 @@ func TestPhotoFaceRetryAndBindingEpoch(t *testing.T) {
 		require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state`).Scan(&actual))
 		require.Equal(t, epoch, actual)
 		if personID == "" {
-			named, namedAssertion, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, id, box, person.PersonID)
-			require.NoError(t, err)
-			require.Equal(t, face.Revision+1, named.Revision)
-			require.NotEmpty(t, named.AssertionID)
-			require.Equal(t, named.AssertionID, namedAssertion.AssertionID)
-			replayedName, replayedAssertion, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, id, box, person.PersonID)
-			require.NoError(t, err)
-			require.Equal(t, named, replayedName)
-			require.Equal(t, namedAssertion, replayedAssertion)
-			_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, id, box, otherPerson.PersonID)
+			_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, id, box, person.PersonID)
 			require.ErrorIs(t, err, ErrExists)
 		}
+
 		changed := box
 		changed.X = 0.5
 		_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, id, changed, personID)
@@ -509,6 +501,7 @@ func TestPhotoFaceReadIncludesSuppressedReference(t *testing.T) {
 	require.NoError(t, err)
 	faces, assertions, err := s.PhotoFaces(ctx, node.CurrentVersionID)
 	require.NoError(t, err)
+	face.Revision++
 	require.Equal(t, []PhotoFace{face}, faces)
 	require.Equal(t, []PersonDocumentAssertion{suppressed}, assertions)
 }
@@ -545,7 +538,7 @@ func TestPhotoFaceAssertionCapacityAndRestore(t *testing.T) {
 	unnamed, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), box, "")
 	require.NoError(t, err)
 	_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, unnamed.FaceID, box, overflow.PersonID)
-	require.ErrorIs(t, err, ErrPhotoFaceLimit)
+	require.ErrorIs(t, err, ErrExists)
 	overflowAssertion := PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: overflow.PersonID, Role: "depicted", Action: "assert", Revision: 1}
 	_, err = s.AssertDocumentPerson(ctx, overflowAssertion)
 	require.ErrorIs(t, err, ErrPhotoFaceLimit)

@@ -25,6 +25,7 @@ type Error struct {
 	Errors             []string       `json:"errors,omitempty"`
 	ObservedScopeCount int            `json:"observed_scope_count,omitzero"`
 	FaceIDs            []string       `json:"face_ids,omitzero" maxItems:"20"`
+	More               bool           `json:"more,omitzero"`
 	HiddenFaceConflict bool           `json:"hidden_face_conflict,omitzero"`
 	Position           *ErrorPosition `json:"position,omitempty"`
 }
@@ -202,6 +203,7 @@ func FromStoreError(err error) error {
 		out := NewError(http.StatusConflict, "person_merge_conflict", conflict.Error())
 		out.FaceIDs = conflict.FaceIDs
 		out.HiddenFaceConflict = conflict.HiddenConflict
+		out.More = conflict.More
 		return out
 	}
 	if err == nil {

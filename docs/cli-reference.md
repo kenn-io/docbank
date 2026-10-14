@@ -191,7 +191,7 @@ docbank photos faces create <content-version-id> [--box X,Y,WIDTH,HEIGHT] [--per
 docbank photos faces name|reject <content-version-id> --face ID --person ID --revision REV
 docbank photos faces retract|dismiss <content-version-id> --face ID --revision REV
 docbank photos faces key <content-version-id> [--face ID] --person ID --revision REV --person-revision REV
-docbank photos faces mark|retract-mark <content-version-id> --person ID --revision REV
+docbank photos faces withdraw-rejection <content-version-id> --face ID --person ID --revision REV
 docbank photos faces undo <receipt-id>
 docbank photos settings show
 docbank photos settings set raw|image [--revision REV]
@@ -262,7 +262,7 @@ Current duplicate owners preserve existing pairings. See
 
 ```text
 docbank people list [query] [--limit N] [--cursor C]
-docbank people show <person-id>
+docbank people show <person-id> [--assertion-cursor UUID] [--assertion-limit N]
 docbank people create <display-name>
 docbank people rename <person-id> <display-name> --revision REV
 docbank people retire <person-id> --revision REV

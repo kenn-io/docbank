@@ -2280,6 +2280,7 @@ CREATE INDEX IF NOT EXISTS photo_change_receipts_set ON photo_change_receipts(se
 CREATE INDEX IF NOT EXISTS photo_change_receipts_operation ON photo_change_receipts(operation);
 
 CREATE TABLE IF NOT EXISTS persons (
+    key_face_id TEXT REFERENCES photo_faces(face_id) ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED,
     person_id TEXT PRIMARY KEY NOT NULL,
     display_name TEXT NOT NULL,
     display_name_folded TEXT NOT NULL,
@@ -2580,3 +2581,19 @@ CREATE TABLE IF NOT EXISTS photo_hidden_failures (
     failure_id INTEGER PRIMARY KEY,
     occurred_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS person_candidate_faces (
+    candidate_id TEXT NOT NULL REFERENCES person_match_candidates(candidate_id) ON DELETE CASCADE,
+    face_id TEXT NOT NULL,
+    content_version_id TEXT NOT NULL,
+    PRIMARY KEY(candidate_id,face_id)
+);
+CREATE INDEX IF NOT EXISTS person_candidate_faces_face ON person_candidate_faces(face_id,candidate_id);
+CREATE INDEX IF NOT EXISTS person_candidate_faces_version ON person_candidate_faces(content_version_id,candidate_id);
+CREATE TRIGGER IF NOT EXISTS person_candidate_faces_insert AFTER INSERT ON person_match_candidates BEGIN
+ INSERT OR IGNORE INTO person_candidate_faces SELECT NEW.candidate_id,json_extract(e.value,'$.evidence_id'),json_extract(e.value,'$.content_version_id') FROM json_each(CAST(NEW.evidence_json AS TEXT)) e WHERE json_extract(e.value,'$.evidence_kind')='face';
+END;
+CREATE TRIGGER IF NOT EXISTS person_candidate_faces_update AFTER UPDATE OF evidence_json ON person_match_candidates BEGIN
+ DELETE FROM person_candidate_faces WHERE candidate_id=NEW.candidate_id;
+ INSERT OR IGNORE INTO person_candidate_faces SELECT NEW.candidate_id,json_extract(e.value,'$.evidence_id'),json_extract(e.value,'$.content_version_id') FROM json_each(CAST(NEW.evidence_json AS TEXT)) e WHERE json_extract(e.value,'$.evidence_kind')='face';
+END;

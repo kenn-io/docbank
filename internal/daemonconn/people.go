@@ -45,6 +45,9 @@ func validatePersonDetailResponse(detail api.PersonDetail, etag, requestedID str
 	if len(detail.Assertions) > 1000 || detail.KeyFaceID != "" && !validUUIDv4(detail.KeyFaceID) {
 		return errors.New("invalid person face details")
 	}
+	if detail.AssertionsNextCursor != "" && (!validUUIDv4(detail.AssertionsNextCursor) || !detail.AssertionsTruncated || len(detail.Assertions) == 0 || detail.Assertions[len(detail.Assertions)-1].AssertionID != detail.AssertionsNextCursor) {
+		return errors.New("invalid assertion cursor")
+	}
 	seen := map[string]bool{}
 	for _, a := range detail.Assertions {
 		if !validUUIDv4(a.AssertionID) || !validUUIDv4(a.ContentVersionID) || a.PersonID != detail.PersonID || a.Revision < 1 || !document.ValidPersonRole(a.Role) || seen[a.AssertionID] {
@@ -92,13 +95,22 @@ func (c *Connection) People(ctx context.Context, query, cursor string, limit int
 	return *page, nil
 }
 
-func (c *Connection) Person(ctx context.Context, id string) (api.PersonDetail, error) {
+func (c *Connection) Person(ctx context.Context, id string, pages ...api.PersonAssertionPage) (api.PersonDetail, error) {
 	pathID, err := parsePersonID(id)
 	if err != nil {
 		return api.PersonDetail{}, err
 	}
 	var response *http.Response
-	detail, err := c.apiWithResponse(&response).GetPerson(ctx, &apiclient.GetPersonRequestOptions{PathParams: &apiclient.GetPersonPath{PersonID: pathID}})
+	options := &apiclient.GetPersonRequestOptions{PathParams: &apiclient.GetPersonPath{PersonID: pathID}}
+	if len(pages) > 0 {
+		page := pages[0]
+		if page.Limit == 0 {
+			page.Limit = 1000
+		}
+		limit := int64(page.Limit)
+		options.Query = &apiclient.GetPersonQuery{AssertionCursor: &page.Cursor, AssertionLimit: &limit}
+	}
+	detail, err := c.apiWithResponse(&response).GetPerson(ctx, options)
 	if err != nil {
 		return api.PersonDetail{}, err
 	}

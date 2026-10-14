@@ -110,7 +110,7 @@ func (c *Connection) CreatePhotoFace(ctx context.Context, versionID string, requ
 }
 
 func validatePhotoAssertionResponse(assertion api.PhotoPersonAssertion, versionID string) error {
-	if !validUUIDv4(assertion.AssertionID) || !validUUIDv4(assertion.PersonID) || assertion.ContentVersionID != versionID || assertion.Role != "depicted" || (assertion.Action != "assert" && assertion.Action != "suppress") || assertion.Revision < 1 || assertion.RecordedAt == "" {
+	if !validUUIDv4(assertion.AssertionID) || !validUUIDv4(assertion.PersonID) || assertion.ContentVersionID != versionID || assertion.Role != "depicted" || (assertion.Action != "assert" && assertion.Action != "suppress" && assertion.Action != "withdrawn") || assertion.Revision < 1 || assertion.RecordedAt == "" {
 		return errors.New("invalid photo assertion response")
 	}
 	return nil

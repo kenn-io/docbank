@@ -8131,10 +8131,16 @@ func (c *Client) CreatePerson(ctx context.Context, options *CreatePersonRequestO
 // GetPerson Inspect one canonical person
 func (c *Client) GetPerson(ctx context.Context, options *GetPersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonResponse, error) {
 	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"assertion_cursor": {Style: "form", Explode: &[]bool{false}[0]},
+		"assertion_limit":  {Style: "form", Explode: &[]bool{false}[0]},
+	}
 	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/people/by-id/{person_id}",
-		Method:     "GET",
-		Options:    options,
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/people/by-id/{person_id}",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
 	}
 
 	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
@@ -19330,6 +19336,7 @@ func (o *CreatePersonRequestOptions) GetHeader() (map[string]string, error) {
 // GetPersonRequestOptions is the options needed to make a request to GetPerson.
 type GetPersonRequestOptions struct {
 	PathParams *GetPersonPath
+	Query      *GetPersonQuery
 }
 
 // GetPathParams returns the path params as a map.
@@ -19345,7 +19352,13 @@ func (o *GetPersonRequestOptions) GetPathParams() (map[string]any, error) {
 
 // GetQuery returns the query params as a map.
 func (o *GetPersonRequestOptions) GetQuery() (map[string]any, error) {
-	return nil, nil
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
 }
 
 // GetBody returns the payload in any type that can be marshalled to JSON by the client.
@@ -24633,6 +24646,11 @@ type ListPeopleQuery struct {
 	Cursor *string `json:"cursor,omitempty"`
 }
 
+type GetPersonQuery struct {
+	AssertionCursor *string `json:"assertion_cursor,omitempty"`
+	AssertionLimit  *int64  `json:"assertion_limit,omitempty"`
+}
+
 type DetachPhotoFileQuery struct {
 	ClearDependentSidecars *bool `json:"clear_dependent_sidecars,omitempty"`
 }
@@ -24975,6 +24993,7 @@ type GetExportJobEventsErrorResponse struct {
 	Errors             []string       `json:"errors,omitempty"`
 	FaceIds            []string       `json:"face_ids,omitempty"`
 	HiddenFaceConflict *bool          `json:"hidden_face_conflict,omitempty"`
+	More               *bool          `json:"more,omitempty"`
 	ObservedScopeCount *int64         `json:"observed_scope_count,omitempty"`
 	Position           *ErrorPosition `json:"position,omitempty"`
 	Status             int64          `json:"status"`

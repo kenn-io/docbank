@@ -30,9 +30,11 @@ func registerPeopleRoutes(api huma.API, d Deps, g *gate) {
 		OperationID: "getPerson", Method: http.MethodGet, Path: "/api/v1/people/by-id/{person_id}",
 		Summary: "Inspect one canonical person",
 	}, func(ctx context.Context, in *struct {
-		PersonID string `path:"person_id" format:"uuid"`
+		PersonID        string `path:"person_id" format:"uuid"`
+		AssertionCursor string `query:"assertion_cursor"`
+		AssertionLimit  int    `query:"assertion_limit" default:"1000" minimum:"1" maximum:"1000"`
 	}) (*personDetailOutput, error) {
-		person, err := d.Store.PersonDetail(ctx, in.PersonID)
+		person, err := d.Store.PersonDetail(ctx, in.PersonID, store.PersonAssertionPage{After: in.AssertionCursor, Limit: in.AssertionLimit})
 		if err != nil {
 			return nil, FromStoreError(err)
 		}

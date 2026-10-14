@@ -50,18 +50,19 @@ Read face revisions with `faces list` before correcting a name:
 docbank photos faces name <content-version-id> --face <face-id> --person <person-id> --revision REV
 docbank photos faces retract <content-version-id> --face <face-id> --revision REV
 docbank photos faces reject <content-version-id> --face <face-id> --person <person-id> --revision REV
+docbank photos faces withdraw-rejection <content-version-id> --face <face-id> --person <person-id> --revision REV
 docbank photos faces dismiss <content-version-id> --face <face-id> --revision REV
 docbank photos faces key <content-version-id> --face <face-id> --person <person-id> --revision REV --person-revision REV
 docbank photos faces undo <receipt-id>
 ```
 
-Each correction returns `receipt_id`. Undo restores the saved decisions only while the photo's face and assertion records, candidates, and affected person revisions still match. A later edit returns `412 stale_revision`; read again before deciding. Undo also returns a receipt, so it can be undone. A rejected assigned person loses that face assignment atomically. Naming clears that face's rejection and dismissal while preserving decisions for other faces in a group. List returns `rejected_person_ids` and `dismissed`.
+Each correction returns `receipt_id`. Undo restores changed records while their saved revisions still match; edits to unrelated faces stay intact. A later edit returns `412 stale_revision`; read again before deciding. Undo also returns a receipt, so it can be undone. A rejected assigned person loses that face assignment atomically. Naming clears that face's rejection and dismissal while preserving decisions for other faces in a group. List returns `rejected_person_ids` and `dismissed`.
 
-Whole-photo marks have separate ownership through `whole_photo`. Retracting a face name preserves an independent whole-photo mark. Use `faces mark` or `faces retract-mark` with `--person` and the assertion's `--revision`. A new mark starts at revision 1. Clear a key face with `faces key` and omit `--face`, using its current face and person revisions. Read the key face with `people show`.
+Retracting the last face assignment leaves a neutral `withdrawn` assertion. Explicit suppressions remain separate. Withdraw a rejection without changing the face's assignment with `faces withdraw-rejection`. Clear a key face with `faces key` and omit `--face`, using the person revision and `--revision 1`. Read the key face with `people show`; choosing a visible replacement works while the old key's photo is locked.
 
 MCP `get_photo_faces` reads up to 100 face boxes and depicted-person records per page. Each named face includes its `person_id` and `action`. Pass `next_offset` as `offset` for the next page. MCP can't unlock Hidden photos. Manual faces and whole-photo marks use HTTP or the CLI.
 
-Faces require the addressed current, live, included image or RAW member. Sidecars and replaced non-image versions cannot receive boxes or whole-photo marks. Face reads and manual writes require an unlock while the photo is Hidden. Audited vault writes return `audit_mutation_unsupported`. These commands record observations manually. Face detection is unavailable. Face boxes stay fixed; person decisions can be corrected and undone.
+New faces require the addressed current, live, included image or RAW member. Retained image and RAW versions remain readable and correctable until purge. Sidecars and replaced non-image versions cannot receive boxes or whole-photo marks. Face reads and manual writes require an unlock while the photo is Hidden. Audited vault writes return `audit_mutation_unsupported`. These commands record observations manually. Face detection is unavailable. Face boxes stay fixed; person decisions can be corrected and undone.
 
 ## Open and inspect a photo
 

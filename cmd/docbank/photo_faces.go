@@ -76,7 +76,7 @@ func photoFacesCommand() *cobra.Command {
 	}}
 	create.Flags().StringVar(&boxText, "box", "", "x,y,width,height as fractions of the EXIF-oriented preview before rotation")
 	create.Flags().StringVar(&personID, "person", "", "person ID to name a face; omit --box to mark the whole photo")
-	create.Flags().StringVar(&faceID, "face-id", "", "face UUID for retrying or naming an existing box")
+	create.Flags().StringVar(&faceID, "face-id", "", "face UUID for retrying creation")
 	faces.AddCommand(create)
 	addPhotoFaceDecisionCommands(faces)
 	return faces
@@ -103,10 +103,10 @@ func photoFaceCreateError(faceID string, err error) error {
 }
 
 func addPhotoFaceDecisionCommands(faces *cobra.Command) {
-	for _, action := range []string{"name", "retract", "reject", "dismiss", "key", "mark", "retract_mark"} {
+	for _, action := range []string{"name", "retract", "reject", "dismiss", "key", "withdraw_rejection"} {
 		var request api.PhotoFaceDecisionRequest
 		request.Action = action
-		command := &cobra.Command{Use: strings.ReplaceAll(action, "_", "-") + " <content-version-id>", Short: map[string]string{"name": "Name a face", "retract": "Retract a face name", "reject": "Reject a face and person match", "dismiss": "Dismiss a face", "key": "Set or clear a person's key face", "mark": "Mark a person in the whole photo", "retract_mark": "Retract a whole-photo mark"}[action], Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		command := &cobra.Command{Use: strings.ReplaceAll(action, "_", "-") + " <content-version-id>", Short: map[string]string{"name": "Name a face", "retract": "Retract a face name", "reject": "Reject a face and person match", "dismiss": "Dismiss a face", "key": "Set or clear a person's key face", "withdraw_rejection": "Withdraw a face rejection"}[action], Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := daemonconn.Ensure(cmd.Context())
 			if err != nil {
 				return err
@@ -119,7 +119,7 @@ func addPhotoFaceDecisionCommands(faces *cobra.Command) {
 			}
 			return writeCLIJSON(cmd.OutOrStdout(), result)
 		}}
-		command.Flags().Int64Var(&request.Revision, "revision", 0, "expected face revision, or assertion revision for a whole-photo mark")
+		command.Flags().Int64Var(&request.Revision, "revision", 0, "expected face revision")
 		_ = command.MarkFlagRequired("revision")
 		if action != "mark" && action != "retract_mark" {
 			command.Flags().StringVar(&request.FaceID, "face", "", "face UUID")
@@ -127,7 +127,7 @@ func addPhotoFaceDecisionCommands(faces *cobra.Command) {
 				_ = command.MarkFlagRequired("face")
 			}
 		}
-		if action == "name" || action == "reject" || action == "key" || action == "mark" || action == "retract_mark" {
+		if action == "name" || action == "reject" || action == "key" || action == "withdraw_rejection" {
 			command.Flags().StringVar(&request.PersonID, "person", "", "person UUID")
 			_ = command.MarkFlagRequired("person")
 		}

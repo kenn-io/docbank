@@ -172,3 +172,18 @@ func TestSplitPersonValidatesHistoricalFence(t *testing.T) {
 		})
 	}
 }
+
+func TestPersonClientForwardsAssertionPage(t *testing.T) {
+	const personID = "00000000-0000-4000-8000-000000000001"
+	const cursor = "00000000-0000-4000-8000-000000000002"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, cursor, r.URL.Query().Get("assertion_cursor"))
+		require.Equal(t, "7", r.URL.Query().Get("assertion_limit"))
+		w.Header().Set("ETag", `"1"`)
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.MarshalWrite(w, api.PersonDetail{Person: api.Person{PersonID: personID, Revision: 1}}))
+	}))
+	defer server.Close()
+	_, err := New(server.URL, "synthetic-key").Person(t.Context(), personID, api.PersonAssertionPage{Cursor: cursor, Limit: 7})
+	require.NoError(t, err)
+}

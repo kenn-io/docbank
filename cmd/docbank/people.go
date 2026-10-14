@@ -72,7 +72,9 @@ var peopleShowCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		person, err := c.Person(cmd.Context(), args[0])
+		cursor, _ := cmd.Flags().GetString("assertion-cursor")
+		limit, _ := cmd.Flags().GetInt("assertion-limit")
+		person, err := c.Person(cmd.Context(), args[0], api.PersonAssertionPage{Cursor: cursor, Limit: limit})
 		if err != nil {
 			return err
 		}
@@ -239,6 +241,8 @@ var peopleAssertionIDs []string
 
 func init() {
 	peopleSplitCmd.Flags().StringSliceVar(&peopleAssertionIDs, "assertion", nil, "person assertion UUID to move")
+	peopleShowCmd.Flags().String("assertion-cursor", "", "assertion cursor from the previous page")
+	peopleShowCmd.Flags().Int("assertion-limit", 1000, "maximum assertion selectors per page")
 	peopleCmd.AddCommand(peopleListCmd, peopleShowCmd, peopleCreateCmd, peopleRenameCmd,
 		peopleRetireCmd, peopleMergeCmd, peopleSplitCmd)
 	rootCmd.AddCommand(peopleCmd)

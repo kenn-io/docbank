@@ -9,6 +9,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
 	"go.kenn.io/docbank/internal/canonical"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/unicode/norm"
@@ -182,11 +183,24 @@ func ExternalPersonActorKey(system, archiveID, uid string) (string, error) {
 }
 
 func PersonEvidenceKinds() []PersonEvidenceKind {
-	return []PersonEvidenceKind{"source_metadata", "email_generation", "provenance_binding", "content_version", "package_row", "output_receipt", "transfer_record", "custodian_assignment", "operator_assertion"}
+	return []PersonEvidenceKind{"source_metadata", "email_generation", "provenance_binding", "content_version", "package_row", "output_receipt", "transfer_record", "custodian_assignment", "operator_assertion", "face"}
 }
 
 // ValidPersonRole accepts document actor roles and the person credited with
 // speaking in a transcript. A speaker label alone does not establish identity.
 func ValidPersonRole(role string) bool {
 	return ValidEventRole(EventRole(role)) || role == "speaker" || role == "depicted"
+}
+
+// ValidPersonCandidateActorKey includes face references without changing document event keys.
+func ValidPersonCandidateActorKey(key string) bool {
+	if strings.HasPrefix(key, "face:") {
+		value := strings.TrimPrefix(key, "face:")
+		return len(value) == 36 && validPersonFaceID(value)
+	}
+	return ValidateActorKeyV1(key) == nil
+}
+func validPersonFaceID(value string) bool {
+	id, err := uuid.Parse(value)
+	return err == nil && id.String() == value && id.Version() == 4 && id.Variant() == uuid.RFC4122
 }

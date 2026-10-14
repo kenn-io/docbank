@@ -279,6 +279,9 @@ func writePhotoReceiptTx(ctx context.Context, tx *sql.Tx, receipt photoReceipt) 
 	if err != nil {
 		return err
 	}
+	if receipt.Operation == "face_decision" && len(beforeJSON)+len(afterJSON) > maxBatchTagReceiptJSONBytes {
+		return ErrInvalidPhotoFace
+	}
 	receiptID := receipt.ReceiptID
 	if receiptID == "" {
 		receiptID, err = newUUIDv4()

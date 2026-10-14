@@ -1,6 +1,7 @@
 package document
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -88,5 +89,22 @@ func TestPersonIdentityScopeBounds(t *testing.T) {
 			require.Equal(t, test.kind, identity.ScopeKind)
 			require.Equal(t, test.value, identity.ScopeValue)
 		})
+	}
+}
+
+func TestPersonFaceCandidateEvidence(t *testing.T) {
+	if !slices.Contains(PersonEvidenceKinds(), PersonEvidenceKind("face")) {
+		t.Fatal("face evidence is missing")
+	}
+	if !ValidPersonCandidateActorKey("face:00000000-0000-4000-8000-000000000001") {
+		t.Fatal("valid face key rejected")
+	}
+	for _, key := range []string{"face:", "face:invalid", "face:00000000-0000-0000-8000-000000000001"} {
+		if ValidPersonCandidateActorKey(key) {
+			t.Fatalf("accepted %q", key)
+		}
+	}
+	if ValidateActorKeyV1("face:00000000-0000-4000-8000-000000000001") == nil {
+		t.Fatal("face keys entered document event authority")
 	}
 }

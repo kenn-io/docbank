@@ -26,7 +26,7 @@ requested person page.
 Create an operator-owned person with `docbank people create "Ada Lovelace"`.
 Read it with `docbank people show <person-id>` or
 `GET /api/v1/people/by-id/{person_id}`. The detail response includes identity
-IDs, external UIDs, the current revision, `key_face_id`, and up to 1,000 assertion selectors. `assertions_truncated` reports additional selectors; split a listed batch, then read again. Hidden photo selectors stay locked until an unlock. The response also identifies the ID used to reach a merged person. It does not list the person's custodian assignments.
+IDs, external UIDs, the current revision, `key_face_id`, and up to 1,000 assertion selectors. Pass `assertions_next_cursor` as `people show --assertion-cursor` to continue, and use `--assertion-limit` to choose a page size. Selectors include document assertions and retained photo versions; visibility filtering happens before the page limit. Hidden photo selectors stay locked until an unlock. The response also identifies the ID used to reach a merged person. It does not list the person's custodian assignments.
 
 Split needs the ID of each custodian assignment it moves. The only listing of
 assignment IDs is per package: `GET /api/v1/packages/by-id/{package_id}/custodians`

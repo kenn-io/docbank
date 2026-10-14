@@ -26,15 +26,16 @@ const (
 )
 
 type metadataPerson struct {
-	Type              string `json:"type"`
-	PersonID          string `json:"person_id" db:"person_id"`
-	DisplayName       string `json:"display_name" db:"display_name"`
-	DisplayNameFolded string `json:"display_name_folded" db:"display_name_folded"`
-	Origin            string `json:"origin" db:"origin"`
-	State             string `json:"state" db:"state"`
-	Revision          int64  `json:"revision" db:"revision"`
-	CreatedAt         string `json:"created_at" db:"created_at"`
-	UpdatedAt         string `json:"updated_at" db:"updated_at"`
+	Type              string  `json:"type"`
+	PersonID          string  `json:"person_id" db:"person_id"`
+	DisplayName       string  `json:"display_name" db:"display_name"`
+	DisplayNameFolded string  `json:"display_name_folded" db:"display_name_folded"`
+	Origin            string  `json:"origin" db:"origin"`
+	State             string  `json:"state" db:"state"`
+	Revision          int64   `json:"revision" db:"revision"`
+	CreatedAt         string  `json:"created_at" db:"created_at"`
+	UpdatedAt         string  `json:"updated_at" db:"updated_at"`
+	KeyFaceID         *string `json:"key_face_id,omitempty" db:"key_face_id"`
 }
 
 type metadataPersonIdentity struct {
@@ -181,7 +182,7 @@ var personMetadataTables = []metadataRecordCodec{
 }
 
 func validateMetadataPerson(r metadataPerson) error {
-	if r.Type != metadataPersonType || validateUUIDv4(r.PersonID) != nil || r.Revision < 1 ||
+	if r.Type != metadataPersonType || validateUUIDv4(r.PersonID) != nil || r.KeyFaceID != nil && validateUUIDv4(*r.KeyFaceID) != nil || r.Revision < 1 ||
 		!validPersonName(r.DisplayName) || r.DisplayNameFolded != document.FoldPersonName(r.DisplayName) ||
 		!validPersonOrigin(r.Origin) ||
 		!slices.Contains([]string{"provisional", "curated", "retired"}, r.State) {
@@ -260,9 +261,9 @@ func validateMetadataPersonMerge(r metadataPersonMerge) error {
 	if err != nil || !bytes.Equal(canonicalMoved, r.MovedJSON) {
 		return errors.New("person merge moved authority is not canonical")
 	}
-	for _, c := range moved.RejectedFaceCandidates {
+	for _, c := range moved.FaceCandidates {
 		if validateUUIDv4(c.CandidateID) != nil || validateUUIDv4(c.RetainedCandidateID) != nil {
-			return errors.New("invalid moved rejected face candidate")
+			return errors.New("invalid moved face candidate")
 		}
 	}
 	for _, ids := range [][]string{moved.IdentityIDs, moved.AssignmentIDs, moved.AssertionIDs, moved.SupersededCandidates} {
@@ -395,7 +396,7 @@ func validateMetadataPersonAssertion(r metadataPersonDocumentAssertion) error {
 
 func validateMetadataPersonCandidate(r metadataPersonMatchCandidate) error {
 	if r.Type != metadataPersonCandidateType || validateUUIDv4(r.CandidateID) != nil || r.Revision < 1 ||
-		document.ValidateActorKeyV1(r.ActorKey) != nil || !document.ValidPersonIdentityText(r.ActorKey) || !validPersonName(r.DisplayName) ||
+		!document.ValidPersonCandidateActorKey(r.ActorKey) || !document.ValidPersonIdentityText(r.ActorKey) || !validPersonName(r.DisplayName) ||
 		!slices.Contains([]string{"open", "linked", "rejected", "superseded"}, r.State) ||
 		len(r.EvidenceJSON) == 0 || len(r.EvidenceJSON) > maxPersonCandidateEvidence || r.OccurrenceCount < 1 {
 		return errors.New("invalid person candidate metadata")
@@ -438,8 +439,12 @@ func validateUniqueMetadataUUIDs(ids []string) error {
 	return nil
 }
 
-func validatePersonMetadataState(ctx context.Context, q metadataQuerier) error {
-	for _, table := range personMetadataTables {
+func validatePersonMetadataState(ctx context.Context, q metadataQuerier, versions ...int) error {
+	version := currentStorageSchemaVersion
+	if len(versions) > 0 {
+		version = versions[0]
+	}
+	for _, table := range personMetadataTablesForSchema(version) {
 		if err := table.validateRows(ctx, q); err != nil {
 			return fmt.Errorf("validating person metadata records: %w", err)
 		}
@@ -568,4 +573,27 @@ func validatePersonSplitMetadataState(ctx context.Context, q metadataQuerier) er
 		}
 	}
 	return rows.Err()
+}
+
+type metadataPersonBeforeKey struct {
+	Type              string `json:"type"`
+	PersonID          string `json:"person_id" db:"person_id"`
+	DisplayName       string `json:"display_name" db:"display_name"`
+	DisplayNameFolded string `json:"display_name_folded" db:"display_name_folded"`
+	Origin            string `json:"origin" db:"origin"`
+	State             string `json:"state" db:"state"`
+	Revision          int64  `json:"revision" db:"revision"`
+	CreatedAt         string `json:"created_at" db:"created_at"`
+	UpdatedAt         string `json:"updated_at" db:"updated_at"`
+}
+
+func personMetadataTablesForSchema(version int) []metadataRecordCodec {
+	if version >= 36 {
+		return personMetadataTables
+	}
+	tables := slices.Clone(personMetadataTables)
+	tables[0] = newMetadataTable(metadataTable[metadataPersonBeforeKey]{record: metadataPersonBeforeKey{Type: metadataPersonType}, table: "persons", suffix: "ORDER BY person_id", checkExport: true, validate: func(v metadataPersonBeforeKey) error {
+		return validateMetadataPerson(metadataPerson{Type: v.Type, PersonID: v.PersonID, DisplayName: v.DisplayName, DisplayNameFolded: v.DisplayNameFolded, Origin: v.Origin, State: v.State, Revision: v.Revision, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt})
+	}})
+	return tables
 }

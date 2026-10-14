@@ -6427,6 +6427,15 @@ components:
           items:
             type: string
           type: array
+        face_ids:
+          items:
+            type: string
+          maxItems: 20
+          type: array
+        hidden_face_conflict:
+          type: boolean
+        more:
+          type: boolean
         observed_scope_count:
           format: int64
           type: integer
@@ -6906,6 +6915,10 @@ components:
         no_tags:
           type: boolean
         paths:
+          items:
+            type: string
+          type: array
+        person_ids:
           items:
             type: string
           type: array
@@ -11058,6 +11071,16 @@ components:
           format: uri
           readOnly: true
           type: string
+        assertions:
+          items:
+            $ref: "#/components/schemas/PhotoPersonAssertion"
+          maxItems: 1000
+          type: array
+        assertions_next_cursor:
+          format: uuid
+          type: string
+        assertions_truncated:
+          type: boolean
         created_at:
           format: date-time
           type: string
@@ -11073,6 +11096,9 @@ components:
             $ref: "#/components/schemas/PersonIdentity"
           maxItems: 200
           type: array
+        key_face_id:
+          format: uuid
+          type: string
         origin:
           type: string
         person_id:
@@ -11091,6 +11117,8 @@ components:
           format: date-time
           type: string
       required:
+        - assertions_truncated
+        - assertions
         - identities
         - external_identities
         - person_id
@@ -11333,6 +11361,11 @@ components:
         created_at:
           format: date-time
           type: string
+        moved_assertion_ids:
+          items:
+            type: string
+          maxItems: 1000
+          type: array
         moved_identity_ids:
           items:
             type: string
@@ -11519,14 +11552,6 @@ components:
           type:
             - string
             - "null"
-        cover_rotation:
-          enum:
-            - 0
-            - 90
-            - 180
-            - 270
-          format: int64
-          type: integer
         created_at:
           format: date-time
           type: string
@@ -11566,7 +11591,6 @@ components:
       required:
         - member_count
         - included_count
-        - cover_rotation
         - id
         - name
         - starred
@@ -11661,6 +11685,7 @@ components:
       properties:
         caption:
           description: At most 16384 UTF-8 bytes.
+          maxLength: 16384
           type: string
         confirmed_fields:
           description: Confirmation mask. See PhotoFile.confirmed_fields for supported bits.
@@ -11670,9 +11695,11 @@ components:
           type: integer
         copyright:
           description: At most 16384 UTF-8 bytes.
+          maxLength: 16384
           type: string
         creator:
           description: At most 16384 UTF-8 bytes.
+          maxLength: 16384
           type: string
         flag:
           enum:
@@ -11695,7 +11722,6 @@ components:
           minimum: 0
           type: integer
         rotation:
-          description: "Clockwise degrees on EXIF-normalized pixels: 0, 90, 180, or 270."
           enum:
             - 0
             - 90
@@ -11713,232 +11739,6 @@ components:
         - rotation
       type: object
       x-go-type: store.PhotoAuthored
-      x-go-type-import:
-        path: go.kenn.io/docbank/internal/store
-        name: store
-    PhotoAuthoredEditRequest:
-      additionalProperties: false
-      properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          examples:
-            - https://example.com/schemas/PhotoAuthoredEditRequest.json
-          format: uri
-          readOnly: true
-          type: string
-        keywords:
-          items:
-            $ref: "#/components/schemas/PhotoKeywordEdit"
-          maxItems: 100
-          type: array
-        patch:
-          $ref: "#/components/schemas/PhotoAuthoredPatch"
-        rotation_delta:
-          description: Rotate each target clockwise by 90 degrees.
-          enum:
-            - 90
-          format: int64
-          type: integer
-        targets:
-          items:
-            $ref: "#/components/schemas/PhotoAuthoredEditTarget"
-          maxItems: 1000
-          minItems: 1
-          type: array
-      required:
-        - targets
-        - patch
-      type: object
-      x-go-type: api.PhotoAuthoredEditRequest
-      x-go-type-import:
-        path: go.kenn.io/docbank/internal/api
-        name: api
-    PhotoAuthoredEditTarget:
-      additionalProperties: false
-      properties:
-        asset_id:
-          format: uuid
-          type: string
-        asset_revision:
-          format: int64
-          minimum: 1
-          type: integer
-        file_id:
-          format: uuid
-          type: string
-        node_revision:
-          format: int64
-          minimum: 1
-          type: integer
-        revision:
-          format: int64
-          minimum: 1
-          type: integer
-      required:
-        - asset_id
-        - asset_revision
-        - file_id
-        - revision
-        - node_revision
-      type: object
-      x-go-type: store.PhotoAuthoredEditTarget
-      x-go-type-import:
-        path: go.kenn.io/docbank/internal/store
-        name: store
-    PhotoAuthoredPatch:
-      additionalProperties: false
-      properties:
-        caption:
-          description: At most 16384 UTF-8 bytes.
-          type:
-            - string
-            - "null"
-        copyright:
-          description: At most 16384 UTF-8 bytes.
-          type:
-            - string
-            - "null"
-        creator:
-          description: At most 16384 UTF-8 bytes.
-          type:
-            - string
-            - "null"
-        flag:
-          enum:
-            - ""
-            - pick
-            - reject
-          type:
-            - string
-            - "null"
-        label:
-          enum:
-            - ""
-            - red
-            - yellow
-            - green
-            - blue
-            - purple
-          type:
-            - string
-            - "null"
-        rating:
-          format: int64
-          maximum: 5
-          minimum: 0
-          type:
-            - integer
-            - "null"
-        rotation:
-          description: "Clockwise degrees on EXIF-normalized pixels: 0, 90, 180, or 270."
-          enum:
-            - 0
-            - 90
-            - 180
-            - 270
-          format: int64
-          type:
-            - integer
-            - "null"
-      type: object
-      x-go-type: store.PhotoAuthoredPatch
-      x-go-type-import:
-        path: go.kenn.io/docbank/internal/store
-        name: store
-    PhotoAuthoredPreparation:
-      additionalProperties: false
-      properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          examples:
-            - https://example.com/schemas/PhotoAuthoredPreparation.json
-          format: uri
-          readOnly: true
-          type: string
-        assets:
-          items:
-            $ref: "#/components/schemas/PhotoAsset"
-          type: array
-        targets:
-          items:
-            $ref: "#/components/schemas/PhotoPreparedTarget"
-          type: array
-      required:
-        - assets
-        - targets
-      type: object
-      x-go-type: api.PhotoAuthoredPreparation
-      x-go-type-import:
-        path: go.kenn.io/docbank/internal/api
-        name: api
-    PhotoAuthoredPrepareRequest:
-      additionalProperties: false
-      properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          examples:
-            - https://example.com/schemas/PhotoAuthoredPrepareRequest.json
-          format: uri
-          readOnly: true
-          type: string
-        asset_ids:
-          items:
-            format: uuid
-            type: string
-          maxItems: 1000
-          type: array
-        coverage:
-          $ref: "#/components/schemas/WorkspaceQueryCoverage"
-        hidden:
-          type: boolean
-        query:
-          $ref: "#/components/schemas/SavedQueryV1Schema"
-        skip_unavailable:
-          type: boolean
-      type: object
-      x-go-type: api.PhotoAuthoredPrepareRequest
-      x-go-type-import:
-        path: go.kenn.io/docbank/internal/api
-        name: api
-    PhotoAuthoredReceipt:
-      additionalProperties: false
-      properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          examples:
-            - https://example.com/schemas/PhotoAuthoredReceipt.json
-          format: uri
-          readOnly: true
-          type: string
-        after:
-          items:
-            $ref: "#/components/schemas/PhotoAuthoredSnapshot"
-          type: array
-        before:
-          items:
-            $ref: "#/components/schemas/PhotoAuthoredSnapshot"
-          type: array
-        keyword_nodes:
-          items:
-            $ref: "#/components/schemas/PhotoKeywordNode"
-          type: array
-        keywords:
-          items:
-            $ref: "#/components/schemas/PhotoKeywordDelta"
-          type: array
-        receipt_id:
-          description: Empty for a no-op, with empty before and after arrays; no receipt is created.
-          type: string
-        sidecar:
-          $ref: "#/components/schemas/PhotoSidecarProvenance"
-        undo_of:
-          type: string
-      required:
-        - receipt_id
-        - before
-        - after
-      type: object
-      x-go-type: store.PhotoAuthoredReceipt
       x-go-type-import:
         path: go.kenn.io/docbank/internal/store
         name: store
@@ -12200,14 +12000,6 @@ components:
           format: int64
           minimum: 1
           type: integer
-        rotation:
-          enum:
-            - 0
-            - 90
-            - 180
-            - 270
-          format: int64
-          type: integer
         width_px:
           format: int64
           type:
@@ -12218,7 +12010,6 @@ components:
         - kind
         - revision
         - display_file_id
-        - rotation
         - node_id
         - content_version_id
         - name
@@ -12246,25 +12037,6 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
-    PhotoExportSelection:
-      additionalProperties: false
-      properties:
-        asset_ids:
-          items:
-            type: string
-          type: array
-        hidden:
-          type: boolean
-        query:
-          $ref: "#/components/schemas/Query"
-      required:
-        - query
-        - hidden
-      type: object
-      x-go-type: bundle.PhotoExportSelection
-      x-go-type-import:
-        path: go.kenn.io/docbank/document/bundle
-        name: bundle
     PhotoFace:
       additionalProperties: false
       properties:
@@ -12276,8 +12048,15 @@ components:
           type: string
         created_at:
           type: string
+        dismissed:
+          type: boolean
         face_id:
           type: string
+        rejected_person_ids:
+          items:
+            type: string
+          maxItems: 1000
+          type: array
         revision:
           format: int64
           type: integer
@@ -12287,11 +12066,72 @@ components:
         - box
         - revision
         - created_at
+        - dismissed
       type: object
       x-go-type: store.PhotoFace
       x-go-type-import:
         path: go.kenn.io/docbank/internal/store
         name: store
+    PhotoFaceDecisionRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoFaceDecisionRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        action:
+          enum:
+            - name
+            - retract
+            - reject
+            - dismiss
+            - key
+            - withdraw_rejection
+          type: string
+        face_id:
+          format: uuid
+          type: string
+        person_id:
+          format: uuid
+          type: string
+        person_revision:
+          format: int64
+          type: integer
+        revision:
+          format: int64
+          minimum: 1
+          type: integer
+      required:
+        - action
+        - revision
+      type: object
+      x-go-type: store.PhotoFaceDecisionRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    PhotoFaceDecisionResult:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoFaceDecisionResult.json
+          format: uri
+          readOnly: true
+          type: string
+        receipt_id:
+          format: uuid
+          type: string
+      required:
+        - receipt_id
+      type: object
+      x-go-type: api.PhotoFaceDecisionResult
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     PhotoFacePage:
       additionalProperties: false
       properties:
@@ -12405,7 +12245,6 @@ components:
             - sidecar
           type: string
         rotation:
-          description: "Clockwise degrees on EXIF-normalized pixels: 0, 90, 180, or 270."
           enum:
             - 0
             - 90
@@ -12523,61 +12362,6 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
-    PhotoKeywordDelta:
-      additionalProperties: false
-      properties:
-        after:
-          type: boolean
-        before:
-          type: boolean
-        node_id:
-          format: int64
-          type: integer
-        tag_id:
-          type: string
-      required:
-        - node_id
-        - tag_id
-        - before
-        - after
-      type: object
-      x-go-type: store.PhotoKeywordDelta
-      x-go-type-import:
-        path: go.kenn.io/docbank/internal/store
-        name: store
-    PhotoKeywordEdit:
-      additionalProperties: false
-      properties:
-        assign:
-          type: boolean
-        tag_id:
-          format: uuid
-          type: string
-      required:
-        - tag_id
-        - assign
-      type: object
-      x-go-type: store.PhotoKeywordEdit
-      x-go-type-import:
-        path: go.kenn.io/docbank/internal/store
-        name: store
-    PhotoKeywordNode:
-      additionalProperties: false
-      properties:
-        after_revision:
-          format: int64
-          type: integer
-        node_id:
-          format: int64
-          type: integer
-      required:
-        - node_id
-        - after_revision
-      type: object
-      x-go-type: store.PhotoKeywordNode
-      x-go-type-import:
-        path: go.kenn.io/docbank/internal/store
-        name: store
     PhotoMapRow:
       additionalProperties: false
       properties:
@@ -12611,21 +12395,12 @@ components:
           format: int64
           minimum: 1
           type: integer
-        rotation:
-          enum:
-            - 0
-            - 90
-            - 180
-            - 270
-          format: int64
-          type: integer
         width_px:
           format: int64
           type:
             - integer
             - "null"
       required:
-        - rotation
         - asset_id
         - revision
         - name
@@ -12685,53 +12460,6 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
-    PhotoPreparedTarget:
-      additionalProperties: false
-      properties:
-        asset_id:
-          format: uuid
-          type: string
-        asset_revision:
-          format: int64
-          minimum: 1
-          type: integer
-        file_id:
-          format: uuid
-          type: string
-        file_name:
-          type: string
-        node_id:
-          format: int64
-          type: integer
-        node_revision:
-          format: int64
-          minimum: 1
-          type: integer
-        revision:
-          format: int64
-          minimum: 1
-          type: integer
-        tags:
-          items:
-            type: string
-          type: array
-        values:
-          $ref: "#/components/schemas/PhotoAuthored"
-      required:
-        - file_name
-        - node_id
-        - values
-        - tags
-        - asset_id
-        - asset_revision
-        - file_id
-        - revision
-        - node_revision
-      type: object
-      x-go-type: store.PhotoPreparedTarget
-      x-go-type-import:
-        path: go.kenn.io/docbank/internal/store
-        name: store
     PhotoPreviewSlot:
       additionalProperties: false
       properties:
@@ -13006,31 +12734,6 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
-    PhotoRenderProfile:
-      additionalProperties: false
-      properties:
-        format:
-          type: string
-        include_metadata:
-          type: boolean
-        long_edge:
-          format: int64
-          type: integer
-        quality:
-          format: int64
-          type: integer
-        remove_gps:
-          type: boolean
-      required:
-        - format
-        - long_edge
-        - include_metadata
-        - remove_gps
-      type: object
-      x-go-type: bundle.PhotoRenderProfile
-      x-go-type-import:
-        path: go.kenn.io/docbank/document/bundle
-        name: bundle
     PhotoSettings:
       additionalProperties: false
       properties:
@@ -13062,25 +12765,6 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
-    PhotoSidecarProvenance:
-      additionalProperties: false
-      properties:
-        file_id:
-          type: string
-        node_id:
-          format: int64
-          type: integer
-        version_id:
-          type: string
-      required:
-        - node_id
-        - version_id
-        - file_id
-      type: object
-      x-go-type: store.PhotoSidecarProvenance
-      x-go-type-import:
-        path: go.kenn.io/docbank/internal/store
-        name: store
     PhotoTimeline:
       additionalProperties: false
       properties:
@@ -13196,9 +12880,6 @@ components:
           type: integer
         duplicate_policy:
           type: string
-        embedded_previews:
-          format: int64
-          type: integer
         expires_at:
           type: string
         fingerprint:
@@ -13210,8 +12891,6 @@ components:
         metadata_bytes:
           format: int64
           type: integer
-        photo_render:
-          $ref: "#/components/schemas/PhotoRenderProfile"
         role_bytes:
           format: int64
           type: integer
@@ -13305,8 +12984,6 @@ components:
           type: string
         operation_id:
           type: string
-        photo_render:
-          $ref: "#/components/schemas/PhotoRenderProfile"
         publications:
           items:
             $ref: "#/components/schemas/PublicationSelection"
@@ -14340,92 +14017,6 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document/bundle
         name: bundle
-    PushSourceCursor:
-      additionalProperties: false
-      properties:
-        hash:
-          pattern: ^[0-9a-f]{64}$
-          type: string
-        node_id:
-          format: int64
-          minimum: 1
-          type: integer
-        size:
-          format: int64
-          minimum: 0
-          type: integer
-        source_ref:
-          type: string
-        trashed:
-          type: boolean
-      required:
-        - source_ref
-        - node_id
-        - hash
-        - size
-        - trashed
-      type: object
-      x-go-type: api.PushSourceCursor
-      x-go-type-import:
-        path: go.kenn.io/docbank/internal/api
-        name: api
-    PushSourcePage:
-      additionalProperties: false
-      properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          examples:
-            - https://example.com/schemas/PushSourcePage.json
-          format: uri
-          readOnly: true
-          type: string
-        items:
-          items:
-            $ref: "#/components/schemas/PushSourceCursor"
-          type: array
-        next:
-          type: string
-      required:
-        - items
-      type: object
-      x-go-type: api.PushSourcePage
-      x-go-type-import:
-        path: go.kenn.io/docbank/internal/api
-        name: api
-    PushUploadReceipt:
-      additionalProperties: false
-      properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          examples:
-            - https://example.com/schemas/PushUploadReceipt.json
-          format: uri
-          readOnly: true
-          type: string
-        computed_hash:
-          pattern: ^[0-9a-f]{64}$
-          type: string
-        computed_size:
-          format: int64
-          type: integer
-        node:
-          $ref: "#/components/schemas/Node"
-        status:
-          enum:
-            - added
-            - updated
-            - skipped
-          type: string
-      required:
-        - status
-        - node
-        - computed_hash
-        - computed_size
-      type: object
-      x-go-type: api.PushUploadReceipt
-      x-go-type-import:
-        path: go.kenn.io/docbank/internal/api
-        name: api
     PutExportChunkRequest:
       additionalProperties: false
       properties:
@@ -16644,8 +16235,6 @@ components:
           type: array
         operation_id:
           type: string
-        photos:
-          $ref: "#/components/schemas/PhotoExportSelection"
         query:
           $ref: "#/components/schemas/Query"
         saved_query_id:
@@ -16676,6 +16265,11 @@ components:
           format: uri
           readOnly: true
           type: string
+        assertion_ids:
+          items:
+            type: string
+          maxItems: 1000
+          type: array
         assignment_ids:
           items:
             type: string
@@ -18954,28 +18548,6 @@ paths:
                   - proof
                 type: object
           description: Daemon ownership proof
-  /api/daemon/key-challenge:
-    get:
-      operationId: challengeAPIKey
-      parameters:
-        - in: query
-          name: nonce
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                additionalProperties: false
-                properties:
-                  proof:
-                    type: string
-                required:
-                  - proof
-                type: object
-          description: API key possession proof
   /api/daemon/shutdown:
     post:
       operationId: shutdownDaemon
@@ -20931,6 +20503,15 @@ paths:
                     items:
                       type: string
                     type: array
+                  face_ids:
+                    items:
+                      type: string
+                    maxItems: 20
+                    type: array
+                  hidden_face_conflict:
+                    type: boolean
+                  more:
+                    type: boolean
                   observed_scope_count:
                     format: int64
                     type: integer
@@ -24333,6 +23914,20 @@ paths:
           schema:
             format: uuid
             type: string
+        - explode: false
+          in: query
+          name: assertion_cursor
+          schema:
+            type: string
+        - explode: false
+          in: query
+          name: assertion_limit
+          schema:
+            default: 1000
+            format: int64
+            maximum: 1000
+            minimum: 1
+            type: integer
       responses:
         "200":
           content:
@@ -25276,56 +24871,9 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: unhide a revisioned photo asset
-  /api/v1/photos/authored/edit:
+  /api/v1/photos/face-decisions/{receipt_id}/undo:
     post:
-      description: A no-op returns an empty receipt_id and empty before and after arrays. It creates no receipt and leaves the last real edit undoable.
-      operationId: editPhotoAuthored
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/PhotoAuthoredEditRequest"
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PhotoAuthoredReceipt"
-          description: OK
-        default:
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Error
-      summary: Edit photo fields and keywords atomically
-  /api/v1/photos/authored/prepare:
-    post:
-      operationId: preparePhotoAuthored
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/PhotoAuthoredPrepareRequest"
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PhotoAuthoredPreparation"
-          description: OK
-        default:
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Error
-      summary: Resolve a revision-bound metadata editing session
-  /api/v1/photos/authored/{receipt_id}/undo:
-    post:
-      operationId: undoPhotoAuthored
+      operationId: undoPhotoFaceDecision
       parameters:
         - in: path
           name: receipt_id
@@ -25338,7 +24886,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/PhotoAuthoredReceipt"
+                $ref: "#/components/schemas/PhotoFaceDecisionResult"
           description: OK
         default:
           content:
@@ -25346,7 +24894,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
           description: Error
-      summary: Undo photo fields and keywords if their revisions still match
+      summary: Undo a face decision if its records are unchanged
   /api/v1/photos/hidden:
     get:
       operationId: getPhotoHiddenState
@@ -25718,6 +25266,36 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Set or reset the photo display preference
+  /api/v1/photos/versions/{content_version_id}/face-decisions:
+    post:
+      operationId: decidePhotoFace
+      parameters:
+        - in: path
+          name: content_version_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoFaceDecisionRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoFaceDecisionResult"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Name, retract, reject, dismiss, or choose a key face
   /api/v1/photos/versions/{content_version_id}/faces:
     get:
       operationId: listPhotoFaces
@@ -25970,144 +25548,6 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Resolve exact current live document search authority
-  /api/v1/push/sources:
-    get:
-      description: Pages through one push name's cursors in source_ref byte order. Before a push accepts a source, the cursor of a daemon watch with the same name and source_ref stands in for it. A cursor can differ from its node's current version. A push name that matches a configured daemon watch is refused with push_name_in_use.
-      operationId: listPushSources
-      parameters:
-        - explode: false
-          in: query
-          name: push_name
-          required: true
-          schema:
-            maxLength: 64
-            type: string
-        - explode: false
-          in: query
-          name: after
-          schema:
-            maxLength: 4096
-            type: string
-        - explode: false
-          in: query
-          name: limit
-          schema:
-            default: 1000
-            format: int64
-            maximum: 1000
-            minimum: 1
-            type: integer
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PushSourcePage"
-          description: OK
-        default:
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Error
-      summary: List the last accepted bytes of a push name's sources
-  /api/v1/push/uploads:
-    post:
-      description: Streams exactly one multipart field named `file`. X-Docbank-Blob-Hash and X-Docbank-Blob-Size are required declarations for the file payload, not the multipart envelope. Success grants node/blob authority only after both match. Records push provenance atomically. Existing source identities keep their node and version changed source bytes; parent_path and name place only new nodes. A new identity always gets its own node.
-      operationId: uploadPushFile
-      parameters:
-        - description: Virtual filename; must equal the multipart filename
-          in: query
-          name: name
-          required: true
-          schema:
-            minLength: 1
-            type: string
-        - description: Expected lowercase hexadecimal SHA-256 of the file payload
-          in: header
-          name: X-Docbank-Blob-Hash
-          required: true
-          schema:
-            pattern: ^[0-9a-f]{64}$
-            type: string
-        - description: Expected raw file byte length
-          in: header
-          name: X-Docbank-Blob-Size
-          required: true
-          schema:
-            format: int64
-            minimum: 0
-            type: integer
-        - description: Absolute virtual directory for a new source; missing directories are created with its node
-          in: query
-          name: parent_path
-          required: true
-          schema:
-            maxLength: 4096
-            type: string
-        - description: Portable push identity; lowercase letters, digits, -, _, .
-          in: query
-          name: push_name
-          required: true
-          schema:
-            maxLength: 64
-            type: string
-        - description: Canonical relative slash path
-          in: query
-          name: source_ref
-          required: true
-          schema:
-            maxLength: 4096
-            type: string
-        - description: Original source modification time in canonical UTC RFC3339Nano
-          in: query
-          name: modified_at
-          schema:
-            maxLength: 64
-            type: string
-        - description: UUIDv4 naming the client's scan; every file one run accepts joins one ingest run
-          in: query
-          name: run_id
-          required: true
-          schema:
-            format: uuid
-            type: string
-      requestBody:
-        content:
-          multipart/form-data:
-            encoding:
-              file:
-                contentType: "*/*"
-            schema:
-              properties:
-                file:
-                  contentMediaType: application/octet-stream
-                  format: binary
-                  type: string
-              required:
-                - file
-              type: object
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PushUploadReceipt"
-          description: Existing source updated or skipped
-        "201":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PushUploadReceipt"
-          description: New file node created
-        default:
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Error
-      summary: Upload one digest-checked push source
   /api/v1/queries/highlights:
     post:
       description: Returns only bounded positive text operands from the resolved compiler AST; structured, name-only, and negated operands are excluded.
