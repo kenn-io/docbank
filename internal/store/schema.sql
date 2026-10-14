@@ -1136,6 +1136,7 @@ CREATE TABLE IF NOT EXISTS provenance (
 );
 
 CREATE INDEX IF NOT EXISTS provenance_node ON provenance(node_id);
+CREATE INDEX IF NOT EXISTS provenance_source_path ON provenance(original_path);
 CREATE UNIQUE INDEX IF NOT EXISTS provenance_direct_successor
     ON provenance(supersedes) WHERE supersedes IS NOT NULL;
 
