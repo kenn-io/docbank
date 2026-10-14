@@ -130,9 +130,12 @@ func insertSavedQueryRunTx(
 	}
 	var previousRunID, previousHash, previousFingerprint sql.NullString
 	var previousTotal sql.NullInt64
+	// Keep unrelated run histories out of the successor lookup while holding
+	// the write transaction. Commit order, not materialization time, defines the head.
 	err = tx.QueryRowContext(ctx, `SELECT r.run_id,r.member_hash,r.total,r.query_fingerprint
 		FROM saved_query_runs r WHERE r.saved_query_id=? AND NOT EXISTS(
-			SELECT 1 FROM saved_query_runs successor WHERE successor.previous_run_id=r.run_id
+			SELECT 1 FROM saved_query_runs successor
+			WHERE successor.saved_query_id=r.saved_query_id AND successor.previous_run_id=r.run_id
 		) LIMIT 1`,
 		savedQueryID).Scan(&previousRunID, &previousHash, &previousTotal, &previousFingerprint)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {

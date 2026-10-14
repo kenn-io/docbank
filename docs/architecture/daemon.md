@@ -57,6 +57,11 @@ HTTP draining and background-task draining each have a ten-second ceiling.
 Clients allow 25 seconds for graceful exit before forced termination. The extra
 time covers scheduling and cleanup without consuming either drain budget.
 
+API shutdown invalidates cached query snapshots, rejects new snapshot builds,
+and signals active builders before waiting for cleanup. This also happens when
+the shutdown context is already canceled or expired; only the wait for builders
+is bounded by that context.
+
 ```bash
 docbank daemon run          # foreground; logs to stderr
 docbank daemon start        # background; logs to $DOCBANK_HOME/logs/

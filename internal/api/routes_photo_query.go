@@ -41,6 +41,9 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 		Summary:      "Browse matching photo assets",
 		MaxBodyBytes: query.MaxInputBytes + (64 << 10),
 	}, func(ctx context.Context, in *struct{ Body PhotoBrowseRequest }) (*struct{ Body PhotoBrowsePage }, error) {
+		if in.Body.Projection != "map" && in.Body.PageSize > store.MaxDocumentCatalogPageSize {
+			return nil, NewError(http.StatusUnprocessableEntity, "invalid_photo_query", fmt.Sprintf("page_size must be at most %d without projection map", store.MaxDocumentCatalogPageSize))
+		}
 		value, err := query.Parse(in.Body.Query)
 		if err != nil {
 			return nil, NewError(http.StatusUnprocessableEntity, "invalid_query", err.Error())
@@ -58,13 +61,31 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 			}
 			boundary = &position
 		}
+		if in.Body.Projection == "map" {
+			request.Recipes = map[string]string{"grid": recipes["grid"]}
+		}
 		page, err := d.Store.ListPhotoAssets(ctx, request, boundary)
 
 		if err != nil {
 			return nil, workspaceQueryError(err)
 		}
 		wire := PhotoBrowsePage{Items: make([]PhotoBrowseRow, len(page.Items)), Total: page.Total, Facets: fromStoreFacets(page.Facets)}
+		if in.Body.Projection == "map" {
+			wire.Items = []PhotoBrowseRow{}
+			wire.MapItems = make([]PhotoMapRow, len(page.Items))
+		}
 		for i, row := range page.Items {
+			if in.Body.Projection == "map" {
+				mapped := PhotoMapRow{AssetID: row.AssetID, Revision: row.Revision, Name: row.Name, CaptureTime: row.Fields.CaptureTime, WidthPX: row.Fields.WidthPX, HeightPX: row.Fields.HeightPX, Latitude: row.Fields.Latitude, Longitude: row.Fields.Longitude}
+				if slot, ok := row.Previews["grid"]; ok {
+					mapped.Previews.Grid = photoPreviewSlot(row.AssetID, slot.State, slot.Generation)
+				}
+				if browserSessionRequest(ctx) && d.Cfg.Web.MapTiles.TileURL == "" {
+					mapped.Latitude, mapped.Longitude = nil, nil
+				}
+				wire.MapItems[i] = mapped
+				continue
+			}
 			slots := map[string]PhotoPreviewSlot{}
 			for size, slot := range row.Previews {
 				out := photoPreviewSlot(row.AssetID, slot.State, slot.Generation)

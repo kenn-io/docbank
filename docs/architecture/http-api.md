@@ -918,6 +918,10 @@ snapshot rows remain ephemeral: backup and restore retain the receipt but do
 not reconstruct rows or silently rerun the query. Run the saved query again
 after `410 snapshot_gone`.
 
+Each run compares with the preceding committed receipt for the same saved
+query, even when concurrent runs materialize out of order. The predecessor
+lookup uses the saved-query index and reads only that definition's run history.
+
 Snapshot execution supports duplicate and text-coverage constraints.
 Text-coverage predicates require a configured processing profile. Semantic and
 hybrid modes and relevance ordering remain unsupported and return positioned
@@ -1094,7 +1098,7 @@ dropping it.
 
 These root-level routes are outside `/api/v1` and auth-exempt: `GET /health`,
 `GET /api/ping` (daemon discovery), `GET /docs` and the OpenAPI documents,
-and `/`, `/photos`, `/photos/albums`, `/photos/albums/{set_id}`, and `/assets/` (the static web application, when `[web] enabled`). Album page IDs must be canonical UUIDv4 values.
+and `/`, `/photos`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, `/photos/albums/{set_id}`, and `/assets/` (the static web application, when `[web] enabled`). Album page IDs must be canonical UUIDv4 values.
 
 A hidden `POST /api/daemon/shutdown` (not in the OpenAPI document) backs
 `docbank daemon stop`. It isn't auth-exempt: it requires both the API key and
@@ -1401,7 +1405,7 @@ skipped, changed, failed, ambiguous and unsupported counts, plus the groups
 left unpaired. `POST /jobs/{operation_id}/cancel` stops it before the next
 group. Starting an import requires the API key on a loopback connection.
 
-`POST /photos/assets/query` executes [photo asset browsing](../usage/photos.md#browse-photo-assets-over-http). It accepts strict `query`, optional `coverage`, `page_size` from 1 through 250, `facets`, `cursor`, and `hidden`. The default page size is 50. Hidden defaults to false; true lists only hidden assets and validates the unlock on every request. It returns one item per eligible matching asset, the full `total`, and requested `camera`, `lens`, `year`, `location`, or `set` facets on the first page. Facets count distinct assets across the whole scope while omitting their own root filter. Camera and lens group Unicode-folded make/model identities and emit original spellings as keys; an asset can count under both make and model.
+`POST /photos/assets/query` executes [photo asset browsing](../usage/photos.md#browse-photo-assets-over-http). It accepts strict `query`, optional `coverage`, `page_size` from 1 through 250, `facets`, `cursor`, and `hidden`. The default page size is 50. With `projection: "map"`, `page_size` allows up to 1,000. Larger pages return a validation error. Hidden defaults to false; true lists only hidden assets and validates the unlock on every request. It returns one item per eligible matching asset, the full `total`, and requested `camera`, `lens`, `year`, `location`, or `set` facets on the first page. Facets count distinct assets across the whole scope while omitting their own root filter. Camera and lens group Unicode-folded make/model identities and emit original spellings as keys; an asset can count under both make and model.
 
 The supported sort fields are `relevance`, `capture_time`, `import_time`, `added_time`, `name`, `modified_at`, `size` and `media_type`; default ordering is name ascending. Relevance returns one page of up to `page_size` matches with no `next_cursor`. It orders evidence tier and numeric score in the requested direction, then capture time descending and asset UUID ascending. Descending relevance places filename evidence first, metadata evidence second, and retained content-only evidence third. Operands keep their field, prefix, phrase and NEAR meaning. Relevance has no snapshot row limit or build deadline. Passing a cursor with relevance returns `invalid_photo_cursor`.
 
@@ -1415,7 +1419,9 @@ Later pages reuse the first page's total while rows remain live; a new browse re
 
 `GET /photos/assets/{asset_id}/previews/{generation_id}` returns complete verified JPEG bytes for an included asset's current display version. An unavailable or stale generation returns 404. Missing retained bytes return `photo_preview_unavailable`; failed byte verification returns `photo_preview_corrupt`. Success includes Content-Length, Content-Digest, the quoted generation ETag and `X-Content-Type-Options: nosniff`. Visible previews use `Cache-Control: private, no-cache`; hidden previews require an unlock and use `no-store`, including `304`. A matching `If-None-Match` returns bodyless `304` after checking current display eligibility, without reopening the blob. Excluded or replaced displays return `404` even with a matching validator. Responses also vary by Cookie. Browser sessions permit the exact list POST, timeline POST, prepare POST, preview GET, hidden-state GET, interactive hidden POSTs and asset hide/unhide POSTs and `POST /photos/assets/{asset_id}/trash`, `POST /photos/rejects/preflight`, and `POST /photos/rejects/trash` with empty query strings. Reset requires the API key. Preview slot states are `missing`, `ready`, `unsupported` and `failed`; only ready results carry URLs. This read never generates a derivative.
 
-Browse rows include current-display camera make/model, lens make/model, ISO, aperture, exposure time/bias, focal length and orientation; absent metadata fields serialize as JSON null. GPS remains outside browse rows.
+Optional `projection: "map"` returns compact `map_items` with asset ID, revision, name, capture time, dimensions, coordinates and the grid preview state/generation/dimensions; `items` is empty and `map_items` is omitted when empty. It uses the same query, total and cursor contract. Omit the projection for viewer metadata and fit/large previews.
+
+Browse rows include current-display camera make/model, lens make/model, ISO, aperture, exposure time/bias, focal length and orientation; absent metadata fields serialize as JSON null. Compact Map rows alone include `latitude` and `longitude`, decimal-degree numbers from the selected display file or JSON null when absent. Browser-session requests receive null for both unless `[web.map_tiles]` is configured; API-key responses are independent of tile configuration.
 
 `POST /photos/assets/{asset_id}/preview` accepts `content_version_id`, `size` (`fit` or `large`) and optional `hidden` (default false); hidden preparation requires an unlock and returns a preview slot. It verifies the current eligible display version before and after on-demand production under the mutation gate, with a 30-second request limit. A version mismatch at admission returns 409 `photo_display_changed`; a display replaced or excluded during production returns 404. Missing or mismatched source bytes return 503 `photo_preview_unavailable`; retry after restoring the source. Preparation timeouts and cancellation return 503 `photo_preview_unavailable` with distinct messages and a retry instruction. Retained failed and unsupported slots are returned unchanged.
 
@@ -2097,7 +2103,7 @@ Host checks precede authentication and accept loopback, the concrete bind IP,
 the dedicated browser origin, and explicit `allowed_hosts`; wildcard listeners
 do not accept arbitrary names. Server-path ingest remains loopback-peer only.
 `/health`, `/api/ping`, `/docs`, the OpenAPI documents, and the static web application at
-`/`, `/photos`, `/photos/albums`, canonical `/photos/albums/{id}` pages, and `/assets/` are auth-exempt. Everything else, including the shutdown
+`/`, `/photos`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, canonical `/photos/albums/{id}` pages, and `/assets/` are auth-exempt. Everything else, including the shutdown
 route, requires the key.
 
 ## Error mapping
