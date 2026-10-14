@@ -295,12 +295,12 @@ func TestPhotoCheckoutRejectedCreateLeavesNoCheckoutOrOperation(t *testing.T) {
 		errorText                                                   string
 	}
 	cases := []rejectedCase{
-		{name: "empty all", limit: 100},
+		{name: "empty all", limit: 100, errorText: "selection contains no files"},
 		{name: "conflicting pair", conflictingPair: true},
 		{name: "audit refusal", limit: 100, withAsset: true, explicitSelection: true, auditRefusal: true},
 		{name: "negative limit", limit: -1, withAsset: true, explicitSelection: true, errorText: "byte_limit must be nonnegative"},
-		{name: "all without limit", withAsset: true},
-		{name: "insufficient limit", limit: 19, withAsset: true},
+		{name: "all without limit", withAsset: true, errorText: "all requires a positive byte_limit"},
+		{name: "insufficient limit", limit: 19, withAsset: true, errorText: "selected bytes exceed byte_limit"},
 	}
 	if runtime.GOOS == "windows" {
 		for _, name := range []string{"CON.jpg", "bad:name.jpg", "trailing.", "trailing ", "control\x01.jpg"} {

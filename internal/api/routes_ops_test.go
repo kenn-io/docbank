@@ -221,17 +221,36 @@ func TestIngestRejectsNonLoopback(t *testing.T) {
 	cfg := config.Default()
 	cfg.Server.APIKey = "test-key"
 	srv := api.NewServer(api.Deps{Store: s, Blobs: blobs, VaultRoot: dir, Cfg: cfg})
-	for _, path := range []string{"/api/v1/ingest", "/api/v1/ingest/stream", "/api/v1/ingest/preflight", "/api/v1/packages/preflights", "/api/v1/photos/imports", "/api/v1/photos/checkouts"} {
-		t.Run(path, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, "http://localhost"+path, strings.NewReader(`{"paths":["/x"],"dest":"/inbox"}`))
+	for _, test := range []struct {
+		path      string
+		forwarded bool
+	}{
+		{path: "/api/v1/ingest"},
+		{path: "/api/v1/ingest/stream"},
+		{path: "/api/v1/ingest/preflight"},
+		{path: "/api/v1/packages/preflights"},
+		{path: "/api/v1/photos/imports"},
+		{path: "/api/v1/photos/checkouts"},
+		{path: "/api/v1/ingest", forwarded: true},
+	} {
+		name := test.path
+		if test.forwarded {
+			name += " with forwarding headers"
+		}
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "http://localhost"+test.path, strings.NewReader(`{"paths":["/x"],"dest":"/inbox"}`))
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("X-Api-Key", "test-key")
+			if test.forwarded {
+				req.Header.Set("X-Forwarded-For", "127.0.0.1")
+				req.Header.Set("Forwarded", "for=127.0.0.1")
+			}
 			req.RemoteAddr = "192.0.2.1:4444"
 			rec := httptest.NewRecorder()
 			srv.Handler().ServeHTTP(rec, req)
 			assert.Equal(t, http.StatusForbidden, rec.Code)
 			assert.Contains(t, rec.Body.String(), `"code":"loopback_only"`)
-			if path == "/api/v1/photos/checkouts" {
+			if test.path == "/api/v1/photos/checkouts" {
 				assert.Contains(t, rec.Body.String(), "daemon's computer")
 			}
 		})

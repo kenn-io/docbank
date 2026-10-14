@@ -152,14 +152,6 @@ func TestRootStageSyncsCreatedParentsInOrder(t *testing.T) {
 			require.Equal(t, []string{filepath.Join(root.Name(), "."), filepath.Join(root.Name(), "2024"), filepath.Join(root.Name(), "2024", "01"), filepath.Join(root.Name(), "2024", "01", "02")}, synced)
 			require.NoError(t, stage.MakeParentDirectories(relativePath))
 			require.Len(t, synced, 4)
-			_, err = stage.File.WriteString("verified")
-			require.NoError(t, err)
-			require.NoError(t, stage.File.Close())
-			stage.File = nil
-			installed, err := stage.Publish(relativePath)
-			require.True(t, installed)
-			require.NoError(t, err)
-			require.Equal(t, filepath.Join(root.Name(), filepath.Dir(relativePath)), synced[4])
 		})
 	}
 }

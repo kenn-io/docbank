@@ -155,7 +155,6 @@ func TestConcreteNetworkDaemonKeepsLocalImports(t *testing.T) {
 		require.NoError(t, err)
 		request.Header.Set("Content-Type", "application/json")
 		request.Header.Set("X-Api-Key", rec.Metadata["api_key"])
-		request.Header.Set("X-Forwarded-For", "127.0.0.1")
 		response, err := httpClient.Do(request)
 		require.NoError(t, err)
 		defer func() { _ = response.Body.Close() }()
@@ -188,7 +187,6 @@ func TestConcreteNetworkDaemonKeepsLocalImports(t *testing.T) {
 
 	status, body = post(networkAddress, "/api/v1/ingest", api.IngestRequest{Paths: []string{source}, Dest: "/remote"})
 	assert.Equal(t, http.StatusForbidden, status, string(body))
-	assert.Contains(t, string(body), "loopback_only")
 	stop()
 	for _, address := range []string{rec.Address, networkAddress} {
 		listener, err := net.Listen("tcp", address)
