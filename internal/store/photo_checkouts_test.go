@@ -289,13 +289,14 @@ func TestPhotoCheckoutMetadata(t *testing.T) {
 func TestPhotoCheckoutRejectedCreateLeavesNoCheckoutOrOperation(t *testing.T) {
 	t.Parallel()
 	type rejectedCase struct {
-		name, filename                             string
-		limit                                      int64
-		withAsset, explicitSelection, auditRefusal bool
-		errorText                                  string
+		name, filename                                              string
+		limit                                                       int64
+		withAsset, explicitSelection, auditRefusal, conflictingPair bool
+		errorText                                                   string
 	}
 	cases := []rejectedCase{
 		{name: "empty all", limit: 100},
+		{name: "conflicting pair", conflictingPair: true},
 		{name: "audit refusal", limit: 100, withAsset: true, explicitSelection: true, auditRefusal: true},
 		{name: "negative limit", limit: -1, withAsset: true, explicitSelection: true, errorText: "byte_limit must be nonnegative"},
 		{name: "all without limit", withAsset: true},
@@ -312,7 +313,23 @@ func TestPhotoCheckoutRejectedCreateLeavesNoCheckoutOrOperation(t *testing.T) {
 			selection := PhotoCheckoutSelection{All: true}
 			expectedErr := ErrInvalidPhotoCheckout
 			var asset PhotoAsset
-			if tc.withAsset {
+			if tc.conflictingPair {
+				source := t.TempDir()
+				run, err := s.BeginIngest(t.Context(), "photo-import", source)
+				require.NoError(t, err)
+				result, err := s.IngestPhotoGroup(t.Context(), run, photoImportTestGroup(
+					photoImportTestMember(filepath.Join(source, "IMG.ARW"), PhotoRoleRAW, browseHash("raw"), "image/x-sony-arw"),
+					photoImportTestMember(filepath.Join(source, "IMG.JPG"), PhotoRoleImage, browseHash("jpeg"), "image/jpeg")))
+				require.NoError(t, err)
+				run, err = s.BeginIngest(t.Context(), "photo-import", source)
+				require.NoError(t, err)
+				node, err := s.IngestFileExact(t.Context(), run, s.RootID(), "unrelated.XMP", browseHash("sidecar"), 20, "application/rdf+xml", filepath.Join(source, "unrelated.XMP"), "")
+				require.NoError(t, err)
+				target := fileByRole(result.Asset.Files, PhotoRoleRAW).ID
+				asset, err = s.AttachPhotoFile(t.Context(), result.Asset.ID, result.Asset.Revision, node.ID, PhotoRoleSidecar, &target)
+				require.NoError(t, err)
+				selection = PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}
+			} else if tc.withAsset {
 				asset = albumAsset(t, s, "photo.jpg")
 				if tc.explicitSelection {
 					selection = PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}
@@ -334,6 +351,10 @@ func TestPhotoCheckoutRejectedCreateLeavesNoCheckoutOrOperation(t *testing.T) {
 				require.Contains(t, err.Error(), "filename")
 				require.Contains(t, err.Error(), asset.ID)
 				require.Contains(t, err.Error(), asset.Files[0].ID)
+			}
+			if tc.conflictingPair {
+				require.Contains(t, err.Error(), asset.ID)
+				require.Contains(t, err.Error(), fileByRole(asset.Files, PhotoRoleSidecar).ID)
 			}
 			checkouts, err := s.ListPhotoCheckouts(t.Context())
 			require.NoError(t, err)
@@ -391,11 +412,10 @@ func TestPhotoCheckoutEntryPaths(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, sidecar, trashRole, captureDate string
-		multipleSidecars, invalidPair         bool
+		multipleSidecars                      bool
 		paths                                 map[string]string
 	}{
 		{name: "separate ingests", sidecar: "IMG.ARW.XMP", captureDate: "2024-06-15", paths: map[string]string{"raw": "2024/06/15/%s/IMG.ARW", "jpeg": "2024/06/15/%s/IMG.JPG", "sidecar": "2024/06/15/%s/IMG.ARW.XMP"}},
-		{name: "conflicting pair", sidecar: "unrelated.XMP", invalidPair: true},
 		{name: "trashed target", sidecar: "IMG.ARW.XMP", trashRole: PhotoRoleRAW, paths: map[string]string{"jpeg": "undated/%s/IMG.JPG", "sidecar": "undated/%s/IMG.ARW.XMP"}},
 		{name: "trashed conflicting sidecar", sidecar: "unrelated.XMP", trashRole: PhotoRoleSidecar, paths: map[string]string{"raw": "undated/%s/IMG.ARW", "jpeg": "undated/%s/IMG.JPG"}},
 		{name: "multiple sidecars", multipleSidecars: true, paths: map[string]string{"raw": "undated/%s/RENAMED.ARW", "jpeg": "undated/%s/IMG.JPG", "first sidecar": "undated/%s/RENAMED.XMP", "second sidecar": "undated/%s/RENAMED.ARW.XMP"}},
@@ -454,12 +474,6 @@ func TestPhotoCheckoutEntryPaths(t *testing.T) {
 				browsePhotoMetadata(t, s, node, tc.captureDate, photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp(tc.captureDate, tc.captureDate, document.SourceMetadataPrecisionDate, document.SourceMetadataTimezoneOmitted, "")))
 			}
 			checkout, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "checkout", 0)
-			if tc.invalidPair {
-				require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
-				require.Contains(t, err.Error(), result.Asset.ID)
-				require.Contains(t, err.Error(), fileByRole(result.Asset.Files, PhotoRoleSidecar).ID)
-				return
-			}
 			require.NoError(t, err)
 			entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
 			require.NoError(t, err)
