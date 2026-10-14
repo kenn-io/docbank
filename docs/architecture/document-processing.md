@@ -394,7 +394,10 @@ inspection use the same configured ceiling. Sequential rendition inspection
 and sealed upload preparation use verified blob streams, including terminal
 verification and a catalog size check, instead of materializing a seekable copy.
 Audio admission and worker runtime preparation intersect it with the selected
-profile's source limit. The built-in supplied-transcript and supplied-captions
+profile's source limit. The configured ceiling is a separate size check, not part
+of the sealed inspection policy, so changing it leaves queued execution
+identities intact. A queued source the lowered ceiling refuses fails with
+`stale_authority`; a new plan re-admits it once the ceiling allows it again. The built-in supplied-transcript and supplied-captions
 profiles allow 4 GiB original sources;
 their 16 MiB transcript, caption and response limits remain separate.
 

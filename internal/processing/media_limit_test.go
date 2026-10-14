@@ -61,12 +61,14 @@ func TestAudioAdmissionUsesSmallerCeilingAndProfile(t *testing.T) {
 	_, profile, err := NewSuppliedMediaProfile(f.catalog, f.blobs, "synthetic:operator")
 	require.NoError(t, err)
 	configured := configuredProfile{portable: profile.Profile, provider: profile.RenditionProvider, mediaMaxBytes: 3 << 30}
-	version := store.ContentVersion{MimeType: "audio/wav"}
-	require.Equal(t, int64(3<<30), inspectionPolicy("call.wav", version, configured).MaxSourceBytes)
+	admitted := func(filename, mediaType string) int64 {
+		return admittedSourceBytes(inspectionPolicy(filename, store.ContentVersion{MimeType: mediaType}, configured), configured)
+	}
+	require.Equal(t, int64(3<<30), admitted("call.wav", "audio/wav"))
 	configured.portable.Rendition.MaxDocumentBytes = 2 << 30
-	require.Equal(t, int64(2<<30), inspectionPolicy("call.wav", version, configured).MaxSourceBytes)
-	version.MimeType = "text/plain"
-	require.Equal(t, int64(1<<30), inspectionPolicy("notes.txt", version, configured).MaxSourceBytes)
+	require.Equal(t, int64(2<<30), admitted("call.wav", "audio/wav"))
+	configured.mediaMaxBytes = 64
+	require.Equal(t, int64(1<<30), admitted("notes.txt", "text/plain"), "the media ceiling does not bound documents")
 }
 
 func TestConfiguredCeilingAppliesToRetainedAudioPlanAndRuntime(t *testing.T) {
@@ -157,4 +159,46 @@ func TestProviderRuntimeAuthorizesAfterPreparation(t *testing.T) {
 	_, err = document.SealRenditionExecutionAt(prepared, execution.Provider, execution.Upload,
 		execution.Authorization, execution.EvidencePolicy, execution.RenditionPolicy)
 	require.NoError(t, err)
+}
+
+func TestConfiguredCeilingChangeKeepsQueuedExecutionIdentity(t *testing.T) {
+	t.Parallel()
+	f := newPublicationFixture(t)
+	raw := mediatest.WAV()
+	written, err := f.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(raw))
+	require.NoError(t, err)
+	node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), "call.wav", written.Hash, written.Size, "audio/wav", processingBlobPhysical(t, written))
+	require.NoError(t, err)
+	version, err := f.catalog.ContentVersionByID(t.Context(), node.CurrentVersionID)
+	require.NoError(t, err)
+	name, profile, err := NewSuppliedMediaProfile(f.catalog, f.blobs, "synthetic:operator")
+	require.NoError(t, err)
+	newCeilingService := func(maximum int64) *Service {
+		service, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newWorkerTestGate(),
+			SpoolDirectory: t.TempDir(), MediaMaxBytes: maximum, Profiles: map[string]ProfileConfig{name: profile}})
+		require.NoError(t, err)
+		return service
+	}
+	queuedUnder := newCeilingService(0)
+	queued, err := queuedUnder.prepareRendition(t.Context(), node, version, queuedUnder.profiles[name], false)
+	require.NoError(t, err)
+	_, fingerprint, err := document.CanonicalRenditionExecutionIdentityV1(queued.identity)
+	require.NoError(t, err)
+	// The queued source stays within both ceilings, so changing the ceiling
+	// must not change what the worker seals for it.
+	for _, maximum := range []int64{1 << 20, 4 << 30} {
+		service := newCeilingService(maximum)
+		work := store.RenditionJobWork{Profile: service.profiles[name].record,
+			Job:               store.RenditionJob{SourceSHA256: written.Hash, ExecutionIdentityFingerprint: fingerprint},
+			Waiter:            store.RenditionJobWaiter{ContentVersionID: node.CurrentVersionID},
+			ExecutionIdentity: queued.identity}
+		execution, err := service.renditions.Prepare(t.Context(), renditionProviderRuntimeWork(work), service.clock())
+		require.NoError(t, err, "ceiling %d", maximum)
+		sealed, err := document.SealRenditionExecutionAt(service.clock(), execution.Provider, execution.Upload,
+			execution.Authorization, execution.EvidencePolicy, execution.RenditionPolicy)
+		require.NoError(t, err, "ceiling %d", maximum)
+		_, err = renditionExecutionSnapshotForWork(work, sealed)
+		require.NoError(t, err, "ceiling %d", maximum)
+		require.NoError(t, execution.Upload.Close())
+	}
 }

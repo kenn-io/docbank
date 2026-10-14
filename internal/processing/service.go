@@ -655,7 +655,7 @@ func (service *Service) PlanStreamsLargeSource(ctx context.Context, selector Sel
 		return false
 	}
 	policy := renditionInspectionPolicy(node, version, profile)
-	return version.Size > media.MaxInspectionSourceBytes && version.Size <= policy.MaxSourceBytes
+	return version.Size > media.MaxInspectionSourceBytes && version.Size <= admittedSourceBytes(policy, profile)
 }
 
 func (service *Service) Plan(ctx context.Context, selector Selector) (Plan, error) {
@@ -2133,7 +2133,7 @@ func inspectRenditionSource(ctx context.Context, blobs *blob.Store, node store.N
 	switch {
 	case version.Size == 0:
 		return media.CapabilityRecord{Reason: media.CapabilityReasonEmptySource}, nil
-	case version.Size > policy.MaxSourceBytes:
+	case version.Size > admittedSourceBytes(policy, profile):
 		return media.CapabilityRecord{Reason: media.CapabilityReasonSourceBytes}, nil
 	}
 	reader, size, err := blobs.OpenStreamContext(ctx, version.BlobHash)
@@ -2158,12 +2158,21 @@ func renditionInspectionPolicy(
 	return inspectionPolicy(filename, version, profile)
 }
 
-func inspectionPolicy(filename string, version store.ContentVersion, profile configuredProfile) media.InspectionPolicy {
-	ceiling := media.InspectionSourceByteCeiling(filename, version.MimeType)
-	if ceiling == media.MaxMediaSourceBytes && profile.mediaMaxBytes > 0 {
-		ceiling = min(ceiling, profile.mediaMaxBytes)
+// admittedSourceBytes is the largest source a plan or runtime admits. The
+// configured media ceiling applies here rather than in the inspection policy.
+// The policy is sealed into queued execution identities, so a configuration
+// change must not alter it for a source that both ceilings admit.
+func admittedSourceBytes(policy media.InspectionPolicy, profile configuredProfile) int64 {
+	if media.InspectionSourceByteCeiling(policy.Filename, policy.DeclaredMediaType) == media.MaxMediaSourceBytes &&
+		profile.mediaMaxBytes > 0 {
+		return min(policy.MaxSourceBytes, profile.mediaMaxBytes)
 	}
-	maximum := min(profile.portable.Rendition.MaxDocumentBytes, ceiling)
+	return policy.MaxSourceBytes
+}
+
+func inspectionPolicy(filename string, version store.ContentVersion, profile configuredProfile) media.InspectionPolicy {
+	maximum := min(profile.portable.Rendition.MaxDocumentBytes,
+		media.InspectionSourceByteCeiling(filename, version.MimeType))
 	maxUnits := int64(profile.portable.Rendition.MaxUnits)
 	declaredMediaType := version.MimeType
 	if baseType, _, err := mime.ParseMediaType(declaredMediaType); err == nil {
