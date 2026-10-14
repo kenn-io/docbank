@@ -138,7 +138,7 @@
     if (!facet.available || !(facet.dimension in summary)) return false;
     if (facet.dimension === "tags" && query.filters.no_tags) return false;
     if (facet.values.some((value) => selected(facet.dimension, value))) return false;
-    return !facet.total || facet.missing === facet.total;
+    return facet.missing === facet.total;
   }
 
   function toggleMissingTags(): void {

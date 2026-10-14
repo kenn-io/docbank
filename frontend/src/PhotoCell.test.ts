@@ -84,6 +84,31 @@ it("keeps detail-1 clicks over 350 ms apart as single clicks", async () => {
   expect(onopen).not.toHaveBeenCalled();
 });
 
+it("treats two quick taps at opposite ends of a wide tile as two clicks", async () => {
+  const onclick = vi.fn(), onopen = vi.fn();
+  render(PhotoCell, { photo: photo(1), cache: { get: vi.fn() } as unknown as PhotoPreviewCache, selected: false, onclick, onopen });
+  const button = screen.getByRole("button", { name: "Select Photo 1.jpg" });
+  await touchTap(button, 1000, 1, undefined, { x: 5, y: 50 });
+  await touchTap(button, 1100, 1, undefined, { x: 400, y: 50 });
+  expect(onclick).toHaveBeenCalledTimes(2);
+  expect(onopen).not.toHaveBeenCalled();
+});
+
+it("ends a pending tap pair when another tile's pointer is cancelled", async () => {
+  const onclick = vi.fn(), onopen = vi.fn();
+  const props = { cache: { get: vi.fn() } as unknown as PhotoPreviewCache, selected: false, onopen };
+  render(PhotoCell, { ...props, photo: photo(1), onclick: vi.fn() });
+  render(PhotoCell, { ...props, photo: photo(2), onclick });
+  const [, button] = screen.getAllByRole("button", { name: /^Select Photo/ });
+  const other = screen.getByRole("button", { name: "Select Photo 1.jpg" });
+  await touchTap(button, 1000);
+  await fireEvent.pointerDown(other, { pointerType: "touch" });
+  await fireEvent.pointerCancel(other, { pointerType: "touch" });
+  await touchTap(button, 1100);
+  expect(onclick).toHaveBeenCalledTimes(2);
+  expect(onopen).not.toHaveBeenCalled();
+});
+
 it("keeps compact touch clicks and never opens the viewer", async () => {
   const onclick = vi.fn(), oncheck = vi.fn(), onopen = vi.fn();
   render(PhotoCell, { photo: photo(1), cache: { get: vi.fn() } as unknown as PhotoPreviewCache, selected: false, compact: true, onclick, oncheck, onopen });

@@ -20,7 +20,7 @@
   } = $props();
   let menuOpen = $state(false);
   let imageButton = $state<HTMLButtonElement>();
-  let lastClick = $state<{ time: number; opened: boolean } | undefined>();
+  let lastClick = $state<{ time: number; x: number; y: number; opened: boolean } | undefined>();
   let touchClick = false;
   let pointerType: string | undefined;
   let tapCancelled = false;
@@ -41,12 +41,13 @@
     if (!compact && touchClick && event.detail > 1 && !suppressDoubleClick) return;
     if (!compact && touchClick && (event.detail === 1 || suppressDoubleClick)) {
       const time = event.timeStamp;
-      if (lastClick && !lastClick.opened && time - lastClick.time <= 350) {
-        lastClick = { time, opened: true };
+      const { clientX: x, clientY: y } = event;
+      if (lastClick && !lastClick.opened && time - lastClick.time <= 350 && Math.hypot(x - lastClick.x, y - lastClick.y) <= 30) {
+        lastClick = { time, x, y, opened: true };
         openImage(event.currentTarget);
         return;
       }
-      lastClick = { time, opened: false };
+      lastClick = { time, x, y, opened: false };
     } else lastClick = undefined;
     onclick(event, touchClick);
   }
@@ -55,14 +56,19 @@
     lastClick = undefined;
     openImage(event.currentTarget);
   }
-  // A click outside this tile ends a pending double-tap; the listener exists only while one is pending.
+  // A click outside this tile or a pointercancel on any tile ends a pending double-tap; the listener exists only while one is pending.
   $effect(() => {
     if (!lastClick) return;
     const reset = (event: Event) => {
       if (!(event.target instanceof Node) || !imageButton?.contains(event.target)) lastClick = undefined;
     };
+    const cancel = () => lastClick = undefined;
     document.addEventListener("click", reset, true);
-    return () => document.removeEventListener("click", reset, true);
+    document.addEventListener("pointercancel", cancel, true);
+    return () => {
+      document.removeEventListener("click", reset, true);
+      document.removeEventListener("pointercancel", cancel, true);
+    };
   });
   $effect(() => {
     const slot = photo.previews.grid;

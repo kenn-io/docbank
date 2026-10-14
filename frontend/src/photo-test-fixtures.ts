@@ -3,10 +3,10 @@ import { vi } from "vitest";
 import { fireEvent } from "@testing-library/svelte";
 import type { PhotoBrowseRow, PhotoMapRow, PhotoAlbumSummary } from "./generated/docbank.js";
 
-export async function touchTap(target: HTMLElement, time: number, detail = 1, clickPointerType?: string): Promise<void> {
+export async function touchTap(target: HTMLElement, time: number, detail = 1, clickPointerType?: string, point = { x: 0, y: 0 }): Promise<void> {
   await fireEvent.pointerDown(target, { pointerType: "touch" });
   await fireEvent.pointerUp(target, { pointerType: "touch" });
-  const event = new MouseEvent("click", { bubbles: true, button: 0, detail });
+  const event = new MouseEvent("click", { bubbles: true, button: 0, detail, clientX: point.x, clientY: point.y });
   Object.defineProperty(event, "timeStamp", { value: time });
   if (clickPointerType !== undefined) Object.defineProperty(event, "pointerType", { value: clickPointerType });
   await fireEvent(target, event);
