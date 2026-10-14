@@ -13,6 +13,26 @@ vi.mock("./PhotoMap.svelte",()=>({default:(_anchor:unknown,props:NonNullable<typ
 
 afterEach(() => { cleanup(); map.props=undefined; document.querySelectorAll('meta[name="docbank-map-tiles"]').forEach(meta=>meta.remove()); history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); new Photos("scoped", vi.fn()).setDensity("comfortable"); });
 
+it("removes a delayed direct-link photo fragment on tab switch without history.back", async () => {
+  history.replaceState(null, "", "/photos/hidden#web_session=synthetic&web_upload_secret=proof&photo=photo-1");
+  storage();
+  let finish!: (response: Response) => void;
+  stubPhotoFetch(vi.fn(async (url: string) => {
+    if (url.endsWith("/photos/hidden")) return new Promise<Response>(resolve => finish = resolve);
+    return Response.json({ items: [], total: 0 });
+  }));
+  const back = vi.spyOn(history, "back");
+  render(App);
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  expect(history.state?.photoReturn).toBeUndefined();
+  expect(location.hash).toBe("#photo=photo-1");
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+  await fireEvent(document, new Event("visibilitychange"));
+  expect(back).not.toHaveBeenCalled();
+  expect(location.hash).toBe("");
+  finish(Response.json({ configured: true }));
+});
+
 it("signing in while hidden then pagehide sends one lock", async () => {
   history.replaceState(null, "", "/photos/hidden");
   storage();
@@ -93,7 +113,8 @@ it("renders no hidden photo buttons after a failed leave lock and return", async
   await screen.findByText("Hidden did not lock. Lock unavailable");
   visibility.mockReturnValue("visible");
   await fireEvent(document, new Event("visibilitychange"));
-  await screen.findByRole("button", { name: "Unlock" });
+  expect(screen.queryByRole("button", { name: "Unlock" })).toBeNull();
+  expect(screen.queryByLabelText("Passcode", { exact: true })).toBeNull();
   expect(screen.queryByRole("button", { name: "Open Photo 1.jpg" })).toBeNull();
   expect(screen.queryByRole("main", { name: "Photo library" })).toBeNull();
   await fireEvent.click(screen.getByRole("button", { name: "Retry lock" }));
@@ -101,7 +122,7 @@ it("renders no hidden photo buttons after a failed leave lock and return", async
   expect(screen.queryByRole("main", { name: "Photo library" })).toBeNull();
   finish();
   await waitFor(() => expect(screen.queryByText("Hidden did not lock. Lock unavailable")).toBeNull());
-  expect(screen.getByRole("button", { name: "Unlock" })).toBeTruthy();
+  await screen.findByRole("button", { name: "Unlock" });
 });
 
 it.each(["hide", "close", "Documents after Photos", "Documents only", "failed lock"])("locks Hidden when leaving %s", async mode => {

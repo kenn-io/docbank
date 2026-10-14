@@ -7,7 +7,7 @@ import { photo, storage } from "./photo-test-fixtures.js";
 afterEach(() => { cleanup(); history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const state = (unlocked: boolean) => ({ configured: true, ...(unlocked ? { expires_at: new Date(Date.now() + 300_000).toISOString(), expires_in: 300 } : {}) });
 const prepare = () => { vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} }); vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000); vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800); };
-const props = (onauthfailure = vi.fn()) => ({ session: "synthetic", onauthfailure, access: new HiddenAccess("synthetic", onauthfailure) });
+const props = (onauthfailure = vi.fn()) => ({ access: new HiddenAccess("synthetic", onauthfailure) });
 const problem = (status: number, detail: string, code = "") => new Response(JSON.stringify({ detail, code }), { status });
 
 it("waits for a held leave lock before reading on return", async () => {
@@ -322,15 +322,16 @@ it("moves focus to the successor control after unlock and lock", async () => {
   await waitFor(() => expect(document.activeElement?.id).toBe("hidden-passcode"));
 });
 
-it("access reads wait for an in-flight Lock and a manual Lock clears the error", async () => {
+it("conceals the passcode form and grid while lockError is set, then offers the form after a successful lock", async () => {
   prepare();
   let settle!: (response: Response) => void;
   let actionSignal: AbortSignal | undefined;
   let failing = false;
+  let unlocked = true;
   let locks = 0;
   vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
     if (url.endsWith("/lock")) { locks++; actionSignal = options?.signal ?? undefined; return new Promise<Response>(resolve => settle = resolve); }
-    if (url.endsWith("/photos/hidden")) return failing ? problem(503, "Access unavailable") : Response.json(state(true));
+    if (url.endsWith("/photos/hidden")) return failing ? problem(503, "Access unavailable") : Response.json(state(unlocked));
     return Response.json({ items: [photo(1)], total: 1 });
   }));
   const supplied = props();
@@ -341,19 +342,25 @@ it("access reads wait for an in-flight Lock and a manual Lock clears the error",
   await fireEvent(document, new Event("visibilitychange"));
   expect(actionSignal?.aborted).toBe(false);
   settle(problem(503, "Lock unavailable"));
-  await screen.findByText("Lock unavailable");
+  await waitFor(() => expect(supplied.access.lockError).toBe("Lock unavailable"));
+  expect(screen.queryByText("Lock unavailable")).toBeNull();
   await screen.findByText("Access unavailable");
   failing = false;
   await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-  await screen.findByRole("button", { name: "Unlock" });
+  await waitFor(() => expect(screen.queryByText("Access unavailable")).toBeNull());
+  expect(document.querySelector(".hidden-gate form")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Unlock" })).toBeNull();
+  expect(screen.queryByRole("main", { name: "Photo library" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Open Photo 1.jpg" })).toBeNull();
   const locking = view.component.lock();
   await waitFor(() => expect(locks).toBe(2));
   expect(supplied.access.lockError).toBe("Lock unavailable");
+  unlocked = false;
   settle(Response.json(state(false)));
   await locking;
   expect(supplied.access.lockError).toBe("");
   expect(screen.queryByText("Lock unavailable")).toBeNull();
+  await screen.findByRole("button", { name: "Unlock" });
 });
 
 it.each(["read", "action"])("routes Hidden %s HTTP 401 to the session owner", async source => {

@@ -87,7 +87,8 @@ test("Hidden photos lock, unlock, unhide, expire, and discard previews", async (
     await leave();
     await expect(page.getByRole("button", { name: "Retry lock", exact: true })).toBeVisible();
     await returnToPage();
-    await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible();
+    await expect(page.locator("[data-asset]")).toHaveCount(0);
+    await expect(page.getByLabel("Passcode", { exact: true })).toHaveCount(0);
     await page.screenshot({ path: path.join(output!, "web-hidden-lock-failure-dark.png"), animations: "disabled" });
     await page.getByRole("button", { name: "Retry lock", exact: true }).click();
     await expect(page.getByRole("button", { name: "Retry lock", exact: true })).toHaveCount(0);
