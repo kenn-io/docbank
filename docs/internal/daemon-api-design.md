@@ -586,6 +586,12 @@ cover newer bytes. Status and replay derive processing state from the bound
 job. The `media-continuations` backfill finishes admission interrupted before a
 job was bound and enqueues embedding jobs once a media rendition is published.
 
+Media operation history is indexed by caller, source, and admission time.
+Receipt reads start from the requested source revisions, keeping unrelated
+source histories out of those lookups. New operations use the same index to
+find the latest admission time without scanning the history. Reopening a
+current-schema vault creates the index if it is missing.
+
 ### Exact media transcript reads
 
 `GET /api/v1/media/sources/{source_id}/versions/{source_version_id}/transcript`

@@ -186,6 +186,7 @@ func (s *Store) mediaSourceReceipts(
 	if err != nil {
 		return err
 	}
+	// Start from the requested revisions so history lookups use both index keys.
 	rows, err := query.QueryContext(ctx, `WITH requested AS MATERIALIZED (
   SELECT json_extract(value,'$.source_id') source_id,
    json_extract(value,'$.source_version_id') source_version_id FROM json_each(?)
@@ -195,7 +196,7 @@ func (s *Store) mediaSourceReceipts(
     CASE WHEN ? AND json_extract(o.receipt_json,'$.source_version_id')=r.source_version_id
      THEN 0 ELSE 1 END,
     o.updated_at DESC,o.operation_id DESC) selection_rank
-  FROM requested r JOIN media_operations o ON o.source_id=r.source_id
+  FROM requested r CROSS JOIN media_operations o ON o.source_id=r.source_id
   WHERE o.principal=? AND o.verb IN ('submit_supplied_media','submit_remote_recording')
    AND (?=0 OR json_extract(o.receipt_json,'$.source_version_id')=r.source_version_id
     OR COALESCE(json_extract(o.receipt_json,'$.source_version_id'),'')='')
@@ -204,7 +205,7 @@ func (s *Store) mediaSourceReceipts(
   FROM retention WHERE selection_rank=1
   UNION ALL
   SELECT r.source_id,r.source_version_id,o.receipt_json,1,o.created_at,o.operation_id
-  FROM requested r JOIN media_operations o ON o.source_id=r.source_id
+  FROM requested r CROSS JOIN media_operations o ON o.source_id=r.source_id
   WHERE o.principal=? AND r.source_version_id<>''
    AND o.verb IN ('submit_supplied_media','retry_media')
    AND o.receipt_json LIKE '%"processing_profile"%'

@@ -1047,6 +1047,8 @@ CREATE INDEX IF NOT EXISTS media_occurrences_principal
     ON media_occurrences(caller_principal, visible, source_id, occurrence_id);
 CREATE INDEX IF NOT EXISTS media_occurrences_source
     ON media_occurrences(source_id, visible, caller_principal, occurrence_id);
+CREATE INDEX IF NOT EXISTS media_operations_source_admission
+    ON media_operations(principal, source_id, created_at);
 
 CREATE TRIGGER IF NOT EXISTS media_sources_immutable_update
 BEFORE UPDATE ON media_sources BEGIN
