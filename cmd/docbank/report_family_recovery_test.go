@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"cmp"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -215,13 +214,8 @@ func assertRecoveryHandleUnavailable(t *testing.T, id string) {
 func assertRecoveryNoJobs(t *testing.T, root string) {
 	t.Helper()
 	path := filepath.Join(root, "docbank.db")
-	wal, err := os.Stat(path + "-wal")
-	if !errors.Is(err, os.ErrNotExist) {
-		require.NoError(t, err)
-		require.Zero(t, wal.Size(), "immutable read requires an empty WAL")
-	}
 	db, err := store.DefaultSQLiteDriver().Open(path,
-		sqlite.OpenOptions{Access: sqlite.ReadOnlyImmutable})
+		sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Deferred})
 	require.NoError(t, err)
 	defer func() { require.NoError(t, db.Close()) }()
 	var jobs int
