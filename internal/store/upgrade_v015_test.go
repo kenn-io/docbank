@@ -44,6 +44,7 @@ func newReleasedFixtureStore(t *testing.T, path string, driver docsqlite.Driver,
 	t.Helper()
 	db, err := driver.Open(path, docsqlite.OpenOptions{Access: docsqlite.Create, TransactionMode: docsqlite.Immediate})
 	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	_, err = db.Exec(schema)
 	require.NoError(t, err)
 	_, err = db.Exec(`INSERT INTO vault_metadata(singleton,vault_uid,schema_version) VALUES(1,?,?)`, releasedFixtureVaultID, version)
@@ -98,12 +99,12 @@ func seedV0150PendingWork(t *testing.T, db *sql.DB, legacy *Store) (photoNodeID 
 	seedReleasedPhotoAsset(t, db, node.ID)
 	const at = "2026-10-05T12:00:00.000000000Z"
 
-	now := time.Now().UTC().Add(time.Second)
 	versions := seedRenditionCatalogVersions(t, legacy)
 	request := renditionJobTestRequest(versions[0], catalogProcessingProfile(t, false))
 	grantRenditionJobConsent(t, legacy, request)
 	job, waiter, err := legacy.EnqueueRenditionJob(ctx, request)
 	require.NoError(t, err)
+	now := time.Now().UTC()
 	claim, err := legacy.ClaimRenditionJob(ctx, job.ID, "worker:released", now, time.Minute)
 	require.NoError(t, err)
 	_, err = legacy.BeginRenditionProvider(ctx, claim, waiter.ID, now.Add(time.Second), renditionJobTestSnapshot(request))
