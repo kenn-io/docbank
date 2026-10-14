@@ -228,7 +228,7 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 	require.Equal(t, "keep this file", string(content))
 }
 
-func TestCheckoutRunHandlesInterruptionsUnavailableSourcesAndCompletesDeferredResumeWithFrozenBytes(t *testing.T) {
+func TestCheckoutRunHandlesInterruptionsAndCompletesDeferredResumeWithFrozenBytes(t *testing.T) {
 	t.Parallel()
 	t.Run("resume after deferral preserves frozen bytes", func(t *testing.T) {
 		s := checkoutService(t)
@@ -314,7 +314,7 @@ func TestCheckoutRunHandlesInterruptionsUnavailableSourcesAndCompletesDeferredRe
 		require.Equal(t, int64(len(entries)), finished.CopiedObjects)
 		require.Equal(t, copiedBytes, finished.CopiedBytes)
 	})
-	for _, failure := range []string{"operator cancellation", "daemon shutdown", "verification failure", "continues after source exclusion"} {
+	for _, failure := range []string{"operator cancellation", "daemon shutdown", "verification failure"} {
 		t.Run(failure, func(t *testing.T) {
 			s := checkoutService(t)
 			names := []string{"first.jpg", "second.jpg", "third.jpg"}
@@ -330,18 +330,7 @@ func TestCheckoutRunHandlesInterruptionsUnavailableSourcesAndCompletesDeferredRe
 			defer cancel()
 			interrupted := false
 			s.Mutate = func(ctx context.Context, fn func() error) error {
-				progress, err := s.Store.PhotoCheckoutStatus(ctx, c.ID)
-				if !assert.NoError(t, err) {
-					return err
-				}
-				if progress.PublishedFiles == 1 && !interrupted && failure == "continues after source exclusion" {
-					interrupted = true
-					asset, err := s.Store.PhotoAssetByID(ctx, entries[1].AssetID)
-					require.NoError(t, err)
-					_, err = s.Store.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
-					require.NoError(t, err)
-				}
-				err = fn()
+				err := fn()
 				progress, statusErr := s.Store.PhotoCheckoutStatus(ctx, c.ID)
 				if !assert.NoError(t, statusErr) {
 					return statusErr
@@ -403,16 +392,53 @@ func TestCheckoutRunHandlesInterruptionsUnavailableSourcesAndCompletesDeferredRe
 				return
 			}
 			require.Equal(t, store.StorageOperationFailed, finished.State)
-			switch failure {
-			case "verification failure":
-				require.False(t, actual[2].Published)
-				require.Equal(t, int64(1), finished.CompletedObjects)
-			case "continues after source exclusion":
-				require.Contains(t, finished.Error, entries[1].FileID)
-				require.Contains(t, finished.Error, entries[1].Path)
-				require.True(t, actual[2].Published)
-				require.Equal(t, int64(2), status.PublishedFiles)
-			}
+			require.False(t, actual[2].Published)
+			require.Equal(t, int64(1), finished.CompletedObjects)
 		})
 	}
+}
+
+func TestCheckoutRunContinuesAfterSourceExclusion(t *testing.T) {
+	t.Parallel()
+	s := checkoutService(t)
+	for _, name := range []string{"first.jpg", "second.jpg", "third.jpg"} {
+		checkoutPhoto(t, s, name, name)
+	}
+	c, op, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{All: true}, t.TempDir(), 100)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, root.Close()) }()
+	entries, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
+	require.NoError(t, err)
+	excluded := false
+	s.Mutate = func(ctx context.Context, fn func() error) error {
+		progress, err := s.Store.PhotoCheckoutStatus(ctx, c.ID)
+		if !assert.NoError(t, err) {
+			return err
+		}
+		if progress.PublishedFiles == 1 && !excluded {
+			excluded = true
+			asset, err := s.Store.PhotoAssetByID(ctx, entries[1].AssetID)
+			require.NoError(t, err)
+			_, err = s.Store.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
+			require.NoError(t, err)
+		}
+		return fn()
+	}
+	require.Error(t, s.Run(t.Context(), c, root))
+	actual, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
+	require.NoError(t, err)
+	require.True(t, actual[0].Published)
+	require.False(t, actual[1].Published)
+	require.True(t, actual[2].Published)
+	content, err := root.ReadFile(filepath.FromSlash(entries[0].Path))
+	require.NoError(t, err)
+	require.Equal(t, filepath.Base(entries[0].Path), string(content))
+	status, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), status.PublishedFiles)
+	finished, err := s.Store.StorageOperation(t.Context(), op.ID)
+	require.NoError(t, err)
+	require.Equal(t, store.StorageOperationFailed, finished.State)
+	require.Contains(t, finished.Error, entries[1].FileID)
+	require.Contains(t, finished.Error, entries[1].Path)
 }

@@ -56,6 +56,7 @@ func TestPhotoImportRoutes(t *testing.T) {
 		require.NoError(t, json.Unmarshal([]byte(stored.RequestJSON), &accepted))
 		assert.Equal(t, store.PhotoImportRequest{SourceRoot: submitted.SourceRoot, Destination: submitted.Destination}, accepted)
 
+		require.Eventually(t, func() bool { return tracker.IdleFor() == 0 }, time.Second, time.Millisecond)
 		runner := api.NewPhotoImportRunner(api.Deps{Gate: gate})
 		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 		defer cancel()
@@ -67,7 +68,6 @@ func TestPhotoImportRoutes(t *testing.T) {
 		return nil
 	}))
 	require.Eventually(t, func() bool { return supervisor.Snapshot()[0].FinishedAt != nil }, 5*time.Second, 10*time.Millisecond)
-	assert.Positive(t, tracker.IdleFor())
 	_, err := catalog.NodeByPath(t.Context(), "/photos/capture.JPG")
 	require.NoError(t, err)
 

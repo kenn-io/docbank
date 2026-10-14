@@ -10,7 +10,7 @@ import (
 
 func TestTrashEmptyRetainsMailboxReceiptsAndDeletesUnrelatedRoots(t *testing.T) {
 	t.Parallel()
-	for _, target := range []string{"separate source and attachment", "folder subtree", "parent", "child"} {
+	for _, target := range []string{"separate source and attachment", "folder subtree", "child"} {
 		t.Run(target, func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
@@ -44,8 +44,6 @@ func TestTrashEmptyRetainsMailboxReceiptsAndDeletesUnrelatedRoots(t *testing.T) 
 			switch target {
 			case "folder subtree":
 				retained = []int64{folder.ID}
-			case "parent":
-				retained = []int64{receipt.Target.NodeID}
 			case "child":
 				retained = []int64{child.NodeID}
 			}

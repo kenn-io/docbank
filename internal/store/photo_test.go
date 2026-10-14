@@ -571,9 +571,9 @@ func TestPhotoPromoteUnownedNodeRejectsRevisionPrecondition(t *testing.T) {
 func TestPhotoVersionTransitionsKeepIdentity(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
-		name, mime    string
+		name          string
 		pruneOriginal bool
-	}{{"JPEG to PDF and revert", "application/pdf", false}, {"prune JPEG under PDF", "application/pdf", true}} {
+	}{{"JPEG to PDF and revert", false}, {"prune JPEG under PDF", true}} {
 		t.Run(test.name, func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
@@ -582,7 +582,7 @@ func TestPhotoVersionTransitionsKeepIdentity(t *testing.T) {
 			asset, err := s.PhotoAssetForNode(ctx, image.ID)
 			require.NoError(t, err)
 			originalVersionID := image.CurrentVersionID
-			updated, replacement, err := s.ReplaceContent(ctx, image.ID, image.Revision, fakeHash("b2"), 1, test.mime)
+			updated, replacement, err := s.ReplaceContent(ctx, image.ID, image.Revision, fakeHash("b2"), 1, "application/pdf")
 			require.NoError(t, err)
 			require.NoError(t, validatePhotoMetadataState(ctx, s.db, currentStorageSchemaVersion))
 			assetAfter, err := s.PhotoAssetForNode(ctx, image.ID)

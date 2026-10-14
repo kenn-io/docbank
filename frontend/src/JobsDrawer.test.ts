@@ -382,6 +382,7 @@ describe("background jobs drawer", () => {
       },
       jobFixture({ name: "watch:inbox", started_at: "2026-07-23T11:00:00Z" }),
     ];
+    const importTotal = items[0].total_objects! + items[1].total_objects!;
     const preparedLanes: ReturnType<typeof jobs.jobLanes> = [
       {
         key: "photo_import",
@@ -390,7 +391,7 @@ describe("background jobs drawer", () => {
         members: [items[0], items[1]],
         status: "running",
         completed: 75,
-        total: 400,
+        total: importTotal,
         active: true,
         control: undefined,
       },
@@ -443,9 +444,9 @@ describe("background jobs drawer", () => {
     const progress = await screen.findByRole("progressbar", { name: "Photo import progress" });
     await waitFor(() => expect(group).toHaveBeenCalledWith(items, []));
     expect(progress.getAttribute("aria-valuenow")).toBe("75");
-    expect(progress.getAttribute("aria-valuemax")).toBe("400");
+    expect(progress.getAttribute("aria-valuemax")).toBe(String(importTotal));
     expect(screen.getByText("Photo import")).toBeTruthy();
-    expect(screen.getByText("75 of 400 groups")).toBeTruthy();
+    expect(screen.getByText(`75 of ${importTotal} groups`)).toBeTruthy();
     expect(screen.getByText("1 of 2 files")).toBeTruthy();
     expect(screen.getAllByRole("button", { name: /^Cancel / })).toHaveLength(3);
     expect(screen.getByText("2 operations")).toBeTruthy();

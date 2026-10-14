@@ -68,7 +68,7 @@ func TestPhotoImportLateSidecarUpdatesLockedHiddenAsset(t *testing.T) {
 	require.Equal(t, PhotoRoleSidecar, fileByRole(updated.Asset.Files, PhotoRoleSidecar).Role)
 }
 
-func TestPhotoImportRollsBackFailedGroupAndSeparatesSameNameVideo(t *testing.T) {
+func TestPhotoImportRollsBackFailedGroup(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -114,7 +114,22 @@ n, err := s.PreparePhotoImportDestination(ctx, "/new/photos")
 	var assets int
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_assets`).Scan(&assets))
 	assert.Equal(t, 1, assets)
+}
 
+func TestPhotoImportKeepsSameNameVideoSeparate(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
+	require.NoError(t, err)
+	root := filepath.Join(t.TempDir(), "camera")
+	group := photoImportTestGroup(
+		photoImportTestMember(filepath.Join(root, "IMG_0001.ARW"), PhotoRoleRAW, browseHash("raw"), "image/x-sony-arw"),
+		photoImportTestMember(filepath.Join(root, "IMG_0001.JPG"), PhotoRoleImage, browseHash("jpg"), "image/jpeg"),
+		photoImportTestMember(filepath.Join(root, "IMG_0001.XMP"), PhotoRoleSidecar, browseHash("xmp"), "application/rdf+xml"),
+	)
+	result, err := s.IngestPhotoGroup(ctx, run, group)
+	require.NoError(t, err)
 	video, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(photoImportTestMember(
 		filepath.Join(root, "IMG_0001.MOV"), PhotoRoleVideo, browseHash("mov"), "video/quicktime")))
 	require.NoError(t, err)
