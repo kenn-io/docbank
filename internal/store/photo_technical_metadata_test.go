@@ -382,10 +382,6 @@ func TestPhotoTechnicalMetadataRecipeChangeReprojectsOnOpen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "docbank.db")
 	s, err := Open(path)
 	require.NoError(t, err)
-	run, err := s.BeginIngest(ctx, "cli", "mtimes")
-	require.NoError(t, err)
-	_, err = s.IngestFileExact(ctx, run, s.RootID(), "mtime.jpg", fakeHash("b4"), 1, "image/jpeg", "/mtime.jpg", "2024-03-05T10:00:00Z")
-	require.NoError(t, err)
 	stale, err := s.CreateFile(ctx, s.RootID(), "stale.jpg", fakeHash("b2"), 1, "image/jpeg")
 	require.NoError(t, err)
 	_, err = s.PublishSourceMetadata(ctx, stale.BlobHash, fakeHash("e2"), photoCanonical(t,
@@ -408,8 +404,6 @@ func TestPhotoTechnicalMetadataRecipeChangeReprojectsOnOpen(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.db.ExecContext(ctx, `UPDATE photo_technical_metadata_state SET projection_recipe='photo-technical/v0'`)
 	require.NoError(t, err)
-	_, err = s.db.ExecContext(ctx, `DELETE FROM photo_file_times`)
-	require.NoError(t, err)
 	require.NoError(t, s.Close())
 
 	reopened, err := Open(path)
@@ -423,9 +417,6 @@ func TestPhotoTechnicalMetadataRecipeChangeReprojectsOnOpen(t *testing.T) {
 	current, err := photoTechnicalRecipeCurrent(ctx, reopened.db)
 	require.NoError(t, err)
 	assert.True(t, current)
-	var times int
-	require.NoError(t, reopened.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_file_times`).Scan(&times))
-	assert.Equal(t, 1, times, "the recipe change rebuilds file times from provenance")
 	var sortKey, date, camera string
 	require.NoError(t, reopened.db.QueryRowContext(ctx, `SELECT p.capture_sort_key, p.capture_date, p.camera_model_folded
 		FROM photo_technical_metadata p JOIN source_metadata_heads h USING(generation_id)
@@ -652,7 +643,7 @@ func TestPhotoTechnicalProjectionRecipeIsPinnedToMapData(t *testing.T) {
 		sum := sha256.Sum256(data)
 		sums[name] = hex.EncodeToString(sum[:])
 	}
-	assert.Equal(t, "photo-technical/v3", PhotoTechnicalProjectionRecipe)
+	assert.Equal(t, "photo-technical/v2", PhotoTechnicalProjectionRecipe)
 	assert.Equal(t, map[string]string{
 		"ne_10m_admin_0_countries.geojson":        "27db73de0818a97f9c7beda9590d39a0c39e9ff45e8f2f32fe6c9f284945d572",
 		"ne_10m_admin_1_states_provinces.geojson": "ae0d6d65975daead72e054f3715273eda770e89386df5fc299b4cc198f9f4f20",

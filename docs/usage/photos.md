@@ -400,7 +400,7 @@ docbank photos albums add <album-id> --query "{\"filters\":{\"kinds\":[\"photo\"
 docbank photos albums members <album-id> --sort added_time --direction desc
 ```
 
-`members` accepts `added_time`, `import_time`, or `capture_time`, plus `--page-size` and `--cursor`. Capture dates with missing evidence come last. Ties use ascending asset UUID. The cursor binds the album ID as well as the query and page options.
+`members` accepts `added_time`, `import_time`, or `capture_time`, plus `--page-size` and `--cursor`. Photos with neither a capture date nor a file modified time come last. Ties use ascending asset UUID. The cursor binds the album ID as well as the query and page options.
 
 ```text
 docbank photos albums rename <album-id> "Trip"
@@ -573,9 +573,10 @@ stay out.
 
 Sort by `relevance`, `capture_time`, `import_time`, `name`, `modified_at`, `size`, or
 `media_type`, with `asc` or `desc`. Set `filters.set_ids` to album UUIDs to browse their members. `added_time` requires exactly one album ID after normalization. Capture sorting converts recorded offsets
-to UTC. Omitted zones use civil calendar coordinates. Missing or unreadable
-capture times sort last in both directions and do not match capture-date
-filters. Asset UUID orders equal keys. Names and media types compare only their
+to UTC. Omitted zones use civil calendar coordinates. A photo without a
+readable capture time sorts by its file's modified time when Docbank recorded
+one. Photos with neither sort last in both directions and do not match
+capture-date filters. Asset UUID orders equal keys. Names and media types compare only their
 first 1,024 characters, so longer values that share that prefix also fall back
 to UUID order. Relevance orders evidence tier and numeric score in the requested direction, then capture time descending and asset UUID ascending. Only members retained after duplicate collapse contribute scores. An unchanged library pages without duplicates or gaps with other sorts. `path` is
 unsupported by this route. Document
@@ -622,8 +623,9 @@ docbank photos timeline --query '{"filters":{"capture_after":"2024-01-01"}}'
 `--query` takes strict QueryV1 JSON and defaults to `{}`, every included
 photo. `--coverage` and `--profile-fingerprint` work as in photo browsing. The
 output's single `capture_day` facet lists one value per day. `total` counts
-every matching asset, and `missing` counts those without a readable capture
-date. Days follow the same recorded calendar day as `capture_after` and
+every matching asset, and `missing` counts those with neither a readable
+capture date nor a recorded file modified time. A photo without a capture date
+counts on the UTC day of its file's modified time. Days follow the same recorded calendar day as `capture_after` and
 `capture_before`, so a day's count matches browsing that day.
 
 Over HTTP, send the same `query` and optional `coverage` to

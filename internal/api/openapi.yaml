@@ -12699,6 +12699,11 @@ components:
           type:
             - string
             - "null"
+        file_modified_time:
+          format: date-time
+          type:
+            - string
+            - "null"
         height_px:
           format: int64
           type:
@@ -12741,6 +12746,7 @@ components:
         - revision
         - name
         - capture_time
+        - file_modified_time
         - width_px
         - height_px
         - latitude

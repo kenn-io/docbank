@@ -2,9 +2,14 @@ import type { PhotoBrowseRow, PhotoPreviewSlot } from "./generated/docbank.js";
 
 export type PhotoGridRow = Pick<
   PhotoBrowseRow,
-  "asset_id" | "name" | "capture_time" | "width_px" | "height_px" | "rotation"
-> &
-  Partial<Pick<PhotoBrowseRow, "file_modified_time">> & { previews: { grid: PhotoPreviewSlot } };
+  | "asset_id"
+  | "name"
+  | "capture_time"
+  | "file_modified_time"
+  | "width_px"
+  | "height_px"
+  | "rotation"
+> & { previews: { grid: PhotoPreviewSlot } };
 import { rotatedDimensions } from "./photoRotation.js";
 
 export type LayoutItem = { aspect: number };
@@ -85,7 +90,7 @@ export function photoAspect(photo: PhotoGridRow): number {
 }
 
 // The file's modified time places photos that carry no capture date.
-export function photoDate(item: { capture_time?: string | null; file_modified_time?: string | null }): string | null {
+export function photoDate(item: Pick<PhotoGridRow, "capture_time" | "file_modified_time">): string | null {
   return item.file_modified_time ?? item.capture_time ?? null;
 }
 
@@ -157,9 +162,6 @@ export function groupPhotos(
       if (clock > previous) group.key = item.asset_id;
       group.items.push(item);
       previous = clock;
-    }
-    for (const group of groups) {
-      if (group.items.some(item => item.file_modified_time)) group.label = group.label.replace("Capture session", "Session");
     }
     for (const group of groups) group.items.sort((a, b) => clocks.get(b)! - clocks.get(a)!);
     groups.reverse();

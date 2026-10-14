@@ -133,5 +133,4 @@ it("places a row with only a file modified time in its month and keeps rows with
   expect(groups.map(group => group.key)).toEqual(["2023-11", "2020-01", "undated"]);
   expect(groups[0]!.items).toEqual([items[0]]);
   expect(groups.at(-1)!.items).toEqual([items[2]]);
-  expect(groupPhotos(items, "sessions").map(group => group.label)).toContain("2023-11-04 · Session");
 });

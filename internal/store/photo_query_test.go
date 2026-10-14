@@ -1,12 +1,14 @@
 package store
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/query"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -1201,6 +1203,9 @@ func TestPhotoBrowsePlacesUndatedPhotosByFileModifiedTime(t *testing.T) {
 	browsePhotoMetadata(t, s, older, "older", exifCapture("2024-01-15T09:00:00Z"))
 	ingestMtimePhoto(t, s, run, "unknown.jpg", "")
 
+	var indexed int
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_file_times`).Scan(&indexed))
+	require.Equal(t, 1, indexed, "photos with a capture date never enter the mtime index, even when it is published after ingest")
 	request := PhotoBrowseRequest{Query: snapshotTestQuery(t, `{"sort":{"field":"capture_time","direction":"desc"}}`), PageSize: 1}
 	var names []string
 	var boundary *PhotoBrowsePosition
@@ -1236,26 +1241,37 @@ func TestPhotoBrowsePlacesUndatedPhotosByFileModifiedTime(t *testing.T) {
 	require.Zero(t, browsePhotoPage(t, s, `{"filters":{"capture_after":"2020-01-01","capture_before":"2020-01-02"}}`).Total)
 	require.Equal(t, int64(1), browsePhotoPage(t, s, `{"syntax":"advanced","text":"capture_after:2024-03-05 AND capture_before:2024-03-06"}`).Total)
 
-	// A later provenance fact, and a correction of it, move the photo.
-	appendMtime := func(mtime string, supersedes *string) string {
+	// Seeing the same content again with a later mtime moves the photo.
+	reseen := func(hash, mtime string) {
 		current, err := s.NodeByID(ctx, wallpaper.ID)
 		require.NoError(t, err)
-		result, err := s.AppendNodeProvenance(ctx, ProvenanceAppendInput{
-			NodeID: wallpaper.ID, IfRevision: current.Revision, SourceKind: "agent", SourceDescription: "mtime",
-			OriginalPath: "/shots/wallpaper.jpg", OriginalMTime: &mtime, Supersedes: supersedes,
-		})
+		again, err := s.BeginIngest(ctx, "cli", "again")
 		require.NoError(t, err)
-		return result.Fact.Identity
+		_, _, err = s.ReplaceContentForIngest(ctx, again, wallpaper.ID, current.Revision, hash, 20, "image/jpeg", "/shots/wallpaper.jpg", mtime)
+		require.NoError(t, err)
 	}
-	first := appendMtime("2023-10-01T08:00:00Z", nil)
-	moved := browsePhotoPage(t, s, `{"filters":{"capture_after":"2023-10-01","capture_before":"2023-10-02"}}`)
-	require.Len(t, moved.Items, 1)
+	reseen(wallpaper.BlobHash, "2023-10-01T08:00:00Z")
+	require.Len(t, browsePhotoPage(t, s, `{"filters":{"capture_after":"2023-10-01","capture_before":"2023-10-02"}}`).Items, 1)
 	require.Zero(t, browsePhotoPage(t, s, inMarch).Total)
-	appendMtime("2023-11-04T18:22:03Z", &first)
-	moved = browsePhotoPage(t, s, `{"filters":{"capture_after":"2023-11-04","capture_before":"2023-11-05"}}`)
+
+	// Each content version carries its own mtime: a new version takes its date, and one
+	// recorded without an mtime is undated rather than keeping the earlier version's.
+	reseen(browseHash("wallpaper-cropped"), "2024-08-09T10:00:00Z")
+	moved := browsePhotoPage(t, s, `{"filters":{"capture_after":"2024-08-09","capture_before":"2024-08-10"}}`)
 	require.Len(t, moved.Items, 1)
-	require.Equal(t, "2023-11-04T18:22:03Z", *moved.Items[0].FileModifiedTime)
-	require.Zero(t, browsePhotoPage(t, s, `{"filters":{"capture_after":"2023-10-01","capture_before":"2023-10-02"}}`).Total)
+	require.Equal(t, "2024-08-09T10:00:00Z", *moved.Items[0].FileModifiedTime)
+	reseen(browseHash("wallpaper-nodate"), "")
+	require.Equal(t, int64(2), browsePhotoPage(t, s, `{"filters":{"capture_after":"2023-01-01","capture_before":"2025-01-01"}}`).Total, "only the two EXIF photos are dated")
+	require.Equal(t, int64(2), *facetByDimension(t, mustSnapshot(t, s), "capture_day").Missing)
+}
+
+func mustSnapshot(t *testing.T, s *Store) SnapshotProjection {
+	t.Helper()
+	projection, err := s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{
+		FacetsOnly: true, Query: snapshotTestQuery(t, `{}`), Facets: []string{"capture_day"},
+	})
+	require.NoError(t, err)
+	return projection
 }
 
 func TestPhotoFileTimeSortKeyMatchesCaptureTimeKey(t *testing.T) {
@@ -1279,4 +1295,67 @@ func TestPhotoFileTimeSortKeyMatchesCaptureTimeKey(t *testing.T) {
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM photo_file_times t
 		JOIN photo_files f ON f.file_id=t.file_id WHERE f.node_id=?`, node.ID).Scan(&count))
 	require.Zero(t, count, "year 0000 has no sortable key")
+}
+
+func TestPhotoBrowseMtimeIndexTracksOnlyUndatedPhotos(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	run, err := s.BeginIngest(ctx, "cli", "mostly dated")
+	require.NoError(t, err)
+	for i := range 40 {
+		node := ingestMtimePhoto(t, s, run, fmt.Sprintf("dated-%02d.jpg", i), fmt.Sprintf("2024-02-%02dT10:00:00Z", i%28+1))
+		browsePhotoMetadata(t, s, node, fmt.Sprintf("dated-%02d", i), exifCapture(fmt.Sprintf("2024-05-%02dT10:00:00Z", i%28+1)))
+	}
+	for i := range 3 {
+		ingestMtimePhoto(t, s, run, fmt.Sprintf("undated-%d.jpg", i), fmt.Sprintf("2024-03-%02dT10:00:00Z", i+1))
+	}
+	var indexed int
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_file_times`).Scan(&indexed))
+	require.Equal(t, 3, indexed)
+	request := PhotoBrowseRequest{Query: snapshotTestQuery(t, `{"sort":{"field":"capture_time","direction":"desc"}}`), PageSize: 7}
+	var keys []string
+	var boundary *PhotoBrowsePosition
+	for {
+		page, err := s.ListPhotoAssets(ctx, request, boundary)
+		require.NoError(t, err)
+		for _, item := range page.Items {
+			keys = append(keys, item.position.Key)
+		}
+		if page.Next == nil {
+			break
+		}
+		boundary = page.Next
+	}
+	require.Len(t, keys, 43)
+	require.True(t, slices.IsSortedFunc(keys, func(a, b string) int { return strings.Compare(b, a) }))
+}
+
+func TestPhotoFileTimesRefillOnRestore(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	source := newTestStore(t)
+	run, err := source.BeginIngest(ctx, "cli", "restore")
+	require.NoError(t, err)
+	ingestMtimePhoto(t, source, run, "restored.jpg", "2024-03-05T10:00:00Z")
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(ctx, &exported))
+	require.NotContains(t, exported.String(), `"type":"photo_file_times"`)
+	target := newTestStore(t)
+	require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
+	page := browsePhotoPage(t, target, `{"filters":{"capture_after":"2024-03-05","capture_before":"2024-03-06"}}`)
+	require.Len(t, page.Items, 1)
+	require.Equal(t, "2024-03-05T10:00:00Z", *page.Items[0].FileModifiedTime)
+}
+
+func TestOpenRejectsUnreleasedSchema34Vault(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "docbank.db")
+	s, err := Open(path)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(t.Context(), `UPDATE vault_metadata SET schema_version=34`)
+	require.NoError(t, err)
+	require.NoError(t, s.Close())
+	_, err = Open(path)
+	require.ErrorContains(t, err, "schema version 34 has no supported JSONL cutover")
 }

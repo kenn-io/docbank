@@ -2226,24 +2226,13 @@ CREATE INDEX IF NOT EXISTS photo_files_sidecar ON photo_files(sidecar_of_file_id
 CREATE INDEX IF NOT EXISTS photo_files_sidecar_nodes ON photo_files(node_id) WHERE role='sidecar';
 
 -- The file's own modified time places photos that carry no capture date. It
--- keys on the file rather than its content: two identical blobs can carry
--- different mtimes. Derived like photo_technical_metadata, so it is absent from
--- export and rebuilt from provenance on open and by the triggers below.
--- The view keeps the latest unsuperseded canonical-UTC mtime per node and
--- formats the sort key like query.CaptureTimeKey (nine fraction digits).
-CREATE VIEW IF NOT EXISTS photo_provenance_times AS
-SELECT p.node_id, p.identity, i.started_at, p.original_mtime AS modified_time,
-    substr(p.original_mtime, 1, 19) || '.' || substr(
-        CASE WHEN substr(p.original_mtime, 20, 1) = '.'
-            THEN substr(p.original_mtime, 21, length(p.original_mtime) - 21) ELSE '' END
-        || '000000000', 1, 9) AS sort_key,
-    substr(p.original_mtime, 1, 10) AS modified_date
-FROM provenance p JOIN ingests i ON i.id = p.ingest_id
-WHERE p.original_mtime GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]*Z'
-    AND (length(p.original_mtime) = 20 OR substr(p.original_mtime, 20, 1) = '.')
-    AND substr(p.original_mtime, 1, 4) <> '0000'
-    AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes = p.identity);
-
+-- keys on the file, not its content: two identical blobs can carry different
+-- mtimes. A row exists only while the displayed content version has no capture
+-- sort key, so the sort_key index holds exactly the photos that need it. The
+-- mtime is the latest unsuperseded claim bound to that version (corrections
+-- follow supersedes), formatted like query.CaptureTimeKey. Derived like
+-- photo_technical_metadata: absent from export, refilled by the triggers below
+-- when restore inserts the facts they watch.
 CREATE TABLE IF NOT EXISTS photo_file_times (
     file_id       TEXT PRIMARY KEY REFERENCES photo_files(file_id) ON DELETE CASCADE,
     modified_time TEXT NOT NULL,
@@ -2252,20 +2241,92 @@ CREATE TABLE IF NOT EXISTS photo_file_times (
 );
 CREATE INDEX IF NOT EXISTS photo_file_times_sort_key ON photo_file_times(sort_key);
 
-CREATE TRIGGER IF NOT EXISTS photo_file_times_file_insert AFTER INSERT ON photo_files BEGIN
-    DELETE FROM photo_file_times WHERE file_id = NEW.file_id;
-    INSERT INTO photo_file_times(file_id, modified_time, sort_key, modified_date)
-    SELECT NEW.file_id, modified_time, sort_key, modified_date FROM photo_provenance_times
-    WHERE node_id = NEW.node_id ORDER BY started_at DESC, identity DESC LIMIT 1;
-END;
+-- Writers queue a node here; the trigger below recomputes its row once and
+-- empties the queue, so the recomputation is written in one place.
+CREATE TABLE IF NOT EXISTS photo_file_times_pending (node_id INTEGER PRIMARY KEY);
 
-CREATE TRIGGER IF NOT EXISTS photo_file_times_provenance_insert AFTER INSERT ON provenance BEGIN
+CREATE TRIGGER IF NOT EXISTS photo_file_times_refresh AFTER INSERT ON photo_file_times_pending BEGIN
     DELETE FROM photo_file_times WHERE file_id IN (SELECT file_id FROM photo_files WHERE node_id = NEW.node_id);
     INSERT INTO photo_file_times(file_id, modified_time, sort_key, modified_date)
-    SELECT f.file_id, t.modified_time, t.sort_key, t.modified_date FROM photo_files f
-    JOIN (SELECT modified_time, sort_key, modified_date FROM photo_provenance_times
-        WHERE node_id = NEW.node_id ORDER BY started_at DESC, identity DESC LIMIT 1) t
-    WHERE f.node_id = NEW.node_id;
+    SELECT f.file_id, c.original_mtime,
+        substr(c.original_mtime, 1, 19) || '.' || substr(
+            CASE WHEN substr(c.original_mtime, 20, 1) = '.'
+                THEN substr(c.original_mtime, 21, length(c.original_mtime) - 21) ELSE '' END
+            || '000000000', 1, 9),
+        substr(c.original_mtime, 1, 10)
+    FROM photo_files f
+    JOIN nodes n ON n.id = f.node_id
+    JOIN provenance_version_bindings b ON b.content_version_id = n.current_version_id
+    JOIN provenance origin ON origin.identity = b.provenance_identity
+    JOIN ingests i ON i.id = origin.ingest_id
+    JOIN provenance c ON c.identity IN (
+        WITH RECURSIVE chain(identity) AS (
+            SELECT b.provenance_identity
+            UNION ALL SELECT p.identity FROM provenance p JOIN chain ON p.supersedes = chain.identity)
+        SELECT identity FROM chain)
+    WHERE f.node_id = NEW.node_id
+        AND c.original_mtime IS NOT NULL AND substr(c.original_mtime, 1, 4) <> '0000'
+        AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes = c.identity)
+        AND NOT EXISTS (
+            SELECT 1 FROM content_versions v
+            JOIN source_metadata_heads h ON h.source_sha256 = v.blob_hash
+            JOIN photo_technical_metadata t ON t.generation_id = h.generation_id
+            WHERE v.version_id = n.current_version_id AND t.capture_sort_key <> '')
+    ORDER BY i.started_at DESC, c.identity DESC LIMIT 1;
+    DELETE FROM photo_file_times_pending WHERE node_id = NEW.node_id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_file_times_file_insert AFTER INSERT ON photo_files BEGIN
+    INSERT OR REPLACE INTO photo_file_times_pending(node_id) VALUES(NEW.node_id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_file_times_version_change
+AFTER UPDATE OF current_version_id ON nodes
+WHEN NEW.current_version_id IS NOT OLD.current_version_id
+    AND EXISTS (SELECT 1 FROM photo_files WHERE node_id = NEW.id) BEGIN
+    INSERT OR REPLACE INTO photo_file_times_pending(node_id) VALUES(NEW.id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_file_times_binding_insert AFTER INSERT ON provenance_version_bindings BEGIN
+    INSERT OR REPLACE INTO photo_file_times_pending(node_id)
+    SELECT f.node_id FROM photo_files f JOIN nodes n ON n.id = f.node_id
+    WHERE n.current_version_id = NEW.content_version_id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_file_times_correction_insert AFTER INSERT ON provenance
+WHEN NEW.supersedes IS NOT NULL BEGIN
+    INSERT OR REPLACE INTO photo_file_times_pending(node_id)
+    SELECT node_id FROM photo_files WHERE node_id = NEW.node_id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_file_times_technical_insert AFTER INSERT ON photo_technical_metadata BEGIN
+    INSERT OR REPLACE INTO photo_file_times_pending(node_id)
+    SELECT f.node_id FROM source_metadata_heads h
+    JOIN content_versions v ON v.blob_hash = h.source_sha256
+    JOIN nodes n ON n.current_version_id = v.version_id
+    JOIN photo_files f ON f.node_id = n.id WHERE h.generation_id = NEW.generation_id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_file_times_technical_delete AFTER DELETE ON photo_technical_metadata BEGIN
+    INSERT OR REPLACE INTO photo_file_times_pending(node_id)
+    SELECT f.node_id FROM source_metadata_heads h
+    JOIN content_versions v ON v.blob_hash = h.source_sha256
+    JOIN nodes n ON n.current_version_id = v.version_id
+    JOIN photo_files f ON f.node_id = n.id WHERE h.generation_id = OLD.generation_id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_file_times_head_change AFTER INSERT ON source_metadata_heads BEGIN
+    INSERT OR REPLACE INTO photo_file_times_pending(node_id)
+    SELECT f.node_id FROM content_versions v
+    JOIN nodes n ON n.current_version_id = v.version_id
+    JOIN photo_files f ON f.node_id = n.id WHERE v.blob_hash = NEW.source_sha256;
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_file_times_head_update AFTER UPDATE ON source_metadata_heads BEGIN
+    INSERT OR REPLACE INTO photo_file_times_pending(node_id)
+    SELECT f.node_id FROM content_versions v
+    JOIN nodes n ON n.current_version_id = v.version_id
+    JOIN photo_files f ON f.node_id = n.id WHERE v.blob_hash = NEW.source_sha256;
 END;
 
 CREATE TABLE IF NOT EXISTS photo_sidecar_considered (

@@ -5518,6 +5518,8 @@ export interface PhotoMapRow {
   /** @nullable */
   capture_time: string | null;
   /** @nullable */
+  file_modified_time: string | null;
+  /** @nullable */
   height_px: number | null;
   /** @nullable */
   latitude: number | null;

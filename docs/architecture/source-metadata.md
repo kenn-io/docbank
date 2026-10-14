@@ -123,7 +123,7 @@ A generation with at least one camera, lens, exposure, dimension,
 capture-time, orientation, or GPS claim also gets one indexed photo technical
 projection row that maps those claims into nullable typed columns. Generations
 without any of them, such as PDFs and email, get no row. The store records the
-`photo-technical/v3` recipe that built its rows in a one-row state table,
+`photo-technical/v2` recipe that built its rows in a one-row state table,
 separately from extractor fingerprints, because the mapping and embedded map
 can change without changing the source evidence. When the recipe changes, the
 next store open re-projects every generation from its retained canonical JSON,

@@ -163,13 +163,23 @@ export function photoMetadataResponse(
 }
 
 export function mapPhoto(id: number): PhotoMapRow {
-  const { asset_id, revision, name, capture_time, width_px, height_px, previews, rotation } =
-    photo(id);
+  const {
+    asset_id,
+    revision,
+    name,
+    capture_time,
+    file_modified_time,
+    width_px,
+    height_px,
+    previews,
+    rotation,
+  } = photo(id);
   return {
     asset_id,
     revision,
     name,
     capture_time,
+    file_modified_time,
     width_px,
     height_px,
     rotation,

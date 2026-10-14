@@ -209,7 +209,7 @@ func (s *Store) ListPhotoAssets(
 				arms = []photoBrowseArm{{photoBrowseDisplayFrom, key, key + `=''`}}
 			} else if sortField == "capture_time" {
 				arms = append(arms, photoBrowseArm{photoBrowseFileTimeFrom, `t.sort_key`,
-					`t.sort_key>'' AND COALESCE(p.capture_sort_key,'')=''`})
+					`t.sort_key>''`})
 			}
 			limit := request.PageSize + 1 - len(page.Items)
 			var pass []PhotoBrowseRow
@@ -285,7 +285,7 @@ func (s *Store) ListPhotoAssets(
 // photoBrowseArm is one indexed read of a known-key pass.
 type photoBrowseArm struct{ from, key, where string }
 
-// photoBrowseFileTimeFrom drives from the file-mtime index for photos that lack an EXIF key.
+// photoBrowseFileTimeFrom drives from the file-mtime index, which holds only photos without a capture key.
 const photoBrowseFileTimeFrom = `photo_file_times t INDEXED BY photo_file_times_sort_key
  CROSS JOIN photo_files f ON f.file_id=t.file_id
  CROSS JOIN photo_assets a ON a.asset_id=f.asset_id AND a.display_file_id=f.file_id
@@ -494,8 +494,8 @@ func rankedPhotoRows(ctx context.Context, q metadataQuerier, compiled CompiledQu
 }
 
 var photoBrowseSelect = `a.asset_id,a.kind,a.revision,f.file_id,n.id,v.version_id,n.name,COALESCE(v.mime_type,''),n.created_at,v.blob_hash,f.rotation,` +
-	// The mtime is exposed only when it placed the photo, so clients cannot disagree.
-	`CASE WHEN COALESCE(p.capture_sort_key,'')='' THEN t.modified_time END,` + photoTechnicalSelect
+	// Rows exist only for photos without a capture key, so the mtime is exposed only when it placed the photo.
+	`t.modified_time,` + photoTechnicalSelect
 
 func scanPhotoBrowseRows(rows *sql.Rows, position PhotoBrowsePosition) ([]PhotoBrowseRow, error) {
 	defer func() { _ = rows.Close() }()

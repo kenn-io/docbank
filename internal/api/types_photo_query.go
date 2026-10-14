@@ -81,16 +81,17 @@ type PhotoBrowseRow struct {
 }
 
 type PhotoMapRow struct {
-	Rotation    int      `json:"rotation" enum:"0,90,180,270"`
-	AssetID     string   `json:"asset_id" format:"uuid"`
-	Revision    int64    `json:"revision" minimum:"1"`
-	Name        string   `json:"name"`
-	CaptureTime *string  `json:"capture_time" nullable:"true"`
-	WidthPX     *int64   `json:"width_px" nullable:"true"`
-	HeightPX    *int64   `json:"height_px" nullable:"true"`
-	Latitude    *float64 `json:"latitude" nullable:"true"`
-	Longitude   *float64 `json:"longitude" nullable:"true"`
-	Previews    struct {
+	Rotation         int      `json:"rotation" enum:"0,90,180,270"`
+	AssetID          string   `json:"asset_id" format:"uuid"`
+	Revision         int64    `json:"revision" minimum:"1"`
+	Name             string   `json:"name"`
+	CaptureTime      *string  `json:"capture_time" nullable:"true"`
+	FileModifiedTime *string  `json:"file_modified_time" nullable:"true" format:"date-time"`
+	WidthPX          *int64   `json:"width_px" nullable:"true"`
+	HeightPX         *int64   `json:"height_px" nullable:"true"`
+	Latitude         *float64 `json:"latitude" nullable:"true"`
+	Longitude        *float64 `json:"longitude" nullable:"true"`
+	Previews         struct {
 		Grid PhotoPreviewSlot `json:"grid"`
 	} `json:"previews"`
 }
