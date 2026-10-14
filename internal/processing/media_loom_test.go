@@ -508,7 +508,7 @@ func runLoomRenditionJob(t *testing.T, service *Service, jobID string) {
 	require.NoError(t, err)
 	worker, err := NewRenditionWorker(RenditionWorkerConfig{
 		Catalog: service.catalog, Blobs: service.blobs, Runtime: service.RenditionRuntimes(),
-		Gate: newWorkerTestGate(), Owner: "loom-coverage-worker", LeaseDuration: time.Minute,
+		Gate: newWorkerTestGate(), Owner: "loom-coverage-worker", LeaseDuration: 5 * time.Minute,
 		IdleDelay: time.Millisecond,
 	})
 	require.NoError(t, err)
