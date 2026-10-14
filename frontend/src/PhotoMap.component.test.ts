@@ -11,9 +11,11 @@ const mocks = vi.hoisted(() => {
  const cluster = {addLayers:vi.fn(), clearLayers:vi.fn(), removeLayers:vi.fn(), getBounds:vi.fn(), on:vi.fn(), addTo:vi.fn(), getVisibleParent:vi.fn()};
  const marker = vi.fn((coordinates: number[]) => ({getLatLng:() => ({lat:coordinates[0], lng:coordinates[1], equals:(value:number[]) => value[0] === coordinates[0] && value[1] === coordinates[1]}), setLatLng:vi.fn((value:number[]) => {coordinates=value;}), options:{title:"Photo "+coordinates[0]+".jpg"}, getElement:()=>undefined, on:vi.fn()}));
  const tile = {addTo:vi.fn(),on:vi.fn()}; tile.on.mockReturnValue(tile);
- return {frames,util,bounds, map, cluster, marker, makeMap:vi.fn(() => map), tileLayer:vi.fn(() => tile), tile};
+ const layer:{createTile?:(this:{getTileUrl:(coords:unknown)=>string},coords:unknown,done:(error:unknown,tile:HTMLElement)=>void)=>HTMLElement}={};
+ const tileLayer=vi.fn(function(){return tile;});
+ return {frames,util,bounds, map, cluster, marker, makeMap:vi.fn(() => map), tileLayer, tile, layer, extend:vi.fn((methods:typeof layer) => { Object.assign(layer,methods); return tileLayer; })};
 });
-vi.mock("leaflet", () => ({default:{Util:mocks.util,map:mocks.makeMap, marker:mocks.marker, tileLayer:mocks.tileLayer, markerClusterGroup:()=>mocks.cluster, divIcon:vi.fn()}}));
+vi.mock("leaflet", () => ({default:{Util:mocks.util,map:mocks.makeMap, marker:mocks.marker, TileLayer:{extend:mocks.extend}, markerClusterGroup:()=>mocks.cluster, divIcon:vi.fn()}}));
 vi.mock("leaflet.markercluster", () => ({}));
 import type { PhotoMapRow } from "./generated/docbank.js";
 import PhotoMap from "./PhotoMap.svelte";
@@ -23,9 +25,9 @@ import type { PhotoPreviewCache } from "./photoPreviewCache.js";
 afterEach(() => { cleanup(); mocks.frames.clear();vi.clearAllMocks(); vi.restoreAllMocks(); mocks.bounds.latitude=2; vi.unstubAllGlobals(); });
 function frame() {const [id,callback]=mocks.frames.entries().next().value!;mocks.frames.delete(id);callback();}
 
-function setup(items: PhotoMapRow[] = [{...mapPhoto(1),latitude:1,longitude:1}]) {
+function setup(items: PhotoMapRow[] = [{...mapPhoto(1),latitude:1,longitude:1}], onauthfailure?: (cause: unknown) => void) {
  vi.stubGlobal("ResizeObserver", class {observe() {} disconnect() {}});
- const props = {items, tiles:{tile_url:"https://tiles.example.org/{z}/{x}/{y}", attribution:"Example", max_zoom:0}, onopen:vi.fn(), onvisible:vi.fn()};
+ const props = {items, session:"tab", tiles:{tile_url:"/api/daemon/web-map-tiles/{z}/{x}/{y}", host:"tiles.example.org", attribution:"Example", max_zoom:0}, onopen:vi.fn(), onvisible:vi.fn(), onauthfailure};
  return {props, view:render(PhotoMap, props)};
 }
 it("renders located rows and cancels pending batches on replacement and disposal", async () => {
@@ -50,7 +52,7 @@ it("recomputes visible rows when the map moves", () => {
 it("restores and reports the map view", () => {
  vi.stubGlobal("ResizeObserver", class {observe() {} disconnect() {}});
  const onview=vi.fn();
- render(PhotoMap,{items:[{...mapPhoto(1),latitude:1,longitude:1}], tiles:{tile_url:"https://tiles.example.org/{z}/{x}/{y}", attribution:"Example", max_zoom:0}, view:{lat:5,lng:6,zoom:7}, onopen:vi.fn(), onvisible:vi.fn(), onview});
+ render(PhotoMap,{items:[{...mapPhoto(1),latitude:1,longitude:1}], session:"tab", tiles:{tile_url:"/api/daemon/web-map-tiles/{z}/{x}/{y}", host:"tiles.example.org", attribution:"Example", max_zoom:0}, view:{lat:5,lng:6,zoom:7}, onopen:vi.fn(), onvisible:vi.fn(), onview});
  expect(mocks.map.setView).toHaveBeenCalledWith([5,6],7);
  const moved = mocks.map.on.mock.calls.find(([name]) => name === "moveend")![1]; moved();
  expect(onview).toHaveBeenCalledWith({lat:10,lng:20,zoom:0});
@@ -70,6 +72,62 @@ it("bounds the map and tiles to one world", () => {
  const {props}=setup();
  expect(mocks.makeMap).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({maxBounds:[[-90,-180],[90,180]],maxBoundsViscosity:1}));
  expect(mocks.tileLayer).toHaveBeenCalledWith(props.tiles.tile_url, expect.objectContaining({maxZoom:0,noWrap:true}));
+});
+
+function tileFlow(fetcher: ReturnType<typeof vi.fn>) {
+ const onauthfailure=vi.fn();
+ setup(undefined,onauthfailure);
+ vi.stubGlobal("fetch",fetcher);
+ const created=vi.fn((_blob:Blob)=>"blob:tile");
+ vi.stubGlobal("URL",Object.assign(URL,{createObjectURL:created,revokeObjectURL:vi.fn()}));
+ const layer={getTileUrl:()=>"/api/daemon/web-map-tiles/2/1/1"};
+ const make=(done=vi.fn())=>({done,tile:mocks.layer.createTile!.call(layer,{z:2,x:1,y:1},done) as HTMLImageElement});
+ const event=(name:string,tile:HTMLElement)=>mocks.tile.on.mock.calls.filter(([n])=>n===name).at(-1)![1]({tile,coords:{z:2,x:1,y:1}});
+ return {onauthfailure,make,event,created};
+}
+const png=()=>Promise.resolve(new Response("png",{headers:{"Content-Type":"image/png"}}));
+it("loads each tile through the session and releases its blob URL", async () => {
+ const fetcher=vi.fn((_url:string,_init:RequestInit)=>png());
+ const {make,created}=tileFlow(fetcher);
+ const {done,tile}=make();
+ await waitFor(()=>expect(tile.src).toBe("blob:tile"));
+ const [url,init]=fetcher.mock.calls[0]!;
+ expect(url).toBe("/api/daemon/web-map-tiles/2/1/1");
+ const headers=new Headers(init.headers);
+ expect(headers.get("X-Docbank-Web-Session")).toBe("tab");expect(headers.get("Accept")).toBe("image/*");
+ tile.dispatchEvent(new Event("load"));
+ expect(done).toHaveBeenCalledWith(undefined,tile);expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:tile");
+ expect(created).toHaveBeenCalledOnce();
+});
+it("aborts a pending fetch and ignores a late response once Leaflet drops the tile", async () => {
+ let finish!:(response:Response)=>void;
+ const fetcher=vi.fn((_url:string,_init:RequestInit)=>new Promise<Response>(resolve=>{finish=resolve;}));
+ const {make,event,created}=tileFlow(fetcher);
+ const {done,tile}=make();
+ event("tileabort",tile);
+ expect(fetcher.mock.calls[0]![1].signal!.aborted).toBe(true);
+ finish(new Response("png"));await new Promise(resolve=>setTimeout(resolve));
+ expect(created).not.toHaveBeenCalled();expect(done).not.toHaveBeenCalled();
+});
+it("revokes a loaded blob when the tile unloads after Leaflet replaces its callbacks", async () => {
+ const {make,event,created}=tileFlow(vi.fn(()=>png()));
+ const {done,tile}=make();
+ await waitFor(()=>expect(created).toHaveBeenCalledOnce());
+ tile.onload=tile.onerror=()=>false;
+ event("tileunload",tile);
+ expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:tile");
+ tile.dispatchEvent(new Event("load"));expect(done).not.toHaveBeenCalled();
+});
+it("reports provider failures as tile errors and authentication failures to the session owner", async () => {
+ const fetcher=vi.fn(()=>Promise.resolve(Response.json({detail:"down"},{status:502})));
+ const {make,onauthfailure}=tileFlow(fetcher);
+ const failed=make();
+ await waitFor(()=>expect(failed.done).toHaveBeenCalledWith(expect.any(Error),failed.tile));
+ expect(onauthfailure).not.toHaveBeenCalled();
+ fetcher.mockResolvedValueOnce(Response.json({detail:"expired"},{status:401}));
+ const expired=make();
+ await waitFor(()=>expect(onauthfailure).toHaveBeenCalledOnce());
+ expect(expired.done).not.toHaveBeenCalled();
 });
 
 it("shows one provider notice when tiles fail repeatedly", async () => {
@@ -140,7 +198,7 @@ it.each(["append","hide","trash"])("shows page one before page two resolves and 
  vi.stubGlobal("fetch",fetcher);
  const photos=new Photos("scoped",vi.fn(),false,photoQuery,"map");
  vi.spyOn(photos,"resume").mockResolvedValue();
- render(PhotosWorkspace,{photos,mapMode:true,tiles:{tile_url:"https://tiles.example.org/{z}/{x}/{y}",attribution:"Example",max_zoom:19},cache:{get:vi.fn()} as unknown as PhotoPreviewCache});
+ render(PhotosWorkspace,{photos,mapMode:true,tiles:{tile_url:"/api/daemon/web-map-tiles/{z}/{x}/{y}",host:"tiles.example.org",attribution:"Example",max_zoom:19},cache:{get:vi.fn()} as unknown as PhotoPreviewCache});
  const loading=photos.loadMore();
  await vi.dynamicImportSettled();
  await screen.findByRole("button",{name:"Open Photo 1.jpg"});

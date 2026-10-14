@@ -15,7 +15,7 @@ const stubPhotoFetch = (fetcher: (url: string, init: RequestInit) => unknown) =>
 const map = vi.hoisted(() => ({onvisible:undefined as ((rows:PhotoMapRow[]) => void) | undefined, props:undefined as {view?:MapView; onview:(view:MapView) => void} | undefined}));
 vi.mock("./PhotoMap.svelte", () => ({default:(_anchor:unknown, props:{onvisible:(rows:PhotoMapRow[]) => void; view?:MapView; onview:(view:MapView) => void}) => { map.onvisible = props.onvisible; map.props = props; return {}; }}));
 
-const tiles = {tile_url:"",attribution:"",max_zoom:19};
+const tiles = {tile_url:"",host:"",attribution:"",max_zoom:19};
 
 afterEach(() => { cleanup(); map.onvisible = undefined; map.props = undefined; history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); new Photos("scoped", vi.fn()).setDensity("comfortable"); Reflect.deleteProperty(Element.prototype, "scrollIntoView"); });
 
@@ -35,7 +35,7 @@ it.each([false, true])("preserves subsequent scrolling when an interrupted refre
   const photos = new Photos("scoped", vi.fn(), false, photoQuery, mapMode ? "map" : undefined);
   photos.items = items; photos.total = items.length; photos.started = true; photos.scrollTop = 500;
   const cache = new PhotoPreviewCache("scoped", vi.fn());
-  const props = { photos, cache, mapMode, tiles: { tile_url: "https://tiles.example.org/{z}/{x}/{y}", attribution: "Example", max_zoom: 19 } };
+  const props = { photos, cache, mapMode, tiles: { tile_url: "/api/daemon/web-map-tiles/{z}/{x}/{y}", host: "tiles.example.org", attribution: "Example", max_zoom: 19 } };
   const view = render(PhotosWorkspace, props);
   if (mapMode) { await vi.dynamicImportSettled(); map.onvisible!(items as PhotoMapRow[]); await tick(); }
   await waitFor(() => expect(screen.getByTestId("photo-scroll").scrollTop).toBe(500));
@@ -802,7 +802,7 @@ it("shows the Map limit notice only for capped results and bounds loading progre
   const photos = new Photos("scoped", vi.fn(), false, photoQuery, "map");
   photos.items = [mapPhoto(1), mapPhoto(2)]; photos.started = true; photos.total = 3000; photos.cursor = "next"; photos.loading = true;
   vi.spyOn(photos, "resume").mockResolvedValue();
-  render(PhotosWorkspace, { photos, mapMode: true, tiles: { tile_url: "https://tiles.example.org/{z}/{x}/{y}", attribution: "Example", max_zoom: 19 }, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
+  render(PhotosWorkspace, { photos, mapMode: true, tiles: { tile_url: "/api/daemon/web-map-tiles/{z}/{x}/{y}", host: "tiles.example.org", attribution: "Example", max_zoom: 19 }, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
   const note = `Showing the newest ${mapPhotoLimit.toLocaleString()} of ${(mapPhotoLimit + 1000).toLocaleString()} located photos. Narrow your search or date to see the rest.`;
   expect(screen.queryByText(/^Showing the newest /)).toBeNull();
   photos.total = mapPhotoLimit + 1000;
@@ -827,7 +827,7 @@ it("shows the Map limit notice only for capped results and bounds loading progre
 it("reopens the map where it was after a remount", async () => {
  vi.stubGlobal("ResizeObserver",class {observe() {} disconnect() {}});
  const photos=new Photos("scoped",vi.fn());photos.items=[mapPhoto(1)];photos.total=1;photos.started=true;vi.spyOn(photos,"resume").mockResolvedValue();
- const props={photos,mapMode:true,tiles:{tile_url:"https://tiles.example.org/{z}/{x}/{y}",attribution:"Example",max_zoom:19},cache:{get:vi.fn()} as unknown as PhotoPreviewCache,photoID:"",onphotochange:vi.fn()};
+ const props={photos,mapMode:true,tiles:{tile_url:"/api/daemon/web-map-tiles/{z}/{x}/{y}",host: "tiles.example.org",attribution:"Example",max_zoom:19},cache:{get:vi.fn()} as unknown as PhotoPreviewCache,photoID:"",onphotochange:vi.fn()};
  const first=render(PhotosWorkspace,props);await vi.dynamicImportSettled();expect(map.props!.view).toBeUndefined();
  map.props!.onview({lat:48.8,lng:2.3,zoom:12});first.unmount();
  render(PhotosWorkspace,props);await vi.dynamicImportSettled();
@@ -839,7 +839,7 @@ function openMapViewerSetup() {
  vi.spyOn(HTMLElement.prototype,"clientWidth","get").mockReturnValue(1000);vi.spyOn(HTMLElement.prototype,"clientHeight","get").mockReturnValue(800);
  const photos=new Photos("scoped",vi.fn(),false,photoQuery,"map");photos.items=[mapPhoto(1),mapPhoto(2)];photos.total=2;photos.started=true;vi.spyOn(photos,"resume").mockResolvedValue();
  const lookup=vi.spyOn(photos,"lookup").mockResolvedValue(photo(1));const preview=vi.spyOn(photos,"preview").mockResolvedValue({state:"unsupported"});
- const props={photos,mapMode:true,tiles:{tile_url:"https://tiles.example.org/{z}/{x}/{y}",attribution:"Example",max_zoom:19},cache:{get:vi.fn()} as unknown as PhotoPreviewCache,photoID:"",onphotochange:vi.fn()};
+ const props={photos,mapMode:true,tiles:{tile_url:"/api/daemon/web-map-tiles/{z}/{x}/{y}",host: "tiles.example.org",attribution:"Example",max_zoom:19},cache:{get:vi.fn()} as unknown as PhotoPreviewCache,photoID:"",onphotochange:vi.fn()};
  return {photos,lookup,preview,props,view:render(PhotosWorkspace,props)};
 }
 async function openMapViewer({props,view}: ReturnType<typeof openMapViewerSetup>) {
@@ -905,7 +905,7 @@ it("viewer follows the Map query while the viewport filters its grid", async () 
  vi.spyOn(HTMLElement.prototype,"clientWidth","get").mockReturnValue(1000);vi.spyOn(HTMLElement.prototype,"clientHeight","get").mockReturnValue(800);
  const photos=new Photos("scoped",vi.fn());photos.items=[{...mapPhoto(1),longitude:120},{...mapPhoto(2),latitude:-85}];photos.total=2;photos.started=true;vi.spyOn(photos,"resume").mockResolvedValue();vi.spyOn(photos,"lookup").mockResolvedValue(photo(1));
  vi.spyOn(photos,"preview").mockResolvedValue({state:"unsupported"});const onphotochange=vi.fn();
- const props={photos,mapMode:true,tiles:{tile_url:"https://tiles.example.org/{z}/{x}/{y}",attribution:"Example",max_zoom:19},cache:{get:vi.fn()} as unknown as PhotoPreviewCache,photoID:"",onphotochange};
+ const props={photos,mapMode:true,tiles:{tile_url:"/api/daemon/web-map-tiles/{z}/{x}/{y}",host: "tiles.example.org",attribution:"Example",max_zoom:19},cache:{get:vi.fn()} as unknown as PhotoPreviewCache,photoID:"",onphotochange};
  const view=render(PhotosWorkspace,props);await vi.dynamicImportSettled();map.onvisible!([{...mapPhoto(1),longitude:120}]);
  await fireEvent.click(await screen.findByRole("button",{name:"Open Photo 1.jpg"}));expect(screen.queryByRole("button",{name:"Open Photo 2.jpg"})).toBeNull();
  await view.rerender({...props,photoID:"photo-1"});await screen.findByRole("dialog",{name:"Photo viewer, Photo 1.jpg"});
@@ -919,7 +919,7 @@ function mapRecoverySetup() {
  vi.spyOn(HTMLElement.prototype,"clientWidth","get").mockReturnValue(400);vi.spyOn(HTMLElement.prototype,"clientHeight","get").mockReturnValue(800);
  const photos=new Photos("scoped",vi.fn());photos.items=[{...photo(1),latitude:0,longitude:120}];photos.started=true;photos.error="Page unavailable";
  photos.selectLoaded();const retry=vi.spyOn(photos,"retry").mockResolvedValue();
- render(PhotosWorkspace,{photos,mapMode:true,tiles:{tile_url:"https://tiles.example.org/{z}/{x}/{y}",attribution:"Example",max_zoom:19},cache:{get:vi.fn()} as unknown as PhotoPreviewCache,photoID:"",onphotochange:vi.fn()});
+ render(PhotosWorkspace,{photos,mapMode:true,tiles:{tile_url:"/api/daemon/web-map-tiles/{z}/{x}/{y}",host: "tiles.example.org",attribution:"Example",max_zoom:19},cache:{get:vi.fn()} as unknown as PhotoPreviewCache,photoID:"",onphotochange:vi.fn()});
  return {photos,retry};
 }
 it("keeps Map recovery outside mobile tabs", async () => {

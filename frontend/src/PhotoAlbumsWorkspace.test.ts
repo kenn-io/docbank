@@ -48,7 +48,7 @@ function setup(scoped = false, onnavigate = vi.fn(), mapMode = false) {
   vi.spyOn(photos, "refresh").mockResolvedValue(true);
   const albums = new PhotoAlbums("scoped", vi.fn(), async id => { if (photos.started && photos.query.filters?.set_ids?.includes(id)) await photos.refresh(); }); albums.items = [album];
   const cache = new PhotoPreviewCache("scoped", vi.fn());
-  const view = render(PhotosWorkspace, { photos, albums, cache, mapMode, tiles: { tile_url: "https://tiles.example.org/{z}/{x}/{y}", attribution: "Example", max_zoom: 19 }, albumID: scoped ? album.id : "", onnavigate, photoID: "", onphotochange: vi.fn() });
+  const view = render(PhotosWorkspace, { photos, albums, cache, mapMode, tiles: { tile_url: "/api/daemon/web-map-tiles/{z}/{x}/{y}", host: "tiles.example.org", attribution: "Example", max_zoom: 19 }, albumID: scoped ? album.id : "", onnavigate, photoID: "", onphotochange: vi.fn() });
   return { photos, albums, cache, view };
 }
 

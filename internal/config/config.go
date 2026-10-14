@@ -68,19 +68,19 @@ type WebConfig struct {
 	MapTiles            MapTilesConfig `toml:"map_tiles"`
 }
 
-// MapTilesConfig is public browser configuration for an optional raster map.
+// MapTilesConfig configures the provider for an optional raster map.
 type MapTilesConfig struct {
-	TileURL     string `toml:"tile_url" json:"tile_url"`
-	Attribution string `toml:"attribution" json:"attribution"`
-	MaxZoom     int    `toml:"max_zoom" json:"max_zoom"`
+	TileURL     string `toml:"tile_url"`
+	Attribution string `toml:"attribution"`
+	MaxZoom     int    `toml:"max_zoom"`
 }
 
-func (m MapTilesConfig) Origin() string {
+func (m MapTilesConfig) Host() string {
 	u, err := url.Parse(m.TileURL)
 	if err != nil || u.Host == "" {
 		return ""
 	}
-	return u.Scheme + "://" + u.Host
+	return u.Host
 }
 
 func (m MapTilesConfig) Validate() error {
@@ -93,9 +93,6 @@ func (m MapTilesConfig) Validate() error {
 	u, err := url.Parse(m.TileURL)
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
 		return errors.New("[web.map_tiles] tile_url must use a fixed HTTPS origin without credentials or fragments")
-	}
-	if strings.Contains(u.Hostname(), ":") {
-		return errors.New("[web.map_tiles] tile_url cannot use an IPv6 address; the browser's image policy cannot allow one")
 	}
 	if !validASCIIHostname(u.Hostname()) {
 		return errors.New("[web.map_tiles] tile_url requires a fixed ASCII hostname")
