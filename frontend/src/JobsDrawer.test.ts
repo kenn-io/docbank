@@ -380,53 +380,6 @@ describe("background jobs drawer", () => {
       jobFixture({ name: "watch:inbox", started_at: "2026-07-23T11:00:00Z" }),
     ];
     const importTotal = items[0].total_objects! + items[1].total_objects!;
-    const preparedLanes: ReturnType<typeof jobs.jobLanes> = [
-      {
-        key: "photo_import",
-        lane: "photo_import",
-        title: "Photo import",
-        members: [items[0], items[1]],
-        status: "running",
-        completed: 75,
-        total: importTotal,
-        active: true,
-        control: undefined,
-      },
-      {
-        key: "photo_checkout",
-        lane: "photo_checkout",
-        title: "Photo checkout",
-        members: [items[2]],
-        status: "running",
-        completed: 1,
-        total: 2,
-        active: true,
-        control: undefined,
-      },
-      {
-        key: "place",
-        lane: "place",
-        title: "Storage placement",
-        members: [items[3]],
-        status: "queued",
-        completed: 0,
-        total: undefined,
-        active: true,
-        control: undefined,
-      },
-      {
-        key: "watch:inbox",
-        lane: "watch:inbox",
-        title: "watch · inbox",
-        members: [items[4]],
-        status: "running",
-        completed: 0,
-        total: undefined,
-        active: true,
-        control: undefined,
-      },
-    ];
-    const group = vi.spyOn(jobs, "jobLanes").mockReturnValue(preparedLanes);
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(
       async () =>
         new Response(JSON.stringify({ items }), { headers: { "Content-Type": "application/json" } }),
@@ -439,7 +392,6 @@ describe("background jobs drawer", () => {
     });
 
     const progress = await screen.findByRole("progressbar", { name: "Photo import progress" });
-    await waitFor(() => expect(group).toHaveBeenCalledWith(items, []));
     expect(progress.getAttribute("aria-valuenow")).toBe("75");
     expect(progress.getAttribute("aria-valuemax")).toBe(String(importTotal));
     expect(screen.getByText("Photo import")).toBeTruthy();
