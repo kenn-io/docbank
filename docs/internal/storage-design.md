@@ -405,9 +405,16 @@ processing sources remain eligible. Automatic enrollment writes no human
 receipt. Existing graphs survive ordinary trash and restore; permanent node
 deletion removes memberships, repairs display pointers, advances each
 affected asset once, and retains an empty asset row.
+
 Unaudited permanent deletion removes authored receipts that reference a deleted
 target or sidecar and their dependent undo receipts in the same transaction.
 Deleting one member removes its whole batch receipt even when other members survive.
+
+Grouped photo imports find edited files through the provenance index on
+`original_path`, so a new source path does not scan unrelated provenance.
+Matching still requires a live file, a compatible photo role, and unsuperseded
+provenance. A node shared with another active source path keeps its content;
+an edit from one path becomes a separate file.
 
 The settings singleton represents an absent or NULL preference as the built-in
 RAW order, with its own revision fence. Setting it recomputes every inherited
