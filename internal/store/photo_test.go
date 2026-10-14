@@ -144,7 +144,21 @@ func TestPhotoSettingsRecomputeInheritedAssets(t *testing.T) {
 	_, err = s.SetPhotoSettings(ctx, settings.Revision-1, &preference)
 	require.ErrorIs(t, err, ErrStaleRevision)
 	assert.Contains(t, receiptOperations(photoReceiptRows(t, s, group.ID)), "settings_recompute")
-	assert.NoError(t, s.ValidateMetadata(ctx))
+	require.NoError(t, s.ValidateMetadata(ctx))
+	t.Run("detach display falls back to RAW", func(t *testing.T) {
+		s := newTestStore(t)
+		ctx := t.Context()
+		asset := authoredPair(t, s)
+		imageFileID := fileByRole(asset.Files, PhotoRoleImage).ID
+		rawFileID := fileByRole(asset.Files, PhotoRoleRAW).ID
+		asset, err := s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &imageFileID)
+		require.NoError(t, err)
+		asset, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, imageFileID, PhotoDetachOptions{})
+		require.NoError(t, err)
+		require.NotNil(t, asset.DisplayFileID)
+		assert.Equal(t, rawFileID, *asset.DisplayFileID)
+		assert.NoError(t, s.ValidateMetadata(ctx))
+	})
 }
 
 func TestPhotoAdmissionSurvivesRenameAndMetadataRoundTrip(t *testing.T) {
@@ -419,7 +433,7 @@ func TestPhotoMetadataAcceptsReceiptIndependentRevisionOneState(t *testing.T) {
 	require.NoError(t, validatePhotoMetadataState(ctx, s.db, currentStorageSchemaVersion))
 }
 
-func TestPhotoSidecarTargetsAndNoDisplayableMember(t *testing.T) {
+func TestPhotoSidecarTargetsReceiptsAndNoDisplayableMember(t *testing.T) {
 	t.Parallel()
 	for _, role := range []string{PhotoRoleRAW, PhotoRoleImage} {
 		t.Run(role, func(t *testing.T) {
@@ -455,20 +469,6 @@ func TestPhotoSidecarTargetsAndNoDisplayableMember(t *testing.T) {
 			assert.Nil(t, asset.DisplayFileID)
 		})
 	}
-	t.Run("detach display falls back to RAW", func(t *testing.T) {
-		s := newTestStore(t)
-		ctx := t.Context()
-		asset := authoredPair(t, s)
-		imageFileID := fileByRole(asset.Files, PhotoRoleImage).ID
-		rawFileID := fileByRole(asset.Files, PhotoRoleRAW).ID
-		asset, err := s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &imageFileID)
-		require.NoError(t, err)
-		asset, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, imageFileID, PhotoDetachOptions{})
-		require.NoError(t, err)
-		require.NotNil(t, asset.DisplayFileID)
-		assert.Equal(t, rawFileID, *asset.DisplayFileID)
-		assert.NoError(t, s.ValidateMetadata(ctx))
-	})
 	t.Run("attach sidecar records a receipt", func(t *testing.T) {
 		s := newTestStore(t)
 		ctx := t.Context()

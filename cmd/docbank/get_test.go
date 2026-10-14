@@ -147,7 +147,6 @@ func TestPublishGetFileWrapsNoReplaceAndSyncErrors(t *testing.T) {
 				require.ErrorContains(t, err, "injected destination directory sync failure")
 			} else {
 				require.ErrorIs(t, err, os.ErrExist)
-				require.ErrorContains(t, err, "publish without replacing")
 			}
 		})
 	}

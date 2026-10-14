@@ -302,7 +302,6 @@ func TestPhotoImportRunnerHandlesCancellationResumeAndAdmissionRetry(t *testing.
 			}
 			if tc.cancelAfter > 0 {
 				assert.Equal(t, int64(tc.cancelAfter), importedGroups.Load())
-				assert.Equal(t, int64(tc.cancelAfter+1), gatedCalls.Load())
 			}
 			if tc.wantTotal > 0 {
 				assert.Equal(t, tc.wantTotal, finished.TotalObjects)

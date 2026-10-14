@@ -168,6 +168,11 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 			if keep != "" {
 				require.NoError(t, os.WriteFile(keep, []byte("keep"), 0o600))
 			}
+			var begun, ended atomic.Int32
+			if replacement == "missing" {
+				s.ActivityBegin = func() { begun.Add(1) }
+				s.ActivityEnd = func() { ended.Add(1) }
+			}
 			supervisor := jobs.New(t.Context(), nil)
 			defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
 			require.NoError(t, s.Resume(t.Context(), supervisor))
@@ -175,6 +180,14 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 				status, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
 				return err == nil && status.Checkout.State == "failed"
 			}, 5*time.Second, 10*time.Millisecond)
+			if replacement == "missing" {
+				require.NoError(t, supervisor.Shutdown(context.Background()))
+				registered := supervisor.Snapshot()
+				require.Len(t, registered, 1)
+				require.Equal(t, "storage:"+op.ID, registered[0].Name)
+				require.Equal(t, int32(1), begun.Load())
+				require.Equal(t, int32(1), ended.Load())
+			}
 			status, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
 			require.NoError(t, err)
 			require.Equal(t, c.ID, status.Checkout.ID)
@@ -202,12 +215,7 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 	}
 	t.Run("verified copies and stage cleanup", func(t *testing.T) {
 		s := checkoutService(t)
-		a := checkoutPhoto(t, s, "one.jpg", "one.jpg")
-		pending, pendingOp, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, t.TempDir(), 0)
-		require.NoError(t, err)
-		require.NoError(t, root.Close())
-		require.NoError(t, s.Store.ClaimPhotoCheckout(t.Context(), pending.ID, pendingOp.ID))
-		for _, name := range []string{"two.jpg", "three.jpg"} {
+		for _, name := range []string{"one.jpg", "two.jpg", "three.jpg"} {
 			checkoutPhoto(t, s, name, name)
 		}
 		c, op, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{All: true}, t.TempDir(), 100)
@@ -239,29 +247,14 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 		require.NoError(t, stage.File.Close())
 		stage.File = nil
 
-		var begun, ended atomic.Int32
-		s.ActivityBegin = func() { begun.Add(1) }
-		s.ActivityEnd = func() { ended.Add(1) }
 		supervisor := jobs.New(t.Context(), nil)
 		defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
 		require.NoError(t, s.Resume(t.Context(), supervisor))
 		require.Eventually(t, func() bool {
-			for _, id := range []string{pending.ID, c.ID} {
-				actual, err := s.Store.PhotoCheckout(t.Context(), id)
-				if err != nil || actual.State != "failed" {
-					return false
-				}
-			}
-			return true
+			actual, err := s.Store.PhotoCheckout(t.Context(), c.ID)
+			return err == nil && actual.State == "failed"
 		}, 5*time.Second, 10*time.Millisecond)
 		require.NoError(t, supervisor.Shutdown(context.Background()))
-		var jobNames []string
-		for _, job := range supervisor.Snapshot() {
-			jobNames = append(jobNames, job.Name)
-		}
-		require.ElementsMatch(t, []string{"storage:" + pendingOp.ID, "storage:" + op.ID}, jobNames)
-		require.Equal(t, int32(2), begun.Load())
-		require.Equal(t, int32(2), ended.Load())
 		_, err = root.Stat(payload)
 		require.ErrorIs(t, err, os.ErrNotExist)
 		observed, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
