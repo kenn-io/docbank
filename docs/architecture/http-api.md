@@ -1395,6 +1395,11 @@ as reads in this slice.
 
 `GET /photos/albums` lists albums with `member_count` for members that still have a file, `included_count` for visible included members, and current ready grid covers. `POST /photos/albums` creates one; `GET /photos/albums/{set_id}` inspects it. `PUT /photos/albums/{set_id}` changes optional `name` or `starred`. `PUT /photos/albums/{set_id}/cover` chooses a member through `asset_id`, or clears the override when omitted. `POST /photos/albums/{set_id}/duplicate` supplies a new `name`. `DELETE /photos/albums/{set_id}` deletes the album while retaining its photos. Existing-album writes require `If-Match` and return the album with its ETag.
 
+Album summaries compute both counts in one membership scan. A display file proves
+that a member still has a file; members without one use a file-existence lookup.
+Visibility and trash filters apply only to the included count, so hidden,
+excluded, and trashed photos retain their album membership count.
+
 `POST /photos/albums/{set_id}/members/add` and `/members/remove` accept either `asset_ids` with at most 1,000 entries or a strict `query`, with optional `coverage`. The full query scope resolves within the atomic write and, like photo browsing, covers only visible photos; removing hidden members requires their `asset_ids` and an unlock. Hidden explicit cover IDs are omitted while locked; selecting a hidden cover requires an unlock. Changes advance the album revision once and record every changed asset ID across bounded receipts. No-ops preserve the revision. Scoped browser sessions can list, create, update, duplicate, and delete albums, choose covers, and add or remove members through these exact method/path pairs with canonical UUIDv4 IDs and empty query strings. Existing-album writes retain the same revision checks. See [Albums](../usage/photos.md#albums) for member ordering, visibility, and cover selection.
 
 `POST /photos/imports` starts a folder import from a daemon-host path and
