@@ -46,25 +46,37 @@ func TestPhotoImportRoutes(t *testing.T) {
 	assert.Equal(t, store.StorageOperationKindPhotoImport, started.Kind)
 	assert.Equal(t, "queued", started.State)
 
-	pollCtx, cancelPoll := context.WithCancel(t.Context())
+	pollCtx, cancelPoll := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancelPoll()
-	require.EventuallyWithT(t, func(collect *assert.CollectT) {
-		request, err := http.NewRequestWithContext(pollCtx, http.MethodGet, ts.URL+"/api/v1/jobs/"+started.ID, nil)
-		require.NoError(collect, err)
-		get, getErr := ts.Client().Do(request)
-		require.NoError(collect, getErr)
-		defer func() { _ = get.Body.Close() }()
-		var latest api.StorageOperation
-		require.NoError(collect, json.UnmarshalRead(get.Body, &latest))
-		require.NotEmpty(collect, latest.FinishedAt, "last observed operation: %+v", latest)
-		assert.Equal(collect, "completed", latest.State)
-		assert.Equal(collect, int64(1), latest.CompletedObjects)
-		receiptJSON, err := json.Marshal(latest.Receipt)
-		require.NoError(collect, err)
-		var receipt store.PhotoImportReceipt
-		require.NoError(collect, json.Unmarshal(receiptJSON, &receipt))
-		assert.Equal(collect, int64(1), receipt.Added)
-	}, 30*time.Second, 10*time.Millisecond)
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	var latest api.StorageOperation
+	for {
+		pollRequest, requestErr := http.NewRequestWithContext(pollCtx, http.MethodGet, ts.URL+"/api/v1/jobs/"+started.ID, nil)
+		require.NoError(t, requestErr)
+		get, getErr := ts.Client().Do(pollRequest)
+		require.NoError(t, getErr, "last observed operation: %+v", latest)
+		var output api.StorageOperation
+		decodeErr := json.UnmarshalRead(get.Body, &output)
+		_ = get.Body.Close()
+		require.NoError(t, decodeErr, "last observed operation: %+v", latest)
+		latest = output
+		if latest.FinishedAt != "" {
+			break
+		}
+		select {
+		case <-pollCtx.Done():
+			require.FailNow(t, "photo import did not finish", "last observed operation: %+v", latest)
+		case <-ticker.C:
+		}
+	}
+	assert.Equal(t, "completed", latest.State)
+	assert.Equal(t, int64(1), latest.CompletedObjects)
+	receiptJSON, receiptErr := json.Marshal(latest.Receipt)
+	require.NoError(t, receiptErr)
+	var receipt store.PhotoImportReceipt
+	require.NoError(t, json.Unmarshal(receiptJSON, &receipt))
+	assert.Equal(t, int64(1), receipt.Added)
 
 	invalid, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/v1/photos/imports", bytes.NewReader([]byte(`{"source_root":"relative","destination":"/photos"}`)))
 	require.NoError(t, err)
