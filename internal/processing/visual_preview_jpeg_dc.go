@@ -64,7 +64,7 @@ type visualJPEGDCDecoder struct {
 func decodeVisualPreviewJPEGDC(reader *bufio.Reader, model color.Model) (image.Image, error) {
 	d := visualJPEGDCDecoder{reader: reader, colorModel: model}
 	if _, err := reader.Discard(2); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("reading JPEG start: %w", err)
 	}
 	marker, err := d.marker()
 	for err == nil {
@@ -106,6 +106,10 @@ func decodeVisualPreviewJPEGDC(reader *bufio.Reader, model color.Model) (image.I
 				marker, err = d.skipAC()
 				continue
 			}
+		case 0xe0, 0xee:
+			if len(d.components) != 0 {
+				err = jpeg.UnsupportedError("color marker after frame header")
+			}
 		default:
 			if marker < 0xe0 || marker > 0xef && marker != 0xfe {
 				err = jpeg.UnsupportedError("JPEG frame or coding mode")
@@ -122,7 +126,7 @@ func (d *visualJPEGDCDecoder) marker() (byte, error) {
 	for {
 		b, err := d.reader.ReadByte()
 		if err != nil {
-			return 0, err
+			return 0, fmt.Errorf("reading JPEG marker: %w", err)
 		}
 		// Match image/jpeg's tolerance for extraneous bytes before markers.
 		if b != 0xff {
@@ -131,7 +135,7 @@ func (d *visualJPEGDCDecoder) marker() (byte, error) {
 		for b == 0xff {
 			b, err = d.reader.ReadByte()
 			if err != nil {
-				return 0, err
+				return 0, fmt.Errorf("reading JPEG marker fill: %w", err)
 			}
 		}
 		if b != 0 {
@@ -141,7 +145,7 @@ func (d *visualJPEGDCDecoder) marker() (byte, error) {
 }
 
 func (d *visualJPEGDCDecoder) frame(p []byte, marker byte) error {
-	if len(d.components) != 0 || len(p) < 6 || len(p) != 6+3*int(p[5]) {
+	if len(d.components) != 0 {
 		return jpeg.FormatError("bad frame header")
 	}
 	d.height, d.width = int(binary.BigEndian.Uint16(p[1:3])), int(binary.BigEndian.Uint16(p[3:5]))
@@ -286,8 +290,8 @@ func (d *visualJPEGDCDecoder) scan(p []byte) error {
 			}
 		}
 		c := &d.components[indices[i]]
-		// Later DQT markers must not change a component whose first scan already started.
-		if !c.quantLatched {
+		// Sequential decoding uses the quantization table defined at the scan.
+		if !d.progressive && !c.quantLatched {
 			c.quantValue, c.quantLatched = d.quant[c.quant], true
 		}
 		total += int(c.h) * int(c.v)
@@ -438,7 +442,11 @@ func (d *visualJPEGDCDecoder) image() (image.Image, error) {
 	if len(d.components) == 0 {
 		return nil, jpeg.FormatError("missing frame")
 	}
-	for _, c := range d.components {
+	for i := range d.components {
+		c := &d.components[i]
+		if d.progressive {
+			c.quantValue = d.quant[c.quant]
+		}
 		if c.precision < 0 || c.quantValue == 0 {
 			return nil, jpeg.FormatError("missing DC scan or quantization table")
 		}
@@ -489,5 +497,6 @@ func (c *visualJPEGDCComponent) chroma(x, y, maxH, maxV int) byte {
 	dx, dy := fx%sx, fy%sy
 	top := int(c.sample(y0*c.w+x0))*(sx-dx) + int(c.sample(y0*c.w+x1))*dx
 	bottom := int(c.sample(y1*c.w+x0))*(sx-dx) + int(c.sample(y1*c.w+x1))*dx
-	return byte((top*(sy-dy) + bottom*dy + sx*sy/2) / (sx * sy))
+	value := (top*(sy-dy) + bottom*dy + sx*sy/2) / (sx * sy)
+	return byte(max(0, min(255, value)))
 }
