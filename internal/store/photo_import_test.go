@@ -86,6 +86,13 @@ func TestPhotoImportRollsBackFailedGroup(t *testing.T) {
 	assert.Len(t, result.Asset.Files, 3)
 	assert.Equal(t, PhotoRoleRAW, fileByRole(result.Asset.Files, PhotoRoleRAW).Role)
 
+	video, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(photoImportTestMember(
+		filepath.Join(root, "IMG_0001.MOV"), PhotoRoleVideo, browseHash("mov"), "video/quicktime")))
+	require.NoError(t, err)
+	assert.NotEqual(t, result.Asset.ID, video.Asset.ID)
+	assert.Equal(t, PhotoKindVideo, video.Asset.Kind)
+	assert.Len(t, video.Asset.Files, 1)
+
 	var nodes int
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE kind='file'`).Scan(&nodes))
 	bad := photoImportTestGroup(
@@ -113,29 +120,7 @@ n, err := s.PreparePhotoImportDestination(ctx, "/new/photos")
 	assert.Equal(t, result.Asset, unchanged)
 	var assets int
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_assets`).Scan(&assets))
-	assert.Equal(t, 1, assets)
-}
-
-func TestPhotoImportKeepsSameNameVideoSeparate(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
-	require.NoError(t, err)
-	root := filepath.Join(t.TempDir(), "camera")
-	group := photoImportTestGroup(
-		photoImportTestMember(filepath.Join(root, "IMG_0001.ARW"), PhotoRoleRAW, browseHash("raw"), "image/x-sony-arw"),
-		photoImportTestMember(filepath.Join(root, "IMG_0001.JPG"), PhotoRoleImage, browseHash("jpg"), "image/jpeg"),
-		photoImportTestMember(filepath.Join(root, "IMG_0001.XMP"), PhotoRoleSidecar, browseHash("xmp"), "application/rdf+xml"),
-	)
-	result, err := s.IngestPhotoGroup(ctx, run, group)
-	require.NoError(t, err)
-	video, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(photoImportTestMember(
-		filepath.Join(root, "IMG_0001.MOV"), PhotoRoleVideo, browseHash("mov"), "video/quicktime")))
-	require.NoError(t, err)
-	assert.NotEqual(t, result.Asset.ID, video.Asset.ID)
-	assert.Equal(t, PhotoKindVideo, video.Asset.Kind)
-	assert.Len(t, video.Asset.Files, 1)
+	assert.Equal(t, 2, assets)
 }
 
 func TestPhotoImportQualifiedSidecarTargets(t *testing.T) {

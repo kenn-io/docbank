@@ -127,24 +127,9 @@ func TestPhotoCheckoutSelections(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
 }
 
-func TestPhotoCheckoutEntriesSurviveDetach(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	a := albumAsset(t, s, "photo.jpg")
-	c, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, t.TempDir(), 100)
-	require.NoError(t, err)
-	before, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
-	require.NoError(t, err)
-	_, err = s.DetachPhotoFile(t.Context(), a.ID, a.Revision, a.Files[0].ID, PhotoDetachOptions{})
-	require.NoError(t, err)
-	after, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
-	require.NoError(t, err)
-	require.Equal(t, before, after)
-}
-
 func TestPhotoCheckoutRefusesUnavailableSources(t *testing.T) {
 	t.Parallel()
-	for _, scenario := range []string{"hidden_at", "excluded_at", "trashed"} {
+	for _, scenario := range []string{"hidden_at", "excluded_at", "trashed", "detach"} {
 		t.Run(scenario, func(t *testing.T) {
 			s := newTestStore(t)
 			a := albumAsset(t, s, "photo.jpg")
@@ -153,6 +138,8 @@ func TestPhotoCheckoutRefusesUnavailableSources(t *testing.T) {
 			entries, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
 			require.NoError(t, err)
 			switch scenario {
+			case "detach":
+				_, err = s.DetachPhotoFile(t.Context(), a.ID, a.Revision, a.Files[0].ID, PhotoDetachOptions{})
 			case "trashed":
 				_, err = s.TrashPhotoAsset(t.Context(), a.ID, a.Revision)
 			case "excluded_at":
@@ -162,6 +149,11 @@ func TestPhotoCheckoutRefusesUnavailableSources(t *testing.T) {
 				_, err = s.SetPhotoAssetHidden(t.Context(), a.ID, a.Revision, true)
 			}
 			require.NoError(t, err)
+			if scenario == "detach" {
+				after, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
+				require.NoError(t, err)
+				require.Equal(t, entries, after)
+			}
 			called := false
 			err = s.PublishPhotoCheckoutEntry(t.Context(), entries[0], func() (bool, error) { called = true; return true, nil })
 			require.ErrorIs(t, err, ErrPhotoCheckoutSourceUnavailable)
