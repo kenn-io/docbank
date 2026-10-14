@@ -512,46 +512,41 @@ func TestPhotoCheckoutResolvesCompanionSources(t *testing.T) {
 		}
 		require.ElementsMatch(t, []string{"IMG.ARW", "IMG.JPG", "IMG.ARW.XMP"}, names)
 	})
-	for _, tc := range []struct{ sourcePath, basename string }{
-		{`C:\camera\capture.JPG`, "capture.JPG"},
-		{`\\camera\photos\capture.JPG`, "capture.JPG"},
-		{`/camera/foo\bar.JPG`, `foo\bar.JPG`},
-		{`/camera/Trip: Day 1.jpg`, "Trip: Day 1.jpg"},
+	for _, tc := range []struct{ name, sourcePath, basename string }{
+		{"Windows source path", `C:\camera\capture.JPG`, "capture.JPG"},
+		{"UNC source path", `\\camera\photos\capture.JPG`, "capture.JPG"},
+		{"Unix source path with backslash", `/camera/foo\bar.JPG`, `foo\bar.JPG`},
+		{"Unix source path with colon", `/camera/Trip: Day 1.jpg`, "Trip: Day 1.jpg"},
+		{"node name fallback", "", "fallback.jpg"},
 	} {
 		if runtime.GOOS == "windows" && strings.HasPrefix(tc.sourcePath, "/camera/") {
 			continue
 		}
-		sourcePath := tc.sourcePath
-		t.Run(sourcePath, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			s := newTestStore(t)
-			run, err := s.BeginIngest(t.Context(), "photo-import", t.TempDir())
+			ctx := t.Context()
+			var asset PhotoAsset
+			if tc.sourcePath == "" {
+				asset = albumAsset(t, s, tc.basename)
+				node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
+				require.NoError(t, err)
+				_, err = s.AppendNodeProvenance(ctx, ProvenanceAppendInput{NodeID: node.ID, IfRevision: node.Revision, SourceKind: "agent", SourceDescription: "synthetic", OriginalPath: filepath.Join(t.TempDir(), "ignored.jpg")})
+				require.NoError(t, err)
+			} else {
+				run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
+				require.NoError(t, err)
+				member := photoImportTestMember(tc.sourcePath, PhotoRoleImage, browseHash("capture"), "image/jpeg")
+				member.Name = "renamed.JPG"
+				result, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(member))
+				require.NoError(t, err)
+				asset = result.Asset
+			}
+			checkout, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
 			require.NoError(t, err)
-			member := photoImportTestMember(sourcePath, PhotoRoleImage, browseHash("capture"), "image/jpeg")
-			member.Name = "renamed.JPG"
-			result, err := s.IngestPhotoGroup(t.Context(), run, photoImportTestGroup(member))
-			require.NoError(t, err)
-			checkout, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "checkout", 0)
-			require.NoError(t, err)
-			entries, err := s.PhotoCheckoutEntries(t.Context(), checkout.ID)
+			entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
 			require.NoError(t, err)
 			require.Len(t, entries, 1)
-			require.Equal(t, "undated/"+result.Asset.ID+"/"+tc.basename, entries[0].Path)
+			require.Equal(t, "undated/"+asset.ID+"/"+tc.basename, entries[0].Path)
 		})
 	}
-	t.Run("node name fallback", func(t *testing.T) {
-		s := newTestStore(t)
-		ctx := t.Context()
-		source := t.TempDir()
-		fallbackAsset := albumAsset(t, s, "fallback.jpg")
-		node, err := s.NodeByID(ctx, fallbackAsset.Files[0].NodeID)
-		require.NoError(t, err)
-		_, err = s.AppendNodeProvenance(ctx, ProvenanceAppendInput{NodeID: node.ID, IfRevision: node.Revision, SourceKind: "agent", SourceDescription: "synthetic", OriginalPath: filepath.Join(source, "ignored.jpg")})
-		require.NoError(t, err)
-		fallback, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{fallbackAsset.ID}}, "fallback", 0)
-		require.NoError(t, err)
-		entries, err := s.PhotoCheckoutEntries(ctx, fallback.ID)
-		require.NoError(t, err)
-		require.Len(t, entries, 1)
-		require.Equal(t, node.Name, filepath.Base(entries[0].Path))
-	})
 }

@@ -436,6 +436,28 @@ func TestWatchDirectoryIdentitiesIncludeDescendants(t *testing.T) {
 	assert.True(t, matchesWatchDirectory(logsInfo, identities))
 }
 
+func TestWatchedFileMustMatchItsSettledFingerprint(t *testing.T) {
+	ing := newTestIngester(t)
+	source := writeTree(t, map[string]string{"document.txt": "first"})
+	sourcePath := filepath.Join(source, "document.txt")
+	settled, err := observeLocalFileFingerprint(sourcePath)
+	require.NoError(t, err)
+	replacementPath := filepath.Join(source, "replacement.tmp")
+	require.NoError(t, os.WriteFile(replacementPath, []byte("other"), 0o600))
+	observedAt := time.Unix(0, settled.modTime)
+	require.NoError(t, os.Chtimes(replacementPath, observedAt, observedAt))
+	require.NoError(t, os.Remove(sourcePath))
+	require.NoError(t, os.Rename(replacementPath, sourcePath))
+
+	_, err = ing.ingestWatchedFile(
+		t.Context(), "documents", "/inbox", "document.txt", settled,
+		func() (*os.File, error) { return blob.OpenNoFollow(sourcePath) },
+	)
+	require.ErrorIs(t, err, ErrSourceChanged)
+	_, err = ing.Store.NodeByPath(t.Context(), "/inbox/document.txt")
+	require.ErrorIs(t, err, store.ErrNotFound)
+}
+
 func TestLocalFileReadRejectsConcurrentChange(t *testing.T) {
 	ing := newTestIngester(t)
 	ctx := t.Context()

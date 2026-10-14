@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -169,9 +168,11 @@ func TestPhotoImportRunnerHandlesCancellationResumeAndAdmissionRetry(t *testing.
 		{name: "shutdown and resume"},
 		{name: "after one group", cancelAfter: 1},
 		{name: "startup admission failure"},
+		{name: "after group admission failure"},
+		{name: "after group pause cancellation"},
+		{name: "startup pause cancellation"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			interruption := tc.name
 			ing := newTestIngester(t)
 			root := t.TempDir()
 			for i := range 3 {
@@ -182,35 +183,51 @@ func TestPhotoImportRunnerHandlesCancellationResumeAndAdmissionRetry(t *testing.
 			require.NoError(t, err)
 			runner := PhotoImportRunner{Ingester: ing}
 			var failing atomic.Bool
-			switch interruption {
+			var gatedCalls, importedGroups atomic.Int64
+			switch tc.name {
 			case "before work":
 				require.NoError(t, ing.Store.RequestStorageOperationCancel(t.Context(), operation.ID))
-			case "after one group", "after final group":
-				gatedCalls, importedGroups := 0, 0
+			case "after one group", "after final group", "after group pause cancellation":
 				runner.Options.Mutate = func(ctx context.Context, fn func() error) error {
 					if err := fn(); err != nil {
 						return err
 					}
-					gatedCalls++
+					calls := gatedCalls.Add(1)
 					// The first gated call creates the destination; later calls import groups.
-					if gatedCalls > 1 {
-						importedGroups++
+					if calls > 1 {
+						importedGroups.Add(1)
 					}
-					if importedGroups == tc.cancelAfter {
+					if tc.cancelAfter > 0 && importedGroups.Load() == int64(tc.cancelAfter) {
 						return ing.Store.RequestStorageOperationCancel(ctx, operation.ID)
+					}
+					if tc.name == "after group pause cancellation" && importedGroups.Load() == 1 {
+						_, err := ing.Store.SetLaneControl(ctx, store.LaneControl{Lane: operation.Kind, Paused: true, Concurrency: 1}, 1)
+						return err
 					}
 					return nil
 				}
-			case "startup admission failure":
+			case "startup pause cancellation":
+				_, err = ing.Store.ClaimStorageOperation(t.Context(), operation.ID)
+				require.NoError(t, err)
+				_, err = ing.Store.SetLaneControl(t.Context(), store.LaneControl{Lane: operation.Kind, Paused: true, Concurrency: 1}, 1)
+				require.NoError(t, err)
+				runner.Options.Mutate = func(_ context.Context, fn func() error) error { gatedCalls.Add(1); return fn() }
+			case "startup admission failure", "after group admission failure":
 				runner.admit = func(ctx context.Context, metadata *store.Store, id string) (bool, error) {
-					if failing.Load() {
+					current, err := metadata.StorageOperation(ctx, id)
+					if err != nil {
+						return false, err
+					}
+					if failing.Load() && (tc.name == "startup admission failure" || current.CompletedObjects == 1) {
 						return false, errors.New("reading storage operation: database is locked")
 					}
 					return jobs.AdmitStorageOperation(ctx, metadata, id)
 				}
-				_, err = ing.Store.ClaimStorageOperation(t.Context(), operation.ID)
-				require.NoError(t, err)
-				require.NoError(t, ing.Store.AdvanceStorageOperation(t.Context(), operation.ID, "", 1, 0, 0, `{"added":1}`))
+				if tc.name == "startup admission failure" {
+					_, err = ing.Store.ClaimStorageOperation(t.Context(), operation.ID)
+					require.NoError(t, err)
+					require.NoError(t, ing.Store.AdvanceStorageOperation(t.Context(), operation.ID, "", 1, 0, 0, `{"added":1}`))
+				}
 				failing.Store(true)
 			case "shutdown and resume":
 				stopped, stop := context.WithCancel(t.Context())
@@ -225,7 +242,27 @@ func TestPhotoImportRunnerHandlesCancellationResumeAndAdmissionRetry(t *testing.
 				require.Len(t, resumable, 1)
 				assert.Equal(t, store.StorageOperationRunning, resumable[0].State)
 			}
-			if strings.Contains(interruption, "admission failure") {
+			if tc.name == "startup pause cancellation" || tc.name == "after group pause cancellation" {
+				supervisor := jobs.New(t.Context(), nil)
+				defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
+				require.NoError(t, runner.Start(supervisor, operation.ID))
+				require.Eventually(t, func() bool {
+					current, err := ing.Store.StorageOperation(t.Context(), operation.ID)
+					return err == nil && current.State == store.StorageOperationQueued && (tc.name == "startup pause cancellation" || current.CompletedObjects == 1)
+				}, 10*time.Second, 10*time.Millisecond)
+				current, err := ing.Store.StorageOperation(t.Context(), operation.ID)
+				require.NoError(t, err)
+				require.Empty(t, current.Error)
+				if tc.name == "after group pause cancellation" {
+					require.Equal(t, int64(1), current.CompletedObjects)
+					require.Contains(t, current.ReceiptJSON, `"added":1`)
+				}
+				require.NoError(t, ing.Store.RequestStorageOperationCancel(t.Context(), operation.ID))
+				require.Eventually(t, func() bool {
+					current, err := ing.Store.StorageOperation(t.Context(), operation.ID)
+					return err == nil && current.State == store.StorageOperationCancelled
+				}, 10*time.Second, 10*time.Millisecond)
+			} else if tc.name == "startup admission failure" || tc.name == "after group admission failure" {
 				supervisor := jobs.New(t.Context(), nil)
 				defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
 				require.NoError(t, runner.Start(supervisor, operation.ID))
@@ -249,17 +286,27 @@ func TestPhotoImportRunnerHandlesCancellationResumeAndAdmissionRetry(t *testing.
 			}
 			finished, err := ing.Store.StorageOperation(t.Context(), operation.ID)
 			require.NoError(t, err)
-			switch interruption {
+			switch tc.name {
 			case "before work":
 				assert.Equal(t, store.StorageOperationCancelled, finished.State)
 				assert.Zero(t, finished.CompletedObjects)
-			case "startup admission failure":
+			case "startup pause cancellation":
+				assert.Equal(t, store.StorageOperationCancelled, finished.State)
+				assert.Zero(t, gatedCalls.Load(), "startup cancellation starts no new import work")
+				assert.Zero(t, finished.CompletedObjects)
+			case "after group pause cancellation":
+				assert.Equal(t, store.StorageOperationCancelled, finished.State)
+				assert.Equal(t, int64(1), finished.CompletedObjects)
+				assert.Contains(t, finished.ReceiptJSON, `"added":1`)
+			case "startup admission failure", "after group admission failure":
 				assert.Equal(t, store.StorageOperationCompleted, finished.State)
 				assert.Equal(t, int64(3), finished.TotalObjects)
 				assert.Equal(t, int64(3), finished.CompletedObjects)
 			case "after one group", "after final group":
 				assert.Equal(t, store.StorageOperationCancelled, finished.State)
 				assert.Equal(t, int64(tc.cancelAfter), finished.CompletedObjects)
+				assert.Equal(t, int64(tc.cancelAfter), importedGroups.Load())
+				assert.Equal(t, int64(tc.cancelAfter+1), gatedCalls.Load())
 			case "shutdown and resume":
 				assert.Equal(t, store.StorageOperationCompleted, finished.State)
 				assert.Equal(t, int64(3), finished.TotalObjects)
