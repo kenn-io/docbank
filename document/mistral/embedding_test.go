@@ -248,27 +248,24 @@ func TestMistralEmbeddingAcceptsDocumentedOptionalUsageFields(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestMistralEmbeddingCancellationPreservesIdentityAndMetrics(t *testing.T) {
+func TestMistralEmbeddingCancelDuringRetryWaitKeepsMetrics(t *testing.T) {
 	input := []document.EmbeddingInput{{Key: "one", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: "text"}}
-	t.Run("retry wait", func(t *testing.T) {
-		synctest.Test(t, func(t *testing.T) {
-			server := httptest.NewTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-				writer.Header().Set("Retry-After", "60")
-				writer.WriteHeader(http.StatusServiceUnavailable)
-			}))
-			profile := testEmbeddingProfile(t)
-			provider, err := NewEmbeddingProvider(profile, embeddingSecretMap{"credential:mistral-embed": "secret"}, nil)
-			require.NoError(t, err)
-			provider.http = server.Client()
-			// Virtual time advances once the response is handled and retry waiting begins.
-			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
-			defer cancel()
-			_, err = provider.Embed(ctx, input, embeddingAuthorization(profile.Descriptor))
-			require.ErrorIs(t, err, context.DeadlineExceeded)
-			assert.Equal(t, RequestMetrics{Requests: 1, Retries: 1}, withoutLatency(MetricsFromError(err)))
-		})
+	synctest.Test(t, func(t *testing.T) {
+		server := httptest.NewTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			writer.Header().Set("Retry-After", "60")
+			writer.WriteHeader(http.StatusServiceUnavailable)
+		}))
+		profile := testEmbeddingProfile(t)
+		provider, err := NewEmbeddingProvider(profile, embeddingSecretMap{"credential:mistral-embed": "secret"}, nil)
+		require.NoError(t, err)
+		provider.http = server.Client()
+		// Virtual time advances once the response is handled and retry waiting begins.
+		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+		defer cancel()
+		_, err = provider.Embed(ctx, input, embeddingAuthorization(profile.Descriptor))
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.Equal(t, RequestMetrics{Requests: 1, Retries: 1}, withoutLatency(MetricsFromError(err)))
 	})
-
 }
 
 func withoutLatency(metrics RequestMetrics) RequestMetrics { metrics.Latency = 0; return metrics }
