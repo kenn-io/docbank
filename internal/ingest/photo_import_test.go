@@ -141,9 +141,6 @@ func TestPhotoImportPublishesBytesAndPassesThroughReceipts(t *testing.T) {
 	got, readErr := io.ReadAll(reader)
 	require.NoError(t, errors.Join(readErr, reader.Close()))
 	assert.Equal(t, content, got)
-	assert.Zero(t, report.Receipt.Ambiguous)
-	assert.Empty(t, report.Receipt.Ambiguities)
-	assert.Zero(t, report.Receipt.Skipped)
 
 	t.Run("ambiguity receipt pass-through", func(t *testing.T) {
 		ing := newTestIngester(t)

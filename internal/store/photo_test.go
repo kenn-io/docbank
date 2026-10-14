@@ -425,30 +425,6 @@ func TestPhotoMetadataAcceptsReceiptIndependentRevisionOneState(t *testing.T) {
 	require.NoError(t, validatePhotoMetadataState(ctx, s.db, currentStorageSchemaVersion))
 }
 
-func TestPhotoExplicitVideoAdmitsGenericVideo(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	clip, err := s.CreateFile(ctx, s.RootID(), "clip.mp4", fakeHash("0c11"), 1, "application/octet-stream")
-	require.NoError(t, err)
-	_, err = s.PhotoAssetForNode(ctx, clip.ID)
-	require.ErrorIs(t, err, ErrNotFound)
-	_, err = s.PromotePhotoNode(ctx, clip.ID, nil, "", "")
-	require.ErrorIs(t, err, ErrPhotoNodeNotEligible)
-	asset, err := s.PromotePhotoNode(ctx, clip.ID, nil, PhotoRoleVideo, "")
-	require.NoError(t, err)
-	assert.Equal(t, PhotoKindVideo, asset.Kind)
-
-	genericAudio, err := s.CreateFile(ctx, s.RootID(), "song.mp3", fakeHash("0c12"), 1, "application/octet-stream")
-	require.NoError(t, err)
-	_, err = s.PromotePhotoNode(ctx, genericAudio.ID, nil, PhotoRoleVideo, PhotoKindVideo)
-	require.ErrorIs(t, err, ErrPhotoNodeNotEligible)
-	typedAudio, err := s.CreateFile(ctx, s.RootID(), "track.mp4", fakeHash("0c13"), 1, "audio/mp4")
-	require.NoError(t, err)
-	_, err = s.PromotePhotoNode(ctx, typedAudio.ID, nil, PhotoRoleVideo, PhotoKindVideo)
-	require.ErrorIs(t, err, ErrPhotoNodeNotEligible)
-}
-
 func TestPhotoSidecarTargetsAndNoDisplayableMember(t *testing.T) {
 	t.Parallel()
 	for _, role := range []string{PhotoRoleRAW, PhotoRoleImage} {
@@ -527,6 +503,16 @@ func TestPhotoExcludePromotePreservesIdentityAndReceipt(t *testing.T) {
 	stale := promoted.Revision - 1
 	_, err = s.PromotePhotoNode(ctx, image.ID, &stale, "", "")
 	require.ErrorIs(t, err, ErrStaleRevision)
+	t.Run("unowned node rejects revision precondition", func(t *testing.T) {
+		raw, err := s.CreateFile(ctx, s.RootID(), "unowned.cr2", fakeHash("unowned"), 1, "application/octet-stream")
+		require.NoError(t, err)
+
+		expectedRevision := int64(1)
+		_, err = s.PromotePhotoNode(ctx, raw.ID, &expectedRevision, PhotoRoleRAW, "")
+		require.ErrorIs(t, err, ErrStaleRevision)
+		_, err = s.PhotoAssetForNode(ctx, raw.ID)
+		require.ErrorIs(t, err, ErrNotFound)
+	})
 }
 
 func TestPhotoConcurrentRevisionMutationHasOneWinner(t *testing.T) {
@@ -557,20 +543,6 @@ func TestPhotoConcurrentRevisionMutationHasOneWinner(t *testing.T) {
 	}
 	assert.Equal(t, 1, winners)
 	assert.Equal(t, 1, staleWrites)
-}
-
-func TestPhotoPromoteUnownedNodeRejectsRevisionPrecondition(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	raw, err := s.CreateFile(ctx, s.RootID(), "unowned.cr2", fakeHash("unowned"), 1, "application/octet-stream")
-	require.NoError(t, err)
-
-	expectedRevision := int64(1)
-	_, err = s.PromotePhotoNode(ctx, raw.ID, &expectedRevision, PhotoRoleRAW, "")
-	require.ErrorIs(t, err, ErrStaleRevision)
-	_, err = s.PhotoAssetForNode(ctx, raw.ID)
-	require.ErrorIs(t, err, ErrNotFound)
 }
 
 func TestPhotoVersionTransitionsKeepIdentity(t *testing.T) {
@@ -672,28 +644,40 @@ func TestPhotoExplicitRawAdmissionAndTargetBoundaries(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, PhotoRoleRAW, explicit.Files[0].Role)
 	})
-}
+	t.Run("explicit video admission excludes audio", func(t *testing.T) {
+		clip, err := s.CreateFile(ctx, s.RootID(), "clip.mp4", fakeHash("0c11"), 1, "application/octet-stream")
+		require.NoError(t, err)
+		_, err = s.PhotoAssetForNode(ctx, clip.ID)
+		require.ErrorIs(t, err, ErrNotFound)
+		_, err = s.PromotePhotoNode(ctx, clip.ID, nil, "", "")
+		require.ErrorIs(t, err, ErrPhotoNodeNotEligible)
+		asset, err := s.PromotePhotoNode(ctx, clip.ID, nil, PhotoRoleVideo, "")
+		require.NoError(t, err)
+		assert.Equal(t, PhotoKindVideo, asset.Kind)
 
-func TestPhotoAttachRequiresExplicitRawForNonqualifyingNodes(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	raw, err := s.CreateFile(ctx, s.RootID(), "attach.capture", fakeHash("aa01"), 1, "application/octet-stream")
-	require.NoError(t, err)
-	asset, err := s.CreatePhotoAsset(ctx, raw.ID, PhotoRoleRAW, "")
-	require.NoError(t, err)
-	textNode, err := s.CreateFile(ctx, s.RootID(), "attach.txt", fakeHash("aa02"), 1, "text/plain")
-	require.NoError(t, err)
-	audioNode, err := s.CreateFile(ctx, s.RootID(), "attach.mp3", fakeHash("aa03"), 1, "audio/mpeg")
-	require.NoError(t, err)
-	_, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, textNode.ID, "", nil)
-	require.ErrorIs(t, err, ErrPhotoNodeNotEligible)
-	_, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, audioNode.ID, "", nil)
-	require.ErrorIs(t, err, ErrPhotoNodeNotEligible)
-	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, textNode.ID, PhotoRoleRAW, nil)
-	require.NoError(t, err)
-	_, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, audioNode.ID, PhotoRoleRAW, nil)
-	require.NoError(t, err)
+		genericAudio, err := s.CreateFile(ctx, s.RootID(), "song.mp3", fakeHash("0c12"), 1, "application/octet-stream")
+		require.NoError(t, err)
+		_, err = s.PromotePhotoNode(ctx, genericAudio.ID, nil, PhotoRoleVideo, PhotoKindVideo)
+		require.ErrorIs(t, err, ErrPhotoNodeNotEligible)
+		typedAudio, err := s.CreateFile(ctx, s.RootID(), "track.mp4", fakeHash("0c13"), 1, "audio/mp4")
+		require.NoError(t, err)
+		_, err = s.PromotePhotoNode(ctx, typedAudio.ID, nil, PhotoRoleVideo, PhotoKindVideo)
+		require.ErrorIs(t, err, ErrPhotoNodeNotEligible)
+	})
+	t.Run("nonqualifying attachments require explicit RAW", func(t *testing.T) {
+		textNode, err := s.CreateFile(ctx, s.RootID(), "attach.txt", fakeHash("aa02"), 1, "text/plain")
+		require.NoError(t, err)
+		audioNode, err := s.CreateFile(ctx, s.RootID(), "attach.mp3", fakeHash("aa03"), 1, "audio/mpeg")
+		require.NoError(t, err)
+		_, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, textNode.ID, "", nil)
+		require.ErrorIs(t, err, ErrPhotoNodeNotEligible)
+		_, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, audioNode.ID, "", nil)
+		require.ErrorIs(t, err, ErrPhotoNodeNotEligible)
+		asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, textNode.ID, PhotoRoleRAW, nil)
+		require.NoError(t, err)
+		_, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, audioNode.ID, PhotoRoleRAW, nil)
+		require.NoError(t, err)
+	})
 }
 
 func TestPhotoNodeModesRefuseDirectoryAndTrashedPromotion(t *testing.T) {
