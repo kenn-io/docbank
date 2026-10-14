@@ -249,7 +249,6 @@ func TestPhotoMetadataRoundTripValidatesPointersReceiptsAndSourceProvenance(t *t
 		require.True(t, found)
 		invalid := newTestStore(t)
 		require.ErrorContains(t, invalid.ImportMetadata(ctx, strings.NewReader(strings.Join(invalidLines, "\n"))), "invalid photo sidecar pointer")
-
 	})
 	t.Run("cross-asset sidecar pointer", func(t *testing.T) {
 		secondAsset, err := s.PhotoAssetForNode(ctx, secondNode.ID)

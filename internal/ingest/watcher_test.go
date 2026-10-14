@@ -482,7 +482,7 @@ func TestLocalFileReadRejectsConcurrentChange(t *testing.T) {
 			test.edit(t, path, before)
 			_, err = ing.readLocalFile(ctx, path, path, nil, &before)
 			require.Error(t, err)
-			assert.ErrorIs(t, err, ErrSourceChanged)
+			require.ErrorIs(t, err, ErrSourceChanged)
 			assert.ErrorContains(t, err, "replaced before opening")
 		})
 	}

@@ -333,9 +333,7 @@ func TestCheckoutRunOutcomes(t *testing.T) {
 			interrupted := false
 			s.Mutate = func(ctx context.Context, fn func() error) error {
 				progress, err := s.Store.PhotoCheckoutStatus(ctx, c.ID)
-				if !assert.NoError(t, err) {
-					return err
-				}
+				require.NoError(t, err)
 				if progress.PublishedFiles == 1 && !interrupted && failure == "source excluded" {
 					interrupted = true
 					asset, err := s.Store.PhotoAssetByID(ctx, entries[1].AssetID)

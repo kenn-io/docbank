@@ -242,7 +242,8 @@ func TestPhotoImportRunnerHandlesCancellationResumeAndAdmissionRetry(t *testing.
 				require.Len(t, resumable, 1)
 				assert.Equal(t, store.StorageOperationRunning, resumable[0].State)
 			}
-			if tc.name == "startup pause cancellation" || tc.name == "after group pause cancellation" {
+			switch tc.name {
+			case "startup pause cancellation", "after group pause cancellation":
 				supervisor := jobs.New(t.Context(), nil)
 				defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
 				require.NoError(t, runner.Start(supervisor, operation.ID))
@@ -262,7 +263,7 @@ func TestPhotoImportRunnerHandlesCancellationResumeAndAdmissionRetry(t *testing.
 					current, err := ing.Store.StorageOperation(t.Context(), operation.ID)
 					return err == nil && current.State == store.StorageOperationCancelled
 				}, 10*time.Second, 10*time.Millisecond)
-			} else if tc.name == "startup admission failure" || tc.name == "after group admission failure" {
+			case "startup admission failure", "after group admission failure":
 				supervisor := jobs.New(t.Context(), nil)
 				defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
 				require.NoError(t, runner.Start(supervisor, operation.ID))
@@ -281,7 +282,7 @@ func TestPhotoImportRunnerHandlesCancellationResumeAndAdmissionRetry(t *testing.
 					current, err := ing.Store.StorageOperation(t.Context(), operation.ID)
 					return err == nil && current.State == store.StorageOperationCompleted
 				}, 10*time.Second, 10*time.Millisecond)
-			} else {
+			default:
 				require.NoError(t, runner.Run(t.Context(), operation.ID))
 			}
 			finished, err := ing.Store.StorageOperation(t.Context(), operation.ID)
