@@ -89,11 +89,16 @@
     const controller = refreshController;
     reading = true;
     try {
-      await access.settled();
-      if (controller.signal.aborted || disposed) return;
       // Anchoring at send time can only end access early, never late.
-      const requestedAt = Date.now();
-      const result = await getPhotoHiddenState({ session: access.session, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]) });
+      let requestedAt = Date.now();
+      let result = await getPhotoHiddenState({ session: access.session, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]) });
+      if (controller.signal.aborted || disposed) return;
+      if (!workspaceVisible && result.expires_in) {
+        await access.settled();
+        if (controller.signal.aborted || disposed) return;
+        requestedAt = Date.now();
+        result = await getPhotoHiddenState({ session: access.session, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]) });
+      }
       if (controller.signal.aborted || disposed) return;
       await applyState(result, controller.signal, requestedAt);
     } catch (cause) {

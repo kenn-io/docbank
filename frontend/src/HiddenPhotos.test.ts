@@ -10,7 +10,7 @@ const prepare = () => { vi.stubGlobal("ResizeObserver", class { observe() {} dis
 const props = (onauthfailure = vi.fn()) => ({ access: new HiddenAccess("synthetic", onauthfailure) });
 const problem = (status: number, detail: string, code = "") => new Response(JSON.stringify({ detail, code }), { status });
 
-it("waits for a held leave lock before reading on return", async () => {
+it("waits for a held leave lock before redisplaying on return", async () => {
   prepare();
   let unlocked = true;
   let finish!: () => void;
@@ -23,24 +23,56 @@ it("waits for a held leave lock before reading on return", async () => {
   const access = new HiddenAccess("synthetic", vi.fn());
   render(HiddenPhotos, { ...props(), access });
   await screen.findByRole("button", { name: "Lock" });
+  const initialReads = reads;
   const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
   await fireEvent(document, new Event("visibilitychange"));
   const lock = access.lock();
   await waitFor(() => expect(finish).toBeTypeOf("function"));
   visibility.mockReturnValue("visible");
   await fireEvent(document, new Event("visibilitychange"));
-  expect(reads).toBe(1);
+  await waitFor(() => expect(reads).toBe(initialReads + 1));
   expect(screen.queryByRole("button", { name: "Unlock" })).toBeNull();
+  expect(screen.queryByRole("main", { name: "Photo library" })).toBeNull();
   visibility.mockReturnValue("hidden");
   await fireEvent(document, new Event("visibilitychange"));
   finish();
   await lock;
   await Promise.resolve();
-  expect(reads).toBe(1);
+  expect(reads).toBe(initialReads + 1);
   visibility.mockReturnValue("visible");
   await fireEvent(document, new Event("visibilitychange"));
   await screen.findByRole("button", { name: "Unlock" });
-  expect(reads).toBe(2);
+  expect(reads).toBe(initialReads + 2);
+});
+
+it("conceals Hidden on the next poll while an unhide batch is held", async () => {
+  prepare();
+  storage();
+  let poll!: () => void;
+  const interval = globalThis.setInterval;
+  vi.spyOn(globalThis, "setInterval").mockImplementation((callback, delay, ...args) => {
+    if (delay === 2000) { poll = callback as () => void; return 0 as unknown as ReturnType<typeof setInterval>; }
+    return interval(callback, delay, ...args);
+  });
+  let hidden = state(true);
+  let finish!: (response: Response) => void;
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    if (url.endsWith("/photos/hidden")) return Response.json(hidden);
+    if (url.endsWith("/unhide")) return new Promise<Response>(resolve => finish = resolve);
+    if (url.includes("/assets/query")) return Response.json({ items: [photo(1)], total: 1 });
+    return Response.json({});
+  }));
+  const view = render(HiddenPhotos, props());
+  await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
+  const batch = view.component.activePhotos()!.setHidden(photo(1).asset_id);
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  hidden = state(false);
+  poll();
+  await screen.findByRole("button", { name: "Unlock" });
+  expect(screen.queryByRole("main", { name: "Photo library" })).toBeNull();
+  expect(screen.queryByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeNull();
+  finish(problem(403, "Hidden locked"));
+  await batch;
 });
 
 it.each(["setup", "unlock", "current", "new"])("preserves %s input focus and value during an access poll", async field => {
@@ -255,7 +287,7 @@ it.each(["lock", "revoke", "expire", "denial", "trash denial", "read"])("clears 
   const grid = screen.getByRole("main", { name: "Photo library" });
   vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
   await fireEvent(document, new Event("visibilitychange"));
-  await waitFor(() => expect(fetcher.mock.calls.filter(([url]) => url.endsWith("/photos/hidden"))).toHaveLength(2));
+  await waitFor(() => expect(fetcher.mock.calls.filter(([url]) => url.endsWith("/photos/hidden"))).toHaveLength(3));
   expect(screen.getByRole("main", { name: "Photo library" })).toBe(grid);
   expect(screen.getByText("1 selected photo")).toBeTruthy();
   expect(fetcher.mock.calls.filter(([url]) => url.includes("/assets/query"))).toHaveLength(2);
