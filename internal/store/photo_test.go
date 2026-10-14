@@ -183,7 +183,7 @@ func TestPhotoAdmissionSurvivesRenameAndMetadataRoundTrip(t *testing.T) {
 	assert.Equal(t, before, restoredMembership)
 }
 
-func TestPhotoMetadataPreservesProvenanceAndRejectsInvalidReferences(t *testing.T) {
+func TestPhotoMetadataRoundTripValidatesPointersReceiptsAndSourceProvenance(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -199,6 +199,11 @@ func TestPhotoMetadataPreservesProvenanceAndRejectsInvalidReferences(t *testing.
 		photoImportTestMember(filepath.Join(camera, "IMG.ARW.XMP"), PhotoRoleSidecar, browseHash("xmp"), "application/rdf+xml")))
 	require.NoError(t, err)
 	assert.Equal(t, jpeg.Asset.ID, paired.Asset.ID)
+	laterRun, err := s.BeginIngest(ctx, "photo-import", "renamed duplicate")
+	require.NoError(t, err)
+	_, err = s.IngestPhotoGroup(ctx, laterRun, photoImportTestGroup(
+		photoImportTestMember(filepath.Join(camera, "AAA.ARW"), PhotoRoleRAW, fakeHash("b2"), "image/x-sony-arw")))
+	require.NoError(t, err)
 	raw := fileByRole(paired.Asset.Files, PhotoRoleRAW)
 	asset := paired.Asset
 	imageFileID := fileByRole(asset.Files, PhotoRoleImage).ID
@@ -214,59 +219,65 @@ func TestPhotoMetadataPreservesProvenanceAndRejectsInvalidReferences(t *testing.
 	require.NoError(t, err)
 	var first bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &first))
-	require.NoError(t, s.ValidateMetadata(ctx))
-	assert.Contains(t, first.String(), `"type":"photo_asset"`)
-	assert.Contains(t, first.String(), `"operation":"import"`)
-	assert.Contains(t, first.String(), jpeg.Nodes[0].CurrentVersionID)
-	target := newTestStore(t)
-	require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(first.Bytes())))
-	var second bytes.Buffer
-	require.NoError(t, target.ExportMetadata(ctx, &second))
-	assert.Equal(t, first.String(), second.String())
-	secondAsset, err := s.PhotoAssetForNode(ctx, secondNode.ID)
-	require.NoError(t, err)
-	restored, err := target.PhotoAssetByID(ctx, asset.ID)
-	require.NoError(t, err)
-	assert.Equal(t, asset.Files, restored.Files)
-	assert.Equal(t, asset.ID, restored.ID)
-	assert.Equal(t, asset.DisplayFileID, restored.DisplayFileID)
-	invalidLines := strings.Split(first.String(), "\n")
-	found := false
-	for index, line := range invalidLines {
-		if strings.Contains(line, `"type":"photo_file"`) && strings.Contains(line, fileByRole(paired.Asset.Files, PhotoRoleSidecar).ID) {
-			require.Contains(t, line, `"sidecar_of_file_id":"`+raw.ID+`"`)
-			invalidLines[index] = strings.Replace(line, `"sidecar_of_file_id":"`+raw.ID+`"`, `"sidecar_of_file_id":null`, 1)
-			require.NotEqual(t, line, invalidLines[index])
-			found = true
-			break
+	t.Run("round trip", func(t *testing.T) {
+		require.NoError(t, s.ValidateMetadata(ctx))
+		assert.Contains(t, first.String(), `"type":"photo_asset"`)
+		assert.Contains(t, first.String(), `"operation":"import"`)
+		assert.Contains(t, first.String(), jpeg.Nodes[0].CurrentVersionID)
+		target := newTestStore(t)
+		require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(first.Bytes())))
+		var second bytes.Buffer
+		require.NoError(t, target.ExportMetadata(ctx, &second))
+		assert.Equal(t, first.String(), second.String())
+		restored, err := target.PhotoAssetByID(ctx, asset.ID)
+		require.NoError(t, err)
+		assert.Equal(t, asset.Files, restored.Files)
+		assert.Equal(t, asset.ID, restored.ID)
+		assert.Equal(t, asset.DisplayFileID, restored.DisplayFileID)
+	})
+	t.Run("null sidecar pointer", func(t *testing.T) {
+		invalidLines := strings.Split(first.String(), "\n")
+		found := false
+		for index, line := range invalidLines {
+			if strings.Contains(line, `"type":"photo_file"`) && strings.Contains(line, fileByRole(paired.Asset.Files, PhotoRoleSidecar).ID) {
+				require.Contains(t, line, `"sidecar_of_file_id":"`+raw.ID+`"`)
+				invalidLines[index] = strings.Replace(line, `"sidecar_of_file_id":"`+raw.ID+`"`, `"sidecar_of_file_id":null`, 1)
+				require.NotEqual(t, line, invalidLines[index])
+				found = true
+				break
+			}
 		}
-	}
-	require.True(t, found)
-	invalid := newTestStore(t)
-	require.ErrorContains(t, invalid.ImportMetadata(ctx, strings.NewReader(strings.Join(invalidLines, "\n"))), "invalid photo sidecar pointer")
+		require.True(t, found)
+		invalid := newTestStore(t)
+		require.ErrorContains(t, invalid.ImportMetadata(ctx, strings.NewReader(strings.Join(invalidLines, "\n"))), "invalid photo sidecar pointer")
 
-	var sidecarFileID string
-	for _, file := range asset.Files {
-		if file.NodeID == sidecar.ID {
-			sidecarFileID = file.ID
-			break
+	})
+	t.Run("cross-asset sidecar pointer", func(t *testing.T) {
+		secondAsset, err := s.PhotoAssetForNode(ctx, secondNode.ID)
+		require.NoError(t, err)
+		var sidecarFileID string
+		for _, file := range asset.Files {
+			if file.NodeID == sidecar.ID {
+				sidecarFileID = file.ID
+				break
+			}
 		}
-	}
-	require.NotEmpty(t, sidecarFileID)
-	crossAssetLines := strings.Split(first.String(), "\n")
-	found = false
-	for index, line := range crossAssetLines {
-		if strings.Contains(line, `"type":"photo_file"`) && strings.Contains(line, sidecarFileID) {
-			require.Contains(t, line, `"sidecar_of_file_id":"`+imageFileID+`"`)
-			crossAssetLines[index] = strings.Replace(line, `"sidecar_of_file_id":"`+imageFileID+`"`, `"sidecar_of_file_id":"`+secondAsset.Files[0].ID+`"`, 1)
-			require.NotEqual(t, line, crossAssetLines[index])
-			found = true
-			break
+		require.NotEmpty(t, sidecarFileID)
+		crossAssetLines := strings.Split(first.String(), "\n")
+		found := false
+		for index, line := range crossAssetLines {
+			if strings.Contains(line, `"type":"photo_file"`) && strings.Contains(line, sidecarFileID) {
+				require.Contains(t, line, `"sidecar_of_file_id":"`+imageFileID+`"`)
+				crossAssetLines[index] = strings.Replace(line, `"sidecar_of_file_id":"`+imageFileID+`"`, `"sidecar_of_file_id":"`+secondAsset.Files[0].ID+`"`, 1)
+				require.NotEqual(t, line, crossAssetLines[index])
+				found = true
+				break
+			}
 		}
-	}
-	require.True(t, found)
-	crossAsset := newTestStore(t)
-	require.ErrorContains(t, crossAsset.ImportMetadata(ctx, strings.NewReader(strings.Join(crossAssetLines, "\n"))), "must point to a same-asset RAW or image")
+		require.True(t, found)
+		crossAsset := newTestStore(t)
+		require.ErrorContains(t, crossAsset.ImportMetadata(ctx, strings.NewReader(strings.Join(crossAssetLines, "\n"))), "must point to a same-asset RAW or image")
+	})
 	for _, lineType := range []string{"photo_asset", "photo_library_settings"} {
 		t.Run("receipt without "+lineType, func(t *testing.T) {
 			backup := first.String()
@@ -290,106 +301,83 @@ func TestPhotoMetadataPreservesProvenanceAndRejectsInvalidReferences(t *testing.
 			require.ErrorContains(t, target.ImportMetadata(ctx, strings.NewReader(strings.Join(lines, "\n"))), expectedError)
 		})
 	}
-}
-
-func TestPhotoMetadataPreservesAndValidatesSourceProvenance(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	ingestRun, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
-	require.NoError(t, err)
-	camera := filepath.Join(t.TempDir(), "camera")
-	jpeg, err := s.IngestPhotoGroup(ctx, ingestRun, photoImportTestGroup(
-		photoImportTestMember(filepath.Join(camera, "IMG.JPG"), PhotoRoleImage, fakeHash("a1"), "image/jpeg")))
-	require.NoError(t, err)
-	paired, err := s.IngestPhotoGroup(ctx, ingestRun, photoImportTestGroup(
-		photoImportTestMember(filepath.Join(camera, "IMG.ARW"), PhotoRoleRAW, fakeHash("b2"), "image/x-sony-arw"),
-		photoImportTestMember(filepath.Join(camera, "IMG.JPG"), PhotoRoleImage, fakeHash("a1"), "image/jpeg"),
-		photoImportTestMember(filepath.Join(camera, "IMG.ARW.XMP"), PhotoRoleSidecar, browseHash("xmp"), "application/rdf+xml")))
-	require.NoError(t, err)
-	assert.Equal(t, jpeg.Asset.ID, paired.Asset.ID)
-	laterRun, err := s.BeginIngest(ctx, "photo-import", "renamed duplicate")
-	require.NoError(t, err)
-	_, err = s.IngestPhotoGroup(ctx, laterRun, photoImportTestGroup(
-		photoImportTestMember(filepath.Join(camera, "AAA.ARW"), PhotoRoleRAW, fakeHash("b2"), "image/x-sony-arw")))
-	require.NoError(t, err)
-	raw := fileByRole(paired.Asset.Files, PhotoRoleRAW)
-	asset := paired.Asset
-	var first bytes.Buffer
-	require.NoError(t, s.ExportMetadata(ctx, &first))
-	sources := make(map[string]string)
-	for _, file := range asset.Files {
-		var selectedSource string
-		require.NoError(t, s.db.QueryRowContext(ctx, `SELECT source_provenance_identity FROM photo_files WHERE file_id=?`, file.ID).Scan(&selectedSource))
-		sources[file.ID] = selectedSource
-	}
-	rawSource := sources[raw.ID]
-	var recordedPath string
-	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT original_path FROM provenance WHERE identity=?`, rawSource).Scan(&recordedPath))
-	require.Equal(t, filepath.Join(camera, "IMG.ARW"), recordedPath)
-	var alternateSource string
-	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT identity FROM provenance WHERE node_id=? AND original_path LIKE '%AAA.ARW'`, raw.NodeID).Scan(&alternateSource))
-	require.NotEqual(t, rawSource, alternateSource)
-	for _, variant := range []string{"alternate source", "missing source_provenance_identity", "another node"} {
-		expectedSource := rawSource
-		if variant == "alternate source" {
-			expectedSource = alternateSource
-		}
-		lines := bytes.Split(first.Bytes(), []byte{'\n'})
-		for i, line := range lines {
-			if !bytes.Contains(line, []byte(`"type":"photo_file"`)) {
-				continue
-			}
-			var file metadataPhotoFile
-			require.NoError(t, json.Unmarshal(line, &file))
-			if variant == "missing source_provenance_identity" {
-				file.SourceProvenanceIdentity = nil
-			} else if variant == "alternate source" && file.FileID == raw.ID {
-				file.SourceProvenanceIdentity = &alternateSource
-			} else if variant == "another node" && file.Role == PhotoRoleImage {
-				file.SourceProvenanceIdentity = &rawSource
-			}
-			lines[i], err = json.Marshal(file)
-			require.NoError(t, err)
-		}
-		restored := newTestStore(t)
-		err = restored.ImportMetadata(ctx, bytes.NewReader(bytes.Join(lines, []byte{'\n'})))
-		if variant == "another node" {
-			require.ErrorContains(t, err, "invalid photo source provenance reference")
-			continue
-		}
-		require.NoError(t, err)
-		if variant == "alternate source" {
-			var reexported bytes.Buffer
-			require.NoError(t, restored.ExportMetadata(ctx, &reexported))
-			var exportedRAW *metadataPhotoFile
-			for line := range bytes.SplitSeq(reexported.Bytes(), []byte{'\n'}) {
-				if !bytes.Contains(line, []byte(`"type":"photo_file"`)) {
-					continue
-				}
-				var file metadataPhotoFile
-				require.NoError(t, json.Unmarshal(line, &file))
-				if file.FileID == raw.ID {
-					exportedRAW = &file
-					break
-				}
-			}
-			require.NotNil(t, exportedRAW)
-			require.Equal(t, &alternateSource, exportedRAW.SourceProvenanceIdentity)
-		}
+	t.Run("source provenance", func(t *testing.T) {
+		sources := make(map[string]string)
 		for _, file := range asset.Files {
-			if variant != "missing source_provenance_identity" && file.ID != raw.ID {
-				continue
-			}
-			want := expectedSource
-			if variant == "missing source_provenance_identity" {
-				want = sources[file.ID]
-			}
-			var storedSource string
-			require.NoError(t, restored.db.QueryRowContext(ctx, `SELECT source_provenance_identity FROM photo_files WHERE file_id=?`, file.ID).Scan(&storedSource))
-			require.Equal(t, want, storedSource, "%s: %s", variant, file.ID)
+			var selectedSource string
+			require.NoError(t, s.db.QueryRowContext(ctx, `SELECT source_provenance_identity FROM photo_files WHERE file_id=?`, file.ID).Scan(&selectedSource))
+			sources[file.ID] = selectedSource
 		}
-	}
+		rawSource := sources[raw.ID]
+		var recordedPath string
+		require.NoError(t, s.db.QueryRowContext(ctx, `SELECT original_path FROM provenance WHERE identity=?`, rawSource).Scan(&recordedPath))
+		require.Equal(t, filepath.Join(camera, "IMG.ARW"), recordedPath)
+		var alternateSource string
+		require.NoError(t, s.db.QueryRowContext(ctx, `SELECT identity FROM provenance WHERE node_id=? AND original_path LIKE '%AAA.ARW'`, raw.NodeID).Scan(&alternateSource))
+		require.NotEqual(t, rawSource, alternateSource)
+		for _, variant := range []string{"alternate source", "missing source_provenance_identity", "another node"} {
+			t.Run(variant, func(t *testing.T) {
+				expectedSource := rawSource
+				if variant == "alternate source" {
+					expectedSource = alternateSource
+				}
+				lines := bytes.Split(first.Bytes(), []byte{'\n'})
+				for i, line := range lines {
+					if !bytes.Contains(line, []byte(`"type":"photo_file"`)) {
+						continue
+					}
+					var file metadataPhotoFile
+					require.NoError(t, json.Unmarshal(line, &file))
+					if variant == "missing source_provenance_identity" {
+						file.SourceProvenanceIdentity = nil
+					} else if variant == "alternate source" && file.FileID == raw.ID {
+						file.SourceProvenanceIdentity = &alternateSource
+					} else if variant == "another node" && file.Role == PhotoRoleImage {
+						file.SourceProvenanceIdentity = &rawSource
+					}
+					lines[i], err = json.Marshal(file)
+					require.NoError(t, err)
+				}
+				restored := newTestStore(t)
+				err = restored.ImportMetadata(ctx, bytes.NewReader(bytes.Join(lines, []byte{'\n'})))
+				if variant == "another node" {
+					require.ErrorContains(t, err, "invalid photo source provenance reference")
+					return
+				}
+				require.NoError(t, err)
+				if variant == "alternate source" {
+					var reexported bytes.Buffer
+					require.NoError(t, restored.ExportMetadata(ctx, &reexported))
+					var exportedRAW *metadataPhotoFile
+					for line := range bytes.SplitSeq(reexported.Bytes(), []byte{'\n'}) {
+						if !bytes.Contains(line, []byte(`"type":"photo_file"`)) {
+							continue
+						}
+						var file metadataPhotoFile
+						require.NoError(t, json.Unmarshal(line, &file))
+						if file.FileID == raw.ID {
+							exportedRAW = &file
+							break
+						}
+					}
+					require.NotNil(t, exportedRAW)
+					require.Equal(t, &alternateSource, exportedRAW.SourceProvenanceIdentity)
+				}
+				for _, file := range asset.Files {
+					if variant != "missing source_provenance_identity" && file.ID != raw.ID {
+						continue
+					}
+					want := expectedSource
+					if variant == "missing source_provenance_identity" {
+						want = sources[file.ID]
+					}
+					var storedSource string
+					require.NoError(t, restored.db.QueryRowContext(ctx, `SELECT source_provenance_identity FROM photo_files WHERE file_id=?`, file.ID).Scan(&storedSource))
+					require.Equal(t, want, storedSource, "%s: %s", variant, file.ID)
+				}
+			})
+		}
+	})
 }
 
 func TestPhotoMetadataRejectsRoleAndAssetKindMismatch(t *testing.T) {

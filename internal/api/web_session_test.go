@@ -30,7 +30,7 @@ func TestWebSessionDeniesPersonRoutes(t *testing.T) {
 	}
 }
 
-func TestWebSessionPhotoRouteAllowlist(t *testing.T) {
+func TestWebSessionPhotoAndJobRouteAllowlist(t *testing.T) {
 	t.Parallel()
 	album := "/api/v1/photos/albums/11111111-1111-4111-8111-111111111111"
 	for _, route := range []struct{ method, path string }{
@@ -57,6 +57,14 @@ func TestWebSessionPhotoRouteAllowlist(t *testing.T) {
 	}
 	for _, path := range []string{"/api/v1/photos/albums/invalid", "/api/v1/photos/albums/11111111-1111-4111-8111-11111111111A", "/api/v1/photos/albums/"} {
 		require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodPut, path, nil)), path)
+	}
+	job := "/api/v1/jobs/11111111-1111-4111-8111-111111111111"
+	for _, route := range []struct{ method, path string }{
+		{http.MethodGet, job},
+		{http.MethodPost, job + "/cancel?force=1"},
+		{http.MethodPost, "/api/v1/jobs/not-a-uuid/cancel"},
+	} {
+		require.False(t, webSessionRequestAllowed(httptest.NewRequest(route.method, route.path, nil)), route.method+" "+route.path)
 	}
 	require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodGet, album, nil)))
 	require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodPatch, album, nil)))

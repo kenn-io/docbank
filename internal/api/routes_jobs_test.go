@@ -185,13 +185,6 @@ func TestBrowserJobRoutesRedactPrivateDetails(t *testing.T) {
 		assert.Contains(t, body, "private error")
 
 		browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issued.Token}
-		response, body = do(t, ts, http.MethodGet, "/api/v1/jobs/"+failed.ID, browser, nil)
-		assert.Equal(t, http.StatusForbidden, response.StatusCode, body)
-		response, body = do(t, ts, http.MethodPost, "/api/v1/jobs/"+running.ID+"/cancel?force=1", browser, nil)
-		assert.Equal(t, http.StatusForbidden, response.StatusCode, body)
-		response, body = do(t, ts, http.MethodPost, "/api/v1/jobs/not-a-uuid/cancel", browser, nil)
-		assert.Equal(t, http.StatusForbidden, response.StatusCode, body)
-
 		response, body = do(t, ts, http.MethodPost, "/api/v1/jobs/"+running.ID+"/cancel", browser, nil)
 		require.Equal(t, http.StatusOK, response.StatusCode, body)
 		var cancelled api.StorageOperation

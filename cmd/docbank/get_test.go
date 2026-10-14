@@ -142,11 +142,20 @@ func TestPublishGetFileWrapsNoReplaceAndSyncErrors(t *testing.T) {
 			t.Cleanup(func() { syncGetDestinationDir = originalSync })
 			err := publishGetFile(staged, output, false)
 			if test.wantSyncError {
+				require.ErrorIs(t, err, syncErr)
 				require.ErrorContains(t, err, "file published")
 				require.ErrorContains(t, err, "injected destination directory sync failure")
 			} else {
+				require.ErrorIs(t, err, os.ErrExist)
 				require.ErrorContains(t, err, "publish without replacing")
 			}
+			published, readErr := os.ReadFile(output)
+			require.NoError(t, readErr)
+			want := "download"
+			if test.existingOutput {
+				want = "existing"
+			}
+			assert.Equal(t, want, string(published))
 		})
 	}
 }

@@ -3,6 +3,7 @@ package filepublish
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -45,9 +46,22 @@ func TestPublishHonorsNoReplaceAndReportsPostInstallDurability(t *testing.T) {
 }
 
 func TestRootStageRejectsChangedDestinationIdentity(t *testing.T) {
-	for _, method := range []string{"public Publish rejects replaced root", "parent renamed after public Publish opens it"} {
+	for _, method := range []string{"public Publish rejects replaced root", "parent renamed after public Publish opens it (skips on Windows: opened directory pinned)"} {
 		t.Run(method, func(t *testing.T) {
-			root, err := os.OpenRoot(t.TempDir())
+			destination := t.TempDir()
+			rootPath := destination
+			public := method == "public Publish rejects replaced root"
+			junction := func(path, target string) {
+				t.Helper()
+				out, err := exec.Command("cmd", "/c", "mklink", "/J", path, target).CombinedOutput()
+				require.NoError(t, err, string(out))
+			}
+			if runtime.GOOS == "windows" && public {
+				rootPath = filepath.Join(t.TempDir(), "checkout")
+				junction(rootPath, destination)
+				defer func() { require.NoError(t, os.Remove(rootPath)) }()
+			}
+			root, err := os.OpenRoot(rootPath)
 			require.NoError(t, err)
 			defer func() { _ = root.Close() }()
 			dir := root.Name()
@@ -60,7 +74,7 @@ func TestRootStageRejectsChangedDestinationIdentity(t *testing.T) {
 			stage.File = nil
 			relativePath := "photo.jpg"
 			parent := root
-			if method == "parent renamed after public Publish opens it" {
+			if !public {
 				relativePath = filepath.Join("date", "asset", "photo.jpg")
 				require.NoError(t, stage.MakeParentDirectories(relativePath))
 				parent, err = root.OpenRoot(filepath.Dir(relativePath))
@@ -69,15 +83,21 @@ func TestRootStageRejectsChangedDestinationIdentity(t *testing.T) {
 			}
 			replacedPath := filepath.Join(dir, filepath.Dir(relativePath))
 			moved := filepath.Join(t.TempDir(), "moved")
-			if err := os.Rename(replacedPath, moved); err != nil {
-				if runtime.GOOS == "windows" {
-					t.Skip("Windows pins an opened directory against rename")
+			if runtime.GOOS == "windows" && public {
+				require.NoError(t, os.Remove(replacedPath))
+				junction(replacedPath, t.TempDir())
+				moved = destination
+			} else {
+				if err := os.Rename(replacedPath, moved); err != nil {
+					if runtime.GOOS == "windows" {
+						t.Skip("Windows pins an opened directory against rename")
+					}
+					require.NoError(t, err)
 				}
-				require.NoError(t, err)
+				require.NoError(t, os.Mkdir(replacedPath, 0o755))
 			}
-			require.NoError(t, os.Mkdir(replacedPath, 0o755))
 			var installed bool
-			if method == "parent renamed after public Publish opens it" {
+			if !public {
 				// Model a rename between Publish opening the parent and calling publish.
 				installed, err = stage.publish(parent, relativePath)
 			} else {
