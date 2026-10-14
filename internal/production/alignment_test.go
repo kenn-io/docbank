@@ -51,36 +51,61 @@ func TestAlignRepeatedNativeTextKeepsDistinctPositions(t *testing.T) {
 }
 
 func TestAlignVisibleGlyphMappedToWhitespaceRequiresMask(t *testing.T) {
-	// Helvetica still paints A, but its extraction map claims that A is a space.
-	content := "BT /F1 24 Tf 72 720 Td (A) Tj ET BT /F2 12 Tf 72 680 Td (visible) Tj ET"
-	cmap := "1 begincodespacerange <00> <FF> endcodespacerange 1 beginbfchar <41> <0020> endbfchar"
-	objects := []string{
-		"<< /Type /Catalog /Pages 2 0 R >>",
-		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R /F2 7 0 R >> >> /Contents 5 0 R >>",
-		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /ToUnicode 6 0 R >>",
-		fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content),
-		fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(cmap), cmap),
-		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+	for _, example := range []struct {
+		name string
+		code byte
+		size int
+	}{
+		{"apostrophe", 0x27, 3},
+		{"period", 0x2E, 3},
+		{"hyphen", 0x2D, 1},
+		{"double quote", 0x22, 1},
+		{"asterisk", 0x2A, 1},
+		{"middle dot", 0xB7, 1},
+		{"A", 0x41, 24},
+	} {
+		t.Run(example.name, func(t *testing.T) {
+			// Helvetica paints the glyph, but its extraction map claims it is a space.
+			content := fmt.Sprintf(
+				"BT /F1 %d Tf 72 720 Td <%02X> Tj ET BT /F2 12 Tf 72 680 Td (visible) Tj ET",
+				example.size, example.code,
+			)
+			cmap := fmt.Sprintf(
+				"1 begincodespacerange <00> <FF> endcodespacerange 1 beginbfchar <%02X> <0020> endbfchar",
+				example.code,
+			)
+			objects := []string{
+				"<< /Type /Catalog /Pages 2 0 R >>",
+				"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+				"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] " +
+					"/Resources << /Font << /F1 4 0 R /F2 7 0 R >> >> /Contents 5 0 R >>",
+				"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica " +
+					"/Encoding /WinAnsiEncoding /ToUnicode 6 0 R >>",
+				fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content),
+				fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(cmap), cmap),
+				"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+			}
+			var pdf strings.Builder
+			pdf.WriteString("%PDF-1.4\n")
+			offsets := make([]int, len(objects))
+			for index, object := range objects {
+				offsets[index] = pdf.Len()
+				fmt.Fprintf(&pdf, "%d 0 obj\n%s\nendobj\n", index+1, object)
+			}
+			xref := pdf.Len()
+			fmt.Fprintf(&pdf, "xref\n0 %d\n0000000000 65535 f \n", len(objects)+1)
+			for _, offset := range offsets {
+				fmt.Fprintf(&pdf, "%010d 00000 n \n", offset)
+			}
+			fmt.Fprintf(&pdf, "trailer << /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objects)+1, xref)
+			m := alignNativeFixture(t, []byte(pdf.String()), "visible")
+			require.NotEmpty(t, m.Gaps)
+			_, err := redaction.Resolve(m, "redact_selected", nil, pdfproduction.QualifiedRecipe())
+			var problem *redaction.Problem
+			require.ErrorAs(t, err, &problem)
+			require.Equal(t, "mapping_incomplete", problem.Code)
+		})
 	}
-	var pdf strings.Builder
-	pdf.WriteString("%PDF-1.4\n")
-	offsets := make([]int, len(objects))
-	for index, object := range objects {
-		offsets[index] = pdf.Len()
-		fmt.Fprintf(&pdf, "%d 0 obj\n%s\nendobj\n", index+1, object)
-	}
-	xref := pdf.Len()
-	fmt.Fprintf(&pdf, "xref\n0 %d\n0000000000 65535 f \n", len(objects)+1)
-	for _, offset := range offsets {
-		fmt.Fprintf(&pdf, "%010d 00000 n \n", offset)
-	}
-	fmt.Fprintf(&pdf, "trailer << /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objects)+1, xref)
-	m := alignNativeFixture(t, []byte(pdf.String()), "visible")
-	_, err := redaction.Resolve(m, "redact_selected", nil, pdfproduction.QualifiedRecipe())
-	var problem *redaction.Problem
-	require.ErrorAs(t, err, &problem)
-	require.Equal(t, "mapping_incomplete", problem.Code)
 }
 
 func TestAlignNativeParagraphGeometryAndWhitespace(t *testing.T) {

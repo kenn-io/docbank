@@ -5,25 +5,19 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { listPhotoAssets } from "../src/generated/docbank.js";
-
+import { output, withPhotoFixture } from "./photo-workspace-fixture.js";
 import { photoFixture, repository } from "./photo-fixture.js";
 
 const exec = promisify(execFile);
 const binary = process.env.DOCBANK_SCREENSHOT_BINARY ?? path.join(repository, "bin", process.platform === "win32" ? "docbank.exe" : "docbank");
-const output = process.env.DOCBANK_PHOTOS_SCREENSHOT_DIR;
+
 test.skip(!output, "DOCBANK_PHOTOS_SCREENSHOT_DIR enables synthetic photo proof");
 
 test("Hidden photos lock, unlock, unhide, expire, and discard previews", async ({ page }) => {
   test.setTimeout(480_000);
   page.setDefaultTimeout(15_000);
   await page.setViewportSize({ width: 1440, height: 720 });
-  const workspace = await mkdtemp(path.join(repository, ".superpowers", "hidden-proof-"));
-  const vault = path.join(workspace, "vault");
-  const env = { ...process.env, DOCBANK_HOME: vault, DOCBANK_LOCK_DIR: path.join(workspace, "locks"), DOCBANK_TELEMETRY_ENABLED: "0" };
-  const run = async (...args: string[]) => (await exec(binary, args, { cwd: repository, env, timeout: 60_000 })).stdout.trim();
-  try {
-    await mkdir(output!, { recursive: true });
-    await exec("go", ["run", "-tags", "fts5", "./frontend/screenshots/photos-fixture.go", vault, "12"], { cwd: repository, env, timeout: 240_000 });
+  await withPhotoFixture(12, "hidden", async run => {
     const webURL = new URL(await run("web", "--no-browser"));
     webURL.pathname = "/photos/hidden";
     await page.goto(webURL.href);
@@ -47,9 +41,10 @@ test("Hidden photos lock, unlock, unhide, expire, and discard previews", async (
     await page.getByRole("menuitem", { name: "Hide", exact: true }).click();
     await hidePending;
     await page.getByRole("button", { name: "Hidden", exact: true }).click();
-    await expect(page.getByText(/Locks in/)).toBeVisible();
-    await expect(page.getByText("No hidden photos", { exact: true })).toBeVisible();
+    await expect(page.getByText(/Locks in/)).toHaveCount(0);
+    await expect(page.locator("[data-asset]")).toHaveCount(0);
     releaseHide();
+    await expect(page.getByText(/Locks in/)).toBeVisible();
     await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible();
     await page.getByRole("button", { name: "Library", exact: true }).click();
     await expect(page.locator(`[data-asset="${id}"]`)).toHaveCount(0);
@@ -62,7 +57,19 @@ test("Hidden photos lock, unlock, unhide, expire, and discard previews", async (
     await expect(page.locator("[data-asset]")).toHaveCount(0);
     await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible({ timeout: 6000 });
     await expect(page.getByRole("button", { name: "Retry", exact: true })).toHaveCount(0);
-    await page.getByRole("button", { name: "Lock", exact: true }).click();
+    const leave = async () => page.evaluate(() => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    const returnToPage = async () => page.evaluate(() => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    const locked = page.waitForResponse(response => response.url().endsWith("/photos/hidden/lock") && response.ok());
+    await leave();
+    await expect(page.locator("[data-asset]")).toHaveCount(0);
+    await locked;
+    await returnToPage();
     await expect(page.getByRole("button", { name: "Unlock", exact: true })).toBeVisible();
     await expect(page.locator("[data-asset]")).toHaveCount(0);
     await expect(page.getByLabel("Passcode", { exact: true })).toBeEnabled();
@@ -77,6 +84,19 @@ test("Hidden photos lock, unlock, unhide, expire, and discard previews", async (
       await page.evaluate(value => { localStorage.setItem("docbank-theme", value); document.documentElement.classList.toggle("dark", value === "dark"); }, theme);
       await page.screenshot({ path: path.join(output!, `web-hidden-unlocked-${theme}.png`), animations: "disabled" });
     }
+    await page.route("**/photos/hidden/lock", route => route.abort("failed"), { times: 1 });
+    await leave();
+    await expect(page.getByRole("button", { name: "Retry lock", exact: true })).toBeVisible();
+    await returnToPage();
+    await expect(page.locator("[data-asset]")).toHaveCount(0);
+    await expect(page.getByLabel("Passcode", { exact: true })).toHaveCount(0);
+    await page.screenshot({ path: path.join(output!, "web-hidden-lock-failure-dark.png"), animations: "disabled" });
+    await page.getByRole("button", { name: "Retry lock", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Retry lock", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Unlock", exact: true })).toBeVisible({ timeout: 5000 });
+    await page.getByLabel("Passcode", { exact: true }).fill("synthetic-passcode");
+    await page.getByRole("button", { name: "Unlock", exact: true }).click();
+    await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible();
     await page.route(`**/api/v1/photos/assets/${id}/unhide`, route => route.fulfill({ status: 412, contentType: "application/problem+json", body: JSON.stringify({ detail: "Synthetic stale photo revision", code: "stale_revision" }) }), { times: 1 });
     await page.locator(`[data-asset="${id}"]`).getByRole("button", { name: /^Actions for / }).click();
     await page.getByRole("menuitem", { name: "Unhide", exact: true }).click();
@@ -133,29 +153,12 @@ test("Hidden photos lock, unlock, unhide, expire, and discard previews", async (
     } finally { globalThis.fetch = fetcher; }
     await expect(page.getByText("The browser session expired or was rejected. Run `docbank web` again.")).toBeVisible({ timeout: 6000 });
     await expect(page.locator("[data-asset]")).toHaveCount(0);
-  } finally {
-    if (process.env.DOCBANK_KEEP_PHOTO_PREVIEW) {
-      const previewURL = new URL(await run("web", "--no-browser"));
-      previewURL.pathname = "/photos/hidden";
-      await writeFile(path.join(output!, "hidden-preview.json"), JSON.stringify({ url: previewURL.href, workspace }, null, 2));
-    } else {
-      await run("daemon", "stop");
-      await rm(workspace, { recursive: true, force: true });
-    }
-  }
+  });
 });
 
 test("timeline seeks an unloaded leap day and preserves full-scope counts", async ({ page }) => {
   test.setTimeout(600_000);
-  const workspace = await mkdtemp(path.join(repository, ".superpowers", "timeline-proof-"));
-  const vault = path.join(workspace, "vault");
-  const fixture = path.join(workspace, process.platform === "win32" ? "photos-fixture.exe" : "photos-fixture");
-  const env = { ...process.env, DOCBANK_HOME: vault, DOCBANK_LOCK_DIR: path.join(workspace, "locks"), DOCBANK_TELEMETRY_ENABLED: "0" };
-  const run = async (...args: string[]) => (await exec(binary, args, { cwd: repository, env, timeout: 60_000 })).stdout.trim();
-  try {
-    await mkdir(output!, { recursive: true });
-    await exec("go", ["build", "-tags", "fts5", "-o", fixture, "./frontend/screenshots/photos-fixture.go"], { cwd: repository, env, timeout: 480_000 });
-    await exec(fixture, [vault], { cwd: repository, env, timeout: 480_000 });
+  await withPhotoFixture(10000, "timeline", async run => {
     const webURL = new URL(await run("web", "--no-browser"));
     webURL.pathname = "/photos";
     await page.goto(webURL.href);
@@ -238,16 +241,7 @@ test("timeline seeks an unloaded leap day and preserves full-scope counts", asyn
     await expect.poll(() => page.locator(".library-title span").innerText()).toContain("500 loaded");
     await page.getByRole("button", { name: "Clear date", exact: true }).click();
     await expect(page.getByText(/10,000 photos ·/)).toBeVisible();
-  } finally {
-    if (process.env.DOCBANK_KEEP_PHOTO_PREVIEW) {
-      const previewURL = new URL(await run("web", "--no-browser"));
-      previewURL.pathname = "/photos";
-      await writeFile(path.join(output!, "timeline-preview.json"), JSON.stringify({ url: previewURL.href, workspace }, null, 2));
-    } else {
-      await run("daemon", "stop");
-      await rm(workspace, { recursive: true, force: true });
-    }
-  }
+  });
 });
 
 test("10,000 photos stay windowed, retain previews and selection, and remember density", async ({ page }) => {
@@ -261,7 +255,6 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
     if (request.url().includes("/previews/")) requests.set(request.url(), (requests.get(request.url()) ?? 0) + 1);
   });
   try {
-    await mkdir(output!, { recursive: true });
     await page.addInitScript(() => {
       const active = new Set<string>();
       Object.assign(window, { photoActiveURLs: active });
@@ -630,7 +623,8 @@ test("photo loupe opens, upgrades, navigates, restores focus and reloads a direc
     await expect(page.getByRole("dialog", { name: /^Photo viewer/ })).toHaveCount(0);
     await expect.poll(() => scroll.evaluate(element => element.scrollTop)).toBeCloseTo(forwardPosition, 0);
     await expect(forwardFocus).toBeFocused();
-    await scroll.locator(`[data-asset="${forwardID}"] .open-photo`).click();
+    await scroll.locator(`[data-asset="${forwardID}"] .open-photo`).focus();
+    await scroll.locator(`[data-asset="${forwardID}"] .open-photo`).press("Enter");
     await expect(page.getByRole("dialog", {name:/^Photo viewer/})).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.getByText("1 selected photo", {exact:true})).toBeVisible();
@@ -641,7 +635,7 @@ test("photo loupe opens, upgrades, navigates, restores focus and reloads a direc
     await scroll.evaluate(element => element.scrollTop = 400);
     const aID = await scroll.evaluate(element => [...element.querySelectorAll<HTMLElement>("[data-asset]")].find(cell => cell.getBoundingClientRect().top >= element.getBoundingClientRect().top)!.dataset.asset!);
     const aOpen = scroll.locator(`[data-asset="${aID}"] .open-photo`);
-    await aOpen.click(); const aPosition = await scroll.evaluate(element => element.scrollTop);
+    await aOpen.focus(); await aOpen.press("Enter"); const aPosition = await scroll.evaluate(element => element.scrollTop);
     await page.getByRole("button", {name:"Background jobs", exact:true}).click();
     await expect(page.getByRole("dialog", {name:"Daemon background jobs"})).toBeVisible();
     const jobsURL = page.url(); await page.keyboard.press("Escape");
@@ -659,7 +653,7 @@ test("photo loupe opens, upgrades, navigates, restores focus and reloads a direc
     await scroll.evaluate(element => element.scrollTop = 1200);
     const cID = await scroll.evaluate(element => [...element.querySelectorAll<HTMLElement>("[data-asset]")].find(cell => cell.getBoundingClientRect().top >= element.getBoundingClientRect().top)!.dataset.asset!);
     const cOpen = scroll.locator(`[data-asset="${cID}"] .open-photo`);
-    await cOpen.click(); const cPosition = await scroll.evaluate(element => element.scrollTop);
+    await cOpen.focus(); await cOpen.press("Enter"); const cPosition = await scroll.evaluate(element => element.scrollTop);
     await page.keyboard.press("Escape");
     await expect.poll(() => scroll.evaluate(element => element.scrollTop)).toBeCloseTo(cPosition, 0); await expect(cOpen).toBeFocused();
     await page.goBack(); await expect(page).not.toHaveURL(/\/photos/);
@@ -899,13 +893,24 @@ test("photo loupe opens, upgrades, navigates, restores focus and reloads a direc
     await expect(touch.getByText("1 selected photo", {exact:true})).toBeVisible();
     await touch.getByRole("button", {name:"Clear selection"}).tap();
     await a.getByRole("checkbox").tap();
-    await b.locator(".photo-image").tap();
+    const selectedTapBox = (await b.locator(".photo-image").boundingBox())!;
+    const selectedTapX = selectedTapBox.x + selectedTapBox.width / 2, selectedTapY = selectedTapBox.y + selectedTapBox.height / 2;
+    await touch.touchscreen.tap(selectedTapX, selectedTapY); await touch.touchscreen.tap(selectedTapX, selectedTapY);
+    await expect(touch.getByRole("dialog", {name:/^Photo viewer/})).toHaveCount(1);
+    await touch.keyboard.press("Escape");
+    await expect(b.locator(".photo-image")).toBeFocused();
     await expect(a.getByRole("checkbox")).toBeChecked(); await expect(b.getByRole("checkbox")).toBeChecked();
-    await b.locator(".photo-image").tap();
-    await expect(a.getByRole("checkbox")).toBeChecked(); await expect(b.getByRole("checkbox")).not.toBeChecked();
+    await a.locator(".photo-image").tap();
+    await a.getByRole("checkbox").tap();
+    await a.locator(".photo-image").tap();
+    await expect(touch.getByRole("dialog", {name:/^Photo viewer/})).toHaveCount(0);
+    await expect(b.getByRole("checkbox")).toBeChecked(); await expect(a.getByRole("checkbox")).not.toBeChecked();
     await expect(touch.getByText("1 selected photo", { exact: true })).toBeVisible();
     await touch.getByRole("button", { name: "Clear selection" }).tap();
-    await a.locator(".photo-image").tap();
+    const emptyTapBox = (await a.locator(".photo-image").boundingBox())!;
+    const emptyTapX = emptyTapBox.x + emptyTapBox.width / 2, emptyTapY = emptyTapBox.y + emptyTapBox.height / 2;
+    await touch.touchscreen.tap(emptyTapX, emptyTapY); await touch.touchscreen.tap(emptyTapX, emptyTapY);
+    await expect(touch.getByRole("dialog", {name:/^Photo viewer/})).toHaveCount(1);
     await expect(touch.getByText("Fit preview", { exact: true })).toBeVisible({ timeout: 60_000 });
     const swipe = async (direction: -1 | 1) => {
       const box = (await touch.locator(".photo-viewport").boundingBox())!;

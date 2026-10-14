@@ -40,8 +40,8 @@ Press <kbd>a</kbd> on any selected node to open its permanent audited history.
 The timeline is newest first and shows when each event was recorded, what
 happened, and the primary path, version, or attached-metadata change. Press
 <kbd>Enter</kbd> to inspect the complete event ID, operation and scope IDs,
-revisions, path states, version identities, and typed tag or provenance
-details. A node outside an audit scope is labeled as such instead of showing an
+revisions, path states, version identities, and typed tag, provenance, or photo
+details. Photo states show authored values and confirmed field names before and after edits and undo, including confirmation of an empty caption. A node outside an audit scope is labeled as such instead of showing an
 empty timeline.
 
 ## Inspect jobs, storage, and backups

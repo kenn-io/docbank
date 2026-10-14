@@ -45,7 +45,7 @@
 
 <div class="album-picker" bind:this={element}>
   <Typeahead options={albums.items.map(album => ({ name: choiceKey(album.id), label: album.name }))} value={albums.targetID ? choiceKey(albums.targetID) : ""} fallbackLabel="Add to album" triggerPrefix={target ? "Add to album · " : ""} placeholder="Find or create an album" title="Add to album" disabled={oversized || albums.busy} allowCustom={!exactName && !albums.unconfirmed} onquery={value => query = value} customLabel={'Create album "{query}"'} placement="top" loading={albums.loading || albums.busy} onselect={choose} />
-  {#if oversized}<span>Select all {photos.total.toLocaleString()} photos to add more than 1,000 at once.</span>{/if}
+  {#if oversized}<span>{photos.projection === "map" ? "Select 1,000 photos or fewer to add to an album." : `Select all ${photos.total.toLocaleString()} photos to add more than 1,000 at once.`}</span>{/if}
   {#if error}<span role="alert">{error}</span>{/if}
   {#if target}<span class="target-hint"><KbdBadge keys={['B']} /> adds to {target.name}</span>{/if}
 </div>

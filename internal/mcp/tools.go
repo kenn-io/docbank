@@ -24,9 +24,9 @@ const toolCatalogTTLMs = 60_000
 func catalogInstructions(options ServerOptions) string {
 	if !options.AllowProcessing && !options.AllowPackageWrites &&
 		!options.AllowPhotoEdits && !options.AllowExportWrites && !options.AllowReportWrites {
-		return "Docbank exposes a bounded read-only document and package surface."
+		return "Docbank exposes bounded read-only document, people, package and photo reads."
 	}
-	instructions := "Docbank exposes bounded document and package reads."
+	instructions := "Docbank exposes bounded document, people, package and photo reads."
 	if options.AllowProcessing {
 		instructions += " start_processing requires a reviewed plan and prior operator consent."
 	}
@@ -90,6 +90,7 @@ var readToolDefinitions = []toolDefinition{
 	{name: "get_bates_export", title: "Get Bates export", description: "Read one exact verified Bates export receipt.", schemas: getBatesExportSchemas},
 	{name: "find_bates_exports", title: "Find Bates exports", description: "Return bounded candidates for one exact Bates label, custodian label, or canonical person.", schemas: findBatesExportsSchemas},
 	{name: "get_photo_asset", title: "Get photo asset", description: "Read a photo asset by asset or node identity. Pass next_file_offset as file_offset to continue through its files.", schemas: getPhotoAssetSchemas},
+	{name: "get_photo_faces", title: "Get photo faces", description: "Read face boxes and depicted people for one photo version. Each named face includes its person_id and action. Pass next_offset as offset to continue.", schemas: getPhotoFacesSchemas},
 }
 
 var processingToolDefinition = toolDefinition{

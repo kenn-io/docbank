@@ -89,6 +89,9 @@ func normalizePersonCandidate(candidate PersonMatchCandidate) (PersonMatchCandid
 		return invalid("candidate evidence is empty")
 	}
 	for _, occurrence := range occurrences {
+		if occurrence.Role == "depicted" {
+			return invalid("depicted occurrence")
+		}
 		if validateUUIDv4(occurrence.ContentVersionID) != nil ||
 			!document.ValidPersonRole(occurrence.Role) ||
 			!slices.Contains(document.PersonEvidenceKinds(), document.PersonEvidenceKind(occurrence.EvidenceKind)) ||
@@ -300,6 +303,11 @@ func (s *Store) AssertDocumentPerson(ctx context.Context, assertion PersonDocume
 	}
 	var saved PersonDocumentAssertion
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+		if assertion.Role == "depicted" {
+			if err := s.facePhotoQuery(ctx, tx, assertion.ContentVersionID); err != nil {
+				return err
+			}
+		}
 		personID, err := resolveActiveCandidatePersonTx(ctx, tx, assertion.PersonID)
 		if err != nil {
 			return err
@@ -331,6 +339,9 @@ func (s *Store) AssertDocumentPerson(ctx context.Context, assertion PersonDocume
 			}
 			assertion.AssertionID = existing.AssertionID
 		case errors.Is(err, sql.ErrNoRows):
+			if err := requirePhotoAssertionCapacity(ctx, tx, assertion.ContentVersionID, assertion.Role); err != nil {
+				return err
+			}
 			if assertion.Revision != 1 {
 				return ErrStaleRevision
 			}

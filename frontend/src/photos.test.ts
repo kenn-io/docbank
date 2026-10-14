@@ -1,13 +1,207 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { APIError } from "./api-transport.js";
 import * as download from "./download.js";
-import { Photos, loadDensity, photoQuery } from "./photos.svelte.js";
-import { photo } from "./photo-test-fixtures.js";
+import { Photos, loadDensity, photoQuery, mapPhotoLimit, type PhotoRow } from "./photos.svelte.js";
+import { photo, mapPhoto } from "./photo-test-fixtures.js";
 import * as snapshots from "./snapshots.js";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); });
-const response = (items: ReturnType<typeof photo>[], cursor?: string) => new Response(JSON.stringify({ items, total: 3, next_cursor: cursor }));
+const response = (items: PhotoRow[], cursor?: string, mapProjection = items.some(row => !("content_version_id" in row))) => new Response(JSON.stringify({ ...(mapProjection ? { items: [], map_items: items } : { items }), total: 3, next_cursor: cursor }));
 const stubPhotoFetch = (fetcher: (url: string, init: RequestInit) => Promise<Response>, facets: unknown[] = []) => vi.stubGlobal("fetch", (url: string, init: RequestInit) => url.endsWith("/photos/assets/query") && JSON.parse(init.body as string).facets?.length ? Promise.resolve(new Response(JSON.stringify({ facets }))) : fetcher(url, init));
+
+it("keeps Library continuation totals without a page timeout", async () => {
+  const timeout = vi.spyOn(AbortSignal, "timeout");
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ items: [photo(1)], total: 2, next_cursor: "next" }))
+    .mockResolvedValueOnce(Response.json({ items: [photo(2)], total: 2 }));
+  stubPhotoFetch(fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  await photos.loadMore();
+  expect(photos.total).toBe(2);
+  await photos.loadMore();
+  expect(photos.total).toBe(2);
+  expect(timeout).not.toHaveBeenCalled();
+  expect(fetcher.mock.calls.map(([, init]) => JSON.parse(init.body).page_size)).toEqual([250, 250]);
+  photos.dispose();
+});
+
+it.each([false, true])("loads more after an interrupted refresh, map=%s", async mapMode => {
+  let finish!: (value: Response) => void;
+  const fetcher = vi.fn().mockImplementationOnce(() => new Promise(resolve => finish = resolve))
+    .mockResolvedValueOnce(response(mapMode ? [mapPhoto(2)] : [photo(2)]));
+  stubPhotoFetch(fetcher);
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, mapMode ? "map" : undefined);
+  photos.items = mapMode ? [mapPhoto(1)] : [photo(1)]; photos.started = true; photos.cursor = "next";
+  const refresh = photos.refresh();
+  photos.cancelPending();
+  await photos.loadMore();
+  finish(response([photo(99)])); await refresh;
+  expect(JSON.parse(fetcher.mock.calls[1][1].body).cursor).toBe(mapMode ? undefined : "next");
+  expect(photos.items.map(row => row.asset_id)).toEqual(mapMode ? ["photo-2"] : ["photo-1", "photo-2"]);
+  photos.dispose();
+});
+
+it("keeps the first Map count and bounds each page", async () => {
+  const timeout = vi.spyOn(AbortSignal, "timeout");
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ items: [], map_items: [mapPhoto(1)], total: 2, next_cursor: "next" }))
+    .mockResolvedValueOnce(Response.json({ items: [], map_items: [mapPhoto(2)], total: 2 }));
+  stubPhotoFetch(fetcher);
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, "map");
+  await photos.loadMore();
+  expect(photos.total).toBe(2);
+  expect(timeout.mock.calls).toEqual([[60_000], [60_000]]);
+  expect(fetcher.mock.calls.map(([, init]) => JSON.parse(init.body).page_size)).toEqual([1000, 1000]);
+  photos.dispose();
+});
+
+it("stops Map loadMore and resume at the located photo limit", async () => {
+  const fetcher = vi.fn(async (_url: string, init: RequestInit) => {
+    const request = JSON.parse(init.body as string);
+    const start = Number(request.cursor ?? 0);
+    return Response.json({ items: [], map_items: Array.from({ length: 1000 }, (_, index) => mapPhoto(start + index + 1)), total: mapPhotoLimit + 1000, next_cursor: String(start + 1000) });
+  });
+  stubPhotoFetch(fetcher);
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, "map");
+  await photos.loadMore();
+  expect(photos.items).toHaveLength(mapPhotoLimit);
+  expect(photos.items.at(-1)?.asset_id).toBe(`photo-${mapPhotoLimit}`);
+  expect(photos.total).toBe(mapPhotoLimit + 1000);
+  expect(photos.cursor).toBe(String(mapPhotoLimit));
+  expect(photos.mapCapped).toBe(true);
+  await photos.loadMore(); await photos.resume();
+  expect(fetcher).toHaveBeenCalledTimes(20);
+  photos.dispose();
+});
+
+it.each(["initial", "refresh", "expiry"])("bounds Map requests with duplicate rows and retains partial pages, %s", async mode => {
+  const cursors: (string | undefined)[] = [];
+  const fetcher = vi.fn(async (_url: string, init: RequestInit) => {
+    const request = JSON.parse(init.body as string);
+    if (request.cursor === "expired") return Response.json({ code: "cursor_expired" }, { status: 410 });
+    cursors.push(request.cursor);
+    const start = Number(request.cursor ?? 0);
+    const rows = Array.from({ length: 1000 }, (_, index) => mapPhoto(start + index + 1));
+    if (start === 1000) rows[0] = mapPhoto(1);
+    return Response.json({ items: [], map_items: rows, total: mapPhotoLimit + 2000, next_cursor: String(start + 1000) });
+  });
+  stubPhotoFetch(fetcher);
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, "map");
+  if (mode !== "initial") { photos.items = [mapPhoto(99_999)]; photos.started = true; }
+  if (mode === "refresh") await photos.refresh();
+  else if (mode === "expiry") { photos.cursor = "expired"; await photos.loadMore(); await photos.retry(); }
+  else await photos.loadMore();
+  expect(cursors).toHaveLength(20);
+  expect(photos.items).toHaveLength(mapPhotoLimit - 1);
+  expect(photos.cursor).toBe(String(mapPhotoLimit));
+  await photos.resume();
+  expect(photos.items).toHaveLength(mapPhotoLimit);
+  expect(photos.items.at(-1)?.asset_id).toBe(`photo-${mapPhotoLimit + 1}`);
+  expect(photos.cursor).toBe(String(mapPhotoLimit));
+  photos.items = photos.items.slice(1);
+  await photos.resume();
+  expect(photos.items).toHaveLength(mapPhotoLimit);
+  expect(photos.items.at(-1)?.asset_id).toBe(`photo-${mapPhotoLimit + 2}`);
+  expect(cursors.slice(-2)).toEqual([String(mapPhotoLimit), String(mapPhotoLimit)]);
+  photos.dispose();
+});
+
+it.each(["trash", "hide"])("refills a capped Map with 20,001 located photos after confirmed %s", async action => {
+  const fetcher = vi.fn(async (url: string, init: RequestInit) => {
+    if (!url.endsWith("/query")) return Response.json({ id: "photo-1", revision: 2 });
+    const request = JSON.parse(init.body as string);
+    const start = Number(request.cursor ?? 0);
+    const count = Math.min(request.page_size, mapPhotoLimit + 1 - start);
+    return Response.json({ items: [], map_items: Array.from({ length: count }, (_, index) => mapPhoto(start + index + 1)), total: mapPhotoLimit + 1, next_cursor: start + count <= mapPhotoLimit ? String(start + count) : undefined });
+  });
+  stubPhotoFetch(fetcher);
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, "map");
+  await photos.loadMore();
+  expect(photos.items).toHaveLength(mapPhotoLimit);
+  expect(photos.cursor).toBe(String(mapPhotoLimit));
+  expect(photos.mapCapped).toBe(true);
+  photos.selectLoaded(["photo-1"]);
+  if (action === "trash") expect(await photos.trashSelected()).toBe(true);
+  else await photos.setHidden("photo-1");
+  await vi.waitFor(() => expect(photos.loading).toBe(false));
+  expect(photos.items).toHaveLength(mapPhotoLimit);
+  expect(photos.items[0].asset_id).toBe("photo-2");
+  expect(photos.items.at(-1)?.asset_id).toBe(`photo-${mapPhotoLimit + 1}`);
+  expect(photos.total).toBe(mapPhotoLimit);
+  expect(photos.cursor).toBeUndefined();
+  expect(photos.mapCapped).toBe(false);
+  expect(JSON.parse(fetcher.mock.calls.at(-1)![1].body as string)).toMatchObject({ cursor: String(mapPhotoLimit), page_size: 1000 });
+  expect(fetcher).toHaveBeenCalledTimes(22);
+  photos.dispose();
+});
+
+it("retains a partly consumed Map page when refilling the ceiling", async () => {
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, "map");
+  photos.items = Array.from({ length: mapPhotoLimit - 1 }, (_, index) => mapPhoto(index + 1));
+  photos.started = true; photos.total = mapPhotoLimit + 1; photos.cursor = "remaining";
+  const fetcher = vi.fn(async () => Response.json({ items: [], map_items: [mapPhoto(mapPhotoLimit), mapPhoto(mapPhotoLimit + 1)], total: mapPhotoLimit + 1 }));
+  stubPhotoFetch(fetcher);
+  await photos.resume();
+  expect(photos.items).toHaveLength(mapPhotoLimit);
+  expect(photos.cursor).toBe("remaining");
+  expect(photos.mapCapped).toBe(true);
+  photos.items = photos.items.slice(1); photos.total--;
+  await photos.resume();
+  expect(photos.items).toHaveLength(mapPhotoLimit);
+  expect(photos.items.at(-1)?.asset_id).toBe(`photo-${mapPhotoLimit + 1}`);
+  expect(photos.cursor).toBeUndefined();
+  expect(photos.mapCapped).toBe(false);
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  photos.dispose();
+});
+
+it.each(["refresh", "expiry"])("stops Map replacement at the located photo limit, %s", async mode => {
+  const fetcher = vi.fn(async (_url: string, init: RequestInit) => {
+    const request = JSON.parse(init.body as string);
+    if (request.cursor === "expired") return Response.json({ code: "cursor_expired" }, { status: 410 });
+    const start = Number(request.cursor ?? 0);
+    return Response.json({ items: [], map_items: Array.from({ length: 1000 }, (_, index) => mapPhoto(start + index + 2)), total: mapPhotoLimit + 1000, next_cursor: String(start + 1000) });
+  });
+  stubPhotoFetch(fetcher);
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, "map");
+  photos.items = [mapPhoto(1)]; photos.started = true; photos.total = 1;
+  if (mode === "expiry") { photos.cursor = "expired"; await photos.loadMore(); await photos.retry(); }
+  else await photos.refresh();
+  expect(photos.items).toHaveLength(mapPhotoLimit);
+  expect(photos.items[0].asset_id).toBe("photo-2");
+  expect(photos.items.at(-1)?.asset_id).toBe(`photo-${mapPhotoLimit + 1}`);
+  expect(photos.total).toBe(mapPhotoLimit + 1000);
+  expect(photos.cursor).toBe(String(mapPhotoLimit));
+  expect(photos.mapCapped).toBe(true);
+  expect(photos.error).toBe("");
+  await photos.loadMore(); await photos.resume();
+  expect(fetcher).toHaveBeenCalledTimes(mode === "refresh" ? 20 : 21);
+  photos.dispose();
+});
+
+it("retries the same Library page after an invalid cursor", async () => {
+  const fetcher = vi.fn().mockResolvedValueOnce(response([photo(1)], "bad"))
+    .mockResolvedValueOnce(Response.json({ code: "invalid_photo_cursor" }, { status: 422 }))
+    .mockResolvedValueOnce(response([photo(2)]));
+  stubPhotoFetch(fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  await photos.loadMore(); await photos.loadMore(); await photos.retry();
+  expect(fetcher.mock.calls.map(([, init]) => JSON.parse(init.body).cursor)).toEqual([undefined, "bad", "bad"]);
+  expect(photos.items.map(row => row.asset_id)).toEqual(["photo-1", "photo-2"]);
+  photos.dispose();
+});
+
+it.each([undefined, "map"] as const)("revalidates absent selection with the %s selection scope", async projection => {
+  const query = { ...photoQuery, text: "Canon", filters: { set_ids: ["album"] } };
+  const fetcher = vi.fn().mockResolvedValueOnce(response(projection ? [mapPhoto(1)] : [photo(1)]))
+    .mockResolvedValueOnce(response(projection ? [] : [photo(2)], undefined, !!projection));
+  stubPhotoFetch(fetcher);
+  const photos = new Photos("scoped", vi.fn(), false, query, projection);
+  photos.items = projection ? [mapPhoto(1)] : [photo(1)]; photos.started = true;
+  photos.trashTargets = [photo(2)]; photos.selectLoaded(["photo-2"]);
+  await photos.refresh();
+  expect(JSON.parse(fetcher.mock.calls[1][1].body).query).toEqual({ ...(projection ? query : photoQuery), filters: { ...(projection ? query.filters : photoQuery.filters), asset_ids: ["photo-2"] } });
+  expect([...photos.selection.selectedIDs]).toEqual(projection ? [] : ["photo-2"]);
+  photos.dispose();
+});
 
 it("cancels the previous scope and carries album sort through paging and refresh", async () => {
   let finish!: (response: Response) => void;
@@ -48,6 +242,96 @@ it.each(["confirmed", "partial", "lost response", "rejected"])("retains trash pr
   expect([...photos.selection.selectedIDs]).toEqual(rejected ? ["photo-1", "photo-2"] : lost ? ["photo-1"] : partial ? ["photo-2"] : []);
   expect(photos.trashTargets.map(item => item.asset_id)).toEqual(rejected ? ["photo-1", "photo-2"] : lost ? ["photo-1"] : partial ? ["photo-2"] : []);
   expect(photos.error).toBe(lost ? "" : "Refresh unavailable");
+  photos.dispose();
+});
+
+const rejectsPreview = (id = "photo-1", unchanged = 0) => ({ targets: [{ asset_id: id, revision: 1, member_revision: 1 }], photos: 1, files: 1, unchanged, mixed: [], mixed_count: 0, selection_limit: 64 });
+
+it("ignores a closed rejects preview after reopening with a different selection", async () => {
+  const preview = rejectsPreview("photo-2");
+  let finishOld!: (response: Response) => void;
+  let finishNew!: (response: Response) => void;
+  const fetcher = vi.fn().mockImplementationOnce(() => new Promise(resolve => finishOld = resolve))
+    .mockImplementationOnce(() => new Promise(resolve => finishNew = resolve));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  photos.rejectsSelectionLimit = preview.selection_limit;
+  photos.selection.selectedIDs = new Set(["photo-1"]);
+  const old = photos.previewRejects(true);
+  const signal = fetcher.mock.lastCall![1].signal as AbortSignal;
+  photos.cancelRejects();
+  expect(signal.aborted).toBe(true);
+  photos.selection.selectedIDs = new Set(["photo-2"]);
+  const current = photos.previewRejects(true);
+  finishOld(Response.json({ ...preview, targets: [{ asset_id: "photo-1", revision: 1, member_revision: 1 }] }));
+  await old;
+  expect(photos.rejects).toBeUndefined();
+  expect(photos.rejectsLoading).toBe(true);
+  finishNew(Response.json(preview));
+  await current;
+  expect(photos.rejects).toEqual(preview);
+  expect(photos.rejectsLoading).toBe(false);
+  photos.dispose();
+});
+
+it.each(["Library", "selected", "over limit", "empty selection"])("bounds rejects requests while keeping Library available, scope=%s", async scope => {
+  const preview = { ...rejectsPreview("photo-1", 4), selection_limit: 3 };
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json(preview));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  await photos.previewRejects();
+  expect(photos.rejectsSelectionLimit).toBe(3);
+  fetcher.mockClear();
+  fetcher.mockResolvedValueOnce(Response.json(preview));
+  photos.selection.selectedIDs = new Set(Array.from({ length: 4 }, (_, i) => `photo-${i}`));
+  if (scope === "selected") photos.selection.selectedIDs = new Set(["photo-2", "photo-1"]);
+  if (scope === "empty selection") photos.clearSelection();
+  await photos.previewRejects(scope !== "Library");
+  if (scope === "over limit" || scope === "empty selection") {
+    expect(photos.rejectsError).toContain("3 photos");
+    expect(fetcher).not.toHaveBeenCalled();
+  } else {
+    expect(photos.rejectsSelected).toBe(scope === "selected");
+    expect(JSON.parse(fetcher.mock.calls[0][1].body).query.filters?.asset_ids).toEqual(scope === "selected" ? ["photo-1", "photo-2"] : undefined);
+    expect(photos.rejects).toEqual(preview);
+  }
+  photos.dispose();
+});
+
+it.each(["confirmed", "server", "unknown ID", "missing ID", "maintenance busy", "audit refusal"])("reconciles a rejects move after %s", async outcome => {
+  const preview = rejectsPreview();
+  const auditDetail = 'photo photo-1, file "reject.jpg": audit mutation unsupported';
+  const refused = outcome === "maintenance busy" || outcome === "audit refusal";
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json(preview));
+  if (outcome === "confirmed") fetcher.mockResolvedValueOnce(Response.json({ moved: ["photo-1"] }));
+  else if (outcome === "unknown ID") fetcher.mockResolvedValueOnce(Response.json({ moved: ["photo-2"] }));
+  else if (outcome === "missing ID") fetcher.mockResolvedValueOnce(Response.json({ moved: [] }));
+  else if (outcome === "server") fetcher.mockResolvedValueOnce(Response.json({ detail: "Internal error", code: "internal" }, { status: 500 }));
+  else if (outcome === "maintenance busy") fetcher.mockResolvedValueOnce(Response.json({ detail: "Move refused", code: "maintenance_busy" }, { status: 503 }));
+  else fetcher.mockResolvedValueOnce(Response.json({ detail: auditDetail, code: "audit_mutation_unsupported" }, { status: 409 }));
+  fetcher.mockResolvedValueOnce(Response.json({ detail: "Refresh unavailable" }, { status: 503 }));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1), photo(2)]; photos.total = 7; photos.started = true;
+  photos.selectLoaded();
+  await photos.previewRejects(false);
+  const changed = vi.fn();
+  const restore = vi.fn(async () => {});
+  const preserve = vi.fn(() => restore);
+  expect(await photos.trashRejects(preserve, changed)).toBe(outcome === "confirmed");
+  expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ hidden: false, targets: preview.targets });
+  expect(changed).toHaveBeenCalledTimes(refused ? 0 : 1);
+  expect(photos.rejectsError).toBe(outcome === "confirmed" ? "" : outcome === "maintenance busy" ? "Move refused" : outcome === "audit refusal" ? `${auditDetail} The batch stayed in Docbank. Close this dialog, select up to 64 other photos, and choose Selected photos.` : "The move may have completed. Refresh Photos before trying again.");
+  expect(photos.rejects).toBeUndefined();
+  expect(photos.error).toBe("Refresh unavailable");
+  if (outcome === "confirmed") {
+    expect(photos.items).toEqual([photo(2)]);
+    expect([...photos.selection.selectedIDs]).toEqual(["photo-2"]);
+    expect(preserve).toHaveBeenCalledOnce();
+    expect(restore).toHaveBeenCalledOnce();
+  } else if (refused) {
+    expect([...photos.selection.selectedIDs]).toEqual(["photo-1", "photo-2"]);
+  }
   photos.dispose();
 });
 
@@ -440,6 +724,46 @@ it("stages multiple replacement pages and preserves accepted rows on a failed re
   photos.dispose();
 });
 
+it("restarts Library expiry recovery after its second page fails", async () => {
+  const first = Array.from({ length: 250 }, (_, index) => photo(index + 1));
+  const second = Array.from({ length: 250 }, (_, index) => photo(index + 251));
+  const fetcher = vi.fn().mockResolvedValueOnce(response(first, "expired"))
+    .mockResolvedValueOnce(Response.json({ code: "cursor_expired" }, { status: 422 }))
+    .mockResolvedValueOnce(response(first, "recovery-second"))
+    .mockResolvedValueOnce(Response.json({ detail: "Page unavailable" }, { status: 503 }))
+    .mockResolvedValueOnce(response(first, "recovery-second"))
+    .mockResolvedValueOnce(response(second, "recovery-third"));
+  stubPhotoFetch(fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  await photos.loadMore(); await photos.loadMore(); await photos.retry();
+  expect(photos.items).toEqual(first);
+  expect(photos.error).toBe("Page unavailable");
+  await photos.retry();
+  expect(fetcher.mock.calls.map(([, init]) => JSON.parse(init.body).cursor)).toEqual([undefined, "expired", undefined, "recovery-second", undefined, "recovery-second"]);
+  expect(photos.items).toEqual([...first, ...second]);
+  expect(photos.cursor).toBe("recovery-third");
+  photos.dispose();
+});
+
+it.each(["unavailable", "cursor_expired", "invalid_photo_cursor"])("retries a staged Map refresh after %s", async failure => {
+  const rejected = failure !== "unavailable";
+  const first = mapPhoto(1), second = mapPhoto(2);
+  const fetcher = vi.fn().mockResolvedValueOnce(response([first], "second"))
+    .mockResolvedValueOnce(Response.json({ code: failure, detail: "Page unavailable" }, { status: rejected ? 422 : 503 }));
+  if (rejected) fetcher.mockResolvedValueOnce(response([first], "renewed-second"));
+  fetcher.mockResolvedValueOnce(response([second]));
+  stubPhotoFetch(fetcher);
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, "map");
+  photos.items = [mapPhoto(3)]; photos.started = true;
+  expect(await photos.refresh()).toBe(false);
+  expect(photos.items.map(row => row.asset_id)).toEqual(["photo-3"]);
+  await photos.retry();
+  expect(fetcher.mock.calls.map(([, init]) => JSON.parse(init.body).cursor)).toEqual(rejected ? [undefined, "second", undefined, "renewed-second"] : [undefined, "second", "second"]);
+  expect(photos.items).toEqual([first, second]);
+  expect(photos.staged).toBeUndefined();
+  photos.dispose();
+});
+
 it("ignores canceled reads while a later request continues", async () => {
   let finish!: (value: Response) => void;
   let finishNew!: (value: Response) => void;
@@ -521,6 +845,22 @@ it("times each replacement page separately", async () => {
   photos.dispose();
 });
 
+it("accepts a Map refresh when the completed listing timeout expires during eligibility lookup", async () => {
+  const timer = new AbortController();
+  vi.spyOn(AbortSignal, "timeout").mockReturnValueOnce(timer.signal);
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, "map");
+  photos.items = [mapPhoto(1)]; photos.started = true;
+  photos.trashTargets = [photo(2)]; photos.selectLoaded(["photo-2"]);
+  const fetcher = vi.fn().mockResolvedValueOnce(response([{...mapPhoto(1),revision:2}]))
+    .mockImplementationOnce(async () => { timer.abort(new DOMException("Timed out", "TimeoutError")); return response([mapPhoto(2)]); });
+  stubPhotoFetch(fetcher);
+  expect(await photos.refresh()).toBe(true);
+  expect(photos.items[0].revision).toBe(2);
+  expect([...photos.selection.selectedIDs]).toEqual(["photo-2"]);
+  expect(photos.error).toBe("");
+  photos.dispose();
+});
+
 it.each([false, true].flatMap(hidden => ["success", "failure", "cancel"].map(outcome => ({ hidden, outcome }))))("revalidates off-prefix captured selections in bounded queries, hidden=$hidden outcome=$outcome", async ({ hidden, outcome }) => {
   const prefix = Array.from({ length: 250 }, (_, index) => photo(index + 1));
   const previous = prefix.map(item => ({ ...item, name: `Earlier ${item.name}` }));
@@ -583,8 +923,9 @@ it.each([
   photos.scrollTop = 480;
   const oldRead = photos.refresh();
   const restore = vi.fn(async () => {});
-  if (kind === "trash") expect(await photos.trashSelected(() => restore)).toBe(!partial);
-  else await photos.setHidden("photo-1", () => restore);
+  const write = kind === "trash" ? photos.trashSelected(() => restore) : photos.setHidden("photo-1", () => restore);
+  if (kind === "trash") expect(await write).toBe(!partial);
+  else await write;
   expect(readSignal?.aborted).toBe(true);
   expect(writeSignal).toBeDefined();
   expect(writeSignal?.aborted).toBe(false);
@@ -736,6 +1077,145 @@ it.each(["display", "excluded", "version", "download-display", "download-node", 
     fetcher.mockResolvedValue(new Response(JSON.stringify({id:2, kind:"file", current_version_id:current.content_version_id, blob_hash:"b".repeat(64), size:10, mime_type:"image/jpeg", revision:1, name:current.name})));
     expect(await photos.original(current, new AbortController().signal)).toBe("blob:original"); expect(read.mock.calls[0]![1].nodeID).toBe(2);
   }
+});
+
+it.each(["success", "failure", "expired", "invalid_photo_cursor", "cancel"])("pages one GPS collection and resumes its accepted cursor after %s", async outcome => {
+ let finish!:(value:Response)=>void;
+ const located=mapPhoto;
+ const query={...photoQuery,filters:{capture_after:"2024-01-01",gps_bounds:{south:"-90",west:"-180",north:"90",east:"180"}}};
+ const fetcher=vi.fn().mockResolvedValueOnce(response([located(2)],"second")).mockImplementationOnce(()=>new Promise(resolve=>finish=resolve));vi.stubGlobal("fetch",fetcher);
+ const photos=new Photos("scoped",vi.fn(),false,query,"map");const pending=photos.resume();
+ await vi.waitFor(()=>expect(photos.items.map(row=>row.asset_id)).toEqual(["photo-2"]));
+ expect(photos.loading).toBe(true);photos.selectLoaded();
+ if(outcome === "cancel") photos.cancelPending();
+ const rejected=outcome === "expired" || outcome === "invalid_photo_cursor";
+ finish(outcome === "failure"?new Response("{}",{status:503}):rejected?Response.json({code:outcome === "expired"?"cursor_expired":outcome},{status:422}):response([located(1),located(3)]));await pending;
+ if(outcome !== "success") {
+  if(rejected) fetcher.mockResolvedValueOnce(response([located(2)],"second"));
+  fetcher.mockResolvedValueOnce(response([located(1),located(3)]));await photos.retry();
+ }
+ expect(photos.items.map(row=>row.asset_id)).toEqual(["photo-2","photo-1","photo-3"]);expect(photos.total).toBe(3);expect(photos.error).toBe("");
+ expect(JSON.parse(fetcher.mock.calls[0]![1].body)).toMatchObject({query,projection:"map"});
+ if(outcome === "failure" || outcome === "cancel") expect(JSON.parse(fetcher.mock.calls[2]![1].body).cursor).toBe("second");
+ if(rejected) expect(fetcher.mock.calls.map(([,init])=>JSON.parse(init.body).cursor)).toEqual([undefined,"second",undefined,"second"]);
+ photos.dispose();
+});
+
+it("marks appended pages and clears the marker on other item assignments", async () => {
+ const photos=new Photos("scoped",vi.fn(),false,photoQuery,"map");
+ const previous=[mapPhoto(1)];photos.items=previous;photos.started=true;photos.cursor="next";
+ vi.stubGlobal("fetch",vi.fn().mockResolvedValue(response([mapPhoto(2)])));
+ await photos.loadMore();
+ expect(photos.appendedFrom).toBe(previous);expect(photos.items).toHaveLength(2);
+ photos.items=photos.items.map(row=>({...row,latitude:3}));
+ expect(photos.appendedFrom).toBeUndefined();
+ photos.dispose();
+});
+
+it("reuses seen IDs across pages and resets them when items are replaced", async () => {
+ const photos=new Photos("scoped",vi.fn(),false,photoQuery,"map");
+ const previous=[mapPhoto(1)];photos.items=previous;photos.started=true;photos.cursor="next";
+ const scans=vi.fn(()=>"photo-1");Object.defineProperty(previous[0],"asset_id",{get:scans});
+ const fetcher=vi.fn().mockResolvedValueOnce(response([mapPhoto(1),mapPhoto(2)],"last")).mockResolvedValueOnce(response([mapPhoto(2),mapPhoto(3),mapPhoto(3)]));vi.stubGlobal("fetch",fetcher);
+ await photos.loadMore();
+ expect(scans).toHaveBeenCalledTimes(1);expect(photos.items.map(row=>row.asset_id)).toEqual(["photo-1","photo-2","photo-3"]);
+ photos.items=[mapPhoto(2),mapPhoto(4)];photos.cursor="replacement-tail";
+ fetcher.mockResolvedValueOnce(response([mapPhoto(1),mapPhoto(2),mapPhoto(3),mapPhoto(4),mapPhoto(5),mapPhoto(5)]));
+ await photos.loadMore();
+ expect(photos.items.map(row=>row.asset_id)).toEqual(["photo-2","photo-4","photo-1","photo-3","photo-5"]);
+ photos.dispose();
+});
+
+it("routes Map Reload authentication failures through the store handler", async () => {
+ const onauth=vi.fn();
+ const photos=new Photos("expired",onauth,false,photoQuery,"map");
+ photos.items=[mapPhoto(1)];photos.started=true;
+ const fetcher=vi.fn().mockResolvedValue(Response.json({code:"unauthorized"},{status:401}));vi.stubGlobal("fetch",fetcher);
+ await expect(photos.reload("photo-1",new AbortController().signal)).rejects.toMatchObject({status:401});
+ expect(onauth).toHaveBeenCalledTimes(1);expect(onauth).toHaveBeenCalledWith(expect.objectContaining({status:401}));
+ expect(JSON.parse(fetcher.mock.calls[0]![1].body).projection).toBe("map");
+ photos.dispose();
+});
+
+it("refreshes the complete GPS query when its accepted population grows", async () => {
+ const rows=Array.from({length:250},(_,index)=>mapPhoto(index+1));
+ const photos=new Photos("scoped",vi.fn(),false,photoQuery,"map");photos.items=rows;photos.started=true;photos.total=250;
+ const fetcher=vi.fn();
+ fetcher.mockResolvedValueOnce(Response.json({items:[],map_items:rows,total:251,next_cursor:"last"})).mockResolvedValueOnce(Response.json({items:[],map_items:[mapPhoto(251)],total:251}));vi.stubGlobal("fetch",fetcher);
+ await photos.refresh();
+ expect(photos.items).toHaveLength(251);expect(photos.total).toBe(251);expect(photos.cursor).toBeUndefined();expect(photos.loading).toBe(false);photos.dispose();
+});
+
+it.each(["complete", "partial", "rejected", "uncertain"])("reconciles Map trash without restarting confirmed pages, %s", async outcome => {
+ let finish!:(value:Response)=>void;
+ const photos=new Photos("scoped",vi.fn(),false,photoQuery,"map");photos.items=[mapPhoto(1),mapPhoto(2)];photos.started=true;photos.total=outcome === "partial"?3:2;photos.selectLoaded(["photo-1"]);
+ const fetcher=vi.fn();
+ if(outcome === "partial") {photos.cursor="remaining";fetcher.mockImplementationOnce(()=>new Promise(resolve=>finish=resolve));}
+ fetcher.mockResolvedValueOnce(outcome === "rejected"?Response.json({detail:"Photo changed"},{status:412}):outcome === "uncertain"?Response.json({detail:"Write unavailable"},{status:503}):Response.json({id:"photo-1",revision:2}));
+ if(outcome === "partial") fetcher.mockResolvedValueOnce(response([mapPhoto(3)]));
+ if(outcome === "uncertain") fetcher.mockResolvedValueOnce(Response.json({items:[],map_items:[mapPhoto(2)],total:1})).mockResolvedValueOnce(response([],undefined,true));
+ if(outcome === "rejected") fetcher.mockResolvedValueOnce(Response.json({items:[],map_items:[mapPhoto(1),mapPhoto(2)],total:2}));
+ vi.stubGlobal("fetch",fetcher);const pending=outcome === "partial"?photos.loadMore():undefined;
+ await photos.trashSelected();
+ if(outcome === "partial") {finish(response([mapPhoto(1)]));await pending;await vi.waitFor(()=>expect(photos.loading).toBe(false));expect(JSON.parse(fetcher.mock.calls[2]![1].body).cursor).toBe("remaining");}
+ expect(photos.items.map(row=>row.asset_id)).toEqual(outcome === "rejected"?["photo-1","photo-2"]:outcome === "partial"?["photo-2","photo-3"]:["photo-2"]);
+ expect(photos.total).toBe(outcome === "partial" || outcome === "rejected"?2:1);expect([...photos.selection.selectedIDs]).toEqual(outcome === "rejected"?["photo-1"]:[]);
+ expect(fetcher).toHaveBeenCalledTimes(outcome === "partial" || outcome === "uncertain"?3:outcome === "rejected"?2:1);photos.dispose();
+});
+
+it("resumes an interrupted Map page after Reload", async () => {
+ let finish!:(value:Response)=>void;
+ const query={...photoQuery,filters:{gps_bounds:{south:"-90",west:"-180",north:"90",east:"180"}}};
+ const fetcher=vi.fn();
+ fetcher.mockResolvedValueOnce(response([mapPhoto(1)],"second"));
+ fetcher.mockImplementationOnce(()=>new Promise(resolve=>finish=resolve))
+  .mockResolvedValueOnce(response([{...mapPhoto(1),revision:2}]))
+  .mockResolvedValueOnce(response([mapPhoto(2)]))
+  .mockResolvedValueOnce(response([photo(1)]));
+ stubPhotoFetch(fetcher);
+ const photos=new Photos("scoped",vi.fn(),false,query,"map");
+ const pending=photos.resume();await vi.waitFor(()=>expect(finish).toBeTypeOf("function"));
+ expect(photos.started).toBe(true);
+ await photos.reload("photo-1",new AbortController().signal);finish(response([mapPhoto(3)]));await pending;
+ await vi.waitFor(()=>expect(photos.loading).toBe(false));
+ expect(photos.items.map(row=>row.asset_id)).toEqual(["photo-1","photo-2"]);
+ expect(photos.cursor).toBeUndefined();
+ expect(JSON.parse(fetcher.mock.calls[3]![1].body).cursor).toBe("second");
+ photos.dispose();
+});
+
+it.each(["fresh", "unlocated", "missing", "aborted"])("reconciles a compact Reload with current membership, %s", async outcome => {
+ const member=outcome === "fresh";
+ const fresh={...photo(1),name:"Fresh photo.jpg",content_version_id:"fresh-version"};
+ const summary={asset_id:fresh.asset_id,revision:2,name:fresh.name,capture_time:fresh.capture_time,width_px:600,height_px:400,latitude:3,longitude:12,previews:{grid:{state:"missing" as const}}};
+ let finish!:(value:Response)=>void;
+ const fetcher=vi.fn();
+ if(outcome === "aborted") fetcher.mockImplementationOnce(()=>new Promise(resolve=>finish=resolve));
+ else fetcher.mockResolvedValueOnce(Response.json({items:[],map_items:member?[summary]:[],total:member?1:0}));
+ if(outcome !== "missing" && outcome !== "aborted") fetcher.mockResolvedValueOnce(Response.json({items:[fresh],total:1}));
+ else if(outcome === "missing") fetcher.mockResolvedValueOnce(Response.json({items:[],total:0}));
+ vi.stubGlobal("fetch",fetcher);
+ const query={...photoQuery,filters:{gps_bounds:{south:"-90",west:"-180",north:"90",east:"180"}}};
+ const photos=new Photos("scoped",vi.fn(),false,query,"map");photos.items=[{...summary,name:"Original photo.jpg",latitude:0},{...summary,asset_id:"photo-2"}];photos.started=true;photos.total=2;photos.selectLoaded();
+ const original=photos.items[0];const controller=new AbortController();const reload=photos.reload("photo-1",controller.signal);
+ if(outcome === "aborted") {
+  controller.abort();finish(Response.json({items:[],map_items:[summary],total:1}));await expect(reload).rejects.toMatchObject({name:"AbortError"});expect(photos.items[0]).toEqual(original);photos.dispose();return;
+ }
+ if(outcome === "missing") await expect(reload).rejects.toMatchObject({status:404,code:"not_found"});else expect(await reload).toEqual(fresh);
+ expect(photos.items.map(row=>row.asset_id)).toEqual(member?["photo-1","photo-2"]:["photo-2"]);expect(photos.total).toBe(member?2:1);expect([...photos.selection.selectedIDs]).toEqual(member?["photo-1","photo-2"]:["photo-2"]);
+ if(member) expect(photos.items[0]).toEqual(summary);
+ expect(fetcher).toHaveBeenCalledTimes(2);photos.dispose();
+});
+
+it("keeps a fresh Map Reload row when an older replacement finishes late", async () => {
+ let finish!:(value:Response)=>void;
+ const fresh={...mapPhoto(1),revision:2};
+ const fetcher=vi.fn().mockImplementationOnce(()=>new Promise(resolve=>finish=resolve)).mockResolvedValueOnce(response([fresh])).mockResolvedValueOnce(response([photo(1)])).mockResolvedValueOnce(response([fresh,mapPhoto(2)]));vi.stubGlobal("fetch",fetcher);
+ const photos=new Photos("scoped",vi.fn(),false,photoQuery,"map");photos.items=[mapPhoto(1),mapPhoto(2)];photos.started=true;photos.total=2;photos.cursor="next";photos.selectLoaded(["photo-2"]);
+ const refresh=photos.refresh();expect(await photos.reload("photo-1",new AbortController().signal)).toEqual(photo(1));
+ finish(Response.json({items:[photo(1)],total:1}));await refresh;
+ expect(photos.items[0]).toEqual(fresh);expect(photos.items.map(row=>row.asset_id)).toEqual(["photo-1","photo-2"]);expect(photos.error).toBe("Photo list changed. Retry to finish loading.");expect(photos.cursor).toBe("next");expect([...photos.selection.selectedIDs]).toEqual(["photo-2"]);
+ await photos.retry();expect(photos.items[0]).toEqual(fresh);expect(photos.error).toBe("");photos.dispose();
 });
 
 it.each(["deselected anchor", "displaced selection"])("reconciles selection across refresh: %s", async kind => {

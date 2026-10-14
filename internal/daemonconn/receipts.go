@@ -175,13 +175,25 @@ func IsResponseDecodeError(err error) bool {
 	return errors.As(err, &decode) || generated
 }
 
+// IsRetryableMutationError identifies failures for which callers should retain their retry ID.
+func IsRetryableMutationError(err error) bool {
+	status, _ := responseStatus(err)
+	return IsTransportError(err) || IsResponseDecodeError(err) || (status >= 500 && status < 600)
+}
+
 type problemError struct {
 	code               string
 	observedScopeCount int
+	detail             string
 	err                error
 }
 
-func (e *problemError) Error() string { return e.err.Error() }
+func (e *problemError) Error() string {
+	if e.detail != "" {
+		return e.detail
+	}
+	return e.err.Error()
+}
 func (e *problemError) Unwrap() error { return e.err }
 
 // ProblemCode returns the daemon's stable RFC 7807 extension code when err
@@ -387,6 +399,8 @@ var codeToTypedErr = map[string]error{
 	"version_node_mismatch":         store.ErrVersionNodeMismatch,
 	"version_already_current":       store.ErrVersionAlreadyCurrent,
 	"invalid_version_prune":         store.ErrInvalidVersionPrune,
+	"invalid_photo_face":            store.ErrInvalidPhotoFace,
+	"photo_face_limit":              store.ErrPhotoFaceLimit,
 	"invalid_photo_asset":           store.ErrInvalidPhotoAsset,
 	"invalid_photo_album":           store.ErrInvalidPhotoAlbum,
 	"photo_node_not_eligible":       store.ErrPhotoNodeNotEligible,
@@ -452,6 +466,7 @@ func decodeError(resp *http.Response) error {
 
 func apiProblemError(e api.Error) error {
 	var cause error
+	detail := ""
 	observedScopeCount := 0
 	if e.Code == "scope_too_large" && e.ObservedScopeCount > processing.MaxSourceFenceIDs {
 		cause = &SourceFenceScopeTooLargeError{ObservedScopeCount: e.ObservedScopeCount, detail: e.Detail}
@@ -462,13 +477,18 @@ func apiProblemError(e api.Error) error {
 		if (strings.HasPrefix(e.Code, "hidden_") || e.Code == "invalid_hidden_passcode") &&
 			(e.Detail == "" || target.Error() == e.Detail || strings.HasPrefix(target.Error(), e.Detail+"; ")) {
 			cause = target
+			detail = target.Error()
+		} else if e.Detail == "" {
+			cause = target
+			detail = target.Error()
 		} else {
 			cause = fmt.Errorf("%s: %w", e.Detail, target)
+			detail = e.Detail
 		}
 	} else {
 		cause = fmt.Errorf("daemon error (%d %s): %s", e.Status, e.Code, e.Detail)
 	}
-	return &problemError{code: e.Code, observedScopeCount: observedScopeCount, err: cause}
+	return &problemError{code: e.Code, observedScopeCount: observedScopeCount, detail: detail, err: cause}
 }
 
 // Children fetches every page. Callers that need bounded traversal should use
@@ -940,6 +960,7 @@ func IsCanonicalUUIDv4(value string) bool {
 // live directory's descendants, and an optional half-open modification-time
 // interval.
 type SearchOptions struct {
+	Fuzzy          bool
 	TagID          string
 	MIMEType       string
 	UnderNodeID    int64
@@ -975,6 +996,9 @@ func (c *Connection) SearchWithOptions(
 	params := apiclient.SearchQuery{}
 	params.Q = new(query)
 	params.Limit = new(int64(limit))
+	if opts.Fuzzy {
+		params.Fuzzy = new(true)
+	}
 	if opts.TagID != "" {
 		params.TagID = new(opts.TagID)
 	}
@@ -1000,7 +1024,42 @@ func (c *Connection) SearchWithOptions(
 		out.ModifiedBefore != modifiedBefore {
 		return api.SearchReport{}, errors.New("search response has inconsistent filter authority")
 	}
+	if opts.Fuzzy && !validFuzzyReceipt(out.Fuzzy) {
+		return api.SearchReport{}, errors.New(
+			"fuzzy search response has missing or invalid coverage receipt")
+	}
 	return out, nil
+}
+
+func validFuzzyReceipt(r *api.FuzzyReceipt) bool {
+	if r == nil || r.Reasons == nil {
+		return false
+	}
+	switch r.Status {
+	case store.FuzzyStatusComplete:
+		return len(r.Reasons) == 0
+	case store.FuzzyStatusNotRun:
+		return len(r.Reasons) == 1 && (r.Reasons[0] == store.FuzzyReasonResultLimit ||
+			r.Reasons[0] == store.FuzzyReasonQueryIneligible)
+	case store.FuzzyStatusLimited:
+		if len(r.Reasons) == 0 {
+			return false
+		}
+		for i, reason := range r.Reasons {
+			if i > 0 && r.Reasons[i-1] >= reason {
+				return false
+			}
+			switch reason {
+			case store.FuzzyReasonCandidateLimit, store.FuzzyReasonTimeBudget,
+				store.FuzzyReasonNameLimit, store.FuzzyReasonPathLimit:
+			default:
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
 }
 
 // AuditPreviewOptions selects one live directory for permanent enrollment.
@@ -1354,6 +1413,8 @@ func validateAuditEvent(event api.AuditEvent, nodeID int64) error {
 func validateAuditAttachment(eventKind string, change *api.AuditAttachmentChange) error {
 	wantKind := ""
 	switch eventKind {
+	case "photo_authored":
+		wantKind = "photo_authored"
 	case "tag_define", "tag_rename", "tag_delete":
 		wantKind = "tag_definition"
 	case "tag_assign", "tag_unassign":
@@ -1383,6 +1444,10 @@ func validateAuditAttachment(eventKind string, change *api.AuditAttachmentChange
 		}
 	}
 	switch eventKind {
+	case "photo_authored":
+		if change.Before != nil && change.After != nil && change.After.Photo.Revision == change.Before.Photo.Revision+1 {
+			return nil
+		}
 	case "tag_rename":
 		if change.Before != nil && change.After != nil {
 			return nil
@@ -1426,6 +1491,10 @@ func validateAuditIngestObservation(event api.AuditEvent) error {
 
 func validateAuditAttachmentIdentity(kind string, identity api.AuditAttachmentIdentity) error {
 	switch kind {
+	case "photo_authored":
+		if validUUIDv4(identity.FileID) && identity.NodeID > 0 && identity.TagID == "" && identity.ProvenanceID == "" {
+			return nil
+		}
 	case "tag_definition":
 		if validUUIDv4(identity.TagID) && identity.NodeID == 0 && identity.ProvenanceID == "" {
 			return nil
@@ -1446,6 +1515,14 @@ func validateAuditAttachmentState(
 	kind string, identity api.AuditAttachmentIdentity, state api.AuditAttachmentState,
 ) error {
 	switch kind {
+	case "photo_authored":
+		if state.Photo != nil && state.Photo.FileID == identity.FileID &&
+			state.Photo.NodeID == identity.NodeID && state.Photo.Revision > 0 &&
+			store.ValidatePhotoAuthored(state.Photo.Values) == nil && state.TagID == "" && state.TagName == "" &&
+			state.NodeID == identity.NodeID && state.ProvenanceID == "" && state.IngestID == "" &&
+			state.OriginalPath == nil && state.OriginalMTime == nil && state.Supersedes == nil {
+			return nil
+		}
 	case "tag_definition":
 		if state.TagID == identity.TagID && state.TagName != "" && state.NodeID == 0 &&
 			state.ProvenanceID == "" && state.IngestID == "" && state.OriginalPath == nil &&

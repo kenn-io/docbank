@@ -296,7 +296,7 @@ and client limits.
 
 ### Photo browsing and preview reads
 
-`POST /api/v1/photos/assets/query` accepts raw strict QueryV1 JSON, coverage selection, a page size, optional signed cursor and `hidden` flag. Hidden queries require a current unlock and bind that visibility in the cursor. The shared query resolver and compiler evaluate ordinary predicates against each current live member and photo metadata predicates against the selected display file. Store projects those matches to included assets with a live display member. The first page counts the entire population in the same lexical-generation read snapshot; signed cursors retain that total for later live pages. Sorting starts from indexed capture, import, name, modification, size or media-type keys, then checks only each candidate asset's members. Capture sort keys and local capture dates are projected once from validated source metadata. Optional content duplicate collapse runs after photo scoping and before asset projection.
+`POST /api/v1/photos/assets/query` accepts raw strict QueryV1 JSON, coverage selection, a page size, optional signed cursor, `projection` and `hidden` flag. Ordinary pages allow up to 250 rows. `projection: "map"` allows up to 1,000 rows per page. Hidden queries require a current unlock and bind that visibility in the cursor. The shared query resolver and compiler evaluate ordinary predicates against each current live member and photo metadata predicates against the selected display file. Store projects those matches to included assets with a live display member. The first page counts the entire population in the same lexical-generation read snapshot; signed cursors retain that total for later live pages. Sorting starts from indexed capture, import, name, modification, size or media-type keys, then checks only each candidate asset's members. Capture sort keys and local capture dates are projected once from validated source metadata. Optional content duplicate collapse runs after photo scoping and before asset projection.
 
 Display facts come from the persisted display file. Capture keys call `document.EventAxisKey` through the shared query adapter registered in both SQLite drivers. Capture evidence retains its precision and explicit or omitted timezone. Missing, unreadable or out-of-domain capture keys sort last. Asset UUID breaks equal keys in ascending order. Keyset cursors bind canonical intent, dependency revisions, coverage and page size through the existing document cursor signing service.
 
@@ -308,7 +308,7 @@ Browser sessions additionally allow hidden-state GET, setup/change/disable/unloc
 
 Hidden state uses the vault-wide passcode and five-minute HttpOnly, SameSite=Strict loopback cookie. Unlock records passcode failures in a storage transaction so directory audit preserves read access. Store keeps session digests and expiry times in memory; lock and browser-session revocation clear them. State reports server-relative seconds beside each deadline. Authentication changes serialize session creation and revocation. Five failures within sixty seconds persist a five-minute lockout; sessions clear at restart and stay outside backups. Hide/unhide use asset revisions and receipts. Disable atomically unhides assets; reset retains flags. Locked Photos readers and mutation responses conceal hidden graphs. Album summaries retain hidden membership in `member_count`, count only visible members in `included_count`, and omit hidden explicit covers while locked. Cover selection requires the same authorization. Documents remain accessible and their snapshots stay valid.
 
-The active Library or Hidden view polls hidden state. A failed state read conceals that view and disposes its preview cache while retaining its photo model. Successful status validation refreshes concealed photos before redisplay; unchanged successful state clears only the read error. HTTP 401 follows the shared browser session-expired path.
+A browser window that has opened Photos queues a keepalive lock on tab hide after pending Hidden writes, including an in-flight unlock, and reports failures with Retry lock in any workspace. Hidden stays concealed until a lock succeeds. Page close sends an immediate keepalive lock and, when Hidden writes are pending, queues another after them; closing during an unlock remains best effort. The active Library or Hidden view polls hidden state. A failed state read conceals that view and disposes its preview cache while retaining its photo model. Successful status validation refreshes concealed photos before redisplay; unchanged successful state clears only the read error. On return, Library and the open album's photo list reload. The Albums index keeps its album list. HTTP 401 follows the shared browser session-expired path.
 
 `POST /api/v1/photos/assets/{asset_id}/preview` uses the global mutation gate with a 30-second request timeout. Stale display admission returns `409`; a display change during production returns `404`. Timeout or cancellation returns `503 photo_preview_unavailable` with the corresponding interruption message.
 
@@ -455,8 +455,8 @@ revision in the body. Merge and split operation UUIDs replay their stored
 receipts. Reads follow a merged person's ID to the survivor. Edits require the
 current person ID and return 404 for a merged ID. The store owns membership
 validation, revision fences, and binding-epoch changes. Browser sessions stay
-denied by default. MCP exposes the person reads only. Edits stay on HTTP and
-the CLI.
+denied by default. MCP exposes person reads and paged photo-face reads. Edits
+stay on HTTP and the CLI.
 
 ## Ingest boundary
 
@@ -585,6 +585,12 @@ immutable version, so a transcript for an older recording revision cannot
 cover newer bytes. Status and replay derive processing state from the bound
 job. The `media-continuations` backfill finishes admission interrupted before a
 job was bound and enqueues embedding jobs once a media rendition is published.
+
+Media operation history is indexed by caller, source, and admission time.
+Receipt reads start from the requested source revisions, keeping unrelated
+source histories out of those lookups. New operations use the same index to
+find the latest admission time without scanning the history. Reopening a
+current-schema vault creates the index if it is missing.
 
 ### Exact media transcript reads
 

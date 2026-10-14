@@ -213,12 +213,15 @@ func (s *Store) MissingSourceMetadataTargetsAfter(
 			return nil, err
 		}
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT b.hash,b.size FROM blobs b
-		JOIN content_versions v ON v.blob_hash=b.hash
-		LEFT JOIN source_metadata_generations g ON g.source_sha256=b.hash
-			AND g.contract_version=? AND g.extractor_fingerprint=?
-		WHERE b.hash>? AND g.generation_id IS NULL ORDER BY b.hash LIMIT ?`,
-		document.SourceMetadataContractV1, fingerprint, afterSHA256, limit)
+	// Shared originals need one retention check, not a join for each version.
+	rows, err := s.db.QueryContext(ctx, `SELECT b.hash,b.size FROM blobs b
+		WHERE b.hash>?
+			AND NOT EXISTS (SELECT 1 FROM source_metadata_generations g
+				WHERE g.source_sha256=b.hash AND g.contract_version=?
+					AND g.extractor_fingerprint=? AND g.generation_id IS NOT NULL)
+			AND EXISTS (SELECT 1 FROM content_versions v WHERE v.blob_hash=b.hash)
+		ORDER BY b.hash LIMIT ?`,
+		afterSHA256, document.SourceMetadataContractV1, fingerprint, limit)
 	if err != nil {
 		return nil, fmt.Errorf("listing missing source metadata: %w", err)
 	}

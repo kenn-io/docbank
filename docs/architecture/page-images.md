@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-05
+last_edited: 2026-10-12
 title: Verified page images
 description: Page geometry and local page rendering for one document version, within fixed limits.
 ---
@@ -111,3 +111,45 @@ Page authority remains with its exact content version and is removed when that
 version is removed. Attachment/build derivative purge does not purge page
 images. There is no separate page-purge API. The PyMuPDF text bridge is
 unchanged.
+
+## Native-PDF redaction qualification
+
+The internal redaction libraries can compose a fresh PDF from verified source
+bytes, a text-to-page map, and a rectangle decision. The source-preparation
+qualification imports a synthetic native PDF through the CLI, downloads its
+verified original, and stops the daemon. A test-only consumer then derives page
+geometry and text evidence from that download before aligning text, resolving
+the mask, rendering at 300 DPI, and writing a fresh PDF and sanitized text.
+
+`TestPDFRedactionSourcePreparation` covers one Letter page in Helvetica. It
+removes the first `SECRET` from `SECRET KEEP SECRET`. Independent readers of
+the saved PDF check that its text is `[REDACTED] KEEP SECRET`, the mask interior
+is black, and both retained word regions have exactly their original pixels.
+The PDF consistency verifier also checks the saved output against its page
+artifacts and sanitized runs.
+
+Resolution requires complete gap coverage across the entire document. Every
+ordered gap in the text map must be fully masked, even away from a selected
+rectangle. An unordered gap requires masks covering its whole page. Any
+uncovered gap rejects the resolve with `mapping_incomplete` before rendering.
+Native text extraction alone does not establish complete mapping. Whitespace
+visibility checks sample the outward-rounded glyph box without an extra pixel
+border, which can include ink from a neighboring letter. Ordinary glyph checks
+and ambiguity accounting retain their one-pixel border. The Courier and Times
+versions of the same grid-aligned fixture resolve the first-word selection.
+Small visible glyphs falsely mapped to spaces still produce gaps and require
+masks.
+
+This sampling correction does not establish general native-PDF coverage.
+Ordinary Courier, Times, and Helvetica text can still produce whitespace gaps:
+outward rounding can include a boundary pixel painted by a neighboring letter.
+Those gaps still require masks across the whole document, so a first-word
+selection can still be refused. Sampling never rounds inward to discard those
+pixels; doing so can miss small visible glyphs falsely mapped to whitespace.
+
+The test invokes the geometry inspector directly on its small generated PDF
+and uses an upstream PDFium reader as an evidence bridge. Daemon inspection
+still requires the resource-limited runtime described above. There is no
+operator redaction command or daemon operation connecting these libraries,
+and this test does not qualify a production extraction recipe, user review,
+retained redaction outputs, restart recovery, numbering, or delivery.

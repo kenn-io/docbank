@@ -14,6 +14,7 @@ const (
 	MaxDocumentCatalogNameCharacters = 255
 	DefaultDocumentCatalogPageSize   = 50
 	MaxDocumentCatalogPageSize       = 250
+	MaxPhotoMapPageSize              = 1000
 	MaxDocumentSummaryResolutions    = 100
 )
 

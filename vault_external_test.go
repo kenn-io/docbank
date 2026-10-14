@@ -19,6 +19,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -1406,6 +1407,10 @@ func TestEmbeddedMediaEmbeddingContinuationSeparatesReplacementConsentAcrossRest
 }
 
 func TestEmbeddedMediaExpiredEmbeddingConsentAllowsFreshSameFenceOperation(t *testing.T) {
+	synctest.Test(t, testEmbeddedMediaExpiredEmbeddingConsentAllowsFreshSameFenceOperation)
+}
+
+func testEmbeddedMediaExpiredEmbeddingConsentAllowsFreshSameFenceOperation(t *testing.T) {
 	renderer, err := suppliedtranscript.New(suppliedtranscript.Profile{
 		Source: syntheticTranscriptSource{}, SourceBinding: embeddedHash("expired-media-source"),
 		MaxDocumentChars: 1 << 20,
@@ -1465,7 +1470,7 @@ func TestEmbeddedMediaExpiredEmbeddingConsentAllowsFreshSameFenceOperation(t *te
 	case <-time.After(10 * time.Second):
 		t.Fatal("embedding did not reach provider before consent expiry")
 	}
-	time.Sleep(max(time.Until(expiresAt), 0) + 50*time.Millisecond) //nolint:kennlint // consent expiry is checked against the store's real clock, which has no seam
+	time.Sleep(time.Until(expiresAt))
 	close(embedder.release)
 	released = true
 	require.EventuallyWithT(t, func(collect *assert.CollectT) {

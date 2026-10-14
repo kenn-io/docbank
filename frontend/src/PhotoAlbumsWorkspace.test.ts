@@ -5,7 +5,7 @@ import PhotosWorkspace from "./PhotosWorkspace.svelte";
 import { Photos } from "./photos.svelte.js";
 import { PhotoAlbums } from "./photoAlbums.svelte.js";
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
-import { photo, photoAlbum, albumResponse } from "./photo-test-fixtures.js";
+import { photo, mapPhoto, photoAlbum, albumResponse } from "./photo-test-fixtures.js";
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const album = photoAlbum({ included_count: 2, member_count: 2 });
@@ -37,18 +37,18 @@ it("requires acknowledgement before retrying an album creation after a network f
   expect(fetcher).toHaveBeenCalledTimes(before + 2);
 });
 
-function setup(scoped = false, onnavigate = vi.fn()) {
+function setup(scoped = false, onnavigate = vi.fn(), mapMode = false) {
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
   HTMLElement.prototype.scrollIntoView = vi.fn();
-  const photos = new Photos("scoped", vi.fn());
+  const photos = new Photos("scoped", vi.fn(), false, undefined, mapMode ? "map" : undefined);
   photos.items = [photo(1, "2024-01-01"), photo(2, "2025-01-01")]; photos.started = true; photos.total = 10000;
   if (scoped) photos.query = { ...photos.query, filters: { set_ids: [album.id] }, sort: { field: "added_time", direction: "desc" } };
   vi.spyOn(photos, "refresh").mockResolvedValue(true);
   const albums = new PhotoAlbums("scoped", vi.fn(), async id => { if (photos.started && photos.query.filters?.set_ids?.includes(id)) await photos.refresh(); }); albums.items = [album];
   const cache = new PhotoPreviewCache("scoped", vi.fn());
-  const view = render(PhotosWorkspace, { photos, albums, cache, albumID: scoped ? album.id : "", onnavigate, photoID: "", onphotochange: vi.fn() });
+  const view = render(PhotosWorkspace, { photos, albums, cache, mapMode, tiles: { tile_url: "https://tiles.example.org/{z}/{x}/{y}", attribution: "Example", max_zoom: 19 }, albumID: scoped ? album.id : "", onnavigate, photoID: "", onphotochange: vi.fn() });
   return { photos, albums, cache, view };
 }
 
@@ -275,12 +275,20 @@ it("resets the empty index create dialog after cancelled attempts", async () => 
   }
 });
 
-it("disables explicit album changes over 1,000 photos until whole-query selection", async () => {
-  const { photos, albums } = setup(true);
-  photos.items = Array.from({ length: 1001 }, (_, id) => photo(id)); photos.total = 1001; photos.selectLoaded();
+it.each([false, true])("disables explicit album changes over 1,000 photos until whole-query selection, map=%s", async mapMode => {
+  const { photos, albums } = setup(!mapMode, vi.fn(), mapMode);
+  photos.items = Array.from({ length: 1001 }, (_, id) => mapMode ? mapPhoto(id) : photo(id)); photos.total = 1001; photos.selectLoaded();
   const members = vi.spyOn(albums, "members").mockResolvedValue(album);
   const picker = await screen.findByRole("button", { name: /Add to album/ });
   expect((picker as HTMLButtonElement).disabled).toBe(true);
+  if (mapMode) {
+    await screen.findByText("Select 1,000 photos or fewer to add to an album.");
+    expect(screen.queryByRole("button", { name: "Select all 1,001 photos" })).toBeNull();
+    photos.check("photo-0", false, false, photos.items.map(item => item.asset_id));
+    await waitFor(() => expect((picker as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.queryByText("Select 1,000 photos or fewer to add to an album.")).toBeNull();
+    return;
+  }
   expect((screen.getByRole("button", { name: "Remove from album" }) as HTMLButtonElement).disabled).toBe(true);
   await screen.findByText("Select all 1,001 photos to add more than 1,000 at once.");
   await fireEvent.click(screen.getByRole("button", { name: "Select all 1,001 photos" }));

@@ -268,6 +268,9 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	if photoAlbumBrowserRequestAllowed(r) {
 		return true
 	}
+	if r.URL.Path == "/api/v1/photos/rejects/preflight" || r.URL.Path == "/api/v1/photos/rejects/trash" {
+		return r.Method == http.MethodPost && r.URL.RawQuery == ""
+	}
 	if r.URL.Path == "/api/v1/photos/assets/query" || r.URL.Path == "/api/v1/photos/assets/timeline" {
 		return r.Method == http.MethodPost && r.URL.RawQuery == ""
 	}

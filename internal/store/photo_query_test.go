@@ -852,7 +852,7 @@ func TestPhotoSearchFacetsRespectVisibilityAndAuthoredDecisions(t *testing.T) {
 		browsePhotoMetadata(t, s, node, fmt.Sprint("scope", i), photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("Canon")))
 		asset, err := s.PhotoAssetForNode(ctx, node.ID)
 		require.NoError(t, err)
-		_, err = s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{asset.Files[0].ID, 1, PhotoAuthoredPatch{Rating: new(rating), Flag: new("pick"), Label: new("red")}}})
+		_, err = s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{FileID: asset.Files[0].ID, Revision: 1, Patch: PhotoAuthoredPatch{Rating: new(rating), Flag: new("pick"), Label: new("red")}}})
 		require.NoError(t, err)
 		if i == 1 {
 			_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)

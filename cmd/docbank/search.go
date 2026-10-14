@@ -23,6 +23,7 @@ var (
 	searchLimit          int
 	searchJSON           bool
 	searchAgent          bool
+	searchFuzzy          bool
 	searchTag            string
 	searchMIME           string
 	searchUnder          string
@@ -54,23 +55,36 @@ var searchCmd = &cobra.Command{
 	Example: `  docbank search invoice 2026 --agent
   docbank search merger plan --under /cases/acme --json
   docbank search --tag urgent
-  docbank search report --mime-type application/pdf --modified-since 2026-01-01T00:00:00Z`,
+  docbank search invocie --fuzzy --modified-since 2026-01-01T00:00:00Z`,
 	Long: `Query words are joined. With no processing options, search automatically uses
 hybrid retrieval when a query embedding binding is ready, otherwise lexical.
 Unavailable semantic search falls back with an explicit degradation reason.
 Lexical search matches word prefixes, names before content, on live versions.
 Filters, limits above 100, and queries over 8192 characters use lexical search.
 --mode lexical selects ordinary lexical search explicitly.
+--fuzzy appends filename/path matches with one typo (fuzzy_name|fuzzy_path).
 Explicit processing modes require --profile and --source-version UUIDs and
-reject ordinary filters; see "docbank processing profiles".
+reject ordinary filters and --fuzzy.
 --agent prints an OK header and one line per hit; --json keeps typed reports.
-See docs/usage/search.md for automatic selection, scope, and consent.`,
+See docs/usage/search.md.`,
 	GroupID: groupSearch,
 	Use:     "search [<query>...]",
 	Short:   "Find files and folders by name, text, tag, type, folder, or date",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if searchAgent && searchJSON {
 			return usageError(errors.New("--agent and --json are mutually exclusive"))
+		}
+		if searchFuzzy {
+			for _, flag := range []string{
+				"mode", "profile", "binding", "source-version", "explain", "rerank", "similar-to",
+			} {
+				if cmd.Flags().Changed(flag) {
+					return usageError(fmt.Errorf("--fuzzy cannot be combined with --%s", flag))
+				}
+			}
+			if strings.TrimSpace(strings.Join(args, " ")) == "" {
+				return usageError(errors.New("--fuzzy requires query text"))
+			}
 		}
 		if cmd.Flags().Changed("similar-to") {
 			if len(args) != 0 {
@@ -152,6 +166,7 @@ See docs/usage/search.md for automatic selection, scope, and consent.`,
 			return err
 		}
 		opts := daemonconn.SearchOptions{
+			Fuzzy:    searchFuzzy,
 			MIMEType: mimeType, ModifiedSince: modifiedSince, ModifiedBefore: modifiedBefore,
 		}
 		var tagName string
@@ -176,7 +191,7 @@ See docs/usage/search.md for automatic selection, scope, and consent.`,
 			underPath = directory.Path
 		}
 		var degradation string
-		if !cmd.Flags().Changed("mode") {
+		if !cmd.Flags().Changed("mode") && !searchFuzzy {
 			report, reason, searchErr := tryAutomaticSearch(cmd, c, strings.Join(args, " "), searchLimit, opts)
 			if searchErr != nil {
 				return searchErr
@@ -214,51 +229,64 @@ See docs/usage/search.md for automatic selection, scope, and consent.`,
 				return fmt.Errorf("writing search degradation: %w", err)
 			}
 		}
-		if len(rep.Hits) == 0 {
-			var filters []string
-			if tagName != "" {
-				filters = append(filters, fmt.Sprintf("tag %q", tagName))
-			}
-			if rep.MIMEType != "" {
-				filters = append(filters, fmt.Sprintf("media type %q", rep.MIMEType))
-			}
-			if underPath != "" {
-				filters = append(filters, fmt.Sprintf("directory %q", underPath))
-			}
-			if rep.ModifiedSince != "" {
-				filters = append(filters, fmt.Sprintf("modified since %q", rep.ModifiedSince))
-			}
-			if rep.ModifiedBefore != "" {
-				filters = append(filters, fmt.Sprintf("modified before %q", rep.ModifiedBefore))
-			}
-			if len(filters) == 0 {
-				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "no matches")
-			} else {
-				_, _ = fmt.Fprintln(cmd.OutOrStdout(),
-					"no matches with "+strings.Join(filters, " and "))
-			}
-			return nil
+		return writeSearchReport(cmd, rep, tagName, underPath)
+	},
+}
+
+func writeSearchReport(cmd *cobra.Command, rep api.SearchReport, tagName, underPath string) error {
+	if rep.Fuzzy != nil && rep.Fuzzy.Status != store.FuzzyStatusComplete {
+		_, err := fmt.Fprintf(cmd.OutOrStdout(), "incomplete fuzzy search (%s: %s); "+
+			"use a more specific ASCII query or --under; "+
+			"increase --limit if ordinary hits filled the page\n",
+			rep.Fuzzy.Status, strings.Join(rep.Fuzzy.Reasons, ", "))
+		if err != nil {
+			return fmt.Errorf("writing fuzzy coverage: %w", err)
 		}
-		w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
-		_, _ = fmt.Fprintln(w, "SELECTOR\tMATCH\tPATH")
-		for _, h := range rep.Hits {
-			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n",
-				formatNodeSelector(h.Node.ID), h.Match, h.Path)
+	}
+	if len(rep.Hits) == 0 {
+		var filters []string
+		if tagName != "" {
+			filters = append(filters, fmt.Sprintf("tag %q", tagName))
 		}
-		if err := w.Flush(); err != nil {
-			return fmt.Errorf("writing search results: %w", err)
+		if rep.MIMEType != "" {
+			filters = append(filters, fmt.Sprintf("media type %q", rep.MIMEType))
 		}
-		if rep.Truncated {
-			noun := "results"
-			if rep.Limit == 1 {
-				noun = "result"
-			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-				"more than %d %s; showing the first %d (increase --limit to see more)\n",
-				rep.Limit, noun, rep.Limit)
+		if underPath != "" {
+			filters = append(filters, fmt.Sprintf("directory %q", underPath))
+		}
+		if rep.ModifiedSince != "" {
+			filters = append(filters, fmt.Sprintf("modified since %q", rep.ModifiedSince))
+		}
+		if rep.ModifiedBefore != "" {
+			filters = append(filters, fmt.Sprintf("modified before %q", rep.ModifiedBefore))
+		}
+		if len(filters) == 0 {
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "no matches")
+		} else {
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(),
+				"no matches with "+strings.Join(filters, " and "))
 		}
 		return nil
-	},
+	}
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintln(w, "SELECTOR\tMATCH\tPATH")
+	for _, h := range rep.Hits {
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n",
+			formatNodeSelector(h.Node.ID), h.Match, h.Path)
+	}
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("writing search results: %w", err)
+	}
+	if rep.Truncated {
+		noun := "results"
+		if rep.Limit == 1 {
+			noun = "result"
+		}
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+			"more than %d %s; showing the first %d (increase --limit to see more)\n",
+			rep.Limit, noun, rep.Limit)
+	}
+	return nil
 }
 
 func documentSearchFlagsChanged(cmd *cobra.Command) bool {
@@ -529,6 +557,7 @@ func init() {
 	searchCmd.Flags().BoolVar(&searchRerank, "rerank", false,
 		"rerank the source-fenced processing search results")
 	searchCmd.Flags().BoolVar(&searchAgent, "agent", false, "print concise agent-readable text")
+	searchCmd.Flags().BoolVar(&searchFuzzy, "fuzzy", false, "append bounded ASCII filename/path matches with at most one typo")
 	searchCmd.Flags().BoolVar(&searchJSON, "json", false, "print JSON to stdout")
 	rootCmd.AddCommand(searchCmd)
 }

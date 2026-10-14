@@ -534,3 +534,47 @@ func TestSearch(t *testing.T) {
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 	assert.Contains(t, body, `"code":"validation"`)
 }
+
+func TestSearchFuzzyReceipt(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	target, err := s.CreateFile(t.Context(), s.RootID(), "invoice.pdf", testHash("fuzzy"), 4, "application/pdf")
+	require.NoError(t, err)
+	for _, url := range []string{"/api/v1/search?q=invocie&fuzzy=true", "/api/v1/search?q=missing&fuzzy=true"} {
+		resp, body := get(t, ts, url, nil)
+		require.Equal(t, http.StatusOK, resp.StatusCode, body)
+		var report struct {
+			Hits  []api.SearchHit `json:"hits"`
+			Fuzzy *struct {
+				Status  string   `json:"status"`
+				Reasons []string `json:"reasons"`
+			} `json:"fuzzy"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(body), &report))
+		require.NotNil(t, report.Fuzzy)
+		require.Equal(t, "complete", report.Fuzzy.Status)
+		require.NotNil(t, report.Fuzzy.Reasons)
+		require.Empty(t, report.Fuzzy.Reasons)
+		require.NotNil(t, report.Hits)
+		if strings.Contains(url, "invocie") {
+			require.Len(t, report.Hits, 1)
+			require.Equal(t, target.ID, report.Hits[0].Node.ID)
+			require.Equal(t, "fuzzy_name", report.Hits[0].Match)
+		} else {
+			require.Empty(t, report.Hits)
+		}
+	}
+	resp, body := get(t, ts, "/api/v1/search?q=invocie&fuzzy=true", map[string]string{"X-Api-Key": "wrong-key"})
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode, body)
+	_, body = get(t, ts, "/api/v1/search?q=invoice", nil)
+	require.NotContains(t, body, `"fuzzy"`)
+	resp, body = get(t, ts, "/api/v1/search?fuzzy=true", nil)
+	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	require.Contains(t, body, `"code":"validation"`)
+	resp, body = get(t, ts, "/api/v1/search?q=cases%2F!!!&fuzzy=true", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var ineligible api.SearchReport
+	require.NoError(t, json.Unmarshal([]byte(body), &ineligible))
+	require.Equal(t, &api.FuzzyReceipt{Status: "not_run", Reasons: []string{"query_ineligible"}},
+		ineligible.Fuzzy)
+}

@@ -60,11 +60,71 @@ type ServerConfig struct {
 
 // WebConfig controls the built-in web UI.
 type WebConfig struct {
-	Enabled             bool     `toml:"enabled"` // default true
-	PublicOrigin        string   `toml:"public_origin"`
-	AllowedHosts        []string `toml:"allowed_hosts"`
-	TrustPrivateNetwork bool     `toml:"trust_private_network"`
-	SessionLifetime     Duration `toml:"session_lifetime"`
+	Enabled             bool           `toml:"enabled"` // default true
+	PublicOrigin        string         `toml:"public_origin"`
+	AllowedHosts        []string       `toml:"allowed_hosts"`
+	TrustPrivateNetwork bool           `toml:"trust_private_network"`
+	SessionLifetime     Duration       `toml:"session_lifetime"`
+	MapTiles            MapTilesConfig `toml:"map_tiles"`
+}
+
+// MapTilesConfig is public browser configuration for an optional raster map.
+type MapTilesConfig struct {
+	TileURL     string `toml:"tile_url" json:"tile_url"`
+	Attribution string `toml:"attribution" json:"attribution"`
+	MaxZoom     int    `toml:"max_zoom" json:"max_zoom"`
+}
+
+func (m MapTilesConfig) Origin() string {
+	u, err := url.Parse(m.TileURL)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
+}
+
+func (m MapTilesConfig) Validate() error {
+	if m.MaxZoom < 0 || m.MaxZoom > 22 {
+		return errors.New("[web.map_tiles] max_zoom must be between 0 and 22")
+	}
+	if m.TileURL == "" {
+		return nil
+	}
+	u, err := url.Parse(m.TileURL)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
+		return errors.New("[web.map_tiles] tile_url must use a fixed HTTPS origin without credentials or fragments")
+	}
+	if strings.Contains(u.Hostname(), ":") {
+		return errors.New("[web.map_tiles] tile_url cannot use an IPv6 address; the browser's image policy cannot allow one")
+	}
+	if !validASCIIHostname(u.Hostname()) {
+		return errors.New("[web.map_tiles] tile_url requires a fixed ASCII hostname")
+	}
+	if _, err := WebHostAuthority(u.Host); err != nil {
+		return fmt.Errorf("[web.map_tiles] tile_url: %w", err)
+	}
+	rawPath, _, _ := strings.Cut(strings.TrimPrefix(m.TileURL, u.Scheme+"://"+u.Host), "?")
+	for _, placeholder := range []string{"{z}", "{x}", "{y}"} {
+		if !strings.Contains(rawPath, placeholder) {
+			return errors.New("[web.map_tiles] tile_url path requires {z}, {x}, and {y}")
+		}
+	}
+	if strings.ContainsAny(strings.NewReplacer("{z}", "0", "{x}", "0", "{y}", "0").Replace(u.Path+u.RawQuery), "{}") {
+		return errors.New("[web.map_tiles] tile_url has unsupported placeholders")
+	}
+	if strings.TrimSpace(m.Attribution) == "" {
+		return errors.New("[web.map_tiles] attribution is required")
+	}
+	return nil
+}
+
+func validASCIIHostname(hostname string) bool {
+	if net.ParseIP(hostname) != nil {
+		return true
+	}
+	hostname = strings.ToLower(hostname)
+	ascii, err := idna.Lookup.ToASCII(hostname)
+	return err == nil && ascii == hostname
 }
 
 // MCPConfig controls the optional local MCP transports. The HTTP transport
@@ -345,7 +405,7 @@ func Default() Config {
 			BindAddr:    "127.0.0.1",
 			IdleTimeout: Duration(30 * time.Minute),
 		},
-		Web:                WebConfig{Enabled: true},
+		Web:                WebConfig{Enabled: true, MapTiles: MapTilesConfig{MaxZoom: 19}},
 		Storage:            StorageConfig{PackMaxBytes: 256 << 20},
 		RenditionProfiles:  make(map[string]RenditionProfileConfig),
 		EmbeddingProfiles:  make(map[string]EmbeddingProfileConfig),
@@ -528,6 +588,9 @@ func (c Config) Validate() error {
 	if err := validateWebConfig(c); err != nil {
 		return err
 	}
+	if err := c.Web.MapTiles.Validate(); err != nil {
+		return err
+	}
 	if c.PageRuntime != nil {
 		if err := c.PageRuntime.Validate(); err != nil {
 			return fmt.Errorf("[page_runtime]: %w", err)
@@ -631,11 +694,8 @@ func validateMediaOrigins(c Config) error {
 				return fmt.Errorf("%s endpoint host must be ASCII", prefix)
 			}
 		}
-		if net.ParseIP(hostname) == nil {
-			asciiHostname, err := idna.Lookup.ToASCII(strings.ToLower(hostname))
-			if err != nil || asciiHostname != strings.ToLower(hostname) {
-				return fmt.Errorf("%s endpoint host is not valid under IDNA lookup rules", prefix)
-			}
+		if !validASCIIHostname(hostname) {
+			return fmt.Errorf("%s endpoint host is not valid under IDNA lookup rules", prefix)
 		}
 		if !credentialReferencePattern.MatchString(origin.CredentialBinding) {
 			return fmt.Errorf("%s credential_binding must use credential:<name>", prefix)

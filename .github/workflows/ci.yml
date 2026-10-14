@@ -19,7 +19,7 @@ env:
 jobs:
   docs:
     name: Public documentation
-    runs-on: namespace-profile-linux-4cpu
+    runs-on: ubuntu-24.04
     steps:
       - name: Check out full repository history
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -67,7 +67,7 @@ jobs:
 
   frontend:
     name: Web application
-    runs-on: namespace-profile-linux-8cpu
+    runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -86,7 +86,7 @@ jobs:
 
   released-schemas:
     name: Released storage schemas
-    runs-on: namespace-profile-linux-4cpu
+    runs-on: ubuntu-24.04
     steps:
       - name: Check out full repository history
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -99,7 +99,7 @@ jobs:
 
   report-export-browser:
     name: Browser reports and original exports
-    runs-on: namespace-profile-linux-8cpu
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - name: Check out repository
@@ -127,9 +127,14 @@ jobs:
       - name: Qualify browser workflow with both SQLite builds
         run: make report-export-browser-test
 
+      - name: Qualify photo map in Chromium
+        env:
+          CGO_ENABLED: "0"
+        run: make photo-map-browser-test
+
   test:
     name: Linux tests
-    runs-on: namespace-profile-linux-16cpu
+    runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -207,7 +212,7 @@ jobs:
 
   purego:
     name: Pure-Go SQLite
-    runs-on: namespace-profile-linux-16cpu
+    runs-on: ubuntu-24.04
     env:
       CGO_ENABLED: "0"
     steps:
@@ -229,7 +234,7 @@ jobs:
 
   lint:
     name: golangci-lint
-    runs-on: namespace-profile-linux-8cpu
+    runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -258,10 +263,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: namespace-profile-windows-8cpu, goarch: amd64 }
-          # The 4 vCPU arm64 runner is saturated by the full suite, so its packages split across two.
+          - { runner: windows-2025, goarch: amd64 }
+          # Split tests because the full suite saturates the 4 vCPU arm64 runners.
           - { runner: windows-11-vs2026-arm, goarch: arm64, shard: 1 }
           - { runner: windows-11-vs2026-arm, goarch: arm64, shard: 2 }
+          - { runner: windows-11-vs2026-arm, goarch: arm64, shard: 3 }
+          - { runner: windows-11-vs2026-arm, goarch: arm64, shard: 4 }
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Check out repository
@@ -303,12 +310,14 @@ jobs:
           Add-Content -Path $env:GITHUB_ENV -Value "CC=$cc"
 
       - name: Build
+        if: matrix.goarch == 'amd64' || matrix.shard == 4
         env:
           CGO_ENABLED: "1"
           GOARCH: ${{ matrix.goarch }}
         run: go build -tags fts5 ./...
 
       - name: Vet
+        if: matrix.goarch == 'amd64' || matrix.shard == 4
         env:
           CGO_ENABLED: "1"
           GOARCH: ${{ matrix.goarch }}
@@ -319,4 +328,4 @@ jobs:
           CGO_ENABLED: "1"
           GOARCH: ${{ matrix.goarch }}
         shell: pwsh
-        run: ./scripts/test-go-ci.ps1 -Shard ${{ matrix.shard || 'all' }}
+        run: ./scripts/test-go-ci.ps1 -Shard ${{ matrix.shard || 'all' }} -ShardCount 4

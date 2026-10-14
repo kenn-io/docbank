@@ -6,11 +6,13 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json/v2"
+	"fmt"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
@@ -92,6 +94,46 @@ func (c *interruptedPhotoCatalog) Resolve(_ context.Context, _ packstore.Hash) (
 	return packstore.Location{}, c.cause
 }
 
+func TestPhotoBrowsePageSizeLimits(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	for i := range 251 {
+		name := fmt.Sprintf("synthetic-%03d.jpg", i)
+		_, err := s.CreateFile(t.Context(), s.RootID(), name, testHash(name), 10, "image/jpeg")
+		require.NoError(t, err)
+	}
+	for _, tc := range []struct {
+		projection string
+		size       int
+		status     int
+		errorText  string
+	}{
+		{"", 250, http.StatusOK, ""},
+		{"", 251, http.StatusUnprocessableEntity, "page_size must be at most 250 without projection map"},
+		{"", 1000, http.StatusUnprocessableEntity, "page_size must be at most 250 without projection map"},
+		{"map", 1000, http.StatusOK, ""},
+		{"map", 1001, http.StatusUnprocessableEntity, "1000"},
+	} {
+		t.Run(fmt.Sprintf("%s/%d", tc.projection, tc.size), func(t *testing.T) {
+			response, body := do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, api.PhotoBrowseRequest{Query: api.QueryPayload(`{}`), Projection: tc.projection, PageSize: tc.size})
+			require.Equal(t, tc.status, response.StatusCode, body)
+			if tc.errorText != "" {
+				require.Contains(t, body, tc.errorText)
+				return
+			}
+			var page api.PhotoBrowsePage
+			require.NoError(t, json.Unmarshal([]byte(body), &page))
+			if tc.projection == "map" {
+				require.Len(t, page.MapItems, 251)
+				require.Empty(t, page.NextCursor)
+			} else {
+				require.Len(t, page.Items, 250)
+				require.NotEmpty(t, page.NextCursor)
+			}
+		})
+	}
+}
+
 func TestPhotoBrowseRouteContract(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
@@ -105,7 +147,7 @@ func TestPhotoBrowseRouteContract(t *testing.T) {
 		require.NoError(t, err)
 		if name == "a.jpg" {
 			qualityNode = node
-			fields := []document.SourceMetadataFieldV1{}
+			fields := syntheticGPSFields()
 			sources := map[string]string{"camera_make": "Make", "camera_model": "Model", "lens_make": "LensMake", "lens_model": "LensModel", "iso": "PhotographicSensitivity", "f_number": "FNumber", "exposure_time_seconds": "ExposureTime", "exposure_bias_ev": "ExposureBiasValue", "focal_length_mm": "FocalLength", "orientation": "Orientation"}
 			for key, value := range map[string]string{"camera_make": "Synthetic Camera", "camera_model": "Model 7", "lens_make": "Synthetic Lens", "lens_model": "Lens 85"} {
 				fields = append(fields, document.SourceMetadataFieldV1{Key: "image.exif." + key, Namespace: "image.exif", SourceField: sources[key], Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new(value)}})
@@ -134,7 +176,34 @@ func TestPhotoBrowseRouteContract(t *testing.T) {
 	require.Nil(t, page.Items[0].CaptureTime)
 	require.Equal(t, "pending", page.Items[0].Quality.State)
 	require.Contains(t, body, `"signals":null`)
+	mapResponse, mapBody := do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, api.PhotoBrowseRequest{Query: api.QueryPayload(`{"filters":{"kinds":["photo"]}}`), PageSize: 1, Projection: "map"})
+	require.Equal(t, http.StatusOK, mapResponse.StatusCode, mapBody)
+	var compact api.PhotoBrowsePage
+	require.NoError(t, json.Unmarshal([]byte(mapBody), &compact))
+	require.Empty(t, compact.Items)
+	require.Len(t, compact.MapItems, 1)
+	require.Equal(t, page.Total, compact.Total)
+	require.Equal(t, page.Items[0].AssetID, compact.MapItems[0].AssetID)
+	require.Equal(t, page.Items[0].Revision, compact.MapItems[0].Revision)
+	require.Equal(t, new(0.0), compact.MapItems[0].Latitude)
+	require.Equal(t, new(12.0), compact.MapItems[0].Longitude)
+	require.Equal(t, page.Items[0].Previews.Grid.State, compact.MapItems[0].Previews.Grid.State)
+	for _, omitted := range []string{"camera_make", "quality", "fit", "large", "content_version_id"} {
+		require.NotContains(t, mapBody, `"`+omitted+`"`)
+	}
+	mapResponse, mapBody = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, api.PhotoBrowseRequest{Query: api.QueryPayload(`{"filters":{"kinds":["photo"]}}`), PageSize: 1, Projection: "map", Cursor: compact.NextCursor})
+	require.Equal(t, http.StatusOK, mapResponse.StatusCode, mapBody)
+	compact = api.PhotoBrowsePage{}
+	require.NoError(t, json.Unmarshal([]byte(mapBody), &compact))
+	require.Len(t, compact.MapItems, 1)
+	require.NotEqual(t, page.Items[0].AssetID, compact.MapItems[0].AssetID)
+	require.Empty(t, compact.NextCursor)
+	mapResponse, mapBody = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, api.PhotoBrowseRequest{Query: api.QueryPayload(`{"text":"absent-synthetic-photo"}`), Projection: "map"})
+	require.Equal(t, http.StatusOK, mapResponse.StatusCode, mapBody)
+	require.NotContains(t, mapBody, `"map_items"`)
 	row := page.Items[0]
+	require.NotContains(t, body, `"latitude"`)
+	require.NotContains(t, body, `"longitude"`)
 	require.Equal(t, new("Synthetic Camera"), row.CameraMake)
 	require.Equal(t, new("Model 7"), row.CameraModel)
 	require.Equal(t, new("Synthetic Lens"), row.LensMake)
@@ -257,6 +326,16 @@ func TestReadPhotoPreviewVerifiedBytes(t *testing.T) {
 	asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	generation, data, previewHash := publishTestPhotoPreview(t, s, node)
+	queryResponse, queryBody := do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, api.PhotoBrowseRequest{Query: api.QueryPayload(`{}`)})
+	require.Equal(t, http.StatusOK, queryResponse.StatusCode, queryBody)
+	var library api.PhotoBrowsePage
+	require.NoError(t, json.Unmarshal([]byte(queryBody), &library))
+	queryResponse, queryBody = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, api.PhotoBrowseRequest{Query: api.QueryPayload(`{}`), Projection: "map"})
+	require.Equal(t, http.StatusOK, queryResponse.StatusCode, queryBody)
+	var mapped api.PhotoBrowsePage
+	require.NoError(t, json.Unmarshal([]byte(queryBody), &mapped))
+	require.Equal(t, library.Items[0].Previews.Grid, mapped.MapItems[0].Previews.Grid)
+	require.Equal(t, "ready", mapped.MapItems[0].Previews.Grid.State)
 	path := "/api/v1/photos/assets/" + asset.ID + "/previews/" + generation.GenerationID
 	response, body := get(t, ts, path, nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
@@ -489,4 +568,48 @@ func TestPreparePhotoPreviewEligibilityAndReuse(t *testing.T) {
 	first = api.PhotoPreviewSlot{}
 	require.NoError(t, json.Unmarshal([]byte(body), &first))
 	require.Equal(t, "ready", first.State)
+}
+
+func syntheticGPSFields() []document.SourceMetadataFieldV1 {
+	return []document.SourceMetadataFieldV1{
+		{Key: "image.exif.gps_latitude", Namespace: "image.exif", SourceField: "GPSLatitude", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("0")}},
+		{Key: "image.exif.gps_longitude", Namespace: "image.exif", SourceField: "GPSLongitude", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("12")}},
+	}
+}
+
+func TestPhotoBrowseBrowserCoordinatesRequireTiles(t *testing.T) {
+	t.Parallel()
+	for _, enabled := range []bool{false, true} {
+		name := "disabled"
+		if enabled {
+			name = "enabled"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ts, s := newTestServer(t, func(d *api.Deps) {
+				if enabled {
+					d.Cfg.Web.MapTiles = config.MapTilesConfig{TileURL: "https://tiles.example.org/{z}/{x}/{y}", Attribution: "Example", MaxZoom: 19}
+				}
+			})
+			node, err := s.CreateFile(t.Context(), s.RootID(), "synthetic.jpg", testHash("gps"), 10, "image/jpeg")
+			require.NoError(t, err)
+			canonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: syntheticGPSFields()})
+			require.NoError(t, err)
+			_, err = s.PublishSourceMetadata(t.Context(), node.BlobHash, testHash("synthetic gps metadata"), canonical)
+			require.NoError(t, err)
+			headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
+			resp, body := do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", headers, api.PhotoBrowseRequest{Query: api.QueryPayload(`{}`), Projection: "map"})
+			require.Equal(t, http.StatusOK, resp.StatusCode, body)
+			var compact api.PhotoBrowsePage
+			require.NoError(t, json.Unmarshal([]byte(body), &compact))
+			require.Len(t, compact.MapItems, 1)
+			if enabled {
+				require.Equal(t, new(0.0), compact.MapItems[0].Latitude)
+				require.Equal(t, new(12.0), compact.MapItems[0].Longitude)
+			} else {
+				require.Nil(t, compact.MapItems[0].Latitude)
+				require.Nil(t, compact.MapItems[0].Longitude)
+			}
+		})
+	}
 }

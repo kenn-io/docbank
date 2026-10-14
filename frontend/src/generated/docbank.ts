@@ -133,6 +133,12 @@ export interface PhotoAuthored {
      */
   caption: string;
   /**
+     * Confirmation mask. See PhotoFile.confirmed_fields for supported bits.
+     * @minimum 0
+     * @maximum 127
+     */
+  confirmed_fields?: number;
+  /**
      * At most 16384 UTF-8 bytes.
      * @maxLength 16384
      */
@@ -1518,6 +1524,21 @@ export interface CreatePhotoAssetRequest {
   /** @minimum 1 */
   node_id: number;
   role?: CreatePhotoAssetRequestRole;
+}
+
+export interface FaceBox {
+  height: number;
+  width: number;
+  x: number;
+  y: number;
+}
+
+export interface CreatePhotoFaceRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  box?: FaceBox;
+  face_id?: string;
+  person_id?: string;
 }
 
 export interface CreateTagRequest {
@@ -3085,6 +3106,32 @@ export interface FormatCoverageResponse {
   pending: PendingFormatV1[];
 }
 
+export type FuzzyReceiptReasonsItem = typeof FuzzyReceiptReasonsItem[keyof typeof FuzzyReceiptReasonsItem];
+
+
+export const FuzzyReceiptReasonsItem = {
+  candidate_limit: 'candidate_limit',
+  name_limit: 'name_limit',
+  path_limit: 'path_limit',
+  query_ineligible: 'query_ineligible',
+  result_limit: 'result_limit',
+  time_budget: 'time_budget',
+} as const;
+
+export type FuzzyReceiptStatus = typeof FuzzyReceiptStatus[keyof typeof FuzzyReceiptStatus];
+
+
+export const FuzzyReceiptStatus = {
+  complete: 'complete',
+  limited: 'limited',
+  not_run: 'not_run',
+} as const;
+
+export interface FuzzyReceipt {
+  reasons: FuzzyReceiptReasonsItem[];
+  status: FuzzyReceiptStatus;
+}
+
 export interface GCReport {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -3768,6 +3815,25 @@ export interface MovePathRequest {
   dest_path: string;
   /** @minLength 1 */
   src_path: string;
+}
+
+export interface PhotoRejectTarget {
+  asset_id: string;
+  /** @minimum 1 */
+  member_revision: number;
+  /** @minimum 1 */
+  revision: number;
+}
+
+export interface MovePhotoRejectsRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  hidden?: boolean;
+  /**
+     * @minItems 1
+     * @maxItems 1000
+     */
+  targets: PhotoRejectTarget[];
 }
 
 export interface NodePage {
@@ -4974,6 +5040,12 @@ export interface PhotoFile {
      */
   caption: string;
   /**
+     * Confirmed fields bitmask: rating=1, flag=2, label=4, caption=8, creator=16, copyright=32, rotation=64. An absent key means no confirmed fields; zero is omitted. Empty text and zero values can be confirmed.
+     * @minimum 0
+     * @maximum 127
+     */
+  confirmed_fields?: number;
+  /**
      * At most 16384 UTF-8 bytes.
      * @maxLength 16384
      */
@@ -5198,11 +5270,34 @@ export interface PhotoBrowseRow {
   width_px: number | null;
 }
 
+export interface PhotoMapRowPreviewsStruct {
+  grid: PhotoPreviewSlot;
+}
+
+export interface PhotoMapRow {
+  asset_id: string;
+  /** @nullable */
+  capture_time: string | null;
+  /** @nullable */
+  height_px: number | null;
+  /** @nullable */
+  latitude: number | null;
+  /** @nullable */
+  longitude: number | null;
+  name: string;
+  previews: PhotoMapRowPreviewsStruct;
+  /** @minimum 1 */
+  revision: number;
+  /** @nullable */
+  width_px: number | null;
+}
+
 export interface PhotoBrowsePage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   facets: PhotoBrowsePageFacetsItem[];
   items: PhotoBrowseRow[];
+  map_items?: PhotoMapRow[];
   next_cursor?: string;
   /** @minimum 0 */
   total: number;
@@ -5219,6 +5314,13 @@ export const PhotoBrowseRequestFacetsItem = {
   set: 'set',
 } as const;
 
+export type PhotoBrowseRequestProjection = typeof PhotoBrowseRequestProjection[keyof typeof PhotoBrowseRequestProjection];
+
+
+export const PhotoBrowseRequestProjection = {
+  map: 'map',
+} as const;
+
 export interface PhotoBrowseRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -5229,11 +5331,49 @@ export interface PhotoBrowseRequest {
   facets?: PhotoBrowseRequestFacetsItem[];
   hidden?: boolean;
   /**
+     * Maximum 1000 only with projection: "map"; 250 otherwise.
      * @minimum 1
-     * @maximum 250
+     * @maximum 1000
      */
   page_size?: number;
+  projection?: PhotoBrowseRequestProjection;
   query: SavedQueryV1Schema;
+}
+
+export interface PhotoFace {
+  assertion_id?: string;
+  box: FaceBox;
+  content_version_id: string;
+  created_at: string;
+  face_id: string;
+  revision: number;
+}
+
+export interface PhotoPersonAssertion {
+  action: string;
+  assertion_id: string;
+  content_version_id: string;
+  note: string;
+  person_id: string;
+  recorded_at: string;
+  revision: number;
+  role: string;
+}
+
+export interface PhotoFacePage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxItems 1000 */
+  assertions: PhotoPersonAssertion[];
+  /** @maxItems 1000 */
+  faces: PhotoFace[];
+}
+
+export interface PhotoFaceResult {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  assertion?: PhotoPersonAssertion;
+  face?: PhotoFace;
 }
 
 export interface PhotoHiddenPasscodeRequest {
@@ -5273,6 +5413,44 @@ export interface PhotoImportStartRequest {
      * @maxLength 4096
      */
   source_root: string;
+}
+
+export interface PhotoRejectMember {
+  file_id: string;
+  flag: string;
+  in_trash: boolean;
+  name: string;
+}
+
+export interface PhotoRejectMixed {
+  asset_id: string;
+  members: PhotoRejectMember[];
+}
+
+export interface PhotoRejectsMoved {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  moved: string[];
+}
+
+export interface PhotoRejectsPreflight {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  files: number;
+  mixed: PhotoRejectMixed[];
+  mixed_count: number;
+  photos: number;
+  selection_limit: number;
+  targets: PhotoRejectTarget[];
+  unchanged: number;
+}
+
+export interface PhotoRejectsRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  coverage?: WorkspaceQueryCoverage;
+  hidden?: boolean;
+  query: SavedQueryV1Schema;
 }
 
 /**
@@ -6477,6 +6655,8 @@ export const SearchHitMatch = {
   name: 'name',
   content: 'content',
   filter: 'filter',
+  fuzzy_name: 'fuzzy_name',
+  fuzzy_path: 'fuzzy_path',
 } as const;
 
 export interface SearchHit {
@@ -6488,6 +6668,7 @@ export interface SearchHit {
 export interface SearchReport {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  fuzzy?: FuzzyReceipt;
   hits: SearchHit[];
   limit: number;
   mime_type?: string;
@@ -8149,6 +8330,7 @@ export type RunSavedQueryHeaders = {
 
 export type SearchParams = {
 q?: string;
+fuzzy?: boolean;
 /**
  * @minimum 1
  * @maximum 1000
@@ -15768,6 +15950,82 @@ return sessionJSON<PhotoAsset>(getPromotePhotoNodeUrl(nodeId),
 
 
 
+export const getPreflightPhotoRejectsUrl = () => {
+
+
+
+
+  return `/api/v1/photos/rejects/preflight`
+}
+
+/**
+ * @summary Preview rejected photos in the current scope
+ */
+export const preflightPhotoRejects = async (photoRejectsRequest: NonReadonly<PhotoRejectsRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoRejectsPreflight> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoRejectsPreflight>(getPreflightPhotoRejectsUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(photoRejectsRequest)
+  }
+);}
+
+
+
+export const getMovePhotoRejectsUrl = () => {
+
+
+
+
+  return `/api/v1/photos/rejects/trash`
+}
+
+/**
+ * @summary Move previewed rejected photos to trash
+ */
+export const movePhotoRejects = async (movePhotoRejectsRequest: NonReadonly<MovePhotoRejectsRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoRejectsMoved> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoRejectsMoved>(getMovePhotoRejectsUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(movePhotoRejectsRequest)
+  }
+);}
+
+
+
 export const getGetPhotoSettingsUrl = () => {
 
 
@@ -15826,6 +16084,69 @@ return sessionJSON<PhotoSettings>(getSetPhotoSettingsUrl(),
     method: 'PUT',
     headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
     body: JSON.stringify(setPhotoSettingsRequest)
+  }
+);}
+
+
+
+export const getListPhotoFacesUrl = (contentVersionId: string,) => {
+
+
+
+
+  return `/api/v1/photos/versions/${encodeURIComponent(String(contentVersionId))}/faces`
+}
+
+/**
+ * @summary Read face boxes and people on one photo version
+ */
+export const listPhotoFaces = async (contentVersionId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoFacePage> => {
+
+  return sessionJSON<PhotoFacePage>(getListPhotoFacesUrl(contentVersionId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getCreatePhotoFaceUrl = (contentVersionId: string,) => {
+
+
+
+
+  return `/api/v1/photos/versions/${encodeURIComponent(String(contentVersionId))}/faces`
+}
+
+/**
+ * @summary Record a face box or a person in a whole photo
+ */
+export const createPhotoFace = async (contentVersionId: string,
+    createPhotoFaceRequest: NonReadonly<CreatePhotoFaceRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoFaceResult> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoFaceResult>(getCreatePhotoFaceUrl(contentVersionId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(createPhotoFaceRequest)
   }
 );}
 
@@ -16632,7 +16953,7 @@ export const getSearchUrl = (params?: SearchParams,) => {
 }
 
 /**
- * Name matches retain their established BM25 order and appear first; content-only matches follow in their own BM25 order. Every hit names its match source. The query may be empty when a tag or modification-time bound makes the page bounded; such filter-only results are ordered by modification time descending. An optional stable tag ID requires that assignment for every result. An optional parameter-free MIME type matches the current file version with or without parameters. An optional live directory node ID restricts results to its descendants. Optional absolute modification timestamps form an inclusive-since, exclusive-before interval.
+ * Name matches retain their established BM25 order and appear first; content-only matches follow in their own BM25 order. Every hit names its match source. The query may be empty when a tag or modification-time bound makes the page bounded; such filter-only results are ordered by modification time descending. An optional stable tag ID requires that assignment for every result. An optional parameter-free MIME type matches the current file version with or without parameters. An optional live directory node ID restricts results to its descendants. Optional absolute modification timestamps form an inclusive-since, exclusive-before interval. fuzzy=true appends bounded ASCII one-edit filename/path discovery after ordinary hits and includes a coverage receipt; it requires a nonblank query, and text outside the supplemental syntax reports not_run.
  * @summary Search live document names and extracted text
  */
 export const search = async (params?: SearchParams, options?: Parameters<typeof sessionJSON>[1]): Promise<SearchReport> => {

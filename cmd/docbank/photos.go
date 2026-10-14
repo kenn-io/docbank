@@ -401,7 +401,7 @@ func init() {
 	photoAssetsCmd.AddCommand(photoCreateCmd, photoInspectCmd, photoAttachCmd, photoDetachCmd,
 		photoExcludeCmd, photoTrashCmd, photoPromoteCmd, photoDisplayCmd)
 	photoSettingsCmd.AddCommand(photoSettingsShowCmd, photoSettingsSetCmd, photoSettingsResetCmd)
-	photosCmd.AddCommand(photoAssetsCmd, photoSettingsCmd)
+	photosCmd.AddCommand(photoAssetsCmd, photoSettingsCmd, photoFacesCommand())
 	rootCmd.AddCommand(photosCmd)
 
 	for _, command := range []*cobra.Command{photoCreateCmd, photoPromoteCmd} {

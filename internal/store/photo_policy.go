@@ -94,14 +94,15 @@ type PhotoNodeFacts struct {
 
 // PhotoFile is one role-bearing reference to an ordinary Docbank file node.
 type PhotoFile struct {
-	Revision  int64  `json:"revision"`
-	Rating    int    `json:"rating"`
-	Flag      string `json:"flag"`
-	Label     string `json:"label"`
-	Caption   string `json:"caption"`
-	Creator   string `json:"creator"`
-	Copyright string `json:"copyright"`
-	Rotation  int    `json:"rotation"`
+	Confirmed PhotoAuthoredFields `json:"confirmed_fields"`
+	Revision  int64               `json:"revision"`
+	Rating    int                 `json:"rating"`
+	Flag      string              `json:"flag"`
+	Label     string              `json:"label"`
+	Caption   string              `json:"caption"`
+	Creator   string              `json:"creator"`
+	Copyright string              `json:"copyright"`
+	Rotation  int                 `json:"rotation"`
 
 	ID          string  `json:"id"`
 	AssetID     string  `json:"asset_id"`

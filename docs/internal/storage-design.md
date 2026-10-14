@@ -405,9 +405,16 @@ processing sources remain eligible. Automatic enrollment writes no human
 receipt. Existing graphs survive ordinary trash and restore; permanent node
 deletion removes memberships, repairs display pointers, advances each
 affected asset once, and retains an empty asset row.
+
 Unaudited permanent deletion removes authored receipts that reference a deleted
 target or sidecar and their dependent undo receipts in the same transaction.
 Deleting one member removes its whole batch receipt even when other members survive.
+
+Grouped photo imports find edited files through the provenance index on
+`original_path`, so a new source path does not scan unrelated provenance.
+Matching still requires a live file, a compatible photo role, and unsuperseded
+provenance. A node shared with another active source path keeps its content;
+an edit from one path becomes a separate file.
 
 The settings singleton represents an absent or NULL preference as the built-in
 RAW order, with its own revision fence. Setting it recomputes every inherited
@@ -418,9 +425,11 @@ keep their revision and append no receipt.
 
 Hidden photos store nullable `photo_assets.hidden_at`. Revisioned hide/unhide writes use the existing asset receipts. Disable reads only hidden asset graphs and atomically clears their flags and authentication state. Reset preserves flags. Public Photos asset and preview reads require an active unlock for hidden assets; ordinary Documents reads retain access.
 
-Vault-wide hidden credentials use fixed Argon2id parameters. Failure timestamps and five-minute lockout persist through restart and restore. JSONL v1 backs up hidden flags, credentials, failed attempts, lockout expiry and decision receipts. Sessions store SHA-256 token digests, expire after five minutes, clear on restart, and stay outside backup. Schema 33 uses the existing deterministic JSONL rebuild for supported released schemas and retains the source database. Schemas 30 through 32 remain unsupported, unreleased sources.
+Vault-wide hidden credentials use fixed Argon2id parameters. Failure timestamps and five-minute lockout persist through restart and restore. JSONL v1 backs up hidden flags, credentials, failed attempts, lockout expiry and decision receipts. Sessions store SHA-256 token digests, expire after five minutes, clear on restart, and stay outside backup. Schema 35 uses the existing deterministic JSONL rebuild for supported released schemas and retains the source database. Schemas 30 through 34 remain unsupported, unreleased sources.
 
-Schema version 33 exports assets, files, settings, albums, album members, and receipts in stable
+The `confirmed_fields` bit mask records supplied rating (1), flag (2), label (4), caption (8), creator (16), copyright (32) and rotation (64), including empty clears. Sidecar initialization confirms only non-default values; undo, audit and backup retain the mask. A revision-1 file has no decisions, so restore refuses one with authored values or confirmation bits.
+
+Schema version 35 exports assets, files, settings, albums, album members, receipts, and faces in stable
 JSONL order. Restore requires a pristine target and validates node ownership,
 local pointers, sidecar targets, selected display state, enum-like text,
 revisions, complete non-null authored receipt snapshots, and the graph before commit.
@@ -571,13 +580,18 @@ in history but cannot receive new assignments or assertions. The derived
 rebuild after restore. An audited vault refuses ordinary person mutations
 until audit-aware mutation records exist.
 
+### Photo face authority
+
+`photo_faces` stores a content-version ID, normalized box, revision and optional assertion ID. Boxes are fractions of the EXIF-oriented preview before authored rotation; changing a photo's rotation leaves stored geometry unchanged. Naming writes the shared `person_document_assertions` row with role `depicted`; a whole-photo mark uses that row without inventing a face. Multiple faces of one person on one version share that row. Face reads return asserted people and suppressed records referenced by faces in the same Hidden-gated transaction.
+
+Each photo version is limited to 1,000 faces and 1,000 depicted assertions, including suppressed rows. A write past either limit fails with `ErrPhotoFaceLimit`. A newly created assertion advances the binding epoch only when its version has a document-event head.
+
+Manual boxed creates use the caller's face UUID for replay. A replay with the same ID, version and box returns the saved face and, for a named face, its saved assertion, even after that person retires; a supplied person must be the saved person or a person merged into it. Replay follows `person_merges` receipts rather than aliases, because retiring a survivor turns its aliases into deletion tombstones. A later name can attach to an unnamed face using the same ID and box, and that requires an active person. Person candidates cannot carry `depicted` occurrences.
+
+A merge retargets faces from the absorbed person's duplicate assertions to the survivor's matching assertion before deleting the duplicates. Deleting a content version cascades its faces and assertions. Faces round-trip through JSONL; validation checks the face's version, its assertion's version and `depicted` role, and the 1,000-record bounds. Detection, face-person suggestions, rendered overlays, correction and undo are not built.
+
 !!! info "Planned"
-    The People view will join one canonical person to current document edges,
-    operator assertions, and photo face assignments. Document edges are valid
-    only for the current binding epoch and generation. Photo visibility comes
-    from the photo resolver. Review queues use open document match candidates
-    and face-person suggestions. Merge and split will move both evidence kinds
-    when the photo authority lands.
+    The People view will join canonical people to current document edges, operator assertions and photo faces. Document edges require the current binding epoch and generation; photo visibility follows the photo resolver.
 
 ## Released schema policy
 

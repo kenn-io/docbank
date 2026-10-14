@@ -94,6 +94,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `GET /photos/assets/{asset_id}/previews/{generation_id}` | read verified bytes for an eligible display preview | Implemented |
 | `POST /photos/assets` · `POST /photos/assets/{asset_id}/files` · `DELETE /photos/assets/{asset_id}/files/{file_id}` | create, attach, or detach photo membership | Implemented |
 | `POST /photos/assets/{asset_id}/exclude` · `POST /photos/nodes/{node_id}/promote` | change exclusion or promote a live file | Implemented |
+| `POST /photos/rejects/preflight` · `POST /photos/rejects/trash` | count scoped rejects and mixed pairs, then confirm a bounded atomic move to recoverable trash | Implemented |
 | `POST /photos/assets/{asset_id}/trash` | atomically move every live photo member to recoverable trash | Implemented |
 | `PUT /photos/assets/{asset_id}/display` · `GET\|PUT /photos/settings` | set an asset display override or vault preference | Implemented |
 | `POST /photos/assets/{asset_id}/hide` · `POST /photos/assets/{asset_id}/unhide` | change Photos visibility under `If-Match` | Implemented |
@@ -121,7 +122,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `GET /audit/scopes/{scope_id}/history?limit=&cursor=` | read canonical newest-first events across every member of one permanent scope | Implemented |
 | `POST /audit/verify` | independently replay audit authority, optionally prove recorded evidence is an exact prefix, and re-hash every protected blob | Implemented |
 | `POST /nodes/{id}/verify` | re-hash one file, bound to an inspected node revision | Implemented |
-| `GET /search?q=&tag_id=&mime_type=&under_node_id=&modified_since=&modified_before=&limit=` | bounded name and extracted-content search (FTS5), optionally restricted by stable tag identity, current base media type, descendants of a live directory, and current node modification time, with match source and `truncated` status | Implemented |
+| `GET /search?q=&tag_id=&mime_type=&under_node_id=&modified_since=&modified_before=&fuzzy=&limit=` | bounded name and extracted-content search (FTS5), optionally restricted by stable tag identity, current base media type, descendants of a live directory, and current node modification time, with match source and `truncated` status; `fuzzy=true` appends bounded one-typo filename/path discovery with a coverage receipt | Implemented |
 | `GET /processing/profiles` · `POST /processing/plans` | list executable profiles / preview one source version and its provider disclosures | Implemented |
 | `POST /processing/jobs` · `GET /processing/jobs/{id}` | run a reviewed plan with streamed job identity / read aggregate status | Implemented |
 | `POST /processing/consent/grants` · `POST /processing/consent/revocations` | grant reviewed profile consent / revoke this operator's processing consent | Implemented |
@@ -183,6 +184,26 @@ require substantial work before reaching `limit`. The normal `limit` and
 `truncated` contract remains in force, without a cursor. If `truncated` is true,
 the page is incomplete. Narrowing time bounds cannot split a group with identical
 modification timestamps, such as nodes restored together.
+
+Set `fuzzy=true` on ordinary `GET /search` to append bounded ASCII filename
+and path discovery after existing hits. Blank text returns `422 validation`;
+other text outside the supplemental syntax returns ordinary hits with
+`not_run`/`query_ineligible`. The response adds optional
+`fuzzy: {status, reasons}` with `status` equal to `complete`, `limited`, or
+`not_run` and an always-array, sorted `reasons`. Without this option, the
+response shape and ordinary ranking are unchanged. Supplemental sources are
+`fuzzy_name` and `fuzzy_path`.
+
+Every scope filter applies before the supplemental candidate cap. Candidate
+metadata, scope eligibility, and bounded display paths share one read
+snapshot. A timeout discards supplemental results while retaining ordinary
+hits; request cancellation and real storage or validation errors propagate.
+Coverage limits and exact matching/ranking rules belong to the
+[Searching guide](../usage/searching.md#how-complete-is-fuzzy-discovery).
+`truncated` continues to identify a known omitted match, independently of
+uncertain fuzzy coverage. Daemon protocol revision 77 requires this contract;
+opted-in direct clients also reject a missing or invalid coverage receipt.
+The separate processing `POST /search` contract is unchanged.
 
 ### Document processing
 
@@ -365,6 +386,10 @@ the original is retained, then use processing receipts for that same source
 version. A processing receipt's state comes from its processing job when read.
 A failed retry can leave an earlier successful transcript visible for the same
 version. A transcript from an older version cannot cover newer bytes.
+Source lists page distinct caller-visible source IDs before selecting each
+source's newest visible occurrence. Equal occurrence timestamps use descending
+occurrence ID as the tie-break. Repeated occurrences do not consume page slots
+or repeat the newest-occurrence lookup for the same source.
 Raw URLs and credential bindings never appear in receipts, errors, logs,
 renditions, search results, or portable metadata.
 
@@ -924,6 +949,10 @@ snapshot rows remain ephemeral: backup and restore retain the receipt but do
 not reconstruct rows or silently rerun the query. Run the saved query again
 after `410 snapshot_gone`.
 
+Each run compares with the preceding committed receipt for the same saved
+query, even when concurrent runs materialize out of order. The predecessor
+lookup uses the saved-query index and reads only that definition's run history.
+
 Snapshot execution supports duplicate and text-coverage constraints.
 Text-coverage predicates require a configured processing profile. Semantic and
 hybrid modes and relevance ordering remain unsupported and return positioned
@@ -1100,7 +1129,7 @@ dropping it.
 
 These root-level routes are outside `/api/v1` and auth-exempt: `GET /health`,
 `GET /api/ping` (daemon discovery), `GET /docs` and the OpenAPI documents,
-and `/`, `/photos`, `/photos/albums`, `/photos/albums/{set_id}`, and `/assets/` (the static web application, when `[web] enabled`). Album page IDs must be canonical UUIDv4 values.
+and `/`, `/photos`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, `/photos/albums/{set_id}`, and `/assets/` (the static web application, when `[web] enabled`). Album page IDs must be canonical UUIDv4 values.
 
 A hidden `POST /api/daemon/shutdown` (not in the OpenAPI document) backs
 `docbank daemon stop`. It isn't auth-exempt: it requires both the API key and
@@ -1358,6 +1387,14 @@ interpreting omissions from a truncated tag listing. Both routes require
 authentication. Browser sessions permit only these exact POST paths without
 query arguments.
 
+## Photo faces
+
+`GET /api/v1/photos/versions/{content_version_id}/faces` reads one live current photo member. It returns `faces` and `assertions` (at most 1,000 each). Assertions include saved `depicted` links with action `assert` and suppressed links still referenced by a face. Check `action` before treating a person as depicted. Each assertion includes its ID, canonical `person_id`, version, revision and recording time. Whole-photo marks appear in `assertions` even when there are no face boxes.
+
+`POST` on the same path accepts `box: {x, y, width, height}` and optional `person_id`, or a `person_id` alone for a whole-photo mark. A boxed request requires a caller-supplied UUIDv4 `face_id`. Retain it for retries: the same ID, version and box return the current saved result, including a named face whose person has since retired; a supplied person must match its canonical person. Conflicting reuse returns `409 exists`. A write past 1,000 faces or 1,000 depicted people on one version returns `409 photo_face_limit`. The result contains `face` for a box and the saved `assertion` when a person is supplied. Repeated whole-photo marks reuse their assertion.
+
+Boxes use normalized coordinates in the EXIF-oriented preview before authored rotation. These routes require the daemon API key; Hidden photos also require the existing unlock cookie. Replies use `Cache-Control: no-store`. Audited vault writes fail with `audit_mutation_unsupported`. Detection, face suggestions, rendered face overlays, correction and undo are unavailable. See [photo face storage](https://github.com/kenn-io/docbank/blob/main/docs/internal/storage-design.md#photo-face-authority) for replay, merge and backup rules.
+
 ## Concurrency: resource revisions and `If-Match`
 
 Photo assets are a revisioned graph over ordinary file nodes. Image files and
@@ -1383,6 +1420,8 @@ graphs and preserves an empty asset identity.
 
 `POST /photos/assets/{asset_id}/trash` requires the asset revision in `If-Match` and moves all live members together. It returns the updated asset and ETag, recording one receipt. An asset with no live files returns `422 invalid_photo_asset`. Each photo is atomic; browser selections submit sequentially and can make partial progress. Audited trash uses the existing audited node rules.
 
+`POST /photos/rejects/preflight` accepts `{query, hidden, coverage}` and returns complete counts, mixed flags, and `targets` in asset ID order, limited to 1,000 live files. A photo that would exceed the limit waits for a later batch, and smaller photos after it still join this one. Coverage uses the same configuration and profile selection as photo queries. `POST /photos/rejects/trash` accepts `{hidden, targets}` and moves those photos atomically, returning `moved` in target order. Each target carries `asset_id`, the asset `revision`, and `member_revision`, the sum of all member node revisions. A missing target, changed asset or member node revision, changed reject flag, or changed Library/Hidden scope returns `412 stale_revision`. `unchanged` counts scoped photos that stay in Docbank, including mixed pairs; `photos` includes eligible photos left for later batches. Audited trash conflicts return `409 audit_mutation_unsupported` with the asset ID and failing file name; invalid or duplicate targets, or more than 1,000 live files return `422 invalid_photo_asset`. Request schema violations, including fewer than 1 or more than 1,000 targets, return `422 validation`. Hidden scope requires an active unlock at both steps.
+
 Paginated `GET /trash?limit=&offset=` groups independently trashed photo members into one item with optional `photo_asset_id` and `photo_file_count`, the count of trashed files recovered together. Unpaged listing remains per node. Restoring any member recovers its group, including companions inside trashed folders, under the selected member's revision. The affected roots are read and restored atomically. Ordinary Documents deletion can trash one member; permanent deletion waits until every connected member is trashed, old enough, and free of retention references. Trash the remaining members or detach live companions to make a partial group eligible.
 
 Photo assets, file memberships, settings, and receipts are included in the
@@ -1395,6 +1434,13 @@ as reads in this slice.
 
 `GET /photos/albums` lists albums with `member_count` for members that still have a file, `included_count` for visible included members, and current ready grid covers. `POST /photos/albums` creates one; `GET /photos/albums/{set_id}` inspects it. `PUT /photos/albums/{set_id}` changes optional `name` or `starred`. `PUT /photos/albums/{set_id}/cover` chooses a member through `asset_id`, or clears the override when omitted. `POST /photos/albums/{set_id}/duplicate` supplies a new `name`. `DELETE /photos/albums/{set_id}` deletes the album while retaining its photos. Existing-album writes require `If-Match` and return the album with its ETag.
 
+Album summaries compute both counts in one membership scan. A display file proves
+that a member still has a file; members without one use a file-existence lookup.
+Visibility and trash filters apply only to the included count, so hidden,
+excluded, and trashed photos retain their album membership count. Counts and
+cover selection share a read transaction. A zero included count rules out any
+visible cover, so summaries skip the cover search.
+
 `POST /photos/albums/{set_id}/members/add` and `/members/remove` accept either `asset_ids` with at most 1,000 entries or a strict `query`, with optional `coverage`. The full query scope resolves within the atomic write and, like photo browsing, covers only visible photos; removing hidden members requires their `asset_ids` and an unlock. Hidden explicit cover IDs are omitted while locked; selecting a hidden cover requires an unlock. Changes advance the album revision once and record every changed asset ID across bounded receipts. No-ops preserve the revision. Scoped browser sessions can list, create, update, duplicate, and delete albums, choose covers, and add or remove members through these exact method/path pairs with canonical UUIDv4 IDs and empty query strings. Existing-album writes retain the same revision checks. See [Albums](../usage/photos.md#albums) for member ordering, visibility, and cover selection.
 
 `POST /photos/imports` starts a folder import from a daemon-host path and
@@ -1405,7 +1451,7 @@ skipped, changed, failed, ambiguous and unsupported counts, plus the groups
 left unpaired. `POST /jobs/{operation_id}/cancel` stops it before the next
 group. Starting an import requires the API key on a loopback connection.
 
-`POST /photos/assets/query` executes [photo asset browsing](../usage/photos.md#browse-photo-assets-over-http). It accepts strict `query`, optional `coverage`, `page_size` from 1 through 250, `facets`, `cursor`, and `hidden`. The default page size is 50. Hidden defaults to false; true lists only hidden assets and validates the unlock on every request. It returns one item per eligible matching asset, the full `total`, and requested `camera`, `lens`, `year`, `location`, or `set` facets on the first page. Facets count distinct assets across the whole scope while omitting their own root filter. Camera and lens group Unicode-folded make/model identities and emit original spellings as keys; an asset can count under both make and model.
+`POST /photos/assets/query` executes [photo asset browsing](../usage/photos.md#browse-photo-assets-over-http). It accepts strict `query`, optional `coverage`, `page_size` from 1 through 250, `facets`, `cursor`, and `hidden`. The default page size is 50. With `projection: "map"`, `page_size` allows up to 1,000. Larger pages return a validation error. Hidden defaults to false; true lists only hidden assets and validates the unlock on every request. It returns one item per eligible matching asset, the full `total`, and requested `camera`, `lens`, `year`, `location`, or `set` facets on the first page. Facets count distinct assets across the whole scope while omitting their own root filter. Camera and lens group Unicode-folded make/model identities and emit original spellings as keys; an asset can count under both make and model.
 
 The supported sort fields are `relevance`, `capture_time`, `import_time`, `added_time`, `name`, `modified_at`, `size` and `media_type`; default ordering is name ascending. Relevance returns one page of up to `page_size` matches with no `next_cursor`. It orders evidence tier and numeric score in the requested direction, then capture time descending and asset UUID ascending. Descending relevance places filename evidence first, metadata evidence second, and retained content-only evidence third. Operands keep their field, prefix, phrase and NEAR meaning. Relevance has no snapshot row limit or build deadline. Passing a cursor with relevance returns `invalid_photo_cursor`.
 
@@ -1415,11 +1461,13 @@ Later pages reuse the first page's total while rows remain live; a new browse re
 
 `POST /photos/assets/{asset_id}/hide` and `/unhide` require `If-Match` and return the asset and ETag. Interactive Photos reads and mutations of already-hidden assets require an unlock. Background imports continue updating hidden files and return ordinary import receipts. Hide requires configured credentials. Unhide of an already-hidden asset requires an unlock; a visible no-op still requires the current revision. Ordinary Documents reads retain file access.
 
-`GET /photos/hidden` returns `configured`, opaque equality token `change_id`, and optional `expires_at` and `locked_until`, each paired with whole seconds remaining in `expires_in` and `locked_for`. POST `setup`, `unlock` and `disable` accept `passcode`; `change` also accepts `new_passcode`. Lock and reset require the JSON body `{}`. Unlock sets the HttpOnly, SameSite=Strict `docbank-hidden-<SHA-256 of request host and port>` cookie for five minutes; loopback HTTP omits Secure. Lock revokes every session, as does revoking or ending any browser session. Disable verifies the passcode and atomically unhides assets; reset preserves hidden flags while clearing auth. Unlock and lock remain available under audit. Five failures in sixty seconds persist a five-minute lockout with `Retry-After`. The active Library or Hidden view checks access every two seconds, conceals its view and deletes cached previews on a changed `change_id`, on 401 or 403, after any Hidden read failure, or after three consecutive Library read failures, and refreshes before redisplay; HTTP 401 uses the browser session-expired flow. Documents snapshots remain valid.
+`GET /photos/hidden` returns `configured`, opaque equality token `change_id`, and optional `expires_at` and `locked_until`, each paired with whole seconds remaining in `expires_in` and `locked_for`. POST `setup`, `unlock` and `disable` accept `passcode`; `change` also accepts `new_passcode`. Lock and reset require the JSON body `{}`. Unlock sets the HttpOnly, SameSite=Strict `docbank-hidden-<SHA-256 of request host and port>` cookie for five minutes; loopback HTTP omits Secure. Lock revokes every session, as does revoking or ending any browser session. Disable verifies the passcode and atomically unhides assets; reset preserves hidden flags while clearing auth. Unlock and lock remain available under audit. Five failures in sixty seconds persist a five-minute lockout with `Retry-After`. The active Library or Hidden view checks access every two seconds, conceals its view and deletes cached previews on a changed `change_id`, on 401 or 403, after any Hidden read failure, or after three consecutive Library read failures, and refreshes before redisplay; HTTP 401 uses the browser session-expired flow. A browser window that has opened Photos queues a keepalive lock on tab hide after pending Hidden writes, including an in-flight unlock, and offers Retry lock after failure in any workspace. Hidden stays concealed until a lock succeeds. Page close sends an immediate keepalive lock and, when Hidden writes are pending, queues another after them; closing during an unlock remains best effort. On return, Library and the open album's photo list reload before redisplay. The Albums index keeps its album list. Documents snapshots remain valid.
 
-`GET /photos/assets/{asset_id}/previews/{generation_id}` returns complete verified JPEG bytes for an included asset's current display version. An unavailable or stale generation returns 404. Missing retained bytes return `photo_preview_unavailable`; failed byte verification returns `photo_preview_corrupt`. Success includes Content-Length, Content-Digest, the quoted generation ETag and `X-Content-Type-Options: nosniff`. Visible previews use `Cache-Control: private, no-cache`; hidden previews require an unlock and use `no-store`, including `304`. A matching `If-None-Match` returns bodyless `304` after checking current display eligibility, without reopening the blob. Excluded or replaced displays return `404` even with a matching validator. Responses also vary by Cookie. Browser sessions permit the exact list POST, timeline POST, prepare POST, preview GET, hidden-state GET, interactive hidden POSTs and asset hide/unhide POSTs and `POST /photos/assets/{asset_id}/trash` with empty query strings. Reset requires the API key. Preview slot states are `missing`, `ready`, `unsupported` and `failed`; only ready results carry URLs. This read never generates a derivative.
+`GET /photos/assets/{asset_id}/previews/{generation_id}` returns complete verified JPEG bytes for an included asset's current display version. An unavailable or stale generation returns 404. Missing retained bytes return `photo_preview_unavailable`; failed byte verification returns `photo_preview_corrupt`. Success includes Content-Length, Content-Digest, the quoted generation ETag and `X-Content-Type-Options: nosniff`. Visible previews use `Cache-Control: private, no-cache`; hidden previews require an unlock and use `no-store`, including `304`. A matching `If-None-Match` returns bodyless `304` after checking current display eligibility, without reopening the blob. Excluded or replaced displays return `404` even with a matching validator. Responses also vary by Cookie. Browser sessions permit the exact list POST, timeline POST, prepare POST, preview GET, hidden-state GET, interactive hidden POSTs and asset hide/unhide POSTs and `POST /photos/assets/{asset_id}/trash`, `POST /photos/rejects/preflight`, and `POST /photos/rejects/trash` with empty query strings. Reset requires the API key. Preview slot states are `missing`, `ready`, `unsupported` and `failed`; only ready results carry URLs. This read never generates a derivative.
 
-Browse rows include current-display camera make/model, lens make/model, ISO, aperture, exposure time/bias, focal length and orientation; absent metadata fields serialize as JSON null. GPS remains outside browse rows.
+Optional `projection: "map"` returns compact `map_items` with asset ID, revision, name, capture time, dimensions, coordinates and the grid preview state/generation/dimensions; `items` is empty and `map_items` is omitted when empty. It uses the same query, total and cursor contract. Omit the projection for viewer metadata and fit/large previews.
+
+Browse rows include current-display camera make/model, lens make/model, ISO, aperture, exposure time/bias, focal length and orientation; absent metadata fields serialize as JSON null. Compact Map rows alone include `latitude` and `longitude`, decimal-degree numbers from the selected display file or JSON null when absent. Browser-session requests receive null for both unless `[web.map_tiles]` is configured; API-key responses are independent of tile configuration.
 
 `POST /photos/assets/{asset_id}/preview` accepts `content_version_id`, `size` (`fit` or `large`) and optional `hidden` (default false); hidden preparation requires an unlock and returns a preview slot. It verifies the current eligible display version before and after on-demand production under the mutation gate, with a 30-second request limit. A version mismatch at admission returns 409 `photo_display_changed`; a display replaced or excluded during production returns 404. Missing or mismatched source bytes return 503 `photo_preview_unavailable`; retry after restoring the source. Preparation timeouts and cancellation return 503 `photo_preview_unavailable` with distinct messages and a retry instruction. Retained failed and unsupported slots are returned unchanged.
 
@@ -1493,6 +1541,7 @@ and maintenance are exceptions:
 | `PUT\|DELETE /nodes/{id}/tags/{tag_id}` | required: target node revision; the tag revision also advances on a real assignment change |
 | `POST /photos/assets/{asset_id}/files`, `DELETE /photos/assets/{asset_id}/files/{file_id}`, `POST /photos/assets/{asset_id}/exclude`, `POST /photos/assets/{asset_id}/trash`, `PUT /photos/assets/{asset_id}/display`, `POST /photos/assets/{asset_id}/hide`, `POST /photos/assets/{asset_id}/unhide` | required: photo asset revision |
 | `PUT /photos/settings` | required: photo library settings revision |
+| `POST /photos/rejects/trash` | body: each previewed target's `revision` and `member_revision`; no `If-Match` header |
 | `PATCH /people/by-id/{person_id}` | required: person revision |
 | `POST /people/by-id/{person_id}/retire` | required: person revision |
 | `POST /people/by-id/{person_id}/merge` | required: survivor revision; the body carries the absorbed revision |
@@ -2100,7 +2149,7 @@ Host checks precede authentication and accept loopback, the concrete bind IP,
 the dedicated browser origin, and explicit `allowed_hosts`; wildcard listeners
 do not accept arbitrary names. Server-path ingest remains loopback-peer only.
 `/health`, `/api/ping`, `/docs`, the OpenAPI documents, and the static web application at
-`/`, `/photos`, `/photos/albums`, canonical `/photos/albums/{id}` pages, and `/assets/` are auth-exempt. Everything else, including the shutdown
+`/`, `/photos`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, canonical `/photos/albums/{id}` pages, and `/assets/` are auth-exempt. Everything else, including the shutdown
 route, requires the key.
 
 ## Error mapping

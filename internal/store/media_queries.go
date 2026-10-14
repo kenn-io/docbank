@@ -36,16 +36,19 @@ func (s *Store) MediaSources(
 		WHERE caller_principal=? AND visible=1`, principal).Scan(&total); err != nil {
 		return nil, 0, false, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT o.source_id,s.kind,COALESCE(o.source_version_id,''),
+	rows, err := s.db.QueryContext(ctx, `WITH page AS MATERIALIZED (
+		SELECT DISTINCT source_id FROM media_occurrences
+		WHERE caller_principal=? AND visible=1 AND source_id>?
+		ORDER BY source_id LIMIT ?
+	) SELECT o.source_id,s.kind,COALESCE(o.source_version_id,''),
 		COALESCE(v.content_version_id,''),o.occurrence_id,o.caller_filename,o.message_json
-		FROM media_occurrences o
+		FROM page CROSS JOIN media_occurrences o ON o.occurrence_id=(
+			SELECT x.occurrence_id FROM media_occurrences x
+			WHERE x.caller_principal=? AND x.visible=1 AND x.source_id=page.source_id
+			ORDER BY x.first_seen_at DESC,x.occurrence_id DESC LIMIT 1)
 		JOIN media_sources s ON s.source_id=o.source_id
 		LEFT JOIN media_source_versions v ON v.source_version_id=o.source_version_id
-		WHERE o.caller_principal=? AND o.visible=1 AND o.source_id>? AND o.occurrence_id=(
-			SELECT x.occurrence_id FROM media_occurrences x
-			WHERE x.caller_principal=o.caller_principal AND x.visible=1 AND x.source_id=o.source_id
-			ORDER BY x.first_seen_at DESC,x.occurrence_id DESC LIMIT 1)
-		ORDER BY o.source_id LIMIT ?`, principal, after, limit+1)
+		ORDER BY o.source_id`, principal, after, limit+1, principal)
 	if err != nil {
 		return nil, 0, false, err
 	}
@@ -183,6 +186,7 @@ func (s *Store) mediaSourceReceipts(
 	if err != nil {
 		return err
 	}
+	// Start from the requested revisions so history lookups use both index keys.
 	rows, err := query.QueryContext(ctx, `WITH requested AS MATERIALIZED (
   SELECT json_extract(value,'$.source_id') source_id,
    json_extract(value,'$.source_version_id') source_version_id FROM json_each(?)
@@ -192,7 +196,7 @@ func (s *Store) mediaSourceReceipts(
     CASE WHEN ? AND json_extract(o.receipt_json,'$.source_version_id')=r.source_version_id
      THEN 0 ELSE 1 END,
     o.updated_at DESC,o.operation_id DESC) selection_rank
-  FROM requested r JOIN media_operations o ON o.source_id=r.source_id
+  FROM requested r CROSS JOIN media_operations o ON o.source_id=r.source_id
   WHERE o.principal=? AND o.verb IN ('submit_supplied_media','submit_remote_recording')
    AND (?=0 OR json_extract(o.receipt_json,'$.source_version_id')=r.source_version_id
     OR COALESCE(json_extract(o.receipt_json,'$.source_version_id'),'')='')
@@ -201,7 +205,7 @@ func (s *Store) mediaSourceReceipts(
   FROM retention WHERE selection_rank=1
   UNION ALL
   SELECT r.source_id,r.source_version_id,o.receipt_json,1,o.created_at,o.operation_id
-  FROM requested r JOIN media_operations o ON o.source_id=r.source_id
+  FROM requested r CROSS JOIN media_operations o ON o.source_id=r.source_id
   WHERE o.principal=? AND r.source_version_id<>''
    AND o.verb IN ('submit_supplied_media','retry_media')
    AND o.receipt_json LIKE '%"processing_profile"%'

@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-12
+last_edited: 2026-10-14
 title: Photo assets
 description: Group camera files, browse photos, and organize albums in the web app, CLI, or HTTP API.
 ---
@@ -28,12 +28,34 @@ asset. Removing the selected member chooses another displayable member
 atomically, or stores a null display when none remains. Assets are limited to
 256 files.
 
+## Record faces and people
+
+Use a photo file's `current_version_id` from `docbank stat <path-or-id> --json` to record an observation:
+
+```sh
+docbank photos faces create <content-version-id> --box 0.1,0.2,0.3,0.4 --person <person-id>
+docbank photos faces create <content-version-id> --person <person-id>
+docbank photos faces list <content-version-id>
+```
+
+A box is `x,y,width,height`, each measured as a fraction of the EXIF-oriented preview before authored rotation. Omit `--person` for an unnamed face, or omit `--box` to mark a person in the whole photo. Naming a face records the same `depicted` person link as a whole-photo mark. Multiple faces of one person share that link. List returns up to 1,000 face boxes and 1,000 depicted-person records, including whole-photo marks and suppressed records referenced by a face. A photo holds at most 1,000 faces and 1,000 depicted people; a create past either limit fails.
+
+A boxed create generates a face UUID. Retain the returned `face_id`, or use `--face-id <uuid>` to supply one. Retry with that same ID, box and version to recover the saved result. A supplied person must match the saved canonical person. A retry still succeeds after that person retires. A boxed command includes the retry ID after a connection failure, a server failure, or an unreadable success response. Conflicting reuse fails.
+
+To name an unnamed box later, repeat the boxed create with its `face_id`, the same box and version, and `--person <person-id>`.
+
+MCP `get_photo_faces` reads up to 100 face boxes and depicted-person records per page. Each named face includes its `person_id` and `action`. Pass `next_offset` as `offset` for the next page. MCP can't unlock Hidden photos. Manual faces and whole-photo marks use HTTP or the CLI.
+
+Faces require the addressed current, live, included image or RAW member. Sidecars and replaced non-image versions cannot receive boxes or whole-photo marks. Face reads and manual writes require an unlock while the photo is Hidden. Audited vault writes return `audit_mutation_unsupported`. These commands record observations manually. Face detection is unavailable. Boxes and existing person assignments can't be changed or undone yet.
+
 ## Open and inspect a photo
 
-Double-click a photo to select it and open it above Library. Enter and Open
-open the photo while preserving any separate selection.
+Double-click a photo to select it and open it above Library. Enter
+opens the photo while preserving any separate selection.
 On touch, tap a photo to open it when nothing is selected. Use the checkbox to
-start a selection. Taps then toggle selection.
+start a selection. Taps then toggle selection. Double-tap opens a photo while a
+selection is active, and also selects it if it wasn't selected. The Open control
+stays reachable for screen readers and keyboard users.
 
 Use the arrow keys, Previous and Next buttons, or the thumbnail rail to move
 through the current result in query order, across calendar-month groups. Navigation loads the next page at the loaded edge
@@ -102,7 +124,7 @@ omits its own selected filter while retaining search and the other filters.
 Camera, lens, year, and location describe the selected display file; year
 uses its recorded local capture date. Text may match any live member of a
 pair, so a text match can appear under a different display-file camera or lens. Camera and lens count both make and model; their counts can sum to more than the asset total. Equivalent Unicode-folded values share one bucket and count each asset once. Buttons submit an original valid spelling; oversized metadata stays visible as informational counts. Year counts omit a selected whole-year range and retain other date ranges. Albums show live memberships. Choose Clear filters to reset the
-search and facets. Clear filters appears when a search or filter is applied. Changing a facet restores the applied search text. Changing scope clears selection and starts a fresh grid.
+search and facets. Clear filters appears when a search or filter is applied. A facet group disappears when none of the photos have a value for it and no value in it is selected. Changing a facet restores the applied search text. Changing scope clears selection and starts a fresh grid.
 
 Choose Months or Capture sessions to group the grid. A session joins captures
 with gaps of four hours or less. Compact, Comfortable, and Large change the
@@ -126,7 +148,7 @@ Choose Hidden in the Photos sidebar and set a passcode. Open a photo's actions m
 
 Hidden photos disappear from Library, photo queries, and album contents. Albums retain their membership; their included count covers only visible photos. Background imports keep updating hidden files, including late sidecars. Import receipts retain ordinary photo IDs and file details. Documents, document tools, original bytes, and exports still expose the underlying files. Hidden is a Photos privacy control.
 
-Enter the passcode in Hidden to unlock for five minutes. The countdown uses the server's remaining time, so a wrong browser clock does not change it. Lock closes every active Hidden session, and so does locking or ending any browser session. Locking and expiry clear the Hidden grid, selection, and browser preview cache. Photos check for committed changes every two seconds, with a two-second request timeout. A visibility change conceals the grid and clears cached previews before refreshing. An open Library photo stays open when the refresh still lists it; otherwise its viewer reports that the photo left the result. Background views stay concealed until status validation and refresh succeed. Hidden conceals after any failed check. Library, Albums, and each open album follow the Library rules, and each is checked again when you open it. Library conceals after a denied check or three failed checks in a row; a concealed view stays concealed until Retry or a later check succeeds. Expired browser sessions use the shared session-expired screen. Reloads retain grouping, density, loaded range, scroll position and the selection of unaffected photos; failed batch targets stay available for retry. Hidden previews carry `Cache-Control: no-store`. Preview generation continues while a photo is hidden.
+Enter the passcode in Hidden to unlock for five minutes. The countdown uses the server's remaining time, so a wrong browser clock does not change it. Lock closes every active Hidden session, and so does locking or ending any browser session. Locking and expiry clear the Hidden grid, selection, and browser preview cache. Photos check for committed changes every two seconds, with a two-second request timeout. Once a window has opened Photos, hiding its tab queues a keepalive lock after pending Hidden writes, including an in-flight unlock. Leaving blanks every Photos view, closes open photos, removes their URL links, and clears cached previews. Library and the open album's photo list reload when you return; a failed load keeps those lists blank with an error and Retry. The Albums index keeps its album list. Page close sends an immediate keepalive lock and, when Hidden writes are pending, queues another after them; closing during an unlock remains best effort. A failed lock shows an error and Retry lock in any workspace. Hidden stays concealed until a lock succeeds. An open Library photo stays open when the refresh still lists it; otherwise its viewer reports that the photo left the result. Background views stay concealed until status validation succeeds. Hidden conceals after any failed check. Library, Map, Albums, and each open album share the Library access checks. Library conceals after a denied check or three failed checks in a row; a concealed view stays concealed until Retry or a later check succeeds. Expired browser sessions use the shared session-expired screen. Reloads retain grouping, density, loaded range, scroll position and the selection of unaffected photos; failed batch targets stay available for retry. Hidden previews carry `Cache-Control: no-store`. Preview generation continues while a photo is hidden.
 
 Hidden supports direct links at `/photos/hidden#photo=<asset-id>` after unlock. Viewer navigation, larger previews and supported originals use the active Library or Hidden scope. Locking or concealing the view closes its viewer and removes displayed bytes.
 
@@ -167,11 +189,20 @@ each file's identity, decisions, and revision. Hidden is a Photos privacy
 control: Documents queries and audit history still show a hidden photo's
 decisions.
 
+`confirmed_fields` records supplied fields with bits rating=1, flag=2, label=4,
+caption=8, creator=16, copyright=32, and rotation=64. Zero means untouched.
+Docbank edits with empty text or numeric zero confirm a clear. Unsupplied
+fields keep their earlier values and confirmation. Receipts, audit history,
+undo, and JSONL backup preserve the mask. Unknown bits and non-default values
+without confirmation are refused.
+
 ### Decisions from XMP sidecars
 
 The daemon fills in an original file's decisions from its imported XMP sidecar
 while that file is still at revision 1. Once a sidecar sets a decision, later
-packets don't change it.
+packets don't change it. Only non-default values confirm a decision. Rating 0,
+empty text, no label or pick, and rotation 0 confirm nothing, because editors
+write these defaults on untouched photos.
 
 The daemon picks the original for each sidecar this way:
 
@@ -195,7 +226,7 @@ The daemon reads these XMP properties:
 
 | Decision | XMP property |
 | --- | --- |
-| Rating | `xmp:Rating`. A rating of -1 means reject with rating 0. |
+| Rating | `xmp:Rating`. A rating of -1 means reject with rating 0, even when the packet also has a pick. It confirms only the flag. |
 | Label | `xmp:Label`, case-insensitive |
 | Flag | `Pick` in the `https://teststrip.app/xmp/1.0/` namespace |
 | Rotation | `Rotation` in the `https://teststrip.app/xmp/1.0/` namespace |
@@ -203,11 +234,11 @@ The daemon reads these XMP properties:
 | Creator | The first `dc:creator` entry |
 | Copyright | `dc:rights`, preferring the `x-default` language |
 
-An unsupported value is ignored and the other decisions still apply. That
+An unsupported value is ignored and stays unconfirmed; the other decisions still apply. That
 covers custom color labels, fractional ratings, unknown picks, other rotations,
 and text over 16 KiB. Whitespace-only text counts as absent; other text keeps
-its spaces and newlines. Malformed XML, a repeated property, or nesting deeper
-than 64 elements rejects the whole packet. Empty and rejected packets leave the file, its
+its spaces and newlines. Malformed XML, a repeated property, multiple values in one property, text beside
+a property's value, or nesting deeper than 64 elements rejects the whole packet. Empty and rejected packets leave the file, its
 revision, and audit history unchanged. Sidecars don't import `dc:subject` as
 tags or `tiff:Orientation` as rotation.
 
@@ -464,7 +495,7 @@ Hidden unlock and lock remain available. Setup, change, disable, reset, hide, an
 
 `POST /api/v1/photos/assets/query` accepts a `query` object using
 [QueryV1](../architecture/http-api.md#saved-query-and-highlight-definitions),
-optional `coverage`, `page_size` from 1 through 250, `facets`, `cursor`, and `hidden`.
+optional `coverage`, `page_size` from 1 through 250, `facets`, `cursor`, and `hidden`. With `projection: "map"`, `page_size` allows up to 1,000. Larger pages return a validation error.
 Omit `hidden` or set it to `false` for visible photos. `hidden: true` selects
 only hidden photos and requires an active unlock on every page.
 Request `camera`, `lens`, `year`, `location`, or `set` facets. It returns
@@ -546,7 +577,8 @@ preview for the supplied `content_version_id`. Include `hidden: true` and an act
 slot shape as browsing, reuses retained terminal outcomes, and refuses an
 excluded, trashed, or changed display. Each request has a 30-second bound.
 Camera, lens, exposure, dimensions, and orientation come from the current
-display's technical metadata. Browser photo rows omit GPS coordinates.
+display's technical metadata. When map tiles are configured, browser Map-projection
+rows include the selected display file's nullable GPS latitude and longitude.
 
 ## Count photos by capture day
 
@@ -573,6 +605,12 @@ Over HTTP, send the same `query` and optional `coverage` to
 
 Select photos in Library and choose **Move to trash**. Confirming moves every member of each selected photo, including RAW files, images, videos, and sidecars, to recoverable trash together. A changed photo revision refuses the action; failed photos remain selected for retry. Each photo is atomic; a selection runs sequentially and can make partial progress. Changing the selection changes the next action's targets. A failed photo outside the loaded grid keeps its captured revision; load and select it again before accepting a newer revision.
 
+Choose **Move rejects** in Photos to preview the complete current scope, including photos beyond the loaded page. The preview counts eligible photos and files, lists up to 20 mixed pairs with their total count, and counts photos that stay in Docbank. Every original member, including individually trashed originals, must have the stored `reject` flag; sidecars follow their photo. The preview returns exact targets in asset ID order, limited to 1,000 live member files. A photo that would exceed the limit waits for the next batch. Confirmation moves those photos atomically. A missing target, changed asset or member node revision, changed reject flag, or changed Library/Hidden scope refuses the whole batch and requires another preview. Changes elsewhere in the scope, including album membership, leave the previewed targets valid. Larger scopes still show complete counts and how many photos will move now. Preview and confirm again for the rest. Select up to 64 photos and choose **Selected photos** in the modal to narrow the scope. Hidden scope requires an active unlock at preview and confirmation. An audit refusal names the blocked photo and file and leaves the entire batch in Docbank. Close the dialog, select up to 64 other photos, and choose **Selected photos** to move them.
+
+Moving rejects preserves the loaded range, browsing position, and surviving selections. If reloading fails, the grid stays available. Retry reloads the range and reconciles selections.
+
+HTTP clients preview with `POST /api/v1/photos/rejects/preflight` and `{query, hidden}`, then confirm with `POST /api/v1/photos/rejects/trash` and `{hidden, targets}`. Each target carries `asset_id`, the asset `revision`, and `member_revision`, the sum of all member node revisions. Confirmation reads each member once in the writer transaction, checks its revision and every original's reject flag, and moves the reviewed files.
+
 Use `docbank photos assets trash <asset-id>` for the same operation from the CLI. `--revision` binds the action to an inspected asset revision. Ordinary Documents deletion and `docbank rm` still remove the selected file or folder.
 
 Open **Trash** in either workspace to restore a photo group. Trash lists files, including hidden photos' files, just like Documents. One row represents its independently trashed members and shows how many trashed files restore will recover, including companions inside folders. Restoring any member recovers the complete group. The selected member's revision guards the request; Docbank reads all affected roots in the same transaction. A member inside a trashed folder restores that folder's subtree and the photo's companions elsewhere. Selected destination folders return before their files. Separately trashed unrelated items stay in trash.
@@ -580,3 +618,11 @@ Open **Trash** in either workspace to restore a photo group. Trash lists files, 
 Trash keeps file bytes, content versions, photo relationships, and album membership intact. Trash and restore each advance the affected asset revision once and record a change receipt. Permanent deletion waits until every member is trashed, old enough, and free of retention references. For a partially trashed photo, trash the remaining companions with the asset action or detach its live companions before emptying trash. See [Trash and garbage collection](trash-and-gc.md).
 
 Metadata JSONL v1 includes `trash` and `restore` receipts recording the operation and asset revision change; node trash state remains in the node records. Older Docbank clients refuse imports containing these operations; use a version that supports photo trash to restore that metadata.
+
+## Map
+
+Map opened from an album plots that album's GPS photos. Otherwise, it plots GPS photos matching the current Library search and filters. Hidden is never mapped. Results sort by capture date.
+
+Configure [photo map tiles](../configuration.md#photo-map-tiles) in `[web.map_tiles]` and restart Docbank. Choose Map beside Library to browse GPS-positioned photos from the current query. Markers group nearby photos into numbered clusters. Click a marker to open the photo viewer. Escape returns focus to the marker or its cluster and retains the map position. The map also keeps its position when an access check conceals and refreshes it. Switching workspaces resets the map position. A cluster zooms in or spreads overlapping markers so you can open each photo.
+
+Map uses album membership when opened from an album. Otherwise it inherits Library's text, filters and date. It sorts by capture date, then adds GPS eligibility. Each visit starts a fresh result and selection. Map fetches the newest 20,000 matching located photos by capture date in pages of 1,000, at most 20 requests. When more match, Map says how many it's showing. Narrow the search, filters or date to see older photos. Returning to the Map rechecks access and reloads only after a hide or unhide. Like Library, the Map picks up other clients' trash, imports or edits on refresh. Markers and the grid show each page as it arrives. Earlier results stay visible during a refresh or if it fails. Retry resumes the failed page. An expired cursor starts a fresh load. The viewer and arrow keys follow the Map query, while the viewport filters only the grid. Panning retains selection, and the trash confirmation discloses selections outside the grid.

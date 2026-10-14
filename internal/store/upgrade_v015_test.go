@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"uuid"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/bundle"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
@@ -213,6 +214,16 @@ func TestEveryReleasedSchemaFixtureUpgrades(t *testing.T) {
 				require.NoError(t, err)
 				require.Nil(t, asset.HiddenAt)
 				require.Equal(t, node.ID, asset.Files[0].NodeID)
+
+				person, err := s.CreatePerson(t.Context(), "Ada", "operator")
+				require.NoError(t, err)
+				currentNode, err := s.NodeByID(t.Context(), node.ID)
+				require.NoError(t, err)
+				face, _, err := s.CreatePhotoFace(t.Context(), currentNode.CurrentVersionID, uuid.New().String(), document.FaceBox{Width: 0.2, Height: 0.2}, person.PersonID)
+				require.NoError(t, err)
+				faces, _, err := s.PhotoFaces(t.Context(), currentNode.CurrentVersionID)
+				require.NoError(t, err)
+				require.Equal(t, []PhotoFace{face}, faces)
 			})
 		}
 	}
@@ -531,7 +542,7 @@ func normalizeReleasedUpgradeSnapshot(t *testing.T, data []byte) []map[string]an
 		var record map[string]any
 		require.NoError(t, json.Unmarshal(line, &record))
 		if record["type"] == "photo_file" {
-			defaults := map[string]any{"revision": float64(1), "rating": float64(0), "flag": "", "label": "", "caption": "", "creator": "", "copyright": "", "rotation": float64(0)}
+			defaults := map[string]any{"revision": float64(1), "rating": float64(0), "flag": "", "label": "", "caption": "", "creator": "", "copyright": "", "rotation": float64(0), "confirmed_fields": float64(0)}
 			for key, value := range defaults {
 				if _, ok := record[key]; !ok {
 					record[key] = value

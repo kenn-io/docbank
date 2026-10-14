@@ -30,11 +30,13 @@ func check(err error) {
 }
 
 func main() {
+	mapGPS := flag.Bool("map", false, "Include synthetic GPS locations")
 	unavailable := flag.Bool("unavailable", false, "Include an undecodable photo")
+	rejects := flag.Bool("rejects", false, "Include confirmed rejects")
 	flag.Parse()
 	args := flag.Args()
 	if len(args) < 1 || len(args) > 2 {
-		panic("usage: photos-fixture [-unavailable] <vault> [count]")
+		panic("usage: photos-fixture [-unavailable] [--rejects] <vault> [count]")
 	}
 	count := 10_000
 	if len(args) == 2 {
@@ -116,8 +118,20 @@ func main() {
 			{Key: "image.exif.f_number", Namespace: "image.exif", SourceField: "FNumber", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataNumber, Number: new(2.8)}},
 			{Key: "image.exif.exposure_time_seconds", Namespace: "image.exif", SourceField: "ExposureTime", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataNumber, Number: new(0.004)}},
 			{Key: "image.exif.focal_length_mm", Namespace: "image.exif", SourceField: "FocalLength", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataNumber, Number: new(50.0)}},
-			{Key: "image.exif.gps_latitude", Namespace: "image.exif", SourceField: "GPSLatitude", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("48.8566")}},
-			{Key: "image.exif.gps_longitude", Namespace: "image.exif", SourceField: "GPSLongitude", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("2.3522")}},
+		}
+		location, located := [2]string{"48.8566", "2.3522"}, true
+		if *mapGPS {
+			locations := [][2]string{{"48.8566", "2.3522"}, {"48.8666", "2.3622"}, {"48.8766", "2.3722"}, {"48.8866", "2.3822"}, {"48.8966", "2.3922"}, {"48.9066", "2.4022"}, {"0", "12"}, {"35.67", "139.65"}, {"40.748816666666667", "-73.98565555555555"}, {"40.748816666666667", "-73.98565555555555"}, {"90", "0"}, {"-90", "0"}, {"0", "-180"}, {"0", "180"}}
+			located = index < len(locations)
+			if located {
+				location = locations[index]
+			}
+		}
+		if located {
+			fields = append(fields,
+				document.SourceMetadataFieldV1{Key: "image.exif.gps_latitude", Namespace: "image.exif", SourceField: "GPSLatitude", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new(location[0])}},
+				document.SourceMetadataFieldV1{Key: "image.exif.gps_longitude", Namespace: "image.exif", SourceField: "GPSLongitude", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new(location[1])}},
+			)
 		}
 		metadata, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: fields})
 		check(err)
@@ -136,6 +150,9 @@ func main() {
 			continue
 		}
 		sampleIndex := index % 10
+		if *mapGPS {
+			sampleIndex = index % 15
+		}
 		if index >= 9000 {
 			sampleIndex = 10 + index%38
 		}
@@ -159,6 +176,41 @@ func main() {
 	check(err)
 	_, err = s.ChangePhotoSetMembers(ctx, album.ID, album.Revision, true, store.PhotoSetSelection{Query: &scope})
 	check(err)
+	if *rejects {
+		if count < 4 {
+			panic("--rejects requires at least four photos")
+		}
+		seedRejects(ctx, s)
+	}
 	check(s.Checkpoint(ctx))
 	fmt.Printf("seeded %d synthetic photos\n", count)
+}
+
+func seedRejects(ctx context.Context, s *store.Store) {
+	value, err := query.Parse([]byte(`{"sort":{"field":"name","direction":"asc"}}`))
+	check(err)
+	page, err := s.ListPhotoAssets(ctx, store.PhotoBrowseRequest{Query: value}, nil)
+	check(err)
+	var targets []store.PhotoAuthoredTarget
+	for _, row := range page.Items[:3] {
+		asset, err := s.PhotoAssetByID(ctx, row.AssetID)
+		check(err)
+		targets = append(targets, store.PhotoAuthoredTarget{FileID: asset.Files[0].ID, Revision: 1, Patch: store.PhotoAuthoredPatch{Flag: new("reject")}})
+	}
+	_, err = s.EditPhotoAuthored(ctx, targets)
+	check(err)
+	member, err := s.PhotoAssetByID(ctx, page.Items[3].AssetID)
+	check(err)
+	_, err = s.DetachPhotoFile(ctx, member.ID, member.Revision, member.Files[0].ID, store.PhotoDetachOptions{})
+	check(err)
+	asset, err := s.PhotoAssetByID(ctx, page.Items[2].AssetID)
+	check(err)
+	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, member.Files[0].NodeID, store.PhotoRoleImage, nil)
+	check(err)
+	_, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &targets[2].FileID)
+	check(err)
+	node, err := s.NodeByID(ctx, member.Files[0].NodeID)
+	check(err)
+	_, _, err = s.Trash(ctx, node.ID, node.Revision)
+	check(err)
 }

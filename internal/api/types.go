@@ -908,19 +908,26 @@ type ContentReversionReceipt struct {
 type SearchHit struct {
 	Node  Node   `json:"node"`
 	Path  string `json:"path"`
-	Match string `json:"match" enum:"name,content,filter"`
+	Match string `json:"match" enum:"name,content,filter,fuzzy_name,fuzzy_path"`
+}
+
+// FuzzyReceipt describes coverage of supplemental ASCII filename/path discovery.
+type FuzzyReceipt struct {
+	Status  string   `json:"status" enum:"complete,limited,not_run"`
+	Reasons []string `json:"reasons" enum:"candidate_limit,name_limit,path_limit,query_ineligible,result_limit,time_budget"`
 }
 
 // SearchReport is one bounded search result page.
 type SearchReport struct {
-	Hits           []SearchHit `json:"hits"`
-	Limit          int         `json:"limit"`
-	Truncated      bool        `json:"truncated"`
-	TagID          string      `json:"tag_id,omitzero"`
-	MIMEType       string      `json:"mime_type,omitzero"`
-	UnderNodeID    int64       `json:"under_node_id,omitzero"`
-	ModifiedSince  string      `json:"modified_since,omitzero"`
-	ModifiedBefore string      `json:"modified_before,omitzero"`
+	Fuzzy          *FuzzyReceipt `json:"fuzzy,omitzero"`
+	Hits           []SearchHit   `json:"hits"`
+	Limit          int           `json:"limit"`
+	Truncated      bool          `json:"truncated"`
+	TagID          string        `json:"tag_id,omitzero"`
+	MIMEType       string        `json:"mime_type,omitzero"`
+	UnderNodeID    int64         `json:"under_node_id,omitzero"`
+	ModifiedSince  string        `json:"modified_since,omitzero"`
+	ModifiedBefore string        `json:"modified_before,omitzero"`
 }
 
 // IngestFailure records one source path that failed to import.

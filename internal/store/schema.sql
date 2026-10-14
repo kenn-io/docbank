@@ -1047,6 +1047,8 @@ CREATE INDEX IF NOT EXISTS media_occurrences_principal
     ON media_occurrences(caller_principal, visible, source_id, occurrence_id);
 CREATE INDEX IF NOT EXISTS media_occurrences_source
     ON media_occurrences(source_id, visible, caller_principal, occurrence_id);
+CREATE INDEX IF NOT EXISTS media_operations_source_admission
+    ON media_operations(principal, source_id, created_at);
 
 CREATE TRIGGER IF NOT EXISTS media_sources_immutable_update
 BEFORE UPDATE ON media_sources BEGIN
@@ -1134,6 +1136,7 @@ CREATE TABLE IF NOT EXISTS provenance (
 );
 
 CREATE INDEX IF NOT EXISTS provenance_node ON provenance(node_id);
+CREATE INDEX IF NOT EXISTS provenance_source_path ON provenance(original_path);
 CREATE UNIQUE INDEX IF NOT EXISTS provenance_direct_successor
     ON provenance(supersedes) WHERE supersedes IS NOT NULL;
 
@@ -2194,6 +2197,7 @@ CREATE TABLE IF NOT EXISTS photo_files (
     creator              TEXT NOT NULL DEFAULT '',
     copyright            TEXT NOT NULL DEFAULT '',
     rotation             INTEGER NOT NULL DEFAULT 0,
+    confirmed_fields     INTEGER NOT NULL DEFAULT 0,
     created_at           TEXT NOT NULL,
     FOREIGN KEY (sidecar_of_file_id) REFERENCES photo_files(file_id)
         ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED
@@ -2373,6 +2377,20 @@ CREATE TABLE IF NOT EXISTS person_document_assertions (
     revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
     UNIQUE (content_version_id, person_id, role)
 );
+
+CREATE TABLE IF NOT EXISTS photo_faces (
+    face_id TEXT PRIMARY KEY NOT NULL,
+    content_version_id TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    x REAL NOT NULL,
+    y REAL NOT NULL,
+    width REAL NOT NULL,
+    height REAL NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+    assertion_id TEXT REFERENCES person_document_assertions(assertion_id),
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS photo_faces_version ON photo_faces(content_version_id,face_id);
+CREATE INDEX IF NOT EXISTS photo_faces_assertion ON photo_faces(assertion_id,content_version_id);
 
 CREATE TABLE IF NOT EXISTS person_match_candidates (
     candidate_id TEXT PRIMARY KEY NOT NULL,

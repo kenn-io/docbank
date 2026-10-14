@@ -61,6 +61,9 @@ func timeoutExempt(method, path string) bool {
 		}
 	}
 	if method == http.MethodPost {
+		if path == "/api/v1/photos/rejects/trash" || path == "/api/v1/photos/rejects/preflight" {
+			return true
+		}
 		if id, ok := strings.CutPrefix(path, "/api/v1/exports/jobs/"); ok {
 			if id, ok := strings.CutSuffix(id, "/download"); ok && (id == "{id}" || validPageJobPathID(id)) {
 				return true
@@ -184,11 +187,11 @@ func clearLongRunningBodyReadDeadlines(api huma.API) {
 // web assets carry no vault data. Everything else requires the key —
 // the daemon always has one; see NewServer.
 func authExempt(path string) bool {
-	if isPhotoAlbumPage(path) {
+	if isPhotoAlbumPage(path) || isPhotoMapPage(path) {
 		return true
 	}
 	switch path {
-	case webAuthPath, webLoginPath, "/", "/photos", "/photos/hidden", "/health", kitPingPath, daemonauth.ChallengePath,
+	case webAuthPath, webLoginPath, "/", "/photos", "/photos/hidden", "/photos/map", "/health", kitPingPath, daemonauth.ChallengePath,
 		webDownloadFilePath, webUploadSocketPath:
 		return true
 	}

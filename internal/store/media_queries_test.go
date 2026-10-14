@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 	"testing"
@@ -9,6 +10,85 @@ import (
 
 	"go.kenn.io/docbank/internal/canonical"
 )
+
+func TestMediaSourcesPageSelectsNewestVisibleOccurrences(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		for _, source := range []string{"a", "b", "c", "d", "e"} {
+			id := strings.Repeat(source, 64)
+			_, err := tx.ExecContext(ctx, `INSERT INTO media_sources VALUES(?,?,?,?,?,?)`,
+				id, "remote_recording", "url", "synthetic", id, "2024-01-01T00:00:00Z")
+			if err != nil {
+				return err
+			}
+			receipt, err := canonical.Marshal(MediaPublicationReceipt{
+				VaultUID: s.VaultID(), SourceID: id, OperationID: "operation-" + source,
+				OperationState: "succeeded", CoverageState: "unprocessed", Outcome: "unsupported",
+			})
+			if err != nil {
+				return err
+			}
+			_, err = tx.ExecContext(ctx, `INSERT INTO media_operations VALUES(?,?,?,?,?,?,?,?)`,
+				"operation-"+source, "operator:test", "submit_remote_recording", id, id,
+				string(receipt), "2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z")
+			if err != nil {
+				return err
+			}
+		}
+		for _, occurrence := range []struct {
+			id, source, principal, stamp string
+			visible                      int
+		}{
+			{"a-other", "a", "operator:other", "2024-01-01", 1},
+			{"b-zz-old", "b", "operator:test", "2024-01-01", 1},
+			{"b-new-a", "b", "operator:test", "2024-01-02", 1},
+			{"b-new-z", "b", "operator:test", "2024-01-02", 1},
+			{"b-revoked", "b", "operator:test", "2024-01-03", 0},
+			{"b-other", "b", "operator:other", "2024-01-04", 1},
+			{"c-revoked", "c", "operator:test", "2024-01-01", 0},
+			{"d-visible", "d", "operator:test", "2024-01-01", 1},
+			{"e-visible", "e", "operator:test", "2024-01-01", 1},
+		} {
+			var revoked any
+			if occurrence.visible == 0 {
+				revoked = "2024-01-05T00:00:00Z"
+			}
+			_, err := tx.ExecContext(ctx, `INSERT INTO media_occurrences VALUES(?,?,NULL,?,?,'1',?,'','','{}',?,?,?)`,
+				occurrence.id, strings.Repeat(occurrence.source, 64), occurrence.principal,
+				occurrence.id, occurrence.id+".wav", occurrence.visible, occurrence.stamp+"T00:00:00Z", revoked)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+	for _, page := range []struct {
+		after       string
+		sources     []string
+		occurrences []string
+		more        bool
+	}{
+		{"", []string{"b", "d"}, []string{"b-new-z", "d-visible"}, true},
+		{strings.Repeat("d", 64), []string{"e"}, []string{"e-visible"}, false},
+		{strings.Repeat("e", 64), nil, nil, false},
+	} {
+		items, total, more, err := s.MediaSources(ctx, "operator:test", page.after, 2)
+		require.NoError(t, err)
+		require.Equal(t, 3, total)
+		require.Equal(t, page.more, more)
+		require.Len(t, items, len(page.sources))
+		for i, item := range items {
+			require.Equal(t, strings.Repeat(page.sources[i], 64), item.SourceID)
+			require.Equal(t, page.occurrences[i], item.OccurrenceID)
+			require.Equal(t, page.occurrences[i]+".wav", item.Filename)
+			require.Empty(t, item.SourceVersionID)
+			require.Empty(t, item.ContentVersionID)
+			require.Equal(t, "operation-"+page.sources[i], item.Receipt.OperationID)
+		}
+	}
+}
 
 func TestMediaSourceVersionSelectsTheExactVisibleRevision(t *testing.T) {
 	t.Parallel()

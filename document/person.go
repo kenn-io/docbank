@@ -188,5 +188,5 @@ func PersonEvidenceKinds() []PersonEvidenceKind {
 // ValidPersonRole accepts document actor roles and the person credited with
 // speaking in a transcript. A speaker label alone does not establish identity.
 func ValidPersonRole(role string) bool {
-	return ValidEventRole(EventRole(role)) || role == "speaker"
+	return ValidEventRole(EventRole(role)) || role == "speaker" || role == "depicted"
 }

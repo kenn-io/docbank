@@ -1,10 +1,53 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { storage } from "./photo-test-fixtures.js";
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
+import { Photos } from "./photos.svelte.js";
+import { recreatePhotoPreviewCache, revalidatePhotoWorkspace } from "./photoWorkspace.js";
 
 const instances: PhotoPreviewCache[] = [];
 function workspace() { const cache = new PhotoPreviewCache("scoped", vi.fn()); instances.push(cache); return cache; }
 afterEach(async () => { await Promise.all(instances.splice(0).map(cache => cache.dispose())); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+it.each([recreatePhotoPreviewCache, revalidatePhotoWorkspace])("replaces the preview cache after disposal and validity checks with %s", async replace => {
+  const photos = new Photos("scoped", vi.fn(), true);
+  const oldCache = workspace();
+  const current = { photos, cache: oldCache };
+  let disposed = false;
+  const dispose = oldCache.dispose.bind(oldCache);
+  vi.spyOn(oldCache, "dispose").mockImplementation(async () => { await dispose(); disposed = true; });
+  const refresh = vi.spyOn(photos, "refresh").mockImplementation(async () => {
+    expect(disposed).toBe(true);
+    expect(current.cache).toBe(oldCache);
+    return true;
+  });
+  expect(await replace(current, "scoped", vi.fn(), () => disposed)).toBe(true);
+  expect(current.cache).not.toBe(oldCache);
+  expect(current.cache).toBeInstanceOf(PhotoPreviewCache);
+  expect(refresh).toHaveBeenCalledTimes(replace === revalidatePhotoWorkspace ? 1 : 0);
+  instances.push(current.cache);
+  photos.dispose();
+});
+
+it.each([recreatePhotoPreviewCache, revalidatePhotoWorkspace])("leaves the disposed cache in place when validity is lost with %s", async replace => {
+  const photos = new Photos("scoped", vi.fn());
+  const current = { photos, cache: workspace() };
+  const oldCache = current.cache;
+  const refresh = vi.spyOn(photos, "refresh");
+  expect(await replace(current, "scoped", vi.fn(), () => false)).toBe(false);
+  expect(current.cache).toBe(oldCache);
+  expect(refresh).not.toHaveBeenCalled();
+  photos.dispose();
+});
+
+it("keeps a failed revalidation from recreating the preview cache", async () => {
+  const photos = new Photos("scoped", vi.fn());
+  const current = { photos, cache: workspace() };
+  const oldCache = current.cache;
+  vi.spyOn(photos, "refresh").mockImplementation(async () => { photos.error = "Refresh failed"; return false; });
+  await expect(revalidatePhotoWorkspace(current, "scoped", vi.fn(), () => true)).rejects.toThrow("Refresh failed");
+  expect(current.cache).toBe(oldCache);
+  photos.dispose();
+});
 
 it("keeps no-store previews out of browser storage", async () => {
   const stored = storage();

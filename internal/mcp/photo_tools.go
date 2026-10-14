@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 )
@@ -30,6 +31,29 @@ type photoAssetToolOutput struct {
 	TotalFiles            int             `json:"total_files"`
 	FileOffset            int             `json:"file_offset"`
 	NextFileOffset        *int            `json:"next_file_offset,omitzero"`
+}
+
+// photoFaceToolItem carries its person so a face page needs no assertion lookup.
+type photoFaceToolItem struct {
+	FaceID           string           `json:"face_id"`
+	ContentVersionID string           `json:"content_version_id"`
+	Box              document.FaceBox `json:"box"`
+	Revision         int64            `json:"revision"`
+	AssertionID      string           `json:"assertion_id,omitzero"`
+	PersonID         string           `json:"person_id,omitzero"`
+	Action           string           `json:"action,omitzero"`
+	CreatedAt        string           `json:"created_at"`
+}
+
+type photoFacesToolOutput struct {
+	privateCache
+
+	Faces           []photoFaceToolItem        `json:"faces"`
+	Assertions      []api.PhotoPersonAssertion `json:"assertions"`
+	TotalFaces      int                        `json:"total_faces"`
+	TotalAssertions int                        `json:"total_assertions"`
+	Offset          int                        `json:"offset"`
+	NextOffset      *int                       `json:"next_offset,omitzero"`
 }
 
 func photoWriteTool(name string) bool {
@@ -63,6 +87,63 @@ func getPhotoAsset(ctx context.Context, lease *daemonLease, raw []byte) (photoAs
 		return photoAssetToolOutput{}, err
 	}
 	return photoAssetOutput(asset, input.FileOffset)
+}
+
+func getPhotoFaces(ctx context.Context, lease *daemonLease, raw []byte) (photoFacesToolOutput, error) {
+	var input struct {
+		ContentVersionID string `json:"content_version_id"`
+		Offset           int    `json:"offset"`
+		Limit            int    `json:"limit"`
+	}
+	if err := decodeReadArguments(raw, &input); err != nil {
+		return photoFacesToolOutput{}, err
+	}
+	if input.Offset < 0 || input.Offset > document.MaxPhotoRecordsPerVersion {
+		return photoFacesToolOutput{}, invalidToolArgumentsError()
+	}
+	if input.Limit == 0 {
+		input.Limit = maxPhotoFacesToolPageSize
+	}
+	if input.Limit < 1 || input.Limit > maxPhotoFacesToolPageSize {
+		return photoFacesToolOutput{}, invalidToolArgumentsError()
+	}
+	page, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (api.PhotoFacePage, error) {
+		return c.PhotoFaces(ctx, input.ContentVersionID)
+	})
+	if err != nil {
+		return photoFacesToolOutput{}, err
+	}
+	total := max(len(page.Faces), len(page.Assertions))
+	start := min(input.Offset, total)
+	end := min(start+input.Limit, total)
+	output := photoFacesToolOutput{
+		privateCache:    newPrivateCache(),
+		Faces:           photoFaceToolItems(page.Faces[min(start, len(page.Faces)):min(end, len(page.Faces))], page.Assertions),
+		Assertions:      append([]api.PhotoPersonAssertion{}, page.Assertions[min(start, len(page.Assertions)):min(end, len(page.Assertions))]...),
+		TotalFaces:      len(page.Faces),
+		TotalAssertions: len(page.Assertions),
+		Offset:          start,
+	}
+	if end < total {
+		output.NextOffset = new(end)
+	}
+	return output, nil
+}
+
+func photoFaceToolItems(faces []api.PhotoFace, assertions []api.PhotoPersonAssertion) []photoFaceToolItem {
+	byID := make(map[string]api.PhotoPersonAssertion, len(assertions))
+	for _, assertion := range assertions {
+		byID[assertion.AssertionID] = assertion
+	}
+	items := make([]photoFaceToolItem, 0, len(faces))
+	for _, face := range faces {
+		assertion := byID[face.AssertionID]
+		items = append(items, photoFaceToolItem{
+			FaceID: face.FaceID, ContentVersionID: face.ContentVersionID, Box: face.Box, Revision: face.Revision,
+			AssertionID: face.AssertionID, PersonID: assertion.PersonID, Action: assertion.Action, CreatedAt: face.CreatedAt,
+		})
+	}
+	return items
 }
 
 func photoAssetOutput(asset api.PhotoAsset, offset int) (photoAssetToolOutput, error) {

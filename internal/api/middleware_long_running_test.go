@@ -19,7 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestExportTicketPreparationTimeoutBoundary(t *testing.T) {
+func TestLongRunningRequestTimeoutBoundary(t *testing.T) {
 	t.Parallel()
 	const download = "/api/v1/exports/jobs/a2b864dd-bcd9-4c63-a1bd-321293fbbd34/download"
 	for _, test := range []struct {
@@ -27,6 +27,8 @@ func TestExportTicketPreparationTimeoutBoundary(t *testing.T) {
 		deadline     bool
 	}{
 		{http.MethodPost, download, false},
+		{http.MethodPost, "/api/v1/photos/rejects/trash", false},
+		{http.MethodPost, "/api/v1/photos/rejects/preflight", false},
 		{http.MethodGet, download, true},
 		{http.MethodPost, "/api/v1/exports/jobs/a2b864dd-bcd9-4c63-a1bd-321293fbbd34/cancel", true},
 		{http.MethodPost, "/api/v1/exports/jobs/a2b864dd-bcd9-4c63-a1bd-321293fbbd34/extra/download", true},

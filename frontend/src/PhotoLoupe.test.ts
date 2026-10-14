@@ -6,7 +6,7 @@ import PhotoLoupe from "./PhotoLoupe.svelte";
 import PhotoLoupeImage from "./PhotoLoupeImage.svelte";
 import { Photos } from "./photos.svelte.js";
 import type { PhotoPreviewCache } from "./photoPreviewCache.js";
-import { photo } from "./photo-test-fixtures.js";
+import { photo, mapPhoto } from "./photo-test-fixtures.js";
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 function setup() {
@@ -167,18 +167,21 @@ it.each(["preview", "original"] as const)("releases each rejected %s URL before 
   expect(URL.revokeObjectURL).toHaveBeenCalledTimes(released + (operation === "preview" ? 2 : 1));
 });
 
-it("serializes the bounded neighboring fit requests", async () => {
+it.each([false,true])("serializes neighboring fit requests and hydrates compact neighbors, compact=%s", async compact => {
   const { props, preview } = setup(); let release!: () => void;
   preview.mockImplementation(async (item, size) => {
     if (item.asset_id === "photo-3") await new Promise<void>(resolve => release = resolve);
     return { state: "ready", generation_id: `${size}-${item.node_id}` };
   });
-  render(PhotoLoupe, props);
+  const lookup=vi.spyOn(props.photos,"lookup").mockImplementation(async id=>photo(Number(id.split("-")[1])));
+  const items=compact?props.items.map((item,index)=>({...mapPhoto(index+1),previews:{grid:item.previews.grid}})):props.items;
+  render(PhotoLoupe, {...props,items});
   await screen.findByText("Fit preview");
   await waitFor(() => expect(release).toBeTypeOf("function"));
   expect(preview.mock.calls.map(([item]) => item.asset_id)).toEqual(["photo-5", "photo-3"]);
   release(); await waitFor(() => expect(preview).toHaveBeenCalledTimes(5));
   expect(preview.mock.calls.map(([item, size]) => [item.asset_id, size])).toEqual(["photo-5", "photo-3", "photo-4", "photo-6", "photo-7"].map(id => [id, "fit"]));
+  expect(lookup.mock.calls.map(([id])=>id)).toEqual(compact?["photo-3","photo-4","photo-6","photo-7"]:[]);
 });
 
 it("resets a touch swipe before requesting navigation when the current photo remains mounted", async () => {

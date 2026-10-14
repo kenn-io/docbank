@@ -71,11 +71,19 @@ func (s *Store) photoSetSummary(ctx context.Context, q metadataQuerier, set Phot
 		return PhotoSetSummary{}, err
 	}
 	out := PhotoSetSummary{PhotoSet: visible}
-	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_set_members m WHERE m.set_id=? AND EXISTS (SELECT 1 FROM photo_files f WHERE f.asset_id=m.asset_id)`, set.ID).Scan(&out.MemberCount); err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*),COUNT(n.id)
+ FROM photo_set_members m
+ JOIN photo_assets a ON a.asset_id=m.asset_id
+ LEFT JOIN photo_files f ON f.file_id=a.display_file_id
+ AND a.excluded_at IS NULL AND `+photoVisibilityPredicate(false)+`
+ LEFT JOIN nodes n ON n.id=f.node_id AND `+photoBrowseLiveDisplay+`
+ WHERE m.set_id=? AND (a.display_file_id IS NOT NULL OR
+ EXISTS (SELECT 1 FROM photo_files member WHERE member.asset_id=m.asset_id))`,
+		set.ID).Scan(&out.MemberCount, &out.IncludedCount); err != nil {
 		return out, err
 	}
-	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_set_members m JOIN photo_assets a ON a.asset_id=m.asset_id JOIN photo_files f ON f.file_id=a.display_file_id JOIN nodes n ON n.id=f.node_id WHERE m.set_id=? AND `+photoBrowseLiveDisplay+` AND `+photoVisibilityPredicate(false), set.ID).Scan(&out.IncludedCount); err != nil {
-		return out, err
+	if out.IncludedCount == 0 {
+		return out, nil
 	}
 	var id, generation string
 	coverSQL := `SELECT a.asset_id,g.generation_id FROM photo_set_members m
@@ -385,20 +393,16 @@ func (s *Store) photoSetSelectionIDs(ctx context.Context, tx *sql.Tx, selection 
 	if err != nil {
 		return nil, err
 	}
-	if coverage.Configuration == photoBrowseConfiguredCoverage {
-		if err := validateSnapshotCoverageProfile(ctx, tx, coverage); err != nil {
-			return nil, err
-		}
-	}
 	generation, err := collectionGenerationTx(ctx, tx)
 	if err != nil {
 		return nil, err
 	}
-	match, err := photoBrowseMatch(compiled, generation, coverage)
+	scope, err := newPhotoBrowseScope(ctx, tx, compiled, generation, coverage, false)
 	if err != nil {
 		return nil, err
 	}
-	sql, args, err := bindQueryPopulation(compiledQueryFragment{sql: `SELECT a.asset_id FROM ` + photoBrowseDisplayFrom + ` WHERE ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(false) + ` AND ` + match.sql + ` ORDER BY a.asset_id`, args: match.args, relations: match.relations}, coverage, generation)
+	sql, args, err := scope.bind(`SELECT a.asset_id FROM ` + photoBrowseDisplayFrom + ` WHERE ` + scope.where() +
+		` ORDER BY a.asset_id`)
 	if err != nil {
 		return nil, err
 	}

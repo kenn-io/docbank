@@ -370,9 +370,13 @@ func registerReadRoutes(api huma.API, d Deps) {
 			"An optional stable tag ID requires that assignment for every result. An optional " +
 			"parameter-free MIME type matches the current file version with or without parameters. " +
 			"An optional live directory node ID restricts results to its descendants. Optional " +
-			"absolute modification timestamps form an inclusive-since, exclusive-before interval.",
+			"absolute modification timestamps form an inclusive-since, exclusive-before interval. " +
+			"fuzzy=true appends bounded ASCII one-edit filename/path discovery after ordinary " +
+			"hits and includes a coverage receipt; it requires a nonblank query, and text " +
+			"outside the supplemental syntax reports not_run.",
 	}, func(ctx context.Context, in *struct {
 		Q              string `query:"q"`
+		Fuzzy          bool   `query:"fuzzy"`
 		Limit          int    `query:"limit" default:"50" minimum:"1" maximum:"1000"`
 		TagID          string `query:"tag_id" pattern:"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"`
 		MIMEType       string `query:"mime_type" maxLength:"255"`
@@ -390,17 +394,28 @@ func registerReadRoutes(api huma.API, d Deps) {
 		if err != nil {
 			return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
 		}
-		hits, truncated, err := d.Store.SearchPageWithOptions(
-			ctx, in.Q, in.Limit, store.SearchOptions{
-				TagID: in.TagID, MIMEType: mimeType, UnderNodeID: in.UnderNodeID,
-				ModifiedSince: modifiedSince, ModifiedBefore: modifiedBefore,
-			},
-		)
+		opts := store.SearchOptions{
+			TagID: in.TagID, MIMEType: mimeType, UnderNodeID: in.UnderNodeID,
+			ModifiedSince: modifiedSince, ModifiedBefore: modifiedBefore,
+		}
+		var hits []store.SearchHit
+		var truncated bool
+		var fuzzy *FuzzyReceipt
+		if in.Fuzzy {
+			var receipt store.FuzzyReceipt
+			hits, truncated, receipt, err = d.Store.SearchDiscoveryPage(ctx, in.Q, in.Limit, opts)
+			fuzzy = &FuzzyReceipt{Status: receipt.Status, Reasons: receipt.Reasons}
+		} else {
+			hits, truncated, err = d.Store.SearchPageWithOptions(ctx, in.Q, in.Limit, opts)
+		}
 		if err != nil {
+			if errors.Is(err, store.ErrFuzzyQuery) {
+				return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
+			}
 			return nil, FromStoreError(err)
 		}
 		out := &searchOutput{Body: SearchReport{
-			Hits: []SearchHit{}, Limit: in.Limit, Truncated: truncated,
+			Hits: []SearchHit{}, Limit: in.Limit, Truncated: truncated, Fuzzy: fuzzy,
 			TagID: in.TagID, MIMEType: mimeType, UnderNodeID: in.UnderNodeID,
 			ModifiedSince: modifiedSince, ModifiedBefore: modifiedBefore,
 		}}

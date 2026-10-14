@@ -18,6 +18,57 @@ import (
 	"go.kenn.io/docbank/internal/audit"
 )
 
+func TestPhotoAuthoredConfirmationFields(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name  string
+		bit   PhotoAuthoredFields
+		patch PhotoAuthoredPatch
+	}{
+		{"rating", PhotoConfirmedRating, PhotoAuthoredPatch{Rating: new(5)}},
+		{"flag", PhotoConfirmedFlag, PhotoAuthoredPatch{Flag: new("pick")}},
+		{"label", PhotoConfirmedLabel, PhotoAuthoredPatch{Label: new("red")}},
+		{"caption", PhotoConfirmedCaption, PhotoAuthoredPatch{Caption: new("River")}},
+		{"creator", PhotoConfirmedCreator, PhotoAuthoredPatch{Creator: new("Example photographer")}},
+		{"copyright", PhotoConfirmedCopyright, PhotoAuthoredPatch{Copyright: new("Example rights")}},
+		{"rotation", PhotoConfirmedRotation, PhotoAuthoredPatch{Rotation: new(90)}},
+		{"zero rating", PhotoConfirmedRating, PhotoAuthoredPatch{Rating: new(0)}},
+		{"empty flag", PhotoConfirmedFlag, PhotoAuthoredPatch{Flag: new("")}},
+		{"empty label", PhotoConfirmedLabel, PhotoAuthoredPatch{Label: new("")}},
+		{"empty caption", PhotoConfirmedCaption, PhotoAuthoredPatch{Caption: new("")}},
+		{"empty creator", PhotoConfirmedCreator, PhotoAuthoredPatch{Creator: new("")}},
+		{"empty copyright", PhotoConfirmedCopyright, PhotoAuthoredPatch{Copyright: new("")}},
+		{"zero rotation", PhotoConfirmedRotation, PhotoAuthoredPatch{Rotation: new(0)}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			value := test.patch.apply(PhotoAuthored{})
+			require.Equal(t, test.bit, value.Confirmed)
+			require.NoError(t, ValidatePhotoAuthored(value))
+			value.Confirmed = 0
+			if value != (PhotoAuthored{}) {
+				require.ErrorIs(t, ValidatePhotoAuthored(value), ErrInvalidPhotoAsset)
+			}
+		})
+	}
+	require.ErrorIs(t, ValidatePhotoAuthored(PhotoAuthored{Confirmed: 128}), ErrInvalidPhotoAsset)
+}
+
+func TestPhotoAuthoredAuditRejectsUnsupportedConfirmationBits(t *testing.T) {
+	t.Parallel()
+	snapshot := PhotoAuthoredSnapshot{FileID: "40000000-0000-4000-8000-000000000001", NodeID: 1, Revision: 1}
+	for _, confirmed := range []uint64{128, 256} {
+		record, err := photoAuthoredAuditRecord(snapshot)
+		require.NoError(t, err)
+		for i := range record.Fields {
+			if record.Fields[i].Name == "confirmed_fields" {
+				record.Fields[i].Value = audit.Unsigned(confirmed)
+			}
+		}
+		_, err = photoAuthoredFromAudit(record)
+		require.ErrorIs(t, err, ErrInvalidPhotoAsset, "confirmation mask %d", confirmed)
+	}
+}
+
 func TestPhotoAuthoredReceiptRequiresCompleteValues(t *testing.T) {
 	t.Parallel()
 	const id = "40000000-0000-4000-8000-000000000001"
@@ -96,20 +147,20 @@ func TestPhotoAuthoredPairAtomicUndo(t *testing.T) {
 	asset := authoredPair(t, s)
 	raw := fileByRole(asset.Files, PhotoRoleRAW)
 	jpg := fileByRole(asset.Files, PhotoRoleImage)
-	_, err := s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{raw.ID, 1, PhotoAuthoredPatch{Rating: new(5)}}, {jpg.ID, 1, PhotoAuthoredPatch{Rating: new(6)}}})
+	_, err := s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{FileID: raw.ID, Revision: 1, Patch: PhotoAuthoredPatch{Rating: new(5)}}, {FileID: jpg.ID, Revision: 1, Patch: PhotoAuthoredPatch{Rating: new(6)}}})
 	require.ErrorIs(t, err, ErrInvalidPhotoAsset)
 	rawNow, err := photoFileByIDQuery(ctx, s.db, raw.ID)
 	require.NoError(t, err)
 	assert.Equal(t, raw, rawNow)
-	_, err = s.EditPhotoPair(ctx, asset.ID, asset.Revision-1, []PhotoAuthoredTarget{{raw.ID, 1, PhotoAuthoredPatch{Rating: new(5)}}})
+	_, err = s.EditPhotoPair(ctx, asset.ID, asset.Revision-1, []PhotoAuthoredTarget{{FileID: raw.ID, Revision: 1, Patch: PhotoAuthoredPatch{Rating: new(5)}}})
 	require.ErrorIs(t, err, ErrStaleRevision)
-	_, err = s.EditPhotoPair(ctx, asset.ID, asset.Revision, []PhotoAuthoredTarget{{raw.ID, 1, PhotoAuthoredPatch{Rating: new(5)}}})
+	_, err = s.EditPhotoPair(ctx, asset.ID, asset.Revision, []PhotoAuthoredTarget{{FileID: raw.ID, Revision: 1, Patch: PhotoAuthoredPatch{Rating: new(5)}}})
 	require.ErrorIs(t, err, ErrStaleRevision)
 	rawNow, err = photoFileByIDQuery(ctx, s.db, raw.ID)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), rawNow.Revision)
 	assert.Equal(t, PhotoAuthored{}, rawNow.Authored())
-	targets := []PhotoAuthoredTarget{{raw.ID, 1, PhotoAuthoredPatch{Rating: new(5), Flag: new("pick"), Caption: new("River"), Rotation: new(90)}}, {jpg.ID, 1, PhotoAuthoredPatch{Rating: new(3), Label: new("red")}}}
+	targets := []PhotoAuthoredTarget{{FileID: raw.ID, Revision: 1, Patch: PhotoAuthoredPatch{Rating: new(5), Flag: new("pick"), Caption: new("River"), Rotation: new(90)}}, {FileID: jpg.ID, Revision: 1, Patch: PhotoAuthoredPatch{Rating: new(3), Label: new("red")}}}
 	receipt, err := s.EditPhotoPair(ctx, asset.ID, asset.Revision, targets)
 	require.NoError(t, err)
 	require.Len(t, receipt.After, 2)
@@ -128,7 +179,7 @@ func TestPhotoAuthoredPairAtomicUndo(t *testing.T) {
 	}
 	_, err = s.UndoPhotoAuthored(ctx, receipt.ReceiptID)
 	require.ErrorIs(t, err, ErrStaleRevision)
-	receipt, err = s.EditPhotoPair(ctx, asset.ID, asset.Revision, []PhotoAuthoredTarget{{raw.ID, 3, PhotoAuthoredPatch{Rating: new(5)}}, {jpg.ID, 3, PhotoAuthoredPatch{Rating: new(5)}}})
+	receipt, err = s.EditPhotoPair(ctx, asset.ID, asset.Revision, []PhotoAuthoredTarget{{FileID: raw.ID, Revision: 3, Patch: PhotoAuthoredPatch{Rating: new(5)}}, {FileID: jpg.ID, Revision: 3, Patch: PhotoAuthoredPatch{Rating: new(5)}}})
 	require.NoError(t, err)
 	require.Len(t, receipt.After, 2)
 	for _, after := range receipt.After {
@@ -148,7 +199,7 @@ func TestPhotoAuthoredCompleteManyFileReceipt(t *testing.T) {
 		asset, err := s.PhotoAssetForNode(ctx, node.ID)
 		require.NoError(t, err)
 		f := asset.Files[0]
-		targets = append(targets, PhotoAuthoredTarget{f.ID, 1, PhotoAuthoredPatch{Rating: new(4)}})
+		targets = append(targets, PhotoAuthoredTarget{FileID: f.ID, Revision: 1, Patch: PhotoAuthoredPatch{Rating: new(4)}})
 	}
 	receipt, err := s.EditPhotoAuthored(ctx, targets)
 	require.NoError(t, err)
@@ -202,22 +253,36 @@ func TestPhotoAuthoredReleasedJSONLDefaults(t *testing.T) {
 	require.NoError(t, err)
 	var backup bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &backup))
-	lines := bytes.Split(backup.Bytes(), []byte{'\n'})
-	for i, line := range lines {
-		if bytes.Contains(line, []byte(`"type":"photo_file"`)) {
-			f := asset.Files[0]
-			old := metadataPhotoFileBeforeAuthored{Type: metadataPhotoFileType, FileID: f.ID, AssetID: f.AssetID, NodeID: f.NodeID, Role: f.Role, SidecarOfID: f.SidecarOfID, CreatedAt: f.CreatedAt}
-			lines[i], err = json.Marshal(old, json.Deterministic(true))
+	for _, test := range []string{"released defaults", "unconfirmed value"} {
+		t.Run(test, func(t *testing.T) {
+			lines := bytes.Split(backup.Bytes(), []byte{'\n'})
+			for i, line := range lines {
+				if bytes.Contains(line, []byte(`"type":"photo_file"`)) {
+					switch test {
+					case "unconfirmed value":
+						lines[i] = bytes.Replace(line, []byte(`"rating":0`), []byte(`"rating":3`), 1)
+					default:
+						f := asset.Files[0]
+						old := metadataPhotoFileBeforeAuthored{Type: metadataPhotoFileType, FileID: f.ID, AssetID: f.AssetID, NodeID: f.NodeID, Role: f.Role, SidecarOfID: f.SidecarOfID, CreatedAt: f.CreatedAt}
+						lines[i], err = json.Marshal(old, json.Deterministic(true))
+						require.NoError(t, err)
+					}
+				}
+			}
+			restored := newTestStore(t)
+			err := restored.ImportMetadata(ctx, bytes.NewReader(bytes.Join(lines, []byte{'\n'})))
+			if test != "released defaults" {
+				require.ErrorContains(t, err, "invalid authored photo decision")
+				_, err = restored.NodeByID(ctx, node.ID)
+				require.ErrorIs(t, err, ErrNotFound)
+				return
+			}
 			require.NoError(t, err)
-		}
+			got, err := restored.PhotoAssetByID(ctx, asset.ID)
+			require.NoError(t, err)
+			assert.Equal(t, asset.Files, got.Files)
+		})
 	}
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, restored.Close()) })
-	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(bytes.Join(lines, []byte{'\n'}))))
-	got, err := restored.PhotoAssetByID(ctx, asset.ID)
-	require.NoError(t, err)
-	assert.Equal(t, asset.Files, got.Files)
 }
 
 func TestPhotoAuthoredLegacyAuditDefaults(t *testing.T) {
@@ -250,11 +315,11 @@ func TestPhotoAuthoredLegacyAuditDefaults(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.EnableInitialAudit(ctx, plan)
 	require.NoError(t, err)
-	human, err := s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{file.ID, 1, PhotoAuthoredPatch{Rating: new(0)}}})
+	human, err := s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{FileID: file.ID, Revision: 1, Patch: PhotoAuthoredPatch{Rating: new(0)}}})
 	require.NoError(t, err)
 	require.NotEmpty(t, human.ReceiptID)
 	require.NoError(t, s.ValidateMetadata(ctx))
-	_, err = s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{file.ID, 2, PhotoAuthoredPatch{Rating: new(5)}}})
+	_, err = s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{FileID: file.ID, Revision: 2, Patch: PhotoAuthoredPatch{Rating: new(5)}}})
 	require.NoError(t, err)
 	require.NoError(t, s.ValidateMetadata(ctx))
 }
@@ -268,7 +333,7 @@ func TestPhotoAuthoredEnrollmentRetainsOutsideScopeCaption(t *testing.T) {
 	node := browsePhotoNode(t, s, "outside.jpg", fakeHash("a1"), "image/jpeg")
 	asset, err := s.PhotoAssetForNode(ctx, node.ID)
 	require.NoError(t, err)
-	_, err = s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{asset.Files[0].ID, 1, PhotoAuthoredPatch{Caption: new("Outside-scope caption")}}})
+	_, err = s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{FileID: asset.Files[0].ID, Revision: 1, Patch: PhotoAuthoredPatch{Caption: new("Outside-scope caption")}}})
 	require.NoError(t, err)
 	seedInitialAuditAuthority(t, s, scope.ID)
 	records, err := loadInitialAuditRecords(ctx, s.db)
@@ -301,33 +366,48 @@ func TestPhotoAuthoredAuditRoundTripAndRollback(t *testing.T) {
 	seedInitialAuditAuthority(t, s, s.RootID())
 	targets := []PhotoAuthoredTarget{}
 	for _, f := range asset.Files {
-		targets = append(targets, PhotoAuthoredTarget{f.ID, 1, PhotoAuthoredPatch{Rating: new(5)}})
+		targets = append(targets, PhotoAuthoredTarget{FileID: f.ID, Revision: 1, Patch: PhotoAuthoredPatch{Rating: new(5)}})
 	}
-	receipt, err := s.EditPhotoAuthored(ctx, targets)
+	_, err := s.EditPhotoAuthored(ctx, targets)
 	require.NoError(t, err)
 	require.NoError(t, s.ValidateMetadata(ctx))
 	history, err := s.AuditHistory(ctx, asset.Files[0].NodeID, 10, "")
 	require.NoError(t, err)
 	require.NotNil(t, history.Items[0].Attachment)
 	require.NotNil(t, history.Items[0].Attachment.After.Photo)
+	cleared, err := s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{FileID: targets[0].FileID, Revision: 2, Patch: PhotoAuthoredPatch{Caption: new("")}}})
+	require.NoError(t, err)
+	require.Len(t, cleared.After, 1)
+	assert.Equal(t, PhotoConfirmedRating, cleared.Before[0].Values.Confirmed)
+	assert.Equal(t, PhotoConfirmedRating|PhotoConfirmedCaption, cleared.After[0].Values.Confirmed)
+	currentAsset, err := s.PhotoAssetByID(ctx, asset.ID)
+	require.NoError(t, err)
+	assert.True(t, currentAsset.Agreement["caption"])
 	var backup bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &backup))
 	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(backup.Bytes())))
-	_, err = restored.UndoPhotoAuthored(ctx, receipt.ReceiptID)
+	current, err := photoFileByIDQuery(ctx, restored.db, targets[0].FileID)
 	require.NoError(t, err)
+	assert.Equal(t, cleared.After[0].Values, current.Authored())
+	undo, err := restored.UndoPhotoAuthored(ctx, cleared.ReceiptID)
+	require.NoError(t, err)
+	assert.Equal(t, PhotoConfirmedRating, undo.After[0].Values.Confirmed)
+	redo, err := restored.UndoPhotoAuthored(ctx, undo.ReceiptID)
+	require.NoError(t, err)
+	assert.Equal(t, cleared.After[0].Values, redo.After[0].Values)
 	require.NoError(t, restored.ValidateMetadata(ctx))
 	_, err = s.db.Exec(`CREATE TRIGGER reject_photo_audit BEFORE UPDATE ON audit_scopes BEGIN SELECT RAISE(ABORT,'forced photo audit failure'); END`)
 	require.NoError(t, err)
-	targets[0].Revision = 2
+	targets[0].Revision = 3
 	targets[0].Patch.Rating = new(4)
 	_, err = s.EditPhotoAuthored(ctx, targets[:1])
 	require.ErrorContains(t, err, "forced photo audit failure")
-	current, err := photoFileByIDQuery(ctx, s.db, targets[0].FileID)
+	current, err = photoFileByIDQuery(ctx, s.db, targets[0].FileID)
 	require.NoError(t, err)
-	assert.Equal(t, int64(2), current.Revision)
+	assert.Equal(t, int64(3), current.Revision)
 	assert.Equal(t, 5, current.Rating)
 }
 
@@ -352,7 +432,7 @@ func TestPhotoSidecarHumanDecisionBlocksInitialization(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, targets, 1)
 	assert.Equal(t, sidecar.ID, targets[0].NodeID)
-	human, err := s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{raw.ID, 1, PhotoAuthoredPatch{Rating: new(0)}}})
+	human, err := s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{FileID: raw.ID, Revision: 1, Patch: PhotoAuthoredPatch{Rating: new(0)}}})
 	require.NoError(t, err)
 	require.NotEmpty(t, human.ReceiptID)
 	require.Len(t, human.After, 1)
@@ -447,7 +527,7 @@ func TestPhotoAuthoredRestoreRejectsDifferentReceiptNode(t *testing.T) {
 				missingFile = targets[0].SidecarFileID
 				_, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, missingFile, PhotoDetachOptions{})
 			} else {
-				receipt, err = s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{f.ID, 1, PhotoAuthoredPatch{Rating: new(4)}}})
+				receipt, err = s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{FileID: f.ID, Revision: 1, Patch: PhotoAuthoredPatch{Rating: new(4)}}})
 			}
 			require.NoError(t, err)
 			if mode == "missing detached" {
@@ -492,7 +572,7 @@ func TestPhotoAuthoredRegroupingPreservesAuthority(t *testing.T) {
 		s := newTestStore(t)
 		asset := authoredPair(t, s)
 		f := fileByRole(asset.Files, PhotoRoleRAW)
-		receipt, err := s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{f.ID, 1, PhotoAuthoredPatch{Rating: new(5), Caption: new("River"), Creator: new("Example photographer")}}})
+		receipt, err := s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{FileID: f.ID, Revision: 1, Patch: PhotoAuthoredPatch{Rating: new(5), Caption: new("River"), Creator: new("Example photographer")}}})
 		require.NoError(t, err)
 		for range 2 {
 			asset, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, f.ID, PhotoDetachOptions{})
@@ -556,8 +636,8 @@ func TestPhotoAuthoredPurgeRemovesReceipts(t *testing.T) {
 			raw := fileByRole(asset.Files, PhotoRoleRAW)
 			jpg := fileByRole(asset.Files, PhotoRoleImage)
 			receipt, err := s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{
-				{raw.ID, 1, PhotoAuthoredPatch{Caption: new("Deleted caption"), Creator: new("Deleted creator"), Copyright: new("Deleted copyright")}},
-				{jpg.ID, 1, PhotoAuthoredPatch{Rating: new(3)}},
+				{FileID: raw.ID, Revision: 1, Patch: PhotoAuthoredPatch{Caption: new("Deleted caption"), Creator: new("Deleted creator"), Copyright: new("Deleted copyright")}},
+				{FileID: jpg.ID, Revision: 1, Patch: PhotoAuthoredPatch{Rating: new(3)}},
 			})
 			require.NoError(t, err)
 			undo, err := s.UndoPhotoAuthored(ctx, receipt.ReceiptID)
@@ -568,7 +648,7 @@ func TestPhotoAuthoredPurgeRemovesReceipts(t *testing.T) {
 			require.NoError(t, err)
 			otherAsset, err := s.PhotoAssetForNode(ctx, other.ID)
 			require.NoError(t, err)
-			unrelated, err := s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{otherAsset.Files[0].ID, 1, PhotoAuthoredPatch{Caption: new("Retained caption")}}})
+			unrelated, err := s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{FileID: otherAsset.Files[0].ID, Revision: 1, Patch: PhotoAuthoredPatch{Caption: new("Retained caption")}}})
 			require.NoError(t, err)
 			if mode == "attached" {
 				_, err = s.TrashPhotoAsset(ctx, asset.ID, asset.Revision)
@@ -832,7 +912,7 @@ func TestPhotoAuthoredExpressionBrowse(t *testing.T) {
 	asset := authoredPair(t, s)
 	raw := fileByRole(asset.Files, PhotoRoleRAW)
 	jpg := fileByRole(asset.Files, PhotoRoleImage)
-	_, err := s.EditPhotoAuthored(t.Context(), []PhotoAuthoredTarget{{raw.ID, 1, PhotoAuthoredPatch{Rating: new(5), Flag: new("pick")}}, {jpg.ID, 1, PhotoAuthoredPatch{Rating: new(1), Label: new("red")}}})
+	_, err := s.EditPhotoAuthored(t.Context(), []PhotoAuthoredTarget{{FileID: raw.ID, Revision: 1, Patch: PhotoAuthoredPatch{Rating: new(5), Flag: new("pick")}}, {FileID: jpg.ID, Revision: 1, Patch: PhotoAuthoredPatch{Rating: new(1), Label: new("red")}}})
 	require.NoError(t, err)
 	for _, stage := range []string{"raw", "raw with sidecar", "image preference with sidecar"} {
 		if stage == "raw with sidecar" {
@@ -1226,7 +1306,7 @@ func TestPhotoAuthoredHiddenEditsRequireUnlock(t *testing.T) {
 	unlocked := WithPhotoHiddenToken(ctx, token)
 	_, err = s.SetPhotoAssetHidden(unlocked, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
-	target := []PhotoAuthoredTarget{{asset.Files[0].ID, 1, PhotoAuthoredPatch{Caption: new("Private caption")}}}
+	target := []PhotoAuthoredTarget{{FileID: asset.Files[0].ID, Revision: 1, Patch: PhotoAuthoredPatch{Caption: new("Private caption")}}}
 	_, err = s.EditPhotoAuthored(ctx, target)
 	require.ErrorIs(t, err, ErrHiddenLocked)
 	current, err := photoFileByIDQuery(ctx, s.db, target[0].FileID)
@@ -1257,15 +1337,16 @@ func TestPhotoAuthoredRestoreRejectsDecidedRevisionOne(t *testing.T) {
 	require.NoError(t, s.ExportMetadata(ctx, &backup))
 	for _, c := range []struct {
 		revision int64
+		rating   int
 		valid    bool
-	}{{1, false}, {2, true}} {
-		t.Run(strconv.FormatInt(c.revision, 10), func(t *testing.T) {
+	}{{1, 4, false}, {1, 0, false}, {2, 4, true}} {
+		t.Run(fmt.Sprintf("revision=%d rating=%d", c.revision, c.rating), func(t *testing.T) {
 			lines := bytes.Split(backup.Bytes(), []byte{'\n'})
 			for i, line := range lines {
 				if bytes.Contains(line, []byte(`"type":"photo_file"`)) {
 					var record metadataPhotoFile
 					require.NoError(t, json.Unmarshal(line, &record))
-					record.Revision, record.Rating = c.revision, 4
+					record.Revision, record.Rating, record.Confirmed = c.revision, c.rating, PhotoConfirmedRating
 					lines[i], err = json.Marshal(record, json.Deterministic(true))
 					require.NoError(t, err)
 				}

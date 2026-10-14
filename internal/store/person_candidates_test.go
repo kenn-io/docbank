@@ -264,6 +264,14 @@ func TestPersonCandidateAndAssertionValidation(t *testing.T) {
 		return openErr
 	})
 	require.ErrorIs(t, err, ErrInvalidPerson)
+	depictedDocumentCandidate := candidateForTest(t, "name_alias:ada", "Ada", "", []PersonCandidateOccurrence{{
+		ContentVersionID: versionID, Role: "depicted", EvidenceKind: "source_metadata", EvidenceID: "claim",
+	}})
+	err = s.withLogicalTx(t.Context(), func(tx *sql.Tx) error {
+		_, _, openErr := s.OpenPersonCandidate(t.Context(), tx, depictedDocumentCandidate)
+		return openErr
+	})
+	require.ErrorIs(t, err, ErrInvalidPerson)
 	_, _, err = s.PersonCandidates(t.Context(), "open", 251, 0)
 	require.ErrorIs(t, err, ErrInvalidPerson)
 	_, err = s.AssertDocumentPerson(t.Context(), PersonDocumentAssertion{

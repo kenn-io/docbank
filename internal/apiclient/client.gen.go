@@ -9992,6 +9992,100 @@ func (c *Client) PromotePhotoNode(ctx context.Context, options *PromotePhotoNode
 	return responseParser(ctx, resp)
 }
 
+// PreflightPhotoRejects Preview rejected photos in the current scope
+func (c *Client) PreflightPhotoRejects(ctx context.Context, options *PreflightPhotoRejectsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreflightPhotoRejectsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/rejects/preflight",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PreflightPhotoRejectsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PreflightPhotoRejectsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PreflightPhotoRejectsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[PreflightPhotoRejectsErrorResponse](resp, "PreflightPhotoRejectsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/rejects/preflight")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// MovePhotoRejects Move previewed rejected photos to trash
+func (c *Client) MovePhotoRejects(ctx context.Context, options *MovePhotoRejectsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MovePhotoRejectsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/rejects/trash",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*MovePhotoRejectsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(MovePhotoRejectsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "MovePhotoRejectsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[MovePhotoRejectsErrorResponse](resp, "MovePhotoRejectsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/rejects/trash")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // GetPhotoSettings Inspect the photo display preference
 func (c *Client) GetPhotoSettings(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetPhotoSettingsResponse, error) {
 	var err error
@@ -10080,6 +10174,99 @@ func (c *Client) SetPhotoSettings(ctx context.Context, options *SetPhotoSettings
 	}
 	if resp.Streaming {
 		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListPhotoFaces Read face boxes and people on one photo version
+func (c *Client) ListPhotoFaces(ctx context.Context, options *ListPhotoFacesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPhotoFacesResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/photos/versions/{content_version_id}/faces",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListPhotoFacesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListPhotoFacesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListPhotoFacesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListPhotoFacesErrorResponse](resp, "ListPhotoFacesErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/versions/{content_version_id}/faces")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CreatePhotoFace Record a face box or a person in a whole photo
+func (c *Client) CreatePhotoFace(ctx context.Context, options *CreatePhotoFaceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreatePhotoFaceResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/versions/{content_version_id}/faces",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreatePhotoFaceResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(CreatePhotoFaceResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreatePhotoFaceResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreatePhotoFaceErrorResponse](resp, "CreatePhotoFaceErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/versions/{content_version_id}/faces")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
 	}
 	return responseParser(ctx, resp)
 }
@@ -11121,6 +11308,7 @@ func (c *Client) Search(ctx context.Context, options *SearchRequestOptions, reqE
 	var err error
 
 	queryEncoding := map[string]runtime.QueryEncoding{
+		"fuzzy":           {Style: "form", Explode: &[]bool{false}[0]},
 		"limit":           {Style: "form", Explode: &[]bool{false}[0]},
 		"mime_type":       {Style: "form", Explode: &[]bool{false}[0]},
 		"modified_before": {Style: "form", Explode: &[]bool{false}[0]},
@@ -20349,6 +20537,62 @@ func (o *PromotePhotoNodeRequestOptions) GetHeader() (map[string]string, error) 
 	return headers, err
 }
 
+// PreflightPhotoRejectsRequestOptions is the options needed to make a request to PreflightPhotoRejects.
+type PreflightPhotoRejectsRequestOptions struct {
+	Body *PreflightPhotoRejectsBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *PreflightPhotoRejectsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *PreflightPhotoRejectsRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *PreflightPhotoRejectsRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *PreflightPhotoRejectsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// MovePhotoRejectsRequestOptions is the options needed to make a request to MovePhotoRejects.
+type MovePhotoRejectsRequestOptions struct {
+	Body *MovePhotoRejectsBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *MovePhotoRejectsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *MovePhotoRejectsRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *MovePhotoRejectsRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *MovePhotoRejectsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // SetPhotoSettingsRequestOptions is the options needed to make a request to SetPhotoSettings.
 type SetPhotoSettingsRequestOptions struct {
 	Body   *SetPhotoSettingsBody
@@ -20382,6 +20626,72 @@ func (o *SetPhotoSettingsRequestOptions) GetHeader() (map[string]string, error) 
 	var headers map[string]string
 	err = json.Unmarshal(encoded, &headers)
 	return headers, err
+}
+
+// ListPhotoFacesRequestOptions is the options needed to make a request to ListPhotoFaces.
+type ListPhotoFacesRequestOptions struct {
+	PathParams *ListPhotoFacesPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListPhotoFacesRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListPhotoFacesRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListPhotoFacesRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListPhotoFacesRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// CreatePhotoFaceRequestOptions is the options needed to make a request to CreatePhotoFace.
+type CreatePhotoFaceRequestOptions struct {
+	PathParams *CreatePhotoFacePath
+	Body       *CreatePhotoFaceBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreatePhotoFaceRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreatePhotoFaceRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreatePhotoFaceRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreatePhotoFaceRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
 }
 
 // GrantDocumentProcessingConsentRequestOptions is the options needed to make a request to GrantDocumentProcessingConsent.
@@ -23474,6 +23784,14 @@ type PromotePhotoNodePath struct {
 	NodeID int64 `json:"node_id"`
 }
 
+type ListPhotoFacesPath struct {
+	ContentVersionID uuid.UUID `json:"content_version_id"`
+}
+
+type CreatePhotoFacePath struct {
+	ContentVersionID uuid.UUID `json:"content_version_id"`
+}
+
 type GetDocumentProcessingJobPath struct {
 	ID string `json:"id"`
 }
@@ -23816,7 +24134,13 @@ type StartPhotoImportBody = PhotoImportStartRequest
 
 type PromotePhotoNodeBody = PromotePhotoNodeRequest
 
+type PreflightPhotoRejectsBody = PhotoRejectsRequest
+
+type MovePhotoRejectsBody = MovePhotoRejectsRequest
+
 type SetPhotoSettingsBody = SetPhotoSettingsRequest
+
+type CreatePhotoFaceBody = CreatePhotoFaceRequest
 
 type GrantDocumentProcessingConsentBody = ProcessingConsentGrantRequest
 
@@ -24169,6 +24493,7 @@ type ListSavedQueriesQuery struct {
 
 type SearchQuery struct {
 	Q              *string `json:"q,omitempty"`
+	Fuzzy          *bool   `json:"fuzzy,omitempty"`
 	Limit          *int64  `json:"limit,omitempty"`
 	TagID          *string `json:"tag_id,omitempty"`
 	MimeType       *string `json:"mime_type,omitempty"`
@@ -25123,6 +25448,14 @@ type PromotePhotoNodeResponse = api.PhotoAsset
 
 type PromotePhotoNodeErrorResponse = Error
 
+type PreflightPhotoRejectsResponse = store.PhotoRejectsPreflight
+
+type PreflightPhotoRejectsErrorResponse = Error
+
+type MovePhotoRejectsResponse = store.PhotoRejectsMoved
+
+type MovePhotoRejectsErrorResponse = Error
+
 type GetPhotoSettingsResponse = api.PhotoSettings
 
 type GetPhotoSettingsErrorResponse = Error
@@ -25130,6 +25463,14 @@ type GetPhotoSettingsErrorResponse = Error
 type SetPhotoSettingsResponse = api.PhotoSettings
 
 type SetPhotoSettingsErrorResponse = Error
+
+type ListPhotoFacesResponse = api.PhotoFacePage
+
+type ListPhotoFacesErrorResponse = Error
+
+type CreatePhotoFaceResponse = api.PhotoFaceResult
+
+type CreatePhotoFaceErrorResponse = Error
 
 type GrantDocumentProcessingConsentResponse = api.ProcessingConsentGrant
 
@@ -25722,6 +26063,8 @@ type CreatePersonRequest = api.CreatePersonRequest
 
 type CreatePhotoAssetRequest = api.CreatePhotoAssetRequest
 
+type CreatePhotoFaceRequest = api.CreatePhotoFaceRequest
+
 type CreateTagRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema *string `json:"$schema,omitempty"`
@@ -25959,6 +26302,8 @@ type EvidenceWindowRequest = api.EvidenceWindowRequest
 
 type ExportJob = bundle.ExportJob
 
+type FaceBox = document.FaceBox
+
 type Filters = query.Filters
 
 type FormatCapabilityV1 = document.FormatCapabilityV1
@@ -25968,6 +26313,8 @@ type FormatCoverageResponse = api.FormatCoverageResponse
 type FormatLookupV1 = document.FormatLookupV1
 
 type FormatVariantCapabilityV1 = document.FormatVariantCapabilityV1
+
+type FuzzyReceipt = api.FuzzyReceipt
 
 type GCReport = api.GCReport
 
@@ -26148,6 +26495,8 @@ type MovePathRequest struct {
 	SrcPath  string  `json:"src_path"`
 }
 
+type MovePhotoRejectsRequest = api.MovePhotoRejectsRequest
+
 type Node = api.Node
 
 type NodePage = api.NodePage
@@ -26294,6 +26643,12 @@ type PhotoBrowseRequest = api.PhotoBrowseRequest
 
 type PhotoBrowseRow = api.PhotoBrowseRow
 
+type PhotoFace = store.PhotoFace
+
+type PhotoFacePage = api.PhotoFacePage
+
+type PhotoFaceResult = api.PhotoFaceResult
+
 type PhotoFile = api.PhotoFile
 
 type PhotoHiddenPasscodeRequest = api.PhotoHiddenPasscodeRequest
@@ -26302,11 +26657,31 @@ type PhotoHiddenState = store.PhotoHiddenState
 
 type PhotoImportStartRequest = api.PhotoImportStartRequest
 
+type PhotoMapRow = api.PhotoMapRow
+
+type PhotoMapRowPreviewsStruct struct {
+	Grid PhotoPreviewSlot `json:"grid"`
+}
+
+type PhotoPersonAssertion = api.PhotoPersonAssertion
+
 type PhotoPreviewSlot = api.PhotoPreviewSlot
 
 type PhotoPreviewSlots = api.PhotoPreviewSlots
 
 type PhotoQualitySignals = document.PhotoQualitySignals
+
+type PhotoRejectMember = store.PhotoRejectMember
+
+type PhotoRejectMixed = store.PhotoRejectMixed
+
+type PhotoRejectTarget = store.PhotoRejectTarget
+
+type PhotoRejectsMoved = store.PhotoRejectsMoved
+
+type PhotoRejectsPreflight = store.PhotoRejectsPreflight
+
+type PhotoRejectsRequest = api.PhotoRejectsRequest
 
 type PhotoSettings = api.PhotoSettings
 
