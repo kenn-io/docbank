@@ -130,9 +130,12 @@ func (c queryCompiler) compilePhotoScalarPredicate(field, value string) (compile
 		if field == "capture_before" {
 			operator = "<"
 		}
+		// The timeline day places photo files; other versions, such as an EXIF JPEG with no photo row, match their own capture date.
 		return c.compilePhotoVersionPredicate(func(alias string) string {
-			return `EXISTS (SELECT 1 FROM photo_files tf JOIN nodes tn ON tn.id=tf.node_id AND tn.current_version_id=` + alias + `.version_id JOIN photo_timeline pl ON pl.file_id=tf.file_id WHERE tf.node_id=` + alias + `.node_id AND pl.day` + operator + ` ?)`
-		}, value), nil
+			timeline := `SELECT 1 FROM photo_files tf JOIN photo_timeline pl ON pl.file_id=tf.file_id WHERE tf.node_id=` + alias + `.node_id`
+			return `(EXISTS (` + timeline + ` AND pl.day` + operator + ` ?) OR (NOT EXISTS (` + timeline + `) AND EXISTS (` +
+				`SELECT 1 FROM source_metadata_heads h JOIN photo_technical_metadata p ON p.generation_id=h.generation_id WHERE h.source_sha256=` + alias + `.blob_hash AND p.capture_date<>'' AND p.capture_date` + operator + ` ?)))`
+		}, value, value), nil
 	case "gps":
 		bounds, err := query.ParseGPSOperand(value)
 		if err != nil {

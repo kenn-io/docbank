@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/query"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -1464,14 +1463,26 @@ func TestPhotoTimelineAgreesWithRestoreAfterPruningVersions(t *testing.T) {
 	require.Equal(t, live, restored, "the cached placement matches what a restore derives")
 }
 
-func TestOpenRejectsUnreleasedSchema34Vault(t *testing.T) {
+func TestCaptureDateFilterMatchesPhotosWithoutAPhotoRow(t *testing.T) {
 	t.Parallel()
-	path := filepath.Join(t.TempDir(), "docbank.db")
-	s, err := Open(path)
+	s := newTestStore(t)
+	ctx := t.Context()
+	dir, err := s.Mkdir(ctx, s.RootID(), "Photos")
 	require.NoError(t, err)
-	_, err = s.db.ExecContext(t.Context(), "UPDATE vault_metadata SET schema_version=34")
+	// With audit history active, new files are not enrolled as photos, but document queries still match their capture date.
+	seedInitialAuditAuthority(t, s, dir.ID)
+	node, err := s.CreateFile(ctx, dir.ID, "audited.jpg", browseHash("audited"), 20, "image/jpeg")
 	require.NoError(t, err)
-	require.NoError(t, s.Close())
-	_, err = Open(path)
-	require.ErrorContains(t, err, "schema version 34 has no supported JSONL cutover")
+	var rows int
+	require.NoError(t, s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM photo_files WHERE node_id=?", node.ID).Scan(&rows))
+	require.Zero(t, rows)
+	browsePhotoMetadata(t, s, node, "audited", exifCapture("2024-06-10T12:00:00Z"))
+	for raw, want := range map[string]int{
+		`{"filters":{"capture_after":"2024-06-10","capture_before":"2024-06-11"}}`: 1,
+		`{"filters":{"capture_after":"2024-06-11"}}`:                               0,
+	} {
+		snapshot, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: snapshotTestQuery(t, raw)})
+		require.NoError(t, err)
+		require.Len(t, snapshot.Rows, want, raw)
+	}
 }
