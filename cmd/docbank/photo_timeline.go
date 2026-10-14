@@ -14,10 +14,11 @@ func newPhotoTimelineCommand() *cobra.Command {
 		Example: `  docbank photos timeline
   docbank photos timeline --query '{"filters":{"capture_after":"2024-01-01"}}'`,
 		Use:   "timeline",
-		Short: "Count photos by recorded capture day",
+		Short: "Count photos by capture day, or file modified day",
 		Long: `Counts every photo asset the query selects by its recorded calendar day,
-newest day first. Scope matches photo browsing in the web app.
-Output: JSON with one capture_day facet. total includes undated photos, which
+newest day first. A photo without a capture date counts on the UTC day its
+file was last modified. Scope matches photo browsing in the web app.
+Output: JSON with one capture_day facet. total includes photos with neither date, which
 are also counted in missing.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {

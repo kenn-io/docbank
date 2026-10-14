@@ -554,10 +554,6 @@ CREATE INDEX IF NOT EXISTS photo_technical_metadata_lens
     ON photo_technical_metadata(lens_make_folded, lens_model_folded);
 CREATE INDEX IF NOT EXISTS photo_technical_metadata_iso
     ON photo_technical_metadata(iso);
-CREATE INDEX IF NOT EXISTS photo_technical_metadata_capture_sort_key
-    ON photo_technical_metadata(capture_sort_key);
-CREATE INDEX IF NOT EXISTS photo_technical_metadata_capture_date
-    ON photo_technical_metadata(capture_date);
 CREATE INDEX IF NOT EXISTS photo_technical_metadata_location
     ON photo_technical_metadata(latitude, longitude);
 
@@ -2233,7 +2229,7 @@ CREATE INDEX IF NOT EXISTS photo_files_sidecar_nodes ON photo_files(node_id) WHE
 -- any version of the node with the displayed blob, so a revert regains the
 -- original date. The key is formatted like query.CaptureTimeKey. Derived like
 -- photo_technical_metadata: absent from export, refilled by the triggers below
--- when restore inserts the facts they watch, and once at open for older vaults.
+-- when restore inserts the facts they watch.
 CREATE TABLE IF NOT EXISTS photo_timeline (
     file_id       TEXT PRIMARY KEY REFERENCES photo_files(file_id) ON DELETE CASCADE,
     sort_key      TEXT NOT NULL,
@@ -2282,6 +2278,15 @@ END;
 
 CREATE TRIGGER IF NOT EXISTS photo_timeline_file_insert AFTER INSERT ON photo_files BEGIN
     INSERT OR REPLACE INTO photo_timeline_pending(node_id) VALUES(NEW.node_id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_timeline_role_change AFTER UPDATE OF role ON photo_files BEGIN
+    INSERT OR REPLACE INTO photo_timeline_pending(node_id) VALUES(NEW.node_id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_timeline_version_delete AFTER DELETE ON content_versions BEGIN
+    INSERT OR REPLACE INTO photo_timeline_pending(node_id)
+    SELECT node_id FROM photo_files WHERE node_id = OLD.node_id;
 END;
 
 CREATE TRIGGER IF NOT EXISTS photo_timeline_version_change

@@ -1394,16 +1394,22 @@ func TestPhotoTimelineAppliesProvenanceCorrections(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
-	run, err := s.BeginIngest(ctx, "cli", "corrections")
+	// Only caller-supplied provenance may be corrected, and a caller-supplied run can ingest the file.
+	run, err := s.BeginCallerSuppliedIngest(ctx, "agent", "wallpapers")
 	require.NoError(t, err)
 	node := ingestMtimePhoto(t, s, run, "photo.jpg", "2024-03-05T10:00:00Z")
+	require.Equal(t, "2024-03-05T10:00:00Z", *photoModifiedTime(t, s, "photo.jpg"))
 	var identity string
 	require.NoError(t, s.db.QueryRowContext(ctx, "SELECT identity FROM provenance WHERE node_id=?", node.ID).Scan(&identity))
-	// A correction of a bound claim replaces it, as an imported or restored fact would arrive.
-	_, err = s.db.ExecContext(ctx, "INSERT INTO provenance(identity,node_id,ingest_id,original_path,original_mtime,supersedes) SELECT ?,node_id,ingest_id,original_path,?,identity FROM provenance WHERE identity=?",
-		browseHash("correction"), "2023-11-04T18:22:03Z", identity)
+	current, err := s.NodeByID(ctx, node.ID)
 	require.NoError(t, err)
-	require.Equal(t, "2023-11-04T18:22:03Z", *photoModifiedTime(t, s, "photo.jpg"))
+	corrected := "2023-11-04T18:22:03Z"
+	_, err = s.AppendNodeProvenance(ctx, ProvenanceAppendInput{
+		NodeID: node.ID, IfRevision: current.Revision, SourceKind: "agent", SourceDescription: "correct",
+		OriginalPath: "/shots/photo.jpg", OriginalMTime: &corrected, Supersedes: &identity,
+	})
+	require.NoError(t, err)
+	require.Equal(t, corrected, *photoModifiedTime(t, s, "photo.jpg"))
 }
 
 func TestPhotoTimelineRefillsOnRestore(t *testing.T) {
@@ -1427,38 +1433,45 @@ func TestPhotoTimelineRefillsOnRestore(t *testing.T) {
 	require.Equal(t, 2, rows)
 }
 
-func TestOpenBackfillsTimelineInVaultWithoutIt(t *testing.T) {
+func TestPhotoTimelineAgreesWithRestoreAfterPruningVersions(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
+	source := newTestStore(t)
+	run, err := source.BeginIngest(ctx, "cli", "versions")
+	require.NoError(t, err)
+	node := ingestMtimePhoto(t, source, run, "photo.jpg", "2024-03-05T10:00:00Z")
+	original := node.CurrentVersionID
+	later, err := source.BeginIngest(ctx, "cli", "later")
+	require.NoError(t, err)
+	observeMtime(t, source, later, node.ID, browseHash("cropped"), "2024-08-09T10:00:00Z")
+	current, err := source.NodeByID(ctx, node.ID)
+	require.NoError(t, err)
+	_, _, _, err = source.RevertContent(ctx, node.ID, current.Revision, original)
+	require.NoError(t, err)
+	require.Equal(t, "2024-03-05T10:00:00Z", *photoModifiedTime(t, source, "photo.jpg"))
+
+	current, err = source.NodeByID(ctx, node.ID)
+	require.NoError(t, err)
+	_, err = source.PruneContentVersions(ctx, node.ID, current.Revision, VersionPruneSelector{AllPrior: true}, true)
+	require.NoError(t, err)
+	live := photoModifiedTime(t, source, "photo.jpg")
+
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(ctx, &exported))
+	target := newTestStore(t)
+	require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
+	restored := photoModifiedTime(t, target, "photo.jpg")
+	require.Equal(t, live, restored, "the cached placement matches what a restore derives")
+}
+
+func TestOpenRejectsUnreleasedSchema34Vault(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "docbank.db")
 	s, err := Open(path)
 	require.NoError(t, err)
-	run, err := s.BeginIngest(ctx, "cli", "wallpapers")
+	_, err = s.db.ExecContext(t.Context(), "UPDATE vault_metadata SET schema_version=34")
 	require.NoError(t, err)
-	dated := ingestMtimePhoto(t, s, run, "dated.jpg", "2020-01-01T00:00:00Z")
-	browsePhotoMetadata(t, s, dated, "dated", exifCapture("2024-06-10T12:00:00Z"))
-	ingestMtimePhoto(t, s, run, "wallpaper.jpg", "2024-03-05T10:00:00Z")
-	// Recreate the layout origin/main shipped: no timeline table, queue, or triggers.
-	statements := []string{"DROP TABLE photo_timeline", "DROP TABLE photo_timeline_pending"}
-	rows, err := s.db.QueryContext(ctx, "SELECT name FROM sqlite_master WHERE type = ? AND name LIKE ?", "trigger", "photo_timeline_%")
-	require.NoError(t, err)
-	for rows.Next() {
-		var name string
-		require.NoError(t, rows.Scan(&name))
-		statements = append([]string{"DROP TRIGGER " + name}, statements...)
-	}
-	require.NoError(t, rows.Close())
-	for _, statement := range statements {
-		_, err = s.db.ExecContext(ctx, statement)
-		require.NoError(t, err, statement)
-	}
 	require.NoError(t, s.Close())
-
-	reopened, err := Open(path)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, reopened.Close()) })
-	require.Equal(t, "2024-03-05T10:00:00Z", *photoModifiedTime(t, reopened, "wallpaper.jpg"))
-	require.Nil(t, photoModifiedTime(t, reopened, "dated.jpg"))
-	asc := browsePhotoPage(t, reopened, `{"sort":{"field":"capture_time","direction":"asc"}}`)
-	require.Equal(t, "wallpaper.jpg", asc.Items[0].Name)
+	_, err = Open(path)
+	require.ErrorContains(t, err, "schema version 34 has no supported JSONL cutover")
 }
