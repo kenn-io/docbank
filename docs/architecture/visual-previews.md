@@ -124,10 +124,12 @@ Animated WebP remains unsupported by the built-in decoder.
 Accepted images scale without upscaling to the selected recipe's maximum edge
 and encode as a quality-90 JPEG. Source dimensions must be positive. JPEGs above
 100,000,000 pixels decode at one-eighth scale per edge using block averages,
-including progressive JPEGs. Fit and large previews stay at most that size.
-Larger PNG, GIF, and WebP sources record `failed` with
-`source_dimensions_exceed_limit`. For camera RAW files, this limit applies to
-the embedded JPEG being decoded.
+including progressive JPEGs, up to 1,000,000,000 source pixels. JPEGs above that
+ceiling record `failed` with `source_dimensions_exceed_limit` before allocating
+coefficient planes. Fit and large previews stay at most one-eighth scale.
+PNG, GIF, and WebP sources above 100,000,000 pixels record `failed` with
+`source_dimensions_exceed_limit`. Camera RAW files use the JPEG limits for
+their embedded preview.
 
 Malformed source bytes become a durable `failed` result. Unsupported media
 types, decoder features, and color models become a durable `unsupported`

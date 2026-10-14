@@ -6,20 +6,14 @@ import (
 	"encoding/binary"
 	"fmt"
 	"image"
+	"image/color"
 	"image/jpeg"
 	"io"
 
 	"go.kenn.io/docbank/document"
 )
 
-func produceVisualPreviewJPEGDC(ctx context.Context, source io.ReadSeeker, base document.VisualPreviewV1, orientation int) (VisualPreviewProduct, error) {
-	if _, err := source.Seek(0, io.SeekStart); err != nil {
-		return VisualPreviewProduct{}, sourceContentUnavailable(fmt.Errorf("seeking visual preview source: %w", err))
-	}
-	config, err := jpeg.DecodeConfig(source)
-	if err != nil {
-		return visualPreviewJPEGDecodeResult(base, "the verified JPEG header is malformed", err)
-	}
+func produceVisualPreviewJPEGDC(ctx context.Context, source io.ReadSeeker, base document.VisualPreviewV1, orientation int, config image.Config) (VisualPreviewProduct, error) {
 	if _, err := source.Seek(0, io.SeekStart); err != nil {
 		return VisualPreviewProduct{}, sourceContentUnavailable(fmt.Errorf("seeking visual preview source: %w", err))
 	}
@@ -43,6 +37,8 @@ type visualJPEGDCComponent struct {
 	w, hBlocks      int
 	dc              []int16
 	precision       int
+	quantValue      uint16
+	quantLatched    bool
 }
 
 type visualJPEGDCHuffman struct {
@@ -59,6 +55,8 @@ type visualJPEGDCDecoder struct {
 	progressive   bool
 	restart       int
 	adobe, rgb    bool
+	jfif          bool
+	maxH, maxV    int
 	bits          byte
 	nbits         int
 }
@@ -108,9 +106,13 @@ func decodeVisualPreviewJPEGDC(reader *bufio.Reader) (image.Image, error) {
 				marker, err = d.skipAC()
 				continue
 			}
+		case 0xe0:
+			if len(payload) >= 14 {
+				d.jfif = string(payload[:5]) == "JFIF\x00"
+			}
 		case 0xee:
 			if len(payload) >= 12 && string(payload[:5]) == "Adobe" {
-				d.adobe, d.rgb = true, payload[11] != 1
+				d.adobe, d.rgb = true, payload[11] == 0
 			}
 		default:
 			if marker < 0xe0 || marker > 0xef && marker != 0xfe {
@@ -144,6 +146,10 @@ func (d *visualJPEGDCDecoder) frame(p []byte, progressive bool) error {
 		if c.h == 0 || c.h > 4 || c.v == 0 || c.v > 4 || c.quant > 3 {
 			return jpeg.FormatError("bad component parameters")
 		}
+		if c.h == 3 || c.v == 3 {
+			return jpeg.UnsupportedError("JPEG subsampling")
+		}
+		d.maxH, d.maxV = max(d.maxH, int(c.h)), max(d.maxV, int(c.v))
 		for j := range i {
 			if c.id == d.components[j].id {
 				return jpeg.FormatError("duplicate component")
@@ -152,37 +158,19 @@ func (d *visualJPEGDCDecoder) frame(p []byte, progressive bool) error {
 	}
 	if len(d.components) == 1 {
 		d.components[0].h, d.components[0].v = 1, 1
-	} else if _, err := d.ratio(); err != nil {
-		return err
+		d.maxH, d.maxV = 1, 1
 	}
 	for i := range d.components {
-		c, y := &d.components[i], &d.components[0]
-		c.w = (d.width*int(c.h) + 8*int(y.h) - 1) / (8 * int(y.h))
-		c.hBlocks = (d.height*int(c.v) + 8*int(y.v) - 1) / (8 * int(y.v))
+		c := &d.components[i]
+		// Match sampling validation in go/src/image/jpeg/reader.go, processSOF.
+		if d.maxH%int(c.h) != 0 || d.maxV%int(c.v) != 0 {
+			return jpeg.UnsupportedError("JPEG subsampling")
+		}
+		c.w = (d.width*int(c.h) + 8*d.maxH - 1) / (8 * d.maxH)
+		c.hBlocks = (d.height*int(c.v) + 8*d.maxV - 1) / (8 * d.maxV)
 		c.dc = make([]int16, c.w*c.hBlocks)
 	}
 	return nil
-}
-
-func (d *visualJPEGDCDecoder) ratio() (image.YCbCrSubsampleRatio, error) {
-	y, cb, cr := d.components[0], d.components[1], d.components[2]
-	if cb.h == cr.h && cb.v == cr.v && y.h%cb.h == 0 && y.v%cb.v == 0 {
-		switch int(y.h/cb.h)<<4 | int(y.v/cb.v) {
-		case 0x11:
-			return image.YCbCrSubsampleRatio444, nil
-		case 0x12:
-			return image.YCbCrSubsampleRatio440, nil
-		case 0x21:
-			return image.YCbCrSubsampleRatio422, nil
-		case 0x22:
-			return image.YCbCrSubsampleRatio420, nil
-		case 0x41:
-			return image.YCbCrSubsampleRatio411, nil
-		case 0x42:
-			return image.YCbCrSubsampleRatio410, nil
-		}
-	}
-	return 0, jpeg.UnsupportedError("JPEG subsampling")
 }
 
 func (d *visualJPEGDCDecoder) quantization(p []byte) error {
@@ -302,6 +290,10 @@ func (d *visualJPEGDCDecoder) scan(p []byte) error {
 			}
 		}
 		c := &d.components[indices[i]]
+		// Later DQT markers must not change a component whose first scan already started.
+		if !c.quantLatched {
+			c.quantValue, c.quantLatched = d.quant[c.quant], true
+		}
 		total += int(c.h) * int(c.v)
 		if ss == 0 {
 			if ah == 0 && c.precision != -1 || ah != 0 && c.precision != int(ah) {
@@ -316,8 +308,7 @@ func (d *visualJPEGDCDecoder) scan(p []byte) error {
 	if ss > 0 {
 		return nil
 	}
-	y := d.components[0]
-	mw, mh := (d.width+8*int(y.h)-1)/(8*int(y.h)), (d.height+8*int(y.v)-1)/(8*int(y.v))
+	mw, mh := (d.width+8*d.maxH-1)/(8*d.maxH), (d.height+8*d.maxV-1)/(8*d.maxV)
 	if n == 1 {
 		mw, mh = d.components[indices[0]].w, d.components[indices[0]].hBlocks
 	}
@@ -420,12 +411,14 @@ func (d *visualJPEGDCDecoder) discardAC(table *visualJPEGDCHuffman) error {
 }
 
 func (d *visualJPEGDCDecoder) skipAC() (byte, error) {
+	hasEntropy := false
 	for {
 		b, err := d.reader.ReadByte()
 		if err != nil {
 			return 0, fmt.Errorf("skipping JPEG AC scan: %w", err)
 		}
 		if b != 0xff {
+			hasEntropy = true
 			continue
 		}
 		for b == 0xff {
@@ -434,7 +427,12 @@ func (d *visualJPEGDCDecoder) skipAC() (byte, error) {
 				return 0, fmt.Errorf("reading JPEG AC marker: %w", err)
 			}
 		}
-		if b != 0 && (b < 0xd0 || b > 0xd7) {
+		if b == 0 {
+			hasEntropy = true
+		} else if b < 0xd0 || b > 0xd7 {
+			if !hasEntropy {
+				return 0, jpeg.FormatError("empty AC scan")
+			}
 			return b, nil
 		}
 	}
@@ -444,34 +442,41 @@ func (d *visualJPEGDCDecoder) image() (image.Image, error) {
 	if len(d.components) == 0 {
 		return nil, jpeg.FormatError("missing frame")
 	}
-	if len(d.components) == 3 && (d.adobe && d.rgb || !d.adobe && d.components[0].id == 'R' && d.components[1].id == 'G' && d.components[2].id == 'B') {
-		return nil, jpeg.UnsupportedError("RGB JPEG")
-	}
 	for _, c := range d.components {
-		if c.precision < 0 || d.quant[c.quant] == 0 {
+		if c.precision < 0 || c.quantValue == 0 {
 			return nil, jpeg.FormatError("missing DC scan or quantization table")
 		}
 	}
 	bounds := image.Rect(0, 0, (d.width+7)/8, (d.height+7)/8)
-	var output image.Image
-	var planes [][]byte
 	if len(d.components) == 1 {
 		gray := image.NewGray(bounds)
-		output, planes = gray, [][]byte{gray.Pix}
-	} else {
-		ratio, err := d.ratio()
-		if err != nil {
-			return nil, err
+		for i := range gray.Pix {
+			gray.Pix[i] = d.components[0].sample(i)
 		}
-		ycbcr := image.NewYCbCr(bounds, ratio)
-		output, planes = ycbcr, [][]byte{ycbcr.Y, ycbcr.Cb, ycbcr.Cr}
+		return gray, nil
 	}
-	for i, c := range d.components {
-		for j, dc := range c.dc {
-			// The DC coefficient gives the block mean without a full inverse transform.
-			value := (int64(dc)*int64(d.quant[c.quant])+4)>>3 + 128
-			planes[i][j] = byte(max(0, min(255, value)))
+	// Match JFIF precedence and RGB detection in go/src/image/jpeg/reader.go, isRGB.
+	rgb := !d.jfif && (d.adobe && d.rgb || d.components[0].id == 'R' && d.components[1].id == 'G' && d.components[2].id == 'B')
+	output := image.NewRGBA(bounds)
+	for y := range bounds.Dy() {
+		for x := range bounds.Dx() {
+			var values [3]byte
+			for i, c := range d.components {
+				cx, cy := x/(d.maxH/int(c.h)), y/(d.maxV/int(c.v))
+				values[i] = c.sample(cy*c.w + cx)
+			}
+			r, g, b := values[0], values[1], values[2]
+			if !rgb {
+				r, g, b = color.YCbCrToRGB(r, g, b)
+			}
+			output.SetRGBA(x, y, color.RGBA{R: r, G: g, B: b, A: 255})
 		}
 	}
 	return output, nil
+}
+
+func (c *visualJPEGDCComponent) sample(i int) byte {
+	// The DC coefficient gives the block mean without a full inverse transform.
+	value := (int64(c.dc[i])*int64(c.quantValue)+4)>>3 + 128
+	return byte(max(0, min(255, value)))
 }

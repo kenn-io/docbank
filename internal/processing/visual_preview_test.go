@@ -19,7 +19,6 @@ import (
 	"path/filepath"
 	"strings"
 	"runtime"
-	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -622,7 +621,7 @@ func TestProduceVisualPreviewKeepsImageReadErrorsRetryable(t *testing.T) {
 		failReadAt      int64
 	}{
 		{name: "jpeg", mediaType: "image/jpeg", data: mediatest.JPEG(3, 2, color.White), failAtSeeks: []int{3, 4}},
-		{name: "oversize jpeg", mediaType: "image/jpeg", data: syntheticVisualJPEGDC(t, 10008, 10008, true, 0), failAtSeeks: []int{3, 5}},
+		{name: "oversize jpeg", mediaType: "image/jpeg", data: syntheticVisualJPEGDC(t, 10008, 10008, true, 0), failAtSeeks: []int{3, 4}},
 		{name: "png", mediaType: "image/png", data: pngSource, failAtSeeks: []int{3, 4}},
 		{name: "png after IDAT", mediaType: "image/png", data: trailingPNG, failAtSeeks: []int{4}, failReadAt: failReadAt},
 		{name: "gif", mediaType: "image/gif", data: mediatest.GIF(3, 2, 1), failAtSeeks: []int{2, 3}},
@@ -929,9 +928,17 @@ func (r *failingVisualPreviewReadSeeker) Seek(offset int64, whence int) (int64, 
 
 //nolint:paralleltest // Measures allocations without concurrent preview producers.
 func TestProduceVisualPreviewDownscalesOversizedJPEG(t *testing.T) {
-	for _, progressive := range []bool{true, false} {
-		t.Run(strconv.FormatBool(progressive), func(t *testing.T) {
-			source := syntheticVisualJPEGDC(t, 10008, 10008, progressive, 0)
+	for _, test := range []struct {
+		name        string
+		progressive bool
+		sampling    []byte
+	}{
+		{name: "progressive", progressive: true},
+		{name: "baseline"},
+		{name: "color progressive", progressive: true, sampling: []byte{0x11, 0x11, 0x11}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			source := syntheticVisualJPEGDC(t, 10008, 10008, test.progressive, 0, visualJPEGDCTestOptions{sampling: test.sampling, refine: len(test.sampling) == 3})
 			digest := sha256.Sum256(source)
 			recipe, err := VisualPreviewRecipeForSize("grid")
 			require.NoError(t, err)
@@ -946,7 +953,11 @@ func TestProduceVisualPreviewDownscalesOversizedJPEG(t *testing.T) {
 			require.NotNil(t, product.Preview.Output)
 			assert.Equal(t, 512, product.Preview.Output.Width)
 			assert.Equal(t, 512, product.Preview.Output.Height)
-			assert.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(32<<20))
+			limit := uint64(32 << 20)
+			if len(test.sampling) == 3 {
+				limit = 48 << 20
+			}
+			assert.Less(t, after.TotalAlloc-before.TotalAlloc, limit)
 			decoded, err := jpeg.Decode(bytes.NewReader(product.Output))
 			require.NoError(t, err)
 			assert.Equal(t, image.Rect(0, 0, 512, 512), decoded.Bounds())
@@ -966,16 +977,24 @@ func TestVisualPreviewJPEGDCBlockMeans(t *testing.T) {
 			ycbcr.Cb[i], ycbcr.Cr[i] = byte(100+9*(x/16)), byte(100+13*(y/16))
 		}
 	}
-	progressive, err := os.ReadFile("testdata/visual-preview-progressive.jpg")
-	require.NoError(t, err)
+	progressive := syntheticVisualJPEGDC(t, 37, 29, true, 0, visualJPEGDCTestOptions{refine: true})
+	rgb := syntheticVisualJPEGDC(t, 37, 29, true, 0, visualJPEGDCTestOptions{sampling: []byte{0x11, 0x11, 0x11}, refine: true, rgb: true})
+	adobe := make([]byte, 12)
+	copy(adobe, "Adobe")
 	for _, test := range []struct {
-		name string
-		img  image.Image
-		data []byte
+		name      string
+		img       image.Image
+		data      []byte
+		wantColor color.Color
 	}{
 		{name: "gray", img: gray},
 		{name: "420", img: ycbcr},
 		{name: "progressive refinement", data: progressive},
+		{name: "redefined quantization", data: syntheticVisualJPEGDC(t, 37, 29, true, 0, visualJPEGDCTestOptions{refine: true, redefine: true}), wantColor: color.Gray{Y: 136}},
+		{name: "RGB IDs", data: rgb, wantColor: color.RGBA{R: 136, G: 128, B: 136, A: 255}},
+		{name: "Adobe RGB", data: syntheticJPEGSegment(t, syntheticVisualJPEGDC(t, 37, 29, true, 0, visualJPEGDCTestOptions{sampling: []byte{0x11, 0x11, 0x11}, refine: true}), 0xee, adobe), wantColor: color.RGBA{R: 136, G: 128, B: 136, A: 255}},
+		{name: "JFIF precedence", data: syntheticJPEGSegment(t, syntheticJPEGSegment(t, rgb, 0xee, adobe), 0xe0, append([]byte("JFIF\x00"), make([]byte, 9)...))},
+		{name: "unequal chroma sampling", data: syntheticVisualJPEGDC(t, 37, 29, true, 0, visualJPEGDCTestOptions{sampling: []byte{0x22, 0x21, 0x11}, refine: true})},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			source := test.data
@@ -984,44 +1003,43 @@ func TestVisualPreviewJPEGDCBlockMeans(t *testing.T) {
 				require.NoError(t, jpeg.Encode(&buffer, test.img, &jpeg.Options{Quality: 90}))
 				source = buffer.Bytes()
 			}
-			full, err := jpeg.Decode(bytes.NewReader(source))
-			require.NoError(t, err)
 			reduced, err := decodeVisualPreviewJPEGDC(bufio.NewReader(bytes.NewReader(source)))
 			require.NoError(t, err)
 			assert.Equal(t, image.Rect(0, 0, 5, 4), reduced.Bounds())
-			if fullGray, ok := full.(*image.Gray); ok {
-				reducedGray, ok := reduced.(*image.Gray)
-				require.True(t, ok)
-				assertVisualJPEGDCMeans(t, fullGray.Pix, fullGray.Stride, 37, 29, reducedGray.Pix)
-			} else {
-				fullYCbCr, ok := full.(*image.YCbCr)
-				require.True(t, ok)
-				reducedYCbCr, ok := reduced.(*image.YCbCr)
-				require.True(t, ok)
-				assertVisualJPEGDCMeans(t, fullYCbCr.Y, fullYCbCr.YStride, 37, 29, reducedYCbCr.Y)
-				cw, ch := 37, 29
-				if fullYCbCr.SubsampleRatio == image.YCbCrSubsampleRatio420 {
-					cw, ch = 19, 15
+			if test.wantColor != nil {
+				for y := range 4 {
+					for x := range 5 {
+						assert.Equal(t, color.RGBAModel.Convert(test.wantColor), color.RGBAModel.Convert(reduced.At(x, y)))
+					}
 				}
-				assertVisualJPEGDCMeans(t, fullYCbCr.Cb, fullYCbCr.CStride, cw, ch, reducedYCbCr.Cb)
-				assertVisualJPEGDCMeans(t, fullYCbCr.Cr, fullYCbCr.CStride, cw, ch, reducedYCbCr.Cr)
+				return
 			}
+			full, err := jpeg.Decode(bytes.NewReader(source))
+			require.NoError(t, err)
+			assertVisualJPEGDCMeans(t, full, reduced)
 		})
 	}
 }
 
-func assertVisualJPEGDCMeans(t *testing.T, full []byte, stride, width, height int, reduced []byte) {
+func assertVisualJPEGDCMeans(t *testing.T, full, reduced image.Image) {
 	t.Helper()
-	for y := range (height + 7) / 8 {
-		for x := range (width + 7) / 8 {
-			sum, count := 0, 0
-			for yy := y * 8; yy < min(y*8+8, height); yy++ {
-				for xx := x * 8; xx < min(x*8+8, width); xx++ {
-					sum += int(full[yy*stride+xx])
+	for y := range reduced.Bounds().Dy() {
+		for x := range reduced.Bounds().Dx() {
+			var sum [3]int
+			count := 0
+			for yy := y * 8; yy < min(y*8+8, full.Bounds().Dy()); yy++ {
+				for xx := x * 8; xx < min(x*8+8, full.Bounds().Dx()); xx++ {
+					r, g, b, _ := full.At(xx, yy).RGBA()
+					sum[0] += int(r >> 8)
+					sum[1] += int(g >> 8)
+					sum[2] += int(b >> 8)
 					count++
 				}
 			}
-			assert.InDelta(t, float64(sum)/float64(count), reduced[y*((width+7)/8)+x], 2)
+			r, g, b, _ := reduced.At(x, y).RGBA()
+			for i, got := range []uint32{r >> 8, g >> 8, b >> 8} {
+				assert.InDelta(t, float64(sum[i])/float64(count), got, 3)
+			}
 		}
 	}
 }
@@ -1042,6 +1060,11 @@ func TestVisualPreviewJPEGDCRestartsAndFailures(t *testing.T) {
 	frame := bytes.Index(arithmetic, []byte{0xff, 0xc2})
 	require.Positive(t, frame)
 	arithmetic[frame+1] = 0xc9
+	header := syntheticVisualJPEGDC(t, 8, 8, true, 0)
+	frame = bytes.Index(header, []byte{0xff, 0xc2})
+	binary.BigEndian.PutUint16(header[frame+5:frame+7], 65535)
+	binary.BigEndian.PutUint16(header[frame+7:frame+9], 65535)
+	header = header[:bytes.Index(header, []byte{0xff, 0xda})+10]
 	for _, test := range []struct {
 		name  string
 		data  []byte
@@ -1050,6 +1073,8 @@ func TestVisualPreviewJPEGDCRestartsAndFailures(t *testing.T) {
 	}{
 		{"truncated", truncated, document.VisualPreviewFailed, "decode_failed"},
 		{"arithmetic", arithmetic, document.VisualPreviewUnsupported, "unsupported_jpeg_feature"},
+		{"above DC ceiling", header, document.VisualPreviewFailed, "source_dimensions_exceed_limit"},
+		{"empty AC scan", syntheticVisualJPEGDC(t, 10008, 10008, true, 0, visualJPEGDCTestOptions{emptyAC: true}), document.VisualPreviewFailed, "decode_failed"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			digest := sha256.Sum256(test.data)
@@ -1064,16 +1089,37 @@ func TestVisualPreviewJPEGDCRestartsAndFailures(t *testing.T) {
 	}
 }
 
-func syntheticVisualJPEGDC(t *testing.T, width, height int, progressive bool, restart int) []byte {
+type visualJPEGDCTestOptions struct {
+	sampling                       []byte
+	refine, redefine, emptyAC, rgb bool
+}
+
+func syntheticVisualJPEGDC(t *testing.T, width, height int, progressive bool, restart int, options ...visualJPEGDCTestOptions) []byte {
 	t.Helper()
+	var opts visualJPEGDCTestOptions
+	if len(options) > 0 {
+		opts = options[0]
+	}
+	if len(opts.sampling) == 0 {
+		opts.sampling = []byte{0x11}
+	}
+	ids := []byte{1, 2, 3}
+	if opts.rgb {
+		ids = []byte{'R', 'G', 'B'}
+	}
 	source := []byte{0xff, 0xd8}
 	segment := func(marker byte, payload []byte) {
 		source = append(source, 0xff, marker, byte((len(payload)+2)>>8), byte(len(payload)+2))
 		source = append(source, payload...)
 	}
-	quant := append([]byte{0}, bytes.Repeat([]byte{1}, 64)...)
+	quant := append([]byte{0}, bytes.Repeat([]byte{16}, 64)...)
 	segment(0xdb, quant)
-	frame := []byte{8, byte(height >> 8), byte(height), byte(width >> 8), byte(width), 1, 1, 0x11, 0}
+	frame := []byte{8, byte(height >> 8), byte(height), byte(width >> 8), byte(width), byte(len(opts.sampling))}
+	maxH, maxV := 1, 1
+	for i, hv := range opts.sampling {
+		frame = append(frame, ids[i], hv, 0)
+		maxH, maxV = max(maxH, int(hv>>4)), max(maxV, int(hv&15))
+	}
 	marker := byte(0xc0)
 	if progressive {
 		marker = 0xc2
@@ -1087,7 +1133,7 @@ func syntheticVisualJPEGDC(t *testing.T, width, height int, progressive bool, re
 		segment(0xdd, []byte{byte(restart >> 8), byte(restart)})
 	}
 	blocks := ((width + 7) / 8) * ((height + 7) / 8)
-	entropy := func(bitsPerBlock int) {
+	entropy := func(bitsPerBlock int, ones bool) {
 		remaining, rst := blocks, byte(0)
 		for remaining > 0 {
 			n := remaining
@@ -1095,9 +1141,25 @@ func syntheticVisualJPEGDC(t *testing.T, width, height int, progressive bool, re
 				n = min(n, restart)
 			}
 			bits := n * bitsPerBlock
-			source = append(source, make([]byte, bits/8)...)
+			value := byte(0)
+			if ones {
+				value = 0xff
+			}
+			for range bits / 8 {
+				source = append(source, value)
+				if ones {
+					source = append(source, 0)
+				}
+			}
 			if bits%8 != 0 {
-				source = append(source, byte((1<<(8-bits%8))-1))
+				value = byte((1 << (8 - bits%8)) - 1)
+				if ones {
+					value = 0xff
+				}
+				source = append(source, value)
+				if value == 0xff {
+					source = append(source, 0)
+				}
 			}
 			remaining -= n
 			if remaining > 0 {
@@ -1106,14 +1168,30 @@ func syntheticVisualJPEGDC(t *testing.T, width, height int, progressive bool, re
 			}
 		}
 	}
-	if progressive {
-		segment(0xda, []byte{1, 1, 0, 0, 0, 0})
-		entropy(1)
-		segment(0xda, []byte{1, 1, 0, 1, 63, 0})
-		entropy(1)
-	} else {
-		segment(0xda, []byte{1, 1, 0, 0, 63, 0})
-		entropy(2)
+	for i, hv := range opts.sampling {
+		blocks = ((width*int(hv>>4) + 8*maxH - 1) / (8 * maxH)) * ((height*int(hv&15) + 8*maxV - 1) / (8 * maxV))
+		if progressive {
+			al := byte(0)
+			if opts.refine {
+				al = 3
+			}
+			segment(0xda, []byte{1, ids[i], 0, 0, 0, al})
+			entropy(1, false)
+			if opts.redefine && i == 0 {
+				segment(0xdb, append([]byte{0}, bytes.Repeat([]byte{32}, 64)...))
+			}
+			if opts.refine {
+				segment(0xda, []byte{1, ids[i], 0, 0, 0, 0x32})
+				entropy(1, i != 1)
+			}
+			segment(0xda, []byte{1, ids[i], 0, 1, 63, 0})
+			if !opts.emptyAC {
+				entropy(1, false)
+			}
+		} else {
+			segment(0xda, []byte{1, ids[i], 0, 0, 63, 0})
+			entropy(2, false)
+		}
 	}
 	return append(source, 0xff, 0xd9)
 }
