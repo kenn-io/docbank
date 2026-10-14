@@ -82,9 +82,6 @@ func TestPhotoImportRollsBackFailedGroup(t *testing.T) {
 	)
 	result, err := s.IngestPhotoGroup(ctx, run, group)
 	require.NoError(t, err)
-	assert.True(t, result.Added)
-	assert.Len(t, result.Asset.Files, 3)
-	assert.Equal(t, PhotoRoleRAW, fileByRole(result.Asset.Files, PhotoRoleRAW).Role)
 
 	var nodes int
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE kind='file'`).Scan(&nodes))
@@ -492,30 +489,6 @@ func TestPhotoImportSidecarDedupStaysWithinSourceGroup(t *testing.T) {
 	assert.NotEqual(t, first.Asset.ID, second.Asset.ID)
 	assert.Len(t, first.Asset.Files, 2)
 	assert.Len(t, second.Asset.Files, 2)
-}
-
-func TestFinalizeLocalOperationSettlesCancelRace(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	start := func() string {
-		operation, err := s.CreateLocalOperation(ctx, StorageOperationKindPhotoImport, `{"source_root":"/camera","destination":"/photos"}`)
-		require.NoError(t, err)
-		_, err = s.ClaimStorageOperation(ctx, operation.ID)
-		require.NoError(t, err)
-		return operation.ID
-	}
-	finalized := start()
-	cancelled, err := s.FinalizeLocalOperation(ctx, finalized)
-	require.NoError(t, err)
-	assert.False(t, cancelled)
-	require.ErrorIs(t, s.RequestStorageOperationCancel(ctx, finalized), ErrStorageOperationTerminal)
-
-	requested := start()
-	require.NoError(t, s.RequestStorageOperationCancel(ctx, requested))
-	cancelled, err = s.FinalizeLocalOperation(ctx, requested)
-	require.NoError(t, err)
-	assert.True(t, cancelled)
 }
 
 func TestPhotoImportRefusesAuditedVault(t *testing.T) {

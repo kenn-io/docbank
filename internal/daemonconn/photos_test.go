@@ -115,7 +115,7 @@ func TestPhotoClientAcceptsCreateTimestampsAndNoOpMutations(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestPhotoNodeAddressedResponsesMustContainTheNode(t *testing.T) {
+func TestPhotoNodeResponsesRequireMembershipAndSupportedConfirmationBits(t *testing.T) {
 	assetID := "00000000-0000-4000-8000-000000000001"
 	fileID := "00000000-0000-4000-8000-000000000010"
 	createdAt := "2026-09-22T00:00:00Z"

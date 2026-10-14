@@ -662,7 +662,8 @@ func TestPruneContentVersionsRetainsAuthoritiesAndCheckpointsAllPrior(t *testing
 	selected, err := s.PruneContentVersions(ctx, created.ID, updated.Revision,
 		VersionPruneSelector{VersionIDs: []string{created.CurrentVersionID, replacement.ID, revertVersion.ID}}, false)
 	require.NoError(t, err)
-	require.Contains(t, contentVersionIDs(selected.DependencyRetained), revertVersion.ID)
+	require.ElementsMatch(t, []string{replacement.ID}, contentVersionIDs(selected.Candidates))
+	require.ElementsMatch(t, []string{created.CurrentVersionID, revertVersion.ID}, contentVersionIDs(selected.DependencyRetained))
 	current, currentRevert, _, err := s.RevertContent(ctx, created.ID, updated.Revision, replacement.ID)
 	require.NoError(t, err)
 
@@ -770,34 +771,28 @@ func TestPruneContentVersionsRetainsAuthoritiesAndCheckpointsAllPrior(t *testing
 			ID: "source-version", SourceID: "source", Revision: 1,
 			ContentVersionID: pinnedRevert.ID, CaptureJSON: "{}",
 		}))
-		current := reverted
-		candidateIDs := []string{replacement.ID}
-
-		selector := VersionPruneSelector{AllPrior: true}
-		preview, err := s.PruneContentVersions(ctx, created.ID, current.Revision, selector, false)
+		preview, err := s.PruneContentVersions(ctx, created.ID, reverted.Revision, VersionPruneSelector{AllPrior: true}, false)
 		require.NoError(t, err)
 		require.ElementsMatch(t,
-			candidateIDs,
+			[]string{replacement.ID},
 			contentVersionIDs(preview.Candidates))
 		require.ElementsMatch(t,
 			[]string{pinnedRevert.ID, created.CurrentVersionID},
 			contentVersionIDs(preview.DependencyRetained))
 		require.False(t, preview.CheckpointRequired)
 
-		run, err := s.PruneContentVersions(ctx, created.ID, current.Revision, selector, true)
+		run, err := s.PruneContentVersions(ctx, created.ID, reverted.Revision, VersionPruneSelector{AllPrior: true}, true)
 		require.NoError(t, err)
 		require.Equal(t, preview.Candidates, run.Candidates)
 		require.Equal(t, preview.DependencyRetained, run.DependencyRetained)
-		require.Equal(t, len(candidateIDs), run.DeletedVersions)
+		require.Equal(t, 1, run.DeletedVersions)
 		require.Nil(t, run.Checkpoint)
 		for _, id := range []string{pinnedRevert.ID, created.CurrentVersionID} {
 			_, err = s.ContentVersionByID(ctx, id)
 			require.NoError(t, err)
 		}
-		for _, id := range candidateIDs {
-			_, err = s.ContentVersionByID(ctx, id)
-			require.ErrorIs(t, err, ErrNotFound)
-		}
+		_, err = s.ContentVersionByID(ctx, replacement.ID)
+		require.ErrorIs(t, err, ErrNotFound)
 	})
 	t.Run("sealed snapshot", func(t *testing.T) {
 		s := newTestStore(t)

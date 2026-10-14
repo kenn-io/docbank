@@ -198,7 +198,7 @@ func TestWithPhotoRevisionRetriesOnceOnlyWhenInferred(t *testing.T) {
 	assert.Equal(t, []int64{7}, writes)
 }
 
-func TestPhotoImportOutputPointsToJobs(t *testing.T) {
+func TestPhotoImportRejectsEmptySourceAndPointsToJobs(t *testing.T) {
 	queued := api.StorageOperation{ID: "00000000-0000-4000-8000-000000000021", Kind: "photo_import", State: "queued"}
 	requests := make(chan api.PhotoImportStartRequest, 2)
 	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {

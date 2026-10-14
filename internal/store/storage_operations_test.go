@@ -11,7 +11,7 @@ import (
 	"go.kenn.io/kit/packstore"
 )
 
-func TestStorageOperationPersistsProgressAndResumes(t *testing.T) {
+func TestStorageOperationPersistsProgressResumesAndCancels(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	created, err := s.CreateStorageOperation(t.Context(), StorageOperationCreate{
@@ -73,6 +73,28 @@ func TestLocalOperationValidatesKindAndPersistsTotalAndReceipt(t *testing.T) {
 	assert.Equal(t, receipt, finished.ReceiptJSON)
 	_, err = s.CreateLocalOperation(t.Context(), "unknown", `{}`)
 	require.ErrorContains(t, err, `unsupported storage operation kind "unknown"`)
+	t.Run("finalization honors cancellation", func(t *testing.T) {
+		s := newTestStore(t)
+		ctx := t.Context()
+		start := func() string {
+			operation, err := s.CreateLocalOperation(ctx, StorageOperationKindPhotoImport, `{"source_root":"/camera","destination":"/photos"}`)
+			require.NoError(t, err)
+			_, err = s.ClaimStorageOperation(ctx, operation.ID)
+			require.NoError(t, err)
+			return operation.ID
+		}
+		finalized := start()
+		cancelled, err := s.FinalizeLocalOperation(ctx, finalized)
+		require.NoError(t, err)
+		assert.False(t, cancelled)
+		require.ErrorIs(t, s.RequestStorageOperationCancel(ctx, finalized), ErrStorageOperationTerminal)
+
+		requested := start()
+		require.NoError(t, s.RequestStorageOperationCancel(ctx, requested))
+		cancelled, err = s.FinalizeLocalOperation(ctx, requested)
+		require.NoError(t, err)
+		assert.True(t, cancelled)
+	})
 }
 
 func TestStorageOperationRejectsCancellationAfterCompletion(t *testing.T) {

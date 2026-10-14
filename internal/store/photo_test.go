@@ -469,6 +469,24 @@ func TestPhotoSidecarTargetsAndNoDisplayableMember(t *testing.T) {
 		assert.Equal(t, rawFileID, *asset.DisplayFileID)
 		assert.NoError(t, s.ValidateMetadata(ctx))
 	})
+	t.Run("attach sidecar records a receipt", func(t *testing.T) {
+		s := newTestStore(t)
+		ctx := t.Context()
+		asset := albumAsset(t, s, "photo.jpg")
+		sidecar, err := s.CreateFile(ctx, s.RootID(), "one.xmp", browseHash("one.xmp"), 1, "application/rdf+xml")
+		require.NoError(t, err)
+		targetFileID := asset.Files[0].ID
+		attached, err := s.AttachPhotoFile(ctx, asset.ID, asset.Revision, sidecar.ID, PhotoRoleSidecar, &targetFileID)
+		require.NoError(t, err)
+		var sidecarReceipt photoReceiptRow
+		for _, receipt := range photoReceiptRows(t, s, attached.ID) {
+			if receipt.Operation == "attach" && strings.Contains(receipt.AfterJSON, `"node_id":`+strconv.FormatInt(sidecar.ID, 10)) {
+				sidecarReceipt = receipt
+				break
+			}
+		}
+		assert.NotEmpty(t, sidecarReceipt.AfterJSON)
+	})
 }
 
 func TestPhotoExcludePromotePreservesIdentityAndReceipt(t *testing.T) {
@@ -503,21 +521,7 @@ func TestPhotoExcludePromotePreservesIdentityAndReceipt(t *testing.T) {
 	stale := promoted.Revision - 1
 	_, err = s.PromotePhotoNode(ctx, image.ID, &stale, "", "")
 	require.ErrorIs(t, err, ErrStaleRevision)
-	t.Run("attach sidecar records a receipt", func(t *testing.T) {
-		sidecar, err := s.CreateFile(ctx, s.RootID(), "one.xmp", browseHash("one.xmp"), 1, "application/rdf+xml")
-		require.NoError(t, err)
-		targetFileID := promoted.Files[0].ID
-		attached, err := s.AttachPhotoFile(ctx, promoted.ID, promoted.Revision, sidecar.ID, PhotoRoleSidecar, &targetFileID)
-		require.NoError(t, err)
-		var sidecarReceipt photoReceiptRow
-		for _, receipt := range photoReceiptRows(t, s, attached.ID) {
-			if receipt.Operation == "attach" && strings.Contains(receipt.AfterJSON, `"node_id":`+strconv.FormatInt(sidecar.ID, 10)) {
-				sidecarReceipt = receipt
-				break
-			}
-		}
-		assert.NotEmpty(t, sidecarReceipt.AfterJSON)
-	})
+
 	t.Run("unowned node rejects revision precondition", func(t *testing.T) {
 		raw, err := s.CreateFile(ctx, s.RootID(), "unowned.cr2", fakeHash("unowned"), 1, "application/octet-stream")
 		require.NoError(t, err)

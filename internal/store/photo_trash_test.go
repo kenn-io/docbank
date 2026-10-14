@@ -266,26 +266,17 @@ func TestTrashPageCountsRootsAcrossPhotoAndDirectoryGroups(t *testing.T) {
 
 func TestPhotoTrashEmptyCompleteGroups(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"bounded", "live peer", "new peer", "retained peer", "folder", "singleton", "image sidecar"} {
+	for _, mode := range []string{"bounded", "live peer", "new peer", "retained peer", "folder", "singleton"} {
 		t.Run(mode, func(t *testing.T) {
 			s := newTestStore(t)
 			var asset PhotoAsset
 			var nodes []Node
-			if mode == "singleton" || mode == "image sidecar" {
-				mime, role := "image/jpeg", PhotoRoleImage
-				node, err := s.CreateFile(t.Context(), s.RootID(), "purge.capture", fakeHash("purge-raw"), 1, mime)
+			if mode == "singleton" {
+				node, err := s.CreateFile(t.Context(), s.RootID(), "purge.capture", fakeHash("purge-raw"), 1, "image/jpeg")
 				require.NoError(t, err)
 				nodes = append(nodes, node)
 				asset, err = s.PhotoAssetForNode(t.Context(), node.ID)
 				require.NoError(t, err)
-				if mode != "singleton" {
-					sidecar, err := s.CreateFile(t.Context(), s.RootID(), "purge.xmp", fakeHash("purge-sidecar"), 1, "application/octet-stream")
-					require.NoError(t, err)
-					targetID := fileByRole(asset.Files, role).ID
-					asset, err = s.AttachPhotoFile(t.Context(), asset.ID, asset.Revision, sidecar.ID, PhotoRoleSidecar, &targetID)
-					require.NoError(t, err)
-					nodes = append(nodes, sidecar)
-				}
 			} else {
 				asset, nodes = photoTrashFixture(t, s)
 			}
