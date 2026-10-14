@@ -368,10 +368,11 @@ func TestTrashListAndEmpty(t *testing.T) {
 	require.NoError(t, err)
 	_, _, err = s.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{retainedAsset.ID}}, "checkout", 0)
 	require.NoError(t, err)
+	retainedImageID := retainedAsset.Files[0].ID
 	for _, name := range []string{"held-a.xmp", "held-b.xmp"} {
 		companion, err := s.CreateFile(t.Context(), s.RootID(), name, testHash(name), 1, "application/octet-stream")
 		require.NoError(t, err)
-		retainedAsset, err = s.AttachPhotoFile(t.Context(), retainedAsset.ID, retainedAsset.Revision, companion.ID, store.PhotoRoleSidecar, &retainedAsset.Files[0].ID)
+		retainedAsset, err = s.AttachPhotoFile(t.Context(), retainedAsset.ID, retainedAsset.Revision, companion.ID, store.PhotoRoleSidecar, &retainedImageID)
 		require.NoError(t, err)
 	}
 	_, err = s.TrashPhotoAsset(t.Context(), retainedAsset.ID, retainedAsset.Revision)
@@ -390,6 +391,8 @@ func TestTrashListAndEmpty(t *testing.T) {
 			want.Deleted = expected.Candidates
 		}
 		assert.Equal(t, want, out)
+		assert.Equal(t, int64(1), out.RetainedRoots)
+		assert.Equal(t, int64(2), out.HeldRoots)
 	}
 
 	// Bad age string → 422.

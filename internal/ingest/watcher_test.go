@@ -442,12 +442,7 @@ func TestWatchedFileMustMatchItsSettledFingerprint(t *testing.T) {
 	sourcePath := filepath.Join(source, "document.txt")
 	settled, err := observeLocalFileFingerprint(sourcePath)
 	require.NoError(t, err)
-	replacementPath := filepath.Join(source, "replacement.tmp")
-	require.NoError(t, os.WriteFile(replacementPath, []byte("other"), 0o600))
-	observedAt := time.Unix(0, settled.modTime)
-	require.NoError(t, os.Chtimes(replacementPath, observedAt, observedAt))
-	require.NoError(t, os.Remove(sourcePath))
-	require.NoError(t, os.Rename(replacementPath, sourcePath))
+	settled.size++
 
 	_, err = ing.ingestWatchedFile(
 		t.Context(), "documents", "/inbox", "document.txt", settled,

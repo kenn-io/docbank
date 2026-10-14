@@ -150,7 +150,7 @@ func TestPhotoCheckoutRefusesUnavailableSources(t *testing.T) {
 	}
 }
 
-func TestPhotoCheckoutMetadataRestoresUnboundAndDetachedFilesAndValidatesFrozenEntries(t *testing.T) {
+func TestPhotoCheckoutMetadataRoundTripRedactsLocalFieldsPreservesDetachAndValidatesFrozenEntries(t *testing.T) {
 	t.Parallel()
 	for _, driver := range v090UpgradeDrivers() {
 		t.Run(driver.name, func(t *testing.T) {

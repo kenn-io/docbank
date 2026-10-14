@@ -646,21 +646,17 @@ func TestPhotoExplicitRawAdmissionAndTargetBoundaries(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, sidecar.ID, PhotoRoleSidecar, &videoAsset.Files[0].ID)
 	require.ErrorIs(t, err, ErrInvalidPhotoAsset)
-}
-
-func TestPhotoPromoteAllowsExplicitRawForCameraImage(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	node, err := s.CreateFile(ctx, s.RootID(), "camera.raw", fakeHash("ca01"), 1, "image/x-sony-arw")
-	require.NoError(t, err)
-	automatic, err := s.PhotoAssetForNode(ctx, node.ID)
-	require.NoError(t, err)
-	_, err = s.DetachPhotoFile(ctx, automatic.ID, automatic.Revision, automatic.Files[0].ID, PhotoDetachOptions{})
-	require.NoError(t, err)
-	explicit, err := s.PromotePhotoNode(ctx, node.ID, nil, PhotoRoleRAW, "")
-	require.NoError(t, err)
-	assert.Equal(t, PhotoRoleRAW, explicit.Files[0].Role)
+	t.Run("camera MIME after automatic asset detach", func(t *testing.T) {
+		node, err := s.CreateFile(ctx, s.RootID(), "camera.raw", fakeHash("ca01"), 1, "image/x-sony-arw")
+		require.NoError(t, err)
+		automatic, err := s.PhotoAssetForNode(ctx, node.ID)
+		require.NoError(t, err)
+		_, err = s.DetachPhotoFile(ctx, automatic.ID, automatic.Revision, automatic.Files[0].ID, PhotoDetachOptions{})
+		require.NoError(t, err)
+		explicit, err := s.PromotePhotoNode(ctx, node.ID, nil, PhotoRoleRAW, "")
+		require.NoError(t, err)
+		assert.Equal(t, PhotoRoleRAW, explicit.Files[0].Role)
+	})
 }
 
 func TestPhotoAttachRequiresExplicitRawForNonqualifyingNodes(t *testing.T) {

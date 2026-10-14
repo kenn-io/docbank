@@ -57,7 +57,7 @@ func TestLocalOperationValidatesKindAndPersistsTotalAndReceipt(t *testing.T) {
 	created, err := s.CreateLocalOperation(t.Context(), StorageOperationKindPhotoImport, `{"source_root":"/camera","destination":"/photos"}`)
 	require.NoError(t, err)
 	require.NoError(t, validateUUIDv4(created.ID))
-	require.Error(t, s.SetStorageOperationTotal(t.Context(), created.ID, 3))
+	require.ErrorIs(t, s.SetStorageOperationTotal(t.Context(), created.ID, 3), ErrNotFound)
 	_, err = s.ClaimStorageOperation(t.Context(), created.ID)
 	require.NoError(t, err)
 	require.NoError(t, s.SetStorageOperationTotal(t.Context(), created.ID, 3))
@@ -72,7 +72,7 @@ func TestLocalOperationValidatesKindAndPersistsTotalAndReceipt(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, receipt, finished.ReceiptJSON)
 	_, err = s.CreateLocalOperation(t.Context(), "unknown", `{}`)
-	require.Error(t, err)
+	require.ErrorContains(t, err, `unsupported storage operation kind "unknown"`)
 }
 
 func TestStorageOperationRejectsCancellationAfterCompletion(t *testing.T) {

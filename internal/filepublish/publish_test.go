@@ -45,7 +45,7 @@ func TestPublishHonorsNoReplaceAndReportsPostInstallDurability(t *testing.T) {
 }
 
 func TestRootStageRejectsChangedDestinationIdentity(t *testing.T) {
-	for _, method := range []string{"public Publish rejects replaced root", "private publish rejects replaced held parent"} {
+	for _, method := range []string{"public Publish rejects replaced root", "parent renamed after public Publish opens it"} {
 		t.Run(method, func(t *testing.T) {
 			root, err := os.OpenRoot(t.TempDir())
 			require.NoError(t, err)
@@ -60,7 +60,7 @@ func TestRootStageRejectsChangedDestinationIdentity(t *testing.T) {
 			stage.File = nil
 			relativePath := "photo.jpg"
 			parent := root
-			if method == "private publish rejects replaced held parent" {
+			if method == "parent renamed after public Publish opens it" {
 				relativePath = filepath.Join("date", "asset", "photo.jpg")
 				require.NoError(t, stage.MakeParentDirectories(relativePath))
 				parent, err = root.OpenRoot(filepath.Dir(relativePath))
@@ -77,7 +77,8 @@ func TestRootStageRejectsChangedDestinationIdentity(t *testing.T) {
 			}
 			require.NoError(t, os.Mkdir(replacedPath, 0o755))
 			var installed bool
-			if method == "private publish rejects replaced held parent" {
+			if method == "parent renamed after public Publish opens it" {
+				// Model a rename between Publish opening the parent and calling publish.
 				installed, err = stage.publish(parent, relativePath)
 			} else {
 				installed, err = stage.Publish(relativePath)
@@ -153,6 +154,8 @@ func TestRootStageHonorsNoReplaceAndReportsPostInstallDurability(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		var status interface{ Errno() syscall.Errno }
 		require.ErrorAs(t, err, &status)
+		const errorAlreadyExists, errorFileExists syscall.Errno = 183, 80
+		require.Contains(t, []syscall.Errno{errorAlreadyExists, errorFileExists}, status.Errno())
 		err = status.Errno()
 	}
 	require.ErrorIs(t, err, os.ErrExist)

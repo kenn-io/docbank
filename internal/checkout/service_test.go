@@ -314,7 +314,7 @@ func TestCheckoutRunHandlesInterruptionsUnavailableSourcesAndCompletesDeferredRe
 		require.Equal(t, int64(len(entries)), finished.CopiedObjects)
 		require.Equal(t, copiedBytes, finished.CopiedBytes)
 	})
-	for _, failure := range []string{"operator cancellation", "daemon shutdown", "verification failure", "source becomes invisible"} {
+	for _, failure := range []string{"operator cancellation", "daemon shutdown", "verification failure", "continues after source exclusion"} {
 		t.Run(failure, func(t *testing.T) {
 			s := checkoutService(t)
 			names := []string{"first.jpg", "second.jpg", "third.jpg"}
@@ -334,7 +334,7 @@ func TestCheckoutRunHandlesInterruptionsUnavailableSourcesAndCompletesDeferredRe
 				if !assert.NoError(t, err) {
 					return err
 				}
-				if progress.PublishedFiles == 1 && !interrupted && failure == "source becomes invisible" {
+				if progress.PublishedFiles == 1 && !interrupted && failure == "continues after source exclusion" {
 					interrupted = true
 					asset, err := s.Store.PhotoAssetByID(ctx, entries[1].AssetID)
 					require.NoError(t, err)
@@ -407,7 +407,7 @@ func TestCheckoutRunHandlesInterruptionsUnavailableSourcesAndCompletesDeferredRe
 			case "verification failure":
 				require.False(t, actual[2].Published)
 				require.Equal(t, int64(1), finished.CompletedObjects)
-			case "source becomes invisible":
+			case "continues after source exclusion":
 				require.Contains(t, finished.Error, entries[1].FileID)
 				require.Contains(t, finished.Error, entries[1].Path)
 				require.True(t, actual[2].Published)
