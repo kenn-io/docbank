@@ -82,6 +82,9 @@ func (s *Store) photoSetSummary(ctx context.Context, q metadataQuerier, set Phot
 		set.ID).Scan(&out.MemberCount, &out.IncludedCount); err != nil {
 		return out, err
 	}
+	if out.IncludedCount == 0 {
+		return out, nil
+	}
 	var id, generation string
 	coverSQL := `SELECT a.asset_id,g.generation_id FROM photo_set_members m
  CROSS JOIN photo_assets a ON a.asset_id=m.asset_id
