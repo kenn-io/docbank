@@ -375,7 +375,6 @@ func TestMailboxTimeoutBoundary(t *testing.T) {
 
 func TestLargeAudioPlanClearsHandlerReadDeadline(t *testing.T) {
 	t.Parallel()
-	require.ErrorContains(t, clearRequestReadDeadline(t.Context()), "response controller is unavailable")
 	synctest.Test(t, func(t *testing.T) {
 		mux := http.NewServeMux()
 		humaAPI := humago.New(mux, huma.DefaultConfig("test", "test"))

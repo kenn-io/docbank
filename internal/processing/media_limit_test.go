@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"testing"
 	"time"
@@ -135,11 +136,20 @@ func TestProviderRuntimeAuthorizesAfterPreparation(t *testing.T) {
 	name, profile, err := NewSuppliedMediaProfile(f.catalog, f.blobs, "synthetic:operator")
 	require.NoError(t, err)
 	started := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-	// Preparation of a large source on slow storage can outlast the 10-minute interval.
+	// Preparation of a large source on slow storage can outlast the 10-minute
+	// interval. Time passes once the sealed spool copy exists.
 	prepared := started.Add(11 * time.Minute)
-	service, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(),
-		Clock: func() time.Time { return prepared }, Profiles: map[string]ProfileConfig{name: profile}})
+	spool := t.TempDir()
+	clock := func() time.Time {
+		if entries, err := os.ReadDir(spool); err == nil && len(entries) > 0 {
+			return prepared
+		}
+		return started
+	}
+	service, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newWorkerTestGate(), SpoolDirectory: spool,
+		Clock: clock, Profiles: map[string]ProfileConfig{name: profile}})
 	require.NoError(t, err)
+	require.Equal(t, started, clock(), "the spool directory must start empty")
 	work := store.RenditionJobWork{Profile: service.profiles[name].record, Job: store.RenditionJob{SourceSHA256: written.Hash}, Waiter: store.RenditionJobWaiter{ContentVersionID: node.CurrentVersionID}, ExecutionIdentity: document.RenditionExecutionIdentityV1{Upload: document.AuthorizedUploadMetadata{Filename: "call.wav", MediaType: "audio/wav", ByteLength: written.Size}}}
 	execution, err := service.renditions.Prepare(t.Context(), work, started)
 	require.NoError(t, err)
