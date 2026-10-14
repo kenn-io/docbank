@@ -89,7 +89,7 @@ func (c *Connection) PhotoCheckoutStatus(ctx context.Context, id string) (api.Ph
 	if out == nil {
 		return api.PhotoCheckoutStatus{}, errors.New("missing photo checkout status response")
 	}
-	if err := validatePhotoCheckoutResponse(out.Checkout, id); err != nil {
+	if err := validatePhotoCheckoutResponse(out.Checkout, parsed.String()); err != nil {
 		return api.PhotoCheckoutStatus{}, err
 	}
 	if out.Files < 0 || out.Bytes < 0 || out.PublishedFiles < 0 || out.PublishedFiles > out.Files || out.PublishedBytes < 0 || out.PublishedBytes > out.Bytes {

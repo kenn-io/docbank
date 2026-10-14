@@ -217,7 +217,7 @@ image member and never become the display member. `timeline` counts the photos
 a QueryV1 scope selects by recorded capture day; see
 [Count photos by capture day](usage/photos.md#count-photos-by-capture-day).
 
-Photo assets, albums, memberships, settings, bounded decision receipts, and checkout definitions and frozen bases are included in JSONL backup and restore. Restored checkouts are unbound. See [Create writable copies](usage/photos.md#create-writable-copies) for destination, capacity, and retention rules.
+Photo assets, albums, memberships, settings, bounded decision receipts, and checkout definitions with historical bases and retention release are included in JSONL backup and restore. Sidecars require a selected eligible original; invalid selections fail as a whole. Failed and cancelled checkouts release source holds and destination reservations. Restored checkouts are unbound. See [Create writable copies](usage/photos.md#create-writable-copies) for destination, capacity, and retention rules.
 
 ### Photo albums
 

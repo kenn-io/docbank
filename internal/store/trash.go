@@ -459,7 +459,7 @@ func (s *Store) trashEmpty(
 		SELECT v.node_id FROM content_versions v
 		WHERE EXISTS(SELECT 1 FROM email_document_publications p WHERE p.parent_version_id=v.version_id)
 		   OR EXISTS(SELECT 1 FROM email_document_relations r WHERE r.child_version_id=v.version_id)
-		   OR EXISTS(SELECT 1 FROM photo_checkout_entries c WHERE c.version_id=v.version_id)
+		   OR EXISTS(SELECT 1 FROM photo_checkout_entries e JOIN photo_checkouts c ON c.checkout_id=e.checkout_id WHERE e.version_id=v.version_id AND c.retention_released=0)
 		UNION
 		SELECT n.parent_id FROM nodes n JOIN retained r ON n.id=r.id WHERE n.parent_id IS NOT NULL
 	) SELECT id FROM retained`

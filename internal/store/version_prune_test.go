@@ -719,7 +719,7 @@ func TestPruneContentVersionsRetainsAuthoritiesAndCheckpointsAllPrior(t *testing
 			if authority == "checkout entry" {
 				checkout, operation, createErr := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{All: true}, "checkout", 10)
 				require.NoError(t, createErr)
-				require.NoError(t, s.FinishPhotoCheckout(ctx, checkout.ID, operation.ID, StorageOperationFailed, `{}`, "checkout failed", time.Time{}))
+				require.NoError(t, s.FinishPhotoCheckout(ctx, checkout.ID, operation.ID, StorageOperationCompleted, `{}`, "", time.Time{}))
 			}
 			updated, _, err := s.ReplaceContent(ctx, created.ID, created.Revision, fakeHash("b2"), 20, mediaType)
 			require.NoError(t, err)

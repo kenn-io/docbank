@@ -179,7 +179,7 @@ func TestPhotoCheckoutMetadata(t *testing.T) {
 		entries, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
 		require.NoError(t, err)
 		require.NoError(t, s.PublishPhotoCheckoutEntry(t.Context(), entries[0], func() (bool, error) { return true, nil }))
-		require.NoError(t, s.FinishPhotoCheckout(t.Context(), c.ID, c.OperationID, StorageOperationFailed, "{}", "machine-local-error", time.Now().Add(time.Hour)))
+		require.NoError(t, s.FinishPhotoCheckout(t.Context(), c.ID, c.OperationID, StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
 		var exported bytes.Buffer
 		require.NoError(t, s.ExportMetadata(t.Context(), &exported))
 		return fixture{a, second, c, entries, exported.Bytes()}
@@ -395,7 +395,7 @@ func TestPhotoCheckoutConflictsAndEntryPaths(t *testing.T) {
 		paths                                 map[string]string
 	}{
 		{name: "separate ingests", sidecar: "IMG.ARW.XMP", captureDate: "2024-06-15", paths: map[string]string{"raw": "2024/06/15/%s/IMG.ARW", "jpeg": "2024/06/15/%s/IMG.JPG", "sidecar": "2024/06/15/%s/IMG.ARW.XMP"}},
-		{name: "trashed target", sidecar: "IMG.ARW.XMP", trashRole: PhotoRoleRAW, paths: map[string]string{"jpeg": "undated/%s/IMG.JPG", "sidecar": "undated/%s/IMG.ARW.XMP"}},
+		{name: "trashed target", sidecar: "IMG.ARW.XMP", trashRole: PhotoRoleRAW, paths: map[string]string{"jpeg": "undated/%s/IMG.JPG"}},
 		{name: "conflicting pair", sidecar: "unrelated.XMP", rejectConflict: true},
 		{name: "trashed conflicting sidecar", sidecar: "unrelated.XMP", trashRole: PhotoRoleSidecar, paths: map[string]string{"raw": "undated/%s/IMG.ARW", "jpeg": "undated/%s/IMG.JPG"}},
 		{name: "multiple sidecars", multipleSidecars: true, paths: map[string]string{"raw": "undated/%s/RENAMED.ARW", "jpeg": "undated/%s/IMG.JPG", "first sidecar": "undated/%s/RENAMED.XMP", "second sidecar": "undated/%s/RENAMED.ARW.XMP"}},
@@ -584,6 +584,157 @@ func TestPhotoCheckoutConflictsAndEntryPaths(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, entries, 1)
 			require.Equal(t, "undated/"+asset.ID+"/"+tc.basename, entries[0].Path)
+		})
+	}
+}
+
+func TestPhotoCheckoutReleasedHistorySurvivesPruneAndRestore(t *testing.T) {
+	t.Parallel()
+	for _, state := range []StorageOperationState{StorageOperationFailed, StorageOperationCancelled} {
+		t.Run(string(state), func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			asset := albumAsset(t, s, "photo.jpg")
+			node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
+			require.NoError(t, err)
+			checkout, op, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+			require.NoError(t, err)
+			entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
+			require.NoError(t, err)
+			require.NoError(t, s.PublishPhotoCheckoutEntry(ctx, entries[0], func() (bool, error) { return true, nil }))
+			updated, _, err := s.ReplaceContent(ctx, node.ID, node.Revision, browseHash("replacement"), 30, "image/jpeg")
+			require.NoError(t, err)
+			held, err := s.PruneContentVersions(ctx, node.ID, updated.Revision, VersionPruneSelector{VersionIDs: []string{node.CurrentVersionID}}, false)
+			require.NoError(t, err)
+			require.Len(t, held.DependencyRetained, 1)
+			require.NoError(t, s.FinishPhotoCheckout(ctx, checkout.ID, op.ID, state, "{}", "partial checkout", time.Now().Add(time.Hour)))
+			status, err := s.PhotoCheckoutStatus(ctx, checkout.ID)
+			require.NoError(t, err)
+			require.True(t, status.Checkout.RetentionReleased)
+			require.Equal(t, string(state), status.Checkout.State)
+			require.Equal(t, "partial checkout", status.Checkout.Error)
+			require.Equal(t, int64(1), status.PublishedFiles)
+			pruned, err := s.PruneContentVersions(ctx, node.ID, updated.Revision, VersionPruneSelector{VersionIDs: []string{node.CurrentVersionID}}, true)
+			require.NoError(t, err)
+			require.Equal(t, 1, pruned.DeletedVersions)
+			require.NoError(t, s.DeleteBlobRows(ctx, []string{entries[0].Hash}))
+			_, _, err = s.Trash(ctx, node.ID, pruned.Node.Revision)
+			require.NoError(t, err)
+			empty, err := s.TrashEmptyBounded(ctx, 0, 10, true)
+			require.NoError(t, err)
+			require.Zero(t, empty.Retained)
+			require.Equal(t, int64(1), empty.Deleted)
+			var exported bytes.Buffer
+			require.NoError(t, s.ExportMetadata(ctx, &exported))
+			restored := newTestStore(t)
+			require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
+			history, err := restored.PhotoCheckout(ctx, checkout.ID)
+			require.NoError(t, err)
+			require.True(t, history.RetentionReleased)
+			actual, err := restored.PhotoCheckoutEntries(ctx, checkout.ID)
+			require.NoError(t, err)
+			entries[0].Published = false
+			require.Equal(t, entries, actual)
+			var roundtrip bytes.Buffer
+			require.NoError(t, restored.ExportMetadata(ctx, &roundtrip))
+			require.Equal(t, exported.String(), roundtrip.String())
+		})
+	}
+}
+
+func TestPhotoCheckoutSidecarRequiresFrozenEligibleTarget(t *testing.T) {
+	t.Parallel()
+	for _, mutation := range []string{"trashed", "hidden", "excluded", "retargeted", "detached", "unpublished"} {
+		t.Run(mutation, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			source := t.TempDir()
+			run, err := s.BeginIngest(ctx, "photo-import", source)
+			require.NoError(t, err)
+			result, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(
+				photoImportTestMember(filepath.Join(source, "IMG.ARW"), PhotoRoleRAW, browseHash("raw"), "image/x-sony-arw"),
+				photoImportTestMember(filepath.Join(source, "IMG.JPG"), PhotoRoleImage, browseHash("jpeg"), "image/jpeg"),
+				photoImportTestMember(filepath.Join(source, "IMG.ARW.XMP"), PhotoRoleSidecar, browseHash("xmp"), "application/rdf+xml")))
+			require.NoError(t, err)
+			asset := result.Asset
+			asset, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, new(fileByRole(asset.Files, PhotoRoleImage).ID))
+			require.NoError(t, err)
+			checkout, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+			require.NoError(t, err)
+			entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
+			require.NoError(t, err)
+			sidecar := fileByRole(asset.Files, PhotoRoleSidecar)
+			raw := fileByRole(asset.Files, PhotoRoleRAW)
+			var entry PhotoCheckoutEntry
+			for _, e := range entries {
+				if e.FileID == sidecar.ID {
+					entry = e
+				}
+				if e.FileID == raw.ID && mutation != "unpublished" {
+					require.NoError(t, s.PublishPhotoCheckoutEntry(ctx, e, func() (bool, error) { return true, nil }))
+				}
+			}
+			require.Equal(t, new(raw.ID), entry.SidecarOfID)
+			switch mutation {
+			case "trashed":
+				node, lookupErr := s.NodeByID(ctx, raw.NodeID)
+				require.NoError(t, lookupErr)
+				_, _, err = s.Trash(ctx, node.ID, node.Revision)
+			case "hidden":
+				require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+				_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+			case "excluded":
+				_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
+			case "retargeted":
+				_, err = s.db.ExecContext(ctx, "UPDATE photo_files SET sidecar_of_file_id=? WHERE file_id=?", fileByRole(asset.Files, PhotoRoleImage).ID, sidecar.ID)
+			case "detached":
+				_, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, raw.ID, PhotoDetachOptions{ClearDependentSidecars: true})
+			}
+			require.NoError(t, err)
+			called := false
+			err = s.PublishPhotoCheckoutEntry(ctx, entry, func() (bool, error) { called = true; return true, nil })
+			require.ErrorIs(t, err, ErrPhotoCheckoutSourceUnavailable)
+			require.False(t, called)
+			if mutation == "retargeted" {
+				return
+			}
+			estimate, err := s.EstimatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}})
+			require.NoError(t, err)
+			if mutation == "trashed" || mutation == "detached" {
+				require.Equal(t, int64(1), estimate.Files)
+			}
+			if mutation == "hidden" || mutation == "excluded" {
+				require.Zero(t, estimate.Files)
+			}
+		})
+	}
+}
+
+func TestPhotoCheckoutSchemaSeparatesFacesOnlyAndReadsItsBackup(t *testing.T) {
+	t.Parallel()
+	for _, driver := range v090UpgradeDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			filename := filepath.Join(t.TempDir(), "faces.db")
+			s, err := Open(filename, driver.driver)
+			require.NoError(t, err)
+			asset := albumAsset(t, s, "photo.jpg")
+			var exported bytes.Buffer
+			require.NoError(t, exportReleasedMetadataSnapshot(t.Context(), s.db, &exported, 35))
+			require.NotContains(t, exported.String(), "source_provenance_identity")
+			require.NotContains(t, exported.String(), `"type":"photo_checkout"`)
+			restored := newTestStore(t)
+			require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
+			actual, err := restored.PhotoAssetByID(t.Context(), asset.ID)
+			require.NoError(t, err)
+			require.Equal(t, asset.ID, actual.ID)
+			_, err = s.db.Exec(`DROP TABLE photo_checkout_entries; DROP TABLE photo_checkouts; ALTER TABLE photo_files DROP COLUMN source_provenance_identity; UPDATE vault_metadata SET schema_version=35`)
+			require.NoError(t, err)
+			require.NoError(t, s.Close())
+			reopened, err := Open(filename, driver.driver)
+			if reopened != nil {
+				require.NoError(t, reopened.Close())
+			}
+			require.ErrorContains(t, err, "schema version 35 has no supported JSONL cutover")
 		})
 	}
 }

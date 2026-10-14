@@ -312,7 +312,7 @@ func TestTrashEmptyRetainsAuthorityPinsAndDeletesUnrelatedRoots(t *testing.T) {
 				require.NoError(t, lookupErr)
 				checkout, operation, createErr := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
 				require.NoError(t, createErr)
-				err = s.FinishPhotoCheckout(ctx, checkout.ID, operation.ID, StorageOperationFailed, `{}`, "checkout failed", time.Time{})
+				err = s.FinishPhotoCheckout(ctx, checkout.ID, operation.ID, StorageOperationCompleted, `{}`, "", time.Time{})
 			case "input artifact":
 				_, err = s.db.Exec(`INSERT INTO media_occurrences VALUES(
 					'occurrence','source',NULL,'operator','ref','1','','','','{}',1,?,NULL)`, stamp)

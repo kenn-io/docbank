@@ -112,7 +112,7 @@ func (s Service) validateDestination(ctx context.Context, root *os.Root, destina
 		return err
 	}
 	for _, c := range checkouts {
-		if c.ID != excludedID && c.Destination != "" {
+		if c.ID != excludedID && c.Destination != "" && !c.RetentionReleased {
 			roots = append(roots, c.Destination)
 		}
 	}
@@ -126,9 +126,9 @@ func (s Service) validateDestination(ctx context.Context, root *os.Root, destina
 		}
 		var overlap bool
 		if statErr == nil && info.IsDir() {
-			_, overlap, err = ingest.WatchBindingOverlap([]config.WatchConfig{{Name: "checkout protection", Source: other}}, config.StoreBindingConfig{Kind: "filesystem", Path: destination})
+			_, overlap, err = ingest.WatchBindingOverlapContext(ctx, []config.WatchConfig{{Name: "checkout protection", Source: other}}, config.StoreBindingConfig{Kind: "filesystem", Path: destination})
 		} else {
-			overlap, err = ingest.PathsOverlap(destination, other)
+			overlap, err = ingest.PathsOverlapContext(ctx, destination, other)
 		}
 		if overlap {
 			return fmt.Errorf("%w: destination overlaps a vault, storage root, watched folder, or checkout", store.ErrInvalidPhotoCheckout)
@@ -218,7 +218,7 @@ func (s Service) reconcile(ctx context.Context, c store.PhotoCheckout) error {
 			defer s.ActivityEnd()
 		}
 	}
-	failure := "checkout creation was interrupted; partial copies and frozen bases are retained"
+	failure := "checkout creation was interrupted; partial copies are retained; source holds and destination reservation are released"
 	canonical, fsErr := filepath.EvalSymlinks(c.Destination)
 	invalidDestination := fsErr == nil && canonical != c.Destination
 	if invalidDestination {

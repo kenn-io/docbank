@@ -534,3 +534,11 @@ func TestLocalFileReadRejectsConcurrentChange(t *testing.T) {
 func stringsReader(value string) io.Reader { return strings.NewReader(value) }
 
 func runTestMutation(fn func() error) error { return fn() }
+
+func TestWatchBindingOverlapHonorsCancellation(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, _, err := WatchBindingOverlapContext(ctx, []config.WatchConfig{{Source: t.TempDir()}}, config.StoreBindingConfig{Kind: "filesystem", Path: t.TempDir()})
+	require.ErrorIs(t, err, context.Canceled)
+}

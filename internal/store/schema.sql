@@ -2744,14 +2744,16 @@ CREATE TABLE IF NOT EXISTS photo_checkouts (
     destination TEXT,
     operation_id TEXT,
     state TEXT NOT NULL DEFAULT 'unbound',
-    error TEXT NOT NULL DEFAULT ''
+    error TEXT NOT NULL DEFAULT '',
+    retention_released INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS photo_checkout_entries (
     checkout_id TEXT NOT NULL REFERENCES photo_checkouts(checkout_id),
     file_id TEXT NOT NULL,
     asset_id TEXT NOT NULL,
-    version_id TEXT NOT NULL REFERENCES content_versions(version_id),
-    blob_hash TEXT NOT NULL REFERENCES blobs(hash),
+    version_id TEXT NOT NULL,
+    blob_hash TEXT NOT NULL,
+    sidecar_of_file_id TEXT,
     size INTEGER NOT NULL,
     relative_path TEXT NOT NULL,
     published INTEGER NOT NULL DEFAULT 0,

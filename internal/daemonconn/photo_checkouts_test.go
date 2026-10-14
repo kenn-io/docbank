@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -16,7 +17,7 @@ import (
 
 func TestPhotoCheckoutClients(t *testing.T) {
 	t.Parallel()
-	const id = "00000000-0000-4000-8000-000000000011"
+	const id = "00000000-0000-4000-8000-0000000000aa"
 	const operationID = "00000000-0000-4000-8000-000000000012"
 	selection := store.PhotoCheckoutSelection{All: true, AssetIDs: []string{"00000000-0000-4000-8000-000000000021"}, AlbumIDs: []string{"00000000-0000-4000-8000-000000000022"}, Years: &store.PhotoCheckoutYears{From: 2024, To: 2025}}
 	checkout := store.PhotoCheckout{ID: id, Selection: selection, ByteLimit: 100, Destination: filepath.Join(t.TempDir(), "destination"), OperationID: operationID, State: "queued"}
@@ -77,6 +78,9 @@ func TestPhotoCheckoutClients(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []store.PhotoCheckout{checkout}, list)
 	status, err := client.PhotoCheckoutStatus(t.Context(), id)
+	require.NoError(t, err)
+	require.Equal(t, expectedStatus, status)
+	status, err = client.PhotoCheckoutStatus(t.Context(), strings.ToUpper(id))
 	require.NoError(t, err)
 	require.Equal(t, expectedStatus, status)
 

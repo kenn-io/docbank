@@ -460,3 +460,26 @@ func TestCheckoutRunOutcomes(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckoutTerminalReleaseAllowsDestinationReuse(t *testing.T) {
+	t.Parallel()
+	for _, state := range []store.StorageOperationState{store.StorageOperationFailed, store.StorageOperationCancelled, store.StorageOperationCompleted} {
+		t.Run(string(state), func(t *testing.T) {
+			s := checkoutService(t)
+			asset := checkoutPhoto(t, s, "photo.jpg", "bytes")
+			selection := store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}
+			destination := t.TempDir()
+			checkout, op, root, err := s.Prepare(t.Context(), selection, destination, 0)
+			require.NoError(t, err)
+			require.NoError(t, root.Close())
+			require.NoError(t, s.Store.FinishPhotoCheckout(t.Context(), checkout.ID, op.ID, state, "{}", "", time.Now().Add(time.Hour)))
+			_, _, next, err := s.Prepare(t.Context(), selection, destination, 0)
+			if state == store.StorageOperationCompleted {
+				require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
+			} else {
+				require.NoError(t, err)
+				require.NoError(t, next.Close())
+			}
+		})
+	}
+}

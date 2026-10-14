@@ -22,6 +22,8 @@ The web application and TUI show this inventory read-only. Registration,
 placement, repair, takeover, evacuation, and removal are CLI or master-key API
 operations.
 
+Photo checkouts hold source versions while queued, running, or completed. Failed and cancelled checkouts release those holds and their destination reservation while retaining historical entries. See [Create writable copies](photos.md#create-writable-copies).
+
 ## Configure a binding
 
 A binding tells this machine how to reach a store. It contains the path or S3

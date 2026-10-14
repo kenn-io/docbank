@@ -14,7 +14,7 @@ import (
 
 type photoSource struct {
 	identity, path, asset, target string
-	trashed                       bool
+	eligible                      bool
 }
 
 const photoSourceObservedSQL = `COALESCE((SELECT MIN(b.observed_at) FROM provenance_version_bindings b WHERE b.provenance_identity=p.identity),i.started_at,'')`
@@ -37,7 +37,7 @@ func backfillPhotoSourcesTx(ctx context.Context, tx *sql.Tx) error {
 func photoSourcesTx(ctx context.Context, tx *sql.Tx, assets string, checkout bool) (map[string]photoSource, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT COALESCE(f.asset_id,CAST(f.node_id AS TEXT)),f.file_id,COALESCE(p.identity,''),COALESCE(p.ingest_id,''),COALESCE(p.original_path,n.name),
  `+photoSourceObservedSQL+` AS observed,
- COALESCE(f.source_provenance_identity,''),COALESCE(f.sidecar_of_file_id,''),n.trashed_at IS NOT NULL
+ COALESCE(f.source_provenance_identity,''),COALESCE(f.sidecar_of_file_id,''),EXISTS(SELECT 1 FROM photo_assets a WHERE a.asset_id=f.asset_id AND a.hidden_at IS NULL AND a.excluded_at IS NULL) AND n.trashed_at IS NULL
  FROM photo_files f JOIN nodes n ON n.id=f.node_id LEFT JOIN provenance p ON p.node_id=f.node_id
  AND EXISTS(SELECT 1 FROM ingests origin WHERE origin.id=p.ingest_id AND origin.source_kind NOT LIKE 'embedded:%')
  AND (p.identity=f.source_provenance_identity OR NOT EXISTS(SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity))
@@ -57,14 +57,14 @@ func photoSourcesTx(ctx context.Context, tx *sql.Tx, assets string, checkout boo
 	for rows.Next() {
 		var source photoSource
 		var file, ingest, observed, fixed string
-		if err := rows.Scan(&source.asset, &file, &source.identity, &ingest, &source.path, &observed, &fixed, &source.target, &source.trashed); err != nil {
+		if err := rows.Scan(&source.asset, &file, &source.identity, &ingest, &source.path, &observed, &fixed, &source.target, &source.eligible); err != nil {
 			return nil, err
 		}
 		source.path = normalizePhotoSourcePath(source.path)
 		if _, exists := sources[file]; !exists || source.identity == fixed {
 			sources[file] = source
 		}
-		if source.identity == "" {
+		if !checkout || source.identity == "" {
 			continue
 		}
 		folder, stem := photoImportSourceKey(source.path)
@@ -90,6 +90,9 @@ func photoSourcesTx(ctx context.Context, tx *sql.Tx, assets string, checkout boo
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
+	if !checkout {
+		return sources, nil
+	}
 	ordered := make([]*group, 0, len(groups))
 	for _, g := range groups {
 		ordered = append(ordered, g)
@@ -107,7 +110,7 @@ func photoSourcesTx(ctx context.Context, tx *sql.Tx, assets string, checkout boo
 	if checkout {
 		companions := map[string][]string{}
 		for file, source := range sources {
-			if source.target != "" && !source.trashed {
+			if source.target != "" && source.eligible && sources[source.target].eligible && sources[source.target].asset == source.asset {
 				companions[source.target] = append(companions[source.target], file)
 			}
 		}
