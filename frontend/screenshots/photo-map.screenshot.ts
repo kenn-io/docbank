@@ -202,12 +202,12 @@ test("photo map privacy, clusters, marker return and mobile grid", async ({ page
     await page.evaluate(()=>(window as typeof window & {photoMap:import("leaflet").Map}).photoMap.panBy([5,0],{animate:false}));await expect(page.locator(".photo-map")).toBeVisible();
     await expect(page.locator(".leaflet-cluster-anim")).toHaveCount(0);await expect(page.locator('.photo-map-dot[title="Synthetic-photo-00010.jpg"]')).toHaveCSS("opacity","1");
     await page.screenshot({path:path.join(output!,"photo-map-overlap-trash-400-dark.png"),animations:"disabled"});
-    await page.route("**/photos/assets/query",route=>route.request().postDataJSON().query.filters.gps_bounds?route.fulfill({status:503,json:{detail:"Map unavailable"}}):route.fallback());
+    await page.route("**/api/v1/photos/hidden",route=>route.fulfill({status:503,json:{detail:"Photo access unavailable"}}));
     await page.evaluate(()=>{Object.defineProperty(document,"visibilityState",{configurable:true,value:"hidden"});document.dispatchEvent(new Event("visibilitychange"));});
     await page.evaluate(()=>{Object.defineProperty(document,"visibilityState",{configurable:true,value:"visible"});document.dispatchEvent(new Event("visibilitychange"));});
     await page.getByRole("alert").waitFor();await page.getByRole("button",{name:"Retry",exact:true}).waitFor();
     await page.screenshot({path:path.join(output!,"photo-map-access-retry-400-dark.png"),animations:"disabled"});
-    await page.unroute("**/photos/assets/query");await page.getByRole("button",{name:"Retry",exact:true}).click();await expect(page.getByText("13 located photos",{exact:true})).toBeVisible();
+    await page.unroute("**/api/v1/photos/hidden");await page.getByRole("button",{name:"Retry",exact:true}).click();await expect(page.getByText("13 located photos",{exact:true})).toBeVisible();
     await page.unroute("https://tiles.example.org/**");
     await page.route("https://tiles.example.org/**",route=>route.fulfill({status:404,body:""}));
     await page.setViewportSize({width:1440,height:960});await page.goto("about:blank");await page.goto(enabledURL.href);
