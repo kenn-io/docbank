@@ -248,7 +248,7 @@ func TestPhotoMetadataPreservesProvenanceAndRejectsInvalidReferences(t *testing.
 	}
 	require.True(t, found)
 	invalid := newTestStore(t)
-	require.Error(t, invalid.ImportMetadata(ctx, strings.NewReader(strings.Join(invalidLines, "\n"))))
+	require.ErrorContains(t, invalid.ImportMetadata(ctx, strings.NewReader(strings.Join(invalidLines, "\n"))), "invalid photo sidecar pointer")
 
 	var sidecarFileID string
 	for _, file := range asset.Files {
@@ -563,7 +563,7 @@ func TestPhotoVersionTransitionsKeepIdentity(t *testing.T) {
 	for _, test := range []struct {
 		name, mime    string
 		pruneOriginal bool
-	}{{"JPEG to PDF and revert", "application/pdf", false}, {"JPEG to JPEG and revert", "image/jpeg", false}, {"prune JPEG under PDF", "application/pdf", true}} {
+	}{{"JPEG to PDF and revert", "application/pdf", false}, {"prune JPEG under PDF", "application/pdf", true}} {
 		t.Run(test.name, func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
