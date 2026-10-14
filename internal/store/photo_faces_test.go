@@ -118,16 +118,18 @@ func TestPhotoFaceRescanRetainsIDsAndDecisions(t *testing.T) {
 
 func openFaceCandidate(t *testing.T, s *Store, versionID, faceID, personID string) PersonMatchCandidate {
 	t.Helper()
-	evidence, err := canonical.Marshal([]PersonCandidateOccurrence{{ContentVersionID: versionID, Role: "depicted", EvidenceKind: "face", EvidenceID: faceID}})
-	require.NoError(t, err)
-	var result PersonMatchCandidate
-	require.NoError(t, s.withLogicalTx(t.Context(), func(tx *sql.Tx) error {
-		var retained bool
-		result, retained, err = s.OpenPersonCandidate(t.Context(), tx, PersonMatchCandidate{ActorKey: "face:" + faceID, DisplayName: "Ada", SuggestedPersonID: personID, Reason: "face_match", Evidence: evidence})
-		require.True(t, retained)
-		return err
-	}))
-	return result
+	candidate := candidateForTest(t, "face:"+faceID, "Ada", personID, []PersonCandidateOccurrence{{
+		ContentVersionID: versionID, Role: "depicted", EvidenceKind: "face", EvidenceID: faceID,
+	}})
+	candidate.Reason = "face_match"
+	return openCandidateForTest(t, s, candidate)
+}
+
+func personKeyFaceForTest(t *testing.T, s *Store, personID string) string {
+	t.Helper()
+	var faceID string
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COALESCE(key_face_id,'') FROM persons WHERE person_id=?`, personID).Scan(&faceID))
+	return faceID
 }
 
 func TestPhotoFaceCandidatesAttachSharedAssertionAndMerge(t *testing.T) {
@@ -337,9 +339,7 @@ func TestPhotoFaceMetadataRoundTripAndInvalidReferences(t *testing.T) {
 	require.NoError(t, s.ValidateMetadata(ctx))
 	target := newTestStore(t)
 	require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
-	read, _, err := target.PersonByID(ctx, person.PersonID)
-	require.NoError(t, err)
-	require.Equal(t, face.FaceID, read.KeyFaceID)
+	require.Equal(t, face.FaceID, personKeyFaceForTest(t, target, person.PersonID))
 	faces, _, err := target.PhotoFaces(ctx, node.CurrentVersionID)
 	require.NoError(t, err)
 	require.Equal(t, []PhotoFace{face}, faces)
@@ -599,7 +599,7 @@ func TestPhotoFaceKeyFaceClearingAndMerge(t *testing.T) {
 			require.NoError(t, err)
 			updated, _, err := s.PersonByID(ctx, person.PersonID)
 			require.NoError(t, err)
-			require.Equal(t, expectedKey, updated.KeyFaceID)
+			require.Equal(t, expectedKey, personKeyFaceForTest(t, s, person.PersonID))
 			require.Equal(t, int64(2), updated.Revision)
 			require.NotEqual(t, "2000-01-01T00:00:00Z", updated.UpdatedAt)
 			require.NoError(t, s.ValidateMetadata(ctx))

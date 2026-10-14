@@ -89,6 +89,9 @@ func normalizePersonCandidate(candidate PersonMatchCandidate) (PersonMatchCandid
 		return invalid("candidate evidence is empty")
 	}
 	for _, occurrence := range occurrences {
+		if occurrence.Role == "depicted" && occurrence.EvidenceKind != "face" {
+			return invalid("depicted occurrence")
+		}
 		if occurrence.EvidenceKind == "face" && (occurrence.Role != "depicted" || validateUUIDv4(occurrence.EvidenceID) != nil || candidate.Reason != "face_match") {
 			return invalid("face occurrence")
 		}

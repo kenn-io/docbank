@@ -18,7 +18,6 @@ var (
 )
 
 type Person struct {
-	KeyFaceID                                               string
 	PersonID, DisplayName, DisplayNameFolded, Origin, State string
 	Revision                                                int64
 	CreatedAt, UpdatedAt                                    string
@@ -70,9 +69,9 @@ func (s *Store) CreatePerson(ctx context.Context, displayName, origin string) (P
 		if _, err := tx.ExecContext(ctx, `INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, id, displayName, document.FoldPersonName(displayName), origin, state, now, now); err != nil {
 			return err
 		}
-		if err := tx.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at,COALESCE(key_face_id,'') FROM persons WHERE person_id=?`, id).Scan(
+		if err := tx.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at FROM persons WHERE person_id=?`, id).Scan(
 			&created.PersonID, &created.DisplayName, &created.DisplayNameFolded, &created.Origin, &created.State,
-			&created.Revision, &created.CreatedAt, &created.UpdatedAt, &created.KeyFaceID); err != nil {
+			&created.Revision, &created.CreatedAt, &created.UpdatedAt); err != nil {
 			return err
 		}
 		return advancePersonBindingEpochTx(ctx, tx)
@@ -103,9 +102,9 @@ func (s *Store) UpdatePerson(ctx context.Context, id string, revision int64, nam
 		if count != 1 {
 			return ErrStaleRevision
 		}
-		if err := tx.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at,COALESCE(key_face_id,'') FROM persons WHERE person_id=?`, id).Scan(
+		if err := tx.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at FROM persons WHERE person_id=?`, id).Scan(
 			&updated.PersonID, &updated.DisplayName, &updated.DisplayNameFolded, &updated.Origin, &updated.State,
-			&updated.Revision, &updated.CreatedAt, &updated.UpdatedAt, &updated.KeyFaceID); err != nil {
+			&updated.Revision, &updated.CreatedAt, &updated.UpdatedAt); err != nil {
 			return err
 		}
 		return advancePersonBindingEpochTx(ctx, tx)
@@ -148,9 +147,9 @@ func (s *Store) RetirePerson(ctx context.Context, id string, revision int64) (Pe
 		if _, err := tx.ExecContext(ctx, `UPDATE person_match_candidates SET state='superseded',revision=revision+1 WHERE suggested_person_id=? AND state='open'`, id); err != nil {
 			return err
 		}
-		if err := tx.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at,COALESCE(key_face_id,'') FROM persons WHERE person_id=?`, id).Scan(
+		if err := tx.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at FROM persons WHERE person_id=?`, id).Scan(
 			&retired.PersonID, &retired.DisplayName, &retired.DisplayNameFolded, &retired.Origin, &retired.State,
-			&retired.Revision, &retired.CreatedAt, &retired.UpdatedAt, &retired.KeyFaceID); err != nil {
+			&retired.Revision, &retired.CreatedAt, &retired.UpdatedAt); err != nil {
 			return err
 		}
 		return advancePersonBindingEpochTx(ctx, tx)
@@ -184,10 +183,10 @@ func resolvePersonIDTx(ctx context.Context, tx *sql.Tx, id string) (string, erro
 
 func personByIDTx(ctx context.Context, q metadataQuerier, id string) (Person, string, error) {
 	var person Person
-	err := q.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at,COALESCE(key_face_id,'')
+	err := q.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at
 		FROM persons WHERE person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=?),?)
 		AND state<>'retired'`, id, id).Scan(&person.PersonID, &person.DisplayName, &person.DisplayNameFolded, &person.Origin,
-		&person.State, &person.Revision, &person.CreatedAt, &person.UpdatedAt, &person.KeyFaceID)
+		&person.State, &person.Revision, &person.CreatedAt, &person.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Person{}, "", ErrNotFound
 	}
@@ -212,7 +211,7 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 		return nil, ErrInvalidPerson
 	}
 	prefix := document.FoldPersonName(query)
-	rows, err := s.db.QueryContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at,COALESCE(key_face_id,'')
+	rows, err := s.db.QueryContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at
 		FROM persons WHERE state<>'retired' AND display_name_folded LIKE ? ESCAPE '\'
 		AND (?='' OR display_name_folded>? OR (display_name_folded=? AND person_id>?))
 		ORDER BY display_name_folded,person_id LIMIT ?`, escapePersonLike(prefix)+"%", afterName, afterName, afterName, afterID, limit)
@@ -224,7 +223,7 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 	for rows.Next() {
 		var person Person
 		if err := rows.Scan(&person.PersonID, &person.DisplayName, &person.DisplayNameFolded, &person.Origin,
-			&person.State, &person.Revision, &person.CreatedAt, &person.UpdatedAt, &person.KeyFaceID); err != nil {
+			&person.State, &person.Revision, &person.CreatedAt, &person.UpdatedAt); err != nil {
 			return nil, err
 		}
 		people = append(people, person)
