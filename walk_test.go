@@ -102,7 +102,6 @@ func TestWalkKeepsStableSnapshotAcrossMutations(t *testing.T) {
 			{Path: "/folder", Node: folder},
 			{Path: "/folder/delta.txt", Node: delta.Node},
 		}, entries)
-
 	})
 }
 
