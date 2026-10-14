@@ -500,7 +500,7 @@ func (service *Service) stageAndRetainMedia(
 			if reuse == nil {
 				written, err := service.blobs.WriteDetailedContext(ctx, staged)
 				if err != nil {
-					return err
+					return mediaStagingError(err)
 				}
 				if written.Hash != request.SHA256 || written.Size != request.ByteLength {
 					return errors.New("media staged identity changed during seal")

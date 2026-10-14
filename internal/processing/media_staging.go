@@ -14,8 +14,9 @@ import (
 	"go.kenn.io/docbank/internal/canonical"
 )
 
-// ErrMediaStagingUnavailable means staging ran out of disk space or quota.
-// The failed stage is cleaned up; callers may free space and retry.
+// ErrMediaStagingUnavailable means staging or the durable copy written at
+// publication ran out of disk space or quota. The failed stage is cleaned up;
+// callers may free space and retry.
 var ErrMediaStagingUnavailable = errors.New("media staging disk space is unavailable; free space and retry")
 
 func mediaStagingError(err error) error {

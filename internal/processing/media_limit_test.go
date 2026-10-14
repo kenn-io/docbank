@@ -2,16 +2,17 @@ package processing
 
 import (
 	"bytes"
-	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/blob"
-	"go.kenn.io/docbank/internal/store"
+	"fmt"
 	"io"
 	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
+	"go.kenn.io/docbank/internal/blob"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestMediaMaxBytesAllowsSuppliedMedia(t *testing.T) {
@@ -99,4 +100,40 @@ func TestConfiguredCeilingAppliesToRetainedAudioPlanAndRuntime(t *testing.T) {
 	work := store.RenditionJobWork{Profile: service.profiles[name].record, Job: store.RenditionJob{SourceSHA256: written.Hash}, Waiter: store.RenditionJobWaiter{ContentVersionID: node.CurrentVersionID}, ExecutionIdentity: document.RenditionExecutionIdentityV1{Upload: document.AuthorizedUploadMetadata{Filename: "call.wav", MediaType: "audio/wav", ByteLength: written.Size}}}
 	_, err = service.renditions.Prepare(t.Context(), work, service.clock())
 	require.ErrorIs(t, err, ErrSourceIneligible)
+}
+
+func TestPlanStreamsLargeSourceOnlyForAdmittedAudio(t *testing.T) {
+	t.Parallel()
+	f := newPublicationFixture(t)
+	name, profile, err := NewSuppliedMediaProfile(f.catalog, f.blobs, "synthetic:operator")
+	require.NoError(t, err)
+	service, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newWorkerTestGate(),
+		SpoolDirectory: t.TempDir(), MediaMaxBytes: 3 << 30, Profiles: map[string]ProfileConfig{name: profile}})
+	require.NoError(t, err)
+	for i, test := range []struct {
+		filename, mediaType string
+		size                int64
+		long                bool
+		refusal             string
+	}{
+		{"call.wav", "audio/wav", 2 << 30, true, ""},
+		{"call.mp3", "audio/mpeg", 3 << 30, true, ""},
+		{"call.wav", "audio/wav", 1 << 30, false, ""},
+		{"call.wav", "audio/wav", (3 << 30) + 1, false, "source_bytes_exceeded"},
+		{"call.m4a", "audio/mp4", (1 << 30) + 1, false, "source_bytes_exceeded"},
+		{"notes.txt", "text/plain", 2 << 30, false, "source_bytes_exceeded"},
+	} {
+		hash := fmt.Sprintf("%064x", i+1)
+		node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), fmt.Sprintf("%d-%s", i, test.filename), hash, test.size,
+			test.mediaType, store.BlobPhysical{Encoding: "raw", StoredBytes: test.size})
+		require.NoError(t, err)
+		selector := Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: name}
+		require.Equal(t, test.long, service.PlanStreamsLargeSource(t.Context(), selector), test.filename)
+		if test.refusal != "" {
+			plan, err := service.Plan(t.Context(), selector)
+			require.NoError(t, err, test.filename)
+			require.Equal(t, test.refusal, plan.RenditionIneligibleReason, test.filename)
+		}
+	}
+	require.False(t, service.PlanStreamsLargeSource(t.Context(), Selector{NodeID: 1, ContentVersionID: "missing", Profile: name}))
 }

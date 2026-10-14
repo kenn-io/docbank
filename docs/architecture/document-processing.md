@@ -404,25 +404,28 @@ fixed copy buffer. WAV chunk skipping uses `int64` counts, including on 32-bit
 systems. Source lengths never select a sample allocation size. Document
 inspectors retain their existing 1 GiB ceiling because they materialize the
 source. Visual detection and remote MP4 originals remain bounded at 20 MiB.
-M4A identities (`.m4a`, `audio/mp4`, `audio/x-m4a`) select the audio ceiling;
-accepting them still requires M4A format support. Its movie metadata bound
-remains independent of source length. Hosted-provider limits
-continue to apply before uploads to those providers.
+Only identities that select the streaming WAV or MP3 inspector use the audio
+ceiling. Other audio, including M4A, keeps the 1 GiB document bound, so a larger
+source receives a `source_bytes_exceeded` refusal before inspection. Hosted-provider
+limits continue to apply before uploads to those providers.
 
 Staging reserves the declared length before creating its private file. The
 reservation is an aggregate service quota, not a claim about filesystem free
-space. Disk or filesystem quota exhaustion during creation, writing or syncing
-returns `ErrMediaStagingUnavailable`; HTTP exposes this as retryable 503
+space. Disk or filesystem quota exhaustion while creating, writing or syncing the
+stage, or while writing the durable loose copy at publication, returns
+`ErrMediaStagingUnavailable`; HTTP exposes this as retryable 503
 `media_staging_unavailable`. Failed staging closes and removes its file and
 releases the reservation. Operators can free space and retry the same operation.
-HTTP processing plans for cataloged audio sources above 1 GiB and within the
-configured ceiling lift the server's 60-second handler deadline after bounded
-JSON decoding. They clear the remaining socket read deadline and preserve the
-client's cancellation and its cause, original deadline and authentication context.
-Browser-session revocation still cancels the inspection, and cancellation hooks
-detach when the plan finishes. An expired handler cannot lift its deadline.
-Smaller audio plans, documents, video, over-ceiling sources and request-body
-limits keep their existing deadline behavior.
+
+The HTTP processing plan route applies the 60-second handler deadline itself
+instead of through `timeoutMiddleware`. Huma's five-second body-read deadline
+still bounds JSON decoding. The handler resolves the selector under the
+60-second deadline and asks `Service.PlanStreamsLargeSource` whether the plan
+will inspect a source above 1 GiB that the profile admits. Only streaming audio
+qualifies. For that plan, the handler clears the socket read deadline and
+inspects under the request context, so client cancellation, caller deadlines and
+browser-session revocation still stop it. Every other plan, including sources
+the profile refuses by size, keeps the 60-second deadline.
 
 A source may need both its stage and durable loose copy on disk during
 publication. Provider execution may also hold a sealed spool copy.

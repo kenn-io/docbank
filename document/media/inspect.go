@@ -157,15 +157,10 @@ func InspectCapability(reader io.Reader, policy InspectionPolicy) (CapabilityRec
 	}
 	baseType, _, _ := mime.ParseMediaType(policy.DeclaredMediaType)
 	ext := strings.ToLower(filepath.Ext(policy.Filename))
-	if baseType == "audio/wav" || baseType == "audio/x-wav" || baseType == "audio/mpeg" ||
-		ext == ".wav" || ext == ".mp3" {
+	if streamingAudio(baseType, ext) {
 		return inspectAudio(reader, policy, baseType, ext)
 	}
-	// Unsupported future audio identities must not reach a document-sized allocation.
-	if policy.ExpectedBytes > MaxInspectionSourceBytes {
-		return CapabilityRecord{}, errors.New("media: source exceeds non-streaming inspection bound")
-	}
-	data, err := io.ReadAll(io.LimitReader(reader, min(policy.MaxSourceBytes, MaxInspectionSourceBytes)+1))
+	data, err := io.ReadAll(io.LimitReader(reader, policy.MaxSourceBytes+1))
 	if err != nil {
 		return CapabilityRecord{}, fmt.Errorf("media: read inspection source: %w", err)
 	}

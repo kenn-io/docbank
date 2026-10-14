@@ -1,10 +1,11 @@
 package processing
 
 import (
-	"github.com/stretchr/testify/require"
-	"golang.org/x/sys/windows"
 	"os"
 	"testing"
+
+	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/windows"
 )
 
 func TestMediaDiskExhaustionIsRetryableWindows(t *testing.T) {

@@ -645,6 +645,19 @@ func (service *Service) Profiles() []ProfileSummary {
 	return result
 }
 
+// PlanStreamsLargeSource reports whether Plan will inspect a source larger
+// than media.MaxInspectionSourceBytes. Only streaming audio admits such a
+// source, and its inspection reads every byte, so it can outlast an ordinary
+// request deadline. Unresolvable selectors report false; Plan reports their error.
+func (service *Service) PlanStreamsLargeSource(ctx context.Context, selector Selector) bool {
+	node, version, profile, err := service.resolve(ctx, selector)
+	if err != nil || profile.portable.Rendition == nil {
+		return false
+	}
+	policy := renditionInspectionPolicy(node, version, profile)
+	return version.Size > media.MaxInspectionSourceBytes && version.Size <= policy.MaxSourceBytes
+}
+
 func (service *Service) Plan(ctx context.Context, selector Selector) (Plan, error) {
 	node, version, profile, err := service.resolve(ctx, selector)
 	if err != nil {
@@ -2109,8 +2122,7 @@ func runtimeVersion(work store.RenditionJobWork) store.ContentVersion {
 func inspectRenditionSource(ctx context.Context, blobs *blob.Store, node store.Node,
 	version store.ContentVersion, profile configuredProfile,
 ) (media.CapabilityRecord, error) {
-	filename := syntheticFilename(node.Name, version.MimeType, profile.portable.Rendition.DiscloseFilename)
-	policy := inspectionPolicy(filename, version, profile)
+	policy := renditionInspectionPolicy(node, version, profile)
 	switch {
 	case version.Size == 0:
 		return media.CapabilityRecord{Reason: media.CapabilityReasonEmptySource}, nil
@@ -2130,6 +2142,13 @@ func inspectRenditionSource(ctx context.Context, blobs *blob.Store, node store.N
 		return media.CapabilityRecord{}, errors.Join(inspectErr, closeErr)
 	}
 	return capability, nil
+}
+
+func renditionInspectionPolicy(
+	node store.Node, version store.ContentVersion, profile configuredProfile,
+) media.InspectionPolicy {
+	filename := syntheticFilename(node.Name, version.MimeType, profile.portable.Rendition.DiscloseFilename)
+	return inspectionPolicy(filename, version, profile)
 }
 
 func inspectionPolicy(filename string, version store.ContentVersion, profile configuredProfile) media.InspectionPolicy {

@@ -47,14 +47,25 @@ func TestInspectFourGiBGeneratedWAVBoundedMemory(t *testing.T) {
 	require.ErrorContains(t, err, "source byte bounds")
 }
 
-func TestAudioCeilingIncludesM4AIdentities(t *testing.T) {
+func TestAudioCeilingCoversOnlyStreamingInspectors(t *testing.T) {
 	t.Parallel()
-	for _, input := range [][2]string{{"call.m4a", "audio/mp4"}, {"call.m4a", "audio/x-m4a"}, {"CALL.M4A", "application/octet-stream"}} {
-		require.Equal(t, int64(4<<30), media.InspectionSourceByteCeiling(input[0], input[1]))
+	for _, test := range []struct {
+		filename, mediaType string
+		want                int64
+	}{
+		{"call.wav", "application/octet-stream", 4 << 30},
+		{"CALL.MP3", "application/octet-stream", 4 << 30},
+		{"recording", "audio/mpeg", 4 << 30},
+		{"recording", "audio/x-wav; rate=8000", 4 << 30},
+		// M4A inspection materializes the source until a streaming inspector exists.
+		{"call.m4a", "audio/mp4", 1 << 30},
+		{"call.m4a", "audio/x-m4a", 1 << 30},
+		{"image.png", "image/png", 1 << 30},
+		{"video.mp4", "video/mp4", 1 << 30},
+	} {
+		require.Equal(t, test.want, media.InspectionSourceByteCeiling(test.filename, test.mediaType),
+			"%s %s", test.filename, test.mediaType)
 	}
-	require.Equal(t, int64(1<<30), media.InspectionSourceByteCeiling("image.png", "image/png"))
-	require.Equal(t, int64(1<<30), media.InspectionSourceByteCeiling("video.mp4", "video/mp4"))
-	require.Equal(t, media.MaxBytes, int64(20<<20))
 }
 
 func TestAudioFourGiBPolicyKeepsDocumentBounds(t *testing.T) {

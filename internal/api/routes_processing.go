@@ -16,7 +16,6 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
-	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/retrieval"
 	"go.kenn.io/docbank/internal/store"
@@ -81,27 +80,27 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 	type planOutput struct{ Body ProcessingPlan }
 	huma.Register(api, huma.Operation{
 		OperationID: "planDocumentProcessing", Method: http.MethodPost,
-		Path: "/api/v1/processing/plans", Summary: "Preview provider disclosure for one document version",
+		Path: processingPlansPath, Summary: "Preview provider disclosure for one document version",
 	}, func(ctx context.Context, input *planInput) (*planOutput, error) {
 		if d.Processing == nil {
 			return nil, processingUnavailable()
 		}
-		// Large streaming audio needs a complete identity read. Keep the ordinary
-		// deadline for other plans, and preserve client cancellation for this one.
-		if version, err := d.Store.ContentVersionByID(ctx, input.Body.Selector.ContentVersionID); err == nil &&
-			largeAudioProcessingPlan(version, d.Processing.MediaSourceMaxBytes()) {
-			var contextErr error
-			var cleanup func()
-			ctx, cleanup, contextErr = withoutRequestTimeout(ctx)
-			defer cleanup()
-			if contextErr != nil {
-				return nil, fromProcessingError(contextErr)
-			}
-		}
-		plan, err := d.Processing.Plan(ctx, processing.Selector{
+		selector := processing.Selector{
 			NodeID: input.Body.Selector.NodeID, ContentVersionID: input.Body.Selector.ContentVersionID,
 			Profile: input.Body.Selector.Profile,
-		})
+		}
+		// timeoutMiddleware leaves this route's deadline to the handler. Inspecting
+		// large streaming audio reads every source byte, so only the caller bounds it.
+		bounded, cancel := context.WithTimeout(ctx, requestTimeout)
+		defer cancel()
+		planCtx := bounded
+		if d.Processing.PlanStreamsLargeSource(bounded, selector) {
+			if err := clearRequestReadDeadline(ctx); err != nil {
+				return nil, fromProcessingError(err)
+			}
+			planCtx = ctx
+		}
+		plan, err := d.Processing.Plan(planCtx, selector)
 		if err != nil {
 			return nil, fromProcessingError(err)
 		}
@@ -834,9 +833,4 @@ func fromProcessingError(err error) error {
 		return FromStoreError(err)
 	}
 	return NewError(http.StatusInternalServerError, "processing_failed", "document processing failed")
-}
-
-func largeAudioProcessingPlan(version store.ContentVersion, maximum int64) bool {
-	return version.Size > media.MaxInspectionSourceBytes && version.Size <= maximum &&
-		media.InspectionSourceByteCeiling("", version.MimeType) == media.MaxMediaSourceBytes
 }

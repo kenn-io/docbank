@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -21,54 +22,24 @@ import (
 
 const requestTimeout = 60 * time.Second
 
-type requestTimeoutParentKey struct{}
-type requestTimeoutControllerKey struct{}
-type authenticationSessionContextKey struct{}
+type responseControllerContextKey struct{}
 
-// requestTimeoutParentContext preserves handler values while using the original
-// request's cancellation and deadline for a qualified long source inspection.
-type requestTimeoutParentContext struct {
-	context.Context
+// processingPlansPath applies requestTimeout in its handler, because only the
+// handler can tell whether the plan must stream a large audio source.
+const processingPlansPath = "/api/v1/processing/plans"
 
-	values context.Context
-}
-
-func (ctx requestTimeoutParentContext) Value(key any) any {
-	// WithoutCancel hides internal cancellation metadata. Resolve those hidden
-	// keys against the new parent while preserving handler values, including nil.
-	value := context.WithoutCancel(ctx.values).Value(key)
-	if value == nil && ctx.values.Value(key) != nil {
-		return ctx.Context.Value(key)
-	}
-	return value
-}
-
-func withoutRequestTimeout(ctx context.Context) (context.Context, func(), error) {
-	noop := func() {}
-	parent, ok := ctx.Value(requestTimeoutParentKey{}).(context.Context)
+// clearRequestReadDeadline removes Huma's request-body socket deadline once a
+// handler commits to long-running work. Left in place, its expiry makes the
+// connection's background read cancel the request.
+func clearRequestReadDeadline(ctx context.Context) error {
+	controller, ok := ctx.Value(responseControllerContextKey{}).(*http.ResponseController)
 	if !ok {
-		return ctx, noop, nil
+		return errors.New("clearing request read deadline: response controller is unavailable")
 	}
-	if err := ctx.Err(); err != nil {
-		return ctx, noop, err
+	if err := controller.SetReadDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		return fmt.Errorf("clearing request read deadline: %w", err)
 	}
-	if controller, ok := ctx.Value(requestTimeoutControllerKey{}).(*http.ResponseController); ok {
-		if err := controller.SetReadDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
-			return nil, noop, err
-		}
-	}
-	// Use the original caller's deadline/cause, and independently retain browser
-	// authority added by authentication after timeout middleware ran.
-	live, cancel := context.WithCancelCause(parent)
-	stopSession := func() bool { return false }
-	if session, ok := ctx.Value(authenticationSessionContextKey{}).(context.Context); ok {
-		stopSession = context.AfterFunc(session, func() { cancel(context.Cause(session)) })
-		if session.Err() != nil {
-			cancel(context.Cause(session))
-		}
-	}
-	cleanup := func() { stopSession(); cancel(nil) }
-	return requestTimeoutParentContext{Context: live, values: ctx}, cleanup, nil
+	return nil
 }
 
 type authenticationContextKey struct{}
@@ -295,7 +266,6 @@ func authMiddleware(next http.Handler, key string, sessions *webSessionRegistry,
 			stop := context.AfterFunc(sessionCtx, cancel)
 			defer stop()
 			defer cancel()
-			ctx = context.WithValue(ctx, authenticationSessionContextKey{}, sessionCtx)
 			ctx = context.WithValue(ctx, authenticationContextKey{}, "browser")
 			ctx = context.WithValue(ctx, workspaceSnapshotOwnerContextKey{}, owner)
 			next.ServeHTTP(w, r.WithContext(ctx))
@@ -346,9 +316,12 @@ func timeoutMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		parent := context.WithValue(r.Context(), requestTimeoutParentKey{}, r.Context())
-		parent = context.WithValue(parent, requestTimeoutControllerKey{}, http.NewResponseController(w))
-		ctx, cancel := context.WithTimeout(parent, requestTimeout)
+		if r.Method == http.MethodPost && r.URL.Path == processingPlansPath {
+			ctx := context.WithValue(r.Context(), responseControllerContextKey{}, http.NewResponseController(w))
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 		defer cancel()
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
