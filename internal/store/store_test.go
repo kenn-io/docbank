@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -40,26 +41,27 @@ func TestStorageMutationDuringReadSnapshot(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestStorageTransactionPreservesCancellationAfterAutomaticRollback(t *testing.T) {
+func TestStorageTransactionPreservesCancellationAfterRollback(t *testing.T) {
 	t.Parallel()
 	for _, phase := range []string{"callback", "commit"} {
 		t.Run(phase, func(t *testing.T) {
-			s := newTestStore(t)
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-				cancel()
-				// The only connection becomes available after automatic rollback.
-				require.NoError(t, s.writeDB.PingContext(t.Context()))
-				var value int
-				readErr := tx.QueryRow("SELECT 1").Scan(&value)
-				if phase == "callback" {
-					return readErr
-				}
-				return nil
+			synctest.Test(t, func(t *testing.T) {
+				s := newTestStore(t)
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+					cancel()
+					synctest.Wait()
+					var value int
+					readErr := tx.QueryRow("SELECT 1").Scan(&value)
+					if phase == "callback" {
+						return readErr
+					}
+					return nil
+				})
+				require.ErrorIs(t, err, context.Canceled)
+				require.ErrorIs(t, err, sql.ErrTxDone)
 			})
-			require.ErrorIs(t, err, context.Canceled)
-			require.ErrorIs(t, err, sql.ErrTxDone)
 		})
 	}
 }
