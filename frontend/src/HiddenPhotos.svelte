@@ -7,8 +7,9 @@
   import { concealPhotoWorkspace, revalidatePhotoWorkspace, type PhotoWorkspace } from "./photoWorkspace.js";
   import PhotosWorkspace from "./PhotosWorkspace.svelte";
   import { APIError } from "./api-transport.js";
+  import { HiddenAccess } from "./hiddenAccess.svelte.js";
 
-  let { photoID = "", onphotochange = () => {}, onconceal, session, onauthfailure, photoActionError = "", ontrashed, onunhidden, onactionerror, onstate, onaccessfailure }: { photoID?: string; onphotochange?: (id: string, mode: "open" | "step" | "close") => void; onconceal?: () => void; session: string; onauthfailure: (cause: unknown) => void; photoActionError?: string; ontrashed?: () => void; onunhidden?: () => void; onactionerror?: (error: string) => void; onstate?: (state: PhotoHiddenState) => void; onaccessfailure?: () => void } = $props();
+  let { photoID = "", onphotochange = () => {}, onconceal, session, onauthfailure, access = new HiddenAccess(session, onauthfailure), photoActionError = "", ontrashed, onunhidden, onactionerror, onstate, onaccessfailure }: { photoID?: string; onphotochange?: (id: string, mode: "open" | "step" | "close") => void; onconceal?: () => void; session: string; onauthfailure: (cause: unknown) => void; access?: HiddenAccess; photoActionError?: string; ontrashed?: () => void; onunhidden?: () => void; onactionerror?: (error: string) => void; onstate?: (state: PhotoHiddenState) => void; onaccessfailure?: () => void } = $props();
   let hiddenState = $state<PhotoHiddenState>({ configured: false });
   let workspace = $state<PhotoWorkspace>();
   let photoWorkspace = $state<PhotosWorkspace>();
@@ -86,9 +87,11 @@
     refreshController = new AbortController();
     const controller = refreshController;
     reading = true;
-    // Anchoring at send time can only end access early, never late.
-    const requestedAt = Date.now();
     try {
+      await access.settled();
+      if (controller.signal.aborted || disposed) return;
+      // Anchoring at send time can only end access early, never late.
+      const requestedAt = Date.now();
       const result = await getPhotoHiddenState({ session, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]) });
       if (controller.signal.aborted || disposed) return;
       await applyState(result, controller.signal, requestedAt);
@@ -127,12 +130,14 @@
     let succeeded = false;
     if (kind === "lock" || kind === "disable" || kind === "change") clear();
     try {
-      if (kind === "enter") {
-        if (!hiddenState.configured) await setupPhotoHidden({ passcode }, options());
-        await unlockPhotoHidden({ passcode }, options());
-      } else if (kind === "lock") await lockPhotoHidden({}, options());
-      else if (kind === "change") await changePhotoHidden({ passcode: currentPasscode, new_passcode: nextPasscode }, options());
-      else { disableDispatched = true; await disablePhotoHidden({ passcode: currentPasscode }, options()); }
+      await access.run(async () => {
+        if (kind === "enter") {
+          if (!hiddenState.configured) await setupPhotoHidden({ passcode }, options());
+          await unlockPhotoHidden({ passcode }, options());
+        } else if (kind === "lock") await lockPhotoHidden({}, options());
+        else if (kind === "change") await changePhotoHidden({ passcode: currentPasscode, new_passcode: nextPasscode }, options());
+        else { disableDispatched = true; await disablePhotoHidden({ passcode: currentPasscode }, options()); }
+      });
       passcode = "";
       currentPasscode = "";
       nextPasscode = "";

@@ -13,6 +13,52 @@ vi.mock("./PhotoMap.svelte",()=>({default:(_anchor:unknown,props:NonNullable<typ
 
 afterEach(() => { cleanup(); map.props=undefined; document.querySelectorAll('meta[name="docbank-map-tiles"]').forEach(meta=>meta.remove()); history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); new Photos("scoped", vi.fn()).setDensity("comfortable"); });
 
+it.each(["hide", "close", "Documents after Photos", "Documents only", "failed lock"])("locks Hidden when leaving %s", async mode => {
+  history.replaceState(null, "", `${mode === "Documents only" ? "/" : "/photos"}#web_session=synthetic&web_upload_secret=proof`);
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
+  let locks = 0;
+  const fetcher = vi.fn(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/photos/hidden/lock")) {
+      locks++;
+      if (mode === "failed lock" && locks === 1) return Response.json({ detail: "Lock unavailable" }, { status: 503 });
+      return Response.json({ configured: true });
+    }
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: true });
+    if (url.endsWith("/photos/assets/query")) return Response.json({ items: [photo(1)], total: 1 });
+    if (url.includes("/nodes/1")) return Response.json({ id: 1, kind: "dir", name: "", revision: 1, path: "/" });
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  stubPhotoFetch(fetcher);
+  render(App);
+  if (mode === "Documents only") await screen.findByRole("button", { name: "Photos" });
+  else await screen.findByRole("button", { name: "Select Photo 1.jpg" });
+  if (mode === "Documents after Photos") await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
+  const visibility = vi.spyOn(document, "visibilityState", "get");
+  if (mode !== "close") {
+    visibility.mockReturnValue("hidden");
+    await fireEvent(document, new Event("visibilitychange"));
+    await fireEvent(document, new Event("visibilitychange"));
+  }
+  await fireEvent(window, new Event("pagehide"));
+  if (mode === "Documents only") { expect(locks).toBe(0); return; }
+  await waitFor(() => expect(locks).toBe(1));
+  expect(fetcher.mock.calls.find(([url]) => url.endsWith("/photos/hidden/lock"))?.[1]).toMatchObject({ keepalive: true });
+  visibility.mockReturnValue("visible");
+  await fireEvent(document, new Event("visibilitychange"));
+  await fireEvent(window, new Event("pageshow"));
+  if (mode === "failed lock") {
+    await screen.findByText("Hidden did not lock. Lock unavailable");
+    await fireEvent.click(screen.getByRole("button", { name: "Retry lock" }));
+    await waitFor(() => expect(screen.queryByText("Hidden did not lock. Lock unavailable")).toBeNull());
+    expect(locks).toBe(2);
+  } else {
+    await fireEvent(window, new Event("pagehide"));
+    await waitFor(() => expect(locks).toBe(2));
+  }
+});
+
 it.each(["server", "stale first page"])("refreshes an album opened again during a delayed membership write with a %s response", async outcome => {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
@@ -642,9 +688,13 @@ it.each([false, true])("keeps direct links and history scoped and conceals a mou
     const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
     await fireEvent(document, new Event("visibilitychange"));
     expect(screen.queryByRole("dialog", { name: /Photo viewer/ })).toBeNull();
-    expect(location.hash).toBe("#photo=photo-1");
+    await waitFor(() => expect(location.hash).toBe(""));
     visibility.mockReturnValue("visible");
     await fireEvent(document, new Event("visibilitychange"));
+    await screen.findByRole("button", { name: "Open Photo 1.jpg" });
+    expect(screen.queryByRole("dialog", { name: /Photo viewer/ })).toBeNull();
+    expect(location.hash).toBe("");
+    await fireEvent.click(screen.getByRole("button", { name: "Open Photo 1.jpg" }));
     await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
     const queries = () => vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith("/assets/query")).length;
     let refreshed = queries();

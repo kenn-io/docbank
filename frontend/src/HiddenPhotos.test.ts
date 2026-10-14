@@ -1,12 +1,46 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import HiddenPhotos from "./HiddenPhotos.svelte";
+import { HiddenAccess } from "./hiddenAccess.svelte.js";
 import { photo, storage } from "./photo-test-fixtures.js";
 
 afterEach(() => { cleanup(); history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const state = (unlocked: boolean) => ({ configured: true, ...(unlocked ? { expires_at: new Date(Date.now() + 300_000).toISOString(), expires_in: 300 } : {}) });
 const prepare = () => { vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} }); vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000); vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800); };
 const problem = (status: number, detail: string, code = "") => new Response(JSON.stringify({ detail, code }), { status });
+
+it("waits for a held leave lock before reading on return", async () => {
+  prepare();
+  let unlocked = true;
+  let finish!: () => void;
+  let reads = 0;
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    if (url.endsWith("/lock")) { await new Promise<void>(resolve => finish = resolve); unlocked = false; return Response.json(state(false)); }
+    if (url.endsWith("/photos/hidden")) { reads++; return Response.json(state(unlocked)); }
+    return Response.json({ items: [], total: 0 });
+  }));
+  const access = new HiddenAccess("synthetic", vi.fn());
+  render(HiddenPhotos, { session: "synthetic", onauthfailure: vi.fn(), access });
+  await screen.findByRole("button", { name: "Lock" });
+  const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+  await fireEvent(document, new Event("visibilitychange"));
+  const lock = access.lock({ keepalive: true });
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  visibility.mockReturnValue("visible");
+  await fireEvent(document, new Event("visibilitychange"));
+  expect(reads).toBe(1);
+  expect(screen.queryByRole("button", { name: "Unlock" })).toBeNull();
+  visibility.mockReturnValue("hidden");
+  await fireEvent(document, new Event("visibilitychange"));
+  finish();
+  await lock;
+  await Promise.resolve();
+  expect(reads).toBe(1);
+  visibility.mockReturnValue("visible");
+  await fireEvent(document, new Event("visibilitychange"));
+  await screen.findByRole("button", { name: "Unlock" });
+  expect(reads).toBe(2);
+});
 
 it.each(["setup", "unlock", "current", "new"])("preserves %s input focus and value during an access poll", async field => {
   let poll!: () => void;
@@ -45,6 +79,7 @@ it("associates incorrect unlock feedback with its field and preserves it through
   vi.stubGlobal("fetch", vi.fn(async (url: string) => url.endsWith("/unlock") ? problem(403, "Wrong passcode", "hidden_passcode") : initial ? (initial = false, new Promise<Response>(resolve => settle = resolve)) : Response.json(state(false))));
   render(HiddenPhotos, { session: "synthetic", onauthfailure: vi.fn() });
   expect(screen.queryByRole("button", { name: "Unlock" })).toBeNull();
+  await waitFor(() => expect(settle).toBeTypeOf("function"));
   settle(Response.json(state(false)));
   const passcode = await screen.findByLabelText("Passcode", { exact: true });
   await waitFor(() => expect((passcode as HTMLInputElement).disabled).toBe(false));
@@ -286,7 +321,7 @@ it("moves focus to the successor control after unlock and lock", async () => {
   await waitFor(() => expect(document.activeElement?.id).toBe("hidden-passcode"));
 });
 
-it("failed access reads preserve an in-flight Lock and its action error", async () => {
+it("access reads wait for an in-flight Lock and preserve its action error", async () => {
   prepare();
   let settle!: (response: Response) => void;
   let actionSignal: AbortSignal | undefined;
@@ -301,10 +336,10 @@ it("failed access reads preserve an in-flight Lock and its action error", async 
   failing = true;
   vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
   await fireEvent(document, new Event("visibilitychange"));
-  await screen.findByText("Access unavailable");
   expect(actionSignal?.aborted).toBe(false);
   settle(problem(503, "Lock unavailable"));
   await screen.findByText("Lock unavailable");
+  await screen.findByText("Access unavailable");
   failing = false;
   await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   await screen.findByRole("main", { name: "Photo library" });
