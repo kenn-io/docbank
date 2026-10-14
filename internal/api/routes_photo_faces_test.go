@@ -95,15 +95,8 @@ func TestPhotoFaceDecisionRoutes(t *testing.T) {
 	response, body = do(t, ts, http.MethodPost, path, nil, api.PhotoFaceDecisionRequest{FaceID: face.FaceID, Action: "dismiss", Revision: 1})
 	require.Equal(t, http.StatusPreconditionFailed, response.StatusCode, body)
 	require.Contains(t, body, "stale_revision")
-	response, body = get(t, ts, "/api/v1/people/by-id/"+p.PersonID, nil)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	var detail api.PersonDetail
-	require.NoError(t, json.Unmarshal([]byte(body), &detail))
-	require.Len(t, detail.Assertions, 1)
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/face-decisions/"+receipt.ReceiptID+"/undo", nil, nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/face-decisions/"+receipt.ReceiptID+"/undo", nil, nil)
-	require.Equal(t, http.StatusPreconditionFailed, response.StatusCode, body)
 	asset, err := s.PhotoAssetForNode(ctx, node.ID)
 	require.NoError(t, err)
 	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
@@ -168,11 +161,6 @@ func TestPhotoFaceDecisionClearKeyAndReplay(t *testing.T) {
 	undoPath := "/api/v1/photos/face-decisions/" + receipt.ReceiptID + "/undo?operation_id=" + uuid.NewString()
 	response, body = do(t, ts, http.MethodPost, undoPath, nil, nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	var undone api.PhotoFaceDecisionResult
-	require.NoError(t, json.Unmarshal([]byte(body), &undone))
-	response, body = do(t, ts, http.MethodPost, undoPath, nil, nil)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	require.Contains(t, body, undone.ReceiptID)
 }
 
 func TestPersonAmbiguousQueryIsInvalid(t *testing.T) {

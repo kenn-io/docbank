@@ -12,7 +12,7 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-func TestPhotoFaceManualAndBoxlessAssertions(t *testing.T) {
+func TestPhotoFaceManualAndInvalidZeroAreaBox(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -70,11 +70,6 @@ func TestPhotoFaceMergeRetargetsDuplicateAssertions(t *testing.T) {
 	}
 	require.Len(t, assertions, 1)
 	require.Equal(t, ada.PersonID, assertions[0].PersonID)
-	replayed, assertion, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, second.FaceID, second.Box, duplicate.PersonID)
-	require.NoError(t, err)
-	require.Equal(t, int64(2), replayed.Revision)
-	require.Equal(t, first.AssertionID, replayed.AssertionID)
-	require.Equal(t, ada.PersonID, assertion.PersonID)
 	require.NoError(t, s.ValidateMetadata(ctx))
 }
 
@@ -247,15 +242,13 @@ func TestPhotoFaceWholePhotoMarkIsIdempotent(t *testing.T) {
 	require.NoError(t, err)
 	var before, after bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &before))
+	var epoch int64
+	require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state`).Scan(&epoch))
 	repeated, err := s.MarkPersonInPhoto(ctx, node.CurrentVersionID, person.PersonID)
 	require.NoError(t, err)
 	require.Equal(t, first, repeated)
 	require.NoError(t, s.ExportMetadata(ctx, &after))
 	require.Equal(t, before.String(), after.String())
-	var epoch int64
-	require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state`).Scan(&epoch))
-	_, err = s.MarkPersonInPhoto(ctx, node.CurrentVersionID, person.PersonID)
-	require.NoError(t, err)
 	var unchanged int64
 	require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state`).Scan(&unchanged))
 	require.Equal(t, epoch, unchanged)

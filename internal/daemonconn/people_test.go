@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 )
@@ -178,12 +179,12 @@ func TestPersonClientForwardsAssertionPage(t *testing.T) {
 	const personID = "00000000-0000-4000-8000-000000000001"
 	const cursor = "00000000-0000-4000-8000-000000000002"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, cursor, r.URL.Query().Get("assertion_cursor"))
-		require.Equal(t, "7", r.URL.Query().Get("assertion_limit"))
-		require.Equal(t, "hidden=synthetic", r.Header.Get("Cookie"))
+		assert.Equal(t, cursor, r.URL.Query().Get("assertion_cursor"))
+		assert.Equal(t, "7", r.URL.Query().Get("assertion_limit"))
+		assert.Equal(t, "hidden=synthetic", r.Header.Get("Cookie"))
 		w.Header().Set("ETag", `"1"`)
 		w.Header().Set("Content-Type", "application/json")
-		require.NoError(t, json.MarshalWrite(w, api.PersonDetail{Person: api.Person{PersonID: personID, Revision: 1}}))
+		assert.NoError(t, json.MarshalWrite(w, api.PersonDetail{Person: api.Person{PersonID: personID, Revision: 1}}))
 	}))
 	defer server.Close()
 	_, err := New(server.URL, "synthetic-key").PersonPage(t.Context(), personID, api.PersonAssertionPage{Cursor: cursor, Limit: 7, HiddenCookie: "hidden=synthetic"})

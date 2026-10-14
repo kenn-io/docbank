@@ -95,27 +95,27 @@ func TestPhotoFaceDecisionClient(t *testing.T) {
 	const receipt = "22222222-2222-4222-8222-222222222222"
 	const face = "33333333-3333-4333-8333-333333333333"
 	for _, invalid := range []bool{false, true} {
-		t.Run(fmt.Sprint(invalid), func(t *testing.T) {
+		t.Run(map[bool]string{false: "valid receipt", true: "invalid receipt"}[invalid], func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				require.Equal(t, http.MethodPost, r.Method)
-				require.Equal(t, "hidden=synthetic", r.Header.Get("Cookie"))
+				assert.Equal(t, http.MethodPost, r.Method)
+				assert.Equal(t, "hidden=synthetic", r.Header.Get("Cookie"))
 				if r.URL.Path == "/api/v1/photos/versions/"+version+"/face-decisions" {
 					var request api.PhotoFaceDecisionRequest
-					require.NoError(t, json.UnmarshalRead(r.Body, &request))
-					require.Equal(t, face, request.FaceID)
-					require.Equal(t, int64(7), request.Revision)
-					require.Equal(t, "dismiss", request.Action)
-					require.Equal(t, receipt, request.OperationID)
+					assert.NoError(t, json.UnmarshalRead(r.Body, &request))
+					assert.Equal(t, face, request.FaceID)
+					assert.Equal(t, int64(7), request.Revision)
+					assert.Equal(t, "dismiss", request.Action)
+					assert.Equal(t, receipt, request.OperationID)
 				} else {
-					require.Equal(t, "/api/v1/photos/face-decisions/"+receipt+"/undo", r.URL.Path)
-					require.Equal(t, face, r.URL.Query().Get("operation_id"))
+					assert.Equal(t, "/api/v1/photos/face-decisions/"+receipt+"/undo", r.URL.Path)
+					assert.Equal(t, face, r.URL.Query().Get("operation_id"))
 				}
 				w.Header().Set("Content-Type", "application/json")
 				id := receipt
 				if invalid {
 					id = "invalid"
 				}
-				require.NoError(t, json.MarshalWrite(w, api.PhotoFaceDecisionResult{ReceiptID: id}))
+				assert.NoError(t, json.MarshalWrite(w, api.PhotoFaceDecisionResult{ReceiptID: id}))
 			}))
 			defer server.Close()
 			c := New(server.URL, "synthetic-key")
