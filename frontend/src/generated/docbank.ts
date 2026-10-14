@@ -5319,7 +5319,6 @@ export interface PhotoFace {
   box: FaceBox;
   content_version_id: string;
   created_at: string;
-  detector_fingerprint: string;
   face_id: string;
   revision: number;
 }

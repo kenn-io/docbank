@@ -12,7 +12,7 @@ import (
 )
 
 func validatePhotoFaceResponse(face api.PhotoFace, versionID string) error {
-	if !validUUIDv4(face.FaceID) || face.ContentVersionID != versionID || face.Revision < 1 || face.Box.Validate() != nil || face.DetectorFingerprint == "" || (face.AssertionID != "" && !validUUIDv4(face.AssertionID)) {
+	if !validUUIDv4(face.FaceID) || face.ContentVersionID != versionID || face.Revision < 1 || face.Box.Validate() != nil || (face.AssertionID != "" && !validUUIDv4(face.AssertionID)) {
 		return errors.New("invalid photo face response")
 	}
 	return nil

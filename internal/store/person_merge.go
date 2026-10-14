@@ -137,8 +137,8 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 		if err := fencePersonTx(ctx, tx, absorbedID, absorbedRevision); err != nil {
 			return err
 		}
-		var absorbedName, absorbedKeyFace string
-		if err := tx.QueryRowContext(ctx, `SELECT display_name,COALESCE(key_face_id,'') FROM persons WHERE person_id=?`, absorbedID).Scan(&absorbedName, &absorbedKeyFace); err != nil {
+		var absorbedName string
+		if err := tx.QueryRowContext(ctx, `SELECT display_name FROM persons WHERE person_id=?`, absorbedID).Scan(&absorbedName); err != nil {
 			return err
 		}
 		if err := validatePersonMergeBoundsTx(ctx, tx, survivorID, absorbedID); err != nil {
@@ -199,10 +199,7 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 		if _, err := tx.ExecContext(ctx, `INSERT INTO person_aliases(retired_person_id,surviving_person_id,reason,retired_at) VALUES(?,?,?,?)`, absorbedID, survivorID, "merged", now); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE persons SET key_face_id=COALESCE(key_face_id,?),revision=revision+1,updated_at=? WHERE person_id=?`, nullableString(absorbedKeyFace), now, survivorID); err != nil {
-			return err
-		}
-		if err := validateMergedPhotoFaces(ctx, tx, survivorID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE persons SET revision=revision+1,updated_at=? WHERE person_id=?`, now, survivorID); err != nil {
 			return err
 		}
 		mergeID, err := newUUIDv4()
@@ -503,16 +500,4 @@ func (s *Store) SplitPerson(ctx context.Context, request PersonSplitRequest) (Pe
 		return err
 	})
 	return receipt, err
-}
-
-func validateMergedPhotoFaces(ctx context.Context, tx *sql.Tx, personID string) error {
-	var invalid bool
-	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM person_document_assertions a JOIN photo_faces f ON f.assertion_id=a.assertion_id WHERE a.person_id=? AND NOT (`+faceAssertionMatchesSQL+`)) OR EXISTS(SELECT 1 FROM persons p LEFT JOIN photo_faces f ON f.face_id=p.key_face_id LEFT JOIN person_document_assertions a ON a.assertion_id=f.assertion_id WHERE p.person_id=? AND p.key_face_id IS NOT NULL AND (f.face_id IS NULL OR a.person_id IS NULL OR a.person_id<>p.person_id OR a.action<>'assert'))`, personID, personID).Scan(&invalid)
-	if err != nil {
-		return err
-	}
-	if invalid {
-		return ErrInvalidPhotoFace
-	}
-	return nil
 }

@@ -33,10 +33,22 @@ type photoAssetToolOutput struct {
 	NextFileOffset        *int            `json:"next_file_offset,omitzero"`
 }
 
+// photoFaceToolItem carries its person so a face page needs no assertion lookup.
+type photoFaceToolItem struct {
+	FaceID           string           `json:"face_id"`
+	ContentVersionID string           `json:"content_version_id"`
+	Box              document.FaceBox `json:"box"`
+	Revision         int64            `json:"revision"`
+	AssertionID      string           `json:"assertion_id,omitzero"`
+	PersonID         string           `json:"person_id,omitzero"`
+	Action           string           `json:"action,omitzero"`
+	CreatedAt        string           `json:"created_at"`
+}
+
 type photoFacesToolOutput struct {
 	privateCache
 
-	Faces           []api.PhotoFace            `json:"faces"`
+	Faces           []photoFaceToolItem        `json:"faces"`
 	Assertions      []api.PhotoPersonAssertion `json:"assertions"`
 	TotalFaces      int                        `json:"total_faces"`
 	TotalAssertions int                        `json:"total_assertions"`
@@ -106,7 +118,7 @@ func getPhotoFaces(ctx context.Context, lease *daemonLease, raw []byte) (photoFa
 	end := min(start+input.Limit, total)
 	output := photoFacesToolOutput{
 		privateCache:    newPrivateCache(),
-		Faces:           append([]api.PhotoFace{}, page.Faces[min(start, len(page.Faces)):min(end, len(page.Faces))]...),
+		Faces:           photoFaceToolItems(page.Faces[min(start, len(page.Faces)):min(end, len(page.Faces))], page.Assertions),
 		Assertions:      append([]api.PhotoPersonAssertion{}, page.Assertions[min(start, len(page.Assertions)):min(end, len(page.Assertions))]...),
 		TotalFaces:      len(page.Faces),
 		TotalAssertions: len(page.Assertions),
@@ -116,6 +128,22 @@ func getPhotoFaces(ctx context.Context, lease *daemonLease, raw []byte) (photoFa
 		output.NextOffset = new(end)
 	}
 	return output, nil
+}
+
+func photoFaceToolItems(faces []api.PhotoFace, assertions []api.PhotoPersonAssertion) []photoFaceToolItem {
+	byID := make(map[string]api.PhotoPersonAssertion, len(assertions))
+	for _, assertion := range assertions {
+		byID[assertion.AssertionID] = assertion
+	}
+	items := make([]photoFaceToolItem, 0, len(faces))
+	for _, face := range faces {
+		assertion := byID[face.AssertionID]
+		items = append(items, photoFaceToolItem{
+			FaceID: face.FaceID, ContentVersionID: face.ContentVersionID, Box: face.Box, Revision: face.Revision,
+			AssertionID: face.AssertionID, PersonID: assertion.PersonID, Action: assertion.Action, CreatedAt: face.CreatedAt,
+		})
+	}
+	return items
 }
 
 func photoAssetOutput(asset api.PhotoAsset, offset int) (photoAssetToolOutput, error) {

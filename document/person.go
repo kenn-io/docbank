@@ -182,7 +182,7 @@ func ExternalPersonActorKey(system, archiveID, uid string) (string, error) {
 }
 
 func PersonEvidenceKinds() []PersonEvidenceKind {
-	return []PersonEvidenceKind{"source_metadata", "email_generation", "provenance_binding", "content_version", "package_row", "output_receipt", "transfer_record", "custodian_assignment", "operator_assertion", "face"}
+	return []PersonEvidenceKind{"source_metadata", "email_generation", "provenance_binding", "content_version", "package_row", "output_receipt", "transfer_record", "custodian_assignment", "operator_assertion"}
 }
 
 // ValidPersonRole accepts document actor roles and the person credited with

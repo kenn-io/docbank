@@ -11987,8 +11987,6 @@ components:
           type: string
         created_at:
           type: string
-        detector_fingerprint:
-          type: string
         face_id:
           type: string
         revision:
@@ -11997,7 +11995,6 @@ components:
       required:
         - face_id
         - content_version_id
-        - detector_fingerprint
         - box
         - revision
         - created_at

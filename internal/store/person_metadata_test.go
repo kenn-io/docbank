@@ -349,7 +349,7 @@ func TestPersonMetadataRejectsInvalidCandidateAndAliasBounds(t *testing.T) {
 		SELECT printf('80000000-0000-4000-8000-%012x',value),printf('name_alias:synthetic-%d',value),'Synthetic','name_only',?,?,1,1,'open',? FROM seq`,
 			maxOpenPersonCandidates+1, evidence, digest, nowRFC3339())
 		require.NoError(t, err)
-		require.ErrorContains(t, validatePersonMetadataState(t.Context(), s.db, currentStorageSchemaVersion), "candidate queue")
+		require.ErrorContains(t, validatePersonMetadataState(t.Context(), s.db), "candidate queue")
 	})
 
 	t.Run("external UID alias hop limit", func(t *testing.T) {
@@ -359,7 +359,7 @@ func TestPersonMetadataRejectsInvalidCandidateAndAliasBounds(t *testing.T) {
 		) INSERT INTO person_external_uid_aliases(system,archive_id,retired_uid,surviving_uid,observed_at)
 		SELECT 'msgvault','synthetic',printf('uid-%02d',value),printf('uid-%02d',value+1),? FROM seq`, nowRFC3339())
 		require.NoError(t, err)
-		require.ErrorContains(t, validatePersonMetadataState(t.Context(), s.db, currentStorageSchemaVersion), "hop limit")
+		require.ErrorContains(t, validatePersonMetadataState(t.Context(), s.db), "hop limit")
 	})
 }
 

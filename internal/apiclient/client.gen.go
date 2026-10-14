@@ -26658,6 +26658,7 @@ type PhotoMapRow = api.PhotoMapRow
 type PhotoMapRowPreviewsStruct struct {
 	Grid PhotoPreviewSlot `json:"grid"`
 }
+
 type PhotoPersonAssertion = api.PhotoPersonAssertion
 
 type PhotoPreviewSlot = api.PhotoPreviewSlot

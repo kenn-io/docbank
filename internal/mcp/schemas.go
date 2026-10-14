@@ -885,17 +885,18 @@ func getPhotoAssetSchemas() (schema, schema) {
 
 func photoFaceSchema() schema {
 	return objectSchema(schema{
-		"face_id":              uuidSchema(),
-		"content_version_id":   uuidSchema(),
-		"detector_fingerprint": stringSchema(256),
+		"face_id":            uuidSchema(),
+		"content_version_id": uuidSchema(),
 		"box": objectSchema(schema{
 			"x": schema{"type": "number", "minimum": 0, "maximum": 1}, "y": schema{"type": "number", "minimum": 0, "maximum": 1},
 			"width": schema{"type": "number", "minimum": 0, "maximum": 1}, "height": schema{"type": "number", "minimum": 0, "maximum": 1},
 		}, "x", "y", "width", "height"),
 		schemaRevisionField:  integerSchema(1, 0),
 		"assertion_id":       uuidSchema(),
+		personIDField:        uuidSchema(),
+		"action":             enumSchema("assert", "suppress"),
 		schemaCreatedAtField: dateTimeSchema(),
-	}, "face_id", "content_version_id", "detector_fingerprint", "box", schemaRevisionField, schemaCreatedAtField)
+	}, "face_id", "content_version_id", "box", schemaRevisionField, schemaCreatedAtField)
 }
 
 func photoPersonAssertionSchema() schema {

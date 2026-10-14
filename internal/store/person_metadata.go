@@ -26,16 +26,15 @@ const (
 )
 
 type metadataPerson struct {
-	Type              string  `json:"type"`
-	PersonID          string  `json:"person_id" db:"person_id"`
-	DisplayName       string  `json:"display_name" db:"display_name"`
-	DisplayNameFolded string  `json:"display_name_folded" db:"display_name_folded"`
-	Origin            string  `json:"origin" db:"origin"`
-	State             string  `json:"state" db:"state"`
-	Revision          int64   `json:"revision" db:"revision"`
-	CreatedAt         string  `json:"created_at" db:"created_at"`
-	UpdatedAt         string  `json:"updated_at" db:"updated_at"`
-	KeyFaceID         *string `json:"key_face_id,omitempty" db:"key_face_id"`
+	Type              string `json:"type"`
+	PersonID          string `json:"person_id" db:"person_id"`
+	DisplayName       string `json:"display_name" db:"display_name"`
+	DisplayNameFolded string `json:"display_name_folded" db:"display_name_folded"`
+	Origin            string `json:"origin" db:"origin"`
+	State             string `json:"state" db:"state"`
+	Revision          int64  `json:"revision" db:"revision"`
+	CreatedAt         string `json:"created_at" db:"created_at"`
+	UpdatedAt         string `json:"updated_at" db:"updated_at"`
 }
 
 type metadataPersonIdentity struct {
@@ -157,10 +156,10 @@ type metadataPersonMatchCandidate struct {
 	DecidedAt         *string `json:"decided_at" db:"decided_at"`
 }
 
-var personMetadata = newMetadataTable(metadataTable[metadataPerson]{record: metadataPerson{Type: metadataPersonType}, table: "persons",
-	suffix: "ORDER BY person_id", validate: validateMetadataPerson, checkExport: true})
-
-var sharedPersonMetadataTables = []metadataRecordCodec{
+// personMetadataTables exports the person records in dependency order.
+var personMetadataTables = []metadataRecordCodec{
+	newMetadataTable(metadataTable[metadataPerson]{record: metadataPerson{Type: metadataPersonType}, table: "persons",
+		suffix: "ORDER BY person_id", validate: validateMetadataPerson, checkExport: true}),
 	newMetadataTable(metadataTable[metadataPersonIdentity]{record: metadataPersonIdentity{Type: metadataPersonIdentityType}, table: "person_identities",
 		suffix: "ORDER BY identity_id", validate: validateMetadataPersonIdentity, checkExport: true}),
 	newMetadataTable(metadataTable[metadataPersonExternalIdentity]{record: metadataPersonExternalIdentity{Type: metadataPersonExternalType}, table: "person_external_identities",
@@ -181,14 +180,7 @@ var sharedPersonMetadataTables = []metadataRecordCodec{
 		suffix: "ORDER BY candidate_id", validate: validateMetadataPersonCandidate, checkExport: true}),
 }
 
-// Schema-specific lists keep each person row codec in dependency order.
-var personMetadataTables = slices.Concat([]metadataRecordCodec{personMetadata}, sharedPersonMetadataTables, []metadataRecordCodec{photoFaceMetadata})
-var personMetadataTablesBeforeFaces = slices.Concat([]metadataRecordCodec{personMetadataBeforeFaces}, sharedPersonMetadataTables)
-
 func validateMetadataPerson(r metadataPerson) error {
-	if r.KeyFaceID != nil && validateUUIDv4(*r.KeyFaceID) != nil {
-		return errors.New("invalid person key face")
-	}
 	if r.Type != metadataPersonType || validateUUIDv4(r.PersonID) != nil || r.Revision < 1 ||
 		!validPersonName(r.DisplayName) || r.DisplayNameFolded != document.FoldPersonName(r.DisplayName) ||
 		!validPersonOrigin(r.Origin) ||
@@ -398,7 +390,7 @@ func validateMetadataPersonAssertion(r metadataPersonDocumentAssertion) error {
 
 func validateMetadataPersonCandidate(r metadataPersonMatchCandidate) error {
 	if r.Type != metadataPersonCandidateType || validateUUIDv4(r.CandidateID) != nil || r.Revision < 1 ||
-		!validCandidateActorKey(r.ActorKey, r.Reason) || !document.ValidPersonIdentityText(r.ActorKey) || !validPersonName(r.DisplayName) ||
+		document.ValidateActorKeyV1(r.ActorKey) != nil || !document.ValidPersonIdentityText(r.ActorKey) || !validPersonName(r.DisplayName) ||
 		!slices.Contains([]string{"open", "linked", "rejected", "superseded"}, r.State) ||
 		len(r.EvidenceJSON) == 0 || len(r.EvidenceJSON) > maxPersonCandidateEvidence || r.OccurrenceCount < 1 {
 		return errors.New("invalid person candidate metadata")
@@ -441,13 +433,8 @@ func validateUniqueMetadataUUIDs(ids []string) error {
 	return nil
 }
 
-func validatePersonMetadataState(ctx context.Context, q metadataQuerier, version int) error {
-	if version >= photoFacesStorageSchemaVersion {
-		if err := validatePhotoFaceReferences(ctx, q); err != nil {
-			return err
-		}
-	}
-	for _, table := range personMetadataTablesForSchema(version) {
+func validatePersonMetadataState(ctx context.Context, q metadataQuerier) error {
+	for _, table := range personMetadataTables {
 		if err := table.validateRows(ctx, q); err != nil {
 			return fmt.Errorf("validating person metadata records: %w", err)
 		}
@@ -576,28 +563,4 @@ func validatePersonSplitMetadataState(ctx context.Context, q metadataQuerier) er
 		}
 	}
 	return rows.Err()
-}
-
-// Released person rows predate key-face references.
-type metadataPersonBeforeFaces struct {
-	Type              string `json:"type"`
-	PersonID          string `json:"person_id" db:"person_id"`
-	DisplayName       string `json:"display_name" db:"display_name"`
-	DisplayNameFolded string `json:"display_name_folded" db:"display_name_folded"`
-	Origin            string `json:"origin" db:"origin"`
-	State             string `json:"state" db:"state"`
-	Revision          int64  `json:"revision" db:"revision"`
-	CreatedAt         string `json:"created_at" db:"created_at"`
-	UpdatedAt         string `json:"updated_at" db:"updated_at"`
-}
-
-var personMetadataBeforeFaces = newMetadataTable(metadataTable[metadataPersonBeforeFaces]{record: metadataPersonBeforeFaces{Type: metadataPersonType}, table: "persons", suffix: "ORDER BY person_id", validate: func(v metadataPersonBeforeFaces) error {
-	return validateMetadataPerson(metadataPerson{Type: v.Type, PersonID: v.PersonID, DisplayName: v.DisplayName, DisplayNameFolded: v.DisplayNameFolded, Origin: v.Origin, State: v.State, Revision: v.Revision, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt})
-}, checkExport: true})
-
-func personMetadataTablesForSchema(version int) []metadataRecordCodec {
-	if version >= photoFacesStorageSchemaVersion {
-		return personMetadataTables
-	}
-	return personMetadataTablesBeforeFaces
 }

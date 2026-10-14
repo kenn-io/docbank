@@ -283,7 +283,7 @@ var metadataCodecs = indexMetadataCodecs(
 	personMetadataTables, processingMetadataTables, embeddingMetadataTables, auditMetadataTables,
 	[]metadataRecordCodec{
 		emailDocumentPublicationMetadata, exportAuthorityMetadata,
-		currentRenditionRootMetadata, derivativePurgeSuppressionMetadata,
+		currentRenditionRootMetadata, derivativePurgeSuppressionMetadata, photoFaceMetadata,
 	},
 )
 
