@@ -205,9 +205,13 @@ func TestPhotoImportGate(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	attempted := make(chan struct{})
 	mutationDone := make(chan error, 1)
+	mutationEntered := false
 	runner.Options.Mutate = func(ctx context.Context, fn func() error) error {
 		close(attempted)
-		return mutate(ctx, fn)
+		return mutate(ctx, func() error {
+			mutationEntered = true
+			return fn()
+		})
 	}
 	go func() {
 		mutationDone <- runner.Run(ctx, operation.ID)
@@ -217,9 +221,17 @@ func TestPhotoImportGate(t *testing.T) {
 	require.NoError(t, catalog.ExportMetadata(t.Context(), &before))
 	assert.NotContains(t, before.String(), "IMG.ARW")
 	cancel()
+	var runErr error
+	select {
+	case runErr = <-mutationDone:
+	case <-time.After(30 * time.Second):
+		close(release)
+		t.Fatal("photo import did not cancel while maintenance held the gate")
+	}
+	assert.False(t, mutationEntered)
 	close(release)
+	require.ErrorIs(t, runErr, context.Canceled)
 	require.NoError(t, <-maintenanceDone)
-	require.ErrorIs(t, <-mutationDone, context.Canceled)
 	_, err = catalog.NodeByPath(t.Context(), "/photos/IMG.ARW")
 	require.ErrorIs(t, err, store.ErrNotFound)
 
