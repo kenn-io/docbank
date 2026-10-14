@@ -86,9 +86,9 @@ func TestGetCLIRequestsAndPublishesCurrentVersion(t *testing.T) {
 		assert.Equal(t, getReceipt{NodeID: node.ID, VersionID: node.CurrentVersionID, BlobHash: node.BlobHash, Size: node.Size, Output: output}, receipt)
 		assert.NotContains(t, out, "download:")
 		assert.Equal(t, selector == "id:42", getOverwrite)
+		published, err := os.ReadFile(output)
+		require.NoError(t, err)
 		if selector == "id:42" {
-			published, err := os.ReadFile(output)
-			require.NoError(t, err)
 			assert.NotEqual(t, "existing destination", string(published))
 		}
 		stages, err := filepath.Glob(filepath.Join(filepath.Dir(output), "docbank-get-*"))
