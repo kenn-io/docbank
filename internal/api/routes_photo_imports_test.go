@@ -46,23 +46,26 @@ func TestPhotoImportRoutes(t *testing.T) {
 	assert.Equal(t, store.StorageOperationKindPhotoImport, started.Kind)
 	assert.Equal(t, "queued", started.State)
 
-	var latest api.StorageOperation
+	pollCtx, cancelPoll := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancelPoll()
 	require.EventuallyWithT(t, func(collect *assert.CollectT) {
-		get, getErr := ts.Client().Get(ts.URL + "/api/v1/jobs/" + started.ID)
+		request, err := http.NewRequestWithContext(pollCtx, http.MethodGet, ts.URL+"/api/v1/jobs/"+started.ID, nil)
+		require.NoError(collect, err)
+		get, getErr := ts.Client().Do(request)
 		require.NoError(collect, getErr)
 		defer func() { _ = get.Body.Close() }()
-		var output api.StorageOperation
-		require.NoError(collect, json.UnmarshalRead(get.Body, &output))
-		latest = output
-		assert.NotEmpty(collect, latest.FinishedAt, "last observed operation: %+v", latest)
+		var latest api.StorageOperation
+		require.NoError(collect, json.UnmarshalRead(get.Body, &latest))
+		require.NotEmpty(collect, latest.FinishedAt, "last observed operation: %+v", latest)
+		assert.Equal(collect, "completed", latest.State)
+		assert.Equal(collect, int64(1), latest.CompletedObjects)
+		receiptJSON, err := json.Marshal(latest.Receipt)
+		require.NoError(collect, err)
+		var receipt store.PhotoImportReceipt
+		require.NoError(collect, json.Unmarshal(receiptJSON, &receipt))
+		assert.Equal(collect, int64(1), receipt.Added)
 	}, 30*time.Second, 10*time.Millisecond)
-	assert.Equal(t, "completed", latest.State)
-	assert.Equal(t, int64(1), latest.CompletedObjects)
-	receiptJSON, err := json.Marshal(latest.Receipt)
-	require.NoError(t, err)
-	var receipt store.PhotoImportReceipt
-	require.NoError(t, json.Unmarshal(receiptJSON, &receipt))
-	assert.Equal(t, int64(1), receipt.Added)
+	cancelPoll()
 
 	invalid, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/v1/photos/imports", bytes.NewReader([]byte(`{"source_root":"relative","destination":"/photos"}`)))
 	require.NoError(t, err)
