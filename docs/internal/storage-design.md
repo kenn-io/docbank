@@ -500,7 +500,7 @@ the embedded Natural Earth map has no matching country or simplified boundary.
 
 ### Photo file times
 
-Schema 35 adds `photo_file_times`, a derived row per displayed photo file whose content version has no capture sort key. It holds the latest unsuperseded modified time bound to that version, so those photos sort and group by the file's mtime. SQL triggers keep it current as bindings, versions, and technical metadata change. It stays out of metadata JSONL and backups; restore refills it through those triggers.
+Schema 34 adds `photo_file_times`, a derived row per displayed photo file whose content version has no capture sort key. It holds the latest unsuperseded modified time bound to that version, so those photos sort and group by the file's mtime. SQL triggers keep it current as bindings, versions, and technical metadata change. It stays out of metadata JSONL and backups; restore refills it through those triggers, and a vault that predates it is filled once at open.
 
 ### Photo quality signals
 

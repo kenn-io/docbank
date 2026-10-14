@@ -1348,14 +1348,35 @@ func TestPhotoFileTimesRefillOnRestore(t *testing.T) {
 	require.Equal(t, "2024-03-05T10:00:00Z", *page.Items[0].FileModifiedTime)
 }
 
-func TestOpenRejectsUnreleasedSchema34Vault(t *testing.T) {
+func TestOpenBackfillsFileTimesInSchema34VaultWithoutThem(t *testing.T) {
 	t.Parallel()
+	ctx := t.Context()
 	path := filepath.Join(t.TempDir(), "docbank.db")
 	s, err := Open(path)
 	require.NoError(t, err)
-	_, err = s.db.ExecContext(t.Context(), `UPDATE vault_metadata SET schema_version=34`)
+	run, err := s.BeginIngest(ctx, "cli", "wallpapers")
 	require.NoError(t, err)
+	ingestMtimePhoto(t, s, run, "wallpaper.jpg", "2024-03-05T10:00:00Z")
+	// Recreate the layout origin/main shipped: no file-times table, queue, or triggers.
+	statements := []string{`DROP TABLE photo_file_times`, `DROP TABLE photo_file_times_pending`}
+	rows, err := s.db.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'photo_file_times_%'`)
+	require.NoError(t, err)
+	for rows.Next() {
+		var name string
+		require.NoError(t, rows.Scan(&name))
+		statements = append([]string{`DROP TRIGGER ` + name}, statements...)
+	}
+	require.NoError(t, rows.Close())
+	for _, statement := range statements {
+		_, err = s.db.ExecContext(ctx, statement)
+		require.NoError(t, err, statement)
+	}
 	require.NoError(t, s.Close())
-	_, err = Open(path)
-	require.ErrorContains(t, err, "schema version 34 has no supported JSONL cutover")
+
+	reopened, err := Open(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, reopened.Close()) })
+	page := browsePhotoPage(t, reopened, `{"filters":{"capture_after":"2024-03-05","capture_before":"2024-03-06"}}`)
+	require.Len(t, page.Items, 1)
+	require.Equal(t, "2024-03-05T10:00:00Z", *page.Items[0].FileModifiedTime)
 }

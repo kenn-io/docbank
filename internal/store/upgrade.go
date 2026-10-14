@@ -330,6 +330,10 @@ func validateCurrentSchemaColumns(
 		if err != nil {
 			return err
 		}
+		// Derived and rebuildable: vaults from before the table existed gain it at bootstrap.
+		if table == "photo_file_times" && len(got) == 0 {
+			continue
+		}
 		if !slices.Equal(got, wantTables[table]) {
 			return fmt.Errorf(
 				"opening database: schema version %d has an unexpected %s layout (%s)",
