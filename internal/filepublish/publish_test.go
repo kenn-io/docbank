@@ -45,78 +45,70 @@ func TestPublishHonorsNoReplaceAndReportsPostInstallDurability(t *testing.T) {
 	require.Equal(t, "replacement", string(got))
 }
 
-func TestRootStagePublishRejectsReplacedRoot(t *testing.T) {
-	destination := t.TempDir()
-	rootPath := destination
-	junction := func(path, target string) {
-		t.Helper()
-		out, err := exec.Command("cmd", "/c", "mklink", "/J", filepath.Clean(filepath.FromSlash(path)), filepath.Clean(filepath.FromSlash(target))).CombinedOutput()
-		require.NoError(t, err, string(out))
-	}
-	if runtime.GOOS == "windows" {
-		rootPath = filepath.Join(t.TempDir(), "checkout")
-		junction(rootPath, destination)
-		defer func() { require.NoError(t, os.Remove(rootPath)) }()
-	}
-	root, err := os.OpenRoot(rootPath)
-	require.NoError(t, err)
-	defer func() { _ = root.Close() }()
-	stage, err := CreateRootStage(root)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, stage.Cleanup()) }()
-	_, err = stage.File.WriteString("verified")
-	require.NoError(t, err)
-	require.NoError(t, stage.File.Close())
-	stage.File = nil
-	replacedPath := root.Name()
-	moved := filepath.Join(t.TempDir(), "moved")
-	if runtime.GOOS == "windows" {
-		require.NoError(t, os.Remove(replacedPath))
-		junction(replacedPath, t.TempDir())
-		moved = destination
-	} else {
-		require.NoError(t, os.Rename(replacedPath, moved))
-		require.NoError(t, os.Mkdir(replacedPath, 0o755))
-	}
-	installed, err := stage.Publish("photo.jpg")
-	require.ErrorContains(t, err, "checkout destination changed before publication")
-	require.False(t, installed)
-	for _, dir := range []string{replacedPath, moved} {
-		_, err = os.Stat(filepath.Join(dir, "photo.jpg"))
-		require.ErrorIs(t, err, os.ErrNotExist)
-	}
-}
-
-func TestRootStagePublishRejectsReplacedParentAfterOpening(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Windows pins an opened directory against rename")
-	}
-	root, err := os.OpenRoot(t.TempDir())
-	require.NoError(t, err)
-	defer func() { _ = root.Close() }()
-	stage, err := CreateRootStage(root)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, stage.Cleanup()) }()
-	_, err = stage.File.WriteString("verified")
-	require.NoError(t, err)
-	require.NoError(t, stage.File.Close())
-	stage.File = nil
-	relativePath := filepath.Join("date", "asset", "photo.jpg")
-	require.NoError(t, stage.MakeParentDirectories(relativePath))
-	parent, err := root.OpenRoot(filepath.Dir(relativePath))
-	require.NoError(t, err)
-	defer func() { _ = parent.Close() }()
-	replacedPath := filepath.Join(root.Name(), filepath.Dir(relativePath))
-	moved := filepath.Join(t.TempDir(), "moved")
-	require.NoError(t, os.Rename(replacedPath, moved))
-	require.NoError(t, os.Mkdir(replacedPath, 0o755))
-	// Model a rename between Publish opening the parent and calling publish.
-	installed, err := stage.publish(parent, relativePath)
-	require.ErrorContains(t, err, "checkout destination changed before publication")
-	require.False(t, installed)
-	for _, dir := range []string{replacedPath, moved} {
-		_, err = os.Stat(filepath.Join(dir, "photo.jpg"))
-		require.ErrorIs(t, err, os.ErrNotExist)
+func TestRootStageRejectsChangedDestinationIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		parent bool
+	}{{name: "root"}, {name: "parent", parent: true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.parent && runtime.GOOS == "windows" {
+				t.Skip("Windows pins an opened directory against rename")
+			}
+			destination := t.TempDir()
+			rootPath := destination
+			junction := func(path, target string) {
+				t.Helper()
+				out, err := exec.Command("cmd", "/c", "mklink", "/J", filepath.Clean(filepath.FromSlash(path)), filepath.Clean(filepath.FromSlash(target))).CombinedOutput()
+				require.NoError(t, err, string(out))
+			}
+			if runtime.GOOS == "windows" {
+				rootPath = filepath.Join(t.TempDir(), "checkout")
+				junction(rootPath, destination)
+				defer func() { require.NoError(t, os.Remove(rootPath)) }()
+			}
+			root, err := os.OpenRoot(rootPath)
+			require.NoError(t, err)
+			defer func() { _ = root.Close() }()
+			stage, err := CreateRootStage(root)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, stage.Cleanup()) }()
+			_, err = stage.File.WriteString("verified")
+			require.NoError(t, err)
+			require.NoError(t, stage.File.Close())
+			stage.File = nil
+			relativePath := "photo.jpg"
+			parent := root
+			if tc.parent {
+				relativePath = filepath.Join("date", "asset", "photo.jpg")
+				require.NoError(t, stage.MakeParentDirectories(relativePath))
+				parent, err = root.OpenRoot(filepath.Dir(relativePath))
+				require.NoError(t, err)
+				defer func() { _ = parent.Close() }()
+			}
+			replacedPath := filepath.Join(root.Name(), filepath.Dir(relativePath))
+			moved := filepath.Join(t.TempDir(), "moved")
+			if runtime.GOOS == "windows" {
+				require.NoError(t, os.Remove(replacedPath))
+				junction(replacedPath, t.TempDir())
+				moved = destination
+			} else {
+				require.NoError(t, os.Rename(replacedPath, moved))
+				require.NoError(t, os.Mkdir(replacedPath, 0o755))
+			}
+			var installed bool
+			if tc.parent {
+				// Model a rename between Publish opening the parent and calling publish.
+				installed, err = stage.publish(parent, relativePath)
+			} else {
+				installed, err = stage.Publish(relativePath)
+			}
+			require.ErrorContains(t, err, "checkout destination changed before publication")
+			require.False(t, installed)
+			for _, dir := range []string{replacedPath, moved} {
+				_, err = os.Stat(filepath.Join(dir, "photo.jpg"))
+				require.ErrorIs(t, err, os.ErrNotExist)
+			}
+		})
 	}
 }
 

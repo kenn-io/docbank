@@ -13,7 +13,7 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func TestPhotoRoutesReadAssetsAndEnforceAssetAndTrashRevisions(t *testing.T) {
+func TestPhotoRoutesReadAssets(t *testing.T) {
 	t.Parallel()
 	ts, fixture := newTestServer(t, nil)
 	hash, size, err := fixture.Blobs.Write(strings.NewReader("jpeg"))
@@ -39,8 +39,19 @@ func TestPhotoRoutesReadAssetsAndEnforceAssetAndTrashRevisions(t *testing.T) {
 	assert.Equal(t, asset.Revision, byNode.Revision)
 	require.Len(t, byNode.Files, len(storedAsset.Files))
 	assert.Equal(t, storedAsset.Files[0].Confirmed, byNode.Files[0].Confirmed)
+}
+
+func TestPhotoRoutesEnforceAssetAndTrashRevisions(t *testing.T) {
+	t.Parallel()
+	ts, fixture := newTestServer(t, nil)
+	hash, size, err := fixture.Blobs.Write(strings.NewReader("jpeg"))
+	require.NoError(t, err)
+	node, err := fixture.CreateFile(t.Context(), fixture.RootID(), "photo.jpg", hash, size, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := fixture.PhotoAssetForNode(t.Context(), node.ID)
+	require.NoError(t, err)
 	path := "/api/v1/photos/assets/" + asset.ID + "/exclude"
-	resp, body = do(t, ts, http.MethodPost, path, nil, map[string]bool{"excluded": true})
+	resp, body := do(t, ts, http.MethodPost, path, nil, map[string]bool{"excluded": true})
 	assert.Equal(t, http.StatusPreconditionRequired, resp.StatusCode, body)
 	assert.Equal(t, "precondition_required", decodeProblem(t, body).Code)
 
