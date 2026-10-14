@@ -125,6 +125,19 @@ func TestPhotoCheckoutSelections(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.EstimatePhotoCheckout(ctx, PhotoCheckoutSelection{All: true})
 	require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
+	t.Run("detach preserves frozen entries", func(t *testing.T) {
+		s := newTestStore(t)
+		a := albumAsset(t, s, "photo.jpg")
+		c, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, t.TempDir(), 100)
+		require.NoError(t, err)
+		before, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
+		require.NoError(t, err)
+		_, err = s.DetachPhotoFile(t.Context(), a.ID, a.Revision, a.Files[0].ID, PhotoDetachOptions{})
+		require.NoError(t, err)
+		after, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
+		require.NoError(t, err)
+		require.Equal(t, before, after)
+	})
 }
 
 func TestPhotoCheckoutRefusesUnavailableSources(t *testing.T) {
@@ -279,18 +292,6 @@ func TestPhotoCheckoutMetadata(t *testing.T) {
 			}
 		})
 	}
-	t.Run("detach preserves frozen entries", func(t *testing.T) {
-		s := newTestStore(t)
-		f := makeFixture(t, s)
-		a, c := f.asset, f.checkout
-		before, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
-		require.NoError(t, err)
-		_, err = s.DetachPhotoFile(t.Context(), a.ID, a.Revision, a.Files[0].ID, PhotoDetachOptions{})
-		require.NoError(t, err)
-		after, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
-		require.NoError(t, err)
-		require.Equal(t, before, after)
-	})
 }
 
 func TestPhotoCheckoutRejectedCreateLeavesNoCheckoutOrOperation(t *testing.T) {
@@ -394,7 +395,7 @@ func TestPhotoCheckoutStatusTracksOperationAcrossPauseAndFinish(t *testing.T) {
 	require.Equal(t, "terminal error", finished.Error)
 }
 
-func TestPhotoCheckoutResolvesCompanionSources(t *testing.T) {
+func TestPhotoCheckoutEntryPaths(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, sidecar, trashRole, captureDate string

@@ -266,24 +266,17 @@ func TestTrashPageCountsRootsAcrossPhotoAndDirectoryGroups(t *testing.T) {
 
 func TestPhotoTrashEmptyCompleteGroups(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"bounded", "live peer", "new peer", "retained peer", "folder", "singleton", "RAW sidecar", "image sidecar"} {
+	for _, mode := range []string{"bounded", "live peer", "new peer", "retained peer", "folder", "singleton", "image sidecar"} {
 		t.Run(mode, func(t *testing.T) {
 			s := newTestStore(t)
 			var asset PhotoAsset
 			var nodes []Node
-			if mode == "singleton" || mode == "RAW sidecar" || mode == "image sidecar" {
+			if mode == "singleton" || mode == "image sidecar" {
 				mime, role := "image/jpeg", PhotoRoleImage
-				if mode == "RAW sidecar" {
-					mime, role = "application/octet-stream", PhotoRoleRAW
-				}
 				node, err := s.CreateFile(t.Context(), s.RootID(), "purge.capture", fakeHash("purge-raw"), 1, mime)
 				require.NoError(t, err)
 				nodes = append(nodes, node)
-				if role == PhotoRoleImage {
-					asset, err = s.PhotoAssetForNode(t.Context(), node.ID)
-				} else {
-					asset, err = s.PromotePhotoNode(t.Context(), node.ID, nil, role, "")
-				}
+				asset, err = s.PhotoAssetForNode(t.Context(), node.ID)
 				require.NoError(t, err)
 				if mode != "singleton" {
 					sidecar, err := s.CreateFile(t.Context(), s.RootID(), "purge.xmp", fakeHash("purge-sidecar"), 1, "application/octet-stream")

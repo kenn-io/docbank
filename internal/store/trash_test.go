@@ -331,15 +331,12 @@ func TestTrashEmptyRetainsAuthorityPinsAndDeletesUnrelatedRoots(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, int64(1), preview.Candidates)
 			require.False(t, preview.More)
-			if authority == "checkout entry" {
-				require.Equal(t, int64(1), preview.Retained)
-			}
+			expectedRetained := map[string]int64{"checkout entry": 1}[authority]
+			require.Equal(t, expectedRetained, preview.Retained)
 			run, err := s.TrashEmptyBounded(ctx, 0, 1, true)
 			require.NoError(t, err)
 			require.Equal(t, preview.Candidates, run.Candidates)
-			if authority == "checkout entry" {
-				require.Equal(t, preview.Retained, run.Retained)
-			}
+			require.Equal(t, preview.Retained, run.Retained)
 			require.Equal(t, int64(1), run.Deleted)
 			_, err = s.NodeByID(ctx, protected.ID)
 			require.NoError(t, err)

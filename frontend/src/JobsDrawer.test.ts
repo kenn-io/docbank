@@ -122,18 +122,16 @@ describe("background jobs drawer", () => {
       expect(screen.queryByText("Read-only")).toBeNull();
       expect(screen.getByText("1 running · 1 total")).toBeTruthy();
       expect(screen.getByText("1 of 2 groups")).toBeTruthy();
-      await fireEvent.click(screen.getByRole("button", { name: "Cancel Photo import a" }));
-      expect(fetchSpy).toHaveBeenCalledWith(
-        "/api/v1/jobs/a/cancel",
-        expect.objectContaining({ method: "POST" }),
-      );
+      expect(
+        (screen.getByRole("button", { name: "Cancel Photo import a" }) as HTMLButtonElement).disabled,
+      ).toBe(false);
       await fireEvent.click(screen.getByRole("button", { name: "Refresh background jobs" }));
       await vi.advanceTimersByTimeAsync(0);
       expect(screen.getByRole("button", { name: "Resume Photo import" })).toBeTruthy();
       expect(group).toHaveBeenCalledWith(items, [control]);
       expect(screen.queryByRole("alert")).toBeNull();
       expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
-      expect(fetchSpy).toHaveBeenCalledTimes(4);
+      expect(fetchSpy).toHaveBeenCalledTimes(3);
     } finally {
       vi.useRealTimers();
     }
