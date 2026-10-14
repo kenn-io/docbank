@@ -105,8 +105,10 @@ func TestPhotoFaceDecisionClient(t *testing.T) {
 					require.Equal(t, face, request.FaceID)
 					require.Equal(t, int64(7), request.Revision)
 					require.Equal(t, "dismiss", request.Action)
+					require.Equal(t, receipt, request.OperationID)
 				} else {
 					require.Equal(t, "/api/v1/photos/face-decisions/"+receipt+"/undo", r.URL.Path)
+					require.Equal(t, face, r.URL.Query().Get("operation_id"))
 				}
 				w.Header().Set("Content-Type", "application/json")
 				id := receipt
@@ -117,14 +119,14 @@ func TestPhotoFaceDecisionClient(t *testing.T) {
 			}))
 			defer server.Close()
 			c := New(server.URL, "synthetic-key")
-			result, err := c.DecidePhotoFace(t.Context(), version, api.PhotoFaceDecisionRequest{FaceID: face, Action: "dismiss", Revision: 7}, "hidden=synthetic")
+			result, err := c.DecidePhotoFace(t.Context(), version, api.PhotoFaceDecisionRequest{OperationID: receipt, FaceID: face, Action: "dismiss", Revision: 7}, "hidden=synthetic")
 			if invalid {
 				require.Error(t, err)
 			} else {
 				require.NoError(t, err)
 				require.Equal(t, receipt, result.ReceiptID)
 			}
-			_, err = c.UndoPhotoFaceDecision(t.Context(), receipt, "hidden=synthetic")
+			_, err = c.UndoPhotoFaceDecisionWithOperationID(t.Context(), receipt, face, "hidden=synthetic")
 			if invalid {
 				require.Error(t, err)
 			} else {

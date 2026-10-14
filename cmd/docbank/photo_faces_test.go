@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json/v2"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,7 @@ import (
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/store"
 
 	"github.com/google/uuid"
@@ -89,4 +91,29 @@ func TestPhotoFaceDecisionCommands(t *testing.T) {
 	key, _, err := faces.Find([]string{"key"})
 	require.NoError(t, err)
 	require.NotNil(t, key.Flags().Lookup("person-revision"))
+	require.Empty(t, key.Flags().Lookup("revision").Annotations)
+}
+
+func TestPhotoFaceClearKeyCLI(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DOCBANK_HOME", dir)
+	s, err := store.Open((home.Layout{Root: dir}).DBPath())
+	require.NoError(t, err)
+	p, err := s.CreatePerson(t.Context(), "Synthetic Ada", "operator")
+	require.NoError(t, err)
+	n, err := s.CreateFile(t.Context(), s.RootID(), "portrait.jpg", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 1, "image/jpeg")
+	require.NoError(t, err)
+	f, _, err := s.CreatePhotoFace(t.Context(), n.CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, p.PersonID)
+	require.NoError(t, err)
+	_, err = s.DecidePhotoFace(t.Context(), n.CurrentVersionID, store.PhotoFaceDecisionRequest{Action: "key", FaceID: f.FaceID, PersonID: p.PersonID, Revision: 1, PersonRevision: 1})
+	require.NoError(t, err)
+	require.NoError(t, s.Close())
+	startTestDaemon(t, dir)
+	_, err = runCLI(t, "photos", "faces", "key", n.CurrentVersionID, "--person", p.PersonID, "--person-revision", "2")
+	require.NoError(t, err)
+	out, err := runCLI(t, "people", "show", p.PersonID)
+	require.NoError(t, err)
+	var detail api.PersonDetail
+	require.NoError(t, json.Unmarshal([]byte(out), &detail))
+	require.Empty(t, detail.KeyFaceID)
 }

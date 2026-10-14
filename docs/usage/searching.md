@@ -190,7 +190,7 @@ modification time or the age of an older version.
 
 QueryV1 advanced expressions accept `person:"Ada Lovelace"` or `person:<person-id>`. Names match exactly after Unicode folding. Duplicate names require an ID; merged IDs resolve to the surviving person. Structured queries use `filters.person_ids`.
 
-Document queries include current published person links and direct assertions. Stale published links stay out until rebuilt. Photo queries match depicted-person assertions across the asset's current members and keep Hidden photos locked.
+Document queries include current published person links and direct assertions. Stale published links stay out until rebuilt. Photo queries match depicted-person assertions across the asset's live image and RAW members, using each member's current version and keep Hidden photos locked.
 
 ## Can I search with filters alone?
 

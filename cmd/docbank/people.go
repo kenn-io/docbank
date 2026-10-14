@@ -74,7 +74,11 @@ var peopleShowCmd = &cobra.Command{
 		}
 		cursor, _ := cmd.Flags().GetString("assertion-cursor")
 		limit, _ := cmd.Flags().GetInt("assertion-limit")
-		person, err := c.Person(cmd.Context(), args[0], api.PersonAssertionPage{Cursor: cursor, Limit: limit})
+		cookie, err := peopleHiddenCookie(cmd, c)
+		if err != nil {
+			return err
+		}
+		person, err := c.PersonPage(cmd.Context(), args[0], api.PersonAssertionPage{Cursor: cursor, Limit: limit, HiddenCookie: cookie})
 		if err != nil {
 			return err
 		}
@@ -197,7 +201,7 @@ list_package_custodians.`,
 			return usageError(errors.New("--display-name is required"))
 		}
 		if len(peopleAssertionIDs)+len(peopleIdentityIDs)+len(peopleAssignmentIDs)+len(peopleExternal) == 0 {
-			return usageError(errors.New("split requires at least one identity, assignment, or external identity"))
+			return usageError(errors.New("split requires at least one assertion, identity, assignment, or external identity"))
 		}
 		external := make([]api.PersonExternalUID, 0, len(peopleExternal))
 		for _, raw := range peopleExternal {
@@ -219,10 +223,14 @@ list_package_custodians.`,
 		if err != nil {
 			return err
 		}
+		cookie, err := peopleHiddenCookie(cmd, c)
+		if err != nil {
+			return err
+		}
 		receipt, err := c.SplitPerson(cmd.Context(), args[0], peopleRevision, api.SplitPersonRequest{
 			OperationID: operationID, DisplayName: peopleDisplayName, IdentityIDs: peopleIdentityIDs,
 			AssertionIDs: peopleAssertionIDs, AssignmentIDs: peopleAssignmentIDs, ExternalIdentities: external,
-		})
+		}, cookie)
 		if err != nil {
 			return err
 		}
@@ -240,6 +248,8 @@ func requirePeopleRevision() error {
 var peopleAssertionIDs []string
 
 func init() {
+	peopleShowCmd.Flags().Bool("unlock-hidden", false, "unlock Hidden photo selectors")
+	peopleSplitCmd.Flags().Bool("unlock-hidden", false, "unlock Hidden photo assertions")
 	peopleSplitCmd.Flags().StringSliceVar(&peopleAssertionIDs, "assertion", nil, "person assertion UUID to move")
 	peopleShowCmd.Flags().String("assertion-cursor", "", "assertion cursor from the previous page")
 	peopleShowCmd.Flags().Int("assertion-limit", 1000, "maximum assertion selectors per page")

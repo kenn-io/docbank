@@ -49,7 +49,7 @@ in the request body. Merge and split require an operation UUID. Retrying the
 same request returns its saved receipt. A different request with the same UUID
 returns `person_merge_conflict`.
 
-A merge that would assign a rejected person to a face returns `409 person_merge_conflict`. Review the returned visible face IDs before retrying. Locked Hidden conflicts return a notice with no face IDs. Rejected matches follow the surviving person.
+A merge that would assign a rejected person to a face returns `409 person_merge_conflict`. Review the returned visible face IDs before retrying. Locked Hidden, excluded, and trashed conflicts return notices without those face IDs. Reinclude or restore the photo to correct excluded or trashed evidence. Rejected matches follow the surviving person.
 
 A merge returns `422 person_merge_too_large`, and changes nothing, when:
 
@@ -59,7 +59,7 @@ A merge returns `422 person_merge_too_large`, and changes nothing, when:
   The receipt holds 256 KiB of moved IDs, about 6,900 identities, custodian
   assignments, document assertions, and open match candidates combined.
 
-Split moves only the identity IDs, assertion IDs, custodian assignment IDs, or external UIDs listed in the request. Use `people split --assertion <assertion-id>` for a document or photo assertion. Its faces and selected key face move to the new person in the same transaction. The new display name is required. The store validates
+Split moves only the identity IDs, assertion IDs, custodian assignment IDs, or external UIDs listed in the request. Use `people split --assertion <assertion-id>` for a document or photo assertion. Its faces and selected key face move to the new person in the same transaction. Add `--unlock-hidden` to `people show` or `people split` to enter the passcode for Hidden evidence. The new display name is required. The store validates
 that every selected member belongs to the source person. A split request
 larger than 1 MiB returns `413` and changes nothing.
 

@@ -10,8 +10,9 @@ import (
 )
 
 var (
-	ErrInvalidPhotoFace = errors.New("invalid photo face")
-	ErrPhotoFaceLimit   = errors.New("photo version already has 1,000 faces or 1,000 depicted people")
+	ErrPhotoFaceRejectionLimit = errors.New("face already has 1,000 rejected people")
+	ErrInvalidPhotoFace        = errors.New("invalid photo face")
+	ErrPhotoFaceLimit          = errors.New("photo version already has 1,000 faces or 1,000 depicted people")
 )
 
 type photoFaceExistsError struct{}
@@ -86,9 +87,7 @@ func (s *Store) facePhotoQuery(ctx context.Context, q metadataQuerier, versionID
 	if err != nil {
 		return err
 	}
-	facts := photoNodeFacts(node)
-	if validatePhotoFileForAsset(PhotoKindPhoto, role, facts) != nil ||
-		(role == PhotoRoleRAW && facts.MediaType != "" && facts.MediaType != "application/octet-stream" && !isPhotoCameraRawMedia(facts.MediaType)) {
+	if !validFacePhotoNode(role, node) {
 		return ErrNotFound
 	}
 	_, err = s.photoAssetReadQuery(ctx, q, assetID)
@@ -280,4 +279,9 @@ func requirePhotoAssertionCapacity(ctx context.Context, q metadataQuerier, versi
 		return ErrPhotoFaceLimit
 	}
 	return nil
+}
+
+func validFacePhotoNode(role string, node Node) bool {
+	facts := photoNodeFacts(node)
+	return validatePhotoFileForAsset(PhotoKindPhoto, role, facts) == nil && (role != PhotoRoleRAW || facts.MediaType == "" || facts.MediaType == "application/octet-stream" || isPhotoCameraRawMedia(facts.MediaType))
 }

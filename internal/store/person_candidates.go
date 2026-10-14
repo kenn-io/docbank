@@ -327,6 +327,11 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDec
 		if changed != 1 {
 			return ErrStaleRevision
 		}
+		if candidate.Reason == "face_match" && state == "rejected" {
+			if err := requirePhotoFaceRejectionBound(ctx, tx, "", candidate.CandidateID); err != nil {
+				return err
+			}
+		}
 		if err := advancePersonBindingEpochTx(ctx, tx); err != nil {
 			return err
 		}

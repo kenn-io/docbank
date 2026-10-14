@@ -9,15 +9,19 @@ import (
 )
 
 type PersonFaceMergeConflict struct {
-	FaceIDs        []string
-	HiddenConflict bool
-	More           bool
+	FaceIDs              []string
+	HiddenConflict       bool
+	InaccessibleConflict bool
+	More                 bool
 }
 
 func (e *PersonFaceMergeConflict) Error() string {
 	message := "review contradictory face assignments and rejections before merging"
 	if len(e.FaceIDs) > 0 {
 		message += "; faces: " + strings.Join(e.FaceIDs, ", ")
+	}
+	if e.InaccessibleConflict {
+		message += "; an excluded or trashed photo also needs review"
 	}
 	if e.HiddenConflict {
 		message += "; a locked Hidden photo also needs review"
@@ -51,6 +55,8 @@ func (s *Store) checkFaceMergeConflictsTx(ctx context.Context, tx *sql.Tx, a, b 
 			continue
 		}
 		if errors.Is(err, ErrNotFound) {
+			found = true
+			conflict.InaccessibleConflict = true
 			continue
 		}
 		if err != nil {

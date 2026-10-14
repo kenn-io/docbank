@@ -13,6 +13,11 @@ import (
 )
 
 func TestPeopleCLIWorkflow(t *testing.T) {
+	for _, name := range []string{"show", "split"} {
+		command, _, err := peopleCmd.Find([]string{name})
+		require.NoError(t, err)
+		require.NotNil(t, command.Flags().Lookup("unlock-hidden"))
+	}
 	for _, name := range []string{"list", "show", "create", "rename", "retire", "merge", "split"} {
 		command, _, err := peopleCmd.Find([]string{name})
 		require.NoError(t, err)

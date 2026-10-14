@@ -34,7 +34,7 @@ func registerPeopleRoutes(api huma.API, d Deps, g *gate) {
 		AssertionCursor string `query:"assertion_cursor"`
 		AssertionLimit  int    `query:"assertion_limit" default:"1000" minimum:"1" maximum:"1000"`
 	}) (*personDetailOutput, error) {
-		person, err := d.Store.PersonDetail(ctx, in.PersonID, store.PersonAssertionPage{After: in.AssertionCursor, Limit: in.AssertionLimit})
+		person, err := d.Store.PersonDetailPage(ctx, in.PersonID, store.PersonAssertionPage{After: in.AssertionCursor, Limit: in.AssertionLimit})
 		if err != nil {
 			return nil, FromStoreError(err)
 		}

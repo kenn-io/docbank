@@ -458,6 +458,9 @@ func (s *Store) SplitPerson(ctx context.Context, request PersonSplitRequest) (Pe
 			for _, id := range selection.ids {
 				if selection.table == "person_document_assertions" {
 					a, err := personAssertionByIDTx(ctx, tx, id)
+					if errors.Is(err, sql.ErrNoRows) {
+						return ErrPersonMergeConflict
+					}
 					if err != nil {
 						return err
 					}
@@ -547,12 +550,5 @@ func (s *Store) SplitPerson(ctx context.Context, request PersonSplitRequest) (Pe
 }
 
 func validateMergedPhotoFaces(ctx context.Context, tx *sql.Tx, id string) error {
-	var invalid bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM persons p LEFT JOIN photo_faces f ON f.face_id=p.key_face_id LEFT JOIN person_document_assertions a ON a.assertion_id=f.assertion_id WHERE p.person_id=? AND p.key_face_id IS NOT NULL AND (a.person_id IS NULL OR a.person_id<>p.person_id OR a.action<>'assert'))`, id).Scan(&invalid); err != nil {
-		return err
-	}
-	if invalid {
-		return ErrPersonIdentityConflict
-	}
-	return nil
+	return validatePersonKeyFaces(ctx, tx, id, ErrPersonIdentityConflict)
 }

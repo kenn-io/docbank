@@ -6434,6 +6434,8 @@ components:
           type: array
         hidden_face_conflict:
           type: boolean
+        inaccessible_face_conflict:
+          type: boolean
         more:
           type: boolean
         observed_scope_count:
@@ -12094,6 +12096,9 @@ components:
         face_id:
           format: uuid
           type: string
+        operation_id:
+          format: uuid
+          type: string
         person_id:
           format: uuid
           type: string
@@ -12102,16 +12107,15 @@ components:
           type: integer
         revision:
           format: int64
-          minimum: 1
+          minimum: 0
           type: integer
       required:
         - action
-        - revision
       type: object
-      x-go-type: store.PhotoFaceDecisionRequest
+      x-go-type: api.PhotoFaceDecisionRequest
       x-go-type-import:
-        path: go.kenn.io/docbank/internal/store
-        name: store
+        path: go.kenn.io/docbank/internal/api
+        name: api
     PhotoFaceDecisionResult:
       additionalProperties: false
       properties:
@@ -20510,6 +20514,8 @@ paths:
                     type: array
                   hidden_face_conflict:
                     type: boolean
+                  inaccessible_face_conflict:
+                    type: boolean
                   more:
                     type: boolean
                   observed_scope_count:
@@ -24880,6 +24886,11 @@ paths:
           required: true
           schema:
             format: uuid
+            type: string
+        - explode: false
+          in: query
+          name: operation_id
+          schema:
             type: string
       responses:
         "200":

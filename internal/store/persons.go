@@ -344,13 +344,13 @@ type PersonAssertionPage struct {
 	Limit int
 }
 
-func (s *Store) PersonDetail(ctx context.Context, personID string, pages ...PersonAssertionPage) (PersonDetail, error) {
-	page := PersonAssertionPage{Limit: 1000}
-	if len(pages) > 0 {
-		page = pages[0]
-		if page.Limit == 0 {
-			page.Limit = 1000
-		}
+func (s *Store) PersonDetail(ctx context.Context, personID string) (PersonDetail, error) {
+	return s.PersonDetailPage(ctx, personID, PersonAssertionPage{})
+}
+
+func (s *Store) PersonDetailPage(ctx context.Context, personID string, page PersonAssertionPage) (PersonDetail, error) {
+	if page.Limit == 0 {
+		page.Limit = 1000
 	}
 	if page.Limit < 1 || page.Limit > 1000 || page.After != "" && validateUUIDv4(page.After) != nil {
 		return PersonDetail{}, ErrInvalidPerson

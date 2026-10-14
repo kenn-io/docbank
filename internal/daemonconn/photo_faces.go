@@ -117,7 +117,7 @@ func validatePhotoAssertionResponse(assertion api.PhotoPersonAssertion, versionI
 }
 
 func (c *Connection) DecidePhotoFace(ctx context.Context, versionID string, request api.PhotoFaceDecisionRequest, cookies ...string) (api.PhotoFaceDecisionResult, error) {
-	if !validUUIDv4(versionID) || request.Revision < 1 {
+	if !validUUIDv4(versionID) || request.Revision < 1 && !(request.Action == "key" && request.FaceID == "") {
 		return api.PhotoFaceDecisionResult{}, errors.New("invalid face decision identity or revision")
 	}
 	id, err := uuid.Parse(versionID)
@@ -125,7 +125,8 @@ func (c *Connection) DecidePhotoFace(ctx context.Context, versionID string, requ
 		return api.PhotoFaceDecisionResult{}, err
 	}
 	var response *http.Response
-	result, err := c.apiWithResponse(&response).DecidePhotoFace(ctx, &apiclient.DecidePhotoFaceRequestOptions{PathParams: &apiclient.DecidePhotoFacePath{ContentVersionID: id}, Body: &request}, photoCookie(cookies))
+	body := apiclient.DecidePhotoFaceBody(request)
+	result, err := c.apiWithResponse(&response).DecidePhotoFace(ctx, &apiclient.DecidePhotoFaceRequestOptions{PathParams: &apiclient.DecidePhotoFacePath{ContentVersionID: id}, Body: &body}, photoCookie(cookies))
 	if err != nil {
 		return api.PhotoFaceDecisionResult{}, mutationRequestError(response, err)
 	}
@@ -135,7 +136,11 @@ func (c *Connection) DecidePhotoFace(ctx context.Context, versionID string, requ
 	return *result, nil
 }
 
-func (c *Connection) UndoPhotoFaceDecision(ctx context.Context, receiptID string, cookies ...string) (api.PhotoFaceDecisionResult, error) {
+func (c *Connection) UndoPhotoFaceDecision(ctx context.Context, id string, cookies ...string) (api.PhotoFaceDecisionResult, error) {
+	return c.UndoPhotoFaceDecisionWithOperationID(ctx, id, "", cookies...)
+}
+
+func (c *Connection) UndoPhotoFaceDecisionWithOperationID(ctx context.Context, receiptID, operationID string, cookies ...string) (api.PhotoFaceDecisionResult, error) {
 	if !validUUIDv4(receiptID) {
 		return api.PhotoFaceDecisionResult{}, errors.New("invalid face decision receipt ID")
 	}
@@ -144,7 +149,11 @@ func (c *Connection) UndoPhotoFaceDecision(ctx context.Context, receiptID string
 		return api.PhotoFaceDecisionResult{}, err
 	}
 	var response *http.Response
-	result, err := c.apiWithResponse(&response).UndoPhotoFaceDecision(ctx, &apiclient.UndoPhotoFaceDecisionRequestOptions{PathParams: &apiclient.UndoPhotoFaceDecisionPath{ReceiptID: id}}, photoCookie(cookies))
+	options := &apiclient.UndoPhotoFaceDecisionRequestOptions{PathParams: &apiclient.UndoPhotoFaceDecisionPath{ReceiptID: id}}
+	if operationID != "" {
+		options.Query = &apiclient.UndoPhotoFaceDecisionQuery{OperationID: &operationID}
+	}
+	result, err := c.apiWithResponse(&response).UndoPhotoFaceDecision(ctx, options, photoCookie(cookies))
 	if err != nil {
 		return api.PhotoFaceDecisionResult{}, mutationRequestError(response, err)
 	}

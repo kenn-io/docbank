@@ -92,7 +92,7 @@ func registerPhotoFaceRoutes(api huma.API, d Deps, g *gate) {
 	})
 }
 
-type PhotoFaceDecisionRequest = store.PhotoFaceDecisionRequest
+type PhotoFaceDecisionRequest store.PhotoFaceDecisionRequest
 
 type PhotoFaceDecisionResult struct {
 	ReceiptID string `json:"receipt_id" format:"uuid"`
@@ -106,7 +106,7 @@ func registerPhotoFaceDecisionRoutes(api huma.API, d Deps, g *gate) {
 		var receipt store.PhotoFaceDecisionReceipt
 		err := g.mutate(func() error {
 			var err error
-			receipt, err = d.Store.DecidePhotoFace(ctx, in.ContentVersionID, in.Body)
+			receipt, err = d.Store.DecidePhotoFace(ctx, in.ContentVersionID, store.PhotoFaceDecisionRequest(in.Body))
 			if err != nil {
 				return FromStoreError(err)
 			}
@@ -118,12 +118,13 @@ func registerPhotoFaceDecisionRoutes(api huma.API, d Deps, g *gate) {
 		return &struct{ Body PhotoFaceDecisionResult }{Body: PhotoFaceDecisionResult{ReceiptID: receipt.ReceiptID}}, nil
 	})
 	huma.Register(api, huma.Operation{OperationID: "undoPhotoFaceDecision", Method: http.MethodPost, Path: "/api/v1/photos/face-decisions/{receipt_id}/undo", Summary: "Undo a face decision if its records are unchanged"}, func(ctx context.Context, in *struct {
-		ReceiptID string `path:"receipt_id" format:"uuid"`
+		ReceiptID   string `path:"receipt_id" format:"uuid"`
+		OperationID string `query:"operation_id"`
 	}) (*struct{ Body PhotoFaceDecisionResult }, error) {
 		var receipt store.PhotoFaceDecisionReceipt
 		err := g.mutate(func() error {
 			var err error
-			receipt, err = d.Store.UndoPhotoFaceDecision(ctx, in.ReceiptID)
+			receipt, err = d.Store.UndoPhotoFaceDecisionWithOperationID(ctx, in.ReceiptID, in.OperationID)
 			if err != nil {
 				return FromStoreError(err)
 			}

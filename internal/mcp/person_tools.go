@@ -24,7 +24,7 @@ func getPerson(ctx context.Context, lease *daemonLease, raw []byte) (personDetai
 		return personDetailToolOutput{}, err
 	}
 	detail, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (api.PersonDetail, error) {
-		return c.Person(ctx, input.PersonID, api.PersonAssertionPage{Cursor: input.AssertionCursor, Limit: input.AssertionLimit})
+		return c.PersonPage(ctx, input.PersonID, api.PersonAssertionPage{Cursor: input.AssertionCursor, Limit: input.AssertionLimit})
 	})
 	if err != nil {
 		return personDetailToolOutput{}, err

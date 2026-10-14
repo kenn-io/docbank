@@ -111,6 +111,12 @@ func addPhotoFaceDecisionCommands(faces *cobra.Command) {
 			if err != nil {
 				return err
 			}
+			if request.OperationID == "" {
+				request.OperationID = uuid.New().String()
+				if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "operation ID %s (pass --operation-id %s to retry)\n", request.OperationID, request.OperationID); err != nil {
+					return err
+				}
+			}
 			result, err := withPhotoHidden(cmd, c, func(cookie string) (api.PhotoFaceDecisionResult, error) {
 				return c.DecidePhotoFace(cmd.Context(), args[0], request, cookie)
 			})
@@ -119,13 +125,14 @@ func addPhotoFaceDecisionCommands(faces *cobra.Command) {
 			}
 			return writeCLIJSON(cmd.OutOrStdout(), result)
 		}}
+		command.Flags().StringVar(&request.OperationID, "operation-id", "", "operation UUID for replaying a decision")
 		command.Flags().Int64Var(&request.Revision, "revision", 0, "expected face revision")
-		_ = command.MarkFlagRequired("revision")
-		if action != "mark" && action != "retract_mark" {
-			command.Flags().StringVar(&request.FaceID, "face", "", "face UUID")
-			if action != "key" {
-				_ = command.MarkFlagRequired("face")
-			}
+		if action != "key" {
+			_ = command.MarkFlagRequired("revision")
+		}
+		command.Flags().StringVar(&request.FaceID, "face", "", "face UUID")
+		if action != "key" {
+			_ = command.MarkFlagRequired("face")
 		}
 		if action == "name" || action == "reject" || action == "key" || action == "withdraw_rejection" {
 			command.Flags().StringVar(&request.PersonID, "person", "", "person UUID")
@@ -137,17 +144,26 @@ func addPhotoFaceDecisionCommands(faces *cobra.Command) {
 		}
 		faces.AddCommand(command)
 	}
-	faces.AddCommand(&cobra.Command{Use: "undo <receipt-id>", Short: "Undo a face decision", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	var undoOperationID string
+	undo := &cobra.Command{Use: "undo <receipt-id>", Short: "Undo a face decision", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
+		if undoOperationID == "" {
+			undoOperationID = uuid.New().String()
+			if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "operation ID %s (pass --operation-id %s to retry)\n", undoOperationID, undoOperationID); err != nil {
+				return err
+			}
+		}
 		result, err := withPhotoHidden(cmd, c, func(cookie string) (api.PhotoFaceDecisionResult, error) {
-			return c.UndoPhotoFaceDecision(cmd.Context(), args[0], cookie)
+			return c.UndoPhotoFaceDecisionWithOperationID(cmd.Context(), args[0], undoOperationID, cookie)
 		})
 		if err != nil {
 			return err
 		}
 		return writeCLIJSON(cmd.OutOrStdout(), result)
-	}})
+	}}
+	undo.Flags().StringVar(&undoOperationID, "operation-id", "", "operation UUID for replaying undo")
+	faces.AddCommand(undo)
 }

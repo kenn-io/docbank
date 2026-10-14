@@ -8,7 +8,7 @@ func (c queryCompiler) compilePersonPredicate(id string) compiledQueryFragment {
 	predicate = `(` + predicate + `) AND NOT EXISTS(SELECT 1 FROM photo_files hidden_member JOIN photo_assets hidden_asset ON hidden_asset.asset_id=hidden_member.asset_id WHERE hidden_member.node_id=n.id AND hidden_asset.hidden_at IS NOT NULL)`
 	args := []any{id, id, id, id, document.PersonResolverFingerprint()}
 	if c.photoDisplayMetadata {
-		predicate = `EXISTS(SELECT 1 FROM photo_files member JOIN photo_files pf ON pf.asset_id=member.asset_id JOIN nodes pn ON pn.id=pf.node_id JOIN person_document_assertions a ON a.content_version_id=pn.current_version_id WHERE member.node_id=n.id AND a.action='assert' AND a.role='depicted' AND a.person_id=` + person + `)`
+		predicate = `EXISTS(SELECT 1 FROM photo_files member JOIN photo_files pf ON pf.asset_id=member.asset_id JOIN nodes pn ON pn.id=pf.node_id JOIN person_document_assertions a ON a.content_version_id=pn.current_version_id WHERE member.node_id=n.id AND pn.trashed_at IS NULL AND pf.role IN ('image','raw') AND a.action='assert' AND a.role='depicted' AND a.person_id=` + person + `)`
 		args = []any{id, id}
 	}
 	return compiledQueryFragment{sql: predicate, args: args}

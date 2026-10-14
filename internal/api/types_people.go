@@ -180,6 +180,7 @@ func fromStorePersonSplitReceipt(value store.PersonSplitReceipt) PersonSplitRece
 }
 
 type PersonAssertionPage struct {
-	Cursor string
-	Limit  int
+	HiddenCookie string
+	Cursor       string
+	Limit        int
 }

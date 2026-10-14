@@ -572,6 +572,7 @@ export interface Error {
   /** @maxItems 20 */
   face_ids?: string[];
   hidden_face_conflict?: boolean;
+  inaccessible_face_conflict?: boolean;
   more?: boolean;
   observed_scope_count?: number;
   position?: ErrorPosition;
@@ -5392,10 +5393,11 @@ export interface PhotoFaceDecisionRequest {
   readonly $schema?: string;
   action: PhotoFaceDecisionRequestAction;
   face_id?: string;
+  operation_id?: string;
   person_id?: string;
   person_revision?: number;
-  /** @minimum 1 */
-  revision: number;
+  /** @minimum 0 */
+  revision?: number;
 }
 
 export interface PhotoFaceDecisionResult {
@@ -7823,6 +7825,7 @@ export type GetExportJobEventsDefault = {
   /** @maxItems 20 */
   face_ids?: string[];
   hidden_face_conflict?: boolean;
+  inaccessible_face_conflict?: boolean;
   more?: boolean;
   observed_scope_count?: number;
   position?: ErrorPosition;
@@ -8292,6 +8295,10 @@ export type TrashPhotoAssetHeaders = {
 
 export type UnhidePhotoAssetHeaders = {
 'If-Match': string;
+};
+
+export type UndoPhotoFaceDecisionParams = {
+operation_id?: string;
 };
 
 export type PromotePhotoNodeHeaders = {
@@ -15664,20 +15671,29 @@ return sessionJSON<PhotoAsset>(getUnhidePhotoAssetUrl(assetId),
 
 
 
-export const getUndoPhotoFaceDecisionUrl = (receiptId: string,) => {
+export const getUndoPhotoFaceDecisionUrl = (receiptId: string,
+    params?: UndoPhotoFaceDecisionParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/v1/photos/face-decisions/${encodeURIComponent(String(receiptId))}/undo`
+  return stringifiedParams.length > 0 ? `/api/v1/photos/face-decisions/${encodeURIComponent(String(receiptId))}/undo?${stringifiedParams}` : `/api/v1/photos/face-decisions/${encodeURIComponent(String(receiptId))}/undo`
 }
 
 /**
  * @summary Undo a face decision if its records are unchanged
  */
-export const undoPhotoFaceDecision = async (receiptId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoFaceDecisionResult> => {
+export const undoPhotoFaceDecision = async (receiptId: string,
+    params?: UndoPhotoFaceDecisionParams, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoFaceDecisionResult> => {
 
-  return sessionJSON<PhotoFaceDecisionResult>(getUndoPhotoFaceDecisionUrl(receiptId),
+  return sessionJSON<PhotoFaceDecisionResult>(getUndoPhotoFaceDecisionUrl(receiptId,params),
   {
     ...options,
     method: 'POST'

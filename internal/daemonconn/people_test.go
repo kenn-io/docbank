@@ -104,6 +104,7 @@ func TestSplitPersonAllowsTwoHundredOneAssignments(t *testing.T) {
 	}
 	var assignmentCount atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "hidden=synthetic", r.Header.Get("Cookie"))
 		payload, err := io.ReadAll(r.Body)
 		var request api.SplitPersonRequest
 		if err == nil {
@@ -123,7 +124,7 @@ func TestSplitPersonAllowsTwoHundredOneAssignments(t *testing.T) {
 
 	receipt, err := New(server.URL, "synthetic-key").SplitPerson(t.Context(), sourceID, 1, api.SplitPersonRequest{
 		OperationID: operationID, DisplayName: "Synthetic split", AssignmentIDs: assignments,
-	})
+	}, "hidden=synthetic")
 	require.NoError(t, err)
 	require.Equal(t, int32(len(assignments)), assignmentCount.Load())
 	require.Equal(t, operationID, receipt.OperationID)
@@ -179,11 +180,12 @@ func TestPersonClientForwardsAssertionPage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, cursor, r.URL.Query().Get("assertion_cursor"))
 		require.Equal(t, "7", r.URL.Query().Get("assertion_limit"))
+		require.Equal(t, "hidden=synthetic", r.Header.Get("Cookie"))
 		w.Header().Set("ETag", `"1"`)
 		w.Header().Set("Content-Type", "application/json")
 		require.NoError(t, json.MarshalWrite(w, api.PersonDetail{Person: api.Person{PersonID: personID, Revision: 1}}))
 	}))
 	defer server.Close()
-	_, err := New(server.URL, "synthetic-key").Person(t.Context(), personID, api.PersonAssertionPage{Cursor: cursor, Limit: 7})
+	_, err := New(server.URL, "synthetic-key").PersonPage(t.Context(), personID, api.PersonAssertionPage{Cursor: cursor, Limit: 7, HiddenCookie: "hidden=synthetic"})
 	require.NoError(t, err)
 }

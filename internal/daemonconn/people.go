@@ -95,22 +95,23 @@ func (c *Connection) People(ctx context.Context, query, cursor string, limit int
 	return *page, nil
 }
 
-func (c *Connection) Person(ctx context.Context, id string, pages ...api.PersonAssertionPage) (api.PersonDetail, error) {
+func (c *Connection) Person(ctx context.Context, id string) (api.PersonDetail, error) {
+	return c.PersonPage(ctx, id, api.PersonAssertionPage{})
+}
+
+func (c *Connection) PersonPage(ctx context.Context, id string, page api.PersonAssertionPage) (api.PersonDetail, error) {
 	pathID, err := parsePersonID(id)
 	if err != nil {
 		return api.PersonDetail{}, err
 	}
 	var response *http.Response
 	options := &apiclient.GetPersonRequestOptions{PathParams: &apiclient.GetPersonPath{PersonID: pathID}}
-	if len(pages) > 0 {
-		page := pages[0]
-		if page.Limit == 0 {
-			page.Limit = 1000
-		}
-		limit := int64(page.Limit)
-		options.Query = &apiclient.GetPersonQuery{AssertionCursor: &page.Cursor, AssertionLimit: &limit}
+	if page.Limit == 0 {
+		page.Limit = 1000
 	}
-	detail, err := c.apiWithResponse(&response).GetPerson(ctx, options)
+	limit := int64(page.Limit)
+	options.Query = &apiclient.GetPersonQuery{AssertionCursor: &page.Cursor, AssertionLimit: &limit}
+	detail, err := c.apiWithResponse(&response).GetPerson(ctx, options, photoCookie([]string{page.HiddenCookie}))
 	if err != nil {
 		return api.PersonDetail{}, err
 	}
@@ -180,7 +181,7 @@ func (c *Connection) MergePerson(ctx context.Context, survivorID string, survivo
 	return *receipt, nil
 }
 
-func (c *Connection) SplitPerson(ctx context.Context, id string, revision int64, request api.SplitPersonRequest) (api.PersonSplitReceipt, error) {
+func (c *Connection) SplitPerson(ctx context.Context, id string, revision int64, request api.SplitPersonRequest, cookies ...string) (api.PersonSplitReceipt, error) {
 	pathID, err := parsePersonID(id)
 	if err != nil || revision < 1 || !validUUIDv4(request.OperationID) {
 		return api.PersonSplitReceipt{}, fmt.Errorf("%w: invalid person split identity or revision", store.ErrInvalidPerson)
@@ -190,7 +191,7 @@ func (c *Connection) SplitPerson(ctx context.Context, id string, revision int64,
 		PathParams: &apiclient.SplitPersonPath{PersonID: pathID}, Header: &apiclient.SplitPersonHeaders{IfMatch: revisionIfMatch(revision)}, Body: &apiclient.SplitPersonBody{
 			OperationID: request.OperationID, DisplayName: request.DisplayName, AssertionIDs: request.AssertionIDs, IdentityIDs: request.IdentityIDs, AssignmentIDs: request.AssignmentIDs, ExternalIdentities: request.ExternalIdentities,
 		},
-	})
+	}, photoCookie(cookies))
 	if err != nil {
 		return api.PersonSplitReceipt{}, mutationRequestError(response, err)
 	}

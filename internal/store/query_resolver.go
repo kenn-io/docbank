@@ -56,7 +56,7 @@ func (r queryResolver) Resolve(
 				err = query.ErrUnknownReference
 			}
 			if err == nil && count > 1 {
-				err = errors.New("several people have this name; use a person ID")
+				err = &query.ExpressionError{Message: "several people have this name; use a person ID"}
 			}
 		}
 	case query.ReferenceTag:
