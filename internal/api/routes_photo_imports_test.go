@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json/v2"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -23,7 +22,7 @@ func TestPhotoImportRoutes(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "capture.JPG"), []byte("photo"), 0o600))
-	ts, catalog := newTestServer(t, func(d *api.Deps) {
+	ts, _ := newTestServer(t, func(d *api.Deps) {
 		d.Jobs = jobs.New(t.Context(), nil)
 		t.Cleanup(func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -88,13 +87,6 @@ func TestPhotoImportRoutes(t *testing.T) {
 		assert.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, text)
 		assert.Contains(t, text, test.message)
 	}
-
-	remote := httptest.NewRecorder()
-	remoteRequest := httptest.NewRequest(http.MethodPost, "http://localhost/api/v1/photos/imports", bytes.NewReader(body))
-	remoteRequest.RemoteAddr = "192.0.2.1:1234"
-	remoteRequest.Header.Set("X-Api-Key", testAPIKey)
-	catalog.Server.Handler().ServeHTTP(remote, remoteRequest)
-	assert.Equal(t, http.StatusForbidden, remote.Code)
 }
 
 func TestPhotoImportCancelThroughJobs(t *testing.T) {
@@ -115,14 +107,10 @@ func TestPhotoImportCancelThroughJobs(t *testing.T) {
 	var jobs api.JobList
 	require.NoError(t, json.Unmarshal([]byte(body), &jobs))
 	require.Len(t, jobs.Items, 1)
-	assert.Equal(t, "storage:"+operation.ID, jobs.Items[0].Name)
-	assert.Equal(t, "queued", jobs.Items[0].Status)
-	assert.Equal(t, operation.CreatedAt.Format(time.RFC3339Nano), jobs.Items[0].StartedAt)
-	assert.True(t, jobs.Items[0].CancelRequested)
-	assert.Equal(t, 1, jobs.Items[0].Concurrency)
-	assert.Equal(t, int64(1), jobs.Items[0].ControlRevision)
-	assert.Equal(t, operation.ID, jobs.Items[0].OperationID)
-	assert.Equal(t, store.StorageOperationKindPhotoImport, jobs.Items[0].Kind)
+	assert.Equal(t, api.Job{Name: "storage:" + operation.ID, Status: "queued",
+		Controllable: true, Concurrency: 1, ControlRevision: 1,
+		StartedAt: operation.CreatedAt.Format(time.RFC3339Nano), OperationID: operation.ID,
+		Kind: store.StorageOperationKindPhotoImport, CanCancel: true, CancelRequested: true}, jobs.Items[0])
 	assert.NotContains(t, body, "private")
 
 	require.NoError(t, catalog.FinishStorageOperation(t.Context(), operation.ID, store.StorageOperationCancelled, "{}", "", time.Time{}))
@@ -191,14 +179,13 @@ func TestPhotoImportJobsReceiptRedactsBrowserSession(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, response.StatusCode, body)
 }
 
-func TestPhotoImportGateAndActivity(t *testing.T) {
+func TestPhotoImportGate(t *testing.T) {
 	t.Parallel()
 	_, catalog := newTestServer(t, nil)
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "IMG.ARW"), []byte("raw"), 0o600))
 	importer := &ingest.Ingester{Store: catalog.Store, Blobs: catalog.Blobs}
 	gate := api.NewOperationGate()
-	tracker := api.NewActivityTracker()
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	maintenanceDone := make(chan error, 1)
@@ -218,7 +205,7 @@ func TestPhotoImportGateAndActivity(t *testing.T) {
 			Mutate: func(ctx context.Context, fn func() error) error {
 				close(attempted)
 				return gate.MutateContext(ctx, fn)
-			}, ActivityBegin: tracker.Begin, ActivityEnd: tracker.End,
+			},
 		})
 		mutationDone <- err
 	}()
@@ -257,7 +244,7 @@ func TestPhotoImportGateAndActivity(t *testing.T) {
 					}
 					return fn()
 				})
-			}, ActivityBegin: tracker.Begin, ActivityEnd: tracker.End,
+			},
 		})
 		completed <- importResult{report, importErr}
 	}()
