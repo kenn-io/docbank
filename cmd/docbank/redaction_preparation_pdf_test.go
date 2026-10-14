@@ -8,6 +8,7 @@ import (
 	"image/png"
 	"io"
 	"os"
+	"runtime/debug"
 	"strings"
 	"testing"
 	"time"
@@ -56,6 +57,8 @@ func readRedactionPDFText(t *testing.T, data []byte) string {
 		Context: ctx, FSConfig: wazero.NewFSConfig(), RuntimeConfig: runtimeConfig, MaxTotal: 1,
 	})
 	require.NoError(t, err)
+	// Return retired reader memory before the next PDF operation checks process RSS.
+	defer debug.FreeOSMemory()
 	defer func() { require.NoError(t, pool.Close()) }()
 	instance, err := pool.GetInstanceWithContext(ctx)
 	require.NoError(t, err)
