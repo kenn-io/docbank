@@ -101,7 +101,7 @@ func (f *documentInspectionFixture) assertNoProcessingJobs(t *testing.T) {
 	t.Helper()
 	// Call only while the synthetic vault's daemon and setup store are closed.
 	db, err := store.DefaultSQLiteDriver().Open(filepath.Join(f.root, "docbank.db"),
-		sqlite.OpenOptions{Access: sqlite.ReadOnlyImmutable})
+		sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Deferred})
 	require.NoError(t, err)
 	defer func() { require.NoError(t, db.Close()) }()
 	var jobs int
