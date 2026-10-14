@@ -539,8 +539,16 @@ func (s *Store) ingestFileTx(
 		ObservedAt:         run.record.StartedAt,
 		BasisRef:           provenanceVersionBindingBasis,
 	}
-	if err := bindProvenanceVersionTx(ctx, tx, binding); err != nil {
+	// This transaction just created the version and provenance; neither can
+	// have an existing binding or derived event/people projection.
+	if _, err := tx.ExecContext(ctx, `INSERT INTO provenance_version_bindings(
+		provenance_identity,content_version_id,observed_at,basis_ref
+	) VALUES(?,?,?,?)`, binding.ProvenanceIdentity, binding.ContentVersionID,
+		binding.ObservedAt, binding.BasisRef); err != nil {
 		return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, fmt.Errorf("binding provenance for %q: %w", finalName, err)
+	}
+	if err := markDocumentEventDirtyTx(ctx, tx, version.ID, "evidence changed"); err != nil {
+		return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, fmt.Errorf("queuing document events for %q: %w", finalName, err)
 	}
 	if run.operationalWatch {
 		if err := insertWatchSourceTx(

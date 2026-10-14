@@ -97,6 +97,11 @@ identities in the same transaction, so a stale worker cannot publish over
 changed evidence. Source metadata is decoded before the write transaction.
 Events, actors, and primary choices stay together in the canonical record.
 
+New file ingestion records the initial exact-version provenance binding and
+dirty revision in the same transaction. The version has no existing timeline
+or people projection to invalidate. Adding new provenance to an existing version
+still revokes its affected projections before queuing a rebuild.
+
 A rebuild advances the input epoch and scans every retained version, including
 history and trash. The current recipe reads active `source-metadata/v1`, exact
 provenance bindings, and the content-version record. It then publishes a fresh

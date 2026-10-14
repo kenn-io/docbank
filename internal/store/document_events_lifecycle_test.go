@@ -25,6 +25,35 @@ func TestTimelineDirtyStateCascadesWithVersion(t *testing.T) {
 	require.Zero(t, count)
 }
 
+func TestInitialIngestRollsBackWhenTimelineQueueFails(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	run, err := s.BeginIngest(ctx, "cli", "Synthetic import")
+	require.NoError(t, err)
+	_, err = s.db.Exec(`CREATE TRIGGER reject_timeline_dirty
+		BEFORE INSERT ON document_event_dirty BEGIN
+		SELECT RAISE(ABORT, 'forced dirty failure'); END`)
+	require.NoError(t, err)
+
+	_, _, err = s.IngestFileWithMembership(ctx, run, s.RootID(), "atomic.txt",
+		fakeHash("a42"), 4, "text/plain", "/synthetic/atomic.txt", "")
+	require.ErrorContains(t, err, "forced dirty failure")
+	_, err = s.NodeByPath(ctx, "/atomic.txt")
+	require.ErrorIs(t, err, ErrNotFound)
+
+	_, err = s.db.Exec(`DROP TRIGGER reject_timeline_dirty`)
+	require.NoError(t, err)
+	node, added, err := s.IngestFileWithMembership(ctx, run, s.RootID(), "atomic.txt",
+		fakeHash("a42"), 4, "text/plain", "/synthetic/atomic.txt", "")
+	require.NoError(t, err)
+	require.True(t, added)
+	bindings, err := s.ProvenanceVersionBindings(ctx, node.CurrentVersionID)
+	require.NoError(t, err)
+	require.Len(t, bindings, 1)
+	require.Equal(t, int64(1), documentEventDirtyRevision(t, s, node.CurrentVersionID))
+}
+
 func TestInvalidateDocumentEventsForVersionsRollsBackWithItsDirtyState(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
