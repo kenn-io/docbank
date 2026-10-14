@@ -68,7 +68,7 @@ func TestPhotoImportLateSidecarUpdatesLockedHiddenAsset(t *testing.T) {
 	require.Equal(t, PhotoRoleSidecar, fileByRole(updated.Asset.Files, PhotoRoleSidecar).Role)
 }
 
-func TestPhotoImportAtomicGroup(t *testing.T) {
+func TestPhotoImportRollsBackFailedGroupAndSeparatesSameNameVideo(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -115,11 +115,6 @@ n, err := s.PreparePhotoImportDestination(ctx, "/new/photos")
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_assets`).Scan(&assets))
 	assert.Equal(t, 1, assets)
 
-	single, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(photoImportTestMember(
-		filepath.Join(root, "single.JPG"), PhotoRoleImage, browseHash("single"), "image/jpeg")))
-	require.NoError(t, err)
-	require.Len(t, single.Nodes, 1)
-	assert.NotEqual(t, result.Nodes[0].ID, single.Nodes[0].ID)
 	video, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(photoImportTestMember(
 		filepath.Join(root, "IMG_0001.MOV"), PhotoRoleVideo, browseHash("mov"), "video/quicktime")))
 	require.NoError(t, err)

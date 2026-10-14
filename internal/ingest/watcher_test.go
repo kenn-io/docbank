@@ -490,7 +490,6 @@ func TestLocalFileReadRejectsConcurrentChange(t *testing.T) {
 	}
 
 	t.Run("changed during read", func(t *testing.T) {
-		ing := newTestIngester(t)
 		filePath := filepath.Join(t.TempDir(), "changing.bin")
 		require.NoError(t, os.WriteFile(filePath, make([]byte, progressByteInterval*2), 0o600))
 		changed := false
@@ -506,7 +505,6 @@ func TestLocalFileReadRejectsConcurrentChange(t *testing.T) {
 		assert.True(t, changed)
 	})
 	t.Run("replaced during read with same size and timestamp", func(t *testing.T) {
-		ing := newTestIngester(t)
 		dir := t.TempDir()
 		filePath := filepath.Join(dir, "document.bin")
 		replacementPath := filepath.Join(dir, "replacement.tmp")

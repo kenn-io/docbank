@@ -163,7 +163,7 @@ func TestPhotoImportPublishesBytesAndPassesThroughReceipts(t *testing.T) {
 	})
 }
 
-func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
+func TestPhotoImportRunnerHandlesCancellationResumeAndAdmissionRetry(t *testing.T) {
 	for _, interruption := range []string{"before work", "after final group", "shutdown and resume", "startup pause cancellation", "after-one-group cancellation", "startup admission failure"} {
 		t.Run(interruption, func(t *testing.T) {
 			ing := newTestIngester(t)

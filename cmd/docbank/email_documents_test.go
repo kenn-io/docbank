@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json/v2"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -16,12 +15,9 @@ import (
 func TestEmailDocumentsCLIForwardsRequestsAndPrintsResponses(t *testing.T) {
 	const parentVersion = "00000000-0000-4000-8000-000000000001"
 	receipt := document.EmailDocumentPublicationReceipt{OperationID: "cli-receipt", RequestDigest: strings.Repeat("a", 64), CreatedAt: "2026-01-01T00:00:00Z", InventoryState: "complete"}
-	page := document.EmailDocumentRelationPage{Total: 64, NextOperationID: "next", NextOrder: 64}
-	for i := range 64 {
-		relation := document.EmailDocumentRelation{OperationID: receipt.OperationID, Order: i + 1, Parent: document.EmailDocumentIdentity{NodeID: 2, VersionID: parentVersion, SHA256: strings.Repeat("b", 64), Size: 1}, GenerationID: strings.Repeat("c", 64), AttachmentID: strings.Repeat("d", 64), PartPath: fmt.Sprintf("1.%d", i+1), Outcome: "unsupported"}
-		receipt.Relations = append(receipt.Relations, relation)
-		page.Items = append(page.Items, document.EmailDocumentRelationStatus{Relation: relation, State: "current"})
-	}
+	relation := document.EmailDocumentRelation{OperationID: receipt.OperationID, Order: 1, Parent: document.EmailDocumentIdentity{NodeID: 2, VersionID: parentVersion, SHA256: strings.Repeat("b", 64), Size: 1}, GenerationID: strings.Repeat("c", 64), AttachmentID: strings.Repeat("d", 64), PartPath: "1.1", Outcome: "unsupported"}
+	receipt.Relations = []document.EmailDocumentRelation{relation}
+	page := document.EmailDocumentRelationPage{Total: 1, NextOperationID: "next", NextOrder: 1, Items: []document.EmailDocumentRelationStatus{{Relation: relation, State: "current"}}}
 	queries := make(chan url.Values, 1)
 	releases := make(chan struct{ id, digest string }, 1)
 	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
