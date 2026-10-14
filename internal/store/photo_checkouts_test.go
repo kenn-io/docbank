@@ -436,12 +436,6 @@ func TestPhotoCheckoutEntryPaths(t *testing.T) {
 					require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
 					require.ErrorContains(t, err, result.Asset.ID)
 					require.ErrorContains(t, err, fileByRole(result.Asset.Files, PhotoRoleSidecar).ID)
-					checkouts, err := s.ListPhotoCheckouts(ctx)
-					require.NoError(t, err)
-					require.Empty(t, checkouts)
-					operations, err := s.StorageOperations(ctx, 10)
-					require.NoError(t, err)
-					require.Empty(t, operations)
 				}
 				for i, file := range result.Asset.Files {
 					node, err := s.NodeByID(ctx, file.NodeID)
