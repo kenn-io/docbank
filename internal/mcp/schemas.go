@@ -244,6 +244,9 @@ func personExternalIdentitySchema() schema {
 
 func personDetailProperties() schema {
 	properties := personSchemaProperties()
+	properties["assertions_truncated"] = booleanSchema()
+	properties["key_face_id"] = uuidSchema()
+	properties["assertions"] = arraySchema(personAssertionSchema(), 1000)
 	properties["identities"] = arraySchema(personIdentitySchema(), document.MaxPersonIdentitiesPerPerson)
 	properties["external_identities"] = arraySchema(personExternalIdentitySchema(), document.MaxPersonExternalIdentities)
 	return properties
@@ -895,16 +898,24 @@ func photoFaceSchema() schema {
 		"assertion_id":       uuidSchema(),
 		personIDField:        uuidSchema(),
 		"action":             enumSchema("assert", "suppress"),
+		"dismissed": booleanSchema(), "rejected_person_ids": arraySchema(uuidSchema(),1000),
 		schemaCreatedAtField: dateTimeSchema(),
 	}, "face_id", "content_version_id", "box", schemaRevisionField, schemaCreatedAtField)
 }
 
 func photoPersonAssertionSchema() schema {
+	value := personAssertionSchema()
+	value["properties"].(schema)["role"] = enumSchema("depicted")
+	return value
+}
+
+func personAssertionSchema() schema {
 	return objectSchema(schema{
+		"whole_photo":        booleanSchema(),
 		"assertion_id":       uuidSchema(),
 		"content_version_id": uuidSchema(),
 		"person_id":          uuidSchema(),
-		"role":               enumSchema("depicted"),
+		"role":               stringSchema(64),
 		"action":             enumSchema("assert", "suppress"),
 		"note":               stringSchema(maxToolResponseBytes),
 		"recorded_at":        dateTimeSchema(),

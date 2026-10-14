@@ -21,6 +21,7 @@ var ErrPersonMergeConflict = errors.New("person merge conflict")
 var ErrPersonMergeTooLarge = errors.New("person merge too large")
 
 type PersonMergeMoved struct {
+	RejectedFaceCandidates []PersonMergeRejectedFaceCandidate `json:"rejected_face_candidates,omitzero"`
 	DeduplicatedAssertions []PersonMergeDeduplicatedAssertion `json:"deduplicated_assertions"`
 	AssertionIDs           []string                           `json:"assertion_ids"`
 	SupersededCandidates   []string                           `json:"superseded_candidate_ids"`
@@ -69,7 +70,8 @@ type PersonMergeReceipt struct {
 type PersonSplitReceipt struct {
 	OperationID, SourcePersonID, NewPersonID string
 	// SourceRevisionAfter is derived from the fenced request so stored receipts keep their shape.
-	SourceRevisionAfter int64 `json:"-"`
+	SourceRevisionAfter int64    `json:"-"`
+	MovedAssertionIDs   []string `json:"MovedAssertionIDs,omitzero"`
 	MovedIdentityIDs    []string
 	CreatedAt           string
 }
@@ -78,15 +80,16 @@ type PersonSplitRequest struct {
 	PersonID, OperationID, DisplayName string
 	Revision                           int64
 	IdentityIDs, AssignmentIDs         []string
+	AssertionIDs                       []string `json:"AssertionIDs,omitzero"`
 	External                           []PersonExternalUID
 }
 
 func validatePersonSplitRequest(request PersonSplitRequest) error {
 	if validateUUIDv4(request.PersonID) != nil || validateUUIDv4(request.OperationID) != nil || request.Revision < 1 ||
-		len(request.IdentityIDs)+len(request.AssignmentIDs)+len(request.External) == 0 {
+		len(request.AssertionIDs) > 1000 || len(request.IdentityIDs)+len(request.AssignmentIDs)+len(request.External)+len(request.AssertionIDs) == 0 {
 		return fmt.Errorf("%w: split requires fenced explicit membership", ErrInvalidPerson)
 	}
-	for _, ids := range [][]string{request.IdentityIDs, request.AssignmentIDs} {
+	for _, ids := range [][]string{request.IdentityIDs, request.AssignmentIDs, request.AssertionIDs} {
 		seen := map[string]bool{}
 		for _, id := range ids {
 			if validateUUIDv4(id) != nil || seen[id] {
@@ -141,10 +144,17 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 		if err := tx.QueryRowContext(ctx, `SELECT display_name FROM persons WHERE person_id=?`, absorbedID).Scan(&absorbedName); err != nil {
 			return err
 		}
+		if err := s.checkFaceMergeConflictsTx(ctx, tx, survivorID, absorbedID); err != nil {
+			return err
+		}
 		if err := validatePersonMergeBoundsTx(ctx, tx, survivorID, absorbedID); err != nil {
 			return err
 		}
 		moved, err := collectPersonMergeMovedTx(ctx, tx, survivorID, absorbedID)
+		if err != nil {
+			return err
+		}
+		moved.RejectedFaceCandidates, err = moveRejectedFaceCandidatesTx(ctx, tx, survivorID, absorbedID)
 		if err != nil {
 			return err
 		}
@@ -372,7 +382,7 @@ func validatePersonMergeBoundsTx(ctx context.Context, tx *sql.Tx, survivorID, ab
 		+ COALESCE((SELECT SUM(length(assignment_id)+2) FROM custodian_assignments WHERE person_id=?),0)
 		+ COALESCE((SELECT SUM(length(assertion_id)+2) FROM person_document_assertions WHERE person_id=?),0)
 		+ COALESCE((SELECT SUM(length(candidate_id)+2) FROM person_match_candidates
-			WHERE suggested_person_id=? AND state='open'),0)`,
+			WHERE suggested_person_id=? AND (state='open' OR (reason='face_match' AND state='rejected'))),0)`,
 		absorbedID, absorbedID, absorbedID, absorbedID).Scan(&movedBytes); err != nil {
 		return err
 	}
@@ -434,8 +444,20 @@ func (s *Store) SplitPerson(ctx context.Context, request PersonSplitRequest) (Pe
 		}{
 			{"person_identities", "identity_id", request.IdentityIDs},
 			{"custodian_assignments", "assignment_id", request.AssignmentIDs},
+			{"person_document_assertions", "assertion_id", request.AssertionIDs},
 		} {
 			for _, id := range selection.ids {
+				if selection.table == "person_document_assertions" {
+					a, err := personAssertionByIDTx(ctx, tx, id)
+					if err != nil {
+						return err
+					}
+					if a.Role == "depicted" {
+						if err = s.facePhotoQuery(ctx, tx, a.ContentVersionID); err != nil {
+							return err
+						}
+					}
+				}
 				var exists bool
 				query := fmt.Sprintf(`SELECT EXISTS(SELECT 1 FROM %s WHERE person_id=? AND %s=?)`, selection.table, selection.column)
 				if err := tx.QueryRowContext(ctx, query, request.PersonID, id).Scan(&exists); err != nil || !exists {
@@ -469,9 +491,16 @@ func (s *Store) SplitPerson(ctx context.Context, request PersonSplitRequest) (Pe
 		}{
 			{"person_identities", "identity_id", request.IdentityIDs},
 			{"custodian_assignments", "assignment_id", request.AssignmentIDs},
+			{"person_document_assertions", "assertion_id", request.AssertionIDs},
 		} {
 			for _, id := range selection.ids {
 				query := fmt.Sprintf(`UPDATE %s SET person_id=? WHERE person_id=? AND %s=?`, selection.table, selection.column)
+				if selection.table == "person_document_assertions" {
+					query = `UPDATE person_document_assertions SET person_id=?,revision=revision+1 WHERE person_id=? AND assertion_id=?`
+					if _, err := tx.ExecContext(ctx, `UPDATE photo_faces SET revision=revision+1 WHERE assertion_id=?`, id); err != nil {
+						return err
+					}
+				}
 				if selection.table == "custodian_assignments" {
 					query = `UPDATE custodian_assignments SET person_id=?,revision=revision+1 WHERE person_id=? AND assignment_id=?`
 				}
@@ -479,6 +508,12 @@ func (s *Store) SplitPerson(ctx context.Context, request PersonSplitRequest) (Pe
 					return err
 				}
 			}
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE persons SET key_face_id=(SELECT p.key_face_id FROM persons p JOIN photo_faces f ON f.face_id=p.key_face_id JOIN person_document_assertions a ON a.assertion_id=f.assertion_id WHERE p.person_id=? AND a.person_id=?) WHERE person_id=?`, request.PersonID, newID, newID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE persons SET key_face_id=NULL WHERE person_id=? AND key_face_id=(SELECT key_face_id FROM persons WHERE person_id=?)`, request.PersonID, newID); err != nil {
+			return err
 		}
 		for _, external := range request.External {
 			if _, err := tx.ExecContext(ctx, `UPDATE person_external_identities SET person_id=?,updated_at=? WHERE person_id=? AND system=? AND archive_id=? AND uid=?`, newID, now, request.PersonID, external.System, external.ArchiveID, external.UID); err != nil {
@@ -491,7 +526,7 @@ func (s *Store) SplitPerson(ctx context.Context, request PersonSplitRequest) (Pe
 		if err := advancePersonBindingEpochTx(ctx, tx); err != nil {
 			return err
 		}
-		receipt = PersonSplitReceipt{OperationID: request.OperationID, SourcePersonID: request.PersonID, NewPersonID: newID, SourceRevisionAfter: request.Revision + 1, MovedIdentityIDs: slices.Clone(request.IdentityIDs), CreatedAt: now}
+		receipt = PersonSplitReceipt{OperationID: request.OperationID, SourcePersonID: request.PersonID, NewPersonID: newID, SourceRevisionAfter: request.Revision + 1, MovedIdentityIDs: slices.Clone(request.IdentityIDs), MovedAssertionIDs: slices.Clone(request.AssertionIDs), CreatedAt: now}
 		raw, err = canonical.Marshal(receipt)
 		if err != nil {
 			return err

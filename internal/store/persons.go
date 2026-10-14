@@ -28,9 +28,12 @@ type Person struct {
 type PersonDetail struct {
 	Person
 
-	ReachedThrough string
-	Identities     []PersonIdentity
-	External       []PersonExternalIdentity
+	KeyFaceID           string
+	Assertions          []PersonDocumentAssertion
+	AssertionsTruncated bool
+	ReachedThrough      string
+	Identities          []PersonIdentity
+	External            []PersonExternalIdentity
 }
 
 type PersonIdentity struct {
@@ -353,10 +356,14 @@ func (s *Store) PersonDetail(ctx context.Context, personID string) (PersonDetail
 	if err != nil {
 		return PersonDetail{}, err
 	}
+	assertions, key, truncated, err := s.personFaceDetailTx(ctx, tx, person.PersonID)
+	if err != nil {
+		return PersonDetail{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return PersonDetail{}, err
 	}
-	return PersonDetail{Person: person, ReachedThrough: reachedThrough, Identities: identities, External: external}, nil
+	return PersonDetail{KeyFaceID: key, Assertions: assertions, AssertionsTruncated: truncated, Person: person, ReachedThrough: reachedThrough, Identities: identities, External: external}, nil
 }
 
 func fencePersonTx(ctx context.Context, tx *sql.Tx, personID string, revision int64) error {

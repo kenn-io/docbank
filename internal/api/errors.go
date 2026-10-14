@@ -24,6 +24,8 @@ type Error struct {
 	Code               string         `json:"code,omitzero"`
 	Errors             []string       `json:"errors,omitempty"`
 	ObservedScopeCount int            `json:"observed_scope_count,omitzero"`
+	FaceIDs            []string       `json:"face_ids,omitzero" maxItems:"20"`
+	HiddenFaceConflict bool           `json:"hidden_face_conflict,omitzero"`
 	Position           *ErrorPosition `json:"position,omitempty"`
 }
 
@@ -196,6 +198,12 @@ var storeErrCodes = []struct {
 // unrecognized error becomes an opaque 500 (message still surfaced — this
 // is a single-user local daemon, not a hardened multi-tenant service).
 func FromStoreError(err error) error {
+	if conflict, ok := errors.AsType[*store.PersonFaceMergeConflict](err); ok {
+		out := NewError(http.StatusConflict, "person_merge_conflict", conflict.Error())
+		out.FaceIDs = conflict.FaceIDs
+		out.HiddenFaceConflict = conflict.HiddenConflict
+		return out
+	}
 	if err == nil {
 		return nil
 	}

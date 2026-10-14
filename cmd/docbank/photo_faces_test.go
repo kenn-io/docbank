@@ -75,3 +75,18 @@ func TestPhotoFaceCreateErrorRetryAdvice(t *testing.T) {
 	require.Contains(t, photoFaceCreateError(faceID, err).Error(), "retry with --face-id "+faceID)
 	require.Same(t, err, photoFaceCreateError("", err))
 }
+
+func TestPhotoFaceDecisionCommands(t *testing.T) {
+	faces := photoFacesCommand()
+	for _, name := range []string{"name", "retract", "reject", "dismiss", "key", "mark", "retract-mark", "undo"} {
+		command, _, err := faces.Find([]string{name})
+		require.NoError(t, err)
+		require.Equal(t, name, command.Name())
+		if name != "undo" {
+			require.NotNil(t, command.Flags().Lookup("revision"))
+		}
+	}
+	key, _, err := faces.Find([]string{"key"})
+	require.NoError(t, err)
+	require.NotNil(t, key.Flags().Lookup("person-revision"))
+}

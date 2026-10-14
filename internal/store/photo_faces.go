@@ -28,6 +28,8 @@ type PhotoFace struct {
 	Revision         int64            `json:"revision"`
 	AssertionID      string           `json:"assertion_id,omitzero"`
 	CreatedAt        string           `json:"created_at"`
+	RejectedPersonIDs []string `json:"rejected_person_ids,omitzero" maxItems:"1000"`
+	Dismissed bool `json:"dismissed"`
 }
 
 func validatePhotoFace(face PhotoFace) error {
@@ -74,7 +76,7 @@ func (s *Store) facePhotoQuery(ctx context.Context, q metadataQuerier, versionID
 	var assetID, role string
 	var node Node
 	err := q.QueryRowContext(ctx, `SELECT member.asset_id,member.role,n.id,n.name,COALESCE(cv.mime_type,'') FROM content_versions cv
- JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id
+ JOIN nodes n ON n.id=cv.node_id
  JOIN photo_files member ON member.node_id=cv.node_id
  JOIN photo_assets a ON a.asset_id=member.asset_id
  WHERE cv.version_id=? AND a.kind='photo' AND n.kind='file' AND member.role IN ('image','raw') AND `+liveIncludedDisplayPredicate, versionID).Scan(&assetID, &role, &node.ID, &node.Name, &node.MimeType)
@@ -102,6 +104,9 @@ func (s *Store) PhotoFaces(ctx context.Context, versionID string) ([]PhotoFace, 
 		}
 		var err error
 		faces, err = photoFacesQuery(ctx, tx, versionID)
+		if err == nil {
+			err = s.readFaceDecisionsTx(ctx, tx, faces)
+		}
 		if err != nil {
 			return err
 		}
@@ -231,16 +236,7 @@ func replayPhotoFaceTx(ctx context.Context, tx *sql.Tx, existing PhotoFace, pers
 	if personID == "" {
 		return existing, nil, nil
 	}
-	saved, err := assertDepictedPersonTx(ctx, tx, existing.ContentVersionID, personID)
-	if err != nil {
-		return PhotoFace{}, nil, err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE photo_faces SET assertion_id=?,revision=revision+1 WHERE face_id=?`, saved.AssertionID, existing.FaceID); err != nil {
-		return PhotoFace{}, nil, err
-	}
-	existing.AssertionID = saved.AssertionID
-	existing.Revision++
-	return existing, &saved, nil
+	return PhotoFace{}, nil, photoFaceExistsError{}
 }
 
 // MarkPersonInPhoto records a depicted edge without an invented face box.

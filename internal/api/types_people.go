@@ -41,6 +41,9 @@ type PersonExternalIdentity struct {
 }
 
 type PersonDetail struct {
+	AssertionsTruncated bool                   `json:"assertions_truncated"`
+	KeyFaceID           string                 `json:"key_face_id,omitzero" format:"uuid"`
+	Assertions          []PhotoPersonAssertion `json:"assertions" maxItems:"1000"`
 	Person
 
 	Identities         []PersonIdentity         `json:"identities" maxItems:"200"`
@@ -68,6 +71,7 @@ type PersonExternalUID struct {
 }
 
 type SplitPersonRequest struct {
+	AssertionIDs       []string            `json:"assertion_ids,omitzero" maxItems:"1000"`
 	OperationID        string              `json:"operation_id" format:"uuid"`
 	DisplayName        string              `json:"display_name" minLength:"1"`
 	IdentityIDs        []string            `json:"identity_ids,omitzero" maxItems:"200"`
@@ -98,6 +102,7 @@ type PersonMergeReceipt struct {
 }
 
 type PersonSplitReceipt struct {
+	MovedAssertionIDs   []string `json:"moved_assertion_ids,omitzero" maxItems:"1000"`
 	OperationID         string   `json:"operation_id" format:"uuid"`
 	SourcePersonID      string   `json:"source_person_id" format:"uuid"`
 	NewPersonID         string   `json:"new_person_id" format:"uuid"`
@@ -145,7 +150,10 @@ func fromStorePersonExternalIdentity(value store.PersonExternalIdentity) PersonE
 }
 
 func fromStorePersonDetail(value store.PersonDetail) PersonDetail {
-	out := PersonDetail{Person: fromStorePerson(value.Person, value.ReachedThrough), Identities: make([]PersonIdentity, 0, len(value.Identities)), ExternalIdentities: make([]PersonExternalIdentity, 0, len(value.External))}
+	out := PersonDetail{AssertionsTruncated: value.AssertionsTruncated, KeyFaceID: value.KeyFaceID, Assertions: make([]PhotoPersonAssertion, 0, len(value.Assertions)), Person: fromStorePerson(value.Person, value.ReachedThrough), Identities: make([]PersonIdentity, 0, len(value.Identities)), ExternalIdentities: make([]PersonExternalIdentity, 0, len(value.External))}
+	for _, a := range value.Assertions {
+		out.Assertions = append(out.Assertions, photoAssertion(a))
+	}
 	for _, identity := range value.Identities {
 		out.Identities = append(out.Identities, fromStorePersonIdentity(identity))
 	}
@@ -167,5 +175,5 @@ func fromStorePersonMergeReceipt(value store.PersonMergeReceipt) PersonMergeRece
 
 func fromStorePersonSplitReceipt(value store.PersonSplitReceipt) PersonSplitReceipt {
 	return PersonSplitReceipt{OperationID: value.OperationID, SourcePersonID: value.SourcePersonID, NewPersonID: value.NewPersonID, SourceRevisionAfter: value.SourceRevisionAfter,
-		MovedIdentityIDs: append([]string{}, value.MovedIdentityIDs...), CreatedAt: value.CreatedAt}
+		MovedAssertionIDs: append([]string(nil), value.MovedAssertionIDs...), MovedIdentityIDs: append([]string{}, value.MovedIdentityIDs...), CreatedAt: value.CreatedAt}
 }

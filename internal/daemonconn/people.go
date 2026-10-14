@@ -42,6 +42,16 @@ func validatePersonDetailResponse(detail api.PersonDetail, etag, requestedID str
 	if len(detail.Identities) > document.MaxPersonIdentitiesPerPerson || len(detail.ExternalIdentities) > document.MaxPersonExternalIdentities {
 		return errors.New("person response exceeds identity bound")
 	}
+	if len(detail.Assertions) > 1000 || detail.KeyFaceID != "" && !validUUIDv4(detail.KeyFaceID) {
+		return errors.New("invalid person face details")
+	}
+	seen := map[string]bool{}
+	for _, a := range detail.Assertions {
+		if !validUUIDv4(a.AssertionID) || !validUUIDv4(a.ContentVersionID) || a.PersonID != detail.PersonID || a.Revision < 1 || !document.ValidPersonRole(a.Role) || seen[a.AssertionID] {
+			return errors.New("invalid person assertion selector")
+		}
+		seen[a.AssertionID] = true
+	}
 	for _, identity := range detail.Identities {
 		if !validUUIDv4(identity.IdentityID) {
 			return errors.New("person response has invalid identity ID")
@@ -166,7 +176,7 @@ func (c *Connection) SplitPerson(ctx context.Context, id string, revision int64,
 	var response *http.Response
 	receipt, err := c.apiWithResponse(&response).SplitPerson(ctx, &apiclient.SplitPersonRequestOptions{
 		PathParams: &apiclient.SplitPersonPath{PersonID: pathID}, Header: &apiclient.SplitPersonHeaders{IfMatch: revisionIfMatch(revision)}, Body: &apiclient.SplitPersonBody{
-			OperationID: request.OperationID, DisplayName: request.DisplayName, IdentityIDs: request.IdentityIDs, AssignmentIDs: request.AssignmentIDs, ExternalIdentities: request.ExternalIdentities,
+			OperationID: request.OperationID, DisplayName: request.DisplayName, AssertionIDs: request.AssertionIDs, IdentityIDs: request.IdentityIDs, AssignmentIDs: request.AssignmentIDs, ExternalIdentities: request.ExternalIdentities,
 		},
 	})
 	if err != nil {

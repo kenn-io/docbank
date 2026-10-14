@@ -260,6 +260,11 @@ func validateMetadataPersonMerge(r metadataPersonMerge) error {
 	if err != nil || !bytes.Equal(canonicalMoved, r.MovedJSON) {
 		return errors.New("person merge moved authority is not canonical")
 	}
+	for _, c := range moved.RejectedFaceCandidates {
+		if validateUUIDv4(c.CandidateID) != nil || validateUUIDv4(c.RetainedCandidateID) != nil {
+			return errors.New("invalid moved rejected face candidate")
+		}
+	}
 	for _, ids := range [][]string{moved.IdentityIDs, moved.AssignmentIDs, moved.AssertionIDs, moved.SupersededCandidates} {
 		if err := validateUniqueMetadataUUIDs(ids); err != nil {
 			return err
@@ -312,7 +317,7 @@ func validateMetadataPersonSplit(r metadataPersonSplit) error {
 	canonicalReceipt, err := canonical.Marshal(receipt)
 	if err != nil || !bytes.Equal(canonicalReceipt, r.ReceiptJSON) || receipt.OperationID != r.OperationID ||
 		validateUUIDv4(receipt.SourcePersonID) != nil || validateUUIDv4(receipt.NewPersonID) != nil ||
-		receipt.SourcePersonID == receipt.NewPersonID || validateUniqueMetadataUUIDs(receipt.MovedIdentityIDs) != nil ||
+		receipt.SourcePersonID == receipt.NewPersonID || validateUniqueMetadataUUIDs(receipt.MovedIdentityIDs) != nil || validateUniqueMetadataUUIDs(receipt.MovedAssertionIDs) != nil || len(receipt.MovedAssertionIDs) > 1000 ||
 		receipt.CreatedAt != r.CreatedAt {
 		return errors.New("invalid person split receipt authority")
 	}

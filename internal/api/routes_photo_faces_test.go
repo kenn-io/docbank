@@ -72,3 +72,43 @@ func TestPhotoFaceRoutes(t *testing.T) {
 	require.Equal(t, []api.PhotoFace{*created.Face}, unlocked.Faces)
 	require.Equal(t, []api.PhotoPersonAssertion{*created.Assertion}, unlocked.Assertions)
 }
+
+func TestPhotoFaceDecisionRoutes(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	ctx := t.Context()
+	hash, size, err := s.Blobs.Write(strings.NewReader("synthetic portrait"))
+	require.NoError(t, err)
+	node, err := s.CreateFile(ctx, s.RootID(), "portrait.jpg", hash, size, "image/jpeg")
+	require.NoError(t, err)
+	p, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	face, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, "")
+	require.NoError(t, err)
+	path := "/api/v1/photos/versions/" + node.CurrentVersionID + "/face-decisions"
+	response, body := do(t, ts, http.MethodPost, path, nil, api.PhotoFaceDecisionRequest{FaceID: face.FaceID, PersonID: p.PersonID, Action: "name", Revision: 1})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var receipt api.PhotoFaceDecisionResult
+	require.NoError(t, json.Unmarshal([]byte(body), &receipt))
+	require.NotEmpty(t, receipt.ReceiptID)
+	response, body = do(t, ts, http.MethodPost, path, nil, api.PhotoFaceDecisionRequest{FaceID: face.FaceID, Action: "dismiss", Revision: 1})
+	require.Equal(t, http.StatusPreconditionFailed, response.StatusCode, body)
+	require.Contains(t, body, "stale_revision")
+	response, body = get(t, ts, "/api/v1/people/by-id/"+p.PersonID, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var detail api.PersonDetail
+	require.NoError(t, json.Unmarshal([]byte(body), &detail))
+	require.Len(t, detail.Assertions, 1)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/face-decisions/"+receipt.ReceiptID+"/undo", nil, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/face-decisions/"+receipt.ReceiptID+"/undo", nil, nil)
+	require.Equal(t, http.StatusPreconditionFailed, response.StatusCode, body)
+	asset, err := s.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	response, body = do(t, ts, http.MethodPost, path, nil, api.PhotoFaceDecisionRequest{FaceID: face.FaceID, Action: "dismiss", Revision: 3})
+	require.Equal(t, http.StatusForbidden, response.StatusCode, body)
+	require.NotContains(t, body, face.FaceID)
+}

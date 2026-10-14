@@ -62,6 +62,9 @@ func TestGetPhotoFacesMCPPaginatesFacesAndAssertions(t *testing.T) {
 		{FaceID: "00000000-0000-4000-8000-000000000303", ContentVersionID: versionID, Box: document.FaceBox{X: 0.7, Y: 0.2, Width: 0.2, Height: 0.2}, Revision: 1, AssertionID: assertions[0].AssertionID, CreatedAt: stamp},
 		{FaceID: "00000000-0000-4000-8000-000000000304", ContentVersionID: versionID, Box: document.FaceBox{X: 0.7, Y: 0.6, Width: 0.2, Height: 0.2}, Revision: 1, CreatedAt: stamp},
 	}
+	faces[0].RejectedPersonIDs = []string{"00000000-0000-4000-8000-000000000203"}
+	faces[2].Dismissed = true
+	assertions[0].WholePhoto = true
 	page := api.PhotoFacePage{Faces: faces, Assertions: assertions}
 	daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		assert.Equal(t, http.MethodGet, request.Method)
@@ -81,6 +84,9 @@ func TestGetPhotoFacesMCPPaginatesFacesAndAssertions(t *testing.T) {
 	require.EqualValues(t, 2, firstPage["next_offset"])
 	require.Len(t, firstPage["faces"], 2)
 	require.Len(t, firstPage["assertions"], 2)
+	firstFace := firstPage["faces"].([]any)[0].(map[string]any)
+	require.Equal(t, []any{"00000000-0000-4000-8000-000000000203"}, firstFace["rejected_person_ids"])
+	require.Equal(t, true, firstPage["assertions"].([]any)[0].(map[string]any)["whole_photo"])
 
 	last, err := invokeReadTool(t.Context(), lease, "get_photo_faces", map[string]any{"content_version_id": versionID, "limit": 2, "offset": 2})
 	require.NoError(t, err)

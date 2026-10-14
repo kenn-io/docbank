@@ -88,3 +88,48 @@ func TestPhotoFaceClientMapsValidationError(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrInvalidPhotoFace)
 	require.EqualError(t, err, "error executing request: invalid photo face")
 }
+
+func TestPhotoFaceDecisionClient(t *testing.T) {
+	t.Parallel()
+	const version = "11111111-1111-4111-8111-111111111111"
+	const receipt = "22222222-2222-4222-8222-222222222222"
+	const face = "33333333-3333-4333-8333-333333333333"
+	for _, invalid := range []bool{false, true} {
+		t.Run(fmt.Sprint(invalid), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				require.Equal(t, http.MethodPost, r.Method)
+				require.Equal(t, "hidden=synthetic", r.Header.Get("Cookie"))
+				if r.URL.Path == "/api/v1/photos/versions/"+version+"/face-decisions" {
+					var request api.PhotoFaceDecisionRequest
+					require.NoError(t, json.UnmarshalRead(r.Body, &request))
+					require.Equal(t, face, request.FaceID)
+					require.Equal(t, int64(7), request.Revision)
+					require.Equal(t, "dismiss", request.Action)
+				} else {
+					require.Equal(t, "/api/v1/photos/face-decisions/"+receipt+"/undo", r.URL.Path)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				id := receipt
+				if invalid {
+					id = "invalid"
+				}
+				require.NoError(t, json.MarshalWrite(w, api.PhotoFaceDecisionResult{ReceiptID: id}))
+			}))
+			defer server.Close()
+			c := New(server.URL, "synthetic-key")
+			result, err := c.DecidePhotoFace(t.Context(), version, api.PhotoFaceDecisionRequest{FaceID: face, Action: "dismiss", Revision: 7}, "hidden=synthetic")
+			if invalid {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, receipt, result.ReceiptID)
+			}
+			_, err = c.UndoPhotoFaceDecision(t.Context(), receipt, "hidden=synthetic")
+			if invalid {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}

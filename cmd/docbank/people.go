@@ -194,7 +194,7 @@ list_package_custodians.`,
 		if peopleDisplayName == "" {
 			return usageError(errors.New("--display-name is required"))
 		}
-		if len(peopleIdentityIDs)+len(peopleAssignmentIDs)+len(peopleExternal) == 0 {
+		if len(peopleAssertionIDs)+len(peopleIdentityIDs)+len(peopleAssignmentIDs)+len(peopleExternal) == 0 {
 			return usageError(errors.New("split requires at least one identity, assignment, or external identity"))
 		}
 		external := make([]api.PersonExternalUID, 0, len(peopleExternal))
@@ -219,7 +219,7 @@ list_package_custodians.`,
 		}
 		receipt, err := c.SplitPerson(cmd.Context(), args[0], peopleRevision, api.SplitPersonRequest{
 			OperationID: operationID, DisplayName: peopleDisplayName, IdentityIDs: peopleIdentityIDs,
-			AssignmentIDs: peopleAssignmentIDs, ExternalIdentities: external,
+			AssertionIDs: peopleAssertionIDs, AssignmentIDs: peopleAssignmentIDs, ExternalIdentities: external,
 		})
 		if err != nil {
 			return err
@@ -235,7 +235,10 @@ func requirePeopleRevision() error {
 	return nil
 }
 
+var peopleAssertionIDs []string
+
 func init() {
+	peopleSplitCmd.Flags().StringSliceVar(&peopleAssertionIDs, "assertion", nil, "person assertion UUID to move")
 	peopleCmd.AddCommand(peopleListCmd, peopleShowCmd, peopleCreateCmd, peopleRenameCmd,
 		peopleRetireCmd, peopleMergeCmd, peopleSplitCmd)
 	rootCmd.AddCommand(peopleCmd)

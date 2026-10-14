@@ -26,8 +26,7 @@ requested person page.
 Create an operator-owned person with `docbank people create "Ada Lovelace"`.
 Read it with `docbank people show <person-id>` or
 `GET /api/v1/people/by-id/{person_id}`. The detail response includes identity
-IDs, external UIDs, the current revision, and the ID used to reach a merged
-person. It does not list the person's custodian assignments.
+IDs, external UIDs, the current revision, `key_face_id`, and up to 1,000 assertion selectors. `assertions_truncated` reports additional selectors; split a listed batch, then read again. Hidden photo selectors stay locked until an unlock. The response also identifies the ID used to reach a merged person. It does not list the person's custodian assignments.
 
 Split needs the ID of each custodian assignment it moves. The only listing of
 assignment IDs is per package: `GET /api/v1/packages/by-id/{package_id}/custodians`
@@ -50,6 +49,8 @@ in the request body. Merge and split require an operation UUID. Retrying the
 same request returns its saved receipt. A different request with the same UUID
 returns `person_merge_conflict`.
 
+A merge that would assign a rejected person to a face returns `409 person_merge_conflict`. Review the returned visible face IDs before retrying. Locked Hidden conflicts return a notice with no face IDs. Rejected matches follow the surviving person.
+
 A merge returns `422 person_merge_too_large`, and changes nothing, when:
 
 - the merged person would exceed the per-person limit on identities or
@@ -58,8 +59,7 @@ A merge returns `422 person_merge_too_large`, and changes nothing, when:
   The receipt holds 256 KiB of moved IDs, about 6,900 identities, custodian
   assignments, document assertions, and open match candidates combined.
 
-Split moves only the identity IDs, custodian assignment IDs, or external UIDs
-listed in the request. The new display name is required. The store validates
+Split moves only the identity IDs, assertion IDs, custodian assignment IDs, or external UIDs listed in the request. Use `people split --assertion <assertion-id>` for a document or photo assertion. Its faces and selected key face move to the new person in the same transaction. The new display name is required. The store validates
 that every selected member belongs to the source person. A split request
 larger than 1 MiB returns `413` and changes nothing.
 

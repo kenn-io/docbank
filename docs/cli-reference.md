@@ -188,6 +188,11 @@ docbank photos assets promote <path-or-id> [--revision REV] [--kind KIND] [--rol
 docbank photos assets display <asset-id> [file-id] [--revision REV]
 docbank photos faces list <content-version-id>
 docbank photos faces create <content-version-id> [--box X,Y,WIDTH,HEIGHT] [--person ID] [--face-id UUID]
+docbank photos faces name|reject <content-version-id> --face ID --person ID --revision REV
+docbank photos faces retract|dismiss <content-version-id> --face ID --revision REV
+docbank photos faces key <content-version-id> [--face ID] --person ID --revision REV --person-revision REV
+docbank photos faces mark|retract-mark <content-version-id> --person ID --revision REV
+docbank photos faces undo <receipt-id>
 docbank photos settings show
 docbank photos settings set raw|image [--revision REV]
 docbank photos settings reset [--revision REV]
@@ -262,18 +267,18 @@ docbank people create <display-name>
 docbank people rename <person-id> <display-name> --revision REV
 docbank people retire <person-id> --revision REV
 docbank people merge <survivor-id> <absorbed-id> --revision REV --absorbed-revision REV [--operation-id UUID]
-docbank people split <person-id> --revision REV --display-name NAME [--identity ID] [--assignment ID] [--external JSON] [--operation-id UUID]
+docbank people split <person-id> --revision REV --display-name NAME [--identity ID] [--assertion ID] [--assignment ID] [--external JSON] [--operation-id UUID]
 ```
 
 Person commands use the daemon API and emit the same JSON records as the HTTP
 client. List accepts a folded display-name prefix. `show` includes identity,
-external UID, and revision data, but not package custodian assignment IDs. Get
+external UID, assertion selectors, key face, and revision data. Package custodian assignment IDs come from package reads. Get
 assignment IDs from `GET /api/v1/packages/by-id/{package_id}/custodians` or MCP
 `list_package_custodians`. See [People](usage/people.md#create-and-inspect) for
 the full split rules. Mutations use the revision supplied by the caller. The
 merge and split operation IDs make retries replayable. When you omit one, the
 CLI generates it and prints it to stderr before the request. A split needs at
-least one identity, assignment, or external UID.
+least one identity, assertion, assignment, or external UID.
 
 ## docbank stat
 

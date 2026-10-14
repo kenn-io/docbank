@@ -130,7 +130,7 @@ func registerPeopleRoutes(api huma.API, d Deps, g *gate) {
 				external[index] = store.PersonExternalUID{System: identity.System, ArchiveID: identity.ArchiveID, UID: identity.UID}
 			}
 			receipt, callErr := d.Store.SplitPerson(ctx, store.PersonSplitRequest{PersonID: in.PersonID, OperationID: in.Body.OperationID,
-				DisplayName: in.Body.DisplayName, Revision: revision, IdentityIDs: in.Body.IdentityIDs, AssignmentIDs: in.Body.AssignmentIDs, External: external})
+				DisplayName: in.Body.DisplayName, Revision: revision, AssertionIDs: in.Body.AssertionIDs, IdentityIDs: in.Body.IdentityIDs, AssignmentIDs: in.Body.AssignmentIDs, External: external})
 			if callErr != nil {
 				return FromStoreError(callErr)
 			}
