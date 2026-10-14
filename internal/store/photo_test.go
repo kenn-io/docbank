@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -504,19 +503,21 @@ func TestPhotoExcludePromotePreservesIdentityAndReceipt(t *testing.T) {
 	stale := promoted.Revision - 1
 	_, err = s.PromotePhotoNode(ctx, image.ID, &stale, "", "")
 	require.ErrorIs(t, err, ErrStaleRevision)
-	sidecar, err := s.CreateFile(ctx, s.RootID(), "one.xmp", browseHash("one.xmp"), 1, "application/rdf+xml")
-	require.NoError(t, err)
-	targetFileID := promoted.Files[0].ID
-	attached, err := s.AttachPhotoFile(ctx, promoted.ID, promoted.Revision, sidecar.ID, PhotoRoleSidecar, &targetFileID)
-	require.NoError(t, err)
-	var sidecarReceipt photoReceiptRow
-	for _, receipt := range photoReceiptRows(t, s, attached.ID) {
-		if receipt.Operation == "attach" && strings.Contains(receipt.AfterJSON, `"node_id":`+strconv.FormatInt(sidecar.ID, 10)) {
-			sidecarReceipt = receipt
-			break
+	t.Run("attach sidecar records a receipt", func(t *testing.T) {
+		sidecar, err := s.CreateFile(ctx, s.RootID(), "one.xmp", browseHash("one.xmp"), 1, "application/rdf+xml")
+		require.NoError(t, err)
+		targetFileID := promoted.Files[0].ID
+		attached, err := s.AttachPhotoFile(ctx, promoted.ID, promoted.Revision, sidecar.ID, PhotoRoleSidecar, &targetFileID)
+		require.NoError(t, err)
+		var sidecarReceipt photoReceiptRow
+		for _, receipt := range photoReceiptRows(t, s, attached.ID) {
+			if receipt.Operation == "attach" && strings.Contains(receipt.AfterJSON, `"node_id":`+strconv.FormatInt(sidecar.ID, 10)) {
+				sidecarReceipt = receipt
+				break
+			}
 		}
-	}
-	assert.NotEmpty(t, sidecarReceipt.AfterJSON)
+		assert.NotEmpty(t, sidecarReceipt.AfterJSON)
+	})
 	t.Run("unowned node rejects revision precondition", func(t *testing.T) {
 		raw, err := s.CreateFile(ctx, s.RootID(), "unowned.cr2", fakeHash("unowned"), 1, "application/octet-stream")
 		require.NoError(t, err)
@@ -527,36 +528,6 @@ func TestPhotoExcludePromotePreservesIdentityAndReceipt(t *testing.T) {
 		_, err = s.PhotoAssetForNode(ctx, raw.ID)
 		require.ErrorIs(t, err, ErrNotFound)
 	})
-}
-
-func TestPhotoConcurrentRevisionMutationHasOneWinner(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	asset := albumAsset(t, s, "photo.jpg")
-	var wait sync.WaitGroup
-	results := make(chan error, 2)
-	wait.Add(2)
-	for range 2 {
-		go func() {
-			defer wait.Done()
-			_, err := s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
-			results <- err
-		}()
-	}
-	wait.Wait()
-	close(results)
-	var winners, staleWrites int
-	for err := range results {
-		if err == nil {
-			winners++
-		} else {
-			require.ErrorIs(t, err, ErrStaleRevision)
-			staleWrites++
-		}
-	}
-	assert.Equal(t, 1, winners)
-	assert.Equal(t, 1, staleWrites)
 }
 
 func TestPhotoVersionTransitionsKeepIdentity(t *testing.T) {

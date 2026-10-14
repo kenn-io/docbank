@@ -228,13 +228,15 @@ func TestPhotoImportSeparatePhotosAreReported(t *testing.T) {
 	imageResult, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(elsewhere))
 	require.NoError(t, err)
 	require.NotEqual(t, rawResult.Asset.ID, imageResult.Asset.ID)
-	video, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(photoImportTestMember(
-		filepath.Join(root, "IMG.MOV"), PhotoRoleVideo, browseHash("mov"), "video/quicktime")))
-	require.NoError(t, err)
-	assert.NotEqual(t, rawResult.Asset.ID, video.Asset.ID)
-	assert.NotEqual(t, imageResult.Asset.ID, video.Asset.ID)
-	assert.Equal(t, PhotoKindVideo, video.Asset.Kind)
-	assert.Len(t, video.Asset.Files, 1)
+	t.Run("video is separate from photos with the same stem", func(t *testing.T) {
+		video, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(photoImportTestMember(
+			filepath.Join(root, "IMG.MOV"), PhotoRoleVideo, browseHash("mov"), "video/quicktime")))
+		require.NoError(t, err)
+		assert.NotEqual(t, rawResult.Asset.ID, video.Asset.ID)
+		assert.NotEqual(t, imageResult.Asset.ID, video.Asset.ID)
+		assert.Equal(t, PhotoKindVideo, video.Asset.Kind)
+		assert.Len(t, video.Asset.Files, 1)
+	})
 
 	duplicate := raw
 	duplicate.OriginalPath = filepath.Join(filepath.Dir(elsewhere.OriginalPath), "IMG.ARW")
