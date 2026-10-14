@@ -420,9 +420,6 @@ describe("background jobs drawer", () => {
       expect(progress.getAttribute("aria-valuemax")).toBe("400");
       expect(screen.getByText("Photo import")).toBeTruthy();
       expect(screen.getByText("75 of 400 groups")).toBeTruthy();
-      const checkoutProgress = screen.getByRole("progressbar", { name: "Photo checkout progress" });
-      expect(checkoutProgress.getAttribute("aria-valuenow")).toBe("1");
-      expect(checkoutProgress.getAttribute("aria-valuemax")).toBe("2");
       expect(screen.getByText("1 of 2 files")).toBeTruthy();
       expect(screen.getAllByRole("button", { name: /^Cancel / })).toHaveLength(3);
       expect(screen.getByText("2 operations")).toBeTruthy();

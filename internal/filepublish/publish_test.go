@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -13,68 +14,34 @@ import (
 )
 
 func TestPublishHonorsNoReplaceAndReportsPostInstallDurability(t *testing.T) {
-	for _, method := range []string{"path", "root"} {
-		t.Run(method, func(t *testing.T) {
-			dir := t.TempDir()
-			root, err := os.OpenRoot(dir)
-			require.NoError(t, err)
-			defer func() { _ = root.Close() }()
-			failure := errors.New("synthetic directory sync failure")
-			publish := func(name, value, destination string, overwrite, failSync bool) (bool, error) {
-				if method == "root" {
-					stage, err := CreateRootStage(root)
-					require.NoError(t, err)
-					defer func() { require.NoError(t, stage.Cleanup()) }()
-					_, err = stage.File.WriteString(value)
-					require.NoError(t, err)
-					require.NoError(t, stage.File.Close())
-					stage.File = nil
-					if failSync {
-						stage.syncDirectory = func(*os.Root, string) error { return failure }
-					}
-					published, err := stage.Publish(destination)
-					if !published {
-						require.NoError(t, stage.Cleanup())
-					}
-					_, statErr := root.Stat(stage.name)
-					require.ErrorIs(t, statErr, os.ErrNotExist)
-					return published, err
-				}
-				path := filepath.Join(dir, name)
-				require.NoError(t, os.WriteFile(path, []byte(value), 0o600))
-				if failSync {
-					previous := syncDirectory
-					syncDirectory = func(string) error { return failure }
-					defer func() { syncDirectory = previous }()
-				}
-				return Publish(path, filepath.Join(dir, destination), overwrite)
-			}
-			published, err := publish("first.tmp", "first", "out.pdf", false, false)
-			require.NoError(t, err)
-			require.True(t, published)
-			published, err = publish("second.tmp", "second", "out.pdf", false, false)
-			if method == "path" {
-				require.ErrorIs(t, err, os.ErrExist)
-			} else {
-				require.Error(t, err)
-			}
-			require.False(t, published)
-			got, err := root.ReadFile("out.pdf")
-			require.NoError(t, err)
-			require.Equal(t, "first", string(got))
-			destination := "out.pdf"
-			if method == "root" {
-				destination = "durable.pdf"
-			}
-			published, err = publish("replace.tmp", "replacement", destination, true, true)
-			require.ErrorIs(t, err, failure)
-			require.ErrorContains(t, err, "directory sync")
-			require.True(t, published)
-			got, err = root.ReadFile(destination)
-			require.NoError(t, err)
-			require.Equal(t, "replacement", string(got))
-		})
+	dir := t.TempDir()
+	failure := errors.New("synthetic directory sync failure")
+	publish := func(name, value string, overwrite, failSync bool) (bool, error) {
+		path := filepath.Join(dir, name)
+		require.NoError(t, os.WriteFile(path, []byte(value), 0o600))
+		if failSync {
+			previous := syncDirectory
+			syncDirectory = func(string) error { return failure }
+			defer func() { syncDirectory = previous }()
+		}
+		return Publish(path, filepath.Join(dir, "out.pdf"), overwrite)
 	}
+	published, err := publish("first.tmp", "first", false, false)
+	require.NoError(t, err)
+	require.True(t, published)
+	published, err = publish("second.tmp", "second", false, false)
+	require.ErrorIs(t, err, os.ErrExist)
+	require.False(t, published)
+	got, err := os.ReadFile(filepath.Join(dir, "out.pdf"))
+	require.NoError(t, err)
+	require.Equal(t, "first", string(got))
+	published, err = publish("replace.tmp", "replacement", true, true)
+	require.ErrorIs(t, err, failure)
+	require.ErrorContains(t, err, "directory sync")
+	require.True(t, published)
+	got, err = os.ReadFile(filepath.Join(dir, "out.pdf"))
+	require.NoError(t, err)
+	require.Equal(t, "replacement", string(got))
 }
 
 func TestRootStageChecksDestinationIdentityAndSyncsParents(t *testing.T) {
@@ -153,9 +120,32 @@ func TestRootStageChecksDestinationIdentityAndSyncsParents(t *testing.T) {
 				require.True(t, installed)
 				require.NoError(t, err)
 				require.Equal(t, filepath.Join(root.Name(), filepath.Dir(relativePath)), synced[4])
+				second, err := CreateRootStage(root)
+				require.NoError(t, err)
+				defer func() { require.NoError(t, second.Cleanup()) }()
+				_, err = second.File.WriteString("replacement")
+				require.NoError(t, err)
+				require.NoError(t, second.File.Close())
+				second.File = nil
+				installed, err = second.Publish(relativePath)
+				if runtime.GOOS == "windows" {
+					var status interface{ Errno() syscall.Errno }
+					require.ErrorAs(t, err, &status)
+					err = status.Errno()
+				}
+				require.ErrorIs(t, err, os.ErrExist)
+				require.False(t, installed)
 				content, err := root.ReadFile(relativePath)
 				require.NoError(t, err)
 				require.Equal(t, "verified", string(content))
+				second.syncDirectory = func(*os.Root, string) error { return failure }
+				durablePath := filepath.Join(filepath.Dir(relativePath), "durable.jpg")
+				installed, err = second.Publish(durablePath)
+				require.ErrorIs(t, err, failure)
+				require.True(t, installed)
+				content, err = root.ReadFile(durablePath)
+				require.NoError(t, err)
+				require.Equal(t, "replacement", string(content))
 			}
 		})
 	}

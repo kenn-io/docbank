@@ -96,15 +96,15 @@ func TestPhotoCheckoutClients(t *testing.T) {
 	mismatchedState.Checkout.State = "running"
 	unfinished := created
 	unfinished.Checkout.State, unfinished.Operation.State = "completed", "completed"
-	mismatchedFailure := created
-	mismatchedFailure.Checkout.State, mismatchedFailure.Operation.State = "failed", "failed"
-	mismatchedFailure.Checkout.Error = "checkout error"
-	mismatchedFailure.Operation.Error = mismatchedFailure.Checkout.Error
-	mismatchedFailure.Operation.FinishedAt = "2026-01-01T00:00:00Z"
-	result, err = create(mismatchedFailure)
+	failedCreation := created
+	failedCreation.Checkout.State, failedCreation.Operation.State = "failed", "failed"
+	failedCreation.Checkout.Error = "checkout error"
+	failedCreation.Operation.Error = failedCreation.Checkout.Error
+	failedCreation.Operation.FinishedAt = "2026-01-01T00:00:00Z"
+	result, err = create(failedCreation)
 	require.NoError(t, err)
-	require.Equal(t, mismatchedFailure, result)
-	mismatchedFailure.Operation.Error = "different operation error"
+	require.Equal(t, failedCreation, result)
+	failedCreation.Operation.Error = "different operation error"
 	for _, invalid := range []struct {
 		response api.PhotoCheckoutCreateResult
 		message  string
@@ -112,7 +112,7 @@ func TestPhotoCheckoutClients(t *testing.T) {
 		{api.PhotoCheckoutCreateResult{Checkout: checkout, Operation: api.StorageOperation{ID: operationID, Kind: "repair", State: "queued"}}, "invalid photo checkout creation operation"},
 		{mismatchedState, "invalid photo checkout creation operation"},
 		{unfinished, "terminal photo checkout creation has no finish time"},
-		{mismatchedFailure, "failed photo checkout creation has no terminal error"},
+		{failedCreation, "failed photo checkout creation has no terminal error"},
 	} {
 		_, err = create(invalid.response)
 		require.ErrorContains(t, err, invalid.message)

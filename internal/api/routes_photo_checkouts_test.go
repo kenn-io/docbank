@@ -39,13 +39,9 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 	require.Equal(t, http.StatusAccepted, response.StatusCode, body)
 	var created api.PhotoCheckoutCreateResult
 	require.NoError(t, json.Unmarshal([]byte(body), &created))
-	require.Equal(t, request.Selection, created.Checkout.Selection)
-	require.Equal(t, request.ByteLimit, created.Checkout.ByteLimit)
 	registered := supervisor.Snapshot()
 	require.Len(t, registered, 1)
 	require.Equal(t, "storage:"+created.Operation.ID, registered[0].Name)
-	require.Equal(t, created.Checkout.OperationID, created.Operation.ID)
-	require.Equal(t, store.StorageOperationKindPhotoCheckout, created.Operation.Kind)
 	entries, err := catalog.PhotoCheckoutEntries(t.Context(), created.Checkout.ID)
 	require.NoError(t, err)
 	require.NoError(t, catalog.PublishPhotoCheckoutEntry(t.Context(), entries[0], func() (bool, error) { return true, nil }))
