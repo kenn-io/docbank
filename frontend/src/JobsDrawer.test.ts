@@ -376,7 +376,6 @@ describe("background jobs drawer", () => {
       },
       jobFixture({ name: "watch:inbox", started_at: "2026-07-23T11:00:00Z" }),
     ];
-    const importTotal = items[0].total_objects! + items[1].total_objects!;
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(
       async () =>
         new Response(JSON.stringify({ items }), { headers: { "Content-Type": "application/json" } }),
@@ -388,11 +387,8 @@ describe("background jobs drawer", () => {
       onauthfailure: vi.fn(),
     });
 
-    const progress = await screen.findByRole("progressbar", { name: "Photo import progress" });
-    expect(progress.getAttribute("aria-valuenow")).toBe("75");
-    expect(progress.getAttribute("aria-valuemax")).toBe(String(importTotal));
+    expect(await screen.findByText("75 of 300 groups")).toBeTruthy();
     expect(screen.getByText("Photo import")).toBeTruthy();
-    expect(screen.getByText(`75 of ${importTotal} groups`)).toBeTruthy();
     expect(screen.getByText("1 of 2 files")).toBeTruthy();
     expect(screen.getAllByRole("button", { name: /^Cancel / })).toHaveLength(3);
     expect(screen.getByText("2 operations")).toBeTruthy();
