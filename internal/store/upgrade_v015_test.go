@@ -105,7 +105,7 @@ func seedV0150PendingWork(t *testing.T, db *sql.DB, legacy *Store) (photoNodeID 
 	grantRenditionJobConsent(t, legacy, request)
 	job, waiter, err := legacy.EnqueueRenditionJob(ctx, request)
 	require.NoError(t, err)
-	now := time.Now().UTC()
+	now := time.Now().UTC().Add(time.Second)
 	claim, err := legacy.ClaimRenditionJob(ctx, job.ID, "worker:released", now, time.Minute)
 	require.NoError(t, err)
 	_, err = legacy.BeginRenditionProvider(ctx, claim, waiter.ID, now.Add(time.Second), renditionJobTestSnapshot(request))
