@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -58,10 +59,18 @@ func TestPhotoImportRoutes(t *testing.T) {
 
 		require.Eventually(t, func() bool { return tracker.IdleFor() == 0 }, time.Second, time.Millisecond)
 		assert.Nil(t, supervisor.Snapshot()[0].FinishedAt)
+		require.Never(t, func() bool {
+			_, err := catalog.NodeByPath(t.Context(), "/photos/capture.JPG")
+			return err == nil
+		}, 2*ingest.DefaultPhotoImportSettleInterval, 10*time.Millisecond)
+		_, err = catalog.NodeByPath(t.Context(), "/photos/capture.JPG")
+		require.ErrorIs(t, err, store.ErrNotFound)
 		return nil
 	}))
 	require.Eventually(t, func() bool { return supervisor.Snapshot()[0].FinishedAt != nil }, 5*time.Second, 10*time.Millisecond)
 	assert.Positive(t, tracker.IdleFor())
+	_, err := catalog.NodeByPath(t.Context(), "/photos/capture.JPG")
+	require.NoError(t, err)
 
 	pollCtx, cancelPoll := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancelPoll()

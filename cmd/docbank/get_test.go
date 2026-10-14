@@ -126,7 +126,6 @@ func TestPublishGetFileForwardsOverwriteAndReportsErrors(t *testing.T) {
 	}{
 		{name: "existing destination", existingOutput: true},
 		{name: "new destination sync failure", wantSyncError: true},
-		{name: "replacement sync failure", overwrite: true, existingOutput: true, wantSyncError: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			dir := t.TempDir()

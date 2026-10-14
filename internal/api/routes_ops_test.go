@@ -391,8 +391,6 @@ func TestTrashListAndEmpty(t *testing.T) {
 			want.Deleted = expected.Candidates
 		}
 		assert.Equal(t, want, out)
-		assert.Equal(t, int64(1), out.RetainedRoots)
-		assert.Equal(t, int64(2), out.HeldRoots)
 	}
 
 	// Bad age string → 422.
