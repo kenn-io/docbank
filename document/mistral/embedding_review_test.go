@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -82,82 +83,110 @@ func (resolve embeddingSecretFunc) ResolveSecret(ctx context.Context, binding st
 }
 
 func TestMistralEmbeddingAttemptTimeouts(t *testing.T) {
-	for _, stage := range []string{"credentials", "headers", "body"} {
-		for _, outcome := range []string{"recover", "exhaust", "caller_cancel"} {
+	for _, stage := range []string{"credentials", "headers", "body", "retry_wait"} {
+		for _, outcome := range []string{"recover", "exhaust", "caller_cancel", "caller_deadline"} {
+			if (stage == "retry_wait") != (outcome == "caller_deadline") {
+				continue
+			}
+			// credentials/recover covers the shared stage-independent retry loop; headers/body exhaust cover stage-specific timeout detection.
+			if stage != "credentials" && outcome == "recover" {
+				continue
+			}
 			t.Run(stage+"/"+outcome, func(t *testing.T) {
-				ctx, cancel := context.WithCancel(t.Context())
-				defer cancel()
-				var requests atomic.Int32
-				var resolutions int
-				response := mistralEmbeddingBody(t, []int{0})
-				endpoint, egress, resolver := mistralFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					count := requests.Add(1)
-					_, _ = io.Copy(io.Discard, r.Body)
-					w.Header().Set("Content-Type", "application/json")
-					if stage != "credentials" && (outcome != "recover" || count < 3) {
-						if stage == "body" {
-							w.WriteHeader(http.StatusOK)
-							assert.NoError(t, http.NewResponseController(w).Flush())
-						}
-						if outcome == "caller_cancel" {
-							cancel()
-						}
-						select {
-						case <-r.Context().Done():
-						case <-time.After(2 * time.Second):
-						}
-						return
+				// Virtual time keeps connection latency out of the attempt deadline.
+				synctest.Test(t, func(t *testing.T) {
+					ctx := t.Context()
+					var cancel context.CancelFunc
+					if outcome == "caller_deadline" {
+						ctx, cancel = context.WithTimeout(ctx, 20*time.Millisecond)
+					} else {
+						ctx, cancel = context.WithCancel(ctx)
 					}
-					_, _ = w.Write(response)
-				}))
-				secrets := embeddingSecretFunc(func(attemptCtx context.Context, _ string) (string, error) {
-					resolutions++
-					if stage == "credentials" && (outcome != "recover" || resolutions < 3) {
-						if outcome == "caller_cancel" {
-							cancel()
+					defer cancel()
+					var requests atomic.Int32
+					var resolutions int
+					secrets := embeddingSecretFunc(func(attemptCtx context.Context, _ string) (string, error) {
+						resolutions++
+						if stage == "credentials" && (outcome != "recover" || resolutions < 3) {
+							if outcome == "caller_cancel" {
+								cancel()
+							}
+							<-attemptCtx.Done()
+							return "", attemptCtx.Err()
 						}
-						<-attemptCtx.Done()
-						return "", attemptCtx.Err()
+						return "synthetic-secret", nil
+					})
+					profile := testEmbeddingProfile(t)
+					profile.RequestTimeout, profile.MaxRetries = 100*time.Millisecond, 3
+					if stage != "retry_wait" {
+						profile.MaxRetryDelay = time.Nanosecond
 					}
-					return "synthetic-secret", nil
-				})
-				profile := testEmbeddingProfile(t)
-				profile.Endpoint, profile.EgressPolicy = endpoint, egress
-				profile.RequestTimeout, profile.MaxRetries = 100*time.Millisecond, 3
-				profile.MaxRetryDelay = time.Nanosecond
-				recomputeMistralEmbeddingProfile(t, &profile)
-				provider, err := newMistralEmbeddingTestProvider(t, profile, secrets, resolver)
-				require.NoError(t, err)
-				result, err := provider.Embed(ctx, []document.EmbeddingInput{{Key: "first", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: "first"}}, embeddingAuthorization(profile.Descriptor))
-				switch outcome {
-				case "recover":
+					recomputeMistralEmbeddingProfile(t, &profile)
+					provider, err := newMistralEmbeddingTestProvider(t, profile, secrets, nil)
 					require.NoError(t, err)
-					require.Len(t, result.Vectors, 1)
-					require.Equal(t, 3, resolutions)
-					require.NoError(t, ctx.Err())
-				case "exhaust":
-					require.ErrorIs(t, err, ErrTransientResponse)
-					require.ErrorIs(t, err, context.DeadlineExceeded)
-					require.NoError(t, ctx.Err())
-					require.Equal(t, 3, resolutions)
-					require.Equal(t, 2, MetricsFromError(err).Retries)
-				case "caller_cancel":
-					require.ErrorIs(t, err, context.Canceled)
-					require.NotErrorIs(t, err, ErrTransientResponse)
-					require.Equal(t, 1, resolutions)
-					require.Zero(t, MetricsFromError(err).Retries)
-				}
-				wantRequests := resolutions
-				if stage == "credentials" {
-					wantRequests = 0
-					if outcome == "recover" {
-						wantRequests = 1
+					response := mistralEmbeddingBody(t, []int{0})
+					server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						requests.Add(1)
+						_, _ = io.Copy(io.Discard, r.Body)
+						if stage == "retry_wait" {
+							w.Header().Set("Retry-After", "60")
+							w.WriteHeader(http.StatusServiceUnavailable)
+							return
+						}
+						w.Header().Set("Content-Type", "application/json")
+						if stage != "credentials" {
+							if stage == "body" {
+								w.WriteHeader(http.StatusOK)
+								assert.NoError(t, http.NewResponseController(w).Flush())
+							}
+							if outcome == "caller_cancel" {
+								if stage == "body" {
+									// Let the client enter the body read before cancelling.
+									synctest.Wait()
+								}
+								cancel()
+							}
+							<-r.Context().Done()
+							return
+						}
+						_, _ = w.Write(response)
+					}))
+					provider.http = server.Client()
+					result, err := provider.Embed(ctx, []document.EmbeddingInput{{Key: "first", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: "first"}}, embeddingAuthorization(profile.Descriptor))
+					switch outcome {
+					case "recover":
+						require.NoError(t, err)
+						require.Len(t, result.Vectors, 1)
+						require.Equal(t, 3, resolutions)
+					case "exhaust":
+						require.ErrorIs(t, err, ErrTransientResponse)
+						require.ErrorIs(t, err, context.DeadlineExceeded)
+						require.Equal(t, 3, resolutions)
+						require.Equal(t, 2, MetricsFromError(err).Retries)
+					case "caller_cancel":
+						require.ErrorIs(t, err, context.Canceled)
+						require.NotErrorIs(t, err, ErrTransientResponse)
+						require.Equal(t, 1, resolutions)
+						require.Zero(t, MetricsFromError(err).Retries)
+					case "caller_deadline":
+						require.ErrorIs(t, err, context.DeadlineExceeded)
+						require.NotErrorIs(t, err, ErrTransientResponse)
+						metrics := MetricsFromError(err)
+						require.Equal(t, 1, metrics.Requests)
+						require.Equal(t, 1, metrics.Retries)
 					}
-				}
-				require.EqualValues(t, wantRequests, requests.Load())
-				if err != nil {
-					require.Equal(t, wantRequests, MetricsFromError(err).Requests)
-				}
+					wantRequests := resolutions
+					if stage == "credentials" {
+						wantRequests = 0
+						if outcome == "recover" {
+							wantRequests = 1
+						}
+					}
+					require.EqualValues(t, wantRequests, requests.Load())
+					if err != nil {
+						require.Equal(t, wantRequests, MetricsFromError(err).Requests)
+					}
+				})
 			})
 		}
 	}

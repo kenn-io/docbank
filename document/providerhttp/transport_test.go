@@ -272,37 +272,95 @@ func TestEgressPreservesTLSIdentityAndEnforcesSPKIPin(t *testing.T) {
 func TestEgressBoundsTLSHandshake(t *testing.T) {
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, listener.Close()) })
-	accepted := make(chan net.Conn, 1)
+	accepted := make(chan net.Conn, 2)
+	acceptDone := make(chan struct{})
 	go func() {
-		connection, acceptErr := listener.Accept()
-		if acceptErr == nil {
+		defer close(acceptDone)
+		for range 2 {
+			connection, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
 			accepted <- connection
 		}
 	}()
+	t.Cleanup(func() {
+		_ = listener.Close()
+		<-acceptDone
+		for {
+			select {
+			case connection := <-accepted:
+				_ = connection.Close()
+			default:
+				return
+			}
+		}
+	})
 	_, port := endpoint(t, listener.Addr())
-	transport, err := providerhttp.NewTransport(providerhttp.EgressPolicy{
-		Scheme: "https", Host: "127.0.0.1", Port: port,
-		AllowedCIDRs:        []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")},
-		TLSHandshakeTimeout: 25 * time.Millisecond,
-	}, &recordingResolver{})
-	require.NoError(t, err)
-	started := time.Now()
+	newTransport := func(t *testing.T, handshakeTimeout time.Duration) *http.Transport {
+		t.Helper()
+		transport, err := providerhttp.NewTransport(providerhttp.EgressPolicy{
+			Scheme: "https", Host: "127.0.0.1", Port: port,
+			AllowedCIDRs:        []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")},
+			TLSHandshakeTimeout: handshakeTimeout,
+		}, &recordingResolver{})
+		require.NoError(t, err)
+		return transport
+	}
+	takeAccepted := func(t *testing.T) {
+		t.Helper()
+		select {
+		case connection := <-accepted:
+			require.NoError(t, connection.Close())
+		case <-time.After(time.Second):
+			require.Fail(t, "provider connection was not accepted")
+		}
+	}
 
-	response, err := (&http.Client{Transport: transport}).Get(
-		"https://127.0.0.1:" + strconv.Itoa(int(port)),
-	)
-	if response != nil {
-		require.NoError(t, response.Body.Close())
-	}
-	require.ErrorIs(t, err, context.DeadlineExceeded)
-	assert.Less(t, time.Since(started), time.Second)
-	select {
-	case connection := <-accepted:
-		require.NoError(t, connection.Close())
-	case <-time.After(time.Second):
-		require.Fail(t, "provider connection was not accepted")
-	}
+	t.Run("policy timeout", func(t *testing.T) {
+		transport := newTransport(t, 25*time.Millisecond)
+		result := make(chan error, 1)
+		go func() {
+			response, err := (&http.Client{Transport: transport}).Get(
+				"https://127.0.0.1:" + strconv.Itoa(int(port)),
+			)
+			if response != nil {
+				_ = response.Body.Close()
+			}
+			result <- err
+		}()
+		var requestErr error
+		select {
+		case requestErr = <-result:
+		case <-time.After(time.Second):
+			require.Fail(t, "TLS handshake exceeded its timeout")
+		}
+		require.ErrorIs(t, requestErr, context.DeadlineExceeded)
+		takeAccepted(t)
+	})
+	t.Run("request context deadline", func(t *testing.T) {
+		transport := newTransport(t, 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		started := time.Now()
+		dialResult := make(chan error, 1)
+		go func() {
+			connection, dialErr := transport.DialTLSContext(ctx, "tcp",
+				net.JoinHostPort("127.0.0.1", strconv.Itoa(int(port))))
+			if connection != nil {
+				_ = connection.Close()
+			}
+			dialResult <- dialErr
+		}()
+		select {
+		case dialErr := <-dialResult:
+			require.ErrorIs(t, dialErr, context.DeadlineExceeded)
+			assert.Less(t, time.Since(started), 3*time.Second)
+		case <-time.After(5 * time.Second):
+			require.Fail(t, "request context did not bound the TLS handshake")
+		}
+		takeAccepted(t)
+	})
 }
 
 func TestEgressPolicyIsImmutableAfterTransportCreation(t *testing.T) {

@@ -455,33 +455,38 @@ func TestClientRequestTimeoutInterruptsBlockedUpload(t *testing.T) {
 }
 
 func TestClientDistinguishesRequestTimeoutFromCallerCancellationAfterSubmission(t *testing.T) {
-	fixture := newFixture(t, "pdf", "application/pdf", "report.pdf", testPDF(1))
-
 	t.Run("request timeout", func(t *testing.T) {
-		fixture.profile.RequestTimeout = 20 * time.Millisecond
-		fixture.profile.Descriptor = descriptorFor(t, fixture.profile)
-		fixture = fixture.withDescriptor(fixture.profile.Descriptor)
-		client := newClient(t, fixture.profile, testSecrets{"marker-front": "secret"}, roundTripFunc(func(request *http.Request) (*http.Response, error) {
-			<-request.Context().Done()
-			return nil, request.Context().Err()
-		}))
+		synctest.Test(t, func(t *testing.T) {
+			fixture := newFixture(t, "pdf", "application/pdf", "report.pdf", testPDF(1))
+			fixture.profile.RequestTimeout = 20 * time.Millisecond
+			fixture.profile.Descriptor = descriptorFor(t, fixture.profile)
+			fixture = fixture.withDescriptor(fixture.profile.Descriptor)
+			client := newClient(t, fixture.profile, testSecrets{"marker-front": "secret"}, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				<-request.Context().Done()
+				return nil, request.Context().Err()
+			}))
 
-		_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
+			_, err := client.Render(t.Context(), fixture.upload(), fixture.authorization)
 
-		assertProviderCode(t, err, document.RenditionErrorAmbiguousSubmission)
+			assertProviderCode(t, err, document.RenditionErrorAmbiguousSubmission)
+		})
 	})
 
 	t.Run("caller cancellation", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(t.Context())
-		client := newClient(t, fixture.profile, testSecrets{"marker-front": "secret"}, roundTripFunc(func(request *http.Request) (*http.Response, error) {
-			cancel()
-			<-request.Context().Done()
-			return nil, request.Context().Err()
-		}))
+		synctest.Test(t, func(t *testing.T) {
+			fixture := newFixture(t, "pdf", "application/pdf", "report.pdf", testPDF(1))
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			client := newClient(t, fixture.profile, testSecrets{"marker-front": "secret"}, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				cancel()
+				<-request.Context().Done()
+				return nil, request.Context().Err()
+			}))
 
-		_, err := client.Render(ctx, fixture.upload(), fixture.authorization)
+			_, err := client.Render(ctx, fixture.upload(), fixture.authorization)
 
-		assertProviderCode(t, err, document.RenditionErrorCanceled)
+			assertProviderCode(t, err, document.RenditionErrorCanceled)
+		})
 	})
 }
 

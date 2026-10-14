@@ -13,6 +13,236 @@ vi.mock("./PhotoMap.svelte",()=>({default:(_anchor:unknown,props:NonNullable<typ
 
 afterEach(() => { cleanup(); map.props=undefined; document.querySelectorAll('meta[name="docbank-map-tiles"]').forEach(meta=>meta.remove()); history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); new Photos("scoped", vi.fn()).setDensity("comfortable"); });
 
+it("removes a delayed direct-link photo fragment on tab switch without history.back", async () => {
+  history.replaceState(null, "", "/photos/hidden#web_session=synthetic&web_upload_secret=proof&photo=photo-1");
+  storage();
+  let finish!: (response: Response) => void;
+  stubPhotoFetch(vi.fn(async (url: string) => {
+    if (url.endsWith("/photos/hidden")) return new Promise<Response>(resolve => finish = resolve);
+    return Response.json({ items: [], total: 0 });
+  }));
+  const back = vi.spyOn(history, "back");
+  render(App);
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  expect(history.state?.photoReturn).toBeUndefined();
+  expect(location.hash).toBe("#photo=photo-1");
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+  await fireEvent(document, new Event("visibilitychange"));
+  expect(back).not.toHaveBeenCalled();
+  expect(location.hash).toBe("");
+  finish(Response.json({ configured: true }));
+});
+
+it("locks once when an authenticated photo direct link starts in a hidden tab", async () => {
+  history.replaceState(null, "", "/photos/hidden#web_session=synthetic&web_upload_secret=proof&photo=photo-1");
+  storage();
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+  const fetcher = vi.fn(async (_url: string) => Response.json({ configured: true, items: [], total: 0 }));
+  stubPhotoFetch(fetcher);
+  const locks = () => fetcher.mock.calls.filter(([url]) => url.endsWith("/photos/hidden/lock"));
+  render(App);
+  await waitFor(() => expect(locks().length).toBeGreaterThan(0));
+  await act(async () => {});
+  expect(location.hash).toBe("");
+  expect(locks()).toHaveLength(1);
+  await fireEvent(window, new Event("pagehide"));
+  expect(locks()).toHaveLength(1);
+});
+
+it("locks once when sign-in completes after the Photos tab was hidden", async () => {
+  history.replaceState(null, "", "/photos/hidden");
+  storage();
+  let finish!: (response: Response) => void;
+  let locks = 0;
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    if (url.endsWith("/web-auth")) return Response.json({ enabled: true });
+    if (url.endsWith("/login")) return new Promise<Response>(resolve => finish = resolve);
+    if (url.endsWith("/photos/hidden/lock")) locks++;
+    return Response.json({ configured: true, items: [], total: 0 });
+  }));
+  render(App);
+  await fireEvent.input(await screen.findByLabelText("API key"), { target: { value: "synthetic-key" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+  await fireEvent(document, new Event("visibilitychange"));
+  finish(Response.json({ enabled: true, session: { token: "synthetic", upload_secret: "proof" } }));
+  await screen.findByRole("button", { name: "Sign out" });
+  await waitFor(() => expect(locks).toBe(1));
+  await fireEvent(window, new Event("pagehide"));
+  await waitFor(() => expect(locks).toBe(1));
+});
+
+it.each(["setup", "unlock", "change", "disable"])("preserves submitted %s passcodes when navigating to Library behind a held leave lock", async kind => {
+  history.replaceState(null, "", "/photos/hidden#web_session=synthetic&web_upload_secret=proof");
+  storage();
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  let finish!: () => void;
+  const requests: { kind: string; body: unknown }[] = [];
+  stubPhotoFetch(vi.fn(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/photos/hidden/lock")) { await new Promise<void>(resolve => finish = resolve); return Response.json({}); }
+    if (init?.method === "POST" && /\/(setup|unlock|change|disable)$/.test(url)) requests.push({ kind: url.split("/").at(-1)!, body: JSON.parse(String(init.body)) });
+    return Response.json({ configured: kind !== "setup", items: [], total: 0 });
+  }));
+  render(App);
+  await screen.findByRole("button", { name: kind === "setup" ? "Set passcode" : "Unlock" });
+  const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+  await fireEvent(document, new Event("visibilitychange"));
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  visibility.mockReturnValue("visible");
+  await fireEvent(document, new Event("visibilitychange"));
+  if (kind === "change" || kind === "disable") {
+    await fireEvent.click(screen.getByText("Manage passcode"));
+    await fireEvent.input(screen.getByLabelText("Current passcode", { exact: true }), { target: { value: "submitted-current" } });
+    if (kind === "change") await fireEvent.input(screen.getByLabelText("New passcode", { exact: true }), { target: { value: "submitted-new" } });
+  } else await fireEvent.input(screen.getByLabelText("Passcode", { exact: true }), { target: { value: "submitted-passcode" } });
+  await fireEvent.click(screen.getByRole("button", { name: kind === "setup" ? "Set passcode" : kind === "unlock" ? "Unlock" : kind === "change" ? "Change passcode" : "Disable Hidden" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Library" }));
+  expect(location.pathname).toBe("/photos");
+  expect(requests).toEqual([]);
+  finish();
+  await waitFor(() => expect(requests).toHaveLength(kind === "setup" ? 2 : 1));
+  expect(requests).toEqual(kind === "setup" ? [{ kind: "setup", body: { passcode: "submitted-passcode" } }, { kind: "unlock", body: { passcode: "submitted-passcode" } }] : [{ kind, body: kind === "change" ? { passcode: "submitted-current", new_passcode: "submitted-new" } : { passcode: kind === "disable" ? "submitted-current" : "submitted-passcode" } }]);
+});
+
+it.each(["unhide", "trash", "rejects"])("finishes every submitted %s before locking when the tab is hidden", async action => {
+  history.replaceState(null, "", "/photos/hidden#web_session=synthetic&web_upload_secret=proof");
+  storage();
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  let finish!: () => void;
+  let locked = false;
+  const completed: string[] = [];
+  stubPhotoFetch(vi.fn(async (url: string) => {
+    if (url.endsWith("/photos/hidden/lock")) { locked = true; completed.push("lock"); return Response.json({}); }
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: true, expires_at: "2099-01-01T00:00:00Z", expires_in: 300 });
+    if (url.endsWith("/photos/rejects/preflight")) return Response.json({ targets: [1, 2, 3].map(i => ({ asset_id: `photo-${i}`, revision: 1, member_revision: 1 })), photos: 3, files: 3, unchanged: 0, mixed: [], mixed_count: 0, selection_limit: 64 });
+    if (url.endsWith("/photos/rejects/trash")) {
+      await new Promise<void>(resolve => finish = resolve);
+      if (locked) return Response.json({ detail: "Hidden locked", code: "hidden_locked" }, { status: 403 });
+      completed.push("photo-1", "photo-2", "photo-3");
+      return Response.json({ moved: [...completed] });
+    }
+    const target = url.match(new RegExp(`/assets/(photo-\\d+)/${action}$`))?.[1];
+    if (target) {
+      if (target === "photo-1") await new Promise<void>(resolve => finish = resolve);
+      if (locked) return Response.json({ detail: "Hidden locked", code: "hidden_locked" }, { status: 403 });
+      completed.push(target);
+      return Response.json({ id: target, revision: 2 });
+    }
+    const items = [photo(1), photo(2), photo(3)].filter(item => !completed.includes(item.asset_id));
+    return Response.json({ items, total: items.length });
+  }));
+  render(App);
+  await fireEvent.click(await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 2.jpg" }));
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 3.jpg" }));
+  if (action === "unhide") {
+    await fireEvent.click(screen.getByRole("button", { name: "Actions for Photo 1.jpg" }));
+    await fireEvent.click(await screen.findByRole("menuitem", { name: "Unhide" }));
+  } else if (action === "rejects") {
+    await fireEvent.click(screen.getByRole("button", { name: "Move rejects" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Move 3 to trash" }));
+  } else {
+    await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
+    await fireEvent.click(within(screen.getByRole("dialog", { name: "Move selected photos to trash" })).getByRole("button", { name: "Move to trash" }));
+  }
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+  await fireEvent(document, new Event("visibilitychange"));
+  expect(screen.queryByTestId("photo-scroll")).toBeNull();
+  expect(completed).toEqual([]);
+  finish();
+  await waitFor(() => expect(completed).toEqual(["photo-1", "photo-2", "photo-3", "lock"]));
+});
+
+it("renders no hidden photo buttons after a failed leave lock and return", async () => {
+  history.replaceState(null, "", "/photos/hidden#web_session=synthetic&web_upload_secret=proof");
+  storage();
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  let locks = 0;
+  let unlocked = true;
+  let finish!: () => void;
+  stubPhotoFetch(vi.fn(async (url: string) => {
+    if (url.endsWith("/photos/hidden/lock")) {
+      if (++locks === 1) return Response.json({ detail: "Lock unavailable" }, { status: 503 });
+      await new Promise<void>(resolve => finish = resolve);
+      unlocked = false;
+    }
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: true, ...(unlocked ? { expires_at: "2099-01-01T00:00:00Z", expires_in: 300 } : {}) });
+    return Response.json({ items: [photo(1)], total: 1 });
+  }));
+  render(App);
+  await screen.findByRole("button", { name: "Open Photo 1.jpg" });
+  const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+  await fireEvent(document, new Event("visibilitychange"));
+  await screen.findByText("Hidden did not lock. Lock unavailable");
+  visibility.mockReturnValue("visible");
+  await fireEvent(document, new Event("visibilitychange"));
+  expect(screen.queryByRole("button", { name: "Unlock" })).toBeNull();
+  expect(screen.queryByLabelText("Passcode", { exact: true })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Open Photo 1.jpg" })).toBeNull();
+  expect(screen.queryByRole("main", { name: "Photo library" })).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: "Retry lock" }));
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  expect(screen.queryByRole("main", { name: "Photo library" })).toBeNull();
+  finish();
+  await waitFor(() => expect(screen.queryByText("Hidden did not lock. Lock unavailable")).toBeNull());
+  await screen.findByRole("button", { name: "Unlock" });
+});
+
+it.each(["hide", "close", "Documents after Photos", "Documents only", "failed lock"])("locks Hidden when leaving %s", async mode => {
+  history.replaceState(null, "", `${mode === "Documents only" ? "/" : "/photos"}#web_session=synthetic&web_upload_secret=proof`);
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
+  let locks = 0;
+  const fetcher = vi.fn(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/photos/hidden/lock")) {
+      locks++;
+      if (mode === "failed lock" && locks === 1) return Response.json({ detail: "Lock unavailable" }, { status: 503 });
+      return Response.json({ configured: true });
+    }
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: true });
+    if (url.endsWith("/photos/assets/query")) return Response.json({ items: [photo(1)], total: 1 });
+    const root = { id: 1, kind: "dir", name: "", revision: 1, path: "/" };
+    if (url.includes("/children")) return Response.json({ directory: root, items: [], total: 0 });
+    if (url.includes("/nodes/1") || url.startsWith("/api/v1/path")) return Response.json(root);
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  stubPhotoFetch(fetcher);
+  render(App);
+  if (mode === "Documents only") await screen.findByRole("button", { name: "Photos" });
+  else await screen.findByRole("button", { name: "Select Photo 1.jpg" });
+  if (mode === "Documents after Photos" || mode === "failed lock") await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
+  const visibility = vi.spyOn(document, "visibilityState", "get");
+  if (mode !== "close") {
+    visibility.mockReturnValue("hidden");
+    await fireEvent(document, new Event("visibilitychange"));
+    await fireEvent(document, new Event("visibilitychange"));
+  }
+  await fireEvent(window, new Event("pagehide"));
+  if (mode === "Documents only") { expect(locks).toBe(0); return; }
+  await waitFor(() => expect(locks).toBe(1));
+  expect(fetcher.mock.calls.find(([url]) => url.endsWith("/photos/hidden/lock"))?.[1]).toMatchObject({ keepalive: true });
+  visibility.mockReturnValue("visible");
+  await fireEvent(document, new Event("visibilitychange"));
+  await fireEvent(window, new Event("pageshow"));
+  if (mode === "failed lock") {
+    expect(location.pathname).toBe("/");
+    expect((await screen.findByText("Hidden did not lock. Lock unavailable")).getAttribute("role")).toBe("alert");
+    await fireEvent.click(screen.getByRole("button", { name: "Retry lock" }));
+    await waitFor(() => expect(screen.queryByText("Hidden did not lock. Lock unavailable")).toBeNull());
+    expect(locks).toBe(2);
+  } else {
+    await fireEvent(window, new Event("pagehide"));
+    await waitFor(() => expect(locks).toBe(2));
+  }
+});
+
 it.each(["server", "stale first page"])("refreshes an album opened again during a delayed membership write with a %s response", async outcome => {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
@@ -454,7 +684,7 @@ it("refreshes a remounted Hidden grid after a delayed unhide", async () => {
   await fireEvent.click(screen.getByRole("button", { name: "Library" }));
   await waitFor(() => expect(screen.queryByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeNull());
   await fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
-  await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
+  expect(screen.queryByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeNull();
   changed = true;
   finish(Response.json({ id: "photo-1", revision: 2 }));
   await screen.findByText("No hidden photos");
@@ -642,9 +872,13 @@ it.each([false, true])("keeps direct links and history scoped and conceals a mou
     const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
     await fireEvent(document, new Event("visibilitychange"));
     expect(screen.queryByRole("dialog", { name: /Photo viewer/ })).toBeNull();
-    expect(location.hash).toBe("#photo=photo-1");
+    await waitFor(() => expect(location.hash).toBe(""));
     visibility.mockReturnValue("visible");
     await fireEvent(document, new Event("visibilitychange"));
+    await screen.findByRole("button", { name: "Open Photo 1.jpg" });
+    expect(screen.queryByRole("dialog", { name: /Photo viewer/ })).toBeNull();
+    expect(location.hash).toBe("");
+    await fireEvent.click(screen.getByRole("button", { name: "Open Photo 1.jpg" }));
     await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
     const queries = () => vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith("/assets/query")).length;
     let refreshed = queries();

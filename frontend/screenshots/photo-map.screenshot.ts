@@ -10,7 +10,7 @@ const binary = process.env.DOCBANK_SCREENSHOT_BINARY ?? path.join(repository, "b
 const output = process.env.DOCBANK_MAP_PROOF_DIR;
 test.skip(!output, "DOCBANK_MAP_PROOF_DIR enables synthetic map proof");
 test("photo map privacy, clusters, marker return and mobile grid", async ({ page }) => {
-  test.setTimeout(600_000);
+  test.setTimeout(300_000);
   await mkdir(output!, { recursive: true });
   const workspace = await mkdtemp(path.join(output!, "map-proof-"));
   const vault = path.join(workspace, "vault");
@@ -202,12 +202,22 @@ test("photo map privacy, clusters, marker return and mobile grid", async ({ page
     await page.evaluate(()=>(window as typeof window & {photoMap:import("leaflet").Map}).photoMap.panBy([5,0],{animate:false}));await expect(page.locator(".photo-map")).toBeVisible();
     await expect(page.locator(".leaflet-cluster-anim")).toHaveCount(0);await expect(page.locator('.photo-map-dot[title="Synthetic-photo-00010.jpg"]')).toHaveCSS("opacity","1");
     await page.screenshot({path:path.join(output!,"photo-map-overlap-trash-400-dark.png"),animations:"disabled"});
-    await page.route("**/api/v1/photos/hidden",route=>route.fulfill({status:503,json:{detail:"Photo access unavailable"}}));
+    await page.route("**/photos/assets/query",route=>route.request().postDataJSON().query.filters.gps_bounds?route.fulfill({status:503,json:{detail:"Map unavailable"}}):route.fallback());
     await page.evaluate(()=>{Object.defineProperty(document,"visibilityState",{configurable:true,value:"hidden"});document.dispatchEvent(new Event("visibilitychange"));});
+    const setup = exec(binary, ["photos", "hidden", "setup"], { cwd: repository, env, timeout: 60_000 });
+    setup.child.stdin!.end("synthetic-passcode\n");
+    await setup;
+    const asset = JSON.parse(await run("photos", "assets", "inspect", "/Synthetic-photo-00015.jpg"));
+    // A changed Hidden state forces revalidation; unlocated photo 15 keeps map counts unchanged.
+    await run("photos", "assets", "hide", asset.id, "--revision", String(asset.revision));
     await page.evaluate(()=>{Object.defineProperty(document,"visibilityState",{configurable:true,value:"visible"});document.dispatchEvent(new Event("visibilitychange"));});
-    await page.getByRole("alert").waitFor();await page.getByRole("button",{name:"Retry",exact:true}).waitFor();
+    const accessError = page.locator(".photo-access-error");
+    await expect(accessError.getByRole("alert")).toHaveText("Map unavailable");
     await page.screenshot({path:path.join(output!,"photo-map-access-retry-400-dark.png"),animations:"disabled"});
-    await page.unroute("**/api/v1/photos/hidden");await page.getByRole("button",{name:"Retry",exact:true}).click();await expect(page.getByText("13 located photos",{exact:true})).toBeVisible();
+    await page.evaluate(()=>{Object.defineProperty(document,"visibilityState",{configurable:true,value:"hidden"});document.dispatchEvent(new Event("visibilitychange"));});
+    await page.unroute("**/photos/assets/query");
+    await accessError.getByRole("button",{name:"Retry",exact:true}).evaluate(button=>button.addEventListener("click",()=>{Object.defineProperty(document,"visibilityState",{configurable:true,value:"visible"});},{capture:true,once:true}));
+    await accessError.getByRole("button",{name:"Retry",exact:true}).click({timeout:15_000});await expect(page.getByText("13 located photos",{exact:true})).toBeVisible();
     await page.unroute("https://tiles.example.org/**");
     await page.route("https://tiles.example.org/**",route=>route.fulfill({status:404,body:""}));
     await page.setViewportSize({width:1440,height:960});await page.goto("about:blank");await page.goto(enabledURL.href);

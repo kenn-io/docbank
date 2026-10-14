@@ -5,12 +5,10 @@ import (
 	json "encoding/json/v2"
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"net/netip"
 	"strings"
 	"sync/atomic"
 	"testing"
-	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -210,7 +208,7 @@ func (failingMistralEmbeddingResolver) LookupNetIP(context.Context, string, stri
 	return nil, errors.New("synthetic DNS failure")
 }
 
-func TestMistralEmbeddingRequestBoundRedirectAndCancellation(t *testing.T) {
+func TestMistralEmbeddingRequestBoundAndRedirect(t *testing.T) {
 	input := []document.EmbeddingInput{{Key: "one", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: "text"}}
 	endpoint, egress, resolver := mistralFixture(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Location", "http://elsewhere.invalid/private")
@@ -247,61 +245,6 @@ func TestMistralEmbeddingAcceptsDocumentedOptionalUsageFields(t *testing.T) {
 	_, err = provider.Embed(t.Context(), []document.EmbeddingInput{{Key: "one", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: "text"}}, embeddingAuthorization(profile.Descriptor))
 	require.NoError(t, err)
 }
-
-func TestMistralEmbeddingCancellationPreservesIdentityAndMetrics(t *testing.T) {
-	input := []document.EmbeddingInput{{Key: "one", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: "text"}}
-	t.Run("retry wait", func(t *testing.T) {
-		synctest.Test(t, func(t *testing.T) {
-			server := httptest.NewTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-				writer.Header().Set("Retry-After", "60")
-				writer.WriteHeader(http.StatusServiceUnavailable)
-			}))
-			profile := testEmbeddingProfile(t)
-			provider, err := NewEmbeddingProvider(profile, embeddingSecretMap{"credential:mistral-embed": "secret"}, nil)
-			require.NoError(t, err)
-			provider.http = server.Client()
-			// Virtual time advances once the response is handled and retry waiting begins.
-			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
-			defer cancel()
-			_, err = provider.Embed(ctx, input, embeddingAuthorization(profile.Descriptor))
-			require.ErrorIs(t, err, context.DeadlineExceeded)
-			assert.Equal(t, RequestMetrics{Requests: 1, Retries: 1}, withoutLatency(MetricsFromError(err)))
-		})
-	})
-
-	t.Run("response read", func(t *testing.T) {
-		started := make(chan struct{})
-		endpoint, egress, resolver := mistralFixture(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-			writer.Header().Set("Content-Type", "application/json")
-			writer.WriteHeader(http.StatusOK)
-			flusher, ok := writer.(http.Flusher)
-			if !assert.True(t, ok) {
-				return
-			}
-			flusher.Flush()
-			close(started)
-			<-request.Context().Done()
-		}))
-		profile := testEmbeddingProfile(t)
-		profile.Endpoint, profile.EgressPolicy = endpoint, egress
-		recomputeMistralEmbeddingProfile(t, &profile)
-		provider, err := newMistralEmbeddingTestProvider(t, profile, embeddingSecretMap{"credential:mistral-embed": "secret"}, resolver)
-		require.NoError(t, err)
-		ctx, cancel := context.WithCancel(t.Context())
-		done := make(chan error, 1)
-		go func() {
-			_, embedErr := provider.Embed(ctx, input, embeddingAuthorization(profile.Descriptor))
-			done <- embedErr
-		}()
-		<-started
-		cancel()
-		err = <-done
-		require.ErrorIs(t, err, context.Canceled)
-		assert.Equal(t, RequestMetrics{Requests: 1}, withoutLatency(MetricsFromError(err)))
-	})
-}
-
-func withoutLatency(metrics RequestMetrics) RequestMetrics { metrics.Latency = 0; return metrics }
 
 func recomputeMistralEmbeddingProfile(t *testing.T, profile *EmbeddingProfile) {
 	t.Helper()

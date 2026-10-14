@@ -9,6 +9,7 @@ import { clearSelection, reconcileIDSelection, toggleIDSelection, type Selection
 import { fetchPhotoTimeline, type SnapshotPage } from "./snapshots.js";
 import { parseQuery, canonicalQuery, type Query, type QuerySort } from "./query.js";
 import { captureDateQuery, type CaptureDayFacet } from "./photoTimeline.js";
+import type { HiddenAccess } from "./hiddenAccess.svelte.js";
 
 export const photoQuery = parseQuery('{"syntax":"simple","sort":{"field":"capture_time","direction":"desc"}}');
 export const mapPhotoLimit = 20_000;
@@ -91,7 +92,7 @@ export class Photos {
   // Album views and Map show no filter counts, so those stores never request them.
   private readonly withoutCounts: boolean;
 
-  constructor(private session: string, private onauthfailure: (cause: unknown) => void, readonly hidden = false, query: Query = photoQuery, readonly projection?: "map") { this.baseQuery = query; this.query = query; this.withoutCounts = Boolean(query.filters?.set_ids?.length) || projection === "map"; }
+  constructor(private session: string, private onauthfailure: (cause: unknown) => void, readonly hidden = false, query: Query = photoQuery, readonly projection?: "map", private readonly hiddenAccess?: HiddenAccess) { this.baseQuery = query; this.query = query; this.withoutCounts = Boolean(query.filters?.set_ids?.length) || projection === "map"; }
 
   setSort(sort: QuerySort) {
     if (this.disposed) return;
@@ -421,24 +422,26 @@ export class Photos {
     this.cancelPending();
     this.trashing = true;
     this.rejectsError = "";
-    try {
-      const result = await movePhotoRejects({ hidden: this.hidden, targets }, { session: this.session, signal: AbortSignal.timeout(photoRejectsTimeout) });
-      if (result.moved.length !== targets.length || result.moved.some((id, i) => id !== targets[i].asset_id)) throw new Error("Invalid rejects move response");
-      await this.removeConfirmed(result.moved, preserve);
-      this.rejects = undefined;
-      ontrashed?.();
-      await this.refresh(preserve);
-      return true;
-    } catch (cause) {
-      this.rejects = undefined;
-      this.rejectsFailure(cause);
-      if (!(cause instanceof APIError) || cause.status >= 500 && cause.code !== "maintenance_busy") {
-        this.rejectsError = "The move may have completed. Refresh Photos before trying again.";
+    return this.write(async () => {
+      try {
+        const result = await movePhotoRejects({ hidden: this.hidden, targets }, { session: this.session, signal: AbortSignal.timeout(photoRejectsTimeout) });
+        if (result.moved.length !== targets.length || result.moved.some((id, i) => id !== targets[i].asset_id)) throw new Error("Invalid rejects move response");
+        await this.removeConfirmed(result.moved, preserve);
+        this.rejects = undefined;
         ontrashed?.();
-      }
-      await this.refresh(preserve);
-      return false;
-    } finally { this.trashing = false; }
+        await this.refresh(preserve);
+        return true;
+      } catch (cause) {
+        this.rejects = undefined;
+        this.rejectsFailure(cause);
+        if (!(cause instanceof APIError) || cause.status >= 500 && cause.code !== "maintenance_busy") {
+          this.rejectsError = "The move may have completed. Refresh Photos before trying again.";
+          ontrashed?.();
+        }
+        await this.refresh(preserve);
+        return false;
+      } finally { this.trashing = false; }
+    });
   }
 
   private rejectsFailure(cause: unknown) {
@@ -546,26 +549,33 @@ export class Photos {
   }
 
   private async mutateBatch(targets: PhotoTarget[], request: (item: PhotoTarget) => Promise<{ id: string; revision: number }>, onerror: (cause: unknown) => boolean, oncomplete: (changed: boolean) => void | Promise<void>, action: "hiding" | "trashing", preserve?: () => (() => Promise<void>) | undefined, onconfirmed?: () => void | Promise<void>) {
-    let successes = 0;
-    let uncertain = false;
-    try {
-      for (const item of targets) {
-        try {
-          const receipt = await request(item);
-          if (receipt.id !== item.asset_id || receipt.revision <= item.revision) throw new Error(`Photo${action === "trashing" ? " trash" : ""} response did not confirm the selected photo. Refresh and retry.`);
-          this.cancelPending();
-          successes++;
-          await this.removeConfirmed([item.asset_id], preserve);
-          await onconfirmed?.();
-        } catch (cause) {
-          if (!(cause instanceof APIError) || cause.status >= 500) uncertain = true;
-          if (onerror(cause)) break;
+    const batch = async () => {
+      let successes = 0;
+      let uncertain = false;
+      try {
+        for (const item of targets) {
+          try {
+            const receipt = await request(item);
+            if (receipt.id !== item.asset_id || receipt.revision <= item.revision) throw new Error(`Photo${action === "trashing" ? " trash" : ""} response did not confirm the selected photo. Refresh and retry.`);
+            this.cancelPending();
+            successes++;
+            await this.removeConfirmed([item.asset_id], preserve);
+            await onconfirmed?.();
+          } catch (cause) {
+            if (!(cause instanceof APIError) || cause.status >= 500) uncertain = true;
+            if (onerror(cause)) break;
+          }
         }
-      }
-      await oncomplete(successes > 0 || uncertain);
-      if (!this.projection || successes !== targets.length) await this.refresh(preserve);
-      return successes;
-    } finally { this[action] = false; if (this.projection) void this.resume(preserve); }
+        await oncomplete(successes > 0 || uncertain);
+        if (!this.projection || successes !== targets.length) await this.refresh(preserve);
+        return successes;
+      } finally { this[action] = false; if (this.projection) void this.resume(preserve); }
+    };
+    return this.write(batch, this.hidden || action === "hiding");
+  }
+
+  private write<T>(request: () => Promise<T>, needsHidden = this.hidden): Promise<T> {
+    return this.hiddenAccess && needsHidden ? this.hiddenAccess.run(request) : request();
   }
 
   // reloadCounts replaces counts that a change outside this listing made stale,

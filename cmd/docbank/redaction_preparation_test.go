@@ -7,6 +7,7 @@ import (
 	"encoding/json/v2"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"testing"
 
@@ -51,6 +52,9 @@ func TestPDFRedactionSourcePreparation(t *testing.T) {
 	source := pdfproduction.Source{
 		Reader: bytes.NewReader(data), Size: identity.Size, SHA256: identity.SHA256,
 	}
+	// The PDF worker's RSS ceiling counts the whole test binary, so return the
+	// freed heap from the daemon, earlier tests, and the text read to the OS before measuring.
+	debug.FreeOSMemory()
 	mapping, err := production.Align(t.Context(), production.AlignmentInput{
 		PDF: source, Pages: frames, Evidence: evidence, EvidenceSHA256: evidence.Checksum,
 	})

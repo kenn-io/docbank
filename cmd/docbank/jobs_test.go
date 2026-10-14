@@ -30,7 +30,6 @@ func TestJobsRejectsNonIntegerConcurrencyBeforeConnecting(t *testing.T) {
 }
 
 func TestJobsPauseResumeAndConcurrency(t *testing.T) {
-	t.Setenv("DOCBANK_LOCK_DIR", t.TempDir())
 	setupVaultHome(t)
 	for _, step := range []struct {
 		args []string

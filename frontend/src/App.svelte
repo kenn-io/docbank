@@ -75,6 +75,7 @@
   import { mapTiles } from "./photoMap.js";
   import PhotosWorkspace from "./PhotosWorkspace.svelte";
   import HiddenPhotos from "./HiddenPhotos.svelte";
+  import { HiddenAccess } from "./hiddenAccess.svelte.js";
   import PhotoAlbumsIndex from "./PhotoAlbumsIndex.svelte";
   import { PhotoAlbums, photoDragType } from "./photoAlbums.svelte.js";
   import StarIcon from "@lucide/svelte/icons/star";
@@ -190,6 +191,7 @@
   };
 
   let webSession = $state("");
+  const hiddenAccess = $derived(webSession ? new HiddenAccess(webSession, handleFailure) : undefined);
   let keySignInEnabled = $state(false);
   let keySession = $state(false);
   let apiKey = $state("");
@@ -201,6 +203,31 @@
   const isMapPath = (path: string) => path === "/photos/map" || path.startsWith("/photos/map/");
   const isPhotoPath = (path: string) => isMapPath(path) || ["/photos", "/photos/hidden", "/photos/albums"].includes(path) || path.startsWith("/photos/albums/");
   let photoMode = $state(isPhotoPath(location.pathname));
+  let openedPhotos = false;
+  $effect(() => { if (photoMode) openedPhotos = true; });
+  $effect(() => {
+    const access = hiddenAccess;
+    if (!access) return;
+    let attempted = false;
+    const leave = () => {
+      if (attempted || !openedPhotos) return;
+      attempted = true;
+      clearPhoto();
+      void access.lock();
+    };
+    const pagehide = () => { if (openedPhotos) access.pagehide(); leave(); };
+    const resume = () => { attempted = false; };
+    const visibility = () => { if (document.visibilityState === "visible") resume(); else leave(); };
+    document.addEventListener("visibilitychange", visibility);
+    window.addEventListener("pagehide", pagehide);
+    window.addEventListener("pageshow", resume);
+    if (document.visibilityState === "hidden") untrack(leave);
+    return () => {
+      document.removeEventListener("visibilitychange", visibility);
+      window.removeEventListener("pagehide", pagehide);
+      window.removeEventListener("pageshow", resume);
+    };
+  });
   let photoPath = $state(location.pathname);
   const mapMode = $derived(photoMode && isMapPath(photoPath));
   const mapAlbumID = $derived(photoPath.startsWith("/photos/map/") ? photoPath.slice("/photos/map/".length) : "");
@@ -213,7 +240,7 @@
   let dragOver = $state("");
   const hashWithoutPhoto = () => new URLSearchParams(location.hash.slice(1)).has("photo") ? "" : location.hash;
   let hiddenPhotoActionError = $state("");
-  let hiddenWorkspace = $state<{ refresh: () => Promise<void>; activePhotos: () => Photos | undefined; captureReturn: () => void }>();
+  let hiddenWorkspace = $state<HiddenPhotos>();
   let libraryWorkspace = $state<PhotosWorkspace>();
   let photoID = $state(new URLSearchParams(location.hash.slice(1)).get("photo") ?? "");
   const activePhotos = () => hiddenMode ? hiddenWorkspace?.activePhotos() : albumID ? albumPhotos : mapMode ? mapPhotos : photoState?.photos;
@@ -244,7 +271,9 @@
     photoMode = isPhotoPath(path); if (photoMode) photoPath = path; photoID = id;
   }
   function changePhoto(id: string, mode: "open" | "step" | "close") {
-    if (mode === "close" && history.state?.photoReturn?.contextID === activePhotos()?.contextID) history.back();
+    const record = history.state?.photoReturn as PhotoReturn | undefined;
+    const photos = activePhotos();
+    if (mode === "close" && record && photos && record.contextID === photos.contextID) history.back();
     else {
       const url = new URL(location.href); url.hash = id ? `photo=${encodeURIComponent(id)}` : "";
       if (mode === "open") history.pushState({photoReturn:activePhotos()?.viewerReturn}, "", url.href);
@@ -314,7 +343,7 @@
       }
     }
     if (version !== photoAccessVersion || document.visibilityState !== "visible") return;
-    photoState ??= { photos: new Photos(webSession, handleFailure), cache: new PhotoPreviewCache(webSession, handleFailure) };
+    photoState ??= { photos: new Photos(webSession, handleFailure, false, undefined, undefined, hiddenAccess), cache: new PhotoPreviewCache(webSession, handleFailure) };
     revalidatedChangeID = result.change_id;
     photoConcealed = false;
     photoValidated = true;
@@ -338,7 +367,7 @@
     const session = webSession;
     const id = albumScopeID;
     if (!session || !id) { albumPhotos = undefined; return; }
-    const photos = new Photos(session, handleFailure, false, albumQuery(id));
+    const photos = new Photos(session, handleFailure, false, albumQuery(id), undefined, hiddenAccess);
     albumPhotos = photos;
     return () => photos.dispose();
   });
@@ -347,7 +376,7 @@
     const id = mapAlbumID;
     if (!mapMode || !tiles.tile_url || !state) { mapPhotos = undefined; return; }
     const inherited = untrack(() => id ? albumPhotos?.query ?? albumQuery(id) : state.photos.query);
-    const photos = new Photos(webSession, handleFailure, false, { ...inherited, sort: { field: "capture_time", direction: "desc" }, filters: { ...inherited.filters, gps_bounds: inherited.filters.gps_bounds ?? { south: "-90", west: "-180", north: "90", east: "180" } } }, "map");
+    const photos = new Photos(webSession, handleFailure, false, { ...inherited, sort: { field: "capture_time", direction: "desc" }, filters: { ...inherited.filters, gps_bounds: inherited.filters.gps_bounds ?? { south: "-90", west: "-180", north: "90", east: "180" } } }, "map", hiddenAccess);
     photos.date = untrack(() => id ? albumPhotos?.date : state.photos.date);
     mapPhotos = photos;
     return () => photos.dispose();
@@ -2349,8 +2378,9 @@
       {/snippet}
     </TopBar>
 
+    {#if hiddenAccess?.lockError}<div class="photo-access-error"><p role="alert">Hidden did not lock. {hiddenAccess.lockError}</p><Button onclick={() => void (hiddenWorkspace ? hiddenWorkspace.lock() : hiddenAccess?.lock())}>Retry lock</Button></div>{/if}
     {#if photoMode}
-      {#if hiddenMode}<HiddenPhotos bind:this={hiddenWorkspace} {photoID} onphotochange={changePhoto} onconceal={clearPhoto} session={webSession} onauthfailure={handleFailure} onstate={result => { void acceptPhotoAccess(result).catch(cause => { void invalidateLibrary(); photoAccessError = cause instanceof Error ? cause.message : String(cause); }); }} onaccessfailure={invalidateLibrary} ontrashed={() => { handleTrashed(); void hiddenWorkspace?.refresh(); }} onunhidden={() => { void invalidateLibrary(); void hiddenWorkspace?.refresh(); }} onactionerror={error => hiddenPhotoActionError = error} photoActionError={hiddenPhotoActionError} />{:else if photoValidated && photoState}
+      {#if hiddenMode && hiddenAccess}<HiddenPhotos access={hiddenAccess} bind:this={hiddenWorkspace} {photoID} onphotochange={changePhoto} onconceal={clearPhoto} onstate={result => { void acceptPhotoAccess(result).catch(cause => { void invalidateLibrary(); photoAccessError = cause instanceof Error ? cause.message : String(cause); }); }} onaccessfailure={invalidateLibrary} ontrashed={() => { handleTrashed(); void hiddenWorkspace?.refresh(); }} onunhidden={() => { void invalidateLibrary(); void hiddenWorkspace?.refresh(); }} onactionerror={error => hiddenPhotoActionError = error} photoActionError={hiddenPhotoActionError} />{:else if photoValidated && photoState}
       {#if hiddenPhotoActionError}<p role="alert">{hiddenPhotoActionError}</p>{/if}
       {#if photoPath === "/photos/albums"}{#if photoAlbums}<PhotoAlbumsIndex albums={photoAlbums} cache={photoState.cache} onnavigate={navigatePhotos} />{/if}
       {:else if albumID}{#if albumPhotos}{#key albumPhotos}<PhotosWorkspace bind:this={libraryWorkspace} photos={albumPhotos} cache={photoState.cache} albums={photoAlbums} {albumID} onnavigate={navigatePhotos} {photoID} onphotochange={changePhoto} ontrashed={source => handleTrashed(undefined, source)} onactionerror={error => hiddenPhotoActionError = error} onhidden={invalidateLibrary} oninvalidate={invalidateLibrary} />{/key}{/if}

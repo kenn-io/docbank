@@ -1,20 +1,22 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { Button, FormField, Spinner } from "@kenn-io/kit-ui";
-  import { getPhotoHiddenState, setupPhotoHidden, unlockPhotoHidden, lockPhotoHidden, changePhotoHidden, disablePhotoHidden, type PhotoHiddenState } from "./generated/docbank.js";
+  import { getPhotoHiddenState, setupPhotoHidden, unlockPhotoHidden, changePhotoHidden, disablePhotoHidden, type PhotoHiddenState } from "./generated/docbank.js";
   import { Photos } from "./photos.svelte.js";
   import { PhotoPreviewCache } from "./photoPreviewCache.js";
   import { concealPhotoWorkspace, revalidatePhotoWorkspace, type PhotoWorkspace } from "./photoWorkspace.js";
   import PhotosWorkspace from "./PhotosWorkspace.svelte";
   import { APIError } from "./api-transport.js";
+  import { HiddenAccess } from "./hiddenAccess.svelte.js";
 
-  let { photoID = "", onphotochange = () => {}, onconceal, session, onauthfailure, photoActionError = "", ontrashed, onunhidden, onactionerror, onstate, onaccessfailure }: { photoID?: string; onphotochange?: (id: string, mode: "open" | "step" | "close") => void; onconceal?: () => void; session: string; onauthfailure: (cause: unknown) => void; photoActionError?: string; ontrashed?: () => void; onunhidden?: () => void; onactionerror?: (error: string) => void; onstate?: (state: PhotoHiddenState) => void; onaccessfailure?: () => void } = $props();
+  let { photoID = "", onphotochange = () => {}, onconceal, access, photoActionError = "", ontrashed, onunhidden, onactionerror, onstate, onaccessfailure }: { photoID?: string; onphotochange?: (id: string, mode: "open" | "step" | "close") => void; onconceal?: () => void; access: HiddenAccess; photoActionError?: string; ontrashed?: () => void; onunhidden?: () => void; onactionerror?: (error: string) => void; onstate?: (state: PhotoHiddenState) => void; onaccessfailure?: () => void } = $props();
   let hiddenState = $state<PhotoHiddenState>({ configured: false });
   let workspace = $state<PhotoWorkspace>();
   let photoWorkspace = $state<PhotosWorkspace>();
   export function activePhotos() { return workspace?.photos; }
   export function captureReturn() { photoWorkspace?.captureReturn(); }
   export async function refresh() { if (workspaceVisible) await photoWorkspace?.refresh(); else await checkAccess(); }
+  export function lock() { return action("lock"); }
   let workspaceVisible = $state(false);
   let concealment = 0;
   let passcode = $state("");
@@ -39,7 +41,7 @@
   const lockoutDescription = $derived(lockDeadline || lockoutError ? "hidden-lockout" : undefined);
   let refreshController = new AbortController();
   let disposed = false;
-  const options = () => ({ session, signal: AbortSignal.timeout(30_000) });
+  const options = () => ({ session: access.session, signal: AbortSignal.timeout(30_000) });
 
   function conceal() {
     if (workspaceVisible && !disposed) onconceal?.();
@@ -57,7 +59,7 @@
   function authorizationLost(cause: unknown) {
     clear();
     readError = cause instanceof Error ? cause.message : String(cause);
-    if (cause instanceof APIError && cause.status === 401) onauthfailure(cause);
+    if (cause instanceof APIError && cause.status === 401) access.onauthfailure(cause);
     else void checkAccess();
   }
   async function applyState(result: PhotoHiddenState, signal: AbortSignal, requestedAt: number) {
@@ -71,12 +73,12 @@
     lockDeadline = result.locked_for ? requestedAt + result.locked_for * 1000 : 0;
     deadline = result.expires_in ? requestedAt + result.expires_in * 1000 : 0;
     remaining = secondsUntil(deadline);
-    if (!remaining || concealingAction) clear();
-    else if (!workspace) { workspace = { photos: new Photos(session, authorizationLost, true), cache: new PhotoPreviewCache(session, authorizationLost, true) }; workspaceVisible = true; }
+    if (!remaining || concealingAction || access.lockError) clear();
+    else if (!workspace) { workspace = { photos: new Photos(access.session, authorizationLost, true, undefined, undefined, access), cache: new PhotoPreviewCache(access.session, authorizationLost, true) }; workspaceVisible = true; }
     else if (!workspaceVisible && !workspace.photos.hiding && !workspace.photos.trashing && !workspace.photos.loading) {
       const current = workspace;
       const version = concealment;
-      if (!await revalidatePhotoWorkspace(current, session, authorizationLost, () => version === concealment && !signal.aborted && !disposed)) return;
+      if (!await revalidatePhotoWorkspace(current, access.session, authorizationLost, () => version === concealment && !signal.aborted && !disposed)) return;
       workspaceVisible = true;
     }
   }
@@ -86,17 +88,24 @@
     refreshController = new AbortController();
     const controller = refreshController;
     reading = true;
-    // Anchoring at send time can only end access early, never late.
-    const requestedAt = Date.now();
     try {
-      const result = await getPhotoHiddenState({ session, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]) });
+      // Anchoring at send time can only end access early, never late.
+      let requestedAt = Date.now();
+      let result = await getPhotoHiddenState({ session: access.session, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]) });
+      if (controller.signal.aborted || disposed) return;
+      if (!workspaceVisible && result.expires_in) {
+        await access.settled();
+        if (controller.signal.aborted || disposed) return;
+        requestedAt = Date.now();
+        result = await getPhotoHiddenState({ session: access.session, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]) });
+      }
       if (controller.signal.aborted || disposed) return;
       await applyState(result, controller.signal, requestedAt);
     } catch (cause) {
       if (!controller.signal.aborted && !disposed) {
         readError = cause instanceof Error ? cause.message : String(cause);
         onaccessfailure?.();
-        if (cause instanceof APIError && (cause.status === 401 || cause.status === 403)) { clear(); hiddenState.expires_at = undefined; if (cause.status === 401) onauthfailure(cause); }
+        if (cause instanceof APIError && (cause.status === 401 || cause.status === 403)) { clear(); hiddenState.expires_at = undefined; if (cause.status === 401) access.onauthfailure(cause); }
         else void conceal();
       }
     }
@@ -121,27 +130,30 @@
       }
     }
     if (invalidField) { await tick(); document.getElementById(invalidField)?.focus(); return; }
+    const submitted = { passcode, currentPasscode, nextPasscode, configured: hiddenState.configured };
     actionPending = true;
     concealingAction = kind !== "enter";
     let disableDispatched = false;
     let succeeded = false;
     if (kind === "lock" || kind === "disable" || kind === "change") clear();
     try {
-      if (kind === "enter") {
-        if (!hiddenState.configured) await setupPhotoHidden({ passcode }, options());
-        await unlockPhotoHidden({ passcode }, options());
-      } else if (kind === "lock") await lockPhotoHidden({}, options());
-      else if (kind === "change") await changePhotoHidden({ passcode: currentPasscode, new_passcode: nextPasscode }, options());
-      else { disableDispatched = true; await disablePhotoHidden({ passcode: currentPasscode }, options()); }
+      if (kind === "lock") succeeded = await access.lock();
+      else await access.run(async () => {
+        if (kind === "enter") {
+          if (!submitted.configured) await setupPhotoHidden({ passcode: submitted.passcode }, options());
+          await unlockPhotoHidden({ passcode: submitted.passcode }, options());
+        } else if (kind === "change") await changePhotoHidden({ passcode: submitted.currentPasscode, new_passcode: submitted.nextPasscode }, options());
+        else { disableDispatched = true; await disablePhotoHidden({ passcode: submitted.currentPasscode }, options()); }
+      });
       passcode = "";
       currentPasscode = "";
       nextPasscode = "";
       passcodeError = currentPasscodeError = nextPasscodeError = "";
       lockoutError = "";
-      succeeded = true;
+      if (kind !== "lock") succeeded = true;
     } catch (cause) {
       if (disposed) return;
-      if (cause instanceof APIError && cause.status === 401) { onauthfailure(cause); return; }
+      if (cause instanceof APIError && cause.status === 401) { access.onauthfailure(cause); return; }
       if (cause instanceof APIError && cause.code === "hidden_passcode") {
         const message = "Incorrect passcode.";
         if (kind === "enter") { passcodeError = message; invalidField = "hidden-passcode"; }
@@ -180,7 +192,9 @@
   {#if photoActionError}<p role="alert">{photoActionError}</p>{/if}
   {#if actionError}<p role="alert">{actionError}</p>{/if}
   {#if readError}<p role="alert">{readError}</p><Button size="sm" onclick={() => void checkAccess()}>Retry</Button>{/if}
-  {#if !resolved}
+  {#if access.lockError}
+    <div class="hidden-gate"><h1>Hidden</h1></div>
+  {:else if !resolved}
     <div class="hidden-gate"><h1>Hidden</h1>{#if reading}<Spinner />{/if}</div>
   {:else if workspace && remaining && workspaceVisible}
     <div id="hidden-controls" class="hidden-controls" tabindex="-1"><span>Locks in {Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, "0")}</span><Button size="sm" disabled={actionPending} onclick={() => void action("lock")}>Lock</Button></div>

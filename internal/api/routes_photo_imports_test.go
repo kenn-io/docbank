@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json/v2"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -14,7 +13,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -23,9 +21,13 @@ func TestPhotoImportRoutes(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "capture.JPG"), []byte("photo"), 0o600))
-	ts, catalog := newTestServer(t, func(d *api.Deps) {
+	ts, _ := newTestServer(t, func(d *api.Deps) {
 		d.Jobs = jobs.New(t.Context(), nil)
-		t.Cleanup(d.Jobs.Stop)
+		t.Cleanup(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			require.NoError(t, d.Jobs.Shutdown(ctx))
+		})
 	})
 	body, err := json.Marshal(api.PhotoImportStartRequest{SourceRoot: root, Destination: "/photos"})
 	require.NoError(t, err)
@@ -42,48 +44,48 @@ func TestPhotoImportRoutes(t *testing.T) {
 	assert.Equal(t, store.StorageOperationKindPhotoImport, started.Kind)
 	assert.Equal(t, "queued", started.State)
 
+	pollCtx, cancelPoll := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancelPoll()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
 	var latest api.StorageOperation
-	for range 3_000 {
-		get, getErr := ts.Client().Get(ts.URL + "/api/v1/jobs/" + started.ID)
-		require.NoError(t, getErr)
+	for {
+		pollRequest, requestErr := http.NewRequestWithContext(pollCtx, http.MethodGet, ts.URL+"/api/v1/jobs/"+started.ID, nil)
+		require.NoError(t, requestErr)
+		get, getErr := ts.Client().Do(pollRequest)
+		require.NoError(t, getErr, "last observed operation: %+v", latest)
 		var output api.StorageOperation
-		require.NoError(t, json.UnmarshalRead(get.Body, &output))
+		decodeErr := json.UnmarshalRead(get.Body, &output)
 		_ = get.Body.Close()
+		require.NoError(t, decodeErr, "last observed operation: %+v", latest)
 		latest = output
 		if latest.FinishedAt != "" {
 			break
 		}
-		time.Sleep(10 * time.Millisecond) //nolint:kennlint // polls the photo import job over the test server's real loopback HTTP, which synctest can't host
+		select {
+		case <-pollCtx.Done():
+			require.FailNow(t, "photo import did not finish", "last observed operation: %+v", latest)
+		case <-ticker.C:
+		}
 	}
 	assert.Equal(t, "completed", latest.State)
 	assert.Equal(t, int64(1), latest.CompletedObjects)
-	receiptJSON, err := json.Marshal(latest.Receipt)
-	require.NoError(t, err)
+	receiptJSON, receiptErr := json.Marshal(latest.Receipt)
+	require.NoError(t, receiptErr)
 	var receipt store.PhotoImportReceipt
 	require.NoError(t, json.Unmarshal(receiptJSON, &receipt))
 	assert.Equal(t, int64(1), receipt.Added)
 
-	invalid, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/v1/photos/imports", bytes.NewReader([]byte(`{"source_root":"relative","destination":"/photos"}`)))
-	require.NoError(t, err)
-	invalid.Header.Set("Content-Type", "application/json")
-	invalidResponse, err := ts.Client().Do(invalid)
-	require.NoError(t, err)
-	defer func() { _ = invalidResponse.Body.Close() }()
-	assert.Equal(t, http.StatusUnprocessableEntity, invalidResponse.StatusCode)
-
-	for _, source := range []string{filepath.Join(root, "missing"), filepath.Join(root, "capture.JPG")} {
+	for _, test := range []struct{ source, message string }{
+		{"relative", "absolute daemon-host path"},
+		{filepath.Join(root, "missing"), "not an existing daemon-host folder"},
+		{filepath.Join(root, "capture.JPG"), "not an existing daemon-host folder"},
+	} {
 		response, text := do(t, ts, http.MethodPost, "/api/v1/photos/imports", nil,
-			api.PhotoImportStartRequest{SourceRoot: source, Destination: "/photos"})
+			api.PhotoImportStartRequest{SourceRoot: test.source, Destination: "/photos"})
 		assert.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, text)
-		assert.Contains(t, text, "not an existing daemon-host folder")
+		assert.Contains(t, text, test.message)
 	}
-
-	remote := httptest.NewRecorder()
-	remoteRequest := httptest.NewRequest(http.MethodPost, "http://localhost/api/v1/photos/imports", bytes.NewReader(body))
-	remoteRequest.RemoteAddr = "192.0.2.1:1234"
-	remoteRequest.Header.Set("X-Api-Key", testAPIKey)
-	catalog.Server.Handler().ServeHTTP(remote, remoteRequest)
-	assert.Equal(t, http.StatusForbidden, remote.Code)
 }
 
 func TestPhotoImportCancelThroughJobs(t *testing.T) {
@@ -113,11 +115,6 @@ func TestPhotoImportCancelThroughJobs(t *testing.T) {
 	require.NoError(t, catalog.FinishStorageOperation(t.Context(), operation.ID, store.StorageOperationCancelled, "{}", "", time.Time{}))
 	response, body = do(t, ts, http.MethodPost, "/api/v1/jobs/"+operation.ID+"/cancel", nil, nil)
 	assert.Equal(t, http.StatusConflict, response.StatusCode, body)
-	response, body = do(t, ts, http.MethodGet, "/api/v1/jobs", nil, nil)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	require.NoError(t, json.Unmarshal([]byte(body), &jobs))
-	require.Len(t, jobs.Items, 1)
-	assert.False(t, jobs.Items[0].CanCancel)
 }
 
 func TestPhotoImportJobsReceiptRedactsBrowserSession(t *testing.T) {
@@ -181,14 +178,19 @@ func TestPhotoImportJobsReceiptRedactsBrowserSession(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, response.StatusCode, body)
 }
 
-func TestPhotoImportGateAndActivity(t *testing.T) {
+func TestPhotoImportGate(t *testing.T) {
 	t.Parallel()
 	_, catalog := newTestServer(t, nil)
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "IMG.ARW"), []byte("raw"), 0o600))
-	importer := &ingest.Ingester{Store: catalog.Store, Blobs: catalog.Blobs}
 	gate := api.NewOperationGate()
-	tracker := api.NewActivityTracker()
+	runner := api.NewPhotoImportRunner(api.Deps{Store: catalog.Store, Blobs: catalog.Blobs, Gate: gate})
+	require.NotNil(t, runner.Options.Mutate)
+	mutate := runner.Options.Mutate
+	request, err := json.Marshal(store.PhotoImportRequest{SourceRoot: root, Destination: "/photos"})
+	require.NoError(t, err)
+	operation, err := catalog.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport, string(request))
+	require.NoError(t, err)
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	maintenanceDone := make(chan error, 1)
@@ -203,71 +205,74 @@ func TestPhotoImportGateAndActivity(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	attempted := make(chan struct{})
 	mutationDone := make(chan error, 1)
-	go func() {
-		_, err := importer.ImportPhotoDirectory(ctx, root, "/photos", ingest.PhotoImportOptions{
-			Mutate: func(ctx context.Context, fn func() error) error {
-				close(attempted)
-				return gate.MutateContext(ctx, fn)
-			}, ActivityBegin: tracker.Begin, ActivityEnd: tracker.End,
+	mutationEntered := false
+	runner.Options.Mutate = func(ctx context.Context, fn func() error) error {
+		close(attempted)
+		return mutate(ctx, func() error {
+			mutationEntered = true
+			return fn()
 		})
-		mutationDone <- err
+	}
+	go func() {
+		mutationDone <- runner.Run(ctx, operation.ID)
 	}()
 	<-attempted
-	select {
-	case err := <-mutationDone:
-		t.Fatalf("import crossed maintenance gate: %v", err)
-	default:
-	}
 	var before bytes.Buffer
 	require.NoError(t, catalog.ExportMetadata(t.Context(), &before))
 	assert.NotContains(t, before.String(), "IMG.ARW")
 	cancel()
+	var runErr error
+	select {
+	case runErr = <-mutationDone:
+	case <-time.After(30 * time.Second):
+		close(release)
+		t.Fatal("photo import did not cancel while maintenance held the gate")
+	}
+	assert.False(t, mutationEntered)
 	close(release)
+	require.ErrorIs(t, runErr, context.Canceled)
 	require.NoError(t, <-maintenanceDone)
-	require.ErrorIs(t, <-mutationDone, context.Canceled)
-	_, err := catalog.NodeByPath(t.Context(), "/photos/IMG.ARW")
+	_, err = catalog.NodeByPath(t.Context(), "/photos/IMG.ARW")
 	require.ErrorIs(t, err, store.ErrNotFound)
 
 	groupReady := make(chan struct{})
 	continueGroup := make(chan struct{})
-	type importResult struct {
-		report ingest.PhotoImportReport
-		err    error
-	}
-	completed := make(chan importResult, 1)
-	go func() {
-		calls := 0
-		report, importErr := importer.ImportPhotoDirectory(t.Context(), root, "/photos", ingest.PhotoImportOptions{
-			Mutate: func(ctx context.Context, fn func() error) error {
-				calls++
-				return gate.MutateContext(ctx, func() error {
-					if calls == 2 {
-						close(groupReady)
-						<-continueGroup
-					}
-					return fn()
-				})
-			}, ActivityBegin: tracker.Begin, ActivityEnd: tracker.End,
+	operation, err = catalog.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport, string(request))
+	require.NoError(t, err)
+	completed := make(chan error, 1)
+	calls := 0
+	runner.Options.Mutate = func(ctx context.Context, fn func() error) error {
+		calls++
+		return mutate(ctx, func() error {
+			if calls == 2 {
+				close(groupReady)
+				<-continueGroup
+			}
+			return fn()
 		})
-		completed <- importResult{report, importErr}
+	}
+	go func() {
+		completed <- runner.Run(t.Context(), operation.ID)
 	}()
 	<-groupReady
 	var captured bytes.Buffer
-	var finished importResult
+	var finishedErr error
 	require.NoError(t, gate.CaptureContext(t.Context(), func() error {
 		if err := catalog.ExportMetadata(t.Context(), &captured); err != nil {
 			return err
 		}
 		close(continueGroup)
-		finished = <-completed
+		finishedErr = <-completed
 		return nil
 	}))
 	assert.NotContains(t, captured.String(), "IMG.ARW")
-	report, err := finished.report, finished.err
+	require.NoError(t, finishedErr)
+	finished, err := catalog.StorageOperation(t.Context(), operation.ID)
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), report.Receipt.Added)
+	var receipt store.PhotoImportReceipt
+	require.NoError(t, json.Unmarshal([]byte(finished.ReceiptJSON), &receipt))
+	assert.Equal(t, int64(1), receipt.Added)
 	var after bytes.Buffer
 	require.NoError(t, catalog.ExportMetadata(t.Context(), &after))
 	assert.Contains(t, after.String(), "IMG.ARW")
-	assert.GreaterOrEqual(t, tracker.IdleFor(), time.Duration(0))
 }

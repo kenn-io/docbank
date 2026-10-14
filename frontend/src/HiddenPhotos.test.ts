@@ -1,12 +1,79 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import HiddenPhotos from "./HiddenPhotos.svelte";
+import { HiddenAccess } from "./hiddenAccess.svelte.js";
 import { photo, storage } from "./photo-test-fixtures.js";
 
 afterEach(() => { cleanup(); history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const state = (unlocked: boolean) => ({ configured: true, ...(unlocked ? { expires_at: new Date(Date.now() + 300_000).toISOString(), expires_in: 300 } : {}) });
 const prepare = () => { vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} }); vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000); vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800); };
+const props = (onauthfailure = vi.fn()) => ({ access: new HiddenAccess("synthetic", onauthfailure) });
 const problem = (status: number, detail: string, code = "") => new Response(JSON.stringify({ detail, code }), { status });
+
+it("waits for a held leave lock before redisplaying on return", async () => {
+  prepare();
+  let unlocked = true;
+  let finish!: () => void;
+  let reads = 0;
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    if (url.endsWith("/lock")) { await new Promise<void>(resolve => finish = resolve); unlocked = false; return Response.json(state(false)); }
+    if (url.endsWith("/photos/hidden")) { reads++; return Response.json(state(unlocked)); }
+    return Response.json({ items: [], total: 0 });
+  }));
+  const access = new HiddenAccess("synthetic", vi.fn());
+  render(HiddenPhotos, { ...props(), access });
+  await screen.findByRole("button", { name: "Lock" });
+  const initialReads = reads;
+  const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+  await fireEvent(document, new Event("visibilitychange"));
+  const lock = access.lock();
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  visibility.mockReturnValue("visible");
+  await fireEvent(document, new Event("visibilitychange"));
+  await waitFor(() => expect(reads).toBe(initialReads + 1));
+  expect(screen.queryByRole("button", { name: "Unlock" })).toBeNull();
+  expect(screen.queryByRole("main", { name: "Photo library" })).toBeNull();
+  visibility.mockReturnValue("hidden");
+  await fireEvent(document, new Event("visibilitychange"));
+  finish();
+  await lock;
+  await Promise.resolve();
+  expect(reads).toBe(initialReads + 1);
+  visibility.mockReturnValue("visible");
+  await fireEvent(document, new Event("visibilitychange"));
+  await screen.findByRole("button", { name: "Unlock" });
+  expect(reads).toBe(initialReads + 2);
+});
+
+it("conceals Hidden on the next poll while an unhide batch is held", async () => {
+  prepare();
+  storage();
+  let poll!: () => void;
+  const interval = globalThis.setInterval;
+  vi.spyOn(globalThis, "setInterval").mockImplementation((callback, delay, ...args) => {
+    if (delay === 2000) { poll = callback as () => void; return 0 as unknown as ReturnType<typeof setInterval>; }
+    return interval(callback, delay, ...args);
+  });
+  let hidden = state(true);
+  let finish!: (response: Response) => void;
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    if (url.endsWith("/photos/hidden")) return Response.json(hidden);
+    if (url.endsWith("/unhide")) return new Promise<Response>(resolve => finish = resolve);
+    if (url.includes("/assets/query")) return Response.json({ items: [photo(1)], total: 1 });
+    return Response.json({});
+  }));
+  const view = render(HiddenPhotos, props());
+  await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
+  const batch = view.component.activePhotos()!.setHidden(photo(1).asset_id);
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  hidden = state(false);
+  poll();
+  await screen.findByRole("button", { name: "Unlock" });
+  expect(screen.queryByRole("main", { name: "Photo library" })).toBeNull();
+  expect(screen.queryByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeNull();
+  finish(problem(403, "Hidden locked"));
+  await batch;
+});
 
 it.each(["setup", "unlock", "current", "new"])("preserves %s input focus and value during an access poll", async field => {
   let poll!: () => void;
@@ -19,7 +86,7 @@ it.each(["setup", "unlock", "current", "new"])("preserves %s input focus and val
   let reads = 0;
   const hidden = { configured: field !== "setup" };
   vi.stubGlobal("fetch", vi.fn(async () => ++reads === 1 ? Response.json(hidden) : new Promise<Response>(resolve => settle = resolve)));
-  render(HiddenPhotos, { session: "synthetic", onauthfailure: vi.fn() });
+  render(HiddenPhotos, props());
   await screen.findByLabelText("Passcode", { exact: true });
   if (field === "current" || field === "new") await fireEvent.click(screen.getByText("Manage passcode"));
   const label = field === "current" ? "Current passcode" : field === "new" ? "New passcode" : "Passcode";
@@ -43,8 +110,9 @@ it("associates incorrect unlock feedback with its field and preserves it through
   let settle!: (response: Response) => void;
   let initial = true;
   vi.stubGlobal("fetch", vi.fn(async (url: string) => url.endsWith("/unlock") ? problem(403, "Wrong passcode", "hidden_passcode") : initial ? (initial = false, new Promise<Response>(resolve => settle = resolve)) : Response.json(state(false))));
-  render(HiddenPhotos, { session: "synthetic", onauthfailure: vi.fn() });
+  render(HiddenPhotos, props());
   expect(screen.queryByRole("button", { name: "Unlock" })).toBeNull();
+  await waitFor(() => expect(settle).toBeTypeOf("function"));
   settle(Response.json(state(false)));
   const passcode = await screen.findByLabelText("Passcode", { exact: true });
   await waitFor(() => expect((passcode as HTMLInputElement).disabled).toBe(false));
@@ -75,7 +143,7 @@ it("keeps management credentials independent and lets Disable ignore an invalid 
     if (url.endsWith("/disable")) { requests.push(JSON.parse(String(options?.body))); configured = false; return new Response("{}"); }
     return new Response(JSON.stringify({ configured }));
   }));
-  render(HiddenPhotos, { session: "synthetic", onauthfailure: vi.fn() });
+  render(HiddenPhotos, props());
   await screen.findByRole("button", { name: "Unlock" });
   await fireEvent.click(screen.getByText("Manage passcode"));
   const current = screen.getByLabelText("Current passcode", { exact: true });
@@ -108,7 +176,7 @@ it.each([false, true])("notifies Library when Disable finishes after unmount, lo
   });
   vi.stubGlobal("fetch", fetcher);
   const onunhidden = vi.fn();
-  const view = render(HiddenPhotos, { session: "synthetic", onauthfailure: vi.fn(), onunhidden });
+  const view = render(HiddenPhotos, { ...props(), onunhidden });
   await screen.findByRole("button", { name: "Unlock" });
   await fireEvent.click(screen.getByText("Manage passcode"));
   await fireEvent.input(screen.getByLabelText("Current passcode", { exact: true }), { target: { value: "synthetic" } });
@@ -127,7 +195,7 @@ it.each(["setup", "unlock", "current", "new"])("bounds %s passcodes before sendi
     if (options?.method === "POST") { mutations.push(JSON.parse(String(options.body))); return problem(503, "Unavailable"); }
     return Response.json({ configured: field !== "setup" });
   }));
-  render(HiddenPhotos, { session: "synthetic", onauthfailure: vi.fn() });
+  render(HiddenPhotos, props());
   const label = field === "current" ? "Current passcode" : field === "new" ? "New passcode" : "Passcode";
   await waitFor(() => expect(screen.getByRole("button", { name: field === "setup" ? "Set passcode" : "Unlock" }).hasAttribute("disabled")).toBe(false));
   if (field === "current" || field === "new") { await fireEvent.click(screen.getByText("Manage passcode")); await fireEvent.input(screen.getByLabelText("Current passcode", { exact: true }), { target: { value: "current" } }); }
@@ -159,7 +227,7 @@ it("keeps one associated lockout visible outside management until its original d
     reads++;
     return new Response(JSON.stringify({ ...state(false), ...(locked ? { locked_until: deadline, locked_for: 300 } : {}) }));
   }));
-  render(HiddenPhotos, { session: "synthetic", onauthfailure: vi.fn() });
+  render(HiddenPhotos, props());
   const passcode = await screen.findByLabelText("Passcode", { exact: true });
   await waitFor(() => expect((passcode as HTMLInputElement).disabled).toBe(false));
   await fireEvent.input(passcode, { target: { value: "wrong" } });
@@ -212,14 +280,14 @@ it.each(["lock", "revoke", "expire", "denial", "trash denial", "read"])("clears 
     return new Response("synthetic-jpeg", { headers: { "Cache-Control": "no-store" } });
   });
   vi.stubGlobal("fetch", fetcher);
-  render(HiddenPhotos, { session: "synthetic", onauthfailure: vi.fn() });
+  render(HiddenPhotos, props());
   await fireEvent.click(await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
   await waitFor(() => expect(screen.getByAltText("Photo 1.jpg")).toBeTruthy());
   const cacheName = stored.open.mock.calls[0][0];
   const grid = screen.getByRole("main", { name: "Photo library" });
   vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
   await fireEvent(document, new Event("visibilitychange"));
-  await waitFor(() => expect(fetcher.mock.calls.filter(([url]) => url.endsWith("/photos/hidden"))).toHaveLength(2));
+  await waitFor(() => expect(fetcher.mock.calls.filter(([url]) => url.endsWith("/photos/hidden"))).toHaveLength(3));
   expect(screen.getByRole("main", { name: "Photo library" })).toBe(grid);
   expect(screen.getByText("1 selected photo")).toBeTruthy();
   expect(fetcher.mock.calls.filter(([url]) => url.includes("/assets/query"))).toHaveLength(2);
@@ -257,7 +325,7 @@ it("counts down from server-relative seconds when the browser clock runs ahead",
     if (url.includes("/assets/query")) return Response.json({ items: [photo(1)], total: 1 });
     return new Response("synthetic-jpeg", { headers: { "Cache-Control": "no-store" } });
   }));
-  render(HiddenPhotos, { session: "synthetic", onauthfailure: vi.fn() });
+  render(HiddenPhotos, props());
   await screen.findByRole("main", { name: "Photo library" });
   expect(screen.getByText("Locks in 5:00")).toBeTruthy();
   now += 300_001;
@@ -276,7 +344,7 @@ it("moves focus to the successor control after unlock and lock", async () => {
     if (url.includes("/assets/query")) return Response.json({ items: [photo(1)], total: 1 });
     return new Response("synthetic-jpeg", { headers: { "Cache-Control": "no-store" } });
   }));
-  render(HiddenPhotos, { session: "synthetic", onauthfailure: vi.fn() });
+  render(HiddenPhotos, props());
   const passcode = await screen.findByLabelText("Passcode", { exact: true });
   await waitFor(() => expect((passcode as HTMLInputElement).disabled).toBe(false));
   await fireEvent.input(passcode, { target: { value: "synthetic" } });
@@ -286,35 +354,55 @@ it("moves focus to the successor control after unlock and lock", async () => {
   await waitFor(() => expect(document.activeElement?.id).toBe("hidden-passcode"));
 });
 
-it("failed access reads preserve an in-flight Lock and its action error", async () => {
+it("conceals the passcode form and grid while lockError is set, then offers the form after a successful lock", async () => {
   prepare();
   let settle!: (response: Response) => void;
   let actionSignal: AbortSignal | undefined;
   let failing = false;
+  let unlocked = true;
+  let locks = 0;
   vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
-    if (url.endsWith("/lock")) { actionSignal = options?.signal ?? undefined; return new Promise<Response>(resolve => settle = resolve); }
-    if (url.endsWith("/photos/hidden")) return failing ? problem(503, "Access unavailable") : Response.json(state(true));
+    if (url.endsWith("/lock")) { locks++; actionSignal = options?.signal ?? undefined; return new Promise<Response>(resolve => settle = resolve); }
+    if (url.endsWith("/photos/hidden")) return failing ? problem(503, "Access unavailable") : Response.json(state(unlocked));
     return Response.json({ items: [photo(1)], total: 1 });
   }));
-  render(HiddenPhotos, { session: "synthetic", onauthfailure: vi.fn() });
+  const supplied = props();
+  const view = render(HiddenPhotos, supplied);
   await fireEvent.click(await screen.findByRole("button", { name: "Lock" }));
   failing = true;
   vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
   await fireEvent(document, new Event("visibilitychange"));
-  await screen.findByText("Access unavailable");
   expect(actionSignal?.aborted).toBe(false);
   settle(problem(503, "Lock unavailable"));
-  await screen.findByText("Lock unavailable");
+  await waitFor(() => expect(supplied.access.lockError).toBe("Lock unavailable"));
+  expect(screen.queryByText("Lock unavailable")).toBeNull();
+  await screen.findByText("Access unavailable");
   failing = false;
   await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-  await screen.findByRole("main", { name: "Photo library" });
-  expect(screen.getByText("Lock unavailable")).toBeTruthy();
+  await waitFor(() => expect(screen.queryByText("Access unavailable")).toBeNull());
+  expect(document.querySelector(".hidden-gate form")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Unlock" })).toBeNull();
+  expect(screen.queryByRole("main", { name: "Photo library" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Open Photo 1.jpg" })).toBeNull();
+  unlocked = false;
+  await view.component.refresh();
+  expect(supplied.access.lockError).toBe("Lock unavailable");
+  expect(screen.queryByRole("button", { name: "Unlock" })).toBeNull();
+  const locking = view.component.lock();
+  await waitFor(() => expect(locks).toBe(2));
+  expect(supplied.access.lockError).toBe("Lock unavailable");
+  unlocked = false;
+  settle(Response.json(state(false)));
+  await locking;
+  expect(supplied.access.lockError).toBe("");
+  expect(screen.queryByText("Lock unavailable")).toBeNull();
+  await screen.findByRole("button", { name: "Unlock" });
 });
 
 it.each(["read", "action"])("routes Hidden %s HTTP 401 to the session owner", async source => {
   const expired = vi.fn();
   vi.stubGlobal("fetch", vi.fn(async (url: string) => url.endsWith("/unlock") || source === "read" ? problem(401, "Session expired") : Response.json(state(false))));
-  render(HiddenPhotos, { session: "synthetic", onauthfailure: expired });
+  render(HiddenPhotos, props(expired));
   if (source === "action") {
     await waitFor(() => expect((screen.getByLabelText("Passcode", { exact: true }) as HTMLInputElement).disabled).toBe(false));
     await fireEvent.input(screen.getByLabelText("Passcode", { exact: true }), { target: { value: "synthetic" } });
