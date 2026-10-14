@@ -19,6 +19,7 @@ import (
 const (
 	personAssertionRoleDepicted    = "depicted"
 	personAssertionActionAssert    = "assert"
+	personAssertionActionWithdrawn = "withdrawn"
 	personCandidateStateOpen       = "open"
 	personCandidateStateRejected   = "rejected"
 	personCandidateReasonFaceMatch = "face_match"
@@ -400,7 +401,7 @@ func (s *Store) AssertDocumentPerson(ctx context.Context, assertion PersonDocume
 		existing, err := personAssertionByIdentityTx(ctx, tx, assertion.ContentVersionID, assertion.PersonID, assertion.Role)
 		switch {
 		case err == nil:
-			if existing.Action == "withdrawn" && assertion.Action != "withdrawn" {
+			if existing.Action == personAssertionActionWithdrawn && assertion.Action != personAssertionActionWithdrawn {
 				if err := requirePhotoAssertionCapacity(ctx, tx, assertion.ContentVersionID, assertion.Role, existing.AssertionID); err != nil {
 					return err
 				}
@@ -498,7 +499,7 @@ func validatePersonAssertion(assertion PersonDocumentAssertion) error {
 	}
 	if validateUUIDv4(assertion.ContentVersionID) != nil || validateUUIDv4(assertion.PersonID) != nil || assertion.Revision < 1 ||
 		!document.ValidPersonRole(assertion.Role) ||
-		(!slices.Contains([]string{personAssertionActionAssert, "suppress"}, assertion.Action) && (assertion.Role != personAssertionRoleDepicted || assertion.Action != "withdrawn")) ||
+		(!slices.Contains([]string{personAssertionActionAssert, "suppress"}, assertion.Action) && (assertion.Role != personAssertionRoleDepicted || assertion.Action != personAssertionActionWithdrawn)) ||
 		len(assertion.Note) > maxPersonAssertionNoteBytes || !utf8.ValidString(assertion.Note) {
 		return ErrInvalidPerson
 	}
@@ -636,7 +637,7 @@ func scanMarkedPersonAssertion(row scanner) (PersonDocumentAssertion, error) {
 func ensurePersonAssertionTx(ctx context.Context, tx *sql.Tx, versionID, personID, role string) (PersonDocumentAssertion, bool, error) {
 	existing, err := personAssertionByIdentityTx(ctx, tx, versionID, personID, role)
 	if err == nil {
-		if existing.Action == "withdrawn" {
+		if existing.Action == personAssertionActionWithdrawn {
 			if err := requirePhotoAssertionCapacity(ctx, tx, versionID, role, existing.AssertionID); err != nil {
 				return PersonDocumentAssertion{}, false, err
 			}

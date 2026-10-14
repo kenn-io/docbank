@@ -173,7 +173,7 @@ func writeFaceDecisionReceiptTx(ctx context.Context, tx *sql.Tx, before, after P
 	// Keep newly created records as inactive rows so undo never reuses their revisions.
 	for _, a := range after.Assertions {
 		if !slices.ContainsFunc(before.Assertions, func(b PersonDocumentAssertion) bool { return a.AssertionID == b.AssertionID }) {
-			a.Action = "withdrawn"
+			a.Action = personAssertionActionWithdrawn
 			a.Revision = 0
 			before.Assertions = append(before.Assertions, a)
 		}
@@ -208,7 +208,7 @@ func writeFaceDecisionReceiptTx(ctx context.Context, tx *sql.Tx, before, after P
 	before.Faces, after.Faces = changedFaceRows(before.Faces, after.Faces)
 	var dependencies []PersonDocumentAssertion
 	for i, a := range after.Assertions {
-		if (a.Action == "suppress" || a.Action == "withdrawn") && reflect.DeepEqual(before.Assertions[i], a) && slices.ContainsFunc(before.Faces, func(f PhotoFace) bool {
+		if reflect.DeepEqual(before.Assertions[i], a) && slices.ContainsFunc(before.Faces, func(f PhotoFace) bool {
 			return slices.ContainsFunc(after.Faces, func(next PhotoFace) bool {
 				return next.FaceID == f.FaceID && next.AssertionID != f.AssertionID && (f.AssertionID == a.AssertionID || next.AssertionID == a.AssertionID)
 			})
@@ -463,7 +463,29 @@ func (s *Store) UndoPhotoFaceDecisionWithOperationID(ctx context.Context, id, op
 		if err != nil {
 			return err
 		}
-		currentHash, err := requestDigest(current)
+		// Unchanged active dependencies fence identity while allowing automatic withdrawal.
+		fenced := current
+		fenced.Assertions = slices.Clone(current.Assertions)
+		for i, a := range r.After.Assertions {
+			if a.Action != personAssertionActionAssert || !reflect.DeepEqual(r.Before.Assertions[i], a) {
+				continue
+			}
+			observed := current.Assertions[i]
+			if observed.Action == personAssertionActionWithdrawn {
+				automatic, err := automaticFaceWithdrawalTx(ctx, tx, observed)
+				if err != nil {
+					return err
+				}
+				if !automatic {
+					return ErrStaleRevision
+				}
+			} else if observed.Action != personAssertionActionAssert {
+				return ErrStaleRevision
+			}
+			observed.Action, observed.Revision = a.Action, a.Revision
+			fenced.Assertions[i] = observed
+		}
+		currentHash, err := requestDigest(fenced)
 		if err != nil {
 			return err
 		}
@@ -474,8 +496,7 @@ func (s *Store) UndoPhotoFaceDecisionWithOperationID(ctx context.Context, id, op
 		if currentHash != afterHash {
 			return ErrStaleRevision
 		}
-		// Unchanged shared assertions are absent from the original receipt. Capture
-		// detached dependencies now so reconciliation is itself fenced and undoable.
+		// Capture dependencies omitted by older receipts so reconciliation stays undoable.
 		var detached []string
 		var attached []string
 		for i, f := range r.After.Faces {
@@ -505,7 +526,7 @@ func (s *Store) UndoPhotoFaceDecisionWithOperationID(ctx context.Context, id, op
 					wasSuppressed := slices.ContainsFunc(r.Before.Assertions, func(old PersonDocumentAssertion) bool {
 						return old.AssertionID == a.AssertionID && old.Action == "suppress"
 					})
-					if a.Action == "withdrawn" && !slices.ContainsFunc(r.After.Assertions, func(after PersonDocumentAssertion) bool { return after.AssertionID == a.AssertionID }) {
+					if a.Action == personAssertionActionWithdrawn && !slices.ContainsFunc(r.After.Assertions, func(after PersonDocumentAssertion) bool { return after.AssertionID == a.AssertionID }) {
 						automatic, e := automaticFaceWithdrawalTx(ctx, tx, a)
 						if e != nil {
 							return e
@@ -536,6 +557,19 @@ func (s *Store) UndoPhotoFaceDecisionWithOperationID(ctx context.Context, id, op
 			if a.Revision == r.After.Assertions[i].Revision {
 				continue
 			}
+			if a.Action == personAssertionActionWithdrawn && a.Revision > 0 {
+				var faceIDs []string
+				for _, face := range r.After.Faces {
+					faceIDs = append(faceIDs, face.FaceID)
+				}
+				var shared bool
+				if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_faces WHERE assertion_id=? AND face_id NOT IN (SELECT value FROM json_each(?)))`, a.AssertionID, personIDsJSON(faceIDs)).Scan(&shared); err != nil {
+					return err
+				}
+				if shared {
+					return ErrStaleRevision
+				}
+			}
 			if _, err = tx.ExecContext(ctx, `UPDATE person_document_assertions SET action=CASE WHEN ?=0 AND ?='withdrawn' AND EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=person_document_assertions.assertion_id) THEN 'assert' ELSE ? END,photo_mark=?,revision=revision+1 WHERE assertion_id=?`, a.Revision, a.Action, a.Action, a.PhotoMark, a.AssertionID); err != nil {
 				return err
 			}
@@ -563,7 +597,7 @@ func (s *Store) UndoPhotoFaceDecisionWithOperationID(ctx context.Context, id, op
 		}
 		for _, assertionID := range attached {
 			if slices.ContainsFunc(r.Before.Assertions, func(a PersonDocumentAssertion) bool {
-				return a.AssertionID == assertionID && a.Revision > 0 && a.Action == "withdrawn"
+				return a.AssertionID == assertionID && a.Revision > 0 && a.Action == personAssertionActionWithdrawn
 			}) {
 				continue
 			}
@@ -627,7 +661,7 @@ func validateFaceDecisionReceipt(r PhotoFaceDecisionReceipt, id string) error {
 			return ErrInvalidPhotoFace
 		}
 		if b.Revision == 0 {
-			if b.Action != "withdrawn" {
+			if b.Action != personAssertionActionWithdrawn {
 				return ErrInvalidPhotoFace
 			}
 			b.Revision = 1
