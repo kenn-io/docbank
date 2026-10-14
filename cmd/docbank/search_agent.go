@@ -40,60 +40,113 @@ func searchAgentExcerpt(value string) string {
 	return strings.TrimSpace(string(runes))
 }
 
-func writeSearchAgentHeader(cmd *cobra.Command, query, mode, reason string, count int, truncated bool, coverage *api.DocumentSearchCoverage, details ...string) error {
-	if reason == "" {
-		reason = "false"
+type searchAgentHeader struct {
+	query, mode, degraded, degradedError string
+	count                                int
+	truncated                            bool
+	coverage                             *api.DocumentSearchCoverage
+	details                              []string
+}
+
+func writeSearchAgentHeader(cmd *cobra.Command, header searchAgentHeader) error {
+	degraded := header.degraded
+	if degraded == "" {
+		degraded = "false"
 	}
-	header := fmt.Sprintf("OK search count=%d query=%s mode=%s degraded=%s truncated=%t", count, searchAgentValue(query), searchAgentValue(mode), searchAgentValue(reason), truncated)
-	if coverage != nil {
-		header += fmt.Sprintf(" coverage=%s complete=%d scoped=%d", searchAgentValue(coverage.State), coverage.CompleteDocuments, coverage.ScopedDocuments)
+	line := fmt.Sprintf("OK search count=%d query=%s mode=%s degraded=%s truncated=%t", header.count,
+		searchAgentValue(header.query), searchAgentValue(header.mode), searchAgentValue(degraded), header.truncated)
+	if header.degradedError != "" {
+		line += " degraded_error=" + searchAgentValue(header.degradedError)
 	}
-	if len(details) > 0 {
-		header += " " + strings.Join(details, " ")
+	if coverage := header.coverage; coverage != nil {
+		line += fmt.Sprintf(" coverage=%s complete=%d scoped=%d", searchAgentValue(coverage.State),
+			coverage.CompleteDocuments, coverage.ScopedDocuments)
 	}
-	_, err := fmt.Fprintln(cmd.OutOrStdout(), header)
-	if err != nil {
+	if len(header.details) > 0 {
+		line += " " + strings.Join(header.details, " ")
+	}
+	if _, err := fmt.Fprintln(cmd.OutOrStdout(), line); err != nil {
 		return fmt.Errorf("writing search agent header: %w", err)
 	}
 	return nil
 }
 
-func writeSearchAgentHit(cmd *cobra.Command, nodeID int64, match string, score float64, path, excerpt string) error {
-	_, err := fmt.Fprintf(cmd.OutOrStdout(), "- selector=%s match=%s score=%g path=%s excerpt=%s\n", formatNodeSelector(nodeID), searchAgentValue(match), score, searchAgentValue(path), searchAgentValue(searchAgentExcerpt(excerpt)))
-	if err != nil {
+// searchAgentHit is one result line. Ranked hits come from processing search
+// and carry its score and excerpt; ordinary lexical hits have neither.
+type searchAgentHit struct {
+	nodeID      int64
+	match, path string
+	ranked      bool
+	score       float64
+	excerpt     string
+}
+
+func writeSearchAgentHit(cmd *cobra.Command, hit searchAgentHit) error {
+	line := fmt.Sprintf("- selector=%s match=%s", formatNodeSelector(hit.nodeID), searchAgentValue(hit.match))
+	if hit.ranked {
+		line += fmt.Sprintf(" score=%g", hit.score)
+	}
+	line += " path=" + searchAgentValue(hit.path)
+	if hit.ranked {
+		line += " excerpt=" + searchAgentValue(searchAgentExcerpt(hit.excerpt))
+	}
+	if _, err := fmt.Fprintln(cmd.OutOrStdout(), line); err != nil {
 		return fmt.Errorf("writing search agent hit: %w", err)
 	}
 	return nil
 }
 
-func writeLexicalSearchAgent(cmd *cobra.Command, query string, report api.SearchReport, reason string) error {
-	if err := writeSearchAgentHeader(cmd, query, "lexical", reason, len(report.Hits), report.Truncated, nil); err != nil {
-		return err
-	}
-	for _, hit := range report.Hits {
-		if err := writeSearchAgentHit(cmd, hit.Node.ID, hit.Match, 0, hit.Path, hit.Node.Name); err != nil {
+func writeLexicalSearchHits(cmd *cobra.Command, hits []api.SearchHit) error {
+	for _, hit := range hits {
+		if err := writeSearchAgentHit(cmd, searchAgentHit{nodeID: hit.Node.ID, match: hit.Match, path: hit.Path}); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func writeDocumentSearchAgent(cmd *cobra.Command, query string, report api.DocumentSearchReport) error {
-	var details []string
+func writeLexicalSearchAgent(cmd *cobra.Command, query string, report api.SearchReport,
+	automatic automaticSearchOutcome,
+) error {
+	header := searchAgentHeader{query: query, mode: "lexical", degraded: automatic.reason,
+		count: len(report.Hits), truncated: report.Truncated}
+	if automatic.err != nil {
+		header.degradedError = automatic.err.Error()
+	}
+	if fuzzy := report.Fuzzy; fuzzy != nil {
+		header.details = append(header.details, "fuzzy="+searchAgentValue(fuzzy.Status))
+		if len(fuzzy.Reasons) > 0 {
+			header.details = append(header.details, "fuzzy_reasons="+searchAgentValue(strings.Join(fuzzy.Reasons, ",")))
+		}
+	}
+	if err := writeSearchAgentHeader(cmd, header); err != nil {
+		return err
+	}
+	return writeLexicalSearchHits(cmd, report.Hits)
+}
+
+// writeDocumentSearchAgent prints processing hits, then any folder name
+// matches that automatic search adds from ordinary lexical search.
+func writeDocumentSearchAgent(cmd *cobra.Command, query string, report api.DocumentSearchReport,
+	folders []api.SearchHit,
+) error {
+	header := searchAgentHeader{query: query, mode: report.ActualMode, degraded: strings.Join(report.Degradations, ","),
+		count: len(report.Results) + len(folders), truncated: report.Truncated, coverage: &report.Coverage}
 	if len(report.Trace) > 0 {
 		stages := make([]string, len(report.Trace))
 		for i, event := range report.Trace {
 			stages[i] = fmt.Sprintf("%s:%d", event.Code, event.Count)
 		}
-		details = append(details, "trace="+searchAgentValue(strings.Join(stages, ",")))
+		header.details = append(header.details, "trace="+searchAgentValue(strings.Join(stages, ",")))
 	}
 	if r := report.Reranking; r != nil {
-		details = append(details, fmt.Sprintf("rerank=%s rerank_candidates=%d", searchAgentValue(r.Outcome), r.CandidateCount))
+		header.details = append(header.details,
+			fmt.Sprintf("rerank=%s rerank_candidates=%d", searchAgentValue(r.Outcome), r.CandidateCount))
 		if r.Cause != "" {
-			details = append(details, "rerank_cause="+searchAgentValue(r.Cause))
+			header.details = append(header.details, "rerank_cause="+searchAgentValue(r.Cause))
 		}
 	}
-	if err := writeSearchAgentHeader(cmd, query, report.ActualMode, strings.Join(report.Degradations, ","), len(report.Results), report.Truncated, &report.Coverage, details...); err != nil {
+	if err := writeSearchAgentHeader(cmd, header); err != nil {
 		return err
 	}
 	for _, hit := range report.Results {
@@ -104,23 +157,26 @@ func writeDocumentSearchAgent(cmd *cobra.Command, query string, report api.Docum
 				match = "hybrid"
 			}
 		}
-		if err := writeSearchAgentHit(cmd, hit.NodeID, match, hit.Score, hit.Path, hit.Excerpt); err != nil {
+		if err := writeSearchAgentHit(cmd, searchAgentHit{nodeID: hit.NodeID, match: match, path: hit.Path,
+			ranked: true, score: hit.Score, excerpt: hit.Excerpt}); err != nil {
 			return err
 		}
 	}
-	return nil
+	return writeLexicalSearchHits(cmd, folders)
 }
 
 func writeSimilarSearchAgent(cmd *cobra.Command, report api.DocumentSimilarReport) error {
-	reason := ""
+	header := searchAgentHeader{query: formatNodeSelector(report.Source.NodeID), mode: "semantic",
+		count: len(report.Results), truncated: report.Truncated, coverage: &report.Coverage}
 	if report.State == "unavailable" {
-		reason = "embedding_unavailable"
+		header.degraded = "embedding_unavailable"
 	}
-	if err := writeSearchAgentHeader(cmd, formatNodeSelector(report.Source.NodeID), "semantic", reason, len(report.Results), report.Truncated, &report.Coverage); err != nil {
+	if err := writeSearchAgentHeader(cmd, header); err != nil {
 		return err
 	}
 	for _, hit := range report.Results {
-		if err := writeSearchAgentHit(cmd, hit.NodeID, "semantic", hit.Score, hit.Path, ""); err != nil {
+		if err := writeSearchAgentHit(cmd, searchAgentHit{nodeID: hit.NodeID, match: "semantic", path: hit.Path,
+			ranked: true, score: hit.Score}); err != nil {
 			return err
 		}
 	}

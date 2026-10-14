@@ -17,11 +17,16 @@ import (
 func TestSearchAgentLexical(t *testing.T) {
 	cmd, out := processingTestCommand()
 	report := api.SearchReport{Limit: 1, Hits: []api.SearchHit{{Node: api.Node{ID: 42, Kind: "file", Name: "report\n2026.txt"}, Path: "/docs/report\n2026.txt", Match: "name"}}, Truncated: true}
-	require.NoError(t, writeLexicalSearchAgent(cmd, "report 2026", report, "processing_failed"))
-	assert.Equal(t, "OK search count=1 query=\"report 2026\" mode=lexical degraded=processing_failed truncated=true\n- selector=id:42 match=name score=0 path=\"/docs/report 2026.txt\" excerpt=\"report 2026.txt\"\n", out.String())
+	require.NoError(t, writeLexicalSearchAgent(cmd, "report 2026", report, automaticSearchOutcome{reason: "processing_failed"}))
+	assert.Equal(t, "OK search count=1 query=\"report 2026\" mode=lexical degraded=processing_failed truncated=true\n- selector=id:42 match=name path=\"/docs/report 2026.txt\"\n", out.String())
 	out.Reset()
-	require.NoError(t, writeLexicalSearchAgent(cmd, "none", api.SearchReport{Limit: 50}, ""))
+	require.NoError(t, writeLexicalSearchAgent(cmd, "none", api.SearchReport{Limit: 50}, automaticSearchOutcome{}))
 	assert.Equal(t, "OK search count=0 query=none mode=lexical degraded=false truncated=false\n", out.String())
+	out.Reset()
+	unexpected := automaticSearchOutcome{reason: "semantic_search_failed", err: errors.New("search response is invalid")}
+	fuzzy := api.SearchReport{Limit: 50, Fuzzy: &api.FuzzyReceipt{Status: "limited", Reasons: []string{"candidate_limit", "time_budget"}}}
+	require.NoError(t, writeLexicalSearchAgent(cmd, "q", fuzzy, unexpected))
+	assert.Equal(t, "OK search count=0 query=q mode=lexical degraded=semantic_search_failed truncated=false degraded_error=\"search response is invalid\" fuzzy=limited fuzzy_reasons=candidate_limit,time_budget\n", out.String())
 }
 
 func TestSearchAgentProcessingLanes(t *testing.T) {
@@ -32,8 +37,9 @@ func TestSearchAgentProcessingLanes(t *testing.T) {
 		api.DocumentSearchResult{NodeID: 3, Path: "/three", Score: .125, SemanticRank: 2},
 	)
 	report.Coverage.State, report.Coverage.CompleteDocuments = "incomplete", 2
-	require.NoError(t, writeDocumentSearchAgent(cmd, "alpha", report))
-	assert.Equal(t, "OK search count=3 query=alpha mode=hybrid degraded=false truncated=false coverage=incomplete complete=2 scoped=3\n- selector=id:1 match=hybrid score=0.5 path=/one excerpt=\"alpha beta\"\n- selector=id:2 match=lexical score=0.25 path=/two excerpt=\"\"\n- selector=id:3 match=semantic score=0.125 path=/three excerpt=\"\"\n", out.String())
+	folders := []api.SearchHit{{Node: api.Node{ID: 9, Kind: "dir", Name: "alpha"}, Path: "/alpha", Match: "name"}}
+	require.NoError(t, writeDocumentSearchAgent(cmd, "alpha", report, folders))
+	assert.Equal(t, "OK search count=4 query=alpha mode=hybrid degraded=false truncated=false coverage=incomplete complete=2 scoped=3\n- selector=id:1 match=hybrid score=0.5 path=/one excerpt=\"alpha beta\"\n- selector=id:2 match=lexical score=0.25 path=/two excerpt=\"\"\n- selector=id:3 match=semantic score=0.125 path=/three excerpt=\"\"\n- selector=id:9 match=name path=/alpha\n", out.String())
 }
 
 func TestSearchAgentSafeValues(t *testing.T) {
@@ -58,8 +64,8 @@ func (searchFailingWriter) Write([]byte) (int, error) { return 0, errors.New("ou
 func TestSearchAgentWriteFailure(t *testing.T) {
 	cmd, _ := processingTestCommand()
 	cmd.SetOut(searchFailingWriter{})
-	require.ErrorContains(t, writeLexicalSearchAgent(cmd, "query", api.SearchReport{Limit: 50}, ""), "writing search agent header: output closed")
-	require.ErrorContains(t, writeDocumentSearchAgent(cmd, "query", searchAgentDocumentReport()), "writing search agent header: output closed")
+	require.ErrorContains(t, writeLexicalSearchAgent(cmd, "query", api.SearchReport{Limit: 50}, automaticSearchOutcome{}), "writing search agent header: output closed")
+	require.ErrorContains(t, writeDocumentSearchAgent(cmd, "query", searchAgentDocumentReport(), nil), "writing search agent header: output closed")
 }
 
 func FuzzSearchAgentValueLine(f *testing.F) {
@@ -108,7 +114,7 @@ func FuzzSearchAgentReportLines(f *testing.F) {
 			results = append(results, api.DocumentSearchResult{NodeID: int64(i + 1), LexicalRank: i + 1, Path: path, Excerpt: excerpt, Score: 0.25})
 		}
 		report := searchAgentDocumentReport(results...)
-		require.NoError(t, writeDocumentSearchAgent(cmd, query, report))
+		require.NoError(t, writeDocumentSearchAgent(cmd, query, report, nil))
 		require.Equal(t, len(report.Results)+1, strings.Count(out.String(), "\n"))
 		require.Contains(t, out.String(), "count="+strconv.Itoa(len(report.Results)))
 	})
@@ -129,7 +135,7 @@ func TestSearchAgentHitWriteFailure(t *testing.T) {
 	writer := &searchHitFailingWriter{}
 	cmd.SetOut(writer)
 	report := api.SearchReport{Limit: 50, Hits: []api.SearchHit{{Node: api.Node{ID: 1, Kind: "file", Name: "one"}, Path: "/one", Match: "name"}, {Node: api.Node{ID: 2, Kind: "file", Name: "two"}, Path: "/two", Match: "name"}}}
-	require.ErrorContains(t, writeLexicalSearchAgent(cmd, "q", report, ""), "writing search agent hit: output closed")
+	require.ErrorContains(t, writeLexicalSearchAgent(cmd, "q", report, automaticSearchOutcome{}), "writing search agent hit: output closed")
 	assert.Equal(t, 2, writer.calls)
 }
 
@@ -139,7 +145,7 @@ func TestSearchAgentProcessingDiagnostics(t *testing.T) {
 	report.Degradations = []string{"reranking_degraded"}
 	report.Trace = []api.DocumentSearchTrace{{Code: "lexical_candidates", Count: 2}, {Code: "semantic_candidates", Count: 0}, {Code: "fused_candidates", Count: 2}}
 	report.Reranking = &api.DocumentSearchRerankingReceipt{Outcome: "degraded", CandidateCount: 2, Cause: "unavailable"}
-	require.NoError(t, writeDocumentSearchAgent(cmd, "q", report))
+	require.NoError(t, writeDocumentSearchAgent(cmd, "q", report, nil))
 	assert.Contains(t, out.String(), "mode=hybrid degraded=reranking_degraded")
 	assert.Contains(t, out.String(), "trace=lexical_candidates:2,semantic_candidates:0,fused_candidates:2 rerank=degraded rerank_candidates=2 rerank_cause=unavailable")
 	assert.Equal(t, 3, strings.Count(out.String(), "\n"))

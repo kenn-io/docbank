@@ -1,29 +1,55 @@
 ---
-last_edited: 2026-10-13
+last_edited: 2026-10-14
 title: Automatic and processing search
 description: Choose automatic retrieval or an explicit profile and source-version set.
 ---
 
 # Automatic and processing search
 
-With no processing options, `docbank search renewal terms` automatically tries
-hybrid search when a query-capable embedding profile is configured. The CLI
+With no processing options, `docbank search renewal terms` tries hybrid
+search when a processing profile has a query embedding binding. The CLI
 resolves the current versions of all live files through the daemon; you do not
 need profile names or version UUIDs for this path. The daemon enforces query
-consent and index authority. If the semantic leg is unavailable, search returns
-ordinary lexical results and reports a stable degradation reason.
+consent and index authority.
+
+The CLI always runs ordinary lexical search first. Hybrid results replace it
+only when a hybrid search succeeds. Folders have no content version, so the
+hybrid source scope cannot include them; folder name matches from the lexical
+search are appended after the hybrid results instead.
 
 Profiles and query bindings are tried in ascending name order until one
-succeeds. If all fail, the command reports the first candidate's failure reason.
-With no
-configured embeddings, ordinary lexical search runs without degradation. With
-embeddings but no query encoder, the reason is `query_embedding_unavailable`.
-An empty file scope returns lexical search with `empty_source_scope`; more than
-4,096 live versions returns lexical search with `scope_too_large`. The CLI never
-silently truncates the semantic population. Limits above 100 use lexical search
-with `limit_requires_lexical`, preserving the ordinary 1–1000 range.
-Queries longer than 8,192 Unicode characters use lexical search with
-`query_requires_lexical`, since processing requests have that length limit.
+succeeds. A failure that could differ by binding, such as missing consent,
+`processing_failed`, `processing_profile_unavailable`, or `stale_index`, moves
+on to the next pair. A failure of the whole source scope, such as
+`stale_version` or `scope_too_large`, stops at once. The CLI never silently
+truncates the semantic population; more than 4,096 live versions falls back
+with `scope_too_large`. When every pair fails, the command reports the first
+failure reason.
+
+Some requests never try hybrid search and report no degradation:
+
+- no profile has a query embedding binding, or processing is unavailable
+- the vault has no live files
+- a tag, directory, MIME, or modification filter, or `--fuzzy`
+- `--limit` above 100, the processing search maximum
+- query text longer than 8,192 Unicode characters, the processing maximum
+- `--mode lexical` with no processing options
+
+Cancellation and authentication failures stop the command. Any other hybrid
+failure falls back to lexical results with the daemon's stable problem code as
+the reason. A failure without a problem code, such as an invalid response,
+reports `semantic_search_failed` with the error text. Search never grants
+consent itself.
+
+Human and `--json` output write one `degraded: REASON` line to stderr, so
+stdout keeps the lexical table or JSON unchanged. `--agent` output puts the
+reason in its header instead.
+
+`--json` output depends on which search produced the results. Lexical search
+returns the ordinary report with `hits`. Successful hybrid search returns the
+processing report with `actual_mode`, `coverage`, and `results`, plus a
+`folders` array of ordinary folder name hits. Check for `actual_mode` to tell
+the shapes apart, or pass `--mode lexical` to always get the ordinary report.
 
 After semantic retrieval, the daemon revalidates the complete report against
 current live versions, including unembedded lexical matches. A match trashed or
@@ -33,19 +59,6 @@ report, including when a tag edit leaves its path and content version unchanged.
 Removed candidates make the report `truncated`, and surviving result ranks and coverage
 reflect the final check. This applies to automatic and explicit semantic/hybrid
 search, including when expansion and reranking are disabled.
-
-Tag, directory, MIME, and modification filters always use ordinary lexical
-search. With configured embeddings, this reports `filters_require_lexical`.
-Use `--mode lexical` alone to select ordinary lexical search explicitly.
-Authentication, transport, cancellation, and malformed-response errors remain
-errors. Provider/index failures and missing, expired, or revoked consent fall
-back with the daemon's stable problem code. Search never grants consent itself.
-
-`--json` retains the report types already exposed by the CLI: ordinary lexical
-search returns `hits`, while successful automatic hybrid search returns the
-processing report with `results`, actual mode, and coverage. Consumers should
-check which report shape was returned. A lexical fallback writes one plain
-`degraded: REASON` line to stderr and leaves stdout JSON unchanged.
 
 ## Choose exact versions and a profile
 

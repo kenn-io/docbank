@@ -56,16 +56,17 @@ var searchCmd = &cobra.Command{
   docbank search merger plan --under /cases/acme --json
   docbank search --tag urgent
   docbank search invocie --fuzzy --modified-since 2026-01-01T00:00:00Z`,
-	Long: `Query words are joined. With no processing options, search automatically uses
-hybrid retrieval when a query embedding binding is ready, otherwise lexical.
-Unavailable semantic search falls back with an explicit degradation reason.
-Lexical search matches word prefixes, names before content, on live versions.
-Filters, limits above 100, and queries over 8192 characters use lexical search.
---mode lexical selects ordinary lexical search explicitly.
---fuzzy appends filename/path matches with one typo (fuzzy_name|fuzzy_path).
-Explicit processing modes require --profile and --source-version UUIDs and
-reject ordinary filters and --fuzzy.
---agent prints an OK header and one line per hit; --json keeps typed reports.
+	Long: `Query words are joined. Lexical search matches word prefixes, names before
+content, on current versions of live nodes.
+With a query embedding binding, plain text search runs hybrid retrieval over
+live files and appends matching folder names. Filters, --fuzzy, --limit above
+100, and --mode lexical use lexical search. A failed hybrid attempt prints
+"degraded: REASON" to stderr and returns lexical results.
+--json prints lexical {hits, limit, truncated}, or for hybrid the processing
+report (actual_mode, coverage, results) plus folders.
+--agent prints an OK header and one line per hit.
+--fuzzy appends filename/path matches with one typo.
+Explicit processing modes need --profile and --source-version UUIDs.
 See docs/usage/search.md.`,
 	GroupID: groupSearch,
 	Use:     "search [<query>...]",
@@ -190,44 +191,29 @@ See docs/usage/search.md.`,
 			opts.UnderNodeID = directory.ID
 			underPath = directory.Path
 		}
-		var degradation string
-		if !cmd.Flags().Changed("mode") && !searchFuzzy {
-			report, reason, searchErr := tryAutomaticSearch(cmd, c, strings.Join(args, " "), searchLimit, opts)
-			if searchErr != nil {
-				return searchErr
-			}
-			if report != nil {
-				if searchJSON {
-					return writeCLIJSON(cmd.OutOrStdout(), *report)
-				}
-				if searchAgent {
-					return writeDocumentSearchAgent(cmd, strings.Join(args, " "), *report)
-				}
-				return writeDocumentSearchReport(cmd, *report, false)
-			}
-			degradation = reason
-		}
-		rep, err := c.SearchWithOptions(
-			cmd.Context(), strings.Join(args, " "), searchLimit, opts,
-		)
+		query := strings.Join(args, " ")
+		rep, err := c.SearchWithOptions(cmd.Context(), query, searchLimit, opts)
 		if err != nil {
 			return err
 		}
-		if searchJSON {
-			if degradation != "" {
-				if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "degraded: %s\n", degradation); err != nil {
-					return fmt.Errorf("writing search degradation: %w", err)
-				}
+		var automatic automaticSearchOutcome
+		if !cmd.Flags().Changed("mode") {
+			automatic, err = tryAutomaticSearch(cmd.Context(), c, query, searchLimit, opts)
+			if err != nil {
+				return err
 			}
+		}
+		if automatic.report != nil {
+			return writeAutomaticSearch(cmd, query, *automatic.report, rep.Hits)
+		}
+		if err := writeSearchDegradation(cmd, automatic); err != nil {
+			return err
+		}
+		if searchJSON {
 			return writeCLIJSON(cmd.OutOrStdout(), rep)
 		}
 		if searchAgent {
-			return writeLexicalSearchAgent(cmd, strings.Join(args, " "), rep, degradation)
-		}
-		if degradation != "" {
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "degraded: %s\n", degradation); err != nil {
-				return fmt.Errorf("writing search degradation: %w", err)
-			}
+			return writeLexicalSearchAgent(cmd, query, rep, automatic)
 		}
 		return writeSearchReport(cmd, rep, tagName, underPath)
 	},
@@ -400,7 +386,7 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 		return writeCLIJSON(cmd.OutOrStdout(), report)
 	}
 	if options.Agent {
-		return writeDocumentSearchAgent(cmd, query, report)
+		return writeDocumentSearchAgent(cmd, query, report, nil)
 	}
 	return writeDocumentSearchReport(cmd, report, options.Explain)
 }

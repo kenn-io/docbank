@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-13
+last_edited: 2026-10-14
 title: CLI reference
 description: Every docbank command, with its flags, output formats, and error behavior.
 ---
@@ -920,17 +920,14 @@ Selecting a photo member restores its whole group. Companions inside trashed fol
 docbank search [<query>...] [--tag <name-or-id>] [--mime-type <type/subtype>] [--under <path-or-id>] [--modified-since <timestamp>] [--modified-before <timestamp>] [--fuzzy] [--limit <n>] [--agent | --json]
 ```
 
-Query words are joined. With no processing options, the CLI resolves current
-live file versions and tries hybrid search with a query-capable embedding
-profile. Without embeddings, it uses ordinary lexical search. Unavailable
-semantic retrieval falls back with an explicit degradation reason. Filters and
-limits above 100 select lexical search; with embeddings they report
-`filters_require_lexical` or `limit_requires_lexical`. `--mode lexical` alone
-also selects ordinary lexical search and accepts filters. Queries longer than
-8,192 Unicode characters select lexical search with `query_requires_lexical`.
-The daemon revalidates all semantic/hybrid candidates after query embedding,
-including lexical-only matches, before returning the report. See
-[Automatic selection and scope](usage/search.md).
+Query words are joined. When a processing profile has a query embedding
+binding, plain text search tries hybrid retrieval over the current versions of
+all live files, then appends folder name matches from ordinary search.
+Filters, `--fuzzy`, limits above 100, queries longer than 8,192 Unicode
+characters, and `--mode lexical` run ordinary lexical search without trying
+hybrid. When a hybrid attempt fails, the CLI writes `degraded: REASON` to
+stderr and prints ordinary lexical results. See
+[Automatic and processing search](usage/search.md).
 
 Ordinary lexical search uses SQLite FTS5, its full-text search engine, over
 live node names and verified extracted text. Each whitespace-separated term matches as a prefix.
@@ -1012,18 +1009,23 @@ for the full contract and receipt meanings.
 
 `--agent` changes only output. It is mutually exclusive with `--json`. The
 header contains `OK search`, count, query, actual mode, degradation reason (or
-`false`), and truncation. Processing headers also include coverage and complete/scoped document counts. Each hit is one line with selector, match, score, path,
-and a short excerpt. With `--explain`, the header adds trace stage/count pairs.
+`false`), and truncation. A hybrid failure without a daemon problem code also
+adds `degraded_error`. Fuzzy lexical search adds `fuzzy` status and
+`fuzzy_reasons`. Processing headers include coverage and complete/scoped
+document counts. With `--explain`, the header adds trace stage/count pairs.
 With `--rerank`, it adds outcome, candidate count, and any failure cause.
-Values with spaces, quotes, or backslashes use Go string
-quoting; terminal escapes and controls are removed. Excerpts collapse whitespace
-and are bounded to 160 Unicode characters. Ordinary lexical scores are `0`
-because that API exposes no score; their excerpts are filenames. Processing
-hits use the daemon score and lexical/semantic/hybrid match kind.
+
+Each hit is one line with selector, match, and path. Processing hits add the
+daemon score, a lexical/semantic/hybrid match kind, and a short excerpt.
+Ordinary lexical hits omit score and excerpt because that API exposes neither.
+Hybrid output lists folder name matches as `match=name` lines after the
+processing hits. Values with spaces, quotes, or backslashes use Go string
+quoting; terminal escapes and controls are removed. Excerpts collapse
+whitespace and are bounded to 160 Unicode characters.
 
 ```text
 OK search count=1 query="renewal terms" mode=lexical degraded=false truncated=false
-- selector=id:42 match=name score=0 path=/renewal-terms.txt excerpt=renewal-terms.txt
+- selector=id:42 match=name path=/renewal-terms.txt
 ```
 
 ### Processing search

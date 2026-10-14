@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-13
+last_edited: 2026-10-14
 title: Searching
 description: Ranked, prefix-matching search over document names and verified text content.
 ---
@@ -10,7 +10,7 @@ Find live files and folders by name, current text, tags, or modification time.
 Query words are joined, so `search tax 2026` and `search "tax 2026"` agree.
 Without processing options, search automatically uses hybrid retrieval when a
 query-capable embedding profile is available; otherwise it uses ordinary lexical
-search. A failed semantic leg falls back with an explicit degradation reason.
+search. A failed hybrid attempt falls back with an explicit degradation reason.
 See [Automatic and processing search](search.md) for selection and scope limits.
 Search returns at most 50 results by default and tells you when more match.
 
@@ -146,10 +146,9 @@ when ordinary hits leave no room for supplemental matches.
 
 ## Which documents can match?
 
-Ordinary lexical search includes live files and directories, excluding the
-vault root. Automatic hybrid search includes current versions of live files;
-directories have no content version to include in that scope. Trashed nodes do
-not appear. Restoring them returns them to search. Renames update the name
+Search includes live files and directories, excluding the vault root.
+Hybrid search ranks current versions of live files, then appends directory name
+matches from ordinary search. Trashed nodes do not appear. Restoring them returns them to search. Renames update the name
 index immediately.
 
 Text search uses only the current version of each live file. Ordinary search
@@ -157,9 +156,8 @@ does not cover older versions. Read those with `docbank versions`.
 
 ## How do I narrow the results?
 
-These filters select ordinary lexical search, including when automatic search
-would otherwise use hybrid retrieval. With configured embeddings, the command
-reports `filters_require_lexical`. `--mode lexical` alone also accepts them.
+These filters always select ordinary lexical search, even when hybrid search
+is available. `--mode lexical` alone also accepts them.
 
 | Filter | What it selects |
 |--------|-----------------|
@@ -201,9 +199,10 @@ rejected. Add text, a tag, or a time bound before using those filters.
 
 `--limit` accepts 1–1000. Docbank always reports when the result was truncated.
 For scripts, ordinary lexical `--json` returns `hits`, `limit`, and `truncated`.
-Automatic hybrid uses the existing processing report with `results` and
-coverage instead. See [Search report shapes](search.md). Lexical fallback
-writes `degraded: REASON` to stderr and keeps stdout JSON unchanged.
+Successful hybrid search returns the processing report with `actual_mode`,
+`results`, coverage, and `folders` instead. See
+[Automatic and processing search](search.md). A lexical fallback writes
+`degraded: REASON` to stderr and keeps stdout JSON unchanged.
 
 In ordinary lexical JSON, `hits` is always
 an array, including when nothing matches. The limit caps response size, not
