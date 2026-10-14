@@ -143,15 +143,24 @@ func bindingSearchFailure(reason string) bool {
 	}
 }
 
+// writeAutomaticSearch adds folder name hits to a hybrid report within one
+// --limit page. Folders rank ahead of the lowest hybrid results, as ordinary
+// search ranks name matches ahead of content. The page is truncated when
+// either search omitted matches.
 func writeAutomaticSearch(cmd *cobra.Command, query string, report api.DocumentSearchReport,
-	lexical []api.SearchHit,
+	lexical api.SearchReport,
 ) error {
 	folders := []api.SearchHit{}
-	for _, hit := range lexical {
+	for _, hit := range lexical.Hits {
 		if hit.Node.Kind == "dir" {
 			folders = append(folders, hit)
 		}
 	}
+	if keep := searchLimit - len(folders); len(report.Results) > keep {
+		report.Results = report.Results[:keep]
+		report.Truncated = true
+	}
+	report.Truncated = report.Truncated || lexical.Truncated
 	if searchJSON {
 		return writeCLIJSON(cmd.OutOrStdout(), automaticSearchJSON{DocumentSearchReport: report, Folders: folders})
 	}

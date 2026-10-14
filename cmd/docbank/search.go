@@ -192,10 +192,6 @@ See docs/usage/search.md.`,
 			underPath = directory.Path
 		}
 		query := strings.Join(args, " ")
-		rep, err := c.SearchWithOptions(cmd.Context(), query, searchLimit, opts)
-		if err != nil {
-			return err
-		}
 		var automatic automaticSearchOutcome
 		if !cmd.Flags().Changed("mode") {
 			automatic, err = tryAutomaticSearch(cmd.Context(), c, query, searchLimit, opts)
@@ -203,8 +199,14 @@ See docs/usage/search.md.`,
 				return err
 			}
 		}
+		// Lexical search runs after query embedding, so folder hits added to a
+		// hybrid report are as current as its revalidated results.
+		rep, err := c.SearchWithOptions(cmd.Context(), query, searchLimit, opts)
+		if err != nil {
+			return err
+		}
 		if automatic.report != nil {
-			return writeAutomaticSearch(cmd, query, *automatic.report, rep.Hits)
+			return writeAutomaticSearch(cmd, query, *automatic.report, rep)
 		}
 		if err := writeSearchDegradation(cmd, automatic); err != nil {
 			return err

@@ -12,10 +12,13 @@ resolves the current versions of all live files through the daemon; you do not
 need profile names or version UUIDs for this path. The daemon enforces query
 consent and index authority.
 
-The CLI always runs ordinary lexical search first. Hybrid results replace it
-only when a hybrid search succeeds. Folders have no content version, so the
-hybrid source scope cannot include them; folder name matches from the lexical
-search are appended after the hybrid results instead.
+The CLI runs ordinary lexical search after the hybrid attempt. Its results
+are shown when hybrid search falls back. Folders have no content version, so the
+hybrid source scope cannot include them. After a successful hybrid search, the
+CLI adds folder name matches from the lexical search instead. They are read
+after query embedding, like the revalidated hybrid results. Folders count
+toward `--limit` and replace the lowest-ranked hybrid results when the page is
+full. The report is `truncated` when either search omitted a match.
 
 Profiles and query bindings are tried in ascending name order until one
 succeeds. A failure that could differ by binding, such as missing consent,

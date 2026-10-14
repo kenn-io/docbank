@@ -922,8 +922,8 @@ docbank search [<query>...] [--tag <name-or-id>] [--mime-type <type/subtype>] [-
 
 Query words are joined. When a processing profile has a query embedding
 binding, plain text search tries hybrid retrieval over the current versions of
-all live files, then appends folder name matches from ordinary search.
-Filters, `--fuzzy`, limits above 100, queries longer than 8,192 Unicode
+all live files, then appends folder name matches from ordinary search within
+the same `--limit`. Filters, `--fuzzy`, limits above 100, queries longer than 8,192 Unicode
 characters, and `--mode lexical` run ordinary lexical search without trying
 hybrid. When a hybrid attempt fails, the CLI writes `degraded: REASON` to
 stderr and prints ordinary lexical results. See

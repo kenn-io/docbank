@@ -7,6 +7,7 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -25,6 +26,7 @@ type automaticSearchCase struct {
 	profiles                              []api.ProcessingProfileSummary
 	profileError, scopeError, searchError string
 	empty, malformed, cold, mixed         bool
+	lexicalTruncated, wantTruncated       bool
 	jsonCLI, humanCLI, agentCLI           bool
 	limit                                 int
 	opts                                  daemonconn.SearchOptions
@@ -42,6 +44,8 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 	cases := []automaticSearchCase{
 		{name: "cold first binding", profiles: profiles, limit: 50, cold: true, wantScope: 1, wantSearch: 2, wantHybrid: true},
 		{name: "JSON hybrid", profiles: profiles, limit: 50, jsonCLI: true, wantScope: 1, wantSearch: 1, wantHybrid: true},
+		{name: "JSON folder within limit", profiles: profiles, limit: 1, jsonCLI: true, wantScope: 1, wantSearch: 1, wantHybrid: true, wantTruncated: true},
+		{name: "JSON lexical truncation", profiles: profiles, limit: 50, jsonCLI: true, lexicalTruncated: true, wantScope: 1, wantSearch: 1, wantHybrid: true, wantTruncated: true},
 		{name: "human hybrid", profiles: profiles, limit: 50, humanCLI: true, wantScope: 1, wantSearch: 1, wantHybrid: true},
 		{name: "agent hybrid", profiles: profiles, limit: 50, agentCLI: true, wantScope: 1, wantSearch: 1, wantHybrid: true},
 		{name: "query length boundary", query: strings.Repeat("界", 8192), profiles: profiles, limit: 50, jsonCLI: true, wantScope: 1, wantSearch: 1, wantHybrid: true},
@@ -145,7 +149,8 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 			assert.NoError(t, json.MarshalWrite(w, map[string]string{"proof": daemonauth.Proof("synthetic-token", nonce)}))
 		case "GET /api/v1/search":
 			assert.Equal(t, tc.query, r.URL.Query().Get("q"))
-			assert.NoError(t, json.MarshalWrite(w, api.SearchReport{Limit: tc.limit, Hits: []api.SearchHit{
+			assert.Equal(t, tc.wantSearch, *searchCalls, "lexical search must run after every hybrid attempt")
+			assert.NoError(t, json.MarshalWrite(w, api.SearchReport{Limit: tc.limit, Truncated: tc.lexicalTruncated, Hits: []api.SearchHit{
 				{Node: api.Node{ID: 42, Kind: "file", Name: "query.txt"}, Path: "/query.txt", Match: "name"},
 				{Node: api.Node{ID: 7, Kind: "dir", Name: "query folder"}, Path: "/query folder", Match: "name"},
 			}}))
@@ -230,6 +235,7 @@ func runAutomaticSearchCLI(t *testing.T, tc automaticSearchCase, serverURL strin
 	rootCmd.SetOut(&stdout)
 	rootCmd.SetErr(&stderr)
 	args := append([]string{"search"}, strings.Split(tc.query, " ")...)
+	args = append(args, "--limit", strconv.Itoa(tc.limit))
 	switch {
 	case tc.jsonCLI:
 		args = append(args, "--json")
@@ -266,8 +272,9 @@ func runAutomaticSearchCLI(t *testing.T, tc automaticSearchCase, serverURL strin
 	case tc.wantHybrid:
 		var hybrid api.DocumentSearchReport
 		require.NoError(t, json.Unmarshal(stdout.Bytes(), &hybrid))
-		require.Len(t, hybrid.Results, 1)
+		assert.Len(t, hybrid.Results, min(1, tc.limit-1), "folders count toward --limit")
 		assert.Equal(t, "hybrid", hybrid.ActualMode)
+		assert.Equal(t, tc.wantTruncated, hybrid.Truncated)
 		var folders struct {
 			Folders []api.SearchHit `json:"folders"`
 		}
@@ -292,7 +299,7 @@ func runAutomaticSearchCLI(t *testing.T, tc automaticSearchCase, serverURL strin
 func TestAutomaticSearchTransportAndCancellation(t *testing.T) {
 	cmd, _ := processingTestCommand()
 	outcome, err := tryAutomaticSearch(cmd.Context(), daemonconn.New("http://127.0.0.1:1", "key"), "query", 50, daemonconn.SearchOptions{})
-	require.NoError(t, err, "the lexical search already reached the daemon, so a hybrid transport failure falls back")
+	require.NoError(t, err, "a hybrid transport failure falls back; the lexical search then reports it")
 	assert.Equal(t, "semantic_search_failed", outcome.reason)
 	require.Error(t, outcome.err)
 	ctx, cancel := context.WithCancel(context.Background())
