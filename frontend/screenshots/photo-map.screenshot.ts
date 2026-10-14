@@ -208,13 +208,16 @@ test("photo map privacy, clusters, marker return and mobile grid", async ({ page
     setup.child.stdin!.end("synthetic-passcode\n");
     await setup;
     const asset = JSON.parse(await run("photos", "assets", "inspect", "/Synthetic-photo-00015.jpg"));
-    // A changed Hidden state makes access revalidation query the map again.
+    // A changed Hidden state forces revalidation; unlocated photo 15 keeps map counts unchanged.
     await run("photos", "assets", "hide", asset.id, "--revision", String(asset.revision));
     await page.evaluate(()=>{Object.defineProperty(document,"visibilityState",{configurable:true,value:"visible"});document.dispatchEvent(new Event("visibilitychange"));});
     const accessError = page.locator(".photo-access-error");
     await expect(accessError.getByRole("alert")).toHaveText("Map unavailable");
     await page.screenshot({path:path.join(output!,"photo-map-access-retry-400-dark.png"),animations:"disabled"});
-    await page.unroute("**/photos/assets/query");await accessError.getByRole("button",{name:"Retry",exact:true}).click({timeout:15_000});await expect(page.getByText("13 located photos",{exact:true})).toBeVisible();
+    await page.evaluate(()=>{Object.defineProperty(document,"visibilityState",{configurable:true,value:"hidden"});document.dispatchEvent(new Event("visibilitychange"));});
+    await page.unroute("**/photos/assets/query");
+    await accessError.getByRole("button",{name:"Retry",exact:true}).evaluate(button=>button.addEventListener("click",()=>{Object.defineProperty(document,"visibilityState",{configurable:true,value:"visible"});},{capture:true,once:true}));
+    await accessError.getByRole("button",{name:"Retry",exact:true}).click({timeout:15_000});await expect(page.getByText("13 located photos",{exact:true})).toBeVisible();
     await page.unroute("https://tiles.example.org/**");
     await page.route("https://tiles.example.org/**",route=>route.fulfill({status:404,body:""}));
     await page.setViewportSize({width:1440,height:960});await page.goto("about:blank");await page.goto(enabledURL.href);
