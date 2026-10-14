@@ -26,7 +26,7 @@ export class HiddenAccess {
     if (this.pending) void this.requestLock(true).catch(() => {});
   }
   lock({ keepalive = false } = {}) {
-    return this.enqueue(async () => {
+    return this.run(async () => {
       try {
         await this.requestLock(keepalive);
         this.lockError = "";

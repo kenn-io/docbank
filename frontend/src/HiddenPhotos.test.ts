@@ -352,6 +352,10 @@ it("conceals the passcode form and grid while lockError is set, then offers the 
   expect(screen.queryByRole("button", { name: "Unlock" })).toBeNull();
   expect(screen.queryByRole("main", { name: "Photo library" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Open Photo 1.jpg" })).toBeNull();
+  unlocked = false;
+  await view.component.refresh();
+  expect(supplied.access.lockError).toBe("Lock unavailable");
+  expect(screen.queryByRole("button", { name: "Unlock" })).toBeNull();
   const locking = view.component.lock();
   await waitFor(() => expect(locks).toBe(2));
   expect(supplied.access.lockError).toBe("Lock unavailable");
