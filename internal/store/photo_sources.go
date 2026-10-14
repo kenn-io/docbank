@@ -37,7 +37,7 @@ func backfillPhotoSourcesTx(ctx context.Context, tx *sql.Tx) error {
 func photoSourcesTx(ctx context.Context, tx *sql.Tx, assets string, checkout bool) (map[string]photoSource, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT COALESCE(f.asset_id,CAST(f.node_id AS TEXT)),f.file_id,COALESCE(p.identity,''),COALESCE(p.ingest_id,''),COALESCE(p.original_path,n.name),
  `+photoSourceObservedSQL+` AS observed,
- (SELECT COUNT(*) FROM photo_files member WHERE member.asset_id=f.asset_id OR member.node_id=f.node_id),COALESCE(f.source_provenance_identity,''),COALESCE(f.sidecar_of_file_id,''),n.trashed_at IS NOT NULL
+ COALESCE(f.source_provenance_identity,''),COALESCE(f.sidecar_of_file_id,''),n.trashed_at IS NOT NULL
  FROM photo_files f JOIN nodes n ON n.id=f.node_id LEFT JOIN provenance p ON p.node_id=f.node_id
  AND EXISTS(SELECT 1 FROM ingests origin WHERE origin.id=p.ingest_id AND origin.source_kind NOT LIKE 'embedded:%')
  AND (p.identity=f.source_provenance_identity OR NOT EXISTS(SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity))
@@ -48,17 +48,16 @@ func photoSourcesTx(ctx context.Context, tx *sql.Tx, assets string, checkout boo
 	}
 	defer func() { _ = rows.Close() }()
 	type group struct {
-		asset, key, observed string
-		members, agreement   int
-		refs                 map[string]photoSource
+		key, observed string
+		agreement     int
+		refs          map[string]photoSource
 	}
 	groups := map[string]*group{}
 	sources := map[string]photoSource{}
 	for rows.Next() {
 		var source photoSource
 		var file, ingest, observed, fixed string
-		var members int
-		if err := rows.Scan(&source.asset, &file, &source.identity, &ingest, &source.path, &observed, &members, &fixed, &source.target, &source.trashed); err != nil {
+		if err := rows.Scan(&source.asset, &file, &source.identity, &ingest, &source.path, &observed, &fixed, &source.target, &source.trashed); err != nil {
 			return nil, err
 		}
 		source.path = normalizePhotoSourcePath(source.path)
@@ -72,7 +71,7 @@ func photoSourcesTx(ctx context.Context, tx *sql.Tx, assets string, checkout boo
 		key := source.asset + "\x00" + ingest + "\x00" + folder + "\x00" + stem
 		g := groups[key]
 		if g == nil {
-			g = &group{asset: source.asset, key: key, members: members, refs: map[string]photoSource{}}
+			g = &group{key: key, refs: map[string]photoSource{}}
 			groups[key] = g
 		}
 		if _, exists := g.refs[file]; !exists {
@@ -99,15 +98,10 @@ func photoSourcesTx(ctx context.Context, tx *sql.Tx, assets string, checkout boo
 		a, b := ordered[i], ordered[j]
 		return a.agreement > b.agreement || a.agreement == b.agreement && (a.observed < b.observed || a.observed == b.observed && a.key < b.key)
 	})
-	complete := map[string]bool{}
 	byFile := map[string][]*group{}
 	for _, g := range ordered {
 		for file := range g.refs {
 			byFile[file] = append(byFile[file], g)
-		}
-		if len(g.refs) == g.members && !complete[g.asset] {
-			complete[g.asset] = true
-			maps.Copy(sources, g.refs)
 		}
 	}
 	if checkout {

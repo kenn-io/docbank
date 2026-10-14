@@ -412,10 +412,11 @@ func TestPhotoCheckoutEntryPaths(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, sidecar, trashRole, captureDate string
-		multipleSidecars                      bool
+		multipleSidecars, renamedDuplicates   bool
 		paths                                 map[string]string
 	}{
 		{name: "separate ingests", sidecar: "IMG.ARW.XMP", captureDate: "2024-06-15", paths: map[string]string{"raw": "2024/06/15/%s/IMG.ARW", "jpeg": "2024/06/15/%s/IMG.JPG", "sidecar": "2024/06/15/%s/IMG.ARW.XMP"}},
+		{name: "separate ingests then renamed duplicates", sidecar: "IMG.ARW.XMP", renamedDuplicates: true, paths: map[string]string{"raw": "undated/%s/IMG.ARW", "jpeg": "undated/%s/IMG.JPG", "sidecar": "undated/%s/IMG.ARW.XMP"}},
 		{name: "trashed target", sidecar: "IMG.ARW.XMP", trashRole: PhotoRoleRAW, paths: map[string]string{"jpeg": "undated/%s/IMG.JPG", "sidecar": "undated/%s/IMG.ARW.XMP"}},
 		{name: "trashed conflicting sidecar", sidecar: "unrelated.XMP", trashRole: PhotoRoleSidecar, paths: map[string]string{"raw": "undated/%s/IMG.ARW", "jpeg": "undated/%s/IMG.JPG"}},
 		{name: "multiple sidecars", multipleSidecars: true, paths: map[string]string{"raw": "undated/%s/RENAMED.ARW", "jpeg": "undated/%s/IMG.JPG", "first sidecar": "undated/%s/RENAMED.XMP", "second sidecar": "undated/%s/RENAMED.ARW.XMP"}},
@@ -452,6 +453,18 @@ func TestPhotoCheckoutEntryPaths(t *testing.T) {
 				target := fileByRole(result.Asset.Files, PhotoRoleRAW).ID
 				result.Asset, err = s.AttachPhotoFile(ctx, result.Asset.ID, result.Asset.Revision, node.ID, PhotoRoleSidecar, &target)
 				require.NoError(t, err)
+				if tc.renamedDuplicates {
+					run, err = s.BeginIngest(ctx, "photo-import", source)
+					require.NoError(t, err)
+					sidecar := photoImportTestMember(filepath.Join(source, "RENAMED.ARW.XMP"), PhotoRoleSidecar, browseHash("sidecar"), "application/rdf+xml")
+					sidecar.Size = 20
+					duplicate, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(
+						photoImportTestMember(filepath.Join(source, "RENAMED.ARW"), PhotoRoleRAW, browseHash("raw"), "image/x-sony-arw"),
+						photoImportTestMember(filepath.Join(source, "RENAMED.JPG"), PhotoRoleImage, browseHash("jpeg"), "image/jpeg"),
+						sidecar))
+					require.NoError(t, err)
+					require.Equal(t, result.Asset.ID, duplicate.Asset.ID)
+				}
 				for i, file := range result.Asset.Files {
 					node, err := s.NodeByID(ctx, file.NodeID)
 					require.NoError(t, err)

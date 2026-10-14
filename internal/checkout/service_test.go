@@ -140,6 +140,66 @@ func TestCheckoutStartFailurePersistsFailureAndClosesRoot(t *testing.T) {
 
 func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 	t.Parallel()
+	for _, replacement := range []string{"missing", "file", "symlink"} {
+		t.Run(replacement, func(t *testing.T) {
+			s := checkoutService(t)
+			a := checkoutPhoto(t, s, "photo.jpg", "photo bytes")
+			c, op, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, t.TempDir(), 0)
+			require.NoError(t, err)
+			require.NoError(t, root.Close())
+			require.NoError(t, s.Store.ClaimPhotoCheckout(t.Context(), c.ID, op.ID))
+			entries, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
+			require.NoError(t, err)
+			require.Len(t, entries, 1)
+			require.NoError(t, s.Store.PublishPhotoCheckoutEntry(t.Context(), entries[0], func() (bool, error) { return true, nil }))
+			before, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
+			require.NoError(t, err)
+			require.Equal(t, int64(1), before.PublishedFiles)
+			require.Positive(t, before.PublishedBytes)
+			require.NoError(t, os.Remove(c.Destination))
+			var keep string
+			switch replacement {
+			case "file":
+				keep = c.Destination
+			case "symlink":
+				destination := t.TempDir()
+				if err := os.Symlink(destination, c.Destination); err != nil {
+					t.Skipf("symbolic links unavailable: %v", err)
+				}
+				keep = filepath.Join(destination, "keep")
+			}
+			if keep != "" {
+				require.NoError(t, os.WriteFile(keep, []byte("keep"), 0o600))
+			}
+			supervisor := jobs.New(t.Context(), nil)
+			defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
+			require.NoError(t, s.Resume(t.Context(), supervisor))
+			require.Eventually(t, func() bool {
+				status, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
+				return err == nil && status.Checkout.State == "failed"
+			}, 5*time.Second, 10*time.Millisecond)
+			status, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
+			require.NoError(t, err)
+			require.Equal(t, c.ID, status.Checkout.ID)
+			require.Equal(t, op.ID, status.Checkout.OperationID)
+			require.Contains(t, status.Checkout.Error, "interrupted")
+			require.Zero(t, status.PublishedFiles)
+			require.Zero(t, status.PublishedBytes)
+			finished, err := s.Store.StorageOperation(t.Context(), op.ID)
+			require.NoError(t, err)
+			require.Zero(t, finished.CompletedObjects)
+			require.Zero(t, finished.CopiedObjects)
+			require.Zero(t, finished.CopiedBytes)
+			observed, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
+			require.NoError(t, err)
+			require.Equal(t, entries, observed)
+			if keep != "" {
+				content, err := os.ReadFile(keep)
+				require.NoError(t, err)
+				require.Equal(t, "keep", string(content))
+			}
+		})
+	}
 	s := checkoutService(t)
 	a := checkoutPhoto(t, s, "one.jpg", "one.jpg")
 	bad, badOp, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, t.TempDir(), 0)

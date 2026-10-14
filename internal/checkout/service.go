@@ -220,9 +220,27 @@ func (s Service) reconcile(ctx context.Context, c store.PhotoCheckout) error {
 	}
 	failure := "checkout creation was interrupted; partial copies and frozen bases are retained"
 	canonical, fsErr := filepath.EvalSymlinks(c.Destination)
+	invalidDestination := fsErr == nil && canonical != c.Destination
+	if invalidDestination {
+		fsErr = fmt.Errorf("destination now resolves to %q", canonical)
+	}
 	var root *os.Root
-	if fsErr == nil && canonical == c.Destination {
-		root, fsErr = os.OpenRoot(c.Destination)
+	if fsErr == nil {
+		var info os.FileInfo
+		info, fsErr = os.Stat(c.Destination)
+		if fsErr == nil {
+			if info.IsDir() {
+				root, fsErr = os.OpenRoot(c.Destination)
+			} else {
+				invalidDestination = true
+				fsErr = errors.New("destination is no longer a directory")
+			}
+		}
+	}
+	if invalidDestination || errors.Is(fsErr, os.ErrNotExist) {
+		if err := s.Store.ObservePhotoCheckout(ctx, c.ID, c.OperationID, nil); err != nil {
+			return err
+		}
 	}
 	if root != nil {
 		defer func() { _ = root.Close() }()
