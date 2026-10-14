@@ -303,6 +303,82 @@ func TestEgressBoundsTLSHandshake(t *testing.T) {
 	case <-time.After(time.Second):
 		require.Fail(t, "provider connection was not accepted")
 	}
+
+	t.Run("request context deadline", func(t *testing.T) {
+		listener, err := net.Listen("tcp4", "127.0.0.1:0")
+		require.NoError(t, err)
+		accepted := make(chan net.Conn, 1)
+		acceptDone := make(chan struct{})
+		var connection net.Conn
+		go func() {
+			defer close(acceptDone)
+			connection, acceptErr := listener.Accept()
+			if acceptErr == nil {
+				accepted <- connection
+			}
+		}()
+		t.Cleanup(func() {
+			_ = listener.Close()
+			<-acceptDone
+			if connection != nil {
+				_ = connection.Close()
+			} else {
+				select {
+				case connection := <-accepted:
+					_ = connection.Close()
+				default:
+				}
+			}
+		})
+		_, port := endpoint(t, listener.Addr())
+		transport, err := providerhttp.NewTransport(providerhttp.EgressPolicy{
+			Scheme: "https", Host: "127.0.0.1", Port: port,
+			AllowedCIDRs:        []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")},
+			TLSHandshakeTimeout: 5 * time.Second,
+		}, &recordingResolver{})
+		require.NoError(t, err)
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet,
+			"https://127.0.0.1:"+strconv.Itoa(int(port)), nil)
+		require.NoError(t, err)
+		result := make(chan error, 1)
+		go func() {
+			response, doErr := (&http.Client{Transport: transport}).Do(request)
+			if response != nil {
+				_ = response.Body.Close()
+			}
+			result <- doErr
+		}()
+
+		select {
+		case connection = <-accepted:
+		case requestErr := <-result:
+			require.ErrorIs(t, requestErr, context.DeadlineExceeded)
+			require.Fail(t, "request deadline expired before the TLS handshake began")
+		case <-time.After(2 * time.Second):
+			require.Fail(t, "provider connection was not accepted")
+		}
+		var clientHello [1]byte
+		readResult := make(chan error, 1)
+		go func() {
+			_, readErr := io.ReadFull(connection, clientHello[:])
+			readResult <- readErr
+		}()
+		select {
+		case readErr := <-readResult:
+			require.NoError(t, readErr)
+			require.Equal(t, byte(22), clientHello[0])
+		case <-time.After(2 * time.Second):
+			require.Fail(t, "TLS ClientHello was not received")
+		}
+		select {
+		case requestErr := <-result:
+			require.ErrorIs(t, requestErr, context.DeadlineExceeded)
+		case <-time.After(2 * time.Second):
+			require.Fail(t, "request did not return after its context deadline")
+		}
+	})
 }
 
 func TestEgressPolicyIsImmutableAfterTransportCreation(t *testing.T) {
