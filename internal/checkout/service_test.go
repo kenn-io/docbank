@@ -95,22 +95,6 @@ func TestCheckoutDestinationSafety(t *testing.T) {
 		defer func() { require.NoError(t, root.Close()) }()
 		require.Equal(t, canonical, created.Destination)
 	})
-	t.Run("Run rechecks destination after Prepare", func(t *testing.T) {
-		c, _, root, err := s.Prepare(t.Context(), selection, t.TempDir(), 0)
-		require.NoError(t, err)
-		require.NoError(t, root.Close())
-		require.NoError(t, os.WriteFile(filepath.Join(c.Destination, "keep"), []byte("keep"), 0600))
-		err = s.Run(t.Context(), c, nil)
-		status, statusErr := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
-		require.NoError(t, statusErr)
-		require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
-		require.Equal(t, "failed", status.Checkout.State)
-		require.Zero(t, status.PublishedFiles)
-		content, err := os.ReadFile(filepath.Join(c.Destination, "keep"))
-		require.NoError(t, err)
-		require.Equal(t, "keep", string(content))
-	})
-
 }
 
 func TestCheckoutStartFailurePersistsFailureAndClosesRoot(t *testing.T) {
@@ -317,6 +301,26 @@ func TestCheckoutResumesAfterDeferralWithFrozenBytes(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(len(entries)), finished.CopiedObjects)
 	require.Equal(t, copiedBytes, finished.CopiedBytes)
+}
+
+func TestCheckoutRunRechecksUnclaimedDestination(t *testing.T) {
+	t.Parallel()
+	s := checkoutService(t)
+	a := checkoutPhoto(t, s, "photo.jpg", "bytes")
+	selection := store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}
+	c, _, root, err := s.Prepare(t.Context(), selection, t.TempDir(), 0)
+	require.NoError(t, err)
+	require.NoError(t, root.Close())
+	require.NoError(t, os.WriteFile(filepath.Join(c.Destination, "keep"), []byte("keep"), 0600))
+	err = s.Run(t.Context(), c, nil)
+	status, statusErr := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
+	require.NoError(t, statusErr)
+	require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
+	require.Equal(t, "failed", status.Checkout.State)
+	require.Zero(t, status.PublishedFiles)
+	content, err := os.ReadFile(filepath.Join(c.Destination, "keep"))
+	require.NoError(t, err)
+	require.Equal(t, "keep", string(content))
 }
 
 func TestCheckoutRunHandlesInterruptionsAndUnavailableSources(t *testing.T) {

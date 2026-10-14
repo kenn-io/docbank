@@ -289,9 +289,11 @@ func TestTrashEmptyRetainsAuthorityPinsAndDeletesUnrelatedRoots(t *testing.T) {
 				ctx, s.RootID(), "unrelated.bin", fakeHash("b2"), 20, "application/octet-stream")
 			require.NoError(t, err)
 			stamp := nowRFC3339()
-			_, err = s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
-				fakeHash("a1"), stamp)
-			require.NoError(t, err)
+			if authority == "source version" || authority == "input artifact" {
+				_, err = s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
+					fakeHash("a1"), stamp)
+				require.NoError(t, err)
+			}
 			switch authority {
 			case "sealed snapshot":
 				snapshotID, idErr := newUUIDv4()
@@ -329,9 +331,7 @@ func TestTrashEmptyRetainsAuthorityPinsAndDeletesUnrelatedRoots(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, int64(1), preview.Candidates)
 			require.False(t, preview.More)
-			if authority == "checkout entry" {
-				require.Equal(t, int64(1), preview.Retained)
-			}
+			require.Equal(t, map[string]int64{"checkout entry": 1}[authority], preview.Retained)
 			run, err := s.TrashEmptyBounded(ctx, 0, 1, true)
 			require.NoError(t, err)
 			require.Equal(t, preview.Candidates, run.Candidates)

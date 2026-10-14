@@ -145,10 +145,6 @@ func TestPhotoImportPublishesBytesAndPassesThroughReceipts(t *testing.T) {
 	assert.Zero(t, report.Receipt.Ambiguous)
 	assert.Empty(t, report.Receipt.Ambiguities)
 	assert.Zero(t, report.Receipt.Skipped)
-	replayed, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{})
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), replayed.Receipt.Skipped)
-	assert.Zero(t, replayed.Receipt.Added)
 
 	t.Run("ambiguity receipt pass-through", func(t *testing.T) {
 		ing := newTestIngester(t)

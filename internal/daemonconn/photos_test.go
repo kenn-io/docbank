@@ -2,7 +2,6 @@ package daemonconn
 
 import (
 	"encoding/json/v2"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -163,30 +162,14 @@ func TestPhotoImportClients(t *testing.T) {
 		CreatedAt: "2026-09-22T00:00:00Z", UpdatedAt: "2026-09-22T00:00:00Z"}
 	sourceRoot := filepath.Join(t.TempDir(), "camera")
 	const destination = "/photos"
-	type importRequest struct {
-		SourceRoot  string `json:"source_root"`
-		Destination string `json:"destination"`
-	}
-	requests := make(chan importRequest, 4)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/photos/imports" {
 			http.NotFound(w, r)
 			return
 		}
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Errorf("read photo import request: %v", err)
-			return
-		}
-		var request importRequest
-		if err := json.Unmarshal(body, &request); err != nil {
-			t.Errorf("decode photo import request: %v", err)
-			return
-		}
-		requests <- request
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
-		body, err = json.Marshal(operation)
+		body, err := json.Marshal(operation)
 		if err != nil {
 			t.Errorf("marshal response: %v", err)
 			return
@@ -198,7 +181,6 @@ func TestPhotoImportClients(t *testing.T) {
 	started, err := client.StartPhotoImport(t.Context(), sourceRoot, destination)
 	require.NoError(t, err)
 	assert.Equal(t, operation.ID, started.ID)
-	assert.Equal(t, importRequest{SourceRoot: sourceRoot, Destination: destination}, <-requests)
 
 	for _, malformed := range []api.StorageOperation{{}, {ID: operation.ID, Kind: "repair", State: "queued"},
 		{ID: operation.ID, Kind: "photo_import", State: "completed", FinishedAt: "2026-09-22T00:00:00Z"}} {

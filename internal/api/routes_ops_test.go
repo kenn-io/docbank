@@ -368,20 +368,14 @@ func TestTrashListAndEmpty(t *testing.T) {
 	require.NoError(t, err)
 	_, _, err = s.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{retainedAsset.ID}}, "checkout", 0)
 	require.NoError(t, err)
-	_, _, err = s.Trash(t.Context(), retained.ID, retained.Revision)
-	require.NoError(t, err)
-	for _, name := range []string{"held-a", "held-b"} {
-		held, err := s.CreateFile(t.Context(), s.RootID(), name+".jpg", testHash(name), 1, "image/jpeg")
+	for _, name := range []string{"held-a.xmp", "held-b.xmp"} {
+		companion, err := s.CreateFile(t.Context(), s.RootID(), name, testHash(name), 1, "application/octet-stream")
 		require.NoError(t, err)
-		asset, err := s.PhotoAssetForNode(t.Context(), held.ID)
-		require.NoError(t, err)
-		companion, err := s.CreateFile(t.Context(), s.RootID(), name+".xmp", testHash(name+" companion"), 1, "application/octet-stream")
-		require.NoError(t, err)
-		_, err = s.AttachPhotoFile(t.Context(), asset.ID, asset.Revision, companion.ID, store.PhotoRoleSidecar, &asset.Files[0].ID)
-		require.NoError(t, err)
-		_, _, err = s.Trash(t.Context(), held.ID, held.Revision)
+		retainedAsset, err = s.AttachPhotoFile(t.Context(), retainedAsset.ID, retainedAsset.Revision, companion.ID, store.PhotoRoleSidecar, &retainedAsset.Files[0].ID)
 		require.NoError(t, err)
 	}
+	_, err = s.TrashPhotoAsset(t.Context(), retainedAsset.ID, retainedAsset.Revision)
+	require.NoError(t, err)
 
 	expected, err := s.TrashEmpty(t.Context(), 0, false)
 	require.NoError(t, err)

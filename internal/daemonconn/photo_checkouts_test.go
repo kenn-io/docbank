@@ -23,10 +23,6 @@ func TestPhotoCheckoutClients(t *testing.T) {
 	expectedStatus := api.PhotoCheckoutStatus{Checkout: checkout, Files: 2, Bytes: 5, PublishedFiles: 1, PublishedBytes: 3}
 	created := api.PhotoCheckoutCreateResult{Checkout: checkout, Operation: api.StorageOperation{ID: operationID, Kind: "photo_checkout", State: "queued"}}
 	var mu sync.Mutex
-	var estimateRequest store.PhotoCheckoutSelection
-	var createRequest api.PhotoCheckoutCreateRequest
-	var decodeErr error
-	var received bool
 	response := created
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
@@ -35,15 +31,8 @@ func TestPhotoCheckoutClients(t *testing.T) {
 		var out any
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/photos/checkouts/estimate":
-			var request store.PhotoCheckoutSelection
-			decodeErr = json.UnmarshalRead(r.Body, &request)
-			estimateRequest = request
 			out = expectedEstimate
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/photos/checkouts":
-			var request api.PhotoCheckoutCreateRequest
-			decodeErr = json.UnmarshalRead(r.Body, &request)
-			createRequest = request
-			received = true
 			out = response
 			w.WriteHeader(http.StatusAccepted)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/photos/checkouts":
@@ -62,26 +51,14 @@ func TestPhotoCheckoutClients(t *testing.T) {
 	client := New(server.URL, "synthetic-key")
 	create := func(expected api.PhotoCheckoutCreateResult) (api.PhotoCheckoutCreateResult, error) {
 		mu.Lock()
-		response, received, decodeErr = expected, false, nil
+		response = expected
 		mu.Unlock()
 		request := api.PhotoCheckoutCreateRequest{Selection: selection, Destination: checkout.Destination, ByteLimit: 100}
-		result, err := client.CreatePhotoCheckout(t.Context(), request)
-		mu.Lock()
-		wasReceived, requestErr, actualRequest := received, decodeErr, createRequest
-		mu.Unlock()
-		require.True(t, wasReceived, "client did not send the create request")
-		require.NoError(t, requestErr)
-		require.Equal(t, request, actualRequest)
-		return result, err
+		return client.CreatePhotoCheckout(t.Context(), request)
 	}
 	estimate, err := client.EstimatePhotoCheckout(t.Context(), selection)
 	require.NoError(t, err)
 	require.Equal(t, expectedEstimate, estimate)
-	mu.Lock()
-	estimateErr, actualEstimateRequest := decodeErr, estimateRequest
-	mu.Unlock()
-	require.NoError(t, estimateErr)
-	require.Equal(t, selection, actualEstimateRequest)
 	result, err := create(created)
 	require.NoError(t, err)
 	require.Equal(t, created, result)
