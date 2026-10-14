@@ -432,6 +432,8 @@ func TestPhotoFaceRescanKeepsManualBoxAndBreaksTies(t *testing.T) {
 	faces, err = s.ReconcilePhotoFaces(ctx, node.CurrentVersionID, "detector-v2", []document.FaceBox{other})
 	require.NoError(t, err)
 	require.Len(t, faces, 2)
+	returnedIDs := []string{faces[0].FaceID, faces[1].FaceID}
+	require.ElementsMatch(t, []string{manual.FaceID, detectorIDs[0]}, returnedIDs)
 	for _, face := range faces {
 		if face.FaceID == detectorIDs[0] {
 			require.Equal(t, int64(2), face.Revision)
@@ -579,6 +581,8 @@ func TestPhotoFaceKeyFaceClearingAndMerge(t *testing.T) {
 				require.NoError(t, createErr)
 				survivingFace, _, createErr := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), document.FaceBox{X: 0.5, Width: 0.2, Height: 0.2}, survivor.PersonID)
 				require.NoError(t, createErr)
+				_, err = s.db.Exec(`UPDATE persons SET updated_at='2000-01-01T00:00:00Z' WHERE person_id=?`, survivor.PersonID)
+				require.NoError(t, err)
 				expectedKey = face.FaceID
 				if change == "keep" {
 					_, err = s.db.Exec(`UPDATE persons SET key_face_id=? WHERE person_id=?`, survivingFace.FaceID, survivor.PersonID)
