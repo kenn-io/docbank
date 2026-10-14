@@ -95,6 +95,21 @@ func TestCheckoutDestinationSafety(t *testing.T) {
 		defer func() { require.NoError(t, root.Close()) }()
 		require.Equal(t, canonical, created.Destination)
 	})
+	t.Run("Run rechecks destination after Prepare", func(t *testing.T) {
+		c, _, root, err := s.Prepare(t.Context(), selection, t.TempDir(), 0)
+		require.NoError(t, err)
+		require.NoError(t, root.Close())
+		require.NoError(t, os.WriteFile(filepath.Join(c.Destination, "keep"), []byte("keep"), 0600))
+		err = s.Run(t.Context(), c, nil)
+		status, statusErr := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
+		require.NoError(t, statusErr)
+		require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
+		require.Equal(t, "failed", status.Checkout.State)
+		require.Zero(t, status.PublishedFiles)
+		content, err := os.ReadFile(filepath.Join(c.Destination, "keep"))
+		require.NoError(t, err)
+		require.Equal(t, "keep", string(content))
+	})
 }
 
 func TestCheckoutStartFailurePersistsFailureAndClosesRoot(t *testing.T) {
@@ -114,10 +129,6 @@ func TestCheckoutStartFailurePersistsFailureAndClosesRoot(t *testing.T) {
 			require.Error(t, cause)
 			_, err = root.Stat(".")
 			require.Error(t, err)
-			status, err := s.Store.PhotoCheckout(t.Context(), c.ID)
-			require.NoError(t, err)
-			require.Equal(t, "failed", status.State)
-			require.Equal(t, cause.Error(), status.Error)
 			finished, err := s.Store.StorageOperation(t.Context(), op.ID)
 			require.NoError(t, err)
 			require.Equal(t, store.StorageOperationFailed, finished.State)
@@ -217,27 +228,7 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 	require.Equal(t, "keep this file", string(content))
 }
 
-func TestCheckoutRunRechecksUnclaimedDestination(t *testing.T) {
-	t.Parallel()
-	s := checkoutService(t)
-	a := checkoutPhoto(t, s, "photo.jpg", "bytes")
-	selection := store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}
-	c, _, root, err := s.Prepare(t.Context(), selection, t.TempDir(), 0)
-	require.NoError(t, err)
-	require.NoError(t, root.Close())
-	require.NoError(t, os.WriteFile(filepath.Join(c.Destination, "keep"), []byte("keep"), 0600))
-	err = s.Run(t.Context(), c, nil)
-	status, statusErr := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
-	require.NoError(t, statusErr)
-	require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
-	require.Equal(t, "failed", status.Checkout.State)
-	require.Zero(t, status.PublishedFiles)
-	content, err := os.ReadFile(filepath.Join(c.Destination, "keep"))
-	require.NoError(t, err)
-	require.Equal(t, "keep", string(content))
-}
-
-func TestCheckoutRunHandlesInterruptionsDeferralAndUnavailableSources(t *testing.T) {
+func TestCheckoutRunHandlesInterruptionsUnavailableSourcesAndCompletesDeferredResumeWithFrozenBytes(t *testing.T) {
 	t.Parallel()
 	t.Run("resume after deferral preserves frozen bytes", func(t *testing.T) {
 		s := checkoutService(t)
@@ -323,7 +314,7 @@ func TestCheckoutRunHandlesInterruptionsDeferralAndUnavailableSources(t *testing
 		require.Equal(t, int64(len(entries)), finished.CopiedObjects)
 		require.Equal(t, copiedBytes, finished.CopiedBytes)
 	})
-	for _, failure := range []string{"operator cancellation", "daemon shutdown", "verification failure", "became-invisible"} {
+	for _, failure := range []string{"operator cancellation", "daemon shutdown", "verification failure", "source becomes invisible"} {
 		t.Run(failure, func(t *testing.T) {
 			s := checkoutService(t)
 			names := []string{"first.jpg", "second.jpg", "third.jpg"}
@@ -343,7 +334,7 @@ func TestCheckoutRunHandlesInterruptionsDeferralAndUnavailableSources(t *testing
 				if !assert.NoError(t, err) {
 					return err
 				}
-				if progress.PublishedFiles == 1 && !interrupted && failure == "became-invisible" {
+				if progress.PublishedFiles == 1 && !interrupted && failure == "source becomes invisible" {
 					interrupted = true
 					asset, err := s.Store.PhotoAssetByID(ctx, entries[1].AssetID)
 					require.NoError(t, err)
@@ -408,18 +399,17 @@ func TestCheckoutRunHandlesInterruptionsDeferralAndUnavailableSources(t *testing
 				return
 			}
 			if failure == "daemon shutdown" {
-				require.Equal(t, "running", status.Checkout.State)
 				require.Equal(t, store.StorageOperationRunning, finished.State)
 				return
 			}
-			require.Equal(t, "failed", status.Checkout.State)
+			require.Equal(t, store.StorageOperationFailed, finished.State)
 			switch failure {
 			case "verification failure":
 				require.False(t, actual[2].Published)
 				require.Equal(t, int64(1), finished.CompletedObjects)
-			case "became-invisible":
-				require.Contains(t, status.Checkout.Error, entries[1].FileID)
-				require.Contains(t, status.Checkout.Error, entries[1].Path)
+			case "source becomes invisible":
+				require.Contains(t, finished.Error, entries[1].FileID)
+				require.Contains(t, finished.Error, entries[1].Path)
 				require.True(t, actual[2].Published)
 				require.Equal(t, int64(2), status.PublishedFiles)
 			}

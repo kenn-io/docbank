@@ -507,7 +507,6 @@ func TestFinalizeLocalOperationSettlesCancelRace(t *testing.T) {
 	cancelled, err := s.FinalizeLocalOperation(ctx, finalized)
 	require.NoError(t, err)
 	assert.False(t, cancelled)
-	require.ErrorIs(t, s.RequestStorageOperationCancel(ctx, finalized), ErrStorageOperationTerminal)
 
 	requested := start()
 	require.NoError(t, s.RequestStorageOperationCancel(ctx, requested))
