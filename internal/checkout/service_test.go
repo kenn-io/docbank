@@ -233,7 +233,7 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 	require.Equal(t, "keep this file", string(content))
 }
 
-func TestCheckoutInterruptedRunKeepsPartialCopies(t *testing.T) {
+func TestCheckoutRunHandlesInterruptionDeferralAndUnavailableSources(t *testing.T) {
 	t.Parallel()
 	for _, failure := range []string{"operator cancellation", "daemon shutdown", "verification failure", "became-invisible", "deferred admission"} {
 		t.Run(failure, func(t *testing.T) {
