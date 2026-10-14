@@ -431,7 +431,7 @@ trust_boundary = "local_process"
     let extractionReady = false;
     for (let attempt = 0; attempt < 100; attempt += 1) {
       const report = JSON.parse(
-        await runDocbank(["search", "Synthetic", "--json"]),
+        await runDocbank(["search", "Synthetic", "--mode", "lexical", "--json"]),
       ) as { hits?: unknown[] };
       if (report.hits?.length === 3) {
         extractionReady = true;
