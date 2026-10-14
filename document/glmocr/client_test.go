@@ -86,7 +86,7 @@ func TestClientRetriesTransientServiceFailure(t *testing.T) {
 	assert.Equal(t, int32(2), requests.Load())
 }
 
-func TestClientRetriesInjectedHTTPClientTimeout(t *testing.T) {
+func TestClientClampsInjectedHTTPClientTimeoutAndRetries(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var requests atomic.Int32
 		normalize, err := document.NewNormalizePolicy(1_000_000)
