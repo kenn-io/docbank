@@ -18,7 +18,7 @@ func produceVisualPreviewJPEGDC(ctx context.Context, source io.ReadSeeker, base 
 		return VisualPreviewProduct{}, sourceContentUnavailable(fmt.Errorf("seeking visual preview source: %w", err))
 	}
 	recorder := &visualPreviewReadErrorRecorder{reader: &contextReader{ctx: ctx, reader: source}}
-	decoded, err := decodeVisualPreviewJPEGDC(bufio.NewReaderSize(recorder, 64*1024), config.ColorModel)
+	decoded, err := decodeVisualPreviewJPEGDC(bufio.NewReaderSize(recorder, 64*1024))
 	if recorder.err != nil {
 		err = recorder.err
 	}
@@ -26,9 +26,6 @@ func produceVisualPreviewJPEGDC(ctx context.Context, source io.ReadSeeker, base 
 		return visualPreviewJPEGDecodeResult(base, "the verified JPEG cannot be decoded", err)
 	}
 	w, h := (config.Width+7)/8, (config.Height+7)/8
-	if decoded.Bounds().Dx() != w || decoded.Bounds().Dy() != h {
-		return failedVisualPreview(base, "decode_failed", "the JPEG dimensions changed during decoding"), nil
-	}
 	return encodeVisualPreview(base, decoded, w, h, orientation)
 }
 
@@ -47,25 +44,24 @@ type visualJPEGDCHuffman struct {
 }
 
 type visualJPEGDCDecoder struct {
-	reader        *bufio.Reader
-	width, height int
-	components    []visualJPEGDCComponent
-	quant         [4]uint16
-	huffman       [2][4]visualJPEGDCHuffman
-	progressive   bool
-	baseline      bool
-	restart       int
-	colorModel    color.Model
-	jfif          bool
-	adobeRGB      bool
-	maxH, maxV    int
-	bits          byte
-	nbits         int
+	reader              *bufio.Reader
+	width, height       int
+	components          []visualJPEGDCComponent
+	quant               [4]uint16
+	huffman             [2][4]visualJPEGDCHuffman
+	progressive         bool
+	baseline            bool
+	restart             int
+	jfif                bool
+	adobeTransformValid bool
+	adobeTransform      byte
+	maxH, maxV          int
+	bits                byte
+	nbits               int
 }
 
-func decodeVisualPreviewJPEGDC(reader *bufio.Reader, model color.Model) (image.Image, error) {
-	d := visualJPEGDCDecoder{reader: reader, colorModel: model}
-	scanStarted := false
+func decodeVisualPreviewJPEGDC(reader *bufio.Reader) (image.Image, error) {
+	d := visualJPEGDCDecoder{reader: reader}
 	if _, err := reader.Discard(2); err != nil {
 		return nil, fmt.Errorf("reading JPEG start: %w", err)
 	}
@@ -104,12 +100,6 @@ func decodeVisualPreviewJPEGDC(reader *bufio.Reader, model color.Model) (image.I
 				d.restart = int(binary.BigEndian.Uint16(payload))
 			}
 		case 0xda:
-			if !scanStarted {
-				if err = d.checkColorModel(); err != nil {
-					return nil, err
-				}
-				scanStarted = true
-			}
 			err = d.scan(payload)
 			if err == nil && d.progressive && payload[len(payload)-3] > 0 {
 				marker, err = d.skipAC()
@@ -119,10 +109,7 @@ func decodeVisualPreviewJPEGDC(reader *bufio.Reader, model color.Model) (image.I
 			if marker == 0xe0 && len(payload) >= 5 {
 				d.jfif = string(payload[:5]) == "JFIF\x00"
 			} else if marker == 0xee && len(payload) >= 12 && string(payload[:5]) == "Adobe" {
-				d.adobeRGB = payload[11] == 0
-			}
-			if scanStarted {
-				err = d.checkColorModel()
+				d.adobeTransformValid, d.adobeTransform = true, payload[11]
 			}
 		default:
 			if marker < 0xe0 || marker > 0xef && marker != 0xfe {
@@ -136,18 +123,14 @@ func decodeVisualPreviewJPEGDC(reader *bufio.Reader, model color.Model) (image.I
 	return nil, err
 }
 
-func (d *visualJPEGDCDecoder) checkColorModel() error {
-	if len(d.components) != 3 {
-		return nil
+func (d *visualJPEGDCDecoder) isRGB() bool {
+	if d.jfif {
+		return false
 	}
-	model := color.YCbCrModel
-	if !d.jfif && (d.adobeRGB || d.components[0].id == 'R' && d.components[1].id == 'G' && d.components[2].id == 'B') {
-		model = color.RGBAModel
+	if d.adobeTransformValid && d.adobeTransform == 0 {
+		return true
 	}
-	if model != d.colorModel {
-		return jpeg.UnsupportedError("color marker changes configured color model")
-	}
-	return nil
+	return d.components[0].id == 'R' && d.components[1].id == 'G' && d.components[2].id == 'B'
 }
 
 func (d *visualJPEGDCDecoder) marker() (byte, error) {
@@ -488,11 +471,12 @@ func (d *visualJPEGDCDecoder) image() (image.Image, error) {
 		return gray, nil
 	}
 	output := image.NewRGBA(bounds)
+	rgb := d.isRGB()
 	for y := range bounds.Dy() {
 		for x := range bounds.Dx() {
 			var values [3]byte
 			for i, c := range d.components {
-				if d.colorModel == color.YCbCrModel && i > 0 {
+				if !rgb && i > 0 {
 					values[i] = c.chroma(x, y, d.maxH, d.maxV)
 				} else {
 					cx, cy := x*int(c.h)/d.maxH, y*int(c.v)/d.maxV
@@ -500,7 +484,7 @@ func (d *visualJPEGDCDecoder) image() (image.Image, error) {
 				}
 			}
 			r, g, b := values[0], values[1], values[2]
-			if d.colorModel == color.YCbCrModel {
+			if !rgb {
 				r, g, b = color.YCbCrToRGB(r, g, b)
 			}
 			output.SetRGBA(x, y, color.RGBA{R: r, G: g, B: b, A: 255})

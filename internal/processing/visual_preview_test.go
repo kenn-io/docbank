@@ -992,6 +992,7 @@ func TestProduceVisualPreviewDownscalesOversizedJPEG(t *testing.T) {
 					}
 					assert.Equal(t, width, product.Preview.Output.Width)
 					assert.Equal(t, height, product.Preview.Output.Height)
+					// Measured TotalAlloc was 27.17-36.92 MiB across these cases on Windows amd64.
 					assert.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(48<<20))
 					decoded, err := jpeg.Decode(bytes.NewReader(product.Output))
 					require.NoError(t, err)
@@ -1004,22 +1005,39 @@ func TestProduceVisualPreviewDownscalesOversizedJPEG(t *testing.T) {
 
 func TestVisualPreviewJPEGDCBlockMeans(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"progressive-444", "progressive-420", "baseline-422"} {
+	for _, name := range []string{"progressive-444", "progressive-420", "baseline-422", "stdlib-420-61x37"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			source, err := os.ReadFile(filepath.Join("testdata", name+".jpg"))
-			require.NoError(t, err)
+			var source []byte
+			if name == "stdlib-420-61x37" {
+				canvas := image.NewRGBA(image.Rect(0, 0, 61, 37))
+				for y := range 37 {
+					for x := range 61 {
+						canvas.SetRGBA(x, y, color.RGBA{R: byte(60 + x), G: byte(80 + y), B: 100, A: 255})
+					}
+				}
+				var encoded bytes.Buffer
+				require.NoError(t, jpeg.Encode(&encoded, canvas, nil))
+				source = encoded.Bytes()
+			} else {
+				var err error
+				source, err = os.ReadFile(filepath.Join("testdata", name+".jpg"))
+				require.NoError(t, err)
+			}
 			config, err := jpeg.DecodeConfig(bytes.NewReader(source))
 			require.NoError(t, err)
-			reduced, err := decodeVisualPreviewJPEGDC(bufio.NewReader(bytes.NewReader(source)), config.ColorModel)
+			reduced, err := decodeVisualPreviewJPEGDC(bufio.NewReader(bytes.NewReader(source)))
 			require.NoError(t, err)
-			assert.Equal(t, image.Rect(0, 0, 8, 6), reduced.Bounds())
+			assert.Equal(t, image.Rect(0, 0, (config.Width+7)/8, (config.Height+7)/8), reduced.Bounds())
 			decoded, err := jpeg.Decode(bytes.NewReader(source))
 			require.NoError(t, err)
 			full, ok := decoded.(*image.YCbCr)
 			require.True(t, ok)
-			for y := range 6 {
-				for x := range 8 {
+			if name == "stdlib-420-61x37" {
+				assert.Equal(t, image.YCbCrSubsampleRatio420, full.SubsampleRatio)
+			}
+			for y := range config.Height / 8 {
+				for x := range config.Width / 8 {
 					var sum [3]int
 					for yy := y * 8; yy < y*8+8; yy++ {
 						for xx := x * 8; xx < x*8+8; xx++ {
@@ -1148,10 +1166,10 @@ func TestVisualPreviewJPEGDCMarkerAndTableHandling(t *testing.T) {
 		{"RGB IDs with short JFIF", jfif, "", "", source},
 		{"JFIF after frame", lateJFIF, "", "", source},
 		{"ignored APP14 then late JFIF", ignoredAdobeLateJFIF, "", "", source},
-		{"JFIF after scan changes RGB", postScanJFIF, "unsupported", "", nil},
+		{"JFIF after scan changes RGB", postScanJFIF, "", "", source},
 		{"Adobe after frame preserves RGB IDs", lateAdobe, "", "", rgb},
 		{"Adobe after scan preserves JFIF", postScanAdobeJFIF, "", "", source},
-		{"Adobe after scan changes YCbCr", postScanAdobe, "unsupported", "", nil},
+		{"Adobe after scan changes YCbCr", postScanAdobe, "", "", rgb},
 		{"second frame", append(append(bytes.Clone(source[:len(source)-2]), rgb[frame:frameEnd]...), 0xff, 0xd9), "format", "bad frame header", nil},
 		{"progressive redefined quantization", redefined, "", "", finalQuant},
 		{"baseline redefined quantization", sequentialRedefined, "", "", baseline},
@@ -1166,9 +1184,9 @@ func TestVisualPreviewJPEGDCMarkerAndTableHandling(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			data := test.data
-			config, err := jpeg.DecodeConfig(bytes.NewReader(data))
+			_, err := jpeg.DecodeConfig(bytes.NewReader(data))
 			require.NoError(t, err)
-			got, err := decodeVisualPreviewJPEGDC(bufio.NewReader(bytes.NewReader(data)), config.ColorModel)
+			got, err := decodeVisualPreviewJPEGDC(bufio.NewReader(bytes.NewReader(data)))
 			if test.wantKind != "" {
 				require.Error(t, err)
 				if test.wantKind == "format" {
@@ -1183,9 +1201,27 @@ func TestVisualPreviewJPEGDCMarkerAndTableHandling(t *testing.T) {
 			}
 			require.NoError(t, err)
 			if test.reference != nil {
-				original, err := decodeVisualPreviewJPEGDC(bufio.NewReader(bytes.NewReader(test.reference)), config.ColorModel)
+				original, err := decodeVisualPreviewJPEGDC(bufio.NewReader(bytes.NewReader(test.reference)))
 				require.NoError(t, err)
 				assert.Equal(t, original, got)
+				if test.name != "standalone TEM" && test.name != "damaged AC entropy" {
+					full, err := jpeg.Decode(bytes.NewReader(data))
+					require.NoError(t, err)
+					var sum [3]uint32
+					for y := range 8 {
+						for x := range 8 {
+							r, g, b, _ := full.At(x, y).RGBA()
+							sum[0] += r >> 8
+							sum[1] += g >> 8
+							sum[2] += b >> 8
+						}
+					}
+					r, g, b, _ := got.At(0, 0).RGBA()
+					// Chroma interpolation and RGB clipping can shift the rendered block mean.
+					assert.InDelta(t, float64(sum[0])/64, r>>8, 6)
+					assert.InDelta(t, float64(sum[1])/64, g>>8, 6)
+					assert.InDelta(t, float64(sum[2])/64, b>>8, 6)
+				}
 			}
 		})
 	}
@@ -1196,7 +1232,7 @@ func TestVisualPreviewJPEGDCReadErrors(t *testing.T) {
 	readErr := errors.New("injected read failure")
 	for _, prefix := range [][]byte{nil, {0xff, 0xd8}, {0xff, 0xd8, 0xff}} {
 		reader := io.MultiReader(bytes.NewReader(prefix), iotest.ErrReader(readErr))
-		_, err := decodeVisualPreviewJPEGDC(bufio.NewReader(reader), color.YCbCrModel)
+		_, err := decodeVisualPreviewJPEGDC(bufio.NewReader(reader))
 		require.ErrorIs(t, err, readErr)
 	}
 }
