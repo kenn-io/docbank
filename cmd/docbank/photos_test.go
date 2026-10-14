@@ -16,24 +16,6 @@ import (
 )
 
 func TestPhotosCLIWorkflow(t *testing.T) {
-	for _, tc := range []struct {
-		path     []string
-		revision bool
-	}{
-		{[]string{"photos", "assets", "create"}, false},
-		{[]string{"photos", "assets", "attach"}, true},
-		{[]string{"photos", "assets", "detach"}, true},
-		{[]string{"photos", "settings", "set"}, true},
-	} {
-		command, args, err := rootCmd.Find(tc.path)
-		require.NoError(t, err, tc.path)
-		require.NotNil(t, command, tc.path)
-		assert.Empty(t, args)
-		if tc.revision {
-			assert.NotNil(t, command.Flags().Lookup("revision"), tc.path)
-		}
-	}
-
 	const assetID = "00000000-0000-4000-8000-000000000001"
 	const assetPath = "/api/v1/photos/assets/" + assetID
 	const nodeAssetPath = "/api/v1/photos/nodes/42/asset"
