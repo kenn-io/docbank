@@ -135,7 +135,8 @@ scope until you refresh.
 Dates use the selected display file's recorded calendar day, so a capture near
 midnight keeps its date regardless of the browser's timezone. A RAW/JPEG pair
 counts once. A photo without a capture date counts on the UTC day its file was
-last modified. The Undated total includes photos with neither.
+last modified. When the same bytes were seen several times, the most recent
+sighting decides, and reverting a photo restores the date of the original bytes. The Undated total includes photos with neither.
 Timeline counts every included photo asset, even in a vault with many ordinary
 documents. It shows a limit message when the scope spans more than 250,000
 distinct capture days or the count runs past its time budget, and offers Retry.
@@ -151,7 +152,7 @@ Camera, Lens, Year, Location, and Albums narrow the grid. Counts cover the
 whole matching library, including photos beyond the loaded page. Tiles appear before the separate count request finishes. Counts have a 30-second budget. Unavailable counts show their reason. Choose Retry counts after a timeout. Member or byte limits require a narrower search or filters. Each facet
 omits its own selected filter while retaining search and the other filters.
 Camera, lens, year, and location describe the selected display file; year
-uses its recorded local capture date. Text may match any live member of a
+uses its recorded local capture date, or the UTC day of its modified time when it has none. Text may match any live member of a
 pair, so a text match can appear under a different display-file camera or lens. Camera and lens count both make and model; their counts can sum to more than the asset total. Equivalent Unicode-folded values share one bucket and count each asset once. Buttons submit an original valid spelling; oversized metadata stays visible as informational counts. Year counts omit a selected whole-year range and retain other date ranges. Albums show live memberships. Choose Clear filters to reset the
 search and facets. Clear filters appears when a search or filter is applied. A facet group disappears when none of the photos have a value for it and no value in it is selected. Changing a facet restores the applied search text. Changing scope clears selection and starts a fresh grid.
 

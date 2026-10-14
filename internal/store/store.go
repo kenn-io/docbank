@@ -152,17 +152,17 @@ func (s *Store) bootstrap(incarnation *metadataProcessingIncarnation) error {
 
 func (s *Store) bootstrapTx(incarnation *metadataProcessingIncarnation) error {
 	return s.withStorageTx(context.Background(), func(tx *sql.Tx) error {
-		var hadFileTimes int
-		if err := tx.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='photo_file_times'`).Scan(&hadFileTimes); err != nil {
-			return fmt.Errorf("checking photo file times: %w", err)
+		var hadTimeline int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='photo_timeline'`).Scan(&hadTimeline); err != nil {
+			return fmt.Errorf("checking photo timeline: %w", err)
 		}
 		if _, err := tx.Exec(schemaSQL); err != nil {
 			return fmt.Errorf("applying schema: %w", err)
 		}
-		if hadFileTimes == 0 {
+		if hadTimeline == 0 {
 			// Vaults built before the table existed get it filled once, through the same refresh the triggers use.
-			if _, err := tx.Exec(`INSERT OR REPLACE INTO photo_file_times_pending(node_id) SELECT node_id FROM photo_files`); err != nil {
-				return fmt.Errorf("backfilling photo file times: %w", err)
+			if _, err := tx.Exec(`INSERT OR REPLACE INTO photo_timeline_pending(node_id) SELECT node_id FROM photo_files`); err != nil {
+				return fmt.Errorf("backfilling photo timeline: %w", err)
 			}
 		}
 		if err := initializeDocumentPeopleState(context.Background(), tx); err != nil {

@@ -525,3 +525,18 @@ func TestCaptureDayFacetCountsFileModifiedTimeDays(t *testing.T) {
 	require.Equal(t, map[string]int64{"2024-03-31": 2, "2025-02-03": 1}, facetCounts(facet))
 	require.Equal(t, int64(1), *facet.Missing)
 }
+
+func TestYearFacetCountsFileModifiedTimeYears(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	run, err := s.BeginIngest(t.Context(), "cli", "wallpapers")
+	require.NoError(t, err)
+	ingestMtimePhoto(t, s, run, "a.jpg", "2023-03-31T01:30:00Z")
+	ingestMtimePhoto(t, s, run, "b.jpg", "2023-06-01T23:59:59Z")
+	dated := ingestMtimePhoto(t, s, run, "c.jpg", "2020-01-01T00:00:00Z")
+	browsePhotoMetadata(t, s, dated, "c", exifCapture("2025-02-03T04:05:06Z"))
+	page, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: snapshotTestQuery(t, `{}`), Facets: []string{"year"}}, nil)
+	require.NoError(t, err)
+	require.Len(t, page.Facets, 1)
+	require.Equal(t, map[string]int64{"2023": 2, "2025": 1}, facetCounts(page.Facets[0]))
+}

@@ -498,9 +498,9 @@ one decode of every retained source generation and one gazetteer load when any
 has GPS; it reads no original blobs. A valid GPS pair can have no label when
 the embedded Natural Earth map has no matching country or simplified boundary.
 
-### Photo file times
+### Photo timeline
 
-Schema 34 adds `photo_file_times`, a derived row per displayed photo file whose content version has no capture sort key. It holds the latest unsuperseded modified time bound to that version, so those photos sort and group by the file's mtime. SQL triggers keep it current as bindings, versions, and technical metadata change. It stays out of metadata JSONL and backups; restore refills it through those triggers, and a vault that predates it is filled once at open.
+Schema 34 adds `photo_timeline`, a derived row per non-sidecar photo file with a placement: the displayed version EXIF capture key and day, else the most recently observed unsuperseded modified time bound to any version with the same bytes. `modified_time` is set only when the mtime placed the photo. Browsing, facets, and date filters read this one indexed key. SQL triggers keep it current as bindings, versions, and technical metadata change. It stays out of metadata JSONL and backups; restore refills it through those triggers, and a vault that predates it is filled once at open.
 
 ### Photo quality signals
 
