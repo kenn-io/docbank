@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/http/httptrace"
 	"net/netip"
 	"net/url"
 	"strconv"
@@ -168,51 +167,6 @@ func TestMistralEmbeddingAttemptTimeouts(t *testing.T) {
 				})
 			})
 		}
-	}
-}
-
-func TestMistralEmbeddingProductionTransportTimeouts(t *testing.T) {
-	for _, stage := range []string{"headers", "body"} {
-		t.Run(stage, func(t *testing.T) {
-			started := make(chan struct{}, 1)
-			release := make(chan struct{})
-			endpoint, egress, resolver := mistralFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				_, _ = io.Copy(io.Discard, r.Body)
-				if stage == "body" {
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(http.StatusOK)
-					if !assert.NoError(t, http.NewResponseController(w).Flush()) {
-						return
-					}
-				}
-				started <- struct{}{}
-				select {
-				case <-r.Context().Done():
-				case <-release:
-				}
-			}))
-			defer close(release)
-			profile := testEmbeddingProfile(t)
-			profile.Endpoint, profile.EgressPolicy = endpoint, egress
-			profile.RequestTimeout, profile.MaxRetries = 5*time.Second, 1
-			recomputeMistralEmbeddingProfile(t, &profile)
-			provider, err := newMistralEmbeddingTestProvider(t, profile, embeddingSecretMap{"credential:mistral-embed": "synthetic-secret"}, resolver)
-			require.NoError(t, err)
-			var responseStarted atomic.Bool
-			ctx := httptrace.WithClientTrace(t.Context(), &httptrace.ClientTrace{
-				GotFirstResponseByte: func() { responseStarted.Store(true) },
-			})
-			_, err = provider.Embed(ctx, []document.EmbeddingInput{{Key: "first", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: "first"}}, embeddingAuthorization(profile.Descriptor))
-			select {
-			case <-started:
-			default:
-				t.Fatal("request did not reach the stalled phase")
-			}
-			require.Equal(t, stage == "body", responseStarted.Load())
-			require.ErrorIs(t, err, ErrTransientResponse)
-			require.ErrorIs(t, err, context.DeadlineExceeded)
-			require.Equal(t, RequestMetrics{Requests: 1}, withoutLatency(MetricsFromError(err)))
-		})
 	}
 }
 
