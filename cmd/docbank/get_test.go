@@ -76,6 +76,7 @@ func TestGetCLIRequestsAndPublishesCurrentVersion(t *testing.T) {
 	for _, selector := range []string{"/inbox/statement.bin", "id:42"} {
 		args := []string{"get", selector, output, "--json"}
 		if selector == "id:42" {
+			require.NoError(t, os.WriteFile(output, []byte("existing destination"), 0o600))
 			args = append(args, "--overwrite")
 		}
 		out, err := runCLI(t, args...)
@@ -85,6 +86,9 @@ func TestGetCLIRequestsAndPublishesCurrentVersion(t *testing.T) {
 		assert.Equal(t, getReceipt{NodeID: node.ID, VersionID: node.CurrentVersionID, BlobHash: node.BlobHash, Size: node.Size, Output: output}, receipt)
 		assert.NotContains(t, out, "download:")
 		assert.Equal(t, selector == "id:42", getOverwrite)
+		published, err := os.ReadFile(output)
+		require.NoError(t, err)
+		assert.Equal(t, content, string(published))
 		stages, err := filepath.Glob(filepath.Join(filepath.Dir(output), "docbank-get-*"))
 		require.NoError(t, err)
 		assert.Empty(t, stages)
@@ -95,8 +99,12 @@ func TestGetCLIRequestsAndPublishesCurrentVersion(t *testing.T) {
 		}
 		assert.Equal(t, "/api/v1/versions/"+node.CurrentVersionID+"/content", <-contentRequests)
 	}
+	require.NoError(t, os.WriteFile(output, []byte("keep me"), 0o600))
 	_, err = runCLI(t, "get", "/inbox/statement.bin", output)
 	require.ErrorContains(t, err, "pass --overwrite")
+	published, readErr := os.ReadFile(output)
+	require.NoError(t, readErr)
+	assert.Equal(t, "keep me", string(published))
 	require.Empty(t, requests)
 	_, err = runCLI(t, "get", "/missing", filepath.Join(t.TempDir(), "out"), "--progress", "animated")
 	require.ErrorContains(t, err, "invalid --progress value")

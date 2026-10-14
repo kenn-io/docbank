@@ -91,6 +91,7 @@ func TestPhotoImportSkipsGroupChangedAfterScan(t *testing.T) {
 	changed := filepath.Join(root, "IMG_0.JPG")
 	require.NoError(t, os.WriteFile(filepath.Join(root, "IMG_0.ARW"), []byte("raw-0"), 0o600))
 	require.NoError(t, os.WriteFile(changed, []byte("jpeg-0"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "IMG_1.JPG"), []byte("jpeg-1"), 0o600))
 	ing := newTestIngester(t)
 	calls := 0
 	report, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{
@@ -104,11 +105,14 @@ func TestPhotoImportSkipsGroupChangedAfterScan(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Empty(t, report.Errors)
-	assert.Zero(t, report.Receipt.Added)
+	assert.Equal(t, int64(1), report.Receipt.Added)
+	assert.Equal(t, int64(1), report.Receipt.Changed)
+	assert.Zero(t, report.Receipt.Skipped)
 	for _, path := range []string{"/photos/IMG_0.ARW", "/photos/IMG_0.JPG"} {
 		_, err := ing.Store.NodeByPath(t.Context(), path)
 		require.ErrorIs(t, err, store.ErrNotFound)
 	}
+	nodeByName(t, ing, "/photos/IMG_1.JPG")
 
 	rerun, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{})
 	require.NoError(t, err)
@@ -117,7 +121,7 @@ func TestPhotoImportSkipsGroupChangedAfterScan(t *testing.T) {
 	nodeByName(t, ing, "/photos/IMG_0.JPG")
 }
 
-func TestPhotoImportPublishedBytes(t *testing.T) {
+func TestPhotoImportReportsAndPublishesBytes(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "capture.JPG")
 	content := []byte("published photo bytes")
@@ -133,6 +137,41 @@ func TestPhotoImportPublishedBytes(t *testing.T) {
 	got, readErr := io.ReadAll(reader)
 	require.NoError(t, errors.Join(readErr, reader.Close()))
 	assert.Equal(t, content, got)
+	assert.Zero(t, report.Receipt.Ambiguous)
+	assert.Empty(t, report.Receipt.Ambiguities)
+	assert.Zero(t, report.Receipt.Skipped)
+
+	t.Run("ambiguous raw group", func(t *testing.T) {
+		ing := newTestIngester(t)
+		root := t.TempDir()
+		for name, bytes := range map[string]string{"IMG_0001.ARW": "raw-one", "IMG_0001.DNG": "raw-two", "IMG_0001.JPG": "jpeg"} {
+			require.NoError(t, os.WriteFile(filepath.Join(root, name), []byte(bytes), 0o600))
+		}
+		report, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos/ambiguous", PhotoImportOptions{})
+		require.NoError(t, err)
+		assert.Equal(t, int64(1), report.Receipt.Ambiguous)
+		require.Len(t, report.Receipt.Ambiguities, 1)
+		assert.Equal(t, store.PhotoImportMultipleRAW, report.Receipt.Ambiguities[0].Reason)
+		assert.Len(t, report.Receipt.Ambiguities[0].Files, 3)
+	})
+
+	t.Run("late companions", func(t *testing.T) {
+		ing := newTestIngester(t)
+		root := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(root, "IMG_0001.ARW"), []byte("raw"), 0o600))
+		first, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos/late", PhotoImportOptions{})
+		require.NoError(t, err)
+		assert.Equal(t, int64(1), first.Receipt.Added)
+		require.NoError(t, os.WriteFile(filepath.Join(root, "IMG_0001.JPG"), []byte("jpeg"), 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(root, "IMG_0001.XMP"), []byte("xmp"), 0o600))
+		second, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos/late", PhotoImportOptions{})
+		require.NoError(t, err)
+		assert.Equal(t, int64(1), second.Receipt.Added)
+		third, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos/late", PhotoImportOptions{})
+		require.NoError(t, err)
+		assert.Equal(t, int64(1), third.Receipt.Skipped)
+		assert.Zero(t, third.Receipt.Added)
+	})
 }
 
 func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
