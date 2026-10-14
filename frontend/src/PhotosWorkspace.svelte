@@ -51,7 +51,8 @@
     const rotations = photos.metadataChanged(receipt);
     const displayFileID = editor.asset?.display_file_id ?? direct?.display_file_id;
     if (direct && rotations.has(direct.display_file_id)) direct = { ...direct, rotation: rotations.get(direct.display_file_id)! };
-    if (photoID && detailLoading && displayFileID && rotations.has(displayFileID)) {
+    // A lookup that has not bound its display file yet may predate any rotation in this receipt.
+    if (photoID && detailLoading && (displayFileID ? rotations.has(displayFileID) : rotations.size > 0)) {
       detailController?.abort();
       reload = { id: photoID };
     }

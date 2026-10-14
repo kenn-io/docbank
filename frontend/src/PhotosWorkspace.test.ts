@@ -694,6 +694,24 @@ it.each(["edit", "Undo"] as const)("reloads an unfiltered Map only after a rotat
   mapped.dispose();
 });
 
+it("restarts a pending viewer lookup when Undo changes a rotation before the display file is known", async () => {
+  Object.defineProperty(Element.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
+  const before = preparedPhoto(1, { file_id: "file-1", values: { ...preparedPhoto(1).values, rotation: 90 } });
+  const photos = workspaceWithPreparedPhoto(before); photos.items = [];
+  photos.authored.receiptID = "rotated"; photos.authored.undoState.summary = "1 file updated: rotation";
+  const lookup = vi.spyOn(photos, "lookup").mockImplementation(() => new Promise(() => {}));
+  const undo = vi.spyOn(photos.authored, "undo").mockResolvedValue(undefined);
+  stubPhotoFetch(vi.fn());
+  render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache, photoID: "photo-1" });
+  await waitFor(() => expect(lookup).toHaveBeenCalledOnce());
+  await fireEvent.click(await screen.findByRole("button", { name: "Undo last photo edit" }));
+  const stale = lookup.mock.calls[0]![1];
+  await undo.mock.calls[0]![0]({ receipt_id: "undone", before: [before], after: [{ ...before, revision: 3, values: { ...before.values, rotation: 0 } }] } as PhotoAuthoredReceipt, []);
+  await waitFor(() => expect(lookup).toHaveBeenCalledTimes(2));
+  expect(stale.aborted).toBe(true);
+  photos.dispose();
+});
+
 it("patches an unfiltered view in place after a metadata edit", async () => {
   Object.defineProperty(Element.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
   const before = preparedPhoto(1, { file_id: "file-1" });
