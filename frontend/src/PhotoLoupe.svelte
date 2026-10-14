@@ -6,7 +6,7 @@
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import Info from "@lucide/svelte/icons/info";
   import RotateCcw from "@lucide/svelte/icons/rotate-ccw";
-  import type { Photos } from "./photos.svelte.js";
+  import type { Photos, PhotoRow } from "./photos.svelte.js";
   import type { PhotoBrowseRow } from "./generated/docbank.js";
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import { isAppShortcutSuppressed } from "./shortcuts.js";
@@ -17,7 +17,7 @@
 
   let { photo, error, note = "", photos, cache, items, canLoadMore, onmove, onchoose, onclose, onretry, onreload, reloading = false, reloadRevision = 0 }: {
     photo?: PhotoBrowseRow; error: string; note?: string; photos: Photos; cache: PhotoPreviewCache;
-    items: PhotoBrowseRow[]; canLoadMore: boolean; onmove: (direction: -1 | 1) => void; onchoose: (id: string) => void; onclose: () => void; onretry: () => void; onreload?: () => void; reloading?: boolean; reloadRevision?: number;
+    items: PhotoRow[]; canLoadMore: boolean; onmove: (direction: -1 | 1) => void; onchoose: (id: string) => void; onclose: () => void; onretry: () => void; onreload?: () => void; reloading?: boolean; reloadRevision?: number;
   } = $props();
   let info = $state(false);
   let url = $state("");
@@ -75,7 +75,7 @@
         if (active.signal.aborted) break;
         const signal = AbortSignal.any([active.signal, AbortSignal.timeout(30_000)]);
         try {
-          const slot = await photos.preview(neighbor, "fit", signal);
+          const slot = await photos.preview(await photos.detail(neighbor, signal), "fit", signal);
           if (slot.state === "ready" && slot.generation_id) await cache.get(neighbor.asset_id, slot.generation_id, signal);
         } catch {}
       }
@@ -162,7 +162,7 @@
     <IconButton ariaLabel="Reset zoom" onclick={() => image?.reset()}><RotateCcw size={18} /></IconButton>
     <IconButton ariaLabel="Photo information" ariaPressed={info} onclick={() => info = !info}><Info size={18} /></IconButton>
   </header>
-  {#if items.length && photos.error}<div class="loupe-error" role="alert"><span>{photos.error}</span><Button size="sm" disabled={photos.loading} onclick={() => { dialog?.focus({preventScroll:true}); onretry(); }}>Retry navigation</Button></div>{/if}
+  {#if (items.length || canLoadMore) && photos.error}<div class="loupe-error" role="alert"><span>{photos.error}</span><Button size="sm" disabled={photos.loading} onclick={() => { dialog?.focus({preventScroll:true}); onretry(); }}>Retry navigation</Button></div>{/if}
   {#if note || error || failure}<div class="loupe-error" role="alert">{#if note}<span>{note}</span>{/if}{#if error}<span>{error}</span>{/if}{#if failure}<span>{failure.message}</span>{/if}{#if note || error || failure?.action === "reload"}<Button size="sm" disabled={reloading} onclick={() => { dialog?.focus({preventScroll:true}); onreload?.(); }}>Reload photo</Button>{/if}{#if (failure?.action === "fit" || failure?.action === "large") && photo}<Button size="sm" disabled={retrying || reloading} onclick={retry}>Retry preview</Button>{/if}</div>{/if}
   <div class="loupe-body">
     <div class="stage">

@@ -183,7 +183,7 @@ exclude = [".DS_Store", "cache/"]
 - **`[web] enabled`**: serves the embedded web application at `/`.
   `docbank web` starts or reconnects to the compatible daemon and opens an
   authenticated browser session on a fresh per-daemon loopback origin,
-  independent of a configured `api_port`. Disabling it 404s `/`, `/photos`, `/photos/albums`, canonical `/photos/albums/{id}`, and `/assets/`.
+  independent of a configured `api_port`. Disabling it 404s `/`, `/photos`, `/photos/map`, `/photos/map/{set_id}`, `/photos/albums`, canonical `/photos/albums/{id}`, and `/assets/`.
   The API and `/docs` are unaffected. See [Web application](usage/web.md).
 - **`[mcp.http] credential_binding`**: names the separate inbound credential
   used by `docbank mcp --transport http`. An empty value leaves stdio available
@@ -1017,3 +1017,16 @@ environment that starts the daemon, then run `docbank daemon restart`. A CLI
 command that starts the daemon automatically passes its own environment, so
 set the variable in your shell profile. Go applications that embed a vault
 in-process send nothing.
+
+## Photo map tiles
+
+Maps stay disabled until you set a raster tile provider and restart the daemon:
+
+```toml
+[web.map_tiles]
+tile_url = "https://tiles.example.org/{z}/{x}/{y}.png"
+attribution = "Example map provider"
+max_zoom = 19
+```
+
+The URL must have a fixed HTTPS origin and all three placeholders in its path. The host must be a hostname or IPv4 address; browsers cannot allow an IPv6 address in the page security policy. Attribution is plain text. The full tile URL, including any key in its query string, stays embedded in the web page. Anyone who can reach the web port can read it without authentication. Use a key restricted to tiles. The provider receives the browser's IP address and viewed map areas. Docbank permits images from that origin only, with no referrer. Choose a provider that permits this; the [public OpenStreetMap tile service requires a Referer](https://operations.osmfoundation.org/policies/tiles/) and is incompatible with this policy.

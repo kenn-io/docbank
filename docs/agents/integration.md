@@ -208,8 +208,9 @@ Directories omit content identity. Version IDs also survive renames. Use a
 live path for display or a one-shot operation on that location.
 
 API-key callers receive source fields marked sensitive, such as GPS
-coordinates. Browser responses omit those fields, but the same session can
-still download the original file. The omission controls display, not access
+coordinates. Browser source metadata omits those fields; compact Map browse rows
+include latitude and longitude when map tiles are configured. The same session
+can still download the original file. The omission controls display, not access
 to information in the original.
 
 The CLI exposes the same distinction without requiring JSON parsing. Human

@@ -5229,11 +5229,34 @@ export interface PhotoBrowseRow {
   width_px: number | null;
 }
 
+export interface PhotoMapRowPreviewsStruct {
+  grid: PhotoPreviewSlot;
+}
+
+export interface PhotoMapRow {
+  asset_id: string;
+  /** @nullable */
+  capture_time: string | null;
+  /** @nullable */
+  height_px: number | null;
+  /** @nullable */
+  latitude: number | null;
+  /** @nullable */
+  longitude: number | null;
+  name: string;
+  previews: PhotoMapRowPreviewsStruct;
+  /** @minimum 1 */
+  revision: number;
+  /** @nullable */
+  width_px: number | null;
+}
+
 export interface PhotoBrowsePage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   facets: PhotoBrowsePageFacetsItem[];
   items: PhotoBrowseRow[];
+  map_items?: PhotoMapRow[];
   next_cursor?: string;
   /** @minimum 0 */
   total: number;
@@ -5250,6 +5273,13 @@ export const PhotoBrowseRequestFacetsItem = {
   set: 'set',
 } as const;
 
+export type PhotoBrowseRequestProjection = typeof PhotoBrowseRequestProjection[keyof typeof PhotoBrowseRequestProjection];
+
+
+export const PhotoBrowseRequestProjection = {
+  map: 'map',
+} as const;
+
 export interface PhotoBrowseRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -5260,10 +5290,12 @@ export interface PhotoBrowseRequest {
   facets?: PhotoBrowseRequestFacetsItem[];
   hidden?: boolean;
   /**
+     * Maximum 1000 only with projection: "map"; 250 otherwise.
      * @minimum 1
-     * @maximum 250
+     * @maximum 1000
      */
   page_size?: number;
+  projection?: PhotoBrowseRequestProjection;
   query: SavedQueryV1Schema;
 }
 

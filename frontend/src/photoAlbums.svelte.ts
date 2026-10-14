@@ -124,7 +124,7 @@ export class PhotoAlbums {
     const selected = source.selection.selectedIDs.has(id);
     this.drag = selected ? source.scope() : { asset_ids: [id] };
     if (this.drag.asset_ids && this.drag.asset_ids.length > 1000) {
-      this.error = `Select all ${source.total.toLocaleString()} photos to add more than 1,000 at once.`;
+      this.error = source.projection === "map" ? "Select 1,000 photos or fewer to add to an album." : `Select all ${source.total.toLocaleString()} photos to add more than 1,000 at once.`;
       this.drag = undefined;
       event.preventDefault();
       return;

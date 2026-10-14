@@ -127,6 +127,11 @@ jobs:
       - name: Qualify browser workflow with both SQLite builds
         run: make report-export-browser-test
 
+      - name: Qualify photo map in Chromium
+        env:
+          CGO_ENABLED: "0"
+        run: make photo-map-browser-test
+
   test:
     name: Linux tests
     runs-on: ubuntu-24.04

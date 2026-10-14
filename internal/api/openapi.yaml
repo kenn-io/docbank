@@ -11706,6 +11706,10 @@ components:
           items:
             $ref: "#/components/schemas/PhotoBrowseRow"
           type: array
+        map_items:
+          items:
+            $ref: "#/components/schemas/PhotoMapRow"
+          type: array
         next_cursor:
           type: string
         total:
@@ -11752,10 +11756,15 @@ components:
           type: boolean
         page_size:
           default: 50
+          description: "Maximum 1000 only with projection: \"map\"; 250 otherwise."
           format: int64
-          maximum: 250
+          maximum: 1000
           minimum: 1
           type: integer
+        projection:
+          enum:
+            - map
+          type: string
         query:
           $ref: "#/components/schemas/SavedQueryV1Schema"
       required:
@@ -12102,6 +12111,67 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    PhotoMapRow:
+      additionalProperties: false
+      properties:
+        asset_id:
+          format: uuid
+          type: string
+        capture_time:
+          type:
+            - string
+            - "null"
+        height_px:
+          format: int64
+          type:
+            - integer
+            - "null"
+        latitude:
+          format: double
+          type:
+            - number
+            - "null"
+        longitude:
+          format: double
+          type:
+            - number
+            - "null"
+        name:
+          type: string
+        previews:
+          $ref: "#/components/schemas/PhotoMapRowPreviewsStruct"
+        revision:
+          format: int64
+          minimum: 1
+          type: integer
+        width_px:
+          format: int64
+          type:
+            - integer
+            - "null"
+      required:
+        - asset_id
+        - revision
+        - name
+        - capture_time
+        - width_px
+        - height_px
+        - latitude
+        - longitude
+        - previews
+      type: object
+      x-go-type: api.PhotoMapRow
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoMapRowPreviewsStruct:
+      additionalProperties: false
+      properties:
+        grid:
+          $ref: "#/components/schemas/PhotoPreviewSlot"
+      required:
+        - grid
+      type: object
     PhotoPreviewSlot:
       additionalProperties: false
       properties:
