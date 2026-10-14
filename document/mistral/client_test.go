@@ -56,8 +56,6 @@ func TestClientProcessStreamsVerifiedDocumentAndReturnsNeutralEvidence(t *testin
 	require.Len(t, result.Document.Units, 1)
 	assert.Equal(t, "# Synthetic", result.Document.Units[0].Markdown)
 	assert.Equal(t, 144, result.Document.Units[0].Dimensions.DPI)
-	assert.Equal(t, RequestMetrics{Requests: 1, Retries: 0, Latency: result.Metrics.Latency}, result.Metrics)
-	assert.Positive(t, result.Metrics.Latency)
 
 	var decoded struct {
 		Model    string `json:"model"`
@@ -211,34 +209,12 @@ func TestClientClassifiesResponsesAndDoesNotFollowRedirects(t *testing.T) {
 	assert.False(t, targetCalled)
 }
 
-func TestClientRetriesOnlyTransientWorkAndReverifiesEveryAttempt(t *testing.T) {
+func TestClientReverifiesDocumentBeforeRetry(t *testing.T) {
 	policy := testPolicy(t, 1024, 10)
 	prepared := prepareTestDocument(t, policy, testPDF("original"))
 	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "pdf")
 	require.NoError(t, err)
 	requests := 0
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		requests++
-		_, copyErr := io.Copy(io.Discard, request.Body)
-		assert.NoError(t, copyErr)
-		if requests == 1 {
-			w.Header().Set("Retry-After", "0")
-			w.WriteHeader(http.StatusTooManyRequests)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, writeErr := io.WriteString(w, testSuccessfulResponse)
-		assert.NoError(t, writeErr)
-	}))
-	defer server.Close()
-	client := newServerClient(t, server, policy, ClientConfig{MaxRetryDelay: time.Millisecond})
-	result, err := client.Process(t.Context(), prepared, authorization)
-	require.NoError(t, err)
-	assert.Equal(t, 2, requests)
-	assert.Equal(t, 2, result.Metrics.Requests)
-	assert.Equal(t, 1, result.Metrics.Retries)
-
-	requests = 0
 	mutating := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		requests++
 		_, copyErr := io.Copy(io.Discard, request.Body)
@@ -248,7 +224,7 @@ func TestClientRetriesOnlyTransientWorkAndReverifiesEveryAttempt(t *testing.T) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	defer mutating.Close()
-	client = newServerClient(t, mutating, policy, ClientConfig{MaxRetryDelay: time.Millisecond})
+	client := newServerClient(t, mutating, policy, ClientConfig{MaxRetryDelay: time.Millisecond})
 	_, err = client.Process(t.Context(), prepared, authorization)
 	require.ErrorContains(t, err, "hash mismatch")
 	assert.Equal(t, 1, requests)
@@ -427,57 +403,83 @@ func TestClientCancellationStopsEarlyResponseAndUpload(t *testing.T) {
 	}
 }
 
-func TestClientPreservesAccountingWhenRetriesExhaustOrWaitIsCanceled(t *testing.T) {
+func TestClientPreservesRequestAccounting(t *testing.T) {
 	policy := testPolicy(t, 1024, 10)
 	prepared := prepareTestDocument(t, policy, testPDF("x"))
 	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "pdf")
 	require.NoError(t, err)
 
-	// Give each request a known latency independent of the host clock resolution.
-	synctest.Test(t, func(t *testing.T) {
-		requests := 0
-		server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-			requests++
-			_, copyErr := io.Copy(io.Discard, request.Body)
-			assert.NoError(t, copyErr)
-			time.Sleep(10 * time.Millisecond)
-			w.Header().Set("Retry-After", "0")
-			w.WriteHeader(http.StatusServiceUnavailable)
-		}))
-		client, err := NewClient(policy, ClientConfig{
-			APIKey: "synthetic-key", HTTPClient: server.Client(), MaxRetries: 1, MaxRetryDelay: time.Millisecond,
+	for _, test := range []struct {
+		name          string
+		statuses      []int
+		retryAfter    string
+		maxRetryDelay time.Duration
+		timeout       time.Duration
+		wantError     error
+		wantMetrics   RequestMetrics
+	}{
+		{
+			name: "success", statuses: []int{http.StatusOK},
+			wantMetrics: RequestMetrics{Requests: 1, Retries: 0, Latency: 10 * time.Millisecond},
+		},
+		{
+			name: "success after retry", statuses: []int{http.StatusTooManyRequests, http.StatusOK},
+			retryAfter: "0", maxRetryDelay: time.Millisecond,
+			wantMetrics: RequestMetrics{Requests: 2, Retries: 1, Latency: 20 * time.Millisecond},
+		},
+		{
+			name: "retries exhausted", statuses: []int{http.StatusServiceUnavailable},
+			retryAfter: "0", maxRetryDelay: time.Millisecond, wantError: ErrTransientResponse,
+			wantMetrics: RequestMetrics{Requests: 2, Retries: 1, Latency: 20 * time.Millisecond},
+		},
+		{
+			name: "retry wait canceled", statuses: []int{http.StatusTooManyRequests},
+			retryAfter: "60", timeout: 20 * time.Millisecond, wantError: context.DeadlineExceeded,
+			wantMetrics: RequestMetrics{Requests: 1, Retries: 0, Latency: 10 * time.Millisecond},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				requests := 0
+				server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+					requests++
+					_, copyErr := io.Copy(io.Discard, request.Body)
+					assert.NoError(t, copyErr)
+					time.Sleep(10 * time.Millisecond)
+					status := test.statuses[min(requests-1, len(test.statuses)-1)]
+					if status != http.StatusOK {
+						w.Header().Set("Retry-After", test.retryAfter)
+						w.WriteHeader(status)
+						return
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_, writeErr := io.WriteString(w, testSuccessfulResponse)
+					assert.NoError(t, writeErr)
+				}))
+				client, err := NewClient(policy, ClientConfig{
+					APIKey: "synthetic-key", HTTPClient: server.Client(), MaxRetries: 1, MaxRetryDelay: test.maxRetryDelay,
+				})
+				require.NoError(t, err)
+				ctx := t.Context()
+				if test.timeout > 0 {
+					var cancel context.CancelFunc
+					ctx, cancel = context.WithTimeout(ctx, test.timeout)
+					defer cancel()
+				}
+				result, err := client.Process(ctx, prepared, authorization)
+				var metrics RequestMetrics
+				if test.wantError != nil {
+					require.ErrorIs(t, err, test.wantError)
+					metrics = MetricsFromError(err)
+				} else {
+					require.NoError(t, err)
+					metrics = result.Metrics
+				}
+				assert.Equal(t, test.wantMetrics.Requests, requests)
+				assert.Equal(t, test.wantMetrics, metrics)
+			})
 		})
-		require.NoError(t, err)
-		_, err = client.Process(t.Context(), prepared, authorization)
-		require.ErrorIs(t, err, ErrTransientResponse)
-		assert.Equal(t, 2, requests)
-		metrics := MetricsFromError(err)
-		assert.Equal(t, 2, metrics.Requests)
-		assert.Equal(t, 1, metrics.Retries)
-		assert.Equal(t, 20*time.Millisecond, metrics.Latency)
-
-		// The response takes 10 ms; cancellation occurs during the retry wait.
-		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
-		defer cancel()
-		requests = 0
-		canceling := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-			requests++
-			_, copyErr := io.Copy(io.Discard, request.Body)
-			assert.NoError(t, copyErr)
-			time.Sleep(10 * time.Millisecond)
-			w.Header().Set("Retry-After", "60")
-			w.WriteHeader(http.StatusTooManyRequests)
-		}))
-		client, err = NewClient(policy, ClientConfig{APIKey: "synthetic-key", HTTPClient: canceling.Client()})
-		require.NoError(t, err)
-		_, err = client.Process(ctx, prepared, authorization)
-		require.ErrorIs(t, err, context.DeadlineExceeded)
-		assert.Equal(t, 1, requests)
-		metrics = MetricsFromError(err)
-		assert.Equal(t, 1, metrics.Requests)
-		assert.Equal(t, 0, metrics.Retries)
-		assert.Equal(t, 10*time.Millisecond, metrics.Latency)
-	})
+	}
 }
 
 func TestClientRejectsProviderUnitContractDrift(t *testing.T) {
