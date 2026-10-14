@@ -73,6 +73,16 @@ it("hides a group where no photo has a value and keeps it once some do", async (
   expect(screen.getByText("4 with no tags")).toBeTruthy();
 });
 
+it("keeps a group with a selected value, and hides empty scopes and a camera group nobody has", async () => {
+  const selectedTag = { key: tagID, label: "reviewed", count: 0, selected: true };
+  const view = render(FacetSidebar, { facets: [facet("tags", { total: 9, missing: 9, other: 0, values: [selectedTag] })], query: originalQuery, onchange: vi.fn() });
+  expect(screen.getByRole("group", { name: "Tags facet" })).toBeTruthy();
+  await view.rerender({ facets: [facet("tags", { total: 0, missing: 0, other: 0 })] });
+  expect(screen.queryByRole("group", { name: "Tags facet" })).toBeNull();
+  await view.rerender({ facets: [facet("camera", { total: 9, missing: 9, other: 0 })] });
+  expect(screen.queryByRole("group", { name: "Camera facet" })).toBeNull();
+});
+
 it("keeps the active no-tags filter available to clear at zero", async () => {
   const onchange = vi.fn();
   const view = render(FacetSidebar, { facets: [facet("tags", { missing: 0, other: 0 })], query: { ...originalQuery, filters: { ...originalQuery.filters, no_tags: true } }, onchange });

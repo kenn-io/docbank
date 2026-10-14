@@ -34,7 +34,7 @@ Double-click a photo to select it and open it above Library. Enter
 opens the photo while preserving any separate selection.
 On touch, tap a photo to open it when nothing is selected. Use the checkbox to
 start a selection. Taps then toggle selection. Double-tap opens a photo while
-a selection is active. The Open control stays reachable for screen readers
+a selection is active, and also selects it if it wasn't selected. The Open control stays reachable for screen readers
 and voice control.
 
 Use the arrow keys, Previous and Next buttons, or the thumbnail rail to move

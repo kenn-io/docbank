@@ -135,9 +135,10 @@
 
   // A group where no photo has a value only repeats the scope total, so hide it unless a filter on it is active.
   function empty(facet: Facet): boolean {
-    if (!facet.available || !(facet.dimension in summary) || !facet.total || facet.missing !== facet.total) return false;
-    if (facet.dimension === "tags" && (query.filters.no_tags || query.filters.tag_ids?.length)) return false;
-    return !facet.values.some((value) => selected(facet.dimension, value));
+    if (!facet.available || !(facet.dimension in summary)) return false;
+    if (facet.dimension === "tags" && query.filters.no_tags) return false;
+    if (facet.values.some((value) => selected(facet.dimension, value))) return false;
+    return !facet.total || facet.missing === facet.total;
   }
 
   function toggleMissingTags(): void {
