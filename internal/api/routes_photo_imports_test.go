@@ -115,6 +115,10 @@ func TestPhotoImportCancelThroughJobs(t *testing.T) {
 	var jobs api.JobList
 	require.NoError(t, json.Unmarshal([]byte(body), &jobs))
 	require.Len(t, jobs.Items, 1)
+	assert.Equal(t, "storage:"+operation.ID, jobs.Items[0].Name)
+	assert.Equal(t, "queued", jobs.Items[0].Status)
+	assert.Equal(t, operation.CreatedAt.Format(time.RFC3339Nano), jobs.Items[0].StartedAt)
+	assert.True(t, jobs.Items[0].CancelRequested)
 	assert.Equal(t, 1, jobs.Items[0].Concurrency)
 	assert.Equal(t, int64(1), jobs.Items[0].ControlRevision)
 	assert.Equal(t, operation.ID, jobs.Items[0].OperationID)
