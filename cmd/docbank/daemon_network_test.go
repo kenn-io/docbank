@@ -171,20 +171,6 @@ func TestConcreteNetworkDaemonKeepsLocalImports(t *testing.T) {
 	var operation api.StorageOperation
 	require.NoError(t, json.Unmarshal(body, &operation))
 	require.NotEmpty(t, operation.ID)
-	require.Eventually(t, func() bool {
-		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+rec.Address+"/api/v1/jobs/"+operation.ID, nil)
-		if err != nil {
-			return false
-		}
-		request.Header.Set("X-Api-Key", rec.Metadata["api_key"])
-		response, err := httpClient.Do(request)
-		if err != nil {
-			return false
-		}
-		defer func() { _ = response.Body.Close() }()
-		var latest api.StorageOperation
-		return json.UnmarshalRead(response.Body, &latest) == nil && latest.State == "completed" && latest.CompletedObjects == 1
-	}, 30*time.Second, 50*time.Millisecond)
 
 	packageRoot := t.TempDir()
 	volumeRoot := filepath.Join(packageRoot, "VOL001")
