@@ -122,7 +122,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `GET /audit/scopes/{scope_id}/history?limit=&cursor=` | read canonical newest-first events across every member of one permanent scope | Implemented |
 | `POST /audit/verify` | independently replay audit authority, optionally prove recorded evidence is an exact prefix, and re-hash every protected blob | Implemented |
 | `POST /nodes/{id}/verify` | re-hash one file, bound to an inspected node revision | Implemented |
-| `GET /search?q=&tag_id=&mime_type=&under_node_id=&modified_since=&modified_before=&limit=` | bounded name and extracted-content search (FTS5), optionally restricted by stable tag identity, current base media type, descendants of a live directory, and current node modification time, with match source and `truncated` status | Implemented |
+| `GET /search?q=&tag_id=&mime_type=&under_node_id=&modified_since=&modified_before=&fuzzy=&limit=` | bounded name and extracted-content search (FTS5), optionally restricted by stable tag identity, current base media type, descendants of a live directory, and current node modification time, with match source and `truncated` status; `fuzzy=true` appends bounded one-typo filename/path discovery with a coverage receipt | Implemented |
 | `GET /processing/profiles` · `POST /processing/plans` | list executable profiles / preview one source version and its provider disclosures | Implemented |
 | `POST /processing/jobs` · `GET /processing/jobs/{id}` | run a reviewed plan with streamed job identity / read aggregate status | Implemented |
 | `POST /processing/consent/grants` · `POST /processing/consent/revocations` | grant reviewed profile consent / revoke this operator's processing consent | Implemented |
@@ -184,6 +184,26 @@ require substantial work before reaching `limit`. The normal `limit` and
 `truncated` contract remains in force, without a cursor. If `truncated` is true,
 the page is incomplete. Narrowing time bounds cannot split a group with identical
 modification timestamps, such as nodes restored together.
+
+Set `fuzzy=true` on ordinary `GET /search` to append bounded ASCII filename
+and path discovery after existing hits. Blank text returns `422 validation`;
+other text outside the supplemental syntax returns ordinary hits with
+`not_run`/`query_ineligible`. The response adds optional
+`fuzzy: {status, reasons}` with `status` equal to `complete`, `limited`, or
+`not_run` and an always-array, sorted `reasons`. Without this option, the
+response shape and ordinary ranking are unchanged. Supplemental sources are
+`fuzzy_name` and `fuzzy_path`.
+
+Every scope filter applies before the supplemental candidate cap. Candidate
+metadata, scope eligibility, and bounded display paths share one read
+snapshot. A timeout discards supplemental results while retaining ordinary
+hits; request cancellation and real storage or validation errors propagate.
+Coverage limits and exact matching/ranking rules belong to the
+[Searching guide](../usage/searching.md#how-complete-is-fuzzy-discovery).
+`truncated` continues to identify a known omitted match, independently of
+uncertain fuzzy coverage. Daemon protocol revision 77 requires this contract;
+opted-in direct clients also reject a missing or invalid coverage receipt.
+The separate processing `POST /search` contract is unchanged.
 
 ### Document processing
 

@@ -915,7 +915,7 @@ Selecting a photo member restores its whole group. Companions inside trashed fol
 ## docbank search
 
 ```
-docbank search [<query>...] [--tag <name-or-id>] [--mime-type <type/subtype>] [--under <path-or-id>] [--modified-since <timestamp>] [--modified-before <timestamp>] [--limit <n>] [--json]
+docbank search [<query>...] [--tag <name-or-id>] [--mime-type <type/subtype>] [--under <path-or-id>] [--modified-since <timestamp>] [--modified-before <timestamp>] [--fuzzy] [--limit <n>] [--json]
 ```
 
 Searches live node names and verified extracted text with SQLite FTS5, its
@@ -971,6 +971,23 @@ Processing search uses the separate form below. Saved queries and highlight sets
 use a separate
 [HTTP API](usage/searching.md#save-complete-query-intent-over-http), with no CLI
 management command. See [Searching](usage/searching.md).
+
+`--fuzzy` appends bounded ASCII filename/path discovery after ordinary hits.
+For example, `docbank search invocie --fuzzy --under /cases/acme` can find
+`invoice.pdf`. Only one edit is allowed across the whole query, on a word of
+at least five characters, with the first character unchanged and no digit edits.
+Slash queries match a path suffix; a leading slash anchors it at the root.
+Supplemental sources are `fuzzy_name` and `fuzzy_path`, including exact path
+matches. Unicode typo matching is unsupported. Query text outside the
+supplemental syntax still returns ordinary hits and reports `not_run`.
+
+Fuzzy search requires query text and rejects `--mode`, `--profile`,
+`--binding`, `--source-version`, `--explain`, `--rerank`, and `--similar-to`.
+Only opted-in JSON includes a `fuzzy` receipt with `status` and an always-array
+`reasons`. Human output reports incomplete coverage even with no hits.
+Candidate, name, path, and time bounds can miss matches; narrow the query or
+`--under`. See [fuzzy discovery rules and limits](usage/searching.md#what-if-i-remember-a-misspelled-filename-or-path)
+for the full contract and receipt meanings.
 
 ### Processing search
 

@@ -11215,6 +11215,7 @@ func (c *Client) Search(ctx context.Context, options *SearchRequestOptions, reqE
 	var err error
 
 	queryEncoding := map[string]runtime.QueryEncoding{
+		"fuzzy":           {Style: "form", Explode: &[]bool{false}[0]},
 		"limit":           {Style: "form", Explode: &[]bool{false}[0]},
 		"mime_type":       {Style: "form", Explode: &[]bool{false}[0]},
 		"modified_before": {Style: "form", Explode: &[]bool{false}[0]},
@@ -24323,6 +24324,7 @@ type ListSavedQueriesQuery struct {
 
 type SearchQuery struct {
 	Q              *string `json:"q,omitempty"`
+	Fuzzy          *bool   `json:"fuzzy,omitempty"`
 	Limit          *int64  `json:"limit,omitempty"`
 	TagID          *string `json:"tag_id,omitempty"`
 	MimeType       *string `json:"mime_type,omitempty"`
@@ -26130,6 +26132,8 @@ type FormatCoverageResponse = api.FormatCoverageResponse
 type FormatLookupV1 = document.FormatLookupV1
 
 type FormatVariantCapabilityV1 = document.FormatVariantCapabilityV1
+
+type FuzzyReceipt = api.FuzzyReceipt
 
 type GCReport = api.GCReport
 

@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-05
+last_edited: 2026-10-12
 title: Searching
 description: Ranked, prefix-matching search over document names and verified text content.
 ---
@@ -46,6 +46,96 @@ need to escape them yourself.
 Name matches appear before content-only matches. Within each group, Docbank
 uses BM25, a text-relevance score, then name and ID to break ties consistently.
 The `MATCH` column tells you which group produced the result.
+
+## What if I remember a misspelled filename or path?
+
+Use `--fuzzy` to append filename and path matches after ordinary name and
+content hits. All existing filters still apply.
+
+```bash
+docbank search invocie --fuzzy --under /cases/acme
+docbank search cases/acme/invocie --fuzzy
+docbank search /cases/acme/invoice --fuzzy --json
+```
+
+Supplemental matching requires ASCII query text. Compared names may contain
+non-ASCII spaces, punctuation, and symbols, such as the narrow no-break space
+in macOS screenshot names, an en dash, or a curly apostrophe. Names with a
+non-ASCII letter or digit, a combining accent, or a private-use character are
+skipped. For slash queries, the same rule applies to every compared
+component; extra unmatched ancestors may contain any characters and keep their
+original spelling. Matching folds ASCII letters and splits on every other
+character. Each query
+word matches a word in its component using a clean prefix or the allowed edit.
+The entire query may contain one insertion, deletion, substitution, or adjacent
+transposition.
+An edited word needs at least five characters. Its first character must still
+match, and edited characters cannot be digits. For example, `invocie` finds
+`invoice.pdf`, but `mian` does not find `main.go`, and year changes are not
+guessed.
+
+Without a slash, the supplemental matcher checks the basename. Slash queries
+match consecutive path components ending in the node's own name. A leading
+slash requires the sequence to begin at the vault root. Other slash queries
+may have extra ancestors. An ancestor-only query does not list descendants.
+Backslash is punctuation on every platform. Glob, regular-expression, and
+boolean syntax are not added.
+
+Text outside the supplemental syntax still runs ordinary search, and the
+receipt reports `not_run` with `query_ineligible`. That covers:
+
+- non-ASCII query text, since Unicode typo matching is not supported
+- more than 256 characters, 16 words, 64 characters in one word, or eight path
+  components
+- an empty, repeated-slash, trailing-slash, `.`, or `..` component, or a
+  component without a letter or digit
+- basename queries without a word of five characters; short slash queries can
+  still match exact paths
+
+Ordinary hits keep their original order and source. Supplemental hits show
+`fuzzy_name` or `fuzzy_path` in `MATCH`, including zero-edit path matches.
+Supplemental zero-edit hits precede one-edit hits. Ties prefer whole words,
+then less unmatched word suffix, then full path and node ID.
+
+Fuzzy search requires query text even with tag or date filters. It cannot be
+combined with processing search, similarity, explanations, or reranking.
+
+## How complete is fuzzy discovery?
+
+Fuzzy discovery examines at most 2,048 scoped candidates in node-ID order.
+It shares a 200 ms cancellation budget across snapshot acquisition, scope
+validation, SQL, matching, and path resolution. The existing ordinary search
+runs first and keeps its current behavior. Supplemental names are limited to
+512 characters, ancestry to 64 nodes including the root, and output paths to
+4,096 UTF-8 bytes. A candidate past the ancestry or path bound counts toward
+`path_limit` only if the path components already read could still match a
+slash query. No archive blobs or source directories are read for fuzzy
+matching, and no separate path index needs rebuilding after a move.
+
+Only `--fuzzy` reports include a `fuzzy` coverage receipt. Its `reasons` is
+always an array, including when there are no results:
+
+```json
+{"status":"limited","reasons":["candidate_limit"]}
+```
+
+| Status | Meaning |
+|--------|---------|
+| `complete` | All scoped candidates under the documented matching rules were checked; `reasons` is empty. |
+| `limited` | A candidate, name, path, or time bound prevented complete coverage. |
+| `not_run` | Ordinary results filled the page, or the query is outside the supplemental domain. |
+
+Reasons sort alphabetically: `candidate_limit`, `name_limit`, `path_limit`,
+`query_ineligible`, `result_limit`, and `time_budget`. A timeout discards the
+entire supplemental batch so partial scoring cannot change its ranking.
+Ordinary hits still return. Cancellation of the request itself remains an
+error.
+
+An incomplete receipt can accompany zero hits and `truncated: false`.
+`truncated` still means a verified match was omitted by the result limit.
+Human output prints an incomplete-search notice. Use a more specific query or
+`--under` to recover a candidate missed by a broad search. Increase `--limit`
+when ordinary hits leave no room for supplemental matches.
 
 ## Which documents can match?
 
