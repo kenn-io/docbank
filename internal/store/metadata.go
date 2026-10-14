@@ -513,6 +513,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 			return err
 		}
 	}
+	if layout.schemaVersion >= photoFacesStorageSchemaVersion {
+		if err := photoFaceMetadata.export(ctx, tx, write); err != nil {
+			return err
+		}
+	}
 	if layout.hasPostV3Metadata() {
 		if err := exportMediaMetadata(ctx, tx, write); err != nil {
 			return err
@@ -1549,6 +1554,11 @@ func validateMetadataStateWithVaultIdentity(
 		}
 		if layout.hasPersons() {
 			if err := validatePersonMetadataState(ctx, tx); err != nil {
+				return err
+			}
+		}
+		if layout.schemaVersion >= photoFacesStorageSchemaVersion {
+			if err := validatePhotoFaceMetadataState(ctx, tx); err != nil {
 				return err
 			}
 		}

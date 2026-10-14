@@ -16,6 +16,8 @@ func TestWebSessionDeniesPersonRoutes(t *testing.T) {
 		method string
 		path   string
 	}{
+		{http.MethodPost, "/api/v1/photos/versions/11111111-1111-4111-8111-111111111111/faces"},
+		{http.MethodGet, "/api/v1/photos/versions/11111111-1111-4111-8111-111111111111/faces"},
 		{http.MethodPost, "/api/v1/people"},
 		{http.MethodGet, "/api/v1/people/by-id/11111111-1111-4111-8111-111111111111"},
 		{http.MethodPatch, "/api/v1/people/by-id/11111111-1111-4111-8111-111111111111"},

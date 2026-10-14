@@ -1526,6 +1526,21 @@ export interface CreatePhotoAssetRequest {
   role?: CreatePhotoAssetRequestRole;
 }
 
+export interface FaceBox {
+  height: number;
+  width: number;
+  x: number;
+  y: number;
+}
+
+export interface CreatePhotoFaceRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  box?: FaceBox;
+  face_id?: string;
+  person_id?: string;
+}
+
 export interface CreateTagRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -5323,6 +5338,42 @@ export interface PhotoBrowseRequest {
   page_size?: number;
   projection?: PhotoBrowseRequestProjection;
   query: SavedQueryV1Schema;
+}
+
+export interface PhotoFace {
+  assertion_id?: string;
+  box: FaceBox;
+  content_version_id: string;
+  created_at: string;
+  face_id: string;
+  revision: number;
+}
+
+export interface PhotoPersonAssertion {
+  action: string;
+  assertion_id: string;
+  content_version_id: string;
+  note: string;
+  person_id: string;
+  recorded_at: string;
+  revision: number;
+  role: string;
+}
+
+export interface PhotoFacePage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxItems 1000 */
+  assertions: PhotoPersonAssertion[];
+  /** @maxItems 1000 */
+  faces: PhotoFace[];
+}
+
+export interface PhotoFaceResult {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  assertion?: PhotoPersonAssertion;
+  face?: PhotoFace;
 }
 
 export interface PhotoHiddenPasscodeRequest {
@@ -16033,6 +16084,69 @@ return sessionJSON<PhotoSettings>(getSetPhotoSettingsUrl(),
     method: 'PUT',
     headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
     body: JSON.stringify(setPhotoSettingsRequest)
+  }
+);}
+
+
+
+export const getListPhotoFacesUrl = (contentVersionId: string,) => {
+
+
+
+
+  return `/api/v1/photos/versions/${encodeURIComponent(String(contentVersionId))}/faces`
+}
+
+/**
+ * @summary Read face boxes and people on one photo version
+ */
+export const listPhotoFaces = async (contentVersionId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoFacePage> => {
+
+  return sessionJSON<PhotoFacePage>(getListPhotoFacesUrl(contentVersionId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getCreatePhotoFaceUrl = (contentVersionId: string,) => {
+
+
+
+
+  return `/api/v1/photos/versions/${encodeURIComponent(String(contentVersionId))}/faces`
+}
+
+/**
+ * @summary Record a face box or a person in a whole photo
+ */
+export const createPhotoFace = async (contentVersionId: string,
+    createPhotoFaceRequest: NonReadonly<CreatePhotoFaceRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoFaceResult> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoFaceResult>(getCreatePhotoFaceUrl(contentVersionId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(createPhotoFaceRequest)
   }
 );}
 

@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
@@ -46,6 +47,55 @@ func TestPhotoMCPWorkflowAndWriteOptIn(t *testing.T) {
 	discovery := decodeResult(t, exchangeRaw(t, server, requestFor("server/discover", nil)))
 	assert.Equal(t, catalogInstructions(ServerOptions{AllowPhotoEdits: true}),
 		discovery["instructions"])
+}
+
+func TestGetPhotoFacesMCPPaginatesFacesAndAssertions(t *testing.T) {
+	versionID := "00000000-0000-4000-8000-000000000001"
+	stamp := "2026-10-01T00:00:00Z"
+	assertions := []api.PhotoPersonAssertion{
+		{AssertionID: "00000000-0000-4000-8000-000000000101", ContentVersionID: versionID, PersonID: "00000000-0000-4000-8000-000000000201", Role: "depicted", Action: "assert", RecordedAt: stamp, Revision: 1},
+		{AssertionID: "00000000-0000-4000-8000-000000000102", ContentVersionID: versionID, PersonID: "00000000-0000-4000-8000-000000000202", Role: "depicted", Action: "assert", RecordedAt: stamp, Revision: 1},
+	}
+	faces := []api.PhotoFace{
+		{FaceID: "00000000-0000-4000-8000-000000000301", ContentVersionID: versionID, Box: document.FaceBox{X: 0.1, Y: 0.2, Width: 0.2, Height: 0.2}, Revision: 1, AssertionID: assertions[0].AssertionID, CreatedAt: stamp},
+		{FaceID: "00000000-0000-4000-8000-000000000302", ContentVersionID: versionID, Box: document.FaceBox{X: 0.4, Y: 0.2, Width: 0.2, Height: 0.2}, Revision: 1, AssertionID: assertions[1].AssertionID, CreatedAt: stamp},
+		{FaceID: "00000000-0000-4000-8000-000000000303", ContentVersionID: versionID, Box: document.FaceBox{X: 0.7, Y: 0.2, Width: 0.2, Height: 0.2}, Revision: 1, AssertionID: assertions[0].AssertionID, CreatedAt: stamp},
+		{FaceID: "00000000-0000-4000-8000-000000000304", ContentVersionID: versionID, Box: document.FaceBox{X: 0.7, Y: 0.6, Width: 0.2, Height: 0.2}, Revision: 1, CreatedAt: stamp},
+	}
+	page := api.PhotoFacePage{Faces: faces, Assertions: assertions}
+	daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		assert.Equal(t, http.MethodGet, request.Method)
+		assert.Equal(t, "/api/v1/photos/versions/"+versionID+"/faces", request.URL.Path)
+		writeDaemonJSON(t, response, page)
+	}))
+	t.Cleanup(daemon.Close)
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		return daemonconn.New(daemon.URL, "synthetic-key"), nil
+	}, func(*daemonconn.Connection) error { return nil })
+
+	first, err := invokeReadTool(t.Context(), lease, "get_photo_faces", map[string]any{"content_version_id": versionID, "limit": 2})
+	require.NoError(t, err)
+	firstPage := structuredMap(t, first.StructuredContent)
+	require.EqualValues(t, 4, firstPage["total_faces"])
+	require.EqualValues(t, 2, firstPage["total_assertions"])
+	require.EqualValues(t, 2, firstPage["next_offset"])
+	require.Len(t, firstPage["faces"], 2)
+	require.Len(t, firstPage["assertions"], 2)
+
+	last, err := invokeReadTool(t.Context(), lease, "get_photo_faces", map[string]any{"content_version_id": versionID, "limit": 2, "offset": 2})
+	require.NoError(t, err)
+	lastPage := structuredMap(t, last.StructuredContent)
+	require.EqualValues(t, 2, lastPage["offset"])
+	lastFaces, ok := lastPage["faces"].([]any)
+	require.True(t, ok)
+	require.Len(t, lastFaces, 2)
+	require.Empty(t, lastPage["assertions"])
+	require.Nil(t, lastPage["next_offset"])
+	named, ok := lastFaces[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, assertions[0].PersonID, named["person_id"])
+	require.Equal(t, "assert", named["action"])
+	require.NotContains(t, lastFaces[1], "person_id")
 }
 
 func photoMCPAuthoredServer(t *testing.T, textUnit string, fileCount int) (api.PhotoAsset, *Server, *daemonLease, *atomic.Int32) {

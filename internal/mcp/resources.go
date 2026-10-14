@@ -56,12 +56,12 @@ func parseRenditionResourceURI(raw string) (renditionResourceIdentity, rendition
 		return renditionResourceIdentity{}, renditionWindow{}, errors.New("invalid rendition resource window")
 	}
 	for key, values := range query {
-		if (key != "offset" && key != "max_chars") || len(values) != 1 || values[0] == "" {
+		if (key != schemaOffsetField && key != "max_chars") || len(values) != 1 || values[0] == "" {
 			return renditionResourceIdentity{}, renditionWindow{}, errors.New("invalid rendition resource window")
 		}
 	}
 	window := renditionWindow{MaxChars: defaultRenditionChars}
-	if value := query.Get("offset"); value != "" {
+	if value := query.Get(schemaOffsetField); value != "" {
 		window.Offset, err = strconv.Atoi(value)
 		if err != nil || window.Offset < 0 || strconv.Itoa(window.Offset) != value || window.Offset > 1<<31-1 {
 			return renditionResourceIdentity{}, renditionWindow{}, errors.New("invalid rendition resource offset")

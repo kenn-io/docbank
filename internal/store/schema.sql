@@ -2378,6 +2378,20 @@ CREATE TABLE IF NOT EXISTS person_document_assertions (
     UNIQUE (content_version_id, person_id, role)
 );
 
+CREATE TABLE IF NOT EXISTS photo_faces (
+    face_id TEXT PRIMARY KEY NOT NULL,
+    content_version_id TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    x REAL NOT NULL,
+    y REAL NOT NULL,
+    width REAL NOT NULL,
+    height REAL NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+    assertion_id TEXT REFERENCES person_document_assertions(assertion_id),
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS photo_faces_version ON photo_faces(content_version_id,face_id);
+CREATE INDEX IF NOT EXISTS photo_faces_assertion ON photo_faces(assertion_id,content_version_id);
+
 CREATE TABLE IF NOT EXISTS person_match_candidates (
     candidate_id TEXT PRIMARY KEY NOT NULL,
     actor_key TEXT NOT NULL,

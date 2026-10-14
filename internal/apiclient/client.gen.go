@@ -10178,6 +10178,99 @@ func (c *Client) SetPhotoSettings(ctx context.Context, options *SetPhotoSettings
 	return responseParser(ctx, resp)
 }
 
+// ListPhotoFaces Read face boxes and people on one photo version
+func (c *Client) ListPhotoFaces(ctx context.Context, options *ListPhotoFacesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPhotoFacesResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/photos/versions/{content_version_id}/faces",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListPhotoFacesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListPhotoFacesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListPhotoFacesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListPhotoFacesErrorResponse](resp, "ListPhotoFacesErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/versions/{content_version_id}/faces")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CreatePhotoFace Record a face box or a person in a whole photo
+func (c *Client) CreatePhotoFace(ctx context.Context, options *CreatePhotoFaceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreatePhotoFaceResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/versions/{content_version_id}/faces",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreatePhotoFaceResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(CreatePhotoFaceResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreatePhotoFaceResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreatePhotoFaceErrorResponse](resp, "CreatePhotoFaceErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/versions/{content_version_id}/faces")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
 // GrantDocumentProcessingConsent Grant consent for one exact reviewed processing plan
 func (c *Client) GrantDocumentProcessingConsent(ctx context.Context, options *GrantDocumentProcessingConsentRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GrantDocumentProcessingConsentResponse, error) {
 	var err error
@@ -20535,6 +20628,72 @@ func (o *SetPhotoSettingsRequestOptions) GetHeader() (map[string]string, error) 
 	return headers, err
 }
 
+// ListPhotoFacesRequestOptions is the options needed to make a request to ListPhotoFaces.
+type ListPhotoFacesRequestOptions struct {
+	PathParams *ListPhotoFacesPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListPhotoFacesRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListPhotoFacesRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListPhotoFacesRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListPhotoFacesRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// CreatePhotoFaceRequestOptions is the options needed to make a request to CreatePhotoFace.
+type CreatePhotoFaceRequestOptions struct {
+	PathParams *CreatePhotoFacePath
+	Body       *CreatePhotoFaceBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreatePhotoFaceRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreatePhotoFaceRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreatePhotoFaceRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreatePhotoFaceRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // GrantDocumentProcessingConsentRequestOptions is the options needed to make a request to GrantDocumentProcessingConsent.
 type GrantDocumentProcessingConsentRequestOptions struct {
 	Body *GrantDocumentProcessingConsentBody
@@ -23625,6 +23784,14 @@ type PromotePhotoNodePath struct {
 	NodeID int64 `json:"node_id"`
 }
 
+type ListPhotoFacesPath struct {
+	ContentVersionID uuid.UUID `json:"content_version_id"`
+}
+
+type CreatePhotoFacePath struct {
+	ContentVersionID uuid.UUID `json:"content_version_id"`
+}
+
 type GetDocumentProcessingJobPath struct {
 	ID string `json:"id"`
 }
@@ -23972,6 +24139,8 @@ type PreflightPhotoRejectsBody = PhotoRejectsRequest
 type MovePhotoRejectsBody = MovePhotoRejectsRequest
 
 type SetPhotoSettingsBody = SetPhotoSettingsRequest
+
+type CreatePhotoFaceBody = CreatePhotoFaceRequest
 
 type GrantDocumentProcessingConsentBody = ProcessingConsentGrantRequest
 
@@ -25295,6 +25464,14 @@ type SetPhotoSettingsResponse = api.PhotoSettings
 
 type SetPhotoSettingsErrorResponse = Error
 
+type ListPhotoFacesResponse = api.PhotoFacePage
+
+type ListPhotoFacesErrorResponse = Error
+
+type CreatePhotoFaceResponse = api.PhotoFaceResult
+
+type CreatePhotoFaceErrorResponse = Error
+
 type GrantDocumentProcessingConsentResponse = api.ProcessingConsentGrant
 
 type GrantDocumentProcessingConsentErrorResponse = Error
@@ -25886,6 +26063,8 @@ type CreatePersonRequest = api.CreatePersonRequest
 
 type CreatePhotoAssetRequest = api.CreatePhotoAssetRequest
 
+type CreatePhotoFaceRequest = api.CreatePhotoFaceRequest
+
 type CreateTagRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema *string `json:"$schema,omitempty"`
@@ -26122,6 +26301,8 @@ type EvidenceWindow = api.EvidenceWindow
 type EvidenceWindowRequest = api.EvidenceWindowRequest
 
 type ExportJob = bundle.ExportJob
+
+type FaceBox = document.FaceBox
 
 type Filters = query.Filters
 
@@ -26462,6 +26643,12 @@ type PhotoBrowseRequest = api.PhotoBrowseRequest
 
 type PhotoBrowseRow = api.PhotoBrowseRow
 
+type PhotoFace = store.PhotoFace
+
+type PhotoFacePage = api.PhotoFacePage
+
+type PhotoFaceResult = api.PhotoFaceResult
+
 type PhotoFile = api.PhotoFile
 
 type PhotoHiddenPasscodeRequest = api.PhotoHiddenPasscodeRequest
@@ -26475,6 +26662,8 @@ type PhotoMapRow = api.PhotoMapRow
 type PhotoMapRowPreviewsStruct struct {
 	Grid PhotoPreviewSlot `json:"grid"`
 }
+
+type PhotoPersonAssertion = api.PhotoPersonAssertion
 
 type PhotoPreviewSlot = api.PhotoPreviewSlot
 

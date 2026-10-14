@@ -39,9 +39,10 @@ type Store struct {
 // by this binary. It is intentionally independent of metadata JSONL's logical
 // format version: physical schema changes can rebuild through the same logical
 // format without changing that portable contract.
-const currentStorageSchemaVersion = 34
+const currentStorageSchemaVersion = 35
 
 const peopleStorageSchemaVersion = 15
+const photoFacesStorageSchemaVersion = 35
 
 // DefaultSQLiteDriver returns the build's standalone-compatible adapter: CGO
 // builds use mattn/go-sqlite3 and no-CGO builds use modernc.org/sqlite.

@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-12
+last_edited: 2026-10-14
 title: Photo assets
 description: Group camera files, browse photos, and organize albums in the web app, CLI, or HTTP API.
 ---
@@ -27,6 +27,26 @@ Sidecars never display and must point at a RAW or image member in the same
 asset. Removing the selected member chooses another displayable member
 atomically, or stores a null display when none remains. Assets are limited to
 256 files.
+
+## Record faces and people
+
+Use a photo file's `current_version_id` from `docbank stat <path-or-id> --json` to record an observation:
+
+```sh
+docbank photos faces create <content-version-id> --box 0.1,0.2,0.3,0.4 --person <person-id>
+docbank photos faces create <content-version-id> --person <person-id>
+docbank photos faces list <content-version-id>
+```
+
+A box is `x,y,width,height`, each measured as a fraction of the EXIF-oriented preview before authored rotation. Omit `--person` for an unnamed face, or omit `--box` to mark a person in the whole photo. Naming a face records the same `depicted` person link as a whole-photo mark. Multiple faces of one person share that link. List returns up to 1,000 face boxes and 1,000 depicted-person records, including whole-photo marks and suppressed records referenced by a face. A photo holds at most 1,000 faces and 1,000 depicted people; a create past either limit fails.
+
+A boxed create generates a face UUID. Retain the returned `face_id`, or use `--face-id <uuid>` to supply one. Retry with that same ID, box and version to recover the saved result. A supplied person must match the saved canonical person. A retry still succeeds after that person retires. A boxed command includes the retry ID after a connection failure, a server failure, or an unreadable success response. Conflicting reuse fails.
+
+To name an unnamed box later, repeat the boxed create with its `face_id`, the same box and version, and `--person <person-id>`.
+
+MCP `get_photo_faces` reads up to 100 face boxes and depicted-person records per page. Each named face includes its `person_id` and `action`. Pass `next_offset` as `offset` for the next page. MCP can't unlock Hidden photos. Manual faces and whole-photo marks use HTTP or the CLI.
+
+Faces require the addressed current, live, included image or RAW member. Sidecars and replaced non-image versions cannot receive boxes or whole-photo marks. Face reads and manual writes require an unlock while the photo is Hidden. Audited vault writes return `audit_mutation_unsupported`. These commands record observations manually. Face detection is unavailable. Boxes and existing person assignments can't be changed or undone yet.
 
 ## Open and inspect a photo
 
