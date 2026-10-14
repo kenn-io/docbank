@@ -111,6 +111,7 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaemon.RuntimeRecord,
 	profileCalls, scopeCalls, searchCalls *int,
 ) http.HandlerFunc {
+	t.Helper()
 	const vault = "22222222-2222-4222-8222-222222222222"
 	problem := func(w http.ResponseWriter, code string) {
 		status := http.StatusInternalServerError
