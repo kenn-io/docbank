@@ -299,6 +299,8 @@ func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
 				assert.Equal(t, int64(1), finished.CompletedObjects)
 			case "startup admission failure", "after-group admission failure":
 				assert.Equal(t, store.StorageOperationCompleted, finished.State)
+				assert.Equal(t, int64(3), finished.TotalObjects)
+				assert.Equal(t, int64(3), finished.CompletedObjects)
 			case "after final group":
 				assert.Equal(t, store.StorageOperationCancelled, finished.State)
 				assert.Equal(t, int64(3), finished.CompletedObjects)

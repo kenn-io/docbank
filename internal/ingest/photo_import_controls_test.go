@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestPhotoImportPreparationThrottlesAdmissionAndConsumesCancellation(t *testing.T) {
@@ -32,11 +33,17 @@ func TestPhotoImportPreparationThrottlesAdmissionAndConsumesCancellation(t *test
 				require.Equal(t, 1, inflight)
 				return fn()
 			},
+			Progress: func(_ context.Context, done, _ int, _ store.PhotoImportReceipt) error {
+				if done == 0 {
+					time.Sleep(101 * time.Millisecond)
+				}
+				return nil
+			},
 			Cancelled: func(context.Context) (bool, error) { cancellations++; return false, nil },
 		})
 		require.NoError(t, err)
 		require.Equal(t, int64(1), report.Receipt.Added)
-		require.Equal(t, 2, admissions, "preparation checks are throttled between forced group admissions")
+		require.Equal(t, 3, admissions, "preparation admits once after the throttle interval, then the group boundary forces admission")
 		require.Equal(t, 2, cancellations, "only destination and group commit recheck cancellation")
 		require.Zero(t, inflight)
 		report, err = ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{
