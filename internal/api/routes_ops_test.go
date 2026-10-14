@@ -19,7 +19,6 @@ import (
 	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
 
-	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
@@ -363,19 +362,13 @@ func TestTrashListAndEmpty(t *testing.T) {
 	assert.Equal(t, 1, trash.Total)
 	assert.Equal(t, 1, trash.Limit)
 
-	version := createEmailVersion(t, s, "synthetic-retained.eml", "Subject: Synthetic\r\n\r\nRetained body")
-	response, text := do(t, ts, http.MethodPost, "/api/v1/versions/"+version.ID+"/email", nil, struct{}{})
-	require.Equal(t, http.StatusOK, response.StatusCode, text)
-	view, err := s.EmailMetadata(t.Context(), version.ID)
+	retained, err := s.CreateFile(t.Context(), s.RootID(), "retained.jpg", f.BlobHash, f.Size, "image/jpeg")
 	require.NoError(t, err)
-	root, err := s.NodeByID(t.Context(), s.RootID())
+	retainedAsset, err := s.PhotoAssetForNode(t.Context(), retained.ID)
 	require.NoError(t, err)
-	_, err = s.PublishEmailDocuments(t.Context(), document.EmailDocumentPublicationRequest{
-		OperationID: "synthetic-retention", Parent: document.EmailDocumentIdentity{NodeID: version.NodeID, VersionID: version.ID, SHA256: version.BlobHash, Size: version.Size},
-		GenerationID: view.Generation.ID, AttachmentID: view.Attachment.ID, DestinationID: root.ID, DestinationRevision: root.Revision,
-	})
+	_, _, err = s.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{retainedAsset.ID}}, "checkout", 0)
 	require.NoError(t, err)
-	_, _, err = s.Trash(t.Context(), version.NodeID, store.UnconditionalRev)
+	_, _, err = s.Trash(t.Context(), retained.ID, store.UnconditionalRev)
 	require.NoError(t, err)
 
 	raw := createFileWithContent(t, ts, s, "/capture.raw", "synthetic raw")
