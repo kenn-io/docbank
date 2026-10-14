@@ -7,6 +7,7 @@ export function startAppOpenedReporting(session: string): () => void {
   return startKitAppOpened({
     route: getReportTelemetryEventUrl(),
     surface: "web",
+    storageKey: "docbank.web.app-opened.v1",
     post: (route, { event }) =>
       sessionResponse(route, {
         method: "POST",
