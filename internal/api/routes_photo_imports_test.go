@@ -25,7 +25,11 @@ func TestPhotoImportRoutes(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(root, "capture.JPG"), []byte("photo"), 0o600))
 	ts, catalog := newTestServer(t, func(d *api.Deps) {
 		d.Jobs = jobs.New(t.Context(), nil)
-		t.Cleanup(d.Jobs.Stop)
+		t.Cleanup(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			require.NoError(t, d.Jobs.Shutdown(ctx))
+		})
 	})
 	body, err := json.Marshal(api.PhotoImportStartRequest{SourceRoot: root, Destination: "/photos"})
 	require.NoError(t, err)
@@ -43,18 +47,15 @@ func TestPhotoImportRoutes(t *testing.T) {
 	assert.Equal(t, "queued", started.State)
 
 	var latest api.StorageOperation
-	for range 300 {
+	require.EventuallyWithT(t, func(collect *assert.CollectT) {
 		get, getErr := ts.Client().Get(ts.URL + "/api/v1/jobs/" + started.ID)
-		require.NoError(t, getErr)
+		require.NoError(collect, getErr)
+		defer func() { _ = get.Body.Close() }()
 		var output api.StorageOperation
-		require.NoError(t, json.UnmarshalRead(get.Body, &output))
-		_ = get.Body.Close()
+		require.NoError(collect, json.UnmarshalRead(get.Body, &output))
 		latest = output
-		if latest.FinishedAt != "" {
-			break
-		}
-		time.Sleep(10 * time.Millisecond) //nolint:kennlint // polls the photo import job over the test server's real loopback HTTP, which synctest can't host
-	}
+		assert.NotEmpty(collect, latest.FinishedAt, "last observed operation: %+v", latest)
+	}, 30*time.Second, 10*time.Millisecond)
 	assert.Equal(t, "completed", latest.State)
 	assert.Equal(t, int64(1), latest.CompletedObjects)
 	receiptJSON, err := json.Marshal(latest.Receipt)
