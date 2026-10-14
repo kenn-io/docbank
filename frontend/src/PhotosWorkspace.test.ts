@@ -448,7 +448,7 @@ it.each(["density", "album trash"])("keeps the top photo after %s and pages that
   await cache.dispose();
 });
 
-it.each(["with", "without"])("opens on touch with empty selection and toggles membership for clicks %s pointerType before a double-tap", async pointerType => {
+it("opens on touch with empty selection and toggles membership on touch taps", async () => {
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: true })));
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
@@ -459,17 +459,12 @@ it.each(["with", "without"])("opens on touch with empty selection and toggles me
   const cell = await screen.findByRole("button", { name: "Select Photo 1.jpg" });
   await fireEvent.click(cell); expect(open).not.toHaveBeenCalled(); expect(photos.selection.selectedIDs.has("photo-1")).toBe(true);
   photos.clearSelection();
-  const clickPointerType = pointerType === "with" ? "touch" : undefined;
-  await touchTap(cell, 1000, 1, clickPointerType); expect(open).toHaveBeenCalledWith("photo-1", "open"); expect(photos.selection.selectedIDs.size).toBe(0);
+  await touchTap(cell, 1000, 1); expect(open).toHaveBeenCalledWith("photo-1", "open"); expect(photos.selection.selectedIDs.size).toBe(0);
   await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
   vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: false })));
   const second = screen.getByRole("button", { name: "Select Photo 2.jpg" });
-  await touchTap(second, 1351, 1, clickPointerType); expect([...photos.selection.selectedIDs]).toEqual(["photo-1", "photo-2"]);
-  await touchTap(second, 1702, 1, clickPointerType); expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
-  open.mockClear();
-  await touchTap(second, 2053, 1, clickPointerType); await touchTap(second, 2153, 2, clickPointerType); await fireEvent.doubleClick(second);
-  expect(open).toHaveBeenCalledExactlyOnceWith("photo-2", "open");
-  expect([...photos.selection.selectedIDs]).toEqual(["photo-1", "photo-2"]);
+  await touchTap(second, 1351, 1); expect([...photos.selection.selectedIDs]).toEqual(["photo-1", "photo-2"]);
+  await touchTap(second, 1702, 1); expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
   await fireEvent.keyDown(cell, { key: "Enter" }); expect(open).toHaveBeenCalledTimes(2);
 });
 

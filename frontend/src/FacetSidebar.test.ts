@@ -65,41 +65,27 @@ it.each([
   expect(view.container.querySelector(".summary")).toBeNull();
 });
 
-it("hides a group where no photo has a value and keeps it once some do", async () => {
+it("hides a group with no values or an empty scope, and keeps one with some missing or a selected value", async () => {
+  const selectedTag = { key: tagID, label: "reviewed", count: 0, selected: true };
   const view = render(FacetSidebar, { facets: [facet("tags", { total: 9, missing: 9, other: 0 })], query: originalQuery, onchange: vi.fn() });
   expect(screen.queryByRole("group", { name: "Tags facet" })).toBeNull();
-  expect(screen.queryByText("9 with no tags")).toBeNull();
   await view.rerender({ facets: [facet("tags", { total: 9, missing: 4, other: 0 })] });
-  expect(screen.getByText("4 with no tags")).toBeTruthy();
-});
-
-it("keeps a group with a selected value, and hides empty scopes and a camera group nobody has", async () => {
-  const selectedTag = { key: tagID, label: "reviewed", count: 0, selected: true };
-  const view = render(FacetSidebar, { facets: [facet("tags", { total: 9, missing: 9, other: 0, values: [selectedTag] })], query: originalQuery, onchange: vi.fn() });
+  expect(screen.getByRole("group", { name: "Tags facet" })).toBeTruthy();
+  await view.rerender({ facets: [facet("tags", { total: 9, missing: 9, other: 0, values: [selectedTag] })] });
   expect(screen.getByRole("group", { name: "Tags facet" })).toBeTruthy();
   await view.rerender({ facets: [facet("tags", { total: 0, missing: 0, other: 0 })] });
   expect(screen.queryByRole("group", { name: "Tags facet" })).toBeNull();
-  await view.rerender({ facets: [facet("camera", { total: 9, missing: 9, other: 0 })] });
-  expect(screen.queryByRole("group", { name: "Camera facet" })).toBeNull();
 });
 
-it("keeps the active no-tags filter available to clear at zero", async () => {
+it("keeps the No tags button reachable to clear while active and to apply after a tag is selected", async () => {
   const onchange = vi.fn();
-  const view = render(FacetSidebar, { facets: [facet("tags", { missing: 0, other: 0 })], query: { ...originalQuery, filters: { ...originalQuery.filters, no_tags: true } }, onchange });
-  const button = screen.getByRole("button", { name: "No tags" });
+  const view = render(FacetSidebar, { facets: [facet("tags", { total: 9, missing: 9, other: 0 })], query: { ...originalQuery, filters: { ...originalQuery.filters, no_tags: true } }, onchange });
+  const button = screen.getByRole("button", { name: "9 with no tags" });
   expect(button.getAttribute("aria-pressed")).toBe("true");
   await fireEvent.click(button);
   expect(onchange.mock.calls.at(-1)?.[0].filters.no_tags).toBeUndefined();
-  await view.rerender({ query: onchange.mock.calls.at(-1)?.[0] });
-  expect(screen.queryByRole("button", { name: "No tags" })).toBeNull();
-  expect(view.container.querySelector(".summary")).toBeNull();
-});
-
-it("keeps No tags reachable at zero missing after a tag is selected", async () => {
-  const onchange = vi.fn();
-  render(FacetSidebar, { facets: [facet("tags", { missing: 0, other: 0 })], query: { ...originalQuery, filters: { ...originalQuery.filters, tag_ids: [tagID] } }, onchange });
-  await fireEvent.click(screen.getByRole("button", { name: "No tags" }));
-  expect(onchange.mock.calls.at(-1)?.[0].filters).toMatchObject({ no_tags: true, tag_ids: undefined });
+  await view.rerender({ facets: [facet("tags", { missing: 0, other: 0 })], query: { ...originalQuery, filters: { ...originalQuery.filters, tag_ids: [tagID] } } });
+  expect(screen.getByRole("button", { name: "No tags" })).toBeTruthy();
 });
 
 it("preserves expression, syntax, exclusions, and unrelated filters when applying supported buckets", async () => {

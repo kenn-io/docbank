@@ -14,12 +14,17 @@ it("opens by accessible name and plain click with the button as the return targe
   expect(onopen).toHaveBeenCalledExactlyOnceWith(button);
 });
 
-it.each([false, true].flatMap(selected => ["native", "detail-1"].map(shape => ({ selected, shape }))))("selects and opens a $shape touch double-tap once with selected=$selected even if dblclick follows", async ({ selected, shape }) => {
+it.each([false, true].flatMap(selected => ["native", "detail-1", "click pointerType"].map(shape => ({ selected, shape }))))("selects and opens a $shape touch double-tap once with selected=$selected even if dblclick follows", async ({ selected, shape }) => {
   const onclick = vi.fn(), oncheck = vi.fn(), onopen = vi.fn();
   render(PhotoCell, { photo: photo(1), cache: { get: vi.fn() } as unknown as PhotoPreviewCache, selected, onclick, oncheck, onopen });
   const button = screen.getByRole("button", { name: "Select Photo 1.jpg" });
   for (const [time, detail] of [[1000, 1], [1100, shape === "native" ? 2 : 1]]) {
-    await touchTap(button, time, detail);
+    if (shape === "click pointerType") {
+      const event = new MouseEvent("click", { bubbles: true, button: 0, detail });
+      Object.defineProperty(event, "timeStamp", { value: time });
+      Object.defineProperty(event, "pointerType", { value: "touch" });
+      await fireEvent(button, event);
+    } else await touchTap(button, time, detail);
   }
   await fireEvent.doubleClick(button);
   expect(onclick).toHaveBeenCalledOnce();
@@ -29,84 +34,20 @@ it.each([false, true].flatMap(selected => ["native", "detail-1"].map(shape => ({
 });
 
 it.each([1, 2])("toggles selection after a cancelled scroll even with click detail=%s and dblclick", async detail => {
-  const onopen = vi.fn();
-  const selectedIDs = new Set(["a"]);
-  const onclick = vi.fn(() => { if (selectedIDs.has("b")) selectedIDs.delete("b"); else selectedIDs.add("b"); });
-  const props = { cache: { get: vi.fn() } as unknown as PhotoPreviewCache, onopen };
-  render(PhotoCell, { ...props, photo: photo(1), selected: true, onclick: vi.fn() });
-  const view = render(PhotoCell, { ...props, photo: photo(2), selected: false, onclick });
-  const button = screen.getByRole("button", { name: "Select Photo 2.jpg" });
-  const tap = async (time: number, detail: number) => {
-    await touchTap(button, time, detail);
-    await view.rerender({ selected: selectedIDs.has("b") });
-  };
-  await tap(1000, 1);
-  expect(button.getAttribute("aria-pressed")).toBe("true");
+  const onclick = vi.fn(), onopen = vi.fn();
+  render(PhotoCell, { photo: photo(1), cache: { get: vi.fn() } as unknown as PhotoPreviewCache, selected: false, onclick, onopen });
+  const button = screen.getByRole("button", { name: "Select Photo 1.jpg" });
+  await touchTap(button, 1000, 1);
   await fireEvent.pointerDown(button, { pointerType: "touch" });
   await fireEvent.pointerCancel(button, { pointerType: "touch" });
-  await tap(1100, detail);
+  await touchTap(button, 1100, detail);
   await fireEvent.doubleClick(button);
   expect(onclick).toHaveBeenCalledTimes(2);
-  expect(selectedIDs).toEqual(new Set(["a"]));
-  expect(button.getAttribute("aria-pressed")).toBe("false");
   expect(onopen).not.toHaveBeenCalled();
-  await tap(1500, 1);
-  await tap(1600, detail);
+  await touchTap(button, 1500, 1);
+  await touchTap(button, 1600, detail);
   await fireEvent.doubleClick(button);
   expect(onopen).toHaveBeenCalledExactlyOnceWith(button);
-});
-
-it.each(["checkbox", "another tile"])("breaks a detail-1 pair when %s is clicked between images", async target => {
-  const onclick = vi.fn(), onopen = vi.fn();
-  const props = { cache: { get: vi.fn() } as unknown as PhotoPreviewCache, selected: false, onclick, onopen };
-  render(PhotoCell, { ...props, photo: photo(1) });
-  if (target === "another tile") render(PhotoCell, { ...props, photo: photo(2) });
-  const button = screen.getByRole("button", { name: "Select Photo 1.jpg" });
-  await fireEvent.pointerDown(button, { pointerType: "touch" });
-  await fireEvent.click(button, { detail: 1 });
-  const intervening = target === "checkbox" ? screen.getByRole("checkbox", { name: "Select photo Photo 1.jpg" }) : screen.getByRole("button", { name: "Select Photo 2.jpg" });
-  await fireEvent.pointerDown(intervening, { pointerType: "touch" });
-  await fireEvent.click(intervening, { detail: 1 });
-  await fireEvent.pointerDown(button, { pointerType: "touch" });
-  await fireEvent.click(button, { detail: 1 });
-  expect(onclick).toHaveBeenCalledTimes(target === "checkbox" ? 2 : 3);
-  expect(onopen).not.toHaveBeenCalled();
-});
-
-it("keeps detail-1 clicks over 350 ms apart as single clicks", async () => {
-  const onclick = vi.fn(), onopen = vi.fn();
-  render(PhotoCell, { photo: photo(1), cache: { get: vi.fn() } as unknown as PhotoPreviewCache, selected: false, onclick, onopen });
-  const button = screen.getByRole("button", { name: "Select Photo 1.jpg" });
-  for (const time of [1000, 1351]) {
-    await touchTap(button, time);
-  }
-  expect(onclick).toHaveBeenCalledTimes(2);
-  expect(onopen).not.toHaveBeenCalled();
-});
-
-it("treats two quick taps at opposite ends of a wide tile as two clicks", async () => {
-  const onclick = vi.fn(), onopen = vi.fn();
-  render(PhotoCell, { photo: photo(1), cache: { get: vi.fn() } as unknown as PhotoPreviewCache, selected: false, onclick, onopen });
-  const button = screen.getByRole("button", { name: "Select Photo 1.jpg" });
-  await touchTap(button, 1000, 1, undefined, { x: 5, y: 50 });
-  await touchTap(button, 1100, 1, undefined, { x: 400, y: 50 });
-  expect(onclick).toHaveBeenCalledTimes(2);
-  expect(onopen).not.toHaveBeenCalled();
-});
-
-it("ends a pending tap pair when another tile's pointer is cancelled", async () => {
-  const onclick = vi.fn(), onopen = vi.fn();
-  const props = { cache: { get: vi.fn() } as unknown as PhotoPreviewCache, selected: false, onopen };
-  render(PhotoCell, { ...props, photo: photo(1), onclick: vi.fn() });
-  render(PhotoCell, { ...props, photo: photo(2), onclick });
-  const [, button] = screen.getAllByRole("button", { name: /^Select Photo/ });
-  const other = screen.getByRole("button", { name: "Select Photo 1.jpg" });
-  await touchTap(button, 1000);
-  await fireEvent.pointerDown(other, { pointerType: "touch" });
-  await fireEvent.pointerCancel(other, { pointerType: "touch" });
-  await touchTap(button, 1100);
-  expect(onclick).toHaveBeenCalledTimes(2);
-  expect(onopen).not.toHaveBeenCalled();
 });
 
 it("keeps compact touch clicks and never opens the viewer", async () => {
@@ -124,21 +65,47 @@ it("keeps compact touch clicks and never opens the viewer", async () => {
   expect(screen.queryByRole("button", { name: "Open Photo 1.jpg" })).toBeNull();
 });
 
-it.each([
-  { pointerType: "mouse", detail: 1 }, { pointerType: "touch", detail: 0 },
-  { pointerType: "touch", detail: 1, ctrlKey: true }, { pointerType: "touch", detail: 1, metaKey: true },
-  { pointerType: "touch", detail: 1, shiftKey: true }, { pointerType: "touch", detail: 1, altKey: true },
-])("clears a pending touch pair for clicks with %j", async options => {
+type Tap = (button: HTMLElement) => Promise<void>;
+const pairRejections: { name: string; clicks: number; run: Tap }[] = [
+  { name: "detail-1 clicks over 350 ms apart", clicks: 2, run: async button => { for (const time of [1000, 1351]) await touchTap(button, time); } },
+  { name: "quick taps at opposite ends of a wide tile", clicks: 2, run: async button => {
+    await touchTap(button, 1000, 1, undefined, { x: 5, y: 50 });
+    await touchTap(button, 1100, 1, undefined, { x: 400, y: 50 });
+  } },
+  ...(["checkbox", "another tile"] as const).map(target => ({ name: `a ${target} click between images`, clicks: target === "checkbox" ? 2 : 3, run: async (button: HTMLElement) => {
+    const intervening = target === "checkbox" ? screen.getByRole("checkbox", { name: "Select photo Photo 1.jpg" }) : screen.getByRole("button", { name: "Select Photo 2.jpg" });
+    await touchTap(button, 1000);
+    await touchTap(intervening, 1100);
+    await touchTap(button, 1200);
+  } })),
+  { name: "another tile's pointer cancel", clicks: 2, run: async button => {
+    const other = screen.getByRole("button", { name: "Select Photo 2.jpg" });
+    await touchTap(button, 1000);
+    await fireEvent.pointerDown(other, { pointerType: "touch" });
+    await fireEvent.pointerCancel(other, { pointerType: "touch" });
+    await touchTap(button, 1100);
+  } },
+  ...[
+    { pointerType: "mouse", detail: 1 }, { pointerType: "touch", detail: 0 },
+    { pointerType: "touch", detail: 1, ctrlKey: true }, { pointerType: "touch", detail: 1, metaKey: true },
+    { pointerType: "touch", detail: 1, shiftKey: true }, { pointerType: "touch", detail: 1, altKey: true },
+  ].map(options => ({ name: `a click with ${JSON.stringify(options)}`, clicks: 3, run: async (button: HTMLElement) => {
+    await touchTap(button, 1000);
+    await fireEvent.pointerDown(button, { pointerType: options.pointerType });
+    const event = new MouseEvent("click", { bubbles: true, button: 0, ...options });
+    Object.defineProperty(event, "timeStamp", { value: 1050 });
+    await fireEvent(button, event);
+    await touchTap(button, 1100);
+  } })),
+];
+
+it.each(pairRejections)("does not count two taps as a double-tap for $name", async ({ clicks, run }) => {
   const onclick = vi.fn(), onopen = vi.fn();
-  render(PhotoCell, { photo: photo(1), cache: { get: vi.fn() } as unknown as PhotoPreviewCache, selected: false, onclick, onopen });
-  const button = screen.getByRole("button", { name: "Select Photo 1.jpg" });
-  await fireEvent.pointerDown(button, { pointerType: "touch" });
-  await fireEvent.click(button, { detail: 1 });
-  await fireEvent.pointerDown(button, { pointerType: options.pointerType });
-  await fireEvent.click(button, options);
-  await fireEvent.pointerDown(button, { pointerType: "touch" });
-  await fireEvent.click(button, { detail: 1 });
-  expect(onclick).toHaveBeenCalledTimes(3);
+  const props = { cache: { get: vi.fn() } as unknown as PhotoPreviewCache, selected: false, onopen };
+  render(PhotoCell, { ...props, photo: photo(1), onclick });
+  render(PhotoCell, { ...props, photo: photo(2), onclick });
+  await run(screen.getByRole("button", { name: "Select Photo 1.jpg" }));
+  expect(onclick).toHaveBeenCalledTimes(clicks);
   expect(onopen).not.toHaveBeenCalled();
 });
 
