@@ -711,4 +711,4 @@ func attachCandidateFaceTx(ctx context.Context, tx *sql.Tx, occurrence PersonCan
 	return err
 }
 
-const personCandidateVisibleSQL = `NOT EXISTS(SELECT 1 FROM person_candidate_faces e JOIN content_versions cv ON cv.version_id=e.content_version_id JOIN photo_files f ON f.node_id=cv.node_id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE e.candidate_id=person_match_candidates.candidate_id AND a.hidden_at IS NOT NULL)`
+var personCandidateVisibleSQL = `NOT EXISTS(SELECT 1 FROM person_candidate_faces e WHERE e.candidate_id=person_match_candidates.candidate_id AND NOT (` + personVersionVisibleSQL("e.content_version_id") + `))`

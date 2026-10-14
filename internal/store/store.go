@@ -44,6 +44,7 @@ const currentStorageSchemaVersion = 36
 
 const peopleStorageSchemaVersion = 15
 const photoFacesStorageSchemaVersion = 35
+const photoFaceDecisionsStorageSchemaVersion = 36
 
 const pushSourcesStorageSchemaVersion = 35
 

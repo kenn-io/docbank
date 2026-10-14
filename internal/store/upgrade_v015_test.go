@@ -580,3 +580,38 @@ func seedReleasedPhotoAsset(t *testing.T, db *sql.DB, nodeID int64) {
 	}
 	require.NoError(t, tx.Commit())
 }
+
+func TestReleasedPhotoMarkSurvivesFaceRetraction(t *testing.T) {
+	t.Parallel()
+	for version, schema := range releasedSchemaFixtures {
+		for _, driver := range v090UpgradeDrivers() {
+			t.Run(fmt.Sprintf("v%d/%s", version, driver.name), func(t *testing.T) {
+				path := filepath.Join(t.TempDir(), "docbank.db")
+				db, legacy := newReleasedFixtureStore(t, path, driver.driver, schema, version)
+				node := createReleasedFixtureFile(t, legacy, "portrait.jpg", fakeHash("e5"), 8, "image/jpeg")
+				seedReleasedPhotoAsset(t, db, node.ID)
+				const personID = "11111111-1111-4111-8111-111111111111"
+				const assertionID = "22222222-2222-4222-8222-222222222222"
+				now := nowRFC3339()
+				_, err := db.Exec(`INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at) VALUES (?,'Ada','ada','operator','curated',1,?,?)`, personID, now, now)
+				require.NoError(t, err)
+				_, err = db.Exec(`INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision) VALUES (?,?,?,'depicted','assert','',?,1)`, assertionID, node.CurrentVersionID, personID, now)
+				require.NoError(t, err)
+				require.NoError(t, db.Close())
+				s, err := Open(path, driver.driver)
+				require.NoError(t, err)
+				defer func() { require.NoError(t, s.Close()) }()
+				face, _, err := s.CreatePhotoFace(t.Context(), node.CurrentVersionID, uuid.New().String(), document.FaceBox{Width: .2, Height: .2}, personID)
+				require.NoError(t, err)
+				decideFaceForTest(t, s, node, face.FaceID, "", "retract")
+				assertions, err := s.DocumentPersonAssertions(t.Context(), node.CurrentVersionID)
+				require.NoError(t, err)
+				require.Len(t, assertions, 1)
+				require.Equal(t, assertionID, assertions[0].AssertionID)
+				require.True(t, assertions[0].PhotoMark)
+				require.Equal(t, personAssertionActionAssert, assertions[0].Action)
+				require.Equal(t, []int64{node.ID}, personMatchNodeIDs(t, s, compilerQuery(t, "person:"+personID)))
+			})
+		}
+	}
+}

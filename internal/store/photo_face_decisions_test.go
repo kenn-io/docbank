@@ -488,10 +488,11 @@ func TestQueryPersonDocumentsPhotosAliasesAndDuplicateNames(t *testing.T) {
 	require.NoError(t, err)
 	page = browsePhotoPage(t, s, `{"filters":{"person_ids":["`+p.PersonID+`"]}}`)
 	require.Empty(t, page.Items)
-	require.ElementsMatch(t, []int64{node.ID, doc}, personMatchNodeIDs(t, s, typed))
+	require.ElementsMatch(t, []int64{doc}, personMatchNodeIDs(t, s, typed))
+	require.Equal(t, []int64{doc}, personMatchNodeIDs(t, s, compilerQuery(t, "person:"+p.PersonID)))
 	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
 	require.NoError(t, err)
-	require.ElementsMatch(t, []int64{node.ID, doc}, personMatchNodeIDs(t, s, typed))
+	require.ElementsMatch(t, []int64{doc}, personMatchNodeIDs(t, s, typed))
 	page, err = s.ListPhotoAssets(WithPhotoHiddenToken(ctx, token), PhotoBrowseRequest{Query: typed, Hidden: true}, nil)
 	require.NoError(t, err)
 	require.Len(t, page.Items, 1)
@@ -676,8 +677,21 @@ func TestPhotoFaceDecisionUndoSharedAssertion(t *testing.T) {
 				require.Empty(t, personMatchNodeIDs(t, s, compilerQuery(t, "person:"+p.PersonID)))
 				return
 			case "earlier retraction":
+				const note = "Ada \"quoted\"\n雪"
+				_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET note=? WHERE assertion_id=?`, note, a.After.Faces[0].AssertionID)
+				require.NoError(t, err)
 				r := decideFaceForTest(t, s, n, first.FaceID, "", "retract")
 				decideFaceForTest(t, s, n, second.FaceID, "", "retract")
+				var backup bytes.Buffer
+				require.NoError(t, s.ExportMetadata(ctx, &backup))
+				restored := newTestStore(t)
+				require.NoError(t, restored.ImportMetadata(ctx, &backup))
+				s = restored
+				var assetID string
+				require.NoError(t, s.db.QueryRowContext(ctx, `SELECT asset_id FROM photo_change_receipts WHERE receipt_id=?`, r.ReceiptID).Scan(&assetID))
+				asset, err := s.PhotoAssetForNode(ctx, n.ID)
+				require.NoError(t, err)
+				require.Equal(t, asset.ID, assetID)
 				remaining = first
 				undo, err := s.UndoPhotoFaceDecision(ctx, r.ReceiptID)
 				require.NoError(t, err)
@@ -685,6 +699,7 @@ func TestPhotoFaceDecisionUndoSharedAssertion(t *testing.T) {
 				faces, assertions, err := s.PhotoFaces(ctx, n.CurrentVersionID)
 				require.NoError(t, err)
 				require.Len(t, assertions, 1)
+				require.Equal(t, note, assertions[0].Note)
 				for _, face := range faces {
 					if face.FaceID == remaining.FaceID {
 						require.Equal(t, assertions[0].AssertionID, face.AssertionID)
@@ -1579,4 +1594,44 @@ func TestPhotoFaceDecisionUndoRetractionAfterAssertionSplit(t *testing.T) {
 	require.Len(t, detail.Assertions, 1)
 	require.Equal(t, split.NewPersonID, detail.Assertions[0].PersonID)
 	require.NoError(t, s.ValidateMetadata(ctx))
+}
+
+func TestPersonMergeFaceRevisionQueryPlan(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	a, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	b, err := s.CreatePerson(ctx, "Grace", "operator")
+	require.NoError(t, err)
+	node, face := faceForDecisionTest(t, s, a.PersonID)
+	unrelated, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{X: .5, Width: .2, Height: .2}, "")
+	require.NoError(t, err)
+	evidence, err := json.Marshal([]PersonCandidateOccurrence{{ContentVersionID: node.CurrentVersionID, Role: "depicted", EvidenceKind: "face", EvidenceID: face.FaceID}})
+	require.NoError(t, err)
+	require.NoError(t, s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+		_, _, err := s.OpenPersonCandidate(ctx, tx, PersonMatchCandidate{ActorKey: "face:" + face.FaceID, DisplayName: b.DisplayName, SuggestedPersonID: b.PersonID, Reason: "face_match", Evidence: evidence})
+		return err
+	}))
+	rows, err := s.db.QueryContext(ctx, "EXPLAIN QUERY PLAN "+personMergeFaceRevisionSQL, a.PersonID, b.PersonID, a.PersonID, b.PersonID)
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+	var plan []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+		plan = append(plan, detail)
+		require.NotContains(t, detail, "SCAN photo_faces")
+	}
+	require.NoError(t, rows.Err())
+	require.NoError(t, rows.Close())
+	require.Contains(t, fmt.Sprint(plan), "photo_faces_assertion")
+	_, err = s.MergePersons(ctx, a.PersonID, b.PersonID, uuid.NewString(), a.Revision, b.Revision)
+	require.NoError(t, err)
+	var revision int64
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT revision FROM photo_faces WHERE face_id=?`, face.FaceID).Scan(&revision))
+	require.Equal(t, face.Revision+1, revision)
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT revision FROM photo_faces WHERE face_id=?`, unrelated.FaceID).Scan(&revision))
+	require.Equal(t, unrelated.Revision, revision)
 }

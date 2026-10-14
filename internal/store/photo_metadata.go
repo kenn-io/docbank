@@ -252,7 +252,7 @@ func validatePhotoReceiptMetadataRecord(v metadataPhotoReceipt) error {
 		return errors.New("invalid photo receipt metadata")
 	}
 	if v.Operation == "face_decision" {
-		if v.AssetID != nil || v.SettingsKey != nil || v.SetID != nil || v.BeforeRevision != 0 || v.AfterRevision != 1 {
+		if v.AssetID == nil || validateUUIDv4(*v.AssetID) != nil || v.SettingsKey != nil || v.SetID != nil || v.BeforeRevision != 0 || v.AfterRevision != 1 {
 			return ErrInvalidPhotoFace
 		}
 		_, err := decodeFaceDecisionReceipt([]byte(v.BeforeJSON), []byte(v.AfterJSON), v.ReceiptID)

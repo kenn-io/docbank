@@ -24659,8 +24659,8 @@ type ListPeopleQuery struct {
 }
 
 type GetPersonQuery struct {
-	AssertionCursor *string `json:"assertion_cursor,omitempty"`
-	AssertionLimit  *int64  `json:"assertion_limit,omitempty"`
+	AssertionCursor *uuid.UUID `json:"assertion_cursor,omitempty"`
+	AssertionLimit  *int64     `json:"assertion_limit,omitempty"`
 }
 
 type DetachPhotoFileQuery struct {
@@ -24668,7 +24668,7 @@ type DetachPhotoFileQuery struct {
 }
 
 type UndoPhotoFaceDecisionQuery struct {
-	OperationID *string `json:"operation_id,omitempty"`
+	OperationID *uuid.UUID `json:"operation_id,omitempty"`
 }
 
 type ReadRenditionTextQuery struct {

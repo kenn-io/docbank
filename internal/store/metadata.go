@@ -1594,7 +1594,7 @@ func validateMetadataStateWithVaultIdentity(
 				return err
 			}
 		}
-		if layout.schemaVersion >= 36 {
+		if layout.schemaVersion >= photoFaceDecisionsStorageSchemaVersion {
 			if err := validatePhotoFaceDecisionReferences(ctx, tx); err != nil {
 				return err
 			}

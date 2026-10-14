@@ -180,7 +180,7 @@ var personMetadataTables = []metadataRecordCodec{
 	newMetadataTable(metadataTable[metadataPersonDocumentAssertion]{record: metadataPersonDocumentAssertion{Type: metadataPersonAssertionType}, table: "person_document_assertions",
 		suffix: "ORDER BY assertion_id", validate: validateMetadataPersonAssertion, checkExport: true, insert: func(ctx context.Context, tx *sql.Tx, v metadataPersonDocumentAssertion) error {
 			if v.PhotoMark == nil {
-				v.PhotoMark = new(false)
+				v.PhotoMark = new(v.Role == personAssertionRoleDepicted && v.Action == personAssertionActionAssert)
 			}
 			return insertMetadataRecord(ctx, tx, "person_document_assertions", v)
 		}}),
@@ -607,7 +607,7 @@ type metadataPersonAssertionBeforePhotoMark struct {
 }
 
 func personMetadataTablesForSchema(version int) []metadataRecordCodec {
-	if version >= 36 {
+	if version >= photoFaceDecisionsStorageSchemaVersion {
 		return personMetadataTables
 	}
 	tables := slices.Clone(personMetadataTables)

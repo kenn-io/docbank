@@ -228,7 +228,11 @@ func writeFaceDecisionReceiptTx(ctx context.Context, tx *sql.Tx, before, after P
 		return result, err
 	}
 	afterState := photoFaceReceiptAfter{RequestSHA256: requestSHA, ReceiptID: id, After: after, UndoOf: undo}
-	err = writePhotoReceiptTx(ctx, tx, photoReceipt{ReceiptID: id, Operation: "face_decision", Before: before, After: afterState, BeforeRevision: 0, AfterRevision: 1})
+	var assetID string
+	if err = tx.QueryRowContext(ctx, `SELECT f.asset_id FROM content_versions v JOIN photo_files f ON f.node_id=v.node_id WHERE v.version_id=?`, before.VersionID).Scan(&assetID); err != nil {
+		return result, err
+	}
+	err = writePhotoReceiptTx(ctx, tx, photoReceipt{ReceiptID: id, Operation: "face_decision", AssetID: assetID, Before: before, After: afterState, BeforeRevision: 0, AfterRevision: 1})
 	return result, err
 }
 
@@ -759,7 +763,7 @@ func (s *Store) personFaceDetailTx(ctx context.Context, tx *sql.Tx, id string, p
 	}
 	visible := "1=1"
 	if _, err := s.hiddenSession(ctx, tx); errors.Is(err, ErrHiddenLocked) {
-		visible = `NOT EXISTS(SELECT 1 FROM content_versions v JOIN photo_files f ON f.node_id=v.node_id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.version_id=pa.content_version_id AND a.hidden_at IS NOT NULL)`
+		visible = personVersionVisibleSQL("pa.content_version_id")
 	} else if err != nil {
 		return nil, "", false, err
 	}
@@ -874,9 +878,35 @@ func (s *Store) clearNamedFaceCandidatesTx(ctx context.Context, tx *sql.Tx, befo
 }
 
 func automaticFaceWithdrawalTx(ctx context.Context, tx *sql.Tx, assertion PersonDocumentAssertion) (bool, error) {
-	var automatic bool
-	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_change_receipts r JOIN json_each(r.after_json,'$.after.assertions') a WHERE r.operation='face_decision' AND json_extract(a.value,'$.AssertionID')=? AND json_extract(a.value,'$.Revision')=? AND json_extract(a.value,'$.Action')='withdrawn' AND EXISTS(SELECT 1 FROM json_each(r.before_json,'$.assertions') b WHERE json_extract(b.value,'$.AssertionID')=? AND json_extract(b.value,'$.Action')='assert') AND NOT EXISTS(SELECT 1 FROM json_each(r.after_json,'$.after.faces') f WHERE json_extract(f.value,'$.assertion_id')=?))`, assertion.AssertionID, assertion.Revision, assertion.AssertionID, assertion.AssertionID).Scan(&automatic)
-	return automatic, err
+	rows, err := tx.QueryContext(ctx, `SELECT receipt_id,before_json,after_json FROM photo_change_receipts INDEXED BY photo_change_receipts_asset WHERE asset_id IN (SELECT f.asset_id FROM content_versions v JOIN photo_files f ON f.node_id=v.node_id WHERE v.version_id=?) AND operation='face_decision'`, assertion.ContentVersionID)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = rows.Close() }()
+	automatic := false
+	for rows.Next() {
+		var id string
+		var before, after []byte
+		if err := rows.Scan(&id, &before, &after); err != nil {
+			return false, err
+		}
+		receipt, err := decodeFaceDecisionReceipt(before, after, id)
+		if err != nil {
+			return false, err
+		}
+		if receipt.Before.VersionID != assertion.ContentVersionID {
+			continue
+		}
+		detached := slices.ContainsFunc(receipt.After.Assertions, func(a PersonDocumentAssertion) bool {
+			return a.AssertionID == assertion.AssertionID && a.Revision == assertion.Revision && a.Action == personAssertionActionWithdrawn
+		})
+		active := slices.ContainsFunc(receipt.Before.Assertions, func(a PersonDocumentAssertion) bool {
+			return a.AssertionID == assertion.AssertionID && a.Action == personAssertionActionAssert
+		})
+		referenced := slices.ContainsFunc(receipt.After.Faces, func(f PhotoFace) bool { return f.AssertionID == assertion.AssertionID })
+		automatic = automatic || detached && active && !referenced
+	}
+	return automatic, errors.Join(rows.Err(), rows.Close())
 }
 
 func faceStateCandidateIDs(state PhotoFaceDecisionState) []string {

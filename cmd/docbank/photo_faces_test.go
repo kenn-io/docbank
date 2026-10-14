@@ -1,13 +1,16 @@
 package main
 
 import (
+	"encoding/json/v2"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/store"
 
 	"github.com/google/uuid"
@@ -23,7 +26,7 @@ func TestParsePhotoFaceBox(t *testing.T) {
 	box, err = parsePhotoFaceBox("")
 	require.NoError(t, err)
 	require.Nil(t, box)
-	for _, value := range []string{"1,2,3", "a,0,0.1,0.1", "0.9,0,0.2,0.1"} {
+	for _, value := range []string{"1,2,3", "a,0,0.1,0.1", "0.9,0,0.2,0.1", "NaN,0,0.1,0.1", "0,0,0,0.1", "-0.1,0,0.1,0.1"} {
 		_, err := parsePhotoFaceBox(value)
 		require.Error(t, err, value)
 	}
@@ -90,4 +93,47 @@ func TestPhotoFaceDecisionCommands(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, key.Flags().Lookup("person-revision"))
 	require.Empty(t, key.Flags().Lookup("revision").Annotations)
+}
+
+func TestPhotoFaceDecisionCLIRequest(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DOCBANK_HOME", dir)
+	catalog, err := store.Open((home.Layout{Root: dir}).DBPath())
+	require.NoError(t, err)
+	person, err := catalog.CreatePerson(t.Context(), "Ada", "operator")
+	require.NoError(t, err)
+	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "portrait.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
+	require.NoError(t, err)
+	face, _, err := catalog.CreatePhotoFace(t.Context(), node.CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, "")
+	require.NoError(t, err)
+	require.NoError(t, catalog.Close())
+	startTestDaemon(t, dir)
+	operationID := uuid.NewString()
+	output, err := runCLI(t, "photos", "faces", "name", node.CurrentVersionID, "--face", face.FaceID, "--person", person.PersonID, "--revision", "1", "--operation-id", operationID)
+	require.NoError(t, err)
+	var named api.PhotoFaceDecisionResult
+	require.NoError(t, json.Unmarshal([]byte(output), &named))
+
+	require.NotEmpty(t, named.ReceiptID)
+	output, err = runCLI(t, "photos", "faces", "list", node.CurrentVersionID)
+	require.NoError(t, err)
+	var page api.PhotoFacePage
+	require.NoError(t, json.Unmarshal([]byte(output), &page))
+	require.Len(t, page.Faces, 1)
+	require.Equal(t, int64(2), page.Faces[0].Revision)
+	require.Len(t, page.Assertions, 1)
+	require.Equal(t, person.PersonID, page.Assertions[0].PersonID)
+	require.Equal(t, page.Assertions[0].AssertionID, page.Faces[0].AssertionID)
+	output, err = runCLI(t, "photos", "faces", "undo", named.ReceiptID, "--operation-id", uuid.NewString())
+	require.NoError(t, err)
+	var undone api.PhotoFaceDecisionResult
+	require.NoError(t, json.Unmarshal([]byte(output), &undone))
+	require.NotEmpty(t, undone.ReceiptID)
+	output, err = runCLI(t, "photos", "faces", "list", node.CurrentVersionID)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(output), &page))
+	require.Len(t, page.Faces, 1)
+	require.Empty(t, page.Faces[0].AssertionID)
+	require.Equal(t, int64(3), page.Faces[0].Revision)
+	require.Empty(t, page.Assertions)
 }

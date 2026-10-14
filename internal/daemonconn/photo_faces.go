@@ -137,10 +137,6 @@ func (c *Connection) DecidePhotoFace(ctx context.Context, versionID string, requ
 	return *result, nil
 }
 
-func (c *Connection) UndoPhotoFaceDecision(ctx context.Context, id string, cookies ...string) (api.PhotoFaceDecisionResult, error) {
-	return c.UndoPhotoFaceDecisionWithOperationID(ctx, id, "", cookies...)
-}
-
 func (c *Connection) UndoPhotoFaceDecisionWithOperationID(ctx context.Context, receiptID, operationID string, cookies ...string) (api.PhotoFaceDecisionResult, error) {
 	if !validUUIDv4(receiptID) {
 		return api.PhotoFaceDecisionResult{}, errors.New("invalid face decision receipt ID")
@@ -152,7 +148,11 @@ func (c *Connection) UndoPhotoFaceDecisionWithOperationID(ctx context.Context, r
 	var response *http.Response
 	options := &apiclient.UndoPhotoFaceDecisionRequestOptions{PathParams: &apiclient.UndoPhotoFaceDecisionPath{ReceiptID: id}}
 	if operationID != "" {
-		options.Query = &apiclient.UndoPhotoFaceDecisionQuery{OperationID: &operationID}
+		operation, err := uuid.Parse(operationID)
+		if err != nil {
+			return api.PhotoFaceDecisionResult{}, fmt.Errorf("parse undo operation ID: %w", err)
+		}
+		options.Query = &apiclient.UndoPhotoFaceDecisionQuery{OperationID: &operation}
 	}
 	result, err := c.apiWithResponse(&response).UndoPhotoFaceDecision(ctx, options, photoCookie(cookies))
 	if err != nil {

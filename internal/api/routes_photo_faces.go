@@ -120,7 +120,7 @@ func registerPhotoFaceDecisionRoutes(api huma.API, d Deps, g *gate) {
 	})
 	huma.Register(api, huma.Operation{OperationID: "undoPhotoFaceDecision", Method: http.MethodPost, Path: "/api/v1/photos/face-decisions/{receipt_id}/undo", Summary: "Undo a face decision if its records are unchanged"}, func(ctx context.Context, in *struct {
 		ReceiptID   string `path:"receipt_id" format:"uuid"`
-		OperationID string `query:"operation_id"`
+		OperationID string `query:"operation_id" format:"uuid"`
 	}) (*struct{ Body PhotoFaceDecisionResult }, error) {
 		var receipt store.PhotoFaceDecisionReceipt
 		err := g.mutate(func() error {

@@ -181,7 +181,7 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 		if _, err := tx.ExecContext(ctx, `UPDATE custodian_assignments SET person_id=?,revision=revision+1 WHERE person_id=?`, survivorID, absorbedID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE photo_faces SET revision=revision+1 WHERE assertion_id IN (SELECT assertion_id FROM person_document_assertions WHERE person_id IN (?,?)) OR EXISTS(SELECT 1 FROM person_candidate_faces m JOIN person_match_candidates c ON c.candidate_id=m.candidate_id WHERE m.face_id=photo_faces.face_id AND c.suggested_person_id IN (?,?))`, survivorID, absorbedID, survivorID, absorbedID); err != nil {
+		if _, err := tx.ExecContext(ctx, personMergeFaceRevisionSQL, survivorID, absorbedID, survivorID, absorbedID); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET action=COALESCE((SELECT other.action FROM person_document_assertions other WHERE other.person_id IN (?,?) AND other.person_id<>person_document_assertions.person_id AND other.content_version_id=person_document_assertions.content_version_id AND other.role=person_document_assertions.role AND other.action<>'withdrawn'),action),revision=revision+1 WHERE person_id IN (?,?) AND action='withdrawn'`, survivorID, absorbedID, survivorID, absorbedID); err != nil {
@@ -555,3 +555,10 @@ func (s *Store) SplitPerson(ctx context.Context, request PersonSplitRequest) (Pe
 func validateMergedPhotoFaces(ctx context.Context, tx *sql.Tx, id string) error {
 	return validatePersonKeyFaces(ctx, tx, id, ErrPersonIdentityConflict)
 }
+
+// UNION deduplicates faces referenced by both assignments and candidates.
+const personMergeFaceRevisionSQL = `UPDATE photo_faces SET revision=revision+1 WHERE face_id IN (
+ SELECT face_id FROM photo_faces WHERE assertion_id IN (SELECT assertion_id FROM person_document_assertions WHERE person_id IN (?,?))
+ UNION
+ SELECT face_id FROM person_candidate_faces WHERE candidate_id IN (SELECT candidate_id FROM person_match_candidates WHERE suggested_person_id IN (?,?))
+)`

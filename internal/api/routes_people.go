@@ -31,7 +31,7 @@ func registerPeopleRoutes(api huma.API, d Deps, g *gate) {
 		Summary: "Inspect one canonical person",
 	}, func(ctx context.Context, in *struct {
 		PersonID        string `path:"person_id" format:"uuid"`
-		AssertionCursor string `query:"assertion_cursor"`
+		AssertionCursor string `query:"assertion_cursor" format:"uuid"`
 		AssertionLimit  int    `query:"assertion_limit" default:"1000" minimum:"1" maximum:"1000"`
 	}) (*personDetailOutput, error) {
 		person, err := d.Store.PersonDetailPage(ctx, in.PersonID, store.PersonAssertionPage{After: in.AssertionCursor, Limit: in.AssertionLimit})

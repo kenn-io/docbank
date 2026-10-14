@@ -23932,6 +23932,7 @@ paths:
           in: query
           name: assertion_cursor
           schema:
+            format: uuid
             type: string
         - explode: false
           in: query
@@ -24899,6 +24900,7 @@ paths:
           in: query
           name: operation_id
           schema:
+            format: uuid
             type: string
       responses:
         "200":

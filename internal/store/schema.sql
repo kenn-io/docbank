@@ -2386,7 +2386,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS custodian_primary_document
     ON custodian_assignments(content_version_id) WHERE scope_kind='document' AND rank='primary' AND retired_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS person_document_assertions (
-	photo_mark INTEGER NOT NULL DEFAULT 0 CHECK (photo_mark IN (0,1) AND (photo_mark=0 OR (role='depicted' AND action='assert'))),
+	photo_mark INTEGER NOT NULL DEFAULT 0 CHECK (photo_mark IN (0,1)),
     assertion_id TEXT PRIMARY KEY NOT NULL,
     content_version_id TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
     person_id TEXT NOT NULL REFERENCES persons(person_id) ON DELETE CASCADE,

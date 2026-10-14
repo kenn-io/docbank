@@ -110,7 +110,14 @@ func (c *Connection) PersonPage(ctx context.Context, id string, page api.PersonA
 		page.Limit = 1000
 	}
 	limit := int64(page.Limit)
-	options.Query = &apiclient.GetPersonQuery{AssertionCursor: &page.Cursor, AssertionLimit: &limit}
+	options.Query = &apiclient.GetPersonQuery{AssertionLimit: &limit}
+	if page.Cursor != "" {
+		cursor, err := parsePersonID(page.Cursor)
+		if err != nil {
+			return api.PersonDetail{}, err
+		}
+		options.Query.AssertionCursor = &cursor
+	}
 	detail, err := c.apiWithResponse(&response).GetPerson(ctx, options, photoCookie([]string{page.HiddenCookie}))
 	if err != nil {
 		return api.PersonDetail{}, err
