@@ -88,6 +88,7 @@ func TestClientRetriesTransientServiceFailure(t *testing.T) {
 
 func TestClientRetriesInjectedHTTPClientTimeout(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+		var requests atomic.Int32
 		normalize, err := document.NewNormalizePolicy(1_000_000)
 		require.NoError(t, err)
 		policy, err := glmocr.NewPolicy(glmocr.PolicyConfig{
@@ -97,7 +98,7 @@ func TestClientRetriesInjectedHTTPClientTimeout(t *testing.T) {
 		require.NoError(t, err)
 		client, err := glmocr.NewClient(policy, glmocr.ClientConfig{
 			Timeout: 20 * time.Millisecond, MaxRetries: 1, MaxRetryDelay: time.Millisecond,
-			HTTPClient: &http.Client{Transport: timeoutTransport{}},
+			HTTPClient: &http.Client{Transport: timeoutTransport{requests: &requests}},
 		})
 		require.NoError(t, err)
 
@@ -105,13 +106,16 @@ func TestClientRetriesInjectedHTTPClientTimeout(t *testing.T) {
 		require.ErrorIs(t, err, context.DeadlineExceeded)
 		assert.Equal(t, ocr.ErrorTransient, ocr.ErrorKindOf(err))
 		assert.Equal(t, 2, ocr.MetricsFromError(err).Requests)
-		assert.Equal(t, 1, ocr.MetricsFromError(err).Retries)
+		assert.Equal(t, int32(2), requests.Load())
 	})
 }
 
-type timeoutTransport struct{}
+type timeoutTransport struct {
+	requests *atomic.Int32
+}
 
-func (timeoutTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+func (transport timeoutTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	transport.requests.Add(1)
 	defer func() { _ = request.Body.Close() }()
 	<-request.Context().Done()
 	return nil, request.Context().Err()
