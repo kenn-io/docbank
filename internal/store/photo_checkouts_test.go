@@ -549,10 +549,10 @@ func TestPhotoCheckoutEntryPaths(t *testing.T) {
 		{"Unix source path with colon", `/camera/Trip: Day 1.jpg`, "Trip: Day 1.jpg"},
 		{"node name fallback", "", "fallback.jpg"},
 	} {
-		if runtime.GOOS == "windows" && strings.HasPrefix(tc.sourcePath, "/camera/") {
-			continue
-		}
 		t.Run(tc.name, func(t *testing.T) {
+			if runtime.GOOS == "windows" && strings.HasPrefix(tc.sourcePath, "/camera/") {
+				t.Skip("source basename is incompatible with Windows filenames")
+			}
 			s := newTestStore(t)
 			ctx := t.Context()
 			var asset PhotoAsset
