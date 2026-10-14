@@ -940,6 +940,7 @@ func IsCanonicalUUIDv4(value string) bool {
 // live directory's descendants, and an optional half-open modification-time
 // interval.
 type SearchOptions struct {
+	Fuzzy          bool
 	TagID          string
 	MIMEType       string
 	UnderNodeID    int64
@@ -975,6 +976,9 @@ func (c *Connection) SearchWithOptions(
 	params := apiclient.SearchQuery{}
 	params.Q = new(query)
 	params.Limit = new(int64(limit))
+	if opts.Fuzzy {
+		params.Fuzzy = new(true)
+	}
 	if opts.TagID != "" {
 		params.TagID = new(opts.TagID)
 	}
@@ -1000,7 +1004,42 @@ func (c *Connection) SearchWithOptions(
 		out.ModifiedBefore != modifiedBefore {
 		return api.SearchReport{}, errors.New("search response has inconsistent filter authority")
 	}
+	if opts.Fuzzy && !validFuzzyReceipt(out.Fuzzy) {
+		return api.SearchReport{}, errors.New(
+			"fuzzy search response has missing or invalid coverage receipt")
+	}
 	return out, nil
+}
+
+func validFuzzyReceipt(r *api.FuzzyReceipt) bool {
+	if r == nil || r.Reasons == nil {
+		return false
+	}
+	switch r.Status {
+	case store.FuzzyStatusComplete:
+		return len(r.Reasons) == 0
+	case store.FuzzyStatusNotRun:
+		return len(r.Reasons) == 1 && (r.Reasons[0] == store.FuzzyReasonResultLimit ||
+			r.Reasons[0] == store.FuzzyReasonQueryIneligible)
+	case store.FuzzyStatusLimited:
+		if len(r.Reasons) == 0 {
+			return false
+		}
+		for i, reason := range r.Reasons {
+			if i > 0 && r.Reasons[i-1] >= reason {
+				return false
+			}
+			switch reason {
+			case store.FuzzyReasonCandidateLimit, store.FuzzyReasonTimeBudget,
+				store.FuzzyReasonNameLimit, store.FuzzyReasonPathLimit:
+			default:
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
 }
 
 // AuditPreviewOptions selects one live directory for permanent enrollment.

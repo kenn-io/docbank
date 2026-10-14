@@ -3091,6 +3091,32 @@ export interface FormatCoverageResponse {
   pending: PendingFormatV1[];
 }
 
+export type FuzzyReceiptReasonsItem = typeof FuzzyReceiptReasonsItem[keyof typeof FuzzyReceiptReasonsItem];
+
+
+export const FuzzyReceiptReasonsItem = {
+  candidate_limit: 'candidate_limit',
+  name_limit: 'name_limit',
+  path_limit: 'path_limit',
+  query_ineligible: 'query_ineligible',
+  result_limit: 'result_limit',
+  time_budget: 'time_budget',
+} as const;
+
+export type FuzzyReceiptStatus = typeof FuzzyReceiptStatus[keyof typeof FuzzyReceiptStatus];
+
+
+export const FuzzyReceiptStatus = {
+  complete: 'complete',
+  limited: 'limited',
+  not_run: 'not_run',
+} as const;
+
+export interface FuzzyReceipt {
+  reasons: FuzzyReceiptReasonsItem[];
+  status: FuzzyReceiptStatus;
+}
+
 export interface GCReport {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -6578,6 +6604,8 @@ export const SearchHitMatch = {
   name: 'name',
   content: 'content',
   filter: 'filter',
+  fuzzy_name: 'fuzzy_name',
+  fuzzy_path: 'fuzzy_path',
 } as const;
 
 export interface SearchHit {
@@ -6589,6 +6617,7 @@ export interface SearchHit {
 export interface SearchReport {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  fuzzy?: FuzzyReceipt;
   hits: SearchHit[];
   limit: number;
   mime_type?: string;
@@ -8250,6 +8279,7 @@ export type RunSavedQueryHeaders = {
 
 export type SearchParams = {
 q?: string;
+fuzzy?: boolean;
 /**
  * @minimum 1
  * @maximum 1000
@@ -16809,7 +16839,7 @@ export const getSearchUrl = (params?: SearchParams,) => {
 }
 
 /**
- * Name matches retain their established BM25 order and appear first; content-only matches follow in their own BM25 order. Every hit names its match source. The query may be empty when a tag or modification-time bound makes the page bounded; such filter-only results are ordered by modification time descending. An optional stable tag ID requires that assignment for every result. An optional parameter-free MIME type matches the current file version with or without parameters. An optional live directory node ID restricts results to its descendants. Optional absolute modification timestamps form an inclusive-since, exclusive-before interval.
+ * Name matches retain their established BM25 order and appear first; content-only matches follow in their own BM25 order. Every hit names its match source. The query may be empty when a tag or modification-time bound makes the page bounded; such filter-only results are ordered by modification time descending. An optional stable tag ID requires that assignment for every result. An optional parameter-free MIME type matches the current file version with or without parameters. An optional live directory node ID restricts results to its descendants. Optional absolute modification timestamps form an inclusive-since, exclusive-before interval. fuzzy=true appends bounded ASCII one-edit filename/path discovery after ordinary hits and includes a coverage receipt; it requires a nonblank query, and text outside the supplemental syntax reports not_run.
  * @summary Search live document names and extracted text
  */
 export const search = async (params?: SearchParams, options?: Parameters<typeof sessionJSON>[1]): Promise<SearchReport> => {

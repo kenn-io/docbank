@@ -1757,3 +1757,50 @@ func TestRestoreTargetContentionRemainsTyped(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, "backup_restore_target_active", code)
 }
+
+func TestSearchFuzzyRequiresReceipt(t *testing.T) {
+	for _, tc := range []struct {
+		name, receipt string
+		fuzzy, valid  bool
+	}{
+		{"missing", "", true, false}, {"opted-out", "", false, true},
+		{"complete", `,"fuzzy":{"status":"complete","reasons":[]}`, true, true},
+		{"nil-reasons", `,"fuzzy":{"status":"complete","reasons":null}`, true, false},
+		{"unknown-status", `,"fuzzy":{"status":"unknown","reasons":[]}`, true, false},
+		{"unsorted-reasons", `,"fuzzy":{"status":"limited","reasons":["time_budget","candidate_limit"]}`, true, false},
+		{"unknown-reason", `,"fuzzy":{"status":"limited","reasons":["unknown"]}`, true, false},
+		{"contradictory", `,"fuzzy":{"status":"complete","reasons":["candidate_limit"]}`, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tc.fuzzy {
+					assert.Equal(t, "true", r.URL.Query().Get("fuzzy"))
+				} else {
+					assert.Empty(t, r.URL.Query().Get("fuzzy"))
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprint(w, `{"hits":[],"limit":10,"truncated":false`+tc.receipt+`}`)
+			}))
+			defer server.Close()
+			_, err := daemonconn.New(server.URL, "").SearchWithOptions(t.Context(), "invocie", 10, daemonconn.SearchOptions{Fuzzy: tc.fuzzy})
+			if tc.valid {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+		})
+	}
+}
+
+func TestSearchFuzzyRoundTrip(t *testing.T) {
+	c, s := newClient(t, serverKey)
+	target, err := s.CreateFile(t.Context(), s.RootID(), "invoice.pdf", strings.Repeat("a", 64), 3, "application/pdf")
+	require.NoError(t, err)
+	report, err := c.SearchWithOptions(t.Context(), "invocie", 10, daemonconn.SearchOptions{Fuzzy: true, MIMEType: "application/pdf"})
+	require.NoError(t, err)
+	require.NotNil(t, report.Fuzzy)
+	require.Equal(t, "complete", report.Fuzzy.Status)
+	require.NotNil(t, report.Fuzzy.Reasons)
+	require.Len(t, report.Hits, 1)
+	require.Equal(t, target.ID, report.Hits[0].Node.ID)
+}
