@@ -319,27 +319,21 @@ func TestEgressBoundsTLSHandshake(t *testing.T) {
 
 	t.Run("policy timeout", func(t *testing.T) {
 		transport := newTransport(t, 25*time.Millisecond)
-		type getResult struct {
-			response *http.Response
-			err      error
-		}
-		result := make(chan getResult, 1)
+		result := make(chan error, 1)
 		go func() {
 			response, err := (&http.Client{Transport: transport}).Get(
 				"https://127.0.0.1:" + strconv.Itoa(int(port)),
 			)
-			result <- getResult{response: response, err: err}
+			if response != nil {
+				_ = response.Body.Close()
+			}
+			result <- err
 		}()
-		var response *http.Response
 		var requestErr error
 		select {
-		case get := <-result:
-			response, requestErr = get.response, get.err
+		case requestErr = <-result:
 		case <-time.After(time.Second):
 			require.Fail(t, "TLS handshake exceeded its timeout")
-		}
-		if response != nil {
-			require.NoError(t, response.Body.Close())
 		}
 		require.ErrorIs(t, requestErr, context.DeadlineExceeded)
 		takeAccepted(t)
