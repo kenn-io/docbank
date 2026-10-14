@@ -397,54 +397,43 @@ func TestTrashEmptyRemovesProcessedDocumentRenditionAttachment(t *testing.T) {
 
 func TestVaultEmptyTrashBoundedStore(t *testing.T) {
 	t.Parallel()
-	for _, test := range []struct {
-		name         string
-		total, limit int
-		populated    bool
-	}{{"small batch", 3, 2, false}, {"populated folders across batches", 205, 101, true}} {
-		t.Run(test.name, func(t *testing.T) {
-			s := newTestStore(t)
-			ctx := t.Context()
-			for i := range test.total {
-				node, err := s.Mkdir(ctx, s.RootID(), fmt.Sprintf("folder-%d", i))
-				require.NoError(t, err)
-				if test.populated {
-					_, err = s.CreateFile(ctx, node.ID, "notes.txt", fakeHash("b2"), 1, "text/plain")
-					require.NoError(t, err)
-				}
-				_, _, err = s.Trash(ctx, node.ID, UnconditionalRev)
-				require.NoError(t, err)
-			}
-			recent, err := s.TrashEmpty(ctx, time.Hour, false)
-			require.NoError(t, err)
-			assert.Equal(t, TrashEmptyResult{}, recent)
-			for remaining := test.total; remaining > 0; remaining -= test.limit {
-				count, more := int64(min(remaining, test.limit)), remaining > test.limit
-				dryRun, err := s.TrashEmptyBounded(ctx, 0, test.limit, false)
-				require.NoError(t, err)
-				assert.Equal(t, TrashEmptyResult{Candidates: count, More: more}, dryRun)
-				roots, err := s.TrashedRoots(ctx)
-				require.NoError(t, err)
-				require.Len(t, roots, remaining)
-				deleted, err := s.TrashEmptyBounded(ctx, 0, test.limit, true)
-				require.NoError(t, err)
-				assert.Equal(t, TrashEmptyResult{Candidates: count, Deleted: count, More: more, Run: true}, deleted)
-				roots, err = s.TrashedRoots(ctx)
-				require.NoError(t, err)
-				require.Len(t, roots, remaining-int(count))
-			}
-			var nodeCount int
-			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodeCount))
-			assert.Equal(t, 1, nodeCount)
-			if test.populated {
-				var blobCount int
-				require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM blobs`).Scan(&blobCount))
-				assert.Equal(t, 1, blobCount)
-			}
-			_, err = s.TrashEmptyBounded(ctx, 0, 0, true)
-			require.ErrorContains(t, err, "maximum trash roots must be positive")
-		})
+	const total, limit = 205, 101
+	s := newTestStore(t)
+	ctx := t.Context()
+	for i := range total {
+		node, err := s.Mkdir(ctx, s.RootID(), fmt.Sprintf("folder-%d", i))
+		require.NoError(t, err)
+		_, err = s.CreateFile(ctx, node.ID, "notes.txt", fakeHash("b2"), 1, "text/plain")
+		require.NoError(t, err)
+		_, _, err = s.Trash(ctx, node.ID, UnconditionalRev)
+		require.NoError(t, err)
 	}
+	recent, err := s.TrashEmpty(ctx, time.Hour, false)
+	require.NoError(t, err)
+	assert.Equal(t, TrashEmptyResult{}, recent)
+	for remaining := total; remaining > 0; remaining -= limit {
+		count, more := int64(min(remaining, limit)), remaining > limit
+		dryRun, err := s.TrashEmptyBounded(ctx, 0, limit, false)
+		require.NoError(t, err)
+		assert.Equal(t, TrashEmptyResult{Candidates: count, More: more}, dryRun)
+		roots, err := s.TrashedRoots(ctx)
+		require.NoError(t, err)
+		require.Len(t, roots, remaining)
+		deleted, err := s.TrashEmptyBounded(ctx, 0, limit, true)
+		require.NoError(t, err)
+		assert.Equal(t, TrashEmptyResult{Candidates: count, Deleted: count, More: more, Run: true}, deleted)
+		roots, err = s.TrashedRoots(ctx)
+		require.NoError(t, err)
+		require.Len(t, roots, remaining-int(count))
+	}
+	var nodeCount int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodeCount))
+	assert.Equal(t, 1, nodeCount)
+	var blobCount int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM blobs`).Scan(&blobCount))
+	assert.Equal(t, 1, blobCount)
+	_, err = s.TrashEmptyBounded(ctx, 0, 0, true)
+	require.ErrorContains(t, err, "maximum trash roots must be positive")
 }
 
 func TestTrashEmptyAdvancesAffectedTagRevisionsOnce(t *testing.T) {

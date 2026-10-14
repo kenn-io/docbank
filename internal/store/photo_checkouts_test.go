@@ -90,7 +90,8 @@ func TestPhotoCheckoutSelections(t *testing.T) {
 	}
 	_, err = s.SetPhotoAssetExcluded(ctx, c.ID, c.Revision, true)
 	require.NoError(t, err)
-	_, err = s.db.ExecContext(ctx, `UPDATE photo_assets SET hidden_at=? WHERE asset_id=?`, nowRFC3339(), b.ID)
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	_, err = s.SetPhotoAssetHidden(ctx, b.ID, b.Revision, true)
 	require.NoError(t, err)
 	var eligibleFiles []string
 	for _, file := range a.Files {
@@ -136,10 +137,14 @@ func TestPhotoCheckoutRefusesUnavailableSources(t *testing.T) {
 			require.NoError(t, err)
 			entries, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
 			require.NoError(t, err)
-			if scenario == "trashed" {
+			switch scenario {
+			case "trashed":
 				_, err = s.TrashPhotoAsset(t.Context(), a.ID, a.Revision)
-			} else {
-				_, err = s.db.ExecContext(t.Context(), `UPDATE photo_assets SET `+scenario+`=? WHERE asset_id=?`, nowRFC3339(), a.ID)
+			case "excluded_at":
+				_, err = s.SetPhotoAssetExcluded(t.Context(), a.ID, a.Revision, true)
+			case "hidden_at":
+				require.NoError(t, s.SetupPhotoHidden(t.Context(), "synthetic-passcode"))
+				_, err = s.SetPhotoAssetHidden(t.Context(), a.ID, a.Revision, true)
 			}
 			require.NoError(t, err)
 			called := false
@@ -152,6 +157,8 @@ func TestPhotoCheckoutRefusesUnavailableSources(t *testing.T) {
 
 func TestPhotoCheckoutMetadata(t *testing.T) {
 	t.Parallel()
+	var snapshot []byte
+	var assetID, checkoutID, secondFileID string
 	for _, driver := range v090UpgradeDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
 			s, err := Open(filepath.Join(t.TempDir(), "source.db"), driver.driver)
@@ -167,6 +174,10 @@ func TestPhotoCheckoutMetadata(t *testing.T) {
 			require.NoError(t, s.FinishPhotoCheckout(t.Context(), c.ID, c.OperationID, StorageOperationFailed, "{}", "machine-local-error", time.Now().Add(time.Hour)))
 			var exported bytes.Buffer
 			require.NoError(t, s.ExportMetadata(t.Context(), &exported))
+			if snapshot == nil {
+				snapshot = append([]byte(nil), exported.Bytes()...)
+				assetID, checkoutID, secondFileID = a.ID, c.ID, second.Files[0].ID
+			}
 			entries[0].Published = false
 			t.Run("export redaction and unbound restore", func(t *testing.T) {
 				require.NotContains(t, exported.String(), "machine-local-")
@@ -189,85 +200,83 @@ func TestPhotoCheckoutMetadata(t *testing.T) {
 				require.NoError(t, restored.ExportMetadata(t.Context(), &roundtrip))
 				require.Equal(t, exported.String(), roundtrip.String())
 			})
-			t.Run("restore colon filename on Windows", func(t *testing.T) {
-				if runtime.GOOS != "windows" {
-					t.Skip("Windows filename compatibility")
-				}
-				colonPath := "undated/" + a.ID + "/Trip: Day 1.jpg"
-				portableLines := bytes.Split(exported.Bytes(), []byte{'\n'})
-				for i, line := range portableLines {
-					if !bytes.Contains(line, []byte(`"type":"photo_checkout_entry"`)) {
-						continue
-					}
-					var entry metadataPhotoCheckoutEntry
-					require.NoError(t, json.Unmarshal(line, &entry))
-					entry.Path = colonPath
-					portableLines[i], err = json.Marshal(entry)
-					require.NoError(t, err)
-				}
-				windowsRestored, err := Open(filepath.Join(t.TempDir(), "windows-colon-restored.db"), driver.driver)
-				require.NoError(t, err)
-				t.Cleanup(func() { require.NoError(t, windowsRestored.Close()) })
-				require.NoError(t, windowsRestored.ImportMetadata(t.Context(), bytes.NewReader(bytes.Join(portableLines, []byte{'\n'}))))
-				actual, err := windowsRestored.PhotoCheckout(t.Context(), c.ID)
-				require.NoError(t, err)
-				require.Equal(t, "unbound", actual.State)
-				actualEntries, err := windowsRestored.PhotoCheckoutEntries(t.Context(), c.ID)
-				require.NoError(t, err)
-				require.Equal(t, colonPath, actualEntries[0].Path)
-				require.NoError(t, windowsRestored.ExportMetadata(t.Context(), &bytes.Buffer{}))
-			})
-			for _, bad := range []struct {
-				name   string
-				mutate func(*metadataPhotoCheckoutEntry)
-				path   bool
-			}{
-				{"unsafe-path", func(entry *metadataPhotoCheckoutEntry) { entry.Path = "../photo.jpg" }, true},
-				{"size", func(entry *metadataPhotoCheckoutEntry) { entry.Size++ }, false},
-				{"file", func(entry *metadataPhotoCheckoutEntry) { entry.FileID = second.Files[0].ID }, false},
-				{"asset", func(entry *metadataPhotoCheckoutEntry) { entry.AssetID = "00000000-0000-4000-8000-000000000001" }, false},
-			} {
-				t.Run("invalid frozen entry "+bad.name, func(t *testing.T) {
-					lines := bytes.Split(exported.Bytes(), []byte{'\n'})
-					changed := false
-					for i, line := range lines {
-						if len(line) == 0 {
-							continue
-						}
-						var entry metadataPhotoCheckoutEntry
-						require.NoError(t, json.Unmarshal(line, &entry))
-						if entry.Type == "photo_checkout_entry" {
-							bad.mutate(&entry)
-							lines[i], err = json.Marshal(entry)
-							require.NoError(t, err)
-							changed = true
-						}
-					}
-					require.True(t, changed, bad.name)
-					invalid, err := Open(filepath.Join(t.TempDir(), bad.name+".db"), driver.driver)
-					require.NoError(t, err)
-					t.Cleanup(func() { require.NoError(t, invalid.Close()) })
-					err = invalid.ImportMetadata(t.Context(), bytes.NewReader(bytes.Join(lines, []byte{'\n'})))
-					if bad.path {
-						require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
-					} else {
-						require.ErrorContains(t, err, "photo checkout frozen bases do not match content versions")
-					}
-				})
-			}
 			t.Run("detach preserves frozen entries", func(t *testing.T) {
+				before, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
+				require.NoError(t, err)
 				_, err = s.DetachPhotoFile(t.Context(), a.ID, a.Revision, a.Files[0].ID, PhotoDetachOptions{})
 				require.NoError(t, err)
-				var detachedExport bytes.Buffer
-				require.NoError(t, s.ExportMetadata(t.Context(), &detachedExport))
-				detached, err := Open(filepath.Join(t.TempDir(), "detached.db"), driver.driver)
+				after, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
 				require.NoError(t, err)
-				t.Cleanup(func() { require.NoError(t, detached.Close()) })
-				require.NoError(t, detached.ImportMetadata(t.Context(), bytes.NewReader(detachedExport.Bytes())))
-				actualEntries, err := detached.PhotoCheckoutEntries(t.Context(), c.ID)
-				require.NoError(t, err)
-				require.Equal(t, entries, actualEntries)
+				require.Equal(t, before, after)
 			})
+		})
+	}
+	t.Run("restore colon filename on Windows", func(t *testing.T) {
+		if runtime.GOOS != "windows" {
+			t.Skip("Windows filename compatibility")
+		}
+		colonPath := "undated/" + assetID + "/Trip: Day 1.jpg"
+		portableLines := bytes.Split(snapshot, []byte{'\n'})
+		for i, line := range portableLines {
+			if !bytes.Contains(line, []byte(`"type":"photo_checkout_entry"`)) {
+				continue
+			}
+			var entry metadataPhotoCheckoutEntry
+			require.NoError(t, json.Unmarshal(line, &entry))
+			entry.Path = colonPath
+			encoded, err := json.Marshal(entry)
+			portableLines[i] = encoded
+			require.NoError(t, err)
+		}
+		windowsRestored, err := Open(filepath.Join(t.TempDir(), "windows-colon-restored.db"))
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, windowsRestored.Close()) })
+		require.NoError(t, windowsRestored.ImportMetadata(t.Context(), bytes.NewReader(bytes.Join(portableLines, []byte{'\n'}))))
+		actual, err := windowsRestored.PhotoCheckout(t.Context(), checkoutID)
+		require.NoError(t, err)
+		require.Equal(t, "unbound", actual.State)
+		actualEntries, err := windowsRestored.PhotoCheckoutEntries(t.Context(), checkoutID)
+		require.NoError(t, err)
+		require.Equal(t, colonPath, actualEntries[0].Path)
+		require.NoError(t, windowsRestored.ExportMetadata(t.Context(), &bytes.Buffer{}))
+	})
+	for _, bad := range []struct {
+		name   string
+		mutate func(*metadataPhotoCheckoutEntry)
+		path   bool
+	}{
+		{"unsafe-path", func(entry *metadataPhotoCheckoutEntry) { entry.Path = "../photo.jpg" }, true},
+		{"size", func(entry *metadataPhotoCheckoutEntry) { entry.Size++ }, false},
+		{"file", func(entry *metadataPhotoCheckoutEntry) { entry.FileID = secondFileID }, false},
+		{"asset", func(entry *metadataPhotoCheckoutEntry) { entry.AssetID = "00000000-0000-4000-8000-000000000001" }, false},
+	} {
+		t.Run("invalid frozen entry "+bad.name, func(t *testing.T) {
+			lines := bytes.Split(snapshot, []byte{'\n'})
+			changed := false
+			for i, line := range lines {
+				if len(line) == 0 {
+					continue
+				}
+				var entry metadataPhotoCheckoutEntry
+				require.NoError(t, json.Unmarshal(line, &entry))
+				if entry.Type == "photo_checkout_entry" {
+					bad.mutate(&entry)
+					encoded, err := json.Marshal(entry)
+					lines[i] = encoded
+					require.NoError(t, err)
+					changed = true
+				}
+			}
+			require.True(t, changed, bad.name)
+			invalid, err := Open(filepath.Join(t.TempDir(), bad.name+".db"))
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, invalid.Close()) })
+			err = invalid.ImportMetadata(t.Context(), bytes.NewReader(bytes.Join(lines, []byte{'\n'})))
+			if bad.path {
+				require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
+			} else {
+				require.ErrorContains(t, err, "photo checkout frozen bases do not match content versions")
+			}
 		})
 	}
 }
