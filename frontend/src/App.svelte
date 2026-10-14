@@ -213,7 +213,7 @@
       if (attempted || !openedPhotos) return;
       attempted = true;
       clearPhoto();
-      void access.lock({ keepalive: true });
+      void access.lock();
     };
     const pagehide = () => { if (openedPhotos) access.pagehide(); leave(); };
     const resume = () => { attempted = false; };

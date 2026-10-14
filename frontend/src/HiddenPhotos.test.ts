@@ -25,7 +25,7 @@ it("waits for a held leave lock before reading on return", async () => {
   await screen.findByRole("button", { name: "Lock" });
   const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
   await fireEvent(document, new Event("visibilitychange"));
-  const lock = access.lock({ keepalive: true });
+  const lock = access.lock();
   await waitFor(() => expect(finish).toBeTypeOf("function"));
   visibility.mockReturnValue("visible");
   await fireEvent(document, new Event("visibilitychange"));

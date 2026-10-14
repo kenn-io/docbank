@@ -18,17 +18,17 @@ export class HiddenAccess {
     return result;
   }
   settled() { return this.queue; }
-  private requestLock(keepalive: boolean) {
-    return lockPhotoHidden({}, { session: this.session, signal: AbortSignal.timeout(30_000), keepalive });
+  private requestLock() {
+    return lockPhotoHidden({}, { session: this.session, signal: AbortSignal.timeout(30_000), keepalive: true });
   }
   pagehide() {
     // The page may disappear before a pending unlock releases the queue.
-    if (this.pending) void this.requestLock(true).catch(() => {});
+    if (this.pending) void this.requestLock().catch(() => {});
   }
-  lock({ keepalive = false } = {}) {
-    return this.run(async () => {
+  lock() {
+    return this.enqueue(async () => {
       try {
-        await this.requestLock(keepalive);
+        await this.requestLock();
         this.lockError = "";
         return true;
       } catch (cause) {

@@ -4,7 +4,7 @@ import { unlockPhotoHidden } from "./generated/docbank.js";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-it("pagehide sends an immediate keepalive lock during a held manual lock", async () => {
+it("a held manual lock uses keepalive without an extra pagehide request", async () => {
   let finish!: (response: Response) => void;
   const fetcher = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => finish = resolve)).mockImplementation(() => Promise.resolve(Response.json({ configured: true })));
   vi.stubGlobal("fetch", fetcher);
@@ -12,13 +12,11 @@ it("pagehide sends an immediate keepalive lock during a held manual lock", async
   const manual = access.lock();
   await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
   access.pagehide();
-  const leave = access.lock({ keepalive: true });
-  expect(fetcher).toHaveBeenCalledTimes(2);
-  expect(fetcher.mock.calls[1]).toEqual([expect.stringMatching(/\/photos\/hidden\/lock$/), expect.objectContaining({ keepalive: true })]);
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(fetcher.mock.calls[0]).toEqual([expect.stringMatching(/\/photos\/hidden\/lock$/), expect.objectContaining({ keepalive: true })]);
   finish(Response.json({ configured: true }));
   await manual;
-  await leave;
-  expect(fetcher).toHaveBeenCalledTimes(3);
+  expect(fetcher).toHaveBeenCalledTimes(1);
 });
 
 it("pagehide sends a keepalive lock without waiting for a held unlock", async () => {
@@ -29,7 +27,7 @@ it("pagehide sends a keepalive lock without waiting for a held unlock", async ()
   const unlock = access.run(() => unlockPhotoHidden({ passcode: "synthetic" }, { session: "synthetic" }));
   await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
   access.pagehide();
-  const lock = access.lock({ keepalive: true });
+  const lock = access.lock();
   await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
   expect(vi.mocked(fetch).mock.calls[1][1]).toMatchObject({ keepalive: true });
   finish(Response.json({ configured: true, expires_in: 300 }));
@@ -46,7 +44,7 @@ it("locks after a held unlock and starts its timeout when dispatched", async () 
   const access = new HiddenAccess("synthetic", vi.fn());
   const unlock = access.run(() => unlockPhotoHidden({ passcode: "synthetic" }, { session: "synthetic" }));
   await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
-  const lock = access.lock({ keepalive: true });
+  const lock = access.lock();
   let settled = false;
   void access.settled().then(() => settled = true);
   await Promise.resolve();
