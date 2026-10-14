@@ -46,7 +46,7 @@ func TestPhotoImportRoutes(t *testing.T) {
 	assert.Equal(t, store.StorageOperationKindPhotoImport, started.Kind)
 	assert.Equal(t, "queued", started.State)
 
-	pollCtx, cancelPoll := context.WithTimeout(t.Context(), 30*time.Second)
+	pollCtx, cancelPoll := context.WithCancel(t.Context())
 	defer cancelPoll()
 	require.EventuallyWithT(t, func(collect *assert.CollectT) {
 		request, err := http.NewRequestWithContext(pollCtx, http.MethodGet, ts.URL+"/api/v1/jobs/"+started.ID, nil)
@@ -65,7 +65,6 @@ func TestPhotoImportRoutes(t *testing.T) {
 		require.NoError(collect, json.Unmarshal(receiptJSON, &receipt))
 		assert.Equal(collect, int64(1), receipt.Added)
 	}, 30*time.Second, 10*time.Millisecond)
-	cancelPoll()
 
 	invalid, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/v1/photos/imports", bytes.NewReader([]byte(`{"source_root":"relative","destination":"/photos"}`)))
 	require.NoError(t, err)
