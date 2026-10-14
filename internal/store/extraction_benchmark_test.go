@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -11,29 +12,47 @@ import (
 
 // BenchmarkIngestMetadata includes one metadata transaction per file, without
 // blob I/O. BenchmarkAddPaths in internal/ingest measures durable blob writes too.
+// Each iteration starts a fresh catalog; seeding and checkpointing are untimed.
 func BenchmarkIngestMetadata(b *testing.B) {
+	const batch = 128
 	for _, mimeType := range []string{"application/octet-stream", "text/plain"} {
-		b.Run(mimeType, func(b *testing.B) {
-			b.ReportAllocs()
-			for b.Loop() {
-				b.StopTimer()
-				s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
-				require.NoError(b, err)
-				run, err := s.BeginIngest(b.Context(), "cli", "Synthetic corpus")
-				require.NoError(b, err)
-				b.StartTimer()
-				for i := range 128 {
-					name := fmt.Sprintf("file-%04d", i)
-					_, added, err := s.IngestFileWithMembership(b.Context(), run, s.RootID(),
-						name, fmt.Sprintf("%064x", i+1), 8192, mimeType, "/synthetic/"+name, "")
+		for _, existing := range []int{0, 10000} {
+			b.Run(fmt.Sprintf("%s/existing=%d", mimeType, existing), func(b *testing.B) {
+				b.ReportAllocs()
+				for b.Loop() {
+					b.StopTimer()
+					dir := b.TempDir()
+					s, err := Open(filepath.Join(dir, "docbank.db"))
 					require.NoError(b, err)
-					require.True(b, added)
+					require.NoError(b, s.withStorageTx(b.Context(), func(tx *sql.Tx) error {
+						for i := range existing {
+							_, _, err := s.createFileTx(b.Context(), tx, s.RootID(),
+								fmt.Sprintf("seed-%05d.bin", i), fmt.Sprintf("%064x", i+1), 8192, "application/octet-stream")
+							if err != nil {
+								return err
+							}
+						}
+						return nil
+					}))
+					run, err := s.BeginIngest(b.Context(), "cli", "Synthetic corpus")
+					require.NoError(b, err)
+					require.NoError(b, s.Checkpoint(b.Context()))
+					b.StartTimer()
+					for i := range batch {
+						name := fmt.Sprintf("file-%04d", i)
+						_, added, err := s.IngestFileWithMembership(b.Context(), run, s.RootID(),
+							name, fmt.Sprintf("%064x", existing+i+1), 8192, mimeType, "/synthetic/"+name, "")
+						require.NoError(b, err)
+						require.True(b, added)
+					}
+					b.StopTimer()
+					require.NoError(b, s.Close())
+					require.NoError(b, os.RemoveAll(dir))
+					b.StartTimer()
 				}
-				b.StopTimer()
-				require.NoError(b, s.Close())
-				b.StartTimer()
-			}
-		})
+				b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*batch), "ns/file")
+			})
+		}
 	}
 }
 
