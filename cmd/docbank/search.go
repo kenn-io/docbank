@@ -390,7 +390,7 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 	if options.Agent {
 		return writeDocumentSearchAgent(cmd, query, report, nil)
 	}
-	return writeDocumentSearchReport(cmd, report, options.Explain)
+	return writeDocumentSearchReport(cmd, report, options.Explain, nil)
 }
 
 func validateDocumentSearchOptions(query string, options documentSearchCLIOptions) error {
@@ -471,48 +471,77 @@ func selectDocumentSearchBinding(mode, requested string, bindings []string) (str
 	return "", nil
 }
 
-func writeDocumentSearchReport(cmd *cobra.Command, report api.DocumentSearchReport, explain bool) error {
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "mode: %s", report.ActualMode)
-	if report.RequestedMode != report.ActualMode {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), " (requested %s)", report.RequestedMode)
-	}
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\ncoverage: %s (%d/%d source document(s) complete)\n",
-		report.Coverage.State, report.Coverage.CompleteDocuments, report.Coverage.ScopedDocuments)
-	for _, degradation := range report.Degradations {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "degraded: %s\n", degradation)
-	}
-	if report.Reranking != nil {
-		if report.Reranking.Cause == "" {
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reranking: %s (%d candidates)\n",
-				report.Reranking.Outcome, report.Reranking.CandidateCount)
-		} else {
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reranking: %s (%s, %d candidates)\n",
-				report.Reranking.Outcome, report.Reranking.Cause, report.Reranking.CandidateCount)
-		}
-	}
-	if len(report.Results) == 0 {
-		_, err := fmt.Fprintln(cmd.OutOrStdout(), "no matches inside the source fence")
-		if err != nil {
+// writeDocumentSearchReport prints a processing report. Automatic search
+// passes the folder name hits it adds; explicit processing search passes nil.
+func writeDocumentSearchReport(cmd *cobra.Command, report api.DocumentSearchReport, explain bool,
+	folders []api.SearchHit,
+) error {
+	writeDocumentSearchHeader(cmd, report)
+	out := cmd.OutOrStdout()
+	if len(report.Results) == 0 && len(folders) == 0 {
+		if _, err := fmt.Fprintln(out, "no matches inside the source fence"); err != nil {
 			return fmt.Errorf("writing empty document search result: %w", err)
 		}
-		return nil
 	}
-	w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "RANK\tSCORE\tSELECTOR\tVERSION\tPATH\tEXCERPT")
-	for _, result := range report.Results {
-		_, _ = fmt.Fprintf(w, "%d\t%.6g\t%s\t%s\t%s\t%s\n", result.Rank, result.Score,
-			formatNodeSelector(result.NodeID), result.ContentVersionID, result.Path, result.Excerpt)
+	if len(report.Results) > 0 {
+		w := tabwriter.NewWriter(out, 2, 4, 2, ' ', 0)
+		_, _ = fmt.Fprintln(w, "RANK\tSCORE\tSELECTOR\tVERSION\tPATH\tEXCERPT")
+		for _, result := range report.Results {
+			_, _ = fmt.Fprintf(w, "%d\t%.6g\t%s\t%s\t%s\t%s\n", result.Rank, result.Score,
+				formatNodeSelector(result.NodeID), result.ContentVersionID, result.Path, result.Excerpt)
+		}
+		if err := w.Flush(); err != nil {
+			return fmt.Errorf("writing document search results: %w", err)
+		}
 	}
-	if err := w.Flush(); err != nil {
-		return fmt.Errorf("writing document search results: %w", err)
+	if err := writeFolderSearchHits(cmd, folders, len(report.Results) > 0); err != nil {
+		return err
 	}
 	if explain {
 		for _, event := range report.Trace {
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "trace: %s=%d\n", event.Code, event.Count)
+			_, _ = fmt.Fprintf(out, "trace: %s=%d\n", event.Code, event.Count)
 		}
 	}
 	if report.Truncated {
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "results truncated at the requested limit")
+		_, _ = fmt.Fprintln(out, "results truncated at the requested limit")
+	}
+	return nil
+}
+
+func writeDocumentSearchHeader(cmd *cobra.Command, report api.DocumentSearchReport) {
+	out := cmd.OutOrStdout()
+	_, _ = fmt.Fprintf(out, "mode: %s", report.ActualMode)
+	if report.RequestedMode != report.ActualMode {
+		_, _ = fmt.Fprintf(out, " (requested %s)", report.RequestedMode)
+	}
+	_, _ = fmt.Fprintf(out, "\ncoverage: %s (%d/%d source document(s) complete)\n",
+		report.Coverage.State, report.Coverage.CompleteDocuments, report.Coverage.ScopedDocuments)
+	for _, degradation := range report.Degradations {
+		_, _ = fmt.Fprintf(out, "degraded: %s\n", degradation)
+	}
+	if r := report.Reranking; r != nil {
+		if r.Cause == "" {
+			_, _ = fmt.Fprintf(out, "reranking: %s (%d candidates)\n", r.Outcome, r.CandidateCount)
+		} else {
+			_, _ = fmt.Fprintf(out, "reranking: %s (%s, %d candidates)\n", r.Outcome, r.Cause, r.CandidateCount)
+		}
+	}
+}
+
+func writeFolderSearchHits(cmd *cobra.Command, folders []api.SearchHit, separate bool) error {
+	if len(folders) == 0 {
+		return nil
+	}
+	if separate {
+		_, _ = fmt.Fprintln(cmd.OutOrStdout())
+	}
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintln(w, "SELECTOR\tMATCH\tPATH")
+	for _, hit := range folders {
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", formatNodeSelector(hit.Node.ID), hit.Match, hit.Path)
+	}
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("writing folder search results: %w", err)
 	}
 	return nil
 }

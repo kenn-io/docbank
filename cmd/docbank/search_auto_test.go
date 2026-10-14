@@ -26,7 +26,8 @@ type automaticSearchCase struct {
 	profiles                              []api.ProcessingProfileSummary
 	profileError, scopeError, searchError string
 	empty, malformed, cold, mixed         bool
-	lexicalTruncated, wantTruncated       bool
+	folderFirst, wantTruncated            bool
+	wantResults, wantFolders              int
 	jsonCLI, humanCLI, agentCLI           bool
 	limit                                 int
 	opts                                  daemonconn.SearchOptions
@@ -43,12 +44,13 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 	}
 	cases := []automaticSearchCase{
 		{name: "cold first binding", profiles: profiles, limit: 50, cold: true, wantScope: 1, wantSearch: 2, wantHybrid: true},
-		{name: "JSON hybrid", profiles: profiles, limit: 50, jsonCLI: true, wantScope: 1, wantSearch: 1, wantHybrid: true},
-		{name: "JSON folder within limit", profiles: profiles, limit: 1, jsonCLI: true, wantScope: 1, wantSearch: 1, wantHybrid: true, wantTruncated: true},
-		{name: "JSON lexical truncation", profiles: profiles, limit: 50, jsonCLI: true, lexicalTruncated: true, wantScope: 1, wantSearch: 1, wantHybrid: true, wantTruncated: true},
+		{name: "JSON hybrid", profiles: profiles, limit: 50, jsonCLI: true, wantScope: 1, wantSearch: 1, wantHybrid: true, wantResults: 1, wantFolders: 1},
+		{name: "JSON folder within limit", profiles: profiles, limit: 1, folderFirst: true, jsonCLI: true, wantScope: 1, wantSearch: 1, wantHybrid: true, wantFolders: 1, wantTruncated: true},
+		{name: "JSON lexical truncation", profiles: profiles, limit: 1, jsonCLI: true, wantScope: 1, wantSearch: 1, wantHybrid: true, wantResults: 1, wantTruncated: true},
+		{name: "human folder fills page", profiles: profiles, limit: 1, folderFirst: true, humanCLI: true, wantScope: 1, wantSearch: 1, wantHybrid: true, wantTruncated: true},
 		{name: "human hybrid", profiles: profiles, limit: 50, humanCLI: true, wantScope: 1, wantSearch: 1, wantHybrid: true},
 		{name: "agent hybrid", profiles: profiles, limit: 50, agentCLI: true, wantScope: 1, wantSearch: 1, wantHybrid: true},
-		{name: "query length boundary", query: strings.Repeat("界", 8192), profiles: profiles, limit: 50, jsonCLI: true, wantScope: 1, wantSearch: 1, wantHybrid: true},
+		{name: "query length boundary", query: strings.Repeat("界", 8192), profiles: profiles, limit: 50, jsonCLI: true, wantScope: 1, wantSearch: 1, wantHybrid: true, wantResults: 1, wantFolders: 1},
 		{name: "query too long", query: strings.Repeat("界", 8193), profiles: profiles, limit: 50, jsonCLI: true, skipped: true},
 		{name: "blank query", query: " ", profiles: profiles, limit: 50, skipped: true},
 		{name: "JSON fallback", profiles: profiles, limit: 50, jsonCLI: true, searchError: "processing_failed", wantScope: 1, wantSearch: 3, wantReason: "processing_failed"},
@@ -131,6 +133,8 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 			status = http.StatusConflict
 		case "foreign_vault":
 			status = http.StatusUnprocessableEntity
+		case "not_found":
+			status = http.StatusNotFound
 		case "scope_too_large":
 			status = http.StatusUnprocessableEntity
 			observed = 4097
@@ -150,10 +154,15 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 		case "GET /api/v1/search":
 			assert.Equal(t, tc.query, r.URL.Query().Get("q"))
 			assert.Equal(t, tc.wantSearch, *searchCalls, "lexical search must run after every hybrid attempt")
-			assert.NoError(t, json.MarshalWrite(w, api.SearchReport{Limit: tc.limit, Truncated: tc.lexicalTruncated, Hits: []api.SearchHit{
+			matches := []api.SearchHit{
 				{Node: api.Node{ID: 42, Kind: "file", Name: "query.txt"}, Path: "/query.txt", Match: "name"},
 				{Node: api.Node{ID: 7, Kind: "dir", Name: "query folder"}, Path: "/query folder", Match: "name"},
-			}}))
+			}
+			if tc.folderFirst {
+				matches[0], matches[1] = matches[1], matches[0]
+			}
+			page := matches[:min(tc.limit, len(matches))]
+			assert.NoError(t, json.MarshalWrite(w, api.SearchReport{Limit: tc.limit, Hits: page, Truncated: len(matches) > tc.limit}))
 		case "GET /api/v1/processing/profiles":
 			*profileCalls++
 			if tc.profileError != "" {
@@ -207,7 +216,8 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 			case tc.mixed && *searchCalls == 1:
 				problem(w, "processing_consent_required")
 			case tc.cold && *searchCalls == 1:
-				problem(w, "processing_failed")
+				// A binding without a built vector index has no index head.
+				problem(w, "not_found")
 			case tc.searchError != "":
 				problem(w, tc.searchError)
 			case tc.malformed:
@@ -256,6 +266,10 @@ func runAutomaticSearchCLI(t *testing.T, tc automaticSearchCase, serverURL strin
 			"- selector=id:42 match=name path=/query.txt\n"+
 			"- selector=id:7 match=name path=\"/query folder\"\n", stdout.String())
 		assert.Empty(t, stderr.String())
+	case tc.humanCLI && tc.wantHybrid && tc.wantTruncated:
+		assert.Equal(t, "mode: hybrid\ncoverage: complete (1/1 source document(s) complete)\n"+
+			"SELECTOR  MATCH  PATH\nid:7      name   /query folder\n"+
+			"results truncated at the requested limit\n", stdout.String())
 	case tc.humanCLI && tc.wantHybrid:
 		assert.True(t, strings.HasPrefix(stdout.String(), "mode: hybrid\n"), stdout.String())
 		assert.Contains(t, stdout.String(), "/query.txt")
@@ -272,15 +286,17 @@ func runAutomaticSearchCLI(t *testing.T, tc automaticSearchCase, serverURL strin
 	case tc.wantHybrid:
 		var hybrid api.DocumentSearchReport
 		require.NoError(t, json.Unmarshal(stdout.Bytes(), &hybrid))
-		assert.Len(t, hybrid.Results, min(1, tc.limit-1), "folders count toward --limit")
+		assert.Len(t, hybrid.Results, tc.wantResults, "folders count toward --limit")
 		assert.Equal(t, "hybrid", hybrid.ActualMode)
 		assert.Equal(t, tc.wantTruncated, hybrid.Truncated)
 		var folders struct {
 			Folders []api.SearchHit `json:"folders"`
 		}
 		require.NoError(t, json.Unmarshal(stdout.Bytes(), &folders))
-		require.Len(t, folders.Folders, 1)
-		assert.Equal(t, "/query folder", folders.Folders[0].Path)
+		require.Len(t, folders.Folders, tc.wantFolders)
+		if tc.wantFolders > 0 {
+			assert.Equal(t, "/query folder", folders.Folders[0].Path)
+		}
 		assert.NotContains(t, stdout.String(), `"hits"`)
 		assert.Empty(t, stderr.String())
 	default:

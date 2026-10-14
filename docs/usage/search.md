@@ -21,9 +21,9 @@ toward `--limit` and replace the lowest-ranked hybrid results when the page is
 full. The report is `truncated` when either search omitted a match.
 
 Profiles and query bindings are tried in ascending name order until one
-succeeds. A failure that could differ by binding, such as missing consent,
-`processing_failed`, `processing_profile_unavailable`, or `stale_index`, moves
-on to the next pair. A failure of the whole source scope, such as
+succeeds. A failure that could differ by binding moves on to the next pair:
+missing consent, `processing_failed`, `processing_profile_unavailable`,
+`stale_index`, or `not_found` from a binding whose vector index is not built. A failure of the whole source scope, such as
 `stale_version` or `scope_too_large`, stops at once. The CLI never silently
 truncates the semantic population; more than 4,096 live versions falls back
 with `scope_too_large`. When every pair fails, the command reports the first

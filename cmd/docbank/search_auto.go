@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"text/tabwriter"
 	"unicode/utf8"
 
 	"github.com/spf13/cobra"
@@ -132,10 +131,11 @@ func automaticSearchFallback(ctx context.Context, err error) (automaticSearchOut
 }
 
 // bindingSearchFailure reports whether another profile or binding could still
-// succeed. Scope failures such as stale_version repeat for every binding.
+// succeed. A binding without a built vector index reports not_found. Scope
+// failures such as stale_version repeat for every binding.
 func bindingSearchFailure(reason string) bool {
 	switch reason {
-	case "processing_profile_unavailable", "processing_failed", "stale_index",
+	case "processing_profile_unavailable", "processing_failed", "stale_index", "not_found",
 		"processing_consent_required", "processing_consent_expired", "processing_consent_revoked":
 		return true
 	default:
@@ -167,21 +167,7 @@ func writeAutomaticSearch(cmd *cobra.Command, query string, report api.DocumentS
 	if searchAgent {
 		return writeDocumentSearchAgent(cmd, query, report, folders)
 	}
-	if err := writeDocumentSearchReport(cmd, report, false); err != nil {
-		return err
-	}
-	if len(folders) == 0 {
-		return nil
-	}
-	w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "\nSELECTOR\tMATCH\tPATH")
-	for _, hit := range folders {
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", formatNodeSelector(hit.Node.ID), hit.Match, hit.Path)
-	}
-	if err := w.Flush(); err != nil {
-		return fmt.Errorf("writing folder search results: %w", err)
-	}
-	return nil
+	return writeDocumentSearchReport(cmd, report, false, folders)
 }
 
 // writeSearchDegradation reports a failed hybrid attempt on stderr so stdout
