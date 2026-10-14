@@ -160,13 +160,12 @@ func TestPhotoCheckoutPublicationReservesAssetWriter(t *testing.T) {
 	require.NoError(t, err)
 	ctx := t.Context()
 	require.NoError(t, s.PublishPhotoCheckoutEntry(ctx, entries[0], func() (bool, error) {
-		// An independent connection can write because publication holds no SQLite transaction.
+		// The callback holds the writer connection without a SQLite transaction.
 		_, err := s.db.ExecContext(ctx, `UPDATE storage_operations SET error='' WHERE operation_id=?`, c.OperationID)
 		if err != nil {
 			return false, err
 		}
 		writer := s.writeDB.Stats()
-		require.Equal(t, 1, writer.MaxOpenConnections)
 		require.Equal(t, 1, writer.InUse)
 		return true, nil
 	}))

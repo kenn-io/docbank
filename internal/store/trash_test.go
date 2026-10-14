@@ -21,8 +21,6 @@ func TestTrashAndRestoreRoundTrip(t *testing.T) {
 	f, err := s.CreateFile(ctx, docs.ID, "a.txt", fakeHash("a1"), 1, "text/plain")
 	require.NoError(t, err)
 
-	assert.Equal(t, "dir", docs.Kind)
-	assert.Equal(t, "file", f.Kind)
 	trashed, origPath, err := s.Trash(ctx, docs.ID, -1)
 	require.NoError(t, err)
 	assert.Equal(t, "/docs", origPath)

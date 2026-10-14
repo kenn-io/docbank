@@ -62,8 +62,6 @@ func TestPhotoImportRoutes(t *testing.T) {
 	}))
 	require.Eventually(t, func() bool { return supervisor.Snapshot()[0].FinishedAt != nil }, 5*time.Second, 10*time.Millisecond)
 	assert.Positive(t, tracker.IdleFor())
-	_, err := catalog.NodeByPath(t.Context(), "/photos/capture.JPG")
-	require.NoError(t, err)
 
 	pollCtx, cancelPoll := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancelPoll()

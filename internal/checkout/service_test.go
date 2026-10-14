@@ -387,9 +387,7 @@ func TestCheckoutInterruptedRunKeepsPartialCopies(t *testing.T) {
 			actual, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
 			require.NoError(t, err)
 			require.True(t, actual[0].Published)
-			if len(actual) > 1 {
-				require.False(t, actual[1].Published)
-			}
+			require.False(t, actual[1].Published)
 			content, err := root.ReadFile(filepath.FromSlash(entries[0].Path))
 			require.NoError(t, err)
 			require.Equal(t, filepath.Base(entries[0].Path), string(content))
