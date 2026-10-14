@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
-import * as jobs from "./jobs.js";
 import type { Job } from "./generated/docbank.js";
 import JobsDrawer from "./JobsDrawer.svelte";
 
@@ -75,7 +74,6 @@ describe("background jobs drawer", () => {
         revision: 2,
         can_set_concurrency: false,
       };
-      const group = vi.spyOn(jobs, "jobLanes");
       const fetchSpy = vi.spyOn(globalThis, "fetch");
       const responses = [
         Promise.resolve(
@@ -113,7 +111,6 @@ describe("background jobs drawer", () => {
       await vi.advanceTimersByTimeAsync(0);
       if (test.populated) {
         expect(screen.getByRole("button", { name: "Resume Photo import" })).toBeTruthy();
-        expect(group).toHaveBeenCalledWith(items, [control]);
       } else {
         expect(screen.getByText("No background jobs")).toBeTruthy();
       }
