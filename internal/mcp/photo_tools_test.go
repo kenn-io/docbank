@@ -103,6 +103,7 @@ func TestGetPhotoFacesMCPPaginatesFacesAndAssertions(t *testing.T) {
 	require.Equal(t, assertions[0].PersonID, named["person_id"])
 	require.Equal(t, "assert", named["action"])
 	require.NotContains(t, lastFaces[1], "person_id")
+	require.Equal(t, true, named["dismissed"])
 }
 
 func TestGetPhotoFacesMCPFitsRejectionEnvelope(t *testing.T) {

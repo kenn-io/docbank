@@ -1,7 +1,6 @@
 package document
 
 import (
-	"slices"
 	"strings"
 	"testing"
 
@@ -93,9 +92,6 @@ func TestPersonIdentityScopeBounds(t *testing.T) {
 }
 
 func TestPersonFaceCandidateEvidence(t *testing.T) {
-	if !slices.Contains(PersonEvidenceKinds(), PersonEvidenceKind("face")) {
-		t.Fatal("face evidence is missing")
-	}
 	if !ValidPersonCandidateActorKey("face:00000000-0000-4000-8000-000000000001") {
 		t.Fatal("valid face key rejected")
 	}

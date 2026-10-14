@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json/v2"
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
@@ -29,5 +30,22 @@ func getPerson(ctx context.Context, lease *daemonLease, raw []byte) (personDetai
 	if err != nil {
 		return personDetailToolOutput{}, err
 	}
-	return personDetailToolOutput{privateCache: newPrivateCache(), PersonDetail: detail}, nil
+	output := personDetailToolOutput{privateCache: newPrivateCache(), PersonDetail: detail}
+	const pageBudget = maxToolResponseBytes/3 - 8<<10
+	for {
+		encoded, err := json.Marshal(output)
+		if err != nil {
+			return personDetailToolOutput{}, err
+		}
+		if len(encoded) <= pageBudget {
+			return output, nil
+		}
+		if len(output.Assertions) <= 1 {
+			return personDetailToolOutput{}, errToolResultTooLarge
+		}
+		end := max(1, len(output.Assertions)*pageBudget/len(encoded))
+		output.Assertions = output.Assertions[:end]
+		output.AssertionsTruncated = true
+		output.AssertionsNextCursor = output.Assertions[len(output.Assertions)-1].AssertionID
+	}
 }

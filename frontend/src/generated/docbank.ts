@@ -4854,6 +4854,8 @@ export interface SavedQueryFiltersSchema {
   no_tags?: boolean | null;
   /** @maxItems 64 */
   paths?: string[];
+  /** @maxItems 64 */
+  person_ids?: string[];
   /**
      * @minimum 0
      * @maximum 5

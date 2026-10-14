@@ -105,7 +105,7 @@ func TestSplitPersonAllowsTwoHundredOneAssignments(t *testing.T) {
 	}
 	var assignmentCount atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "hidden=synthetic", r.Header.Get("Cookie"))
+		assert.Equal(t, "hidden=synthetic", r.Header.Get("Cookie"))
 		payload, err := io.ReadAll(r.Body)
 		var request api.SplitPersonRequest
 		if err == nil {
@@ -184,7 +184,7 @@ func TestPersonClientForwardsAssertionPage(t *testing.T) {
 		assert.Equal(t, "hidden=synthetic", r.Header.Get("Cookie"))
 		w.Header().Set("ETag", `"1"`)
 		w.Header().Set("Content-Type", "application/json")
-		assert.NoError(t, json.MarshalWrite(w, api.PersonDetail{Person: api.Person{PersonID: personID, Revision: 1}}))
+		assert.NoError(t, json.MarshalWrite(w, api.PersonDetail{PersonID: personID, Revision: 1}))
 	}))
 	defer server.Close()
 	_, err := New(server.URL, "synthetic-key").PersonPage(t.Context(), personID, api.PersonAssertionPage{Cursor: cursor, Limit: 7, HiddenCookie: "hidden=synthetic"})

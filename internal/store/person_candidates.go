@@ -147,12 +147,23 @@ func (s *Store) retainPersonCandidate(ctx context.Context, tx *sql.Tx, candidate
 		return PersonMatchCandidate{}, false, err
 	}
 	if candidate.SuggestedPersonID != "" {
-		resolved, err := resolveActiveCandidatePersonTx(ctx, tx, candidate.SuggestedPersonID)
-		if err != nil {
-			return PersonMatchCandidate{}, false, err
+		if terminal {
+			var exists bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM persons WHERE person_id=?)`, candidate.SuggestedPersonID).Scan(&exists); err != nil {
+				return PersonMatchCandidate{}, false, err
+			}
+			if !exists {
+				return PersonMatchCandidate{}, false, ErrNotFound
+			}
+		} else {
+			resolved, err := resolveActiveCandidatePersonTx(ctx, tx, candidate.SuggestedPersonID)
+			if err != nil {
+				return PersonMatchCandidate{}, false, err
+			}
+			candidate.SuggestedPersonID = resolved
 		}
-		candidate.SuggestedPersonID = resolved
 	}
+
 	existing, err := personCandidateByIdentityTx(ctx, tx, candidate)
 	if err == nil {
 		return existing, true, nil
@@ -332,6 +343,17 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDec
 		if changed != 1 {
 			return ErrStaleRevision
 		}
+		if candidate.Reason == personCandidateReasonFaceMatch && personID != "" {
+			for _, occurrence := range occurrences {
+				before, err := s.faceDecisionStateTx(ctx, tx, occurrence.ContentVersionID, occurrence.EvidenceID, []string{personID}, true)
+				if err != nil {
+					return err
+				}
+				if err := s.clearNamedFaceCandidatesTx(ctx, tx, &before, occurrence.EvidenceID, personID, faceDecisionName); err != nil {
+					return err
+				}
+			}
+		}
 		if candidate.Reason == personCandidateReasonFaceMatch && state == personCandidateStateRejected {
 			if err := requirePhotoFaceRejectionBound(ctx, tx, "", candidate.CandidateID); err != nil {
 				return err
@@ -370,7 +392,7 @@ func (s *Store) AssertDocumentPerson(ctx context.Context, assertion PersonDocume
 		switch {
 		case err == nil:
 			if existing.Action == "withdrawn" && assertion.Action != "withdrawn" {
-				if err := requirePhotoAssertionCapacity(ctx, tx, assertion.ContentVersionID, assertion.Role); err != nil {
+				if err := requirePhotoAssertionCapacity(ctx, tx, assertion.ContentVersionID, assertion.Role, existing.AssertionID); err != nil {
 					return err
 				}
 			}
@@ -394,7 +416,7 @@ func (s *Store) AssertDocumentPerson(ctx context.Context, assertion PersonDocume
 			}
 			assertion.AssertionID = existing.AssertionID
 		case errors.Is(err, sql.ErrNoRows):
-			if err := requirePhotoAssertionCapacity(ctx, tx, assertion.ContentVersionID, assertion.Role); err != nil {
+			if err := requirePhotoAssertionCapacity(ctx, tx, assertion.ContentVersionID, assertion.Role, ""); err != nil {
 				return err
 			}
 			if assertion.Revision != 1 {
@@ -606,7 +628,7 @@ func ensurePersonAssertionTx(ctx context.Context, tx *sql.Tx, versionID, personI
 	existing, err := personAssertionByIdentityTx(ctx, tx, versionID, personID, role)
 	if err == nil {
 		if existing.Action == "withdrawn" {
-			if err := requirePhotoAssertionCapacity(ctx, tx, versionID, role); err != nil {
+			if err := requirePhotoAssertionCapacity(ctx, tx, versionID, role, existing.AssertionID); err != nil {
 				return PersonDocumentAssertion{}, false, err
 			}
 			if _, err = tx.ExecContext(ctx, `UPDATE person_document_assertions SET action='assert',revision=revision+1 WHERE assertion_id=?`, existing.AssertionID); err != nil {
@@ -623,7 +645,7 @@ func ensurePersonAssertionTx(ctx context.Context, tx *sql.Tx, versionID, personI
 	if !errors.Is(err, sql.ErrNoRows) {
 		return PersonDocumentAssertion{}, false, err
 	}
-	if err := requirePhotoAssertionCapacity(ctx, tx, versionID, role); err != nil {
+	if err := requirePhotoAssertionCapacity(ctx, tx, versionID, role, ""); err != nil {
 		return PersonDocumentAssertion{}, false, err
 	}
 	id, err := newUUIDv4()

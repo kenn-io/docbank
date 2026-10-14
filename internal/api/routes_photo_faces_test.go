@@ -175,3 +175,13 @@ func TestPersonAmbiguousQueryIsInvalid(t *testing.T) {
 	require.Contains(t, body, `"code":"invalid_query"`)
 	require.Contains(t, body, "use a person ID")
 }
+
+func TestPersonStructuredQueryFilter(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	p, err := s.CreatePerson(t.Context(), "Ada", "operator")
+	require.NoError(t, err)
+	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/queries/parse", map[string]string{"X-Api-Key": testAPIKey}, `{"filters":{"person_ids":["`+p.PersonID+`"]}}`)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.Contains(t, body, p.PersonID)
+}

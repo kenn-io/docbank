@@ -264,7 +264,7 @@ func (s *Store) MarkPersonInPhoto(ctx context.Context, versionID, personID strin
 func validatePhotoFaceReferences(ctx context.Context, q metadataQuerier) error {
 	var invalid bool
 	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_faces f LEFT JOIN content_versions v ON v.version_id=f.content_version_id LEFT JOIN person_document_assertions a ON a.assertion_id=f.assertion_id WHERE v.version_id IS NULL OR (f.assertion_id IS NOT NULL AND (a.assertion_id IS NULL OR NOT (a.content_version_id=f.content_version_id AND a.role='depicted'))))
- OR EXISTS(SELECT 1 FROM person_document_assertions WHERE role='depicted' AND action<>'withdrawn' GROUP BY content_version_id HAVING COUNT(*)>?)
+ OR EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.role='depicted' AND (a.action<>'withdrawn' OR EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=a.assertion_id)) GROUP BY a.content_version_id HAVING COUNT(*)>?)
  OR EXISTS(SELECT 1 FROM photo_faces GROUP BY content_version_id HAVING COUNT(*)>?)`, document.MaxPhotoRecordsPerVersion, document.MaxPhotoRecordsPerVersion).Scan(&invalid)
 	if err != nil {
 		return fmt.Errorf("checking face references: %w", err)
@@ -275,12 +275,12 @@ func validatePhotoFaceReferences(ctx context.Context, q metadataQuerier) error {
 	return nil
 }
 
-func requirePhotoAssertionCapacity(ctx context.Context, q metadataQuerier, versionID, role string) error {
+func requirePhotoAssertionCapacity(ctx context.Context, q metadataQuerier, versionID, role, existingAssertionID string) error {
 	if role != "depicted" {
 		return nil
 	}
-	var count int
-	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_document_assertions WHERE content_version_id=? AND role='depicted' AND action<>'withdrawn'`, versionID).Scan(&count); err != nil {
+	count, err := photoAssertionCount(ctx, q, versionID, existingAssertionID)
+	if err != nil {
 		return err
 	}
 	if count >= document.MaxPhotoRecordsPerVersion {
@@ -292,4 +292,10 @@ func requirePhotoAssertionCapacity(ctx context.Context, q metadataQuerier, versi
 func validFacePhotoNode(role string, node Node) bool {
 	facts := photoNodeFacts(node)
 	return validatePhotoFileForAsset(PhotoKindPhoto, role, facts) == nil && (role != PhotoRoleRAW || facts.MediaType == "" || facts.MediaType == "application/octet-stream" || isPhotoCameraRawMedia(facts.MediaType))
+}
+
+func photoAssertionCount(ctx context.Context, q metadataQuerier, versionID, existingAssertionID string) (int, error) {
+	var count int
+	err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_document_assertions a WHERE a.content_version_id=? AND a.role='depicted' AND a.assertion_id<>? AND (a.action<>'withdrawn' OR EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=a.assertion_id))`, versionID, existingAssertionID).Scan(&count)
+	return count, err
 }

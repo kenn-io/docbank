@@ -194,8 +194,7 @@ func ValidPersonRole(role string) bool {
 
 // ValidPersonCandidateActorKey includes face references without changing document event keys.
 func ValidPersonCandidateActorKey(key string) bool {
-	if strings.HasPrefix(key, "face:") {
-		value := strings.TrimPrefix(key, "face:")
+	if value, ok := strings.CutPrefix(key, "face:"); ok {
 		return len(value) == 36 && validPersonFaceID(value)
 	}
 	return ValidateActorKeyV1(key) == nil

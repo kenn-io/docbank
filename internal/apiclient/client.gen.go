@@ -27217,6 +27217,7 @@ type SavedQueryFiltersSchema struct {
 	ModifiedBefore       *time.Time                             `json:"modified_before,omitempty"`
 	NoTags               *bool                                  `json:"no_tags,omitempty"`
 	Paths                []string                               `json:"paths,omitempty"`
+	PersonIds            []uuid.UUID                            `json:"person_ids,omitempty"`
 	RatingMax            *int64                                 `json:"rating_max,omitempty"`
 	RatingMin            *int64                                 `json:"rating_min,omitempty"`
 	SetIds               []uuid.UUID                            `json:"set_ids,omitempty"`

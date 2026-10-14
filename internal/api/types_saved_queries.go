@@ -76,6 +76,7 @@ type savedQueryFiltersSchema struct {
 	Locations            []string                           `json:"locations,omitempty" maxItems:"64"`
 	Lenses               []string                           `json:"lenses,omitempty" maxItems:"64"`
 	SetIDs               []string                           `json:"set_ids,omitempty" maxItems:"64" format:"uuid"`
+	PersonIDs            []string                           `json:"person_ids,omitempty" maxItems:"64" format:"uuid"`
 	AssetIDs             []string                           `json:"asset_ids,omitempty" maxItems:"64" format:"uuid"`
 	FocusMin             *string                            `json:"focus_min,omitempty" nullable:"true" maxLength:"64"`
 	FocusMax             *string                            `json:"focus_max,omitempty" nullable:"true" maxLength:"64"`

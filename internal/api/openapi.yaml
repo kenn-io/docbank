@@ -15462,6 +15462,12 @@ components:
             type: string
           maxItems: 64
           type: array
+        person_ids:
+          items:
+            format: uuid
+            type: string
+          maxItems: 64
+          type: array
         rating_max:
           format: int64
           maximum: 5
