@@ -160,8 +160,19 @@ func TestPhotoImportPublishesBytesAndPassesThroughReceipts(t *testing.T) {
 }
 
 func TestPhotoImportRunnerHandlesCancellationResumeAndAdmissionRetry(t *testing.T) {
-	for _, interruption := range []string{"before work", "after final group", "shutdown and resume", "startup pause cancellation", "after-one-group cancellation", "startup admission failure"} {
-		t.Run(interruption, func(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		cancelAfter int
+	}{
+		{name: "before work"},
+		{name: "after final group", cancelAfter: 3},
+		{name: "shutdown and resume"},
+		{name: "startup pause cancellation"},
+		{name: "after one group", cancelAfter: 1},
+		{name: "startup admission failure"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			interruption := tc.name
 			ing := newTestIngester(t)
 			root := t.TempDir()
 			for i := range 3 {
@@ -173,11 +184,10 @@ func TestPhotoImportRunnerHandlesCancellationResumeAndAdmissionRetry(t *testing.
 			runner := PhotoImportRunner{Ingester: ing}
 			var mutations atomic.Int64
 			var failing atomic.Bool
-			var cancelAdmission atomic.Bool
 			switch interruption {
 			case "before work":
 				require.NoError(t, ing.Store.RequestStorageOperationCancel(t.Context(), operation.ID))
-			case "after final group":
+			case "after one group", "after final group":
 				gatedCalls, importedGroups := 0, 0
 				runner.Options.Mutate = func(ctx context.Context, fn func() error) error {
 					if err := fn(); err != nil {
@@ -188,7 +198,7 @@ func TestPhotoImportRunnerHandlesCancellationResumeAndAdmissionRetry(t *testing.
 					if gatedCalls > 1 {
 						importedGroups++
 					}
-					if importedGroups == 3 {
+					if importedGroups == tc.cancelAfter {
 						return ing.Store.RequestStorageOperationCancel(ctx, operation.ID)
 					}
 					return nil
@@ -212,25 +222,6 @@ func TestPhotoImportRunnerHandlesCancellationResumeAndAdmissionRetry(t *testing.
 				require.NoError(t, err)
 				require.NoError(t, ing.Store.AdvanceStorageOperation(t.Context(), operation.ID, "", 1, 0, 0, `{"added":1}`))
 				failing.Store(true)
-			case "after-one-group cancellation":
-				runner.admit = func(context.Context, *store.Store, string) (bool, error) {
-					return cancelAdmission.Load(), nil
-				}
-				gatedCalls, importedGroups := 0, 0
-				runner.Options.Mutate = func(ctx context.Context, fn func() error) error {
-					if err := fn(); err != nil {
-						return err
-					}
-					gatedCalls++
-					// The first gated call creates the destination; later calls import groups.
-					if gatedCalls > 1 {
-						importedGroups++
-					}
-					if importedGroups == 1 {
-						cancelAdmission.Store(true)
-					}
-					return nil
-				}
 			case "shutdown and resume":
 				stopped, stop := context.WithCancel(t.Context())
 				shutdown := runner
@@ -292,16 +283,13 @@ func TestPhotoImportRunnerHandlesCancellationResumeAndAdmissionRetry(t *testing.
 				assert.Equal(t, int64(1), finished.CopiedObjects)
 				assert.Equal(t, int64(42), finished.CopiedBytes)
 				assert.JSONEq(t, `{"added":2,"skipped":1}`, finished.ReceiptJSON)
-			case "after-one-group cancellation":
-				assert.Equal(t, store.StorageOperationCancelled, finished.State)
-				assert.Equal(t, int64(1), finished.CompletedObjects)
 			case "startup admission failure":
 				assert.Equal(t, store.StorageOperationCompleted, finished.State)
 				assert.Equal(t, int64(3), finished.TotalObjects)
 				assert.Equal(t, int64(3), finished.CompletedObjects)
-			case "after final group":
+			case "after one group", "after final group":
 				assert.Equal(t, store.StorageOperationCancelled, finished.State)
-				assert.Equal(t, int64(3), finished.CompletedObjects)
+				assert.Equal(t, int64(tc.cancelAfter), finished.CompletedObjects)
 			case "shutdown and resume":
 				assert.Equal(t, store.StorageOperationCompleted, finished.State)
 				assert.Equal(t, int64(3), finished.TotalObjects)

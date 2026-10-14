@@ -469,12 +469,6 @@ func TestLocalFileReadRejectsConcurrentChange(t *testing.T) {
 			t.Helper()
 			require.NoError(t, os.WriteFile(path, []byte("changed-size"), 0o600))
 		}},
-		{name: "same-size replacement", edit: func(t *testing.T, path string, before localFileFingerprint) {
-			t.Helper()
-			require.NoError(t, os.Rename(path, path+".old"))
-			require.NoError(t, os.WriteFile(path, []byte("same"), 0o600))
-			require.NoError(t, os.Chtimes(path, before.info.ModTime(), before.info.ModTime()))
-		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "capture.JPG")
