@@ -1345,7 +1345,7 @@ func TestTrashEmpty(t *testing.T) {
 			}
 			assert.NoError(t, json.UnmarshalRead(r.Body, &input))
 			runs <- input.Run
-			report := api.TrashEmptyReport{CandidateRoots: 1, RetainedRoots: 1, Run: input.Run}
+			report := api.TrashEmptyReport{CandidateRoots: 1, RetainedRoots: 1, HeldRoots: 2, Run: input.Run}
 			if input.Run {
 				report.Deleted = 1
 			}
@@ -1368,6 +1368,7 @@ func TestTrashEmpty(t *testing.T) {
 	require.NoError(t, err, out)
 	assert.Contains(t, out, "deleted 1 trashed root(s)")
 	assert.Contains(t, out, "retained 1 trashed root(s) referenced by email publications or photo checkouts")
+	assert.Contains(t, out, "held 2 trashed root(s) whose photo companions are live, newer, or retained")
 	require.Len(t, runs, 2)
 	assert.False(t, <-runs)
 	assert.True(t, <-runs)

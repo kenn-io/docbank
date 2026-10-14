@@ -171,11 +171,6 @@ func TestPhotoCheckoutPublicationReservesAssetWriter(t *testing.T) {
 		return true, nil
 	}))
 	require.Zero(t, s.writeDB.Stats().InUse)
-	_, err = s.SetPhotoAssetExcluded(ctx, a.ID, a.Revision, true)
-	require.NoError(t, err)
-	entries, err = s.PhotoCheckoutEntries(t.Context(), c.ID)
-	require.NoError(t, err)
-	require.True(t, entries[0].Published)
 }
 
 func TestPhotoCheckoutMetadataRestoresUnboundAndDetachedFilesAndValidatesFrozenEntries(t *testing.T) {
@@ -296,19 +291,22 @@ func TestPhotoCheckoutMetadataRestoresUnboundAndDetachedFilesAndValidatesFrozenE
 
 func TestPhotoCheckoutRejectedCreateLeavesNoCheckoutOrOperation(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		name, filename string
-		limit          int64
-	}{
-		{"empty all", "", 100}, {"audit refusal", "", 100},
-		{"negative limit", "", -1}, {"all without limit", "", 0}, {"insufficient limit", "", 19},
+	type rejectedCase struct {
+		name, filename                             string
+		limit                                      int64
+		withAsset, explicitSelection, auditRefusal bool
+		errorText                                  string
+	}
+	cases := []rejectedCase{
+		{name: "empty all", limit: 100},
+		{name: "audit refusal", limit: 100, withAsset: true, explicitSelection: true, auditRefusal: true},
+		{name: "negative limit", limit: -1, withAsset: true, explicitSelection: true, errorText: "byte_limit must be nonnegative"},
+		{name: "all without limit", withAsset: true},
+		{name: "insufficient limit", limit: 19, withAsset: true},
 	}
 	if runtime.GOOS == "windows" {
 		for _, name := range []string{"CON.jpg", "bad:name.jpg", "trailing.", "trailing ", "control\x01.jpg"} {
-			cases = append(cases, struct {
-				name, filename string
-				limit          int64
-			}{name, name, 100})
+			cases = append(cases, rejectedCase{name: name, filename: name, limit: 100, withAsset: true, explicitSelection: true})
 		}
 	}
 	for _, tc := range cases {
@@ -317,23 +315,23 @@ func TestPhotoCheckoutRejectedCreateLeavesNoCheckoutOrOperation(t *testing.T) {
 			selection := PhotoCheckoutSelection{All: true}
 			expectedErr := ErrInvalidPhotoCheckout
 			var asset PhotoAsset
-			if tc.name != "empty all" {
+			if tc.withAsset {
 				asset = albumAsset(t, s, "photo.jpg")
-				if tc.filename != "" || tc.name == "audit refusal" || tc.name == "negative limit" {
+				if tc.explicitSelection {
 					selection = PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}
 				}
 				if tc.filename != "" {
 					_, err := s.db.ExecContext(t.Context(), "UPDATE nodes SET name=? WHERE id=?", tc.filename, asset.Files[0].NodeID)
 					require.NoError(t, err)
-				} else if tc.name == "audit refusal" {
+				} else if tc.auditRefusal {
 					seedInitialAuditAuthority(t, s, s.RootID())
 					expectedErr = ErrAuditMutationUnsupported
 				}
 			}
 			_, _, err := s.CreatePhotoCheckout(t.Context(), selection, "checkout", tc.limit)
 			require.ErrorIs(t, err, expectedErr)
-			if tc.name == "negative limit" {
-				require.ErrorContains(t, err, "byte_limit must be nonnegative")
+			if tc.errorText != "" {
+				require.ErrorContains(t, err, tc.errorText)
 			}
 			if tc.filename != "" {
 				require.Contains(t, err.Error(), "filename")

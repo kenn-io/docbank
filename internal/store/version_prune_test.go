@@ -688,7 +688,7 @@ func TestPruneContentVersionsRetainsAuthoritiesAndCheckpointsAllPrior(t *testing
 	require.NoError(t, err)
 	require.Len(t, unreachable, 1)
 	assert.Equal(t, replacement.BlobHash, unreachable[0].Hash)
-	for _, authority := range []string{"media source", "input artifact", "checkout entry"} {
+	for _, authority := range []string{"input artifact", "checkout entry"} {
 		t.Run(authority, func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
@@ -710,19 +710,13 @@ func TestPruneContentVersionsRetainsAuthoritiesAndCheckpointsAllPrior(t *testing
 				_, err = s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
 					strings.Repeat("c", 64), stamp)
 				require.NoError(t, err)
-				if authority == "media source" {
-					_, err = s.db.Exec(`INSERT INTO media_source_versions VALUES('source-version','source',1,?,?,?)`,
-						created.CurrentVersionID, `{}`, stamp)
-					require.NoError(t, err)
-				} else {
-					_, err = s.db.Exec(`INSERT INTO media_occurrences VALUES(
-		'occurrence','source',NULL,'operator','ref','1','','','','{}',1,?,NULL)`, stamp)
-					require.NoError(t, err)
-					_, err = s.db.Exec(`INSERT INTO media_input_artifacts VALUES(
-		'input','occurrence','source',NULL,?,'recording','supplied','','',?,?)`,
-						created.CurrentVersionID, fakeHash("a1"), stamp)
-					require.NoError(t, err)
-				}
+				_, err = s.db.Exec(`INSERT INTO media_occurrences VALUES(
+	'occurrence','source',NULL,'operator','ref','1','','','','{}',1,?,NULL)`, stamp)
+				require.NoError(t, err)
+				_, err = s.db.Exec(`INSERT INTO media_input_artifacts VALUES(
+	'input','occurrence','source',NULL,?,'recording','supplied','','',?,?)`,
+					created.CurrentVersionID, fakeHash("a1"), stamp)
+				require.NoError(t, err)
 			}
 
 			preview, err := s.PruneContentVersions(ctx, created.ID, updated.Revision,

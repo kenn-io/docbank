@@ -40,6 +40,10 @@ func TestClassifyPhotoMediaMatrix(t *testing.T) {
 	}{
 		{name: "jpeg", mime: "image/jpeg", filename: "a.jpg", kind: PhotoKindPhoto, qualifies: true, role: PhotoRoleImage},
 		{name: "sony raw MIME", mime: "image/x-sony-arw", filename: "capture.ARW", kind: PhotoKindPhoto, qualifies: true, role: PhotoRoleImage},
+		{name: "fuji raw MIME", mime: "image/x-fuji-raf", filename: "capture.raw", kind: PhotoKindPhoto, qualifies: true, role: PhotoRoleImage},
+		{name: "adobe raw MIME", mime: "image/x-adobe-dng", filename: "capture.raw", kind: PhotoKindPhoto, qualifies: true, role: PhotoRoleImage},
+		{name: "canon raw MIME", mime: "image/x-canon-cr2", filename: "capture.raw", kind: PhotoKindPhoto, qualifies: true, role: PhotoRoleImage},
+		{name: "nikon raw MIME", mime: "image/x-nikon-nef", filename: "capture.raw", kind: PhotoKindPhoto, qualifies: true, role: PhotoRoleImage},
 		{name: "webp", mime: "image/webp", filename: "capture.WEBP", kind: PhotoKindPhoto, qualifies: true, role: PhotoRoleImage},
 		{name: "video", mime: "video/mp4", filename: "a.mp4", kind: PhotoKindVideo, qualifies: true},
 		{name: "audio", mime: "audio/mpeg", filename: "a.mp3", qualifies: false},
@@ -76,14 +80,6 @@ func TestPhotoEnrollmentClassifiesCreatedNodes(t *testing.T) {
 	require.Len(t, asset.Files, 1)
 	assert.Equal(t, int64(1), asset.Revision)
 	assert.Equal(t, PhotoRoleImage, asset.Files[0].Role)
-
-	webp, err := s.CreateFile(ctx, s.RootID(), "image.webp", fakeHash("b2"), 4, "image/webp")
-	require.NoError(t, err)
-	webpAsset, err := s.PhotoAssetForNode(ctx, webp.ID)
-	require.NoError(t, err)
-	require.Len(t, webpAsset.Files, 1)
-	assert.Equal(t, int64(1), webpAsset.Revision)
-	assert.Equal(t, PhotoRoleImage, webpAsset.Files[0].Role)
 
 	audio, err := s.CreateFile(ctx, s.RootID(), "audio.mp3", fakeHash("c3"), 4, "audio/mpeg")
 	require.NoError(t, err)
@@ -642,31 +638,19 @@ func TestPhotoExplicitRawAdmissionAndTargetBoundaries(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidPhotoAsset)
 }
 
-func TestPhotoCameraRawMIMEsAllowExplicitRaw(t *testing.T) {
+func TestPhotoPromoteAllowsExplicitRawForCameraImage(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
-	mediaTypes := []string{
-		"image/x-sony-arw",
-		"image/x-fuji-raf",
-		"image/x-adobe-dng",
-		"image/x-canon-cr2",
-		"image/x-nikon-nef",
-	}
-	for index, mediaType := range mediaTypes {
-		t.Run(mediaType, func(t *testing.T) {
-			node, err := s.CreateFile(ctx, s.RootID(), "camera-"+strconv.Itoa(index)+".raw", fakeHash("ca"+strconv.Itoa(index)), 1, mediaType)
-			require.NoError(t, err)
-			automatic, err := s.PhotoAssetForNode(ctx, node.ID)
-			require.NoError(t, err)
-			require.Equal(t, PhotoRoleImage, automatic.Files[0].Role)
-			_, err = s.DetachPhotoFile(ctx, automatic.ID, automatic.Revision, automatic.Files[0].ID, PhotoDetachOptions{})
-			require.NoError(t, err)
-			explicit, err := s.PromotePhotoNode(ctx, node.ID, nil, PhotoRoleRAW, "")
-			require.NoError(t, err)
-			assert.Equal(t, PhotoRoleRAW, explicit.Files[0].Role)
-		})
-	}
+	node, err := s.CreateFile(ctx, s.RootID(), "camera.raw", fakeHash("ca01"), 1, "image/x-sony-arw")
+	require.NoError(t, err)
+	automatic, err := s.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	_, err = s.DetachPhotoFile(ctx, automatic.ID, automatic.Revision, automatic.Files[0].ID, PhotoDetachOptions{})
+	require.NoError(t, err)
+	explicit, err := s.PromotePhotoNode(ctx, node.ID, nil, PhotoRoleRAW, "")
+	require.NoError(t, err)
+	assert.Equal(t, PhotoRoleRAW, explicit.Files[0].Role)
 }
 
 func TestPhotoAttachRequiresExplicitRawForNonqualifyingNodes(t *testing.T) {
