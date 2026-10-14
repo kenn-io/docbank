@@ -975,6 +975,9 @@ CREATE TABLE IF NOT EXISTS content_versions (
 CREATE INDEX IF NOT EXISTS content_versions_node
     ON content_versions(node_id, node_revision DESC);
 CREATE INDEX IF NOT EXISTS content_versions_blob ON content_versions(blob_hash);
+-- Avoid scanning version history when resolving deferred references on insert.
+CREATE INDEX IF NOT EXISTS content_versions_source ON content_versions(source_version_id)
+    WHERE source_version_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS content_versions_photo_size ON content_versions(printf('%020d',size));
 CREATE INDEX IF NOT EXISTS content_versions_photo_media_type ON content_versions(substr(COALESCE(mime_type,''),1,1024));
 

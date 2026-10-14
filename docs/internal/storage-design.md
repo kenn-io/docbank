@@ -109,6 +109,12 @@ Store code adds validation that SQL cannot express economically: Unicode NFC
 normalization, rejection of empty/dot/slash/NUL names, ancestry checks for
 cycle prevention, revision preconditions, and size agreement.
 
+New-file creation inserts the node before its initial content version in the
+same transaction. SQLite checks pending foreign-key references when the version
+is inserted. A partial index on `content_versions(source_version_id)` finds
+referring reverts without scanning version history. It omits versions with no
+revert source.
+
 Virtual-path lookup normalizes names in Go, walks the live sibling-name index
 with one query, and loads metadata only for the final node. Nested paths use
 a recursive query. Reads use the caller's transaction when supplied. A missing
