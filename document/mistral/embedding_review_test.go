@@ -83,15 +83,25 @@ func (resolve embeddingSecretFunc) ResolveSecret(ctx context.Context, binding st
 }
 
 func TestMistralEmbeddingAttemptTimeouts(t *testing.T) {
-	for _, stage := range []string{"credentials", "headers", "body"} {
-		for _, outcome := range []string{"recover", "exhaust", "caller_cancel"} {
+	for _, stage := range []string{"credentials", "headers", "body", "retry_wait"} {
+		for _, outcome := range []string{"recover", "exhaust", "caller_cancel", "caller_deadline"} {
+			if (stage == "retry_wait") != (outcome == "caller_deadline") {
+				continue
+			}
+			// Only credential timeouts can recover; header and body timeouts repeat on retry.
 			if stage != "credentials" && outcome == "recover" {
 				continue
 			}
 			t.Run(stage+"/"+outcome, func(t *testing.T) {
 				// Virtual time keeps connection latency out of the attempt deadline.
 				synctest.Test(t, func(t *testing.T) {
-					ctx, cancel := context.WithCancel(t.Context())
+					ctx := t.Context()
+					var cancel context.CancelFunc
+					if outcome == "caller_deadline" {
+						ctx, cancel = context.WithTimeout(ctx, 20*time.Millisecond)
+					} else {
+						ctx, cancel = context.WithCancel(ctx)
+					}
 					defer cancel()
 					var requests atomic.Int32
 					var resolutions int
@@ -108,7 +118,9 @@ func TestMistralEmbeddingAttemptTimeouts(t *testing.T) {
 					})
 					profile := testEmbeddingProfile(t)
 					profile.RequestTimeout, profile.MaxRetries = 100*time.Millisecond, 3
-					profile.MaxRetryDelay = time.Nanosecond
+					if stage != "retry_wait" {
+						profile.MaxRetryDelay = time.Nanosecond
+					}
 					recomputeMistralEmbeddingProfile(t, &profile)
 					provider, err := newMistralEmbeddingTestProvider(t, profile, secrets, nil)
 					require.NoError(t, err)
@@ -116,6 +128,11 @@ func TestMistralEmbeddingAttemptTimeouts(t *testing.T) {
 					server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 						requests.Add(1)
 						_, _ = io.Copy(io.Discard, r.Body)
+						if stage == "retry_wait" {
+							w.Header().Set("Retry-After", "60")
+							w.WriteHeader(http.StatusServiceUnavailable)
+							return
+						}
 						w.Header().Set("Content-Type", "application/json")
 						if stage != "credentials" {
 							if stage == "body" {
@@ -151,6 +168,12 @@ func TestMistralEmbeddingAttemptTimeouts(t *testing.T) {
 						require.NotErrorIs(t, err, ErrTransientResponse)
 						require.Equal(t, 1, resolutions)
 						require.Zero(t, MetricsFromError(err).Retries)
+					case "caller_deadline":
+						require.ErrorIs(t, err, context.DeadlineExceeded)
+						require.NotErrorIs(t, err, ErrTransientResponse)
+						metrics := MetricsFromError(err)
+						require.Equal(t, 1, metrics.Requests)
+						require.Equal(t, 1, metrics.Retries)
 					}
 					wantRequests := resolutions
 					if stage == "credentials" {
