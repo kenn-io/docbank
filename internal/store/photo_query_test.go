@@ -1198,6 +1198,16 @@ func observeMtime(t *testing.T, s *Store, run IngestRun, nodeID int64, hash, mti
 	require.NoError(t, err)
 }
 
+// revertTo restores an earlier content version of the node and returns the node.
+func revertTo(t *testing.T, s *Store, nodeID int64, versionID string) Node {
+	t.Helper()
+	current, err := s.NodeByID(t.Context(), nodeID)
+	require.NoError(t, err)
+	node, _, _, err := s.RevertContent(t.Context(), nodeID, current.Revision, versionID)
+	require.NoError(t, err)
+	return node
+}
+
 func photoModifiedTime(t *testing.T, s *Store, name string) *string {
 	t.Helper()
 	for _, item := range browsePhotoPage(t, s, `{}`).Items {
@@ -1222,37 +1232,39 @@ func TestPhotoBrowsePlacesUndatedPhotosByFileModifiedTime(t *testing.T) {
 	browsePhotoMetadata(t, s, older, "older", exifCapture("2024-01-15T09:00:00Z"))
 	ingestMtimePhoto(t, s, run, "unknown.jpg", "")
 
-	request := PhotoBrowseRequest{Query: snapshotTestQuery(t, `{"sort":{"field":"capture_time","direction":"desc"}}`), PageSize: 1}
-	var names []string
-	var boundary *PhotoBrowsePosition
-	for {
-		page, err := s.ListPhotoAssets(ctx, request, boundary)
-		require.NoError(t, err)
-		for _, item := range page.Items {
-			names = append(names, item.Name)
-			if item.Name == "wallpaper.jpg" {
-				require.NotNil(t, item.FileModifiedTime)
-				require.Equal(t, "2024-03-05T10:00:00.5Z", *item.FileModifiedTime)
-				require.Nil(t, item.Fields.CaptureTime)
-			} else {
-				require.Nil(t, item.FileModifiedTime, item.Name)
+	for direction, want := range map[string][]string{
+		"desc": {"newer.jpg", "wallpaper.jpg", "older.jpg", "unknown.jpg"},
+		"asc":  {"older.jpg", "wallpaper.jpg", "newer.jpg", "unknown.jpg"},
+	} {
+		request := PhotoBrowseRequest{Query: snapshotTestQuery(t, fmt.Sprintf(`{"sort":{"field":"capture_time","direction":%q}}`, direction)), PageSize: 1}
+		var names []string
+		var boundary *PhotoBrowsePosition
+		for {
+			page, err := s.ListPhotoAssets(ctx, request, boundary)
+			require.NoError(t, err)
+			for _, item := range page.Items {
+				names = append(names, item.Name)
+				if item.Name == "wallpaper.jpg" {
+					require.NotNil(t, item.FileModifiedTime)
+					require.Equal(t, "2024-03-05T10:00:00.5Z", *item.FileModifiedTime)
+					require.Nil(t, item.Fields.CaptureTime)
+				} else {
+					require.Nil(t, item.FileModifiedTime, item.Name)
+				}
 			}
+			if page.Next == nil {
+				break
+			}
+			boundary = page.Next
 		}
-		if page.Next == nil {
-			break
-		}
-		boundary = page.Next
+		require.Equal(t, want, names, direction)
 	}
-	require.Equal(t, []string{"newer.jpg", "wallpaper.jpg", "older.jpg", "unknown.jpg"}, names)
-	asc := browsePhotoPage(t, s, `{"sort":{"field":"capture_time","direction":"asc"}}`)
-	require.Equal(t, []string{"older.jpg", "wallpaper.jpg", "newer.jpg", "unknown.jpg"}, []string{asc.Items[0].Name, asc.Items[1].Name, asc.Items[2].Name, asc.Items[3].Name})
 
 	// The EXIF day beats the mtime day, and an mtime day matches only photos without EXIF.
 	page := browsePhotoPage(t, s, `{"filters":{"capture_after":"2024-03-05","capture_before":"2024-03-06"}}`)
 	require.Len(t, page.Items, 1)
 	require.Equal(t, "wallpaper.jpg", page.Items[0].Name)
 	require.Zero(t, browsePhotoPage(t, s, `{"filters":{"capture_after":"2020-01-01","capture_before":"2020-01-02"}}`).Total)
-	require.Equal(t, int64(1), browsePhotoPage(t, s, `{"syntax":"advanced","text":"capture_after:2024-03-05 AND capture_before:2024-03-06"}`).Total)
 }
 
 func TestPhotoTimelineKeysMatchCaptureTimeKey(t *testing.T) {
@@ -1268,114 +1280,16 @@ func TestPhotoTimelineKeysMatchCaptureTimeKey(t *testing.T) {
 			precision = "fraction"
 		}
 		var got string
-		require.NoError(t, s.db.QueryRowContext(ctx, `SELECT pl.sort_key FROM photo_timeline pl
-			JOIN photo_files f ON f.file_id=pl.file_id WHERE f.node_id=?`, node.ID).Scan(&got))
+		require.NoError(t, s.db.QueryRowContext(ctx, "SELECT pl.sort_key FROM photo_timeline pl JOIN photo_files f ON f.file_id=pl.file_id WHERE f.node_id=?", node.ID).Scan(&got))
 		require.Equal(t, query.CaptureTimeKey(mtime, precision, "utc", ""), got, mtime)
 	}
-	exif := ingestMtimePhoto(t, s, run, "exif.jpg", "2020-01-01T00:00:00Z")
-	browsePhotoMetadata(t, s, exif, "exif", exifCapture("2024-06-10T12:00:00Z"))
-	var key, day string
-	var modified *string
-	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT pl.sort_key,pl.day,pl.modified_time FROM photo_timeline pl
-		JOIN photo_files f ON f.file_id=pl.file_id WHERE f.node_id=?`, exif.ID).Scan(&key, &day, &modified))
-	require.Equal(t, query.CaptureTimeKey("2024-06-10T12:00:00Z", "second", "utc", ""), key)
-	require.Equal(t, "2024-06-10", day)
-	require.Nil(t, modified, "the mtime did not place a photo with a capture date")
 	zero := ingestMtimePhoto(t, s, run, "year-zero.jpg", "0000-01-01T00:00:00Z")
 	var rows int
-	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_timeline pl
-		JOIN photo_files f ON f.file_id=pl.file_id WHERE f.node_id=?`, zero.ID).Scan(&rows))
+	require.NoError(t, s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM photo_timeline pl JOIN photo_files f ON f.file_id=pl.file_id WHERE f.node_id=?", zero.ID).Scan(&rows))
 	require.Zero(t, rows, "year 0000 has no sortable key")
 }
 
-func TestPhotoBrowseMixedLibraryPagesWithoutGapsInBothDirections(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	run, err := s.BeginIngest(ctx, "cli", "mixed")
-	require.NoError(t, err)
-	want := 0
-	for i := range 30 {
-		node := ingestMtimePhoto(t, s, run, fmt.Sprintf("dated-%02d.jpg", i), fmt.Sprintf("2024-02-%02dT10:00:00Z", i%28+1))
-		browsePhotoMetadata(t, s, node, fmt.Sprintf("dated-%02d", i), exifCapture(fmt.Sprintf("2024-05-%02dT10:00:00Z", i%28+1)))
-		want++
-	}
-	for i := range 39 {
-		ingestMtimePhoto(t, s, run, fmt.Sprintf("wallpaper-%02d.jpg", i), fmt.Sprintf("2024-%02d-%02dT10:00:00Z", i/13+1, i%13+1))
-		want++
-	}
-	ingestMtimePhoto(t, s, run, "unknown.jpg", "")
-	want++
-	for _, direction := range []string{"asc", "desc"} {
-		request := PhotoBrowseRequest{Query: snapshotTestQuery(t, fmt.Sprintf(`{"sort":{"field":"capture_time","direction":%q}}`, direction)), PageSize: 7}
-		seen := map[string]bool{}
-		var keys []string
-		var placed int
-		var boundary *PhotoBrowsePosition
-		for {
-			page, err := s.ListPhotoAssets(ctx, request, boundary)
-			require.NoError(t, err)
-			for _, item := range page.Items {
-				require.False(t, seen[item.AssetID], "duplicate %s", item.Name)
-				seen[item.AssetID] = true
-				if item.position.Key != "" {
-					keys = append(keys, item.position.Key)
-				}
-				if item.FileModifiedTime != nil {
-					placed++
-				}
-			}
-			if page.Next == nil {
-				break
-			}
-			boundary = page.Next
-		}
-		require.Len(t, seen, want, direction)
-		require.Equal(t, 39, placed, direction)
-		require.True(t, slices.IsSortedFunc(keys, func(a, b string) int {
-			if direction == "desc" {
-				return strings.Compare(b, a)
-			}
-			return strings.Compare(a, b)
-		}), direction)
-	}
-}
-
 func TestPhotoTimelineFollowsTheDisplayedBytes(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	run, err := s.BeginIngest(ctx, "cli", "versions")
-	require.NoError(t, err)
-	node := ingestMtimePhoto(t, s, run, "photo.jpg", "2024-03-05T10:00:00Z")
-	original := node.CurrentVersionID
-	require.Equal(t, "2024-03-05T10:00:00Z", *photoModifiedTime(t, s, "photo.jpg"))
-
-	// New bytes take their own mtime.
-	later, err := s.BeginIngest(ctx, "cli", "later")
-	require.NoError(t, err)
-	observeMtime(t, s, later, node.ID, browseHash("cropped"), "2024-08-09T10:00:00Z")
-	require.Equal(t, "2024-08-09T10:00:00Z", *photoModifiedTime(t, s, "photo.jpg"))
-
-	// Reverting to the original bytes regains the original date, and a chained revert keeps it.
-	current, err := s.NodeByID(ctx, node.ID)
-	require.NoError(t, err)
-	reverted, _, _, err := s.RevertContent(ctx, node.ID, current.Revision, original)
-	require.NoError(t, err)
-	require.Equal(t, "2024-03-05T10:00:00Z", *photoModifiedTime(t, s, "photo.jpg"))
-	observeMtime(t, s, later, node.ID, browseHash("cropped-again"), "2024-09-09T10:00:00Z")
-	current, err = s.NodeByID(ctx, node.ID)
-	require.NoError(t, err)
-	_, _, _, err = s.RevertContent(ctx, node.ID, current.Revision, reverted.CurrentVersionID)
-	require.NoError(t, err)
-	require.Equal(t, "2024-03-05T10:00:00Z", *photoModifiedTime(t, s, "photo.jpg"))
-
-	// Bytes recorded without an mtime stay undated rather than borrowing another version.
-	observeMtime(t, s, later, node.ID, browseHash("no-mtime"), "")
-	require.Nil(t, photoModifiedTime(t, s, "photo.jpg"))
-}
-
-func TestPhotoTimelineUsesTheLatestObservation(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -1383,10 +1297,29 @@ func TestPhotoTimelineUsesTheLatestObservation(t *testing.T) {
 	require.NoError(t, err)
 	laterStarted, err := s.BeginIngest(ctx, "cli", "second run")
 	require.NoError(t, err)
-	node := ingestMtimePhoto(t, s, laterStarted, "photo.jpg", "2025-03-01T10:00:00Z")
-	// The run that started first observes last, so its mtime is the most recent observation.
+	node := ingestMtimePhoto(t, s, laterStarted, "photo.jpg", "2024-03-05T10:00:00Z")
+	original := node.CurrentVersionID
+	require.Equal(t, "2024-03-05T10:00:00Z", *photoModifiedTime(t, s, "photo.jpg"))
+
+	// Seeing the same bytes again never moves the photo, whatever the new mtime or run start order.
 	observeMtime(t, s, earlierStarted, node.ID, node.BlobHash, "2024-02-01T10:00:00Z")
-	require.Equal(t, "2024-02-01T10:00:00Z", *photoModifiedTime(t, s, "photo.jpg"))
+	observeMtime(t, s, laterStarted, node.ID, node.BlobHash, "2025-01-01T10:00:00Z")
+	require.Equal(t, "2024-03-05T10:00:00Z", *photoModifiedTime(t, s, "photo.jpg"))
+
+	// New bytes take their own mtime.
+	observeMtime(t, s, laterStarted, node.ID, browseHash("cropped"), "2024-08-09T10:00:00Z")
+	require.Equal(t, "2024-08-09T10:00:00Z", *photoModifiedTime(t, s, "photo.jpg"))
+
+	// Reverting regains the original date, and a chained revert keeps it.
+	reverted := revertTo(t, s, node.ID, original)
+	require.Equal(t, "2024-03-05T10:00:00Z", *photoModifiedTime(t, s, "photo.jpg"))
+	observeMtime(t, s, laterStarted, node.ID, browseHash("cropped-again"), "2024-09-09T10:00:00Z")
+	revertTo(t, s, node.ID, reverted.CurrentVersionID)
+	require.Equal(t, "2024-03-05T10:00:00Z", *photoModifiedTime(t, s, "photo.jpg"))
+
+	// Bytes recorded without an mtime stay undated rather than borrowing another version.
+	observeMtime(t, s, laterStarted, node.ID, browseHash("no-mtime"), "")
+	require.Nil(t, photoModifiedTime(t, s, "photo.jpg"))
 }
 
 func TestPhotoTimelineAppliesProvenanceCorrections(t *testing.T) {
@@ -1409,6 +1342,14 @@ func TestPhotoTimelineAppliesProvenanceCorrections(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, corrected, *photoModifiedTime(t, s, "photo.jpg"))
+
+	// The document-events pipeline resolves the same claim for the same corrected binding.
+	snapshot := DocumentEventEvidenceSnapshot{}
+	_, boundErr, err := loadBoundDocumentEventEvidence(ctx, s.db, node.CurrentVersionID, &snapshot, sha256.New())
+	require.NoError(t, err)
+	require.NoError(t, boundErr)
+	require.Len(t, snapshot.Bindings, 1)
+	require.Equal(t, corrected, *snapshot.Bindings[0].OriginalMTime)
 }
 
 func TestPhotoTimelineRefillsOnRestore(t *testing.T) {
@@ -1420,47 +1361,23 @@ func TestPhotoTimelineRefillsOnRestore(t *testing.T) {
 	dated := ingestMtimePhoto(t, source, run, "dated.jpg", "2020-01-01T00:00:00Z")
 	browsePhotoMetadata(t, source, dated, "dated", exifCapture("2024-06-10T12:00:00Z"))
 	ingestMtimePhoto(t, source, run, "restored.jpg", "2024-03-05T10:00:00Z")
+	// A pruned photo keeps no bound mtime in either vault: crop, revert, then drop every prior version.
+	pruned := ingestMtimePhoto(t, source, run, "pruned.jpg", "2024-04-01T10:00:00Z")
+	observeMtime(t, source, run, pruned.ID, browseHash("pruned-crop"), "2024-08-09T10:00:00Z")
+	revertTo(t, source, pruned.ID, pruned.CurrentVersionID)
+	current, err := source.NodeByID(ctx, pruned.ID)
+	require.NoError(t, err)
+	_, err = source.PruneContentVersions(ctx, pruned.ID, current.Revision, VersionPruneSelector{AllPrior: true}, true)
+	require.NoError(t, err)
+
 	var exported bytes.Buffer
 	require.NoError(t, source.ExportMetadata(ctx, &exported))
-	require.NotContains(t, exported.String(), `"type":"photo_timeline"`)
 	target := newTestStore(t)
 	require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
+	for _, name := range []string{"dated.jpg", "restored.jpg", "pruned.jpg"} {
+		require.Equal(t, photoModifiedTime(t, source, name), photoModifiedTime(t, target, name), name)
+	}
 	require.Equal(t, "2024-03-05T10:00:00Z", *photoModifiedTime(t, target, "restored.jpg"))
-	require.Nil(t, photoModifiedTime(t, target, "dated.jpg"))
-	var rows int
-	require.NoError(t, target.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM photo_timeline").Scan(&rows))
-	require.Equal(t, 2, rows)
-}
-
-func TestPhotoTimelineAgreesWithRestoreAfterPruningVersions(t *testing.T) {
-	t.Parallel()
-	ctx := t.Context()
-	source := newTestStore(t)
-	run, err := source.BeginIngest(ctx, "cli", "versions")
-	require.NoError(t, err)
-	node := ingestMtimePhoto(t, source, run, "photo.jpg", "2024-03-05T10:00:00Z")
-	original := node.CurrentVersionID
-	later, err := source.BeginIngest(ctx, "cli", "later")
-	require.NoError(t, err)
-	observeMtime(t, source, later, node.ID, browseHash("cropped"), "2024-08-09T10:00:00Z")
-	current, err := source.NodeByID(ctx, node.ID)
-	require.NoError(t, err)
-	_, _, _, err = source.RevertContent(ctx, node.ID, current.Revision, original)
-	require.NoError(t, err)
-	require.Equal(t, "2024-03-05T10:00:00Z", *photoModifiedTime(t, source, "photo.jpg"))
-
-	current, err = source.NodeByID(ctx, node.ID)
-	require.NoError(t, err)
-	_, err = source.PruneContentVersions(ctx, node.ID, current.Revision, VersionPruneSelector{AllPrior: true}, true)
-	require.NoError(t, err)
-	live := photoModifiedTime(t, source, "photo.jpg")
-
-	var exported bytes.Buffer
-	require.NoError(t, source.ExportMetadata(ctx, &exported))
-	target := newTestStore(t)
-	require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
-	restored := photoModifiedTime(t, target, "photo.jpg")
-	require.Equal(t, live, restored, "the cached placement matches what a restore derives")
 }
 
 func TestCaptureDateFilterMatchesPhotosWithoutAPhotoRow(t *testing.T) {

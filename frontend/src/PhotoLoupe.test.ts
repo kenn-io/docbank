@@ -621,3 +621,14 @@ it("starts details closed, opens with Metadata and closes with I", async () => {
   await fireEvent.keyDown(screen.getByRole("dialog"), { key: "i" });
   expect(screen.queryByRole("complementary", { name: "Photo details" })).toBeNull();
 });
+
+it("hides an unreadable capture time when the file modified time placed the photo", async () => {
+  const { props } = setup();
+  props.photo.capture_time = "0000-01-01";
+  props.photo.file_modified_time = "2023-11-04T18:22:03Z";
+  render(PhotoLoupe, props);
+  await fireEvent.click(await screen.findByRole("button", { name: "Photo information" }));
+  expect(screen.getByText("File modified")).toBeTruthy();
+  expect(screen.getByText("2023-11-04 18:22 UTC")).toBeTruthy();
+  expect(screen.queryByText("Captured")).toBeNull();
+});

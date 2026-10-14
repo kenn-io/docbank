@@ -2225,7 +2225,7 @@ CREATE INDEX IF NOT EXISTS photo_files_sidecar_nodes ON photo_files(node_id) WHE
 -- version's EXIF capture key and day when it has them, else the recorded
 -- modified time of the same bytes, so sort, grouping, counts, and date filters
 -- read one indexed column. modified_time is set only when the mtime placed the
--- photo. The mtime is the most recently observed unsuperseded claim bound to
+-- photo. The mtime is the earliest observed unsuperseded claim bound to
 -- any version of the node with the displayed blob, so a revert regains the
 -- original date. The key is formatted like query.CaptureTimeKey. Derived like
 -- photo_technical_metadata: absent from export, refilled by the triggers below
@@ -2268,7 +2268,7 @@ CREATE TRIGGER IF NOT EXISTS photo_timeline_refresh AFTER INSERT ON photo_timeli
              SELECT c.original_mtime FROM chain JOIN provenance c ON c.identity = chain.identity
              WHERE c.original_mtime IS NOT NULL AND substr(c.original_mtime, 1, 4) <> '0000'
                 AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes = c.identity)
-             ORDER BY chain.observed_at DESC, c.identity DESC LIMIT 1) AS mtime
+             ORDER BY chain.observed_at ASC, c.identity ASC LIMIT 1) AS mtime
         FROM photo_files f
         JOIN nodes n ON n.id = f.node_id
         JOIN content_versions v ON v.version_id = n.current_version_id

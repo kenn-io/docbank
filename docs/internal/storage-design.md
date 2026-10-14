@@ -500,7 +500,7 @@ the embedded Natural Earth map has no matching country or simplified boundary.
 
 ### Photo timeline
 
-Schema 35 adds `photo_timeline`, a derived row per non-sidecar photo file with a placement: the displayed version EXIF capture key and day, else the most recently observed unsuperseded modified time bound to any version with the same bytes. `modified_time` is set only when the mtime placed the photo. Browsing, facets, and date filters read this one indexed key. SQL triggers keep it current as bindings, versions, and technical metadata change. It stays out of metadata JSONL and backups; restore refills it through those triggers.
+Schema 35 adds `photo_timeline`, a derived row per non-sidecar photo file with a placement: the displayed version EXIF capture key and day, else the earliest observed unsuperseded modified time bound to any version with the same bytes. `modified_time` is set only when the mtime placed the photo. Browsing, facets, and date filters read this one indexed key. SQL triggers keep it current as bindings, versions, and technical metadata change. It stays out of metadata JSONL and backups; restore refills it through those triggers.
 
 ### Photo quality signals
 

@@ -135,8 +135,11 @@ scope until you refresh.
 Dates use the selected display file's recorded calendar day, so a capture near
 midnight keeps its date regardless of the browser's timezone. A RAW/JPEG pair
 counts once. A photo without a capture date counts on the UTC day its file was
-last modified. When the same bytes were seen several times, the most recent
-sighting decides, and reverting a photo restores the date of the original bytes. The Undated total includes photos with neither.
+last modified. When the same bytes were seen several times, the first
+sighting decides, so re-importing copies never moves a photo. Reverting a photo
+restores the date of the original bytes; a photo replaced by content recorded
+without a modified time is undated until reverted. The Undated total includes
+photos with neither.
 Timeline counts every included photo asset, even in a vault with many ordinary
 documents. It shows a limit message when the scope spans more than 250,000
 distinct capture days or the count runs past its time budget, and offers Retry.
