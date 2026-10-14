@@ -128,7 +128,7 @@ func TestPhotoCheckoutSelections(t *testing.T) {
 
 func TestPhotoCheckoutPublication(t *testing.T) {
 	t.Parallel()
-	for _, scenario := range []string{"hidden_at", "excluded_at", "trashed", "writer held while the callback runs"} {
+	for _, scenario := range []string{"hidden_at", "excluded_at", "trashed"} {
 		t.Run(scenario, func(t *testing.T) {
 			s := newTestStore(t)
 			a := albumAsset(t, s, "photo.jpg")
@@ -136,21 +136,6 @@ func TestPhotoCheckoutPublication(t *testing.T) {
 			require.NoError(t, err)
 			entries, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
 			require.NoError(t, err)
-			if scenario == "writer held while the callback runs" {
-				ctx := t.Context()
-				require.NoError(t, s.PublishPhotoCheckoutEntry(ctx, entries[0], func() (bool, error) {
-					// The callback holds the writer connection without a SQLite transaction.
-					_, err := s.db.ExecContext(ctx, `UPDATE storage_operations SET error='' WHERE operation_id=?`, c.OperationID)
-					if err != nil {
-						return false, err
-					}
-					writer := s.writeDB.Stats()
-					require.Equal(t, 1, writer.InUse)
-					return true, nil
-				}))
-				require.Zero(t, s.writeDB.Stats().InUse)
-				return
-			}
 			if scenario == "trashed" {
 				_, err = s.TrashPhotoAsset(t.Context(), a.ID, a.Revision)
 			} else {
@@ -371,7 +356,11 @@ func TestPhotoCheckoutStatusTracksOperationAcrossPauseAndFinish(t *testing.T) {
 	require.Empty(t, resumed.Error)
 	entries, err := s.PhotoCheckoutEntries(t.Context(), checkout.ID)
 	require.NoError(t, err)
-	require.NoError(t, s.PublishPhotoCheckoutEntry(t.Context(), entries[0], func() (bool, error) { return true, nil }))
+	require.NoError(t, s.PublishPhotoCheckoutEntry(t.Context(), entries[0], func() (bool, error) {
+		require.Equal(t, 1, s.writeDB.Stats().InUse)
+		return true, nil
+	}))
+	require.Zero(t, s.writeDB.Stats().InUse)
 	status, err = s.PhotoCheckoutStatus(t.Context(), checkout.ID)
 	require.NoError(t, err)
 	require.Equal(t, PhotoCheckoutStatus{Checkout: resumed, Files: 1, Bytes: 20, PublishedFiles: 1, PublishedBytes: 20}, status)
