@@ -9,7 +9,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -20,30 +19,18 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/daemonauth"
 	"go.kenn.io/docbank/internal/daemonconn"
-	"go.kenn.io/docbank/internal/version"
-	kitdaemon "go.kenn.io/kit/daemon"
 )
 
 func TestGetCLIRequestsAndPublishesCurrentVersion(t *testing.T) {
-	vault := t.TempDir()
-	t.Setenv("DOCBANK_HOME", vault)
-	const token = "synthetic-proof-token"
 	const content = "download"
 	sum := sha256.Sum256([]byte(content))
 	node := api.Node{ID: 42, Name: "statement.bin", Kind: "file", Revision: 1, CurrentVersionID: "00000000-0000-4000-8000-000000000021", BlobHash: hex.EncodeToString(sum[:]), Size: int64(len(content))}
 	output := filepath.Join(t.TempDir(), "retrieved.bin")
 	requests := make(chan string, 8)
 	contentRequests := make(chan string, 8)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case kitdaemon.DefaultPingPath:
-			assert.NoError(t, json.MarshalWrite(w, kitdaemon.PingInfo{OK: true, Service: daemonconn.Service, Version: version.Version, PID: os.Getpid()}))
-		case daemonauth.ChallengePath:
-			nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
-			assert.NoError(t, err)
-			assert.NoError(t, json.MarshalWrite(w, map[string]string{"proof": daemonauth.Proof(token, nonce)}))
 		case "/api/v1/path", "/api/v1/nodes/42":
 			assert.Equal(t, http.MethodGet, r.Method)
 			requests <- r.URL.Path + "?" + r.URL.Query().Get("path")
@@ -69,10 +56,7 @@ func TestGetCLIRequestsAndPublishesCurrentVersion(t *testing.T) {
 		default:
 			http.NotFound(w, r)
 		}
-	}))
-	t.Cleanup(server.Close)
-	_, err := daemonconn.RuntimeStore(vault).Write(daemonconn.NewRecord(strings.TrimPrefix(server.URL, "http://"), "synthetic-key", token, ""))
-	require.NoError(t, err)
+	})
 	for _, test := range []struct {
 		selector, existingDestination, expectedError string
 		overwrite                                    bool
@@ -123,7 +107,7 @@ func TestGetCLIRequestsAndPublishesCurrentVersion(t *testing.T) {
 		}
 		assert.Equal(t, "/api/v1/versions/"+node.CurrentVersionID+"/content", <-contentRequests)
 	}
-	_, err = runCLI(t, "get", "/missing", filepath.Join(t.TempDir(), "out"), "--progress", "animated")
+	_, err := runCLI(t, "get", "/missing", filepath.Join(t.TempDir(), "out"), "--progress", "animated")
 	require.ErrorContains(t, err, "invalid --progress value")
 	require.Empty(t, requests)
 	_, err = runCLI(t, "get", "/", filepath.Join(t.TempDir(), "root"))

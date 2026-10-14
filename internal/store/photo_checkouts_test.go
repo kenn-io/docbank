@@ -126,7 +126,7 @@ func TestPhotoCheckoutSelections(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
 }
 
-func TestPhotoCheckoutPublication(t *testing.T) {
+func TestPhotoCheckoutRefusesUnavailableSources(t *testing.T) {
 	t.Parallel()
 	for _, scenario := range []string{"hidden_at", "excluded_at", "trashed"} {
 		t.Run(scenario, func(t *testing.T) {

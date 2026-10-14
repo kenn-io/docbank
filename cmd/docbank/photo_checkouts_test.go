@@ -1,31 +1,20 @@
 package main
 
 import (
-	"encoding/hex"
 	"encoding/json/v2"
 	"net/http"
-	"net/http/httptest"
-	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/daemonauth"
-	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
-	"go.kenn.io/docbank/internal/version"
-	kitdaemon "go.kenn.io/kit/daemon"
 )
 
-func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
-	vault := t.TempDir()
-	t.Setenv("DOCBANK_HOME", vault)
+func TestPhotoCheckoutCLICreateEstimateListStatusAndYears(t *testing.T) {
 	const checkoutID = "00000000-0000-4000-8000-000000000001"
 	const operationID = "00000000-0000-4000-8000-000000000002"
-	const token = "synthetic-proof-token"
 	destination := filepath.Join("relative", "checkout")
 	absoluteDestination, err := filepath.Abs(destination)
 	require.NoError(t, err)
@@ -38,15 +27,9 @@ func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 	listRequests := make(chan struct{}, 1)
 	inputs := make(chan api.PhotoCheckoutCreateRequest, 1)
 	estimates := make(chan store.PhotoCheckoutSelection, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case kitdaemon.DefaultPingPath:
-			assert.NoError(t, json.MarshalWrite(w, kitdaemon.PingInfo{OK: true, Service: daemonconn.Service, Version: version.Version, PID: os.Getpid()}))
-		case daemonauth.ChallengePath:
-			nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
-			assert.NoError(t, err)
-			assert.NoError(t, json.MarshalWrite(w, map[string]string{"proof": daemonauth.Proof(token, nonce)}))
 		case "/api/v1/photos/checkouts":
 			if r.Method == http.MethodPost {
 				var input api.PhotoCheckoutCreateRequest
@@ -69,10 +52,7 @@ func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 		default:
 			http.NotFound(w, r)
 		}
-	}))
-	t.Cleanup(server.Close)
-	_, err = daemonconn.RuntimeStore(vault).Write(daemonconn.NewRecord(strings.TrimPrefix(server.URL, "http://"), "synthetic-key", token, ""))
-	require.NoError(t, err)
+	})
 	out, err := runCLI(t, "photos", "checkout", "create", destination, "--all", "--asset", checkoutID, "--album", operationID, "--byte-limit", "100000")
 	require.NoError(t, err, out)
 	var createOutput api.PhotoCheckoutCreateResult

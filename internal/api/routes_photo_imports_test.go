@@ -105,10 +105,6 @@ func TestPhotoImportRoutes(t *testing.T) {
 		assert.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, text)
 		assert.Contains(t, text, test.message)
 	}
-	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
-	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/imports", browser,
-		api.PhotoImportStartRequest{SourceRoot: root, Destination: "/photos"})
-	assert.Equal(t, http.StatusForbidden, response.StatusCode, body)
 }
 func TestPhotoImportGate(t *testing.T) {
 	t.Parallel()

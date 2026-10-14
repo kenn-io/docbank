@@ -66,7 +66,4 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 	require.Equal(t, expectedList, list.Items)
 	response, body = do(t, ts, http.MethodGet, "/api/v1/photos/checkouts/00000000-0000-4000-8000-000000000001", nil, nil)
 	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
-	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
-	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/checkouts", browser, request)
-	require.Equal(t, http.StatusForbidden, response.StatusCode, body)
 }

@@ -52,7 +52,7 @@ func TestWebSessionAllowsPhotoAlbumAndAuthoredRoutes(t *testing.T) {
 			require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodGet, route.path, nil)))
 		}
 	}
-	for _, path := range []string{album + "/extra", album + "/members/add/extra", "/api/v1/photos/authored/photos/undo"} {
+	for _, path := range []string{album + "/extra", album + "/members/add/extra", "/api/v1/photos/authored/photos/undo", "/api/v1/photos/checkouts", "/api/v1/photos/imports"} {
 		require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodPost, path, nil)), path)
 	}
 	for _, path := range []string{"/api/v1/photos/albums/invalid", "/api/v1/photos/albums/11111111-1111-4111-8111-11111111111A", "/api/v1/photos/albums/"} {

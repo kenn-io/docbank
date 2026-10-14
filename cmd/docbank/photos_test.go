@@ -1,12 +1,9 @@
 package main
 
 import (
-	"encoding/hex"
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
-	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -16,11 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/daemonauth"
-	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
-	"go.kenn.io/docbank/internal/version"
-	kitdaemon "go.kenn.io/kit/daemon"
 )
 
 func TestPhotosCLIWorkflow(t *testing.T) {
@@ -46,9 +39,6 @@ func TestPhotosCLIWorkflow(t *testing.T) {
 		assert.NotNil(t, command.Flags().Lookup("revision"), path)
 	}
 
-	vault := t.TempDir()
-	t.Setenv("DOCBANK_HOME", vault)
-	const token = "synthetic-proof-token"
 	const assetID = "00000000-0000-4000-8000-000000000001"
 	const assetPath = "/api/v1/photos/assets/" + assetID
 	const nodeAssetPath = "/api/v1/photos/nodes/42/asset"
@@ -65,18 +55,8 @@ func TestPhotosCLIWorkflow(t *testing.T) {
 	}
 	requests := make(chan request, 32)
 	var trashed atomic.Bool
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case kitdaemon.DefaultPingPath:
-			assert.NoError(t, json.MarshalWrite(w, kitdaemon.PingInfo{OK: true, Service: daemonconn.Service, Version: version.Version, PID: os.Getpid()}))
-			return
-		case daemonauth.ChallengePath:
-			nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
-			assert.NoError(t, err)
-			assert.NoError(t, json.MarshalWrite(w, map[string]string{"proof": daemonauth.Proof(token, nonce)}))
-			return
-		}
 		input := request{method: r.Method, path: r.URL.Path, queryPath: r.URL.Query().Get("path"), revision: r.Header.Get("If-Match")}
 		if r.Method == http.MethodPut || r.Method == http.MethodPost {
 			assert.NoError(t, json.UnmarshalRead(r.Body, &input.body))
@@ -115,10 +95,7 @@ func TestPhotosCLIWorkflow(t *testing.T) {
 		default:
 			http.NotFound(w, r)
 		}
-	}))
-	t.Cleanup(server.Close)
-	_, err := daemonconn.RuntimeStore(vault).Write(daemonconn.NewRecord(strings.TrimPrefix(server.URL, "http://"), "synthetic-key", token, ""))
-	require.NoError(t, err)
+	})
 	checkRequests := func(expected ...request) {
 		t.Helper()
 		require.Len(t, requests, len(expected))
@@ -170,7 +147,7 @@ func TestPhotosCLIWorkflow(t *testing.T) {
 			checkRequests(request{method: "GET", path: "/api/v1/photos/settings"}, request{method: "PUT", path: "/api/v1/photos/settings", revision: `"8"`, body: map[string]any{}})
 		}
 	}
-	_, err = runCLI(t, "photos", "assets", "exclude", assetID, "--excluded=false", "--revision", "7")
+	_, err := runCLI(t, "photos", "assets", "exclude", assetID, "--excluded=false", "--revision", "7")
 	require.ErrorIs(t, err, store.ErrStaleRevision)
 	assert.Equal(t, exitStale, commandExitCode(err, true))
 	checkRequests(request{method: "POST", path: assetPath + "/exclude", revision: `"7"`, body: map[string]any{"excluded": false}})
@@ -227,20 +204,11 @@ func TestWithPhotoRevisionRetriesOnceOnlyWhenInferred(t *testing.T) {
 }
 
 func TestPhotoImportOutputPointsToJobs(t *testing.T) {
-	vault := t.TempDir()
-	t.Setenv("DOCBANK_HOME", vault)
-	const token = "synthetic-proof-token"
 	queued := api.StorageOperation{ID: "00000000-0000-4000-8000-000000000021", Kind: "photo_import", State: "queued"}
 	requests := make(chan api.PhotoImportStartRequest, 2)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case kitdaemon.DefaultPingPath:
-			assert.NoError(t, json.MarshalWrite(w, kitdaemon.PingInfo{OK: true, Service: daemonconn.Service, Version: version.Version, PID: os.Getpid()}))
-		case daemonauth.ChallengePath:
-			nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
-			assert.NoError(t, err)
-			assert.NoError(t, json.MarshalWrite(w, map[string]string{"proof": daemonauth.Proof(token, nonce)}))
 		case "/api/v1/photos/imports":
 			assert.Equal(t, http.MethodPost, r.Method)
 			var request api.PhotoImportStartRequest
@@ -251,11 +219,8 @@ func TestPhotoImportOutputPointsToJobs(t *testing.T) {
 		default:
 			http.NotFound(w, r)
 		}
-	}))
-	t.Cleanup(server.Close)
-	_, err := daemonconn.RuntimeStore(vault).Write(daemonconn.NewRecord(strings.TrimPrefix(server.URL, "http://"), "synthetic-key", token, ""))
-	require.NoError(t, err)
-	_, err = runCLI(t, "photos", "import", "")
+	})
+	_, err := runCLI(t, "photos", "import", "")
 	require.Error(t, err)
 	assert.Equal(t, exitUsage, commandExitCode(err, true))
 	source := t.TempDir()

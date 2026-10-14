@@ -35,6 +35,28 @@ import (
 	kitdaemon "go.kenn.io/kit/daemon"
 )
 
+func setupFakeDaemon(t *testing.T, handler http.HandlerFunc) {
+	t.Helper()
+	vault := t.TempDir()
+	t.Setenv("DOCBANK_HOME", vault)
+	const token = "synthetic-proof-token"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case kitdaemon.DefaultPingPath:
+			assert.NoError(t, json.MarshalWrite(w, kitdaemon.PingInfo{OK: true, Service: daemonconn.Service, Version: version.Version, PID: os.Getpid()}))
+		case daemonauth.ChallengePath:
+			nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
+			assert.NoError(t, err)
+			assert.NoError(t, json.MarshalWrite(w, map[string]string{"proof": daemonauth.Proof(token, nonce)}))
+		default:
+			handler(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	_, err := daemonconn.RuntimeStore(vault).Write(daemonconn.NewRecord(strings.TrimPrefix(server.URL, "http://"), "synthetic-key", token, ""))
+	require.NoError(t, err)
+}
+
 // runCLI executes the root command against a test vault (caller must have
 // set DOCBANK_HOME via t.Setenv) and returns captured stdout.
 //
@@ -1326,19 +1348,10 @@ func TestSearchCLIReportsTruncation(t *testing.T) {
 }
 
 func TestTrashEmpty(t *testing.T) {
-	vault := t.TempDir()
-	t.Setenv("DOCBANK_HOME", vault)
-	const token = "synthetic-proof-token"
 	runs := make(chan bool, 2)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case kitdaemon.DefaultPingPath:
-			assert.NoError(t, json.MarshalWrite(w, kitdaemon.PingInfo{OK: true, Service: daemonconn.Service, Version: version.Version, PID: os.Getpid()}))
-		case daemonauth.ChallengePath:
-			nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
-			assert.NoError(t, err)
-			assert.NoError(t, json.MarshalWrite(w, map[string]string{"proof": daemonauth.Proof(token, nonce)}))
 		case "/api/v1/trash/empty":
 			var input struct {
 				Run bool `json:"run"`
@@ -1353,11 +1366,8 @@ func TestTrashEmpty(t *testing.T) {
 		default:
 			http.NotFound(w, r)
 		}
-	}))
-	t.Cleanup(server.Close)
-	_, err := daemonconn.RuntimeStore(vault).Write(daemonconn.NewRecord(strings.TrimPrefix(server.URL, "http://"), "synthetic-key", token, ""))
-	require.NoError(t, err)
-	_, err = runCLI(t, "trash", "empty", "--older-than=-1h")
+	})
+	_, err := runCLI(t, "trash", "empty", "--older-than=-1h")
 	require.ErrorContains(t, err, "negative")
 	require.Empty(t, runs)
 	out, err := runCLI(t, "trash", "empty")
