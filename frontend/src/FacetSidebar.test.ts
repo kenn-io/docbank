@@ -65,6 +65,14 @@ it.each([
   expect(view.container.querySelector(".summary")).toBeNull();
 });
 
+it("hides a group where no photo has a value and keeps it once some do", async () => {
+  const view = render(FacetSidebar, { facets: [facet("tags", { total: 9, missing: 9, other: 0 })], query: originalQuery, onchange: vi.fn() });
+  expect(screen.queryByRole("group", { name: "Tags facet" })).toBeNull();
+  expect(screen.queryByText("9 with no tags")).toBeNull();
+  await view.rerender({ facets: [facet("tags", { total: 9, missing: 4, other: 0 })] });
+  expect(screen.getByText("4 with no tags")).toBeTruthy();
+});
+
 it("keeps the active no-tags filter available to clear at zero", async () => {
   const onchange = vi.fn();
   const view = render(FacetSidebar, { facets: [facet("tags", { missing: 0, other: 0 })], query: { ...originalQuery, filters: { ...originalQuery.filters, no_tags: true } }, onchange });

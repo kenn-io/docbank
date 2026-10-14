@@ -133,6 +133,13 @@
       (dimension === "duplicates" && value.key === "duplicate");
   }
 
+  // A group where no photo has a value only repeats the scope total, so hide it unless a filter on it is active.
+  function empty(facet: Facet): boolean {
+    if (!facet.available || !(facet.dimension in summary) || !facet.total || facet.missing !== facet.total) return false;
+    if (facet.dimension === "tags" && (query.filters.no_tags || query.filters.tag_ids?.length)) return false;
+    return !facet.values.some((value) => selected(facet.dimension, value));
+  }
+
   function toggleMissingTags(): void {
     const enable = !query.filters.no_tags;
     onchange(changed({ ...query.filters, no_tags: enable || undefined, tag_ids: enable ? undefined : query.filters.tag_ids }));
@@ -142,6 +149,7 @@
 <aside class="facets" aria-label={unit === "photos" ? "Photo facets" : "Snapshot facets"}>
   <h2>{unit === "photos" ? "Refine photos" : "Refine snapshot"}</h2>
   {#each facets as facet (facet.dimension)}
+    {#if !empty(facet)}
     <section role="group" aria-label={`${names[facet.dimension]} facet`}>
       <h3>{names[facet.dimension]}</h3>
       {#if !facet.available}
@@ -176,6 +184,7 @@
         {/if}
       {/if}
     </section>
+    {/if}
   {/each}
 </aside>
 
