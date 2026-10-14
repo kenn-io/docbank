@@ -62,7 +62,7 @@
     const reset = (event: Event) => {
       if (!(event.target instanceof Node) || !imageButton?.contains(event.target)) lastClick = undefined;
     };
-    const cancel = () => lastClick = undefined;
+    const cancel = () => { lastClick = undefined; tapCancelled = true; };
     document.addEventListener("click", reset, true);
     document.addEventListener("pointercancel", cancel, true);
     return () => {

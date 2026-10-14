@@ -78,13 +78,14 @@ const pairRejections: { name: string; clicks: number; run: Tap }[] = [
     await touchTap(intervening, 1100);
     await touchTap(button, 1200);
   } })),
-  { name: "another tile's pointer cancel", clicks: 2, run: async button => {
+  ...([1, 2] as const).map(detail => ({ name: `another tile's pointer cancel then a detail-${detail} tap and double-click`, clicks: 2, run: async (button: HTMLElement) => {
     const other = screen.getByRole("button", { name: "Select Photo 2.jpg" });
     await touchTap(button, 1000);
     await fireEvent.pointerDown(other, { pointerType: "touch" });
     await fireEvent.pointerCancel(other, { pointerType: "touch" });
-    await touchTap(button, 1100);
-  } },
+    await touchTap(button, 1100, detail);
+    await fireEvent.doubleClick(button);
+  } })),
   ...[
     { pointerType: "mouse", detail: 1 }, { pointerType: "touch", detail: 0 },
     { pointerType: "touch", detail: 1, ctrlKey: true }, { pointerType: "touch", detail: 1, metaKey: true },
