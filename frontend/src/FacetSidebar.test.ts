@@ -49,19 +49,21 @@ it.each([
   ["extension", "with no extension", "in unlisted extensions", "in unlisted extension"],
   ["modified", "with no modified date", "in unlisted months", "in unlisted month"],
 ] as const)("shows positive %s counts in plain words and hides zeros", async (dimension, missing, other, singular) => {
-  const view = render(FacetSidebar, { facets: [facet(dimension, { missing: 6, other: 6 })], query: originalQuery, onchange: vi.fn() });
+  // The server lists the 50 largest buckets before counting the rest as other.
+  const listed = (count: number) => Array.from({ length: count }, (_, i) => ({ key: `v${i}`, label: `v${i}`, count: 1, selected: false }));
+  const view = render(FacetSidebar, { facets: [facet(dimension, { total: 62, missing: 6, other: 6, values: listed(50) })], query: originalQuery, onchange: vi.fn() });
   expect(screen.getByText(`6 ${missing}`)).toBeTruthy();
   expect(screen.getByText(`6 ${other}`)).toBeTruthy();
-  await view.rerender({ facets: [facet(dimension, { missing: 1, other: 1 })] });
+  await view.rerender({ facets: [facet(dimension, { total: 52, missing: 1, other: 1, values: listed(50) })] });
   expect(screen.getByText(`1 ${missing}`)).toBeTruthy();
   expect(screen.getByText(`1 ${singular}`)).toBeTruthy();
-  await view.rerender({ facets: [facet(dimension, { missing: 0, other: 6 })] });
+  await view.rerender({ facets: [facet(dimension, { total: 56, missing: 0, other: 6, values: listed(50) })] });
   expect(screen.queryByText(`0 ${missing}`)).toBeNull();
   expect(screen.getByText(`6 ${other}`)).toBeTruthy();
-  await view.rerender({ facets: [facet(dimension, { missing: 6, other: 0 })] });
+  await view.rerender({ facets: [facet(dimension, { total: 9, missing: 6, other: 0, values: listed(3) })] });
   expect(screen.getByText(`6 ${missing}`)).toBeTruthy();
   expect(view.container.querySelectorAll(".summary span")).toHaveLength(dimension === "tags" ? 0 : 1);
-  await view.rerender({ facets: [facet(dimension, { missing: 0, other: 0 })] });
+  await view.rerender({ facets: [facet(dimension, { total: 9, missing: 0, other: 0, values: listed(9) })] });
   expect(view.container.querySelector(".summary")).toBeNull();
 });
 
@@ -69,7 +71,7 @@ it("hides a group with no values or an empty scope, and keeps one with some miss
   const selectedTag = { key: tagID, label: "reviewed", count: 0, selected: true };
   const view = render(FacetSidebar, { facets: [facet("tags", { total: 9, missing: 9, other: 0 })], query: originalQuery, onchange: vi.fn() });
   expect(screen.queryByRole("group", { name: "Tags facet" })).toBeNull();
-  await view.rerender({ facets: [facet("tags", { total: 9, missing: 4, other: 0 })] });
+  await view.rerender({ facets: [facet("tags", { total: 9, missing: 4, other: 0, values: [{ ...selectedTag, count: 5, selected: false }] })] });
   expect(screen.getByRole("group", { name: "Tags facet" })).toBeTruthy();
   await view.rerender({ facets: [facet("tags", { total: 9, missing: 9, other: 0, values: [selectedTag] })] });
   expect(screen.getByRole("group", { name: "Tags facet" })).toBeTruthy();
@@ -93,7 +95,7 @@ it("keeps the No tags button reachable to clear while active and to apply after 
   expect(button.getAttribute("aria-pressed")).toBe("true");
   await fireEvent.click(button);
   expect(onchange.mock.calls.at(-1)?.[0].filters.no_tags).toBeUndefined();
-  await view.rerender({ facets: [facet("tags", { missing: 0, other: 0 })], query: { ...originalQuery, filters: { ...originalQuery.filters, tag_ids: [tagID] } } });
+  await view.rerender({ facets: [facet("tags", { total: 9, missing: 0, other: 0, values: [{ key: tagID, label: "reviewed", count: 9, selected: true }] })], query: { ...originalQuery, filters: { ...originalQuery.filters, tag_ids: [tagID] } } });
   expect(screen.getByRole("button", { name: "No tags" })).toBeTruthy();
 });
 
