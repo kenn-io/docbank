@@ -41,9 +41,10 @@ test("Hidden photos lock, unlock, unhide, expire, and discard previews", async (
     await page.getByRole("menuitem", { name: "Hide", exact: true }).click();
     await hidePending;
     await page.getByRole("button", { name: "Hidden", exact: true }).click();
-    await expect(page.getByText(/Locks in/)).toBeVisible();
-    await expect(page.getByText("No hidden photos", { exact: true })).toBeVisible();
+    await expect(page.getByText(/Locks in/)).toHaveCount(0);
+    await expect(page.locator("[data-asset]")).toHaveCount(0);
     releaseHide();
+    await expect(page.getByText(/Locks in/)).toBeVisible();
     await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible();
     await page.getByRole("button", { name: "Library", exact: true }).click();
     await expect(page.locator(`[data-asset="${id}"]`)).toHaveCount(0);

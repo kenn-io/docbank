@@ -288,7 +288,7 @@ export class Photos {
     this.actionError = "";
     let failure = "";
     let failures = 0;
-    const batch = () => this.mutateBatch(members, async member => {
+    await this.mutateBatch(members, async member => {
       const signal = AbortSignal.timeout(60_000);
       const receipt = await (this.hidden ? unhidePhotoAsset : hidePhotoAsset)(member.asset_id, { "If-Match": String(member.revision) }, { session: this.session, signal });
       if (signal.aborted) throw signal.reason;
@@ -305,7 +305,6 @@ export class Photos {
       onactionerror?.(this.actionError);
       if (changed) await onhidden?.();
     }, "hiding", preserve, oninvalidate);
-    await (this.hiddenAccess ? this.hiddenAccess.run(batch) : batch());
   }
 
   cancelPending(invalidateReplacement = false) {
@@ -548,26 +547,29 @@ export class Photos {
   }
 
   private async mutateBatch(targets: PhotoTarget[], request: (item: PhotoTarget) => Promise<{ id: string; revision: number }>, onerror: (cause: unknown) => boolean, oncomplete: (changed: boolean) => void | Promise<void>, action: "hiding" | "trashing", preserve?: () => (() => Promise<void>) | undefined, onconfirmed?: () => void | Promise<void>) {
-    let successes = 0;
-    let uncertain = false;
-    try {
-      for (const item of targets) {
-        try {
-          const receipt = await request(item);
-          if (receipt.id !== item.asset_id || receipt.revision <= item.revision) throw new Error(`Photo${action === "trashing" ? " trash" : ""} response did not confirm the selected photo. Refresh and retry.`);
-          this.cancelPending();
-          successes++;
-          await this.removeConfirmed([item.asset_id], preserve);
-          await onconfirmed?.();
-        } catch (cause) {
-          if (!(cause instanceof APIError) || cause.status >= 500) uncertain = true;
-          if (onerror(cause)) break;
+    const batch = async () => {
+      let successes = 0;
+      let uncertain = false;
+      try {
+        for (const item of targets) {
+          try {
+            const receipt = await request(item);
+            if (receipt.id !== item.asset_id || receipt.revision <= item.revision) throw new Error(`Photo${action === "trashing" ? " trash" : ""} response did not confirm the selected photo. Refresh and retry.`);
+            this.cancelPending();
+            successes++;
+            await this.removeConfirmed([item.asset_id], preserve);
+            await onconfirmed?.();
+          } catch (cause) {
+            if (!(cause instanceof APIError) || cause.status >= 500) uncertain = true;
+            if (onerror(cause)) break;
+          }
         }
-      }
-      await oncomplete(successes > 0 || uncertain);
-      if (!this.projection || successes !== targets.length) await this.refresh(preserve);
-      return successes;
-    } finally { this[action] = false; if (this.projection) void this.resume(preserve); }
+        await oncomplete(successes > 0 || uncertain);
+        if (!this.projection || successes !== targets.length) await this.refresh(preserve);
+        return successes;
+      } finally { this[action] = false; if (this.projection) void this.resume(preserve); }
+    };
+    return this.hiddenAccess && (this.hidden || action === "hiding") ? this.hiddenAccess.run(batch) : batch();
   }
 
   // reloadCounts replaces counts that a change outside this listing made stale,

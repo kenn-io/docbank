@@ -105,7 +105,7 @@ it.each(["setup", "unlock", "change", "disable"])("preserves submitted %s passco
   expect(requests).toEqual(kind === "setup" ? [{ kind: "setup", body: { passcode: "submitted-passcode" } }, { kind: "unlock", body: { passcode: "submitted-passcode" } }] : [{ kind, body: kind === "change" ? { passcode: "submitted-current", new_passcode: "submitted-new" } : { passcode: kind === "disable" ? "submitted-current" : "submitted-passcode" } }]);
 });
 
-it("finishes every submitted unhide before locking when the tab is hidden", async () => {
+it.each(["unhide", "trash"])("finishes every submitted %s before locking when the tab is hidden", async action => {
   history.replaceState(null, "", "/photos/hidden#web_session=synthetic&web_upload_secret=proof");
   storage();
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
@@ -117,7 +117,7 @@ it("finishes every submitted unhide before locking when the tab is hidden", asyn
   stubPhotoFetch(vi.fn(async (url: string) => {
     if (url.endsWith("/photos/hidden/lock")) { locked = true; completed.push("lock"); return Response.json({}); }
     if (url.endsWith("/photos/hidden")) return Response.json({ configured: true, expires_at: "2099-01-01T00:00:00Z", expires_in: 300 });
-    const target = url.match(/\/assets\/(photo-\d+)\/unhide$/)?.[1];
+    const target = url.match(new RegExp(`/assets/(photo-\\d+)/${action}$`))?.[1];
     if (target) {
       if (target === "photo-1") await new Promise<void>(resolve => finish = resolve);
       if (locked) return Response.json({ detail: "Hidden locked", code: "hidden_locked" }, { status: 403 });
@@ -131,8 +131,13 @@ it("finishes every submitted unhide before locking when the tab is hidden", asyn
   await fireEvent.click(await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
   await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 2.jpg" }));
   await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 3.jpg" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Actions for Photo 1.jpg" }));
-  await fireEvent.click(await screen.findByRole("menuitem", { name: "Unhide" }));
+  if (action === "unhide") {
+    await fireEvent.click(screen.getByRole("button", { name: "Actions for Photo 1.jpg" }));
+    await fireEvent.click(await screen.findByRole("menuitem", { name: "Unhide" }));
+  } else {
+    await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
+    await fireEvent.click(within(screen.getByRole("dialog", { name: "Move selected photos to trash" })).getByRole("button", { name: "Move to trash" }));
+  }
   await waitFor(() => expect(finish).toBeTypeOf("function"));
   vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
   await fireEvent(document, new Event("visibilitychange"));
