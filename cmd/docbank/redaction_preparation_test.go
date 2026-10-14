@@ -27,9 +27,6 @@ func TestPDFRedactionSourcePreparation(t *testing.T) {
 		t.Setenv(key, temporary)
 	}
 	data, identity := downloadRedactionSource(t)
-	// The PDF worker's RSS ceiling counts the whole test binary, so return the
-	// daemon's and earlier tests' freed heap to the OS before measuring.
-	debug.FreeOSMemory()
 	// From here on, input comes only from the verified download and its receipt.
 	frames, err := pagerender.InspectSource(data, identity, "application/pdf")
 	require.NoError(t, err)
@@ -55,6 +52,9 @@ func TestPDFRedactionSourcePreparation(t *testing.T) {
 	source := pdfproduction.Source{
 		Reader: bytes.NewReader(data), Size: identity.Size, SHA256: identity.SHA256,
 	}
+	// The PDF worker's RSS ceiling counts the whole test binary, so return the
+	// freed heap from the daemon, earlier tests, and the text read to the OS before measuring.
+	debug.FreeOSMemory()
 	mapping, err := production.Align(t.Context(), production.AlignmentInput{
 		PDF: source, Pages: frames, Evidence: evidence, EvidenceSHA256: evidence.Checksum,
 	})
