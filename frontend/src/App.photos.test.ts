@@ -33,6 +33,22 @@ it("removes a delayed direct-link photo fragment on tab switch without history.b
   finish(Response.json({ configured: true }));
 });
 
+it("locks once when an authenticated photo direct link starts in a hidden tab", async () => {
+  history.replaceState(null, "", "/photos/hidden#web_session=synthetic&web_upload_secret=proof&photo=photo-1");
+  storage();
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+  const fetcher = vi.fn(async (_url: string) => Response.json({ configured: true, items: [], total: 0 }));
+  stubPhotoFetch(fetcher);
+  const locks = () => fetcher.mock.calls.filter(([url]) => url.endsWith("/photos/hidden/lock"));
+  render(App);
+  await waitFor(() => expect(locks().length).toBeGreaterThan(0));
+  await act(async () => {});
+  expect(location.hash).toBe("");
+  expect(locks()).toHaveLength(1);
+  await fireEvent(window, new Event("pagehide"));
+  expect(locks()).toHaveLength(1);
+});
+
 it("locks once when sign-in completes after the Photos tab was hidden", async () => {
   history.replaceState(null, "", "/photos/hidden");
   storage();

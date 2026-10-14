@@ -221,7 +221,7 @@
     document.addEventListener("visibilitychange", visibility);
     window.addEventListener("pagehide", pagehide);
     window.addEventListener("pageshow", resume);
-    if (document.visibilityState === "hidden") leave();
+    if (document.visibilityState === "hidden") untrack(leave);
     return () => {
       document.removeEventListener("visibilitychange", visibility);
       window.removeEventListener("pagehide", pagehide);
