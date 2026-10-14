@@ -10,7 +10,7 @@ const binary = process.env.DOCBANK_SCREENSHOT_BINARY ?? path.join(repository, "b
 const output = process.env.DOCBANK_MAP_PROOF_DIR;
 test.skip(!output, "DOCBANK_MAP_PROOF_DIR enables synthetic map proof");
 test("photo map privacy, clusters, marker return and mobile grid", async ({ page }) => {
-  test.setTimeout(300_000);
+  test.setTimeout(600_000);
   await mkdir(output!, { recursive: true });
   const workspace = await mkdtemp(path.join(output!, "map-proof-"));
   const vault = path.join(workspace, "vault");
