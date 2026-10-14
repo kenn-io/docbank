@@ -703,7 +703,30 @@ func TestRenditionWorkerFailsSourceRefusedAtRuntime(t *testing.T) {
 	current, err := fixture.catalog.RenditionJobByID(t.Context(), job.ID)
 	require.NoError(t, err)
 	assert.Equal(t, store.RenditionJobFailed, current.State)
-	assert.Equal(t, store.RenditionFailureTerminal, current.FailureCode)
+	assert.Equal(t, store.RenditionFailureStaleAuthority, current.FailureCode)
+	processed, err = worker.RunOne(t.Context())
+	require.NoError(t, err)
+	assert.False(t, processed, "a refused source must not retry on its own")
+
+	// Once the limits admit the source again, a new plan re-admits the same job.
+	readmitted, _, err := fixture.catalog.EnqueueRenditionJob(t.Context(), request)
+	require.NoError(t, err)
+	require.Equal(t, job.ID, readmitted.ID)
+	readmittedAt := time.Now().UTC()
+	eligible, err := NewRenditionWorker(RenditionWorkerConfig{
+		Catalog: fixture.catalog, Blobs: fixture.blobs,
+		Runtime: workerRuntime{provider: provider}, Gate: newTestOperationGate(),
+		Owner: "rendition-worker-source-readmitted", LeaseDuration: time.Minute,
+		IdleDelay: time.Millisecond, Clock: func() time.Time { return readmittedAt },
+	})
+	require.NoError(t, err)
+	processed, err = eligible.RunOne(t.Context())
+	require.NoError(t, err)
+	assert.True(t, processed)
+	assert.Equal(t, 1, provider.calls)
+	current, err = fixture.catalog.RenditionJobByID(t.Context(), job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, store.RenditionJobCompleted, current.State)
 }
 
 func TestRenditionWorkerQuarantinesSealTimeInvalidUpload(t *testing.T) {

@@ -933,14 +933,13 @@ func (worker *RenditionWorker) classifyAuthorityError(
 }
 
 func (worker *RenditionWorker) classifyRuntimeError(ctx context.Context, claim store.RenditionJobClaim, err error) error {
-	if errors.Is(err, ErrRenditionRuntimeStale) {
+	// An inspection refusal depends only on the exact source and the configured
+	// limits, so an automatic retry repeats it. A lowered
+	// [media].max_source_bytes reaches already queued work this way. Stale
+	// authority stops retries yet lets a new plan re-admit the same job once
+	// the limits allow the source again.
+	if errors.Is(err, ErrRenditionRuntimeStale) || errors.Is(err, ErrSourceIneligible) {
 		return worker.markFailed(ctx, claim, store.RenditionFailureStaleAuthority, worker.clock().UTC())
-	}
-	// Inspection refusals depend only on the exact source and the configured
-	// limits, so retrying them repeats the same refusal. A lowered
-	// [media].max_source_bytes reaches already queued work this way.
-	if errors.Is(err, ErrSourceIneligible) {
-		return worker.markFailed(ctx, claim, store.RenditionFailureTerminal, worker.clock().UTC())
 	}
 	return worker.markSafeTransient(ctx, claim)
 }
