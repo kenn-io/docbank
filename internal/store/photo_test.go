@@ -77,6 +77,14 @@ func TestPhotoEnrollmentClassifiesCreatedNodes(t *testing.T) {
 	assert.Equal(t, int64(1), asset.Revision)
 	assert.Equal(t, PhotoRoleImage, asset.Files[0].Role)
 
+	webp, err := s.CreateFile(ctx, s.RootID(), "image.webp", fakeHash("b2"), 4, "image/webp")
+	require.NoError(t, err)
+	webpAsset, err := s.PhotoAssetForNode(ctx, webp.ID)
+	require.NoError(t, err)
+	require.Len(t, webpAsset.Files, 1)
+	assert.Equal(t, int64(1), webpAsset.Revision)
+	assert.Equal(t, PhotoRoleImage, webpAsset.Files[0].Role)
+
 	audio, err := s.CreateFile(ctx, s.RootID(), "audio.mp3", fakeHash("c3"), 4, "audio/mpeg")
 	require.NoError(t, err)
 	_, err = s.PhotoAssetForNode(ctx, audio.ID)

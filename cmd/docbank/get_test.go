@@ -33,8 +33,10 @@ func TestGetCLIRequestsAndPublishesCurrentVersion(t *testing.T) {
 	const content = "download"
 	sum := sha256.Sum256([]byte(content))
 	node := api.Node{ID: 42, Name: "statement.bin", Kind: "file", Revision: 1, CurrentVersionID: "00000000-0000-4000-8000-000000000021", BlobHash: hex.EncodeToString(sum[:]), Size: int64(len(content))}
+	output := filepath.Join(t.TempDir(), "retrieved.bin")
 	requests := make(chan string, 8)
 	contentRequests := make(chan string, 8)
+	lateDestinations := make(chan string, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case kitdaemon.DefaultPingPath:
@@ -53,11 +55,19 @@ func TestGetCLIRequestsAndPublishesCurrentVersion(t *testing.T) {
 			if r.URL.Path == "/api/v1/nodes/42" {
 				response.TrashedAt = "2026-01-01T00:00:00Z"
 			}
+			if r.URL.Query().Get("path") == "/inbox/race.bin" {
+				response.Name = "race.bin"
+			}
 			w.Header().Set("Content-Type", "application/json")
 			assert.NoError(t, json.MarshalWrite(w, response))
 		case "/api/v1/versions/" + node.CurrentVersionID + "/content":
 			assert.Equal(t, http.MethodGet, r.Method)
 			contentRequests <- r.URL.Path
+			select {
+			case sentinel := <-lateDestinations:
+				assert.NoError(t, os.WriteFile(output, []byte(sentinel), 0o600))
+			default:
+			}
 			w.Header().Set(api.ContentVersionHeader, node.CurrentVersionID)
 			w.Header().Set(api.BlobHashHeader, node.BlobHash)
 			w.Header().Set(api.BlobSizeHeader, strconv.FormatInt(node.Size, 10))
@@ -72,32 +82,49 @@ func TestGetCLIRequestsAndPublishesCurrentVersion(t *testing.T) {
 	t.Cleanup(server.Close)
 	_, err := daemonconn.RuntimeStore(vault).Write(daemonconn.NewRecord(strings.TrimPrefix(server.URL, "http://"), "synthetic-key", token, ""))
 	require.NoError(t, err)
-	output := filepath.Join(t.TempDir(), "retrieved.bin")
-	for _, selector := range []string{"/inbox/statement.bin", "id:42"} {
-		args := []string{"get", selector, output, "--json"}
-		if selector == "id:42" {
-			require.NoError(t, os.WriteFile(output, []byte("existing destination"), 0o600))
+	for _, test := range []struct {
+		selector, lateDestination, expectedError string
+		overwrite                                bool
+	}{
+		{selector: "/inbox/statement.bin"},
+		{selector: "id:42", lateDestination: "existing destination", overwrite: true},
+		{selector: "/inbox/race.bin", lateDestination: "appeared during download", expectedError: "pass --overwrite"},
+	} {
+		err := os.Remove(output)
+		if !os.IsNotExist(err) {
+			require.NoError(t, err)
+		}
+		if test.lateDestination != "" {
+			lateDestinations <- test.lateDestination
+		}
+		args := []string{"get", test.selector, output, "--json"}
+		if test.overwrite {
 			args = append(args, "--overwrite")
 		}
 		out, err := runCLI(t, args...)
-		require.NoError(t, err, out)
-		var receipt getReceipt
-		require.NoError(t, json.Unmarshal([]byte(out), &receipt))
-		assert.Equal(t, getReceipt{NodeID: node.ID, VersionID: node.CurrentVersionID, BlobHash: node.BlobHash, Size: node.Size, Output: output}, receipt)
-		assert.NotContains(t, out, "download:")
-		assert.Equal(t, selector == "id:42", getOverwrite)
-		published, err := os.ReadFile(output)
-		require.NoError(t, err)
-		if selector == "id:42" {
-			assert.NotEqual(t, "existing destination", string(published))
+		assert.Equal(t, test.overwrite, getOverwrite)
+		if test.expectedError != "" {
+			require.ErrorContains(t, err, test.expectedError)
+			published, readErr := os.ReadFile(output)
+			require.NoError(t, readErr)
+			assert.Equal(t, test.lateDestination, string(published))
+		} else {
+			require.NoError(t, err, out)
+			var receipt getReceipt
+			require.NoError(t, json.Unmarshal([]byte(out), &receipt))
+			assert.Equal(t, getReceipt{NodeID: node.ID, VersionID: node.CurrentVersionID, BlobHash: node.BlobHash, Size: node.Size, Output: output}, receipt)
+			assert.NotContains(t, out, "download:")
+			published, readErr := os.ReadFile(output)
+			require.NoError(t, readErr)
+			assert.Equal(t, content, string(published))
 		}
 		stages, err := filepath.Glob(filepath.Join(filepath.Dir(output), "docbank-get-*"))
 		require.NoError(t, err)
 		assert.Empty(t, stages)
-		if selector == "id:42" {
+		if test.selector == "id:42" {
 			assert.Equal(t, "/api/v1/nodes/42?", <-requests)
 		} else {
-			assert.Equal(t, "/api/v1/path?/inbox/statement.bin", <-requests)
+			assert.Equal(t, "/api/v1/path?"+test.selector, <-requests)
 		}
 		assert.Equal(t, "/api/v1/versions/"+node.CurrentVersionID+"/content", <-contentRequests)
 	}
@@ -119,70 +146,69 @@ func TestGetCLIRequestsAndPublishesCurrentVersion(t *testing.T) {
 }
 
 func TestPublishGetFileForwardsOverwriteAndReportsErrors(t *testing.T) {
-	for _, overwrite := range []bool{false, true} {
-		t.Run(strconv.FormatBool(overwrite), func(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		overwrite      bool
+		existingOutput bool
+		wantSyncError  bool
+	}{
+		{name: "existing destination", existingOutput: true},
+		{name: "new destination sync failure", wantSyncError: true},
+		{name: "replacement sync failure", overwrite: true, existingOutput: true, wantSyncError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			dir := t.TempDir()
 			staged, output := filepath.Join(dir, "staged"), filepath.Join(dir, "output")
 			require.NoError(t, os.WriteFile(staged, []byte("download"), 0o600))
-			require.NoError(t, os.WriteFile(output, []byte("existing"), 0o600))
+			if test.existingOutput {
+				require.NoError(t, os.WriteFile(output, []byte("existing"), 0o600))
+			}
 			syncErr := errors.New("injected destination directory sync failure")
 			originalSync := syncGetDestinationDir
+			syncCalled := false
 			syncGetDestinationDir = func(got string) error {
-				assert.True(t, overwrite, "no-replace failure must return before syncing")
+				syncCalled = true
 				assert.Equal(t, filepath.Dir(output), got)
 				return syncErr
 			}
 			t.Cleanup(func() { syncGetDestinationDir = originalSync })
-			err := publishGetFile(staged, output, overwrite)
-			if overwrite {
+			err := publishGetFile(staged, output, test.overwrite)
+			if test.wantSyncError {
 				require.ErrorIs(t, err, syncErr)
 				require.ErrorContains(t, err, "file published")
 				require.ErrorContains(t, err, "injected destination directory sync failure")
+				require.True(t, syncCalled)
+				published, readErr := os.ReadFile(output)
+				require.NoError(t, readErr)
+				assert.Equal(t, "download", string(published))
 			} else {
 				require.ErrorIs(t, err, os.ErrExist)
 				require.ErrorContains(t, err, "publish without replacing")
+				assert.False(t, syncCalled)
 			}
 		})
 	}
 }
 
 func TestGetIntegrityFailureNeverPublishesPartialDestination(t *testing.T) {
-	for _, valid := range []bool{false, true} {
-		t.Run(strconv.FormatBool(valid), func(t *testing.T) {
-			dir := t.TempDir()
-			staging, err := makePrivateStagingDirAt(dir, "docbank-get-")
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, staging.removeAll()) })
-			const content = "complete downloaded bytes"
-			const versionID = "7b0dbd90-5730-4436-b082-b692790725ff"
-			digest := sha256.Sum256([]byte(content))
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set(api.ContentVersionHeader, versionID)
-				w.Header().Set(api.BlobHashHeader, hex.EncodeToString(digest[:]))
-				w.Header().Set(api.BlobSizeHeader, strconv.Itoa(len(content)))
-				w.Header().Set("Trailer", "Content-Digest")
-				_, writeErr := io.WriteString(w, content)
-				assert.NoError(t, writeErr)
-				if valid {
-					w.Header().Set("Content-Digest", "sha-256=:"+base64.StdEncoding.EncodeToString(digest[:])+":")
-				}
-			}))
-			t.Cleanup(server.Close)
-			stream, err := daemonconn.New(server.URL, "synthetic-key").VersionContent(t.Context(), versionID)
-			require.NoError(t, err)
-			output := filepath.Join(dir, "download")
-			renderer := newBackupProgressRenderer(io.Discard, backupProgressAuto)
-			_, err = stageAndPublishGet(context.Background(), staging, stream, stream.Size, output, false, renderer)
-			if valid {
-				require.NoError(t, err)
-				copied, readErr := os.ReadFile(output)
-				require.NoError(t, readErr)
-				assert.Equal(t, content, string(copied))
-			} else {
-				require.ErrorIs(t, err, daemonconn.ErrIntegrity)
-				_, statErr := os.Lstat(output)
-				assert.ErrorIs(t, statErr, os.ErrNotExist)
-			}
-		})
+	dir := t.TempDir()
+	staging, err := makePrivateStagingDirAt(dir, "docbank-get-")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, staging.removeAll()) })
+	content := "complete bytes without the required digest trailer"
+	digest := sha256.Sum256([]byte(content))
+	stream := &daemonconn.ContentStream{
+		ReadCloser: io.NopCloser(strings.NewReader(content)),
+		VersionID:  "7b0dbd90-5730-4436-b082-b692790725ff",
+		BlobHash:   hex.EncodeToString(digest[:]),
+		Size:       int64(len(content)),
 	}
+	output := filepath.Join(dir, "must-not-exist")
+	renderer := newBackupProgressRenderer(io.Discard, backupProgressAuto)
+	_, err = stageAndPublishGet(context.Background(), staging, stream, stream.Size,
+		output, false, renderer)
+	require.Error(t, err)
+	require.ErrorIs(t, err, daemonconn.ErrIntegrity)
+	_, statErr := os.Lstat(output)
+	assert.ErrorIs(t, statErr, os.ErrNotExist)
 }
