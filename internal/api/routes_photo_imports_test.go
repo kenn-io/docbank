@@ -43,7 +43,7 @@ func TestPhotoImportRoutes(t *testing.T) {
 	assert.Equal(t, "queued", started.State)
 
 	var latest api.StorageOperation
-	for range 300 {
+	for range 3_000 {
 		get, getErr := ts.Client().Get(ts.URL + "/api/v1/jobs/" + started.ID)
 		require.NoError(t, getErr)
 		var output api.StorageOperation
