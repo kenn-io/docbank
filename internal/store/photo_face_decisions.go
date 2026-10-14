@@ -505,6 +505,15 @@ func (s *Store) UndoPhotoFaceDecisionWithOperationID(ctx context.Context, id, op
 					wasSuppressed := slices.ContainsFunc(r.Before.Assertions, func(old PersonDocumentAssertion) bool {
 						return old.AssertionID == a.AssertionID && old.Action == "suppress"
 					})
+					if a.Action == "withdrawn" && !slices.ContainsFunc(r.After.Assertions, func(after PersonDocumentAssertion) bool { return after.AssertionID == a.AssertionID }) {
+						automatic, e := automaticFaceWithdrawalTx(ctx, tx, a)
+						if e != nil {
+							return e
+						}
+						if !automatic {
+							return ErrStaleRevision
+						}
+					}
 					if resolved != a.PersonID || a.Action == "suppress" && !wasSuppressed {
 						return ErrStaleRevision
 					}
@@ -809,6 +818,18 @@ func (s *Store) clearNamedFaceCandidatesTx(ctx context.Context, tx *sql.Tx, befo
 		} else {
 			return e
 		}
+		if c.State == personCandidateStateOpen && existing.State == "superseded" {
+			_, full, err := openPersonCandidateCount(ctx, tx)
+			if err != nil {
+				return err
+			}
+			if full {
+				return ErrInvalidPhotoFace
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE person_match_candidates SET state='open',decided_at=NULL,decided_person_id=NULL,revision=revision+1 WHERE candidate_id=?`, existing.CandidateID); err != nil {
+				return err
+			}
+		}
 		if c.State == personCandidateStateRejected {
 			if _, err = tx.ExecContext(ctx, `UPDATE person_match_candidates SET state='rejected',decided_at=?,decided_person_id=NULL,revision=revision+1 WHERE candidate_id=?`, c.DecidedAt, existing.CandidateID); err != nil {
 				return err
@@ -816,6 +837,12 @@ func (s *Store) clearNamedFaceCandidatesTx(ctx context.Context, tx *sql.Tx, befo
 		}
 	}
 	return nil
+}
+
+func automaticFaceWithdrawalTx(ctx context.Context, tx *sql.Tx, assertion PersonDocumentAssertion) (bool, error) {
+	var automatic bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_change_receipts r JOIN json_each(r.after_json,'$.after.assertions') a WHERE r.operation='face_decision' AND json_extract(a.value,'$.AssertionID')=? AND json_extract(a.value,'$.Revision')=? AND json_extract(a.value,'$.Action')='withdrawn' AND EXISTS(SELECT 1 FROM json_each(r.before_json,'$.assertions') b WHERE json_extract(b.value,'$.AssertionID')=? AND json_extract(b.value,'$.Action')='assert') AND NOT EXISTS(SELECT 1 FROM json_each(r.after_json,'$.after.faces') f WHERE json_extract(f.value,'$.assertion_id')=?))`, assertion.AssertionID, assertion.Revision, assertion.AssertionID, assertion.AssertionID).Scan(&automatic)
+	return automatic, err
 }
 
 func faceStateCandidateIDs(state PhotoFaceDecisionState) []string {

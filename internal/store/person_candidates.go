@@ -305,6 +305,15 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDec
 				if e := requireFaceOccurrenceTx(ctx, tx, o); e != nil {
 					return e
 				}
+				if decision.Action == "reject" && candidate.SuggestedPersonID != "" {
+					var assigned bool
+					if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_faces f JOIN person_document_assertions a ON a.assertion_id=f.assertion_id WHERE f.face_id=? AND a.person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=?),?))`, o.EvidenceID, candidate.SuggestedPersonID, candidate.SuggestedPersonID).Scan(&assigned); err != nil {
+						return err
+					}
+					if assigned {
+						return ErrPersonIdentityConflict
+					}
+				}
 				if _, e := tx.ExecContext(ctx, `UPDATE photo_faces SET revision=revision+1 WHERE face_id=?`, o.EvidenceID); e != nil {
 					return e
 				}
