@@ -166,7 +166,7 @@ export class Photos {
   async preview(photo: PhotoBrowseRow, size: "fit" | "large", signal: AbortSignal): Promise<PhotoPreviewSlot> {
     if (photo.previews[size].state !== "missing") return photo.previews[size];
     try {
-      const slot = await this.write(() => preparePhotoPreview(photo.asset_id, { content_version_id: photo.content_version_id, size, hidden: this.hidden }, { session: this.session, signal }));
+      const slot = await preparePhotoPreview(photo.asset_id, { content_version_id: photo.content_version_id, size, hidden: this.hidden }, { session: this.session, signal });
       signal.throwIfAborted();
       photo.previews[size] = slot;
       return slot;
