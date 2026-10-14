@@ -166,7 +166,7 @@ export class Photos {
   async preview(photo: PhotoBrowseRow, size: "fit" | "large", signal: AbortSignal): Promise<PhotoPreviewSlot> {
     if (photo.previews[size].state !== "missing") return photo.previews[size];
     try {
-      const slot = await preparePhotoPreview(photo.asset_id, { content_version_id: photo.content_version_id, size, hidden: this.hidden }, { session: this.session, signal });
+      const slot = await this.write(() => preparePhotoPreview(photo.asset_id, { content_version_id: photo.content_version_id, size, hidden: this.hidden }, { session: this.session, signal }));
       signal.throwIfAborted();
       photo.previews[size] = slot;
       return slot;
@@ -422,24 +422,26 @@ export class Photos {
     this.cancelPending();
     this.trashing = true;
     this.rejectsError = "";
-    try {
-      const result = await movePhotoRejects({ hidden: this.hidden, targets }, { session: this.session, signal: AbortSignal.timeout(photoRejectsTimeout) });
-      if (result.moved.length !== targets.length || result.moved.some((id, i) => id !== targets[i].asset_id)) throw new Error("Invalid rejects move response");
-      await this.removeConfirmed(result.moved, preserve);
-      this.rejects = undefined;
-      ontrashed?.();
-      await this.refresh(preserve);
-      return true;
-    } catch (cause) {
-      this.rejects = undefined;
-      this.rejectsFailure(cause);
-      if (!(cause instanceof APIError) || cause.status >= 500 && cause.code !== "maintenance_busy") {
-        this.rejectsError = "The move may have completed. Refresh Photos before trying again.";
+    return this.write(async () => {
+      try {
+        const result = await movePhotoRejects({ hidden: this.hidden, targets }, { session: this.session, signal: AbortSignal.timeout(photoRejectsTimeout) });
+        if (result.moved.length !== targets.length || result.moved.some((id, i) => id !== targets[i].asset_id)) throw new Error("Invalid rejects move response");
+        await this.removeConfirmed(result.moved, preserve);
+        this.rejects = undefined;
         ontrashed?.();
-      }
-      await this.refresh(preserve);
-      return false;
-    } finally { this.trashing = false; }
+        await this.refresh(preserve);
+        return true;
+      } catch (cause) {
+        this.rejects = undefined;
+        this.rejectsFailure(cause);
+        if (!(cause instanceof APIError) || cause.status >= 500 && cause.code !== "maintenance_busy") {
+          this.rejectsError = "The move may have completed. Refresh Photos before trying again.";
+          ontrashed?.();
+        }
+        await this.refresh(preserve);
+        return false;
+      } finally { this.trashing = false; }
+    });
   }
 
   private rejectsFailure(cause: unknown) {
@@ -569,7 +571,11 @@ export class Photos {
         return successes;
       } finally { this[action] = false; if (this.projection) void this.resume(preserve); }
     };
-    return this.hiddenAccess && (this.hidden || action === "hiding") ? this.hiddenAccess.run(batch) : batch();
+    return this.write(batch, this.hidden || action === "hiding");
+  }
+
+  private write<T>(request: () => Promise<T>, needsHidden = this.hidden): Promise<T> {
+    return this.hiddenAccess && needsHidden ? this.hiddenAccess.run(request) : request();
   }
 
   // reloadCounts replaces counts that a change outside this listing made stale,

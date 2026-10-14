@@ -4,6 +4,7 @@ import * as download from "./download.js";
 import { Photos, loadDensity, photoQuery, mapPhotoLimit, type PhotoRow } from "./photos.svelte.js";
 import { photo, mapPhoto } from "./photo-test-fixtures.js";
 import * as snapshots from "./snapshots.js";
+import { HiddenAccess } from "./hiddenAccess.svelte.js";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); });
 const response = (items: PhotoRow[], cursor?: string, mapProjection = items.some(row => !("content_version_id" in row))) => new Response(JSON.stringify({ ...(mapProjection ? { items: [], map_items: items } : { items }), total: 3, next_cursor: cursor }));
@@ -1017,6 +1018,30 @@ it.each([false, true])("looks up direct photos without replacing loaded results,
  expect(JSON.parse(fetcher.mock.calls[0][1].body).query.filters.asset_ids).toEqual(["photo-2"]);
  expect(JSON.parse(fetcher.mock.calls[0][1].body).hidden).toBe(hidden);
  expect(fetcher).toHaveBeenCalledTimes(2); photos.dispose();
+});
+
+it("finishes Hidden preview preparation before a queued leave lock", async () => {
+  let finish!: (response: Response) => void;
+  const completed: string[] = [];
+  vi.stubGlobal("fetch", async (url: string) => {
+    if (url.endsWith("/preview")) {
+      const result = await new Promise<Response>(resolve => finish = resolve);
+      completed.push("preview");
+      return result;
+    }
+    completed.push("lock");
+    return Response.json({});
+  });
+  const access = new HiddenAccess("scoped", vi.fn());
+  const photos = new Photos("scoped", vi.fn(), true, undefined, undefined, access);
+  const preview = photos.preview(photo(1), "fit", new AbortController().signal);
+  const lock = access.lock();
+  await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+  expect(completed).toEqual([]);
+  finish(Response.json({ state: "ready", generation_id: "fit-generation" }));
+  await Promise.all([preview, lock]);
+  expect(completed).toEqual(["preview", "lock"]);
+  photos.dispose();
 });
 
 it.each([{ hidden: false, status: 401 }, { hidden: true, status: 403 }])("retains prepared preview slots and applies access cleanup for lookup, preparation and original reads, hidden=$hidden", async ({ hidden, status }) => {

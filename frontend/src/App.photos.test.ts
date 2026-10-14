@@ -105,7 +105,7 @@ it.each(["setup", "unlock", "change", "disable"])("preserves submitted %s passco
   expect(requests).toEqual(kind === "setup" ? [{ kind: "setup", body: { passcode: "submitted-passcode" } }, { kind: "unlock", body: { passcode: "submitted-passcode" } }] : [{ kind, body: kind === "change" ? { passcode: "submitted-current", new_passcode: "submitted-new" } : { passcode: kind === "disable" ? "submitted-current" : "submitted-passcode" } }]);
 });
 
-it.each(["unhide", "trash"])("finishes every submitted %s before locking when the tab is hidden", async action => {
+it.each(["unhide", "trash", "rejects"])("finishes every submitted %s before locking when the tab is hidden", async action => {
   history.replaceState(null, "", "/photos/hidden#web_session=synthetic&web_upload_secret=proof");
   storage();
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
@@ -117,6 +117,13 @@ it.each(["unhide", "trash"])("finishes every submitted %s before locking when th
   stubPhotoFetch(vi.fn(async (url: string) => {
     if (url.endsWith("/photos/hidden/lock")) { locked = true; completed.push("lock"); return Response.json({}); }
     if (url.endsWith("/photos/hidden")) return Response.json({ configured: true, expires_at: "2099-01-01T00:00:00Z", expires_in: 300 });
+    if (url.endsWith("/photos/rejects/preflight")) return Response.json({ targets: [1, 2, 3].map(i => ({ asset_id: `photo-${i}`, revision: 1, member_revision: 1 })), photos: 3, files: 3, unchanged: 0, mixed: [], mixed_count: 0, selection_limit: 64 });
+    if (url.endsWith("/photos/rejects/trash")) {
+      await new Promise<void>(resolve => finish = resolve);
+      if (locked) return Response.json({ detail: "Hidden locked", code: "hidden_locked" }, { status: 403 });
+      completed.push("photo-1", "photo-2", "photo-3");
+      return Response.json({ moved: [...completed] });
+    }
     const target = url.match(new RegExp(`/assets/(photo-\\d+)/${action}$`))?.[1];
     if (target) {
       if (target === "photo-1") await new Promise<void>(resolve => finish = resolve);
@@ -134,6 +141,9 @@ it.each(["unhide", "trash"])("finishes every submitted %s before locking when th
   if (action === "unhide") {
     await fireEvent.click(screen.getByRole("button", { name: "Actions for Photo 1.jpg" }));
     await fireEvent.click(await screen.findByRole("menuitem", { name: "Unhide" }));
+  } else if (action === "rejects") {
+    await fireEvent.click(screen.getByRole("button", { name: "Move rejects" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Move 3 to trash" }));
   } else {
     await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
     await fireEvent.click(within(screen.getByRole("dialog", { name: "Move selected photos to trash" })).getByRole("button", { name: "Move to trash" }));
