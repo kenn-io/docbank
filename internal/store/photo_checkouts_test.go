@@ -2,7 +2,6 @@ package store
 
 import (
 	"bytes"
-	"context"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -159,20 +158,19 @@ func TestPhotoCheckoutPublicationReservesAssetWriter(t *testing.T) {
 	require.NoError(t, err)
 	entries, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
 	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
+	ctx := t.Context()
 	require.NoError(t, s.PublishPhotoCheckoutEntry(ctx, entries[0], func() (bool, error) {
 		// An independent connection can write because publication holds no SQLite transaction.
 		_, err := s.db.ExecContext(ctx, `UPDATE storage_operations SET error='' WHERE operation_id=?`, c.OperationID)
 		if err != nil {
 			return false, err
 		}
-		blocked, stop := context.WithTimeout(ctx, 2*time.Second)
-		defer stop()
-		_, err = s.SetPhotoAssetExcluded(blocked, a.ID, a.Revision, true)
-		require.ErrorIs(t, err, context.DeadlineExceeded)
+		writer := s.writeDB.Stats()
+		require.Equal(t, 1, writer.MaxOpenConnections)
+		require.Equal(t, 1, writer.InUse)
 		return true, nil
 	}))
+	require.Zero(t, s.writeDB.Stats().InUse)
 	_, err = s.SetPhotoAssetExcluded(ctx, a.ID, a.Revision, true)
 	require.NoError(t, err)
 	entries, err = s.PhotoCheckoutEntries(t.Context(), c.ID)

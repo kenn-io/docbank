@@ -467,14 +467,15 @@ func TestLocalFileReadRejectsConcurrentChange(t *testing.T) {
 	ing := newTestIngester(t)
 	ctx := t.Context()
 	for _, test := range []struct {
-		name string
-		edit func(t *testing.T, path string, before localFileFingerprint)
+		name          string
+		expectChanged bool
+		edit          func(t *testing.T, path string, before localFileFingerprint)
 	}{
-		{name: "size changed", edit: func(t *testing.T, path string, _ localFileFingerprint) {
+		{name: "size changed", expectChanged: true, edit: func(t *testing.T, path string, _ localFileFingerprint) {
 			t.Helper()
 			require.NoError(t, os.WriteFile(path, []byte("changed-size"), 0o600))
 		}},
-		{name: "same-size replacement", edit: func(t *testing.T, path string, before localFileFingerprint) {
+		{name: "same-size replacement", expectChanged: true, edit: func(t *testing.T, path string, before localFileFingerprint) {
 			t.Helper()
 			require.NoError(t, os.Rename(path, path+".old"))
 			require.NoError(t, os.WriteFile(path, []byte("same"), 0o600))
@@ -493,8 +494,9 @@ func TestLocalFileReadRejectsConcurrentChange(t *testing.T) {
 			test.edit(t, path, before)
 			_, err = ing.readLocalFile(ctx, path, path, nil, &before)
 			require.Error(t, err)
-			if test.name != "disappeared" {
+			if test.expectChanged {
 				assert.ErrorIs(t, err, ErrSourceChanged)
+				assert.ErrorContains(t, err, "replaced before opening")
 			}
 		})
 	}
@@ -541,6 +543,7 @@ func TestLocalFileReadRejectsConcurrentChange(t *testing.T) {
 			context.Background(), filePath, filePath, progress, &settled,
 		)
 		require.ErrorIs(t, err, ErrSourceChanged)
+		require.ErrorContains(t, err, "watched path was replaced while reading")
 		assert.True(t, replaced)
 	})
 }

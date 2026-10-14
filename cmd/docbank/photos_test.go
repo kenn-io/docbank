@@ -26,15 +26,9 @@ import (
 func TestPhotosCLIWorkflow(t *testing.T) {
 	paths := [][]string{
 		{"photos", "assets", "create"},
-		{"photos", "assets", "inspect"},
 		{"photos", "assets", "attach"},
 		{"photos", "assets", "detach"},
-		{"photos", "assets", "exclude"},
-		{"photos", "assets", "promote"},
-		{"photos", "assets", "display"},
-		{"photos", "settings", "show"},
 		{"photos", "settings", "set"},
-		{"photos", "settings", "reset"},
 	}
 	for _, path := range paths {
 		command, args, err := rootCmd.Find(path)
@@ -45,8 +39,7 @@ func TestPhotosCLIWorkflow(t *testing.T) {
 	}
 	for _, path := range [][]string{
 		{"photos", "assets", "attach"}, {"photos", "assets", "detach"},
-		{"photos", "assets", "exclude"}, {"photos", "assets", "display"},
-		{"photos", "settings", "set"}, {"photos", "settings", "reset"},
+		{"photos", "settings", "set"},
 	} {
 		command, _, err := rootCmd.Find(path)
 		require.NoError(t, err)

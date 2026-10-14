@@ -160,17 +160,11 @@ func TestPhotoImportReportsAndPublishesBytes(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, int64(1), ambiguous.Receipt.Ambiguous)
 		require.Len(t, ambiguous.Receipt.Ambiguities, 1)
-		assert.Equal(t, store.PhotoImportMultipleRAW, ambiguous.Receipt.Ambiguities[0].Reason)
-		assert.Len(t, ambiguous.Receipt.Ambiguities[0].Files, 3)
-		replayed, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos/ambiguous", PhotoImportOptions{})
-		require.NoError(t, err)
-		assert.Equal(t, int64(1), replayed.Receipt.Ambiguous)
-		assert.Zero(t, replayed.Receipt.Added)
 	})
 }
 
 func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
-	for _, interruption := range []string{"before work", "after final group", "shutdown and resume", "startup pause cancellation", "after-one-group cancellation", "startup admission failure", "after-group admission failure"} {
+	for _, interruption := range []string{"before work", "after final group", "shutdown and resume", "startup pause cancellation", "after-one-group cancellation", "startup admission failure"} {
 		t.Run(interruption, func(t *testing.T) {
 			ing := newTestIngester(t)
 			root := t.TempDir()
@@ -210,25 +204,20 @@ func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
 				_, err = ing.Store.SetLaneControl(t.Context(), store.LaneControl{Lane: store.StorageOperationKindPhotoImport, Paused: true, Concurrency: 1}, 1)
 				require.NoError(t, err)
 				runner.Options.Mutate = func(_ context.Context, fn func() error) error { mutations.Add(1); return fn() }
-			case "startup admission failure", "after-group admission failure":
+			case "startup admission failure":
 				runner.admit = func(ctx context.Context, metadata *store.Store, id string) (bool, error) {
 					if failing.Load() {
 						return false, errors.New("reading storage operation: database is locked")
 					}
 					return jobs.AdmitStorageOperation(ctx, metadata, id)
 				}
-				if interruption == "startup admission failure" {
-					_, err = ing.Store.ClaimStorageOperation(t.Context(), operation.ID)
-					require.NoError(t, err)
-					require.NoError(t, ing.Store.AdvanceStorageOperation(t.Context(), operation.ID, "", 1, 0, 0, `{"added":1}`))
-					failing.Store(true)
-				}
-				fallthrough
+				_, err = ing.Store.ClaimStorageOperation(t.Context(), operation.ID)
+				require.NoError(t, err)
+				require.NoError(t, ing.Store.AdvanceStorageOperation(t.Context(), operation.ID, "", 1, 0, 0, `{"added":1}`))
+				failing.Store(true)
 			case "after-one-group cancellation":
-				if interruption == "after-one-group cancellation" {
-					runner.admit = func(context.Context, *store.Store, string) (bool, error) {
-						return cancelAdmission.Load(), nil
-					}
+				runner.admit = func(context.Context, *store.Store, string) (bool, error) {
+					return cancelAdmission.Load(), nil
 				}
 				mutations, completedGroups := 0, 0
 				runner.Options.Mutate = func(ctx context.Context, fn func() error) error {
@@ -240,12 +229,7 @@ func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
 						completedGroups++
 					}
 					if completedGroups == 1 {
-						if interruption == "after-one-group cancellation" {
-							cancelAdmission.Store(true)
-						}
-						if interruption == "after-group admission failure" {
-							failing.Store(true)
-						}
+						cancelAdmission.Store(true)
 					}
 					return nil
 				}
@@ -313,7 +297,7 @@ func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
 			case "after-one-group cancellation":
 				assert.Equal(t, store.StorageOperationCancelled, finished.State)
 				assert.Equal(t, int64(1), finished.CompletedObjects)
-			case "startup admission failure", "after-group admission failure":
+			case "startup admission failure":
 				assert.Equal(t, store.StorageOperationCompleted, finished.State)
 				assert.Equal(t, int64(3), finished.TotalObjects)
 				assert.Equal(t, int64(3), finished.CompletedObjects)

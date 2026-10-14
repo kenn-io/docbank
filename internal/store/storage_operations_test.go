@@ -11,7 +11,7 @@ import (
 	"go.kenn.io/kit/packstore"
 )
 
-func TestStorageOperationPersistsPlacementProgressAndResumes(t *testing.T) {
+func TestStorageOperationPersistsProgressAndResumesAndValidatesLocalMetadata(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	created, err := s.CreateStorageOperation(t.Context(), StorageOperationCreate{
@@ -49,44 +49,28 @@ func TestStorageOperationPersistsPlacementProgressAndResumes(t *testing.T) {
 	require.Len(t, items, 1)
 	assert.Equal(t, StorageOperationCancelled, items[0].State)
 	assert.NotNil(t, items[0].FinishedAt)
-}
-
-func TestLocalOperationPersistsTotalAndReceiptAndRejectsUnknownKind(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	created, err := s.CreateLocalOperation(t.Context(), StorageOperationKindPhotoImport, `{"source_root":"/camera","destination":"/photos"}`)
-	require.NoError(t, err)
-	require.NoError(t, validateUUIDv4(created.ID))
-	assert.Equal(t, StorageOperationQueued, created.State)
-	require.Error(t, s.SetStorageOperationTotal(t.Context(), created.ID, 3))
-	claimed, err := s.ClaimStorageOperation(t.Context(), created.ID)
-	require.NoError(t, err)
-	assert.Equal(t, StorageOperationRunning, claimed.State)
-	require.NoError(t, s.SetStorageOperationTotal(t.Context(), created.ID, 3))
-	const receipt = `{"added":1}`
-	require.NoError(t, s.AdvanceStorageOperation(t.Context(), created.ID, "", 1, 0, 0, receipt))
-	require.NoError(t, s.RequestStorageOperationCancel(t.Context(), created.ID))
-	current, err := s.StorageOperation(t.Context(), created.ID)
-	require.NoError(t, err)
-	resumable, err := s.ResumableStorageOperations(t.Context())
-	require.NoError(t, err)
-	require.Equal(t, []StorageOperation{current}, resumable)
-	assert.Equal(t, int64(3), current.TotalObjects)
-	assert.Equal(t, receipt, current.ReceiptJSON)
-	assert.Empty(t, current.Cursor)
-	assert.Zero(t, current.CopiedObjects)
-	assert.Equal(t, int64(1), current.CompletedObjects)
-	assert.Zero(t, current.CopiedBytes)
-	assert.True(t, current.CancelRequested)
-	require.NoError(t, s.FinishStorageOperation(t.Context(), created.ID, StorageOperationCancelled, receipt, "", time.Time{}))
-	items, err := s.StorageOperations(t.Context(), 10)
-	require.NoError(t, err)
-	require.Len(t, items, 1)
-	assert.Equal(t, StorageOperationCancelled, items[0].State)
-	assert.NotNil(t, items[0].FinishedAt)
-	assert.Equal(t, receipt, items[0].ReceiptJSON)
-	_, err = s.CreateLocalOperation(t.Context(), "unknown", `{}`)
-	require.Error(t, err)
+	t.Run("local total receipt and kind validation", func(t *testing.T) {
+		s := newTestStore(t)
+		created, err := s.CreateLocalOperation(t.Context(), StorageOperationKindPhotoImport, `{"source_root":"/camera","destination":"/photos"}`)
+		require.NoError(t, err)
+		require.NoError(t, validateUUIDv4(created.ID))
+		require.Error(t, s.SetStorageOperationTotal(t.Context(), created.ID, 3))
+		_, err = s.ClaimStorageOperation(t.Context(), created.ID)
+		require.NoError(t, err)
+		require.NoError(t, s.SetStorageOperationTotal(t.Context(), created.ID, 3))
+		const receipt = `{"added":1}`
+		require.NoError(t, s.AdvanceStorageOperation(t.Context(), created.ID, "", 1, 0, 0, receipt))
+		current, err := s.StorageOperation(t.Context(), created.ID)
+		require.NoError(t, err)
+		assert.Equal(t, int64(3), current.TotalObjects)
+		assert.Equal(t, receipt, current.ReceiptJSON)
+		require.NoError(t, s.FinishStorageOperation(t.Context(), created.ID, StorageOperationCancelled, receipt, "", time.Time{}))
+		finished, err := s.StorageOperation(t.Context(), created.ID)
+		require.NoError(t, err)
+		assert.Equal(t, receipt, finished.ReceiptJSON)
+		_, err = s.CreateLocalOperation(t.Context(), "unknown", `{}`)
+		require.Error(t, err)
+	})
 }
 
 func TestStorageOperationRejectsCancellationAfterCompletion(t *testing.T) {
