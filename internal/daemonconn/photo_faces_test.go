@@ -30,6 +30,7 @@ func TestPhotoFaceClientValidatesResponses(t *testing.T) {
 	}
 	wrongVersion := face
 	wrongVersion.ContentVersionID = "55555555-5555-4555-8555-555555555555"
+	wrongVersion.AssertionID = ""
 	faceWithoutAssertion := face
 	faceWithoutAssertion.AssertionID = ""
 	cases := []struct {
