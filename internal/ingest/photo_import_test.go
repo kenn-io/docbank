@@ -207,7 +207,8 @@ func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
 				require.NoError(t, err)
 				require.NoError(t, ing.Store.SetStorageOperationTotal(t.Context(), operation.ID, 3))
 				require.NoError(t, ing.Store.AdvanceStorageOperation(t.Context(), operation.ID, "group-two", 2, 1, 42, `{"added":2,"skipped":1}`))
-				runner.admit = func(context.Context, *store.Store, string) (bool, error) { return true, nil }
+				_, err = ing.Store.SetLaneControl(t.Context(), store.LaneControl{Lane: store.StorageOperationKindPhotoImport, Paused: true, Concurrency: 1}, 1)
+				require.NoError(t, err)
 				runner.Options.Mutate = func(_ context.Context, fn func() error) error { mutations.Add(1); return fn() }
 			case "startup admission failure", "after-group admission failure":
 				runner.admit = func(ctx context.Context, metadata *store.Store, id string) (bool, error) {
@@ -261,13 +262,26 @@ func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
 				require.Len(t, resumable, 1)
 				assert.Equal(t, store.StorageOperationRunning, resumable[0].State)
 			}
-			if strings.Contains(interruption, "admission failure") {
+			if interruption == "startup pause cancellation" {
 				supervisor := jobs.New(t.Context(), nil)
 				defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
 				require.NoError(t, runner.Start(supervisor, operation.ID))
 				require.Eventually(t, func() bool {
 					current, err := ing.Store.StorageOperation(t.Context(), operation.ID)
-					return err == nil && current.State == store.StorageOperationQueued && current.CompletedObjects > 0 && (current.Error != "" || !strings.Contains(interruption, "admission failure"))
+					return err == nil && current.State == store.StorageOperationQueued
+				}, 10*time.Second, 10*time.Millisecond)
+				require.NoError(t, ing.Store.RequestStorageOperationCancel(t.Context(), operation.ID))
+				require.Eventually(t, func() bool {
+					current, err := ing.Store.StorageOperation(t.Context(), operation.ID)
+					return err == nil && current.State == store.StorageOperationCancelled
+				}, 10*time.Second, 10*time.Millisecond)
+			} else if strings.Contains(interruption, "admission failure") {
+				supervisor := jobs.New(t.Context(), nil)
+				defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
+				require.NoError(t, runner.Start(supervisor, operation.ID))
+				require.Eventually(t, func() bool {
+					current, err := ing.Store.StorageOperation(t.Context(), operation.ID)
+					return err == nil && current.State == store.StorageOperationQueued && current.CompletedObjects > 0 && current.Error != ""
 				}, 10*time.Second, 10*time.Millisecond)
 				current, err := ing.Store.StorageOperation(t.Context(), operation.ID)
 				require.NoError(t, err)

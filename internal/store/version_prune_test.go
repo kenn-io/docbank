@@ -624,7 +624,7 @@ func TestPruneSoleWaiterKeepsRetriedProviderResumeFence(t *testing.T) {
 		"fresh consent must not resubmit a provider operation with a durable handle")
 }
 
-func TestPruneContentVersionsRetainsDependenciesAndCheckpointsAllPrior(t *testing.T) {
+func TestPruneContentVersionsRetainsAuthoritiesAndCheckpointsAllPrior(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()

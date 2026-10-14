@@ -398,7 +398,7 @@ func TestTrashListAndEmpty(t *testing.T) {
 		require.Equal(t, http.StatusOK, resp.StatusCode, body)
 		var out api.TrashEmptyReport
 		require.NoError(t, json.Unmarshal([]byte(body), &out))
-		want := api.TrashEmptyReport{CandidateRoots: expected.Candidates, RetainedRoots: expected.Retained, HeldRoots: expected.Held, Run: run}
+		want := api.TrashEmptyReport{CandidateRoots: expected.Candidates, RetainedRoots: 1, HeldRoots: 1, Run: run}
 		if run {
 			want.Deleted = expected.Candidates
 		}

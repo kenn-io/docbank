@@ -276,7 +276,7 @@ func TestTrashedRootsPageIsBounded(t *testing.T) {
 	require.ErrorContains(t, err, "trash offset")
 }
 
-func TestTrashEmptyRetainsMediaAuthorityAndCheckoutEntryPinsAndDeletesUnrelatedRoots(t *testing.T) {
+func TestTrashEmptyRetainsAuthorityPinsAndDeletesUnrelatedRoots(t *testing.T) {
 	t.Parallel()
 	for _, authority := range []string{"source version", "input artifact", "checkout entry", "sealed snapshot"} {
 		t.Run(authority, func(t *testing.T) {

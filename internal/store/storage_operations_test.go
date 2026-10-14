@@ -32,7 +32,7 @@ func TestStorageOperationPersistsProgressAndCancellation(t *testing.T) {
 			assert.Equal(t, StorageOperationQueued, created.State)
 			if local {
 				require.Error(t, s.SetStorageOperationTotal(t.Context(), created.ID, 3))
-			} else {
+			} else if kind == "placement" {
 				require.NoError(t, s.NoteQueuedStorageOperation(t.Context(), created.ID, strings.Repeat("界", 2000)))
 				queued, err := s.StorageOperation(t.Context(), created.ID)
 				require.NoError(t, err)
@@ -42,6 +42,11 @@ func TestStorageOperationPersistsProgressAndCancellation(t *testing.T) {
 			claimed, err := s.ClaimStorageOperation(t.Context(), created.ID)
 			require.NoError(t, err)
 			assert.Equal(t, StorageOperationRunning, claimed.State)
+			if kind == "completed" {
+				require.NoError(t, s.FinishStorageOperation(t.Context(), created.ID, StorageOperationCompleted, `{}`, "", time.Now().Add(24*time.Hour)))
+				require.ErrorIs(t, s.RequestStorageOperationCancel(t.Context(), created.ID), ErrStorageOperationTerminal)
+				return
+			}
 			if kind == "placement" {
 				resumable, err := s.ResumableStorageOperations(t.Context())
 				require.NoError(t, err)
@@ -59,9 +64,7 @@ func TestStorageOperationPersistsProgressAndCancellation(t *testing.T) {
 				cursor, copied, copiedBytes, receipts = "", 0, 0, []string{progressReceipt}
 			}
 			require.NoError(t, s.AdvanceStorageOperation(t.Context(), created.ID, cursor, 1, copied, copiedBytes, receipts...))
-			if kind != "completed" {
-				require.NoError(t, s.RequestStorageOperationCancel(t.Context(), created.ID))
-			}
+			require.NoError(t, s.RequestStorageOperationCancel(t.Context(), created.ID))
 
 			current, err := s.StorageOperation(t.Context(), created.ID)
 			require.NoError(t, err)
@@ -76,27 +79,20 @@ func TestStorageOperationPersistsProgressAndCancellation(t *testing.T) {
 			assert.Equal(t, copied, current.CopiedObjects)
 			assert.Equal(t, int64(1), current.CompletedObjects)
 			assert.Equal(t, copiedBytes, current.CopiedBytes)
-			assert.Equal(t, kind != "completed", current.CancelRequested)
+			assert.True(t, current.CancelRequested)
 
 			receipt, expiry := `{"cancelled":true}`, time.Now().Add(24*time.Hour)
 			if local {
 				receipt, expiry = progressReceipt, time.Time{}
 			}
-			terminal := StorageOperationCancelled
-			if kind == "completed" {
-				terminal = StorageOperationCompleted
-			}
 			require.NoError(t, s.FinishStorageOperation(
-				t.Context(), created.ID, terminal, receipt, "", expiry,
+				t.Context(), created.ID, StorageOperationCancelled, receipt, "", expiry,
 			))
 			items, err := s.StorageOperations(t.Context(), 10)
 			require.NoError(t, err)
 			require.Len(t, items, 1)
-			assert.Equal(t, terminal, items[0].State)
+			assert.Equal(t, StorageOperationCancelled, items[0].State)
 			assert.NotNil(t, items[0].FinishedAt)
-			if kind == "completed" {
-				require.ErrorIs(t, s.RequestStorageOperationCancel(t.Context(), created.ID), ErrStorageOperationTerminal)
-			}
 			if local {
 				assert.Equal(t, progressReceipt, items[0].ReceiptJSON)
 				_, err = s.CreateLocalOperation(t.Context(), "unknown", `{}`)

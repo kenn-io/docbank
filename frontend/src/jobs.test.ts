@@ -60,7 +60,7 @@ describe("activity lanes", () => {
     expect(unknown.total).toBeUndefined();
   });
 
-  it("orders lane members newest first at fractional-second precision", () => {
+  it("orders lane members at fractional-second precision and retains paused controls and latest status", () => {
     const [lane] = jobLanes(
       [
         job({ status: "failed", started_at: "2026-07-23T12:00:00.1Z" }),

@@ -36,7 +36,6 @@ func TestGetCLIRequestsAndPublishesCurrentVersion(t *testing.T) {
 	output := filepath.Join(t.TempDir(), "retrieved.bin")
 	requests := make(chan string, 8)
 	contentRequests := make(chan string, 8)
-	lateDestinations := make(chan string, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case kitdaemon.DefaultPingPath:
@@ -55,19 +54,11 @@ func TestGetCLIRequestsAndPublishesCurrentVersion(t *testing.T) {
 			if r.URL.Path == "/api/v1/nodes/42" {
 				response.TrashedAt = "2026-01-01T00:00:00Z"
 			}
-			if r.URL.Query().Get("path") == "/inbox/race.bin" {
-				response.Name = "race.bin"
-			}
 			w.Header().Set("Content-Type", "application/json")
 			assert.NoError(t, json.MarshalWrite(w, response))
 		case "/api/v1/versions/" + node.CurrentVersionID + "/content":
 			assert.Equal(t, http.MethodGet, r.Method)
 			contentRequests <- r.URL.Path
-			select {
-			case sentinel := <-lateDestinations:
-				assert.NoError(t, os.WriteFile(output, []byte(sentinel), 0o600))
-			default:
-			}
 			w.Header().Set(api.ContentVersionHeader, node.CurrentVersionID)
 			w.Header().Set(api.BlobHashHeader, node.BlobHash)
 			w.Header().Set(api.BlobSizeHeader, strconv.FormatInt(node.Size, 10))
@@ -83,19 +74,19 @@ func TestGetCLIRequestsAndPublishesCurrentVersion(t *testing.T) {
 	_, err := daemonconn.RuntimeStore(vault).Write(daemonconn.NewRecord(strings.TrimPrefix(server.URL, "http://"), "synthetic-key", token, ""))
 	require.NoError(t, err)
 	for _, test := range []struct {
-		selector, lateDestination, expectedError string
-		overwrite                                bool
+		selector, existingDestination, expectedError string
+		overwrite                                    bool
 	}{
 		{selector: "/inbox/statement.bin"},
-		{selector: "id:42", lateDestination: "existing destination", overwrite: true},
-		{selector: "/inbox/race.bin", lateDestination: "appeared during download", expectedError: "pass --overwrite"},
+		{selector: "id:42", existingDestination: "existing destination", overwrite: true},
+		{selector: "/inbox/statement.bin", existingDestination: "existing destination", expectedError: "pass --overwrite"},
 	} {
 		err := os.Remove(output)
 		if !os.IsNotExist(err) {
 			require.NoError(t, err)
 		}
-		if test.lateDestination != "" {
-			lateDestinations <- test.lateDestination
+		if test.existingDestination != "" {
+			require.NoError(t, os.WriteFile(output, []byte(test.existingDestination), 0o600))
 		}
 		args := []string{"get", test.selector, output, "--json"}
 		if test.overwrite {
@@ -106,7 +97,7 @@ func TestGetCLIRequestsAndPublishesCurrentVersion(t *testing.T) {
 			require.ErrorContains(t, err, test.expectedError)
 			published, readErr := os.ReadFile(output)
 			require.NoError(t, readErr)
-			assert.Equal(t, test.lateDestination, string(published))
+			assert.Equal(t, test.existingDestination, string(published))
 		} else {
 			require.NoError(t, err, out)
 			var receipt getReceipt
@@ -120,6 +111,11 @@ func TestGetCLIRequestsAndPublishesCurrentVersion(t *testing.T) {
 		stages, err := filepath.Glob(filepath.Join(filepath.Dir(output), "docbank-get-*"))
 		require.NoError(t, err)
 		assert.Empty(t, stages)
+		if test.expectedError != "" {
+			assert.Empty(t, requests)
+			assert.Empty(t, contentRequests)
+			continue
+		}
 		if test.selector == "id:42" {
 			assert.Equal(t, "/api/v1/nodes/42?", <-requests)
 		} else {

@@ -158,7 +158,7 @@ func TestPhotoSettingsRecomputeInheritedAssets(t *testing.T) {
 	assert.NoError(t, s.ValidateMetadata(ctx))
 }
 
-func TestPhotoMetadataRoundTripAndInvalidReferences(t *testing.T) {
+func TestPhotoMetadataPreservesAdmissionAndProvenanceAndRejectsInvalidReferences(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
