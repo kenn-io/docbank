@@ -114,10 +114,10 @@ func TestMistralEmbeddingAttemptTimeouts(t *testing.T) {
 					require.NoError(t, err)
 					response := mistralEmbeddingBody(t, []int{0})
 					server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-						count := requests.Add(1)
+						requests.Add(1)
 						_, _ = io.Copy(io.Discard, r.Body)
 						w.Header().Set("Content-Type", "application/json")
-						if stage != "credentials" && (outcome != "recover" || count < 3) {
+						if stage != "credentials" {
 							if stage == "body" {
 								w.WriteHeader(http.StatusOK)
 								assert.NoError(t, http.NewResponseController(w).Flush())
