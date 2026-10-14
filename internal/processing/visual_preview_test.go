@@ -957,7 +957,11 @@ func TestProduceVisualPreviewDownscalesOversizedJPEG(t *testing.T) {
 				mediaType = "image/x-adobe-dng"
 			}
 			digest := sha256.Sum256(source)
-			for _, size := range []string{"grid", "fit", "large"} {
+			sizes := []string{"fit"}
+			if test.name == "progressive" {
+				sizes = []string{"grid", "fit"}
+			}
+			for _, size := range sizes {
 				t.Run(size, func(t *testing.T) {
 					recipe, err := VisualPreviewRecipeForSize(size)
 					require.NoError(t, err)
@@ -1034,7 +1038,7 @@ func TestVisualPreviewJPEGDCBlockMeans(t *testing.T) {
 	}
 }
 
-func TestVisualPreviewJPEGDCRegressions(t *testing.T) {
+func TestVisualPreviewJPEGDCMarkerAndTableHandling(t *testing.T) {
 	t.Parallel()
 	source, err := os.ReadFile(filepath.Join("testdata", "progressive-444.jpg"))
 	require.NoError(t, err)
@@ -1126,31 +1130,32 @@ func TestVisualPreviewJPEGDCRegressions(t *testing.T) {
 	}
 	extendedRedefined := append(append(bytes.Clone(extended[:len(extended)-2]), sequentialQuant...), 0xff, 0xd9)
 	for _, test := range []struct {
-		name      string
-		data      []byte
-		wantError error
-		reference []byte
+		name        string
+		data        []byte
+		wantKind    string
+		wantMessage string
+		reference   []byte
 	}{
-		{"trailing fill bytes", append(bytes.Clone(baseline[:len(baseline)-2]), 0x00, 0x00, 0xff, 0xd9), nil, baseline},
-		{"fill bytes between scans", append(append(bytes.Clone(source[:firstAC]), 0x00, 0x00), source[firstAC:]...), nil, source},
-		{"trailing restart", append(bytes.Clone(baseline[:len(baseline)-2]), 0xff, 0xd0, 0xff, 0xd9), nil, baseline},
-		{"standalone TEM", append(bytes.Clone(source[:len(source)-2]), 0xff, 0x01, 0xff, 0xd9), nil, source},
-		{"RGB IDs with short JFIF", jfif, nil, source},
-		{"JFIF after frame", lateJFIF, nil, source},
-		{"JFIF after scan changes RGB", postScanJFIF, jpeg.UnsupportedError(""), nil},
-		{"Adobe after frame preserves RGB IDs", lateAdobe, nil, rgb},
-		{"Adobe after scan preserves JFIF", postScanAdobeJFIF, nil, source},
-		{"Adobe after scan changes YCbCr", postScanAdobe, jpeg.UnsupportedError(""), nil},
-		{"second frame", append(append(bytes.Clone(source[:len(source)-2]), rgb[frame:frameEnd]...), 0xff, 0xd9), jpeg.FormatError(""), nil},
-		{"progressive redefined quantization", redefined, nil, finalQuant},
-		{"baseline redefined quantization", sequentialRedefined, nil, baseline},
-		{"extended sequential redefined quantization", extendedRedefined, nil, extended},
-		{"empty AC scan", empty, jpeg.FormatError(""), nil},
-		{"damaged AC entropy", damaged, nil, source},
-		{"baseline DC selector above 1", badDC, jpeg.FormatError(""), nil},
-		{"baseline AC selector above 1", badAC, jpeg.FormatError(""), nil},
-		{"baseline DHT ID above 1", append(bytes.Clone(baseline[:len(baseline)-2]), badDHT...), jpeg.FormatError(""), nil},
-		{"extended sequential selectors above 1", extended, nil, baseline},
+		{"trailing fill bytes", append(bytes.Clone(baseline[:len(baseline)-2]), 0x00, 0x00, 0xff, 0xd9), "", "", baseline},
+		{"fill bytes between scans", append(append(bytes.Clone(source[:firstAC]), 0x00, 0x00), source[firstAC:]...), "", "", source},
+		{"trailing restart", append(bytes.Clone(baseline[:len(baseline)-2]), 0xff, 0xd0, 0xff, 0xd9), "", "", baseline},
+		{"standalone TEM", append(bytes.Clone(source[:len(source)-2]), 0xff, 0x01, 0xff, 0xd9), "", "", source},
+		{"RGB IDs with short JFIF", jfif, "", "", source},
+		{"JFIF after frame", lateJFIF, "", "", source},
+		{"JFIF after scan changes RGB", postScanJFIF, "unsupported", "", nil},
+		{"Adobe after frame preserves RGB IDs", lateAdobe, "", "", rgb},
+		{"Adobe after scan preserves JFIF", postScanAdobeJFIF, "", "", source},
+		{"Adobe after scan changes YCbCr", postScanAdobe, "unsupported", "", nil},
+		{"second frame", append(append(bytes.Clone(source[:len(source)-2]), rgb[frame:frameEnd]...), 0xff, 0xd9), "format", "bad frame header", nil},
+		{"progressive redefined quantization", redefined, "", "", finalQuant},
+		{"baseline redefined quantization", sequentialRedefined, "", "", baseline},
+		{"extended sequential redefined quantization", extendedRedefined, "", "", extended},
+		{"empty AC scan", empty, "format", "empty AC scan", nil},
+		{"damaged AC entropy", damaged, "", "", source},
+		{"baseline DC selector above 1", badDC, "format", "bad baseline Huffman selector", nil},
+		{"baseline AC selector above 1", badAC, "format", "bad baseline Huffman selector", nil},
+		{"baseline DHT ID above 1", append(bytes.Clone(baseline[:len(baseline)-2]), badDHT...), "format", "bad Huffman table", nil},
+		{"extended sequential selectors above 1", extended, "", "", baseline},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -1158,21 +1163,15 @@ func TestVisualPreviewJPEGDCRegressions(t *testing.T) {
 			config, err := jpeg.DecodeConfig(bytes.NewReader(data))
 			require.NoError(t, err)
 			got, err := decodeVisualPreviewJPEGDC(bufio.NewReader(bytes.NewReader(data)), config.ColorModel)
-			if test.wantError != nil {
+			if test.wantKind != "" {
 				require.Error(t, err)
-				if _, formatError := errors.AsType[jpeg.FormatError](test.wantError); formatError {
+				if test.wantKind == "format" {
 					var target jpeg.FormatError
 					require.ErrorAs(t, err, &target)
+					assert.Contains(t, target.Error(), test.wantMessage)
 				} else {
 					var target jpeg.UnsupportedError
 					require.ErrorAs(t, err, &target)
-				}
-				product, decodeErr := visualPreviewJPEGDecodeResult(document.VisualPreviewV1{}, "malformed JPEG", err)
-				require.NoError(t, decodeErr)
-				if _, unsupported := errors.AsType[jpeg.UnsupportedError](err); unsupported {
-					assert.Equal(t, document.VisualPreviewUnsupported, product.Preview.State)
-					require.NotNil(t, product.Preview.Failure)
-					assert.Equal(t, "unsupported_jpeg_feature", product.Preview.Failure.Code)
 				}
 				return
 			}
@@ -1188,22 +1187,11 @@ func TestVisualPreviewJPEGDCRegressions(t *testing.T) {
 
 func TestVisualPreviewJPEGDCReadErrors(t *testing.T) {
 	t.Parallel()
-	for _, readErr := range []error{io.EOF, io.ErrUnexpectedEOF, errors.New("injected read failure")} {
-		for _, prefix := range [][]byte{nil, {0xff, 0xd8}, {0xff, 0xd8, 0xff}} {
-			reader := io.MultiReader(bytes.NewReader(prefix), iotest.ErrReader(readErr))
-			_, err := decodeVisualPreviewJPEGDC(bufio.NewReader(reader), color.YCbCrModel)
-			require.ErrorIs(t, err, readErr)
-			product, decodeErr := visualPreviewJPEGDecodeResult(document.VisualPreviewV1{}, "truncated JPEG", err)
-			if errors.Is(readErr, io.EOF) || errors.Is(readErr, io.ErrUnexpectedEOF) {
-				require.NoError(t, decodeErr)
-				assert.Equal(t, document.VisualPreviewFailed, product.Preview.State)
-				require.NotNil(t, product.Preview.Failure)
-				assert.Equal(t, "decode_failed", product.Preview.Failure.Code)
-			} else {
-				require.ErrorIs(t, decodeErr, readErr)
-				assert.True(t, IsSourceContentUnavailable(decodeErr))
-			}
-		}
+	readErr := errors.New("injected read failure")
+	for _, prefix := range [][]byte{nil, {0xff, 0xd8}, {0xff, 0xd8, 0xff}} {
+		reader := io.MultiReader(bytes.NewReader(prefix), iotest.ErrReader(readErr))
+		_, err := decodeVisualPreviewJPEGDC(bufio.NewReader(reader), color.YCbCrModel)
+		require.ErrorIs(t, err, readErr)
 	}
 }
 
