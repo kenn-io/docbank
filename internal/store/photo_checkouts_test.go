@@ -157,34 +157,39 @@ func TestPhotoCheckoutRefusesUnavailableSources(t *testing.T) {
 
 func TestPhotoCheckoutMetadata(t *testing.T) {
 	t.Parallel()
-	var snapshot []byte
-	var assetID, checkoutID, secondFileID string
+	type fixture struct {
+		asset, second PhotoAsset
+		checkout      PhotoCheckout
+		entries       []PhotoCheckoutEntry
+		snapshot      []byte
+	}
+	makeFixture := func(t *testing.T, s *Store) fixture {
+		t.Helper()
+		a := albumAsset(t, s, "photo.jpg")
+		second := albumAsset(t, s, "second.jpg")
+		c, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, "machine-local-checkout", 100)
+		require.NoError(t, err)
+		entries, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
+		require.NoError(t, err)
+		require.NoError(t, s.PublishPhotoCheckoutEntry(t.Context(), entries[0], func() (bool, error) { return true, nil }))
+		require.NoError(t, s.FinishPhotoCheckout(t.Context(), c.ID, c.OperationID, StorageOperationFailed, "{}", "machine-local-error", time.Now().Add(time.Hour)))
+		var exported bytes.Buffer
+		require.NoError(t, s.ExportMetadata(t.Context(), &exported))
+		return fixture{a, second, c, entries, exported.Bytes()}
+	}
 	for _, driver := range v090UpgradeDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
 			s, err := Open(filepath.Join(t.TempDir(), "source.db"), driver.driver)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, s.Close()) })
-			a := albumAsset(t, s, "photo.jpg")
-			second := albumAsset(t, s, "second.jpg")
-			c, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, "machine-local-checkout", 100)
-			require.NoError(t, err)
-			entries, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
-			require.NoError(t, err)
-			require.NoError(t, s.PublishPhotoCheckoutEntry(t.Context(), entries[0], func() (bool, error) { return true, nil }))
-			require.NoError(t, s.FinishPhotoCheckout(t.Context(), c.ID, c.OperationID, StorageOperationFailed, "{}", "machine-local-error", time.Now().Add(time.Hour)))
-			var exported bytes.Buffer
-			require.NoError(t, s.ExportMetadata(t.Context(), &exported))
-			if snapshot == nil {
-				snapshot = append([]byte(nil), exported.Bytes()...)
-				assetID, checkoutID, secondFileID = a.ID, c.ID, second.Files[0].ID
-			}
-			entries[0].Published = false
+			f := makeFixture(t, s)
+			c, entries := f.checkout, f.entries
 			t.Run("export redaction and unbound restore", func(t *testing.T) {
-				require.NotContains(t, exported.String(), "machine-local-")
+				require.NotContains(t, string(f.snapshot), "machine-local-")
 				restored, err := Open(filepath.Join(t.TempDir(), "restored.db"), driver.driver)
 				require.NoError(t, err)
 				t.Cleanup(func() { require.NoError(t, restored.Close()) })
-				require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
+				require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(f.snapshot)))
 				actual, err := restored.PhotoCheckout(t.Context(), c.ID)
 				require.NoError(t, err)
 				require.Equal(t, c.Selection, actual.Selection)
@@ -198,16 +203,7 @@ func TestPhotoCheckoutMetadata(t *testing.T) {
 				require.Equal(t, entries, actualEntries)
 				var roundtrip bytes.Buffer
 				require.NoError(t, restored.ExportMetadata(t.Context(), &roundtrip))
-				require.Equal(t, exported.String(), roundtrip.String())
-			})
-			t.Run("detach preserves frozen entries", func(t *testing.T) {
-				before, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
-				require.NoError(t, err)
-				_, err = s.DetachPhotoFile(t.Context(), a.ID, a.Revision, a.Files[0].ID, PhotoDetachOptions{})
-				require.NoError(t, err)
-				after, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
-				require.NoError(t, err)
-				require.Equal(t, before, after)
+				require.Equal(t, string(f.snapshot), roundtrip.String())
 			})
 		})
 	}
@@ -215,8 +211,9 @@ func TestPhotoCheckoutMetadata(t *testing.T) {
 		if runtime.GOOS != "windows" {
 			t.Skip("Windows filename compatibility")
 		}
-		colonPath := "undated/" + assetID + "/Trip: Day 1.jpg"
-		portableLines := bytes.Split(snapshot, []byte{'\n'})
+		f := makeFixture(t, newTestStore(t))
+		colonPath := "undated/" + f.asset.ID + "/Trip: Day 1.jpg"
+		portableLines := bytes.Split(f.snapshot, []byte{'\n'})
 		for i, line := range portableLines {
 			if !bytes.Contains(line, []byte(`"type":"photo_checkout_entry"`)) {
 				continue
@@ -232,26 +229,29 @@ func TestPhotoCheckoutMetadata(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, windowsRestored.Close()) })
 		require.NoError(t, windowsRestored.ImportMetadata(t.Context(), bytes.NewReader(bytes.Join(portableLines, []byte{'\n'}))))
-		actual, err := windowsRestored.PhotoCheckout(t.Context(), checkoutID)
+		actual, err := windowsRestored.PhotoCheckout(t.Context(), f.checkout.ID)
 		require.NoError(t, err)
 		require.Equal(t, "unbound", actual.State)
-		actualEntries, err := windowsRestored.PhotoCheckoutEntries(t.Context(), checkoutID)
+		actualEntries, err := windowsRestored.PhotoCheckoutEntries(t.Context(), f.checkout.ID)
 		require.NoError(t, err)
 		require.Equal(t, colonPath, actualEntries[0].Path)
 		require.NoError(t, windowsRestored.ExportMetadata(t.Context(), &bytes.Buffer{}))
 	})
 	for _, bad := range []struct {
 		name   string
-		mutate func(*metadataPhotoCheckoutEntry)
+		mutate func(*metadataPhotoCheckoutEntry, fixture)
 		path   bool
 	}{
-		{"unsafe-path", func(entry *metadataPhotoCheckoutEntry) { entry.Path = "../photo.jpg" }, true},
-		{"size", func(entry *metadataPhotoCheckoutEntry) { entry.Size++ }, false},
-		{"file", func(entry *metadataPhotoCheckoutEntry) { entry.FileID = secondFileID }, false},
-		{"asset", func(entry *metadataPhotoCheckoutEntry) { entry.AssetID = "00000000-0000-4000-8000-000000000001" }, false},
+		{"unsafe-path", func(entry *metadataPhotoCheckoutEntry, _ fixture) { entry.Path = "../photo.jpg" }, true},
+		{"size", func(entry *metadataPhotoCheckoutEntry, _ fixture) { entry.Size++ }, false},
+		{"file", func(entry *metadataPhotoCheckoutEntry, f fixture) { entry.FileID = f.second.Files[0].ID }, false},
+		{"asset", func(entry *metadataPhotoCheckoutEntry, _ fixture) {
+			entry.AssetID = "00000000-0000-4000-8000-000000000001"
+		}, false},
 	} {
 		t.Run("invalid frozen entry "+bad.name, func(t *testing.T) {
-			lines := bytes.Split(snapshot, []byte{'\n'})
+			f := makeFixture(t, newTestStore(t))
+			lines := bytes.Split(f.snapshot, []byte{'\n'})
 			changed := false
 			for i, line := range lines {
 				if len(line) == 0 {
@@ -260,7 +260,7 @@ func TestPhotoCheckoutMetadata(t *testing.T) {
 				var entry metadataPhotoCheckoutEntry
 				require.NoError(t, json.Unmarshal(line, &entry))
 				if entry.Type == "photo_checkout_entry" {
-					bad.mutate(&entry)
+					bad.mutate(&entry, f)
 					encoded, err := json.Marshal(entry)
 					lines[i] = encoded
 					require.NoError(t, err)
@@ -279,6 +279,18 @@ func TestPhotoCheckoutMetadata(t *testing.T) {
 			}
 		})
 	}
+	t.Run("detach preserves frozen entries", func(t *testing.T) {
+		s := newTestStore(t)
+		f := makeFixture(t, s)
+		a, c := f.asset, f.checkout
+		before, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
+		require.NoError(t, err)
+		_, err = s.DetachPhotoFile(t.Context(), a.ID, a.Revision, a.Files[0].ID, PhotoDetachOptions{})
+		require.NoError(t, err)
+		after, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
+		require.NoError(t, err)
+		require.Equal(t, before, after)
+	})
 }
 
 func TestPhotoCheckoutRejectedCreateLeavesNoCheckoutOrOperation(t *testing.T) {

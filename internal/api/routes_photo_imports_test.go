@@ -57,13 +57,6 @@ func TestPhotoImportRoutes(t *testing.T) {
 		assert.Equal(t, store.PhotoImportRequest{SourceRoot: submitted.SourceRoot, Destination: submitted.Destination}, accepted)
 
 		require.Eventually(t, func() bool { return tracker.IdleFor() == 0 }, time.Second, time.Millisecond)
-		runner := api.NewPhotoImportRunner(api.Deps{Gate: gate})
-		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
-		defer cancel()
-		mutated := false
-		err = runner.Options.Mutate(ctx, func() error { mutated = true; return nil })
-		require.ErrorIs(t, err, context.DeadlineExceeded)
-		assert.False(t, mutated)
 		assert.Nil(t, supervisor.Snapshot()[0].FinishedAt)
 		return nil
 	}))

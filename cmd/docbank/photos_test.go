@@ -17,6 +17,7 @@ import (
 
 func TestPhotosCLIWorkflow(t *testing.T) {
 	const assetID = "00000000-0000-4000-8000-000000000001"
+	const fileID = "00000000-0000-4000-8000-000000000002"
 	const assetPath = "/api/v1/photos/assets/" + assetID
 	const nodeAssetPath = "/api/v1/photos/nodes/42/asset"
 	const virtualPath = "/inbox/workflow-image.jpeg"
@@ -24,8 +25,11 @@ func TestPhotosCLIWorkflow(t *testing.T) {
 	excluded := asset
 	excluded.Revision = 8
 	excluded.ExcludedAt = new("2026-01-01T00:00:00Z")
+	detached := asset
+	detached.Files = []api.PhotoFile{}
 	settings := api.PhotoSettings{Preference: new("image"), Revision: 8}
 	resetSettings := api.PhotoSettings{Revision: 9}
+	updatedSettings := api.PhotoSettings{Preference: new("raw"), Revision: 9}
 	type request struct {
 		method, path, queryPath, revision string
 		body                              map[string]any
@@ -52,8 +56,13 @@ func TestPhotosCLIWorkflow(t *testing.T) {
 				node.TrashedAt = "2026-01-01T00:00:00Z"
 			}
 			assert.NoError(t, json.MarshalWrite(w, node))
-		case assetPath, nodeAssetPath, assetPath + "/display", "/api/v1/photos/nodes/42/promote":
+		case assetPath, nodeAssetPath, assetPath + "/display", assetPath + "/files", "/api/v1/photos/nodes/42/promote":
 			assert.NoError(t, json.MarshalWrite(w, asset))
+		case "/api/v1/photos/assets":
+			w.WriteHeader(http.StatusCreated)
+			assert.NoError(t, json.MarshalWrite(w, asset))
+		case assetPath + "/files/" + fileID:
+			assert.NoError(t, json.MarshalWrite(w, detached))
 		case assetPath + "/exclude":
 			if input.body["excluded"] == false {
 				w.WriteHeader(http.StatusPreconditionFailed)
@@ -66,6 +75,9 @@ func TestPhotosCLIWorkflow(t *testing.T) {
 			response := settings
 			if r.Method == http.MethodPut {
 				response = resetSettings
+				if input.body["preference"] == "raw" {
+					response = updatedSettings
+				}
 			}
 			w.Header().Set("ETag", strconv.Quote(strconv.FormatInt(response.Revision, 10)))
 			assert.NoError(t, json.MarshalWrite(w, response))
@@ -100,6 +112,9 @@ func TestPhotosCLIWorkflow(t *testing.T) {
 		response api.PhotoAsset
 		requests []request
 	}{
+		{[]string{"create", "id:42", "--role", "image", "--kind", "photo"}, asset, []request{{method: "GET", path: "/api/v1/nodes/42"}, {method: "POST", path: "/api/v1/photos/assets", body: map[string]any{"node_id": float64(42), "role": "image", "kind": "photo"}}}},
+		{[]string{"attach", assetID, "id:42", "--role", "image", "--revision", "7"}, asset, []request{{method: "GET", path: "/api/v1/nodes/42"}, {method: "POST", path: assetPath + "/files", revision: `"7"`, body: map[string]any{"node_id": float64(42), "role": "image"}}}},
+		{[]string{"detach", assetID, fileID, "--revision", "7"}, detached, []request{{method: "DELETE", path: assetPath + "/files/" + fileID, revision: `"7"`}}},
 		{[]string{"display", assetID}, asset, []request{{method: "GET", path: assetPath}, {method: "PUT", path: assetPath + "/display", revision: `"7"`, body: map[string]any{}}}},
 		{[]string{"exclude", assetID, "--revision", "7"}, excluded, []request{{method: "POST", path: assetPath + "/exclude", revision: `"7"`, body: map[string]any{"excluded": true}}}},
 		{[]string{"promote", virtualPath}, asset, []request{{method: "GET", path: "/api/v1/path", queryPath: virtualPath}, {method: "GET", path: nodeAssetPath}, {method: "POST", path: "/api/v1/photos/nodes/42/promote", revision: `"7"`, body: map[string]any{}}}},
@@ -111,18 +126,21 @@ func TestPhotosCLIWorkflow(t *testing.T) {
 		assert.Equal(t, test.response, received)
 		checkRequests(test.requests...)
 	}
-	for _, action := range []string{"show", "reset"} {
-		out, err := runCLI(t, "photos", "settings", action)
+	for _, test := range []struct {
+		args     []string
+		response api.PhotoSettings
+		requests []request
+	}{
+		{[]string{"show"}, settings, []request{{method: "GET", path: "/api/v1/photos/settings"}}},
+		{[]string{"reset"}, resetSettings, []request{{method: "GET", path: "/api/v1/photos/settings"}, {method: "PUT", path: "/api/v1/photos/settings", revision: `"8"`, body: map[string]any{}}}},
+		{[]string{"set", "raw", "--revision", "8"}, updatedSettings, []request{{method: "PUT", path: "/api/v1/photos/settings", revision: `"8"`, body: map[string]any{"preference": "raw"}}}},
+	} {
+		out, err := runCLI(t, append([]string{"photos", "settings"}, test.args...)...)
 		require.NoError(t, err, out)
 		var received api.PhotoSettings
 		require.NoError(t, json.Unmarshal([]byte(out), &received))
-		if action == "show" {
-			assert.Equal(t, settings, received)
-			checkRequests(request{method: "GET", path: "/api/v1/photos/settings"})
-		} else {
-			assert.Equal(t, resetSettings, received)
-			checkRequests(request{method: "GET", path: "/api/v1/photos/settings"}, request{method: "PUT", path: "/api/v1/photos/settings", revision: `"8"`, body: map[string]any{}})
-		}
+		assert.Equal(t, test.response, received)
+		checkRequests(test.requests...)
 	}
 	_, err := runCLI(t, "photos", "assets", "exclude", assetID, "--excluded=false", "--revision", "7")
 	require.ErrorIs(t, err, store.ErrStaleRevision)
