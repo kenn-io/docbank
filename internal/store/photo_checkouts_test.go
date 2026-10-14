@@ -128,7 +128,7 @@ func TestPhotoCheckoutSelections(t *testing.T) {
 
 func TestPhotoCheckoutPublication(t *testing.T) {
 	t.Parallel()
-	for _, scenario := range []string{"hidden_at", "excluded_at", "trashed"} {
+	for _, scenario := range []string{"hidden_at", "excluded_at", "trashed", "writer held while the callback runs"} {
 		t.Run(scenario, func(t *testing.T) {
 			s := newTestStore(t)
 			a := albumAsset(t, s, "photo.jpg")
@@ -136,6 +136,21 @@ func TestPhotoCheckoutPublication(t *testing.T) {
 			require.NoError(t, err)
 			entries, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
 			require.NoError(t, err)
+			if scenario == "writer held while the callback runs" {
+				ctx := t.Context()
+				require.NoError(t, s.PublishPhotoCheckoutEntry(ctx, entries[0], func() (bool, error) {
+					// The callback holds the writer connection without a SQLite transaction.
+					_, err := s.db.ExecContext(ctx, `UPDATE storage_operations SET error='' WHERE operation_id=?`, c.OperationID)
+					if err != nil {
+						return false, err
+					}
+					writer := s.writeDB.Stats()
+					require.Equal(t, 1, writer.InUse)
+					return true, nil
+				}))
+				require.Zero(t, s.writeDB.Stats().InUse)
+				return
+			}
 			if scenario == "trashed" {
 				_, err = s.TrashPhotoAsset(t.Context(), a.ID, a.Revision)
 			} else {
@@ -148,28 +163,6 @@ func TestPhotoCheckoutPublication(t *testing.T) {
 			require.False(t, called)
 		})
 	}
-}
-
-func TestPhotoCheckoutPublicationReservesAssetWriter(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	a := albumAsset(t, s, "photo.jpg")
-	c, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, "checkout", 0)
-	require.NoError(t, err)
-	entries, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
-	require.NoError(t, err)
-	ctx := t.Context()
-	require.NoError(t, s.PublishPhotoCheckoutEntry(ctx, entries[0], func() (bool, error) {
-		// The callback holds the writer connection without a SQLite transaction.
-		_, err := s.db.ExecContext(ctx, `UPDATE storage_operations SET error='' WHERE operation_id=?`, c.OperationID)
-		if err != nil {
-			return false, err
-		}
-		writer := s.writeDB.Stats()
-		require.Equal(t, 1, writer.InUse)
-		return true, nil
-	}))
-	require.Zero(t, s.writeDB.Stats().InUse)
 }
 
 func TestPhotoCheckoutMetadataRestoresUnboundAndDetachedFilesAndValidatesFrozenEntries(t *testing.T) {
@@ -524,12 +517,6 @@ func TestPhotoCheckoutResolvesCompanionSources(t *testing.T) {
 			_, _, err = s.Move(ctx, node.ID, s.RootID(), fmt.Sprintf("virtual-%d.%s", i, strings.TrimPrefix(filepath.Ext(node.Name), ".")), node.Revision)
 			require.NoError(t, err)
 		}
-		var sourceNames []string
-		for _, file := range result.Asset.Files {
-			var originalPath string
-			require.NoError(t, s.db.QueryRowContext(ctx, `SELECT p.original_path FROM provenance p JOIN photo_files f ON f.source_provenance_identity=p.identity WHERE f.file_id=?`, file.ID).Scan(&originalPath))
-			sourceNames = append(sourceNames, filepath.Base(originalPath))
-		}
 		checkout, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "checkout", 0)
 		require.NoError(t, err)
 		entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
@@ -538,7 +525,7 @@ func TestPhotoCheckoutResolvesCompanionSources(t *testing.T) {
 		for _, entry := range entries {
 			names = append(names, filepath.Base(entry.Path))
 		}
-		require.ElementsMatch(t, sourceNames, names)
+		require.ElementsMatch(t, []string{"IMG.ARW", "IMG.JPG", "IMG.ARW.XMP"}, names)
 	})
 	for _, tc := range []struct{ sourcePath, basename string }{
 		{`C:\camera\capture.JPG`, "capture.JPG"},
