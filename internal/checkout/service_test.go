@@ -228,93 +228,96 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 	require.Equal(t, "keep this file", string(content))
 }
 
-func TestCheckoutRunHandlesInterruptionsAndCompletesDeferredResumeWithFrozenBytes(t *testing.T) {
+func TestCheckoutResumeAfterDeferralPreservesFrozenBytes(t *testing.T) {
 	t.Parallel()
-	t.Run("resume after deferral preserves frozen bytes", func(t *testing.T) {
-		s := checkoutService(t)
-		for _, name := range []string{"first.jpg", "second.jpg", "third.jpg"} {
-			checkoutPhoto(t, s, name, name)
+	s := checkoutService(t)
+	for _, name := range []string{"first.jpg", "second.jpg", "third.jpg"} {
+		checkoutPhoto(t, s, name, name)
+	}
+	ctx := t.Context()
+	c, op, root, err := s.Prepare(ctx, store.PhotoCheckoutSelection{All: true}, t.TempDir(), 100)
+	require.NoError(t, err)
+	defer func() { _ = root.Close() }()
+	entries, err := s.Store.PhotoCheckoutEntries(ctx, c.ID)
+	require.NoError(t, err)
+	asset, err := s.Store.PhotoAssetByID(ctx, entries[0].AssetID)
+	require.NoError(t, err)
+	node, err := s.Store.NodeByID(ctx, asset.Files[0].NodeID)
+	require.NoError(t, err)
+	hash, size, err := s.Blobs.Write(strings.NewReader("new bytes"))
+	require.NoError(t, err)
+	_, _, err = s.Store.ReplaceContent(ctx, node.ID, node.Revision, hash, size, "image/jpeg")
+	require.NoError(t, err)
+	beforeWork, afterCopy := false, false
+	admissionErr := errors.New("synthetic admission failure")
+	s.admit = func(ctx context.Context, _ *store.Store, _ string) (bool, error) {
+		if !beforeWork {
+			beforeWork = true
+			return false, admissionErr
 		}
-		ctx := t.Context()
-		c, op, root, err := s.Prepare(ctx, store.PhotoCheckoutSelection{All: true}, t.TempDir(), 100)
-		require.NoError(t, err)
-		defer func() { _ = root.Close() }()
-		entries, err := s.Store.PhotoCheckoutEntries(ctx, c.ID)
-		require.NoError(t, err)
-		asset, err := s.Store.PhotoAssetByID(ctx, entries[0].AssetID)
-		require.NoError(t, err)
-		node, err := s.Store.NodeByID(ctx, asset.Files[0].NodeID)
-		require.NoError(t, err)
-		hash, size, err := s.Blobs.Write(strings.NewReader("new bytes"))
-		require.NoError(t, err)
-		_, _, err = s.Store.ReplaceContent(ctx, node.ID, node.Revision, hash, size, "image/jpeg")
-		require.NoError(t, err)
-		beforeWork, afterCopy := false, false
-		admissionErr := errors.New("synthetic admission failure")
-		s.admit = func(ctx context.Context, _ *store.Store, _ string) (bool, error) {
-			if !beforeWork {
-				beforeWork = true
-				return false, admissionErr
-			}
-			status, err := s.Store.PhotoCheckoutStatus(ctx, c.ID)
-			if !assert.NoError(t, err) {
-				return false, err
-			}
-			if status.PublishedFiles == 1 && !afterCopy {
-				afterCopy = true
-				return false, admissionErr
-			}
-			return false, nil
+		status, err := s.Store.PhotoCheckoutStatus(ctx, c.ID)
+		if !assert.NoError(t, err) {
+			return false, err
 		}
-		require.ErrorIs(t, s.Run(ctx, c, root), jobs.ErrStorageOperationDeferred)
-		started, err := s.Store.PhotoCheckoutStarted(ctx, c.ID)
-		require.NoError(t, err)
-		require.False(t, started)
-		unstarted, err := s.Store.PhotoCheckoutStatus(ctx, c.ID)
-		require.NoError(t, err)
-		require.Zero(t, unstarted.PublishedFiles)
-		files, err := os.ReadDir(c.Destination)
-		require.NoError(t, err)
-		require.Empty(t, files)
-		require.ErrorIs(t, s.Run(ctx, c, root), jobs.ErrStorageOperationDeferred)
-		partial, err := s.Store.PhotoCheckoutStatus(ctx, c.ID)
-		require.NoError(t, err)
-		require.Equal(t, int64(1), partial.PublishedFiles)
-		observed, err := s.Store.PhotoCheckoutEntries(ctx, c.ID)
-		require.NoError(t, err)
-		require.True(t, observed[0].Published)
-		require.False(t, observed[1].Published)
-		require.False(t, observed[2].Published)
-		content, err := root.ReadFile(filepath.FromSlash(entries[0].Path))
-		require.NoError(t, err)
-		require.Equal(t, filepath.Base(entries[0].Path), string(content))
-		supervisor := jobs.New(ctx, nil)
-		defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
-		require.NoError(t, s.Start(supervisor, c, root))
-		require.Eventually(t, func() bool {
-			operation, err := s.Store.StorageOperation(ctx, op.ID)
-			return err == nil && operation.FinishedAt != nil
-		}, 5*time.Second, 10*time.Millisecond)
-		require.NoError(t, supervisor.Shutdown(context.Background()))
-		root, err = os.OpenRoot(c.Destination)
-		require.NoError(t, err)
-		complete, err := s.Store.PhotoCheckoutStatus(ctx, c.ID)
-		require.NoError(t, err)
-		require.Equal(t, "completed", complete.Checkout.State)
-		require.Equal(t, int64(len(entries)), complete.PublishedFiles)
-		var copiedBytes int64
-		for _, entry := range entries {
-			content, err := root.ReadFile(filepath.FromSlash(entry.Path))
-			require.NoError(t, err)
-			require.Equal(t, filepath.Base(entry.Path), string(content))
-			copiedBytes += int64(len(content))
+		if status.PublishedFiles == 1 && !afterCopy {
+			afterCopy = true
+			return false, admissionErr
 		}
-		finished, err := s.Store.StorageOperation(ctx, op.ID)
+		return false, nil
+	}
+	require.ErrorIs(t, s.Run(ctx, c, root), jobs.ErrStorageOperationDeferred)
+	started, err := s.Store.PhotoCheckoutStarted(ctx, c.ID)
+	require.NoError(t, err)
+	require.False(t, started)
+	unstarted, err := s.Store.PhotoCheckoutStatus(ctx, c.ID)
+	require.NoError(t, err)
+	require.Zero(t, unstarted.PublishedFiles)
+	files, err := os.ReadDir(c.Destination)
+	require.NoError(t, err)
+	require.Empty(t, files)
+	require.ErrorIs(t, s.Run(ctx, c, root), jobs.ErrStorageOperationDeferred)
+	partial, err := s.Store.PhotoCheckoutStatus(ctx, c.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), partial.PublishedFiles)
+	observed, err := s.Store.PhotoCheckoutEntries(ctx, c.ID)
+	require.NoError(t, err)
+	require.True(t, observed[0].Published)
+	require.False(t, observed[1].Published)
+	require.False(t, observed[2].Published)
+	content, err := root.ReadFile(filepath.FromSlash(entries[0].Path))
+	require.NoError(t, err)
+	require.Equal(t, filepath.Base(entries[0].Path), string(content))
+	supervisor := jobs.New(ctx, nil)
+	defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
+	require.NoError(t, s.Start(supervisor, c, root))
+	require.Eventually(t, func() bool {
+		operation, err := s.Store.StorageOperation(ctx, op.ID)
+		return err == nil && operation.FinishedAt != nil
+	}, 5*time.Second, 10*time.Millisecond)
+	require.NoError(t, supervisor.Shutdown(context.Background()))
+	root, err = os.OpenRoot(c.Destination)
+	require.NoError(t, err)
+	complete, err := s.Store.PhotoCheckoutStatus(ctx, c.ID)
+	require.NoError(t, err)
+	require.Equal(t, "completed", complete.Checkout.State)
+	require.Equal(t, int64(len(entries)), complete.PublishedFiles)
+	var copiedBytes int64
+	for _, entry := range entries {
+		content, err := root.ReadFile(filepath.FromSlash(entry.Path))
 		require.NoError(t, err)
-		require.Equal(t, int64(len(entries)), finished.CopiedObjects)
-		require.Equal(t, copiedBytes, finished.CopiedBytes)
-	})
-	for _, failure := range []string{"operator cancellation", "daemon shutdown", "verification failure"} {
+		require.Equal(t, filepath.Base(entry.Path), string(content))
+		copiedBytes += int64(len(content))
+	}
+	finished, err := s.Store.StorageOperation(ctx, op.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(len(entries)), finished.CopiedObjects)
+	require.Equal(t, copiedBytes, finished.CopiedBytes)
+}
+
+func TestCheckoutRunOutcomes(t *testing.T) {
+	t.Parallel()
+
+	for _, failure := range []string{"operator cancellation", "daemon shutdown", "verification failure", "source excluded"} {
 		t.Run(failure, func(t *testing.T) {
 			s := checkoutService(t)
 			names := []string{"first.jpg", "second.jpg", "third.jpg"}
@@ -330,7 +333,18 @@ func TestCheckoutRunHandlesInterruptionsAndCompletesDeferredResumeWithFrozenByte
 			defer cancel()
 			interrupted := false
 			s.Mutate = func(ctx context.Context, fn func() error) error {
-				err := fn()
+				progress, err := s.Store.PhotoCheckoutStatus(ctx, c.ID)
+				if !assert.NoError(t, err) {
+					return err
+				}
+				if progress.PublishedFiles == 1 && !interrupted && failure == "source excluded" {
+					interrupted = true
+					asset, err := s.Store.PhotoAssetByID(ctx, entries[1].AssetID)
+					require.NoError(t, err)
+					_, err = s.Store.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
+					require.NoError(t, err)
+				}
+				err = fn()
 				progress, statusErr := s.Store.PhotoCheckoutStatus(ctx, c.ID)
 				if !assert.NoError(t, statusErr) {
 					return statusErr
@@ -392,53 +406,15 @@ func TestCheckoutRunHandlesInterruptionsAndCompletesDeferredResumeWithFrozenByte
 				return
 			}
 			require.Equal(t, store.StorageOperationFailed, finished.State)
-			require.False(t, actual[2].Published)
-			require.Equal(t, int64(1), finished.CompletedObjects)
+			if failure == "source excluded" {
+				require.Contains(t, finished.Error, entries[1].FileID)
+				require.Contains(t, finished.Error, entries[1].Path)
+				require.True(t, actual[2].Published)
+				require.Equal(t, int64(2), status.PublishedFiles)
+			} else {
+				require.False(t, actual[2].Published)
+				require.Equal(t, int64(1), finished.CompletedObjects)
+			}
 		})
 	}
-}
-
-func TestCheckoutRunContinuesAfterSourceExclusion(t *testing.T) {
-	t.Parallel()
-	s := checkoutService(t)
-	for _, name := range []string{"first.jpg", "second.jpg", "third.jpg"} {
-		checkoutPhoto(t, s, name, name)
-	}
-	c, op, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{All: true}, t.TempDir(), 100)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, root.Close()) }()
-	entries, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
-	require.NoError(t, err)
-	excluded := false
-	s.Mutate = func(ctx context.Context, fn func() error) error {
-		progress, err := s.Store.PhotoCheckoutStatus(ctx, c.ID)
-		if !assert.NoError(t, err) {
-			return err
-		}
-		if progress.PublishedFiles == 1 && !excluded {
-			excluded = true
-			asset, err := s.Store.PhotoAssetByID(ctx, entries[1].AssetID)
-			require.NoError(t, err)
-			_, err = s.Store.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
-			require.NoError(t, err)
-		}
-		return fn()
-	}
-	require.Error(t, s.Run(t.Context(), c, root))
-	actual, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
-	require.NoError(t, err)
-	require.True(t, actual[0].Published)
-	require.False(t, actual[1].Published)
-	require.True(t, actual[2].Published)
-	content, err := root.ReadFile(filepath.FromSlash(entries[0].Path))
-	require.NoError(t, err)
-	require.Equal(t, filepath.Base(entries[0].Path), string(content))
-	status, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
-	require.NoError(t, err)
-	require.Equal(t, int64(2), status.PublishedFiles)
-	finished, err := s.Store.StorageOperation(t.Context(), op.ID)
-	require.NoError(t, err)
-	require.Equal(t, store.StorageOperationFailed, finished.State)
-	require.Contains(t, finished.Error, entries[1].FileID)
-	require.Contains(t, finished.Error, entries[1].Path)
 }

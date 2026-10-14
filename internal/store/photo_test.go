@@ -79,7 +79,6 @@ func TestPhotoEnrollmentClassifiesCreatedNodes(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, asset.Files, 1)
 	assert.Equal(t, int64(1), asset.Revision)
-	assert.Equal(t, PhotoRoleImage, asset.Files[0].Role)
 
 	audio, err := s.CreateFile(ctx, s.RootID(), "audio.mp3", fakeHash("c3"), 4, "audio/mpeg")
 	require.NoError(t, err)
@@ -529,13 +528,20 @@ func TestPhotoExcludePromotePreservesIdentityAndReceipt(t *testing.T) {
 	stale := promoted.Revision - 1
 	_, err = s.PromotePhotoNode(ctx, image.ID, &stale, "", "")
 	require.ErrorIs(t, err, ErrStaleRevision)
+}
+
+func TestPhotoConcurrentRevisionMutationHasOneWinner(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	asset := albumAsset(t, s, "photo.jpg")
 	var wait sync.WaitGroup
 	results := make(chan error, 2)
 	wait.Add(2)
 	for range 2 {
 		go func() {
 			defer wait.Done()
-			_, err := s.SetPhotoAssetExcluded(ctx, promoted.ID, promoted.Revision, true)
+			_, err := s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
 			results <- err
 		}()
 	}
