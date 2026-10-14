@@ -107,6 +107,7 @@ func TestPhotoImportRoutes(t *testing.T) {
 		assert.Contains(t, text, test.message)
 	}
 }
+
 func TestPhotoImportGate(t *testing.T) {
 	t.Parallel()
 	_, catalog := newTestServer(t, nil)

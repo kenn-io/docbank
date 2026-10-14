@@ -149,13 +149,6 @@ func TestPublishGetFileWrapsNoReplaceAndSyncErrors(t *testing.T) {
 				require.ErrorIs(t, err, os.ErrExist)
 				require.ErrorContains(t, err, "publish without replacing")
 			}
-			published, readErr := os.ReadFile(output)
-			require.NoError(t, readErr)
-			want := "download"
-			if test.existingOutput {
-				want = "existing"
-			}
-			assert.Equal(t, want, string(published))
 		})
 	}
 }

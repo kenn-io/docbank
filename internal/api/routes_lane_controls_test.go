@@ -133,7 +133,7 @@ func TestJobRoutesListAndCancelQueuedWorkWithBrokenLaneControls(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	operation, err := s.CreateLocalOperation(
-		t.Context(), store.StorageOperationKindPhotoImport, `{"source_root":"example"}`,
+		t.Context(), store.StorageOperationKindPhotoImport, `{"source_root":"/camera/source"}`,
 	)
 	require.NoError(t, err)
 	controls := filepath.Join(filepath.Dir(s.DBPath), "lane-controls.json")
@@ -146,6 +146,8 @@ func TestJobRoutesListAndCancelQueuedWorkWithBrokenLaneControls(t *testing.T) {
 	assert.Contains(t, listed.LaneControlsError, "decoding lane controls")
 	require.Len(t, listed.Items, 1)
 	assert.Equal(t, operation.ID, listed.Items[0].OperationID)
+	assert.Equal(t, store.StorageOperationKindPhotoImport, listed.Items[0].Kind)
+	assert.NotContains(t, body, "/camera/source")
 	assert.False(t, listed.Items[0].Controllable)
 
 	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
@@ -174,4 +176,7 @@ func TestJobRoutesListAndCancelQueuedWorkWithBrokenLaneControls(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &cancelled))
 	assert.True(t, cancelled.CancelRequested)
 	assert.Equal(t, "queued", cancelled.State)
+	require.NoError(t, s.FinishStorageOperation(t.Context(), operation.ID, store.StorageOperationCancelled, "{}", "", time.Time{}))
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/jobs/"+operation.ID+"/cancel", nil, nil)
+	assert.Equal(t, http.StatusConflict, resp.StatusCode, body)
 }
