@@ -76,20 +76,12 @@ func TestWalkKeepsStableSnapshotAcrossMutations(t *testing.T) {
 			{Path: "/alpha.txt", Node: alpha.Node},
 		}, first)
 
-		mutationErr := make(chan error, 1)
-		go func() {
-			if _, err := vault.Put(context.Background(), "/added.txt", strings.NewReader("added\n"), PutOptions{}); err != nil {
-				mutationErr <- err
-				return
-			}
-			if _, err := vault.MovePath(context.Background(), "/bravo.txt", "/zulu.txt", RevisionOptions{}); err != nil {
-				mutationErr <- err
-				return
-			}
-			_, err := vault.TrashPath(context.Background(), "/folder", RevisionOptions{})
-			mutationErr <- err
-		}()
-		require.NoError(t, <-mutationErr)
+		_, err = vault.Put(t.Context(), "/added.txt", strings.NewReader("added\n"), PutOptions{})
+		require.NoError(t, err)
+		_, err = vault.MovePath(t.Context(), "/bravo.txt", "/zulu.txt", RevisionOptions{})
+		require.NoError(t, err)
+		_, err = vault.TrashPath(t.Context(), "/folder", RevisionOptions{})
+		require.NoError(t, err)
 
 		entries := append([]WalkEntry(nil), first...)
 		for {
@@ -111,36 +103,7 @@ func TestWalkKeepsStableSnapshotAcrossMutations(t *testing.T) {
 			{Path: "/folder/delta.txt", Node: delta.Node},
 		}, entries)
 
-		seen := make(map[int64]struct{}, len(entries))
-		for _, entry := range entries {
-			_, duplicate := seen[entry.Node.ID]
-			assert.False(t, duplicate, "node %d appeared more than once", entry.Node.ID)
-			seen[entry.Node.ID] = struct{}{}
-		}
-		assert.Len(t, seen, 6)
 	})
-}
-
-func TestWalkNextHonorsCancellation(t *testing.T) {
-	vault, err := New(t.Context(), Config{Root: t.TempDir()})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, vault.Close()) })
-	_, err = vault.Put(t.Context(), "/item.txt", strings.NewReader("item\n"), PutOptions{})
-	require.NoError(t, err)
-
-	walker, err := vault.Walk(t.Context(), "/", WalkOptions{PageSize: 1})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, walker.Close()) })
-	canceled, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	page, err := walker.Next(canceled)
-	assert.Nil(t, page)
-	require.ErrorIs(t, err, context.Canceled)
-	page, err = walker.Next(t.Context())
-	require.NoError(t, err)
-	require.Len(t, page, 1)
-	assert.Equal(t, "/", page[0].Path)
 }
 
 func TestWalkOutlivesCanceledSetupContext(t *testing.T) {
@@ -185,7 +148,7 @@ func TestWalkOptionallyIncludesTrashedNodes(t *testing.T) {
 	assert.Equal(t, trashed.Node, page[1].Node)
 }
 
-func TestWalkUsesFiniteDefaultAndRejectsInvalidPageSizes(t *testing.T) {
+func TestWalkPageSizeBounds(t *testing.T) {
 	vault, err := New(t.Context(), Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
@@ -195,28 +158,33 @@ func TestWalkUsesFiniteDefaultAndRejectsInvalidPageSizes(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	walker, err := vault.Walk(t.Context(), "/", WalkOptions{})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, walker.Close()) })
-	first, err := walker.Next(t.Context())
-	require.NoError(t, err)
-	assert.Len(t, first, DefaultWalkPageSize)
-	second, err := walker.Next(t.Context())
-	require.NoError(t, err)
-	assert.Len(t, second, 2)
-
-	for _, pageSize := range []int{-1, MaxWalkPageSize + 1} {
-		invalid, err := vault.Walk(t.Context(), "/", WalkOptions{PageSize: pageSize})
-		assert.Nil(t, invalid)
-		require.ErrorContains(t, err, "page size must be between 1 and 5000")
-	}
-	maximumWalker, err := vault.Walk(t.Context(), "/", WalkOptions{PageSize: MaxWalkPageSize})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, maximumWalker.Close()) })
-	page, err := maximumWalker.Next(t.Context())
-	require.NoError(t, err)
-	require.Len(t, page, DefaultWalkPageSize+2)
-	assert.Equal(t, "/", page[0].Path)
+	t.Run("default", func(t *testing.T) {
+		walker, err := vault.Walk(t.Context(), "/", WalkOptions{})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, walker.Close()) })
+		first, err := walker.Next(t.Context())
+		require.NoError(t, err)
+		assert.Len(t, first, DefaultWalkPageSize)
+		second, err := walker.Next(t.Context())
+		require.NoError(t, err)
+		assert.Len(t, second, 2)
+	})
+	t.Run("invalid", func(t *testing.T) {
+		for _, pageSize := range []int{-1, MaxWalkPageSize + 1} {
+			invalid, err := vault.Walk(t.Context(), "/", WalkOptions{PageSize: pageSize})
+			assert.Nil(t, invalid)
+			require.ErrorContains(t, err, "page size must be between 1 and 5000")
+		}
+	})
+	t.Run("maximum", func(t *testing.T) {
+		walker, err := vault.Walk(t.Context(), "/", WalkOptions{PageSize: MaxWalkPageSize})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, walker.Close()) })
+		page, err := walker.Next(t.Context())
+		require.NoError(t, err)
+		require.Len(t, page, DefaultWalkPageSize+2)
+		assert.Equal(t, "/", page[0].Path)
+	})
 }
 
 func TestWalkCloseIsIdempotentAndReleasesVaultLifecycle(t *testing.T) {

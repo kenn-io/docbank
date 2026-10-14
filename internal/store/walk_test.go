@@ -16,29 +16,35 @@ import (
 	"go.kenn.io/docbank/sqlite/modernc"
 )
 
-func TestBeginWalkRejectsOversizedPage(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-
-	walker, err := s.BeginWalk(t.Context(), "/", 5001, false)
-	if walker != nil {
-		t.Cleanup(func() { require.NoError(t, walker.Close()) })
+func TestBeginWalkPageSizeBounds(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		pageSize int
+		valid    bool
+	}{
+		{name: "maximum", pageSize: MaxWalkPageSize, valid: true},
+		{name: "too large", pageSize: MaxWalkPageSize + 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			s := newTestStore(t)
+			walker, err := s.BeginWalk(t.Context(), "/", test.pageSize, false)
+			if test.valid {
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, walker.Close()) })
+				page, err := walker.Next(t.Context())
+				require.NoError(t, err)
+				require.Len(t, page, 1)
+				assert.Equal(t, s.RootID(), page[0].Node.ID)
+				return
+			}
+			if walker != nil {
+				t.Cleanup(func() { require.NoError(t, walker.Close()) })
+			}
+			require.Nil(t, walker)
+			require.ErrorContains(t, err, "walk page size must be between 1 and 5000")
+		})
 	}
-	require.Nil(t, walker)
-	require.ErrorContains(t, err, "walk page size must be between 1 and 5000")
-}
-
-func TestBeginWalkAcceptsMaximumPageSize(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-
-	walker, err := s.BeginWalk(t.Context(), "/", MaxWalkPageSize, false)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, walker.Close()) })
-	page, err := walker.Next(t.Context())
-	require.NoError(t, err)
-	require.Len(t, page, 1)
-	assert.Equal(t, s.RootID(), page[0].Node.ID)
 }
 
 func TestWalkerConcurrentNextAndClose(t *testing.T) {
