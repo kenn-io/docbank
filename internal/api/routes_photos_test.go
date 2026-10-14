@@ -23,6 +23,8 @@ func TestPhotoRoutesEnforceIfMatch(t *testing.T) {
 	require.NoError(t, err)
 	asset, err := fixture.PhotoAssetForNode(t.Context(), node.ID)
 	require.NoError(t, err)
+	_, err = fixture.EditPhotoAuthored(t.Context(), []store.PhotoAuthoredTarget{{FileID: asset.Files[0].ID, Revision: 1, Patch: store.PhotoAuthoredPatch{Caption: new("")}}})
+	require.NoError(t, err)
 
 	resp, body := get(t, ts, "/api/v1/photos/assets/"+asset.ID, nil)
 	assert.Equal(t, http.StatusOK, resp.StatusCode, body)
@@ -33,6 +35,7 @@ func TestPhotoRoutesEnforceIfMatch(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, asset.ID, byNode.ID)
 	assert.Equal(t, asset.Revision, byNode.Revision)
+	assert.Equal(t, store.PhotoConfirmedCaption, byNode.Files[0].Confirmed)
 	path := "/api/v1/photos/assets/" + asset.ID + "/exclude"
 	resp, body = do(t, ts, http.MethodPost, path, nil, map[string]bool{"excluded": true})
 	assert.Equal(t, http.StatusPreconditionRequired, resp.StatusCode, body)
@@ -119,24 +122,4 @@ func TestPhotoRoutesCreateAndPromote(t *testing.T) {
 	storedSecond, err := fixture.PhotoAssetForNode(t.Context(), secondNode.ID)
 	require.NoError(t, err)
 	assert.Equal(t, storedSecond, secondAsset)
-}
-func TestPhotoRoutesAndClientTraversal(t *testing.T) {
-	t.Parallel()
-	ts, fixture := newTestServer(t, nil)
-	hash, size, err := fixture.Blobs.Write(strings.NewReader("jpeg"))
-	require.NoError(t, err)
-	node, err := fixture.CreateFile(t.Context(), fixture.RootID(), "photo.jpg", hash, size, "image/jpeg")
-	require.NoError(t, err)
-	asset, err := fixture.PhotoAssetForNode(t.Context(), node.ID)
-	require.NoError(t, err)
-	client := daemonconn.New(ts.URL, testAPIKey)
-
-	resp, body := get(t, ts, "/api/v1/photos/assets/"+asset.ID, nil)
-	assert.Equal(t, http.StatusOK, resp.StatusCode, body)
-	assert.Equal(t, strconv.Quote(strconv.FormatInt(asset.Revision, 10)), resp.Header.Get("ETag"))
-
-	byNode, err := client.PhotoAssetForNode(t.Context(), node.ID)
-	require.NoError(t, err)
-	assert.Equal(t, asset.ID, byNode.ID)
-	assert.Equal(t, asset.Revision, byNode.Revision)
 }

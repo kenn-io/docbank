@@ -192,11 +192,16 @@ func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
 			case "before work":
 				require.NoError(t, ing.Store.RequestStorageOperationCancel(t.Context(), operation.ID))
 			case "after final group":
+				mutations, completedGroups := 0, 0
 				runner.Options.Mutate = func(ctx context.Context, fn func() error) error {
 					if err := fn(); err != nil {
 						return err
 					}
-					if _, err := ing.Store.NodeByPath(ctx, "/photos/IMG_2.JPG"); err == nil {
+					mutations++
+					if mutations > 1 {
+						completedGroups++
+					}
+					if completedGroups == 3 {
 						return ing.Store.RequestStorageOperationCancel(ctx, operation.ID)
 					}
 					return nil
@@ -224,13 +229,16 @@ func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
 				}
 				fallthrough
 			case "after-one-group cancellation":
-				deferred := false
+				mutations, completedGroups := 0, 0
 				runner.Options.Mutate = func(ctx context.Context, fn func() error) error {
 					if err := fn(); err != nil {
 						return err
 					}
-					if _, err := ing.Store.NodeByPath(ctx, "/photos/IMG_0.JPG"); err == nil && !deferred {
-						deferred = true
+					mutations++
+					if mutations > 1 {
+						completedGroups++
+					}
+					if completedGroups == 1 {
 						if interruption == "after-one-group cancellation" {
 							_, err = ing.Store.SetLaneControl(ctx, store.LaneControl{Lane: operation.Kind, Paused: true, Concurrency: 1}, 1)
 							return err

@@ -2,6 +2,7 @@ package daemonconn
 
 import (
 	"encoding/json/v2"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -155,14 +156,32 @@ func TestPhotoNodeAddressedResponsesMustContainTheNode(t *testing.T) {
 func TestPhotoImportClients(t *testing.T) {
 	operation := api.StorageOperation{ID: "00000000-0000-4000-8000-000000000021", Kind: "photo_import", State: "queued",
 		CreatedAt: "2026-09-22T00:00:00Z", UpdatedAt: "2026-09-22T00:00:00Z"}
+	sourceRoot := filepath.Join(t.TempDir(), "camera")
+	const destination = "/photos"
+	type importRequest struct {
+		SourceRoot  string `json:"source_root"`
+		Destination string `json:"destination"`
+	}
+	requests := make(chan importRequest, 4)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/photos/imports" {
 			http.NotFound(w, r)
 			return
 		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read photo import request: %v", err)
+			return
+		}
+		var request importRequest
+		if err := json.Unmarshal(body, &request); err != nil {
+			t.Errorf("decode photo import request: %v", err)
+			return
+		}
+		requests <- request
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
-		body, err := json.Marshal(operation)
+		body, err = json.Marshal(operation)
 		if err != nil {
 			t.Errorf("marshal response: %v", err)
 			return
@@ -171,15 +190,15 @@ func TestPhotoImportClients(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client := New(server.URL, "synthetic-key")
-	sourceRoot := filepath.Join(t.TempDir(), "camera")
-	started, err := client.StartPhotoImport(t.Context(), sourceRoot, "/photos")
+	started, err := client.StartPhotoImport(t.Context(), sourceRoot, destination)
 	require.NoError(t, err)
 	assert.Equal(t, operation.ID, started.ID)
+	assert.Equal(t, importRequest{SourceRoot: sourceRoot, Destination: destination}, <-requests)
 
 	for _, malformed := range []api.StorageOperation{{}, {ID: operation.ID, Kind: "repair", State: "queued"},
 		{ID: operation.ID, Kind: "photo_import", State: "completed", FinishedAt: "2026-09-22T00:00:00Z"}} {
 		operation = malformed
-		_, err = client.StartPhotoImport(t.Context(), sourceRoot, "/photos")
+		_, err = client.StartPhotoImport(t.Context(), sourceRoot, destination)
 		require.Error(t, err)
 		assert.True(t, IsResponseDecodeError(err))
 	}
