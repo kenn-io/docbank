@@ -126,7 +126,7 @@ func TestPhotoImportSkipsGroupChangedAfterScan(t *testing.T) {
 	nodeByName(t, ing, "/photos/IMG_0.JPG")
 }
 
-func TestPhotoImportReportsAndPublishesBytes(t *testing.T) {
+func TestPhotoImportReceiptReplayAmbiguityAndPublishedBytes(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "capture.JPG")
 	content := []byte("published photo bytes")
@@ -182,16 +182,17 @@ func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
 			case "before work":
 				require.NoError(t, ing.Store.RequestStorageOperationCancel(t.Context(), operation.ID))
 			case "after final group":
-				mutations, completedGroups := 0, 0
+				gatedCalls, importedGroups := 0, 0
 				runner.Options.Mutate = func(ctx context.Context, fn func() error) error {
 					if err := fn(); err != nil {
 						return err
 					}
-					mutations++
-					if mutations > 1 {
-						completedGroups++
+					gatedCalls++
+					// The first gated call creates the destination; later calls import groups.
+					if gatedCalls > 1 {
+						importedGroups++
 					}
-					if completedGroups == 3 {
+					if importedGroups == 3 {
 						return ing.Store.RequestStorageOperationCancel(ctx, operation.ID)
 					}
 					return nil
@@ -219,16 +220,17 @@ func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
 				runner.admit = func(context.Context, *store.Store, string) (bool, error) {
 					return cancelAdmission.Load(), nil
 				}
-				mutations, completedGroups := 0, 0
+				gatedCalls, importedGroups := 0, 0
 				runner.Options.Mutate = func(ctx context.Context, fn func() error) error {
 					if err := fn(); err != nil {
 						return err
 					}
-					mutations++
-					if mutations > 1 {
-						completedGroups++
+					gatedCalls++
+					// The first gated call creates the destination; later calls import groups.
+					if gatedCalls > 1 {
+						importedGroups++
 					}
-					if completedGroups == 1 {
+					if importedGroups == 1 {
 						cancelAdmission.Store(true)
 					}
 					return nil

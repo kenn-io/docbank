@@ -129,7 +129,7 @@ func TestStorageJobControlsFollowOperationState(t *testing.T) {
 	}
 }
 
-func TestJobListSurvivesBrokenLaneControls(t *testing.T) {
+func TestJobRoutesListAndCancelQueuedWorkWithBrokenLaneControls(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	operation, err := s.CreateLocalOperation(

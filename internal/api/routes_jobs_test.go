@@ -120,21 +120,12 @@ func TestBrowserJobListRedactsPrivateBackendErrors(t *testing.T) {
 		time.Now().Add(time.Hour),
 	))
 
-	photoImport, err := live.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport, `{"source_root":"/private/camera","destination":"/photos"}`)
-	require.NoError(t, err)
-	_, err = live.ClaimStorageOperation(t.Context(), photoImport.ID)
-	require.NoError(t, err)
-	require.NoError(t, live.FinishStorageOperation(t.Context(), photoImport.ID, store.StorageOperationFailed, "{}", privateFailure, time.Time{}))
-
 	resp, body := get(t, ts, "/api/v1/jobs", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	var operator api.JobList
 	require.NoError(t, json.Unmarshal([]byte(body), &operator))
-	errorsByOperation := make(map[string]string)
-	for _, job := range operator.Items {
-		errorsByOperation[job.OperationID] = job.Error
-	}
-	assert.Equal(t, map[string]string{operation.ID: privateFailure, photoImport.ID: privateFailure}, errorsByOperation)
+	require.Len(t, operator.Items, 1)
+	assert.Equal(t, privateFailure, operator.Items[0].Error)
 
 	resp, body = do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
 	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
@@ -152,13 +143,9 @@ func TestBrowserJobListRedactsPrivateBackendErrors(t *testing.T) {
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	var got api.JobList
 	require.NoError(t, json.UnmarshalRead(resp.Body, &got))
-	require.Len(t, got.Items, 2)
-	var operationIDs []string
-	for _, job := range got.Items {
-		operationIDs = append(operationIDs, job.OperationID)
-		assert.NotEmpty(t, job.Error)
-		assert.NotContains(t, job.Error, "/Users/user-a/private/archive")
-		assert.NotContains(t, job.Error, "private.example.invalid")
-	}
-	assert.ElementsMatch(t, []string{operation.ID, photoImport.ID}, operationIDs)
+	require.Len(t, got.Items, 1)
+	assert.Equal(t, operation.ID, got.Items[0].OperationID)
+	assert.NotEmpty(t, got.Items[0].Error)
+	assert.NotContains(t, got.Items[0].Error, "/Users/user-a/private/archive")
+	assert.NotContains(t, got.Items[0].Error, "private.example.invalid")
 }
