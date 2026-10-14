@@ -1518,35 +1518,34 @@ func TestEmbeddingWorkerReleasesMaintenanceGateDuringRetryDelay(t *testing.T) {
 
 func TestEmbeddingWorkerRetriesTimedOutAttemptAndPublishesSibling(t *testing.T) {
 	t.Parallel()
-	fixture, fake, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
-	worker.attemptLifetime = 3 * time.Second
-	// Only the first provider call waits for its attempt deadline.
-	fake.runtime.block = true
-	fake.runtime.onBlock = func() {
-		fake.runtime.mu.Lock()
-		fake.runtime.block = false
-		fake.runtime.mu.Unlock()
-		// The first attempt already owns its deadline; later claims need a full budget.
-		worker.attemptLifetime = time.Minute
-	}
-	data := mediatest.PNG(3, 3, color.Black)
-	receipt, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(data))
-	require.NoError(t, err)
-	node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "sibling.png", receipt.Hash, receipt.Size, "image/png", processingBlobPhysical(t, receipt))
-	require.NoError(t, err)
-	sibling := request
-	sibling.ContentVersionID = node.CurrentVersionID
-	sibling.InputGeneration.ID = workerHash("sibling-generation")
-	sibling.InputGeneration.SourceVersionID = node.CurrentVersionID
-	sibling.InputGeneration.GenerationChecksum = receipt.Hash
-	sibling.InputGeneration.Inputs = []store.EmbeddingInputReference{{ID: node.CurrentVersionID, RenderedChecksum: receipt.Hash}}
-	_, err = fixture.catalog.EnqueueEmbeddingJob(t.Context(), sibling)
-	require.NoError(t, err)
-	now := time.Now()
 	synctest.Test(t, func(t *testing.T) {
-		// Queued work keeps the timestamps assigned by the real fixture.
-		time.Sleep(time.Until(now))
-		synctest.Wait()
+		// Keep SQLite's pool goroutines and cleanup in the same synctest bubble.
+		fixture, fake, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
+		worker.attemptLifetime = 3 * time.Second
+		// Only the first provider call waits for its attempt deadline.
+		fake.runtime.block = true
+		fake.runtime.onBlock = func() {
+			fake.runtime.mu.Lock()
+			fake.runtime.block = false
+			fake.runtime.mu.Unlock()
+			// The first attempt already owns its deadline; later claims need a full budget.
+			worker.attemptLifetime = time.Minute
+		}
+		data := mediatest.PNG(3, 3, color.Black)
+		receipt, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(data))
+		require.NoError(t, err)
+		node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "sibling.png", receipt.Hash, receipt.Size, "image/png", processingBlobPhysical(t, receipt))
+		require.NoError(t, err)
+		sibling := request
+		sibling.ContentVersionID = node.CurrentVersionID
+		sibling.InputGeneration.ID = workerHash("sibling-generation")
+		sibling.InputGeneration.SourceVersionID = node.CurrentVersionID
+		sibling.InputGeneration.GenerationChecksum = receipt.Hash
+		sibling.InputGeneration.Inputs = []store.EmbeddingInputReference{{ID: node.CurrentVersionID, RenderedChecksum: receipt.Hash}}
+		// Give the sibling a later queue timestamp so the original attempt times out.
+		time.Sleep(time.Second)
+		_, err = fixture.catalog.EnqueueEmbeddingJob(t.Context(), sibling)
+		require.NoError(t, err)
 		// A healthy sibling may take longer than the injected timeout.
 		fake.runtime.inspectInputs = func([]document.EmbeddingInput) { time.Sleep(4 * time.Second) }
 		processed, err := worker.ScanOnce(t.Context())
