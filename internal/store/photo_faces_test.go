@@ -103,6 +103,46 @@ func TestPhotoFaceReplaysNamedFaceAfterPersonRetires(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
+func TestPhotoFaceReplaysMergedPersonAfterSurvivorRetires(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("a1"), "image/jpeg")
+	absorbed, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	middle, err := s.CreatePerson(ctx, "Ada middle", "operator")
+	require.NoError(t, err)
+	survivor, err := s.CreatePerson(ctx, "Ada survivor", "operator")
+	require.NoError(t, err)
+	stranger, err := s.CreatePerson(ctx, "Grace", "operator")
+	require.NoError(t, err)
+	box := document.FaceBox{Width: 0.2, Height: 0.2}
+	faceID := uuid.New().String()
+	face, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, faceID, box, absorbed.PersonID)
+	require.NoError(t, err)
+	for _, merge := range []struct {
+		survivorID, absorbedID string
+		absorbedRevision       int64
+	}{{middle.PersonID, absorbed.PersonID, 1}, {survivor.PersonID, middle.PersonID, 2}} {
+		operation, err := newUUIDv4()
+		require.NoError(t, err)
+		_, err = s.MergePersons(ctx, merge.survivorID, merge.absorbedID, operation, 1, merge.absorbedRevision)
+		require.NoError(t, err)
+	}
+	current, _, err := s.PersonByID(ctx, survivor.PersonID)
+	require.NoError(t, err)
+	_, err = s.RetirePerson(ctx, survivor.PersonID, current.Revision)
+	require.NoError(t, err)
+	replayed, saved, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, faceID, box, absorbed.PersonID)
+	require.NoError(t, err)
+	require.Equal(t, face.FaceID, replayed.FaceID)
+	require.Equal(t, survivor.PersonID, saved.PersonID)
+	_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, faceID, box, stranger.PersonID)
+	require.ErrorIs(t, err, ErrExists)
+	_, err = s.MarkPersonInPhoto(ctx, node.CurrentVersionID, absorbed.PersonID)
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
 func TestPhotoFaceHiddenReadsAndWrites(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

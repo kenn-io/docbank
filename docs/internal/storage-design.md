@@ -579,7 +579,7 @@ until audit-aware mutation records exist.
 
 Each photo version is limited to 1,000 faces and 1,000 depicted assertions, including suppressed rows. A write past either limit fails with `ErrPhotoFaceLimit`. A newly created assertion advances the binding epoch only when its version has a document-event head.
 
-Manual boxed creates use the caller's face UUID for replay. A replay with the same ID, version and box returns the saved face and, for a named face, its saved assertion, even after that person retires; a supplied person must resolve to the saved person. A later name can attach to an unnamed face using the same ID and box, and that requires an active person. Person candidates cannot carry `depicted` occurrences.
+Manual boxed creates use the caller's face UUID for replay. A replay with the same ID, version and box returns the saved face and, for a named face, its saved assertion, even after that person retires; a supplied person must be the saved person or a person merged into it. Replay follows `person_merges` receipts rather than aliases, because retiring a survivor turns its aliases into deletion tombstones. A later name can attach to an unnamed face using the same ID and box, and that requires an active person. Person candidates cannot carry `depicted` occurrences.
 
 A merge retargets faces from the absorbed person's duplicate assertions to the survivor's matching assertion before deleting the duplicates. Deleting a content version cascades its faces and assertions. Faces round-trip through JSONL; validation checks the face's version, its assertion's version and `depicted` role, and the 1,000-record bounds. Detection, face-person suggestions, rendered overlays, correction and undo are not built.
 

@@ -206,7 +206,9 @@ func (s *Store) CreatePhotoFace(ctx context.Context, versionID, faceID string, b
 }
 
 // replayPhotoFaceTx returns a saved face, naming it when it has no person yet.
-// A named face replays without requiring its person to remain active.
+// A named face replays without requiring its person to remain active. Merge
+// receipts, unlike aliases, survive retirement, so they link an absorbed ID to
+// the saved person.
 func replayPhotoFaceTx(ctx context.Context, tx *sql.Tx, existing PhotoFace, personID string) (PhotoFace, *PersonDocumentAssertion, error) {
 	if existing.AssertionID != "" {
 		saved, err := personAssertionByIDTx(ctx, tx, existing.AssertionID)
@@ -214,11 +216,13 @@ func replayPhotoFaceTx(ctx context.Context, tx *sql.Tx, existing PhotoFace, pers
 			return PhotoFace{}, nil, err
 		}
 		if personID != "" && personID != saved.PersonID {
-			resolved, err := resolvePersonIDTx(ctx, tx, personID)
-			if err != nil {
+			var merged bool
+			if err := tx.QueryRowContext(ctx, `WITH RECURSIVE chain(person_id) AS (
+ SELECT ? UNION SELECT m.survivor_person_id FROM person_merges m JOIN chain c ON m.absorbed_person_id=c.person_id
+) SELECT EXISTS(SELECT 1 FROM chain WHERE person_id=?)`, personID, saved.PersonID).Scan(&merged); err != nil {
 				return PhotoFace{}, nil, err
 			}
-			if resolved != saved.PersonID {
+			if !merged {
 				return PhotoFace{}, nil, photoFaceExistsError{}
 			}
 		}
