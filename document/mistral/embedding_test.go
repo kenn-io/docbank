@@ -248,7 +248,7 @@ func TestMistralEmbeddingAcceptsDocumentedOptionalUsageFields(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestMistralEmbeddingRetryWaitCancellationPreservesIdentityAndMetrics(t *testing.T) {
+func TestMistralEmbeddingCancellationPreservesIdentityAndMetrics(t *testing.T) {
 	input := []document.EmbeddingInput{{Key: "one", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: "text"}}
 	t.Run("retry wait", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
@@ -267,6 +267,37 @@ func TestMistralEmbeddingRetryWaitCancellationPreservesIdentityAndMetrics(t *tes
 			require.ErrorIs(t, err, context.DeadlineExceeded)
 			assert.Equal(t, RequestMetrics{Requests: 1, Retries: 1}, withoutLatency(MetricsFromError(err)))
 		})
+	})
+
+	t.Run("response read", func(t *testing.T) {
+		started := make(chan struct{})
+		endpoint, egress, resolver := mistralFixture(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			writer.Header().Set("Content-Type", "application/json")
+			writer.WriteHeader(http.StatusOK)
+			flusher, ok := writer.(http.Flusher)
+			if !assert.True(t, ok) {
+				return
+			}
+			flusher.Flush()
+			close(started)
+			<-request.Context().Done()
+		}))
+		profile := testEmbeddingProfile(t)
+		profile.Endpoint, profile.EgressPolicy = endpoint, egress
+		recomputeMistralEmbeddingProfile(t, &profile)
+		provider, err := newMistralEmbeddingTestProvider(t, profile, embeddingSecretMap{"credential:mistral-embed": "secret"}, resolver)
+		require.NoError(t, err)
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		go func() {
+			_, embedErr := provider.Embed(ctx, input, embeddingAuthorization(profile.Descriptor))
+			done <- embedErr
+		}()
+		<-started
+		cancel()
+		err = <-done
+		require.ErrorIs(t, err, context.Canceled)
+		assert.Equal(t, RequestMetrics{Requests: 1}, withoutLatency(MetricsFromError(err)))
 	})
 }
 

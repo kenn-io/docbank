@@ -86,32 +86,35 @@ func TestClientRetriesTransientServiceFailure(t *testing.T) {
 	assert.Equal(t, int32(2), requests.Load())
 }
 
-func TestClientRetriesHTTPClientTimeout(t *testing.T) {
-	var requests atomic.Int32
-	release := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
-		requests.Add(1)
-		<-release
-	}))
-	defer server.Close()
-	defer close(release)
-	normalize, err := document.NewNormalizePolicy(1_000_000)
-	require.NoError(t, err)
-	policy, err := glmocr.NewPolicy(glmocr.PolicyConfig{
-		Endpoint: server.URL + "/glmocr/parse", MaxDocumentBytes: 1 << 20,
-		MaxResponseBytes: 1 << 20, MaxUnits: 1, NormalizePolicy: normalize,
-	})
-	require.NoError(t, err)
-	client, err := glmocr.NewClient(policy, glmocr.ClientConfig{
-		Timeout: 20 * time.Millisecond, MaxRetries: 1, MaxRetryDelay: time.Millisecond,
-	})
-	require.NoError(t, err)
+func TestClientRetriesInjectedHTTPClientTimeout(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		normalize, err := document.NewNormalizePolicy(1_000_000)
+		require.NoError(t, err)
+		policy, err := glmocr.NewPolicy(glmocr.PolicyConfig{
+			Endpoint: "http://127.0.0.1:30004/glmocr/parse", MaxDocumentBytes: 1 << 20,
+			MaxResponseBytes: 1 << 20, MaxUnits: 1, NormalizePolicy: normalize,
+		})
+		require.NoError(t, err)
+		client, err := glmocr.NewClient(policy, glmocr.ClientConfig{
+			Timeout: 20 * time.Millisecond, MaxRetries: 1, MaxRetryDelay: time.Millisecond,
+			HTTPClient: &http.Client{Transport: timeoutTransport{}},
+		})
+		require.NoError(t, err)
 
-	_, err = client.Process(t.Context(), syntheticPNGSource(t))
-	require.ErrorIs(t, err, context.DeadlineExceeded)
-	assert.Equal(t, ocr.ErrorTransient, ocr.ErrorKindOf(err))
-	assert.Equal(t, 2, ocr.MetricsFromError(err).Requests)
-	require.Eventually(t, func() bool { return requests.Load() == 2 }, time.Second, time.Millisecond)
+		_, err = client.Process(t.Context(), syntheticPNGSource(t))
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.Equal(t, ocr.ErrorTransient, ocr.ErrorKindOf(err))
+		assert.Equal(t, 2, ocr.MetricsFromError(err).Requests)
+		assert.Equal(t, 1, ocr.MetricsFromError(err).Retries)
+	})
+}
+
+type timeoutTransport struct{}
+
+func (timeoutTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	defer func() { _ = request.Body.Close() }()
+	<-request.Context().Done()
+	return nil, request.Context().Err()
 }
 
 func TestClientDoesNotRetryUnsuitableInput(t *testing.T) {
