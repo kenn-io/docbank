@@ -273,8 +273,12 @@ func TestPhotoMetadataPreservesAdmissionAndProvenanceAndRejectsInvalidReferences
 		sources[file.ID] = selectedSource
 	}
 	rawSource := sources[raw.ID]
+	var recordedPath string
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT original_path FROM provenance WHERE identity=?`, rawSource).Scan(&recordedPath))
+	require.Equal(t, filepath.Join(camera, "IMG.ARW"), recordedPath)
 	var alternateSource string
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT identity FROM provenance WHERE node_id=? AND original_path LIKE '%AAA.ARW'`, raw.NodeID).Scan(&alternateSource))
+	require.NotEqual(t, rawSource, alternateSource)
 	for _, variant := range []string{"alternate source", "missing source_provenance_identity", "another node"} {
 		expectedSource := rawSource
 		if variant == "alternate source" {

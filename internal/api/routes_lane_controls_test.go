@@ -170,4 +170,8 @@ func TestJobListSurvivesBrokenLaneControls(t *testing.T) {
 
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/jobs/"+operation.ID+"/cancel", nil, nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var cancelled api.StorageOperation
+	require.NoError(t, json.Unmarshal([]byte(body), &cancelled))
+	assert.True(t, cancelled.CancelRequested)
+	assert.Equal(t, "queued", cancelled.State)
 }

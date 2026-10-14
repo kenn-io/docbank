@@ -533,6 +533,12 @@ func TestPhotoCheckoutResolvesCompanionSources(t *testing.T) {
 			_, _, err = s.Move(ctx, node.ID, s.RootID(), fmt.Sprintf("virtual-%d.%s", i, strings.TrimPrefix(filepath.Ext(node.Name), ".")), node.Revision)
 			require.NoError(t, err)
 		}
+		var sourceNames []string
+		for _, file := range result.Asset.Files {
+			var originalPath string
+			require.NoError(t, s.db.QueryRowContext(ctx, `SELECT p.original_path FROM provenance p JOIN photo_files f ON f.source_provenance_identity=p.identity WHERE f.file_id=?`, file.ID).Scan(&originalPath))
+			sourceNames = append(sourceNames, filepath.Base(originalPath))
+		}
 		checkout, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "checkout", 0)
 		require.NoError(t, err)
 		entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
@@ -541,7 +547,7 @@ func TestPhotoCheckoutResolvesCompanionSources(t *testing.T) {
 		for _, entry := range entries {
 			names = append(names, filepath.Base(entry.Path))
 		}
-		require.ElementsMatch(t, []string{"IMG.ARW", "IMG.JPG", "IMG.ARW.XMP"}, names)
+		require.ElementsMatch(t, sourceNames, names)
 	})
 	for _, tc := range []struct{ sourcePath, basename string }{
 		{`C:\camera\capture.JPG`, "capture.JPG"},

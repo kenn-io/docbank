@@ -86,14 +86,19 @@ func TestListJobsOmitsFinishedStorageSnapshotsWithoutDurableRows(t *testing.T) {
 	assert.Contains(t, lanes, "place")
 }
 
-func TestListJobsWithoutSupervisorReturnsEmptyObject(t *testing.T) {
+func TestJobRoutesWithoutSupervisorListEmptyAndRejectTerminalCancellation(t *testing.T) {
 	t.Parallel()
-	ts, _ := newTestServer(t, nil)
+	ts, live := newTestServer(t, nil)
 	resp, body := get(t, ts, "/api/v1/jobs", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	var got api.JobList
 	require.NoError(t, json.Unmarshal([]byte(body), &got))
 	assert.Empty(t, got.Items)
+	operation, err := live.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport, `{}`)
+	require.NoError(t, err)
+	require.NoError(t, live.FinishStorageOperation(t.Context(), operation.ID, store.StorageOperationCancelled, "{}", "", time.Time{}))
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/jobs/"+operation.ID+"/cancel", nil, nil)
+	assert.Equal(t, http.StatusConflict, resp.StatusCode, body)
 }
 
 func TestBrowserJobListRedactsPrivateBackendErrors(t *testing.T) {

@@ -126,17 +126,6 @@ func TestPhotoImportJobsReceiptRedactsBrowserSession(t *testing.T) {
 		}},
 	}}})
 	require.NoError(t, err)
-	queuedOperation, err := catalog.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport, string(request))
-	require.NoError(t, err)
-	response, body := do(t, ts, http.MethodPost, "/api/v1/jobs/"+queuedOperation.ID+"/cancel", nil, nil)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	var queued api.StorageOperation
-	require.NoError(t, json.Unmarshal([]byte(body), &queued))
-	assert.True(t, queued.CancelRequested)
-	assert.Equal(t, "queued", queued.State)
-	require.NoError(t, catalog.FinishStorageOperation(t.Context(), queuedOperation.ID, store.StorageOperationCancelled, "{}", "", time.Time{}))
-	response, body = do(t, ts, http.MethodPost, "/api/v1/jobs/"+queuedOperation.ID+"/cancel", nil, nil)
-	assert.Equal(t, http.StatusConflict, response.StatusCode, body)
 	running, err := catalog.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport, string(request))
 	require.NoError(t, err)
 	_, err = catalog.ClaimStorageOperation(t.Context(), running.ID)
@@ -148,7 +137,7 @@ func TestPhotoImportJobsReceiptRedactsBrowserSession(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, catalog.FinishStorageOperation(t.Context(), failed.ID, store.StorageOperationFailed, string(receipt), "private error", time.Time{}))
 
-	response, body = do(t, ts, http.MethodGet, "/api/v1/jobs/"+failed.ID, nil, nil)
+	response, body := do(t, ts, http.MethodGet, "/api/v1/jobs/"+failed.ID, nil, nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var operator api.StorageOperation
 	require.NoError(t, json.Unmarshal([]byte(body), &operator))

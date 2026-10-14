@@ -11,7 +11,7 @@ import (
 	"go.kenn.io/kit/packstore"
 )
 
-func TestStorageOperationPersistsProgressAndCancellation(t *testing.T) {
+func TestStorageOperationPersistsProgressSupportsResumeAndValidatesKindAndCancellation(t *testing.T) {
 	t.Parallel()
 	for _, kind := range []string{"placement", "local", "completed"} {
 		t.Run(kind, func(t *testing.T) {
