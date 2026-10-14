@@ -35,7 +35,7 @@ opens the photo while preserving any separate selection.
 On touch, tap a photo to open it when nothing is selected. Use the checkbox to
 start a selection. Taps then toggle selection. Double-tap opens a photo while a
 selection is active, and also selects it if it wasn't selected. The Open control
-stays reachable for screen readers and voice control.
+stays reachable for screen readers and keyboard users.
 
 Use the arrow keys, Previous and Next buttons, or the thumbnail rail to move
 through the current result in query order, across calendar-month groups. Navigation loads the next page at the loaded edge

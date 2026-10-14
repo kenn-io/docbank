@@ -461,6 +461,10 @@ func snapshotFacetSelected(value query.Query, dimension string) map[string]bool 
 		values = value.Filters.MediaFamilies
 	case "extension":
 		values = value.Filters.Extensions
+	case "modified":
+		if month := wholeModifiedMonth(value); month != "" {
+			values = []string{month}
+		}
 	case snapshotFacetTextCoverage:
 		values = value.Filters.TextCoverage
 	case "duplicates":
@@ -771,6 +775,16 @@ func observeSnapshotFacet(rows *sql.Rows, dimension string, limit int64, scan fu
 		return observation.snapshotFacetObservation, false, err
 	}
 	return observation.snapshotFacetObservation, false, rows.Close()
+}
+
+func wholeModifiedMonth(value query.Query) string {
+	after, err := time.Parse(time.RFC3339, value.Filters.ModifiedAfter)
+	if err != nil || after.Format(time.RFC3339) != value.Filters.ModifiedAfter || after.Location() != time.UTC ||
+		after.Day() != 1 || after.Hour() != 0 || after.Minute() != 0 || after.Second() != 0 ||
+		value.Filters.ModifiedBefore != after.AddDate(0, 1, 0).Format(time.RFC3339) {
+		return ""
+	}
+	return after.Format("2006-01")
 }
 
 func wholeCaptureYear(value query.Query) string {

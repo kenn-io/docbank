@@ -77,6 +77,15 @@ it("hides a group with no values or an empty scope, and keeps one with some miss
   expect(screen.queryByRole("group", { name: "Tags facet" })).toBeNull();
 });
 
+it("keeps an active modified month in an empty scope so it can be cleared", async () => {
+  const onchange = vi.fn();
+  const month = { key: "2025-07", label: "2025-07", count: 0, selected: true };
+  const filters = { ...originalQuery.filters, modified_after: "2025-07-01T00:00:00Z", modified_before: "2025-08-01T00:00:00Z" };
+  render(FacetSidebar, { facets: [facet("modified", { total: 0, missing: 0, other: 0, values: [month] })], query: { ...originalQuery, filters }, onchange });
+  await fireEvent.click(within(screen.getByRole("group", { name: "Modified facet" })).getByRole("button", { name: /July 2025/ }));
+  expect(onchange.mock.calls.at(-1)?.[0].filters.modified_after).toBeUndefined();
+});
+
 it("keeps the No tags button reachable to clear while active and to apply after a tag is selected", async () => {
   const onchange = vi.fn();
   const view = render(FacetSidebar, { facets: [facet("tags", { total: 9, missing: 9, other: 0 })], query: { ...originalQuery, filters: { ...originalQuery.filters, no_tags: true } }, onchange });
