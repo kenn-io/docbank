@@ -263,6 +263,12 @@ mutexes on the real clock.
 
 ## Verification contract
 
+All repository workflows use GitHub-hosted runners. The main CI workflow uses
+Ubuntu 24.04 for Linux jobs and Windows Server 2025 for Windows amd64. Windows
+arm64 uses `windows-11-vs2026-arm` with two package shards. Pull requests call
+`ci.yml` from `main`, so changes to that workflow take effect for pull requests
+after merge. Workflow validation runs against the proposed workflow changes.
+
 Repository commands are defined in `AGENTS.md` and the Makefile. The important
 design-specific checks are:
 
