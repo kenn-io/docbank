@@ -248,7 +248,7 @@ func TestMistralEmbeddingAcceptsDocumentedOptionalUsageFields(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestMistralEmbeddingCancelDuringRetryWaitKeepsMetrics(t *testing.T) {
+func TestMistralEmbeddingDeadlineDuringRetryWaitKeepsMetrics(t *testing.T) {
 	input := []document.EmbeddingInput{{Key: "one", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: "text"}}
 	synctest.Test(t, func(t *testing.T) {
 		server := httptest.NewTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {

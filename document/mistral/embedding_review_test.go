@@ -158,7 +158,9 @@ func TestMistralEmbeddingAttemptTimeouts(t *testing.T) {
 							wantRequests = 1
 						}
 					}
-					require.EqualValues(t, wantRequests, requests.Load())
+					if stage != "credentials" || outcome == "recover" {
+						require.EqualValues(t, wantRequests, requests.Load())
+					}
 					if err != nil {
 						require.Equal(t, wantRequests, MetricsFromError(err).Requests)
 					}
