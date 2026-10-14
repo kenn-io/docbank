@@ -621,7 +621,7 @@ func TestProduceVisualPreviewKeepsImageReadErrorsRetryable(t *testing.T) {
 		failReadAt      int64
 	}{
 		{name: "jpeg", mediaType: "image/jpeg", data: mediatest.JPEG(3, 2, color.White), failAtSeeks: []int{3, 4}},
-		{name: "oversize jpeg", mediaType: "image/jpeg", data: syntheticVisualJPEGDC(t, 10008, 10008), failAtSeeks: []int{3, 4}},
+		{name: "oversize jpeg", mediaType: "image/jpeg", data: syntheticVisualJPEGDC(t, 10008, 10008, false), failAtSeeks: []int{3, 4}},
 		{name: "png", mediaType: "image/png", data: pngSource, failAtSeeks: []int{3, 4}},
 		{name: "png after IDAT", mediaType: "image/png", data: trailingPNG, failAtSeeks: []int{4}, failReadAt: failReadAt},
 		{name: "gif", mediaType: "image/gif", data: mediatest.GIF(3, 2, 1), failAtSeeks: []int{2, 3}},
@@ -928,31 +928,68 @@ func (r *failingVisualPreviewReadSeeker) Seek(offset int64, whence int) (int64, 
 
 //nolint:paralleltest // Measures allocations without concurrent preview producers.
 func TestProduceVisualPreviewDownscalesOversizedJPEG(t *testing.T) {
-	source := syntheticVisualJPEGDC(t, 10008, 10008)
-	digest := sha256.Sum256(source)
-	for _, size := range []string{"grid", "fit", "large"} {
-		t.Run(size, func(t *testing.T) {
-			recipe, err := VisualPreviewRecipeForSize(size)
-			require.NoError(t, err)
-			var before, after runtime.MemStats
-			runtime.ReadMemStats(&before)
-			product, err := ProduceVisualPreviewForRecipe(t.Context(), bytes.NewReader(source), VisualPreviewTarget{
-				SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(source)), MediaType: "image/jpeg",
-			}, recipe)
-			runtime.ReadMemStats(&after)
-			require.NoError(t, err)
-			require.Equal(t, document.VisualPreviewReady, product.Preview.State)
-			require.NotNil(t, product.Preview.Output)
-			edge := 1251
-			if size == "grid" {
-				edge = 512
+	for _, test := range []struct {
+		name        string
+		width       int
+		height      int
+		orientation uint16
+		baseline    bool
+		raw         bool
+	}{
+		{"progressive", 10008, 10008, 1, false, false},
+		{"EXIF orientation 6", 12000, 9000, 6, false, false},
+		{"baseline", 12000, 9000, 1, true, false},
+		{"embedded RAW", 12000, 9000, 1, false, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if test.baseline && testing.Short() {
+				t.Skip("large baseline allocation check")
 			}
-			assert.Equal(t, edge, product.Preview.Output.Width)
-			assert.Equal(t, edge, product.Preview.Output.Height)
-			assert.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(48<<20))
-			decoded, err := jpeg.Decode(bytes.NewReader(product.Output))
-			require.NoError(t, err)
-			assert.Equal(t, image.Rect(0, 0, edge, edge), decoded.Bounds())
+			source := syntheticVisualJPEGDC(t, test.width, test.height, test.baseline)
+			mediaType := "image/jpeg"
+			if test.orientation == 6 {
+				tiff := syntheticTIFF(42, []syntheticTIFFEntry{tiffShort(0x0112, 6)}, nil)
+				source = syntheticJPEGSegment(t, source, 0xe1, append([]byte("Exif\x00\x00"), tiff...))
+			}
+			if test.raw {
+				source = syntheticRAWPreviewTIFF(test.orientation, source)
+				mediaType = "image/x-adobe-dng"
+			}
+			digest := sha256.Sum256(source)
+			for _, size := range []string{"grid", "fit", "large"} {
+				t.Run(size, func(t *testing.T) {
+					recipe, err := VisualPreviewRecipeForSize(size)
+					require.NoError(t, err)
+					var before, after runtime.MemStats
+					runtime.ReadMemStats(&before)
+					product, err := ProduceVisualPreviewForRecipe(t.Context(), bytes.NewReader(source), VisualPreviewTarget{
+						SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(source)), MediaType: mediaType,
+					}, recipe)
+					runtime.ReadMemStats(&after)
+					require.NoError(t, err)
+					require.Equal(t, document.VisualPreviewReady, product.Preview.State)
+					require.NotNil(t, product.Preview.Output)
+					width, height := 1500, 1125
+					if test.width == test.height {
+						width, height = 1251, 1251
+					}
+					if size == "grid" {
+						width, height = 512, 384
+						if test.width == test.height {
+							height = 512
+						}
+					}
+					if test.orientation == 6 {
+						width, height = height, width
+					}
+					assert.Equal(t, width, product.Preview.Output.Width)
+					assert.Equal(t, height, product.Preview.Output.Height)
+					assert.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(48<<20))
+					decoded, err := jpeg.Decode(bytes.NewReader(product.Output))
+					require.NoError(t, err)
+					assert.Equal(t, image.Rect(0, 0, width, height), decoded.Bounds())
+				})
+			}
 		})
 	}
 }
@@ -1039,6 +1076,35 @@ func TestVisualPreviewJPEGDCRegressions(t *testing.T) {
 	jfif := syntheticJPEGSegment(t, rgb, 0xe0, []byte("JFIF\x00"))
 	baseline, err := os.ReadFile(filepath.Join("testdata", "baseline-422.jpg"))
 	require.NoError(t, err)
+	scan := bytes.Index(baseline, []byte{0xff, 0xda})
+	badDC, badAC := bytes.Clone(baseline), bytes.Clone(baseline)
+	badDC[scan+6] = 0x20
+	badAC[scan+6] = 0x02
+	badDHT := syntheticJPEGSegment(t, []byte{0xff, 0xd8, 0xff, 0xd9}, 0xc4, append([]byte{2, 1}, make([]byte, 16)...))[2:]
+	extended := bytes.Clone(baseline)
+	extended[bytes.Index(extended, []byte{0xff, 0xc0})+1] = 0xc1
+	for offset := 0; ; {
+		index := bytes.Index(extended[offset:], []byte{0xff, 0xc4})
+		if index < 0 {
+			break
+		}
+		index += offset
+		end := index + 2 + int(binary.BigEndian.Uint16(extended[index+2:index+4]))
+		for table := index + 4; table < end; {
+			extended[table] += 2
+			n := 0
+			for _, count := range extended[table+1 : table+17] {
+				n += int(count)
+			}
+			table += 17 + n
+		}
+		badDC = syntheticJPEGSegment(t, badDC, 0xc4, extended[index+4:end])
+		badAC = syntheticJPEGSegment(t, badAC, 0xc4, extended[index+4:end])
+		offset = end
+	}
+	for i := range int(extended[scan+4]) {
+		extended[scan+6+2*i] += 0x22
+	}
 	for _, test := range []struct {
 		name      string
 		data      []byte
@@ -1051,6 +1117,10 @@ func TestVisualPreviewJPEGDCRegressions(t *testing.T) {
 		{"redefined quantization", redefined, false, source},
 		{"empty AC scan", empty, true, nil},
 		{"damaged AC entropy", damaged, false, source},
+		{"baseline DC selector above 1", badDC, true, nil},
+		{"baseline AC selector above 1", badAC, true, nil},
+		{"baseline DHT ID above 1", append(bytes.Clone(baseline[:len(baseline)-2]), badDHT...), true, nil},
+		{"extended sequential selectors above 1", extended, false, baseline},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -1060,6 +1130,8 @@ func TestVisualPreviewJPEGDCRegressions(t *testing.T) {
 			got, err := decodeVisualPreviewJPEGDC(bufio.NewReader(bytes.NewReader(data)), config.ColorModel)
 			if test.wantError {
 				require.Error(t, err)
+				_, formatError := errors.AsType[jpeg.FormatError](err)
+				require.True(t, formatError)
 				return
 			}
 			require.NoError(t, err)
@@ -1074,7 +1146,7 @@ func TestVisualPreviewJPEGDCRegressions(t *testing.T) {
 
 func TestVisualPreviewJPEGDCAboveCeiling(t *testing.T) {
 	t.Parallel()
-	header := syntheticVisualJPEGDC(t, 8, 8)
+	header := syntheticVisualJPEGDC(t, 8, 8, false)
 	frame := bytes.Index(header, []byte{0xff, 0xc2})
 	binary.BigEndian.PutUint16(header[frame+5:frame+7], 65535)
 	binary.BigEndian.PutUint16(header[frame+7:frame+9], 65535)
@@ -1089,7 +1161,7 @@ func TestVisualPreviewJPEGDCAboveCeiling(t *testing.T) {
 	assert.Equal(t, "source_dimensions_exceed_limit", product.Preview.Failure.Code)
 }
 
-func syntheticVisualJPEGDC(t *testing.T, width, height int) []byte {
+func syntheticVisualJPEGDC(t *testing.T, width, height int, baseline bool) []byte {
 	t.Helper()
 	source := []byte{0xff, 0xd8}
 	segment := func(marker byte, payload []byte) {
@@ -1097,21 +1169,33 @@ func syntheticVisualJPEGDC(t *testing.T, width, height int) []byte {
 		source = append(source, payload...)
 	}
 	segment(0xdb, append([]byte{0}, bytes.Repeat([]byte{16}, 64)...))
-	segment(0xc2, []byte{8, byte(height >> 8), byte(height), byte(width >> 8), byte(width), 3, 1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0})
+	frame := byte(0xc2)
+	if baseline {
+		frame = 0xc0
+	}
+	segment(frame, []byte{8, byte(height >> 8), byte(height), byte(width >> 8), byte(width), 3, 1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0})
 	// One one-bit code, zero, represents a zero DC difference or AC EOB.
 	for _, table := range []byte{0, 0x10} {
 		segment(0xc4, append([]byte{table, 1}, make([]byte, 16)...))
 	}
 	blocks := ((width + 7) / 8) * ((height + 7) / 8)
+	if baseline {
+		blocks *= 2
+	}
 	entropy := make([]byte, (blocks+7)/8)
 	if blocks%8 != 0 {
 		entropy[len(entropy)-1] = byte((1 << (8 - blocks%8)) - 1)
 	}
 	for id := byte(1); id <= 3; id++ {
-		segment(0xda, []byte{1, id, 0, 0, 0, 0})
-		source = append(source, entropy...)
-		segment(0xda, []byte{1, id, 0, 1, 63, 0})
-		source = append(source, entropy...)
+		if baseline {
+			segment(0xda, []byte{1, id, 0, 0, 63, 0})
+			source = append(source, entropy...)
+		} else {
+			segment(0xda, []byte{1, id, 0, 0, 0, 0})
+			source = append(source, entropy...)
+			segment(0xda, []byte{1, id, 0, 1, 63, 0})
+			source = append(source, entropy...)
+		}
 	}
 	return append(source, 0xff, 0xd9)
 }

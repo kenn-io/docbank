@@ -53,6 +53,7 @@ type visualJPEGDCDecoder struct {
 	quant         [4]uint16
 	huffman       [2][4]visualJPEGDCHuffman
 	progressive   bool
+	baseline      bool
 	restart       int
 	colorModel    color.Model
 	maxH, maxV    int
@@ -62,12 +63,8 @@ type visualJPEGDCDecoder struct {
 
 func decodeVisualPreviewJPEGDC(reader *bufio.Reader, model color.Model) (image.Image, error) {
 	d := visualJPEGDCDecoder{reader: reader, colorModel: model}
-	var signature [2]byte
-	if _, err := io.ReadFull(reader, signature[:]); err != nil {
+	if _, err := reader.Discard(2); err != nil {
 		return nil, err
-	}
-	if signature != [2]byte{0xff, 0xd8} {
-		return nil, jpeg.FormatError("missing SOI")
 	}
 	marker, err := readVisualPreviewJPEGMarker(reader)
 	for err == nil {
@@ -92,7 +89,7 @@ func decodeVisualPreviewJPEGDC(reader *bufio.Reader, model color.Model) (image.I
 		}
 		switch marker {
 		case 0xc0, 0xc1, 0xc2:
-			err = d.frame(payload, marker == 0xc2)
+			err = d.frame(payload, marker)
 		case 0xdb:
 			err = d.quantization(payload)
 		case 0xc4:
@@ -121,12 +118,12 @@ func decodeVisualPreviewJPEGDC(reader *bufio.Reader, model color.Model) (image.I
 	return nil, err
 }
 
-func (d *visualJPEGDCDecoder) frame(p []byte, progressive bool) error {
+func (d *visualJPEGDCDecoder) frame(p []byte, marker byte) error {
 	if len(d.components) != 0 || len(p) < 6 || len(p) != 6+3*int(p[5]) {
 		return jpeg.FormatError("bad frame header")
 	}
 	d.height, d.width = int(binary.BigEndian.Uint16(p[1:3])), int(binary.BigEndian.Uint16(p[3:5]))
-	d.progressive = progressive
+	d.progressive, d.baseline = marker == 0xc2, marker == 0xc0
 	d.components = make([]visualJPEGDCComponent, int(p[5]))
 	for i := range d.components {
 		c := &d.components[i]
@@ -166,7 +163,7 @@ func (d *visualJPEGDCDecoder) quantization(p []byte) error {
 
 func (d *visualJPEGDCDecoder) tables(p []byte) error {
 	for len(p) > 0 {
-		if len(p) < 17 || p[0]>>4 > 1 || p[0]&15 > 3 {
+		if len(p) < 17 || p[0]>>4 > 1 || p[0]&15 > 3 || d.baseline && p[0]&15 > 1 {
 			return jpeg.FormatError("bad Huffman table")
 		}
 		t := &d.huffman[p[0]>>4][p[0]&15]
@@ -257,6 +254,9 @@ func (d *visualJPEGDCDecoder) scan(p []byte) error {
 		}
 		if indices[i] < 0 || p[2+2*i]>>4 > 3 || p[2+2*i]&15 > 3 {
 			return jpeg.FormatError("bad scan component")
+		}
+		if d.baseline && (p[2+2*i]>>4 > 1 || p[2+2*i]&15 > 1) {
+			return jpeg.FormatError("bad baseline Huffman selector")
 		}
 		for j := range i {
 			if indices[i] == indices[j] {
@@ -458,12 +458,13 @@ func (c *visualJPEGDCComponent) sample(i int) byte {
 
 func (c *visualJPEGDCComponent) chroma(x, y, maxH, maxV int) byte {
 	// Align chroma block centres with output pixel centres before interpolating.
-	fx := max(0, min(float64(c.w-1), (float64(x)+0.5)*float64(c.h)/float64(maxH)-0.5))
-	fy := max(0, min(float64(c.hBlocks-1), (float64(y)+0.5)*float64(c.v)/float64(maxV)-0.5))
-	x0, y0 := int(fx), int(fy)
+	sx, sy := 2*maxH, 2*maxV
+	fx := max(0, min((c.w-1)*sx, (2*x+1)*int(c.h)-maxH))
+	fy := max(0, min((c.hBlocks-1)*sy, (2*y+1)*int(c.v)-maxV))
+	x0, y0 := fx/sx, fy/sy
 	x1, y1 := min(x0+1, c.w-1), min(y0+1, c.hBlocks-1)
-	dx, dy := fx-float64(x0), fy-float64(y0)
-	top := float64(c.sample(y0*c.w+x0))*(1-dx) + float64(c.sample(y0*c.w+x1))*dx
-	bottom := float64(c.sample(y1*c.w+x0))*(1-dx) + float64(c.sample(y1*c.w+x1))*dx
-	return byte(top*(1-dy) + bottom*dy + 0.5)
+	dx, dy := fx%sx, fy%sy
+	top := int(c.sample(y0*c.w+x0))*(sx-dx) + int(c.sample(y0*c.w+x1))*dx
+	bottom := int(c.sample(y1*c.w+x0))*(sx-dx) + int(c.sample(y1*c.w+x1))*dx
+	return byte((top*(sy-dy) + bottom*dy + sx*sy/2) / (sx * sy))
 }
