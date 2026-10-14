@@ -88,7 +88,7 @@ func TestMistralEmbeddingAttemptTimeouts(t *testing.T) {
 			if (stage == "retry_wait") != (outcome == "caller_deadline") {
 				continue
 			}
-			// Only credential timeouts can recover; header and body timeouts repeat on retry.
+			// credentials/recover covers the shared stage-independent retry loop; headers/body exhaust cover stage-specific timeout detection.
 			if stage != "credentials" && outcome == "recover" {
 				continue
 			}
