@@ -61,7 +61,7 @@ type PhotoBrowseRow struct {
 	MediaType            string            `json:"media_type"`
 	ImportTime           string            `json:"import_time"`
 	CaptureTime          *string           `json:"capture_time" nullable:"true"`
-	FileModifiedTime     *string           `json:"file_modified_time" nullable:"true" format:"date-time"`
+	FileModifiedTime     *string           `json:"file_modified_time" nullable:"true" format:"date-time" doc:"Set only when the file modified time, not a capture date, placed the photo."`
 	CaptureTimePrecision *string           `json:"capture_time_precision" nullable:"true"`
 	CaptureTimeTimezone  *string           `json:"capture_time_timezone" nullable:"true"`
 	CaptureTimeOffset    *string           `json:"capture_time_offset" nullable:"true"`
@@ -86,7 +86,7 @@ type PhotoMapRow struct {
 	Revision         int64    `json:"revision" minimum:"1"`
 	Name             string   `json:"name"`
 	CaptureTime      *string  `json:"capture_time" nullable:"true"`
-	FileModifiedTime *string  `json:"file_modified_time" nullable:"true" format:"date-time"`
+	FileModifiedTime *string  `json:"file_modified_time" nullable:"true" format:"date-time" doc:"Set only when the file modified time, not a capture date, placed the photo."`
 	WidthPX          *int64   `json:"width_px" nullable:"true"`
 	HeightPX         *int64   `json:"height_px" nullable:"true"`
 	Latitude         *float64 `json:"latitude" nullable:"true"`

@@ -12170,6 +12170,7 @@ components:
             - number
             - "null"
         file_modified_time:
+          description: Set only when the file modified time, not a capture date, placed the photo.
           format: date-time
           type:
             - string
@@ -12700,6 +12701,7 @@ components:
             - string
             - "null"
         file_modified_time:
+          description: Set only when the file modified time, not a capture date, placed the photo.
           format: date-time
           type:
             - string

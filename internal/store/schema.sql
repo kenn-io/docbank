@@ -2259,6 +2259,7 @@ CREATE TRIGGER IF NOT EXISTS photo_timeline_refresh AFTER INSERT ON photo_timeli
             (SELECT NULLIF(t.capture_date, '') FROM source_metadata_heads h
                 JOIN photo_technical_metadata t ON t.generation_id = h.generation_id
                 WHERE h.source_sha256 = v.blob_hash) AS exif_day,
+            -- The supersedes walk mirrors loadBoundDocumentEventEvidence (document_events_evidence.go).
             (WITH RECURSIVE chain(observed_at, identity) AS (
                 SELECT b.observed_at, b.provenance_identity FROM content_versions cv
                 JOIN provenance_version_bindings b ON b.content_version_id = cv.version_id

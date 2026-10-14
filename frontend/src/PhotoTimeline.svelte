@@ -115,7 +115,7 @@
     {:else if facet.total === 0}
       <p>No photos in this scope.</p>
     {:else}
-      <p>These photos have no recorded capture dates.</p>
+      <p>These photos have no recorded dates.</p>
     {/if}
   {/if}
 </section>

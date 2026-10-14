@@ -5470,7 +5470,10 @@ export interface PhotoBrowseRow {
   exposure_time_seconds: number | null;
   /** @nullable */
   f_number: number | null;
-  /** @nullable */
+  /**
+     * Set only when the file modified time, not a capture date, placed the photo.
+     * @nullable
+     */
   file_modified_time: string | null;
   /** @nullable */
   focal_length_mm: number | null;
@@ -5517,7 +5520,10 @@ export interface PhotoMapRow {
   asset_id: string;
   /** @nullable */
   capture_time: string | null;
-  /** @nullable */
+  /**
+     * Set only when the file modified time, not a capture date, placed the photo.
+     * @nullable
+     */
   file_modified_time: string | null;
   /** @nullable */
   height_px: number | null;
