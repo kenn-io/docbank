@@ -534,6 +534,35 @@ func TestPhotoExcludePromotePreservesIdentityAndReceipt(t *testing.T) {
 	})
 }
 
+func TestPhotoConcurrentRevisionMutationHasOneWinner(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	asset := albumAsset(t, s, "photo.jpg")
+	start := make(chan struct{})
+	ready := make(chan struct{}, 2)
+	results := make(chan error, 2)
+	for range 2 {
+		go func() {
+			ready <- struct{}{}
+			<-start
+			_, err := s.SetPhotoAssetExcluded(t.Context(), asset.ID, asset.Revision, true)
+			results <- err
+		}()
+	}
+	<-ready
+	<-ready
+	close(start)
+	first, second := <-results, <-results
+	if first != nil {
+		first, second = second, first
+	}
+	require.NoError(t, first)
+	require.ErrorIs(t, second, ErrStaleRevision)
+	updated, err := s.PhotoAssetByID(t.Context(), asset.ID)
+	require.NoError(t, err)
+	require.Equal(t, asset.Revision+1, updated.Revision)
+}
+
 func TestPhotoVersionTransitionsKeepIdentity(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {

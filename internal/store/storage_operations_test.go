@@ -87,7 +87,10 @@ func TestLocalOperationValidatesKindAndPersistsTotalAndReceipt(t *testing.T) {
 		cancelled, err := s.FinalizeLocalOperation(ctx, finalized)
 		require.NoError(t, err)
 		assert.False(t, cancelled)
-		require.ErrorIs(t, s.RequestStorageOperationCancel(ctx, finalized), ErrStorageOperationTerminal)
+		finalizing, err := s.StorageOperation(ctx, finalized)
+		require.NoError(t, err)
+		assert.Equal(t, StorageOperationRunning, finalizing.State)
+		assert.Equal(t, storageOperationFinalizingCursor, finalizing.Cursor)
 
 		requested := start()
 		require.NoError(t, s.RequestStorageOperationCancel(ctx, requested))
