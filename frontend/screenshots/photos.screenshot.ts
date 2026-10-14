@@ -41,9 +41,10 @@ test("Hidden photos lock, unlock, unhide, expire, and discard previews", async (
     await page.getByRole("menuitem", { name: "Hide", exact: true }).click();
     await hidePending;
     await page.getByRole("button", { name: "Hidden", exact: true }).click();
-    await expect(page.getByText(/Locks in/)).toBeVisible();
-    await expect(page.getByText("No hidden photos", { exact: true })).toBeVisible();
+    await expect(page.getByText(/Locks in/)).toHaveCount(0);
+    await expect(page.locator("[data-asset]")).toHaveCount(0);
     releaseHide();
+    await expect(page.getByText(/Locks in/)).toBeVisible();
     await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible();
     await page.getByRole("button", { name: "Library", exact: true }).click();
     await expect(page.locator(`[data-asset="${id}"]`)).toHaveCount(0);
@@ -56,7 +57,19 @@ test("Hidden photos lock, unlock, unhide, expire, and discard previews", async (
     await expect(page.locator("[data-asset]")).toHaveCount(0);
     await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible({ timeout: 6000 });
     await expect(page.getByRole("button", { name: "Retry", exact: true })).toHaveCount(0);
-    await page.getByRole("button", { name: "Lock", exact: true }).click();
+    const leave = async () => page.evaluate(() => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    const returnToPage = async () => page.evaluate(() => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    const locked = page.waitForResponse(response => response.url().endsWith("/photos/hidden/lock") && response.ok());
+    await leave();
+    await expect(page.locator("[data-asset]")).toHaveCount(0);
+    await locked;
+    await returnToPage();
     await expect(page.getByRole("button", { name: "Unlock", exact: true })).toBeVisible();
     await expect(page.locator("[data-asset]")).toHaveCount(0);
     await expect(page.getByLabel("Passcode", { exact: true })).toBeEnabled();
@@ -71,6 +84,19 @@ test("Hidden photos lock, unlock, unhide, expire, and discard previews", async (
       await page.evaluate(value => { localStorage.setItem("docbank-theme", value); document.documentElement.classList.toggle("dark", value === "dark"); }, theme);
       await page.screenshot({ path: path.join(output!, `web-hidden-unlocked-${theme}.png`), animations: "disabled" });
     }
+    await page.route("**/photos/hidden/lock", route => route.abort("failed"), { times: 1 });
+    await leave();
+    await expect(page.getByRole("button", { name: "Retry lock", exact: true })).toBeVisible();
+    await returnToPage();
+    await expect(page.locator("[data-asset]")).toHaveCount(0);
+    await expect(page.getByLabel("Passcode", { exact: true })).toHaveCount(0);
+    await page.screenshot({ path: path.join(output!, "web-hidden-lock-failure-dark.png"), animations: "disabled" });
+    await page.getByRole("button", { name: "Retry lock", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Retry lock", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Unlock", exact: true })).toBeVisible({ timeout: 5000 });
+    await page.getByLabel("Passcode", { exact: true }).fill("synthetic-passcode");
+    await page.getByRole("button", { name: "Unlock", exact: true }).click();
+    await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible();
     await page.route(`**/api/v1/photos/assets/${id}/unhide`, route => route.fulfill({ status: 412, contentType: "application/problem+json", body: JSON.stringify({ detail: "Synthetic stale photo revision", code: "stale_revision" }) }), { times: 1 });
     await page.locator(`[data-asset="${id}"]`).getByRole("button", { name: /^Actions for / }).click();
     await page.getByRole("menuitem", { name: "Unhide", exact: true }).click();
