@@ -129,7 +129,7 @@ func TestPhotoCheckoutSelections(t *testing.T) {
 
 func TestPhotoCheckoutPublication(t *testing.T) {
 	t.Parallel()
-	for _, scenario := range []string{"hidden_at", "excluded_at", "trashed", "writer reservation"} {
+	for _, scenario := range []string{"hidden_at", "excluded_at", "trashed"} {
 		t.Run(scenario, func(t *testing.T) {
 			s := newTestStore(t)
 			a := albumAsset(t, s, "photo.jpg")
@@ -137,28 +137,6 @@ func TestPhotoCheckoutPublication(t *testing.T) {
 			require.NoError(t, err)
 			entries, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
 			require.NoError(t, err)
-			if scenario == "writer reservation" {
-				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-				defer cancel()
-				require.NoError(t, s.PublishPhotoCheckoutEntry(ctx, entries[0], func() (bool, error) {
-					// An independent connection can write because publication holds no SQLite transaction.
-					_, err := s.db.ExecContext(ctx, `UPDATE storage_operations SET error='' WHERE operation_id=?`, c.OperationID)
-					if err != nil {
-						return false, err
-					}
-					blocked, stop := context.WithTimeout(ctx, 2*time.Second)
-					defer stop()
-					_, err = s.SetPhotoAssetExcluded(blocked, a.ID, a.Revision, true)
-					require.ErrorIs(t, err, context.DeadlineExceeded)
-					return true, nil
-				}))
-				_, err = s.SetPhotoAssetExcluded(ctx, a.ID, a.Revision, true)
-				require.NoError(t, err)
-				entries, err = s.PhotoCheckoutEntries(t.Context(), c.ID)
-				require.NoError(t, err)
-				require.True(t, entries[0].Published)
-				return
-			}
 			if scenario == "trashed" {
 				_, err = s.TrashPhotoAsset(t.Context(), a.ID, a.Revision)
 			} else {
@@ -171,6 +149,35 @@ func TestPhotoCheckoutPublication(t *testing.T) {
 			require.False(t, called)
 		})
 	}
+}
+
+func TestPhotoCheckoutPublicationReservesAssetWriter(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	a := albumAsset(t, s, "photo.jpg")
+	c, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, "checkout", 0)
+	require.NoError(t, err)
+	entries, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, s.PublishPhotoCheckoutEntry(ctx, entries[0], func() (bool, error) {
+		// An independent connection can write because publication holds no SQLite transaction.
+		_, err := s.db.ExecContext(ctx, `UPDATE storage_operations SET error='' WHERE operation_id=?`, c.OperationID)
+		if err != nil {
+			return false, err
+		}
+		blocked, stop := context.WithTimeout(ctx, 2*time.Second)
+		defer stop()
+		_, err = s.SetPhotoAssetExcluded(blocked, a.ID, a.Revision, true)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		return true, nil
+	}))
+	_, err = s.SetPhotoAssetExcluded(ctx, a.ID, a.Revision, true)
+	require.NoError(t, err)
+	entries, err = s.PhotoCheckoutEntries(t.Context(), c.ID)
+	require.NoError(t, err)
+	require.True(t, entries[0].Published)
 }
 
 func TestPhotoCheckoutMetadataRestoresUnboundAndDetachedFilesAndValidatesFrozenEntries(t *testing.T) {
@@ -299,7 +306,7 @@ func TestPhotoCheckoutRejectedCreateLeavesNoCheckoutOrOperation(t *testing.T) {
 		{"negative limit", "", -1}, {"all without limit", "", 0}, {"insufficient limit", "", 19},
 	}
 	if runtime.GOOS == "windows" {
-		for _, name := range []string{"CON.jpg", "bad:name.jpg", "trailing.", "trailing "} {
+		for _, name := range []string{"CON.jpg", "bad:name.jpg", "trailing.", "trailing ", "control\x01.jpg"} {
 			cases = append(cases, struct {
 				name, filename string
 				limit          int64
@@ -343,14 +350,6 @@ func TestPhotoCheckoutRejectedCreateLeavesNoCheckoutOrOperation(t *testing.T) {
 			require.Empty(t, operations)
 		})
 	}
-}
-
-func TestValidateCheckoutFilenameRejectsWindowsControlCharacters(t *testing.T) {
-	t.Parallel()
-	if runtime.GOOS != "windows" {
-		t.Skip("Windows filename compatibility")
-	}
-	require.ErrorContains(t, validateCheckoutFilename("control\x01.jpg"), "control character")
 }
 
 func TestPhotoCheckoutStatusTracksOperationAcrossPauseAndFinish(t *testing.T) {

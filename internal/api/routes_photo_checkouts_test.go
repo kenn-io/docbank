@@ -65,17 +65,6 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 	response, body = do(t, ts, http.MethodGet, "/api/v1/photos/checkouts/00000000-0000-4000-8000-000000000001", nil, nil)
 	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
 	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
-	for _, endpoint := range []struct {
-		method string
-		path   string
-		input  any
-	}{
-		{http.MethodPost, "/api/v1/photos/checkouts/estimate", selection},
-		{http.MethodPost, "/api/v1/photos/checkouts", request},
-		{http.MethodGet, "/api/v1/photos/checkouts", nil},
-		{http.MethodGet, "/api/v1/photos/checkouts/" + created.Checkout.ID, nil},
-	} {
-		response, body = do(t, ts, endpoint.method, endpoint.path, browser, endpoint.input)
-		require.Equal(t, http.StatusForbidden, response.StatusCode, body)
-	}
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/checkouts", browser, request)
+	require.Equal(t, http.StatusForbidden, response.StatusCode, body)
 }

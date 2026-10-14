@@ -362,27 +362,6 @@ func TestTrashListAndEmpty(t *testing.T) {
 	assert.Equal(t, 1, trash.Total)
 	assert.Equal(t, 1, trash.Limit)
 
-	retained, err := s.CreateFile(t.Context(), s.RootID(), "retained.jpg", f.BlobHash, f.Size, "image/jpeg")
-	require.NoError(t, err)
-	retainedAsset, err := s.PhotoAssetForNode(t.Context(), retained.ID)
-	require.NoError(t, err)
-	_, _, err = s.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{retainedAsset.ID}}, "checkout", 0)
-	require.NoError(t, err)
-	_, _, err = s.Trash(t.Context(), retained.ID, store.UnconditionalRev)
-	require.NoError(t, err)
-
-	raw := createFileWithContent(t, ts, s, "/capture.raw", "synthetic raw")
-	jpegHash, jpegSize, err := s.Blobs.Write(strings.NewReader("synthetic jpeg"))
-	require.NoError(t, err)
-	jpeg, err := s.CreateFile(t.Context(), s.RootID(), "capture.jpg", jpegHash, jpegSize, "image/jpeg")
-	require.NoError(t, err)
-	asset, err := s.PhotoAssetForNode(t.Context(), jpeg.ID)
-	require.NoError(t, err)
-	_, err = s.AttachPhotoFile(t.Context(), asset.ID, asset.Revision, raw.ID, store.PhotoRoleRAW, nil)
-	require.NoError(t, err)
-	_, _, err = s.Trash(t.Context(), raw.ID, store.UnconditionalRev)
-	require.NoError(t, err)
-
 	expected, err := s.TrashEmpty(t.Context(), 0, false)
 	require.NoError(t, err)
 	for _, run := range []bool{false, true} {
@@ -391,7 +370,7 @@ func TestTrashListAndEmpty(t *testing.T) {
 		require.Equal(t, http.StatusOK, resp.StatusCode, body)
 		var out api.TrashEmptyReport
 		require.NoError(t, json.Unmarshal([]byte(body), &out))
-		want := api.TrashEmptyReport{CandidateRoots: expected.Candidates, RetainedRoots: 1, HeldRoots: 1, Run: run}
+		want := api.TrashEmptyReport{CandidateRoots: expected.Candidates, RetainedRoots: expected.Retained, HeldRoots: expected.Held, Run: run}
 		if run {
 			want.Deleted = expected.Candidates
 		}

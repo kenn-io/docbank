@@ -120,35 +120,45 @@ func TestRootStageChecksDestinationIdentityAndSyncsParents(t *testing.T) {
 				require.True(t, installed)
 				require.NoError(t, err)
 				require.Equal(t, filepath.Join(root.Name(), filepath.Dir(relativePath)), synced[4])
-				second, err := CreateRootStage(root)
-				require.NoError(t, err)
-				defer func() { require.NoError(t, second.Cleanup()) }()
-				_, err = second.File.WriteString("replacement")
-				require.NoError(t, err)
-				require.NoError(t, second.File.Close())
-				second.File = nil
-				installed, err = second.Publish(relativePath)
-				if runtime.GOOS == "windows" {
-					var status interface{ Errno() syscall.Errno }
-					require.ErrorAs(t, err, &status)
-					err = status.Errno()
-				}
-				require.ErrorIs(t, err, os.ErrExist)
-				require.False(t, installed)
-				content, err := root.ReadFile(relativePath)
-				require.NoError(t, err)
-				require.Equal(t, "verified", string(content))
-				second.syncDirectory = func(*os.Root, string) error { return failure }
-				durablePath := filepath.Join(filepath.Dir(relativePath), "durable.jpg")
-				installed, err = second.Publish(durablePath)
-				require.ErrorIs(t, err, failure)
-				require.True(t, installed)
-				content, err = root.ReadFile(durablePath)
-				require.NoError(t, err)
-				require.Equal(t, "replacement", string(content))
 			}
 		})
 	}
+}
+
+func TestRootStageHonorsNoReplaceAndReportsPostInstallDurability(t *testing.T) {
+	t.Parallel()
+	root, err := os.OpenRoot(t.TempDir())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, root.Close()) }()
+	relativePath := "photo.jpg"
+	require.NoError(t, root.WriteFile(relativePath, []byte("verified"), 0o600))
+	failure := errors.New("directory sync failed")
+	stage, err := CreateRootStage(root)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, stage.Cleanup()) }()
+	_, err = stage.File.WriteString("replacement")
+	require.NoError(t, err)
+	require.NoError(t, stage.File.Close())
+	stage.File = nil
+	installed, err := stage.Publish(relativePath)
+	if runtime.GOOS == "windows" {
+		var status interface{ Errno() syscall.Errno }
+		require.ErrorAs(t, err, &status)
+		err = status.Errno()
+	}
+	require.ErrorIs(t, err, os.ErrExist)
+	require.False(t, installed)
+	content, err := root.ReadFile(relativePath)
+	require.NoError(t, err)
+	require.Equal(t, "verified", string(content))
+	stage.syncDirectory = func(*os.Root, string) error { return failure }
+	durablePath := filepath.Join(filepath.Dir(relativePath), "durable.jpg")
+	installed, err = stage.Publish(durablePath)
+	require.ErrorIs(t, err, failure)
+	require.True(t, installed)
+	content, err = root.ReadFile(durablePath)
+	require.NoError(t, err)
+	require.Equal(t, "replacement", string(content))
 }
 
 func TestCreateStageRemovesOnlyStaleAbandonedStages(t *testing.T) {

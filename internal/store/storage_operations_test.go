@@ -11,95 +11,96 @@ import (
 	"go.kenn.io/kit/packstore"
 )
 
-func TestStorageOperationPersistsProgressSupportsResumeAndValidatesKindAndCancellation(t *testing.T) {
+func TestStorageOperationPersistsPlacementProgressAndResumes(t *testing.T) {
 	t.Parallel()
-	for _, kind := range []string{"placement", "local", "completed"} {
-		t.Run(kind, func(t *testing.T) {
-			local := kind == "local"
-			s := newTestStore(t)
-			var created StorageOperation
-			var err error
-			if local {
-				created, err = s.CreateLocalOperation(t.Context(), StorageOperationKindPhotoImport, `{"source_root":"/camera","destination":"/photos"}`)
-			} else {
-				created, err = s.CreateStorageOperation(t.Context(), StorageOperationCreate{
-					Kind: "place", RequestDigest: fakeHash("a5"),
-					RequestJSON: `{"version":1}`, PlanJSON: `{"hashes":["a"]}`, TotalObjects: 3,
-				})
-			}
-			require.NoError(t, err)
-			require.NoError(t, validateUUIDv4(created.ID))
-			assert.Equal(t, StorageOperationQueued, created.State)
-			if local {
-				require.Error(t, s.SetStorageOperationTotal(t.Context(), created.ID, 3))
-			} else if kind == "placement" {
-				require.NoError(t, s.NoteQueuedStorageOperation(t.Context(), created.ID, strings.Repeat("界", 2000)))
-				queued, err := s.StorageOperation(t.Context(), created.ID)
-				require.NoError(t, err)
-				assert.Equal(t, strings.Repeat("界", 4096/3), queued.Error)
-			}
+	s := newTestStore(t)
+	created, err := s.CreateStorageOperation(t.Context(), StorageOperationCreate{
+		Kind: "place", RequestDigest: fakeHash("a5"),
+		RequestJSON: `{"version":1}`, PlanJSON: `{"hashes":["a"]}`, TotalObjects: 3,
+	})
+	require.NoError(t, err)
+	require.NoError(t, validateUUIDv4(created.ID))
+	assert.Equal(t, StorageOperationQueued, created.State)
+	require.NoError(t, s.NoteQueuedStorageOperation(t.Context(), created.ID, strings.Repeat("界", 2000)))
+	queued, err := s.StorageOperation(t.Context(), created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, strings.Repeat("界", 4096/3), queued.Error)
+	claimed, err := s.ClaimStorageOperation(t.Context(), created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, StorageOperationRunning, claimed.State)
+	resumable, err := s.ResumableStorageOperations(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, []StorageOperation{claimed}, resumable)
+	claimed, err = s.ClaimStorageOperation(t.Context(), created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, StorageOperationRunning, claimed.State)
+	require.NoError(t, s.AdvanceStorageOperation(t.Context(), created.ID, "hash-1", 1, 1, 12))
+	require.NoError(t, s.RequestStorageOperationCancel(t.Context(), created.ID))
+	current, err := s.StorageOperation(t.Context(), created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "hash-1", current.Cursor)
+	assert.Equal(t, int64(1), current.CopiedObjects)
+	assert.Equal(t, int64(1), current.CompletedObjects)
+	assert.Equal(t, int64(12), current.CopiedBytes)
+	assert.True(t, current.CancelRequested)
+	require.NoError(t, s.FinishStorageOperation(t.Context(), created.ID, StorageOperationCancelled, `{"cancelled":true}`, "", time.Now().Add(24*time.Hour)))
+	items, err := s.StorageOperations(t.Context(), 10)
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	assert.Equal(t, StorageOperationCancelled, items[0].State)
+	assert.NotNil(t, items[0].FinishedAt)
+}
 
-			claimed, err := s.ClaimStorageOperation(t.Context(), created.ID)
-			require.NoError(t, err)
-			assert.Equal(t, StorageOperationRunning, claimed.State)
-			if kind == "completed" {
-				require.NoError(t, s.FinishStorageOperation(t.Context(), created.ID, StorageOperationCompleted, `{}`, "", time.Now().Add(24*time.Hour)))
-				require.ErrorIs(t, s.RequestStorageOperationCancel(t.Context(), created.ID), ErrStorageOperationTerminal)
-				return
-			}
-			if kind == "placement" {
-				resumable, err := s.ResumableStorageOperations(t.Context())
-				require.NoError(t, err)
-				require.Equal(t, []StorageOperation{claimed}, resumable)
-				claimed, err = s.ClaimStorageOperation(t.Context(), created.ID)
-				require.NoError(t, err)
-				assert.Equal(t, StorageOperationRunning, claimed.State)
-			}
-			if local {
-				require.NoError(t, s.SetStorageOperationTotal(t.Context(), created.ID, 3))
-			}
-			const progressReceipt = `{"added":1}`
-			cursor, copied, copiedBytes, receipts := "hash-1", int64(1), int64(12), []string(nil)
-			if local {
-				cursor, copied, copiedBytes, receipts = "", 0, 0, []string{progressReceipt}
-			}
-			require.NoError(t, s.AdvanceStorageOperation(t.Context(), created.ID, cursor, 1, copied, copiedBytes, receipts...))
-			require.NoError(t, s.RequestStorageOperationCancel(t.Context(), created.ID))
+func TestLocalOperationPersistsTotalAndReceiptAndRejectsUnknownKind(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	created, err := s.CreateLocalOperation(t.Context(), StorageOperationKindPhotoImport, `{"source_root":"/camera","destination":"/photos"}`)
+	require.NoError(t, err)
+	require.NoError(t, validateUUIDv4(created.ID))
+	assert.Equal(t, StorageOperationQueued, created.State)
+	require.Error(t, s.SetStorageOperationTotal(t.Context(), created.ID, 3))
+	claimed, err := s.ClaimStorageOperation(t.Context(), created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, StorageOperationRunning, claimed.State)
+	require.NoError(t, s.SetStorageOperationTotal(t.Context(), created.ID, 3))
+	const receipt = `{"added":1}`
+	require.NoError(t, s.AdvanceStorageOperation(t.Context(), created.ID, "", 1, 0, 0, receipt))
+	require.NoError(t, s.RequestStorageOperationCancel(t.Context(), created.ID))
+	current, err := s.StorageOperation(t.Context(), created.ID)
+	require.NoError(t, err)
+	resumable, err := s.ResumableStorageOperations(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, []StorageOperation{current}, resumable)
+	assert.Equal(t, int64(3), current.TotalObjects)
+	assert.Equal(t, receipt, current.ReceiptJSON)
+	assert.Empty(t, current.Cursor)
+	assert.Zero(t, current.CopiedObjects)
+	assert.Equal(t, int64(1), current.CompletedObjects)
+	assert.Zero(t, current.CopiedBytes)
+	assert.True(t, current.CancelRequested)
+	require.NoError(t, s.FinishStorageOperation(t.Context(), created.ID, StorageOperationCancelled, receipt, "", time.Time{}))
+	items, err := s.StorageOperations(t.Context(), 10)
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	assert.Equal(t, StorageOperationCancelled, items[0].State)
+	assert.NotNil(t, items[0].FinishedAt)
+	assert.Equal(t, receipt, items[0].ReceiptJSON)
+	_, err = s.CreateLocalOperation(t.Context(), "unknown", `{}`)
+	require.Error(t, err)
+}
 
-			current, err := s.StorageOperation(t.Context(), created.ID)
-			require.NoError(t, err)
-			if local {
-				resumable, err := s.ResumableStorageOperations(t.Context())
-				require.NoError(t, err)
-				require.Equal(t, []StorageOperation{current}, resumable)
-				assert.Equal(t, int64(3), current.TotalObjects)
-				assert.Equal(t, progressReceipt, current.ReceiptJSON)
-			}
-			assert.Equal(t, cursor, current.Cursor)
-			assert.Equal(t, copied, current.CopiedObjects)
-			assert.Equal(t, int64(1), current.CompletedObjects)
-			assert.Equal(t, copiedBytes, current.CopiedBytes)
-			assert.True(t, current.CancelRequested)
-
-			receipt, expiry := `{"cancelled":true}`, time.Now().Add(24*time.Hour)
-			if local {
-				receipt, expiry = progressReceipt, time.Time{}
-			}
-			require.NoError(t, s.FinishStorageOperation(
-				t.Context(), created.ID, StorageOperationCancelled, receipt, "", expiry,
-			))
-			items, err := s.StorageOperations(t.Context(), 10)
-			require.NoError(t, err)
-			require.Len(t, items, 1)
-			assert.Equal(t, StorageOperationCancelled, items[0].State)
-			assert.NotNil(t, items[0].FinishedAt)
-			if local {
-				assert.Equal(t, progressReceipt, items[0].ReceiptJSON)
-				_, err = s.CreateLocalOperation(t.Context(), "unknown", `{}`)
-				require.Error(t, err)
-			}
-		})
-	}
+func TestStorageOperationRejectsCancellationAfterCompletion(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	created, err := s.CreateStorageOperation(t.Context(), StorageOperationCreate{
+		Kind: "place", RequestDigest: fakeHash("a5"),
+		RequestJSON: `{"version":1}`, PlanJSON: `{"hashes":["a"]}`, TotalObjects: 3,
+	})
+	require.NoError(t, err)
+	_, err = s.ClaimStorageOperation(t.Context(), created.ID)
+	require.NoError(t, err)
+	require.NoError(t, s.FinishStorageOperation(t.Context(), created.ID, StorageOperationCompleted, `{}`, "", time.Now().Add(24*time.Hour)))
+	require.ErrorIs(t, s.RequestStorageOperationCancel(t.Context(), created.ID), ErrStorageOperationTerminal)
 }
 
 func TestStorageOperationRejectsConcurrentEvacuationsForOneStore(t *testing.T) {
