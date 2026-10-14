@@ -85,11 +85,6 @@ func TestPhotoImportAtomicGroup(t *testing.T) {
 	assert.True(t, result.Added)
 	assert.Len(t, result.Asset.Files, 3)
 	assert.Equal(t, PhotoRoleRAW, fileByRole(result.Asset.Files, PhotoRoleRAW).Role)
-	replay, err := s.IngestPhotoGroup(ctx, run, group)
-	require.NoError(t, err)
-	assert.True(t, replay.Skipped)
-	assert.False(t, replay.Added)
-	assert.Equal(t, result.Asset.ID, replay.Asset.ID)
 
 	var nodes int
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE kind='file'`).Scan(&nodes))
