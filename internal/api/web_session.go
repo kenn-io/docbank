@@ -265,6 +265,9 @@ func (r *webSessionRegistry) waitRevocations() {
 }
 
 func webSessionRequestAllowed(r *http.Request) bool {
+	if photoAuthoredBrowserRequestAllowed(r) {
+		return true
+	}
 	if photoAlbumBrowserRequestAllowed(r) {
 		return true
 	}

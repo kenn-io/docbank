@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import PhotoRejectsModal from "./PhotoRejectsModal.svelte";
+import { preparedPhoto } from "./photo-test-fixtures.js";
 import { Photos } from "./photos.svelte.js";
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); Reflect.deleteProperty(Element.prototype, "scrollIntoView"); });
@@ -9,7 +10,8 @@ it("shows counts, mixed pairs, batch limits, and the unavailable selected scope"
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   Object.defineProperty(Element.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
   const photos = new Photos("scoped", vi.fn());
-  photos.selection.selectedIDs = new Set(Array.from({ length: 3 }, (_, i) => `photo-${i}`));
+  photos.selection.selectedIDs = new Set(["photo-1"]);
+  photos.authored.targets = [preparedPhoto(1), preparedPhoto(2), preparedPhoto(3)];
   photos.rejects = { targets: Array.from({ length: 1000 }, (_, i) => ({ asset_id: `photo-${i}`, revision: 1, member_revision: 1 })), photos: 1001, files: 1001, unchanged: 66, mixed: [{ asset_id: "mixed", members: [{ file_id: "raw", name: "photo.raw", flag: "reject", in_trash: false }, { file_id: "jpeg", name: "photo.jpg", flag: "pick", in_trash: true }] }], mixed_count: 1, selection_limit: 3 };
   photos.rejectsSelectionLimit = 2;
   photos.rejectsError = "Move refused";

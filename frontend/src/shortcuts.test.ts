@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   isAppShortcutSuppressed,
+  isPhotoShortcutSuppressed,
   moveInspection,
 } from "./shortcuts.js";
 
@@ -88,4 +89,23 @@ describe("loaded-page inspection", () => {
     expect(moveInspection(displayed, undefined, 1)).toEqual({ id: 30 });
     expect(moveInspection(displayed, 999, -1)).toEqual({ id: 20 });
   });
+});
+
+it.each([
+  ['<div class="photo-loupe" role="dialog" aria-modal="true" tabindex="-1"></div>', false],
+  ['<div class="photo-loupe" role="dialog" aria-modal="true" tabindex="-1"></div><div role="dialog" aria-modal="true"></div>', true],
+  ['<button><span></span></button>', true],
+  ['<div class="photo-cell"><input type="checkbox"></div>', false],
+  ['<div class="photo-cell"><button><span></span></button></div>', false],
+  ['<div class="photo-inspector"><button><span></span></button></div>', false],
+  ['<div class="photo-loupe"><button><span></span></button></div>', false],
+  ['<div class="photo-cell"><div role="menu"><button><span></span></button></div></div>', true],
+  ['<input>', true],
+  ['<textarea></textarea>', true],
+  ['<select></select>', true],
+  ['<div contenteditable="true"><span></span></div>', true],
+  ['<div role="combobox"></div>', true],
+])("suppresses photo metadata shortcuts for %s: %s", (markup, suppressed) => {
+  document.body.innerHTML = markup;
+  expect(isPhotoShortcutSuppressed(keydown(document.querySelector("span,input,textarea,select,[role=combobox]") ?? document.body.firstElementChild!, { key: "0" }))).toBe(suppressed);
 });

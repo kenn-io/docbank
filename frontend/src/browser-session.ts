@@ -11,7 +11,7 @@ export function takeFragmentSession(
   const token = params.get("web_session") ?? "";
   const uploadSecret = params.get("web_upload_secret") ?? "";
   if (token || uploadSecret) {
-    history.replaceState(null, "", `${location.pathname}${location.search}`);
+    history.replaceState(history.state, "", `${location.pathname}${location.search}`);
   }
   return token && uploadSecret ? { token, uploadSecret } : null;
 }

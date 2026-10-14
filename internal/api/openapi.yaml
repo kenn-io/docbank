@@ -11519,6 +11519,14 @@ components:
           type:
             - string
             - "null"
+        cover_rotation:
+          enum:
+            - 0
+            - 90
+            - 180
+            - 270
+          format: int64
+          type: integer
         created_at:
           format: date-time
           type: string
@@ -11558,6 +11566,7 @@ components:
       required:
         - member_count
         - included_count
+        - cover_rotation
         - id
         - name
         - starred
@@ -11652,7 +11661,6 @@ components:
       properties:
         caption:
           description: At most 16384 UTF-8 bytes.
-          maxLength: 16384
           type: string
         confirmed_fields:
           description: Confirmation mask. See PhotoFile.confirmed_fields for supported bits.
@@ -11662,11 +11670,9 @@ components:
           type: integer
         copyright:
           description: At most 16384 UTF-8 bytes.
-          maxLength: 16384
           type: string
         creator:
           description: At most 16384 UTF-8 bytes.
-          maxLength: 16384
           type: string
         flag:
           enum:
@@ -11706,6 +11712,231 @@ components:
         - rotation
       type: object
       x-go-type: store.PhotoAuthored
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    PhotoAuthoredEditRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoAuthoredEditRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        keywords:
+          items:
+            $ref: "#/components/schemas/PhotoKeywordEdit"
+          maxItems: 100
+          type: array
+        patch:
+          $ref: "#/components/schemas/PhotoAuthoredPatch"
+        rotation_delta:
+          description: Rotate each target clockwise by 90 degrees.
+          enum:
+            - 90
+          format: int64
+          type: integer
+        targets:
+          items:
+            $ref: "#/components/schemas/PhotoAuthoredEditTarget"
+          maxItems: 1000
+          minItems: 1
+          type: array
+      required:
+        - targets
+        - patch
+      type: object
+      x-go-type: api.PhotoAuthoredEditRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoAuthoredEditTarget:
+      additionalProperties: false
+      properties:
+        asset_id:
+          format: uuid
+          type: string
+        asset_revision:
+          format: int64
+          minimum: 1
+          type: integer
+        file_id:
+          format: uuid
+          type: string
+        node_revision:
+          format: int64
+          minimum: 1
+          type: integer
+        revision:
+          format: int64
+          minimum: 1
+          type: integer
+      required:
+        - asset_id
+        - asset_revision
+        - file_id
+        - revision
+        - node_revision
+      type: object
+      x-go-type: store.PhotoAuthoredEditTarget
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    PhotoAuthoredPatch:
+      additionalProperties: false
+      properties:
+        caption:
+          description: At most 16384 UTF-8 bytes.
+          type:
+            - string
+            - "null"
+        copyright:
+          description: At most 16384 UTF-8 bytes.
+          type:
+            - string
+            - "null"
+        creator:
+          description: At most 16384 UTF-8 bytes.
+          type:
+            - string
+            - "null"
+        flag:
+          enum:
+            - ""
+            - pick
+            - reject
+          type:
+            - string
+            - "null"
+        label:
+          enum:
+            - ""
+            - red
+            - yellow
+            - green
+            - blue
+            - purple
+          type:
+            - string
+            - "null"
+        rating:
+          format: int64
+          maximum: 5
+          minimum: 0
+          type:
+            - integer
+            - "null"
+        rotation:
+          enum:
+            - 0
+            - 90
+            - 180
+            - 270
+          format: int64
+          type:
+            - integer
+            - "null"
+      type: object
+      x-go-type: store.PhotoAuthoredPatch
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    PhotoAuthoredPreparation:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoAuthoredPreparation.json
+          format: uri
+          readOnly: true
+          type: string
+        assets:
+          items:
+            $ref: "#/components/schemas/PhotoAsset"
+          type: array
+        targets:
+          items:
+            $ref: "#/components/schemas/PhotoPreparedTarget"
+          type: array
+      required:
+        - assets
+        - targets
+      type: object
+      x-go-type: api.PhotoAuthoredPreparation
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoAuthoredPrepareRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoAuthoredPrepareRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        asset_ids:
+          items:
+            format: uuid
+            type: string
+          maxItems: 1000
+          type: array
+        coverage:
+          $ref: "#/components/schemas/WorkspaceQueryCoverage"
+        hidden:
+          type: boolean
+        query:
+          $ref: "#/components/schemas/SavedQueryV1Schema"
+        skip_unavailable:
+          type: boolean
+      type: object
+      x-go-type: api.PhotoAuthoredPrepareRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoAuthoredReceipt:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoAuthoredReceipt.json
+          format: uri
+          readOnly: true
+          type: string
+        after:
+          items:
+            $ref: "#/components/schemas/PhotoAuthoredSnapshot"
+          type: array
+        before:
+          items:
+            $ref: "#/components/schemas/PhotoAuthoredSnapshot"
+          type: array
+        keyword_nodes:
+          items:
+            $ref: "#/components/schemas/PhotoKeywordNode"
+          type: array
+        keywords:
+          items:
+            $ref: "#/components/schemas/PhotoKeywordDelta"
+          type: array
+        receipt_id:
+          description: Empty for a no-op, with empty before and after arrays; no receipt is created.
+          type: string
+        sidecar:
+          $ref: "#/components/schemas/PhotoSidecarProvenance"
+        undo_of:
+          type: string
+      required:
+        - receipt_id
+        - before
+        - after
+      type: object
+      x-go-type: store.PhotoAuthoredReceipt
       x-go-type-import:
         path: go.kenn.io/docbank/internal/store
         name: store
@@ -11967,6 +12198,14 @@ components:
           format: int64
           minimum: 1
           type: integer
+        rotation:
+          enum:
+            - 0
+            - 90
+            - 180
+            - 270
+          format: int64
+          type: integer
         width_px:
           format: int64
           type:
@@ -11977,6 +12216,7 @@ components:
         - kind
         - revision
         - display_file_id
+        - rotation
         - node_id
         - content_version_id
         - name
@@ -12261,6 +12501,61 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    PhotoKeywordDelta:
+      additionalProperties: false
+      properties:
+        after:
+          type: boolean
+        before:
+          type: boolean
+        node_id:
+          format: int64
+          type: integer
+        tag_id:
+          type: string
+      required:
+        - node_id
+        - tag_id
+        - before
+        - after
+      type: object
+      x-go-type: store.PhotoKeywordDelta
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    PhotoKeywordEdit:
+      additionalProperties: false
+      properties:
+        assign:
+          type: boolean
+        tag_id:
+          format: uuid
+          type: string
+      required:
+        - tag_id
+        - assign
+      type: object
+      x-go-type: store.PhotoKeywordEdit
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    PhotoKeywordNode:
+      additionalProperties: false
+      properties:
+        after_revision:
+          format: int64
+          type: integer
+        node_id:
+          format: int64
+          type: integer
+      required:
+        - node_id
+        - after_revision
+      type: object
+      x-go-type: store.PhotoKeywordNode
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
     PhotoMapRow:
       additionalProperties: false
       properties:
@@ -12294,12 +12589,21 @@ components:
           format: int64
           minimum: 1
           type: integer
+        rotation:
+          enum:
+            - 0
+            - 90
+            - 180
+            - 270
+          format: int64
+          type: integer
         width_px:
           format: int64
           type:
             - integer
             - "null"
       required:
+        - rotation
         - asset_id
         - revision
         - name
@@ -12359,6 +12663,53 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    PhotoPreparedTarget:
+      additionalProperties: false
+      properties:
+        asset_id:
+          format: uuid
+          type: string
+        asset_revision:
+          format: int64
+          minimum: 1
+          type: integer
+        file_id:
+          format: uuid
+          type: string
+        file_name:
+          type: string
+        node_id:
+          format: int64
+          type: integer
+        node_revision:
+          format: int64
+          minimum: 1
+          type: integer
+        revision:
+          format: int64
+          minimum: 1
+          type: integer
+        tags:
+          items:
+            type: string
+          type: array
+        values:
+          $ref: "#/components/schemas/PhotoAuthored"
+      required:
+        - file_name
+        - node_id
+        - values
+        - tags
+        - asset_id
+        - asset_revision
+        - file_id
+        - revision
+        - node_revision
+      type: object
+      x-go-type: store.PhotoPreparedTarget
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
     PhotoPreviewSlot:
       additionalProperties: false
       properties:
@@ -12664,6 +13015,25 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    PhotoSidecarProvenance:
+      additionalProperties: false
+      properties:
+        file_id:
+          type: string
+        node_id:
+          format: int64
+          type: integer
+        version_id:
+          type: string
+      required:
+        - node_id
+        - version_id
+        - file_id
+      type: object
+      x-go-type: store.PhotoSidecarProvenance
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
     PhotoTimeline:
       additionalProperties: false
       properties:
@@ -24742,6 +25112,77 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: unhide a revisioned photo asset
+  /api/v1/photos/authored/edit:
+    post:
+      description: A no-op returns an empty receipt_id and empty before and after arrays. It creates no receipt and leaves the last real edit undoable.
+      operationId: editPhotoAuthored
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoAuthoredEditRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoAuthoredReceipt"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Edit photo fields and keywords atomically
+  /api/v1/photos/authored/prepare:
+    post:
+      operationId: preparePhotoAuthored
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoAuthoredPrepareRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoAuthoredPreparation"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Resolve a revision-bound metadata editing session
+  /api/v1/photos/authored/{receipt_id}/undo:
+    post:
+      operationId: undoPhotoAuthored
+      parameters:
+        - in: path
+          name: receipt_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoAuthoredReceipt"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Undo photo fields and keywords if their revisions still match
   /api/v1/photos/hidden:
     get:
       operationId: getPhotoHiddenState

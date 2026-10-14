@@ -33,6 +33,9 @@ func main() {
 	mapGPS := flag.Bool("map", false, "Include synthetic GPS locations")
 	unavailable := flag.Bool("unavailable", false, "Include an undecodable photo")
 	rejects := flag.Bool("rejects", false, "Include confirmed rejects")
+	rotateCover := flag.Bool("rotate-cover", false, "Rotate the album cover for comparison")
+	manyKeywords := flag.Bool("many-keywords", false, "Include an assigned keyword beyond the first 1,000")
+	pair := flag.Bool("pair", false, "Include a synthetic RAW/JPEG pair")
 	flag.Parse()
 	args := flag.Args()
 	if len(args) < 1 || len(args) > 2 {
@@ -141,6 +144,7 @@ func main() {
 		}
 		samples[index].metadata = metadata
 	}
+	var firstAssetID string
 	for index := range count {
 		if *unavailable && index == count-1 {
 			hash, size, err := blobs.Write(bytes.NewReader([]byte("synthetic undecodable JPEG")))
@@ -159,6 +163,11 @@ func main() {
 		item := samples[sampleIndex]
 		node, err := s.CreateFile(ctx, s.RootID(), fmt.Sprintf("Synthetic-photo-%05d.jpg", index+1), item.hash, item.size, "image/jpeg")
 		check(err)
+		if (*rotateCover || *manyKeywords) && index == 0 {
+			asset, err := s.PhotoAssetForNode(ctx, node.ID)
+			check(err)
+			firstAssetID = asset.ID
+		}
 		if !samples[sampleIndex].published {
 			_, err = processing.BackfillSourceMetadataTargets(ctx, s, blobs, layout.Root, []store.SourceMetadataTarget{{SourceSHA256: item.hash, Size: item.size}})
 			check(err)
@@ -168,6 +177,39 @@ func main() {
 			samples[sampleIndex].published = true
 		}
 		_, err = s.PublishVisualPreviewGeneration(ctx, node.CurrentVersionID, item.canonical, &item.physical)
+		check(err)
+		if *pair && index == 0 {
+			asset, err := s.PhotoAssetForNode(ctx, node.ID)
+			check(err)
+			raw, err := s.CreateFile(ctx, s.RootID(), "Synthetic-photo-00001.cr2", item.hash, item.size, "application/octet-stream")
+			check(err)
+			asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, raw.ID, store.PhotoRoleRAW, nil)
+			check(err)
+			var display string
+			for _, file := range asset.Files {
+				if file.NodeID == node.ID {
+					display = file.ID
+				}
+			}
+			_, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &display)
+			check(err)
+			_, err = s.CreateTag(ctx, "Portfolio")
+			check(err)
+		}
+	}
+	if *manyKeywords {
+		for index := range 1000 {
+			_, err := s.CreateTag(ctx, fmt.Sprintf("Catalog keyword %04d", index))
+			check(err)
+		}
+		tag, err := s.CreateTag(ctx, "ZZ assigned keyword")
+		check(err)
+		asset, err := s.PhotoAssetByID(ctx, firstAssetID)
+		check(err)
+		file := asset.Files[0]
+		node, err := s.NodeByID(ctx, file.NodeID)
+		check(err)
+		_, err = s.AssignTag(ctx, tag.ID, node.ID, node.Revision)
 		check(err)
 	}
 	album, err := s.CreatePhotoSet(ctx, "Paris walks")
@@ -182,6 +224,19 @@ func main() {
 		}
 		seedRejects(ctx, s)
 	}
+	if *rotateCover {
+		first, err := s.PhotoAssetByID(ctx, firstAssetID)
+		check(err)
+		prepared, err := s.PreparePhotoAuthored(ctx, store.PhotoSetSelection{AssetIDs: []string{first.ID}})
+		check(err)
+		_, err = s.EditPhotoAuthoredBatch(ctx, store.PhotoAuthoredBatch{Targets: editTargets(prepared.Targets), Patch: store.PhotoAuthoredPatch{Rotation: new(90)}})
+		check(err)
+		cover := &first.ID
+		current, err := s.PhotoSet(ctx, album.ID, "")
+		check(err)
+		_, err = s.UpdatePhotoSet(ctx, album.ID, current.Revision, nil, nil, &cover)
+		check(err)
+	}
 	check(s.Checkpoint(ctx))
 	fmt.Printf("seeded %d synthetic photos\n", count)
 }
@@ -191,13 +246,13 @@ func seedRejects(ctx context.Context, s *store.Store) {
 	check(err)
 	page, err := s.ListPhotoAssets(ctx, store.PhotoBrowseRequest{Query: value}, nil)
 	check(err)
-	var targets []store.PhotoAuthoredTarget
+	var ids []string
 	for _, row := range page.Items[:3] {
-		asset, err := s.PhotoAssetByID(ctx, row.AssetID)
-		check(err)
-		targets = append(targets, store.PhotoAuthoredTarget{FileID: asset.Files[0].ID, Revision: 1, Patch: store.PhotoAuthoredPatch{Flag: new("reject")}})
+		ids = append(ids, row.AssetID)
 	}
-	_, err = s.EditPhotoAuthored(ctx, targets)
+	prepared, err := s.PreparePhotoAuthored(ctx, store.PhotoSetSelection{AssetIDs: ids})
+	check(err)
+	_, err = s.EditPhotoAuthoredBatch(ctx, store.PhotoAuthoredBatch{Targets: editTargets(prepared.Targets), Patch: store.PhotoAuthoredPatch{Flag: new("reject")}})
 	check(err)
 	member, err := s.PhotoAssetByID(ctx, page.Items[3].AssetID)
 	check(err)
@@ -205,12 +260,21 @@ func seedRejects(ctx context.Context, s *store.Store) {
 	check(err)
 	asset, err := s.PhotoAssetByID(ctx, page.Items[2].AssetID)
 	check(err)
+	displayFileID := asset.DisplayFileID
 	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, member.Files[0].NodeID, store.PhotoRoleImage, nil)
 	check(err)
-	_, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &targets[2].FileID)
+	_, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, displayFileID)
 	check(err)
 	node, err := s.NodeByID(ctx, member.Files[0].NodeID)
 	check(err)
 	_, _, err = s.Trash(ctx, node.ID, node.Revision)
 	check(err)
+}
+
+func editTargets(prepared []store.PhotoPreparedTarget) []store.PhotoAuthoredEditTarget {
+	targets := make([]store.PhotoAuthoredEditTarget, len(prepared))
+	for i, target := range prepared {
+		targets[i] = target.PhotoAuthoredEditTarget
+	}
+	return targets
 }

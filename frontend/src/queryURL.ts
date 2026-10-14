@@ -11,5 +11,5 @@ export function queryFromFragment(hash: string): Query | null {
 
 export function replaceQueryURL(query: Query | null): void {
   const fragment = query ? `#query=${encodeURIComponent(canonicalQuery(query))}` : "";
-  history.replaceState(null, "", `${location.pathname}${location.search}${fragment}`);
+  history.replaceState(history.state, "", `${location.pathname}${location.search}${fragment}`);
 }

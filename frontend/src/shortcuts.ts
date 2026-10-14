@@ -38,8 +38,17 @@ export function isAppShortcutSuppressed(
   const target = event.target;
   return target instanceof Element && target.closest(NATIVE_KEYBOARD_TARGETS) !== null && !(allowedTargetSelector && target.closest(allowedTargetSelector));
 }
-
 export type InspectionBoundary = "first" | "last" | "empty";
+
+export function isPhotoShortcutSuppressed(event: KeyboardEvent, root: ParentNode = document): boolean {
+  if (event.defaultPrevented || event.repeat || event.isComposing) return true;
+  if ([...root.querySelectorAll(OPEN_DIALOGS)].some(dialog => !dialog.classList.contains("photo-loupe"))) return true;
+  const target = event.target;
+  if (!(target instanceof Element)) return false;
+  if (target.closest("input:not([type=checkbox]),textarea,select,[contenteditable]:not([contenteditable=false]),[role=combobox],[role=listbox],[role=menu],[role=menuitem]")) return true;
+  const control = target.closest(NATIVE_KEYBOARD_TARGETS);
+  return !!control && !(control.matches("button,input[type=checkbox],[role=button],[role=checkbox]") && control.closest(".photo-cell,.photo-loupe,.photo-inspector"));
+}
 
 export interface InspectionMove {
   id?: number;

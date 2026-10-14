@@ -1,16 +1,18 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { tick } from "svelte";
+import { createShortcutManager } from "@kenn-io/kit-ui";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import PhotosWorkspace from "./PhotosWorkspace.svelte";
+import * as api from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
 import { Photos, photoQuery, mapPhotoLimit, type MapView } from "./photos.svelte.js";
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
-import { photo, mapPhoto, touchTap } from "./photo-test-fixtures.js";
+import { photoMetadataResponse, preparedPhoto, mapPhoto, photo, touchTap } from "./photo-test-fixtures.js";
 import { captureDateQuery } from "./photoTimeline.js";
-import type { PhotoBrowseRow, PhotoMapRow } from "./generated/docbank.js";
+import type { PhotoAsset, PhotoAuthoredReceipt, PhotoBrowseRow, PhotoMapRow } from "./generated/docbank.js";
 
 // Answers background filter-count requests so tests that predate counts see only their own reads.
-const stubPhotoFetch = (fetcher: (url: string, init: RequestInit) => unknown) => vi.stubGlobal("fetch", (url: string, init: RequestInit) => url.endsWith("/photos/assets/query") && JSON.parse(String(init?.body ?? "{}")).facets?.length ? Promise.resolve(Response.json({ items: [], total: 0, facets: [] })) : fetcher(url, init));
+const stubPhotoFetch = (fetcher: (url: string, init: RequestInit) => unknown) => vi.stubGlobal("fetch", (url: string, init: RequestInit) => photoMetadataResponse(url, init) ?? (url.endsWith("/photos/assets/query") && JSON.parse(String(init?.body ?? "{}")).facets?.length ? Promise.resolve(Response.json({ items: [], total: 0, facets: [] })) : fetcher(url, init)));
 
 const map = vi.hoisted(() => ({onvisible:undefined as ((rows:PhotoMapRow[]) => void) | undefined, props:undefined as {view?:MapView; onview:(view:MapView) => void} | undefined}));
 vi.mock("./PhotoMap.svelte", () => ({default:(_anchor:unknown, props:{onvisible:(rows:PhotoMapRow[]) => void; view?:MapView; onview:(view:MapView) => void}) => { map.onvisible = props.onvisible; map.props = props; return {}; }}));
@@ -32,7 +34,7 @@ it.each([false, true])("preserves subsequent scrolling when an interrupted refre
   let finishRefresh!: (response: Response) => void;
   stubPhotoFetch(vi.fn().mockImplementationOnce(() => new Promise(() => {}))
     .mockImplementationOnce(() => new Promise<Response>(resolve => finishRefresh = resolve)));
-  const photos = new Photos("scoped", vi.fn(), false, photoQuery, mapMode ? "map" : undefined);
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection: mapMode ? "map" : undefined });
   photos.items = items; photos.total = items.length; photos.started = true; photos.scrollTop = 500;
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   const props = { photos, cache, mapMode, tiles: { tile_url: "/api/daemon/web-map-tiles/{z}/{x}/{y}", host: "tiles.example.org", attribution: "Example", max_zoom: 19 } };
@@ -532,7 +534,6 @@ it.each(["success", "grid", "removed", "pending"])("keeps query order and viewer
   await fireEvent.keyDown(screen.getByRole("dialog"), {key:"ArrowLeft"}); await waitFor(() => expect(onphotochange).toHaveBeenLastCalledWith("photo-1", "step"));
 });
 
-
 it.each(["close", "photo", "unmount", "live"])("keeps deferred continuation scoped to its %s photo visit", async interruption => {
   vi.stubGlobal("ResizeObserver", class {observe() {} disconnect() {}});
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
@@ -589,13 +590,13 @@ it.each(["listing", "late", "navigation", "retry", "fresh"])("keeps standalone l
   if (scenario === "fresh") {
     await waitFor(() => expect(lookup).toHaveBeenCalledOnce());
     expect(view.container.querySelector(".photo-viewport img")).toBeNull(); expect(preview).not.toHaveBeenCalled();
-    photos.items = [old, photo(2)]; await fireEvent.keyDown(screen.getByRole("dialog"), {key:"i"});
+    photos.items = [old, photo(2)]; await tick();
     expect(lookup).toHaveBeenCalledOnce(); expect(lookup.mock.calls[0]![1].aborted).toBe(false);
     finish(fresh); await screen.findByText("Fit preview");
     expect(preview).toHaveBeenCalledWith(expect.objectContaining({content_version_id:"fresh-version"}), "fit", expect.any(AbortSignal));
     expect(get).toHaveBeenCalledWith(old.asset_id, "fresh-grid", expect.any(AbortSignal), false);
     expect((photos.items[0] as PhotoBrowseRow).content_version_id).toBe("fresh-version");
-    photos.items = [old]; await fireEvent.keyDown(screen.getByRole("dialog"), {key:"i"});
+    photos.items = [old]; await tick();
     expect(lookup).toHaveBeenCalledOnce(); expect(preview).toHaveBeenCalledTimes(1); return;
   }
   await waitFor(() => expect(reject).toBeTypeOf("function"));
@@ -616,7 +617,7 @@ it.each(["listing", "late", "navigation", "retry", "fresh"])("keeps standalone l
     await view.rerender({...props, photoID:"photo-1"});
     await waitFor(() => expect(lookup.mock.calls[0]![1].aborted).toBe(true));
   } else {
-    photos.items = [photo(1)]; await fireEvent.keyDown(screen.getByRole("dialog"), {key:"i"});
+    photos.items = [photo(1)]; await tick();
     expect(lookup.mock.calls[0]![1].aborted).toBe(false); expect(lookup).toHaveBeenCalledOnce();
     if (scenario === "late") reject(new Error("Lookup failed"));
     await screen.findByText("Lookup failed");
@@ -625,6 +626,89 @@ it.each(["listing", "late", "navigation", "retry", "fresh"])("keeps standalone l
   }
   await screen.findByRole("dialog", {name:"Photo viewer, Photo 1.jpg"});
   await waitFor(() => expect(screen.queryByText("Lookup failed")).toBeNull());
+});
+
+function workspaceWithPreparedPhoto(target = preparedPhoto(1), projection?: "map") {
+  vi.stubGlobal("ResizeObserver", class {observe() {} disconnect() {}});
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection }); photos.started = true; photos.items = [projection ? mapPhoto(1) : photo(1)]; photos.authored.targets = [target];
+  return photos;
+}
+
+it("refreshes a filtered view and restarts pending reads after a metadata edit", async () => {
+  Object.defineProperty(Element.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
+  const old = photo(1);
+  const before = preparedPhoto(1, { file_id: "file-1" });
+  const photos = workspaceWithPreparedPhoto(before); photos.items = [old]; photos.query = { ...photos.query, filters: { flags: ["pick"] } }; photos.authored.inspectedID = "photo-1";
+  photos.authored.asset = { id: "photo-1", display_file_id: "file-1", files: [{ id: "file-1", role: "image" }] } as PhotoAsset;
+  const lookup = vi.spyOn(photos, "lookup").mockImplementation(() => new Promise(() => {}));
+  const edit = vi.spyOn(photos.authored, "edit").mockResolvedValue(undefined);
+  const fetcher = vi.fn().mockImplementationOnce((_url: string, init: RequestInit) => new Promise<Response>((_resolve, reject) => {
+    init.signal!.addEventListener("abort", () => reject(init.signal!.reason), { once: true });
+  }))
+    .mockResolvedValueOnce(Response.json({ items: [{ ...old, rotation: 90 }], total: 1 }));
+  stubPhotoFetch(fetcher);
+  const receipt = { receipt_id: "rotated", before: [before], after: [{ ...before, revision: 2, values: { ...before.values, flag: "pick", rotation: 90 as const } }] } as PhotoAuthoredReceipt;
+  render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache, photoID: "photo-1" });
+  await waitFor(() => expect(lookup).toHaveBeenCalledOnce());
+  photos.authored.stage({ rating: 0 });
+  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  const notify = edit.mock.calls[0]![3];
+  await fireEvent.click(screen.getByRole("button", { name: "Refresh previews" }));
+  const oldSignal = fetcher.mock.calls[0]![1].signal as AbortSignal;
+  const oldLookupSignal = lookup.mock.calls[0]![1];
+  await notify(receipt, []);
+  await waitFor(() => expect(lookup).toHaveBeenCalledTimes(2));
+  expect(oldSignal.aborted).toBe(true); expect(oldLookupSignal.aborted).toBe(true);
+  expect(JSON.parse(fetcher.mock.calls[1]![1].body as string).query.filters).toEqual({ flags: ["pick"] });
+  photos.dispose();
+});
+
+it.each(["edit", "Undo"] as const)("reloads an unfiltered Map only after a rotation %s", async action => {
+  Object.defineProperty(Element.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
+  const before = preparedPhoto(1, { file_id: "file-1" });
+  const mapped = workspaceWithPreparedPhoto(before, "map");
+  const fetcher = vi.fn(async () => Response.json({ map_items: [{ ...mapPhoto(1), rotation: 90 }], total: 1 })); stubPhotoFetch(fetcher);
+  const edit = vi.spyOn(mapped.authored, "edit").mockResolvedValue(undefined);
+  const undo = vi.spyOn(mapped.authored, "undo").mockResolvedValue(undefined);
+  render(PhotosWorkspace, { photos: mapped, cache: { get: vi.fn() } as unknown as PhotoPreviewCache, mapMode: true, tiles: { tile_url: "/api/daemon/web-map-tiles/{z}/{x}/{y}", host: "tiles.example.org", attribution: "Example", max_zoom: 19 } });
+  let notify: (receipt: PhotoAuthoredReceipt, tags: api.Tag[]) => Promise<void>;
+  if (action === "edit") {
+    mapped.authored.stage({ rotation: 90 });
+    await fireEvent.click(await screen.findByRole("button", { name: "Metadata" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    notify = edit.mock.calls[0]![3];
+  } else {
+    mapped.authored.receiptID = "rotated"; mapped.authored.undoState.summary = "1 file updated: rotation";
+    await fireEvent.click(await screen.findByRole("button", { name: "Undo last photo edit" }));
+    notify = undo.mock.calls[0]![0];
+  }
+  const rated = { receipt_id: "rated", before: [before], after: [{ ...before, revision: 2, values: { ...before.values, rating: 3 } }] } as PhotoAuthoredReceipt;
+  await notify(rated, []);
+  expect(fetcher).not.toHaveBeenCalled();
+  await notify({ receipt_id: "rotated", before: [before], after: [{ ...before, revision: 3, values: { ...before.values, rotation: 90 as const } }] } as PhotoAuthoredReceipt, []);
+  expect(fetcher).toHaveBeenCalled();
+  expect((mapped.items[0] as PhotoMapRow).rotation).toBe(90);
+  mapped.dispose();
+});
+
+it("patches an unfiltered view in place after a metadata edit", async () => {
+  Object.defineProperty(Element.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
+  const before = preparedPhoto(1, { file_id: "file-1" });
+  const photos = workspaceWithPreparedPhoto(before); photos.items = [{ ...photo(1), display_file_id: "file-1" }];
+  const edit = vi.spyOn(photos.authored, "edit").mockResolvedValue(undefined);
+  const fetcher = vi.fn(); stubPhotoFetch(fetcher);
+  const receipt = { receipt_id: "rated", before: [before], after: [{ ...before, revision: 2, values: { ...before.values, rating: 3, rotation: 90 as const } }] } as PhotoAuthoredReceipt;
+  render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
+  photos.authored.stage({ rating: 3 });
+  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await edit.mock.calls[0]![3](receipt, []);
+  expect(fetcher).not.toHaveBeenCalled(); expect(photos.loading).toBe(false); expect(photos.authored.concealed).toBe(false);
+  expect((photos.items[0] as PhotoBrowseRow).rotation).toBe(90);
+  photos.dispose();
 });
 
 it.each([
@@ -758,6 +842,61 @@ it("explains the relevance limit and hides it for complete results or capture da
   photos.dispose(); await cache.dispose();
 });
 
+it.each([["4", { rating: 4 }], ["6", { label: "red" }], ["7", { label: "yellow" }], ["8", { label: "green" }], ["9", { label: "blue" }], ["v", { label: "purple" }]])("applies the registered %s photo shortcut", async (key, patch) => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  const photos = new Photos("scoped", vi.fn()); photos.items = [photo(1)]; photos.started = true; photos.selectLoaded();
+  const edit = vi.spyOn(photos.authored, "edit").mockResolvedValue();
+  const shortcuts = createShortcutManager();
+  render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache, shortcuts });
+  shortcuts.handleKeydown(new KeyboardEvent("keydown", { key, cancelable: true }));
+  expect(edit).toHaveBeenCalledWith({ asset_ids: ["photo-1"] }, patch, false, expect.any(Function), undefined, undefined);
+  photos.dispose();
+});
+
+it.each([
+  ["no target", undefined],
+  ["loading", "loading"],
+  ["hiding", "hiding"],
+  ["trashing", "trashing"],
+  ["busy", "busy"],
+] as const)("gates metadata shortcuts for %s", async (_scenario, pending) => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  const photos = new Photos("scoped", vi.fn()); photos.started = true; photos.items = [photo(1)];
+  if (pending) {
+    photos.selectLoaded(); photos.authored.targets = [preparedPhoto(1)]; photos.authored.receiptID = "last-edit"; photos.authored.stage({ caption: "Draft" });
+  }
+  const edit = vi.spyOn(photos.authored, "edit").mockResolvedValue(undefined), undo = vi.spyOn(photos.authored, "undo").mockResolvedValue(undefined);
+  const shortcuts = createShortcutManager();
+  render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache, shortcuts });
+  if (pending) {
+    if (pending === "busy") photos.authored.busy = true; else photos[pending] = true;
+    await tick();
+  }
+  for (const key of ["4", "z"]) {
+    const event = new KeyboardEvent("keydown", { key, ctrlKey: key === "z", bubbles: true, cancelable: true });
+    shortcuts.handleKeydown(event); expect(event.defaultPrevented).toBe(true);
+  }
+  expect(edit).not.toHaveBeenCalled(); expect(undo).not.toHaveBeenCalled();
+  photos.dispose();
+});
+
+it("guards loupe navigation through the metadata editor", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  const photos = new Photos("scoped", vi.fn()); photos.started = true; photos.items = [photo(1), photo(2)];
+  vi.spyOn(photos, "lookup").mockImplementation(async id => photo(Number(id.slice("photo-".length))));
+  const onphotochange = vi.fn();
+  const canChangeTarget = vi.spyOn(photos.authored, "canChangeTarget").mockReturnValue(false);
+  photos.viewerReturn = { contextID: photos.contextID, assetID: "photo-1", control: "open", scrollTop: 0 };
+  const view = render(PhotosWorkspace, { photos, onphotochange, cache: { get: vi.fn() } as unknown as PhotoPreviewCache, shortcuts: createShortcutManager(), photoID: "photo-1" });
+  const viewer = await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+  await fireEvent.keyDown(viewer, { key: "ArrowRight" });
+  expect(onphotochange).not.toHaveBeenCalled();
+  canChangeTarget.mockReturnValue(true);
+  await fireEvent.keyDown(viewer, { key: "ArrowRight" });
+  expect(onphotochange).toHaveBeenCalledWith("photo-2", "step");
+  view.unmount(); photos.dispose();
+});
+
 it("keeps a Library reload error through a list refresh", async () => {
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   const photos = new Photos("scoped", vi.fn()); photos.items = [photo(1)]; photos.started = true;
@@ -796,7 +935,7 @@ it("renders disabled maps without fetching and keeps the Library selection on Es
 
 it("shows the Map limit notice only for capped results and bounds loading progress", async () => {
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
-  const photos = new Photos("scoped", vi.fn(), false, photoQuery, "map");
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection: "map" });
   photos.items = [mapPhoto(1), mapPhoto(2)]; photos.started = true; photos.total = 3000; photos.cursor = "next"; photos.loading = true;
   vi.spyOn(photos, "resume").mockResolvedValue();
   render(PhotosWorkspace, { photos, mapMode: true, tiles: { tile_url: "/api/daemon/web-map-tiles/{z}/{x}/{y}", host: "tiles.example.org", attribution: "Example", max_zoom: 19 }, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
@@ -834,7 +973,7 @@ it("reopens the map where it was after a remount", async () => {
 function openMapViewerSetup() {
  vi.stubGlobal("ResizeObserver",class {observe() {} disconnect() {}});
  vi.spyOn(HTMLElement.prototype,"clientWidth","get").mockReturnValue(1000);vi.spyOn(HTMLElement.prototype,"clientHeight","get").mockReturnValue(800);
- const photos=new Photos("scoped",vi.fn(),false,photoQuery,"map");photos.items=[mapPhoto(1),mapPhoto(2)];photos.total=2;photos.started=true;vi.spyOn(photos,"resume").mockResolvedValue();
+ const photos=new Photos("scoped",vi.fn(),false,photoQuery,{projection:"map"});photos.items=[mapPhoto(1),mapPhoto(2)];photos.total=2;photos.started=true;vi.spyOn(photos,"resume").mockResolvedValue();
  const lookup=vi.spyOn(photos,"lookup").mockResolvedValue(photo(1));const preview=vi.spyOn(photos,"preview").mockResolvedValue({state:"unsupported"});
  const props={photos,mapMode:true,tiles:{tile_url:"/api/daemon/web-map-tiles/{z}/{x}/{y}",host: "tiles.example.org",attribution:"Example",max_zoom:19},cache:{get:vi.fn()} as unknown as PhotoPreviewCache,photoID:"",onphotochange:vi.fn()};
  return {photos,lookup,preview,props,view:render(PhotosWorkspace,props)};
@@ -930,7 +1069,8 @@ it("discloses offscreen selection and replaces it with the visible photos", asyn
  await screen.findByText("1 outside this view");await fireEvent.click(screen.getByRole("button",{name:"Move to trash"}));
  const dialog=screen.getByRole("dialog",{name:"Move selected photos to trash"});expect(within(dialog).getByText("1 selected photo is outside this view.")).toBeTruthy();
  await fireEvent.click(within(dialog).getByRole("button",{name:"Keep in Docbank"}));
- const select=screen.getByRole("button",{name:"Select visible photos"});await fireEvent.click(select);expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);photos.dispose();
+ const select=screen.getByRole("button",{name:"Select visible photos"});
+ await fireEvent.click(select);expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);photos.dispose();
 });
 it("distinguishes an empty Map area from no located photos", async () => {
  const {photos}=mapRecoverySetup();await vi.dynamicImportSettled();map.onvisible!([]);

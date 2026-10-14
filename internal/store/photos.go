@@ -11,43 +11,46 @@ import (
 
 const maxPhotoReceiptBytes = 16 << 10
 
+const photoAssetColumns = "asset_id, kind, revision, hidden_at, excluded_at, display_file_id, display_override_file_id, created_at, updated_at"
+const photoFileColumns = "file_id, asset_id, node_id, role, sidecar_of_file_id, created_at, revision, rating, flag, label, caption, creator, copyright, rotation, confirmed_fields"
+
+func scanPhotoAsset(row scanner) (PhotoAsset, error) {
+	var asset PhotoAsset
+	err := row.Scan(&asset.ID, &asset.Kind, &asset.Revision, &asset.HiddenAt, &asset.ExcludedAt, &asset.DisplayFileID, &asset.DisplayOverrideFileID, &asset.CreatedAt, &asset.UpdatedAt)
+	return asset, err
+}
+
 func photoAssetByIDQuery(ctx context.Context, q metadataQuerier, id string) (PhotoAsset, error) {
 	if err := validateUUIDv4(id); err != nil {
 		return PhotoAsset{}, fmt.Errorf("photo asset %q: %w", id, ErrNotFound)
 	}
-	var asset PhotoAsset
-	var display, override sql.NullString
-	if err := q.QueryRowContext(ctx, `
-		SELECT asset_id, kind, revision, hidden_at, excluded_at, display_file_id,
-		       display_override_file_id, created_at, updated_at
-		FROM photo_assets WHERE asset_id=?`, id).Scan(
-		&asset.ID, &asset.Kind, &asset.Revision, &asset.HiddenAt, &asset.ExcludedAt, &display,
-		&override, &asset.CreatedAt, &asset.UpdatedAt,
-	); errors.Is(err, sql.ErrNoRows) {
+	asset, err := scanPhotoAsset(q.QueryRowContext(ctx, `SELECT `+photoAssetColumns+` FROM photo_assets WHERE asset_id=?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
 		return PhotoAsset{}, ErrNotFound
 	} else if err != nil {
 		return PhotoAsset{}, fmt.Errorf("reading photo asset %q: %w", id, err)
-	}
-	if display.Valid {
-		asset.DisplayFileID = new(display.String)
-	}
-	if override.Valid {
-		asset.DisplayOverrideFileID = new(override.String)
 	}
 	files, err := loadPhotoFiles(ctx, q, id)
 	if err != nil {
 		return PhotoAsset{}, err
 	}
 	asset.Files = files
-	asset.Agreement = photoAgreement(files)
 	settings, err := photoSettingsTx(ctx, q)
 	if err != nil {
 		return PhotoAsset{}, err
 	}
+	return completePhotoAsset(asset, settings)
+}
+
+func completePhotoAsset(asset PhotoAsset, settings PhotoSettings) (PhotoAsset, error) {
+	if len(asset.Files) > PhotoMaxFiles {
+		return PhotoAsset{}, ErrInvalidPhotoAsset
+	}
+	asset.Agreement = photoAgreement(asset.Files)
 	choice := selectPhotoDisplay(asset.Files, settings.Preference, asset.DisplayOverrideFileID)
 	asset.DisplaySource = choice.Source
 	if !equalPhotoString(asset.DisplayFileID, choice.FileID) {
-		return PhotoAsset{}, fmt.Errorf("%w: asset %s has a stale display pointer", ErrInvalidPhotoAsset, id)
+		return PhotoAsset{}, fmt.Errorf("%w: asset %s has a stale display pointer", ErrInvalidPhotoAsset, asset.ID)
 	}
 	if err := validatePhotoAssetPointers(asset, asset.Files); err != nil {
 		return PhotoAsset{}, err
@@ -325,7 +328,7 @@ func scanPhotoFile(row scanner) (PhotoFile, error) {
 
 func loadPhotoFiles(ctx context.Context, q metadataQuerier, assetID string) ([]PhotoFile, error) {
 	rows, err := q.QueryContext(ctx, `
-		SELECT file_id, asset_id, node_id, role, sidecar_of_file_id, created_at, revision, rating, flag, label, caption, creator, copyright, rotation, confirmed_fields
+		SELECT `+photoFileColumns+`
 		FROM photo_files WHERE asset_id=? ORDER BY file_id LIMIT ?`, assetID, PhotoMaxFiles+1)
 	if err != nil {
 		return nil, fmt.Errorf("listing photo files: %w", err)

@@ -10,6 +10,7 @@ import { photo, mapPhoto } from "./photo-test-fixtures.js";
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 function setup() {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   let counter = 0;
   Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => `blob:synthetic-${++counter}`) });
   Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
@@ -79,10 +80,10 @@ it("shows paging recovery and preserves fractional exposure with readable orient
   const { props } = setup(); props.photos.error = "Photo continuation expired";
   props.photo.exposure_time_seconds = 0.4; props.photo.orientation = 6;
   props.photo.iso = 640; props.photo.f_number = 3.2; props.photo.exposure_bias_ev = -1.5; props.photo.focal_length_mm = 85;
-  const view = render(PhotoLoupe, props);
+  const view = render(PhotoLoupe, { ...props, metadataOpen: true });
   await screen.findByText("Photo continuation expired");
   await fireEvent.click(screen.getByRole("button", { name: "Retry navigation" })); expect(props.onretry).toHaveBeenCalledOnce();
-  await fireEvent.keyDown(screen.getByRole("dialog"), { key: "i" }); expect(screen.getByText("0.4 s")).toBeTruthy(); expect(screen.getByText("Rotated 90° clockwise")).toBeTruthy();
+  expect(screen.getByText("0.4 s")).toBeTruthy(); expect(screen.getByText("Rotated 90° clockwise")).toBeTruthy();
   for (const value of ["640", "f/3.2", "-1.5 EV", "85 mm"]) expect(screen.getByText(value)).toBeTruthy();
   for (const [seconds, label] of [[0.004, "1/250 s"], [0.000125, "1/8000 s"], [0.4, "0.4 s"], [0.0167, "0.0167 s"], [2, "2 s"]] as const) {
     await view.rerender({ ...props, photo: { ...props.photo, exposure_time_seconds: seconds } });
@@ -185,6 +186,7 @@ it.each([false,true])("serializes neighboring fit requests and hydrates compact 
 });
 
 it("resets a touch swipe before requesting navigation when the current photo remains mounted", async () => {
+ vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   const onmove = vi.fn(() => expect(pan.style.transform).toBe("translate(0px, 0px) scale(1)"));
   const view = render(PhotoLoupeImage, { url: "", name: "Synthetic photo", onzoom: vi.fn(), onmove });
   const viewport = view.container.querySelector<HTMLElement>(".photo-viewport")!;
@@ -273,7 +275,7 @@ it("loads the new photo's large preview after an obsolete original finishes deco
   expect(preview).toHaveBeenCalledWith(props.items[5], "large", expect.any(AbortSignal));
 });
 
-it.each(["Retry navigation", "Retry preview", "Reload photo", "Close photo viewer", "View original", "Photo information", "Next photo", "Show Photo 4.jpg"])("closes with Escape focused on %s while respecting a nested dialog", async buttonName => {
+it.each(["Retry navigation", "Retry preview", "Reload photo", "Close photo viewer", "View original", "Metadata", "Next photo", "Show Photo 4.jpg"])("closes with Escape focused on %s while respecting a nested dialog", async buttonName => {
   const {props, preview} = setup();
   if (buttonName === "Retry navigation") props.photos.error = "Navigation failed";
   else if (buttonName === "Retry preview" || buttonName === "Reload photo") preview.mockRejectedValueOnce(buttonName === "Reload photo" ? new APIError("Photo changed", 409, "photo_display_changed") : new Error("Preview failed"));
@@ -296,4 +298,13 @@ it("retries a failed rail fetch without navigating", async () => {
   expect(get).toHaveBeenCalledWith("photo-4", "grid-4", expect.any(AbortSignal), true); expect(props.onchoose).not.toHaveBeenCalled();
   const button = view.container.querySelector<HTMLButtonElement>('.filmstrip [data-asset="photo-4"] .photo-image')!;
   expect(document.activeElement).toBe(button);
+});
+
+it("starts details closed, opens with Metadata and closes with I", async () => {
+ const { props } = setup(); render(PhotoLoupe, props);
+ expect(screen.queryByRole("complementary", { name: "Photo details" })).toBeNull();
+ await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+ expect(screen.getByRole("complementary", { name: "Photo details" })).toBeTruthy();
+ await fireEvent.keyDown(screen.getByRole("dialog"), { key: "i" });
+ expect(screen.queryByRole("complementary", { name: "Photo details" })).toBeNull();
 });

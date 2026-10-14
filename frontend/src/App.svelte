@@ -48,6 +48,7 @@
     TableHeaderCell,
     ThemeToggle,
     TopBar,
+    ROOT_SCOPE,
     createShortcutManager,
     formatShortcutKeys,
     type SortDirection,
@@ -72,6 +73,8 @@
   import ScanSearchIcon from "@lucide/svelte/icons/scan-search";
   import ProvenanceDrawer from "./ProvenanceDrawer.svelte";
   import SelectionDock from "./SelectionDock.svelte";
+  import { photoNavigationGuard } from "./photoNavigation.js";
+  import { PhotoUndoState } from "./photoAuthored.svelte.js";
   import { mapTiles } from "./photoMap.js";
   import PhotosWorkspace from "./PhotosWorkspace.svelte";
   import HiddenPhotos from "./HiddenPhotos.svelte";
@@ -120,7 +123,7 @@
   import { basename, formatBytes, formatDate } from "./format.js";
   import { orderRows, reconcileSearchView, type SortField } from "./rows.js";
   import { sortTags } from "./tagPresentation.js";
-  import { isAppShortcutSuppressed, moveInspection } from "./shortcuts.js";
+  import { isAppShortcutSuppressed, isPhotoShortcutSuppressed, moveInspection } from "./shortcuts.js";
   import { applySnapshotReceiptOverlay, snapshotTargetRevision, visibleSnapshotOverlay } from "./snapshotOverlays.js";
   import { SnapshotWorkspace } from "./snapshotWorkspace.svelte.js";
   import { type SnapshotOptions, type SnapshotRow } from "./snapshots.js";
@@ -191,6 +194,7 @@
   };
 
   let webSession = $state("");
+  const photoUndo = $derived.by(() => { void webSession; return new PhotoUndoState(); });
   const hiddenAccess = $derived(webSession ? new HiddenAccess(webSession, handleFailure) : undefined);
   let keySignInEnabled = $state(false);
   let keySession = $state(false);
@@ -241,16 +245,32 @@
   const hashWithoutPhoto = () => new URLSearchParams(location.hash.slice(1)).has("photo") ? "" : location.hash;
   let hiddenPhotoActionError = $state("");
   let hiddenWorkspace = $state<HiddenPhotos>();
+  const shortcutManager = createShortcutManager();
   let libraryWorkspace = $state<PhotosWorkspace>();
   let photoID = $state(new URLSearchParams(location.hash.slice(1)).get("photo") ?? "");
   const activePhotos = () => hiddenMode ? hiddenWorkspace?.activePhotos() : albumID ? albumPhotos : mapMode ? mapPhotos : photoState?.photos;
-  function clearPhoto() {
+  const retainedPhotoEditor = () => hiddenMode ? hiddenWorkspace?.retainedEditor() : activePhotos()?.authored;
+  // A discarded workspace takes its draft with it, so the draft cannot hold the viewer open.
+  function clearPhoto(discarded = false) {
     if (!photoID) return;
     const photos = activePhotos();
-    if (photos) photos.viewerReturn = undefined;
-    changePhoto("", "close");
+    if (changePhoto("", "close", discarded) && photos) photos.viewerReturn = undefined;
+  }
+  const photoNavigation = photoNavigationGuard(url => {
+    const id = new URLSearchParams(url.hash.slice(1)).get("photo") ?? "";
+    return (url.pathname !== photoPath || id !== photoID) && photoMode && !!retainedPhotoEditor() && !retainedPhotoEditor()!.canChangeTarget();
+  });
+  onMount(() => photoNavigation.listen());
+  function pushPhotoHistory(state: Record<string, unknown> | null, url: string) {
+    photoNavigation.push(state, url);
+  }
+  function guardPhotoUnload(event: BeforeUnloadEvent) {
+    if (!photoMode || !retainedPhotoEditor()?.dirty) return;
+    event.preventDefault();
+    event.returnValue = "";
   }
   function syncPhotoLocation() {
+    if (photoNavigation.blocked()) return;
     clearPhotoNotice();
     const id = new URLSearchParams(location.hash.slice(1)).get("photo") ?? "", path = location.pathname;
     const showing = photoMode && path === photoPath;
@@ -261,7 +281,7 @@
     if (id && photos) {
       if (!photoID && showing && record?.contextID === photos.contextID && workspace) {
         workspace.captureReturn();
-        history.replaceState({...history.state, photoReturn:photos.viewerReturn}, "", location.href);
+        photoNavigation.replace({...history.state, photoReturn:photos.viewerReturn}, location.href);
       } else {
         photos.viewerReturn = record?.contextID === photos.contextID ? record : undefined;
         if (photos.viewerReturn) photos.scrollTop = photos.viewerReturn.scrollTop;
@@ -269,17 +289,20 @@
     } else if (isPhotoPath(path) && photos?.viewerReturn) photos.scrollTop = photos.viewerReturn.scrollTop;
     if (path !== photoPath) revalidatedChangeID = null;
     photoMode = isPhotoPath(path); if (photoMode) photoPath = path; photoID = id;
+    photoNavigation.accept();
   }
-  function changePhoto(id: string, mode: "open" | "step" | "close") {
+  function changePhoto(id: string, mode: "open" | "step" | "close", discarded = false) {
+    if (!discarded && id !== photoID && retainedPhotoEditor() && !retainedPhotoEditor()!.canChangeTarget()) return false;
     const record = history.state?.photoReturn as PhotoReturn | undefined;
     const photos = activePhotos();
     if (mode === "close" && record && photos && record.contextID === photos.contextID) history.back();
     else {
       const url = new URL(location.href); url.hash = id ? `photo=${encodeURIComponent(id)}` : "";
-      if (mode === "open") history.pushState({photoReturn:activePhotos()?.viewerReturn}, "", url.href);
-      else history.replaceState(history.state, "", url.href);
+      if (mode === "open") pushPhotoHistory({photoReturn:activePhotos()?.viewerReturn}, url.href);
+      else photoNavigation.replace(history.state, url.href);
     }
     photoID = id;
+    return true;
   }
   let photoState = $state<PhotoWorkspace>();
   let photoValidated = $state(false);
@@ -306,7 +329,10 @@
     photoConcealed = true;
     photoAccessVersion++;
     albumPhotos?.cancelPending();
+    photoState?.photos.authored.conceal();
+    albumPhotos?.authored.conceal();
     mapPhotos?.cancelPending();
+    mapPhotos?.authored.conceal();
     return concealPhotoWorkspace(photoState);
   }
   // Album views share Library's preview cache, so revalidation refreshes whichever list is open.
@@ -322,7 +348,7 @@
   async function acceptPhotoAccess(result: generated.PhotoHiddenState) {
     const changed = result.change_id !== photoChangeID;
     // The refreshed workspace reports an open photo that is no longer listed, so the viewer stays.
-    if (photoState && changed) void invalidateLibrary(false);
+    if (photoState && changed) await invalidateLibrary(false);
     // Hiding or unhiding changes album counts and covers. The server omits change_id until the first hide.
     if (photoAccessChecked && changed) void photoAlbums?.load();
     photoAccessChecked = true;
@@ -335,6 +361,7 @@
     if (state && photoConcealed) {
       const valid = () => version === photoAccessVersion;
       if (photos?.projection === "map" && photos.started && !photos.staged && !photos.loading && revalidatedChangeID === result.change_id) {
+        if (!await photos.revalidateAuthored(valid) || !valid()) return;
         if (!await recreatePhotoPreviewCache(state, webSession, handleFailure, valid)) return;
       } else {
         revalidatedChangeID = null;
@@ -343,7 +370,7 @@
       }
     }
     if (version !== photoAccessVersion || document.visibilityState !== "visible") return;
-    photoState ??= { photos: new Photos(webSession, handleFailure, false, undefined, undefined, hiddenAccess), cache: new PhotoPreviewCache(webSession, handleFailure) };
+    photoState ??= { photos: new Photos(webSession, handleFailure, false, undefined, { undoState: photoUndo, hiddenAccess }), cache: new PhotoPreviewCache(webSession, handleFailure) };
     revalidatedChangeID = result.change_id;
     photoConcealed = false;
     photoValidated = true;
@@ -367,7 +394,7 @@
     const session = webSession;
     const id = albumScopeID;
     if (!session || !id) { albumPhotos = undefined; return; }
-    const photos = new Photos(session, handleFailure, false, albumQuery(id), undefined, hiddenAccess);
+    const photos = new Photos(session, handleFailure, false, albumQuery(id), { undoState: photoUndo, hiddenAccess });
     albumPhotos = photos;
     return () => photos.dispose();
   });
@@ -376,7 +403,7 @@
     const id = mapAlbumID;
     if (!mapMode || !tiles.tile_url || !state) { mapPhotos = undefined; return; }
     const inherited = untrack(() => id ? albumPhotos?.query ?? albumQuery(id) : state.photos.query);
-    const photos = new Photos(webSession, handleFailure, false, { ...inherited, sort: { field: "capture_time", direction: "desc" }, filters: { ...inherited.filters, gps_bounds: inherited.filters.gps_bounds ?? { south: "-90", west: "-180", north: "90", east: "180" } } }, "map", hiddenAccess);
+    const photos = new Photos(webSession, handleFailure, false, { ...inherited, sort: { field: "capture_time", direction: "desc" }, filters: { ...inherited.filters, gps_bounds: inherited.filters.gps_bounds ?? { south: "-90", west: "-180", north: "90", east: "180" } } }, { projection: "map", undoState: photoUndo, hiddenAccess });
     photos.date = untrack(() => id ? albumPhotos?.date : state.photos.date);
     mapPhotos = photos;
     return () => photos.dispose();
@@ -396,7 +423,6 @@
     let pending = false;
     let failures = 0;
     let controller = new AbortController();
-    photoValidated = false;
     const conceal = () => { void invalidateLibrary(false); };
     const check = async () => {
       if (pending || hidden || document.visibilityState !== "visible") return;
@@ -426,6 +452,7 @@
   function clearPhotoNotice() { if (photoAlbums) { photoAlbums.notice = ""; photoAlbums.noticeID = ""; photoAlbums.error = ""; } }
 
   function navigatePhotos(path: string) {
+    if (photoMode && (path !== photoPath || photoID) && retainedPhotoEditor() && !retainedPhotoEditor()!.canChangeTarget()) return;
     clearPhotoNotice();
     navOpen = false;
     if (photoMode && path === photoPath && path === location.pathname && !photoID) return;
@@ -437,11 +464,12 @@
     photoMode = true;
     photoPath = path;
     photoID = "";
-    history.pushState(null, "", `${path}${location.search}${hashWithoutPhoto()}`);
+    pushPhotoHistory(null, `${path}${location.search}${hashWithoutPhoto()}`);
     if (path === "/photos/albums") void tick().then(() => document.querySelector<HTMLButtonElement>('[data-albums-nav]')?.focus());
   }
 
   function switchWorkspace(photos: boolean) {
+    if (!photos && photoMode && retainedPhotoEditor() && !retainedPhotoEditor()!.canChangeTarget()) return;
     if (photos) {
       navigatePhotos(photoMode || photoPath === "/photos/hidden" || !photoPath.startsWith("/photos") ? "/photos" : photoPath);
       return;
@@ -454,7 +482,7 @@
     if (previous) previous.viewerReturn = undefined;
     photoID = "";
     photoMode = false;
-    history.pushState(null, "", `/${location.search}${hashWithoutPhoto()}`);
+    pushPhotoHistory(null, `/${location.search}${hashWithoutPhoto()}`);
   }
   let uploadChannel = $state<VerifiedUploadChannel | null>(null);
   let uploadChannelError = $state("");
@@ -682,7 +710,6 @@
   onMount(() => {
     try { savedQueryDraft = queryFromFragment(location.hash); }
     catch (cause) { queryURLError = cause instanceof Error ? cause.message : String(cause); }
-    const shortcutManager = createShortcutManager();
     const unregister = [
       shortcutManager.register("/", focusSearch, {
         description: "Focus search",
@@ -714,11 +741,17 @@
       ),
     ];
     const handleShortcut = (event: KeyboardEvent): void => {
-      if (
-        isAppShortcutSuppressed(
-          event,
-          !webSession || loading || searchPending || snapshotActive || photoMode,
-        )
+      if (photoMode) {
+        if (isPhotoShortcutSuppressed(event)) return;
+        const rootHelpShortcut = event.shiftKey && (event.key === "/" || event.key === "?");
+        if (shortcutManager.activeScope() === ROOT_SCOPE && !rootHelpShortcut) return;
+        if (!event.shiftKey && !/^[0-9]$/.test(event.key) && /^Digit[0-9]$/.test(event.code)) {
+          const normalized = new KeyboardEvent(event.type, { key: event.code.slice(-1), code: event.code, ctrlKey: event.ctrlKey, metaKey: event.metaKey, altKey: event.altKey, shiftKey: event.shiftKey, bubbles: true, cancelable: true });
+          if (shortcutManager.handleKeydown(normalized)) event.preventDefault();
+          return;
+        }
+      } else if (
+        isAppShortcutSuppressed(event, !webSession || loading || searchPending || snapshotActive)
       ) {
         return;
       }
@@ -734,8 +767,9 @@
     const session = takeFragmentSession();
     if (photoMode && photoID) {
       const url = new URL(location.href); url.hash = `photo=${encodeURIComponent(photoID)}`;
-      history.replaceState(null, "", url.href);
+      photoNavigation.replace(history.state, url.href);
     } else if (savedQueryDraft) replaceQueryURL(savedQueryDraft);
+    photoNavigation.accept();
     if (session) activateBrowserSession(session);
     else void getSignInStatus().then((status) => {
       if (!mounted) return;
@@ -1612,16 +1646,16 @@
     }
   }
 
-  async function loadTagCatalog(): Promise<void> {
+  async function loadTagCatalog(append = false): Promise<void> {
     const request = ++tagCatalogGeneration;
     const session = webSession;
     const selectedTagID = tagFilterID;
     tagCatalogLoading = true;
     tagCatalogError = "";
     try {
-      const page = await generated.listTags({ limit: 1000, offset: 0 }, { session });
+      const page = await generated.listTags({ limit: 1000, offset: append ? tagCatalogListed : 0 }, { session });
       if (request !== tagCatalogGeneration || session !== webSession) return;
-      let items = page.items;
+      let items = append ? [...new Map([...tagCatalog, ...page.items].map(tag => [tag.id, tag])).values()] : page.items;
       let selectedMissing = false;
       if (
         selectedTagID &&
@@ -1643,9 +1677,10 @@
         }
       }
       if (request !== tagCatalogGeneration || session !== webSession) return;
-      tagCatalog = sortTags(selectedTagID === tagFilterID ? items : page.items);
+      const current = new Map(tagCatalog.map(tag => [tag.id, tag]));
+      tagCatalog = sortTags((append || selectedTagID === tagFilterID ? items : page.items).map(tag => (current.get(tag.id)?.revision ?? 0) > tag.revision ? current.get(tag.id)! : tag));
       tagCatalogTotal = page.total;
-      tagCatalogListed = page.items.length;
+      tagCatalogListed = (append ? tagCatalogListed : 0) + page.items.length;
       if (selectedMissing && tagFilterID === selectedTagID) {
         const rerunSearch = Boolean(activeQuery || searchPending);
         const leaveTagBrowse = activeQuery === "" && activeTagID === selectedTagID;
@@ -1753,10 +1788,46 @@
 
   function refreshCurrentView(): void {
     void loadTagCatalog();
+    refreshDocumentsView();
+  }
+
+  function refreshDocumentsView(): void {
     if (activeQuery) void runSearch();
     else if (activeTagID) void loadTaggedNodes(activeTagID);
-    else if (directory) void loadDirectory(directory.id, false);
+    else if (directory) void loadDirectory(directory.id, false, selectedID, true);
     else void loadRoot();
+  }
+
+  function handlePhotoMetadataChanged(receipt: import("./generated/docbank.js").PhotoAuthoredReceipt, tags: Tag[]): void {
+    const refreshed = new Map(tags.map(tag => [tag.id, tag]));
+    for (const tag of tagCatalog) if ((refreshed.get(tag.id)?.revision ?? 0) < tag.revision) refreshed.set(tag.id, tag);
+    tagCatalog = sortTags([...refreshed.values()]);
+    if (receipt.after.some(after => receipt.before.some(before => before.file_id === after.file_id && before.values.rotation !== after.values.rotation))) void photoAlbums?.load();
+    const source = activePhotos();
+    const siblings = [photoState?.photos, albumPhotos, mapPhotos, hiddenWorkspace?.activePhotos()];
+    for (const photos of new Set(siblings)) {
+      if (!photos || photos === source || source && photos.hidden !== source.hidden || !(photos.started || photos.loading)) continue;
+      const rotations = photos.metadataChanged(receipt);
+      const preparedChanged = photos.authored.targets.some(target => receipt.after.some(file => file.file_id === target.file_id));
+      const refresh = photos.loading || photos.reloadsAfter(rotations) ? photos.refresh() : Promise.resolve();
+      if (preparedChanged) void refresh.then(() => photos.authored.reload());
+    }
+    for (const file of receipt.after) pendingPhotoNodes.add(file.node_id);
+    if (!photoMode) refreshPhotoDocuments();
+  }
+
+  const pendingPhotoNodes = new Set<number>();
+  $effect(() => { if (!photoMode) untrack(refreshPhotoDocuments); });
+  function refreshPhotoDocuments(): void {
+    if (!pendingPhotoNodes.size) return;
+    const affected = new Set(pendingPhotoNodes);
+    pendingPhotoNodes.clear();
+    const source = selectedSource;
+    if (!snapshotActive) refreshDocumentsView();
+    if (source && affected.has(source.nodeID)) {
+      void loadSelectedTags(source.nodeID, source.key);
+      void loadAuditStatus(source.nodeID, source.key);
+    }
   }
 
   function openBatchTags(targets: readonly SelectionTarget[]): void {
@@ -2205,7 +2276,7 @@
   }
 </script>
 
-<svelte:window onpopstate={syncPhotoLocation} onhashchange={syncPhotoLocation} />
+<svelte:window onpopstate={syncPhotoLocation} onhashchange={syncPhotoLocation} onbeforeunload={guardPhotoUnload} />
 {#if !webSession}
   <main class="unlock-shell">
     <Card level="raised" title="Open your Docbank">
@@ -2369,6 +2440,10 @@
           >
             <KeyboardIcon size="16" aria-hidden="true" />
           </IconButton>
+          {:else}
+          {#if activePhotos()}
+          <IconButton ariaLabel="Keyboard shortcuts" onclick={openShortcutHelp}><KeyboardIcon size="16" aria-hidden="true" /></IconButton>
+          {/if}
           {/if}
           <ThemeToggle />
           <IconButton ariaLabel={keySession ? "Sign out" : "Lock web session"} onclick={() => void lock()}>
@@ -2380,13 +2455,13 @@
 
     {#if hiddenAccess?.lockError}<div class="photo-access-error"><p role="alert">Hidden did not lock. {hiddenAccess.lockError}</p><Button onclick={() => void (hiddenWorkspace ? hiddenWorkspace.lock() : hiddenAccess?.lock())}>Retry lock</Button></div>{/if}
     {#if photoMode}
-      {#if hiddenMode && hiddenAccess}<HiddenPhotos access={hiddenAccess} bind:this={hiddenWorkspace} {photoID} onphotochange={changePhoto} onconceal={clearPhoto} onstate={result => { void acceptPhotoAccess(result).catch(cause => { void invalidateLibrary(); photoAccessError = cause instanceof Error ? cause.message : String(cause); }); }} onaccessfailure={invalidateLibrary} ontrashed={() => { handleTrashed(); void hiddenWorkspace?.refresh(); }} onunhidden={() => { void invalidateLibrary(); void hiddenWorkspace?.refresh(); }} onactionerror={error => hiddenPhotoActionError = error} photoActionError={hiddenPhotoActionError} />{:else if photoValidated && photoState}
+      {#if hiddenMode && hiddenAccess}<HiddenPhotos access={hiddenAccess} undoState={photoUndo} onhelp={openShortcutHelp} tags={tagCatalog} tagsError={tagCatalogError} tagsLoading={tagCatalogLoading} tagsTotal={tagCatalogTotal} onloadtags={loadTagCatalog} onloadmoretags={() => loadTagCatalog(true)} onmetadatachanged={handlePhotoMetadataChanged} shortcuts={shortcutManager} bind:this={hiddenWorkspace} {photoID} onphotochange={changePhoto} onconceal={clearPhoto} onstate={result => { void acceptPhotoAccess(result).catch(cause => { void invalidateLibrary(); photoAccessError = cause instanceof Error ? cause.message : String(cause); }); }} onaccessfailure={invalidateLibrary} ontrashed={() => { handleTrashed(); void hiddenWorkspace?.refresh(); }} onunhidden={() => { void invalidateLibrary(); void hiddenWorkspace?.refresh(); }} onactionerror={error => hiddenPhotoActionError = error} photoActionError={hiddenPhotoActionError} />{:else if photoValidated && photoState}
       {#if hiddenPhotoActionError}<p role="alert">{hiddenPhotoActionError}</p>{/if}
       {#if photoPath === "/photos/albums"}{#if photoAlbums}<PhotoAlbumsIndex albums={photoAlbums} cache={photoState.cache} onnavigate={navigatePhotos} />{/if}
-      {:else if albumID}{#if albumPhotos}{#key albumPhotos}<PhotosWorkspace bind:this={libraryWorkspace} photos={albumPhotos} cache={photoState.cache} albums={photoAlbums} {albumID} onnavigate={navigatePhotos} {photoID} onphotochange={changePhoto} ontrashed={source => handleTrashed(undefined, source)} onactionerror={error => hiddenPhotoActionError = error} onhidden={invalidateLibrary} oninvalidate={invalidateLibrary} />{/key}{/if}
+      {:else if albumID}{#if albumPhotos}{#key albumPhotos}<PhotosWorkspace onhelp={openShortcutHelp} tags={tagCatalog} tagsError={tagCatalogError} tagsLoading={tagCatalogLoading} tagsTotal={tagCatalogTotal} onloadtags={loadTagCatalog} onloadmoretags={() => loadTagCatalog(true)} onmetadatachanged={handlePhotoMetadataChanged} shortcuts={shortcutManager} bind:this={libraryWorkspace} photos={albumPhotos} cache={photoState.cache} albums={photoAlbums} {albumID} onnavigate={navigatePhotos} {photoID} onphotochange={changePhoto} ontrashed={source => handleTrashed(undefined, source)} onactionerror={error => hiddenPhotoActionError = error} onhidden={invalidateLibrary} oninvalidate={invalidateLibrary} />{/key}{/if}
       {:else if mapMode}{#if mapAlbumID && photoAlbums?.initialized && !photoAlbums.loading && !photoAlbums.busy && !photoAlbums.loadError && !photoAlbums.items.some(album => album.id === mapAlbumID)}<EmptyState title="Album not found"><Button onclick={() => navigatePhotos("/photos/albums")}>Back to albums</Button></EmptyState>
-      {:else if !tiles.tile_url}<PhotosWorkspace {mapMode} {tiles} photos={photoState.photos} cache={photoState.cache} />{:else if mapPhotos}{#key mapPhotos}<PhotosWorkspace {mapMode} {tiles} bind:this={libraryWorkspace} photos={mapPhotos} cache={photoState.cache} albums={photoAlbums} onnavigate={navigatePhotos} {photoID} onphotochange={changePhoto} ontrashed={source => handleTrashed(undefined, source)} onactionerror={error => hiddenPhotoActionError = error} onhidden={invalidateLibrary} oninvalidate={invalidateLibrary} />{/key}{/if}
-      {:else}{#key photoState.photos.contextID}<PhotosWorkspace {mapMode} {tiles} bind:this={libraryWorkspace} photos={photoState.photos} cache={photoState.cache} albums={photoAlbums} onnavigate={navigatePhotos} {photoID} onphotochange={changePhoto} ontrashed={source => handleTrashed(undefined, source)} onactionerror={error => hiddenPhotoActionError = error} onhidden={invalidateLibrary} oninvalidate={invalidateLibrary} />{/key}{/if}
+      {:else if !tiles.tile_url}<PhotosWorkspace onhelp={openShortcutHelp} tags={tagCatalog} tagsError={tagCatalogError} tagsLoading={tagCatalogLoading} tagsTotal={tagCatalogTotal} onloadtags={loadTagCatalog} onloadmoretags={() => loadTagCatalog(true)} onmetadatachanged={handlePhotoMetadataChanged} shortcuts={shortcutManager} {mapMode} {tiles} photos={photoState.photos} cache={photoState.cache} />{:else if mapPhotos}{#key mapPhotos}<PhotosWorkspace onhelp={openShortcutHelp} tags={tagCatalog} tagsError={tagCatalogError} tagsLoading={tagCatalogLoading} tagsTotal={tagCatalogTotal} onloadtags={loadTagCatalog} onloadmoretags={() => loadTagCatalog(true)} onmetadatachanged={handlePhotoMetadataChanged} shortcuts={shortcutManager} {mapMode} {tiles} bind:this={libraryWorkspace} photos={mapPhotos} cache={photoState.cache} albums={photoAlbums} onnavigate={navigatePhotos} {photoID} onphotochange={changePhoto} ontrashed={source => handleTrashed(undefined, source)} onactionerror={error => hiddenPhotoActionError = error} onhidden={invalidateLibrary} oninvalidate={invalidateLibrary} />{/key}{/if}
+      {:else}{#key photoState.photos.contextID}<PhotosWorkspace onhelp={openShortcutHelp} tags={tagCatalog} tagsError={tagCatalogError} tagsLoading={tagCatalogLoading} tagsTotal={tagCatalogTotal} onloadtags={loadTagCatalog} onloadmoretags={() => loadTagCatalog(true)} onmetadatachanged={handlePhotoMetadataChanged} shortcuts={shortcutManager} {mapMode} {tiles} bind:this={libraryWorkspace} photos={photoState.photos} cache={photoState.cache} albums={photoAlbums} onnavigate={navigatePhotos} {photoID} onphotochange={changePhoto} ontrashed={source => handleTrashed(undefined, source)} onactionerror={error => hiddenPhotoActionError = error} onhidden={invalidateLibrary} oninvalidate={invalidateLibrary} />{/key}{/if}
       {:else if photoAccessError}<div class="photo-access-error"><p role="alert">{photoAccessError}</p><Button onclick={() => void checkPhotoAccess?.()}>Retry</Button></div>{:else}<Spinner />
       {/if}
     {:else}
@@ -3122,6 +3197,8 @@
     </div>
     {#if shortcutHelpOpen}
       <ShortcutHelpModal
+        context={photoMode ? "photos" : "documents"}
+        photoShortcuts={[...shortcutManager.list().filter(shortcut => shortcut.scope === `photos-${activePhotos()?.contextID}`), ...(hiddenMode ? [] : [{ combo: "b", description: "Add selected photos to album" }])]}
         vaultReady={vaultID !== ""}
         catalog={tagCatalog}
         catalogTotal={tagCatalogTotal}

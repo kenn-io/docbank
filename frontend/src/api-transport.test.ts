@@ -27,3 +27,20 @@ it("keeps manually-created API errors compatible with current-session handling",
   expect(isCurrentSessionError(new APIError("expired", 401, "unauthorized"), "new-tab"))
     .toBe(true);
 });
+
+it("preserves server field diagnostics verbatim", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ title: "Unprocessable Entity", status: 422, detail: "validation failed", code: "validation", errors: ["expected number <= 5 (body.patch.rating: 6)"] }, { status: 422 }));
+  const error = await sessionResponse("/api/v1/photos/authored/edit", { session: "tab" }).catch((cause: APIError) => cause) as APIError;
+  expect(error.message).toBe("validation failed");
+  expect(error).toMatchObject({ status: 422, code: "validation", errors: ["expected number <= 5 (body.patch.rating: 6)"] });
+});
+
+it.each([
+  { problem: { detail: "ordinary failure", errors: [{ message: "missing location" }] }, expected: "ordinary failure" },
+  { problem: { title: "Unavailable", errors: {} }, expected: "Unavailable" },
+])("falls back when diagnostics are unusable: $expected", async ({ problem, expected }) => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(problem, { status: 503 }));
+  const error = await sessionResponse("/api/v1/photos", {}).catch((cause: APIError) => cause) as APIError;
+  expect(error.message).toBe(expected);
+  expect(error.errors).toEqual([]);
+});

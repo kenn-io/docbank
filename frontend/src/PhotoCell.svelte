@@ -4,6 +4,7 @@
   import ImageIcon from "@lucide/svelte/icons/image";
   import type { PhotoGridRow } from "./photoGrid.js";
   import { previewObjectURL, type PhotoPreviewCache } from "./photoPreviewCache.js";
+  import { photoRotationStyle, photoRotationTransform, observePhotoSize } from "./photoRotation.js";
 
   let { photo, cache, selected, onclick, oncheck, onhidden, hidden = false, onopen, compact = false, ondragstart, ondragend }: {
     photo: PhotoGridRow;
@@ -19,6 +20,9 @@
     ondragend?: () => void;
   } = $props();
   let menuOpen = $state(false);
+  const quarterTurn = $derived(photo.rotation === 90 || photo.rotation === 270);
+  let width = $state(0);
+  let height = $state(0);
   let imageButton = $state<HTMLButtonElement>();
   let lastClick = $state<{ time: number; x: number; y: number; opened: boolean } | undefined>();
   let touchClick = false;
@@ -82,10 +86,10 @@
   const placeholder = $derived(failed || photo.previews.grid.state === "failed" ? "Preview failed" : photo.previews.grid.state === "unsupported" ? "Preview unsupported" : photo.previews.grid.state === "missing" ? "Preview pending" : "Loading preview");
 </script>
 
-<div class="photo-cell" class:selected class:compact data-asset={photo.asset_id}>
+<div class="photo-cell" class:selected class:compact data-asset={photo.asset_id} {@attach quarterTurn ? (element => observePhotoSize(element, (w, h) => { width = w; height = h; })) : undefined}>
   <button type="button" class="photo-image" bind:this={imageButton} aria-label={`${compact ? "Show" : "Select"} ${photo.name}`} aria-pressed={compact ? undefined : selected} aria-current={compact && selected ? "true" : undefined} onpointerdown={event => pointerType = event.pointerType} onpointercancel={() => { lastClick = undefined; tapCancelled = true; pointerType = undefined; }} onclick={clickImage} ondblclick={doubleClickImage} oncontextmenu={event => { if (onhidden) { event.preventDefault(); menuOpen = true; } }} onkeydown={event => { if (!compact && event.key === "Enter") { event.preventDefault(); onopen?.(event.currentTarget); } }} draggable={!!ondragstart} {ondragstart} {ondragend}>
     {#if url}
-      <img src={url} alt={photo.name} draggable="false" onerror={() => { url = ""; failed = true; }} />
+      <img src={url} alt={photo.name} style={quarterTurn ? photoRotationStyle(photo.rotation ?? 0, width, height) : `width:100%;height:100%;transform:${photoRotationTransform(photo.rotation ?? 0)}`} draggable="false" onerror={() => { url = ""; failed = true; }} />
     {:else}
       <span class="placeholder" title={errorMessage} class:pending={placeholder === "Preview pending"}>
         <ImageIcon size="24" aria-hidden="true" />
@@ -110,7 +114,7 @@
   .photo-cell.selected { outline: 3px solid var(--accent-blue); outline-offset: -3px; }
   .photo-image { display: block; width: 100%; height: 100%; padding: 0; border: 0; background: transparent; cursor: pointer; color: var(--text-muted); touch-action: manipulation; }
   .photo-image:focus-visible { outline: 3px solid var(--accent-blue); outline-offset: -3px; }
-  img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  img { position: absolute; top: 50%; left: 50%; display: block; object-fit: cover; }
   .placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; height: 100%; font-size: var(--font-size-xs); }
   .pending { background: var(--bg-surface-hover); }
   .photo-menu { position: absolute; top: 8px; right: 8px; }

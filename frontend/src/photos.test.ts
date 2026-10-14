@@ -2,7 +2,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import { APIError } from "./api-transport.js";
 import * as download from "./download.js";
 import { Photos, loadDensity, photoQuery, mapPhotoLimit, type PhotoRow } from "./photos.svelte.js";
-import { photo, mapPhoto } from "./photo-test-fixtures.js";
+import type { Query } from "./query.js";
+import { photo, preparedPhoto, mapPhoto } from "./photo-test-fixtures.js";
 import * as snapshots from "./snapshots.js";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); });
@@ -29,7 +30,7 @@ it.each([false, true])("loads more after an interrupted refresh, map=%s", async 
   const fetcher = vi.fn().mockImplementationOnce(() => new Promise(resolve => finish = resolve))
     .mockResolvedValueOnce(response(mapMode ? [mapPhoto(2)] : [photo(2)]));
   stubPhotoFetch(fetcher);
-  const photos = new Photos("scoped", vi.fn(), false, photoQuery, mapMode ? "map" : undefined);
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection: mapMode ? "map" : undefined });
   photos.items = mapMode ? [mapPhoto(1)] : [photo(1)]; photos.started = true; photos.cursor = "next";
   const refresh = photos.refresh();
   photos.cancelPending();
@@ -45,7 +46,7 @@ it("keeps the first Map count and bounds each page", async () => {
   const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ items: [], map_items: [mapPhoto(1)], total: 2, next_cursor: "next" }))
     .mockResolvedValueOnce(Response.json({ items: [], map_items: [mapPhoto(2)], total: 2 }));
   stubPhotoFetch(fetcher);
-  const photos = new Photos("scoped", vi.fn(), false, photoQuery, "map");
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection: "map" });
   await photos.loadMore();
   expect(photos.total).toBe(2);
   expect(timeout.mock.calls).toEqual([[60_000], [60_000]]);
@@ -60,7 +61,7 @@ it("stops Map loadMore and resume at the located photo limit", async () => {
     return Response.json({ items: [], map_items: Array.from({ length: 1000 }, (_, index) => mapPhoto(start + index + 1)), total: mapPhotoLimit + 1000, next_cursor: String(start + 1000) });
   });
   stubPhotoFetch(fetcher);
-  const photos = new Photos("scoped", vi.fn(), false, photoQuery, "map");
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection: "map" });
   await photos.loadMore();
   expect(photos.items).toHaveLength(mapPhotoLimit);
   expect(photos.items.at(-1)?.asset_id).toBe(`photo-${mapPhotoLimit}`);
@@ -84,7 +85,7 @@ it.each(["initial", "refresh", "expiry"])("bounds Map requests with duplicate ro
     return Response.json({ items: [], map_items: rows, total: mapPhotoLimit + 2000, next_cursor: String(start + 1000) });
   });
   stubPhotoFetch(fetcher);
-  const photos = new Photos("scoped", vi.fn(), false, photoQuery, "map");
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection: "map" });
   if (mode !== "initial") { photos.items = [mapPhoto(99_999)]; photos.started = true; }
   if (mode === "refresh") await photos.refresh();
   else if (mode === "expiry") { photos.cursor = "expired"; await photos.loadMore(); await photos.retry(); }
@@ -113,7 +114,7 @@ it.each(["trash", "hide"])("refills a capped Map with 20,001 located photos afte
     return Response.json({ items: [], map_items: Array.from({ length: count }, (_, index) => mapPhoto(start + index + 1)), total: mapPhotoLimit + 1, next_cursor: start + count <= mapPhotoLimit ? String(start + count) : undefined });
   });
   stubPhotoFetch(fetcher);
-  const photos = new Photos("scoped", vi.fn(), false, photoQuery, "map");
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection: "map" });
   await photos.loadMore();
   expect(photos.items).toHaveLength(mapPhotoLimit);
   expect(photos.cursor).toBe(String(mapPhotoLimit));
@@ -134,7 +135,7 @@ it.each(["trash", "hide"])("refills a capped Map with 20,001 located photos afte
 });
 
 it("retains a partly consumed Map page when refilling the ceiling", async () => {
-  const photos = new Photos("scoped", vi.fn(), false, photoQuery, "map");
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection: "map" });
   photos.items = Array.from({ length: mapPhotoLimit - 1 }, (_, index) => mapPhoto(index + 1));
   photos.started = true; photos.total = mapPhotoLimit + 1; photos.cursor = "remaining";
   const fetcher = vi.fn(async () => Response.json({ items: [], map_items: [mapPhoto(mapPhotoLimit), mapPhoto(mapPhotoLimit + 1)], total: mapPhotoLimit + 1 }));
@@ -161,7 +162,7 @@ it.each(["refresh", "expiry"])("stops Map replacement at the located photo limit
     return Response.json({ items: [], map_items: Array.from({ length: 1000 }, (_, index) => mapPhoto(start + index + 2)), total: mapPhotoLimit + 1000, next_cursor: String(start + 1000) });
   });
   stubPhotoFetch(fetcher);
-  const photos = new Photos("scoped", vi.fn(), false, photoQuery, "map");
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection: "map" });
   photos.items = [mapPhoto(1)]; photos.started = true; photos.total = 1;
   if (mode === "expiry") { photos.cursor = "expired"; await photos.loadMore(); await photos.retry(); }
   else await photos.refresh();
@@ -194,12 +195,42 @@ it.each([undefined, "map"] as const)("revalidates absent selection with the %s s
   const fetcher = vi.fn().mockResolvedValueOnce(response(projection ? [mapPhoto(1)] : [photo(1)]))
     .mockResolvedValueOnce(response(projection ? [] : [photo(2)], undefined, !!projection));
   stubPhotoFetch(fetcher);
-  const photos = new Photos("scoped", vi.fn(), false, query, projection);
+  const photos = new Photos("scoped", vi.fn(), false, query, { projection });
   photos.items = projection ? [mapPhoto(1)] : [photo(1)]; photos.started = true;
   photos.trashTargets = [photo(2)]; photos.selectLoaded(["photo-2"]);
   await photos.refresh();
   expect(JSON.parse(fetcher.mock.calls[1][1].body).query).toEqual({ ...(projection ? query : photoQuery), filters: { ...(projection ? query.filters : photoQuery.filters), asset_ids: ["photo-2"] } });
   expect([...photos.selection.selectedIDs]).toEqual(projection ? [] : ["photo-2"]);
+  photos.dispose();
+});
+
+it("retains prepared Map targets when a metadata edit leaves the inherited filter", async () => {
+  const gps_bounds = { south: "-90", west: "-180", north: "90", east: "180" };
+  const query = { ...photoQuery, text: "Trip", filters: { rating_min: 4, gps_bounds } };
+  const before = preparedPhoto(1);
+  before.values.rating = 5;
+  const after = { ...before, revision: 2, node_revision: 2, values: { ...before.values, rating: 1 } };
+  let rating = before.values.rating;
+  const fetcher = vi.fn(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/photos/authored/edit")) {
+      rating = after.values.rating;
+      return Response.json({ receipt_id: "rated", before: [before], after: [after] });
+    }
+    const request = JSON.parse(init.body as string);
+    return response(request.query.filters?.rating_min > rating ? [] : [mapPhoto(1)], undefined, true);
+  });
+  stubPhotoFetch(fetcher);
+  const photos = new Photos("scoped", vi.fn(), false, query, { projection: "map" });
+  photos.items = [mapPhoto(1)]; photos.started = true;
+  photos.selectLoaded(); photos.authored.targets = [before];
+  await photos.authored.edit(photos.scope(), { rating: 1 }, false, async () => { await photos.refresh(); });
+  expect(photos.authored.error).toBe("");
+  expect(photos.items).toEqual([]);
+  expect(photos.authored.targets).toEqual([after]);
+  expect([...photos.selectedIDs]).toEqual(["photo-1"]);
+  const revalidation = JSON.parse(fetcher.mock.calls[2]![1].body as string);
+  expect(revalidation.query).toEqual({ ...photoQuery, filters: { gps_bounds, asset_ids: ["photo-1"] } });
+  expect(revalidation).toMatchObject({ projection: "map", hidden: false });
   photos.dispose();
 });
 
@@ -274,25 +305,35 @@ it("ignores a closed rejects preview after reopening with a different selection"
   photos.dispose();
 });
 
-it.each(["Library", "selected", "over limit", "empty selection"])("bounds rejects requests while keeping Library available, scope=%s", async scope => {
+it.each(["Library", "selected", "over limit", "empty selection", "prepared"])("bounds rejects requests while keeping Library available, scope=%s", async scope => {
   const preview = { ...rejectsPreview("photo-1", 4), selection_limit: 3 };
-  const fetcher = vi.fn().mockResolvedValueOnce(Response.json(preview));
+  const fetcher = vi.fn().mockImplementation(async () => Response.json(preview));
   vi.stubGlobal("fetch", fetcher);
   const photos = new Photos("scoped", vi.fn());
   await photos.previewRejects();
   expect(photos.rejectsSelectionLimit).toBe(3);
   fetcher.mockClear();
-  fetcher.mockResolvedValueOnce(Response.json(preview));
   photos.selection.selectedIDs = new Set(Array.from({ length: 4 }, (_, i) => `photo-${i}`));
   if (scope === "selected") photos.selection.selectedIDs = new Set(["photo-2", "photo-1"]);
   if (scope === "empty selection") photos.clearSelection();
+  if (scope === "prepared") {
+    photos.items = [photo(1)]; photos.started = true; photos.selectAllResults();
+    photos.authored.targets = [preparedPhoto(1), preparedPhoto(2)];
+    photos.query = { ...photoQuery, filters: { flags: ["pick"] } };
+    photos.items = [];
+  }
   await photos.previewRejects(scope !== "Library");
   if (scope === "over limit" || scope === "empty selection") {
     expect(photos.rejectsError).toContain("3 photos");
     expect(fetcher).not.toHaveBeenCalled();
   } else {
-    expect(photos.rejectsSelected).toBe(scope === "selected");
-    expect(JSON.parse(fetcher.mock.calls[0][1].body).query.filters?.asset_ids).toEqual(scope === "selected" ? ["photo-1", "photo-2"] : undefined);
+    const selected = scope === "selected" || scope === "prepared";
+    expect(photos.rejectsSelected).toBe(selected);
+    const request = fetcher.mock.calls.find(([url]) => url.endsWith("/rejects/preflight"));
+    expect(request).toBeDefined();
+    const filters = JSON.parse(String(request![1].body)).query.filters;
+    if (selected) expect(filters).toEqual({ asset_ids: ["photo-1", "photo-2"] });
+    else expect(filters?.asset_ids).toBeUndefined();
     expect(photos.rejects).toEqual(preview);
   }
   photos.dispose();
@@ -389,36 +430,43 @@ it.each([
   photos.dispose();
 });
 
-it("binds retries to captured or displayed revisions", async () => {
-  const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-1", revision: 2 })))
+it.each(["loaded", "prepared"])("binds retries to captured revisions: %s", async mode => {
+  const revision = mode === "loaded" ? 1 : 7;
+  const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-1", revision: revision + 1 })))
     .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Photo changed" }), { status: 412 }))
     .mockResolvedValueOnce(response([photo(3)]))
     .mockResolvedValueOnce(response([photo(2)]))
-    .mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-2", revision: 2 })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-2", revision: revision + 1 })))
     .mockResolvedValueOnce(response([photo(3)]));
   stubPhotoFetch(fetcher);
   const photos = new Photos("scoped", vi.fn());
   photos.items = [photo(1), photo(2)];
   photos.started = true;
   photos.selectLoaded();
+  if (mode !== "loaded") {
+    photos.authored.targets = [1, 2].map(id => preparedPhoto(id, { asset_revision: revision, revision: 2 }));
+    photos.items = [];
+  }
   const invalidateDocuments = vi.fn();
   expect(await photos.trashSelected(undefined, invalidateDocuments)).toBe(false);
   expect(invalidateDocuments).toHaveBeenCalledTimes(1);
   expect(fetcher.mock.calls[0][0]).toBe("/api/v1/photos/assets/photo-1/trash");
-  expect(new Headers(fetcher.mock.calls[0][1].headers).get("If-Match")).toBe("1");
+  expect(new Headers(fetcher.mock.calls[0][1].headers).get("If-Match")).toBe(String(revision));
   expect([...photos.selection.selectedIDs]).toEqual(["photo-2"]);
   expect(photos.trashError).toBe("Photo changed");
   expect(photos.items.map(item => item.asset_id)).toEqual(["photo-3"]);
   expect(photos.trashTargets.map(item => item.asset_id)).toEqual(["photo-2"]);
   expect(await photos.trashSelected(undefined, invalidateDocuments)).toBe(true);
   expect(fetcher.mock.calls[4][0]).toBe("/api/v1/photos/assets/photo-2/trash");
-  expect(new Headers(fetcher.mock.calls[4][1].headers).get("If-Match")).toBe("1");
+  expect(new Headers(fetcher.mock.calls[4][1].headers).get("If-Match")).toBe(String(revision));
   expect(photos.trashTargets).toEqual([]);
   expect(invalidateDocuments).toHaveBeenCalledTimes(2);
   photos.selection.selectedIDs.add("unloaded");
   expect(await photos.trashSelected()).toBe(false);
   photos.dispose();
+});
 
+it("binds retries to displayed revisions", async () => {
   const updated = { ...photo(1), revision: 2 };
   const loadedFetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Photo changed" }), { status: 412 }))
     .mockResolvedValueOnce(response([updated]))
@@ -753,7 +801,7 @@ it.each(["unavailable", "cursor_expired", "invalid_photo_cursor"])("retries a st
   if (rejected) fetcher.mockResolvedValueOnce(response([first], "renewed-second"));
   fetcher.mockResolvedValueOnce(response([second]));
   stubPhotoFetch(fetcher);
-  const photos = new Photos("scoped", vi.fn(), false, photoQuery, "map");
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection: "map" });
   photos.items = [mapPhoto(3)]; photos.started = true;
   expect(await photos.refresh()).toBe(false);
   expect(photos.items.map(row => row.asset_id)).toEqual(["photo-3"]);
@@ -786,6 +834,14 @@ it("ignores canceled reads while a later request continues", async () => {
   expect(photos.loading).toBe(true);
   finishNew(response([photo(4)])); await current;
   expect(photos.items.map(item => item.asset_id)).toEqual(["photo-2", "photo-4"]);
+  fetcher.mockImplementationOnce(() => new Promise(resolve => finish = resolve))
+    .mockImplementationOnce(() => new Promise(resolve => finishNew = resolve));
+  const replaced = photos.refresh(); photos.cancelPending();
+  const replacement = photos.refresh();
+  finish(response([photo(99)])); await replaced;
+  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-2", "photo-4"]);
+  finishNew(response([photo(2)])); await replacement;
+  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-2"]);
   fetcher.mockResolvedValueOnce(new Response("{}", { status: 503 }))
     .mockImplementationOnce(() => new Promise(resolve => finish = resolve));
   await photos.refresh();
@@ -848,7 +904,7 @@ it("times each replacement page separately", async () => {
 it("accepts a Map refresh when the completed listing timeout expires during eligibility lookup", async () => {
   const timer = new AbortController();
   vi.spyOn(AbortSignal, "timeout").mockReturnValueOnce(timer.signal);
-  const photos = new Photos("scoped", vi.fn(), false, photoQuery, "map");
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection: "map" });
   photos.items = [mapPhoto(1)]; photos.started = true;
   photos.trashTargets = [photo(2)]; photos.selectLoaded(["photo-2"]);
   const fetcher = vi.fn().mockResolvedValueOnce(response([{...mapPhoto(1),revision:2}]))
@@ -861,7 +917,7 @@ it("accepts a Map refresh when the completed listing timeout expires during elig
   photos.dispose();
 });
 
-it.each([false, true].flatMap(hidden => ["success", "failure", "cancel"].map(outcome => ({ hidden, outcome }))))("revalidates off-prefix captured selections in bounded queries, hidden=$hidden outcome=$outcome", async ({ hidden, outcome }) => {
+it.each([false, true].flatMap(hidden => ["success", "failure", "cancel"].map(outcome => ({ hidden, outcome }))))("revalidates off-prefix captured selections and conceals metadata until successful, hidden=$hidden outcome=$outcome", async ({ hidden, outcome }) => {
   const prefix = Array.from({ length: 250 }, (_, index) => photo(index + 1));
   const previous = prefix.map(item => ({ ...item, name: `Earlier ${item.name}` }));
   const captured = Array.from({ length: 65 }, (_, index) => photo(index + 1001));
@@ -869,6 +925,7 @@ it.each([false, true].flatMap(hidden => ["success", "failure", "cancel"].map(out
   photos.items = previous; photos.started = true; photos.trashTargets = captured;
   photos.selection = { selectedIDs: new Set(captured.map(item => item.asset_id)), anchorID: captured[0].asset_id };
   let groups = 0;
+  let canceledState: { validating: boolean; concealed: boolean } | undefined;
   const fetcher = vi.fn(async (url: string, options: RequestInit) => {
     if (!url.endsWith("/query")) return Response.json({ detail:"Stale revision" },{ status:412 });
     const body = JSON.parse(String(options.body));
@@ -878,13 +935,19 @@ it.each([false, true].flatMap(hidden => ["success", "failure", "cancel"].map(out
     expect(ids.length).toBeLessThanOrEqual(64);
     groups++;
     if (groups === 2 && outcome === "failure") return Response.json({ detail:"Eligibility unavailable" },{status:503});
-    if (groups === 2 && outcome === "cancel") photos.cancelPending();
+    if (groups === 2 && outcome === "cancel") {
+      photos.cancelPending();
+      canceledState = { validating: photos.authored.validating, concealed: photos.authored.concealed };
+    }
     return response(captured.filter(item => ids.includes(item.asset_id) && item !== captured[64]).map(item => ({ ...item, revision:7 })));
   });
   vi.stubGlobal("fetch",fetcher);
-  expect(await photos.refresh()).toBe(outcome === "success");
+  const accepted = outcome === "success";
+  expect(await photos.refresh()).toBe(accepted);
+  if (outcome === "cancel") expect(canceledState).toEqual({ validating: false, concealed: true });
+  expect(photos.authored.validating).toBe(false); expect(photos.authored.concealed).toBe(!accepted);
   expect(groups).toBe(2);
-  expect(photos.items).toEqual(outcome === "success" ? prefix : previous);
+  expect(photos.items).toEqual(accepted ? prefix : previous);
   if (outcome === "success") {
     expect([...photos.selection.selectedIDs]).toEqual(captured.slice(0,64).map(item => item.asset_id));
     expect(photos.trashTargets).toEqual(captured.slice(0,64));
@@ -898,6 +961,25 @@ it.each([false, true].flatMap(hidden => ["success", "failure", "cancel"].map(out
     expect(photos.selection.selectedIDs.size).toBe(65);
     expect(photos.error).toBe(outcome === "failure" ? "Eligibility unavailable" : "");
   }
+  photos.dispose();
+});
+
+it("clears captured edits and selection when refresh finds no eligible photos", async () => {
+  const captured = photo(1001), photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1)]; photos.started = true; photos.allResults = true;
+  photos.selection = { selectedIDs: new Set([captured.asset_id]), anchorID: captured.asset_id };
+  photos.trashTargets = [captured]; photos.authored.targets = [preparedPhoto(captured.node_id)];
+  const fetcher = vi.fn(async (_url: string, _init: RequestInit) => response([]));
+  stubPhotoFetch(fetcher);
+  expect(await photos.refresh()).toBe(true);
+  expect(photos.authored.targets).toEqual([]);
+  expect(photos.authored.concealed).toBe(false);
+  expect([...photos.selectedIDs]).toEqual([]);
+  expect(photos.trashTargets).toEqual([]);
+  expect(photos.allResults).toBe(false);
+  expect(photos.scope()).toEqual({ asset_ids: [] });
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(JSON.parse(String(fetcher.mock.calls[1][1].body)).query.filters.asset_ids).toEqual([captured.asset_id]);
   photos.dispose();
 });
 
@@ -1019,7 +1101,7 @@ it.each([false, true])("looks up direct photos without replacing loaded results,
  expect(fetcher).toHaveBeenCalledTimes(2); photos.dispose();
 });
 
-it.each([{ hidden: false, status: 401 }, { hidden: true, status: 403 }])("retains prepared preview slots and applies access cleanup for lookup, preparation and original reads, hidden=$hidden", async ({ hidden, status }) => {
+it.each([{ hidden: false, status: 401, calls: 3 }, { hidden: false, status: 403, calls: 0 }, { hidden: true, status: 401, calls: 3 }, { hidden: true, status: 403, calls: 3 }])("retains prepared preview slots and applies access cleanup for lookup, preparation and original reads, hidden=$hidden status=$status", async ({ hidden, status, calls }) => {
   const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ state: "ready", generation_id: "fit-generation" })));
   stubPhotoFetch(fetcher); const onauth = vi.fn(); const photos = new Photos("scoped", onauth, hidden); const item = photo(1); const signal = new AbortController().signal;
   const slot = await photos.preview(item,"fit",signal); expect(item.previews.fit).toEqual(slot);
@@ -1036,7 +1118,21 @@ it.each([{ hidden: false, status: 401 }, { hidden: true, status: 403 }])("retain
   await expect(photos.original(item,signal)).rejects.toMatchObject({status,code:"hidden_locked"});
   expect(fetcher.mock.calls.map(([url]) => url)).toEqual(["/api/v1/photos/assets/query"]);
   expect(read).not.toHaveBeenCalled();
-  expect(onauth).toHaveBeenCalledTimes(3); photos.dispose();
+  expect(onauth).toHaveBeenCalledTimes(calls); photos.dispose();
+});
+
+it("reports locked Hidden access when Undo cannot restore a photo edit", async () => {
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ detail: "Unlock Hidden to undo this photo edit", code: "hidden_locked" }, { status: 403 }));
+  stubPhotoFetch(fetcher);
+  const onauth = vi.fn(), photos = new Photos("scoped", onauth, true);
+  photos.authored.receiptID = "edited-before-hide";
+  await photos.authored.undo(vi.fn());
+  expect(fetcher).toHaveBeenCalledOnce();
+  expect(fetcher.mock.calls[0][0]).toBe("/api/v1/photos/authored/edited-before-hide/undo");
+  expect(onauth).toHaveBeenCalledOnce();
+  expect(photos.authored.receiptID).toBe("edited-before-hide");
+  expect(photos.authored.error).toBe("Unlock Hidden to undo this photo edit");
+  photos.dispose();
 });
 
 it.each(["display", "excluded", "version", "download-display", "download-node", "download-version", "download-excluded", "download-error", "download-auth", "download-abort", "download-success"])("checks original photo binding for %s without adopting stale results", async scenario => {
@@ -1084,7 +1180,7 @@ it.each(["success", "failure", "expired", "invalid_photo_cursor", "cancel"])("pa
  const located=mapPhoto;
  const query={...photoQuery,filters:{capture_after:"2024-01-01",gps_bounds:{south:"-90",west:"-180",north:"90",east:"180"}}};
  const fetcher=vi.fn().mockResolvedValueOnce(response([located(2)],"second")).mockImplementationOnce(()=>new Promise(resolve=>finish=resolve));vi.stubGlobal("fetch",fetcher);
- const photos=new Photos("scoped",vi.fn(),false,query,"map");const pending=photos.resume();
+ const photos=new Photos("scoped",vi.fn(),false,query,{projection:"map"});const pending=photos.resume();
  await vi.waitFor(()=>expect(photos.items.map(row=>row.asset_id)).toEqual(["photo-2"]));
  expect(photos.loading).toBe(true);photos.selectLoaded();
  if(outcome === "cancel") photos.cancelPending();
@@ -1102,7 +1198,7 @@ it.each(["success", "failure", "expired", "invalid_photo_cursor", "cancel"])("pa
 });
 
 it("marks appended pages and clears the marker on other item assignments", async () => {
- const photos=new Photos("scoped",vi.fn(),false,photoQuery,"map");
+ const photos=new Photos("scoped",vi.fn(),false,photoQuery,{projection:"map"});
  const previous=[mapPhoto(1)];photos.items=previous;photos.started=true;photos.cursor="next";
  vi.stubGlobal("fetch",vi.fn().mockResolvedValue(response([mapPhoto(2)])));
  await photos.loadMore();
@@ -1113,7 +1209,7 @@ it("marks appended pages and clears the marker on other item assignments", async
 });
 
 it("reuses seen IDs across pages and resets them when items are replaced", async () => {
- const photos=new Photos("scoped",vi.fn(),false,photoQuery,"map");
+ const photos=new Photos("scoped",vi.fn(),false,photoQuery,{projection:"map"});
  const previous=[mapPhoto(1)];photos.items=previous;photos.started=true;photos.cursor="next";
  const scans=vi.fn(()=>"photo-1");Object.defineProperty(previous[0],"asset_id",{get:scans});
  const fetcher=vi.fn().mockResolvedValueOnce(response([mapPhoto(1),mapPhoto(2)],"last")).mockResolvedValueOnce(response([mapPhoto(2),mapPhoto(3),mapPhoto(3)]));vi.stubGlobal("fetch",fetcher);
@@ -1128,7 +1224,7 @@ it("reuses seen IDs across pages and resets them when items are replaced", async
 
 it("routes Map Reload authentication failures through the store handler", async () => {
  const onauth=vi.fn();
- const photos=new Photos("expired",onauth,false,photoQuery,"map");
+ const photos=new Photos("expired",onauth,false,photoQuery,{projection:"map"});
  photos.items=[mapPhoto(1)];photos.started=true;
  const fetcher=vi.fn().mockResolvedValue(Response.json({code:"unauthorized"},{status:401}));vi.stubGlobal("fetch",fetcher);
  await expect(photos.reload("photo-1",new AbortController().signal)).rejects.toMatchObject({status:401});
@@ -1139,7 +1235,7 @@ it("routes Map Reload authentication failures through the store handler", async 
 
 it("refreshes the complete GPS query when its accepted population grows", async () => {
  const rows=Array.from({length:250},(_,index)=>mapPhoto(index+1));
- const photos=new Photos("scoped",vi.fn(),false,photoQuery,"map");photos.items=rows;photos.started=true;photos.total=250;
+ const photos=new Photos("scoped",vi.fn(),false,photoQuery,{projection:"map"});photos.items=rows;photos.started=true;photos.total=250;
  const fetcher=vi.fn();
  fetcher.mockResolvedValueOnce(Response.json({items:[],map_items:rows,total:251,next_cursor:"last"})).mockResolvedValueOnce(Response.json({items:[],map_items:[mapPhoto(251)],total:251}));vi.stubGlobal("fetch",fetcher);
  await photos.refresh();
@@ -1148,7 +1244,7 @@ it("refreshes the complete GPS query when its accepted population grows", async 
 
 it.each(["complete", "partial", "rejected", "uncertain"])("reconciles Map trash without restarting confirmed pages, %s", async outcome => {
  let finish!:(value:Response)=>void;
- const photos=new Photos("scoped",vi.fn(),false,photoQuery,"map");photos.items=[mapPhoto(1),mapPhoto(2)];photos.started=true;photos.total=outcome === "partial"?3:2;photos.selectLoaded(["photo-1"]);
+ const photos=new Photos("scoped",vi.fn(),false,photoQuery,{projection:"map"});photos.items=[mapPhoto(1),mapPhoto(2)];photos.started=true;photos.total=outcome === "partial"?3:2;photos.selectLoaded(["photo-1"]);
  const fetcher=vi.fn();
  if(outcome === "partial") {photos.cursor="remaining";fetcher.mockImplementationOnce(()=>new Promise(resolve=>finish=resolve));}
  fetcher.mockResolvedValueOnce(outcome === "rejected"?Response.json({detail:"Photo changed"},{status:412}):outcome === "uncertain"?Response.json({detail:"Write unavailable"},{status:503}):Response.json({id:"photo-1",revision:2}));
@@ -1173,7 +1269,7 @@ it("resumes an interrupted Map page after Reload", async () => {
   .mockResolvedValueOnce(response([mapPhoto(2)]))
   .mockResolvedValueOnce(response([photo(1)]));
  stubPhotoFetch(fetcher);
- const photos=new Photos("scoped",vi.fn(),false,query,"map");
+ const photos=new Photos("scoped",vi.fn(),false,query,{projection:"map"});
  const pending=photos.resume();await vi.waitFor(()=>expect(finish).toBeTypeOf("function"));
  expect(photos.started).toBe(true);
  await photos.reload("photo-1",new AbortController().signal);finish(response([mapPhoto(3)]));await pending;
@@ -1187,7 +1283,7 @@ it("resumes an interrupted Map page after Reload", async () => {
 it.each(["fresh", "unlocated", "missing", "aborted"])("reconciles a compact Reload with current membership, %s", async outcome => {
  const member=outcome === "fresh";
  const fresh={...photo(1),name:"Fresh photo.jpg",content_version_id:"fresh-version"};
- const summary={asset_id:fresh.asset_id,revision:2,name:fresh.name,capture_time:fresh.capture_time,width_px:600,height_px:400,latitude:3,longitude:12,previews:{grid:{state:"missing" as const}}};
+ const summary={rotation:0 as const,asset_id:fresh.asset_id,revision:2,name:fresh.name,capture_time:fresh.capture_time,width_px:600,height_px:400,latitude:3,longitude:12,previews:{grid:{state:"missing" as const}}};
  let finish!:(value:Response)=>void;
  const fetcher=vi.fn();
  if(outcome === "aborted") fetcher.mockImplementationOnce(()=>new Promise(resolve=>finish=resolve));
@@ -1196,7 +1292,7 @@ it.each(["fresh", "unlocated", "missing", "aborted"])("reconciles a compact Relo
  else if(outcome === "missing") fetcher.mockResolvedValueOnce(Response.json({items:[],total:0}));
  vi.stubGlobal("fetch",fetcher);
  const query={...photoQuery,filters:{gps_bounds:{south:"-90",west:"-180",north:"90",east:"180"}}};
- const photos=new Photos("scoped",vi.fn(),false,query,"map");photos.items=[{...summary,name:"Original photo.jpg",latitude:0},{...summary,asset_id:"photo-2"}];photos.started=true;photos.total=2;photos.selectLoaded();
+ const photos=new Photos("scoped",vi.fn(),false,query,{projection:"map"});photos.items=[{...summary,name:"Original photo.jpg",latitude:0},{...summary,asset_id:"photo-2"}];photos.started=true;photos.total=2;photos.selectLoaded();
  const original=photos.items[0];const controller=new AbortController();const reload=photos.reload("photo-1",controller.signal);
  if(outcome === "aborted") {
   controller.abort();finish(Response.json({items:[],map_items:[summary],total:1}));await expect(reload).rejects.toMatchObject({name:"AbortError"});expect(photos.items[0]).toEqual(original);photos.dispose();return;
@@ -1211,7 +1307,7 @@ it("keeps a fresh Map Reload row when an older replacement finishes late", async
  let finish!:(value:Response)=>void;
  const fresh={...mapPhoto(1),revision:2};
  const fetcher=vi.fn().mockImplementationOnce(()=>new Promise(resolve=>finish=resolve)).mockResolvedValueOnce(response([fresh])).mockResolvedValueOnce(response([photo(1)])).mockResolvedValueOnce(response([fresh,mapPhoto(2)]));vi.stubGlobal("fetch",fetcher);
- const photos=new Photos("scoped",vi.fn(),false,photoQuery,"map");photos.items=[mapPhoto(1),mapPhoto(2)];photos.started=true;photos.total=2;photos.cursor="next";photos.selectLoaded(["photo-2"]);
+ const photos=new Photos("scoped",vi.fn(),false,photoQuery,{projection:"map"});photos.items=[mapPhoto(1),mapPhoto(2)];photos.started=true;photos.total=2;photos.cursor="next";photos.selectLoaded(["photo-2"]);
  const refresh=photos.refresh();expect(await photos.reload("photo-1",new AbortController().signal)).toEqual(photo(1));
  finish(Response.json({items:[photo(1)],total:1}));await refresh;
  expect(photos.items[0]).toEqual(fresh);expect(photos.items.map(row=>row.asset_id)).toEqual(["photo-1","photo-2"]);expect(photos.error).toBe("Photo list changed. Retry to finish loading.");expect(photos.cursor).toBe("next");expect([...photos.selection.selectedIDs]).toEqual(["photo-2"]);
@@ -1405,4 +1501,109 @@ it("requests filter counts for the library but not for an album", async () => {
     expect(counted).toBe(album ? 0 : 1);
     photos.dispose();
   }
+});
+
+it.each([
+  ...(["check", "clear", "query"] as const).map(action => ["clean", action] as const),
+  ...(["select", "check", "clear", "loaded", "all", "query", "sort", "date", "hide", "trash", "rejects"] as const).map(action => ["dirty", action] as const),
+])("preserves dirty scopes and releases clean prepared sessions, draft=%s, action=%s", async (state, action) => {
+  const fetcher = vi.fn().mockResolvedValue(Response.json({ items: [], total: 0 })); vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1), photo(2)]; photos.started = true;
+  if (state === "clean") {
+    photos.selectAllResults();
+    photos.authored.targets = [1,2,3].map(id => preparedPhoto(id, { asset_revision: 7, revision: 2, node_revision: 2 }));
+    expect([...photos.selectedIDs]).toEqual(["photo-1", "photo-2", "photo-3"]);
+  } else {
+    photos.select("photo-1", new MouseEvent("click"), ["photo-1", "photo-2"]);
+    if (action === "rejects") { photos.authored.targets = [preparedPhoto(1)]; photos.rejects = rejectsPreview(); }
+    photos.authored.stage({ caption: "Unapplied" });
+  }
+  const revision = photos.editScopeRevision;
+  const transitions: Record<string, () => unknown> = {
+    select: () => photos.select("photo-2", new MouseEvent("click"), ["photo-1", "photo-2"]),
+    check: () => state === "clean" ? photos.check("photo-1", false, false, ["photo-1", "photo-2"]) : photos.check("photo-2", true, false, ["photo-1", "photo-2"]),
+    clear: () => photos.clearSelection(), loaded: () => photos.selectLoaded(), all: () => photos.selectAllResults(),
+    query: () => photos.setQuery({ ...photoQuery, text: state === "clean" ? "another search" : "New search" }),
+    sort: () => photos.setSort({ field: "import_time", direction: "desc" }),
+    date: () => photos.selectDate("2025-06-01"), hide: () => photos.setHidden("photo-1"), trash: () => photos.trashSelected(),
+    rejects: async () => { await photos.previewRejects(); return photos.trashRejects(); },
+  };
+  const result = await transitions[action]!();
+  if (state === "clean") {
+    expect(photos.authored.targets).toHaveLength(0);
+    if (action === "check") {
+      expect(photos.allResults).toBe(false);
+      expect([...photos.selectedIDs]).toEqual(["photo-2", "photo-3"]);
+    }
+  } else {
+    if (action === "rejects") { expect(result).toBe(false); expect(photos.authored.targets.map(target => target.asset_id)).toEqual(["photo-1"]); }
+    expect(fetcher).not.toHaveBeenCalled();
+    expect([...photos.selectedIDs]).toEqual(["photo-1"]);
+    expect(photos.editScopeRevision).toBe(revision);
+    expect(photos.query).toEqual(photoQuery); expect(photos.date).toBeUndefined();
+    expect(photos.authored.patch).toEqual({ caption: "Unapplied" });
+    photos.authored.clearDraft(); photos.selectLoaded();
+    expect([...photos.selectedIDs]).toEqual(["photo-1", "photo-2"]);
+  }
+  photos.dispose();
+});
+
+
+it("patches only display-file rotation", () => {
+  const photos = new Photos("scoped", vi.fn()); photos.items = [photo(1), photo(2)];
+  const before = preparedPhoto(1), after = { ...before, revision: 2, values: { ...before.values, rotation: 90 as const } };
+  expect(photos.metadataChanged({ receipt_id: "rotated", before: [before], after: [after] })).toEqual(new Map([[before.file_id, 90]]));
+  expect(photos.items.map(row => row.rotation)).toEqual([90, 0]);
+  const companion = { ...before, file_id: "raw-1" };
+  photos.metadataChanged({ receipt_id: "companion", before: [companion], after: [{ ...companion, values: { ...companion.values, rotation: 180 } }] });
+  expect(photos.items[0]!.rotation).toBe(90); photos.dispose();
+});
+
+it.each([
+  [{}, "", false], [{}, "harbor", true], [{}, "  ", false],
+  [{ set_ids: ["album"] }, "", false], [{ gps_bounds: { south: "0", west: "0", north: "1", east: "1" } }, "", false], [{ capture_after: "2024-01-01" }, "", false],
+  [{ rating_min: 3 }, "", true], [{ rating_max: 0 }, "", true], [{ flags: ["pick"] }, "", true], [{ flags: [] }, "", false], [{ labels: ["red"] }, "", true],
+  [{ tag_ids: ["tag"] }, "", true], [{ exclude_tag_ids: ["tag"] }, "", true], [{ no_tags: true }, "", true], [{ no_tags: false }, "", false],
+  [{ modified_after: "2024-01-01" }, "", true], [{ modified_before: "2024-01-01" }, "", true],
+] as const)("decides whether filters %j and text %j depend on edited metadata", (filters, text, expected) => {
+  const photos = new Photos("scoped", vi.fn(), false, { ...photoQuery, text, filters: filters as Query["filters"] });
+  expect(photos.dependsOnAuthored).toBe(expected);
+  photos.dispose();
+});
+
+it.each(["listed", "outside", "recount failure"] as const)("keeps the Map count accurate after trashing a prepared target, %s", async scenario => {
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection: "map" });
+  photos.items = scenario === "listed" ? [mapPhoto(1), mapPhoto(2)] : [mapPhoto(2)]; photos.started = true; photos.total = photos.items.length;
+  photos.selectAllResults(); photos.authored.targets = [preparedPhoto(1, { asset_revision: 1 })];
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ id: "photo-1", revision: 2 }));
+  if (scenario === "outside") fetcher.mockResolvedValueOnce(Response.json({ items: [], map_items: [mapPhoto(2)], total: 1 }));
+  if (scenario === "recount failure") fetcher.mockResolvedValueOnce(Response.json({ detail: "Busy" }, { status: 503 })).mockResolvedValue(Response.json({ items: [], map_items: [mapPhoto(2)], total: 1 }));
+  vi.stubGlobal("fetch", fetcher);
+  expect(await photos.trashSelected()).toBe(true);
+  await vi.waitFor(() => expect(photos.loading).toBe(false));
+  expect(photos.items.map(row => row.asset_id)).toEqual(["photo-2"]);
+  expect(photos.total).toBe(1);
+  if (scenario === "listed") expect(fetcher).toHaveBeenCalledOnce();
+  else expect(JSON.parse(fetcher.mock.calls[1]![1].body).page_size).toBe(1);
+  photos.dispose();
+});
+
+it("retries a cancelled Map recount when the Map resumes", async () => {
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection: "map" });
+  photos.items = [mapPhoto(2)]; photos.started = true; photos.total = 2;
+  photos.selectAllResults(); photos.authored.targets = [preparedPhoto(1, { asset_revision: 1 })];
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ id: "photo-1", revision: 2 }))
+    .mockImplementationOnce((_url: string, init: RequestInit) => new Promise((_resolve, reject) => init.signal!.addEventListener("abort", () => reject(init.signal!.reason), { once: true })))
+    .mockImplementation(async () => Response.json({ items: [], map_items: [mapPhoto(2)], total: 1 }));
+  vi.stubGlobal("fetch", fetcher);
+  const trashed = photos.trashSelected();
+  await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+  photos.cancelPending(); await trashed;
+  photos.cancelPending();
+  expect(photos.total).toBe(2);
+  await photos.resume();
+  await vi.waitFor(() => expect(photos.total).toBe(1));
+  expect(fetcher.mock.calls.slice(1).every(([, init]) => JSON.parse(init.body).page_size === 1)).toBe(true);
+  photos.dispose();
 });

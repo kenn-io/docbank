@@ -196,7 +196,7 @@ it.each(["append","hide","trash"])("shows page one before page two resolves and 
    return body.cursor ? new Promise<Response>(resolve => finish=resolve) : Promise.resolve(Response.json({map_items:[first,second],total:3,next_cursor:"page-two"}));
  });
  vi.stubGlobal("fetch",fetcher);
- const photos=new Photos("scoped",vi.fn(),false,photoQuery,"map");
+ const photos=new Photos("scoped",vi.fn(),false,photoQuery,{projection:"map"});
  vi.spyOn(photos,"resume").mockResolvedValue();
  render(PhotosWorkspace,{photos,mapMode:true,tiles:{tile_url:"/api/daemon/web-map-tiles/{z}/{x}/{y}",host:"tiles.example.org",attribution:"Example",max_zoom:19},cache:{get:vi.fn()} as unknown as PhotoPreviewCache});
  const loading=photos.loadMore();

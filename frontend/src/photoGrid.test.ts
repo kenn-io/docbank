@@ -22,9 +22,10 @@ it("bounds the mounted rows in one month with 10,000 photos", () => {
   }
 });
 
-it("uses preview dimensions before technical dimensions and falls back to a square", () => {
+it("applies rotation to technical dimensions, prefers preview dimensions and falls back to a square", () => {
   const item = photo(1);
   expect(photoAspect(item)).toBe(1.5);
+  item.rotation = 90; expect(photoAspect(item)).toBe(2 / 3); item.rotation = 0;
   item.previews.grid = { state: "ready", width: 400, height: 600 };
   expect(photoAspect(item)).toBe(2 / 3);
   item.previews.grid = { state: "missing" };

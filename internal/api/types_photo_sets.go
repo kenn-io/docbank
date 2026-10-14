@@ -19,6 +19,7 @@ type PhotoAlbumSummary struct {
 	MemberCount           int64   `json:"member_count" minimum:"0"`
 	IncludedCount         int64   `json:"included_count" minimum:"0"`
 	EffectiveCoverAssetID *string `json:"effective_cover_asset_id,omitzero" format:"uuid"`
+	CoverRotation         int     `json:"cover_rotation" enum:"0,90,180,270"`
 	CoverGenerationID     *string `json:"cover_generation_id,omitzero"`
 }
 
@@ -32,11 +33,15 @@ type UpdatePhotoAlbumRequest struct {
 type PhotoAlbumCoverRequest struct {
 	AssetID *string `json:"asset_id,omitzero" format:"uuid"`
 }
-type PhotoAlbumMembersRequest struct {
+type PhotoSelectionRequest struct {
 	AssetIDs []string               `json:"asset_ids,omitzero" maxItems:"1000" format:"uuid"`
 	Query    *QueryPayload          `json:"query,omitzero"`
 	Coverage WorkspaceQueryCoverage `json:"coverage,omitzero"`
 }
+type PhotoAlbumMembersRequest struct {
+	PhotoSelectionRequest
+}
+
 type photoAlbumOutput struct {
 	ETag string `header:"ETag"`
 	Body PhotoAlbum
@@ -46,5 +51,5 @@ func fromStorePhotoAlbum(v store.PhotoSet) PhotoAlbum {
 	return PhotoAlbum{ID: v.ID, Name: v.Name, Starred: v.Starred, Revision: v.Revision, CoverAssetID: v.CoverAssetID, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt, DeletedAt: v.DeletedAt}
 }
 func fromStorePhotoAlbumSummary(v store.PhotoSetSummary) PhotoAlbumSummary {
-	return PhotoAlbumSummary{PhotoAlbum: fromStorePhotoAlbum(v.PhotoSet), MemberCount: v.MemberCount, IncludedCount: v.IncludedCount, EffectiveCoverAssetID: v.EffectiveCoverAssetID, CoverGenerationID: v.CoverGenerationID}
+	return PhotoAlbumSummary{PhotoAlbum: fromStorePhotoAlbum(v.PhotoSet), MemberCount: v.MemberCount, IncludedCount: v.IncludedCount, EffectiveCoverAssetID: v.EffectiveCoverAssetID, CoverGenerationID: v.CoverGenerationID, CoverRotation: v.CoverRotation}
 }

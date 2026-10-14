@@ -96,6 +96,23 @@ func TestPhotoSetSelectionRollback(t *testing.T) {
 	}
 }
 
+func TestPhotoSetMembersRejectOversizeSelectionAsAlbumError(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	set, err := s.CreatePhotoSet(ctx, "Oversize")
+	require.NoError(t, err)
+	ids := make([]string, maxBatchTagTargets+1)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("00000000-0000-4000-8000-%012d", i)
+	}
+	for _, limit := range []int{0, maxBatchTagTargets} {
+		_, err := s.ChangePhotoSetMembers(ctx, set.ID, set.Revision, true, PhotoSetSelection{AssetIDs: ids, Limit: limit})
+		require.ErrorIs(t, err, ErrInvalidPhotoAlbum, "limit %d", limit)
+		require.NotErrorIs(t, err, ErrPhotoEditFileLimit, "limit %d", limit)
+	}
+}
+
 func TestPhotoSetQueryReceiptsCoverCompleteLargeScope(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -294,6 +311,8 @@ func TestPhotoSetCoverAndBackup(t *testing.T) {
 		require.NoError(t, err)
 		recipe = g.RecipeFingerprint
 	}
+	_, err := editPhotoAuthored(ctx, s, []PhotoAuthoredTarget{{FileID: b.Files[0].ID, Revision: b.Files[0].Revision, Patch: PhotoAuthoredPatch{Rotation: new(90)}}})
+	require.NoError(t, err)
 	set, err := s.CreatePhotoSet(ctx, "Covers")
 	require.NoError(t, err)
 	set, err = s.ChangePhotoSetMembers(ctx, set.ID, set.Revision, true, PhotoSetSelection{AssetIDs: []string{a.ID, b.ID}})
@@ -303,6 +322,7 @@ func TestPhotoSetCoverAndBackup(t *testing.T) {
 	summary, err := s.PhotoSet(ctx, set.ID, recipe)
 	require.NoError(t, err)
 	require.Equal(t, b.ID, *summary.EffectiveCoverAssetID)
+	require.Equal(t, 90, summary.CoverRotation)
 	wrongRecipe, err := s.PhotoSet(ctx, set.ID, browseHash("old-recipe"))
 	require.NoError(t, err)
 	require.Nil(t, wrongRecipe.EffectiveCoverAssetID)

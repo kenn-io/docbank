@@ -13,6 +13,39 @@ const binary = process.env.DOCBANK_SCREENSHOT_BINARY ?? path.join(repository, "b
 
 test.skip(!output, "DOCBANK_PHOTOS_SCREENSHOT_DIR enables synthetic photo proof");
 
+test("photo inspector keeps Apply reachable at 400×480", async ({ page }) => {
+ test.setTimeout(300_000);
+ const workspace = await mkdtemp(path.join(repository, ".superpowers", "metadata-search-proof-"));
+ const fixture = photoFixture(workspace);
+ try {
+  await fixture.seed(12, "-pair");
+  const url = new URL(await fixture.run("web", "--no-browser")); url.pathname = "/photos";
+  await page.goto(url.href);
+  await page.getByRole("searchbox", { name: "Search photos", exact: true }).fill("Synthetic");
+  await page.getByRole("button", { name: "Search", exact: true }).click();
+  await page.getByRole("button", { name: "Select Synthetic-photo-00001.jpg", exact: true }).click();
+  await page.getByRole("button", { name: "Select loaded photos", exact: true }).click();
+  await page.getByRole("button", { name: "Select all 12 photos", exact: true }).click();
+  await page.getByRole("button", { name: "Metadata", exact: true }).click();
+  const inspector = page.getByRole("region", { name: "Photo metadata" });
+  await mkdir(output!, { recursive: true });
+  await page.setViewportSize({ width: 400, height: 480 });
+  const panel = page.locator(".grid-inspector");
+  await expect.poll(() => panel.evaluate(element => element.scrollHeight > element.clientHeight && element.clientHeight > 0)).toBe(true);
+  const apply = inspector.getByRole("button", { name: "Apply", exact: true });
+  await apply.scrollIntoViewIfNeeded();
+  expect(await apply.evaluate(element => { const button = element.getBoundingClientRect(), panel = element.closest(".grid-inspector")!.getBoundingClientRect(); return button.top >= panel.top && button.bottom <= panel.bottom && button.bottom <= innerHeight; })).toBe(true);
+  await page.screenshot({ path: path.join(output!, "web-photo-inspector-400x480-apply.png"), animations: "disabled" });
+  await panel.evaluate(element => { element.scrollTop = 0; element.scrollIntoView({ block: "start" }); });
+  await expect(inspector.getByRole("combobox", { name: /^Rating:/ })).toBeInViewport();
+  await expect(inspector.getByRole("combobox", { name: /^Flag:/ })).toBeInViewport();
+  for (const theme of ["light", "dark"]) {
+    await page.evaluate(value => { localStorage.setItem("docbank-theme", value); document.documentElement.classList.toggle("dark", value === "dark"); }, theme);
+    await page.screenshot({ path: path.join(output!, `web-photo-inspector-400x480-${theme}.png`), animations: "disabled" });
+  }
+ } finally { await fixture.dispose(); }
+});
+
 test("Hidden photos lock, unlock, unhide, expire, and discard previews", async ({ page }) => {
   test.setTimeout(480_000);
   page.setDefaultTimeout(15_000);
@@ -561,10 +594,9 @@ test("photo loupe keeps painted geometry and crop through delayed resolution upg
       const url = new URL(await run("web", "--no-browser")); url.pathname = "/photos";
       if (previewURL) url.hash += `&photo=${new URLSearchParams(new URL(previewURL).hash.slice(1)).get("photo")}`;
       await writeFile(path.join(output!, "geometry-preview.json"), JSON.stringify({ url: url.href, workspace, binary }, null, 2));
-    } else { await run("daemon", "stop"); await rm(workspace, { recursive: true, force: true }); }
+    } else { await run("daemon", "stop"); await rm(workspace, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 }); }
   }
 });
-
 
 test("photo loupe opens, upgrades, navigates, restores focus and reloads a direct URL", async ({ page, browser }) => {
   test.setTimeout(480_000);
@@ -602,7 +634,7 @@ test("photo loupe opens, upgrades, navigates, restores focus and reloads a direc
     const transform = await page.locator(".pan").evaluate(element => (element as HTMLElement).style.transform);
     await expect(page.getByText("Large preview", { exact: true })).toBeVisible({ timeout: 60_000 });
     expect(await page.locator(".pan").evaluate(element => (element as HTMLElement).style.transform)).toBe(transform);
-    await page.keyboard.press("0");
+    await page.getByRole("button", { name: "Reset zoom", exact: true }).click();
     await expect(viewport).not.toHaveAttribute("data-zoomed");
     await page.keyboard.press("ArrowRight");
     await expect(page).not.toHaveURL(new RegExp(`photo=${assetID}`));
@@ -970,6 +1002,6 @@ test("photo loupe opens, upgrades, navigates, restores focus and reloads a direc
     if (process.env.DOCBANK_KEEP_PHOTO_PREVIEW) {
       const previewURL = new URL(await run("web", "--no-browser")); previewURL.pathname = "/photos"; previewURL.hash += `&photo=${assetID}`;
       await writeFile(path.join(output!, "loupe-preview.json"), JSON.stringify({ url: previewURL.href, workspace, binary }, null, 2));
-    } else { await run("daemon", "stop"); await rm(workspace, { recursive: true, force: true }); }
+    } else { await run("daemon", "stop"); await rm(workspace, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 }); }
   }
 });

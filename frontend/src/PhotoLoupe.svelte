@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick, untrack } from "svelte";
-  import { Button, IconButton, Spinner, trapFocus } from "@kenn-io/kit-ui";
+  import { Button, IconButton, Spinner, trapFocus, Notice } from "@kenn-io/kit-ui";
   import X from "@lucide/svelte/icons/x";
   import ChevronLeft from "@lucide/svelte/icons/chevron-left";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
@@ -12,14 +12,17 @@
   import { isAppShortcutSuppressed } from "./shortcuts.js";
   import { APIError } from "./api-transport.js";
   import { previewEligibility } from "./download.js";
+  import PhotoInspector from "./PhotoInspector.svelte";
+  import type { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
+  import type { PhotoAuthoredPatch, PhotoKeywordEdit } from "./generated/docbank.js";
   import PhotoCell from "./PhotoCell.svelte";
   import PhotoLoupeImage from "./PhotoLoupeImage.svelte";
 
-  let { photo, error, note = "", photos, cache, items, canLoadMore, onmove, onchoose, onclose, onretry, onreload, reloading = false, reloadRevision = 0 }: {
+  let { metadataOpen = $bindable(false), editor, actionDisabled = false, onedit, onundo, photo, error, note = "", photos, cache, items, canLoadMore, onmove, onchoose, onclose, onretry, onreload, reloading = false, reloadRevision = 0 }: {
+    metadataOpen?: boolean; editor?: PhotoAuthoredEditor; actionDisabled?: boolean; onedit?: (patch: PhotoAuthoredPatch, keywords?: PhotoKeywordEdit[]) => void; onundo?: () => void;
     photo?: PhotoBrowseRow; error: string; note?: string; photos: Photos; cache: PhotoPreviewCache;
     items: PhotoRow[]; canLoadMore: boolean; onmove: (direction: -1 | 1) => void; onchoose: (id: string) => void; onclose: () => void; onretry: () => void; onreload?: () => void; reloading?: boolean; reloadRevision?: number;
   } = $props();
-  let info = $state(false);
   let url = $state("");
   let quality = $state("");
   let failure = $state<{rank:number; message:string; action?:"reload" | "fit" | "large"}>();
@@ -148,8 +151,7 @@
     if (event.key === "Escape") { event.preventDefault(); onclose(); }
     else if (event.key === "ArrowLeft" && previous) { event.preventDefault(); move(-1); }
     else if (event.key === "ArrowRight" && next) { event.preventDefault(); move(1); }
-    else if (event.key.toLowerCase() === "i") { event.preventDefault(); info = !info; }
-    else if (event.key === "0") { event.preventDefault(); image?.reset(); }
+    else if (event.key.toLowerCase() === "i") { event.preventDefault(); metadataOpen = !metadataOpen; }
   }
 </script>
 
@@ -160,18 +162,21 @@
     <div class="mobile-navigation"><IconButton ariaLabel="Previous photo" disabled={!previous} onclick={() => move(-1)}><ChevronLeft size={18} /></IconButton><IconButton ariaLabel="Next photo" disabled={!next} onclick={() => move(1)}><ChevronRight size={18} /></IconButton></div>
     <Button size="sm" disabled={!originalAllowed || busy || quality === "original"} onclick={original}>{#if busy}<Spinner size={14} />{/if}View original</Button>
     <IconButton ariaLabel="Reset zoom" onclick={() => image?.reset()}><RotateCcw size={18} /></IconButton>
-    <IconButton ariaLabel="Photo information" ariaPressed={info} onclick={() => info = !info}><Info size={18} /></IconButton>
+    <IconButton ariaLabel="Metadata" ariaPressed={metadataOpen} onclick={() => metadataOpen = !metadataOpen}><Info size={18} /></IconButton>
   </header>
   {#if (items.length || canLoadMore) && photos.error}<div class="loupe-error" role="alert"><span>{photos.error}</span><Button size="sm" disabled={photos.loading} onclick={() => { dialog?.focus({preventScroll:true}); onretry(); }}>Retry navigation</Button></div>{/if}
   {#if note || error || failure}<div class="loupe-error" role="alert">{#if note}<span>{note}</span>{/if}{#if error}<span>{error}</span>{/if}{#if failure}<span>{failure.message}</span>{/if}{#if note || error || failure?.action === "reload"}<Button size="sm" disabled={reloading} onclick={() => { dialog?.focus({preventScroll:true}); onreload?.(); }}>Reload photo</Button>{/if}{#if (failure?.action === "fit" || failure?.action === "large") && photo}<Button size="sm" disabled={retrying || reloading} onclick={retry}>Retry preview</Button>{/if}</div>{/if}
+  {#if editor?.error}<Notice tone="error" message={editor.error} />{/if}
+  {#if editor?.receiptID}<Notice tone="success" message={editor.undoState.summary} actionLabel="Undo last photo edit" onaction={onundo} />{/if}
+  {#if editor?.notice}<Notice tone={editor.noticeTone} message={editor.notice} />{/if}
   <div class="loupe-body">
     <div class="stage">
       <div class="edge previous"><IconButton ariaLabel="Previous photo" disabled={!previous} onclick={() => move(-1)}><ChevronLeft size={24} /></IconButton></div>
-      {#key identity}<PhotoLoupeImage bind:this={image} {url} {unavailable} name={photo?.name ?? "Photo"} onzoom={zoom} onmove={move} />{/key}
+      {#key identity}<PhotoLoupeImage rotation={photo?.rotation ?? 0} bind:this={image} {url} {unavailable} name={photo?.name ?? "Photo"} onzoom={zoom} onmove={move} />{/key}
       <div class="edge next"><IconButton ariaLabel="Next photo" disabled={!next} onclick={() => move(1)}><ChevronRight size={24} /></IconButton></div>
       {#if quality}<span class="quality" aria-live="polite">{quality === "original" ? "Original" : `${quality[0]!.toUpperCase()}${quality.slice(1)} preview`}</span>{/if}
     </div>
-    {#if info}<aside class="photo-info" aria-label="Photo details"><h2>Photo details</h2><dl>{#each facts as [label, value]}<dt>{label}</dt><dd>{value}</dd>{/each}</dl></aside>{/if}
+    {#if metadataOpen}<aside class="photo-info" aria-label="Photo details">{#if editor && onedit}<PhotoInspector {editor} {actionDisabled} {onedit} />{/if}<h2>Photo details</h2><dl>{#each facts as [label, value]}<dt>{label}</dt><dd>{value}</dd>{/each}</dl></aside>{/if}
   </div>
   {#if rail.length}<nav class="filmstrip" aria-label="Photos in current result">{#each rail as item (item.asset_id)}<div class="thumb"><PhotoCell compact photo={item} {cache} selected={item.asset_id === photo?.asset_id} onclick={() => onchoose(item.asset_id)} /></div>{/each}</nav>{/if}
 </div>

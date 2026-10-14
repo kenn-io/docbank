@@ -2531,7 +2531,7 @@ func backupProcessingProfile(t *testing.T) store.ProcessingProfileRecord {
 // counted over the complete tables rather than catalog authority.
 type legacyMetadataSource struct{ metadata *store.Store }
 
-func (legacyMetadataSource) Format() string { return backupapp.MetadataFormat }
+func (legacyMetadataSource) Format() string { return "docbank-metadata-jsonl-v1" }
 
 func (s legacyMetadataSource) OpenSnapshot(
 	ctx context.Context,
@@ -2575,7 +2575,11 @@ func (s legacyMetadataSnapshot) OpenMetadata(
 	if err := s.pinned.Export(ctx, &buffer); err != nil {
 		return nil, 0, err
 	}
-	return io.NopCloser(bytes.NewReader(buffer.Bytes())), int64(buffer.Len()), nil
+	metadata := bytes.Replace(buffer.Bytes(), []byte(`"version":2`), []byte(`"version":1`), 1)
+	if bytes.Equal(metadata, buffer.Bytes()) {
+		return nil, 0, errors.New("legacy metadata header version was not found")
+	}
+	return io.NopCloser(bytes.NewReader(metadata)), int64(len(metadata)), nil
 }
 
 func (s legacyMetadataSnapshot) ContentInfo(
@@ -2664,7 +2668,7 @@ func TestPlacementRestoreDoesNotMigrateLegacySnapshotBeforePublication(t *testin
 		})
 	require.NoError(t, err)
 	require.NotNil(t, manifest.Metadata)
-	assert.Equal(t, backupapp.MetadataFormat, manifest.Metadata.Format)
+	assert.Equal(t, "docbank-metadata-jsonl-v1", manifest.Metadata.Format)
 	assert.NotContains(t, string(manifest.Stats), `"derivative_authority"`)
 
 	target := filepath.Join(t.TempDir(), "restored")

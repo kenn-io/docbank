@@ -4,6 +4,7 @@ export interface Problem {
   detail?: string;
   title?: string;
   position?: unknown;
+  errors?: unknown;
 }
 
 export class APIError extends Error {
@@ -12,6 +13,7 @@ export class APIError extends Error {
     readonly status: number,
     readonly code: string,
     readonly position?: unknown,
+    readonly errors: string[] = [],
   ) {
     super(message);
     this.name = "APIError";
@@ -42,9 +44,10 @@ export async function sessionResponse<_T>(url: string, { session = "", ...init }
   const response = await fetch(url, { ...init, headers, credentials: "same-origin", redirect: "error" });
   if (!response.ok && !(allowNotModified && response.status === 304)) {
     let problem: Problem = {};
-    try { problem = await response.json() as Problem; } catch { /* An empty error still carries its HTTP status. */ }
+    try { const body: unknown = await response.json(); if (body && typeof body === "object") problem = body as Problem; } catch { /* An empty error still carries its HTTP status. */ }
+    const errors = Array.isArray(problem.errors) ? problem.errors.filter((entry): entry is string => typeof entry === "string") : [];
     const error = new APIError(problem.detail || problem.title || `HTTP ${response.status}`,
-      response.status, problem.code ?? "", problem.position);
+      response.status, problem.code ?? "", problem.position, errors);
     requestSessionByError.set(error, session);
     throw error;
   }

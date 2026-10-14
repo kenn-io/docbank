@@ -697,7 +697,7 @@ func TestPhotoBrowseCurrentLiveMembers(t *testing.T) {
 	require.Zero(t, browsePhotoPage(t, s, `{}`).Total)
 }
 
-func TestPhotoBrowseDisplayAuthority(t *testing.T) {
+func TestPhotoBrowseDisplayAuthorityAndRotation(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -711,6 +711,12 @@ func TestPhotoBrowseDisplayAuthority(t *testing.T) {
 	require.NoError(t, err)
 	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, jpeg.ID, PhotoRoleImage, nil)
 	require.NoError(t, err)
+	_, err = editPhotoAuthored(ctx, s, []PhotoAuthoredTarget{{FileID: fileByRole(asset.Files, PhotoRoleRAW).ID, Revision: 1, Patch: PhotoAuthoredPatch{Rotation: new(90)}}})
+	require.NoError(t, err)
+	compact, err := s.ListPhotoAssets(ctx, PhotoBrowseRequest{Query: snapshotTestQuery(t, `{}`), Recipes: map[string]string{"grid": "grid"}}, nil)
+	require.NoError(t, err)
+	require.Len(t, compact.Items, 1)
+	require.Equal(t, 90, compact.Items[0].Rotation)
 	page := browsePhotoPage(t, s, `{}`)
 	require.Equal(t, raw.ID, page.Items[0].NodeID)
 	require.Equal(t, raw.CreatedAt, page.Items[0].ImportTime)
@@ -719,6 +725,9 @@ func TestPhotoBrowseDisplayAuthority(t *testing.T) {
 	page = browsePhotoPage(t, s, `{}`)
 	require.Equal(t, jpeg.ID, page.Items[0].NodeID)
 	require.Equal(t, jpeg.CreatedAt, page.Items[0].ImportTime)
+	compact, err = s.ListPhotoAssets(ctx, PhotoBrowseRequest{Query: snapshotTestQuery(t, `{}`), Recipes: map[string]string{"grid": "grid"}}, nil)
+	require.NoError(t, err)
+	require.Equal(t, 0, compact.Items[0].Rotation)
 	asset, err = s.PhotoAssetByID(ctx, asset.ID)
 	require.NoError(t, err)
 	rawID := fileByRole(asset.Files, PhotoRoleRAW).ID
@@ -852,7 +861,7 @@ func TestPhotoSearchFacetsRespectVisibilityAndAuthoredDecisions(t *testing.T) {
 		browsePhotoMetadata(t, s, node, fmt.Sprint("scope", i), photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("Canon")))
 		asset, err := s.PhotoAssetForNode(ctx, node.ID)
 		require.NoError(t, err)
-		_, err = s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{FileID: asset.Files[0].ID, Revision: 1, Patch: PhotoAuthoredPatch{Rating: new(rating), Flag: new("pick"), Label: new("red")}}})
+		_, err = editPhotoAuthored(ctx, s, []PhotoAuthoredTarget{{FileID: asset.Files[0].ID, Revision: 1, Patch: PhotoAuthoredPatch{Rating: new(rating), Flag: new("pick"), Label: new("red")}}})
 		require.NoError(t, err)
 		if i == 1 {
 			_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)

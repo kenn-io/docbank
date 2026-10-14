@@ -164,6 +164,12 @@ func TestPhotoBrowseRouteContract(t *testing.T) {
 			require.NoError(t, err)
 		}
 	}
+	asset, err := s.PhotoAssetForNode(t.Context(), qualityNode.ID)
+	require.NoError(t, err)
+	prepared, err := s.PreparePhotoAuthored(t.Context(), store.PhotoSetSelection{AssetIDs: []string{asset.ID}})
+	require.NoError(t, err)
+	_, err = s.EditPhotoAuthoredBatch(t.Context(), store.PhotoAuthoredBatch{Targets: apiEditTargets(prepared.Targets), Patch: store.PhotoAuthoredPatch{Rotation: new(90)}})
+	require.NoError(t, err)
 	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, api.PhotoBrowseRequest{Query: api.QueryPayload(`{"filters":{"kinds":["photo"]}}`), PageSize: 1})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var page api.PhotoBrowsePage
@@ -185,6 +191,7 @@ func TestPhotoBrowseRouteContract(t *testing.T) {
 	require.Equal(t, page.Total, compact.Total)
 	require.Equal(t, page.Items[0].AssetID, compact.MapItems[0].AssetID)
 	require.Equal(t, page.Items[0].Revision, compact.MapItems[0].Revision)
+	require.Equal(t, 90, compact.MapItems[0].Rotation)
 	require.Equal(t, new(0.0), compact.MapItems[0].Latitude)
 	require.Equal(t, new(12.0), compact.MapItems[0].Longitude)
 	require.Equal(t, page.Items[0].Previews.Grid.State, compact.MapItems[0].Previews.Grid.State)

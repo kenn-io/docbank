@@ -4,11 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/internal/query"
 )
+
+const photoSelectionChunkSize = 200
 
 // ErrInvalidPhotoAlbum reports an invalid album name, cover, or member selection.
 var ErrInvalidPhotoAlbum = errors.New("invalid photo album")
@@ -32,14 +36,18 @@ type PhotoSetSummary struct {
 	MemberCount           int64   `json:"member_count"`
 	IncludedCount         int64   `json:"included_count"`
 	EffectiveCoverAssetID *string `json:"effective_cover_asset_id,omitzero"`
+	CoverRotation         int     `json:"cover_rotation"`
 	CoverGenerationID     *string `json:"cover_generation_id,omitzero"`
 }
 
 // PhotoSetSelection supplies either explicit IDs or the complete browse population.
 type PhotoSetSelection struct {
-	AssetIDs []string
-	Query    *query.Query
-	Coverage CoverageSelection
+	AssetIDs        []string
+	Query           *query.Query
+	Coverage        CoverageSelection
+	Hidden          bool
+	Limit           int
+	SkipUnavailable bool
 }
 
 func validPhotoSetName(name string) bool {
@@ -86,7 +94,7 @@ func (s *Store) photoSetSummary(ctx context.Context, q metadataQuerier, set Phot
 		return out, nil
 	}
 	var id, generation string
-	coverSQL := `SELECT a.asset_id,g.generation_id FROM photo_set_members m
+	coverSQL := `SELECT a.asset_id,g.generation_id,f.rotation FROM photo_set_members m
  CROSS JOIN photo_assets a ON a.asset_id=m.asset_id
  CROSS JOIN photo_files f ON f.file_id=a.display_file_id
  CROSS JOIN nodes n ON n.id=f.node_id
@@ -94,7 +102,7 @@ func (s *Store) photoSetSummary(ctx context.Context, q metadataQuerier, set Phot
  CROSS JOIN visual_preview_generations g ON g.content_version_id=v.version_id AND g.source_sha256=v.blob_hash
  WHERE m.set_id=? AND ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(false) + ` AND g.recipe_fingerprint=? AND g.state='ready' AND g.output_blob_hash IS NOT NULL`
 	if set.CoverAssetID != nil {
-		err := q.QueryRowContext(ctx, coverSQL+` AND m.asset_id=?`, set.ID, recipe, *set.CoverAssetID).Scan(&id, &generation)
+		err := q.QueryRowContext(ctx, coverSQL+` AND m.asset_id=?`, set.ID, recipe, *set.CoverAssetID).Scan(&id, &generation, &out.CoverRotation)
 		if err == nil {
 			out.EffectiveCoverAssetID, out.CoverGenerationID = &id, &generation
 			return out, nil
@@ -103,7 +111,7 @@ func (s *Store) photoSetSummary(ctx context.Context, q metadataQuerier, set Phot
 			return out, err
 		}
 	}
-	err = q.QueryRowContext(ctx, coverSQL+` ORDER BY m.added_at DESC,m.asset_id ASC LIMIT 1`, set.ID, recipe).Scan(&id, &generation)
+	err = q.QueryRowContext(ctx, coverSQL+` ORDER BY m.added_at DESC,m.asset_id ASC LIMIT 1`, set.ID, recipe).Scan(&id, &generation, &out.CoverRotation)
 	if errors.Is(err, sql.ErrNoRows) {
 		return out, nil
 	}
@@ -355,41 +363,112 @@ func (s *Store) DuplicatePhotoSet(ctx context.Context, id string, revision int64
 	return out, err
 }
 
+var errPhotoSetSelector = fmt.Errorf("provide either asset_ids or query: %w", ErrInvalidPhotoAlbum)
+
+// errPhotoSetTooManyAssets reports more explicit asset IDs than one selection accepts.
+// Callers map it to their own public limit error.
+var errPhotoSetTooManyAssets = fmt.Errorf("select at most %d asset IDs", maxBatchTagTargets)
+
 func (s *Store) photoSetSelectionIDs(ctx context.Context, tx *sql.Tx, selection PhotoSetSelection) ([]string, error) {
-	if (selection.Query == nil) == (len(selection.AssetIDs) == 0) || len(selection.AssetIDs) > maxBatchTagTargets {
-		return nil, ErrInvalidPhotoAlbum
+	if selection.Hidden {
+		if _, err := s.hiddenSession(ctx, tx); err != nil {
+			return nil, err
+		}
+	}
+	if len(selection.AssetIDs) > maxBatchTagTargets {
+		return nil, errPhotoSetTooManyAssets
+	}
+	if selection.SkipUnavailable && selection.Query != nil {
+		return nil, errPhotoSetSelector
+	}
+	if (selection.Query == nil) == (len(selection.AssetIDs) == 0) {
+		return nil, errPhotoSetSelector
 	}
 	if selection.Query == nil {
-		if selection.Coverage.Configuration != "" || selection.Coverage.ProfileFingerprint != "" {
-			return nil, ErrInvalidPhotoQuery
+		return s.photoSetExplicitIDs(ctx, tx, selection)
+	}
+	return s.photoSetQueryIDs(ctx, tx, selection)
+}
+
+func (s *Store) photoSetExplicitIDs(ctx context.Context, tx *sql.Tx, selection PhotoSetSelection) ([]string, error) {
+	if selection.Coverage.Configuration != "" || selection.Coverage.ProfileFingerprint != "" {
+		return nil, ErrInvalidPhotoQuery
+	}
+	ids := make([]string, 0, len(selection.AssetIDs))
+	seen := map[string]bool{}
+	for _, id := range selection.AssetIDs {
+		if validateUUIDv4(id) != nil {
+			return nil, ErrInvalidPhotoAlbum
 		}
-		ids := make([]string, 0, len(selection.AssetIDs))
-		seen := map[string]bool{}
-		for _, id := range selection.AssetIDs {
-			if validateUUIDv4(id) != nil {
-				return nil, ErrInvalidPhotoAlbum
-			}
-			hidden, err := photoAssetHiddenQuery(ctx, tx, id)
+		if !seen[id] {
+			ids = append(ids, id)
+			seen[id] = true
+		}
+	}
+	if selection.SkipUnavailable {
+		value, err := query.Parse([]byte(`{}`))
+		if err != nil {
+			return nil, err
+		}
+		selection.AssetIDs = nil
+		selection.Query = &value
+		selection.SkipUnavailable = false
+		eligible := make(map[string]bool, len(ids))
+		for chunk := range slices.Chunk(ids, query.MaxIDValues) {
+			value.Filters.AssetIDs = chunk
+			current, err := s.photoSetSelectionIDs(ctx, tx, selection)
 			if err != nil {
 				return nil, err
 			}
-			if hidden {
-				if _, err := s.hiddenSession(ctx, tx); err != nil {
-					return nil, err
-				}
-			}
-			if !seen[id] {
-				ids = append(ids, id)
-				seen[id] = true
+			for _, id := range current {
+				eligible[id] = true
 			}
 		}
-		return ids, nil
+		return slices.DeleteFunc(ids, func(id string) bool { return !eligible[id] }), nil
 	}
+	for chunk := range slices.Chunk(ids, photoSelectionChunkSize) {
+		args := make([]any, len(chunk))
+		for i, id := range chunk {
+			args[i] = id
+		}
+		count, hidden, err := func() (int, bool, error) {
+			rows, err := tx.QueryContext(ctx, `SELECT hidden_at FROM photo_assets WHERE asset_id IN (`+placeholders(len(chunk))+`)`, args...)
+			if err != nil {
+				return 0, false, err
+			}
+			defer func() { _ = rows.Close() }()
+			count, hidden := 0, false
+			for rows.Next() {
+				var at sql.NullString
+				if err := rows.Scan(&at); err != nil {
+					return 0, false, err
+				}
+				count++
+				hidden = hidden || at.Valid
+			}
+			return count, hidden, rows.Err()
+		}()
+		if err != nil {
+			return nil, err
+		}
+		if count != len(chunk) {
+			return nil, ErrNotFound
+		}
+		if hidden {
+			if _, err := s.hiddenSession(ctx, tx); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return ids, nil
+}
+
+func (s *Store) photoSetQueryIDs(ctx context.Context, tx *sql.Tx, selection PhotoSetSelection) ([]string, error) {
 	coverage, err := normalizeCoverageSelection(selection.Coverage)
 	if err != nil {
 		return nil, err
 	}
-	compiled, err := (queryCompiler{photoDisplayMetadata: true}).compile(ctx, *selection.Query, queryResolver{q: tx})
+	compiled, err := (queryCompiler{photoDisplayMetadata: true, photoHidden: selection.Hidden}).compile(ctx, *selection.Query, queryResolver{q: tx})
 	if err != nil {
 		return nil, err
 	}
@@ -397,12 +476,15 @@ func (s *Store) photoSetSelectionIDs(ctx context.Context, tx *sql.Tx, selection 
 	if err != nil {
 		return nil, err
 	}
-	scope, err := newPhotoBrowseScope(ctx, tx, compiled, generation, coverage, false)
+	scope, err := newPhotoBrowseScope(ctx, tx, compiled, generation, coverage, selection.Hidden)
 	if err != nil {
 		return nil, err
 	}
-	sql, args, err := scope.bind(`SELECT a.asset_id FROM ` + photoBrowseDisplayFrom + ` WHERE ` + scope.where() +
-		` ORDER BY a.asset_id`)
+	selectionSQL := `SELECT a.asset_id FROM ` + photoBrowseDisplayFrom + ` WHERE ` + scope.where() + ` ORDER BY a.asset_id`
+	if selection.Limit > 0 {
+		selectionSQL += fmt.Sprintf(" LIMIT %d", selection.Limit+1)
+	}
+	sql, args, err := scope.bind(selectionSQL)
 	if err != nil {
 		return nil, err
 	}
@@ -434,6 +516,9 @@ func (s *Store) ChangePhotoSetMembers(ctx context.Context, id string, revision i
 		}
 		out = before
 		ids, err := s.photoSetSelectionIDs(ctx, tx, selection)
+		if errors.Is(err, errPhotoSetTooManyAssets) {
+			return ErrInvalidPhotoAlbum
+		}
 		if err != nil {
 			return err
 		}

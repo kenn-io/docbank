@@ -1,4 +1,4 @@
-import { getNode, hidePhotoAsset, unhidePhotoAsset, preparePhotoPreview, listPhotoAssets, trashPhotoAsset, preflightPhotoRejects, movePhotoRejects, type PhotoRejectsPreflight, type PhotoPreviewSlot, type PhotoBrowseRow, type PhotoMapRow, type SavedQueryV1Schema, type PhotoAlbumMembersRequest } from "./generated/docbank.js";
+import { getNode, hidePhotoAsset, unhidePhotoAsset, preparePhotoPreview, listPhotoAssets, trashPhotoAsset, preflightPhotoRejects, movePhotoRejects, type PhotoRejectsPreflight, type PhotoAuthoredPatch, type PhotoAuthoredReceipt, type PhotoPreviewSlot, type PhotoBrowseRow, type PhotoMapRow, type SavedQueryV1Schema, type PhotoAlbumMembersRequest } from "./generated/docbank.js";
 import { readVerifiedPreview } from "./download.js";
 import { selectedSourceFromNode } from "./selectedSource.js";
 import { localPreferenceStorage } from "./browser-storage.js";
@@ -7,8 +7,9 @@ import { randomUUID } from "./crypto.js";
 import { ROW_HEIGHTS, type Density } from "./photoGrid.js";
 import { clearSelection, reconcileIDSelection, toggleIDSelection, type SelectionState } from "./selection.js";
 import { fetchPhotoTimeline, type SnapshotPage } from "./snapshots.js";
-import { parseQuery, canonicalQuery, type Query, type QuerySort } from "./query.js";
+import { parseQuery, canonicalQuery, type Query, type QueryFilters, type QuerySort } from "./query.js";
 import { captureDateQuery, type CaptureDayFacet } from "./photoTimeline.js";
+import { PhotoAuthoredEditor, type PhotoUndoState } from "./photoAuthored.svelte.js";
 import type { HiddenAccess } from "./hiddenAccess.svelte.js";
 
 export const photoQuery = parseQuery('{"syntax":"simple","sort":{"field":"capture_time","direction":"desc"}}');
@@ -18,6 +19,8 @@ const photoFacets = ["camera", "lens", "year", "location", "set"] as const;
 // One move can audit-trash up to 1,000 files in a single writer transaction.
 const photoRejectsTimeout = 300_000;
 const densityKey = "docbank.photos.density";
+// Photo sorts, facets, and the timeline never read authored metadata; only search text and these filters do.
+const authoredFilters = ["rating_min", "rating_max", "flags", "labels", "tag_ids", "exclude_tag_ids", "no_tags", "modified_after", "modified_before"] as const satisfies readonly (keyof QueryFilters)[];
 
 export function loadDensity(): Density {
   try {
@@ -35,8 +38,16 @@ export interface PhotoReturn { contextID: string; assetID: string; control: "ima
 export type PhotoRow = PhotoBrowseRow | PhotoMapRow;
 
 type PhotoTarget = Pick<PhotoBrowseRow, "asset_id" | "revision">;
+interface PhotosOptions { projection?: "map" | undefined; undoState?: PhotoUndoState | undefined; hiddenAccess?: HiddenAccess | undefined }
 
 export class Photos {
+  readonly authored: PhotoAuthoredEditor;
+  editScopeRevision = $state(0);
+  private changeEditScope() {
+    if (!this.authored.canChangeTarget()) return false;
+    this.editScopeRevision++; this.authored.reset();
+    return true;
+  }
   readonly contextID = randomUUID();
   viewerReturn = $state.raw<PhotoReturn>();
   view = $state<"grid" | "timeline">("grid");
@@ -57,6 +68,7 @@ export class Photos {
   get items() { return this.rows; }
   set items(value: PhotoRow[]) { this.appendedFrom = undefined; this.seenIDs = undefined; this.rows = value; }
   total = $state(0);
+  private countStale = false;
   cursor = $state<string | undefined>();
   get mapCapped() { return this.projection === "map" && this.items.length >= mapPhotoLimit && this.total > this.items.length; }
   loading = $state(false);
@@ -92,10 +104,12 @@ export class Photos {
   // Album views and Map show no filter counts, so those stores never request them.
   private readonly withoutCounts: boolean;
 
-  constructor(readonly session: string, readonly onauthfailure: (cause: unknown) => void, readonly hidden = false, query: Query = photoQuery, readonly projection?: "map", private readonly hiddenAccess?: HiddenAccess) { this.baseQuery = query; this.query = query; this.withoutCounts = Boolean(query.filters?.set_ids?.length) || projection === "map"; }
+  readonly projection?: "map" | undefined;
+  private readonly hiddenAccess?: HiddenAccess | undefined;
+  constructor(readonly session: string, readonly onauthfailure: (cause: unknown) => void, readonly hidden = false, query: Query = photoQuery, { projection, undoState, hiddenAccess }: PhotosOptions = {}) { this.projection = projection; this.hiddenAccess = hiddenAccess; this.authored = new PhotoAuthoredEditor(session, cause => { this.authFailure(cause); }, undoState, hidden ? hiddenAccess : undefined); this.baseQuery = query; this.query = query; this.withoutCounts = Boolean(query.filters?.set_ids?.length) || this.projection === "map"; }
 
   setSort(sort: QuerySort) {
-    if (this.disposed) return;
+    if (this.disposed || !this.authored.canChangeTarget()) return;
     // Timeline counts ignore sort, so only photo paging restarts.
     this.controller.abort();
     this.controller = new AbortController();
@@ -109,7 +123,22 @@ export class Photos {
     return this.loadMore();
   }
 
+  private authFailure(cause: unknown) {
+    const expired = cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403);
+    if (expired) this.onauthfailure(cause);
+    return expired;
+  }
+
+  selectedIDs = $derived.by(() => !this.authored.inspectedID && this.authored.targets.length ? new Set(this.authored.targets.map(target => target.asset_id)) : this.selection.selectedIDs);
+
+  private captureSelection() {
+    const selectedIDs = this.selectedIDs;
+    this.resolveTargets(selectedIDs);
+    this.selection = { selectedIDs: new Set(selectedIDs), anchorID: this.selection.anchorID };
+  }
+
   scope(): PhotoAlbumMembersRequest {
+    if (!this.authored.inspectedID && this.authored.targets.length) return { asset_ids: [...this.selectedIDs] };
     return this.allResults ? { query: structuredClone(this.query) } : { asset_ids: [...this.selection.selectedIDs] };
   }
 
@@ -121,7 +150,7 @@ export class Photos {
       signal.throwIfAborted();
       return page.items[0];
     } catch (cause) {
-      if (!signal.aborted && cause instanceof APIError && (cause.status === 401 || (this.hidden && cause.status === 403))) this.onauthfailure(cause);
+      if (!signal.aborted) this.authFailure(cause);
       throw cause;
     }
   }
@@ -171,7 +200,7 @@ export class Photos {
       photo.previews[size] = slot;
       return slot;
     } catch (cause) {
-      if (!signal.aborted && cause instanceof APIError && (cause.status === 401 || (this.hidden && cause.status === 403))) this.onauthfailure(cause);
+      if (!signal.aborted) this.authFailure(cause);
       throw cause;
     }
   }
@@ -192,7 +221,7 @@ export class Photos {
       if (result.kind !== "image") throw new Error("This original cannot be viewed as an image.");
       objectURL = result.url;
     } catch (cause) {
-      if (!signal.aborted && cause instanceof APIError && (cause.status === 401 || (this.hidden && cause.status === 403))) this.onauthfailure(cause);
+      if (!signal.aborted) this.authFailure(cause);
       throw cause;
     }
     try {
@@ -205,7 +234,7 @@ export class Photos {
   // setQuery replaces the search, filter, or album scope. It clears the selected
   // date and the timeline counts, which describe the previous scope.
   setQuery(query: Query) {
-    if (this.disposed || this.hiding || this.trashing) return;
+    if (this.disposed || this.hiding || this.trashing || !this.authored.canChangeTarget()) return;
     this.cancelPending();
     let next: Query;
     try { next = parseQuery(canonicalQuery(query)); } catch (cause) { this.error = cause instanceof Error ? cause.message : String(cause); return; }
@@ -253,7 +282,7 @@ export class Photos {
         const previous = this.items;
         this.rows = [...previous, ...added];
         this.appendedFrom = previous;
-        if (this.allResults) this.selection = { selectedIDs: new Set(this.items.map(item => item.asset_id)), anchorID: undefined };
+        if (this.allResults && !this.authored.targets.length) this.selection = { selectedIDs: new Set(this.items.map(item => item.asset_id)), anchorID: undefined };
         if (!this.started || !this.projection) this.total = page.total;
         this.cursor = capped ? this.cursor : page.next_cursor;
         this.started = true;
@@ -271,13 +300,13 @@ export class Photos {
   }
 
   async setHidden(id: string, preserve?: () => (() => Promise<void>) | undefined, onhidden?: () => void | Promise<void>, onactionerror?: (error: string) => void, oninvalidate?: () => void | Promise<void>) {
-    if (this.hiding || this.trashing || this.disposed) return;
-    if (this.allResults && this.selection.selectedIDs.has(id)) {
+    if (this.hiding || this.trashing || this.disposed || !this.authored.canChangeTarget()) return;
+    if (this.allResults && !this.authored.targets.length && this.selectedIDs.has(id)) {
       this.actionError = "Hide changes loaded photos only. Choose Select loaded photos first.";
       onactionerror?.(this.actionError);
       return;
     }
-    const members = this.resolveTargets(this.selection.selectedIDs.has(id) ? this.selection.selectedIDs : [id]);
+    const members = this.resolveTargets(this.selectedIDs.has(id) ? this.selectedIDs : [id]);
     if (!members) {
       this.actionError = "Load and select the photos again before changing their visibility.";
       onactionerror?.(this.actionError);
@@ -314,6 +343,7 @@ export class Photos {
     this.controller = new AbortController();
     this.facetsController.abort();
     this.facetsLoading = false;
+    this.authored.validating = false;
     this.staged = undefined;
     this.loading = false;
     this.timelineController.abort();
@@ -330,6 +360,7 @@ export class Photos {
     if (this.needsFacets && !this.facetsError) void this.retryFacets();
     if (this.view === "timeline" && !this.timeline && !this.timelineLoading && !this.timelineError) void this.loadTimeline();
     if (this.error) return;
+    if (this.countStale && !this.replacement) void this.recount(preserve);
     if (this.replacement) return this.retry(preserve);
     if (!this.started || this.projection && this.cursor) return this.loadMore(preserve);
   }
@@ -339,6 +370,29 @@ export class Photos {
     this.error = "";
     this.expired = false;
     return this.loadMore(preserve);
+  }
+
+  metadataChanged(receipt: PhotoAuthoredReceipt) {
+    const before = new Map(receipt.before.map(file => [file.file_id, file]));
+    const rotations = new Map(receipt.after.filter(file => before.get(file.file_id)?.values.rotation !== file.values.rotation).map(file => [file.file_id, file.values.rotation]));
+    if (rotations.size) {
+      this.items = this.items.map(row => "display_file_id" in row && rotations.has(row.display_file_id) ? { ...row, rotation: rotations.get(row.display_file_id)! } : row);
+    }
+    return rotations;
+  }
+
+  /** Whether a metadata edit can change which photos this view lists or how it orders them. */
+  get dependsOnAuthored() {
+    const filters = this.query.filters ?? {};
+    return Boolean(this.query.text.trim()) || authoredFilters.some(key => {
+      const value = filters[key];
+      return Array.isArray(value) ? value.length > 0 : value !== undefined && value !== false && value !== "";
+    });
+  }
+
+  /** Whether this view must reload after an edit with these display-file rotations, because compact Map rows cannot be matched to rotated files. */
+  reloadsAfter(rotations: ReadonlyMap<string, number>) {
+    return this.dependsOnAuthored || this.projection === "map" && rotations.size > 0;
   }
 
   refresh(preserve?: () => (() => Promise<void>) | undefined) {
@@ -366,7 +420,7 @@ export class Photos {
       if (!controller.signal.aborted) this.timeline = page.facets[0];
     } catch (cause) {
       if (controller.signal.aborted) return;
-      if (cause instanceof APIError && cause.status === 401) { this.onauthfailure(cause); return; }
+      if (this.authFailure(cause)) return;
       if (cause instanceof APIError && ["snapshot_too_large", "snapshot_capacity", "snapshot_busy", "snapshot_unavailable"].includes(cause.code)) {
         this.timeline = { dimension: "capture_day", available: false, reason: cause.code, values: [] };
       } else this.timelineError = cause instanceof Error ? cause.message : String(cause);
@@ -377,10 +431,11 @@ export class Photos {
 
   private async eligibleSelection(ids: Iterable<string>, query: Query, signal: AbortSignal) {
     query = this.projection ? query : photoQuery;
+    if (this.projection && this.authored.targets.length) query = { ...photoQuery, filters: query.filters?.gps_bounds ? { gps_bounds: query.filters.gps_bounds } : {} };
     const eligible = new Set(ids);
-    const absent = this.trashTargets.filter(row => this.selection.selectedIDs.has(row.asset_id) && !eligible.has(row.asset_id));
+    const absent = [...new Set([...this.trashTargets.filter(row => this.selection.selectedIDs.has(row.asset_id)).map(row => row.asset_id), ...this.authored.targets.map(target => target.asset_id)])].filter(id => !eligible.has(id));
     for (let offset = 0; offset < absent.length; offset += 64) {
-      const asset_ids = absent.slice(offset, offset + 64).map(row => row.asset_id);
+      const asset_ids = absent.slice(offset, offset + 64);
       const page = await this.page({ ...query, filters: { ...query.filters, asset_ids } }, AbortSignal.any([signal, AbortSignal.timeout(60_000)]));
       signal.throwIfAborted();
       for (const row of page.items) eligible.add(row.asset_id);
@@ -388,23 +443,43 @@ export class Photos {
     return eligible;
   }
 
+  async revalidateAuthored(valid: () => boolean): Promise<boolean> {
+    const controller = this.controller;
+    this.authored.validating = true;
+    try {
+      const eligible = await this.eligibleSelection([], this.query, controller.signal);
+      if (controller.signal.aborted || this.disposed || !valid()) return false;
+      if (this.authored.targets.length) {
+        this.captureSelection();
+        this.selection = { ...this.selection, selectedIDs: new Set([...this.selection.selectedIDs].filter(id => eligible.has(id))) };
+      }
+      this.authored.revalidate(eligible);
+      return true;
+    } catch (cause) {
+      if (!controller.signal.aborted) this.authFailure(cause);
+      if (controller.signal.aborted) return false;
+      throw cause;
+    }
+  }
+
   selectDate(date?: string) {
+    if (!this.authored.canChangeTarget()) return;
     return this.replace("date", undefined, date);
   }
 
   async previewRejects(selected = false) {
-    if (this.disposed || this.trashing || this.hiding || this.rejectsLoading) return;
+    if (this.disposed || this.trashing || this.hiding || this.rejectsLoading || !this.authored.canChangeTarget()) return;
     this.rejects = undefined;
     this.rejectsError = "";
     this.rejectsSelected = selected;
-    const query = $state.snapshot(this.query);
+    const query = $state.snapshot(selected ? photoQuery : this.query);
     if (selected) {
-      const ids = [...this.selection.selectedIDs].sort();
+      const ids = [...this.selectedIDs].sort();
       if (!ids.length || ids.length > this.rejectsSelectionLimit) {
         this.rejectsError = `Select between 1 and ${this.rejectsSelectionLimit} photos to preview selected rejects.`;
         return;
       }
-      query.filters = { ...query.filters, asset_ids: ids };
+      query.filters = { asset_ids: ids };
     }
     this.rejectsLoading = true;
     this.rejectsController.abort();
@@ -417,7 +492,7 @@ export class Photos {
   }
 
   async trashRejects(preserve?: () => (() => Promise<void>) | undefined, ontrashed?: () => void) {
-    if (this.disposed || this.trashing || this.hiding || !this.rejects?.targets.length) return false;
+    if (this.disposed || this.trashing || this.hiding || !this.rejects?.targets.length || !this.authored.canChangeTarget()) return false;
     const targets = this.rejects.targets;
     this.cancelPending();
     this.trashing = true;
@@ -453,6 +528,7 @@ export class Photos {
 
   private async replace(mode: "refresh" | "expiry" | "date", preserve?: () => (() => Promise<void>) | undefined, date?: string, resume = false) {
     if (this.disposed) return false;
+    this.authored.conceal();
     this.controller.abort();
     this.controller = new AbortController();
     this.facetsController.abort();
@@ -493,8 +569,12 @@ export class Photos {
       const eligible = mode === "date" ? new Set(candidate.keys()) : await this.eligibleSelection(candidate.keys(), query, controller.signal);
       if (controller.signal.aborted) return false;
       const restore = mode === "date" ? undefined : preserve?.();
+      const captured = !this.authored.inspectedID && !!this.authored.targets.length;
+      if (captured) this.captureSelection();
+      this.authored.revalidate(eligible);
+      this.editScopeRevision++;
       this.items = [...candidate.values()];
-      this.total = total;
+      this.total = total; this.countStale = false;
       this.facets = []; this.facetsError = "";
       this.cursor = cursor;
       this.started = true;
@@ -504,9 +584,9 @@ export class Photos {
         this.scrollTop = 0;
         this.clearSelection();
       } else {
-        this.selection = this.allResults ? { selectedIDs: new Set(candidate.keys()), anchorID: undefined } : reconcileIDSelection(this.selection, eligible);
-        if (!this.selection.selectedIDs.size) this.allResults = false;
-        this.trashTargets = this.trashTargets.filter(item => eligible.has(item.asset_id) && this.selection.selectedIDs.has(item.asset_id));
+        if (!this.authored.targets.length) this.selection = this.allResults && !captured ? { selectedIDs: new Set(candidate.keys()), anchorID: undefined } : reconcileIDSelection(this.selection, eligible);
+        if (!this.authored.targets.length && !this.selection.selectedIDs.size) this.allResults = false;
+        this.trashTargets = this.trashTargets.filter(item => eligible.has(item.asset_id) && this.selectedIDs.has(item.asset_id));
       }
       this.expired = false;
       this.replacement = undefined;
@@ -521,13 +601,13 @@ export class Photos {
       this.error = signal.aborted || cause instanceof Error && cause.name === "TimeoutError" ? "Photo refresh timed out. Retry to keep browsing." : cause instanceof Error ? cause.message : String(cause);
       return false;
     } finally {
-      if (!controller.signal.aborted) this.loading = false;
+      if (this.controller === controller) { this.loading = false; this.authored.validating = false; }
     }
   }
 
   async trashSelected(preserve?: () => (() => Promise<void>) | undefined, ontrashed?: () => void) {
-    if (this.trashing || this.hiding || this.disposed) return false;
-    const selected = this.resolveTargets(this.selection.selectedIDs);
+    if (this.trashing || this.hiding || this.disposed || !this.authored.canChangeTarget()) return false;
+    const selected = this.resolveTargets(this.scope().asset_ids ?? this.selectedIDs);
     if (!selected) {
       this.trashError = "Load and select the photos again before moving them to trash.";
       return false;
@@ -568,6 +648,7 @@ export class Photos {
         }
         await oncomplete(successes > 0 || uncertain);
         if (!this.projection || successes !== targets.length) await this.refresh(preserve);
+        else if (this.countStale) await this.recount(preserve);
         return successes;
       } finally { this[action] = false; if (this.projection) void this.resume(preserve); }
     };
@@ -609,7 +690,7 @@ export class Photos {
       }
     } catch (cause) {
       if (controller.signal.aborted) return;
-      if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) this.onauthfailure(cause);
+      this.authFailure(cause);
       this.needsFacets = false;
       this.facetsError = cause instanceof Error ? cause.message : String(cause);
     } finally {
@@ -619,6 +700,9 @@ export class Photos {
 
   select(id: string, event: MouseEvent, orderedIDs: string[]) {
     if (event.button !== 0) return;
+    if (!this.authored.canChangeTarget()) return;
+    this.captureSelection();
+    this.changeEditScope();
     this.allResults = false;
     if (event.shiftKey || event.ctrlKey || event.metaKey) {
       this.selection = toggleIDSelection(this.selection, orderedIDs, id, event.shiftKey || !this.selection.selectedIDs.has(id), event.shiftKey);
@@ -627,6 +711,9 @@ export class Photos {
   }
 
   check(id: string, checked: boolean, range: boolean, orderedIDs: string[]) {
+    if (!this.authored.canChangeTarget()) return;
+    this.captureSelection();
+    this.changeEditScope();
     this.allResults = false;
     this.selection = toggleIDSelection(this.selection, orderedIDs, id, checked, range);
     this.pruneTrashTargets();
@@ -635,17 +722,12 @@ export class Photos {
   private resolveTargets(ids: Iterable<string>): PhotoTarget[] | undefined {
     this.pruneTrashTargets();
     const rows = new Map([...this.trashTargets, ...this.items].map(item => [item.asset_id, item]));
+    if (!this.authored.inspectedID) for (const target of this.authored.targets) rows.set(target.asset_id, { asset_id: target.asset_id, revision: target.asset_revision });
     const resolved = [...ids].map(id => rows.get(id));
     if (!resolved.length || resolved.some(item => !item)) return;
     const targets = resolved.filter((item): item is PhotoTarget => !!item).map(item => ({ ...item }));
     this.trashTargets = [...new Map([...this.trashTargets, ...targets].map(item => [item.asset_id, item])).values()];
     return targets;
-  }
-
-  private authFailure(cause: unknown) {
-    if (!(cause instanceof APIError) || cause.status !== 401 && !(this.hidden && cause.status === 403)) return false;
-    this.onauthfailure(cause);
-    return true;
   }
 
   private async removeConfirmed(ids: string[], preserve?: () => (() => Promise<void>) | undefined) {
@@ -655,18 +737,34 @@ export class Photos {
   }
 
   private removeTarget(id: string) {
+    const ids = new Set(this.selectedIDs);
+    const listed = this.items.some(item => item.asset_id === id);
+    this.authored.targets = this.authored.targets.filter(target => target.asset_id !== id);
     this.items = this.items.filter(item => item.asset_id !== id);
-    this.total = Math.max(0, this.total - 1);
+    // Map checks prepared targets only against its bounds, so an unlisted one may be beyond the loaded rows or outside the result.
+    if (listed || !this.projection) this.total = Math.max(0, this.total - 1);
+    else this.countStale = true;
     this.trashTargets = this.trashTargets.filter(item => item.asset_id !== id);
-    const ids = new Set(this.selection.selectedIDs);
     ids.delete(id);
+    if (!ids.size && !this.authored.targets.length) this.allResults = false;
     this.selection = { selectedIDs: ids, anchorID: undefined };
   }
 
-  private pruneTrashTargets() { this.trashTargets = this.trashTargets.filter(item => this.selection.selectedIDs.has(item.asset_id)); }
+  private async recount(preserve?: () => (() => Promise<void>) | undefined) {
+    const controller = this.controller;
+    try {
+      const page = await listPhotoAssets({ query: this.query, projection: this.projection, hidden: this.hidden, facets: [], page_size: 1 }, { session: this.session, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]) });
+      if (!controller.signal.aborted) { this.total = page.total; this.countStale = false; }
+    } catch (cause) {
+      if (controller.signal.aborted || this.authFailure(cause)) return;
+      await this.refresh(preserve);
+    }
+  }
 
-  clearSelection() { this.allResults = false; this.selection = clearSelection<string>(); this.trashTargets = []; }
-  selectLoaded(ids = this.items.map(item => item.asset_id)) { this.allResults = false; this.selection = { selectedIDs: new Set(ids), anchorID: undefined }; this.pruneTrashTargets(); }
-  selectAllResults() { this.selectLoaded(); this.allResults = true; }
-  dispose() { this.viewerReturn = undefined; this.disposed = true; this.staged = undefined; this.controller.abort(); this.timelineController.abort(); this.facetsController.abort(); this.rejectsController.abort(); }
+  private pruneTrashTargets() { this.trashTargets = this.trashTargets.filter(item => this.selectedIDs.has(item.asset_id)); }
+
+  clearSelection() { if (!this.changeEditScope()) return; this.allResults = false; this.selection = clearSelection<string>(); this.trashTargets = []; }
+  selectLoaded(ids = this.items.map(item => item.asset_id)) { if (!this.changeEditScope()) return; this.allResults = false; this.selection = { selectedIDs: new Set(ids), anchorID: undefined }; this.pruneTrashTargets(); }
+  selectAllResults() { if (!this.authored.canChangeTarget()) return; this.selectLoaded(); this.allResults = true; }
+  dispose() { this.authored.dispose(); this.viewerReturn = undefined; this.disposed = true; this.staged = undefined; this.controller.abort(); this.timelineController.abort(); this.facetsController.abort(); this.rejectsController.abort(); }
 }

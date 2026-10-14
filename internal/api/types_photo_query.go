@@ -54,6 +54,7 @@ type PhotoBrowseRow struct {
 	Kind                 string            `json:"kind" enum:"photo,video"`
 	Revision             int64             `json:"revision" minimum:"1"`
 	DisplayFileID        string            `json:"display_file_id" format:"uuid"`
+	Rotation             int               `json:"rotation" enum:"0,90,180,270"`
 	NodeID               int64             `json:"node_id" minimum:"1"`
 	ContentVersionID     string            `json:"content_version_id" format:"uuid"`
 	Name                 string            `json:"name"`
@@ -79,6 +80,7 @@ type PhotoBrowseRow struct {
 }
 
 type PhotoMapRow struct {
+	Rotation    int      `json:"rotation" enum:"0,90,180,270"`
 	AssetID     string   `json:"asset_id" format:"uuid"`
 	Revision    int64    `json:"revision" minimum:"1"`
 	Name        string   `json:"name"`

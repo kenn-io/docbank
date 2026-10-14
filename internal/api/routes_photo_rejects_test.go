@@ -20,9 +20,7 @@ func TestPhotoRejectRoutes(t *testing.T) {
 			require.NoError(t, err)
 			asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
 			require.NoError(t, err)
-			_, err = s.EditPhotoAuthored(t.Context(), []store.PhotoAuthoredTarget{{
-				FileID: asset.Files[0].ID, Revision: 1, Patch: store.PhotoAuthoredPatch{Flag: new("reject")},
-			}})
+			_, err = s.EditPhotoAuthoredBatch(t.Context(), store.PhotoAuthoredBatch{Targets: []store.PhotoAuthoredEditTarget{{AssetID: asset.ID, AssetRevision: asset.Revision, FileID: asset.Files[0].ID, Revision: asset.Files[0].Revision, NodeRevision: 1}}, Patch: store.PhotoAuthoredPatch{Flag: new("reject")}})
 			require.NoError(t, err)
 
 			request := api.PhotoRejectsRequest{Query: api.QueryPayload(`{}`)}
@@ -33,9 +31,7 @@ func TestPhotoRejectRoutes(t *testing.T) {
 				require.NoError(t, err)
 				other, err := s.PhotoAssetForNode(t.Context(), outside.ID)
 				require.NoError(t, err)
-				_, err = s.EditPhotoAuthored(t.Context(), []store.PhotoAuthoredTarget{{
-					FileID: other.Files[0].ID, Revision: 1, Patch: store.PhotoAuthoredPatch{Flag: new("reject")},
-				}})
+				_, err = s.EditPhotoAuthoredBatch(t.Context(), store.PhotoAuthoredBatch{Targets: []store.PhotoAuthoredEditTarget{{AssetID: other.ID, AssetRevision: other.Revision, FileID: other.Files[0].ID, Revision: other.Files[0].Revision, NodeRevision: 1}}, Patch: store.PhotoAuthoredPatch{Flag: new("reject")}})
 				require.NoError(t, err)
 				album, err := s.CreatePhotoSet(t.Context(), "Holiday")
 				require.NoError(t, err)

@@ -21,7 +21,7 @@ import (
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
-const metadataFormatVersion = 1
+const metadataFormatVersion = 2
 
 const (
 	metadataCreatedAtField        = "created_at"
@@ -1083,7 +1083,7 @@ func (s *Store) importMetadataLines(
 		return metadataHeader{}, fmt.Errorf("decoding metadata header: %w", err)
 	}
 	if header.Type != "meta" || header.Format != "docbank-metadata" ||
-		header.Version != metadataFormatVersion || header.NodeSequence <= 0 {
+		header.Version < 1 || header.Version > metadataFormatVersion || header.NodeSequence <= 0 {
 		return metadataHeader{}, fmt.Errorf("unsupported metadata header: type=%q format=%q version=%d node_sequence=%d",
 			header.Type, header.Format, header.Version, header.NodeSequence)
 	}

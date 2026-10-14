@@ -92,7 +92,7 @@ it.each(["over-limit", "map over-limit", "whole-query", "external payload", "uns
   const fetcher = vi.fn().mockResolvedValueOnce(response({ ...album, revision: 2 })).mockResolvedValueOnce(response([album]));
   vi.stubGlobal("fetch", fetcher);
   const albums = new PhotoAlbums("scoped", vi.fn());
-  const photos = new Photos("scoped", vi.fn(), false, photoQuery, kind === "map over-limit" ? "map" : undefined);
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection: kind === "map over-limit" ? "map" : undefined });
   photos.total = 12000;
   photos.selection.selectedIDs = new Set(Array.from({ length: 1001 }, (_, id) => String(id)));
   photos.allResults = kind !== "over-limit" && kind !== "map over-limit" && kind !== "unselected photo";

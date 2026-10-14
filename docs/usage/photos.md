@@ -61,7 +61,7 @@ Use the arrow keys, Previous and Next buttons, or the thumbnail rail to move
 through the current result in query order, across calendar-month groups. Navigation loads the next page at the loaded edge
 and stops at the query boundary. If loading fails, Retry navigation resumes it
 inside the viewer, including after a cursor expires. Press I for available camera and exposure
-details. Wheel, pinch, or double-click to zoom, and press 0 to reset. Escape
+details. Wheel, pinch, or double-click to zoom. Use Reset zoom to reset. Escape
 returns to the scroll position and focus left on entering the viewer, including
 when Forward reopens it.
 
@@ -86,6 +86,16 @@ album in the URL. Back and
 Forward also update the viewer. Browser sessions stay in memory. After a reload,
 run `docbank web` for a fresh session, then append `&photo=<asset-id>` to its
 fragment to reopen the direct photo.
+
+## Edit metadata
+
+Metadata editing currently works in the web app; CLI and MCP commands aren't available. Press I or choose Metadata to open the viewer's metadata panel. It edits rating, flag, color label, caption, creator, copyright, rotation, and keywords. Whole pair edits every image or RAW member together. Choose a member to edit it alone. Mixed means members have different values. Stage fields and keyword changes, then choose Apply. Reloading or closing the page asks before discarding staged edits. Clear caption, creator, or copyright sets mixed text to empty.
+
+Select photos in the grid and choose Metadata in the bottom action bar to edit the selection. Select all results to edit the current search, including photos beyond the loaded page. Each edit allows at most 1,000 files, including both members of a pair. The editing session keeps the resolved photos through result refreshes until you change the selection, search, or inspected photo. Counts, checkboxes, album actions, drag, shortcuts, and trash use those same photos. After partial trash, failed photos stay selected with their captured revisions, including unloaded photos; retry them or choose Clear selection. A failed edit changes nothing. After a conflict, Reload metadata preserves your draft for review and an explicit retry. Keywords use the existing tag picker.
+
+In Photos, 0 through 5 set the rating, P picks, X rejects, and U clears the flag. 6 sets red, 7 yellow, 8 green, and 9 blue. R rotates each selected photo 90° clockwise, and V sets purple. Use the inspector for other rotation values or No label. A shortcut applies any staged fields and keywords together with its decision; the Undo feedback names those edits. Apply or Clear edits before switching between pair members. Typing in a text field keeps its normal shortcuts. Edits update open photo lists in place. A list with search text or a rating, flag, label, keyword, or modified-date filter reloads after each edit, so an edited photo can leave it. Map also reloads after a rotation or its Undo. Undo or Ctrl/Cmd+Z restores the last edit, including keyword changes. Undo uses conservative revision checks. It reports a conflict if an edited file has changed; keyword Undo also conflicts after any revision change to an affected document. Reload metadata before making another edit.
+
+Rotation applies to the displayed photo in the grid, viewer, and album cover without rebuilding previews. Hidden photos require an active unlock for editing and Undo. Undo after hiding a photo asks you to unlock Hidden and keeps Library signed in.
 
 ## Browse in the web app
 
@@ -357,7 +367,7 @@ To use the newest ready photo as the cover again, run `docbank photos albums cov
 
 Select photos in Library or an album, then choose Add to album in the selection dock. Type to find an album or create one. B adds to the last album chosen until you reload or the session locks; the dock and sidebar show that target. Without a target, B opens the picker. You can also drag a photo or selection onto a sidebar album. After every album change, Docbank reloads the album list. Membership changes also refresh the affected album's photo view. Trash and restore reload albums and every started photo view. A failed create or duplicate also reloads Albums, where the album may already appear.
 
-Select loaded photos selects only the pages already loaded. Select all N photos selects the complete live query, including unloaded pages. Add to album, B, and drag use that same scope. Trash and Hide change loaded photos only, so they are unavailable while all N photos are selected. The server resolves the query when you add, so the refreshed album count can reflect imports made since browsing. Explicit selections allow up to 1,000 photos per album change. For larger selections, choose Select all N photos to send one atomic query write. A revision conflict shows the server error and reloads the album list. An open form shows the reloaded album and keeps what you typed. Save again to retry with its current revision.
+Select loaded photos selects only the pages already loaded. Select all N photos selects the complete live query, including unloaded pages. Add to album, B, and drag use that same scope. Before preparing metadata, Trash and Hide change loaded photos only and are unavailable while all N photos are selected. A prepared metadata selection also allows trash for its resolved photos. The server resolves the query when you add, so the refreshed album count can reflect imports made since browsing. Explicit selections allow up to 1,000 photos per album change. For larger selections, choose Select all N photos to send one atomic query write. A revision conflict shows the server error and reloads the album list. An open form shows the reloaded album and keeps what you typed. Save again to retry with its current revision.
 
 Create an album, add selected asset UUIDs or a complete query result, then
 browse its members:
@@ -600,6 +610,8 @@ date. Days follow the same recorded calendar day as `capture_after` and
 Over HTTP, send the same `query` and optional `coverage` to
 `POST /api/v1/photos/assets/timeline`. The
 [HTTP reference](../architecture/http-api.md) lists its limits and errors.
+
+Apply or clear staged metadata edits before changing the selection, search, sort, date, or viewed photo, or hiding or trashing photos. Hide uses the prepared selection, including unloaded photos, and keeps failed targets selected with their captured revisions.
 
 ## Move photos to trash
 

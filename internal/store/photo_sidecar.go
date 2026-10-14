@@ -143,7 +143,7 @@ func (s *Store) InitializePhotoSidecar(ctx context.Context, target PhotoSidecarT
 					}
 				}
 				if patch != (PhotoAuthoredPatch{}) {
-					result, err = s.applyPhotoAuthoredTx(ctx, tx, []PhotoAuthoredTarget{{FileID: f.ID, Revision: 1, Patch: patch}}, "", &PhotoSidecarProvenance{NodeID: target.NodeID, VersionID: target.VersionID, FileID: target.SidecarFileID}, false)
+					result, err = s.applyPhotoAuthoredTx(ctx, tx, []PhotoAuthoredTarget{{FileID: f.ID, Revision: 1, Patch: patch}}, photoAuthoredApply{sidecar: &PhotoSidecarProvenance{NodeID: target.NodeID, VersionID: target.VersionID, FileID: target.SidecarFileID}})
 					if err != nil {
 						return err
 					}
