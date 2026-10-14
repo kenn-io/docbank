@@ -32,7 +32,7 @@ func authoredPair(t *testing.T, s *Store) PhotoAsset {
 	return asset
 }
 
-func TestClassifyPhotoMediaMatrix(t *testing.T) {
+func TestPhotoMediaClassificationRoleInferenceAndNodeFacts(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name, mime, filename, kind, role string
@@ -145,11 +145,6 @@ func TestPhotoSettingsRecomputeInheritedAssets(t *testing.T) {
 	_, err = s.SetPhotoSettings(ctx, settings.Revision-1, &preference)
 	require.ErrorIs(t, err, ErrStaleRevision)
 	assert.Contains(t, receiptOperations(photoReceiptRows(t, s, group.ID)), "settings_recompute")
-	rawFileID := fileByRole(group.Files, PhotoRoleRAW).ID
-	group, err = s.DetachPhotoFile(ctx, group.ID, group.Revision, imageFileID, PhotoDetachOptions{})
-	require.NoError(t, err)
-	require.NotNil(t, group.DisplayFileID)
-	assert.Equal(t, rawFileID, *group.DisplayFileID)
 	assert.NoError(t, s.ValidateMetadata(ctx))
 }
 
@@ -451,14 +446,6 @@ func TestPhotoSidecarTargetsAndNoDisplayableMember(t *testing.T) {
 				require.NoError(t, err)
 				asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, sidecar.ID, PhotoRoleSidecar, &targetFileID)
 				require.NoError(t, err)
-				var sidecarReceipt photoReceiptRow
-				for _, receipt := range photoReceiptRows(t, s, asset.ID) {
-					if receipt.Operation == "attach" && strings.Contains(receipt.AfterJSON, `"node_id":`+strconv.FormatInt(sidecar.ID, 10)) {
-						sidecarReceipt = receipt
-						break
-					}
-				}
-				assert.NotEmpty(t, sidecarReceipt.AfterJSON)
 			}
 			_, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, targetFileID, PhotoDetachOptions{})
 			require.ErrorIs(t, err, ErrInvalidPhotoAsset)
@@ -469,6 +456,20 @@ func TestPhotoSidecarTargetsAndNoDisplayableMember(t *testing.T) {
 			assert.Nil(t, asset.DisplayFileID)
 		})
 	}
+	t.Run("detach display falls back to RAW", func(t *testing.T) {
+		s := newTestStore(t)
+		ctx := t.Context()
+		asset := authoredPair(t, s)
+		imageFileID := fileByRole(asset.Files, PhotoRoleImage).ID
+		rawFileID := fileByRole(asset.Files, PhotoRoleRAW).ID
+		asset, err := s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &imageFileID)
+		require.NoError(t, err)
+		asset, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, imageFileID, PhotoDetachOptions{})
+		require.NoError(t, err)
+		require.NotNil(t, asset.DisplayFileID)
+		assert.Equal(t, rawFileID, *asset.DisplayFileID)
+		assert.NoError(t, s.ValidateMetadata(ctx))
+	})
 }
 
 func TestPhotoExcludePromotePreservesIdentityAndReceipt(t *testing.T) {
@@ -503,6 +504,19 @@ func TestPhotoExcludePromotePreservesIdentityAndReceipt(t *testing.T) {
 	stale := promoted.Revision - 1
 	_, err = s.PromotePhotoNode(ctx, image.ID, &stale, "", "")
 	require.ErrorIs(t, err, ErrStaleRevision)
+	sidecar, err := s.CreateFile(ctx, s.RootID(), "one.xmp", browseHash("one.xmp"), 1, "application/rdf+xml")
+	require.NoError(t, err)
+	targetFileID := promoted.Files[0].ID
+	attached, err := s.AttachPhotoFile(ctx, promoted.ID, promoted.Revision, sidecar.ID, PhotoRoleSidecar, &targetFileID)
+	require.NoError(t, err)
+	var sidecarReceipt photoReceiptRow
+	for _, receipt := range photoReceiptRows(t, s, attached.ID) {
+		if receipt.Operation == "attach" && strings.Contains(receipt.AfterJSON, `"node_id":`+strconv.FormatInt(sidecar.ID, 10)) {
+			sidecarReceipt = receipt
+			break
+		}
+	}
+	assert.NotEmpty(t, sidecarReceipt.AfterJSON)
 	t.Run("unowned node rejects revision precondition", func(t *testing.T) {
 		raw, err := s.CreateFile(ctx, s.RootID(), "unowned.cr2", fakeHash("unowned"), 1, "application/octet-stream")
 		require.NoError(t, err)

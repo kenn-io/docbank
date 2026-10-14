@@ -86,13 +86,6 @@ func TestPhotoImportRollsBackFailedGroup(t *testing.T) {
 	assert.Len(t, result.Asset.Files, 3)
 	assert.Equal(t, PhotoRoleRAW, fileByRole(result.Asset.Files, PhotoRoleRAW).Role)
 
-	video, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(photoImportTestMember(
-		filepath.Join(root, "IMG_0001.MOV"), PhotoRoleVideo, browseHash("mov"), "video/quicktime")))
-	require.NoError(t, err)
-	assert.NotEqual(t, result.Asset.ID, video.Asset.ID)
-	assert.Equal(t, PhotoKindVideo, video.Asset.Kind)
-	assert.Len(t, video.Asset.Files, 1)
-
 	var nodes int
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE kind='file'`).Scan(&nodes))
 	bad := photoImportTestGroup(
@@ -120,7 +113,7 @@ n, err := s.PreparePhotoImportDestination(ctx, "/new/photos")
 	assert.Equal(t, result.Asset, unchanged)
 	var assets int
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_assets`).Scan(&assets))
-	assert.Equal(t, 2, assets)
+	assert.Equal(t, 1, assets)
 }
 
 func TestPhotoImportQualifiedSidecarTargets(t *testing.T) {
@@ -235,6 +228,13 @@ func TestPhotoImportSeparatePhotosAreReported(t *testing.T) {
 	imageResult, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(elsewhere))
 	require.NoError(t, err)
 	require.NotEqual(t, rawResult.Asset.ID, imageResult.Asset.ID)
+	video, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(photoImportTestMember(
+		filepath.Join(root, "IMG.MOV"), PhotoRoleVideo, browseHash("mov"), "video/quicktime")))
+	require.NoError(t, err)
+	assert.NotEqual(t, rawResult.Asset.ID, video.Asset.ID)
+	assert.NotEqual(t, imageResult.Asset.ID, video.Asset.ID)
+	assert.Equal(t, PhotoKindVideo, video.Asset.Kind)
+	assert.Len(t, video.Asset.Files, 1)
 
 	duplicate := raw
 	duplicate.OriginalPath = filepath.Join(filepath.Dir(elsewhere.OriginalPath), "IMG.ARW")
