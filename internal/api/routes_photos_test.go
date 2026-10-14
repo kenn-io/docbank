@@ -33,8 +33,12 @@ func TestPhotoRoutesEnforceIfMatch(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode, body)
 	var byNode api.PhotoAsset
 	require.NoError(t, json.Unmarshal([]byte(body), &byNode))
+	storedAsset, err := fixture.PhotoAssetForNode(t.Context(), node.ID)
+	require.NoError(t, err)
 	assert.Equal(t, asset.ID, byNode.ID)
 	assert.Equal(t, asset.Revision, byNode.Revision)
+	require.Len(t, byNode.Files, len(storedAsset.Files))
+	assert.Equal(t, storedAsset.Files[0].Confirmed, byNode.Files[0].Confirmed)
 	path := "/api/v1/photos/assets/" + asset.ID + "/exclude"
 	resp, body = do(t, ts, http.MethodPost, path, nil, map[string]bool{"excluded": true})
 	assert.Equal(t, http.StatusPreconditionRequired, resp.StatusCode, body)
