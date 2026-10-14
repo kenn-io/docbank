@@ -36,16 +36,19 @@ func (s *Store) MediaSources(
 		WHERE caller_principal=? AND visible=1`, principal).Scan(&total); err != nil {
 		return nil, 0, false, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT o.source_id,s.kind,COALESCE(o.source_version_id,''),
+	rows, err := s.db.QueryContext(ctx, `WITH page AS MATERIALIZED (
+		SELECT DISTINCT source_id FROM media_occurrences
+		WHERE caller_principal=? AND visible=1 AND source_id>?
+		ORDER BY source_id LIMIT ?
+	) SELECT o.source_id,s.kind,COALESCE(o.source_version_id,''),
 		COALESCE(v.content_version_id,''),o.occurrence_id,o.caller_filename,o.message_json
-		FROM media_occurrences o
+		FROM page CROSS JOIN media_occurrences o ON o.occurrence_id=(
+			SELECT x.occurrence_id FROM media_occurrences x
+			WHERE x.caller_principal=? AND x.visible=1 AND x.source_id=page.source_id
+			ORDER BY x.first_seen_at DESC,x.occurrence_id DESC LIMIT 1)
 		JOIN media_sources s ON s.source_id=o.source_id
 		LEFT JOIN media_source_versions v ON v.source_version_id=o.source_version_id
-		WHERE o.caller_principal=? AND o.visible=1 AND o.source_id>? AND o.occurrence_id=(
-			SELECT x.occurrence_id FROM media_occurrences x
-			WHERE x.caller_principal=o.caller_principal AND x.visible=1 AND x.source_id=o.source_id
-			ORDER BY x.first_seen_at DESC,x.occurrence_id DESC LIMIT 1)
-		ORDER BY o.source_id LIMIT ?`, principal, after, limit+1)
+		ORDER BY o.source_id`, principal, after, limit+1, principal)
 	if err != nil {
 		return nil, 0, false, err
 	}
