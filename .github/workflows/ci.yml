@@ -264,9 +264,11 @@ jobs:
       matrix:
         include:
           - { runner: windows-2025, goarch: amd64 }
-          # The 4 vCPU arm64 runner is saturated by the full suite, so its packages split across two.
+          # Split tests because the full suite saturates the 4 vCPU arm64 runners.
           - { runner: windows-11-vs2026-arm, goarch: arm64, shard: 1 }
           - { runner: windows-11-vs2026-arm, goarch: arm64, shard: 2 }
+          - { runner: windows-11-vs2026-arm, goarch: arm64, shard: 3 }
+          - { runner: windows-11-vs2026-arm, goarch: arm64, shard: 4 }
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Check out repository
@@ -308,12 +310,14 @@ jobs:
           Add-Content -Path $env:GITHUB_ENV -Value "CC=$cc"
 
       - name: Build
+        if: matrix.goarch == 'amd64' || matrix.shard == 4
         env:
           CGO_ENABLED: "1"
           GOARCH: ${{ matrix.goarch }}
         run: go build -tags fts5 ./...
 
       - name: Vet
+        if: matrix.goarch == 'amd64' || matrix.shard == 4
         env:
           CGO_ENABLED: "1"
           GOARCH: ${{ matrix.goarch }}
@@ -324,4 +328,4 @@ jobs:
           CGO_ENABLED: "1"
           GOARCH: ${{ matrix.goarch }}
         shell: pwsh
-        run: ./scripts/test-go-ci.ps1 -Shard ${{ matrix.shard || 'all' }}
+        run: ./scripts/test-go-ci.ps1 -Shard ${{ matrix.shard || 'all' }} -ShardCount 4
