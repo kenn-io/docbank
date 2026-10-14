@@ -1,6 +1,16 @@
 import { Blob } from "node:buffer";
 import { vi } from "vitest";
+import { fireEvent } from "@testing-library/svelte";
 import type { PhotoBrowseRow, PhotoMapRow, PhotoAlbumSummary } from "./generated/docbank.js";
+
+export async function touchTap(target: HTMLElement, time: number, detail = 1, clickPointerType?: string, point = { x: 0, y: 0 }): Promise<void> {
+  await fireEvent.pointerDown(target, { pointerType: "touch" });
+  await fireEvent.pointerUp(target, { pointerType: "touch" });
+  const event = new MouseEvent("click", { bubbles: true, button: 0, detail, clientX: point.x, clientY: point.y });
+  Object.defineProperty(event, "timeStamp", { value: time });
+  if (clickPointerType !== undefined) Object.defineProperty(event, "pointerType", { value: clickPointerType });
+  await fireEvent(target, event);
+}
 
 export function photoAlbum(overrides: Partial<PhotoAlbumSummary> = {}): PhotoAlbumSummary {
   return { id: "11111111-1111-4111-8111-111111111111", name: "Trip", revision: 1, starred: false, created_at: "2025-01-01T00:00:00Z", updated_at: "2025-01-01T00:00:00Z", included_count: 0, member_count: 0, ...overrides };

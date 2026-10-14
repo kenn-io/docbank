@@ -352,6 +352,33 @@ func TestQuerySnapshotFacetsSelfExcludeAndRetainSelectedZero(t *testing.T) {
 	}
 }
 
+func TestQuerySnapshotFacetsRetainSelectedModifiedMonth(t *testing.T) {
+	t.Parallel()
+	fixture := newSnapshotFacetFixture(t)
+	for _, tc := range []struct {
+		name, after, before string
+		want                []SnapshotFacetValue
+	}{
+		{"unobserved month", "2025-07-01T00:00:00Z", "2025-08-01T00:00:00Z", []SnapshotFacetValue{{Key: "2025-07", Label: "2025-07", Selected: true}}},
+		{"december", "2025-12-01T00:00:00Z", "2026-01-01T00:00:00Z", []SnapshotFacetValue{{Key: "2025-12", Label: "2025-12", Selected: true}}},
+		{"partial month", "2025-07-01T00:00:00Z", "2025-07-15T00:00:00Z", []SnapshotFacetValue{}},
+		{"mid-month start", "2025-07-02T00:00:00Z", "2025-08-02T00:00:00Z", []SnapshotFacetValue{}},
+		{"offset", "2025-07-01T00:00:00+02:00", "2025-08-01T00:00:00+02:00", []SnapshotFacetValue{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			value := snapshotTestQuery(t, `{"text":"no such document anywhere"}`)
+			value.Filters.ModifiedAfter, value.Filters.ModifiedBefore = tc.after, tc.before
+			projection, err := fixture.store.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{
+				Query: value, Coverage: fixture.selection, Facets: []string{"modified"},
+			})
+			require.NoError(t, err)
+			modified := facetByDimension(t, projection, "modified")
+			assert.Zero(t, *modified.Total)
+			assert.Equal(t, tc.want, modified.Values)
+		})
+	}
+}
+
 func TestQuerySnapshotFacetUnavailableStatesAreExplicit(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

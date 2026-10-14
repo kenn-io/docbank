@@ -119,9 +119,8 @@
     if (next) onphotochange(next.asset_id, "step");
   }
   async function retryNavigation() { await photos.retry(preserve); }
-  function select(id: string, event: MouseEvent) {
-    const touch = "pointerType" in event && event.pointerType === "touch";
-    if (touch && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
+  function select(id: string, event: MouseEvent, touch: boolean) {
+    if (touch) {
       if (photos.selection.selectedIDs.size) photos.check(id, !photos.selection.selectedIDs.has(id), false, orderedIDs);
       else open(id, event.currentTarget as HTMLElement);
     }

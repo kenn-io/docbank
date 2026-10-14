@@ -20,6 +20,18 @@
     collections: "Collections", tags: "Tags", media_family: "Media family", extension: "Extension",
     modified: "Modified", size: "Size", text_coverage: "Text coverage", duplicates: "Duplicates",
   };
+  // media_family, size, text_coverage, and duplicates have zero missing and other counts by construction because their fixed value lists cover every row in internal/store/query_snapshot_facets.go.
+  const summary: Partial<Record<Facet["dimension"], { missing: string; other?: (count: number) => string }>> = {
+    camera: { missing: "with no camera", other: n => `${n} ${n === 1 ? "use" : "uses"} of unlisted camera names` },
+    lens: { missing: "with no lens", other: n => `${n} ${n === 1 ? "use" : "uses"} of unlisted lens names` },
+    year: { missing: "with no capture date", other: n => `${n} in unlisted ${n === 1 ? "year" : "years"}` },
+    location: { missing: "with no location", other: n => `${n} in unlisted ${n === 1 ? "location" : "locations"}` },
+    set: { missing: "not in an album", other: n => `${n} ${n === 1 ? "membership" : "memberships"} in unlisted albums` },
+    collections: { missing: "not in a collection", other: n => `${n} ${n === 1 ? "membership" : "memberships"} in unlisted collections` },
+    tags: { missing: "with no tags", other: n => `${n} ${n === 1 ? "use" : "uses"} of unlisted tags` },
+    extension: { missing: "with no extension", other: n => `${n} in unlisted ${n === 1 ? "extension" : "extensions"}` },
+    modified: { missing: "with no modified date", other: n => `${n} in unlisted ${n === 1 ? "month" : "months"}` },
+  };
   const arrayFields = {
     camera: "cameras", lens: "lenses", location: "locations", set: "set_ids",
     collections: "collection_ids", tags: "tag_ids", media_family: "media_families",
@@ -121,6 +133,14 @@
       (dimension === "duplicates" && value.key === "duplicate");
   }
 
+  // A group where no photo has a value only repeats the scope total, so hide it unless a filter on it is active.
+  function empty(facet: Facet): boolean {
+    if (!facet.available || !(facet.dimension in summary)) return false;
+    if (facet.dimension === "tags" && query.filters.no_tags) return false;
+    if (facet.values.some((value) => selected(facet.dimension, value))) return false;
+    return facet.missing === facet.total;
+  }
+
   function toggleMissingTags(): void {
     const enable = !query.filters.no_tags;
     onchange(changed({ ...query.filters, no_tags: enable || undefined, tag_ids: enable ? undefined : query.filters.tag_ids }));
@@ -130,6 +150,7 @@
 <aside class="facets" aria-label={unit === "photos" ? "Photo facets" : "Snapshot facets"}>
   <h2>{unit === "photos" ? "Refine photos" : "Refine snapshot"}</h2>
   {#each facets as facet (facet.dimension)}
+    {#if !empty(facet)}
     <section role="group" aria-label={`${names[facet.dimension]} facet`}>
       <h3>{names[facet.dimension]}</h3>
       {#if !facet.available}
@@ -150,15 +171,21 @@
             {/if}
           {/each}
         </div>
-        <div class="summary">
-          {#if facet.dimension === "tags"}
-            <button type="button" class:selected={query.filters.no_tags === true} aria-pressed={query.filters.no_tags === true}
-              disabled={disabled} onclick={toggleMissingTags}>Missing {facet.missing}</button>
-          {:else}<span>Missing {facet.missing}</span>{/if}
-          <span>Other {facet.other}</span>
-        </div>
+        {@const wording = summary[facet.dimension]}
+        {@const missing = wording && (facet.missing ?? 0) > 0 ? `${facet.missing} ${wording.missing}` : ""}
+        {@const other = (facet.other ?? 0) > 0 ? wording?.other?.(facet.other!) : ""}
+        {#if missing || other || (facet.dimension === "tags" && (query.filters.no_tags || query.filters.tag_ids?.length))}
+          <div class="summary">
+            {#if facet.dimension === "tags" && (missing || query.filters.no_tags || query.filters.tag_ids?.length)}
+              <button type="button" class:selected={query.filters.no_tags === true} aria-pressed={query.filters.no_tags === true}
+                disabled={disabled} onclick={toggleMissingTags}>{missing || "No tags"}</button>
+            {:else if missing}<span>{missing}</span>{/if}
+            {#if other}<span>{other}</span>{/if}
+          </div>
+        {/if}
       {/if}
     </section>
+    {/if}
   {/each}
 </aside>
 

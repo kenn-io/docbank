@@ -11,7 +11,7 @@
     loading: boolean;
     cache: PhotoPreviewCache;
     selectedIDs: ReadonlySet<string>;
-    onselect: (id: string, event: MouseEvent) => void;
+    onselect: (id: string, event: MouseEvent, touch: boolean) => void;
     onopen: (id: string, element: HTMLElement) => void;
     oncheck: (id: string, checked: boolean, range: boolean) => void;
     onhidden?: (id: string) => void;

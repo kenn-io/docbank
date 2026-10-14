@@ -11,7 +11,7 @@
     selected: boolean;
     onhidden?: () => void;
     hidden?: boolean;
-    onclick: (event: MouseEvent) => void;
+    onclick: (event: MouseEvent, touch: boolean) => void;
     compact?: boolean;
     onopen?: (element: HTMLElement) => void;
     oncheck?: (checked: boolean, range: boolean) => void;
@@ -20,11 +20,56 @@
   } = $props();
   let menuOpen = $state(false);
   let imageButton = $state<HTMLButtonElement>();
+  let lastClick = $state<{ time: number; x: number; y: number; opened: boolean } | undefined>();
   let touchClick = false;
+  let pointerType: string | undefined;
+  let tapCancelled = false;
+  let suppressDoubleClick = false;
   let url = $state("");
   let failed = $state(false);
   let errorMessage = $state("");
   let retry = $state(0);
+  function openImage(element: HTMLElement): void {
+    if (touchClick && !selected) oncheck?.(true, false);
+    onopen?.(element);
+  }
+  function clickImage(event: MouseEvent & { currentTarget: HTMLButtonElement }): void {
+    touchClick = event.detail > 0 && (pointerType ?? ("pointerType" in event ? event.pointerType : undefined)) === "touch" && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey;
+    pointerType = undefined;
+    suppressDoubleClick = touchClick && tapCancelled;
+    tapCancelled = false;
+    if (!compact && touchClick && event.detail > 1 && !suppressDoubleClick) return;
+    if (!compact && touchClick && (event.detail === 1 || suppressDoubleClick)) {
+      const time = event.timeStamp;
+      const { clientX: x, clientY: y } = event;
+      if (lastClick && !lastClick.opened && time - lastClick.time <= 350 && Math.hypot(x - lastClick.x, y - lastClick.y) <= 30) {
+        lastClick = { time, x, y, opened: true };
+        openImage(event.currentTarget);
+        return;
+      }
+      lastClick = { time, x, y, opened: false };
+    } else lastClick = undefined;
+    onclick(event, touchClick);
+  }
+  function doubleClickImage(event: MouseEvent & { currentTarget: HTMLButtonElement }): void {
+    if (compact || suppressDoubleClick || lastClick?.opened) return;
+    lastClick = undefined;
+    openImage(event.currentTarget);
+  }
+  // A click outside this tile or a pointercancel on any tile ends a pending double-tap; the listener exists only while one is pending.
+  $effect(() => {
+    if (!lastClick) return;
+    const reset = (event: Event) => {
+      if (!(event.target instanceof Node) || !imageButton?.contains(event.target)) lastClick = undefined;
+    };
+    const cancel = () => { lastClick = undefined; tapCancelled = true; };
+    document.addEventListener("click", reset, true);
+    document.addEventListener("pointercancel", cancel, true);
+    return () => {
+      document.removeEventListener("click", reset, true);
+      document.removeEventListener("pointercancel", cancel, true);
+    };
+  });
   $effect(() => {
     const slot = photo.previews.grid;
     void retry;
@@ -38,7 +83,7 @@
 </script>
 
 <div class="photo-cell" class:selected class:compact data-asset={photo.asset_id}>
-  <button type="button" class="photo-image" bind:this={imageButton} aria-label={`${compact ? "Show" : "Select"} ${photo.name}`} aria-pressed={compact ? undefined : selected} aria-current={compact && selected ? "true" : undefined} onclick={event => { touchClick = "pointerType" in event && event.pointerType === "touch"; onclick(event); }} ondblclick={event => { if (!compact && !touchClick) onopen?.(event.currentTarget); }} oncontextmenu={event => { if (onhidden) { event.preventDefault(); menuOpen = true; } }} onkeydown={event => { if (!compact && event.key === "Enter") { event.preventDefault(); onopen?.(event.currentTarget); } }} draggable={!!ondragstart} {ondragstart} {ondragend}>
+  <button type="button" class="photo-image" bind:this={imageButton} aria-label={`${compact ? "Show" : "Select"} ${photo.name}`} aria-pressed={compact ? undefined : selected} aria-current={compact && selected ? "true" : undefined} onpointerdown={event => pointerType = event.pointerType} onpointercancel={() => { lastClick = undefined; tapCancelled = true; pointerType = undefined; }} onclick={clickImage} ondblclick={doubleClickImage} oncontextmenu={event => { if (onhidden) { event.preventDefault(); menuOpen = true; } }} onkeydown={event => { if (!compact && event.key === "Enter") { event.preventDefault(); onopen?.(event.currentTarget); } }} draggable={!!ondragstart} {ondragstart} {ondragend}>
     {#if url}
       <img src={url} alt={photo.name} draggable="false" onerror={() => { url = ""; failed = true; }} />
     {:else}
@@ -55,7 +100,7 @@
   {#if onhidden}
     <div class="photo-menu"><Menu bind:open={menuOpen} align="end"><MenuTrigger ariaLabel={`Actions for ${photo.name}`}>•••</MenuTrigger><MenuContent ariaLabel="Photo actions"><MenuItem onselect={onhidden}>{hidden ? "Unhide" : "Hide"}</MenuItem></MenuContent></Menu></div>
   {/if}
-  <button type="button" class="open-photo" aria-label={`Open ${photo.name}`} onclick={event => onopen?.(event.currentTarget)}>Open</button>
+  <button type="button" class="open-photo kit-sr-only" aria-label={`Open ${photo.name}`} onclick={event => onopen?.(event.currentTarget)}>Open</button>
   {/if}
   {#if failed}<button type="button" class="retry-preview" aria-label={compact ? `Retry preview for ${photo.name}` : undefined} onclick={() => { if (compact) imageButton?.focus({preventScroll:true}); retry++; }}>{#if compact}<RotateCcw size={14} aria-hidden="true" />{:else}Retry preview{/if}</button>{/if}
 </div>
@@ -63,16 +108,14 @@
 <style>
   .photo-cell { position: relative; height: 100%; background: var(--bg-inset); border-radius: var(--radius-sm); overflow: hidden; }
   .photo-cell.selected { outline: 3px solid var(--accent-blue); outline-offset: -3px; }
-  .photo-image { display: block; width: 100%; height: 100%; padding: 0; border: 0; background: transparent; cursor: pointer; color: var(--text-muted); }
+  .photo-image { display: block; width: 100%; height: 100%; padding: 0; border: 0; background: transparent; cursor: pointer; color: var(--text-muted); touch-action: manipulation; }
   .photo-image:focus-visible { outline: 3px solid var(--accent-blue); outline-offset: -3px; }
   img { display: block; width: 100%; height: 100%; object-fit: cover; }
   .placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; height: 100%; font-size: var(--font-size-xs); }
   .pending { background: var(--bg-surface-hover); }
   .photo-menu { position: absolute; top: 8px; right: 8px; }
   .photo-check { position: absolute; top: 8px; left: 8px; display: flex; }
-  .open-photo { position: absolute; bottom: 8px; right: 8px; padding: 4px 8px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-surface); color: var(--text-primary); opacity: 0; }
-  .photo-cell:hover .open-photo, .photo-cell:focus-within .open-photo { opacity: 1; }
-  @media (pointer: coarse) { .open-photo { opacity: 1; } }
+  .open-photo:focus-visible { position: absolute; bottom: 8px; right: 8px; width: auto; height: auto; margin: 0; padding: 4px 8px; overflow: visible; clip-path: none; white-space: normal; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-surface); color: var(--text-primary); }
   .retry-preview { position: absolute; bottom: 8px; left: 8px; background: var(--bg-surface); color: var(--text-primary); border: 1px solid var(--border-default); border-radius: var(--radius-sm); padding: 4px 8px; font-size: var(--font-size-xs); }
   .compact .retry-preview { bottom: 2px; left: 2px; display: flex; padding: 3px; }
 </style>
