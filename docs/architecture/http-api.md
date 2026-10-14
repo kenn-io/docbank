@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-13
+last_edited: 2026-10-14
 title: HTTP API
 description: The agent-first HTTP API: filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
 ---
@@ -828,9 +828,11 @@ Semantic and hybrid search revalidate the complete result set after query
 embedding, including lexical matches without embeddings. Trashed or replaced
 candidates are removed, current paths are refreshed, result ranks are renumbered, and
 coverage is captured at that final check. Removal sets `truncated: true`.
-Mixed-lane evidence pins the earliest node revision; a revision drift removes
-that candidate rather than failing the report. Inconsistent evidence within one
-lane remains an error.
+Each candidate must keep its current content version and still cite current
+evidence. A file-name match also requires the node's name to be unchanged, so a
+rename removes it. A tag edit or other metadata change keeps the candidate. A
+move between the lexical and semantic lane reads keeps the candidate under its
+current path.
 Consumers still check visibility immediately before displaying a result.
 See [Automatic and processing search](../usage/search.md) for the consumer contract.
 

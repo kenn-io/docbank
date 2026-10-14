@@ -339,10 +339,12 @@ func SearchNeedsQuery(query string, opts SearchOptions) bool {
 }
 
 // SearchCandidateIdentity identifies one current scoped head for a final
-// retrieval fence without retaining any query or document text.
+// retrieval fence without retaining any query or document text. NodeName is
+// the name that node_name evidence matched; a rename invalidates that evidence.
+// Other node changes, such as tag edits, leave the content evidence valid.
 type SearchCandidateIdentity struct {
 	NodeID           int64
-	NodeRevision     int64
+	NodeName         string
 	ContentVersionID string
 	Evidence         []SearchEvidenceIdentity
 }
@@ -385,7 +387,7 @@ type SearchEvidenceIdentity struct {
 
 type searchCandidateRevalidationJSON struct {
 	NodeID           int64                    `json:"node_id"`
-	NodeRevision     int64                    `json:"node_revision"`
+	NodeName         string                   `json:"node_name"`
 	ContentVersionID string                   `json:"version_id"`
 	Evidence         []SearchEvidenceIdentity `json:"evidence"`
 }
@@ -500,22 +502,23 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 		rows, queryErr := tx.QueryContext(ctx, `WITH requested AS (
 			SELECT CAST(key AS INTEGER) AS position,
 			       CAST(json_extract(value,'$.node_id') AS INTEGER) AS node_id,
-			       CAST(json_extract(value,'$.node_revision') AS INTEGER) AS node_revision,
+			       json_extract(value,'$.node_name') AS node_name,
 			       json_extract(value,'$.version_id') AS version_id,
 			       json_extract(value,'$.evidence') AS evidence
 			FROM json_each(?)
 		), scoped AS (
-			SELECT requested.position,requested.node_id,requested.version_id,requested.evidence,cv.blob_hash
+			SELECT requested.position,requested.node_id,requested.version_id,requested.evidence,cv.blob_hash,
+			       requested.node_name,n.name AS current_name
 			FROM requested JOIN nodes n ON n.id=requested.node_id
 			JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=n.current_version_id
 			 AND cv.version_id=requested.version_id
-			WHERE n.kind='file' AND n.revision=requested.node_revision AND n.trashed_at IS NULL `+filterSQL+`
+			WHERE n.kind='file' AND n.trashed_at IS NULL `+filterSQL+`
 		)
 		SELECT scoped.position FROM scoped
 		WHERE NOT EXISTS (
 			SELECT 1 FROM json_each(scoped.evidence) evidence
 			WHERE CASE json_extract(evidence.value,'$.kind')
-			WHEN 'node_name' THEN 0
+			WHEN 'node_name' THEN scoped.current_name IS NOT scoped.node_name
 			WHEN 'content_blob' THEN NOT (
 				COALESCE(json_extract(evidence.value,'$.blob_hash'),'')<>'' AND
 				json_extract(evidence.value,'$.blob_hash')=scoped.blob_hash)

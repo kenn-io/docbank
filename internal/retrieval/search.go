@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path"
 	"reflect"
 	"slices"
 	"strings"
@@ -169,26 +170,15 @@ func (searcher *Searcher) revalidateReport(ctx context.Context, query Query, rep
 	requested := make([]store.SearchCandidateIdentity, len(report.Results))
 	for i, result := range report.Results {
 		evidence := make([]store.SearchEvidenceIdentity, len(result.Evidence))
-		var nodeRevision int64
 		for j, reference := range result.Evidence {
-			if j == 0 {
-				nodeRevision = reference.NodeRevision
-			}
-			if reference.NodeRevision != nodeRevision {
-				if result.LexicalRank == 0 || result.SemanticRank == 0 {
-					return Report{}, errors.New("search result evidence spans node revisions")
-				}
-				// Fusion can join lanes read on opposite sides of query encoding.
-				// Pin the oldest revision so the store drops a drifted candidate.
-				nodeRevision = min(nodeRevision, reference.NodeRevision)
-			}
 			evidence[j] = store.SearchEvidenceIdentity{Kind: reference.Kind,
 				VectorSpaceID: reference.VectorSpaceID, EmbeddingSetID: reference.EmbeddingSetID,
 				InputGenerationID: reference.InputGenerationID, InputID: reference.InputID,
 				InputKind: reference.InputKind, BuildID: reference.BuildID, SegmentID: reference.SegmentID,
 				BlobHash: reference.BlobHash, SourceManifestChecksum: reference.SourceManifestChecksum}
 		}
-		requested[i] = store.SearchCandidateIdentity{NodeID: result.Document.NodeID, NodeRevision: nodeRevision,
+		// Lane paths were read with their evidence, so the base is the matched name.
+		requested[i] = store.SearchCandidateIdentity{NodeID: result.Document.NodeID, NodeName: path.Base(result.Path),
 			ContentVersionID: result.Document.ContentVersionID, Evidence: evidence}
 	}
 	semanticProfile, semanticBinding := "", ""

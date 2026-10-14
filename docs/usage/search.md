@@ -53,9 +53,8 @@ the shapes apart, or pass `--mode lexical` to always get the ordinary report.
 
 After semantic retrieval, the daemon revalidates the complete report against
 current live versions, including unembedded lexical matches. A match trashed or
-replaced during query embedding is removed; moved ancestor paths are refreshed.
-A both-lane match whose node revision drifts is removed instead of failing the
-report, including when a tag edit leaves its path and content version unchanged.
+replaced during query embedding is removed, and moved paths are refreshed. A
+file-name match is removed when the file is renamed. A tag edit keeps the match.
 Removed candidates make the report `truncated`, and surviving result ranks and coverage
 reflect the final check. This applies to automatic and explicit semantic/hybrid
 search, including when expansion and reranking are disabled.

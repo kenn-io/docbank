@@ -611,6 +611,18 @@ func TestFuseReciprocalRankPreservesExactLaneContributions(t *testing.T) {
 		"equal RRF scores use stable document identity, never raw lane score")
 }
 
+func TestFuseReciprocalRankKeepsLexicalPathAfterConcurrentMove(t *testing.T) {
+	t.Parallel()
+
+	shared := DocumentIdentity{VaultID: "vault", NodeID: 7, ContentVersionID: "version-a"}
+	results, _, err := FuseReciprocalRank(
+		[]Candidate{{Document: shared, Lane: LaneLexical, Rank: 1, Path: "/before/report.pdf"}},
+		[]Candidate{{Document: shared, Lane: LaneSemantic, Rank: 1, VectorSpaceID: "space", Path: "/after/renamed.pdf"}}, 1)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, "/before/report.pdf", results[0].Path)
+}
+
 func TestFuseReciprocalRankRejectsMixedSemanticVectorSpaces(t *testing.T) {
 	t.Parallel()
 

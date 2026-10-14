@@ -89,10 +89,11 @@ func TestHybridSearcherUsesRealStoreBindingAuthority(t *testing.T) {
 
 func TestHybridSearchRevalidatesUnembeddedMatchesAfterQueryEmbedding(t *testing.T) {
 	t.Parallel()
-	for _, change := range []string{"trashed", "replaced", "ancestor moved", "indexed tagged"} {
+	for _, change := range []string{"trashed", "replaced", "ancestor moved", "indexed tagged", "indexed renamed"} {
 		t.Run(change, func(t *testing.T) {
 			query := "race"
-			if change == "indexed tagged" {
+			indexedChange := strings.HasPrefix(change, "indexed ")
+			if indexedChange {
 				query = "synthetic"
 			}
 			fixture, fake, worker, request := newRealEmbeddingWorker(t, document.EmbeddingInputOriginalFile)
@@ -162,6 +163,10 @@ func TestHybridSearchRevalidatesUnembeddedMatchesAfterQueryEmbedding(t *testing.
 				tag, tagErr := fixture.catalog.CreateTag(t.Context(), "race-tag")
 				require.NoError(t, tagErr)
 				_, err = fixture.catalog.AssignTag(t.Context(), tag.ID, indexed.ID, indexed.Revision)
+			case "indexed renamed":
+				indexed, lookupErr := fixture.catalog.NodeByPath(t.Context(), "/synthetic.png")
+				require.NoError(t, lookupErr)
+				_, _, err = fixture.catalog.Move(t.Context(), indexed.ID, fixture.catalog.RootID(), "renamed.png", indexed.Revision)
 			case "ancestor moved":
 				parent, err = fixture.catalog.NodeByID(t.Context(), parent.ID)
 				require.NoError(t, err)
@@ -179,7 +184,7 @@ func TestHybridSearchRevalidatesUnembeddedMatchesAfterQueryEmbedding(t *testing.
 					switch change {
 					case "ancestor moved":
 						assert.Equal(t, "/after/change.txt", hit.Path)
-					case "indexed tagged":
+					case "indexed tagged", "indexed renamed":
 						assert.Equal(t, "/before/change.txt", hit.Path)
 					}
 				} else if hit.Document.NodeID == kept.ID {
@@ -188,10 +193,11 @@ func TestHybridSearchRevalidatesUnembeddedMatchesAfterQueryEmbedding(t *testing.
 					foundSemantic = true
 				}
 			}
-			assert.Equal(t, change == "ancestor moved" || change == "indexed tagged", foundChanging)
+			assert.Equal(t, change == "ancestor moved" || indexedChange, foundChanging)
 			assert.True(t, foundKept, "unchanged unembedded lexical match must survive")
-			assert.Equal(t, change != "indexed tagged", foundSemantic, "only the revised both-lane match must be removed")
-			assert.Equal(t, change != "ancestor moved", result.report.Truncated)
+			assert.Equal(t, change != "indexed renamed", foundSemantic,
+				"a tag edit keeps the both-lane match; a rename invalidates its name evidence")
+			assert.Equal(t, change != "ancestor moved" && change != "indexed tagged", result.report.Truncated)
 		})
 	}
 }
