@@ -508,6 +508,14 @@ that used either profile:
   transcripts as uncovered until they are processed again. Transcript reads and
   lexical search still return the earlier evidence.
 
+WAV and MP3 inspection previously capped every profile's source limit at
+1 GiB. A custom processing profile with `max_document_bytes` above 1 GiB now
+inspects WAV and MP3 sources under its own limit, up to 4 GiB. Its profile
+fingerprint and consent are unchanged. WAV or MP3 work that such a profile
+queued before the upgrade fails when the worker reaches it, because its
+inspection record no longer matches. Plan it again and retry; the new plan
+creates a fresh job.
+
 The daemon also registers two local media profiles. `supplied-transcript`
 processes supplied WAV and MP3 transcript text as untimed evidence.
 `supplied-captions` processes supplied SubRip captions for WAV, MP3, and MP4
