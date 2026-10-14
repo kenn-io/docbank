@@ -99,13 +99,18 @@ func (f *documentInspectionFixture) publish(t *testing.T, catalog *store.Store,
 
 func (f *documentInspectionFixture) assertNoProcessingJobs(t *testing.T) {
 	t.Helper()
+	assertNoProcessingJobs(t, f.root, "inspection must not enqueue processing")
+}
+
+func assertNoProcessingJobs(t *testing.T, root, message string) {
+	t.Helper()
 	// Call only while the synthetic vault's daemon and setup store are closed.
-	db, err := store.DefaultSQLiteDriver().Open(filepath.Join(f.root, "docbank.db"),
-		sqlite.OpenOptions{Access: sqlite.ReadOnlyImmutable})
+	db, err := store.DefaultSQLiteDriver().Open(filepath.Join(root, "docbank.db"),
+		sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Deferred})
 	require.NoError(t, err)
 	defer func() { require.NoError(t, db.Close()) }()
 	var jobs int
 	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT
 		(SELECT COUNT(*) FROM rendition_jobs) + (SELECT COUNT(*) FROM embedding_jobs)`).Scan(&jobs))
-	require.Zero(t, jobs, "inspection must not enqueue processing")
+	require.Zero(t, jobs, message)
 }
