@@ -4,6 +4,16 @@ import * as jobs from "./jobs.js";
 import type { Job } from "./generated/docbank.js";
 import JobsDrawer from "./JobsDrawer.svelte";
 
+const jobFixture = (fields: Partial<Job>): Job => ({
+  name: "storage:a",
+  status: "running",
+  started_at: "2026-07-23T12:00:00Z",
+  controllable: false,
+  paused: false,
+  can_set_concurrency: false,
+  ...fields,
+});
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
@@ -38,15 +48,7 @@ describe("background jobs drawer", () => {
       "populated lane controls",
       200,
       {
-        items: [
-          {
-            name: "storage:import",
-            kind: "photo_import",
-            operation_id: "import",
-            status: "running",
-            started_at: "2026-07-23T12:00:00Z",
-          },
-        ],
+        items: [jobFixture({ name: "storage:import", kind: "photo_import", operation_id: "import" })],
         lane_controls_error: "Lane controls are unavailable",
       },
       "Lane controls are unavailable",
@@ -326,16 +328,12 @@ describe("background jobs drawer", () => {
       const placeId = "0b9d8f43-6f0e-4b4a-9d55-2f1c5b2b7c11";
       const items: Job[] = [
         {
-          name: `storage:${id}`,
-          kind: "photo_import",
-          operation_id: id,
-          status: "running",
-          started_at: "2026-07-23T12:00:00Z",
+          ...jobFixture({ name: `storage:${id}`, kind: "photo_import", operation_id: id }),
           completed_objects: 75,
           total_objects: 300,
           can_cancel: true,
         },
-        {
+        jobFixture({
           name: "storage:b",
           kind: "photo_import",
           operation_id: "b",
@@ -343,29 +341,20 @@ describe("background jobs drawer", () => {
           started_at: "2026-07-23T12:00:20Z",
           total_objects: 1,
           can_cancel: true,
-        },
-        {
+        }),
+        jobFixture({
           name: "storage:checkout",
           kind: "photo_checkout",
           operation_id: "checkout",
-          status: "running",
           started_at: "2026-07-23T12:00:30Z",
           completed_objects: 1,
           total_objects: 2,
-        },
+        }),
         {
-          name: `storage:${placeId}`,
-          kind: "place",
-          operation_id: placeId,
-          status: "queued",
-          started_at: "2026-07-23T12:01:00Z",
+          ...jobFixture({ name: `storage:${placeId}`, kind: "place", operation_id: placeId, status: "queued", started_at: "2026-07-23T12:01:00Z" }),
           can_cancel: true,
         },
-        {
-          name: "watch:inbox",
-          status: "running",
-          started_at: "2026-07-23T11:00:00Z",
-        },
+        jobFixture({ name: "watch:inbox", started_at: "2026-07-23T11:00:00Z" }),
       ];
       const preparedLanes: ReturnType<typeof jobs.jobLanes> = [
         {

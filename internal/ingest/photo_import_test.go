@@ -82,7 +82,12 @@ func TestPhotoImportDiscovery(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, candidates, 3)
 		assert.Equal(t, int64(2), unsupported)
-		assert.ElementsMatch(t, []string{keep, linkTarget, hidden}, []string{candidates[0].Path, candidates[1].Path, candidates[2].Path})
+		expected := []string{keep, linkTarget, hidden}
+		for i, path := range expected {
+			expected[i], err = filepath.EvalSymlinks(path)
+			require.NoError(t, err)
+		}
+		assert.ElementsMatch(t, expected, []string{candidates[0].Path, candidates[1].Path, candidates[2].Path})
 	})
 }
 

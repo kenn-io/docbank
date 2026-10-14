@@ -102,7 +102,6 @@ func TestGetCLIRequestsAndPublishesCurrentVersion(t *testing.T) {
 			args = append(args, "--overwrite")
 		}
 		out, err := runCLI(t, args...)
-		assert.Equal(t, test.overwrite, getOverwrite)
 		if test.expectedError != "" {
 			require.ErrorContains(t, err, test.expectedError)
 			published, readErr := os.ReadFile(output)

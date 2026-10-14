@@ -259,7 +259,7 @@ func validatePhotoFileMetadataRecord(v metadataPhotoFile) error {
 	if v.Revision < 1 {
 		return errors.New("invalid photo file revision")
 	}
-	values := PhotoAuthored{Rating: v.Rating, Flag: v.Flag, Label: v.Label, Caption: v.Caption, Creator: v.Creator, Copyright: v.Copyright, Rotation: v.Rotation}
+	values := PhotoAuthored{Confirmed: v.Confirmed, Rating: v.Rating, Flag: v.Flag, Label: v.Label, Caption: v.Caption, Creator: v.Creator, Copyright: v.Copyright, Rotation: v.Rotation}
 	if err := ValidatePhotoAuthored(values); err != nil {
 		return err
 	}

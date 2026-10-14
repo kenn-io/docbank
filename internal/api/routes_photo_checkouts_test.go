@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -44,7 +45,11 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &created))
 	require.Equal(t, request.Selection, created.Checkout.Selection)
 	require.Equal(t, request.ByteLimit, created.Checkout.ByteLimit)
-	require.Equal(t, request.Destination, created.Checkout.Destination)
+	requestedDestination, err := os.Stat(request.Destination)
+	require.NoError(t, err)
+	returnedDestination, err := os.Stat(created.Checkout.Destination)
+	require.NoError(t, err)
+	require.True(t, os.SameFile(requestedDestination, returnedDestination))
 	registered := supervisor.Snapshot()
 	require.Len(t, registered, 1)
 	require.Equal(t, "storage:"+created.Operation.ID, registered[0].Name)
