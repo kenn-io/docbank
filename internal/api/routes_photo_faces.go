@@ -18,6 +18,7 @@ type CreatePhotoFaceRequest struct {
 }
 
 type PhotoPersonAssertion struct {
+	PhotoMark        bool   `json:"photo_mark,omitzero"`
 	AssertionID      string `json:"assertion_id" format:"uuid"`
 	ContentVersionID string `json:"content_version_id" format:"uuid"`
 	PersonID         string `json:"person_id" format:"uuid"`
@@ -29,7 +30,7 @@ type PhotoPersonAssertion struct {
 }
 
 func photoAssertion(assertion store.PersonDocumentAssertion) PhotoPersonAssertion {
-	return PhotoPersonAssertion{AssertionID: assertion.AssertionID, ContentVersionID: assertion.ContentVersionID, PersonID: assertion.PersonID, Role: assertion.Role, Action: assertion.Action, Note: assertion.Note, RecordedAt: assertion.RecordedAt, Revision: assertion.Revision}
+	return PhotoPersonAssertion{PhotoMark: assertion.PhotoMark, AssertionID: assertion.AssertionID, ContentVersionID: assertion.ContentVersionID, PersonID: assertion.PersonID, Role: assertion.Role, Action: assertion.Action, Note: assertion.Note, RecordedAt: assertion.RecordedAt, Revision: assertion.Revision}
 }
 
 type PhotoFaceResult struct {

@@ -193,6 +193,9 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 		if _, err := tx.ExecContext(ctx, `UPDATE photo_faces SET assertion_id=(SELECT keep.assertion_id FROM person_document_assertions old JOIN person_document_assertions keep ON keep.person_id=? AND keep.content_version_id=old.content_version_id AND keep.role=old.role AND keep.action=old.action WHERE old.assertion_id=photo_faces.assertion_id) WHERE assertion_id IN (SELECT old.assertion_id FROM person_document_assertions old JOIN person_document_assertions keep ON keep.person_id=? AND keep.content_version_id=old.content_version_id AND keep.role=old.role AND keep.action=old.action WHERE old.person_id=?)`, survivorID, survivorID, absorbedID); err != nil {
 			return err
 		}
+		if _, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET photo_mark=1,revision=revision+1 WHERE person_id=? AND photo_mark=0 AND EXISTS(SELECT 1 FROM person_document_assertions other WHERE other.person_id=? AND other.content_version_id=person_document_assertions.content_version_id AND other.role=person_document_assertions.role AND other.photo_mark=1)`, survivorID, absorbedID); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM person_document_assertions WHERE person_id=? AND EXISTS(
 			SELECT 1 FROM person_document_assertions keep WHERE keep.person_id=?
 			AND keep.content_version_id=person_document_assertions.content_version_id
@@ -306,7 +309,7 @@ func collectPersonExternalUIDsTx(ctx context.Context, tx *sql.Tx, personID strin
 }
 
 func collectPersonMergeDeduplicatedAssertionsTx(ctx context.Context, tx *sql.Tx, survivorID, absorbedID string) (_ []PersonMergeDeduplicatedAssertion, retErr error) {
-	rows, err := tx.QueryContext(ctx, `SELECT a.assertion_id,a.content_version_id,a.person_id,a.role,a.action,a.note,a.recorded_at,a.revision,k.assertion_id
+	rows, err := tx.QueryContext(ctx, `SELECT a.assertion_id,a.content_version_id,a.person_id,a.role,a.action,a.note,a.recorded_at,a.revision,a.photo_mark,k.assertion_id
 		FROM person_document_assertions a JOIN person_document_assertions k
 		ON k.person_id=? AND k.content_version_id=a.content_version_id AND k.role=a.role AND (k.action=a.action OR k.action='withdrawn' OR a.action='withdrawn')
 		WHERE a.person_id=? ORDER BY a.assertion_id`, survivorID, absorbedID)
@@ -318,7 +321,7 @@ func collectPersonMergeDeduplicatedAssertionsTx(ctx context.Context, tx *sql.Tx,
 	for rows.Next() {
 		var value PersonMergeDeduplicatedAssertion
 		a := &value.Assertion
-		if err := rows.Scan(&a.AssertionID, &a.ContentVersionID, &a.PersonID, &a.Role, &a.Action, &a.Note, &a.RecordedAt, &a.Revision, &value.RetainedAssertionID); err != nil {
+		if err := rows.Scan(&a.AssertionID, &a.ContentVersionID, &a.PersonID, &a.Role, &a.Action, &a.Note, &a.RecordedAt, &a.Revision, &a.PhotoMark, &value.RetainedAssertionID); err != nil {
 			return nil, err
 		}
 		values = append(values, value)

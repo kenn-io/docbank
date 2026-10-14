@@ -39,6 +39,7 @@ type CandidateDecision struct {
 }
 
 type PersonDocumentAssertion struct {
+	PhotoMark                                                               bool `json:"PhotoMark,omitzero"`
 	AssertionID, ContentVersionID, PersonID, Role, Action, Note, RecordedAt string
 	Revision                                                                int64
 }
@@ -273,19 +274,22 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDec
 		if candidate.Revision != decision.ExpectedRevision {
 			return ErrStaleRevision
 		}
-		if candidate.Reason == "face_match" {
-			occurrences, e := decodeStoredCandidateEvidence(candidate.Evidence)
-			if e != nil {
-				return e
+		var occurrences []PersonCandidateOccurrence
+		if candidate.Reason == "face_match" || decision.Action != "reject" {
+			occurrences, err = decodeStoredCandidateEvidence(candidate.Evidence)
+			if err != nil {
+				return err
 			}
+		}
+		if candidate.Reason == "face_match" {
 			for _, o := range occurrences {
-				if e = s.facePhotoQuery(ctx, tx, o.ContentVersionID); e != nil {
+				if e := s.facePhotoQuery(ctx, tx, o.ContentVersionID); e != nil {
 					return e
 				}
-				if e = requireFaceOccurrenceTx(ctx, tx, o); e != nil {
+				if e := requireFaceOccurrenceTx(ctx, tx, o); e != nil {
 					return e
 				}
-				if _, e = tx.ExecContext(ctx, `UPDATE photo_faces SET revision=revision+1 WHERE face_id=?`, o.EvidenceID); e != nil {
+				if _, e := tx.ExecContext(ctx, `UPDATE photo_faces SET revision=revision+1 WHERE face_id=?`, o.EvidenceID); e != nil {
 					return e
 				}
 			}
@@ -301,10 +305,6 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDec
 			return err
 		}
 		if personID != "" {
-			occurrences, err := decodeStoredCandidateEvidence(candidate.Evidence)
-			if err != nil {
-				return err
-			}
 			err = materializeCandidateAssertionsTx(ctx, tx, personID, occurrences)
 			if err != nil {
 				return err
@@ -342,6 +342,7 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDec
 }
 
 func (s *Store) AssertDocumentPerson(ctx context.Context, assertion PersonDocumentAssertion) (PersonDocumentAssertion, error) {
+	assertion.PhotoMark = assertion.Role == "depicted" && assertion.Action == "assert"
 	if err := validatePersonAssertion(assertion); err != nil {
 		return PersonDocumentAssertion{}, err
 	}
@@ -363,14 +364,19 @@ func (s *Store) AssertDocumentPerson(ctx context.Context, assertion PersonDocume
 		existing, err := personAssertionByIdentityTx(ctx, tx, assertion.ContentVersionID, assertion.PersonID, assertion.Role)
 		switch {
 		case err == nil:
+			if existing.Action == "withdrawn" && assertion.Action != "withdrawn" {
+				if err := requirePhotoAssertionCapacity(ctx, tx, assertion.ContentVersionID, assertion.Role); err != nil {
+					return err
+				}
+			}
 			if assertion.AssertionID != "" && assertion.AssertionID != existing.AssertionID {
 				return ErrInvalidPerson
 			}
 			if assertion.Revision != existing.Revision {
 				return ErrStaleRevision
 			}
-			result, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET action=?,note=?,revision=revision+1 WHERE assertion_id=? AND revision=?`,
-				assertion.Action, assertion.Note, existing.AssertionID, existing.Revision)
+			result, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET action=?,note=?,photo_mark=?,revision=revision+1 WHERE assertion_id=? AND revision=?`,
+				assertion.Action, assertion.Note, assertion.Role == "depicted" && assertion.Action == "assert", existing.AssertionID, existing.Revision)
 			if err != nil {
 				return err
 			}
@@ -406,6 +412,9 @@ func (s *Store) AssertDocumentPerson(ctx context.Context, assertion PersonDocume
 			return err
 		}
 		if assertion.Role == "depicted" {
+			if _, err = tx.ExecContext(ctx, `UPDATE person_document_assertions SET photo_mark=? WHERE assertion_id=?`, assertion.Action == "assert", assertion.AssertionID); err != nil {
+				return err
+			}
 			if _, err = tx.ExecContext(ctx, `UPDATE photo_faces SET revision=revision+1 WHERE assertion_id=?`, assertion.AssertionID); err != nil {
 				return err
 			}
@@ -428,14 +437,14 @@ func (s *Store) DocumentPersonAssertions(ctx context.Context, contentVersionID s
 	if validateUUIDv4(contentVersionID) != nil {
 		return nil, ErrInvalidPerson
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision FROM person_document_assertions WHERE content_version_id=? ORDER BY role,person_id,assertion_id`, contentVersionID)
+	rows, err := s.db.QueryContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision,photo_mark FROM person_document_assertions WHERE content_version_id=? ORDER BY role,person_id,assertion_id`, contentVersionID)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
 	assertions := make([]PersonDocumentAssertion, 0)
 	for rows.Next() {
-		assertion, err := scanPersonAssertion(rows)
+		assertion, err := scanMarkedPersonAssertion(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -445,6 +454,9 @@ func (s *Store) DocumentPersonAssertions(ctx context.Context, contentVersionID s
 }
 
 func validatePersonAssertion(assertion PersonDocumentAssertion) error {
+	if assertion.PhotoMark && (assertion.Role != "depicted" || assertion.Action != "assert") {
+		return ErrInvalidPerson
+	}
 	if assertion.AssertionID != "" && validateUUIDv4(assertion.AssertionID) != nil {
 		return ErrInvalidPerson
 	}
@@ -490,11 +502,6 @@ func materializeCandidateAssertionsTx(
 	ctx context.Context, tx *sql.Tx, personID string, occurrences []PersonCandidateOccurrence,
 ) error {
 	for _, occurrence := range occurrences {
-		if occurrence.EvidenceKind == "face" {
-			if err := requireFaceOccurrenceTx(ctx, tx, occurrence); err != nil {
-				return err
-			}
-		}
 		if err := requireCandidateVersionTx(ctx, tx, occurrence.ContentVersionID); errors.Is(err, ErrNotFound) {
 			continue
 		} else if err != nil {
@@ -569,17 +576,24 @@ func scanPersonCandidate(row scanner) (PersonMatchCandidate, error) {
 }
 
 func personAssertionByIdentityTx(ctx context.Context, tx *sql.Tx, versionID, personID, role string) (PersonDocumentAssertion, error) {
-	return scanPersonAssertion(tx.QueryRowContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision FROM person_document_assertions WHERE content_version_id=? AND person_id=? AND role=?`, versionID, personID, role))
+	return scanMarkedPersonAssertion(tx.QueryRowContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision,photo_mark FROM person_document_assertions WHERE content_version_id=? AND person_id=? AND role=?`, versionID, personID, role))
 }
 
 func personAssertionByIDTx(ctx context.Context, tx *sql.Tx, assertionID string) (PersonDocumentAssertion, error) {
-	return scanPersonAssertion(tx.QueryRowContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision FROM person_document_assertions WHERE assertion_id=?`, assertionID))
+	return scanMarkedPersonAssertion(tx.QueryRowContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision,photo_mark FROM person_document_assertions WHERE assertion_id=?`, assertionID))
 }
 
+// Projection rebuilds also read released schemas without photo ownership metadata.
 func scanPersonAssertion(row scanner) (PersonDocumentAssertion, error) {
 	var assertion PersonDocumentAssertion
+	err := row.Scan(&assertion.AssertionID, &assertion.ContentVersionID, &assertion.PersonID, &assertion.Role, &assertion.Action, &assertion.Note, &assertion.RecordedAt, &assertion.Revision)
+	return assertion, err
+}
+
+func scanMarkedPersonAssertion(row scanner) (PersonDocumentAssertion, error) {
+	var assertion PersonDocumentAssertion
 	err := row.Scan(&assertion.AssertionID, &assertion.ContentVersionID, &assertion.PersonID, &assertion.Role,
-		&assertion.Action, &assertion.Note, &assertion.RecordedAt, &assertion.Revision)
+		&assertion.Action, &assertion.Note, &assertion.RecordedAt, &assertion.Revision, &assertion.PhotoMark)
 	return assertion, err
 }
 
@@ -587,6 +601,9 @@ func ensurePersonAssertionTx(ctx context.Context, tx *sql.Tx, versionID, personI
 	existing, err := personAssertionByIdentityTx(ctx, tx, versionID, personID, role)
 	if err == nil {
 		if existing.Action == "withdrawn" {
+			if err := requirePhotoAssertionCapacity(ctx, tx, versionID, role); err != nil {
+				return PersonDocumentAssertion{}, false, err
+			}
 			if _, err = tx.ExecContext(ctx, `UPDATE person_document_assertions SET action='assert',revision=revision+1 WHERE assertion_id=?`, existing.AssertionID); err != nil {
 				return PersonDocumentAssertion{}, false, err
 			}

@@ -4482,6 +4482,7 @@ export interface PhotoPersonAssertion {
   content_version_id: string;
   note: string;
   person_id: string;
+  photo_mark?: boolean;
   recorded_at: string;
   revision: number;
   role: string;

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json/v2"
@@ -79,13 +80,13 @@ func (s *Store) faceDecisionStateTx(ctx context.Context, tx *sql.Tx, versionID s
 	if err != nil {
 		return state, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision FROM person_document_assertions WHERE content_version_id=? AND role='depicted' AND person_id IN (SELECT value FROM json_each(?)) ORDER BY assertion_id`, versionID, personIDsJSON(personIDs))
+	rows, err := tx.QueryContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision,photo_mark FROM person_document_assertions WHERE content_version_id=? AND role='depicted' AND person_id IN (SELECT value FROM json_each(?)) ORDER BY assertion_id`, versionID, personIDsJSON(personIDs))
 	if err != nil {
 		return state, err
 	}
 	for rows.Next() {
 		var a PersonDocumentAssertion
-		if err = rows.Scan(&a.AssertionID, &a.ContentVersionID, &a.PersonID, &a.Role, &a.Action, &a.Note, &a.RecordedAt, &a.Revision); err != nil {
+		if err = rows.Scan(&a.AssertionID, &a.ContentVersionID, &a.PersonID, &a.Role, &a.Action, &a.Note, &a.RecordedAt, &a.Revision, &a.PhotoMark); err != nil {
 			_ = rows.Close()
 			return state, err
 		}
@@ -95,7 +96,7 @@ func (s *Store) faceDecisionStateTx(ctx context.Context, tx *sql.Tx, versionID s
 	if err != nil {
 		return state, err
 	}
-	rows, err = tx.QueryContext(ctx, `SELECT candidate_id FROM person_match_candidates c WHERE ? AND state IN ('open','rejected') AND reason='face_match' AND EXISTS(SELECT 1 FROM person_candidate_faces e WHERE e.candidate_id=c.candidate_id AND e.face_id=?) ORDER BY candidate_id`, includeCandidates, faceID)
+	rows, err = tx.QueryContext(ctx, `SELECT c.candidate_id FROM person_candidate_faces e JOIN person_match_candidates c ON c.candidate_id=e.candidate_id WHERE ? AND e.face_id=? AND c.state IN ('open','rejected') AND c.reason='face_match' ORDER BY c.candidate_id`, includeCandidates, faceID)
 	if err != nil {
 		return state, err
 	}
@@ -248,7 +249,15 @@ func (s *Store) DecidePhotoFace(ctx context.Context, versionID string, request P
 		}
 		personIDs := []string{}
 		if request.PersonID != "" {
-			request.PersonID, err = resolveActiveCandidatePersonTx(ctx, tx, request.PersonID)
+			if request.Action == "withdraw_rejection" {
+				var exists bool
+				err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM persons WHERE person_id=?)`, request.PersonID).Scan(&exists)
+				if err == nil && !exists {
+					return ErrNotFound
+				}
+			} else {
+				request.PersonID, err = resolveActiveCandidatePersonTx(ctx, tx, request.PersonID)
+			}
 			if err != nil {
 				return err
 			}
@@ -289,7 +298,7 @@ func (s *Store) DecidePhotoFace(ctx context.Context, versionID string, request P
 				if _, err = tx.ExecContext(ctx, `UPDATE persons SET key_face_id=NULL,revision=revision+1,updated_at=? WHERE key_face_id=?`, nowRFC3339(), face.FaceID); err != nil {
 					return err
 				}
-				if _, err = tx.ExecContext(ctx, `UPDATE person_document_assertions SET action='withdrawn',revision=revision+1 WHERE assertion_id=? AND NOT EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=person_document_assertions.assertion_id)`, face.AssertionID); err != nil {
+				if _, err = tx.ExecContext(ctx, `UPDATE person_document_assertions SET action='withdrawn',revision=revision+1 WHERE assertion_id=? AND photo_mark=0 AND NOT EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=person_document_assertions.assertion_id)`, face.AssertionID); err != nil {
 					return err
 				}
 			}
@@ -429,6 +438,49 @@ func (s *Store) UndoPhotoFaceDecisionWithOperationID(ctx context.Context, id, op
 		if currentHash != afterHash {
 			return ErrStaleRevision
 		}
+		// Unchanged shared assertions are absent from the original receipt. Capture
+		// detached dependencies now so reconciliation is itself fenced and undoable.
+		var detached []string
+		var attached []string
+		for i, f := range r.After.Faces {
+			old := r.Before.Faces[i].AssertionID
+			if f.AssertionID == old {
+				continue
+			}
+			if f.AssertionID != "" {
+				detached = append(detached, f.AssertionID)
+			}
+			if old != "" {
+				attached = append(attached, old)
+			}
+			for _, assertionID := range []string{f.AssertionID, old} {
+				if assertionID == "" {
+					continue
+				}
+				a, e := personAssertionByIDTx(ctx, tx, assertionID)
+				if e != nil {
+					return e
+				}
+				if assertionID == old {
+					resolved, e := resolveActiveCandidatePersonTx(ctx, tx, a.PersonID)
+					if e != nil {
+						return e
+					}
+					if resolved != a.PersonID || a.Action == "suppress" {
+						return ErrStaleRevision
+					}
+					if a.Action == "withdrawn" {
+						if e := requirePhotoAssertionCapacity(ctx, tx, a.ContentVersionID, a.Role); e != nil {
+							return e
+						}
+					}
+				}
+				if !slices.ContainsFunc(current.Assertions, func(v PersonDocumentAssertion) bool { return v.AssertionID == assertionID }) {
+					current.Assertions = append(current.Assertions, a)
+				}
+			}
+		}
+		slices.SortFunc(current.Assertions, func(a, b PersonDocumentAssertion) int { return cmp.Compare(a.AssertionID, b.AssertionID) })
 		for i, f := range r.Before.Faces {
 			if f.Revision == r.After.Faces[i].Revision {
 				continue
@@ -441,7 +493,7 @@ func (s *Store) UndoPhotoFaceDecisionWithOperationID(ctx context.Context, id, op
 			if a.Revision == r.After.Assertions[i].Revision {
 				continue
 			}
-			if _, err = tx.ExecContext(ctx, `UPDATE person_document_assertions SET action=CASE WHEN ?='withdrawn' AND EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=person_document_assertions.assertion_id) THEN 'assert' ELSE ? END,revision=revision+1 WHERE assertion_id=?`, a.Action, a.Action, a.AssertionID); err != nil {
+			if _, err = tx.ExecContext(ctx, `UPDATE person_document_assertions SET action=CASE WHEN ?='withdrawn' AND EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=person_document_assertions.assertion_id) THEN 'assert' ELSE ? END,photo_mark=?,revision=revision+1 WHERE assertion_id=?`, a.Action, a.Action, a.PhotoMark, a.AssertionID); err != nil {
 				return err
 			}
 		}
@@ -461,6 +513,16 @@ func (s *Store) UndoPhotoFaceDecisionWithOperationID(ctx context.Context, id, op
 				return err
 			}
 		}
+		for _, assertionID := range detached {
+			if _, err = tx.ExecContext(ctx, `UPDATE person_document_assertions SET action='withdrawn',revision=revision+1 WHERE assertion_id=? AND photo_mark=0 AND action='assert' AND NOT EXISTS(SELECT 1 FROM photo_faces WHERE assertion_id=?)`, assertionID, assertionID); err != nil {
+				return err
+			}
+		}
+		for _, assertionID := range attached {
+			if _, err = tx.ExecContext(ctx, `UPDATE person_document_assertions SET action='assert',revision=revision+1 WHERE assertion_id=? AND action='withdrawn'`, assertionID); err != nil {
+				return err
+			}
+		}
 		if err = advancePersonBindingEpochForVersionTx(ctx, tx, r.After.VersionID); err != nil {
 			return err
 		}
@@ -469,7 +531,7 @@ func (s *Store) UndoPhotoFaceDecisionWithOperationID(ctx context.Context, id, op
 				return err
 			}
 		}
-		after, err := faceDecisionRowsTx(ctx, tx, r.After)
+		after, err := faceDecisionRowsTx(ctx, tx, current)
 		if err != nil {
 			return err
 		}
@@ -506,7 +568,7 @@ func validateFaceDecisionReceipt(r PhotoFaceDecisionReceipt, id string) error {
 			}
 			b.Revision = 1
 		}
-		if validatePersonAssertion(a) != nil || validatePersonAssertion(b) != nil || a.Role != "depicted" || b.Role != a.Role || b.AssertionID != a.AssertionID || a.ContentVersionID != r.After.VersionID || b.ContentVersionID != a.ContentVersionID || b.PersonID != a.PersonID || b.Note != a.Note || b.RecordedAt != a.RecordedAt || i > 0 && r.After.Assertions[i-1].AssertionID >= a.AssertionID {
+		if validatePersonAssertion(a) != nil || validatePersonAssertion(b) != nil || a.Role != "depicted" || b.Role != a.Role || b.AssertionID != a.AssertionID || a.ContentVersionID != r.After.VersionID || b.ContentVersionID != a.ContentVersionID || b.PersonID != a.PersonID || b.Note != a.Note || b.PhotoMark != a.PhotoMark || b.RecordedAt != a.RecordedAt || i > 0 && r.After.Assertions[i-1].AssertionID >= a.AssertionID {
 			return ErrInvalidPhotoFace
 		}
 	}
@@ -603,7 +665,7 @@ func (s *Store) personFaceDetailTx(ctx context.Context, tx *sql.Tx, id string, p
 	} else if err != nil {
 		return nil, "", false, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT pa.assertion_id,pa.content_version_id,pa.person_id,pa.role,pa.action,pa.note,pa.recorded_at,pa.revision,COALESCE(member.role,''),n.id,n.name,COALESCE(cv.mime_type,'') FROM person_document_assertions pa JOIN content_versions cv ON cv.version_id=pa.content_version_id JOIN nodes n ON n.id=cv.node_id LEFT JOIN photo_files member ON member.node_id=n.id LEFT JOIN photo_assets asset ON asset.asset_id=member.asset_id WHERE pa.person_id=? AND pa.assertion_id>? AND n.trashed_at IS NULL AND (pa.role<>'depicted' OR (asset.kind='photo' AND asset.excluded_at IS NULL AND n.kind='file' AND member.role IN ('image','raw'))) AND `+visible+` ORDER BY pa.assertion_id`, id, page.After)
+	rows, err := tx.QueryContext(ctx, `SELECT pa.assertion_id,pa.content_version_id,pa.person_id,pa.role,pa.action,pa.note,pa.recorded_at,pa.revision,pa.photo_mark,COALESCE(member.role,''),n.id,n.name,COALESCE(cv.mime_type,'') FROM person_document_assertions pa JOIN content_versions cv ON cv.version_id=pa.content_version_id JOIN nodes n ON n.id=cv.node_id LEFT JOIN photo_files member ON member.node_id=n.id LEFT JOIN photo_assets asset ON asset.asset_id=member.asset_id WHERE pa.person_id=? AND pa.assertion_id>? AND n.trashed_at IS NULL AND (pa.role<>'depicted' OR (asset.kind='photo' AND asset.excluded_at IS NULL AND n.kind='file' AND member.role IN ('image','raw'))) AND `+visible+` ORDER BY pa.assertion_id`, id, page.After)
 	if err != nil {
 		return nil, "", false, err
 	}
@@ -613,7 +675,7 @@ func (s *Store) personFaceDetailTx(ctx context.Context, tx *sql.Tx, id string, p
 		var a PersonDocumentAssertion
 		var role string
 		var node Node
-		if e := rows.Scan(&a.AssertionID, &a.ContentVersionID, &a.PersonID, &a.Role, &a.Action, &a.Note, &a.RecordedAt, &a.Revision, &role, &node.ID, &node.Name, &node.MimeType); e != nil {
+		if e := rows.Scan(&a.AssertionID, &a.ContentVersionID, &a.PersonID, &a.Role, &a.Action, &a.Note, &a.RecordedAt, &a.Revision, &a.PhotoMark, &role, &node.ID, &node.Name, &node.MimeType); e != nil {
 			_ = rows.Close()
 			return nil, "", false, e
 		}

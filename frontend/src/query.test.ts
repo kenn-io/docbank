@@ -12,6 +12,16 @@ import {
 } from "./query.js";
 
 describe("query identity", () => {
+	 it("preserves normalized person filters", () => {
+		const first = "00000000-0000-4000-8000-000000000001";
+		const second = "00000000-0000-4000-8000-000000000002";
+		const value = parseQuery(JSON.stringify({ filters: { person_ids: [second, first, second] } }));
+		expect(value.filters.person_ids).toEqual([first, second]);
+		expect(parseQuery(canonicalQuery(value)).filters.person_ids).toEqual([first, second]);
+		expect(canonicalQuery(parseQuery('{"filters":{"person_ids":null}}'))).toBe(canonicalQuery(parseQuery('{}')));
+		expect(() => parseQuery('{"filters":{"person_ids":["invalid"]}}')).toThrow();
+		expect(() => parseQuery(JSON.stringify({ filters: { person_ids: Array.from({length:65}, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`) } }))).toThrow();
+	 });
   for (const vector of fixture.queries) {
     it(vector.name, async () => {
       const value = parseQuery(vector.input_json);

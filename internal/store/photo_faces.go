@@ -109,13 +109,13 @@ func (s *Store) PhotoFaces(ctx context.Context, versionID string) ([]PhotoFace, 
 		if err != nil {
 			return err
 		}
-		rows, err := tx.QueryContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision FROM person_document_assertions WHERE content_version_id=? AND role='depicted' AND (action='assert' OR EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=person_document_assertions.assertion_id)) ORDER BY person_id,assertion_id LIMIT ?`, versionID, document.MaxPhotoRecordsPerVersion+1)
+		rows, err := tx.QueryContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision,photo_mark FROM person_document_assertions WHERE content_version_id=? AND role='depicted' AND (action='assert' OR EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=person_document_assertions.assertion_id)) ORDER BY person_id,assertion_id LIMIT ?`, versionID, document.MaxPhotoRecordsPerVersion+1)
 		if err != nil {
 			return err
 		}
 		defer func() { _ = rows.Close() }()
 		for rows.Next() {
-			assertion, err := scanPersonAssertion(rows)
+			assertion, err := scanMarkedPersonAssertion(rows)
 			if err != nil {
 				return err
 			}
@@ -248,6 +248,14 @@ func (s *Store) MarkPersonInPhoto(ctx context.Context, versionID, personID strin
 		}
 		var err error
 		assertion, err = assertDepictedPersonTx(ctx, tx, versionID, personID)
+		if err == nil && !assertion.PhotoMark {
+			_, err = tx.ExecContext(ctx, `UPDATE person_document_assertions SET photo_mark=1,revision=revision+1 WHERE assertion_id=?`, assertion.AssertionID)
+			if err == nil {
+				assertion.PhotoMark = true
+				assertion.Revision++
+				err = advancePersonBindingEpochForVersionTx(ctx, tx, versionID)
+			}
+		}
 		return err
 	})
 	return assertion, err
@@ -256,7 +264,7 @@ func (s *Store) MarkPersonInPhoto(ctx context.Context, versionID, personID strin
 func validatePhotoFaceReferences(ctx context.Context, q metadataQuerier) error {
 	var invalid bool
 	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_faces f LEFT JOIN content_versions v ON v.version_id=f.content_version_id LEFT JOIN person_document_assertions a ON a.assertion_id=f.assertion_id WHERE v.version_id IS NULL OR (f.assertion_id IS NOT NULL AND (a.assertion_id IS NULL OR NOT (a.content_version_id=f.content_version_id AND a.role='depicted'))))
- OR EXISTS(SELECT 1 FROM person_document_assertions WHERE role='depicted' GROUP BY content_version_id HAVING COUNT(*)>?)
+ OR EXISTS(SELECT 1 FROM person_document_assertions WHERE role='depicted' AND action<>'withdrawn' GROUP BY content_version_id HAVING COUNT(*)>?)
  OR EXISTS(SELECT 1 FROM photo_faces GROUP BY content_version_id HAVING COUNT(*)>?)`, document.MaxPhotoRecordsPerVersion, document.MaxPhotoRecordsPerVersion).Scan(&invalid)
 	if err != nil {
 		return fmt.Errorf("checking face references: %w", err)
@@ -272,7 +280,7 @@ func requirePhotoAssertionCapacity(ctx context.Context, q metadataQuerier, versi
 		return nil
 	}
 	var count int
-	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_document_assertions WHERE content_version_id=? AND role='depicted'`, versionID).Scan(&count); err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_document_assertions WHERE content_version_id=? AND role='depicted' AND action<>'withdrawn'`, versionID).Scan(&count); err != nil {
 		return err
 	}
 	if count >= document.MaxPhotoRecordsPerVersion {

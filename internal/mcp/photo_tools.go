@@ -129,6 +129,24 @@ func getPhotoFaces(ctx context.Context, lease *daemonLease, raw []byte) (photoFa
 	if end < total {
 		output.NextOffset = new(end)
 	}
+	// Leave room for both the structured data and its escaped text copy.
+	const pageBudget = maxToolResponseBytes/3 - 8<<10
+	for {
+		encoded, err := json.Marshal(output)
+		if err != nil {
+			return photoFacesToolOutput{}, err
+		}
+		if len(encoded) <= pageBudget {
+			break
+		}
+		if end-start <= 1 {
+			return photoFacesToolOutput{}, errToolResultTooLarge
+		}
+		end--
+		output.Faces = output.Faces[:min(end-start, len(output.Faces))]
+		output.Assertions = output.Assertions[:min(end-start, len(output.Assertions))]
+		output.NextOffset = new(end)
+	}
 	return output, nil
 }
 

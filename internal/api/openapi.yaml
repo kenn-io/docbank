@@ -12443,6 +12443,8 @@ components:
         person_id:
           format: uuid
           type: string
+        photo_mark:
+          type: boolean
         recorded_at:
           type: string
         revision:

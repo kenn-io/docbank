@@ -912,6 +912,7 @@ func photoPersonAssertionSchema() schema {
 
 func personAssertionSchema() schema {
 	return objectSchema(schema{
+		"photo_mark":         booleanSchema(),
 		"assertion_id":       uuidSchema(),
 		"content_version_id": uuidSchema(),
 		"person_id":          uuidSchema(),
