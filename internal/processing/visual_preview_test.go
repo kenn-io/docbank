@@ -1,6 +1,7 @@
 package processing
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
@@ -17,6 +18,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"runtime"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -619,6 +622,7 @@ func TestProduceVisualPreviewKeepsImageReadErrorsRetryable(t *testing.T) {
 		failReadAt      int64
 	}{
 		{name: "jpeg", mediaType: "image/jpeg", data: mediatest.JPEG(3, 2, color.White), failAtSeeks: []int{3, 4}},
+		{name: "oversize jpeg", mediaType: "image/jpeg", data: syntheticVisualJPEGDC(t, 10008, 10008, true, 0), failAtSeeks: []int{3, 5}},
 		{name: "png", mediaType: "image/png", data: pngSource, failAtSeeks: []int{3, 4}},
 		{name: "png after IDAT", mediaType: "image/png", data: trailingPNG, failAtSeeks: []int{4}, failReadAt: failReadAt},
 		{name: "gif", mediaType: "image/gif", data: mediatest.GIF(3, 2, 1), failAtSeeks: []int{2, 3}},
@@ -921,4 +925,195 @@ func (r *failingVisualPreviewReadSeeker) Seek(offset int64, whence int) (int64, 
 		r.startSeeks++
 	}
 	return position, err //nolint:wrapcheck // The test double preserves Seeker error identity.
+}
+
+//nolint:paralleltest // Measures allocations without concurrent preview producers.
+func TestProduceVisualPreviewDownscalesOversizedJPEG(t *testing.T) {
+	for _, progressive := range []bool{true, false} {
+		t.Run(strconv.FormatBool(progressive), func(t *testing.T) {
+			source := syntheticVisualJPEGDC(t, 10008, 10008, progressive, 0)
+			digest := sha256.Sum256(source)
+			recipe, err := VisualPreviewRecipeForSize("grid")
+			require.NoError(t, err)
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			product, err := ProduceVisualPreviewForRecipe(t.Context(), bytes.NewReader(source), VisualPreviewTarget{
+				SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(source)), MediaType: "image/jpeg",
+			}, recipe)
+			runtime.ReadMemStats(&after)
+			require.NoError(t, err)
+			require.Equal(t, document.VisualPreviewReady, product.Preview.State)
+			require.NotNil(t, product.Preview.Output)
+			assert.Equal(t, 512, product.Preview.Output.Width)
+			assert.Equal(t, 512, product.Preview.Output.Height)
+			assert.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(32<<20))
+			decoded, err := jpeg.Decode(bytes.NewReader(product.Output))
+			require.NoError(t, err)
+			assert.Equal(t, image.Rect(0, 0, 512, 512), decoded.Bounds())
+		})
+	}
+}
+
+func TestVisualPreviewJPEGDCBlockMeans(t *testing.T) {
+	t.Parallel()
+	gray := image.NewGray(image.Rect(0, 0, 37, 29))
+	ycbcr := image.NewYCbCr(gray.Bounds(), image.YCbCrSubsampleRatio420)
+	for y := range 29 {
+		for x := range 37 {
+			gray.Pix[gray.PixOffset(x, y)] = byte(40 + 17*(x/8) + 23*(y/8))
+			ycbcr.Y[ycbcr.YOffset(x, y)] = gray.GrayAt(x, y).Y
+			i := ycbcr.COffset(x, y)
+			ycbcr.Cb[i], ycbcr.Cr[i] = byte(100+9*(x/16)), byte(100+13*(y/16))
+		}
+	}
+	progressive, err := os.ReadFile("testdata/visual-preview-progressive.jpg")
+	require.NoError(t, err)
+	for _, test := range []struct {
+		name string
+		img  image.Image
+		data []byte
+	}{
+		{name: "gray", img: gray},
+		{name: "420", img: ycbcr},
+		{name: "progressive refinement", data: progressive},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			source := test.data
+			if test.img != nil {
+				var buffer bytes.Buffer
+				require.NoError(t, jpeg.Encode(&buffer, test.img, &jpeg.Options{Quality: 90}))
+				source = buffer.Bytes()
+			}
+			full, err := jpeg.Decode(bytes.NewReader(source))
+			require.NoError(t, err)
+			reduced, err := decodeVisualPreviewJPEGDC(bufio.NewReader(bytes.NewReader(source)))
+			require.NoError(t, err)
+			assert.Equal(t, image.Rect(0, 0, 5, 4), reduced.Bounds())
+			if fullGray, ok := full.(*image.Gray); ok {
+				reducedGray, ok := reduced.(*image.Gray)
+				require.True(t, ok)
+				assertVisualJPEGDCMeans(t, fullGray.Pix, fullGray.Stride, 37, 29, reducedGray.Pix)
+			} else {
+				fullYCbCr, ok := full.(*image.YCbCr)
+				require.True(t, ok)
+				reducedYCbCr, ok := reduced.(*image.YCbCr)
+				require.True(t, ok)
+				assertVisualJPEGDCMeans(t, fullYCbCr.Y, fullYCbCr.YStride, 37, 29, reducedYCbCr.Y)
+				cw, ch := 37, 29
+				if fullYCbCr.SubsampleRatio == image.YCbCrSubsampleRatio420 {
+					cw, ch = 19, 15
+				}
+				assertVisualJPEGDCMeans(t, fullYCbCr.Cb, fullYCbCr.CStride, cw, ch, reducedYCbCr.Cb)
+				assertVisualJPEGDCMeans(t, fullYCbCr.Cr, fullYCbCr.CStride, cw, ch, reducedYCbCr.Cr)
+			}
+		})
+	}
+}
+
+func assertVisualJPEGDCMeans(t *testing.T, full []byte, stride, width, height int, reduced []byte) {
+	t.Helper()
+	for y := range (height + 7) / 8 {
+		for x := range (width + 7) / 8 {
+			sum, count := 0, 0
+			for yy := y * 8; yy < min(y*8+8, height); yy++ {
+				for xx := x * 8; xx < min(x*8+8, width); xx++ {
+					sum += int(full[yy*stride+xx])
+					count++
+				}
+			}
+			assert.InDelta(t, float64(sum)/float64(count), reduced[y*((width+7)/8)+x], 2)
+		}
+	}
+}
+
+func TestVisualPreviewJPEGDCRestartsAndFailures(t *testing.T) {
+	t.Parallel()
+	for _, progressive := range []bool{false, true} {
+		source := syntheticVisualJPEGDC(t, 37, 29, progressive, 3)
+		decoded, err := decodeVisualPreviewJPEGDC(bufio.NewReader(bytes.NewReader(source)))
+		require.NoError(t, err)
+		gray, ok := decoded.(*image.Gray)
+		require.True(t, ok)
+		assert.Equal(t, bytes.Repeat([]byte{128}, 20), gray.Pix)
+	}
+	source := syntheticVisualJPEGDC(t, 10008, 10008, true, 0)
+	truncated := source[:len(source)/3]
+	arithmetic := bytes.Clone(source)
+	frame := bytes.Index(arithmetic, []byte{0xff, 0xc2})
+	require.Positive(t, frame)
+	arithmetic[frame+1] = 0xc9
+	for _, test := range []struct {
+		name  string
+		data  []byte
+		state document.VisualPreviewState
+		code  string
+	}{
+		{"truncated", truncated, document.VisualPreviewFailed, "decode_failed"},
+		{"arithmetic", arithmetic, document.VisualPreviewUnsupported, "unsupported_jpeg_feature"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			digest := sha256.Sum256(test.data)
+			product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(test.data), VisualPreviewTarget{
+				SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(test.data)), MediaType: "image/jpeg",
+			})
+			require.NoError(t, err)
+			assert.Equal(t, test.state, product.Preview.State)
+			require.NotNil(t, product.Preview.Failure)
+			assert.Equal(t, test.code, product.Preview.Failure.Code)
+		})
+	}
+}
+
+func syntheticVisualJPEGDC(t *testing.T, width, height int, progressive bool, restart int) []byte {
+	t.Helper()
+	source := []byte{0xff, 0xd8}
+	segment := func(marker byte, payload []byte) {
+		source = append(source, 0xff, marker, byte((len(payload)+2)>>8), byte(len(payload)+2))
+		source = append(source, payload...)
+	}
+	quant := append([]byte{0}, bytes.Repeat([]byte{1}, 64)...)
+	segment(0xdb, quant)
+	frame := []byte{8, byte(height >> 8), byte(height), byte(width >> 8), byte(width), 1, 1, 0x11, 0}
+	marker := byte(0xc0)
+	if progressive {
+		marker = 0xc2
+	}
+	segment(marker, frame)
+	for _, table := range []byte{0, 0x10} {
+		// One one-bit code, zero, represents a zero DC difference or AC EOB.
+		segment(0xc4, append([]byte{table, 1}, make([]byte, 16)...))
+	}
+	if restart > 0 {
+		segment(0xdd, []byte{byte(restart >> 8), byte(restart)})
+	}
+	blocks := ((width + 7) / 8) * ((height + 7) / 8)
+	entropy := func(bitsPerBlock int) {
+		remaining, rst := blocks, byte(0)
+		for remaining > 0 {
+			n := remaining
+			if restart > 0 {
+				n = min(n, restart)
+			}
+			bits := n * bitsPerBlock
+			source = append(source, make([]byte, bits/8)...)
+			if bits%8 != 0 {
+				source = append(source, byte((1<<(8-bits%8))-1))
+			}
+			remaining -= n
+			if remaining > 0 {
+				source = append(source, 0xff, 0xd0+rst)
+				rst = (rst + 1) % 8
+			}
+		}
+	}
+	if progressive {
+		segment(0xda, []byte{1, 1, 0, 0, 0, 0})
+		entropy(1)
+		segment(0xda, []byte{1, 1, 0, 1, 63, 0})
+		entropy(1)
+	} else {
+		segment(0xda, []byte{1, 1, 0, 0, 63, 0})
+		entropy(2)
+	}
+	return append(source, 0xff, 0xd9)
 }

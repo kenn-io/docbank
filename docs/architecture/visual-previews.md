@@ -122,10 +122,12 @@ WebP inputs apply bounded EXIF orientation.
 Animated WebP remains unsupported by the built-in decoder.
 
 Accepted images scale without upscaling to the selected recipe's maximum edge
-and encode as a quality-90 JPEG. The decoded source image must have positive
-dimensions and no more than 100,000,000 pixels. A larger image records
-`failed` with `source_dimensions_exceed_limit`. For camera RAW files, this
-limit applies to the embedded JPEG being decoded.
+and encode as a quality-90 JPEG. Source dimensions must be positive. JPEGs above
+100,000,000 pixels decode at one-eighth scale per edge using block averages,
+including progressive JPEGs. Fit and large previews stay at most that size.
+Larger PNG, GIF, and WebP sources record `failed` with
+`source_dimensions_exceed_limit`. For camera RAW files, this limit applies to
+the embedded JPEG being decoded.
 
 Malformed source bytes become a durable `failed` result. Unsupported media
 types, decoder features, and color models become a durable `unsupported`
