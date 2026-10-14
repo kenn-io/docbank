@@ -457,7 +457,7 @@ Vault-wide hidden credentials use fixed Argon2id parameters. Failure timestamps 
 
 The `confirmed_fields` bit mask records supplied rating (1), flag (2), label (4), caption (8), creator (16), copyright (32) and rotation (64), including empty clears. Sidecar initialization confirms only non-default values; undo, audit and backup retain the mask. A revision-1 file has no decisions, so restore refuses one with authored values or confirmation bits.
 
-Schema version 35 exports assets, files, settings, albums, album members, receipts, and faces in stable
+Schema version 36 exports assets, files, settings, albums, album members, receipts, and faces in stable
 JSONL order. Restore requires a pristine target and validates node ownership,
 local pointers, sidecar targets, selected display state, enum-like text,
 revisions, complete non-null authored receipt snapshots, and the graph before commit.
