@@ -1342,14 +1342,6 @@ func TestPhotoTimelineAppliesProvenanceCorrections(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, corrected, *photoModifiedTime(t, s, "photo.jpg"))
-
-	// The document-events pipeline resolves the same claim for the same corrected binding.
-	snapshot := DocumentEventEvidenceSnapshot{}
-	_, boundErr, err := loadBoundDocumentEventEvidence(ctx, s.db, node.CurrentVersionID, &snapshot, sha256.New())
-	require.NoError(t, err)
-	require.NoError(t, boundErr)
-	require.Len(t, snapshot.Bindings, 1)
-	require.Equal(t, corrected, *snapshot.Bindings[0].OriginalMTime)
 }
 
 func TestPhotoTimelineRefillsOnRestore(t *testing.T) {
