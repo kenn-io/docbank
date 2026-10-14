@@ -33,7 +33,7 @@ it("removes a delayed direct-link photo fragment on tab switch without history.b
   finish(Response.json({ configured: true }));
 });
 
-it("signing in while hidden then pagehide sends one lock", async () => {
+it("locks once when sign-in completes after the Photos tab was hidden", async () => {
   history.replaceState(null, "", "/photos/hidden");
   storage();
   let finish!: (response: Response) => void;
@@ -52,6 +52,7 @@ it("signing in while hidden then pagehide sends one lock", async () => {
   await fireEvent(document, new Event("visibilitychange"));
   finish(Response.json({ enabled: true, session: { token: "synthetic", upload_secret: "proof" } }));
   await screen.findByRole("button", { name: "Sign out" });
+  await waitFor(() => expect(locks).toBe(1));
   await fireEvent(window, new Event("pagehide"));
   await waitFor(() => expect(locks).toBe(1));
 });
@@ -139,14 +140,16 @@ it.each(["hide", "close", "Documents after Photos", "Documents only", "failed lo
     }
     if (url.endsWith("/photos/hidden")) return Response.json({ configured: true });
     if (url.endsWith("/photos/assets/query")) return Response.json({ items: [photo(1)], total: 1 });
-    if (url.includes("/nodes/1")) return Response.json({ id: 1, kind: "dir", name: "", revision: 1, path: "/" });
+    const root = { id: 1, kind: "dir", name: "", revision: 1, path: "/" };
+    if (url.includes("/children")) return Response.json({ directory: root, items: [], total: 0 });
+    if (url.includes("/nodes/1") || url.startsWith("/api/v1/path")) return Response.json(root);
     return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
   });
   stubPhotoFetch(fetcher);
   render(App);
   if (mode === "Documents only") await screen.findByRole("button", { name: "Photos" });
   else await screen.findByRole("button", { name: "Select Photo 1.jpg" });
-  if (mode === "Documents after Photos") await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
+  if (mode === "Documents after Photos" || mode === "failed lock") await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
   const visibility = vi.spyOn(document, "visibilityState", "get");
   if (mode !== "close") {
     visibility.mockReturnValue("hidden");
@@ -161,7 +164,8 @@ it.each(["hide", "close", "Documents after Photos", "Documents only", "failed lo
   await fireEvent(document, new Event("visibilitychange"));
   await fireEvent(window, new Event("pageshow"));
   if (mode === "failed lock") {
-    await screen.findByText("Hidden did not lock. Lock unavailable");
+    expect(location.pathname).toBe("/");
+    expect((await screen.findByText("Hidden did not lock. Lock unavailable")).getAttribute("role")).toBe("alert");
     await fireEvent.click(screen.getByRole("button", { name: "Retry lock" }));
     await waitFor(() => expect(screen.queryByText("Hidden did not lock. Lock unavailable")).toBeNull());
     expect(locks).toBe(2);

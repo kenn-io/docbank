@@ -221,6 +221,7 @@
     document.addEventListener("visibilitychange", visibility);
     window.addEventListener("pagehide", pagehide);
     window.addEventListener("pageshow", resume);
+    if (document.visibilityState === "hidden") leave();
     return () => {
       document.removeEventListener("visibilitychange", visibility);
       window.removeEventListener("pagehide", pagehide);
@@ -2377,8 +2378,8 @@
       {/snippet}
     </TopBar>
 
+    {#if hiddenAccess?.lockError}<div class="photo-access-error"><p role="alert">Hidden did not lock. {hiddenAccess.lockError}</p><Button onclick={() => void (hiddenWorkspace ? hiddenWorkspace.lock() : hiddenAccess?.lock())}>Retry lock</Button></div>{/if}
     {#if photoMode}
-      {#if hiddenAccess?.lockError}<div class="photo-access-error"><p role="alert">Hidden did not lock. {hiddenAccess.lockError}</p><Button onclick={() => void (hiddenWorkspace ? hiddenWorkspace.lock() : hiddenAccess?.lock())}>Retry lock</Button></div>{/if}
       {#if hiddenMode && hiddenAccess}<HiddenPhotos access={hiddenAccess} bind:this={hiddenWorkspace} {photoID} onphotochange={changePhoto} onconceal={clearPhoto} onstate={result => { void acceptPhotoAccess(result).catch(cause => { void invalidateLibrary(); photoAccessError = cause instanceof Error ? cause.message : String(cause); }); }} onaccessfailure={invalidateLibrary} ontrashed={() => { handleTrashed(); void hiddenWorkspace?.refresh(); }} onunhidden={() => { void invalidateLibrary(); void hiddenWorkspace?.refresh(); }} onactionerror={error => hiddenPhotoActionError = error} photoActionError={hiddenPhotoActionError} />{:else if photoValidated && photoState}
       {#if hiddenPhotoActionError}<p role="alert">{hiddenPhotoActionError}</p>{/if}
       {#if photoPath === "/photos/albums"}{#if photoAlbums}<PhotoAlbumsIndex albums={photoAlbums} cache={photoState.cache} onnavigate={navigatePhotos} />{/if}
