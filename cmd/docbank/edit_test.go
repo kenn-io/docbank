@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/packagetest"
 )
 
 func TestEditCreatesVersionAndSkipsUnchangedContent(t *testing.T) {
@@ -229,7 +230,7 @@ func TestMain(m *testing.M) {
 	}
 	// In-process daemons here must never reach PostHog.
 	posthog.DisableProcess()
-	os.Exit(m.Run())
+	os.Exit(packagetest.RunWithLockRegistry(m))
 }
 
 func runEditHelper() int {

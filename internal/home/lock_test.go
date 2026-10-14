@@ -9,7 +9,8 @@ import (
 )
 
 func TestOwnershipTransitionIsPrivateAndHierarchyWide(t *testing.T) {
-	isolateTargetLockRegistry(t)
+	registry := t.TempDir()
+	t.Setenv("DOCBANK_LOCK_DIR", registry)
 	base := t.TempDir()
 	firstPath := filepath.Join(base, "customer-visible-vault-name")
 	secondPath := filepath.Join(base, "other-vault")
@@ -37,7 +38,7 @@ func TestOwnershipTransitionIsPrivateAndHierarchyWide(t *testing.T) {
 	require.NoError(t, err, "disjoint parent hierarchies must remain independent")
 	require.NoError(t, disjoint.Release())
 
-	entries, err := os.ReadDir(targetLockRegistryTestBase)
+	entries, err := os.ReadDir(registry)
 	require.NoError(t, err)
 	require.NotEmpty(t, entries)
 	for _, entry := range entries {
@@ -118,40 +119,37 @@ func TestOwnershipTransitionExcludesOrdinaryAcquisition(t *testing.T) {
 }
 
 func TestOwnershipTransitionRejectsRegistryInsideSource(t *testing.T) {
-	require.Empty(t, targetLockRegistryTestBase,
-		"target-lock registry tests must not run in parallel")
-	source := filepath.Join(t.TempDir(), "vault")
-	require.NoError(t, os.Mkdir(source, 0o700))
-	targetLockRegistryTestBase = filepath.Join(source, "state", "target-locks")
-	t.Cleanup(func() { targetLockRegistryTestBase = "" })
+	for _, tc := range []struct {
+		name   string
+		exists bool
+	}{
+		{name: "existing", exists: true},
+		{name: "missing"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := filepath.Join(t.TempDir(), "vault")
+			if tc.exists {
+				require.NoError(t, os.Mkdir(source, 0o700))
+			}
+			registry := filepath.Join(source, "state", "target-locks")
+			t.Setenv("DOCBANK_LOCK_DIR", registry)
 
-	transition, err := (Layout{Root: source}).TryLockOwnershipTransition()
-	if transition != nil {
-		t.Cleanup(func() { _ = transition.Release() })
+			transition, err := (Layout{Root: source}).TryLockOwnershipTransition()
+			if transition != nil {
+				t.Cleanup(func() { _ = transition.Release() })
+			}
+
+			require.Nil(t, transition)
+			require.ErrorContains(t, err, "lock registry")
+			if tc.exists {
+				require.NoDirExists(t, registry,
+					"rejecting a movable registry must not mutate the source")
+			} else {
+				require.NoDirExists(t, source,
+					"rejecting a movable registry must not recreate a missing source")
+			}
+		})
 	}
-
-	require.Nil(t, transition)
-	require.ErrorContains(t, err, "lock registry")
-	require.NoDirExists(t, targetLockRegistryTestBase,
-		"rejecting a movable registry must not mutate the source")
-}
-
-func TestOwnershipTransitionRejectsRegistryInsideMissingSource(t *testing.T) {
-	require.Empty(t, targetLockRegistryTestBase,
-		"target-lock registry tests must not run in parallel")
-	source := filepath.Join(t.TempDir(), "missing-vault")
-	targetLockRegistryTestBase = filepath.Join(source, "state", "target-locks")
-	t.Cleanup(func() { targetLockRegistryTestBase = "" })
-
-	transition, err := (Layout{Root: source}).TryLockOwnershipTransition()
-	if transition != nil {
-		t.Cleanup(func() { _ = transition.Release() })
-	}
-
-	require.Nil(t, transition)
-	require.ErrorContains(t, err, "lock registry")
-	require.NoDirExists(t, source,
-		"rejecting a movable registry must not recreate a missing source")
 }
 
 func TestOwnershipReplacementExcludesLegacyAcquisitionThroughRename(t *testing.T) {
@@ -371,7 +369,6 @@ func TestOpenAndLockExclusiveOwnsTargetThatAppearsBeforeScan(t *testing.T) {
 }
 
 func TestTryLockLaunchDoesNotCreateVaultRoot(t *testing.T) {
-	isolateTargetLockRegistry(t)
 	target := filepath.Join(t.TempDir(), "missing", "vault")
 	lock, err := (Layout{Root: target}).TryLockLaunch()
 	require.NoError(t, err)
@@ -384,7 +381,6 @@ func TestTryLockLaunchDoesNotCreateVaultRoot(t *testing.T) {
 }
 
 func TestTryLockLaunchUsesFilesystemIdentityForAliases(t *testing.T) {
-	isolateTargetLockRegistry(t)
 	base := t.TempDir()
 	realParent := filepath.Join(base, "real")
 	alias := filepath.Join(base, "alias")
@@ -402,7 +398,6 @@ func TestTryLockLaunchUsesFilesystemIdentityForAliases(t *testing.T) {
 }
 
 func TestTryLockLaunchRemainsStableWhenVaultAppears(t *testing.T) {
-	isolateTargetLockRegistry(t)
 	base := t.TempDir()
 	target := filepath.Join(base, "new", "vault")
 	lock, err := (Layout{Root: target}).TryLockLaunch()
@@ -416,7 +411,6 @@ func TestTryLockLaunchRemainsStableWhenVaultAppears(t *testing.T) {
 }
 
 func TestTryLockLaunchSerializesDifferentVaults(t *testing.T) {
-	isolateTargetLockRegistry(t)
 	base := t.TempDir()
 	first, err := (Layout{Root: filepath.Join(base, "one")}).TryLockLaunch()
 	require.NoError(t, err)
@@ -424,14 +418,6 @@ func TestTryLockLaunchSerializesDifferentVaults(t *testing.T) {
 	_, err = (Layout{Root: filepath.Join(base, "two")}).TryLockLaunch()
 	require.ErrorIs(t, err, ErrVaultLocked,
 		"the short-lived per-user launch lock must serialize all daemon starters")
-}
-
-func isolateTargetLockRegistry(t *testing.T) {
-	t.Helper()
-	require.Empty(t, targetLockRegistryTestBase,
-		"launch-lock tests must not run in parallel")
-	targetLockRegistryTestBase = t.TempDir()
-	t.Cleanup(func() { targetLockRegistryTestBase = "" })
 }
 
 func TestOpenLaunchOutputStaysOutsideVault(t *testing.T) {
@@ -446,18 +432,18 @@ func TestOpenLaunchOutputStaysOutsideVault(t *testing.T) {
 }
 
 func TestTargetLockRegistryIgnoresProcessHomeEnvironment(t *testing.T) {
-	before, err := targetLockRegistryDir()
+	t.Setenv("DOCBANK_LOCK_DIR", "")
+	before, err := targetLockRegistryPath()
 	require.NoError(t, err)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	after, err := targetLockRegistryDir()
+	after, err := targetLockRegistryPath()
 	require.NoError(t, err)
 	require.Equal(t, before, after)
 }
 
 func TestExplicitTargetLockDirectory(t *testing.T) {
-	require.Empty(t, targetLockRegistryTestBase)
 	registry := filepath.Join(t.TempDir(), "locks")
 	t.Setenv("DOCBANK_LOCK_DIR", registry)
 	t.Setenv("HOME", filepath.Join(t.TempDir(), "unavailable"))
