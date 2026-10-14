@@ -132,10 +132,20 @@ Resolution requires complete gap coverage across the entire document. Every
 ordered gap in the text map must be fully masked, even away from a selected
 rectangle. An unordered gap requires masks covering its whole page. Any
 uncovered gap rejects the resolve with `mapping_incomplete` before rendering.
-Native text extraction alone does not establish complete mapping. In the same
-single-line fixture, Courier and Times produce whitespace gaps and refuse the
-first-word selection; the Helvetica qualification does not resolve those
-refusals or establish general native-PDF coverage.
+Native text extraction alone does not establish complete mapping. Whitespace
+visibility checks sample the outward-rounded glyph box without an extra pixel
+border, which can include ink from a neighboring letter. Ordinary glyph checks
+and ambiguity accounting retain their one-pixel border. The Courier and Times
+versions of the same grid-aligned fixture resolve the first-word selection.
+Small visible glyphs falsely mapped to spaces still produce gaps and require
+masks.
+
+This sampling correction does not establish general native-PDF coverage.
+Ordinary Courier, Times, and Helvetica text can still produce whitespace gaps:
+outward rounding can include a boundary pixel painted by a neighboring letter.
+Those gaps still require masks across the whole document, so a first-word
+selection can still be refused. Sampling never rounds inward to discard those
+pixels; doing so can miss small visible glyphs falsely mapped to whitespace.
 
 The test invokes the geometry inspector directly on its small generated PDF
 and uses an upstream PDFium reader as an evidence bridge. Daemon inspection

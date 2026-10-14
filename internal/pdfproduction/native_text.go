@@ -476,7 +476,7 @@ func reconcileNativeVisibility(ctx context.Context, instance pdfium.Pdfium, docu
 			return boundsErr
 		}
 		if ok {
-			glyphRects = append(glyphRects, physicalPixelRect(baseline.Bounds(), frame, bounds))
+			glyphRects = append(glyphRects, physicalPixelRect(baseline.Bounds(), frame, bounds, 1))
 		}
 	}
 	ambiguity, err := nativeGlyphAmbiguity(ctx, baseline.Bounds(), glyphRects)
@@ -491,12 +491,14 @@ func reconcileNativeVisibility(ctx context.Context, instance pdfium.Pdfium, docu
 			if err != nil {
 				return err
 			}
-			rect := physicalPixelRect(baseline.Bounds(), frame, box)
 			whitespace := nativeWhitespaceText(glyphs[index].Text)
+			padding := int64(1)
 			counts := ambiguity
 			if whitespace {
+				padding = 0  // Extra border pixels can belong to a neighboring glyph.
 				counts = nil // Any ink forbids treating this glyph as blank space.
 			}
+			rect := physicalPixelRect(baseline.Bounds(), frame, box, padding)
 			visible, visibilityErr := nativeGlyphHasDelta(ctx, baseline, noText, rect, counts, &visits)
 			if visibilityErr != nil {
 				return visibilityErr
@@ -606,7 +608,9 @@ func renderNativePage(instance pdfium.Pdfium, documentRef references.FPDF_DOCUME
 	return rendered.Result.RenderedImage, rendered.Cleanup, nil
 }
 
-func physicalPixelRect(imageBounds image.Rectangle, frame document.PageFrameV1, box physicalBounds) image.Rectangle {
+func physicalPixelRect(
+	imageBounds image.Rectangle, frame document.PageFrameV1, box physicalBounds, padding int64,
+) image.Rectangle {
 	width, height := int64(imageBounds.Dx()), int64(imageBounds.Dy())
 	scale := func(value, pixels, physical int64, ceil bool) int64 {
 		product := new(big.Int).Mul(big.NewInt(value), big.NewInt(pixels))
@@ -617,10 +621,10 @@ func physicalPixelRect(imageBounds image.Rectangle, frame document.PageFrameV1, 
 		}
 		return quotient.Int64()
 	}
-	x0 := max(int64(0), scale(box.x0, width, frame.Width, false)-1)
-	y0 := max(int64(0), scale(box.y0, height, frame.Height, false)-1)
-	x1 := min(width, scale(box.x1, width, frame.Width, true)+1)
-	y1 := min(height, scale(box.y1, height, frame.Height, true)+1)
+	x0 := max(int64(0), scale(box.x0, width, frame.Width, false)-padding)
+	y0 := max(int64(0), scale(box.y0, height, frame.Height, false)-padding)
+	x1 := min(width, scale(box.x1, width, frame.Width, true)+padding)
+	y1 := min(height, scale(box.y1, height, frame.Height, true)+padding)
 	return image.Rect(imageBounds.Min.X+int(x0), imageBounds.Min.Y+int(y0), imageBounds.Min.X+int(x1), imageBounds.Min.Y+int(y1)).Intersect(imageBounds)
 }
 

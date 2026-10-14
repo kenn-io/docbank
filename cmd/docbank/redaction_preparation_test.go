@@ -2,14 +2,17 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
@@ -21,7 +24,21 @@ import (
 )
 
 func TestPDFRedactionSourcePreparation(t *testing.T) {
-	// The CLI owns global flags; PDF readers also run sequentially to bound RSS.
+	// PDF limits count process-wide RSS, including memory retained by earlier tests.
+	const childVariable = "DOCBANK_TEST_REDACTION_PREPARATION"
+	if os.Getenv(childVariable) != "1" {
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+		defer cancel()
+		executable, err := os.Executable()
+		require.NoError(t, err)
+		command := exec.CommandContext(ctx, executable,
+			"-test.run=^TestPDFRedactionSourcePreparation$", "-test.timeout=2m")
+		command.Env = append(os.Environ(), childVariable+"=1")
+		output, err := command.CombinedOutput()
+		require.NoError(t, err, "%s", output)
+		return
+	}
+	// The CLI owns global flags; PDF readers run sequentially within this process.
 	temporary := t.TempDir()
 	for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
 		t.Setenv(key, temporary)

@@ -56,14 +56,24 @@ func TestPhysicalPointDecimalIsExactForInchTenThousandths(t *testing.T) {
 	}
 }
 
-func TestPhysicalPixelRectDoesNotOverflowAtAcceptedCoordinateLimit(t *testing.T) {
-	frame := document.PageFrameV1{Width: document.MaxPageInteger, Height: document.MaxPageInteger}
-	box := physicalBounds{
-		x0: document.MaxPageInteger - 20_000, y0: document.MaxPageInteger - 30_000,
-		x1: document.MaxPageInteger - 10_000, y1: document.MaxPageInteger - 15_000,
+func TestPhysicalPixelRectPaddingPreservesEdgesAndThinRows(t *testing.T) {
+	frame := document.PageFrameV1{Width: 10000, Height: 10000}
+	for _, example := range []struct {
+		name    string
+		box     physicalBounds
+		padding int64
+		want    image.Rectangle
+	}{
+		{"page edge without padding", physicalBounds{0, 0, 100, 100}, 0, image.Rect(0, 0, 1, 1)},
+		{"page edge with padding", physicalBounds{0, 0, 100, 100}, 1, image.Rect(0, 0, 2, 2)},
+		{"below pixel boundary", physicalBounds{1000, 1000, 2000, 1001}, 0, image.Rect(10, 10, 20, 11)},
+		{"above pixel boundary", physicalBounds{1000, 999, 2000, 1000}, 0, image.Rect(10, 9, 20, 10)},
+	} {
+		t.Run(example.name, func(t *testing.T) {
+			got := physicalPixelRect(image.Rect(0, 0, 100, 100), frame, example.box, example.padding)
+			require.Equal(t, example.want, got)
+		})
 	}
-	got := physicalPixelRect(image.Rect(0, 0, 16384, 16384), frame, box)
-	require.Equal(t, image.Rect(16382, 16382, 16384, 16384), got)
 }
 
 func TestFreshWriterUsesInchTenThousandGeometry(t *testing.T) {
