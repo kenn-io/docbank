@@ -36,7 +36,7 @@ type PersonMergeFaceCandidate struct {
 }
 
 func (s *Store) checkFaceMergeConflictsTx(ctx context.Context, tx *sql.Tx, a, b string) error {
-	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT f.face_id,f.content_version_id FROM photo_faces f JOIN person_document_assertions p ON p.assertion_id=f.assertion_id JOIN person_match_candidates c ON c.reason='face_match' AND c.state='rejected' JOIN person_candidate_faces e ON e.candidate_id=c.candidate_id AND e.face_id=f.face_id WHERE p.action='assert' AND ((p.person_id=? AND c.suggested_person_id=?) OR (p.person_id=? AND c.suggested_person_id=?)) ORDER BY f.face_id`, a, b, b, a)
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT f.face_id,f.content_version_id FROM photo_faces f JOIN person_document_assertions p ON p.assertion_id=f.assertion_id JOIN person_match_candidates c ON c.reason='face_match' AND c.state='rejected' JOIN person_candidate_faces e ON e.candidate_id=c.candidate_id AND e.face_id=f.face_id WHERE (p.action='assert' OR (p.action='withdrawn' AND EXISTS(SELECT 1 FROM person_document_assertions other WHERE other.person_id=c.suggested_person_id AND other.content_version_id=p.content_version_id AND other.role=p.role AND other.action='assert'))) AND ((p.person_id=? AND c.suggested_person_id=?) OR (p.person_id=? AND c.suggested_person_id=?)) ORDER BY f.face_id`, a, b, b, a)
 	if err != nil {
 		return err
 	}

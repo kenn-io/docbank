@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json/v2"
+	"fmt"
 	"strconv"
 	"testing"
 
@@ -221,7 +222,7 @@ func TestPhotoFaceDecisionHiddenAndRestore(t *testing.T) {
 
 func TestPhotoFaceMergeReviewsContradictions(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"forward", "reverse", "hidden-only", "excluded", "trashed", "retained", "bounded", "rejection union"} {
+	for _, mode := range []string{"forward", "reverse", "hidden-only", "excluded", "trashed", "retained", "bounded", "rejection union", "reactivated", "reactivated reverse", "reactivated hidden"} {
 		t.Run(mode, func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
@@ -246,6 +247,18 @@ func TestPhotoFaceMergeReviewsContradictions(t *testing.T) {
 				require.NoError(t, s.ValidateMetadata(ctx))
 				return
 			}
+			reactivated := mode == "reactivated" || mode == "reactivated reverse" || mode == "reactivated hidden"
+			rejectedPerson := b.PersonID
+			if reactivated {
+				assertions, err := s.DocumentPersonAssertions(ctx, n.CurrentVersionID)
+				require.NoError(t, err)
+				assertion := assertions[0]
+				assertion.Action = "withdrawn"
+				_, err = s.AssertDocumentPerson(ctx, assertion)
+				require.NoError(t, err)
+				_, err = s.MarkPersonInPhoto(ctx, n.CurrentVersionID, b.PersonID)
+				require.NoError(t, err)
+			}
 			var hiddenFaceID string
 			if mode == "bounded" {
 				for range 20 {
@@ -267,9 +280,9 @@ func TestPhotoFaceMergeReviewsContradictions(t *testing.T) {
 			asset, err := s.PhotoAssetForNode(ctx, n.ID)
 			require.NoError(t, err)
 			switch mode {
-			case "reverse":
+			case "reverse", "reactivated reverse":
 				a, b = b, a
-			case "hidden-only":
+			case "hidden-only", "reactivated hidden":
 				require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
 				_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 				hiddenFaceID = f.FaceID
@@ -290,7 +303,7 @@ func TestPhotoFaceMergeReviewsContradictions(t *testing.T) {
 				require.NotContains(t, err.Error(), hiddenFaceID)
 			}
 			switch mode {
-			case "hidden-only":
+			case "hidden-only", "reactivated hidden":
 				require.Empty(t, conflict.FaceIDs)
 			case "bounded":
 				require.Len(t, conflict.FaceIDs, 20)
@@ -312,6 +325,26 @@ func TestPhotoFaceMergeReviewsContradictions(t *testing.T) {
 				require.Equal(t, []string{f.FaceID}, conflict.FaceIDs)
 			default:
 				require.Equal(t, []string{f.FaceID}, conflict.FaceIDs)
+			}
+			if reactivated {
+				if mode == "reactivated hidden" {
+					token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+					require.NoError(t, err)
+					ctx = WithPhotoHiddenToken(ctx, token)
+				}
+				faces, _, err := s.PhotoFaces(ctx, n.CurrentVersionID)
+				require.NoError(t, err)
+				_, err = s.DecidePhotoFace(ctx, n.CurrentVersionID, PhotoFaceDecisionRequest{FaceID: f.FaceID, PersonID: rejectedPerson, Action: "withdraw_rejection", Revision: faces[0].Revision})
+				require.NoError(t, err)
+				_, err = s.MergePersons(ctx, a.PersonID, b.PersonID, uuid.NewString(), 1, 1)
+				require.NoError(t, err)
+				faces, assertions, err := s.PhotoFaces(ctx, n.CurrentVersionID)
+				require.NoError(t, err)
+				require.Len(t, assertions, 1)
+				require.Equal(t, "assert", assertions[0].Action)
+				require.Equal(t, assertions[0].AssertionID, faces[0].AssertionID)
+				require.Empty(t, faces[0].RejectedPersonIDs)
+				require.NoError(t, s.ValidateMetadata(ctx))
 			}
 			if mode == "excluded" || mode == "trashed" || mode == "retained" {
 				if mode == "retained" {
@@ -1007,11 +1040,34 @@ func TestPersonAssertionSelectorsFilterBeforePaging(t *testing.T) {
 	ctx := t.Context()
 	p, err := s.CreatePerson(ctx, "Ada", "operator")
 	require.NoError(t, err)
-	node, version := seedPeopleVersion(t, s)
-	_, err = s.db.ExecContext(ctx, `WITH RECURSIVE slots(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM slots WHERE i<1001) INSERT INTO content_versions(version_id,node_id,blob_hash,size,mime_type,recorded_at,node_revision,introduced_operation_id,transition_kind) SELECT printf('10000000-0000-4000-8000-%012d',i),node_id,blob_hash,size,mime_type,recorded_at,i+1,printf('30000000-0000-4000-8000-%012d',i),'content_replace' FROM slots JOIN content_versions v ON v.version_id=?`, version)
-	require.NoError(t, err)
-	_, err = s.db.ExecContext(ctx, `INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision) SELECT replace(version_id,'10000000-','20000000-'),version_id,?,'depicted','withdrawn','',?,1 FROM content_versions WHERE node_id=? AND version_id<>?`, p.PersonID, nowRFC3339(), node, version)
-	require.NoError(t, err)
+	doc := browsePhotoNode(t, s, "selectors.txt", fakeHash("ac"), "text/plain")
+	version := doc.CurrentVersionID
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	serial := 0
+	for group, count := range []int{334, 334, 333} {
+		photo := browsePhotoNode(t, s, "selector-"+strconv.Itoa(group)+".jpg", fmt.Sprintf("%064x", serial+10000), "image/jpeg")
+		for i := range count {
+			if i > 0 {
+				photo, _, err = s.ReplaceContent(ctx, photo.ID, photo.Revision, fmt.Sprintf("%064x", serial+10000), 20, "image/jpeg")
+				require.NoError(t, err)
+			}
+			_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{AssertionID: fmt.Sprintf("20000000-0000-4000-8000-%012d", serial+1), ContentVersionID: photo.CurrentVersionID, PersonID: p.PersonID, Role: "depicted", Action: "assert", Revision: 1})
+			require.NoError(t, err)
+			serial++
+		}
+		asset, err := s.PhotoAssetForNode(ctx, photo.ID)
+		require.NoError(t, err)
+		switch group {
+		case 0:
+			_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+		case 1:
+			_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
+		case 2:
+			_, err = s.TrashPhotoAsset(ctx, asset.ID, asset.Revision)
+		}
+		require.NoError(t, err)
+	}
+	require.NoError(t, s.ValidateMetadata(ctx))
 	first := "f0000000-0000-4000-8000-000000000001"
 	second := "f0000000-0000-4000-8000-000000000002"
 	for i, id := range []string{first, second} {
