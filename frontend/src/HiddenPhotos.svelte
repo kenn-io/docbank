@@ -74,7 +74,7 @@
     deadline = result.expires_in ? requestedAt + result.expires_in * 1000 : 0;
     remaining = secondsUntil(deadline);
     if (!remaining || concealingAction || access.lockError) clear();
-    else if (!workspace) { workspace = { photos: new Photos(access.session, authorizationLost, true), cache: new PhotoPreviewCache(access.session, authorizationLost, true) }; workspaceVisible = true; }
+    else if (!workspace) { workspace = { photos: new Photos(access.session, authorizationLost, true, undefined, undefined, access), cache: new PhotoPreviewCache(access.session, authorizationLost, true) }; workspaceVisible = true; }
     else if (!workspaceVisible && !workspace.photos.hiding && !workspace.photos.trashing && !workspace.photos.loading) {
       const current = workspace;
       const version = concealment;

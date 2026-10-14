@@ -105,6 +105,43 @@ it.each(["setup", "unlock", "change", "disable"])("preserves submitted %s passco
   expect(requests).toEqual(kind === "setup" ? [{ kind: "setup", body: { passcode: "submitted-passcode" } }, { kind: "unlock", body: { passcode: "submitted-passcode" } }] : [{ kind, body: kind === "change" ? { passcode: "submitted-current", new_passcode: "submitted-new" } : { passcode: kind === "disable" ? "submitted-current" : "submitted-passcode" } }]);
 });
 
+it("finishes every submitted unhide before locking when the tab is hidden", async () => {
+  history.replaceState(null, "", "/photos/hidden#web_session=synthetic&web_upload_secret=proof");
+  storage();
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  let finish!: () => void;
+  let locked = false;
+  const completed: string[] = [];
+  stubPhotoFetch(vi.fn(async (url: string) => {
+    if (url.endsWith("/photos/hidden/lock")) { locked = true; completed.push("lock"); return Response.json({}); }
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: true, expires_at: "2099-01-01T00:00:00Z", expires_in: 300 });
+    const target = url.match(/\/assets\/(photo-\d+)\/unhide$/)?.[1];
+    if (target) {
+      if (target === "photo-1") await new Promise<void>(resolve => finish = resolve);
+      if (locked) return Response.json({ detail: "Hidden locked", code: "hidden_locked" }, { status: 403 });
+      completed.push(target);
+      return Response.json({ id: target, revision: 2 });
+    }
+    const items = [photo(1), photo(2), photo(3)].filter(item => !completed.includes(item.asset_id));
+    return Response.json({ items, total: items.length });
+  }));
+  render(App);
+  await fireEvent.click(await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 2.jpg" }));
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 3.jpg" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Actions for Photo 1.jpg" }));
+  await fireEvent.click(await screen.findByRole("menuitem", { name: "Unhide" }));
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+  await fireEvent(document, new Event("visibilitychange"));
+  expect(screen.queryByTestId("photo-scroll")).toBeNull();
+  expect(completed).toEqual([]);
+  finish();
+  await waitFor(() => expect(completed).toEqual(["photo-1", "photo-2", "photo-3", "lock"]));
+});
+
 it("renders no hidden photo buttons after a failed leave lock and return", async () => {
   history.replaceState(null, "", "/photos/hidden#web_session=synthetic&web_upload_secret=proof");
   storage();
@@ -632,7 +669,7 @@ it("refreshes a remounted Hidden grid after a delayed unhide", async () => {
   await fireEvent.click(screen.getByRole("button", { name: "Library" }));
   await waitFor(() => expect(screen.queryByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeNull());
   await fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
-  await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
+  expect(screen.queryByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeNull();
   changed = true;
   finish(Response.json({ id: "photo-1", revision: 2 }));
   await screen.findByText("No hidden photos");

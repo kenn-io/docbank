@@ -9,6 +9,7 @@ import { clearSelection, reconcileIDSelection, toggleIDSelection, type Selection
 import { fetchPhotoTimeline, type SnapshotPage } from "./snapshots.js";
 import { parseQuery, canonicalQuery, type Query, type QuerySort } from "./query.js";
 import { captureDateQuery, type CaptureDayFacet } from "./photoTimeline.js";
+import type { HiddenAccess } from "./hiddenAccess.svelte.js";
 
 export const photoQuery = parseQuery('{"syntax":"simple","sort":{"field":"capture_time","direction":"desc"}}');
 export const mapPhotoLimit = 20_000;
@@ -91,7 +92,7 @@ export class Photos {
   // Album views and Map show no filter counts, so those stores never request them.
   private readonly withoutCounts: boolean;
 
-  constructor(private session: string, private onauthfailure: (cause: unknown) => void, readonly hidden = false, query: Query = photoQuery, readonly projection?: "map") { this.baseQuery = query; this.query = query; this.withoutCounts = Boolean(query.filters?.set_ids?.length) || projection === "map"; }
+  constructor(private session: string, private onauthfailure: (cause: unknown) => void, readonly hidden = false, query: Query = photoQuery, readonly projection?: "map", private readonly hiddenAccess?: HiddenAccess) { this.baseQuery = query; this.query = query; this.withoutCounts = Boolean(query.filters?.set_ids?.length) || projection === "map"; }
 
   setSort(sort: QuerySort) {
     if (this.disposed) return;
@@ -287,7 +288,7 @@ export class Photos {
     this.actionError = "";
     let failure = "";
     let failures = 0;
-    await this.mutateBatch(members, async member => {
+    const batch = () => this.mutateBatch(members, async member => {
       const signal = AbortSignal.timeout(60_000);
       const receipt = await (this.hidden ? unhidePhotoAsset : hidePhotoAsset)(member.asset_id, { "If-Match": String(member.revision) }, { session: this.session, signal });
       if (signal.aborted) throw signal.reason;
@@ -304,6 +305,7 @@ export class Photos {
       onactionerror?.(this.actionError);
       if (changed) await onhidden?.();
     }, "hiding", preserve, oninvalidate);
+    await (this.hiddenAccess ? this.hiddenAccess.run(batch) : batch());
   }
 
   cancelPending(invalidateReplacement = false) {

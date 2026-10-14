@@ -343,7 +343,7 @@
       }
     }
     if (version !== photoAccessVersion || document.visibilityState !== "visible") return;
-    photoState ??= { photos: new Photos(webSession, handleFailure), cache: new PhotoPreviewCache(webSession, handleFailure) };
+    photoState ??= { photos: new Photos(webSession, handleFailure, false, undefined, undefined, hiddenAccess), cache: new PhotoPreviewCache(webSession, handleFailure) };
     revalidatedChangeID = result.change_id;
     photoConcealed = false;
     photoValidated = true;
@@ -367,7 +367,7 @@
     const session = webSession;
     const id = albumScopeID;
     if (!session || !id) { albumPhotos = undefined; return; }
-    const photos = new Photos(session, handleFailure, false, albumQuery(id));
+    const photos = new Photos(session, handleFailure, false, albumQuery(id), undefined, hiddenAccess);
     albumPhotos = photos;
     return () => photos.dispose();
   });
@@ -376,7 +376,7 @@
     const id = mapAlbumID;
     if (!mapMode || !tiles.tile_url || !state) { mapPhotos = undefined; return; }
     const inherited = untrack(() => id ? albumPhotos?.query ?? albumQuery(id) : state.photos.query);
-    const photos = new Photos(webSession, handleFailure, false, { ...inherited, sort: { field: "capture_time", direction: "desc" }, filters: { ...inherited.filters, gps_bounds: inherited.filters.gps_bounds ?? { south: "-90", west: "-180", north: "90", east: "180" } } }, "map");
+    const photos = new Photos(webSession, handleFailure, false, { ...inherited, sort: { field: "capture_time", direction: "desc" }, filters: { ...inherited.filters, gps_bounds: inherited.filters.gps_bounds ?? { south: "-90", west: "-180", north: "90", east: "180" } } }, "map", hiddenAccess);
     photos.date = untrack(() => id ? albumPhotos?.date : state.photos.date);
     mapPhotos = photos;
     return () => photos.dispose();
