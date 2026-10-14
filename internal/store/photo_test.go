@@ -154,7 +154,7 @@ func TestPhotoSettingsRecomputeInheritedAssets(t *testing.T) {
 	assert.NoError(t, s.ValidateMetadata(ctx))
 }
 
-func TestPhotoMetadataPreservesAdmissionAndProvenanceAndRejectsInvalidReferences(t *testing.T) {
+func TestPhotoAdmissionSurvivesRenameAndMetadataRoundTrip(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -171,6 +171,22 @@ func TestPhotoMetadataPreservesAdmissionAndProvenanceAndRejectsInvalidReferences
 	after, err := s.PhotoAssetForNode(ctx, image.ID)
 	require.NoError(t, err)
 	assert.Equal(t, before, after)
+	var exported bytes.Buffer
+	require.NoError(t, s.ExportMetadata(ctx, &exported))
+	target := newTestStore(t)
+	require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
+	restoredAdmission, err := target.NodeByID(ctx, image.ID)
+	require.NoError(t, err)
+	assert.Equal(t, renamed.MimeType, restoredAdmission.MimeType)
+	restoredMembership, err := target.PhotoAssetForNode(ctx, image.ID)
+	require.NoError(t, err)
+	assert.Equal(t, before, restoredMembership)
+}
+
+func TestPhotoMetadataPreservesProvenanceAndRejectsInvalidReferences(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
 	ingestRun, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
 	require.NoError(t, err)
 	camera := filepath.Join(t.TempDir(), "camera")
@@ -219,12 +235,6 @@ func TestPhotoMetadataPreservesAdmissionAndProvenanceAndRejectsInvalidReferences
 	assert.Equal(t, asset.Files, restored.Files)
 	assert.Equal(t, asset.ID, restored.ID)
 	assert.Equal(t, asset.DisplayFileID, restored.DisplayFileID)
-	restoredAdmission, err := target.NodeByID(ctx, image.ID)
-	require.NoError(t, err)
-	assert.Equal(t, renamed.MimeType, restoredAdmission.MimeType)
-	restoredMembership, err := target.PhotoAssetForNode(ctx, image.ID)
-	require.NoError(t, err)
-	assert.Equal(t, before, restoredMembership)
 	invalidLines := strings.Split(first.String(), "\n")
 	found := false
 	for index, line := range invalidLines {

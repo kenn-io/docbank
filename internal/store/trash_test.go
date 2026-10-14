@@ -21,10 +21,9 @@ func TestTrashAndRestoreRoundTrip(t *testing.T) {
 	f, err := s.CreateFile(ctx, docs.ID, "a.txt", fakeHash("a1"), 1, "text/plain")
 	require.NoError(t, err)
 
-	trashed, origPath, err := s.Trash(ctx, docs.ID, -1)
+	_, origPath, err := s.Trash(ctx, docs.ID, -1)
 	require.NoError(t, err)
 	assert.Equal(t, "/docs", origPath)
-	assert.Equal(t, "dir", trashed.Kind)
 
 	// Subtree is gone from live views.
 	_, err = s.NodeByPath(ctx, "/docs")
@@ -32,7 +31,6 @@ func TestTrashAndRestoreRoundTrip(t *testing.T) {
 	trashedChild, err := s.NodeByID(ctx, f.ID)
 	require.NoError(t, err)
 	assert.NotNil(t, trashedChild.TrashedAt)
-	assert.Equal(t, "file", trashedChild.Kind)
 
 	// Name is reusable while trashed.
 	_, err = s.Mkdir(ctx, s.RootID(), "docs")

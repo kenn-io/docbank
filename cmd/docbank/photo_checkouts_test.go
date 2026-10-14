@@ -75,6 +75,9 @@ func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 	require.NoError(t, err)
 	out, err := runCLI(t, "photos", "checkout", "create", destination, "--all", "--asset", checkoutID, "--album", operationID, "--byte-limit", "100000")
 	require.NoError(t, err, out)
+	var createOutput api.PhotoCheckoutCreateResult
+	require.NoError(t, json.Unmarshal([]byte(out), &createOutput))
+	require.Equal(t, created, createOutput)
 	require.Len(t, inputs, 1)
 	input := <-inputs
 	require.Equal(t, checkout.Selection, input.Selection)
@@ -82,9 +85,15 @@ func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 	require.Equal(t, absoluteDestination, input.Destination)
 	out, err = runCLI(t, "photos", "checkout", "list")
 	require.NoError(t, err, out)
+	var listOutput []store.PhotoCheckout
+	require.NoError(t, json.Unmarshal([]byte(out), &listOutput))
+	require.Equal(t, listed, listOutput)
 	require.Len(t, listRequests, 1)
 	out, err = runCLI(t, "photos", "checkout", "status", checkoutID)
 	require.NoError(t, err, out)
+	var statusOutput api.PhotoCheckoutStatus
+	require.NoError(t, json.Unmarshal([]byte(out), &statusOutput))
+	require.Equal(t, status, statusOutput)
 	require.Len(t, statusRequests, 1)
 	for _, tc := range []struct {
 		years     string

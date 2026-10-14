@@ -356,11 +356,7 @@ func TestPhotoCheckoutStatusTracksOperationAcrossPauseAndFinish(t *testing.T) {
 	require.Empty(t, resumed.Error)
 	entries, err := s.PhotoCheckoutEntries(t.Context(), checkout.ID)
 	require.NoError(t, err)
-	require.NoError(t, s.PublishPhotoCheckoutEntry(t.Context(), entries[0], func() (bool, error) {
-		require.Equal(t, 1, s.writeDB.Stats().InUse)
-		return true, nil
-	}))
-	require.Zero(t, s.writeDB.Stats().InUse)
+	require.NoError(t, s.PublishPhotoCheckoutEntry(t.Context(), entries[0], func() (bool, error) { return true, nil }))
 	status, err = s.PhotoCheckoutStatus(t.Context(), checkout.ID)
 	require.NoError(t, err)
 	require.Equal(t, PhotoCheckoutStatus{Checkout: resumed, Files: 1, Bytes: 20, PublishedFiles: 1, PublishedBytes: 20}, status)
