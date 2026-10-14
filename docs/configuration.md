@@ -477,7 +477,8 @@ default. The daemon uses this ceiling for media HTTP uploads, shared staging
 reservations, original publication, and audio processing admission and worker
 preparation. A smaller
 processing-profile source limit still applies. Restart the daemon after changing
-it. Embedded Go applications use `ProcessingOptions.MediaMaxBytes`; zero uses
+it. Lowering it fails queued processing for larger sources; raise it again and
+retry that work. Embedded Go applications use `ProcessingOptions.MediaMaxBytes`; zero uses
 the 4 GiB default.
 
 This setting does not raise document inspection, image/video, M4A, transcript,

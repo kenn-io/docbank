@@ -1951,7 +1951,7 @@ func (service *Service) prepareRendition(ctx context.Context, node store.Node, v
 	profile configuredProfile, withUpload bool,
 ) (preparedRendition, error) {
 	execution, err := prepareProviderExecution(ctx, service.blobs, service.spoolDirectory,
-		node, version, profile, service.clock(), withUpload)
+		node, version, profile, service.clock, withUpload)
 	if err != nil {
 		return preparedRendition{}, err
 	}
@@ -1996,8 +1996,10 @@ func (upload *boundAuthorizedUpload) CapabilityProof() document.UploadCapability
 	return carrier.CapabilityProof()
 }
 
+// Prepare stamps the authorization from runtime.clock once preparation ends,
+// rather than at the caller's start time.
 func (runtime *providerRenditionRuntime) Prepare(ctx context.Context, work store.RenditionJobWork,
-	now time.Time,
+	_ time.Time,
 ) (RenditionExecution, error) {
 	var portable document.ProcessingProfileV1
 	if err := json.Unmarshal(work.Profile.CanonicalProfile, &portable, json.RejectUnknownMembers(true)); err != nil {
@@ -2009,7 +2011,7 @@ func (runtime *providerRenditionRuntime) Prepare(ctx context.Context, work store
 	profile := configuredProfile{portable: portable, provider: runtime.provider, record: work.Profile,
 		mediaMaxBytes: runtime.mediaMaxBytes}
 	prepared, err := prepareProviderExecution(ctx, runtime.blobs, runtime.spoolDirectory, node, version,
-		profile, now, true)
+		profile, runtime.clock, true)
 	if err != nil {
 		return RenditionExecution{}, err
 	}
@@ -2039,7 +2041,8 @@ type providerExecution struct {
 }
 
 func prepareProviderExecution(ctx context.Context, blobs *blob.Store, spool string,
-	node store.Node, version store.ContentVersion, profile configuredProfile, now time.Time, withUpload bool,
+	node store.Node, version store.ContentVersion, profile configuredProfile, clock func() time.Time,
+	withUpload bool,
 ) (providerExecution, error) {
 	if profile.portable.Rendition == nil {
 		return providerExecution{}, errors.New("processing profile has no rendition binding")
@@ -2059,7 +2062,6 @@ func prepareProviderExecution(ctx context.Context, blobs *blob.Store, spool stri
 		CapabilityRecordChecksum: capability.Checksum,
 		ProviderMetadataChecksum: hex.EncodeToString(emptyDigest[:]),
 		InputKind:                document.RenditionInputOriginalFile}
-	authorizedAt := now.UTC()
 	maximum := int(min(profile.portable.Rendition.MaxResponseBytes, int64(math.MaxInt)))
 	markdownMaximum, artifactMaximum := 0, 0
 	var artifactRoles []document.EvidenceArtifactRole
@@ -2083,8 +2085,7 @@ func prepareProviderExecution(ctx context.Context, blobs *blob.Store, spool stri
 		AllowedArtifactRoles:     artifactRoles,
 		MaxProviderMarkdownBytes: markdownMaximum, MaxArtifactBytes: artifactMaximum,
 		MaxArtifacts:        len(artifactRoles),
-		MaxTotalResultBytes: maximum, AuthorizedAt: authorizedAt.Format(timestampForm),
-		ExpiresAt: authorizedAt.Add(10 * time.Minute).Format(timestampForm)}
+		MaxTotalResultBytes: maximum}
 	evidence, rendition, err := document.RenditionExecutionPoliciesForProfileV1(profile.portable)
 	if err != nil {
 		return providerExecution{}, err
@@ -2106,6 +2107,12 @@ func prepareProviderExecution(ctx context.Context, blobs *blob.Store, spool stri
 		}
 		result.metadata = result.Upload.Metadata()
 	}
+	// Start the interval after inspection and spooling. A 4 GiB source on slow
+	// storage can take longer than the interval to prepare, and an interval that
+	// expired during preparation would fail every retry the same way.
+	authorizedAt := clock().UTC()
+	result.Authorization.AuthorizedAt = authorizedAt.Format(timestampForm)
+	result.Authorization.ExpiresAt = authorizedAt.Add(10 * time.Minute).Format(timestampForm)
 	return result, nil
 }
 

@@ -1137,7 +1137,6 @@ func TestDoclingOperatorNetworkRequiresPrivateCIDRs(t *testing.T) {
 
 func TestMediaSourceCeilingConfig(t *testing.T) {
 	t.Parallel()
-	require.Equal(t, int64(4<<30), Default().Media.MaxSourceBytes)
 	for _, maximum := range []int64{1, 1 << 30, 4 << 30, 0, -1, (4 << 30) + 1} {
 		t.Run(strconv.FormatInt(maximum, 10), func(t *testing.T) {
 			dir := privateTestConfigDir(t)

@@ -936,6 +936,12 @@ func (worker *RenditionWorker) classifyRuntimeError(ctx context.Context, claim s
 	if errors.Is(err, ErrRenditionRuntimeStale) {
 		return worker.markFailed(ctx, claim, store.RenditionFailureStaleAuthority, worker.clock().UTC())
 	}
+	// Inspection refusals depend only on the exact source and the configured
+	// limits, so retrying them repeats the same refusal. A lowered
+	// [media].max_source_bytes reaches already queued work this way.
+	if errors.Is(err, ErrSourceIneligible) {
+		return worker.markFailed(ctx, claim, store.RenditionFailureTerminal, worker.clock().UTC())
+	}
 	return worker.markSafeTransient(ctx, claim)
 }
 

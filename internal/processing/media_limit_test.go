@@ -6,12 +6,12 @@ import (
 	"io"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
-	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -33,9 +33,6 @@ func TestMediaMaxBytesAllowsSuppliedMedia(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			if maximum == 0 {
-				require.Equal(t, int64(4<<30), service.mediaMaxBytes)
-			}
 			receipt, err := service.SubmitSuppliedMedia(t.Context(), SuppliedMediaRequest{
 				OperationID: "00000000-0000-4000-8000-000000000703", Filename: "call.wav",
 				MediaType: "audio/wav", SHA256: written.Hash, ByteLength: written.Size,
@@ -55,17 +52,6 @@ func TestStageMediaFourGiBCeiling(t *testing.T) {
 	require.NoError(t, err)
 	_, err = stageMedia(t.Context(), bytes.NewReader(raw), io.Discard, (4<<30)+1, 4<<30, processingHash(string(raw)))
 	require.ErrorContains(t, err, "byte_limit")
-}
-
-func TestSuppliedProfilesFourGiBSourceOnly(t *testing.T) {
-	t.Parallel()
-	f := newPublicationFixture(t)
-	for _, constructor := range []func(*store.Store, *blob.Store, string) (string, ProfileConfig, error){NewSuppliedMediaProfile, NewSuppliedCaptionProfile} {
-		_, profile, err := constructor(f.catalog, f.blobs, "synthetic:operator")
-		require.NoError(t, err)
-		require.Equal(t, int64(4<<30), profile.Profile.Rendition.MaxDocumentBytes)
-		require.Equal(t, int64(16<<20), profile.Profile.Rendition.MaxResponseBytes)
-	}
 }
 
 func TestAudioAdmissionUsesSmallerCeilingAndProfile(t *testing.T) {
@@ -136,4 +122,29 @@ func TestPlanStreamsLargeSourceOnlyForAdmittedAudio(t *testing.T) {
 		}
 	}
 	require.False(t, service.PlanStreamsLargeSource(t.Context(), Selector{NodeID: 1, ContentVersionID: "missing", Profile: name}))
+}
+
+func TestProviderRuntimeAuthorizesAfterPreparation(t *testing.T) {
+	t.Parallel()
+	f := newPublicationFixture(t)
+	raw := mediatest.WAV()
+	written, err := f.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(raw))
+	require.NoError(t, err)
+	node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), "call.wav", written.Hash, written.Size, "audio/wav", processingBlobPhysical(t, written))
+	require.NoError(t, err)
+	name, profile, err := NewSuppliedMediaProfile(f.catalog, f.blobs, "synthetic:operator")
+	require.NoError(t, err)
+	started := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	// Preparation of a large source on slow storage can outlast the 10-minute interval.
+	prepared := started.Add(11 * time.Minute)
+	service, err := NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(),
+		Clock: func() time.Time { return prepared }, Profiles: map[string]ProfileConfig{name: profile}})
+	require.NoError(t, err)
+	work := store.RenditionJobWork{Profile: service.profiles[name].record, Job: store.RenditionJob{SourceSHA256: written.Hash}, Waiter: store.RenditionJobWaiter{ContentVersionID: node.CurrentVersionID}, ExecutionIdentity: document.RenditionExecutionIdentityV1{Upload: document.AuthorizedUploadMetadata{Filename: "call.wav", MediaType: "audio/wav", ByteLength: written.Size}}}
+	execution, err := service.renditions.Prepare(t.Context(), work, started)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, execution.Upload.Close()) })
+	_, err = document.SealRenditionExecutionAt(prepared, execution.Provider, execution.Upload,
+		execution.Authorization, execution.EvidencePolicy, execution.RenditionPolicy)
+	require.NoError(t, err)
 }

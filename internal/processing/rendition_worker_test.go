@@ -8,6 +8,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"io"
 	"path/filepath"
 	"sync"
@@ -20,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -674,6 +676,36 @@ func TestRenditionWorkerQuarantinesSealTimePolicyMismatch(t *testing.T) {
 	assert.Equal(t, store.RenditionFailureTerminal, restoredJob.FailureCode)
 }
 
+func TestRenditionWorkerFailsSourceRefusedAtRuntime(t *testing.T) {
+	t.Parallel()
+	fixture := newPublicationFixture(t)
+	provider := newWorkerProvider(t)
+	profile := workerProcessingProfile(t, provider.Descriptor())
+	fixture.profile = profile
+	request := workerJobRequest(fixture.versionID, profile, provider.Descriptor())
+	grantWorkerConsent(t, fixture.catalog, request)
+	job, _, err := fixture.catalog.EnqueueRenditionJob(t.Context(), request)
+	require.NoError(t, err)
+	now := time.Now().UTC()
+	prepareCalls := 0
+	worker, err := NewRenditionWorker(RenditionWorkerConfig{
+		Catalog: fixture.catalog, Blobs: fixture.blobs,
+		Runtime: ineligibleWorkerRuntime{prepareCalls: &prepareCalls}, Gate: newTestOperationGate(),
+		Owner: "rendition-worker-source-refused", LeaseDuration: time.Minute,
+		IdleDelay: time.Millisecond, Clock: func() time.Time { return now },
+	})
+	require.NoError(t, err)
+
+	processed, err := worker.RunOne(t.Context())
+	require.NoError(t, err)
+	assert.True(t, processed)
+	assert.Equal(t, 1, prepareCalls)
+	current, err := fixture.catalog.RenditionJobByID(t.Context(), job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, store.RenditionJobFailed, current.State)
+	assert.Equal(t, store.RenditionFailureTerminal, current.FailureCode)
+}
+
 func TestRenditionWorkerQuarantinesSealTimeInvalidUpload(t *testing.T) {
 	t.Parallel()
 	fixture := newPublicationFixture(t)
@@ -1265,6 +1297,15 @@ func (runtime driftedWorkerRuntime) Prepare(
 	upload.metadata.CapabilityRecordChecksum = processingHash("runtime-drift")
 	execution.Authorization.CapabilityRecordChecksum = upload.metadata.CapabilityRecordChecksum
 	return execution, nil
+}
+
+type ineligibleWorkerRuntime struct{ prepareCalls *int }
+
+func (runtime ineligibleWorkerRuntime) Prepare(
+	context.Context, store.RenditionJobWork, time.Time,
+) (RenditionExecution, error) {
+	*runtime.prepareCalls++
+	return RenditionExecution{}, fmt.Errorf("%w: %s", ErrSourceIneligible, media.CapabilityReasonSourceBytes)
 }
 
 type expiringWorkerRuntime struct{ provider *workerProvider }
