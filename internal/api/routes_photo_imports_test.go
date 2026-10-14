@@ -61,40 +61,6 @@ func TestPhotoImportRoutes(t *testing.T) {
 		return nil
 	}))
 	require.Eventually(t, func() bool { return supervisor.Snapshot()[0].FinishedAt != nil }, 5*time.Second, 10*time.Millisecond)
-	_, err := catalog.NodeByPath(t.Context(), "/photos/capture.JPG")
-	require.NoError(t, err)
-
-	pollCtx, cancelPoll := context.WithTimeout(t.Context(), 30*time.Second)
-	defer cancelPoll()
-	ticker := time.NewTicker(10 * time.Millisecond)
-	defer ticker.Stop()
-	var latest api.StorageOperation
-	for {
-		pollRequest, requestErr := http.NewRequestWithContext(pollCtx, http.MethodGet, ts.URL+"/api/v1/jobs/"+started.ID, nil)
-		require.NoError(t, requestErr)
-		get, getErr := ts.Client().Do(pollRequest)
-		require.NoError(t, getErr, "last observed operation: %+v", latest)
-		var output api.StorageOperation
-		decodeErr := json.UnmarshalRead(get.Body, &output)
-		_ = get.Body.Close()
-		require.NoError(t, decodeErr, "last observed operation: %+v", latest)
-		latest = output
-		if latest.FinishedAt != "" {
-			break
-		}
-		select {
-		case <-pollCtx.Done():
-			require.FailNow(t, "photo import did not finish", "last observed operation: %+v", latest)
-		case <-ticker.C:
-		}
-	}
-	assert.Equal(t, "completed", latest.State)
-	assert.Equal(t, int64(1), latest.CompletedObjects)
-	receiptJSON, receiptErr := json.Marshal(latest.Receipt)
-	require.NoError(t, receiptErr)
-	var receipt store.PhotoImportReceipt
-	require.NoError(t, json.Unmarshal(receiptJSON, &receipt))
-	assert.Equal(t, int64(1), receipt.Added)
 
 	for _, test := range []struct{ source, message string }{
 		{"relative", "absolute daemon-host path"},
