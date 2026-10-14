@@ -436,28 +436,6 @@ func TestWatchDirectoryIdentitiesIncludeDescendants(t *testing.T) {
 	assert.True(t, matchesWatchDirectory(logsInfo, identities))
 }
 
-func TestWatchedFileMustMatchItsSettledFingerprint(t *testing.T) {
-	ing := newTestIngester(t)
-	source := writeTree(t, map[string]string{"document.txt": "first"})
-	sourcePath := filepath.Join(source, "document.txt")
-	settled, err := observeLocalFileFingerprint(sourcePath)
-	require.NoError(t, err)
-	replacementPath := filepath.Join(source, "replacement.tmp")
-	require.NoError(t, os.WriteFile(replacementPath, []byte("other"), 0o600))
-	observedAt := time.Unix(0, settled.modTime)
-	require.NoError(t, os.Chtimes(replacementPath, observedAt, observedAt))
-	require.NoError(t, os.Remove(sourcePath))
-	require.NoError(t, os.Rename(replacementPath, sourcePath))
-
-	_, err = ing.ingestWatchedFile(
-		t.Context(), "documents", "/inbox", "document.txt", settled,
-		func() (*os.File, error) { return blob.OpenNoFollow(sourcePath) },
-	)
-	require.ErrorIs(t, err, ErrSourceChanged)
-	_, err = ing.Store.NodeByPath(t.Context(), "/inbox/document.txt")
-	require.ErrorIs(t, err, store.ErrNotFound)
-}
-
 func TestLocalFileReadRejectsConcurrentChange(t *testing.T) {
 	ing := newTestIngester(t)
 	ctx := t.Context()
@@ -468,6 +446,15 @@ func TestLocalFileReadRejectsConcurrentChange(t *testing.T) {
 		{name: "size changed", edit: func(t *testing.T, path string, _ localFileFingerprint) {
 			t.Helper()
 			require.NoError(t, os.WriteFile(path, []byte("changed-size"), 0o600))
+		}},
+		{name: "replaced with same size and timestamp", edit: func(t *testing.T, path string, before localFileFingerprint) {
+			t.Helper()
+			replacementPath := filepath.Join(filepath.Dir(path), "replacement.tmp")
+			require.NoError(t, os.WriteFile(replacementPath, []byte("else"), 0o600))
+			observedAt := time.Unix(0, before.modTime)
+			require.NoError(t, os.Chtimes(replacementPath, observedAt, observedAt))
+			require.NoError(t, os.Remove(path))
+			require.NoError(t, os.Rename(replacementPath, path))
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/store"
@@ -22,6 +23,7 @@ func TestPhotoCheckoutClients(t *testing.T) {
 	expectedEstimate := store.PhotoCheckoutEstimate{Assets: 1, Files: 2, Bytes: 5}
 	expectedStatus := api.PhotoCheckoutStatus{Checkout: checkout, Files: 2, Bytes: 5, PublishedFiles: 1, PublishedBytes: 3}
 	created := api.PhotoCheckoutCreateResult{Checkout: checkout, Operation: api.StorageOperation{ID: operationID, Kind: "photo_checkout", State: "queued"}}
+	request := api.PhotoCheckoutCreateRequest{Selection: selection, Destination: checkout.Destination, ByteLimit: 100}
 	var mu sync.Mutex
 	response := created
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -31,8 +33,18 @@ func TestPhotoCheckoutClients(t *testing.T) {
 		var out any
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/photos/checkouts/estimate":
+			var body store.PhotoCheckoutSelection
+			if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {
+				return
+			}
+			assert.Equal(t, selection, body)
 			out = expectedEstimate
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/photos/checkouts":
+			var body api.PhotoCheckoutCreateRequest
+			if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {
+				return
+			}
+			assert.Equal(t, request, body)
 			out = response
 			w.WriteHeader(http.StatusAccepted)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/photos/checkouts":
@@ -53,7 +65,6 @@ func TestPhotoCheckoutClients(t *testing.T) {
 		mu.Lock()
 		response = expected
 		mu.Unlock()
-		request := api.PhotoCheckoutCreateRequest{Selection: selection, Destination: checkout.Destination, ByteLimit: 100}
 		return client.CreatePhotoCheckout(t.Context(), request)
 	}
 	estimate, err := client.EstimatePhotoCheckout(t.Context(), selection)
