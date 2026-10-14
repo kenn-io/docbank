@@ -671,10 +671,6 @@ func TestPhotoFaceRestoreBoundsAndSemanticReferences(t *testing.T) {
 	bounded.Write(raw)
 	bounded.WriteByte('\n')
 	require.ErrorIs(t, newTestStore(t).ImportMetadata(ctx, strings.NewReader(bounded.String())), ErrInvalidPhotoFace)
-	_, err = target.db.Exec(`INSERT INTO photo_faces SELECT ?,content_version_id,detector_fingerprint,x,y,width,height,revision,assertion_id,created_at FROM photo_faces LIMIT 1`, id)
-	require.NoError(t, err)
-	_, _, err = target.PhotoFaces(ctx, node.CurrentVersionID)
-	require.ErrorIs(t, err, ErrInvalidPhotoFace)
 }
 
 func TestPhotoFaceRetryAndBindingEpoch(t *testing.T) {

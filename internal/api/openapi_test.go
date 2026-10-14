@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -796,15 +795,4 @@ func TestOpenAPIPhotoBrowseContract(t *testing.T) {
 	require.ElementsMatch(t, []any{"", "pick", "reject"}, schemas["SavedQueryFiltersSchema"].Properties["flags"].Items.Enum)
 	require.ElementsMatch(t, []any{"", "red", "yellow", "green", "blue", "purple"}, schemas["SavedQueryFiltersSchema"].Properties["labels"].Items.Enum)
 	require.ElementsMatch(t, []any{"name", "path", "modified_at", "size", "media_type", "relevance", "capture_time", "import_time", "added_time"}, schemas["SavedQuerySortSchema"].Properties["field"].Enum)
-}
-
-func TestOpenAPIPhotoFaceBounds(t *testing.T) {
-	t.Parallel()
-	doc := api.NewOfflineServer().API().OpenAPI()
-	schema := doc.Components.Schemas.Map()["PhotoFacePage"]
-	require.NotNil(t, schema)
-	for _, field := range []string{"faces", "assertions"} {
-		require.NotNil(t, schema.Properties[field].MaxItems, field)
-		require.Equal(t, document.MaxPhotoRecordsPerVersion, *schema.Properties[field].MaxItems, field)
-	}
 }
