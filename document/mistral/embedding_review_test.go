@@ -168,33 +168,84 @@ func TestMistralEmbeddingAttemptTimeouts(t *testing.T) {
 	}
 }
 
-func TestMistralEmbeddingAttemptTimeoutThroughProductionTransport(t *testing.T) {
-	var requests atomic.Int32
-	handlerCanceled := make(chan error, 1)
-	endpoint, egress, resolver := mistralFixture(t, http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
-		requests.Add(1)
-		_, _ = io.Copy(io.Discard, request.Body)
-		<-request.Context().Done()
-		handlerCanceled <- request.Context().Err()
-	}))
+func TestMistralEmbeddingAttemptDeadlineDuringTLSHandshake(t *testing.T) {
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	tcpAddress, ok := listener.Addr().(*net.TCPAddr)
+	require.True(t, ok)
+	port := uint16(tcpAddress.Port)
+	type clientHello struct {
+		recordType    byte
+		handshakeType byte
+		err           error
+	}
+	releaseServer := make(chan struct{})
+	serverDone := make(chan struct{})
+	clientHelloReceived := make(chan clientHello, 1)
+	go func() {
+		defer close(serverDone)
+		connection, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			clientHelloReceived <- clientHello{err: acceptErr}
+			return
+		}
+		defer connection.Close()
+		if err := connection.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+			clientHelloReceived <- clientHello{err: err}
+			return
+		}
+		var prefix [6]byte
+		_, readErr := io.ReadFull(connection, prefix[:])
+		if readErr != nil {
+			clientHelloReceived <- clientHello{err: readErr}
+			return
+		}
+		clientHelloReceived <- clientHello{recordType: prefix[0], handshakeType: prefix[5]}
+		<-releaseServer
+	}()
+	t.Cleanup(func() {
+		close(releaseServer)
+		_ = listener.Close()
+		<-serverDone
+	})
+
 	profile := testEmbeddingProfile(t)
-	profile.Endpoint, profile.EgressPolicy = endpoint, egress
+	profile.Endpoint = "https://127.0.0.1:" + strconv.Itoa(int(port))
+	profile.EgressPolicy = providerhttp.EgressPolicy{
+		Scheme: "https", Host: "127.0.0.1", Port: port,
+		AllowedCIDRs:        []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")},
+		ProxyMode:           providerhttp.ProxyDisabled,
+		TLSHandshakeTimeout: 5 * time.Second,
+	}
+	// Keep the TLS timeout longer so the embedding attempt ends first.
 	profile.RequestTimeout, profile.MaxRetries = time.Second, 1
 	recomputeMistralEmbeddingProfile(t, &profile)
-	provider, err := newMistralEmbeddingTestProvider(t, profile, embeddingSecretMap{"credential:mistral-embed": "synthetic-secret"}, resolver)
+	provider, err := newMistralEmbeddingTestProvider(t, profile, embeddingSecretMap{"credential:mistral-embed": "synthetic-secret"}, nil)
 	require.NoError(t, err)
-
-	_, err = provider.Embed(t.Context(), []document.EmbeddingInput{{Key: "first", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: "first"}}, embeddingAuthorization(profile.Descriptor))
-	require.ErrorIs(t, err, ErrTransientResponse)
-	require.ErrorIs(t, err, context.DeadlineExceeded)
-	require.EqualValues(t, 1, requests.Load())
+	inputs := []document.EmbeddingInput{{Key: "first", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: "first"}}
+	guard := time.NewTimer(5 * time.Second)
+	defer guard.Stop()
+	embedResult := make(chan error, 1)
+	go func() {
+		_, embedErr := provider.Embed(t.Context(), inputs, embeddingAuthorization(profile.Descriptor))
+		embedResult <- embedErr
+	}()
 	select {
-	case handlerErr := <-handlerCanceled:
-		require.ErrorIs(t, handlerErr, context.Canceled)
-	case <-time.After(time.Second):
-		t.Fatal("provider timeout did not cancel the stalled request")
+	case hello := <-clientHelloReceived:
+		require.NoError(t, hello.err)
+		require.Equal(t, byte(22), hello.recordType)
+		require.Equal(t, byte(1), hello.handshakeType)
+	case <-guard.C:
+		t.Fatal("provider did not send a TLS ClientHello")
 	}
-	require.NoError(t, t.Context().Err())
+	select {
+	case embedErr := <-embedResult:
+		require.ErrorIs(t, embedErr, ErrTransientResponse)
+		require.ErrorIs(t, embedErr, context.DeadlineExceeded)
+		require.Equal(t, 1, MetricsFromError(embedErr).Requests)
+	case <-guard.C:
+		t.Fatal("embedding did not return when its attempt deadline expired")
+	}
 }
 
 func TestMistralEmbeddingCapacityCeilings(t *testing.T) {
