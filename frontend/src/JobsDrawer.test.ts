@@ -47,7 +47,16 @@ describe("background jobs drawer", () => {
       "populated lane controls",
       200,
       {
-        items: [jobFixture({ name: "storage:import", kind: "photo_import", operation_id: "import" })],
+        items: [
+          jobFixture({
+            name: "storage:a",
+            kind: "photo_import",
+            operation_id: "a",
+            completed_objects: 1,
+            total_objects: 2,
+            can_cancel: true,
+          }),
+        ],
         lane_controls_error: "Lane controls are unavailable",
       },
       "Lane controls are unavailable",
@@ -68,15 +77,19 @@ describe("background jobs drawer", () => {
         };
         const group = vi.spyOn(jobs, "jobLanes");
         const fetchSpy = vi.spyOn(globalThis, "fetch");
-        fetchSpy.mockResolvedValueOnce(
-          new Response(JSON.stringify(body), {
-            status,
-            headers: { "Content-Type": "application/json" },
-          }),
+        const responses = [
+          Promise.resolve(
+            new Response(JSON.stringify(body), {
+              status,
+              headers: { "Content-Type": "application/json" },
+            }),
+          ),
+          new Promise<Response>(() => {}),
+          Promise.resolve(jobsResponse(items, populated ? [control] : [])),
+        ];
+        fetchSpy.mockImplementation((_url, options) =>
+          options?.method === "POST" ? new Promise<Response>(() => {}) : responses.shift()!,
         );
-        fetchSpy
-          .mockReturnValueOnce(new Promise<Response>(() => {}))
-          .mockResolvedValueOnce(jobsResponse(items, populated ? [control] : []));
         render(JobsDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
         await vi.advanceTimersByTimeAsync(0);
         expect(screen.getByRole("alert").textContent).toBe(message);
@@ -86,7 +99,15 @@ describe("background jobs drawer", () => {
         expect(screen.getByRole("alert").textContent).toBe(message);
         expect(screen.queryByText("No background jobs")).toBeNull();
         expect(screen.queryByText("Read-only")).toBeNull();
-        if (populated) expect(screen.getByText("1 running · 1 total")).toBeTruthy();
+        if (populated) {
+          expect(screen.getByText("1 running · 1 total")).toBeTruthy();
+          expect(screen.getByText("1 of 2 groups")).toBeTruthy();
+          await fireEvent.click(screen.getByRole("button", { name: "Cancel Photo import a" }));
+          expect(fetchSpy).toHaveBeenCalledWith(
+            "/api/v1/jobs/a/cancel",
+            expect.objectContaining({ method: "POST" }),
+          );
+        }
         await fireEvent.click(
           screen.getByRole("button", {
             name: populated ? "Refresh background jobs" : "Try again",
@@ -101,7 +122,7 @@ describe("background jobs drawer", () => {
         }
         expect(screen.queryByRole("alert")).toBeNull();
         expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
-        expect(fetchSpy).toHaveBeenCalledTimes(3);
+        expect(fetchSpy).toHaveBeenCalledTimes(populated ? 4 : 3);
       } finally {
         vi.useRealTimers();
       }

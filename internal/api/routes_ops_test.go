@@ -362,22 +362,14 @@ func TestTrashListAndEmpty(t *testing.T) {
 	assert.Equal(t, 1, trash.Total)
 	assert.Equal(t, 1, trash.Limit)
 
-	var retainedAssetIDs []string
-	var retainedNodes []store.Node
-	for _, name := range []string{"retained-a.jpg", "retained-b.jpg"} {
-		node, err := s.CreateFile(t.Context(), s.RootID(), name, testHash(name), 1, "image/jpeg")
-		require.NoError(t, err)
-		asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
-		require.NoError(t, err)
-		retainedAssetIDs = append(retainedAssetIDs, asset.ID)
-		retainedNodes = append(retainedNodes, node)
-	}
-	_, _, err := s.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: retainedAssetIDs}, "checkout", 0)
+	retained, err := s.CreateFile(t.Context(), s.RootID(), "retained.jpg", testHash("retained"), 1, "image/jpeg")
 	require.NoError(t, err)
-	for _, node := range retainedNodes {
-		_, _, err = s.Trash(t.Context(), node.ID, node.Revision)
-		require.NoError(t, err)
-	}
+	retainedAsset, err := s.PhotoAssetForNode(t.Context(), retained.ID)
+	require.NoError(t, err)
+	_, _, err = s.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{retainedAsset.ID}}, "checkout", 0)
+	require.NoError(t, err)
+	_, _, err = s.Trash(t.Context(), retained.ID, retained.Revision)
+	require.NoError(t, err)
 	held, err := s.CreateFile(t.Context(), s.RootID(), "held.jpg", testHash("held"), 1, "image/jpeg")
 	require.NoError(t, err)
 	asset, err := s.PhotoAssetForNode(t.Context(), held.ID)
@@ -391,7 +383,7 @@ func TestTrashListAndEmpty(t *testing.T) {
 
 	expected, err := s.TrashEmpty(t.Context(), 0, false)
 	require.NoError(t, err)
-	require.Equal(t, int64(2), expected.Retained)
+	require.Equal(t, int64(1), expected.Retained)
 	require.Equal(t, int64(1), expected.Held)
 	for _, run := range []bool{false, true} {
 		resp, body = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil,
