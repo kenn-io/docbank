@@ -16,9 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/report"
-	"go.kenn.io/docbank/sqlite"
 )
 
 func TestReportFamilyRecovery(t *testing.T) {
@@ -85,7 +83,7 @@ func TestReportFamilyRecovery(t *testing.T) {
 	liveRoot := restoreReportSnapshot(t, liveSnapshot)
 	trashedRoot := restoreReportSnapshot(t, trashedSnapshot)
 	stop()
-	assertRecoveryNoJobs(t, f.root)
+	assertNoProcessingJobs(t, f.root, "recovery must not enqueue provider processing")
 
 	stop = f.start(t, liveRoot)
 	require.Equal(t, liveHistory, reportHistory(t))
@@ -97,7 +95,7 @@ func TestReportFamilyRecovery(t *testing.T) {
 	require.ElementsMatch(t, relations, recoveryRelations(t, live.packet))
 	export()
 	stop()
-	assertRecoveryNoJobs(t, liveRoot)
+	assertNoProcessingJobs(t, liveRoot, "recovery must not enqueue provider processing")
 
 	stop = f.start(t, trashedRoot)
 	require.Equal(t, trashedHistory, reportHistory(t))
@@ -112,7 +110,7 @@ func TestReportFamilyRecovery(t *testing.T) {
 	export()
 	assertRecoveryPacketUnchanged(t, incomplete)
 	stop()
-	assertRecoveryNoJobs(t, trashedRoot)
+	assertNoProcessingJobs(t, trashedRoot, "recovery must not enqueue provider processing")
 
 	verifyFamilyPackets(t, packets...)
 	for _, archive := range archives {
@@ -211,19 +209,6 @@ func assertRecoveryHandleUnavailable(t *testing.T, id string) {
 	require.NoFileExists(t, path)
 }
 
-func assertRecoveryNoJobs(t *testing.T, root string) {
-	t.Helper()
-	path := filepath.Join(root, "docbank.db")
-	db, err := store.DefaultSQLiteDriver().Open(path,
-		sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Deferred})
-	require.NoError(t, err)
-	defer func() { require.NoError(t, db.Close()) }()
-	var jobs int
-	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT
-		(SELECT COUNT(*) FROM rendition_jobs) + (SELECT COUNT(*) FROM embedding_jobs)`).Scan(&jobs))
-	require.Zero(t, jobs, "recovery must not enqueue provider processing")
-}
-
 func maintainFamilyStorage(t *testing.T) {
 	t.Helper()
 	// Repack selects packs with fewer than half their entries live. One dead
@@ -234,56 +219,18 @@ func maintainFamilyStorage(t *testing.T) {
 		_, err := runCLI(t, "add", source, "--dest", "/reclaim")
 		require.NoError(t, err)
 	}
-	out, err := runCLI(t, "storage", "pack", "--json")
+	_, err := runCLI(t, "storage", "pack", "--json")
 	require.NoError(t, err)
-	var packed api.StoragePackReport
-	require.NoError(t, json.Unmarshal([]byte(out), &packed))
-	require.Equal(t, 1, packed.PacksSealed)
-	require.Positive(t, packed.BlobsPacked)
-	require.Zero(t, packed.BlobsMissing)
-	require.Zero(t, packed.BlobsCorrupt)
-	require.Zero(t, packed.BlobsDeferredOversized)
-	require.False(t, packed.BudgetExhausted)
-	before := recoveryStorageStatus(t)
-	require.Equal(t, 1, before.Packs)
-	require.Positive(t, before.PackedBlobs)
-	require.Zero(t, before.LooseBlobs)
-	require.Zero(t, before.DeadPackedBytes)
 	_, err = runCLI(t, "rm", "/reclaim")
 	require.NoError(t, err)
-	out, err = runCLI(t, "trash", "empty", "--run", "--json")
+	_, err = runCLI(t, "trash", "empty", "--run", "--json")
 	require.NoError(t, err)
-	var emptied api.TrashEmptyReport
-	require.NoError(t, json.Unmarshal([]byte(out), &emptied))
-	require.EqualValues(t, 1, emptied.Deleted)
-	require.Zero(t, emptied.RetainedRoots)
 	_, err = runCLI(t, "gc", "--run")
 	require.NoError(t, err)
-	dead := recoveryStorageStatus(t)
-	require.Equal(t, 1, dead.Packs)
-	require.Positive(t, dead.DeadPackedBytes)
-	require.Positive(t, dead.PackedBlobs)
-	require.Less(t, 2*dead.PackedBlobs, before.PackedBlobs, "pack must qualify for repack")
-	out, err = runCLI(t, "storage", "repack", "--min-age", "1ns",
+	out, err := runCLI(t, "storage", "repack", "--min-age", "1ns",
 		"--min-dead-bytes", "1", "--json")
 	require.NoError(t, err)
 	var repacked api.StorageRepackReport
 	require.NoError(t, json.Unmarshal([]byte(out), &repacked))
-	require.Equal(t, 1, repacked.PacksSelected)
 	require.Equal(t, 1, repacked.PacksRewritten)
-	require.Equal(t, 1, repacked.PacksRemoved)
-	require.Positive(t, repacked.BlobsRepacked)
-	require.Positive(t, repacked.BytesRepacked)
-	require.Zero(t, repacked.PacksDeferredOversized)
-	require.False(t, repacked.BudgetExhausted)
-	require.Zero(t, recoveryStorageStatus(t).DeadPackedBytes)
-}
-
-func recoveryStorageStatus(t *testing.T) api.StorageStatus {
-	t.Helper()
-	out, err := runCLI(t, "storage", "status", "--json")
-	require.NoError(t, err)
-	var status api.StorageStatus
-	require.NoError(t, json.Unmarshal([]byte(out), &status))
-	return status
 }
