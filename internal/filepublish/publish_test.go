@@ -44,7 +44,7 @@ func TestPublishHonorsNoReplaceAndReportsPostInstallDurability(t *testing.T) {
 	require.Equal(t, "replacement", string(got))
 }
 
-func TestRootStageChecksDestinationIdentityAndSyncsParents(t *testing.T) {
+func TestRootStageRejectsChangedDestinationsAndSyncsCreatedParents(t *testing.T) {
 	for _, method := range []string{"destination root", "parent", "parent sync", "parent failure"} {
 		t.Run(method, func(t *testing.T) {
 			root, err := os.OpenRoot(t.TempDir())

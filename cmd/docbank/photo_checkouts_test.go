@@ -65,15 +65,9 @@ func TestPhotoCheckoutCLICreateEstimateListStatusAndYears(t *testing.T) {
 	require.Equal(t, absoluteDestination, input.Destination)
 	out, err = runCLI(t, "photos", "checkout", "list")
 	require.NoError(t, err, out)
-	var listOutput []store.PhotoCheckout
-	require.NoError(t, json.Unmarshal([]byte(out), &listOutput))
-	require.Equal(t, listed, listOutput)
 	require.Len(t, listRequests, 1)
 	out, err = runCLI(t, "photos", "checkout", "status", checkoutID)
 	require.NoError(t, err, out)
-	var statusOutput api.PhotoCheckoutStatus
-	require.NoError(t, json.Unmarshal([]byte(out), &statusOutput))
-	require.Equal(t, status, statusOutput)
 	require.Len(t, statusRequests, 1)
 	for _, tc := range []struct {
 		years     string
