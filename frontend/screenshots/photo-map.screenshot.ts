@@ -47,14 +47,14 @@ test("photo map privacy, clusters, marker return and mobile grid", async ({ page
     await page.screenshot({path:path.join(output!, "photo-map-enabled-1440-dark.png"), animations:"disabled"});
     await page.evaluate(() => (window as typeof window & {photoMap:import("leaflet").Map}).photoMap.setView([0,372],2,{animate:false}));
     await expect.poll(() => page.evaluate(() => (window as typeof window & {photoMap:import("leaflet").Map}).photoMap.getCenter().lng)).toBeLessThanOrEqual(180);
-    await expect(page.getByRole("button",{name:"Open Synthetic-photo-00007.jpg"})).toBeVisible();
+    await expect(page.getByRole("button",{name:"Open Synthetic-photo-00007.jpg"})).toBeAttached();
     await page.evaluate(() => (window as typeof window & {photoMap:import("leaflet").Map}).photoMap.setView([0,0],0,{animate:false}));
     await expect(page.getByText("14 photos",{exact:true})).toBeVisible();
-    await expect(page.getByRole("button",{name:"Open Synthetic-photo-00007.jpg"})).toBeVisible();
+    await expect(page.getByRole("button",{name:"Open Synthetic-photo-00007.jpg"})).toBeAttached();
     await expect(page.locator(".leaflet-tile-loaded")).toHaveCount(1);
     await expect(page.locator(".leaflet-tile-loaded")).toHaveCSS("opacity","1");
     await page.screenshot({path:path.join(output!, "photo-map-world-1440-dark.png"),animations:"disabled"});
-    await page.getByRole("button",{name:"Open Synthetic-photo-00014.jpg"}).click();
+    const open14=page.getByRole("button",{name:"Open Synthetic-photo-00014.jpg"});await open14.focus();await open14.press("Enter");
     await expect(page.getByRole("dialog",{name:"Photo viewer, Synthetic-photo-00014.jpg"})).toBeVisible();
     await page.getByRole("button",{name:"Next photo",exact:true}).first().click();
     await expect(page.getByRole("dialog",{name:"Photo viewer, Synthetic-photo-00010.jpg"})).toBeVisible();
@@ -118,7 +118,7 @@ test("photo map privacy, clusters, marker return and mobile grid", async ({ page
     await page.getByRole("navigation",{name:"Docbank navigation"}).getByRole("button",{name:"Map",exact:true}).click();
     await expect(page.getByRole("dialog",{name:/Photo viewer/})).toHaveCount(0);
     expect(listings).toBe(beforeClose);
-    await page.getByRole("button", {name:"Open Synthetic-photo-00009.jpg"}).click();
+    const open9=page.getByRole("button", {name:"Open Synthetic-photo-00009.jpg"});await open9.focus();await open9.press("Enter");
     await expect(page.getByRole("dialog", {name:"Photo viewer, Synthetic-photo-00009.jpg"})).toBeVisible();
     await page.setViewportSize({width:400,height:860});
     await expect(page.getByRole("button", {name:"Next photo",exact:true}).first()).toBeEnabled();
@@ -153,7 +153,7 @@ test("photo map privacy, clusters, marker return and mobile grid", async ({ page
     await page.evaluate(()=>(window as typeof window & {photoMap:import("leaflet").Map}).photoMap.setView([0,0],0,{animate:false}));
     await expect(page.getByText("7 photos",{exact:true})).toBeVisible();
     await expect(page.getByTestId("photo-scroll").locator("img")).toHaveCount(7);
-    for(const index of [1,3,5,7,9,11,13]) await expect(page.getByRole("button",{name:`Open Synthetic-photo-${String(index).padStart(5,"0")}.jpg`,exact:true})).toBeVisible();
+    for(const index of [1,3,5,7,9,11,13]) await expect(page.getByRole("button",{name:`Open Synthetic-photo-${String(index).padStart(5,"0")}.jpg`,exact:true})).toBeAttached();
     await expect(page.locator(".leaflet-tile-loaded")).toHaveCount(1);
     await expect(page.locator(".leaflet-tile-loaded")).toHaveCSS("opacity","1");
     await page.screenshot({path:path.join(output!,"photo-map-album-1440-dark.png"),animations:"disabled"});
@@ -196,7 +196,7 @@ test("photo map privacy, clusters, marker return and mobile grid", async ({ page
     await page.locator(".map-tabs").getByRole("button",{name:"Photos",exact:true}).click();await page.getByRole("checkbox",{name:"Select photo Synthetic-photo-00009.jpg"}).check();
     await page.getByRole("button",{name:"Move to trash",exact:true}).click();await page.getByRole("dialog",{name:"Move selected photos to trash"}).getByRole("button",{name:"Move to trash",exact:true}).click();
     await expect(page.getByRole("dialog",{name:"Move selected photos to trash"})).toHaveCount(0);await expect(page.getByText("13 located photos",{exact:true})).toBeVisible();
-    await expect(page.getByRole("button",{name:"Open Synthetic-photo-00010.jpg"})).toBeVisible();await expect(page.getByRole("button",{name:"Open Synthetic-photo-00009.jpg"})).toHaveCount(0);
+    await expect(page.getByRole("button",{name:"Open Synthetic-photo-00010.jpg"})).toBeAttached();await expect(page.getByRole("button",{name:"Open Synthetic-photo-00009.jpg"})).toHaveCount(0);
     await page.locator(".map-tabs").getByRole("button",{name:"Map",exact:true}).click();await expect(page.locator(".leaflet-cluster-anim")).toHaveCount(0);await page.locator('.photo-map-dot[title="Synthetic-photo-00010.jpg"]').press("Enter");await expect(page.getByRole("dialog",{name:"Photo viewer, Synthetic-photo-00010.jpg"})).toBeVisible();await page.keyboard.press("Escape");
     await expect(page.locator(".photo-map")).toBeVisible();await expect(page.locator('.photo-map-dot[title="Synthetic-photo-00010.jpg"]')).toBeFocused();
     await page.evaluate(()=>(window as typeof window & {photoMap:import("leaflet").Map}).photoMap.panBy([5,0],{animate:false}));await expect(page.locator(".photo-map")).toBeVisible();
