@@ -107,47 +107,45 @@ func photoSourcesTx(ctx context.Context, tx *sql.Tx, assets string, checkout boo
 			byFile[file] = append(byFile[file], g)
 		}
 	}
-	if checkout {
-		companions := map[string][]string{}
-		for file, source := range sources {
-			if source.target != "" && source.eligible && sources[source.target].eligible && sources[source.target].asset == source.asset {
-				companions[source.target] = append(companions[source.target], file)
-			}
+	companions := map[string][]string{}
+	for file, source := range sources {
+		if source.target != "" && source.eligible && sources[source.target].eligible && sources[source.target].asset == source.asset {
+			companions[source.target] = append(companions[source.target], file)
 		}
-		for target, files := range companions {
-			sort.Strings(files)
-			candidates := []photoSource{sources[target]}
-			for _, g := range byFile[target] {
-				candidates = append(candidates, g.refs[target])
-			}
-			resolved := false
-			for _, candidate := range candidates {
-				choices := map[string]photoSource{}
-				for _, file := range files {
-					source := sources[file]
-					if !photoSourcePairMatches(source.path, candidate.path) {
-						for _, g := range byFile[file] {
-							observed := g.refs[target]
-							if observed.identity != "" && strings.EqualFold(norm.NFC.String(path.Base(observed.path)), norm.NFC.String(path.Base(candidate.path))) && photoSourcePairMatches(g.refs[file].path, candidate.path) {
-								source = g.refs[file]
-								break
-							}
+	}
+	for target, files := range companions {
+		sort.Strings(files)
+		candidates := []photoSource{sources[target]}
+		for _, g := range byFile[target] {
+			candidates = append(candidates, g.refs[target])
+		}
+		resolved := false
+		for _, candidate := range candidates {
+			choices := map[string]photoSource{}
+			for _, file := range files {
+				source := sources[file]
+				if !photoSourcePairMatches(source.path, candidate.path) {
+					for _, g := range byFile[file] {
+						observed := g.refs[target]
+						if observed.identity != "" && strings.EqualFold(norm.NFC.String(path.Base(observed.path)), norm.NFC.String(path.Base(candidate.path))) && photoSourcePairMatches(g.refs[file].path, candidate.path) {
+							source = g.refs[file]
+							break
 						}
 					}
-					if photoSourcePairMatches(source.path, candidate.path) {
-						choices[file] = source
-					}
 				}
-				if len(choices) == len(files) {
-					sources[target] = candidate
-					maps.Copy(sources, choices)
-					resolved = true
-					break
+				if photoSourcePairMatches(source.path, candidate.path) {
+					choices[file] = source
 				}
 			}
-			if !resolved {
-				return nil, fmt.Errorf("%w: incompatible source names for file %s and target %s in asset %s", ErrInvalidPhotoCheckout, files[0], target, sources[target].asset)
+			if len(choices) == len(files) {
+				sources[target] = candidate
+				maps.Copy(sources, choices)
+				resolved = true
+				break
 			}
+		}
+		if !resolved {
+			return nil, fmt.Errorf("%w: incompatible source names for file %s and target %s in asset %s", ErrInvalidPhotoCheckout, files[0], target, sources[target].asset)
 		}
 	}
 	return sources, nil

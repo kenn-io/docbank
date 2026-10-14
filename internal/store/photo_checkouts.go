@@ -394,15 +394,10 @@ func (s *Store) PhotoCheckoutEntries(ctx context.Context, id string) ([]PhotoChe
 	return out, rows.Err()
 }
 
-// PublishPhotoCheckoutEntry reserves the sole writer connection to pin visibility without a transaction across filesystem I/O.
+// PublishPhotoCheckoutEntry checks visibility immediately before installing a copy.
 func (s *Store) PublishPhotoCheckoutEntry(ctx context.Context, e PhotoCheckoutEntry, publish func() (bool, error)) error {
-	conn, err := s.writeDB.Conn(ctx)
-	if err != nil {
-		return fmt.Errorf("reserving checkout writer: %w", err)
-	}
-	defer func() { _ = conn.Close() }()
 	var allowed bool
-	if err := conn.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_assets a JOIN photo_files f ON f.asset_id=a.asset_id JOIN nodes n ON n.id=f.node_id WHERE a.asset_id=? AND f.file_id=? AND a.hidden_at IS NULL AND a.excluded_at IS NULL AND n.trashed_at IS NULL
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_assets a JOIN photo_files f ON f.asset_id=a.asset_id JOIN nodes n ON n.id=f.node_id WHERE a.asset_id=? AND f.file_id=? AND a.hidden_at IS NULL AND a.excluded_at IS NULL AND n.trashed_at IS NULL
  AND f.sidecar_of_file_id IS ? AND (? IS NULL OR EXISTS(
  SELECT 1 FROM photo_files target JOIN nodes target_node ON target_node.id=target.node_id
  JOIN photo_checkout_entries frozen ON frozen.file_id=target.file_id AND frozen.checkout_id=?
@@ -412,11 +407,14 @@ func (s *Store) PublishPhotoCheckoutEntry(ctx context.Context, e PhotoCheckoutEn
 	if !allowed {
 		return ErrPhotoCheckoutSourceUnavailable
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	published, publicationErr := publish()
 	if !published {
 		return publicationErr
 	}
-	_, err = conn.ExecContext(ctx, `UPDATE photo_checkout_entries SET published=1 WHERE checkout_id=? AND file_id=?`, e.CheckoutID, e.FileID)
+	_, err := s.writeDB.ExecContext(context.WithoutCancel(ctx), `UPDATE photo_checkout_entries SET published=1 WHERE checkout_id=? AND file_id=?`, e.CheckoutID, e.FileID)
 	return errors.Join(err, publicationErr)
 }
 

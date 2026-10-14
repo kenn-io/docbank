@@ -1,6 +1,7 @@
 package filepublish
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ const rootStagePrefix = ".docbank-checkout-"
 
 type RootStage struct {
 	File          *os.File
+	parent        *os.Root
 	root          *os.Root
 	name          string
 	info          os.FileInfo
@@ -80,7 +82,35 @@ func (s *RootStage) Publish(destination string) (bool, error) {
 	return s.publish(parent, destination)
 }
 
+// Install publishes without syncing so its owner can record the installed copy first.
+func (s *RootStage) Install(destination string) (bool, error) {
+	if !filepath.IsLocal(destination) {
+		return false, errors.New("checkout destination must be root-relative")
+	}
+	parent, err := s.root.OpenRoot(filepath.Dir(destination))
+	if err != nil {
+		return false, err
+	}
+	installed, err := s.install(parent, destination)
+	if installed {
+		s.parent = parent
+	} else {
+		err = errors.Join(err, parent.Close())
+	}
+	return installed, err
+}
+
+func (s *RootStage) SyncParent() error { return s.syncDirectory(s.parent, ".") }
+
 func (s *RootStage) publish(parent *os.Root, destination string) (bool, error) {
+	installed, err := s.install(parent, destination)
+	if !installed {
+		return false, err
+	}
+	return true, errors.Join(err, s.syncDirectory(parent, "."))
+}
+
+func (s *RootStage) install(parent *os.Root, destination string) (bool, error) {
 	source, err := s.root.Open(".")
 	if err != nil {
 		return false, err
@@ -115,18 +145,22 @@ func (s *RootStage) publish(parent *os.Root, destination string) (bool, error) {
 	}
 	installed, err := s.root.Lstat(destination)
 	if err != nil {
-		return false, err
+		return true, err
 	}
 	if !installed.Mode().IsRegular() || !os.SameFile(s.info, installed) {
-		return false, errors.New("checkout destination changed during publication")
+		return true, errors.New("checkout destination changed during publication")
 	}
-	return true, s.syncDirectory(parent, ".")
+	return true, nil
 }
 
 func (s *RootStage) Cleanup() error {
 	var err error
+	if s.parent != nil {
+		err = s.parent.Close()
+		s.parent = nil
+	}
 	if s.File != nil {
-		err = s.File.Close()
+		err = errors.Join(err, s.File.Close())
 		s.File = nil
 	}
 	removeErr := s.root.Remove(s.name)
@@ -152,6 +186,55 @@ func CleanupRootStages(root *os.Root) error {
 			if err := root.Remove(entry.Name()); err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+// CheckRootPaths probes the destination's own name-equivalence rules before copying bytes.
+func CheckRootPaths(ctx context.Context, root *os.Root, paths []string) (retErr error) {
+	type probe struct {
+		path string
+		info os.FileInfo
+	}
+	var probes []probe
+	defer func() {
+		for _, probe := range probes {
+			current, err := root.Lstat(probe.path)
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			if err == nil && !os.SameFile(probe.info, current) {
+				err = errors.New("checkout path changed during validation")
+			}
+			if err == nil {
+				err = root.Remove(probe.path)
+			}
+			retErr = errors.Join(retErr, err)
+		}
+	}()
+	stage := RootStage{root: root, syncDirectory: syncRootDirectory}
+	for _, name := range paths {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := stage.MakeParentDirectories(name); err != nil {
+			return err
+		}
+		probeStage, err := CreateRootStage(root)
+		if err != nil {
+			return err
+		}
+		installed, installErr := probeStage.Install(name)
+		if installed {
+			probes = append(probes, probe{name, probeStage.info})
+		} else if installErr != nil {
+			if _, err := root.Lstat(name); err == nil {
+				installErr = errors.Join(os.ErrExist, installErr)
+			}
+		}
+		if err := errors.Join(installErr, probeStage.Cleanup()); err != nil {
+			return &os.PathError{Op: "reserving checkout path", Path: name, Err: err}
 		}
 	}
 	return nil

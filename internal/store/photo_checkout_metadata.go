@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json/v2"
 	"errors"
 )
 
@@ -29,21 +30,23 @@ type metadataPhotoCheckoutEntry struct {
 }
 
 var photoCheckoutMetadataTables = []metadataRecordCodec{
-	newMetadataTable(metadataTable[metadataPhotoCheckout]{record: metadataPhotoCheckout{Type: "photo_checkout"}, table: "photo_checkouts", suffix: "ORDER BY checkout_id", checkExport: true, validate: func(v metadataPhotoCheckout) error {
-		if v.Type != "photo_checkout" || validateUUIDv4(v.ID) != nil || v.ByteLimit < 0 || v.Selection.All && v.ByteLimit == 0 {
-			return ErrInvalidPhotoCheckout
-		}
-		if err := ValidatePhotoCheckoutSelection(v.Selection); err != nil {
-			return err
-		}
-		return validateMetadataTime("photo checkout created_at", v.CreatedAt)
-	}}),
+	newMetadataTable(metadataTable[metadataPhotoCheckout]{record: metadataPhotoCheckout{Type: "photo_checkout"}, table: "photo_checkouts", suffix: "ORDER BY checkout_id", checkExport: true, exportAll: exportPhotoCheckoutMetadata, validate: validatePhotoCheckoutMetadata}),
 	newMetadataTable(metadataTable[metadataPhotoCheckoutEntry]{record: metadataPhotoCheckoutEntry{Type: "photo_checkout_entry"}, table: "photo_checkout_entries", suffix: "ORDER BY checkout_id,file_id", checkExport: true, validate: func(v metadataPhotoCheckoutEntry) error {
 		if v.Type != "photo_checkout_entry" || validateUUIDv4(v.CheckoutID) != nil || validateUUIDv4(v.FileID) != nil || validateUUIDv4(v.AssetID) != nil || validateUUIDv4(v.VersionID) != nil || v.SidecarOfID != nil && validateUUIDv4(*v.SidecarOfID) != nil || v.Size < 0 || validateCheckoutPath(v.Path) != nil {
 			return ErrInvalidPhotoCheckout
 		}
 		return validateCatalogSHA256(v.Hash, "photo checkout blob hash")
 	}}),
+}
+
+func validatePhotoCheckoutMetadata(v metadataPhotoCheckout) error {
+	if v.Type != "photo_checkout" || validateUUIDv4(v.ID) != nil || v.ByteLimit < 0 || v.Selection.All && v.ByteLimit == 0 {
+		return ErrInvalidPhotoCheckout
+	}
+	if err := ValidatePhotoCheckoutSelection(v.Selection); err != nil {
+		return err
+	}
+	return validateMetadataTime("photo checkout created_at", v.CreatedAt)
 }
 
 func validatePhotoCheckoutReferences(ctx context.Context, q metadataQuerier) error {
@@ -55,4 +58,29 @@ func validatePhotoCheckoutReferences(ctx context.Context, q metadataQuerier) err
 		return errors.New("photo checkout frozen bases do not match content versions")
 	}
 	return nil
+}
+
+func exportPhotoCheckoutMetadata(ctx context.Context, q metadataQuerier, write metadataWrite) error {
+	rows, err := q.QueryContext(ctx, `SELECT c.checkout_id,c.selection_json,c.byte_limit,c.created_at,c.retention_released OR COALESCE(o.state,c.state) IN ('queued','running','paused') FROM photo_checkouts c LEFT JOIN storage_operations o ON o.operation_id=c.operation_id ORDER BY c.checkout_id`)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		record := metadataPhotoCheckout{Type: "photo_checkout"}
+		var selection string
+		if err := rows.Scan(&record.ID, &selection, &record.ByteLimit, &record.CreatedAt, &record.RetentionReleased); err != nil {
+			return err
+		}
+		if err := json.Unmarshal([]byte(selection), &record.Selection); err != nil {
+			return err
+		}
+		if err := validatePhotoCheckoutMetadata(record); err != nil {
+			return err
+		}
+		if err := write(record); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
 }

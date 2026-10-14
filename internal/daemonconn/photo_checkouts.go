@@ -55,7 +55,7 @@ func (c *Connection) CreatePhotoCheckout(ctx context.Context, request api.PhotoC
 	if slices.Contains([]string{"completed", "failed", "cancelled"}, out.Operation.State) && out.Operation.FinishedAt == "" {
 		return api.PhotoCheckoutCreateResult{}, &responseDecodeError{err: errors.New("terminal photo checkout creation has no finish time")}
 	}
-	if out.Operation.State == "failed" && (out.Operation.FinishedAt == "" || out.Operation.Error == "" || out.Checkout.Error != out.Operation.Error) {
+	if out.Operation.State == "failed" && (out.Operation.Error == "" || out.Checkout.Error != out.Operation.Error) {
 		return api.PhotoCheckoutCreateResult{}, &responseDecodeError{err: errors.New("failed photo checkout creation has no terminal error")}
 	}
 	return *out, nil

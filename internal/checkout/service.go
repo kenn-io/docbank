@@ -31,6 +31,7 @@ type Service struct {
 	Mutate        func(context.Context, func() error) error
 	ActivityBegin func()
 	ActivityEnd   func()
+	syncParent    func(*filepublish.RootStage) error
 	admit         func(context.Context, *store.Store, string) (bool, error)
 }
 
@@ -351,6 +352,23 @@ func (s Service) Run(ctx context.Context, c store.PhotoCheckout, root *os.Root) 
 		}
 	}
 	entries, copyErr := s.Store.PhotoCheckoutEntries(ctx, c.ID)
+	if copyErr == nil {
+		var paths []string
+		for _, entry := range entries {
+			if !entry.Published {
+				paths = append(paths, filepath.FromSlash(entry.Path))
+			}
+		}
+		copyErr = filepublish.CheckRootPaths(ctx, root, paths)
+		if pathErr, ok := errors.AsType[*os.PathError](copyErr); ok {
+			for _, entry := range entries {
+				if filepath.FromSlash(entry.Path) == pathErr.Path {
+					copyErr = fmt.Errorf("asset %s file %s at %q: %w", entry.AssetID, entry.FileID, entry.Path, copyErr)
+					break
+				}
+			}
+		}
+	}
 	var copied, bytes int64
 	if copyErr == nil && !cancelled {
 		for _, entry := range entries {
@@ -367,19 +385,19 @@ func (s Service) Run(ctx context.Context, c store.PhotoCheckout, root *os.Root) 
 			if cancelled {
 				break
 			}
-			if err := s.copy(ctx, root, c.Destination, entry); err != nil {
+			installed, err := s.copy(ctx, root, c.Destination, entry)
+			if installed {
+				copied++
+				bytes += entry.Size
+				err = errors.Join(err, s.Store.AdvanceStorageOperation(context.WithoutCancel(ctx), c.OperationID, entry.FileID, copied, copied, bytes, "{}"))
+			}
+			if err != nil {
 				if copyErr == nil {
 					copyErr = err
 				}
 				if errors.Is(err, store.ErrPhotoCheckoutSourceUnavailable) {
 					continue
 				}
-				break
-			}
-			copied++
-			bytes += entry.Size
-			if err := s.Store.AdvanceStorageOperation(ctx, c.OperationID, entry.FileID, copied, copied, bytes, "{}"); err != nil {
-				copyErr = errors.Join(copyErr, err)
 				break
 			}
 		}
@@ -417,7 +435,7 @@ func checkDestinationIdentity(root *os.Root, destination string) error {
 	return nil
 }
 
-func (s Service) copy(ctx context.Context, root *os.Root, destination string, e store.PhotoCheckoutEntry) (retErr error) {
+func (s Service) copy(ctx context.Context, root *os.Root, destination string, e store.PhotoCheckoutEntry) (installed bool, retErr error) {
 	defer func() {
 		if retErr != nil {
 			retErr = fmt.Errorf("file %s at %q: %w", e.FileID, e.Path, retErr)
@@ -425,50 +443,61 @@ func (s Service) copy(ctx context.Context, root *os.Root, destination string, e 
 	}()
 	stage, err := filepublish.CreateRootStage(root)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer func() { retErr = errors.Join(retErr, stage.Cleanup()) }()
 	if err := stage.MakeParentDirectories(filepath.FromSlash(e.Path)); err != nil {
-		return err
+		return false, err
 	}
 	stream, size, err := s.Blobs.OpenStreamContext(ctx, e.Hash)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if size != e.Size {
 		_ = stream.Close()
-		return errors.New("checkout source size differs from frozen base")
+		return false, errors.New("checkout source size differs from frozen base")
 	}
 	n, copyErr := io.Copy(stage.File, stream)
 	if err := errors.Join(copyErr, stream.Verify(), stream.Close()); err != nil {
-		return err
+		return false, err
 	}
 	if n != e.Size {
-		return errors.New("checkout bytes differ from frozen base")
+		return false, errors.New("checkout bytes differ from frozen base")
 	}
 	if err := stage.File.Sync(); err != nil {
-		return err
+		return false, err
 	}
 	// Read the staged bytes back before publication to catch destination I/O damage.
 	if _, err := stage.File.Seek(0, io.SeekStart); err != nil {
-		return err
+		return false, err
 	}
 	digest := sha256.New()
 	n, err = io.Copy(digest, blob.ReaderWithContext(ctx, stage.File))
 	if err != nil {
-		return err
+		return false, err
 	}
 	if n != e.Size || hex.EncodeToString(digest.Sum(nil)) != e.Hash {
-		return errors.New("checkout staged bytes failed verification")
+		return false, errors.New("checkout staged bytes failed verification")
 	}
 	if err := stage.File.Close(); err != nil {
-		return err
+		return false, err
 	}
 	stage.File = nil
-	return s.mutate(ctx, func() error {
+	retErr = s.mutate(ctx, func() error {
 		return s.Store.PublishPhotoCheckoutEntry(ctx, e, func() (bool, error) {
-			installed, err := stage.Publish(filepath.FromSlash(e.Path))
+			var err error
+			installed, err = stage.Install(filepath.FromSlash(e.Path))
 			return installed, errors.Join(err, checkDestinationIdentity(root, destination))
 		})
 	})
+	if installed {
+		var syncErr error
+		if s.syncParent != nil {
+			syncErr = s.syncParent(stage)
+		} else {
+			syncErr = stage.SyncParent()
+		}
+		retErr = errors.Join(retErr, syncErr)
+	}
+	return installed, retErr
 }

@@ -357,13 +357,29 @@ func (w *Watcher) openRoot(ctx context.Context) (*watchRoot, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolving vault root for watch %q: %w", w.config.Name, err)
 	}
-	overlaps, err := PathsOverlap(root, vaultRoot)
+	overlaps, err := PathsOverlapContext(ctx, root, vaultRoot)
 	if err != nil {
 		return nil, fmt.Errorf("checking watch %q source against the vault: %w", w.config.Name, err)
 	}
 	if overlaps {
 		return nil, fmt.Errorf("watch %q source %q overlaps the vault root %q",
 			w.config.Name, root, vaultRoot)
+	}
+	checkouts, err := w.ing.Store.ListPhotoCheckouts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, checkout := range checkouts {
+		if checkout.RetentionReleased || checkout.Destination == "" {
+			continue
+		}
+		_, overlaps, err := WatchBindingOverlapContext(ctx, []config.WatchConfig{w.config}, config.StoreBindingConfig{Kind: "filesystem", Path: checkout.Destination})
+		if err != nil {
+			return nil, fmt.Errorf("checking watch %q against checkout %s: %w", w.config.Name, checkout.ID, err)
+		}
+		if overlaps {
+			return nil, fmt.Errorf("watch %q source overlaps reserved checkout %s", w.config.Name, checkout.ID)
+		}
 	}
 	vaultInfo, err := os.Stat(vaultRoot)
 	if err != nil {

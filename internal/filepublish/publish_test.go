@@ -246,3 +246,34 @@ func TestRootStageCleanupPreservesDecoysAndUserFiles(t *testing.T) {
 		require.NoError(t, err)
 	}
 }
+
+func TestCheckRootPathsUsesDestinationNameEquivalence(t *testing.T) {
+	t.Parallel()
+	root, err := os.OpenRoot(t.TempDir())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, root.Close()) }()
+	require.NoError(t, root.WriteFile("case-probe", nil, 0600))
+	_, caseErr := root.Stat("CASE-PROBE")
+	require.NoError(t, root.Remove("case-probe"))
+	for _, tc := range []struct {
+		name      string
+		paths     []string
+		collision bool
+	}{
+		{"identical", []string{"asset/photo.jpg", "asset/photo.jpg"}, true},
+		{"case distinct", []string{"asset/photo.jpg", "asset/PHOTO.JPG"}, caseErr == nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := CheckRootPaths(t.Context(), root, tc.paths)
+			if tc.collision {
+				require.ErrorIs(t, err, os.ErrExist)
+			} else {
+				require.NoError(t, err)
+			}
+			for _, name := range tc.paths {
+				_, err := root.Lstat(name)
+				require.ErrorIs(t, err, os.ErrNotExist)
+			}
+		})
+	}
+}

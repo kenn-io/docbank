@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"context"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -710,23 +711,13 @@ func TestPhotoCheckoutSidecarRequiresFrozenEligibleTarget(t *testing.T) {
 	}
 }
 
-func TestPhotoCheckoutSchemaSeparatesFacesOnlyAndReadsItsBackup(t *testing.T) {
+func TestPhotoCheckoutSchemaRejectsFacesOnlyDatabase(t *testing.T) {
 	t.Parallel()
 	for _, driver := range v090UpgradeDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
 			filename := filepath.Join(t.TempDir(), "faces.db")
 			s, err := Open(filename, driver.driver)
 			require.NoError(t, err)
-			asset := albumAsset(t, s, "photo.jpg")
-			var exported bytes.Buffer
-			require.NoError(t, exportReleasedMetadataSnapshot(t.Context(), s.db, &exported, 35))
-			require.NotContains(t, exported.String(), "source_provenance_identity")
-			require.NotContains(t, exported.String(), `"type":"photo_checkout"`)
-			restored := newTestStore(t)
-			require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
-			actual, err := restored.PhotoAssetByID(t.Context(), asset.ID)
-			require.NoError(t, err)
-			require.Equal(t, asset.ID, actual.ID)
 			_, err = s.db.Exec(`DROP TABLE photo_checkout_entries; DROP TABLE photo_checkouts; ALTER TABLE photo_files DROP COLUMN source_provenance_identity; UPDATE vault_metadata SET schema_version=35`)
 			require.NoError(t, err)
 			require.NoError(t, s.Close())
@@ -737,4 +728,88 @@ func TestPhotoCheckoutSchemaSeparatesFacesOnlyAndReadsItsBackup(t *testing.T) {
 			require.ErrorContains(t, err, "schema version 35 has no supported JSONL cutover")
 		})
 	}
+}
+
+func TestPhotoMetadataImportsWithoutOptionalSourceIdentity(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	asset := albumAsset(t, s, "photo.jpg")
+	var exported bytes.Buffer
+	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
+	require.Contains(t, exported.String(), `"type":"photo_file"`)
+	require.NotContains(t, exported.String(), "source_provenance_identity")
+	restored := newTestStore(t)
+	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
+	actual, err := restored.PhotoAssetByID(t.Context(), asset.ID)
+	require.NoError(t, err)
+	require.Equal(t, asset, actual)
+}
+
+func TestPhotoCheckoutBackupReleasesActiveAndKeepsCompletedHolds(t *testing.T) {
+	t.Parallel()
+	for _, state := range []string{"queued", "running", "paused", "completed"} {
+		t.Run(state, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			asset := albumAsset(t, s, "photo.jpg")
+			node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
+			require.NoError(t, err)
+			checkout, op, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+			require.NoError(t, err)
+			if state == "running" || state == "paused" {
+				require.NoError(t, s.ClaimPhotoCheckout(ctx, checkout.ID, op.ID))
+				if state == "paused" {
+					require.NoError(t, s.DeferStorageOperation(ctx, op.ID, errors.New("paused")))
+				}
+			}
+			if state == "completed" {
+				require.NoError(t, s.FinishPhotoCheckout(ctx, checkout.ID, op.ID, StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
+			}
+			updated, _, err := s.ReplaceContent(ctx, node.ID, node.Revision, browseHash("replacement"), 30, "image/jpeg")
+			require.NoError(t, err)
+			var exported bytes.Buffer
+			require.NoError(t, s.ExportMetadata(ctx, &exported))
+			local, err := s.PhotoCheckout(ctx, checkout.ID)
+			require.NoError(t, err)
+			require.False(t, local.RetentionReleased)
+			restored := newTestStore(t)
+			require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
+			actual, err := restored.PhotoCheckout(ctx, checkout.ID)
+			require.NoError(t, err)
+			require.Equal(t, state != "completed", actual.RetentionReleased)
+			require.Equal(t, "unbound", actual.State)
+			pruned, err := restored.PruneContentVersions(ctx, node.ID, updated.Revision, VersionPruneSelector{VersionIDs: []string{node.CurrentVersionID}}, true)
+			require.NoError(t, err)
+			if state == "completed" {
+				require.Len(t, pruned.DependencyRetained, 1)
+				require.Zero(t, pruned.DeletedVersions)
+			} else {
+				require.Equal(t, 1, pruned.DeletedVersions)
+			}
+			var roundtrip bytes.Buffer
+			require.NoError(t, restored.ExportMetadata(ctx, &roundtrip))
+			final := newTestStore(t)
+			require.NoError(t, final.ImportMetadata(ctx, bytes.NewReader(roundtrip.Bytes())))
+			history, err := final.PhotoCheckout(ctx, checkout.ID)
+			require.NoError(t, err)
+			require.Equal(t, actual.RetentionReleased, history.RetentionReleased)
+		})
+	}
+}
+
+func TestPhotoCheckoutRecordsInstallAfterCancellation(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	asset := albumAsset(t, s, "photo.jpg")
+	checkout, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+	require.NoError(t, err)
+	entries, err := s.PhotoCheckoutEntries(t.Context(), checkout.ID)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	err = s.PublishPhotoCheckoutEntry(ctx, entries[0], func() (bool, error) { cancel(); return true, context.Canceled })
+	require.ErrorIs(t, err, context.Canceled)
+	status, err := s.PhotoCheckoutStatus(t.Context(), checkout.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), status.PublishedFiles)
 }

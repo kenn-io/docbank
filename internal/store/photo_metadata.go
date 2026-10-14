@@ -55,35 +55,6 @@ type metadataPhotoFile struct {
 	CreatedAt   string  `json:"created_at" db:"created_at"`
 }
 
-type metadataPhotoFileBeforeSource struct {
-	Confirmed PhotoAuthoredFields `json:"confirmed_fields" db:"confirmed_fields"`
-	Revision  int64               `json:"revision" db:"revision"`
-	Rating    int                 `json:"rating" db:"rating"`
-	Flag      string              `json:"flag" db:"flag"`
-	Label     string              `json:"label" db:"label"`
-	Caption   string              `json:"caption" db:"caption"`
-	Creator   string              `json:"creator" db:"creator"`
-	Copyright string              `json:"copyright" db:"copyright"`
-	Rotation  int                 `json:"rotation" db:"rotation"`
-
-	Type        string  `json:"type"`
-	FileID      string  `json:"file_id" db:"file_id"`
-	AssetID     *string `json:"asset_id" db:"asset_id"`
-	NodeID      int64   `json:"node_id" db:"node_id"`
-	Role        string  `json:"role" db:"role"`
-	SidecarOfID *string `json:"sidecar_of_file_id" db:"sidecar_of_file_id"`
-	CreatedAt   string  `json:"created_at" db:"created_at"`
-}
-
-var photoFileBeforeSourceMetadata = newMetadataTable(metadataTable[metadataPhotoFileBeforeSource]{
-	record: metadataPhotoFileBeforeSource{Type: metadataPhotoFileType}, table: "photo_files", suffix: "ORDER BY file_id",
-	validate: func(v metadataPhotoFileBeforeSource) error {
-		return validatePhotoFileMetadataRecord(metadataPhotoFile{Type: v.Type, FileID: v.FileID, AssetID: v.AssetID, NodeID: v.NodeID, Role: v.Role, SidecarOfID: v.SidecarOfID, CreatedAt: v.CreatedAt,
-			Confirmed: v.Confirmed,
-			Revision:  v.Revision, Rating: v.Rating, Flag: v.Flag, Label: v.Label, Caption: v.Caption, Creator: v.Creator, Copyright: v.Copyright, Rotation: v.Rotation})
-	}, checkExport: true,
-})
-
 type metadataPhotoFileBeforeAuthored struct {
 	Type        string  `json:"type"`
 	FileID      string  `json:"file_id" db:"file_id"`
@@ -470,9 +441,6 @@ func photoMetadataTablesForSchema(version int) []metadataRecordCodec {
 	}
 	tables = append([]metadataRecordCodec(nil), tables...)
 	for i, table := range tables {
-		if version >= photoAuthoredStorageSchemaVersion && version < photoCheckoutsStorageSchemaVersion && table.kind() == metadataPhotoFileType {
-			tables[i] = photoFileBeforeSourceMetadata
-		}
 		if version < photoAuthoredStorageSchemaVersion && table.kind() == metadataPhotoFileType {
 			tables[i] = photoFileBeforeAuthoredMetadata
 		}
