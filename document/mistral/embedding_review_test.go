@@ -109,31 +109,29 @@ func TestMistralEmbeddingAttemptTimeouts(t *testing.T) {
 					recomputeMistralEmbeddingProfile(t, &profile)
 					provider, err := newMistralEmbeddingTestProvider(t, profile, secrets, failingMistralEmbeddingResolver{})
 					require.NoError(t, err)
-					if stage != "credentials" || outcome == "recover" {
-						response := mistralEmbeddingBody(t, []int{0})
-						server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-							count := requests.Add(1)
-							_, _ = io.Copy(io.Discard, r.Body)
-							w.Header().Set("Content-Type", "application/json")
-							if stage != "credentials" && (outcome != "recover" || count < 3) {
-								if stage == "body" {
-									w.WriteHeader(http.StatusOK)
-									assert.NoError(t, http.NewResponseController(w).Flush())
-								}
-								if outcome == "caller_cancel" {
-									if stage == "body" {
-										// Let the client enter the body read before cancelling.
-										synctest.Wait()
-									}
-									cancel()
-								}
-								<-r.Context().Done()
-								return
+					response := mistralEmbeddingBody(t, []int{0})
+					server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						count := requests.Add(1)
+						_, _ = io.Copy(io.Discard, r.Body)
+						w.Header().Set("Content-Type", "application/json")
+						if stage != "credentials" && (outcome != "recover" || count < 3) {
+							if stage == "body" {
+								w.WriteHeader(http.StatusOK)
+								assert.NoError(t, http.NewResponseController(w).Flush())
 							}
-							_, _ = w.Write(response)
-						}))
-						provider.http = server.Client()
-					}
+							if outcome == "caller_cancel" {
+								if stage == "body" {
+									// Let the client enter the body read before cancelling.
+									synctest.Wait()
+								}
+								cancel()
+							}
+							<-r.Context().Done()
+							return
+						}
+						_, _ = w.Write(response)
+					}))
+					provider.http = server.Client()
 					result, err := provider.Embed(ctx, []document.EmbeddingInput{{Key: "first", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: "first"}}, embeddingAuthorization(profile.Descriptor))
 					switch outcome {
 					case "recover":
@@ -158,9 +156,7 @@ func TestMistralEmbeddingAttemptTimeouts(t *testing.T) {
 							wantRequests = 1
 						}
 					}
-					if stage != "credentials" || outcome == "recover" {
-						require.EqualValues(t, wantRequests, requests.Load())
-					}
+					require.EqualValues(t, wantRequests, requests.Load())
 					if err != nil {
 						require.Equal(t, wantRequests, MetricsFromError(err).Requests)
 					}
