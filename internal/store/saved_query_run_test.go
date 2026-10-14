@@ -296,15 +296,27 @@ func TestSavedQueryRunConcurrentCommitOrderChoosesPreviousChainHead(t *testing.T
 	require.NoError(t, first.err)
 	assert.Equal(t, second.RunID, first.run.PreviousRunID)
 
+	other, err := s.CreateSavedQuery(t.Context(), "other", "", SavedQueryKindQuery, []byte(`{}`))
+	require.NoError(t, err)
+	unrelated, _, err := service.RunSaved(t.Context(), "owner-d", other.ID,
+		other.Revision, SnapshotRequest{}, nil)
+	require.NoError(t, err)
+	assert.Empty(t, unrelated.PreviousRunID)
+
 	third, _, err := service.RunSaved(t.Context(), "owner-c", definition.ID,
 		definition.Revision, SnapshotRequest{}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, first.run.RunID, third.PreviousRunID,
 		"the next receipt must follow commit order even when materialization timestamps were inverted")
-	runs, err := s.ListSavedQueryRuns(t.Context(), definition.ID, 10)
+	for _, limit := range []int{1, 2, 10} {
+		runs, err := s.ListSavedQueryRuns(t.Context(), definition.ID, limit)
+		require.NoError(t, err)
+		want := []SavedQueryRun{third, first.run, second}
+		assert.Equal(t, want[:min(limit, len(want))], runs)
+	}
+	runs, err := s.ListSavedQueryRuns(t.Context(), other.ID, 10)
 	require.NoError(t, err)
-	assert.Equal(t, []string{third.RunID, first.run.RunID, second.RunID},
-		[]string{runs[0].RunID, runs[1].RunID, runs[2].RunID})
+	assert.Equal(t, []SavedQueryRun{unrelated}, runs)
 }
 
 func TestSavedQueryRunCanceledAdmissionAndDefinitionDeletionLeaveNoAuthority(t *testing.T) {
