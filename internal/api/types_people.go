@@ -41,14 +41,14 @@ type PersonExternalIdentity struct {
 }
 
 type PersonDetail struct {
-	AssertionsNextCursor string                 `json:"assertions_next_cursor,omitzero" format:"uuid"`
-	AssertionsTruncated  bool                   `json:"assertions_truncated"`
-	KeyFaceID            string                 `json:"key_face_id,omitzero" format:"uuid"`
-	Assertions           []PhotoPersonAssertion `json:"assertions" maxItems:"1000"`
 	Person
 
-	Identities         []PersonIdentity         `json:"identities" maxItems:"200"`
-	ExternalIdentities []PersonExternalIdentity `json:"external_identities" maxItems:"64"`
+	AssertionsNextCursor string                   `json:"assertions_next_cursor,omitzero" format:"uuid"`
+	AssertionsTruncated  bool                     `json:"assertions_truncated"`
+	KeyFaceID            string                   `json:"key_face_id,omitzero" format:"uuid"`
+	Assertions           []PhotoPersonAssertion   `json:"assertions" maxItems:"1000"`
+	Identities           []PersonIdentity         `json:"identities" maxItems:"200"`
+	ExternalIdentities   []PersonExternalIdentity `json:"external_identities" maxItems:"64"`
 }
 
 type CreatePersonRequest struct {

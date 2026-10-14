@@ -90,7 +90,7 @@ func TestPhotoFaceDecisionRejectDismissRename(t *testing.T) {
 	_, err = s.UndoPhotoFaceDecision(ctx, rejected.ReceiptID)
 	require.NoError(t, err)
 	decideFaceForTest(t, s, node, face.FaceID, grace.PersonID, "name")
-	faces, assertions, err = s.PhotoFaces(ctx, node.CurrentVersionID)
+	_, assertions, err = s.PhotoFaces(ctx, node.CurrentVersionID)
 	require.NoError(t, err)
 	require.Equal(t, grace.PersonID, assertions[0].PersonID)
 	decideFaceForTest(t, s, node, face.FaceID, ada.PersonID, "reject")
@@ -281,7 +281,7 @@ func TestPhotoFaceMergeReviewsContradictions(t *testing.T) {
 			}
 			require.NoError(t, err)
 			_, err = s.MergePersons(ctx, a.PersonID, b.PersonID, uuid.NewString(), 1, 1)
-			var conflict *PersonFaceMergeConflict
+			var conflict *PersonFaceMergeConflictError
 			require.ErrorAs(t, err, &conflict)
 			require.Equal(t, hiddenFaceID != "", conflict.HiddenConflict)
 			if hiddenFaceID != "" {
@@ -527,7 +527,6 @@ func TestPhotoFaceDecisionWithdrawalMerge(t *testing.T) {
 			if action == "undo" {
 				_, err = s.UndoPhotoFaceDecision(ctx, r.ReceiptID)
 				require.NoError(t, err)
-
 			} else {
 				as, err := s.DocumentPersonAssertions(ctx, n.CurrentVersionID)
 				require.NoError(t, err)
@@ -936,7 +935,6 @@ func TestPhotoFaceKeyReplacementWithLockedOldPhoto(t *testing.T) {
 	require.NoError(t, restored.ImportMetadata(ctx, &backup))
 	require.Equal(t, f.FaceID, personKeyFaceForTest(t, restored, p.PersonID))
 	require.NoError(t, restored.ValidateMetadata(ctx))
-
 }
 func TestPersonAssertionSelectorsFilterBeforePaging(t *testing.T) {
 	t.Parallel()

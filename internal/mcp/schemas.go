@@ -246,7 +246,7 @@ func personDetailProperties() schema {
 	properties := personSchemaProperties()
 	properties["assertions_truncated"] = booleanSchema()
 	properties["key_face_id"] = uuidSchema()
-	properties["assertions"] = arraySchema(personAssertionSchema(), 1000)
+	properties["assertions"] = arraySchema(personAssertionSchema(stringSchema(64)), 1000)
 	properties["identities"] = arraySchema(personIdentitySchema(), document.MaxPersonIdentitiesPerPerson)
 	properties["assertions_next_cursor"] = uuidSchema()
 	properties["external_identities"] = arraySchema(personExternalIdentitySchema(), document.MaxPersonExternalIdentities)
@@ -904,19 +904,13 @@ func photoFaceSchema() schema {
 	}, "face_id", "content_version_id", "box", schemaRevisionField, schemaCreatedAtField)
 }
 
-func photoPersonAssertionSchema() schema {
-	value := personAssertionSchema()
-	value["properties"].(schema)["role"] = enumSchema("depicted")
-	return value
-}
-
-func personAssertionSchema() schema {
+func personAssertionSchema(role schema) schema {
 	return objectSchema(schema{
 		"photo_mark":         booleanSchema(),
 		"assertion_id":       uuidSchema(),
 		"content_version_id": uuidSchema(),
 		"person_id":          uuidSchema(),
-		"role":               stringSchema(64),
+		"role":               role,
 		"action":             enumSchema("assert", "suppress", "withdrawn"),
 		"note":               stringSchema(maxToolResponseBytes),
 		"recorded_at":        dateTimeSchema(),
@@ -932,7 +926,7 @@ func getPhotoFacesSchemas() (schema, schema) {
 	}, "content_version_id")
 	output := rootObjectSchema(withPrivateCache(schema{
 		"faces":            arraySchema(photoFaceSchema(), maxPhotoFacesToolPageSize),
-		"assertions":       arraySchema(photoPersonAssertionSchema(), maxPhotoFacesToolPageSize),
+		"assertions":       arraySchema(personAssertionSchema(enumSchema("depicted")), maxPhotoFacesToolPageSize),
 		"total_faces":      integerSchema(0, document.MaxPhotoRecordsPerVersion),
 		"total_assertions": integerSchema(0, document.MaxPhotoRecordsPerVersion),
 		schemaOffsetField:  integerSchema(0, document.MaxPhotoRecordsPerVersion),

@@ -8,14 +8,14 @@ import (
 	"strings"
 )
 
-type PersonFaceMergeConflict struct {
+type PersonFaceMergeConflictError struct {
 	FaceIDs              []string
 	HiddenConflict       bool
 	InaccessibleConflict bool
 	More                 bool
 }
 
-func (e *PersonFaceMergeConflict) Error() string {
+func (e *PersonFaceMergeConflictError) Error() string {
 	message := "review contradictory face assignments and rejections before merging"
 	if len(e.FaceIDs) > 0 {
 		message += "; faces: " + strings.Join(e.FaceIDs, ", ")
@@ -28,7 +28,7 @@ func (e *PersonFaceMergeConflict) Error() string {
 	}
 	return message
 }
-func (e *PersonFaceMergeConflict) Is(target error) bool { return target == ErrPersonMergeConflict }
+func (e *PersonFaceMergeConflictError) Is(target error) bool { return target == ErrPersonMergeConflict }
 
 type PersonMergeFaceCandidate struct {
 	CandidateID         string `json:"candidate_id"`
@@ -40,12 +40,12 @@ func (s *Store) checkFaceMergeConflictsTx(ctx context.Context, tx *sql.Tx, a, b 
 	if err != nil {
 		return err
 	}
-	conflict := &PersonFaceMergeConflict{}
+	defer func() { _ = rows.Close() }()
+	conflict := &PersonFaceMergeConflictError{}
 	found := false
 	for rows.Next() {
 		var id, version string
 		if err = rows.Scan(&id, &version); err != nil {
-			_ = rows.Close()
 			return err
 		}
 		err = s.facePhotoQuery(ctx, tx, version)
@@ -60,7 +60,6 @@ func (s *Store) checkFaceMergeConflictsTx(ctx context.Context, tx *sql.Tx, a, b 
 			continue
 		}
 		if err != nil {
-			_ = rows.Close()
 			return err
 		}
 		found = true
@@ -91,7 +90,7 @@ func moveFaceCandidatesTx(ctx context.Context, tx *sql.Tx, survivor, absorbed st
 		if err != nil {
 			return nil, err
 		}
-		if c.State == "open" {
+		if c.State == personCandidateStateOpen {
 			c.State = "superseded"
 			c.DecidedAt = ""
 			c.DecidedPersonID = ""
@@ -106,7 +105,7 @@ func moveFaceCandidatesTx(ctx context.Context, tx *sql.Tx, survivor, absorbed st
 			if e != nil {
 				return nil, e
 			}
-			if c.State == "rejected" || keep.State == "open" {
+			if c.State == personCandidateStateRejected || keep.State == personCandidateStateOpen {
 				if _, err = tx.ExecContext(ctx, `UPDATE person_match_candidates SET state=?,decided_person_id=?,decided_at=?,revision=revision+1 WHERE candidate_id=?`, c.State, nullableString(c.DecidedPersonID), nullableString(c.DecidedAt), retained); err != nil {
 					return nil, err
 				}

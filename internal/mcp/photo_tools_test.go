@@ -83,7 +83,10 @@ func TestGetPhotoFacesMCPPaginatesFacesAndAssertions(t *testing.T) {
 	require.EqualValues(t, 2, firstPage["next_offset"])
 	require.Len(t, firstPage["faces"], 2)
 	require.Len(t, firstPage["assertions"], 2)
-	firstFace := firstPage["faces"].([]any)[0].(map[string]any)
+	firstFaces, ok := firstPage["faces"].([]any)
+	require.True(t, ok)
+	firstFace, ok := firstFaces[0].(map[string]any)
+	require.True(t, ok)
 	require.Equal(t, []any{"00000000-0000-4000-8000-000000000203"}, firstFace["rejected_person_ids"])
 
 	last, err := invokeReadTool(t.Context(), lease, "get_photo_faces", map[string]any{"content_version_id": versionID, "limit": 2, "offset": 2})

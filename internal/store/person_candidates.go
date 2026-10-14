@@ -17,9 +17,14 @@ import (
 )
 
 const (
-	maxOpenPersonCandidates     = 10000
-	maxPersonCandidateEvidence  = 16384
-	maxPersonAssertionNoteBytes = 1000
+	personAssertionRoleDepicted    = "depicted"
+	personAssertionActionAssert    = "assert"
+	personCandidateStateOpen       = "open"
+	personCandidateStateRejected   = "rejected"
+	personCandidateReasonFaceMatch = "face_match"
+	maxOpenPersonCandidates        = 10000
+	maxPersonCandidateEvidence     = 16384
+	maxPersonAssertionNoteBytes    = 1000
 )
 
 var ErrPersonCandidateDecided = errors.New("person candidate is no longer open")
@@ -71,8 +76,8 @@ func normalizePersonCandidate(candidate PersonMatchCandidate) (PersonMatchCandid
 	}
 	if !document.ValidPersonCandidateActorKey(candidate.ActorKey) || !document.ValidPersonIdentityText(candidate.ActorKey) ||
 		!validPersonName(candidate.DisplayName) ||
-		!slices.Contains([]string{"name_only", "identifier_conflict", "external_uid_conflict", "transfer_unresolved", "face_match"}, candidate.Reason) ||
-		(candidate.State != "" && candidate.State != "open") {
+		!slices.Contains([]string{"name_only", "identifier_conflict", "external_uid_conflict", "transfer_unresolved", personCandidateReasonFaceMatch}, candidate.Reason) ||
+		(candidate.State != "" && candidate.State != personCandidateStateOpen) {
 		return invalid("candidate fields")
 	}
 	if candidate.SuggestedPersonID != "" && validateUUIDv4(candidate.SuggestedPersonID) != nil {
@@ -90,7 +95,7 @@ func normalizePersonCandidate(candidate PersonMatchCandidate) (PersonMatchCandid
 		return invalid("candidate evidence is empty")
 	}
 	for _, occurrence := range occurrences {
-		if (occurrence.Role == "depicted") != (candidate.Reason == "face_match") || candidate.Reason == "face_match" && (occurrence.EvidenceKind != "face" || validateUUIDv4(occurrence.EvidenceID) != nil) || candidate.Reason != "face_match" && occurrence.EvidenceKind == "face" {
+		if (occurrence.Role == personAssertionRoleDepicted) != (candidate.Reason == personCandidateReasonFaceMatch) || candidate.Reason == personCandidateReasonFaceMatch && (occurrence.EvidenceKind != "face" || validateUUIDv4(occurrence.EvidenceID) != nil) || candidate.Reason != personCandidateReasonFaceMatch && occurrence.EvidenceKind == "face" {
 			return invalid("depicted occurrence")
 		}
 		if validateUUIDv4(occurrence.ContentVersionID) != nil ||
@@ -100,7 +105,7 @@ func normalizePersonCandidate(candidate PersonMatchCandidate) (PersonMatchCandid
 			return invalid("candidate occurrence")
 		}
 	}
-	if candidate.Reason == "face_match" && (!strings.HasPrefix(candidate.ActorKey, "face:") || !slices.ContainsFunc(occurrences, func(o PersonCandidateOccurrence) bool { return "face:"+o.EvidenceID == candidate.ActorKey })) {
+	if candidate.Reason == personCandidateReasonFaceMatch && (!strings.HasPrefix(candidate.ActorKey, "face:") || !slices.ContainsFunc(occurrences, func(o PersonCandidateOccurrence) bool { return "face:"+o.EvidenceID == candidate.ActorKey })) {
 		return invalid("face candidate actor")
 	}
 	raw, err := canonical.Marshal(occurrences)
@@ -119,7 +124,7 @@ func normalizePersonCandidate(candidate PersonMatchCandidate) (PersonMatchCandid
 	candidate.EvidenceSHA256 = wantDigest
 	candidate.OccurrenceCount = int64(len(occurrences))
 	candidate.Revision = 1
-	candidate.State = "open"
+	candidate.State = personCandidateStateOpen
 	candidate.DecidedPersonID = ""
 	candidate.DecidedAt = ""
 	return candidate, nil
@@ -191,12 +196,12 @@ func (s *Store) retainPersonCandidate(ctx context.Context, tx *sql.Tx, candidate
 
 func (s *Store) PersonCandidates(ctx context.Context, state string, limit, offset int) ([]PersonMatchCandidate, int64, error) {
 	if state == "" {
-		state = "open"
+		state = personCandidateStateOpen
 	}
 	if limit == 0 {
 		limit = 100
 	}
-	if !slices.Contains([]string{"open", "linked", "rejected", "superseded"}, state) || limit < 1 || limit > 250 || offset < 0 {
+	if !slices.Contains([]string{personCandidateStateOpen, "linked", personCandidateStateRejected, "superseded"}, state) || limit < 1 || limit > 250 || offset < 0 {
 		return nil, 0, ErrInvalidPerson
 	}
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
@@ -268,20 +273,20 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDec
 		if err != nil {
 			return err
 		}
-		if candidate.State != "open" {
+		if candidate.State != personCandidateStateOpen {
 			return ErrPersonCandidateDecided
 		}
 		if candidate.Revision != decision.ExpectedRevision {
 			return ErrStaleRevision
 		}
 		var occurrences []PersonCandidateOccurrence
-		if candidate.Reason == "face_match" || decision.Action != "reject" {
+		if candidate.Reason == personCandidateReasonFaceMatch || decision.Action != "reject" {
 			occurrences, err = decodeStoredCandidateEvidence(candidate.Evidence)
 			if err != nil {
 				return err
 			}
 		}
-		if candidate.Reason == "face_match" {
+		if candidate.Reason == personCandidateReasonFaceMatch {
 			for _, o := range occurrences {
 				if e := s.facePhotoQuery(ctx, tx, o.ContentVersionID); e != nil {
 					return e
@@ -310,7 +315,7 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDec
 				return err
 			}
 		}
-		state := "rejected"
+		state := personCandidateStateRejected
 		if personID != "" {
 			state = "linked"
 		}
@@ -327,7 +332,7 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDec
 		if changed != 1 {
 			return ErrStaleRevision
 		}
-		if candidate.Reason == "face_match" && state == "rejected" {
+		if candidate.Reason == personCandidateReasonFaceMatch && state == personCandidateStateRejected {
 			if err := requirePhotoFaceRejectionBound(ctx, tx, "", candidate.CandidateID); err != nil {
 				return err
 			}
@@ -342,13 +347,13 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDec
 }
 
 func (s *Store) AssertDocumentPerson(ctx context.Context, assertion PersonDocumentAssertion) (PersonDocumentAssertion, error) {
-	assertion.PhotoMark = assertion.Role == "depicted" && assertion.Action == "assert"
+	assertion.PhotoMark = assertion.Role == personAssertionRoleDepicted && assertion.Action == personAssertionActionAssert
 	if err := validatePersonAssertion(assertion); err != nil {
 		return PersonDocumentAssertion{}, err
 	}
 	var saved PersonDocumentAssertion
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		if assertion.Role == "depicted" {
+		if assertion.Role == personAssertionRoleDepicted {
 			if err := s.facePhotoQuery(ctx, tx, assertion.ContentVersionID); err != nil {
 				return err
 			}
@@ -376,7 +381,7 @@ func (s *Store) AssertDocumentPerson(ctx context.Context, assertion PersonDocume
 				return ErrStaleRevision
 			}
 			result, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET action=?,note=?,photo_mark=?,revision=revision+1 WHERE assertion_id=? AND revision=?`,
-				assertion.Action, assertion.Note, assertion.Role == "depicted" && assertion.Action == "assert", existing.AssertionID, existing.Revision)
+				assertion.Action, assertion.Note, assertion.Role == personAssertionRoleDepicted && assertion.Action == personAssertionActionAssert, existing.AssertionID, existing.Revision)
 			if err != nil {
 				return err
 			}
@@ -411,14 +416,14 @@ func (s *Store) AssertDocumentPerson(ctx context.Context, assertion PersonDocume
 		default:
 			return err
 		}
-		if assertion.Role == "depicted" {
-			if _, err = tx.ExecContext(ctx, `UPDATE person_document_assertions SET photo_mark=? WHERE assertion_id=?`, assertion.Action == "assert", assertion.AssertionID); err != nil {
+		if assertion.Role == personAssertionRoleDepicted {
+			if _, err = tx.ExecContext(ctx, `UPDATE person_document_assertions SET photo_mark=? WHERE assertion_id=?`, assertion.Action == personAssertionActionAssert, assertion.AssertionID); err != nil {
 				return err
 			}
 			if _, err = tx.ExecContext(ctx, `UPDATE photo_faces SET revision=revision+1 WHERE assertion_id=?`, assertion.AssertionID); err != nil {
 				return err
 			}
-			if assertion.Action != "assert" {
+			if assertion.Action != personAssertionActionAssert {
 				if _, err = tx.ExecContext(ctx, `UPDATE persons SET key_face_id=NULL,revision=revision+1,updated_at=? WHERE key_face_id IN (SELECT face_id FROM photo_faces WHERE assertion_id=?)`, nowRFC3339(), assertion.AssertionID); err != nil {
 					return err
 				}
@@ -454,7 +459,7 @@ func (s *Store) DocumentPersonAssertions(ctx context.Context, contentVersionID s
 }
 
 func validatePersonAssertion(assertion PersonDocumentAssertion) error {
-	if assertion.PhotoMark && (assertion.Role != "depicted" || assertion.Action != "assert") {
+	if assertion.PhotoMark && (assertion.Role != personAssertionRoleDepicted || assertion.Action != personAssertionActionAssert) {
 		return ErrInvalidPerson
 	}
 	if assertion.AssertionID != "" && validateUUIDv4(assertion.AssertionID) != nil {
@@ -462,7 +467,7 @@ func validatePersonAssertion(assertion PersonDocumentAssertion) error {
 	}
 	if validateUUIDv4(assertion.ContentVersionID) != nil || validateUUIDv4(assertion.PersonID) != nil || assertion.Revision < 1 ||
 		!document.ValidPersonRole(assertion.Role) ||
-		(!slices.Contains([]string{"assert", "suppress"}, assertion.Action) && !(assertion.Role == "depicted" && assertion.Action == "withdrawn")) ||
+		(!slices.Contains([]string{personAssertionActionAssert, "suppress"}, assertion.Action) && (assertion.Role != personAssertionRoleDepicted || assertion.Action != "withdrawn")) ||
 		len(assertion.Note) > maxPersonAssertionNoteBytes || !utf8.ValidString(assertion.Note) {
 		return ErrInvalidPerson
 	}
@@ -607,10 +612,10 @@ func ensurePersonAssertionTx(ctx context.Context, tx *sql.Tx, versionID, personI
 			if _, err = tx.ExecContext(ctx, `UPDATE person_document_assertions SET action='assert',revision=revision+1 WHERE assertion_id=?`, existing.AssertionID); err != nil {
 				return PersonDocumentAssertion{}, false, err
 			}
-			existing.Action = "assert"
+			existing.Action = personAssertionActionAssert
 			existing.Revision++
 			return existing, true, nil
-		} else if existing.Action != "assert" {
+		} else if existing.Action != personAssertionActionAssert {
 			return PersonDocumentAssertion{}, false, ErrPersonIdentityConflict
 		}
 		return existing, false, nil
@@ -625,7 +630,7 @@ func ensurePersonAssertionTx(ctx context.Context, tx *sql.Tx, versionID, personI
 	if err != nil {
 		return PersonDocumentAssertion{}, false, err
 	}
-	assertion := PersonDocumentAssertion{AssertionID: id, ContentVersionID: versionID, PersonID: personID, Role: role, Action: "assert", Revision: 1, RecordedAt: nowRFC3339()}
+	assertion := PersonDocumentAssertion{AssertionID: id, ContentVersionID: versionID, PersonID: personID, Role: role, Action: personAssertionActionAssert, Revision: 1, RecordedAt: nowRFC3339()}
 	_, err = tx.ExecContext(ctx, `INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision) VALUES(?,?,?,?,'assert','',?,1)`, id, versionID, personID, role, assertion.RecordedAt)
 	return assertion, true, err
 }
@@ -640,7 +645,7 @@ func (s *Store) personCandidateVisibility(ctx context.Context, q metadataQuerier
 }
 
 func requireFaceOccurrenceTx(ctx context.Context, tx *sql.Tx, occurrence PersonCandidateOccurrence) error {
-	if occurrence.Role != "depicted" || validateUUIDv4(occurrence.EvidenceID) != nil {
+	if occurrence.Role != personAssertionRoleDepicted || validateUUIDv4(occurrence.EvidenceID) != nil {
 		return ErrInvalidPerson
 	}
 	var exists bool

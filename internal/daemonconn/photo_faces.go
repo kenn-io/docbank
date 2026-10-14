@@ -3,6 +3,7 @@ package daemonconn
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"uuid"
 
@@ -117,15 +118,15 @@ func validatePhotoAssertionResponse(assertion api.PhotoPersonAssertion, versionI
 }
 
 func (c *Connection) DecidePhotoFace(ctx context.Context, versionID string, request api.PhotoFaceDecisionRequest, cookies ...string) (api.PhotoFaceDecisionResult, error) {
-	if !validUUIDv4(versionID) || request.Revision < 1 && !(request.Action == "key" && request.FaceID == "") {
+	if !validUUIDv4(versionID) || request.Revision < 1 && (request.Action != "key" || request.FaceID != "") {
 		return api.PhotoFaceDecisionResult{}, errors.New("invalid face decision identity or revision")
 	}
 	id, err := uuid.Parse(versionID)
 	if err != nil {
-		return api.PhotoFaceDecisionResult{}, err
+		return api.PhotoFaceDecisionResult{}, fmt.Errorf("parse face decision ID: %w", err)
 	}
 	var response *http.Response
-	body := apiclient.DecidePhotoFaceBody(request)
+	body := request
 	result, err := c.apiWithResponse(&response).DecidePhotoFace(ctx, &apiclient.DecidePhotoFaceRequestOptions{PathParams: &apiclient.DecidePhotoFacePath{ContentVersionID: id}, Body: &body}, photoCookie(cookies))
 	if err != nil {
 		return api.PhotoFaceDecisionResult{}, mutationRequestError(response, err)
@@ -146,7 +147,7 @@ func (c *Connection) UndoPhotoFaceDecisionWithOperationID(ctx context.Context, r
 	}
 	id, err := uuid.Parse(receiptID)
 	if err != nil {
-		return api.PhotoFaceDecisionResult{}, err
+		return api.PhotoFaceDecisionResult{}, fmt.Errorf("parse face decision ID: %w", err)
 	}
 	var response *http.Response
 	options := &apiclient.UndoPhotoFaceDecisionRequestOptions{PathParams: &apiclient.UndoPhotoFaceDecisionPath{ReceiptID: id}}

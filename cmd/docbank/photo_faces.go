@@ -114,7 +114,7 @@ func addPhotoFaceDecisionCommands(faces *cobra.Command) {
 			if request.OperationID == "" {
 				request.OperationID = uuid.New().String()
 				if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "operation ID %s (pass --operation-id %s to retry)\n", request.OperationID, request.OperationID); err != nil {
-					return err
+					return fmt.Errorf("write operation ID: %w", err)
 				}
 			}
 			result, err := withPhotoHidden(cmd, c, func(cookie string) (api.PhotoFaceDecisionResult, error) {
@@ -142,10 +142,19 @@ func addPhotoFaceDecisionCommands(faces *cobra.Command) {
 			command.Flags().Int64Var(&request.PersonRevision, "person-revision", 0, "expected person revision; omit --face to clear the key face")
 			_ = command.MarkFlagRequired("person-revision")
 		}
+		command.Example = "  docbank photos faces " + command.Name() + " 11111111-1111-4111-8111-111111111111"
+		if action == "key" {
+			command.Example += " --person 33333333-3333-4333-8333-333333333333 --person-revision 1"
+		} else {
+			command.Example += " --face 22222222-2222-4222-8222-222222222222 --revision 1"
+			if command.Flags().Lookup("person") != nil {
+				command.Example += " --person 33333333-3333-4333-8333-333333333333"
+			}
+		}
 		faces.AddCommand(command)
 	}
 	var undoOperationID string
-	undo := &cobra.Command{Use: "undo <receipt-id>", Short: "Undo a face decision", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	undo := &cobra.Command{Use: "undo <receipt-id>", Example: "  docbank photos faces undo 44444444-4444-4444-8444-444444444444", Short: "Undo a face decision", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
@@ -153,7 +162,7 @@ func addPhotoFaceDecisionCommands(faces *cobra.Command) {
 		if undoOperationID == "" {
 			undoOperationID = uuid.New().String()
 			if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "operation ID %s (pass --operation-id %s to retry)\n", undoOperationID, undoOperationID); err != nil {
-				return err
+				return fmt.Errorf("write operation ID: %w", err)
 			}
 		}
 		result, err := withPhotoHidden(cmd, c, func(cookie string) (api.PhotoFaceDecisionResult, error) {

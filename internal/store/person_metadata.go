@@ -404,7 +404,7 @@ func validateMetadataPersonAssertion(r metadataPersonDocumentAssertion) error {
 func validateMetadataPersonCandidate(r metadataPersonMatchCandidate) error {
 	if r.Type != metadataPersonCandidateType || validateUUIDv4(r.CandidateID) != nil || r.Revision < 1 ||
 		!document.ValidPersonCandidateActorKey(r.ActorKey) || !document.ValidPersonIdentityText(r.ActorKey) || !validPersonName(r.DisplayName) ||
-		!slices.Contains([]string{"open", "linked", "rejected", "superseded"}, r.State) ||
+		!slices.Contains([]string{personCandidateStateOpen, "linked", personCandidateStateRejected, "superseded"}, r.State) ||
 		len(r.EvidenceJSON) == 0 || len(r.EvidenceJSON) > maxPersonCandidateEvidence || r.OccurrenceCount < 1 {
 		return errors.New("invalid person candidate metadata")
 	}
@@ -420,9 +420,9 @@ func validateMetadataPersonCandidate(r metadataPersonMatchCandidate) error {
 		normalized.EvidenceSHA256 != r.EvidenceSHA256 || !bytes.Equal(normalized.Evidence, r.EvidenceJSON) {
 		return errors.New("invalid person candidate evidence")
 	}
-	if r.State == "open" && (r.DecidedPersonID != nil || r.DecidedAt != nil) ||
+	if r.State == personCandidateStateOpen && (r.DecidedPersonID != nil || r.DecidedAt != nil) ||
 		r.State == "linked" && (r.DecidedPersonID == nil || r.DecidedAt == nil) ||
-		r.State == "rejected" && (r.DecidedPersonID != nil || r.DecidedAt == nil) ||
+		r.State == personCandidateStateRejected && (r.DecidedPersonID != nil || r.DecidedAt == nil) ||
 		r.State == "superseded" && (r.DecidedPersonID != nil || r.DecidedAt != nil) {
 		return errors.New("invalid person candidate decision state")
 	}

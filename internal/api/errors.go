@@ -201,7 +201,7 @@ var storeErrCodes = []struct {
 // unrecognized error becomes an opaque 500 (message still surfaced — this
 // is a single-user local daemon, not a hardened multi-tenant service).
 func FromStoreError(err error) error {
-	if conflict, ok := errors.AsType[*store.PersonFaceMergeConflict](err); ok {
+	if conflict, ok := errors.AsType[*store.PersonFaceMergeConflictError](err); ok {
 		out := NewError(http.StatusConflict, "person_merge_conflict", conflict.Error())
 		out.FaceIDs = conflict.FaceIDs
 		out.HiddenFaceConflict = conflict.HiddenConflict
