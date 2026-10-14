@@ -120,7 +120,7 @@
   }
   async function retryNavigation() { await photos.retry(preserve); }
   function select(id: string, event: MouseEvent, touch: boolean) {
-    if (touch && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
+    if (touch) {
       if (photos.selection.selectedIDs.size) photos.check(id, !photos.selection.selectedIDs.has(id), false, orderedIDs);
       else open(id, event.currentTarget as HTMLElement);
     }

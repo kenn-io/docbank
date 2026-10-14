@@ -95,6 +95,13 @@ it("keeps the active no-tags filter available to clear at zero", async () => {
   expect(view.container.querySelector(".summary")).toBeNull();
 });
 
+it("keeps No tags reachable at zero missing after a tag is selected", async () => {
+  const onchange = vi.fn();
+  render(FacetSidebar, { facets: [facet("tags", { missing: 0, other: 0 })], query: { ...originalQuery, filters: { ...originalQuery.filters, tag_ids: [tagID] } }, onchange });
+  await fireEvent.click(screen.getByRole("button", { name: "No tags" }));
+  expect(onchange.mock.calls.at(-1)?.[0].filters).toMatchObject({ no_tags: true, tag_ids: undefined });
+});
+
 it("preserves expression, syntax, exclusions, and unrelated filters when applying supported buckets", async () => {
   const onchange = vi.fn();
   const view = render(FacetSidebar, { facets, query: originalQuery, disabled: false, onchange });

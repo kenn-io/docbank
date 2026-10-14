@@ -174,9 +174,9 @@
         {@const wording = summary[facet.dimension]}
         {@const missing = wording && (facet.missing ?? 0) > 0 ? `${facet.missing} ${wording.missing}` : ""}
         {@const other = (facet.other ?? 0) > 0 ? wording?.other?.(facet.other!) : ""}
-        {#if missing || other || (facet.dimension === "tags" && query.filters.no_tags)}
+        {#if missing || other || (facet.dimension === "tags" && (query.filters.no_tags || query.filters.tag_ids?.length))}
           <div class="summary">
-            {#if facet.dimension === "tags" && (missing || query.filters.no_tags)}
+            {#if facet.dimension === "tags" && (missing || query.filters.no_tags || query.filters.tag_ids?.length)}
               <button type="button" class:selected={query.filters.no_tags === true} aria-pressed={query.filters.no_tags === true}
                 disabled={disabled} onclick={toggleMissingTags}>{missing || "No tags"}</button>
             {:else if missing}<span>{missing}</span>{/if}

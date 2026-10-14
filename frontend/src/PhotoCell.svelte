@@ -1,10 +1,3 @@
-<script module lang="ts">
-  let lastClick: { image: HTMLElement; time: number; opened: boolean } | undefined;
-  if (typeof document !== "undefined") document.addEventListener("click", event => {
-    if (lastClick && (!(event.target instanceof Node) || !lastClick.image.contains(event.target))) lastClick = undefined;
-  }, true);
-</script>
-
 <script lang="ts">
   import { Checkbox, Menu, MenuTrigger, MenuContent, MenuItem } from "@kenn-io/kit-ui";
   import RotateCcw from "@lucide/svelte/icons/rotate-ccw";
@@ -27,6 +20,7 @@
   } = $props();
   let menuOpen = $state(false);
   let imageButton = $state<HTMLButtonElement>();
+  let lastClick = $state<{ time: number; opened: boolean } | undefined>();
   let touchClick = false;
   let pointerType: string | undefined;
   let tapCancelled = false;
@@ -47,20 +41,29 @@
     if (!compact && touchClick && event.detail > 1 && !suppressDoubleClick) return;
     if (!compact && touchClick && (event.detail === 1 || suppressDoubleClick)) {
       const time = event.timeStamp;
-      if (lastClick?.image === event.currentTarget && !lastClick.opened && time - lastClick.time <= 350) {
-        lastClick = { image: event.currentTarget, time, opened: true };
+      if (lastClick && !lastClick.opened && time - lastClick.time <= 350) {
+        lastClick = { time, opened: true };
         openImage(event.currentTarget);
         return;
       }
-      lastClick = { image: event.currentTarget, time, opened: false };
+      lastClick = { time, opened: false };
     } else lastClick = undefined;
     onclick(event, touchClick);
   }
   function doubleClickImage(event: MouseEvent & { currentTarget: HTMLButtonElement }): void {
-    if (compact || suppressDoubleClick || lastClick?.image === event.currentTarget && lastClick.opened) return;
+    if (compact || suppressDoubleClick || lastClick?.opened) return;
     lastClick = undefined;
     openImage(event.currentTarget);
   }
+  // A click outside this tile ends a pending double-tap; the listener exists only while one is pending.
+  $effect(() => {
+    if (!lastClick) return;
+    const reset = (event: Event) => {
+      if (!(event.target instanceof Node) || !imageButton?.contains(event.target)) lastClick = undefined;
+    };
+    document.addEventListener("click", reset, true);
+    return () => document.removeEventListener("click", reset, true);
+  });
   $effect(() => {
     const slot = photo.previews.grid;
     void retry;
