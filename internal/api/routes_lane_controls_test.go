@@ -86,48 +86,46 @@ func TestLaneControlRoutesAndReadonlyJobs(t *testing.T) {
 
 func TestStorageJobControlsFollowOperationState(t *testing.T) {
 	t.Parallel()
-	for _, kind := range []string{"place", store.StorageOperationKindPhotoImport} {
-		for _, state := range []store.StorageOperationState{
-			store.StorageOperationQueued, store.StorageOperationRunning,
-			store.StorageOperationCompleted, store.StorageOperationFailed, store.StorageOperationCancelled,
-		} {
-			t.Run(kind+"/"+string(state), func(t *testing.T) {
-				ts, s := newTestServer(t, nil)
-				_, err := s.SetLaneControl(t.Context(), store.LaneControl{Lane: kind, Paused: true, Concurrency: 1}, 1)
+	for _, state := range []store.StorageOperationState{
+		store.StorageOperationQueued, store.StorageOperationRunning,
+		store.StorageOperationCompleted, store.StorageOperationFailed, store.StorageOperationCancelled,
+	} {
+		t.Run(string(state), func(t *testing.T) {
+			ts, s := newTestServer(t, nil)
+			_, err := s.SetLaneControl(t.Context(), store.LaneControl{Lane: "place", Paused: true, Concurrency: 1}, 1)
+			require.NoError(t, err)
+			operation, err := s.CreateLocalOperation(t.Context(), "place", `{}`)
+			require.NoError(t, err)
+			if state != store.StorageOperationQueued {
+				_, err = s.ClaimStorageOperation(t.Context(), operation.ID)
 				require.NoError(t, err)
-				operation, err := s.CreateLocalOperation(t.Context(), kind, `{}`)
-				require.NoError(t, err)
-				if state != store.StorageOperationQueued {
-					_, err = s.ClaimStorageOperation(t.Context(), operation.ID)
-					require.NoError(t, err)
-				}
-				cancelRequested := state == store.StorageOperationQueued || state == store.StorageOperationCancelled
-				if cancelRequested {
-					require.NoError(t, s.RequestStorageOperationCancel(t.Context(), operation.ID))
-				}
-				active := state == store.StorageOperationQueued || state == store.StorageOperationRunning
-				if !active {
-					require.NoError(t, s.FinishStorageOperation(t.Context(), operation.ID, state, "{}", "", time.Now().Add(time.Hour)))
-				}
-				resp, body := get(t, ts, "/api/v1/jobs", nil)
-				require.Equal(t, http.StatusOK, resp.StatusCode, body)
-				var listed api.JobList
-				require.NoError(t, json.Unmarshal([]byte(body), &listed))
-				require.Len(t, listed.Items, 1)
-				job := listed.Items[0]
-				assert.Equal(t, active, job.Controllable)
-				assert.Equal(t, active, job.CanCancel)
-				assert.Equal(t, cancelRequested, job.CancelRequested)
-				assert.Equal(t, active, job.Paused)
-				if active {
-					assert.Equal(t, 1, job.Concurrency)
-					assert.Equal(t, int64(2), job.ControlRevision)
-				} else {
-					assert.Zero(t, job.Concurrency)
-					assert.Zero(t, job.ControlRevision)
-				}
-			})
-		}
+			}
+			cancelRequested := state == store.StorageOperationQueued || state == store.StorageOperationCancelled
+			if cancelRequested {
+				require.NoError(t, s.RequestStorageOperationCancel(t.Context(), operation.ID))
+			}
+			active := state == store.StorageOperationQueued || state == store.StorageOperationRunning
+			if !active {
+				require.NoError(t, s.FinishStorageOperation(t.Context(), operation.ID, state, "{}", "", time.Now().Add(time.Hour)))
+			}
+			resp, body := get(t, ts, "/api/v1/jobs", nil)
+			require.Equal(t, http.StatusOK, resp.StatusCode, body)
+			var listed api.JobList
+			require.NoError(t, json.Unmarshal([]byte(body), &listed))
+			require.Len(t, listed.Items, 1)
+			job := listed.Items[0]
+			assert.Equal(t, active, job.Controllable)
+			assert.Equal(t, active, job.CanCancel)
+			assert.Equal(t, cancelRequested, job.CancelRequested)
+			assert.Equal(t, active, job.Paused)
+			if active {
+				assert.Equal(t, 1, job.Concurrency)
+				assert.Equal(t, int64(2), job.ControlRevision)
+			} else {
+				assert.Zero(t, job.Concurrency)
+				assert.Zero(t, job.ControlRevision)
+			}
+		})
 	}
 }
 

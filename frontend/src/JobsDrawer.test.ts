@@ -43,7 +43,6 @@ describe("background jobs drawer", () => {
   it.each([
     ["initial load", 503, { detail: "busy" }, "busy"],
     ["lane controls", 200, { items: [], lane_controls_error: "Lane controls are unavailable" }, "Lane controls are unavailable"],
-    ["active polling", 503, { detail: "busy" }, "busy"],
     [
       "populated lane controls",
       200,
@@ -58,12 +57,6 @@ describe("background jobs drawer", () => {
     async (failure, status, body, message) => {
       vi.useFakeTimers();
       try {
-        const active = {
-          name: "extract:plain-text",
-          status: "running",
-          started_at: "2026-07-23T12:00:00Z",
-        };
-        const automatic = failure === "active polling";
         const populated = failure === "populated lane controls";
         const items = populated ? (body as { items: Job[] }).items : [];
         const control = {
@@ -75,65 +68,73 @@ describe("background jobs drawer", () => {
         };
         const group = vi.spyOn(jobs, "jobLanes");
         const fetchSpy = vi.spyOn(globalThis, "fetch");
-        if (automatic) fetchSpy.mockResolvedValueOnce(jobsResponse([active]));
         fetchSpy.mockResolvedValueOnce(
           new Response(JSON.stringify(body), {
             status,
             headers: { "Content-Type": "application/json" },
           }),
         );
-        if (automatic) {
-          fetchSpy.mockResolvedValueOnce(
-            jobsResponse([{ ...active, status: "completed", finished_at: "2026-07-23T12:05:00Z" }]),
-          );
-        } else {
-          fetchSpy
-            .mockReturnValueOnce(new Promise<Response>(() => {}))
-            .mockResolvedValueOnce(jobsResponse(items, populated ? [control] : []));
-        }
+        fetchSpy
+          .mockReturnValueOnce(new Promise<Response>(() => {}))
+          .mockResolvedValueOnce(jobsResponse(items, populated ? [control] : []));
         render(JobsDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
         await vi.advanceTimersByTimeAsync(0);
-        if (automatic) {
-          expect(screen.getByText("1 running · 1 total")).toBeTruthy();
-          expect(fetchSpy).toHaveBeenCalledTimes(1);
-          await vi.advanceTimersByTimeAsync(2000);
-        }
         expect(screen.getByRole("alert").textContent).toBe(message);
         expect(screen.queryByText("No background jobs")).toBeNull();
         await vi.advanceTimersByTimeAsync(2000);
-        if (automatic) {
-          expect(screen.getByText("Completed")).toBeTruthy();
-          expect(screen.getByText("0 running · 1 total")).toBeTruthy();
+        expect(fetchSpy).toHaveBeenCalledTimes(2);
+        expect(screen.getByRole("alert").textContent).toBe(message);
+        expect(screen.queryByText("No background jobs")).toBeNull();
+        expect(screen.queryByText("Read-only")).toBeNull();
+        if (populated) expect(screen.getByText("1 running · 1 total")).toBeTruthy();
+        await fireEvent.click(
+          screen.getByRole("button", {
+            name: populated ? "Refresh background jobs" : "Try again",
+          }),
+        );
+        await vi.advanceTimersByTimeAsync(0);
+        if (populated) {
+          expect(screen.getByRole("button", { name: "Resume Photo import" })).toBeTruthy();
+          expect(group).toHaveBeenCalledWith(items, [control]);
         } else {
-          expect(fetchSpy).toHaveBeenCalledTimes(2);
-          expect(screen.getByRole("alert").textContent).toBe(message);
-          expect(screen.queryByText("No background jobs")).toBeNull();
-          expect(screen.queryByText("Read-only")).toBeNull();
-          if (populated) expect(screen.getByText("1 running · 1 total")).toBeTruthy();
-          await fireEvent.click(
-            screen.getByRole("button", {
-              name: populated ? "Refresh background jobs" : "Try again",
-            }),
-          );
-          await vi.advanceTimersByTimeAsync(0);
-          if (populated) {
-            expect(screen.getByRole("button", { name: "Resume Photo import" })).toBeTruthy();
-            expect(group).toHaveBeenCalledWith(items, [control]);
-          } else {
-            expect(screen.getByText("No background jobs")).toBeTruthy();
-          }
+          expect(screen.getByText("No background jobs")).toBeTruthy();
         }
         expect(screen.queryByRole("alert")).toBeNull();
         expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
-        expect(fetchSpy).toHaveBeenCalledTimes(3);
-        cleanup();
-        await vi.advanceTimersByTimeAsync(4000);
-        expect(fetchSpy).toHaveBeenCalledTimes(3);
       } finally {
         vi.useRealTimers();
       }
     },
   );
+
+  it("refreshes while work is active, recovers polling errors, and stops on unmount", async () => {
+    vi.useFakeTimers();
+    try {
+      const active = { name: "extract:plain-text", status: "running", started_at: "2026-07-23T12:00:00Z" };
+      const fetchSpy = vi.spyOn(globalThis, "fetch")
+        .mockResolvedValueOnce(jobsResponse([active]))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "busy" }), { status: 503, headers: { "Content-Type": "application/json" } }))
+        .mockResolvedValueOnce(jobsResponse([{ ...active, status: "completed", finished_at: "2026-07-23T12:05:00Z" }]));
+      render(JobsDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(screen.getByText("1 running · 1 total")).toBeTruthy();
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(screen.getByRole("alert").textContent).toBe("busy");
+      expect(screen.queryByText("No background jobs")).toBeNull();
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(screen.getByText("Completed")).toBeTruthy();
+      expect(screen.getByText("0 running · 1 total")).toBeTruthy();
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+      expect(fetchSpy).toHaveBeenCalledTimes(3);
+      cleanup();
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(fetchSpy).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it("closes the drawer when a lane write loses authorization", async () => {
     const control = {

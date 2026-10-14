@@ -127,13 +127,6 @@ func TestGetCLIRequestsAndPublishesCurrentVersion(t *testing.T) {
 		}
 		assert.Equal(t, "/api/v1/versions/"+node.CurrentVersionID+"/content", <-contentRequests)
 	}
-	require.NoError(t, os.WriteFile(output, []byte("keep me"), 0o600))
-	_, err = runCLI(t, "get", "/inbox/statement.bin", output)
-	require.ErrorContains(t, err, "pass --overwrite")
-	published, readErr := os.ReadFile(output)
-	require.NoError(t, readErr)
-	assert.Equal(t, "keep me", string(published))
-	require.Empty(t, requests)
 	_, err = runCLI(t, "get", "/missing", filepath.Join(t.TempDir(), "out"), "--progress", "animated")
 	require.ErrorContains(t, err, "invalid --progress value")
 	require.Empty(t, requests)

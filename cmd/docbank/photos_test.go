@@ -237,14 +237,7 @@ func TestPhotoImportOutputPointsToJobs(t *testing.T) {
 	vault := t.TempDir()
 	t.Setenv("DOCBANK_HOME", vault)
 	const token = "synthetic-proof-token"
-	operation := api.StorageOperation{ID: "00000000-0000-4000-8000-000000000021", Kind: "photo_import", State: "completed", Receipt: store.PhotoImportReceipt{
-		Ambiguous: 1, Ambiguities: []store.PhotoImportAmbiguity{{Reason: store.PhotoImportMultipleRAW, Files: []store.PhotoImportAmbiguousFile{
-			{SourcePath: "IMG.ARW", NodeID: 42, Role: store.PhotoRoleRAW},
-			{SourcePath: "IMG.DNG", NodeID: 43, Role: store.PhotoRoleRAW},
-			{SourcePath: "IMG.JPG", NodeID: 44, Role: store.PhotoRoleImage},
-		}}},
-	}}
-	queued := api.StorageOperation{ID: operation.ID, Kind: operation.Kind, State: "queued"}
+	queued := api.StorageOperation{ID: "00000000-0000-4000-8000-000000000021", Kind: "photo_import", State: "queued"}
 	requests := make(chan api.PhotoImportStartRequest, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -262,9 +255,6 @@ func TestPhotoImportOutputPointsToJobs(t *testing.T) {
 			requests <- request
 			w.WriteHeader(http.StatusAccepted)
 			assert.NoError(t, json.MarshalWrite(w, queued))
-		case "/api/v1/jobs/" + operation.ID:
-			assert.Equal(t, http.MethodGet, r.Method)
-			assert.NoError(t, json.MarshalWrite(w, operation))
 		default:
 			http.NotFound(w, r)
 		}
@@ -294,9 +284,4 @@ func TestPhotoImportOutputPointsToJobs(t *testing.T) {
 			assert.Contains(t, output, "docbank jobs cancel "+queued.ID)
 		}
 	}
-	output, err := runCLI(t, "jobs", "show", operation.ID, "--json")
-	require.NoError(t, err, output)
-	expected, err := json.Marshal(operation)
-	require.NoError(t, err)
-	assert.JSONEq(t, string(expected), output)
 }

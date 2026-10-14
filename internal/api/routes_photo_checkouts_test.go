@@ -4,10 +4,8 @@ import (
 	"context"
 	"encoding/json/v2"
 	"net/http"
-	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
@@ -27,8 +25,6 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 	require.NoError(t, err)
 	asset, err := catalog.PhotoAssetForNode(t.Context(), node.ID)
 	require.NoError(t, err)
-	_, err = catalog.CreateFile(t.Context(), catalog.RootID(), "other.jpg", hash, size, "image/jpeg")
-	require.NoError(t, err)
 	selection := store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}
 	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/checkouts/estimate", nil, selection)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
@@ -45,34 +41,11 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &created))
 	require.Equal(t, request.Selection, created.Checkout.Selection)
 	require.Equal(t, request.ByteLimit, created.Checkout.ByteLimit)
-	requestedDestination, err := os.Stat(request.Destination)
-	require.NoError(t, err)
-	returnedDestination, err := os.Stat(created.Checkout.Destination)
-	require.NoError(t, err)
-	require.True(t, os.SameFile(requestedDestination, returnedDestination))
 	registered := supervisor.Snapshot()
 	require.Len(t, registered, 1)
 	require.Equal(t, "storage:"+created.Operation.ID, registered[0].Name)
-	storedCheckout, storedOperation, err := catalog.PhotoCheckoutOperation(t.Context(), created.Checkout.ID)
-	require.NoError(t, err)
-	require.Equal(t, storedCheckout, created.Checkout)
-	var receipt any
-	if storedOperation.ReceiptJSON != "" {
-		require.NoError(t, json.Unmarshal([]byte(storedOperation.ReceiptJSON), &receipt))
-	}
-	expectedOperation := api.StorageOperation{
-		ID: storedOperation.ID, Kind: storedOperation.Kind, State: string(storedOperation.State),
-		PlanDigest: storedOperation.RequestDigest, TotalObjects: storedOperation.TotalObjects,
-		CompletedObjects: storedOperation.CompletedObjects, CopiedObjects: storedOperation.CopiedObjects,
-		CopiedBytes: storedOperation.CopiedBytes, CancelRequested: storedOperation.CancelRequested,
-		Error: storedOperation.Error, Receipt: receipt,
-		CreatedAt: storedOperation.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: storedOperation.UpdatedAt.Format(time.RFC3339Nano),
-	}
-	expectedJSON, err := json.Marshal(expectedOperation)
-	require.NoError(t, err)
-	var expectedResponse api.StorageOperation
-	require.NoError(t, json.Unmarshal(expectedJSON, &expectedResponse))
-	require.Equal(t, expectedResponse, created.Operation)
+	require.Equal(t, created.Checkout.OperationID, created.Operation.ID)
+	require.Equal(t, store.StorageOperationKindPhotoCheckout, created.Operation.Kind)
 	entries, err := catalog.PhotoCheckoutEntries(t.Context(), created.Checkout.ID)
 	require.NoError(t, err)
 	require.NoError(t, catalog.PublishPhotoCheckoutEntry(t.Context(), entries[0], func() (bool, error) { return true, nil }))

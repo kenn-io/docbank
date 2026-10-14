@@ -50,6 +50,9 @@ describe("activity lanes", () => {
       job({ name: "storage:b", operation_id: "b", total_objects: 0 }),
     ]);
     expect(unknown.total).toBeUndefined();
+  });
+
+  it("orders lane members newest first at fractional-second precision", () => {
     const [lane] = jobLanes(
       [
         job({ status: "failed", started_at: "2026-07-23T12:00:00.1Z" }),
@@ -71,6 +74,9 @@ describe("activity lanes", () => {
     expect(lane.control?.paused).toBe(true);
     expect(lane.status).toBe("cancelled");
     expect(lane.members.map((member) => member.operation_id)).toEqual(["c", "b", "a"]);
+  });
+
+  it("retains idle paused lanes and stable keys", () => {
     const controls = [
       { lane: "repair", paused: false, concurrency: 1, revision: 1, can_set_concurrency: false },
       { lane: "place", paused: true, concurrency: 1, revision: 4, can_set_concurrency: false },
