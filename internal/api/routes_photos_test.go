@@ -13,7 +13,7 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func TestPhotoRoutesEnforceIfMatch(t *testing.T) {
+func TestPhotoRoutesReadAssetsAndEnforceRevisionHeaders(t *testing.T) {
 	t.Parallel()
 	ts, fixture := newTestServer(t, nil)
 	hash, size, err := fixture.Blobs.Write(strings.NewReader("jpeg"))

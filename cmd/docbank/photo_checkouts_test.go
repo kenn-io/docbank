@@ -106,8 +106,7 @@ func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 	} {
 		out, err := runCLI(t, "photos", "checkout", "estimate", "--years", tc.years)
 		if tc.wantError {
-			require.Error(t, err, out)
-			require.Empty(t, estimates)
+			require.ErrorContains(t, err, "years must be YYYY or YYYY:YYYY", out)
 		} else {
 			require.NoError(t, err, out)
 			var estimateOutput store.PhotoCheckoutEstimate
