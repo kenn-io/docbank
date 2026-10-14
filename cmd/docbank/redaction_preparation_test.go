@@ -7,6 +7,7 @@ import (
 	"encoding/json/v2"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"testing"
 
@@ -26,6 +27,9 @@ func TestPDFRedactionSourcePreparation(t *testing.T) {
 		t.Setenv(key, temporary)
 	}
 	data, identity := downloadRedactionSource(t)
+	// The PDF worker's RSS ceiling counts the whole test binary, so return the
+	// daemon's and earlier tests' freed heap to the OS before measuring.
+	debug.FreeOSMemory()
 	// From here on, input comes only from the verified download and its receipt.
 	frames, err := pagerender.InspectSource(data, identity, "application/pdf")
 	require.NoError(t, err)
