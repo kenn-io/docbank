@@ -122,3 +122,16 @@ it("keeps relevance order across months and undated photos", () => {
   expect(groupPhotos(items, "relevance").flatMap((group) => group.items)).toEqual(items);
   expect(groupPhotos(items, "relevance")[0]!.year).toBe("");
 });
+
+it("places a row with only a file modified time in its month and keeps rows with neither undated", () => {
+  const items = [photo(1), photo(2), photo(3)];
+  items[0]!.capture_time = null;
+  items[0]!.file_modified_time = "2023-11-04T18:22:03.5Z";
+  items[1]!.capture_time = "2020-01-01T12:00:00";
+  items[2]!.capture_time = null;
+  const groups = groupPhotos(items, "months");
+  expect(groups.map(group => group.key)).toEqual(["2023-11", "2020-01", "undated"]);
+  expect(groups[0]!.items).toEqual([items[0]]);
+  expect(groups.at(-1)!.items).toEqual([items[2]]);
+  expect(groupPhotos(items, "sessions").map(group => group.label)).toContain("2023-11-04 · Session");
+});

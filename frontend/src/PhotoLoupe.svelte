@@ -101,6 +101,12 @@
       ? [
           ["Captured", photo.capture_time],
           [
+            "File modified",
+            photo.file_modified_time
+              ? `${photo.file_modified_time.slice(0, 16).replace("T", " ")} UTC`
+              : undefined,
+          ],
+          [
             "Dimensions",
             photo.width_px && photo.height_px
               ? `${photo.width_px} × ${photo.height_px}`

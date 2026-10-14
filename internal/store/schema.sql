@@ -2225,6 +2225,49 @@ CREATE INDEX IF NOT EXISTS photo_files_asset ON photo_files(asset_id, role, file
 CREATE INDEX IF NOT EXISTS photo_files_sidecar ON photo_files(sidecar_of_file_id);
 CREATE INDEX IF NOT EXISTS photo_files_sidecar_nodes ON photo_files(node_id) WHERE role='sidecar';
 
+-- The file's own modified time places photos that carry no capture date. It
+-- keys on the file rather than its content: two identical blobs can carry
+-- different mtimes. Derived like photo_technical_metadata, so it is absent from
+-- export and rebuilt from provenance on open and by the triggers below.
+-- The view keeps the latest unsuperseded canonical-UTC mtime per node and
+-- formats the sort key like query.CaptureTimeKey (nine fraction digits).
+CREATE VIEW IF NOT EXISTS photo_provenance_times AS
+SELECT p.node_id, p.identity, i.started_at, p.original_mtime AS modified_time,
+    substr(p.original_mtime, 1, 19) || '.' || substr(
+        CASE WHEN substr(p.original_mtime, 20, 1) = '.'
+            THEN substr(p.original_mtime, 21, length(p.original_mtime) - 21) ELSE '' END
+        || '000000000', 1, 9) AS sort_key,
+    substr(p.original_mtime, 1, 10) AS modified_date
+FROM provenance p JOIN ingests i ON i.id = p.ingest_id
+WHERE p.original_mtime GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]*Z'
+    AND (length(p.original_mtime) = 20 OR substr(p.original_mtime, 20, 1) = '.')
+    AND substr(p.original_mtime, 1, 4) <> '0000'
+    AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes = p.identity);
+
+CREATE TABLE IF NOT EXISTS photo_file_times (
+    file_id       TEXT PRIMARY KEY REFERENCES photo_files(file_id) ON DELETE CASCADE,
+    modified_time TEXT NOT NULL,
+    sort_key      TEXT NOT NULL,
+    modified_date TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS photo_file_times_sort_key ON photo_file_times(sort_key);
+
+CREATE TRIGGER IF NOT EXISTS photo_file_times_file_insert AFTER INSERT ON photo_files BEGIN
+    DELETE FROM photo_file_times WHERE file_id = NEW.file_id;
+    INSERT INTO photo_file_times(file_id, modified_time, sort_key, modified_date)
+    SELECT NEW.file_id, modified_time, sort_key, modified_date FROM photo_provenance_times
+    WHERE node_id = NEW.node_id ORDER BY started_at DESC, identity DESC LIMIT 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_file_times_provenance_insert AFTER INSERT ON provenance BEGIN
+    DELETE FROM photo_file_times WHERE file_id IN (SELECT file_id FROM photo_files WHERE node_id = NEW.node_id);
+    INSERT INTO photo_file_times(file_id, modified_time, sort_key, modified_date)
+    SELECT f.file_id, t.modified_time, t.sort_key, t.modified_date FROM photo_files f
+    JOIN (SELECT modified_time, sort_key, modified_date FROM photo_provenance_times
+        WHERE node_id = NEW.node_id ORDER BY started_at DESC, identity DESC LIMIT 1) t
+    WHERE f.node_id = NEW.node_id;
+END;
+
 CREATE TABLE IF NOT EXISTS photo_sidecar_considered (
     sidecar_file_id      TEXT PRIMARY KEY REFERENCES photo_files(file_id) ON DELETE CASCADE,
     asset_id             TEXT NOT NULL REFERENCES photo_assets(asset_id) ON DELETE CASCADE,

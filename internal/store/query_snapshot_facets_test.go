@@ -506,3 +506,22 @@ func TestQuerySnapshotRejectsProductionRowOver64KiB(t *testing.T) {
 	_, err = s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Query: snapshotTestQuery(t, `{}`)})
 	require.ErrorIs(t, err, ErrQuerySnapshotTooLarge)
 }
+
+func TestCaptureDayFacetCountsFileModifiedTimeDays(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	run, err := s.BeginIngest(t.Context(), "cli", "wallpapers")
+	require.NoError(t, err)
+	ingestMtimePhoto(t, s, run, "a.jpg", "2024-03-31T01:30:00Z")
+	ingestMtimePhoto(t, s, run, "b.jpg", "2024-03-31T23:59:59Z")
+	dated := ingestMtimePhoto(t, s, run, "c.jpg", "2020-01-01T00:00:00Z")
+	browsePhotoMetadata(t, s, dated, "c", exifCapture("2025-02-03T04:05:06Z"))
+	ingestMtimePhoto(t, s, run, "none.jpg", "")
+	projection, err := s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{
+		FacetsOnly: true, Query: snapshotTestQuery(t, `{}`), Facets: []string{"capture_day"},
+	})
+	require.NoError(t, err)
+	facet := facetByDimension(t, projection, "capture_day")
+	require.Equal(t, map[string]int64{"2024-03-31": 2, "2025-02-03": 1}, facetCounts(facet))
+	require.Equal(t, int64(1), *facet.Missing)
+}

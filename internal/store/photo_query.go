@@ -8,6 +8,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"go.kenn.io/docbank/document"
@@ -56,10 +57,12 @@ type PhotoBrowseRow struct {
 	Name               string
 	MediaType          string
 	ImportTime         string
-	Fields             PhotoTechnicalFields
-	Previews           map[string]PhotoPreviewSlot
-	position           PhotoBrowsePosition
-	sourceHash         string
+	// FileModifiedTime is set when the file's mtime, not a capture date, placed the photo.
+	FileModifiedTime *string
+	Fields           PhotoTechnicalFields
+	Previews         map[string]PhotoPreviewSlot
+	position         PhotoBrowsePosition
+	sourceHash       string
 }
 
 type PhotoBrowsePage struct {
@@ -192,52 +195,76 @@ func (s *Store) ListPhotoAssets(
 		page.Items = make([]PhotoBrowseRow, 0, request.PageSize+1)
 		// Read known keys from their index, then missing keys in asset order.
 		// Keeping these separate avoids sorting the entire library to put NULLs last.
+		// Capture-time reads a second known arm: photos without an EXIF key, ordered by file mtime.
 		for _, missing := range []bool{false, true} {
 			if !missing && boundary != nil && boundary.Missing {
 				continue
 			}
-			pageFrom, key := from, sortKey
-			order := key + ` ` + primary + `,a.asset_id ASC`
-			where := key + `>''`
-			var args []any
-			if sortField == "added_time" {
-				where = `sm.set_id=? AND ` + where
-				args = append(args, compiled.Query.Filters.SetIDs[0])
-			}
+			arms := []photoBrowseArm{{from, sortKey, sortKey + `>''`}}
 			if missing {
-				pageFrom = photoBrowseDisplayFrom
 				if sortField == "added_time" {
 					continue
 				}
-				key = photoBrowseMissingKey(sortField)
-				where = key + `=''`
-				order = `a.asset_id ASC`
-				if boundary != nil && boundary.Missing {
-					where += ` AND a.asset_id>?`
-					args = append(args, boundary.AssetID)
+				key := photoBrowseMissingKey(sortField)
+				arms = []photoBrowseArm{{photoBrowseDisplayFrom, key, key + `=''`}}
+			} else if sortField == "capture_time" {
+				arms = append(arms, photoBrowseArm{photoBrowseFileTimeFrom, `t.sort_key`,
+					`t.sort_key>'' AND COALESCE(p.capture_sort_key,'')=''`})
+			}
+			limit := request.PageSize + 1 - len(page.Items)
+			var pass []PhotoBrowseRow
+			for _, arm := range arms {
+				order := arm.key + ` ` + primary + `,a.asset_id ASC`
+				where := arm.where
+				var args []any
+				if missing {
+					order = `a.asset_id ASC`
+					if boundary != nil && boundary.Missing {
+						where += ` AND a.asset_id>?`
+						args = append(args, boundary.AssetID)
+					}
+				} else {
+					if sortField == "added_time" {
+						where = `sm.set_id=? AND ` + where
+						args = append(args, compiled.Query.Filters.SetIDs[0])
+					}
+					if boundary != nil {
+						// The inclusive range gives SQLite a seek even when the tie-break
+						// below is an OR involving a joined asset.
+						where += ` AND ` + arm.key + comparison + `=? AND (` + arm.key + comparison +
+							`? OR (` + arm.key + `=? AND a.asset_id>?))`
+						args = append(args, boundary.Key, boundary.Key, boundary.Key, boundary.AssetID)
+					}
 				}
-			} else if boundary != nil {
-				// The inclusive range gives SQLite a seek even when the tie-break
-				// below is an OR involving a joined asset.
-				where += ` AND ` + key + comparison + `=? AND (` + key + comparison +
-					`? OR (` + key + `=? AND a.asset_id>?))`
-				args = append(args, boundary.Key, boundary.Key, boundary.Key, boundary.AssetID)
+				args = append(args, limit)
+				pageSQL, pageArgs, err := scope.bind(`SELECT `+photoBrowseSelect+`,`+arm.key+` FROM `+arm.from+` WHERE `+scope.where()+` AND `+where+
+					` ORDER BY `+order+` LIMIT ?`, args...)
+				if err != nil {
+					return err
+				}
+				rows, err := q.QueryContext(ctx, pageSQL, pageArgs...)
+				if err != nil {
+					return err
+				}
+				items, err := scanPhotoBrowseRows(rows, PhotoBrowsePosition{QueryIdentity: identity, Total: page.Total, Missing: missing})
+				if err != nil {
+					return err
+				}
+				pass = append(pass, items...)
 			}
-			args = append(args, request.PageSize+1-len(page.Items))
-			pageSQL, pageArgs, err := scope.bind(`SELECT `+photoBrowseSelect+`,`+key+` FROM `+pageFrom+` WHERE `+scope.where()+` AND `+where+
-				` ORDER BY `+order+` LIMIT ?`, args...)
-			if err != nil {
-				return err
+			if len(arms) > 1 {
+				slices.SortFunc(pass, func(x, y PhotoBrowseRow) int {
+					if c := strings.Compare(x.position.Key, y.position.Key); c != 0 {
+						if primary == "DESC" {
+							return -c
+						}
+						return c
+					}
+					return strings.Compare(x.AssetID, y.AssetID)
+				})
+				pass = pass[:min(len(pass), limit)]
 			}
-			rows, err := q.QueryContext(ctx, pageSQL, pageArgs...)
-			if err != nil {
-				return err
-			}
-			items, err := scanPhotoBrowseRows(rows, PhotoBrowsePosition{QueryIdentity: identity, Total: page.Total, Missing: missing})
-			if err != nil {
-				return err
-			}
-			page.Items = append(page.Items, items...)
+			page.Items = append(page.Items, pass...)
 			if len(page.Items) > request.PageSize {
 				break
 			}
@@ -255,6 +282,18 @@ func (s *Store) ListPhotoAssets(
 	return page, nil
 }
 
+// photoBrowseArm is one indexed read of a known-key pass.
+type photoBrowseArm struct{ from, key, where string }
+
+// photoBrowseFileTimeFrom drives from the file-mtime index for photos that lack an EXIF key.
+const photoBrowseFileTimeFrom = `photo_file_times t INDEXED BY photo_file_times_sort_key
+ CROSS JOIN photo_files f ON f.file_id=t.file_id
+ CROSS JOIN photo_assets a ON a.asset_id=f.asset_id AND a.display_file_id=f.file_id
+ CROSS JOIN nodes n ON n.id=f.node_id
+ CROSS JOIN content_versions v ON v.version_id=n.current_version_id
+ LEFT JOIN source_metadata_heads h ON h.source_sha256=v.blob_hash
+ LEFT JOIN photo_technical_metadata p ON p.generation_id=h.generation_id`
+
 // Force the outer relation to be the indexed sort source. Every following join
 // uses an ownership key; the member predicate only visits this asset's files.
 const photoBrowseDisplayFrom = `photo_assets a
@@ -262,7 +301,8 @@ const photoBrowseDisplayFrom = `photo_assets a
  CROSS JOIN nodes n ON n.id=f.node_id
  CROSS JOIN content_versions v ON v.version_id=n.current_version_id
  LEFT JOIN source_metadata_heads h ON h.source_sha256=v.blob_hash
- LEFT JOIN photo_technical_metadata p ON p.generation_id=h.generation_id`
+ LEFT JOIN photo_technical_metadata p ON p.generation_id=h.generation_id
+ LEFT JOIN photo_file_times t ON t.file_id=f.file_id`
 
 const photoBrowseLiveDisplay = liveIncludedDisplayPredicate + ` AND n.kind='file'`
 
@@ -278,14 +318,16 @@ const photoBrowseNodeJoins = `
  CROSS JOIN photo_assets a ON a.asset_id=f.asset_id AND a.display_file_id=f.file_id
  CROSS JOIN content_versions v ON v.version_id=n.current_version_id
  LEFT JOIN source_metadata_heads h ON h.source_sha256=v.blob_hash
- LEFT JOIN photo_technical_metadata p ON p.generation_id=h.generation_id`
+ LEFT JOIN photo_technical_metadata p ON p.generation_id=h.generation_id
+ LEFT JOIN photo_file_times t ON t.file_id=f.file_id`
 
 const photoBrowseVersionJoins = `
  CROSS JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id
  CROSS JOIN photo_files f ON f.node_id=n.id
  CROSS JOIN photo_assets a ON a.asset_id=f.asset_id AND a.display_file_id=f.file_id
  LEFT JOIN source_metadata_heads h ON h.source_sha256=v.blob_hash
- LEFT JOIN photo_technical_metadata p ON p.generation_id=h.generation_id`
+ LEFT JOIN photo_technical_metadata p ON p.generation_id=h.generation_id
+ LEFT JOIN photo_file_times t ON t.file_id=f.file_id`
 
 func photoBrowseOrder(field string) (from, key string, ok bool) {
 	switch field {
@@ -295,7 +337,8 @@ func photoBrowseOrder(field string) (from, key string, ok bool) {
  CROSS JOIN content_versions v ON v.blob_hash=h.source_sha256
  CROSS JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id
  CROSS JOIN photo_files f ON f.node_id=n.id
- CROSS JOIN photo_assets a ON a.asset_id=f.asset_id AND a.display_file_id=f.file_id`,
+ CROSS JOIN photo_assets a ON a.asset_id=f.asset_id AND a.display_file_id=f.file_id
+ LEFT JOIN photo_file_times t ON t.file_id=f.file_id`,
 			"p.capture_sort_key", true
 	case "import_time":
 		return `nodes n INDEXED BY nodes_photo_import` + photoBrowseNodeJoins, "n.created_at", true
@@ -314,9 +357,12 @@ func photoBrowseOrder(field string) (from, key string, ok bool) {
 	}
 }
 
+// photoEffectiveCaptureKey is the EXIF key, else the file-mtime key, else empty.
+const photoEffectiveCaptureKey = `COALESCE(NULLIF(p.capture_sort_key,''),t.sort_key,'')`
+
 func photoBrowseMissingKey(field string) string {
 	if field == "capture_time" {
-		return "COALESCE(p.capture_sort_key,'')"
+		return photoEffectiveCaptureKey
 	}
 	_, key, _ := photoBrowseOrder(field)
 	return key
@@ -429,7 +475,7 @@ func rankedPhotoRows(ctx context.Context, q metadataQuerier, compiled CompiledQu
 	}
 	ranking += ` SELECT ` + photoBrowseSelect + `,'' FROM ranked member
  CROSS JOIN photo_assets a ON a.asset_id=member.asset_id ` + strings.TrimPrefix(photoBrowseDisplayFrom, `photo_assets a`) +
-		` WHERE ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(compiled.photoHidden) + ` ORDER BY member.tier ` + order + `,member.score ` + order + `,COALESCE(p.capture_sort_key,'') DESC,member.asset_id ASC LIMIT ?`
+		` WHERE ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(compiled.photoHidden) + ` ORDER BY member.tier ` + order + `,member.score ` + order + `,` + photoEffectiveCaptureKey + ` DESC,member.asset_id ASC LIMIT ?`
 	args = append(args, pageSize)
 	statement, args, err := bindQueryPopulation(compiledQueryFragment{args: args, relations: population.relations}, coverage, generation)
 	if err != nil {
@@ -447,14 +493,16 @@ func rankedPhotoRows(ctx context.Context, q metadataQuerier, compiled CompiledQu
 	return scanPhotoBrowseRows(rows, PhotoBrowsePosition{})
 }
 
-var photoBrowseSelect = `a.asset_id,a.kind,a.revision,f.file_id,n.id,v.version_id,n.name,COALESCE(v.mime_type,''),n.created_at,v.blob_hash,f.rotation,` + photoTechnicalSelect
+var photoBrowseSelect = `a.asset_id,a.kind,a.revision,f.file_id,n.id,v.version_id,n.name,COALESCE(v.mime_type,''),n.created_at,v.blob_hash,f.rotation,` +
+	// The mtime is exposed only when it placed the photo, so clients cannot disagree.
+	`CASE WHEN COALESCE(p.capture_sort_key,'')='' THEN t.modified_time END,` + photoTechnicalSelect
 
 func scanPhotoBrowseRows(rows *sql.Rows, position PhotoBrowsePosition) ([]PhotoBrowseRow, error) {
 	defer func() { _ = rows.Close() }()
 	result := make([]PhotoBrowseRow, 0)
 	for rows.Next() {
 		row := PhotoBrowseRow{position: position}
-		dest := []any{&row.AssetID, &row.Kind, &row.Revision, &row.DisplayFileID, &row.NodeID, &row.ContentVersionID, &row.Name, &row.MediaType, &row.ImportTime, &row.sourceHash, &row.Rotation}
+		dest := []any{&row.AssetID, &row.Kind, &row.Revision, &row.DisplayFileID, &row.NodeID, &row.ContentVersionID, &row.Name, &row.MediaType, &row.ImportTime, &row.sourceHash, &row.Rotation, &row.FileModifiedTime}
 		dest = append(dest, row.Fields.columnPointers()...)
 		dest = append(dest, &row.position.Key)
 		if err := rows.Scan(dest...); err != nil {

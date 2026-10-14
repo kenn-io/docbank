@@ -21,7 +21,7 @@ import (
 // PhotoTechnicalProjectionRecipe identifies the mapping and embedded
 // gazetteer data used to derive projection rows. Changing it re-projects every
 // retained source generation the next time a store opens.
-const PhotoTechnicalProjectionRecipe = "photo-technical/v2"
+const PhotoTechnicalProjectionRecipe = "photo-technical/v3"
 
 // PhotoTechnicalFields are typed facts projected from one source-metadata
 // generation. Nil values mean that the source did not provide a valid fact.
@@ -379,6 +379,22 @@ func photoTechnicalRecipeCurrent(ctx context.Context, q metadataQuerier) (bool, 
 	return recipe == PhotoTechnicalProjectionRecipe, nil
 }
 
+// rebuildPhotoFileTimesTx refills the file-mtime placement table from provenance.
+func rebuildPhotoFileTimesTx(ctx context.Context, tx *sql.Tx) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM photo_file_times`); err != nil {
+		return fmt.Errorf("removing stale photo file times: %w", err)
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO photo_file_times(file_id,modified_time,sort_key,modified_date)
+		SELECT f.file_id,t.modified_time,t.sort_key,t.modified_date FROM photo_files f
+		JOIN photo_provenance_times t ON t.node_id=f.node_id
+		WHERE t.identity=(SELECT c.identity FROM photo_provenance_times c WHERE c.node_id=f.node_id
+			ORDER BY c.started_at DESC,c.identity DESC LIMIT 1)`)
+	if err != nil {
+		return fmt.Errorf("rebuilding photo file times: %w", err)
+	}
+	return nil
+}
+
 // refreshPhotoTechnicalMetadataTx is the one owner of bulk projection. It
 // drops every row, projects every generation from its retained canonical
 // JSON, and records the recipe it applied, so generations that yielded no
@@ -389,6 +405,9 @@ func photoTechnicalRecipeCurrent(ctx context.Context, q metadataQuerier) (bool, 
 func refreshPhotoTechnicalMetadataTx(ctx context.Context, tx *sql.Tx) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM photo_technical_metadata`); err != nil {
 		return fmt.Errorf("removing stale photo technical metadata: %w", err)
+	}
+	if err := rebuildPhotoFileTimesTx(ctx, tx); err != nil {
+		return err
 	}
 	readPage := func(after string) ([]string, error) {
 		rows, err := tx.QueryContext(ctx, `SELECT generation_id

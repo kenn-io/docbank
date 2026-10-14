@@ -116,7 +116,9 @@ Rotation applies to the displayed photo in the grid, viewer, and album cover wit
 ## Browse in the web app
 
 Open `docbank web` and choose **Photos** in the sidebar. Library opens at
-`/photos`, newest captures first. Photos without a capture date appear under
+`/photos`, newest captures first. A photo without a readable capture date sits
+in the month its file was last modified, when Docbank recorded that time; the
+viewer then shows File modified and leaves Captured blank. The rest appear under
 Undated. The year buttons jump to the years loaded so far; scrolling loads
 more photos and reveals older years. Choose **Load more** to continue from
 the same position when further results remain.
@@ -132,7 +134,8 @@ scope until you refresh.
 
 Dates use the selected display file's recorded calendar day, so a capture near
 midnight keeps its date regardless of the browser's timezone. A RAW/JPEG pair
-counts once. The Undated total includes photos without a readable capture date.
+counts once. A photo without a capture date counts on the UTC day its file was
+last modified. The Undated total includes photos with neither.
 Timeline counts every included photo asset, even in a vault with many ordinary
 documents. It shows a limit message when the scope spans more than 250,000
 distinct capture days or the count runs past its time budget, and offers Retry.

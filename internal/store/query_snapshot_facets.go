@@ -193,6 +193,9 @@ func materializeSnapshotFacet(
 	return finishSnapshotFacet(ctx, q, compiled.Query, dimension, observation)
 }
 
+// photoEffectiveCaptureDate is the EXIF day, else the file's UTC modified day, else empty.
+const photoEffectiveCaptureDate = `COALESCE(NULLIF(p.capture_date,''),t.modified_date,'')`
+
 // materializeCaptureDayFacet counts every live photo asset in scope by its
 // recorded calendar day. The member limit bounds the number of distinct days,
 // not photos, so large libraries still get a timeline.
@@ -207,9 +210,9 @@ func materializeCaptureDayFacet(
 		return SnapshotFacet{}, err
 	}
 	statement, args, err := bindQueryPopulation(compiledQueryFragment{
-		sql: `SELECT COALESCE(p.capture_date,''),COUNT(*) FROM ` + photoBrowseDisplayFrom +
+		sql: `SELECT ` + photoEffectiveCaptureDate + `,COUNT(*) FROM ` + photoBrowseDisplayFrom +
 			` WHERE ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(false) + ` AND ` + match.sql +
-			` GROUP BY COALESCE(p.capture_date,'') ORDER BY COALESCE(p.capture_date,'') DESC`,
+			` GROUP BY ` + photoEffectiveCaptureDate + ` ORDER BY ` + photoEffectiveCaptureDate + ` DESC`,
 		args: match.args, relations: match.relations,
 	}, coverage, generation)
 	if err != nil {
@@ -618,7 +621,7 @@ func materializeSharedPhotoFacets(ctx context.Context, q metadataQuerier, compil
 		albumJoin = ` LEFT JOIN photo_set_members sm ON sm.asset_id=a.asset_id LEFT JOIN photo_sets ps ON ps.set_id=sm.set_id AND ps.deleted_at IS NULL`
 		albumValues = `COALESCE(ps.set_id,''),COALESCE(ps.name,'')`
 	}
-	statement, args, err := bindQueryPopulation(compiledQueryFragment{sql: `SELECT a.asset_id,COALESCE(p.camera_make,''),COALESCE(p.camera_model,''),COALESCE(p.lens_make,''),COALESCE(p.lens_model,''),substr(COALESCE(p.capture_date,''),1,4),COALESCE(p.location_label,''),` + albumValues + ` FROM ` + photoBrowseDisplayFrom + albumJoin + ` WHERE ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(compiled.photoHidden) + ` AND ` + match.sql + ` ORDER BY a.asset_id LIMIT ?`, args: append(match.args, options.FacetMemberLimit+1), relations: match.relations}, coverage, generation)
+	statement, args, err := bindQueryPopulation(compiledQueryFragment{sql: `SELECT a.asset_id,COALESCE(p.camera_make,''),COALESCE(p.camera_model,''),COALESCE(p.lens_make,''),COALESCE(p.lens_model,''),substr(` + photoEffectiveCaptureDate + `,1,4),COALESCE(p.location_label,''),` + albumValues + ` FROM ` + photoBrowseDisplayFrom + albumJoin + ` WHERE ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(compiled.photoHidden) + ` AND ` + match.sql + ` ORDER BY a.asset_id LIMIT ?`, args: append(match.args, options.FacetMemberLimit+1), relations: match.relations}, coverage, generation)
 	if err != nil {
 		return nil, err
 	}

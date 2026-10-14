@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick, untrack } from "svelte";
   import { Button } from "@kenn-io/kit-ui";
-  import { computeMonthLayout, HEADER_HEIGHT, type PhotoGroup } from "./photoGrid.js";
+  import { computeMonthLayout, HEADER_HEIGHT, photoDate, type PhotoGroup } from "./photoGrid.js";
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import PhotoMonthChunk from "./PhotoMonthChunk.svelte";
 
@@ -57,7 +57,7 @@
       ...new Set(
         groups
           .filter((group) => group.year)
-          .flatMap((group) => group.items.map((item) => item.capture_time!.slice(0, 4))),
+          .flatMap((group) => group.items.map((item) => photoDate(item)!.slice(0, 4))),
       ),
     ]
       .sort()
@@ -112,7 +112,7 @@
     const chunk = chunks.find(
       (chunk) =>
         chunk.group.year &&
-        chunk.group.items.some((item) => item.capture_time!.slice(0, 4) === year),
+        chunk.group.items.some((item) => photoDate(item)!.slice(0, 4) === year),
     );
     if (chunk && container) {
       container.scrollTo({ top: Math.ceil(chunk.offset) });

@@ -12169,6 +12169,11 @@ components:
           type:
             - number
             - "null"
+        file_modified_time:
+          format: date-time
+          type:
+            - string
+            - "null"
         focal_length_mm:
           format: double
           type:
@@ -12260,6 +12265,7 @@ components:
         - media_type
         - import_time
         - capture_time
+        - file_modified_time
         - capture_time_precision
         - capture_time_timezone
         - capture_time_offset

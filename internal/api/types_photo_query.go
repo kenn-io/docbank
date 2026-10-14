@@ -61,6 +61,7 @@ type PhotoBrowseRow struct {
 	MediaType            string            `json:"media_type"`
 	ImportTime           string            `json:"import_time"`
 	CaptureTime          *string           `json:"capture_time" nullable:"true"`
+	FileModifiedTime     *string           `json:"file_modified_time" nullable:"true" format:"date-time"`
 	CaptureTimePrecision *string           `json:"capture_time_precision" nullable:"true"`
 	CaptureTimeTimezone  *string           `json:"capture_time_timezone" nullable:"true"`
 	CaptureTimeOffset    *string           `json:"capture_time_offset" nullable:"true"`

@@ -5471,6 +5471,8 @@ export interface PhotoBrowseRow {
   /** @nullable */
   f_number: number | null;
   /** @nullable */
+  file_modified_time: string | null;
+  /** @nullable */
   focal_length_mm: number | null;
   /** @nullable */
   height_px: number | null;

@@ -97,6 +97,7 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 				DisplayFileID: row.DisplayFileID, NodeID: row.NodeID,
 				ContentVersionID: row.ContentVersionID, Name: row.Name, MediaType: row.MediaType,
 				ImportTime: row.ImportTime, CaptureTime: row.Fields.CaptureTime,
+				FileModifiedTime:     row.FileModifiedTime,
 				CaptureTimePrecision: row.Fields.CaptureTimePrecision,
 				CaptureTimeTimezone:  row.Fields.CaptureTimeTimezone,
 				CaptureTimeOffset:    row.Fields.CaptureTimeOffset,

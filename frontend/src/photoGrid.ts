@@ -3,7 +3,8 @@ import type { PhotoBrowseRow, PhotoPreviewSlot } from "./generated/docbank.js";
 export type PhotoGridRow = Pick<
   PhotoBrowseRow,
   "asset_id" | "name" | "capture_time" | "width_px" | "height_px" | "rotation"
-> & { previews: { grid: PhotoPreviewSlot } };
+> &
+  Partial<Pick<PhotoBrowseRow, "file_modified_time">> & { previews: { grid: PhotoPreviewSlot } };
 import { rotatedDimensions } from "./photoRotation.js";
 
 export type LayoutItem = { aspect: number };
@@ -83,6 +84,11 @@ export function photoAspect(photo: PhotoGridRow): number {
   return size.width / size.height;
 }
 
+// The file's modified time places photos that carry no capture date.
+export function photoDate(item: { capture_time?: string | null; file_modified_time?: string | null }): string | null {
+  return item.file_modified_time ?? item.capture_time ?? null;
+}
+
 export function monthLabel(key: string): string {
   return new Intl.DateTimeFormat(undefined, {
     month: "long",
@@ -116,7 +122,7 @@ export function groupPhotos(
   if (grouping === "relevance")
     return items.length ? [{ key: grouping, label: "Search results", year: "", items }] : [];
   const clocks = new Map(
-    items.map((item) => [item, item.capture_time ? captureClock(item.capture_time) : NaN]),
+    items.map((item) => [item, photoDate(item) ? captureClock(photoDate(item)!) : NaN]),
   );
   const undated = items.filter((item) => !Number.isFinite(clocks.get(item)));
   const dated = items.filter((item) => Number.isFinite(clocks.get(item)));
@@ -124,7 +130,7 @@ export function groupPhotos(
   if (grouping === "months") {
     const byMonth = new Map<string, PhotoGroup>();
     for (const item of dated) {
-      const key = item.capture_time!.slice(0, 7);
+      const key = photoDate(item)!.slice(0, 7);
       let group = byMonth.get(key);
       if (!group) {
         group = { key, label: monthLabel(key), year: key.slice(0, 4), items: [] };
@@ -142,8 +148,8 @@ export function groupPhotos(
       if (clock - previous > 4 * 3600 * 1000) {
         groups.push({
           key: item.asset_id,
-          label: `${item.capture_time!.slice(0, 10)} · Capture session`,
-          year: item.capture_time!.slice(0, 4),
+          label: `${photoDate(item)!.slice(0, 10)} · Capture session`,
+          year: photoDate(item)!.slice(0, 4),
           items: [],
         });
       }
@@ -151,6 +157,9 @@ export function groupPhotos(
       if (clock > previous) group.key = item.asset_id;
       group.items.push(item);
       previous = clock;
+    }
+    for (const group of groups) {
+      if (group.items.some(item => item.file_modified_time)) group.label = group.label.replace("Capture session", "Session");
     }
     for (const group of groups) group.items.sort((a, b) => clocks.get(b)! - clocks.get(a)!);
     groups.reverse();

@@ -1175,3 +1175,108 @@ func TestPhotoRankedCaptureTimeTies(t *testing.T) {
 	require.Equal(t, int64(3), page.Total)
 	require.Len(t, page.Items, 3)
 }
+
+func ingestMtimePhoto(t *testing.T, s *Store, run IngestRun, name, mtime string) Node {
+	t.Helper()
+	node, err := s.IngestFileExact(t.Context(), run, s.RootID(), name, browseHash(name), 20, "image/jpeg", "/shots/"+name, mtime)
+	require.NoError(t, err)
+	return node
+}
+
+func exifCapture(stamp string) document.SourceMetadataFieldV1 {
+	return photoMetadataField("created", "image.exif", "DateTimeOriginal",
+		photoTimestamp(stamp, stamp, document.SourceMetadataPrecisionSecond, document.SourceMetadataTimezoneUTC, ""))
+}
+
+func TestPhotoBrowsePlacesUndatedPhotosByFileModifiedTime(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	run, err := s.BeginIngest(ctx, "cli", "wallpapers")
+	require.NoError(t, err)
+	newer := ingestMtimePhoto(t, s, run, "newer.jpg", "2020-01-01T00:00:00Z")
+	browsePhotoMetadata(t, s, newer, "newer", exifCapture("2024-06-10T12:00:00Z"))
+	wallpaper := ingestMtimePhoto(t, s, run, "wallpaper.jpg", "2024-03-05T10:00:00.5Z")
+	older := ingestMtimePhoto(t, s, run, "older.jpg", "")
+	browsePhotoMetadata(t, s, older, "older", exifCapture("2024-01-15T09:00:00Z"))
+	ingestMtimePhoto(t, s, run, "unknown.jpg", "")
+
+	request := PhotoBrowseRequest{Query: snapshotTestQuery(t, `{"sort":{"field":"capture_time","direction":"desc"}}`), PageSize: 1}
+	var names []string
+	var boundary *PhotoBrowsePosition
+	for {
+		page, err := s.ListPhotoAssets(ctx, request, boundary)
+		require.NoError(t, err)
+		for _, item := range page.Items {
+			names = append(names, item.Name)
+			if item.Name == "wallpaper.jpg" {
+				require.NotNil(t, item.FileModifiedTime)
+				require.Equal(t, "2024-03-05T10:00:00.5Z", *item.FileModifiedTime)
+				require.Nil(t, item.Fields.CaptureTime)
+			} else {
+				require.Nil(t, item.FileModifiedTime, item.Name)
+			}
+		}
+		if page.Next == nil {
+			break
+		}
+		boundary = page.Next
+	}
+	require.Equal(t, []string{"newer.jpg", "wallpaper.jpg", "older.jpg", "unknown.jpg"}, names)
+
+	asc := browsePhotoPage(t, s, `{"sort":{"field":"capture_time","direction":"asc"}}`)
+	require.Equal(t, "older.jpg", asc.Items[0].Name)
+	require.Equal(t, "wallpaper.jpg", asc.Items[1].Name)
+
+	// The EXIF day beats the file's own mtime day, and a mtime day matches only photos without EXIF.
+	inMarch := `{"filters":{"capture_after":"2024-03-05","capture_before":"2024-03-06"}}`
+	page := browsePhotoPage(t, s, inMarch)
+	require.Len(t, page.Items, 1)
+	require.Equal(t, "wallpaper.jpg", page.Items[0].Name)
+	require.Zero(t, browsePhotoPage(t, s, `{"filters":{"capture_after":"2020-01-01","capture_before":"2020-01-02"}}`).Total)
+	require.Equal(t, int64(1), browsePhotoPage(t, s, `{"syntax":"advanced","text":"capture_after:2024-03-05 AND capture_before:2024-03-06"}`).Total)
+
+	// A later provenance fact, and a correction of it, move the photo.
+	appendMtime := func(mtime string, supersedes *string) string {
+		current, err := s.NodeByID(ctx, wallpaper.ID)
+		require.NoError(t, err)
+		result, err := s.AppendNodeProvenance(ctx, ProvenanceAppendInput{
+			NodeID: wallpaper.ID, IfRevision: current.Revision, SourceKind: "agent", SourceDescription: "mtime",
+			OriginalPath: "/shots/wallpaper.jpg", OriginalMTime: &mtime, Supersedes: supersedes,
+		})
+		require.NoError(t, err)
+		return result.Fact.Identity
+	}
+	first := appendMtime("2023-10-01T08:00:00Z", nil)
+	moved := browsePhotoPage(t, s, `{"filters":{"capture_after":"2023-10-01","capture_before":"2023-10-02"}}`)
+	require.Len(t, moved.Items, 1)
+	require.Zero(t, browsePhotoPage(t, s, inMarch).Total)
+	appendMtime("2023-11-04T18:22:03Z", &first)
+	moved = browsePhotoPage(t, s, `{"filters":{"capture_after":"2023-11-04","capture_before":"2023-11-05"}}`)
+	require.Len(t, moved.Items, 1)
+	require.Equal(t, "2023-11-04T18:22:03Z", *moved.Items[0].FileModifiedTime)
+	require.Zero(t, browsePhotoPage(t, s, `{"filters":{"capture_after":"2023-10-01","capture_before":"2023-10-02"}}`).Total)
+}
+
+func TestPhotoFileTimeSortKeyMatchesCaptureTimeKey(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	run, err := s.BeginIngest(t.Context(), "cli", "keys")
+	require.NoError(t, err)
+	for i, mtime := range []string{"2024-03-05T10:00:00Z", "2024-03-05T10:00:00.5Z", "2024-03-05T10:00:00.123456789Z"} {
+		node := ingestMtimePhoto(t, s, run, fmt.Sprintf("key-%d.jpg", i), mtime)
+		var got string
+		require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT t.sort_key FROM photo_file_times t
+			JOIN photo_files f ON f.file_id=t.file_id WHERE f.node_id=?`, node.ID).Scan(&got))
+		precision := "second"
+		if strings.Contains(mtime, ".") {
+			precision = "fraction"
+		}
+		require.Equal(t, query.CaptureTimeKey(mtime, precision, "utc", ""), got, mtime)
+	}
+	node := ingestMtimePhoto(t, s, run, "year-zero.jpg", "0000-01-01T00:00:00Z")
+	var count int
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM photo_file_times t
+		JOIN photo_files f ON f.file_id=t.file_id WHERE f.node_id=?`, node.ID).Scan(&count))
+	require.Zero(t, count, "year 0000 has no sortable key")
+}

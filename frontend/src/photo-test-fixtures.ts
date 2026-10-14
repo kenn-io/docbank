@@ -81,6 +81,7 @@ export function photo(id: number, capture: string | null = "2025-06-01T12:00:00"
     name: `Photo ${id}.jpg`,
     kind: "photo",
     capture_time: capture,
+    file_modified_time: null,
     capture_time_offset: null,
     capture_time_precision: "second",
     capture_time_timezone: "omitted",

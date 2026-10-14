@@ -130,7 +130,12 @@ func (c queryCompiler) compilePhotoScalarPredicate(field, value string) (compile
 		if field == "capture_before" {
 			operator = "<"
 		}
-		return c.compilePhotoMetadataPredicate(`p.capture_date<>'' AND p.capture_date`+operator+` ?`, value), nil
+		// A version without an EXIF day falls back to its file's UTC modified day.
+		return c.compilePhotoVersionPredicate(func(alias string) string {
+			exif := `SELECT 1 FROM source_metadata_heads h JOIN photo_technical_metadata p ON p.generation_id=h.generation_id WHERE h.source_sha256=` + alias + `.blob_hash AND p.capture_date<>''`
+			return `(EXISTS (` + exif + ` AND p.capture_date` + operator + ` ?) OR (NOT EXISTS (` + exif + `) AND EXISTS (` +
+				`SELECT 1 FROM photo_files tf JOIN photo_file_times t ON t.file_id=tf.file_id WHERE tf.node_id=` + alias + `.node_id AND t.modified_date` + operator + ` ?)))`
+		}, value, value), nil
 	case "gps":
 		bounds, err := query.ParseGPSOperand(value)
 		if err != nil {
