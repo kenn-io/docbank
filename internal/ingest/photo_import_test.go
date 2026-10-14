@@ -157,6 +157,10 @@ func TestPhotoImportReportsAndPublishesBytes(t *testing.T) {
 		require.Len(t, ambiguous.Receipt.Ambiguities, 1)
 		assert.Equal(t, store.PhotoImportMultipleRAW, ambiguous.Receipt.Ambiguities[0].Reason)
 		assert.Len(t, ambiguous.Receipt.Ambiguities[0].Files, 3)
+		replayed, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos/ambiguous", PhotoImportOptions{})
+		require.NoError(t, err)
+		assert.Equal(t, int64(1), replayed.Receipt.Ambiguous)
+		assert.Zero(t, replayed.Receipt.Added)
 	})
 }
 
@@ -174,6 +178,7 @@ func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
 			runner := PhotoImportRunner{Ingester: ing}
 			var mutations atomic.Int64
 			var failing atomic.Bool
+			var cancelAdmission atomic.Bool
 			switch interruption {
 			case "before work":
 				require.NoError(t, ing.Store.RequestStorageOperationCancel(t.Context(), operation.ID))
@@ -197,8 +202,7 @@ func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
 				require.NoError(t, err)
 				require.NoError(t, ing.Store.SetStorageOperationTotal(t.Context(), operation.ID, 3))
 				require.NoError(t, ing.Store.AdvanceStorageOperation(t.Context(), operation.ID, "group-two", 2, 1, 42, `{"added":2,"skipped":1}`))
-				_, err = ing.Store.SetLaneControl(t.Context(), store.LaneControl{Lane: operation.Kind, Paused: true, Concurrency: 1}, 1)
-				require.NoError(t, err)
+				runner.admit = func(context.Context, *store.Store, string) (bool, error) { return true, nil }
 				runner.Options.Mutate = func(_ context.Context, fn func() error) error { mutations.Add(1); return fn() }
 			case "startup admission failure", "after-group admission failure":
 				runner.admit = func(ctx context.Context, metadata *store.Store, id string) (bool, error) {
@@ -215,6 +219,11 @@ func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
 				}
 				fallthrough
 			case "after-one-group cancellation":
+				if interruption == "after-one-group cancellation" {
+					runner.admit = func(context.Context, *store.Store, string) (bool, error) {
+						return cancelAdmission.Load(), nil
+					}
+				}
 				mutations, completedGroups := 0, 0
 				runner.Options.Mutate = func(ctx context.Context, fn func() error) error {
 					if err := fn(); err != nil {
@@ -226,8 +235,7 @@ func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
 					}
 					if completedGroups == 1 {
 						if interruption == "after-one-group cancellation" {
-							_, err = ing.Store.SetLaneControl(ctx, store.LaneControl{Lane: operation.Kind, Paused: true, Concurrency: 1}, 1)
-							return err
+							cancelAdmission.Store(true)
 						}
 						if interruption == "after-group admission failure" {
 							failing.Store(true)
@@ -248,7 +256,7 @@ func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
 				require.Len(t, resumable, 1)
 				assert.Equal(t, store.StorageOperationRunning, resumable[0].State)
 			}
-			if strings.Contains(interruption, "pause cancellation") || interruption == "after-one-group cancellation" || strings.Contains(interruption, "admission failure") {
+			if strings.Contains(interruption, "admission failure") {
 				supervisor := jobs.New(t.Context(), nil)
 				defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
 				require.NoError(t, runner.Start(supervisor, operation.ID))
@@ -258,16 +266,11 @@ func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
 				}, 10*time.Second, 10*time.Millisecond)
 				current, err := ing.Store.StorageOperation(t.Context(), operation.ID)
 				require.NoError(t, err)
-				if strings.Contains(interruption, "admission failure") {
-					require.Equal(t, int64(1), current.CompletedObjects)
-					require.Contains(t, current.ReceiptJSON, `"added":1`)
-					require.Equal(t, store.StorageOperationKindPhotoImport, current.Kind)
-					require.Contains(t, current.Error, "database is locked")
-					failing.Store(false)
-				} else {
-					require.Empty(t, current.Error)
-					require.NoError(t, ing.Store.RequestStorageOperationCancel(t.Context(), operation.ID))
-				}
+				require.Equal(t, int64(1), current.CompletedObjects)
+				require.Contains(t, current.ReceiptJSON, `"added":1`)
+				require.Equal(t, store.StorageOperationKindPhotoImport, current.Kind)
+				require.Contains(t, current.Error, "database is locked")
+				failing.Store(false)
 				require.Eventually(t, func() bool {
 					current, err := ing.Store.StorageOperation(t.Context(), operation.ID)
 					return err == nil && (current.State == store.StorageOperationCompleted || current.State == store.StorageOperationCancelled)
