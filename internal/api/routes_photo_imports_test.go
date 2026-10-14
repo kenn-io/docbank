@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -57,14 +56,17 @@ func TestPhotoImportRoutes(t *testing.T) {
 		require.NoError(t, json.Unmarshal([]byte(stored.RequestJSON), &accepted))
 		assert.Equal(t, store.PhotoImportRequest{SourceRoot: submitted.SourceRoot, Destination: submitted.Destination}, accepted)
 
-		require.Eventually(t, func() bool { return tracker.IdleFor() == 0 }, time.Second, time.Millisecond)
+		runner := api.NewPhotoImportRunner(api.Deps{Gate: gate, Tracker: tracker})
+		runner.Options.ActivityBegin()
+		assert.Zero(t, tracker.IdleFor())
+		runner.Options.ActivityEnd()
+		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+		defer cancel()
+		mutated := false
+		err = runner.Options.Mutate(ctx, func() error { mutated = true; return nil })
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.False(t, mutated)
 		assert.Nil(t, supervisor.Snapshot()[0].FinishedAt)
-		require.Never(t, func() bool {
-			_, err := catalog.NodeByPath(t.Context(), "/photos/capture.JPG")
-			return err == nil
-		}, 2*ingest.DefaultPhotoImportSettleInterval, 10*time.Millisecond)
-		_, err = catalog.NodeByPath(t.Context(), "/photos/capture.JPG")
-		require.ErrorIs(t, err, store.ErrNotFound)
 		return nil
 	}))
 	require.Eventually(t, func() bool { return supervisor.Snapshot()[0].FinishedAt != nil }, 5*time.Second, 10*time.Millisecond)

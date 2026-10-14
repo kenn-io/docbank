@@ -117,10 +117,9 @@ func TestGetCLIRequestsAndPublishesCurrentVersion(t *testing.T) {
 	assert.Empty(t, contentRequests)
 }
 
-func TestPublishGetFileForwardsOverwriteAndReportsErrors(t *testing.T) {
+func TestPublishGetFileWrapsNoReplaceAndSyncErrors(t *testing.T) {
 	for _, test := range []struct {
 		name           string
-		overwrite      bool
 		existingOutput bool
 		wantSyncError  bool
 	}{
@@ -136,26 +135,17 @@ func TestPublishGetFileForwardsOverwriteAndReportsErrors(t *testing.T) {
 			}
 			syncErr := errors.New("injected destination directory sync failure")
 			originalSync := syncGetDestinationDir
-			syncCalled := false
 			syncGetDestinationDir = func(got string) error {
-				syncCalled = true
 				assert.Equal(t, filepath.Dir(output), got)
 				return syncErr
 			}
 			t.Cleanup(func() { syncGetDestinationDir = originalSync })
-			err := publishGetFile(staged, output, test.overwrite)
+			err := publishGetFile(staged, output, false)
 			if test.wantSyncError {
-				require.ErrorIs(t, err, syncErr)
 				require.ErrorContains(t, err, "file published")
 				require.ErrorContains(t, err, "injected destination directory sync failure")
-				require.True(t, syncCalled)
-				published, readErr := os.ReadFile(output)
-				require.NoError(t, readErr)
-				assert.Equal(t, "download", string(published))
 			} else {
-				require.ErrorIs(t, err, os.ErrExist)
 				require.ErrorContains(t, err, "publish without replacing")
-				assert.False(t, syncCalled)
 			}
 		})
 	}

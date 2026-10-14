@@ -199,11 +199,6 @@ func TestPhotoMetadataPreservesProvenanceAndRejectsInvalidReferences(t *testing.
 		photoImportTestMember(filepath.Join(camera, "IMG.ARW.XMP"), PhotoRoleSidecar, browseHash("xmp"), "application/rdf+xml")))
 	require.NoError(t, err)
 	assert.Equal(t, jpeg.Asset.ID, paired.Asset.ID)
-	laterRun, err := s.BeginIngest(ctx, "photo-import", "renamed duplicate")
-	require.NoError(t, err)
-	_, err = s.IngestPhotoGroup(ctx, laterRun, photoImportTestGroup(
-		photoImportTestMember(filepath.Join(camera, "AAA.ARW"), PhotoRoleRAW, fakeHash("b2"), "image/x-sony-arw")))
-	require.NoError(t, err)
 	raw := fileByRole(paired.Asset.Files, PhotoRoleRAW)
 	asset := paired.Asset
 	imageFileID := fileByRole(asset.Files, PhotoRoleImage).ID
@@ -272,6 +267,56 @@ func TestPhotoMetadataPreservesProvenanceAndRejectsInvalidReferences(t *testing.
 	require.True(t, found)
 	crossAsset := newTestStore(t)
 	require.ErrorContains(t, crossAsset.ImportMetadata(ctx, strings.NewReader(strings.Join(crossAssetLines, "\n"))), "must point to a same-asset RAW or image")
+	for _, lineType := range []string{"photo_asset", "photo_library_settings"} {
+		t.Run("receipt without "+lineType, func(t *testing.T) {
+			backup := first.String()
+			expectedError := "reference missing assets"
+			if lineType == "photo_library_settings" {
+				preference := "raw"
+				_, err := s.SetPhotoSettings(ctx, 1, &preference)
+				require.NoError(t, err)
+				var exported bytes.Buffer
+				require.NoError(t, s.ExportMetadata(ctx, &exported))
+				backup = exported.String()
+				expectedError = "reference missing assets or settings"
+			}
+			lines := strings.Split(backup, "\n")
+			for index, line := range lines {
+				if strings.Contains(line, `"type":"`+lineType+`"`) || (lineType == "photo_asset" && strings.Contains(line, `"type":"photo_file"`)) {
+					lines[index] = ""
+				}
+			}
+			target := newTestStore(t)
+			require.ErrorContains(t, target.ImportMetadata(ctx, strings.NewReader(strings.Join(lines, "\n"))), expectedError)
+		})
+	}
+}
+
+func TestPhotoMetadataPreservesAndValidatesSourceProvenance(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	ingestRun, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
+	require.NoError(t, err)
+	camera := filepath.Join(t.TempDir(), "camera")
+	jpeg, err := s.IngestPhotoGroup(ctx, ingestRun, photoImportTestGroup(
+		photoImportTestMember(filepath.Join(camera, "IMG.JPG"), PhotoRoleImage, fakeHash("a1"), "image/jpeg")))
+	require.NoError(t, err)
+	paired, err := s.IngestPhotoGroup(ctx, ingestRun, photoImportTestGroup(
+		photoImportTestMember(filepath.Join(camera, "IMG.ARW"), PhotoRoleRAW, fakeHash("b2"), "image/x-sony-arw"),
+		photoImportTestMember(filepath.Join(camera, "IMG.JPG"), PhotoRoleImage, fakeHash("a1"), "image/jpeg"),
+		photoImportTestMember(filepath.Join(camera, "IMG.ARW.XMP"), PhotoRoleSidecar, browseHash("xmp"), "application/rdf+xml")))
+	require.NoError(t, err)
+	assert.Equal(t, jpeg.Asset.ID, paired.Asset.ID)
+	laterRun, err := s.BeginIngest(ctx, "photo-import", "renamed duplicate")
+	require.NoError(t, err)
+	_, err = s.IngestPhotoGroup(ctx, laterRun, photoImportTestGroup(
+		photoImportTestMember(filepath.Join(camera, "AAA.ARW"), PhotoRoleRAW, fakeHash("b2"), "image/x-sony-arw")))
+	require.NoError(t, err)
+	raw := fileByRole(paired.Asset.Files, PhotoRoleRAW)
+	asset := paired.Asset
+	var first bytes.Buffer
+	require.NoError(t, s.ExportMetadata(ctx, &first))
 	sources := make(map[string]string)
 	for _, file := range asset.Files {
 		var selectedSource string
@@ -344,29 +389,6 @@ func TestPhotoMetadataPreservesProvenanceAndRejectsInvalidReferences(t *testing.
 			require.NoError(t, restored.db.QueryRowContext(ctx, `SELECT source_provenance_identity FROM photo_files WHERE file_id=?`, file.ID).Scan(&storedSource))
 			require.Equal(t, want, storedSource, "%s: %s", variant, file.ID)
 		}
-	}
-	for _, lineType := range []string{"photo_asset", "photo_library_settings"} {
-		t.Run("receipt without "+lineType, func(t *testing.T) {
-			backup := first.String()
-			expectedError := "reference missing assets"
-			if lineType == "photo_library_settings" {
-				preference := "raw"
-				_, err := s.SetPhotoSettings(ctx, 1, &preference)
-				require.NoError(t, err)
-				var exported bytes.Buffer
-				require.NoError(t, s.ExportMetadata(ctx, &exported))
-				backup = exported.String()
-				expectedError = "reference missing assets or settings"
-			}
-			lines := strings.Split(backup, "\n")
-			for index, line := range lines {
-				if strings.Contains(line, `"type":"`+lineType+`"`) || (lineType == "photo_asset" && strings.Contains(line, `"type":"photo_file"`)) {
-					lines[index] = ""
-				}
-			}
-			target := newTestStore(t)
-			require.ErrorContains(t, target.ImportMetadata(ctx, strings.NewReader(strings.Join(lines, "\n"))), expectedError)
-		})
 	}
 }
 
