@@ -4,17 +4,26 @@ import { APIError } from "./api-transport.js";
 export class HiddenAccess {
   lockError = $state("");
   private queue = Promise.resolve();
+  private pending = 0;
 
   constructor(readonly session: string, readonly onauthfailure: (cause: unknown) => void) {}
 
   run<T>(request: () => Promise<T>): Promise<T> {
+    this.pending++;
+    return this.enqueue(async () => { try { return await request(); } finally { this.pending--; } });
+  }
+  private enqueue<T>(request: () => Promise<T>): Promise<T> {
     const result = this.queue.then(request);
     this.queue = result.then(() => {}, () => {});
     return result;
   }
   settled() { return this.queue; }
+  pagehide() {
+    // The page may disappear before a pending unlock releases the queue.
+    if (this.pending) void lockPhotoHidden({}, { session: this.session, signal: AbortSignal.timeout(30_000), keepalive: true }).catch(() => {});
+  }
   lock({ keepalive = false } = {}) {
-    return this.run(async () => {
+    return this.enqueue(async () => {
       try {
         await lockPhotoHidden({}, { session: this.session, signal: AbortSignal.timeout(30_000), keepalive });
         this.lockError = "";

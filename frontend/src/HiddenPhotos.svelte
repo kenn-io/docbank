@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import { Button, FormField, Spinner } from "@kenn-io/kit-ui";
-  import { getPhotoHiddenState, setupPhotoHidden, unlockPhotoHidden, lockPhotoHidden, changePhotoHidden, disablePhotoHidden, type PhotoHiddenState } from "./generated/docbank.js";
+  import { getPhotoHiddenState, setupPhotoHidden, unlockPhotoHidden, changePhotoHidden, disablePhotoHidden, type PhotoHiddenState } from "./generated/docbank.js";
   import { Photos } from "./photos.svelte.js";
   import { PhotoPreviewCache } from "./photoPreviewCache.js";
   import { concealPhotoWorkspace, revalidatePhotoWorkspace, type PhotoWorkspace } from "./photoWorkspace.js";
@@ -9,13 +9,14 @@
   import { APIError } from "./api-transport.js";
   import { HiddenAccess } from "./hiddenAccess.svelte.js";
 
-  let { photoID = "", onphotochange = () => {}, onconceal, session, onauthfailure, access = new HiddenAccess(session, onauthfailure), photoActionError = "", ontrashed, onunhidden, onactionerror, onstate, onaccessfailure }: { photoID?: string; onphotochange?: (id: string, mode: "open" | "step" | "close") => void; onconceal?: () => void; session: string; onauthfailure: (cause: unknown) => void; access?: HiddenAccess; photoActionError?: string; ontrashed?: () => void; onunhidden?: () => void; onactionerror?: (error: string) => void; onstate?: (state: PhotoHiddenState) => void; onaccessfailure?: () => void } = $props();
+  let { photoID = "", onphotochange = () => {}, onconceal, session, onauthfailure, access, photoActionError = "", ontrashed, onunhidden, onactionerror, onstate, onaccessfailure }: { photoID?: string; onphotochange?: (id: string, mode: "open" | "step" | "close") => void; onconceal?: () => void; session: string; onauthfailure: (cause: unknown) => void; access: HiddenAccess; photoActionError?: string; ontrashed?: () => void; onunhidden?: () => void; onactionerror?: (error: string) => void; onstate?: (state: PhotoHiddenState) => void; onaccessfailure?: () => void } = $props();
   let hiddenState = $state<PhotoHiddenState>({ configured: false });
   let workspace = $state<PhotoWorkspace>();
   let photoWorkspace = $state<PhotosWorkspace>();
   export function activePhotos() { return workspace?.photos; }
   export function captureReturn() { photoWorkspace?.captureReturn(); }
   export async function refresh() { if (workspaceVisible) await photoWorkspace?.refresh(); else await checkAccess(); }
+  export function lock() { return action("lock"); }
   let workspaceVisible = $state(false);
   let concealment = 0;
   let passcode = $state("");
@@ -55,6 +56,7 @@
     remaining = 0;
     deadline = 0;
   }
+  $effect(() => { if (access.lockError) untrack(clear); });
   function authorizationLost(cause: unknown) {
     clear();
     readError = cause instanceof Error ? cause.message : String(cause);
@@ -72,7 +74,7 @@
     lockDeadline = result.locked_for ? requestedAt + result.locked_for * 1000 : 0;
     deadline = result.expires_in ? requestedAt + result.expires_in * 1000 : 0;
     remaining = secondsUntil(deadline);
-    if (!remaining || concealingAction) clear();
+    if (!remaining || concealingAction || access.lockError) clear();
     else if (!workspace) { workspace = { photos: new Photos(session, authorizationLost, true), cache: new PhotoPreviewCache(session, authorizationLost, true) }; workspaceVisible = true; }
     else if (!workspaceVisible && !workspace.photos.hiding && !workspace.photos.trashing && !workspace.photos.loading) {
       const current = workspace;
@@ -124,26 +126,27 @@
       }
     }
     if (invalidField) { await tick(); document.getElementById(invalidField)?.focus(); return; }
+    const submitted = { passcode, currentPasscode, nextPasscode, configured: hiddenState.configured };
     actionPending = true;
     concealingAction = kind !== "enter";
     let disableDispatched = false;
     let succeeded = false;
     if (kind === "lock" || kind === "disable" || kind === "change") clear();
     try {
-      await access.run(async () => {
+      if (kind === "lock") { succeeded = await access.lock(); if (!succeeded) actionError = access.lockError; }
+      else await access.run(async () => {
         if (kind === "enter") {
-          if (!hiddenState.configured) await setupPhotoHidden({ passcode }, options());
-          await unlockPhotoHidden({ passcode }, options());
-        } else if (kind === "lock") await lockPhotoHidden({}, options());
-        else if (kind === "change") await changePhotoHidden({ passcode: currentPasscode, new_passcode: nextPasscode }, options());
-        else { disableDispatched = true; await disablePhotoHidden({ passcode: currentPasscode }, options()); }
+          if (!submitted.configured) await setupPhotoHidden({ passcode: submitted.passcode }, options());
+          await unlockPhotoHidden({ passcode: submitted.passcode }, options());
+        } else if (kind === "change") await changePhotoHidden({ passcode: submitted.currentPasscode, new_passcode: submitted.nextPasscode }, options());
+        else { disableDispatched = true; await disablePhotoHidden({ passcode: submitted.currentPasscode }, options()); }
       });
       passcode = "";
       currentPasscode = "";
       nextPasscode = "";
       passcodeError = currentPasscodeError = nextPasscodeError = "";
       lockoutError = "";
-      succeeded = true;
+      if (kind !== "lock") succeeded = true;
     } catch (cause) {
       if (disposed) return;
       if (cause instanceof APIError && cause.status === 401) { onauthfailure(cause); return; }
@@ -187,10 +190,10 @@
   {#if readError}<p role="alert">{readError}</p><Button size="sm" onclick={() => void checkAccess()}>Retry</Button>{/if}
   {#if !resolved}
     <div class="hidden-gate"><h1>Hidden</h1>{#if reading}<Spinner />{/if}</div>
-  {:else if workspace && remaining && workspaceVisible}
+  {:else if workspace && remaining && workspaceVisible && !access.lockError}
     <div id="hidden-controls" class="hidden-controls" tabindex="-1"><span>Locks in {Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, "0")}</span><Button size="sm" disabled={actionPending} onclick={() => void action("lock")}>Lock</Button></div>
     {#each [workspace] as current (current)}<PhotosWorkspace bind:this={photoWorkspace} photos={current.photos} cache={current.cache} title="Hidden" {photoID} {onphotochange} {ontrashed} onhidden={onunhidden} oninvalidate={conceal} {onactionerror} />{/each}
-  {:else if workspace && remaining}
+  {:else if workspace && remaining && !access.lockError}
     <Spinner />
   {:else}
     <div class="hidden-gate">

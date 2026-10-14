@@ -4,6 +4,23 @@ import { unlockPhotoHidden } from "./generated/docbank.js";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
+it("pagehide sends a keepalive lock without waiting for a held unlock", async () => {
+  let finish!: (response: Response) => void;
+  const fetcher = vi.fn((url: string) => url.endsWith("/unlock") ? new Promise<Response>(resolve => finish = resolve) : Promise.resolve(Response.json({ configured: true })));
+  vi.stubGlobal("fetch", fetcher);
+  const access = new HiddenAccess("synthetic", vi.fn());
+  const unlock = access.run(() => unlockPhotoHidden({ passcode: "synthetic" }, { session: "synthetic" }));
+  await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+  access.pagehide();
+  const lock = access.lock({ keepalive: true });
+  await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+  expect(vi.mocked(fetch).mock.calls[1][1]).toMatchObject({ keepalive: true });
+  finish(Response.json({ configured: true, expires_in: 300 }));
+  await unlock;
+  await lock;
+  expect(fetcher.mock.calls.map(([url]) => url.split("/").at(-1))).toEqual(["unlock", "lock", "lock"]);
+});
+
 it("locks after a held unlock and starts its timeout when dispatched", async () => {
   let finish!: (response: Response) => void;
   const timeout = vi.spyOn(AbortSignal, "timeout");

@@ -208,20 +208,22 @@
   $effect(() => {
     const access = hiddenAccess;
     if (!access) return;
-    let left = document.visibilityState !== "visible";
+    let attempted = false;
     const leave = () => {
-      if (left) return;
-      left = true;
-      if (openedPhotos) { clearPhoto(); void access.lock({ keepalive: true }); }
+      if (attempted || !openedPhotos) return;
+      attempted = true;
+      clearPhoto();
+      void access.lock({ keepalive: true });
     };
-    const resume = () => { left = false; };
+    const pagehide = () => { if (openedPhotos) access.pagehide(); leave(); };
+    const resume = () => { attempted = false; };
     const visibility = () => { if (document.visibilityState === "visible") resume(); else leave(); };
     document.addEventListener("visibilitychange", visibility);
-    window.addEventListener("pagehide", leave);
+    window.addEventListener("pagehide", pagehide);
     window.addEventListener("pageshow", resume);
     return () => {
       document.removeEventListener("visibilitychange", visibility);
-      window.removeEventListener("pagehide", leave);
+      window.removeEventListener("pagehide", pagehide);
       window.removeEventListener("pageshow", resume);
     };
   });
@@ -237,7 +239,7 @@
   let dragOver = $state("");
   const hashWithoutPhoto = () => new URLSearchParams(location.hash.slice(1)).has("photo") ? "" : location.hash;
   let hiddenPhotoActionError = $state("");
-  let hiddenWorkspace = $state<{ refresh: () => Promise<void>; activePhotos: () => Photos | undefined; captureReturn: () => void }>();
+  let hiddenWorkspace = $state<HiddenPhotos>();
   let libraryWorkspace = $state<PhotosWorkspace>();
   let photoID = $state(new URLSearchParams(location.hash.slice(1)).get("photo") ?? "");
   const activePhotos = () => hiddenMode ? hiddenWorkspace?.activePhotos() : albumID ? albumPhotos : mapMode ? mapPhotos : photoState?.photos;
@@ -2374,8 +2376,8 @@
     </TopBar>
 
     {#if photoMode}
-      {#if hiddenAccess?.lockError}<div class="photo-access-error"><p role="alert">Hidden did not lock. {hiddenAccess.lockError}</p><Button onclick={() => void hiddenAccess?.lock()}>Retry lock</Button></div>{/if}
-      {#if hiddenMode}<HiddenPhotos access={hiddenAccess} bind:this={hiddenWorkspace} {photoID} onphotochange={changePhoto} onconceal={clearPhoto} session={webSession} onauthfailure={handleFailure} onstate={result => { void acceptPhotoAccess(result).catch(cause => { void invalidateLibrary(); photoAccessError = cause instanceof Error ? cause.message : String(cause); }); }} onaccessfailure={invalidateLibrary} ontrashed={() => { handleTrashed(); void hiddenWorkspace?.refresh(); }} onunhidden={() => { void invalidateLibrary(); void hiddenWorkspace?.refresh(); }} onactionerror={error => hiddenPhotoActionError = error} photoActionError={hiddenPhotoActionError} />{:else if photoValidated && photoState}
+      {#if hiddenAccess?.lockError}<div class="photo-access-error"><p role="alert">Hidden did not lock. {hiddenAccess.lockError}</p><Button onclick={() => void (hiddenWorkspace ? hiddenWorkspace.lock() : hiddenAccess?.lock())}>Retry lock</Button></div>{/if}
+      {#if hiddenMode && hiddenAccess}<HiddenPhotos access={hiddenAccess} bind:this={hiddenWorkspace} {photoID} onphotochange={changePhoto} onconceal={clearPhoto} session={webSession} onauthfailure={handleFailure} onstate={result => { void acceptPhotoAccess(result).catch(cause => { void invalidateLibrary(); photoAccessError = cause instanceof Error ? cause.message : String(cause); }); }} onaccessfailure={invalidateLibrary} ontrashed={() => { handleTrashed(); void hiddenWorkspace?.refresh(); }} onunhidden={() => { void invalidateLibrary(); void hiddenWorkspace?.refresh(); }} onactionerror={error => hiddenPhotoActionError = error} photoActionError={hiddenPhotoActionError} />{:else if photoValidated && photoState}
       {#if hiddenPhotoActionError}<p role="alert">{hiddenPhotoActionError}</p>{/if}
       {#if photoPath === "/photos/albums"}{#if photoAlbums}<PhotoAlbumsIndex albums={photoAlbums} cache={photoState.cache} onnavigate={navigatePhotos} />{/if}
       {:else if albumID}{#if albumPhotos}{#key albumPhotos}<PhotosWorkspace bind:this={libraryWorkspace} photos={albumPhotos} cache={photoState.cache} albums={photoAlbums} {albumID} onnavigate={navigatePhotos} {photoID} onphotochange={changePhoto} ontrashed={source => handleTrashed(undefined, source)} onactionerror={error => hiddenPhotoActionError = error} onhidden={invalidateLibrary} oninvalidate={invalidateLibrary} />{/key}{/if}
