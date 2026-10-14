@@ -622,7 +622,7 @@ func TestProduceVisualPreviewKeepsImageReadErrorsRetryable(t *testing.T) {
 		failReadAt      int64
 	}{
 		{name: "jpeg", mediaType: "image/jpeg", data: mediatest.JPEG(3, 2, color.White), failAtSeeks: []int{3, 4}},
-		{name: "oversize jpeg", mediaType: "image/jpeg", data: syntheticVisualJPEGDC(t, 10008, 10008, false), failAtSeeks: []int{3, 4}},
+		{name: "oversize jpeg", mediaType: "image/jpeg", data: syntheticVisualJPEGDC(t, 10008, 10008, false), failAtSeeks: []int{4}},
 		{name: "png", mediaType: "image/png", data: pngSource, failAtSeeks: []int{3, 4}},
 		{name: "png after IDAT", mediaType: "image/png", data: trailingPNG, failAtSeeks: []int{4}, failReadAt: failReadAt},
 		{name: "gif", mediaType: "image/gif", data: mediatest.GIF(3, 2, 1), failAtSeeks: []int{2, 3}},
@@ -639,6 +639,9 @@ func TestProduceVisualPreviewKeepsImageReadErrorsRetryable(t *testing.T) {
 			digest := sha256.Sum256(source.data)
 			for index, failAtSeek := range source.failAtSeeks {
 				phase := phases[index].name
+				if failAtSeek == 4 {
+					phase = "pixels"
+				}
 				if source.failReadAt != 0 {
 					phase = "after IDAT"
 				}
@@ -1084,6 +1087,8 @@ func TestVisualPreviewJPEGDCMarkerAndTableHandling(t *testing.T) {
 	frameEnd := frame + 2 + int(binary.BigEndian.Uint16(rgb[frame+2:frame+4]))
 	jfifMarker := syntheticJPEGSegment(t, []byte{0xff, 0xd8}, 0xe0, []byte("JFIF\x00"))[2:]
 	lateJFIF := append(append(bytes.Clone(rgb[:frameEnd]), jfifMarker...), rgb[frameEnd:]...)
+	ignoredAdobe := syntheticJPEGSegment(t, []byte{0xff, 0xd8}, 0xee, []byte("ignored APP14"))[2:]
+	ignoredAdobeLateJFIF := append(append(bytes.Clone(lateJFIF[:frameEnd]), ignoredAdobe...), lateJFIF[frameEnd:]...)
 	postScanJFIF := append(append(bytes.Clone(rgb[:len(rgb)-2]), jfifMarker...), 0xff, 0xd9)
 	adobe := syntheticJPEGSegment(t, []byte{0xff, 0xd8}, 0xee, []byte("Adobe\x00\x64\x00\x00\x00\x00\x01"))[2:]
 	lateAdobe := append(append(bytes.Clone(rgb[:frameEnd]), adobe...), rgb[frameEnd:]...)
@@ -1142,6 +1147,7 @@ func TestVisualPreviewJPEGDCMarkerAndTableHandling(t *testing.T) {
 		{"standalone TEM", append(bytes.Clone(source[:len(source)-2]), 0xff, 0x01, 0xff, 0xd9), "", "", source},
 		{"RGB IDs with short JFIF", jfif, "", "", source},
 		{"JFIF after frame", lateJFIF, "", "", source},
+		{"ignored APP14 then late JFIF", ignoredAdobeLateJFIF, "", "", source},
 		{"JFIF after scan changes RGB", postScanJFIF, "unsupported", "", nil},
 		{"Adobe after frame preserves RGB IDs", lateAdobe, "", "", rgb},
 		{"Adobe after scan preserves JFIF", postScanAdobeJFIF, "", "", source},

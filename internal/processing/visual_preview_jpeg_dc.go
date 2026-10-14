@@ -65,6 +65,7 @@ type visualJPEGDCDecoder struct {
 
 func decodeVisualPreviewJPEGDC(reader *bufio.Reader, model color.Model) (image.Image, error) {
 	d := visualJPEGDCDecoder{reader: reader, colorModel: model}
+	scanStarted := false
 	if _, err := reader.Discard(2); err != nil {
 		return nil, fmt.Errorf("reading JPEG start: %w", err)
 	}
@@ -103,6 +104,12 @@ func decodeVisualPreviewJPEGDC(reader *bufio.Reader, model color.Model) (image.I
 				d.restart = int(binary.BigEndian.Uint16(payload))
 			}
 		case 0xda:
+			if !scanStarted {
+				if err = d.checkColorModel(); err != nil {
+					return nil, err
+				}
+				scanStarted = true
+			}
 			err = d.scan(payload)
 			if err == nil && d.progressive && payload[len(payload)-3] > 0 {
 				marker, err = d.skipAC()
@@ -114,14 +121,8 @@ func decodeVisualPreviewJPEGDC(reader *bufio.Reader, model color.Model) (image.I
 			} else if marker == 0xee && len(payload) >= 12 && string(payload[:5]) == "Adobe" {
 				d.adobeRGB = payload[11] == 0
 			}
-			if len(d.components) == 3 {
-				model := color.YCbCrModel
-				if !d.jfif && (d.adobeRGB || d.components[0].id == 'R' && d.components[1].id == 'G' && d.components[2].id == 'B') {
-					model = color.RGBAModel
-				}
-				if model != d.colorModel {
-					err = jpeg.UnsupportedError("color marker changes configured color model")
-				}
+			if scanStarted {
+				err = d.checkColorModel()
 			}
 		default:
 			if marker < 0xe0 || marker > 0xef && marker != 0xfe {
@@ -133,6 +134,20 @@ func decodeVisualPreviewJPEGDC(reader *bufio.Reader, model color.Model) (image.I
 		}
 	}
 	return nil, err
+}
+
+func (d *visualJPEGDCDecoder) checkColorModel() error {
+	if len(d.components) != 3 {
+		return nil
+	}
+	model := color.YCbCrModel
+	if !d.jfif && (d.adobeRGB || d.components[0].id == 'R' && d.components[1].id == 'G' && d.components[2].id == 'B') {
+		model = color.RGBAModel
+	}
+	if model != d.colorModel {
+		return jpeg.UnsupportedError("color marker changes configured color model")
+	}
+	return nil
 }
 
 func (d *visualJPEGDCDecoder) marker() (byte, error) {
