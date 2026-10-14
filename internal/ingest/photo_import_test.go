@@ -278,7 +278,7 @@ func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
 				failing.Store(false)
 				require.Eventually(t, func() bool {
 					current, err := ing.Store.StorageOperation(t.Context(), operation.ID)
-					return err == nil && (current.State == store.StorageOperationCompleted || current.State == store.StorageOperationCancelled)
+					return err == nil && current.State == store.StorageOperationCompleted
 				}, 10*time.Second, 10*time.Millisecond)
 			} else {
 				require.NoError(t, runner.Run(t.Context(), operation.ID))
