@@ -42,8 +42,8 @@ type MediaTimeSpan struct {
 }
 
 // EvidenceReference cites the authority behind one result. NodeName is set
-// only on node_name evidence: the name read with the match, which revalidation
-// requires to be unchanged.
+// only on node_name evidence: the name read with that match, which
+// revalidation requires to be unchanged.
 type EvidenceReference struct {
 	MediaSources           []MediaSource
 	Kind                   string

@@ -169,18 +169,14 @@ func (searcher *Searcher) revalidateReport(ctx context.Context, query Query, rep
 	requested := make([]store.SearchCandidateIdentity, len(report.Results))
 	for i, result := range report.Results {
 		evidence := make([]store.SearchEvidenceIdentity, len(result.Evidence))
-		var nodeName string
 		for j, reference := range result.Evidence {
-			if reference.Kind == "node_name" {
-				nodeName = reference.NodeName
-			}
-			evidence[j] = store.SearchEvidenceIdentity{Kind: reference.Kind,
+			evidence[j] = store.SearchEvidenceIdentity{Kind: reference.Kind, NodeName: reference.NodeName,
 				VectorSpaceID: reference.VectorSpaceID, EmbeddingSetID: reference.EmbeddingSetID,
 				InputGenerationID: reference.InputGenerationID, InputID: reference.InputID,
 				InputKind: reference.InputKind, BuildID: reference.BuildID, SegmentID: reference.SegmentID,
 				BlobHash: reference.BlobHash, SourceManifestChecksum: reference.SourceManifestChecksum}
 		}
-		requested[i] = store.SearchCandidateIdentity{NodeID: result.Document.NodeID, NodeName: nodeName,
+		requested[i] = store.SearchCandidateIdentity{NodeID: result.Document.NodeID,
 			ContentVersionID: result.Document.ContentVersionID, Evidence: evidence}
 	}
 	semanticProfile, semanticBinding := "", ""

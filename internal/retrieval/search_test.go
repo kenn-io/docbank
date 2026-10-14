@@ -178,7 +178,9 @@ func TestSearcherRevalidatesTheNameItMatched(t *testing.T) {
 		Authorization: retrievalAuthorization(descriptor)})
 	require.NoError(t, err)
 	require.Len(t, backend.revalidated, 1)
-	assert.Equal(t, "semantic.pdf", backend.revalidated[0].NodeName)
+	require.NotEmpty(t, backend.revalidated[0].Evidence)
+	assert.Equal(t, store.SearchEvidenceIdentity{Kind: "node_name", NodeName: "semantic.pdf"},
+		backend.revalidated[0].Evidence[0])
 }
 
 func TestSearcherAppliesIndependentLaneAndResponseLimits(t *testing.T) {

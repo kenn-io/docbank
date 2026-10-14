@@ -324,9 +324,8 @@ func TestRevalidateSearchCandidatesPreservesOrderAtTheCandidateLimit(t *testing.
 		if i%2 == 0 {
 			node = second
 		}
-		requested[i] = SearchCandidateIdentity{NodeID: node.ID, NodeName: node.Name,
-			ContentVersionID: node.CurrentVersionID,
-			Evidence:         []SearchEvidenceIdentity{{Kind: "node_name"}}}
+		requested[i] = SearchCandidateIdentity{NodeID: node.ID, ContentVersionID: node.CurrentVersionID,
+			Evidence: []SearchEvidenceIdentity{{Kind: "node_name", NodeName: node.Name}}}
 	}
 
 	revalidation, err := s.RevalidateSearchCandidates(t.Context(), requested, SearchOptions{}, "", "")
@@ -349,12 +348,14 @@ func TestRevalidateSearchCandidatesRefreshesPathsAfterFiltering(t *testing.T) {
 	require.NoError(t, err)
 	second, err := s.CreateFile(ctx, parent.ID, "second.txt", fakeHash("second"), 6, "text/plain")
 	require.NoError(t, err)
-	a := SearchCandidateIdentity{NodeID: first.ID, NodeName: first.Name,
-		ContentVersionID: first.CurrentVersionID, Evidence: []SearchEvidenceIdentity{{Kind: "node_name"}}}
-	b := SearchCandidateIdentity{NodeID: second.ID, NodeName: second.Name,
-		ContentVersionID: second.CurrentVersionID, Evidence: []SearchEvidenceIdentity{{Kind: "node_name"}}}
+	a := SearchCandidateIdentity{NodeID: first.ID, ContentVersionID: first.CurrentVersionID,
+		Evidence: []SearchEvidenceIdentity{{Kind: "node_name", NodeName: first.Name}}}
+	b := SearchCandidateIdentity{NodeID: second.ID, ContentVersionID: second.CurrentVersionID,
+		Evidence: []SearchEvidenceIdentity{{Kind: "node_name", NodeName: second.Name}}}
+	// Expanded query variants can read the same node before and after a rename.
 	stale := a
-	stale.NodeName = "renamed.txt"
+	stale.Evidence = []SearchEvidenceIdentity{{Kind: "node_name", NodeName: "renamed.txt"},
+		{Kind: "node_name", NodeName: first.Name}}
 	missing := a
 	missing.NodeID = second.ID + 100
 	requested := []SearchCandidateIdentity{stale, b, missing, a, a}
@@ -419,8 +420,8 @@ func TestRevalidateSearchCandidatesAppliesCurrentScopeAndBlobEvidence(t *testing
 	revalidation, err = s.RevalidateSearchCandidates(t.Context(), requested[:1], SearchOptions{}, "", "")
 	require.NoError(t, err)
 	require.Len(t, revalidation.Candidates, 1, "a tag edit must not discard current content evidence")
-	nameMatch := SearchCandidateIdentity{NodeID: text.ID, NodeName: text.Name, ContentVersionID: text.CurrentVersionID,
-		Evidence: []SearchEvidenceIdentity{{Kind: "node_name"}}}
+	nameMatch := SearchCandidateIdentity{NodeID: text.ID, ContentVersionID: text.CurrentVersionID,
+		Evidence: []SearchEvidenceIdentity{{Kind: "node_name", NodeName: text.Name}}}
 	_, _, err = s.Move(t.Context(), text.ID, s.RootID(), "renamed.txt", tagged.Node.Revision)
 	require.NoError(t, err)
 	revalidation, err = s.RevalidateSearchCandidates(t.Context(),
