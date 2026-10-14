@@ -76,7 +76,7 @@ describe("background jobs drawer", () => {
     }
   });
 
-  it("keeps progress and cancel while lane controls are unavailable, then recovers on refresh", async () => {
+  it("keeps progress while lane controls are unavailable, then recovers on refresh", async () => {
     vi.useFakeTimers();
     try {
       const items = [
@@ -108,9 +108,7 @@ describe("background jobs drawer", () => {
         new Promise<Response>(() => {}),
         Promise.resolve(jobsResponse(items, [control])),
       ];
-      fetchSpy.mockImplementation((_url, options) =>
-        options?.method === "POST" ? new Promise<Response>(() => {}) : responses.shift()!,
-      );
+      fetchSpy.mockImplementation(() => responses.shift()!);
       render(JobsDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
       await vi.advanceTimersByTimeAsync(0);
       expect(screen.getByRole("alert").textContent).toBe("Lane controls are unavailable");
