@@ -211,10 +211,11 @@ test("photo map privacy, clusters, marker return and mobile grid", async ({ page
     // A changed Hidden state makes access revalidation query the map again.
     await run("photos", "assets", "hide", asset.id, "--revision", String(asset.revision));
     await page.evaluate(()=>{Object.defineProperty(document,"visibilityState",{configurable:true,value:"visible"});document.dispatchEvent(new Event("visibilitychange"));});
-    await expect(page.getByRole("alert")).toHaveText("Map unavailable");await expect(page.getByRole("button",{name:"Retry",exact:true})).toBeVisible();
+    const accessError = page.locator(".photo-access-error");
+    await expect(accessError.getByRole("alert")).toHaveText("Map unavailable");await expect(accessError.getByRole("button",{name:"Retry",exact:true})).toBeVisible();
     await expect(page.locator(".photo-map")).toHaveCount(0);
     await page.screenshot({path:path.join(output!,"photo-map-access-retry-400-dark.png"),animations:"disabled"});
-    await page.unroute("**/photos/assets/query");await page.getByRole("button",{name:"Retry",exact:true}).click({timeout:15_000});await expect(page.getByRole("alert")).toHaveCount(0);await expect(page.getByText("13 located photos",{exact:true})).toBeVisible();
+    await page.unroute("**/photos/assets/query");await accessError.getByRole("button",{name:"Retry",exact:true}).click({timeout:15_000});await expect(accessError).toHaveCount(0);await expect(page.getByText("13 located photos",{exact:true})).toBeVisible();
     await page.unroute("https://tiles.example.org/**");
     await page.route("https://tiles.example.org/**",route=>route.fulfill({status:404,body:""}));
     await page.setViewportSize({width:1440,height:960});await page.goto("about:blank");await page.goto(enabledURL.href);
