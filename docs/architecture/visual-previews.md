@@ -126,8 +126,9 @@ and encode as a quality-90 JPEG. Source dimensions must be positive. JPEGs above
 100,000,000 pixels decode at one-eighth scale per edge using block averages,
 including progressive JPEGs, up to 1,000,000,000 source pixels. JPEGs above that
 ceiling record `failed` with `source_dimensions_exceed_limit` before allocating
-coefficient planes. Fit and large previews stay at most one-eighth scale.
-Measured peak memory at the 1,000,000,000-pixel ceiling is about 200 MB.
+coefficient planes. Fit and large previews for these JPEGs can come out below the
+2560/4096 recipe edges because they stop at one-eighth of the source edge.
+Measured peak memory at the 1,000,000,000-pixel ceiling is about 250 MB.
 Oversize progressive previews use DC scans only. AC scans must be marker-framed
 and nonempty; their entropy contents are skipped. Damaged AC data after valid
 DC scans still yields a correct one-eighth preview. Baseline JPEGs decode all

@@ -1080,8 +1080,14 @@ func TestVisualPreviewJPEGDCRegressions(t *testing.T) {
 	frameEnd := frame + 2 + int(binary.BigEndian.Uint16(rgb[frame+2:frame+4]))
 	jfifMarker := syntheticJPEGSegment(t, []byte{0xff, 0xd8}, 0xe0, []byte("JFIF\x00"))[2:]
 	lateJFIF := append(append(bytes.Clone(rgb[:frameEnd]), jfifMarker...), rgb[frameEnd:]...)
+	postScanJFIF := append(append(bytes.Clone(rgb[:len(rgb)-2]), jfifMarker...), 0xff, 0xd9)
 	adobe := syntheticJPEGSegment(t, []byte{0xff, 0xd8}, 0xee, []byte("Adobe\x00\x64\x00\x00\x00\x00\x01"))[2:]
 	lateAdobe := append(append(bytes.Clone(rgb[:frameEnd]), adobe...), rgb[frameEnd:]...)
+	adobeRGB := bytes.Clone(adobe)
+	adobeRGB[len(adobeRGB)-1] = 0
+	postScanAdobeJFIF := append(append(bytes.Clone(source[:len(source)-2]), adobeRGB...), 0xff, 0xd9)
+	noJFIF := append(bytes.Clone(source[:2]), source[4+int(binary.BigEndian.Uint16(source[4:6])):]...)
+	postScanAdobe := append(append(bytes.Clone(noJFIF[:len(noJFIF)-2]), adobeRGB...), 0xff, 0xd9)
 	baseline, err := os.ReadFile(filepath.Join("testdata", "baseline-422.jpg"))
 	require.NoError(t, err)
 	baselineQuant := bytes.Index(baseline, []byte{0xff, 0xdb})
@@ -1130,8 +1136,11 @@ func TestVisualPreviewJPEGDCRegressions(t *testing.T) {
 		{"trailing restart", append(bytes.Clone(baseline[:len(baseline)-2]), 0xff, 0xd0, 0xff, 0xd9), nil, baseline},
 		{"standalone TEM", append(bytes.Clone(source[:len(source)-2]), 0xff, 0x01, 0xff, 0xd9), nil, source},
 		{"RGB IDs with short JFIF", jfif, nil, source},
-		{"JFIF after frame", lateJFIF, jpeg.UnsupportedError(""), nil},
-		{"Adobe after frame", lateAdobe, jpeg.UnsupportedError(""), nil},
+		{"JFIF after frame", lateJFIF, nil, source},
+		{"JFIF after scan changes RGB", postScanJFIF, jpeg.UnsupportedError(""), nil},
+		{"Adobe after frame preserves RGB IDs", lateAdobe, nil, rgb},
+		{"Adobe after scan preserves JFIF", postScanAdobeJFIF, nil, source},
+		{"Adobe after scan changes YCbCr", postScanAdobe, jpeg.UnsupportedError(""), nil},
 		{"second frame", append(append(bytes.Clone(source[:len(source)-2]), rgb[frame:frameEnd]...), 0xff, 0xd9), jpeg.FormatError(""), nil},
 		{"progressive redefined quantization", redefined, nil, finalQuant},
 		{"baseline redefined quantization", sequentialRedefined, nil, baseline},
@@ -1219,8 +1228,7 @@ func syntheticVisualJPEGDC(t *testing.T, width, height int, baseline bool) []byt
 	t.Helper()
 	source := []byte{0xff, 0xd8}
 	segment := func(marker byte, payload []byte) {
-		source = append(source, 0xff, marker, byte((len(payload)+2)>>8), byte(len(payload)+2))
-		source = append(source, payload...)
+		source = append(source, syntheticJPEGSegment(t, []byte{0xff, 0xd8}, marker, payload)[2:]...)
 	}
 	segment(0xdb, append([]byte{0}, bytes.Repeat([]byte{16}, 64)...))
 	frame := byte(0xc2)

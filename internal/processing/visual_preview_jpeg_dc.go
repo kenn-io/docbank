@@ -56,6 +56,8 @@ type visualJPEGDCDecoder struct {
 	baseline      bool
 	restart       int
 	colorModel    color.Model
+	jfif          bool
+	adobeRGB      bool
 	maxH, maxV    int
 	bits          byte
 	nbits         int
@@ -107,8 +109,19 @@ func decodeVisualPreviewJPEGDC(reader *bufio.Reader, model color.Model) (image.I
 				continue
 			}
 		case 0xe0, 0xee:
-			if len(d.components) != 0 {
-				err = jpeg.UnsupportedError("color marker after frame header")
+			if marker == 0xe0 && len(payload) >= 5 {
+				d.jfif = string(payload[:5]) == "JFIF\x00"
+			} else if marker == 0xee && len(payload) >= 12 && string(payload[:5]) == "Adobe" {
+				d.adobeRGB = payload[11] == 0
+			}
+			if len(d.components) == 3 {
+				model := color.YCbCrModel
+				if !d.jfif && (d.adobeRGB || d.components[0].id == 'R' && d.components[1].id == 'G' && d.components[2].id == 'B') {
+					model = color.RGBAModel
+				}
+				if model != d.colorModel {
+					err = jpeg.UnsupportedError("color marker changes configured color model")
+				}
 			}
 		default:
 			if marker < 0xe0 || marker > 0xef && marker != 0xfe {
