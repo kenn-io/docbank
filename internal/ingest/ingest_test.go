@@ -845,9 +845,12 @@ func TestAddReplaceFailsBeforeSourceReadForDirectory(t *testing.T) {
 	run, err := ing.Store.BeginIngest(ctx, "cli", "test")
 	require.NoError(t, err)
 	files := &filesystemIngest{ing: ing, run: run}
-	_, _, err = files.importFile(ctx, &ingestDirectory{id: ing.Store.RootID()}, filepath.Join(t.TempDir(), "missing"),
-		"/synthetic/missing/notes.txt", true, nil)
-	assert.ErrorIs(t, err, store.ErrNotFile)
+	var report Report
+	require.NoError(t, files.addOne(ctx, &report, &ingestDirectory{id: ing.Store.RootID()},
+		filepath.Join(t.TempDir(), "missing"), "/synthetic/missing/notes.txt", true, nil))
+	require.NoError(t, files.flush(ctx, &report, nil))
+	require.Len(t, report.Failed, 1)
+	assert.ErrorIs(t, report.Failed[0].Err, store.ErrNotFile)
 }
 
 func TestAddReplaceReusesTrashOnlyName(t *testing.T) {

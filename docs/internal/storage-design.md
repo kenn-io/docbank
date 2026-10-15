@@ -163,15 +163,19 @@ is harmless because no `blobs` row authorizes it; GC's physical scan can remove
 it. Reversing the order could commit a node whose bytes vanish after power
 loss, which is not recoverable through metadata.
 
-Ordinary local filesystem imports prepare up to eight files concurrently through
+Local filesystem imports prepare up to eight files concurrently through
 the same durable writer. All preparations in a group finish before metadata
 transactions run in input order. Successful preparations share verified creation
 receipts for matching hashes, so an earlier duplicate can restore missing catalog
 authority even when a later input published the bytes first. Failed preparations
 cannot supply these receipts. Directory creation and traversal errors finish
 earlier pending files first, preserving name conflicts and report order.
-Replacement imports remain sequential so each target revision is observed after
-the preceding import. No sync or SQLite commit policy changes for either path.
+Replacement imports observe each target before reading its source and keep that
+revision as the commit precondition. Before observing a repeated normalized
+destination name, they finish the pending group so the later input sees the
+earlier input's committed version. Concurrent edits still fail the revision check;
+targets observed as absent use exact creation without name suffixes. No sync or
+SQLite commit policy changes for either path.
 
 The importer serializes progress callbacks and waits for every writer before
 returning, including on cancellation. The caller's mutation lease covers this

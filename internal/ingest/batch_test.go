@@ -22,13 +22,24 @@ import (
 )
 
 func TestAddRecoversMissingAuthorityWhenLaterInputPublishesFirst(t *testing.T) {
-	for _, sourceChanged := range []bool{false, true} {
-		t.Run(fmt.Sprintf("publisher_changed=%t", sourceChanged), func(t *testing.T) {
+	for _, tc := range []struct {
+		sourceChanged, replace, existing bool
+	}{
+		{false, false, false}, {true, false, false},
+		{false, true, false}, {true, true, false},
+		{false, true, true}, {true, true, true},
+	} {
+		t.Run(fmt.Sprintf("publisher_changed=%t/replace=%t/existing=%t",
+			tc.sourceChanged, tc.replace, tc.existing), func(t *testing.T) {
 			ing := newTestIngester(t)
 			const content = "shared recovery content"
 			source := writeTree(t, map[string]string{"first.txt": content, "later.txt": content})
 			first, later := filepath.Join(source, "first.txt"), filepath.Join(source, "later.txt")
-			report, err := ing.AddPaths(t.Context(), []string{first}, "/seed")
+			seedDestination := "/seed"
+			if tc.existing {
+				seedDestination = "/recovered"
+			}
+			report, err := ing.AddPaths(t.Context(), []string{first}, seedDestination)
 			require.NoError(t, err)
 			require.Equal(t, 1, report.Added)
 			packed, err := ing.Blobs.Maintainer().Pack(t.Context(), packstore.PackOptions{})
@@ -69,7 +80,7 @@ func TestAddRecoversMissingAuthorityWhenLaterInputPublishesFirst(t *testing.T) {
 					publishOnce.Do(func() {
 						// Release the first input only after the later input's
 						// canonical loose file has been published and synced.
-						if sourceChanged {
+						if tc.sourceChanged {
 							changeErr = os.WriteFile(later, []byte(content+" changed"), 0o600)
 						}
 						close(published)
@@ -78,9 +89,11 @@ func TestAddRecoversMissingAuthorityWhenLaterInputPublishesFirst(t *testing.T) {
 				return changeErr
 			}
 
-			report, err = ing.AddPaths(ctx, []string{first, later}, "/recovered")
+			report, err = ing.AddPathsWithOptions(ctx, []string{first, later}, "/recovered", Options{
+				Replace: tc.replace,
+			})
 			require.NoError(t, err)
-			if sourceChanged {
+			if tc.sourceChanged {
 				require.Len(t, report.Failed, 2)
 				require.ErrorIs(t, report.Failed[0].Err, store.ErrPhysicalAuthorityMissing)
 				require.ErrorIs(t, report.Failed[1].Err, ErrSourceChanged)
@@ -90,7 +103,12 @@ func TestAddRecoversMissingAuthorityWhenLaterInputPublishesFirst(t *testing.T) {
 				return
 			}
 			require.Empty(t, report.Failed)
-			require.Equal(t, 2, report.Added)
+			if tc.existing {
+				assert.Equal(t, 1, report.Added)
+				assert.Equal(t, 1, report.Skipped)
+			} else {
+				assert.Equal(t, 2, report.Added)
+			}
 			for _, name := range []string{"first.txt", "later.txt"} {
 				node, err := ing.Store.NodeByPath(t.Context(), "/recovered/"+name)
 				require.NoError(t, err)
@@ -108,14 +126,32 @@ func TestAddRecoversMissingAuthorityWhenLaterInputPublishesFirst(t *testing.T) {
 }
 
 func TestAddOverlapsDurableWritesBeforeMetadata(t *testing.T) {
-	for _, outcome := range []string{"success", "sync failure", "cancel"} {
-		t.Run(outcome, func(t *testing.T) {
+	for _, tc := range []struct {
+		outcome string
+		replace bool
+	}{
+		{"success", false}, {"sync failure", false}, {"cancel", false},
+		{"success", true}, {"sync failure", true}, {"cancel", true},
+	} {
+		t.Run(fmt.Sprintf("%s/replace=%t", tc.outcome, tc.replace), func(t *testing.T) {
 			ing := newTestIngester(t)
 			contents := map[string]string{}
 			for i := range 9 {
 				contents[fmt.Sprintf("%02d.txt", i)] = fmt.Sprintf("synthetic content %d", i)
 			}
 			source := writeTree(t, contents)
+			if tc.replace {
+				for name := range contents {
+					require.NoError(t, os.WriteFile(filepath.Join(source, name), []byte("original "+name), 0o600))
+				}
+				seed, err := ing.AddPaths(t.Context(), []string{source}, "/inbox")
+				require.NoError(t, err)
+				require.Empty(t, seed.Failed)
+				require.Equal(t, 9, seed.Added)
+				for name, content := range contents {
+					require.NoError(t, os.WriteFile(filepath.Join(source, name), []byte(content), 0o600))
+				}
+			}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			entered := make(chan struct{}, 8)
@@ -132,7 +168,7 @@ func TestAddOverlapsDurableWritesBeforeMetadata(t *testing.T) {
 					<-release
 					active.Add(-1)
 				}
-				if outcome == "sync failure" && filepath.Base(dir) == failedHash[:2] {
+				if tc.outcome == "sync failure" && filepath.Base(dir) == failedHash[:2] {
 					return syncErr
 				}
 				return originalSync(dir)
@@ -145,6 +181,7 @@ func TestAddOverlapsDurableWritesBeforeMetadata(t *testing.T) {
 			go func() {
 				defer close(done)
 				report, importErr = ing.AddPathsWithOptions(ctx, []string{source}, "/inbox", Options{
+					Replace:  tc.replace,
 					Progress: func(event ProgressEvent) { events = append(events, event) },
 				})
 			}()
@@ -167,9 +204,16 @@ func TestAddOverlapsDurableWritesBeforeMetadata(t *testing.T) {
 			require.NoError(t, err)
 			children, err := ing.Store.Children(t.Context(), parent.ID)
 			require.NoError(t, err)
-			assert.Empty(t, children, "blocked publication must not grant metadata authority")
+			if tc.replace {
+				require.Len(t, children, 9)
+				for _, node := range children {
+					assert.Equal(t, fmt.Sprintf("%x", sha256.Sum256([]byte("original "+node.Name))), node.BlobHash)
+				}
+			} else {
+				assert.Empty(t, children, "blocked publication must not grant metadata authority")
+			}
 			assert.EqualValues(t, 8, active.Load())
-			if outcome == "cancel" {
+			if tc.outcome == "cancel" {
 				cancel()
 			}
 			releaseOnce.Do(func() { close(release) })
@@ -179,20 +223,28 @@ func TestAddOverlapsDurableWritesBeforeMetadata(t *testing.T) {
 				assert.GreaterOrEqual(t, events[i].BytesRead, events[i-1].BytesRead)
 				assert.GreaterOrEqual(t, events[i].FilesDone, events[i-1].FilesDone)
 			}
-			assert.Equal(t, outcome != "cancel", events[len(events)-1].Final)
+			assert.Equal(t, tc.outcome != "cancel", events[len(events)-1].Final)
 			children, err = ing.Store.Children(t.Context(), parent.ID)
 			require.NoError(t, err)
-			switch outcome {
+			switch tc.outcome {
 			case "cancel":
 				require.ErrorIs(t, importErr, context.Canceled)
-				assert.Empty(t, children)
+				if !tc.replace {
+					assert.Empty(t, children)
+				} else {
+					require.Len(t, children, 9)
+				}
 			case "sync failure":
 				require.NoError(t, importErr)
 				require.Len(t, report.Failed, 1)
 				assert.Equal(t, filepath.Join(source, "03.txt"), report.Failed[0].Path)
 				require.ErrorIs(t, report.Failed[0].Err, syncErr)
 				assert.Equal(t, 8, report.Added)
-				require.Len(t, children, 8)
+				if tc.replace {
+					require.Len(t, children, 9)
+				} else {
+					require.Len(t, children, 8)
+				}
 				_, err = ing.Store.PhysicalContent(t.Context(), failedHash)
 				require.ErrorIs(t, err, store.ErrNotFound)
 			case "success":
@@ -208,7 +260,17 @@ func TestAddOverlapsDurableWritesBeforeMetadata(t *testing.T) {
 				closeErr := reader.Close()
 				require.NoError(t, readErr)
 				require.NoError(t, closeErr)
-				assert.Equal(t, contents[node.Name], string(data))
+				expected, versionCount := contents[node.Name], 1
+				if tc.replace {
+					versionCount = 2
+					if tc.outcome == "cancel" || tc.outcome == "sync failure" && node.Name == "03.txt" {
+						expected, versionCount = "original "+node.Name, 1
+					}
+				}
+				assert.Equal(t, expected, string(data))
+				_, total, err := ing.Store.ContentVersions(t.Context(), node.ID, 10, 0)
+				require.NoError(t, err)
+				assert.Equal(t, versionCount, total)
 			}
 		})
 	}
@@ -284,5 +346,57 @@ func TestAddKeepsFileAndDirectoryOrder(t *testing.T) {
 			_, err = ing.Store.NodeByPath(t.Context(), "/inbox/album/photo.txt")
 			assert.ErrorIs(t, err, store.ErrNotFound)
 		})
+	}
+}
+
+func TestAddReplaceKeepsNormalizedTargetOrder(t *testing.T) {
+	for _, labeled := range []bool{false, true} {
+		for _, seeded := range []bool{false, true} {
+			t.Run(fmt.Sprintf("labeled=%t/seeded=%t", labeled, seeded), func(t *testing.T) {
+				ing := newTestIngester(t)
+				var paths []string
+				for i, name := range []string{"caf\u00e9.txt", "cafe\u0301.txt", "caf\u00e9.txt"} {
+					path := filepath.Join(t.TempDir(), name)
+					require.NoError(t, os.WriteFile(path, []byte([]string{"first", "second", "third"}[i]), 0o600))
+					paths = append(paths, path)
+				}
+				if seeded {
+					seed := filepath.Join(t.TempDir(), "caf\u00e9.txt")
+					require.NoError(t, os.WriteFile(seed, []byte("seed"), 0o600))
+					report, err := ing.AddPaths(t.Context(), []string{seed}, "/inbox")
+					require.NoError(t, err)
+					require.Empty(t, report.Failed)
+					require.Equal(t, 1, report.Added)
+				}
+				opts := Options{Replace: true}
+				if labeled {
+					opts.CollectionLabel = new("Replacement import")
+				}
+				paths = append(paths, paths[2])
+				report, err := ing.AddPathsWithOptions(t.Context(), paths, "/inbox", opts)
+				require.NoError(t, err)
+				require.Empty(t, report.Failed)
+				require.Equal(t, 3, report.Added)
+				require.Equal(t, 1, report.Skipped)
+				node, err := ing.Store.NodeByPath(t.Context(), "/inbox/caf\u00e9.txt")
+				require.NoError(t, err)
+				versions, total, err := ing.Store.ContentVersions(t.Context(), node.ID, 10, 0)
+				require.NoError(t, err)
+				expected := []string{"third", "second", "first"}
+				if seeded {
+					expected = append(expected, "seed")
+				}
+				require.Equal(t, len(expected), total)
+				for i, version := range versions {
+					reader, err := ing.Blobs.OpenContext(t.Context(), version.BlobHash)
+					require.NoError(t, err)
+					data, readErr := io.ReadAll(reader)
+					closeErr := reader.Close()
+					require.NoError(t, readErr)
+					require.NoError(t, closeErr)
+					require.Equal(t, expected[i], string(data))
+				}
+			})
+		}
 	}
 }

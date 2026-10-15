@@ -631,7 +631,7 @@ func (files *filesystemIngest) applyResolution(
 // Traversal is by path (WalkDir): swapping an already-classified directory
 // for a symlink mid-walk can redirect descent outside walkRoot. That race is
 // accepted — docbank is single-user and imports the user's own trees, so a
-// process able to race the walk already runs as the user; importFile's
+// process able to race the walk already runs as the user; preparation's
 // no-follow open covers the accidental symlink case.
 func (files *filesystemIngest) addTree(
 	ctx context.Context,
@@ -827,19 +827,29 @@ func (files *filesystemIngest) addOne(
 		}
 		return files.recordOutcome(ctx, rep, sourcePath, false, store.IngestDirectoryResolution{}, err, progress)
 	}
-	if !replace {
-		files.pending = append(files.pending, pendingLocalFile{
-			parent: parent, openPath: openPath, sourcePath: sourcePath,
-		})
-		if len(files.pending) < 8 {
-			return nil
+	file := pendingLocalFile{parent: parent, openPath: openPath, sourcePath: sourcePath}
+	if replace {
+		name, err := store.NormalizeName(filepath.Base(sourcePath))
+		if err != nil {
+			file.err = fmt.Errorf("normalizing destination name for %s: %w", sourcePath, err)
+		} else {
+			// Observe a repeated target only after the preceding input commits.
+			for _, pending := range files.pending {
+				if pending.replacement != nil && pending.replacement.Name == name {
+					if err := files.flush(ctx, rep, progress); err != nil {
+						return err
+					}
+					break
+				}
+			}
+			file.replacement, file.err = files.observeReplacement(ctx, parent, sourcePath, name)
 		}
-		return files.flush(ctx, rep, progress)
 	}
-	added, resolution, err := files.importFile(
-		ctx, parent, openPath, sourcePath, replace, progress,
-	)
-	return files.recordOutcome(ctx, rep, sourcePath, added, resolution, err, progress)
+	files.pending = append(files.pending, file)
+	if len(files.pending) < 8 {
+		return nil
+	}
+	return files.flush(ctx, rep, progress)
 }
 
 func (files *filesystemIngest) recordOutcome(
@@ -868,81 +878,60 @@ func (files *filesystemIngest) recordOutcome(
 	return nil
 }
 
-func (files *filesystemIngest) importFile(
-	ctx context.Context,
-	parent *ingestDirectory,
-	openPath, sourcePath string,
-	replace bool,
-	progress *progressTracker,
-) (added bool, resolution store.IngestDirectoryResolution, retErr error) {
-	if err := validateSourcePath(sourcePath); err != nil {
-		return false, resolution, err
+// observeReplacement captures the target revision before any source reads.
+func (files *filesystemIngest) observeReplacement(
+	ctx context.Context, parent *ingestDirectory, sourcePath, name string,
+) (*store.Node, error) {
+	parentID, resolved := parent.id, true
+	if parent.plan != nil {
+		parentID, resolved = parent.plan.ResolvedID()
 	}
-	var observed struct {
-		node    store.Node
-		present bool
-	}
-	var name string
-	if replace {
-		var err error
-		name, err = store.NormalizeName(filepath.Base(sourcePath))
-		if err != nil {
-			return false, resolution, fmt.Errorf("normalizing destination name for %s: %w", sourcePath, err)
-		}
-		parentID, resolved := parent.id, true
-		if parent.plan != nil {
-			parentID, resolved = parent.plan.ResolvedID()
-		}
-		if resolved {
-			observed.node, err = files.ing.Store.ChildByName(ctx, parentID, name)
-			switch {
-			case err == nil:
-				observed.present = true
-				if observed.node.IsDir() {
-					return false, resolution, fmt.Errorf("destination %s: %w", sourcePath, store.ErrNotFile)
-				}
-			case errors.Is(err, store.ErrNotFound):
-			default:
-				return false, resolution, fmt.Errorf("resolving destination %s: %w", sourcePath, err)
+	if resolved {
+		node, err := files.ing.Store.ChildByName(ctx, parentID, name)
+		switch {
+		case err == nil:
+			if node.IsDir() {
+				return nil, fmt.Errorf("destination %s: %w", sourcePath, store.ErrNotFile)
 			}
+			return &node, nil
+		case errors.Is(err, store.ErrNotFound):
+		default:
+			return nil, fmt.Errorf("resolving destination %s: %w", sourcePath, err)
 		}
 	}
-	content, err := files.ing.readLocalFile(ctx, openPath, sourcePath, progress, nil)
-	if err != nil {
-		return false, resolution, err
-	}
-	defer func() {
-		retErr = mutationCleanupResult(retErr, files.ing.cleanupLoose(content.hash))
-	}()
-	if replace {
-		if observed.present {
-			_, added, err = files.ing.Store.ReplaceContentForIngest(
-				ctx, files.run, observed.node.ID, observed.node.Revision,
-				content.hash, content.size, content.mimeType, sourcePath, content.mtime,
-				content.physical,
-			)
-			if err != nil {
-				return false, resolution, fmt.Errorf("recording %s: %w", sourcePath, err)
-			}
-			return added, resolution, nil
-		}
-		if parent.plan == nil {
-			_, err = files.ing.Store.IngestFileExact(
-				ctx, files.run, parent.id, filepath.Base(sourcePath), content.hash,
-				content.size, content.mimeType, sourcePath, content.mtime, content.physical,
-			)
-		} else {
-			_, resolution, err = files.ing.Store.IngestFileExactPlanned(
-				ctx, files.run, *parent.plan, filepath.Base(sourcePath), content.hash,
-				content.size, content.mimeType, sourcePath, content.mtime, content.physical,
-			)
-		}
+	return &store.Node{Name: name}, nil
+}
+
+func (files *filesystemIngest) recordReplacement(
+	ctx context.Context, parent *ingestDirectory, sourcePath string,
+	content localFileContent, observed *store.Node,
+) (added bool, resolution store.IngestDirectoryResolution, err error) {
+	if observed.ID != 0 {
+		_, added, err = files.ing.Store.ReplaceContentForIngest(
+			ctx, files.run, observed.ID, observed.Revision,
+			content.hash, content.size, content.mimeType, sourcePath, content.mtime,
+			content.physical,
+		)
 		if err != nil {
 			return false, resolution, fmt.Errorf("recording %s: %w", sourcePath, err)
 		}
-		return true, resolution, nil
+		return added, resolution, nil
 	}
-	return files.recordPreparedFile(ctx, parent, sourcePath, content)
+	if parent.plan == nil {
+		_, err = files.ing.Store.IngestFileExact(
+			ctx, files.run, parent.id, filepath.Base(sourcePath), content.hash,
+			content.size, content.mimeType, sourcePath, content.mtime, content.physical,
+		)
+	} else {
+		_, resolution, err = files.ing.Store.IngestFileExactPlanned(
+			ctx, files.run, *parent.plan, filepath.Base(sourcePath), content.hash,
+			content.size, content.mimeType, sourcePath, content.mtime, content.physical,
+		)
+	}
+	if err != nil {
+		return false, resolution, fmt.Errorf("recording %s: %w", sourcePath, err)
+	}
+	return true, resolution, nil
 }
 
 func (files *filesystemIngest) recordPreparedFile(

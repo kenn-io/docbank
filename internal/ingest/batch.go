@@ -15,6 +15,7 @@ var openBatchSource = blob.OpenNoFollow
 type pendingLocalFile struct {
 	parent               *ingestDirectory
 	openPath, sourcePath string
+	replacement          *store.Node // nil for ordinary imports; ID zero for an absent target.
 	content              localFileContent
 	err                  error
 }
@@ -36,6 +37,9 @@ func (files *filesystemIngest) flush(
 	var workers sync.WaitGroup
 	for i := range pending {
 		file := &pending[i]
+		if file.err != nil {
+			continue
+		}
 		workers.Go(func() {
 			file.content, file.err = files.ing.prepareLocalFileWith(
 				ctx, func() (*os.File, error) { return openBatchSource(file.openPath) },
@@ -72,7 +76,13 @@ func (files *filesystemIngest) flush(
 			if physical, ok := created[file.content.hash]; ok {
 				file.content.physical = physical
 			}
-			added, resolution, err = files.recordPreparedFile(ctx, file.parent, file.sourcePath, file.content)
+			if file.replacement != nil {
+				added, resolution, err = files.recordReplacement(
+					ctx, file.parent, file.sourcePath, file.content, file.replacement,
+				)
+			} else {
+				added, resolution, err = files.recordPreparedFile(ctx, file.parent, file.sourcePath, file.content)
+			}
 		}
 		if file.content.hash != "" {
 			err = mutationCleanupResult(err, files.ing.cleanupLoose(file.content.hash))
