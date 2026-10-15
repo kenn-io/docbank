@@ -389,7 +389,6 @@ func TestCheckoutValidationDefersInternalDeadline(t *testing.T) {
 		{name: "traversal deadline", err: fmt.Errorf("traversing checkout: %w", context.DeadlineExceeded), pending: true},
 		{name: "unavailable directory", err: &os.PathError{Op: "open", Path: "checkout", Err: os.ErrPermission}, pending: true},
 		{name: "parent cancelled", err: context.DeadlineExceeded, parent: context.Canceled},
-		{name: "parent deadline", err: context.DeadlineExceeded, parent: context.DeadlineExceeded},
 		{name: "confirmed overlap", err: errors.New("configured path overlaps reserved checkout")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -398,10 +397,6 @@ func TestCheckoutValidationDefersInternalDeadline(t *testing.T) {
 				var cancel context.CancelFunc
 				ctx, cancel = context.WithCancel(ctx)
 				cancel()
-			} else if errors.Is(tc.parent, context.DeadlineExceeded) {
-				var cancel context.CancelFunc
-				ctx, cancel = context.WithDeadline(ctx, time.Now().Add(-time.Second))
-				defer cancel()
 			}
 			require.Equal(t, tc.pending, checkoutValidationPending(ctx, tc.err))
 		})

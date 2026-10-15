@@ -29,6 +29,7 @@ func TestStorageProtectionPathsIgnoreLocalDirectoriesForS3(t *testing.T) {
 	paths, err := storageProtectionPaths(t.Context(), d, config.StoreBindingConfig{Kind: "s3", Bucket: "archive", Region: "us-east-1"})
 	require.NoError(t, err)
 	require.Empty(t, paths)
+	d.Cfg.Watches = nil
 	_, err = storageProtectionPaths(t.Context(), d, config.StoreBindingConfig{Kind: "filesystem", Path: t.TempDir()})
-	require.ErrorContains(t, err, "unavailable", "filesystem registration must keep uncertain checkout paths closed")
+	require.ErrorContains(t, err, checkout.Destination, "filesystem registration must keep uncertain checkout paths closed")
 }

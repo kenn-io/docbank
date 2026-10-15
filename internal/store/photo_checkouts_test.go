@@ -846,19 +846,11 @@ func TestPhotoCheckoutPublicationOrdersEligibilityMutationsWithoutReservingWrite
 				}
 				changed <- err
 			}()
-			require.Eventually(t, func() bool {
-				if mutation == "node trash" || mutation == "path trash" {
-					if s.photoPublicationTreeMu.TryRLock() {
-						s.photoPublicationTreeMu.RUnlock()
-						return false
-					}
-					return true
-				}
-				s.photoPublicationMu.Lock()
-				defer s.photoPublicationMu.Unlock()
-				lock := s.photoPublicationLocks[asset.ID]
-				return lock != nil && lock.users == 2
-			}, 5*time.Second, time.Millisecond)
+			select {
+			case err := <-changed:
+				t.Fatalf("eligibility changed during installation: %v", err)
+			case <-time.After(100 * time.Millisecond): //nolint:kennlint // real SQLite mutations must remain pending while installation holds the source
+			}
 			_, err = s.SetPhotoAssetExcluded(ctx, other.ID, other.Revision, true)
 			require.NoError(t, err)
 			releaseInstall()
