@@ -30,7 +30,7 @@ func TestWebSessionDeniesPersonRoutes(t *testing.T) {
 	}
 }
 
-func TestWebSessionAllowsPhotoAlbumRoutes(t *testing.T) {
+func TestWebSessionAllowsPhotoAlbumAndAuthoredRoutes(t *testing.T) {
 	t.Parallel()
 	album := "/api/v1/photos/albums/11111111-1111-4111-8111-111111111111"
 	for _, route := range []struct{ method, path string }{
@@ -42,11 +42,17 @@ func TestWebSessionAllowsPhotoAlbumRoutes(t *testing.T) {
 		{http.MethodPost, album + "/duplicate"},
 		{http.MethodPost, album + "/members/add"},
 		{http.MethodPost, album + "/members/remove"},
+		{http.MethodPost, "/api/v1/photos/authored/prepare"},
+		{http.MethodPost, "/api/v1/photos/authored/edit"},
+		{http.MethodPost, "/api/v1/photos/authored/40000000-0000-4000-8000-000000000001/undo"},
 	} {
 		require.True(t, webSessionRequestAllowed(httptest.NewRequest(route.method, route.path, nil)), route.method+" "+route.path)
 		require.False(t, webSessionRequestAllowed(httptest.NewRequest(route.method, route.path+"?extra=1", nil)))
+		if route.method == http.MethodPost && route.path != "/api/v1/photos/albums" {
+			require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodGet, route.path, nil)))
+		}
 	}
-	for _, path := range []string{album + "/extra", album + "/members/add/extra"} {
+	for _, path := range []string{album + "/extra", album + "/members/add/extra", "/api/v1/photos/authored/photos/undo"} {
 		require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodPost, path, nil)), path)
 	}
 	for _, path := range []string{"/api/v1/photos/albums/invalid", "/api/v1/photos/albums/11111111-1111-4111-8111-11111111111A", "/api/v1/photos/albums/"} {

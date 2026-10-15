@@ -19,7 +19,7 @@ func rejectOriginals(t *testing.T, s *Store, asset PhotoAsset) {
 			targets = append(targets, rejectTarget(file))
 		}
 	}
-	_, err := s.EditPhotoAuthored(t.Context(), targets)
+	_, err := editPhotoAuthored(t.Context(), s, targets)
 	require.NoError(t, err)
 }
 
@@ -220,7 +220,7 @@ func TestPhotoRejectsFileBound(t *testing.T) {
 			}
 		}
 	}
-	_, err := s.EditPhotoAuthored(t.Context(), targets)
+	_, err := editPhotoAuthored(t.Context(), s, targets)
 	require.NoError(t, err)
 	var lastID string
 	require.NoError(t, s.db.QueryRow(`SELECT MAX(asset_id) FROM photo_files`).Scan(&lastID))
@@ -292,10 +292,9 @@ func TestPhotoRejectsMixedAndUnchanged(t *testing.T) {
 			require.NoError(t, err)
 		}
 		raw, image := fileByRole(asset.Files, PhotoRoleRAW), fileByRole(asset.Files, PhotoRoleImage)
-		_, err = s.EditPhotoAuthored(t.Context(), []PhotoAuthoredTarget{
-			{FileID: raw.ID, Revision: raw.Revision, Patch: PhotoAuthoredPatch{Flag: new("reject")}},
-			{FileID: image.ID, Revision: image.Revision, Patch: PhotoAuthoredPatch{Flag: new("pick")}},
-		})
+		_, err = editPhotoAuthored(t.Context(), s, []PhotoAuthoredTarget{{FileID: raw.ID, Revision: raw.Revision, Patch: PhotoAuthoredPatch{Flag: new("reject")}}})
+		require.NoError(t, err)
+		_, err = editPhotoAuthored(t.Context(), s, []PhotoAuthoredTarget{{FileID: image.ID, Revision: image.Revision, Patch: PhotoAuthoredPatch{Flag: new("pick")}}})
 		require.NoError(t, err)
 		node, err := s.NodeByID(t.Context(), image.NodeID)
 		require.NoError(t, err)

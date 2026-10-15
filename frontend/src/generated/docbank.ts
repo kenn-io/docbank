@@ -127,10 +127,7 @@ export const PhotoAuthoredRotation = {
 } as const;
 
 export interface PhotoAuthored {
-  /**
-     * At most 16384 UTF-8 bytes.
-     * @maxLength 16384
-     */
+  /** At most 16384 UTF-8 bytes. */
   caption: string;
   /**
      * Confirmation mask. See PhotoFile.confirmed_fields for supported bits.
@@ -138,15 +135,9 @@ export interface PhotoAuthored {
      * @maximum 127
      */
   confirmed_fields?: number;
-  /**
-     * At most 16384 UTF-8 bytes.
-     * @maxLength 16384
-     */
+  /** At most 16384 UTF-8 bytes. */
   copyright: string;
-  /**
-     * At most 16384 UTF-8 bytes.
-     * @maxLength 16384
-     */
+  /** At most 16384 UTF-8 bytes. */
   creator: string;
   flag: PhotoAuthoredFlag;
   label: PhotoAuthoredLabel;
@@ -4946,6 +4937,16 @@ export interface PhotoAlbumNameRequest {
   name: string;
 }
 
+export type PhotoAlbumSummaryCoverRotation = typeof PhotoAlbumSummaryCoverRotation[keyof typeof PhotoAlbumSummaryCoverRotation];
+
+
+export const PhotoAlbumSummaryCoverRotation = {
+  NUMBER_0: 0,
+  NUMBER_90: 90,
+  NUMBER_180: 180,
+  NUMBER_270: 270,
+} as const;
+
 export interface PhotoAlbumSummary {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -4953,6 +4954,7 @@ export interface PhotoAlbumSummary {
   cover_asset_id?: string | null;
   /** @nullable */
   cover_generation_id?: string | null;
+  cover_rotation: PhotoAlbumSummaryCoverRotation;
   created_at: string;
   /** @nullable */
   deleted_at?: string | null;
@@ -5097,6 +5099,181 @@ export interface PhotoAsset {
   updated_at: string;
 }
 
+/**
+ * Rotate each target clockwise by 90 degrees.
+ */
+export type PhotoAuthoredEditRequestRotationDelta = typeof PhotoAuthoredEditRequestRotationDelta[keyof typeof PhotoAuthoredEditRequestRotationDelta];
+
+
+export const PhotoAuthoredEditRequestRotationDelta = {
+  NUMBER_90: 90,
+} as const;
+
+export interface PhotoKeywordEdit {
+  assign: boolean;
+  tag_id: string;
+}
+
+/**
+ * @nullable
+ */
+export type PhotoAuthoredPatchFlag = typeof PhotoAuthoredPatchFlag[keyof typeof PhotoAuthoredPatchFlag] | null;
+
+
+export const PhotoAuthoredPatchFlag = {
+  '': '',
+  pick: 'pick',
+  reject: 'reject',
+} as const;
+
+/**
+ * @nullable
+ */
+export type PhotoAuthoredPatchLabel = typeof PhotoAuthoredPatchLabel[keyof typeof PhotoAuthoredPatchLabel] | null;
+
+
+export const PhotoAuthoredPatchLabel = {
+  '': '',
+  red: 'red',
+  yellow: 'yellow',
+  green: 'green',
+  blue: 'blue',
+  purple: 'purple',
+} as const;
+
+/**
+ * @nullable
+ */
+export type PhotoAuthoredPatchRotation = typeof PhotoAuthoredPatchRotation[keyof typeof PhotoAuthoredPatchRotation] | null;
+
+
+export const PhotoAuthoredPatchRotation = {
+  NUMBER_0: 0,
+  NUMBER_90: 90,
+  NUMBER_180: 180,
+  NUMBER_270: 270,
+} as const;
+
+export interface PhotoAuthoredPatch {
+  /**
+     * At most 16384 UTF-8 bytes.
+     * @nullable
+     */
+  caption?: string | null;
+  /**
+     * At most 16384 UTF-8 bytes.
+     * @nullable
+     */
+  copyright?: string | null;
+  /**
+     * At most 16384 UTF-8 bytes.
+     * @nullable
+     */
+  creator?: string | null;
+  /** @nullable */
+  flag?: PhotoAuthoredPatchFlag;
+  /** @nullable */
+  label?: PhotoAuthoredPatchLabel;
+  /**
+     * @minimum 0
+     * @maximum 5
+     * @nullable
+     */
+  rating?: number | null;
+  /** @nullable */
+  rotation?: PhotoAuthoredPatchRotation;
+}
+
+export interface PhotoAuthoredEditTarget {
+  asset_id: string;
+  /** @minimum 1 */
+  asset_revision: number;
+  file_id: string;
+  /** @minimum 1 */
+  node_revision: number;
+  /** @minimum 1 */
+  revision: number;
+}
+
+export interface PhotoAuthoredEditRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxItems 100 */
+  keywords?: PhotoKeywordEdit[];
+  patch: PhotoAuthoredPatch;
+  /** Rotate each target clockwise by 90 degrees. */
+  rotation_delta?: PhotoAuthoredEditRequestRotationDelta;
+  /**
+     * @minItems 1
+     * @maxItems 1000
+     */
+  targets: PhotoAuthoredEditTarget[];
+}
+
+export interface PhotoPreparedTarget {
+  asset_id: string;
+  /** @minimum 1 */
+  asset_revision: number;
+  file_id: string;
+  file_name: string;
+  node_id: number;
+  /** @minimum 1 */
+  node_revision: number;
+  /** @minimum 1 */
+  revision: number;
+  tags: string[];
+  values: PhotoAuthored;
+}
+
+export interface PhotoAuthoredPreparation {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  assets: PhotoAsset[];
+  targets: PhotoPreparedTarget[];
+}
+
+export interface PhotoAuthoredPrepareRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxItems 1000 */
+  asset_ids?: string[];
+  coverage?: WorkspaceQueryCoverage;
+  hidden?: boolean;
+  query?: SavedQueryV1Schema;
+  skip_unavailable?: boolean;
+}
+
+export interface PhotoKeywordNode {
+  after_revision: number;
+  node_id: number;
+}
+
+export interface PhotoKeywordDelta {
+  after: boolean;
+  before: boolean;
+  node_id: number;
+  tag_id: string;
+}
+
+export interface PhotoSidecarProvenance {
+  file_id: string;
+  node_id: number;
+  version_id: string;
+}
+
+export interface PhotoAuthoredReceipt {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  after: PhotoAuthoredSnapshot[];
+  before: PhotoAuthoredSnapshot[];
+  keyword_nodes?: PhotoKeywordNode[];
+  keywords?: PhotoKeywordDelta[];
+  /** Empty for a no-op, with empty before and after arrays; no receipt is created. */
+  receipt_id: string;
+  sidecar?: PhotoSidecarProvenance;
+  undo_of?: string;
+}
+
 export interface WorkspaceFacetValue {
   /** @minimum 0 */
   count: number;
@@ -5217,6 +5394,16 @@ export const PhotoBrowseRowQualityState = {
   ready: 'ready',
 } as const;
 
+export type PhotoBrowseRowRotation = typeof PhotoBrowseRowRotation[keyof typeof PhotoBrowseRowRotation];
+
+
+export const PhotoBrowseRowRotation = {
+  NUMBER_0: 0,
+  NUMBER_90: 90,
+  NUMBER_180: 180,
+  NUMBER_270: 270,
+} as const;
+
 export type PhotoBrowseRowQuality = {
   signals: PhotoQualitySignals | null;
   state: PhotoBrowseRowQualityState;
@@ -5266,6 +5453,7 @@ export interface PhotoBrowseRow {
   quality?: PhotoBrowseRowQuality;
   /** @minimum 1 */
   revision: number;
+  rotation: PhotoBrowseRowRotation;
   /** @nullable */
   width_px: number | null;
 }
@@ -5273,6 +5461,16 @@ export interface PhotoBrowseRow {
 export interface PhotoMapRowPreviewsStruct {
   grid: PhotoPreviewSlot;
 }
+
+export type PhotoMapRowRotation = typeof PhotoMapRowRotation[keyof typeof PhotoMapRowRotation];
+
+
+export const PhotoMapRowRotation = {
+  NUMBER_0: 0,
+  NUMBER_90: 90,
+  NUMBER_180: 180,
+  NUMBER_270: 270,
+} as const;
 
 export interface PhotoMapRow {
   asset_id: string;
@@ -5288,6 +5486,7 @@ export interface PhotoMapRow {
   previews: PhotoMapRowPreviewsStruct;
   /** @minimum 1 */
   revision: number;
+  rotation: PhotoMapRowRotation;
   /** @nullable */
   width_px: number | null;
 }
@@ -15590,6 +15789,107 @@ return sessionJSON<PhotoAsset>(getUnhidePhotoAssetUrl(assetId),
     ...options,
     method: 'POST',
     headers: { ...headers, ...getHeaders(options?.headers) }
+
+  }
+);}
+
+
+
+export const getEditPhotoAuthoredUrl = () => {
+
+
+
+
+  return `/api/v1/photos/authored/edit`
+}
+
+/**
+ * A no-op returns an empty receipt_id and empty before and after arrays. It creates no receipt and leaves the last real edit undoable.
+ * @summary Edit photo fields and keywords atomically
+ */
+export const editPhotoAuthored = async (photoAuthoredEditRequest: NonReadonly<PhotoAuthoredEditRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAuthoredReceipt> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoAuthoredReceipt>(getEditPhotoAuthoredUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(photoAuthoredEditRequest)
+  }
+);}
+
+
+
+export const getPreparePhotoAuthoredUrl = () => {
+
+
+
+
+  return `/api/v1/photos/authored/prepare`
+}
+
+/**
+ * @summary Resolve a revision-bound metadata editing session
+ */
+export const preparePhotoAuthored = async (photoAuthoredPrepareRequest: NonReadonly<PhotoAuthoredPrepareRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAuthoredPreparation> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoAuthoredPreparation>(getPreparePhotoAuthoredUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(photoAuthoredPrepareRequest)
+  }
+);}
+
+
+
+export const getUndoPhotoAuthoredUrl = (receiptId: string,) => {
+
+
+
+
+  return `/api/v1/photos/authored/${encodeURIComponent(String(receiptId))}/undo`
+}
+
+/**
+ * @summary Undo photo fields and keywords if their revisions still match
+ */
+export const undoPhotoAuthored = async (receiptId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAuthoredReceipt> => {
+
+  return sessionJSON<PhotoAuthoredReceipt>(getUndoPhotoAuthoredUrl(receiptId),
+  {
+    ...options,
+    method: 'POST'
+
 
   }
 );}

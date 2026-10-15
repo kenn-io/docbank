@@ -15,11 +15,11 @@
 </script>
 
 <div class="album-cover">
-  {#if url}<img src={url} alt="" onerror={() => { url = ""; failed = true; }} />
+  {#if url}<img src={url} alt="" style:transform={`rotate(${album.cover_rotation ?? 0}deg)`} onerror={() => { url = ""; failed = true; }} />
   {:else}<ImageIcon size="28" /><span>{failed || unavailable ? "Cover unavailable" : album.cover_generation_id ? "Loading cover…" : "No cover yet"}</span>{/if}
 </div>
 
 <style>
-  .album-cover { aspect-ratio: 1; background: var(--bg-inset); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--text-muted); font-size: var(--font-size-xs); overflow: hidden; }
+  .album-cover { position: relative; aspect-ratio: 1; background: var(--bg-inset); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--text-muted); font-size: var(--font-size-xs); overflow: hidden; }
   img { width: 100%; height: 100%; object-fit: cover; }
 </style>

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount, tick, untrack } from "svelte";
-  import { Button, EmptyState, IconButton, Menu, MenuTrigger, MenuContent, MenuItem, Modal, TextInput, SelectDropdown, SearchInput, Spinner } from "@kenn-io/kit-ui";
+  import { Button, EmptyState, IconButton, Menu, MenuTrigger, MenuContent, MenuItem, Modal, TextInput, SelectDropdown, SearchInput, Spinner, Notice, type ShortcutManager } from "@kenn-io/kit-ui";
   import StarIcon from "@lucide/svelte/icons/star";
   import ImageIcon from "@lucide/svelte/icons/image";
   import { mapPhotoLimit, type Photos, type PhotoReturn } from "./photos.svelte.js";
@@ -8,6 +8,8 @@
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import { isAppShortcutSuppressed } from "./shortcuts.js";
   import PhotoGrid from "./PhotoGrid.svelte";
+  import PhotoInspector from "./PhotoInspector.svelte";
+  import type { PhotoAuthoredPatch, PhotoAuthoredReceipt, PhotoKeywordEdit } from "./generated/docbank.js";
   import PhotoLoupe from "./PhotoLoupe.svelte";
   import PhotoTimeline from "./PhotoTimeline.svelte";
   import type { PhotoBrowseRow, PhotoMapRow } from "./generated/docbank.js";
@@ -20,8 +22,70 @@
 
   import type PhotoMap from "./PhotoMap.svelte";
   import type { MapTiles } from "./photoMap.js";
-  let { photos, cache, title = "Library", mapMode = false, tiles = { tile_url: "", host: "", attribution: "", max_zoom: 19 }, albums, albumID = "", onnavigate = () => {}, ontrashed, onhidden, onactionerror, oninvalidate, photoID = "", onphotochange = () => {} }: { photos: Photos; cache: PhotoPreviewCache; title?: string; mapMode?: boolean; tiles?: MapTiles; albums?: PhotoAlbums; albumID?: string; onnavigate?: (path: string) => void; ontrashed?: (source: Photos) => void; onhidden?: () => void | Promise<void>; onactionerror?: (error: string) => void; oninvalidate?: () => void | Promise<void>; photoID?: string; onphotochange?: (id: string, mode: "open" | "step" | "close") => void } = $props();
+  let { photos, cache, shortcuts, tags, tagsError = "", tagsLoading = false, tagsTotal = 0, onloadtags, onloadmoretags, onmetadatachanged, onhelp, title = "Library", mapMode = false, tiles = { tile_url: "", host: "", attribution: "", max_zoom: 19 }, albums, albumID = "", onnavigate = () => {}, ontrashed, onhidden, onactionerror, oninvalidate, photoID = "", onphotochange = () => {} }: { photos: Photos; cache: PhotoPreviewCache; shortcuts?: ShortcutManager; tags?: import("./generated/docbank.js").Tag[]; tagsError?: string; tagsLoading?: boolean; tagsTotal?: number; onloadtags?: () => Promise<void>; onloadmoretags?: () => Promise<void>; onmetadatachanged?: (receipt: PhotoAuthoredReceipt, tags: import("./generated/docbank.js").Tag[]) => void; onhelp?: () => void; title?: string; mapMode?: boolean; tiles?: MapTiles; albums?: PhotoAlbums; albumID?: string; onnavigate?: (path: string) => void; ontrashed?: (source: Photos) => void; onhidden?: () => void | Promise<void>; onactionerror?: (error: string) => void; oninvalidate?: () => void | Promise<void>; photoID?: string; onphotochange?: (id: string, mode: "open" | "step" | "close") => void } = $props();
   const album = $derived(albums?.items.find(item => item.id === albumID));
+  const editor = $derived(photos.authored);
+  let editing = $state(false);
+  let loupeMetadata = $state(false);
+  const selectionCount = $derived(photos.selectedIDs.size);
+  const actionDisabled = $derived(photos.loading || photos.hiding || photos.trashing);
+  const editCount = $derived(photoID ? 1 : editor.count || (photos.allResults ? photos.total : photos.selectedIDs.size));
+  $effect(() => {
+    const id = photoID, active = id ? loupeMetadata : editing, revision = photos.editScopeRevision;
+    untrack(() => {
+      void revision;
+      if (editor.inspectedID !== id) { editor.reset(); editor.inspectedID = id; }
+      if (!id) loupeMetadata = false;
+      if (active && !editor.targets.length && !editor.loading && !editor.concealed && !editor.conflict) {
+        const scope = id ? { asset_ids: [id] } : photos.scope();
+        if (scope.query || scope.asset_ids?.length) void editor.prepare({ ...scope, hidden: photos.hidden });
+      }
+    });
+  });
+  $effect(() => { editor.loadTags = onloadtags; editor.loadMoreTags = onloadmoretags; const catalog = tags; if (catalog) untrack(() => editor.catalog(catalog)); });
+  $effect(() => { editor.tagsError = tagsError; editor.tagsLoading = tagsLoading; editor.tagsTotal = tagsTotal; });
+  async function metadataRefresh(receipt: PhotoAuthoredReceipt, tags: import("./generated/docbank.js").Tag[]) {
+    onmetadatachanged?.(receipt, tags);
+    const refreshing = photos.loading;
+    if (refreshing) photos.cancelPending();
+    const rotations = photos.metadataChanged(receipt);
+    const displayFileID = editor.asset?.display_file_id ?? direct?.display_file_id;
+    if (direct && rotations.has(direct.display_file_id)) direct = { ...direct, rotation: rotations.get(direct.display_file_id)! };
+    // A lookup that has not bound its display file yet may predate any rotation in this receipt.
+    if (photoID && detailLoading && (displayFileID ? rotations.has(displayFileID) : rotations.size > 0)) {
+      detailController?.abort();
+      reload = { id: photoID };
+    }
+    if (refreshing || photos.started && photos.reloadsAfter(rotations)) await refresh();
+  }
+  function unavailable() { editor.unavailable(editor.conflict ? "Reload metadata before editing." : photos.loading ? "Photos are loading. Try again when they finish." : photos.hiding || photos.trashing ? "A photo change is in progress. Try again when it finishes." : undefined); }
+  function edit(patch: PhotoAuthoredPatch, keywords?: PhotoKeywordEdit[], rotationDelta?: 90) {
+    if (!editCount) return;
+    if (actionDisabled || editor.conflict || editor.busy || editor.loading || editor.concealed) { unavailable(); return; }
+    const scope = photoID ? { asset_ids: [photoID] } : photos.scope();
+    void editor.edit(scope, patch, photos.hidden, metadataRefresh, keywords, rotationDelta);
+  }
+  function undoShortcut() {
+    if (!editor.receiptID) return;
+    if (actionDisabled || editor.conflict || editor.busy || editor.loading || editor.concealed) { unavailable(); return; }
+    void editor.undo(metadataRefresh);
+  }
+  onMount(() => {
+    if (!shortcuts || mapMode && !tiles.tile_url) return;
+    const scope = `photos-${photos.contextID}`;
+    const pop = shortcuts.pushScope(scope);
+    const bindings: [string, string, () => void][] = [
+      ...[0,1,2,3,4,5].map(value => [String(value), value ? `Rate ${value} star${value === 1 ? '' : 's'}` : "Clear rating", () => edit({ rating: value })] as [string, string, () => void]),
+      ...([['p','pick','Pick photo'],['x','reject','Reject photo'],['u','','Clear flag']] as const).map(([key, flag, description]) => [key, description, () => edit({ flag })] as [string, string, () => void]),
+      ...(['red','yellow','green','blue'] as const).map((label, index) => [String(index + 6), `Set ${label} label`, () => edit({ label })] as [string, string, () => void]),
+      ['v', "Set purple label", () => edit({ label: "purple" })],
+      ['r', "Rotate selected photos 90° clockwise", () => edit({}, undefined, 90)],
+      ['mod+z', "Undo last photo edit", undoShortcut],
+      ...(onhelp ? [['shift+/', 'Show keyboard shortcuts', onhelp] as [string, string, () => void]] : []),
+    ];
+    const unregister = bindings.map(([key, description, handler]) => shortcuts.register(key, handler, { scope, description, allowInInput: true }));
+    return () => { unregister.forEach(remove => remove()); pop(); };
+  });
   let alive = true;
   onDestroy(() => alive = false);
   let picker = $state<{ focus: () => void; addToTarget: () => Promise<boolean> }>();
@@ -48,6 +112,7 @@
   let consumedReload = $state.raw<typeof reload>();
   let reloadedRow: Photos["items"][number] | undefined;
   let reloadRevision = $state(0);
+  let detailController: AbortController | undefined;
   let visitController: AbortController | undefined;
   const fromGrid = $derived(photos.viewerReturn?.contextID === photos.contextID);
   const listed = $derived(photos.items.some(item => item.asset_id === photoID));
@@ -66,6 +131,7 @@
     const id = photoID;
     if (!id) { direct = undefined; detailError = ""; if (fromGrid) void restoreGrid(); return; }
     const controller = new AbortController();
+    detailController = controller;
     const explicit = reload?.id === id && reload !== (photos.projection ? consumedReload : untrack(() => consumedReload));
     // Map list refreshes revalidate compact rows; explicit reloads update the list themselves.
     if (photos.projection && !explicit && fromGrid) void listedRow;
@@ -100,10 +166,12 @@
     localReturn = photos.viewerReturn;
   }
   function open(id: string, element: HTMLElement) {
+    if (!editor.canChangeTarget()) return;
     captureReturn(element);
     onphotochange(id, "open");
   }
   async function move(direction: -1 | 1) {
+    if (!editor.canChangeTarget()) return;
     const controller = visitController;
     if (!fromGrid || !current || !controller) return;
     const id = current.asset_id;
@@ -121,7 +189,7 @@
   async function retryNavigation() { await photos.retry(preserve); }
   function select(id: string, event: MouseEvent, touch: boolean) {
     if (touch) {
-      if (photos.selection.selectedIDs.size) photos.check(id, !photos.selection.selectedIDs.has(id), false, orderedIDs);
+      if (photos.selectedIDs.size) photos.check(id, !photos.selectedIDs.has(id), false, orderedIDs);
       else open(id, event.currentTarget as HTMLElement);
     }
     else photos.select(id, event, orderedIDs);
@@ -140,7 +208,7 @@
   const searchable = $derived(!albumID && !mapMode);
   const filtered = $derived(searchable && (Boolean(photos.baseQuery.text.trim()) || Object.values(photos.baseQuery.filters ?? {}).some(value => Array.isArray(value) ? value.length > 0 : value !== undefined && value !== false && value !== "")));
   const ordered = $derived(photos.items);
-  const outsideSelection = $derived(mapMode ? [...photos.selection.selectedIDs].filter(id => !shownIDs.has(id)).length : 0);
+  const outsideSelection = $derived(mapMode ? [...photos.selectedIDs].filter(id => !shownIDs.has(id)).length : 0);
   const listedRow = $derived(photos.items.find(item => item.asset_id === photoID));
   const listedDetail = $derived(!!listedRow && "content_version_id" in listedRow);
   const current = $derived(photoID ? fromGrid && listedRow && "content_version_id" in listedRow ? listedRow : direct : undefined);
@@ -166,7 +234,7 @@
   function escape(event: KeyboardEvent) {
     if (mapMode && !tiles.tile_url) return;
     if (!photoID && event.key === "Escape" && !isAppShortcutSuppressed(event, false, document, ".photo-cell")) photos.clearSelection();
-    if (albums && !photoID && event.key.toLowerCase() === "b" && !event.repeat && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && !isAppShortcutSuppressed(event, !photos.selection.selectedIDs.size, document, ".photo-cell")) {
+    if (albums && !photoID && event.key.toLowerCase() === "b" && !event.repeat && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && !isAppShortcutSuppressed(event, !photos.selectedIDs.size, document, ".photo-cell")) {
       event.preventDefault();
       if (albums.rejectBusy()) return;
       if (albums.targetID) void picker?.addToTarget();
@@ -241,7 +309,7 @@
         <IconButton ariaLabel={album.starred ? "Unstar album" : "Star album"} title={album.starred ? "Unstar album" : "Star album"} ariaPressed={album.starred} disabled={albums.busy || renaming} onclick={() => void albums!.update(album!, { starred: !album!.starred })}><StarIcon size="16" fill={album.starred ? "currentColor" : "none"} /></IconButton>
         <Menu align="end"><MenuTrigger ariaLabel="Album actions" disabled={albums.busy || renaming}>More</MenuTrigger><MenuContent ariaLabel="Album actions"><MenuItem onselect={beginRename}>Rename</MenuItem><MenuItem onselect={() => openModal("duplicate")}>Duplicate…</MenuItem><MenuItem tone="danger" onselect={() => openModal("delete")}>Delete album…</MenuItem></MenuContent></Menu>
       {/if}<Button size="sm" disabled={photos.loading || photos.hiding || photos.trashing || albums?.busy} onclick={() => void refreshView()}>Refresh previews</Button>
-      {#if !mapMode}<Button size="sm" disabled={photos.loading || photos.hiding || photos.trashing || photos.rejectsLoading} onclick={() => { rejectsOpen = true; void photos.previewRejects(); }}>Move rejects</Button>{/if}
+      {#if !mapMode}<Button size="sm" disabled={photos.loading || photos.hiding || photos.trashing || photos.rejectsLoading} onclick={() => { if (!editor.canChangeTarget()) return; rejectsOpen = true; void photos.previewRejects(); }}>Move rejects</Button>{/if}
     </div>
   </div>
   {#if photos.actionError && !onactionerror}<p role="alert">{photos.actionError}</p>{/if}
@@ -279,10 +347,13 @@
   </div>
   {/if}
   <div class="photo-results">
+  {#if !photoID && editor.error}<Notice tone="error" message={editor.error} />{/if}
+  {#if !photoID && editor.receiptID}<Notice tone="success" message={editor.undoState.summary} actionLabel="Undo last photo edit" onaction={() => void editor.undo(metadataRefresh)} />{/if}
+  {#if !photoID && editor.notice}<Notice tone={editor.noticeTone} message={editor.notice} />{/if}
   {#if albumID && albums && albums.initialized && !albums.loading && !albums.busy && modal !== "delete" && !albums.loadError && !album}<EmptyState title="Album not found"><Button onclick={() => onnavigate("/photos/albums")}>Back to albums</Button></EmptyState>
   {:else if shown.length}
     {#key photos.baseQuery}
-    <PhotoGrid bind:this={grid} bind:scrollTop={photos.scrollTop} {groups} targetRowHeight={ROW_HEIGHTS[photos.density]} loading={photos.loading || !!photoID} {cache} hidden={photos.hidden} onhidden={id => void setHidden(id)} selectedIDs={photos.selection.selectedIDs} onselect={select} onopen={open} oncheck={(id, checked, range) => photos.check(id, checked, range, orderedIDs)} onloadmore={() => { if (!mapMode) void photos.loadMore(preserve); }} ondragstart={albums ? (id, event) => albums?.startDrag(id, event, photos) : undefined} ondragend={albums ? () => { if (albums) albums.drag = undefined; } : undefined} />
+    <PhotoGrid bind:this={grid} bind:scrollTop={photos.scrollTop} {groups} targetRowHeight={ROW_HEIGHTS[photos.density]} loading={photos.loading || !!photoID} {cache} hidden={photos.hidden} onhidden={id => void setHidden(id)} selectedIDs={photos.selectedIDs} onselect={select} onopen={open} oncheck={(id, checked, range) => photos.check(id, checked, range, orderedIDs)} onloadmore={() => { if (!mapMode) void photos.loadMore(preserve); }} ondragstart={albums ? (id, event) => albums?.startDrag(id, event, photos) : undefined} ondragend={albums ? () => { if (albums) albums.drag = undefined; } : undefined} />
     {/key}
   {:else if !(photos.loading || photos.error)}
     <EmptyState title={mapMode ? photos.items.length ? "No photos in this area" : "No located photos" : photos.date ? `No photos ${photos.date.length === 10 ? "on this day" : photos.date.length === 7 ? "in this month" : "in this year"}` : filtered ? "No matching photos" : photos.hidden ? "No hidden photos" : albumID ? "This album is empty" : "Your photo library is empty"} description={mapMode || photos.date ? undefined : filtered ? "Clear a filter or try another search." : photos.hidden ? "Choose Hide from a photo's actions menu in Library." : albumID ? "Go to Library, select photos, then choose Add to album or press B." : "Import photos with docbank photos import to browse them here."}>
@@ -291,12 +362,13 @@
     </EmptyState>
   {/if}
   {#if !mapMode}<div class="photo-loading" role="status">{#if photos.loading}<Spinner size={14} />Loading photos…{:else if photos.cursor && !photos.error}<Button size="sm" onclick={() => void photos.loadMore(preserve)}>Load more</Button>{/if}</div>{/if}
-  </div></div>
+  </div>{#if editing && (editCount || editor.dirty)}<aside class="grid-inspector"><PhotoInspector {editor} {actionDisabled} count={editCount} onedit={edit} /></aside>{/if}</div>
   {#if !photoID}
-  <SelectionDock context="photos" selectVisible={mapMode} outsideCount={outsideSelection} selectedCount={photos.selection.selectedIDs.size} visibleDocumentCount={shown.length} loadedSelected={shown.every(item => photos.selection.selectedIDs.has(item.asset_id))} wholeQueryCount={photos.total} allResults={photos.allResults} onallresults={mapMode ? undefined : () => photos.selectAllResults()} onclear={() => photos.clearSelection()} onselectvisible={() => photos.selectLoaded(mapMode ? orderedIDs : undefined)} ontrash={() => { photos.trashError = ""; trashOpen = true; }} trashDisabled={photos.trashing || photos.hiding || !mapMode && (photos.loading || photos.allResults)}>
+  <SelectionDock retainOpen={editor.dirty} context="photos" selectVisible={mapMode} outsideCount={outsideSelection} selectedCount={photos.selectedIDs.size} visibleDocumentCount={shown.length} loadedSelected={shown.every(item => photos.selectedIDs.has(item.asset_id))} wholeQueryCount={photos.allResults && editor.count ? editor.count : photos.total} allResults={photos.allResults} onallresults={mapMode ? undefined : () => photos.selectAllResults()} onclear={() => photos.clearSelection()} onselectvisible={() => photos.selectLoaded(mapMode ? orderedIDs : undefined)} ontrash={() => { photos.trashError = ""; trashOpen = true; }} trashDisabled={!photos.selectedIDs.size || photos.trashing || photos.hiding || !mapMode && (photos.loading || photos.allResults && !editor.targets.length)}>
     {#snippet photoActions()}
+      <Button size="sm" disabled={!editCount && !editor.dirty} onclick={() => editing = !editing}>Metadata</Button>
       {#if albums}<PhotoAlbumPicker bind:this={picker} {photos} {albums} />{/if}
-      {#if album && albums}<Button size="sm" disabled={albums.busy || !photos.allResults && photos.selection.selectedIDs.size > 1000} onclick={() => void remove()}>Remove from album</Button><Button size="sm" disabled={albums.busy || photos.allResults || photos.selection.selectedIDs.size !== 1} onclick={() => void albums!.cover(album!, [...photos.selection.selectedIDs][0])}>Use as cover</Button>{/if}
+      {#if album && albums}<Button size="sm" disabled={!photos.selectedIDs.size || albums.busy || !photos.allResults && photos.selectedIDs.size > 1000} onclick={() => void remove()}>Remove from album</Button><Button size="sm" disabled={albums.busy || photos.allResults || photos.selectedIDs.size !== 1} onclick={() => void albums!.cover(album!, [...photos.selectedIDs][0])}>Use as cover</Button>{/if}
     {/snippet}
   </SelectionDock>
   {/if}
@@ -310,7 +382,7 @@
   {:else}{@render libraryGrid()}{/if}
   </div>
   {/if}
-  {#if photoID}<PhotoLoupe photo={current} error={detailError} note={membershipNote} reloading={detailLoading} {reloadRevision} onreload={() => reload = {id:photoID}} onretry={retryNavigation} {photos} {cache} items={fromGrid ? ordered : []} canLoadMore={fromGrid && (!mapMode || photos.items.length < mapPhotoLimit) && !!photos.cursor} onmove={move} onchoose={id => onphotochange(id, "step")} onclose={() => onphotochange("", "close")} />{/if}
+  {#if photoID}<PhotoLoupe bind:metadataOpen={loupeMetadata} {editor} {actionDisabled} onedit={edit} onundo={() => void editor.undo(metadataRefresh)} photo={current} error={detailError} note={membershipNote} reloading={detailLoading} {reloadRevision} onreload={() => reload = {id:photoID}} onretry={retryNavigation} {photos} {cache} items={fromGrid ? ordered : []} canLoadMore={fromGrid && (!mapMode || photos.items.length < mapPhotoLimit) && !!photos.cursor} onmove={move} onchoose={id => onphotochange(id, "step")} onclose={() => onphotochange("", "close")} />{/if}
 </main>
 {#if modal && modalAlbum && albums}
   <Modal title={modal === "delete" ? "Delete album" : "Duplicate album"} onclose={() => { if (!albums.busy) modal = undefined; }}>
@@ -327,12 +399,12 @@
 
 {#if trashOpen}
   <Modal title="Move selected photos to trash?" tone="danger" ariaLabel="Move selected photos to trash" onclose={() => { if (!photos.trashing) trashOpen = false; }} closeOnOverlayClick={!photos.trashing}>
-    <p>Move {photos.selection.selectedIDs.size} selected photo{photos.selection.selectedIDs.size === 1 ? "" : "s"} and every RAW, image, video, and sidecar member to recoverable trash. Stored files and album membership stay intact.</p>
+    <p>Move {selectionCount} selected photo{selectionCount === 1 ? "" : "s"} and every RAW, image, video, and sidecar member to recoverable trash. Stored files and album membership stay intact.</p>
     {#if outsideSelection}<p>{outsideSelection} selected photo{outsideSelection === 1 ? " is" : "s are"} outside this view.</p>{/if}
     {#if photos.trashError}<p role="alert">{photos.trashError} Failed photos remain selected for retry.</p>{/if}
     {#snippet footer()}
       <Button disabled={photos.trashing} onclick={() => trashOpen = false}>Keep in Docbank</Button>
-      <Button tone="danger" disabled={photos.trashing || photos.selection.selectedIDs.size === 0} onclick={async () => { const source = photos; if (await source.trashSelected(preserve, () => ontrashed?.(source))) trashOpen = false; }}>{photos.trashing ? "Moving…" : "Move to trash"}</Button>
+      <Button tone="danger" disabled={photos.trashing || selectionCount === 0} onclick={async () => { const source = photos; if (await source.trashSelected(preserve, () => ontrashed?.(source))) trashOpen = false; }}>{photos.trashing ? "Moving…" : "Move to trash"}</Button>
     {/snippet}
   </Modal>
 {/if}
@@ -358,8 +430,9 @@
   .photo-browser { display: flex; flex: 1; min-height: 0; overflow: hidden; }
   .photo-facets { display: flex; flex-direction: column; width: 230px; flex-shrink: 0; overflow: auto; }
   .photo-facets :global(.facets) { flex: 1; }
+  .grid-inspector { width: 280px; flex-shrink: 0; padding: 16px; overflow: auto; border-left: 1px solid var(--border-default); }
   .photo-results { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
-  @media (max-width: 640px) { .photo-browser { flex-direction: column; } .photo-facets { width: auto; max-height: 180px; } }
+  @media (max-width: 640px) { .photos-workspace:has(.grid-inspector) { overflow: auto; } .library-grid:has(.grid-inspector) { flex: none; } .photo-browser { flex-direction: column; } .photo-browser:has(.grid-inspector) { flex: none; overflow: visible; } .photo-browser:has(.grid-inspector) .photo-results { flex: none; height: 180px; overflow: auto; } .photo-facets { width: auto; max-height: 180px; } .grid-inspector { width: auto; min-height: 0; max-height: 50dvh; flex-shrink: 0; } }
   .photo-toolbar { border-bottom: 1px solid var(--border-default); }
   .photo-date-selection { display: flex; gap: var(--space-3); align-items: center; padding: var(--space-2) var(--space-5); font-size: var(--font-size-sm); color: var(--text-primary); }
   .library-title h1 { margin: 0 0 4px; font-size: var(--font-size-lg); color: var(--text-primary); }

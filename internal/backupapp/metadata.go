@@ -20,9 +20,10 @@ import (
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
-// MetadataFormat is the stable Kit manifest identifier for Docbank's
-// deterministic logical metadata stream.
-const MetadataFormat = "docbank-metadata-jsonl-v1"
+// MetadataFormat identifies the current deterministic logical metadata stream.
+const MetadataFormat = "docbank-metadata-jsonl-v2"
+
+const metadataFormatV1 = "docbank-metadata-jsonl-v1"
 
 const derivativeAuthorityVersion = 1
 
@@ -382,7 +383,7 @@ var _ backup.MetadataRestorer = metadataRestorer{}
 func (r metadataRestorer) RestoreMetadata(
 	ctx context.Context, format string, metadata io.Reader, targetPath string,
 ) (resultErr error) {
-	if format != MetadataFormat {
+	if format != MetadataFormat && format != metadataFormatV1 {
 		return fmt.Errorf("backupapp: unsupported metadata format %q", format)
 	}
 	target, err := store.Open(targetPath, r.driver)

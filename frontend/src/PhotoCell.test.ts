@@ -4,7 +4,7 @@ import PhotoCell from "./PhotoCell.svelte";
 import { photo, touchTap } from "./photo-test-fixtures.js";
 import type { PhotoPreviewCache } from "./photoPreviewCache.js";
 
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 it("opens by accessible name and plain click with the button as the return target", async () => {
   const onopen = vi.fn();
@@ -143,4 +143,25 @@ it("reloads a preview from the network after the image fails to decode", async (
   await fireEvent.click(screen.getByRole("button", { name: "Retry preview" }));
   await screen.findByRole("img");
   expect(get.mock.calls.map(call => call[3])).toEqual([false, true]);
+});
+
+it("measures only quarter turns and releases the observer when rotation returns to zero", async () => {
+  const created = vi.fn(), observe = vi.fn(), disconnect = vi.fn();
+  vi.stubGlobal("ResizeObserver", class { constructor() { created(); } observe = observe; disconnect = disconnect; });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(300);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
+  Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:rotated") });
+  Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+  const item = photo(1); item.previews.grid = { state: "ready", generation_id: "generation" };
+  const props = { photo: item, cache: { get: vi.fn(async () => new Blob(["synthetic JPEG"])) } as unknown as PhotoPreviewCache, selected: false, onclick: vi.fn() };
+  const view = render(PhotoCell, props);
+  const image = await screen.findByRole("img") as HTMLImageElement;
+  expect(image.style.width).toBe("100%"); expect(image.style.height).toBe("100%"); expect(created).not.toHaveBeenCalled();
+  await view.rerender({ ...props, photo: { ...item, rotation: 180 } });
+  expect(created).not.toHaveBeenCalled();
+  await view.rerender({ ...props, photo: { ...item, rotation: 90 } });
+  await waitFor(() => expect(observe).toHaveBeenCalledOnce());
+  expect(created).toHaveBeenCalledOnce(); expect(observe).toHaveBeenCalledOnce();
+  await view.rerender(props);
+  expect(disconnect).toHaveBeenCalledOnce(); expect((await screen.findByRole("img") as HTMLImageElement).style.width).toBe("100%");
 });

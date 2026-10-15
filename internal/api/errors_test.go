@@ -43,7 +43,7 @@ func TestFromStoreErrorMapsCustodianConflict(t *testing.T) {
 	assert.Equal(t, "custodian_conflict", mapped.Code)
 }
 
-func TestFromStoreErrorMapsPersonConflicts(t *testing.T) {
+func TestFromStoreErrorMappings(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		err    error
@@ -53,6 +53,7 @@ func TestFromStoreErrorMapsPersonConflicts(t *testing.T) {
 		{store.ErrPersonMergeConflict, http.StatusConflict, "person_merge_conflict"},
 		{store.ErrPersonMergeTooLarge, http.StatusUnprocessableEntity, "person_merge_too_large"},
 		{store.ErrPersonRetired, http.StatusConflict, "person_retired"},
+		{store.ErrPhotoEditReceiptLimit, http.StatusUnprocessableEntity, "photo_edit_receipt_limit"},
 	} {
 		t.Run(test.code, func(t *testing.T) {
 			mapped := &Error{}

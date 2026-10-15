@@ -9525,6 +9525,146 @@ func (c *Client) UnhidePhotoAsset(ctx context.Context, options *UnhidePhotoAsset
 	return responseParser(ctx, resp)
 }
 
+// EditPhotoAuthored Edit photo fields and keywords atomically
+func (c *Client) EditPhotoAuthored(ctx context.Context, options *EditPhotoAuthoredRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EditPhotoAuthoredResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/authored/edit",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*EditPhotoAuthoredResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(EditPhotoAuthoredResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "EditPhotoAuthoredResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[EditPhotoAuthoredErrorResponse](resp, "EditPhotoAuthoredErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/authored/edit")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// PreparePhotoAuthored Resolve a revision-bound metadata editing session
+func (c *Client) PreparePhotoAuthored(ctx context.Context, options *PreparePhotoAuthoredRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreparePhotoAuthoredResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/authored/prepare",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PreparePhotoAuthoredResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PreparePhotoAuthoredResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PreparePhotoAuthoredResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[PreparePhotoAuthoredErrorResponse](resp, "PreparePhotoAuthoredErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/authored/prepare")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// UndoPhotoAuthored Undo photo fields and keywords if their revisions still match
+func (c *Client) UndoPhotoAuthored(ctx context.Context, options *UndoPhotoAuthoredRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UndoPhotoAuthoredResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/photos/authored/{receipt_id}/undo",
+		Method:     "POST",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*UndoPhotoAuthoredResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(UndoPhotoAuthoredResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "UndoPhotoAuthoredResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[UndoPhotoAuthoredErrorResponse](resp, "UndoPhotoAuthoredErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/authored/{receipt_id}/undo")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // GetPhotoHiddenState Read hidden photos configuration and current unlock expiry
 func (c *Client) GetPhotoHiddenState(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetPhotoHiddenStateResponse, error) {
 	var err error
@@ -20268,6 +20408,93 @@ func (o *UnhidePhotoAssetRequestOptions) GetHeader() (map[string]string, error) 
 	return headers, err
 }
 
+// EditPhotoAuthoredRequestOptions is the options needed to make a request to EditPhotoAuthored.
+type EditPhotoAuthoredRequestOptions struct {
+	Body *EditPhotoAuthoredBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *EditPhotoAuthoredRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *EditPhotoAuthoredRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *EditPhotoAuthoredRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *EditPhotoAuthoredRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// PreparePhotoAuthoredRequestOptions is the options needed to make a request to PreparePhotoAuthored.
+type PreparePhotoAuthoredRequestOptions struct {
+	Body *PreparePhotoAuthoredBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *PreparePhotoAuthoredRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *PreparePhotoAuthoredRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *PreparePhotoAuthoredRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *PreparePhotoAuthoredRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// UndoPhotoAuthoredRequestOptions is the options needed to make a request to UndoPhotoAuthored.
+type UndoPhotoAuthoredRequestOptions struct {
+	PathParams *UndoPhotoAuthoredPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *UndoPhotoAuthoredRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *UndoPhotoAuthoredRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *UndoPhotoAuthoredRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *UndoPhotoAuthoredRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ChangePhotoHiddenRequestOptions is the options needed to make a request to ChangePhotoHidden.
 type ChangePhotoHiddenRequestOptions struct {
 	Body *ChangePhotoHiddenBody
@@ -23776,6 +24003,10 @@ type UnhidePhotoAssetPath struct {
 	AssetID string `json:"asset_id"`
 }
 
+type UndoPhotoAuthoredPath struct {
+	ReceiptID uuid.UUID `json:"receipt_id"`
+}
+
 type GetPhotoAssetByNodePath struct {
 	NodeID int64 `json:"node_id"`
 }
@@ -24117,6 +24348,10 @@ type ExcludePhotoAssetBody = SetPhotoExcludedRequest
 type AttachPhotoFileBody = AttachPhotoFileRequest
 
 type PreparePhotoPreviewBody = PreparePhotoPreviewRequest
+
+type EditPhotoAuthoredBody = PhotoAuthoredEditRequest
+
+type PreparePhotoAuthoredBody = PhotoAuthoredPrepareRequest
 
 type ChangePhotoHiddenBody = PhotoHiddenPasscodeRequest
 
@@ -25408,6 +25643,18 @@ type UnhidePhotoAssetResponse = api.PhotoAsset
 
 type UnhidePhotoAssetErrorResponse = Error
 
+type EditPhotoAuthoredResponse = store.PhotoAuthoredReceipt
+
+type EditPhotoAuthoredErrorResponse = Error
+
+type PreparePhotoAuthoredResponse = api.PhotoAuthoredPreparation
+
+type PreparePhotoAuthoredErrorResponse = Error
+
+type UndoPhotoAuthoredResponse = store.PhotoAuthoredReceipt
+
+type UndoPhotoAuthoredErrorResponse = Error
+
 type GetPhotoHiddenStateResponse = store.PhotoHiddenState
 
 type GetPhotoHiddenStateErrorResponse = Error
@@ -26635,6 +26882,18 @@ type PhotoAsset = api.PhotoAsset
 
 type PhotoAuthored = store.PhotoAuthored
 
+type PhotoAuthoredEditRequest = api.PhotoAuthoredEditRequest
+
+type PhotoAuthoredEditTarget = store.PhotoAuthoredEditTarget
+
+type PhotoAuthoredPatch = store.PhotoAuthoredPatch
+
+type PhotoAuthoredPreparation = api.PhotoAuthoredPreparation
+
+type PhotoAuthoredPrepareRequest = api.PhotoAuthoredPrepareRequest
+
+type PhotoAuthoredReceipt = store.PhotoAuthoredReceipt
+
 type PhotoAuthoredSnapshot = store.PhotoAuthoredSnapshot
 
 type PhotoBrowsePage = api.PhotoBrowsePage
@@ -26657,6 +26916,12 @@ type PhotoHiddenState = store.PhotoHiddenState
 
 type PhotoImportStartRequest = api.PhotoImportStartRequest
 
+type PhotoKeywordDelta = store.PhotoKeywordDelta
+
+type PhotoKeywordEdit = store.PhotoKeywordEdit
+
+type PhotoKeywordNode = store.PhotoKeywordNode
+
 type PhotoMapRow = api.PhotoMapRow
 
 type PhotoMapRowPreviewsStruct struct {
@@ -26664,6 +26929,8 @@ type PhotoMapRowPreviewsStruct struct {
 }
 
 type PhotoPersonAssertion = api.PhotoPersonAssertion
+
+type PhotoPreparedTarget = store.PhotoPreparedTarget
 
 type PhotoPreviewSlot = api.PhotoPreviewSlot
 
@@ -26684,6 +26951,8 @@ type PhotoRejectsPreflight = store.PhotoRejectsPreflight
 type PhotoRejectsRequest = api.PhotoRejectsRequest
 
 type PhotoSettings = api.PhotoSettings
+
+type PhotoSidecarProvenance = store.PhotoSidecarProvenance
 
 type PhotoTimeline = api.PhotoTimeline
 

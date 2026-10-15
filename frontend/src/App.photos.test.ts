@@ -1,17 +1,20 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
-import { photo, mapPhoto, photoAlbum, albumResponse, storage } from "./photo-test-fixtures.js";
+import { photoMetadataResponse, preparedPhoto, mapPhoto, photo, photoAlbum, albumResponse, storage } from "./photo-test-fixtures.js";
 import App from "./App.svelte";
 import { Photos } from "./photos.svelte.js";
+import { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
 import type { Query } from "./query.js";
 
 // Answers background filter-count requests so tests that predate counts see only their own reads.
-const stubPhotoFetch = (fetcher: (url: string, init: RequestInit) => unknown) => vi.stubGlobal("fetch", (url: string, init: RequestInit) => url.endsWith("/photos/assets/query") && JSON.parse(String(init?.body ?? "{}")).facets?.length ? Promise.resolve(Response.json({ items: [], total: 0, facets: [] })) : fetcher(url, init));
+const stubPhotoFetch = (fetcher: (url: string, init: RequestInit) => unknown) => vi.stubGlobal("fetch", (url: string, init: RequestInit) => photoMetadataResponse(url, init) ?? (url.endsWith("/photos/assets/query") && JSON.parse(String(init?.body ?? "{}")).facets?.length ? Promise.resolve(Response.json({ items: [], total: 0, facets: [] })) : fetcher(url, init)));
 
-const map = vi.hoisted(() => ({props:undefined as {items:ReturnType<typeof mapPhoto>[]} | undefined}));
+const map = vi.hoisted(() => ({props:undefined as {items:ReturnType<typeof mapPhoto>[]; onvisible: (rows: ReturnType<typeof mapPhoto>[]) => void} | undefined}));
 vi.mock("./PhotoMap.svelte",()=>({default:(_anchor:unknown,props:NonNullable<typeof map.props>)=>{map.props=props;return {};}}));
 
-afterEach(() => { cleanup(); map.props=undefined; document.querySelectorAll('meta[name="docbank-map-tiles"]').forEach(meta=>meta.remove()); history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); new Photos("scoped", vi.fn()).setDensity("comfortable"); });
+const originalCreateObjectURL = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
+const originalRevokeObjectURL = Object.getOwnPropertyDescriptor(URL, "revokeObjectURL");
+afterEach(() => { cleanup(); map.props=undefined; document.querySelectorAll('meta[name="docbank-map-tiles"]').forEach(meta=>meta.remove()); history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); if (originalCreateObjectURL) Object.defineProperty(URL, "createObjectURL", originalCreateObjectURL); else Reflect.deleteProperty(URL, "createObjectURL"); if (originalRevokeObjectURL) Object.defineProperty(URL, "revokeObjectURL", originalRevokeObjectURL); else Reflect.deleteProperty(URL, "revokeObjectURL"); localStorage.clear(); Reflect.deleteProperty(Element.prototype, "scrollIntoView"); new Photos("scoped", vi.fn()).setDensity("comfortable"); });
 
 it("removes a delayed direct-link photo fragment on tab switch without history.back", async () => {
   history.replaceState(null, "", "/photos/hidden#web_session=synthetic&web_upload_secret=proof&photo=photo-1");
@@ -577,8 +580,9 @@ async function failStatusReads(reads: () => number, count: number) {
   }
 }
 
-it.each(["change", "failure", "background", "delayed page", "unrelated mutation"])("validates retained photo state after %s", async kind => {
+it.each(["change", "failure", "background", "delayed page", "album route", "unrelated mutation"])("validates retained photo state after %s", async kind => {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  const album = photoAlbum({ id: "22222222-2222-4222-8222-0000000000ac", included_count: 1, member_count: 1 });
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
@@ -590,13 +594,16 @@ it.each(["change", "failure", "background", "delayed page", "unrelated mutation"
   let delay = false;
   let accessFailed = true;
   let finish!: (response: Response) => void;
-  stubPhotoFetch(vi.fn(async (url: string) => {
+  stubPhotoFetch(vi.fn(async (url: string, init: RequestInit) => {
     if (url.endsWith("/photos/hidden")) {
       statusReads++;
       if (changed && kind === "failure" && accessFailed) throw new Error("Status unavailable");
       return Response.json({ configured: false, change_id: changed && kind !== "unrelated mutation" ? "second" : "first" });
     }
+    if (url.endsWith("/photos/albums")) return Response.json([{ ...album, included_count: changed ? 0 : 1 }]);
     if (url.endsWith("/assets/query")) {
+      const query = JSON.parse(String(init.body ?? "{}")).query;
+      if (query.filters?.set_ids) return Response.json({ items: changed ? [] : [photo(1)], total: changed ? 0 : 1 });
       if (delay) { delay = false; return new Promise<Response>(resolve => finish = resolve); }
       return Response.json({ items: changed && kind !== "failure" ? [] : [{ ...photo(1), previews: { grid: { state: "ready", generation_id: "synthetic" } } }], total: changed ? 0 : 1 });
     }
@@ -608,12 +615,24 @@ it.each(["change", "failure", "background", "delayed page", "unrelated mutation"
   await screen.findByRole("img", { name: "Photo 1.jpg" });
   const cacheName = stored.open.mock.calls[0][0];
   await waitFor(() => expect(stored.data.get(cacheName)?.size).toBe(1));
+  if (kind === "album route") {
+    await fireEvent.click(await screen.findByRole("button", { name: /^Trip/ }));
+    await screen.findByRole("main", { name: "Photo album" });
+    await screen.findByRole("button", { name: "Select Photo 1.jpg" });
+  }
   if (kind === "delayed page") {
     delay = true;
     await fireEvent.click(screen.getByRole("button", { name: "Refresh previews" }));
     await waitFor(() => expect(finish).toBeDefined());
   }
   changed = true;
+  if (kind === "album route") {
+    await screen.findByText("This album is empty", undefined, { timeout: 5000 });
+    delay = true;
+    await fireEvent.click(screen.getByRole("button", { name: "Library" }));
+    expect(location.pathname).toBe("/photos");
+    await waitFor(() => expect(finish).toBeDefined());
+  }
   if (kind === "unrelated mutation") {
     const scroll = screen.getByTestId("photo-scroll");
     scroll.scrollTop = 100;
@@ -649,8 +668,8 @@ it.each(["change", "failure", "background", "delayed page", "unrelated mutation"
     await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
     expect(screen.getByText("1 selected photo")).toBeTruthy();
   }
-  if (kind === "delayed page") {
-    finish(Response.json({ items: [photo(1)], total: 1 }));
+  if (kind === "delayed page" || kind === "album route") {
+    finish(Response.json(kind === "album route" ? { items: [], total: 0 } : { items: [photo(1)], total: 1 }));
     await screen.findByText("Your photo library is empty");
     expect(screen.queryByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeNull();
   }
@@ -665,6 +684,7 @@ it("refreshes a remounted Hidden grid after a delayed unhide", async () => {
   let changed = false;
   let finish!: (response: Response) => void;
   vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
+    const metadata = photoMetadataResponse(url, options); if (metadata) return metadata;
     if (url.endsWith("/photos/hidden")) return Response.json({ configured: true, expires_at: "2099-01-01T00:00:00Z", expires_in: 300 });
     if (url.includes("/assets/query")) {
       const request = JSON.parse(String(options?.body));
@@ -718,10 +738,8 @@ it("clears previews on sidebar and history departure while retaining eligible se
   await waitFor(() => expect(stored.data.get(cacheName)?.size).toBe(1));
   const listings = () => fetcher.mock.calls.filter(([url, init]) => url.includes("/photos/assets/query") && !JSON.parse(init!.body as string).facets?.length).length;
   const counts = () => fetcher.mock.calls.filter(([url, init]) => url.includes("/photos/assets/query") && JSON.parse(init!.body as string).facets?.length).length;
-  const previews = () => fetcher.mock.calls.filter(([url]) => url.includes("/previews/")).length;
   expect(listings()).toBe(1);
   await waitFor(() => expect(counts()).toBe(1));
-  expect(previews()).toBe(1);
   const historyLength = history.length;
   await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
   expect(history.length).toBe(historyLength);
@@ -736,8 +754,8 @@ it("clears previews on sidebar and history departure while retaining eligible se
   await screen.findByText("1 selected photo");
   await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
   expect(listings()).toBe(2);
-  await waitFor(() => expect(previews()).toBe(2));
   const returnedCache = stored.open.mock.calls.at(-1)![0];
+  await waitFor(() => expect(stored.data.get(returnedCache)?.size).toBe(1));
   history.replaceState(null, "", "/");
   await fireEvent(window, new PopStateEvent("popstate"));
   await waitFor(() => expect(screen.queryByRole("main", { name: "Photo library" })).toBeNull());
@@ -828,6 +846,7 @@ it.each([false, true])("keeps direct links and history scoped and conceals a mou
   let finishRefresh!: (response: Response) => void;
   const item = photo(1); item.previews.grid = { state: "ready", generation_id: "grid" }; item.previews.fit = { state: "ready", generation_id: "fit" };
   vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
+    const metadata = photoMetadataResponse(url, options); if (metadata) return metadata;
     if (url.endsWith("/photos/hidden")) { statusReads++; if (unavailable) throw new Error("Status unavailable"); return Response.json({ configured: true, change_id: changeID, ...(unlocked ? { expires_at: "2099-01-01T00:00:00Z", expires_in: 300 } : {}) }); }
     if (url.endsWith("/hidden/lock")) { unlocked = false; return Response.json({ configured: true }); }
     if (url.endsWith("/assets/query")) {
@@ -1169,7 +1188,7 @@ it.each([undefined, "first"])("conceals an open album when hidden photos change,
   expect(location.pathname).toBe(`/photos/albums/${album.id}`);
 });
 
-it("restores photo scroll before resumed counts finish and keeps subsequent scrolling", async () => {
+it("restores photo scroll while resumed counts are pending and keeps subsequent scrolling", async () => {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
@@ -1177,11 +1196,13 @@ it("restores photo scroll before resumed counts finish and keeps subsequent scro
   storage();
   const counts: { signal: AbortSignal; finish: (response: Response) => void }[] = [];
   let listings = 0;
+  let finishListing: ((response: Response) => void) | undefined;
   vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
     if (url.includes("/photos/assets/query")) {
       const request = JSON.parse(init!.body as string);
       if (request.facets?.length) return new Promise<Response>(finish => counts.push({ signal: init!.signal!, finish }));
       listings++;
+      if (listings === 2) return new Promise<Response>(finish => finishListing = finish);
       return Response.json({ items: Array.from({ length: 100 }, (_, index) => photo(index + 1)), total: 100 });
     }
     if (url.endsWith("/photos/hidden")) return Response.json({ configured: true, change_id: "first" });
@@ -1190,6 +1211,7 @@ it("restores photo scroll before resumed counts finish and keeps subsequent scro
   });
   render(App);
   await waitFor(() => expect(counts).toHaveLength(1));
+  await screen.findByText("100 photos · 100 loaded");
   await act(async () => {});
   const original = screen.getByTestId("photo-scroll");
   original.scrollTop = 480;
@@ -1197,9 +1219,12 @@ it("restores photo scroll before resumed counts finish and keeps subsequent scro
   await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
   expect(counts[0].signal.aborted).toBe(true);
   await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
+  await waitFor(() => expect(finishListing).toBeTypeOf("function"));
+  await act(async () => finishListing!(Response.json({ items: Array.from({ length: 100 }, (_, index) => photo(index + 1)), total: 100 })));
+  const resumed = await screen.findByTestId("photo-scroll");
   await waitFor(() => expect(counts).toHaveLength(2));
-  const resumed = screen.getByTestId("photo-scroll");
   await waitFor(() => expect(resumed.scrollTop).toBe(480));
+  expect(screen.getByText("100 photos · 100 loaded")).toBeTruthy();
   // Leaving Photos conceals the Library, so returning revalidates it with one refresh.
   expect(listings).toBe(2);
   resumed.scrollTop = 960;
@@ -1211,4 +1236,386 @@ it("restores photo scroll before resumed counts finish and keeps subsequent scro
   await waitFor(() => expect(screen.queryByText(/Loading counts/)).toBeNull());
   await act(async () => {});
   expect(resumed.scrollTop).toBe(960);
+});
+
+it("passes a registered Photos shortcut into the help dialog", async () => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
+  stubPhotoFetch(async url => {
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+    if (url.endsWith("/photos/assets/query")) return Response.json({ items: [photo(1)], total: 1, facets: [] });
+    return Response.json({ items: [], total: 0 });
+  });
+  render(App);
+  await screen.findByRole("button", { name: "Select Photo 1.jpg" });
+  const edit = vi.spyOn(PhotoAuthoredEditor.prototype, "edit").mockResolvedValue(undefined);
+  await fireEvent.click(screen.getByRole("button", { name: "Select Photo 1.jpg" }));
+  await fireEvent.keyDown(window, { key: "&", code: "Digit6" });
+  await waitFor(() => expect(edit).toHaveBeenCalledWith({ asset_ids: ["photo-1"] }, { label: "red" }, false, expect.any(Function), undefined, undefined));
+  await fireEvent.keyDown(window, { key: "r" });
+  await waitFor(() => expect(edit).toHaveBeenCalledWith({ asset_ids: ["photo-1"] }, {}, false, expect.any(Function), undefined, 90));
+  document.body.focus();
+  await fireEvent.keyDown(window, { key: "?", shiftKey: true });
+  const help = await screen.findByRole("dialog", { name: "Keyboard shortcuts" });
+  expect(within(help).getByText("Clear rating")).toBeTruthy();
+  expect(within(help).getByText("Set purple label")).toBeTruthy();
+  expect(within(help).getByText("Rotate selected photos 90° clockwise")).toBeTruthy();
+  expect(within(help).getByText("Add selected photos to album")).toBeTruthy();
+});
+
+it("refuses draft navigation until Clear edits releases it", async () => {
+  history.replaceState(null, "", "/#web_session=synthetic&web_upload_secret=proof");
+  vi.stubGlobal("navigation", undefined);
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  Element.prototype.scrollIntoView = vi.fn();
+  const root = { id: 1, kind: "dir", name: "", revision: 1, path: "/" };
+  stubPhotoFetch(async url => {
+    if (url.endsWith("/photos/assets/query")) return Response.json({ items: [photo(1), photo(2)], total: 2 });
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+    if (url.startsWith("/api/v1/path?") || url === "/api/v1/nodes/1") return Response.json(root);
+    if (url.startsWith("/api/v1/nodes/1/children")) return Response.json({ directory: root, items: [], total: 0 });
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "Photos" }));
+  await screen.findByRole("button", { name: "Open Photo 1.jpg" });
+  await fireEvent.click(screen.getByRole("button", { name: "Open Photo 1.jpg" }));
+  const viewer = await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+  await fireEvent.click(within(viewer).getByRole("button", { name: "Metadata" }));
+  const caption = await within(viewer).findByRole("textbox", { name: "Caption" });
+  await waitFor(() => expect(caption.hasAttribute("disabled")).toBe(false));
+  await fireEvent.input(caption, { target: { value: "Keep my caption" } });
+  const unloadBlocked = () => { const event = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(event); return event.defaultPrevented; };
+  expect(unloadBlocked()).toBe(true);
+  history.back();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect((screen.getByRole("textbox", { name: "Caption" }) as HTMLTextAreaElement).value).toBe("Keep my caption");
+  await fireEvent.click(within(viewer).getByRole("button", { name: "Clear edits" }));
+  await waitFor(() => expect(screen.getByRole("textbox", { name: "Caption" }).hasAttribute("disabled")).toBe(false));
+  expect(unloadBlocked()).toBe(false);
+});
+
+it("closes the viewer to the grid after refusing a typed photo hash", async () => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  vi.stubGlobal("navigation", undefined);
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  Element.prototype.scrollIntoView = vi.fn();
+  stubPhotoFetch(async url => {
+    if (url.endsWith("/photos/assets/query")) return Response.json({ items: [photo(1), photo(2)], total: 2 });
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "Open Photo 1.jpg" }));
+  const viewer = await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+  await fireEvent.click(within(viewer).getByRole("button", { name: "Metadata" }));
+  const caption = await within(viewer).findByRole("textbox", { name: "Caption" });
+  await waitFor(() => expect(caption.hasAttribute("disabled")).toBe(false));
+  await fireEvent.input(caption, { target: { value: "Draft caption" } });
+  const typed = new URL(location.href); typed.hash = "photo=photo-2";
+  history.pushState(null, "", typed.href); window.dispatchEvent(new PopStateEvent("popstate")); window.dispatchEvent(new HashChangeEvent("hashchange"));
+  await waitFor(() => expect(location.hash).toContain("photo=photo-1"));
+  const kept = await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+  await fireEvent.click(await within(kept).findByRole("button", { name: "Clear edits" }));
+  await fireEvent.click(within(kept).getByRole("button", { name: "Close photo viewer" }));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Photo viewer, Photo 1.jpg" })).toBeNull());
+  await new Promise(resolve => setTimeout(resolve, 50));
+  expect(screen.queryByRole("dialog", { name: "Photo viewer, Photo 1.jpg" })).toBeNull();
+  expect(location.hash).not.toContain("photo=");
+});
+
+async function applyAlbumKeyword() {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
+  Element.prototype.scrollIntoView = vi.fn();
+  const album = photoAlbum({ member_count: 1, included_count: 1 });
+  let coverRotation = 0;
+  const albumRotations: number[] = [];
+  const root = { id: 1000, name: "", kind: "dir", size: 0, revision: 1, path: "/", created_at: "2026-01-01T00:00:00Z", modified_at: "2026-01-01T00:00:00Z" };
+  const document = () => ({ ...root, id: 1, parent_id: root.id, name: "Photo 1.jpg", kind: "file", revision: documentRevision, size: 74, mime_type: "image/jpeg", current_version_id: "version-1", blob_hash: "a".repeat(64), path: "/Photo 1.jpg" });
+  const tag = { id: "22222222-2222-4222-8222-222222222222", name: "Portfolio", revision: 1, assignment_count: 1 };
+  const before = preparedPhoto(1);
+  const rotated = { ...before, revision: 2, values: { ...before.values, rotation: 90 as const } };
+  const edited = { ...rotated, revision: 3 };
+  let documentRevision = 1;
+  let keywordApplied = false;
+  let editCount = 0;
+  const fetcher = vi.fn(async (url: string) => {
+    if (url.endsWith("/photos/albums")) { albumRotations.push(coverRotation); return albumResponse([{ ...album, cover_rotation: coverRotation }]); }
+    if (url.endsWith("/photos/assets/query")) return albumResponse({ items: [photo(1)], total: 1 });
+    if (url === "/api/v1/path?path=%2F") return albumResponse(root);
+    if (url === "/api/v1/nodes/1000/children?limit=1000&offset=0") return albumResponse({ directory: root, items: [document()], total: 1, limit: 1000, offset: 0 });
+    if (url === "/api/v1/nodes/1") return albumResponse(document());
+    if (url === "/api/v1/nodes/1/tags?limit=1000&offset=0") return albumResponse({ items: keywordApplied ? [tag] : [], total: Number(keywordApplied), limit: 1000, offset: 0 });
+    if (url === "/api/v1/tags?limit=1000&offset=0") return albumResponse({ items: [tag], total: 1, limit: 1000, offset: 0 });
+    if (url === `/api/v1/tags/${tag.id}`) return albumResponse({ ...tag, revision: documentRevision, assignment_count: keywordApplied ? 2 : 1 });
+    if (url.endsWith("/photos/authored/edit")) {
+      if (editCount++ === 0) { coverRotation = 90; documentRevision = 2; return albumResponse({ receipt_id: "rotated", before: [before], after: [rotated] }); }
+      keywordApplied = true; documentRevision = 3;
+      return albumResponse({ receipt_id: "edited", before: [rotated], after: [edited], keywords: [{ node_id: 1, tag_id: tag.id, before: false, after: true }], keyword_nodes: [{ node_id: 1, after_revision: 3 }] });
+    }
+    if (url.endsWith("/photos/authored/edited/undo")) {
+      keywordApplied = false; documentRevision = 4;
+      return albumResponse({ receipt_id: "undone", before: [edited], after: [{ ...rotated, revision: 4 }], keywords: [{ node_id: 1, tag_id: tag.id, before: true, after: false }], keyword_nodes: [{ node_id: 1, after_revision: 4 }] });
+    }
+    if (url.startsWith("/api/v1/audit/status")) return albumResponse({ enabled: false, scopes: [] });
+    return albumResponse({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  stubPhotoFetch(fetcher);
+  const changed = vi.spyOn(Photos.prototype, "metadataChanged");
+  render(App);
+  await screen.findByRole("button", { name: "Select Photo 1.jpg" });
+  await fireEvent.click(screen.getByRole("button", { name: /^Trip/ }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
+  await fireEvent.keyDown(window, { key: "r" });
+  await waitFor(() => expect(albumRotations).toContain(90));
+  await waitFor(() => expect(changed).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect((changed.mock.contexts[1] as Photos).authored.busy).toBe(false));
+  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+  await waitFor(() => expect(screen.getByRole("combobox", { name: /Keyword:/ }).hasAttribute("disabled")).toBe(false));
+  await fireEvent.click(screen.getByRole("combobox", { name: /Keyword:/ }));
+  await fireEvent.click(screen.getByRole("option", { name: /Portfolio/ }));
+  await fireEvent.click(screen.getByRole("button", { name: "Add keyword" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await waitFor(() => expect(changed).toHaveBeenCalledTimes(4));
+  await waitFor(() => expect((changed.mock.contexts[3] as Photos).authored.busy).toBe(false));
+  return { changed, album, fetcher, albumRotations };
+}
+
+it("forwards photo edit and Undo receipts to Library, Albums, and Documents", async () => {
+  const { changed, album, fetcher, albumRotations } = await applyAlbumKeyword();
+  const library = changed.mock.contexts[0] as Photos;
+  expect(albumRotations).toContain(90);
+  expect(library.query.filters?.set_ids).toBeUndefined();
+  expect((changed.mock.contexts[1] as Photos).query.filters?.set_ids).toEqual([album.id]);
+  expect(changed.mock.calls.slice(0, 2).every(([receipt]) => receipt.receipt_id === "rotated")).toBe(true);
+  expect(changed.mock.calls.slice(2, 4).every(([receipt]) => receipt.receipt_id === "edited")).toBe(true);
+  await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
+  await fireEvent.click(await screen.findByRole("cell", { name: "Photo 1.jpg" }));
+  const inspector = await screen.findByRole("region", { name: "Document authority for Photo 1.jpg" });
+  await waitFor(() => expect(within(inspector).getByRole("group", { name: "Assigned tags" }).textContent).toContain("Portfolio"));
+  expect(within(inspector).getByText("Revision").nextElementSibling?.textContent).toBe("3");
+  await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
+  await screen.findByRole("button", { name: "Select Photo 1.jpg" });
+  await screen.findByText("1 photos · 1 loaded");
+  fetcher.mockClear();
+  await fireEvent.click(await screen.findByRole("button", { name: "Undo last photo edit" }));
+  await waitFor(() => expect(changed).toHaveBeenCalledTimes(6));
+  expect(changed.mock.contexts[4]).toBe(library);
+  expect(changed.mock.contexts[5]).toBe(changed.mock.contexts[1]);
+  expect(changed.mock.calls.slice(4).every(([receipt]) => receipt.receipt_id === "undone")).toBe(true);
+  await waitFor(() => expect((changed.mock.contexts[3] as Photos).authored.busy).toBe(false));
+  await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
+  const undoneInspector = await screen.findByRole("region", { name: "Document authority for Photo 1.jpg" });
+  await waitFor(() => expect(within(undoneInspector).getByText("No tags are assigned to this node.")).toBeTruthy());
+  expect(fetcher).toHaveBeenCalledWith("/api/v1/nodes/1", expect.anything());
+  expect(within(undoneInspector).getByText("Revision").nextElementSibling?.textContent).toBe("4");
+});
+
+it("updates unfiltered Library and album rows after edits without reloading them", async () => {
+  const refresh = vi.spyOn(Photos.prototype, "refresh");
+  const { changed } = await applyAlbumKeyword();
+  await waitFor(() => expect(changed).toHaveBeenCalledTimes(4));
+  expect(new Set(changed.mock.contexts).size).toBe(2);
+  const firstReceipt = changed.mock.invocationCallOrder[0]!;
+  expect(refresh.mock.invocationCallOrder.filter(order => order > firstReceipt)).toEqual([]);
+});
+
+it("discards shared photo Undo when signing into a replacement web session", async () => {
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
+  history.replaceState(null, "", "/photos");
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  let sessions = 0;
+  stubPhotoFetch(async url => {
+    if (url === "/api/daemon/web-auth") return Response.json({ enabled: true });
+    if (url === "/api/daemon/web-auth/login") return Response.json({ enabled: true, session: { token: `session-${++sessions}`, upload_secret: "synthetic-proof" } });
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+    if (url.endsWith("/photos/assets/query")) return Response.json({ items: [photo(1)], total: 1, facets: [] });
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  const resumed = vi.spyOn(Photos.prototype, "resume");
+  vi.spyOn(PhotoAuthoredEditor.prototype, "edit").mockImplementation(async function (this: PhotoAuthoredEditor) { this.receiptID = "last-edit"; this.undoState.summary = "1 file updated: rating"; });
+  render(App);
+  const signIn = async () => {
+    await fireEvent.input(await screen.findByLabelText("API key"), { target: { value: "synthetic-key" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    return screen.findByRole("button", { name: "Select Photo 1.jpg" });
+  };
+  await fireEvent.click(await signIn()); await fireEvent.keyDown(window, { key: "4" });
+  await screen.findByRole("button", { name: "Undo last photo edit" });
+  const previous = (resumed.mock.contexts.at(-1) as Photos).authored.undoState;
+  await fireEvent.click(screen.getByRole("button", { name: "Sign out" })); await signIn();
+  const current = (resumed.mock.contexts.at(-1) as Photos).authored.undoState;
+  expect(current).not.toBe(previous); expect(current.receiptID).toBe(""); expect(current.summary).toBe("");
+  expect(screen.queryByRole("button", { name: "Undo last photo edit" })).toBeNull();
+});
+
+it("loads keywords beyond the first catalog page", async () => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
+  Element.prototype.scrollIntoView = vi.fn();
+  const catalog = Array.from({ length: 1000 }, (_, index) => ({ id: `tag-${index}`, name: `Keyword ${index}`, revision: 1, assignment_count: 0 }));
+  const last = { id: "last", name: "Beyond the first page", revision: 1, assignment_count: 0 };
+  const fetcher = vi.fn(async (url: string, init: RequestInit) => {
+    if (url === "/api/v1/tags?limit=1000&offset=0") return Response.json({ items: catalog, total: 1001 });
+    if (url === "/api/v1/tags?limit=1000&offset=1000") return Response.json({ items: [last], total: 1001 });
+    if (url.endsWith("/photos/assets/query")) return Response.json({ items: [photo(1)], total: 1 });
+    if (url.includes("/nodes/1")) return Response.json({ id: 1, kind: "dir", name: "", revision: 1, path: "/" });
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  stubPhotoFetch(fetcher);
+  render(App);
+  await fireEvent.click(await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+  const inspector = await screen.findByRole("region", { name: "Photo metadata" });
+  const more = await within(inspector).findByRole("button", { name: "Load more keywords" });
+  await waitFor(() => expect((more as HTMLButtonElement).disabled).toBe(false));
+  await fireEvent.click(more);
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Load more keywords" })).toBeNull());
+  expect(fetcher.mock.calls.some(([url]) => url === "/api/v1/tags?limit=1000&offset=1000")).toBe(true);
+  await fireEvent.click(within(inspector).getByRole("combobox", { name: "Keyword: Choose keyword" }));
+  expect(await within(inspector).findByRole("option", { name: /Beyond the first page/ })).toBeTruthy();
+});
+
+
+it("guards a Hidden draft while a status failure conceals its workspace", async () => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof"); storage();
+  vi.stubGlobal("navigation", undefined);
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  Element.prototype.scrollIntoView = vi.fn();
+  let unavailable = false;
+  stubPhotoFetch(async url => {
+    if (url.endsWith("/photos/hidden")) return unavailable ? Response.json({ detail: "Status unavailable" }, { status: 503 }) : Response.json({ configured: true, expires_at: "2099-01-01T00:00:00Z", expires_in: 300 });
+    if (url.endsWith("/photos/assets/query")) return Response.json({ items: [photo(1)], total: 1 });
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  render(App);
+  await screen.findByRole("button", { name: "Open Photo 1.jpg" });
+  await fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
+  await fireEvent.click(await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+  const caption = await screen.findByRole("textbox", { name: "Caption" });
+  await waitFor(() => expect(caption.hasAttribute("disabled")).toBe(false));
+  await fireEvent.input(caption, { target: { value: "Retained Hidden caption" } });
+  unavailable = true; await fireEvent(document, new Event("visibilitychange"));
+  await screen.findByText("Status unavailable");
+  expect(screen.queryByRole("button", { name: "Open Photo 1.jpg" })).toBeNull();
+  for (const name of ["Documents", "Library"]) {
+    await fireEvent.click(screen.getByRole("button", { name }));
+    expect(location.pathname).toBe("/photos/hidden");
+  }
+  unavailable = false;
+  await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Metadata" }));
+  expect((await screen.findByRole("textbox", { name: "Caption" }) as HTMLInputElement).value).toBe("Retained Hidden caption");
+});
+
+it("keeps a Hidden viewer's return point while a status failure refuses to close its draft", async () => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof"); storage();
+  vi.stubGlobal("navigation", undefined);
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  Element.prototype.scrollIntoView = vi.fn();
+  let unavailable = false;
+  stubPhotoFetch(async url => {
+    if (url.endsWith("/photos/hidden")) return unavailable ? Response.json({ detail: "Status unavailable" }, { status: 503 }) : Response.json({ configured: true, expires_at: "2099-01-01T00:00:00Z", expires_in: 300 });
+    if (url.endsWith("/photos/assets/query")) return Response.json({ items: [photo(1), photo(2)], total: 2 });
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  render(App);
+  await screen.findByRole("button", { name: "Open Photo 1.jpg" });
+  await fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Open Photo 1.jpg" }));
+  const viewer = await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+  await fireEvent.click(within(viewer).getByRole("button", { name: "Metadata" }));
+  const caption = await within(viewer).findByRole("textbox", { name: "Caption" });
+  await waitFor(() => expect(caption.hasAttribute("disabled")).toBe(false));
+  await fireEvent.input(caption, { target: { value: "Retained Hidden caption" } });
+  unavailable = true; await fireEvent(document, new Event("visibilitychange"));
+  await screen.findByText("Status unavailable");
+  unavailable = false;
+  await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  const restored = await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+  if (!within(restored).queryByRole("button", { name: "Clear edits" })) await fireEvent.click(within(restored).getByRole("button", { name: "Metadata" }));
+  await fireEvent.click(await within(restored).findByRole("button", { name: "Clear edits" }));
+  await fireEvent.keyDown(restored, { key: "ArrowRight" });
+  await screen.findByRole("dialog", { name: "Photo viewer, Photo 2.jpg" });
+});
+
+it.each(["while open", "after a status failure"])("closes a Hidden viewer with a staged draft when Hidden locks %s", async scenario => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof"); storage();
+  vi.stubGlobal("navigation", undefined);
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  Element.prototype.scrollIntoView = vi.fn();
+  let locked = false, unavailable = false;
+  stubPhotoFetch(async url => {
+    if (url.endsWith("/photos/hidden/lock")) { locked = true; return Response.json({ configured: true }); }
+    if (url.endsWith("/photos/hidden") && unavailable) return Response.json({ detail: "Status unavailable" }, { status: 503 });
+    if (url.endsWith("/photos/hidden")) return Response.json(locked ? { configured: true } : { configured: true, expires_at: "2099-01-01T00:00:00Z", expires_in: 300 });
+    if (url.endsWith("/photos/assets/query")) return Response.json({ items: [photo(1)], total: 1 });
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  render(App);
+  await screen.findByRole("button", { name: "Open Photo 1.jpg" });
+  await fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Open Photo 1.jpg" }));
+  const viewer = await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+  expect(location.hash).toContain("photo=photo-1");
+  await fireEvent.click(within(viewer).getByRole("button", { name: "Metadata" }));
+  const caption = await within(viewer).findByRole("textbox", { name: "Caption" });
+  await waitFor(() => expect(caption.hasAttribute("disabled")).toBe(false));
+  await fireEvent.input(caption, { target: { value: "Discarded Hidden caption" } });
+  if (scenario === "while open") {
+    await fireEvent.click(screen.getByRole("button", { name: "Lock" }));
+    await waitFor(() => expect(locked).toBe(true));
+  } else {
+    unavailable = true; await fireEvent(document, new Event("visibilitychange"));
+    await screen.findByText("Status unavailable");
+    expect(location.hash).toContain("photo=photo-1");
+    unavailable = false; locked = true;
+    await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  }
+  await waitFor(() => expect(location.hash).not.toContain("photo="));
+  expect(screen.queryByRole("dialog", { name: "Photo viewer, Photo 1.jpg" })).toBeNull();
+});
+
+it("resume requests Map authored revalidation", async () => {
+  history.replaceState(null, "", "/photos/map#web_session=synthetic&web_upload_secret=proof"); storage();
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  Element.prototype.scrollIntoView = vi.fn();
+  const meta = document.createElement("meta"); meta.name = "docbank-map-tiles"; meta.content = JSON.stringify({ tile_url: "/api/daemon/web-map-tiles/{z}/{x}/{y}", host: "tiles.example.org", attribution: "Example", max_zoom: 19 }); document.head.append(meta);
+  const fetcher = vi.fn(async (url: string) => {
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: true, change_id: "same" });
+    if (url.endsWith("/photos/assets/query")) {
+      return Response.json({ items: [], map_items: [mapPhoto(1)], total: 1, facets: [] });
+    }
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  stubPhotoFetch(fetcher); render(App);
+  await waitFor(() => expect(map.props?.items).toHaveLength(1));
+  await act(() => map.props!.onvisible(map.props!.items));
+  await fireEvent.click(await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
+  const revalidate = vi.spyOn(Photos.prototype, "revalidateAuthored");
+  const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+  await fireEvent(document, new Event("visibilitychange"));
+  visibility.mockReturnValue("visible"); await fireEvent(document, new Event("visibilitychange"));
+  await waitFor(() => expect(revalidate).toHaveBeenCalled());
 });

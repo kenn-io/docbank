@@ -4,6 +4,7 @@
 
   interface Props {
     selectedCount: number;
+    retainOpen?: boolean;
     outsideCount?: number;
     selectVisible?: boolean;
     visibleDocumentCount: number;
@@ -29,6 +30,7 @@
 
   let {
     selectedCount,
+    retainOpen = false,
     outsideCount = 0,
     selectVisible = false,
     visibleDocumentCount,
@@ -55,7 +57,7 @@
 </script>
 
 <BottomDock
-  open={selectedCount > 0}
+  open={selectedCount > 0 || retainOpen}
   onclose={onclear}
   ariaLabel={context === "photos" ? "Selected photos" : "Selected documents"}
   initialHeight={context === "photos" ? "auto" : "126px"}
@@ -67,7 +69,7 @@
 >
   {#snippet header()}
     <div class="selection-summary">
-      <strong>{allResults ? `All ${wholeQueryCount.toLocaleString()} photos selected` : `${selectedCount} selected ${context === "photos" ? (selectedCount === 1 ? "photo" : "photos") : `on this ${context === "snapshot" ? "frozen page" : "page"}`}`}</strong>
+      <strong>{allResults && selectedCount > 0 ? `All ${wholeQueryCount.toLocaleString()} photos selected` : `${selectedCount} selected ${context === "photos" ? (selectedCount === 1 ? "photo" : "photos") : `on this ${context === "snapshot" ? "frozen page" : "page"}`}`}</strong>
       {#if outsideCount}<span>{outsideCount} outside this view</span>{/if}
       {#if context === "snapshot"}
         <span>Visible selection only · whole query has {wholeQueryCount} documents</span>
@@ -78,10 +80,10 @@
   <div class="selection-actions">
     <Button
       size="sm"
-      disabled={visibleSelected && selectedCount === visibleDocumentCount && !allResults}
+      disabled={context === "photos" && retainOpen && selectedCount === 0 || visibleSelected && selectedCount === visibleDocumentCount && !allResults}
       onclick={onselectvisible}
     >{context === "photos" ? selectVisible ? "Select visible photos" : "Select loaded photos" : "Select visible documents"}</Button>
-    <Button size="sm" onclick={onclear}>Clear selection</Button>
+    <Button size="sm" disabled={context === "photos" && selectedCount === 0} onclick={onclear}>Clear selection</Button>
     {#if context === "photos" && onallresults && !allResults && visibleSelected && wholeQueryCount > 0}<Button size="sm" tone="info" onclick={onallresults}>Select all {wholeQueryCount.toLocaleString()} photos</Button>{/if}
     {#if photoActions}{@render photoActions()}{/if}
     {#if ontags}

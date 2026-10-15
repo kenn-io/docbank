@@ -14,9 +14,9 @@ describe("browser authentication", () => {
     vi.restoreAllMocks();
   });
 
-  it("consumes the browser session without retaining it in web storage", () => {
+  it("consumes the browser session without web storage and preserves history.state", () => {
     history.replaceState(
-      null,
+      { fixtureIndex: 4 },
       "",
       "/#web_session=one%20time&web_upload_secret=proof",
     );
@@ -26,6 +26,7 @@ describe("browser authentication", () => {
     });
     expect(location.hash).toBe("");
     expect(sessionStorage.length).toBe(0);
+    expect(history.state).toEqual({ fixtureIndex: 4 });
     expect(takeFragmentSession()).toBeNull();
   });
 

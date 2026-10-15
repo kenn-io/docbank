@@ -88,3 +88,9 @@ it("explains why tag bindings are disabled without a trustworthy vault ID", () =
       .hasAttribute("disabled"),
   ).toBe(true);
 });
+
+it("lists registered Photos commands without document browsing or tag bindings", () => {
+  render(ShortcutHelpModal, { props: { context: "photos", vaultReady: true, catalog: [tax], catalogTotal: 1, bindings: {}, onbindingchange: vi.fn(), onclose: vi.fn(), photoShortcuts: [{ combo: "0", description: "Clear rating" }, { combo: "shift+/", description: "Show keyboard shortcuts" }] } });
+  expect(screen.getByText("Clear rating")).toBeTruthy(); expect(screen.getByText("Show keyboard shortcuts")).toBeTruthy();
+  expect(screen.queryByText("Next loaded row")).toBeNull(); expect(screen.queryByText("Focus search")).toBeNull(); expect(screen.queryByRole("combobox")).toBeNull();
+});

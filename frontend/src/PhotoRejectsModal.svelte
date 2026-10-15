@@ -6,8 +6,8 @@
 </script>
 
 <Modal title="Move rejects to trash?" tone="danger" ariaLabel="Move rejects to trash" onclose={() => { if (!photos.trashing) onclose(); }} closeOnOverlayClick={!photos.trashing}>
-  <SelectDropdown title="Rejects scope" value={photos.rejectsSelected ? "selected" : "workspace"} options={[{ value: "workspace", label: "Current view" }, { value: "selected", label: `Selected photos (${photos.selection.selectedIDs.size})`, disabled: !photos.selection.selectedIDs.size || photos.selection.selectedIDs.size > photos.rejectsSelectionLimit }]} disabled={photos.trashing || photos.rejectsLoading} onchange={value => void photos.previewRejects(value === "selected")} />
-  {#if photos.rejectsSelectionLimit && photos.selection.selectedIDs.size > photos.rejectsSelectionLimit}<p>Close this dialog and select up to {photos.rejectsSelectionLimit} photos.</p>{/if}
+  <SelectDropdown title="Rejects scope" value={photos.rejectsSelected ? "selected" : "workspace"} options={[{ value: "workspace", label: "Current view" }, { value: "selected", label: `Selected photos (${photos.selectedIDs.size})`, disabled: !photos.selectedIDs.size || photos.selectedIDs.size > photos.rejectsSelectionLimit }]} disabled={photos.trashing || photos.rejectsLoading} onchange={value => void photos.previewRejects(value === "selected")} />
+  {#if photos.rejectsSelectionLimit && photos.selectedIDs.size > photos.rejectsSelectionLimit}<p>Close this dialog and select up to {photos.rejectsSelectionLimit} photos.</p>{/if}
   {#if photos.rejectsLoading}<p role="status"><Spinner size={14} /> Counting rejects…</p>{/if}
   {#if photos.rejects}
     <p>{photos.rejects.photos.toLocaleString()} {photos.rejects.photos === 1 ? "photo" : "photos"} · {photos.rejects.files.toLocaleString()} {photos.rejects.files === 1 ? "file" : "files"} including sidecars</p>

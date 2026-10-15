@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import PhotoAlbumsIndex from "./PhotoAlbumsIndex.svelte";
 import PhotosWorkspace from "./PhotosWorkspace.svelte";
@@ -7,6 +7,7 @@ import { PhotoAlbums } from "./photoAlbums.svelte.js";
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
 import { photo, mapPhoto, photoAlbum, albumResponse } from "./photo-test-fixtures.js";
 
+beforeEach(() => vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} }));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const album = photoAlbum({ included_count: 2, member_count: 2 });
 
@@ -42,7 +43,7 @@ function setup(scoped = false, onnavigate = vi.fn(), mapMode = false) {
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
   HTMLElement.prototype.scrollIntoView = vi.fn();
-  const photos = new Photos("scoped", vi.fn(), false, undefined, mapMode ? "map" : undefined);
+  const photos = new Photos("scoped", vi.fn(), false, undefined, { projection: mapMode ? "map" : undefined });
   photos.items = [photo(1, "2024-01-01"), photo(2, "2025-01-01")]; photos.started = true; photos.total = 10000;
   if (scoped) photos.query = { ...photos.query, filters: { set_ids: [album.id] }, sort: { field: "added_time", direction: "desc" } };
   vi.spyOn(photos, "refresh").mockResolvedValue(true);

@@ -8,7 +8,7 @@ export async function withPhotoFixture(count: number, preview: string, use: (run
   const { run, seed, dispose } = photoFixture(workspace);
   try {
     await mkdir(output!, { recursive: true });
-    await seed(count, rejects);
+    await seed(count, ...(rejects ? ["--rejects"] : []));
     await use(run);
   } finally {
     if (process.env.DOCBANK_KEEP_PHOTO_PREVIEW) {

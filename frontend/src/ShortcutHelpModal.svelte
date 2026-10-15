@@ -15,21 +15,25 @@
   } from "./tag-hotkeys.js";
 
   interface Props {
+    context?: "documents" | "photos";
     vaultReady: boolean;
     catalog: Tag[];
     catalogTotal: number;
     bindings: TagHotkeyBindings;
     onbindingchange: (key: TagHotkey, tagID: string) => void;
     onclose: () => void;
+    photoShortcuts?: { combo: string; description?: string | undefined }[];
   }
 
   let {
+    context = "documents",
     vaultReady,
     catalog,
     catalogTotal,
     bindings,
     onbindingchange,
     onclose,
+    photoShortcuts = [],
   }: Props = $props();
 
   const shortcuts = [
@@ -39,7 +43,6 @@
     { combo: "space", action: "Toggle inspected file selection" },
     { combo: "enter", action: "Open inspected row" },
     { combo: "escape", action: "Clear page selection" },
-    { combo: "b", action: "Add selected photos to album" },
     { combo: "?", action: "Show keyboard shortcuts" },
   ];
 
@@ -76,6 +79,7 @@
   {onclose}
 >
   <div class="shortcut-help">
+    {#if context === "documents"}
     <section aria-labelledby="browsing-shortcuts-heading">
       <div class="section-heading">
         <span>Browsing</span>
@@ -94,7 +98,18 @@
         does not wrap or fetch another page.
       </p>
     </section>
-
+    {/if}
+    {#if context === "photos" && photoShortcuts.length}
+      <section aria-labelledby="photo-shortcuts-heading">
+        <strong id="photo-shortcuts-heading">Photos</strong>
+        <dl class="shortcut-list">
+          {#each photoShortcuts as shortcut (shortcut.combo)}
+            <div><dt>{shortcut.description}</dt><dd><KbdBadge keys={formatShortcutKeys(shortcut.combo)} /></dd></div>
+          {/each}
+        </dl>
+      </section>
+    {/if}
+    {#if context === "documents"}
     <section aria-labelledby="tag-shortcuts-heading">
       <div class="section-heading">
         <span>Tag hotkeys</span>
@@ -130,6 +145,7 @@
         </p>
       {/if}
     </section>
+    {/if}
   </div>
   {#snippet footer()}
     <Button surface="soft" onclick={onclose}>Done</Button>

@@ -2,18 +2,21 @@
   import { onMount, tick } from "svelte";
   import { Button, FormField, Spinner } from "@kenn-io/kit-ui";
   import { getPhotoHiddenState, setupPhotoHidden, unlockPhotoHidden, changePhotoHidden, disablePhotoHidden, type PhotoHiddenState } from "./generated/docbank.js";
+  import type { PhotoUndoState } from "./photoAuthored.svelte.js";
   import { Photos } from "./photos.svelte.js";
   import { PhotoPreviewCache } from "./photoPreviewCache.js";
   import { concealPhotoWorkspace, revalidatePhotoWorkspace, type PhotoWorkspace } from "./photoWorkspace.js";
+  import type { ShortcutManager } from "@kenn-io/kit-ui";
   import PhotosWorkspace from "./PhotosWorkspace.svelte";
   import { APIError } from "./api-transport.js";
   import { HiddenAccess } from "./hiddenAccess.svelte.js";
 
-  let { photoID = "", onphotochange = () => {}, onconceal, access, photoActionError = "", ontrashed, onunhidden, onactionerror, onstate, onaccessfailure }: { photoID?: string; onphotochange?: (id: string, mode: "open" | "step" | "close") => void; onconceal?: () => void; access: HiddenAccess; photoActionError?: string; ontrashed?: () => void; onunhidden?: () => void; onactionerror?: (error: string) => void; onstate?: (state: PhotoHiddenState) => void; onaccessfailure?: () => void } = $props();
+  let { tags, tagsError = "", tagsLoading = false, tagsTotal = 0, onloadtags, onloadmoretags, onmetadatachanged, undoState, onhelp, shortcuts, photoID = "", onphotochange = () => {}, onconceal, access, photoActionError = "", ontrashed, onunhidden, onactionerror, onstate, onaccessfailure }: { tags?: import("./generated/docbank.js").Tag[]; tagsError?: string; tagsLoading?: boolean; tagsTotal?: number; onloadtags?: () => Promise<void>; onloadmoretags?: () => Promise<void>; onmetadatachanged?: (receipt: import("./generated/docbank.js").PhotoAuthoredReceipt, tags: import("./generated/docbank.js").Tag[]) => void; undoState?: PhotoUndoState; onhelp?: () => void; shortcuts?: ShortcutManager; photoID?: string; onphotochange?: (id: string, mode: "open" | "step" | "close") => void; onconceal?: (discarded: boolean) => void; access: HiddenAccess; photoActionError?: string; ontrashed?: () => void; onunhidden?: () => void; onactionerror?: (error: string) => void; onstate?: (state: PhotoHiddenState) => void; onaccessfailure?: () => void } = $props();
   let hiddenState = $state<PhotoHiddenState>({ configured: false });
   let workspace = $state<PhotoWorkspace>();
   let photoWorkspace = $state<PhotosWorkspace>();
-  export function activePhotos() { return workspace?.photos; }
+  export function retainedEditor() { return workspace?.photos.authored; }
+  export function activePhotos() { return workspaceVisible ? workspace?.photos : undefined; }
   export function captureReturn() { photoWorkspace?.captureReturn(); }
   export async function refresh() { if (workspaceVisible) await photoWorkspace?.refresh(); else await checkAccess(); }
   export function lock() { return action("lock"); }
@@ -43,14 +46,14 @@
   let disposed = false;
   const options = () => ({ session: access.session, signal: AbortSignal.timeout(30_000) });
 
-  function conceal() {
-    if (workspaceVisible && !disposed) onconceal?.();
+  function conceal(discarded = false) {
+    if ((workspaceVisible || discarded && workspace) && !disposed) onconceal?.(discarded);
     workspaceVisible = false;
     concealment++;
     return concealPhotoWorkspace(workspace);
   }
   function clear() {
-    void conceal();
+    void conceal(true);
     workspace?.photos.dispose();
     workspace = undefined;
     remaining = 0;
@@ -74,7 +77,7 @@
     deadline = result.expires_in ? requestedAt + result.expires_in * 1000 : 0;
     remaining = secondsUntil(deadline);
     if (!remaining || concealingAction || access.lockError) clear();
-    else if (!workspace) { workspace = { photos: new Photos(access.session, authorizationLost, true, undefined, undefined, access), cache: new PhotoPreviewCache(access.session, authorizationLost, true) }; workspaceVisible = true; }
+    else if (!workspace) { workspace = { photos: new Photos(access.session, authorizationLost, true, undefined, { undoState, hiddenAccess: access }), cache: new PhotoPreviewCache(access.session, authorizationLost, true) }; workspaceVisible = true; }
     else if (!workspaceVisible && !workspace.photos.hiding && !workspace.photos.trashing && !workspace.photos.loading) {
       const current = workspace;
       const version = concealment;
@@ -198,7 +201,7 @@
     <div class="hidden-gate"><h1>Hidden</h1>{#if reading}<Spinner />{/if}</div>
   {:else if workspace && remaining && workspaceVisible}
     <div id="hidden-controls" class="hidden-controls" tabindex="-1"><span>Locks in {Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, "0")}</span><Button size="sm" disabled={actionPending} onclick={() => void action("lock")}>Lock</Button></div>
-    {#each [workspace] as current (current)}<PhotosWorkspace bind:this={photoWorkspace} photos={current.photos} cache={current.cache} title="Hidden" {photoID} {onphotochange} {ontrashed} onhidden={onunhidden} oninvalidate={conceal} {onactionerror} />{/each}
+    {#each [workspace] as current (current)}<PhotosWorkspace {onhelp} {onloadtags} {onloadmoretags} {onmetadatachanged} {tags} {tagsError} {tagsLoading} {tagsTotal} {shortcuts} bind:this={photoWorkspace} photos={current.photos} cache={current.cache} title="Hidden" {photoID} {onphotochange} {ontrashed} onhidden={onunhidden} oninvalidate={conceal} {onactionerror} />{/each}
   {:else if workspace && remaining}
     <Spinner />
   {:else}

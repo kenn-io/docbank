@@ -1,6 +1,7 @@
 import type { PhotoBrowseRow, PhotoPreviewSlot } from "./generated/docbank.js";
 
-export type PhotoGridRow = Pick<PhotoBrowseRow, "asset_id" | "name" | "capture_time" | "width_px" | "height_px"> & { previews: { grid: PhotoPreviewSlot } };
+export type PhotoGridRow = Pick<PhotoBrowseRow, "asset_id" | "name" | "capture_time" | "width_px" | "height_px" | "rotation"> & { previews: { grid: PhotoPreviewSlot } };
+import { rotatedDimensions } from "./photoRotation.js";
 
 export type LayoutItem = { aspect: number };
 
@@ -74,7 +75,9 @@ export function photoAspect(photo: PhotoGridRow): number {
   const preview = photo.previews.grid;
   const width = preview.width ?? photo.width_px;
   const height = preview.height ?? photo.height_px;
-  return width && height && width > 0 && height > 0 ? width / height : 1;
+  if (!width || !height || width <= 0 || height <= 0) return 1;
+  const size = rotatedDimensions(width, height, photo.rotation);
+  return size.width / size.height;
 }
 
 export function monthLabel(key: string): string {

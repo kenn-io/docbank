@@ -76,7 +76,7 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 		}
 		for i, row := range page.Items {
 			if in.Body.Projection == "map" {
-				mapped := PhotoMapRow{AssetID: row.AssetID, Revision: row.Revision, Name: row.Name, CaptureTime: row.Fields.CaptureTime, WidthPX: row.Fields.WidthPX, HeightPX: row.Fields.HeightPX, Latitude: row.Fields.Latitude, Longitude: row.Fields.Longitude}
+				mapped := PhotoMapRow{Rotation: row.Rotation, AssetID: row.AssetID, Revision: row.Revision, Name: row.Name, CaptureTime: row.Fields.CaptureTime, WidthPX: row.Fields.WidthPX, HeightPX: row.Fields.HeightPX, Latitude: row.Fields.Latitude, Longitude: row.Fields.Longitude}
 				if slot, ok := row.Previews["grid"]; ok {
 					mapped.Previews.Grid = photoPreviewSlot(row.AssetID, slot.State, slot.Generation)
 				}
@@ -93,6 +93,7 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 			}
 			wire.Items[i] = PhotoBrowseRow{
 				AssetID: row.AssetID, Kind: row.Kind, Revision: row.Revision,
+				Rotation:      row.Rotation,
 				DisplayFileID: row.DisplayFileID, NodeID: row.NodeID,
 				ContentVersionID: row.ContentVersionID, Name: row.Name, MediaType: row.MediaType,
 				ImportTime: row.ImportTime, CaptureTime: row.Fields.CaptureTime,

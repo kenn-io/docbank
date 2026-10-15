@@ -403,7 +403,7 @@ func TestPhotoFaceBoxStaysStoredWhenPhotoRotationChanges(t *testing.T) {
 	asset, err := s.PhotoAssetForNode(ctx, node.ID)
 	require.NoError(t, err)
 	rotation := 90
-	_, err = s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{
+	_, err = editPhotoAuthored(ctx, s, []PhotoAuthoredTarget{{
 		FileID: asset.Files[0].ID, Revision: asset.Files[0].Revision, Patch: PhotoAuthoredPatch{Rotation: &rotation},
 	}})
 	require.NoError(t, err)
