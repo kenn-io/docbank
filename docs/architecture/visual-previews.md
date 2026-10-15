@@ -128,7 +128,8 @@ including progressive JPEGs, up to 1,000,000,000 source pixels. JPEGs above that
 ceiling record `failed` with `source_dimensions_exceed_limit` before allocating
 coefficient planes. Fit and large previews for these JPEGs can come out below the
 2560/4096 recipe edges because they stop at one-eighth of the source edge.
-Measured peak memory at the 1,000,000,000-pixel ceiling is about 250 MB.
+Measured at a 31622 x 31622 progressive JPEG (just under the ceiling), peak live Go heap
+is about 230 MB, with roughly 270 MB allocated in total.
 Oversize progressive previews use DC scans only. AC scans must be marker-framed
 and nonempty; their entropy contents are skipped. Damaged AC data after valid
 DC scans still yields a correct one-eighth preview. Baseline JPEGs decode all
