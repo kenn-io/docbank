@@ -945,6 +945,15 @@ func TestPhotoAuthoredExpressionBrowse(t *testing.T) {
 			_, err = s.SetPhotoSettings(t.Context(), 1, new("image"))
 			require.NoError(t, err)
 		}
+		displayed := browsePhotoPage(t, s, `{}`).Items
+		require.Len(t, displayed, 1)
+		if stage == "image preference with sidecar" {
+			assert.Equal(t, 1, displayed[0].Rating)
+			assert.Empty(t, displayed[0].Flag)
+		} else {
+			assert.Equal(t, 5, displayed[0].Rating)
+			assert.Equal(t, "pick", displayed[0].Flag)
+		}
 		rawMatch, imageMatch := 1, 0
 		if stage == "image preference with sidecar" {
 			rawMatch, imageMatch = 0, 1

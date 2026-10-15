@@ -747,6 +747,26 @@
   let tagCatalogLoading = $state(false);
   let tagCatalogError = $state("");
   let vaultID = $state("");
+  $effect(() => {
+    const session = webSession;
+    if (!session || !photoMode || untrack(() => !!vaultID)) return;
+    const controller = new AbortController();
+    void generated
+      .auditStatus({}, { session, signal: controller.signal })
+      .then((status) => {
+        if (controller.signal.aborted) return;
+        if (isTagHotkeyVaultID(status.vault_id)) {
+          vaultID = status.vault_id;
+          const storage = localPreferenceStorage();
+          tagHotkeys = storage ? loadTagHotkeys(storage, vaultID) : {};
+        }
+      })
+      .catch((cause) => {
+        if (!controller.signal.aborted) handleFailure(cause);
+      });
+    return () => controller.abort();
+  });
+
   let tagHotkeys = $state<TagHotkeyBindings>({});
   let pendingTagHotkey = $state<TagHotkey | "">("");
   let shortcutNotice = $state("");
@@ -3241,6 +3261,7 @@
                 }}
               />{/if}
           {:else if albumID}{#if albumPhotos}{#key albumPhotos}<PhotosWorkspace
+                  {vaultID}
                   onhelp={openShortcutHelp}
                   tags={tagCatalog}
                   tagsError={tagCatalogError}
@@ -3270,6 +3291,7 @@
                 ></EmptyState
               >
             {:else if !tiles.tile_url}<PhotosWorkspace
+                {vaultID}
                 onhelp={openShortcutHelp}
                 tags={tagCatalog}
                 tagsError={tagCatalogError}
@@ -3284,6 +3306,7 @@
                 photos={photoState.photos}
                 cache={photoState.cache}
               />{:else if mapPhotos}{#key mapPhotos}<PhotosWorkspace
+                  {vaultID}
                   onhelp={openShortcutHelp}
                   tags={tagCatalog}
                   tagsError={tagCatalogError}
@@ -3309,6 +3332,7 @@
                   oninvalidate={invalidateLibrary}
                 />{/key}{/if}
           {:else}{#key photoState.photos.contextID}<PhotosWorkspace
+                {vaultID}
                 onhelp={openShortcutHelp}
                 tags={tagCatalog}
                 tagsError={tagCatalogError}

@@ -41,12 +41,17 @@
   import PhotoAlbumPicker from "./PhotoAlbumPicker.svelte";
   import PhotoAlbumPending from "./PhotoAlbumPending.svelte";
   import { type PhotoAlbums, type PhotoAlbumItem } from "./photoAlbums.svelte.js";
+  import { PhotoCull as CullRun } from "./photoCull.svelte.js";
+  import { photoCullStorage } from "./photoCullStorage.js";
+  import PhotoCull from "./PhotoCull.svelte";
+  import PhotoCompare from "./PhotoCompare.svelte";
   import PhotoRejectsModal from "./PhotoRejectsModal.svelte";
 
   import type PhotoMap from "./PhotoMap.svelte";
   import type { MapTiles } from "./photoMap.js";
   let {
     photos,
+    vaultID = "",
     cache,
     shortcuts,
     tags,
@@ -74,6 +79,7 @@
     uploadChannelError = "",
   }: {
     photos: Photos;
+    vaultID?: string;
     cache: PhotoPreviewCache;
     shortcuts?: ShortcutManager;
     tags?: import("./generated/docbank.js").Tag[];
@@ -103,6 +109,33 @@
     onadd?: () => void;
     uploadChannelError?: string;
   } = $props();
+  const cull = $derived(new CullRun(photos.session, photoCullStorage(vaultID)));
+  let culling = $state(false);
+  let comparing = $state(false);
+  let compareIDs = $state<string[]>([]);
+  let returnFocus: HTMLElement | undefined;
+  $effect(() => {
+    void cull.restore();
+    return () => cull.cancel();
+  });
+  async function startCull(resume = false) {
+    if (!editor.canChangeTarget()) return;
+    returnFocus = document.activeElement as HTMLElement;
+    if (resume || (await cull.start(photos.query))) culling = true;
+  }
+  function compare() {
+    if (!editor.canChangeTarget()) return;
+    returnFocus = document.activeElement as HTMLElement;
+    compareIDs = [...photos.selectedIDs];
+    if (compareIDs.length >= 2 && compareIDs.length <= 4) comparing = true;
+  }
+  async function closeReview() {
+    culling = comparing = false;
+    await cull.flush();
+    await refresh();
+    await tick();
+    if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
+  }
   const album = $derived(albums?.items.find((item) => item.id === albumID));
   const editor = $derived(photos.authored);
   let editing = $state(false);
@@ -236,7 +269,13 @@
         : []),
     ];
     const unregister = bindings.map(([key, description, handler]) =>
-      shortcuts.register(key, handler, { scope, description, allowInInput: true }),
+      shortcuts.register(
+        key,
+        () => {
+          if (!culling && !comparing) handler();
+        },
+        { scope, description, allowInInput: true },
+      ),
     );
     return () => {
       unregister.forEach((remove) => remove());
@@ -637,7 +676,26 @@
   >
 {/snippet}
 
-<svelte:window onkeydown={escape} />
+<svelte:window
+  onkeydown={escape}
+  onkeydowncapture={(event) => {
+    if ((culling || comparing) && (event.ctrlKey || event.metaKey || event.altKey))
+      event.stopPropagation();
+  }}
+/>
+{#if culling}<PhotoCull
+    {cull}
+    {photos}
+    {cache}
+    {onmetadatachanged}
+    onclose={() => void closeReview()}
+  />{/if}
+{#if comparing}<PhotoCompare
+    ids={compareIDs}
+    {photos}
+    {cache}
+    onclose={() => void closeReview()}
+  />{/if}
 <main class="photos-workspace" aria-label={albumID ? "Photo album" : "Photo library"}>
   {#if mapMode && !tiles.tile_url}
     <EmptyState
@@ -691,7 +749,7 @@
       class:map-layout={mapMode}
       class:show-photos={mobileTab === "photos"}
       class="photo-layout"
-      inert={!!photoID}
+      inert={!!photoID || culling || comparing}
     >
       {#snippet libraryGrid()}
         <div class="library-grid">
@@ -745,6 +803,29 @@
                 >{/if}
             </div>
             <div class="toolbar-actions">
+              {#if !mapMode && !photos.hidden}
+                <Button
+                  size="sm"
+                  disabled={actionDisabled || cull.capturing || !vaultID || !photos.total}
+                  onclick={() => void startCull()}>Cull</Button
+                >
+                {#if cull.capturing}<Button size="sm" onclick={() => cull.cancel()}
+                    >Cancel capture</Button
+                  >{/if}
+                {#if cull.run}<Button
+                    size="sm"
+                    disabled={actionDisabled || cull.capturing}
+                    onclick={() => void startCull(true)}>Resume cull</Button
+                  >{/if}
+                <Button
+                  size="sm"
+                  disabled={selectionCount < 2 || selectionCount > 4 || photos.allResults}
+                  title="Select 2–4 photos to compare"
+                  onclick={compare}>Compare</Button
+                >
+                {#if selectionCount > 4}<span>Select 2–4 photos to compare.</span>{/if}
+                {#if cull.error}<span role="alert">{cull.error}</span>{/if}
+              {/if}
               {#if !mapMode && !photos.hidden && !albumID}<Button
                   size="sm"
                   disabled={!onadd}

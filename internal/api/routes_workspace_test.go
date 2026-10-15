@@ -420,3 +420,25 @@ func TestWorkspaceQueryPageKeepsFrozenVersionAcrossConcurrentReplacement(t *test
 	require.Len(t, refreshedLast.Rows, 1)
 	assert.Equal(t, last.CurrentVersionID, refreshedLast.Rows[0].ContentVersionID)
 }
+
+func TestWorkspaceAdHocPhotoSnapshot(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	ids := map[string]string{}
+	for _, name := range []string{"a.jpg", "b.jpg", "c.jpg"} {
+		node, err := s.CreateFile(t.Context(), s.RootID(), name, testHash(name), 10, "image/jpeg")
+		require.NoError(t, err)
+		asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
+		require.NoError(t, err)
+		ids[name] = asset.ID
+	}
+	_, err := s.CreateFile(t.Context(), s.RootID(), "document.txt", testHash("document"), 10, "text/plain")
+	require.NoError(t, err)
+	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", map[string]string{"X-Api-Key": testAPIKey}, `{"photos":true,"query":{"sort":{"field":"name","direction":"desc"}},"page_size":50}`)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var page api.WorkspaceQueryResponse
+	require.NoError(t, json.Unmarshal([]byte(body), &page))
+	require.EqualValues(t, 3, page.Total)
+	require.Len(t, page.Rows, 3)
+	require.Equal(t, []string{ids["c.jpg"], ids["b.jpg"], ids["a.jpg"]}, []string{page.Rows[0].AssetID, page.Rows[1].AssetID, page.Rows[2].AssetID})
+}

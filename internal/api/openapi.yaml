@@ -12208,6 +12208,12 @@ components:
           type:
             - string
             - "null"
+        flag:
+          enum:
+            - ""
+            - pick
+            - reject
+          type: string
         focal_length_mm:
           format: double
           type:
@@ -12270,6 +12276,11 @@ components:
             - state
             - signals
           type: object
+        rating:
+          format: int64
+          maximum: 5
+          minimum: 0
+          type: integer
         revision:
           format: int64
           minimum: 1
@@ -12288,6 +12299,8 @@ components:
             - integer
             - "null"
       required:
+        - rating
+        - flag
         - asset_id
         - kind
         - revision
@@ -18797,6 +18810,8 @@ components:
             - 250
           format: int64
           type: integer
+        photos:
+          type: boolean
         profile:
           maxLength: 128
           type: string

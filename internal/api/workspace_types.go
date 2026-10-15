@@ -14,6 +14,7 @@ const maxWorkspaceQueryRequestBytes = query.MaxInputBytes + (32 << 10)
 
 // WorkspaceQueryCreateRequest opens one exact, daemon-lifetime query snapshot.
 type WorkspaceQueryCreateRequest struct {
+	Photos   bool         `json:"photos,omitempty"`
 	Query    QueryPayload `json:"query"`
 	Profile  string       `json:"profile,omitempty" maxLength:"128"`
 	PageSize int          `json:"page_size,omitempty" enum:"50,100,250" default:"100"`

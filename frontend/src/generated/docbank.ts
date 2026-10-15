@@ -5346,6 +5346,15 @@ export type PhotoBrowsePageFacetsItem = {
   values: WorkspaceFacetValue[];
 };
 
+export type PhotoBrowseRowFlag = typeof PhotoBrowseRowFlag[keyof typeof PhotoBrowseRowFlag];
+
+
+export const PhotoBrowseRowFlag = {
+  '': '',
+  pick: 'pick',
+  reject: 'reject',
+} as const;
+
 export type PhotoBrowseRowKind = typeof PhotoBrowseRowKind[keyof typeof PhotoBrowseRowKind];
 
 
@@ -5489,6 +5498,7 @@ export interface PhotoBrowseRow {
      * @nullable
      */
   file_modified_time: string | null;
+  flag: PhotoBrowseRowFlag;
   /** @nullable */
   focal_length_mm: number | null;
   /** @nullable */
@@ -5509,6 +5519,11 @@ export interface PhotoBrowseRow {
   orientation: number | null;
   previews: PhotoPreviewSlots;
   quality?: PhotoBrowseRowQuality;
+  /**
+     * @minimum 0
+     * @maximum 5
+     */
+  rating: number;
   /** @minimum 1 */
   revision: number;
   rotation: PhotoBrowseRowRotation;
@@ -7793,6 +7808,7 @@ export interface WorkspaceQueryCreateRequest {
   /** @maxItems 8 */
   facets?: WorkspaceQueryCreateRequestFacetsItem[];
   page_size?: WorkspaceQueryCreateRequestPageSize;
+  photos?: boolean;
   /** @maxLength 128 */
   profile?: string;
   query: SavedQueryV1Schema;
