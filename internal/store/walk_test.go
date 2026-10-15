@@ -16,11 +16,10 @@ import (
 	"go.kenn.io/docbank/sqlite/modernc"
 )
 
-func TestBeginWalkRejectsOversizedPage(t *testing.T) {
+func TestBeginWalkPageSizeBounds(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-
-	walker, err := s.BeginWalk(t.Context(), "/", 5001, false)
+	walker, err := s.BeginWalk(t.Context(), "/", MaxWalkPageSize+1, false)
 	if walker != nil {
 		t.Cleanup(func() { require.NoError(t, walker.Close()) })
 	}
@@ -28,17 +27,41 @@ func TestBeginWalkRejectsOversizedPage(t *testing.T) {
 	require.ErrorContains(t, err, "walk page size must be between 1 and 5000")
 }
 
-func TestBeginWalkAcceptsMaximumPageSize(t *testing.T) {
+func TestWalkerConcurrentNextAndClose(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 
-	walker, err := s.BeginWalk(t.Context(), "/", MaxWalkPageSize, false)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, walker.Close()) })
-	page, err := walker.Next(t.Context())
-	require.NoError(t, err)
-	require.Len(t, page, 1)
-	assert.Equal(t, s.RootID(), page[0].Node.ID)
+	type nextResult struct {
+		page []WalkEntry
+		err  error
+	}
+	for range 100 {
+		walker, err := s.BeginWalk(t.Context(), "/", 1, false)
+		require.NoError(t, err)
+		start := make(chan struct{})
+		nextDone := make(chan nextResult, 1)
+		closeDone := make(chan error, 1)
+		go func() {
+			<-start
+			page, err := walker.Next(t.Context())
+			nextDone <- nextResult{page: page, err: err}
+		}()
+		go func() {
+			<-start
+			closeDone <- walker.Close()
+		}()
+		close(start)
+
+		result := <-nextDone
+		if result.err != nil {
+			require.ErrorIs(t, result.err, io.EOF)
+			assert.Nil(t, result.page)
+		} else {
+			require.Len(t, result.page, 1)
+			assert.Equal(t, s.RootID(), result.page[0].Node.ID)
+		}
+		require.NoError(t, <-closeDone)
+	}
 }
 
 func TestWalkOrdersDuplicatePathsByNodeIDAndOptionallyIncludesTrash(t *testing.T) {
