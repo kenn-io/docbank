@@ -271,7 +271,9 @@ func (s Service) reconcile(ctx context.Context, c store.PhotoCheckout) error {
 		if err != nil {
 			return err
 		}
-		fsErr = filepublish.CleanupRootStages(root)
+		if err := filepublish.CleanupRootStages(root); err != nil {
+			return fmt.Errorf("cleaning checkout stages: %w", err)
+		}
 		var observed []string
 		seen := map[string]bool{}
 		for _, e := range entries {
@@ -282,13 +284,10 @@ func (s Service) reconcile(ctx context.Context, c store.PhotoCheckout) error {
 				// A committed copy or install intent may already contain user edits.
 				_, err := root.Lstat(filepath.FromSlash(e.Path))
 				if !errors.Is(err, os.ErrNotExist) {
-					if err != nil && !e.Published {
+					if err != nil {
 						return fmt.Errorf("file %s at %q: %w", e.FileID, e.Path, err)
 					}
 					observed = append(observed, e.FileID)
-					if err != nil {
-						fsErr = errors.Join(fsErr, fmt.Errorf("file %s at %q: %w", e.FileID, e.Path, err))
-					}
 				}
 				continue
 			}
