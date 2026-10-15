@@ -1,17 +1,73 @@
 ---
-last_edited: 2026-10-05
-title: Document processing search
-description: Search only the document versions a consumer currently authorizes.
+last_edited: 2026-10-14
+title: Automatic and processing search
+description: Choose automatic retrieval or an explicit profile and source-version set.
 ---
 
-# Document processing search
+# Automatic and processing search
 
-Processing search is separate from ordinary `docbank search`. It searches
-rendition text (the searchable text that document processing derives from a
-document version) and, where configured, vectors. It searches only the source
-set the caller names. The caller supplies the daemon's vault UUID and one or
-more content version IDs. The CLI obtains the vault UUID and sends repeated
-`--source-version` values for you.
+With no processing options, `docbank search renewal terms` tries hybrid
+search when a processing profile has a query embedding binding. The CLI
+resolves the current versions of all live files through the daemon; you do not
+need profile names or version UUIDs for this path. The daemon enforces query
+consent and index authority.
+
+The CLI runs ordinary lexical search after the hybrid attempt. Its results
+are shown when hybrid search falls back. Folders have no content version, so the
+hybrid source scope cannot include them. After a successful hybrid search, the
+CLI adds folder name matches from the lexical search instead. They are read
+after query embedding, like the revalidated hybrid results. Folders count
+toward `--limit` and replace the lowest-ranked hybrid results when the page is
+full. The report is `truncated` when either search omitted a match.
+
+Profiles and query bindings are tried in ascending name order until one
+succeeds. A failure that could differ by binding moves on to the next pair:
+missing consent, `processing_failed`, `processing_profile_unavailable`,
+`stale_index`, or `not_found` from a binding whose vector index is not built. A failure of the whole source scope, such as
+`stale_version` or `scope_too_large`, stops at once. The CLI never silently
+truncates the semantic population; more than 4,096 live versions falls back
+with `scope_too_large`. When every pair fails, the command reports the first
+failure reason.
+
+Some requests never try hybrid search and report no degradation:
+
+- no profile has a query embedding binding, or processing is unavailable
+- the vault has no live files
+- a tag, directory, MIME, or modification filter, or `--fuzzy`
+- `--limit` above 100, the processing search maximum
+- query text longer than 8,192 Unicode characters, the processing maximum
+- `--mode lexical` with no processing options
+
+Cancellation and authentication failures stop the command. Any other hybrid
+failure falls back to lexical results with the daemon's stable problem code as
+the reason. A failure without a problem code, such as an invalid response,
+reports `semantic_search_failed` with the error text. Search never grants
+consent itself.
+
+Human and `--json` output write one `degraded: REASON` line to stderr, so
+stdout keeps the lexical table or JSON unchanged. `--agent` output puts the
+reason in its header instead.
+
+`--json` output depends on which search produced the results. Lexical search
+returns the ordinary report with `hits`. Successful hybrid search returns the
+processing report with `actual_mode`, `coverage`, and `results`, plus a
+`folders` array of ordinary folder name hits. Check for `actual_mode` to tell
+the shapes apart, or pass `--mode lexical` to always get the ordinary report.
+
+After semantic retrieval, the daemon revalidates the complete report against
+current live versions, including unembedded lexical matches. A match trashed or
+replaced during query embedding is removed, and moved paths are refreshed. A
+file-name match is removed when the file is renamed. A tag edit keeps the match.
+Removed candidates make the report `truncated`, and surviving result ranks and coverage
+reflect the final check. This applies to automatic and explicit semantic/hybrid
+search, including when expansion and reranking are disabled.
+
+## Choose exact versions and a profile
+
+Explicit processing search uses rendition text (text derived from a document
+version) and, where configured, vectors. It searches only the source set you
+name. The CLI obtains the daemon's vault UUID and sends repeated
+`--source-version` values for you:
 
 ```bash
 docbank search "renewal terms" \
@@ -20,7 +76,7 @@ docbank search "renewal terms" \
   --source-version 11111111-1111-4111-8111-111111111111
 ```
 
-Processing search requires a mode, executable profile, and at least one source
+Explicit processing search requires a mode, executable profile, and at least one source
 version. Replace `<configured-profile>` with a name reported by `docbank
 processing profiles`. A search accepts at most 4,096 unique versions and
 returns at most 100 results. `--binding` is optional when the selected profile
@@ -52,7 +108,7 @@ These grants cover the daemon operator's use of that profile across documents
 and searches. A profile with reranking includes a `query_text_and_excerpt`
 grant in the same approval. Review the reranking provider and its disclosure
 alongside the document and query operations. CLI grants have no expiry.
-`lexical` and `auto` use text already stored locally. They do not require
+Explicit processing `lexical` and `auto` use text already stored locally. They do not require
 query-text consent or call an embedding provider.
 
 ## Rerank search results
@@ -87,7 +143,7 @@ for receipt fields and degradation causes.
 - **`lexical`** searches canonical segments from renditions.
 - **`semantic`** searches the selected embedding binding.
 - **`hybrid`** combines lexical and semantic candidates.
-- **`auto`** uses lexical retrieval and reports `lexical` as the actual mode.
+- **Explicit `auto`** uses lexical retrieval and reports `lexical` as the actual mode.
 
 HTTP and embedded callers can [prefer content matches over filenames](../architecture/http-api.md#coverage-and-source-fenced-search)
 with `content_first: true` or `ContentFirst: true`.

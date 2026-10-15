@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-11
+last_edited: 2026-10-13
 title: Roadmap
 description: What Docbank does today, what it does not do yet, and what is planned.
 ---
@@ -59,7 +59,7 @@ prepared input generations, matching profiles, and current consent.
 
 You can [preview and run configured processing profiles](usage/document-processing.md),
 inspect jobs, and read the stored sanitized renditions through the CLI, HTTP
-API, web app, and TUI. [Processing search](usage/search.md) has lexical,
+API, web app, and TUI. [Automatic and processing search](usage/search.md) has lexical,
 semantic, hybrid, and auto modes, and searches only the source versions you
 have authorized.
 

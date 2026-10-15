@@ -22,6 +22,7 @@ const (
 var (
 	searchLimit          int
 	searchJSON           bool
+	searchAgent          bool
 	searchFuzzy          bool
 	searchTag            string
 	searchMIME           string
@@ -47,29 +48,33 @@ type documentSearchCLIOptions struct {
 	Explain           bool
 	Rerank            bool
 	JSON              bool
+	Agent             bool
 }
 
 var searchCmd = &cobra.Command{
-	Example: `  docbank search invoice 2026
+	Example: `  docbank search invoice 2026 --agent
   docbank search merger plan --under /cases/acme --json
   docbank search --tag urgent
   docbank search invocie --fuzzy --modified-since 2026-01-01T00:00:00Z`,
-	Long: `Each word matches a word prefix; all words must match. Name hits rank before
-content hits. Only current versions of live nodes are searched.
-Text content is indexed for text/* (txt, md, csv), JSON/JSONL and email
-bodies. PDFs, images and Office files match by name only until a processing
-profile publishes a rendition; plain search then matches that text too.
-Output: table of SELECTOR, MATCH (name|content|filter), PATH; --json prints
-{hits:[{node,path,match}], limit, truncated}.
---fuzzy appends filename/path matches with one typo (fuzzy_name|fuzzy_path)
-and a coverage receipt: https://docbank.ai/docs/usage/searching/
---mode (lexical|semantic|hybrid|auto) ranks one profile's renditions; it needs
---profile and --source-version UUIDs, and cannot be combined with --fuzzy,
---tag, --under, --mime-type or --modified-*.`,
+	Long: `Query words are joined. Lexical search matches word prefixes, names before
+content, on current versions of live nodes.
+With a query embedding binding, plain text search runs hybrid retrieval over
+live files and appends matching folder names. Filters, --fuzzy, --limit above
+100, and --mode lexical use lexical search. A failed hybrid attempt prints
+"degraded: REASON" to stderr and returns lexical results.
+--json prints lexical {hits, limit, truncated}, or for hybrid the processing
+report (actual_mode, coverage, results) plus folders.
+--agent prints an OK header and one line per hit.
+--fuzzy appends filename/path matches with one typo.
+Explicit processing modes need --profile and --source-version UUIDs.
+See docs/usage/search.md.`,
 	GroupID: groupSearch,
 	Use:     "search [<query>...]",
 	Short:   "Find files and folders by name, text, tag, type, folder, or date",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if searchAgent && searchJSON {
+			return usageError(errors.New("--agent and --json are mutually exclusive"))
+		}
 		if searchFuzzy {
 			for _, flag := range []string{
 				"mode", "profile", "binding", "source-version", "explain", "rerank", "similar-to",
@@ -91,7 +96,7 @@ and a coverage receipt: https://docbank.ai/docs/usage/searching/
 					return usageError(fmt.Errorf("--similar-to cannot be combined with --%s", flag))
 				}
 			}
-			options := documentSearchCLIOptions{Mode: "semantic", Profile: searchProfile, BindingID: searchBinding, ContentVersionIDs: searchSourceVersions, Limit: searchLimit, JSON: searchJSON}
+			options := documentSearchCLIOptions{Mode: "semantic", Profile: searchProfile, BindingID: searchBinding, ContentVersionIDs: searchSourceVersions, Limit: searchLimit, JSON: searchJSON, Agent: searchAgent}
 			if !cmd.Flags().Changed("limit") {
 				options.Limit = 20
 			}
@@ -121,7 +126,7 @@ and a coverage receipt: https://docbank.ai/docs/usage/searching/
 			options := documentSearchCLIOptions{
 				Mode: searchMode, Profile: searchProfile, BindingID: searchBinding,
 				ContentVersionIDs: searchSourceVersions, Limit: searchLimit,
-				Explain: searchExplain, Rerank: searchRerank, JSON: searchJSON,
+				Explain: searchExplain, Rerank: searchRerank, JSON: searchJSON, Agent: searchAgent,
 			}
 			if err := validateDocumentSearchOptions(strings.Join(args, " "), options); err != nil {
 				return err
@@ -186,14 +191,31 @@ and a coverage receipt: https://docbank.ai/docs/usage/searching/
 			opts.UnderNodeID = directory.ID
 			underPath = directory.Path
 		}
-		rep, err := c.SearchWithOptions(
-			cmd.Context(), strings.Join(args, " "), searchLimit, opts,
-		)
+		query := strings.Join(args, " ")
+		var automatic automaticSearchOutcome
+		if !cmd.Flags().Changed("mode") {
+			automatic, err = tryAutomaticSearch(cmd.Context(), c, query, searchLimit, opts)
+			if err != nil {
+				return err
+			}
+		}
+		// Lexical search runs after query embedding, so folder hits added to a
+		// hybrid report are as current as its revalidated results.
+		rep, err := c.SearchWithOptions(cmd.Context(), query, searchLimit, opts)
 		if err != nil {
+			return err
+		}
+		if automatic.report != nil {
+			return writeAutomaticSearch(cmd, query, *automatic.report, rep)
+		}
+		if err := writeSearchDegradation(cmd, automatic); err != nil {
 			return err
 		}
 		if searchJSON {
 			return writeCLIJSON(cmd.OutOrStdout(), rep)
+		}
+		if searchAgent {
+			return writeLexicalSearchAgent(cmd, query, rep, automatic)
 		}
 		return writeSearchReport(cmd, rep, tagName, underPath)
 	},
@@ -256,7 +278,7 @@ func writeSearchReport(cmd *cobra.Command, rep api.SearchReport, tagName, underP
 }
 
 func documentSearchFlagsChanged(cmd *cobra.Command) bool {
-	return cmd.Flags().Changed("mode") || cmd.Flags().Changed("profile") ||
+	return (cmd.Flags().Changed("mode") && searchMode != "lexical") || cmd.Flags().Changed("profile") ||
 		cmd.Flags().Changed("binding") || cmd.Flags().Changed("source-version") ||
 		cmd.Flags().Changed("explain") || searchRerank
 }
@@ -299,6 +321,9 @@ func runSimilarSearch(cmd *cobra.Command, c *daemonconn.Connection, selector nod
 	}
 	if options.JSON {
 		return writeCLIJSON(cmd.OutOrStdout(), report)
+	}
+	if options.Agent {
+		return writeSimilarSearchAgent(cmd, report)
 	}
 	return writeSimilarSearchReport(cmd, report)
 }
@@ -362,7 +387,10 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 	if options.JSON {
 		return writeCLIJSON(cmd.OutOrStdout(), report)
 	}
-	return writeDocumentSearchReport(cmd, report, options.Explain)
+	if options.Agent {
+		return writeDocumentSearchAgent(cmd, query, report, nil)
+	}
+	return writeDocumentSearchReport(cmd, report, options.Explain, nil)
 }
 
 func validateDocumentSearchOptions(query string, options documentSearchCLIOptions) error {
@@ -443,48 +471,77 @@ func selectDocumentSearchBinding(mode, requested string, bindings []string) (str
 	return "", nil
 }
 
-func writeDocumentSearchReport(cmd *cobra.Command, report api.DocumentSearchReport, explain bool) error {
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "mode: %s", report.ActualMode)
-	if report.RequestedMode != report.ActualMode {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), " (requested %s)", report.RequestedMode)
-	}
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\ncoverage: %s (%d/%d source document(s) complete)\n",
-		report.Coverage.State, report.Coverage.CompleteDocuments, report.Coverage.ScopedDocuments)
-	for _, degradation := range report.Degradations {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "degraded: %s\n", degradation)
-	}
-	if report.Reranking != nil {
-		if report.Reranking.Cause == "" {
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reranking: %s (%d candidates)\n",
-				report.Reranking.Outcome, report.Reranking.CandidateCount)
-		} else {
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reranking: %s (%s, %d candidates)\n",
-				report.Reranking.Outcome, report.Reranking.Cause, report.Reranking.CandidateCount)
-		}
-	}
-	if len(report.Results) == 0 {
-		_, err := fmt.Fprintln(cmd.OutOrStdout(), "no matches inside the source fence")
-		if err != nil {
+// writeDocumentSearchReport prints a processing report. Automatic search
+// passes the folder name hits it adds; explicit processing search passes nil.
+func writeDocumentSearchReport(cmd *cobra.Command, report api.DocumentSearchReport, explain bool,
+	folders []api.SearchHit,
+) error {
+	writeDocumentSearchHeader(cmd, report)
+	out := cmd.OutOrStdout()
+	if len(report.Results) == 0 && len(folders) == 0 {
+		if _, err := fmt.Fprintln(out, "no matches inside the source fence"); err != nil {
 			return fmt.Errorf("writing empty document search result: %w", err)
 		}
-		return nil
 	}
-	w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "RANK\tSCORE\tSELECTOR\tVERSION\tPATH\tEXCERPT")
-	for _, result := range report.Results {
-		_, _ = fmt.Fprintf(w, "%d\t%.6g\t%s\t%s\t%s\t%s\n", result.Rank, result.Score,
-			formatNodeSelector(result.NodeID), result.ContentVersionID, result.Path, result.Excerpt)
+	if len(report.Results) > 0 {
+		w := tabwriter.NewWriter(out, 2, 4, 2, ' ', 0)
+		_, _ = fmt.Fprintln(w, "RANK\tSCORE\tSELECTOR\tVERSION\tPATH\tEXCERPT")
+		for _, result := range report.Results {
+			_, _ = fmt.Fprintf(w, "%d\t%.6g\t%s\t%s\t%s\t%s\n", result.Rank, result.Score,
+				formatNodeSelector(result.NodeID), result.ContentVersionID, result.Path, result.Excerpt)
+		}
+		if err := w.Flush(); err != nil {
+			return fmt.Errorf("writing document search results: %w", err)
+		}
 	}
-	if err := w.Flush(); err != nil {
-		return fmt.Errorf("writing document search results: %w", err)
+	if err := writeFolderSearchHits(cmd, folders, len(report.Results) > 0); err != nil {
+		return err
 	}
 	if explain {
 		for _, event := range report.Trace {
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "trace: %s=%d\n", event.Code, event.Count)
+			_, _ = fmt.Fprintf(out, "trace: %s=%d\n", event.Code, event.Count)
 		}
 	}
 	if report.Truncated {
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "results truncated at the requested limit")
+		_, _ = fmt.Fprintln(out, "results truncated at the requested limit")
+	}
+	return nil
+}
+
+func writeDocumentSearchHeader(cmd *cobra.Command, report api.DocumentSearchReport) {
+	out := cmd.OutOrStdout()
+	_, _ = fmt.Fprintf(out, "mode: %s", report.ActualMode)
+	if report.RequestedMode != report.ActualMode {
+		_, _ = fmt.Fprintf(out, " (requested %s)", report.RequestedMode)
+	}
+	_, _ = fmt.Fprintf(out, "\ncoverage: %s (%d/%d source document(s) complete)\n",
+		report.Coverage.State, report.Coverage.CompleteDocuments, report.Coverage.ScopedDocuments)
+	for _, degradation := range report.Degradations {
+		_, _ = fmt.Fprintf(out, "degraded: %s\n", degradation)
+	}
+	if r := report.Reranking; r != nil {
+		if r.Cause == "" {
+			_, _ = fmt.Fprintf(out, "reranking: %s (%d candidates)\n", r.Outcome, r.CandidateCount)
+		} else {
+			_, _ = fmt.Fprintf(out, "reranking: %s (%s, %d candidates)\n", r.Outcome, r.Cause, r.CandidateCount)
+		}
+	}
+}
+
+func writeFolderSearchHits(cmd *cobra.Command, folders []api.SearchHit, separate bool) error {
+	if len(folders) == 0 {
+		return nil
+	}
+	if separate {
+		_, _ = fmt.Fprintln(cmd.OutOrStdout())
+	}
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintln(w, "SELECTOR\tMATCH\tPATH")
+	for _, hit := range folders {
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", formatNodeSelector(hit.Node.ID), hit.Match, hit.Path)
+	}
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("writing folder search results: %w", err)
 	}
 	return nil
 }
@@ -505,7 +562,7 @@ func init() {
 	searchCmd.Flags().StringVar(&searchBefore, "modified-before", "",
 		"require modification before an absolute RFC3339 timestamp")
 	searchCmd.Flags().StringVar(&searchMode, "mode", "",
-		"processing search mode: lexical, semantic, hybrid, or auto")
+		"mode: lexical (ordinary alone), semantic, hybrid, or auto")
 	searchCmd.Flags().StringVar(&searchProfile, "profile", "",
 		"named executable processing profile for --mode search")
 	searchCmd.Flags().StringVar(&searchBinding, "binding", "",
@@ -516,6 +573,7 @@ func init() {
 		"show bounded retrieval stages without raw similarities or vectors")
 	searchCmd.Flags().BoolVar(&searchRerank, "rerank", false,
 		"rerank the source-fenced processing search results")
+	searchCmd.Flags().BoolVar(&searchAgent, "agent", false, "print concise agent-readable text")
 	searchCmd.Flags().BoolVar(&searchFuzzy, "fuzzy", false, "append bounded ASCII filename/path matches with at most one typo")
 	searchCmd.Flags().BoolVar(&searchJSON, "json", false, "print JSON to stdout")
 	rootCmd.AddCommand(searchCmd)

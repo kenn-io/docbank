@@ -130,7 +130,9 @@ func (searcher *Searcher) Search(ctx context.Context, query Query) (Report, erro
 	if expansionDegradation != DegradationNone {
 		report.Degradations = append(report.Degradations, expansionDegradation)
 	}
-	if searcher.expansion.Enabled || searcher.reranking.Enabled {
+	// Query encoding leaves lexical candidates in flight while the catalog can
+	// change. Fence the complete report, including its unembedded lexical hits.
+	if searcher.expansion.Enabled || searcher.reranking.Enabled || report.ActualMode == ModeSemantic || report.ActualMode == ModeHybrid {
 		revalidated, err := searcher.revalidateReport(ctx, query, report)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -139,7 +141,10 @@ func (searcher *Searcher) Search(ctx context.Context, query Query) (Report, erro
 			if searcher.expansion.Enabled {
 				return Report{}, ErrExpandedSearchFailed
 			}
-			return Report{}, ErrRerankingFailed
+			if searcher.reranking.Enabled {
+				return Report{}, ErrRerankingFailed
+			}
+			return Report{}, fmt.Errorf("revalidating semantic search results: %w", err)
 		}
 		report = revalidated
 	}
@@ -164,21 +169,14 @@ func (searcher *Searcher) revalidateReport(ctx context.Context, query Query, rep
 	requested := make([]store.SearchCandidateIdentity, len(report.Results))
 	for i, result := range report.Results {
 		evidence := make([]store.SearchEvidenceIdentity, len(result.Evidence))
-		var nodeRevision int64
 		for j, reference := range result.Evidence {
-			if nodeRevision == 0 {
-				nodeRevision = reference.NodeRevision
-			}
-			if reference.NodeRevision != nodeRevision {
-				return Report{}, errors.New("search result evidence spans node revisions")
-			}
-			evidence[j] = store.SearchEvidenceIdentity{Kind: reference.Kind,
+			evidence[j] = store.SearchEvidenceIdentity{Kind: reference.Kind, NodeName: reference.NodeName,
 				VectorSpaceID: reference.VectorSpaceID, EmbeddingSetID: reference.EmbeddingSetID,
 				InputGenerationID: reference.InputGenerationID, InputID: reference.InputID,
 				InputKind: reference.InputKind, BuildID: reference.BuildID, SegmentID: reference.SegmentID,
 				BlobHash: reference.BlobHash, SourceManifestChecksum: reference.SourceManifestChecksum}
 		}
-		requested[i] = store.SearchCandidateIdentity{NodeID: result.Document.NodeID, NodeRevision: nodeRevision,
+		requested[i] = store.SearchCandidateIdentity{NodeID: result.Document.NodeID,
 			ContentVersionID: result.Document.ContentVersionID, Evidence: evidence}
 	}
 	semanticProfile, semanticBinding := "", ""
@@ -534,6 +532,9 @@ func (searcher *Searcher) collectLexical(ctx context.Context, query Query) ([]Ca
 		reference := EvidenceReference{Kind: hit.EvidenceKind, VaultID: searcher.backend.VaultID(),
 			NodeID: hit.Node.ID, NodeRevision: hit.Node.Revision, ContentVersionID: hit.Node.CurrentVersionID,
 			BuildID: hit.BuildID, SegmentID: hit.SegmentID, BlobHash: hit.BlobHash}
+		if hit.EvidenceKind == "node_name" {
+			reference.NodeName = hit.Node.Name
+		}
 		span, err := MediaTimeSpanFromLocator(hit.Locator)
 		if err != nil {
 			return nil, false, err

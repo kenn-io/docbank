@@ -41,9 +41,13 @@ type MediaTimeSpan struct {
 	EndMS   int64 `json:"end_ms"`
 }
 
+// EvidenceReference cites the authority behind one result. NodeName is set
+// only on node_name evidence: the name read with that match, which
+// revalidation requires to be unchanged.
 type EvidenceReference struct {
 	MediaSources           []MediaSource
 	Kind                   string
+	NodeName               string
 	VaultID                string
 	NodeID                 int64
 	NodeRevision           int64

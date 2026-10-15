@@ -21,7 +21,7 @@ If you are new, start with [setup](setup.md) and then the
 | Import a folder of documents | [Importing documents](usage/importing.md) |
 | Move, rename, or tag documents | [Organizing and tagging](usage/organizing.md) |
 | Find documents by name, text, or filters | [Searching](usage/searching.md) |
-| Search by meaning | [Processing search](usage/search.md) |
+| Search by meaning | [Automatic and processing search](usage/search.md) |
 | Extract a document's text and read it | [Document processing](usage/document-processing.md) |
 | Read email and follow attachments | [Web email reader](usage/web.md#read-archived-email) |
 | Browse photos and organize albums | [Photos](usage/photos.md) |

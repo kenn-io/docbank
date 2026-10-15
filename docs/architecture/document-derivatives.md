@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-05
+last_edited: 2026-10-13
 title: Document derivatives
 description: Authority, retention, retrieval, and rendition format for processed document derivatives.
 ---
@@ -115,5 +115,5 @@ it asks Docbank for the authenticated retained rendition for the still-authorize
 source version.
 
 Next: [Document processing](../usage/document-processing.md) describes the
-operator workflow and [Document processing search](../usage/search.md) describes
+operator workflow and [Automatic and processing search](../usage/search.md) describes
 the consumer request contract.

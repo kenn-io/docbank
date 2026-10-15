@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-11
+last_edited: 2026-10-14
 title: CLI reference
 description: Every docbank command, with its flags, output formats, and error behavior.
 ---
@@ -917,11 +917,20 @@ Selecting a photo member restores its whole group. Companions inside trashed fol
 ## docbank search
 
 ```
-docbank search [<query>...] [--tag <name-or-id>] [--mime-type <type/subtype>] [--under <path-or-id>] [--modified-since <timestamp>] [--modified-before <timestamp>] [--fuzzy] [--limit <n>] [--json]
+docbank search [<query>...] [--tag <name-or-id>] [--mime-type <type/subtype>] [--under <path-or-id>] [--modified-since <timestamp>] [--modified-before <timestamp>] [--fuzzy] [--limit <n>] [--agent | --json]
 ```
 
-Searches live node names and verified extracted text with SQLite FTS5, its
-full-text search engine. Each whitespace-separated term matches as a prefix.
+Query words are joined. When a processing profile has a query embedding
+binding, plain text search tries hybrid retrieval over the current versions of
+all live files, then appends folder name matches from ordinary search within
+the same `--limit`. Filters, `--fuzzy`, limits above 100, queries longer than 8,192 Unicode
+characters, and `--mode lexical` run ordinary lexical search without trying
+hybrid. When a hybrid attempt fails, the CLI writes `degraded: REASON` to
+stderr and prints ordinary lexical results. See
+[Automatic and processing search](usage/search.md).
+
+Ordinary lexical search uses SQLite FTS5, its full-text search engine, over
+live node names and verified extracted text. Each whitespace-separated term matches as a prefix.
 Docbank escapes FTS operator syntax instead of interpreting it. Name matches
 use BM25 relevance ranking and appear before separately ranked content-only
 matches.
@@ -960,8 +969,13 @@ limit bounds response size, not database work. Search has no continuation
 cursor: when `truncated` is true, narrowing time bounds cannot recover omitted
 nodes that share a timestamp with returned nodes, such as a restored subtree.
 
-`--json` emits the typed search report with `hits`, the applied `limit`, and
-a `truncated` boolean. A filtered report also echoes the stable
+`--json` emits the existing typed report for the selected path: ordinary lexical
+search uses `hits`; hybrid and explicit processing search use `results`. A
+lexical fallback writes its degradation reason to stderr, keeping stdout JSON
+unchanged.
+
+For ordinary lexical search, the typed report contains `hits`, the applied
+`limit`, and a `truncated` boolean. A filtered report also echoes the stable
 `tag_id`, normalized `mime_type`, stable `under_node_id`, and canonical
 `modified_since` / `modified_before` bounds when supplied. An empty result uses
 `"hits": []`.
@@ -969,7 +983,7 @@ a `truncated` boolean. A filtered report also echoes the stable
 The daemon indexes current UTF-8 `text/*`, JSON, and JSONL blobs up to 16 MiB
 after a complete verified read. It does not automatically run PDF, Office,
 or OCR extraction. Ordinary search uses words in names and indexed text.
-Processing search uses the separate form below. Saved queries and highlight sets
+Explicit processing search uses the form below. Saved queries and highlight sets
 use a separate
 [HTTP API](usage/searching.md#save-complete-query-intent-over-http), with no CLI
 management command. See [Searching](usage/searching.md).
@@ -991,10 +1005,33 @@ Candidate, name, path, and time bounds can miss matches; narrow the query or
 `--under`. See [fuzzy discovery rules and limits](usage/searching.md#what-if-i-remember-a-misspelled-filename-or-path)
 for the full contract and receipt meanings.
 
+### Agent output
+
+`--agent` changes only output. It is mutually exclusive with `--json`. The
+header contains `OK search`, count, query, actual mode, degradation reason (or
+`false`), and truncation. A hybrid failure without a daemon problem code also
+adds `degraded_error`. Fuzzy lexical search adds `fuzzy` status and
+`fuzzy_reasons`. Processing headers include coverage and complete/scoped
+document counts. With `--explain`, the header adds trace stage/count pairs.
+With `--rerank`, it adds outcome, candidate count, and any failure cause.
+
+Each hit is one line with selector, match, and path. Processing hits add the
+daemon score, a lexical/semantic/hybrid match kind, and a short excerpt.
+Ordinary lexical hits omit score and excerpt because that API exposes neither.
+Hybrid output lists folder name matches as `match=name` lines after the
+processing hits. Values with spaces, quotes, or backslashes use Go string
+quoting; terminal escapes and controls are removed. Excerpts collapse
+whitespace and are bounded to 160 Unicode characters.
+
+```text
+OK search count=1 query="renewal terms" mode=lexical degraded=false truncated=false
+- selector=id:42 match=name path=/renewal-terms.txt
+```
+
 ### Processing search
 
 ```
-docbank search <query> --mode <lexical|semantic|hybrid|auto> --profile <name> --source-version <uuid> [--source-version <uuid>...] [--binding <name>] [--limit <n>] [--rerank] [--explain] [--json]
+docbank search <query> --mode <lexical|semantic|hybrid|auto> --profile <name> --source-version <uuid> [--source-version <uuid>...] [--binding <name>] [--limit <n>] [--rerank] [--explain] [--agent | --json]
 ```
 
 Searches retained processing results for the source versions you list. That set
@@ -1033,7 +1070,7 @@ Use `docbank search --similar-to id:42 --profile private_text` with repeated
 `--source-version <uuid>` values to find files like one selected current
 version. Include that version in the source fence. `--version <uuid>` pins the
 selection; omission uses the node's current version. The fence accepts 1 to
-4,096 versions. `--binding`, `--limit` from 1 to 100, and `--json` are supported.
+4,096 versions. `--binding`, `--limit` from 1 to 100, and `--agent` or `--json` are supported.
 The default limit is 20 content groups.
 
 Similarity uses stored embeddings locally. It excludes the source node, groups

@@ -104,9 +104,9 @@ func addLane(results map[DocumentIdentity]*Result, candidates []Candidate, lane 
 		if result == nil {
 			result = &Result{Document: candidate.Document, Path: candidate.Path}
 			results[candidate.Document] = result
-		} else if result.Path != "" && candidate.Path != "" && result.Path != candidate.Path {
-			return errors.New("candidate lanes disagree on the stable document path")
 		} else if result.Path == "" {
+			// Lanes read on either side of query encoding can see a concurrent
+			// move. Keep the first lane's path; hybrid revalidation refreshes it.
 			result.Path = candidate.Path
 		}
 		if lane == LaneLexical {

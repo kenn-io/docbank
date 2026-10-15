@@ -200,7 +200,7 @@ func TestRunProcessErrorHints(t *testing.T) {
 	}
 	assert.Equal(t, exitUsage, run("processing", "plan", "id:1"))
 	assert.Contains(t, stderr.String(), `list profiles with "docbank processing profiles"`)
-	assert.Equal(t, exitUsage, run("search", "term", "--mode", "lexical"))
+	assert.Equal(t, exitUsage, run("search", "term", "--mode", "hybrid"))
 	assert.Contains(t, stderr.String(), `list profiles with "docbank processing profiles"`)
 	assert.Equal(t, exitUsage, run("search", "term", "--mode", "lexical", "--profile", "supplied-captions"))
 	assert.Contains(t, stderr.String(), `use current_version_id from "docbank stat <path-or-id> --json"`)

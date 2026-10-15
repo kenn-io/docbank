@@ -57,7 +57,8 @@ will receive. Once the job finishes, read its rendition: the extracted Markdown
 that Docbank verified and stored for that version. With embeddings configured,
 search gains Semantic and Hybrid modes. **Find similar** compares stored
 embeddings and calls no provider. See
-[processing](usage/document-processing.md) and [search](usage/search.md).
+[processing](usage/document-processing.md) and
+[automatic and processing search](usage/search.md).
 
 ![A processing plan listing each provider, its destination, and the outputs Docbank will keep](https://docbank.ai/assets/generated/web-document-processing-plan.png)
 

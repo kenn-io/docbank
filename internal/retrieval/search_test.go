@@ -165,6 +165,24 @@ func TestSearcherHybridUsesRRFWithoutComparingRawScores(t *testing.T) {
 	assert.InDelta(t, 2.0/61.0, report.Results[0].Score, 1e-12)
 }
 
+func TestSearcherRevalidatesTheNameItMatched(t *testing.T) {
+	t.Parallel()
+	searcher, backend, _, descriptor := retrievalSearcherFixture(t, true, 1)
+	// The store reads names and paths separately, so a rename between the
+	// reads pairs the old matched name with the new path.
+	backend.lexical = []store.ExplainedLexicalCandidate{{Node: store.Node{ID: 8,
+		CurrentVersionID: "version-semantic", Name: "semantic.pdf"}, Path: "/renamed.pdf",
+		Match: store.SearchMatchName, EvidenceKind: "node_name", Excerpt: "semantic.pdf"}}
+	_, err := searcher.Search(t.Context(), Query{Text: "semantic", Mode: ModeHybrid, Limit: 3,
+		ProcessingProfileFingerprint: strings.Repeat("a", 64), BindingID: "required",
+		Authorization: retrievalAuthorization(descriptor)})
+	require.NoError(t, err)
+	require.Len(t, backend.revalidated, 1)
+	require.NotEmpty(t, backend.revalidated[0].Evidence)
+	assert.Equal(t, store.SearchEvidenceIdentity{Kind: "node_name", NodeName: "semantic.pdf"},
+		backend.revalidated[0].Evidence[0])
+}
+
 func TestSearcherAppliesIndependentLaneAndResponseLimits(t *testing.T) {
 	for _, mode := range []Mode{ModeAuto, ModeLexical, ModeSemantic, ModeHybrid} {
 		for _, limit := range []int{1, 10} {
@@ -376,6 +394,7 @@ func retrievalANNRows(t *testing.T, generation *vectorindex.Generation) []vector
 }
 
 type retrievalBackendStub struct {
+	revalidated            []store.SearchCandidateIdentity
 	lexicalTruncated       bool
 	semanticTruncated      bool
 	vaultID                string
@@ -441,9 +460,15 @@ func (backend *retrievalBackendStub) ReleaseVectorIndexGeneration(ctx context.Co
 }
 
 func (backend *retrievalBackendStub) RevalidateSearchCandidates(_ context.Context,
-	_ []store.SearchCandidateIdentity, _ store.SearchOptions, _, _ string,
+	requested []store.SearchCandidateIdentity, _ store.SearchOptions, _, _ string,
 ) (store.SearchCandidateRevalidation, error) {
+	backend.revalidated = requested
 	candidates := make([]store.RevalidatedSearchCandidate, 0, len(backend.semantic))
+	for _, candidate := range backend.lexical {
+		candidates = append(candidates, store.RevalidatedSearchCandidate{
+			NodeID: candidate.Node.ID, ContentVersionID: candidate.Node.CurrentVersionID, Path: candidate.Path,
+		})
+	}
 	for _, candidate := range backend.semantic {
 		candidates = append(candidates, store.RevalidatedSearchCandidate{
 			NodeID: candidate.NodeID, ContentVersionID: candidate.ContentVersionID, Path: candidate.Path,
@@ -604,6 +629,18 @@ func TestFuseReciprocalRankPreservesExactLaneContributions(t *testing.T) {
 	assert.InDelta(t, 1.0/62.0, results[0].Explanation[1].Contribution, 1e-12)
 	assert.Equal(t, semanticOnly, results[1].Document,
 		"equal RRF scores use stable document identity, never raw lane score")
+}
+
+func TestFuseReciprocalRankKeepsLexicalPathAfterConcurrentMove(t *testing.T) {
+	t.Parallel()
+
+	shared := DocumentIdentity{VaultID: "vault", NodeID: 7, ContentVersionID: "version-a"}
+	results, _, err := FuseReciprocalRank(
+		[]Candidate{{Document: shared, Lane: LaneLexical, Rank: 1, Path: "/before/report.pdf"}},
+		[]Candidate{{Document: shared, Lane: LaneSemantic, Rank: 1, VectorSpaceID: "space", Path: "/after/renamed.pdf"}}, 1)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, "/before/report.pdf", results[0].Path)
 }
 
 func TestFuseReciprocalRankRejectsMixedSemanticVectorSpaces(t *testing.T) {
