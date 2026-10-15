@@ -13,18 +13,6 @@ export default defineConfig({
     rules: {
       "vite-plus/prefer-vite-plus-imports": "error",
     },
-    overrides: [
-      {
-        // Mock assertions pass methods without calling them.
-        files: ["**/*.test.ts"],
-        rules: { "typescript/unbound-method": "off" },
-      },
-    ],
-    options: {
-      typeAware: true,
-      // svelte-check validates types, including Svelte component exports.
-      typeCheck: false,
-    },
   },
   plugins: [svelte()],
   resolve: {
