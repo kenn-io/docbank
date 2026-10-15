@@ -987,6 +987,27 @@ func TestPhotoFaceDecisionRejectionBound(t *testing.T) {
 	}))
 	_, err = s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: open.CandidateID, ExpectedRevision: open.Revision, Action: "reject"})
 	require.ErrorIs(t, err, ErrPhotoFaceRejectionLimit)
+	updated, current, err := s.ReplaceContent(ctx, n.ID, n.Revision, fakeHash("b2"), 20, "image/jpeg")
+	require.NoError(t, err)
+	surviving, _, err := s.CreatePhotoFace(ctx, current.ID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, "")
+	require.NoError(t, err)
+	grouped := candidateForTest(t, c.ActorKey, "Face", p.PersonID, []PersonCandidateOccurrence{
+		{ContentVersionID: n.CurrentVersionID, Role: "depicted", EvidenceKind: "face", EvidenceID: f.FaceID},
+		{ContentVersionID: current.ID, Role: "depicted", EvidenceKind: "face", EvidenceID: surviving.FaceID},
+	})
+	grouped.Reason = personCandidateReasonFaceMatch
+	grouped = openCandidateForTest(t, s, grouped)
+	_, err = s.PruneContentVersions(ctx, n.ID, updated.Revision, VersionPruneSelector{AllPrior: true}, true)
+	require.NoError(t, err)
+	decided, err := s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: grouped.CandidateID, ExpectedRevision: grouped.Revision, Action: "reject"})
+	require.NoError(t, err)
+	require.Equal(t, personCandidateStateRejected, decided.State)
+	faces, _, err = s.PhotoFaces(ctx, current.ID)
+	require.NoError(t, err)
+	require.Equal(t, []string{p.PersonID}, faces[0].RejectedPersonIDs)
+	backup.Reset()
+	require.NoError(t, s.ExportMetadata(ctx, &backup))
+	require.NoError(t, newTestStore(t).ImportMetadata(ctx, &backup))
 }
 
 func TestPhotoFaceCandidateAcceptanceClearsDecisions(t *testing.T) {

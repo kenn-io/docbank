@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/canonical"
 )
 
@@ -472,6 +473,81 @@ func TestCandidateLinksSkipPrunedVersions(t *testing.T) {
 				require.ErrorIs(t, err, ErrNotFound)
 			})
 		}
+	}
+}
+
+func TestFaceMatchCandidateDecisionsSkipPrunedVersions(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name, action string
+		surviving    bool
+		wantErr      error
+	}{
+		{name: "link surviving occurrence", action: "link", surviving: true},
+		{name: "reject surviving occurrence", action: "reject", surviving: true},
+		{name: "reject all pruned occurrences", action: "reject"},
+		{name: "link all pruned occurrences", action: "link", wantErr: ErrNotFound},
+		{name: "new person from all pruned occurrences", action: "new_person", wantErr: ErrNotFound},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			person, err := s.CreatePerson(ctx, "Ada", "operator")
+			require.NoError(t, err)
+			prunedNode, prunedFace := faceForDecisionTest(t, s, "")
+			updated, current, err := s.ReplaceContent(ctx, prunedNode.ID, prunedNode.Revision, fakeHash("f2"), 20, "image/jpeg")
+			require.NoError(t, err)
+			faceID, err := newUUIDv4()
+			require.NoError(t, err)
+			survivingFace, _, err := s.CreatePhotoFace(ctx, current.ID, faceID, document.FaceBox{Width: .3, Height: .4}, "")
+			require.NoError(t, err)
+			occurrences := []PersonCandidateOccurrence{{
+				ContentVersionID: prunedNode.CurrentVersionID, Role: "depicted", EvidenceKind: "face", EvidenceID: prunedFace.FaceID,
+			}}
+			if test.surviving {
+				occurrences = append(occurrences, PersonCandidateOccurrence{
+					ContentVersionID: current.ID, Role: "depicted", EvidenceKind: "face", EvidenceID: survivingFace.FaceID,
+				})
+			}
+			candidate := candidateForTest(t, "face:"+prunedFace.FaceID, "Ada", person.PersonID, occurrences)
+			candidate.Reason = personCandidateReasonFaceMatch
+			candidate = openCandidateForTest(t, s, candidate)
+			pruned, err := s.PruneContentVersions(ctx, prunedNode.ID, updated.Revision, VersionPruneSelector{AllPrior: true}, true)
+			require.NoError(t, err)
+			require.Equal(t, 1, pruned.DeletedVersions)
+
+			decision := CandidateDecision{CandidateID: candidate.CandidateID, Action: test.action, ExpectedRevision: candidate.Revision}
+			if test.action == "link" {
+				decision.PersonID = person.PersonID
+			}
+			decided, err := s.DecidePersonCandidate(ctx, decision)
+			if test.wantErr != nil {
+				require.ErrorIs(t, err, test.wantErr)
+				retained, _, err := s.PersonCandidates(ctx, personCandidateStateOpen, 10, 0)
+				require.NoError(t, err)
+				require.Equal(t, []PersonMatchCandidate{candidate}, retained)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, candidate.Evidence, decided.Evidence)
+			require.Equal(t, candidate.EvidenceSHA256, decided.EvidenceSHA256)
+			if test.action == "reject" {
+				require.Equal(t, personCandidateStateRejected, decided.State)
+				if test.surviving {
+					faces, _, err := s.PhotoFaces(ctx, current.ID)
+					require.NoError(t, err)
+					require.Equal(t, []string{person.PersonID}, faces[0].RejectedPersonIDs)
+				}
+				return
+			}
+			require.Equal(t, "linked", decided.State)
+			faces, assertions, err := s.PhotoFaces(ctx, current.ID)
+			require.NoError(t, err)
+			require.Equal(t, survivingFace.FaceID, faces[0].FaceID)
+			require.Len(t, assertions, 1)
+			require.Equal(t, person.PersonID, assertions[0].PersonID)
+			require.Equal(t, assertions[0].AssertionID, faces[0].AssertionID)
+		})
 	}
 }
 

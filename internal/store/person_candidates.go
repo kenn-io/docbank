@@ -299,6 +299,19 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDec
 			}
 		}
 		if candidate.Reason == personCandidateReasonFaceMatch {
+			activeOccurrences := occurrences[:0]
+			for _, occurrence := range occurrences {
+				if err := requireCandidateVersionTx(ctx, tx, occurrence.ContentVersionID); errors.Is(err, ErrNotFound) {
+					continue
+				} else if err != nil {
+					return err
+				}
+				activeOccurrences = append(activeOccurrences, occurrence)
+			}
+			occurrences = activeOccurrences
+			if len(occurrences) == 0 && decision.Action != "reject" {
+				return ErrNotFound
+			}
 			for _, o := range occurrences {
 				if e := s.facePhotoQuery(ctx, tx, o.ContentVersionID); e != nil {
 					return e

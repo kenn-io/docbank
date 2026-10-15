@@ -409,7 +409,7 @@ func (s *Store) DecidePhotoFace(ctx context.Context, versionID string, request P
 
 func requirePhotoFaceRejectionBound(ctx context.Context, tx metadataQuerier, faceID, candidateID string) error {
 	var exceeded bool
-	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT m.face_id FROM person_candidate_faces m JOIN person_match_candidates c ON c.candidate_id=m.candidate_id WHERE ((?='' AND ?='') OR m.face_id=? OR m.face_id IN (SELECT face_id FROM person_candidate_faces WHERE candidate_id=?)) AND c.state='rejected' GROUP BY m.face_id HAVING COUNT(DISTINCT c.suggested_person_id)>1000)`, faceID, candidateID, faceID, candidateID).Scan(&exceeded)
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT m.face_id FROM person_candidate_faces m JOIN photo_faces f ON f.face_id=m.face_id AND f.content_version_id=m.content_version_id JOIN person_match_candidates c ON c.candidate_id=m.candidate_id WHERE ((?='' AND ?='') OR m.face_id=? OR m.face_id IN (SELECT face_id FROM person_candidate_faces WHERE candidate_id=?)) AND c.state='rejected' GROUP BY m.face_id HAVING COUNT(DISTINCT c.suggested_person_id)>1000)`, faceID, candidateID, faceID, candidateID).Scan(&exceeded)
 	if err != nil {
 		return err
 	}
