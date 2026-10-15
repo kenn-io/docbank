@@ -25,9 +25,10 @@ type PhotoFaceDecisionRequest struct {
 }
 
 type faceDecisionPerson struct {
-	PersonID  string `json:"person_id"`
-	KeyFaceID string `json:"key_face_id,omitzero"`
-	Revision  int64  `json:"revision"`
+	PersonID                string `json:"person_id"`
+	KeyFaceID               string `json:"key_face_id,omitzero"`
+	KeyFaceContentVersionID string `json:"key_face_content_version_id,omitzero"`
+	Revision                int64  `json:"revision"`
 }
 
 type PhotoFaceDecisionState struct {
@@ -153,7 +154,7 @@ func (s *Store) faceDecisionStateTx(ctx context.Context, tx *sql.Tx, versionID s
 	for _, id := range personIDs {
 		var p faceDecisionPerson
 		p.PersonID = id
-		if err = tx.QueryRowContext(ctx, `SELECT COALESCE(key_face_id,''),revision FROM persons WHERE person_id=?`, id).Scan(&p.KeyFaceID, &p.Revision); err != nil {
+		if err = tx.QueryRowContext(ctx, `SELECT COALESCE(p.key_face_id,''),COALESCE(f.content_version_id,''),p.revision FROM persons p LEFT JOIN photo_faces f ON f.face_id=p.key_face_id WHERE p.person_id=?`, id).Scan(&p.KeyFaceID, &p.KeyFaceContentVersionID, &p.Revision); err != nil {
 			return state, err
 		}
 		state.People = append(state.People, p)
@@ -224,6 +225,13 @@ func writeFaceDecisionReceiptTx(ctx context.Context, tx *sql.Tx, before, after P
 	before.Candidates, after.Candidates = changedFaceRows(before.Candidates, after.Candidates)
 	before.People, after.People = changedFaceRows(before.People, after.People)
 	result := PhotoFaceDecisionReceipt{RequestSHA256: requestSHA, ReceiptID: id, Before: before, After: after, UndoOf: undo}
+	for _, state := range []PhotoFaceDecisionState{before, after} {
+		for _, person := range state.People {
+			if person.KeyFaceID != "" && person.KeyFaceContentVersionID == "" {
+				return result, ErrInvalidPhotoFace
+			}
+		}
+	}
 	if err = validateFaceDecisionReceipt(result, id); err != nil {
 		return result, err
 	}
@@ -508,6 +516,22 @@ func (s *Store) UndoPhotoFaceDecisionWithOperationID(ctx context.Context, id, op
 		if currentHash != afterHash {
 			return ErrStaleRevision
 		}
+		for i, p := range r.Before.People {
+			after := r.After.People[i]
+			if p.KeyFaceID == "" || (p.KeyFaceID == after.KeyFaceID && p.KeyFaceContentVersionID == after.KeyFaceContentVersionID) {
+				continue
+			}
+			if p.KeyFaceContentVersionID == "" {
+				return ErrStaleRevision
+			}
+			var exists bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_faces WHERE face_id=? AND content_version_id=?)`, p.KeyFaceID, p.KeyFaceContentVersionID).Scan(&exists); err != nil {
+				return err
+			}
+			if !exists {
+				return ErrStaleRevision
+			}
+		}
 		// Capture dependencies omitted by older receipts so reconciliation stays undoable.
 		var detached []string
 		var attached []string
@@ -704,7 +728,12 @@ func validateFaceDecisionReceipt(r PhotoFaceDecisionReceipt, id string) error {
 	}
 	for i, a := range r.After.People {
 		b := r.Before.People[i]
-		if validateUUIDv4(a.PersonID) != nil || a.PersonID != b.PersonID || a.Revision < b.Revision || b.Revision < 1 || a.KeyFaceID != "" && validateUUIDv4(a.KeyFaceID) != nil || b.KeyFaceID != "" && validateUUIDv4(b.KeyFaceID) != nil || i > 0 && r.After.People[i-1].PersonID >= a.PersonID {
+		if validateUUIDv4(a.PersonID) != nil || a.PersonID != b.PersonID || a.Revision < b.Revision || b.Revision < 1 ||
+			a.KeyFaceID != "" && validateUUIDv4(a.KeyFaceID) != nil || b.KeyFaceID != "" && validateUUIDv4(b.KeyFaceID) != nil ||
+			a.KeyFaceContentVersionID != "" && validateUUIDv4(a.KeyFaceContentVersionID) != nil ||
+			b.KeyFaceContentVersionID != "" && validateUUIDv4(b.KeyFaceContentVersionID) != nil ||
+			a.KeyFaceID == "" && a.KeyFaceContentVersionID != "" || b.KeyFaceID == "" && b.KeyFaceContentVersionID != "" ||
+			i > 0 && r.After.People[i-1].PersonID >= a.PersonID {
 			return ErrInvalidPhotoFace
 		}
 	}
@@ -963,7 +992,7 @@ func faceDecisionRowsTx(ctx context.Context, tx *sql.Tx, template PhotoFaceDecis
 	}
 	for _, v := range template.People {
 		p := faceDecisionPerson{PersonID: v.PersonID}
-		e := tx.QueryRowContext(ctx, `SELECT COALESCE(key_face_id,''),revision FROM persons WHERE person_id=?`, p.PersonID).Scan(&p.KeyFaceID, &p.Revision)
+		e := tx.QueryRowContext(ctx, `SELECT COALESCE(p.key_face_id,''),COALESCE(f.content_version_id,''),p.revision FROM persons p LEFT JOIN photo_faces f ON f.face_id=p.key_face_id WHERE p.person_id=?`, p.PersonID).Scan(&p.KeyFaceID, &p.KeyFaceContentVersionID, &p.Revision)
 		if e != nil {
 			return current, e
 		}

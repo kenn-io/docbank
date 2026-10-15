@@ -468,6 +468,45 @@ func TestPhotoFaceDecisionGroupedRejection(t *testing.T) {
 	}
 }
 
+func TestPhotoFaceDecisionUndoRejectsReusedPreviousKeyFace(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	person, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	previousNode, previousFace := faceForDecisionTest(t, s, person.PersonID)
+	_, err = s.DecidePhotoFace(ctx, previousNode.CurrentVersionID, PhotoFaceDecisionRequest{
+		FaceID: previousFace.FaceID, PersonID: person.PersonID, Action: "key",
+		Revision: previousFace.Revision, PersonRevision: person.Revision,
+	})
+	require.NoError(t, err)
+
+	currentNode := browsePhotoNode(t, s, "second.jpg", fakeHash("c1"), "image/jpeg")
+	currentFace, _, err := s.CreatePhotoFace(ctx, currentNode.CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, person.PersonID)
+	require.NoError(t, err)
+	personDetail, err := s.PersonDetail(ctx, person.PersonID)
+	require.NoError(t, err)
+	changed, err := s.DecidePhotoFace(ctx, currentNode.CurrentVersionID, PhotoFaceDecisionRequest{
+		FaceID: currentFace.FaceID, PersonID: person.PersonID, Action: "key",
+		Revision: currentFace.Revision, PersonRevision: personDetail.Revision,
+	})
+	require.NoError(t, err)
+	require.Equal(t, previousNode.CurrentVersionID, changed.Before.People[0].KeyFaceContentVersionID)
+	require.Equal(t, currentNode.CurrentVersionID, changed.After.People[0].KeyFaceContentVersionID)
+
+	updated, replacementVersion, err := s.ReplaceContent(ctx, previousNode.ID, previousNode.Revision, fakeHash("b2"), 20, "image/jpeg")
+	require.NoError(t, err)
+	_, err = s.PruneContentVersions(ctx, previousNode.ID, updated.Revision, VersionPruneSelector{AllPrior: true}, true)
+	require.NoError(t, err)
+	_, _, err = s.CreatePhotoFace(ctx, replacementVersion.ID, previousFace.FaceID, previousFace.Box, person.PersonID)
+	require.NoError(t, err)
+
+	_, err = s.UndoPhotoFaceDecision(ctx, changed.ReceiptID)
+	require.ErrorIs(t, err, ErrStaleRevision)
+	require.Equal(t, currentFace.FaceID, personKeyFaceForTest(t, s, person.PersonID))
+	require.NoError(t, s.ValidateMetadata(ctx))
+}
+
 func TestPhotoFaceDecisionReceiptRejectsInvalidShape(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
