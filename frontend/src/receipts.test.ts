@@ -171,14 +171,16 @@ describe("processing receipts", () => {
     expect(validateDocumentSourceFenceResolution(valid).fence.content_version_ids).toHaveLength(
       4096,
     );
+    const oversizedIDs = [...ids, "00000000-0000-4000-8000-000000001000"];
     expect(() =>
       validateDocumentSourceFenceResolution({
         ...valid,
         fence: {
           ...valid.fence,
-          content_version_ids: [...ids, "00000000-0000-4000-8000-000000001000"],
+          content_version_ids: oversizedIDs,
         },
         observed_scope_count: 4097,
+        fence_fingerprint: fenceFingerprint(vault, oversizedIDs),
       }),
     ).toThrow();
   });

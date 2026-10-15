@@ -185,14 +185,25 @@ it("verifies rendition headers, length, SHA-256 and UTF-8 before returning inert
   ).resolves.toBe("Verified <script>alert('blocked')</script>");
 });
 
-it("rejects a wrong body digest and wrong generation header", async () => {
+it("rejects a wrong body digest with matching rendition headers", async () => {
   const expected = new TextEncoder().encode("expected text");
   const wrong = new TextEncoder().encode("different txt");
   const digest = createHash("sha256").update(expected).digest("hex");
   const ready = await resolveReady(expected.length, digest);
-  const headers = renditionHeaders(ready, digest, wrong);
-  headers.set("X-Docbank-Rendition-Generation", "9".repeat(64));
+  const headers = renditionHeaders(ready, digest, expected);
   vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(wrong, { headers }));
+  await expect(
+    readVerifiedRenditionText("session", source, 9, ready, new AbortController().signal),
+  ).rejects.toThrow(/disagreed with the selected rendition/);
+});
+
+it("rejects a wrong generation header with a matching body digest", async () => {
+  const bytes = new TextEncoder().encode("expected text");
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  const ready = await resolveReady(bytes.length, digest);
+  const headers = renditionHeaders(ready, digest, bytes);
+  headers.set("X-Docbank-Rendition-Generation", "9".repeat(64));
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(bytes, { headers }));
   await expect(
     readVerifiedRenditionText("session", source, 9, ready, new AbortController().signal),
   ).rejects.toThrow(/disagreed with the selected rendition/);
