@@ -34,11 +34,11 @@ func (p *PathProtection) Check(paths []string) error {
 	paths = append([]string(nil), paths...)
 	slices.Sort(paths)
 	if len(paths) != len(p.paths) {
-		return fmt.Errorf("protected roots changed during validation; retry")
+		return errors.New("protected roots changed during validation; retry")
 	}
 	for i, path := range paths {
 		if path != p.paths[i] {
-			return fmt.Errorf("protected roots changed during validation; retry")
+			return errors.New("protected roots changed during validation; retry")
 		}
 		current, err := os.Stat(path)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {

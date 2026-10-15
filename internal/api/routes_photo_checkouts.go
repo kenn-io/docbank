@@ -91,5 +91,4 @@ func registerPhotoCheckoutRoutes(api huma.API, d Deps, g *gate) {
 		}
 		return &struct{ Body store.PhotoCheckout }{out}, nil
 	})
-
 }

@@ -530,7 +530,7 @@ func (s *Store) RetirePhotoCheckout(ctx context.Context, id string) (PhotoChecko
 			return err
 		}
 		switch out.State {
-		case "unbound", "completed", "failed", "cancelled":
+		case "unbound", "completed", exportFailedState, "cancelled":
 		default:
 			return fmt.Errorf("%w: cancel active checkout work before retirement", ErrInvalidPhotoCheckout)
 		}
