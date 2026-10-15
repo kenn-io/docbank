@@ -271,16 +271,39 @@ func TestWatcherRetriesFileThatDisappearsBeforeIngest(t *testing.T) {
 
 func TestWatcherRejectsVaultOverlapAndDestinationConflicts(t *testing.T) {
 	ing := newTestIngester(t)
+	ctx := t.Context()
+	node, err := ing.Store.CreateFile(ctx, ing.Store.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := ing.Store.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	checkoutDestination := t.TempDir()
+	checkout, _, err := ing.Store.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, checkoutDestination, 0)
+	require.NoError(t, err)
+
 	vaultRoot := t.TempDir()
 	overlapping := filepath.Join(vaultRoot, "incoming")
 	require.NoError(t, os.Mkdir(overlapping, 0o700))
-	watcher, err := NewWatcher(ing, vaultRoot, config.WatchConfig{
-		Name: "overlap", Source: overlapping, Destination: "/inbox",
-		SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(time.Second),
-	}, runTestMutation, nil)
+	for _, tc := range []struct {
+		name, source, overlap string
+	}{
+		{name: "vault", source: overlapping, overlap: "overlaps the vault root"},
+		{name: "checkout", source: checkoutDestination, overlap: checkout.ID},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			watcher, err := NewWatcher(ing, vaultRoot, config.WatchConfig{
+				Name: tc.name, Source: tc.source, Destination: "/inbox",
+				SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(time.Second),
+			}, runTestMutation, nil)
+			require.NoError(t, err)
+			_, err = watcher.openRoot(ctx)
+			require.ErrorContains(t, err, tc.overlap)
+		})
+	}
+	watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{Name: "clean-watch", Source: t.TempDir(), Destination: "/inbox"}, runTestMutation, nil)
 	require.NoError(t, err)
-	_, err = watcher.openRoot(t.Context())
-	require.ErrorContains(t, err, "overlaps the vault root")
+	clean, err := watcher.openRoot(ctx)
+	require.NoError(t, err)
+	require.NoError(t, clean.Close())
 
 	source := writeTree(t, map[string]string{"conflict.txt": "watched"})
 	parent, err := ing.Store.MkdirAll(t.Context(), "/inbox")
@@ -293,7 +316,7 @@ func TestWatcherRejectsVaultOverlapAndDestinationConflicts(t *testing.T) {
 	fingerprint, err := observeLocalFileFingerprint(conflictPath)
 	require.NoError(t, err)
 	_, err = ing.ingestWatchedFile(
-		t.Context(), "conflict", "/inbox", "conflict.txt", fingerprint,
+		ctx, "conflict", "/inbox", "conflict.txt", fingerprint,
 		func() (*os.File, error) { return blob.OpenNoFollow(conflictPath) },
 	)
 	require.ErrorIs(t, err, store.ErrExists)
@@ -562,26 +585,4 @@ func TestWatchTreeTraversalHonorsContext(t *testing.T) {
 			require.ErrorIs(t, err, want)
 		})
 	}
-}
-
-func TestWatcherRejectsReservedCheckoutDestinations(t *testing.T) {
-	ing := newTestIngester(t)
-	ctx := t.Context()
-	node, err := ing.Store.CreateFile(ctx, ing.Store.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
-	require.NoError(t, err)
-	asset, err := ing.Store.PhotoAssetForNode(ctx, node.ID)
-	require.NoError(t, err)
-	destination := t.TempDir()
-	checkout, _, err := ing.Store.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
-	require.NoError(t, err)
-
-	watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{Name: "checkout-watch", Source: destination, Destination: "/inbox"}, runTestMutation, nil)
-	require.NoError(t, err)
-	_, err = watcher.openRoot(ctx)
-	require.ErrorContains(t, err, checkout.ID)
-	watcher, err = NewWatcher(ing, t.TempDir(), config.WatchConfig{Name: "clean-watch", Source: t.TempDir(), Destination: "/inbox"}, runTestMutation, nil)
-	require.NoError(t, err)
-	clean, err := watcher.openRoot(ctx)
-	require.NoError(t, err)
-	require.NoError(t, clean.Close())
 }

@@ -88,48 +88,6 @@ func TestStorageRegistrationPreviewApplyAndRemoval(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestStorageRegistrationRejectsVaultOverlap(t *testing.T) {
-	t.Parallel()
-	ts, _ := newTestServer(t, func(d *api.Deps) {
-		d.Cfg.StoreBindings = map[string]config.StoreBindingConfig{
-			"inside": {
-				Kind: "filesystem", Path: filepath.Join(d.VaultRoot, "secondary"),
-			},
-		}
-		d.BlobRegistry = blob.NewRegistry(
-			t.Context(), d.Store.VaultID(), d.Cfg.StoreBindings, nil,
-		)
-		t.Cleanup(func() { require.NoError(t, d.BlobRegistry.Close()) })
-	})
-	resp, body := do(t, ts, http.MethodPost, "/api/v1/storage/stores/preview", nil,
-		map[string]any{"name": "unsafe", "binding": "inside"})
-	assert.Equal(t, http.StatusConflict, resp.StatusCode, body)
-	assert.Contains(t, body, `"code":"storage_namespace_overlap"`)
-}
-
-func TestStorageRegistrationRejectsWatchOverlap(t *testing.T) {
-	t.Parallel()
-	watchRoot := t.TempDir()
-	ts, _ := newTestServer(t, func(d *api.Deps) {
-		d.Cfg.Watches = []config.WatchConfig{{
-			Name: "inbox", Source: watchRoot, Destination: "/inbox",
-		}}
-		d.Cfg.StoreBindings = map[string]config.StoreBindingConfig{
-			"watched": {Kind: "filesystem", Path: watchRoot},
-		}
-		d.BlobRegistry = blob.NewRegistry(
-			t.Context(), d.Store.VaultID(), d.Cfg.StoreBindings, nil,
-		)
-		t.Cleanup(func() { require.NoError(t, d.BlobRegistry.Close()) })
-	})
-
-	resp, body := do(t, ts, http.MethodPost, "/api/v1/storage/stores/preview", nil,
-		map[string]any{"name": "unsafe", "binding": "watched"})
-
-	assert.Equal(t, http.StatusConflict, resp.StatusCode, body)
-	assert.Contains(t, body, `"code":"storage_namespace_overlap"`)
-}
-
 func TestStorageRegistrationRejectsUnmarkedNonemptyNamespace(t *testing.T) {
 	t.Parallel()
 	namespace := t.TempDir()
@@ -329,22 +287,37 @@ func TestStorageEvacuationPreviewRunsAndDetachesEmptySecondary(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
 }
 
-func TestStorageRegistrationProtectsCheckoutReservations(t *testing.T) {
+func TestStorageRegistrationRejectsProtectedPathOverlaps(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name         string
-		previewFirst bool
-	}{{"preview", false}, {"apply rechecks reservation", true}} {
+		name          string
+		protectedPath string
+		applyRechecks bool
+	}{
+		{name: "vault overlap", protectedPath: "vault"},
+		{name: "watch overlap", protectedPath: "watch"},
+		{name: "checkout overlap", protectedPath: "checkout"},
+		{name: "apply rechecks reservation", protectedPath: "checkout", applyRechecks: true},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
 			destination := t.TempDir()
+			watchRoot := t.TempDir()
 			ts, live := newTestServer(t, func(d *api.Deps) {
-				d.Cfg.StoreBindings = map[string]config.StoreBindingConfig{"checkout": {Kind: "filesystem", Path: destination}}
+				bindingPath := destination
+				switch tc.protectedPath {
+				case "vault":
+					bindingPath = filepath.Join(d.VaultRoot, "secondary")
+				case "watch":
+					bindingPath = watchRoot
+					d.Cfg.Watches = []config.WatchConfig{{Name: "inbox", Source: watchRoot, Destination: "/inbox"}}
+				}
+				d.Cfg.StoreBindings = map[string]config.StoreBindingConfig{"overlap": {Kind: "filesystem", Path: bindingPath}}
 				d.BlobRegistry = blob.NewRegistry(t.Context(), d.Store.VaultID(), d.Cfg.StoreBindings, nil)
 				t.Cleanup(func() { require.NoError(t, d.BlobRegistry.Close()) })
 			})
 			endpoint := "/api/v1/storage/stores/preview"
-			input := map[string]any{"name": "archive", "binding": "checkout"}
-			if tc.previewFirst {
+			input := map[string]any{"name": "archive", "binding": "overlap"}
+			if tc.applyRechecks {
 				resp, body := do(t, ts, http.MethodPost, endpoint, nil, input)
 				require.Equal(t, http.StatusOK, resp.StatusCode, body)
 				var preview api.BlobStorePreview
@@ -352,16 +325,22 @@ func TestStorageRegistrationProtectsCheckoutReservations(t *testing.T) {
 				endpoint = "/api/v1/storage/stores"
 				input = map[string]any{"preview_token": preview.PreviewToken}
 			}
-			node, err := live.CreateFile(t.Context(), live.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
-			require.NoError(t, err)
-			asset, err := live.PhotoAssetForNode(t.Context(), node.ID)
-			require.NoError(t, err)
-			checkout, operation, err := live.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
-			require.NoError(t, err)
-			require.NoError(t, live.FinishPhotoCheckout(t.Context(), checkout.ID, operation.ID, store.StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
+			var checkoutID string
+			if tc.protectedPath == "checkout" {
+				node, err := live.CreateFile(t.Context(), live.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
+				require.NoError(t, err)
+				asset, err := live.PhotoAssetForNode(t.Context(), node.ID)
+				require.NoError(t, err)
+				checkout, operation, err := live.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
+				require.NoError(t, err)
+				require.NoError(t, live.FinishPhotoCheckout(t.Context(), checkout.ID, operation.ID, store.StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
+				checkoutID = checkout.ID
+			}
 			resp, body := do(t, ts, http.MethodPost, endpoint, nil, input)
 			require.Equal(t, http.StatusConflict, resp.StatusCode, body)
-			require.Contains(t, body, checkout.ID)
+			if checkoutID != "" {
+				require.Contains(t, body, checkoutID)
+			}
 			require.Contains(t, body, `"code":"storage_namespace_overlap"`)
 		})
 	}
