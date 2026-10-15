@@ -28,7 +28,7 @@ const (
 	visualPreviewProcessorDescriptor = document.VisualPreviewProcessorDescriptor
 	visualPreviewMaxEdgePixels       = document.VisualPreviewMaxEdgePixels
 	visualPreviewMaxSourcePixels     = document.VisualPreviewMaxSourcePixels
-	visualPreviewMaxDCSourcePixels   = 1_000_000_000
+	visualPreviewMaxDCSourcePixels   = document.VisualPreviewMaxDCSourcePixels
 	visualPreviewJPEGQuality         = document.VisualPreviewJPEGQuality
 	visualPreviewMaxJPEGSegments     = 1024
 	visualPreviewMaxPNGChunks        = 1024
@@ -221,7 +221,7 @@ func produceVisualPreviewPNG(
 		}
 		return VisualPreviewProduct{Preview: base}, nil
 	}
-	pixels, err := decodeVisualPixels(ctx, source, visualFormatPNG)
+	pixels, err := decodeVisualPixels(ctx, source, visualFormatPNG, false)
 	if err != nil {
 		return visualPreviewDecodeResult(base, visualFormatPNG, pixels, err)
 	}
@@ -440,7 +440,7 @@ func inspectVisualPreviewContainer(ctx context.Context, source io.ReadSeeker, fo
 }
 
 func decodeAndEncodeVisualPreview(ctx context.Context, source io.ReadSeeker, base document.VisualPreviewV1, format string, orientation int, colorSpace visualPreviewColorSpace) (VisualPreviewProduct, error) {
-	pixels, err := decodeVisualPixels(ctx, source, format)
+	pixels, err := decodeVisualPixels(ctx, source, format, true)
 	if err == nil {
 		return encodeVisualPreview(ctx, base, pixels.image, orientation, colorSpace)
 	}

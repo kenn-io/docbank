@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/jpeg"
 	"io"
 
 	_ "golang.org/x/image/webp" // Register WebP for the shared image decoder.
@@ -23,7 +24,7 @@ type visualPixels struct {
 	readErr    error
 }
 
-func decodeVisualPixels(ctx context.Context, source io.ReadSeeker, format string) (result visualPixels, err error) {
+func decodeVisualPixels(ctx context.Context, source io.ReadSeeker, format string, allowReducedJPEG bool) (result visualPixels, err error) {
 	if _, err = source.Seek(0, io.SeekStart); err != nil {
 		result.readErr = err
 		result.seekFailed = true
@@ -48,7 +49,7 @@ func decodeVisualPixels(ctx context.Context, source io.ReadSeeker, format string
 		return result, errVisualColor
 	}
 	if !visualPreviewDimensionsAllowed(config.Width, config.Height, visualPreviewMaxSourcePixels) {
-		if format == visualFormatJPEG &&
+		if allowReducedJPEG && format == visualFormatJPEG &&
 			visualPreviewDimensionsAllowed(config.Width, config.Height, visualPreviewMaxDCSourcePixels) {
 			// Decode only the DC coefficients: the image comes back at one
 			// eighth width and height, so the bounds check below is skipped.
@@ -86,12 +87,13 @@ func decodeVisualPixels(ctx context.Context, source io.ReadSeeker, format string
 	return result, ctx.Err()
 }
 
-// decodeVisualPreviewJPEGDCSafely turns a decoder panic into an error so one
-// malformed original fails its own preview instead of stopping the worker.
+// decodeVisualPreviewJPEGDCSafely turns a decoder panic into a durable JPEG
+// format error so one malformed original fails its own preview once instead of
+// stopping the worker or retrying forever.
 func decodeVisualPreviewJPEGDCSafely(reader *bufio.Reader) (img image.Image, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			img, err = nil, fmt.Errorf("JPEG DC decoder panic: %v", r)
+			img, err = nil, jpeg.FormatError(fmt.Sprintf("decoder panic: %v", r))
 		}
 	}()
 	return decodeVisualPreviewJPEGDC(reader)

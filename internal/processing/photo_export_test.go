@@ -1502,3 +1502,22 @@ func TestPhotoExportRefusesJPEGBeyondItsDimensionLimit(t *testing.T) {
 	_, _, err = renderPhotoExport(t.Context(), source, input, bundle.PhotoRenderProfile{Format: "png"})
 	require.NoError(t, err)
 }
+
+func TestRenderPhotoExportRejectsJPEGAbovePreviewSourceLimit(t *testing.T) {
+	t.Parallel()
+	jpegData := syntheticVisualJPEGDC(t, 10008, 10008, false)
+	for _, test := range []struct {
+		name      string
+		data      []byte
+		mediaType string
+	}{
+		{"jpeg", jpegData, "image/jpeg"},
+		{"embedded RAW", syntheticRAWPreviewTIFF(1, jpegData), "image/x-adobe-dng"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			_, _, err := renderPhotoExport(t.Context(), test.data, photoRenderInput(test.data, test.mediaType), bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90})
+			require.ErrorIs(t, err, bundle.ErrLimit)
+		})
+	}
+}

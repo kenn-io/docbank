@@ -290,7 +290,7 @@ func TestProduceVisualPreviewUsesGIFPrimaryFrame(t *testing.T) {
 		Config: image.Config{ColorModel: palette, Width: 64, Height: 32},
 	}))
 	source := encoded.Bytes()
-	decoded, err := decodeVisualPixels(t.Context(), bytes.NewReader(source), "gif")
+	decoded, err := decodeVisualPixels(t.Context(), bytes.NewReader(source), "gif", false)
 	require.NoError(t, err)
 	red, green, blue, alpha := decoded.image.At(8, 4).RGBA()
 	assert.Equal(t, [4]uint32{}, [4]uint32{red, green, blue, alpha})
@@ -1305,3 +1305,19 @@ func syntheticVisualJPEGDC(t testing.TB, width, height int, baseline bool) []byt
 	}
 	return append(source, 0xff, 0xd9)
 }
+
+func TestVisualPreviewJPEGDCPanicFailsDurably(t *testing.T) {
+	t.Parallel()
+	// A reader that panics stands in for any decoder bug the bounds checks miss.
+	_, err := decodeVisualPreviewJPEGDCSafely(bufio.NewReader(&panicReader{}))
+	require.Error(t, err)
+	_, isFormat := errors.AsType[jpeg.FormatError](err)
+	require.True(t, isFormat, "panic must classify as a durable JPEG format error")
+	product, err := visualPreviewJPEGDecodeResult(document.VisualPreviewV1{}, "cannot be decoded", err)
+	require.NoError(t, err)
+	assert.Equal(t, document.VisualPreviewFailed, product.Preview.State)
+}
+
+type panicReader struct{}
+
+func (*panicReader) Read([]byte) (int, error) { panic("injected decoder panic") }
