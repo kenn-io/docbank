@@ -251,24 +251,16 @@ func (s *Store) PruneExpiredStorageOperations(
 func pruneExpiredStorageOperationsTx(
 	ctx context.Context, tx *sql.Tx, now time.Time,
 ) (int64, error) {
-	var hasCheckouts bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='photo_checkouts')`).Scan(&hasCheckouts); err != nil {
-		return 0, err
-	}
-	checkoutRetention := ""
-	if hasCheckouts {
-		checkoutRetention = `AND NOT EXISTS (
-   SELECT 1 FROM photo_checkouts c JOIN photo_checkout_entries e ON e.checkout_id=c.checkout_id
-   WHERE c.operation_id=storage_operations.operation_id AND c.retired_at IS NULL
-     AND e.file_id=storage_operations.cursor AND e.published=0
-  )`
-	}
 	result, err := tx.ExecContext(ctx, `
 		DELETE FROM storage_operations
 		WHERE state IN (?,?,?)
 		  AND retention_until IS NOT NULL
 		  AND retention_until<=?
-		  `+checkoutRetention+`
+		  AND NOT EXISTS (
+			SELECT 1 FROM photo_checkouts c JOIN photo_checkout_entries e ON e.checkout_id=c.checkout_id
+			WHERE c.operation_id=storage_operations.operation_id AND c.retired_at IS NULL
+			  AND e.file_id=storage_operations.cursor AND e.published=0
+		  )
 		  AND NOT EXISTS (
 			SELECT 1 FROM storage_operation_cleanup cleanup
 			WHERE cleanup.operation_id=storage_operations.operation_id

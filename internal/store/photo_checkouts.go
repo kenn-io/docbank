@@ -179,6 +179,7 @@ func (s *Store) checkoutEntriesTx(ctx context.Context, tx *sql.Tx, selection Pho
 	}
 	defer func() { _ = rows.Close() }()
 	var invalidNames []error
+	seenPaths := map[string]bool{}
 	for rows.Next() {
 		var entry PhotoCheckoutEntry
 		var name, date string
@@ -210,6 +211,11 @@ func (s *Store) checkoutEntriesTx(ctx context.Context, tx *sql.Tx, selection Pho
 			continue
 		}
 		entry.Path = path.Join(folder, entry.AssetID, name)
+		if seenPaths[entry.Path] {
+			invalidNames = append(invalidNames, fmt.Errorf("file %s in asset %s, filename %q: %w: destination name collides with another selected file", entry.FileID, entry.AssetID, name, ErrInvalidPhotoCheckout))
+			continue
+		}
+		seenPaths[entry.Path] = true
 		entries = append(entries, entry)
 		estimate.Files++
 		estimate.Bytes += entry.Size
