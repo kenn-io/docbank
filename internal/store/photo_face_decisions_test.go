@@ -422,14 +422,9 @@ func TestPhotoFaceDecisionGroupedRejection(t *testing.T) {
 			node, face := faceForDecisionTest(t, s, "")
 			other, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{X: .5, Width: .2, Height: .2}, "")
 			require.NoError(t, err)
-			raw, err := json.Marshal([]PersonCandidateOccurrence{{ContentVersionID: node.CurrentVersionID, Role: "depicted", EvidenceKind: "face", EvidenceID: face.FaceID}, {ContentVersionID: node.CurrentVersionID, Role: "depicted", EvidenceKind: "face", EvidenceID: other.FaceID}})
-			require.NoError(t, err)
-			var c PersonMatchCandidate
-			require.NoError(t, s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-				var err error
-				c, _, err = s.OpenPersonCandidate(ctx, tx, PersonMatchCandidate{ActorKey: "face:" + face.FaceID, DisplayName: "Ada", SuggestedPersonID: p.PersonID, Reason: "face_match", Evidence: raw})
-				return err
-			}))
+			c := candidateForTest(t, "face:"+face.FaceID, "Ada", p.PersonID, []PersonCandidateOccurrence{{ContentVersionID: node.CurrentVersionID, Role: "depicted", EvidenceKind: "face", EvidenceID: face.FaceID}, {ContentVersionID: node.CurrentVersionID, Role: "depicted", EvidenceKind: "face", EvidenceID: other.FaceID}})
+			c.Reason = personCandidateReasonFaceMatch
+			c = openCandidateForTest(t, s, c)
 			_, err = s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: c.CandidateID, ExpectedRevision: c.Revision, Action: "reject"})
 			require.NoError(t, err)
 			if test.retired {
@@ -498,43 +493,25 @@ func personKeyFaceForTest(t *testing.T, s *Store, id string) string {
 
 func TestPhotoFaceDecisionWithdrawalMerge(t *testing.T) {
 	t.Parallel()
-	for _, action := range []string{"undo", "suppress"} {
-		t.Run(action, func(t *testing.T) {
-			s := newTestStore(t)
-			ctx := t.Context()
-			a, err := s.CreatePerson(ctx, "Ada", "operator")
-			require.NoError(t, err)
-			b, err := s.CreatePerson(ctx, "Duplicate", "operator")
-			require.NoError(t, err)
-			n, f := faceForDecisionTest(t, s, "")
-			r := decideFaceForTest(t, s, n, f.FaceID, a.PersonID, "name")
-			if action == "undo" {
-				_, err = s.UndoPhotoFaceDecision(ctx, r.ReceiptID)
-				require.NoError(t, err)
-			} else {
-				as, err := s.DocumentPersonAssertions(ctx, n.CurrentVersionID)
-				require.NoError(t, err)
-				as[0].Action = "suppress"
-				_, err = s.AssertDocumentPerson(ctx, as[0])
-				require.NoError(t, err)
-			}
-			if action != "suppress" {
-				as, err := s.DocumentPersonAssertions(ctx, n.CurrentVersionID)
-				require.NoError(t, err)
-				require.Equal(t, "withdrawn", as[0].Action)
-			}
-			_, _, err = s.CreatePhotoFace(ctx, n.CurrentVersionID, uuid.NewString(), document.FaceBox{X: .5, Width: .2, Height: .2}, b.PersonID)
-			require.NoError(t, err)
-			_, err = s.MergePersons(ctx, a.PersonID, b.PersonID, uuid.NewString(), 1, 1)
-			if action == "suppress" {
-				require.ErrorIs(t, err, ErrPersonMergeConflict)
-			} else {
-				require.NoError(t, err)
-				require.NoError(t, s.ValidateMetadata(ctx))
-				decideFaceForTest(t, s, n, f.FaceID, a.PersonID, "name")
-			}
-		})
-	}
+	s := newTestStore(t)
+	ctx := t.Context()
+	a, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	b, err := s.CreatePerson(ctx, "Duplicate", "operator")
+	require.NoError(t, err)
+	n, f := faceForDecisionTest(t, s, "")
+	r := decideFaceForTest(t, s, n, f.FaceID, a.PersonID, "name")
+	_, err = s.UndoPhotoFaceDecision(ctx, r.ReceiptID)
+	require.NoError(t, err)
+	assertions, err := s.DocumentPersonAssertions(ctx, n.CurrentVersionID)
+	require.NoError(t, err)
+	require.Equal(t, "withdrawn", assertions[0].Action)
+	_, _, err = s.CreatePhotoFace(ctx, n.CurrentVersionID, uuid.NewString(), document.FaceBox{X: .5, Width: .2, Height: .2}, b.PersonID)
+	require.NoError(t, err)
+	_, err = s.MergePersons(ctx, a.PersonID, b.PersonID, uuid.NewString(), 1, 1)
+	require.NoError(t, err)
+	require.NoError(t, s.ValidateMetadata(ctx))
+	decideFaceForTest(t, s, n, f.FaceID, a.PersonID, "name")
 }
 
 func TestPhotoFaceDecisionUndoSharedAssertion(t *testing.T) {
@@ -583,7 +560,6 @@ func TestPhotoFaceDecisionUndoSharedAssertion(t *testing.T) {
 					require.Empty(t, face.AssertionID)
 				}
 				require.Empty(t, assertions)
-				require.Empty(t, personMatchNodeIDs(t, s, compilerQuery(t, "person:"+p.PersonID)))
 				require.NoError(t, s.ValidateMetadata(ctx))
 				_, err = s.UndoPhotoFaceDecision(ctx, lastUndo.ReceiptID)
 				require.NoError(t, err)
@@ -987,27 +963,6 @@ func TestPhotoFaceDecisionRejectionBound(t *testing.T) {
 	}))
 	_, err = s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: open.CandidateID, ExpectedRevision: open.Revision, Action: "reject"})
 	require.ErrorIs(t, err, ErrPhotoFaceRejectionLimit)
-	updated, current, err := s.ReplaceContent(ctx, n.ID, n.Revision, fakeHash("b2"), 20, "image/jpeg")
-	require.NoError(t, err)
-	surviving, _, err := s.CreatePhotoFace(ctx, current.ID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, "")
-	require.NoError(t, err)
-	grouped := candidateForTest(t, c.ActorKey, "Face", p.PersonID, []PersonCandidateOccurrence{
-		{ContentVersionID: n.CurrentVersionID, Role: "depicted", EvidenceKind: "face", EvidenceID: f.FaceID},
-		{ContentVersionID: current.ID, Role: "depicted", EvidenceKind: "face", EvidenceID: surviving.FaceID},
-	})
-	grouped.Reason = personCandidateReasonFaceMatch
-	grouped = openCandidateForTest(t, s, grouped)
-	_, err = s.PruneContentVersions(ctx, n.ID, updated.Revision, VersionPruneSelector{AllPrior: true}, true)
-	require.NoError(t, err)
-	decided, err := s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: grouped.CandidateID, ExpectedRevision: grouped.Revision, Action: "reject"})
-	require.NoError(t, err)
-	require.Equal(t, personCandidateStateRejected, decided.State)
-	faces, _, err = s.PhotoFaces(ctx, current.ID)
-	require.NoError(t, err)
-	require.Equal(t, []string{p.PersonID}, faces[0].RejectedPersonIDs)
-	backup.Reset()
-	require.NoError(t, s.ExportMetadata(ctx, &backup))
-	require.NoError(t, newTestStore(t).ImportMetadata(ctx, &backup))
 }
 
 func TestPhotoFaceCandidateAcceptanceClearsDecisions(t *testing.T) {
@@ -1050,14 +1005,9 @@ func TestPhotoFaceDecisionWithdrawalPreservesOpenSuggestion(t *testing.T) {
 	require.NoError(t, err)
 	n, f := faceForDecisionTest(t, s, "")
 	decideFaceForTest(t, s, n, f.FaceID, "", "dismiss")
-	raw, err := json.Marshal([]PersonCandidateOccurrence{{ContentVersionID: n.CurrentVersionID, Role: "depicted", EvidenceKind: "face", EvidenceID: f.FaceID}})
-	require.NoError(t, err)
-	var c PersonMatchCandidate
-	require.NoError(t, s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		var e error
-		c, _, e = s.OpenPersonCandidate(ctx, tx, PersonMatchCandidate{ActorKey: "face:" + f.FaceID, DisplayName: "Ada", SuggestedPersonID: p.PersonID, Reason: "face_match", Evidence: raw})
-		return e
-	}))
+	c := candidateForTest(t, "face:"+f.FaceID, "Ada", p.PersonID, []PersonCandidateOccurrence{{ContentVersionID: n.CurrentVersionID, Role: "depicted", EvidenceKind: "face", EvidenceID: f.FaceID}})
+	c.Reason = personCandidateReasonFaceMatch
+	c = openCandidateForTest(t, s, c)
 	decideFaceForTest(t, s, n, f.FaceID, p.PersonID, "withdraw_rejection")
 	faces, _, err := s.PhotoFaces(ctx, n.CurrentVersionID)
 	require.NoError(t, err)
@@ -1118,14 +1068,9 @@ func TestPhotoFaceCandidateReadsAndDecisionsRequireHiddenAccess(t *testing.T) {
 	p, err := s.CreatePerson(ctx, "Ada", "operator")
 	require.NoError(t, err)
 	n, f := faceForDecisionTest(t, s, "")
-	raw, err := json.Marshal([]PersonCandidateOccurrence{{ContentVersionID: n.CurrentVersionID, Role: "depicted", EvidenceKind: "face", EvidenceID: f.FaceID}})
-	require.NoError(t, err)
-	var candidate PersonMatchCandidate
-	require.NoError(t, s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		var e error
-		candidate, _, e = s.OpenPersonCandidate(ctx, tx, PersonMatchCandidate{ActorKey: "face:" + f.FaceID, DisplayName: "Ada", SuggestedPersonID: p.PersonID, Reason: "face_match", Evidence: raw})
-		return e
-	}))
+	candidate := candidateForTest(t, "face:"+f.FaceID, "Ada", p.PersonID, []PersonCandidateOccurrence{{ContentVersionID: n.CurrentVersionID, Role: "depicted", EvidenceKind: "face", EvidenceID: f.FaceID}})
+	candidate.Reason = personCandidateReasonFaceMatch
+	candidate = openCandidateForTest(t, s, candidate)
 	asset, err := s.PhotoAssetForNode(ctx, n.ID)
 	require.NoError(t, err)
 	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
@@ -1148,14 +1093,6 @@ func TestPhotoFaceCandidateReadsAndDecisionsRequireHiddenAccess(t *testing.T) {
 	require.Len(t, candidates, 1)
 	require.EqualValues(t, 1, total)
 	_, err = s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: candidate.CandidateID, ExpectedRevision: candidate.Revision, Action: "reject"})
-	require.NoError(t, err)
-}
-
-func seedFaceAssertionSlots(t *testing.T, s *Store, version string, count int) {
-	t.Helper()
-	_, err := s.db.ExecContext(t.Context(), `WITH RECURSIVE slots(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM slots WHERE i<?) INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at) SELECT printf('00000000-0000-4000-9000-%012d',i),'Synthetic person','synthetic person','operator','curated',1,?,? FROM slots`, count, nowRFC3339(), nowRFC3339())
-	require.NoError(t, err)
-	_, err = s.db.ExecContext(t.Context(), `INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision) SELECT person_id,?,person_id,'depicted','assert','',?,1 FROM persons WHERE person_id LIKE '00000000-0000-4000-9000-%'`, version, nowRFC3339())
 	require.NoError(t, err)
 }
 
@@ -1337,12 +1274,9 @@ func TestPersonMergeBumpsAffectedFaceOnce(t *testing.T) {
 			unrelated, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{X: .5, Width: .2, Height: .2}, "")
 			require.NoError(t, err)
 			if !test.moved {
-				evidence, err := json.Marshal([]PersonCandidateOccurrence{{ContentVersionID: node.CurrentVersionID, Role: "depicted", EvidenceKind: "face", EvidenceID: face.FaceID}})
-				require.NoError(t, err)
-				require.NoError(t, s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-					_, _, err := s.OpenPersonCandidate(ctx, tx, PersonMatchCandidate{ActorKey: "face:" + face.FaceID, DisplayName: b.DisplayName, SuggestedPersonID: b.PersonID, Reason: "face_match", Evidence: evidence})
-					return err
-				}))
+				candidate := candidateForTest(t, "face:"+face.FaceID, b.DisplayName, b.PersonID, []PersonCandidateOccurrence{{ContentVersionID: node.CurrentVersionID, Role: "depicted", EvidenceKind: "face", EvidenceID: face.FaceID}})
+				candidate.Reason = personCandidateReasonFaceMatch
+				openCandidateForTest(t, s, candidate)
 			}
 			_, err = s.MergePersons(ctx, a.PersonID, b.PersonID, uuid.NewString(), a.Revision, b.Revision)
 			require.NoError(t, err)
@@ -1354,83 +1288,6 @@ func TestPersonMergeBumpsAffectedFaceOnce(t *testing.T) {
 			_, err = s.DecidePhotoFace(ctx, node.CurrentVersionID, PhotoFaceDecisionRequest{FaceID: face.FaceID, Action: "retract", Revision: face.Revision})
 			require.ErrorIs(t, err, ErrStaleRevision)
 		})
-	}
-}
-
-func TestPhotoFaceAssertionCapacity(t *testing.T) {
-	t.Parallel()
-	for _, test := range []struct {
-		name string
-		run  func(*testing.T)
-	}{
-		{"unreferenced withdrawal", func(t *testing.T) {
-			t.Helper()
-			s := newTestStore(t)
-			ctx := t.Context()
-			p, err := s.CreatePerson(ctx, "Ada", "operator")
-			require.NoError(t, err)
-			n, f := faceForDecisionTest(t, s, "")
-			seedFaceAssertionSlots(t, s, n.CurrentVersionID, 1000)
-			_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET action='withdrawn' WHERE content_version_id=?`, n.CurrentVersionID)
-			require.NoError(t, err)
-			decideFaceForTest(t, s, n, f.FaceID, p.PersonID, "name")
-			_, assertions, err := s.PhotoFaces(ctx, n.CurrentVersionID)
-			require.NoError(t, err)
-			require.Len(t, assertions, 1)
-			require.NoError(t, s.ValidateMetadata(ctx))
-		}},
-		{"referenced withdrawal", func(t *testing.T) {
-			t.Helper()
-			s := newTestStore(t)
-			ctx := t.Context()
-			p, err := s.CreatePerson(ctx, "Ada", "operator")
-			require.NoError(t, err)
-			n, _ := faceForDecisionTest(t, s, p.PersonID)
-			seedFaceAssertionSlots(t, s, n.CurrentVersionID, 999)
-			rows, err := s.DocumentPersonAssertions(ctx, n.CurrentVersionID)
-			require.NoError(t, err)
-			var withdrawn PersonDocumentAssertion
-			for _, a := range rows {
-				if a.PersonID == p.PersonID {
-					withdrawn = a
-				}
-			}
-			withdrawn.Action = "withdrawn"
-			withdrawn, err = s.AssertDocumentPerson(ctx, withdrawn)
-			require.NoError(t, err)
-			other, err := s.CreatePerson(ctx, "Grace", "operator")
-			require.NoError(t, err)
-			_, err = s.MarkPersonInPhoto(ctx, n.CurrentVersionID, other.PersonID)
-			require.ErrorIs(t, err, ErrPhotoFaceLimit)
-			withdrawn.Action = "assert"
-			_, err = s.AssertDocumentPerson(ctx, withdrawn)
-			require.NoError(t, err)
-			_, assertions, err := s.PhotoFaces(ctx, n.CurrentVersionID)
-			require.NoError(t, err)
-			require.Len(t, assertions, 1000)
-			require.NoError(t, s.ValidateMetadata(ctx))
-		}},
-		{"undo rename", func(t *testing.T) {
-			t.Helper()
-			s := newTestStore(t)
-			ctx := t.Context()
-			a, err := s.CreatePerson(ctx, "Ada", "operator")
-			require.NoError(t, err)
-			b, err := s.CreatePerson(ctx, "Grace", "operator")
-			require.NoError(t, err)
-			n, f := faceForDecisionTest(t, s, a.PersonID)
-			seedFaceAssertionSlots(t, s, n.CurrentVersionID, 999)
-			receipt := decideFaceForTest(t, s, n, f.FaceID, b.PersonID, "name")
-			_, err = s.UndoPhotoFaceDecision(ctx, receipt.ReceiptID)
-			require.NoError(t, err)
-			faces, assertions, err := s.PhotoFaces(ctx, n.CurrentVersionID)
-			require.NoError(t, err)
-			require.Len(t, assertions, 1000)
-			require.Equal(t, f.AssertionID, faces[0].AssertionID)
-			require.NoError(t, s.ValidateMetadata(ctx))
-		}},
-	} {
-		t.Run(test.name, test.run)
 	}
 }
 

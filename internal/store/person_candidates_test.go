@@ -1,8 +1,10 @@
 package store
 
 import (
+	"bytes"
 	"database/sql"
 	"fmt"
+	"github.com/google/uuid"
 	"strings"
 	"testing"
 
@@ -434,88 +436,71 @@ func TestCandidateAuthorityPreventsMetadataImport(t *testing.T) {
 
 func TestCandidateLinksSkipPrunedVersions(t *testing.T) {
 	t.Parallel()
-	for _, action := range []string{"link", "new_person"} {
-		for _, allPruned := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/all_pruned=%t", action, allPruned), func(t *testing.T) {
-				s := newTestStore(t)
-				ctx := t.Context()
-				created, err := s.CreateFile(ctx, s.RootID(), "history.txt", fakeHash("a1"), 10, "text/plain")
-				require.NoError(t, err)
-				replaced, current, err := s.ReplaceContent(ctx, created.ID, created.Revision, fakeHash("b2"), 20, "text/plain")
-				require.NoError(t, err)
-				occurrences := []PersonCandidateOccurrence{{ContentVersionID: created.CurrentVersionID, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "old-claim"}}
-				if !allPruned {
-					occurrences = append(occurrences, PersonCandidateOccurrence{ContentVersionID: current.ID, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "current-claim"})
-				}
-				candidate := openCandidateForTest(t, s, candidateForTest(t, "name_alias:example", "Example Person", "", occurrences))
-				pruned, err := s.PruneContentVersions(ctx, created.ID, replaced.Revision, VersionPruneSelector{AllPrior: true}, true)
-				require.NoError(t, err)
-				require.Equal(t, 1, pruned.DeletedVersions)
-				decision := CandidateDecision{CandidateID: candidate.CandidateID, Action: action, ExpectedRevision: candidate.Revision}
-				if action == "link" {
-					person, err := s.CreatePerson(ctx, "Example Person", "operator")
-					require.NoError(t, err)
-					decision.PersonID = person.PersonID
-				}
-				decided, err := s.DecidePersonCandidate(ctx, decision)
-				require.NoError(t, err)
-				require.Equal(t, "linked", decided.State)
-				require.Equal(t, candidate.Evidence, decided.Evidence)
-				assertions, err := s.DocumentPersonAssertions(ctx, current.ID)
-				require.NoError(t, err)
-				if allPruned {
-					require.Empty(t, assertions)
-				} else {
-					require.Len(t, assertions, 1)
-					require.Equal(t, decided.DecidedPersonID, assertions[0].PersonID)
-				}
-				_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: created.CurrentVersionID, PersonID: decided.DecidedPersonID, Role: "author", Action: "assert", Revision: 1})
-				require.ErrorIs(t, err, ErrNotFound)
-			})
-		}
-	}
-}
-
-func TestFaceMatchCandidateDecisionsSkipPrunedVersions(t *testing.T) {
-	t.Parallel()
 	for _, test := range []struct {
-		name, action string
-		surviving    bool
-		wantErr      error
+		name, evidenceKind, action string
+		allPruned, rejectionLimit  bool
+		wantErr                    error
 	}{
-		{name: "link surviving occurrence", action: "link", surviving: true},
-		{name: "reject surviving occurrence", action: "reject", surviving: true},
-		{name: "reject all pruned occurrences", action: "reject"},
-		{name: "link all pruned occurrences", action: "link", wantErr: ErrNotFound},
-		{name: "new person from all pruned occurrences", action: "new_person", wantErr: ErrNotFound},
+		{name: "metadata link surviving", evidenceKind: "source_metadata", action: "link"},
+		{name: "metadata link all pruned", evidenceKind: "source_metadata", action: "link", allPruned: true},
+		{name: "metadata new person surviving", evidenceKind: "source_metadata", action: "new_person"},
+		{name: "metadata new person all pruned", evidenceKind: "source_metadata", action: "new_person", allPruned: true},
+		{name: "face link surviving", evidenceKind: "face", action: "link"},
+		{name: "face reject surviving", evidenceKind: "face", action: "reject"},
+		{name: "face reject all pruned", evidenceKind: "face", action: "reject", allPruned: true},
+		{name: "face link all pruned", evidenceKind: "face", action: "link", allPruned: true, wantErr: ErrNotFound},
+		{name: "face new person all pruned", evidenceKind: "face", action: "new_person", allPruned: true, wantErr: ErrNotFound},
+		{name: "pruned face rejection limit", evidenceKind: "face", action: "reject", rejectionLimit: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
 			person, err := s.CreatePerson(ctx, "Ada", "operator")
 			require.NoError(t, err)
-			prunedNode, prunedFace := faceForDecisionTest(t, s, "")
-			updated, current, err := s.ReplaceContent(ctx, prunedNode.ID, prunedNode.Revision, fakeHash("f2"), 20, "image/jpeg")
-			require.NoError(t, err)
-			faceID, err := newUUIDv4()
-			require.NoError(t, err)
-			survivingFace, _, err := s.CreatePhotoFace(ctx, current.ID, faceID, document.FaceBox{Width: .3, Height: .4}, "")
-			require.NoError(t, err)
-			occurrences := []PersonCandidateOccurrence{{
-				ContentVersionID: prunedNode.CurrentVersionID, Role: "depicted", EvidenceKind: "face", EvidenceID: prunedFace.FaceID,
-			}}
-			if test.surviving {
-				occurrences = append(occurrences, PersonCandidateOccurrence{
-					ContentVersionID: current.ID, Role: "depicted", EvidenceKind: "face", EvidenceID: survivingFace.FaceID,
-				})
+			name, mimeType, role := "history.txt", "text/plain", "author"
+			if test.evidenceKind == "face" {
+				name, mimeType, role = "portrait.jpg", "image/jpeg", "depicted"
 			}
-			candidate := candidateForTest(t, "face:"+prunedFace.FaceID, "Ada", person.PersonID, occurrences)
-			candidate.Reason = personCandidateReasonFaceMatch
+			node, err := s.CreateFile(ctx, s.RootID(), name, fakeHash("a1"), 10, mimeType)
+			require.NoError(t, err)
+			oldID, currentID := "old-claim", "current-claim"
+			box := document.FaceBox{Width: .3, Height: .4}
+			if test.evidenceKind == "face" {
+				face, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), box, "")
+				require.NoError(t, err)
+				oldID = face.FaceID
+			}
+			updated, current, err := s.ReplaceContent(ctx, node.ID, node.Revision, fakeHash("b2"), 20, mimeType)
+			require.NoError(t, err)
+			if test.evidenceKind == "face" {
+				face, _, err := s.CreatePhotoFace(ctx, current.ID, uuid.NewString(), box, "")
+				require.NoError(t, err)
+				currentID = face.FaceID
+			}
+			occurrences := []PersonCandidateOccurrence{{ContentVersionID: node.CurrentVersionID, Role: role, EvidenceKind: test.evidenceKind, EvidenceID: oldID}}
+			actor, reason := "name_alias:ada", "name_only"
+			if test.evidenceKind == "face" {
+				actor, reason = "face:"+oldID, personCandidateReasonFaceMatch
+			}
+			if test.rejectionLimit {
+				rejected := candidateForTest(t, actor, "Ada", person.PersonID, occurrences)
+				rejected.Reason = reason
+				rejected, err = normalizePersonCandidate(rejected)
+				require.NoError(t, err)
+				_, err = s.db.ExecContext(ctx, `WITH RECURSIVE slots(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM slots WHERE i<1000) INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at) SELECT printf('00000000-0000-4000-8000-%012d',i),'Synthetic person','synthetic person','operator','curated',1,?,? FROM slots`, nowRFC3339(), nowRFC3339())
+				require.NoError(t, err)
+				_, err = s.db.ExecContext(ctx, `INSERT INTO person_match_candidates(candidate_id,actor_key,display_name,suggested_person_id,reason,evidence_json,evidence_sha256,occurrence_count,revision,state,created_at,decided_at) SELECT person_id,?,'Face',person_id,'face_match',?,?,1,1,'rejected',?,? FROM persons WHERE person_id<>?`, actor, rejected.Evidence, rejected.EvidenceSHA256, nowRFC3339(), nowRFC3339(), person.PersonID)
+				require.NoError(t, err)
+			}
+			if !test.allPruned {
+				occurrences = append(occurrences, PersonCandidateOccurrence{ContentVersionID: current.ID, Role: role, EvidenceKind: test.evidenceKind, EvidenceID: currentID})
+			}
+			candidate := candidateForTest(t, actor, "Ada", person.PersonID, occurrences)
+			candidate.Reason = reason
 			candidate = openCandidateForTest(t, s, candidate)
-			pruned, err := s.PruneContentVersions(ctx, prunedNode.ID, updated.Revision, VersionPruneSelector{AllPrior: true}, true)
+			pruned, err := s.PruneContentVersions(ctx, node.ID, updated.Revision, VersionPruneSelector{AllPrior: true}, true)
 			require.NoError(t, err)
 			require.Equal(t, 1, pruned.DeletedVersions)
-
 			decision := CandidateDecision{CandidateID: candidate.CandidateID, Action: test.action, ExpectedRevision: candidate.Revision}
 			if test.action == "link" {
 				decision.PersonID = person.PersonID
@@ -533,20 +518,35 @@ func TestFaceMatchCandidateDecisionsSkipPrunedVersions(t *testing.T) {
 			require.Equal(t, candidate.EvidenceSHA256, decided.EvidenceSHA256)
 			if test.action == "reject" {
 				require.Equal(t, personCandidateStateRejected, decided.State)
-				if test.surviving {
+				if !test.allPruned {
 					faces, _, err := s.PhotoFaces(ctx, current.ID)
 					require.NoError(t, err)
 					require.Equal(t, []string{person.PersonID}, faces[0].RejectedPersonIDs)
 				}
+				if test.rejectionLimit {
+					var backup bytes.Buffer
+					require.NoError(t, s.ExportMetadata(ctx, &backup))
+					require.NoError(t, newTestStore(t).ImportMetadata(ctx, &backup))
+				}
 				return
 			}
 			require.Equal(t, "linked", decided.State)
-			faces, assertions, err := s.PhotoFaces(ctx, current.ID)
+			assertions, err := s.DocumentPersonAssertions(ctx, current.ID)
 			require.NoError(t, err)
-			require.Equal(t, survivingFace.FaceID, faces[0].FaceID)
-			require.Len(t, assertions, 1)
-			require.Equal(t, person.PersonID, assertions[0].PersonID)
-			require.Equal(t, assertions[0].AssertionID, faces[0].AssertionID)
+			if test.allPruned {
+				require.Empty(t, assertions)
+			} else {
+				require.Len(t, assertions, 1)
+				require.Equal(t, decided.DecidedPersonID, assertions[0].PersonID)
+				if test.evidenceKind == "face" {
+					faces, _, err := s.PhotoFaces(ctx, current.ID)
+					require.NoError(t, err)
+					require.Equal(t, currentID, faces[0].FaceID)
+					require.Equal(t, assertions[0].AssertionID, faces[0].AssertionID)
+				}
+			}
+			_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: decided.DecidedPersonID, Role: role, Action: "assert", Revision: 1})
+			require.ErrorIs(t, err, ErrNotFound)
 		})
 	}
 }

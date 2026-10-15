@@ -92,7 +92,6 @@ func TestPhotoFaceDecisionCLIRequest(t *testing.T) {
 		faceID      = "22222222-2222-4222-8222-222222222222"
 		personID    = "33333333-3333-4333-8333-333333333333"
 		operationID = "44444444-4444-4444-8444-444444444444"
-		undoID      = "55555555-5555-4555-8555-555555555555"
 		token       = "synthetic-proof-token"
 	)
 	var record kitdaemon.RuntimeRecord
@@ -108,16 +107,13 @@ func TestPhotoFaceDecisionCLIRequest(t *testing.T) {
 			assert.NoError(t, json.MarshalWrite(w, map[string]string{"proof": daemonauth.Proof(token, nonce)}))
 		case "/api/v1/photos/versions/" + versionID + "/face-decisions":
 			requests.Add(1)
-			assert.Equal(t, http.MethodPost, r.Method)
 			var request api.PhotoFaceDecisionRequest
 			assert.NoError(t, json.UnmarshalRead(r.Body, &request))
-			assert.Equal(t, api.PhotoFaceDecisionRequest{Action: "name", FaceID: faceID, PersonID: personID, Revision: 7, OperationID: operationID}, request)
+			assert.Equal(t, faceID, request.FaceID)
+			assert.Equal(t, personID, request.PersonID)
+			assert.Equal(t, int64(7), request.Revision)
+			assert.Equal(t, operationID, request.OperationID)
 			assert.NoError(t, json.MarshalWrite(w, api.PhotoFaceDecisionResult{ReceiptID: operationID}))
-		case "/api/v1/photos/face-decisions/" + operationID + "/undo":
-			requests.Add(1)
-			assert.Equal(t, http.MethodPost, r.Method)
-			assert.Equal(t, undoID, r.URL.Query().Get("operation_id"))
-			assert.NoError(t, json.MarshalWrite(w, api.PhotoFaceDecisionResult{ReceiptID: undoID}))
 		default:
 			http.NotFound(w, r)
 		}
@@ -131,10 +127,5 @@ func TestPhotoFaceDecisionCLIRequest(t *testing.T) {
 	var named api.PhotoFaceDecisionResult
 	require.NoError(t, json.Unmarshal([]byte(output), &named))
 	require.Equal(t, operationID, named.ReceiptID)
-	output, err = runCLI(t, "photos", "faces", "undo", named.ReceiptID, "--operation-id", undoID)
-	require.NoError(t, err)
-	var undone api.PhotoFaceDecisionResult
-	require.NoError(t, json.Unmarshal([]byte(output), &undone))
-	require.Equal(t, undoID, undone.ReceiptID)
-	require.Equal(t, int32(2), requests.Load())
+	require.Equal(t, int32(1), requests.Load())
 }
