@@ -264,7 +264,7 @@ describe("document processing browser API", () => {
     const jobID = "b".repeat(64);
     const encoder = new TextEncoder();
     let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         new ReadableStream<Uint8Array>({
           start(controller) {
@@ -331,10 +331,6 @@ describe("document processing browser API", () => {
     await expect(pending).resolves.toMatchObject({
       job: { id: jobID },
       status: { state: "completed" },
-    });
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
-      consent: true,
-      plan_fingerprint: "c".repeat(64),
     });
   });
 
@@ -594,9 +590,11 @@ describe("shared processing response contract", () => {
   it.each(contract.status_cases)("status: $name", async ({ patch, valid }) => {
     const status = { ...contract.status, ...patch };
     const events = `${JSON.stringify({ sequence: 1, type: "job", job: contract.job })}\n${JSON.stringify({ sequence: 2, type: "status", terminal: true, status })}\n`;
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(events, { headers: { "Content-Type": "application/x-ndjson" } }),
-    );
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(events, { headers: { "Content-Type": "application/x-ndjson" } }),
+      );
     const onProgress = vi.fn();
     const run = startProcessing(
       "session",
@@ -606,8 +604,13 @@ describe("shared processing response contract", () => {
       true,
       onProgress,
     );
-    if (valid) await expect(run).resolves.toMatchObject({ status });
-    else {
+    if (valid) {
+      await expect(run).resolves.toMatchObject({ status });
+      expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+        consent: true,
+        plan_fingerprint: "c".repeat(64),
+      });
+    } else {
       await expect(run).rejects.toThrow(/malformed processing progress/);
       expect(onProgress.mock.calls.map(([event]) => event.type)).toEqual(["job"]);
     }

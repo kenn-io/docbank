@@ -391,18 +391,15 @@ describe("exact snapshot target capture", () => {
     ).toHaveLength(0);
   });
 
-  it("rejects a capture whose member hash does not match its receipt", async () => {
-    const first = await twoPageFirst();
-    first.member_hash = "0".repeat(64);
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      jsonResponse(await second({ member_hash: first.member_hash })),
-    );
-    await expect(
-      captureSnapshotTargets("session", first, new AbortController().signal),
-    ).rejects.toThrow(/member hash does not match its receipt/);
-  });
-
   it.each([
+    [
+      "wrong member hash",
+      async (first: SnapshotPage) => {
+        first.member_hash = "0".repeat(64);
+        return second({ member_hash: first.member_hash });
+      },
+      "Snapshot capture member hash does not match its receipt.",
+    ],
     [
       "duplicate members",
       async () => second({ rows: [captureRows[0]] }),
@@ -422,7 +419,7 @@ describe("exact snapshot target capture", () => {
     const first = await twoPageFirst();
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
-      .mockResolvedValue(jsonResponse(await makeSecond()));
+      .mockResolvedValue(jsonResponse(await makeSecond(first)));
     await expect(
       captureSnapshotTargets("session", first, new AbortController().signal),
     ).rejects.toThrow(error);
