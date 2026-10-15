@@ -121,35 +121,90 @@ verified original, and stops the daemon. A test-only consumer then derives page
 geometry and text evidence from that download before aligning text, resolving
 the mask, rendering at 300 DPI, and writing a fresh PDF and sanitized text.
 
-`TestPDFRedactionSourcePreparation` covers one Letter page in Helvetica. It
-removes the first `SECRET` from `SECRET KEEP SECRET`. Independent readers of
-the saved PDF check that its text is `[REDACTED] KEEP SECRET`, the mask interior
-is black, and both retained word regions have exactly their original pixels.
-The PDF consistency verifier also checks the saved output against its page
-artifacts and sanitized runs.
+`TestPDFRedactionSourcePreparation` covers a Letter page in Helvetica and a
+fractional-position Courier page. It removes the first `SECRET`, then checks
+the exact sanitized text, a black mask interior, and unchanged pixels in both
+retained word regions. The PDF consistency verifier checks the saved output
+against its page artifacts and sanitized runs.
 
 Resolution requires complete gap coverage across the entire document. Every
-ordered gap in the text map must be fully masked, even away from a selected
-rectangle. An unordered gap requires masks covering its whole page. Any
-uncovered gap rejects the resolve with `mapping_incomplete` before rendering.
-Native text extraction alone does not establish complete mapping. Whitespace
-visibility checks sample the outward-rounded glyph box without an extra pixel
-border, which can include ink from a neighboring letter. Ordinary glyph checks
-and ambiguity accounting retain their one-pixel border. The Courier and Times
-versions of the same grid-aligned fixture resolve the first-word selection.
-Small visible glyphs falsely mapped to spaces still produce gaps and require
-masks.
+ordered gap must be fully masked, even away from a selected rectangle. An
+unordered gap requires masks covering its whole page. Any uncovered gap rejects
+the resolve with `mapping_incomplete` before rendering.
 
-This sampling correction does not establish general native-PDF coverage.
-Ordinary Courier, Times, and Helvetica text can still produce whitespace gaps:
-outward rounding can include a boundary pixel painted by a neighboring letter.
-Those gaps still require masks across the whole document, so a first-word
-selection can still be refused. Sampling never rounds inward to discard those
-pixels; doing so can miss small visible glyphs falsely mapped to whitespace.
+### Recognizing blank standard-font spaces
 
-The test invokes the geometry inspector directly on its small generated PDF
-and uses an upstream PDFium reader as an evidence bridge. Daemon inspection
-still requires the resource-limited runtime described above. There is no
-operator redaction command or daemon operation connecting these libraries,
-and this test does not qualify a production extraction recipe, user review,
-retained redaction outputs, restart recovery, numbering, or delivery.
+With the configured Linux amd64 page runtime, native inspection can establish
+that whitespace in a qualified Courier, Times or Helvetica program paints
+nothing. This avoids false gaps from a neighboring letter's boundary pixels.
+It primarily helps programmatic PDFs such as fpdf and ReportLab output;
+Word, LaTeX and browser PDFs commonly use other programs or composite encodings.
+
+The proof has two parts:
+
+1. The resource-limited inspector checks every font in the page's effective
+   inherited resources, including unused fonts and ExtGState font entries.
+   All must be simple Type1, MMType1 or TrueType fonts. It reads these facts
+   before pdfcpu validation can repair font dictionaries. Type3, composite/CID,
+   unknown or malformed fonts cannot establish this fact.
+2. Inside the qualified PDFium runtime, each source text object's actual font
+   program must equal one of twelve qualified standard programs byte for byte.
+   The inspector enumerates all 256 raw codes between checked anchors on a
+   scratch text page, then renders every whitespace-mapped code alone onto a
+   transparent bitmap. Both scratch pages have explicit full-page crop boxes
+   and checked effective bounds, so inherited source crops cannot hide probe
+   ink. Any nonzero alpha is ink. A single inked alias makes that object's
+   whitespace unproven, even if the alias is unused on the page.
+
+The child returns `docbank-page-inspect/v2`, `parser_identity: pdfcpu/v0.15.0`
+and one required `simple_fonts_only` boolean per page. Native inspection accepts
+these facts only for the exact staged source identity and ordered frames.
+Rebuild an older inspector and update its configured executable SHA-256 pin;
+there is no v1 compatibility path. The changed inspector identity also changes
+page-image recipe fingerprints. Font facts are transient and do not change
+stored frames, redaction formats or the PDFium asset and recipe.
+
+pdfcpu supplies only the code-domain fact. PDFium supplies the actual program,
+Unicode mappings and painted glyphs. The remaining assumption is that both
+parsers agree which fonts the page can select and whether they are simple.
+Program equality alone is insufficient: a CID font can use the same program
+bytes as a standard font while accepting more than 256 codes.
+
+Every glyph in the twelve accepted programs is qualified at the scratch
+geometry: 72-point type at (72,144) on a 288-point square page, rendered at
+300 DPI to a 1,200-square transparent bitmap. The complete inventory and
+requalification command live in `internal/pdfproduction/testdata/README.md`.
+The 2,792 nonempty outlines must paint ink; the 24 empty glyphs must not.
+This finite-raster proof does not extend to arbitrary fonts.
+
+Each page admits at most 256 batches, 8,192 observations per batch and 2,048
+isolated renders. Missing anchors, uncertain attribution and exhausted work
+limits leave whitespace to the existing pixel decision. There is no elapsed-time
+proof budget that changes the map with machine load. Program acceptance is
+limited to 64 KiB, after the bounded WASM instance retrieves the program. The
+existing hard runtime deadline and memory limits still apply. Proofs are not
+cached across source objects: equal program bytes and Unicode tables can hide
+different glyph encodings. Scratch pages are deleted before the existing
+source-page visibility checks; the source bytes are never rewritten.
+
+### Remaining refusals
+
+Without a usable configured runtime, with an unclassified page, or with an
+unsupported program, inspection uses the existing pixel decision. Classifier
+failure does not create a new blanket refusal. Caller cancellation and PDFium
+errors still end inspection. Only complete proofs skip the whitespace pixel
+check; all earlier hidden-text, ActualText, crop, generated-character, nested
+object and annotation refusals remain.
+
+The pixel path samples the outward-rounded whitespace box without an extra
+border. It can still include neighboring ink in Courier, Times and Helvetica
+text. Ordinary glyph checks and ambiguity accounting retain their one-pixel
+border. Sampling never rounds inward to discard boundary pixels, which could
+miss small visible glyphs falsely mapped to whitespace. A proof that observes
+an inked whitespace alias adds an ordered `unproven_whitespace` gap, even if
+that alias is unused on the source page. Every gap still needs complete masking.
+
+The qualification uses an upstream PDFium reader as a test-only evidence
+bridge. There is no operator redaction command or daemon operation connecting
+these libraries. This does not qualify a production extraction recipe, user
+review, retained redaction outputs, restart recovery, numbering or delivery.

@@ -77,7 +77,8 @@ func densityPNG(ppm uint32) []byte {
 
 func TestInspectorPreservesInheritedCropAndRejectsUnsupportedGeometry(t *testing.T) {
 	data := syntheticPDF([]string{"/MediaBox [-20 -30 220 330]"}, "/MediaBox [-10 -20 210 320] /CropBox [10.125 20.25 170.625 250.75] /Rotate 90")
-	frames, err := InspectSource(data, testSource(data), "application/pdf")
+	inspection, err := InspectSource(data, testSource(data), "application/pdf")
+	frames := inspection.Frames
 	require.NoError(t, err)
 	require.Len(t, frames, 1)
 	require.Equal(t, [4]int64{101250, 202500, 1706250, 2507500}, frames[0].CropBox)
@@ -91,7 +92,8 @@ func TestInspectorPreservesInheritedCropAndRejectsUnsupportedGeometry(t *testing
 
 func TestInspectorNormalizesOppositePDFBoxCorners(t *testing.T) {
 	data := syntheticPDF([]string{"/MediaBox [220 330 -20 -30]"}, "/CropBox [170.625 20.25 10.125 250.75]")
-	frames, err := InspectSource(data, testSource(data), "application/pdf")
+	inspection, err := InspectSource(data, testSource(data), "application/pdf")
+	frames := inspection.Frames
 	require.NoError(t, err)
 	require.Equal(t, [4]int64{-200000, -300000, 2200000, 3300000}, frames[0].MediaBox)
 	require.Equal(t, [4]int64{101250, 202500, 1706250, 2507500}, frames[0].CropBox)
@@ -99,7 +101,8 @@ func TestInspectorNormalizesOppositePDFBoxCorners(t *testing.T) {
 
 func TestPNGInspectionRequiresPhysicalDensityAndRejectsOrientation(t *testing.T) {
 	data := densityPNG(10000)
-	frames, err := InspectSource(data, testSource(data), "image/png")
+	inspection, err := InspectSource(data, testSource(data), "image/png")
+	frames := inspection.Frames
 	require.NoError(t, err)
 	require.Equal(t, int64(10000), frames[0].Width)
 	plain := mediatest.PNG(2, 2, color.White)
@@ -140,7 +143,11 @@ func TestRealRuntimeInspectAndRenderPDFAndPNG(t *testing.T) {
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
 		t.Skip("optional renderer is Linux amd64 only")
 	}
-	renderer, err := exec.LookPath("pdftoppm")
+	renderer := os.Getenv("DOCBANK_TEST_PDFTOPPM")
+	var err error
+	if renderer == "" {
+		renderer, err = exec.LookPath("pdftoppm")
+	}
 	if err != nil {
 		t.Skip("Poppler unavailable")
 	}
@@ -156,7 +163,8 @@ func TestRealRuntimeInspectAndRenderPDFAndPNG(t *testing.T) {
 	require.NoError(t, err)
 	data := syntheticPDF([]string{"/MediaBox [0 0 612 792]", "/MediaBox [0 0 595.2756 841.8898]", "/MediaBox [0 0 792 612]", "/MediaBox [-10 -20 210 320] /CropBox [10.125 20.25 170.625 250.75] /Rotate 90"}, "")
 	source := testSource(data)
-	frames, err := engine.Inspect(t.Context(), data, source, "application/pdf")
+	inspection, err := engine.Inspect(t.Context(), data, source, "application/pdf")
+	frames := inspection.Frames
 	require.NoError(t, err)
 	require.Len(t, frames, 4)
 	for i, want := range [][2]int64{{1224, 1584}, {1191, 1684}, {1584, 1224}, {461, 321}} {
@@ -178,7 +186,8 @@ func TestRealRuntimeInspectAndRenderPDFAndPNG(t *testing.T) {
 			"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 72 144] /Resources << >> /Contents 4 0 R >>",
 			fmt.Sprintf("<< /Length %d >>\nstream\n%sendstream", len(content), content),
 		})
-		frames, err := engine.Inspect(t.Context(), pdf, testSource(pdf), "application/pdf")
+		inspection, err := engine.Inspect(t.Context(), pdf, testSource(pdf), "application/pdf")
+		frames := inspection.Frames
 		require.NoError(t, err)
 		recipe, err := engine.Recipe(frames[0], 144)
 		require.NoError(t, err)
@@ -219,7 +228,8 @@ func TestRealRuntimeInspectAndRenderPDFAndPNG(t *testing.T) {
 					fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [-10 -10 612.000001 792.000001] /CropBox %s /Rotate %d /Resources << >> /Contents 4 0 R >>", crop.box, rotation.degrees),
 					fmt.Sprintf("<< /Length %d >>\nstream\n%sendstream", len(content), content),
 				})
-				frames, err := engine.Inspect(t.Context(), pdf, testSource(pdf), "application/pdf")
+				inspection, err := engine.Inspect(t.Context(), pdf, testSource(pdf), "application/pdf")
+				frames := inspection.Frames
 				require.NoError(t, err)
 				recipe, err := engine.Recipe(frames[0], crop.dpi)
 				require.NoError(t, err)
@@ -240,7 +250,8 @@ func TestRealRuntimeInspectAndRenderPDFAndPNG(t *testing.T) {
 	}
 	data = densityPNG(10000)
 	source = testSource(data)
-	frames, err = engine.Inspect(t.Context(), data, source, "image/png")
+	inspection, err = engine.Inspect(t.Context(), data, source, "image/png")
+	frames = inspection.Frames
 	require.NoError(t, err)
 	recipe, err := engine.Recipe(frames[0], 0)
 	require.NoError(t, err)

@@ -19,7 +19,7 @@ func main() {
 	mediaType := flag.String("media-type", "", "source media type")
 	flag.Parse()
 	if *version {
-		fmt.Println(pagerender.Protocol + " " + runtime.Version() + " pdfcpu/v0.15.0")
+		fmt.Println(pagerender.Protocol + " " + runtime.Version() + " " + pagerender.ParserIdentity)
 		return
 	}
 	if *protocol != pagerender.Protocol || flag.NArg() != 0 {

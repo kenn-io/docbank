@@ -152,11 +152,11 @@ func (w *PageWorker) process(ctx context.Context, claim store.PageJobClaim) erro
 	}
 	defer clear(source)
 	if inventory.PageCount == 0 {
-		frames, err := w.runtime.Inspect(ctx, source, request.Source, version.Version.MimeType)
+		inspection, err := w.runtime.Inspect(ctx, source, request.Source, version.Version.MimeType)
 		if err != nil {
 			return err
 		}
-		if err := w.gate.MutateContext(ctx, func() error { return w.catalog.PublishPageFrames(ctx, claim, frames) }); err != nil {
+		if err := w.gate.MutateContext(ctx, func() error { return w.catalog.PublishPageFrames(ctx, claim, inspection.Frames) }); err != nil {
 			return err
 		}
 		inventory, err = w.catalog.PageInventory(ctx, request.Binding())

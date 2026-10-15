@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
+	"image"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,6 +22,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/pdfproduction"
 	"go.kenn.io/docbank/internal/production"
+	"go.kenn.io/docbank/internal/redactiontest"
 )
 
 func TestPDFRedactionSourcePreparation(t *testing.T) {
@@ -38,14 +40,46 @@ func TestPDFRedactionSourcePreparation(t *testing.T) {
 		require.NoError(t, err, "%s", output)
 		return
 	}
+	for _, fixture := range []redactionFixture{
+		{font: "Helvetica", x: 72, y: 72, text: "SECRET KEEP SECRET",
+			mask:     redaction.Box{X0: 9000, Y0: 7800, X1: 17000, Y1: 11000},
+			black:    image.Rect(280, 240, 505, 325),
+			retained: []image.Rectangle{image.Rect(515, 240, 655, 325), image.Rect(660, 240, 875, 325)}},
+		{font: "Courier", x: 72.37, y: 204, text: "SECRET KEEP SECRET Wave AV To Ty f j",
+			mask:     redaction.Box{X0: 9000, Y0: 26133, X1: 16450, Y1: 29333},
+			black:    image.Rect(280, 790, 490, 875),
+			retained: []image.Rectangle{image.Rect(505, 790, 645, 875), image.Rect(655, 790, 850, 875)}},
+	} {
+		t.Run(fixture.font, func(t *testing.T) {
+			var runtime *pagerender.Runtime
+			if fixture.font == "Courier" {
+				runtime = redactiontest.PageRuntime(t)
+			}
+			qualifyRedactionSource(t, fixture, runtime)
+		})
+	}
+}
+
+type redactionFixture struct {
+	font     string
+	x, y     float64
+	text     string
+	mask     redaction.Box
+	black    image.Rectangle
+	retained []image.Rectangle
+}
+
+func qualifyRedactionSource(t *testing.T, fixture redactionFixture, runtime *pagerender.Runtime) {
+	t.Helper()
 	// The CLI owns global flags; PDF readers run sequentially within this process.
 	temporary := t.TempDir()
 	for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
 		t.Setenv(key, temporary)
 	}
-	data, identity := downloadRedactionSource(t)
+	data, identity := downloadRedactionSource(t, redactionSourcePDF(t, fixture))
 	// From here on, input comes only from the verified download and its receipt.
-	frames, err := pagerender.InspectSource(data, identity, "application/pdf")
+	inspection, err := pagerender.InspectSource(data, identity, "application/pdf")
+	frames := inspection.Frames
 	require.NoError(t, err)
 	require.Len(t, frames, 1)
 	require.Equal(t, identity, frames[0].Source)
@@ -55,7 +89,7 @@ func TestPDFRedactionSourcePreparation(t *testing.T) {
 	_, frameHash, err := document.MarshalPageFrameV1(frames[0])
 	require.NoError(t, err)
 	text := readRedactionPDFText(t, data)
-	require.Equal(t, "SECRET KEEP SECRET", text)
+	require.Equal(t, fixture.text, text)
 	policy, err := document.NewEvidencePolicy(1 << 20)
 	require.NoError(t, err)
 	evidence, err := document.NormalizeEvidenceV1(document.SourceEvidenceV1{
@@ -73,46 +107,47 @@ func TestPDFRedactionSourcePreparation(t *testing.T) {
 	// freed heap from the daemon, earlier tests, and the text read to the OS before measuring.
 	debug.FreeOSMemory()
 	mapping, err := production.Align(t.Context(), production.AlignmentInput{
-		PDF: source, Pages: frames, Evidence: evidence, EvidenceSHA256: evidence.Checksum,
+		PDF: source, Pages: frames, Evidence: evidence, EvidenceSHA256: evidence.Checksum, PageRuntime: runtime,
 	})
 	require.NoError(t, err)
-	require.Equal(t, "SECRET KEEP SECRET", strings.TrimSpace(mapping.Text))
+	require.Equal(t, fixture.text, strings.TrimSpace(mapping.Text))
 	require.Empty(t, mapping.Gaps)
 	require.Equal(t, identity.SHA256, mapping.PDFSHA256)
 	require.Equal(t, evidence.Checksum, mapping.EvidenceSHA256)
 	require.Len(t, mapping.Pages, 1)
 	require.Equal(t, frameHash, mapping.Pages[0].FrameSHA256)
+	fixture.mask.Page = 1
+	fixture.mask.FrameSHA256 = frameHash
 	decision := redaction.Decision{
 		ID: "00000000-0000-4000-8000-000000000001", Action: "redact",
 		MemberID: "00000000-0000-4000-8000-000000000002",
 		Selector: redaction.Selector{Kind: "rectangle", MapSHA256: mapping.SHA256,
-			Boxes: []redaction.Box{{Page: 1, FrameSHA256: frameHash,
-				X0: 9000, Y0: 7800, X1: 17000, Y1: 11000}}},
+			Boxes: []redaction.Box{fixture.mask}},
 	}
 	plan, err := redaction.Resolve(mapping, "redact_selected",
 		[]redaction.Decision{decision}, pdfproduction.QualifiedRecipe())
 	require.NoError(t, err)
 	sidecar, err := redaction.Text(plan)
 	require.NoError(t, err)
-	require.Equal(t, "[REDACTED] KEEP SECRET\f", string(sidecar))
+	expected := "[REDACTED]" + strings.TrimPrefix(fixture.text, "SECRET")
+	require.Equal(t, expected+"\f", string(sidecar))
 
 	output := filepath.Join(t.TempDir(), "redacted.pdf")
 	artifact, original := writeRedactionPDF(t, output, source, plan)
 	saved, err := os.ReadFile(output)
 	require.NoError(t, err)
 	verifyRedactionPDF(t, saved, sidecar, artifact)
-	require.Equal(t, "[REDACTED] KEEP SECRET",
+	require.Equal(t, expected,
 		strings.Join(strings.Fields(readRedactionPDFText(t, saved)), " "))
-	assertRedactionPixels(t, saved, original)
+	assertRedactionPixels(t, saved, original, fixture)
 }
 
-func downloadRedactionSource(t *testing.T) ([]byte, document.PageSource) {
+func downloadRedactionSource(t *testing.T, original []byte) ([]byte, document.PageSource) {
 	t.Helper()
 	vault := t.TempDir()
 	t.Setenv("DOCBANK_HOME", vault)
 	stop := startServe(t)
 	waitForDaemon(t, vault)
-	original := redactionSourcePDF(t)
 	input := filepath.Join(t.TempDir(), "source.pdf")
 	require.NoError(t, os.WriteFile(input, original, 0o600))
 	_, err := runCLI(t, "add", input, "--dest", "/inbox", "--json")

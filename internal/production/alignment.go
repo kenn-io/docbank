@@ -10,12 +10,14 @@ import (
 	"strings"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/pagerender"
 	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/pdfproduction"
 )
 
 type AlignmentInput struct {
+	PageRuntime         *pagerender.Runtime
 	PDF                 pdfproduction.Source
 	Pages               []document.PageFrameV1
 	Evidence            document.NormalizedEvidenceV1
@@ -58,7 +60,7 @@ func Align(ctx context.Context, input AlignmentInput) (redaction.TextMap, error)
 		result, err = alignEvidence(input.Pages, input.Evidence, pages, input.PDF.SHA256, evidenceSHA)
 	} else {
 		var inspected []pdfproduction.NativeTextPage
-		inspected, err = pdfproduction.InspectNativeText(ctx, input.PDF, input.Pages)
+		inspected, err = pdfproduction.InspectNativeText(ctx, input.PDF, input.Pages, input.PageRuntime)
 		if err == nil {
 			result, err = alignNative(input.Pages, inspected, pages, evidenceSHA, input.PDF.SHA256)
 		}

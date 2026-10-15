@@ -27,15 +27,15 @@ import (
 	"go.kenn.io/docbank/internal/pdfproduction"
 )
 
-func redactionSourcePDF(t *testing.T) []byte {
+func redactionSourcePDF(t *testing.T, fixture redactionFixture) []byte {
 	t.Helper()
 	pdf := fpdf.New("P", "pt", "Letter", "")
 	pdf.SetCatalogSort(true)
 	pdf.SetCreationDate(time.Unix(0, 0).UTC())
 	pdf.SetModificationDate(time.Unix(0, 0).UTC())
 	pdf.AddPage()
-	pdf.SetFont("Helvetica", "", 12)
-	pdf.Text(72, 72, "SECRET KEEP SECRET")
+	pdf.SetFont(fixture.font, "", 12)
+	pdf.Text(fixture.x, fixture.y, fixture.text)
 	var output bytes.Buffer
 	require.NoError(t, pdf.Output(&output))
 	return output.Bytes()
@@ -161,7 +161,7 @@ func (s *redactionPageSequence) Next(context.Context) (pdfproduction.PageArtifac
 	return s.artifact, nil
 }
 
-func assertRedactionPixels(t *testing.T, pdf []byte, original image.Image) {
+func assertRedactionPixels(t *testing.T, pdf []byte, original image.Image, fixture redactionFixture) {
 	t.Helper()
 	pages, err := pdfapi.ExtractImagesRaw(bytes.NewReader(pdf), nil, redactionPDFConfig())
 	require.NoError(t, err)
@@ -173,17 +173,15 @@ func assertRedactionPixels(t *testing.T, pdf []byte, original image.Image) {
 			require.NoError(t, err)
 			require.Equal(t, image.Rect(0, 0, 2550, 3300), decoded.Bounds())
 			white := color.RGBA64{R: 65535, G: 65535, B: 65535, A: 65535}
-			require.Equal(t, white, color.RGBA64Model.Convert(original.At(280, 240)))
-			// Literal regions follow Helvetica's placement, not the resolved mask.
-			for y := 240; y < 325; y++ {
-				for x := 280; x < 505; x++ {
+			require.Equal(t, white, color.RGBA64Model.Convert(original.At(fixture.black.Min.X, fixture.black.Min.Y)))
+			// Literal regions follow the fixture's placement, not the resolved mask.
+			for y := fixture.black.Min.Y; y < fixture.black.Max.Y; y++ {
+				for x := fixture.black.Min.X; x < fixture.black.Max.X; x++ {
 					require.Equal(t, color.RGBA64{A: 65535},
 						color.RGBA64Model.Convert(decoded.At(x, y)), "mask pixel %d,%d", x, y)
 				}
 			}
-			for _, region := range []image.Rectangle{
-				image.Rect(515, 240, 655, 325), image.Rect(660, 240, 875, 325),
-			} {
+			for _, region := range fixture.retained {
 				ink := 0
 				for y := region.Min.Y; y < region.Max.Y; y++ {
 					for x := region.Min.X; x < region.Max.X; x++ {
