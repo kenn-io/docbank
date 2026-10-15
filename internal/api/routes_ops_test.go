@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
@@ -355,26 +356,42 @@ func TestTrashListAndEmpty(t *testing.T) {
 	require.NoError(t, err)
 	_, _, err = s.Trash(t.Context(), raw.ID, store.UnconditionalRev)
 	require.NoError(t, err)
+	version := createEmailVersion(t, s, "synthetic-retained.eml", "Subject: Synthetic\r\n\r\nRetained body")
+	emailResp, emailBody := do(t, ts, http.MethodPost, "/api/v1/versions/"+version.ID+"/email", nil, struct{}{})
+	require.Equal(t, http.StatusOK, emailResp.StatusCode, emailBody)
+	view, err := s.EmailMetadata(t.Context(), version.ID)
+	require.NoError(t, err)
+	root, err := s.NodeByID(t.Context(), s.RootID())
+	require.NoError(t, err)
+	_, err = s.PublishEmailDocuments(t.Context(), document.EmailDocumentPublicationRequest{
+		OperationID:  "synthetic-retention",
+		Parent:       document.EmailDocumentIdentity{NodeID: version.NodeID, VersionID: version.ID, SHA256: version.BlobHash, Size: version.Size},
+		GenerationID: view.Generation.ID, AttachmentID: view.Attachment.ID,
+		DestinationID: root.ID, DestinationRevision: root.Revision,
+	})
+	require.NoError(t, err)
 	old := createFileWithContent(t, ts, s, "/old.txt", "x")
 	_, etag := etagOf(t, ts, old.ID)
 	resp, _ := do(t, ts, http.MethodPost, fmt.Sprintf("/api/v1/nodes/%d/trash", old.ID),
 		map[string]string{"If-Match": etag}, nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
+	_, _, err = s.Trash(t.Context(), version.NodeID, store.UnconditionalRev)
+	require.NoError(t, err)
 
 	resp, body := get(t, ts, "/api/v1/trash", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var trash api.TrashPage
 	require.NoError(t, json.Unmarshal([]byte(body), &trash))
-	require.Len(t, trash.Items, 2)
-	assert.ElementsMatch(t, []string{"capture.raw", "old.txt"}, []string{trash.Items[0].Name, trash.Items[1].Name})
-	assert.Equal(t, 2, trash.Total)
+	require.Len(t, trash.Items, 3)
+	assert.ElementsMatch(t, []string{"capture.raw", "old.txt", "synthetic-retained.eml"}, []string{trash.Items[0].Name, trash.Items[1].Name, trash.Items[2].Name})
+	assert.Equal(t, 3, trash.Total)
 	assert.Zero(t, trash.Limit)
 	assert.Zero(t, trash.Offset)
 
 	resp, body = get(t, ts, "/api/v1/trash?limit=1&offset=0", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NoError(t, json.Unmarshal([]byte(body), &trash))
-	assert.Equal(t, 2, trash.Total)
+	assert.Equal(t, 3, trash.Total)
 	assert.Equal(t, 1, trash.Limit)
 
 	for _, run := range []bool{false, true} {
@@ -383,7 +400,7 @@ func TestTrashListAndEmpty(t *testing.T) {
 		require.Equal(t, http.StatusOK, resp.StatusCode, body)
 		var out api.TrashEmptyReport
 		require.NoError(t, json.Unmarshal([]byte(body), &out))
-		want := api.TrashEmptyReport{CandidateRoots: 1, RetainedRoots: 0, HeldRoots: 1, Run: run}
+		want := api.TrashEmptyReport{CandidateRoots: 1, RetainedRoots: 1, HeldRoots: 1, Run: run}
 		if run {
 			want.Deleted = 1
 		}
