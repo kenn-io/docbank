@@ -923,12 +923,16 @@ func validateConfiguredCheckouts(ctx context.Context, cfg config.Config, stores 
 			paths = append(paths, binding.Path)
 		}
 	}
+	var pending error
 	for _, pathname := range paths {
 		if err := validateCheckoutPath(ctx, catalog, pathname); err != nil {
-			return err
+			if _, ok := errors.AsType[*os.PathError](err); !ok {
+				return err
+			}
+			pending = errors.Join(pending, err)
 		}
 	}
-	return nil
+	return pending
 }
 
 func validateConfiguredWatchStores(
