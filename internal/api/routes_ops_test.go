@@ -337,18 +337,31 @@ func TestIngestRoutesAcceptPairedSurrogatePath(t *testing.T) {
 func TestTrashListAndEmpty(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
-	f := createFileWithContent(t, ts, s, "/old.txt", "x")
-	_, etag := etagOf(t, ts, f.ID)
-	resp, _ := do(t, ts, http.MethodPost, fmt.Sprintf("/api/v1/nodes/%d/trash", f.ID),
-		map[string]string{"If-Match": etag}, nil)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
+	rawHash, rawSize, err := s.Blobs.Write(strings.NewReader("synthetic raw"))
+	require.NoError(t, err)
+	raw, err := s.CreateFile(t.Context(), s.RootID(), "capture.raw", rawHash, rawSize, "application/octet-stream")
+	require.NoError(t, err)
+	jpegHash, jpegSize, err := s.Blobs.Write(strings.NewReader("synthetic jpeg"))
+	require.NoError(t, err)
+	jpeg, err := s.CreateFile(t.Context(), s.RootID(), "capture.jpg", jpegHash, jpegSize, "image/jpeg")
+	require.NoError(t, err)
+	auto, err := s.PhotoAssetForNode(t.Context(), jpeg.ID)
+	require.NoError(t, err)
+	_, err = s.DetachPhotoFile(t.Context(), auto.ID, auto.Revision, auto.Files[0].ID, store.PhotoDetachOptions{})
+	require.NoError(t, err)
+	asset, err := s.CreatePhotoAsset(t.Context(), raw.ID, store.PhotoRoleRAW, store.PhotoKindPhoto)
+	require.NoError(t, err)
+	_, err = s.AttachPhotoFile(t.Context(), asset.ID, asset.Revision, jpeg.ID, store.PhotoRoleImage, nil)
+	require.NoError(t, err)
+	_, _, err = s.Trash(t.Context(), raw.ID, store.UnconditionalRev)
+	require.NoError(t, err)
 
 	resp, body := get(t, ts, "/api/v1/trash", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var trash api.TrashPage
 	require.NoError(t, json.Unmarshal([]byte(body), &trash))
 	require.Len(t, trash.Items, 1)
-	assert.Equal(t, "old.txt", trash.Items[0].Name)
+	assert.Equal(t, "capture.raw", trash.Items[0].Name)
 	assert.Equal(t, 1, trash.Total)
 	assert.Zero(t, trash.Limit)
 	assert.Zero(t, trash.Offset)
@@ -361,6 +374,7 @@ func TestTrashListAndEmpty(t *testing.T) {
 
 	expected, err := s.TrashEmpty(t.Context(), 0, false)
 	require.NoError(t, err)
+	assert.Equal(t, int64(1), expected.Held)
 	for _, run := range []bool{false, true} {
 		resp, body = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil,
 			map[string]any{"older_than": "", "run": run})
@@ -373,7 +387,7 @@ func TestTrashListAndEmpty(t *testing.T) {
 		}
 		assert.Equal(t, want, out)
 		if !run {
-			survived, err := s.NodeByID(t.Context(), f.ID)
+			survived, err := s.NodeByID(t.Context(), raw.ID)
 			require.NoError(t, err)
 			require.NotNil(t, survived.TrashedAt)
 		}

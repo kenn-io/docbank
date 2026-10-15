@@ -16,8 +16,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func addWindowsCheckoutRecoveryRetryCases(t *testing.T) {
-	t.Helper()
+func TestCheckoutRecoveryRetriesInaccessiblePaths(t *testing.T) {
 	for _, test := range []struct {
 		name      string
 		root      bool
@@ -105,8 +104,4 @@ func addWindowsCheckoutRecoveryRetryCases(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestCheckoutRecoveryRetriesInaccessiblePaths(t *testing.T) {
-	addWindowsCheckoutRecoveryRetryCases(t)
 }
