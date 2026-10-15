@@ -12,7 +12,7 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func TestStorageProtectionPathsIgnoreLocalDirectoriesForS3(t *testing.T) {
+func TestStorageProtectionPathsSkipS3AndRejectUncertainFilesystemCheckout(t *testing.T) {
 	t.Parallel()
 	catalog, err := store.Open(filepath.Join(t.TempDir(), "docbank.db"))
 	require.NoError(t, err)

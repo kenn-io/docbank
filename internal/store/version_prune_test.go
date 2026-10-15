@@ -1013,7 +1013,7 @@ func TestPruneContentVersionsValidatesSelectorsAndTargets(t *testing.T) {
 	assert.NotEmpty(t, preview.Cutoff)
 }
 
-func TestRetainCheckoutVersionsBatchesCandidateBindings(t *testing.T) {
+func TestRetainMediaAuthorityVersionsBatchesCandidateBindings(t *testing.T) {
 	t.Parallel()
 	for _, driver := range v090UpgradeDrivers() {
 		t.Run(driver.name, func(t *testing.T) {

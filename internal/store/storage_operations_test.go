@@ -49,6 +49,7 @@ func TestStorageOperationPersistsProgressResumesAndCancels(t *testing.T) {
 	require.Len(t, items, 1)
 	assert.Equal(t, StorageOperationCancelled, items[0].State)
 	assert.NotNil(t, items[0].FinishedAt)
+	require.ErrorIs(t, s.RequestStorageOperationCancel(t.Context(), created.ID), ErrStorageOperationTerminal)
 }
 
 func TestStorageOperationRejectsCancellationAfterCompletion(t *testing.T) {

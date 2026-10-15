@@ -371,11 +371,13 @@ func TestServeRejectsCheckoutCopiesBeforeStartup(t *testing.T) {
 	configText := fmt.Sprintf("[[watch]]\nname = 'checkout'\nsource = %q\ndestination = '/inbox'\n", filepath.ToSlash(destination))
 	require.NoError(t, os.WriteFile(filepath.Join(layout.Root, "config.toml"), []byte(configText), 0o600))
 	t.Setenv("DOCBANK_HOME", layout.Root)
-	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
-	defer cancel()
-	err = runServe(ctx)
-	require.ErrorContains(t, err, "configured path")
-	require.ErrorContains(t, err, checkout.ID)
+	t.Run("watch source", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(t.Context(), daemonStartTimeout)
+		defer cancel()
+		err = runServe(ctx)
+		require.ErrorContains(t, err, "configured path")
+		require.ErrorContains(t, err, checkout.ID)
+	})
 }
 
 func TestCheckoutValidationDefersInternalDeadline(t *testing.T) {
