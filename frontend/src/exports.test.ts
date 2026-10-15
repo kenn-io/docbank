@@ -270,16 +270,22 @@ it("accepts current-state gaps and byte-identical duplicates, never treats EOF a
 it("rejects conflicting duplicates, backwards, truncated and oversized progress", async () => {
   const line = (job: unknown) =>
     JSON.stringify({ delivery: "current_state", requested_after: 0, job });
-  for (const content of [
-    events([line(queued), line({ ...queued, state: "running" })]),
-    events([line({ ...queued, sequence: 3 }), line(queued)]),
-    new Response(line(complete), { headers: { "Content-Type": "application/x-ndjson" } }),
-    events(["a".repeat(65537)]),
-  ]) {
+  for (const [content, error] of [
+    [events([line(queued), line({ ...queued, state: "running" })]), /captured authority/],
+    [
+      events([line({ ...queued, sequence: 3 }), line(queued), line(complete)]),
+      /captured authority/,
+    ],
+    [
+      new Response(line(complete), { headers: { "Content-Type": "application/x-ndjson" } }),
+      /progress stream was truncated/,
+    ],
+    [events(["a".repeat(65537)]), /progress event was unexpectedly large/],
+  ] as const) {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(content);
     await expect(
       readExportEvents("s", plan, jobID, undefined, new AbortController().signal, () => {}),
-    ).rejects.toThrow();
+    ).rejects.toThrow(error);
   }
 });
 

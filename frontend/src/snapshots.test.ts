@@ -187,7 +187,12 @@ describe("snapshot transport and receipt validation", () => {
   ])("rejects %s", async (_name, makeReceipt) => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(await makeReceipt()));
     await expect(
-      createSnapshot("session", query, {}, new AbortController().signal),
+      createSnapshot(
+        "session",
+        query,
+        { profile: "archive", page_size: 50, facets: ["tags"] },
+        new AbortController().signal,
+      ),
     ).rejects.toThrow(/malformed snapshot receipt/i);
   });
 
@@ -380,14 +385,14 @@ describe("exact snapshot target capture", () => {
     ["wrong bytes", async () => second({ rows: [{ ...captureRows[50], size: 52 }] })],
     ["wrong member hash", async () => second({ member_hash: "0".repeat(64) })],
     ["premature next cursor", async () => second({ next_cursor: "next-2" })],
-  ])("rejects %s without sending a mutation", async (_name, makeSecond) => {
+  ])("rejects %s without sending a mutation", async (name, makeSecond) => {
     const first = await twoPageFirst();
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(jsonResponse(await makeSecond()));
     await expect(
       captureSnapshotTargets("session", first, new AbortController().signal),
-    ).rejects.toThrow();
+    ).rejects.toThrow(name === "duplicate members" ? /duplicate member/ : undefined);
     expect(
       fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/batch/tags")),
     ).toHaveLength(0);
