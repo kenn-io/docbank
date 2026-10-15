@@ -471,6 +471,13 @@ func (r *Registry) admitRefresh(ctx context.Context, id packstore.StoreID) bool 
 		return true
 	}
 	if err := r.admitBinding(ctx, binding); err != nil {
+		if ctx.Err() != nil {
+			// The caller's own cancellation or deadline interrupted
+			// admission, not a rejection; leave any existing backend and
+			// observation as they were rather than treating an
+			// interrupted check as a failed one.
+			return false
+		}
 		r.mu.Lock()
 		// A prior online backend must also pass admission on every later
 		// refresh, the same guarantee probeStore's own admission check

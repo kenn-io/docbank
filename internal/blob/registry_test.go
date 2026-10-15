@@ -869,3 +869,38 @@ func TestRegistryAdmissionRunsOutsideOwnershipProbeDeadline(t *testing.T) {
 			"admission outlasting the ownership-probe deadline must still complete")
 	})
 }
+
+func TestRegistryPreservesBackendWhenAdmissionIsCancelled(t *testing.T) {
+	const storeID = "40000000-0000-4000-8000-000000000001"
+	var interrupted atomic.Bool
+	spec := StoreSpec{
+		ID: storeID, Kind: "filesystem", Role: "secondary",
+		Lifecycle: "active", Binding: "archive", OwnershipEpoch: "epoch",
+	}
+	open := func(
+		_ context.Context, _ config.StoreBindingConfig, expected *packstore.Ownership,
+	) (packstore.Backend, error) {
+		return &staticOwnershipBackend{ownership: *expected}, nil
+	}
+	registry := newRegistryWithFactories(t.Context(), "vault", map[string]config.StoreBindingConfig{
+		"archive": {Kind: "filesystem", Path: t.TempDir()},
+	}, []StoreSpec{spec}, open, open, func(ctx context.Context, _ config.StoreBindingConfig) error {
+		if !interrupted.Load() {
+			return nil
+		}
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	t.Cleanup(func() { require.NoError(t, registry.Close()) })
+	require.Equal(t, StoreOnline, registry.Observation(storeID).State)
+
+	interrupted.Store(true)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	observation := registry.Refresh(ctx, storeID)
+	require.Equal(t, StoreOnline, observation.State,
+		"an interrupted admission must not be treated as a rejection")
+	_, available := registry.Backend(storeID)
+	require.True(t, available,
+		"the existing backend must survive an interrupted admission check")
+}
