@@ -242,6 +242,8 @@ func (s Service) reconcile(ctx context.Context, c store.PhotoCheckout) error {
 		if err := s.Store.ObservePhotoCheckout(ctx, c.ID, c.OperationID, nil); err != nil {
 			return err
 		}
+	} else if fsErr != nil {
+		return fmt.Errorf("inspecting checkout destination: %w", fsErr)
 	}
 	if root != nil {
 		defer func() { _ = root.Close() }()
