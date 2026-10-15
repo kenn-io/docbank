@@ -122,10 +122,30 @@ WebP inputs apply bounded EXIF orientation.
 Animated WebP remains unsupported by the built-in decoder.
 
 Accepted images scale without upscaling to the selected recipe's maximum edge
-and encode as a quality-90 JPEG. The decoded source image must have positive
-dimensions and no more than 100,000,000 pixels. A larger image records
-`failed` with `source_dimensions_exceed_limit`. For camera RAW files, this
-limit applies to the embedded JPEG being decoded.
+and encode as a quality-90 JPEG. Source dimensions must be positive. JPEGs above
+100,000,000 pixels decode at one-eighth scale per edge using block averages,
+including progressive JPEGs, up to 1,000,000,000 source pixels. JPEGs above that
+ceiling record `failed` with `source_dimensions_exceed_limit` before allocating
+coefficient planes. Fit and large previews for these JPEGs can come out below the
+2560/4096 recipe edges because they stop at one-eighth of the source edge.
+Measured at a 31622 x 31622 progressive JPEG (just under the ceiling), peak live Go heap
+is about 230 MB, with roughly 270 MB allocated in total.
+Oversize progressive previews use DC scans only. AC scans must be marker-framed
+and nonempty; their entropy contents are skipped. Damaged AC data after valid
+DC scans still yields a correct one-eighth preview. Baseline JPEGs must
+Huffman-decode all AC entropy data, so they have a lower reduced-decode ceiling
+of 200,000,000 pixels. Above it they record `failed` with
+`source_dimensions_exceed_limit`. On one fast workstation, noisy 4:2:0
+quality-90 baseline images decode in about 2.2 s at 110 MP and 5.1 s at
+199 MP, about 26 s per gigapixel. That is faster than the standard library's
+full-resolution decode of the same files. The ceiling leaves about six times
+that workstation's decode time under the 30 s on-demand preview timeout; slower
+hosts have less margin. Decoding checks for cancellation periodically during
+entropy decoding and pixel reconstruction. Subsampled chroma block averages use
+bilinear interpolation.
+PNG, GIF, and WebP sources above 100,000,000 pixels record `failed` with
+`source_dimensions_exceed_limit`. Camera RAW files use the JPEG limits for
+their embedded preview.
 
 Malformed source bytes become a durable `failed` result. Unsupported media
 types, decoder features, and color models become a durable `unsupported`

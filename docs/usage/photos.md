@@ -307,6 +307,8 @@ JPEG, PNG, GIF, still WebP, and supported embedded JPEGs in ARW, DNG, CR2,
 NEF, and RAF files have decoder paths. Format support does not guarantee that
 every individual file decodes. Unsupported and deterministic decode failures
 are stored as terminal results. Temporary storage or read failures retry.
+JPEGs over 100 MP stop at one-eighth of the source edge instead of the
+2560 and 4096 recipe edges.
 
 ## Quality signals
 

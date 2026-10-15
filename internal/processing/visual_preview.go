@@ -28,15 +28,22 @@ const (
 	visualPreviewProcessorDescriptor = document.VisualPreviewProcessorDescriptor
 	visualPreviewMaxEdgePixels       = document.VisualPreviewMaxEdgePixels
 	visualPreviewMaxSourcePixels     = document.VisualPreviewMaxSourcePixels
-	visualPreviewJPEGQuality         = document.VisualPreviewJPEGQuality
-	visualPreviewMaxJPEGSegments     = 1024
-	visualPreviewMaxPNGChunks        = 1024
-	visualPreviewMaxWebPChunks       = 1024
-	visualPreviewMaxEXIFBytes        = 1 << 20
-	visualPreviewMaxICCBytes         = 1 << 20
-	visualPreviewWebPAnimation       = 1 << 1
-	visualPreviewWebPEXIF            = 1 << 3
-	visualPreviewWebPICCProfile      = 1 << 5
+	visualPreviewMaxDCSourcePixels   = 1_000_000_000
+	// Baseline JPEGs Huffman-decode every AC symbol even at one-eighth scale.
+	// On one fast workstation, noisy 4:2:0 quality-90 images take about 2.2 s
+	// at 110 MP and 5.1 s at 199 MP (about 26 s per gigapixel). 200 MP leaves
+	// slower hosts room under the 30 s on-demand preview timeout.
+	// Progressive JPEGs skip AC scans and keep the full ceiling.
+	visualPreviewMaxBaselineDCSourcePixels = 200_000_000
+	visualPreviewJPEGQuality               = document.VisualPreviewJPEGQuality
+	visualPreviewMaxJPEGSegments           = 1024
+	visualPreviewMaxPNGChunks              = 1024
+	visualPreviewMaxWebPChunks             = 1024
+	visualPreviewMaxEXIFBytes              = 1 << 20
+	visualPreviewMaxICCBytes               = 1 << 20
+	visualPreviewWebPAnimation             = 1 << 1
+	visualPreviewWebPEXIF                  = 1 << 3
+	visualPreviewWebPICCProfile            = 1 << 5
 )
 
 var visualPreviewRecipe = func() document.VisualPreviewRecipeV1 {
@@ -220,7 +227,7 @@ func produceVisualPreviewPNG(
 		}
 		return VisualPreviewProduct{Preview: base}, nil
 	}
-	pixels, err := decodeVisualPixels(ctx, source, visualFormatPNG)
+	pixels, err := decodeVisualPixels(ctx, source, visualFormatPNG, false)
 	if err != nil {
 		return visualPreviewDecodeResult(base, visualFormatPNG, pixels, err)
 	}
@@ -439,7 +446,7 @@ func inspectVisualPreviewContainer(ctx context.Context, source io.ReadSeeker, fo
 }
 
 func decodeAndEncodeVisualPreview(ctx context.Context, source io.ReadSeeker, base document.VisualPreviewV1, format string, orientation int, colorSpace visualPreviewColorSpace) (VisualPreviewProduct, error) {
-	pixels, err := decodeVisualPixels(ctx, source, format)
+	pixels, err := decodeVisualPixels(ctx, source, format, true)
 	if err == nil {
 		return encodeVisualPreview(ctx, base, pixels.image, orientation, colorSpace)
 	}
@@ -646,9 +653,9 @@ func failedVisualPreview(
 	return VisualPreviewProduct{Preview: base}
 }
 
-func visualPreviewDimensionsAllowed(width, height int) bool {
+func visualPreviewDimensionsAllowed(width, height int, limit int64) bool {
 	return width > 0 && height > 0 &&
-		int64(width) <= visualPreviewMaxSourcePixels/int64(height)
+		int64(width) <= limit/int64(height)
 }
 
 func boundedVisualPreviewDimensionsForEdge(width, height, edge int) (int, int) {

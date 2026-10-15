@@ -1,7 +1,9 @@
 package processing
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
@@ -14,10 +16,14 @@ import (
 	"image/jpeg"
 	"image/png"
 	"io"
+	"log/slog"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -287,7 +293,7 @@ func TestProduceVisualPreviewUsesGIFPrimaryFrame(t *testing.T) {
 		Config: image.Config{ColorModel: palette, Width: 64, Height: 32},
 	}))
 	source := encoded.Bytes()
-	decoded, err := decodeVisualPixels(t.Context(), bytes.NewReader(source), "gif")
+	decoded, err := decodeVisualPixels(t.Context(), bytes.NewReader(source), "gif", false)
 	require.NoError(t, err)
 	red, green, blue, alpha := decoded.image.At(8, 4).RGBA()
 	assert.Equal(t, [4]uint32{}, [4]uint32{red, green, blue, alpha})
@@ -619,6 +625,7 @@ func TestProduceVisualPreviewKeepsImageReadErrorsRetryable(t *testing.T) {
 		failReadAt      int64
 	}{
 		{name: "jpeg", mediaType: "image/jpeg", data: mediatest.JPEG(3, 2, color.White), failAtSeeks: []int{3, 4}},
+		{name: "oversize jpeg", mediaType: "image/jpeg", data: syntheticVisualJPEGDC(t, 10008, 10008, false), failAtSeeks: []int{4}},
 		{name: "png", mediaType: "image/png", data: pngSource, failAtSeeks: []int{3, 4}},
 		{name: "png after IDAT", mediaType: "image/png", data: trailingPNG, failAtSeeks: []int{4}, failReadAt: failReadAt},
 		{name: "gif", mediaType: "image/gif", data: mediatest.GIF(3, 2, 1), failAtSeeks: []int{2, 3}},
@@ -635,6 +642,9 @@ func TestProduceVisualPreviewKeepsImageReadErrorsRetryable(t *testing.T) {
 			digest := sha256.Sum256(source.data)
 			for index, failAtSeek := range source.failAtSeeks {
 				phase := phases[index].name
+				if failAtSeek == 4 {
+					phase = "pixels"
+				}
 				if source.failReadAt != 0 {
 					phase = "after IDAT"
 				}
@@ -684,9 +694,9 @@ func TestVisualPreviewJPEGUnsupportedFeatureIsTerminal(t *testing.T) {
 	assert.Equal(t, "unsupported_jpeg_feature", product.Preview.Failure.Code)
 }
 
-func syntheticJPEGSegment(t *testing.T, source []byte, marker byte, payload []byte) []byte {
-	t.Helper()
-	require.LessOrEqual(t, len(payload)+2, int(^uint16(0)))
+func syntheticJPEGSegment(tb testing.TB, source []byte, marker byte, payload []byte) []byte {
+	tb.Helper()
+	require.LessOrEqual(tb, len(payload)+2, int(^uint16(0)))
 	header := []byte{0xff, marker, 0, 0}
 	binary.BigEndian.PutUint16(header[2:], uint16(len(payload)+2))
 	result := make([]byte, 0, len(source)+len(header)+len(payload))
@@ -922,3 +932,493 @@ func (r *failingVisualPreviewReadSeeker) Seek(offset int64, whence int) (int64, 
 	}
 	return position, err //nolint:wrapcheck // The test double preserves Seeker error identity.
 }
+
+//nolint:paralleltest // Measures allocations without concurrent preview producers.
+func TestProduceVisualPreviewDownscalesOversizedJPEG(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		width       int
+		height      int
+		orientation uint16
+		baseline    bool
+		raw         bool
+	}{
+		{"progressive", 10008, 10008, 1, false, false},
+		{"EXIF orientation 6", 12000, 9000, 6, false, false},
+		{"baseline", 12000, 9000, 1, true, false},
+		{"embedded RAW", 12000, 9000, 1, false, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if test.baseline && testing.Short() {
+				t.Skip("large baseline allocation check")
+			}
+			source := syntheticVisualJPEGDC(t, test.width, test.height, test.baseline)
+			mediaType := "image/jpeg"
+			if test.orientation == 6 {
+				tiff := syntheticTIFF(42, []syntheticTIFFEntry{tiffShort(0x0112, 6)}, nil)
+				source = syntheticJPEGSegment(t, source, 0xe1, append([]byte("Exif\x00\x00"), tiff...))
+			}
+			if test.raw {
+				source = syntheticRAWPreviewTIFF(test.orientation, source)
+				mediaType = "image/x-adobe-dng"
+			}
+			digest := sha256.Sum256(source)
+			sizes := []string{"fit"}
+			if test.name == "progressive" {
+				sizes = []string{"grid", "fit"}
+			}
+			for _, size := range sizes {
+				t.Run(size, func(t *testing.T) {
+					recipe, err := VisualPreviewRecipeForSize(size)
+					require.NoError(t, err)
+					var before, after runtime.MemStats
+					runtime.ReadMemStats(&before)
+					product, err := ProduceVisualPreviewForRecipe(t.Context(), bytes.NewReader(source), VisualPreviewTarget{
+						SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(source)), MediaType: mediaType,
+					}, recipe)
+					runtime.ReadMemStats(&after)
+					require.NoError(t, err)
+					require.Equal(t, document.VisualPreviewReady, product.Preview.State)
+					require.NotNil(t, product.Preview.Output)
+					width, height := 1500, 1125
+					if test.width == test.height {
+						width, height = 1251, 1251
+					}
+					if size == "grid" {
+						width, height = 512, 384
+						if test.width == test.height {
+							height = 512
+						}
+					}
+					if test.orientation == 6 {
+						width, height = height, width
+					}
+					assert.Equal(t, width, product.Preview.Output.Width)
+					assert.Equal(t, height, product.Preview.Output.Height)
+					// Measured TotalAlloc was 27.17-36.92 MiB across these cases on Windows amd64.
+					assert.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(48<<20))
+					decoded, err := jpeg.Decode(bytes.NewReader(product.Output))
+					require.NoError(t, err)
+					assert.Equal(t, image.Rect(0, 0, width, height), decoded.Bounds())
+				})
+			}
+		})
+	}
+}
+
+func TestVisualPreviewJPEGDCBlockMeans(t *testing.T) {
+	t.Parallel()
+	names := []string{"progressive-444", "progressive-420", "baseline-422", "stdlib-420-61x37", "stdlib-noise-420-128x96"}
+	for _, name := range names {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var source []byte
+			if strings.HasPrefix(name, "stdlib-") {
+				canvas := image.NewRGBA(image.Rect(0, 0, 61, 37))
+				for y := range 37 {
+					for x := range 61 {
+						canvas.SetRGBA(x, y, color.RGBA{R: byte(60 + x), G: byte(80 + y), B: 100, A: 255})
+					}
+				}
+				var options *jpeg.Options
+				if name == "stdlib-noise-420-128x96" {
+					// Gray noise forces AC Huffman codes longer than eight bits
+					// while keeping chroma flat and reconstruction unclipped.
+					canvas = image.NewRGBA(image.Rect(0, 0, 128, 96))
+					noise := rand.New(rand.NewPCG(1, 2)) //nolint:gosec // G404: deterministic test noise.
+					for i := 0; i < len(canvas.Pix); i += 4 {
+						v := byte(64 + noise.IntN(128))
+						copy(canvas.Pix[i:i+4], []byte{v, v, v, 255})
+					}
+					options = &jpeg.Options{Quality: 90}
+				}
+				var encoded bytes.Buffer
+				require.NoError(t, jpeg.Encode(&encoded, canvas, options))
+				source = encoded.Bytes()
+			} else {
+				var err error
+				source, err = os.ReadFile(filepath.Join("testdata", name+".jpg"))
+				require.NoError(t, err)
+			}
+			config, err := jpeg.DecodeConfig(bytes.NewReader(source))
+			require.NoError(t, err)
+			reduced, err := decodeVisualPreviewJPEGDC(context.Background(), bufio.NewReader(bytes.NewReader(source)))
+			require.NoError(t, err)
+			assert.Equal(t, image.Rect(0, 0, (config.Width+7)/8, (config.Height+7)/8), reduced.Bounds())
+			decoded, err := jpeg.Decode(bytes.NewReader(source))
+			require.NoError(t, err)
+			full, ok := decoded.(*image.YCbCr)
+			require.True(t, ok)
+			if strings.HasPrefix(name, "stdlib-") {
+				assert.Equal(t, image.YCbCrSubsampleRatio420, full.SubsampleRatio)
+			}
+			for y := range config.Height / 8 {
+				for x := range config.Width / 8 {
+					var sum [3]int
+					for yy := y * 8; yy < y*8+8; yy++ {
+						for xx := x * 8; xx < x*8+8; xx++ {
+							c := full.YCbCrAt(xx, yy)
+							sum[0] += int(c.Y)
+							sum[1] += int(c.Cb)
+							sum[2] += int(c.Cr)
+						}
+					}
+					got, ok := color.YCbCrModel.Convert(reduced.At(x, y)).(color.YCbCr)
+					require.True(t, ok)
+					assert.InDelta(t, float64(sum[0])/64, got.Y, 2)
+					// Interpolation and RGB rounding may move chroma by up to four levels.
+					assert.InDelta(t, float64(sum[1])/64, got.Cb, 4)
+					assert.InDelta(t, float64(sum[2])/64, got.Cr, 4)
+				}
+			}
+		})
+	}
+}
+
+func TestVisualPreviewJPEGDCMarkerAndTableHandling(t *testing.T) {
+	t.Parallel()
+	source, err := os.ReadFile(filepath.Join("testdata", "progressive-444.jpg"))
+	require.NoError(t, err)
+	firstAC := bytes.Index(source, []byte{0xff, 0xda})
+	firstAC += 2 + int(binary.BigEndian.Uint16(source[firstAC+2:firstAC+4]))
+	firstAC += bytes.Index(source[firstAC:], []byte{0xff, 0xda})
+	entropy := firstAC + 2 + int(binary.BigEndian.Uint16(source[firstAC+2:firstAC+4]))
+	nextMarker := entropy
+	for source[nextMarker] != 0xff || source[nextMarker+1] == 0 || source[nextMarker+1] >= 0xd0 && source[nextMarker+1] <= 0xd7 {
+		if source[nextMarker] == 0xff {
+			nextMarker++
+		}
+		nextMarker++
+	}
+	empty := append(bytes.Clone(source[:entropy]), source[nextMarker:]...)
+	damaged := bytes.Clone(source)
+	damaged[entropy] ^= 0x20
+	quant := bytes.Index(source, []byte{0xff, 0xdb})
+	quantEnd := quant + 2 + int(binary.BigEndian.Uint16(source[quant+2:quant+4]))
+	redefined := bytes.Clone(source[quant:quantEnd])
+	redefined[5] *= 2
+	redefined = append(append(bytes.Clone(source[:firstAC]), redefined...), source[firstAC:]...)
+	finalQuant := bytes.Clone(source)
+	finalQuant[quant+5] *= 2
+	// Remove the encoder JFIF marker so the short replacement decides the color model.
+	rgb := append(bytes.Clone(source[:2]), source[4+int(binary.BigEndian.Uint16(source[4:6])):]...)
+	frame := bytes.Index(rgb, []byte{0xff, 0xc2})
+	for i, id := range []byte{'R', 'G', 'B'} {
+		rgb[frame+10+3*i] = id
+	}
+	for offset := 0; ; {
+		index := bytes.Index(rgb[offset:], []byte{0xff, 0xda})
+		if index < 0 {
+			break
+		}
+		index += offset
+		for i := range int(rgb[index+4]) {
+			rgb[index+5+2*i] = []byte{'R', 'G', 'B'}[rgb[index+5+2*i]-1]
+		}
+		offset = index + 2
+	}
+	jfif := syntheticJPEGSegment(t, rgb, 0xe0, []byte("JFIF\x00"))
+	frameEnd := frame + 2 + int(binary.BigEndian.Uint16(rgb[frame+2:frame+4]))
+	jfifMarker := syntheticJPEGSegment(t, []byte{0xff, 0xd8}, 0xe0, []byte("JFIF\x00"))[2:]
+	lateJFIF := append(append(bytes.Clone(rgb[:frameEnd]), jfifMarker...), rgb[frameEnd:]...)
+	ignoredAdobe := syntheticJPEGSegment(t, []byte{0xff, 0xd8}, 0xee, []byte("ignored APP14"))[2:]
+	ignoredAdobeLateJFIF := append(append(bytes.Clone(lateJFIF[:frameEnd]), ignoredAdobe...), lateJFIF[frameEnd:]...)
+	postScanJFIF := append(append(bytes.Clone(rgb[:len(rgb)-2]), jfifMarker...), 0xff, 0xd9)
+	adobe := syntheticJPEGSegment(t, []byte{0xff, 0xd8}, 0xee, []byte("Adobe\x00\x64\x00\x00\x00\x00\x01"))[2:]
+	lateAdobe := append(append(bytes.Clone(rgb[:frameEnd]), adobe...), rgb[frameEnd:]...)
+	adobeRGB := bytes.Clone(adobe)
+	adobeRGB[len(adobeRGB)-1] = 0
+	postScanAdobeJFIF := append(append(bytes.Clone(source[:len(source)-2]), adobeRGB...), 0xff, 0xd9)
+	noJFIF := append(bytes.Clone(source[:2]), source[4+int(binary.BigEndian.Uint16(source[4:6])):]...)
+	postScanAdobe := append(append(bytes.Clone(noJFIF[:len(noJFIF)-2]), adobeRGB...), 0xff, 0xd9)
+	baseline, err := os.ReadFile(filepath.Join("testdata", "baseline-422.jpg"))
+	require.NoError(t, err)
+	baselineQuant := bytes.Index(baseline, []byte{0xff, 0xdb})
+	baselineQuantEnd := baselineQuant + 2 + int(binary.BigEndian.Uint16(baseline[baselineQuant+2:baselineQuant+4]))
+	sequentialQuant := bytes.Clone(baseline[baselineQuant:baselineQuantEnd])
+	sequentialQuant[5] *= 2
+	sequentialRedefined := append(append(bytes.Clone(baseline[:len(baseline)-2]), sequentialQuant...), 0xff, 0xd9)
+	scan := bytes.Index(baseline, []byte{0xff, 0xda})
+	badDC, badAC := bytes.Clone(baseline), bytes.Clone(baseline)
+	badDC[scan+6] = 0x20
+	badAC[scan+6] = 0x02
+	badDHT := syntheticJPEGSegment(t, []byte{0xff, 0xd8, 0xff, 0xd9}, 0xc4, append([]byte{2, 1}, make([]byte, 16)...))[2:]
+	extended := bytes.Clone(baseline)
+	extended[bytes.Index(extended, []byte{0xff, 0xc0})+1] = 0xc1
+	for offset := 0; ; {
+		index := bytes.Index(extended[offset:], []byte{0xff, 0xc4})
+		if index < 0 {
+			break
+		}
+		index += offset
+		end := index + 2 + int(binary.BigEndian.Uint16(extended[index+2:index+4]))
+		for table := index + 4; table < end; {
+			extended[table] += 2
+			n := 0
+			for _, count := range extended[table+1 : table+17] {
+				n += int(count)
+			}
+			table += 17 + n
+		}
+		badDC = syntheticJPEGSegment(t, badDC, 0xc4, extended[index+4:end])
+		badAC = syntheticJPEGSegment(t, badAC, 0xc4, extended[index+4:end])
+		offset = end
+	}
+	for i := range int(extended[scan+4]) {
+		extended[scan+6+2*i] += 0x22
+	}
+	extendedRedefined := append(append(bytes.Clone(extended[:len(extended)-2]), sequentialQuant...), 0xff, 0xd9)
+	for _, test := range []struct {
+		name        string
+		data        []byte
+		wantKind    string
+		wantMessage string
+		reference   []byte
+	}{
+		{"trailing fill bytes", append(bytes.Clone(baseline[:len(baseline)-2]), 0x00, 0x00, 0xff, 0xd9), "", "", baseline},
+		{"fill bytes between scans", append(append(bytes.Clone(source[:firstAC]), 0x00, 0x00), source[firstAC:]...), "", "", source},
+		{"trailing restart", append(bytes.Clone(baseline[:len(baseline)-2]), 0xff, 0xd0, 0xff, 0xd9), "", "", baseline},
+		{"standalone TEM", append(bytes.Clone(source[:len(source)-2]), 0xff, 0x01, 0xff, 0xd9), "", "", source},
+		{"RGB IDs with short JFIF", jfif, "", "", source},
+		{"JFIF after frame", lateJFIF, "", "", source},
+		{"ignored APP14 then late JFIF", ignoredAdobeLateJFIF, "", "", source},
+		{"JFIF after scan changes RGB", postScanJFIF, "", "", source},
+		{"Adobe after frame preserves RGB IDs", lateAdobe, "", "", rgb},
+		{"Adobe after scan preserves JFIF", postScanAdobeJFIF, "", "", source},
+		{"Adobe after scan changes YCbCr", postScanAdobe, "", "", rgb},
+		{"second frame", append(append(bytes.Clone(source[:len(source)-2]), rgb[frame:frameEnd]...), 0xff, 0xd9), "format", "bad frame header", nil},
+		{"progressive redefined quantization", redefined, "", "", finalQuant},
+		{"baseline redefined quantization", sequentialRedefined, "", "", baseline},
+		{"extended sequential redefined quantization", extendedRedefined, "", "", extended},
+		{"empty AC scan", empty, "format", "empty AC scan", nil},
+		{"damaged AC entropy", damaged, "", "", source},
+		{"baseline DC selector above 1", badDC, "format", "bad baseline Huffman selector", nil},
+		{"baseline AC selector above 1", badAC, "format", "bad baseline Huffman selector", nil},
+		{"baseline DHT ID above 1", append(bytes.Clone(baseline[:len(baseline)-2]), badDHT...), "format", "bad Huffman table", nil},
+		{"extended sequential selectors above 1", extended, "", "", baseline},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			data := test.data
+			_, err := jpeg.DecodeConfig(bytes.NewReader(data))
+			require.NoError(t, err)
+			got, err := decodeVisualPreviewJPEGDC(context.Background(), bufio.NewReader(bytes.NewReader(data)))
+			if test.wantKind != "" {
+				require.Error(t, err)
+				if test.wantKind == "format" {
+					var target jpeg.FormatError
+					require.ErrorAs(t, err, &target)
+					assert.Contains(t, target.Error(), test.wantMessage)
+				} else {
+					var target jpeg.UnsupportedError
+					require.ErrorAs(t, err, &target)
+				}
+				return
+			}
+			require.NoError(t, err)
+			if test.reference != nil {
+				original, err := decodeVisualPreviewJPEGDC(context.Background(), bufio.NewReader(bytes.NewReader(test.reference)))
+				require.NoError(t, err)
+				assert.Equal(t, original, got)
+				if test.name != "standalone TEM" && test.name != "damaged AC entropy" {
+					full, err := jpeg.Decode(bytes.NewReader(data))
+					require.NoError(t, err)
+					var sum [3]uint32
+					for y := range 8 {
+						for x := range 8 {
+							r, g, b, _ := full.At(x, y).RGBA()
+							sum[0] += r >> 8
+							sum[1] += g >> 8
+							sum[2] += b >> 8
+						}
+					}
+					r, g, b, _ := got.At(0, 0).RGBA()
+					// Chroma interpolation and RGB clipping can shift the rendered block mean.
+					assert.InDelta(t, float64(sum[0])/64, r>>8, 6)
+					assert.InDelta(t, float64(sum[1])/64, g>>8, 6)
+					assert.InDelta(t, float64(sum[2])/64, b>>8, 6)
+				}
+			}
+		})
+	}
+}
+
+func TestVisualPreviewJPEGDCReadErrors(t *testing.T) {
+	t.Parallel()
+	readErr := errors.New("injected read failure")
+	for _, prefix := range [][]byte{nil, {0xff, 0xd8}, {0xff, 0xd8, 0xff}} {
+		reader := io.MultiReader(bytes.NewReader(prefix), iotest.ErrReader(readErr))
+		_, err := decodeVisualPreviewJPEGDC(context.Background(), bufio.NewReader(reader))
+		require.ErrorIs(t, err, readErr)
+	}
+}
+
+func FuzzVisualPreviewJPEGDC(f *testing.F) {
+	for _, name := range []string{"progressive-420.jpg", "progressive-444.jpg", "baseline-422.jpg"} {
+		data, err := os.ReadFile(filepath.Join("testdata", name))
+		require.NoError(f, err)
+		f.Add(data)
+	}
+	f.Add(syntheticVisualJPEGDC(f, 24, 16, false))
+	f.Add(syntheticVisualJPEGDC(f, 24, 16, true))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		// A panic fails the fuzz run; any error or image is acceptable.
+		_, _ = decodeVisualPreviewJPEGDC(context.Background(), bufio.NewReader(bytes.NewReader(data)))
+	})
+}
+
+func TestVisualPreviewJPEGDCAboveCeiling(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name          string
+		baseline      bool
+		width, height int
+		exceeds       bool
+	}{
+		{"progressive above ceiling", false, 65535, 65535, true},
+		{"baseline above ceiling", true, 65535, 65535, true},
+		// 400 MP sits between the baseline and progressive ceilings.
+		{"baseline between ceilings", true, 20000, 20000, true},
+		{"progressive between ceilings", false, 20000, 20000, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			header := syntheticVisualJPEGDC(t, 8, 8, test.baseline)
+			marker := []byte{0xff, 0xc2}
+			if test.baseline {
+				marker = []byte{0xff, 0xc0}
+			}
+			frame := bytes.Index(header, marker)
+			binary.BigEndian.PutUint16(header[frame+5:frame+7], uint16(test.height))
+			binary.BigEndian.PutUint16(header[frame+7:frame+9], uint16(test.width))
+			header = header[:bytes.Index(header, []byte{0xff, 0xda})+14]
+			digest := sha256.Sum256(header)
+			product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(header), VisualPreviewTarget{
+				SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(header)), MediaType: "image/jpeg",
+			})
+			require.NoError(t, err)
+			assert.Equal(t, document.VisualPreviewFailed, product.Preview.State)
+			require.NotNil(t, product.Preview.Failure)
+			if test.exceeds {
+				assert.Equal(t, "source_dimensions_exceed_limit", product.Preview.Failure.Code)
+			} else {
+				// The truncated header passes the size check and then fails on data.
+				assert.NotEqual(t, "source_dimensions_exceed_limit", product.Preview.Failure.Code)
+			}
+		})
+	}
+}
+
+// cancelAfterContext reports cancellation once Err has been polled limit times.
+type cancelAfterContext struct {
+	context.Context
+
+	limit      int
+	calls      int
+	imageCalls int
+}
+
+func (c *cancelAfterContext) Err() error {
+	c.calls++
+	pcs := make([]uintptr, 8)
+	frames := runtime.CallersFrames(pcs[:runtime.Callers(2, pcs)])
+	for frame, more := frames.Next(); more || frame.Function != ""; frame, more = frames.Next() {
+		if strings.HasSuffix(frame.Function, "visualJPEGDCDecoder).image") {
+			c.imageCalls++
+			break
+		}
+		if !more {
+			break
+		}
+	}
+	if c.limit >= 0 && c.calls > c.limit {
+		return context.Canceled
+	}
+	return nil
+}
+
+func TestVisualPreviewJPEGDCReconstructionStopsWhenCancelled(t *testing.T) {
+	t.Parallel()
+	source := syntheticVisualJPEGDC(t, 2048, 2048, false)
+	decode := func(ctx context.Context) error {
+		_, err := decodeVisualPreviewJPEGDC(ctx, bufio.NewReader(bytes.NewReader(source)))
+		return err
+	}
+	counter := &cancelAfterContext{Context: context.Background(), limit: -1}
+	require.NoError(t, decode(counter))
+	// One poll before allocating plus periodic polls in the pixel loop.
+	require.Greater(t, counter.imageCalls, 1)
+	// The last poll happens while reconstructing pixels, after entropy decoding.
+	require.ErrorIs(t, decode(&cancelAfterContext{Context: context.Background(), limit: counter.calls - 1}), context.Canceled)
+}
+
+func TestVisualPreviewJPEGDCStopsWhenCancelled(t *testing.T) {
+	t.Parallel()
+	for _, baseline := range []bool{true, false} {
+		source := syntheticVisualJPEGDC(t, 2048, 2048, baseline)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err := decodeVisualPreviewJPEGDC(ctx, bufio.NewReader(bytes.NewReader(source)))
+		require.ErrorIs(t, err, context.Canceled, "baseline=%v", baseline)
+	}
+}
+
+func syntheticVisualJPEGDC(tb testing.TB, width, height int, baseline bool) []byte {
+	tb.Helper()
+	source := []byte{0xff, 0xd8}
+	segment := func(marker byte, payload []byte) {
+		source = append(source, syntheticJPEGSegment(tb, []byte{0xff, 0xd8}, marker, payload)[2:]...)
+	}
+	segment(0xdb, append([]byte{0}, bytes.Repeat([]byte{16}, 64)...))
+	frame := byte(0xc2)
+	if baseline {
+		frame = 0xc0
+	}
+	segment(frame, []byte{8, byte(height >> 8), byte(height), byte(width >> 8), byte(width), 3, 1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0})
+	// One one-bit code, zero, represents a zero DC difference or AC EOB.
+	for _, table := range []byte{0, 0x10} {
+		segment(0xc4, append([]byte{table, 1}, make([]byte, 16)...))
+	}
+	blocks := ((width + 7) / 8) * ((height + 7) / 8)
+	if baseline {
+		blocks *= 2
+	}
+	entropy := make([]byte, (blocks+7)/8)
+	if blocks%8 != 0 {
+		entropy[len(entropy)-1] = byte((1 << (8 - blocks%8)) - 1)
+	}
+	for id := byte(1); id <= 3; id++ {
+		if baseline {
+			segment(0xda, []byte{1, id, 0, 0, 63, 0})
+			source = append(source, entropy...)
+		} else {
+			segment(0xda, []byte{1, id, 0, 0, 0, 0})
+			source = append(source, entropy...)
+			segment(0xda, []byte{1, id, 0, 1, 63, 0})
+			source = append(source, entropy...)
+		}
+	}
+	return append(source, 0xff, 0xd9)
+}
+
+//nolint:paralleltest // Replaces the process-wide default logger to capture the panic report.
+func TestVisualPreviewJPEGDCPanicFailsDurably(t *testing.T) {
+	var logged bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	// A reader that panics stands in for any decoder bug the bounds checks miss.
+	_, err := decodeVisualPreviewJPEGDCSafely(context.Background(), bufio.NewReader(&panicReader{}))
+	require.Error(t, err)
+	assert.Contains(t, logged.String(), "injected decoder panic")
+	assert.Contains(t, logged.String(), "panicReader")
+	_, isFormat := errors.AsType[jpeg.FormatError](err)
+	require.True(t, isFormat, "panic must classify as a durable JPEG format error")
+	product, err := visualPreviewJPEGDecodeResult(document.VisualPreviewV1{}, "cannot be decoded", err)
+	require.NoError(t, err)
+	assert.Equal(t, document.VisualPreviewFailed, product.Preview.State)
+}
+
+type panicReader struct{}
+
+func (*panicReader) Read([]byte) (int, error) { panic("injected decoder panic") }

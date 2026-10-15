@@ -231,7 +231,7 @@ func decodePhotoExport(ctx context.Context, source io.ReadSeeker, format string,
 	if containerOrientation >= 1 && containerOrientation <= 8 {
 		orientation = containerOrientation
 	}
-	pixels, err := decodeVisualPixels(ctx, source, format)
+	pixels, err := decodeVisualPixels(ctx, source, format, false)
 	if err != nil {
 		if errors.Is(err, errVisualDimensions) {
 			err = fmt.Errorf("%w: %w", bundle.ErrLimit, err)
