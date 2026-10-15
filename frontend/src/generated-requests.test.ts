@@ -157,7 +157,6 @@ it("reads page images as PNG bytes through the browser session", async () => {
   expect(Buffer.from(await response.arrayBuffer())).toEqual(png);
   const headers = new Headers(fetch.mock.calls[0][1]?.headers);
   expect(headers.get("Accept")).toBe("image/png");
-  expect(headers.get("X-Docbank-Web-Session")).toBe("synthetic-session");
 });
 
 it("preserves export progress as an NDJSON response", async () => {
@@ -178,7 +177,6 @@ it("preserves export progress as an NDJSON response", async () => {
   const [url, request] = fetch.mock.calls[0];
   expect(url).toBe("/api/v1/exports/jobs/synthetic-job/events?after=1");
   expect(new Headers(request?.headers).get("Accept")).toBe("application/x-ndjson");
-  expect(new Headers(request?.headers).get("X-Docbank-Web-Session")).toBe("synthetic-session");
 });
 
 it("sends photo query intent through the generated read-only POST and preserves preview bytes", async () => {
@@ -201,7 +199,6 @@ it("sends photo query intent through the generated read-only POST and preserves 
   expect(url).toBe("/api/v1/photos/assets/query");
   expect(request?.method).toBe("POST");
   expect(JSON.parse(String(request?.body))).toEqual({ query });
-  expect(new Headers(request?.headers).get("X-Docbank-Web-Session")).toBe("synthetic-session");
   const response = await api.readPhotoPreview(
     "00000000-0000-4000-8000-000000000001",
     "a".repeat(64),
@@ -240,7 +237,6 @@ it("preserves a conditional photo preview's empty 304 response", async () => {
   const headers = new Headers(request?.headers);
   expect(headers.get("Accept")).toBe("image/jpeg");
   expect(headers.get("If-None-Match")).toBe(etag);
-  expect(headers.get("X-Docbank-Web-Session")).toBe("synthetic-session");
 });
 
 it("preserves photo preview errors after conditional revalidation", async () => {

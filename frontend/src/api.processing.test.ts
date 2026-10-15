@@ -264,7 +264,7 @@ describe("document processing browser API", () => {
     const jobID = "b".repeat(64);
     const encoder = new TextEncoder();
     let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         new ReadableStream<Uint8Array>({
           start(controller) {
@@ -332,6 +332,10 @@ describe("document processing browser API", () => {
       job: { id: jobID },
       status: { state: "completed" },
     });
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+      consent: true,
+      plan_fingerprint: "c".repeat(64),
+    });
   });
 
   it("rejects malformed, trailing, and oversized incremental progress", async () => {
@@ -383,10 +387,10 @@ describe("document processing browser API", () => {
     }
   });
 
-  it("sends consent and plan_fingerprint and propagates processing cancellation", async () => {
+  it("propagates cancellation to the processing request", async () => {
     const controller = new AbortController();
     let receivedSignal: AbortSignal | null | undefined;
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
       receivedSignal = init?.signal;
       return new Promise<Response>((_resolve, reject) => {
         init?.signal?.addEventListener(
@@ -412,10 +416,6 @@ describe("document processing browser API", () => {
     controller.abort();
     await expect(pending).rejects.toMatchObject({ name: "AbortError" });
     expect(receivedSignal).toBe(controller.signal);
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
-      consent: true,
-      plan_fingerprint: "c".repeat(64),
-    });
   });
 
   it("rejects search results outside the fence and malformed result identities", async () => {
@@ -478,6 +478,9 @@ describe("document processing browser API", () => {
       },
       (report: ReturnType<typeof valid>) => {
         report.results[0]!.rank = 2;
+      },
+      (report: ReturnType<typeof valid>) => {
+        report.results[0]!.semantic_rank = 1001;
       },
       (report: ReturnType<typeof valid>) => {
         report.results.push({

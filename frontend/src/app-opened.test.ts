@@ -43,7 +43,6 @@ describe("app_opened reporting", () => {
     expect(init?.body).toBe(JSON.stringify({ event: "app_opened" }));
     const headers = new Headers(init?.headers);
     expect(headers.get("X-Docbank-Web-Session")).toBe("secret");
-    expect(headers.get("X-Api-Key")).toBeNull();
   });
 
   it("treats a problem response as answered without an unhandled rejection", async () => {

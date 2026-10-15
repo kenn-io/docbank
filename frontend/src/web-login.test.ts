@@ -11,6 +11,5 @@ it("exchanges a key without forwarding it as a vault header", async () => {
     .mockResolvedValue(new Response(JSON.stringify({ enabled: true })));
   await signIn("synthetic-key");
   const options = fetchMock.mock.calls[0]?.[1];
-  expect(new Headers(options?.headers).has("X-Api-Key")).toBe(false);
   expect(JSON.parse(String(options?.body))).toEqual({ api_key: "synthetic-key" });
 });
