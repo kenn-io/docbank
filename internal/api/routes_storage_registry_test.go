@@ -15,6 +15,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -344,4 +345,53 @@ func TestStorageRegistrationRejectsProtectedPathOverlaps(t *testing.T) {
 			require.Contains(t, body, `"code":"storage_namespace_overlap"`)
 		})
 	}
+}
+
+// TestStorageRegistrationAdmitsReleasedCheckoutDestinationAndSurvivesRestart
+// covers a retired checkout whose destination folder has been confirmed
+// empty: registering a filesystem store at that same path must succeed, and
+// the admission check daemon startup runs against every configured path
+// (ingest.CheckoutPathOverlap, the same function this registration path
+// uses) must keep admitting it on a later restart, after the registered
+// store has written its own ownership marker into the folder.
+func TestStorageRegistrationAdmitsReleasedCheckoutDestinationAndSurvivesRestart(t *testing.T) {
+	t.Parallel()
+	destination := t.TempDir()
+	ts, live := newTestServer(t, func(d *api.Deps) {
+		d.Cfg.StoreBindings = map[string]config.StoreBindingConfig{"archive": {Kind: "filesystem", Path: destination}}
+		d.BlobRegistry = blob.NewRegistry(t.Context(), d.Store.VaultID(), d.Cfg.StoreBindings, nil)
+		t.Cleanup(func() { require.NoError(t, d.BlobRegistry.Close()) })
+	})
+	node, err := live.CreateFile(t.Context(), live.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := live.PhotoAssetForNode(t.Context(), node.ID)
+	require.NoError(t, err)
+	checkout, operation, err := live.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
+	require.NoError(t, err)
+	require.NoError(t, live.FinishPhotoCheckout(t.Context(), checkout.ID, operation.ID, store.StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
+	_, err = live.RetirePhotoCheckout(t.Context(), checkout.ID)
+	require.NoError(t, err)
+
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/storage/stores/preview", nil,
+		map[string]any{"name": "archive", "binding": "archive"})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var preview api.BlobStorePreview
+	require.NoError(t, json.Unmarshal([]byte(body), &preview))
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/storage/stores", nil,
+		map[string]any{"preview_token": preview.PreviewToken})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+
+	released, err := live.PhotoCheckout(t.Context(), checkout.ID)
+	require.NoError(t, err)
+	require.Empty(t, released.Destination)
+
+	entries, err := os.ReadDir(destination)
+	require.NoError(t, err)
+	require.NotEmpty(t, entries, "registration should have written its ownership marker")
+
+	checkouts, err := live.ListPhotoCheckouts(t.Context())
+	require.NoError(t, err)
+	id, overlap, _, err := ingest.CheckoutPathOverlap(t.Context(), checkouts, destination)
+	require.NoError(t, err)
+	require.False(t, overlap, "restart admission must not mistake the store's own marker for leftover checkout content: %s", id)
 }

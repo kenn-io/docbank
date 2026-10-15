@@ -431,6 +431,13 @@ func validateStorageNamespace(
 			if overlap {
 				return NewError(http.StatusConflict, "storage_namespace_overlap", fmt.Sprintf("binding %q overlaps reserved checkout %s", bindingName, checkoutID))
 			}
+			for _, checkout := range checkouts {
+				if checkout.RetentionReleased && checkout.Destination == binding.Path {
+					if err := d.Store.ReleaseCheckoutDestination(ctx, checkout.ID); err != nil {
+						return FromStoreError(err)
+					}
+				}
+			}
 			watchName, watchOverlap, err := ingest.WatchBindingOverlapContext(
 				ctx, d.Cfg.Watches, binding,
 			)

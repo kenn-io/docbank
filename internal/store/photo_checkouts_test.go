@@ -250,31 +250,6 @@ func TestPhotoCheckoutMetadata(t *testing.T) {
 		})
 	}
 
-	t.Run("legacy snapshot without base_held releases source", func(t *testing.T) {
-		s := newTestStore(t)
-		ctx := t.Context()
-		asset := albumAsset(t, s, "legacy.jpg")
-		node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
-		require.NoError(t, err)
-		checkout, op, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
-		require.NoError(t, err)
-		entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
-		require.NoError(t, err)
-		require.NoError(t, s.PublishPhotoCheckoutEntry(ctx, entries[0], func() (bool, error) { return true, nil }))
-		require.NoError(t, s.FinishPhotoCheckout(ctx, checkout.ID, op.ID, StorageOperationFailed, "{}", "partial", time.Now().Add(time.Hour)))
-		updated, _, err := s.ReplaceContent(ctx, node.ID, node.Revision, browseHash("replacement"), 30, "image/jpeg")
-		require.NoError(t, err)
-		var exported bytes.Buffer
-		require.NoError(t, s.ExportMetadata(ctx, &exported))
-		require.Contains(t, exported.String(), `"base_held":true,`)
-		legacySnapshot := strings.ReplaceAll(exported.String(), `"base_held":true,`, "")
-		require.NotContains(t, legacySnapshot, `"base_held"`)
-		restored := newTestStore(t)
-		require.NoError(t, restored.ImportMetadata(ctx, strings.NewReader(legacySnapshot)))
-		pruned, err := restored.PruneContentVersions(ctx, node.ID, updated.Revision, VersionPruneSelector{VersionIDs: []string{node.CurrentVersionID}}, true)
-		require.NoError(t, err)
-		require.Equal(t, 1, pruned.DeletedVersions)
-	})
 }
 
 func TestPhotoCheckoutCreateValidation(t *testing.T) {

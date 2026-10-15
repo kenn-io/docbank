@@ -572,5 +572,16 @@ func (s *Store) RetirePhotoCheckout(ctx context.Context, id string) (PhotoChecko
 	return out, err
 }
 
+// ReleaseCheckoutDestination clears a retired checkout's destination once its
+// folder has been confirmed empty and admitted for reuse by a new store
+// registration. Persisting the release here, before that registration writes
+// into the folder, keeps a later admission check from mistaking the new
+// store's own data for leftover checkout content and rejecting a reuse it
+// already approved.
+func (s *Store) ReleaseCheckoutDestination(ctx context.Context, id string) error {
+	_, err := s.writeDB.ExecContext(ctx, `UPDATE photo_checkouts SET destination='' WHERE checkout_id=? AND retention_released=1`, id)
+	return err
+}
+
 // e and c are the entry and checkout aliases in every retained-version query.
 const photoCheckoutHoldPredicate = `c.retired_at IS NULL AND (c.retention_released=0 OR e.base_held=1 OR e.published=1 OR EXISTS(SELECT 1 FROM storage_operations pending WHERE pending.operation_id=c.operation_id AND pending.cursor=e.file_id))`

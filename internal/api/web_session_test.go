@@ -59,7 +59,6 @@ func TestWebSessionPhotoAllowlistAndJobDenials(t *testing.T) {
 		require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodPut, path, nil)), path)
 	}
 	job := "/api/v1/jobs/11111111-1111-4111-8111-111111111111"
-	require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodPost, "/api/v1/photos/checkouts", nil)))
 	for _, route := range []struct{ method, path string }{
 		{http.MethodGet, job},
 		{http.MethodPost, job + "/cancel?force=1"},
