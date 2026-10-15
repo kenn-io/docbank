@@ -106,3 +106,7 @@ func addWindowsCheckoutRecoveryRetryCases(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckoutRecoveryRetriesInaccessiblePaths(t *testing.T) {
+	addWindowsCheckoutRecoveryRetryCases(t)
+}

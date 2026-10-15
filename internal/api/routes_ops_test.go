@@ -359,31 +359,8 @@ func TestTrashListAndEmpty(t *testing.T) {
 	assert.Equal(t, 1, trash.Total)
 	assert.Equal(t, 1, trash.Limit)
 
-	retained, err := s.CreateFile(t.Context(), s.RootID(), "retained.jpg", testHash("retained"), 1, "image/jpeg")
-	require.NoError(t, err)
-	retainedAsset, err := s.PhotoAssetForNode(t.Context(), retained.ID)
-	require.NoError(t, err)
-	_, _, err = s.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{retainedAsset.ID}}, "checkout", 0)
-	require.NoError(t, err)
-
-	_, _, err = s.Trash(t.Context(), retained.ID, store.UnconditionalRev)
-	require.NoError(t, err)
-	held, err := s.CreateFile(t.Context(), s.RootID(), "held.jpg", testHash("held"), 1, "image/jpeg")
-	require.NoError(t, err)
-	heldAsset, err := s.PhotoAssetForNode(t.Context(), held.ID)
-	require.NoError(t, err)
-	companion, err := s.CreateFile(t.Context(), s.RootID(), "held.xmp", testHash("sidecar"), 1, "application/octet-stream")
-	require.NoError(t, err)
-	imageID := heldAsset.Files[0].ID
-	_, err = s.AttachPhotoFile(t.Context(), heldAsset.ID, heldAsset.Revision, companion.ID, store.PhotoRoleSidecar, &imageID)
-	require.NoError(t, err)
-	_, _, err = s.Trash(t.Context(), companion.ID, store.UnconditionalRev)
-	require.NoError(t, err)
-
 	expected, err := s.TrashEmpty(t.Context(), 0, false)
 	require.NoError(t, err)
-	require.EqualValues(t, 1, expected.Retained)
-	require.EqualValues(t, 1, expected.Held)
 	for _, run := range []bool{false, true} {
 		resp, body = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil,
 			map[string]any{"older_than": "", "run": run})

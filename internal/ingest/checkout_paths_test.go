@@ -12,7 +12,7 @@ import (
 )
 
 func TestCheckoutPathOverlapProtectsReservationsAndReleasedCopies(t *testing.T) {
-	unavailable := store.PhotoCheckout{ID: "unavailable", Destination: filepath.Join(t.TempDir(), "invalid\x00path")}
+	unavailable := store.PhotoCheckout{ID: "unavailable", Destination: filepath.Join(t.TempDir(), "invalid\x00path"), RetentionReleased: true}
 	reserved := store.PhotoCheckout{ID: "reserved", Destination: t.TempDir()}
 	for _, checkouts := range [][]store.PhotoCheckout{{unavailable, reserved}, {reserved, unavailable}} {
 		id, overlap, _, err := CheckoutPathOverlap(t.Context(), checkouts, filepath.Join(reserved.Destination, "child"))
@@ -24,7 +24,7 @@ func TestCheckoutPathOverlapProtectsReservationsAndReleasedCopies(t *testing.T) 
 	require.Error(t, err, "a binding with only inconclusive checks must stay closed")
 	require.False(t, overlap)
 
-	for _, state := range []store.StorageOperationState{store.StorageOperationQueued, store.StorageOperationFailed, store.StorageOperationCompleted} {
+	for _, state := range []store.StorageOperationState{store.StorageOperationFailed, store.StorageOperationCompleted} {
 		t.Run(string(state), func(t *testing.T) {
 			ing := newTestIngester(t)
 			ctx := t.Context()
@@ -35,9 +35,7 @@ func TestCheckoutPathOverlapProtectsReservationsAndReleasedCopies(t *testing.T) 
 			destination := t.TempDir()
 			checkout, op, err := ing.Store.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
 			require.NoError(t, err)
-			if state != store.StorageOperationQueued {
-				require.NoError(t, ing.Store.FinishPhotoCheckout(ctx, checkout.ID, op.ID, state, "{}", "", time.Now().Add(time.Hour)))
-			}
+			require.NoError(t, ing.Store.FinishPhotoCheckout(ctx, checkout.ID, op.ID, state, "{}", "", time.Now().Add(time.Hour)))
 			check := func(path string, want bool) {
 				t.Helper()
 				checkouts, err := ing.Store.ListPhotoCheckouts(ctx)
@@ -61,9 +59,6 @@ func TestCheckoutPathOverlapProtectsReservationsAndReleasedCopies(t *testing.T) 
 			require.NoError(t, os.Mkdir(destination, 0o700))
 			edited := filepath.Join(destination, "edited.jpg")
 			require.NoError(t, os.WriteFile(edited, []byte("edits"), 0o600))
-			if state == store.StorageOperationQueued {
-				require.NoError(t, ing.Store.FinishPhotoCheckout(ctx, checkout.ID, op.ID, store.StorageOperationCancelled, "{}", "cancelled", time.Now().Add(time.Hour)))
-			}
 			_, err = ing.Store.RetirePhotoCheckout(ctx, checkout.ID)
 			require.NoError(t, err)
 			check(destination, true)

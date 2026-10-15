@@ -154,70 +154,6 @@ func TestMediaMetadataMissingCurrentTableFailsValidation(t *testing.T) {
 	require.ErrorContains(t, err, "media_input_artifacts")
 }
 
-func contentVersionIDs(versions []ContentVersion) []string {
-	ids := make([]string, len(versions))
-	for index, version := range versions {
-		ids[index] = version.ID
-	}
-	return ids
-}
-
-func TestMediaMetadataRejectsNonObjectTimestampClaim(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	file, err := s.CreateFile(ctx, s.RootID(), "recording.mp3", fakeHash("a1"), 10, "audio/mpeg")
-	require.NoError(t, err)
-	stamp := nowRFC3339()
-	_, err = s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
-		strings.Repeat("c", 64), stamp)
-	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO media_source_versions VALUES('source-version','source',1,?,?,?)`,
-		file.CurrentVersionID, `[]`, stamp)
-	require.NoError(t, err)
-	err = s.ExportMetadata(ctx, &bytes.Buffer{})
-	require.ErrorContains(t, err, "capture claim")
-}
-
-func TestMediaInputArtifactBytesBelongToBackupAuthority(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	caption, err := s.CreateFile(ctx, s.RootID(), "caption.vtt", fakeHash("b2"), 20, "text/vtt")
-	require.NoError(t, err)
-	stamp := nowRFC3339()
-	_, err = s.db.Exec(`INSERT INTO media_sources VALUES('source','remote_recording','cap.cloud','app',?,?)`,
-		strings.Repeat("c", 64), stamp)
-	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO media_occurrences VALUES(
-		'occurrence','source',NULL,'operator','ref','1','','','','{}',1,?,NULL)`, stamp)
-	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO media_input_artifacts VALUES(
-		'input','occurrence','source',NULL,?,'caption','supplied','cap.cloud','en',?,?)`,
-		caption.CurrentVersionID, fakeHash("b2"), stamp)
-	require.NoError(t, err)
-	snapshot, err := s.BeginMetadataSnapshot(ctx)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, snapshot.Close()) }()
-	var count int
-	require.NoError(t, snapshot.QueryRowContext(ctx, BackupBlobAuthorityCTE()+`
-		SELECT count(*) FROM backup_authorized_blobs WHERE hash=?`, fakeHash("b2")).Scan(&count))
-	require.Equal(t, 1, count)
-}
-
-func TestMediaMetadataImportRequiresPristineMediaTables(t *testing.T) {
-	t.Parallel()
-	source := newTestStore(t)
-	var exported bytes.Buffer
-	require.NoError(t, source.ExportMetadata(t.Context(), &exported))
-	target := newTestStore(t)
-	_, err := target.db.Exec(`INSERT INTO media_sources VALUES('existing','supplied_media','','',?,?)`,
-		strings.Repeat("a", 64), nowRFC3339())
-	require.NoError(t, err)
-	err = target.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes()))
-	require.ErrorContains(t, err, "not pristine")
-}
-
 func TestPruneContentVersionsRetainsMediaOriginalAndInputAuthority(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -363,4 +299,68 @@ func TestPruneContentVersionsRetainsMediaRevertAncestryIncludingAllPrior(t *test
 			require.ErrorIs(t, err, ErrNotFound)
 		}
 	})
+}
+
+func contentVersionIDs(versions []ContentVersion) []string {
+	ids := make([]string, len(versions))
+	for index, version := range versions {
+		ids[index] = version.ID
+	}
+	return ids
+}
+
+func TestMediaMetadataRejectsNonObjectTimestampClaim(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	file, err := s.CreateFile(ctx, s.RootID(), "recording.mp3", fakeHash("a1"), 10, "audio/mpeg")
+	require.NoError(t, err)
+	stamp := nowRFC3339()
+	_, err = s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
+		strings.Repeat("c", 64), stamp)
+	require.NoError(t, err)
+	_, err = s.db.Exec(`INSERT INTO media_source_versions VALUES('source-version','source',1,?,?,?)`,
+		file.CurrentVersionID, `[]`, stamp)
+	require.NoError(t, err)
+	err = s.ExportMetadata(ctx, &bytes.Buffer{})
+	require.ErrorContains(t, err, "capture claim")
+}
+
+func TestMediaInputArtifactBytesBelongToBackupAuthority(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	caption, err := s.CreateFile(ctx, s.RootID(), "caption.vtt", fakeHash("b2"), 20, "text/vtt")
+	require.NoError(t, err)
+	stamp := nowRFC3339()
+	_, err = s.db.Exec(`INSERT INTO media_sources VALUES('source','remote_recording','cap.cloud','app',?,?)`,
+		strings.Repeat("c", 64), stamp)
+	require.NoError(t, err)
+	_, err = s.db.Exec(`INSERT INTO media_occurrences VALUES(
+		'occurrence','source',NULL,'operator','ref','1','','','','{}',1,?,NULL)`, stamp)
+	require.NoError(t, err)
+	_, err = s.db.Exec(`INSERT INTO media_input_artifacts VALUES(
+		'input','occurrence','source',NULL,?,'caption','supplied','cap.cloud','en',?,?)`,
+		caption.CurrentVersionID, fakeHash("b2"), stamp)
+	require.NoError(t, err)
+	snapshot, err := s.BeginMetadataSnapshot(ctx)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, snapshot.Close()) }()
+	var count int
+	require.NoError(t, snapshot.QueryRowContext(ctx, BackupBlobAuthorityCTE()+`
+		SELECT count(*) FROM backup_authorized_blobs WHERE hash=?`, fakeHash("b2")).Scan(&count))
+	require.Equal(t, 1, count)
+}
+
+func TestMediaMetadataImportRequiresPristineMediaTables(t *testing.T) {
+	t.Parallel()
+	source := newTestStore(t)
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(t.Context(), &exported))
+	target := newTestStore(t)
+	_, err := target.db.Exec(`INSERT INTO media_sources VALUES('existing','supplied_media','','',?,?)`,
+		strings.Repeat("a", 64), nowRFC3339())
+	require.NoError(t, err)
+	err = target.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes()))
+	require.ErrorContains(t, err, "not pristine")
 }

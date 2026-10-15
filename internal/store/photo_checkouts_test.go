@@ -118,16 +118,6 @@ func TestPhotoCheckoutSelections(t *testing.T) {
 		}
 		require.ElementsMatch(t, eligibleFiles, selectedFiles)
 	}
-	for _, bad := range []PhotoCheckoutSelection{{}, {AssetIDs: []string{"bad"}}, {AlbumIDs: []string{"bad"}}, {Years: &PhotoCheckoutYears{From: 0, To: 2024}}, {Years: &PhotoCheckoutYears{From: 2025, To: 2024}}, {Years: &PhotoCheckoutYears{From: 2024, To: 10000}}} {
-		_, err := s.EstimatePhotoCheckout(ctx, bad)
-		require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
-	}
-	_, err = s.EstimatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{"00000000-0000-4000-8000-000000000001"}})
-	require.ErrorIs(t, err, ErrNotFound)
-	_, err = s.CreateFile(ctx, s.RootID(), "large.jpg", browseHash("large"), math.MaxInt64, "image/jpeg")
-	require.NoError(t, err)
-	_, err = s.EstimatePhotoCheckout(ctx, PhotoCheckoutSelection{All: true})
-	require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
 }
 
 func TestPhotoCheckoutMetadata(t *testing.T) {
@@ -295,11 +285,22 @@ func TestPhotoCheckoutCreateValidation(t *testing.T) {
 		name, filename                             string
 		limit                                      int64
 		withAsset, explicitSelection, auditRefusal bool
+		setSelection, overflow                     bool
+		selection                                  PhotoCheckoutSelection
+		expectedErr                                error
 		errorText                                  string
 		additionalNames                            []string
 	}
 	cases := []rejectedCase{
 		{name: "empty all", limit: 100, errorText: "selection contains no files"},
+		{name: "empty selection", limit: 100, setSelection: true, errorText: "select assets, albums, years, or all"},
+		{name: "invalid asset ID", limit: 100, setSelection: true, selection: PhotoCheckoutSelection{AssetIDs: []string{"bad"}}},
+		{name: "invalid album ID", limit: 100, setSelection: true, selection: PhotoCheckoutSelection{AlbumIDs: []string{"bad"}}},
+		{name: "invalid year start", limit: 100, setSelection: true, selection: PhotoCheckoutSelection{Years: &PhotoCheckoutYears{From: 0, To: 2024}}},
+		{name: "invalid year range", limit: 100, setSelection: true, selection: PhotoCheckoutSelection{Years: &PhotoCheckoutYears{From: 2025, To: 2024}}},
+		{name: "invalid year end", limit: 100, setSelection: true, selection: PhotoCheckoutSelection{Years: &PhotoCheckoutYears{From: 2024, To: 10000}}},
+		{name: "unknown asset ID", limit: 100, setSelection: true, selection: PhotoCheckoutSelection{AssetIDs: []string{"00000000-0000-4000-8000-000000000001"}}, expectedErr: ErrNotFound},
+		{name: "byte overflow", limit: 100, withAsset: true, overflow: true},
 		{name: "audit refusal", limit: 100, withAsset: true, explicitSelection: true, auditRefusal: true},
 		{name: "negative limit", limit: -1, withAsset: true, explicitSelection: true, errorText: "byte_limit must be nonnegative"},
 		{name: "all without limit", withAsset: true, errorText: "all requires a positive byte_limit"},
@@ -315,7 +316,13 @@ func TestPhotoCheckoutCreateValidation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := newTestStore(t)
 			selection := PhotoCheckoutSelection{All: true}
-			expectedErr := ErrInvalidPhotoCheckout
+			if tc.setSelection {
+				selection = tc.selection
+			}
+			expectedErr := tc.expectedErr
+			if expectedErr == nil {
+				expectedErr = ErrInvalidPhotoCheckout
+			}
 			var asset PhotoAsset
 			if tc.withAsset {
 				asset = albumAsset(t, s, "photo.jpg")
@@ -329,6 +336,10 @@ func TestPhotoCheckoutCreateValidation(t *testing.T) {
 					seedInitialAuditAuthority(t, s, s.RootID())
 					expectedErr = ErrAuditMutationUnsupported
 				}
+			}
+			if tc.overflow {
+				_, err := s.CreateFile(t.Context(), s.RootID(), "large.jpg", browseHash("large"), math.MaxInt64, "image/jpeg")
+				require.NoError(t, err)
 			}
 			var estimateErr error
 			if tc.filename != "" {

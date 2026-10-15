@@ -12,7 +12,7 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func TestStorageProtectionPathsSkipS3AndRejectUncertainFilesystemCheckout(t *testing.T) {
+func TestStorageProtectionPathsSkipS3AndClassifyProtectionErrors(t *testing.T) {
 	t.Parallel()
 	catalog, err := store.Open(filepath.Join(t.TempDir(), "docbank.db"))
 	require.NoError(t, err)
@@ -22,6 +22,8 @@ func TestStorageProtectionPathsSkipS3AndRejectUncertainFilesystemCheckout(t *tes
 	checkout, operation, err := catalog.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{All: true}, "unavailable\x00checkout", 100)
 	require.NoError(t, err)
 	require.NoError(t, catalog.FinishPhotoCheckout(t.Context(), checkout.ID, operation.ID, store.StorageOperationFailed, "{}", "partial", time.Now().Add(time.Hour)))
+	_, err = catalog.RetirePhotoCheckout(t.Context(), checkout.ID)
+	require.NoError(t, err)
 	d := Deps{Store: catalog, VaultRoot: t.TempDir(), Cfg: config.Default()}
 	d.BlobRegistry = blob.NewRegistry(t.Context(), catalog.VaultID(), nil, nil)
 	t.Cleanup(func() { require.NoError(t, d.BlobRegistry.Close()) })
@@ -31,5 +33,7 @@ func TestStorageProtectionPathsSkipS3AndRejectUncertainFilesystemCheckout(t *tes
 	require.Empty(t, paths)
 	d.Cfg.Watches = nil
 	_, err = storageProtectionPaths(t.Context(), d, config.StoreBindingConfig{Kind: "filesystem", Path: t.TempDir()})
-	require.ErrorContains(t, err, checkout.Destination, "filesystem registration must keep uncertain checkout paths closed")
+	var apiErr *Error
+	require.ErrorAs(t, err, &apiErr)
+	require.Equal(t, "storage_binding_invalid", apiErr.Code)
 }
