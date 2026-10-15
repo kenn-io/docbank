@@ -54,13 +54,13 @@ describe("processing receipts", () => {
         ...valid,
         fence: { ...valid.fence, content_version_ids: [...versions].reverse() },
       }),
-    ).toThrow();
+    ).toThrow(/The daemon returned an invalid source fence/);
     expect(() =>
       validateDocumentSourceFenceResolution({
         ...valid,
         fence_fingerprint: emptyFenceFingerprint,
       }),
-    ).toThrow();
+    ).toThrow(/The daemon returned an invalid source fence/);
   });
 
   it("requires a valid reranking receipt only for opted-in requests", () => {

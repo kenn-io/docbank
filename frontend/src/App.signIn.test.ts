@@ -80,7 +80,10 @@ it("exchanges the key before reading the vault and offers sign out", async () =>
   await waitFor(
     () =>
       expect(
-        fetchMock.mock.calls.some(([input]) => String(input) === "/api/daemon/web-session"),
+        fetchMock.mock.calls.some(
+          ([input, init]) =>
+            String(input) === "/api/daemon/web-session" && init?.method === "DELETE",
+        ),
       ).toBe(true),
     { timeout: 10_000 },
   );

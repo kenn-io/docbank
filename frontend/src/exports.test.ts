@@ -261,6 +261,12 @@ it("accepts current-state gaps and byte-identical duplicates, never treats EOF a
   );
   expect(seen).toEqual([1, 8]);
   expect(gaps).toEqual([false, true]);
+  vi.mocked(fetch).mockResolvedValue(events([last, last]));
+  const published: string[] = [];
+  await readExportEvents("s", plan, jobID, undefined, new AbortController().signal, (job) =>
+    published.push(job.state),
+  );
+  expect(published).toEqual(["completed"]);
   vi.mocked(fetch).mockResolvedValue(events([first]));
   await expect(
     readExportEvents("session", plan, jobID, undefined, new AbortController().signal, () => {}),
@@ -289,18 +295,8 @@ it("withholds completion until the terminal stream closes cleanly", async () => 
     readExportEvents("s", plan, jobID, undefined, new AbortController().signal, (job) =>
       published.push(job.state),
     ),
-  ).rejects.toThrow();
+  ).rejects.toThrow(SyntaxError);
   expect(published).toEqual([]);
-});
-
-it("ignores identical terminal duplicates", async () => {
-  const last = JSON.stringify({ delivery: "current_state", requested_after: 0, job: complete });
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(events([last, last]));
-  const published: string[] = [];
-  await readExportEvents("s", plan, jobID, undefined, new AbortController().signal, (job) =>
-    published.push(job.state),
-  );
-  expect(published).toEqual(["completed"]);
 });
 
 it("requires exact receipt and native same-origin ticket and rejects unsafe basenames", async () => {

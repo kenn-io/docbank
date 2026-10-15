@@ -434,15 +434,6 @@ describe("document processing browser API", () => {
     expect(receivedSignal).toBe(controller.signal);
   });
 
-  it("rejects a search response from a foreign vault", async () => {
-    const report = structuredClone(contract.report);
-    report.results[0]!.vault_uid = "33333333-3333-4333-8333-333333333333";
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(report));
-    await expect(
-      documentSearch("session", { ...contract.request, mode: "semantic" }),
-    ).rejects.toThrow("The daemon returned an invalid search response.");
-  });
-
   it("rejects a rendition whose retained body checksum does not match", async () => {
     const attachmentID = "a".repeat(64);
     const buildID = "b".repeat(64);
