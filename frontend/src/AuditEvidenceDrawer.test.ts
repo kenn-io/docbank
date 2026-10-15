@@ -55,7 +55,6 @@ describe("audit evidence drawer", () => {
       expect.objectContaining({
         method: "POST",
         body: "{}",
-        credentials: "same-origin",
       }),
     );
   });

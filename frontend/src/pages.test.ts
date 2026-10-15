@@ -417,7 +417,7 @@ for (const header of [
       new Response(fixture.bytes, {
         headers: {
           ...fixture.headers,
-          [header]: header === "Content-Length" ? "33554433" : "wrong",
+          [header]: header === "Content-Length" ? String(fixture.bytes.length + 1) : "wrong",
         },
       }),
     );

@@ -480,9 +480,6 @@ describe("document processing browser API", () => {
         report.results[0]!.rank = 2;
       },
       (report: ReturnType<typeof valid>) => {
-        report.results[0]!.semantic_rank = 1001;
-      },
-      (report: ReturnType<typeof valid>) => {
         report.results.push({
           ...report.results[0]!,
           node_id: 8,

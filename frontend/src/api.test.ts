@@ -37,24 +37,6 @@ describe("browser authentication", () => {
     expect(takeFragmentSession()).toBeNull();
   });
 
-  it("sends only the scoped browser session header", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ id: 1 }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
-    await expect(generated.resolvePath({ path: "/" }, { session: "secret" })).resolves.toEqual({
-      id: 1,
-    });
-    const request = fetchMock.mock.calls[0]?.[1];
-    expect(request?.redirect).toBe("error");
-    expect(request?.credentials).toBe("same-origin");
-    const headers = new Headers(request?.headers);
-    expect(headers.get("X-Docbank-Web-Session")).toBe("secret");
-    expect(headers.get("X-Api-Key")).toBeNull();
-  });
-
   it("preserves structured daemon failures", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(

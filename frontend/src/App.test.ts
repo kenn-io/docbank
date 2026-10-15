@@ -1514,7 +1514,9 @@ it.each(["settles", "hangs"])(
           JSON.parse(String(init?.body)).event === "session_ended",
       );
     const revokes = () =>
-      fetchMock.mock.calls.filter(([input]) => String(input) === "/api/daemon/web-session");
+      fetchMock.mock.calls.filter(
+        ([input, init]) => String(input) === "/api/daemon/web-session" && init?.method === "DELETE",
+      );
     expect(reports()).toHaveLength(1);
     expect(new Headers(reports()[0]?.[1]?.headers).get("X-Docbank-Web-Session")).toBe(
       "short-lived",
