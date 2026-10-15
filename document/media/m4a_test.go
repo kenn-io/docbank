@@ -90,10 +90,18 @@ func TestInspectM4ARejectsUnsafeContainers(t *testing.T) {
 
 func TestInspectM4AIdentityAndMetadataBound(t *testing.T) {
 	data := mediatest.M4A("mp4a")
-	for _, labels := range [][2]string{{"call.mp3", "audio/mp4"}, {"call.m4a", "audio/mpeg"}, {"call.m4a", "video/mp4"}} {
-		record, err := media.InspectCapability(bytes.NewReader(data), inspectionPolicy(data, labels[0], labels[1]))
+	for _, labels := range [][2]string{
+		{"call.m4a", "audio/mp4"}, {"call.mp3", "audio/mp4"}, {"call.m4a", "audio/mpeg"}, {"call.m4a", "video/mp4"},
+	} {
+		policy := inspectionPolicy(data, labels[0], labels[1])
+		policy.MaxDurationMS = 1000
+		record, err := media.InspectCapability(bytes.NewReader(data), policy)
 		require.NoError(t, err)
-		require.False(t, record.Eligible)
+		canonical := labels == [2]string{"call.m4a", "audio/mp4"}
+		require.Equal(t, canonical, record.Eligible, labels)
+		if !canonical {
+			require.Equal(t, media.CapabilityReasonMalformed, record.Reason, labels)
+		}
 	}
 	policy := inspectionPolicy(data, "call.m4a", "audio/mp4")
 	policy.MaxDurationMS = 1000
