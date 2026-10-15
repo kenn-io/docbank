@@ -258,13 +258,33 @@ describe("document processing browser API", () => {
     },
   );
 
-  it("includes consent and plan_fingerprint in the request body and delivers the job before the terminal stream unblocks", async () => {
+  it("sends consent and plan_fingerprint in the processing request", async () => {
+    const events = `${JSON.stringify({ sequence: 1, type: "job", job: contract.job })}\n${JSON.stringify({ sequence: 2, type: "status", terminal: true, status: contract.status })}\n`;
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(events, { headers: { "Content-Type": "application/x-ndjson" } }),
+      );
+    await startProcessing(
+      "session",
+      { node_id: 7, content_version_id: contract.job.content_version_id, profile: "private" },
+      "c".repeat(64),
+      contract.job.profile_fingerprint,
+      true,
+    );
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+      consent: true,
+      plan_fingerprint: "c".repeat(64),
+    });
+  });
+
+  it("delivers the durable job before a blocked terminal status", async () => {
     const versionID = "11111111-1111-4111-8111-111111111111";
     const fingerprint = "a".repeat(64);
     const jobID = "b".repeat(64);
     const encoder = new TextEncoder();
     let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         new ReadableStream<Uint8Array>({
           start(controller) {
@@ -331,10 +351,6 @@ describe("document processing browser API", () => {
     await expect(pending).resolves.toMatchObject({
       job: { id: jobID },
       status: { state: "completed" },
-    });
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
-      consent: true,
-      plan_fingerprint: "c".repeat(64),
     });
   });
 
@@ -418,143 +434,13 @@ describe("document processing browser API", () => {
     expect(receivedSignal).toBe(controller.signal);
   });
 
-  describe("search result authority", () => {
-    const vaultID = "11111111-1111-4111-8111-111111111111";
-    const versionID = "22222222-2222-4222-8222-222222222222";
-    const otherVersionID = "55555555-5555-4555-8555-555555555555";
-    const request = {
-      query: "visible",
-      mode: "semantic" as const,
-      limit: 20,
-      profile: "private",
-      fence: { vault_uid: vaultID, content_version_ids: [versionID, otherVersionID] },
-    };
-    const valid = () => ({
-      requested_mode: "semantic",
-      actual_mode: "semantic",
-      coverage: {
-        binding_required: false,
-        scoped_documents: 1,
-        complete_documents: 1,
-        state: "complete",
-      },
-      degradations: [],
-      truncated: false,
-      trace: [],
-      results: [
-        {
-          vault_uid: vaultID,
-          node_id: 7,
-          content_version_id: versionID,
-          rank: 1,
-          semantic_rank: 1,
-          score: 0.9,
-          path: "/visible.pdf",
-          excerpt: "Synthetic match",
-          evidence: [
-            {
-              kind: "embedding",
-              build_id: "f".repeat(64),
-              vector_space_id: "a".repeat(64),
-              embedding_set_id: "b".repeat(64),
-              input_generation_id: "c".repeat(64),
-              input_id: "chunk-000000-aaaaaaaaaaaa",
-              input_kind: "rendition_chunk",
-              source_manifest_checksum: "d".repeat(64),
-            },
-          ],
-        },
-      ],
-    });
-    it.each([
-      [
-        "foreign vault",
-        (report: ReturnType<typeof valid>) => {
-          report.results[0]!.vault_uid = "33333333-3333-4333-8333-333333333333";
-        },
-      ],
-      [
-        "foreign version",
-        (report: ReturnType<typeof valid>) => {
-          report.results[0]!.content_version_id = "44444444-4444-4444-8444-444444444444";
-        },
-      ],
-      [
-        "duplicate result identity",
-        (report: ReturnType<typeof valid>) => {
-          report.results.push({ ...report.results[0]!, rank: 2, semantic_rank: 2 });
-        },
-      ],
-      [
-        "nonconsecutive rank",
-        (report: ReturnType<typeof valid>) => {
-          report.results[0]!.rank = 2;
-        },
-      ],
-      [
-        "duplicate semantic rank",
-        (report: ReturnType<typeof valid>) => {
-          report.results.push({
-            ...report.results[0]!,
-            node_id: 8,
-            content_version_id: otherVersionID,
-            rank: 2,
-          });
-        },
-      ],
-      [
-        "duplicate evidence",
-        (report: ReturnType<typeof valid>) => {
-          report.results[0]!.evidence.push({ ...report.results[0]!.evidence[0]! });
-        },
-      ],
-      [
-        "missing input generation",
-        (report: ReturnType<typeof valid>) => {
-          report.results[0]!.evidence[0]!.input_generation_id = "";
-        },
-      ],
-      [
-        "relative path",
-        (report: ReturnType<typeof valid>) => {
-          report.results[0]!.path = "visible.pdf";
-        },
-      ],
-      [
-        "oversized excerpt",
-        (report: ReturnType<typeof valid>) => {
-          report.results[0]!.excerpt = "e".repeat(513);
-        },
-      ],
-    ] as const)("rejects %s", async (_name, mutate) => {
-      const report = valid();
-      mutate(report);
-      vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(report));
-      await expect(documentSearch("session", request)).rejects.toThrow(
-        "The daemon returned an invalid search response.",
-      );
-    });
-
-    it("accepts long absolute paths and media evidence", async () => {
-      const fetchMock = vi.spyOn(globalThis, "fetch");
-      const longPath = valid();
-      longPath.results[0]!.path = `/${"p".repeat(17000)}`;
-      fetchMock.mockResolvedValueOnce(Response.json(longPath));
-      await expect(documentSearch("session", request)).resolves.toMatchObject({
-        results: [{ content_version_id: versionID }],
-      });
-
-      const media = valid();
-      const mediaIdentity = {
-        build_id: "f".repeat(64),
-        time_span: { start_ms: 1000, end_ms: 2000 },
-      };
-      Object.assign(media.results[0]!.evidence[0]!, mediaIdentity);
-      fetchMock.mockResolvedValueOnce(Response.json(media));
-      await expect(documentSearch("session", request)).resolves.toMatchObject({
-        results: [{ evidence: [mediaIdentity] }],
-      });
-    });
+  it("rejects a search response from a foreign vault", async () => {
+    const report = structuredClone(contract.report);
+    report.results[0]!.vault_uid = "33333333-3333-4333-8333-333333333333";
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(report));
+    await expect(
+      documentSearch("session", { ...contract.request, mode: "semantic" }),
+    ).rejects.toThrow("The daemon returned an invalid search response.");
   });
 
   it("rejects a rendition whose retained body checksum does not match", async () => {

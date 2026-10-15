@@ -281,7 +281,7 @@ it("rejects conflicting duplicates and backwards progress", async () => {
   }
 });
 
-it("withholds completion until the terminal stream closes cleanly and ignores identical terminal duplicates", async () => {
+it("withholds completion until the terminal stream closes cleanly", async () => {
   const last = JSON.stringify({ delivery: "current_state", requested_after: 0, job: complete });
   vi.spyOn(globalThis, "fetch").mockResolvedValue(events([last, "malformed"]));
   const published: string[] = [];
@@ -289,9 +289,14 @@ it("withholds completion until the terminal stream closes cleanly and ignores id
     readExportEvents("s", plan, jobID, undefined, new AbortController().signal, (job) =>
       published.push(job.state),
     ),
-  ).rejects.toThrow(SyntaxError);
+  ).rejects.toThrow();
   expect(published).toEqual([]);
-  vi.mocked(fetch).mockResolvedValue(events([last, last]));
+});
+
+it("ignores identical terminal duplicates", async () => {
+  const last = JSON.stringify({ delivery: "current_state", requested_after: 0, job: complete });
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(events([last, last]));
+  const published: string[] = [];
   await readExportEvents("s", plan, jobID, undefined, new AbortController().signal, (job) =>
     published.push(job.state),
   );

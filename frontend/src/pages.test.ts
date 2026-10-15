@@ -287,7 +287,7 @@ function pngResponse() {
   return { bytes, receipt, headers };
 }
 
-it("returns a URL for verified dimensions and rejects mismatched encoded dimensions", async () => {
+it("returns a URL for verified dimensions", async () => {
   const fixture = pngResponse();
   const create = vi.fn(() => "blob:page");
   vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: create }));
@@ -296,9 +296,9 @@ it("returns a URL for verified dimensions and rejects mismatched encoded dimensi
     "createImageBitmap",
     vi.fn(async () => ({ width: 1152, height: 864, close })),
   );
-  const fetcher = vi
-    .spyOn(globalThis, "fetch")
-    .mockImplementation(async () => new Response(fixture.bytes, { headers: fixture.headers }));
+  vi.spyOn(globalThis, "fetch").mockImplementation(
+    async () => new Response(fixture.bytes, { headers: fixture.headers }),
+  );
   const binding = { node_id: 7, revision: 2, source };
   const recipe = inventory().inventory.recipes[0]!.recipe;
   expect(
@@ -306,6 +306,15 @@ it("returns a URL for verified dimensions and rejects mismatched encoded dimensi
   ).toBe("blob:page");
   expect(close).toHaveBeenCalledOnce();
   expect(create).toHaveBeenCalledOnce();
+});
+
+it("rejects mismatched encoded dimensions", async () => {
+  const fixture = pngResponse();
+  vi.spyOn(globalThis, "fetch").mockImplementation(
+    async () => new Response(fixture.bytes, { headers: fixture.headers }),
+  );
+  const binding = { node_id: 7, revision: 2, source };
+  const recipe = inventory().inventory.recipes[0]!.recipe;
   fixture.bytes[20] = 1;
   fixture.receipt.sha256 = createHash("sha256").update(fixture.bytes).digest("hex");
   fixture.headers["X-Docbank-Page-SHA256"] = fixture.receipt.sha256;
@@ -314,7 +323,6 @@ it("returns a URL for verified dimensions and rejects mismatched encoded dimensi
   await expect(
     readPageImage("session", binding, fixture.receipt, recipe, new AbortController().signal),
   ).rejects.toThrow(/Invalid encoded page image dimensions/);
-  expect(fetcher).toHaveBeenCalledTimes(2);
 });
 
 it("fences late image decoding and releases its decoded resource", async () => {

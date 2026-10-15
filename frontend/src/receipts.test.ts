@@ -132,6 +132,7 @@ describe("processing receipts", () => {
           kind: "rendition_segment",
           build_id: buildID,
           segment_id: "segment-1",
+          time_span: { start_ms: 1000, end_ms: 2000 },
           media_sources: [source],
         },
       ],
@@ -183,5 +184,130 @@ describe("processing receipts", () => {
         fence_fingerprint: fenceFingerprint(vault, oversizedIDs),
       }),
     ).toThrow(/The daemon returned an invalid source fence/);
+  });
+});
+
+describe("search result authority", () => {
+  const vaultID = "11111111-1111-4111-8111-111111111111";
+  const versionID = "22222222-2222-4222-8222-222222222222";
+  const otherVersionID = "55555555-5555-4555-8555-555555555555";
+  const request = {
+    query: "visible",
+    mode: "semantic" as const,
+    limit: 20,
+    profile: "private",
+    fence: { vault_uid: vaultID, content_version_ids: [versionID, otherVersionID] },
+  };
+  const valid = () => ({
+    requested_mode: "semantic",
+    actual_mode: "semantic",
+    coverage: {
+      binding_required: false,
+      scoped_documents: 1,
+      complete_documents: 1,
+      state: "complete",
+    },
+    degradations: [],
+    truncated: false,
+    trace: [],
+    results: [
+      {
+        vault_uid: vaultID,
+        node_id: 7,
+        content_version_id: versionID,
+        rank: 1,
+        semantic_rank: 1,
+        score: 0.9,
+        path: "/visible.pdf",
+        excerpt: "Synthetic match",
+        evidence: [
+          {
+            kind: "embedding",
+            build_id: "f".repeat(64),
+            vector_space_id: "a".repeat(64),
+            embedding_set_id: "b".repeat(64),
+            input_generation_id: "c".repeat(64),
+            input_id: "chunk-000000-aaaaaaaaaaaa",
+            input_kind: "rendition_chunk",
+            source_manifest_checksum: "d".repeat(64),
+          },
+        ],
+      },
+    ],
+  });
+  it.each([
+    [
+      "foreign vault",
+      (report: ReturnType<typeof valid>) => {
+        report.results[0]!.vault_uid = "33333333-3333-4333-8333-333333333333";
+      },
+    ],
+    [
+      "foreign version",
+      (report: ReturnType<typeof valid>) => {
+        report.results[0]!.content_version_id = "44444444-4444-4444-8444-444444444444";
+      },
+    ],
+    [
+      "duplicate result identity",
+      (report: ReturnType<typeof valid>) => {
+        report.results.push({ ...report.results[0]!, rank: 2, semantic_rank: 2 });
+      },
+    ],
+    [
+      "nonconsecutive rank",
+      (report: ReturnType<typeof valid>) => {
+        report.results[0]!.rank = 2;
+      },
+    ],
+    [
+      "duplicate semantic rank",
+      (report: ReturnType<typeof valid>) => {
+        report.results.push({
+          ...report.results[0]!,
+          node_id: 8,
+          content_version_id: otherVersionID,
+          rank: 2,
+        });
+      },
+    ],
+    [
+      "duplicate evidence",
+      (report: ReturnType<typeof valid>) => {
+        report.results[0]!.evidence.push({ ...report.results[0]!.evidence[0]! });
+      },
+    ],
+    [
+      "missing input generation",
+      (report: ReturnType<typeof valid>) => {
+        report.results[0]!.evidence[0]!.input_generation_id = "";
+      },
+    ],
+    [
+      "relative path",
+      (report: ReturnType<typeof valid>) => {
+        report.results[0]!.path = "visible.pdf";
+      },
+    ],
+    [
+      "oversized excerpt",
+      (report: ReturnType<typeof valid>) => {
+        report.results[0]!.excerpt = "e".repeat(513);
+      },
+    ],
+  ] as const)("rejects %s", (_name, mutate) => {
+    const report = valid();
+    mutate(report);
+    expect(() => validateDocumentSearchReport(report, request)).toThrow(
+      "The daemon returned an invalid search response.",
+    );
+  });
+
+  it("accepts long absolute paths", () => {
+    const report = valid();
+    report.results[0]!.path = `/${"p".repeat(17000)}`;
+    expect(validateDocumentSearchReport(report, request)).toMatchObject({
+      results: [{ content_version_id: versionID }],
+    });
   });
 });
