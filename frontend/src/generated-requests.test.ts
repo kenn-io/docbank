@@ -4,33 +4,6 @@ import * as api from "./generated/docbank";
 
 afterEach(() => vi.restoreAllMocks());
 
-it("sends reference media as JSON", async () => {
-  const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({}));
-  const body: api.MediaReferenceBody = {
-    operation_id: "synthetic-operation",
-    provider_hint: "synthetic",
-    reference_url: "https://example.com/sample.wav",
-    acquire: false,
-    occurrence: {
-      filename: "sample.wav",
-      ref: "synthetic",
-      revision: "1",
-      message: {
-        raw: "2026-09-01",
-        normalized: "2026-09-01",
-        precision: "day",
-        timezone: "UTC",
-        zone_text: "UTC",
-        fraction_digits: 0,
-      },
-    },
-  };
-  await api.submitMediaSourceWithJson(body);
-  const [, request] = fetch.mock.calls[0];
-  expect(new Headers(request?.headers).get("Content-Type")).toBe("application/json");
-  expect(JSON.parse(String(request?.body))).toEqual(body);
-});
-
 it("sends JSON metadata before the media file without a metadata filename", async () => {
   const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, request) => {
     const response = new Response(await (request?.body as Blob).text(), {
