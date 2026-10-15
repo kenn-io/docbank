@@ -123,7 +123,7 @@ it("keeps relevance order across months and undated photos", () => {
   expect(groupPhotos(items, "relevance")[0]!.year).toBe("");
 });
 
-it("labels a session by file modified time only when it lacks a real capture time", () => {
+it("labels a session by file modified time across the whole group, not just the seed item", () => {
   const modified = [photo(1), photo(2)];
   modified[0]!.capture_time = null;
   modified[0]!.file_modified_time = "2023-11-04T18:00:00Z";
@@ -132,9 +132,34 @@ it("labels a session by file modified time only when it lacks a real capture tim
   const modifiedGroups = groupPhotos(modified, "sessions");
   expect(modifiedGroups).toHaveLength(1);
   expect(modifiedGroups[0]!.label).toBe("2023-11-04 · File modified");
+
   const captured = groupPhotos([photo(3, "2025-06-01T09:00:00"), photo(4, "2025-06-01T10:00:00")], "sessions");
   expect(captured).toHaveLength(1);
   expect(captured[0]!.label).toBe("2025-06-01 · Capture session");
+
+  // A raw capture_time can still hold a truthy-but-invalid placeholder even when
+  // file_modified_time is what actually placed the photo; the label must key off
+  // file_modified_time, not capture_time truthiness.
+  const invalidCapture = [photo(5), photo(6)];
+  invalidCapture[0]!.capture_time = "0000-01-01T00:00:00";
+  invalidCapture[0]!.file_modified_time = "2024-02-02T08:00:00Z";
+  invalidCapture[1]!.capture_time = "0000-01-01T00:00:00";
+  invalidCapture[1]!.file_modified_time = "2024-02-02T09:00:00Z";
+  const invalidGroups = groupPhotos(invalidCapture, "sessions");
+  expect(invalidGroups).toHaveLength(1);
+  expect(invalidGroups[0]!.label).toBe("2024-02-02 · File modified");
+
+  // A window mixing a real capture with an mtime-placed photo is still a real session:
+  // any genuinely captured photo makes the whole group a capture session.
+  const mixed = [photo(7, "2025-06-01T09:00:00")];
+  mixed[0]!.file_modified_time = null;
+  const mtimeOnly = photo(8);
+  mtimeOnly.capture_time = null;
+  mtimeOnly.file_modified_time = "2025-06-01T10:00:00Z";
+  const mixedGroups = groupPhotos([...mixed, mtimeOnly], "sessions");
+  expect(mixedGroups).toHaveLength(1);
+  expect(mixedGroups[0]!.items.map(item => item.asset_id)).toEqual(["photo-8", "photo-7"]);
+  expect(mixedGroups[0]!.label).toBe("2025-06-01 · Capture session");
 });
 
 it("places a row with only a file modified time in its month and keeps rows with neither undated", () => {
