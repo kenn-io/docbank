@@ -92,6 +92,7 @@ type Filters struct {
 	GPSBounds     *GPSBounds `json:"gps_bounds,omitzero"`
 	AssetIDs      []string   `json:"asset_ids,omitzero"`
 	SetIDs        []string   `json:"set_ids,omitzero"`
+	PersonIDs     []string   `json:"person_ids,omitzero"`
 
 	Paths                []string `json:"paths,omitempty"`
 	ExcludePaths         []string `json:"exclude_paths,omitempty"`
@@ -160,6 +161,7 @@ type filtersInput struct {
 	GPSBounds     *GPSBounds `json:"gps_bounds"`
 	AssetIDs      *[]string  `json:"asset_ids"`
 	SetIDs        *[]string  `json:"set_ids"`
+	PersonIDs     *[]string  `json:"person_ids"`
 
 	Paths                *[]string `json:"paths"`
 	ExcludePaths         *[]string `json:"exclude_paths"`
@@ -185,7 +187,7 @@ var optionalFilterFields = withQualityFields(map[string]struct{}{
 	"tag_ids": {}, "exclude_tag_ids": {}, "no_tags": {}, "media_families": {},
 	"mime_types": {}, "extensions": {}, "modified_after": {}, "modified_before": {},
 	"size_min": {}, "size_max": {}, "text_coverage": {}, "has_duplicates": {},
-	"rating_min": {}, "rating_max": {}, "flags": {}, "labels": {}, "collapse_duplicates": {}, "kinds": {}, "cameras": {}, "lenses": {}, "locations": {}, "iso_min": {}, "iso_max": {}, "capture_after": {}, "capture_before": {}, "gps_bounds": {}, "asset_ids": {}, "set_ids": {},
+	"rating_min": {}, "rating_max": {}, "flags": {}, "labels": {}, "collapse_duplicates": {}, "kinds": {}, "cameras": {}, "lenses": {}, "locations": {}, "iso_min": {}, "iso_max": {}, "capture_after": {}, "capture_before": {}, "gps_bounds": {}, "asset_ids": {}, "set_ids": {}, "person_ids": {},
 })
 
 // Parse validates and normalizes one bounded QueryV1 JSON value.
@@ -330,6 +332,9 @@ func (input filtersInput) value() Filters {
 	}
 	if input.GPSBounds != nil {
 		value.GPSBounds = input.GPSBounds
+	}
+	if input.PersonIDs != nil {
+		value.PersonIDs = *input.PersonIDs
 	}
 	if input.SetIDs != nil {
 		value.SetIDs = *input.SetIDs

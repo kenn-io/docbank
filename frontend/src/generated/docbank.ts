@@ -564,6 +564,11 @@ export interface Error {
   code?: string;
   detail?: string;
   errors?: string[];
+  /** @maxItems 20 */
+  face_ids?: string[];
+  hidden_face_conflict?: boolean;
+  inaccessible_face_conflict?: boolean;
+  more?: boolean;
   observed_scope_count?: number;
   position?: ErrorPosition;
   status: number;
@@ -3047,6 +3052,7 @@ export interface Filters {
   modified_before?: string;
   no_tags?: boolean;
   paths?: string[];
+  person_ids?: string[];
   /** @nullable */
   rating_max?: number | null;
   /** @nullable */
@@ -4465,6 +4471,18 @@ export interface Person {
   updated_at: string;
 }
 
+export interface PhotoPersonAssertion {
+  action: string;
+  assertion_id: string;
+  content_version_id: string;
+  note: string;
+  person_id: string;
+  photo_mark?: boolean;
+  recorded_at: string;
+  revision: number;
+  role: string;
+}
+
 export interface PersonExternalIdentity {
   archive_id: string;
   display_name_snapshot: string;
@@ -4496,12 +4514,17 @@ export interface PersonIdentity {
 export interface PersonDetail {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /** @maxItems 1000 */
+  assertions: PhotoPersonAssertion[];
+  assertions_next_cursor?: string;
+  assertions_truncated: boolean;
   created_at: string;
   display_name: string;
   /** @maxItems 64 */
   external_identities: PersonExternalIdentity[];
   /** @maxItems 200 */
   identities: PersonIdentity[];
+  key_face_id?: string;
   origin: string;
   person_id: string;
   reached_through_person_id?: string;
@@ -4561,6 +4584,8 @@ export interface PersonSplitReceipt {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   created_at: string;
+  /** @maxItems 1000 */
+  moved_assertion_ids?: string[];
   moved_identity_ids: string[];
   new_person_id: string;
   operation_id: string;
@@ -4824,6 +4849,8 @@ export interface SavedQueryFiltersSchema {
   no_tags?: boolean | null;
   /** @maxItems 64 */
   paths?: string[];
+  /** @maxItems 64 */
+  person_ids?: string[];
   /**
      * @minimum 0
      * @maximum 5
@@ -5576,19 +5603,41 @@ export interface PhotoFace {
   box: FaceBox;
   content_version_id: string;
   created_at: string;
+  dismissed: boolean;
   face_id: string;
+  /** @maxItems 1000 */
+  rejected_person_ids?: string[];
   revision: number;
 }
 
-export interface PhotoPersonAssertion {
-  action: string;
-  assertion_id: string;
-  content_version_id: string;
-  note: string;
-  person_id: string;
-  recorded_at: string;
-  revision: number;
-  role: string;
+export type PhotoFaceDecisionRequestAction = typeof PhotoFaceDecisionRequestAction[keyof typeof PhotoFaceDecisionRequestAction];
+
+
+export const PhotoFaceDecisionRequestAction = {
+  name: 'name',
+  retract: 'retract',
+  reject: 'reject',
+  dismiss: 'dismiss',
+  key: 'key',
+  withdraw_rejection: 'withdraw_rejection',
+} as const;
+
+export interface PhotoFaceDecisionRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  action: PhotoFaceDecisionRequestAction;
+  face_id?: string;
+  operation_id?: string;
+  person_id?: string;
+  person_revision?: number;
+  /** @minimum 0 */
+  revision?: number;
+}
+
+export interface PhotoFaceDecisionResult {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  receipt_id: string;
 }
 
 export interface PhotoFacePage {
@@ -7013,6 +7062,8 @@ export interface SourceRequest {
 export interface SplitPersonRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /** @maxItems 1000 */
+  assertion_ids?: string[];
   assignment_ids?: string[];
   /** @minLength 1 */
   display_name: string;
@@ -8048,6 +8099,11 @@ export type GetExportJobEventsDefault = {
   code?: string;
   detail?: string;
   errors?: string[];
+  /** @maxItems 20 */
+  face_ids?: string[];
+  hidden_face_conflict?: boolean;
+  inaccessible_face_conflict?: boolean;
+  more?: boolean;
   observed_scope_count?: number;
   position?: ErrorPosition;
   status: number;
@@ -8433,6 +8489,15 @@ limit?: number;
 cursor?: string;
 };
 
+export type GetPersonParams = {
+assertion_cursor?: string;
+/**
+ * @minimum 1
+ * @maximum 1000
+ */
+assertion_limit?: number;
+};
+
 export type RenamePersonHeaders = {
 'If-Match': string;
 };
@@ -8507,6 +8572,10 @@ export type TrashPhotoAssetHeaders = {
 
 export type UnhidePhotoAssetHeaders = {
 'If-Match': string;
+};
+
+export type UndoPhotoFaceDecisionParams = {
+operation_id?: string;
 };
 
 export type PromotePhotoNodeHeaders = {
@@ -14863,20 +14932,29 @@ return sessionJSON<Person>(getCreatePersonUrl(),
 
 
 
-export const getGetPersonUrl = (personId: string,) => {
+export const getGetPersonUrl = (personId: string,
+    params?: GetPersonParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/v1/people/by-id/${encodeURIComponent(String(personId))}`
+  return stringifiedParams.length > 0 ? `/api/v1/people/by-id/${encodeURIComponent(String(personId))}?${stringifiedParams}` : `/api/v1/people/by-id/${encodeURIComponent(String(personId))}`
 }
 
 /**
  * @summary Inspect one canonical person
  */
-export const getPerson = async (personId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<PersonDetail> => {
+export const getPerson = async (personId: string,
+    params?: GetPersonParams, options?: Parameters<typeof sessionJSON>[1]): Promise<PersonDetail> => {
 
-  return sessionJSON<PersonDetail>(getGetPersonUrl(personId),
+  return sessionJSON<PersonDetail>(getGetPersonUrl(personId,params),
   {
     ...options,
     method: 'GET'
@@ -16064,6 +16142,39 @@ export const undoPhotoAuthored = async (receiptId: string, options?: Parameters<
 
 
 
+export const getUndoPhotoFaceDecisionUrl = (receiptId: string,
+    params?: UndoPhotoFaceDecisionParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/photos/face-decisions/${encodeURIComponent(String(receiptId))}/undo?${stringifiedParams}` : `/api/v1/photos/face-decisions/${encodeURIComponent(String(receiptId))}/undo`
+}
+
+/**
+ * @summary Undo a face decision if its records are unchanged
+ */
+export const undoPhotoFaceDecision = async (receiptId: string,
+    params?: UndoPhotoFaceDecisionParams, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoFaceDecisionResult> => {
+
+  return sessionJSON<PhotoFaceDecisionResult>(getUndoPhotoFaceDecisionUrl(receiptId,params),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
 export const getGetPhotoHiddenStateUrl = () => {
 
 
@@ -16552,6 +16663,45 @@ return sessionJSON<PhotoSettings>(getSetPhotoSettingsUrl(),
     method: 'PUT',
     headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
     body: JSON.stringify(setPhotoSettingsRequest)
+  }
+);}
+
+
+
+export const getDecidePhotoFaceUrl = (contentVersionId: string,) => {
+
+
+
+
+  return `/api/v1/photos/versions/${encodeURIComponent(String(contentVersionId))}/face-decisions`
+}
+
+/**
+ * @summary Name, retract, reject, dismiss, or choose a key face
+ */
+export const decidePhotoFace = async (contentVersionId: string,
+    photoFaceDecisionRequest: NonReadonly<PhotoFaceDecisionRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoFaceDecisionResult> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoFaceDecisionResult>(getDecidePhotoFaceUrl(contentVersionId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(photoFaceDecisionRequest)
   }
 );}
 

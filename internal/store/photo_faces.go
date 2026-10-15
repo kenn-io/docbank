@@ -10,8 +10,9 @@ import (
 )
 
 var (
-	ErrInvalidPhotoFace = errors.New("invalid photo face")
-	ErrPhotoFaceLimit   = errors.New("photo version already has 1,000 faces or 1,000 depicted people")
+	ErrPhotoFaceRejectionLimit = errors.New("face already has 1,000 rejected people")
+	ErrInvalidPhotoFace        = errors.New("invalid photo face")
+	ErrPhotoFaceLimit          = errors.New("photo version already has 1,000 faces or 1,000 depicted people")
 )
 
 type photoFaceExistsError struct{}
@@ -22,12 +23,14 @@ func (photoFaceExistsError) Error() string {
 func (photoFaceExistsError) Is(target error) bool { return target == ErrExists }
 
 type PhotoFace struct {
-	FaceID           string           `json:"face_id"`
-	ContentVersionID string           `json:"content_version_id"`
-	Box              document.FaceBox `json:"box"`
-	Revision         int64            `json:"revision"`
-	AssertionID      string           `json:"assertion_id,omitzero"`
-	CreatedAt        string           `json:"created_at"`
+	FaceID            string           `json:"face_id"`
+	ContentVersionID  string           `json:"content_version_id"`
+	Box               document.FaceBox `json:"box"`
+	Revision          int64            `json:"revision"`
+	AssertionID       string           `json:"assertion_id,omitzero"`
+	CreatedAt         string           `json:"created_at"`
+	RejectedPersonIDs []string         `json:"rejected_person_ids,omitzero" maxItems:"1000"`
+	Dismissed         bool             `json:"dismissed"`
 }
 
 func validatePhotoFace(face PhotoFace) error {
@@ -66,7 +69,7 @@ func photoFacesQuery(ctx context.Context, q metadataQuerier, versionID string) (
 	return faces, rows.Err()
 }
 
-// facePhotoQuery requires a current, live, included image or RAW member and Hidden access.
+// facePhotoQuery authorizes retained image or RAW versions through their live photo member.
 func (s *Store) facePhotoQuery(ctx context.Context, q metadataQuerier, versionID string) error {
 	if validateUUIDv4(versionID) != nil {
 		return ErrInvalidPhotoFace
@@ -74,7 +77,7 @@ func (s *Store) facePhotoQuery(ctx context.Context, q metadataQuerier, versionID
 	var assetID, role string
 	var node Node
 	err := q.QueryRowContext(ctx, `SELECT member.asset_id,member.role,n.id,n.name,COALESCE(cv.mime_type,'') FROM content_versions cv
- JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id
+ JOIN nodes n ON n.id=cv.node_id
  JOIN photo_files member ON member.node_id=cv.node_id
  JOIN photo_assets a ON a.asset_id=member.asset_id
  WHERE cv.version_id=? AND a.kind='photo' AND n.kind='file' AND member.role IN ('image','raw') AND `+liveIncludedDisplayPredicate, versionID).Scan(&assetID, &role, &node.ID, &node.Name, &node.MimeType)
@@ -84,9 +87,7 @@ func (s *Store) facePhotoQuery(ctx context.Context, q metadataQuerier, versionID
 	if err != nil {
 		return err
 	}
-	facts := photoNodeFacts(node)
-	if validatePhotoFileForAsset(PhotoKindPhoto, role, facts) != nil ||
-		(role == PhotoRoleRAW && facts.MediaType != "" && facts.MediaType != "application/octet-stream" && !isPhotoCameraRawMedia(facts.MediaType)) {
+	if !validFacePhotoNode(role, node) {
 		return ErrNotFound
 	}
 	_, err = s.photoAssetReadQuery(ctx, q, assetID)
@@ -102,16 +103,19 @@ func (s *Store) PhotoFaces(ctx context.Context, versionID string) ([]PhotoFace, 
 		}
 		var err error
 		faces, err = photoFacesQuery(ctx, tx, versionID)
+		if err == nil {
+			err = s.readFaceDecisionsTx(ctx, tx, faces)
+		}
 		if err != nil {
 			return err
 		}
-		rows, err := tx.QueryContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision FROM person_document_assertions WHERE content_version_id=? AND role='depicted' AND (action='assert' OR EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=person_document_assertions.assertion_id)) ORDER BY person_id,assertion_id LIMIT ?`, versionID, document.MaxPhotoRecordsPerVersion+1)
+		rows, err := tx.QueryContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision,photo_mark FROM person_document_assertions WHERE content_version_id=? AND role='depicted' AND (action='assert' OR EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=person_document_assertions.assertion_id)) ORDER BY person_id,assertion_id LIMIT ?`, versionID, document.MaxPhotoRecordsPerVersion+1)
 		if err != nil {
 			return err
 		}
 		defer func() { _ = rows.Close() }()
 		for rows.Next() {
-			assertion, err := scanPersonAssertion(rows)
+			assertion, err := scanMarkedPersonAssertion(rows)
 			if err != nil {
 				return err
 			}
@@ -137,28 +141,22 @@ func assertDepictedPersonTx(ctx context.Context, tx *sql.Tx, versionID, personID
 	if err != nil {
 		return PersonDocumentAssertion{}, err
 	}
-	existing, err := personAssertionByIdentityTx(ctx, tx, versionID, resolved, "depicted")
-	if err == nil {
-		if existing.Action != "assert" {
-			return PersonDocumentAssertion{}, ErrPersonIdentityConflict
-		}
-		return existing, nil
+	assertion, changed, err := ensurePersonAssertionTx(ctx, tx, versionID, resolved, "depicted")
+	if err == nil && changed {
+		err = advancePersonBindingEpochForVersionTx(ctx, tx, versionID)
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return PersonDocumentAssertion{}, err
+	return assertion, err
+}
+
+func (s *Store) currentFacePhotoQuery(ctx context.Context, q metadataQuerier, versionID string) error {
+	var current bool
+	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM content_versions v JOIN nodes n ON n.id=v.node_id WHERE v.version_id=? AND n.current_version_id=v.version_id)`, versionID).Scan(&current); err != nil {
+		return err
 	}
-	if err := requirePhotoAssertionCapacity(ctx, tx, versionID, "depicted"); err != nil {
-		return PersonDocumentAssertion{}, err
+	if !current {
+		return ErrNotFound
 	}
-	id, err := newUUIDv4()
-	if err != nil {
-		return PersonDocumentAssertion{}, err
-	}
-	assertion := PersonDocumentAssertion{AssertionID: id, ContentVersionID: versionID, PersonID: resolved, Role: "depicted", Action: "assert", Revision: 1, RecordedAt: nowRFC3339()}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision) VALUES(?,?,?,'depicted','assert','',?,1)`, id, versionID, resolved, assertion.RecordedAt); err != nil {
-		return PersonDocumentAssertion{}, err
-	}
-	return assertion, advancePersonBindingEpochForVersionTx(ctx, tx, versionID)
+	return s.facePhotoQuery(ctx, q, versionID)
 }
 
 // CreatePhotoFace records a manual face box, optionally naming its person.
@@ -170,7 +168,7 @@ func (s *Store) CreatePhotoFace(ctx context.Context, versionID, faceID string, b
 	var face PhotoFace
 	var assertion *PersonDocumentAssertion
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		if err := s.facePhotoQuery(ctx, tx, versionID); err != nil {
+		if err := s.currentFacePhotoQuery(ctx, tx, versionID); err != nil {
 			return err
 		}
 		existing, err := scanPhotoFace(tx.QueryRowContext(ctx, `SELECT `+photoFaceColumns+` FROM photo_faces WHERE face_id=?`, faceID))
@@ -179,6 +177,11 @@ func (s *Store) CreatePhotoFace(ctx context.Context, versionID, faceID string, b
 				return photoFaceExistsError{}
 			}
 			face, assertion, err = replayPhotoFaceTx(ctx, tx, existing, personID)
+			if err == nil {
+				items := []PhotoFace{face}
+				err = s.readFaceDecisionsTx(ctx, tx, items)
+				face = items[0]
+			}
 			return err
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
@@ -205,10 +208,9 @@ func (s *Store) CreatePhotoFace(ctx context.Context, versionID, faceID string, b
 	return face, assertion, err
 }
 
-// replayPhotoFaceTx returns a saved face, naming it when it has no person yet.
+// replayPhotoFaceTx returns an existing face without changing its decision.
 // A named face replays without requiring its person to remain active. Merge
-// receipts, unlike aliases, survive retirement, so they link an absorbed ID to
-// the saved person.
+// receipts survive retirement and link an absorbed ID to the saved person.
 func replayPhotoFaceTx(ctx context.Context, tx *sql.Tx, existing PhotoFace, personID string) (PhotoFace, *PersonDocumentAssertion, error) {
 	if existing.AssertionID != "" {
 		saved, err := personAssertionByIDTx(ctx, tx, existing.AssertionID)
@@ -231,16 +233,7 @@ func replayPhotoFaceTx(ctx context.Context, tx *sql.Tx, existing PhotoFace, pers
 	if personID == "" {
 		return existing, nil, nil
 	}
-	saved, err := assertDepictedPersonTx(ctx, tx, existing.ContentVersionID, personID)
-	if err != nil {
-		return PhotoFace{}, nil, err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE photo_faces SET assertion_id=?,revision=revision+1 WHERE face_id=?`, saved.AssertionID, existing.FaceID); err != nil {
-		return PhotoFace{}, nil, err
-	}
-	existing.AssertionID = saved.AssertionID
-	existing.Revision++
-	return existing, &saved, nil
+	return PhotoFace{}, nil, photoFaceExistsError{}
 }
 
 // MarkPersonInPhoto records a depicted edge without an invented face box.
@@ -250,11 +243,19 @@ func (s *Store) MarkPersonInPhoto(ctx context.Context, versionID, personID strin
 	}
 	var assertion PersonDocumentAssertion
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		if err := s.facePhotoQuery(ctx, tx, versionID); err != nil {
+		if err := s.currentFacePhotoQuery(ctx, tx, versionID); err != nil {
 			return err
 		}
 		var err error
 		assertion, err = assertDepictedPersonTx(ctx, tx, versionID, personID)
+		if err == nil && !assertion.PhotoMark {
+			_, err = tx.ExecContext(ctx, `UPDATE person_document_assertions SET photo_mark=1,revision=revision+1 WHERE assertion_id=?`, assertion.AssertionID)
+			if err == nil {
+				assertion.PhotoMark = true
+				assertion.Revision++
+				err = advancePersonBindingEpochForVersionTx(ctx, tx, versionID)
+			}
+		}
 		return err
 	})
 	return assertion, err
@@ -263,7 +264,7 @@ func (s *Store) MarkPersonInPhoto(ctx context.Context, versionID, personID strin
 func validatePhotoFaceReferences(ctx context.Context, q metadataQuerier) error {
 	var invalid bool
 	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_faces f LEFT JOIN content_versions v ON v.version_id=f.content_version_id LEFT JOIN person_document_assertions a ON a.assertion_id=f.assertion_id WHERE v.version_id IS NULL OR (f.assertion_id IS NOT NULL AND (a.assertion_id IS NULL OR NOT (a.content_version_id=f.content_version_id AND a.role='depicted'))))
- OR EXISTS(SELECT 1 FROM person_document_assertions WHERE role='depicted' GROUP BY content_version_id HAVING COUNT(*)>?)
+ OR EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.role='depicted' AND (a.action<>'withdrawn' OR EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=a.assertion_id)) GROUP BY a.content_version_id HAVING COUNT(*)>?)
  OR EXISTS(SELECT 1 FROM photo_faces GROUP BY content_version_id HAVING COUNT(*)>?)`, document.MaxPhotoRecordsPerVersion, document.MaxPhotoRecordsPerVersion).Scan(&invalid)
 	if err != nil {
 		return fmt.Errorf("checking face references: %w", err)
@@ -274,16 +275,27 @@ func validatePhotoFaceReferences(ctx context.Context, q metadataQuerier) error {
 	return nil
 }
 
-func requirePhotoAssertionCapacity(ctx context.Context, q metadataQuerier, versionID, role string) error {
+func requirePhotoAssertionCapacity(ctx context.Context, q metadataQuerier, versionID, role, existingAssertionID string) error {
 	if role != "depicted" {
 		return nil
 	}
-	var count int
-	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_document_assertions WHERE content_version_id=? AND role='depicted'`, versionID).Scan(&count); err != nil {
+	count, err := photoAssertionCount(ctx, q, versionID, existingAssertionID)
+	if err != nil {
 		return err
 	}
 	if count >= document.MaxPhotoRecordsPerVersion {
 		return ErrPhotoFaceLimit
 	}
 	return nil
+}
+
+func validFacePhotoNode(role string, node Node) bool {
+	facts := photoNodeFacts(node)
+	return validatePhotoFileForAsset(PhotoKindPhoto, role, facts) == nil && (role != PhotoRoleRAW || facts.MediaType == "" || facts.MediaType == "application/octet-stream" || isPhotoCameraRawMedia(facts.MediaType))
+}
+
+func photoAssertionCount(ctx context.Context, q metadataQuerier, versionID, existingAssertionID string) (int, error) {
+	var count int
+	err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_document_assertions a WHERE a.content_version_id=? AND a.role='depicted' AND a.assertion_id<>? AND (a.action<>'withdrawn' OR EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=a.assertion_id))`, versionID, existingAssertionID).Scan(&count)
+	return count, err
 }

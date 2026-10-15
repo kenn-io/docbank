@@ -73,6 +73,22 @@ func withPhotoHidden[T any](cmd *cobra.Command, connection *daemonconn.Connectio
 	return run(cookie)
 }
 
+func peopleHiddenCookie(cmd *cobra.Command, c *daemonconn.Connection) (string, error) {
+	unlock, err := cmd.Flags().GetBool("unlock-hidden")
+	if err != nil {
+		return "", fmt.Errorf("reading --unlock-hidden: %w", err)
+	}
+	if !unlock {
+		return "", nil
+	}
+	passcode, err := readPhotoPasscode(cmd, bufio.NewReaderSize(cmd.InOrStdin(), 2048), "Passcode")
+	if err != nil {
+		return "", err
+	}
+	_, cookie, err := c.PhotoHidden(cmd.Context(), "unlock", passcode, "")
+	return cookie, err
+}
+
 func init() {
 	hidden := &cobra.Command{Use: "hidden", Short: "Configure Hidden photos access", Long: "setup sets a passcode; change and disable require the current passcode.\nlock revokes sessions; reset removes the passcode and keeps photos hidden.\nAfter reset, run docbank photos hidden setup to set a replacement passcode.\nstate reports whether Hidden is configured.", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
 	photosCmd.AddCommand(hidden)

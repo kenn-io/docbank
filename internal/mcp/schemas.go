@@ -244,13 +244,17 @@ func personExternalIdentitySchema() schema {
 
 func personDetailProperties() schema {
 	properties := personSchemaProperties()
+	properties["assertions_truncated"] = booleanSchema()
+	properties["key_face_id"] = uuidSchema()
+	properties["assertions"] = arraySchema(personAssertionSchema(stringSchema(64)), 1000)
 	properties["identities"] = arraySchema(personIdentitySchema(), document.MaxPersonIdentitiesPerPerson)
+	properties["assertions_next_cursor"] = uuidSchema()
 	properties["external_identities"] = arraySchema(personExternalIdentitySchema(), document.MaxPersonExternalIdentities)
 	return properties
 }
 
 func getPersonSchemas() (schema, schema) {
-	return rootObjectSchema(schema{personIDField: uuidSchema()}, personIDField), rootObjectSchema(withPrivateCache(personDetailProperties()), cacheRequired(
+	return rootObjectSchema(schema{personIDField: uuidSchema(), "assertion_cursor": uuidSchema(), "assertion_limit": integerSchema(1, 1000)}, personIDField), rootObjectSchema(withPrivateCache(personDetailProperties()), cacheRequired(
 		personIDField, "display_name", "origin", "state", schemaRevisionField, "created_at", "updated_at", "identities", "external_identities")...)
 }
 
@@ -891,21 +895,23 @@ func photoFaceSchema() schema {
 			"x": schema{"type": "number", "minimum": 0, "maximum": 1}, "y": schema{"type": "number", "minimum": 0, "maximum": 1},
 			"width": schema{"type": "number", "minimum": 0, "maximum": 1}, "height": schema{"type": "number", "minimum": 0, "maximum": 1},
 		}, "x", "y", "width", "height"),
-		schemaRevisionField:  integerSchema(1, 0),
-		"assertion_id":       uuidSchema(),
-		personIDField:        uuidSchema(),
-		"action":             enumSchema("assert", "suppress"),
+		schemaRevisionField: integerSchema(1, 0),
+		"assertion_id":      uuidSchema(),
+		personIDField:       uuidSchema(),
+		"action":            enumSchema("assert", "suppress", "withdrawn"),
+		"dismissed":         booleanSchema(), "rejected_person_ids": arraySchema(uuidSchema(), 1000),
 		schemaCreatedAtField: dateTimeSchema(),
 	}, "face_id", "content_version_id", "box", schemaRevisionField, schemaCreatedAtField)
 }
 
-func photoPersonAssertionSchema() schema {
+func personAssertionSchema(role schema) schema {
 	return objectSchema(schema{
+		"photo_mark":         booleanSchema(),
 		"assertion_id":       uuidSchema(),
 		"content_version_id": uuidSchema(),
 		"person_id":          uuidSchema(),
-		"role":               enumSchema("depicted"),
-		"action":             enumSchema("assert", "suppress"),
+		"role":               role,
+		"action":             enumSchema("assert", "suppress", "withdrawn"),
 		"note":               stringSchema(maxToolResponseBytes),
 		"recorded_at":        dateTimeSchema(),
 		schemaRevisionField:  integerSchema(1, 0),
@@ -920,7 +926,7 @@ func getPhotoFacesSchemas() (schema, schema) {
 	}, "content_version_id")
 	output := rootObjectSchema(withPrivateCache(schema{
 		"faces":            arraySchema(photoFaceSchema(), maxPhotoFacesToolPageSize),
-		"assertions":       arraySchema(photoPersonAssertionSchema(), maxPhotoFacesToolPageSize),
+		"assertions":       arraySchema(personAssertionSchema(enumSchema("depicted")), maxPhotoFacesToolPageSize),
 		"total_faces":      integerSchema(0, document.MaxPhotoRecordsPerVersion),
 		"total_assertions": integerSchema(0, document.MaxPhotoRecordsPerVersion),
 		schemaOffsetField:  integerSchema(0, document.MaxPhotoRecordsPerVersion),

@@ -21,6 +21,7 @@ const (
 	ReferenceTag        ReferenceKind = "tag"
 	ReferenceCollection ReferenceKind = "collection"
 	ReferenceSaved      ReferenceKind = "saved"
+	ReferencePerson     ReferenceKind = "person"
 )
 
 // ErrUnknownReference identifies a recognized reference value which does not
@@ -257,6 +258,7 @@ func (state *resolutionState) resolveFacets(ctx context.Context, value Query) ([
 		{kind: ReferenceCollection, values: value.Filters.ExcludeCollectionIDs},
 		{kind: ReferenceTag, values: value.Filters.TagIDs},
 		{kind: ReferenceTag, values: value.Filters.ExcludeTagIDs},
+		{kind: ReferencePerson, values: value.Filters.PersonIDs},
 	}
 	var dependencies []Dependency
 	for _, facet := range facets {
@@ -313,7 +315,7 @@ func validateReference(ref Reference, kind ReferenceKind, key string, byID bool)
 	if !validUUIDv4(dependency.ID) {
 		return fmt.Errorf("resolver returned invalid stable ID for %s reference", kind)
 	}
-	if byID && dependency.ID != key {
+	if byID && dependency.ID != key && kind != ReferencePerson {
 		return fmt.Errorf("resolver returned stable ID %q for exact ID %q", dependency.ID, key)
 	}
 	if dependency.Revision <= 0 {
@@ -355,6 +357,8 @@ func referenceKindForField(field string) (ReferenceKind, bool) {
 		return ReferenceTag, true
 	case string(ReferenceCollection):
 		return ReferenceCollection, true
+	case string(ReferencePerson):
+		return ReferencePerson, true
 	case string(ReferenceSaved):
 		return ReferenceSaved, true
 	default:

@@ -61,6 +61,7 @@ const optionalFilterFields = new Set([
   "exclude_collection_ids",
   "tag_ids",
   "exclude_tag_ids",
+  "person_ids",
   "no_tags",
   "media_families",
   "mime_types",
@@ -156,6 +157,7 @@ export interface QueryFilters {
   exclude_paths?: string[];
   collection_ids?: string[];
   exclude_collection_ids?: string[];
+  person_ids?: string[];
   tag_ids?: string[];
   exclude_tag_ids?: string[];
   no_tags?: boolean;
@@ -245,6 +247,7 @@ export function canonicalQuery(value: Query): string {
   if (normalized.filters.modified_before)
     filters.modified_before = normalized.filters.modified_before;
   if (normalized.filters.no_tags) filters.no_tags = true;
+  if (normalized.filters.person_ids?.length) filters.person_ids = normalized.filters.person_ids;
   if (normalized.filters.paths?.length) filters.paths = normalized.filters.paths;
   if (normalized.filters.size_max !== undefined) filters.size_max = normalized.filters.size_max;
   if (normalized.filters.size_min) filters.size_min = normalized.filters.size_min;
@@ -360,6 +363,7 @@ function parseFilters(input: Record<string, unknown>): QueryFilters {
       input.exclude_collection_ids,
       "filters.exclude_collection_ids",
     ),
+    person_ids: optionalStringArray(input.person_ids, "filters.person_ids"),
     tag_ids: optionalStringArray(input.tag_ids, "filters.tag_ids"),
     exclude_tag_ids: optionalStringArray(input.exclude_tag_ids, "filters.exclude_tag_ids"),
     no_tags: optionalBoolean(input.no_tags, "filters.no_tags"),
@@ -458,6 +462,12 @@ function normalizeFilters(value: QueryFilters): QueryFilters {
       64,
       (item) => uuidV4Pattern.test(item),
       "exclude_collection_ids",
+    ),
+    person_ids: normalizeSet(
+      value.person_ids,
+      64,
+      (item) => uuidV4Pattern.test(item),
+      "person_ids",
     ),
     tag_ids: normalizeSet(value.tag_ids, 64, (item) => uuidV4Pattern.test(item), "tag_ids"),
     exclude_tag_ids: normalizeSet(

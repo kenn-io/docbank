@@ -62,6 +62,8 @@ func TestGetPhotoFacesMCPPaginatesFacesAndAssertions(t *testing.T) {
 		{FaceID: "00000000-0000-4000-8000-000000000303", ContentVersionID: versionID, Box: document.FaceBox{X: 0.7, Y: 0.2, Width: 0.2, Height: 0.2}, Revision: 1, AssertionID: assertions[0].AssertionID, CreatedAt: stamp},
 		{FaceID: "00000000-0000-4000-8000-000000000304", ContentVersionID: versionID, Box: document.FaceBox{X: 0.7, Y: 0.6, Width: 0.2, Height: 0.2}, Revision: 1, CreatedAt: stamp},
 	}
+	faces[0].RejectedPersonIDs = []string{"00000000-0000-4000-8000-000000000203"}
+	faces[2].Dismissed = true
 	page := api.PhotoFacePage{Faces: faces, Assertions: assertions}
 	daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		assert.Equal(t, http.MethodGet, request.Method)
@@ -81,6 +83,11 @@ func TestGetPhotoFacesMCPPaginatesFacesAndAssertions(t *testing.T) {
 	require.EqualValues(t, 2, firstPage["next_offset"])
 	require.Len(t, firstPage["faces"], 2)
 	require.Len(t, firstPage["assertions"], 2)
+	firstFaces, ok := firstPage["faces"].([]any)
+	require.True(t, ok)
+	firstFace, ok := firstFaces[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, []any{"00000000-0000-4000-8000-000000000203"}, firstFace["rejected_person_ids"])
 
 	last, err := invokeReadTool(t.Context(), lease, "get_photo_faces", map[string]any{"content_version_id": versionID, "limit": 2, "offset": 2})
 	require.NoError(t, err)
@@ -96,6 +103,45 @@ func TestGetPhotoFacesMCPPaginatesFacesAndAssertions(t *testing.T) {
 	require.Equal(t, assertions[0].PersonID, named["person_id"])
 	require.Equal(t, "assert", named["action"])
 	require.NotContains(t, lastFaces[1], "person_id")
+	require.Equal(t, true, named["dismissed"])
+}
+
+func TestGetPhotoFacesMCPFitsRejectionEnvelope(t *testing.T) {
+	version := "00000000-0000-4000-8000-000000000001"
+	page := api.PhotoFacePage{Assertions: []api.PhotoPersonAssertion{}}
+	for i := range 14 {
+		f := api.PhotoFace{FaceID: fmt.Sprintf("00000000-0000-4000-8000-%012d", i+10), ContentVersionID: version, Box: document.FaceBox{Width: .2, Height: .2}, Revision: 1, CreatedAt: "2026-10-01T00:00:00Z"}
+		for j := range 1000 {
+			f.RejectedPersonIDs = append(f.RejectedPersonIDs, fmt.Sprintf("00000000-0000-4000-8000-%012d", j+100))
+		}
+		page.Faces = append(page.Faces, f)
+	}
+	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { writeDaemonJSON(t, w, page) }))
+	t.Cleanup(daemon.Close)
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		return daemonconn.New(daemon.URL, "synthetic-key"), nil
+	}, func(*daemonconn.Connection) error { return nil })
+	var all []photoFaceToolItem
+	for offset := 0; ; {
+		result, err := invokeReadTool(t.Context(), lease, "get_photo_faces", map[string]any{"content_version_id": version, "offset": offset})
+		require.NoError(t, err)
+		wire, err := json.Marshal(result)
+		require.NoError(t, err)
+		require.Less(t, len(wire), maxToolResponseBytes)
+		raw, err := json.Marshal(result.StructuredContent)
+		require.NoError(t, err)
+		var output photoFacesToolOutput
+		require.NoError(t, json.Unmarshal(raw, &output))
+		require.NotEmpty(t, output.Faces)
+		require.Equal(t, offset, output.Offset)
+		all = append(all, output.Faces...)
+		if output.NextOffset == nil {
+			break
+		}
+		require.Equal(t, offset+len(output.Faces), *output.NextOffset)
+		offset = *output.NextOffset
+	}
+	require.Equal(t, photoFaceToolItems(page.Faces, page.Assertions), all)
 }
 
 func photoMCPAuthoredServer(t *testing.T, textUnit string, fileCount int) (api.PhotoAsset, *Server, *daemonLease, *atomic.Int32) {

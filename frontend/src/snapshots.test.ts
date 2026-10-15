@@ -92,6 +92,15 @@ function jsonResponse(value: unknown): Response {
 afterEach(() => vi.restoreAllMocks());
 
 describe("snapshot transport and receipt validation", () => {
+  it("accepts a person dependency", async () => {
+    const dependencies = [{ kind: "person", id: tagID, revision: 4 }];
+    const receipt = await page({ dependencies });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(receipt));
+    const result = await createSnapshot("session", query, { profile: "archive", page_size: 50, facets: ["tags"] }, new AbortController().signal);
+    expect(result.query).toEqual(query);
+    expect(result.dependencies).toEqual(dependencies);
+  });
+
   it("posts the complete canonical create request and maps the real wire shape", async () => {
     const controller = new AbortController();
     const receipt = await page();

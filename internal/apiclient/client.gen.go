@@ -8176,10 +8176,16 @@ func (c *Client) CreatePerson(ctx context.Context, options *CreatePersonRequestO
 // GetPerson Inspect one canonical person
 func (c *Client) GetPerson(ctx context.Context, options *GetPersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPersonResponse, error) {
 	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"assertion_cursor": {Style: "form", Explode: &[]bool{false}[0]},
+		"assertion_limit":  {Style: "form", Explode: &[]bool{false}[0]},
+	}
 	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/people/by-id/{person_id}",
-		Method:     "GET",
-		Options:    options,
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/people/by-id/{person_id}",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
 	}
 
 	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
@@ -9710,6 +9716,57 @@ func (c *Client) UndoPhotoAuthored(ctx context.Context, options *UndoPhotoAuthor
 	return responseParser(ctx, resp)
 }
 
+// UndoPhotoFaceDecision Undo a face decision if its records are unchanged
+func (c *Client) UndoPhotoFaceDecision(ctx context.Context, options *UndoPhotoFaceDecisionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UndoPhotoFaceDecisionResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"operation_id": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/photos/face-decisions/{receipt_id}/undo",
+		Method:        "POST",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*UndoPhotoFaceDecisionResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(UndoPhotoFaceDecisionResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "UndoPhotoFaceDecisionResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[UndoPhotoFaceDecisionErrorResponse](resp, "UndoPhotoFaceDecisionErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/face-decisions/{receipt_id}/undo")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // GetPhotoHiddenState Read hidden photos configuration and current unlock expiry
 func (c *Client) GetPhotoHiddenState(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetPhotoHiddenStateResponse, error) {
 	var err error
@@ -10354,6 +10411,53 @@ func (c *Client) SetPhotoSettings(ctx context.Context, options *SetPhotoSettings
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/settings")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// DecidePhotoFace Name, retract, reject, dismiss, or choose a key face
+func (c *Client) DecidePhotoFace(ctx context.Context, options *DecidePhotoFaceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DecidePhotoFaceResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/versions/{content_version_id}/face-decisions",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*DecidePhotoFaceResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(DecidePhotoFaceResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "DecidePhotoFaceResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[DecidePhotoFaceErrorResponse](resp, "DecidePhotoFaceErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/versions/{content_version_id}/face-decisions")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -19577,6 +19681,7 @@ func (o *CreatePersonRequestOptions) GetHeader() (map[string]string, error) {
 // GetPersonRequestOptions is the options needed to make a request to GetPerson.
 type GetPersonRequestOptions struct {
 	PathParams *GetPersonPath
+	Query      *GetPersonQuery
 }
 
 // GetPathParams returns the path params as a map.
@@ -19592,7 +19697,13 @@ func (o *GetPersonRequestOptions) GetPathParams() (map[string]any, error) {
 
 // GetQuery returns the query params as a map.
 func (o *GetPersonRequestOptions) GetQuery() (map[string]any, error) {
-	return nil, nil
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
 }
 
 // GetBody returns the payload in any type that can be marshalled to JSON by the client.
@@ -20695,6 +20806,44 @@ func (o *UndoPhotoAuthoredRequestOptions) GetHeader() (map[string]string, error)
 	return nil, nil
 }
 
+// UndoPhotoFaceDecisionRequestOptions is the options needed to make a request to UndoPhotoFaceDecision.
+type UndoPhotoFaceDecisionRequestOptions struct {
+	PathParams *UndoPhotoFaceDecisionPath
+	Query      *UndoPhotoFaceDecisionQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *UndoPhotoFaceDecisionRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *UndoPhotoFaceDecisionRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *UndoPhotoFaceDecisionRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *UndoPhotoFaceDecisionRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ChangePhotoHiddenRequestOptions is the options needed to make a request to ChangePhotoHidden.
 type ChangePhotoHiddenRequestOptions struct {
 	Body *ChangePhotoHiddenBody
@@ -21053,6 +21202,41 @@ func (o *SetPhotoSettingsRequestOptions) GetHeader() (map[string]string, error) 
 	var headers map[string]string
 	err = json.Unmarshal(encoded, &headers)
 	return headers, err
+}
+
+// DecidePhotoFaceRequestOptions is the options needed to make a request to DecidePhotoFace.
+type DecidePhotoFaceRequestOptions struct {
+	PathParams *DecidePhotoFacePath
+	Body       *DecidePhotoFaceBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *DecidePhotoFaceRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *DecidePhotoFaceRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *DecidePhotoFaceRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *DecidePhotoFaceRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
 }
 
 // ListPhotoFacesRequestOptions is the options needed to make a request to ListPhotoFaces.
@@ -24288,12 +24472,20 @@ type UndoPhotoAuthoredPath struct {
 	ReceiptID uuid.UUID `json:"receipt_id"`
 }
 
+type UndoPhotoFaceDecisionPath struct {
+	ReceiptID uuid.UUID `json:"receipt_id"`
+}
+
 type GetPhotoAssetByNodePath struct {
 	NodeID int64 `json:"node_id"`
 }
 
 type PromotePhotoNodePath struct {
 	NodeID int64 `json:"node_id"`
+}
+
+type DecidePhotoFacePath struct {
+	ContentVersionID uuid.UUID `json:"content_version_id"`
 }
 
 type ListPhotoFacesPath struct {
@@ -24656,6 +24848,8 @@ type MovePhotoRejectsBody = MovePhotoRejectsRequest
 
 type SetPhotoSettingsBody = SetPhotoSettingsRequest
 
+type DecidePhotoFaceBody = PhotoFaceDecisionRequest
+
 type CreatePhotoFaceBody = CreatePhotoFaceRequest
 
 type GrantDocumentProcessingConsentBody = ProcessingConsentGrantRequest
@@ -24988,8 +25182,17 @@ type ListPeopleQuery struct {
 	Cursor *string `json:"cursor,omitempty"`
 }
 
+type GetPersonQuery struct {
+	AssertionCursor *uuid.UUID `json:"assertion_cursor,omitempty"`
+	AssertionLimit  *int64     `json:"assertion_limit,omitempty"`
+}
+
 type DetachPhotoFileQuery struct {
 	ClearDependentSidecars *bool `json:"clear_dependent_sidecars,omitempty"`
+}
+
+type UndoPhotoFaceDecisionQuery struct {
+	OperationID *uuid.UUID `json:"operation_id,omitempty"`
 }
 
 type ListPushSourcesQuery struct {
@@ -25355,13 +25558,17 @@ type DownloadExportArchiveErrorResponse = Error
 type GetExportJobEventsResponse = []byte
 
 type GetExportJobEventsErrorResponse struct {
-	Code               *string        `json:"code,omitempty"`
-	Detail             *string        `json:"detail,omitempty"`
-	Errors             []string       `json:"errors,omitempty"`
-	ObservedScopeCount *int64         `json:"observed_scope_count,omitempty"`
-	Position           *ErrorPosition `json:"position,omitempty"`
-	Status             int64          `json:"status"`
-	Title              string         `json:"title"`
+	Code                     *string        `json:"code,omitempty"`
+	Detail                   *string        `json:"detail,omitempty"`
+	Errors                   []string       `json:"errors,omitempty"`
+	FaceIds                  []string       `json:"face_ids,omitempty"`
+	HiddenFaceConflict       *bool          `json:"hidden_face_conflict,omitempty"`
+	InaccessibleFaceConflict *bool          `json:"inaccessible_face_conflict,omitempty"`
+	More                     *bool          `json:"more,omitempty"`
+	ObservedScopeCount       *int64         `json:"observed_scope_count,omitempty"`
+	Position                 *ErrorPosition `json:"position,omitempty"`
+	Status                   int64          `json:"status"`
+	Title                    string         `json:"title"`
 }
 
 type CreateExportPlanResponse = bundle.Plan
@@ -25974,6 +26181,10 @@ type UndoPhotoAuthoredResponse = store.PhotoAuthoredReceipt
 
 type UndoPhotoAuthoredErrorResponse = Error
 
+type UndoPhotoFaceDecisionResponse = api.PhotoFaceDecisionResult
+
+type UndoPhotoFaceDecisionErrorResponse = Error
+
 type GetPhotoHiddenStateResponse = store.PhotoHiddenState
 
 type GetPhotoHiddenStateErrorResponse = Error
@@ -26029,6 +26240,10 @@ type GetPhotoSettingsErrorResponse = Error
 type SetPhotoSettingsResponse = api.PhotoSettings
 
 type SetPhotoSettingsErrorResponse = Error
+
+type DecidePhotoFaceResponse = api.PhotoFaceDecisionResult
+
+type DecidePhotoFaceErrorResponse = Error
 
 type ListPhotoFacesResponse = api.PhotoFacePage
 
@@ -27235,6 +27450,10 @@ type PhotoExportSelection = bundle.PhotoExportSelection
 
 type PhotoFace = store.PhotoFace
 
+type PhotoFaceDecisionRequest = api.PhotoFaceDecisionRequest
+
+type PhotoFaceDecisionResult = api.PhotoFaceDecisionResult
+
 type PhotoFacePage = api.PhotoFacePage
 
 type PhotoFaceResult = api.PhotoFaceResult
@@ -27606,6 +27825,7 @@ type SavedQueryFiltersSchema struct {
 	ModifiedBefore       *time.Time                             `json:"modified_before,omitempty"`
 	NoTags               *bool                                  `json:"no_tags,omitempty"`
 	Paths                []string                               `json:"paths,omitempty"`
+	PersonIds            []uuid.UUID                            `json:"person_ids,omitempty"`
 	RatingMax            *int64                                 `json:"rating_max,omitempty"`
 	RatingMin            *int64                                 `json:"rating_min,omitempty"`
 	SetIds               []uuid.UUID                            `json:"set_ids,omitempty"`

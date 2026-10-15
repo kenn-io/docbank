@@ -187,7 +187,7 @@ func (c queryCompiler) compilePhotoFilters(filters query.Filters, start, end int
 	for _, set := range []struct {
 		field  string
 		values []string
-	}{{"flag", filters.Flags}, {"label", filters.Labels}, {"kind", filters.Kinds}, {"camera", filters.Cameras}, {"lens", filters.Lenses}, {compiledLocationField, filters.Locations}, {"asset", filters.AssetIDs}, {"set", filters.SetIDs}} {
+	}{{"flag", filters.Flags}, {"label", filters.Labels}, {"kind", filters.Kinds}, {"camera", filters.Cameras}, {"lens", filters.Lenses}, {compiledLocationField, filters.Locations}, {"asset", filters.AssetIDs}, {"set", filters.SetIDs}, {"person", filters.PersonIDs}} {
 		matches := []compiledQueryFragment{}
 		for _, v := range set.values {
 			part, err := c.compileScalarPredicate(set.field, v, start, end)
