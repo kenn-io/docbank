@@ -337,67 +337,50 @@ func waitForDaemon(t *testing.T, dir string) kitdaemon.RuntimeRecord {
 	return rec
 }
 
-func TestConfiguredCheckoutPathsRejectReservedDestinationsBeforeDaemonStartup(t *testing.T) {
-	catalog, err := store.Open(filepath.Join(t.TempDir(), "docbank.db"))
+func newCheckoutReservationFixture(t *testing.T) (home.Layout, *store.Store, string, string) {
+	t.Helper()
+	layout := home.Layout{Root: t.TempDir()}
+	require.NoError(t, layout.Ensure())
+	catalog, err := store.Open(layout.DBPath())
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
-	ctx := t.Context()
-	node, err := catalog.CreateFile(ctx, catalog.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
+	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
 	require.NoError(t, err)
-	asset, err := catalog.PhotoAssetForNode(ctx, node.ID)
+	asset, err := catalog.PhotoAssetForNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	destination := t.TempDir()
-	checkout, _, err := catalog.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
+	checkout, _, err := catalog.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
 	require.NoError(t, err)
+	return layout, catalog, checkout.ID, destination
+}
+
+func TestConfiguredCheckoutValidationChecksStoreBindingOverlap(t *testing.T) {
+	t.Parallel()
+	_, catalog, checkoutID, destination := newCheckoutReservationFixture(t)
+	defer func() { require.NoError(t, catalog.Close()) }()
 	cfg := config.Default()
-	stores := []store.BlobStore{{Name: "archive", Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "archive"}}
 	cfg.StoreBindings = map[string]config.StoreBindingConfig{"archive": {Kind: "filesystem", Path: destination}}
-	require.ErrorContains(t, validateConfiguredCheckouts(ctx, cfg, stores, catalog), checkout.ID)
+	stores := []store.BlobStore{{Name: "archive", Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "archive"}}
+	require.ErrorContains(t, validateConfiguredCheckouts(t.Context(), cfg, stores, catalog), checkoutID)
 }
 
 func TestCheckoutReservationsPreventDaemonStartup(t *testing.T) {
-	setup := func(t *testing.T) (home.Layout, *store.Store, string, string) {
-		t.Helper()
-		layout := home.Layout{Root: t.TempDir()}
-		require.NoError(t, layout.Ensure())
-		catalog, err := store.Open(layout.DBPath())
-		require.NoError(t, err)
-		node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
-		require.NoError(t, err)
-		asset, err := catalog.PhotoAssetForNode(t.Context(), node.ID)
-		require.NoError(t, err)
-		destination := t.TempDir()
-		checkout, _, err := catalog.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
-		require.NoError(t, err)
-		return layout, catalog, checkout.ID, destination
-	}
-	t.Run("store binding", func(t *testing.T) {
-		_, catalog, checkoutID, destination := setup(t)
-		defer func() { require.NoError(t, catalog.Close()) }()
-		cfg := config.Default()
-		cfg.StoreBindings = map[string]config.StoreBindingConfig{"archive": {Kind: "filesystem", Path: destination}}
-		stores := []store.BlobStore{{Name: "archive", Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "archive"}}
-		require.ErrorContains(t, validateConfiguredCheckouts(t.Context(), cfg, stores, catalog), checkoutID)
-	})
-	t.Run("watch source", func(t *testing.T) {
-		layout, catalog, checkoutID, destination := setup(t)
-		catalogOpen := true
-		defer func() {
-			if catalogOpen {
-				require.NoError(t, catalog.Close())
-			}
-		}()
-		configText := fmt.Sprintf("[[watch]]\nname = 'checkout'\nsource = %q\ndestination = '/inbox'\n", filepath.ToSlash(destination))
-		require.NoError(t, os.WriteFile(filepath.Join(layout.Root, "config.toml"), []byte(configText), 0o600))
-		t.Setenv("DOCBANK_HOME", layout.Root)
-		require.NoError(t, catalog.Close())
-		catalogOpen = false
-		ctx, cancel := context.WithTimeout(t.Context(), daemonStartTimeout)
-		defer cancel()
-		serveErr := runServe(ctx)
-		require.ErrorContains(t, serveErr, "configured path")
-		require.ErrorContains(t, serveErr, checkoutID)
-	})
+	layout, catalog, checkoutID, destination := newCheckoutReservationFixture(t)
+	catalogOpen := true
+	defer func() {
+		if catalogOpen {
+			require.NoError(t, catalog.Close())
+		}
+	}()
+	configText := fmt.Sprintf("[[watch]]\nname = 'checkout'\nsource = %q\ndestination = '/inbox'\n", filepath.ToSlash(destination))
+	require.NoError(t, os.WriteFile(filepath.Join(layout.Root, "config.toml"), []byte(configText), 0o600))
+	t.Setenv("DOCBANK_HOME", layout.Root)
+	require.NoError(t, catalog.Close())
+	catalogOpen = false
+	ctx, cancel := context.WithTimeout(t.Context(), daemonStartTimeout)
+	defer cancel()
+	serveErr := runServe(ctx)
+	require.ErrorContains(t, serveErr, "configured path")
+	require.ErrorContains(t, serveErr, checkoutID)
 }
 
 func TestCheckoutValidationDefersInternalDeadline(t *testing.T) {

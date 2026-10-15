@@ -228,7 +228,6 @@ func TestIngestRejectsNonLoopback(t *testing.T) {
 		{path: "/api/v1/ingest/stream"},
 		{path: "/api/v1/ingest/preflight"},
 		{path: "/api/v1/packages/preflights"},
-		{path: "/api/v1/photos/checkouts"},
 	} {
 		t.Run(test.path, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "http://localhost"+test.path, strings.NewReader(`{"paths":["/x"],"dest":"/inbox"}`))
@@ -239,9 +238,6 @@ func TestIngestRejectsNonLoopback(t *testing.T) {
 			srv.Handler().ServeHTTP(rec, req)
 			assert.Equal(t, http.StatusForbidden, rec.Code)
 			assert.Contains(t, rec.Body.String(), `"code":"loopback_only"`)
-			if test.path == "/api/v1/photos/checkouts" {
-				assert.Contains(t, rec.Body.String(), "daemon's computer")
-			}
 		})
 	}
 }
