@@ -23,6 +23,10 @@ type visualJPEGDCComponent struct {
 type visualJPEGDCHuffman struct {
 	counts [16]int
 	values []byte
+	// lutValue and lutLength decode codes up to 8 bits from the next 8 bits;
+	// length zero means a longer code.
+	lutValue  [256]byte
+	lutLength [256]uint8
 }
 
 type visualJPEGDCDecoder struct {
@@ -38,10 +42,15 @@ type visualJPEGDCDecoder struct {
 	adobeTransformValid bool
 	adobeTransform      byte
 	maxH, maxV          int
-	bits                byte
-	nbits               int
-	ctx                 context.Context
-	steps               int
+	// acc holds nacc unread entropy bits in its low bits.
+	acc     uint64
+	nacc    int
+	stopped bool
+	fillErr error
+	// pending is a marker that fill consumed while looking ahead.
+	pending byte
+	ctx     context.Context
+	steps   int
 }
 
 // check polls for cancellation every 4096 calls so the hot loops stay cheap.
@@ -127,6 +136,11 @@ func (d *visualJPEGDCDecoder) isRGB() bool {
 }
 
 func (d *visualJPEGDCDecoder) marker() (byte, error) {
+	if d.pending != 0 {
+		marker := d.pending
+		d.pending = 0
+		return marker, nil
+	}
 	for {
 		b, err := d.reader.ReadByte()
 		if err != nil {
@@ -221,39 +235,96 @@ func (d *visualJPEGDCDecoder) tables(p []byte) error {
 			return jpeg.FormatError("bad Huffman values")
 		}
 		t.values = p[17 : 17+n]
+		t.lutLength = [256]uint8{}
+		code, k := 0, 0
+		for length := 1; length <= 8; length++ {
+			for range t.counts[length-1] {
+				first := code << (8 - length)
+				for i := range 1 << (8 - length) {
+					t.lutValue[first+i], t.lutLength[first+i] = t.values[k], uint8(length)
+				}
+				code++
+				k++
+			}
+			code <<= 1
+		}
 		p = p[17+n:]
 	}
 	return nil
 }
 
-func (d *visualJPEGDCDecoder) readBits(n int) (int32, error) {
-	var value int32
-	for range n {
-		if d.nbits == 0 {
-			b, err := d.reader.ReadByte()
-			if err != nil {
-				return 0, fmt.Errorf("reading JPEG entropy: %w", err)
-			}
-			if b == 0xff {
-				stuffed, err := d.reader.ReadByte()
-				if err != nil {
-					return 0, fmt.Errorf("reading JPEG stuffing: %w", err)
-				}
-				if stuffed != 0 {
-					return 0, jpeg.FormatError("marker inside entropy data")
-				}
-			}
-			d.bits, d.nbits = b, 8
+// fill buffers entropy bytes until a marker, a read error, or a full
+// accumulator. A marker found while looking ahead is kept for marker().
+func (d *visualJPEGDCDecoder) fill() {
+	for !d.stopped && d.nacc <= 56 {
+		b, err := d.reader.ReadByte()
+		if err != nil {
+			d.stopped, d.fillErr = true, err
+			return
 		}
-		d.nbits--
-		value = value<<1 | int32(d.bits>>d.nbits&1)
+		if b == 0xff {
+			if b, err = d.reader.ReadByte(); err != nil {
+				d.stopped, d.fillErr = true, err
+				return
+			}
+			if b != 0 {
+				d.stopped = true
+				for b == 0xff {
+					if b, err = d.reader.ReadByte(); err != nil {
+						d.fillErr = err
+						return
+					}
+				}
+				// After fill bytes, 0x00 is no marker; marker() keeps scanning.
+				d.pending = b
+				return
+			}
+			b = 0xff
+		}
+		d.acc = d.acc<<8 | uint64(b)
+		d.nacc += 8
 	}
-	return value, nil
+}
+
+// align drops the fill bits at a restart marker or scan end. Whole bytes still
+// buffered precede the next marker, which marker() would also skip.
+func (d *visualJPEGDCDecoder) align() error {
+	err := d.fillErr
+	d.acc, d.nacc, d.stopped, d.fillErr = 0, 0, false, nil
+	if err != nil {
+		return fmt.Errorf("reading JPEG entropy: %w", err)
+	}
+	return nil
+}
+
+func (d *visualJPEGDCDecoder) readBits(n int) (int32, error) {
+	if d.nacc < n {
+		d.fill()
+		if d.nacc < n {
+			if d.fillErr != nil {
+				return 0, fmt.Errorf("reading JPEG entropy: %w", d.fillErr)
+			}
+			return 0, jpeg.FormatError("marker inside entropy data")
+		}
+	}
+	d.nacc -= n
+	// n is at most 16, so the constant mask keeps the value in int32 range.
+	return int32(d.acc>>d.nacc&0xffff) & (1<<n - 1), nil
 }
 
 func (d *visualJPEGDCDecoder) symbol(table *visualJPEGDCHuffman) (byte, error) {
+	if d.nacc < 16 {
+		d.fill()
+	}
+	if d.nacc >= 8 {
+		next := d.acc >> (d.nacc - 8) & 0xff
+		if length := int(table.lutLength[next]); length != 0 {
+			d.nacc -= length
+			return table.lutValue[next], nil
+		}
+	}
 	code, first, offset := 0, 0, 0
-	for i, count := range table.counts {
+	for _, count := range table.counts {
 		bit, err := d.readBits(1)
 		if err != nil {
 			return 0, err
@@ -264,11 +335,8 @@ func (d *visualJPEGDCDecoder) symbol(table *visualJPEGDCHuffman) (byte, error) {
 		}
 		offset += count
 		first = (first + count) << 1
-		if i == 15 {
-			return 0, jpeg.FormatError("invalid Huffman code")
-		}
 	}
-	return 0, jpeg.FormatError("missing Huffman table")
+	return 0, jpeg.FormatError("invalid Huffman code")
 }
 
 func (d *visualJPEGDCDecoder) scan(p []byte) error {
@@ -327,11 +395,12 @@ func (d *visualJPEGDCDecoder) scan(p []byte) error {
 	if n == 1 {
 		mw, mh = d.components[indices[0]].w, d.components[indices[0]].hBlocks
 	}
-	d.nbits = 0
 	var predictors [3]int32
 	for mcu := range mw * mh {
 		if d.restart > 0 && mcu > 0 && mcu%d.restart == 0 {
-			d.nbits = 0
+			if err := d.align(); err != nil {
+				return err
+			}
 			marker, err := d.marker()
 			if err != nil {
 				return err
@@ -352,38 +421,17 @@ func (d *visualJPEGDCDecoder) scan(p []byte) error {
 			}
 			for b := range h * v {
 				x, y := mcu%mw*h+b%h, mcu/mw*v+b/h
-				var dc int32
-				if ah != 0 {
-					bit, err := d.readBits(1)
-					if err != nil {
-						return err
-					}
-					if x < c.w && y < c.hBlocks {
-						dc = int32(c.dc[y*c.w+x]) | bit<<al
-					}
-				} else {
-					category, err := d.symbol(&d.huffman[0][p[2+2*i]>>4])
-					if err != nil {
-						return err
-					}
-					if category > 11 {
-						return jpeg.FormatError("bad DC magnitude")
-					}
-					diff, err := d.readBits(int(category))
-					if err != nil {
-						return err
-					}
-					if category > 0 && diff < 1<<(category-1) {
-						diff -= 1<<category - 1
-					}
-					predictors[i] += diff
-					dc = predictors[i] << al
+				inside := x < c.w && y < c.hBlocks
+				var previous int16
+				if inside {
+					previous = c.dc[y*c.w+x]
 				}
-				if dc < -32768 || dc > 32767 {
-					return jpeg.FormatError("DC coefficient overflow")
+				dc, err := d.blockDC(&d.huffman[0][p[2+2*i]>>4], &predictors[i], ah, al, previous)
+				if err != nil {
+					return err
 				}
-				if x < c.w && y < c.hBlocks {
-					c.dc[y*c.w+x] = int16(dc)
+				if inside {
+					c.dc[y*c.w+x] = dc
 				}
 				if !d.progressive {
 					if err := d.discardAC(&d.huffman[1][p[2+2*i]&15]); err != nil {
@@ -393,8 +441,43 @@ func (d *visualJPEGDCDecoder) scan(p []byte) error {
 			}
 		}
 	}
-	d.nbits = 0
-	return nil
+	return d.align()
+}
+
+// blockDC decodes one block's DC coefficient. A first scan adds a Huffman-coded
+// difference to the predictor; a refinement scan adds one bit to previous.
+func (d *visualJPEGDCDecoder) blockDC(
+	table *visualJPEGDCHuffman, predictor *int32, ah, al byte, previous int16,
+) (int16, error) {
+	var dc int32
+	if ah != 0 {
+		bit, err := d.readBits(1)
+		if err != nil {
+			return 0, err
+		}
+		dc = int32(previous) | bit<<al
+	} else {
+		category, err := d.symbol(table)
+		if err != nil {
+			return 0, err
+		}
+		if category > 11 {
+			return 0, jpeg.FormatError("bad DC magnitude")
+		}
+		diff, err := d.readBits(int(category))
+		if err != nil {
+			return 0, err
+		}
+		if category > 0 && diff < 1<<(category-1) {
+			diff -= 1<<category - 1
+		}
+		*predictor += diff
+		dc = *predictor << al
+	}
+	if dc < -32768 || dc > 32767 {
+		return 0, jpeg.FormatError("DC coefficient overflow")
+	}
+	return int16(dc), nil
 }
 
 func (d *visualJPEGDCDecoder) discardAC(table *visualJPEGDCHuffman) error {

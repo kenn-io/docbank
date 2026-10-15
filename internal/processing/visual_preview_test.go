@@ -16,6 +16,7 @@ import (
 	"image/jpeg"
 	"image/png"
 	"io"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -1006,19 +1007,32 @@ func TestProduceVisualPreviewDownscalesOversizedJPEG(t *testing.T) {
 
 func TestVisualPreviewJPEGDCBlockMeans(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"progressive-444", "progressive-420", "baseline-422", "stdlib-420-61x37"} {
+	names := []string{"progressive-444", "progressive-420", "baseline-422", "stdlib-420-61x37", "stdlib-noise-420-128x96"}
+	for _, name := range names {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			var source []byte
-			if name == "stdlib-420-61x37" {
+			if strings.HasPrefix(name, "stdlib-") {
 				canvas := image.NewRGBA(image.Rect(0, 0, 61, 37))
 				for y := range 37 {
 					for x := range 61 {
 						canvas.SetRGBA(x, y, color.RGBA{R: byte(60 + x), G: byte(80 + y), B: 100, A: 255})
 					}
 				}
+				var options *jpeg.Options
+				if name == "stdlib-noise-420-128x96" {
+					// Gray noise forces AC Huffman codes longer than eight bits
+					// while keeping chroma flat and reconstruction unclipped.
+					canvas = image.NewRGBA(image.Rect(0, 0, 128, 96))
+					noise := rand.New(rand.NewPCG(1, 2)) //nolint:gosec // G404: deterministic test noise.
+					for i := 0; i < len(canvas.Pix); i += 4 {
+						v := byte(64 + noise.IntN(128))
+						copy(canvas.Pix[i:i+4], []byte{v, v, v, 255})
+					}
+					options = &jpeg.Options{Quality: 90}
+				}
 				var encoded bytes.Buffer
-				require.NoError(t, jpeg.Encode(&encoded, canvas, nil))
+				require.NoError(t, jpeg.Encode(&encoded, canvas, options))
 				source = encoded.Bytes()
 			} else {
 				var err error
@@ -1034,7 +1048,7 @@ func TestVisualPreviewJPEGDCBlockMeans(t *testing.T) {
 			require.NoError(t, err)
 			full, ok := decoded.(*image.YCbCr)
 			require.True(t, ok)
-			if name == "stdlib-420-61x37" {
+			if strings.HasPrefix(name, "stdlib-") {
 				assert.Equal(t, image.YCbCrSubsampleRatio420, full.SubsampleRatio)
 			}
 			for y := range config.Height / 8 {

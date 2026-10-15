@@ -30,9 +30,9 @@ const (
 	visualPreviewMaxSourcePixels     = document.VisualPreviewMaxSourcePixels
 	visualPreviewMaxDCSourcePixels   = 1_000_000_000
 	// Baseline JPEGs Huffman-decode every AC symbol even at one-eighth scale.
-	// Measured on noisy 4:2:0 quality-90 images: 108 MP 5.8 s, 150 MP 8.9 s,
-	// 200 MP 10.6 s, 300 MP 23.2 s (about 55 s per gigapixel). 200 MP keeps
-	// decode near 10.6 s, comfortably under the 30 s preview timeout.
+	// On one fast workstation, noisy 4:2:0 quality-90 images take about 2.2 s
+	// at 110 MP and 5.1 s at 199 MP (about 26 s per gigapixel). 200 MP leaves
+	// slower hosts room under the 30 s on-demand preview timeout.
 	// Progressive JPEGs skip AC scans and keep the full ceiling.
 	visualPreviewMaxBaselineDCSourcePixels = 200_000_000
 	visualPreviewJPEGQuality               = document.VisualPreviewJPEGQuality

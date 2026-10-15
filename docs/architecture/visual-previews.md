@@ -132,13 +132,17 @@ Measured at a 31622 x 31622 progressive JPEG (just under the ceiling), peak live
 is about 230 MB, with roughly 270 MB allocated in total.
 Oversize progressive previews use DC scans only. AC scans must be marker-framed
 and nonempty; their entropy contents are skipped. Damaged AC data after valid
-DC scans still yields a correct one-eighth preview. Baseline JPEGs decode all
-AC entropy data, so they have a lower reduced-decode ceiling of 200,000,000
-pixels. Above it they record `failed` with `source_dimensions_exceed_limit`.
-Measured on noisy 4:2:0 quality-90 baseline images, decode takes 5.8 s at
-108 MP, 8.9 s at 150 MP, 10.6 s at 200 MP, and 23.2 s at 300 MP, about 55 s
-per gigapixel. The ceiling keeps worst-case decode near 10.6 s against the 30 s
-preview timeout. Decoding checks for cancellation every 4096 blocks. Subsampled chroma block averages use bilinear interpolation.
+DC scans still yields a correct one-eighth preview. Baseline JPEGs must
+Huffman-decode all AC entropy data, so they have a lower reduced-decode ceiling
+of 200,000,000 pixels. Above it they record `failed` with
+`source_dimensions_exceed_limit`. On one fast workstation, noisy 4:2:0
+quality-90 baseline images decode in about 2.2 s at 110 MP and 5.1 s at
+199 MP, about 26 s per gigapixel. That is faster than the standard library's
+full-resolution decode of the same files. The ceiling leaves about six times
+that workstation's decode time under the 30 s on-demand preview timeout; slower
+hosts have less margin. Decoding checks for cancellation periodically during
+entropy decoding and pixel reconstruction. Subsampled chroma block averages use
+bilinear interpolation.
 PNG, GIF, and WebP sources above 100,000,000 pixels record `failed` with
 `source_dimensions_exceed_limit`. Camera RAW files use the JPEG limits for
 their embedded preview.
