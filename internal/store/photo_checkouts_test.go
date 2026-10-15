@@ -18,6 +18,25 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
+func TestPhotoCheckoutReportsAllInvalidFilenames(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	for _, name := range []string{"first?.jpg", "second:.jpg", "valid.jpg"} {
+		_, err := s.CreateFile(t.Context(), s.RootID(), name, browseHash(name), 10, "image/jpeg")
+		require.NoError(t, err)
+	}
+	selection := PhotoCheckoutSelection{All: true}
+	_, estimateErr := s.EstimatePhotoCheckout(t.Context(), selection)
+	require.ErrorIs(t, estimateErr, ErrInvalidPhotoCheckout)
+	require.ErrorContains(t, estimateErr, `filename "first?.jpg"`)
+	require.ErrorContains(t, estimateErr, `filename "second:.jpg"`)
+	_, _, createErr := s.CreatePhotoCheckout(t.Context(), selection, t.TempDir(), 100)
+	require.EqualError(t, createErr, estimateErr.Error())
+	checkouts, err := s.ListPhotoCheckouts(t.Context())
+	require.NoError(t, err)
+	require.Empty(t, checkouts)
+}
+
 func TestPhotoCheckoutSelections(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

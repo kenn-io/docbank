@@ -155,6 +155,7 @@ func TestConcreteNetworkDaemonKeepsLocalImports(t *testing.T) {
 		require.NoError(t, err)
 		request.Header.Set("Content-Type", "application/json")
 		request.Header.Set("X-Api-Key", rec.Metadata["api_key"])
+		request.Header.Set("X-Forwarded-For", "127.0.0.1")
 		response, err := httpClient.Do(request)
 		require.NoError(t, err)
 		defer func() { _ = response.Body.Close() }()
@@ -185,8 +186,20 @@ func TestConcreteNetworkDaemonKeepsLocalImports(t *testing.T) {
 	assert.NotEmpty(t, packagePreflight.PreflightID)
 	assert.False(t, packagePreflight.Blocking)
 
-	status, body = post(networkAddress, "/api/v1/ingest", api.IngestRequest{Paths: []string{source}, Dest: "/remote"})
-	assert.Equal(t, http.StatusForbidden, status, string(body))
+	for _, test := range []struct {
+		path string
+		body any
+	}{
+		{"/api/v1/ingest", api.IngestRequest{Paths: []string{source}, Dest: "/remote"}},
+		{"/api/v1/ingest/stream", api.IngestRequest{Paths: []string{source}, Dest: "/remote"}},
+		{"/api/v1/ingest/preflight", api.IngestPreflightRequest{Paths: []string{source}}},
+		{"/api/v1/photos/imports", photoRequest},
+		{"/api/v1/packages/preflights", packageRequest},
+	} {
+		status, body := post(networkAddress, test.path, test.body)
+		assert.Equal(t, http.StatusForbidden, status, test.path+": "+string(body))
+		assert.Contains(t, string(body), "loopback_only")
+	}
 	stop()
 	for _, address := range []string{rec.Address, networkAddress} {
 		listener, err := net.Listen("tcp", address)

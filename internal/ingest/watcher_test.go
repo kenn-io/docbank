@@ -544,7 +544,7 @@ func TestWatchBindingOverlapHonorsCancellation(t *testing.T) {
 }
 
 func TestWatcherRejectsReservedCheckoutDestinations(t *testing.T) {
-	for _, state := range []store.StorageOperationState{store.StorageOperationCompleted, store.StorageOperationFailed} {
+	for _, state := range []store.StorageOperationState{store.StorageOperationCompleted, store.StorageOperationFailed, store.StorageOperationCancelled} {
 		t.Run(string(state), func(t *testing.T) {
 			ing := newTestIngester(t)
 			ctx := t.Context()
@@ -559,7 +559,15 @@ func TestWatcherRejectsReservedCheckoutDestinations(t *testing.T) {
 			watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{Name: "checkout-watch", Source: destination, Destination: "/inbox"}, runTestMutation, nil)
 			require.NoError(t, err)
 			root, err := watcher.openRoot(ctx)
-			if state == store.StorageOperationFailed {
+			if state != store.StorageOperationCompleted {
+				require.NoError(t, err)
+				require.NoError(t, root.Close())
+				partial := filepath.Join(destination, "photo.jpg")
+				require.NoError(t, os.WriteFile(partial, []byte("partial"), 0o600))
+				_, err = watcher.openRoot(ctx)
+				require.ErrorContains(t, err, "with partial files")
+				require.NoError(t, os.Remove(partial))
+				root, err = watcher.openRoot(ctx)
 				require.NoError(t, err)
 				require.NoError(t, root.Close())
 			} else {

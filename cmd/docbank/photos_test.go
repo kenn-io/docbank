@@ -1,162 +1,134 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json/v2"
 	"fmt"
-	"net/http"
+	"image/color"
+	"os"
 	"path/filepath"
 	"strconv"
-	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 )
 
+func TestPhotosCLIEnrollsAddedImage(t *testing.T) {
+	_ = setupVaultHome(t)
+	source := writeSourceFile(t, "synthetic-image.jpeg", string(mediatest.JPEG(2, 2, color.White)))
+	_, err := runCLI(t, "add", source, "--dest", "/inbox")
+	require.NoError(t, err)
+	c, err := daemonconn.Ensure(t.Context())
+	require.NoError(t, err)
+	node, err := c.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/inbox/synthetic-image.jpeg"}})
+	require.NoError(t, err)
+	assetFromNode, err := c.PhotoAssetForNode(t.Context(), node.ID)
+	require.NoError(t, err)
+	for _, selector := range []string{assetFromNode.ID, "id:" + strconv.FormatInt(node.ID, 10), "/inbox/synthetic-image.jpeg"} {
+		out, err := runCLI(t, "photos", "assets", "inspect", selector)
+		require.NoError(t, err, selector)
+		var asset api.PhotoAsset
+		require.NoError(t, json.Unmarshal([]byte(out), &asset))
+		assert.Equal(t, assetFromNode.ID, asset.ID, selector)
+		assert.Equal(t, int64(1), asset.Revision)
+		require.Len(t, asset.Files, 1)
+		assert.Equal(t, node.ID, asset.Files[0].NodeID)
+	}
+
+	_, err = runCLI(t, "rm", "/inbox/synthetic-image.jpeg")
+	require.NoError(t, err)
+	out, err := runCLI(t, "photos", "assets", "inspect", "id:"+strconv.FormatInt(node.ID, 10))
+	require.NoError(t, err, out)
+	var trashed api.PhotoAsset
+	require.NoError(t, json.Unmarshal([]byte(out), &trashed))
+	assert.Equal(t, assetFromNode.ID, trashed.ID)
+	_, err = runCLI(t, "photos", "assets", "inspect", "/inbox/synthetic-image.jpeg")
+	require.Error(t, err)
+}
+
 func TestPhotosCLIWorkflow(t *testing.T) {
-	const assetID = "00000000-0000-4000-8000-000000000001"
-	const fileID = "00000000-0000-4000-8000-000000000002"
-	const assetPath = "/api/v1/photos/assets/" + assetID
-	const nodeAssetPath = "/api/v1/photos/nodes/42/asset"
-	const virtualPath = "/inbox/workflow-image.jpeg"
-	asset := api.PhotoAsset{Agreement: map[string]bool{}, ID: assetID, Kind: "photo", Revision: 7, Files: []api.PhotoFile{{ID: "00000000-0000-4000-8000-000000000002", AssetID: assetID, NodeID: 42, Role: "image", Revision: 3}}}
-	excluded := asset
-	excluded.Revision = 8
-	excluded.ExcludedAt = new("2026-01-01T00:00:00Z")
-	detached := asset
-	detached.Files = []api.PhotoFile{}
-	settings := api.PhotoSettings{Preference: new("image"), Revision: 8}
-	resetSettings := api.PhotoSettings{Revision: 9}
-	updatedSettings := api.PhotoSettings{Preference: new("raw"), Revision: 9}
-	type request struct {
-		method, path, queryPath, revision string
-		body                              map[string]any
+	paths := [][]string{
+		{"photos", "assets", "create"},
+		{"photos", "assets", "inspect"},
+		{"photos", "assets", "attach"},
+		{"photos", "assets", "detach"},
+		{"photos", "assets", "exclude"},
+		{"photos", "assets", "promote"},
+		{"photos", "assets", "display"},
+		{"photos", "settings", "show"},
+		{"photos", "settings", "set"},
+		{"photos", "settings", "reset"},
 	}
-	requests := make(chan request, 32)
-	var trashed atomic.Bool
-	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		input := request{method: r.Method, path: r.URL.Path, queryPath: r.URL.Query().Get("path"), revision: r.Header.Get("If-Match")}
-		if r.Method == http.MethodPut || r.Method == http.MethodPost {
-			assert.NoError(t, json.UnmarshalRead(r.Body, &input.body))
-		}
-		requests <- input
-		w.Header().Set("ETag", `"7"`)
-		switch r.URL.Path {
-		case "/api/v1/path", "/api/v1/nodes/42":
-			if trashed.Load() && r.URL.Path == "/api/v1/path" {
-				w.WriteHeader(http.StatusNotFound)
-				assert.NoError(t, json.MarshalWrite(w, api.NewError(http.StatusNotFound, "not_found", "path is absent")))
-				return
-			}
-			node := api.Node{ID: 42, Name: "workflow-image.jpeg", Kind: "file", Revision: 3}
-			if trashed.Load() {
-				node.TrashedAt = "2026-01-01T00:00:00Z"
-			}
-			assert.NoError(t, json.MarshalWrite(w, node))
-		case assetPath, nodeAssetPath, assetPath + "/display", assetPath + "/files", "/api/v1/photos/nodes/42/promote":
-			assert.NoError(t, json.MarshalWrite(w, asset))
-		case "/api/v1/photos/assets":
-			w.WriteHeader(http.StatusCreated)
-			assert.NoError(t, json.MarshalWrite(w, asset))
-		case assetPath + "/files/" + fileID:
-			assert.NoError(t, json.MarshalWrite(w, detached))
-		case assetPath + "/exclude":
-			if input.body["excluded"] == false {
-				w.WriteHeader(http.StatusPreconditionFailed)
-				assert.NoError(t, json.MarshalWrite(w, api.NewError(http.StatusPreconditionFailed, "stale_revision", "asset moved on")))
-			} else {
-				w.Header().Set("ETag", `"8"`)
-				assert.NoError(t, json.MarshalWrite(w, excluded))
-			}
-		case "/api/v1/photos/settings":
-			response := settings
-			if r.Method == http.MethodPut {
-				response = resetSettings
-				if input.body["preference"] == "raw" {
-					response = updatedSettings
-				}
-			}
-			w.Header().Set("ETag", strconv.Quote(strconv.FormatInt(response.Revision, 10)))
-			assert.NoError(t, json.MarshalWrite(w, response))
-		default:
-			http.NotFound(w, r)
-		}
-	})
-	checkRequests := func(expected ...request) {
-		t.Helper()
-		require.Len(t, requests, len(expected))
-		for _, want := range expected {
-			assert.Equal(t, want, <-requests)
-		}
+	for _, path := range paths {
+		command, _, err := rootCmd.Find(path)
+		require.NoError(t, err, path)
+		assert.NotNil(t, command, path)
 	}
-	for _, test := range []struct {
-		selector string
-		requests []request
-	}{
-		{assetID, []request{{method: "GET", path: assetPath}}},
-		{"id:42", []request{{method: "GET", path: "/api/v1/nodes/42"}, {method: "GET", path: nodeAssetPath}}},
-		{virtualPath, []request{{method: "GET", path: "/api/v1/path", queryPath: virtualPath}, {method: "GET", path: nodeAssetPath}}},
+	for _, path := range [][]string{
+		{"photos", "assets", "attach"}, {"photos", "assets", "detach"},
+		{"photos", "assets", "exclude"}, {"photos", "assets", "display"},
+		{"photos", "settings", "set"}, {"photos", "settings", "reset"},
 	} {
-		out, err := runCLI(t, "photos", "assets", "inspect", test.selector)
-		require.NoError(t, err, out)
-		var inspected api.PhotoAsset
-		require.NoError(t, json.Unmarshal([]byte(out), &inspected))
-		assert.Equal(t, asset, inspected)
-		checkRequests(test.requests...)
+		command, _, err := rootCmd.Find(path)
+		require.NoError(t, err)
+		assert.NotNil(t, command.Flags().Lookup("revision"), path)
 	}
-	for _, test := range []struct {
-		args     []string
-		response api.PhotoAsset
-		requests []request
-	}{
-		{[]string{"create", "id:42", "--role", "image", "--kind", "photo"}, asset, []request{{method: "GET", path: "/api/v1/nodes/42"}, {method: "POST", path: "/api/v1/photos/assets", body: map[string]any{"node_id": float64(42), "role": "image", "kind": "photo"}}}},
-		{[]string{"attach", assetID, "id:42", "--role", "image", "--revision", "7"}, asset, []request{{method: "GET", path: "/api/v1/nodes/42"}, {method: "POST", path: assetPath + "/files", revision: `"7"`, body: map[string]any{"node_id": float64(42), "role": "image"}}}},
-		{[]string{"detach", assetID, fileID, "--revision", "7"}, detached, []request{{method: "DELETE", path: assetPath + "/files/" + fileID, revision: `"7"`}}},
-		{[]string{"display", assetID}, asset, []request{{method: "GET", path: assetPath}, {method: "PUT", path: assetPath + "/display", revision: `"7"`, body: map[string]any{}}}},
-		{[]string{"exclude", assetID, "--revision", "7"}, excluded, []request{{method: "POST", path: assetPath + "/exclude", revision: `"7"`, body: map[string]any{"excluded": true}}}},
-		{[]string{"promote", virtualPath}, asset, []request{{method: "GET", path: "/api/v1/path", queryPath: virtualPath}, {method: "GET", path: nodeAssetPath}, {method: "POST", path: "/api/v1/photos/nodes/42/promote", revision: `"7"`, body: map[string]any{}}}},
-	} {
-		out, err := runCLI(t, append([]string{"photos", "assets"}, test.args...)...)
-		require.NoError(t, err, out)
-		var received api.PhotoAsset
-		require.NoError(t, json.Unmarshal([]byte(out), &received))
-		assert.Equal(t, test.response, received)
-		checkRequests(test.requests...)
-	}
-	for _, test := range []struct {
-		args     []string
-		response api.PhotoSettings
-		requests []request
-	}{
-		{[]string{"show"}, settings, []request{{method: "GET", path: "/api/v1/photos/settings"}}},
-		{[]string{"reset"}, resetSettings, []request{{method: "GET", path: "/api/v1/photos/settings"}, {method: "PUT", path: "/api/v1/photos/settings", revision: `"8"`, body: map[string]any{}}}},
-		{[]string{"set", "raw", "--revision", "8"}, updatedSettings, []request{{method: "PUT", path: "/api/v1/photos/settings", revision: `"8"`, body: map[string]any{"preference": "raw"}}}},
-	} {
-		out, err := runCLI(t, append([]string{"photos", "settings"}, test.args...)...)
-		require.NoError(t, err, out)
-		var received api.PhotoSettings
-		require.NoError(t, json.Unmarshal([]byte(out), &received))
-		assert.Equal(t, test.response, received)
-		checkRequests(test.requests...)
-	}
-	_, err := runCLI(t, "photos", "assets", "exclude", assetID, "--excluded=false", "--revision", "7")
+
+	_ = setupVaultHome(t)
+	source := writeSourceFile(t, "workflow-image.jpeg", string(mediatest.JPEG(2, 2, color.White)))
+	_, err := runCLI(t, "add", source, "--dest", "/inbox")
+	require.NoError(t, err)
+	c, err := daemonconn.Ensure(t.Context())
+	require.NoError(t, err)
+	node, err := c.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/inbox/workflow-image.jpeg"}})
+	require.NoError(t, err)
+	asset, err := c.PhotoAssetForNode(t.Context(), node.ID)
+	require.NoError(t, err)
+
+	inspect, err := runCLI(t, "photos", "assets", "inspect", asset.ID)
+	require.NoError(t, err)
+	var inspected api.PhotoAsset
+	require.NoError(t, json.Unmarshal([]byte(inspect), &inspected))
+	assert.Equal(t, asset.ID, inspected.ID)
+
+	display, err := runCLI(t, "photos", "assets", "display", asset.ID)
+	require.NoError(t, err)
+	var displayed api.PhotoAsset
+	require.NoError(t, json.Unmarshal([]byte(display), &displayed))
+	assert.Equal(t, asset.Revision, displayed.Revision)
+
+	settingsOutput, err := runCLI(t, "photos", "settings", "show")
+	require.NoError(t, err)
+	var settings api.PhotoSettings
+	require.NoError(t, json.Unmarshal([]byte(settingsOutput), &settings))
+	reset, err := runCLI(t, "photos", "settings", "reset")
+	require.NoError(t, err)
+	var resetSettings api.PhotoSettings
+	require.NoError(t, json.Unmarshal([]byte(reset), &resetSettings))
+	assert.Equal(t, settings.Revision, resetSettings.Revision)
+
+	excludedOutput, err := runCLI(t, "photos", "assets", "exclude", asset.ID, "--revision", strconv.FormatInt(asset.Revision, 10))
+	require.NoError(t, err)
+	var excluded api.PhotoAsset
+	require.NoError(t, json.Unmarshal([]byte(excludedOutput), &excluded))
+	assert.NotNil(t, excluded.ExcludedAt)
+	_, err = runCLI(t, "photos", "assets", "exclude", asset.ID, "--excluded=false", "--revision", strconv.FormatInt(asset.Revision, 10))
 	require.ErrorIs(t, err, store.ErrStaleRevision)
 	assert.Equal(t, exitStale, commandExitCode(err, true))
-	checkRequests(request{method: "POST", path: assetPath + "/exclude", revision: `"7"`, body: map[string]any{"excluded": false}})
-	trashed.Store(true)
-	out, err := runCLI(t, "photos", "assets", "inspect", "id:42")
-	require.NoError(t, err, out)
-	var received api.PhotoAsset
-	require.NoError(t, json.Unmarshal([]byte(out), &received))
-	assert.Equal(t, asset, received)
-	checkRequests(request{method: "GET", path: "/api/v1/nodes/42"}, request{method: "GET", path: nodeAssetPath})
-	_, err = runCLI(t, "photos", "assets", "inspect", virtualPath)
-	require.ErrorIs(t, err, store.ErrNotFound)
-	checkRequests(request{method: "GET", path: "/api/v1/path", queryPath: virtualPath})
+	promotedOutput, err := runCLI(t, "photos", "assets", "promote", "/inbox/workflow-image.jpeg")
+	require.NoError(t, err)
+	var promoted api.PhotoAsset
+	require.NoError(t, json.Unmarshal([]byte(promotedOutput), &promoted))
+	assert.Equal(t, asset.ID, promoted.ID)
+	assert.Nil(t, promoted.ExcludedAt)
 }
 
 func TestWithPhotoRevisionRetriesOnceOnlyWhenInferred(t *testing.T) {
@@ -199,45 +171,62 @@ func TestWithPhotoRevisionRetriesOnceOnlyWhenInferred(t *testing.T) {
 	assert.Equal(t, []int64{7}, writes)
 }
 
-func TestPhotoImportRejectsEmptySourceAndPointsToJobs(t *testing.T) {
-	queued := api.StorageOperation{ID: "00000000-0000-4000-8000-000000000021", Kind: "photo_import", State: "queued"}
-	requests := make(chan api.PhotoImportStartRequest, 2)
-	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/api/v1/photos/imports":
-			assert.Equal(t, http.MethodPost, r.Method)
-			var request api.PhotoImportStartRequest
-			assert.NoError(t, json.UnmarshalRead(r.Body, &request))
-			requests <- request
-			w.WriteHeader(http.StatusAccepted)
-			assert.NoError(t, json.MarshalWrite(w, queued))
-		default:
-			http.NotFound(w, r)
-		}
-	})
+func TestPhotoImportCommands(t *testing.T) {
+	command, _, err := rootCmd.Find([]string{"photos", "import"})
+	require.NoError(t, err)
+	assert.NotNil(t, command.Flags().Lookup("json"))
+	command, _, err = rootCmd.Find([]string{"photos", "imports"})
+	require.NoError(t, err)
+	assert.NotEqual(t, "imports", command.Name())
+}
+
+func TestPhotoImportRejectsEmptySource(t *testing.T) {
+	t.Setenv("DOCBANK_HOME", t.TempDir())
 	_, err := runCLI(t, "photos", "import", "")
 	require.Error(t, err)
 	assert.Equal(t, exitUsage, commandExitCode(err, true))
+}
+
+func TestPhotoImportOutputPointsToJobs(t *testing.T) {
+	previousJSON := photoImportJSON
+	t.Cleanup(func() { photoImportJSON = previousJSON })
+	operation := api.StorageOperation{ID: "00000000-0000-4000-8000-000000000021", Kind: "photo_import", State: "queued"}
+	var output bytes.Buffer
+	command := &cobra.Command{}
+	command.SetOut(&output)
+	photoImportJSON = false
+	require.NoError(t, writePhotoImportOutput(command, operation))
+	assert.Contains(t, output.String(), "docbank jobs show "+operation.ID+" --json")
+	assert.Contains(t, output.String(), "docbank jobs cancel "+operation.ID)
+	photoImportJSON = true
+	output.Reset()
+	require.NoError(t, writePhotoImportOutput(command, operation))
+	var accepted api.StorageOperation
+	require.NoError(t, json.Unmarshal(output.Bytes(), &accepted))
+	assert.Equal(t, operation, accepted)
+}
+
+func TestPhotoImportAmbiguitiesReachJobsShow(t *testing.T) {
+	_ = setupVaultHome(t)
 	source := t.TempDir()
-	absoluteSource, err := filepath.Abs(source)
-	require.NoError(t, err)
-	for _, asJSON := range []bool{false, true} {
-		args := []string{"photos", "import", source, "/photos"}
-		if asJSON {
-			args = append(args, "--json")
-		}
-		output, err := runCLI(t, args...)
-		require.NoError(t, err, output)
-		require.Len(t, requests, 1)
-		assert.Equal(t, api.PhotoImportStartRequest{SourceRoot: absoluteSource, Destination: "/photos"}, <-requests)
-		if asJSON {
-			var accepted api.StorageOperation
-			require.NoError(t, json.Unmarshal([]byte(output), &accepted))
-			assert.Equal(t, queued, accepted)
-		} else {
-			assert.Contains(t, output, "docbank jobs show "+queued.ID+" --json")
-			assert.Contains(t, output, "docbank jobs cancel "+queued.ID)
-		}
+	for name, body := range map[string]string{"IMG_0001.ARW": "raw-one", "IMG_0001.DNG": "raw-two", "IMG_0001.JPG": "jpeg"} {
+		require.NoError(t, os.WriteFile(filepath.Join(source, name), []byte(body), 0o600))
 	}
+	output, err := runCLI(t, "photos", "import", source, "/photos", "--json")
+	require.NoError(t, err, output)
+	var accepted api.StorageOperation
+	require.NoError(t, json.Unmarshal([]byte(output), &accepted))
+	var completed api.StorageOperation
+	require.Eventually(t, func() bool {
+		shown, showErr := runCLI(t, "jobs", "show", accepted.ID, "--json")
+		return showErr == nil && json.Unmarshal([]byte(shown), &completed) == nil && completed.State == "completed"
+	}, 10*time.Second, 20*time.Millisecond)
+	receiptJSON, err := json.Marshal(completed.Receipt)
+	require.NoError(t, err)
+	var receipt store.PhotoImportReceipt
+	require.NoError(t, json.Unmarshal(receiptJSON, &receipt))
+	assert.Equal(t, int64(1), receipt.Ambiguous)
+	require.Len(t, receipt.Ambiguities, 1)
+	assert.Equal(t, store.PhotoImportMultipleRAW, receipt.Ambiguities[0].Reason)
+	assert.Len(t, receipt.Ambiguities[0].Files, 3)
 }

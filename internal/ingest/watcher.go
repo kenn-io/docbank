@@ -370,7 +370,7 @@ func (w *Watcher) openRoot(ctx context.Context) (*watchRoot, error) {
 		return nil, err
 	}
 	for _, checkout := range checkouts {
-		if checkout.RetentionReleased || checkout.Destination == "" {
+		if checkout.Destination == "" {
 			continue
 		}
 		_, overlaps, err := WatchBindingOverlapContext(ctx, []config.WatchConfig{w.config}, config.StoreBindingConfig{Kind: "filesystem", Path: checkout.Destination})
@@ -378,6 +378,16 @@ func (w *Watcher) openRoot(ctx context.Context) (*watchRoot, error) {
 			return nil, fmt.Errorf("checking watch %q against checkout %s: %w", w.config.Name, checkout.ID, err)
 		}
 		if overlaps {
+			if checkout.RetentionReleased {
+				entries, err := os.ReadDir(checkout.Destination)
+				if errors.Is(err, os.ErrNotExist) || err == nil && len(entries) == 0 {
+					continue
+				}
+				if err != nil {
+					return nil, fmt.Errorf("inspecting released checkout %s: %w", checkout.ID, err)
+				}
+				return nil, fmt.Errorf("watch %q source overlaps checkout %s with partial files; clear the folder and restart Docbank", w.config.Name, checkout.ID)
+			}
 			return nil, fmt.Errorf("watch %q source overlaps reserved checkout %s", w.config.Name, checkout.ID)
 		}
 	}

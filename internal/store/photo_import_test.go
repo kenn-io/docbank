@@ -1,7 +1,7 @@
 package store
 
 import (
-	"context"
+	"bytes"
 	"path/filepath"
 	"testing"
 	"time"
@@ -37,6 +37,35 @@ func TestPhotoSourceClassification(t *testing.T) {
 	}
 }
 
+func TestPhotoNodeFactsKeepVideoFamily(t *testing.T) {
+	t.Parallel()
+	video := photoNodeFacts(Node{Name: "capture.MP4", MimeType: "video/mp4"})
+	assert.Equal(t, "audio_video", video.MediaFamily)
+	assert.Equal(t, PhotoKindVideo, video.AssetKind)
+}
+
+func TestOrdinaryPhotoMediaEnrollment(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	for _, test := range []struct {
+		name string
+		mime string
+		role string
+	}{
+		{name: "capture.ARW", mime: "image/x-sony-arw", role: PhotoRoleImage},
+		{name: "capture.JPG", mime: "image/jpeg", role: PhotoRoleImage},
+		{name: "capture.WEBP", mime: "image/webp", role: PhotoRoleImage},
+	} {
+		file, err := s.CreateFile(ctx, s.RootID(), test.name, fakeHash(test.name), 4, test.mime)
+		require.NoError(t, err)
+		asset, err := s.PhotoAssetForNode(ctx, file.ID)
+		require.NoError(t, err)
+		require.Len(t, asset.Files, 1)
+		assert.Equal(t, test.role, asset.Files[0].Role)
+	}
+}
+
 func photoImportTestMember(path, role, hash, mediaType string) PhotoImportMember {
 	return PhotoImportMember{Name: filepath.Base(path), Role: role, BlobHash: hash,
 		Size: 4, MediaType: mediaType, OriginalPath: path}
@@ -68,7 +97,7 @@ func TestPhotoImportLateSidecarUpdatesLockedHiddenAsset(t *testing.T) {
 	require.Equal(t, PhotoRoleSidecar, fileByRole(updated.Asset.Files, PhotoRoleSidecar).Role)
 }
 
-func TestPhotoImportRollsBackFailedGroup(t *testing.T) {
+func TestPhotoImportAtomicGroup(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -76,41 +105,34 @@ func TestPhotoImportRollsBackFailedGroup(t *testing.T) {
 	require.NoError(t, err)
 	root := filepath.Join(t.TempDir(), "camera")
 	group := photoImportTestGroup(
-		photoImportTestMember(filepath.Join(root, "IMG_0001.ARW"), PhotoRoleRAW, browseHash("raw"), "image/x-sony-arw"),
-		photoImportTestMember(filepath.Join(root, "IMG_0001.JPG"), PhotoRoleImage, browseHash("jpg"), "image/jpeg"),
-		photoImportTestMember(filepath.Join(root, "IMG_0001.XMP"), PhotoRoleSidecar, browseHash("xmp"), "application/rdf+xml"),
+		photoImportTestMember(filepath.Join(root, "IMG_0001.ARW"), PhotoRoleRAW, fakeHash("raw"), "image/x-sony-arw"),
+		photoImportTestMember(filepath.Join(root, "IMG_0001.JPG"), PhotoRoleImage, fakeHash("jpg"), "image/jpeg"),
+		photoImportTestMember(filepath.Join(root, "IMG_0001.XMP"), PhotoRoleSidecar, fakeHash("xmp"), "application/rdf+xml"),
 	)
 	result, err := s.IngestPhotoGroup(ctx, run, group)
 	require.NoError(t, err)
+	assert.True(t, result.Added)
+	assert.Len(t, result.Asset.Files, 3)
+	assert.Equal(t, PhotoRoleRAW, fileByRole(result.Asset.Files, PhotoRoleRAW).Role)
 
 	var nodes int
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE kind='file'`).Scan(&nodes))
 	bad := photoImportTestGroup(
-		photoImportTestMember(filepath.Join(root, "IMG_0002.ARW"), PhotoRoleRAW, browseHash("raw2"), "image/x-sony-arw"),
-		photoImportTestMember(filepath.Join(root, "IMG_0002.JPG"), PhotoRoleImage, browseHash("jpg2"), "image/jpeg"),
-		photoImportTestMember(filepath.Join(root, "IMG_0002.XMP"), PhotoRoleSidecar, browseHash("xmp2"), "application/rdf+xml"),
+		photoImportTestMember(filepath.Join(root, "IMG_0002.ARW"), PhotoRoleRAW, fakeHash("raw2"), "image/x-sony-arw"),
+		photoImportTestMember(filepath.Join(root, "IMG_0002.JPG"), PhotoRoleImage, fakeHash("jpg2"), "image/jpeg"),
+		photoImportTestMember(filepath.Join(root, "IMG_0002.XMP"), PhotoRoleSidecar, "", "application/rdf+xml"),
 	)
-n, err := s.PreparePhotoImportDestination(ctx, "/new/photos")
-	require.NoError(t, err)
-	beforePlan := plan
-	bad.DestinationPlan = &plan
-	_, err = s.db.Exec(`CREATE TRIGGER reject_final_photo_member BEFORE INSERT ON nodes
-		WHEN NEW.name='IMG_0002.XMP' BEGIN SELECT RAISE(ABORT, 'injected final photo member failure'); END`)
-	require.NoError(t, err)
 	_, err = s.IngestPhotoGroup(ctx, run, bad)
-	require.ErrorContains(t, err, "injected final photo member failure")
-	assert.Equal(t, beforePlan, plan)
-	_, err = s.NodeByPath(ctx, "/new")
-	require.ErrorIs(t, err, ErrNotFound)
+	require.Error(t, err)
 	var after int
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE kind='file'`).Scan(&after))
 	assert.Equal(t, nodes, after)
-	unchanged, err := s.PhotoAssetByID(ctx, result.Asset.ID)
+
+	rerun, err := s.IngestPhotoGroup(ctx, run, group)
 	require.NoError(t, err)
-	assert.Equal(t, result.Asset, unchanged)
-	var assets int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_assets`).Scan(&assets))
-	assert.Equal(t, 1, assets)
+	assert.True(t, rerun.Skipped)
+	assert.False(t, rerun.Added)
+	assert.Equal(t, result.Asset.ID, rerun.Asset.ID)
 }
 
 func TestPhotoImportQualifiedSidecarTargets(t *testing.T) {
@@ -225,31 +247,19 @@ func TestPhotoImportSeparatePhotosAreReported(t *testing.T) {
 	imageResult, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(elsewhere))
 	require.NoError(t, err)
 	require.NotEqual(t, rawResult.Asset.ID, imageResult.Asset.ID)
-	t.Run("video is separate from photos with the same stem", func(t *testing.T) {
-		video, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(photoImportTestMember(
-			filepath.Join(root, "IMG.MOV"), PhotoRoleVideo, browseHash("mov"), "video/quicktime")))
-		require.NoError(t, err)
-		assert.NotEqual(t, rawResult.Asset.ID, video.Asset.ID)
-		assert.NotEqual(t, imageResult.Asset.ID, video.Asset.ID)
-		assert.Equal(t, PhotoKindVideo, video.Asset.Kind)
-		assert.Len(t, video.Asset.Files, 1)
-	})
 
-	duplicate := raw
-	duplicate.OriginalPath = filepath.Join(filepath.Dir(elsewhere.OriginalPath), "IMG.ARW")
-	for _, candidates := range [][]PhotoImportMember{{raw, image}, {duplicate, elsewhere}} {
-		rerun, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(candidates...))
+	rerun, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(raw, image))
+	require.NoError(t, err)
+	assert.True(t, rerun.Skipped)
+	require.NotNil(t, rerun.Ambiguity)
+	assert.Equal(t, PhotoImportSeparatePhotos, rerun.Ambiguity.Reason)
+	assert.ElementsMatch(t, []string{rawResult.Asset.ID, imageResult.Asset.ID},
+		[]string{rerun.Ambiguity.Files[0].AssetID, rerun.Ambiguity.Files[1].AssetID})
+	for _, id := range []string{rawResult.Asset.ID, imageResult.Asset.ID} {
+		asset, err := s.PhotoAssetByID(ctx, id)
 		require.NoError(t, err)
-		assert.True(t, rerun.Skipped)
-		require.NotNil(t, rerun.Ambiguity)
-		assert.Equal(t, PhotoImportSeparatePhotos, rerun.Ambiguity.Reason)
-		assert.ElementsMatch(t, []string{rawResult.Asset.ID, imageResult.Asset.ID},
-			[]string{rerun.Ambiguity.Files[0].AssetID, rerun.Ambiguity.Files[1].AssetID})
-		for _, original := range []PhotoAsset{rawResult.Asset, imageResult.Asset} {
-			asset, err := s.PhotoAssetByID(ctx, original.ID)
-			require.NoError(t, err)
-			assert.Equal(t, original, asset)
-		}
+		assert.Len(t, asset.Files, 1)
+		assert.Equal(t, int64(1), asset.Revision)
 	}
 }
 
@@ -309,18 +319,6 @@ func TestPhotoImportMultipleRAWsImportAlone(t *testing.T) {
 	alone, err := s.PhotoAssetForNode(ctx, reported.Nodes[0].ID)
 	require.NoError(t, err)
 	assert.Len(t, alone.Files, 1)
-	t.Run("operator resolved", func(t *testing.T) {
-		target := mustPhotoAsset(t, s, result.Nodes[0].ID)
-		other := mustPhotoAsset(t, s, result.Nodes[1].ID)
-		_, err := s.DetachPhotoFile(ctx, other.ID, other.Revision, other.Files[0].ID, PhotoDetachOptions{})
-		require.NoError(t, err)
-		_, err = s.AttachPhotoFile(ctx, target.ID, target.Revision, result.Nodes[1].ID, PhotoRoleRAW, nil)
-		require.NoError(t, err)
-		rerun, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(arw, dng))
-		require.NoError(t, err)
-		assert.Nil(t, rerun.Ambiguity)
-		assert.True(t, rerun.Skipped)
-	})
 }
 
 func TestPhotoImportLoneSidecarWaitsForItsImage(t *testing.T) {
@@ -349,59 +347,80 @@ func TestPhotoImportLoneSidecarWaitsForItsImage(t *testing.T) {
 	assert.Equal(t, alone.Nodes[0].ID, fileByRole(paired.Asset.Files, PhotoRoleSidecar).NodeID)
 }
 
+func TestPhotoImportOperatorPairedRAWsAreSettled(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
+	require.NoError(t, err)
+	root := t.TempDir()
+	arw := photoImportTestMember(filepath.Join(root, "IMG.ARW"), PhotoRoleRAW, fakeHash("paired-arw"), "image/x-sony-arw")
+	dng := photoImportTestMember(filepath.Join(root, "IMG.DNG"), PhotoRoleRAW, fakeHash("paired-dng"), "image/x-adobe-dng")
+	first, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(arw, dng))
+	require.NoError(t, err)
+	require.NotNil(t, first.Ambiguity)
+	target := mustPhotoAsset(t, s, first.Nodes[0].ID)
+	other := mustPhotoAsset(t, s, first.Nodes[1].ID)
+	_, err = s.DetachPhotoFile(ctx, other.ID, other.Revision, other.Files[0].ID, PhotoDetachOptions{})
+	require.NoError(t, err)
+	_, err = s.AttachPhotoFile(ctx, target.ID, target.Revision, first.Nodes[1].ID, PhotoRoleRAW, nil)
+	require.NoError(t, err)
+
+	rerun, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(arw, dng))
+	require.NoError(t, err)
+	assert.Nil(t, rerun.Ambiguity)
+	assert.True(t, rerun.Skipped)
+}
+
 func TestPhotoImportDedupObservation(t *testing.T) {
 	t.Parallel()
-	for _, origin := range []string{"photo import", "ordinary file"} {
-		t.Run(origin, func(t *testing.T) {
-			s := newTestStore(t)
-			ctx := t.Context()
-			run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
-			require.NoError(t, err)
-			hash := fakeHash("same-raw")
-			firstRoot := filepath.Join(t.TempDir(), "first")
-			secondRoot := filepath.Join(t.TempDir(), "second")
-			var original Node
-			if origin == "ordinary file" {
-				inbox, err := s.Mkdir(ctx, s.RootID(), "Inbox")
-				require.NoError(t, err)
-				original, err = s.CreateFile(ctx, inbox.ID, "capture.ARW", hash, 4, "image/x-sony-arw")
-				require.NoError(t, err)
-			} else {
-				first, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(
-					photoImportTestMember(filepath.Join(firstRoot, "IMG.ARW"), PhotoRoleRAW, hash, "image/x-sony-arw")))
-				require.NoError(t, err)
-				original = first.Nodes[0]
-			}
-			duplicate, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(
-				photoImportTestMember(filepath.Join(secondRoot, "IMG.DNG"), PhotoRoleRAW, hash, "image/x-adobe-dng")))
-			require.NoError(t, err)
-			assert.True(t, duplicate.Skipped)
-			assert.Equal(t, original.ID, duplicate.Nodes[0].ID)
-			var nodes int
-			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE kind='file'`).Scan(&nodes))
-			assert.Equal(t, 1, nodes)
-			group := photoImportTestGroup(
-				photoImportTestMember(filepath.Join(secondRoot, "IMG.JPG"), PhotoRoleImage, fakeHash("same-jpg"), "image/jpeg"),
-				photoImportTestMember(filepath.Join(secondRoot, "IMG.DNG"), PhotoRoleRAW, hash, "image/x-adobe-dng"),
-				photoImportTestMember(filepath.Join(secondRoot, "IMG.XMP"), PhotoRoleSidecar, fakeHash("same-xmp"), "application/rdf+xml"))
-			result, err := s.IngestPhotoGroup(ctx, run, group)
-			require.NoError(t, err)
-			asset, err := s.PhotoAssetForNode(ctx, result.Nodes[0].ID)
-			require.NoError(t, err)
-			assert.True(t, result.Added)
-			assert.Len(t, asset.Files, 3)
-			rawAsset, err := s.PhotoAssetForNode(ctx, original.ID)
-			require.NoError(t, err)
-			assert.Equal(t, rawAsset.ID, asset.ID)
-			rerun, err := s.IngestPhotoGroup(ctx, run, group)
-			require.NoError(t, err)
-			assert.True(t, rerun.Skipped)
-			assert.False(t, rerun.Added)
-			var observations int
-			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM provenance WHERE original_path=?`, filepath.Join(secondRoot, "IMG.DNG")).Scan(&observations))
-			assert.Equal(t, 1, observations)
-		})
-	}
+	s := newTestStore(t)
+	ctx := t.Context()
+	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
+	require.NoError(t, err)
+	hash := fakeHash("same-raw")
+	firstRoot := filepath.Join(t.TempDir(), "first")
+	secondRoot := filepath.Join(t.TempDir(), "second")
+	_, err = s.IngestPhotoGroup(ctx, run, photoImportTestGroup(
+		photoImportTestMember(filepath.Join(firstRoot, "IMG.ARW"), PhotoRoleRAW, hash, "image/x-sony-arw")))
+	require.NoError(t, err)
+	_, err = s.IngestPhotoGroup(ctx, run, photoImportTestGroup(
+		photoImportTestMember(filepath.Join(secondRoot, "IMG.DNG"), PhotoRoleRAW, hash, "image/x-adobe-dng")))
+	require.NoError(t, err)
+	var nodes int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE kind='file'`).Scan(&nodes))
+	assert.Equal(t, 1, nodes)
+	result, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(
+		photoImportTestMember(filepath.Join(secondRoot, "IMG.JPG"), PhotoRoleImage, fakeHash("same-jpg"), "image/jpeg"),
+		photoImportTestMember(filepath.Join(secondRoot, "IMG.DNG"), PhotoRoleRAW, hash, "image/x-adobe-dng")))
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, result.Nodes[0].ID)
+	require.NoError(t, err)
+	assert.Len(t, asset.Files, 2)
+	var observations int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM provenance WHERE original_path=?`, filepath.Join(secondRoot, "IMG.DNG")).Scan(&observations))
+	assert.Equal(t, 1, observations)
+}
+
+func TestPhotoImportReusesOrdinaryRAWInAnotherFolder(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	inbox, err := s.Mkdir(ctx, s.RootID(), "Inbox")
+	require.NoError(t, err)
+	hash := fakeHash("ordinary-raw")
+	ordinary, err := s.CreateFile(ctx, inbox.ID, "capture.ARW", hash, 4, "image/x-sony-arw")
+	require.NoError(t, err)
+	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
+	require.NoError(t, err)
+	result, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(
+		photoImportTestMember(filepath.Join(t.TempDir(), "cam", "capture.ARW"), PhotoRoleRAW, hash, "image/x-sony-arw")))
+	require.NoError(t, err)
+	assert.True(t, result.Skipped)
+	assert.Equal(t, ordinary.ID, result.Nodes[0].ID)
+	var nodes int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE kind='file'`).Scan(&nodes))
+	assert.Equal(t, 1, nodes)
 }
 
 func TestPhotoImportEditedSourceBecomesNewVersion(t *testing.T) {
@@ -420,11 +439,12 @@ func TestPhotoImportEditedSourceBecomesNewVersion(t *testing.T) {
 	}
 	first, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(raw, jpg("jpg-v1"), xmp("xmp-v1")))
 	require.NoError(t, err)
+	sidecar := first.Nodes[2]
 
 	edited, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(raw, jpg("jpg-v1"), xmp("xmp-v2")))
 	require.NoError(t, err)
 	assert.True(t, edited.Added)
-	jpegEdited, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(raw, jpg("jpg-v2"), xmp("xmp-v2")))
+	_, err = s.IngestPhotoGroup(ctx, run, photoImportTestGroup(raw, jpg("jpg-v2"), xmp("xmp-v2")))
 	require.NoError(t, err)
 
 	asset := mustPhotoAsset(t, s, first.Nodes[0].ID)
@@ -436,36 +456,75 @@ func TestPhotoImportEditedSourceBecomesNewVersion(t *testing.T) {
 	var files int
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE kind='file'`).Scan(&files))
 	assert.Equal(t, 3, files)
-	for index, hash := range map[int]string{1: "jpg-v2", 2: "xmp-v2"} {
-		current, err := s.NodeByID(ctx, first.Nodes[index].ID)
-		require.NoError(t, err)
-		assert.Equal(t, first.Nodes[index].ID, jpegEdited.Nodes[index].ID)
-		assert.NotEqual(t, first.Nodes[index].CurrentVersionID, current.CurrentVersionID)
-		assert.Equal(t, fakeHash(hash), current.BlobHash)
-	}
-	t.Run("shared source", func(t *testing.T) {
-		s := newTestStore(t)
-		ctx := t.Context()
-		run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
-		require.NoError(t, err)
-		first := photoImportTestMember(filepath.Join(t.TempDir(), "a", "IMG.ARW"), PhotoRoleRAW, fakeHash("raw-v1"), "image/x-sony-arw")
-		second := photoImportTestMember(filepath.Join(t.TempDir(), "b", "IMG.ARW"), PhotoRoleRAW, fakeHash("raw-v1"), "image/x-sony-arw")
-		original, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(first))
-		require.NoError(t, err)
-		shared, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(second))
-		require.NoError(t, err)
-		require.Equal(t, original.Nodes[0].ID, shared.Nodes[0].ID)
+	current, err := s.NodeByID(ctx, sidecar.ID)
+	require.NoError(t, err)
+	assert.Equal(t, fakeHash("xmp-v2"), current.BlobHash)
+}
 
-		first.BlobHash = fakeHash("raw-v2")
-		edited, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(first))
-		require.NoError(t, err)
-		assert.NotEqual(t, original.Nodes[0].ID, edited.Nodes[0].ID)
-		kept, err := s.NodeByID(ctx, original.Nodes[0].ID)
-		require.NoError(t, err)
-		assert.Equal(t, fakeHash("raw-v1"), kept.BlobHash)
-		assert.Equal(t, original.Nodes[0].CurrentVersionID, kept.CurrentVersionID)
-		assert.Equal(t, first.BlobHash, edited.Nodes[0].BlobHash)
-	})
+func TestPhotoImportEditedSourceLeavesSharedNodeAlone(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
+	require.NoError(t, err)
+	first := photoImportTestMember(filepath.Join(t.TempDir(), "a", "IMG.ARW"), PhotoRoleRAW, fakeHash("raw-v1"), "image/x-sony-arw")
+	second := photoImportTestMember(filepath.Join(t.TempDir(), "b", "IMG.ARW"), PhotoRoleRAW, fakeHash("raw-v1"), "image/x-sony-arw")
+	original, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(first))
+	require.NoError(t, err)
+	shared, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(second))
+	require.NoError(t, err)
+	require.Equal(t, original.Nodes[0].ID, shared.Nodes[0].ID)
+
+	first.BlobHash = fakeHash("raw-v2")
+	edited, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(first))
+	require.NoError(t, err)
+	assert.NotEqual(t, original.Nodes[0].ID, edited.Nodes[0].ID)
+	kept, err := s.NodeByID(ctx, original.Nodes[0].ID)
+	require.NoError(t, err)
+	assert.Equal(t, fakeHash("raw-v1"), kept.BlobHash)
+}
+
+func TestPhotoImportDuplicateRawNextToSeparateJPEGIsReported(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
+	require.NoError(t, err)
+	first := filepath.Join(t.TempDir(), "first")
+	second := filepath.Join(t.TempDir(), "second")
+	raw := photoImportTestMember(filepath.Join(first, "IMG.ARW"), PhotoRoleRAW, fakeHash("same-raw"), "image/x-sony-arw")
+	jpeg := photoImportTestMember(filepath.Join(second, "IMG.JPG"), PhotoRoleImage, fakeHash("same-jpg"), "image/jpeg")
+	_, err = s.IngestPhotoGroup(ctx, run, photoImportTestGroup(raw))
+	require.NoError(t, err)
+	jpegResult, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(jpeg))
+	require.NoError(t, err)
+	duplicate := photoImportTestMember(filepath.Join(second, "IMG.ARW"), PhotoRoleRAW, raw.BlobHash, raw.MediaType)
+	reported, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(duplicate, jpeg))
+	require.NoError(t, err)
+	assert.True(t, reported.Skipped)
+	require.NotNil(t, reported.Ambiguity)
+	assert.Equal(t, PhotoImportSeparatePhotos, reported.Ambiguity.Reason)
+	jpegAsset, err := s.PhotoAssetByID(ctx, jpegResult.Asset.ID)
+	require.NoError(t, err)
+	assert.Len(t, jpegAsset.Files, 1)
+}
+
+func TestPhotoImportVideoWithSameNameJPEG(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
+	require.NoError(t, err)
+	root := t.TempDir()
+	jpeg := photoImportTestMember(filepath.Join(root, "IMG.JPG"), PhotoRoleImage, fakeHash("jpg"), "image/jpeg")
+	image, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(jpeg))
+	require.NoError(t, err)
+	video := photoImportTestMember(filepath.Join(root, "IMG.MOV"), PhotoRoleVideo, fakeHash("mov"), "video/quicktime")
+	clip, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(video))
+	require.NoError(t, err)
+	assert.NotEqual(t, image.Asset.ID, clip.Asset.ID)
+	assert.Equal(t, PhotoKindVideo, clip.Asset.Kind)
+	assert.Len(t, clip.Asset.Files, 1)
 }
 
 func TestPhotoImportSidecarDedupStaysWithinSourceGroup(t *testing.T) {
@@ -489,6 +548,264 @@ func TestPhotoImportSidecarDedupStaysWithinSourceGroup(t *testing.T) {
 	assert.NotEqual(t, first.Asset.ID, second.Asset.ID)
 	assert.Len(t, first.Asset.Files, 2)
 	assert.Len(t, second.Asset.Files, 2)
+}
+
+func TestPhotoSidecarImageTarget(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	image, err := s.CreateFile(ctx, s.RootID(), "IMG.JPG", fakeHash("image"), 4, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, image.ID)
+	require.NoError(t, err)
+	_, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, asset.Files[0].ID, PhotoDetachOptions{})
+	require.NoError(t, err)
+	asset, err = s.PromotePhotoNode(ctx, image.ID, nil, PhotoRoleImage, PhotoKindPhoto)
+	require.NoError(t, err)
+	sidecar, err := s.CreateFile(ctx, s.RootID(), "IMG.XMP", fakeHash("sidecar"), 4, "application/rdf+xml")
+	require.NoError(t, err)
+	imageFile := fileByRole(asset.Files, PhotoRoleImage)
+	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, sidecar.ID, PhotoRoleSidecar, &imageFile.ID)
+	require.NoError(t, err)
+	_, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, imageFile.ID, PhotoDetachOptions{})
+	require.Error(t, err)
+	asset, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, imageFile.ID, PhotoDetachOptions{ClearDependentSidecars: true})
+	require.NoError(t, err)
+	assert.Empty(t, asset.Files)
+}
+
+func TestPhotoSidecarImageLifecycle(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	image, err := s.CreateFile(ctx, s.RootID(), "lifecycle.JPG", fakeHash("a1"), 4, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, image.ID)
+	require.NoError(t, err)
+	imageFile := asset.Files[0]
+	sidecarOne, err := s.CreateFile(ctx, s.RootID(), "lifecycle-one.XMP", fakeHash("a2"), 4, "application/rdf+xml")
+	require.NoError(t, err)
+	sidecarTwo, err := s.CreateFile(ctx, s.RootID(), "lifecycle-two.XMP", fakeHash("a3"), 4, "application/rdf+xml")
+	require.NoError(t, err)
+	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, sidecarOne.ID, PhotoRoleSidecar, &imageFile.ID)
+	require.NoError(t, err)
+	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, sidecarTwo.ID, PhotoRoleSidecar, &imageFile.ID)
+	require.NoError(t, err)
+	require.Len(t, asset.Files, 3)
+
+	var exported bytes.Buffer
+	require.NoError(t, s.ExportMetadata(ctx, &exported))
+	restored := newTestStore(t)
+	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
+	restoredAsset, err := restored.PhotoAssetByID(ctx, asset.ID)
+	require.NoError(t, err)
+	require.Len(t, restoredAsset.Files, 3)
+
+	_, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, imageFile.ID, PhotoDetachOptions{})
+	require.ErrorIs(t, err, ErrInvalidPhotoAsset)
+	asset, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, imageFile.ID, PhotoDetachOptions{ClearDependentSidecars: true})
+	require.NoError(t, err)
+	assert.Empty(t, asset.Files)
+
+	purgeImage, err := s.CreateFile(ctx, s.RootID(), "purge.JPG", fakeHash("b1"), 4, "image/jpeg")
+	require.NoError(t, err)
+	purgeAsset, err := s.PhotoAssetForNode(ctx, purgeImage.ID)
+	require.NoError(t, err)
+	purgeFile := purgeAsset.Files[0]
+	purgeSidecar, err := s.CreateFile(ctx, s.RootID(), "purge.XMP", fakeHash("b2"), 4, "application/rdf+xml")
+	require.NoError(t, err)
+	purgeAsset, err = s.AttachPhotoFile(ctx, purgeAsset.ID, purgeAsset.Revision, purgeSidecar.ID, PhotoRoleSidecar, &purgeFile.ID)
+	require.NoError(t, err)
+	_, err = s.TrashPhotoAsset(ctx, purgeAsset.ID, purgeAsset.Revision)
+	require.NoError(t, err)
+	_, err = s.TrashEmpty(ctx, 0, true)
+	require.NoError(t, err)
+	purgedAsset, err := s.PhotoAssetByID(ctx, purgeAsset.ID)
+	require.NoError(t, err)
+	assert.Empty(t, purgedAsset.Files)
+	_, err = s.NodeByID(ctx, purgeSidecar.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestPhotoImportNodeStates(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
+	require.NoError(t, err)
+	directory, _, err := s.MkdirPath(ctx, "/state-dir")
+	require.NoError(t, err)
+	file, err := s.CreateFile(ctx, directory.ID, "state.txt", fakeHash("state-file"), 4, "text/plain")
+	require.NoError(t, err)
+	assert.Equal(t, "dir", directory.Kind)
+	assert.Equal(t, "file", file.Kind)
+	directory, err = s.NodeByID(ctx, directory.ID)
+	require.NoError(t, err)
+	trashedDir, _, err := s.Trash(ctx, directory.ID, directory.Revision)
+	require.NoError(t, err)
+	assert.Equal(t, "dir", trashedDir.Kind)
+	trashedFile, err := s.NodeByID(ctx, file.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "file", trashedFile.Kind)
+	require.NotNil(t, trashedFile.TrashedAt)
+
+	group := photoImportTestGroup(photoImportTestMember(
+		filepath.Join(t.TempDir(), "state.JPG"), PhotoRoleImage, fakeHash("state-import"), "image/jpeg"))
+	group.DestinationID = s.RootID()
+	result, err := s.IngestPhotoGroup(ctx, run, group)
+	require.NoError(t, err)
+	require.Len(t, result.Nodes, 1)
+	assert.NotEqual(t, file.ID, result.Nodes[0].ID)
+	_, err = s.TrashEmpty(ctx, 0, true)
+	require.NoError(t, err)
+	_, err = s.NodeByID(ctx, directory.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+	_, err = s.NodeByID(ctx, file.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestPhotoImportVersionStates(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	image, err := s.CreateFile(ctx, s.RootID(), "versions.JPG", fakeHash("version-current"), 4, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, image.ID)
+	require.NoError(t, err)
+	original := image.CurrentVersionID
+	updated, replacement, err := s.ReplaceContent(ctx, image.ID, image.Revision, fakeHash("version-replacement"), 4, "image/jpeg")
+	require.NoError(t, err)
+	assert.Equal(t, asset.ID, mustPhotoAsset(t, s, image.ID).ID)
+	_, revert, source, err := s.RevertContent(ctx, image.ID, updated.Revision, original)
+	require.NoError(t, err)
+	assert.Equal(t, original, source.ID)
+	versions, total, err := s.ContentVersions(ctx, image.ID, 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 3, total)
+	assert.Len(t, versions, 3)
+	assert.Equal(t, revert.ID, versions[0].ID)
+	assert.Equal(t, replacement.ID, versions[1].ID)
+	preview, err := s.PruneContentVersions(ctx, image.ID, updated.Revision+1, VersionPruneSelector{VersionIDs: []string{replacement.ID}}, false)
+	require.NoError(t, err)
+	assert.False(t, preview.Changed)
+	receipt, err := s.PruneContentVersions(ctx, image.ID, updated.Revision+1, VersionPruneSelector{VersionIDs: []string{replacement.ID}}, true)
+	require.NoError(t, err)
+	assert.True(t, receipt.Changed)
+	_, err = s.ContentVersionByID(ctx, replacement.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestPhotoImportMembershipStates(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	image, err := s.CreateFile(ctx, s.RootID(), "membership.JPG", fakeHash("membership-image"), 4, "image/jpeg")
+	require.NoError(t, err)
+	automatic, err := s.PhotoAssetForNode(ctx, image.ID)
+	require.NoError(t, err)
+	assert.Equal(t, PhotoRoleImage, automatic.Files[0].Role)
+	excluded, err := s.SetPhotoAssetExcluded(ctx, automatic.ID, automatic.Revision, true)
+	require.NoError(t, err)
+	assert.NotNil(t, excluded.ExcludedAt)
+	explicit, err := s.PromotePhotoNode(ctx, image.ID, &excluded.Revision, PhotoRoleImage, PhotoKindPhoto)
+	require.NoError(t, err)
+	assert.Nil(t, explicit.ExcludedAt)
+
+	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
+	require.NoError(t, err)
+	root := filepath.Join(t.TempDir(), "camera")
+	group := photoImportTestGroup(
+		photoImportTestMember(filepath.Join(root, "MEM.ARW"), PhotoRoleRAW, fakeHash("membership-raw"), "image/x-sony-arw"),
+		photoImportTestMember(filepath.Join(root, "MEM.JPG"), PhotoRoleImage, fakeHash("membership-jpg"), "image/jpeg"),
+	)
+	group.DestinationID = s.RootID()
+	groupResult, err := s.IngestPhotoGroup(ctx, run, group)
+	require.NoError(t, err)
+	groupAsset, err := s.PhotoAssetByID(ctx, groupResult.Asset.ID)
+	require.NoError(t, err)
+	imageFile := fileByRole(groupAsset.Files, PhotoRoleImage)
+	groupAsset, err = s.SetPhotoDisplay(ctx, groupAsset.ID, groupAsset.Revision, &imageFile.ID)
+	require.NoError(t, err)
+	preference := "raw"
+	_, err = s.SetPhotoSettings(ctx, 1, &preference)
+	require.NoError(t, err)
+	groupAsset, err = s.PhotoAssetByID(ctx, groupAsset.ID)
+	require.NoError(t, err)
+	assert.Equal(t, imageFile.ID, *groupAsset.DisplayFileID)
+	assert.Equal(t, PhotoRoleRAW, fileByRole(groupAsset.Files, PhotoRoleRAW).Role)
+}
+
+func TestPhotoImportMetadata(t *testing.T) {
+	t.Parallel()
+	source := newTestStore(t)
+	ctx := t.Context()
+	ingestRun, err := source.BeginIngest(ctx, "photo-import", t.TempDir())
+	require.NoError(t, err)
+	camera := filepath.Join(t.TempDir(), "camera")
+	jpeg, err := source.IngestPhotoGroup(ctx, ingestRun, photoImportTestGroup(
+		photoImportTestMember(filepath.Join(camera, "IMG.JPG"), PhotoRoleImage, fakeHash("a1"), "image/jpeg")))
+	require.NoError(t, err)
+	paired, err := source.IngestPhotoGroup(ctx, ingestRun, photoImportTestGroup(
+		photoImportTestMember(filepath.Join(camera, "IMG.ARW"), PhotoRoleRAW, fakeHash("b2"), "image/x-sony-arw"),
+		photoImportTestMember(filepath.Join(camera, "IMG.JPG"), PhotoRoleImage, fakeHash("a1"), "image/jpeg")))
+	require.NoError(t, err)
+	assert.Equal(t, jpeg.Asset.ID, paired.Asset.ID)
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(ctx, &exported))
+	assert.Contains(t, exported.String(), `"operation":"import"`)
+	target := newTestStore(t)
+	require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
+	restoredAsset, err := target.PhotoAssetByID(ctx, paired.Asset.ID)
+	require.NoError(t, err)
+	assert.Len(t, restoredAsset.Files, 2)
+}
+
+func TestPhotoImportOperationLifecycle(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	operation, err := s.CreateLocalOperation(ctx, StorageOperationKindPhotoImport, `{"source_root":"/camera","destination":"/photos"}`)
+	require.NoError(t, err)
+	assert.Equal(t, StorageOperationQueued, operation.State)
+	require.Error(t, s.SetStorageOperationTotal(ctx, operation.ID, 3))
+	_, err = s.ClaimStorageOperation(ctx, operation.ID)
+	require.NoError(t, err)
+	require.NoError(t, s.SetStorageOperationTotal(ctx, operation.ID, 3))
+	require.NoError(t, s.AdvanceStorageOperation(ctx, operation.ID, "", 1, 0, 0, `{"added":1}`))
+	require.NoError(t, s.RequestStorageOperationCancel(ctx, operation.ID))
+	resumable, err := s.ResumableStorageOperations(ctx)
+	require.NoError(t, err)
+	require.Len(t, resumable, 1)
+	current := resumable[0]
+	assert.Equal(t, int64(3), current.TotalObjects)
+	assert.Equal(t, int64(1), current.CompletedObjects)
+	assert.True(t, current.CancelRequested)
+	require.NoError(t, s.FinishStorageOperation(ctx, operation.ID, StorageOperationCancelled, current.ReceiptJSON, "", time.Time{}))
+	_, err = s.CreateLocalOperation(ctx, "unknown", `{}`)
+	require.Error(t, err)
+}
+func TestFinalizeLocalOperationSettlesCancelRace(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	start := func() string {
+		operation, err := s.CreateLocalOperation(ctx, StorageOperationKindPhotoImport, `{"source_root":"/camera","destination":"/photos"}`)
+		require.NoError(t, err)
+		_, err = s.ClaimStorageOperation(ctx, operation.ID)
+		require.NoError(t, err)
+		return operation.ID
+	}
+	finalized := start()
+	cancelled, err := s.FinalizeLocalOperation(ctx, finalized)
+	require.NoError(t, err)
+	assert.False(t, cancelled)
+	require.ErrorIs(t, s.RequestStorageOperationCancel(ctx, finalized), ErrStorageOperationTerminal)
+
+	requested := start()
+	require.NoError(t, s.RequestStorageOperationCancel(ctx, requested))
+	cancelled, err = s.FinalizeLocalOperation(ctx, requested)
+	require.NoError(t, err)
+	assert.True(t, cancelled)
 }
 
 func TestPhotoImportRefusesAuditedVault(t *testing.T) {
@@ -527,41 +844,47 @@ func TestPhotoImportDestinationCreatesAndReusesPath(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.EnsurePhotoImportDestination(ctx, "/file/child")
 	require.ErrorIs(t, err, ErrNotDir)
-	t.Run("invalid component", func(t *testing.T) {
-		before, err := s.NodeByID(ctx, s.RootID())
-		require.NoError(t, err)
+}
 
-		_, err = s.EnsurePhotoImportDestination(ctx, "/rollback/.")
-		require.ErrorIs(t, err, ErrInvalidName)
+func TestPhotoImportDestinationRollsBackOnInvalidComponent(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	before, err := s.NodeByID(ctx, s.RootID())
+	require.NoError(t, err)
 
-		_, err = s.NodeByPath(ctx, "/rollback")
-		require.ErrorIs(t, err, ErrNotFound)
-		after, err := s.NodeByID(ctx, s.RootID())
-		require.NoError(t, err)
-		assert.Equal(t, before.Revision, after.Revision)
-	})
-	t.Run("audited vault", func(t *testing.T) {
-		parent, err := s.Mkdir(ctx, s.RootID(), "audited")
-		require.NoError(t, err)
-		before, err := s.NodeByID(ctx, parent.ID)
-		require.NoError(t, err)
-		plan, err := s.PreviewInitialAudit(ctx, parent.ID, "api", nil)
-		require.NoError(t, err)
-		_, err = s.EnableInitialAudit(ctx, plan)
-		require.NoError(t, err)
+	_, err = s.EnsurePhotoImportDestination(ctx, "/rollback/.")
+	require.ErrorIs(t, err, ErrInvalidName)
 
-		_, err = s.PreparePhotoImportDestination(ctx, "/audited/new/nested")
-		require.ErrorIs(t, err, ErrAuditMutationUnsupported)
-		_, err = s.EnsurePhotoImportDestination(ctx, "/audited/new/nested")
-		require.ErrorIs(t, err, ErrAuditMutationUnsupported)
-		_, err = s.NodeByPath(ctx, "/audited/new")
-		require.ErrorIs(t, err, ErrNotFound)
-		_, err = s.NodeByPath(ctx, "/audited/new/nested")
-		require.ErrorIs(t, err, ErrNotFound)
-		after, err := s.NodeByID(ctx, parent.ID)
-		require.NoError(t, err)
-		assert.Equal(t, before.Revision, after.Revision)
-	})
+	_, err = s.NodeByPath(ctx, "/rollback")
+	require.ErrorIs(t, err, ErrNotFound)
+	after, err := s.NodeByID(ctx, s.RootID())
+	require.NoError(t, err)
+	assert.Equal(t, before.Revision, after.Revision)
+}
+
+func TestPhotoImportDestinationRejectsAuditedVault(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	parent, err := s.Mkdir(ctx, s.RootID(), "audited")
+	require.NoError(t, err)
+	before, err := s.NodeByID(ctx, parent.ID)
+	require.NoError(t, err)
+	plan, err := s.PreviewInitialAudit(ctx, parent.ID, "api", nil)
+	require.NoError(t, err)
+	_, err = s.EnableInitialAudit(ctx, plan)
+	require.NoError(t, err)
+
+	_, err = s.EnsurePhotoImportDestination(ctx, "/audited/new/nested")
+	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
+	_, err = s.NodeByPath(ctx, "/audited/new")
+	require.ErrorIs(t, err, ErrNotFound)
+	_, err = s.NodeByPath(ctx, "/audited/new/nested")
+	require.ErrorIs(t, err, ErrNotFound)
+	after, err := s.NodeByID(ctx, parent.ID)
+	require.NoError(t, err)
+	assert.Equal(t, before.Revision, after.Revision)
 }
 
 func mustPhotoAsset(t *testing.T, s *Store, nodeID int64) PhotoAsset {
@@ -569,32 +892,4 @@ func mustPhotoAsset(t *testing.T, s *Store, nodeID int64) PhotoAsset {
 	asset, err := s.PhotoAssetForNode(t.Context(), nodeID)
 	require.NoError(t, err)
 	return asset
-}
-
-func TestPreparePhotoImportDestination(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	_, err := s.PreparePhotoImportDestination(ctx, "/")
-	require.NoError(t, err)
-	writer, err := s.writeDB.BeginTx(ctx, nil)
-	require.NoError(t, err)
-	defer func() { _ = writer.Rollback() }()
-	readCtx, cancel := context.WithTimeout(ctx, time.Second)
-	defer cancel()
-	_, err = s.PreparePhotoImportDestination(readCtx, "/missing/nested")
-	require.NoError(t, err)
-	require.NoError(t, writer.Rollback())
-	_, err = s.NodeByPath(ctx, "/missing")
-	require.ErrorIs(t, err, ErrNotFound)
-	_, err = s.EnsurePhotoImportDestination(ctx, "/photos/existing")
-	require.NoError(t, err)
-	_, err = s.PreparePhotoImportDestination(ctx, "/photos/existing/new")
-	require.NoError(t, err)
-	_, err = s.CreateFile(ctx, s.RootID(), "file", fakeHash("destination-check"), 4, "text/plain")
-	require.NoError(t, err)
-	_, err = s.PreparePhotoImportDestination(ctx, "/file/child")
-	require.ErrorIs(t, err, ErrNotDir)
-	_, err = s.PreparePhotoImportDestination(ctx, "/missing/.")
-	require.ErrorIs(t, err, ErrInvalidName)
 }

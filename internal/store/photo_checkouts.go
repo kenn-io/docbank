@@ -177,6 +177,7 @@ func (s *Store) checkoutEntriesTx(ctx context.Context, tx *sql.Tx, selection Pho
 		return nil, estimate, err
 	}
 	defer func() { _ = rows.Close() }()
+	var invalidNames []error
 	for rows.Next() {
 		var entry PhotoCheckoutEntry
 		var name, date string
@@ -204,8 +205,8 @@ func (s *Store) checkoutEntriesTx(ctx context.Context, tx *sql.Tx, selection Pho
 			folder = strings.ReplaceAll(date[:10], "-", "/")
 		}
 		if err := validateCheckoutFilename(name); err != nil {
-			_ = rows.Close()
-			return nil, estimate, fmt.Errorf("file %s in asset %s, filename %q: %w", entry.FileID, entry.AssetID, name, err)
+			invalidNames = append(invalidNames, fmt.Errorf("file %s in asset %s, filename %q: %w", entry.FileID, entry.AssetID, name, err))
+			continue
 		}
 		entry.Path = path.Join(folder, entry.AssetID, name)
 		entries = append(entries, entry)
@@ -214,6 +215,9 @@ func (s *Store) checkoutEntriesTx(ctx context.Context, tx *sql.Tx, selection Pho
 	}
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return nil, estimate, err
+	}
+	if len(invalidNames) != 0 {
+		return nil, estimate, errors.Join(invalidNames...)
 	}
 	estimate.Assets = int64(len(assets))
 	return entries, estimate, nil

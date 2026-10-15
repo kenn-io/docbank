@@ -259,7 +259,7 @@ func (s Service) reconcile(ctx context.Context, c store.PhotoCheckout) error {
 			return err
 		}
 	} else if fsErr != nil {
-		return fmt.Errorf("inspecting checkout destination: %w", fsErr)
+		return jobs.DeferStorageAdmission(ctx, s.Store, c.OperationID, fmt.Errorf("inspecting checkout destination: %w", fsErr))
 	}
 	if root != nil {
 		defer func() { _ = root.Close() }()
@@ -285,7 +285,7 @@ func (s Service) reconcile(ctx context.Context, c store.PhotoCheckout) error {
 				_, err := root.Lstat(filepath.FromSlash(e.Path))
 				if !errors.Is(err, os.ErrNotExist) {
 					if err != nil {
-						return fmt.Errorf("file %s at %q: %w", e.FileID, e.Path, err)
+						return jobs.DeferStorageAdmission(ctx, s.Store, c.OperationID, fmt.Errorf("file %s at %q: %w", e.FileID, e.Path, err))
 					}
 					observed = append(observed, e.FileID)
 				}
@@ -298,7 +298,7 @@ func (s Service) reconcile(ctx context.Context, c store.PhotoCheckout) error {
 			matches, err := observeCheckoutFile(ctx, root, e)
 			if err != nil {
 				// An unreadable unrecorded copy may still need its frozen source.
-				return fmt.Errorf("file %s at %q: %w", e.FileID, e.Path, err)
+				return jobs.DeferStorageAdmission(ctx, s.Store, c.OperationID, fmt.Errorf("file %s at %q: %w", e.FileID, e.Path, err))
 			}
 			if matches {
 				observed = append(observed, e.FileID)

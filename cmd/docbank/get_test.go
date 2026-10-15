@@ -3,15 +3,13 @@ package main
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -22,134 +20,98 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 )
 
-func TestGetCLIRequestsAndPublishesCurrentVersion(t *testing.T) {
-	const content = "download"
-	sum := sha256.Sum256([]byte(content))
-	node := api.Node{ID: 42, Name: "statement.bin", Kind: "file", Revision: 1, CurrentVersionID: "00000000-0000-4000-8000-000000000021", BlobHash: hex.EncodeToString(sum[:]), Size: int64(len(content))}
+func TestGetPublishesVerifiedCurrentVersion(t *testing.T) {
+	_ = setupVaultHome(t)
+	source := writeSourceFile(t, "statement.bin", "synthetic binary\x00content")
+	_, err := runCLI(t, "add", source, "--dest", "/inbox", "--json")
+	require.NoError(t, err)
+
 	output := filepath.Join(t.TempDir(), "retrieved.bin")
-	requests := make(chan string, 8)
-	contentRequests := make(chan string, 8)
-	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v1/path", "/api/v1/nodes/42":
-			assert.Equal(t, http.MethodGet, r.Method)
-			requests <- r.URL.Path + "?" + r.URL.Query().Get("path")
-			response := node
-			if r.URL.Query().Get("path") == "/" {
-				response.Kind = "dir"
-			}
-			if r.URL.Path == "/api/v1/nodes/42" {
-				response.TrashedAt = "2026-01-01T00:00:00Z"
-			}
-			w.Header().Set("Content-Type", "application/json")
-			assert.NoError(t, json.MarshalWrite(w, response))
-		case "/api/v1/versions/" + node.CurrentVersionID + "/content":
-			assert.Equal(t, http.MethodGet, r.Method)
-			contentRequests <- r.URL.Path
-			w.Header().Set(api.ContentVersionHeader, node.CurrentVersionID)
-			w.Header().Set(api.BlobHashHeader, node.BlobHash)
-			w.Header().Set(api.BlobSizeHeader, strconv.FormatInt(node.Size, 10))
-			w.Header().Set("Trailer", "Content-Digest")
-			_, err := io.WriteString(w, content)
-			assert.NoError(t, err)
-			w.Header().Set("Content-Digest", "sha-256=:"+base64.StdEncoding.EncodeToString(sum[:])+":")
-		default:
-			http.NotFound(w, r)
-		}
-	})
-	for _, test := range []struct {
-		selector, existingDestination, expectedError string
-		overwrite                                    bool
-	}{
-		{selector: "/inbox/statement.bin"},
-		{selector: "id:42", existingDestination: "existing destination", overwrite: true},
-		{selector: "/inbox/statement.bin", existingDestination: "existing destination", expectedError: "pass --overwrite"},
-	} {
-		err := os.Remove(output)
-		if !os.IsNotExist(err) {
-			require.NoError(t, err)
-		}
-		if test.existingDestination != "" {
-			require.NoError(t, os.WriteFile(output, []byte(test.existingDestination), 0o600))
-		}
-		args := []string{"get", test.selector, output, "--json"}
-		if test.overwrite {
-			args = append(args, "--overwrite")
-		}
-		out, err := runCLI(t, args...)
-		if test.expectedError != "" {
-			require.ErrorContains(t, err, test.expectedError)
-			published, readErr := os.ReadFile(output)
-			require.NoError(t, readErr)
-			assert.Equal(t, test.existingDestination, string(published))
-		} else {
-			require.NoError(t, err, out)
-			var receipt getReceipt
-			require.NoError(t, json.Unmarshal([]byte(out), &receipt))
-			assert.Equal(t, getReceipt{NodeID: node.ID, VersionID: node.CurrentVersionID, BlobHash: node.BlobHash, Size: node.Size, Output: output}, receipt)
-			assert.NotContains(t, out, "download:")
-			published, readErr := os.ReadFile(output)
-			require.NoError(t, readErr)
-			assert.Equal(t, content, string(published))
-		}
-		stages, err := filepath.Glob(filepath.Join(filepath.Dir(output), "docbank-get-*"))
-		require.NoError(t, err)
-		assert.Empty(t, stages)
-		if test.expectedError != "" {
-			assert.Empty(t, requests)
-			assert.Empty(t, contentRequests)
-			continue
-		}
-		if test.selector == "id:42" {
-			assert.Equal(t, "/api/v1/nodes/42?", <-requests)
-		} else {
-			assert.Equal(t, "/api/v1/path?"+test.selector, <-requests)
-		}
-		assert.Equal(t, "/api/v1/versions/"+node.CurrentVersionID+"/content", <-contentRequests)
-	}
-	_, err := runCLI(t, "get", "/missing", filepath.Join(t.TempDir(), "out"), "--progress", "animated")
-	require.ErrorContains(t, err, "invalid --progress value")
-	require.Empty(t, requests)
-	_, err = runCLI(t, "get", "/", filepath.Join(t.TempDir(), "root"))
-	require.ErrorContains(t, err, "not a file")
-	require.Len(t, requests, 1)
-	assert.Equal(t, "/api/v1/path?/", <-requests)
-	assert.Empty(t, contentRequests)
+	out, err := runCLI(t, "get", "/inbox/statement.bin", output, "--json")
+	require.NoError(t, err)
+	var receipt getReceipt
+	require.NoError(t, json.Unmarshal([]byte(out), &receipt), out)
+	assert.Positive(t, receipt.NodeID)
+	assert.NotEmpty(t, receipt.VersionID)
+	assert.Len(t, receipt.BlobHash, 64)
+	assert.Equal(t, int64(len("synthetic binary\x00content")), receipt.Size)
+	absOutput, err := filepath.Abs(output)
+	require.NoError(t, err)
+	assert.Equal(t, absOutput, receipt.Output)
+	bytes, err := os.ReadFile(output)
+	require.NoError(t, err)
+	assert.Equal(t, "synthetic binary\x00content", string(bytes))
+	assert.NotContains(t, out, "download:", "JSON must contain no progress lines")
+	assertNoGetStaging(t, filepath.Dir(output))
 }
 
-func TestPublishGetFileWrapsNoReplaceAndSyncErrors(t *testing.T) {
-	for _, test := range []struct {
-		name           string
-		existingOutput bool
-		wantSyncError  bool
-	}{
-		{name: "existing destination", existingOutput: true},
-		{name: "new destination sync failure", wantSyncError: true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			dir := t.TempDir()
-			staged, output := filepath.Join(dir, "staged"), filepath.Join(dir, "output")
-			require.NoError(t, os.WriteFile(staged, []byte("download"), 0o600))
-			if test.existingOutput {
-				require.NoError(t, os.WriteFile(output, []byte("existing"), 0o600))
-			}
-			syncErr := errors.New("injected destination directory sync failure")
-			originalSync := syncGetDestinationDir
-			syncGetDestinationDir = func(got string) error {
-				assert.Equal(t, filepath.Dir(output), got)
-				return syncErr
-			}
-			t.Cleanup(func() { syncGetDestinationDir = originalSync })
-			err := publishGetFile(staged, output, false)
-			if test.wantSyncError {
-				require.ErrorIs(t, err, syncErr)
-				require.ErrorContains(t, err, "file published")
-				require.ErrorContains(t, err, "injected destination directory sync failure")
-			} else {
-				require.ErrorIs(t, err, os.ErrExist)
-			}
-		})
-	}
+func TestGetRefusesExistingDestinationUnlessOverwriteIsExplicit(t *testing.T) {
+	_ = setupVaultHome(t)
+	source := writeSourceFile(t, "report.txt", "authoritative")
+	_, err := runCLI(t, "add", source, "--dest", "/inbox", "--json")
+	require.NoError(t, err)
+
+	output := filepath.Join(t.TempDir(), "report.txt")
+	require.NoError(t, os.WriteFile(output, []byte("keep me"), 0o600))
+	_, err = runCLI(t, "get", "/inbox/report.txt", output)
+	require.ErrorContains(t, err, "pass --overwrite")
+	bytes, readErr := os.ReadFile(output)
+	require.NoError(t, readErr)
+	assert.Equal(t, "keep me", string(bytes))
+	assertNoGetStaging(t, filepath.Dir(output))
+
+	out, err := runCLI(t, "get", "/inbox/report.txt", output, "--overwrite", "--json")
+	require.NoError(t, err)
+	assert.True(t, jsontext.Value([]byte(out)).IsValid(), out)
+	bytes, readErr = os.ReadFile(output)
+	require.NoError(t, readErr)
+	assert.Equal(t, "authoritative", string(bytes))
+	assertNoGetStaging(t, filepath.Dir(output))
+}
+
+func TestGetCanRetrieveTrashedFileByStableID(t *testing.T) {
+	_ = setupVaultHome(t)
+	source := writeSourceFile(t, "archived.txt", "retained bytes")
+	_, err := runCLI(t, "add", source, "--dest", "/inbox", "--json")
+	require.NoError(t, err)
+	statJSON, err := runCLI(t, "stat", "/inbox/archived.txt", "--json")
+	require.NoError(t, err)
+	var node api.Node
+	require.NoError(t, json.Unmarshal([]byte(statJSON), &node))
+	_, err = runCLI(t, "rm", formatNodeSelector(node.ID), "--json")
+	require.NoError(t, err)
+
+	output := filepath.Join(t.TempDir(), "recovered.txt")
+	_, err = runCLI(t, "get", formatNodeSelector(node.ID), output, "--json")
+	require.NoError(t, err)
+	bytes, err := os.ReadFile(output)
+	require.NoError(t, err)
+	assert.Equal(t, "retained bytes", string(bytes))
+}
+
+func TestGetRejectsDirectoryAndInvalidProgress(t *testing.T) {
+	_ = setupVaultHome(t)
+	_, err := runCLI(t, "get", "/", filepath.Join(t.TempDir(), "root"))
+	require.ErrorContains(t, err, "not a file")
+
+	_, err = runCLI(t, "get", "/missing", filepath.Join(t.TempDir(), "out"),
+		"--progress", "animated")
+	require.ErrorContains(t, err, "invalid --progress value")
+}
+
+func TestPublishGetFileNoReplacePreservesConcurrentDestination(t *testing.T) {
+	dir := t.TempDir()
+	staged := filepath.Join(dir, "staged")
+	output := filepath.Join(dir, "output")
+	require.NoError(t, os.WriteFile(staged, []byte("download"), 0o600))
+	require.NoError(t, os.WriteFile(output, []byte("concurrent"), 0o600))
+
+	err := publishGetFile(staged, output, false)
+	require.Error(t, err)
+	require.ErrorIs(t, err, os.ErrExist)
+	bytes, readErr := os.ReadFile(output)
+	require.NoError(t, readErr)
+	assert.Equal(t, "concurrent", string(bytes))
 }
 
 func TestGetIntegrityFailureNeverPublishesPartialDestination(t *testing.T) {
@@ -173,4 +135,34 @@ func TestGetIntegrityFailureNeverPublishesPartialDestination(t *testing.T) {
 	require.ErrorIs(t, err, daemonconn.ErrIntegrity)
 	_, statErr := os.Lstat(output)
 	assert.ErrorIs(t, statErr, os.ErrNotExist)
+}
+
+func TestPublishGetFileSurfacesDestinationDirectorySyncFailure(t *testing.T) {
+	dir := t.TempDir()
+	staged := filepath.Join(dir, "staged")
+	output := filepath.Join(dir, "output")
+	require.NoError(t, os.WriteFile(staged, []byte("durable content"), 0o600))
+	syncErr := errors.New("injected destination directory sync failure")
+	originalSync := syncGetDestinationDir
+	syncGetDestinationDir = func(got string) error {
+		assert.Equal(t, dir, got)
+		return syncErr
+	}
+	t.Cleanup(func() { syncGetDestinationDir = originalSync })
+
+	err := publishGetFile(staged, output, false)
+	require.ErrorIs(t, err, syncErr)
+	require.ErrorContains(t, err, "file published")
+	bytes, readErr := os.ReadFile(output)
+	require.NoError(t, readErr)
+	assert.Equal(t, "durable content", string(bytes))
+}
+
+func assertNoGetStaging(t *testing.T, dir string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	for _, entry := range entries {
+		assert.False(t, strings.HasPrefix(entry.Name(), "docbank-get-"), entry.Name())
+	}
 }
