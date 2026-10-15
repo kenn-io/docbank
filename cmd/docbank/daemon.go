@@ -875,11 +875,18 @@ func startRetentionMaintenance(
 // An uncertain filesystem must defer admission, while catalog and configuration errors still fail startup.
 func validateConfiguredCheckoutStartup(ctx context.Context, cfg config.Config, stores []store.BlobStore, catalog *store.Store) (bool, error) {
 	err := validateConfiguredCheckouts(ctx, cfg, stores, catalog)
-	var pathErr *os.PathError
-	if errors.As(err, &pathErr) && ctx.Err() == nil {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if checkoutValidationPending(ctx, err) {
 		return true, nil
 	}
 	return false, err
+}
+
+func checkoutValidationPending(ctx context.Context, err error) bool {
+	_, pathError := errors.AsType[*os.PathError](err)
+	return ctx.Err() == nil && (pathError || errors.Is(err, context.DeadlineExceeded))
 }
 
 func validateCheckoutPath(ctx context.Context, catalog *store.Store, pathname string) error {
@@ -926,7 +933,10 @@ func validateConfiguredCheckouts(ctx context.Context, cfg config.Config, stores 
 	var pending error
 	for _, pathname := range paths {
 		if err := validateCheckoutPath(ctx, catalog, pathname); err != nil {
-			if _, ok := errors.AsType[*os.PathError](err); !ok {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if !checkoutValidationPending(ctx, err) {
 				return err
 			}
 			pending = errors.Join(pending, err)

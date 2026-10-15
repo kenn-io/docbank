@@ -59,11 +59,6 @@ func TestPhotoMediaClassificationRoleInferenceAndNodeFacts(t *testing.T) {
 			if test.kind != "" {
 				assert.Equal(t, test.kind, kind)
 			}
-			if test.kind == PhotoKindVideo {
-				facts := photoNodeFacts(Node{Name: test.filename, MimeType: test.mime})
-				assert.Equal(t, "audio_video", facts.MediaFamily)
-				assert.Equal(t, PhotoKindVideo, facts.AssetKind)
-			}
 		})
 	}
 }

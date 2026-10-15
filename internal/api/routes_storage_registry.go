@@ -84,9 +84,12 @@ func registerStorageRegistryRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, err
 		}
-		proof, err := ingest.CapturePathProtection(paths)
-		if err != nil {
-			return nil, err
+		var proof *ingest.PathProtection
+		if len(paths) > 0 {
+			proof, err = ingest.CapturePathProtection(paths)
+			if err != nil {
+				return nil, err
+			}
 		}
 		stores, err := d.Store.BlobStores(ctx)
 		if err != nil {
@@ -101,12 +104,14 @@ func registerStorageRegistryRoutes(api huma.API, d Deps, g *gate) {
 			return nil, err
 		}
 		err = g.mutate(func() error {
-			paths, err := storageProtectionPaths(ctx, d, plan.binding)
-			if err != nil {
-				return err
-			}
-			if err := proof.Check(paths); err != nil {
-				return NewError(http.StatusConflict, "storage_preview_stale", err.Error())
+			if proof != nil {
+				paths, err := storageProtectionPaths(ctx, d, plan.binding)
+				if err != nil {
+					return err
+				}
+				if err := proof.Check(paths); err != nil {
+					return NewError(http.StatusConflict, "storage_preview_stale", err.Error())
+				}
 			}
 			result, err := applyStorageRegistration(ctx, d, plan, true)
 			if err != nil {
@@ -610,10 +615,10 @@ func blobStoreSpec(item store.BlobStore) blob.StoreSpec {
 }
 
 func storageProtectionPaths(ctx context.Context, d Deps, binding config.StoreBindingConfig) ([]string, error) {
-	paths := []string{d.VaultRoot}
-	if binding.Kind == "filesystem" {
-		paths = append(paths, binding.Path)
+	if binding.Kind != "filesystem" {
+		return nil, nil
 	}
+	paths := []string{d.VaultRoot, binding.Path}
 	for _, watch := range d.Cfg.Watches {
 		paths = append(paths, watch.Source)
 	}

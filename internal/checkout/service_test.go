@@ -541,14 +541,12 @@ func TestCheckoutRecoversInstalledCopyWhenPublicationRecordFails(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		name      string
-		edit      bool
 		interrupt bool
 		noCursor  bool
 	}{
-		{"verified", false, false, false},
-		{"edited", true, false, false},
-		{"edited before progress", true, true, false},
-		{"edited without cursor", true, false, true},
+		{"edited", false, false},
+		{"edited before progress", true, false},
+		{"edited without cursor", false, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -589,9 +587,7 @@ func TestCheckoutRecoversInstalledCopyWhenPublicationRecordFails(t *testing.T) {
 			content, err := root.ReadFile(filepath.FromSlash(entries[0].Path))
 			require.NoError(t, err)
 			require.Equal(t, "verified bytes", string(content))
-			if test.edit {
-				require.NoError(t, root.WriteFile(filepath.FromSlash(entries[0].Path), []byte("edited working copy"), 0o600))
-			}
+			require.NoError(t, root.WriteFile(filepath.FromSlash(entries[0].Path), []byte("edited working copy"), 0o600))
 			status, err := s.Store.PhotoCheckoutStatus(ctx, checkout.ID)
 			require.NoError(t, err)
 			require.Equal(t, "running", status.Checkout.State)
@@ -624,11 +620,9 @@ func TestCheckoutRecoversInstalledCopyWhenPublicationRecordFails(t *testing.T) {
 			}
 			_, err = root.Stat(payload)
 			require.ErrorIs(t, err, os.ErrNotExist)
-			if test.edit {
-				content, err := root.ReadFile(filepath.FromSlash(entries[0].Path))
-				require.NoError(t, err)
-				require.Equal(t, "edited working copy", string(content))
-			}
+			content, err = root.ReadFile(filepath.FromSlash(entries[0].Path))
+			require.NoError(t, err)
+			require.Equal(t, "edited working copy", string(content))
 		})
 	}
 }

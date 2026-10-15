@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"image/color"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -373,4 +375,58 @@ func TestServeRejectsCheckoutCopiesBeforeStartup(t *testing.T) {
 	err = runServe(ctx)
 	require.ErrorContains(t, err, "configured path")
 	require.ErrorContains(t, err, checkout.ID)
+}
+
+func TestCheckoutValidationDefersInternalDeadline(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		err     error
+		parent  error
+		pending bool
+	}{
+		{name: "traversal deadline", err: fmt.Errorf("traversing checkout: %w", context.DeadlineExceeded), pending: true},
+		{name: "unavailable directory", err: &os.PathError{Op: "open", Path: "checkout", Err: os.ErrPermission}, pending: true},
+		{name: "parent cancelled", err: context.DeadlineExceeded, parent: context.Canceled},
+		{name: "parent deadline", err: context.DeadlineExceeded, parent: context.DeadlineExceeded},
+		{name: "confirmed overlap", err: errors.New("configured path overlaps reserved checkout")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
+			if tc.parent == context.Canceled {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				cancel()
+			} else if tc.parent == context.DeadlineExceeded {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithDeadline(ctx, time.Now().Add(-time.Second))
+				defer cancel()
+			}
+			require.Equal(t, tc.pending, checkoutValidationPending(ctx, tc.err))
+		})
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	checked, admitted := make(chan struct{}, 1), make(chan error, 1)
+	var readable atomic.Bool
+	go func() {
+		admitted <- waitForCheckoutValidation(ctx, func(context.Context) error {
+			if readable.Load() {
+				return nil
+			}
+			select {
+			case checked <- struct{}{}:
+			default:
+			}
+			return context.DeadlineExceeded
+		}, slog.Default())
+	}()
+	<-checked
+	select {
+	case err := <-admitted:
+		t.Fatalf("admission finished before validation succeeded: %v", err)
+	default:
+	}
+	readable.Store(true)
+	require.NoError(t, <-admitted)
 }
