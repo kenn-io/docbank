@@ -94,7 +94,9 @@ func TestPhotoFaceReplaysNamedFaceAfterPersonRetires(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 	unnamed, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), box, "")
 	require.NoError(t, err)
-	_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, unnamed.FaceID, box, person.PersonID)
+	active, err := s.CreatePerson(ctx, "Grace", "operator")
+	require.NoError(t, err)
+	_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, unnamed.FaceID, box, active.PersonID)
 	require.ErrorIs(t, err, ErrExists)
 }
 
