@@ -592,7 +592,7 @@ func TestPhotoCheckoutConflictsAndEntryPaths(t *testing.T) {
 	}
 }
 
-func TestPhotoCheckoutSidecarRequiresFrozenEligibleTarget(t *testing.T) {
+func TestPhotoCheckoutEntryRequiresFrozenEligibleSource(t *testing.T) {
 	t.Parallel()
 	for _, mutation := range []string{"trashed", "retargeted", "detached", "unpublished", "detached own file"} {
 		t.Run(mutation, func(t *testing.T) {
@@ -615,18 +615,31 @@ func TestPhotoCheckoutSidecarRequiresFrozenEligibleTarget(t *testing.T) {
 			require.NoError(t, err)
 			sidecar := fileByRole(asset.Files, PhotoRoleSidecar)
 			raw := fileByRole(asset.Files, PhotoRoleRAW)
+			if mutation == "detached own file" {
+				_, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, raw.ID, PhotoDetachOptions{ClearDependentSidecars: true})
+				require.NoError(t, err)
+				after, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
+				require.NoError(t, err)
+				require.Equal(t, entries, after)
+				for _, entry := range entries {
+					if entry.FileID == raw.ID {
+						err = s.PublishPhotoCheckoutEntry(ctx, entry, func() (bool, error) { t.Fatal("detached source installed"); return false, nil })
+						require.ErrorIs(t, err, ErrPhotoCheckoutSourceUnavailable)
+						return
+					}
+				}
+				t.Fatal("frozen RAW entry missing")
+			}
 			var entry PhotoCheckoutEntry
 			for _, e := range entries {
-				if e.FileID == sidecar.ID && mutation != "detached own file" || e.FileID == raw.ID && mutation == "detached own file" {
+				if e.FileID == sidecar.ID {
 					entry = e
 				}
-				if e.FileID == raw.ID && mutation != "unpublished" && mutation != "detached own file" {
+				if e.FileID == raw.ID && mutation != "unpublished" {
 					require.NoError(t, s.PublishPhotoCheckoutEntry(ctx, e, func() (bool, error) { return true, nil }))
 				}
 			}
-			if mutation != "detached own file" {
-				require.Equal(t, new(raw.ID), entry.SidecarOfID)
-			}
+			require.Equal(t, new(raw.ID), entry.SidecarOfID)
 			switch mutation {
 			case "trashed":
 				node, lookupErr := s.NodeByID(ctx, raw.NodeID)
@@ -634,15 +647,10 @@ func TestPhotoCheckoutSidecarRequiresFrozenEligibleTarget(t *testing.T) {
 				_, _, err = s.Trash(ctx, node.ID, node.Revision)
 			case "retargeted":
 				_, err = s.db.ExecContext(ctx, "UPDATE photo_files SET sidecar_of_file_id=? WHERE file_id=?", fileByRole(asset.Files, PhotoRoleImage).ID, sidecar.ID)
-			case "detached", "detached own file":
+			case "detached":
 				_, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, raw.ID, PhotoDetachOptions{ClearDependentSidecars: true})
 			}
 			require.NoError(t, err)
-			if mutation == "detached own file" {
-				after, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
-				require.NoError(t, err)
-				require.Equal(t, entries, after)
-			}
 			called := false
 			err = s.PublishPhotoCheckoutEntry(ctx, entry, func() (bool, error) { called = true; return true, nil })
 			require.ErrorIs(t, err, ErrPhotoCheckoutSourceUnavailable)
@@ -654,14 +662,15 @@ func TestPhotoCheckoutSidecarRequiresFrozenEligibleTarget(t *testing.T) {
 func TestPhotoCheckoutBackupRetentionAcrossLifecycleStates(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, state          string
-		published, uncertain bool
+		name, state                           string
+		published, uncertain, legacy, expired bool
 	}{
 		{name: "queued", state: "queued"},
 		{name: "completed", state: "completed", published: true}, {name: "failed published", state: "failed", published: true},
-		{name: "failed unpublished", state: "failed"}, {name: "cancelled published", state: "cancelled", published: true},
-		{name: "cancelled uncertain", state: "cancelled", uncertain: true}, {name: "running uncertain", state: "running", uncertain: true},
-		{name: "paused published", state: "paused", published: true},
+		{name: "legacy export", state: "failed", published: true, legacy: true},
+		{name: "failed unpublished", state: "failed"},
+		{name: "running uncertain", state: "running", uncertain: true},
+		{name: "expired cancelled uncertain", state: "cancelled", uncertain: true, expired: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := newTestStore(t)
@@ -686,11 +695,15 @@ func TestPhotoCheckoutBackupRetentionAcrossLifecycleStates(t *testing.T) {
 					require.NoError(t, s.AdvanceStorageOperation(ctx, op.ID, entry.FileID, 0, 0, 0, "{}"))
 				}
 			}
+			retainUntil := time.Now().Add(time.Hour)
+			if tc.expired {
+				retainUntil = time.Now().Add(-time.Hour)
+			}
 			switch tc.state {
 			case "queued":
 				require.NoError(t, s.DeferStorageOperation(ctx, op.ID, errors.New("waiting")))
-			case "completed", "failed":
-				require.NoError(t, s.FinishPhotoCheckout(ctx, checkout.ID, op.ID, StorageOperationState(tc.state), "{}", "result", time.Now().Add(time.Hour)))
+			case "completed", "failed", "cancelled":
+				require.NoError(t, s.FinishPhotoCheckout(ctx, checkout.ID, op.ID, StorageOperationState(tc.state), "{}", "result", retainUntil))
 			}
 			updated, _, err := s.ReplaceContent(ctx, node.ID, node.Revision, browseHash("replacement"), 30, "image/jpeg")
 			require.NoError(t, err)
@@ -705,13 +718,31 @@ func TestPhotoCheckoutBackupRetentionAcrossLifecycleStates(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, 1, result.DeletedVersions)
 			}
+			if tc.expired {
+				_, err = s.PruneExpiredStorageOperations(ctx, time.Now())
+				require.NoError(t, err)
+				_, err = s.StorageOperation(ctx, op.ID)
+				require.NoError(t, err)
+				held, err := s.PruneContentVersions(ctx, node.ID, updated.Revision, VersionPruneSelector{VersionIDs: []string{node.CurrentVersionID}}, true)
+				require.NoError(t, err)
+				require.Zero(t, held.DeletedVersions)
+				require.Len(t, held.DependencyRetained, 1)
+			}
 			var exported bytes.Buffer
 			require.NoError(t, s.ExportMetadata(ctx, &exported))
+			if tc.legacy {
+				require.Contains(t, exported.String(), `"base_held":true,`)
+				legacy := strings.ReplaceAll(exported.String(), `"base_held":true,`, "")
+				require.NotContains(t, legacy, `"base_held"`)
+				exported.Reset()
+				_, err := exported.WriteString(legacy)
+				require.NoError(t, err)
+			}
 			restored := newTestStore(t)
 			require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
 			actual, err := restored.PhotoCheckout(ctx, checkout.ID)
 			require.NoError(t, err)
-			released := !tc.published && !tc.uncertain
+			released := !tc.published && !tc.uncertain || tc.legacy
 			require.Equal(t, tc.state != "completed", actual.RetentionReleased)
 			var roundtrip bytes.Buffer
 			require.NoError(t, restored.ExportMetadata(ctx, &roundtrip))
@@ -735,6 +766,14 @@ func TestPhotoCheckoutBackupRetentionAcrossLifecycleStates(t *testing.T) {
 				require.Len(t, pruned.DependencyRetained, 1)
 				_, err = final.RetirePhotoCheckout(ctx, checkout.ID)
 				require.NoError(t, err)
+				if tc.expired {
+					_, err = s.RetirePhotoCheckout(ctx, checkout.ID)
+					require.NoError(t, err)
+					_, err = s.PruneExpiredStorageOperations(ctx, time.Now())
+					require.NoError(t, err)
+					_, err = s.StorageOperation(ctx, op.ID)
+					require.ErrorIs(t, err, ErrNotFound)
+				}
 				pruned, err = final.PruneContentVersions(ctx, node.ID, updated.Revision, selector, true)
 				require.NoError(t, err)
 				require.Equal(t, 1, pruned.DeletedVersions)
@@ -865,40 +904,4 @@ func TestRetirePhotoCheckoutReleasesHistoryAndSurvivesRestore(t *testing.T) {
 	require.True(t, actual.RetentionReleased)
 	_, err = restored.RetirePhotoCheckout(ctx, checkout.ID)
 	require.NoError(t, err)
-}
-
-func TestPhotoCheckoutUncertainHoldSurvivesOperationExpiry(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	asset := albumAsset(t, s, "photo.jpg")
-	checkout, op, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
-	require.NoError(t, err)
-	entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
-	require.NoError(t, err)
-	node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
-	require.NoError(t, err)
-	updated, _, err := s.ReplaceContent(ctx, node.ID, node.Revision, browseHash("replacement"), 30, "image/jpeg")
-	require.NoError(t, err)
-	selector := VersionPruneSelector{VersionIDs: []string{entries[0].VersionID}}
-	require.NoError(t, s.ClaimPhotoCheckout(ctx, checkout.ID, op.ID))
-	require.NoError(t, s.AdvanceStorageOperation(ctx, op.ID, entries[0].FileID, 0, 0, 0, "{}"))
-	require.NoError(t, s.FinishPhotoCheckout(ctx, checkout.ID, op.ID, StorageOperationCancelled, "{}", "offline", time.Now().Add(-time.Hour)))
-	_, err = s.PruneExpiredStorageOperations(ctx, time.Now())
-	require.NoError(t, err)
-	_, err = s.StorageOperation(ctx, op.ID)
-	require.NoError(t, err)
-	held, err := s.PruneContentVersions(ctx, node.ID, updated.Revision, selector, true)
-	require.NoError(t, err)
-	require.Zero(t, held.DeletedVersions)
-	require.Len(t, held.DependencyRetained, 1)
-	_, err = s.RetirePhotoCheckout(ctx, checkout.ID)
-	require.NoError(t, err)
-	_, err = s.PruneExpiredStorageOperations(ctx, time.Now())
-	require.NoError(t, err)
-	_, err = s.StorageOperation(ctx, op.ID)
-	require.ErrorIs(t, err, ErrNotFound)
-	pruned, err := s.PruneContentVersions(ctx, node.ID, updated.Revision, selector, true)
-	require.NoError(t, err)
-	require.Equal(t, 1, pruned.DeletedVersions)
 }

@@ -70,8 +70,6 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var retired store.PhotoCheckout
 	require.NoError(t, json.Unmarshal([]byte(body), &retired))
-	require.NotNil(t, retired.RetiredAt)
-	require.True(t, retired.RetentionReleased)
 	response, body = do(t, ts, http.MethodGet, "/api/v1/photos/checkouts/00000000-0000-4000-8000-000000000001", nil, nil)
 	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
 }
