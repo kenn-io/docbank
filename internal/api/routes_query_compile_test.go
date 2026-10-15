@@ -170,15 +170,3 @@ func TestQueryHighlightPreviewIsAvailableToBoundedBrowserSessions(t *testing.T) 
 		queryHighlightsPath+"?unrecognized=1", headers, `{}`)
 	require.Equal(t, http.StatusForbidden, resp.StatusCode, body)
 }
-
-func TestPersonStructuredQueryFilter(t *testing.T) {
-	t.Parallel()
-	ts, s := newTestServer(t, nil)
-	p, err := s.CreatePerson(t.Context(), "Ada", "operator")
-	require.NoError(t, err)
-	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/queries/parse", map[string]string{"X-Api-Key": testAPIKey}, `{"filters":{"person_ids":["`+p.PersonID+`"]}}`)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	var preview api.QueryPreview
-	require.NoError(t, json.Unmarshal([]byte(body), &preview))
-	require.Equal(t, []api.QueryDependency{{Kind: "person", ID: p.PersonID, Revision: p.Revision}}, preview.Dependencies)
-}

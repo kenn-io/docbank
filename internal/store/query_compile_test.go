@@ -385,7 +385,7 @@ func personMatchNodeIDs(t *testing.T, s *Store, value query.Query) []int64 {
 	return ids
 }
 
-func TestQueryPersonDocumentsPhotosAliasesAndDuplicateNames(t *testing.T) {
+func TestQueryPersonResolutionFiltersAndHiddenPhotoBrowsing(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -398,6 +398,9 @@ func TestQueryPersonDocumentsPhotosAliasesAndDuplicateNames(t *testing.T) {
 	require.ElementsMatch(t, []int64{node.ID, doc}, personMatchNodeIDs(t, s, compilerQuery(t, `person:"ADA LOVELACE"`)))
 	typed := snapshotTestQuery(t, `{}`)
 	typed.Filters.PersonIDs = []string{p.PersonID}
+	compiled, err := compileQuery(ctx, typed, queryResolver{q: s.db})
+	require.NoError(t, err)
+	require.Equal(t, []query.Dependency{{Kind: query.ReferencePerson, ID: p.PersonID, Revision: p.Revision}}, compiled.Dependencies)
 	require.ElementsMatch(t, []int64{node.ID, doc}, personMatchNodeIDs(t, s, typed))
 	page := browsePhotoPage(t, s, `{"syntax":"advanced","text":"person:\"Ada Lovelace\""}`)
 	require.Len(t, page.Items, 1)

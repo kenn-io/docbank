@@ -1,7 +1,6 @@
 package store
 
 import (
-	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -13,23 +12,11 @@ func TestSplitRequiresExplicitMembership(t *testing.T) {
 	t.Parallel()
 	request := PersonSplitRequest{PersonID: "00000000-0000-4000-8000-000000000001",
 		OperationID: "00000000-0000-4000-8000-000000000002", Revision: 1}
-	require.Error(t, validatePersonSplitRequest(request))
+	require.ErrorIs(t, validatePersonSplitRequest(request), ErrInvalidPerson)
 	request.IdentityIDs = []string{"00000000-0000-4000-8000-000000000003"}
 	require.NoError(t, validatePersonSplitRequest(request))
 	request.IdentityIDs = append(request.IdentityIDs, request.IdentityIDs[0])
 	require.Error(t, validatePersonSplitRequest(request))
-}
-
-func TestSplitPersonInvalidRequestIsInvalidPerson(t *testing.T) {
-	t.Parallel()
-	request := PersonSplitRequest{
-		PersonID:    "00000000-0000-4000-8000-000000000001",
-		OperationID: "00000000-0000-4000-8000-000000000002",
-		Revision:    1,
-	}
-	if err := validatePersonSplitRequest(request); !errors.Is(err, ErrInvalidPerson) {
-		t.Fatalf("validatePersonSplitRequest() error = %v, want ErrInvalidPerson", err)
-	}
 }
 
 func addTestPersonIdentity(t *testing.T, s *Store, person Person, kind, value, evidenceID string) (Person, PersonIdentity) {

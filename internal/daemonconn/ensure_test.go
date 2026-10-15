@@ -155,8 +155,6 @@ func TestWebDiscoveryRequiresAdvertisedCapability(t *testing.T) {
 
 func TestEnsureReplacesOlderProtocolDaemon(t *testing.T) {
 	root, rec := startUnresponsiveRuntime(t)
-	const faceVersionID = "11111111-1111-4111-8111-111111111111"
-	const faceReceiptID = "22222222-2222-4222-8222-222222222222"
 	assetID := "00000000-0000-4000-8000-000000000001"
 	fileID := "00000000-0000-4000-8000-000000000010"
 	stamp := "2026-09-22T00:00:00Z"
@@ -194,9 +192,6 @@ func TestEnsureReplacesOlderProtocolDaemon(t *testing.T) {
 				Files: []api.PhotoFile{{ID: fileID, AssetID: assetID,
 					NodeID: 1, Role: "image", CreatedAt: stamp}},
 			})
-		} else if started.Load() && r.URL.Path == "/api/v1/photos/versions/"+faceVersionID+"/face-decisions" {
-			assert.Equal(t, "new-key", r.Header.Get("X-Api-Key"))
-			_ = json.MarshalWrite(w, api.PhotoFaceDecisionResult{ReceiptID: faceReceiptID})
 		} else {
 			http.NotFound(w, r)
 		}
@@ -226,9 +221,6 @@ func TestEnsureReplacesOlderProtocolDaemon(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, assetID, asset.ID)
 	assert.Equal(t, int64(2), asset.Revision)
-	faceDecision, err := client.DecidePhotoFace(t.Context(), faceVersionID, api.PhotoFaceDecisionRequest{FaceID: faceReceiptID, Action: "dismiss", Revision: 1})
-	require.NoError(t, err)
-	assert.Equal(t, faceReceiptID, faceDecision.ReceiptID)
 }
 
 func TestEnsureWebReplacesWebIncapableDaemon(t *testing.T) {

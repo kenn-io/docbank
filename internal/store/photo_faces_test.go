@@ -92,12 +92,6 @@ func TestPhotoFaceReplaysNamedFaceAfterPersonRetires(t *testing.T) {
 	require.Equal(t, assertion, saved)
 	_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), box, person.PersonID)
 	require.ErrorIs(t, err, ErrNotFound)
-	unnamed, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), box, "")
-	require.NoError(t, err)
-	active, err := s.CreatePerson(ctx, "Grace", "operator")
-	require.NoError(t, err)
-	_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, unnamed.FaceID, box, active.PersonID)
-	require.ErrorIs(t, err, ErrExists)
 }
 
 func TestPhotoFaceReplaysMergedPersonAfterSurvivorRetires(t *testing.T) {
@@ -351,10 +345,8 @@ func TestPhotoFaceRetryAndBindingEpoch(t *testing.T) {
 		changed.X = 0.5
 		_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, id, changed, personID)
 		require.ErrorIs(t, err, ErrExists)
-		if personID != "" {
-			_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, id, box, otherPerson.PersonID)
-			require.ErrorIs(t, err, ErrExists)
-		}
+		_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, id, box, otherPerson.PersonID)
+		require.ErrorIs(t, err, ErrExists)
 		other := browsePhotoNode(t, s, id+".jpg", fakeHash("b2"), "image/jpeg")
 		_, _, err = s.CreatePhotoFace(ctx, other.CurrentVersionID, id, box, personID)
 		require.ErrorIs(t, err, ErrExists)

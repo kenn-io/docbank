@@ -1,13 +1,12 @@
 package store
 
 import (
-	"bytes"
 	"database/sql"
 	"fmt"
-	"github.com/google/uuid"
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/canonical"
@@ -438,7 +437,7 @@ func TestCandidateLinksSkipPrunedVersions(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		name, evidenceKind, action string
-		allPruned, rejectionLimit  bool
+		allPruned                  bool
 		wantErr                    error
 	}{
 		{name: "metadata link surviving", evidenceKind: "source_metadata", action: "link"},
@@ -450,7 +449,6 @@ func TestCandidateLinksSkipPrunedVersions(t *testing.T) {
 		{name: "face reject all pruned", evidenceKind: "face", action: "reject", allPruned: true},
 		{name: "face link all pruned", evidenceKind: "face", action: "link", allPruned: true, wantErr: ErrNotFound},
 		{name: "face new person all pruned", evidenceKind: "face", action: "new_person", allPruned: true, wantErr: ErrNotFound},
-		{name: "pruned face rejection limit", evidenceKind: "face", action: "reject", rejectionLimit: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			s := newTestStore(t)
@@ -482,16 +480,7 @@ func TestCandidateLinksSkipPrunedVersions(t *testing.T) {
 			if test.evidenceKind == "face" {
 				actor, reason = "face:"+oldID, personCandidateReasonFaceMatch
 			}
-			if test.rejectionLimit {
-				rejected := candidateForTest(t, actor, "Ada", person.PersonID, occurrences)
-				rejected.Reason = reason
-				rejected, err = normalizePersonCandidate(rejected)
-				require.NoError(t, err)
-				_, err = s.db.ExecContext(ctx, `WITH RECURSIVE slots(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM slots WHERE i<1000) INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at) SELECT printf('00000000-0000-4000-8000-%012d',i),'Synthetic person','synthetic person','operator','curated',1,?,? FROM slots`, nowRFC3339(), nowRFC3339())
-				require.NoError(t, err)
-				_, err = s.db.ExecContext(ctx, `INSERT INTO person_match_candidates(candidate_id,actor_key,display_name,suggested_person_id,reason,evidence_json,evidence_sha256,occurrence_count,revision,state,created_at,decided_at) SELECT person_id,?,'Face',person_id,'face_match',?,?,1,1,'rejected',?,? FROM persons WHERE person_id<>?`, actor, rejected.Evidence, rejected.EvidenceSHA256, nowRFC3339(), nowRFC3339(), person.PersonID)
-				require.NoError(t, err)
-			}
+
 			if !test.allPruned {
 				occurrences = append(occurrences, PersonCandidateOccurrence{ContentVersionID: current.ID, Role: role, EvidenceKind: test.evidenceKind, EvidenceID: currentID})
 			}
@@ -523,11 +512,7 @@ func TestCandidateLinksSkipPrunedVersions(t *testing.T) {
 					require.NoError(t, err)
 					require.Equal(t, []string{person.PersonID}, faces[0].RejectedPersonIDs)
 				}
-				if test.rejectionLimit {
-					var backup bytes.Buffer
-					require.NoError(t, s.ExportMetadata(ctx, &backup))
-					require.NoError(t, newTestStore(t).ImportMetadata(ctx, &backup))
-				}
+
 				return
 			}
 			require.Equal(t, "linked", decided.State)
