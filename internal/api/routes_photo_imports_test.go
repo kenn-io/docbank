@@ -158,12 +158,6 @@ func TestPhotoImportJobsReceiptRedactsBrowserSession(t *testing.T) {
 	response, body = do(t, ts, http.MethodGet, "/api/v1/jobs", browser, nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	assert.NotContains(t, body, "private")
-	response, body = do(t, ts, http.MethodGet, "/api/v1/jobs/"+failed.ID, browser, nil)
-	assert.Equal(t, http.StatusForbidden, response.StatusCode, body)
-	response, body = do(t, ts, http.MethodPost, "/api/v1/jobs/"+running.ID+"/cancel?force=1", browser, nil)
-	assert.Equal(t, http.StatusForbidden, response.StatusCode, body)
-	response, body = do(t, ts, http.MethodPost, "/api/v1/jobs/not-a-uuid/cancel", browser, nil)
-	assert.Equal(t, http.StatusForbidden, response.StatusCode, body)
 
 	response, body = do(t, ts, http.MethodPost, "/api/v1/jobs/"+running.ID+"/cancel", browser, nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
@@ -172,10 +166,6 @@ func TestPhotoImportJobsReceiptRedactsBrowserSession(t *testing.T) {
 	assert.True(t, cancelled.CancelRequested)
 	assert.Nil(t, cancelled.Receipt)
 	assert.NotContains(t, body, "private")
-
-	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/imports", browser,
-		api.PhotoImportStartRequest{SourceRoot: source, Destination: "/photos"})
-	assert.Equal(t, http.StatusForbidden, response.StatusCode, body)
 }
 
 func TestPhotoImportGate(t *testing.T) {

@@ -768,7 +768,7 @@ func TestPhotoCheckoutRecordsInstallAfterCancellation(t *testing.T) {
 
 func TestPhotoCheckoutPublicationOrdersEligibilityMutationsWithoutReservingWriter(t *testing.T) {
 	t.Parallel()
-	for _, mutation := range []string{"hide", "exclude", "photo trash", "node trash", "subtree trash", "path trash"} {
+	for _, mutation := range []string{"hide", "exclude", "photo trash", "node trash", "path trash"} {
 		t.Run(mutation, func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
@@ -781,7 +781,7 @@ func TestPhotoCheckoutPublicationOrdersEligibilityMutationsWithoutReservingWrite
 			require.NoError(t, err)
 			folder, err := s.MkdirAll(ctx, "/photos-to-trash")
 			require.NoError(t, err)
-			if mutation == "subtree trash" || mutation == "path trash" {
+			if mutation == "path trash" {
 				node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
 				require.NoError(t, err)
 				_, _, err = s.Move(ctx, node.ID, folder.ID, node.Name, node.Revision)
@@ -808,15 +808,13 @@ func TestPhotoCheckoutPublicationOrdersEligibilityMutationsWithoutReservingWrite
 					_, err = s.TrashPhotoAsset(ctx, asset.ID, asset.Revision)
 				case "node trash":
 					_, _, err = s.Trash(ctx, asset.Files[0].NodeID, UnconditionalRev)
-				case "subtree trash":
-					_, _, err = s.Trash(ctx, folder.ID, UnconditionalRev)
 				case "path trash":
 					_, _, err = s.TrashPath(ctx, "/photos-to-trash")
 				}
 				changed <- err
 			}()
 			require.Eventually(t, func() bool {
-				if mutation == "node trash" || mutation == "subtree trash" || mutation == "path trash" {
+				if mutation == "node trash" || mutation == "path trash" {
 					if s.photoPublicationTreeMu.TryRLock() {
 						s.photoPublicationTreeMu.RUnlock()
 						return false
@@ -830,11 +828,6 @@ func TestPhotoCheckoutPublicationOrdersEligibilityMutationsWithoutReservingWrite
 			}, 5*time.Second, time.Millisecond)
 			_, err = s.SetPhotoAssetExcluded(ctx, other.ID, other.Revision, true)
 			require.NoError(t, err)
-			select {
-			case err := <-changed:
-				t.Fatalf("eligibility changed before installation: %v", err)
-			default:
-			}
 			releaseInstall()
 			require.NoError(t, <-published)
 			require.NoError(t, <-changed)

@@ -781,8 +781,11 @@ func TestPhotoImportOperationLifecycle(t *testing.T) {
 	assert.Equal(t, int64(1), current.CompletedObjects)
 	assert.True(t, current.CancelRequested)
 	require.NoError(t, s.FinishStorageOperation(ctx, operation.ID, StorageOperationCancelled, current.ReceiptJSON, "", time.Time{}))
+	finished, err := s.StorageOperation(ctx, operation.ID)
+	require.NoError(t, err)
+	assert.Equal(t, `{"added":1}`, finished.ReceiptJSON)
 	_, err = s.CreateLocalOperation(ctx, "unknown", `{}`)
-	require.Error(t, err)
+	require.ErrorContains(t, err, `unsupported storage operation kind "unknown"`)
 }
 func TestFinalizeLocalOperationSettlesCancelRace(t *testing.T) {
 	t.Parallel()

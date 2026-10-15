@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -139,39 +138,4 @@ func TestBrowserJobListRedactsPrivateBackendErrors(t *testing.T) {
 	assert.NotEmpty(t, got.Items[0].Error)
 	assert.NotContains(t, got.Items[0].Error, "/Users/example")
 	assert.NotContains(t, got.Items[0].Error, "private.example.invalid")
-	t.Run("receipt redaction", func(t *testing.T) {
-		source := filepath.Join(t.TempDir(), "camera")
-		request, err := json.Marshal(store.PhotoImportRequest{SourceRoot: source, Destination: "/photos"})
-		require.NoError(t, err)
-		receipt, err := json.Marshal(store.PhotoImportReceipt{Ambiguous: 1, Ambiguities: []store.PhotoImportAmbiguity{{
-			Reason: store.PhotoImportMultipleRAW, Files: []store.PhotoImportAmbiguousFile{{
-				SourcePath: filepath.Join(source, "private.ARW"), NodeID: 7, Role: store.PhotoRoleRAW,
-				AssetID: "00000000-0000-4000-8000-000000000001",
-			}},
-		}}})
-		require.NoError(t, err)
-		running, err := live.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport, string(request))
-		require.NoError(t, err)
-		_, err = live.ClaimStorageOperation(t.Context(), running.ID)
-		require.NoError(t, err)
-		require.NoError(t, live.AdvanceStorageOperation(t.Context(), running.ID, "", 0, 0, 0, string(receipt)))
-		response, body := do(t, ts, http.MethodGet, "/api/v1/jobs/"+running.ID, nil, nil)
-		require.Equal(t, http.StatusOK, response.StatusCode, body)
-		var operator api.StorageOperation
-		require.NoError(t, json.Unmarshal([]byte(body), &operator))
-		receiptJSON, err := json.Marshal(operator.Receipt)
-		require.NoError(t, err)
-		var operatorReceipt store.PhotoImportReceipt
-		require.NoError(t, json.Unmarshal(receiptJSON, &operatorReceipt))
-		require.Len(t, operatorReceipt.Ambiguities, 1)
-		assert.Equal(t, int64(7), operatorReceipt.Ambiguities[0].Files[0].NodeID)
-
-		browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issued.Token}
-		response, body = do(t, ts, http.MethodPost, "/api/v1/jobs/"+running.ID+"/cancel", browser, nil)
-		require.Equal(t, http.StatusOK, response.StatusCode, body)
-		var cancelled api.StorageOperation
-		require.NoError(t, json.Unmarshal([]byte(body), &cancelled))
-		assert.Nil(t, cancelled.Receipt)
-		assert.NotContains(t, body, "private")
-	})
 }

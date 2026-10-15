@@ -51,50 +51,6 @@ func TestStorageOperationPersistsProgressResumesAndCancels(t *testing.T) {
 	assert.NotNil(t, items[0].FinishedAt)
 }
 
-func TestLocalOperationValidatesKindAndPersistsTotalAndReceipt(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	created, err := s.CreateLocalOperation(t.Context(), StorageOperationKindPhotoImport, `{"source_root":"/camera","destination":"/photos"}`)
-	require.NoError(t, err)
-	require.NoError(t, validateUUIDv4(created.ID))
-	require.ErrorIs(t, s.SetStorageOperationTotal(t.Context(), created.ID, 3), ErrNotFound)
-	_, err = s.ClaimStorageOperation(t.Context(), created.ID)
-	require.NoError(t, err)
-	require.NoError(t, s.SetStorageOperationTotal(t.Context(), created.ID, 3))
-	const receipt = `{"added":1}`
-	require.NoError(t, s.AdvanceStorageOperation(t.Context(), created.ID, "", 1, 0, 0, receipt))
-	current, err := s.StorageOperation(t.Context(), created.ID)
-	require.NoError(t, err)
-	assert.Equal(t, int64(3), current.TotalObjects)
-	assert.Equal(t, receipt, current.ReceiptJSON)
-	require.NoError(t, s.FinishStorageOperation(t.Context(), created.ID, StorageOperationCancelled, receipt, "", time.Time{}))
-	finished, err := s.StorageOperation(t.Context(), created.ID)
-	require.NoError(t, err)
-	assert.Equal(t, receipt, finished.ReceiptJSON)
-	_, err = s.CreateLocalOperation(t.Context(), "unknown", `{}`)
-	require.ErrorContains(t, err, `unsupported storage operation kind "unknown"`)
-	t.Run("finalization honors cancellation", func(t *testing.T) {
-		s := newTestStore(t)
-		ctx := t.Context()
-		start := func() string {
-			operation, err := s.CreateLocalOperation(ctx, StorageOperationKindPhotoImport, `{"source_root":"/camera","destination":"/photos"}`)
-			require.NoError(t, err)
-			_, err = s.ClaimStorageOperation(ctx, operation.ID)
-			require.NoError(t, err)
-			return operation.ID
-		}
-		finalized := start()
-		cancelled, err := s.FinalizeLocalOperation(ctx, finalized)
-		require.NoError(t, err)
-		assert.False(t, cancelled)
-		require.ErrorIs(t, s.RequestStorageOperationCancel(ctx, finalized), ErrStorageOperationTerminal)
-		finalizing, err := s.StorageOperation(ctx, finalized)
-		require.NoError(t, err)
-		assert.Equal(t, StorageOperationRunning, finalizing.State)
-		assert.Equal(t, storageOperationFinalizingCursor, finalizing.Cursor)
-	})
-}
-
 func TestStorageOperationRejectsCancellationAfterCompletion(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
