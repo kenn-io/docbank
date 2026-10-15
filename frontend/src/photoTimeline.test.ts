@@ -109,7 +109,7 @@ it("shows an undated scope honestly", () => {
       values: [],
     },
   });
-  expect(screen.getByText("These photos have no recorded capture dates.")).toBeTruthy();
+  expect(screen.getByText("These photos have no recorded dates.")).toBeTruthy();
 });
 it.each([
   ["time_budget_exceeded", /Timeline took too long/],

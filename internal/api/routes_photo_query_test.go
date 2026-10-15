@@ -633,3 +633,25 @@ func TestMapTileRouteIsInstalledBehindAuthentication(t *testing.T) {
 	require.Equal(t, http.StatusBadGateway, resp.StatusCode, body)
 	require.Contains(t, body, "map_tile_unavailable")
 }
+
+func TestPhotoBrowseRowsCarryFileModifiedTime(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	run, err := s.BeginIngest(t.Context(), "cli", "wallpapers")
+	require.NoError(t, err)
+	_, err = s.IngestFileExact(t.Context(), run, s.RootID(), "wallpaper.jpg", testHash("wallpaper"), 10, "image/jpeg", "/shots/wallpaper.jpg", "2024-03-05T10:00:00Z")
+	require.NoError(t, err)
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, api.PhotoBrowseRequest{Query: api.QueryPayload(`{}`)})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var page api.PhotoBrowsePage
+	require.NoError(t, json.Unmarshal([]byte(body), &page))
+	require.Len(t, page.Items, 1)
+	require.Nil(t, page.Items[0].CaptureTime)
+	require.Equal(t, new("2024-03-05T10:00:00Z"), page.Items[0].FileModifiedTime)
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, api.PhotoBrowseRequest{Query: api.QueryPayload(`{}`), Projection: "map"})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var compact api.PhotoBrowsePage
+	require.NoError(t, json.Unmarshal([]byte(body), &compact))
+	require.Len(t, compact.MapItems, 1)
+	require.Equal(t, new("2024-03-05T10:00:00Z"), compact.MapItems[0].FileModifiedTime)
+}

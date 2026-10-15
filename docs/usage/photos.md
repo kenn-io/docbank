@@ -116,7 +116,9 @@ Rotation applies to the displayed photo in the grid, viewer, and album cover wit
 ## Browse in the web app
 
 Open `docbank web` and choose **Photos** in the sidebar. Library opens at
-`/photos`, newest captures first. Photos without a capture date appear under
+`/photos`, newest captures first. A photo without a readable capture date sits
+in the month its file was last modified, when Docbank recorded that time; the
+viewer then shows File modified and leaves Captured blank. The rest appear under
 Undated. The year buttons jump to the years loaded so far; scrolling loads
 more photos and reveals older years. Choose **Load more** to continue from
 the same position when further results remain.
@@ -132,7 +134,13 @@ scope until you refresh.
 
 Dates use the selected display file's recorded calendar day, so a capture near
 midnight keeps its date regardless of the browser's timezone. A RAW/JPEG pair
-counts once. The Undated total includes photos without a readable capture date.
+counts once. A photo without a capture date counts on the UTC day its file was
+last modified. When the same bytes were seen several times, the first
+sighting that recorded a modified time decides, so re-importing copies never
+moves a photo. Reverting a photo
+restores the date of the original bytes; a photo replaced by content recorded
+without a modified time is undated until reverted. The Undated total includes
+photos with neither.
 Timeline counts every included photo asset, even in a vault with many ordinary
 documents. It shows a limit message when the scope spans more than 250,000
 distinct capture days or the count runs past its time budget, and offers Retry.
@@ -142,13 +150,13 @@ the timeline does not block Documents queries.
 Search filenames, camera or lens names, and location labels in the Photos
 search box. Search opens in relevance order, with one tile per asset even
 when several paired files match. Choose Capture date to
-return to date browsing. Relevance shows the best 250 matches and the full total. Refine the search or sort by capture date to see all matches. Equal-score ties use capture time descending, then asset ID.
+return to date browsing. Relevance shows the best 250 matches and the full total. Refine the search or sort by capture date to see all matches. Equal-score ties use capture placement descending, then asset ID.
 
 Camera, Lens, Year, Location, and Albums narrow the grid. Counts cover the
 whole matching library, including photos beyond the loaded page. Tiles appear before the separate count request finishes. Counts have a 30-second budget. Unavailable counts show their reason. Choose Retry counts after a timeout. Member or byte limits require a narrower search or filters. Each facet
 omits its own selected filter while retaining search and the other filters.
 Camera, lens, year, and location describe the selected display file; year
-uses its recorded local capture date. Text may match any live member of a
+uses its recorded local capture date, or the UTC day of its modified time when it has none. Text may match any live member of a
 pair, so a text match can appear under a different display-file camera or lens. Camera and lens count both make and model; their counts can sum to more than the asset total. Equivalent Unicode-folded values share one bucket and count each asset once. Buttons submit an original valid spelling; oversized metadata stays visible as informational counts. Year counts omit a selected whole-year range and retain other date ranges. Albums show live memberships. Choose Clear filters to reset the
 search and facets. Clear filters appears when a search or filter is applied. A facet group disappears when none of the photos have a value for it and no value in it is selected. Changing a facet restores the applied search text. Changing scope clears selection and starts a fresh grid.
 
@@ -397,7 +405,7 @@ docbank photos albums add <album-id> --query "{\"filters\":{\"kinds\":[\"photo\"
 docbank photos albums members <album-id> --sort added_time --direction desc
 ```
 
-`members` accepts `added_time`, `import_time`, or `capture_time`, plus `--page-size` and `--cursor`. Capture dates with missing evidence come last. Ties use ascending asset UUID. The cursor binds the album ID as well as the query and page options.
+`members` accepts `added_time`, `import_time`, or `capture_time`, plus `--page-size` and `--cursor`. Photos with neither a capture date nor a file modified time come last. Ties use ascending asset UUID. The cursor binds the album ID as well as the query and page options.
 
 ```text
 docbank photos albums rename <album-id> "Trip"
@@ -570,11 +578,12 @@ stay out.
 
 Sort by `relevance`, `capture_time`, `import_time`, `name`, `modified_at`, `size`, or
 `media_type`, with `asc` or `desc`. Set `filters.set_ids` to album UUIDs to browse their members. `added_time` requires exactly one album ID after normalization. Capture sorting converts recorded offsets
-to UTC. Omitted zones use civil calendar coordinates. Missing or unreadable
-capture times sort last in both directions and do not match capture-date
-filters. Asset UUID orders equal keys. Names and media types compare only their
+to UTC. Omitted zones use civil calendar coordinates. A photo without a
+readable capture time sorts by its file's modified time when Docbank recorded
+one. Photos with neither sort last in both directions and do not match
+capture-date filters. Asset UUID orders equal keys. Names and media types compare only their
 first 1,024 characters, so longer values that share that prefix also fall back
-to UUID order. Relevance orders evidence tier and numeric score in the requested direction, then capture time descending and asset UUID ascending. Only members retained after duplicate collapse contribute scores. An unchanged library pages without duplicates or gaps with other sorts. `path` is
+to UUID order. Relevance orders evidence tier and numeric score in the requested direction, then capture placement descending and asset UUID ascending. Only members retained after duplicate collapse contribute scores. An unchanged library pages without duplicates or gaps with other sorts. `path` is
 unsupported by this route. Document
 snapshots reject `capture_time`, `import_time`, and `added_time` with an error naming Photos
 as the supported view.
@@ -619,8 +628,9 @@ docbank photos timeline --query '{"filters":{"capture_after":"2024-01-01"}}'
 `--query` takes strict QueryV1 JSON and defaults to `{}`, every included
 photo. `--coverage` and `--profile-fingerprint` work as in photo browsing. The
 output's single `capture_day` facet lists one value per day. `total` counts
-every matching asset, and `missing` counts those without a readable capture
-date. Days follow the same recorded calendar day as `capture_after` and
+every matching asset, and `missing` counts those with neither a readable
+capture date nor a recorded file modified time. A photo without a capture date
+counts on the UTC day of its file's modified time. Days follow the same recorded calendar day as `capture_after` and
 `capture_before`, so a day's count matches browsing that day.
 
 Over HTTP, send the same `query` and optional `coverage` to

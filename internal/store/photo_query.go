@@ -56,10 +56,12 @@ type PhotoBrowseRow struct {
 	Name               string
 	MediaType          string
 	ImportTime         string
-	Fields             PhotoTechnicalFields
-	Previews           map[string]PhotoPreviewSlot
-	position           PhotoBrowsePosition
-	sourceHash         string
+	// FileModifiedTime is set when the file's mtime, not a capture date, placed the photo.
+	FileModifiedTime *string
+	Fields           PhotoTechnicalFields
+	Previews         map[string]PhotoPreviewSlot
+	position         PhotoBrowsePosition
+	sourceHash       string
 }
 
 type PhotoBrowsePage struct {
@@ -262,7 +264,8 @@ const photoBrowseDisplayFrom = `photo_assets a
  CROSS JOIN nodes n ON n.id=f.node_id
  CROSS JOIN content_versions v ON v.version_id=n.current_version_id
  LEFT JOIN source_metadata_heads h ON h.source_sha256=v.blob_hash
- LEFT JOIN photo_technical_metadata p ON p.generation_id=h.generation_id`
+ LEFT JOIN photo_technical_metadata p ON p.generation_id=h.generation_id
+ LEFT JOIN photo_timeline pl ON pl.file_id=f.file_id`
 
 const photoBrowseLiveDisplay = liveIncludedDisplayPredicate + ` AND n.kind='file'`
 
@@ -278,25 +281,28 @@ const photoBrowseNodeJoins = `
  CROSS JOIN photo_assets a ON a.asset_id=f.asset_id AND a.display_file_id=f.file_id
  CROSS JOIN content_versions v ON v.version_id=n.current_version_id
  LEFT JOIN source_metadata_heads h ON h.source_sha256=v.blob_hash
- LEFT JOIN photo_technical_metadata p ON p.generation_id=h.generation_id`
+ LEFT JOIN photo_technical_metadata p ON p.generation_id=h.generation_id
+ LEFT JOIN photo_timeline pl ON pl.file_id=f.file_id`
 
 const photoBrowseVersionJoins = `
  CROSS JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id
  CROSS JOIN photo_files f ON f.node_id=n.id
  CROSS JOIN photo_assets a ON a.asset_id=f.asset_id AND a.display_file_id=f.file_id
  LEFT JOIN source_metadata_heads h ON h.source_sha256=v.blob_hash
- LEFT JOIN photo_technical_metadata p ON p.generation_id=h.generation_id`
+ LEFT JOIN photo_technical_metadata p ON p.generation_id=h.generation_id
+ LEFT JOIN photo_timeline pl ON pl.file_id=f.file_id`
 
 func photoBrowseOrder(field string) (from, key string, ok bool) {
 	switch field {
 	case "capture_time":
-		return `photo_technical_metadata p INDEXED BY photo_technical_metadata_capture_sort_key
- CROSS JOIN source_metadata_heads h ON h.generation_id=p.generation_id
- CROSS JOIN content_versions v ON v.blob_hash=h.source_sha256
- CROSS JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id
- CROSS JOIN photo_files f ON f.node_id=n.id
- CROSS JOIN photo_assets a ON a.asset_id=f.asset_id AND a.display_file_id=f.file_id`,
-			"p.capture_sort_key", true
+		return `photo_timeline pl INDEXED BY photo_timeline_sort_key
+ CROSS JOIN photo_files f ON f.file_id=pl.file_id
+ CROSS JOIN photo_assets a ON a.asset_id=f.asset_id AND a.display_file_id=f.file_id
+ CROSS JOIN nodes n ON n.id=f.node_id
+ CROSS JOIN content_versions v ON v.version_id=n.current_version_id
+ LEFT JOIN source_metadata_heads h ON h.source_sha256=v.blob_hash
+ LEFT JOIN photo_technical_metadata p ON p.generation_id=h.generation_id`,
+			"pl.sort_key", true
 	case "import_time":
 		return `nodes n INDEXED BY nodes_photo_import` + photoBrowseNodeJoins, "n.created_at", true
 	case "name":
@@ -316,7 +322,7 @@ func photoBrowseOrder(field string) (from, key string, ok bool) {
 
 func photoBrowseMissingKey(field string) string {
 	if field == "capture_time" {
-		return "COALESCE(p.capture_sort_key,'')"
+		return "COALESCE(pl.sort_key,'')"
 	}
 	_, key, _ := photoBrowseOrder(field)
 	return key
@@ -429,7 +435,7 @@ func rankedPhotoRows(ctx context.Context, q metadataQuerier, compiled CompiledQu
 	}
 	ranking += ` SELECT ` + photoBrowseSelect + `,'' FROM ranked member
  CROSS JOIN photo_assets a ON a.asset_id=member.asset_id ` + strings.TrimPrefix(photoBrowseDisplayFrom, `photo_assets a`) +
-		` WHERE ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(compiled.photoHidden) + ` ORDER BY member.tier ` + order + `,member.score ` + order + `,COALESCE(p.capture_sort_key,'') DESC,member.asset_id ASC LIMIT ?`
+		` WHERE ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(compiled.photoHidden) + ` ORDER BY member.tier ` + order + `,member.score ` + order + `,COALESCE(pl.sort_key,'') DESC,member.asset_id ASC LIMIT ?`
 	args = append(args, pageSize)
 	statement, args, err := bindQueryPopulation(compiledQueryFragment{args: args, relations: population.relations}, coverage, generation)
 	if err != nil {
@@ -447,14 +453,16 @@ func rankedPhotoRows(ctx context.Context, q metadataQuerier, compiled CompiledQu
 	return scanPhotoBrowseRows(rows, PhotoBrowsePosition{})
 }
 
-var photoBrowseSelect = `a.asset_id,a.kind,a.revision,f.file_id,n.id,v.version_id,n.name,COALESCE(v.mime_type,''),n.created_at,v.blob_hash,f.rotation,` + photoTechnicalSelect
+var photoBrowseSelect = `a.asset_id,a.kind,a.revision,f.file_id,n.id,v.version_id,n.name,COALESCE(v.mime_type,''),n.created_at,v.blob_hash,f.rotation,` +
+	// Set only when the file's mtime, not a capture date, placed the photo.
+	`pl.modified_time,` + photoTechnicalSelect
 
 func scanPhotoBrowseRows(rows *sql.Rows, position PhotoBrowsePosition) ([]PhotoBrowseRow, error) {
 	defer func() { _ = rows.Close() }()
 	result := make([]PhotoBrowseRow, 0)
 	for rows.Next() {
 		row := PhotoBrowseRow{position: position}
-		dest := []any{&row.AssetID, &row.Kind, &row.Revision, &row.DisplayFileID, &row.NodeID, &row.ContentVersionID, &row.Name, &row.MediaType, &row.ImportTime, &row.sourceHash, &row.Rotation}
+		dest := []any{&row.AssetID, &row.Kind, &row.Revision, &row.DisplayFileID, &row.NodeID, &row.ContentVersionID, &row.Name, &row.MediaType, &row.ImportTime, &row.sourceHash, &row.Rotation, &row.FileModifiedTime}
 		dest = append(dest, row.Fields.columnPointers()...)
 		dest = append(dest, &row.position.Key)
 		if err := rows.Scan(dest...); err != nil {

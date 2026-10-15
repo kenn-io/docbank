@@ -25,9 +25,9 @@ func TestPhotoTimelineCLICountsPhotos(t *testing.T) {
 	facet := timeline.Facets[0]
 	require.True(t, facet.Available)
 	assert.Equal(t, int64(1), *facet.Total)
-	assert.Equal(t, int64(1), *facet.Missing)
+	assert.Zero(t, *facet.Missing, "the file modified time places a photo without EXIF")
 
-	out, err = runCLI(t, "photos", "timeline", "--query", `{"filters":{"capture_after":"2024-01-01"}}`)
+	out, err = runCLI(t, "photos", "timeline", "--query", `{"filters":{"capture_before":"2000-01-01"}}`)
 	require.NoError(t, err, out)
 	require.NoError(t, json.Unmarshal([]byte(out), &timeline), out)
 	assert.Equal(t, int64(0), *timeline.Facets[0].Total)

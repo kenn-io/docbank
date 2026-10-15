@@ -204,6 +204,7 @@ func TestEveryReleasedSchemaFixtureUpgrades(t *testing.T) {
 				db, legacy := newReleasedFixtureStore(t, path, driver.driver, schema, version)
 				node := createReleasedFixtureFile(t, legacy, "released.jpg", fakeHash("e5"), 8, "image/jpeg")
 				seedReleasedPhotoAsset(t, db, node.ID)
+				seedReleasedMtime(t, db, node.ID, "2024-03-05T10:00:00Z")
 				require.NoError(t, db.Close())
 				s, err := Open(path, driver.driver)
 				require.NoError(t, err)
@@ -225,6 +226,10 @@ func TestEveryReleasedSchemaFixtureUpgrades(t *testing.T) {
 				faces, _, err := s.PhotoFaces(t.Context(), currentNode.CurrentVersionID)
 				require.NoError(t, err)
 				require.Equal(t, []PhotoFace{face}, faces)
+				page, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: snapshotTestQuery(t, `{"sort":{"field":"capture_time","direction":"desc"}}`)}, nil)
+				require.NoError(t, err)
+				require.Len(t, page.Items, 1)
+				require.Equal(t, "2024-03-05T10:00:00Z", *page.Items[0].FileModifiedTime, "an EXIF-less photo is placed by its released mtime")
 			})
 		}
 	}
@@ -628,5 +633,28 @@ func TestJSONLOmittedPhotoMarkSurvivesFaceRetraction(t *testing.T) {
 			require.Equal(t, personAssertionActionAssert, assertions[0].Action)
 			require.NoError(t, restored.ValidateMetadata(ctx))
 		})
+	}
+}
+
+// seedReleasedMtime records an operational ingest observation of the node's current bytes.
+func seedReleasedMtime(t *testing.T, db *sql.DB, nodeID int64, mtime string) {
+	t.Helper()
+	const at = "2026-10-05T12:00:00.000000000Z"
+	var versionID, ingestID string
+	require.NoError(t, db.QueryRow("SELECT current_version_id FROM nodes WHERE id=?", nodeID).Scan(&versionID))
+	ingestID = "40000000-0000-4000-8000-000000000010"
+	fact := metadataProvenance{Type: metadataProvenanceType, NodeID: nodeID, IngestID: ingestID, OriginalPath: "/shots/released.jpg", OriginalMTime: &mtime}
+	identity, err := provenanceIdentity(fact)
+	require.NoError(t, err)
+	for _, statement := range []struct {
+		query string
+		args  []any
+	}{
+		{"INSERT INTO ingests(id,started_at,source_kind,source_desc) VALUES(?,?,?,?)", []any{ingestID, at, "cli", "released"}},
+		{"INSERT INTO provenance(identity,node_id,ingest_id,original_path,original_mtime) VALUES(?,?,?,?,?)", []any{identity, nodeID, ingestID, "/shots/released.jpg", mtime}},
+		{"INSERT INTO provenance_version_bindings(provenance_identity,content_version_id,observed_at,basis_ref) VALUES(?,?,?,?)", []any{identity, versionID, at, provenanceVersionBindingBasis}},
+	} {
+		_, err := db.Exec(statement.query, statement.args...)
+		require.NoError(t, err)
 	}
 }

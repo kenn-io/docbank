@@ -498,6 +498,10 @@ one decode of every retained source generation and one gazetteer load when any
 has GPS; it reads no original blobs. A valid GPS pair can have no label when
 the embedded Natural Earth map has no matching country or simplified boundary.
 
+### Photo timeline
+
+Schema 37 adds `photo_timeline`, a derived row per non-sidecar photo file with a placement: the displayed version EXIF capture key and day, else the earliest observed unsuperseded modified time bound to any version with the same bytes. `modified_time` is set only when the mtime placed the photo. Browsing, facets, and date filters read this one indexed key. SQL triggers keep it current as bindings, versions, and technical metadata change. It stays out of metadata JSONL and backups; restore refills it through those triggers.
+
 ### Photo quality signals
 
 Schema 30 adds `photo_quality_signals`, a derived row per content version and evaluator fingerprint. It records focus, blur, brightness, color, framing, and aesthetics from the verified grid preview, or an unavailable result. It stays out of metadata JSONL and backups; the quality worker rebuilds it from ready previews.

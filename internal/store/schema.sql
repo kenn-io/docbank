@@ -554,10 +554,6 @@ CREATE INDEX IF NOT EXISTS photo_technical_metadata_lens
     ON photo_technical_metadata(lens_make_folded, lens_model_folded);
 CREATE INDEX IF NOT EXISTS photo_technical_metadata_iso
     ON photo_technical_metadata(iso);
-CREATE INDEX IF NOT EXISTS photo_technical_metadata_capture_sort_key
-    ON photo_technical_metadata(capture_sort_key);
-CREATE INDEX IF NOT EXISTS photo_technical_metadata_capture_date
-    ON photo_technical_metadata(capture_date);
 CREATE INDEX IF NOT EXISTS photo_technical_metadata_location
     ON photo_technical_metadata(latitude, longitude);
 
@@ -2224,6 +2220,128 @@ CREATE TABLE IF NOT EXISTS photo_files (
 CREATE INDEX IF NOT EXISTS photo_files_asset ON photo_files(asset_id, role, file_id);
 CREATE INDEX IF NOT EXISTS photo_files_sidecar ON photo_files(sidecar_of_file_id);
 CREATE INDEX IF NOT EXISTS photo_files_sidecar_nodes ON photo_files(node_id) WHERE role='sidecar';
+
+-- Where each non-sidecar photo file sits on the timeline: the displayed
+-- version's EXIF capture key and day when it has them, else the recorded
+-- modified time of the same bytes, so sort, grouping, counts, and date filters
+-- read one indexed column. modified_time is set only when the mtime placed the
+-- photo. The mtime is the earliest observed unsuperseded claim bound to
+-- any version of the node with the displayed blob, so a revert regains the
+-- original date; finding it below walks provenance.supersedes the same way
+-- loadBoundDocumentEventEvidence does (document_events_evidence.go).
+-- The mtime key pads the canonical UTC RFC3339Nano fraction to the fixed
+-- nine digits query.CaptureTimeKey produces, so EXIF and mtime keys sort together.
+-- Derived like photo_technical_metadata: absent from export, refilled by the
+-- triggers below when restore inserts the facts they watch. These triggers have
+-- no recipe marker, so changing them or the key format needs a schema bump.
+CREATE TABLE IF NOT EXISTS photo_timeline (
+    file_id       TEXT PRIMARY KEY REFERENCES photo_files(file_id) ON DELETE CASCADE,
+    sort_key      TEXT NOT NULL,
+    day           TEXT NOT NULL,
+    modified_time TEXT
+);
+CREATE INDEX IF NOT EXISTS photo_timeline_sort_key ON photo_timeline(sort_key);
+
+-- Writers queue a node here; the trigger below recomputes its row once and
+-- empties the queue, so the recomputation is written in one place.
+CREATE TABLE IF NOT EXISTS photo_timeline_pending (node_id INTEGER PRIMARY KEY);
+
+CREATE TRIGGER IF NOT EXISTS photo_timeline_refresh AFTER INSERT ON photo_timeline_pending BEGIN
+    DELETE FROM photo_timeline WHERE file_id IN (SELECT file_id FROM photo_files WHERE node_id = NEW.node_id);
+    INSERT INTO photo_timeline(file_id, sort_key, day, modified_time)
+    SELECT file_id,
+        COALESCE(exif_key, substr(mtime, 1, 19) || '.' || substr(
+            CASE WHEN substr(mtime, 20, 1) = '.' THEN substr(mtime, 21, length(mtime) - 21) ELSE '' END
+            || '000000000', 1, 9)),
+        COALESCE(exif_day, substr(mtime, 1, 10)),
+        CASE WHEN exif_key IS NULL THEN mtime END
+    FROM (
+        SELECT f.file_id,
+            (SELECT NULLIF(t.capture_sort_key, '') FROM source_metadata_heads h
+                JOIN photo_technical_metadata t ON t.generation_id = h.generation_id
+                WHERE h.source_sha256 = v.blob_hash) AS exif_key,
+            (SELECT NULLIF(t.capture_date, '') FROM source_metadata_heads h
+                JOIN photo_technical_metadata t ON t.generation_id = h.generation_id
+                WHERE h.source_sha256 = v.blob_hash) AS exif_day,
+            -- The supersedes walk mirrors loadBoundDocumentEventEvidence (document_events_evidence.go).
+            (WITH RECURSIVE chain(observed_at, identity) AS (
+                SELECT b.observed_at, b.provenance_identity FROM content_versions cv
+                JOIN provenance_version_bindings b ON b.content_version_id = cv.version_id
+                WHERE cv.node_id = f.node_id AND cv.blob_hash = v.blob_hash
+                UNION ALL SELECT chain.observed_at, p.identity FROM chain JOIN provenance p ON p.supersedes = chain.identity)
+             SELECT c.original_mtime FROM chain JOIN provenance c ON c.identity = chain.identity
+             WHERE c.original_mtime IS NOT NULL AND substr(c.original_mtime, 1, 4) <> '0000'
+                AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes = c.identity)
+             ORDER BY chain.observed_at ASC, c.identity ASC LIMIT 1) AS mtime
+        FROM photo_files f
+        JOIN nodes n ON n.id = f.node_id
+        JOIN content_versions v ON v.version_id = n.current_version_id
+        WHERE f.node_id = NEW.node_id AND f.role <> 'sidecar')
+    WHERE exif_key IS NOT NULL OR mtime IS NOT NULL;
+    DELETE FROM photo_timeline_pending WHERE node_id = NEW.node_id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_timeline_file_insert AFTER INSERT ON photo_files BEGIN
+    INSERT OR REPLACE INTO photo_timeline_pending(node_id) VALUES(NEW.node_id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_timeline_role_change AFTER UPDATE OF role ON photo_files BEGIN
+    INSERT OR REPLACE INTO photo_timeline_pending(node_id) VALUES(NEW.node_id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_timeline_version_delete AFTER DELETE ON content_versions BEGIN
+    INSERT OR REPLACE INTO photo_timeline_pending(node_id)
+    SELECT node_id FROM photo_files WHERE node_id = OLD.node_id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_timeline_version_change
+AFTER UPDATE OF current_version_id ON nodes
+WHEN NEW.current_version_id IS NOT OLD.current_version_id
+    AND EXISTS (SELECT 1 FROM photo_files WHERE node_id = NEW.id) BEGIN
+    INSERT OR REPLACE INTO photo_timeline_pending(node_id) VALUES(NEW.id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_timeline_binding_insert AFTER INSERT ON provenance_version_bindings BEGIN
+    INSERT OR REPLACE INTO photo_timeline_pending(node_id)
+    SELECT f.node_id FROM content_versions v JOIN photo_files f ON f.node_id = v.node_id
+    WHERE v.version_id = NEW.content_version_id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_timeline_correction_insert AFTER INSERT ON provenance
+WHEN NEW.supersedes IS NOT NULL BEGIN
+    INSERT OR REPLACE INTO photo_timeline_pending(node_id)
+    SELECT node_id FROM photo_files WHERE node_id = NEW.node_id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_timeline_technical_insert AFTER INSERT ON photo_technical_metadata BEGIN
+    -- DISTINCT: several content_versions rows can share a blob_hash after a revert.
+    INSERT OR REPLACE INTO photo_timeline_pending(node_id)
+    SELECT DISTINCT f.node_id FROM source_metadata_heads h
+    JOIN content_versions v ON v.blob_hash = h.source_sha256
+    JOIN photo_files f ON f.node_id = v.node_id WHERE h.generation_id = NEW.generation_id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_timeline_technical_delete AFTER DELETE ON photo_technical_metadata BEGIN
+    -- DISTINCT: several content_versions rows can share a blob_hash after a revert.
+    INSERT OR REPLACE INTO photo_timeline_pending(node_id)
+    SELECT DISTINCT f.node_id FROM source_metadata_heads h
+    JOIN content_versions v ON v.blob_hash = h.source_sha256
+    JOIN photo_files f ON f.node_id = v.node_id WHERE h.generation_id = OLD.generation_id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_timeline_head_insert AFTER INSERT ON source_metadata_heads BEGIN
+    -- DISTINCT: several content_versions rows can share a blob_hash after a revert.
+    INSERT OR REPLACE INTO photo_timeline_pending(node_id)
+    SELECT DISTINCT f.node_id FROM content_versions v JOIN photo_files f ON f.node_id = v.node_id
+    WHERE v.blob_hash = NEW.source_sha256;
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_timeline_head_update AFTER UPDATE ON source_metadata_heads BEGIN
+    -- DISTINCT: several content_versions rows can share a blob_hash after a revert.
+    INSERT OR REPLACE INTO photo_timeline_pending(node_id)
+    SELECT DISTINCT f.node_id FROM content_versions v JOIN photo_files f ON f.node_id = v.node_id
+    WHERE v.blob_hash = NEW.source_sha256;
+END;
 
 CREATE TABLE IF NOT EXISTS photo_sidecar_considered (
     sidecar_file_id      TEXT PRIMARY KEY REFERENCES photo_files(file_id) ON DELETE CASCADE,

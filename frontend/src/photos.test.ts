@@ -2059,6 +2059,7 @@ it.each(["fresh", "unlocated", "missing", "aborted"])(
       revision: 2,
       name: fresh.name,
       capture_time: fresh.capture_time,
+      file_modified_time: null,
       width_px: 600,
       height_px: 400,
       latitude: 3,

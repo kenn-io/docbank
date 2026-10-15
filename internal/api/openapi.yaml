@@ -12169,6 +12169,12 @@ components:
           type:
             - number
             - "null"
+        file_modified_time:
+          description: Set only when the file modified time, not a capture date, placed the photo.
+          format: date-time
+          type:
+            - string
+            - "null"
         focal_length_mm:
           format: double
           type:
@@ -12260,6 +12266,7 @@ components:
         - media_type
         - import_time
         - capture_time
+        - file_modified_time
         - capture_time_precision
         - capture_time_timezone
         - capture_time_offset
@@ -12693,6 +12700,12 @@ components:
           type:
             - string
             - "null"
+        file_modified_time:
+          description: Set only when the file modified time, not a capture date, placed the photo.
+          format: date-time
+          type:
+            - string
+            - "null"
         height_px:
           format: int64
           type:
@@ -12735,6 +12748,7 @@ components:
         - revision
         - name
         - capture_time
+        - file_modified_time
         - width_px
         - height_px
         - latitude
