@@ -207,8 +207,13 @@ describe("snapshot transport and receipt validation", () => {
       ),
     );
     await expect(
-      createSnapshot("session", query, {}, new AbortController().signal),
-    ).rejects.toThrow(/does not match the request/i);
+      createSnapshot(
+        "session",
+        query,
+        { page_size: 50, facets: ["tags"] },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow(/query does not match the request/i);
   });
 
   it("bounds chunked successful response decoding to 32 MiB", async () => {

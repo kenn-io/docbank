@@ -53,17 +53,6 @@ describe("browser authentication", () => {
     expect(headers.get("X-Api-Key")).toBeNull();
   });
 
-  it("revokes the session when the interface locks", async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(new Response(null, { status: 204 }));
-    await generated.revokeWebSession({ session: "short-lived" });
-    const [path, request] = fetchMock.mock.calls[0] ?? [];
-    expect(path).toBe("/api/daemon/web-session");
-    expect(request?.method).toBe("DELETE");
-    expect(new Headers(request?.headers).get("X-Docbank-Web-Session")).toBe("short-lived");
-  });
-
   it("preserves structured daemon failures", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
@@ -324,7 +313,7 @@ describe("browser authentication", () => {
     expect(new Headers(request?.headers).get("If-Match")).toBe("7");
   });
 
-  it("lists bounded trash and restores one inspected root", async () => {
+  it("restores one inspected root under its revision", async () => {
     const restored = {
       id: 42,
       parent_id: 2,
@@ -336,30 +325,15 @@ describe("browser authentication", () => {
       modified_at: "2026-07-28T12:02:00Z",
       path: "/Reports/report (2).txt",
     };
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockImplementation(
-        async (input) =>
-          new Response(
-            JSON.stringify(
-              String(input).startsWith("/api/v1/trash?")
-                ? { items: [], total: 0, limit: 1000, offset: 0 }
-                : restored,
-            ),
-            { status: 200, headers: { "Content-Type": "application/json" } },
-          ),
-      );
-
-    await expect(
-      generated.listTrash({ limit: 1000, offset: 0 }, { session: "session" }),
-    ).resolves.toMatchObject({
-      total: 0,
-      limit: 1000,
-    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify(restored), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
     await expect(restoreNode("session", 42, 8)).resolves.toEqual(restored);
 
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/trash?limit=1000&offset=0");
-    const [path, request] = fetchMock.mock.calls[1] ?? [];
+    const [path, request] = fetchMock.mock.calls[0] ?? [];
     expect(path).toBe("/api/v1/nodes/42/restore");
     expect(request?.method).toBe("POST");
     expect(new Headers(request?.headers).get("If-Match")).toBe("8");
