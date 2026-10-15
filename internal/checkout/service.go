@@ -273,7 +273,8 @@ func (s Service) reconcile(ctx context.Context, c store.PhotoCheckout) error {
 			seen[e.Path] = true
 			matches, err := observeCheckoutFile(ctx, root, e)
 			if err != nil {
-				fsErr = errors.Join(fsErr, fmt.Errorf("file %s at %q: %w", e.FileID, e.Path, err))
+				// An unreadable unrecorded copy may still need its frozen source.
+				return fmt.Errorf("file %s at %q: %w", e.FileID, e.Path, err)
 			}
 			if matches {
 				observed = append(observed, e.FileID)
