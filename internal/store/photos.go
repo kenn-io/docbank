@@ -265,9 +265,6 @@ func writePhotoReceiptTx(ctx context.Context, tx *sql.Tx, receipt photoReceipt) 
 	if receipt.Operation == "face_decision" || receipt.Operation == "authored" || receipt.Operation == "authored_undo" || receipt.Operation == "authored_sidecar" {
 		marshal = func(v any) (string, error) {
 			b, err := json.Marshal(v, json.Deterministic(true))
-			if len(b) > maxBatchTagReceiptJSONBytes {
-				return "", ErrInvalidPhotoFace
-			}
 			return string(b), err
 		}
 	}
