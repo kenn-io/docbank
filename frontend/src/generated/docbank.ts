@@ -116,6 +116,9 @@ export const PhotoAuthoredLabel = {
   purple: 'purple',
 } as const;
 
+/**
+ * Clockwise degrees on EXIF-normalized pixels: 0, 90, 180, or 270.
+ */
 export type PhotoAuthoredRotation = typeof PhotoAuthoredRotation[keyof typeof PhotoAuthoredRotation];
 
 
@@ -127,10 +130,7 @@ export const PhotoAuthoredRotation = {
 } as const;
 
 export interface PhotoAuthored {
-  /**
-     * At most 16384 UTF-8 bytes.
-     * @maxLength 16384
-     */
+  /** At most 16384 UTF-8 bytes. */
   caption: string;
   /**
      * Confirmation mask. See PhotoFile.confirmed_fields for supported bits.
@@ -138,15 +138,9 @@ export interface PhotoAuthored {
      * @maximum 127
      */
   confirmed_fields?: number;
-  /**
-     * At most 16384 UTF-8 bytes.
-     * @maxLength 16384
-     */
+  /** At most 16384 UTF-8 bytes. */
   copyright: string;
-  /**
-     * At most 16384 UTF-8 bytes.
-     * @maxLength 16384
-     */
+  /** At most 16384 UTF-8 bytes. */
   creator: string;
   flag: PhotoAuthoredFlag;
   label: PhotoAuthoredLabel;
@@ -155,6 +149,7 @@ export interface PhotoAuthored {
      * @maximum 5
      */
   rating: number;
+  /** Clockwise degrees on EXIF-normalized pixels: 0, 90, 180, or 270. */
   rotation: PhotoAuthoredRotation;
 }
 
@@ -4973,6 +4968,16 @@ export interface PhotoAlbumNameRequest {
   name: string;
 }
 
+export type PhotoAlbumSummaryCoverRotation = typeof PhotoAlbumSummaryCoverRotation[keyof typeof PhotoAlbumSummaryCoverRotation];
+
+
+export const PhotoAlbumSummaryCoverRotation = {
+  NUMBER_0: 0,
+  NUMBER_90: 90,
+  NUMBER_180: 180,
+  NUMBER_270: 270,
+} as const;
+
 export interface PhotoAlbumSummary {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -4980,6 +4985,7 @@ export interface PhotoAlbumSummary {
   cover_asset_id?: string | null;
   /** @nullable */
   cover_generation_id?: string | null;
+  cover_rotation: PhotoAlbumSummaryCoverRotation;
   created_at: string;
   /** @nullable */
   deleted_at?: string | null;
@@ -5049,6 +5055,9 @@ export const PhotoFileRole = {
   sidecar: 'sidecar',
 } as const;
 
+/**
+ * Clockwise degrees on EXIF-normalized pixels: 0, 90, 180, or 270.
+ */
 export type PhotoFileRotation = typeof PhotoFileRotation[keyof typeof PhotoFileRotation];
 
 
@@ -5096,6 +5105,7 @@ export interface PhotoFile {
   /** @minimum 1 */
   revision: number;
   role: PhotoFileRole;
+  /** Clockwise degrees on EXIF-normalized pixels: 0, 90, 180, or 270. */
   rotation: PhotoFileRotation;
   /** @nullable */
   sidecar_of_file_id?: string | null;
@@ -5122,6 +5132,185 @@ export interface PhotoAsset {
   /** @minimum 1 */
   revision: number;
   updated_at: string;
+}
+
+/**
+ * Rotate each target clockwise by 90 degrees.
+ */
+export type PhotoAuthoredEditRequestRotationDelta = typeof PhotoAuthoredEditRequestRotationDelta[keyof typeof PhotoAuthoredEditRequestRotationDelta];
+
+
+export const PhotoAuthoredEditRequestRotationDelta = {
+  NUMBER_90: 90,
+} as const;
+
+export interface PhotoKeywordEdit {
+  assign: boolean;
+  tag_id: string;
+}
+
+/**
+ * @nullable
+ */
+export type PhotoAuthoredPatchFlag = typeof PhotoAuthoredPatchFlag[keyof typeof PhotoAuthoredPatchFlag] | null;
+
+
+export const PhotoAuthoredPatchFlag = {
+  '': '',
+  pick: 'pick',
+  reject: 'reject',
+} as const;
+
+/**
+ * @nullable
+ */
+export type PhotoAuthoredPatchLabel = typeof PhotoAuthoredPatchLabel[keyof typeof PhotoAuthoredPatchLabel] | null;
+
+
+export const PhotoAuthoredPatchLabel = {
+  '': '',
+  red: 'red',
+  yellow: 'yellow',
+  green: 'green',
+  blue: 'blue',
+  purple: 'purple',
+} as const;
+
+/**
+ * Clockwise degrees on EXIF-normalized pixels: 0, 90, 180, or 270.
+ * @nullable
+ */
+export type PhotoAuthoredPatchRotation = typeof PhotoAuthoredPatchRotation[keyof typeof PhotoAuthoredPatchRotation] | null;
+
+
+export const PhotoAuthoredPatchRotation = {
+  NUMBER_0: 0,
+  NUMBER_90: 90,
+  NUMBER_180: 180,
+  NUMBER_270: 270,
+} as const;
+
+export interface PhotoAuthoredPatch {
+  /**
+     * At most 16384 UTF-8 bytes.
+     * @nullable
+     */
+  caption?: string | null;
+  /**
+     * At most 16384 UTF-8 bytes.
+     * @nullable
+     */
+  copyright?: string | null;
+  /**
+     * At most 16384 UTF-8 bytes.
+     * @nullable
+     */
+  creator?: string | null;
+  /** @nullable */
+  flag?: PhotoAuthoredPatchFlag;
+  /** @nullable */
+  label?: PhotoAuthoredPatchLabel;
+  /**
+     * @minimum 0
+     * @maximum 5
+     * @nullable
+     */
+  rating?: number | null;
+  /**
+     * Clockwise degrees on EXIF-normalized pixels: 0, 90, 180, or 270.
+     * @nullable
+     */
+  rotation?: PhotoAuthoredPatchRotation;
+}
+
+export interface PhotoAuthoredEditTarget {
+  asset_id: string;
+  /** @minimum 1 */
+  asset_revision: number;
+  file_id: string;
+  /** @minimum 1 */
+  node_revision: number;
+  /** @minimum 1 */
+  revision: number;
+}
+
+export interface PhotoAuthoredEditRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxItems 100 */
+  keywords?: PhotoKeywordEdit[];
+  patch: PhotoAuthoredPatch;
+  /** Rotate each target clockwise by 90 degrees. */
+  rotation_delta?: PhotoAuthoredEditRequestRotationDelta;
+  /**
+     * @minItems 1
+     * @maxItems 1000
+     */
+  targets: PhotoAuthoredEditTarget[];
+}
+
+export interface PhotoPreparedTarget {
+  asset_id: string;
+  /** @minimum 1 */
+  asset_revision: number;
+  file_id: string;
+  file_name: string;
+  node_id: number;
+  /** @minimum 1 */
+  node_revision: number;
+  /** @minimum 1 */
+  revision: number;
+  tags: string[];
+  values: PhotoAuthored;
+}
+
+export interface PhotoAuthoredPreparation {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  assets: PhotoAsset[];
+  targets: PhotoPreparedTarget[];
+}
+
+export interface PhotoAuthoredPrepareRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxItems 1000 */
+  asset_ids?: string[];
+  coverage?: WorkspaceQueryCoverage;
+  hidden?: boolean;
+  query?: SavedQueryV1Schema;
+  skip_unavailable?: boolean;
+}
+
+export interface PhotoKeywordNode {
+  after_revision: number;
+  node_id: number;
+}
+
+export interface PhotoKeywordDelta {
+  after: boolean;
+  before: boolean;
+  node_id: number;
+  tag_id: string;
+}
+
+export interface PhotoSidecarProvenance {
+  file_id: string;
+  node_id: number;
+  version_id: string;
+}
+
+export interface PhotoAuthoredReceipt {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  after: PhotoAuthoredSnapshot[];
+  before: PhotoAuthoredSnapshot[];
+  keyword_nodes?: PhotoKeywordNode[];
+  keywords?: PhotoKeywordDelta[];
+  /** Empty for a no-op, with empty before and after arrays; no receipt is created. */
+  receipt_id: string;
+  sidecar?: PhotoSidecarProvenance;
+  undo_of?: string;
 }
 
 export interface WorkspaceFacetValue {
@@ -5244,6 +5433,16 @@ export const PhotoBrowseRowQualityState = {
   ready: 'ready',
 } as const;
 
+export type PhotoBrowseRowRotation = typeof PhotoBrowseRowRotation[keyof typeof PhotoBrowseRowRotation];
+
+
+export const PhotoBrowseRowRotation = {
+  NUMBER_0: 0,
+  NUMBER_90: 90,
+  NUMBER_180: 180,
+  NUMBER_270: 270,
+} as const;
+
 export type PhotoBrowseRowQuality = {
   signals: PhotoQualitySignals | null;
   state: PhotoBrowseRowQualityState;
@@ -5293,6 +5492,7 @@ export interface PhotoBrowseRow {
   quality?: PhotoBrowseRowQuality;
   /** @minimum 1 */
   revision: number;
+  rotation: PhotoBrowseRowRotation;
   /** @nullable */
   width_px: number | null;
 }
@@ -5300,6 +5500,16 @@ export interface PhotoBrowseRow {
 export interface PhotoMapRowPreviewsStruct {
   grid: PhotoPreviewSlot;
 }
+
+export type PhotoMapRowRotation = typeof PhotoMapRowRotation[keyof typeof PhotoMapRowRotation];
+
+
+export const PhotoMapRowRotation = {
+  NUMBER_0: 0,
+  NUMBER_90: 90,
+  NUMBER_180: 180,
+  NUMBER_270: 270,
+} as const;
 
 export interface PhotoMapRow {
   asset_id: string;
@@ -5315,6 +5525,7 @@ export interface PhotoMapRow {
   previews: PhotoMapRowPreviewsStruct;
   /** @minimum 1 */
   revision: number;
+  rotation: PhotoMapRowRotation;
   /** @nullable */
   width_px: number | null;
 }
@@ -5365,6 +5576,26 @@ export interface PhotoBrowseRequest {
   page_size?: number;
   projection?: PhotoBrowseRequestProjection;
   query: SavedQueryV1Schema;
+}
+
+export interface Sort {
+  direction: string;
+  field: string;
+}
+
+export interface Query {
+  filters: Filters;
+  mode: string;
+  sort: Sort;
+  syntax: string;
+  text: string;
+  v: number;
+}
+
+export interface PhotoExportSelection {
+  asset_ids?: string[];
+  hidden: boolean;
+  query: Query;
 }
 
 export interface PhotoFace {
@@ -5502,6 +5733,14 @@ export interface PhotoRejectsRequest {
   query: SavedQueryV1Schema;
 }
 
+export interface PhotoRenderProfile {
+  format: string;
+  include_metadata: boolean;
+  long_edge: number;
+  quality?: number;
+  remove_gps: boolean;
+}
+
 /**
  * @nullable
  */
@@ -5620,11 +5859,13 @@ export interface Plan {
   created_at: string;
   document_rows?: number;
   duplicate_policy?: string;
+  embedded_previews?: number;
   expires_at: string;
   fingerprint: string;
   format: string;
   id: string;
   metadata_bytes: number;
+  photo_render?: PhotoRenderProfile;
   role_bytes: number;
   role_entries: number;
   roles: RolePolicy[];
@@ -5667,6 +5908,7 @@ export interface PlanRequest {
   duplicate_policy?: string;
   member_hash: string;
   operation_id: string;
+  photo_render?: PhotoRenderProfile;
   publications?: PublicationSelection[];
   roles: RolePolicy[];
   source_id: string;
@@ -6078,24 +6320,47 @@ export interface ProvenancePage {
   total: number;
 }
 
+export interface PushSourceCursor {
+  /** @pattern ^[0-9a-f]{64}$ */
+  hash: string;
+  /** @minimum 1 */
+  node_id: number;
+  /** @minimum 0 */
+  size: number;
+  source_ref: string;
+  trashed: boolean;
+}
+
+export interface PushSourcePage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: PushSourceCursor[];
+  next?: string;
+}
+
+export type PushUploadReceiptStatus = typeof PushUploadReceiptStatus[keyof typeof PushUploadReceiptStatus];
+
+
+export const PushUploadReceiptStatus = {
+  added: 'added',
+  updated: 'updated',
+  skipped: 'skipped',
+} as const;
+
+export interface PushUploadReceipt {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  computed_hash: string;
+  computed_size: number;
+  node: Node;
+  status: PushUploadReceiptStatus;
+}
+
 export interface PutExportChunkRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   members: Member[];
-}
-
-export interface Sort {
-  direction: string;
-  field: string;
-}
-
-export interface Query {
-  filters: Filters;
-  mode: string;
-  sort: Sort;
-  syntax: string;
-  text: string;
-  v: number;
 }
 
 export interface QueryDependency {
@@ -6786,6 +7051,7 @@ export interface SourceRequest {
   members?: Member[];
   node_ids?: number[];
   operation_id: string;
+  photos?: PhotoExportSelection;
   query?: Query;
   saved_query_id?: string;
   saved_query_revision?: number;
@@ -7511,6 +7777,14 @@ nonce: string;
 };
 
 export type ChallengeDaemon200 = {
+  proof: string;
+};
+
+export type ChallengeAPIKeyParams = {
+nonce: string;
+};
+
+export type ChallengeAPIKey200 = {
   proof: string;
 };
 
@@ -8312,6 +8586,71 @@ export type SetPhotoSettingsHeaders = {
 'If-Match': string;
 };
 
+export type ListPushSourcesParams = {
+/**
+ * @maxLength 64
+ */
+push_name: string;
+/**
+ * @maxLength 4096
+ */
+after?: string;
+/**
+ * @minimum 1
+ * @maximum 1000
+ */
+limit?: number;
+};
+
+export type UploadPushFileParams = {
+/**
+ * Virtual filename; must equal the multipart filename
+ * @minLength 1
+ */
+name: string;
+/**
+ * Absolute virtual directory for a new source; missing directories are created with its node
+ * @maxLength 4096
+ */
+parent_path: string;
+/**
+ * Portable push identity; lowercase letters, digits, -, _, .
+ * @maxLength 64
+ */
+push_name: string;
+/**
+ * Canonical relative slash path
+ * @maxLength 4096
+ */
+source_ref: string;
+/**
+ * Original source modification time in canonical UTC RFC3339Nano
+ * @maxLength 64
+ */
+modified_at?: string;
+/**
+ * UUIDv4 naming the client's scan; every file one run accepts joins one ingest run
+ */
+run_id: string;
+};
+
+export type UploadPushFileHeaders = {
+/**
+ * Expected lowercase hexadecimal SHA-256 of the file payload
+ * @pattern ^[0-9a-f]{64}$
+ */
+'X-Docbank-Blob-Hash': string;
+/**
+ * Expected raw file byte length
+ * @minimum 0
+ */
+'X-Docbank-Blob-Size': string;
+};
+
+export type UploadPushFileBody = {
+  file: Blob | File;
+};
+
 export type ReadRenditionTextParams = {
 /**
  * @minimum 1
@@ -8552,6 +8891,34 @@ export const getChallengeDaemonUrl = (params: ChallengeDaemonParams,) => {
 export const challengeDaemon = async (params: ChallengeDaemonParams, options?: Parameters<typeof sessionJSON>[1]): Promise<ChallengeDaemon200> => {
 
   return sessionJSON<ChallengeDaemon200>(getChallengeDaemonUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getChallengeAPIKeyUrl = (params: ChallengeAPIKeyParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/daemon/key-challenge?${stringifiedParams}` : `/api/daemon/key-challenge`
+}
+
+export const challengeAPIKey = async (params: ChallengeAPIKeyParams, options?: Parameters<typeof sessionJSON>[1]): Promise<ChallengeAPIKey200> => {
+
+  return sessionJSON<ChallengeAPIKey200>(getChallengeAPIKeyUrl(params),
   {
     ...options,
     method: 'GET'
@@ -15674,6 +16041,107 @@ return sessionJSON<PhotoAsset>(getUnhidePhotoAssetUrl(assetId),
 
 
 
+export const getEditPhotoAuthoredUrl = () => {
+
+
+
+
+  return `/api/v1/photos/authored/edit`
+}
+
+/**
+ * A no-op returns an empty receipt_id and empty before and after arrays. It creates no receipt and leaves the last real edit undoable.
+ * @summary Edit photo fields and keywords atomically
+ */
+export const editPhotoAuthored = async (photoAuthoredEditRequest: NonReadonly<PhotoAuthoredEditRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAuthoredReceipt> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoAuthoredReceipt>(getEditPhotoAuthoredUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(photoAuthoredEditRequest)
+  }
+);}
+
+
+
+export const getPreparePhotoAuthoredUrl = () => {
+
+
+
+
+  return `/api/v1/photos/authored/prepare`
+}
+
+/**
+ * @summary Resolve a revision-bound metadata editing session
+ */
+export const preparePhotoAuthored = async (photoAuthoredPrepareRequest: NonReadonly<PhotoAuthoredPrepareRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAuthoredPreparation> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoAuthoredPreparation>(getPreparePhotoAuthoredUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(photoAuthoredPrepareRequest)
+  }
+);}
+
+
+
+export const getUndoPhotoAuthoredUrl = (receiptId: string,) => {
+
+
+
+
+  return `/api/v1/photos/authored/${encodeURIComponent(String(receiptId))}/undo`
+}
+
+/**
+ * @summary Undo photo fields and keywords if their revisions still match
+ */
+export const undoPhotoAuthored = async (receiptId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAuthoredReceipt> => {
+
+  return sessionJSON<PhotoAuthoredReceipt>(getUndoPhotoAuthoredUrl(receiptId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
 export const getUndoPhotoFaceDecisionUrl = (receiptId: string,
     params?: UndoPhotoFaceDecisionParams,) => {
   const normalizedParams = new URLSearchParams();
@@ -16598,6 +17066,88 @@ return sessionJSON<DocumentSourceFenceResolution>(getResolveDocumentSourceFenceU
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(documentSourceFenceResolveRequest)
+  }
+);}
+
+
+
+export const getListPushSourcesUrl = (params: ListPushSourcesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/push/sources?${stringifiedParams}` : `/api/v1/push/sources`
+}
+
+/**
+ * Pages through one push name's cursors in source_ref byte order. Before a push accepts a source, the cursor of a daemon watch with the same name and source_ref stands in for it. A cursor can differ from its node's current version. A push name that matches a configured daemon watch is refused with push_name_in_use.
+ * @summary List the last accepted bytes of a push name's sources
+ */
+export const listPushSources = async (params: ListPushSourcesParams, options?: Parameters<typeof sessionJSON>[1]): Promise<PushSourcePage> => {
+
+  return sessionJSON<PushSourcePage>(getListPushSourcesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getUploadPushFileUrl = (params: UploadPushFileParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/push/uploads?${stringifiedParams}` : `/api/v1/push/uploads`
+}
+
+/**
+ * Streams exactly one multipart field named `file`. X-Docbank-Blob-Hash and X-Docbank-Blob-Size are required declarations for the file payload, not the multipart envelope. Success grants node/blob authority only after both match. Records push provenance atomically. Existing source identities keep their node and version changed source bytes; parent_path and name place only new nodes. A new identity always gets its own node.
+ * @summary Upload one digest-checked push source
+ */
+export const uploadPushFile = async (uploadPushFileBody: UploadPushFileBody,
+    params: UploadPushFileParams,
+    headers: UploadPushFileHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PushUploadReceipt> => {
+    const formData = new FormData();
+formData.append(`file`, uploadPushFileBody.file);
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PushUploadReceipt>(getUploadPushFileUrl(params),
+  {
+    ...options,
+    method: 'POST',
+    headers: { ...headers, ...getHeaders(options?.headers) },
+    body: formData
   }
 );}
 
