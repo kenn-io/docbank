@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"path"
+	"sync"
 	"time"
 	"uuid"
 
@@ -72,7 +73,7 @@ func Run(ctx context.Context, connection *daemonconn.Connection, opts Options) (
 	if opts.Watch {
 		err = scanner.Run(ctx)
 	} else {
-		err = scanner.ScanOnce(ctx)
+		err = scanner.ScanOnce(ctx, 8)
 	}
 	if report.Failed > 0 {
 		err = errors.Join(err, fmt.Errorf("%w: %d failed", ErrFilesFailed, report.Failed))
@@ -86,6 +87,7 @@ func Run(ctx context.Context, connection *daemonconn.Connection, opts Options) (
 // push: an upload whose response was lost, a trashed or purged document, or
 // another producer can change the daemon's cursors between scans.
 type pusher struct {
+	mu         sync.Mutex // Serialize client state and callbacks while uploads overlap.
 	connection *daemonconn.Connection
 	opts       Options
 	report     *Report
@@ -94,11 +96,14 @@ type pusher struct {
 	cursorErr  error
 	runScan    uint64
 	runID      string
+	uploads    map[string]chan struct{} // First digest byte bounds this to 256 slots.
 }
 
 // reject reports a file or subdirectory the scanner could not read. The
 // scanner reports it once and continues with the rest of the folder.
 func (p *pusher) reject(_ context.Context, ref string, err error) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.report.Failed++
 	if p.opts.Failure != nil {
 		return p.opts.Failure(ref, err)
@@ -127,6 +132,8 @@ func (p *pusher) process(ctx context.Context, file ingest.FolderFile) error {
 	if err != nil {
 		return p.fail(ctx, file, err)
 	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	switch outcome {
 	case "added":
 		p.report.Added++
@@ -161,11 +168,7 @@ func (p *pusher) fail(ctx context.Context, file ingest.FolderFile, err error) er
 		}
 		return fmt.Errorf("%w: %w", ingest.ErrRetryLater, changed)
 	}
-	p.report.Failed++
-	if p.opts.Failure != nil {
-		return p.opts.Failure(file.Ref, err)
-	}
-	return nil
+	return p.reject(ctx, file.Ref, err)
 }
 
 func stopsRun(err error) bool {
@@ -201,7 +204,9 @@ func (p *pusher) push(ctx context.Context, file ingest.FolderFile) (string, erro
 	if err != nil {
 		return "", err
 	}
+	p.mu.Lock()
 	cursor, known := p.cursors[file.Ref]
+	p.mu.Unlock()
 	if known && cursor.Trashed {
 		return "", fmt.Errorf("archived document %d is in trash; restore it to push this file", cursor.NodeID)
 	}
@@ -212,14 +217,22 @@ func (p *pusher) push(ctx context.Context, file ingest.FolderFile) (string, erro
 	if err != nil {
 		return "", err
 	}
+	p.mu.Lock()
 	if file.Scan != p.runScan {
 		p.runScan, p.runID = file.Scan, uuid.NewV4().String()
 	}
+	runID := p.runID
+	p.mu.Unlock()
+	release, err := p.beginUpload(ctx, digest)
+	if err != nil {
+		return "", err
+	}
+	defer release()
 	receipt, err := p.connection.PushUpload(ctx, store.PushSource{
 		Name: p.opts.Folder.Name, Ref: file.Ref,
 		ModifiedAt: file.Info.ModTime().UTC().Format(time.RFC3339Nano),
 	}, store.PushContent{
-		RunID:      p.runID,
+		RunID:      runID,
 		ParentPath: path.Join(p.opts.Folder.Destination, path.Dir(file.Ref)),
 		Name:       path.Base(file.Ref), Hash: digest, Size: file.Info.Size(), MIMEType: mimeType,
 	}, contextReader{ctx: ctx, reader: file.File})
@@ -239,10 +252,38 @@ func (p *pusher) push(ctx context.Context, file ingest.FolderFile) (string, erro
 		}
 		return "", err
 	}
+	p.mu.Lock()
 	p.cursors[file.Ref] = api.PushSourceCursor{
 		SourceRef: file.Ref, NodeID: receipt.Node.ID, Hash: digest, Size: file.Info.Size(),
 	}
+	p.mu.Unlock()
 	return receipt.Status, nil
+}
+
+// beginUpload holds a bounded content stripe through the metadata receipt.
+// A duplicate must wait for the upload that restores missing physical authority.
+func (p *pusher) beginUpload(ctx context.Context, digest string) (func(), error) {
+	p.mu.Lock()
+	if p.uploads == nil {
+		p.uploads = make(map[string]chan struct{})
+	}
+	slot := p.uploads[digest[:2]]
+	if slot == nil {
+		slot = make(chan struct{}, 1)
+		p.uploads[digest[:2]] = slot
+	}
+	p.mu.Unlock()
+	select {
+	case slot <- struct{}{}:
+		release := func() { <-slot }
+		if err := ctx.Err(); err != nil {
+			release()
+			return nil, err
+		}
+		return release, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // detectMIME sniffs the file head and leaves the file positioned at its start.

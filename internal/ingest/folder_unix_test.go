@@ -24,7 +24,7 @@ func TestFolderScanNeverFollowsSymlinksAndRejectsRootReplacement(t *testing.T) {
 	count := 0
 	scanner, err := NewFolderScanner(config.WatchConfig{Name: "laptop", Source: dir, Destination: "/archive", SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(time.Second)}, func(_ context.Context, _ FolderFile) error { count++; return nil }, failOnReject(t))
 	require.NoError(t, err)
-	require.NoError(t, scanner.ScanOnce(t.Context()))
+	require.NoError(t, scanner.ScanOnce(t.Context(), 1))
 	assert.Zero(t, count)
 	root, err := scanner.openRoot()
 	require.NoError(t, err)
@@ -58,7 +58,7 @@ func TestFolderScanReportsRootReplacementDuringOneShotScan(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(oldRoot) })
 
-	err = scanner.ScanOnce(t.Context())
+	err = scanner.ScanOnce(t.Context(), 1)
 	require.ErrorIs(t, err, ErrSourceChanged)
 	assert.Equal(t, 1, processed, "one-shot scan must stop when its pinned root is replaced")
 }

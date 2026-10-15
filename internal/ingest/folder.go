@@ -11,7 +11,11 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"time"
+
+	"golang.org/x/text/unicode/norm"
 
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/store"
@@ -210,7 +214,13 @@ func (s *FolderScanner) openRoot() (*watchRoot, error) {
 }
 
 // ScanOnce processes each selected regular file once without a settle delay.
-func (s *FolderScanner) ScanOnce(ctx context.Context) error {
+// concurrency bounds the processing window. Above one, process and reject may
+// run concurrently; Run remains serial. Conflicting normalized paths stay in
+// traversal order. Every processor exits before ScanOnce returns.
+func (s *FolderScanner) ScanOnce(ctx context.Context, concurrency int) error {
+	if concurrency < 1 {
+		return errors.New("folder scan concurrency must be positive")
+	}
 	root, err := s.openRoot()
 	if err != nil {
 		return err
@@ -220,8 +230,51 @@ func (s *FolderScanner) ScanOnce(ctx context.Context) error {
 	s.watcher.observations = make(map[string]watchObservation)
 	s.watcher.rejected = make(map[string]struct{})
 	s.scans++
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	process := s.watcher.process
+	defer func() { s.watcher.process = process }()
+	var workers sync.WaitGroup
+	var pending []string
+	join := func() {
+		workers.Wait()
+		pending = pending[:0]
+	}
+	s.watcher.process = func(ctx context.Context, ref string, observation *watchObservation, open localFileOpener) error {
+		// Distinct source spellings can name the same virtual destination, or
+		// compete to create a file and directory at the same normalized path.
+		name := norm.NFC.String(ref)
+		for _, prior := range pending {
+			if name == prior || strings.HasPrefix(name, prior+"/") || strings.HasPrefix(prior, name+"/") {
+				join()
+				break
+			}
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		pending = append(pending, name)
+		admitted := *observation
+		workers.Go(func() {
+			err := process(ctx, ref, &admitted, open)
+			if access, ok := errors.AsType[*SourceAccessError](err); ok && !errors.Is(err, ErrSourceChanged) {
+				err = s.watcher.reject(ctx, ref, access.Err)
+			}
+			if err != nil {
+				cancel(fmt.Errorf("ingesting %q: %w", ref, err))
+			}
+		})
+		if len(pending) == concurrency {
+			join()
+		}
+		return ctx.Err()
+	}
 	if err := s.watcher.scan(ctx, root); err != nil {
-		return err
+		cancel(err)
+	}
+	join()
+	if err := context.Cause(ctx); err != nil {
+		return fmt.Errorf("scanning folder: %w", err)
 	}
 	return root.verify()
 }

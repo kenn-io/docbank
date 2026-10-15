@@ -856,5 +856,14 @@ Content replacement and its observation commit together.
 The client-side scanner reuses watched-inbox confined traversal, filesystem
 boundaries, literal exclusions, and stability fingerprints. Its processor has
 only an opened read-only source descriptor and an HTTP connection, not a vault.
+One-shot push uses an eight-file processing window. Each worker owns its source
+until verification and upload finish; cancellation joins all workers before the
+scanner closes its pinned root. A window ends before a normalized path conflicts
+with a pending file or one of its ancestor paths, preserving traversal order for
+competing destinations. Cursor updates, scan identity, reports, and callbacks
+are serialized; hashing and HTTP requests overlap. Uploads in the same client
+sharing the first hash byte wait for one another's metadata receipts, so a
+duplicate cannot race the upload that restores missing physical authority.
+This uses at most 256 client-local slots. Watch scans remain serial.
 The dedicated digest-checked push route shares ordinary upload envelope checking
 and keeps server-side filesystem ingest out of this workflow.
