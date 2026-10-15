@@ -28,7 +28,9 @@ describe("audit presentation", () => {
   it("names supported confirmation fields and marks unsupported masks invalid", () => {
     expect(photoConfirmedFieldNames()).toBe("none");
     expect(photoConfirmedFieldNames(12)).toBe("label, caption");
-    expect(photoConfirmedFieldNames(127)).toBe("rating, flag, label, caption, creator, copyright, rotation");
+    expect(photoConfirmedFieldNames(127)).toBe(
+      "rating, flag, label, caption, creator, copyright, rotation",
+    );
     for (const mask of [128, 136, -1, 0.5, NaN, Infinity, 2 ** 32]) {
       expect(photoConfirmedFieldNames(mask)).toBe("Invalid confirmation mask");
     }
@@ -47,27 +49,51 @@ describe("audit presentation", () => {
         new_path: { path: "@trash/known/Taxes/return.pdf", state: "trash" },
       }),
     );
-    expect(summary).toBe(
-      "/Taxes/return.pdf → @trash/known/Taxes/return.pdf (trash)",
-    );
+    expect(summary).toBe("/Taxes/return.pdf → @trash/known/Taxes/return.pdf (trash)");
     expect(auditPathLabel({ path: "/Taxes", state: "live" })).toBe("/Taxes");
   });
 
   it("names the photo decisions an event changed", () => {
-    const values: PhotoAuthored = { rating: 0, flag: "", label: "", caption: "", creator: "", copyright: "", rotation: 0 };
+    const values: PhotoAuthored = {
+      rating: 0,
+      flag: "",
+      label: "",
+      caption: "",
+      creator: "",
+      copyright: "",
+      rotation: 0,
+    };
     const photoEvent = (after: PhotoAuthored) =>
       event({
         kind: "photo_authored",
         attachment: {
           kind: "photo_authored",
           identity: { file_id: "44444444-4444-4444-8444-444444444444" },
-          before: { photo: { file_id: "44444444-4444-4444-8444-444444444444", node_id: 42, revision: 1, values } },
-          after: { photo: { file_id: "44444444-4444-4444-8444-444444444444", node_id: 42, revision: 2, values: after } },
+          before: {
+            photo: {
+              file_id: "44444444-4444-4444-8444-444444444444",
+              node_id: 42,
+              revision: 1,
+              values,
+            },
+          },
+          after: {
+            photo: {
+              file_id: "44444444-4444-4444-8444-444444444444",
+              node_id: 42,
+              revision: 2,
+              values: after,
+            },
+          },
         },
       });
     expect(auditEventLabel("photo_authored")).toBe("Photo decisions changed");
-    expect(auditEventSummary(photoEvent({ ...values, rating: 5, caption: "River" }))).toBe("Changed rating, caption");
-    expect(auditEventSummary(photoEvent({ ...values, confirmed_fields: 8 }))).toBe("Changed caption");
+    expect(auditEventSummary(photoEvent({ ...values, rating: 5, caption: "River" }))).toBe(
+      "Changed rating, caption",
+    );
+    expect(auditEventSummary(photoEvent({ ...values, confirmed_fields: 8 }))).toBe(
+      "Changed caption",
+    );
     expect(auditEventSummary(photoEvent(values))).toBe("Decisions unchanged");
   });
 

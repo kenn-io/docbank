@@ -37,9 +37,7 @@
 
   let updating = $state(new Set<string>());
   const lanes = $derived(jobLanes(items, controls));
-  const running = $derived(
-    items.filter((job) => job.status === "running").length,
-  );
+  const running = $derived(items.filter((job) => job.status === "running").length);
 
   onMount(() => {
     void refresh();
@@ -111,19 +109,30 @@
     actionError = cause instanceof Error ? cause.message : String(cause);
   }
 
-  async function setControl(control: LaneControl, paused: boolean, concurrency: number): Promise<void> {
+  async function setControl(
+    control: LaneControl,
+    paused: boolean,
+    concurrency: number,
+  ): Promise<void> {
     const lane = control.lane;
     if (updating.has(lane)) return;
     actionError = "";
     updating = new Set(updating).add(lane);
     try {
-      await generated.setLaneControl(lane, { paused, concurrency }, { "If-Match": `"${control.revision}"` }, { session });
+      await generated.setLaneControl(
+        lane,
+        { paused, concurrency },
+        { "If-Match": `"${control.revision}"` },
+        { session },
+      );
       await refresh(true);
     } catch (cause) {
       if (generation < 0) return;
       if (cause instanceof APIError && cause.status === 412) {
         await refresh(true);
-        if (generation >= 0) actionError = "Lane settings changed elsewhere. Review the current settings and try again.";
+        if (generation >= 0)
+          actionError =
+            "Lane settings changed elsewhere. Review the current settings and try again.";
       } else {
         handleFailure(cause);
       }
@@ -163,11 +172,7 @@
   }
 </script>
 
-<DetailDrawer
-  width="min(620px, 100vw)"
-  ariaLabel="Daemon background jobs"
-  {onclose}
->
+<DetailDrawer width="min(620px, 100vw)" ariaLabel="Daemon background jobs" {onclose}>
   {#snippet header()}
     <div class="drawer-heading">
       <div>
@@ -201,9 +206,7 @@
         <Button size="sm" onclick={() => void refresh()}>Try again</Button>
       </div>
     {:else if lanes.length === 0}
-      <EmptyState
-        title="No background jobs"
-      >
+      <EmptyState title="No background jobs">
         {#snippet icon()}<ActivityIcon size="22" />{/snippet}
       </EmptyState>
     {:else}
@@ -212,19 +215,40 @@
         {#each lanes as lane (lane.key)}
           {@const control = lane.control}
           {@const state = laneState(lane)}
-          <Card level="default" padding="sm" title={lane.title} meta={control || loadError ? undefined : "Read-only"}>
+          <Card
+            level="default"
+            padding="sm"
+            title={lane.title}
+            meta={control || loadError ? undefined : "Read-only"}
+          >
             {#snippet actions()}
               {#if control?.can_set_concurrency}
-                <SelectDropdown title={`Concurrency ${lane.title}`} value={String(control.concurrency)} options={[1, 2, 3, 4].map((value) => ({ value: String(value), label: `${value} ${value === 1 ? "worker" : "workers"}` }))} disabled={updating.has(lane.lane)} onchange={(value) => void setControl(control, control.paused, Number(value))} />
+                <SelectDropdown
+                  title={`Concurrency ${lane.title}`}
+                  value={String(control.concurrency)}
+                  options={[1, 2, 3, 4].map((value) => ({
+                    value: String(value),
+                    label: `${value} ${value === 1 ? "worker" : "workers"}`,
+                  }))}
+                  disabled={updating.has(lane.lane)}
+                  onchange={(value) => void setControl(control, control.paused, Number(value))}
+                />
               {/if}
               {#if control}
-                <Button size="sm" ariaLabel={`${control.paused ? "Resume" : "Pause"} ${lane.title}`} disabled={updating.has(lane.lane)} onclick={() => void setControl(control, !control.paused, control.concurrency)}>{control.paused ? "Resume" : "Pause"}</Button>
+                <Button
+                  size="sm"
+                  ariaLabel={`${control.paused ? "Resume" : "Pause"} ${lane.title}`}
+                  disabled={updating.has(lane.lane)}
+                  onclick={() => void setControl(control, !control.paused, control.concurrency)}
+                  >{control.paused ? "Resume" : "Pause"}</Button
+                >
               {/if}
             {/snippet}
             <div class="lane">
               <p class="state" data-tone={state.tone}>
                 <span class="state-label">{state.label}</span>
-                {#each state.details as detail (detail)}<span class="state-detail">{detail}</span>{/each}
+                {#each state.details as detail (detail)}<span class="state-detail">{detail}</span
+                  >{/each}
               </p>
               {#if lane.total !== undefined}
                 {@const share = percent(lane.completed, lane.total)}
@@ -233,7 +257,14 @@
                     <span>{lane.completed} of {lane.total} {unit(lane.lane)}</span>
                     <span>{share}%</span>
                   </div>
-                  <div class="progress-track" role="progressbar" aria-label={`${lane.title} progress`} aria-valuemin="0" aria-valuemax={lane.total} aria-valuenow={lane.completed}>
+                  <div
+                    class="progress-track"
+                    role="progressbar"
+                    aria-label={`${lane.title} progress`}
+                    aria-valuemin="0"
+                    aria-valuemax={lane.total}
+                    aria-valuenow={lane.completed}
+                  >
                     <span style:width={`${share}%`}></span>
                   </div>
                 </div>
@@ -246,22 +277,46 @@
                         <div class="operation-head">
                           <code class="operation-id">{member.operation_id}</code>
                           {#if member.can_cancel && !member.cancel_requested}
-                            <Button size="sm" ariaLabel={`Cancel ${lane.title} ${member.operation_id}`} disabled={cancelling.has(member.operation_id)} onclick={() => void cancelJob(member)}>Cancel</Button>
+                            <Button
+                              size="sm"
+                              ariaLabel={`Cancel ${lane.title} ${member.operation_id}`}
+                              disabled={cancelling.has(member.operation_id)}
+                              onclick={() => void cancelJob(member)}>Cancel</Button
+                            >
                           {/if}
                         </div>
                       {/if}
                       <dl class="facts">
                         {#if lane.members.length > 1}
-                          <div><dt>Status</dt><dd class="state" data-tone={member.status}><span class="state-label">{statusLabel(member.status)}</span></dd></div>
+                          <div>
+                            <dt>Status</dt>
+                            <dd class="state" data-tone={member.status}>
+                              <span class="state-label">{statusLabel(member.status)}</span>
+                            </dd>
+                          </div>
                         {/if}
-                        <div><dt>Started</dt><dd>{formatDate(member.started_at)}</dd></div>
-                        {#if member.finished_at}<div><dt>Finished</dt><dd>{formatDate(member.finished_at)}</dd></div>{/if}
+                        <div>
+                          <dt>Started</dt>
+                          <dd>{formatDate(member.started_at)}</dd>
+                        </div>
+                        {#if member.finished_at}<div>
+                            <dt>Finished</dt>
+                            <dd>{formatDate(member.finished_at)}</dd>
+                          </div>{/if}
                         {#if member.operation_id && member.total_objects !== undefined && member.total_objects > 0 && lane.members.length > 1}
-                          <div><dt>Progress</dt><dd>{member.completed_objects ?? 0} of {member.total_objects} {unit(member.kind)}</dd></div>
+                          <div>
+                            <dt>Progress</dt>
+                            <dd>
+                              {member.completed_objects ?? 0} of {member.total_objects}
+                              {unit(member.kind)}
+                            </dd>
+                          </div>
                         {/if}
                       </dl>
                       {#if member.cancel_requested && (member.status === "running" || member.status === "queued")}
-                        <p class="note">Cancellation requested. The job stops at its next safe point.</p>
+                        <p class="note">
+                          Cancellation requested. The job stops at its next safe point.
+                        </p>
                       {/if}
                       {#if member.error}<p class="job-error" role="alert">{member.error}</p>{/if}
                     </li>
@@ -397,7 +452,8 @@
   }
 
   /* Waiting and inactive states use a hollow ring instead of a filled dot. */
-  .state:is([data-tone="queued"], [data-tone="idle"], [data-tone="cancelled"]) .state-label::before {
+  .state:is([data-tone="queued"], [data-tone="idle"], [data-tone="cancelled"])
+    .state-label::before {
     border: 1.5px solid var(--state-color);
     background: transparent;
   }

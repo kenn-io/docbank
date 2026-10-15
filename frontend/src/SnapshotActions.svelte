@@ -45,7 +45,9 @@
   let failure = $state("");
   let abandonWarning = $state(false);
   let active = true;
-  onDestroy(() => { active = false; });
+  onDestroy(() => {
+    active = false;
+  });
 
   const options = $derived<SelectDropdownOption[]>([
     { value: "", label: "Choose a tag…" },
@@ -65,7 +67,8 @@
     reading = true;
     failure = "";
     try {
-      if (file.size > ACTION_MAX_BYTES) throw new Error("The action recovery file exceeds 128 MiB.");
+      if (file.size > ACTION_MAX_BYTES)
+        throw new Error("The action recovery file exceeds 128 MiB.");
       const bytes = new Uint8Array(await file.arrayBuffer());
       if (active) onimport(bytes);
     } catch (cause) {
@@ -76,72 +79,146 @@
   }
 </script>
 
-<Modal title="Tag frozen snapshot" tone="info" width="680px"
-  maxWidth="min(680px, calc(100vw - 32px))" ariaLabel="Tag frozen snapshot"
-  onclose={onclose} closeOnOverlayClick={!disabled && !reading}>
+<Modal
+  title="Tag frozen snapshot"
+  tone="info"
+  width="680px"
+  maxWidth="min(680px, calc(100vw - 32px))"
+  ariaLabel="Tag frozen snapshot"
+  {onclose}
+  closeOnOverlayClick={!disabled && !reading}
+>
   <div class="snapshot-actions">
     <p class="warning">
-      Recovery files contain private document identities, hashes, sizes, and revisions. Store them with the same care as vault metadata.
+      Recovery files contain private document identities, hashes, sizes, and revisions. Store them
+      with the same care as vault metadata.
     </p>
 
-    <SelectDropdown value={tagID} {options} title="Tag for snapshot action"
-      disabled={disabled || reading} onchange={(value) => (tagID = value)} />
+    <SelectDropdown
+      value={tagID}
+      {options}
+      title="Tag for snapshot action"
+      disabled={disabled || reading}
+      onchange={(value) => (tagID = value)}
+    />
     {#if catalogTotal > catalog.length}
       <p class="hint">Showing {catalog.length} of {catalogTotal} tag definitions.</p>
     {/if}
 
     <section aria-labelledby="visible-action-heading">
       <h3 id="visible-action-heading">Visible selection</h3>
-      <p>{selectedCount} document{selectedCount === 1 ? "" : "s"} selected on this visible page. This does not include unselected or other snapshot pages.</p>
+      <p>
+        {selectedCount} document{selectedCount === 1 ? "" : "s"} selected on this visible page. This does
+        not include unselected or other snapshot pages.
+      </p>
       <div class="actions">
-        <Button tone="info" disabled={disabled || reading || !tagID || selectedCount === 0}
-          onclick={() => start("selection", true)}>Add tag to visible selection</Button>
-        <Button disabled={disabled || reading || !tagID || selectedCount === 0}
-          onclick={() => start("selection", false)}>Remove tag from visible selection</Button>
+        <Button
+          tone="info"
+          disabled={disabled || reading || !tagID || selectedCount === 0}
+          onclick={() => start("selection", true)}>Add tag to visible selection</Button
+        >
+        <Button
+          disabled={disabled || reading || !tagID || selectedCount === 0}
+          onclick={() => start("selection", false)}>Remove tag from visible selection</Button
+        >
       </div>
     </section>
 
     <section aria-labelledby="whole-action-heading">
       <h3 id="whole-action-heading">Whole frozen query</h3>
-      <p>Prepare a recoverable action for all {total} documents in the frozen query, including pages not currently visible.</p>
+      <p>
+        Prepare a recoverable action for all {total} documents in the frozen query, including pages not
+        currently visible.
+      </p>
       <div class="actions">
-        <Button tone="info" disabled={disabled || reading || !tagID || total === 0}
-          onclick={() => start("query", true)}>Add tag to whole query</Button>
-        <Button disabled={disabled || reading || !tagID || total === 0}
-          onclick={() => start("query", false)}>Remove tag from whole query</Button>
+        <Button
+          tone="info"
+          disabled={disabled || reading || !tagID || total === 0}
+          onclick={() => start("query", true)}>Add tag to whole query</Button
+        >
+        <Button
+          disabled={disabled || reading || !tagID || total === 0}
+          onclick={() => start("query", false)}>Remove tag from whole query</Button
+        >
       </div>
     </section>
 
     <section aria-labelledby="recover-action-heading">
       <h3 id="recover-action-heading">Recover an action</h3>
-      <p>Selecting a recovery file only validates and stages it. It never runs a mutation by itself.</p>
+      <p>
+        Selecting a recovery file only validates and stages it. It never runs a mutation by itself.
+      </p>
       <Button disabled={disabled || reading} onclick={onresume}>Resume retained action</Button>
       {#if abandonWarning}
-        <p role="alert">Delete the retained action for this vault, even if it cannot be opened. Completed or in-flight changes are not rolled back. Keep a recovery file if you need its receipts.</p>
-        <Button tone="danger" disabled={disabled || reading} onclick={onabandon}>Abandon retained action without rollback</Button>
+        <p role="alert">
+          Delete the retained action for this vault, even if it cannot be opened. Completed or
+          in-flight changes are not rolled back. Keep a recovery file if you need its receipts.
+        </p>
+        <Button tone="danger" disabled={disabled || reading} onclick={onabandon}
+          >Abandon retained action without rollback</Button
+        >
       {:else}
-        <Button disabled={disabled || reading} onclick={() => (abandonWarning = true)}>Abandon retained action…</Button>
+        <Button disabled={disabled || reading} onclick={() => (abandonWarning = true)}
+          >Abandon retained action…</Button
+        >
       {/if}
       <label class:disabled={disabled || reading}>
         <span>Import action recovery file</span>
-        <input type="file" accept="application/json,.json" disabled={disabled || reading}
-          onchange={(event) => void importFile(event)} />
+        <input
+          type="file"
+          accept="application/json,.json"
+          disabled={disabled || reading}
+          onchange={(event) => void importFile(event)}
+        />
       </label>
     </section>
 
     {#if failure || errorMessage}<p role="alert">{failure || errorMessage}</p>{/if}
   </div>
-  {#snippet footer()}<Button surface="soft" disabled={reading} onclick={onclose}>Cancel</Button>{/snippet}
+  {#snippet footer()}<Button surface="soft" disabled={reading} onclick={onclose}>Cancel</Button
+    >{/snippet}
 </Modal>
 
 <style>
-  .snapshot-actions { display: grid; gap: var(--space-5); }
-  .snapshot-actions p, .snapshot-actions h3 { margin: 0; }
-  .snapshot-actions section { display: grid; gap: var(--space-3); padding-block-start: var(--space-4); border-top: 1px solid var(--border-default); }
-  .snapshot-actions h3 { font-size: var(--font-size-sm); }
-  .actions { display: flex; flex-wrap: wrap; gap: var(--space-3); }
-  .warning { padding: var(--space-3); border: 1px solid color-mix(in srgb, var(--accent-amber) 35%, var(--border-default)); border-radius: var(--radius-md); background: color-mix(in srgb, var(--accent-amber) 8%, var(--bg-surface)); }
-  .hint { color: var(--text-muted); font-size: var(--font-size-sm); }
-  label { display: grid; gap: var(--space-2); font-size: var(--font-size-sm); font-weight: 600; }
-  label.disabled { opacity: 0.6; }
+  .snapshot-actions {
+    display: grid;
+    gap: var(--space-5);
+  }
+  .snapshot-actions p,
+  .snapshot-actions h3 {
+    margin: 0;
+  }
+  .snapshot-actions section {
+    display: grid;
+    gap: var(--space-3);
+    padding-block-start: var(--space-4);
+    border-top: 1px solid var(--border-default);
+  }
+  .snapshot-actions h3 {
+    font-size: var(--font-size-sm);
+  }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+  }
+  .warning {
+    padding: var(--space-3);
+    border: 1px solid color-mix(in srgb, var(--accent-amber) 35%, var(--border-default));
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--accent-amber) 8%, var(--bg-surface));
+  }
+  .hint {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+  label {
+    display: grid;
+    gap: var(--space-2);
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+  }
+  label.disabled {
+    opacity: 0.6;
+  }
 </style>

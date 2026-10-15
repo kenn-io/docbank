@@ -1,11 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import DownloadButton from "./DownloadButton.svelte";
 import type { SelectedSource } from "./selectedSource.js";
 

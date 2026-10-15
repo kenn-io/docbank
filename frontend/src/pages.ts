@@ -302,9 +302,16 @@ function decodeRecipe(v: unknown): PageRecipe {
   options.forEach((v) => text(v));
   if (r.runtime !== undefined) {
     const limits = [
-      "inspector_memory_bytes", "renderer_memory_bytes", "max_source_bytes", "max_pages",
-      "max_output_bytes", "max_pixels", "max_axis", "max_geometry_bytes",
-      "max_diagnostic_bytes", "phase_seconds",
+      "inspector_memory_bytes",
+      "renderer_memory_bytes",
+      "max_source_bytes",
+      "max_pages",
+      "max_output_bytes",
+      "max_pixels",
+      "max_axis",
+      "max_geometry_bytes",
+      "max_diagnostic_bytes",
+      "phase_seconds",
     ];
     const rt = object(r.runtime, [
       "inspector_sha256",
@@ -409,7 +416,8 @@ export function decodePageInventory(v: unknown, source: PageSource): PageInvento
       "Page image frame/recipe closure is invalid",
     );
     const size = dimensions(frame.frame, recipe.recipe);
-    const tolerance = frame.frame.input_units === "point/10000" ? Math.ceil(recipe.recipe.dpi / 720000) : 0;
+    const tolerance =
+      frame.frame.input_units === "point/10000" ? Math.ceil(recipe.recipe.dpi / 720000) : 0;
     requireValue(
       Math.abs(image.width - size[0]) <= tolerance && Math.abs(image.height - size[1]) <= tolerance,
       "Page image dimensions disagree with the physical frame",
@@ -531,7 +539,9 @@ export async function readPageJob(
   requireValue(uuidPattern.test(job.id));
   const result = decodePageJob(
     await (cancel ? generated.cancelPageRenderJob : generated.getPageRenderJob)(
-      job.id, { selection: binding }, { session, signal },
+      job.id,
+      { selection: binding },
+      { session, signal },
     ),
     binding,
     job.request.pages[0]!,
@@ -571,17 +581,20 @@ export async function readPageImage(
   decodeRecipe(recipe);
   requireValue(pageDigest(recipe) === image.recipe_sha256);
   signal.throwIfAborted();
-  const response = await generated.readPageImage({
-    node_id: binding.node_id,
-    revision: binding.revision,
-    version_id: binding.source.version_id,
-    source_sha256: binding.source.sha256,
-    source_size: binding.source.size,
-    page: image.page,
-    recipe_sha256: image.recipe_sha256,
-    frame_sha256: image.frame_sha256,
-    image_sha256: image.sha256,
-  }, { session, signal });
+  const response = await generated.readPageImage(
+    {
+      node_id: binding.node_id,
+      revision: binding.revision,
+      version_id: binding.source.version_id,
+      source_sha256: binding.source.sha256,
+      source_size: binding.source.size,
+      page: image.page,
+      recipe_sha256: image.recipe_sha256,
+      frame_sha256: image.frame_sha256,
+      image_sha256: image.sha256,
+    },
+    { session, signal },
+  );
   const headers = response.headers;
   try {
     signal.throwIfAborted();
@@ -601,7 +614,10 @@ export async function readPageImage(
   const bytes = await readExactBody(response, image.size, signal, "Invalid page image size");
   const actual = bytesToHex(await sha256Digest(bytes));
   signal.throwIfAborted();
-  requireValue(actual === image.sha256 && digestHeaderMatches(headers, actual), "Invalid page image digest");
+  requireValue(
+    actual === image.sha256 && digestHeaderMatches(headers, actual),
+    "Invalid page image digest",
+  );
   const view = new DataView(bytes.buffer);
   requireValue(
     bytes.length >= 33 &&

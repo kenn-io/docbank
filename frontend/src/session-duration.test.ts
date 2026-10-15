@@ -14,9 +14,9 @@ describe("session_ended reporting", () => {
     vi.spyOn(performance, "now").mockImplementation(() => now);
     vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
     vi.setSystemTime(new Date("2026-03-04T10:00:00Z"));
-    fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
-      async () => new Response('{"status":"queued"}', { status: 202 }),
-    );
+    fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => new Response('{"status":"queued"}', { status: 202 }));
   });
 
   afterEach(() => {
@@ -27,7 +27,9 @@ describe("session_ended reporting", () => {
   });
 
   const sessionReports = () =>
-    fetchMock.mock.calls.filter(([, init]) => JSON.parse(String(init?.body)).event === "session_ended");
+    fetchMock.mock.calls.filter(
+      ([, init]) => JSON.parse(String(init?.body)).event === "session_ended",
+    );
   const expectBucket = (bucket: string) => {
     expect(sessionReports()).toHaveLength(1);
     const [url, init] = sessionReports()[0] ?? [];
@@ -84,9 +86,13 @@ describe("session_ended reporting", () => {
   });
 
   it.each([
-    [1, "under_1m"], [59_999, "under_1m"], [60_000, "1_to_5m"],
-    [299_999, "1_to_5m"], [300_000, "5_to_30m"],
-    [1_800_000, "5_to_30m"], [1_800_001, "over_30m"],
+    [1, "under_1m"],
+    [59_999, "under_1m"],
+    [60_000, "1_to_5m"],
+    [299_999, "1_to_5m"],
+    [300_000, "5_to_30m"],
+    [1_800_000, "5_to_30m"],
+    [1_800_001, "over_30m"],
   ])("buckets %i visible milliseconds as %s", async (elapsed, bucket) => {
     stop = startSessionReporting("secret");
     now = Number(elapsed);
@@ -119,27 +125,36 @@ describe("session_ended reporting", () => {
     ).toEqual(["1_to_5m", bucket]);
   });
 
-  it.each([false, true])("stop waits for the pending send and never rejects, failure=%s", async (failure) => {
-    stop = startSessionReporting("secret");
-    let resolve!: (response: Response) => void;
-    let reject!: (cause: Error) => void;
-    fetchMock.mockImplementationOnce(() => new Promise<Response>((yes, no) => { resolve = yes; reject = no; }));
-    now = 120_000;
-    visibility(true);
-    const stopped = vi.fn();
-    const pending = stop().then(stopped);
-    expectBucket("1_to_5m");
-    await vi.advanceTimersByTimeAsync(0);
-    expect(stopped).not.toHaveBeenCalled();
-    if (failure) reject(new Error("offline"));
-    else resolve(new Response('{"status":"queued"}', { status: 202 }));
-    await pending;
-    expect(stopped).toHaveBeenCalledOnce();
-    visibility(false);
-    now += 120_000;
-    window.dispatchEvent(new Event("pagehide"));
-    await vi.advanceTimersByTimeAsync(1_800_000);
-    await stop();
-    expectBucket("1_to_5m");
-  });
+  it.each([false, true])(
+    "stop waits for the pending send and never rejects, failure=%s",
+    async (failure) => {
+      stop = startSessionReporting("secret");
+      let resolve!: (response: Response) => void;
+      let reject!: (cause: Error) => void;
+      fetchMock.mockImplementationOnce(
+        () =>
+          new Promise<Response>((yes, no) => {
+            resolve = yes;
+            reject = no;
+          }),
+      );
+      now = 120_000;
+      visibility(true);
+      const stopped = vi.fn();
+      const pending = stop().then(stopped);
+      expectBucket("1_to_5m");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(stopped).not.toHaveBeenCalled();
+      if (failure) reject(new Error("offline"));
+      else resolve(new Response('{"status":"queued"}', { status: 202 }));
+      await pending;
+      expect(stopped).toHaveBeenCalledOnce();
+      visibility(false);
+      now += 120_000;
+      window.dispatchEvent(new Event("pagehide"));
+      await vi.advanceTimersByTimeAsync(1_800_000);
+      await stop();
+      expectBucket("1_to_5m");
+    },
+  );
 });

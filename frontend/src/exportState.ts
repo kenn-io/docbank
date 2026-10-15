@@ -1,21 +1,72 @@
 import { APIError } from "./api-transport.js";
 import { randomUUID } from "./crypto.js";
-import { cancelWebDownload, releaseExportJob, type PhotoExportSelection } from "./generated/docbank.js";
+import {
+  cancelWebDownload,
+  releaseExportJob,
+  type PhotoExportSelection,
+} from "./generated/docbank.js";
 import { captureSnapshotTargets, type SnapshotPage } from "./snapshots.js";
 import {
-  assertExportAdvance, cancelExportJob, copyExportMembers, createExportPlan,
-  exportExpired, exportTicket, getExportJob, maxExportMembers, exportEmailPDFRecipes, exportOutputProblems, exportAttachmentPublications,
-  offerExportDownload, readExportEvents, sealExportSource,
-  sealPhotoExportSource, startExportJob, validateRolePolicies, validateExportOptions, sealMailboxExportSource,
-  type ExportJob, type ExportMember, type ExportPlan, type ExportPreview,
-  type ExportSource, type RolePolicy, type ExportOptions, type EmailPDFRecipeChoice, type OutputProblems, type AttachmentPublications,
+  assertExportAdvance,
+  cancelExportJob,
+  copyExportMembers,
+  createExportPlan,
+  exportExpired,
+  exportTicket,
+  getExportJob,
+  maxExportMembers,
+  exportEmailPDFRecipes,
+  exportOutputProblems,
+  exportAttachmentPublications,
+  offerExportDownload,
+  readExportEvents,
+  sealExportSource,
+  sealPhotoExportSource,
+  startExportJob,
+  validateRolePolicies,
+  validateExportOptions,
+  sealMailboxExportSource,
+  type ExportJob,
+  type ExportMember,
+  type ExportPlan,
+  type ExportPreview,
+  type ExportSource,
+  type RolePolicy,
+  type ExportOptions,
+  type EmailPDFRecipeChoice,
+  type OutputProblems,
+  type AttachmentPublications,
 } from "./exports.js";
 
-export type ExportInput = { label: string; photos: PhotoExportSelection; total: number } | { label: string; members: readonly ExportMember[] } | { label: string; snapshot: SnapshotPage } | { label: string; collectionID: string; total: number };
-export interface ReviewedExport { plan: ExportPlan; preview: ExportPreview; label: string }
-export interface ActiveExport { plan: ExportPlan; label: string; id: string; job?: ExportJob }
+export type ExportInput =
+  | { label: string; photos: PhotoExportSelection; total: number }
+  | { label: string; members: readonly ExportMember[] }
+  | { label: string; snapshot: SnapshotPage }
+  | { label: string; collectionID: string; total: number };
+export interface ReviewedExport {
+  plan: ExportPlan;
+  preview: ExportPreview;
+  label: string;
+}
+export interface ActiveExport {
+  plan: ExportPlan;
+  label: string;
+  id: string;
+  job?: ExportJob;
+}
 export interface ExportState {
-  status: "idle" | "preparing" | "ready" | "starting" | "running" | "completed" | "canceled" | "failed" | "expired" | "disconnected" | "error";
+  status:
+    | "idle"
+    | "preparing"
+    | "ready"
+    | "starting"
+    | "running"
+    | "completed"
+    | "canceled"
+    | "failed"
+    | "expired"
+    | "disconnected"
+    | "error";
   reviewed?: ReviewedExport;
   active?: ActiveExport;
   error?: Error;
@@ -48,34 +99,72 @@ export class ExportSession {
   private disposed = false;
   private expiryTimer?: ReturnType<typeof setTimeout>;
 
-  constructor(private readonly session: string, private readonly publish: (state: Readonly<ExportState>) => void) { publish(this.state); }
+  constructor(
+    private readonly session: string,
+    private readonly publish: (state: Readonly<ExportState>) => void,
+  ) {
+    publish(this.state);
+  }
 
   choose(input: ExportInput, policies: RolePolicy[], options: ExportOptions = {}): void {
     this.stop();
     // Snapshot DTOs contain JSON data. Copy through JSON so reactive browser
     // proxies cannot fail structuredClone or remain mutable through the caller.
-    const copied = "members" in input ? { ...input, members: input.members.map(m => ({ ...m })) } : "snapshot" in input ? { ...input, snapshot: JSON.parse(JSON.stringify(input.snapshot)) as SnapshotPage } : JSON.parse(JSON.stringify(input)) as ExportInput;
+    const copied =
+      "members" in input
+        ? { ...input, members: input.members.map((m) => ({ ...m })) }
+        : "snapshot" in input
+          ? { ...input, snapshot: JSON.parse(JSON.stringify(input.snapshot)) as SnapshotPage }
+          : (JSON.parse(JSON.stringify(input)) as ExportInput);
     const changed = JSON.stringify(copied) !== JSON.stringify(this.input);
     this.input = copied;
-    this.policies = policies.map(p => ({ ...p }));
+    this.policies = policies.map((p) => ({ ...p }));
     this.options = JSON.parse(JSON.stringify(options)) as ExportOptions;
     this.planID = randomUUID();
-    if (changed) { this.sourceID = randomUUID(); this.members = undefined; this.source = undefined; }
+    if (changed) {
+      this.sourceID = randomUUID();
+      this.members = undefined;
+      this.source = undefined;
+    }
     const job = this.state.active?.job;
-    const status = this.state.active ? (!job || ["queued", "running"].includes(job.state) ? "disconnected" : this.state.status) : "idle";
-    this.emit({ ...this.state, status, reviewed: undefined, error: undefined, problems: undefined, problemsLoading: false, problemsError: undefined, ...(changed ? { recipes: undefined, publications: undefined, publicationSelections: undefined } : {}) });
+    const status = this.state.active
+      ? !job || ["queued", "running"].includes(job.state)
+        ? "disconnected"
+        : this.state.status
+      : "idle";
+    this.emit({
+      ...this.state,
+      status,
+      reviewed: undefined,
+      error: undefined,
+      problems: undefined,
+      problemsLoading: false,
+      problemsError: undefined,
+      ...(changed
+        ? { recipes: undefined, publications: undefined, publicationSelections: undefined }
+        : {}),
+    });
   }
 
   async discoverRecipes(): Promise<void> {
     if (!this.input || this.disposed || this.state.active) return;
     const started = this.begin();
-    this.emit({ ...this.state, status: "preparing", error: undefined, problemsError: undefined, reviewed: undefined, recipes: undefined });
+    this.emit({
+      ...this.state,
+      status: "preparing",
+      error: undefined,
+      problemsError: undefined,
+      reviewed: undefined,
+      recipes: undefined,
+    });
     try {
       const source = await this.prepareSource(this.input, started);
       if (!source) return;
       const recipes = await exportEmailPDFRecipes(this.session, source, started.signal);
       if (this.current(started.generation)) this.emit({ ...this.state, status: "idle", recipes });
-    } catch (error) { this.fail(started.generation, error); }
+    } catch (error) {
+      this.fail(started.generation, error);
+    }
   }
 
   async publicationPage(after: number): Promise<void> {
@@ -85,92 +174,204 @@ export class ExportSession {
     try {
       const source = await this.prepareSource(this.input, started);
       if (!source) return;
-      const publications = await exportAttachmentPublications(this.session, source, after, started.signal);
-      if (this.current(started.generation)) this.emit({ ...this.state, status: "idle", publications, ...(this.state.publications?.source_id === source.id ? {} : { publicationSelections: undefined }) });
-    } catch (error) { this.fail(started.generation, error); }
+      const publications = await exportAttachmentPublications(
+        this.session,
+        source,
+        after,
+        started.signal,
+      );
+      if (this.current(started.generation))
+        this.emit({
+          ...this.state,
+          status: "idle",
+          publications,
+          ...(this.state.publications?.source_id === source.id
+            ? {}
+            : { publicationSelections: undefined }),
+        });
+    } catch (error) {
+      this.fail(started.generation, error);
+    }
   }
 
   selectPublication(version: string, operation: string): void {
-    if (this.disposed || this.state.active || !this.state.publications?.items.some(c => c.version_id === version && c.operation_id === operation)) return;
-    this.stop(); this.planID = randomUUID();
-    this.emit({ ...this.state, status: "idle", reviewed: undefined, error: undefined, publicationSelections: { ...this.state.publicationSelections, [version]: operation } });
+    if (
+      this.disposed ||
+      this.state.active ||
+      !this.state.publications?.items.some(
+        (c) => c.version_id === version && c.operation_id === operation,
+      )
+    )
+      return;
+    this.stop();
+    this.planID = randomUUID();
+    this.emit({
+      ...this.state,
+      status: "idle",
+      reviewed: undefined,
+      error: undefined,
+      publicationSelections: { ...this.state.publicationSelections, [version]: operation },
+    });
   }
 
-  private async prepareSource(input: ExportInput, started: { generation: number; signal: AbortSignal }): Promise<ExportSource | undefined> {
+  private async prepareSource(
+    input: ExportInput,
+    started: { generation: number; signal: AbortSignal },
+  ): Promise<ExportSource | undefined> {
     if (this.source && exportExpired(this.source.expires_at)) {
-      this.source = undefined; this.sourceID = randomUUID(); this.planID = randomUUID();
+      this.source = undefined;
+      this.sourceID = randomUUID();
+      this.planID = randomUUID();
     }
     if (this.source) return this.source;
     if ("photos" in input) {
-      const source = await sealPhotoExportSource(this.session, input.photos, this.sourceID, started.signal);
+      const source = await sealPhotoExportSource(
+        this.session,
+        input.photos,
+        this.sourceID,
+        started.signal,
+      );
       if (!this.current(started.generation)) return;
-      return this.source = source;
+      return (this.source = source);
     }
     if ("collectionID" in input) {
-      const source = await sealMailboxExportSource(this.session, input.collectionID, input.total, this.sourceID, started.signal);
+      const source = await sealMailboxExportSource(
+        this.session,
+        input.collectionID,
+        input.total,
+        this.sourceID,
+        started.signal,
+      );
       if (!this.current(started.generation)) return;
-      return this.source = source;
+      return (this.source = source);
     }
     if (!this.members) {
       if ("snapshot" in input) {
-        if (input.snapshot.total > maxExportMembers) throw new Error("Exports are limited to 100,000 documents. Refine this query and capture a new snapshot.");
+        if (input.snapshot.total > maxExportMembers)
+          throw new Error(
+            "Exports are limited to 100,000 documents. Refine this query and capture a new snapshot.",
+          );
         const captured = await captureSnapshotTargets(this.session, input.snapshot, started.signal);
         if (!this.current(started.generation)) return;
         this.members = copyExportMembers(captured.members);
       } else {
-        this.members = copyExportMembers(input.members.map(m => ({ node_id: m.node_id, content_version_id: m.version_id, blob_hash: m.sha256, size: m.size })));
+        this.members = copyExportMembers(
+          input.members.map((m) => ({
+            node_id: m.node_id,
+            content_version_id: m.version_id,
+            blob_hash: m.sha256,
+            size: m.size,
+          })),
+        );
       }
     }
-    const source = await sealExportSource(this.session, this.members, this.sourceID, started.signal);
+    const source = await sealExportSource(
+      this.session,
+      this.members,
+      this.sourceID,
+      started.signal,
+    );
     if (!this.current(started.generation)) return;
-    return this.source = source;
+    return (this.source = source);
   }
 
   async preview(): Promise<void> {
     if (!this.input || this.disposed) return;
     if (this.state.status === "expired") {
-      this.source = undefined; this.sourceID = randomUUID(); this.planID = randomUUID();
+      this.source = undefined;
+      this.sourceID = randomUUID();
+      this.planID = randomUUID();
     }
-    const input = this.input, started = this.begin();
-    this.emit({ ...this.state, status: "preparing", reviewed: undefined, error: undefined, problemsError: undefined });
+    const input = this.input,
+      started = this.begin();
+    this.emit({
+      ...this.state,
+      status: "preparing",
+      reviewed: undefined,
+      error: undefined,
+      problemsError: undefined,
+    });
     try {
-      const policies = validateRolePolicies(this.policies), options = validateExportOptions(this.options);
+      const policies = validateRolePolicies(this.policies),
+        options = validateExportOptions(this.options);
       const source = await this.prepareSource(input, started);
       if (!source) return;
-      if (policies.some(p => p.role === "attachment_original" || p.role === "attachment_pdf")) {
+      if (policies.some((p) => p.role === "attachment_original" || p.role === "attachment_pdf")) {
         if (!this.state.publications || this.state.publications.source_id !== source.id) {
-          const publications = await exportAttachmentPublications(this.session, source, 0, started.signal);
+          const publications = await exportAttachmentPublications(
+            this.session,
+            source,
+            0,
+            started.signal,
+          );
           if (!this.current(started.generation)) return;
           this.emit({ ...this.state, publications, publicationSelections: undefined });
-          if (publications.total) { this.emit({ ...this.state, status: "idle" }); return; }
+          if (publications.total) {
+            this.emit({ ...this.state, status: "idle" });
+            return;
+          }
         }
         const selections = Object.entries(this.state.publicationSelections ?? {});
-        if (selections.length) options.publications = selections.map(([version_id, operation_id]) => ({ version_id, operation_id }));
+        if (selections.length)
+          options.publications = selections.map(([version_id, operation_id]) => ({
+            version_id,
+            operation_id,
+          }));
       }
-      const reviewed = await createExportPlan(this.session, source, policies, this.planID, started.signal, options);
+      const reviewed = await createExportPlan(
+        this.session,
+        source,
+        policies,
+        this.planID,
+        started.signal,
+        options,
+      );
       if (!this.current(started.generation)) return;
-      this.emit({ ...this.state, status: "ready", reviewed: { ...reviewed, label: input.label }, problems: undefined, error: undefined });
+      this.emit({
+        ...this.state,
+        status: "ready",
+        reviewed: { ...reviewed, label: input.label },
+        problems: undefined,
+        error: undefined,
+      });
       const delay = Date.parse(reviewed.plan.expires_at) - Date.now();
-      if (delay >= 0 && delay < 2 ** 31) this.expiryTimer = setTimeout(() => {
-        if (this.current(started.generation) && !this.state.active) this.emit({ ...this.state, status: "expired", reviewed: undefined });
-      }, delay);
+      if (delay >= 0 && delay < 2 ** 31)
+        this.expiryTimer = setTimeout(() => {
+          if (this.current(started.generation) && !this.state.active)
+            this.emit({ ...this.state, status: "expired", reviewed: undefined });
+        }, delay);
       const counts = reviewed.plan.counts;
-      if (counts && (counts.unavailable || counts.unavailable_inventories)) await this.problemPage(0);
-    } catch (error) { this.fail(started.generation, error); }
+      if (counts && (counts.unavailable || counts.unavailable_inventories))
+        await this.problemPage(0);
+    } catch (error) {
+      this.fail(started.generation, error);
+    }
   }
 
   async problemPage(after: number): Promise<void> {
     const plan = this.state.active?.plan ?? this.state.reviewed?.plan;
     if (!plan || this.disposed || this.state.problemsLoading) return;
-    if (this.state.active && (!this.state.active.job || ["queued", "running"].includes(this.state.active.job.state))) return;
-    const generation = this.generation, controller = this.problemsController = new AbortController();
+    if (
+      this.state.active &&
+      (!this.state.active.job || ["queued", "running"].includes(this.state.active.job.state))
+    )
+      return;
+    const generation = this.generation,
+      controller = (this.problemsController = new AbortController());
     this.emit({ ...this.state, problemsLoading: true, problemsError: undefined });
     try {
       const problems = await exportOutputProblems(this.session, plan, after, controller.signal);
       if (this.current(generation)) this.emit({ ...this.state, problems, problemsLoading: false });
     } catch (error) {
       if (!this.current(generation)) return;
-      this.emit({ ...this.state, problemsLoading: false, problemsError: error instanceof Error ? error : new Error("Unavailable output details could not be loaded.") });
+      this.emit({
+        ...this.state,
+        problemsLoading: false,
+        problemsError:
+          error instanceof Error
+            ? error
+            : new Error("Unavailable output details could not be loaded."),
+      });
       if (error instanceof APIError && error.status === 410) this.fail(generation, error);
     } finally {
       if (this.problemsController === controller) this.problemsController = undefined;
@@ -181,22 +382,38 @@ export class ExportSession {
     const reviewed = this.state.reviewed;
     if (!reviewed || this.disposed || this.state.active) return;
     if (exportExpired(reviewed.plan.expires_at)) {
-      this.emit({ ...this.state, status: "expired", reviewed: undefined, error: new Error("The export plan expired. Preview again.") }); return;
+      this.emit({
+        ...this.state,
+        status: "expired",
+        reviewed: undefined,
+        error: new Error("The export plan expired. Preview again."),
+      });
+      return;
     }
     const active = { plan: reviewed.plan, label: reviewed.label, id: randomUUID() };
     const started = this.begin();
-    this.emit({ ...this.state, status: "starting", active, error: undefined, downloadOffered: false });
+    this.emit({
+      ...this.state,
+      status: "starting",
+      active,
+      error: undefined,
+      downloadOffered: false,
+    });
     try {
       let job: ExportJob;
-      try { job = await this.createJob(active, started); }
-      catch (error) {
-        if (started.signal.aborted || error instanceof APIError && error.status < 500) throw error;
+      try {
+        job = await this.createJob(active, started);
+      } catch (error) {
+        if (started.signal.aborted || (error instanceof APIError && error.status < 500))
+          throw error;
         job = await getExportJob(this.session, active.plan, active.id, started.signal);
       }
       if (!this.current(started.generation)) return;
       this.accept(job);
       await this.watch(started);
-    } catch (error) { this.fail(started.generation, error, true); }
+    } catch (error) {
+      this.fail(started.generation, error, true);
+    }
   }
 
   async reconnect(): Promise<void> {
@@ -206,15 +423,18 @@ export class ExportSession {
     this.emit({ ...this.state, status: "starting", error: undefined });
     try {
       let job: ExportJob;
-      try { job = await getExportJob(this.session, active.plan, active.id, started.signal); }
-      catch (error) {
+      try {
+        job = await getExportJob(this.session, active.plan, active.id, started.signal);
+      } catch (error) {
         if (!(error instanceof APIError && error.status === 404) || active.job) throw error;
         job = await this.createJob(active, started);
       }
       if (!this.current(started.generation)) return;
       this.accept(job);
       await this.watch(started);
-    } catch (error) { this.fail(started.generation, error, true); }
+    } catch (error) {
+      this.fail(started.generation, error, true);
+    }
   }
 
   async cancel(): Promise<void> {
@@ -225,67 +445,129 @@ export class ExportSession {
       await cancelExportJob(this.session, active.id, started.signal);
       const job = await getExportJob(this.session, active.plan, active.id, started.signal);
       if (this.current(started.generation)) this.accept(job);
-    } catch (error) { this.fail(started.generation, error, true); }
+    } catch (error) {
+      this.fail(started.generation, error, true);
+    }
   }
 
   async download(basename: string): Promise<void> {
     const active = this.state.active;
-    if (!active?.job || active.job.state !== "completed" || this.state.downloading || this.disposed) return;
+    if (!active?.job || active.job.state !== "completed" || this.state.downloading || this.disposed)
+      return;
     const started = this.begin();
     this.emit({ ...this.state, downloading: true, error: undefined });
     try {
-      const ticket = await exportTicket(this.session, active.plan, active.job, basename, started.signal);
+      const ticket = await exportTicket(
+        this.session,
+        active.plan,
+        active.job,
+        basename,
+        started.signal,
+      );
       if (!this.current(started.generation)) {
         // A issued-but-unoffered ticket still owns an archive lease.
-        await cancelWebDownload({ ticket: ticket.url.split("ticket=")[1]! }, { session: this.session }).catch(() => undefined);
+        await cancelWebDownload(
+          { ticket: ticket.url.split("ticket=")[1]! },
+          { session: this.session },
+        ).catch(() => undefined);
         return;
       }
       offerExportDownload(ticket, basename);
       this.emit({ ...this.state, downloading: false, downloadOffered: true });
     } catch (error) {
-      if (this.current(started.generation)) this.emit({ ...this.state, downloading: false, status: error instanceof APIError && error.status === 410 ? "expired" : this.state.status, error: error instanceof Error ? error : new Error("Export download failed.") });
+      if (this.current(started.generation))
+        this.emit({
+          ...this.state,
+          downloading: false,
+          status: error instanceof APIError && error.status === 410 ? "expired" : this.state.status,
+          error: error instanceof Error ? error : new Error("Export download failed."),
+        });
     }
   }
 
   close(): void {
     if (!this.state.active && this.state.status === "preparing") {
       if (!this.source) this.resetPreparation();
-      else { this.stop(); this.emit({ status: "idle" }); }
+      else {
+        this.stop();
+        this.emit({ status: "idle" });
+      }
       return;
     }
     this.stop();
     const active = this.state.active;
-    this.emit({ ...this.state, downloading: false, releasing: false, ...(active && (!active.job || ["queued", "running"].includes(active.job.state)) ? { status: "disconnected" } : {}) });
+    this.emit({
+      ...this.state,
+      downloading: false,
+      releasing: false,
+      ...(active && (!active.job || ["queued", "running"].includes(active.job.state))
+        ? { status: "disconnected" }
+        : {}),
+    });
   }
   resetPreparation(): void {
     if (this.disposed || this.state.active) return;
-    this.stop(); this.members = undefined; this.source = undefined; this.sourceID = randomUUID(); this.planID = randomUUID();
+    this.stop();
+    this.members = undefined;
+    this.source = undefined;
+    this.sourceID = randomUUID();
+    this.planID = randomUUID();
     this.emit({ status: "idle" });
   }
   async clearFinished(): Promise<void> {
     const active = this.state.active;
-    if (!active?.job || !["completed", "canceled", "failed"].includes(active.job.state) || this.state.releasing || this.state.downloading) return;
+    if (
+      !active?.job ||
+      !["completed", "canceled", "failed"].includes(active.job.state) ||
+      this.state.releasing ||
+      this.state.downloading
+    )
+      return;
     const started = this.begin();
     this.emit({ ...this.state, releasing: true, error: undefined });
     try {
-      await releaseExportJob(active.id, { session: this.session, signal: started.signal }).catch(error => {
-        if (!(error instanceof APIError && error.status === 404)) throw error;
-      });
+      await releaseExportJob(active.id, { session: this.session, signal: started.signal }).catch(
+        (error) => {
+          if (!(error instanceof APIError && error.status === 404)) throw error;
+        },
+      );
       if (!this.current(started.generation)) return;
-      this.stop(); this.source = undefined; this.sourceID = randomUUID(); this.planID = randomUUID();
+      this.stop();
+      this.source = undefined;
+      this.sourceID = randomUUID();
+      this.planID = randomUUID();
       this.emit({ status: "idle" });
     } catch (error) {
       if (error instanceof APIError && error.status === 409 && error.code === "export_retained") {
-        if (this.current(started.generation)) this.emit({ ...this.state, releasing: false, error: new Error("Your browser is still downloading this export. Choose Prepare another export again once the download finishes.") });
+        if (this.current(started.generation))
+          this.emit({
+            ...this.state,
+            releasing: false,
+            error: new Error(
+              "Your browser is still downloading this export. Choose Prepare another export again once the download finishes.",
+            ),
+          });
       } else this.fail(started.generation, error);
     }
   }
-  dispose(): void { this.close(); this.disposed = true; }
+  dispose(): void {
+    this.close();
+    this.disposed = true;
+  }
 
-  private async createJob(active: ActiveExport, started: { generation: number; signal: AbortSignal }): Promise<ExportJob> {
-    try { return await startExportJob(this.session, active.plan, active.id, started.signal); }
-    catch (error) {
-      if (this.current(started.generation) && error instanceof APIError && error.status >= 400 && error.status < 500) {
+  private async createJob(
+    active: ActiveExport,
+    started: { generation: number; signal: AbortSignal },
+  ): Promise<ExportJob> {
+    try {
+      return await startExportJob(this.session, active.plan, active.id, started.signal);
+    } catch (error) {
+      if (
+        this.current(started.generation) &&
+        error instanceof APIError &&
+        error.status >= 400 &&
+        error.status < 500
+      ) {
         this.emit({ ...this.state, active: undefined, reviewed: undefined });
       }
       throw error;
@@ -296,9 +578,16 @@ export class ExportSession {
     const active = this.state.active;
     if (!active?.job || !["queued", "running"].includes(active.job.state)) return;
     try {
-      await readExportEvents(this.session, active.plan, active.id, active.job, started.signal, (job, gap) => {
-        if (this.current(started.generation)) this.accept(job, gap);
-      });
+      await readExportEvents(
+        this.session,
+        active.plan,
+        active.id,
+        active.job,
+        started.signal,
+        (job, gap) => {
+          if (this.current(started.generation)) this.accept(job, gap);
+        },
+      );
     } catch (error) {
       if (!this.current(started.generation)) return;
       if (error instanceof APIError && (error.status === 401 || error.status === 410)) throw error;
@@ -315,25 +604,54 @@ export class ExportSession {
     const active = this.state.active;
     if (!active) return;
     if (active.job) assertExportAdvance(active.job, job);
-    this.emit({ ...this.state, status: job.state === "queued" ? "running" : job.state as ExportState["status"], active: { ...active, job }, error: undefined, gap: this.state.gap || gap });
+    this.emit({
+      ...this.state,
+      status: job.state === "queued" ? "running" : (job.state as ExportState["status"]),
+      active: { ...active, job },
+      error: undefined,
+      gap: this.state.gap || gap,
+    });
   }
   private fail(generation: number, cause: unknown, disconnected = false): void {
     if (!this.current(generation)) return;
     const error = cause instanceof Error ? cause : new Error("Export request failed.");
-    this.emit({ ...this.state, downloading: false, releasing: false, status: error instanceof APIError && error.status === 410 ? "expired" : disconnected && this.state.active ? "disconnected" : "error", error });
+    this.emit({
+      ...this.state,
+      downloading: false,
+      releasing: false,
+      status:
+        error instanceof APIError && error.status === 410
+          ? "expired"
+          : disconnected && this.state.active
+            ? "disconnected"
+            : "error",
+      error,
+    });
   }
   private begin(): { generation: number; signal: AbortSignal } {
-    this.stop(); this.controller = new AbortController();
+    this.stop();
+    this.controller = new AbortController();
     return { generation: this.generation, signal: this.controller.signal };
   }
   private stop(): void {
-    if (this.state.status === "preparing" && !this.source && !this.state.active) this.sourceID = randomUUID();
-    this.generation++; this.controller?.abort(); this.controller = undefined;
-    this.problemsController?.abort(); this.problemsController = undefined;
+    if (this.state.status === "preparing" && !this.source && !this.state.active)
+      this.sourceID = randomUUID();
+    this.generation++;
+    this.controller?.abort();
+    this.controller = undefined;
+    this.problemsController?.abort();
+    this.problemsController = undefined;
     if (this.state.problemsLoading) this.emit({ ...this.state, problemsLoading: false });
     if (this.expiryTimer) clearTimeout(this.expiryTimer);
     this.expiryTimer = undefined;
   }
-  private current(generation: number): boolean { return !this.disposed && generation === this.generation; }
-  private emit(state: ExportState): void { if (!this.disposed) { this.state = state; this.publish(state); } }
+  private current(generation: number): boolean {
+    return !this.disposed && generation === this.generation;
+  }
+  private emit(state: ExportState): void {
+    if (!this.disposed) {
+      this.state = state;
+      this.publish(state);
+    }
+  }
 }

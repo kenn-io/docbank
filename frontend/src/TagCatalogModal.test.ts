@@ -1,11 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import TagCatalogModal from "./TagCatalogModal.svelte";
 
 beforeEach(() => {
@@ -35,38 +29,36 @@ const tax = {
 it("creates, renames, and deliberately deletes stable tag definitions", async () => {
   const reviewedID = "22222222-2222-4222-8222-222222222222";
   const onchanged = vi.fn();
-  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
-    async (_path, request) => {
-      if (request?.method === "POST") {
-        return new Response(
-          JSON.stringify({
-            id: reviewedID,
-            name: "reviewed",
-            revision: 1,
-            assignment_count: 0,
-          }),
-          { status: 201, headers: { "Content-Type": "application/json" } },
-        );
-      }
-      if (request?.method === "PATCH") {
-        return new Response(
-          JSON.stringify({
-            ...tax,
-            name: "tax filing",
-            revision: 3,
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        );
-      }
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (_path, request) => {
+    if (request?.method === "POST") {
       return new Response(
         JSON.stringify({
-          tag: { ...tax, name: "tax filing", revision: 3 },
-          removed_assignments: 3,
+          id: reviewedID,
+          name: "reviewed",
+          revision: 1,
+          assignment_count: 0,
+        }),
+        { status: 201, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    if (request?.method === "PATCH") {
+      return new Response(
+        JSON.stringify({
+          ...tax,
+          name: "tax filing",
+          revision: 3,
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
-    },
-  );
+    }
+    return new Response(
+      JSON.stringify({
+        tag: { ...tax, name: "tax filing", revision: 3 },
+        removed_assignments: 3,
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  });
 
   render(TagCatalogModal, {
     session: "short-lived",
@@ -87,33 +79,21 @@ it("creates, renames, and deliberately deletes stable tag definitions", async ()
   await fireEvent.click(screen.getByRole("button", { name: "Rename tag tax" }));
   const renameInput = screen.getByRole("textbox", { name: "Rename tax" });
   await fireEvent.input(renameInput, { target: { value: "tax filing" } });
-  await fireEvent.click(
-    screen.getByRole("button", { name: "Save renamed tag tax" }),
-  );
+  await fireEvent.click(screen.getByRole("button", { name: "Save renamed tag tax" }));
   expect(await screen.findByText("Renamed tag to tax filing.")).toBeTruthy();
 
-  await fireEvent.click(
-    screen.getByRole("button", { name: "Delete tag tax filing" }),
-  );
+  await fireEvent.click(screen.getByRole("button", { name: "Delete tag tax filing" }));
   expect(
     screen.getByText(
       "This permanently removes the tag definition and every assignment that currently uses it. Documents and their stored content are not deleted.",
     ),
   ).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Delete tag" }));
-  expect(
-    await screen.findByText(
-      "Deleted tax filing and removed 3 assignments.",
-    ),
-  ).toBeTruthy();
+  expect(await screen.findByText("Deleted tax filing and removed 3 assignments.")).toBeTruthy();
 
   expect(fetchMock).toHaveBeenCalledTimes(3);
-  expect(
-    new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get("If-Match"),
-  ).toBe("2");
-  expect(
-    new Headers(fetchMock.mock.calls[2]?.[1]?.headers).get("If-Match"),
-  ).toBe("3");
+  expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get("If-Match")).toBe("2");
+  expect(new Headers(fetchMock.mock.calls[2]?.[1]?.headers).get("If-Match")).toBe("3");
   expect(onchanged).toHaveBeenNthCalledWith(
     1,
     expect.objectContaining({
@@ -166,16 +146,10 @@ it("keeps a stale rename visible without losing the inspected definition", async
   await fireEvent.input(screen.getByRole("textbox", { name: "Rename tax" }), {
     target: { value: "tax filing" },
   });
-  await fireEvent.click(
-    screen.getByRole("button", { name: "Save renamed tag tax" }),
-  );
+  await fireEvent.click(screen.getByRole("button", { name: "Save renamed tag tax" }));
 
-  expect(
-    await screen.findByText("tag changed; refresh before renaming"),
-  ).toBeTruthy();
-  await waitFor(() =>
-    expect(screen.getByRole("textbox", { name: "Rename tax" })).toBeTruthy(),
-  );
+  expect(await screen.findByText("tag changed; refresh before renaming")).toBeTruthy();
+  await waitFor(() => expect(screen.getByRole("textbox", { name: "Rename tax" })).toBeTruthy());
 });
 
 it("keeps an identity color while a rename moves the tag between groups", async () => {
@@ -210,13 +184,10 @@ it("keeps an identity color while a rename moves the tag between groups", async 
     "rgb(188, 76, 0)",
   );
 
-  await fireEvent.click(
-    screen.getByRole("button", { name: "Rename tag matter/acme/tax" }),
-  );
-  await fireEvent.input(
-    screen.getByRole("textbox", { name: "Rename matter/acme/tax" }),
-    { target: { value: "archive/complete" } },
-  );
+  await fireEvent.click(screen.getByRole("button", { name: "Rename tag matter/acme/tax" }));
+  await fireEvent.input(screen.getByRole("textbox", { name: "Rename matter/acme/tax" }), {
+    target: { value: "archive/complete" },
+  });
   await fireEvent.click(
     screen.getByRole("button", {
       name: "Save renamed tag matter/acme/tax",

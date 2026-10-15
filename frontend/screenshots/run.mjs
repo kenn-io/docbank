@@ -26,13 +26,7 @@ await rm(captures, { recursive: true, force: true });
 await mkdir(staging, { recursive: true, mode: 0o700 });
 await mkdir(captures, { recursive: true, mode: 0o700 });
 
-const playwrightCLI = path.join(
-  frontendRoot,
-  "node_modules",
-  "@playwright",
-  "test",
-  "cli.js",
-);
+const playwrightCLI = path.join(frontendRoot, "node_modules", "@playwright", "test", "cli.js");
 const result = spawnSync(
   process.execPath,
   [
@@ -66,9 +60,7 @@ if (result.status !== 0) {
   process.exit(result.status ?? 1);
 }
 
-const names = (await readFile(manifestPath, "utf8"))
-  .split("\n")
-  .filter((line) => line !== "");
+const names = (await readFile(manifestPath, "utf8")).split("\n").filter((line) => line !== "");
 // Proof runs also write receipts and alternate viewport captures. Only the
 // complete public image manifest enters the atomically published set.
 for (const name of names) {

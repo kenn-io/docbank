@@ -64,9 +64,7 @@ it("uses the dock close control to clear selection", async () => {
   });
 
   expect(screen.queryByText("More results exist beyond this page")).toBeNull();
-  await fireEvent.click(
-    screen.getByRole("button", { name: "Clear selected documents" }),
-  );
+  await fireEvent.click(screen.getByRole("button", { name: "Clear selected documents" }));
   expect(onclear).toHaveBeenCalledOnce();
 });
 
@@ -83,7 +81,9 @@ it("offers the bounded tag action when supplied", async () => {
     oncsv: vi.fn(),
   });
 
-  expect((screen.getByRole("button", { name: "Edit tags" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole("button", { name: "Edit tags" }) as HTMLButtonElement).disabled).toBe(
+    true,
+  );
   await rerender({ tagsDisabled: false });
   await fireEvent.click(screen.getByRole("button", { name: "Edit tags" }));
   expect(ontags).toHaveBeenCalledOnce();
@@ -100,26 +100,26 @@ it("labels and invokes the visible-page CSV action for the current selection", a
     oncsv,
   });
 
-  await fireEvent.click(
-    screen.getByRole("button", { name: "Export page CSV" }),
-  );
+  await fireEvent.click(screen.getByRole("button", { name: "Export page CSV" }));
   expect(oncsv).toHaveBeenCalledOnce();
 });
 
 it("names snapshot-page tagging separately from the whole frozen query", async () => {
   const ontags = vi.fn();
   const onwholequerytags = vi.fn();
-  render(SelectionDock, { props: {
-    selectedCount: 1,
-    visibleDocumentCount: 2,
-    truncated: true,
-    context: "snapshot",
-    wholeQueryCount: 101,
-    onclear: vi.fn(),
-    onselectvisible: vi.fn(),
-    ontags,
-    onwholequerytags,
-  } });
+  render(SelectionDock, {
+    props: {
+      selectedCount: 1,
+      visibleDocumentCount: 2,
+      truncated: true,
+      context: "snapshot",
+      wholeQueryCount: 101,
+      onclear: vi.fn(),
+      onselectvisible: vi.fn(),
+      ontags,
+      onwholequerytags,
+    },
+  });
 
   expect(screen.getByText("1 selected on this frozen page")).toBeTruthy();
   expect(screen.getByText("Visible selection only · whole query has 101 documents")).toBeTruthy();
@@ -130,9 +130,24 @@ it("names snapshot-page tagging separately from the whole frozen query", async (
 });
 
 it("disables both snapshot tagging actions together", () => {
-  render(SelectionDock, { props: { selectedCount: 1, visibleDocumentCount: 2, truncated: true,
-    context: "snapshot", wholeQueryCount: 101, tagsDisabled: true,
-    onclear: vi.fn(), onselectvisible: vi.fn(), ontags: vi.fn(), onwholequerytags: vi.fn() } });
-  expect((screen.getByRole("button", { name: "Tag visible selection" }) as HTMLButtonElement).disabled).toBe(true);
-  expect((screen.getByRole("button", { name: "Tag whole query" }) as HTMLButtonElement).disabled).toBe(true);
+  render(SelectionDock, {
+    props: {
+      selectedCount: 1,
+      visibleDocumentCount: 2,
+      truncated: true,
+      context: "snapshot",
+      wholeQueryCount: 101,
+      tagsDisabled: true,
+      onclear: vi.fn(),
+      onselectvisible: vi.fn(),
+      ontags: vi.fn(),
+      onwholequerytags: vi.fn(),
+    },
+  });
+  expect(
+    (screen.getByRole("button", { name: "Tag visible selection" }) as HTMLButtonElement).disabled,
+  ).toBe(true);
+  expect(
+    (screen.getByRole("button", { name: "Tag whole query" }) as HTMLButtonElement).disabled,
+  ).toBe(true);
 });

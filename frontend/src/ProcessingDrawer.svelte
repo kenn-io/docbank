@@ -5,11 +5,27 @@
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import SearchIcon from "@lucide/svelte/icons/search";
   import XIcon from "@lucide/svelte/icons/x";
-  import { Button, Card, Chip, DetailDrawer, IconButton, SearchInput, Spinner } from "@kenn-io/kit-ui";
+  import {
+    Button,
+    Card,
+    Chip,
+    DetailDrawer,
+    IconButton,
+    SearchInput,
+    Spinner,
+  } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
   import { documentSearch, documentSimilar, startProcessing } from "./receipts.js";
   import type { DocumentSimilarReport } from "./generated/docbank.js";
-  import { type CoverageReport, type DocumentSearchReport, type Node, type ProcessingPlan, type ProcessingProfileSummary, type ProcessingJob, type ProcessingStatus } from "./generated/docbank.js";
+  import {
+    type CoverageReport,
+    type DocumentSearchReport,
+    type Node,
+    type ProcessingPlan,
+    type ProcessingProfileSummary,
+    type ProcessingJob,
+    type ProcessingStatus,
+  } from "./generated/docbank.js";
 
   interface Props {
     session: string;
@@ -22,7 +38,16 @@
     intent?: "similar" | null;
   }
 
-  let { session, node, path, onclose, onauthfailure, onrendition, scopeVersionIDs = [], intent = null }: Props = $props();
+  let {
+    session,
+    node,
+    path,
+    onclose,
+    onauthfailure,
+    onrendition,
+    scopeVersionIDs = [],
+    intent = null,
+  }: Props = $props();
   let similarReport = $state<DocumentSimilarReport | null>(null);
   let similarBusy = $state(false);
   let similarError = $state("");
@@ -106,14 +131,26 @@
     similarBusy = false;
     searching = false;
     try {
-      const next = await generated.planDocumentProcessing({ selector: ({
-        node_id: node.id,
-        content_version_id: node.current_version_id,
-        profile: profileName,
-      }) }, { session });
+      const next = await generated.planDocumentProcessing(
+        {
+          selector: {
+            node_id: node.id,
+            content_version_id: node.current_version_id,
+            profile: profileName,
+          },
+        },
+        { session },
+      );
       if (request !== generation) return;
       plan = next;
-      const nextCoverage = await generated.getDocumentProcessingCoverage({ profile: profileName, vault_uid: next.vault_uid, content_version_id: [node.current_version_id] }, { session });
+      const nextCoverage = await generated.getDocumentProcessingCoverage(
+        {
+          profile: profileName,
+          vault_uid: next.vault_uid,
+          content_version_id: [node.current_version_id],
+        },
+        { session },
+      );
       if (request !== generation) return;
       coverage = nextCoverage;
       if (intent === "similar" && !similarAutoRun) {
@@ -137,17 +174,35 @@
     job = null;
     status = null;
     try {
-      const result = await startProcessing(session, plan.selector, plan.fingerprint, plan.profile_fingerprint, plan.consent_required, (event) => {
-        if (processingController === active && event.job) job = event.job;
-      }, active.signal);
+      const result = await startProcessing(
+        session,
+        plan.selector,
+        plan.fingerprint,
+        plan.profile_fingerprint,
+        plan.consent_required,
+        (event) => {
+          if (processingController === active && event.job) job = event.job;
+        },
+        active.signal,
+      );
       if (processingController !== active) return;
       job = result.job;
       status = result.status;
-      const nextCoverage = await generated.getDocumentProcessingCoverage({ profile: profileName, vault_uid: plan.vault_uid, content_version_id: [node.current_version_id] }, { session, signal: active.signal });
+      const nextCoverage = await generated.getDocumentProcessingCoverage(
+        {
+          profile: profileName,
+          vault_uid: plan.vault_uid,
+          content_version_id: [node.current_version_id],
+        },
+        { session, signal: active.signal },
+      );
       if (processingController !== active) return;
       coverage = nextCoverage;
     } catch (cause) {
-      if (processingController === active && !(cause instanceof DOMException && cause.name === "AbortError")) {
+      if (
+        processingController === active &&
+        !(cause instanceof DOMException && cause.name === "AbortError")
+      ) {
         handleFailure(cause);
       }
     } finally {
@@ -180,7 +235,10 @@
     error = "";
     try {
       const nextReport = await documentSearch(session, {
-        query: query.trim(), mode: "auto", limit: 20, profile: profileName,
+        query: query.trim(),
+        mode: "auto",
+        limit: 20,
+        profile: profileName,
         binding_id: profiles.find((item) => item.name === profileName)?.embedding_bindings[0],
         fence: { vault_uid: plan.vault_uid, content_version_ids: [node.current_version_id] },
         explain: true,
@@ -204,8 +262,12 @@
     similarError = "";
     similarReport = null;
     try {
-      const report = await documentSimilar(session, { selector: { ...plan.selector }, binding_id: binding, limit: 20,
-        fence: { vault_uid: plan.vault_uid, content_version_ids: [...scopeVersionIDs] } });
+      const report = await documentSimilar(session, {
+        selector: { ...plan.selector },
+        binding_id: binding,
+        limit: 20,
+        fence: { vault_uid: plan.vault_uid, content_version_ids: [...scopeVersionIDs] },
+      });
       if (request === generation && id === similarID) similarReport = report;
     } catch (cause) {
       if (request === generation && id === similarID) {
@@ -219,38 +281,56 @@
 
   function boundaryLabel(boundary: string): string {
     switch (boundary) {
-      case "local_process": return "Local process";
-      case "operator_network": return "Private network";
-      case "hosted_provider": return "Hosted provider";
-      default: return "Unrecognized boundary";
+      case "local_process":
+        return "Local process";
+      case "operator_network":
+        return "Private network";
+      case "hosted_provider":
+        return "Hosted provider";
+      default:
+        return "Unrecognized boundary";
     }
   }
 
   function boundaryDetail(boundary: string): string {
     switch (boundary) {
-      case "local_process": return "Processing stays inside this Docbank process.";
-      case "operator_network": return "Document data goes to an operator-controlled private endpoint.";
-      case "hosted_provider": return "Document data leaves this machine for this step.";
-      default: return "Treat this step as external until its trust boundary is configured correctly.";
+      case "local_process":
+        return "Processing stays inside this Docbank process.";
+      case "operator_network":
+        return "Document data goes to an operator-controlled private endpoint.";
+      case "hosted_provider":
+        return "Document data leaves this machine for this step.";
+      default:
+        return "Treat this step as external until its trust boundary is configured correctly.";
     }
   }
 
   function consentLabel(state: ProcessingPlan["consent_state"]): string {
     switch (state) {
-      case "active": return "Consent active";
-      case "required": return "Consent required";
-      case "expired": return "Consent expired";
-      case "revoked": return "Consent revoked";
+      case "active":
+        return "Consent active";
+      case "required":
+        return "Consent required";
+      case "expired":
+        return "Consent expired";
+      case "revoked":
+        return "Consent revoked";
     }
   }
 
   function previousGenerationServes(report: CoverageReport): boolean {
-    return report.renditions.previous_generation_serving > 0 ||
-      report.embeddings.some((item) => item.previous_generation_serving > 0);
+    return (
+      report.renditions.previous_generation_serving > 0 ||
+      report.embeddings.some((item) => item.previous_generation_serving > 0)
+    );
   }
 </script>
 
-<DetailDrawer width="min(900px, 100vw)" ariaLabel="Document processing and coverage" onclose={closeDrawer}>
+<DetailDrawer
+  width="min(900px, 100vw)"
+  ariaLabel="Document processing and coverage"
+  onclose={closeDrawer}
+>
   {#snippet header()}
     <div class="drawer-heading">
       <div>
@@ -259,7 +339,12 @@
         <small>Exact version {node.current_version_id}</small>
       </div>
       <div class="drawer-actions">
-        <IconButton size="sm" ariaLabel="Refresh processing plan" disabled={loading || running} onclick={() => void preview()}>
+        <IconButton
+          size="sm"
+          ariaLabel="Refresh processing plan"
+          disabled={loading || running}
+          onclick={() => void preview()}
+        >
           <RefreshCwIcon size="14" aria-hidden="true" />
         </IconButton>
         <IconButton size="sm" ariaLabel="Close document processing" onclick={closeDrawer}>
@@ -273,7 +358,10 @@
     {#if loading && !plan}
       <div class="loading"><Spinner size={16} /> Preparing the exact disclosure plan…</div>
     {:else if error && !plan}
-      <div class="load-error"><p role="alert">{error}</p><Button size="sm" onclick={() => void loadProfiles()}>Try again</Button></div>
+      <div class="load-error">
+        <p role="alert">{error}</p>
+        <Button size="sm" onclick={() => void loadProfiles()}>Try again</Button>
+      </div>
     {:else if profiles.length === 0}
       <Card level="default" title="No executable processing profiles" eyebrow="Not configured">
         <p>The daemon will not advertise a provider flow it cannot execute end to end.</p>
@@ -282,7 +370,12 @@
       {#if error}<p class="error" role="alert">{error}</p>{/if}
       <div class="profile-row">
         <label for="processing-profile">Profile</label>
-        <select id="processing-profile" bind:value={profileName} onchange={() => void preview()} disabled={loading || running}>
+        <select
+          id="processing-profile"
+          bind:value={profileName}
+          onchange={() => void preview()}
+          disabled={loading || running}
+        >
           {#each profiles as profile}<option value={profile.name}>{profile.name}</option>{/each}
         </select>
       </div>
@@ -295,20 +388,32 @@
         {:else if !profiles.find((item) => item.name === profileName)?.embedding_bindings.length}
           <p>This profile has no embedding binding.</p>
         {:else}
-          <Button size="sm" disabled={similarBusy || loading || scopeVersionIDs.length === 0} onclick={() => void findSimilar()}>
+          <Button
+            size="sm"
+            disabled={similarBusy || loading || scopeVersionIDs.length === 0}
+            onclick={() => void findSimilar()}
+          >
             {#if similarBusy}<Spinner size={14} /> Finding similar files{:else}Find similar{/if}
           </Button>
         {/if}
         {#if similarError}<p role="alert">{similarError}</p>{/if}
         {#if similarReport?.state === "unavailable"}
-          <p>Unavailable: no current embedding for binding "{similarReport.binding_id}". Run processing to build it.</p>
+          <p>
+            Unavailable: no current embedding for binding "{similarReport.binding_id}". Run
+            processing to build it.
+          </p>
         {:else if similarReport}
-          <p>Coverage: {similarReport.coverage.state}, {similarReport.coverage.complete_documents}/{similarReport.coverage.scoped_documents} complete.</p>
+          <p>
+            Coverage: {similarReport.coverage.state}, {similarReport.coverage
+              .complete_documents}/{similarReport.coverage.scoped_documents} complete.
+          </p>
           {#if similarReport.results.length === 0}<p>No similar documents inside this view.</p>{/if}
           {#each similarReport.results as result}
             <Card level="default" padding="sm" eyebrow={`RANK ${result.rank}`} title={result.path}>
               <p>Score {result.score.toPrecision(4)}</p>
-              {#if result.duplicate_count > 0}<Chip size="xs">+{result.duplicate_count} identical</Chip>{/if}
+              {#if result.duplicate_count > 0}<Chip size="xs"
+                  >+{result.duplicate_count} identical</Chip
+                >{/if}
             </Card>
           {/each}
           {#if similarReport.truncated}<p>Showing the first 20 content groups.</p>{/if}
@@ -316,81 +421,191 @@
       </section>
 
       <section aria-label="Reviewed provider flow">
-        <div class="section-heading"><div><span>Reviewed flow</span><strong>What leaves the vault, and what stays</strong></div><Chip size="xs" tone={plan.consent_state === "active" ? "success" : "warning"}>{consentLabel(plan.consent_state)}</Chip></div>
+        <div class="section-heading">
+          <div>
+            <span>Reviewed flow</span><strong>What leaves the vault, and what stays</strong>
+          </div>
+          <Chip size="xs" tone={plan.consent_state === "active" ? "success" : "warning"}
+            >{consentLabel(plan.consent_state)}</Chip
+          >
+        </div>
         <div class="flow-list">
           {#each plan.flow as hop}
-            <Card level="default" padding="sm" eyebrow={hop.capability.replace(/^./, (char) => char.toUpperCase())} title={hop.provider_id}>
-              {#snippet actions()}<Chip size="xs" tone={hop.trust_boundary === "local_process" || hop.trust_boundary === "operator_network" ? "success" : "warning"}>{boundaryLabel(hop.trust_boundary)}</Chip>{/snippet}
+            <Card
+              level="default"
+              padding="sm"
+              eyebrow={hop.capability.replace(/^./, (char) => char.toUpperCase())}
+              title={hop.provider_id}
+            >
+              {#snippet actions()}<Chip
+                  size="xs"
+                  tone={hop.trust_boundary === "local_process" ||
+                  hop.trust_boundary === "operator_network"
+                    ? "success"
+                    : "warning"}>{boundaryLabel(hop.trust_boundary)}</Chip
+                >{/snippet}
               <p>{hop.input_classes.join(", ")}</p>
               {#if hop.disclose_filename}<p>Disclosed filename: {hop.filename}</p>{/if}
-              <p>{hop.runtime_disclosure.immediate_processor} → {hop.runtime_disclosure.ultimate_processor}</p>
+              <p>
+                {hop.runtime_disclosure.immediate_processor} → {hop.runtime_disclosure
+                  .ultimate_processor}
+              </p>
               <small>{hop.runtime_disclosure.endpoint}</small>
               <small>Deployment {hop.runtime_disclosure.deployment}</small>
               {#if hop.runtime_disclosure.model || hop.runtime_disclosure.model_revision}
-                <small>{hop.runtime_disclosure.model ?? ""}{hop.runtime_disclosure.model && hop.runtime_disclosure.model_revision ? "@" : ""}{hop.runtime_disclosure.model_revision ?? ""}</small>
+                <small
+                  >{hop.runtime_disclosure.model ?? ""}{hop.runtime_disclosure.model &&
+                  hop.runtime_disclosure.model_revision
+                    ? "@"
+                    : ""}{hop.runtime_disclosure.model_revision ?? ""}</small
+                >
               {/if}
-              {#if hop.runtime_disclosure.vector_space}<small>Vector space {hop.runtime_disclosure.vector_space}</small>{/if}
-              <small>Provider metadata: {hop.runtime_disclosure.metadata_classes.join(", ") || "none"}</small>
-              <small>Retained artifacts: {hop.runtime_disclosure.retained_artifact_roles.join(", ") || "none"}</small>
+              {#if hop.runtime_disclosure.vector_space}<small
+                  >Vector space {hop.runtime_disclosure.vector_space}</small
+                >{/if}
+              <small
+                >Provider metadata: {hop.runtime_disclosure.metadata_classes.join(", ") ||
+                  "none"}</small
+              >
+              <small
+                >Retained artifacts: {hop.runtime_disclosure.retained_artifact_roles.join(", ") ||
+                  "none"}</small
+              >
               <small>{boundaryDetail(hop.trust_boundary)}</small>
             </Card>
           {/each}
         </div>
         {#if plan.retained_classes.includes("sanitized_markdown")}
-          <p class="retention-warning">Extracted text is saved in the vault and included in backups.</p>
+          <p class="retention-warning">
+            Extracted text is saved in the vault and included in backups.
+          </p>
         {/if}
-        <p class="consent-copy">Consent covers this processing profile and operator scope until revoked or expired. The exact plan fingerprint is still reviewed before each run.</p>
+        <p class="consent-copy">
+          Consent covers this processing profile and operator scope until revoked or expired. The
+          exact plan fingerprint is still reviewed before each run.
+        </p>
         {#if plan.rendition_ineligible_reason}
-          <p class="retention-warning">This profile can't process this file: {plan.rendition_ineligible_reason.replaceAll("_", " ")}.</p>
+          <p class="retention-warning">
+            This profile can't process this file: {plan.rendition_ineligible_reason.replaceAll(
+              "_",
+              " ",
+            )}.
+          </p>
         {/if}
-        <Button size="sm" tone="info" disabled={running || loading || !!plan.rendition_ineligible_reason} onclick={() => void execute()}>
-          {#if running}<Spinner size={14} /> Running…{:else}<ActivityIcon size="14" aria-hidden="true" /> {plan.consent_required ? "Consent and run" : "Run processing"}{/if}
+        <Button
+          size="sm"
+          tone="info"
+          disabled={running || loading || !!plan.rendition_ineligible_reason}
+          onclick={() => void execute()}
+        >
+          {#if running}<Spinner size={14} /> Running…{:else}<ActivityIcon
+              size="14"
+              aria-hidden="true"
+            />
+            {plan.consent_required ? "Consent and run" : "Run processing"}{/if}
         </Button>
-        <Button size="sm" surface="soft" disabled={running || loading} onclick={() => void revokeConsent()}>Revoke all processing consent</Button>
+        <Button
+          size="sm"
+          surface="soft"
+          disabled={running || loading}
+          onclick={() => void revokeConsent()}>Revoke all processing consent</Button
+        >
         <small>Revocation applies to all processing profiles for this operator.</small>
       </section>
 
       <section aria-label="Reviewed processing scope">
-        <div class="section-heading"><div><span>Reviewed scope</span><strong>Exact plan and saved outputs</strong></div></div>
+        <div class="section-heading">
+          <div><span>Reviewed scope</span><strong>Exact plan and saved outputs</strong></div>
+        </div>
         <div class="fingerprints">
           <div><span>Plan fingerprint</span><code>{plan.fingerprint}</code></div>
           <div><span>Profile fingerprint</span><code>{plan.profile_fingerprint}</code></div>
         </div>
         <p><strong>Disclosed:</strong> {plan.disclosed_classes.join(", ") || "none"}</p>
         <p><strong>Retained:</strong> {plan.retained_classes.join(", ") || "none"}</p>
-        <p>{plan.estimate.source_bytes} source bytes · {plan.estimate.provider_calls} provider call{plan.estimate.provider_calls === 1 ? "" : "s"} · {plan.estimate.vector_spaces} vector space{plan.estimate.vector_spaces === 1 ? "" : "s"}</p>
+        <p>
+          {plan.estimate.source_bytes} source bytes · {plan.estimate.provider_calls} provider call{plan
+            .estimate.provider_calls === 1
+            ? ""
+            : "s"} · {plan.estimate.vector_spaces} vector space{plan.estimate.vector_spaces === 1
+            ? ""
+            : "s"}
+        </p>
         <p><strong>Backup consequence:</strong> {plan.backup_consequence}</p>
       </section>
 
       {#if job}
         <section aria-live="polite">
-          <div class="section-heading"><div><span>Durable job</span><strong>{status?.state ?? "Accepted"}</strong></div>{#if status}<Chip size="xs" tone={status.state === "completed" ? "success" : "warning"}>{status.phase}</Chip>{/if}</div>
+          <div class="section-heading">
+            <div><span>Durable job</span><strong>{status?.state ?? "Accepted"}</strong></div>
+            {#if status}<Chip size="xs" tone={status.state === "completed" ? "success" : "warning"}
+                >{status.phase}</Chip
+              >{/if}
+          </div>
           <code>{job.id}</code>
           {#if status?.failure_code}<p class="warning">{status.failure_code}</p>{/if}
-          {#if status && job.attachment_id}<Button size="sm" surface="soft" onclick={() => onrendition(job!.attachment_id!)}>Read sanitized Markdown</Button>{/if}
+          {#if status && job.attachment_id}<Button
+              size="sm"
+              surface="soft"
+              onclick={() => onrendition(job!.attachment_id!)}>Read sanitized Markdown</Button
+            >{/if}
         </section>
       {/if}
 
       {#if coverage}
         <section aria-label="Document processing coverage">
-          <div class="section-heading"><div><span>Coverage</span><strong>{coverage.state}</strong></div></div>
-          {#if coverage.state === "rebuilding" && previousGenerationServes(coverage)}<p>Previous complete generation remains available while the rebuild runs.</p>{/if}
+          <div class="section-heading">
+            <div><span>Coverage</span><strong>{coverage.state}</strong></div>
+          </div>
+          {#if coverage.state === "rebuilding" && previousGenerationServes(coverage)}<p>
+              Previous complete generation remains available while the rebuild runs.
+            </p>{/if}
           <div class="coverage-list">
-            <div><strong>Rendition · {coverage.renditions.state}</strong><span>{coverage.renditions.complete}/{coverage.renditions.total} complete · {coverage.renditions.rebuilding} rebuilding</span></div>
-            {#each coverage.embeddings as item}<div><strong>{item.name} · {item.state}</strong><span>{item.required ? "Required" : "Optional"} · {item.complete}/{item.total} complete · {item.rebuilding} rebuilding</span></div>{/each}
+            <div>
+              <strong>Rendition · {coverage.renditions.state}</strong><span
+                >{coverage.renditions.complete}/{coverage.renditions.total} complete · {coverage
+                  .renditions.rebuilding} rebuilding</span
+              >
+            </div>
+            {#each coverage.embeddings as item}<div>
+                <strong>{item.name} · {item.state}</strong><span
+                  >{item.required ? "Required" : "Optional"} · {item.complete}/{item.total} complete ·
+                  {item.rebuilding} rebuilding</span
+                >
+              </div>{/each}
           </div>
         </section>
       {/if}
 
       <section aria-label="Search exact document version">
-        <div class="section-heading"><div><span>Retrieval proof</span><strong>Search this exact version</strong></div></div>
-        <form class="document-search" onsubmit={(event) => { event.preventDefault(); void searchVersion(); }}>
-          <SearchInput bind:value={query} ariaLabel="Search this document version" placeholder="Search retained evidence" block />
-          <Button type="submit" size="sm" disabled={searching || !query.trim()}><SearchIcon size="14" aria-hidden="true" />Search this version</Button>
+        <div class="section-heading">
+          <div><span>Retrieval proof</span><strong>Search this exact version</strong></div>
+        </div>
+        <form
+          class="document-search"
+          onsubmit={(event) => {
+            event.preventDefault();
+            void searchVersion();
+          }}
+        >
+          <SearchInput
+            bind:value={query}
+            ariaLabel="Search this document version"
+            placeholder="Search retained evidence"
+            block
+          />
+          <Button type="submit" size="sm" disabled={searching || !query.trim()}
+            ><SearchIcon size="14" aria-hidden="true" />Search this version</Button
+          >
         </form>
         {#if searchReport}
-          <p>Actual mode: <strong>{searchReport.actual_mode}</strong> · coverage {searchReport.coverage.state}</p>
-          {#each searchReport.degradations as degradation}<p class="warning">{degradation}</p>{/each}
+          <p>
+            Actual mode: <strong>{searchReport.actual_mode}</strong> · coverage {searchReport
+              .coverage.state}
+          </p>
+          {#each searchReport.degradations as degradation}<p class="warning">
+              {degradation}
+            </p>{/each}
           {#each searchReport.results as result}
             <Card level="default" padding="sm" eyebrow={`RANK ${result.rank}`} title={result.path}>
               <p>{result.excerpt ?? "Direct-file result; no text excerpt."}</p>
@@ -404,34 +619,157 @@
 </DetailDrawer>
 
 <style>
-  .drawer-heading, .section-heading, .profile-row, .document-search { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
-  .drawer-heading { width: 100%; }
-  .drawer-heading > div:first-child, .section-heading > div { display: grid; gap: var(--space-1); min-width: 0; }
-  .drawer-heading span, .section-heading span { color: var(--text-muted); font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); }
-  .drawer-heading strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-lg); }
-  .drawer-heading small, section small { color: var(--text-muted); font-size: var(--font-size-xs); }
-  .drawer-actions { display: flex; gap: var(--space-2); }
-  .processing-shell { display: grid; gap: var(--space-5); padding: var(--space-5); }
-  section { display: grid; gap: var(--space-3); padding-top: var(--space-4); border-top: 1px solid var(--border-muted); }
-  section p, section code, .flow-list p { margin: 0; color: var(--text-secondary); font-size: var(--font-size-sm); }
-  .loading { display: flex; align-items: center; gap: var(--space-3); color: var(--text-secondary); }
-  .load-error { display: grid; justify-items: start; gap: var(--space-3); }
-  .error, .warning, .load-error p { color: var(--accent-red); }
-  .profile-row { justify-content: flex-start; }
-  .profile-row label { color: var(--text-muted); font-size: var(--font-size-xs); font-weight: var(--font-weight-bold); }
-  select { min-height: 36px; padding: 0 var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-surface); color: var(--text-primary); }
-  .flow-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--space-3); }
-  .flow-list p, .flow-list small { overflow-wrap: anywhere; }
-  .flow-list small { display: block; }
-  .retention-warning { padding: var(--space-3); border: 1px solid color-mix(in srgb, var(--accent-amber) 35%, var(--border-default)); border-radius: var(--radius-md); background: color-mix(in srgb, var(--accent-amber) 8%, transparent); }
-  .consent-copy { color: var(--text-muted); }
-  .coverage-list { display: grid; gap: var(--space-2); }
-  .coverage-list div { display: flex; justify-content: space-between; gap: var(--space-3); padding: var(--space-3); border: 1px solid var(--border-muted); border-radius: var(--radius-md); }
-  .coverage-list span { color: var(--text-muted); font-size: var(--font-size-xs); }
-  .document-search :global(.kit-search-input) { flex: 1; }
-  .fingerprints { display: grid; gap: var(--space-2); }
-  .fingerprints div { display: grid; gap: var(--space-1); }
-  .fingerprints span { color: var(--text-muted); font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); }
-  code { overflow-wrap: anywhere; }
-  @media (max-width: 640px) { .profile-row, .document-search, .coverage-list div { align-items: stretch; flex-direction: column; } }
+  .drawer-heading,
+  .section-heading,
+  .profile-row,
+  .document-search {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+  .drawer-heading {
+    width: 100%;
+  }
+  .drawer-heading > div:first-child,
+  .section-heading > div {
+    display: grid;
+    gap: var(--space-1);
+    min-width: 0;
+  }
+  .drawer-heading span,
+  .section-heading span {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
+  }
+  .drawer-heading strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--font-size-lg);
+  }
+  .drawer-heading small,
+  section small {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+  .drawer-actions {
+    display: flex;
+    gap: var(--space-2);
+  }
+  .processing-shell {
+    display: grid;
+    gap: var(--space-5);
+    padding: var(--space-5);
+  }
+  section {
+    display: grid;
+    gap: var(--space-3);
+    padding-top: var(--space-4);
+    border-top: 1px solid var(--border-muted);
+  }
+  section p,
+  section code,
+  .flow-list p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+  }
+  .loading {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    color: var(--text-secondary);
+  }
+  .load-error {
+    display: grid;
+    justify-items: start;
+    gap: var(--space-3);
+  }
+  .error,
+  .warning,
+  .load-error p {
+    color: var(--accent-red);
+  }
+  .profile-row {
+    justify-content: flex-start;
+  }
+  .profile-row label {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-bold);
+  }
+  select {
+    min-height: 36px;
+    padding: 0 var(--space-3);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+  }
+  .flow-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: var(--space-3);
+  }
+  .flow-list p,
+  .flow-list small {
+    overflow-wrap: anywhere;
+  }
+  .flow-list small {
+    display: block;
+  }
+  .retention-warning {
+    padding: var(--space-3);
+    border: 1px solid color-mix(in srgb, var(--accent-amber) 35%, var(--border-default));
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--accent-amber) 8%, transparent);
+  }
+  .consent-copy {
+    color: var(--text-muted);
+  }
+  .coverage-list {
+    display: grid;
+    gap: var(--space-2);
+  }
+  .coverage-list div {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-3);
+    border: 1px solid var(--border-muted);
+    border-radius: var(--radius-md);
+  }
+  .coverage-list span {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+  .document-search :global(.kit-search-input) {
+    flex: 1;
+  }
+  .fingerprints {
+    display: grid;
+    gap: var(--space-2);
+  }
+  .fingerprints div {
+    display: grid;
+    gap: var(--space-1);
+  }
+  .fingerprints span {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
+  }
+  code {
+    overflow-wrap: anywhere;
+  }
+  @media (max-width: 640px) {
+    .profile-row,
+    .document-search,
+    .coverage-list div {
+      align-items: stretch;
+      flex-direction: column;
+    }
+  }
 </style>

@@ -1,4 +1,17 @@
-import type { Node, ProcessingSelector, ProcessingJob, ProcessingStatus, ProcessingJobEvent, DocumentSearchRequest, DocumentSearchReport, DocumentSourceFenceFilters, DocumentSourceFenceResolution, Tag, TagAssignmentReceipt, TagDeletionReceipt } from "./generated/docbank.js";
+import type {
+  Node,
+  ProcessingSelector,
+  ProcessingJob,
+  ProcessingStatus,
+  ProcessingJobEvent,
+  DocumentSearchRequest,
+  DocumentSearchReport,
+  DocumentSourceFenceFilters,
+  DocumentSourceFenceResolution,
+  Tag,
+  TagAssignmentReceipt,
+  TagDeletionReceipt,
+} from "./generated/docbank.js";
 import * as generated from "./generated/docbank.js";
 import type { DocumentSimilarRequest, DocumentSimilarReport } from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
@@ -40,10 +53,6 @@ export interface RenditionArtifact {
   };
 }
 
-
-
-
-
 export async function startProcessing(
   session: string,
   selector: ProcessingSelector,
@@ -53,7 +62,10 @@ export async function startProcessing(
   onProgress?: (event: ProcessingJobEvent) => void,
   signal?: AbortSignal,
 ): Promise<ProcessingRun> {
-  const response = await generated.startDocumentProcessing({ selector, plan_fingerprint: planFingerprint, consent }, { session, signal, headers: { Accept: "application/x-ndjson" } });
+  const response = await generated.startDocumentProcessing(
+    { selector, plan_fingerprint: planFingerprint, consent },
+    { session, signal, headers: { Accept: "application/x-ndjson" } },
+  );
   if (!(response.headers.get("Content-Type") ?? "").startsWith("application/x-ndjson")) {
     throw new Error("The daemon returned an invalid processing stream.");
   }
@@ -83,7 +95,13 @@ async function readProcessingRun(
           throw new Error("The processing progress stream is too large.");
         }
         buffered += decoder.decode(value, { stream: true });
-        buffered = consumeProcessingLines(buffered, events, selector, profileFingerprint, onProgress);
+        buffered = consumeProcessingLines(
+          buffered,
+          events,
+          selector,
+          profileFingerprint,
+          onProgress,
+        );
       }
       if (!done) continue;
       buffered += decoder.decode();
@@ -97,14 +115,20 @@ async function readProcessingRun(
       const first = events[0];
       const second = events[1];
       if (second?.error) {
-        throw new APIError(second.error.detail ?? "Document processing status is unavailable.",
-          second.error.status ?? 503, second.error.code ?? "");
+        throw new APIError(
+          second.error.detail ?? "Document processing status is unavailable.",
+          second.error.status ?? 503,
+          second.error.code ?? "",
+        );
       }
       if (!first?.job || !second?.status) {
         throw new Error("The daemon returned malformed processing progress.");
       }
       onProgress?.(second);
-      return { job: { ...first.job, embedding_job_ids: second.status.embedding_job_ids }, status: second.status };
+      return {
+        job: { ...first.job, embedding_job_ids: second.status.embedding_job_ids },
+        status: second.status,
+      };
     }
   } catch (cause) {
     await reader.cancel(cause).catch(() => undefined);
@@ -153,19 +177,38 @@ function acceptProcessingLine(
   if (events.length === 1 || event.type === "error") onProgress?.(event);
 }
 
-function validateProcessingEvent(value: unknown, selector: ProcessingSelector, profileFingerprint: string, jobID?: string): ProcessingJobEvent {
+function validateProcessingEvent(
+  value: unknown,
+  selector: ProcessingSelector,
+  profileFingerprint: string,
+  jobID?: string,
+): ProcessingJobEvent {
   if (!isRecord(value)) throw new Error("The daemon returned malformed processing progress.");
   if (!jobID) {
-    if (value.sequence !== 1 || value.type !== "job" || !isProcessingJob(value.job, selector, profileFingerprint) ||
-        "status" in value || "error" in value || "terminal" in value) {
+    if (
+      value.sequence !== 1 ||
+      value.type !== "job" ||
+      !isProcessingJob(value.job, selector, profileFingerprint) ||
+      "status" in value ||
+      "error" in value ||
+      "terminal" in value
+    ) {
       throw new Error("The daemon returned malformed processing progress.");
     }
     return value as unknown as ProcessingJobEvent;
   }
-  const validStatus = value.type === "status" && !("job" in value) && !("error" in value) &&
-    isProcessingStatus(value.status) && value.status.job_id === jobID;
-  const validError = value.type === "error" && !("status" in value) &&
-    isProcessingJob(value.job, selector, profileFingerprint) && value.job.id === jobID && isRecord(value.error) &&
+  const validStatus =
+    value.type === "status" &&
+    !("job" in value) &&
+    !("error" in value) &&
+    isProcessingStatus(value.status) &&
+    value.status.job_id === jobID;
+  const validError =
+    value.type === "error" &&
+    !("status" in value) &&
+    isProcessingJob(value.job, selector, profileFingerprint) &&
+    value.job.id === jobID &&
+    isRecord(value.error) &&
     (value.error.status === undefined || Number.isInteger(value.error.status)) &&
     (value.error.code === undefined || typeof value.error.code === "string") &&
     (value.error.detail === undefined || typeof value.error.detail === "string");
@@ -175,32 +218,62 @@ function validateProcessingEvent(value: unknown, selector: ProcessingSelector, p
   return value as unknown as ProcessingJobEvent;
 }
 
-function isProcessingJob(value: unknown, selector: ProcessingSelector, profileFingerprint: string): value is ProcessingJob {
+function isProcessingJob(
+  value: unknown,
+  selector: ProcessingSelector,
+  profileFingerprint: string,
+): value is ProcessingJob {
   if (!isRecord(value)) return false;
-  return canonicalHash(value.id) && optionalCanonicalHash(value.rendition_job_id) &&
-    optionalCanonicalHash(value.attachment_id) && canonicalHashArray(value.embedding_job_ids) &&
-    canonicalHash(value.profile_fingerprint) && value.profile_fingerprint === profileFingerprint &&
-    canonicalUUID(value.content_version_id) && value.content_version_id === selector.content_version_id;
+  return (
+    canonicalHash(value.id) &&
+    optionalCanonicalHash(value.rendition_job_id) &&
+    optionalCanonicalHash(value.attachment_id) &&
+    canonicalHashArray(value.embedding_job_ids) &&
+    canonicalHash(value.profile_fingerprint) &&
+    value.profile_fingerprint === profileFingerprint &&
+    canonicalUUID(value.content_version_id) &&
+    value.content_version_id === selector.content_version_id
+  );
 }
 
 function isProcessingStatus(value: unknown): value is ProcessingStatus {
   if (!isRecord(value)) return false;
-  if (!canonicalHash(value.job_id) || !processingState(value.state) ||
-      !boundedSearchIdentity(value.phase, 128) || value.phase.trim() === "" ||
-      (value.failure_code !== undefined && value.failure_code !== "" &&
-        (!boundedSearchIdentity(value.failure_code, 128) || value.failure_code.trim() === "")) ||
-      !canonicalHashArray(value.embedding_job_ids) || !nonnegativeInteger(value.completed_bindings) ||
-      Number(value.completed_bindings) > value.embedding_job_ids.length) return false;
+  if (
+    !canonicalHash(value.job_id) ||
+    !processingState(value.state) ||
+    !boundedSearchIdentity(value.phase, 128) ||
+    value.phase.trim() === "" ||
+    (value.failure_code !== undefined &&
+      value.failure_code !== "" &&
+      (!boundedSearchIdentity(value.failure_code, 128) || value.failure_code.trim() === "")) ||
+    !canonicalHashArray(value.embedding_job_ids) ||
+    !nonnegativeInteger(value.completed_bindings) ||
+    Number(value.completed_bindings) > value.embedding_job_ids.length
+  )
+    return false;
   const failureCode = value.failure_code ?? "";
-  if (value.state === "completed") return failureCode === "" && value.completed_bindings === value.embedding_job_ids.length;
-  if (["failed", "operator_required", "retry_wait"].includes(value.state)) return failureCode !== "";
+  if (value.state === "completed")
+    return failureCode === "" && value.completed_bindings === value.embedding_job_ids.length;
+  if (["failed", "operator_required", "retry_wait"].includes(value.state))
+    return failureCode !== "";
   // Running retries can retain a failure code; abandoned work may have none.
   return true;
 }
 
 function processingState(value: unknown): value is ProcessingState {
-  return typeof value === "string" &&
-    ["queued", "running", "retry_wait", "operator_required", "completed", "failed", "abandoned", "partial"].includes(value);
+  return (
+    typeof value === "string" &&
+    [
+      "queued",
+      "running",
+      "retry_wait",
+      "operator_required",
+      "completed",
+      "failed",
+      "abandoned",
+      "partial",
+    ].includes(value)
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -237,71 +310,147 @@ export async function resolveDocumentSourceFence(
   return validateDocumentSourceFenceResolution(response);
 }
 
-export function validateDocumentSourceFenceResolution(value: unknown): DocumentSourceFenceResolution {
-  const invalid = (): never => { throw new Error("The daemon returned an invalid source fence."); };
+export function validateDocumentSourceFenceResolution(
+  value: unknown,
+): DocumentSourceFenceResolution {
+  const invalid = (): never => {
+    throw new Error("The daemon returned an invalid source fence.");
+  };
   if (!isRecord(value)) invalid();
   const record = value as Record<string, unknown>;
   if (!isRecord(record.fence)) invalid();
   const fence = record.fence as Record<string, unknown>;
-  if (!Array.isArray(fence.content_version_ids) || !canonicalUUID(fence.vault_uid) || fence.content_version_ids.length > 4096 ||
-      !nonnegativeInteger(record.observed_scope_count) || record.observed_scope_count !== fence.content_version_ids.length ||
-      typeof record.fence_fingerprint !== "string" || !/^sha256:[0-9a-f]{64}$/.test(record.fence_fingerprint)) invalid();
+  if (
+    !Array.isArray(fence.content_version_ids) ||
+    !canonicalUUID(fence.vault_uid) ||
+    fence.content_version_ids.length > 4096 ||
+    !nonnegativeInteger(record.observed_scope_count) ||
+    record.observed_scope_count !== fence.content_version_ids.length ||
+    typeof record.fence_fingerprint !== "string" ||
+    !/^sha256:[0-9a-f]{64}$/.test(record.fence_fingerprint)
+  )
+    invalid();
   const ids = fence.content_version_ids as unknown[];
   for (let index = 0; index < ids.length; index += 1) {
-    if (!canonicalUUID(ids[index]) || (index > 0 && String(ids[index - 1]) >= String(ids[index]))) invalid();
+    if (!canonicalUUID(ids[index]) || (index > 0 && String(ids[index - 1]) >= String(ids[index])))
+      invalid();
   }
   const expected = sourceFenceFingerprint(String(fence.vault_uid), ids as string[]);
   if (expected !== record.fence_fingerprint) invalid();
   return record as unknown as DocumentSourceFenceResolution;
 }
 
-export async function documentSimilar(session: string, request: DocumentSimilarRequest): Promise<DocumentSimilarReport> {
-  return validateDocumentSimilarReport(await generated.findSimilarDocuments(request, { session }), request);
+export async function documentSimilar(
+  session: string,
+  request: DocumentSimilarRequest,
+): Promise<DocumentSimilarReport> {
+  return validateDocumentSimilarReport(
+    await generated.findSimilarDocuments(request, { session }),
+    request,
+  );
 }
 
-export function validateDocumentSimilarReport(value: unknown, request: DocumentSimilarRequest): DocumentSimilarReport {
-  const invalid = (): never => { throw new Error("The daemon returned an invalid similar response."); };
+export function validateDocumentSimilarReport(
+  value: unknown,
+  request: DocumentSimilarRequest,
+): DocumentSimilarReport {
+  const invalid = (): never => {
+    throw new Error("The daemon returned an invalid similar response.");
+  };
   if (!isRecord(value)) return invalid();
   const source = value.source;
-  if (!isRecord(source) || !positiveInteger(source.node_id) || source.node_id !== request.selector.node_id ||
-      source.content_version_id !== request.selector.content_version_id || !request.fence.content_version_ids.includes(String(source.content_version_id)) ||
-      !boundedSearchIdentity(value.binding_id, 128) || request.binding_id && value.binding_id !== request.binding_id ||
-      !isRecord(value.coverage) || !Array.isArray(value.results) || typeof value.truncated !== "boolean") return invalid();
+  if (
+    !isRecord(source) ||
+    !positiveInteger(source.node_id) ||
+    source.node_id !== request.selector.node_id ||
+    source.content_version_id !== request.selector.content_version_id ||
+    !request.fence.content_version_ids.includes(String(source.content_version_id)) ||
+    !boundedSearchIdentity(value.binding_id, 128) ||
+    (request.binding_id && value.binding_id !== request.binding_id) ||
+    !isRecord(value.coverage) ||
+    !Array.isArray(value.results) ||
+    typeof value.truncated !== "boolean"
+  )
+    return invalid();
   const coverage = value.coverage;
   if (value.state === "ready") {
     if (value.missing_coverage !== undefined || coverage.state === "unknown") invalid();
   } else if (value.state === "unavailable") {
     const missing = value.missing_coverage;
-    if (!isRecord(missing) || missing.kind !== "embedding" || missing.binding_id !== value.binding_id ||
-        missing.content_version_id !== source.content_version_id || !canonicalHash(missing.profile_fingerprint) ||
-        value.results.length !== 0 || value.truncated || coverage.state !== "unknown" ||
-        coverage.complete_documents !== 0 || coverage.scoped_documents !== 0) invalid();
+    if (
+      !isRecord(missing) ||
+      missing.kind !== "embedding" ||
+      missing.binding_id !== value.binding_id ||
+      missing.content_version_id !== source.content_version_id ||
+      !canonicalHash(missing.profile_fingerprint) ||
+      value.results.length !== 0 ||
+      value.truncated ||
+      coverage.state !== "unknown" ||
+      coverage.complete_documents !== 0 ||
+      coverage.scoped_documents !== 0
+    )
+      invalid();
   } else invalid();
   const hashes = new Set<string>();
   const nodes = new Set<number>();
   let previous = Infinity;
   const results = value.results.map((result: unknown) => {
-    if (!isRecord(result) || result.node_id === source.node_id || nodes.has(Number(result.node_id)) ||
-        !canonicalHash(result.blob_hash) || hashes.has(String(result.blob_hash)) ||
-        !nonnegativeInteger(result.duplicate_count) || Number(result.duplicate_count) >= Number(coverage.complete_documents) ||
-        typeof result.score !== "number" || result.score > previous || !Array.isArray(result.evidence) ||
-        result.evidence.length !== 1 || !isRecord(result.evidence[0]) || result.evidence[0].kind !== "embedding" ||
-        result.evidence[0].time_span !== undefined) return invalid();
+    if (
+      !isRecord(result) ||
+      result.node_id === source.node_id ||
+      nodes.has(Number(result.node_id)) ||
+      !canonicalHash(result.blob_hash) ||
+      hashes.has(String(result.blob_hash)) ||
+      !nonnegativeInteger(result.duplicate_count) ||
+      Number(result.duplicate_count) >= Number(coverage.complete_documents) ||
+      typeof result.score !== "number" ||
+      result.score > previous ||
+      !Array.isArray(result.evidence) ||
+      result.evidence.length !== 1 ||
+      !isRecord(result.evidence[0]) ||
+      result.evidence[0].kind !== "embedding" ||
+      result.evidence[0].time_span !== undefined
+    )
+      return invalid();
     hashes.add(String(result.blob_hash));
     nodes.add(Number(result.node_id));
     previous = result.score;
     return { ...result, semantic_rank: result.rank };
   });
-  validateDocumentSearchReport({ requested_mode: "semantic", actual_mode: "semantic", coverage, results,
-    truncated: value.truncated, degradations: [], trace: [] }, { query: "stored source", mode: "semantic",
-    profile: request.selector.profile, fence: request.fence, limit: request.limit });
+  validateDocumentSearchReport(
+    {
+      requested_mode: "semantic",
+      actual_mode: "semantic",
+      coverage,
+      results,
+      truncated: value.truncated,
+      degradations: [],
+      trace: [],
+    },
+    {
+      query: "stored source",
+      mode: "semantic",
+      profile: request.selector.profile,
+      fence: request.fence,
+      limit: request.limit,
+    },
+  );
   return value as unknown as DocumentSimilarReport;
 }
 
-export function validateDocumentSearchReport(value: unknown, request: DocumentSearchRequest): DocumentSearchReport {
-  const invalid = (): never => { throw new Error("The daemon returned an invalid search response."); };
-  if (!canonicalUUID(request.fence.vault_uid) || request.fence.content_version_ids.length < 1 ||
-      request.fence.content_version_ids.length > 4096) invalid();
+export function validateDocumentSearchReport(
+  value: unknown,
+  request: DocumentSearchRequest,
+): DocumentSearchReport {
+  const invalid = (): never => {
+    throw new Error("The daemon returned an invalid search response.");
+  };
+  if (
+    !canonicalUUID(request.fence.vault_uid) ||
+    request.fence.content_version_ids.length < 1 ||
+    request.fence.content_version_ids.length > 4096
+  )
+    invalid();
   const versions = new Set<string>();
   for (const versionID of request.fence.content_version_ids) {
     if (!canonicalUUID(versionID) || versions.has(versionID)) invalid();
@@ -311,12 +460,22 @@ export function validateDocumentSearchReport(value: unknown, request: DocumentSe
   const report = value as UnknownRecord;
   const requestedMode = request.mode || "auto";
   const actualMode = report.actual_mode;
-  if (report.requested_mode !== requestedMode || typeof actualMode !== "string" ||
-      !["lexical", "semantic", "hybrid"].includes(actualMode) ||
-      (requestedMode !== "auto" && requestedMode !== actualMode)) invalid();
+  if (
+    report.requested_mode !== requestedMode ||
+    typeof actualMode !== "string" ||
+    !["lexical", "semantic", "hybrid"].includes(actualMode) ||
+    (requestedMode !== "auto" && requestedMode !== actualMode)
+  )
+    invalid();
   const limit = request.limit || 20;
-  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100 || !Array.isArray(report.results) ||
-      report.results.length > limit) invalid();
+  if (
+    !Number.isSafeInteger(limit) ||
+    limit < 1 ||
+    limit > 100 ||
+    !Array.isArray(report.results) ||
+    report.results.length > limit
+  )
+    invalid();
   if (!Array.isArray(report.degradations)) invalid();
 
   const reranking = report.reranking;
@@ -325,33 +484,72 @@ export function validateDocumentSearchReport(value: unknown, request: DocumentSe
   if (request.rerank) {
     if (!isRecord(reranking)) invalid();
     const receipt = reranking as Record<string, unknown>;
-    if (!nonnegativeInteger(receipt.candidate_count) || Number(receipt.candidate_count) > resultValues.length ||
-        typeof receipt.outcome !== "string" || (receipt.cause !== undefined && typeof receipt.cause !== "string")) invalid();
+    if (
+      !nonnegativeInteger(receipt.candidate_count) ||
+      Number(receipt.candidate_count) > resultValues.length ||
+      typeof receipt.outcome !== "string" ||
+      (receipt.cause !== undefined && typeof receipt.cause !== "string")
+    )
+      invalid();
     const cause = String(receipt.cause ?? "");
     if (receipt.outcome === "applied") {
-      if (cause !== "" || Number(receipt.candidate_count) < 1 || degradations.includes("reranking_degraded")) invalid();
+      if (
+        cause !== "" ||
+        Number(receipt.candidate_count) < 1 ||
+        degradations.includes("reranking_degraded")
+      )
+        invalid();
     } else if (receipt.outcome === "skipped") {
-      if (cause !== "" || Number(receipt.candidate_count) !== 0 || resultValues.length !== 0 || degradations.includes("reranking_degraded")) invalid();
+      if (
+        cause !== "" ||
+        Number(receipt.candidate_count) !== 0 ||
+        resultValues.length !== 0 ||
+        degradations.includes("reranking_degraded")
+      )
+        invalid();
     } else if (receipt.outcome === "degraded") {
-      if (!("authorization_denied" === cause || "timed_out" === cause || "malformed_output" === cause || "unavailable" === cause) ||
-          !degradations.includes("reranking_degraded")) invalid();
+      if (
+        !(
+          "authorization_denied" === cause ||
+          "timed_out" === cause ||
+          "malformed_output" === cause ||
+          "unavailable" === cause
+        ) ||
+        !degradations.includes("reranking_degraded")
+      )
+        invalid();
     } else invalid();
   } else if (reranking !== undefined) invalid();
 
   const coverage = report.coverage;
-  if (!isRecord(coverage) || typeof coverage.binding_required !== "boolean" ||
-      !nonnegativeInteger(coverage.scoped_documents) || Number(coverage.scoped_documents) > versions.size ||
-      !nonnegativeInteger(coverage.complete_documents) ||
-      Number(coverage.complete_documents) > Number(coverage.scoped_documents) ||
-      typeof coverage.state !== "string" || !["unknown", "complete", "incomplete"].includes(coverage.state) ||
-      (coverage.state === "complete" && coverage.complete_documents !== coverage.scoped_documents)) invalid();
-  if (!Array.isArray(report.degradations) || report.degradations.some((item: unknown) => !boundedSearchIdentity(item, 128)) ||
-      typeof report.truncated !== "boolean" || !Array.isArray(report.trace) ||
-      (!request.explain && report.trace.length !== 0)) invalid();
+  if (
+    !isRecord(coverage) ||
+    typeof coverage.binding_required !== "boolean" ||
+    !nonnegativeInteger(coverage.scoped_documents) ||
+    Number(coverage.scoped_documents) > versions.size ||
+    !nonnegativeInteger(coverage.complete_documents) ||
+    Number(coverage.complete_documents) > Number(coverage.scoped_documents) ||
+    typeof coverage.state !== "string" ||
+    !["unknown", "complete", "incomplete"].includes(coverage.state) ||
+    (coverage.state === "complete" && coverage.complete_documents !== coverage.scoped_documents)
+  )
+    invalid();
+  if (
+    !Array.isArray(report.degradations) ||
+    report.degradations.some((item: unknown) => !boundedSearchIdentity(item, 128)) ||
+    typeof report.truncated !== "boolean" ||
+    !Array.isArray(report.trace) ||
+    (!request.explain && report.trace.length !== 0)
+  )
+    invalid();
   const trace = report.trace as unknown[];
   for (const rawTrace of trace) {
-    if (!isRecord(rawTrace) || !boundedSearchIdentity(rawTrace.code, 128) ||
-        !nonnegativeInteger(rawTrace.count)) invalid();
+    if (
+      !isRecord(rawTrace) ||
+      !boundedSearchIdentity(rawTrace.code, 128) ||
+      !nonnegativeInteger(rawTrace.count)
+    )
+      invalid();
   }
 
   const documents = new Set<string>();
@@ -359,18 +557,28 @@ export function validateDocumentSearchReport(value: unknown, request: DocumentSe
   const semanticRanks = new Set<number>();
   for (let index = 0; index < resultValues.length; index += 1) {
     const result = resultValues[index];
-    if (!isRecord(result) || result.vault_uid !== request.fence.vault_uid ||
-        !canonicalUUID(result.vault_uid) || typeof result.content_version_id !== "string" ||
-        !versions.has(result.content_version_id) || !canonicalUUID(result.content_version_id) ||
-        !positiveInteger(result.node_id) || result.rank !== index + 1 ||
-        typeof result.score !== "number" || !Number.isFinite(result.score) ||
-        !validDocumentSearchPath(result.path) ||
-        (result.excerpt !== undefined && !boundedDocumentSearchExcerpt(result.excerpt))) invalid();
+    if (
+      !isRecord(result) ||
+      result.vault_uid !== request.fence.vault_uid ||
+      !canonicalUUID(result.vault_uid) ||
+      typeof result.content_version_id !== "string" ||
+      !versions.has(result.content_version_id) ||
+      !canonicalUUID(result.content_version_id) ||
+      !positiveInteger(result.node_id) ||
+      result.rank !== index + 1 ||
+      typeof result.score !== "number" ||
+      !Number.isFinite(result.score) ||
+      !validDocumentSearchPath(result.path) ||
+      (result.excerpt !== undefined && !boundedDocumentSearchExcerpt(result.excerpt))
+    )
+      invalid();
     const item = result as UnknownRecord;
     // Media source selection returns one result per selected content/build pair.
     const firstEvidence = Array.isArray(item.evidence) ? item.evidence[0] : undefined;
-    const buildKey = request.media_sources !== undefined && isRecord(firstEvidence)
-      ? String(firstEvidence.build_id ?? "") : "";
+    const buildKey =
+      request.media_sources !== undefined && isRecord(firstEvidence)
+        ? String(firstEvidence.build_id ?? "")
+        : "";
     const documentKey = JSON.stringify([item.content_version_id, buildKey]);
     if (documents.has(documentKey)) invalid();
     documents.add(documentKey);
@@ -380,24 +588,35 @@ export function validateDocumentSearchReport(value: unknown, request: DocumentSe
     const lexicalRank = Number(rawLexicalRank);
     const semanticRank = Number(rawSemanticRank);
     if (
-        (actualMode === "lexical" && (lexicalRank === 0 || semanticRank !== 0)) ||
-        (actualMode === "semantic" && (semanticRank === 0 || lexicalRank !== 0)) ||
-        (actualMode === "hybrid" && lexicalRank === 0 && semanticRank === 0) ||
-        (lexicalRank > 0 && lexicalRanks.has(lexicalRank)) ||
-        (semanticRank > 0 && semanticRanks.has(semanticRank))) invalid();
+      (actualMode === "lexical" && (lexicalRank === 0 || semanticRank !== 0)) ||
+      (actualMode === "semantic" && (semanticRank === 0 || lexicalRank !== 0)) ||
+      (actualMode === "hybrid" && lexicalRank === 0 && semanticRank === 0) ||
+      (lexicalRank > 0 && lexicalRanks.has(lexicalRank)) ||
+      (semanticRank > 0 && semanticRanks.has(semanticRank))
+    )
+      invalid();
     if (lexicalRank > 0) lexicalRanks.add(lexicalRank);
     if (semanticRank > 0) semanticRanks.add(semanticRank);
-    if (!Array.isArray(item.evidence) || item.evidence.length < 1 || item.evidence.length > 32) invalid();
+    if (!Array.isArray(item.evidence) || item.evidence.length < 1 || item.evidence.length > 32)
+      invalid();
     const evidenceItems = item.evidence as unknown[];
     const evidenceIdentities = new Set<string>();
     for (const evidence of evidenceItems) {
       if (!isRecord(evidence) || !validateDocumentEvidenceIdentity(evidence)) invalid();
       const evidenceItem = evidence as UnknownRecord;
-      const identity = JSON.stringify([evidenceItem.kind, evidenceItem.build_id ?? "", evidenceItem.segment_id ?? "",
-        evidenceItem.vector_space_id ?? "", evidenceItem.embedding_set_id ?? "", evidenceItem.input_generation_id ?? "",
-        evidenceItem.input_id ?? "", evidenceItem.input_kind ?? "", evidenceItem.source_manifest_checksum ?? "",
+      const identity = JSON.stringify([
+        evidenceItem.kind,
+        evidenceItem.build_id ?? "",
+        evidenceItem.segment_id ?? "",
+        evidenceItem.vector_space_id ?? "",
+        evidenceItem.embedding_set_id ?? "",
+        evidenceItem.input_generation_id ?? "",
+        evidenceItem.input_id ?? "",
+        evidenceItem.input_kind ?? "",
+        evidenceItem.source_manifest_checksum ?? "",
         isRecord(evidenceItem.time_span) ? evidenceItem.time_span.start_ms : null,
-        isRecord(evidenceItem.time_span) ? evidenceItem.time_span.end_ms : null]);
+        isRecord(evidenceItem.time_span) ? evidenceItem.time_span.end_ms : null,
+      ]);
       if (evidenceIdentities.has(identity)) invalid();
       evidenceIdentities.add(identity);
     }
@@ -406,43 +625,82 @@ export function validateDocumentSearchReport(value: unknown, request: DocumentSe
 }
 
 function validateDocumentEvidenceIdentity(evidence: UnknownRecord): boolean {
-  const optionalFields = ["build_id", "segment_id", "vector_space_id", "embedding_set_id",
-    "input_generation_id", "input_id", "input_kind", "source_manifest_checksum"];
-  if (typeof evidence.kind !== "string" || optionalFields.some((field) =>
-    evidence[field] !== undefined && typeof evidence[field] !== "string")) return false;
-  if (evidence.time_span !== undefined && (!isRecord(evidence.time_span) ||
-      !nonnegativeInteger(evidence.time_span.start_ms) || !positiveInteger(evidence.time_span.end_ms) ||
-      Number(evidence.time_span.end_ms) <= Number(evidence.time_span.start_ms))) return false;
+  const optionalFields = [
+    "build_id",
+    "segment_id",
+    "vector_space_id",
+    "embedding_set_id",
+    "input_generation_id",
+    "input_id",
+    "input_kind",
+    "source_manifest_checksum",
+  ];
+  if (
+    typeof evidence.kind !== "string" ||
+    optionalFields.some(
+      (field) => evidence[field] !== undefined && typeof evidence[field] !== "string",
+    )
+  )
+    return false;
+  if (
+    evidence.time_span !== undefined &&
+    (!isRecord(evidence.time_span) ||
+      !nonnegativeInteger(evidence.time_span.start_ms) ||
+      !positiveInteger(evidence.time_span.end_ms) ||
+      Number(evidence.time_span.end_ms) <= Number(evidence.time_span.start_ms))
+  )
+    return false;
   const field = (name: string): string => String(evidence[name] ?? "");
-  const embeddingEmpty = ["vector_space_id", "embedding_set_id", "input_generation_id", "input_id",
-    "input_kind", "source_manifest_checksum"].every((name) => field(name) === "");
+  const embeddingEmpty = [
+    "vector_space_id",
+    "embedding_set_id",
+    "input_generation_id",
+    "input_id",
+    "input_kind",
+    "source_manifest_checksum",
+  ].every((name) => field(name) === "");
   const renditionEmpty = field("build_id") === "" && field("segment_id") === "";
   if (evidence.kind === "node_name" || evidence.kind === "content_blob") {
     return embeddingEmpty && renditionEmpty && evidence.time_span === undefined;
   }
   if (evidence.kind === "rendition_segment") {
-    return embeddingEmpty && canonicalHash(field("build_id")) && boundedSearchIdentity(field("segment_id"), 1024);
+    return (
+      embeddingEmpty &&
+      canonicalHash(field("build_id")) &&
+      boundedSearchIdentity(field("segment_id"), 1024)
+    );
   }
   if (evidence.kind === "embedding") {
     const renditionChunk = field("input_kind") === "rendition_chunk";
-    return field("segment_id") === "" &&
+    return (
+      field("segment_id") === "" &&
       (renditionChunk ? canonicalHash(field("build_id")) : field("build_id") === "") &&
       (evidence.time_span === undefined || (renditionChunk && canonicalHash(field("build_id")))) &&
-      canonicalHash(field("vector_space_id")) && canonicalHash(field("embedding_set_id")) &&
-      canonicalHash(field("input_generation_id")) && boundedSearchIdentity(field("input_id"), 1024) &&
+      canonicalHash(field("vector_space_id")) &&
+      canonicalHash(field("embedding_set_id")) &&
+      canonicalHash(field("input_generation_id")) &&
+      boundedSearchIdentity(field("input_id"), 1024) &&
       ["rendition_chunk", "original_file"].includes(field("input_kind")) &&
-      canonicalHash(field("source_manifest_checksum"));
+      canonicalHash(field("source_manifest_checksum"))
+    );
   }
   return false;
 }
 
 function canonicalUUID(value: unknown): value is string {
-  return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
+  return (
+    typeof value === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value)
+  );
 }
 
 function sourceFenceFingerprint(vaultID: string, versionIDs: string[]): string {
-  const bytes = [...utf8ToBytes("docbank-document-source-fence/v1"), ...uint32Bytes(utf8ToBytes(vaultID).length),
-    ...utf8ToBytes(vaultID), ...uint32Bytes(versionIDs.length)];
+  const bytes = [
+    ...utf8ToBytes("docbank-document-source-fence/v1"),
+    ...uint32Bytes(utf8ToBytes(vaultID).length),
+    ...utf8ToBytes(vaultID),
+    ...uint32Bytes(versionIDs.length),
+  ];
   for (const versionID of [...versionIDs].sort()) {
     const encoded = utf8ToBytes(versionID);
     bytes.push(...uint32Bytes(encoded.length), ...encoded);
@@ -459,13 +717,25 @@ function boundedSearchIdentity(value: unknown, maximum: number): value is string
 }
 
 function validDocumentSearchPath(value: unknown): value is string {
-  if (typeof value !== "string" || value.length < 2 ||
-      !value.startsWith("/") || value.endsWith("/")) return false;
-  return value.slice(1).split("/").every((part) => part.length > 0 && part !== "." && part !== "..");
+  if (
+    typeof value !== "string" ||
+    value.length < 2 ||
+    !value.startsWith("/") ||
+    value.endsWith("/")
+  )
+    return false;
+  return value
+    .slice(1)
+    .split("/")
+    .every((part) => part.length > 0 && part !== "." && part !== "..");
 }
 
 function boundedDocumentSearchExcerpt(value: unknown): value is string {
-  return typeof value === "string" && Array.from(value).length <= 512 && utf8ToBytes(value).length <= 4 * 512;
+  return (
+    typeof value === "string" &&
+    Array.from(value).length <= 512 &&
+    utf8ToBytes(value).length <= 4 * 512
+  );
 }
 
 function positiveInteger(value: unknown): boolean {
@@ -480,11 +750,19 @@ function nonnegativeInteger(value: unknown): boolean {
 const maxRetrievalCandidateLimit = 1000;
 
 function boundedLaneRank(value: unknown): boolean {
-  return Number.isSafeInteger(value) && Number(value) >= 0 && Number(value) <= maxRetrievalCandidateLimit;
+  return (
+    Number.isSafeInteger(value) && Number(value) >= 0 && Number(value) <= maxRetrievalCandidateLimit
+  );
 }
 
-export async function renditionArtifact(session: string, attachmentID: string): Promise<RenditionArtifact> {
-  const response = await generated.getDocumentRendition(attachmentID, undefined, undefined, { session, headers: { Accept: "text/markdown" } });
+export async function renditionArtifact(
+  session: string,
+  attachmentID: string,
+): Promise<RenditionArtifact> {
+  const response = await generated.getDocumentRendition(attachmentID, undefined, undefined, {
+    session,
+    headers: { Accept: "text/markdown" },
+  });
   if (!(response.headers.get("Content-Type") ?? "").toLowerCase().startsWith("text/markdown")) {
     throw new Error("The daemon returned an invalid rendition content type.");
   }
@@ -495,13 +773,21 @@ export async function renditionArtifact(session: string, attachmentID: string): 
   const blobHash = response.headers.get("X-Docbank-Blob-Hash") ?? "";
   const profileFingerprint = response.headers.get("X-Docbank-Rendition-Profile") ?? "";
   const transportCompleteness = response.headers.get("X-Docbank-Rendition-Completeness") ?? "";
-  const warnings = parseRenditionWarnings(response.headers.get("X-Docbank-Rendition-Warnings") ?? "");
+  const warnings = parseRenditionWarnings(
+    response.headers.get("X-Docbank-Rendition-Warnings") ?? "",
+  );
   const declaredSize = Number(response.headers.get("X-Docbank-Blob-Size"));
-  if (receivedAttachment !== attachmentID || !/^[0-9a-f]{64}$/.test(buildID) ||
-      !/^[0-9a-f]{64}$/.test(artifactID) || !/^[0-9a-f]{64}$/.test(blobHash) ||
-      !/^[0-9a-f]{64}$/.test(profileFingerprint) ||
-      !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(contentVersionID) ||
-      !["complete", "partial", "degraded_provenance"].includes(transportCompleteness)) {
+  if (
+    receivedAttachment !== attachmentID ||
+    !/^[0-9a-f]{64}$/.test(buildID) ||
+    !/^[0-9a-f]{64}$/.test(artifactID) ||
+    !/^[0-9a-f]{64}$/.test(blobHash) ||
+    !/^[0-9a-f]{64}$/.test(profileFingerprint) ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+      contentVersionID,
+    ) ||
+    !["complete", "partial", "degraded_provenance"].includes(transportCompleteness)
+  ) {
     throw new Error("The daemon returned invalid rendition identities.");
   }
   const maximumSize = 64 * 1024 * 1024;
@@ -510,21 +796,36 @@ export async function renditionArtifact(session: string, attachmentID: string): 
     throw new Error("The daemon returned an invalid rendition size.");
   }
   const bytes = await readBoundedRendition(response, declaredSize);
-  if (bytesToHex(sha256(bytes)) !== blobHash) throw new Error("The rendition transport checksum does not match.");
+  if (bytesToHex(sha256(bytes)) !== blobHash)
+    throw new Error("The rendition transport checksum does not match.");
   const artifact = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   const metadata = parseRenditionMarkdown(artifact);
   if (metadata.buildID !== buildID || metadata.completeness !== transportCompleteness) {
     throw new Error("The rendition transport metadata does not match its frontmatter.");
   }
-  return { attachmentID, buildID, artifactID, contentVersionID, blobHash, profileFingerprint,
-    frontmatter: metadata.frontmatter, markdown: metadata.markdown, completeness: metadata.completeness, warnings, source: metadata.source,
-    document: metadata.document, navigation: metadata.navigation };
+  return {
+    attachmentID,
+    buildID,
+    artifactID,
+    contentVersionID,
+    blobHash,
+    profileFingerprint,
+    frontmatter: metadata.frontmatter,
+    markdown: metadata.markdown,
+    completeness: metadata.completeness,
+    warnings,
+    source: metadata.source,
+    document: metadata.document,
+    navigation: metadata.navigation,
+  };
 }
 
 export function parseRenditionMarkdown(artifact: string) {
-  if (!artifact.startsWith("---\n")) throw new Error("The rendition is missing canonical frontmatter.");
+  if (!artifact.startsWith("---\n"))
+    throw new Error("The rendition is missing canonical frontmatter.");
   const closing = artifact.indexOf("\n---\n", 4);
-  if (closing < 0 || closing + 5 > 256 * 1024) throw new Error("The rendition frontmatter is incomplete or too large.");
+  if (closing < 0 || closing + 5 > 256 * 1024)
+    throw new Error("The rendition frontmatter is incomplete or too large.");
   const frontmatter = artifact.slice(4, closing);
   const markdown = artifact.slice(closing + 5);
   if (!markdown) throw new Error("The rendition Markdown body is empty.");
@@ -579,21 +880,28 @@ type UnknownRecord = Record<string, unknown>;
 function parseRenditionWarnings(value: string): string[] {
   if (!value) return [];
   const warnings = value.split(",");
-  if (warnings.length > 64 || new Set(warnings).size !== warnings.length ||
-      warnings.some((warning) => !/^[a-z0-9_.-]{1,63}$/.test(warning))) {
+  if (
+    warnings.length > 64 ||
+    new Set(warnings).size !== warnings.length ||
+    warnings.some((warning) => !/^[a-z0-9_.-]{1,63}$/.test(warning))
+  ) {
     throw new Error("The daemon returned invalid rendition warnings.");
   }
   return warnings;
 }
 
 function record(value: unknown, subject: string): UnknownRecord {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`The rendition ${subject} is invalid.`);
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error(`The rendition ${subject} is invalid.`);
   return value as UnknownRecord;
 }
 
 function exactKeys(value: UnknownRecord, required: string[], optional: string[] = []): void {
   const allowed = new Set([...required, ...optional]);
-  if (required.some((key) => !(key in value)) || Object.keys(value).some((key) => !allowed.has(key))) {
+  if (
+    required.some((key) => !(key in value)) ||
+    Object.keys(value).some((key) => !allowed.has(key))
+  ) {
     throw new Error("The rendition frontmatter contains an invalid field set.");
   }
 }
@@ -601,13 +909,15 @@ function exactKeys(value: UnknownRecord, required: string[], optional: string[] 
 function textField(value: UnknownRecord, key: string, optional = false): string {
   const field = value[key];
   if (optional && field === undefined) return "";
-  if (typeof field !== "string" || !field || field.length > 1024) throw new Error(`The rendition ${key} is invalid.`);
+  if (typeof field !== "string" || !field || field.length > 1024)
+    throw new Error(`The rendition ${key} is invalid.`);
   return field;
 }
 
 function integerField(value: UnknownRecord, key: string, minimum: number): number {
   const field = value[key];
-  if (!Number.isSafeInteger(field) || Number(field) < minimum) throw new Error(`The rendition ${key} is invalid.`);
+  if (!Number.isSafeInteger(field) || Number(field) < minimum)
+    throw new Error(`The rendition ${key} is invalid.`);
   return Number(field);
 }
 
@@ -623,7 +933,10 @@ function digestField(value: UnknownRecord, key: string): string {
   return field;
 }
 
-function parseRenditionFrontmatter(frontmatter: string, markdown: string): {
+function parseRenditionFrontmatter(
+  frontmatter: string,
+  markdown: string,
+): {
   buildID: string;
   bodyHash: string;
   completeness: string;
@@ -632,39 +945,79 @@ function parseRenditionFrontmatter(frontmatter: string, markdown: string): {
   navigation: RenditionArtifact["navigation"];
 } {
   const parsed = parseDocument(frontmatter, { schema: "core", strict: true, uniqueKeys: true });
-  if (parsed.errors.length > 0 || parsed.warnings.length > 0) throw new Error("The rendition frontmatter is invalid YAML.");
+  if (parsed.errors.length > 0 || parsed.warnings.length > 0)
+    throw new Error("The rendition frontmatter is invalid YAML.");
   const root = record(parsed.toJS({ maxAliasCount: 0 }), "frontmatter");
   exactKeys(root, ["docbank"]);
   const docbank = record(root.docbank, "docbank envelope");
   exactKeys(docbank, ["contract", "source", "rendition", "document", "navigation"]);
-  if (textField(docbank, "contract") !== "docbank-sanitized-markdown/v1") throw new Error("The rendition contract is unsupported.");
+  if (textField(docbank, "contract") !== "docbank-sanitized-markdown/v1")
+    throw new Error("The rendition contract is unsupported.");
 
   const sourceValue = record(docbank.source, "source identity");
   exactKeys(sourceValue, ["sha256", "format", "media_type"]);
-  const source = { sha256: digestField(sourceValue, "sha256"), format: textField(sourceValue, "format"), mediaType: textField(sourceValue, "media_type") };
+  const source = {
+    sha256: digestField(sourceValue, "sha256"),
+    format: textField(sourceValue, "format"),
+    mediaType: textField(sourceValue, "media_type"),
+  };
 
   const rendition = record(docbank.rendition, "build identity");
-  exactKeys(rendition, ["build_id", "rendition_request_fingerprint", "evidence_lexical_fingerprint", "normalized_evidence_contract", "body_sha256", "completeness", "truncated"]);
+  exactKeys(rendition, [
+    "build_id",
+    "rendition_request_fingerprint",
+    "evidence_lexical_fingerprint",
+    "normalized_evidence_contract",
+    "body_sha256",
+    "completeness",
+    "truncated",
+  ]);
   const buildID = digestField(rendition, "build_id");
   digestField(rendition, "rendition_request_fingerprint");
   digestField(rendition, "evidence_lexical_fingerprint");
-  if (textField(rendition, "normalized_evidence_contract") !== "normalized-evidence/v1") throw new Error("The rendition evidence contract is unsupported.");
+  if (textField(rendition, "normalized_evidence_contract") !== "normalized-evidence/v1")
+    throw new Error("The rendition evidence contract is unsupported.");
   const bodyHash = digestField(rendition, "body_sha256");
   const completeness = textField(rendition, "completeness");
-  if (!["complete", "partial", "degraded_provenance"].includes(completeness)) throw new Error("The rendition completeness is invalid.");
+  if (!["complete", "partial", "degraded_provenance"].includes(completeness))
+    throw new Error("The rendition completeness is invalid.");
   booleanField(rendition, "truncated");
 
   const documentValue = record(docbank.document, "document identity");
   exactKeys(documentValue, ["unit_kind", "unit_count"], ["title", "language"]);
   const unitKind = textField(documentValue, "unit_kind");
-  if (!["generic", "line", "message", "page", "record", "section", "sheet", "slide", "spine"].includes(unitKind)) throw new Error("The rendition unit kind is invalid.");
-  const document = { title: textField(documentValue, "title", true), language: textField(documentValue, "language", true), unitKind, unitCount: integerField(documentValue, "unit_count", 1) };
+  if (
+    ![
+      "generic",
+      "line",
+      "message",
+      "page",
+      "record",
+      "section",
+      "sheet",
+      "slide",
+      "spine",
+    ].includes(unitKind)
+  )
+    throw new Error("The rendition unit kind is invalid.");
+  const document = {
+    title: textField(documentValue, "title", true),
+    language: textField(documentValue, "language", true),
+    unitKind,
+    unitCount: integerField(documentValue, "unit_count", 1),
+  };
 
   const navigationValue = record(docbank.navigation, "navigation");
   exactKeys(navigationValue, ["offset_base", "complete", "entries"]);
-  if (textField(navigationValue, "offset_base") !== "body") throw new Error("The rendition navigation offset base is invalid.");
+  if (textField(navigationValue, "offset_base") !== "body")
+    throw new Error("The rendition navigation offset base is invalid.");
   const rawEntries = navigationValue.entries;
-  if (!Array.isArray(rawEntries) || rawEntries.length > 1024 || rawEntries.length > document.unitCount) throw new Error("The rendition navigation entries are invalid.");
+  if (
+    !Array.isArray(rawEntries) ||
+    rawEntries.length > 1024 ||
+    rawEntries.length > document.unitCount
+  )
+    throw new Error("The rendition navigation entries are invalid.");
   const bodyBytes = utf8ToBytes(markdown);
   const seen = new Set<string>();
   let priorByte = -1;
@@ -678,8 +1031,23 @@ function parseRenditionFrontmatter(frontmatter: string, markdown: string): {
     const title = textField(entry, "title", true);
     const line = integerField(entry, "line", 1);
     const byte = integerField(entry, "byte", 0);
-    if (!["generic", "line", "message", "page", "record", "section", "sheet", "slide", "spine"].includes(kind) ||
-        seen.has(key) || byte < priorByte || byte >= bodyBytes.length || (bodyBytes[byte]! & 0xc0) === 0x80) {
+    if (
+      ![
+        "generic",
+        "line",
+        "message",
+        "page",
+        "record",
+        "section",
+        "sheet",
+        "slide",
+        "spine",
+      ].includes(kind) ||
+      seen.has(key) ||
+      byte < priorByte ||
+      byte >= bodyBytes.length ||
+      (bodyBytes[byte]! & 0xc0) === 0x80
+    ) {
       throw new Error("The rendition navigation entry is invalid.");
     }
     while (scannedByte < byte) {
@@ -690,19 +1058,20 @@ function parseRenditionFrontmatter(frontmatter: string, markdown: string): {
     priorByte = byte;
     return { key, kind, title, line, byte };
   });
-  return { buildID, bodyHash, completeness, source, document,
-    navigation: { complete: booleanField(navigationValue, "complete"), entries } };
+  return {
+    buildID,
+    bodyHash,
+    completeness,
+    source,
+    document,
+    navigation: { complete: booleanField(navigationValue, "complete"), entries },
+  };
 }
 
 export async function createTag(session: string, name: string): Promise<Tag> {
   const normalized = name.normalize("NFC");
   const tag = await generated.createTag({ name }, { session });
-  if (
-    !tag.id ||
-    tag.name !== normalized ||
-    tag.revision !== 1 ||
-    tag.assignment_count !== 0
-  ) {
+  if (!tag.id || tag.name !== normalized || tag.revision !== 1 || tag.assignment_count !== 0) {
     throw new Error("The daemon returned an invalid created-tag receipt.");
   }
   return tag;
@@ -715,7 +1084,12 @@ export async function renameTag(
   name: string,
 ): Promise<Tag> {
   const normalized = name.normalize("NFC");
-  const tag = await generated.renameTag(tagID, { name }, { "If-Match": String(revision) }, { session });
+  const tag = await generated.renameTag(
+    tagID,
+    { name },
+    { "If-Match": String(revision) },
+    { session },
+  );
   if (tag.id !== tagID || tag.name !== normalized || tag.revision < revision) {
     throw new Error("The daemon returned an invalid renamed-tag receipt.");
   }
@@ -750,10 +1124,16 @@ export async function liveNodeTags(
   const identities = new Set<string>();
   let total: number | undefined;
   while (total === undefined || items.length < total) {
-    const page = await generated.listNodeTags(nodeID, { limit: 1000, offset: items.length }, { session });
+    const page = await generated.listNodeTags(
+      nodeID,
+      { limit: 1000, offset: items.length },
+      { session },
+    );
     if (
-      !Number.isSafeInteger(page.total) || page.total < 0 ||
-      page.limit !== 1000 || page.offset !== items.length ||
+      !Number.isSafeInteger(page.total) ||
+      page.total < 0 ||
+      page.limit !== 1000 ||
+      page.offset !== items.length ||
       (total !== undefined && page.total !== total) ||
       page.items.length !== Math.min(1000, page.total - items.length)
     ) {
@@ -785,7 +1165,12 @@ export async function changeNodeTag(
   tagID: string,
   assign: boolean,
 ): Promise<TagAssignmentReceipt> {
-  const receipt = await (assign ? generated.assignTag : generated.unassignTag)(nodeID, tagID, { "If-Match": String(revision) }, { session });
+  const receipt = await (assign ? generated.assignTag : generated.unassignTag)(
+    nodeID,
+    tagID,
+    { "If-Match": String(revision) },
+    { session },
+  );
   if (
     receipt.node.id !== nodeID ||
     receipt.node.revision < revision ||
@@ -798,11 +1183,7 @@ export async function changeNodeTag(
   return receipt;
 }
 
-export async function trashNode(
-  session: string,
-  nodeID: number,
-  revision: number,
-): Promise<Node> {
+export async function trashNode(session: string, nodeID: number, revision: number): Promise<Node> {
   const node = await generated.trashNode(nodeID, { "If-Match": String(revision) }, { session });
   if (
     node.id !== nodeID ||

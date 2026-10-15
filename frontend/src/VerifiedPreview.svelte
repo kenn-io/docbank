@@ -11,19 +11,47 @@
   import PageViewer from "./PageViewer.svelte";
   import { parseMediaType, type HighlightTerm } from "./query.js";
   import type { RenditionObservation } from "./renditionText.js";
-  import type { LiveSelectedSource, RelatedSelectedSource, SelectedSource } from "./selectedSource.js";
+  import type {
+    LiveSelectedSource,
+    RelatedSelectedSource,
+    SelectedSource,
+  } from "./selectedSource.js";
   import VerifiedText from "./VerifiedText.svelte";
 
   type HighlightChoice = { id: string; name: string; terms: HighlightTerm[] };
-  let { session, source, authorizationRevision, profileName = "", observed, activeTab = $bindable("preview"),
-    queryTerms = [], queryHighlightError = "", highlightSets = [], snapshotPosition,
-    snapshotTotal, canPrevious = false, canNext = false, snapshotExpired = false,
-    onnavigate = () => undefined, onreturnfocus = () => undefined, onauthfailure }: {
-    session: string; source: SelectedSource; authorizationRevision: number; profileName?: string;
+  let {
+    session,
+    source,
+    authorizationRevision,
+    profileName = "",
+    observed,
+    activeTab = $bindable("preview"),
+    queryTerms = [],
+    queryHighlightError = "",
+    highlightSets = [],
+    snapshotPosition,
+    snapshotTotal,
+    canPrevious = false,
+    canNext = false,
+    snapshotExpired = false,
+    onnavigate = () => undefined,
+    onreturnfocus = () => undefined,
+    onauthfailure,
+  }: {
+    session: string;
+    source: SelectedSource;
+    authorizationRevision: number;
+    profileName?: string;
     activeTab?: "preview" | "text" | "duplicates" | "attachments" | "email";
-    observed?: RenditionObservation; queryTerms?: string[]; queryHighlightError?: string;
-    highlightSets?: HighlightChoice[]; snapshotPosition?: number; snapshotTotal?: number;
-    canPrevious?: boolean; canNext?: boolean; snapshotExpired?: boolean;
+    observed?: RenditionObservation;
+    queryTerms?: string[];
+    queryHighlightError?: string;
+    highlightSets?: HighlightChoice[];
+    snapshotPosition?: number;
+    snapshotTotal?: number;
+    canPrevious?: boolean;
+    canNext?: boolean;
+    snapshotExpired?: boolean;
     onnavigate?: (direction: "previous" | "next") => void | Promise<void>;
     onreturnfocus?: () => void;
     onauthfailure: (cause: unknown) => void;
@@ -37,8 +65,14 @@
   let frozenKey = "";
   const relatedSource = $derived(relatedSources.at(-1));
   const displayedSource = $derived(relatedSource ?? duplicateSource ?? source);
-  const displayedTab = $derived(activeTab === "email" && parseMediaType(displayedSource.mimeType) !== "message/rfc822" ? "preview" : activeTab);
-  const displayedRevision = $derived(relatedSource?.mutationRevision ?? duplicateSource?.mutationRevision ?? authorizationRevision);
+  const displayedTab = $derived(
+    activeTab === "email" && parseMediaType(displayedSource.mimeType) !== "message/rfc822"
+      ? "preview"
+      : activeTab,
+  );
+  const displayedRevision = $derived(
+    relatedSource?.mutationRevision ?? duplicateSource?.mutationRevision ?? authorizationRevision,
+  );
 
   $effect(() => {
     const key = `${session}:${source.key}`;
@@ -64,10 +98,16 @@
   }
   async function openRelated(target: AttachmentIdentity): Promise<void> {
     cancelNavigation();
-    if (relatedSources.length >= 32) { navigationError = "Navigation depth limit reached. Return to an earlier document to continue."; return; }
-    const pending = new AbortController(); navigationController = pending;
+    if (relatedSources.length >= 32) {
+      navigationError =
+        "Navigation depth limit reached. Return to an earlier document to continue.";
+      return;
+    }
+    const pending = new AbortController();
+    navigationController = pending;
     const request = navigationEpoch;
-    navigationPending = true; navigationError = "";
+    navigationPending = true;
+    navigationError = "";
     try {
       const next = await readRelatedSource(session, target, pending.signal);
       if (request !== navigationEpoch || pending.signal.aborted) return;
@@ -77,7 +117,9 @@
       if (request !== navigationEpoch || pending.signal.aborted) return;
       if (cause instanceof APIError && cause.status === 401) onauthfailure(cause);
       else navigationError = cause instanceof Error ? cause.message : String(cause);
-    } finally { if (request === navigationEpoch) navigationPending = false; }
+    } finally {
+      if (request === navigationEpoch) navigationPending = false;
+    }
   }
   function backRelated(): void {
     cancelNavigation();
@@ -87,7 +129,9 @@
   }
   async function returnToOrigin(): Promise<void> {
     cancelNavigation();
-    relatedSources = []; duplicateSource = undefined; navigationError = "";
+    relatedSources = [];
+    duplicateSource = undefined;
+    navigationError = "";
     activeTab = "attachments";
     await tick();
     onreturnfocus();
@@ -107,77 +151,206 @@
   }
 </script>
 
-<section class="verified-preview" aria-label={`Verified content of ${displayedSource.name}`} data-source-version={displayedSource.versionID}>
+<section
+  class="verified-preview"
+  aria-label={`Verified content of ${displayedSource.name}`}
+  data-source-version={displayedSource.versionID}
+>
   {#if relatedSource}
     <div class="separate-context related-context" role="status">
       <span>Related document · separate inspector context · current path {relatedSource.path}</span>
       <span>Exact related version {relatedSource.versionID}</span>
       <div class="related-actions">
         <Button size="sm" surface="soft" onclick={backRelated}>Back to previous document</Button>
-        <Button size="sm" surface="soft" onclick={() => void returnToOrigin()}>Return to {source.kind === "snapshot" ? "frozen" : "selected"} document</Button>
+        <Button size="sm" surface="soft" onclick={() => void returnToOrigin()}
+          >Return to {source.kind === "snapshot" ? "frozen" : "selected"} document</Button
+        >
       </div>
     </div>
   {:else if duplicateSource}
-    <div class="separate-context" role="status"><span>Outside duplicate · {duplicateSource.path}</span>
-      <Button size="sm" surface="soft" onclick={closeDuplicate}>Return to {source.kind === "snapshot" ? "frozen" : "selected"} document</Button></div>
+    <div class="separate-context" role="status">
+      <span>Outside duplicate · {duplicateSource.path}</span>
+      <Button size="sm" surface="soft" onclick={closeDuplicate}
+        >Return to {source.kind === "snapshot" ? "frozen" : "selected"} document</Button
+      >
+    </div>
   {/if}
   {#if !duplicateSource && !relatedSource && snapshotPosition !== undefined && snapshotTotal !== undefined}
     <nav class="document-navigation" aria-label="Snapshot document navigation">
-      <Button size="sm" surface="soft" disabled={!canPrevious || snapshotExpired}
-        onclick={() => void onnavigate("previous")}>Previous</Button>
+      <Button
+        size="sm"
+        surface="soft"
+        disabled={!canPrevious || snapshotExpired}
+        onclick={() => void onnavigate("previous")}>Previous</Button
+      >
       <span aria-live="polite">Document {snapshotPosition + 1} of {snapshotTotal}</span>
-      <Button size="sm" surface="soft" disabled={!canNext || snapshotExpired}
-        onclick={() => void onnavigate("next")}>Next</Button>
+      <Button
+        size="sm"
+        surface="soft"
+        disabled={!canNext || snapshotExpired}
+        onclick={() => void onnavigate("next")}>Next</Button
+      >
     </nav>
-    {#if snapshotExpired}<p class="expired" role="status">This frozen snapshot expired. Run the query again to continue navigation.</p>{/if}
+    {#if snapshotExpired}<p class="expired" role="status">
+        This frozen snapshot expired. Run the query again to continue navigation.
+      </p>{/if}
   {/if}
   <div class="tabs" role="tablist" aria-label="Verified content view">
-    <button type="button" role="tab" aria-selected={displayedTab === "preview"}
-      onclick={() => chooseTab("preview")}>Preview</button>
-    <button type="button" role="tab" aria-selected={displayedTab === "text"}
-      onclick={() => chooseTab("text")}>Text</button>
-    <button type="button" role="tab" aria-selected={displayedTab === "duplicates"}
-      onclick={() => chooseTab("duplicates")}>Duplicates</button>
-    <button type="button" role="tab" aria-selected={displayedTab === "attachments"}
-      onclick={() => chooseTab("attachments")}>Attachments</button>
+    <button
+      type="button"
+      role="tab"
+      aria-selected={displayedTab === "preview"}
+      onclick={() => chooseTab("preview")}>Preview</button
+    >
+    <button
+      type="button"
+      role="tab"
+      aria-selected={displayedTab === "text"}
+      onclick={() => chooseTab("text")}>Text</button
+    >
+    <button
+      type="button"
+      role="tab"
+      aria-selected={displayedTab === "duplicates"}
+      onclick={() => chooseTab("duplicates")}>Duplicates</button
+    >
+    <button
+      type="button"
+      role="tab"
+      aria-selected={displayedTab === "attachments"}
+      onclick={() => chooseTab("attachments")}>Attachments</button
+    >
     {#if parseMediaType(displayedSource.mimeType) === "message/rfc822"}
-      <button type="button" role="tab" aria-selected={displayedTab === "email"} onclick={() => chooseTab("email")}>Email</button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={displayedTab === "email"}
+        onclick={() => chooseTab("email")}>Email</button
+      >
     {/if}
   </div>
-  {#if navigationPending}<p role="status">Checking related document access and exact version…</p>{/if}
+  {#if navigationPending}<p role="status">
+      Checking related document access and exact version…
+    </p>{/if}
   {#if navigationError}<p role="status">Related document unavailable: {navigationError}</p>{/if}
   {#if displayedTab === "preview"}
     {#if displayedSource.mimeType === "application/pdf" || displayedSource.mimeType === "image/png"}
-      <PageViewer {session} source={displayedSource} authorizationRevision={displayedRevision} {onauthfailure} />
+      <PageViewer
+        {session}
+        source={displayedSource}
+        authorizationRevision={displayedRevision}
+        {onauthfailure}
+      />
     {:else}
-      <OriginalPreview {session} source={displayedSource} authorizationRevision={displayedRevision} {onauthfailure} />
+      <OriginalPreview
+        {session}
+        source={displayedSource}
+        authorizationRevision={displayedRevision}
+        {onauthfailure}
+      />
     {/if}
   {:else}
     {#if displayedTab === "email"}
       {#key `${session}:${displayedSource.key}:${displayedRevision}`}
-        <EmailViewer {session} source={displayedSource} authorizationRevision={displayedRevision} onattachments={() => chooseTab("attachments")} {onauthfailure} />
+        <EmailViewer
+          {session}
+          source={displayedSource}
+          authorizationRevision={displayedRevision}
+          onattachments={() => chooseTab("attachments")}
+          {onauthfailure}
+        />
       {/key}
     {:else if displayedTab === "text"}
-      <VerifiedText {session} source={displayedSource} authorizationRevision={displayedRevision} {profileName}
-        observed={duplicateSource || relatedSource ? undefined : observed} {queryTerms} {queryHighlightError} {highlightSets} {onauthfailure} />
+      <VerifiedText
+        {session}
+        source={displayedSource}
+        authorizationRevision={displayedRevision}
+        {profileName}
+        observed={duplicateSource || relatedSource ? undefined : observed}
+        {queryTerms}
+        {queryHighlightError}
+        {highlightSets}
+        {onauthfailure}
+      />
     {:else if displayedTab === "attachments"}
-      <AttachmentsTab {session} source={displayedSource} onopen={(target) => void openRelated(target)} {onauthfailure} />
+      <AttachmentsTab
+        {session}
+        source={displayedSource}
+        onopen={(target) => void openRelated(target)}
+        {onauthfailure}
+      />
     {:else}
       <DuplicatesTab {session} source={displayedSource} onopen={openDuplicate} {onauthfailure} />
     {/if}
   {/if}
-  <DownloadButton {session} source={displayedSource} authorizationRevision={displayedRevision}
-    label="Download verified original" {onauthfailure} />
+  <DownloadButton
+    {session}
+    source={displayedSource}
+    authorizationRevision={displayedRevision}
+    label="Download verified original"
+    {onauthfailure}
+  />
 </section>
 
 <style>
-  .verified-preview { display: grid; gap: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--border-default); }
-  .tabs { display: flex; gap: var(--space-1); border-bottom: 1px solid var(--border-default); }
-  .tabs button { padding: var(--space-2) var(--space-3); border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--text-muted); cursor: pointer; font: inherit; font-size: var(--font-size-sm); }
-  .tabs button[aria-selected="true"] { border-bottom-color: var(--accent-blue); color: var(--text-primary); }
-  .document-navigation { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); color: var(--text-muted); font-size: var(--font-size-xs); }
-  .expired { margin: 0; color: var(--text-muted); font-size: var(--font-size-xs); }
-  .related-context { flex-direction: column; align-items: stretch; overflow-wrap: anywhere; }
-  .related-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
-  .separate-context { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-inset); color: var(--text-muted); font-size: var(--font-size-xs); }
+  .verified-preview {
+    display: grid;
+    gap: var(--space-3);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border-default);
+  }
+  .tabs {
+    display: flex;
+    gap: var(--space-1);
+    border-bottom: 1px solid var(--border-default);
+  }
+  .tabs button {
+    padding: var(--space-2) var(--space-3);
+    border: 0;
+    border-bottom: 2px solid transparent;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    font: inherit;
+    font-size: var(--font-size-sm);
+  }
+  .tabs button[aria-selected="true"] {
+    border-bottom-color: var(--accent-blue);
+    color: var(--text-primary);
+  }
+  .document-navigation {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+  .expired {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+  .related-context {
+    flex-direction: column;
+    align-items: stretch;
+    overflow-wrap: anywhere;
+  }
+  .related-actions {
+    display: flex;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+  }
+  .separate-context {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    padding: var(--space-2);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    background: var(--bg-inset);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
 </style>

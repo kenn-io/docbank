@@ -40,10 +40,10 @@
   const verified = $derived(
     Boolean(
       report?.enabled &&
-        evidence &&
-        metadataProblems.length === 0 &&
-        contentProblems.length === 0 &&
-        report.verified_blobs === report.protected_blobs,
+      evidence &&
+      metadataProblems.length === 0 &&
+      contentProblems.length === 0 &&
+      report.verified_blobs === report.protected_blobs,
     ),
   );
 
@@ -85,11 +85,7 @@
   }
 </script>
 
-<DetailDrawer
-  width="min(860px, 100vw)"
-  ariaLabel="Permanent audit verification"
-  {onclose}
->
+<DetailDrawer width="min(860px, 100vw)" ariaLabel="Permanent audit verification" {onclose}>
   {#snippet header()}
     <div class="drawer-heading">
       <div>
@@ -190,8 +186,10 @@
           title={formatBytes(report.protected_bytes)}
         >
           <p>
-            {report.verified_blobs} of {report.protected_blobs} unique retained
-            blob{report.protected_blobs === 1 ? "" : "s"} passed SHA-256 verification.
+            {report.verified_blobs} of {report.protected_blobs} unique retained blob{report.protected_blobs ===
+            1
+              ? ""
+              : "s"} passed SHA-256 verification.
           </p>
         </Card>
         <Card
@@ -226,10 +224,7 @@
           <span>Allocation head</span>
           <div class="identity">
             <code>{evidence.allocation_head}</code>
-            <CopyButton
-              text={evidence.allocation_head}
-              ariaLabel="Copy verified allocation head"
-            />
+            <CopyButton text={evidence.allocation_head} ariaLabel="Copy verified allocation head" />
           </div>
         </div>
       </section>
@@ -238,7 +233,13 @@
         <section class="problems" aria-label="Audit verification problems">
           <div class="section-heading">
             <span>Verification problems</span>
-            <strong>{metadataProblems.length + contentProblems.length} issue{metadataProblems.length + contentProblems.length === 1 ? "" : "s"}</strong>
+            <strong
+              >{metadataProblems.length + contentProblems.length} issue{metadataProblems.length +
+                contentProblems.length ===
+              1
+                ? ""
+                : "s"}</strong
+            >
           </div>
           {#each metadataProblems as problem}
             <p><strong>Metadata</strong> {problem}</p>
@@ -255,7 +256,9 @@
       <section class="scopes" aria-label="Verified audit scope heads">
         <div class="section-heading">
           <span>Scope chains</span>
-          <strong>{evidence.scopes.length} terminal head{evidence.scopes.length === 1 ? "" : "s"}</strong>
+          <strong
+            >{evidence.scopes.length} terminal head{evidence.scopes.length === 1 ? "" : "s"}</strong
+          >
         </div>
         <div class="scope-list">
           {#each visibleScopes as scope (scope.id)}
@@ -278,8 +281,7 @@
         {#if evidence.scopes.length > visibleScopes.length}
           <p class="limit-note">
             Showing the first {visibleScopes.length} of {evidence.scopes.length}
-            verified scopes. Use <code>docbank audit verify --json</code> for
-            the complete evidence bundle.
+            verified scopes. Use <code>docbank audit verify --json</code> for the complete evidence bundle.
           </p>
         {/if}
       </section>
@@ -287,9 +289,9 @@
       <aside class="evidence-note">
         <strong>This is a fresh proof, not an external trust anchor.</strong>
         <p>
-          Save <code>docbank audit verify --json</code> outside this vault and
-          later pass it back with <code>--expected</code> when you need to prove
-          that current history extends an earlier verified state.
+          Save <code>docbank audit verify --json</code> outside this vault and later pass it back
+          with <code>--expected</code> when you need to prove that current history extends an earlier
+          verified state.
         </p>
       </aside>
     {/if}

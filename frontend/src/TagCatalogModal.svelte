@@ -16,13 +16,7 @@
   import PlusIcon from "@lucide/svelte/icons/plus";
   import Trash2Icon from "@lucide/svelte/icons/trash-2";
   import XIcon from "@lucide/svelte/icons/x";
-  import {
-    Button,
-    IconButton,
-    Modal,
-    Spinner,
-    TextInput,
-  } from "@kenn-io/kit-ui";
+  import { Button, IconButton, Modal, Spinner, TextInput } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
   import { createTag, deleteTag, renameTag } from "./receipts.js";
   import { type Tag } from "./generated/docbank.js";
@@ -58,7 +52,9 @@
   let notice = $state("");
   const currentGroups = $derived(groupTags(current));
   let destroyed = false;
-  onDestroy(() => { destroyed = true; });
+  onDestroy(() => {
+    destroyed = true;
+  });
 
   // A reply from an ended session must not change a newer session's view.
   function stale(requestSession: string): boolean {
@@ -121,9 +117,7 @@
     try {
       const renamed = await renameTag(requestSession, tag.id, tag.revision, editName);
       if (stale(requestSession)) return;
-      current = sortTags(
-        current.map((item) => (item.id === renamed.id ? renamed : item)),
-      );
+      current = sortTags(current.map((item) => (item.id === renamed.id ? renamed : item)));
       editingID = "";
       editName = "";
       notice = `Renamed tag to ${renamed.name}.`;
@@ -179,17 +173,20 @@
           <strong>{deleting.name}</strong>
           <code>{deleting.id}</code>
           <span>
-            Revision {deleting.revision} · {deleting.assignment_count} assignment{deleting.assignment_count === 1 ? "" : "s"}
+            Revision {deleting.revision} · {deleting.assignment_count} assignment{deleting.assignment_count ===
+            1
+              ? ""
+              : "s"}
           </span>
         </div>
       </div>
       <p>
-        This permanently removes the tag definition and every assignment that
-        currently uses it. Documents and their stored content are not deleted.
+        This permanently removes the tag definition and every assignment that currently uses it.
+        Documents and their stored content are not deleted.
       </p>
       <p class="boundary">
-        This action cannot be undone. You may create a tag with the same name
-        later, but it will have a different stable identity.
+        This action cannot be undone. You may create a tag with the same name later, but it will
+        have a different stable identity.
       </p>
       {#if failure}<p class="failure" role="alert">{failure}</p>{/if}
     </div>
@@ -270,7 +267,11 @@
                   <div class="definition-authority">
                     <div>
                       <TagLabel {tag} size="sm" />
-                      <span>{tag.assignment_count} assignment{tag.assignment_count === 1 ? "" : "s"}</span>
+                      <span
+                        >{tag.assignment_count} assignment{tag.assignment_count === 1
+                          ? ""
+                          : "s"}</span
+                      >
                     </div>
                     <code>{tag.id}</code>
                   </div>
@@ -315,9 +316,7 @@
   {/if}
   {#snippet footer()}
     {#if deleting}
-      <Button surface="soft" disabled={pending} onclick={() => (deleting = null)}>
-        Keep tag
-      </Button>
+      <Button surface="soft" disabled={pending} onclick={() => (deleting = null)}>Keep tag</Button>
       <Button
         tone="danger"
         surface="solid"

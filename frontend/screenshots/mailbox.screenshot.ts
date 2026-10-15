@@ -10,7 +10,11 @@ import { crc32 } from "node:zlib";
 
 const run = promisify(execFile);
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const binary = path.join(repository, "bin", process.platform === "win32" ? "docbank.exe" : "docbank");
+const binary = path.join(
+  repository,
+  "bin",
+  process.platform === "win32" ? "docbank.exe" : "docbank",
+);
 const output = process.env.DOCBANK_SCREENSHOT_DIR;
 if (!output) throw new Error("DOCBANK_SCREENSHOT_DIR is required");
 
@@ -161,14 +165,24 @@ test.describe("mailbox import screenshot", () => {
     const body = page.frameLocator('iframe[title^="Email HTML body"]');
     await expect(body.getByRole("heading", { name: "Project update" })).toBeVisible();
     await page.setViewportSize({ width: 860, height: 1500 });
-    await reader.screenshot({ path: path.join(output, "web-email-reader.png"), animations: "disabled" });
+    await reader.screenshot({
+      path: path.join(output, "web-email-reader.png"),
+      animations: "disabled",
+    });
     await reader.getByRole("button", { name: "Show raw headers", exact: true }).click();
     await expect(reader.getByLabel("Raw email headers")).toContainText("review@example.test");
-    await reader.screenshot({ path: path.join(output, "web-email-headers.png"), animations: "disabled" });
+    await reader.screenshot({
+      path: path.join(output, "web-email-headers.png"),
+      animations: "disabled",
+    });
     await page.getByRole("tab", { name: "Attachments", exact: true }).click();
     const attachments = page.getByRole("region", { name: "Outgoing attachments" });
-    await expect(attachments.getByRole("button", { name: /Open attachment project.csv/ })).toBeVisible();
-    await page.locator(`[data-source-version="${occurrences[0]!.target.version_id}"]`).screenshot({ path: path.join(output, "web-email-attachments.png"), animations: "disabled" });
+    await expect(
+      attachments.getByRole("button", { name: /Open attachment project.csv/ }),
+    ).toBeVisible();
+    await page
+      .locator(`[data-source-version="${occurrences[0]!.target.version_id}"]`)
+      .screenshot({ path: path.join(output, "web-email-attachments.png"), animations: "disabled" });
     await writeFile(
       path.join(output, "mailbox-proof.json"),
       JSON.stringify({ job, occurrences }, null, 2) + "\n",

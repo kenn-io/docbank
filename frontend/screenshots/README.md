@@ -85,12 +85,12 @@ The album proof uses `DOCBANK_ALBUMS_SCREENSHOT_DIR` to check adding photos by a
 to check ranked search, whole-library counts, continuation and rows before counts.
 Run either photo spec with the Playwright command above and its filename.
 
-| Variable | Photo proof behavior |
-| --- | --- |
-| `DOCBANK_SCREENSHOT_BINARY` | Absolute branch binary; defaults to the built binary in `bin/`. |
-| `DOCBANK_PHOTO_PROOF_WORKSPACE` | Reuse an existing synthetic workspace; omit to seed one. |
-| `DOCBANK_KEEP_PHOTO_PREVIEW` | Retain the daemon and vault, and write its preview URL receipt beside the images. |
-| `DOCBANK_SCREENSHOT_SCALE` | Search proof device scale factor; defaults to 1. |
+| Variable                        | Photo proof behavior                                                              |
+| ------------------------------- | --------------------------------------------------------------------------------- |
+| `DOCBANK_SCREENSHOT_BINARY`     | Absolute branch binary; defaults to the built binary in `bin/`.                   |
+| `DOCBANK_PHOTO_PROOF_WORKSPACE` | Reuse an existing synthetic workspace; omit to seed one.                          |
+| `DOCBANK_KEEP_PHOTO_PREVIEW`    | Retain the daemon and vault, and write its preview URL receipt beside the images. |
+| `DOCBANK_SCREENSHOT_SCALE`      | Search proof device scale factor; defaults to 1.                                  |
 
 Preview receipts contain synthetic session credentials. Keep them local. Stop
 retained daemons before removing their workspaces.

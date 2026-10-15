@@ -8,12 +8,18 @@ export function mediaFormData(input: {
   file: Blob;
 }): Blob {
   const boundary = `docbank-${randomUUID()}`;
-  const filename = input.metadata.filename.replace(/\r/g, "%0D").replace(/\n/g, "%0A").replace(/"/g, "%22");
-  return new Blob([
-    `--${boundary}\r\nContent-Disposition: form-data; name="metadata"\r\nContent-Type: application/json\r\n\r\n`,
-    JSON.stringify(input.metadata),
-    `\r\n--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: ${input.metadata.media_type}\r\n\r\n`,
-    input.file,
-    `\r\n--${boundary}--\r\n`,
-  ], { type: `multipart/form-data; boundary=${boundary}` });
+  const filename = input.metadata.filename
+    .replace(/\r/g, "%0D")
+    .replace(/\n/g, "%0A")
+    .replace(/"/g, "%22");
+  return new Blob(
+    [
+      `--${boundary}\r\nContent-Disposition: form-data; name="metadata"\r\nContent-Type: application/json\r\n\r\n`,
+      JSON.stringify(input.metadata),
+      `\r\n--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: ${input.metadata.media_type}\r\n\r\n`,
+      input.file,
+      `\r\n--${boundary}--\r\n`,
+    ],
+    { type: `multipart/form-data; boundary=${boundary}` },
+  );
 }

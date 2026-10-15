@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import AuditHistoryDrawer from "./AuditHistoryDrawer.svelte";
-import type { AuditEvent, AuditEventPage, Node, PhotoAuthored, PhotoAuthoredSnapshot } from "./generated/docbank.js";
+import type {
+  AuditEvent,
+  AuditEventPage,
+  Node,
+  PhotoAuthored,
+  PhotoAuthoredSnapshot,
+} from "./generated/docbank.js";
 
 const node: Node = {
   id: 42,
@@ -41,11 +41,7 @@ function event(overrides: Partial<AuditEvent>): AuditEvent {
   };
 }
 
-function page(
-  items: AuditEvent[],
-  nextCursor = "",
-  cursor = "",
-): AuditEventPage {
+function page(items: AuditEvent[], nextCursor = "", cursor = ""): AuditEventPage {
   return {
     node,
     path: "/Taxes/return.pdf",
@@ -65,25 +61,89 @@ afterEach(() => {
 describe("audited history drawer", () => {
   it("shows every authored value in both state cards", async () => {
     const fileID = "44444444-4444-4444-8444-444444444444";
-    const before: PhotoAuthoredSnapshot = { file_id: fileID, node_id: 42, revision: 1, values: { rating: 0, flag: "", label: "", caption: "", creator: "", copyright: "", rotation: 0 } };
+    const before: PhotoAuthoredSnapshot = {
+      file_id: fileID,
+      node_id: 42,
+      revision: 1,
+      values: {
+        rating: 0,
+        flag: "",
+        label: "",
+        caption: "",
+        creator: "",
+        copyright: "",
+        rotation: 0,
+      },
+    };
     for (const values of [
-      { confirmed_fields: 127, rating: 5, flag: "pick", label: "red", caption: "River", creator: "Example photographer", copyright: "Example copyright", rotation: 90 },
+      {
+        confirmed_fields: 127,
+        rating: 5,
+        flag: "pick",
+        label: "red",
+        caption: "River",
+        creator: "Example photographer",
+        copyright: "Example copyright",
+        rotation: 90,
+      },
       { ...before.values, confirmed_fields: 8 },
     ] satisfies PhotoAuthored[]) {
       const after = { ...before, revision: 2, values };
-      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify(page([event({ kind: "photo_authored", attachment: { kind: "photo_authored", identity: { file_id: fileID }, before: { photo: before }, after: { photo: after } } })])), { status: 200, headers: { "Content-Type": "application/json" } }));
-      render(AuditHistoryDrawer, { session: "short-lived", node, path: "/Photos/capture.jpg", onclose: vi.fn(), onauthfailure: vi.fn() });
+      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        new Response(
+          JSON.stringify(
+            page([
+              event({
+                kind: "photo_authored",
+                attachment: {
+                  kind: "photo_authored",
+                  identity: { file_id: fileID },
+                  before: { photo: before },
+                  after: { photo: after },
+                },
+              }),
+            ]),
+          ),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+      render(AuditHistoryDrawer, {
+        session: "short-lived",
+        node,
+        path: "/Photos/capture.jpg",
+        onclose: vi.fn(),
+        onauthfailure: vi.fn(),
+      });
       const confirmed = await screen.findAllByText("Confirmed fields");
-      expect(confirmed.map((label) => label.nextElementSibling?.textContent)).toEqual(["none", values.confirmed_fields === 8 ? "caption" : "rating, flag, label, caption, creator, copyright, rotation"]);
+      expect(confirmed.map((label) => label.nextElementSibling?.textContent)).toEqual([
+        "none",
+        values.confirmed_fields === 8
+          ? "caption"
+          : "rating, flag, label, caption, creator, copyright, rotation",
+      ]);
       if (values.confirmed_fields === 8) {
-        expect(screen.getAllByText("Caption").map((label) => label.nextElementSibling?.textContent)).toEqual(["(empty)", "(empty)"]);
+        expect(
+          screen.getAllByText("Caption").map((label) => label.nextElementSibling?.textContent),
+        ).toEqual(["(empty)", "(empty)"]);
       } else {
         expect(screen.getByText("River")).toBeTruthy();
-        for (const label of ["File revision", "Rating", "Flag", "Label", "Caption", "Creator", "Copyright", "Rotation"]) expect(screen.getAllByText(label)).toHaveLength(2);
+        for (const label of [
+          "File revision",
+          "Rating",
+          "Flag",
+          "Label",
+          "Caption",
+          "Creator",
+          "Copyright",
+          "Rotation",
+        ])
+          expect(screen.getAllByText(label)).toHaveLength(2);
         expect(screen.getAllByText(fileID)).toHaveLength(2);
-        expect(screen.getByText("0°")).toBeTruthy(); expect(screen.getByText("90°")).toBeTruthy();
+        expect(screen.getByText("0°")).toBeTruthy();
+        expect(screen.getByText("90°")).toBeTruthy();
         expect(screen.getAllByText("(empty)")).toHaveLength(5);
-        expect(screen.getByText("Example photographer")).toBeTruthy(); expect(screen.getByText("Example copyright")).toBeTruthy();
+        expect(screen.getByText("Example photographer")).toBeTruthy();
+        expect(screen.getByText("Example copyright")).toBeTruthy();
       }
       cleanup();
     }
@@ -147,17 +207,19 @@ describe("audited history drawer", () => {
     });
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
-      .mockImplementationOnce(async () =>
-        new Response(JSON.stringify(page([pathEvent], "older")), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
+      .mockImplementationOnce(
+        async () =>
+          new Response(JSON.stringify(page([pathEvent], "older")), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
       )
-      .mockImplementationOnce(async () =>
-        new Response(JSON.stringify(page([tagEvent], "", "older")), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
+      .mockImplementationOnce(
+        async () =>
+          new Response(JSON.stringify(page([tagEvent], "", "older")), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
       );
     const close = vi.fn();
 

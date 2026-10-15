@@ -5,8 +5,7 @@ export type TagHotkeyBindings = Partial<Record<TagHotkey, string>>;
 
 type PreferenceStorage = Pick<Storage, "getItem" | "setItem">;
 
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function isTagHotkeyVaultID(value: unknown): value is string {
   return typeof value === "string" && UUID_PATTERN.test(value);
@@ -42,7 +41,10 @@ export function loadTagHotkeys(
     const parsed: unknown = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
     const envelope = parsed as Record<string, unknown>;
-    if (envelope.version !== 1 || Object.keys(envelope).some((key) => key !== "version" && key !== "bindings")) {
+    if (
+      envelope.version !== 1 ||
+      Object.keys(envelope).some((key) => key !== "version" && key !== "bindings")
+    ) {
       return {};
     }
     return normalizeBindings(envelope.bindings) ?? {};

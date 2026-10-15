@@ -1,7 +1,18 @@
-import { validateBatchTagReceipt, type BatchTagReceipt, type BatchTagRequest } from "./batch-tags.js";
+import {
+  validateBatchTagReceipt,
+  type BatchTagReceipt,
+  type BatchTagRequest,
+} from "./batch-tags.js";
 import type { SnapshotMember } from "./snapshots.js";
-import { ACTION_MAX_BATCHES, decodeRecovery, encodeRecovery, receiptProjection,
-  type ActionSource, type PreparedAction, type PreparedActionBatch } from "./actionRecovery.js";
+import {
+  ACTION_MAX_BATCHES,
+  decodeRecovery,
+  encodeRecovery,
+  receiptProjection,
+  type ActionSource,
+  type PreparedAction,
+  type PreparedActionBatch,
+} from "./actionRecovery.js";
 
 export type ActionState = "prepared" | "sending" | "paused" | "uncertain" | "stale" | "complete";
 export type ActionBatchState = "prepared" | "sending" | "uncertain" | "stale" | "complete";
@@ -18,7 +29,11 @@ export interface PersistedAction extends Omit<PreparedAction, "batches"> {
 
 export interface ActionJournalAccess {
   load(): Promise<PersistedAction | null>;
-  loadBatch(index: number): Promise<Pick<PersistedAction, "action_id" | "state" | "checkpoint_verified"> & { batch: PersistedActionBatch }>;
+  loadBatch(index: number): Promise<
+    Pick<PersistedAction, "action_id" | "state" | "checkpoint_verified"> & {
+      batch: PersistedActionBatch;
+    }
+  >;
   markSending(index: number): Promise<void>;
   recordReceipt(index: number, receipt: BatchTagReceipt): Promise<void>;
   markUncertain(index: number): Promise<void>;
@@ -29,13 +44,30 @@ export interface ActionJournalAccess {
 const uuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 type StoredHeader = {
-  version: 1; action_id: string; vault_id: string; source: ActionSource; total: number; total_bytes: number;
-  tag_id: string; assign: boolean; created_at: string; plan_digest: string; state: ActionState;
-  checkpoint_verified: boolean; batch_count: number; completed_batches: number;
+  version: 1;
+  action_id: string;
+  vault_id: string;
+  source: ActionSource;
+  total: number;
+  total_bytes: number;
+  tag_id: string;
+  assign: boolean;
+  created_at: string;
+  plan_digest: string;
+  state: ActionState;
+  checkpoint_verified: boolean;
+  batch_count: number;
+  completed_batches: number;
 };
 type StoredBatch = {
-  vault_id: string; index: number; operation_id: string; members: SnapshotMember[]; request: BatchTagRequest;
-  request_digest: string; receipt?: BatchTagReceipt; state: ActionBatchState;
+  vault_id: string;
+  index: number;
+  operation_id: string;
+  members: SnapshotMember[];
+  request: BatchTagRequest;
+  request_digest: string;
+  receipt?: BatchTagReceipt;
+  state: ActionBatchState;
 };
 
 const databaseName = "docbank-action-journal-v1";
@@ -53,8 +85,10 @@ function idbRequest<T>(request: IDBRequest<T>): Promise<T> {
 function transactionDone(transaction: IDBTransaction): Promise<void> {
   return new Promise((resolve, reject) => {
     transaction.oncomplete = () => resolve();
-    transaction.onabort = () => reject(transaction.error ?? new Error("IndexedDB transaction aborted."));
-    transaction.onerror = () => reject(transaction.error ?? new Error("IndexedDB transaction failed."));
+    transaction.onabort = () =>
+      reject(transaction.error ?? new Error("IndexedDB transaction aborted."));
+    transaction.onerror = () =>
+      reject(transaction.error ?? new Error("IndexedDB transaction failed."));
   });
 }
 
@@ -65,7 +99,12 @@ function abort(transaction: IDBTransaction, message: string): never {
 
 function persistedFrom(header: StoredHeader, batches: StoredBatch[]): PersistedAction {
   const { completed_batches: _completedBatches, batch_count: _batchCount, ...action } = header;
-  return { ...action, batches: batches.sort((left, right) => left.index - right.index).map(({ vault_id: _vaultID, ...batch }) => batch) };
+  return {
+    ...action,
+    batches: batches
+      .sort((left, right) => left.index - right.index)
+      .map(({ vault_id: _vaultID, ...batch }) => batch),
+  };
 }
 
 export class ActionJournal implements ActionJournalAccess {
@@ -92,17 +131,25 @@ export class ActionJournal implements ActionJournalAccess {
 
   static async abandon(vaultID: string): Promise<void> {
     const journal = await this.#connect(vaultID);
-    try { await journal.abandon(); } finally { journal.#database.close(); }
+    try {
+      await journal.abandon();
+    } finally {
+      journal.#database.close();
+    }
   }
 
   static async #connect(vaultID: string): Promise<ActionJournal> {
-    if (!uuidV4.test(vaultID)) throw new Error("The action journal requires a valid vault identity.");
-    if (typeof indexedDB === "undefined") throw new Error("This browser does not provide durable action storage.");
+    if (!uuidV4.test(vaultID))
+      throw new Error("The action journal requires a valid vault identity.");
+    if (typeof indexedDB === "undefined")
+      throw new Error("This browser does not provide durable action storage.");
     const request = indexedDB.open(databaseName, databaseVersion);
     request.onupgradeneeded = () => {
       const database = request.result;
-      if (!database.objectStoreNames.contains(headerStore)) database.createObjectStore(headerStore, { keyPath: "vault_id" });
-      if (!database.objectStoreNames.contains(batchStore)) database.createObjectStore(batchStore, { keyPath: ["vault_id", "index"] });
+      if (!database.objectStoreNames.contains(headerStore))
+        database.createObjectStore(headerStore, { keyPath: "vault_id" });
+      if (!database.objectStoreNames.contains(batchStore))
+        database.createObjectStore(batchStore, { keyPath: ["vault_id", "index"] });
     };
     return new ActionJournal(vaultID, await idbRequest(request));
   }
@@ -111,17 +158,28 @@ export class ActionJournal implements ActionJournalAccess {
     const bytes = await encodeRecovery(action);
     const normalized = await decodeRecovery(bytes);
     signal?.throwIfAborted();
-    if (normalized.vault_id !== this.vaultID) throw new Error("The recovery action belongs to a different vault.");
-    const transaction = this.#database.transaction([headerStore, batchStore], "readwrite", { durability: "strict" });
+    if (normalized.vault_id !== this.vaultID)
+      throw new Error("The recovery action belongs to a different vault.");
+    const transaction = this.#database.transaction([headerStore, batchStore], "readwrite", {
+      durability: "strict",
+    });
     const actions = transaction.objectStore(headerStore);
-    const existing = await idbRequest(actions.get(this.vaultID) as IDBRequest<StoredHeader | undefined>);
+    const existing = await idbRequest(
+      actions.get(this.vaultID) as IDBRequest<StoredHeader | undefined>,
+    );
     if (signal?.aborted) abort(transaction, "Action preparation cancelled.");
     if (existing) {
-      if (existing.action_id === normalized.action_id && existing.plan_digest === normalized.plan_digest) {
+      if (
+        existing.action_id === normalized.action_id &&
+        existing.plan_digest === normalized.plan_digest
+      ) {
         await transactionDone(transaction);
         return;
       }
-      abort(transaction, "This vault already has an action retained in the journal. Abandon it explicitly before preparing another.");
+      abort(
+        transaction,
+        "This vault already has an action retained in the journal. Abandon it explicitly before preparing another.",
+      );
     }
     const { batches, ...preparedHeader } = normalized;
     // File receipts are unauthenticated. Only a daemon response recorded by
@@ -134,15 +192,20 @@ export class ActionJournal implements ActionJournalAccess {
       completed_batches: 0,
     } satisfies StoredHeader);
     const batchRecords = transaction.objectStore(batchStore);
-    for (const { receipt: _receipt, ...batch } of batches) batchRecords.add({
-      ...batch,
-      members: batch.members.map((member) => ({ ...member })),
-      request: { ...batch.request, nodes: batch.request.nodes.map((node) => ({ ...node })) },
-      vault_id: this.vaultID,
-      state: "prepared",
-    } satisfies StoredBatch);
+    for (const { receipt: _receipt, ...batch } of batches)
+      batchRecords.add({
+        ...batch,
+        members: batch.members.map((member) => ({ ...member })),
+        request: { ...batch.request, nodes: batch.request.nodes.map((node) => ({ ...node })) },
+        vault_id: this.vaultID,
+        state: "prepared",
+      } satisfies StoredBatch);
     const cancel = () => {
-      try { transaction.abort(); } catch { /* A completed transaction cannot be cancelled. */ }
+      try {
+        transaction.abort();
+      } catch {
+        /* A completed transaction cannot be cancelled. */
+      }
     };
     signal?.addEventListener("abort", cancel, { once: true });
     try {
@@ -155,38 +218,62 @@ export class ActionJournal implements ActionJournalAccess {
   async load(): Promise<PersistedAction | null> {
     const transaction = this.#database.transaction([headerStore, batchStore], "readonly");
     const actions = transaction.objectStore(headerStore);
-    const header = await idbRequest(actions.get(this.vaultID) as IDBRequest<StoredHeader | undefined>);
+    const header = await idbRequest(
+      actions.get(this.vaultID) as IDBRequest<StoredHeader | undefined>,
+    );
     if (!header) {
       await transactionDone(transaction);
       return null;
     }
     const range = IDBKeyRange.bound([this.vaultID, 0], [this.vaultID, ACTION_MAX_BATCHES]);
-    const batches = await idbRequest(transaction.objectStore(batchStore).getAll(range) as IDBRequest<StoredBatch[]>);
-    if (batches.length !== header.batch_count) abort(transaction, "The durable action journal is inconsistent.");
+    const batches = await idbRequest(
+      transaction.objectStore(batchStore).getAll(range) as IDBRequest<StoredBatch[]>,
+    );
+    if (batches.length !== header.batch_count)
+      abort(transaction, "The durable action journal is inconsistent.");
     await transactionDone(transaction);
     return persistedFrom(header, batches);
   }
 
   async loadBatch(index: number): ReturnType<ActionJournalAccess["loadBatch"]> {
     const transaction = this.#database.transaction([headerStore, batchStore], "readonly");
-    const header = await idbRequest(transaction.objectStore(headerStore).get(this.vaultID) as IDBRequest<StoredHeader | undefined>);
-    const stored = await idbRequest(transaction.objectStore(batchStore).get([this.vaultID, index]) as IDBRequest<StoredBatch | undefined>);
+    const header = await idbRequest(
+      transaction.objectStore(headerStore).get(this.vaultID) as IDBRequest<
+        StoredHeader | undefined
+      >,
+    );
+    const stored = await idbRequest(
+      transaction.objectStore(batchStore).get([this.vaultID, index]) as IDBRequest<
+        StoredBatch | undefined
+      >,
+    );
     if (!header || !stored) abort(transaction, "The durable action batch is missing.");
     await transactionDone(transaction);
     const { vault_id: _vaultID, ...batch } = stored;
-    return { action_id: header.action_id, state: header.state, checkpoint_verified: header.checkpoint_verified, batch };
+    return {
+      action_id: header.action_id,
+      state: header.state,
+      checkpoint_verified: header.checkpoint_verified,
+      batch,
+    };
   }
 
   async #recoverInterruptedSend(): Promise<void> {
-    const transaction = this.#database.transaction([headerStore, batchStore], "readwrite", { durability: "strict" });
+    const transaction = this.#database.transaction([headerStore, batchStore], "readwrite", {
+      durability: "strict",
+    });
     const actions = transaction.objectStore(headerStore);
-    const header = await idbRequest(actions.get(this.vaultID) as IDBRequest<StoredHeader | undefined>);
+    const header = await idbRequest(
+      actions.get(this.vaultID) as IDBRequest<StoredHeader | undefined>,
+    );
     if (!header) {
       await transactionDone(transaction);
       return;
     }
     const range = IDBKeyRange.bound([this.vaultID, 0], [this.vaultID, ACTION_MAX_BATCHES]);
-    const batches = await idbRequest(transaction.objectStore(batchStore).getAll(range) as IDBRequest<StoredBatch[]>);
+    const batches = await idbRequest(
+      transaction.objectStore(batchStore).getAll(range) as IDBRequest<StoredBatch[]>,
+    );
     let recovered = false;
     for (const batch of batches) {
       if (batch.state === "sending") {
@@ -206,10 +293,23 @@ export class ActionJournal implements ActionJournalAccess {
   async #validateStoredAction(): Promise<void> {
     const action = await this.load();
     if (!action) return;
-    if (typeof action.checkpoint_verified !== "boolean" ||
-        !new Set<ActionState>(["prepared", "sending", "paused", "uncertain", "stale", "complete"]).has(action.state) ||
-        action.batches.some((batch) => !new Set<ActionBatchState>(["prepared", "sending", "uncertain", "stale", "complete"]).has(batch.state) ||
-          (batch.state === "complete") !== (batch.receipt !== undefined))) {
+    if (
+      typeof action.checkpoint_verified !== "boolean" ||
+      !new Set<ActionState>([
+        "prepared",
+        "sending",
+        "paused",
+        "uncertain",
+        "stale",
+        "complete",
+      ]).has(action.state) ||
+      action.batches.some(
+        (batch) =>
+          !new Set<ActionBatchState>(["prepared", "sending", "uncertain", "stale", "complete"]).has(
+            batch.state,
+          ) || (batch.state === "complete") !== (batch.receipt !== undefined),
+      )
+    ) {
       throw new Error("The durable action journal contains invalid progress state.");
     }
     await decodeRecovery(await encodeRecovery(action));
@@ -217,10 +317,19 @@ export class ActionJournal implements ActionJournalAccess {
 
   async verifyCheckpoint(bytes: Uint8Array): Promise<void> {
     const checkpoint = await decodeRecovery(bytes);
-    const transaction = this.#database.transaction(headerStore, "readwrite", { durability: "strict" });
+    const transaction = this.#database.transaction(headerStore, "readwrite", {
+      durability: "strict",
+    });
     const store = transaction.objectStore(headerStore);
-    const header = await idbRequest(store.get(this.vaultID) as IDBRequest<StoredHeader | undefined>);
-    if (!header || checkpoint.vault_id !== this.vaultID || checkpoint.action_id !== header.action_id || checkpoint.plan_digest !== header.plan_digest) {
+    const header = await idbRequest(
+      store.get(this.vaultID) as IDBRequest<StoredHeader | undefined>,
+    );
+    if (
+      !header ||
+      checkpoint.vault_id !== this.vaultID ||
+      checkpoint.action_id !== header.action_id ||
+      checkpoint.plan_digest !== header.plan_digest
+    ) {
       abort(transaction, "The selected checkpoint does not match the prepared action and vault.");
     }
     header.checkpoint_verified = true;
@@ -230,12 +339,18 @@ export class ActionJournal implements ActionJournalAccess {
 
   async confirmResume(actionID: string): Promise<void> {
     const action = await this.load();
-    if (!action || action.action_id !== actionID) throw new Error("The confirmed action is no longer available.");
+    if (!action || action.action_id !== actionID)
+      throw new Error("The confirmed action is no longer available.");
     if (action.state === "paused") {
-      const transaction = this.#database.transaction(headerStore, "readwrite", { durability: "strict" });
+      const transaction = this.#database.transaction(headerStore, "readwrite", {
+        durability: "strict",
+      });
       const store = transaction.objectStore(headerStore);
-      const header = await idbRequest(store.get(this.vaultID) as IDBRequest<StoredHeader | undefined>);
-      if (!header || header.action_id !== actionID) abort(transaction, "The confirmed action is no longer available.");
+      const header = await idbRequest(
+        store.get(this.vaultID) as IDBRequest<StoredHeader | undefined>,
+      );
+      if (!header || header.action_id !== actionID)
+        abort(transaction, "The confirmed action is no longer available.");
       if (header.state === "paused") {
         header.state = "prepared";
         store.put(header);
@@ -253,23 +368,36 @@ export class ActionJournal implements ActionJournalAccess {
 
   async markSending(index: number): Promise<void> {
     await this.#update(index, (header, batch, transaction) => {
-      if (!header.checkpoint_verified) abort(transaction, "Select and verify the saved recovery file before mutation.");
-      if (header.state === "paused" || header.state === "stale" || header.state === "complete") abort(transaction, "The action is not schedulable.");
+      if (!header.checkpoint_verified)
+        abort(transaction, "Select and verify the saved recovery file before mutation.");
+      if (header.state === "paused" || header.state === "stale" || header.state === "complete")
+        abort(transaction, "The action is not schedulable.");
       // Another tab may have stopped before recording its receipt. Reusing the
       // original operation ID lets the daemon return its saved receipt on retry.
-      if (batch.state !== "prepared" && batch.state !== "uncertain" && batch.state !== "sending") abort(transaction, "The batch is not schedulable.");
+      if (batch.state !== "prepared" && batch.state !== "uncertain" && batch.state !== "sending")
+        abort(transaction, "The batch is not schedulable.");
       batch.state = "sending";
       header.state = "sending";
     });
   }
 
-  async #update(index: number, update: (header: StoredHeader, batch: StoredBatch, transaction: IDBTransaction) => void): Promise<void> {
-    if (!Number.isSafeInteger(index) || index < 0 || index >= ACTION_MAX_BATCHES) throw new Error("Action batch index is invalid.");
-    const transaction = this.#database.transaction([headerStore, batchStore], "readwrite", { durability: "strict" });
+  async #update(
+    index: number,
+    update: (header: StoredHeader, batch: StoredBatch, transaction: IDBTransaction) => void,
+  ): Promise<void> {
+    if (!Number.isSafeInteger(index) || index < 0 || index >= ACTION_MAX_BATCHES)
+      throw new Error("Action batch index is invalid.");
+    const transaction = this.#database.transaction([headerStore, batchStore], "readwrite", {
+      durability: "strict",
+    });
     const actions = transaction.objectStore(headerStore);
     const batches = transaction.objectStore(batchStore);
-    const header = await idbRequest(actions.get(this.vaultID) as IDBRequest<StoredHeader | undefined>);
-    const batch = await idbRequest(batches.get([this.vaultID, index]) as IDBRequest<StoredBatch | undefined>);
+    const header = await idbRequest(
+      actions.get(this.vaultID) as IDBRequest<StoredHeader | undefined>,
+    );
+    const batch = await idbRequest(
+      batches.get([this.vaultID, index]) as IDBRequest<StoredBatch | undefined>,
+    );
     if (!header || !batch) abort(transaction, "The durable action batch is missing.");
     update(header, batch, transaction);
     actions.put(header);
@@ -281,18 +409,29 @@ export class ActionJournal implements ActionJournalAccess {
     const { batch } = await this.loadBatch(index);
     const projected = receiptProjection(await validateBatchTagReceipt(batch.request, receipt));
     await this.#update(index, (header, stored, transaction) => {
-      if (stored.operation_id !== batch.operation_id || stored.request_digest !== batch.request_digest) abort(transaction, "The durable action batch changed during receipt validation.");
+      if (
+        stored.operation_id !== batch.operation_id ||
+        stored.request_digest !== batch.request_digest
+      )
+        abort(transaction, "The durable action batch changed during receipt validation.");
       if (stored.state !== "complete") header.completed_batches++;
       stored.receipt = projected;
       stored.state = "complete";
-      if (header.state !== "stale") header.state = header.completed_batches === header.batch_count ? "complete" : (header.state === "paused" ? "paused" : "sending");
+      if (header.state !== "stale")
+        header.state =
+          header.completed_batches === header.batch_count
+            ? "complete"
+            : header.state === "paused"
+              ? "paused"
+              : "sending";
     });
   }
 
   async markUncertain(index: number): Promise<void> {
     await this.#update(index, (header, batch) => {
       if (batch.state !== "complete") batch.state = "uncertain";
-      if (header.state !== "paused" && header.state !== "complete" && header.state !== "stale") header.state = "uncertain";
+      if (header.state !== "paused" && header.state !== "complete" && header.state !== "stale")
+        header.state = "uncertain";
     });
   }
 
@@ -304,9 +443,13 @@ export class ActionJournal implements ActionJournalAccess {
   }
 
   async pause(): Promise<void> {
-    const transaction = this.#database.transaction(headerStore, "readwrite", { durability: "strict" });
+    const transaction = this.#database.transaction(headerStore, "readwrite", {
+      durability: "strict",
+    });
     const store = transaction.objectStore(headerStore);
-    const header = await idbRequest(store.get(this.vaultID) as IDBRequest<StoredHeader | undefined>);
+    const header = await idbRequest(
+      store.get(this.vaultID) as IDBRequest<StoredHeader | undefined>,
+    );
     if (!header) abort(transaction, "No durable action is available to pause.");
     if (header.state !== "complete" && header.state !== "stale") {
       header.state = "paused";
@@ -316,9 +459,13 @@ export class ActionJournal implements ActionJournalAccess {
   }
 
   async abandon(): Promise<void> {
-    const transaction = this.#database.transaction([headerStore, batchStore], "readwrite", { durability: "strict" });
+    const transaction = this.#database.transaction([headerStore, batchStore], "readwrite", {
+      durability: "strict",
+    });
     transaction.objectStore(headerStore).delete(this.vaultID);
-    transaction.objectStore(batchStore).delete(IDBKeyRange.bound([this.vaultID], [this.vaultID, []]));
+    transaction
+      .objectStore(batchStore)
+      .delete(IDBKeyRange.bound([this.vaultID], [this.vaultID, []]));
     await transactionDone(transaction);
     this.#confirmedActionID = undefined;
   }

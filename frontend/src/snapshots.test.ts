@@ -64,11 +64,16 @@ async function page(overrides: Record<string, unknown> = {}): Promise<Record<str
     total: rows.length,
     total_bytes: rows.reduce((total, item) => total + item.size, 0),
     rows,
-    facets: [{
-      dimension: "tags", available: true, values: [
-        { key: tagID, label: "Synthetic", count: 1, selected: false },
-      ], total: 1, missing: 0, other: 0,
-    }],
+    facets: [
+      {
+        dimension: "tags",
+        available: true,
+        values: [{ key: tagID, label: "Synthetic", count: 1, selected: false }],
+        total: 1,
+        missing: 0,
+        other: 0,
+      },
+    ],
     snapshot: true,
     snapshot_id: snapshotID,
     created_at: "2026-09-11T00:00:00Z",
@@ -93,9 +98,18 @@ describe("snapshot transport and receipt validation", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(receipt));
 
     const { $schema: _schema, ...expected } = receipt;
-    await expect(createSnapshot("session", query, {
-      profile: "archive", page_size: 50, facets: ["tags"],
-    }, controller.signal)).resolves.toEqual(expected);
+    await expect(
+      createSnapshot(
+        "session",
+        query,
+        {
+          profile: "archive",
+          page_size: 50,
+          facets: ["tags"],
+        },
+        controller.signal,
+      ),
+    ).resolves.toEqual(expected);
 
     const [url, init] = fetchMock.mock.calls[0] ?? [];
     expect(url).toBe("/api/v1/workspace/queries");
@@ -103,49 +117,93 @@ describe("snapshot transport and receipt validation", () => {
     expect(init?.signal).toBe(controller.signal);
     expect(new Headers(init?.headers).get("Content-Type")).toBe("application/json");
     expect(JSON.parse(String(init?.body))).toEqual({
-      query, profile: "archive", page_size: 50, facets: ["tags"],
+      query,
+      profile: "archive",
+      page_size: 50,
+      facets: ["tags"],
     });
   });
 
   it.each([
-    ["an unknown envelope field", async () => ({ ...await page(), future: true })],
-    ["a missing receipt field", async () => {
-      const value = await page();
-      delete value.member_hash;
-      return value;
-    }],
+    ["an unknown envelope field", async () => ({ ...(await page()), future: true })],
+    [
+      "a missing receipt field",
+      async () => {
+        const value = await page();
+        delete value.member_hash;
+        return value;
+      },
+    ],
     ["an unsafe total", async () => page({ total: Number.MAX_SAFE_INTEGER + 1 })],
-    ["an unsafe row identity", async () => page({
-      rows: [row(Number.MAX_SAFE_INTEGER + 1, version2, blob2, 20)], total: 1, total_bytes: 20,
-    })],
-    ["an oversized serialized row", async () => page({
-      rows: [{ ...row(2, version2, blob2, 20), excerpt: "x".repeat(65_536) }],
-      total: 1, total_bytes: 20,
-    })],
-    ["invented unavailable counts", async () => page({
-      facets: [{ dimension: "tags", available: false, reason: "time_budget_exceeded", values: [], total: 0 }],
-    })],
-    ["missing unavailable reason", async () => page({
-      facets: [{ dimension: "tags", available: false, values: [] }],
-    })],
-    ["unknown nested row field", async () => page({
-      rows: [{ ...row(2, version2, blob2, 20), future: true }], total: 1, total_bytes: 20,
-    })],
+    [
+      "an unsafe row identity",
+      async () =>
+        page({
+          rows: [row(Number.MAX_SAFE_INTEGER + 1, version2, blob2, 20)],
+          total: 1,
+          total_bytes: 20,
+        }),
+    ],
+    [
+      "an oversized serialized row",
+      async () =>
+        page({
+          rows: [{ ...row(2, version2, blob2, 20), excerpt: "x".repeat(65_536) }],
+          total: 1,
+          total_bytes: 20,
+        }),
+    ],
+    [
+      "invented unavailable counts",
+      async () =>
+        page({
+          facets: [
+            {
+              dimension: "tags",
+              available: false,
+              reason: "time_budget_exceeded",
+              values: [],
+              total: 0,
+            },
+          ],
+        }),
+    ],
+    [
+      "missing unavailable reason",
+      async () =>
+        page({
+          facets: [{ dimension: "tags", available: false, values: [] }],
+        }),
+    ],
+    [
+      "unknown nested row field",
+      async () =>
+        page({
+          rows: [{ ...row(2, version2, blob2, 20), future: true }],
+          total: 1,
+          total_bytes: 20,
+        }),
+    ],
   ])("rejects %s", async (_name, makeReceipt) => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(await makeReceipt()));
-    await expect(createSnapshot("session", query, {}, new AbortController().signal)).rejects.toThrow(
-      /malformed snapshot receipt/i,
-    );
+    await expect(
+      createSnapshot("session", query, {}, new AbortController().signal),
+    ).rejects.toThrow(/malformed snapshot receipt/i);
   });
 
   it("rejects a receipt for a different query", async () => {
     const other = parseQuery('{"text":"different"}');
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(await page({
-      query: other, query_fingerprint: await queryFingerprint(other),
-    })));
-    await expect(createSnapshot("session", query, {}, new AbortController().signal)).rejects.toThrow(
-      /does not match the request/i,
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse(
+        await page({
+          query: other,
+          query_fingerprint: await queryFingerprint(other),
+        }),
+      ),
     );
+    await expect(
+      createSnapshot("session", query, {}, new AbortController().signal),
+    ).rejects.toThrow(/does not match the request/i);
   });
 
   it("bounds chunked successful response decoding to 32 MiB", async () => {
@@ -158,100 +216,162 @@ describe("snapshot transport and receipt validation", () => {
       },
     });
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(body, { status: 200 }));
-    await expect(createSnapshot("session", query, {}, new AbortController().signal)).rejects.toThrow(
-      /32 MiB/i,
-    );
+    await expect(
+      createSnapshot("session", query, {}, new AbortController().signal),
+    ).rejects.toThrow(/32 MiB/i);
   });
 
   it("binds a page to the requested snapshot and cursor direction", async () => {
-    const first = await page({ total: 2, total_bytes: 30, next_cursor: "next-1" }) as unknown as SnapshotPage;
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(await page({
-      total: 2, total_bytes: 30, rows: [row(10, version10, blob10, 10)],
-      previous_cursor: "previous-1", expires_at: "2026-09-11T00:16:00Z",
-    })));
+    const first = (await page({
+      total: 2,
+      total_bytes: 30,
+      next_cursor: "next-1",
+    })) as unknown as SnapshotPage;
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse(
+        await page({
+          total: 2,
+          total_bytes: 30,
+          rows: [row(10, version10, blob10, 10)],
+          previous_cursor: "previous-1",
+          expires_at: "2026-09-11T00:16:00Z",
+        }),
+      ),
+    );
 
-    await expect(readSnapshotPage("session", first, "next-1", new AbortController().signal))
-      .resolves.toMatchObject({ rows: [{ node_id: 10 }], previous_cursor: "previous-1" });
+    await expect(
+      readSnapshotPage("session", first, "next-1", new AbortController().signal),
+    ).resolves.toMatchObject({ rows: [{ node_id: 10 }], previous_cursor: "previous-1" });
   });
 
   it.each([
-    ["wrong snapshot ID", { snapshot_id: "fedcba9876543210fedcba9876543210", previous_cursor: "previous-1" }],
+    [
+      "wrong snapshot ID",
+      { snapshot_id: "fedcba9876543210fedcba9876543210", previous_cursor: "previous-1" },
+    ],
     ["wrong member identity", { member_hash: "0".repeat(64), previous_cursor: "previous-1" }],
-    ["wrong snapshot identity", { snapshot_fingerprint: `sha256:${"0".repeat(64)}`, previous_cursor: "previous-1" }],
+    [
+      "wrong snapshot identity",
+      { snapshot_fingerprint: `sha256:${"0".repeat(64)}`, previous_cursor: "previous-1" },
+    ],
     ["missing reverse cursor", {}],
   ])("rejects a page with %s", async (_name, overrides) => {
-    const first = await page({ total: 2, total_bytes: 30, next_cursor: "next-1" }) as unknown as SnapshotPage;
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(await page({
-      total: 2, total_bytes: 30, rows: [row(10, version10, blob10, 10)], ...overrides,
-    })));
-    await expect(readSnapshotPage("session", first, "next-1", new AbortController().signal)).rejects.toThrow();
+    const first = (await page({
+      total: 2,
+      total_bytes: 30,
+      next_cursor: "next-1",
+    })) as unknown as SnapshotPage;
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse(
+        await page({
+          total: 2,
+          total_bytes: 30,
+          rows: [row(10, version10, blob10, 10)],
+          ...overrides,
+        }),
+      ),
+    );
+    await expect(
+      readSnapshotPage("session", first, "next-1", new AbortController().signal),
+    ).rejects.toThrow();
   });
 
   it("requires the requested cursor to belong to the supplied page", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch");
-    await expect(readSnapshotPage(
-      "session", await page({ next_cursor: "next-1" }) as unknown as SnapshotPage,
-      "unrelated", new AbortController().signal,
-    )).rejects.toThrow(/cursor/i);
+    await expect(
+      readSnapshotPage(
+        "session",
+        (await page({ next_cursor: "next-1" })) as unknown as SnapshotPage,
+        "unrelated",
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow(/cursor/i);
     expect(fetchMock).not.toHaveBeenCalled();
   });
-
 });
 
 describe("exact snapshot target capture", () => {
   const captureRows = Array.from({ length: 51 }, (_, index) => {
     const nodeID = index + 1;
     const suffix = String(nodeID).padStart(12, "0");
-    return row(nodeID, `00000000-0000-4000-8000-${suffix}`, nodeID.toString(16).padStart(64, "0"), nodeID);
+    return row(
+      nodeID,
+      `00000000-0000-4000-8000-${suffix}`,
+      nodeID.toString(16).padStart(64, "0"),
+      nodeID,
+    );
   });
 
   async function captureHash(): Promise<string> {
-    return sha256OfUTF8(captureRows.map((item) => `${item.node_id}:${item.content_version_id}\n`).join(""));
+    return sha256OfUTF8(
+      captureRows.map((item) => `${item.node_id}:${item.content_version_id}\n`).join(""),
+    );
   }
 
   async function twoPageFirst(overrides: Record<string, unknown> = {}): Promise<SnapshotPage> {
-    return await page({
-      rows: captureRows.slice(0, 50), total: 51, total_bytes: 1326,
+    return (await page({
+      rows: captureRows.slice(0, 50),
+      total: 51,
+      total_bytes: 1326,
       member_hash: await captureHash(),
-      next_cursor: "next-1", ...overrides,
-    }) as unknown as SnapshotPage;
+      next_cursor: "next-1",
+      ...overrides,
+    })) as unknown as SnapshotPage;
   }
 
   async function second(overrides: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
     return page({
-      rows: captureRows.slice(50), total: 51, total_bytes: 1326,
+      rows: captureRows.slice(50),
+      total: 51,
+      total_bytes: 1326,
       member_hash: await captureHash(),
-      previous_cursor: "previous-1", ...overrides,
+      previous_cursor: "previous-1",
+      ...overrides,
     });
   }
 
   it("hashes numeric node/version identities independent of input order", async () => {
     const expected = await sha256OfUTF8("2:v2\n10:v10\n");
-    await expect(snapshotMemberHash([
-      { node_id: 10, content_version_id: "v10" },
-      { node_id: 2, content_version_id: "v2" },
-    ])).resolves.toBe(expected);
+    await expect(
+      snapshotMemberHash([
+        { node_id: 10, content_version_id: "v10" },
+        { node_id: 2, content_version_id: "v2" },
+      ]),
+    ).resolves.toBe(expected);
   });
 
   it("copies and verifies every member before returning mutation-ready targets", async () => {
     const first = await twoPageFirst();
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(await second()));
-    const result = await captureSnapshotTargets("session", first, new AbortController().signal, { 1: { expectedRevision: 1, revision: 4 }, 51: { expectedRevision: 48, revision: 49 } });
+    const result = await captureSnapshotTargets("session", first, new AbortController().signal, {
+      1: { expectedRevision: 1, revision: 4 },
+      51: { expectedRevision: 48, revision: 49 },
+    });
 
     expect(result.snapshot).toBe(first);
     expect(result.members).toHaveLength(51);
     expect(result.members[0]).toEqual({
-      node_id: 1, content_version_id: captureRows[0].content_version_id,
-      blob_hash: captureRows[0].blob_hash, size: 1, revision: 4,
+      node_id: 1,
+      content_version_id: captureRows[0].content_version_id,
+      blob_hash: captureRows[0].blob_hash,
+      size: 1,
+      revision: 4,
     });
     expect(result.members[50]).toEqual({
-      node_id: 51, content_version_id: captureRows[50].content_version_id,
-      blob_hash: captureRows[50].blob_hash, size: 51, revision: 51,
+      node_id: 51,
+      content_version_id: captureRows[50].content_version_id,
+      blob_hash: captureRows[50].blob_hash,
+      size: 51,
+      revision: 51,
     });
     expect(first.rows[0].revision).toBe(1);
     expect(await snapshotMemberHash(result.members)).toBe(first.member_hash);
-    expect(fetchMock.mock.calls.every(([url]) => String(url).includes("/workspace/queries/"))).toBe(true);
-    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/batch/tags"))).toHaveLength(0);
+    expect(fetchMock.mock.calls.every(([url]) => String(url).includes("/workspace/queries/"))).toBe(
+      true,
+    );
+    expect(
+      fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/batch/tags")),
+    ).toHaveLength(0);
   });
 
   it.each([
@@ -262,56 +382,102 @@ describe("exact snapshot target capture", () => {
     ["premature next cursor", async () => second({ next_cursor: "next-2" })],
   ])("rejects %s without sending a mutation", async (_name, makeSecond) => {
     const first = await twoPageFirst();
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(await makeSecond()));
-    await expect(captureSnapshotTargets("session", first, new AbortController().signal)).rejects.toThrow();
-    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/batch/tags"))).toHaveLength(0);
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(jsonResponse(await makeSecond()));
+    await expect(
+      captureSnapshotTargets("session", first, new AbortController().signal),
+    ).rejects.toThrow();
+    expect(
+      fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/batch/tags")),
+    ).toHaveLength(0);
   });
 
   it("rejects capture from a later page so earlier members cannot be omitted", async () => {
-    const later = await second() as unknown as SnapshotPage;
+    const later = (await second()) as unknown as SnapshotPage;
     const fetchMock = vi.spyOn(globalThis, "fetch");
-    await expect(captureSnapshotTargets("session", later, new AbortController().signal)).rejects.toThrow(
-      /first page/i,
-    );
+    await expect(
+      captureSnapshotTargets("session", later, new AbortController().signal),
+    ).rejects.toThrow(/first page/i);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("refuses populations above 250000 before paging", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch");
-    await expect(captureSnapshotTargets(
-      "session", await page({ total: 250_001 }) as unknown as SnapshotPage,
-      new AbortController().signal,
-    )).rejects.toThrow(/250,000/i);
+    await expect(
+      captureSnapshotTargets(
+        "session",
+        (await page({ total: 250_001 })) as unknown as SnapshotPage,
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow(/250,000/i);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 it("decodes photo timeline counts without accepting snapshot authority", async () => {
   const values = Array.from({ length: 120 }, (_, index) => {
-    const date = new Date("2024-01-01T00:00:00Z"); date.setUTCDate(date.getUTCDate() + index);
+    const date = new Date("2024-01-01T00:00:00Z");
+    date.setUTCDate(date.getUTCDate() + index);
     const key = date.toISOString().slice(0, 10);
     return { key, label: key, count: 1, selected: false };
   });
   const full = await page();
-  const counts = { query: full.query, dependencies: full.dependencies, generation: full.generation, coverage: full.coverage, observed_at: full.observed_at, facets: [{ dimension: "capture_day", available: true, total: 122, missing: 2, other: 0, values }] };
-  const fetcher = vi.fn().mockResolvedValue(jsonResponse(counts)); vi.stubGlobal("fetch", fetcher);
+  const counts = {
+    query: full.query,
+    dependencies: full.dependencies,
+    generation: full.generation,
+    coverage: full.coverage,
+    observed_at: full.observed_at,
+    facets: [
+      { dimension: "capture_day", available: true, total: 122, missing: 2, other: 0, values },
+    ],
+  };
+  const fetcher = vi.fn().mockResolvedValue(jsonResponse(counts));
+  vi.stubGlobal("fetch", fetcher);
   const result = await fetchPhotoTimeline("session", query, new AbortController().signal);
   expect(result.facets[0].values).toHaveLength(120);
   expect(result.facets[0].missing).toBe(2);
   expect(String(fetcher.mock.calls[0][0])).toMatch(/\/api\/v1\/photos\/assets\/timeline$/);
   expect(Object.keys(JSON.parse(String(fetcher.mock.calls[0][1]?.body)))).toEqual(["query"]);
   for (const key of ["2024-02-30", "0000-01-01"]) {
-    const dated = values.map((value, index) => index === 0 ? { ...value, key, label: key } : value);
-    fetcher.mockResolvedValue(jsonResponse({ ...counts, facets: [{ ...counts.facets[0], values: dated }] }));
-    await expect(fetchPhotoTimeline("session", query, new AbortController().signal)).rejects.toThrow("invalid capture day");
+    const dated = values.map((value, index) =>
+      index === 0 ? { ...value, key, label: key } : value,
+    );
+    fetcher.mockResolvedValue(
+      jsonResponse({ ...counts, facets: [{ ...counts.facets[0], values: dated }] }),
+    );
+    await expect(
+      fetchPhotoTimeline("session", query, new AbortController().signal),
+    ).rejects.toThrow("invalid capture day");
   }
   for (const change of [{ total: 123 }, { missing: 3 }, { other: 1 }]) {
-    fetcher.mockResolvedValue(jsonResponse({ ...counts, facets: [{ ...counts.facets[0], ...change }] }));
-    await expect(fetchPhotoTimeline("session", query, new AbortController().signal)).rejects.toThrow("inconsistent capture-day counts");
+    fetcher.mockResolvedValue(
+      jsonResponse({ ...counts, facets: [{ ...counts.facets[0], ...change }] }),
+    );
+    await expect(
+      fetchPhotoTimeline("session", query, new AbortController().signal),
+    ).rejects.toThrow("inconsistent capture-day counts");
   }
   fetcher.mockResolvedValue(jsonResponse({ ...counts, snapshot_id: "123" }));
-  await expect(fetchPhotoTimeline("session", query, new AbortController().signal)).rejects.toThrow("unknown fields");
+  await expect(fetchPhotoTimeline("session", query, new AbortController().signal)).rejects.toThrow(
+    "unknown fields",
+  );
   fetcher.mockResolvedValue(jsonResponse(counts));
-  await expect(createSnapshot("session", query, {}, new AbortController().signal)).rejects.toThrow("unknown fields");
-  fetcher.mockResolvedValue(jsonResponse({ ...full, facets: [{ dimension: "tags", available: true, total: 120, missing: 0, other: 0, values }] }));
-  await expect(createSnapshot("session", query, { page_size: 50, facets: ["tags"] }, new AbortController().signal)).rejects.toThrow("values exceeds its bound");
+  await expect(createSnapshot("session", query, {}, new AbortController().signal)).rejects.toThrow(
+    "unknown fields",
+  );
+  fetcher.mockResolvedValue(
+    jsonResponse({
+      ...full,
+      facets: [{ dimension: "tags", available: true, total: 120, missing: 0, other: 0, values }],
+    }),
+  );
+  await expect(
+    createSnapshot(
+      "session",
+      query,
+      { page_size: 50, facets: ["tags"] },
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow("values exceeds its bound");
 });

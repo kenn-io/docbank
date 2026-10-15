@@ -6,7 +6,10 @@ beforeEach(async () => {
   ({ startScreenReporting } = await import("./screen-views.js"));
 });
 
-afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
 
 it.each([400, 503, "network rejection"])("retries focus after a %s response", async (status) => {
   vi.useFakeTimers();
@@ -25,7 +28,10 @@ it.each([400, 503, "network rejection"])("retries focus after a %s response", as
   expect(fetchMock).toHaveBeenCalledTimes(2);
   const [url, init] = fetchMock.mock.calls[1]!;
   expect(url).toBe("/api/daemon/telemetry/events");
-  expect(JSON.parse(init!.body as string)).toEqual({ event: "screen_viewed", properties: { screen: "browse", surface: "web" } });
+  expect(JSON.parse(init!.body as string)).toEqual({
+    event: "screen_viewed",
+    properties: { screen: "browse", surface: "web" },
+  });
   expect(new Headers(init!.headers).get("X-Docbank-Web-Session")).toBe("synthetic-session");
   stop();
   expect(init!.signal!.aborted).toBe(true);
@@ -37,7 +43,9 @@ it.each([400, 503, "network rejection"])("retries focus after a %s response", as
 it("retries a network failure after one second without focus", async () => {
   vi.useFakeTimers();
   vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
-  const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(new Error("offline"))
+  const fetchMock = vi
+    .spyOn(globalThis, "fetch")
+    .mockRejectedValueOnce(new Error("offline"))
     .mockResolvedValue(new Response(null, { status: 202 }));
   const stop = startScreenReporting("synthetic-session", "browse");
   await vi.advanceTimersByTimeAsync(999);
@@ -50,7 +58,9 @@ it("retries a network failure after one second without focus", async () => {
 it("records answered screens across focus, visibility and remounts while allowing a new screen", async () => {
   vi.useFakeTimers();
   vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
-  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 202 }));
+  const fetchMock = vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValue(new Response(null, { status: 202 }));
   const stop = startScreenReporting("synthetic-session", "browse");
   await vi.advanceTimersByTimeAsync(0);
   window.dispatchEvent(new Event("focus"));

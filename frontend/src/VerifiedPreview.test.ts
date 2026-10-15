@@ -10,11 +10,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function source(
-  content: Uint8Array,
-  versionID: string,
-  mimeType = "text/plain",
-): SelectedSource {
+function source(content: Uint8Array, versionID: string, mimeType = "text/plain"): SelectedSource {
   const blobHash = createHash("sha256").update(content).digest("hex");
   return {
     kind: "snapshot",
@@ -62,26 +58,43 @@ function body(selected: SelectedSource, bytes: Uint8Array): Response {
 }
 
 it("keeps Email available and selected for a parameterized email MIME type", async () => {
-  const selected = source(new TextEncoder().encode("Subject: Synthetic\r\n\r\nBody"),
-    "11111111-1111-4111-8111-111111111111", "MESSAGE/RFC822\t; charset=utf-8");
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ state: "pending" }, { status: 202 }));
-  render(VerifiedPreview, { session: "session", source: selected, authorizationRevision: 8, activeTab: "email", onauthfailure: vi.fn() });
+  const selected = source(
+    new TextEncoder().encode("Subject: Synthetic\r\n\r\nBody"),
+    "11111111-1111-4111-8111-111111111111",
+    "MESSAGE/RFC822\t; charset=utf-8",
+  );
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    Response.json({ state: "pending" }, { status: 202 }),
+  );
+  render(VerifiedPreview, {
+    session: "session",
+    source: selected,
+    authorizationRevision: 8,
+    activeTab: "email",
+    onauthfailure: vi.fn(),
+  });
   expect(screen.getByRole("tab", { name: "Email" }).getAttribute("aria-selected")).toBe("true");
   expect(await screen.findByText(/Email decoding is pending/)).toBeTruthy();
 });
 
 it("falls back to verified Preview when an Email tab survives non-email selection", async () => {
   const bytes = new TextEncoder().encode("Selected ordinary document");
-  const selected = source(bytes,"11111111-1111-4111-8111-111111111111");
-  vi.spyOn(globalThis,"fetch").mockImplementation(async (input,init) => {
-    if (init?.method === "POST") return ready(selected,"ordinary");
-    if (String(input).endsWith("ticket=ordinary")) return body(selected,bytes);
+  const selected = source(bytes, "11111111-1111-4111-8111-111111111111");
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (init?.method === "POST") return ready(selected, "ordinary");
+    if (String(input).endsWith("ticket=ordinary")) return body(selected, bytes);
     throw new Error(`Unexpected request ${String(input)}`);
   });
-  render(VerifiedPreview,{ session:"session",source:selected,authorizationRevision:8,activeTab:"email",onauthfailure:vi.fn() });
+  render(VerifiedPreview, {
+    session: "session",
+    source: selected,
+    authorizationRevision: 8,
+    activeTab: "email",
+    onauthfailure: vi.fn(),
+  });
   expect(await screen.findByText("Selected ordinary document")).toBeTruthy();
-  expect(screen.getByRole("tab",{ name:"Preview" }).getAttribute("aria-selected")).toBe("true");
-  expect(screen.queryByRole("tab",{ name:"Email" })).toBeNull();
+  expect(screen.getByRole("tab", { name: "Preview" }).getAttribute("aria-selected")).toBe("true");
+  expect(screen.queryByRole("tab", { name: "Email" })).toBeNull();
 });
 
 it("shows only the newly selected exact version when source and session change", async () => {
@@ -130,50 +143,66 @@ it("shows only the newly selected exact version when source and session change",
   expect(screen.queryByText("old frozen text")).toBeNull();
 });
 
-it.each([["image/jpeg", false], ["image/png", false], ["image/png", true]] as const)(
-  "previews %s without page frames (runtime %s) and revokes its URL", async (mimeType, runtime) => {
-  const bytes = new Uint8Array([137, 80, 78, 71]);
-  const selected = source(
-    bytes,
-    "33333333-3333-4333-8333-333333333333",
-    mimeType,
-  );
-  const fetcher = vi.spyOn(globalThis, "fetch");
-  if (mimeType === "image/png") fetcher.mockResolvedValueOnce(new Response(JSON.stringify({
-    runtime_available: runtime,
-    inventory: { source: { version_id: selected.versionID, sha256: selected.blobHash, size: selected.size },
-      page_count: 0, frames: [], recipes: [], images: [] },
-  })));
-  fetcher
-    .mockResolvedValueOnce(ready(selected, "image"))
-    .mockResolvedValueOnce(body(selected, bytes));
-  const createObjectURL = vi.fn(() => "blob:verified-image");
-  const revokeObjectURL = vi.fn();
-  Object.defineProperty(URL, "createObjectURL", {
-    configurable: true,
-    value: createObjectURL,
-  });
-  Object.defineProperty(URL, "revokeObjectURL", {
-    configurable: true,
-    value: revokeObjectURL,
-  });
+it.each([
+  ["image/jpeg", false],
+  ["image/png", false],
+  ["image/png", true],
+] as const)(
+  "previews %s without page frames (runtime %s) and revokes its URL",
+  async (mimeType, runtime) => {
+    const bytes = new Uint8Array([137, 80, 78, 71]);
+    const selected = source(bytes, "33333333-3333-4333-8333-333333333333", mimeType);
+    const fetcher = vi.spyOn(globalThis, "fetch");
+    if (mimeType === "image/png")
+      fetcher.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            runtime_available: runtime,
+            inventory: {
+              source: {
+                version_id: selected.versionID,
+                sha256: selected.blobHash,
+                size: selected.size,
+              },
+              page_count: 0,
+              frames: [],
+              recipes: [],
+              images: [],
+            },
+          }),
+        ),
+      );
+    fetcher
+      .mockResolvedValueOnce(ready(selected, "image"))
+      .mockResolvedValueOnce(body(selected, bytes));
+    const createObjectURL = vi.fn(() => "blob:verified-image");
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: createObjectURL,
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: revokeObjectURL,
+    });
 
-  const view = render(VerifiedPreview, {
-    session: "session",
-    source: selected,
-    authorizationRevision: 8,
-    onauthfailure: vi.fn(),
-  });
-  expect(
-    (
-      await screen.findByRole("img", { name: "Verified preview of scan.png" })
-    ).getAttribute("src"),
-  ).toBe("blob:verified-image");
-  expect(createObjectURL).toHaveBeenCalledOnce();
+    const view = render(VerifiedPreview, {
+      session: "session",
+      source: selected,
+      authorizationRevision: 8,
+      onauthfailure: vi.fn(),
+    });
+    expect(
+      (await screen.findByRole("img", { name: "Verified preview of scan.png" })).getAttribute(
+        "src",
+      ),
+    ).toBe("blob:verified-image");
+    expect(createObjectURL).toHaveBeenCalledOnce();
 
-  view.unmount();
-  expect(revokeObjectURL).toHaveBeenCalledWith("blob:verified-image");
-});
+    view.unmount();
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:verified-image");
+  },
+);
 
 it("keeps unsupported content on the verified-download fallback without a preview request", async () => {
   const selected = source(
@@ -190,12 +219,8 @@ it("keeps unsupported content on the verified-download fallback without a previe
     onauthfailure: vi.fn(),
   });
 
-  expect(
-    await screen.findByText(/not an eligible text or raster image preview/i),
-  ).toBeTruthy();
-  expect(
-    screen.getByRole("button", { name: "Download verified original" }),
-  ).toBeTruthy();
+  expect(await screen.findByText(/not an eligible text or raster image preview/i)).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Download verified original" })).toBeTruthy();
   expect(fetchMock).not.toHaveBeenCalled();
 });
 
@@ -203,52 +228,112 @@ it("loads one exact rendition only while Text is active and keeps hostile markup
   const original = new TextEncoder().encode("%PDF synthetic");
   const selected = source(original, "55555555-5555-4555-8555-555555555555", "application/pdf");
   const markdown = "Alpha 😀 <script>alert('blocked')</script> alpha";
-  const envelope = { docbank: {
-    contract: "docbank-sanitized-markdown/v1",
-    source: { sha256: selected.blobHash, format: "pdf", media_type: selected.mimeType },
-    rendition: { build_id: "e".repeat(64), rendition_request_fingerprint: "a".repeat(64),
-      evidence_lexical_fingerprint: "b".repeat(64), normalized_evidence_contract: "normalized-evidence/v1",
-      body_sha256: createHash("sha256").update(markdown).digest("hex"), completeness: "complete", truncated: false },
-    document: { unit_kind: "page", unit_count: 1 },
-    navigation: { offset_base: "body", complete: true, entries: [{ key: "page:1", kind: "page", line: 1, byte: 0 }] },
-  } };
+  const envelope = {
+    docbank: {
+      contract: "docbank-sanitized-markdown/v1",
+      source: { sha256: selected.blobHash, format: "pdf", media_type: selected.mimeType },
+      rendition: {
+        build_id: "e".repeat(64),
+        rendition_request_fingerprint: "a".repeat(64),
+        evidence_lexical_fingerprint: "b".repeat(64),
+        normalized_evidence_contract: "normalized-evidence/v1",
+        body_sha256: createHash("sha256").update(markdown).digest("hex"),
+        completeness: "complete",
+        truncated: false,
+      },
+      document: { unit_kind: "page", unit_count: 1 },
+      navigation: {
+        offset_base: "body",
+        complete: true,
+        entries: [{ key: "page:1", kind: "page", line: 1, byte: 0 }],
+      },
+    },
+  };
   const text = new TextEncoder().encode(`---\n${JSON.stringify(envelope)}\n---\n${markdown}`);
   const digest = createHash("sha256").update(text).digest("hex");
   const authority = {
-    profile: "b".repeat(64), generation: "c".repeat(64), attachment: "d".repeat(64),
-    build: "e".repeat(64), artifact: `artifact_${"f".repeat(64)}`,
+    profile: "b".repeat(64),
+    generation: "c".repeat(64),
+    attachment: "d".repeat(64),
+    build: "e".repeat(64),
+    artifact: `artifact_${"f".repeat(64)}`,
   };
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
-    if (path.endsWith("/api/v1/pages/inventory")) return new Response(JSON.stringify({ runtime_available: false,
-      inventory: { source: { version_id: selected.versionID, sha256: selected.blobHash, size: selected.size }, page_count: 0, frames: [], recipes: [], images: [] } }));
-    if (path.endsWith("/api/v1/renditions/text")) return new Response(JSON.stringify({
-      state: "ready",
-      source: { node_id: selected.nodeID, revision: 8, version_id: selected.versionID,
-        blob_hash: selected.blobHash, size: selected.size, media_type: selected.mimeType },
-      profile: { name: "archive", configuration: "configured", fingerprint: authority.profile },
-      generation_id: authority.generation, attachment_id: authority.attachment, build_id: authority.build,
-      artifact: { id: authority.artifact, sha256: digest, size: text.length,
-        media_type: "text/markdown; charset=utf-8" },
-    }), { headers: { "Content-Type": "application/json" } });
-    if (path.includes("/api/v1/renditions/text/content?")) return new Response(text, { headers: {
-      "Content-Type": "text/markdown; charset=utf-8", "Content-Length": String(text.length),
-      "Content-Digest": `sha-256=:${createHash("sha256").update(text).digest("base64")}:`,
-      "X-Docbank-Rendition-SHA256": digest, "X-Docbank-Rendition-Size": String(text.length),
-      "X-Docbank-Rendition-Profile": authority.profile,
-      "X-Docbank-Rendition-Generation": authority.generation,
-      "X-Docbank-Rendition-Attachment": authority.attachment,
-      "X-Docbank-Rendition-Build": authority.build,
-      "X-Docbank-Rendition-Artifact": authority.artifact,
-    } });
+    if (path.endsWith("/api/v1/pages/inventory"))
+      return new Response(
+        JSON.stringify({
+          runtime_available: false,
+          inventory: {
+            source: {
+              version_id: selected.versionID,
+              sha256: selected.blobHash,
+              size: selected.size,
+            },
+            page_count: 0,
+            frames: [],
+            recipes: [],
+            images: [],
+          },
+        }),
+      );
+    if (path.endsWith("/api/v1/renditions/text"))
+      return new Response(
+        JSON.stringify({
+          state: "ready",
+          source: {
+            node_id: selected.nodeID,
+            revision: 8,
+            version_id: selected.versionID,
+            blob_hash: selected.blobHash,
+            size: selected.size,
+            media_type: selected.mimeType,
+          },
+          profile: { name: "archive", configuration: "configured", fingerprint: authority.profile },
+          generation_id: authority.generation,
+          attachment_id: authority.attachment,
+          build_id: authority.build,
+          artifact: {
+            id: authority.artifact,
+            sha256: digest,
+            size: text.length,
+            media_type: "text/markdown; charset=utf-8",
+          },
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    if (path.includes("/api/v1/renditions/text/content?"))
+      return new Response(text, {
+        headers: {
+          "Content-Type": "text/markdown; charset=utf-8",
+          "Content-Length": String(text.length),
+          "Content-Digest": `sha-256=:${createHash("sha256").update(text).digest("base64")}:`,
+          "X-Docbank-Rendition-SHA256": digest,
+          "X-Docbank-Rendition-Size": String(text.length),
+          "X-Docbank-Rendition-Profile": authority.profile,
+          "X-Docbank-Rendition-Generation": authority.generation,
+          "X-Docbank-Rendition-Attachment": authority.attachment,
+          "X-Docbank-Rendition-Build": authority.build,
+          "X-Docbank-Rendition-Artifact": authority.artifact,
+        },
+      });
     throw new Error(`unexpected request ${path}`);
   });
   const props = {
-    session: "session", source: selected, authorizationRevision: 8, profileName: "archive",
-    observed: { configuration: "configured" as const, profileFingerprint: authority.profile,
-      generationID: authority.generation, coverageState: "complete" as const,
-      attachmentID: authority.attachment, buildID: authority.build },
-    queryTerms: ["alpha"], onauthfailure: vi.fn(),
+    session: "session",
+    source: selected,
+    authorizationRevision: 8,
+    profileName: "archive",
+    observed: {
+      configuration: "configured" as const,
+      profileFingerprint: authority.profile,
+      generationID: authority.generation,
+      coverageState: "complete" as const,
+      attachmentID: authority.attachment,
+      buildID: authority.build,
+    },
+    queryTerms: ["alpha"],
+    onauthfailure: vi.fn(),
   };
   const view = render(VerifiedPreview, props);
   await screen.findByText(/No page inventory/);
@@ -273,29 +358,60 @@ it.each([
   const selected = source(bytes, "66666666-6666-4666-8666-666666666666");
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
-    if (path === "/api/v1/renditions/text") return new Response(JSON.stringify({
-      state,
-      source: { node_id: selected.nodeID, revision: 8, version_id: selected.versionID,
-        blob_hash: selected.blobHash, size: selected.size, media_type: selected.mimeType },
-      profile: { name: "", configuration: state === "unconfigured" ? "unconfigured" : "configured",
-        fingerprint: state === "unconfigured" ? "" : "b".repeat(64) },
-      generation_id: "", attachment_id: "", build_id: "",
-    }), { headers: { "Content-Type": "application/json" } });
+    if (path === "/api/v1/renditions/text")
+      return new Response(
+        JSON.stringify({
+          state,
+          source: {
+            node_id: selected.nodeID,
+            revision: 8,
+            version_id: selected.versionID,
+            blob_hash: selected.blobHash,
+            size: selected.size,
+            media_type: selected.mimeType,
+          },
+          profile: {
+            name: "",
+            configuration: state === "unconfigured" ? "unconfigured" : "configured",
+            fingerprint: state === "unconfigured" ? "" : "b".repeat(64),
+          },
+          generation_id: "",
+          attachment_id: "",
+          build_id: "",
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
     if (init?.method === "POST") return ready(selected, "fallback");
     if (path.endsWith("ticket=fallback")) return body(selected, bytes);
     throw new Error(`unexpected request ${path}`);
   });
-  render(VerifiedPreview, { session: "session", source: selected, authorizationRevision: 8,
-    activeTab: "text", onauthfailure: vi.fn() });
+  render(VerifiedPreview, {
+    session: "session",
+    source: selected,
+    authorizationRevision: 8,
+    activeTab: "text",
+    onauthfailure: vi.fn(),
+  });
   expect(await screen.findByText("Synthetic fallback evidence")).toBeTruthy();
   expect(screen.getByText(message).getAttribute("role")).toBe("status");
 });
 
-it.each([0, 64 * 1024 * 1024 + 1])("offers download without requesting pages for a %i-byte PDF", async size => {
-  const selected = { ...source(new Uint8Array([1]), "33333333-3333-4333-8333-333333333333", "application/pdf"), size };
-  const fetcher = vi.spyOn(globalThis, "fetch");
-  render(VerifiedPreview, { session: "session", source: selected, authorizationRevision: 8, onauthfailure: vi.fn() });
-  await screen.findByText(/Download the verified original/);
-  expect(screen.queryByRole("button", { name: /Refresh|Render/ })).toBeNull();
-  expect(fetcher).not.toHaveBeenCalled();
-});
+it.each([0, 64 * 1024 * 1024 + 1])(
+  "offers download without requesting pages for a %i-byte PDF",
+  async (size) => {
+    const selected = {
+      ...source(new Uint8Array([1]), "33333333-3333-4333-8333-333333333333", "application/pdf"),
+      size,
+    };
+    const fetcher = vi.spyOn(globalThis, "fetch");
+    render(VerifiedPreview, {
+      session: "session",
+      source: selected,
+      authorizationRevision: 8,
+      onauthfailure: vi.fn(),
+    });
+    await screen.findByText(/Download the verified original/);
+    expect(screen.queryByRole("button", { name: /Refresh|Render/ })).toBeNull();
+    expect(fetcher).not.toHaveBeenCalled();
+  },
+);

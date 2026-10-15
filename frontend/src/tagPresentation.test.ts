@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  groupTags,
-  splitTagName,
-  tagColor,
-  type PresentedTag,
-} from "./tagPresentation.js";
+import { groupTags, splitTagName, tagColor, type PresentedTag } from "./tagPresentation.js";
 import type { Tag } from "./generated/docbank.js";
 
 const tag = (id: string, name: string): Tag => ({
@@ -18,10 +13,7 @@ describe("tagColor", () => {
   it("derives a stable hex color from tag identity instead of its name", () => {
     const first = tag("11111111-1111-4111-8111-111111111111", "reviewed");
     const renamed = { ...first, name: "matter/acme/reviewed" };
-    const differentIdentity = tag(
-      "22222222-2222-4222-8222-222222222222",
-      "reviewed",
-    );
+    const differentIdentity = tag("22222222-2222-4222-8222-222222222222", "reviewed");
 
     expect(tagColor(first)).toBe("#bc4c00");
     expect(tagColor(renamed)).toBe("#bc4c00");

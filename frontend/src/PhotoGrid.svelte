@@ -5,7 +5,22 @@
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import PhotoMonthChunk from "./PhotoMonthChunk.svelte";
 
-  let { groups, targetRowHeight, loading, cache, selectedIDs, onselect, oncheck, onhidden, hidden = false, onopen, onloadmore, ondragstart, ondragend, scrollTop = $bindable(0) }: {
+  let {
+    groups,
+    targetRowHeight,
+    loading,
+    cache,
+    selectedIDs,
+    onselect,
+    oncheck,
+    onhidden,
+    hidden = false,
+    onopen,
+    onloadmore,
+    ondragstart,
+    ondragend,
+    scrollTop = $bindable(0),
+  }: {
     groups: PhotoGroup[];
     targetRowHeight: number;
     loading: boolean;
@@ -27,15 +42,27 @@
   let viewport = $state(960);
   const chunks = $derived.by(() => {
     let offset = 0;
-    return groups.map(group => {
+    return groups.map((group) => {
       const layout = computeMonthLayout(group.items, width, targetRowHeight);
       const chunk = { group, layout, offset };
       offset += layout.intrinsicHeight;
       return chunk;
     });
   });
-  const totalHeight = $derived(chunks.reduce((sum, chunk) => sum + chunk.layout.intrinsicHeight, 0));
-  const years = $derived([...new Set(groups.filter(group => group.year).flatMap(group => group.items.map(item => item.capture_time!.slice(0, 4))))].sort().reverse());
+  const totalHeight = $derived(
+    chunks.reduce((sum, chunk) => sum + chunk.layout.intrinsicHeight, 0),
+  );
+  const years = $derived(
+    [
+      ...new Set(
+        groups
+          .filter((group) => group.year)
+          .flatMap((group) => group.items.map((item) => item.capture_time!.slice(0, 4))),
+      ),
+    ]
+      .sort()
+      .reverse(),
+  );
 
   $effect(() => {
     if (!container) return;
@@ -45,8 +72,15 @@
     let current = true;
     const measure = () => {
       const style = getComputedStyle(grid);
-      const nextWidth = Math.max(1, (Number.parseFloat(style.width) || grid.clientWidth) - Number.parseFloat(style.paddingRight) - (Number.parseFloat(style.borderRightWidth) || 0));
-      const restore = untrack(() => initialized && nextWidth !== width ? preservePosition() : undefined);
+      const nextWidth = Math.max(
+        1,
+        (Number.parseFloat(style.width) || grid.clientWidth) -
+          Number.parseFloat(style.paddingRight) -
+          (Number.parseFloat(style.borderRightWidth) || 0),
+      );
+      const restore = untrack(() =>
+        initialized && nextWidth !== width ? preservePosition() : undefined,
+      );
       width = nextWidth;
       viewport = element.clientHeight;
       void restore?.();
@@ -61,17 +95,25 @@
       scrollTop = element.scrollTop;
       initialized = true;
     });
-    return () => { current = false; resize.disconnect(); };
+    return () => {
+      current = false;
+      resize.disconnect();
+    };
   });
   $effect(() => {
-    if (initialized && container && container.scrollTop !== scrollTop) container.scrollTop = scrollTop;
+    if (initialized && container && container.scrollTop !== scrollTop)
+      container.scrollTop = scrollTop;
   });
   $effect(() => {
     if (initialized && !loading && totalHeight < scrollTop + viewport + 800) untrack(onloadmore);
   });
 
   function jump(year: string) {
-    const chunk = chunks.find(chunk => chunk.group.year && chunk.group.items.some(item => item.capture_time!.slice(0, 4) === year));
+    const chunk = chunks.find(
+      (chunk) =>
+        chunk.group.year &&
+        chunk.group.items.some((item) => item.capture_time!.slice(0, 4) === year),
+    );
     if (chunk && container) {
       container.scrollTo({ top: Math.ceil(chunk.offset) });
       scrollTop = Math.ceil(chunk.offset);
@@ -83,16 +125,20 @@
     if (!element) return async () => {};
     const oldTop = element.scrollTop;
     const viewportTop = element.getBoundingClientRect().top;
-    const cell = [...element.querySelectorAll<HTMLElement>("[data-asset]")].find(item => item.getBoundingClientRect().bottom > viewportTop + HEADER_HEIGHT);
+    const cell = [...element.querySelectorAll<HTMLElement>("[data-asset]")].find(
+      (item) => item.getBoundingClientRect().bottom > viewportTop + HEADER_HEIGHT,
+    );
     const id = cell?.dataset.asset;
     const pixelOffset = cell ? cell.getBoundingClientRect().top - viewportTop : 0;
     return async () => {
       let newTop = oldTop;
       if (id) {
         for (const chunk of chunks) {
-          const index = chunk.group.items.findIndex(item => item.asset_id === id);
+          const index = chunk.group.items.findIndex((item) => item.asset_id === id);
           if (index < 0) continue;
-          const row = chunk.layout.rows.find(row => row.items.some(item => item.index === index));
+          const row = chunk.layout.rows.find((row) =>
+            row.items.some((item) => item.index === index),
+          );
           if (row) newTop = chunk.offset + HEADER_HEIGHT + row.y - pixelOffset;
           break;
         }
@@ -106,28 +152,84 @@
   }
 </script>
 
-<div class="photo-scroll" class:with-years={years.length > 1} bind:this={container} onscroll={() => { if (initialized) scrollTop = container?.scrollTop ?? 0; }} data-testid="photo-scroll">
+<div
+  class="photo-scroll"
+  class:with-years={years.length > 1}
+  bind:this={container}
+  onscroll={() => {
+    if (initialized) scrollTop = container?.scrollTop ?? 0;
+  }}
+  data-testid="photo-scroll"
+>
   {#if years.length > 1}
-  <nav class="year-scrubber" aria-label="Photo years">
-    <div class="year-buttons" style:max-height={`${Math.max(0, viewport - 7)}px`}>
-      {#each years as year}<Button size="sm" onclick={() => jump(year)}>{year}</Button>{/each}
-    </div>
-  </nav>
+    <nav class="year-scrubber" aria-label="Photo years">
+      <div class="year-buttons" style:max-height={`${Math.max(0, viewport - 7)}px`}>
+        {#each years as year}<Button size="sm" onclick={() => jump(year)}>{year}</Button>{/each}
+      </div>
+    </nav>
   {/if}
   <div class="grid" style:height={`${totalHeight}px`}>
     {#if initialized}
-    {#each chunks as chunk (chunk.group.key)}
-      <PhotoMonthChunk group={chunk.group} layout={chunk.layout} offset={chunk.offset} top={Math.max(0, scrollTop - viewport)} bottom={scrollTop + 2 * viewport} {cache} {selectedIDs} {onselect} {oncheck} {onopen} {onhidden} {hidden} {ondragstart} {ondragend} />
-    {/each}
+      {#each chunks as chunk (chunk.group.key)}
+        <PhotoMonthChunk
+          group={chunk.group}
+          layout={chunk.layout}
+          offset={chunk.offset}
+          top={Math.max(0, scrollTop - viewport)}
+          bottom={scrollTop + 2 * viewport}
+          {cache}
+          {selectedIDs}
+          {onselect}
+          {oncheck}
+          {onopen}
+          {onhidden}
+          {hidden}
+          {ondragstart}
+          {ondragend}
+        />
+      {/each}
     {/if}
   </div>
 </div>
 
 <style>
-  .photo-scroll { position: relative; flex: 1; min-height: 0; overflow: auto; overflow-anchor: none; display: grid; grid-template-columns: minmax(0, 1fr); column-gap: 12px; align-content: start; padding: 0 12px; }
-  .with-years { grid-template-columns: minmax(0, 1fr) max-content; }
-  .with-years .grid { padding-right: 12px; border-right: 1px solid var(--border-default); }
-  .year-scrubber { position: sticky; top: 7px; grid-column: 2; grid-row: 1; height: 0; z-index: 3; }
-  .year-buttons { display: flex; flex-direction: column; align-items: stretch; gap: 2px; overflow-y: auto; }
-  .grid { position: relative; grid-column: 1; grid-row: 1; }
+  .photo-scroll {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    overflow-anchor: none;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    column-gap: 12px;
+    align-content: start;
+    padding: 0 12px;
+  }
+  .with-years {
+    grid-template-columns: minmax(0, 1fr) max-content;
+  }
+  .with-years .grid {
+    padding-right: 12px;
+    border-right: 1px solid var(--border-default);
+  }
+  .year-scrubber {
+    position: sticky;
+    top: 7px;
+    grid-column: 2;
+    grid-row: 1;
+    height: 0;
+    z-index: 3;
+  }
+  .year-buttons {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+    overflow-y: auto;
+  }
+  .grid {
+    position: relative;
+    grid-column: 1;
+    grid-row: 1;
+  }
 </style>

@@ -5,53 +5,78 @@ import { Photos } from "./photos.svelte.js";
 import { recreatePhotoPreviewCache, revalidatePhotoWorkspace } from "./photoWorkspace.js";
 
 const instances: PhotoPreviewCache[] = [];
-function workspace() { const cache = new PhotoPreviewCache("scoped", vi.fn()); instances.push(cache); return cache; }
-afterEach(async () => { await Promise.all(instances.splice(0).map(cache => cache.dispose())); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+function workspace() {
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  instances.push(cache);
+  return cache;
+}
+afterEach(async () => {
+  await Promise.all(instances.splice(0).map((cache) => cache.dispose()));
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
-it.each([recreatePhotoPreviewCache, revalidatePhotoWorkspace])("replaces the preview cache after disposal and validity checks with %s", async replace => {
-  const photos = new Photos("scoped", vi.fn(), true);
-  const oldCache = workspace();
-  const current = { photos, cache: oldCache };
-  let disposed = false;
-  const dispose = oldCache.dispose.bind(oldCache);
-  vi.spyOn(oldCache, "dispose").mockImplementation(async () => { await dispose(); disposed = true; });
-  const refresh = vi.spyOn(photos, "refresh").mockImplementation(async () => {
-    expect(disposed).toBe(true);
+it.each([recreatePhotoPreviewCache, revalidatePhotoWorkspace])(
+  "replaces the preview cache after disposal and validity checks with %s",
+  async (replace) => {
+    const photos = new Photos("scoped", vi.fn(), true);
+    const oldCache = workspace();
+    const current = { photos, cache: oldCache };
+    let disposed = false;
+    const dispose = oldCache.dispose.bind(oldCache);
+    vi.spyOn(oldCache, "dispose").mockImplementation(async () => {
+      await dispose();
+      disposed = true;
+    });
+    const refresh = vi.spyOn(photos, "refresh").mockImplementation(async () => {
+      expect(disposed).toBe(true);
+      expect(current.cache).toBe(oldCache);
+      return true;
+    });
+    expect(await replace(current, "scoped", vi.fn(), () => disposed)).toBe(true);
+    expect(current.cache).not.toBe(oldCache);
+    expect(current.cache).toBeInstanceOf(PhotoPreviewCache);
+    expect(refresh).toHaveBeenCalledTimes(replace === revalidatePhotoWorkspace ? 1 : 0);
+    instances.push(current.cache);
+    photos.dispose();
+  },
+);
+
+it.each([recreatePhotoPreviewCache, revalidatePhotoWorkspace])(
+  "leaves the disposed cache in place when validity is lost with %s",
+  async (replace) => {
+    const photos = new Photos("scoped", vi.fn());
+    const current = { photos, cache: workspace() };
+    const oldCache = current.cache;
+    const refresh = vi.spyOn(photos, "refresh");
+    expect(await replace(current, "scoped", vi.fn(), () => false)).toBe(false);
     expect(current.cache).toBe(oldCache);
-    return true;
-  });
-  expect(await replace(current, "scoped", vi.fn(), () => disposed)).toBe(true);
-  expect(current.cache).not.toBe(oldCache);
-  expect(current.cache).toBeInstanceOf(PhotoPreviewCache);
-  expect(refresh).toHaveBeenCalledTimes(replace === revalidatePhotoWorkspace ? 1 : 0);
-  instances.push(current.cache);
-  photos.dispose();
-});
-
-it.each([recreatePhotoPreviewCache, revalidatePhotoWorkspace])("leaves the disposed cache in place when validity is lost with %s", async replace => {
-  const photos = new Photos("scoped", vi.fn());
-  const current = { photos, cache: workspace() };
-  const oldCache = current.cache;
-  const refresh = vi.spyOn(photos, "refresh");
-  expect(await replace(current, "scoped", vi.fn(), () => false)).toBe(false);
-  expect(current.cache).toBe(oldCache);
-  expect(refresh).not.toHaveBeenCalled();
-  photos.dispose();
-});
+    expect(refresh).not.toHaveBeenCalled();
+    photos.dispose();
+  },
+);
 
 it("keeps a failed revalidation from recreating the preview cache", async () => {
   const photos = new Photos("scoped", vi.fn());
   const current = { photos, cache: workspace() };
   const oldCache = current.cache;
-  vi.spyOn(photos, "refresh").mockImplementation(async () => { photos.error = "Refresh failed"; return false; });
-  await expect(revalidatePhotoWorkspace(current, "scoped", vi.fn(), () => true)).rejects.toThrow("Refresh failed");
+  vi.spyOn(photos, "refresh").mockImplementation(async () => {
+    photos.error = "Refresh failed";
+    return false;
+  });
+  await expect(revalidatePhotoWorkspace(current, "scoped", vi.fn(), () => true)).rejects.toThrow(
+    "Refresh failed",
+  );
   expect(current.cache).toBe(oldCache);
   photos.dispose();
 });
 
 it("keeps no-store previews out of browser storage", async () => {
   const stored = storage();
-  const fetcher = vi.fn(async () => new Response("hidden-preview", { headers: { "Cache-Control": "private, no-store" } }));
+  const fetcher = vi.fn(
+    async () =>
+      new Response("hidden-preview", { headers: { "Cache-Control": "private, no-store" } }),
+  );
   vi.stubGlobal("fetch", fetcher);
   const cache = workspace();
   expect(await (await cache.get("asset", "generation")).text()).toBe("hidden-preview");
@@ -73,7 +98,9 @@ it("creates its cache namespace without secure-context randomUUID", () => {
 
 it("retains bytes without fetch and cancels abandoned reads", async () => {
   const stored = storage();
-  const fetcher = vi.fn(async (_url: string | URL | Request, _init: RequestInit) => new Response("synthetic-jpeg"));
+  const fetcher = vi.fn(
+    async (_url: string | URL | Request, _init: RequestInit) => new Response("synthetic-jpeg"),
+  );
   vi.stubGlobal("fetch", fetcher);
   const cache = workspace();
   const first = cache.get("asset", "generation");
@@ -101,8 +128,9 @@ it("retains bytes without fetch and cancels abandoned reads", async () => {
   expect(fetcher).toHaveBeenCalledTimes(3);
   let finishOld!: (response: Response) => void;
   let finishFresh!: (response: Response) => void;
-  fetcher.mockImplementationOnce(() => new Promise(resolve => finishOld = resolve))
-    .mockImplementationOnce(() => new Promise(resolve => finishFresh = resolve));
+  fetcher
+    .mockImplementationOnce(() => new Promise((resolve) => (finishOld = resolve)))
+    .mockImplementationOnce(() => new Promise((resolve) => (finishFresh = resolve)));
   const caller = new AbortController();
   const abandoned = second.get("uncached", "generation", caller.signal);
   const rejected = expect(abandoned).rejects.toThrow();
@@ -147,13 +175,15 @@ it("displays network bytes when storage fails and retains only healthy writes", 
   fetcher.mockResolvedValueOnce(broken);
   await expect(cache.get("asset", "body-failure")).rejects.toThrow("Body failed");
   let rejectOpen!: (cause: Error) => void;
-  const opening = new Promise<typeof opened>((_resolve, reject) => rejectOpen = reject);
+  const opening = new Promise<typeof opened>((_resolve, reject) => (rejectOpen = reject));
   stored.open.mockReturnValueOnce(opening);
   const unavailable = workspace();
   const caller = new AbortController();
   const rejected = expect(unavailable.get("asset", "canceled", caller.signal)).rejects.toThrow();
-  caller.abort(); rejectOpen(new Error("Storage unavailable"));
-  await opening.catch(() => {}); await rejected;
+  caller.abort();
+  rejectOpen(new Error("Storage unavailable"));
+  await opening.catch(() => {});
+  await rejected;
   expect(fetcher).toHaveBeenCalledTimes(8);
 });
 
@@ -161,7 +191,12 @@ it("deletes its cache when disposal races opening and rejects the late request",
   const stored = storage();
   const normalOpen = stored.open.getMockImplementation()!;
   let finish: (() => void) | undefined;
-  stored.open.mockImplementation(name => new Promise(resolve => { finish = () => void normalOpen(name).then(resolve); }));
+  stored.open.mockImplementation(
+    (name) =>
+      new Promise((resolve) => {
+        finish = () => void normalOpen(name).then(resolve);
+      }),
+  );
   const cache = workspace();
   const request = cache.get("asset", "generation");
   const rejected = expect(request).rejects.toThrow();
@@ -170,12 +205,23 @@ it("deletes its cache when disposal races opening and rejects the late request",
   await Promise.all([disposed, rejected]);
   expect(stored.data.size).toBe(0);
 
-  stored.open.mockImplementation(async name => {
+  stored.open.mockImplementation(async (name) => {
     const opened = await normalOpen(name);
-    opened.put.mockImplementation((key, response) => new Promise(resolve => { finish = () => { void (stored.data.get(name)?.set(key.url, response)); resolve(); }; }));
+    opened.put.mockImplementation(
+      (key, response) =>
+        new Promise((resolve) => {
+          finish = () => {
+            void stored.data.get(name)?.set(key.url, response);
+            resolve();
+          };
+        }),
+    );
     return opened;
   });
-  vi.stubGlobal("fetch", vi.fn(async () => new Response("synthetic-jpeg")));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response("synthetic-jpeg")),
+  );
   finish = undefined;
   const writing = workspace();
   const write = writing.get("asset", "generation");
@@ -193,7 +239,10 @@ it("deletes its cache when disposal races opening and rejects the late request",
 it("sends at most six network reads and times each read from when it is sent", async () => {
   storage();
   const finishers: ((response: Response) => void)[] = [];
-  const fetcher = vi.fn((_url: string | URL | Request, _init: RequestInit) => new Promise<Response>(resolve => finishers.push(resolve)));
+  const fetcher = vi.fn(
+    (_url: string | URL | Request, _init: RequestInit) =>
+      new Promise<Response>((resolve) => finishers.push(resolve)),
+  );
   vi.stubGlobal("fetch", fetcher);
   const timeout = vi.spyOn(AbortSignal, "timeout");
   const cache = workspace();
@@ -202,7 +251,7 @@ it("sends at most six network reads and times each read from when it is sent", a
   const canceled = cache.get("asset", "canceled", caller.signal);
   const queued = cache.get("asset", "queued");
   await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(6));
-  await new Promise(resolve => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
   expect(fetcher).toHaveBeenCalledTimes(6);
   expect(timeout).toHaveBeenCalledTimes(6);
   caller.abort();
@@ -219,7 +268,13 @@ it("sends at most six network reads and times each read from when it is sent", a
 
 it("reloads cached bytes from the network on request", async () => {
   storage();
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response("undecodable")).mockResolvedValueOnce(new Response("repaired")));
+  vi.stubGlobal(
+    "fetch",
+    vi
+      .fn()
+      .mockResolvedValueOnce(new Response("undecodable"))
+      .mockResolvedValueOnce(new Response("repaired")),
+  );
   const cache = workspace();
   await cache.get("asset", "generation");
   expect(await (await cache.get("asset", "generation", undefined, true)).text()).toBe("repaired");
@@ -228,16 +283,22 @@ it("reloads cached bytes from the network on request", async () => {
 
 it("removes caches left by closed pages and releases its lock after disposal", async () => {
   const stored = storage();
-  for (const name of ["docbank-photo-previews-closed", "docbank-photo-previews-open", "unrelated"]) stored.data.set(name, new Map());
+  for (const name of ["docbank-photo-previews-closed", "docbank-photo-previews-open", "unrelated"])
+    stored.data.set(name, new Map());
   const request = vi.fn((_name: string, callback: () => Promise<void>) => callback());
-  const query = vi.fn(async () => ({ held: [{ name: "docbank-photo-previews-open" }], pending: [] }));
+  const query = vi.fn(async () => ({
+    held: [{ name: "docbank-photo-previews-open" }],
+    pending: [],
+  }));
   Object.defineProperty(navigator, "locks", { configurable: true, value: { request, query } });
   try {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const cache = workspace();
-    await vi.waitFor(() => expect([...stored.data.keys()]).toEqual(["docbank-photo-previews-open", "unrelated"]));
+    await vi.waitFor(() =>
+      expect([...stored.data.keys()]).toEqual(["docbank-photo-previews-open", "unrelated"]),
+    );
     let released = false;
-    void request.mock.results[0].value.then(() => released = true);
+    void request.mock.results[0].value.then(() => (released = true));
     stored.remove.mockRejectedValueOnce(new Error("Storage broken"));
     await cache.dispose();
     await vi.waitFor(() => expect(released).toBe(true));
@@ -246,11 +307,22 @@ it("removes caches left by closed pages and releases its lock after disposal", a
     Reflect.deleteProperty(navigator, "locks");
   }
 });
-it.each([{ status: 401, hidden: false }, { status: 403, hidden: false }, { status: 403, hidden: true }])("routes preview authorization loss to the workspace handler, status=$status hidden=$hidden", async ({ status, hidden }) => {
-  storage();
-  const auth = vi.fn();
-  const cache = new PhotoPreviewCache("scoped", auth, hidden); instances.push(cache);
-  vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status })));
-  await expect(cache.get("asset", "generation")).rejects.toThrow(`HTTP ${status}`);
-  expect(auth).toHaveBeenCalledTimes(status === 401 || hidden ? 1 : 0);
-});
+it.each([
+  { status: 401, hidden: false },
+  { status: 403, hidden: false },
+  { status: 403, hidden: true },
+])(
+  "routes preview authorization loss to the workspace handler, status=$status hidden=$hidden",
+  async ({ status, hidden }) => {
+    storage();
+    const auth = vi.fn();
+    const cache = new PhotoPreviewCache("scoped", auth, hidden);
+    instances.push(cache);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("{}", { status })),
+    );
+    await expect(cache.get("asset", "generation")).rejects.toThrow(`HTTP ${status}`);
+    expect(auth).toHaveBeenCalledTimes(status === 401 || hidden ? 1 : 0);
+  },
+);

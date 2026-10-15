@@ -14,10 +14,16 @@ export default defineConfig({
         transformer: (operation) => {
           // Fetch headers are text, including the contract's integer byte count.
           if (operation.headers) {
-            operation.headers.schema.model = operation.headers.schema.model.replace(/: number/g, ": string");
+            operation.headers.schema.model = operation.headers.schema.model.replace(
+              /: number/g,
+              ": string",
+            );
           }
           if (operation.operationName === "uploadFile" && operation.body.formData) {
-            operation.body.formData = operation.body.formData.replace("uploadFileBody.file);", "uploadFileBody.file, params.name);");
+            operation.body.formData = operation.body.formData.replace(
+              "uploadFileBody.file);",
+              "uploadFileBody.file, params.name);",
+            );
           }
           return operation;
         },
@@ -41,26 +47,63 @@ export default defineConfig({
             mutator: { path: "src/api-transport.ts", name: "sessionResponse", inferred: true },
             requestOptions: { headers: { Accept: "application/x-ndjson" } },
           },
-          submitMediaSource: { formData: { path: "src/media-form-data.ts", name: "mediaFormData" } },
-          importMediaArtifact: { formData: { path: "src/media-form-data.ts", name: "mediaFormData" } },
-          ...Object.fromEntries([
-          "createExportSource", "sealExportSource", "createExportPlan",
-          "getExportEmailPDFRecipes", "getExportOutputProblems", "getExportAttachmentPublications",
-          "getExportPlanPreview", "createExportJob", "getExportJob", "downloadExportArchive",
-          "downloadTermReportcsv", "downloadTermReportbundle",
-          "startDocumentProcessing", "getDocumentRendition",
-          "streamBackupSnapshotRestore", "streamBackupSnapshotCreation",
-          "streamBackupRepositoryVerification", "runDerivativePurge", "streamIngest",
-          "getNodeContent", "getContentVersionBytes", "getEmailPart", "downloadEmailPDF",
-          "readDocumentRenditionBySelector", "readRenditionText",
-          "getSavedQuery", "createSavedQuery", "updateSavedQuery", "deleteSavedQuery",
-          "getCollectionLabel", "setCollectionLabel", "prepareWebDownload",
-          "createPhotoAlbum", "updatePhotoAlbum", "deletePhotoAlbum", "duplicatePhotoAlbum",
-          "setPhotoAlbumCover", "addPhotoAlbumMembers", "removePhotoAlbumMembers",
-          "createWorkspaceQuery", "readWorkspaceQueryPage", "getPhotoTimeline",
-        ].map((operation) => [operation, {
-          mutator: { path: "src/api-transport.ts", name: "sessionResponse", inferred: true },
-        }])),
+          submitMediaSource: {
+            formData: { path: "src/media-form-data.ts", name: "mediaFormData" },
+          },
+          importMediaArtifact: {
+            formData: { path: "src/media-form-data.ts", name: "mediaFormData" },
+          },
+          ...Object.fromEntries(
+            [
+              "createExportSource",
+              "sealExportSource",
+              "createExportPlan",
+              "getExportEmailPDFRecipes",
+              "getExportOutputProblems",
+              "getExportAttachmentPublications",
+              "getExportPlanPreview",
+              "createExportJob",
+              "getExportJob",
+              "downloadExportArchive",
+              "downloadTermReportcsv",
+              "downloadTermReportbundle",
+              "startDocumentProcessing",
+              "getDocumentRendition",
+              "streamBackupSnapshotRestore",
+              "streamBackupSnapshotCreation",
+              "streamBackupRepositoryVerification",
+              "runDerivativePurge",
+              "streamIngest",
+              "getNodeContent",
+              "getContentVersionBytes",
+              "getEmailPart",
+              "downloadEmailPDF",
+              "readDocumentRenditionBySelector",
+              "readRenditionText",
+              "getSavedQuery",
+              "createSavedQuery",
+              "updateSavedQuery",
+              "deleteSavedQuery",
+              "getCollectionLabel",
+              "setCollectionLabel",
+              "prepareWebDownload",
+              "createPhotoAlbum",
+              "updatePhotoAlbum",
+              "deletePhotoAlbum",
+              "duplicatePhotoAlbum",
+              "setPhotoAlbumCover",
+              "addPhotoAlbumMembers",
+              "removePhotoAlbumMembers",
+              "createWorkspaceQuery",
+              "readWorkspaceQueryPage",
+              "getPhotoTimeline",
+            ].map((operation) => [
+              operation,
+              {
+                mutator: { path: "src/api-transport.ts", name: "sessionResponse", inferred: true },
+              },
+            ]),
+          ),
         },
       },
     },

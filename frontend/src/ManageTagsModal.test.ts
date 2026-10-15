@@ -1,11 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import ManageTagsModal from "./ManageTagsModal.svelte";
 
 beforeEach(() => {
@@ -56,27 +50,23 @@ const node = {
 
 it("adds and removes existing tags under consecutive node revisions", async () => {
   const onchanged = vi.fn();
-  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
-    async (_input, request) => {
-      const assigning = request?.method === "PUT";
-      return new Response(
-        JSON.stringify({
-          tag: assigning
-            ? { ...reviewed, revision: 2, assignment_count: 3 }
-            : { ...tax, revision: 3, assignment_count: 0 },
-          node: {
-            ...node,
-            revision: assigning ? 4 : 5,
-            modified_at: assigning
-              ? "2026-07-28T12:01:00Z"
-              : "2026-07-28T12:02:00Z",
-          },
-          changed: true,
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
-    },
-  );
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, request) => {
+    const assigning = request?.method === "PUT";
+    return new Response(
+      JSON.stringify({
+        tag: assigning
+          ? { ...reviewed, revision: 2, assignment_count: 3 }
+          : { ...tax, revision: 3, assignment_count: 0 },
+        node: {
+          ...node,
+          revision: assigning ? 4 : 5,
+          modified_at: assigning ? "2026-07-28T12:01:00Z" : "2026-07-28T12:02:00Z",
+        },
+        changed: true,
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  });
 
   render(ManageTagsModal, {
     session: "short-lived",
@@ -91,9 +81,7 @@ it("adds and removes existing tags under consecutive node revisions", async () =
     onauthfailure: vi.fn(),
   });
 
-  await fireEvent.click(
-    screen.getByRole("combobox", { name: "Tag to assign: Choose a tag…" }),
-  );
+  await fireEvent.click(screen.getByRole("combobox", { name: "Tag to assign: Choose a tag…" }));
   expect(screen.getByText("matter/acme")).toBeTruthy();
   const reviewedOption = screen.getByRole("option", {
     name: "matter/acme/reviewed (2)",
@@ -105,20 +93,15 @@ it("adds and removes existing tags under consecutive node revisions", async () =
   expect(screen.queryByRole("status", { name: "Loading" })).toBeNull();
   const assignedName = screen.getByText("matter/acme/reviewed");
   expect(
-    assignedName.parentElement?.querySelector<HTMLElement>("[aria-hidden='true']")
-      ?.textContent,
+    assignedName.parentElement?.querySelector<HTMLElement>("[aria-hidden='true']")?.textContent,
   ).toBe("reviewed");
 
   await fireEvent.click(screen.getByRole("button", { name: "Remove tag tax" }));
   expect(await screen.findByText("Removed tax.")).toBeTruthy();
 
   expect(fetchMock).toHaveBeenCalledTimes(2);
-  expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("If-Match")).toBe(
-    "3",
-  );
-  expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get("If-Match")).toBe(
-    "4",
-  );
+  expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("If-Match")).toBe("3");
+  expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get("If-Match")).toBe("4");
   expect(onchanged).toHaveBeenNthCalledWith(
     1,
     expect.objectContaining({
@@ -165,17 +148,11 @@ it("keeps a stale assignment decision visible for refresh", async () => {
     onauthfailure: vi.fn(),
   });
 
-  await fireEvent.click(
-    screen.getByRole("combobox", { name: "Tag to assign: Choose a tag…" }),
-  );
-  await fireEvent.click(
-    screen.getByRole("option", { name: "matter/acme/reviewed (2)" }),
-  );
+  await fireEvent.click(screen.getByRole("combobox", { name: "Tag to assign: Choose a tag…" }));
+  await fireEvent.click(screen.getByRole("option", { name: "matter/acme/reviewed (2)" }));
   await fireEvent.click(screen.getByRole("button", { name: "Add tag" }));
 
-  expect(
-    await screen.findByText("node changed; refresh before assigning tags"),
-  ).toBeTruthy();
+  expect(await screen.findByText("node changed; refresh before assigning tags")).toBeTruthy();
   await waitFor(() =>
     expect(
       screen.getByRole("dialog", { name: "Manage tags for quarterly-report.txt" }),
@@ -186,8 +163,12 @@ it("keeps a stale assignment decision visible for refresh", async () => {
 it("ignores a pending authorization failure after the modal is destroyed", async () => {
   let resolveResponse!: (response: Response) => void;
   let markFetchStarted!: () => void;
-  const response = new Promise<Response>((resolve) => { resolveResponse = resolve; });
-  const fetchStarted = new Promise<void>((resolve) => { markFetchStarted = resolve; });
+  const response = new Promise<Response>((resolve) => {
+    resolveResponse = resolve;
+  });
+  const fetchStarted = new Promise<void>((resolve) => {
+    markFetchStarted = resolve;
+  });
   vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
     markFetchStarted();
     return response;
@@ -210,10 +191,12 @@ it("ignores a pending authorization failure after the modal is destroyed", async
   await fireEvent.click(screen.getByRole("button", { name: "Remove tag tax" }));
   await fetchStarted;
   mounted.unmount();
-  resolveResponse(new Response(JSON.stringify({ detail: "session expired" }), {
-    status: 401,
-    headers: { "Content-Type": "application/problem+json" },
-  }));
+  resolveResponse(
+    new Response(JSON.stringify({ detail: "session expired" }), {
+      status: 401,
+      headers: { "Content-Type": "application/problem+json" },
+    }),
+  );
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   expect(onauthfailure).not.toHaveBeenCalled();

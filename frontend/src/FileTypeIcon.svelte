@@ -1,20 +1,33 @@
 <script module lang="ts">
   export type FileFamily =
-    | "folder" | "pdf" | "sheet" | "image" | "email" | "archive"
-    | "audio" | "video" | "code" | "text" | "file";
+    | "folder"
+    | "pdf"
+    | "sheet"
+    | "image"
+    | "email"
+    | "archive"
+    | "audio"
+    | "video"
+    | "code"
+    | "text"
+    | "file";
 
   export function fileFamily(kind: string, mime: string | undefined): FileFamily {
     if (kind === "dir") return "folder";
     const type = (mime ?? "").split(";")[0]!.trim().toLowerCase();
     if (type === "application/pdf") return "pdf";
-    if (type === "text/csv" || type.includes("spreadsheet") || type.includes("excel")) return "sheet";
+    if (type === "text/csv" || type.includes("spreadsheet") || type.includes("excel"))
+      return "sheet";
     if (type.startsWith("image/")) return "image";
     if (type === "message/rfc822" || type === "application/mbox") return "email";
-    if (type.includes("zip") || type.includes("tar") || type.includes("compressed")) return "archive";
+    if (type.includes("zip") || type.includes("tar") || type.includes("compressed"))
+      return "archive";
     if (type.startsWith("audio/")) return "audio";
     if (type.startsWith("video/")) return "video";
-    if (type === "application/json" || type.includes("xml") || type.includes("javascript")) return "code";
-    if (type.startsWith("text/") || type.includes("word") || type.includes("document")) return "text";
+    if (type === "application/json" || type.includes("xml") || type.includes("javascript"))
+      return "code";
+    if (type.startsWith("text/") || type.includes("word") || type.includes("document"))
+      return "text";
     return "file";
   }
 
@@ -61,13 +74,28 @@
   import TextIcon from "@lucide/svelte/icons/file-text";
   import VideoIcon from "@lucide/svelte/icons/file-video";
 
-  let { kind, mime = undefined, size = 18 }: { kind: string; mime?: string | undefined; size?: number } = $props();
+  let {
+    kind,
+    mime = undefined,
+    size = 18,
+  }: { kind: string; mime?: string | undefined; size?: number } = $props();
 
   const family = $derived(fileFamily(kind, mime));
-  const Icon = $derived({
-    folder: FolderIcon, pdf: TextIcon, sheet: SheetIcon, image: ImageIcon, email: MailIcon,
-    archive: ArchiveIcon, audio: AudioIcon, video: VideoIcon, code: CodeIcon, text: TextIcon, file: FileIcon,
-  }[family]);
+  const Icon = $derived(
+    {
+      folder: FolderIcon,
+      pdf: TextIcon,
+      sheet: SheetIcon,
+      image: ImageIcon,
+      email: MailIcon,
+      archive: ArchiveIcon,
+      audio: AudioIcon,
+      video: VideoIcon,
+      code: CodeIcon,
+      text: TextIcon,
+      file: FileIcon,
+    }[family],
+  );
 </script>
 
 <span class="file-type-icon file-type-icon--{family}" aria-hidden="true">
@@ -89,11 +117,23 @@
     fill: var(--folder-fill);
   }
 
-  .file-type-icon--pdf { color: var(--accent-red); }
-  .file-type-icon--sheet { color: var(--accent-green); }
-  .file-type-icon--image { color: var(--accent-purple); }
-  .file-type-icon--email { color: var(--accent-blue); }
-  .file-type-icon--archive { color: var(--accent-amber); }
+  .file-type-icon--pdf {
+    color: var(--accent-red);
+  }
+  .file-type-icon--sheet {
+    color: var(--accent-green);
+  }
+  .file-type-icon--image {
+    color: var(--accent-purple);
+  }
+  .file-type-icon--email {
+    color: var(--accent-blue);
+  }
+  .file-type-icon--archive {
+    color: var(--accent-amber);
+  }
   .file-type-icon--audio,
-  .file-type-icon--video { color: var(--accent-teal); }
+  .file-type-icon--video {
+    color: var(--accent-teal);
+  }
 </style>

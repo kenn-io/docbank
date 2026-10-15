@@ -4,14 +4,7 @@
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import Trash2Icon from "@lucide/svelte/icons/trash-2";
   import XIcon from "@lucide/svelte/icons/x";
-  import {
-    Button,
-    Chip,
-    DetailDrawer,
-    EmptyState,
-    IconButton,
-    Spinner,
-  } from "@kenn-io/kit-ui";
+  import { Button, Chip, DetailDrawer, EmptyState, IconButton, Spinner } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
   import { type Node } from "./generated/docbank.js";
   import type { UploadReceipt } from "./generated/docbank.js";
@@ -53,7 +46,12 @@
   }
 
   let {
-    channel, directory, disabledReason = "", onclose, oncomplete, onauthfailure,
+    channel,
+    directory,
+    disabledReason = "",
+    onclose,
+    oncomplete,
+    onauthfailure,
   }: Props = $props();
   let input: HTMLInputElement;
   let items = $state<UploadItem[]>([]);
@@ -62,17 +60,13 @@
   let nextID = 1;
 
   const pending = $derived(
-    items.filter((item) =>
-      ["ready", "failed", "unconfirmed", "cancelled"].includes(item.state),
-    ).length,
-  );
-  const completed = $derived(
-    items.filter((item) => item.state === "added" || item.state === "skipped")
+    items.filter((item) => ["ready", "failed", "unconfirmed", "cancelled"].includes(item.state))
       .length,
   );
-  const failures = $derived(
-    items.filter((item) => item.state === "failed").length,
+  const completed = $derived(
+    items.filter((item) => item.state === "added" || item.state === "skipped").length,
   );
+  const failures = $derived(items.filter((item) => item.state === "failed").length);
 
   onDestroy(() => controller?.abort());
 
@@ -125,10 +119,8 @@
         progress: { processed: 0, total: queued.file.size },
       });
       try {
-        const hash = await hashFile(
-          queued.file,
-          active.signal,
-          (progress) => progressFor(queued.id, progress),
+        const hash = await hashFile(queued.file, active.signal, (progress) =>
+          progressFor(queued.id, progress),
         );
         updateItem(queued.id, {
           state: "uploading",
@@ -207,10 +199,7 @@
 
   function percentage(item: UploadItem): number {
     if (item.progress.total === 0) return item.state === "ready" ? 0 : 100;
-    return Math.min(
-      100,
-      Math.round((item.progress.processed * 100) / item.progress.total),
-    );
+    return Math.min(100, Math.round((item.progress.processed * 100) / item.progress.total));
   }
 
   function stateLabel(item: UploadItem): string {
@@ -256,11 +245,10 @@
     </section>
 
     <p class="contract">
-      Docbank reads each file twice: once locally to declare its SHA-256
-      identity, then once to stream it. Authority is granted only when the
-      daemon independently computes the same hash and size. Bytes travel only
-      over the upload channel proved by this daemon; a broken channel is never
-      reconnected.
+      Docbank reads each file twice: once locally to declare its SHA-256 identity, then once to
+      stream it. Authority is granted only when the daemon independently computes the same hash and
+      size. Bytes travel only over the upload channel proved by this daemon; a broken channel is
+      never reconnected.
     </p>
     {#if disabledReason}
       <p class="channel-error" role="alert">{disabledReason}</p>
@@ -310,7 +298,8 @@
         <strong>{items.length} selected</strong>
         <span>
           {completed} accepted
-          {#if failures > 0} · {failures} failed{/if}
+          {#if failures > 0}
+            · {failures} failed{/if}
         </span>
       </div>
       <ul class="queue" aria-live="polite">
@@ -319,7 +308,10 @@
             <div class="file-row">
               <div class="file-authority">
                 <strong>{item.file.name}</strong>
-                <span>{formatBytes(item.file.size)} · {item.file.type || "application/octet-stream"}</span>
+                <span
+                  >{formatBytes(item.file.size)} · {item.file.type ||
+                    "application/octet-stream"}</span
+                >
               </div>
               <div class="file-actions">
                 <Chip
@@ -353,7 +345,9 @@
             {#if item.state === "hashing" || item.state === "uploading"}
               <div class="progress-copy">
                 <span>{stateLabel(item)}</span>
-                <span>{formatBytes(item.progress.processed)} / {formatBytes(item.progress.total)}</span>
+                <span
+                  >{formatBytes(item.progress.processed)} / {formatBytes(item.progress.total)}</span
+                >
               </div>
               <div
                 class="progress"
@@ -384,8 +378,8 @@
       <aside class="outcome">
         <RefreshCwIcon size="15" aria-hidden="true" />
         <span>
-          {completed} file{completed === 1 ? "" : "s"} accepted with matching
-          server receipts. The current folder has been refreshed.
+          {completed} file{completed === 1 ? "" : "s"} accepted with matching server receipts. The current
+          folder has been refreshed.
         </span>
       </aside>
     {/if}

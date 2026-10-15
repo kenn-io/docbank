@@ -27,8 +27,11 @@ describe("query identity", () => {
   }
 
   it("accepts null only for optional filters", () => {
-    expect(canonicalQuery(parseQuery('{"filters":{"paths":null,"size_min":null,"no_tags":true}}')))
-      .toBe('{"filters":{"no_tags":true},"mode":"lexical","sort":{"direction":"asc","field":"name"},"syntax":"simple","text":"","v":1}');
+    expect(
+      canonicalQuery(parseQuery('{"filters":{"paths":null,"size_min":null,"no_tags":true}}')),
+    ).toBe(
+      '{"filters":{"no_tags":true},"mode":"lexical","sort":{"direction":"asc","field":"name"},"syntax":"simple","text":"","v":1}',
+    );
     expect(() => parseQuery('{"sort":null}')).toThrow();
   });
 
@@ -38,13 +41,19 @@ describe("query identity", () => {
 
   it("rejects quality bounds outside 0..1 with a quality error", () => {
     for (const value of ["abc", "1.5", "-0", ".5"]) {
-      expect(() => parseQuery(`{"filters":{"focus_min":"${value}"}}`)).toThrow("quality score must be a decimal string within 0..1");
+      expect(() => parseQuery(`{"filters":{"focus_min":"${value}"}}`)).toThrow(
+        "quality score must be a decimal string within 0..1",
+      );
     }
-    expect(canonicalQuery(parseQuery('{"filters":{"focus_min":"0.70"}}'))).toContain('"focus_min":"0.7"');
+    expect(canonicalQuery(parseQuery('{"filters":{"focus_min":"0.70"}}'))).toContain(
+      '"focus_min":"0.7"',
+    );
   });
 
   it("treats structured unevaluated false as omission", () => {
-    expect(canonicalQuery(parseQuery('{"filters":{"unevaluated":false}}'))).toBe(canonicalQuery(parseQuery('{}')));
+    expect(canonicalQuery(parseQuery('{"filters":{"unevaluated":false}}'))).toBe(
+      canonicalQuery(parseQuery("{}")),
+    );
   });
 
   it("rejects invalid values and bounds", () => {
@@ -68,7 +77,11 @@ describe("query identity", () => {
       `${" ".repeat(128 * 1024)}{}`,
     ];
     for (const raw of invalid) expect(() => parseQuery(raw)).toThrow();
-    expect(() => parseQuery('{"filters":{"modified_after":"2026-09-09T00:00:00Z","modified_before":"2026-09-09T00:00:00.1Z"}}')).not.toThrow();
+    expect(() =>
+      parseQuery(
+        '{"filters":{"modified_after":"2026-09-09T00:00:00Z","modified_before":"2026-09-09T00:00:00.1Z"}}',
+      ),
+    ).not.toThrow();
   });
 
   it("enforces the shared normalized query byte bound during parse", () => {
@@ -108,12 +121,17 @@ describe("highlight-set identity", () => {
   it("enforces shared highlight boundaries during parse", () => {
     const maxTerm = `{"v":1,"terms":[{"text":"${"x".repeat(fixture.bounds.highlight_max_term_scalars)}","color":"#abcdef"}]}`;
     expect(() => parseHighlightSet(maxTerm)).not.toThrow();
-    const maxTerms = Array.from({ length: fixture.bounds.highlight_max_terms }, (_, index) =>
-      `{"text":"${String(index).padStart(2, "0")}","color":"#abcdef"}`);
+    const maxTerms = Array.from(
+      { length: fixture.bounds.highlight_max_terms },
+      (_, index) => `{"text":"${String(index).padStart(2, "0")}","color":"#abcdef"}`,
+    );
     expect(() => parseHighlightSet(`{"v":1,"terms":[${maxTerms.join(",")}]}`)).not.toThrow();
 
-    const oversizedTerms = Array.from({ length: fixture.bounds.highlight_max_terms }, (_, index) =>
-      `{"text":"${"😀".repeat(fixture.bounds.oversized_highlight_astral_scalars)}${String(index).padStart(2, "0")}","color":"#abcdef"}`);
+    const oversizedTerms = Array.from(
+      { length: fixture.bounds.highlight_max_terms },
+      (_, index) =>
+        `{"text":"${"😀".repeat(fixture.bounds.oversized_highlight_astral_scalars)}${String(index).padStart(2, "0")}","color":"#abcdef"}`,
+    );
     const oversized = `{"v":1,"terms":[${oversizedTerms.join(",")}]}`;
     expect(new TextEncoder().encode(oversized).byteLength).toBeLessThan(128 * 1024);
     expect(() => parseHighlightSet(oversized)).toThrow();
@@ -129,9 +147,14 @@ describe("media classification", () => {
 
   it("uses every document-owned mapping", () => {
     for (const metadata of formatMetadata) {
-      expect(classifyMedia(metadata.media_type, "synthetic.bin"), metadata.id).toBe(metadata.query_family);
+      expect(classifyMedia(metadata.media_type, "synthetic.bin"), metadata.id).toBe(
+        metadata.query_family,
+      );
       for (const extension of metadata.extensions) {
-        expect(classifyMedia("application/octet-stream", `synthetic.${extension}`), metadata.id).toBe(metadata.query_family);
+        expect(
+          classifyMedia("application/octet-stream", `synthetic.${extension}`),
+          metadata.id,
+        ).toBe(metadata.query_family);
       }
     }
   });
@@ -164,10 +187,12 @@ describe("media classification", () => {
 });
 
 describe("authored photo filters", () => {
- it("keeps decisions in canonical saved queries", () => {
-   const value = parseQuery('{"filters":{"rating_min":0,"rating_max":5,"flags":["pick",""],"labels":["red","blue","red"]}}');
-   expect(canonicalQuery(value)).toContain('"flags":["","pick"]');
-   expect(canonicalQuery(value)).toContain('"labels":["blue","red"]');
-   expect(canonicalQuery(value)).toContain('"rating_min":0');
- });
+  it("keeps decisions in canonical saved queries", () => {
+    const value = parseQuery(
+      '{"filters":{"rating_min":0,"rating_max":5,"flags":["pick",""],"labels":["red","blue","red"]}}',
+    );
+    expect(canonicalQuery(value)).toContain('"flags":["","pick"]');
+    expect(canonicalQuery(value)).toContain('"labels":["blue","red"]');
+    expect(canonicalQuery(value)).toContain('"rating_min":0');
+  });
 });

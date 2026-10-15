@@ -47,9 +47,7 @@ it("makes browsing shortcuts discoverable and edits bounded tag bindings", async
   expect(screen.getByText("Focus search")).toBeTruthy();
   expect(screen.getByText("Next loaded row")).toBeTruthy();
   expect(screen.getByText("Toggle inspected file selection")).toBeTruthy();
-  expect(
-    screen.getByText(/Showing the first 1 of 2 tag definitions\./),
-  ).toBeTruthy();
+  expect(screen.getByText(/Showing the first 1 of 2 tag definitions\./)).toBeTruthy();
   expect(
     screen.getByRole("combobox", { name: `Tag shortcut 2: Not in loaded catalog · ${missing}` }),
   ).toBeTruthy();
@@ -83,14 +81,29 @@ it("explains why tag bindings are disabled without a trustworthy vault ID", () =
     ),
   ).toBeTruthy();
   expect(
-    screen
-      .getByRole("combobox", { name: "Tag shortcut 1: Unassigned" })
-      .hasAttribute("disabled"),
+    screen.getByRole("combobox", { name: "Tag shortcut 1: Unassigned" }).hasAttribute("disabled"),
   ).toBe(true);
 });
 
 it("lists registered Photos commands without document browsing or tag bindings", () => {
-  render(ShortcutHelpModal, { props: { context: "photos", vaultReady: true, catalog: [tax], catalogTotal: 1, bindings: {}, onbindingchange: vi.fn(), onclose: vi.fn(), photoShortcuts: [{ combo: "0", description: "Clear rating" }, { combo: "shift+/", description: "Show keyboard shortcuts" }] } });
-  expect(screen.getByText("Clear rating")).toBeTruthy(); expect(screen.getByText("Show keyboard shortcuts")).toBeTruthy();
-  expect(screen.queryByText("Next loaded row")).toBeNull(); expect(screen.queryByText("Focus search")).toBeNull(); expect(screen.queryByRole("combobox")).toBeNull();
+  render(ShortcutHelpModal, {
+    props: {
+      context: "photos",
+      vaultReady: true,
+      catalog: [tax],
+      catalogTotal: 1,
+      bindings: {},
+      onbindingchange: vi.fn(),
+      onclose: vi.fn(),
+      photoShortcuts: [
+        { combo: "0", description: "Clear rating" },
+        { combo: "shift+/", description: "Show keyboard shortcuts" },
+      ],
+    },
+  });
+  expect(screen.getByText("Clear rating")).toBeTruthy();
+  expect(screen.getByText("Show keyboard shortcuts")).toBeTruthy();
+  expect(screen.queryByText("Next loaded row")).toBeNull();
+  expect(screen.queryByText("Focus search")).toBeNull();
+  expect(screen.queryByRole("combobox")).toBeNull();
 });

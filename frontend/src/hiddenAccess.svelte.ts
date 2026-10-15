@@ -6,20 +6,37 @@ export class HiddenAccess {
   private queue = Promise.resolve();
   private pending = 0;
 
-  constructor(readonly session: string, readonly onauthfailure: (cause: unknown) => void) {}
+  constructor(
+    readonly session: string,
+    readonly onauthfailure: (cause: unknown) => void,
+  ) {}
 
   run<T>(request: () => Promise<T>): Promise<T> {
     this.pending++;
-    return this.enqueue(async () => { try { return await request(); } finally { this.pending--; } });
+    return this.enqueue(async () => {
+      try {
+        return await request();
+      } finally {
+        this.pending--;
+      }
+    });
   }
   private enqueue<T>(request: () => Promise<T>): Promise<T> {
     const result = this.queue.then(request);
-    this.queue = result.then(() => {}, () => {});
+    this.queue = result.then(
+      () => {},
+      () => {},
+    );
     return result;
   }
-  settled() { return this.queue; }
+  settled() {
+    return this.queue;
+  }
   private requestLock() {
-    return lockPhotoHidden({}, { session: this.session, signal: AbortSignal.timeout(30_000), keepalive: true });
+    return lockPhotoHidden(
+      {},
+      { session: this.session, signal: AbortSignal.timeout(30_000), keepalive: true },
+    );
   }
   pagehide() {
     // The page may disappear before a pending unlock releases the queue.

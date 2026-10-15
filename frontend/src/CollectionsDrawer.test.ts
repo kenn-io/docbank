@@ -1,12 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import CollectionsDrawer from "./CollectionsDrawer.svelte";
 
 const collectionID = "11111111-1111-4111-8111-111111111111";
@@ -64,62 +57,167 @@ afterEach(() => {
 });
 
 describe("collections drawer", () => {
-  it("changes coverage profiles without reloading collection browsing",async()=>{
-    vi.stubGlobal("ResizeObserver",class{observe(){}unobserve(){}disconnect(){}});
-    Object.defineProperty(HTMLElement.prototype,"scrollIntoView",{value:vi.fn(),configurable:true});
-    const requests:string[]=[];
-    vi.spyOn(globalThis,"fetch").mockImplementation(async(input)=>{
-      const url=String(input);requests.push(url);
-      if(url.includes("/quality")) {
-        if(url.includes("profile=review"))return new Response(JSON.stringify({title:"Quality unavailable"}),{status:503});
-        const chosen=url.includes("profile=archive");
-        return json({collection:{...collection,coverage:{configuration:chosen?"configured":"profile_required",profile:chosen?"archive":"",profiles:["archive","review"],profile_fingerprint:chosen?"a".repeat(64):"",generation_id:"",counts:chosen?{complete:2,partial:0,failed:0,unprocessed:0,none:0}:null}},source_fingerprint:"b".repeat(64),dimensions:[],zero_bytes:0,mismatches:0,duplicate_documents:0,spikes:[]});
+  it("changes coverage profiles without reloading collection browsing", async () => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      value: vi.fn(),
+      configurable: true,
+    });
+    const requests: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url.includes("/quality")) {
+        if (url.includes("profile=review"))
+          return new Response(JSON.stringify({ title: "Quality unavailable" }), { status: 503 });
+        const chosen = url.includes("profile=archive");
+        return json({
+          collection: {
+            ...collection,
+            coverage: {
+              configuration: chosen ? "configured" : "profile_required",
+              profile: chosen ? "archive" : "",
+              profiles: ["archive", "review"],
+              profile_fingerprint: chosen ? "a".repeat(64) : "",
+              generation_id: "",
+              counts: chosen
+                ? { complete: 2, partial: 0, failed: 0, unprocessed: 0, none: 0 }
+                : null,
+            },
+          },
+          source_fingerprint: "b".repeat(64),
+          dimensions: [],
+          zero_bytes: 0,
+          mismatches: 0,
+          duplicate_documents: 0,
+          spikes: [],
+        });
       }
-      if(url.includes("/members?"))return json({collection,items:members,total:2,limit:100,offset:0});
-      if(url.endsWith("/label"))return json({ingest_id:collectionID,label:collection.label,revision:3,updated_at:collection.label_updated_at},'"3"');
-      return json({items:[collection],total:1,limit:100,offset:0});
+      if (url.includes("/members?"))
+        return json({ collection, items: members, total: 2, limit: 100, offset: 0 });
+      if (url.endsWith("/label"))
+        return json(
+          {
+            ingest_id: collectionID,
+            label: collection.label,
+            revision: 3,
+            updated_at: collection.label_updated_at,
+          },
+          '"3"',
+        );
+      return json({ items: [collection], total: 1, limit: 100, offset: 0 });
     });
-    render(CollectionsDrawer,{session:"session",onclose:vi.fn(),onauthfailure:vi.fn(),onopenmember:vi.fn()});
-    await fireEvent.click(await screen.findByRole("button",{name:"Browse collection Discovery batch"}));
-    await fireEvent.click(screen.getByRole("button",{name:"Inspect collection quality"}));
+    render(CollectionsDrawer, {
+      session: "session",
+      onclose: vi.fn(),
+      onauthfailure: vi.fn(),
+      onopenmember: vi.fn(),
+    });
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Browse collection Discovery batch" }),
+    );
+    await fireEvent.click(screen.getByRole("button", { name: "Inspect collection quality" }));
     await screen.findByText("Choose a processing profile to inspect coverage.");
-    await fireEvent.click(screen.getByRole("combobox",{name:/Coverage profile/}));
-    await fireEvent.click(await screen.findByRole("option",{name:"archive"}));
+    await fireEvent.click(screen.getByRole("combobox", { name: /Coverage profile/ }));
+    await fireEvent.click(await screen.findByRole("option", { name: "archive" }));
     await screen.findByText("Complete: 2");
-    await fireEvent.click(screen.getByRole("combobox",{name:/Coverage profile/}));
-    await fireEvent.click(await screen.findByRole("option",{name:"review"}));
+    await fireEvent.click(screen.getByRole("combobox", { name: /Coverage profile/ }));
+    await fireEvent.click(await screen.findByRole("option", { name: "review" }));
     await screen.findByRole("alert");
-    await fireEvent.click(screen.getByRole("combobox",{name:/Coverage profile/}));
-    await fireEvent.click(await screen.findByRole("option",{name:"archive"}));
+    await fireEvent.click(screen.getByRole("combobox", { name: /Coverage profile/ }));
+    await fireEvent.click(await screen.findByRole("option", { name: "archive" }));
     await screen.findByText("Complete: 2");
-    expect(requests.filter(url=>url.startsWith("/api/v1/collections?"))).toHaveLength(1);
-    expect(requests.filter(url=>url.includes("/members?"))).toHaveLength(1);
+    expect(requests.filter((url) => url.startsWith("/api/v1/collections?"))).toHaveLength(1);
+    expect(requests.filter((url) => url.includes("/members?"))).toHaveLength(1);
   });
-  it("opens collection quality only after an explicit action",async()=>{
-    vi.spyOn(globalThis,"fetch").mockImplementation(async(input)=>{
-      const url=String(input);
-      if(url.includes("/quality"))return json({collection:{...collection,coverage:{configuration:"unconfigured",profile:"",profiles:[],profile_fingerprint:"",generation_id:"",counts:null}},source_fingerprint:"a".repeat(64),dimensions:[],zero_bytes:0,mismatches:0,duplicate_documents:0,spikes:[]});
-      if(url.includes("/members?"))return json({collection,items:members,total:2,limit:100,offset:0});
-      if(url.endsWith("/label"))return json({ingest_id:collectionID,label:collection.label,revision:3,updated_at:collection.label_updated_at},'"3"');
-      return json({items:[collection],total:1,limit:100,offset:0});
+  it("opens collection quality only after an explicit action", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/quality"))
+        return json({
+          collection: {
+            ...collection,
+            coverage: {
+              configuration: "unconfigured",
+              profile: "",
+              profiles: [],
+              profile_fingerprint: "",
+              generation_id: "",
+              counts: null,
+            },
+          },
+          source_fingerprint: "a".repeat(64),
+          dimensions: [],
+          zero_bytes: 0,
+          mismatches: 0,
+          duplicate_documents: 0,
+          spikes: [],
+        });
+      if (url.includes("/members?"))
+        return json({ collection, items: members, total: 2, limit: 100, offset: 0 });
+      if (url.endsWith("/label"))
+        return json(
+          {
+            ingest_id: collectionID,
+            label: collection.label,
+            revision: 3,
+            updated_at: collection.label_updated_at,
+          },
+          '"3"',
+        );
+      return json({ items: [collection], total: 1, limit: 100, offset: 0 });
     });
-    render(CollectionsDrawer,{session:"session",onclose:vi.fn(),onauthfailure:vi.fn(),onopenmember:vi.fn()});
-    await fireEvent.click(await screen.findByRole("button",{name:"Browse collection Discovery batch"}));
-    expect(screen.queryByRole("region",{name:"Collection quality"})).toBeNull();
-    await fireEvent.click(screen.getByRole("button",{name:"Inspect collection quality"}));
+    render(CollectionsDrawer, {
+      session: "session",
+      onclose: vi.fn(),
+      onauthfailure: vi.fn(),
+      onopenmember: vi.fn(),
+    });
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Browse collection Discovery batch" }),
+    );
+    expect(screen.queryByRole("region", { name: "Collection quality" })).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "Inspect collection quality" }));
     await screen.findByText("Processing is not configured.");
   });
   it("starts a new query from the exact selected collection identity", async () => {
-    vi.spyOn(globalThis,"fetch").mockImplementation(async (input) => {
-      const url=String(input);
-      if(url.includes("/members?")) return json({collection,items:members,total:2,limit:100,offset:0});
-      if(url.endsWith("/label")) return json({ingest_id:collectionID,label:collection.label,revision:3,updated_at:collection.label_updated_at},'"3"');
-      return json({items:[collection],total:1,limit:100,offset:0});
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/members?"))
+        return json({ collection, items: members, total: 2, limit: 100, offset: 0 });
+      if (url.endsWith("/label"))
+        return json(
+          {
+            ingest_id: collectionID,
+            label: collection.label,
+            revision: 3,
+            updated_at: collection.label_updated_at,
+          },
+          '"3"',
+        );
+      return json({ items: [collection], total: 1, limit: 100, offset: 0 });
     });
-    const onnewquery=vi.fn();
-    render(CollectionsDrawer,{session:"session",onclose:vi.fn(),onauthfailure:vi.fn(),onopenmember:vi.fn(),onnewquery});
-    await fireEvent.click(await screen.findByRole("button",{name:"Browse collection Discovery batch"}));
-    await fireEvent.click(await screen.findByRole("button",{name:"New query for this collection"}));
+    const onnewquery = vi.fn();
+    render(CollectionsDrawer, {
+      session: "session",
+      onclose: vi.fn(),
+      onauthfailure: vi.fn(),
+      onopenmember: vi.fn(),
+      onnewquery,
+    });
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Browse collection Discovery batch" }),
+    );
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "New query for this collection" }),
+    );
     expect(onnewquery).toHaveBeenCalledWith(collectionID);
   });
   it("shows supported collection facts and opens an exact direct member", async () => {
@@ -128,10 +226,7 @@ describe("collections drawer", () => {
       if (url === "/api/v1/collections?limit=100&offset=0") {
         return json({ items: [collection], total: 1, limit: 100, offset: 0 });
       }
-      if (
-        url ===
-        `/api/v1/collections/${collectionID}/members?limit=100&offset=0`
-      ) {
+      if (url === `/api/v1/collections/${collectionID}/members?limit=100&offset=0`) {
         return json({
           collection,
           items: members,
@@ -290,7 +385,9 @@ describe("collections drawer", () => {
 
     await view.rerender({ session: "fresh-session" });
     await waitFor(() => {
-      expect(screen.queryByRole("button", { name: "Browse collection Discovery batch" })).toBeNull();
+      expect(
+        screen.queryByRole("button", { name: "Browse collection Discovery batch" }),
+      ).toBeNull();
     });
     expect(screen.getByText("Loading import collections…")).toBeTruthy();
 

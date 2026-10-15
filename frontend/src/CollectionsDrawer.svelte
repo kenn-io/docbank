@@ -36,7 +36,8 @@
     onqualityquery?: (query: Query) => void;
   }
 
-  let { session, onclose, onauthfailure, onopenmember, onnewquery, onqualityquery }: Props = $props();
+  let { session, onclose, onauthfailure, onopenmember, onnewquery, onqualityquery }: Props =
+    $props();
   let qualityOpen = $state(false);
   let profile = $state("");
 
@@ -151,7 +152,8 @@
         request !== memberGeneration ||
         currentSession !== session ||
         selected?.id !== collection.id
-      ) return;
+      )
+        return;
       selected = page.collection;
       members = page.items;
       memberTotal = page.total;
@@ -160,7 +162,8 @@
         request !== memberGeneration ||
         currentSession !== session ||
         selected?.id !== collection.id
-      ) return;
+      )
+        return;
       if (!authFailure(cause)) memberError = message(cause);
     } finally {
       if (request === memberGeneration) memberLoading = false;
@@ -195,7 +198,8 @@
         request !== labelGeneration ||
         currentSession !== session ||
         selected?.id !== collection.id
-      ) return;
+      )
+        return;
       observedLabel = label;
       labelDraft = label.label ?? "";
       applyLabel(label);
@@ -204,7 +208,8 @@
         request !== labelGeneration ||
         currentSession !== session ||
         selected?.id !== collection.id
-      ) return;
+      )
+        return;
       if (!authFailure(cause)) labelError = message(cause);
     } finally {
       if (request === labelGeneration) labelLoading = false;
@@ -226,7 +231,8 @@
         request !== labelGeneration ||
         currentSession !== session ||
         selected?.id !== collectionID
-      ) return;
+      )
+        return;
       observedLabel = label;
       labelDraft = label.label ?? "";
       applyLabel(label);
@@ -236,7 +242,8 @@
         request !== labelGeneration ||
         currentSession !== session ||
         selected?.id !== collectionID
-      ) return;
+      )
+        return;
       if (!authFailure(cause)) labelError = message(cause);
     } finally {
       if (request === labelGeneration) labelPending = false;
@@ -248,9 +255,7 @@
     const currentSession = session;
     const collectionID = selected?.id;
     const current = () =>
-      request === openGeneration &&
-      currentSession === session &&
-      selected?.id === collectionID;
+      request === openGeneration && currentSession === session && selected?.id === collectionID;
     openingMemberID = member.id;
     openError = "";
     try {
@@ -275,7 +280,8 @@
         <strong>Import collections</strong>
         <small>
           {total} collection{total === 1 ? "" : "s"}
-          {#if refreshedAt} · Refreshed {formatDate(refreshedAt)}{/if}
+          {#if refreshedAt}
+            · Refreshed {formatDate(refreshedAt)}{/if}
         </small>
       </div>
       <div class="drawer-actions">
@@ -349,9 +355,20 @@
       </section>
 
       {#if selected}
-        <Button onclick={()=>qualityOpen=!qualityOpen}>{qualityOpen ? "Close collection quality" : "Inspect collection quality"}</Button>
-        {#if qualityOpen}<QualityPanel {session} collectionID={selected.id} {profile} onprofile={(name)=>profile=name} onnewquery={onqualityquery} {onauthfailure}/>{/if}
-        {#if onnewquery}<Button onclick={() => selected && onnewquery?.(selected.id)}>New query for this collection</Button>{/if}
+        <Button onclick={() => (qualityOpen = !qualityOpen)}
+          >{qualityOpen ? "Close collection quality" : "Inspect collection quality"}</Button
+        >
+        {#if qualityOpen}<QualityPanel
+            {session}
+            collectionID={selected.id}
+            {profile}
+            onprofile={(name) => (profile = name)}
+            onnewquery={onqualityquery}
+            {onauthfailure}
+          />{/if}
+        {#if onnewquery}<Button onclick={() => selected && onnewquery?.(selected.id)}
+            >New query for this collection</Button
+          >{/if}
         <section class="label-editor" aria-labelledby="collection-label-heading">
           <div class="section-heading">
             <div>
@@ -378,22 +395,28 @@
                 surface="solid"
                 disabled={labelLoading || labelPending || !observedLabel || labelDraft === ""}
                 onclick={() => void saveLabel(labelDraft)}
-              >{labelPending ? "Saving…" : "Save label"}</Button>
+                >{labelPending ? "Saving…" : "Save label"}</Button
+              >
               <Button
                 size="sm"
                 surface="soft"
-                disabled={labelLoading || labelPending || !observedLabel || observedLabel.label === null}
-                onclick={() => void saveLabel(null)}
-              >Clear label</Button>
+                disabled={labelLoading ||
+                  labelPending ||
+                  !observedLabel ||
+                  observedLabel.label === null}
+                onclick={() => void saveLabel(null)}>Clear label</Button
+              >
               <Button
                 size="sm"
                 surface="soft"
                 disabled={labelLoading || labelPending}
-                onclick={() => void reloadLabel()}
-              >Reload label</Button>
+                onclick={() => void reloadLabel()}>Reload label</Button
+              >
             </div>
           {/if}
-          <p class="quality-note">Inspect collection quality for processing coverage and document distributions.</p>
+          <p class="quality-note">
+            Inspect collection quality for processing coverage and document distributions.
+          </p>
           {#if labelError}<p class="error" role="alert">{labelError}</p>{/if}
           {#if labelNotice}<p class="notice" role="status">{labelNotice}</p>{/if}
         </section>
@@ -415,8 +438,8 @@
                 size="sm"
                 onclick={() => {
                   if (selected) void browse(selected);
-                }}
-              >Try again</Button>
+                }}>Try again</Button
+              >
             </div>
           {:else if members.length === 0}
             <EmptyState
@@ -436,7 +459,12 @@
             </p>
             <div class="member-list">
               {#each members as member (member.id)}
-                <Card level="inset" padding="sm" title={member.name} meta={formatBytes(member.size)}>
+                <Card
+                  level="inset"
+                  padding="sm"
+                  title={member.name}
+                  meta={formatBytes(member.size)}
+                >
                   <div class="member-row">
                     <span class="path">{member.path}</span>
                     <Button
@@ -446,7 +474,8 @@
                       disabled={openingMemberID !== null}
                       onclick={() => void openMember(member)}
                       ariaLabel={`Open document ${member.path}`}
-                    >{openingMemberID === member.id ? "Opening…" : "Open"}</Button>
+                      >{openingMemberID === member.id ? "Opening…" : "Open"}</Button
+                    >
                   </div>
                 </Card>
               {/each}

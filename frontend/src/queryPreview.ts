@@ -1,10 +1,5 @@
 import * as generated from "./generated/docbank.js";
-import {
-  canonicalQuery,
-  parseQuery,
-  queryFingerprint,
-  type Query,
-} from "./query.js";
+import { canonicalQuery, parseQuery, queryFingerprint, type Query } from "./query.js";
 
 export interface QueryPreview {
   query: Query;
@@ -31,7 +26,11 @@ function object(value: unknown, field: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function requireKeys(value: Record<string, unknown>, expected: readonly string[], field: string): void {
+function requireKeys(
+  value: Record<string, unknown>,
+  expected: readonly string[],
+  field: string,
+): void {
   const keys = Object.keys(value);
   if (keys.length !== expected.length || expected.some((key) => !Object.hasOwn(value, key))) {
     malformed(`${field} has missing or unknown fields`);
@@ -52,8 +51,10 @@ export async function previewQuery(
     ? ["$schema", "query", "query_fingerprint", "dependencies"]
     : ["query", "query_fingerprint", "dependencies"];
   requireKeys(receipt, receiptKeys, "receipt");
-  if (Object.hasOwn(receipt, "$schema") &&
-    (typeof receipt.$schema !== "string" || receipt.$schema.length === 0)) {
+  if (
+    Object.hasOwn(receipt, "$schema") &&
+    (typeof receipt.$schema !== "string" || receipt.$schema.length === 0)
+  ) {
     malformed("receipt.$schema is invalid");
   }
 
@@ -85,8 +86,11 @@ export async function previewQuery(
     if (typeof dependency.id !== "string" || !uuidV4.test(dependency.id)) {
       malformed(`dependencies[${index}].id is invalid`);
     }
-    if (typeof dependency.revision !== "number" ||
-      !Number.isSafeInteger(dependency.revision) || dependency.revision < 1) {
+    if (
+      typeof dependency.revision !== "number" ||
+      !Number.isSafeInteger(dependency.revision) ||
+      dependency.revision < 1
+    ) {
       malformed(`dependencies[${index}].revision is invalid`);
     }
     const kind = dependency.kind as QueryPreview["dependencies"][number]["kind"];
@@ -105,9 +109,15 @@ export function querySelection(
 ): { start: number; end: number } | null {
   if (position === null || typeof position !== "object" || Array.isArray(position)) return null;
   const span = position as Record<string, unknown>;
-  if (!Number.isSafeInteger(span.offset) || !Number.isSafeInteger(span.end) ||
-    typeof span.offset !== "number" || typeof span.end !== "number" ||
-    span.offset < 0 || span.end < span.offset) return null;
+  if (
+    !Number.isSafeInteger(span.offset) ||
+    !Number.isSafeInteger(span.end) ||
+    typeof span.offset !== "number" ||
+    typeof span.end !== "number" ||
+    span.offset < 0 ||
+    span.end < span.offset
+  )
+    return null;
 
   const boundaries = new Map<number, number>([[0, 0]]);
   let byteOffset = 0;

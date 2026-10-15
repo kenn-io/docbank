@@ -1,8 +1,13 @@
 import * as generated from "./generated/docbank.js";
 import {
-  canonicalHighlightSet, canonicalQuery, highlightSetFingerprint,
-  parseHighlightSet, parseQuery, queryFingerprint,
-  type HighlightSet, type Query,
+  canonicalHighlightSet,
+  canonicalQuery,
+  highlightSetFingerprint,
+  parseHighlightSet,
+  parseQuery,
+  queryFingerprint,
+  type HighlightSet,
+  type Query,
 } from "./query.js";
 
 export type Definition =
@@ -36,7 +41,9 @@ const encoder = new TextEncoder();
 
 export class SavedQueryReceiptError extends Error {
   constructor() {
-    super("Saved definition receipt does not match the request. Reload definitions and reopen the item before continuing.");
+    super(
+      "Saved definition receipt does not match the request. Reload definitions and reopen the item before continuing.",
+    );
   }
 }
 
@@ -54,7 +61,11 @@ function positiveInteger(value: unknown): value is number {
 }
 
 function validString(value: unknown, maxBytes: number): value is string {
-  return typeof value === "string" && !/[\uD800-\uDFFF]/u.test(value) && encoder.encode(value).length <= maxBytes;
+  return (
+    typeof value === "string" &&
+    !/[\uD800-\uDFFF]/u.test(value) &&
+    encoder.encode(value).length <= maxBytes
+  );
 }
 
 function nameValue(value: unknown): string {
@@ -77,31 +88,46 @@ function descriptionValue(value: unknown): string {
 
 function definition(kind: unknown, payload: unknown): Definition {
   if (kind === "query") return { kind, payload: parseQuery(JSON.stringify(payload)) };
-  if (kind === "highlight_set") return { kind, payload: parseHighlightSet(JSON.stringify(payload)) };
+  if (kind === "highlight_set")
+    return { kind, payload: parseHighlightSet(JSON.stringify(payload)) };
   throw new Error("Unknown saved definition kind.");
 }
 
 function canonical(value: Definition): string {
-  return value.kind === "query" ? canonicalQuery(value.payload) : canonicalHighlightSet(value.payload);
+  return value.kind === "query"
+    ? canonicalQuery(value.payload)
+    : canonicalHighlightSet(value.payload);
 }
 
 async function receipt(value: unknown): Promise<SavedQuery> {
   const raw = object(value);
   requireReceipt(typeof raw.id === "string" && uuid.test(raw.id) && positiveInteger(raw.revision));
-  requireReceipt(typeof raw.created_at === "string" && Number.isFinite(Date.parse(raw.created_at)) &&
-    typeof raw.updated_at === "string" && Number.isFinite(Date.parse(raw.updated_at)));
+  requireReceipt(
+    typeof raw.created_at === "string" &&
+      Number.isFinite(Date.parse(raw.created_at)) &&
+      typeof raw.updated_at === "string" &&
+      Number.isFinite(Date.parse(raw.updated_at)),
+  );
   // The server owns name normalization; browser Unicode tables can differ.
   requireReceipt(validString(raw.name, 256) && raw.name.length > 0);
   const name = raw.name;
   const description = descriptionValue(raw.description);
   requireReceipt(description === raw.description);
   const decoded = definition(raw.kind, raw.payload);
-  const fingerprint = decoded.kind === "query"
-    ? await queryFingerprint(decoded.payload) : await highlightSetFingerprint(decoded.payload);
+  const fingerprint =
+    decoded.kind === "query"
+      ? await queryFingerprint(decoded.payload)
+      : await highlightSetFingerprint(decoded.payload);
   requireReceipt(raw.fingerprint === fingerprint);
   return {
-    ...decoded, id: raw.id, name, description, fingerprint,
-    revision: raw.revision, created_at: raw.created_at, updated_at: raw.updated_at,
+    ...decoded,
+    id: raw.id,
+    name,
+    description,
+    fingerprint,
+    revision: raw.revision,
+    created_at: raw.created_at,
+    updated_at: raw.updated_at,
   };
 }
 
@@ -110,7 +136,8 @@ function validateID(id: string): void {
 }
 
 function fence(value: SavedQuery): { "If-Match": string } {
-  if (!positiveInteger(value.revision)) throw new Error("A positive saved definition revision is required.");
+  if (!positiveInteger(value.revision))
+    throw new Error("A positive saved definition revision is required.");
   return { "If-Match": `"${value.revision}"` };
 }
 
@@ -125,16 +152,34 @@ async function readResponse(response: Response): Promise<SavedQuery> {
 }
 
 export async function listSavedQueries(
-  session: string, kind?: SavedQueryKind, offset = 0, limit = 100,
+  session: string,
+  kind?: SavedQueryKind,
+  offset = 0,
+  limit = 100,
 ): Promise<SavedQueryPage> {
-  if (!Number.isSafeInteger(offset) || offset < 0 || !positiveInteger(limit) || limit > 1000 ||
-    kind !== undefined && kind !== "query" && kind !== "highlight_set") throw new Error("Invalid saved definition page.");
+  if (
+    !Number.isSafeInteger(offset) ||
+    offset < 0 ||
+    !positiveInteger(limit) ||
+    limit > 1000 ||
+    (kind !== undefined && kind !== "query" && kind !== "highlight_set")
+  )
+    throw new Error("Invalid saved definition page.");
   const page = object(await generated.listSavedQueries({ limit, offset, kind }, { session }));
-  requireReceipt(page.limit === limit && page.offset === offset &&
-    typeof page.total === "number" && Number.isSafeInteger(page.total) && page.total >= 0 && Array.isArray(page.items));
+  requireReceipt(
+    page.limit === limit &&
+      page.offset === offset &&
+      typeof page.total === "number" &&
+      Number.isSafeInteger(page.total) &&
+      page.total >= 0 &&
+      Array.isArray(page.items),
+  );
   requireReceipt(page.items.length === Math.min(limit, Math.max(0, page.total - offset)));
   const items = await Promise.all(page.items.map(receipt));
-  requireReceipt(new Set(items.map((item) => item.id)).size === items.length && items.every((item) => !kind || item.kind === kind));
+  requireReceipt(
+    new Set(items.map((item) => item.id)).size === items.length &&
+      items.every((item) => !kind || item.kind === kind),
+  );
   return { items, total: page.total, limit, offset };
 }
 
@@ -145,21 +190,41 @@ export async function getSavedQuery(session: string, id: string): Promise<SavedQ
   return saved;
 }
 
-export async function createSavedQuery(session: string, input: SavedQueryCreate): Promise<SavedQuery> {
-  const expected = { ...definition(input.kind, input.payload), name: nameValue(input.name), description: descriptionValue(input.description ?? "") };
+export async function createSavedQuery(
+  session: string,
+  input: SavedQueryCreate,
+): Promise<SavedQuery> {
+  const expected = {
+    ...definition(input.kind, input.payload),
+    name: nameValue(input.name),
+    description: descriptionValue(input.description ?? ""),
+  };
   const saved = await readResponse(await generated.createSavedQuery(expected, { session }));
   requireReceipt(saved.revision === 1 && sameDefinition(saved, expected));
   return saved;
 }
 
-function sameDefinition(left: SavedQuery, right: Definition & { name: string; description: string }): boolean {
-  return left.kind === right.kind && left.name === right.name && left.description === right.description && canonical(left) === canonical(right);
+function sameDefinition(
+  left: SavedQuery,
+  right: Definition & { name: string; description: string },
+): boolean {
+  return (
+    left.kind === right.kind &&
+    left.name === right.name &&
+    left.description === right.description &&
+    canonical(left) === canonical(right)
+  );
 }
 
-export async function updateSavedQuery(session: string, observed: SavedQuery, patch: SavedQueryPatch): Promise<SavedQuery> {
+export async function updateSavedQuery(
+  session: string,
+  observed: SavedQuery,
+  patch: SavedQueryPatch,
+): Promise<SavedQuery> {
   validateID(observed.id);
   const headers = fence(observed);
-  if (Object.keys(patch).some((key) => !["name", "description", "payload"].includes(key))) throw new Error("Unknown saved definition patch field.");
+  if (Object.keys(patch).some((key) => !["name", "description", "payload"].includes(key)))
+    throw new Error("Unknown saved definition patch field.");
   const body: SavedQueryPatch = {};
   if (patch.name !== undefined) body.name = nameValue(patch.name);
   if (patch.description !== undefined) body.description = descriptionValue(patch.description);
@@ -167,19 +232,34 @@ export async function updateSavedQuery(session: string, observed: SavedQuery, pa
   if (!Object.keys(body).length) throw new Error("No changes supplied.");
   const expected = {
     ...definition(observed.kind, body.payload ?? observed.payload),
-    name: body.name ?? observed.name, description: body.description ?? observed.description,
+    name: body.name ?? observed.name,
+    description: body.description ?? observed.description,
   };
   const revision = observed.revision + (sameDefinition(observed, expected) ? 0 : 1);
   requireReceipt(Number.isSafeInteger(revision));
-  const saved = await readResponse(await generated.updateSavedQuery(observed.id, body, headers, { session }));
-  requireReceipt(saved.id === observed.id && saved.revision === revision && saved.created_at === observed.created_at && sameDefinition(saved, expected));
+  const saved = await readResponse(
+    await generated.updateSavedQuery(observed.id, body, headers, { session }),
+  );
+  requireReceipt(
+    saved.id === observed.id &&
+      saved.revision === revision &&
+      saved.created_at === observed.created_at &&
+      sameDefinition(saved, expected),
+  );
   return saved;
 }
 
 export async function deleteSavedQuery(session: string, observed: SavedQuery): Promise<SavedQuery> {
   validateID(observed.id);
-  const saved = await readResponse(await generated.deleteSavedQuery(observed.id, fence(observed), { session }));
-  requireReceipt(saved.id === observed.id && saved.revision === observed.revision &&
-    saved.created_at === observed.created_at && saved.updated_at === observed.updated_at && sameDefinition(saved, observed));
+  const saved = await readResponse(
+    await generated.deleteSavedQuery(observed.id, fence(observed), { session }),
+  );
+  requireReceipt(
+    saved.id === observed.id &&
+      saved.revision === observed.revision &&
+      saved.created_at === observed.created_at &&
+      saved.updated_at === observed.updated_at &&
+      sameDefinition(saved, observed),
+  );
   return saved;
 }

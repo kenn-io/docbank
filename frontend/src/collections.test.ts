@@ -1,20 +1,51 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { APIError } from "./api-transport.js";
-import { collectionByID, collectionLabel, collectionMembers, collections, setCollectionLabel } from "./collections.js";
+import {
+  collectionByID,
+  collectionLabel,
+  collectionMembers,
+  collections,
+  setCollectionLabel,
+} from "./collections.js";
 
 const id = "11111111-1111-4111-8111-111111111111";
 const otherID = "22222222-2222-4222-8222-222222222222";
 const collection = {
-  id, source_kind: "cli", source_description: "Synthetic proposals", started_at: "2026-01-01T00:00:00Z",
-  file_count: 2, total_bytes: 12, label: "Proposals", label_revision: 3, label_updated_at: "2026-01-02T00:00:00Z",
+  id,
+  source_kind: "cli",
+  source_description: "Synthetic proposals",
+  started_at: "2026-01-01T00:00:00Z",
+  file_count: 2,
+  total_bytes: 12,
+  label: "Proposals",
+  label_revision: 3,
+  label_updated_at: "2026-01-02T00:00:00Z",
 };
-const label = { ingest_id: id, label: "Proposals", revision: 3, updated_at: "2026-01-02T00:00:00Z" };
+const label = {
+  ingest_id: id,
+  label: "Proposals",
+  revision: 3,
+  updated_at: "2026-01-02T00:00:00Z",
+};
 const node = {
-  id: 2, parent_id: 1, name: "alpha.txt", kind: "file", path: "/alpha.txt", current_version_id: otherID,
-  blob_hash: "a".repeat(64), size: 5, revision: 1, created_at: "2026-01-01T00:00:00Z", modified_at: "2026-01-01T00:00:00Z",
+  id: 2,
+  parent_id: 1,
+  name: "alpha.txt",
+  kind: "file",
+  path: "/alpha.txt",
+  current_version_id: otherID,
+  blob_hash: "a".repeat(64),
+  size: 5,
+  revision: 1,
+  created_at: "2026-01-01T00:00:00Z",
+  modified_at: "2026-01-01T00:00:00Z",
 };
 function respond(value: unknown, etag = '"3"') {
-  return vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify(value), { headers: { ETag: etag } }));
+  return vi
+    .spyOn(globalThis, "fetch")
+    .mockImplementation(
+      async () => new Response(JSON.stringify(value), { headers: { ETag: etag } }),
+    );
 }
 afterEach(() => vi.restoreAllMocks());
 
@@ -28,7 +59,11 @@ it("lists a bounded page without replacing collection totals with page counts", 
 });
 
 it.each([
-  { file_count: -1 }, { total_bytes: Number.MAX_SAFE_INTEGER + 1 }, { label_revision: 0 }, { label: "" }, { id: otherID },
+  { file_count: -1 },
+  { total_bytes: Number.MAX_SAFE_INTEGER + 1 },
+  { label_revision: 0 },
+  { label: "" },
+  { id: otherID },
 ])("rejects invalid or mismatched collection authority %j", async (change) => {
   respond({ ...collection, ...change });
   await expect(collectionByID("session", id)).rejects.toThrow();
@@ -70,7 +105,11 @@ it("fences normalized renames and explicit clearing with the inspected label rev
   expect(request?.method).toBe("PUT");
   expect(new Headers(request?.headers).get("If-Match")).toBe('"3"');
   expect(JSON.parse(String(request?.body))).toEqual({ label: "Café" });
-  fetch.mockResolvedValueOnce(new Response(JSON.stringify({ ...label, label: null, revision: 4 }), { headers: { ETag: '"4"' } }));
+  fetch.mockResolvedValueOnce(
+    new Response(JSON.stringify({ ...label, label: null, revision: 4 }), {
+      headers: { ETag: '"4"' },
+    }),
+  );
   expect((await setCollectionLabel("session", label, null)).label).toBeNull();
   expect(JSON.parse(String(fetch.mock.calls[1][1]?.body))).toEqual({ label: null });
 });
@@ -90,7 +129,13 @@ it("rejects invalid labels and fences before sending", async () => {
 });
 
 it("surfaces stale or audit-fenced changes without automatic retries", async () => {
-  const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ code: "stale_revision", detail: "Label changed elsewhere" }), { status: 412 }));
-  await expect(setCollectionLabel("session", label, "New label")).rejects.toEqual(new APIError("Label changed elsewhere", 412, "stale_revision"));
+  const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(JSON.stringify({ code: "stale_revision", detail: "Label changed elsewhere" }), {
+      status: 412,
+    }),
+  );
+  await expect(setCollectionLabel("session", label, "New label")).rejects.toEqual(
+    new APIError("Label changed elsewhere", 412, "stale_revision"),
+  );
   expect(fetch).toHaveBeenCalledTimes(1);
 });

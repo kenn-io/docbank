@@ -34,19 +34,13 @@
   let error = $state("");
   let generation = 0;
 
-  const selectedFact = $derived(
-    page?.items.find((fact) => fact.identity === selectedIdentity),
-  );
+  const selectedFact = $derived(page?.items.find((fact) => fact.identity === selectedIdentity));
   const authorityNode = $derived(page?.node ?? node);
   const authorityPath = $derived(page ? page.node.path : path);
   const authorityLabel = $derived(
-    authorityPath
-      ? basename(authorityPath)
-      : `${authorityNode.name} (trashed)`,
+    authorityPath ? basename(authorityPath) : `${authorityNode.name} (trashed)`,
   );
-  const authorityCoordinate = $derived(
-    authorityPath ?? `Trashed node · id:${authorityNode.id}`,
-  );
+  const authorityCoordinate = $derived(authorityPath ?? `Trashed node · id:${authorityNode.id}`);
 
   onMount(() => {
     void load();
@@ -60,7 +54,11 @@
     loading = true;
     error = "";
     try {
-      const next = await generated.listNodeProvenance((node.id), { limit: 1000, offset: 0 }, { session });
+      const next = await generated.listNodeProvenance(
+        node.id,
+        { limit: 1000, offset: 0 },
+        { session },
+      );
       if (request !== generation) return;
       page = next;
       selectedIdentity = next.items[0]?.identity ?? "";
@@ -144,8 +142,8 @@
         </Timeline>
         {#if page.total > page.items.length}
           <p class="limit-note">
-            Showing the newest {page.items.length} of {page.total} origin facts.
-            Use the CLI or HTTP API for older history.
+            Showing the newest {page.items.length} of {page.total} origin facts. Use the CLI or HTTP API
+            for older history.
           </p>
         {/if}
       {/if}
@@ -168,8 +166,14 @@
                 <CopyButton text={selectedFact.identity} ariaLabel="Copy provenance identity" />
               </dd>
             </div>
-            <div><dt>Status</dt><dd>{factStatus(selectedFact)}</dd></div>
-            <div><dt>Node</dt><dd>id:{selectedFact.node_id}</dd></div>
+            <div>
+              <dt>Status</dt>
+              <dd>{factStatus(selectedFact)}</dd>
+            </div>
+            <div>
+              <dt>Node</dt>
+              <dd>id:{selectedFact.node_id}</dd>
+            </div>
             <div class="identity">
               <dt>Ingest</dt>
               <dd>
@@ -177,33 +181,56 @@
                 <CopyButton text={selectedFact.ingest_id} ariaLabel="Copy ingest ID" />
               </dd>
             </div>
-            <div><dt>Ingest began</dt><dd>{formatDate(selectedFact.ingest_started_at)}</dd></div>
-            <div><dt>Canonical time</dt><dd><code>{selectedFact.ingest_started_at}</code></dd></div>
-            <div><dt>Source kind</dt><dd>{selectedFact.source_kind}</dd></div>
-            <div><dt>Source</dt><dd>{selectedFact.source_description}</dd></div>
-            <div><dt>Original reference</dt><dd>{selectedFact.original_path}</dd></div>
+            <div>
+              <dt>Ingest began</dt>
+              <dd>{formatDate(selectedFact.ingest_started_at)}</dd>
+            </div>
+            <div>
+              <dt>Canonical time</dt>
+              <dd><code>{selectedFact.ingest_started_at}</code></dd>
+            </div>
+            <div>
+              <dt>Source kind</dt>
+              <dd>{selectedFact.source_kind}</dd>
+            </div>
+            <div>
+              <dt>Source</dt>
+              <dd>{selectedFact.source_description}</dd>
+            </div>
+            <div>
+              <dt>Original reference</dt>
+              <dd>{selectedFact.original_path}</dd>
+            </div>
             <div>
               <dt>Source modified</dt>
-              <dd>{selectedFact.original_mtime
-                ? formatDate(selectedFact.original_mtime)
-                : "Not recorded"}</dd>
+              <dd>
+                {selectedFact.original_mtime
+                  ? formatDate(selectedFact.original_mtime)
+                  : "Not recorded"}
+              </dd>
             </div>
             {#if selectedFact.original_mtime}
-              <div><dt>Canonical mtime</dt><dd><code>{selectedFact.original_mtime}</code></dd></div>
+              <div>
+                <dt>Canonical mtime</dt>
+                <dd><code>{selectedFact.original_mtime}</code></dd>
+              </div>
             {/if}
             {#if selectedFact.supersedes}
               <div class="identity">
                 <dt>Supersedes</dt>
                 <dd>
                   <code>{selectedFact.supersedes}</code>
-                  <CopyButton text={selectedFact.supersedes} ariaLabel="Copy superseded provenance identity" />
+                  <CopyButton
+                    text={selectedFact.supersedes}
+                    ariaLabel="Copy superseded provenance identity"
+                  />
                 </dd>
               </div>
             {/if}
           </dl>
           <p class="explanation">
-            Provenance records where Docbank was told this document came from.
-            It does not open, manage, or retain the original source.
+            Provenance records where Docbank was told this document came from. It does not open,
+            manage, or retain the original source.
           </p>
         </Card>
       {:else}

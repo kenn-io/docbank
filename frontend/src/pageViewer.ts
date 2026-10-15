@@ -81,7 +81,8 @@ export class PageViewerSession {
   }
   private publish(next: Partial<PageViewerState>): void {
     if (!this.disposed) {
-      if (next.status === "failed" || next.status === "canceled") this.operations.delete(this.state.page);
+      if (next.status === "failed" || next.status === "canceled")
+        this.operations.delete(this.state.page);
       this.state = { ...this.state, ...next };
       this.changed(this.state);
     }
@@ -152,12 +153,15 @@ export class PageViewerSession {
       frame = inventory.inventory.frames[page - 1]?.frame;
     this.publish({ inventory, frame });
     const result = job?.results.find((v) => v.page === page);
-    const recipes = new Map(inventory.inventory.recipes.map(v => [v.sha256, v.recipe]));
-    const dpi = frame?.input_units === "pixel" ? frame.pixels_per_metre_x! * 127 / 5000 : pdfPageDPI;
+    const recipes = new Map(inventory.inventory.recipes.map((v) => [v.sha256, v.recipe]));
+    const dpi =
+      frame?.input_units === "pixel" ? (frame.pixels_per_metre_x! * 127) / 5000 : pdfPageDPI;
     // Prefer the standard recipe; retain the highest available DPI as a fallback.
-    const images = inventory.inventory.images.filter(v => v.page === page)
+    const images = inventory.inventory.images
+      .filter((v) => v.page === page)
       .toSorted((a, b) => recipes.get(b.recipe_sha256)!.dpi - recipes.get(a.recipe_sha256)!.dpi);
-    const image = result ?? images.find(v => recipes.get(v.recipe_sha256)!.dpi === dpi) ?? images[0];
+    const image =
+      result ?? images.find((v) => recipes.get(v.recipe_sha256)!.dpi === dpi) ?? images[0];
     if (!image) {
       this.publish({ status: "missing" });
       return;
@@ -185,7 +189,10 @@ export class PageViewerSession {
     }
     const previousJob = this.state.job;
     const signal = this.reset();
-    this.publish({ status: "rendering", job: previousJob?.id === operation ? previousJob : undefined });
+    this.publish({
+      status: "rendering",
+      job: previousJob?.id === operation ? previousJob : undefined,
+    });
     try {
       const binding = pageBinding(this.source, this.revision),
         dpi = this.source.mimeType === "image/png" ? 0 : pdfPageDPI;
@@ -207,7 +214,10 @@ export class PageViewerSession {
           this.session,
           binding,
           job,
-          AbortSignal.any([signal, AbortSignal.timeout(Math.max(1, Math.ceil(deadline - performance.now())))]),
+          AbortSignal.any([
+            signal,
+            AbortSignal.timeout(Math.max(1, Math.ceil(deadline - performance.now()))),
+          ]),
         );
         if (!this.current(signal)) return;
         this.publish({ job });
@@ -221,7 +231,11 @@ export class PageViewerSession {
     } catch (cause) {
       // Keep the operation UUID: a lost response or local timeout does not mean
       // the daemon stopped the job. Only transport failures offer direct retry.
-      this.failure(cause, signal, cause instanceof TypeError && this.state.job?.state !== "completed");
+      this.failure(
+        cause,
+        signal,
+        cause instanceof TypeError && this.state.job?.state !== "completed",
+      );
     }
   }
   async cancel(): Promise<void> {

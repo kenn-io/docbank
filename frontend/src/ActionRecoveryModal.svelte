@@ -51,18 +51,36 @@
   let targetOffset = $state(0);
   let controller: AbortController | undefined;
   let alive = true;
-  onDestroy(() => { alive = false; controller?.abort(); });
+  onDestroy(() => {
+    alive = false;
+    controller?.abort();
+  });
   const batch = $derived(action.batches[targetBatch]);
   const visibleTargets = $derived(batch.members.slice(targetOffset, targetOffset + 50));
 
   const vaultMatches = $derived(sessionVaultID === action.vault_id);
-  const completedBatches = $derived(action.batches.filter((batch) => batch.state === "complete").length);
+  const completedBatches = $derived(
+    action.batches.filter((batch) => batch.state === "complete").length,
+  );
   const remainingBatches = $derived(action.batches.length - completedBatches);
-  const stateLabel = $derived(action.state === "prepared" ? "Pending" :
-    action.state === "sending" ? "Running" :
-    action.state[0].toUpperCase() + action.state.slice(1));
-  const runnable = $derived(!disabled && tag !== null && vaultMatches && action.checkpoint_verified &&
-    action.state !== "stale" && action.state !== "complete" && confirmed && !running && !checking);
+  const stateLabel = $derived(
+    action.state === "prepared"
+      ? "Pending"
+      : action.state === "sending"
+        ? "Running"
+        : action.state[0].toUpperCase() + action.state.slice(1),
+  );
+  const runnable = $derived(
+    !disabled &&
+      tag !== null &&
+      vaultMatches &&
+      action.checkpoint_verified &&
+      action.state !== "stale" &&
+      action.state !== "complete" &&
+      confirmed &&
+      !running &&
+      !checking,
+  );
 
   async function reload(): Promise<void> {
     const stored = await journal.load();
@@ -98,7 +116,8 @@
     failure = "";
     notice = "";
     try {
-      if (file.size > ACTION_MAX_BYTES) throw new Error("The action recovery file exceeds 128 MiB.");
+      if (file.size > ACTION_MAX_BYTES)
+        throw new Error("The action recovery file exceeds 128 MiB.");
       await journal.verifyCheckpoint(new Uint8Array(await file.arrayBuffer()));
       await reload();
       notice = "Recovery checkpoint verified.";
@@ -129,7 +148,11 @@
       onprogress(result);
     } catch (cause) {
       if (!alive) return;
-      try { await reload(); } catch { /* Preserve the mutation error. */ }
+      try {
+        await reload();
+      } catch {
+        /* Preserve the mutation error. */
+      }
       if (!alive) return;
       failure = cause instanceof Error ? cause.message : String(cause);
       if (cause instanceof APIError && cause.status === 401) onauthfailure(cause);
@@ -163,83 +186,177 @@
   }
 </script>
 
-<Modal title="Recoverable snapshot action" tone="info" width="700px"
-  maxWidth="min(700px, calc(100vw - 32px))" ariaLabel="Recoverable snapshot action"
-  onclose={() => { if (!running) onclose(); }} closeOnOverlayClick={!running && !checking}>
+<Modal
+  title="Recoverable snapshot action"
+  tone="info"
+  width="700px"
+  maxWidth="min(700px, calc(100vw - 32px))"
+  ariaLabel="Recoverable snapshot action"
+  onclose={() => {
+    if (!running) onclose();
+  }}
+  closeOnOverlayClick={!running && !checking}
+>
   <div class="recovery">
     <div class="heading">
-      <Chip size="sm" tone={action.state === "complete" ? "success" : action.state === "stale" || action.state === "uncertain" ? "warning" : "info"}
-        uppercase={false}>{stateLabel}</Chip>
-      <span>{completedBatches} completed · {remainingBatches} remaining batch{remainingBatches === 1 ? "" : "es"}</span>
+      <Chip
+        size="sm"
+        tone={action.state === "complete"
+          ? "success"
+          : action.state === "stale" || action.state === "uncertain"
+            ? "warning"
+            : "info"}
+        uppercase={false}>{stateLabel}</Chip
+      >
+      <span
+        >{completedBatches} completed · {remainingBatches} remaining batch{remainingBatches === 1
+          ? ""
+          : "es"}</span
+      >
     </div>
 
-    <p class="warning">Recovery files contain private document identities, hashes, sizes, and revisions. They never contain the browser session credential.</p>
+    <p class="warning">
+      Recovery files contain private document identities, hashes, sizes, and revisions. They never
+      contain the browser session credential.
+    </p>
 
     <dl>
-      <div><dt>Vault</dt><dd><code>{action.vault_id}</code></dd></div>
-      <div><dt>Action</dt><dd><code>{action.action_id}</code></dd></div>
-      <div><dt>Tag</dt><dd>{tag?.name ?? "Unavailable tag"} <code>{action.tag_id}</code></dd></div>
-      <div><dt>Operation</dt><dd>{action.assign ? "Add" : "Remove"} “{tag?.name ?? action.tag_id}”</dd></div>
-      <div><dt>Targets</dt><dd>{action.total} exact document{action.total === 1 ? "" : "s"}</dd></div>
+      <div>
+        <dt>Vault</dt>
+        <dd><code>{action.vault_id}</code></dd>
+      </div>
+      <div>
+        <dt>Action</dt>
+        <dd><code>{action.action_id}</code></dd>
+      </div>
+      <div>
+        <dt>Tag</dt>
+        <dd>{tag?.name ?? "Unavailable tag"} <code>{action.tag_id}</code></dd>
+      </div>
+      <div>
+        <dt>Operation</dt>
+        <dd>{action.assign ? "Add" : "Remove"} “{tag?.name ?? action.tag_id}”</dd>
+      </div>
+      <div>
+        <dt>Targets</dt>
+        <dd>{action.total} exact document{action.total === 1 ? "" : "s"}</dd>
+      </div>
     </dl>
 
     {#if !tag}
-      <p role="alert">This tag is no longer available. You can save the checkpoint or abandon the action.</p>
+      <p role="alert">
+        This tag is no longer available. You can save the checkpoint or abandon the action.
+      </p>
     {/if}
 
     <details>
       <summary>Review exact targets</summary>
-      <p>Recovery files contain instructions supplied by their creator. Checksums detect inconsistent files; they do not prove who created the file. Confirm only targets you intend to change.</p>
+      <p>
+        Recovery files contain instructions supplied by their creator. Checksums detect inconsistent
+        files; they do not prove who created the file. Confirm only targets you intend to change.
+      </p>
       <label for="action-target-batch">Target batch</label>
-        <select id="action-target-batch" value={targetBatch} onchange={(event) => { targetBatch = Number(event.currentTarget.value); targetOffset = 0; }}>
-          {#each action.batches as item (item.index)}
-            <option value={item.index}>Batch {item.index + 1} · {item.members.length} documents</option>
-          {/each}
-        </select>
+      <select
+        id="action-target-batch"
+        value={targetBatch}
+        onchange={(event) => {
+          targetBatch = Number(event.currentTarget.value);
+          targetOffset = 0;
+        }}
+      >
+        {#each action.batches as item (item.index)}
+          <option value={item.index}
+            >Batch {item.index + 1} · {item.members.length} documents</option
+          >
+        {/each}
+      </select>
       <div class="target-list">
         <table aria-label="Exact action targets">
-          <thead><tr><th>Node ID</th><th>Content version</th><th>SHA-256</th><th>Bytes</th><th>Expected revision</th></tr></thead>
-          <tbody>{#each visibleTargets as member (member.node_id)}
-            <tr><td>{member.node_id}</td><td><code>{member.content_version_id}</code></td><td><code>{member.blob_hash}</code></td><td>{member.size}</td><td>{member.revision}</td></tr>
-          {/each}</tbody>
+          <thead
+            ><tr
+              ><th>Node ID</th><th>Content version</th><th>SHA-256</th><th>Bytes</th><th
+                >Expected revision</th
+              ></tr
+            ></thead
+          >
+          <tbody
+            >{#each visibleTargets as member (member.node_id)}
+              <tr
+                ><td>{member.node_id}</td><td><code>{member.content_version_id}</code></td><td
+                  ><code>{member.blob_hash}</code></td
+                ><td>{member.size}</td><td>{member.revision}</td></tr
+              >
+            {/each}</tbody
+          >
         </table>
       </div>
       <nav class="actions" aria-label="Action target pages">
-        <span>{targetOffset + 1}–{targetOffset + visibleTargets.length} of {batch.members.length} in this batch</span>
-        <Button disabled={targetOffset === 0} onclick={() => (targetOffset -= 50)}>Previous targets</Button>
-        <Button disabled={targetOffset + 50 >= batch.members.length} onclick={() => (targetOffset += 50)}>Next targets</Button>
+        <span
+          >{targetOffset + 1}–{targetOffset + visibleTargets.length} of {batch.members.length} in this
+          batch</span
+        >
+        <Button disabled={targetOffset === 0} onclick={() => (targetOffset -= 50)}
+          >Previous targets</Button
+        >
+        <Button
+          disabled={targetOffset + 50 >= batch.members.length}
+          onclick={() => (targetOffset += 50)}>Next targets</Button
+        >
       </nav>
     </details>
 
     {#if !vaultMatches}
-      <p role="alert">This fresh browser session is connected to a different vault. This action cannot run here.</p>
+      <p role="alert">
+        This fresh browser session is connected to a different vault. This action cannot run here.
+      </p>
     {/if}
 
     <section aria-labelledby="checkpoint-heading">
       <h3 id="checkpoint-heading">Recovery checkpoint</h3>
-      <p>Save the checkpoint, then select that saved file back. A download click alone does not unlock mutation.</p>
+      <p>
+        Save the checkpoint, then select that saved file back. A download click alone does not
+        unlock mutation.
+      </p>
       <div class="actions">
-        <Button disabled={running || checking} onclick={() => void saveCheckpoint()}>Save recovery checkpoint</Button>
+        <Button disabled={running || checking} onclick={() => void saveCheckpoint()}
+          >Save recovery checkpoint</Button
+        >
         <label class:disabled={running || checking}>
           <span>Select the saved recovery checkpoint</span>
-          <input type="file" accept="application/json,.json" disabled={running || checking}
-            onchange={(event) => void verifyCheckpoint(event)} />
+          <input
+            type="file"
+            accept="application/json,.json"
+            disabled={running || checking}
+            onchange={(event) => void verifyCheckpoint(event)}
+          />
         </label>
       </div>
     </section>
 
     {#if action.state === "stale"}
-      <p class="state-copy">This action is stale. A document changed, or a tag or document is no longer available. Abandon this action and create a new one with a fresh selection. Its original targets and revisions will not be changed.</p>
+      <p class="state-copy">
+        This action is stale. A document changed, or a tag or document is no longer available.
+        Abandon this action and create a new one with a fresh selection. Its original targets and
+        revisions will not be changed.
+      </p>
     {:else if action.state === "uncertain"}
-      <p class="state-copy">The result is uncertain. Retry same operation uses every original operation identity and expected revision.</p>
+      <p class="state-copy">
+        The result is uncertain. Retry same operation uses every original operation identity and
+        expected revision.
+      </p>
     {:else if action.state === "paused"}
       <p class="state-copy">The action is paused. Resuming uses the retained original requests.</p>
     {:else if action.state === "complete"}
       <p class="state-copy">Action complete. All batches have validated receipts.</p>
     {:else if action.state === "sending" || running}
-      <p class="state-copy"><Spinner size={16} /> The action is running. Stop after the current request to pause safely.</p>
+      <p class="state-copy">
+        <Spinner size={16} /> The action is running. Stop after the current request to pause safely.
+      </p>
     {:else}
-      <p class="state-copy">The action is pending. No mutation starts before checkpoint readback and explicit confirmation.</p>
+      <p class="state-copy">
+        The action is pending. No mutation starts before checkpoint readback and explicit
+        confirmation.
+      </p>
     {/if}
 
     {#if notice}<p role="status">{notice}</p>{/if}
@@ -247,11 +364,19 @@
 
     {#if vaultMatches && action.state !== "stale" && action.state !== "complete"}
       <div class="confirmation">
-        <Checkbox checked={confirmed} disabled={disabled || !action.checkpoint_verified || running || checking}
+        <Checkbox
+          checked={confirmed}
+          disabled={disabled || !action.checkpoint_verified || running || checking}
           ariaLabel="I confirm this vault, action, tag, operation, and exact targets"
-          label="I confirm this vault, action, tag, operation, and exact targets." onchange={(value) => (confirmed = value)} />
+          label="I confirm this vault, action, tag, operation, and exact targets."
+          onchange={(value) => (confirmed = value)}
+        />
         <Button tone="info" disabled={!runnable} onclick={() => void run()}>
-          {action.state === "uncertain" ? "Retry same operation" : action.state === "paused" ? "Confirm and resume action" : "Confirm and run action"}
+          {action.state === "uncertain"
+            ? "Retry same operation"
+            : action.state === "paused"
+              ? "Confirm and resume action"
+              : "Confirm and run action"}
         </Button>
         {#if running}<Button onclick={() => void pause()}>Pause after current request</Button>{/if}
       </div>
@@ -259,36 +384,125 @@
 
     <div class="abandon">
       {#if abandonWarning}
-        <p role="alert">Abandoning deletes this browser’s journal. Completed or in-flight changes are not rolled back. Save the latest checkpoint first if you may need its receipts.</p>
-        <Button tone="danger" disabled={running} onclick={() => void abandon()}>Abandon action without rollback</Button>
+        <p role="alert">
+          Abandoning deletes this browser’s journal. Completed or in-flight changes are not rolled
+          back. Save the latest checkpoint first if you may need its receipts.
+        </p>
+        <Button tone="danger" disabled={running} onclick={() => void abandon()}
+          >Abandon action without rollback</Button
+        >
       {:else}
-        <Button surface="soft" disabled={running} onclick={() => (abandonWarning = true)}>Abandon action…</Button>
+        <Button surface="soft" disabled={running} onclick={() => (abandonWarning = true)}
+          >Abandon action…</Button
+        >
       {/if}
     </div>
   </div>
-  {#snippet footer()}<Button surface="soft" disabled={running || checking} onclick={onclose}>Close</Button>{/snippet}
+  {#snippet footer()}<Button surface="soft" disabled={running || checking} onclick={onclose}
+      >Close</Button
+    >{/snippet}
 </Modal>
 
 <style>
-  .recovery { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); }
-  .recovery p, .recovery h3 { margin: 0; }
-  .heading, .actions, .confirmation { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); }
-  .heading span { color: var(--text-muted); font-size: var(--font-size-sm); }
-  .warning { padding: var(--space-3); border: 1px solid color-mix(in srgb, var(--accent-amber) 35%, var(--border-default)); border-radius: var(--radius-md); background: color-mix(in srgb, var(--accent-amber) 8%, var(--bg-surface)); }
-  dl { display: grid; gap: var(--space-2); margin: 0; }
-  dl div { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: var(--space-3); }
-  dt { color: var(--text-muted); }
-  dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
-  section, .abandon { display: grid; gap: var(--space-3); padding-block-start: var(--space-4); border-top: 1px solid var(--border-default); }
-  h3 { font-size: var(--font-size-sm); }
-  label { display: grid; gap: var(--space-2); font-size: var(--font-size-sm); font-weight: 600; }
-  label.disabled { opacity: 0.6; }
-  .state-copy { display: flex; align-items: center; gap: var(--space-2); }
-  code { font-size: var(--font-size-xs); }
-  details > * { margin-block-start: var(--space-3); }
-  summary { cursor: pointer; }
-  .target-list { overflow-x: auto; max-height: 300px; }
-  table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: var(--font-size-xs); }
-  th, td { padding: var(--space-2); text-align: left; overflow-wrap: anywhere; border-bottom: 1px solid var(--border-default); }
-  @media (max-width: 640px) { dl div { grid-template-columns: 1fr; gap: var(--space-1); } }
+  .recovery {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-4);
+  }
+  .recovery p,
+  .recovery h3 {
+    margin: 0;
+  }
+  .heading,
+  .actions,
+  .confirmation {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+  }
+  .heading span {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+  .warning {
+    padding: var(--space-3);
+    border: 1px solid color-mix(in srgb, var(--accent-amber) 35%, var(--border-default));
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--accent-amber) 8%, var(--bg-surface));
+  }
+  dl {
+    display: grid;
+    gap: var(--space-2);
+    margin: 0;
+  }
+  dl div {
+    display: grid;
+    grid-template-columns: 90px minmax(0, 1fr);
+    gap: var(--space-3);
+  }
+  dt {
+    color: var(--text-muted);
+  }
+  dd {
+    margin: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  section,
+  .abandon {
+    display: grid;
+    gap: var(--space-3);
+    padding-block-start: var(--space-4);
+    border-top: 1px solid var(--border-default);
+  }
+  h3 {
+    font-size: var(--font-size-sm);
+  }
+  label {
+    display: grid;
+    gap: var(--space-2);
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+  }
+  label.disabled {
+    opacity: 0.6;
+  }
+  .state-copy {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  code {
+    font-size: var(--font-size-xs);
+  }
+  details > * {
+    margin-block-start: var(--space-3);
+  }
+  summary {
+    cursor: pointer;
+  }
+  .target-list {
+    overflow-x: auto;
+    max-height: 300px;
+  }
+  table {
+    width: 100%;
+    table-layout: fixed;
+    border-collapse: collapse;
+    font-size: var(--font-size-xs);
+  }
+  th,
+  td {
+    padding: var(--space-2);
+    text-align: left;
+    overflow-wrap: anywhere;
+    border-bottom: 1px solid var(--border-default);
+  }
+  @media (max-width: 640px) {
+    dl div {
+      grid-template-columns: 1fr;
+      gap: var(--space-1);
+    }
+  }
 </style>

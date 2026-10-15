@@ -2,12 +2,7 @@
   import { onDestroy, untrack } from "svelte";
   import PlusIcon from "@lucide/svelte/icons/plus";
   import XIcon from "@lucide/svelte/icons/x";
-  import {
-    Button,
-    IconButton,
-    Modal,
-    Spinner,
-  } from "@kenn-io/kit-ui";
+  import { Button, IconButton, Modal, Spinner } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
   import { changeNodeTag } from "./receipts.js";
   import { type Node, type Tag, type TagAssignmentReceipt } from "./generated/docbank.js";
@@ -49,11 +44,11 @@
   let failure = $state("");
   let notice = $state("");
   let destroyed = false;
-  onDestroy(() => { destroyed = true; });
+  onDestroy(() => {
+    destroyed = true;
+  });
 
-  const available = $derived(
-    catalog.filter((tag) => !assigned.some((item) => item.id === tag.id)),
-  );
+  const available = $derived(catalog.filter((tag) => !assigned.some((item) => item.id === tag.id)));
   const assignedGroups = $derived(groupTags(assigned));
 
   function close(): void {
@@ -77,10 +72,7 @@
       if (destroyed || session !== requestSession) return;
       currentNode = receipt.node;
       if (assign) {
-        assigned = sortTags([
-          ...assigned.filter((item) => item.id !== tag.id),
-          receipt.tag,
-        ]);
+        assigned = sortTags([...assigned.filter((item) => item.id !== tag.id), receipt.tag]);
         if (receipt.changed) currentAssignedTotal += 1;
         notice = receipt.changed
           ? `Added ${receipt.tag.name}.`
@@ -139,7 +131,11 @@
             <div class="assigned-tag">
               <div>
                 <TagLabel {tag} size="sm" />
-                <small>{tag.assignment_count} total assignment{tag.assignment_count === 1 ? "" : "s"}</small>
+                <small
+                  >{tag.assignment_count} total assignment{tag.assignment_count === 1
+                    ? ""
+                    : "s"}</small
+                >
               </div>
               <IconButton
                 size="sm"
@@ -160,7 +156,9 @@
       </div>
     {/if}
     {#if currentAssignedTotal > assigned.length}
-      <p class="bounded">Showing the first {assigned.length} of {currentAssignedTotal} assigned tags.</p>
+      <p class="bounded">
+        Showing the first {assigned.length} of {currentAssignedTotal} assigned tags.
+      </p>
     {/if}
 
     <div class="add-row">

@@ -84,9 +84,7 @@ describe("prepareCurrentDownload", () => {
     const [path, init] = vi.mocked(fetch).mock.calls[0];
     expect(path).toBe("/api/daemon/web-download");
     expect(init?.method).toBe("POST");
-    expect(new Headers(init?.headers).get("X-Docbank-Web-Session")).toBe(
-      "browser-session",
-    );
+    expect(new Headers(init?.headers).get("X-Docbank-Web-Session")).toBe("browser-session");
   });
 
   it("rejects a ready event that names different content", async () => {
@@ -198,10 +196,7 @@ describe("exact selected-source preview", () => {
     );
   }
 
-  function body(
-    overrides: Record<string, string> = {},
-    bytes = content,
-  ): Response {
+  function body(overrides: Record<string, string> = {}, bytes = content): Response {
     return new Response(bytes, {
       status: 200,
       headers: {
@@ -244,7 +239,12 @@ describe("exact selected-source preview", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(ready("renamed", "renamed-live.txt")));
 
     const prepared = await prepareExactDownload(
-      "browser-session", source, 11, "native", new AbortController().signal, () => undefined,
+      "browser-session",
+      source,
+      11,
+      "native",
+      new AbortController().signal,
+      () => undefined,
     );
 
     expect(prepared.name).toBe("renamed-live.txt");
@@ -256,15 +256,17 @@ describe("exact selected-source preview", () => {
     const controller = new AbortController();
     vi.stubGlobal(
       "fetch",
-      vi.fn()
+      vi
+        .fn()
         .mockResolvedValueOnce(ready("resolved-before-cancel"))
         .mockResolvedValueOnce(new Response(null, { status: 204 })),
     );
 
-    await expect(prepareExactDownload(
-      "browser-session", source, 11, "native", controller.signal,
-      () => controller.abort(),
-    )).rejects.toMatchObject({ name: "AbortError" });
+    await expect(
+      prepareExactDownload("browser-session", source, 11, "native", controller.signal, () =>
+        controller.abort(),
+      ),
+    ).rejects.toMatchObject({ name: "AbortError" });
     expect(vi.mocked(fetch).mock.calls[1]?.[0]).toBe(
       "/api/daemon/web-download?ticket=resolved-before-cancel",
     );
@@ -274,34 +276,30 @@ describe("exact selected-source preview", () => {
     );
     vi.stubGlobal(
       "fetch",
-      vi.fn()
+      vi
+        .fn()
         .mockResolvedValueOnce(continued)
         .mockResolvedValueOnce(new Response(null, { status: 204 })),
     );
-    await expect(prepareExactDownload(
-      "browser-session", source, 11, "native", new AbortController().signal, () => undefined,
-    )).rejects.toThrow("continued after publication");
+    await expect(
+      prepareExactDownload(
+        "browser-session",
+        source,
+        11,
+        "native",
+        new AbortController().signal,
+        () => undefined,
+      ),
+    ).rejects.toThrow("continued after publication");
     expect(vi.mocked(fetch).mock.calls[1]?.[0]).toBe(
       "/api/daemon/web-download?ticket=resolved-before-failure",
     );
   });
 
   it.each([
-    [
-      "version",
-      { "X-Docbank-Content-Version": node.current_version_id ?? "" },
-      content,
-    ],
-    [
-      "declared size",
-      { "X-Docbank-Blob-Size": String(source.size + 1) },
-      content,
-    ],
-    [
-      "received size",
-      { "Content-Length": String(source.size - 1) },
-      content.slice(0, -1),
-    ],
+    ["version", { "X-Docbank-Content-Version": node.current_version_id ?? "" }, content],
+    ["declared size", { "X-Docbank-Blob-Size": String(source.size + 1) }, content],
+    ["received size", { "Content-Length": String(source.size - 1) }, content.slice(0, -1)],
     [
       "digest",
       {
@@ -309,35 +307,29 @@ describe("exact selected-source preview", () => {
       },
       content,
     ],
-  ])(
-    "rejects a wrong received %s before decoding",
-    async (_case, headers, bytes) => {
-      vi.stubGlobal(
-        "fetch",
-        vi
-          .fn()
-          .mockResolvedValueOnce(ready())
-          .mockResolvedValueOnce(body(headers, bytes))
-          .mockResolvedValueOnce(new Response(null, { status: 204 })),
-      );
-
-      await expect(
-        readVerifiedPreview(
-          "browser-session",
-          source,
-          11,
-          new AbortController().signal,
-          () => undefined,
-        ),
-      ).rejects.toThrow("disagreed with the selected document");
-    },
-  );
-
-  it("verifies the complete digest before decoding text", async () => {
+  ])("rejects a wrong received %s before decoding", async (_case, headers, bytes) => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValueOnce(ready()).mockResolvedValueOnce(body()),
+      vi
+        .fn()
+        .mockResolvedValueOnce(ready())
+        .mockResolvedValueOnce(body(headers, bytes))
+        .mockResolvedValueOnce(new Response(null, { status: 204 })),
     );
+
+    await expect(
+      readVerifiedPreview(
+        "browser-session",
+        source,
+        11,
+        new AbortController().signal,
+        () => undefined,
+      ),
+    ).rejects.toThrow("disagreed with the selected document");
+  });
+
+  it("verifies the complete digest before decoding text", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(ready()).mockResolvedValueOnce(body()));
 
     await expect(
       readVerifiedPreview(
@@ -374,25 +366,14 @@ describe("exact selected-source preview", () => {
     );
 
     await expect(
-      readVerifiedPreview(
-        "browser-session",
-        source,
-        11,
-        controller.signal,
-        () => undefined,
-      ),
+      readVerifiedPreview("browser-session", source, 11, controller.signal, () => undefined),
     ).rejects.toMatchObject({ name: "AbortError" });
-    expect(vi.mocked(fetch).mock.calls[2]?.[0]).toBe(
-      "/api/daemon/web-download?ticket=cancel-me",
-    );
+    expect(vi.mocked(fetch).mock.calls[2]?.[0]).toBe("/api/daemon/web-download?ticket=cancel-me");
     expect(vi.mocked(fetch).mock.calls[2]?.[1]?.method).toBe("DELETE");
   });
 
   it("uses authenticated owner cancellation for a known ready ticket", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(new Response(null, { status: 204 })),
-    );
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
 
     await cancelPreparedDownload("browser-session", {
       url: "/api/daemon/web-download/file?ticket=known",
@@ -405,17 +386,29 @@ describe("exact selected-source preview", () => {
     const [path, init] = vi.mocked(fetch).mock.calls[0];
     expect(path).toBe("/api/daemon/web-download?ticket=known");
     expect(init?.method).toBe("DELETE");
-    expect(new Headers(init?.headers).get("X-Docbank-Web-Session")).toBe(
-      "browser-session",
-    );
+    expect(new Headers(init?.headers).get("X-Docbank-Web-Session")).toBe("browser-session");
   });
   it("checks image/webp original eligibility through the existing browser download", async () => {
     const mimeType = "image/webp";
-    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:verified-original") });
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(ready()).mockResolvedValueOnce(body({ "Content-Type": mimeType })));
-    const result = await readVerifiedPreview("browser-session", { ...source, mimeType }, 11, new AbortController().signal, () => {});
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: vi.fn(() => "blob:verified-original"),
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(ready())
+        .mockResolvedValueOnce(body({ "Content-Type": mimeType })),
+    );
+    const result = await readVerifiedPreview(
+      "browser-session",
+      { ...source, mimeType },
+      11,
+      new AbortController().signal,
+      () => {},
+    );
     expect(result).toEqual({ kind: "image", url: "blob:verified-original", mediaType: mimeType });
     expect(URL.createObjectURL).toHaveBeenCalledOnce();
   });
-
 });

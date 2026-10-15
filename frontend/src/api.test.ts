@@ -1,8 +1,15 @@
-
 import * as generated from "./generated/docbank.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { APIError } from "./api-transport.js";
-import { changeNodeTag, liveNodeTags, createTag, deleteTag, renameTag, restoreNode, trashNode } from "./receipts.js";
+import {
+  changeNodeTag,
+  liveNodeTags,
+  createTag,
+  deleteTag,
+  renameTag,
+  restoreNode,
+  trashNode,
+} from "./receipts.js";
 import { takeFragmentSession } from "./browser-session.js";
 
 describe("browser authentication", () => {
@@ -47,16 +54,14 @@ describe("browser authentication", () => {
   });
 
   it("revokes the session when the interface locks", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(null, { status: 204 }),
-    );
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(null, { status: 204 }));
     await generated.revokeWebSession({ session: "short-lived" });
     const [path, request] = fetchMock.mock.calls[0] ?? [];
     expect(path).toBe("/api/daemon/web-session");
     expect(request?.method).toBe("DELETE");
-    expect(new Headers(request?.headers).get("X-Docbank-Web-Session")).toBe(
-      "short-lived",
-    );
+    expect(new Headers(request?.headers).get("X-Docbank-Web-Session")).toBe("short-lived");
   });
 
   it("preserves structured daemon failures", async () => {
@@ -98,14 +103,18 @@ describe("browser authentication", () => {
   });
 
   it("addresses audit status and cursor-stable history by node ID", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
-      new Response(JSON.stringify({ enabled: true, scopes: [], items: [] }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ enabled: true, scopes: [], items: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
     );
     await generated.auditStatus({ node_id: 42 }, { session: "session" });
-    await generated.auditNodeHistory({ node_id: 42, limit: 50, cursor: "cursor +/=" }, { session: "session" });
+    await generated.auditNodeHistory(
+      { node_id: 42, limit: 50, cursor: "cursor +/=" },
+      { session: "session" },
+    );
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/audit/status?node_id=42");
     expect(fetchMock.mock.calls[1]?.[0]).toBe(
@@ -121,7 +130,9 @@ describe("browser authentication", () => {
       }),
     );
 
-    await expect(generated.listJobs({ session: "session" }).then((result) => result.items)).resolves.toEqual([]);
+    await expect(
+      generated.listJobs({ session: "session" }).then((result) => result.items),
+    ).resolves.toEqual([]);
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/jobs");
   });
 
@@ -134,7 +145,9 @@ describe("browser authentication", () => {
     const stream = await generated.mailboxEvents("synthetic-job", { session: "session" });
     expect(stream).toBe(response);
     expect(stream.bodyUsed).toBe(false);
-    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Accept")).toBe("application/x-ndjson");
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Accept")).toBe(
+      "application/x-ndjson",
+    );
     expect(await stream.text()).toBe(events);
   });
 
@@ -146,16 +159,16 @@ describe("browser authentication", () => {
       }),
     );
 
-    await generated.storageStatus((true) ? { refresh: true } : undefined, { session: "session" });
+    await generated.storageStatus(true ? { refresh: true } : undefined, { session: "session" });
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/storage?refresh=true");
   });
 
   it("reads configured backup snapshots through the browser session", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(
-        JSON.stringify({ repository: { id: "repo", path: "/backups" }, items: [] }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
+      new Response(JSON.stringify({ repository: { id: "repo", path: "/backups" }, items: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
     );
 
     await generated.listBackupSnapshots(undefined, { session: "session" });
@@ -171,25 +184,35 @@ describe("browser authentication", () => {
     );
 
     await generated.listContentVersions(42, { limit: 1000, offset: 0 }, { session: "session" });
-    expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      "/api/v1/nodes/42/versions?limit=1000&offset=0",
-    );
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/nodes/42/versions?limit=1000&offset=0");
   });
 
   it("addresses tag authority and tag-filtered search", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
-      new Response(
-        JSON.stringify({ items: [], total: 0, limit: 1000, offset: 0, hits: [] }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ items: [], total: 0, limit: 1000, offset: 0, hits: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
     );
 
     await generated.listTags({ limit: 1000, offset: 0 }, { session: "session" });
-    await generated.getTag(("11111111-1111-4111-8111-111111111111"), { session: "session" });
-    await generated.listTagNodes(("11111111-1111-4111-8111-111111111111"), { limit: 1000, offset: 0 }, { session: "session" });
-    await generated.listTagNodes(("11111111-1111-4111-8111-111111111111"), { limit: 1000, offset: 0, live_only: true }, { session: "session" });
+    await generated.getTag("11111111-1111-4111-8111-111111111111", { session: "session" });
+    await generated.listTagNodes(
+      "11111111-1111-4111-8111-111111111111",
+      { limit: 1000, offset: 0 },
+      { session: "session" },
+    );
+    await generated.listTagNodes(
+      "11111111-1111-4111-8111-111111111111",
+      { limit: 1000, offset: 0, live_only: true },
+      { session: "session" },
+    );
     await generated.listNodeTags(42, { limit: 1000, offset: 0 }, { session: "session" });
-    await generated.search({ q: "quarterly report", limit: 1000, tag_id: "11111111-1111-4111-8111-111111111111" }, { session: "session" });
+    await generated.search(
+      { q: "quarterly report", limit: 1000, tag_id: "11111111-1111-4111-8111-111111111111" },
+      { session: "session" },
+    );
 
     expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
       "/api/v1/tags?limit=1000&offset=0",
@@ -203,24 +226,38 @@ describe("browser authentication", () => {
 
   it("loads every live node tag under one before-and-after revision fence", async () => {
     const live = {
-      id: 42, parent_id: 1, name: "report.txt", kind: "file" as const,
+      id: 42,
+      parent_id: 1,
+      name: "report.txt",
+      kind: "file" as const,
       current_version_id: "11111111-1111-4111-8111-111111111111",
-      blob_hash: "a".repeat(64), size: 5, mime_type: "text/plain", revision: 8,
-      path: "/report.txt", created_at: "2026-09-11T12:00:00Z", modified_at: "2026-09-11T12:00:00Z",
+      blob_hash: "a".repeat(64),
+      size: 5,
+      mime_type: "text/plain",
+      revision: 8,
+      path: "/report.txt",
+      created_at: "2026-09-11T12:00:00Z",
+      modified_at: "2026-09-11T12:00:00Z",
     };
     const makeTag = (index: number) => ({
       id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
-      name: `tag-${index}`, revision: 1, assignment_count: 1,
+      name: `tag-${index}`,
+      revision: 1,
+      assignment_count: 1,
     });
     const requests: string[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const path = String(input);
       requests.push(path);
       if (path === "/api/v1/nodes/42") {
-        return new Response(JSON.stringify(live), { headers: { "Content-Type": "application/json" } });
+        return new Response(JSON.stringify(live), {
+          headers: { "Content-Type": "application/json" },
+        });
       }
       const offset = path.endsWith("offset=1000") ? 1000 : 0;
-      const items = Array.from({ length: offset ? 1 : 1000 }, (_, index) => makeTag(offset + index));
+      const items = Array.from({ length: offset ? 1 : 1000 }, (_, index) =>
+        makeTag(offset + index),
+      );
       return new Response(JSON.stringify({ items, total: 1001, limit: 1000, offset }), {
         headers: { "Content-Type": "application/json" },
       });
@@ -242,24 +279,62 @@ describe("browser authentication", () => {
   it.each(["revision", "duplicate", "count"])(
     "rejects a live tag listing with inconsistent %s evidence",
     async (problem) => {
-      const nodeResponse = (revision: number) => new Response(JSON.stringify({
-        id: 42, parent_id: 1, name: "report.txt", kind: "file",
-        current_version_id: "11111111-1111-4111-8111-111111111111",
-        blob_hash: "a".repeat(64), size: 5, mime_type: "text/plain", revision,
-        path: "/report.txt", created_at: "2026-09-11T12:00:00Z", modified_at: "2026-09-11T12:00:00Z",
-      }), { headers: { "Content-Type": "application/json" } });
+      const nodeResponse = (revision: number) =>
+        new Response(
+          JSON.stringify({
+            id: 42,
+            parent_id: 1,
+            name: "report.txt",
+            kind: "file",
+            current_version_id: "11111111-1111-4111-8111-111111111111",
+            blob_hash: "a".repeat(64),
+            size: 5,
+            mime_type: "text/plain",
+            revision,
+            path: "/report.txt",
+            created_at: "2026-09-11T12:00:00Z",
+            modified_at: "2026-09-11T12:00:00Z",
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
       let call = 0;
       vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
         call += 1;
         if (call === 1) return nodeResponse(8);
-        if (call === 2) return new Response(JSON.stringify({
-          items: [{ id: "00000000-0000-4000-8000-000000000001", name: "one", revision: 1, assignment_count: 1 }],
-          total: problem === "count" ? 2 : (problem === "duplicate" ? 2 : 1), limit: 1000, offset: 0,
-        }), { headers: { "Content-Type": "application/json" } });
-        if (problem === "duplicate" && call === 3) return new Response(JSON.stringify({
-          items: [{ id: "00000000-0000-4000-8000-000000000001", name: "one", revision: 1, assignment_count: 1 }],
-          total: 2, limit: 1000, offset: 1,
-        }), { headers: { "Content-Type": "application/json" } });
+        if (call === 2)
+          return new Response(
+            JSON.stringify({
+              items: [
+                {
+                  id: "00000000-0000-4000-8000-000000000001",
+                  name: "one",
+                  revision: 1,
+                  assignment_count: 1,
+                },
+              ],
+              total: problem === "count" ? 2 : problem === "duplicate" ? 2 : 1,
+              limit: 1000,
+              offset: 0,
+            }),
+            { headers: { "Content-Type": "application/json" } },
+          );
+        if (problem === "duplicate" && call === 3)
+          return new Response(
+            JSON.stringify({
+              items: [
+                {
+                  id: "00000000-0000-4000-8000-000000000001",
+                  name: "one",
+                  revision: 1,
+                  assignment_count: 1,
+                },
+              ],
+              total: 2,
+              limit: 1000,
+              offset: 1,
+            }),
+            { headers: { "Content-Type": "application/json" } },
+          );
         return nodeResponse(problem === "revision" ? 9 : 8);
       });
 
@@ -271,45 +346,43 @@ describe("browser authentication", () => {
 
   it("manages tag definitions under stable revision authority", async () => {
     const tagID = "11111111-1111-4111-8111-111111111111";
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
-      async (_path, request) => {
-        const method = request?.method;
-        if (method === "POST") {
-          return new Response(
-            JSON.stringify({
-              id: tagID,
-              name: "tax",
-              revision: 1,
-              assignment_count: 0,
-            }),
-            { status: 201, headers: { "Content-Type": "application/json" } },
-          );
-        }
-        if (method === "PATCH") {
-          return new Response(
-            JSON.stringify({
-              id: tagID,
-              name: "tax filing",
-              revision: 2,
-              assignment_count: 3,
-            }),
-            { status: 200, headers: { "Content-Type": "application/json" } },
-          );
-        }
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (_path, request) => {
+      const method = request?.method;
+      if (method === "POST") {
         return new Response(
           JSON.stringify({
-            tag: {
-              id: tagID,
-              name: "tax filing",
-              revision: 2,
-              assignment_count: 3,
-            },
-            removed_assignments: 3,
+            id: tagID,
+            name: "tax",
+            revision: 1,
+            assignment_count: 0,
+          }),
+          { status: 201, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (method === "PATCH") {
+        return new Response(
+          JSON.stringify({
+            id: tagID,
+            name: "tax filing",
+            revision: 2,
+            assignment_count: 3,
           }),
           { status: 200, headers: { "Content-Type": "application/json" } },
         );
-      },
-    );
+      }
+      return new Response(
+        JSON.stringify({
+          tag: {
+            id: tagID,
+            name: "tax filing",
+            revision: 2,
+            assignment_count: 3,
+          },
+          removed_assignments: 3,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    });
 
     await createTag("session", "tax");
     await renameTag("session", tagID, 1, "tax filing");
@@ -325,12 +398,8 @@ describe("browser authentication", () => {
       "PATCH",
       "DELETE",
     ]);
-    expect(
-      new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get("If-Match"),
-    ).toBe("1");
-    expect(
-      new Headers(fetchMock.mock.calls[2]?.[1]?.headers).get("If-Match"),
-    ).toBe("2");
+    expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get("If-Match")).toBe("1");
+    expect(new Headers(fetchMock.mock.calls[2]?.[1]?.headers).get("If-Match")).toBe("2");
   });
 
   it("trashes one stable node under its inspected revision", async () => {
@@ -374,26 +443,29 @@ describe("browser authentication", () => {
       modified_at: "2026-07-28T12:02:00Z",
       path: "/Reports/report (2).txt",
     };
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
-      new Response(
-        JSON.stringify(
-          String(input).startsWith("/api/v1/trash?")
-            ? { items: [], total: 0, limit: 1000, offset: 0 }
-            : restored,
-        ),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
-    );
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(
+        async (input) =>
+          new Response(
+            JSON.stringify(
+              String(input).startsWith("/api/v1/trash?")
+                ? { items: [], total: 0, limit: 1000, offset: 0 }
+                : restored,
+            ),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+      );
 
-    await expect(generated.listTrash({ limit: 1000, offset: 0 }, { session: "session" })).resolves.toMatchObject({
+    await expect(
+      generated.listTrash({ limit: 1000, offset: 0 }, { session: "session" }),
+    ).resolves.toMatchObject({
       total: 0,
       limit: 1000,
     });
     await expect(restoreNode("session", 42, 8)).resolves.toEqual(restored);
 
-    expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      "/api/v1/trash?limit=1000&offset=0",
-    );
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/trash?limit=1000&offset=0");
     const [path, request] = fetchMock.mock.calls[1] ?? [];
     expect(path).toBe("/api/v1/nodes/42/restore");
     expect(request?.method).toBe("POST");
@@ -428,19 +500,11 @@ describe("browser authentication", () => {
     );
 
     await expect(
-      changeNodeTag(
-        "session",
-        42,
-        7,
-        "11111111-1111-4111-8111-111111111111",
-        true,
-      ),
+      changeNodeTag("session", 42, 7, "11111111-1111-4111-8111-111111111111", true),
     ).resolves.toEqual(receipt);
 
     const [path, request] = fetchMock.mock.calls[0] ?? [];
-    expect(path).toBe(
-      "/api/v1/nodes/42/tags/11111111-1111-4111-8111-111111111111",
-    );
+    expect(path).toBe("/api/v1/nodes/42/tags/11111111-1111-4111-8111-111111111111");
     expect(request?.method).toBe("PUT");
     expect(new Headers(request?.headers).get("If-Match")).toBe("7");
   });

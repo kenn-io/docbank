@@ -1,13 +1,6 @@
 import { createHash } from "node:crypto";
 import { afterEach, expect, it, vi } from "vitest";
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import App from "./App.svelte";
 import { batchTagRequestDigest } from "./batch-tags.js";
 
@@ -21,11 +14,7 @@ afterEach(() => {
 });
 
 it("supersedes an in-flight search when its tag filter changes", async () => {
-  history.replaceState(
-    null,
-    "",
-    "/#web_session=short-lived&web_upload_secret=proof",
-  );
+  history.replaceState(null, "", "/#web_session=short-lived&web_upload_secret=proof");
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -154,13 +143,10 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
     if (url === "/api/v1/tags/33333333-3333-4333-8333-333333333333") {
       if (tagResolutionMode === "missing") {
         missingTagResolved = true;
-        return new Response(
-          JSON.stringify({ status: 404, detail: "tag not found" }),
-          {
-            status: 404,
-            headers: { "Content-Type": "application/json" },
-          },
-        );
+        return new Response(JSON.stringify({ status: 404, detail: "tag not found" }), {
+          status: 404,
+          headers: { "Content-Type": "application/json" },
+        });
       }
       if (tagResolutionMode === "renamed") {
         renamedTagResolved = true;
@@ -218,8 +204,7 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
       });
     }
     if (
-      url ===
-      "/api/v1/search?q=quarterly&limit=1000&tag_id=33333333-3333-4333-8333-333333333333"
+      url === "/api/v1/search?q=quarterly&limit=1000&tag_id=33333333-3333-4333-8333-333333333333"
     ) {
       filteredSearches += 1;
       return json({
@@ -262,14 +247,11 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
     name: "matter/acme/reviewed (6)",
   });
   expect(groupedOption.textContent).not.toContain("matter/acme/reviewed");
-  expect(
-    groupedOption.querySelector<HTMLElement>("[data-tag-swatch]")?.style
-      .backgroundColor,
-  ).toBe("rgb(188, 76, 0)");
-  await fireEvent.click(screen.getByRole("option", { name: "tax (3)" }));
-  await fireEvent.click(
-    screen.getByRole("combobox", { name: "Browse or filter by tag: tax" }),
+  expect(groupedOption.querySelector<HTMLElement>("[data-tag-swatch]")?.style.backgroundColor).toBe(
+    "rgb(188, 76, 0)",
   );
+  await fireEvent.click(screen.getByRole("option", { name: "tax (3)" }));
+  await fireEvent.click(screen.getByRole("combobox", { name: "Browse or filter by tag: tax" }));
   await fireEvent.click(screen.getByRole("option", { name: "All tags" }));
   await screen.findByText("This folder is empty");
   resolveInitialTagBrowse(
@@ -289,9 +271,7 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
   );
   await fireEvent.click(screen.getByRole("option", { name: "tax (3)" }));
   expect(await screen.findByText("tag catalog temporarily unavailable")).toBeTruthy();
-  expect(
-    screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
-  ).toBeTruthy();
+  expect(screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" })).toBeTruthy();
   expect(screen.getByText("This folder is empty")).toBeTruthy();
 
   await fireEvent.click(
@@ -300,15 +280,11 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
   await fireEvent.click(screen.getByRole("option", { name: "tax (3)" }));
   expect(await screen.findByText("Documents tagged")).toBeTruthy();
   expect(screen.getByText("tax", { selector: "strong" })).toBeTruthy();
-  expect(
-    screen.getByRole("cell", { name: "/Reports/quarterly-tax-report.txt" }),
-  ).toBeTruthy();
+  expect(screen.getByRole("cell", { name: "/Reports/quarterly-tax-report.txt" })).toBeTruthy();
   expect(screen.queryByText("superseded-tax-report.txt")).toBeNull();
   expect(screen.getByText(/1 live shown · 2 trashed omitted/)).toBeTruthy();
 
-  await fireEvent.click(
-    screen.getByRole("combobox", { name: "Browse or filter by tag: tax" }),
-  );
+  await fireEvent.click(screen.getByRole("combobox", { name: "Browse or filter by tag: tax" }));
   await fireEvent.click(screen.getByRole("option", { name: "All tags" }));
   await screen.findByText("This folder is empty");
 
@@ -381,9 +357,7 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
   const filteredSearchesBeforeBack = filteredSearches;
   tagResolutionMode = "missing";
   await fireEvent.click(back);
-  await waitFor(() =>
-    expect(filteredSearches).toBe(filteredSearchesBeforeBack + 1),
-  );
+  await waitFor(() => expect(filteredSearches).toBe(filteredSearchesBeforeBack + 1));
   await waitFor(() => expect(tagCatalogReads).toBe(3));
   expect(screen.getByRole("combobox").getAttribute("aria-label")).toContain("tax records");
   await waitFor(() => expect(missingTagResolved).toBe(true));
@@ -403,11 +377,7 @@ it("supersedes an in-flight search when its tag filter changes", async () => {
 it.each(["browse", "search"] as const)(
   "reconciles the active tag %s across failed and superseded refreshes",
   async (view) => {
-    history.replaceState(
-      null,
-      "",
-      "/#web_session=short-lived&web_upload_secret=proof",
-    );
+    history.replaceState(null, "", "/#web_session=short-lived&web_upload_secret=proof");
     vi.stubGlobal(
       "ResizeObserver",
       class {
@@ -544,8 +514,7 @@ it.each(["browse", "search"] as const)(
         });
       }
       if (
-        url ===
-        "/api/v1/search?q=quarterly&limit=1000&tag_id=33333333-3333-4333-8333-333333333333"
+        url === "/api/v1/search?q=quarterly&limit=1000&tag_id=33333333-3333-4333-8333-333333333333"
       ) {
         searchReads += 1;
         if (view === "search" && searchReads === 2) {
@@ -558,9 +527,7 @@ it.each(["browse", "search"] as const)(
           return delayedAddSearch;
         }
         return json({
-          hits: assigned
-            ? [{ node: report, path: report.path, match: "name" }]
-            : [],
+          hits: assigned ? [{ node: report, path: report.path, match: "name" }] : [],
           limit: 1000,
           truncated: false,
           tag_id: tax.id,
@@ -572,10 +539,7 @@ it.each(["browse", "search"] as const)(
       }
       if (url === "/api/v1/nodes/3") return json(report);
       if (url === "/api/v1/nodes/3/tags?limit=1000&offset=0") {
-        const items = [
-          ...(assigned ? [tax] : []),
-          ...(reviewedAssigned ? [reviewed] : []),
-        ];
+        const items = [...(assigned ? [tax] : []), ...(reviewedAssigned ? [reviewed] : [])];
         return json({
           items,
           total: items.length,
@@ -584,8 +548,7 @@ it.each(["browse", "search"] as const)(
         });
       }
       if (
-        url ===
-          "/api/v1/nodes/3/tags/33333333-3333-4333-8333-333333333333" &&
+        url === "/api/v1/nodes/3/tags/33333333-3333-4333-8333-333333333333" &&
         init?.method === "DELETE"
       ) {
         assigned = false;
@@ -600,8 +563,7 @@ it.each(["browse", "search"] as const)(
         });
       }
       if (
-        url ===
-          "/api/v1/nodes/3/tags/44444444-4444-4444-8444-444444444444" &&
+        url === "/api/v1/nodes/3/tags/44444444-4444-4444-8444-444444444444" &&
         init?.method === "DELETE"
       ) {
         reviewedAssigned = false;
@@ -617,8 +579,7 @@ it.each(["browse", "search"] as const)(
         });
       }
       if (
-        url ===
-          "/api/v1/nodes/3/tags/33333333-3333-4333-8333-333333333333" &&
+        url === "/api/v1/nodes/3/tags/33333333-3333-4333-8333-333333333333" &&
         init?.method === "PUT"
       ) {
         assigned = true;
@@ -653,13 +614,11 @@ it.each(["browse", "search"] as const)(
     await screen.findByText("2 assigned");
     const reviewedName = screen.getByText("matter/acme/reviewed");
     const reviewedLabel = reviewedName.parentElement as HTMLElement;
-    const reviewedVisual = reviewedLabel.querySelector<HTMLElement>(
-      "[aria-hidden='true']",
-    );
+    const reviewedVisual = reviewedLabel.querySelector<HTMLElement>("[aria-hidden='true']");
     expect(reviewedVisual?.textContent).toBe("reviewed");
-    expect(
-      (reviewedVisual?.firstElementChild as HTMLElement).style.backgroundColor,
-    ).toBe("rgb(130, 80, 223)");
+    expect((reviewedVisual?.firstElementChild as HTMLElement).style.backgroundColor).toBe(
+      "rgb(130, 80, 223)",
+    );
     await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
     const manage = screen.getByRole("button", { name: "Manage" });
     expect(manage.hasAttribute("disabled")).toBe(true);
@@ -683,14 +642,10 @@ it.each(["browse", "search"] as const)(
     await waitFor(() => expect(manage.hasAttribute("disabled")).toBe(false));
     await fireEvent.click(screen.getByRole("button", { name: "Manage" }));
     const auditReadsBeforeRemoval = targetAuditReads;
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Remove tag tax" }),
-    );
+    await fireEvent.click(screen.getByRole("button", { name: "Remove tag tax" }));
 
     await waitFor(() =>
-      expect(
-        screen.queryByRole("cell", { name: "/quarterly-tax-report.txt" }),
-      ).toBeNull(),
+      expect(screen.queryByRole("cell", { name: "/quarterly-tax-report.txt" })).toBeNull(),
     );
 
     if (view === "browse") {
@@ -703,13 +658,9 @@ it.each(["browse", "search"] as const)(
       await fireEvent.click(tagToAssign);
       await fireEvent.click(screen.getByRole("option", { name: "tax (0)" }));
       await fireEvent.click(screen.getByRole("button", { name: "Add tag" }));
-      expect(
-        await screen.findByRole("cell", { name: "/quarterly-tax-report.txt" }),
-      ).toBeTruthy();
+      expect(await screen.findByRole("cell", { name: "/quarterly-tax-report.txt" })).toBeTruthy();
       expect(await screen.findByText("1 live shown")).toBeTruthy();
-      expect(
-        await screen.findByText("re-added tag view temporarily unavailable"),
-      ).toBeTruthy();
+      expect(await screen.findByText("re-added tag view temporarily unavailable")).toBeTruthy();
       expect(browseReads).toBe(4);
       return;
     }
@@ -727,12 +678,8 @@ it.each(["browse", "search"] as const)(
     const tagToAssign = screen.getByRole("combobox", {
       name: "Tag to assign: Choose a tag…",
     });
-    await waitFor(() =>
-      expect(tagToAssign.hasAttribute("disabled")).toBe(false),
-    );
-    await fireEvent.click(
-      tagToAssign,
-    );
+    await waitFor(() => expect(tagToAssign.hasAttribute("disabled")).toBe(false));
+    await fireEvent.click(tagToAssign);
     await fireEvent.click(screen.getByRole("option", { name: "tax (0)" }));
     await fireEvent.click(screen.getByRole("button", { name: "Add tag" }));
     await waitFor(() => expect(searchReads).toBe(4));
@@ -751,26 +698,16 @@ it.each(["browse", "search"] as const)(
         tag_id: tax.id,
       }),
     );
-    await waitFor(() =>
-      expect(removeReviewed.hasAttribute("disabled")).toBe(false),
-    );
+    await waitFor(() => expect(removeReviewed.hasAttribute("disabled")).toBe(false));
     await fireEvent.click(removeReviewed);
     await waitFor(() => expect(reviewedDeletes).toBe(1));
-    expect(
-      await screen.findByRole("cell", { name: "/quarterly-tax-report.txt" }),
-    ).toBeTruthy();
-    await waitFor(() =>
-      expect(screen.getByText("6", { selector: "dd" })).toBeTruthy(),
-    );
+    expect(await screen.findByRole("cell", { name: "/quarterly-tax-report.txt" })).toBeTruthy();
+    await waitFor(() => expect(screen.getByText("6", { selector: "dd" })).toBeTruthy());
   },
 );
 
 it("returns to root when a nested child is trashed and refresh fails", async () => {
-  history.replaceState(
-    null,
-    "",
-    "/#web_session=short-lived&web_upload_secret=proof",
-  );
+  history.replaceState(null, "", "/#web_session=short-lived&web_upload_secret=proof");
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -891,17 +828,13 @@ it("returns to root when a nested child is trashed and refresh fails", async () 
   const confirmation = screen.getByRole("dialog", {
     name: "Move quarterly-report.txt to trash",
   });
-  await fireEvent.click(
-    within(confirmation).getByRole("button", { name: "Move to trash" }),
-  );
+  await fireEvent.click(within(confirmation).getByRole("button", { name: "Move to trash" }));
 
   await waitFor(() => expect(rootReads).toBe(2));
   expect(await screen.findByText("root temporarily unavailable")).toBeTruthy();
   expect(screen.queryByRole("cell", { name: "quarterly-report.txt" })).toBeNull();
   expect(
-    screen.getByRole("button", { name: "Back to previous directory" }).hasAttribute(
-      "disabled",
-    ),
+    screen.getByRole("button", { name: "Back to previous directory" }).hasAttribute("disabled"),
   ).toBe(true);
 
   await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
@@ -953,84 +886,73 @@ function installSelectionBackend(rootHasFiles = true) {
       status,
       headers: { "Content-Type": "application/json" },
     });
-  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
-    async (input, init) => {
-      const url = String(input);
-      if (url === "/api/v1/path?path=%2F") return json(root);
-      if (url === "/api/v1/nodes/1/children?limit=1000&offset=0") {
-        return json({
-          directory: root,
-          items: rootHasFiles ? [reports, rootFile] : [reports],
-          total: rootHasFiles ? 2 : 1,
-          limit: 1000,
-          offset: 0,
-        });
-      }
-      if (url === "/api/v1/nodes/2/children?limit=1000&offset=0") {
-        reportsReads += 1;
-        return json({
-          directory: reports,
-          items:
-            reportsReads === 1
-              ? [alpha, beta, gamma]
-              : [{ ...alpha, revision: 7 }, gamma],
-          total: reportsReads === 1 ? 3 : 2,
-          limit: 1000,
-          offset: 0,
-        });
-      }
-      if (url === "/api/v1/tags?limit=1000&offset=0") {
-        return json({ items: [tax], total: 1, limit: 1000, offset: 0 });
-      }
-      if (url.startsWith("/api/v1/audit/status?node_id=")) {
-        return json({ enabled: false, scopes: [] });
-      }
-      if (/^\/api\/v1\/nodes\/\d+\/tags\?limit=1000&offset=0$/.test(url)) {
-        return json({ items: [], total: 0, limit: 1000, offset: 0 });
-      }
-      if (url === `/api/v1/tags/${tax.id}/nodes?limit=1000&offset=0&live_only=true`) {
-        return json({
-          items: [reports, alpha, rootFile].map((node) => ({
-            node,
-            path: node.path ?? (node.parent_id === 1 ? `/${node.name}` : `/Reports/${node.name}`),
-          })),
-          total: 3,
-          limit: 1000,
-          offset: 0,
-        });
-      }
-      if (url.startsWith("/api/v1/search?")) {
-        const requestedTag = new URL(`https://docbank.local${url}`).searchParams.get(
-          "tag_id",
-        );
-        return json({
-          hits: [
-            {
-              node: { ...alpha, revision: requestedTag ? 9 : 8 },
-              path: "/Reports/alpha.txt",
-              match: "name",
-            },
-          ],
-          limit: 1000,
-          truncated: false,
-          tag_id: requestedTag ?? undefined,
-        });
-      }
-      if (url === "/api/daemon/web-session" && init?.method === "DELETE") {
-        return new Response(null, { status: 204 });
-      }
-      throw new Error(`unexpected request: ${url}`);
-    },
-  );
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === "/api/v1/path?path=%2F") return json(root);
+    if (url === "/api/v1/nodes/1/children?limit=1000&offset=0") {
+      return json({
+        directory: root,
+        items: rootHasFiles ? [reports, rootFile] : [reports],
+        total: rootHasFiles ? 2 : 1,
+        limit: 1000,
+        offset: 0,
+      });
+    }
+    if (url === "/api/v1/nodes/2/children?limit=1000&offset=0") {
+      reportsReads += 1;
+      return json({
+        directory: reports,
+        items: reportsReads === 1 ? [alpha, beta, gamma] : [{ ...alpha, revision: 7 }, gamma],
+        total: reportsReads === 1 ? 3 : 2,
+        limit: 1000,
+        offset: 0,
+      });
+    }
+    if (url === "/api/v1/tags?limit=1000&offset=0") {
+      return json({ items: [tax], total: 1, limit: 1000, offset: 0 });
+    }
+    if (url.startsWith("/api/v1/audit/status?node_id=")) {
+      return json({ enabled: false, scopes: [] });
+    }
+    if (/^\/api\/v1\/nodes\/\d+\/tags\?limit=1000&offset=0$/.test(url)) {
+      return json({ items: [], total: 0, limit: 1000, offset: 0 });
+    }
+    if (url === `/api/v1/tags/${tax.id}/nodes?limit=1000&offset=0&live_only=true`) {
+      return json({
+        items: [reports, alpha, rootFile].map((node) => ({
+          node,
+          path: node.path ?? (node.parent_id === 1 ? `/${node.name}` : `/Reports/${node.name}`),
+        })),
+        total: 3,
+        limit: 1000,
+        offset: 0,
+      });
+    }
+    if (url.startsWith("/api/v1/search?")) {
+      const requestedTag = new URL(`https://docbank.local${url}`).searchParams.get("tag_id");
+      return json({
+        hits: [
+          {
+            node: { ...alpha, revision: requestedTag ? 9 : 8 },
+            path: "/Reports/alpha.txt",
+            match: "name",
+          },
+        ],
+        limit: 1000,
+        truncated: false,
+        tag_id: requestedTag ?? undefined,
+      });
+    }
+    if (url === "/api/daemon/web-session" && init?.method === "DELETE") {
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`unexpected request: ${url}`);
+  });
   return { fetchMock, getReportsReads: () => reportsReads };
 }
 
 function prepareSelectionApp(): void {
-  history.replaceState(
-    null,
-    "",
-    "/#web_session=short-lived&web_upload_secret=proof",
-  );
+  history.replaceState(null, "", "/#web_session=short-lived&web_upload_secret=proof");
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -1053,7 +975,10 @@ it("opens an export for the exact page selection without mutation revisions or u
   fetchMock.mockImplementation(async (input, init) => {
     if (String(input) === "/api/v1/exports/sources") {
       exported = JSON.parse(String(init?.body));
-      return new Response(JSON.stringify({ detail: "Synthetic boundary stop", code: "export_role_unavailable" }), { status: 422, headers: { "Content-Type": "application/problem+json" } });
+      return new Response(
+        JSON.stringify({ detail: "Synthetic boundary stop", code: "export_role_unavailable" }),
+        { status: 422, headers: { "Content-Type": "application/problem+json" } },
+      );
     }
     return original(input, init);
   });
@@ -1063,7 +988,18 @@ it("opens an export for the exact page selection without mutation revisions or u
   const drawer = await screen.findByRole("dialog", { name: "Verified export" });
   await fireEvent.click(within(drawer).getByRole("button", { name: "Preview export" }));
   await within(drawer).findByText("Synthetic boundary stop");
-  expect(exported).toEqual({ operation_id: expect.any(String), kind: "explicit", members: [{ node_id: 3, version_id: "00000003-1111-4111-8111-111111111111", sha256: "3".repeat(64), size: 30 }] });
+  expect(exported).toEqual({
+    operation_id: expect.any(String),
+    kind: "explicit",
+    members: [
+      {
+        node_id: 3,
+        version_id: "00000003-1111-4111-8111-111111111111",
+        sha256: "3".repeat(64),
+        size: 30,
+      },
+    ],
+  });
   await fireEvent.click(within(drawer).getByRole("button", { name: "Close export" }));
   expect(screen.getByText("1 selected on this page")).toBeTruthy();
 });
@@ -1073,31 +1009,87 @@ it("switches panels while retaining the admitted export and its selected source"
   const { fetchMock } = installSelectionBackend();
   const original = fetchMock.getMockImplementation()!;
   const { exportMemberHash } = await import("./exports.js");
-  const hash = "a".repeat(64), future = "2099-01-01T00:00:00Z";
-  const memberHash = await exportMemberHash([{ node_id: 3, version_id: "00000003-1111-4111-8111-111111111111", sha256: "3".repeat(64), size: 30 }]);
+  const hash = "a".repeat(64),
+    future = "2099-01-01T00:00:00Z";
+  const memberHash = await exportMemberHash([
+    {
+      node_id: 3,
+      version_id: "00000003-1111-4111-8111-111111111111",
+      sha256: "3".repeat(64),
+      size: 30,
+    },
+  ]);
   let source: import("./exports.js").ExportSource;
   let plan: import("./exports.js").ExportPlan;
   let job: import("./exports.js").ExportJob;
   let starts = 0;
-  const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
+  const json = (value: unknown) =>
+    new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
   fetchMock.mockImplementation(async (input, init) => {
-    const path = String(input), body = init?.body ? JSON.parse(String(init.body)) : undefined;
+    const path = String(input),
+      body = init?.body ? JSON.parse(String(init.body)) : undefined;
     if (path === "/api/daemon/jobs") return json({ items: [] });
     if (path === "/api/v1/exports/sources") {
-      source = { id: body.operation_id, request_sha256: hash, kind: "explicit", state: "sealed", member_hash: memberHash, total: 1, source_bytes: 30, created_at: "2026-01-01T00:00:00Z", expires_at: future };
+      source = {
+        id: body.operation_id,
+        request_sha256: hash,
+        kind: "explicit",
+        state: "sealed",
+        member_hash: memberHash,
+        total: 1,
+        source_bytes: 30,
+        created_at: "2026-01-01T00:00:00Z",
+        expires_at: future,
+      };
       return json(source);
     }
     if (path === "/api/v1/exports/plans") {
-      plan = { format: "docbank-bundle-v1", id: body.operation_id, vault_id: "11111111-1111-4111-8111-111111111111", toolchain: "go1.27", source, roles: body.roles, fingerprint: hash, total: 1, role_entries: 1, role_bytes: 30, metadata_bytes: 100, created_at: source.created_at, expires_at: future };
+      plan = {
+        format: "docbank-bundle-v1",
+        id: body.operation_id,
+        vault_id: "11111111-1111-4111-8111-111111111111",
+        toolchain: "go1.27",
+        source,
+        roles: body.roles,
+        fingerprint: hash,
+        total: 1,
+        role_entries: 1,
+        role_bytes: 30,
+        metadata_bytes: 100,
+        created_at: source.created_at,
+        expires_at: future,
+      };
       return json(plan);
     }
-    if (path === `/api/v1/exports/plans/${plan?.id}/preview`) return json({ plan_id: plan.id, fingerprint: hash, member_hash: memberHash, total: 1, roles: [{ role: "original", available_members: 1, unavailable_members: 0, files: 1, bytes: 30 }] });
+    if (path === `/api/v1/exports/plans/${plan?.id}/preview`)
+      return json({
+        plan_id: plan.id,
+        fingerprint: hash,
+        member_hash: memberHash,
+        total: 1,
+        roles: [
+          { role: "original", available_members: 1, unavailable_members: 0, files: 1, bytes: 30 },
+        ],
+      });
     if (path === "/api/v1/exports/jobs") {
       starts++;
-      job = { id: body.operation_id, plan_id: plan.id, fingerprint: hash, state: "queued", sequence: 1, completed_roles: 0, completed_bytes: 0, attempt: 0, created_at: source.created_at, deadline: future, expires_at: future };
+      job = {
+        id: body.operation_id,
+        plan_id: plan.id,
+        fingerprint: hash,
+        state: "queued",
+        sequence: 1,
+        completed_roles: 0,
+        completed_bytes: 0,
+        attempt: 0,
+        created_at: source.created_at,
+        deadline: future,
+        expires_at: future,
+      };
       return json(job);
     }
-    if (path.startsWith(`/api/v1/exports/jobs/${job?.id}/events`)) return new Response("", { headers: { "Content-Type": "application/x-ndjson" } });
+    if (path.startsWith(`/api/v1/exports/jobs/${job?.id}/events`))
+      return new Response("", { headers: { "Content-Type": "application/x-ndjson" } });
     if (path === `/api/v1/exports/jobs/${job?.id}`) {
       return json(job);
     }
@@ -1134,7 +1126,9 @@ it("opens bounded tag assignment for the exact page selection", async () => {
   await fireEvent.click(screen.getByRole("button", { name: "Edit tags" }));
   const dialog = await screen.findByRole("dialog", { name: "Tag selected documents" });
   expect(within(dialog).getByText(/1 selected document\./)).toBeTruthy();
-  expect((within(dialog).getByRole("button", { name: "Add to all" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(
+    (within(dialog).getByRole("button", { name: "Add to all" }) as HTMLButtonElement).disabled,
+  ).toBe(true);
   await fireEvent.click(within(dialog).getByRole("button", { name: "Done" }));
   expect(screen.queryByRole("dialog", { name: "Tag selected documents" })).toBeNull();
 });
@@ -1143,14 +1137,22 @@ it("keeps the inspected source after batch tagging when the folder refresh fails
   prepareSelectionApp();
   const { fetchMock } = installSelectionBackend();
   const backend = fetchMock.getMockImplementation()!;
-  const tag = { id: "33333333-3333-4333-8333-333333333333", name: "tax", revision: 2, assignment_count: 4 };
+  const tag = {
+    id: "33333333-3333-4333-8333-333333333333",
+    name: "tax",
+    revision: 2,
+    assignment_count: 4,
+  };
   let changed = false;
-  const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), {
-    status, headers: { "Content-Type": "application/json" },
-  });
+  const json = (value: unknown, status = 200) =>
+    new Response(JSON.stringify(value), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    });
   fetchMock.mockImplementation(async (input, init) => {
     const url = String(input);
-    if (url === "/api/v1/nodes/3") return json(selectionNode(3, "readme.txt", "file", 1, changed ? 2 : 1));
+    if (url === "/api/v1/nodes/3")
+      return json(selectionNode(3, "readme.txt", "file", 1, changed ? 2 : 1));
     if (url === "/api/v1/nodes/3/tags?limit=1000&offset=0") {
       return json({ items: changed ? [tag] : [], total: changed ? 1 : 0, limit: 1000, offset: 0 });
     }
@@ -1158,16 +1160,26 @@ it("keeps the inspected source after batch tagging when the folder refresh fails
       return json({ detail: "Folder refresh unavailable" }, 503);
     }
     if (url === "/api/v1/batch/tags/preview") {
-      return json({ tag_id: tag.id, tag_revision: changed ? 2 : 1,
-        nodes: [{ node_id: 3, revision: changed ? 2 : 1, assigned: changed }] });
+      return json({
+        tag_id: tag.id,
+        tag_revision: changed ? 2 : 1,
+        nodes: [{ node_id: 3, revision: changed ? 2 : 1, assigned: changed }],
+      });
     }
     if (url === "/api/v1/batch/tags") {
       const request = JSON.parse(String(init?.body));
       changed = true;
-      return json({ version: 1, operation_id: request.operation_id,
-        request_digest: await batchTagRequestDigest(request), tag_id: tag.id, assign: true,
-        tag_revision: 2, assignment_count: 4, completed_at: "2026-09-16T12:00:00.000000000Z",
-        nodes: [{ node_id: 3, expected_revision: 1, revision: 2, changed: true }] });
+      return json({
+        version: 1,
+        operation_id: request.operation_id,
+        request_digest: await batchTagRequestDigest(request),
+        tag_id: tag.id,
+        assign: true,
+        tag_revision: 2,
+        assignment_count: 4,
+        completed_at: "2026-09-16T12:00:00.000000000Z",
+        nodes: [{ node_id: 3, expected_revision: 1, revision: 2, changed: true }],
+      });
     }
     return backend(input, init);
   });
@@ -1182,7 +1194,9 @@ it("keeps the inspected source after batch tagging when the folder refresh fails
   await fireEvent.click(screen.getByRole("button", { name: "Add to all" }));
 
   await screen.findByText("Folder refresh unavailable");
-  await waitFor(() => expect(screen.getByRole("group", { name: "Assigned tags" }).textContent).toContain("tax"));
+  await waitFor(() =>
+    expect(screen.getByRole("group", { name: "Assigned tags" }).textContent).toContain("tax"),
+  );
   expect(screen.getByRole("region", { name: "Verified content of readme.txt" })).toBeTruthy();
 });
 
@@ -1191,8 +1205,14 @@ it("uses refreshed live metadata for the selected row and tag actions", async ()
   const { fetchMock } = installSelectionBackend();
   const backend = fetchMock.getMockImplementation()!;
   const current = { ...selectionNode(3, "renamed.txt", "file", 1, 2), path: "/renamed.txt" };
-  const tag = { id: "33333333-3333-4333-8333-333333333333", name: "tax", revision: 1, assignment_count: 1 };
-  const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
+  const tag = {
+    id: "33333333-3333-4333-8333-333333333333",
+    name: "tax",
+    revision: 1,
+    assignment_count: 1,
+  };
+  const json = (value: unknown) =>
+    new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
   const revisions: (string | null)[] = [];
   fetchMock.mockImplementation(async (input, init) => {
     const url = String(input);
@@ -1202,7 +1222,11 @@ it("uses refreshed live metadata for the selected row and tag actions", async ()
     }
     if (url === `/api/v1/nodes/3/tags/${tag.id}` && init?.method === "DELETE") {
       revisions.push(new Headers(init.headers).get("If-Match"));
-      return json({ node: { ...current, revision: 3 }, tag: { ...tag, revision: 2, assignment_count: 0 }, changed: true });
+      return json({
+        node: { ...current, revision: 3 },
+        tag: { ...tag, revision: 2, assignment_count: 0 },
+        changed: true,
+      });
     }
     return backend(input, init);
   });
@@ -1216,76 +1240,114 @@ it("uses refreshed live metadata for the selected row and tag actions", async ()
   expect(revisions).toEqual(["2"]);
 });
 
-it.each(["before", "during"])("blocks document actions when content changes %s live metadata loading until the view is refreshed", async (timing) => {
-  prepareSelectionApp();
-  const { fetchMock } = installSelectionBackend();
-  const backend = fetchMock.getMockImplementation()!;
-  const original = selectionNode(3, "readme.txt", "file", 1);
-  const bytes = new TextEncoder().encode("synthetic replacement edition");
-  const replacement = {
-    ...original, revision: 2, size: bytes.length,
-    current_version_id: "44444444-4444-4444-8444-444444444444",
-    blob_hash: createHash("sha256").update(bytes).digest("hex"),
-  };
-  let folderReads = 0;
-  let liveRevision = replacement.revision;
-  const requests: { revision: number; version_id: string }[] = [];
-  const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), {
-    status, headers: { "Content-Type": "application/json" },
-  });
-  fetchMock.mockImplementation(async (input, init) => {
-    const url = String(input);
-    if (url === "/api/v1/nodes/1/children?limit=1000&offset=0") {
-      return json({ directory: selectionNode(1, "", "dir", undefined),
-        items: [++folderReads === 1 ? original : replacement], total: 1, limit: 1000, offset: 0 });
-    }
-    if (url === "/api/v1/nodes/3") return json({
-      ...replacement,
-      revision: timing === "during" && folderReads === 1 ? liveRevision++ : replacement.revision,
-    });
-    if (url === "/api/daemon/web-download") {
-      const request = JSON.parse(String(init?.body));
-      requests.push(request);
-      if (request.revision !== replacement.revision || request.version_id !== replacement.current_version_id) {
-        return json({ detail: "The selected document changed; refresh it before downloading" }, 409);
+it.each(["before", "during"])(
+  "blocks document actions when content changes %s live metadata loading until the view is refreshed",
+  async (timing) => {
+    prepareSelectionApp();
+    const { fetchMock } = installSelectionBackend();
+    const backend = fetchMock.getMockImplementation()!;
+    const original = selectionNode(3, "readme.txt", "file", 1);
+    const bytes = new TextEncoder().encode("synthetic replacement edition");
+    const replacement = {
+      ...original,
+      revision: 2,
+      size: bytes.length,
+      current_version_id: "44444444-4444-4444-8444-444444444444",
+      blob_hash: createHash("sha256").update(bytes).digest("hex"),
+    };
+    let folderReads = 0;
+    let liveRevision = replacement.revision;
+    const requests: { revision: number; version_id: string }[] = [];
+    const json = (value: unknown, status = 200) =>
+      new Response(JSON.stringify(value), {
+        status,
+        headers: { "Content-Type": "application/json" },
+      });
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === "/api/v1/nodes/1/children?limit=1000&offset=0") {
+        return json({
+          directory: selectionNode(1, "", "dir", undefined),
+          items: [++folderReads === 1 ? original : replacement],
+          total: 1,
+          limit: 1000,
+          offset: 0,
+        });
       }
-      return new Response(`${JSON.stringify({ phase: "ready", received: replacement.size, total: replacement.size,
-        url: "/api/daemon/web-download/file?ticket=replacement", name: replacement.name,
-        version_id: replacement.current_version_id, blob_hash: replacement.blob_hash })}\n`);
-    }
-    if (url === "/api/daemon/web-download/file?ticket=replacement") {
-      return new Response(bytes, { headers: {
-        "Content-Type": "text/plain", "Content-Length": String(bytes.length),
-        "Content-Digest": `sha-256=:${createHash("sha256").update(bytes).digest("base64")}:`,
-        "X-Docbank-Content-Version": replacement.current_version_id,
-        "X-Docbank-Blob-Hash": replacement.blob_hash, "X-Docbank-Blob-Size": String(bytes.length),
-      } });
-    }
-    return backend(input, init);
-  });
-  render(App);
+      if (url === "/api/v1/nodes/3")
+        return json({
+          ...replacement,
+          revision:
+            timing === "during" && folderReads === 1 ? liveRevision++ : replacement.revision,
+        });
+      if (url === "/api/daemon/web-download") {
+        const request = JSON.parse(String(init?.body));
+        requests.push(request);
+        if (
+          request.revision !== replacement.revision ||
+          request.version_id !== replacement.current_version_id
+        ) {
+          return json(
+            { detail: "The selected document changed; refresh it before downloading" },
+            409,
+          );
+        }
+        return new Response(
+          `${JSON.stringify({
+            phase: "ready",
+            received: replacement.size,
+            total: replacement.size,
+            url: "/api/daemon/web-download/file?ticket=replacement",
+            name: replacement.name,
+            version_id: replacement.current_version_id,
+            blob_hash: replacement.blob_hash,
+          })}\n`,
+        );
+      }
+      if (url === "/api/daemon/web-download/file?ticket=replacement") {
+        return new Response(bytes, {
+          headers: {
+            "Content-Type": "text/plain",
+            "Content-Length": String(bytes.length),
+            "Content-Digest": `sha-256=:${createHash("sha256").update(bytes).digest("base64")}:`,
+            "X-Docbank-Content-Version": replacement.current_version_id,
+            "X-Docbank-Blob-Hash": replacement.blob_hash,
+            "X-Docbank-Blob-Size": String(bytes.length),
+          },
+        });
+      }
+      return backend(input, init);
+    });
+    render(App);
 
-  if (timing === "during") {
-    await screen.findByText("The selected node changed while tags were loading; refresh and try again.");
-  }
-  await screen.findByText(/Refresh the current view before using document actions\./);
-  const actions = ["Manage", "Version history", "Process and retrieve", "Move to trash"];
-  for (const name of actions) {
-    expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(true);
-  }
-  expect(screen.queryByRole("region", { name: "Verified content of readme.txt" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Download verified original" })).toBeNull();
-  expect(requests.some((request) => request.revision === 2 && request.version_id === original.current_version_id)).toBe(false);
-
-  await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
-  expect(await screen.findByText("synthetic replacement edition")).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Download verified original" })).toBeTruthy();
-  await waitFor(() => {
+    if (timing === "during") {
+      await screen.findByText(
+        "The selected node changed while tags were loading; refresh and try again.",
+      );
+    }
+    await screen.findByText(/Refresh the current view before using document actions\./);
+    const actions = ["Manage", "Version history", "Process and retrieve", "Move to trash"];
     for (const name of actions) {
-      expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(false);
+      expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(true);
     }
-  });
-});
+    expect(screen.queryByRole("region", { name: "Verified content of readme.txt" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Download verified original" })).toBeNull();
+    expect(
+      requests.some(
+        (request) => request.revision === 2 && request.version_id === original.current_version_id,
+      ),
+    ).toBe(false);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
+    expect(await screen.findByText("synthetic replacement edition")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Download verified original" })).toBeTruthy();
+    await waitFor(() => {
+      for (const name of actions) {
+        expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(false);
+      }
+    });
+  },
+);
 
 it("selects displayed files without requests or changing the inspector, then reconciles a refresh", async () => {
   prepareSelectionApp();
@@ -1339,15 +1401,11 @@ it("downloads the selected visible subset in displayed order without another req
   const { fetchMock } = installSelectionBackend();
   const downloaded: Blob[] = [];
   const clicked: Array<{ download: string; href: string }> = [];
-  const createObjectURL = vi
-    .spyOn(URL, "createObjectURL")
-    .mockImplementation((blob) => {
-      downloaded.push(blob as Blob);
-      return `blob:visible-page-${downloaded.length}`;
-    });
-  const revokeObjectURL = vi
-    .spyOn(URL, "revokeObjectURL")
-    .mockImplementation(() => {});
+  const createObjectURL = vi.spyOn(URL, "createObjectURL").mockImplementation((blob) => {
+    downloaded.push(blob as Blob);
+    return `blob:visible-page-${downloaded.length}`;
+  });
+  const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
   vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(
     function (this: HTMLAnchorElement) {
       clicked.push({ download: this.download, href: this.href });
@@ -1355,16 +1413,10 @@ it("downloads the selected visible subset in displayed order without another req
   );
   render(App);
 
-  await fireEvent.dblClick(
-    await screen.findByRole("cell", { name: "Reports" }),
-  );
+  await fireEvent.dblClick(await screen.findByRole("cell", { name: "Reports" }));
   await screen.findByRole("checkbox", { name: "Select alpha.txt" });
-  await fireEvent.click(
-    screen.getByRole("checkbox", { name: "Select alpha.txt" }),
-  );
-  await fireEvent.click(
-    screen.getByRole("checkbox", { name: "Select gamma.txt" }),
-  );
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Select alpha.txt" }));
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Select gamma.txt" }));
   await fireEvent.click(screen.getByRole("button", { name: "Size" }));
   const requestsBeforeExport = fetchMock.mock.calls.length;
 
@@ -1374,31 +1426,20 @@ it("downloads the selected visible subset in displayed order without another req
 
   expect(fetchMock.mock.calls).toHaveLength(requestsBeforeExport);
   expect(createObjectURL).toHaveBeenCalledTimes(2);
-  expect(revokeObjectURL.mock.calls).toEqual([
-    ["blob:visible-page-1"],
-    ["blob:visible-page-2"],
-  ]);
+  expect(revokeObjectURL.mock.calls).toEqual([["blob:visible-page-1"], ["blob:visible-page-2"]]);
   expect(clicked).toHaveLength(2);
   expect(clicked[0]?.href).toBe("blob:visible-page-1");
-  expect(clicked[0]?.download).toMatch(
-    /^docbank-visible-page-\d{4}-\d{2}-\d{2}\.csv$/,
-  );
+  expect(clicked[0]?.download).toMatch(/^docbank-visible-page-\d{4}-\d{2}-\d{2}\.csv$/);
   expect(downloaded[0]?.type).toBe("text/csv;charset=utf-8");
 
   const bytes = new Uint8Array(await downloaded[0]!.arrayBuffer());
   expect(Array.from(bytes.slice(0, 3))).toEqual([0xef, 0xbb, 0xbf]);
 
-  const records = (await downloaded[0]!.text())
-    .split("\r\n")
-    .filter((record) => record !== "");
+  const records = (await downloaded[0]!.text()).split("\r\n").filter((record) => record !== "");
   expect(records).toHaveLength(3);
-  expect(records[1]).toContain(
-    '12,"00000012-1111-4111-8111-111111111111",1,"/Reports/gamma.txt"',
-  );
+  expect(records[1]).toContain('12,"00000012-1111-4111-8111-111111111111",1,"/Reports/gamma.txt"');
   expect(records[1]).toContain(`"${"c".repeat(64)}"`);
-  expect(records[2]).toContain(
-    '10,"00000010-1111-4111-8111-111111111111",1,"/Reports/alpha.txt"',
-  );
+  expect(records[2]).toContain('10,"00000010-1111-4111-8111-111111111111",1,"/Reports/alpha.txt"');
   expect(records[2]).toContain(`"${"a".repeat(64)}"`);
 });
 
@@ -1408,45 +1449,33 @@ it("clears page selection across folder, Back, query, tag-filter, and session tr
   render(App);
 
   await screen.findByRole("checkbox", { name: "Select readme.txt" });
-  await fireEvent.click(
-    screen.getByRole("checkbox", { name: "Select readme.txt" }),
-  );
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Select readme.txt" }));
   expect(screen.getByText("1 selected on this page")).toBeTruthy();
 
   await fireEvent.dblClick(screen.getByRole("cell", { name: "Reports" }));
   await screen.findByRole("checkbox", { name: "Select alpha.txt" });
   expect(screen.queryByText(/selected on this page/)).toBeNull();
 
-  await fireEvent.click(
-    screen.getByRole("checkbox", { name: "Select alpha.txt" }),
-  );
-  await fireEvent.click(
-    screen.getByRole("button", { name: "Back to previous directory" }),
-  );
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Select alpha.txt" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Back to previous directory" }));
   await screen.findByRole("checkbox", { name: "Select readme.txt" });
   expect(screen.queryByText(/selected on this page/)).toBeNull();
 
-  await fireEvent.click(
-    screen.getByRole("checkbox", { name: "Select readme.txt" }),
-  );
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Select readme.txt" }));
   const search = screen.getByRole("searchbox", { name: "Search documents" });
   await fireEvent.input(search, { target: { value: "alpha" } });
   await fireEvent.submit(search.closest("form")!);
   await screen.findByRole("cell", { name: "/Reports/alpha.txt" });
   expect(screen.queryByText(/selected on this page/)).toBeNull();
 
-  await fireEvent.click(
-    await screen.findByRole("checkbox", { name: "Select /Reports/alpha.txt" }),
-  );
+  await fireEvent.click(await screen.findByRole("checkbox", { name: "Select /Reports/alpha.txt" }));
   await fireEvent.click(
     screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
   );
   await fireEvent.click(screen.getByRole("option", { name: "tax (3)" }));
   await waitFor(() => expect(screen.queryByText(/selected on this page/)).toBeNull());
 
-  await fireEvent.click(
-    await screen.findByRole("checkbox", { name: "Select /Reports/alpha.txt" }),
-  );
+  await fireEvent.click(await screen.findByRole("checkbox", { name: "Select /Reports/alpha.txt" }));
   await fireEvent.click(screen.getByRole("button", { name: "Lock web session" }));
   expect(await screen.findByText("Open your Docbank")).toBeTruthy();
   expect(screen.queryByText(/selected on this page/)).toBeNull();
@@ -1509,16 +1538,24 @@ it("restores the tag view sort when returning from a tagged folder", async () =>
   installSelectionBackend();
   render(App);
   await screen.findByRole("cell", { name: "Reports" });
-  await fireEvent.click(screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }));
+  await fireEvent.click(
+    screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
+  );
   await fireEvent.click(screen.getByRole("option", { name: "tax (3)" }));
   await screen.findByRole("cell", { name: "/Reports/alpha.txt" });
-  await fireEvent.click(within(screen.getByRole("columnheader", { name: "Size" })).getByRole("button"));
-  expect(screen.getByRole("columnheader", { name: /Size/ }).getAttribute("aria-sort")).toBe("descending");
+  await fireEvent.click(
+    within(screen.getByRole("columnheader", { name: "Size" })).getByRole("button"),
+  );
+  expect(screen.getByRole("columnheader", { name: /Size/ }).getAttribute("aria-sort")).toBe(
+    "descending",
+  );
   await fireEvent.dblClick(screen.getByRole("cell", { name: "/Reports" }));
   await screen.findByRole("cell", { name: "alpha.txt" });
   await fireEvent.click(screen.getByRole("button", { name: "Back to previous directory" }));
   await screen.findByRole("cell", { name: "/Reports/alpha.txt" });
-  expect(screen.getByRole("columnheader", { name: /Size/ }).getAttribute("aria-sort")).toBe("descending");
+  expect(screen.getByRole("columnheader", { name: /Size/ }).getAttribute("aria-sort")).toBe(
+    "descending",
+  );
 });
 
 it("returns to search results after opening All files", async () => {
@@ -1557,7 +1594,9 @@ it("clears the tag filter when All files opens and restores it on Back", async (
   });
   render(App);
   await screen.findByRole("cell", { name: "Reports" });
-  await fireEvent.click(screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }));
+  await fireEvent.click(
+    screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
+  );
   await fireEvent.click(screen.getByRole("option", { name: "tax (3)" }));
   await screen.findByRole("cell", { name: "/Reports/alpha.txt" });
 
@@ -1593,12 +1632,16 @@ it("ignores a folder lookup that finishes after a newer navigation", async () =>
   let rootLookups = 0;
   fetchMock.mockImplementation(async (input, init) => {
     if (String(input) === "/api/v1/path?path=%2F" && ++rootLookups === 2) {
-      await new Promise<void>((resolve) => { releaseRootLookup = resolve; });
+      await new Promise<void>((resolve) => {
+        releaseRootLookup = resolve;
+      });
     }
     return backend(input, init);
   });
-  const rootListings = () => fetchMock.mock.calls
-    .filter(([url]) => String(url) === "/api/v1/nodes/1/children?limit=1000&offset=0").length;
+  const rootListings = () =>
+    fetchMock.mock.calls.filter(
+      ([url]) => String(url) === "/api/v1/nodes/1/children?limit=1000&offset=0",
+    ).length;
   render(App);
   await fireEvent.dblClick(await screen.findByRole("cell", { name: "Reports" }));
   await screen.findByRole("cell", { name: "alpha.txt" });
@@ -1623,39 +1666,52 @@ it("disables select-all in a folder containing only folders", async () => {
   installSelectionBackend(false);
   render(App);
   await screen.findByRole("cell", { name: "Reports" });
-  const checkbox = screen.getByRole("checkbox", { name: "Select visible documents" }) as HTMLInputElement;
+  const checkbox = screen.getByRole("checkbox", {
+    name: "Select visible documents",
+  }) as HTMLInputElement;
   checkbox.click();
   expect(checkbox.checked).toBe(false);
   expect(checkbox.disabled).toBe(true);
 });
 
-it.each(["folder", "query", "tag"])("keeps selection when loading a new %s fails", async (destination) => {
-  prepareSelectionApp();
-  const { fetchMock } = installSelectionBackend();
-  render(App);
-  await fireEvent.click(await screen.findByRole("checkbox", { name: "Select readme.txt" }));
-  const backend = fetchMock.getMockImplementation()!;
-  fetchMock.mockImplementation(async (input, init) => {
-    const url = String(input);
-    if (url.includes("/nodes/2/children?") || url.startsWith("/api/v1/search?") || url.endsWith("&live_only=true")) {
-      return new Response(JSON.stringify({ detail: "temporarily unavailable" }), { status: 503 });
+it.each(["folder", "query", "tag"])(
+  "keeps selection when loading a new %s fails",
+  async (destination) => {
+    prepareSelectionApp();
+    const { fetchMock } = installSelectionBackend();
+    render(App);
+    await fireEvent.click(await screen.findByRole("checkbox", { name: "Select readme.txt" }));
+    const backend = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (
+        url.includes("/nodes/2/children?") ||
+        url.startsWith("/api/v1/search?") ||
+        url.endsWith("&live_only=true")
+      ) {
+        return new Response(JSON.stringify({ detail: "temporarily unavailable" }), { status: 503 });
+      }
+      return backend(input, init);
+    });
+    if (destination === "folder") {
+      await fireEvent.dblClick(screen.getByRole("cell", { name: "Reports" }));
+    } else if (destination === "query") {
+      const search = screen.getByRole("searchbox", { name: "Search documents" });
+      await fireEvent.input(search, { target: { value: "alpha" } });
+      await fireEvent.submit(search.closest("form")!);
+    } else {
+      await fireEvent.click(
+        screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
+      );
+      await fireEvent.click(screen.getByRole("option", { name: "tax (3)" }));
     }
-    return backend(input, init);
-  });
-  if (destination === "folder") {
-    await fireEvent.dblClick(screen.getByRole("cell", { name: "Reports" }));
-  } else if (destination === "query") {
-    const search = screen.getByRole("searchbox", { name: "Search documents" });
-    await fireEvent.input(search, { target: { value: "alpha" } });
-    await fireEvent.submit(search.closest("form")!);
-  } else {
-    await fireEvent.click(screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }));
-    await fireEvent.click(screen.getByRole("option", { name: "tax (3)" }));
-  }
-  await screen.findByText("temporarily unavailable");
-  expect((screen.getByRole("checkbox", { name: "Select readme.txt" }) as HTMLInputElement).checked).toBe(true);
-  expect(screen.getByText("1 selected on this page")).toBeTruthy();
-});
+    await screen.findByText("temporarily unavailable");
+    expect(
+      (screen.getByRole("checkbox", { name: "Select readme.txt" }) as HTMLInputElement).checked,
+    ).toBe(true);
+    expect(screen.getByText("1 selected on this page")).toBeTruthy();
+  },
+);
 
 it("does not carry Shift from an abandoned gesture into a later toggle", async () => {
   prepareSelectionApp();
@@ -1667,7 +1723,9 @@ it("does not carry Shift from an abandoned gesture into a later toggle", async (
   await fireEvent.pointerDown(gamma, { shiftKey: true });
   await fireEvent.pointerUp(gamma.closest("td")!);
   await fireEvent.click(gamma);
-  expect((screen.getByRole("checkbox", { name: "Select beta.txt" }) as HTMLInputElement).checked).toBe(false);
+  expect(
+    (screen.getByRole("checkbox", { name: "Select beta.txt" }) as HTMLInputElement).checked,
+  ).toBe(false);
   expect(screen.getByText("2 selected on this page")).toBeTruthy();
 });
 
@@ -1676,7 +1734,9 @@ it("retains tag selection on refresh and clears it when the tag disappears", asy
   const { fetchMock } = installSelectionBackend();
   render(App);
   await screen.findByRole("cell", { name: "Reports" });
-  await fireEvent.click(screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }));
+  await fireEvent.click(
+    screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
+  );
   await fireEvent.click(screen.getByRole("option", { name: "tax (3)" }));
   await fireEvent.click(await screen.findByRole("checkbox", { name: "Select /readme.txt" }));
   await fireEvent.click(screen.getByRole("button", { name: "Refresh current view" }));
@@ -1707,9 +1767,9 @@ function prepareKeyboardApp(): Storage {
       return entries.size;
     },
     clear: () => entries.clear(),
-    getItem: key => entries.get(key) ?? null,
-    key: index => [...entries.keys()][index] ?? null,
-    removeItem: key => entries.delete(key),
+    getItem: (key) => entries.get(key) ?? null,
+    key: (index) => [...entries.keys()][index] ?? null,
+    removeItem: (key) => entries.delete(key),
     setItem: (key, value) => entries.set(key, value),
   };
   vi.stubGlobal("localStorage", storage);
@@ -1805,10 +1865,7 @@ function installKeyboardBackend(
       }
       return json({ items: [], total: 0, limit: 1000, offset: 0 });
     }
-    if (
-      url === `/api/v1/nodes/10/tags/${keyboardTagID}` &&
-      init?.method === "PUT"
-    ) {
+    if (url === `/api/v1/nodes/10/tags/${keyboardTagID}` && init?.method === "PUT") {
       writes.push({
         url,
         method: init.method,
@@ -1838,10 +1895,7 @@ function installKeyboardBackend(
         changed: true,
       });
     }
-    if (
-      mutation === "same-node-race" &&
-      url === `/api/v1/nodes/10/tags/${keyboardReviewedTagID}`
-    ) {
+    if (mutation === "same-node-race" && url === `/api/v1/nodes/10/tags/${keyboardReviewedTagID}`) {
       writes.push({
         url,
         method: init?.method ?? "",
@@ -1897,9 +1951,7 @@ function installKeyboardBackend(
 }
 
 async function configureFirstTagHotkey(): Promise<void> {
-  await fireEvent.click(
-    screen.getByRole("button", { name: "Keyboard shortcuts and tag hotkeys" }),
-  );
+  await fireEvent.click(screen.getByRole("button", { name: "Keyboard shortcuts and tag hotkeys" }));
   const slot = screen.getByRole("combobox", {
     name: "Tag shortcut 1: Unassigned",
   });
@@ -1922,9 +1974,11 @@ it("navigates the displayed page, keeps checkbox selection independent, and acti
   expect(screen.getByLabelText("Document authority for alpha.txt")).toBeTruthy();
   await fireEvent.keyDown(window, { key: " " });
   expect(
-    (screen.getByRole("checkbox", {
-      name: "Select alpha.txt",
-    }) as HTMLInputElement).checked,
+    (
+      screen.getByRole("checkbox", {
+        name: "Select alpha.txt",
+      }) as HTMLInputElement
+    ).checked,
   ).toBe(true);
   expect(screen.getByLabelText("Document authority for alpha.txt")).toBeTruthy();
 
@@ -1932,12 +1986,12 @@ it("navigates the displayed page, keeps checkbox selection independent, and acti
   expect(screen.getByLabelText("Folder for Reports")).toBeTruthy();
   await fireEvent.keyDown(window, { key: "k" });
   expect(
-    (await screen.findByRole("status", {
-      name: "Keyboard shortcut status",
-    })).textContent,
-  ).toContain(
-    "First loaded row reached.",
-  );
+    (
+      await screen.findByRole("status", {
+        name: "Keyboard shortcut status",
+      })
+    ).textContent,
+  ).toContain("First loaded row reached.");
   expect(backend.getRootReads()).toBe(requestsAtBoundary);
 
   await fireEvent.keyDown(window, { key: "j" });
@@ -1954,9 +2008,7 @@ it("navigates the displayed page, keeps checkbox selection independent, and acti
   await fireEvent.click(screen.getByRole("button", { name: "Done" }));
 
   await fireEvent.keyDown(window, { key: "/" });
-  expect(document.activeElement).toBe(
-    screen.getByRole("searchbox", { name: "Search documents" }),
-  );
+  expect(document.activeElement).toBe(screen.getByRole("searchbox", { name: "Search documents" }));
   await fireEvent.keyDown(document.activeElement!, { key: "j" });
   expect(screen.getByLabelText("Document authority for alpha.txt")).toBeTruthy();
 
@@ -1989,38 +2041,42 @@ it("persists a vault-scoped tag binding and applies it only to the inspected fil
   );
 });
 
-it.each(["Albums", "Map"])(
-  "blocks Documents tag shortcuts on the Photos %s view",
-  async (view) => {
-    const preferences = prepareKeyboardApp();
-    preferences.setItem(`docbank:tag-hotkeys:v1:${keyboardVaultID}`, JSON.stringify({
-      version: 1, bindings: { "1": keyboardTagID },
-    }));
-    const backend = installKeyboardBackend();
-    const fetchMock = vi.mocked(globalThis.fetch);
-    const original = fetchMock.getMockImplementation()!;
-    fetchMock.mockImplementation(async (input, init) => {
-      const url = String(input);
-      if (url === "/api/v1/photos/hidden") return new Response(JSON.stringify({ configured: false }));
-      if (url === "/api/v1/photos/albums") return new Response("[]");
-      if (url === "/api/v1/photos/assets/query") return new Response(JSON.stringify({ items: [], total: 0 }));
-      return original(input, init);
-    });
-    render(App);
+it.each(["Albums", "Map"])("blocks Documents tag shortcuts on the Photos %s view", async (view) => {
+  const preferences = prepareKeyboardApp();
+  preferences.setItem(
+    `docbank:tag-hotkeys:v1:${keyboardVaultID}`,
+    JSON.stringify({
+      version: 1,
+      bindings: { "1": keyboardTagID },
+    }),
+  );
+  const backend = installKeyboardBackend();
+  const fetchMock = vi.mocked(globalThis.fetch);
+  const original = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === "/api/v1/photos/hidden") return new Response(JSON.stringify({ configured: false }));
+    if (url === "/api/v1/photos/albums") return new Response("[]");
+    if (url === "/api/v1/photos/assets/query")
+      return new Response(JSON.stringify({ items: [], total: 0 }));
+    return original(input, init);
+  });
+  render(App);
 
-    await fireEvent.click(await screen.findByRole("cell", { name: "zeta.txt" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Keyboard shortcuts and tag hotkeys" }));
-    await screen.findByRole("combobox", { name: "Tag shortcut 1: tax" });
-    await fireEvent.click(screen.getByRole("button", { name: "Done" }));
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Keyboard shortcuts" })).toBeNull());
-    await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
-    await fireEvent.click(await screen.findByRole("button", { name: view }));
-    await fireEvent.keyDown(window, { key: "1" });
-    await new Promise((resolve) => setTimeout(resolve, 0));
+  await fireEvent.click(await screen.findByRole("cell", { name: "zeta.txt" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Keyboard shortcuts and tag hotkeys" }));
+  await screen.findByRole("combobox", { name: "Tag shortcut 1: tax" });
+  await fireEvent.click(screen.getByRole("button", { name: "Done" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Keyboard shortcuts" })).toBeNull(),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
+  await fireEvent.click(await screen.findByRole("button", { name: view }));
+  await fireEvent.keyDown(window, { key: "1" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(backend.writes).toEqual([]);
-  },
-);
+  expect(backend.writes).toEqual([]);
+});
 
 it.each(["click", "Enter"] as const)(
   "reloads the inspector when %s reactivates the selected file",
@@ -2029,14 +2085,22 @@ it.each(["click", "Enter"] as const)(
     const backend = installKeyboardBackend("same-node-race");
     render(App);
     const cell = await screen.findByRole("cell", { name: "zeta.txt" });
-    await waitFor(() => expect(screen.getByRole("group", { name: "Assigned tags" }).textContent).toContain("reviewed"));
+    await waitFor(() =>
+      expect(screen.getByRole("group", { name: "Assigned tags" }).textContent).toContain(
+        "reviewed",
+      ),
+    );
     expect(screen.getByRole("region", { name: "Verified content of zeta.txt" })).toBeTruthy();
 
     if (interaction === "click") await fireEvent.click(cell);
     else await fireEvent.keyDown(cell.closest("tr")!, { key: "Enter" });
     backend.resolveTagReload();
 
-    await waitFor(() => expect(screen.getByRole("group", { name: "Assigned tags" }).textContent).toContain("reviewed"));
+    await waitFor(() =>
+      expect(screen.getByRole("group", { name: "Assigned tags" }).textContent).toContain(
+        "reviewed",
+      ),
+    );
     expect(screen.getByRole("region", { name: "Verified content of zeta.txt" })).toBeTruthy();
   },
 );
@@ -2048,9 +2112,7 @@ it("loads and edits tag bindings in an empty vault", async () => {
   installKeyboardBackend("success", true);
   render(App);
 
-  await fireEvent.click(
-    screen.getByRole("button", { name: "Keyboard shortcuts and tag hotkeys" }),
-  );
+  await fireEvent.click(screen.getByRole("button", { name: "Keyboard shortcuts and tag hotkeys" }));
   const slot = await screen.findByRole("combobox", { name: "Tag shortcut 1: tax" });
   expect(slot.hasAttribute("disabled")).toBe(false);
   await fireEvent.click(slot);
@@ -2184,23 +2246,30 @@ it.each(["click", "Enter"] as const)(
     });
     expect(backend.getTagReads()).toBe(1);
   },
-  );
+);
 
 it("blocks tag shortcuts when inspected live content has changed", async () => {
   const storage = prepareKeyboardApp();
-  storage.setItem(`docbank:tag-hotkeys:v1:${keyboardVaultID}`, JSON.stringify({
-    version: 1, bindings: { "1": keyboardTagID },
-  }));
+  storage.setItem(
+    `docbank:tag-hotkeys:v1:${keyboardVaultID}`,
+    JSON.stringify({
+      version: 1,
+      bindings: { "1": keyboardTagID },
+    }),
+  );
   const backend = installKeyboardBackend();
   const fetchMock = vi.mocked(globalThis.fetch);
   const originalFetch = fetchMock.getMockImplementation()!;
   fetchMock.mockImplementation(async (input, init) => {
     if (String(input) === "/api/v1/nodes/10") {
-      return new Response(JSON.stringify({
-        ...selectionNode(10, "zeta.txt", "file", 1, 4),
-        current_version_id: "55555555-5555-4555-8555-555555555555",
-        blob_hash: "5".repeat(64),
-      }), { headers: { "Content-Type": "application/json" } });
+      return new Response(
+        JSON.stringify({
+          ...selectionNode(10, "zeta.txt", "file", 1, 4),
+          current_version_id: "55555555-5555-4555-8555-555555555555",
+          blob_hash: "5".repeat(64),
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
     }
     return originalFetch(input, init);
   });
@@ -2213,34 +2282,68 @@ it("blocks tag shortcuts when inspected live content has changed", async () => {
 
 it("refreshes open audit history when a pending tag change completes", async () => {
   const storage = prepareKeyboardApp();
-  storage.setItem(`docbank:tag-hotkeys:v1:${keyboardVaultID}`, JSON.stringify({
-    version: 1, bindings: { "1": keyboardTagID },
-  }));
+  storage.setItem(
+    `docbank:tag-hotkeys:v1:${keyboardVaultID}`,
+    JSON.stringify({
+      version: 1,
+      bindings: { "1": keyboardTagID },
+    }),
+  );
   const backend = installKeyboardBackend("pending");
   const fetchMock = vi.mocked(globalThis.fetch);
   const originalFetch = fetchMock.getMockImplementation()!;
-  const json = (value: unknown) => new Response(JSON.stringify(value), {
-    headers: { "Content-Type": "application/json" },
-  });
+  const json = (value: unknown) =>
+    new Response(JSON.stringify(value), {
+      headers: { "Content-Type": "application/json" },
+    });
   let committed = false;
   fetchMock.mockImplementation(async (input, init) => {
     const url = String(input);
-    if (url.startsWith("/api/v1/audit/status")) return json({
-      enabled: true, vault_id: keyboardVaultID, operation_sequence_high_water: committed ? 2 : 1,
-      allocation_entry_count: 1, scopes: [], membership: { node_id: 10, path: "/zeta.txt",
-        trashed: false, protected: true, scope_ids: [], baseline_digests: [] },
-    });
-    if (url.startsWith("/api/v1/audit/history?node_id=10")) return json({
-      node: selectionNode(10, "zeta.txt", "file", 1, committed ? 4 : 3),
-      path: "/zeta.txt", total: committed ? 1 : 0, limit: 50,
-      items: committed ? [{ id: "a".repeat(64), operation_id: "55555555-5555-4555-8555-555555555555",
-        operation_sequence: 2, ordinal: 0, node_id: 10, kind: "tag_assign",
-        scope_id: "66666666-6666-4666-8666-666666666666", recorded_at: "2026-09-09T00:01:00Z",
-        origin: "api", prior_node_revision: 3, resulting_node_revision: 4,
-        attachment: { kind: "tag_assignment", identity: { tag_id: keyboardTagID, node_id: 10 },
-          after: { tag_id: keyboardTagID, tag_name: "tax", node_id: 10 } },
-      }] : [],
-    });
+    if (url.startsWith("/api/v1/audit/status"))
+      return json({
+        enabled: true,
+        vault_id: keyboardVaultID,
+        operation_sequence_high_water: committed ? 2 : 1,
+        allocation_entry_count: 1,
+        scopes: [],
+        membership: {
+          node_id: 10,
+          path: "/zeta.txt",
+          trashed: false,
+          protected: true,
+          scope_ids: [],
+          baseline_digests: [],
+        },
+      });
+    if (url.startsWith("/api/v1/audit/history?node_id=10"))
+      return json({
+        node: selectionNode(10, "zeta.txt", "file", 1, committed ? 4 : 3),
+        path: "/zeta.txt",
+        total: committed ? 1 : 0,
+        limit: 50,
+        items: committed
+          ? [
+              {
+                id: "a".repeat(64),
+                operation_id: "55555555-5555-4555-8555-555555555555",
+                operation_sequence: 2,
+                ordinal: 0,
+                node_id: 10,
+                kind: "tag_assign",
+                scope_id: "66666666-6666-4666-8666-666666666666",
+                recorded_at: "2026-09-09T00:01:00Z",
+                origin: "api",
+                prior_node_revision: 3,
+                resulting_node_revision: 4,
+                attachment: {
+                  kind: "tag_assignment",
+                  identity: { tag_id: keyboardTagID, node_id: 10 },
+                  after: { tag_id: keyboardTagID, tag_name: "tax", node_id: 10 },
+                },
+              },
+            ]
+          : [],
+      });
     return originalFetch(input, init);
   });
   render(App);

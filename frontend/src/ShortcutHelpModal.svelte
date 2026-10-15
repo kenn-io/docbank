@@ -8,11 +8,7 @@
     type SelectDropdownOption,
   } from "@kenn-io/kit-ui";
   import type { Tag } from "./generated/docbank.js";
-  import {
-    TAG_HOTKEYS,
-    type TagHotkey,
-    type TagHotkeyBindings,
-  } from "./tag-hotkeys.js";
+  import { TAG_HOTKEYS, type TagHotkey, type TagHotkeyBindings } from "./tag-hotkeys.js";
 
   interface Props {
     context?: "documents" | "photos";
@@ -48,9 +44,7 @@
 
   function optionsFor(key: TagHotkey): SelectDropdownOption[] {
     const value = bindings[key] ?? "";
-    const options: SelectDropdownOption[] = [
-      { value: "", label: "Unassigned" },
-    ];
+    const options: SelectDropdownOption[] = [{ value: "", label: "Unassigned" }];
     if (value && !catalog.some((tag) => tag.id === value)) {
       options.push({
         value,
@@ -80,71 +74,74 @@
 >
   <div class="shortcut-help">
     {#if context === "documents"}
-    <section aria-labelledby="browsing-shortcuts-heading">
-      <div class="section-heading">
-        <span>Browsing</span>
-        <strong id="browsing-shortcuts-heading">Loaded-page shortcuts</strong>
-      </div>
-      <dl class="shortcut-list">
-        {#each shortcuts as shortcut (shortcut.combo)}
-          <div>
-            <dt>{shortcut.action}</dt>
-            <dd><KbdBadge keys={formatShortcutKeys(shortcut.combo)} /></dd>
-          </div>
-        {/each}
-      </dl>
-      <p class="boundary">
-        Row navigation stops at the first and last item currently loaded. It
-        does not wrap or fetch another page.
-      </p>
-    </section>
+      <section aria-labelledby="browsing-shortcuts-heading">
+        <div class="section-heading">
+          <span>Browsing</span>
+          <strong id="browsing-shortcuts-heading">Loaded-page shortcuts</strong>
+        </div>
+        <dl class="shortcut-list">
+          {#each shortcuts as shortcut (shortcut.combo)}
+            <div>
+              <dt>{shortcut.action}</dt>
+              <dd><KbdBadge keys={formatShortcutKeys(shortcut.combo)} /></dd>
+            </div>
+          {/each}
+        </dl>
+        <p class="boundary">
+          Row navigation stops at the first and last item currently loaded. It does not wrap or
+          fetch another page.
+        </p>
+      </section>
     {/if}
     {#if context === "photos" && photoShortcuts.length}
       <section aria-labelledby="photo-shortcuts-heading">
         <strong id="photo-shortcuts-heading">Photos</strong>
         <dl class="shortcut-list">
           {#each photoShortcuts as shortcut (shortcut.combo)}
-            <div><dt>{shortcut.description}</dt><dd><KbdBadge keys={formatShortcutKeys(shortcut.combo)} /></dd></div>
+            <div>
+              <dt>{shortcut.description}</dt>
+              <dd><KbdBadge keys={formatShortcutKeys(shortcut.combo)} /></dd>
+            </div>
           {/each}
         </dl>
       </section>
     {/if}
     {#if context === "documents"}
-    <section aria-labelledby="tag-shortcuts-heading">
-      <div class="section-heading">
-        <span>Tag hotkeys</span>
-        <strong id="tag-shortcuts-heading">Assign digits to vault tags</strong>
-      </div>
-      <p class="boundary">
-        Bindings stay in this browser for the current daemon run. Set them again
-        after restarting the daemon or clearing browser data.
-      </p>
-      {#if !vaultReady}
-        <p class="unavailable" role="status">
-          Tag shortcuts are unavailable until this browser session confirms the vault identity.
-        </p>
-      {/if}
-      <div class="tag-bindings">
-        {#each TAG_HOTKEYS as key (key)}
-          <div class="tag-binding">
-            <KbdBadge keys={formatShortcutKeys(key)} ariaLabel={`Digit ${key}`} />
-            <SelectDropdown
-              value={bindings[key] ?? ""}
-              options={optionsFor(key)}
-              title={`Tag shortcut ${key}`}
-              disabled={!vaultReady}
-              onchange={(tagID) => onbindingchange(key, tagID)}
-            />
-          </div>
-        {/each}
-      </div>
-      {#if catalogTotal > catalog.length}
+      <section aria-labelledby="tag-shortcuts-heading">
+        <div class="section-heading">
+          <span>Tag hotkeys</span>
+          <strong id="tag-shortcuts-heading">Assign digits to vault tags</strong>
+        </div>
         <p class="boundary">
-          Showing the first {catalog.length} of {catalogTotal} tag definitions.
-          Saved IDs outside this loaded catalog are retained as unavailable.
+          Bindings stay in this browser for the current daemon run. Set them again after restarting
+          the daemon or clearing browser data.
         </p>
-      {/if}
-    </section>
+        {#if !vaultReady}
+          <p class="unavailable" role="status">
+            Tag shortcuts are unavailable until this browser session confirms the vault identity.
+          </p>
+        {/if}
+        <div class="tag-bindings">
+          {#each TAG_HOTKEYS as key (key)}
+            <div class="tag-binding">
+              <KbdBadge keys={formatShortcutKeys(key)} ariaLabel={`Digit ${key}`} />
+              <SelectDropdown
+                value={bindings[key] ?? ""}
+                options={optionsFor(key)}
+                title={`Tag shortcut ${key}`}
+                disabled={!vaultReady}
+                onchange={(tagID) => onbindingchange(key, tagID)}
+              />
+            </div>
+          {/each}
+        </div>
+        {#if catalogTotal > catalog.length}
+          <p class="boundary">
+            Showing the first {catalog.length} of {catalogTotal} tag definitions. Saved IDs outside this
+            loaded catalog are retained as unavailable.
+          </p>
+        {/if}
+      </section>
     {/if}
   </div>
   {#snippet footer()}

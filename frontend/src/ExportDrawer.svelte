@@ -1,211 +1,621 @@
 <script lang="ts">
   import { onDestroy, untrack, tick } from "svelte";
   import XIcon from "@lucide/svelte/icons/x";
-  import { Button, Card, Checkbox, Chip, CopyButton, DetailDrawer, IconButton, SelectDropdown, Spinner, TextInput } from "@kenn-io/kit-ui";
+  import {
+    Button,
+    Card,
+    Checkbox,
+    Chip,
+    CopyButton,
+    DetailDrawer,
+    IconButton,
+    SelectDropdown,
+    Spinner,
+    TextInput,
+  } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
   import { ExportSession, type ExportInput, type ExportState } from "./exportState.js";
-  import { maxExportMembers, maxPhotoExportMembers, type RolePolicy, type ExportOptions } from "./exports.js";
+  import {
+    maxExportMembers,
+    maxPhotoExportMembers,
+    type RolePolicy,
+    type ExportOptions,
+  } from "./exports.js";
   import { formatBytes, formatDate } from "./format.js";
 
-  interface Props { session: string; open: boolean; input: ExportInput | null; notice?: string; onclose: () => void; onauthfailure: (error: unknown) => void; onactivechange?: (active: boolean) => void; onprepareanother?: () => void }
-  let { session, open, input, notice = "", onclose, onauthfailure, onactivechange, onprepareanother }: Props = $props();
+  interface Props {
+    session: string;
+    open: boolean;
+    input: ExportInput | null;
+    notice?: string;
+    onclose: () => void;
+    onauthfailure: (error: unknown) => void;
+    onactivechange?: (active: boolean) => void;
+    onprepareanother?: () => void;
+  }
+  let {
+    session,
+    open,
+    input,
+    notice = "",
+    onclose,
+    onauthfailure,
+    onactivechange,
+    onprepareanother,
+  }: Props = $props();
   let view = $state<Readonly<ExportState>>({ status: "idle" });
-  let photoFormat = $state("jpeg"), quality = $state("90"), longEdge = $state("");
-  let includeMetadata = $state(true), removeGPS = $state(true);
+  let photoFormat = $state("jpeg"),
+    quality = $state("90"),
+    longEdge = $state("");
+  let includeMetadata = $state(true),
+    removeGPS = $state(true);
   const photo = $derived(input && "photos" in input);
-  const validLongEdge = $derived(longEdge === "" || /^\d+$/.test(longEdge) && +longEdge >= 1 && +longEdge <= 100000);
-  const validQuality = $derived(photoFormat === "png" || /^\d+$/.test(quality) && +quality >= 1 && +quality <= 100);
+  const validLongEdge = $derived(
+    longEdge === "" || (/^\d+$/.test(longEdge) && +longEdge >= 1 && +longEdge <= 100000),
+  );
+  const validQuality = $derived(
+    photoFormat === "png" || (/^\d+$/.test(quality) && +quality >= 1 && +quality <= 100),
+  );
   const validPhotoSettings = $derived(validQuality && validLongEdge);
   let basename = $state("docbank-bundle.zip");
-  let original = $state("required"), text = $state("omit"), pages = $state("omit");
-  let emailPDF = $state("omit"), attachments = $state("omit"), partial = $state("strict"), duplicates = $state("preserve"), packaging = $state("flat"), recipe = $state("");
-  const controller = new ExportSession(untrack(() => session), next => view = next);
+  let original = $state("required"),
+    text = $state("omit"),
+    pages = $state("omit");
+  let emailPDF = $state("omit"),
+    attachments = $state("omit"),
+    partial = $state("strict"),
+    duplicates = $state("preserve"),
+    packaging = $state("flat"),
+    recipe = $state("");
+  const controller = new ExportSession(
+    untrack(() => session),
+    (next) => (view = next),
+  );
   let authFailureHandled = false;
-  const options = [{ value: "omit", label: "Do not include" }, { value: "required", label: "Required — fail if unavailable" }, { value: "optional", label: "Optional — allow unavailable" }];
+  const options = [
+    { value: "omit", label: "Do not include" },
+    { value: "required", label: "Required — fail if unavailable" },
+    { value: "optional", label: "Optional — allow unavailable" },
+  ];
   const memberLimit = $derived(photo ? maxPhotoExportMembers : maxExportMembers);
-  const count = $derived(input ? ("members" in input ? input.members.length : "snapshot" in input ? input.snapshot.total : input.total) : 0);
-  const recipeOptions = $derived([{ value: "", label: "Choose a retained recipe" }, ...(view.recipes ?? []).map(choice => ({ value: choice.recipe_sha256, label: `${choice.paper} · Chromium ${choice.renderer_version} · ${choice.messages}/${count} messages${choice.ambiguous ? ` · ${choice.ambiguous} ambiguous` : ""}` }))]);
+  const count = $derived(
+    input
+      ? "members" in input
+        ? input.members.length
+        : "snapshot" in input
+          ? input.snapshot.total
+          : input.total
+      : 0,
+  );
+  const recipeOptions = $derived([
+    { value: "", label: "Choose a retained recipe" },
+    ...(view.recipes ?? []).map((choice) => ({
+      value: choice.recipe_sha256,
+      label: `${choice.paper} · Chromium ${choice.renderer_version} · ${choice.messages}/${count} messages${choice.ambiguous ? ` · ${choice.ambiguous} ambiguous` : ""}`,
+    })),
+  ]);
   const busy = $derived(["preparing", "starting", "running"].includes(view.status));
   const admitted = $derived(view.active);
   const plan = $derived(admitted?.plan ?? view.reviewed?.plan);
   const receipt = $derived(admitted?.job?.receipt);
-  const terminal = $derived(admitted?.job && ["completed", "failed", "canceled"].includes(admitted.job.state));
+  const terminal = $derived(
+    admitted?.job && ["completed", "failed", "canceled"].includes(admitted.job.state),
+  );
   $effect(() => onactivechange?.(!!view.active));
 
   $effect(() => {
     const current = input;
-    const policies: RolePolicy[] = [["original", original], ["text", text], ["pages", pages]]
+    const policies: RolePolicy[] = [
+      ["original", original],
+      ["text", text],
+      ["pages", pages],
+    ]
       .filter(([, choice]) => choice !== "omit")
-      .map(([role, choice]) => ({ role: role!, ...(choice === "optional" ? { allow_unavailable: true } : {}) }));
+      .map(([role, choice]) => ({
+        role: role!,
+        ...(choice === "optional" ? { allow_unavailable: true } : {}),
+      }));
     if (emailPDF !== "omit") {
       const optional = partial === "partial" ? { allow_unavailable: true } : {};
       policies.push({ role: "email_pdf", recipe_sha256: recipe, ...optional });
       if (attachments !== "omit") policies.push({ role: "attachment_original", ...optional });
-      if (attachments === "pdf") policies.push({ role: "attachment_pdf", recipe_sha256: recipe, ...optional });
+      if (attachments === "pdf")
+        policies.push({ role: "attachment_pdf", recipe_sha256: recipe, ...optional });
     }
     const planOptions: ExportOptions = {
-      ...(!photo && duplicates !== "preserve" ? { duplicate_policy: "collapse_exact_content" } : {}),
-      ...(!photo && packaging !== "flat" ? { volume_limits: { roles: packaging === "one" ? 1 : 1000, role_bytes: 512 * 2 ** 20 } } : {}),
+      ...(!photo && duplicates !== "preserve"
+        ? { duplicate_policy: "collapse_exact_content" }
+        : {}),
+      ...(!photo && packaging !== "flat"
+        ? { volume_limits: { roles: packaging === "one" ? 1 : 1000, role_bytes: 512 * 2 ** 20 } }
+        : {}),
     };
     if (current && "photos" in current) {
       policies.splice(0, policies.length, { role: "photo_rendered" });
-      planOptions.photo_render = { format: photoFormat, quality: Number(quality), long_edge: longEdge === "" ? 0 : Number(longEdge), include_metadata: includeMetadata, remove_gps: includeMetadata && removeGPS };
+      planOptions.photo_render = {
+        format: photoFormat,
+        quality: Number(quality),
+        long_edge: longEdge === "" ? 0 : Number(longEdge),
+        include_metadata: includeMetadata,
+        remove_gps: includeMetadata && removeGPS,
+      };
     }
     if (current) untrack(() => controller.choose(current, policies, planOptions));
   });
   $effect(() => {
-    if (!open) untrack(() => { controller.close(); });
-    else untrack(() => {
-      // A new photo export captures current membership, even when its query and count match.
-      if (input && "photos" in input) controller.resetPreparation();
-      if (view.active && view.status === "disconnected") void controller.reconnect();
-    });
+    if (!open)
+      untrack(() => {
+        controller.close();
+      });
+    else
+      untrack(() => {
+        // A new photo export captures current membership, even when its query and count match.
+        if (input && "photos" in input) controller.resetPreparation();
+        if (view.active && view.status === "disconnected") void controller.reconnect();
+      });
   });
   $effect(() => {
-    const error = [view.error, view.problemsError].find(error => error instanceof APIError && error.status === 401);
-    if (error instanceof APIError && error.status === 401) untrack(() => {
-      if (authFailureHandled) return;
-      authFailureHandled = true;
-      onauthfailure(error); close();
-    });
+    const error = [view.error, view.problemsError].find(
+      (error) => error instanceof APIError && error.status === 401,
+    );
+    if (error instanceof APIError && error.status === 401)
+      untrack(() => {
+        if (authFailureHandled) return;
+        authFailureHandled = true;
+        onauthfailure(error);
+        close();
+      });
   });
   onDestroy(() => controller.dispose());
-  function close(): void { controller.close(); onclose(); }
+  function close(): void {
+    controller.close();
+    onclose();
+  }
   async function prepareAnother(): Promise<void> {
     const resetInput = photo || !!notice;
     await controller.clearFinished();
     if (!view.active && resetInput) onprepareanother?.();
   }
-  async function findRecipes(): Promise<void> { recipe = ""; await tick(); await controller.discoverRecipes(); }
+  async function findRecipes(): Promise<void> {
+    recipe = "";
+    await tick();
+    await controller.discoverRecipes();
+  }
 </script>
 
 {#if open}
   <DetailDrawer width="min(760px, 100vw)" ariaLabel="Verified export" onclose={close}>
     {#snippet header()}
       <div class="drawer-heading">
-        <div><span>{photo ? "Photo export" : "Document export"}</span><strong>Preview and download</strong><small>Exact versions · verified ZIP archive</small></div>
-        <IconButton size="sm" ariaLabel="Close export" onclick={close}><XIcon size="16" aria-hidden="true" /></IconButton>
+        <div>
+          <span>{photo ? "Photo export" : "Document export"}</span><strong
+            >Preview and download</strong
+          ><small>Exact versions · verified ZIP archive</small>
+        </div>
+        <IconButton size="sm" ariaLabel="Close export" onclick={close}
+          ><XIcon size="16" aria-hidden="true" /></IconButton
+        >
       </div>
     {/snippet}
     <div class="exports">
       {#if notice}<p role="alert" class="error">{notice}</p>{/if}
       <section class="source" aria-label="Export source">
-        <span>Source</span><strong>{admitted?.label ?? input?.label ?? "No source selected"}</strong>
-        <p>{(plan?.total ?? count).toLocaleString()} {photo ? "photo" : "exact document"}{(plan?.total ?? count) === 1 ? "" : "s"}</p>
-        {#if !admitted && input && "snapshot" in input}<p>All frozen pages are copied and checked before planning. Changes to the live query do not change this source.</p>{/if}
-        {#if !admitted && input && "collectionID" in input}<p>Completed import receipts freeze the original imported versions. Later edits and changes to the live collection do not change this source.</p>{/if}
-        {#if count > memberLimit}<p class="error">Choose at most {memberLimit.toLocaleString()} {photo ? "photos" : "documents"}.</p>{/if}
+        <span>Source</span><strong>{admitted?.label ?? input?.label ?? "No source selected"}</strong
+        >
+        <p>
+          {(plan?.total ?? count).toLocaleString()}
+          {photo ? "photo" : "exact document"}{(plan?.total ?? count) === 1 ? "" : "s"}
+        </p>
+        {#if !admitted && input && "snapshot" in input}<p>
+            All frozen pages are copied and checked before planning. Changes to the live query do
+            not change this source.
+          </p>{/if}
+        {#if !admitted && input && "collectionID" in input}<p>
+            Completed import receipts freeze the original imported versions. Later edits and changes
+            to the live collection do not change this source.
+          </p>{/if}
+        {#if count > memberLimit}<p class="error">
+            Choose at most {memberLimit.toLocaleString()}
+            {photo ? "photos" : "documents"}.
+          </p>{/if}
       </section>
 
       <section class="choices" aria-label="Download settings">
         <label for="export-basename">Downloaded ZIP filename</label>
-        <TextInput id="export-basename" ariaLabel="Downloaded ZIP filename" bind:value={basename} block />
-        {#if !photo}<p>Changing the filename does not change the reviewed files or require another preview.</p>{/if}
+        <TextInput
+          id="export-basename"
+          ariaLabel="Downloaded ZIP filename"
+          bind:value={basename}
+          block
+        />
+        {#if !photo}<p>
+            Changing the filename does not change the reviewed files or require another preview.
+          </p>{/if}
       </section>
 
       {#if !admitted}
         <section class="choices" aria-label="Export choices">
           {#if photo}
-            <div class="role-choice"><strong>Format</strong><SelectDropdown title="Photo format" value={photoFormat} options={[{ value: "jpeg", label: "JPEG" }, { value: "png", label: "PNG" }]} onchange={value => { photoFormat = value; if (value === "png") quality = "90"; }} /></div>
-            {#if photoFormat === "jpeg"}<p>JPEG gives transparent areas a white background.</p>{/if}
-            {#if photoFormat === "jpeg"}<label for="photo-export-quality">JPEG quality, 1–100</label><TextInput id="photo-export-quality" ariaLabel="JPEG quality" bind:value={quality} block />{/if}
-            {#if !validQuality}<p role="alert" class="error">Enter a whole number from 1 to 100 for JPEG quality to enable Prepare.</p>{/if}
-            <label for="photo-export-edge">Long edge, pixels</label><TextInput id="photo-export-edge" ariaLabel="Long edge, pixels" bind:value={longEdge} placeholder="Original size" block />
-            <p>1 to 100,000 pixels. Blank keeps the original size. Smaller originals keep their size. Up to 16 photos, each at most 100 million pixels.</p>
-            {#if !validLongEdge}<p role="alert" class="error"><!-- One string preserves the exact alert text through formatting. -->{"Enter a whole number from 1 to 100,000 pixels or leave Long edge blank to enable Prepare."}</p>{/if}
-            <p>Supported sources: JPEG, PNG, GIF and static WebP; embedded JPEG previews from ARW, DNG, CR2, NEF and RAF.</p>
-            <Checkbox label="Include image metadata" checked={includeMetadata} onchange={checked => includeMetadata = checked} />
-            <Checkbox label="Remove GPS" checked={removeGPS} disabled={!includeMetadata} onchange={checked => removeGPS = checked} />
-            <p>Location names stay.</p>
-            <p>The ZIP manifest records original filenames, vault paths and source hashes. Color profiles stay attached to preserve appearance.</p>
-            <Button tone="info" disabled={busy || count === 0 || count > memberLimit || !validPhotoSettings} onclick={() => void controller.preview()}>{view.status === "preparing" ? "Preparing…" : "Prepare"}</Button>
-          {:else}
-          <div class="role-choice"><strong>Email body PDFs</strong><SelectDropdown title="Email body PDF" value={emailPDF} options={[{ value: "omit", label: "Do not include" }, { value: "include", label: "Include retained body PDFs" }]} onchange={value => { emailPDF = value; if (value === "include") { original = "omit"; packaging = "bounded"; } }} /></div>
-          {#if emailPDF !== "omit"}
-            <div class="email-choices">
-              <p>Each body stays a separate verified PDF. Choose a qualified retained recipe; this export does not render missing PDFs or concatenate attachments.</p>
-              <Button disabled={busy || count === 0 || count > memberLimit} onclick={() => void findRecipes()}>Find retained PDF recipes</Button>
-              {#if view.recipes}
-                {#if view.recipes.length}<SelectDropdown title="Retained PDF recipe" value={recipe} options={recipeOptions} onchange={value => recipe = value} />
-                {:else}<p>No qualified retained body PDF recipe was found. Generate the message PDFs first, then find recipes again.</p>{/if}
-              {/if}
-              <div class="role-choice"><strong>Attachments</strong><SelectDropdown title="Email attachment outputs" value={attachments} options={[{ value: "omit", label: "Body PDF only" }, { value: "original", label: "Include original attachments" }, { value: "pdf", label: "Originals + separate qualified PDFs" }]} onchange={value => attachments = value} /></div>
-              {#if attachments !== "omit"}
-                <Button disabled={busy} onclick={() => void controller.publicationPage(0)}>Find attachment sets</Button>
-                {#if view.publications}
-                  {#if view.publications.total}
-                    <p>These messages have more than one published attachment set. Choose one per message before previewing. No set is chosen automatically.</p>
-                    {#each view.publications.items as choice (`${choice.version_id}:${choice.operation_id}`)}
-                      <label class="publication-choice">
-                        <input type="radio" name={`publication-${choice.version_id}`} checked={view.publicationSelections?.[choice.version_id] === choice.operation_id} onchange={() => controller.selectPublication(choice.version_id, choice.operation_id)} />
-                        <span><strong>{choice.name}</strong> · {choice.attachments} attachments · {choice.state}<br />
-                          {formatDate(choice.created_at)} · <code>{choice.operation_id}</code><br />
-                          <small>Message {choice.node_id} · version {choice.version_id.slice(0, 8)} · generation {choice.generation_id.slice(0, 12)}</small>
-                        </span>
-                      </label>
-                    {/each}
-                    <div class="actions">
-                      {#if view.publications.after > 0}<Button disabled={busy} onclick={() => void controller.publicationPage(Math.max(0, view.publications!.after - 50))}>Previous attachment sets</Button>{/if}
-                      {#if view.publications.next > 0}<Button disabled={busy} onclick={() => void controller.publicationPage(view.publications!.next)}>Next attachment sets</Button>{/if}
-                    </div>
-                  {:else}<p>Each message has at most one attachment set. No choice is needed.</p>{/if}
-                {/if}
-              {/if}
-              <p>Only qualified nested-email PDFs are supported as separate attachment derivatives. Other child formats remain originals with unavailable PDF entries. Existing PDF attachments are originals, not rendered derivatives.</p>
-              <div class="role-choice"><strong>Unavailable outputs</strong><SelectDropdown title="Partial email export" value={partial} options={[{ value: "strict", label: "Fail if any output is unavailable" }, { value: "partial", label: "Allow declared unavailable outputs" }]} onchange={value => partial = value} /></div>
+            <div class="role-choice">
+              <strong>Format</strong><SelectDropdown
+                title="Photo format"
+                value={photoFormat}
+                options={[
+                  { value: "jpeg", label: "JPEG" },
+                  { value: "png", label: "PNG" },
+                ]}
+                onchange={(value) => {
+                  photoFormat = value;
+                  if (value === "png") quality = "90";
+                }}
+              />
             </div>
-          {/if}
-          <div class="role-choice"><strong>Original files</strong><SelectDropdown title="Original export policy" value={original} {options} onchange={value => original = value} /></div>
-          <div class="role-choice"><strong>Retained text</strong><SelectDropdown title="Text export policy" value={text} {options} onchange={value => text = value} /></div>
-          <div class="role-choice"><strong>Page images</strong><SelectDropdown title="Pages export policy" value={pages} {options} onchange={value => pages = value} /></div>
-          <p>Required roles stop the plan if any document is unavailable. Optional roles record those omissions in the bundle.</p>
-          <div class="role-choice"><strong>Duplicates</strong><SelectDropdown title="Duplicate outputs" value={duplicates} options={[{ value: "preserve", label: "Preserve every occurrence" }, { value: "collapse", label: "Share exact duplicate outputs" }]} onchange={value => duplicates = value} /></div>
-          <p>Sharing is explicit and keeps every occurrence in the manifest. Equal subjects or Message-ID values never establish a duplicate.</p>
-          <div class="role-choice"><strong>ZIP packaging</strong><SelectDropdown title="ZIP packaging" value={packaging} options={[{ value: "flat", label: "Single flat archive" }, { value: "bounded", label: "Up to 1,000 outputs / 512 MiB per volume" }, { value: "one", label: "One output / 512 MiB per volume" }]} onchange={value => packaging = value} /></div>
-          {#if packaging !== "flat"}<p>One browser download contains numbered ZIP volumes and a complete parent manifest. No output is split; an output over 512 MiB stops planning.</p>{/if}
-          <Button tone="info" disabled={busy || count === 0 || count > memberLimit || [original, text, pages, emailPDF].every(value => value === "omit") || emailPDF !== "omit" && !recipe} onclick={() => void controller.preview()}>
-            {view.status === "preparing" ? "Copying source and freezing plan…" : "Preview export"}
-          </Button>
+            {#if photoFormat === "jpeg"}<p>JPEG gives transparent areas a white background.</p>{/if}
+            {#if photoFormat === "jpeg"}<label for="photo-export-quality">JPEG quality, 1–100</label
+              ><TextInput
+                id="photo-export-quality"
+                ariaLabel="JPEG quality"
+                bind:value={quality}
+                block
+              />{/if}
+            {#if !validQuality}<p role="alert" class="error">
+                Enter a whole number from 1 to 100 for JPEG quality to enable Prepare.
+              </p>{/if}
+            <label for="photo-export-edge">Long edge, pixels</label><TextInput
+              id="photo-export-edge"
+              ariaLabel="Long edge, pixels"
+              bind:value={longEdge}
+              placeholder="Original size"
+              block
+            />
+            <p>
+              1 to 100,000 pixels. Blank keeps the original size. Smaller originals keep their size.
+              Up to 16 photos, each at most 100 million pixels.
+            </p>
+            {#if !validLongEdge}<p role="alert" class="error">
+                <!-- One string preserves the exact alert text through formatting. -->{"Enter a whole number from 1 to 100,000 pixels or leave Long edge blank to enable Prepare."}
+              </p>{/if}
+            <p>
+              Supported sources: JPEG, PNG, GIF and static WebP; embedded JPEG previews from ARW,
+              DNG, CR2, NEF and RAF.
+            </p>
+            <Checkbox
+              label="Include image metadata"
+              checked={includeMetadata}
+              onchange={(checked) => (includeMetadata = checked)}
+            />
+            <Checkbox
+              label="Remove GPS"
+              checked={removeGPS}
+              disabled={!includeMetadata}
+              onchange={(checked) => (removeGPS = checked)}
+            />
+            <p>Location names stay.</p>
+            <p>
+              The ZIP manifest records original filenames, vault paths and source hashes. Color
+              profiles stay attached to preserve appearance.
+            </p>
+            <Button
+              tone="info"
+              disabled={busy || count === 0 || count > memberLimit || !validPhotoSettings}
+              onclick={() => void controller.preview()}
+              >{view.status === "preparing" ? "Preparing…" : "Prepare"}</Button
+            >
+          {:else}
+            <div class="role-choice">
+              <strong>Email body PDFs</strong><SelectDropdown
+                title="Email body PDF"
+                value={emailPDF}
+                options={[
+                  { value: "omit", label: "Do not include" },
+                  { value: "include", label: "Include retained body PDFs" },
+                ]}
+                onchange={(value) => {
+                  emailPDF = value;
+                  if (value === "include") {
+                    original = "omit";
+                    packaging = "bounded";
+                  }
+                }}
+              />
+            </div>
+            {#if emailPDF !== "omit"}
+              <div class="email-choices">
+                <p>
+                  Each body stays a separate verified PDF. Choose a qualified retained recipe; this
+                  export does not render missing PDFs or concatenate attachments.
+                </p>
+                <Button
+                  disabled={busy || count === 0 || count > memberLimit}
+                  onclick={() => void findRecipes()}>Find retained PDF recipes</Button
+                >
+                {#if view.recipes}
+                  {#if view.recipes.length}<SelectDropdown
+                      title="Retained PDF recipe"
+                      value={recipe}
+                      options={recipeOptions}
+                      onchange={(value) => (recipe = value)}
+                    />
+                  {:else}<p>
+                      No qualified retained body PDF recipe was found. Generate the message PDFs
+                      first, then find recipes again.
+                    </p>{/if}
+                {/if}
+                <div class="role-choice">
+                  <strong>Attachments</strong><SelectDropdown
+                    title="Email attachment outputs"
+                    value={attachments}
+                    options={[
+                      { value: "omit", label: "Body PDF only" },
+                      { value: "original", label: "Include original attachments" },
+                      { value: "pdf", label: "Originals + separate qualified PDFs" },
+                    ]}
+                    onchange={(value) => (attachments = value)}
+                  />
+                </div>
+                {#if attachments !== "omit"}
+                  <Button disabled={busy} onclick={() => void controller.publicationPage(0)}
+                    >Find attachment sets</Button
+                  >
+                  {#if view.publications}
+                    {#if view.publications.total}
+                      <p>
+                        These messages have more than one published attachment set. Choose one per
+                        message before previewing. No set is chosen automatically.
+                      </p>
+                      {#each view.publications.items as choice (`${choice.version_id}:${choice.operation_id}`)}
+                        <label class="publication-choice">
+                          <input
+                            type="radio"
+                            name={`publication-${choice.version_id}`}
+                            checked={view.publicationSelections?.[choice.version_id] ===
+                              choice.operation_id}
+                            onchange={() =>
+                              controller.selectPublication(choice.version_id, choice.operation_id)}
+                          />
+                          <span
+                            ><strong>{choice.name}</strong> · {choice.attachments} attachments · {choice.state}<br
+                            />
+                            {formatDate(choice.created_at)} · <code>{choice.operation_id}</code><br
+                            />
+                            <small
+                              >Message {choice.node_id} · version {choice.version_id.slice(0, 8)} · generation
+                              {choice.generation_id.slice(0, 12)}</small
+                            >
+                          </span>
+                        </label>
+                      {/each}
+                      <div class="actions">
+                        {#if view.publications.after > 0}<Button
+                            disabled={busy}
+                            onclick={() =>
+                              void controller.publicationPage(
+                                Math.max(0, view.publications!.after - 50),
+                              )}>Previous attachment sets</Button
+                          >{/if}
+                        {#if view.publications.next > 0}<Button
+                            disabled={busy}
+                            onclick={() => void controller.publicationPage(view.publications!.next)}
+                            >Next attachment sets</Button
+                          >{/if}
+                      </div>
+                    {:else}<p>
+                        Each message has at most one attachment set. No choice is needed.
+                      </p>{/if}
+                  {/if}
+                {/if}
+                <p>
+                  Only qualified nested-email PDFs are supported as separate attachment derivatives.
+                  Other child formats remain originals with unavailable PDF entries. Existing PDF
+                  attachments are originals, not rendered derivatives.
+                </p>
+                <div class="role-choice">
+                  <strong>Unavailable outputs</strong><SelectDropdown
+                    title="Partial email export"
+                    value={partial}
+                    options={[
+                      { value: "strict", label: "Fail if any output is unavailable" },
+                      { value: "partial", label: "Allow declared unavailable outputs" },
+                    ]}
+                    onchange={(value) => (partial = value)}
+                  />
+                </div>
+              </div>
+            {/if}
+            <div class="role-choice">
+              <strong>Original files</strong><SelectDropdown
+                title="Original export policy"
+                value={original}
+                {options}
+                onchange={(value) => (original = value)}
+              />
+            </div>
+            <div class="role-choice">
+              <strong>Retained text</strong><SelectDropdown
+                title="Text export policy"
+                value={text}
+                {options}
+                onchange={(value) => (text = value)}
+              />
+            </div>
+            <div class="role-choice">
+              <strong>Page images</strong><SelectDropdown
+                title="Pages export policy"
+                value={pages}
+                {options}
+                onchange={(value) => (pages = value)}
+              />
+            </div>
+            <p>
+              Required roles stop the plan if any document is unavailable. Optional roles record
+              those omissions in the bundle.
+            </p>
+            <div class="role-choice">
+              <strong>Duplicates</strong><SelectDropdown
+                title="Duplicate outputs"
+                value={duplicates}
+                options={[
+                  { value: "preserve", label: "Preserve every occurrence" },
+                  { value: "collapse", label: "Share exact duplicate outputs" },
+                ]}
+                onchange={(value) => (duplicates = value)}
+              />
+            </div>
+            <p>
+              Sharing is explicit and keeps every occurrence in the manifest. Equal subjects or
+              Message-ID values never establish a duplicate.
+            </p>
+            <div class="role-choice">
+              <strong>ZIP packaging</strong><SelectDropdown
+                title="ZIP packaging"
+                value={packaging}
+                options={[
+                  { value: "flat", label: "Single flat archive" },
+                  { value: "bounded", label: "Up to 1,000 outputs / 512 MiB per volume" },
+                  { value: "one", label: "One output / 512 MiB per volume" },
+                ]}
+                onchange={(value) => (packaging = value)}
+              />
+            </div>
+            {#if packaging !== "flat"}<p>
+                One browser download contains numbered ZIP volumes and a complete parent manifest.
+                No output is split; an output over 512 MiB stops planning.
+              </p>{/if}
+            <Button
+              tone="info"
+              disabled={busy ||
+                count === 0 ||
+                count > memberLimit ||
+                [original, text, pages, emailPDF].every((value) => value === "omit") ||
+                (emailPDF !== "omit" && !recipe)}
+              onclick={() => void controller.preview()}
+            >
+              {view.status === "preparing" ? "Copying source and freezing plan…" : "Preview export"}
+            </Button>
           {/if}
         </section>
       {/if}
 
-      {#if !photo}<aside class="original-note">Originals are not redacted or sanitized by annotation overlays. Original file bytes remain unchanged.</aside>{/if}
+      {#if !photo}<aside class="original-note">
+          Originals are not redacted or sanitized by annotation overlays. Original file bytes remain
+          unchanged.
+        </aside>{/if}
 
       {#if view.error}<p role="alert" class="error">{view.error.message}</p>
         {#if photo && !admitted && view.error instanceof APIError && view.error.code === "export_role_unavailable"}
-          <p>{input && "photos" in input && input.photos.asset_ids?.length ? "Remove the unavailable photo from your selection and retry." : "Switch to Export selection and select photos without the unavailable photo."}</p>
+          <p>
+            {input && "photos" in input && input.photos.asset_ids?.length
+              ? "Remove the unavailable photo from your selection and retry."
+              : "Switch to Export selection and select photos without the unavailable photo."}
+          </p>
         {/if}
-        {#if !admitted}<Button onclick={() => controller.resetPreparation()}>Start over</Button>{/if}
+        {#if !admitted}<Button onclick={() => controller.resetPreparation()}>Start over</Button
+          >{/if}
       {/if}
-      {#if view.status === "preparing"}<div role="status"><Spinner size={16} /> {photo ? "Rendering photos…" : "Checking exact membership and retained roles…"}</div>{/if}
-      {#if view.status === "expired"}<p role="status">Export authority expired. A fresh preview is required before starting another export.</p>{/if}
+      {#if view.status === "preparing"}<div role="status">
+          <Spinner size={16} />
+          {photo ? "Rendering photos…" : "Checking exact membership and retained roles…"}
+        </div>{/if}
+      {#if view.status === "expired"}<p role="status">
+          Export authority expired. A fresh preview is required before starting another export.
+        </p>{/if}
 
       {#if plan}
-        <Card level="default" padding="sm" title={admitted ? "Admitted export plan" : "Review this frozen plan"}>
+        <Card
+          level="default"
+          padding="sm"
+          title={admitted ? "Admitted export plan" : "Review this frozen plan"}
+        >
           <dl>
-            <div><dt>{plan.photo_render ? "Photos" : "Documents"}</dt><dd data-testid="export-total">{plan.total.toLocaleString()}</dd></div>
-            {#if plan.photo_render}<div><dt>Photo format</dt><dd>{plan.photo_render.format.toUpperCase()} · {plan.photo_render.long_edge || "Original"} pixels</dd></div><div><dt>Embedded RAW previews</dt><dd>{plan.embedded_previews ?? 0}</dd></div>{/if}
-            <div><dt>Role bytes</dt><dd>{formatBytes(plan.role_bytes)} · {plan.role_entries.toLocaleString()} files</dd></div>
+            <div>
+              <dt>{plan.photo_render ? "Photos" : "Documents"}</dt>
+              <dd data-testid="export-total">{plan.total.toLocaleString()}</dd>
+            </div>
+            {#if plan.photo_render}<div>
+                <dt>Photo format</dt>
+                <dd>
+                  {plan.photo_render.format.toUpperCase()} · {plan.photo_render.long_edge ||
+                    "Original"} pixels
+                </dd>
+              </div>
+              <div>
+                <dt>Embedded RAW previews</dt>
+                <dd>{plan.embedded_previews ?? 0}</dd>
+              </div>{/if}
+            <div>
+              <dt>Role bytes</dt>
+              <dd>{formatBytes(plan.role_bytes)} · {plan.role_entries.toLocaleString()} files</dd>
+            </div>
             {#if plan.counts && !plan.photo_render}
-              <div><dt>Message occurrences</dt><dd data-testid="export-message-count">{plan.counts.messages.toLocaleString()}</dd></div>
-              <div><dt>Attachment occurrences</dt><dd data-testid="export-attachment-count">{plan.counts.attachments.toLocaleString()}</dd></div>
-              <div><dt>Separate PDFs</dt><dd>{plan.counts.email_pdfs} bodies · {plan.counts.attachment_pdfs} attachments</dd></div>
-              <div><dt>PDF pages</dt><dd data-testid="export-page-count">{plan.counts.pages.toLocaleString()}</dd></div>
-              <div><dt>Shared duplicate outputs</dt><dd>{plan.counts.collapsed.toLocaleString()}</dd></div>
-              <div><dt>Unavailable</dt><dd>{plan.counts.unavailable} outputs · {plan.counts.unavailable_inventories} inventories</dd></div>
+              <div>
+                <dt>Message occurrences</dt>
+                <dd data-testid="export-message-count">{plan.counts.messages.toLocaleString()}</dd>
+              </div>
+              <div>
+                <dt>Attachment occurrences</dt>
+                <dd data-testid="export-attachment-count">
+                  {plan.counts.attachments.toLocaleString()}
+                </dd>
+              </div>
+              <div>
+                <dt>Separate PDFs</dt>
+                <dd>{plan.counts.email_pdfs} bodies · {plan.counts.attachment_pdfs} attachments</dd>
+              </div>
+              <div>
+                <dt>PDF pages</dt>
+                <dd data-testid="export-page-count">{plan.counts.pages.toLocaleString()}</dd>
+              </div>
+              <div>
+                <dt>Shared duplicate outputs</dt>
+                <dd>{plan.counts.collapsed.toLocaleString()}</dd>
+              </div>
+              <div>
+                <dt>Unavailable</dt>
+                <dd>
+                  {plan.counts.unavailable} outputs · {plan.counts.unavailable_inventories} inventories
+                </dd>
+              </div>
             {/if}
-            {#if plan.volume_limits}<div><dt>Nested ZIP volumes</dt><dd>{plan.volumes ?? 0} in one download</dd></div>{/if}
-            <div><dt>Download filename</dt><dd>{basename}</dd></div>
-            <div><dt>Plan expires</dt><dd>{formatDate(plan.expires_at)}</dd></div>
+            {#if plan.volume_limits}<div>
+                <dt>Nested ZIP volumes</dt>
+                <dd>{plan.volumes ?? 0} in one download</dd>
+              </div>{/if}
+            <div>
+              <dt>Download filename</dt>
+              <dd>{basename}</dd>
+            </div>
+            <div>
+              <dt>Plan expires</dt>
+              <dd>{formatDate(plan.expires_at)}</dd>
+            </div>
           </dl>
-          <p>Role bytes estimate payload only. The final ZIP size includes metadata and archive overhead.</p>
-          <div class="identity"><span>Member SHA-256</span><code data-testid="export-member-hash">{plan.source.member_hash}</code><CopyButton text={plan.source.member_hash} ariaLabel="Copy export member hash" /></div>
-          <div class="identity"><span>Plan fingerprint</span><code data-testid="export-plan-fingerprint">{plan.fingerprint}</code><CopyButton text={plan.fingerprint} ariaLabel="Copy export plan fingerprint" /></div>
+          <p>
+            Role bytes estimate payload only. The final ZIP size includes metadata and archive
+            overhead.
+          </p>
+          <div class="identity">
+            <span>Member SHA-256</span><code data-testid="export-member-hash"
+              >{plan.source.member_hash}</code
+            ><CopyButton text={plan.source.member_hash} ariaLabel="Copy export member hash" />
+          </div>
+          <div class="identity">
+            <span>Plan fingerprint</span><code data-testid="export-plan-fingerprint"
+              >{plan.fingerprint}</code
+            ><CopyButton text={plan.fingerprint} ariaLabel="Copy export plan fingerprint" />
+          </div>
           {#if view.reviewed?.plan.id === plan.id}
             <div class="role-summaries">
               {#each view.reviewed.preview.roles as role (role.role)}
-                <div class="role-summary"><strong>{role.role.replaceAll("_", " ")}</strong><Chip size="xs" tone={role.unavailable_members ? "warning" : "success"}>{role.available_members} available · {role.unavailable_members} unavailable</Chip><span>{role.files} files · {role.collapsed_files ?? 0} shared · {formatBytes(role.bytes)}</span>
+                <div class="role-summary">
+                  <strong>{role.role.replaceAll("_", " ")}</strong><Chip
+                    size="xs"
+                    tone={role.unavailable_members ? "warning" : "success"}
+                    >{role.available_members} available · {role.unavailable_members} unavailable</Chip
+                  ><span
+                    >{role.files} files · {role.collapsed_files ?? 0} shared · {formatBytes(
+                      role.bytes,
+                    )}</span
+                  >
                   {#if role.unavailable_reason}<p>{role.unavailable_reason}</p>{/if}
                 </div>
               {/each}
@@ -216,45 +626,135 @@
           <section class="problems" aria-label="Unavailable export outputs">
             <strong>Partial export — unavailable outputs remain declared</strong>
             {#if view.problems}
-              <p>Showing {view.problems.after + 1}–{view.problems.after + view.problems.items.length} of {view.problems.total}. A message can have both available and unavailable attachments.</p>
+              <p>
+                Showing {view.problems.after + 1}–{view.problems.after + view.problems.items.length} of
+                {view.problems.total}. A message can have both available and unavailable
+                attachments.
+              </p>
               {#each view.problems.items as problem, i (`${view.problems.after}:${i}`)}
-                <div><code>{problem.node_id}/{problem.version_id}{problem.part_path ? ` · part ${problem.part_path}` : ""}</code><p>{problem.role.replaceAll("_", " ")}: {problem.reason}</p></div>
+                <div>
+                  <code
+                    >{problem.node_id}/{problem.version_id}{problem.part_path
+                      ? ` · part ${problem.part_path}`
+                      : ""}</code
+                  >
+                  <p>{problem.role.replaceAll("_", " ")}: {problem.reason}</p>
+                </div>
               {/each}
               {#if !admitted || terminal}<div class="actions">
-                {#if view.problems.after > 0}<Button size="sm" disabled={view.problemsLoading} onclick={() => void controller.problemPage(Math.max(0, view.problems!.after - 50))}>Previous unavailable outputs</Button>{/if}
-                {#if view.problems.next > 0}<Button size="sm" disabled={view.problemsLoading} onclick={() => void controller.problemPage(view.problems!.next)}>Next unavailable outputs</Button>{/if}
-              </div>{/if}
-            {:else if view.problemsLoading}<p role="status">Loading unavailable output details…</p>{/if}
+                  {#if view.problems.after > 0}<Button
+                      size="sm"
+                      disabled={view.problemsLoading}
+                      onclick={() =>
+                        void controller.problemPage(Math.max(0, view.problems!.after - 50))}
+                      >Previous unavailable outputs</Button
+                    >{/if}
+                  {#if view.problems.next > 0}<Button
+                      size="sm"
+                      disabled={view.problemsLoading}
+                      onclick={() => void controller.problemPage(view.problems!.next)}
+                      >Next unavailable outputs</Button
+                    >{/if}
+                </div>{/if}
+            {:else if view.problemsLoading}<p role="status">
+                Loading unavailable output details…
+              </p>{/if}
             {#if view.problemsError}
               <p role="alert" class="error">{view.problemsError.message}</p>
               {#if !view.problems && (!admitted || terminal) && view.status !== "expired"}
-                <Button size="sm" disabled={view.problemsLoading} onclick={() => void controller.problemPage(0)}>Retry unavailable output details</Button>
+                <Button
+                  size="sm"
+                  disabled={view.problemsLoading}
+                  onclick={() => void controller.problemPage(0)}
+                  >Retry unavailable output details</Button
+                >
               {/if}
             {/if}
           </section>
         {/if}
         {#if !admitted && view.reviewed}
-          <Button tone="info" disabled={view.status !== "ready"} onclick={() => void controller.start()}>Start reviewed export</Button>
+          <Button
+            tone="info"
+            disabled={view.status !== "ready"}
+            onclick={() => void controller.start()}>Start reviewed export</Button
+          >
         {/if}
       {/if}
 
       {#if admitted}
         <section class="job" aria-label="Export job" aria-live="polite">
-          <strong>{view.status === "completed" ? "Archive verified and ready" : view.status === "disconnected" ? "Disconnected — server work may continue" : view.status === "canceled" ? "Export canceled" : view.status === "failed" ? "Export failed" : view.status === "expired" ? "Export expired" : "Building verified archive"}</strong>
-          {#if admitted.job}<p>{admitted.job.completed_roles.toLocaleString()} of {admitted.plan.role_entries.toLocaleString()} role files · {formatBytes(admitted.job.completed_bytes)} of {formatBytes(admitted.plan.role_bytes)} payload processed</p>{/if}
-          {#if view.gap}<p>Progress advanced to a newer current-state snapshot. Intermediate updates were not replayed.</p>{/if}
+          <strong
+            >{view.status === "completed"
+              ? "Archive verified and ready"
+              : view.status === "disconnected"
+                ? "Disconnected — server work may continue"
+                : view.status === "canceled"
+                  ? "Export canceled"
+                  : view.status === "failed"
+                    ? "Export failed"
+                    : view.status === "expired"
+                      ? "Export expired"
+                      : "Building verified archive"}</strong
+          >
+          {#if admitted.job}<p>
+              {admitted.job.completed_roles.toLocaleString()} of {admitted.plan.role_entries.toLocaleString()}
+              role files · {formatBytes(admitted.job.completed_bytes)} of {formatBytes(
+                admitted.plan.role_bytes,
+              )} payload processed
+            </p>{/if}
+          {#if view.gap}<p>
+              Progress advanced to a newer current-state snapshot. Intermediate updates were not
+              replayed.
+            </p>{/if}
           {#if admitted.job?.failure}<p class="error">{admitted.job.failure}</p>{/if}
           {#if receipt}
-            <dl><div><dt>Final ZIP size</dt><dd data-testid="export-archive-size" data-bytes={receipt.size} title={`${receipt.size.toLocaleString()} bytes`}>{formatBytes(receipt.size)}</dd></div><div><dt>Archive entries</dt><dd>{receipt.entries.toLocaleString()}</dd></div></dl>
-            <div class="identity"><span>Archive SHA-256</span><code data-testid="export-archive-hash">{receipt.sha256}</code><CopyButton text={receipt.sha256} ariaLabel="Copy archive hash" /></div>
-            <Button tone="info" disabled={view.downloading || view.releasing || view.status === "expired"} onclick={() => void controller.download(basename)}>{view.downloading ? "Reverifying download…" : "Download verified ZIP"}</Button>
-            <p>{view.downloadOffered ? "Download handed to your browser. Check its download list for completion." : "Docbank verified the server archive. Your browser handles the download; its completion is separate."}</p>
+            <dl>
+              <div>
+                <dt>Final ZIP size</dt>
+                <dd
+                  data-testid="export-archive-size"
+                  data-bytes={receipt.size}
+                  title={`${receipt.size.toLocaleString()} bytes`}
+                >
+                  {formatBytes(receipt.size)}
+                </dd>
+              </div>
+              <div>
+                <dt>Archive entries</dt>
+                <dd>{receipt.entries.toLocaleString()}</dd>
+              </div>
+            </dl>
+            <div class="identity">
+              <span>Archive SHA-256</span><code data-testid="export-archive-hash"
+                >{receipt.sha256}</code
+              ><CopyButton text={receipt.sha256} ariaLabel="Copy archive hash" />
+            </div>
+            <Button
+              tone="info"
+              disabled={view.downloading || view.releasing || view.status === "expired"}
+              onclick={() => void controller.download(basename)}
+              >{view.downloading ? "Reverifying download…" : "Download verified ZIP"}</Button
+            >
+            <p>
+              {view.downloadOffered
+                ? "Download handed to your browser. Check its download list for completion."
+                : "Docbank verified the server archive. Your browser handles the download; its completion is separate."}
+            </p>
           {/if}
           <div class="actions">
-            {#if !terminal}<Button disabled={view.status === "starting"} onclick={() => void controller.reconnect()}>Reconnect to same export</Button><Button onclick={() => void controller.cancel()}>Cancel export</Button>{/if}
-            {#if terminal}<Button disabled={view.releasing || view.downloading} onclick={() => void prepareAnother()}>Prepare another export</Button>{/if}
+            {#if !terminal}<Button
+                disabled={view.status === "starting"}
+                onclick={() => void controller.reconnect()}>Reconnect to same export</Button
+              ><Button onclick={() => void controller.cancel()}>Cancel export</Button>{/if}
+            {#if terminal}<Button
+                disabled={view.releasing || view.downloading}
+                onclick={() => void prepareAnother()}>Prepare another export</Button
+              >{/if}
           </div>
-          <p>Closing this drawer stops progress readers. It does not cancel the server job. Reopen in this browser session to reconnect.</p>
+          <p>
+            Closing this drawer stops progress readers. It does not cancel the server job. Reopen in
+            this browser session to reconnect.
+          </p>
         </section>
       {/if}
     </div>
@@ -262,29 +762,137 @@
 {/if}
 
 <style>
-  .drawer-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); width: 100%; }
-  .drawer-heading > div, .source, .exports, .choices, .job { display: grid; gap: var(--space-3); }
-  .drawer-heading strong { font-size: var(--font-size-lg); }
-  .drawer-heading span, .source > span, .identity > span { font-size: var(--font-size-xs); color: var(--text-muted); font-weight: var(--font-weight-bold); }
-  .drawer-heading small { color: var(--text-muted); }
-  .exports { padding: var(--space-5); gap: var(--space-5); }
-  .source, .original-note, .job { padding: var(--space-4); border: 1px solid var(--border-muted); border-radius: var(--radius-lg); background: var(--bg-inset); }
-  p { margin: 0; font-size: var(--font-size-sm); color: var(--text-secondary); }
-  .role-choice { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
-  .choices strong, label { font-size: var(--font-size-sm); }
-  .publication-choice { display: flex; align-items: start; gap: var(--space-2); overflow-wrap: anywhere; }
-  .original-note { color: var(--text-secondary); font-size: var(--font-size-sm); }
-  .identity { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin-block: var(--space-3); }
-  .identity > span { width: 100%; }
-  code { font-size: var(--font-size-xs); overflow-wrap: anywhere; min-width: 0; }
-  dl { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); margin: 0 0 var(--space-3); }
-  dt { font-size: var(--font-size-xs); color: var(--text-muted); }
-  dd { margin: var(--space-1) 0 0; overflow-wrap: anywhere; font-size: var(--font-size-sm); }
-  .role-summaries { display: grid; gap: var(--space-3); }
-  .role-summary { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); font-size: var(--font-size-sm); }
-  .role-summary p { width: 100%; }
-  .actions { display: flex; flex-wrap: wrap; gap: var(--space-3); }
-  .email-choices, .problems { display: grid; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--border-muted); border-radius: var(--radius-lg); }
-  .error { color: var(--accent-red); }
-  @media (max-width: 640px) { .role-choice { display: grid; } dl { grid-template-columns: 1fr; } }
+  .drawer-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    width: 100%;
+  }
+  .drawer-heading > div,
+  .source,
+  .exports,
+  .choices,
+  .job {
+    display: grid;
+    gap: var(--space-3);
+  }
+  .drawer-heading strong {
+    font-size: var(--font-size-lg);
+  }
+  .drawer-heading span,
+  .source > span,
+  .identity > span {
+    font-size: var(--font-size-xs);
+    color: var(--text-muted);
+    font-weight: var(--font-weight-bold);
+  }
+  .drawer-heading small {
+    color: var(--text-muted);
+  }
+  .exports {
+    padding: var(--space-5);
+    gap: var(--space-5);
+  }
+  .source,
+  .original-note,
+  .job {
+    padding: var(--space-4);
+    border: 1px solid var(--border-muted);
+    border-radius: var(--radius-lg);
+    background: var(--bg-inset);
+  }
+  p {
+    margin: 0;
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+  }
+  .role-choice {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+  .choices strong,
+  label {
+    font-size: var(--font-size-sm);
+  }
+  .publication-choice {
+    display: flex;
+    align-items: start;
+    gap: var(--space-2);
+    overflow-wrap: anywhere;
+  }
+  .original-note {
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+  }
+  .identity {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    align-items: center;
+    margin-block: var(--space-3);
+  }
+  .identity > span {
+    width: 100%;
+  }
+  code {
+    font-size: var(--font-size-xs);
+    overflow-wrap: anywhere;
+    min-width: 0;
+  }
+  dl {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-3);
+    margin: 0 0 var(--space-3);
+  }
+  dt {
+    font-size: var(--font-size-xs);
+    color: var(--text-muted);
+  }
+  dd {
+    margin: var(--space-1) 0 0;
+    overflow-wrap: anywhere;
+    font-size: var(--font-size-sm);
+  }
+  .role-summaries {
+    display: grid;
+    gap: var(--space-3);
+  }
+  .role-summary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--font-size-sm);
+  }
+  .role-summary p {
+    width: 100%;
+  }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+  }
+  .email-choices,
+  .problems {
+    display: grid;
+    gap: var(--space-3);
+    padding: var(--space-4);
+    border: 1px solid var(--border-muted);
+    border-radius: var(--radius-lg);
+  }
+  .error {
+    color: var(--accent-red);
+  }
+  @media (max-width: 640px) {
+    .role-choice {
+      display: grid;
+    }
+    dl {
+      grid-template-columns: 1fr;
+    }
+  }
 </style>

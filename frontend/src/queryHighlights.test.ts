@@ -20,13 +20,16 @@ const snapshot = {
 } as SnapshotPage;
 
 function receipt(overrides: Record<string, unknown> = {}): Response {
-  return new Response(JSON.stringify({
-    $schema: "https://example.test/schemas/QueryHighlightReceipt.json",
-    query_fingerprint: fingerprint,
-    dependencies: [dependency],
-    terms: ["alpha", "nested phrase"],
-    ...overrides,
-  }), { headers: { "Content-Type": "application/json" } });
+  return new Response(
+    JSON.stringify({
+      $schema: "https://example.test/schemas/QueryHighlightReceipt.json",
+      query_fingerprint: fingerprint,
+      dependencies: [dependency],
+      terms: ["alpha", "nested phrase"],
+      ...overrides,
+    }),
+    { headers: { "Content-Type": "application/json" } },
+  );
 }
 
 it("accepts compiler terms only when fingerprint and saved revisions match the snapshot", async () => {
@@ -34,7 +37,8 @@ it("accepts compiler terms only when fingerprint and saved revisions match the s
   const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(receipt());
 
   await expect(readQueryHighlights("session", snapshot, controller.signal)).resolves.toEqual([
-    "alpha", "nested phrase",
+    "alpha",
+    "nested phrase",
   ]);
   const [path, request] = fetchMock.mock.calls[0] ?? [];
   expect(path).toBe("/api/v1/queries/highlights");
@@ -53,6 +57,7 @@ it.each([
   ["term longer than 256 scalars", { terms: ["😀".repeat(257)] }],
 ])("rejects %s instead of applying unbound highlights", async (_name, overrides) => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(receipt(overrides));
-  await expect(readQueryHighlights("session", snapshot, new AbortController().signal))
-    .rejects.toThrow(/highlight receipt/i);
+  await expect(
+    readQueryHighlights("session", snapshot, new AbortController().signal),
+  ).rejects.toThrow(/highlight receipt/i);
 });

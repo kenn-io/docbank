@@ -49,10 +49,38 @@ export type VerifiedPreview =
 const previewTextMaxBytes = 16 * 1024 * 1024;
 const previewImageMaxBytes = 32 * 1024 * 1024;
 
-export async function prepareEmailPDFDownload(session: string, node: Node, version: ContentVersion, receipt: EmailPDFReceipt, signal: AbortSignal, onprogress: (progress: DownloadProgress) => void): Promise<PreparedDownload> {
+export async function prepareEmailPDFDownload(
+  session: string,
+  node: Node,
+  version: ContentVersion,
+  receipt: EmailPDFReceipt,
+  signal: AbortSignal,
+  onprogress: (progress: DownloadProgress) => void,
+): Promise<PreparedDownload> {
   validatePDFReceipt(receipt, version.id);
-  if (receipt.source.node_id !== node.id || version.node_id !== node.id || receipt.source.sha256 !== version.blob_hash || receipt.source.size !== version.size) throw new Error("The PDF source disagrees with the selected email.");
-  return prepareDownload(session, { nodeID: node.id, revision: node.revision, name: "message.pdf", versionID: version.id, blobHash: receipt.output.pdf_sha256, size: receipt.output.pdf_size, PDFProfile: receipt.profile_fingerprint, PDFAttachment: receipt.attachment_id }, signal, onprogress, "native");
+  if (
+    receipt.source.node_id !== node.id ||
+    version.node_id !== node.id ||
+    receipt.source.sha256 !== version.blob_hash ||
+    receipt.source.size !== version.size
+  )
+    throw new Error("The PDF source disagrees with the selected email.");
+  return prepareDownload(
+    session,
+    {
+      nodeID: node.id,
+      revision: node.revision,
+      name: "message.pdf",
+      versionID: version.id,
+      blobHash: receipt.output.pdf_sha256,
+      size: receipt.output.pdf_size,
+      PDFProfile: receipt.profile_fingerprint,
+      PDFAttachment: receipt.attachment_id,
+    },
+    signal,
+    onprogress,
+    "native",
+  );
 }
 
 export async function prepareCurrentDownload(
@@ -135,9 +163,7 @@ export async function prepareExactDownload(
     source.size < 0 ||
     !Number.isSafeInteger(source.size)
   ) {
-    throw new Error(
-      "The selected source does not have complete download authority.",
-    );
+    throw new Error("The selected source does not have complete download authority.");
   }
   return prepareDownload(
     session,
@@ -161,7 +187,19 @@ async function prepareDownload(
   onprogress: (progress: DownloadProgress) => void,
   purpose: DownloadPurpose,
 ): Promise<PreparedDownload> {
-  const response = await generated.prepareWebDownload({ node_id: authority.nodeID, revision: authority.revision, version_id: authority.versionID, blob_hash: authority.blobHash, size: authority.size, email_pdf_profile: authority.PDFProfile, email_pdf_attachment: authority.PDFAttachment, ...(purpose === "preview" ? { purpose: "preview" } : {}) }, { session, signal, headers: { Accept: "application/x-ndjson" } });
+  const response = await generated.prepareWebDownload(
+    {
+      node_id: authority.nodeID,
+      revision: authority.revision,
+      version_id: authority.versionID,
+      blob_hash: authority.blobHash,
+      size: authority.size,
+      email_pdf_profile: authority.PDFProfile,
+      email_pdf_attachment: authority.PDFAttachment,
+      ...(purpose === "preview" ? { purpose: "preview" } : {}),
+    },
+    { session, signal, headers: { Accept: "application/x-ndjson" } },
+  );
   if (!response.body) throw new Error("The download response did not contain a progress stream.");
 
   const reader = response.body.getReader();
@@ -259,13 +297,8 @@ export async function readVerifiedPreview(
     validatePreviewHeaders(response.headers, source, eligibility.mediaType);
     const bytes = await readExactBody(response, source.size, signal);
     const computedHash = bytesToHex(sha256(bytes));
-    if (
-      computedHash !== source.blobHash ||
-      !digestHeaderMatches(response.headers, computedHash)
-    ) {
-      throw new Error(
-        "The received preview disagreed with the selected document.",
-      );
+    if (computedHash !== source.blobHash || !digestHeaderMatches(response.headers, computedHash)) {
+      throw new Error("The received preview disagreed with the selected document.");
     }
     if (eligibility.kind === "text") {
       let text: string;
@@ -283,8 +316,7 @@ export async function readVerifiedPreview(
     );
     return { kind: "image", url, mediaType: eligibility.mediaType };
   } catch (cause) {
-    if (prepared)
-      await cancelPreparedDownload(session, prepared).catch(() => undefined);
+    if (prepared) await cancelPreparedDownload(session, prepared).catch(() => undefined);
     throw cause;
   }
 }
@@ -299,19 +331,13 @@ export function previewEligibility(
   const segments = rawMediaType.split(";");
   const mediaType = (segments.shift() ?? "").trim().toLowerCase();
   if (!/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/.test(mediaType)) {
-    throw new Error(
-      "The selected version does not have an eligible preview media type.",
-    );
+    throw new Error("The selected version does not have an eligible preview media type.");
   }
   let charset = "";
   for (const segment of segments) {
-    const match = /^\s*charset\s*=\s*(?:"([^"]+)"|([^\s;]+))\s*$/i.exec(
-      segment,
-    );
+    const match = /^\s*charset\s*=\s*(?:"([^"]+)"|([^\s;]+))\s*$/i.exec(segment);
     if (!match || charset) {
-      throw new Error(
-        "The selected version does not have eligible preview media parameters.",
-      );
+      throw new Error("The selected version does not have eligible preview media parameters.");
     }
     charset = (match[1] ?? match[2] ?? "").toLowerCase();
   }
@@ -321,42 +347,25 @@ export function previewEligibility(
     mediaType === "application/x-ndjson";
   if (text) {
     if (charset && charset !== "utf-8" && charset !== "us-ascii") {
-      throw new Error(
-        "The selected text version uses an unsupported character set.",
-      );
+      throw new Error("The selected text version uses an unsupported character set.");
     }
     if (size > previewTextMaxBytes) {
-      throw new Error(
-        "Text previews are limited to 16 MiB; use verified download instead.",
-      );
+      throw new Error("Text previews are limited to 16 MiB; use verified download instead.");
     }
     return { kind: "text", mediaType };
   }
-  const image =
-    charset === "" && ["image/png", "image/jpeg", "image/webp"].includes(mediaType);
+  const image = charset === "" && ["image/png", "image/jpeg", "image/webp"].includes(mediaType);
   if (image) {
     if (size > previewImageMaxBytes) {
-      throw new Error(
-        "Image previews are limited to 32 MiB; use verified download instead.",
-      );
+      throw new Error("Image previews are limited to 32 MiB; use verified download instead.");
     }
     return { kind: "image", mediaType };
   }
-  throw new Error(
-    "The selected version is not an eligible text or raster image preview.",
-  );
+  throw new Error("The selected version is not an eligible text or raster image preview.");
 }
 
-function validatePreviewHeaders(
-  headers: Headers,
-  source: SelectedSource,
-  mediaType: string,
-): void {
-  const receivedType = headers
-    .get("Content-Type")
-    ?.split(";", 1)[0]
-    ?.trim()
-    .toLowerCase();
+function validatePreviewHeaders(headers: Headers, source: SelectedSource, mediaType: string): void {
+  const receivedType = headers.get("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase();
   if (
     headers.get("X-Docbank-Content-Version") !== source.versionID ||
     headers.get("X-Docbank-Blob-Hash") !== source.blobHash ||
@@ -364,9 +373,7 @@ function validatePreviewHeaders(
     headers.get("Content-Length") !== String(source.size) ||
     receivedType !== mediaType
   ) {
-    throw new Error(
-      "The received preview disagreed with the selected document.",
-    );
+    throw new Error("The received preview disagreed with the selected document.");
   }
 }
 
@@ -381,7 +388,9 @@ export async function readExactBody(
   const bytes = new Uint8Array(expectedSize);
   const reader = response.body.getReader();
   let received = 0;
-  const abort = () => { void reader.cancel().catch(() => undefined); };
+  const abort = () => {
+    void reader.cancel().catch(() => undefined);
+  };
   signal.addEventListener("abort", abort, { once: true });
   try {
     while (true) {
@@ -405,15 +414,14 @@ export async function readExactBody(
 }
 
 export function digestHeaderMatches(headers: Headers, expectedHash: string): boolean {
-  const match = /^sha-256=:([A-Za-z0-9+/]+={0,2}):$/.exec(
-    headers.get("Content-Digest") ?? "",
-  );
+  const match = /^sha-256=:([A-Za-z0-9+/]+={0,2}):$/.exec(headers.get("Content-Digest") ?? "");
   if (!match) return false;
   try {
     const decoded = atob(match[1] ?? "");
-    return [...decoded]
-      .map((unit) => unit.charCodeAt(0).toString(16).padStart(2, "0"))
-      .join("") === expectedHash;
+    return (
+      [...decoded].map((unit) => unit.charCodeAt(0).toString(16).padStart(2, "0")).join("") ===
+      expectedHash
+    );
   } catch {
     return false;
   }

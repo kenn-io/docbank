@@ -1,10 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-} from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import StorageDrawer from "./StorageDrawer.svelte";
 
 afterEach(() => {
@@ -85,9 +80,7 @@ describe("storage status drawer", () => {
     expect(screen.getByText(/2 objects currently have no readable alternative/)).toBeTruthy();
     expect(screen.getByText(/Dead packed bytes are not reclaimed space/)).toBeTruthy();
 
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Close storage status" }),
-    );
+    await fireEvent.click(screen.getByRole("button", { name: "Close storage status" }));
     expect(close).toHaveBeenCalledOnce();
   });
 });

@@ -1,20 +1,36 @@
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { APIError } from "./api-transport.js";
-import { createSavedQuery, deleteSavedQuery, getSavedQuery, listSavedQueries, updateSavedQuery } from "./savedQueries.js";
+import {
+  createSavedQuery,
+  deleteSavedQuery,
+  getSavedQuery,
+  listSavedQueries,
+  updateSavedQuery,
+} from "./savedQueries.js";
 
 const id = "00000000-0000-4000-8000-000000000001";
-const canonical = '{"filters":{"extensions":["pdf"],"no_tags":true},"mode":"hybrid","sort":{"direction":"desc","field":"size"},"syntax":"advanced","text":"alpha OR β","v":1}';
+const canonical =
+  '{"filters":{"extensions":["pdf"],"no_tags":true},"mode":"hybrid","sort":{"direction":"desc","field":"size"},"syntax":"advanced","text":"alpha OR β","v":1}';
 const payload = JSON.parse(canonical);
 const record = {
-  id, name: "Review", description: "Synthetic definition", kind: "query" as const,
-  payload, fingerprint: `sha256:${createHash("sha256").update(canonical).digest("hex")}`,
-  revision: 3, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-02T00:00:00Z",
+  id,
+  name: "Review",
+  description: "Synthetic definition",
+  kind: "query" as const,
+  payload,
+  fingerprint: `sha256:${createHash("sha256").update(canonical).digest("hex")}`,
+  revision: 3,
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-02T00:00:00Z",
 };
 function respond(value: unknown, etag = '"3"') {
-  return vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify(value), {
-    headers: { ETag: etag, "Content-Type": "application/json" },
-  }));
+  return vi.spyOn(globalThis, "fetch").mockImplementation(
+    async () =>
+      new Response(JSON.stringify(value), {
+        headers: { ETag: etag, "Content-Type": "application/json" },
+      }),
+  );
 }
 afterEach(() => vi.restoreAllMocks());
 
@@ -25,7 +41,9 @@ describe("saved definition receipts", () => {
     const page = await listSavedQueries("session");
     expect(page.items[0].name).toBe("\ufeff");
     fetch.mockResolvedValueOnce(new Response(JSON.stringify(saved), { headers: { ETag: '"3"' } }));
-    expect((await updateSavedQuery("session", page.items[0], { name: "\ufeff" })).name).toBe("\ufeff");
+    expect((await updateSavedQuery("session", page.items[0], { name: "\ufeff" })).name).toBe(
+      "\ufeff",
+    );
     fetch.mockResolvedValueOnce(new Response(JSON.stringify(saved), { headers: { ETag: '"3"' } }));
     expect((await deleteSavedQuery("session", page.items[0])).id).toBe(id);
   });
@@ -57,18 +75,43 @@ describe("saved definition receipts", () => {
     const fetch = respond({ items: [record], total: 1, limit: 100, offset: 0 });
     expect((await listSavedQueries("session", "query")).items[0].payload).toEqual(payload);
     expect(String(fetch.mock.calls[0][0])).toContain("kind=query");
-    fetch.mockResolvedValueOnce(new Response(JSON.stringify({ items: [record, record], total: 2, limit: 100, offset: 0 })));
+    fetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ items: [record, record], total: 2, limit: 100, offset: 0 })),
+    );
     await expect(listSavedQueries("session", "query")).rejects.toThrow(/receipt/i);
-    fetch.mockResolvedValueOnce(new Response(JSON.stringify({ items: [record], total: 1, limit: 100, offset: 0 })));
+    fetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ items: [record], total: 1, limit: 100, offset: 0 })),
+    );
     await expect(listSavedQueries("session", "highlight_set")).rejects.toThrow(/receipt/i);
   });
 
   it("creates without changing the full definition and checks the returned content", async () => {
     const fetch = respond({ ...record, revision: 1 }, '"1"');
-    await createSavedQuery("session", { name: record.name, description: record.description, kind: "query", payload });
-    expect(JSON.parse(String(fetch.mock.calls[0][1]?.body))).toEqual({ name: record.name, description: record.description, kind: "query", payload });
-    fetch.mockResolvedValueOnce(new Response(JSON.stringify({ ...record, name: "Wrong", revision: 1 }), { headers: { ETag: '"1"' } }));
-    await expect(createSavedQuery("session", { name: record.name, description: record.description, kind: "query", payload })).rejects.toThrow(/receipt/i);
+    await createSavedQuery("session", {
+      name: record.name,
+      description: record.description,
+      kind: "query",
+      payload,
+    });
+    expect(JSON.parse(String(fetch.mock.calls[0][1]?.body))).toEqual({
+      name: record.name,
+      description: record.description,
+      kind: "query",
+      payload,
+    });
+    fetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ ...record, name: "Wrong", revision: 1 }), {
+        headers: { ETag: '"1"' },
+      }),
+    );
+    await expect(
+      createSavedQuery("session", {
+        name: record.name,
+        description: record.description,
+        kind: "query",
+        payload,
+      }),
+    ).rejects.toThrow(/receipt/i);
   });
 
   it("fences a rename and preserves omitted fields", async () => {
@@ -82,19 +125,29 @@ describe("saved definition receipts", () => {
   it("accepts an unchanged revision only for a no-op", async () => {
     respond(record);
     expect((await updateSavedQuery("session", record, { name: "Review" })).revision).toBe(3);
-    await expect(updateSavedQuery("session", record, { name: "Renamed" })).rejects.toThrow(/receipt/i);
+    await expect(updateSavedQuery("session", record, { name: "Renamed" })).rejects.toThrow(
+      /receipt/i,
+    );
   });
 
   it("rejects null patches and unsafe fences before sending", async () => {
     const fetch = respond(record);
-    await expect(updateSavedQuery("session", record, { description: null } as never)).rejects.toThrow();
+    await expect(
+      updateSavedQuery("session", record, { description: null } as never),
+    ).rejects.toThrow();
     await expect(deleteSavedQuery("session", { ...record, revision: 0 })).rejects.toThrow();
     expect(fetch).not.toHaveBeenCalled();
   });
 
   it("does not retry a stale mutation or claim deletion", async () => {
-    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ code: "stale_revision", detail: "Changed elsewhere" }), { status: 412 }));
-    await expect(deleteSavedQuery("session", record)).rejects.toEqual(new APIError("Changed elsewhere", 412, "stale_revision"));
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ code: "stale_revision", detail: "Changed elsewhere" }), {
+        status: 412,
+      }),
+    );
+    await expect(deleteSavedQuery("session", record)).rejects.toEqual(
+      new APIError("Changed elsewhere", 412, "stale_revision"),
+    );
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
@@ -102,17 +155,39 @@ describe("saved definition receipts", () => {
     const fetch = respond(record);
     expect((await deleteSavedQuery("session", record)).id).toBe(id);
     expect(new Headers(fetch.mock.calls[0][1]?.headers).get("If-Match")).toBe('"3"');
-    fetch.mockResolvedValueOnce(new Response(JSON.stringify({ ...record, name: "Someone else" }), { headers: { ETag: '"3"' } }));
+    fetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ ...record, name: "Someone else" }), {
+        headers: { ETag: '"3"' },
+      }),
+    );
     await expect(deleteSavedQuery("session", record)).rejects.toThrow(/receipt/i);
   });
 
   it("saves bounded literal highlights separately from executable queries", async () => {
     const highlight = { v: 1 as const, terms: [{ text: "alpha", color: "#ffcc00" }] };
     const fingerprint = `sha256:${createHash("sha256").update('{"terms":[{"color":"#ffcc00","text":"alpha"}],"v":1}').digest("hex")}`;
-    const fetch = respond({ ...record, kind: "highlight_set", payload: highlight, fingerprint, revision: 1 }, '"1"');
-    expect((await createSavedQuery("session", { name: record.name, description: record.description, kind: "highlight_set", payload: highlight })).kind).toBe("highlight_set");
+    const fetch = respond(
+      { ...record, kind: "highlight_set", payload: highlight, fingerprint, revision: 1 },
+      '"1"',
+    );
+    expect(
+      (
+        await createSavedQuery("session", {
+          name: record.name,
+          description: record.description,
+          kind: "highlight_set",
+          payload: highlight,
+        })
+      ).kind,
+    ).toBe("highlight_set");
     fetch.mockClear();
-    await expect(createSavedQuery("session", { name: "Bad", kind: "highlight_set", payload: { v: 1, terms: [{ text: "x", color: "red" }] } })).rejects.toThrow();
+    await expect(
+      createSavedQuery("session", {
+        name: "Bad",
+        kind: "highlight_set",
+        payload: { v: 1, terms: [{ text: "x", color: "red" }] },
+      }),
+    ).rejects.toThrow();
     expect(fetch).not.toHaveBeenCalled();
   });
 });

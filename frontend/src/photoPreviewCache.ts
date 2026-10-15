@@ -5,14 +5,33 @@ import { randomUUID } from "./crypto.js";
 const cachePrefix = "docbank-photo-previews-";
 const maxFetches = 6;
 
-export function previewObjectURL(cache: PhotoPreviewCache, assetID: string, generationID: string, onload: (url: string) => void, onfailure: (cause: unknown) => void, reload = false) {
+export function previewObjectURL(
+  cache: PhotoPreviewCache,
+  assetID: string,
+  generationID: string,
+  onload: (url: string) => void,
+  onfailure: (cause: unknown) => void,
+  reload = false,
+) {
   const controller = new AbortController();
   let current = true;
   let url = "";
-  void cache.get(assetID, generationID, controller.signal, reload).then(blob => {
-    if (current) { url = URL.createObjectURL(blob); onload(url); }
-  }).catch(cause => { if (current) onfailure(cause); });
-  return () => { current = false; controller.abort(); if (url) URL.revokeObjectURL(url); };
+  void cache
+    .get(assetID, generationID, controller.signal, reload)
+    .then((blob) => {
+      if (current) {
+        url = URL.createObjectURL(blob);
+        onload(url);
+      }
+    })
+    .catch((cause) => {
+      if (current) onfailure(cause);
+    });
+  return () => {
+    current = false;
+    controller.abort();
+    if (url) URL.revokeObjectURL(url);
+  };
 }
 
 export class PhotoPreviewCache {
@@ -23,33 +42,62 @@ export class PhotoPreviewCache {
   private releaseLock?: () => void;
   private fetching = 0;
   private waiting: (() => void)[] = [];
-  private pagehide = (event: PageTransitionEvent) => { if (!event.persisted) void this.dispose(); };
+  private pagehide = (event: PageTransitionEvent) => {
+    if (!event.persisted) void this.dispose();
+  };
 
-  constructor(private session: string, private onauthfailure: (cause: unknown) => void, private hidden = false) {
+  constructor(
+    private session: string,
+    private onauthfailure: (cause: unknown) => void,
+    private hidden = false,
+  ) {
     window.addEventListener("pagehide", this.pagehide);
-    void this.sweep().catch(cause => console.warn("Could not remove abandoned photo preview caches", cause));
+    void this.sweep().catch((cause) =>
+      console.warn("Could not remove abandoned photo preview caches", cause),
+    );
   }
 
   // Each live cache holds a Web Lock with its name, so unlocked caches belong to closed pages.
   private async sweep() {
     if (typeof navigator.locks === "undefined" || typeof caches === "undefined") return;
-    void navigator.locks.request(this.name, () => this.disposed ?? new Promise<void>(resolve => this.releaseLock = resolve));
+    void navigator.locks.request(
+      this.name,
+      () => this.disposed ?? new Promise<void>((resolve) => (this.releaseLock = resolve)),
+    );
     const { held = [], pending = [] } = await navigator.locks.query();
-    const live = new Set([...held, ...pending].map(lock => lock.name));
+    const live = new Set([...held, ...pending].map((lock) => lock.name));
     for (const name of await caches.keys()) {
-      if (name.startsWith(cachePrefix) && name !== this.name && !live.has(name)) await caches.delete(name);
+      if (name.startsWith(cachePrefix) && name !== this.name && !live.has(name))
+        await caches.delete(name);
     }
   }
 
   get(assetID: string, generationID: string, caller?: AbortSignal, reload = false): Promise<Blob> {
     const signal = AbortSignal.any([this.controller.signal, ...(caller ? [caller] : [])]);
-    return this.read(assetID, generationID, getReadPhotoPreviewUrl(assetID, generationID), signal, reload).catch(cause => {
-      if (!signal.aborted && cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) this.onauthfailure(cause);
+    return this.read(
+      assetID,
+      generationID,
+      getReadPhotoPreviewUrl(assetID, generationID),
+      signal,
+      reload,
+    ).catch((cause) => {
+      if (
+        !signal.aborted &&
+        cause instanceof APIError &&
+        (cause.status === 401 || (this.hidden && cause.status === 403))
+      )
+        this.onauthfailure(cause);
       throw cause;
     });
   }
 
-  private async read(assetID: string, generationID: string, path: string, signal: AbortSignal, reload: boolean): Promise<Blob> {
+  private async read(
+    assetID: string,
+    generationID: string,
+    path: string,
+    signal: AbortSignal,
+    reload: boolean,
+  ): Promise<Blob> {
     signal.throwIfAborted();
     let onabort: () => void;
     const aborted = new Promise<never>((_, reject) => {
@@ -78,29 +126,48 @@ export class PhotoPreviewCache {
       try {
         const fetchSignal = AbortSignal.any([signal, AbortSignal.timeout(30_000)]);
         // The browser HTTP cache would keep bytes of photos hidden later; this class owns retention.
-        const response = await readPhotoPreview(assetID, generationID, undefined, { session: this.session, signal: fetchSignal, cache: "no-store" });
+        const response = await readPhotoPreview(assetID, generationID, undefined, {
+          session: this.session,
+          signal: fetchSignal,
+          cache: "no-store",
+        });
         noStore = /(?:^|,)\s*no-store\s*(?:,|$)/i.test(response.headers.get("Cache-Control") ?? "");
         bytes = await response.arrayBuffer();
-      } finally { this.release(); }
+      } finally {
+        this.release();
+      }
       signal.throwIfAborted();
       try {
         // The network response varies by credentials; retained keys contain no credentials.
         if (!noStore) {
           await cache?.put(key, new Response(bytes, { headers: { "Content-Type": "image/jpeg" } }));
         }
-      } catch { signal.throwIfAborted(); }
+      } catch {
+        signal.throwIfAborted();
+      }
       signal.throwIfAborted();
       return new Blob([bytes], { type: "image/jpeg" });
     };
-    return Promise.race([read(), aborted]).finally(() => signal.removeEventListener("abort", onabort));
+    return Promise.race([read(), aborted]).finally(() =>
+      signal.removeEventListener("abort", onabort),
+    );
   }
 
   private async acquire(signal: AbortSignal) {
     signal.throwIfAborted();
-    if (this.fetching < maxFetches) { this.fetching++; return; }
+    if (this.fetching < maxFetches) {
+      this.fetching++;
+      return;
+    }
     await new Promise<void>((resolve, reject) => {
-      const grant = () => { signal.removeEventListener("abort", cancel); resolve(); };
-      const cancel = () => { this.waiting.splice(this.waiting.indexOf(grant), 1); reject(signal.reason); };
+      const grant = () => {
+        signal.removeEventListener("abort", cancel);
+        resolve();
+      };
+      const cancel = () => {
+        this.waiting.splice(this.waiting.indexOf(grant), 1);
+        reject(signal.reason);
+      };
       this.waiting.push(grant);
       signal.addEventListener("abort", cancel, { once: true });
     });
@@ -117,9 +184,13 @@ export class PhotoPreviewCache {
     this.controller.abort();
     window.removeEventListener("pagehide", this.pagehide);
     const opening = this.cache;
-    this.disposed = Promise.resolve(opening).catch(() => undefined).then(async () => {
-      if (typeof caches !== "undefined") await caches.delete(this.name);
-    }).catch(cause => console.warn("Could not delete photo preview cache", cause)).finally(() => this.releaseLock?.());
+    this.disposed = Promise.resolve(opening)
+      .catch(() => undefined)
+      .then(async () => {
+        if (typeof caches !== "undefined") await caches.delete(this.name);
+      })
+      .catch((cause) => console.warn("Could not delete photo preview cache", cause))
+      .finally(() => this.releaseLock?.());
     return this.disposed;
   }
 }

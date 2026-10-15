@@ -33,7 +33,8 @@
     onauthfailure: (cause: unknown) => void;
     onexport?: (collectionID: string, total: number) => void;
   }
-  let { session, channel, directory, onclose, oncomplete, onauthfailure, onexport }: Props = $props();
+  let { session, channel, directory, onclose, oncomplete, onauthfailure, onexport }: Props =
+    $props();
   let file = $state<File | null>(null),
     dialect = $state("mboxrd"),
     busy = $state(false),
@@ -217,44 +218,140 @@
 
 <DetailDrawer width="min(720px, 100vw)" ariaLabel="Import mailbox archive" {onclose}>
   {#snippet header()}
-    <div class="drawer-heading"><div><span>Email documents</span><strong>Import mailbox archive</strong><small>{directory.path??"Current folder"}</small></div><IconButton size="sm" ariaLabel="Close mailbox import" onclick={onclose}><XIcon size="14" /></IconButton></div>
+    <div class="drawer-heading">
+      <div>
+        <span>Email documents</span><strong>Import mailbox archive</strong><small
+          >{directory.path ?? "Current folder"}</small
+        >
+      </div>
+      <IconButton size="sm" ariaLabel="Close mailbox import" onclick={onclose}
+        ><XIcon size="14" /></IconButton
+      >
+    </div>
   {/snippet}
   <div class="mailbox">
-    <p>Keep the original MBOX or Google Takeout ZIP and import each message with its attachments.</p>
-    <label class="file-label">Choose MBOX or Takeout ZIP<input type="file" accept=".mbox,.zip" aria-label="Choose MBOX or Takeout ZIP" disabled={busy} onchange={choose} /></label>
-    <div class="choice"><span>Mailbox interpretation</span><SelectDropdown title="Mailbox interpretation" value={dialect} options={[{value:"mboxrd",label:"mboxrd (default)"},{value:"mboxo",label:"mboxo"}]} disabled={busy||Boolean(container)} onchange={(value)=>{dialect=value;preview=null;}} /></div>
-    <p class="muted">The dialect is explicit. Source labels stay in provenance; importing does not authorize remote processing.</p>
-    {#if file}<div class="file-name"><MailIcon size="18" /><strong>{file.name}</strong><span>{formatBytes(file.size)}</span></div>{/if}
-    {#if file&&!job}<Button tone="info" disabled={busy} onclick={()=>void upload()}>{container?"Refresh preview":"Upload and preview"}</Button>{/if}
-    {#if busy}<div class="progress" aria-live="polite"><Spinner size={16}/><span>{stage} · {formatBytes(processed)} / {formatBytes(total)}</span></div><progress aria-label="Mailbox source upload" value={processed} max={total||1}></progress><Button size="sm" onclick={()=>void cancel()}>Cancel upload</Button>{/if}
+    <p>
+      Keep the original MBOX or Google Takeout ZIP and import each message with its attachments.
+    </p>
+    <label class="file-label"
+      >Choose MBOX or Takeout ZIP<input
+        type="file"
+        accept=".mbox,.zip"
+        aria-label="Choose MBOX or Takeout ZIP"
+        disabled={busy}
+        onchange={choose}
+      /></label
+    >
+    <div class="choice">
+      <span>Mailbox interpretation</span><SelectDropdown
+        title="Mailbox interpretation"
+        value={dialect}
+        options={[
+          { value: "mboxrd", label: "mboxrd (default)" },
+          { value: "mboxo", label: "mboxo" },
+        ]}
+        disabled={busy || Boolean(container)}
+        onchange={(value) => {
+          dialect = value;
+          preview = null;
+        }}
+      />
+    </div>
+    <p class="muted">
+      The dialect is explicit. Source labels stay in provenance; importing does not authorize remote
+      processing.
+    </p>
+    {#if file}<div class="file-name">
+        <MailIcon size="18" /><strong>{file.name}</strong><span>{formatBytes(file.size)}</span>
+      </div>{/if}
+    {#if file && !job}<Button tone="info" disabled={busy} onclick={() => void upload()}
+        >{container ? "Refresh preview" : "Upload and preview"}</Button
+      >{/if}
+    {#if busy}<div class="progress" aria-live="polite">
+        <Spinner size={16} /><span>{stage} · {formatBytes(processed)} / {formatBytes(total)}</span>
+      </div>
+      <progress aria-label="Mailbox source upload" value={processed} max={total || 1}
+      ></progress><Button size="sm" onclick={() => void cancel()}>Cancel upload</Button>{/if}
     {#if error}<p role="alert" class="error">{error}</p>{/if}
-    {#if preview&&container}
+    {#if preview && container}
       <Card title="Source verified" eyebrow="Import preview" padding="md">
-        <p>{preview.entry_count} mailbox {preview.entry_count===1?"entry":"entries"} · {preview.dialect}</p>
-        <p>Previewed {preview.samples.length} {preview.has_more?"initial ":""}messages. Every occurrence is kept, including repeated content and Message-IDs.</p>
-        {#if preview.samples.some(sample=>sample.rejection)}<p class="error">Some preview messages exceed the import limits and will be reported as rejected.</p>{/if}
-        <Button tone="success" disabled={busy} onclick={()=>void start()}>Import messages</Button>
+        <p>
+          {preview.entry_count} mailbox {preview.entry_count === 1 ? "entry" : "entries"} · {preview.dialect}
+        </p>
+        <p>
+          Previewed {preview.samples.length}
+          {preview.has_more ? "initial " : ""}messages. Every occurrence is kept, including repeated
+          content and Message-IDs.
+        </p>
+        {#if preview.samples.some((sample) => sample.rejection)}<p class="error">
+            Some preview messages exceed the import limits and will be reported as rejected.
+          </p>{/if}
+        <Button tone="success" disabled={busy} onclick={() => void start()}>Import messages</Button>
       </Card>
     {/if}
     {#if job}
-      <Card title={job.state==="complete"?"Import complete":"Mailbox import"} eyebrow="Durable import report" padding="md">
-        {#snippet actions()}{#if job}<Chip size="xs" tone={job.state==="complete"?"success":job.state==="failed"?"danger":"info"}>{job.state}</Chip>{/if}{/snippet}
-        <div class="counts" aria-live="polite"><div><strong>{job.imported}</strong><span>Imported</span></div><div><strong>{job.rejected}</strong><span>Rejected</span></div><div><strong>{job.pending??0}</strong><span>Pending</span></div><div><strong>{job.canceled??0}</strong><span>Canceled</span></div></div>
-        <p>{job.scanned_tail?"Every message occurrence has been scanned.":"Unscanned messages remain."}</p>
+      <Card
+        title={job.state === "complete" ? "Import complete" : "Mailbox import"}
+        eyebrow="Durable import report"
+        padding="md"
+      >
+        {#snippet actions()}{#if job}<Chip
+              size="xs"
+              tone={job.state === "complete"
+                ? "success"
+                : job.state === "failed"
+                  ? "danger"
+                  : "info"}>{job.state}</Chip
+            >{/if}{/snippet}
+        <div class="counts" aria-live="polite">
+          <div><strong>{job.imported}</strong><span>Imported</span></div>
+          <div><strong>{job.rejected}</strong><span>Rejected</span></div>
+          <div><strong>{job.pending ?? 0}</strong><span>Pending</span></div>
+          <div><strong>{job.canceled ?? 0}</strong><span>Canceled</span></div>
+        </div>
+        <p>
+          {job.scanned_tail
+            ? "Every message occurrence has been scanned."
+            : "Unscanned messages remain."}
+        </p>
         {#if job.reason}<p>{job.reason}</p>{/if}
-        <p class="muted">Attachment documents are retained. Their indexing status depends on the configured processing profile and consent.</p>
+        <p class="muted">
+          Attachment documents are retained. Their indexing status depends on the configured
+          processing profile and consent.
+        </p>
         <small>Import {job.id}</small>
         <div class="actions">
-          {#if job.state === "complete" && job.imported > 0 && onexport}<Button size="sm" onclick={() => onexport?.(job!.collection_id, job!.imported)}>Export completed collection</Button>{/if}
-          {#if ["queued","running"].includes(job.state)}<Button size="sm" onclick={()=>void cancel()}>Cancel import</Button>{/if}
-          {#if job.state==="partial"&&!job.scanned_tail}<Button size="sm" onclick={()=>void resume(true)}>Continue import</Button>{/if}
-          {#if ["failed","canceled"].includes(job.state)&&!job.scanned_tail}<Button size="sm" onclick={()=>void resume(false)}>Resume import</Button>{/if}
+          {#if job.state === "complete" && job.imported > 0 && onexport}<Button
+              size="sm"
+              onclick={() => onexport?.(job!.collection_id, job!.imported)}
+              >Export completed collection</Button
+            >{/if}
+          {#if ["queued", "running"].includes(job.state)}<Button
+              size="sm"
+              onclick={() => void cancel()}>Cancel import</Button
+            >{/if}
+          {#if job.state === "partial" && !job.scanned_tail}<Button
+              size="sm"
+              onclick={() => void resume(true)}>Continue import</Button
+            >{/if}
+          {#if ["failed", "canceled"].includes(job.state) && !job.scanned_tail}<Button
+              size="sm"
+              onclick={() => void resume(false)}>Resume import</Button
+            >{/if}
         </div>
       </Card>
     {/if}
-    {#if prior.length>1}<div class="prior"><strong>Retained imports</strong>{#each prior as item(item.id)}<Button size="sm" onclick={()=>{job=item;}}>{item.id} · {item.state}</Button>{/each}</div>{/if}
+    {#if prior.length > 1}<div class="prior">
+        <strong>Retained imports</strong>{#each prior as item (item.id)}<Button
+            size="sm"
+            onclick={() => {
+              job = item;
+            }}>{item.id} · {item.state}</Button
+          >{/each}
+      </div>{/if}
   </div>
 </DetailDrawer>
+
 <style>
   .drawer-heading {
     display: flex;
