@@ -7,7 +7,7 @@
     "dev": "vp dev",
     "build": "vp build",
     "fmt": "vp fmt",
-    "check:fmt-lint": "vp check --no-lint && vp lint --format github",
+    "check:fmt-lint": "vp check --no-lint && vp lint --format unix",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "check:kit-ui": "kit-ui-check src",
     "docs-site:check": "tsc -p docs-site/tsconfig.json --noEmit",

@@ -1514,9 +1514,7 @@ it.each(["settles", "hangs"])(
           JSON.parse(String(init?.body)).event === "session_ended",
       );
     const revokes = () =>
-      fetchMock.mock.calls.filter(
-        ([input, init]) => String(input) === "/api/daemon/web-session" && init?.method === "DELETE",
-      );
+      fetchMock.mock.calls.filter(([input]) => String(input) === "/api/daemon/web-session");
     expect(reports()).toHaveLength(1);
     expect(new Headers(reports()[0]?.[1]?.headers).get("X-Docbank-Web-Session")).toBe(
       "short-lived",
@@ -1527,6 +1525,10 @@ it.each(["settles", "hangs"])(
     expect(revokes()).toHaveLength(report === "hangs" ? 0 : 1);
     await vi.advanceTimersByTimeAsync(1);
     expect(revokes()).toHaveLength(1);
+    expect(revokes()[0]?.[1]?.method).toBe("DELETE");
+    expect(new Headers(revokes()[0]?.[1]?.headers).get("X-Docbank-Web-Session")).toBe(
+      "short-lived",
+    );
     vi.useRealTimers();
     cleanup();
     expect(reports()).toHaveLength(1);
