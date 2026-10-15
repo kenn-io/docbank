@@ -10,6 +10,8 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
+var openBatchSource = blob.OpenNoFollow
+
 type pendingLocalFile struct {
 	parent               *ingestDirectory
 	openPath, sourcePath string
@@ -36,12 +38,20 @@ func (files *filesystemIngest) flush(
 		file := &pending[i]
 		workers.Go(func() {
 			file.content, file.err = files.ing.prepareLocalFileWith(
-				ctx, func() (*os.File, error) { return blob.OpenNoFollow(file.openPath) },
+				ctx, func() (*os.File, error) { return openBatchSource(file.openPath) },
 				file.sourcePath, progress, nil,
 			)
 		})
 	}
 	workers.Wait()
+	// Publication order can differ from input order. An earlier duplicate may
+	// need a later writer's verified receipt to restore missing authority.
+	created := make(map[string]store.BlobPhysical, len(pending))
+	for _, file := range pending {
+		if file.err == nil && file.content.physical.Created {
+			created[file.content.hash] = file.content.physical
+		}
+	}
 	defer func() {
 		// Cancellation can leave prepared files that never reached a transaction.
 		for _, file := range pending {
@@ -59,6 +69,9 @@ func (files *filesystemIngest) flush(
 		var resolution store.IngestDirectoryResolution
 		err := file.err
 		if err == nil {
+			if physical, ok := created[file.content.hash]; ok {
+				file.content.physical = physical
+			}
 			added, resolution, err = files.recordPreparedFile(ctx, file.parent, file.sourcePath, file.content)
 		}
 		if file.content.hash != "" {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -19,6 +20,92 @@ import (
 	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
 )
+
+func TestAddRecoversMissingAuthorityWhenLaterInputPublishesFirst(t *testing.T) {
+	for _, sourceChanged := range []bool{false, true} {
+		t.Run(fmt.Sprintf("publisher_changed=%t", sourceChanged), func(t *testing.T) {
+			ing := newTestIngester(t)
+			const content = "shared recovery content"
+			source := writeTree(t, map[string]string{"first.txt": content, "later.txt": content})
+			first, later := filepath.Join(source, "first.txt"), filepath.Join(source, "later.txt")
+			report, err := ing.AddPaths(t.Context(), []string{first}, "/seed")
+			require.NoError(t, err)
+			require.Equal(t, 1, report.Added)
+			packed, err := ing.Blobs.Maintainer().Pack(t.Context(), packstore.PackOptions{})
+			require.NoError(t, err)
+			require.Equal(t, 1, packed.BlobsPacked)
+			hash := fmt.Sprintf("%x", sha256.Sum256([]byte(content)))
+			require.NoError(t, store.NewPackCatalog(ing.Store).DeleteIndexEntry(t.Context(), packstore.Hash(hash)))
+			_, err = ing.Store.PhysicalContent(t.Context(), hash)
+			require.ErrorIs(t, err, store.ErrPhysicalAuthorityMissing)
+			loose, err := ing.Blobs.List()
+			require.NoError(t, err)
+			require.Empty(t, loose)
+
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			published := make(chan struct{})
+			var publishOnce sync.Once
+			originalOpen, originalSync := openBatchSource, pack.SyncDir
+			t.Cleanup(func() {
+				openBatchSource, pack.SyncDir = originalOpen, originalSync
+			})
+			openBatchSource = func(path string) (*os.File, error) {
+				if path == first {
+					select {
+					case <-published:
+					case <-ctx.Done():
+						return nil, ctx.Err()
+					}
+				}
+				return originalOpen(path)
+			}
+			pack.SyncDir = func(dir string) error {
+				if err := originalSync(dir); err != nil {
+					return err
+				}
+				var changeErr error
+				if filepath.Base(dir) == hash[:2] {
+					publishOnce.Do(func() {
+						// Release the first input only after the later input's
+						// canonical loose file has been published and synced.
+						if sourceChanged {
+							changeErr = os.WriteFile(later, []byte(content+" changed"), 0o600)
+						}
+						close(published)
+					})
+				}
+				return changeErr
+			}
+
+			report, err = ing.AddPaths(ctx, []string{first, later}, "/recovered")
+			require.NoError(t, err)
+			if sourceChanged {
+				require.Len(t, report.Failed, 2)
+				require.ErrorIs(t, report.Failed[0].Err, store.ErrPhysicalAuthorityMissing)
+				require.ErrorIs(t, report.Failed[1].Err, ErrSourceChanged)
+				assert.Zero(t, report.Added)
+				_, err = ing.Store.PhysicalContent(t.Context(), hash)
+				require.ErrorIs(t, err, store.ErrPhysicalAuthorityMissing)
+				return
+			}
+			require.Empty(t, report.Failed)
+			require.Equal(t, 2, report.Added)
+			for _, name := range []string{"first.txt", "later.txt"} {
+				node, err := ing.Store.NodeByPath(t.Context(), "/recovered/"+name)
+				require.NoError(t, err)
+				assert.Equal(t, hash, node.BlobHash)
+			}
+			reader, err := ing.Blobs.OpenContext(t.Context(), hash)
+			require.NoError(t, err)
+			data, readErr := io.ReadAll(reader)
+			closeErr := reader.Close()
+			require.NoError(t, readErr)
+			require.NoError(t, closeErr)
+			assert.Equal(t, content, string(data))
+		})
+	}
+}
 
 func TestAddOverlapsDurableWritesBeforeMetadata(t *testing.T) {
 	for _, outcome := range []string{"success", "sync failure", "cancel"} {

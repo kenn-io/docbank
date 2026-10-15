@@ -165,7 +165,10 @@ loss, which is not recoverable through metadata.
 
 Ordinary local filesystem imports prepare up to eight files concurrently through
 the same durable writer. All preparations in a group finish before metadata
-transactions run in input order. Directory creation and traversal errors finish
+transactions run in input order. Successful preparations share verified creation
+receipts for matching hashes, so an earlier duplicate can restore missing catalog
+authority even when a later input published the bytes first. Failed preparations
+cannot supply these receipts. Directory creation and traversal errors finish
 earlier pending files first, preserving name conflicts and report order.
 Replacement imports remain sequential so each target revision is observed after
 the preceding import. No sync or SQLite commit policy changes for either path.
