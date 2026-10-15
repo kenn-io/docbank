@@ -970,9 +970,45 @@ func (s *Store) ImportMetadata(ctx context.Context, r io.Reader) error {
 	return s.importMetadata(ctx, r)
 }
 
+// legacyDepictedMarkTrackerKey carries, for the duration of one import, the
+// IDs of depicted person_document_assertion rows whose photo_mark was guessed
+// because the backup predates that column. Records export in a fixed order
+// with photo_faces always after person_document_assertions, so by the time a
+// face record naming one of these assertions is imported, the guess can be
+// corrected: a legacy row that turns out to carry a face box is box-only, not
+// a whole-photo mark.
+type legacyDepictedMarkTrackerKey struct{}
+
+func withLegacyDepictedMarkTracking(ctx context.Context) context.Context {
+	return context.WithValue(ctx, legacyDepictedMarkTrackerKey{}, make(map[string]struct{}))
+}
+
+func markLegacyDepictedAssertion(ctx context.Context, assertionID string) {
+	if tracker, ok := ctx.Value(legacyDepictedMarkTrackerKey{}).(map[string]struct{}); ok {
+		tracker[assertionID] = struct{}{}
+	}
+}
+
+// resolveLegacyDepictedMarkTx flips a guessed whole-photo mark to box-only
+// once its assertion turns out to own a face box. It is a no-op outside
+// ImportMetadata and for assertions whose photo_mark came from the backup.
+func resolveLegacyDepictedMarkTx(ctx context.Context, tx *sql.Tx, assertionID string) error {
+	tracker, ok := ctx.Value(legacyDepictedMarkTrackerKey{}).(map[string]struct{})
+	if !ok {
+		return nil
+	}
+	if _, pending := tracker[assertionID]; !pending {
+		return nil
+	}
+	delete(tracker, assertionID)
+	_, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET photo_mark=0 WHERE assertion_id=?`, assertionID)
+	return err
+}
+
 func (s *Store) importMetadata(ctx context.Context, r io.Reader) error {
 	rootID := int64(0)
 	vaultID := ""
+	ctx = withLegacyDepictedMarkTracking(ctx)
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		if err := requirePristineMetadataTarget(ctx, tx); err != nil {
 			return err

@@ -129,3 +129,16 @@ func TestPhotoFaceDecisionCLIRequest(t *testing.T) {
 	require.Equal(t, operationID, named.ReceiptID)
 	require.Equal(t, int32(1), requests.Load())
 }
+
+func TestPhotoFaceKeyRequiresRevisionWithFace(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DOCBANK_HOME", dir)
+	const (
+		versionID = "11111111-1111-4111-8111-111111111111"
+		faceID    = "22222222-2222-4222-8222-222222222222"
+		personID  = "33333333-3333-4333-8333-333333333333"
+	)
+	_, err := runCLI(t, "photos", "faces", "key", versionID,
+		"--face", faceID, "--person", personID, "--person-revision", "1")
+	require.ErrorContains(t, err, "--revision is required when --face is set")
+}

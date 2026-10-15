@@ -9,7 +9,6 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/google/uuid"
 	"go.kenn.io/docbank/internal/canonical"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/unicode/norm"
@@ -195,11 +194,7 @@ func ValidPersonRole(role string) bool {
 // ValidPersonCandidateActorKey includes face references without changing document event keys.
 func ValidPersonCandidateActorKey(key string) bool {
 	if value, ok := strings.CutPrefix(key, "face:"); ok {
-		return len(value) == 36 && validPersonFaceID(value)
+		return canonical.ValidateUUIDv4(value) == nil
 	}
 	return ValidateActorKeyV1(key) == nil
-}
-func validPersonFaceID(value string) bool {
-	id, err := uuid.Parse(value)
-	return err == nil && id.String() == value && id.Version() == 4 && id.Variant() == uuid.RFC4122
 }

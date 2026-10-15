@@ -107,6 +107,9 @@ func addPhotoFaceDecisionCommands(faces *cobra.Command) {
 		var request api.PhotoFaceDecisionRequest
 		request.Action = action
 		command := &cobra.Command{Use: strings.ReplaceAll(action, "_", "-") + " <content-version-id>", Short: map[string]string{"name": "Name a face", "retract": "Retract a face name", "reject": "Reject a face and person match", "dismiss": "Dismiss a face", "key": "Set or clear a person's key face", "withdraw_rejection": "Withdraw a face rejection"}[action], Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+			if action == "key" && request.FaceID != "" && request.Revision < 1 {
+				return errors.New("--revision is required when --face is set")
+			}
 			c, err := daemonconn.Ensure(cmd.Context())
 			if err != nil {
 				return err
