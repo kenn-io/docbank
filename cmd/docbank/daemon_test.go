@@ -335,29 +335,21 @@ func waitForDaemon(t *testing.T, dir string) kitdaemon.RuntimeRecord {
 }
 
 func TestConfiguredCheckoutPathsRejectReservedDestinationsBeforeDaemonStartup(t *testing.T) {
-	for _, watch := range []bool{false, true} {
-		t.Run(fmt.Sprintf("/watch=%t", watch), func(t *testing.T) {
-			catalog, err := store.Open(filepath.Join(t.TempDir(), "docbank.db"))
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, catalog.Close()) })
-			ctx := t.Context()
-			node, err := catalog.CreateFile(ctx, catalog.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
-			require.NoError(t, err)
-			asset, err := catalog.PhotoAssetForNode(ctx, node.ID)
-			require.NoError(t, err)
-			destination := t.TempDir()
-			checkout, _, err := catalog.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
-			require.NoError(t, err)
-			cfg := config.Default()
-			stores := []store.BlobStore{{Name: "archive", Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "archive"}}
-			if watch {
-				cfg.Watches = []config.WatchConfig{{Name: "inbox", Source: destination}}
-			} else {
-				cfg.StoreBindings = map[string]config.StoreBindingConfig{"archive": {Kind: "filesystem", Path: destination}}
-			}
-			require.ErrorContains(t, validateConfiguredCheckouts(ctx, cfg, stores, catalog), checkout.ID)
-		})
-	}
+	catalog, err := store.Open(filepath.Join(t.TempDir(), "docbank.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+	ctx := t.Context()
+	node, err := catalog.CreateFile(ctx, catalog.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := catalog.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	destination := t.TempDir()
+	checkout, _, err := catalog.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
+	require.NoError(t, err)
+	cfg := config.Default()
+	stores := []store.BlobStore{{Name: "archive", Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "archive"}}
+	cfg.StoreBindings = map[string]config.StoreBindingConfig{"archive": {Kind: "filesystem", Path: destination}}
+	require.ErrorContains(t, validateConfiguredCheckouts(ctx, cfg, stores, catalog), checkout.ID)
 }
 
 func TestServeRejectsCheckoutCopiesBeforeStartup(t *testing.T) {

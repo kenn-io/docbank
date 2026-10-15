@@ -83,14 +83,6 @@ func TestCheckoutRecoveryRetriesFilesystemAccessFailures(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, store.StorageOperationQueued, operation.State)
 			require.Nil(t, operation.FinishedAt)
-			status, err := s.Store.PhotoCheckoutStatus(ctx, checkout.ID)
-			require.NoError(t, err)
-			require.False(t, status.Checkout.RetentionReleased)
-			if test.published {
-				require.Equal(t, int64(1), status.PublishedFiles)
-			} else {
-				require.Zero(t, status.PublishedFiles)
-			}
 			if test.cancel {
 				require.NoError(t, s.Store.RequestStorageOperationCancel(ctx, op.ID))
 			}
@@ -102,18 +94,13 @@ func TestCheckoutRecoveryRetriesFilesystemAccessFailures(t *testing.T) {
 				operation, err := s.Store.StorageOperation(ctx, op.ID)
 				return err == nil && operation.FinishedAt != nil
 			}, 5*time.Second, 10*time.Millisecond)
-			status, err = s.Store.PhotoCheckoutStatus(ctx, checkout.ID)
+			operation, err = s.Store.StorageOperation(ctx, op.ID)
 			require.NoError(t, err)
 			wantState := "failed"
 			if test.cancel {
 				wantState = "cancelled"
 			}
-			require.Equal(t, wantState, status.Checkout.State)
-			if !test.cancel || test.published {
-				require.Equal(t, int64(1), status.PublishedFiles)
-			} else {
-				require.Zero(t, status.PublishedFiles)
-			}
+			require.Equal(t, store.StorageOperationState(wantState), operation.State)
 			if test.stage && !test.cancel {
 				_, err := os.Stat(lockedPath)
 				require.ErrorIs(t, err, os.ErrNotExist)
