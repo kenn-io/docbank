@@ -312,7 +312,7 @@ describe("exact selected-source preview", () => {
       },
       content,
     ],
-  ])("rejects a wrong received %s before decoding", async (_case, headers, bytes) => {
+  ])("rejects a wrong received %s", async (_case, headers, bytes) => {
     vi.stubGlobal(
       "fetch",
       vi

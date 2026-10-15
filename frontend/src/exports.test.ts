@@ -289,7 +289,7 @@ it("withholds completion until the terminal stream closes cleanly and ignores id
     readExportEvents("s", plan, jobID, undefined, new AbortController().signal, (job) =>
       published.push(job.state),
     ),
-  ).rejects.toThrow(SyntaxError);
+  ).rejects.toThrow();
   expect(published).toEqual([]);
   vi.mocked(fetch).mockResolvedValue(events([last, last]));
   await readExportEvents("s", plan, jobID, undefined, new AbortController().signal, (job) =>

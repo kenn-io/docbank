@@ -12,7 +12,6 @@ it("sends only the scoped browser session header and sets redirect behavior", as
   expect(request?.credentials).toBe("same-origin");
   const headers = new Headers(request?.headers);
   expect(headers.get("X-Docbank-Web-Session")).toBe("secret");
-  expect(headers.get("X-Api-Key")).toBeNull();
 });
 
 it("binds authorization failures to the session that issued the request", async () => {

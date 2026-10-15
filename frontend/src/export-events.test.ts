@@ -6,6 +6,7 @@ afterEach(() => vi.restoreAllMocks());
 
 it.each([
   ["truncated", "{}", /progress stream was truncated/],
+  ["malformed", "malformed\n", SyntaxError],
   ["oversized", "a".repeat(65537) + "\n", /progress event was unexpectedly large/],
 ] as const)("rejects %s progress streams", async (_name, content, error) => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(
