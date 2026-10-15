@@ -81,7 +81,7 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: "Frontend checks (format: npm --prefix frontend run fmt; lint: fix code)"
+      - name: Frontend checks (fix format with npm --prefix frontend run fmt)
         run: make frontend-test
 
   released-schemas:
