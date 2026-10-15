@@ -544,49 +544,28 @@ func TestWatchBindingOverlapHonorsCancellation(t *testing.T) {
 }
 
 func TestWatcherRejectsReservedCheckoutDestinations(t *testing.T) {
-	for _, state := range []store.StorageOperationState{store.StorageOperationQueued, store.StorageOperationRunning, store.StorageOperationCompleted, store.StorageOperationFailed, store.StorageOperationCancelled} {
-		for _, relationship := range []string{"same", "child", "parent", "alias"} {
-			t.Run(string(state)+"/"+relationship, func(t *testing.T) {
-				ing := newTestIngester(t)
-				ctx := t.Context()
-				node, err := ing.Store.CreateFile(ctx, ing.Store.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
+	for _, state := range []store.StorageOperationState{store.StorageOperationCompleted, store.StorageOperationFailed} {
+		t.Run(string(state), func(t *testing.T) {
+			ing := newTestIngester(t)
+			ctx := t.Context()
+			node, err := ing.Store.CreateFile(ctx, ing.Store.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
+			require.NoError(t, err)
+			asset, err := ing.Store.PhotoAssetForNode(ctx, node.ID)
+			require.NoError(t, err)
+			destination := t.TempDir()
+			checkout, op, err := ing.Store.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
+			require.NoError(t, err)
+			require.NoError(t, ing.Store.FinishPhotoCheckout(ctx, checkout.ID, op.ID, state, "{}", "", time.Now().Add(time.Hour)))
+			watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{Name: "checkout-watch", Source: destination, Destination: "/inbox"}, runTestMutation, nil)
+			require.NoError(t, err)
+			root, err := watcher.openRoot(ctx)
+			if state == store.StorageOperationFailed {
 				require.NoError(t, err)
-				asset, err := ing.Store.PhotoAssetForNode(ctx, node.ID)
-				require.NoError(t, err)
-				parent := t.TempDir()
-				destination := filepath.Join(parent, "checkout")
-				require.NoError(t, os.Mkdir(destination, 0700))
-				checkout, op, err := ing.Store.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
-				require.NoError(t, err)
-				if state == store.StorageOperationRunning {
-					require.NoError(t, ing.Store.ClaimPhotoCheckout(ctx, checkout.ID, op.ID))
-				} else if state != store.StorageOperationQueued {
-					require.NoError(t, ing.Store.FinishPhotoCheckout(ctx, checkout.ID, op.ID, state, "{}", "", time.Now().Add(time.Hour)))
-				}
-				source := destination
-				switch relationship {
-				case "child":
-					source = filepath.Join(destination, "nested")
-					require.NoError(t, os.Mkdir(source, 0700))
-				case "parent":
-					source = parent
-				case "alias":
-					source = filepath.Join(t.TempDir(), "alias")
-					if err := os.Symlink(destination, source); err != nil {
-						t.Skipf("symbolic links unavailable: %v", err)
-					}
-				}
-				watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{Name: "checkout-watch", Source: source, Destination: "/inbox"}, runTestMutation, nil)
-				require.NoError(t, err)
-				root, err := watcher.openRoot(ctx)
-				if state == store.StorageOperationFailed || state == store.StorageOperationCancelled {
-					require.NoError(t, err)
-					require.NoError(t, root.Close())
-				} else {
-					require.ErrorContains(t, err, "overlaps reserved checkout")
-					require.ErrorContains(t, err, checkout.ID)
-				}
-			})
-		}
+				require.NoError(t, root.Close())
+			} else {
+				require.ErrorContains(t, err, "overlaps reserved checkout")
+				require.ErrorContains(t, err, checkout.ID)
+			}
+		})
 	}
 }

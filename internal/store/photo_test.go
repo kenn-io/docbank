@@ -217,6 +217,19 @@ func TestPhotoMetadataRoundTripValidatesPointersReceiptsAndSourceProvenance(t *t
 		assert.Contains(t, first.String(), `"type":"photo_asset"`)
 		assert.Contains(t, first.String(), `"operation":"import"`)
 		assert.Contains(t, first.String(), jpeg.Nodes[0].CurrentVersionID)
+		var unobservedFile string
+		for line := range strings.SplitSeq(first.String(), "\n") {
+			if !strings.Contains(line, `"type":"photo_file"`) {
+				continue
+			}
+			var record metadataPhotoFile
+			require.NoError(t, json.Unmarshal([]byte(line), &record))
+			if record.NodeID == secondNode.ID {
+				unobservedFile = line
+			}
+		}
+		require.NotEmpty(t, unobservedFile)
+		require.NotContains(t, unobservedFile, "source_provenance_identity")
 		target := newTestStore(t)
 		require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(first.Bytes())))
 		var second bytes.Buffer

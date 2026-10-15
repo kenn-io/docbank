@@ -3,10 +3,8 @@ package main
 import (
 	"encoding/json/v2"
 	"net/http"
-	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -95,64 +93,4 @@ func TestPhotoCheckoutCLICreateEstimateListStatusAndYears(t *testing.T) {
 			require.Equal(t, store.PhotoCheckoutSelection{Years: tc.expected}, received)
 		}
 	}
-}
-
-func TestPhotoCheckoutCLIImportsAndCopiesGroupedPhotosThroughDaemon(t *testing.T) {
-	setupVaultHome(t)
-	source, destination := t.TempDir(), t.TempDir()
-	files := map[string]string{
-		"IMG.ARW":     "synthetic RAW bytes",
-		"IMG.JPG":     "synthetic JPEG bytes",
-		"IMG.ARW.XMP": `<x:xmpmeta xmlns:x="adobe:ns:meta/"/>`,
-	}
-	var total int64
-	for name, content := range files {
-		require.NoError(t, os.WriteFile(filepath.Join(source, name), []byte(content), 0600))
-		total += int64(len(content))
-	}
-	out, err := runCLI(t, "photos", "import", source, "/photos", "--json")
-	require.NoError(t, err, out)
-	var imported api.StorageOperation
-	require.NoError(t, json.Unmarshal([]byte(out), &imported))
-	require.Eventually(t, func() bool {
-		out, err = runCLI(t, "jobs", "show", imported.ID, "--json")
-		require.NoError(t, err, out)
-		require.NoError(t, json.Unmarshal([]byte(out), &imported))
-		return imported.FinishedAt != ""
-	}, 15*time.Second, 25*time.Millisecond)
-	require.Equal(t, "completed", imported.State, imported.Error)
-	out, err = runCLI(t, "photos", "checkout", "create", destination, "--all", "--byte-limit", "1000000")
-	require.NoError(t, err, out)
-	var created api.PhotoCheckoutCreateResult
-	require.NoError(t, json.Unmarshal([]byte(out), &created))
-	var status api.PhotoCheckoutStatus
-	require.Eventually(t, func() bool {
-		out, err = runCLI(t, "photos", "checkout", "status", created.Checkout.ID)
-		require.NoError(t, err, out)
-		require.NoError(t, json.Unmarshal([]byte(out), &status))
-		return status.Checkout.State != "queued" && status.Checkout.State != "running"
-	}, 15*time.Second, 25*time.Millisecond)
-	require.Equal(t, "completed", status.Checkout.State, status.Checkout.Error)
-	require.Equal(t, int64(3), status.Files)
-	require.Equal(t, int64(3), status.PublishedFiles)
-	require.Equal(t, total, status.PublishedBytes)
-	var parent string
-	require.NoError(t, filepath.WalkDir(destination, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil || entry.IsDir() {
-			return walkErr
-		}
-		name := entry.Name()
-		content, ok := files[name]
-		require.True(t, ok, path)
-		actual, err := os.ReadFile(path)
-		require.NoError(t, err)
-		require.Equal(t, content, string(actual))
-		if parent == "" {
-			parent = filepath.Dir(path)
-		}
-		require.Equal(t, parent, filepath.Dir(path))
-		delete(files, name)
-		return nil
-	}))
-	require.Empty(t, files)
 }

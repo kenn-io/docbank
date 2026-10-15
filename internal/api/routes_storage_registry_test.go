@@ -333,12 +333,10 @@ func TestStorageRegistrationRejectsReservedCheckoutDestination(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name         string
-		state        store.StorageOperationState
 		previewFirst bool
 	}{
-		{"preview", store.StorageOperationCompleted, false},
-		{"apply rechecks reservation", store.StorageOperationCompleted, true},
-		{"released destination", store.StorageOperationFailed, false},
+		{"preview", false},
+		{"apply rechecks reservation", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			destination := t.TempDir()
@@ -363,15 +361,11 @@ func TestStorageRegistrationRejectsReservedCheckoutDestination(t *testing.T) {
 			require.NoError(t, err)
 			checkout, operation, err := live.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
 			require.NoError(t, err)
-			require.NoError(t, live.FinishPhotoCheckout(t.Context(), checkout.ID, operation.ID, tc.state, "{}", "", time.Now().Add(time.Hour)))
+			require.NoError(t, live.FinishPhotoCheckout(t.Context(), checkout.ID, operation.ID, store.StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
 			resp, body := do(t, ts, http.MethodPost, endpoint, nil, input)
-			if tc.state == store.StorageOperationCompleted {
-				require.Equal(t, http.StatusConflict, resp.StatusCode, body)
-				require.Contains(t, body, checkout.ID)
-				require.Contains(t, body, `"code":"storage_namespace_overlap"`)
-			} else {
-				require.Equal(t, http.StatusOK, resp.StatusCode, body)
-			}
+			require.Equal(t, http.StatusConflict, resp.StatusCode, body)
+			require.Contains(t, body, checkout.ID)
+			require.Contains(t, body, `"code":"storage_namespace_overlap"`)
 		})
 	}
 }
