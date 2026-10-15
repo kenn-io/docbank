@@ -1,7 +1,18 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vite-plus/test";
 import { APIError, isCurrentSessionError, sessionResponse } from "./api-transport.js";
 
 afterEach(() => vi.restoreAllMocks());
+
+it("sends the scoped browser session header and sets redirect behavior", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ id: 1 }));
+  const response = await sessionResponse("/api/v1/tags", { session: "secret" });
+  await expect(response.json()).resolves.toEqual({ id: 1 });
+  const request = fetchMock.mock.calls[0]?.[1];
+  expect(request?.redirect).toBe("error");
+  expect(request?.credentials).toBe("same-origin");
+  const headers = new Headers(request?.headers);
+  expect(headers.get("X-Docbank-Web-Session")).toBe("secret");
+});
 
 it("binds authorization failures to the session that issued the request", async () => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -24,15 +35,40 @@ it("keeps manually-created API errors compatible with current-session handling",
   expect(isCurrentSessionError(new APIError("expired", 401, "unauthorized"), "new-tab")).toBe(true);
 });
 
-it("preserves server field diagnostics verbatim", async () => {
+it.each([
+  {
+    name: "field errors",
+    problem: {
+      code: "validation",
+      detail: "validation failed",
+      errors: ["expected number <= 5 (body.patch.rating: 6)"],
+    },
+    expected: {
+      code: "validation",
+      message: "validation failed",
+      errors: ["expected number <= 5 (body.patch.rating: 6)"],
+    },
+  },
+  {
+    name: "untrusted query position",
+    problem: {
+      code: "invalid_query",
+      detail: "expected an expression",
+      position: { offset: 5, end: 8 },
+    },
+    expected: {
+      code: "invalid_query",
+      message: "expected an expression",
+      position: { offset: 5, end: 8 },
+    },
+  },
+])("preserves server diagnostics verbatim: $name", async ({ problem, expected }) => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(
     Response.json(
       {
         title: "Unprocessable Entity",
         status: 422,
-        detail: "validation failed",
-        code: "validation",
-        errors: ["expected number <= 5 (body.patch.rating: 6)"],
+        ...problem,
       },
       { status: 422 },
     ),
@@ -40,11 +76,9 @@ it("preserves server field diagnostics verbatim", async () => {
   const error = (await sessionResponse("/api/v1/photos/authored/edit", { session: "tab" }).catch(
     (cause: APIError) => cause,
   )) as APIError;
-  expect(error.message).toBe("validation failed");
   expect(error).toMatchObject({
     status: 422,
-    code: "validation",
-    errors: ["expected number <= 5 (body.patch.rating: 6)"],
+    ...expected,
   });
 });
 

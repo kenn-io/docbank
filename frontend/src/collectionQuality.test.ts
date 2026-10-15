@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { collectionQuality, qualitySuggestion } from "./collectionQuality.js";
 
 const id = "11111111-1111-4111-8111-111111111111";
@@ -67,16 +67,22 @@ describe("collection quality receipts", () => {
     it(`rejects a malformed ${mutation} receipt`, async () => {
       const value = receipt();
       if (mutation === "identity") value.collection.id = "22222222-2222-4222-8222-222222222222";
-      if (mutation === "profile") value.collection.coverage.profile = "different";
+      if (mutation === "profile") {
+        value.collection.coverage.profile = "different";
+        value.collection.coverage.profiles = ["different"];
+      }
       if (mutation === "counts") Object.assign(value.collection.coverage, { counts: null });
-      if (mutation === "sum") value.collection.coverage.counts.complete = 4;
+      if (mutation === "sum") value.collection.coverage.counts.complete = 2;
       if (mutation === "dimension") value.dimensions[0].field = "invented";
-      if (mutation === "buckets") value.dimensions[0].values[0].count = -1;
+      if (mutation === "buckets") {
+        value.dimensions[0].values[0].count = -1;
+        value.dimensions[0].values.push({ value: "html", count: 2 });
+      }
       if (mutation === "fingerprint") value.source_fingerprint = "not-a-digest";
       vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(value)));
       await expect(
         collectionQuality("session", id, "archive", new AbortController().signal),
-      ).rejects.toThrow();
+      ).rejects.toThrow(/Invalid collection quality receipt/);
     });
   }
   it("keeps unavailable configuration distinct from empty output", async () => {

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import BatesExportDrawer from "./BatesExportDrawer.svelte";
 import { batesRecipeSHA256, type BatesRecipe } from "./bates";

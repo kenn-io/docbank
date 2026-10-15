@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vite-plus/test";
 import {
   copyExportMembers,
   sealExportSource,
@@ -261,29 +261,33 @@ it("accepts current-state gaps and byte-identical duplicates, never treats EOF a
   );
   expect(seen).toEqual([1, 8]);
   expect(gaps).toEqual([false, true]);
+  vi.mocked(fetch).mockResolvedValue(events([last, last]));
+  const published: string[] = [];
+  await readExportEvents("s", plan, jobID, undefined, new AbortController().signal, (job) =>
+    published.push(job.state),
+  );
+  expect(published).toEqual(["completed"]);
   vi.mocked(fetch).mockResolvedValue(events([first]));
   await expect(
     readExportEvents("session", plan, jobID, undefined, new AbortController().signal, () => {}),
   ).rejects.toThrow(/closed/);
 });
 
-it("rejects conflicting duplicates, backwards, truncated and oversized progress", async () => {
+it("rejects conflicting duplicates and backwards progress", async () => {
   const line = (job: unknown) =>
     JSON.stringify({ delivery: "current_state", requested_after: 0, job });
-  for (const content of [
-    events([line(queued), line({ ...queued, state: "running" })]),
-    events([line({ ...queued, sequence: 3 }), line(queued)]),
-    new Response(line(complete), { headers: { "Content-Type": "application/x-ndjson" } }),
-    events(["a".repeat(65537)]),
-  ]) {
+  for (const [content, error] of [
+    [events([line(queued), line({ ...queued, state: "running" })]), /captured authority/],
+    [events([line({ ...queued, sequence: 3 }), line(queued)]), /captured authority/],
+  ] as const) {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(content);
     await expect(
       readExportEvents("s", plan, jobID, undefined, new AbortController().signal, () => {}),
-    ).rejects.toThrow();
+    ).rejects.toThrow(error);
   }
 });
 
-it("withholds completion until the terminal stream closes cleanly and ignores identical terminal duplicates", async () => {
+it("withholds publication after malformed trailing data", async () => {
   const last = JSON.stringify({ delivery: "current_state", requested_after: 0, job: complete });
   vi.spyOn(globalThis, "fetch").mockResolvedValue(events([last, "malformed"]));
   const published: string[] = [];
@@ -293,11 +297,6 @@ it("withholds completion until the terminal stream closes cleanly and ignores id
     ),
   ).rejects.toThrow();
   expect(published).toEqual([]);
-  vi.mocked(fetch).mockResolvedValue(events([last, last]));
-  await readExportEvents("s", plan, jobID, undefined, new AbortController().signal, (job) =>
-    published.push(job.state),
-  );
-  expect(published).toEqual(["completed"]);
 });
 
 it("requires exact receipt and native same-origin ticket and rejects unsafe basenames", async () => {

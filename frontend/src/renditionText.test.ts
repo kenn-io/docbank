@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vite-plus/test";
 import {
   readVerifiedRenditionText,
   resolveRenditionText,
@@ -151,7 +151,7 @@ it.each([
   ).rejects.toThrow(/Malformed rendition text receipt/);
 });
 
-it("verifies rendition headers, length, SHA-256 and UTF-8 before returning inert text", async () => {
+it("returns verified inert rendition text", async () => {
   const markdown = "Verified <script>alert('blocked')</script>";
   const envelope = {
     docbank: {
@@ -185,14 +185,15 @@ it("verifies rendition headers, length, SHA-256 and UTF-8 before returning inert
   ).resolves.toBe("Verified <script>alert('blocked')</script>");
 });
 
-it("rejects a wrong body digest and wrong generation header", async () => {
+it.each(["body digest", "generation header"])("rejects a wrong %s", async (problem) => {
   const expected = new TextEncoder().encode("expected text");
-  const wrong = new TextEncoder().encode("different txt");
   const digest = createHash("sha256").update(expected).digest("hex");
   const ready = await resolveReady(expected.length, digest);
-  const headers = renditionHeaders(ready, digest, wrong);
-  headers.set("X-Docbank-Rendition-Generation", "9".repeat(64));
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(wrong, { headers }));
+  const headers = renditionHeaders(ready, digest, expected);
+  const bytes = problem === "body digest" ? new TextEncoder().encode("different txt") : expected;
+  if (problem === "generation header")
+    headers.set("X-Docbank-Rendition-Generation", "9".repeat(64));
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(bytes, { headers }));
   await expect(
     readVerifiedRenditionText("session", source, 9, ready, new AbortController().signal),
   ).rejects.toThrow(/disagreed with the selected rendition/);

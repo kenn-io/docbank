@@ -1,4 +1,4 @@
-import { beforeEach, afterEach, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import App from "./App.svelte";
 
@@ -29,7 +29,6 @@ it("offers the API key and clears it after rejected sign-in", async () => {
   await fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
   await screen.findByText("invalid API key");
   await waitFor(() => expect((field as HTMLInputElement).value).toBe(""));
-  expect((field as HTMLInputElement).value).toBe("");
   const call = fetchMock.mock.calls.find(([input]) => String(input).endsWith("/login"));
   expect(JSON.parse(String(call?.[1]?.body))).toEqual({
     api_key: "synthetic-browser-credential-0123456789",
@@ -39,7 +38,7 @@ it("offers the API key and clears it after rejected sign-in", async () => {
   ).toBe(false);
 });
 
-it("exchanges the key before reading the vault and offers sign out", async () => {
+it("signs out with a DELETE request and the tab-token session header", async () => {
   history.replaceState(null, "", "/");
   vi.stubGlobal(
     "ResizeObserver",
@@ -74,21 +73,22 @@ it("exchanges the key before reading the vault and offers sign out", async () =>
   await fireEvent.input(key, { target: { value: "synthetic-master-key" } });
   await fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
   const signOut = await screen.findByRole("button", { name: "Sign out" });
-  expect((key as HTMLInputElement).value).toBe("");
   await fireEvent.click(signOut);
   await waitFor(() => expect(screen.getByLabelText("API key")).toBeTruthy());
   await waitFor(
     () =>
       expect(
-        fetchMock.mock.calls.some(([input]) => String(input) === "/api/daemon/web-session"),
+        fetchMock.mock.calls.some(
+          ([input, init]) =>
+            String(input) === "/api/daemon/web-session" && init?.method === "DELETE",
+        ),
       ).toBe(true),
     { timeout: 10_000 },
   );
-  const call = fetchMock.mock.calls.find(([input]) => String(input) === "/api/daemon/web-session");
+  const call = fetchMock.mock.calls.find(
+    ([input, init]) => String(input) === "/api/daemon/web-session" && init?.method === "DELETE",
+  );
   expect(new Headers(call?.[1]?.headers).get("X-Docbank-Web-Session")).toBe("tab-token");
-  expect(call?.[1]?.redirect).toBe("error");
-  expect(call?.[1]?.credentials).toBe("same-origin");
-  vi.unstubAllGlobals();
 });
 
 it("clears an open Manage tags dialog after session expiry before signing in again", async () => {

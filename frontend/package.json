@@ -7,6 +7,7 @@
     "dev": "vp dev",
     "build": "vp build",
     "fmt": "vp fmt",
+    "check:fmt-lint": "vp fmt --check && vp lint --format unix",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "check:kit-ui": "kit-ui-check src",
     "docs-site:check": "tsc -p docs-site/tsconfig.json --noEmit",
@@ -39,8 +40,7 @@
     "svelte-check": "4.7.2",
     "typescript": "6.0.3",
     "vite": "npm:@voidzero-dev/vite-plus-core@0.2.4",
-    "vite-plus": "0.2.4",
-    "vitest": "4.1.10"
+    "vite-plus": "0.2.4"
   },
   "overrides": {
     "vite": "npm:@voidzero-dev/vite-plus-core@0.2.4"

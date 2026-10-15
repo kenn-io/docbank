@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { groupTags, splitTagName, tagColor, type PresentedTag } from "./tagPresentation.js";
 import type { Tag } from "./generated/docbank.js";
 

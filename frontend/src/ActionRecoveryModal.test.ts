@@ -1,6 +1,6 @@
 import { prepareAction } from "./actionRecovery.js";
 import { webcrypto } from "node:crypto";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import ActionRecoveryModal, { type ActionRecoveryJournal } from "./ActionRecoveryModal.svelte";
 import { APIError } from "./api-transport.js";

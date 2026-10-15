@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { parseCSV } from "../test-support/csv.js";
 import type { Node } from "./generated/docbank.js";
 import { buildVisiblePageCSV, selectedVisibleCSVRows, type VisibleCSVRow } from "./csv.js";

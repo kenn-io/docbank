@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vite-plus/test";
 import { storage } from "./photo-test-fixtures.js";
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
 import { Photos } from "./photos.svelte.js";

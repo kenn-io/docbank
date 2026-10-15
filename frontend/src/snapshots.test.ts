@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { parseQuery, queryFingerprint, type Query } from "./query.js";
 import {
   captureSnapshotTargets,
@@ -96,7 +96,12 @@ describe("snapshot transport and receipt validation", () => {
     const dependencies = [{ kind: "person", id: tagID, revision: 4 }];
     const receipt = await page({ dependencies });
     vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(receipt));
-    const result = await createSnapshot("session", query, { profile: "archive", page_size: 50, facets: ["tags"] }, new AbortController().signal);
+    const result = await createSnapshot(
+      "session",
+      query,
+      { profile: "archive", page_size: 50, facets: ["tags"] },
+      new AbortController().signal,
+    );
     expect(result.query).toEqual(query);
     expect(result.dependencies).toEqual(dependencies);
   });
@@ -134,7 +139,11 @@ describe("snapshot transport and receipt validation", () => {
   });
 
   it.each([
-    ["an unknown envelope field", async () => ({ ...(await page()), future: true })],
+    [
+      "an unknown envelope field",
+      async () => ({ ...(await page()), future: true }),
+      "receipt has missing or unknown fields",
+    ],
     [
       "a missing receipt field",
       async () => {
@@ -142,8 +151,18 @@ describe("snapshot transport and receipt validation", () => {
         delete value.member_hash;
         return value;
       },
+      "receipt has missing or unknown fields",
     ],
-    ["an unsafe total", async () => page({ total: Number.MAX_SAFE_INTEGER + 1 })],
+    [
+      "an unsafe total",
+      async () => page({ total: Number.MAX_SAFE_INTEGER + 1 }),
+      "total must be a safe integer of at least 0",
+    ],
+    [
+      "empty rows with a nonzero total",
+      async () => page({ rows: [], total: 51 }),
+      "rows is inconsistent with total",
+    ],
     [
       "an unsafe row identity",
       async () =>
@@ -152,6 +171,7 @@ describe("snapshot transport and receipt validation", () => {
           total: 1,
           total_bytes: 20,
         }),
+      "rows[0].node_id must be a safe integer of at least 1",
     ],
     [
       "an oversized serialized row",
@@ -161,6 +181,7 @@ describe("snapshot transport and receipt validation", () => {
           total: 1,
           total_bytes: 20,
         }),
+      "rows[0] exceeds 64 KiB",
     ],
     [
       "invented unavailable counts",
@@ -176,6 +197,7 @@ describe("snapshot transport and receipt validation", () => {
             },
           ],
         }),
+      "facets[0] fabricates unavailable counts",
     ],
     [
       "missing unavailable reason",
@@ -183,6 +205,7 @@ describe("snapshot transport and receipt validation", () => {
         page({
           facets: [{ dimension: "tags", available: false, values: [] }],
         }),
+      "facets[0] fabricates unavailable counts",
     ],
     [
       "unknown nested row field",
@@ -192,12 +215,18 @@ describe("snapshot transport and receipt validation", () => {
           total: 1,
           total_bytes: 20,
         }),
+      "rows[0] has missing or unknown fields",
     ],
-  ])("rejects %s", async (_name, makeReceipt) => {
+  ])("rejects %s", async (_name, makeReceipt, error) => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(await makeReceipt()));
     await expect(
-      createSnapshot("session", query, {}, new AbortController().signal),
-    ).rejects.toThrow(/malformed snapshot receipt/i);
+      createSnapshot(
+        "session",
+        query,
+        { profile: "archive", page_size: 50, facets: ["tags"] },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow(`Malformed snapshot receipt: ${error}.`);
   });
 
   it("rejects a receipt for a different query", async () => {
@@ -211,8 +240,13 @@ describe("snapshot transport and receipt validation", () => {
       ),
     );
     await expect(
-      createSnapshot("session", query, {}, new AbortController().signal),
-    ).rejects.toThrow(/does not match the request/i);
+      createSnapshot(
+        "session",
+        query,
+        { page_size: 50, facets: ["tags"] },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow(/query does not match the request/i);
   });
 
   it("bounds chunked successful response decoding to 32 MiB", async () => {
@@ -257,14 +291,20 @@ describe("snapshot transport and receipt validation", () => {
     [
       "wrong snapshot ID",
       { snapshot_id: "fedcba9876543210fedcba9876543210", previous_cursor: "previous-1" },
+      /page does not match immutable snapshot authority/,
     ],
-    ["wrong member identity", { member_hash: "0".repeat(64), previous_cursor: "previous-1" }],
+    [
+      "wrong member identity",
+      { member_hash: "0".repeat(64), previous_cursor: "previous-1" },
+      /page does not match immutable snapshot authority/,
+    ],
     [
       "wrong snapshot identity",
       { snapshot_fingerprint: `sha256:${"0".repeat(64)}`, previous_cursor: "previous-1" },
+      /page does not match immutable snapshot authority/,
     ],
-    ["missing reverse cursor", {}],
-  ])("rejects a page with %s", async (_name, overrides) => {
+    ["missing reverse cursor", {}, /page cursor direction is inconsistent/],
+  ])("rejects a page with %s", async (_name, overrides, error) => {
     const first = (await page({
       total: 2,
       total_bytes: 30,
@@ -282,7 +322,7 @@ describe("snapshot transport and receipt validation", () => {
     );
     await expect(
       readSnapshotPage("session", first, "next-1", new AbortController().signal),
-    ).rejects.toThrow();
+    ).rejects.toThrow(error);
   });
 
   it("requires the requested cursor to belong to the supplied page", async () => {
@@ -384,19 +424,42 @@ describe("exact snapshot target capture", () => {
   });
 
   it.each([
-    ["duplicate members", async () => second({ rows: [captureRows[0]] })],
-    ["wrong count", async () => second({ rows: [], previous_cursor: "previous-1" })],
-    ["wrong bytes", async () => second({ rows: [{ ...captureRows[50], size: 52 }] })],
-    ["wrong member hash", async () => second({ member_hash: "0".repeat(64) })],
-    ["premature next cursor", async () => second({ next_cursor: "next-2" })],
-  ])("rejects %s without sending a mutation", async (_name, makeSecond) => {
+    [
+      "wrong member hash",
+      async (first: SnapshotPage) => {
+        first.member_hash = "0".repeat(64);
+        return second({ member_hash: first.member_hash });
+      },
+      "Snapshot capture member hash does not match its receipt.",
+    ],
+    [
+      "duplicate members",
+      async () => second({ rows: [captureRows[0]] }),
+      "Snapshot capture contains a duplicate member.",
+    ],
+    [
+      "wrong row count",
+      async () => second({ rows: [captureRows[49], captureRows[50]] }),
+      "Snapshot page row count is inconsistent.",
+    ],
+    [
+      "wrong bytes",
+      async () => second({ rows: [{ ...captureRows[50], size: 52 }] }),
+      "Snapshot capture byte total does not match its receipt.",
+    ],
+    [
+      "premature next cursor",
+      async () => second({ next_cursor: "next-2" }),
+      "Snapshot final page has a next cursor.",
+    ],
+  ])("rejects %s without sending a mutation", async (_name, makeSecond, error) => {
     const first = await twoPageFirst();
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
-      .mockResolvedValue(jsonResponse(await makeSecond()));
+      .mockResolvedValue(jsonResponse(await makeSecond(first)));
     await expect(
       captureSnapshotTargets("session", first, new AbortController().signal),
-    ).rejects.toThrow();
+    ).rejects.toThrow(error);
     expect(
       fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/batch/tags")),
     ).toHaveLength(0);

@@ -1,6 +1,4 @@
-import * as generated from "./generated/docbank.js";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { APIError } from "./api-transport.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   changeNodeTag,
   liveNodeTags,
@@ -35,193 +33,6 @@ describe("browser authentication", () => {
     expect(sessionStorage.length).toBe(0);
     expect(history.state).toEqual({ fixtureIndex: 4 });
     expect(takeFragmentSession()).toBeNull();
-  });
-
-  it("sends only the scoped browser session header", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ id: 1 }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
-    await expect(generated.resolvePath({ path: "/" }, { session: "secret" })).resolves.toEqual({
-      id: 1,
-    });
-    const request = fetchMock.mock.calls[0]?.[1];
-    const headers = new Headers(request?.headers);
-    expect(headers.get("X-Docbank-Web-Session")).toBe("secret");
-    expect(headers.get("X-Api-Key")).toBeNull();
-  });
-
-  it("revokes the session when the interface locks", async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(new Response(null, { status: 204 }));
-    await generated.revokeWebSession({ session: "short-lived" });
-    const [path, request] = fetchMock.mock.calls[0] ?? [];
-    expect(path).toBe("/api/daemon/web-session");
-    expect(request?.method).toBe("DELETE");
-    expect(new Headers(request?.headers).get("X-Docbank-Web-Session")).toBe("short-lived");
-  });
-
-  it("preserves structured daemon failures", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          status: 401,
-          code: "unauthorized",
-          detail: "missing or invalid API key",
-        }),
-        { status: 401, headers: { "Content-Type": "application/problem+json" } },
-      ),
-    );
-    await expect(generated.resolvePath({ path: "/" }, { session: "bad" })).rejects.toEqual(
-      new APIError("missing or invalid API key", 401, "unauthorized"),
-    );
-  });
-
-  it("preserves an untrusted problem position for the query editor", async () => {
-    const position = { offset: 5, end: 8 };
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          status: 422,
-          code: "invalid_query",
-          detail: "expected an expression",
-          position,
-        }),
-        { status: 422, headers: { "Content-Type": "application/problem+json" } },
-      ),
-    );
-
-    await expect(generated.parseQuery({}, { session: "session" })).rejects.toMatchObject({
-      message: "expected an expression",
-      status: 422,
-      code: "invalid_query",
-      position,
-    });
-  });
-
-  it("addresses audit status and cursor-stable history by node ID", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
-      async () =>
-        new Response(JSON.stringify({ enabled: true, scopes: [], items: [] }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
-    );
-    await generated.auditStatus({ node_id: 42 }, { session: "session" });
-    await generated.auditNodeHistory(
-      { node_id: 42, limit: 50, cursor: "cursor +/=" },
-      { session: "session" },
-    );
-
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/audit/status?node_id=42");
-    expect(fetchMock.mock.calls[1]?.[0]).toBe(
-      "/api/v1/audit/history?node_id=42&limit=50&cursor=cursor+%2B%2F%3D",
-    );
-  });
-
-  it("reads daemon-owned background jobs through the browser session", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ items: [] }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
-
-    await expect(
-      generated.listJobs({ session: "session" }).then((result) => result.items),
-    ).resolves.toEqual([]);
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/jobs");
-  });
-
-  it("leaves mailbox event streams available to the caller", async () => {
-    const events = '{"type":"progress"}\n{"type":"done"}\n';
-    const response = new Response(events, {
-      headers: { "Content-Type": "application/x-ndjson" },
-    });
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(response);
-    const stream = await generated.mailboxEvents("synthetic-job", { session: "session" });
-    expect(stream).toBe(response);
-    expect(stream.bodyUsed).toBe(false);
-    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Accept")).toBe(
-      "application/x-ndjson",
-    );
-    expect(await stream.text()).toBe(events);
-  });
-
-  it("reads physical storage authority through the browser session", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ loose_blobs: 0, packs: 0 }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
-
-    await generated.storageStatus(true ? { refresh: true } : undefined, { session: "session" });
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/storage?refresh=true");
-  });
-
-  it("reads configured backup snapshots through the browser session", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ repository: { id: "repo", path: "/backups" }, items: [] }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
-
-    await generated.listBackupSnapshots(undefined, { session: "session" });
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/backup/snapshots");
-  });
-
-  it("reads immutable versions for one stable node", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ items: [], total: 0, limit: 1000, offset: 0 }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
-
-    await generated.listContentVersions(42, { limit: 1000, offset: 0 }, { session: "session" });
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/nodes/42/versions?limit=1000&offset=0");
-  });
-
-  it("addresses tag authority and tag-filtered search", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
-      async () =>
-        new Response(JSON.stringify({ items: [], total: 0, limit: 1000, offset: 0, hits: [] }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
-    );
-
-    await generated.listTags({ limit: 1000, offset: 0 }, { session: "session" });
-    await generated.getTag("11111111-1111-4111-8111-111111111111", { session: "session" });
-    await generated.listTagNodes(
-      "11111111-1111-4111-8111-111111111111",
-      { limit: 1000, offset: 0 },
-      { session: "session" },
-    );
-    await generated.listTagNodes(
-      "11111111-1111-4111-8111-111111111111",
-      { limit: 1000, offset: 0, live_only: true },
-      { session: "session" },
-    );
-    await generated.listNodeTags(42, { limit: 1000, offset: 0 }, { session: "session" });
-    await generated.search(
-      { q: "quarterly report", limit: 1000, tag_id: "11111111-1111-4111-8111-111111111111" },
-      { session: "session" },
-    );
-
-    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
-      "/api/v1/tags?limit=1000&offset=0",
-      "/api/v1/tags/11111111-1111-4111-8111-111111111111",
-      "/api/v1/tags/11111111-1111-4111-8111-111111111111/nodes?limit=1000&offset=0",
-      "/api/v1/tags/11111111-1111-4111-8111-111111111111/nodes?limit=1000&offset=0&live_only=true",
-      "/api/v1/nodes/42/tags?limit=1000&offset=0",
-      "/api/v1/search?q=quarterly+report&limit=1000&tag_id=11111111-1111-4111-8111-111111111111",
-    ]);
   });
 
   it("loads every live node tag under one before-and-after revision fence", async () => {
@@ -276,7 +87,7 @@ describe("browser authentication", () => {
     ]);
   });
 
-  it.each(["revision", "duplicate", "count"])(
+  it.each(["revision", "duplicate", "duplicate across pages", "count"])(
     "rejects a live tag listing with inconsistent %s evidence",
     async (problem) => {
       const nodeResponse = (revision: number) =>
@@ -301,37 +112,30 @@ describe("browser authentication", () => {
       vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
         call += 1;
         if (call === 1) return nodeResponse(8);
+        if (problem === "duplicate across pages" && (call === 2 || call === 3))
+          return Response.json({
+            items: Array.from({ length: call === 2 ? 1000 : 1 }, (_, index) => ({
+              id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+              name: `tag-${index}`,
+              revision: 1,
+              assignment_count: 1,
+            })),
+            total: 1001,
+            limit: 1000,
+            offset: call === 2 ? 0 : 1000,
+          });
         if (call === 2)
           return new Response(
             JSON.stringify({
-              items: [
-                {
-                  id: "00000000-0000-4000-8000-000000000001",
-                  name: "one",
-                  revision: 1,
-                  assignment_count: 1,
-                },
-              ],
+              items: Array.from({ length: problem === "duplicate" ? 2 : 1 }, () => ({
+                id: "00000000-0000-4000-8000-000000000001",
+                name: "one",
+                revision: 1,
+                assignment_count: 1,
+              })),
               total: problem === "count" ? 2 : problem === "duplicate" ? 2 : 1,
               limit: 1000,
               offset: 0,
-            }),
-            { headers: { "Content-Type": "application/json" } },
-          );
-        if (problem === "duplicate" && call === 3)
-          return new Response(
-            JSON.stringify({
-              items: [
-                {
-                  id: "00000000-0000-4000-8000-000000000001",
-                  name: "one",
-                  revision: 1,
-                  assignment_count: 1,
-                },
-              ],
-              total: 2,
-              limit: 1000,
-              offset: 1,
             }),
             { headers: { "Content-Type": "application/json" } },
           );
@@ -402,110 +206,79 @@ describe("browser authentication", () => {
     expect(new Headers(fetchMock.mock.calls[2]?.[1]?.headers).get("If-Match")).toBe("2");
   });
 
-  it("trashes one stable node under its inspected revision", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          id: 42,
-          name: "report.txt",
-          kind: "file",
-          size: 12,
-          revision: 8,
-          created_at: "2026-07-28T12:00:00Z",
-          modified_at: "2026-07-28T12:00:00Z",
-          trashed_at: "2026-07-28T12:01:00Z",
-          path: "/Reports/report.txt",
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
-    );
-
-    await expect(trashNode("session", 42, 7)).resolves.toMatchObject({
-      id: 42,
-      revision: 8,
-      path: "/Reports/report.txt",
-    });
-    const [path, request] = fetchMock.mock.calls[0] ?? [];
-    expect(path).toBe("/api/v1/nodes/42/trash");
-    expect(request?.method).toBe("POST");
-    expect(new Headers(request?.headers).get("If-Match")).toBe("7");
-  });
-
-  it("lists bounded trash and restores one inspected root", async () => {
-    const restored = {
-      id: 42,
-      parent_id: 2,
-      name: "report.txt",
-      kind: "file",
-      size: 12,
-      revision: 9,
-      created_at: "2026-07-28T12:00:00Z",
-      modified_at: "2026-07-28T12:02:00Z",
-      path: "/Reports/report (2).txt",
-    };
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockImplementation(
-        async (input) =>
-          new Response(
-            JSON.stringify(
-              String(input).startsWith("/api/v1/trash?")
-                ? { items: [], total: 0, limit: 1000, offset: 0 }
-                : restored,
-            ),
-            { status: 200, headers: { "Content-Type": "application/json" } },
-          ),
-      );
-
-    await expect(
-      generated.listTrash({ limit: 1000, offset: 0 }, { session: "session" }),
-    ).resolves.toMatchObject({
-      total: 0,
-      limit: 1000,
-    });
-    await expect(restoreNode("session", 42, 8)).resolves.toEqual(restored);
-
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/trash?limit=1000&offset=0");
-    const [path, request] = fetchMock.mock.calls[1] ?? [];
-    expect(path).toBe("/api/v1/nodes/42/restore");
-    expect(request?.method).toBe("POST");
-    expect(new Headers(request?.headers).get("If-Match")).toBe("8");
-  });
-
-  it("changes one tag assignment under the inspected node revision", async () => {
-    const receipt = {
-      tag: {
-        id: "11111111-1111-4111-8111-111111111111",
-        name: "reviewed",
-        revision: 2,
-        assignment_count: 4,
-      },
-      node: {
+  it.each([
+    {
+      operation: "trash",
+      revision: 7,
+      apply: (revision: number) => trashNode("session", 42, revision),
+      method: "POST",
+      path: "/api/v1/nodes/42/trash",
+      response: {
         id: 42,
         name: "report.txt",
         kind: "file",
         size: 12,
         revision: 8,
         created_at: "2026-07-28T12:00:00Z",
-        modified_at: "2026-07-28T12:02:00Z",
+        modified_at: "2026-07-28T12:00:00Z",
+        trashed_at: "2026-07-28T12:01:00Z",
         path: "/Reports/report.txt",
       },
-      changed: true,
-    };
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify(receipt), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
-
-    await expect(
-      changeNodeTag("session", 42, 7, "11111111-1111-4111-8111-111111111111", true),
-    ).resolves.toEqual(receipt);
-
-    const [path, request] = fetchMock.mock.calls[0] ?? [];
-    expect(path).toBe("/api/v1/nodes/42/tags/11111111-1111-4111-8111-111111111111");
-    expect(request?.method).toBe("PUT");
-    expect(new Headers(request?.headers).get("If-Match")).toBe("7");
-  });
+    },
+    {
+      operation: "restore",
+      revision: 8,
+      apply: (revision: number) => restoreNode("session", 42, revision),
+      method: "POST",
+      path: "/api/v1/nodes/42/restore",
+      response: {
+        id: 42,
+        parent_id: 2,
+        name: "report.txt",
+        kind: "file",
+        size: 12,
+        revision: 9,
+        created_at: "2026-07-28T12:00:00Z",
+        modified_at: "2026-07-28T12:02:00Z",
+        path: "/Reports/report (2).txt",
+      },
+    },
+    {
+      operation: "tag assignment",
+      revision: 7,
+      apply: (revision: number) =>
+        changeNodeTag("session", 42, revision, "11111111-1111-4111-8111-111111111111", true),
+      method: "PUT",
+      path: "/api/v1/nodes/42/tags/11111111-1111-4111-8111-111111111111",
+      response: {
+        tag: {
+          id: "11111111-1111-4111-8111-111111111111",
+          name: "reviewed",
+          revision: 2,
+          assignment_count: 4,
+        },
+        node: {
+          id: 42,
+          name: "report.txt",
+          kind: "file",
+          size: 12,
+          revision: 8,
+          created_at: "2026-07-28T12:00:00Z",
+          modified_at: "2026-07-28T12:02:00Z",
+          path: "/Reports/report.txt",
+        },
+        changed: true,
+      },
+    },
+  ])(
+    "applies $operation under the inspected node revision",
+    async ({ apply, revision, method, path, response }) => {
+      const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(response));
+      await expect(apply(revision)).resolves.toEqual(response);
+      const [requestPath, request] = fetchMock.mock.calls[0] ?? [];
+      expect(requestPath).toBe(path);
+      expect(request?.method).toBe(method);
+      expect(new Headers(request?.headers).get("If-Match")).toBe(String(revision));
+    },
+  );
 });

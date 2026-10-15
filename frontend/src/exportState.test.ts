@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vite-plus/test";
 import { ExportSession, type ExportState } from "./exportState.js";
 import { exportMemberHash, type ExportJob } from "./exports.js";
 import { parseQuery } from "./query.js";

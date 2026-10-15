@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { decodePageInventory, decodePageJob, pageDigest, readPageImage } from "./pages.js";
 
 afterEach(() => {
@@ -287,7 +287,7 @@ function pngResponse() {
   return { bytes, receipt, headers };
 }
 
-it("bounds the body and verifies headers, encoded dimensions and decoded dimensions before a URL", async () => {
+it("returns a URL for verified dimensions", async () => {
   const fixture = pngResponse();
   const create = vi.fn(() => "blob:page");
   vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: create }));
@@ -296,9 +296,9 @@ it("bounds the body and verifies headers, encoded dimensions and decoded dimensi
     "createImageBitmap",
     vi.fn(async () => ({ width: 1152, height: 864, close })),
   );
-  const fetcher = vi
-    .spyOn(globalThis, "fetch")
-    .mockImplementation(async () => new Response(fixture.bytes, { headers: fixture.headers }));
+  vi.spyOn(globalThis, "fetch").mockImplementation(
+    async () => new Response(fixture.bytes, { headers: fixture.headers }),
+  );
   const binding = { node_id: 7, revision: 2, source };
   const recipe = inventory().inventory.recipes[0]!.recipe;
   expect(
@@ -306,17 +306,23 @@ it("bounds the body and verifies headers, encoded dimensions and decoded dimensi
   ).toBe("blob:page");
   expect(close).toHaveBeenCalledOnce();
   expect(create).toHaveBeenCalledOnce();
-  fixture.headers["Content-Length"] = "33554433";
-  await expect(
-    readPageImage("session", binding, fixture.receipt, recipe, new AbortController().signal),
-  ).rejects.toThrow();
-  expect(create).toHaveBeenCalledOnce();
-  fixture.headers["Content-Length"] = String(fixture.bytes.length);
+});
+
+it("rejects mismatched encoded dimensions", async () => {
+  const fixture = pngResponse();
+  vi.spyOn(globalThis, "fetch").mockImplementation(
+    async () => new Response(fixture.bytes, { headers: fixture.headers }),
+  );
+  const binding = { node_id: 7, revision: 2, source };
+  const recipe = inventory().inventory.recipes[0]!.recipe;
   fixture.bytes[20] = 1;
+  fixture.receipt.sha256 = createHash("sha256").update(fixture.bytes).digest("hex");
+  fixture.headers["X-Docbank-Page-SHA256"] = fixture.receipt.sha256;
+  fixture.headers["Content-Digest"] =
+    `sha-256=:${createHash("sha256").update(fixture.bytes).digest("base64")}:`;
   await expect(
     readPageImage("session", binding, fixture.receipt, recipe, new AbortController().signal),
-  ).rejects.toThrow();
-  expect(fetcher).toHaveBeenCalledTimes(3);
+  ).rejects.toThrow(/Invalid encoded page image dimensions/);
 });
 
 it("fences late image decoding and releases its decoded resource", async () => {
@@ -410,12 +416,18 @@ for (const header of [
   "X-Docbank-Page-SHA256",
   "X-Docbank-Page-DPI",
   "Content-Type",
+  "Content-Length",
   "Content-Digest",
 ]) {
   it(`rejects mismatched ${header}`, async () => {
     const fixture = pngResponse();
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(fixture.bytes, { headers: { ...fixture.headers, [header]: "wrong" } }),
+      new Response(fixture.bytes, {
+        headers: {
+          ...fixture.headers,
+          [header]: header === "Content-Length" ? String(fixture.bytes.length + 1) : "wrong",
+        },
+      }),
     );
     const decode = vi.fn();
     vi.stubGlobal("createImageBitmap", decode);
@@ -427,7 +439,11 @@ for (const header of [
         inventory().inventory.recipes[0]!.recipe,
         new AbortController().signal,
       ),
-    ).rejects.toThrow();
+    ).rejects.toThrow(
+      header === "Content-Digest"
+        ? /Invalid page image digest/
+        : /Page image headers disagree with the selected receipt/,
+    );
     expect(decode).not.toHaveBeenCalled();
   });
 }
@@ -448,5 +464,5 @@ for (const delta of [-1, 1])
         inventory().inventory.recipes[0]!.recipe,
         new AbortController().signal,
       ),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/Invalid page image size/);
   });

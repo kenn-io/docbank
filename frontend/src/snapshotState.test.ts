@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { APIError } from "./api-transport.js";
 import { parseQuery, queryFingerprint } from "./query.js";
 import { SnapshotSession, type SnapshotState } from "./snapshotState.js";

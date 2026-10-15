@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/svelte";
 import FacetSidebar from "./FacetSidebar.svelte";
 import type { Query } from "./query.js";

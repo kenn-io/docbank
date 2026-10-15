@@ -1,5 +1,5 @@
 import { Blob } from "node:buffer";
-import { vi } from "vitest";
+import { vi } from "vite-plus/test";
 import { fireEvent } from "@testing-library/svelte";
 import type {
   PhotoBrowseRow,

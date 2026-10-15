@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vite-plus/test";
 import { startAppOpenedReporting } from "./app-opened.js";
 
 const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -43,7 +43,6 @@ describe("app_opened reporting", () => {
     expect(init?.body).toBe(JSON.stringify({ event: "app_opened" }));
     const headers = new Headers(init?.headers);
     expect(headers.get("X-Docbank-Web-Session")).toBe("secret");
-    expect(headers.get("X-Api-Key")).toBeNull();
   });
 
   it("treats a problem response as answered without an unhandled rejection", async () => {

@@ -58,6 +58,7 @@ frontend:
 
 frontend-test:
 	cd frontend && npm ci
+	cd frontend && npm run check:fmt-lint
 	cd frontend && npm run check
 	cd frontend && npm run check:kit-ui
 	cd frontend && npm run screenshots:check

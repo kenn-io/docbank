@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import VersionHistoryDrawer from "./VersionHistoryDrawer.svelte";
 import type { ContentVersion, Node } from "./generated/docbank.js";

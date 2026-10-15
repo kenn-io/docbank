@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vite-plus/test";
 import { HiddenAccess } from "./hiddenAccess.svelte.js";
 import { unlockPhotoHidden } from "./generated/docbank.js";
 

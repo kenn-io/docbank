@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import ResultsPager from "./ResultsPager.svelte";
 import type { SnapshotPage } from "./snapshots.js";

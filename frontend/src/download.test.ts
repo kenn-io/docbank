@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   cancelPreparedDownload,
   prepareCurrentDownload,
@@ -299,7 +299,12 @@ describe("exact selected-source preview", () => {
   it.each([
     ["version", { "X-Docbank-Content-Version": node.current_version_id ?? "" }, content],
     ["declared size", { "X-Docbank-Blob-Size": String(source.size + 1) }, content],
-    ["received size", { "Content-Length": String(source.size - 1) }, content.slice(0, -1)],
+    ["Content-Length header", { "Content-Length": String(source.size - 1) }, content],
+    [
+      "short body",
+      { "Content-Length": String(source.size) },
+      content.subarray(0, content.length - 1),
+    ],
     [
       "digest",
       {
@@ -307,7 +312,7 @@ describe("exact selected-source preview", () => {
       },
       content,
     ],
-  ])("rejects a wrong received %s before decoding", async (_case, headers, bytes) => {
+  ])("rejects a wrong received %s", async (_case, headers, bytes) => {
     vi.stubGlobal(
       "fetch",
       vi
@@ -328,7 +333,7 @@ describe("exact selected-source preview", () => {
     ).rejects.toThrow("disagreed with the selected document");
   });
 
-  it("verifies the complete digest before decoding text", async () => {
+  it("decodes verified text", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(ready()).mockResolvedValueOnce(body()));
 
     await expect(

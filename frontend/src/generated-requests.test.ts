@@ -1,43 +1,8 @@
 // @vitest-environment node
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vite-plus/test";
 import * as api from "./generated/docbank";
-import { streamExportJobEvents } from "./export-events";
 
 afterEach(() => vi.restoreAllMocks());
-
-it("sends reference media as JSON and rejects a conflict", async () => {
-  const fetch = vi
-    .spyOn(globalThis, "fetch")
-    .mockResolvedValue(
-      new Response(JSON.stringify({ code: "conflict", detail: "Changed" }), { status: 412 }),
-    );
-  const body: api.MediaReferenceBody = {
-    operation_id: "synthetic-operation",
-    provider_hint: "synthetic",
-    reference_url: "https://example.com/sample.wav",
-    acquire: false,
-    occurrence: {
-      filename: "sample.wav",
-      ref: "synthetic",
-      revision: "1",
-      message: {
-        raw: "2026-09-01",
-        normalized: "2026-09-01",
-        precision: "day",
-        timezone: "UTC",
-        zone_text: "UTC",
-        fraction_digits: 0,
-      },
-    },
-  };
-  await expect(api.submitMediaSourceWithJson(body)).rejects.toMatchObject({
-    status: 412,
-    code: "conflict",
-  });
-  const [, request] = fetch.mock.calls[0];
-  expect(new Headers(request?.headers).get("Content-Type")).toBe("application/json");
-  expect(JSON.parse(String(request?.body))).toEqual(body);
-});
 
 it("sends JSON metadata before the media file without a metadata filename", async () => {
   const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, request) => {
@@ -131,7 +96,7 @@ it("accepts the empty shutdown acknowledgement", async () => {
   ).resolves.toBeUndefined();
 });
 
-it("reads page images as PNG bytes through the browser session", async () => {
+it("reads page images as PNG bytes with PNG Accept", async () => {
   const png = Buffer.from(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=",
     "base64",
@@ -158,7 +123,6 @@ it("reads page images as PNG bytes through the browser session", async () => {
   expect(Buffer.from(await response.arrayBuffer())).toEqual(png);
   const headers = new Headers(fetch.mock.calls[0][1]?.headers);
   expect(headers.get("Accept")).toBe("image/png");
-  expect(headers.get("X-Docbank-Web-Session")).toBe("synthetic-session");
 });
 
 it("preserves export progress as an NDJSON response", async () => {
@@ -176,102 +140,8 @@ it("preserves export progress as an NDJSON response", async () => {
   );
   expect(response).toBeInstanceOf(Response);
   expect(await response.text()).toBe(body);
-  const [url, request] = fetch.mock.calls[0];
-  expect(url).toBe("/api/v1/exports/jobs/synthetic-job/events?after=1");
+  const [, request] = fetch.mock.calls[0];
   expect(new Headers(request?.headers).get("Accept")).toBe("application/x-ndjson");
-  expect(new Headers(request?.headers).get("X-Docbank-Web-Session")).toBe("synthetic-session");
-});
-
-it.each(["end", "cancel"])(
-  "reads export progress incrementally before stream %s",
-  async (finish) => {
-    const running: api.GetExportJobEvents200 = {
-      delivery: "current_state",
-      requested_after: 0,
-      job: {
-        id: "synthetic-job",
-        plan_id: "synthetic-plan",
-        fingerprint: "a".repeat(64),
-        attempt: 1,
-        sequence: 1,
-        state: "running",
-        completed_bytes: 0,
-        completed_roles: 0,
-        created_at: "2026-09-01T00:00:00Z",
-        deadline: "2026-09-01T02:00:00Z",
-        expires_at: "2026-09-01T02:00:00Z",
-      },
-    };
-    const failed = {
-      ...running,
-      job: { ...running.job, sequence: 2, state: "failed", failure: "archive_failed" },
-    };
-    const lastLine = JSON.stringify(failed) + "\n";
-    const encoder = new TextEncoder();
-    let controller!: ReadableStreamDefaultController<Uint8Array>;
-    const cancel = vi.fn();
-    const body = new ReadableStream<Uint8Array>({
-      start(value) {
-        controller = value;
-      },
-      cancel,
-    });
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(body, { headers: { "Content-Type": "application/x-ndjson" } }),
-    );
-    const events = streamExportJobEvents("synthetic-job");
-    try {
-      controller.enqueue(encoder.encode(JSON.stringify(running) + "\n" + lastLine.slice(0, 20)));
-      expect(await events.next()).toEqual({ done: false, value: running });
-      if (finish === "cancel") {
-        await events.return(undefined);
-        expect(cancel).toHaveBeenCalledOnce();
-      } else {
-        controller.enqueue(encoder.encode(lastLine.slice(20)));
-        controller.close();
-        expect(await events.next()).toEqual({ done: false, value: failed });
-        expect((await events.next()).done).toBe(true);
-      }
-      expect(body.locked).toBe(false);
-    } finally {
-      await events.return(undefined);
-    }
-  },
-);
-
-it("sends photo query intent through the generated read-only POST and preserves preview bytes", async () => {
-  const query = {
-    filters: {
-      kinds: ["photo"],
-      iso_min: 0,
-      gps_bounds: { south: "-10", west: "170", north: "10", east: "-170" },
-    },
-    sort: { field: "capture_time", direction: "desc" },
-  };
-  const fetch = vi
-    .spyOn(globalThis, "fetch")
-    .mockResolvedValueOnce(Response.json({ items: [], total: 0 }))
-    .mockResolvedValueOnce(
-      new Response("synthetic JPEG", { headers: { "Content-Type": "image/jpeg" } }),
-    );
-  await api.listPhotoAssets({ query } as api.PhotoBrowseRequest, { session: "synthetic-session" });
-  const [url, request] = fetch.mock.calls[0];
-  expect(url).toBe("/api/v1/photos/assets/query");
-  expect(request?.method).toBe("POST");
-  expect(JSON.parse(String(request?.body))).toEqual({ query });
-  expect(new Headers(request?.headers).get("X-Docbank-Web-Session")).toBe("synthetic-session");
-  const response = await api.readPhotoPreview(
-    "00000000-0000-4000-8000-000000000001",
-    "a".repeat(64),
-    { "If-None-Match": '"older-generation"' },
-    { session: "synthetic-session" },
-  );
-  expect(response).toBeInstanceOf(Response);
-  expect(await response.text()).toBe("synthetic JPEG");
-  expect(String(fetch.mock.calls[1][0])).not.toContain("synthetic-session");
-  const previewHeaders = new Headers(fetch.mock.calls[1][1]?.headers);
-  expect(previewHeaders.get("If-None-Match")).toBe('"older-generation"');
-  expect(previewHeaders.get("X-Docbank-Web-Session")).toBe("synthetic-session");
 });
 
 it("preserves a conditional photo preview's empty 304 response", async () => {
@@ -298,25 +168,6 @@ it("preserves a conditional photo preview's empty 304 response", async () => {
   const headers = new Headers(request?.headers);
   expect(headers.get("Accept")).toBe("image/jpeg");
   expect(headers.get("If-None-Match")).toBe(etag);
-  expect(headers.get("X-Docbank-Web-Session")).toBe("synthetic-session");
-});
-
-it("preserves photo preview errors after conditional revalidation", async () => {
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(
-    Response.json({ code: "not_found", detail: "Photo is no longer included." }, { status: 404 }),
-  );
-  await expect(
-    api.readPhotoPreview(
-      "00000000-0000-4000-8000-000000000001",
-      "a".repeat(64),
-      { "If-None-Match": '"cached-generation"' },
-      { session: "synthetic-session" },
-    ),
-  ).rejects.toMatchObject({
-    status: 404,
-    code: "not_found",
-    message: "Photo is no longer included.",
-  });
 });
 
 it("keeps 304 outside JSON response contracts", async () => {

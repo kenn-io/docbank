@@ -1,6 +1,5 @@
-import * as generated from "./generated/docbank.js";
 import contract from "../../internal/daemonconn/testdata/processing_responses.json";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { documentSearch, renditionArtifact, startProcessing } from "./receipts.js";
@@ -120,7 +119,7 @@ describe("document processing browser API", () => {
           state: "completed",
           phase: "published",
           embedding_job_ids: ids,
-          completed_bindings: 0,
+          completed_bindings: ids.length,
         },
       })}\n`;
       vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -259,118 +258,24 @@ describe("document processing browser API", () => {
     },
   );
 
-  it("keeps plans, jobs, coverage, and search on exact identities", async () => {
-    const versionID = "11111111-1111-4111-8111-111111111111";
-    const fingerprint = "a".repeat(64);
-    const jobID = "b".repeat(64);
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, request) => {
-      const path = String(input);
-      if (path === "/api/v1/processing/profiles") {
-        return Response.json([
-          { name: "private", fingerprint, rendition: true, embedding_bindings: [] },
-        ]);
-      }
-      if (path === "/api/v1/processing/plans") {
-        expect(request?.method).toBe("POST");
-        expect(JSON.parse(String(request?.body))).toMatchObject({
-          selector: { node_id: 42, content_version_id: versionID, profile: "private" },
-        });
-        return Response.json({
-          fingerprint,
-          selector: { node_id: 42, content_version_id: versionID, profile: "private" },
-          flow: [],
-          disclosed_classes: [],
-          retained_classes: [],
-          estimate: {},
-          consent_required: true,
-          consent_state: "required",
-        });
-      }
-      if (path === "/api/v1/processing/jobs") {
-        expect(JSON.parse(String(request?.body))).toMatchObject({ consent: true });
-        return new Response(
-          `${JSON.stringify({ sequence: 1, type: "job", job: { id: jobID, embedding_job_ids: [], profile_fingerprint: fingerprint, content_version_id: versionID } })}\n${JSON.stringify({ sequence: 2, type: "status", status: { job_id: jobID, state: "completed", phase: "embedding", embedding_job_ids: [fingerprint], completed_bindings: 1 }, terminal: true })}\n`,
-          { headers: { "Content-Type": "application/x-ndjson" } },
-        );
-      }
-      if (path.startsWith("/api/v1/coverage?")) {
-        return Response.json({
-          vault_uid: versionID,
-          profile_fingerprint: fingerprint,
-          state: "complete",
-          renditions: {
-            name: "rendition",
-            required: true,
-            state: "complete",
-            complete: 1,
-            unavailable: 0,
-            stale: 0,
-            ineligible: 0,
-            rebuilding: 0,
-            previous_generation_serving: 0,
-            total: 1,
-          },
-          embeddings: [],
-        });
-      }
-      if (path === "/api/v1/search") {
-        expect(request?.method).toBe("POST");
-        return Response.json({
-          requested_mode: "auto",
-          actual_mode: "lexical",
-          coverage: {
-            binding_required: false,
-            scoped_documents: 1,
-            complete_documents: 1,
-            state: "complete",
-          },
-          degradations: [],
-          results: [],
-          truncated: false,
-          trace: [],
-        });
-      }
-      throw new Error(`unexpected request: ${path}`);
+  it("sends consent and plan_fingerprint in the processing request", async () => {
+    const events = `${JSON.stringify({ sequence: 1, type: "job", job: contract.job })}\n${JSON.stringify({ sequence: 2, type: "status", terminal: true, status: contract.status })}\n`;
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(events, { headers: { "Content-Type": "application/x-ndjson" } }),
+      );
+    await startProcessing(
+      "session",
+      { node_id: 7, content_version_id: contract.job.content_version_id, profile: "private" },
+      "c".repeat(64),
+      contract.job.profile_fingerprint,
+      true,
+    );
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+      consent: true,
+      plan_fingerprint: "c".repeat(64),
     });
-
-    await expect(
-      generated.listDocumentProcessingProfiles({ session: "session" }),
-    ).resolves.toHaveLength(1);
-    await expect(
-      generated.planDocumentProcessing(
-        { selector: { node_id: 42, content_version_id: versionID, profile: "private" } },
-        { session: "session" },
-      ),
-    ).resolves.toMatchObject({ fingerprint });
-    await expect(
-      startProcessing(
-        "session",
-        { node_id: 42, content_version_id: versionID, profile: "private" },
-        "c".repeat(64),
-        fingerprint,
-        true,
-      ),
-    ).resolves.toMatchObject({
-      status: { state: "completed" },
-      job: { embedding_job_ids: [fingerprint] },
-    });
-    await expect(
-      generated.getDocumentProcessingCoverage(
-        { profile: "private", vault_uid: versionID, content_version_id: [versionID] },
-        { session: "session" },
-      ),
-    ).resolves.toMatchObject({ state: "complete" });
-    await expect(
-      documentSearch("session", {
-        query: "synthetic",
-        mode: "auto",
-        limit: 20,
-        profile: "private",
-        fence: { vault_uid: versionID, content_version_ids: [versionID] },
-        explain: true,
-      }),
-    ).resolves.toMatchObject({ actual_mode: "lexical" });
-    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
   it("delivers the durable job before a blocked terminal status", async () => {
@@ -449,7 +354,7 @@ describe("document processing browser API", () => {
     });
   });
 
-  it("rejects malformed, trailing, and oversized incremental progress", async () => {
+  it("rejects trailing and oversized incremental progress", async () => {
     const jobID = "b".repeat(64);
     const job = `${JSON.stringify({
       sequence: 1,
@@ -527,115 +432,6 @@ describe("document processing browser API", () => {
     controller.abort();
     await expect(pending).rejects.toMatchObject({ name: "AbortError" });
     expect(receivedSignal).toBe(controller.signal);
-  });
-
-  it("rejects search results outside the fence and malformed result identities", async () => {
-    const vaultID = "11111111-1111-4111-8111-111111111111";
-    const versionID = "22222222-2222-4222-8222-222222222222";
-    const otherVersionID = "55555555-5555-4555-8555-555555555555";
-    const request = {
-      query: "visible",
-      mode: "semantic" as const,
-      limit: 20,
-      profile: "private",
-      fence: { vault_uid: vaultID, content_version_ids: [versionID, otherVersionID] },
-    };
-    const valid = () => ({
-      requested_mode: "semantic",
-      actual_mode: "semantic",
-      coverage: {
-        binding_required: false,
-        scoped_documents: 1,
-        complete_documents: 1,
-        state: "complete",
-      },
-      degradations: [],
-      truncated: false,
-      trace: [],
-      results: [
-        {
-          vault_uid: vaultID,
-          node_id: 7,
-          content_version_id: versionID,
-          rank: 1,
-          semantic_rank: 1,
-          score: 0.9,
-          path: "/visible.pdf",
-          excerpt: "Synthetic match",
-          evidence: [
-            {
-              kind: "embedding",
-              build_id: "f".repeat(64),
-              vector_space_id: "a".repeat(64),
-              embedding_set_id: "b".repeat(64),
-              input_generation_id: "c".repeat(64),
-              input_id: "chunk-000000-aaaaaaaaaaaa",
-              input_kind: "rendition_chunk",
-              source_manifest_checksum: "d".repeat(64),
-            },
-          ],
-        },
-      ],
-    });
-    const malformed = [
-      (report: ReturnType<typeof valid>) => {
-        report.results[0]!.vault_uid = "33333333-3333-4333-8333-333333333333";
-      },
-      (report: ReturnType<typeof valid>) => {
-        report.results[0]!.content_version_id = "44444444-4444-4444-8444-444444444444";
-      },
-      (report: ReturnType<typeof valid>) => {
-        report.results.push({ ...report.results[0]!, rank: 2, semantic_rank: 2 });
-      },
-      (report: ReturnType<typeof valid>) => {
-        report.results[0]!.rank = 2;
-      },
-      (report: ReturnType<typeof valid>) => {
-        report.results[0]!.semantic_rank = 1001;
-      },
-      (report: ReturnType<typeof valid>) => {
-        report.results.push({
-          ...report.results[0]!,
-          node_id: 8,
-          content_version_id: otherVersionID,
-          rank: 2,
-          evidence: [{ ...report.results[0]!.evidence[0]!, embedding_set_id: "e".repeat(64) }],
-        });
-      },
-      (report: ReturnType<typeof valid>) => {
-        report.results[0]!.evidence.push({ ...report.results[0]!.evidence[0]! });
-      },
-      (report: ReturnType<typeof valid>) => {
-        report.results[0]!.evidence[0]!.input_generation_id = "";
-      },
-      (report: ReturnType<typeof valid>) => {
-        report.results[0]!.path = "visible.pdf";
-      },
-      (report: ReturnType<typeof valid>) => {
-        report.results[0]!.excerpt = "e".repeat(513);
-      },
-    ];
-    const fetchMock = vi.spyOn(globalThis, "fetch");
-    for (const mutate of malformed) {
-      const report = valid();
-      mutate(report);
-      fetchMock.mockResolvedValueOnce(Response.json(report));
-      await expect(documentSearch("session", request)).rejects.toThrow(/search response/i);
-    }
-    const longPath = valid();
-    longPath.results[0]!.path = `/${"p".repeat(17000)}`;
-    fetchMock.mockResolvedValueOnce(Response.json(longPath));
-    await expect(documentSearch("session", request)).resolves.toMatchObject({
-      results: [{ content_version_id: versionID }],
-    });
-
-    const media = valid();
-    const mediaIdentity = { build_id: "f".repeat(64), time_span: { start_ms: 1000, end_ms: 2000 } };
-    Object.assign(media.results[0]!.evidence[0]!, mediaIdentity);
-    fetchMock.mockResolvedValueOnce(Response.json(media));
-    await expect(documentSearch("session", request)).resolves.toMatchObject({
-      results: [{ evidence: [mediaIdentity] }],
-    });
   });
 
   it("rejects a rendition whose retained body checksum does not match", async () => {

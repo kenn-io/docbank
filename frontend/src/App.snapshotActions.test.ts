@@ -1,5 +1,5 @@
 import { createHash, webcrypto } from "node:crypto";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import type { PreparedAction } from "./actionRecovery.js";
 import type { PersistedAction } from "./actionJournal.js";

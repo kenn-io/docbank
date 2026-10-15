@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 let startScreenReporting: typeof import("./screen-views.js").startScreenReporting;
 beforeEach(async () => {

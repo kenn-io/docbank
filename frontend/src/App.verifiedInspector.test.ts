@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import App from "./App.svelte";
 import { canonicalQuery, parseQuery } from "./query.js";

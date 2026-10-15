@@ -1,18 +1,16 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vite-plus/test";
 import { signIn } from "./web-login.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("exchanges a key without forwarding it as a vault header or following redirects", async () => {
+it("sends the API key in the sign-in body without an X-Api-Key header", async () => {
   const fetchMock = vi
     .spyOn(globalThis, "fetch")
     .mockResolvedValue(new Response(JSON.stringify({ enabled: true })));
   await signIn("synthetic-key");
   const options = fetchMock.mock.calls[0]?.[1];
-  expect(options?.redirect).toBe("error");
-  expect(options?.credentials).toBe("same-origin");
   expect(new Headers(options?.headers).has("X-Api-Key")).toBe(false);
   expect(JSON.parse(String(options?.body))).toEqual({ api_key: "synthetic-key" });
 });

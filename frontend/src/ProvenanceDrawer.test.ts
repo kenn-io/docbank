@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import ProvenanceDrawer from "./ProvenanceDrawer.svelte";
 import type { Node, ProvenanceFact } from "./generated/docbank.js";

@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import PhotoRejectsModal from "./PhotoRejectsModal.svelte";
 import { preparedPhoto } from "./photo-test-fixtures.js";
