@@ -210,6 +210,7 @@ describe("browser authentication", () => {
     {
       operation: "trash",
       revision: 7,
+      apply: (revision: number) => trashNode("session", 42, revision),
       method: "POST",
       path: "/api/v1/nodes/42/trash",
       response: {
@@ -227,6 +228,7 @@ describe("browser authentication", () => {
     {
       operation: "restore",
       revision: 8,
+      apply: (revision: number) => restoreNode("session", 42, revision),
       method: "POST",
       path: "/api/v1/nodes/42/restore",
       response: {
@@ -244,6 +246,8 @@ describe("browser authentication", () => {
     {
       operation: "tag assignment",
       revision: 7,
+      apply: (revision: number) =>
+        changeNodeTag("session", 42, revision, "11111111-1111-4111-8111-111111111111", true),
       method: "PUT",
       path: "/api/v1/nodes/42/tags/11111111-1111-4111-8111-111111111111",
       response: {
@@ -268,18 +272,9 @@ describe("browser authentication", () => {
     },
   ])(
     "applies $operation under the inspected node revision",
-    async ({ operation, revision, method, path, response }) => {
+    async ({ apply, revision, method, path, response }) => {
       const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(response));
-      const result = await (operation === "trash"
-        ? trashNode("session", 42, revision)
-        : operation === "restore"
-          ? restoreNode("session", 42, revision)
-          : changeNodeTag("session", 42, revision, "11111111-1111-4111-8111-111111111111", true));
-      if (operation === "trash") {
-        expect(result).toMatchObject({ id: 42, revision: 8, path: "/Reports/report.txt" });
-      } else {
-        expect(result).toEqual(response);
-      }
+      await expect(apply(revision)).resolves.toEqual(response);
       const [requestPath, request] = fetchMock.mock.calls[0] ?? [];
       expect(requestPath).toBe(path);
       expect(request?.method).toBe(method);
