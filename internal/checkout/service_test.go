@@ -291,6 +291,7 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 			}
 		})
 	}
+	addWindowsCheckoutRecoveryRetryCases(t)
 }
 
 func TestCheckoutRunOutcomes(t *testing.T) {

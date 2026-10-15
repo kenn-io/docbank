@@ -134,6 +134,7 @@ func TestPhotoCheckoutMetadata(t *testing.T) {
 	type fixture struct {
 		asset, second PhotoAsset
 		checkout      PhotoCheckout
+		entries       []PhotoCheckoutEntry
 		snapshot      []byte
 	}
 	makeFixture := func(t *testing.T, s *Store) fixture {
@@ -148,7 +149,30 @@ func TestPhotoCheckoutMetadata(t *testing.T) {
 		require.NoError(t, s.FinishPhotoCheckout(t.Context(), c.ID, c.OperationID, StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
 		var exported bytes.Buffer
 		require.NoError(t, s.ExportMetadata(t.Context(), &exported))
-		return fixture{a, second, c, exported.Bytes()}
+		return fixture{a, second, c, entries, exported.Bytes()}
+	}
+	for _, driver := range v090UpgradeDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			s := newTestStoreWithDriver(t, driver.driver)
+			f := makeFixture(t, s)
+			require.NotContains(t, string(f.snapshot), "machine-local-")
+			restored := newTestStoreWithDriver(t, driver.driver)
+			require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(f.snapshot)))
+			actual, err := restored.PhotoCheckout(t.Context(), f.checkout.ID)
+			require.NoError(t, err)
+			require.Equal(t, f.checkout.Selection, actual.Selection)
+			require.Equal(t, f.checkout.ByteLimit, actual.ByteLimit)
+			require.Equal(t, "unbound", actual.State)
+			require.Empty(t, actual.Destination)
+			require.Empty(t, actual.OperationID)
+			require.Empty(t, actual.Error)
+			actualEntries, err := restored.PhotoCheckoutEntries(t.Context(), f.checkout.ID)
+			require.NoError(t, err)
+			require.Equal(t, f.entries, actualEntries)
+			var roundtrip bytes.Buffer
+			require.NoError(t, restored.ExportMetadata(t.Context(), &roundtrip))
+			require.Equal(t, string(f.snapshot), roundtrip.String())
+		})
 	}
 	t.Run("restore colon filename on Windows", func(t *testing.T) {
 		if runtime.GOOS != "windows" {
@@ -377,23 +401,6 @@ func TestPhotoCheckoutStatusTracksOperationAcrossPauseAndFinish(t *testing.T) {
 	again, err := s.RetirePhotoCheckout(t.Context(), checkout.ID)
 	require.NoError(t, err)
 	require.Equal(t, retired, again)
-
-	t.Run("cancelled installation stays published", func(t *testing.T) {
-		t.Parallel()
-		s := newTestStore(t)
-		asset := albumAsset(t, s, "photo.jpg")
-		checkout, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
-		require.NoError(t, err)
-		entries, err := s.PhotoCheckoutEntries(t.Context(), checkout.ID)
-		require.NoError(t, err)
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		err = s.PublishPhotoCheckoutEntry(ctx, entries[0], func() (bool, error) { cancel(); return true, context.Canceled })
-		require.ErrorIs(t, err, context.Canceled)
-		status, err := s.PhotoCheckoutStatus(t.Context(), checkout.ID)
-		require.NoError(t, err)
-		require.Equal(t, int64(1), status.PublishedFiles)
-	})
 }
 
 func TestPhotoCheckoutConflictsAndEntryPaths(t *testing.T) {
@@ -681,11 +688,7 @@ func TestPhotoCheckoutBackupRetentionAcrossLifecycleStates(t *testing.T) {
 					second := albumAsset(t, s, "unpublished.jpg")
 					node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
 					require.NoError(t, err)
-					destination := "checkout"
-					if tc.state == "completed" {
-						destination = "machine-local-checkout"
-					}
-					checkout, op, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID, second.ID}}, destination, 0)
+					checkout, op, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID, second.ID}}, "checkout", 0)
 					require.NoError(t, err)
 					require.NoError(t, s.ClaimPhotoCheckout(ctx, checkout.ID, op.ID))
 					entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
@@ -736,9 +739,6 @@ func TestPhotoCheckoutBackupRetentionAcrossLifecycleStates(t *testing.T) {
 					}
 					var exported bytes.Buffer
 					require.NoError(t, s.ExportMetadata(ctx, &exported))
-					if tc.state == "completed" {
-						require.NotContains(t, exported.String(), "machine-local-")
-					}
 					if tc.legacy {
 						require.Contains(t, exported.String(), `"base_held":true,`)
 						legacy := strings.ReplaceAll(exported.String(), `"base_held":true,`, "")
@@ -751,24 +751,10 @@ func TestPhotoCheckoutBackupRetentionAcrossLifecycleStates(t *testing.T) {
 					require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
 					actual, err := restored.PhotoCheckout(ctx, checkout.ID)
 					require.NoError(t, err)
-					if tc.state == "completed" {
-						require.Equal(t, checkout.Selection, actual.Selection)
-						require.Equal(t, checkout.ByteLimit, actual.ByteLimit)
-						require.Equal(t, "unbound", actual.State)
-						require.Empty(t, actual.Destination)
-						require.Empty(t, actual.OperationID)
-						require.Empty(t, actual.Error)
-						actualEntries, err := restored.PhotoCheckoutEntries(ctx, checkout.ID)
-						require.NoError(t, err)
-						require.Equal(t, entries, actualEntries)
-					}
 					released := tc.legacy || !tc.published && !tc.uncertain
 					require.Equal(t, tc.state != "completed", actual.RetentionReleased)
 					var roundtrip bytes.Buffer
 					require.NoError(t, restored.ExportMetadata(ctx, &roundtrip))
-					if tc.state == "completed" {
-						require.Equal(t, exported.String(), roundtrip.String())
-					}
 					final := newTestStoreWithDriver(t, driver.driver)
 					require.NoError(t, final.ImportMetadata(ctx, bytes.NewReader(roundtrip.Bytes())))
 					history, err := final.PhotoCheckout(ctx, checkout.ID)
@@ -885,4 +871,20 @@ func TestPhotoCheckoutPublicationOrdersEligibilityMutationsWithoutReservingWrite
 			require.ErrorIs(t, err, ErrPhotoCheckoutSourceUnavailable)
 		})
 	}
+	t.Run("cancelled installation stays published", func(t *testing.T) {
+		t.Parallel()
+		s := newTestStore(t)
+		asset := albumAsset(t, s, "photo.jpg")
+		checkout, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+		require.NoError(t, err)
+		entries, err := s.PhotoCheckoutEntries(t.Context(), checkout.ID)
+		require.NoError(t, err)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		err = s.PublishPhotoCheckoutEntry(ctx, entries[0], func() (bool, error) { cancel(); return true, context.Canceled })
+		require.ErrorIs(t, err, context.Canceled)
+		status, err := s.PhotoCheckoutStatus(t.Context(), checkout.ID)
+		require.NoError(t, err)
+		require.Equal(t, int64(1), status.PublishedFiles)
+	})
 }

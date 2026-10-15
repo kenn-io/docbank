@@ -16,8 +16,8 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func TestCheckoutRecoveryRetriesFilesystemAccessFailures(t *testing.T) {
-	t.Parallel()
+func addWindowsCheckoutRecoveryRetryCases(t *testing.T) {
+	t.Helper()
 	for _, test := range []struct {
 		name      string
 		root      bool
