@@ -28,7 +28,24 @@ func (p *nativeFontProof) scratchPage(width, height float64) (*fontScratchPage, 
 	if err != nil {
 		return nil, fmt.Errorf("append font probe page: %w", err)
 	}
-	return &fontScratchPage{p.instance, p.document, page.Page, count.PageCount}, nil
+	scratch := &fontScratchPage{p.instance, p.document, page.Page, count.PageCount}
+	// Source page-tree crops must not clip an inked probe into a blank bitmap.
+	_, err = p.instance.FPDFPage_SetCropBox(&requests.FPDFPage_SetCropBox{
+		Page: scratch.ref(), Right: float32(width), Top: float32(height),
+	})
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("set font probe crop: %w", err), scratch.close())
+	}
+	bounds, err := p.instance.FPDF_GetPageBoundingBox(&requests.FPDF_GetPageBoundingBox{
+		Page: scratch.ref(),
+	})
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("read font probe bounds: %w", err), scratch.close())
+	}
+	if bounds.Rect != (structs.FPDF_FS_RECTF{Right: float32(width), Top: float32(height)}) {
+		return nil, errors.Join(errors.New("font probe page geometry mismatch"), scratch.close())
+	}
+	return scratch, nil
 }
 
 func (s *fontScratchPage) ref() requests.Page { return requests.Page{ByReference: &s.page} }

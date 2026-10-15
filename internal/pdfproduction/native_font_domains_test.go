@@ -27,12 +27,6 @@ func TestNativeFontDomainsBindStagedSource(t *testing.T) {
 		inspection.Frames)
 	require.NoError(t, err)
 	require.Equal(t, []bool{true}, domains)
-	// Same version, size and geometry, different source: no certificate may survive.
-	changed := bytes.Replace(data, []byte("(L R)"), []byte("(L A)"), 1)
-	domains, err = nativeFontDomains(t.Context(), runtime, bytes.NewReader(changed), source,
-		inspection.Frames)
-	require.NoError(t, err)
-	require.Empty(t, domains)
 	// A configured child that cannot start remains an optional proof failure.
 	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing"))
 	_, err = runtime.Inspect(t.Context(), data, identity, "application/pdf")

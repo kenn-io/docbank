@@ -151,8 +151,10 @@ The proof has two parts:
    program must equal one of twelve qualified standard programs byte for byte.
    The inspector enumerates all 256 raw codes between checked anchors on a
    scratch text page, then renders every whitespace-mapped code alone onto a
-   transparent bitmap. Any nonzero alpha is ink. A single inked alias makes
-   that object's whitespace unproven, even if the alias is unused on the page.
+   transparent bitmap. Both scratch pages have explicit full-page crop boxes
+   and checked effective bounds, so inherited source crops cannot hide probe
+   ink. Any nonzero alpha is ink. A single inked alias makes that object's
+   whitespace unproven, even if the alias is unused on the page.
 
 The child returns `docbank-page-inspect/v2`, `parser_identity: pdfcpu/v0.15.0`
 and one required `simple_fonts_only` boolean per page. Native inspection accepts
