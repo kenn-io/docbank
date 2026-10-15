@@ -777,3 +777,44 @@ func (r staticLocationResolver) ResolveLocations(
 ) (packstore.Resolution, error) {
 	return r.resolution, nil
 }
+
+func TestRegistryAdmissionStaysClosedAcrossRefreshAndReattach(t *testing.T) {
+	const storeID = "20000000-0000-4000-8000-000000000001"
+	var blocked atomic.Bool
+	blocked.Store(true)
+	var openings atomic.Int32
+	spec := StoreSpec{ID: storeID, Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "archive", OwnershipEpoch: "epoch"}
+	admissionErr := errors.New("checkout destination cannot be inspected")
+	open := func(_ context.Context, _ config.StoreBindingConfig, expected *packstore.Ownership) (packstore.Backend, error) {
+		openings.Add(1)
+		return &staticOwnershipBackend{ownership: *expected}, nil
+	}
+	registry := newRegistryWithFactories(t.Context(), "vault", map[string]config.StoreBindingConfig{
+		"archive": {Kind: "filesystem", Path: t.TempDir()},
+	}, []StoreSpec{spec}, open, open, func(context.Context, config.StoreBindingConfig) error {
+		if blocked.Load() {
+			return admissionErr
+		}
+		return nil
+	})
+	t.Cleanup(func() { require.NoError(t, registry.Close()) })
+	for _, observation := range []StoreObservation{registry.Observation(storeID), registry.Refresh(t.Context(), storeID), registry.AttachSpec(t.Context(), spec)} {
+		require.Equal(t, StoreUnavailable, observation.State)
+		require.Equal(t, admissionErr.Error(), observation.Detail)
+	}
+	require.Zero(t, openings.Load())
+	_, available := registry.Backend(storeID)
+	require.False(t, available)
+	require.Equal(t, "active", registry.specs[packstore.StoreID(storeID)].Lifecycle)
+
+	blocked.Store(false)
+	require.Equal(t, StoreOnline, registry.Refresh(t.Context(), storeID).State)
+	require.EqualValues(t, 1, openings.Load())
+	blocked.Store(true)
+	require.Equal(t, StoreUnavailable, registry.Refresh(t.Context(), storeID).State)
+	_, available = registry.Backend(storeID)
+	require.False(t, available, "a prior online backend must also pass admission")
+	blocked.Store(false)
+	require.Equal(t, StoreOnline, registry.AttachSpec(t.Context(), spec).State)
+	require.EqualValues(t, 2, openings.Load())
+}

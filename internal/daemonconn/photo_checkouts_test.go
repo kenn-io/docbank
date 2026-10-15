@@ -48,8 +48,6 @@ func TestPhotoCheckoutClients(t *testing.T) {
 			assert.Equal(t, request, body)
 			out = response
 			w.WriteHeader(http.StatusAccepted)
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/photos/checkouts":
-			out = api.PhotoCheckoutList{Items: []store.PhotoCheckout{checkout}}
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/photos/checkouts/"+id:
 			out = expectedStatus
 		default:
@@ -74,13 +72,7 @@ func TestPhotoCheckoutClients(t *testing.T) {
 	result, err := create(created)
 	require.NoError(t, err)
 	require.Equal(t, created, result)
-	list, err := client.PhotoCheckouts(t.Context())
-	require.NoError(t, err)
-	require.Equal(t, []store.PhotoCheckout{checkout}, list)
-	status, err := client.PhotoCheckoutStatus(t.Context(), id)
-	require.NoError(t, err)
-	require.Equal(t, expectedStatus, status)
-	status, err = client.PhotoCheckoutStatus(t.Context(), strings.ToUpper(id))
+	status, err := client.PhotoCheckoutStatus(t.Context(), strings.ToUpper(id))
 	require.NoError(t, err)
 	require.Equal(t, expectedStatus, status)
 

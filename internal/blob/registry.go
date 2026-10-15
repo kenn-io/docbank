@@ -64,13 +64,14 @@ type StoreObservation struct {
 // A missing or bad binding degrades only that store; it never prevents the
 // local metadata catalog or other stores from opening.
 type Registry struct {
-	mu          sync.RWMutex
-	vaultID     string
-	bindings    map[string]config.StoreBindingConfig
-	openBackend configuredBackendFactory
-	openSalvage configuredBackendFactory
-	specs       map[packstore.StoreID]StoreSpec
-	backends    map[packstore.StoreID]packstore.Backend
+	mu            sync.RWMutex
+	vaultID       string
+	bindings      map[string]config.StoreBindingConfig
+	openBackend   configuredBackendFactory
+	openSalvage   configuredBackendFactory
+	admitBindings []func(context.Context, config.StoreBindingConfig) error
+	specs         map[packstore.StoreID]StoreSpec
+	backends      map[packstore.StoreID]packstore.Backend
 	// Kit's backend registry has no release callback. Once a backend has been
 	// handed to a reader, keep a fenced or detached instance alive until daemon
 	// shutdown while immediately removing it from admission for new work.
@@ -83,16 +84,17 @@ type Registry struct {
 
 // NewRegistry binds every active secondary that can prove its expected
 // ownership marker. The caller supplies catalog rows, never deployment
-// endpoints from SQLite.
+// endpoints from SQLite. Optional admission checks run before opening or reusing a binding.
 func NewRegistry(
 	ctx context.Context,
 	vaultID string,
 	bindings map[string]config.StoreBindingConfig,
 	stores []StoreSpec,
+	admitBindings ...func(context.Context, config.StoreBindingConfig) error,
 ) *Registry {
 	return newRegistryWithFactories(
 		ctx, vaultID, bindings, stores,
-		newAttachedConfiguredBackend, newSalvageConfiguredBackend,
+		newAttachedConfiguredBackend, newSalvageConfiguredBackend, admitBindings...,
 	)
 }
 
@@ -156,10 +158,11 @@ func newRegistryWithFactories(
 	stores []StoreSpec,
 	openBackend configuredBackendFactory,
 	openSalvage configuredBackendFactory,
+	admitBindings ...func(context.Context, config.StoreBindingConfig) error,
 ) *Registry {
 	registry := &Registry{
 		vaultID: vaultID, bindings: bindings,
-		openBackend: openBackend, openSalvage: openSalvage,
+		openBackend: openBackend, openSalvage: openSalvage, admitBindings: admitBindings,
 		specs:        make(map[packstore.StoreID]StoreSpec, len(stores)),
 		backends:     make(map[packstore.StoreID]packstore.Backend, len(stores)),
 		observations: make(map[packstore.StoreID]StoreObservation, len(stores)),
@@ -267,6 +270,9 @@ func (r *Registry) SalvageBackend(
 	}
 	if !bound || binding.Kind != spec.Kind {
 		return nil, fmt.Errorf("salvage store %s has no usable binding", id)
+	}
+	if err := r.admitBinding(ctx, binding); err != nil {
+		return nil, err
 	}
 	inspector, err := r.openBackend(ctx, binding, nil)
 	if err != nil {
@@ -410,7 +416,19 @@ func (r *Registry) beginRefresh(id packstore.StoreID) (registryRefresh, bool) {
 	return refresh, true
 }
 
+func (r *Registry) admitBinding(ctx context.Context, binding config.StoreBindingConfig) error {
+	for _, admit := range r.admitBindings {
+		if err := admit(ctx, binding); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (r *Registry) probeStore(ctx context.Context, refresh registryRefresh) registryProbe {
+	if err := r.admitBinding(ctx, refresh.binding); err != nil {
+		return registryProbe{state: StoreUnavailable, detail: err.Error(), priority: refresh.priority}
+	}
 	if prior := refresh.prior; prior != nil {
 		actual, err := prior.Ownership(ctx)
 		if err == nil && actual == refresh.expected {

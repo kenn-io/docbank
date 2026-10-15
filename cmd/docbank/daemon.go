@@ -178,7 +178,8 @@ func runServe(ctx context.Context) (retErr error) {
 	if err := validateConfiguredWatchStores(cfg, catalogStores); err != nil {
 		return err
 	}
-	if err := validateConfiguredCheckouts(sigCtx, cfg, catalogStores, s); err != nil {
+	checkoutValidationPending, err := validateConfiguredCheckoutStartup(sigCtx, cfg, catalogStores, s)
+	if err != nil {
 		return err
 	}
 	storeSpecs := make([]blob.StoreSpec, 0, len(catalogStores)-1)
@@ -192,7 +193,12 @@ func runServe(ctx context.Context) (retErr error) {
 			OwnershipEpoch: catalogStore.OwnershipEpoch,
 		})
 	}
-	blobRegistry := blob.NewRegistry(sigCtx, s.VaultID(), cfg.StoreBindings, storeSpecs)
+	blobRegistry := blob.NewRegistry(sigCtx, s.VaultID(), cfg.StoreBindings, storeSpecs, func(ctx context.Context, binding config.StoreBindingConfig) error {
+		if binding.Kind != "filesystem" {
+			return nil
+		}
+		return validateCheckoutPath(ctx, s, binding.Path)
+	})
 	blobOptions := blob.ManagedOptions()
 	blobOptions.Registry = blobRegistry
 	blobs, err := blob.NewWithOptions(
@@ -239,6 +245,24 @@ func runServe(ctx context.Context) (retErr error) {
 			retErr = errors.Join(retErr, err)
 		}
 	}()
+	if checkoutValidationPending {
+		validationCfg := cfg
+		if err := jobSupervisor.Start("checkout:configured-paths", func(ctx context.Context) error {
+			if err := waitForCheckoutValidation(ctx, func(ctx context.Context) error {
+				return validateConfiguredCheckouts(ctx, validationCfg, catalogStores, s)
+			}, logger); err != nil {
+				return err
+			}
+			ids := make([]string, 0, len(storeSpecs))
+			for _, spec := range storeSpecs {
+				ids = append(ids, spec.ID)
+			}
+			blobRegistry.RefreshStores(ctx, ids)
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
 	operationGate := api.NewOperationGate()
 	executable, err := os.Executable()
 	if err != nil {
@@ -451,7 +475,14 @@ func runServe(ctx context.Context) (retErr error) {
 		if err != nil {
 			return fmt.Errorf("configuring watch %q: %w", watchConfig.Name, err)
 		}
-		if err := jobSupervisor.Start("watch:"+watchConfig.Name, watcher.Run); err != nil {
+		if err := jobSupervisor.Start("watch:"+watchConfig.Name, func(ctx context.Context) error {
+			if err := waitForCheckoutValidation(ctx, func(ctx context.Context) error {
+				return validateCheckoutPath(ctx, s, watchConfig.Source)
+			}, logger); err != nil {
+				return err
+			}
+			return watcher.Run(ctx)
+		}); err != nil {
 			return fmt.Errorf("starting watch %q: %w", watchConfig.Name, err)
 		}
 	}
@@ -841,11 +872,45 @@ func startRetentionMaintenance(
 	return nil
 }
 
-func validateConfiguredCheckouts(ctx context.Context, cfg config.Config, stores []store.BlobStore, catalog *store.Store) error {
+// An uncertain filesystem must defer admission, while catalog and configuration errors still fail startup.
+func validateConfiguredCheckoutStartup(ctx context.Context, cfg config.Config, stores []store.BlobStore, catalog *store.Store) (bool, error) {
+	err := validateConfiguredCheckouts(ctx, cfg, stores, catalog)
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) && ctx.Err() == nil {
+		return true, nil
+	}
+	return false, err
+}
+
+func validateCheckoutPath(ctx context.Context, catalog *store.Store, pathname string) error {
 	checkouts, err := catalog.ListPhotoCheckouts(ctx)
 	if err != nil {
 		return err
 	}
+	id, overlap, _, err := ingest.CheckoutPathOverlap(ctx, checkouts, pathname)
+	if err != nil {
+		return fmt.Errorf("checking configured path against checkout %s: %w", id, err)
+	}
+	if overlap {
+		return fmt.Errorf("configured path %q overlaps reserved checkout %s", pathname, id)
+	}
+	return nil
+}
+
+func waitForCheckoutValidation(ctx context.Context, check func(context.Context) error, logger *slog.Logger) error {
+	for {
+		err := check(ctx)
+		if err == nil {
+			return nil
+		}
+		logger.Warn("checkout path validation is waiting", "error", err)
+		if err := jobs.Wait(ctx, time.Second); err != nil {
+			return err
+		}
+	}
+}
+
+func validateConfiguredCheckouts(ctx context.Context, cfg config.Config, stores []store.BlobStore, catalog *store.Store) error {
 	paths := make([]string, 0, len(cfg.Watches)+len(stores))
 	for _, watch := range cfg.Watches {
 		paths = append(paths, watch.Source)
@@ -859,16 +924,13 @@ func validateConfiguredCheckouts(ctx context.Context, cfg config.Config, stores 
 		}
 	}
 	for _, pathname := range paths {
-		id, overlap, _, err := ingest.CheckoutPathOverlap(ctx, checkouts, pathname)
-		if err != nil {
-			return fmt.Errorf("checking configured path against checkout %s: %w", id, err)
-		}
-		if overlap {
-			return fmt.Errorf("configured path %q overlaps reserved checkout %s", pathname, id)
+		if err := validateCheckoutPath(ctx, catalog, pathname); err != nil {
+			return err
 		}
 	}
 	return nil
 }
+
 func validateConfiguredWatchStores(
 	cfg config.Config, stores []store.BlobStore,
 ) error {
