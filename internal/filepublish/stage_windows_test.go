@@ -3,10 +3,8 @@
 package filepublish
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -55,21 +53,22 @@ func TestStagesAndCheckoutDirectoriesOverridePermissiveParentDACL(t *testing.T) 
 	}
 }
 
-func TestPublishAcceptsPathsLongerThanMaxPath(t *testing.T) {
+func TestRenameNoReplaceAcceptsPathsLongerThanMaxPath(t *testing.T) {
 	dir := t.TempDir()
 	for len(dir) <= windows.MAX_PATH {
 		dir = filepath.Join(dir, strings.Repeat("d", 40))
 	}
 	require.NoError(t, os.MkdirAll(dir, 0o700))
-	destination := filepath.Join(dir, "out.pdf")
-	for _, overwrite := range []bool{false, true} {
-		staged := filepath.Join(dir, fmt.Sprintf("stage-%t.tmp", overwrite))
-		require.NoError(t, os.WriteFile(staged, []byte(strconv.FormatBool(overwrite)), 0o600))
-		published, err := Publish(staged, destination, overwrite)
-		require.NoError(t, err)
-		require.True(t, published)
-		got, err := os.ReadFile(destination)
-		require.NoError(t, err)
-		require.Equal(t, strconv.FormatBool(overwrite), string(got))
-	}
+	stagedPath, destinationPath := filepath.Join(dir, "stage.tmp"), filepath.Join(dir, "out.pdf")
+	require.NoError(t, os.WriteFile(stagedPath, []byte("long path bytes"), 0o600))
+	staged, destination, err := windowsPaths(stagedPath, destinationPath)
+	require.NoError(t, err)
+	require.Equal(t, `\\?\`+stagedPath, windows.UTF16PtrToString(staged))
+	require.Equal(t, `\\?\`+destinationPath, windows.UTF16PtrToString(destination))
+	require.NoError(t, renameNoReplace(stagedPath, destinationPath))
+	got, err := os.ReadFile(destinationPath)
+	require.NoError(t, err)
+	require.Equal(t, "long path bytes", string(got))
+	_, err = os.Stat(stagedPath)
+	require.ErrorIs(t, err, os.ErrNotExist)
 }

@@ -219,7 +219,7 @@ func (s Service) reconcile(ctx context.Context, c store.PhotoCheckout) error {
 			defer s.ActivityEnd()
 		}
 	}
-	failure := "checkout creation was interrupted; partial copies are retained; source holds and destination reservation are released"
+	failure := "checkout creation was interrupted; partial copies are retained; unpublished source holds and destination reservation are released"
 	canonical, fsErr := filepath.EvalSymlinks(c.Destination)
 	invalidDestination := fsErr == nil && canonical != c.Destination
 	if invalidDestination {
@@ -250,11 +250,22 @@ func (s Service) reconcile(ctx context.Context, c store.PhotoCheckout) error {
 			return err
 		}
 		fsErr = filepublish.CleanupRootStages(root)
-		var verified []string
+		var observed []string
 		seen := map[string]bool{}
 		for _, e := range entries {
 			if err := ctx.Err(); err != nil {
 				return err
+			}
+			if e.Published {
+				// Committed copies may contain edits; only a missing path releases their base.
+				_, err := root.Lstat(filepath.FromSlash(e.Path))
+				if !errors.Is(err, os.ErrNotExist) {
+					observed = append(observed, e.FileID)
+					if err != nil {
+						fsErr = errors.Join(fsErr, fmt.Errorf("file %s at %q: %w", e.FileID, e.Path, err))
+					}
+				}
+				continue
 			}
 			if seen[e.Path] {
 				continue
@@ -265,13 +276,13 @@ func (s Service) reconcile(ctx context.Context, c store.PhotoCheckout) error {
 				fsErr = errors.Join(fsErr, fmt.Errorf("file %s at %q: %w", e.FileID, e.Path, err))
 			}
 			if matches {
-				verified = append(verified, e.FileID)
+				observed = append(observed, e.FileID)
 			}
 		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := s.Store.ObservePhotoCheckout(ctx, c.ID, c.OperationID, verified); err != nil {
+		if err := s.Store.ObservePhotoCheckout(ctx, c.ID, c.OperationID, observed); err != nil {
 			return err
 		}
 	}

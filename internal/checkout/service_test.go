@@ -142,7 +142,7 @@ func TestCheckoutStartFailurePersistsFailureAndClosesRoot(t *testing.T) {
 
 func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 	t.Parallel()
-	for _, replacement := range []string{"missing", "file", "symlink"} {
+	for _, replacement := range []string{"missing", "file", "symlink", "edited published copy"} {
 		t.Run(replacement, func(t *testing.T) {
 			s := checkoutService(t)
 			a := checkoutPhoto(t, s, "photo.jpg", "photo bytes")
@@ -155,9 +155,14 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 			require.Len(t, entries, 1)
 			require.NoError(t, s.Store.PublishPhotoCheckoutEntry(t.Context(), entries[0], func() (bool, error) { return true, nil }))
 			require.NoError(t, s.Store.ObservePhotoCheckout(t.Context(), c.ID, op.ID, []string{entries[0].FileID}))
-			require.NoError(t, os.Remove(c.Destination))
+			if replacement != "edited published copy" {
+				require.NoError(t, os.Remove(c.Destination))
+			}
 			var keep string
 			switch replacement {
+			case "edited published copy":
+				keep = filepath.Join(c.Destination, filepath.FromSlash(entries[0].Path))
+				require.NoError(t, os.MkdirAll(filepath.Dir(keep), 0700))
 			case "file":
 				keep = c.Destination
 			case "symlink":
@@ -198,13 +203,31 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 			if replacement == "file" {
 				require.Contains(t, status.Checkout.Error, "reconciliation failed")
 			}
-			require.Zero(t, status.PublishedFiles)
-			require.Zero(t, status.PublishedBytes)
 			finished, err := s.Store.StorageOperation(t.Context(), op.ID)
 			require.NoError(t, err)
-			require.Zero(t, finished.CompletedObjects)
-			require.Zero(t, finished.CopiedObjects)
-			require.Zero(t, finished.CopiedBytes)
+			if replacement == "edited published copy" {
+				require.Equal(t, int64(1), status.PublishedFiles)
+				require.Equal(t, entries[0].Size, status.PublishedBytes)
+				require.Equal(t, int64(1), finished.CompletedObjects)
+				require.Equal(t, int64(1), finished.CopiedObjects)
+				require.Equal(t, entries[0].Size, finished.CopiedBytes)
+				entries[0].Published = true
+				node, err := s.Store.NodeByID(t.Context(), a.Files[0].NodeID)
+				require.NoError(t, err)
+				hash, size, err := s.Blobs.Write(strings.NewReader("replacement"))
+				require.NoError(t, err)
+				updated, _, err := s.Store.ReplaceContent(t.Context(), node.ID, node.Revision, hash, size, "image/jpeg")
+				require.NoError(t, err)
+				pruned, err := s.Store.PruneContentVersions(t.Context(), node.ID, updated.Revision, store.VersionPruneSelector{VersionIDs: []string{entries[0].VersionID}}, true)
+				require.NoError(t, err)
+				require.Len(t, pruned.DependencyRetained, 1)
+			} else {
+				require.Zero(t, status.PublishedFiles)
+				require.Zero(t, status.PublishedBytes)
+				require.Zero(t, finished.CompletedObjects)
+				require.Zero(t, finished.CopiedObjects)
+				require.Zero(t, finished.CopiedBytes)
+			}
 			observed, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
 			require.NoError(t, err)
 			require.Equal(t, entries, observed)
