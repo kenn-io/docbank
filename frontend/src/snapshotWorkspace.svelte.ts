@@ -87,12 +87,12 @@ export class SnapshotWorkspace {
       return;
     }
     const acceptedSnapshot = page.snapshot_id;
-    if (!await this.controller?.page(direction)) return;
+    if (!(await this.controller?.page(direction))) return;
     const nextPage = this.state.page;
-    if (!nextPage || nextPage.snapshot_id !== acceptedSnapshot || nextPage.rows.length === 0) return;
-    this.selectedID = direction === "next"
-      ? nextPage.rows[0]?.node_id
-      : nextPage.rows.at(-1)?.node_id;
+    if (!nextPage || nextPage.snapshot_id !== acceptedSnapshot || nextPage.rows.length === 0)
+      return;
+    this.selectedID =
+      direction === "next" ? nextPage.rows[0]?.node_id : nextPage.rows.at(-1)?.node_id;
   }
 
   toggleSelection(row: SnapshotRow, checked: boolean): void {
@@ -103,9 +103,10 @@ export class SnapshotWorkspace {
   }
 
   selectVisible(checked = true): void {
-    this.selection = checked && this.state.page
-      ? new Set(this.state.page.rows.map((row) => row.node_id))
-      : new Set();
+    this.selection =
+      checked && this.state.page
+        ? new Set(this.state.page.rows.map((row) => row.node_id))
+        : new Set();
   }
 
   closeRecovery(): void {
@@ -116,8 +117,12 @@ export class SnapshotWorkspace {
   }
 
   handleRecoveryProgress(action: Readonly<PersistedAction>, receipt?: BatchTagReceipt): void {
-    if (this.recoverySnapshotEpoch !== this.epoch || this.recoverySnapshotID !== this.state.firstPage?.snapshot_id ||
-        this.recoveryAction?.action_id !== action.action_id) return;
+    if (
+      this.recoverySnapshotEpoch !== this.epoch ||
+      this.recoverySnapshotID !== this.state.firstPage?.snapshot_id ||
+      this.recoveryAction?.action_id !== action.action_id
+    )
+      return;
     this.recoveryAction = action;
     if (receipt && this.recoverySnapshotID) this.onreceipt(receipt);
   }
@@ -140,9 +145,16 @@ export class SnapshotWorkspace {
     this.actionController = controller;
     this.actionBusy = true;
     this.actionError = "";
-    return { session, signal: controller.signal,
-      current: () => request === this.actionGeneration && session === this.getSession() && !controller.signal.aborted &&
-        epoch === this.epoch && snapshotID === this.state.firstPage?.snapshot_id };
+    return {
+      session,
+      signal: controller.signal,
+      current: () =>
+        request === this.actionGeneration &&
+        session === this.getSession() &&
+        !controller.signal.aborted &&
+        epoch === this.epoch &&
+        snapshotID === this.state.firstPage?.snapshot_id,
+    };
   }
 
   private async showRecovery(
@@ -152,10 +164,12 @@ export class SnapshotWorkspace {
     operation: ReturnType<SnapshotWorkspace["beginAction"]>,
   ): Promise<void> {
     if (!operation.current()) return;
-    const currentTag = await generated.getTag(action.tag_id, { session: operation.session }).catch((cause) => {
-      if (cause instanceof APIError && cause.status === 404) return null;
-      throw cause;
-    });
+    const currentTag = await generated
+      .getTag(action.tag_id, { session: operation.session })
+      .catch((cause) => {
+        if (cause instanceof APIError && cause.status === 404) return null;
+        throw cause;
+      });
     if (!operation.current()) return;
     this.recoverySnapshotEpoch = this.epoch;
     this.recoverySnapshotID = this.state.firstPage?.snapshot_id;
@@ -175,7 +189,12 @@ export class SnapshotWorkspace {
     try {
       // Complete enumeration and hash/byte verification happen before random
       // operation identities are prepared or anything is persisted.
-      const targets = await captureSnapshotTargets(operation.session, firstPage, operation.signal, this.overlays);
+      const targets = await captureSnapshotTargets(
+        operation.session,
+        firstPage,
+        operation.signal,
+        this.overlays,
+      );
       if (!operation.current()) return;
       const vaultID = await readActionVaultID(operation.session);
       if (!operation.current()) return;
@@ -206,7 +225,8 @@ export class SnapshotWorkspace {
       if (!operation.current()) return;
       const vaultID = await readActionVaultID(operation.session);
       if (!operation.current()) return;
-      if (prepared.vault_id !== vaultID) throw new Error("The recovery action belongs to a different vault.");
+      if (prepared.vault_id !== vaultID)
+        throw new Error("The recovery action belongs to a different vault.");
       const journal = await ActionJournal.open(vaultID);
       if (!operation.current()) return;
       await journal.prepare(prepared, operation.signal);
@@ -234,7 +254,10 @@ export class SnapshotWorkspace {
       if (!operation.current()) return;
       const journal = await ActionJournal.open(vaultID);
       const action = await journal.load();
-      if (!action) throw new Error("No retained action is available for this vault. Select a recovery file instead.");
+      if (!action)
+        throw new Error(
+          "No retained action is available for this vault. Select a recovery file instead.",
+        );
       await this.showRecovery(journal, action, vaultID, operation);
     } catch (cause) {
       if (!operation.current()) return;
@@ -268,5 +291,4 @@ export class SnapshotWorkspace {
       }
     }
   }
-
 }

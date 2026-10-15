@@ -9,7 +9,9 @@ import { fileURLToPath } from "node:url";
 
 const run = promisify(execFile);
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const binary = process.env.DOCBANK_SCREENSHOT_BINARY ?? path.join(repository, "bin", process.platform === "win32" ? "docbank.exe" : "docbank");
+const binary =
+  process.env.DOCBANK_SCREENSHOT_BINARY ??
+  path.join(repository, "bin", process.platform === "win32" ? "docbank.exe" : "docbank");
 const output = process.env.DOCBANK_SCREENSHOT_DIR;
 if (!output) throw new Error("DOCBANK_SCREENSHOT_DIR is required");
 
@@ -19,11 +21,13 @@ test.describe("TUI packages screenshot", () => {
   let socket = "";
 
   async function docbank(args: string[]): Promise<string> {
-    return (await run(binary, args, {
-      cwd: repository,
-      env: { ...process.env, DOCBANK_HOME: vault },
-      timeout: 60_000,
-    })).stdout.trim();
+    return (
+      await run(binary, args, {
+        cwd: repository,
+        env: { ...process.env, DOCBANK_HOME: vault },
+        timeout: 60_000,
+      })
+    ).stdout.trim();
   }
 
   test.beforeAll(async () => {
@@ -38,27 +42,66 @@ test.describe("TUI packages screenshot", () => {
       const suffix = String(ordinal).padStart(3, "0");
       const document = `DOC-${suffix}`;
       const label = `EXT${String(ordinal).padStart(6, "0")}`;
-      records.push(`þ${document}þ\x14þNATIVES/${document}.txtþ\x14þ${label}þ\x14þEXT999999þ\x14þset-${suffix}þ`);
-      await writeFile(path.join(volume, "NATIVES", `${document}.txt`),
-        `Synthetic package document ${ordinal}\n`, { mode: 0o600 });
+      records.push(
+        `þ${document}þ\x14þNATIVES/${document}.txtþ\x14þ${label}þ\x14þEXT999999þ\x14þset-${suffix}þ`,
+      );
+      await writeFile(
+        path.join(volume, "NATIVES", `${document}.txt`),
+        `Synthetic package document ${ordinal}\n`,
+        { mode: 0o600 },
+      );
     }
-    await writeFile(path.join(volume, "DATA", "production.dat"), records.join("\r\n") + "\r\n", { mode: 0o600 });
+    await writeFile(path.join(volume, "DATA", "production.dat"), records.join("\r\n") + "\r\n", {
+      mode: 0o600,
+    });
     const mappingPath = path.join(workspace, "mapping.json");
-    await writeFile(mappingPath, JSON.stringify({ contract: "loadfile-mapping/v1", columns: [
-      { source: "DOCID", source_ordinal: 0, canonical: "loadfile.document.id" },
-      { source: "NATIVE", source_ordinal: 1, canonical: "loadfile.file.native" },
-      { source: "BEGBATES", source_ordinal: 2, canonical: "loadfile.label.begin" },
-      { source: "ENDBATES", source_ordinal: 3, canonical: "loadfile.label.end" },
-      { source: "LABELSET", source_ordinal: 4, canonical: "loadfile.label.set" },
-    ] }), { mode: 0o600 });
+    await writeFile(
+      mappingPath,
+      JSON.stringify({
+        contract: "loadfile-mapping/v1",
+        columns: [
+          { source: "DOCID", source_ordinal: 0, canonical: "loadfile.document.id" },
+          { source: "NATIVE", source_ordinal: 1, canonical: "loadfile.file.native" },
+          { source: "BEGBATES", source_ordinal: 2, canonical: "loadfile.label.begin" },
+          { source: "ENDBATES", source_ordinal: 3, canonical: "loadfile.label.end" },
+          { source: "LABELSET", source_ordinal: 4, canonical: "loadfile.label.set" },
+        ],
+      }),
+      { mode: 0o600 },
+    );
     await docbank(["web", "--no-browser"]);
-    const preflight = JSON.parse(await docbank(["package", "preflight", path.join(workspace, "package"),
-      "--profile", "dat-concordance-v1", "--encoding", "utf-8", "--map", mappingPath, "--json"]));
+    const preflight = JSON.parse(
+      await docbank([
+        "package",
+        "preflight",
+        path.join(workspace, "package"),
+        "--profile",
+        "dat-concordance-v1",
+        "--encoding",
+        "utf-8",
+        "--map",
+        mappingPath,
+        "--json",
+      ]),
+    );
     const operationID = randomUUID();
-    await docbank(["package", "import", preflight.preflight_id, "--name", "synthetic-production",
-      "--operation-id", operationID, "--json"]);
-    await expect.poll(async () => JSON.parse(await docbank(["package", "import", "status", operationID, "--json"])).state,
-      { timeout: 30_000 }).toBe("complete");
+    await docbank([
+      "package",
+      "import",
+      preflight.preflight_id,
+      "--name",
+      "synthetic-production",
+      "--operation-id",
+      operationID,
+      "--json",
+    ]);
+    await expect
+      .poll(
+        async () =>
+          JSON.parse(await docbank(["package", "import", "status", operationID, "--json"])).state,
+        { timeout: 30_000 },
+      )
+      .toBe("complete");
   });
 
   test.afterAll(async () => {
@@ -77,13 +120,32 @@ test.describe("TUI packages screenshot", () => {
   test("shows package status and second-page member and label navigation", async ({ page }) => {
     socket = `docbank-packages-${process.pid}`;
     const session = "docbank-tui";
-    const tmux = async (args: string[]): Promise<string> => (await run("tmux", ["-L", socket, ...args], {
-      cwd: repository,
-      env: { ...process.env, DOCBANK_HOME: vault, DOCBANK_SCREENSHOT_BINARY: binary, TERM: "xterm-256color" },
-      timeout: 15_000,
-    })).stdout;
-    const capture = async (): Promise<string> => tmux(["capture-pane", "-p", "-t", session, "-S", "0"]);
-    await tmux(["new-session", "-d", "-x", "120", "-y", "38", "-s", session, 'exec "$DOCBANK_SCREENSHOT_BINARY" tui']);
+    const tmux = async (args: string[]): Promise<string> =>
+      (
+        await run("tmux", ["-L", socket, ...args], {
+          cwd: repository,
+          env: {
+            ...process.env,
+            DOCBANK_HOME: vault,
+            DOCBANK_SCREENSHOT_BINARY: binary,
+            TERM: "xterm-256color",
+          },
+          timeout: 15_000,
+        })
+      ).stdout;
+    const capture = async (): Promise<string> =>
+      tmux(["capture-pane", "-p", "-t", session, "-S", "0"]);
+    await tmux([
+      "new-session",
+      "-d",
+      "-x",
+      "120",
+      "-y",
+      "38",
+      "-s",
+      session,
+      'exec "$DOCBANK_SCREENSHOT_BINARY" tui',
+    ]);
     await expect.poll(capture).toContain("documents for you and your agents");
     await tmux(["send-keys", "-t", session, "K"]);
     await expect.poll(capture).toContain("synthetic-production");
@@ -93,8 +155,17 @@ test.describe("TUI packages screenshot", () => {
       html,body{margin:0;background:#07100f}.terminal{box-sizing:border-box;width:max-content;min-width:100vw;min-height:100vh;margin:0;padding:16px 18px;color:#e8f1ef;background:#07100f;font:16px/1.25 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;white-space:pre}
     </style><pre class="terminal"></pre>`);
     const screenshot = async (name: string): Promise<void> => {
-      await page.locator(".terminal").evaluate((element, text) => { element.textContent = String(text); }, await capture());
-      await page.screenshot({ path: path.join(output, name), fullPage: true, animations: "disabled" });
+      await page.locator(".terminal").evaluate(
+        (element, text) => {
+          element.textContent = String(text);
+        },
+        await capture(),
+      );
+      await page.screenshot({
+        path: path.join(output, name),
+        fullPage: true,
+        animations: "disabled",
+      });
     };
     await screenshot("tui-packages.png");
 

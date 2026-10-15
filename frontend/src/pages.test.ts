@@ -1,11 +1,6 @@
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  decodePageInventory,
-  decodePageJob,
-  pageDigest,
-  readPageImage,
-} from "./pages.js";
+import { decodePageInventory, decodePageJob, pageDigest, readPageImage } from "./pages.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -90,7 +85,9 @@ it("accepts PDF pixel rounding while preserving the actual receipt dimensions", 
     const value = inventory();
     value.inventory.images[0]!.width += delta;
     value.inventory.images[0]!.height -= delta;
-    expect(decodePageInventory(value, source).inventory.images[0]).toEqual(value.inventory.images[0]);
+    expect(decodePageInventory(value, source).inventory.images[0]).toEqual(
+      value.inventory.images[0],
+    );
   }
 });
 
@@ -209,11 +206,24 @@ it("preserves native PNG density and rejects a substituted DPI recipe", () => {
 it("reads retained runtime limits independently of current launch policy", () => {
   const value = inventory();
   const runtime = {
-    inspector_sha256: "a".repeat(64), renderer_sha256: "b".repeat(64), limiter_sha256: "c".repeat(64),
-    inspector_version: "synthetic-inspector", limiter_version: "synthetic-limiter", deployment_identity: "synthetic-deployment",
-    platform: "linux/amd64", memory_enforcement: "rlimit-as", inspector_memory_bytes: 1073741824, renderer_memory_bytes: 268435456,
-    max_source_bytes: 33554432, max_pages: 500, max_output_bytes: 16777216, max_pixels: 20000000, max_axis: 8192,
-    max_geometry_bytes: 8388608, max_diagnostic_bytes: 32768, phase_seconds: 30,
+    inspector_sha256: "a".repeat(64),
+    renderer_sha256: "b".repeat(64),
+    limiter_sha256: "c".repeat(64),
+    inspector_version: "synthetic-inspector",
+    limiter_version: "synthetic-limiter",
+    deployment_identity: "synthetic-deployment",
+    platform: "linux/amd64",
+    memory_enforcement: "rlimit-as",
+    inspector_memory_bytes: 1073741824,
+    renderer_memory_bytes: 268435456,
+    max_source_bytes: 33554432,
+    max_pages: 500,
+    max_output_bytes: 16777216,
+    max_pixels: 20000000,
+    max_axis: 8192,
+    max_geometry_bytes: 8388608,
+    max_diagnostic_bytes: 32768,
+    phase_seconds: 30,
   };
   const recipe = value.inventory.recipes[0]!;
   Object.assign(recipe.recipe.renderer_identity, { runtime });

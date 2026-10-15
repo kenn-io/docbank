@@ -34,9 +34,7 @@
 
   const snapshots = $derived(
     report
-      ? [...report.items].sort((left, right) =>
-          right.created_at.localeCompare(left.created_at),
-        )
+      ? [...report.items].sort((left, right) => right.created_at.localeCompare(left.created_at))
       : [],
   );
 
@@ -83,11 +81,7 @@
   }
 </script>
 
-<DetailDrawer
-  width="min(760px, 100vw)"
-  ariaLabel="Backup snapshots"
-  {onclose}
->
+<DetailDrawer width="min(760px, 100vw)" ariaLabel="Backup snapshots" {onclose}>
   {#snippet header()}
     <div class="drawer-heading">
       <div>
@@ -141,10 +135,7 @@
         </div>
         <div class="repository-id">
           <code>{report.repository.id}</code>
-          <CopyButton
-            text={report.repository.id}
-            ariaLabel="Copy backup repository ID"
-          />
+          <CopyButton text={report.repository.id} ariaLabel="Copy backup repository ID" />
         </div>
       </section>
 
@@ -171,14 +162,17 @@
               {/snippet}
               <div class="snapshot-id">
                 <code>{snapshot.id}</code>
-                <CopyButton
-                  text={snapshot.id}
-                  ariaLabel={`Copy snapshot ID ${snapshot.id}`}
-                />
+                <CopyButton text={snapshot.id} ariaLabel={`Copy snapshot ID ${snapshot.id}`} />
               </div>
               <dl>
-                <div><dt>Tree</dt><dd>{snapshot.files} files · {snapshot.nodes} nodes</dd></div>
-                <div><dt>Content</dt><dd>{snapshot.blobs} blobs · {formatBytes(snapshot.blob_bytes)}</dd></div>
+                <div>
+                  <dt>Tree</dt>
+                  <dd>{snapshot.files} files · {snapshot.nodes} nodes</dd>
+                </div>
+                <div>
+                  <dt>Content</dt>
+                  <dd>{snapshot.blobs} blobs · {formatBytes(snapshot.blob_bytes)}</dd>
+                </div>
                 <div>
                   <dt>Added</dt>
                   <dd>
@@ -196,8 +190,8 @@
         <strong>Snapshot presence is not recovery proof.</strong>
         <p>
           This view lists immutable manifests only. Run
-          <code>docbank backup verify</code> to prove repository bytes, and
-          restore into a separate vault to rehearse recovery.
+          <code>docbank backup verify</code> to prove repository bytes, and restore into a separate vault
+          to rehearse recovery.
         </p>
       </aside>
     {/if}

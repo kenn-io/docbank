@@ -1,10 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-} from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import AuditEvidenceDrawer from "./AuditEvidenceDrawer.svelte";
 
 const evidence = {
@@ -48,10 +43,10 @@ describe("audit evidence drawer", () => {
       onauthfailure: vi.fn(),
     });
 
+    expect(await screen.findByText("Protected history and content agree")).toBeTruthy();
     expect(
-      await screen.findByText("Protected history and content agree"),
+      screen.getByText("3 of 3 unique retained blobs passed SHA-256 verification."),
     ).toBeTruthy();
-    expect(screen.getByText("3 of 3 unique retained blobs passed SHA-256 verification.")).toBeTruthy();
     expect(screen.getByText(evidence.lineage_id)).toBeTruthy();
     expect(screen.getByText(evidence.scopes[0]!.id)).toBeTruthy();
     expect(screen.getByText(evidence.scopes[0]!.chain_head)).toBeTruthy();
@@ -66,7 +61,8 @@ describe("audit evidence drawer", () => {
   });
 
   it("distinguishes a dormant vault and can retry verification", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch")
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
@@ -131,12 +127,8 @@ describe("audit evidence drawer", () => {
       onauthfailure: vi.fn(),
     });
 
-    expect(
-      await screen.findByText("Protected authority needs attention"),
-    ).toBeTruthy();
-    expect(
-      screen.getByText("audit scope chain does not match its head"),
-    ).toBeTruthy();
+    expect(await screen.findByText("Protected authority needs attention")).toBeTruthy();
+    expect(screen.getByText("audit scope chain does not match its head")).toBeTruthy();
     expect(screen.queryByText("Permanent audit is dormant")).toBeNull();
   });
 
@@ -166,9 +158,7 @@ describe("audit evidence drawer", () => {
       onauthfailure: vi.fn(),
     });
 
-    expect(
-      await screen.findByText("Protected history and content agree"),
-    ).toBeTruthy();
+    expect(await screen.findByText("Protected history and content agree")).toBeTruthy();
     await fireEvent.click(
       screen.getByRole("button", {
         name: "Run permanent audit verification again",
@@ -176,20 +166,12 @@ describe("audit evidence drawer", () => {
     );
 
     expect(
-      screen.getByText(
-        "Replaying protected history and hashing retained content…",
-      ),
+      screen.getByText("Replaying protected history and hashing retained content…"),
     ).toBeTruthy();
-    expect(
-      screen.queryByText("Protected history and content agree"),
-    ).toBeNull();
+    expect(screen.queryByText("Protected history and content agree")).toBeNull();
 
     rejectRefresh(new Error("verification interrupted"));
-    expect((await screen.findByRole("alert")).textContent).toContain(
-      "verification interrupted",
-    );
-    expect(
-      screen.queryByText("Protected history and content agree"),
-    ).toBeNull();
+    expect((await screen.findByRole("alert")).textContent).toContain("verification interrupted");
+    expect(screen.queryByText("Protected history and content agree")).toBeNull();
   });
 });

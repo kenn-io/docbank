@@ -4,11 +4,16 @@ import { markText } from "./textMarks.js";
 it("uses deterministic source priority for overlaps and preserves UTF-16 offsets", () => {
   const result = markText("😀ALPHA alphabet", {
     find: "😀a",
-    highlightTerms: [{ text: "alphabet", color: "#00ff00" }, { text: "alpha", color: "#ff0000" }],
+    highlightTerms: [
+      { text: "alphabet", color: "#00ff00" },
+      { text: "alpha", color: "#ff0000" },
+    ],
     queryTerms: ["alpha"],
   });
 
-  expect(result.matches.map(({ start, end, source, text }) => ({ start, end, source, text }))).toEqual([
+  expect(
+    result.matches.map(({ start, end, source, text }) => ({ start, end, source, text })),
+  ).toEqual([
     { start: 0, end: 3, source: "find", text: "😀A" },
     { start: 8, end: 16, source: "highlight", text: "alphabet" },
   ]);

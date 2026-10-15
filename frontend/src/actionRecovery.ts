@@ -1,6 +1,15 @@
-import { batchTagRequestDigest, validateBatchTagReceipt, type BatchTagReceipt, type BatchTagRequest } from "./batch-tags.js";
+import {
+  batchTagRequestDigest,
+  validateBatchTagReceipt,
+  type BatchTagReceipt,
+  type BatchTagRequest,
+} from "./batch-tags.js";
 import { randomUUID, sha256Digest } from "./crypto.js";
-import { snapshotMemberHash, type SnapshotMember, type VerifiedSnapshotTargets } from "./snapshots.js";
+import {
+  snapshotMemberHash,
+  type SnapshotMember,
+  type VerifiedSnapshotTargets,
+} from "./snapshots.js";
 
 export const ACTION_MAX_MEMBERS = 250_000;
 export const ACTION_MAX_BATCHES = 250;
@@ -83,22 +92,33 @@ function immutablePlanValue(action: Omit<PreparedAction, "plan_digest"> | Prepar
         operation_id: batch.request.operation_id,
         tag_id: batch.request.tag_id,
         assign: batch.request.assign,
-        nodes: batch.request.nodes.map((node) => ({ node_id: node.node_id, revision: node.revision })),
+        nodes: batch.request.nodes.map((node) => ({
+          node_id: node.node_id,
+          revision: node.revision,
+        })),
       },
       request_digest: batch.request_digest,
     })),
   };
 }
 
-export async function actionPlanDigest(action: Omit<PreparedAction, "plan_digest"> | PreparedAction): Promise<string> {
+export async function actionPlanDigest(
+  action: Omit<PreparedAction, "plan_digest"> | PreparedAction,
+): Promise<string> {
   return sha256Hex(digestBytes(immutablePlanValue(action)));
 }
 
 function exactMember(member: SnapshotMember): SnapshotMember {
-  if (!Number.isSafeInteger(member.node_id) || member.node_id < 1 ||
-      !uuidV4.test(member.content_version_id) || !sha256.test(member.blob_hash) ||
-      !Number.isSafeInteger(member.size) || member.size < 0 ||
-      !Number.isSafeInteger(member.revision) || member.revision < 1) {
+  if (
+    !Number.isSafeInteger(member.node_id) ||
+    member.node_id < 1 ||
+    !uuidV4.test(member.content_version_id) ||
+    !sha256.test(member.blob_hash) ||
+    !Number.isSafeInteger(member.size) ||
+    member.size < 0 ||
+    !Number.isSafeInteger(member.revision) ||
+    member.revision < 1
+  ) {
     throw new Error("Snapshot action contains an invalid exact source member.");
   }
   return {
@@ -119,23 +139,41 @@ export async function prepareAction(
   if (!uuidV4.test(vaultID) || !uuidV4.test(tagID) || typeof assign !== "boolean") {
     throw new Error("The action has an invalid vault, tag identity, or operation.");
   }
-  if (!Array.isArray(targets.members) || targets.members.length < 1 || targets.members.length > ACTION_MAX_MEMBERS) {
+  if (
+    !Array.isArray(targets.members) ||
+    targets.members.length < 1 ||
+    targets.members.length > ACTION_MAX_MEMBERS
+  ) {
     throw new Error("A recoverable action requires between 1 and 250,000 members.");
   }
   const snapshot = targets.snapshot;
-  if (!snapshotID.test(snapshot.snapshot_id) || !prefixedSHA256.test(snapshot.snapshot_fingerprint) ||
-      !prefixedSHA256.test(snapshot.query_fingerprint) || !sha256.test(snapshot.member_hash) ||
-      snapshot.total !== targets.members.length || !Number.isSafeInteger(snapshot.total_bytes) || snapshot.total_bytes < 0) {
+  if (
+    !snapshotID.test(snapshot.snapshot_id) ||
+    !prefixedSHA256.test(snapshot.snapshot_fingerprint) ||
+    !prefixedSHA256.test(snapshot.query_fingerprint) ||
+    !sha256.test(snapshot.member_hash) ||
+    snapshot.total !== targets.members.length ||
+    !Number.isSafeInteger(snapshot.total_bytes) ||
+    snapshot.total_bytes < 0
+  ) {
     throw new Error("The action source identity is invalid.");
   }
-  const members = targets.members.map(exactMember).sort((left, right) =>
-    left.node_id - right.node_id || left.content_version_id.localeCompare(right.content_version_id));
+  const members = targets.members
+    .map(exactMember)
+    .sort(
+      (left, right) =>
+        left.node_id - right.node_id ||
+        left.content_version_id.localeCompare(right.content_version_id),
+    );
   if (new Set(members.map((member) => member.node_id)).size !== members.length) {
     throw new Error("Snapshot action members repeat a node identity.");
   }
   const totalBytes = members.reduce((sum, member) => sum + member.size, 0);
-  if (!Number.isSafeInteger(totalBytes) || totalBytes !== snapshot.total_bytes ||
-      await snapshotMemberHash(members) !== snapshot.member_hash) {
+  if (
+    !Number.isSafeInteger(totalBytes) ||
+    totalBytes !== snapshot.total_bytes ||
+    (await snapshotMemberHash(members)) !== snapshot.member_hash
+  ) {
     throw new Error("The action source members do not match the snapshot receipt.");
   }
 
@@ -157,7 +195,8 @@ export async function prepareAction(
       request_digest: await batchTagRequestDigest(request),
     });
   }
-  if (batches.length > ACTION_MAX_BATCHES) throw new Error("A recoverable action is limited to 250 batches.");
+  if (batches.length > ACTION_MAX_BATCHES)
+    throw new Error("A recoverable action is limited to 250 batches.");
 
   const withoutDigest: Omit<PreparedAction, "plan_digest"> = {
     version: 1,
@@ -176,8 +215,12 @@ export async function prepareAction(
     created_at: new Date().toISOString(),
     batches,
   };
-  const action: PreparedAction = { ...withoutDigest, plan_digest: await actionPlanDigest(withoutDigest) };
-  if (digestBytes(action).length > ACTION_MAX_BYTES) throw new Error("The recoverable action exceeds 128 MiB.");
+  const action: PreparedAction = {
+    ...withoutDigest,
+    plan_digest: await actionPlanDigest(withoutDigest),
+  };
+  if (digestBytes(action).length > ACTION_MAX_BYTES)
+    throw new Error("The recoverable action exceeds 128 MiB.");
   return action;
 }
 
@@ -186,19 +229,29 @@ function malformed(reason: string): never {
 }
 
 function object(value: unknown, field: string): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) malformed(`${field} must be an object`);
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    malformed(`${field} must be an object`);
   return value as Record<string, unknown>;
 }
 
-function exactKeys(raw: Record<string, unknown>, required: readonly string[], optional: readonly string[], field: string): void {
+function exactKeys(
+  raw: Record<string, unknown>,
+  required: readonly string[],
+  optional: readonly string[],
+  field: string,
+): void {
   const allowed = new Set([...required, ...optional]);
-  if (required.some((key) => !Object.hasOwn(raw, key)) || Object.keys(raw).some((key) => !allowed.has(key))) {
+  if (
+    required.some((key) => !Object.hasOwn(raw, key)) ||
+    Object.keys(raw).some((key) => !allowed.has(key))
+  ) {
     malformed(`${field} has missing or unknown fields`);
   }
 }
 
 function integer(value: unknown, field: string, minimum = 0): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < minimum) malformed(`${field} is not a safe integer`);
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < minimum)
+    malformed(`${field} is not a safe integer`);
   return value;
 }
 
@@ -215,7 +268,8 @@ function uuid(value: unknown, field: string): string {
 
 function hash(value: unknown, field: string, prefixed = false): string {
   const parsed = string(value, field);
-  if (!(prefixed ? prefixedSHA256 : sha256).test(parsed)) malformed(`${field} is not a SHA-256 identity`);
+  if (!(prefixed ? prefixedSHA256 : sha256).test(parsed))
+    malformed(`${field} is not a SHA-256 identity`);
   return parsed;
 }
 
@@ -234,7 +288,12 @@ function member(value: unknown, field: string): SnapshotMember {
 function request(value: unknown, field: string): BatchTagRequest {
   const raw = object(value, field);
   exactKeys(raw, ["operation_id", "tag_id", "assign", "nodes"], [], field);
-  if (typeof raw.assign !== "boolean" || !Array.isArray(raw.nodes) || raw.nodes.length < 1 || raw.nodes.length > ACTION_MAX_BATCH_MEMBERS) {
+  if (
+    typeof raw.assign !== "boolean" ||
+    !Array.isArray(raw.nodes) ||
+    raw.nodes.length < 1 ||
+    raw.nodes.length > ACTION_MAX_BATCH_MEMBERS
+  ) {
     malformed(`${field} is invalid`);
   }
   return {
@@ -244,7 +303,10 @@ function request(value: unknown, field: string): BatchTagRequest {
     nodes: raw.nodes.map((value, index) => {
       const node = object(value, `${field}.nodes[${index}]`);
       exactKeys(node, ["node_id", "revision"], [], `${field}.nodes[${index}]`);
-      return { node_id: integer(node.node_id, `${field}.nodes[${index}].node_id`, 1), revision: integer(node.revision, `${field}.nodes[${index}].revision`, 1) };
+      return {
+        node_id: integer(node.node_id, `${field}.nodes[${index}].node_id`, 1),
+        revision: integer(node.revision, `${field}.nodes[${index}].revision`, 1),
+      };
     }),
   };
 }
@@ -252,14 +314,31 @@ function request(value: unknown, field: string): BatchTagRequest {
 function rawReceipt(value: unknown, field: string, strict: boolean): unknown {
   if (!strict) return value;
   const raw = object(value, field);
-  exactKeys(raw, [
-    "version", "operation_id", "request_digest", "tag_id", "assign", "tag_revision",
-    "assignment_count", "completed_at", "nodes",
-  ], [], field);
+  exactKeys(
+    raw,
+    [
+      "version",
+      "operation_id",
+      "request_digest",
+      "tag_id",
+      "assign",
+      "tag_revision",
+      "assignment_count",
+      "completed_at",
+      "nodes",
+    ],
+    [],
+    field,
+  );
   if (!Array.isArray(raw.nodes)) malformed(`${field}.nodes is not an array`);
   raw.nodes.forEach((value, index) => {
     const node = object(value, `${field}.nodes[${index}]`);
-    exactKeys(node, ["node_id", "expected_revision", "revision", "changed"], [], `${field}.nodes[${index}]`);
+    exactKeys(
+      node,
+      ["node_id", "expected_revision", "revision", "changed"],
+      [],
+      `${field}.nodes[${index}]`,
+    );
   });
   return raw;
 }
@@ -285,54 +364,122 @@ export function receiptProjection(receipt: BatchTagReceipt): BatchTagReceipt {
 
 async function normalize(value: unknown, strict: boolean): Promise<PreparedAction> {
   const raw = object(value, "action");
-  if (strict) exactKeys(raw, [
-    "version", "action_id", "vault_id", "source", "total", "total_bytes", "tag_id", "assign",
-    "created_at", "plan_digest", "batches",
-  ], [], "action");
-  if (raw.version !== 1 || typeof raw.assign !== "boolean" || !Array.isArray(raw.batches)) malformed("action header is invalid");
+  if (strict)
+    exactKeys(
+      raw,
+      [
+        "version",
+        "action_id",
+        "vault_id",
+        "source",
+        "total",
+        "total_bytes",
+        "tag_id",
+        "assign",
+        "created_at",
+        "plan_digest",
+        "batches",
+      ],
+      [],
+      "action",
+    );
+  if (raw.version !== 1 || typeof raw.assign !== "boolean" || !Array.isArray(raw.batches))
+    malformed("action header is invalid");
   const source = object(raw.source, "action.source");
-  if (strict) exactKeys(source, ["snapshot_id", "snapshot_fingerprint", "query_fingerprint", "member_hash"], [], "action.source");
+  if (strict)
+    exactKeys(
+      source,
+      ["snapshot_id", "snapshot_fingerprint", "query_fingerprint", "member_hash"],
+      [],
+      "action.source",
+    );
   const createdAt = string(raw.created_at, "action.created_at");
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(createdAt) || !Number.isFinite(Date.parse(createdAt))) {
+  if (
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(createdAt) ||
+    !Number.isFinite(Date.parse(createdAt))
+  ) {
     malformed("action.created_at is not canonical UTC time");
   }
-  if (raw.batches.length < 1 || raw.batches.length > ACTION_MAX_BATCHES) malformed("batch count is outside its bound");
+  if (raw.batches.length < 1 || raw.batches.length > ACTION_MAX_BATCHES)
+    malformed("batch count is outside its bound");
   const tagID = uuid(raw.tag_id, "action.tag_id");
   const batches: PreparedActionBatch[] = [];
   const allMembers: SnapshotMember[] = [];
   for (let index = 0; index < raw.batches.length; index++) {
     const batchRaw = object(raw.batches[index], `action.batches[${index}]`);
-    if (strict) exactKeys(batchRaw, ["index", "operation_id", "members", "request", "request_digest"], ["receipt"], `action.batches[${index}]`);
-    if (batchRaw.index !== index || !Array.isArray(batchRaw.members) || batchRaw.members.length < 1 || batchRaw.members.length > ACTION_MAX_BATCH_MEMBERS) {
+    if (strict)
+      exactKeys(
+        batchRaw,
+        ["index", "operation_id", "members", "request", "request_digest"],
+        ["receipt"],
+        `action.batches[${index}]`,
+      );
+    if (
+      batchRaw.index !== index ||
+      !Array.isArray(batchRaw.members) ||
+      batchRaw.members.length < 1 ||
+      batchRaw.members.length > ACTION_MAX_BATCH_MEMBERS
+    ) {
       malformed(`action.batches[${index}] is outside its bound`);
     }
-    const members = batchRaw.members.map((value, memberIndex) => member(value, `action.batches[${index}].members[${memberIndex}]`));
+    const members = batchRaw.members.map((value, memberIndex) =>
+      member(value, `action.batches[${index}].members[${memberIndex}]`),
+    );
     const originalRequest = request(batchRaw.request, `action.batches[${index}].request`);
     const operationID = uuid(batchRaw.operation_id, `action.batches[${index}].operation_id`);
     const requestDigest = hash(batchRaw.request_digest, `action.batches[${index}].request_digest`);
-    if (operationID !== originalRequest.operation_id || tagID !== originalRequest.tag_id || raw.assign !== originalRequest.assign ||
-        JSON.stringify(originalRequest.nodes) !== JSON.stringify(members.map((item) => ({ node_id: item.node_id, revision: item.revision }))) ||
-        requestDigest !== await batchTagRequestDigest(originalRequest)) {
+    if (
+      operationID !== originalRequest.operation_id ||
+      tagID !== originalRequest.tag_id ||
+      raw.assign !== originalRequest.assign ||
+      JSON.stringify(originalRequest.nodes) !==
+        JSON.stringify(
+          members.map((item) => ({ node_id: item.node_id, revision: item.revision })),
+        ) ||
+      requestDigest !== (await batchTagRequestDigest(originalRequest))
+    ) {
       malformed(`action.batches[${index}] does not bind its original request`);
     }
     let receipt: BatchTagReceipt | undefined;
     if (batchRaw.receipt !== undefined) {
-      receipt = receiptProjection(await validateBatchTagReceipt(originalRequest, rawReceipt(batchRaw.receipt, `action.batches[${index}].receipt`, strict)));
+      receipt = receiptProjection(
+        await validateBatchTagReceipt(
+          originalRequest,
+          rawReceipt(batchRaw.receipt, `action.batches[${index}].receipt`, strict),
+        ),
+      );
     }
-    batches.push({ index, operation_id: operationID, members, request: originalRequest, request_digest: requestDigest, ...(receipt ? { receipt } : {}) });
+    batches.push({
+      index,
+      operation_id: operationID,
+      members,
+      request: originalRequest,
+      request_digest: requestDigest,
+      ...(receipt ? { receipt } : {}),
+    });
     allMembers.push(...members);
   }
   const total = integer(raw.total, "action.total", 1);
   const totalBytes = integer(raw.total_bytes, "action.total_bytes");
-  if (total > ACTION_MAX_MEMBERS || total !== allMembers.length || new Set(allMembers.map((item) => item.node_id)).size !== allMembers.length ||
-      totalBytes !== allMembers.reduce((sum, item) => sum + item.size, 0) || !Number.isSafeInteger(totalBytes)) malformed("member totals are inconsistent");
+  if (
+    total > ACTION_MAX_MEMBERS ||
+    total !== allMembers.length ||
+    new Set(allMembers.map((item) => item.node_id)).size !== allMembers.length ||
+    totalBytes !== allMembers.reduce((sum, item) => sum + item.size, 0) ||
+    !Number.isSafeInteger(totalBytes)
+  )
+    malformed("member totals are inconsistent");
   const normalized: PreparedAction = {
     version: 1,
     action_id: uuid(raw.action_id, "action.action_id"),
     vault_id: uuid(raw.vault_id, "action.vault_id"),
     source: {
       snapshot_id: string(source.snapshot_id, "action.source.snapshot_id"),
-      snapshot_fingerprint: hash(source.snapshot_fingerprint, "action.source.snapshot_fingerprint", true),
+      snapshot_fingerprint: hash(
+        source.snapshot_fingerprint,
+        "action.source.snapshot_fingerprint",
+        true,
+      ),
       query_fingerprint: hash(source.query_fingerprint, "action.source.query_fingerprint", true),
       member_hash: hash(source.member_hash, "action.source.member_hash"),
     },
@@ -344,8 +491,12 @@ async function normalize(value: unknown, strict: boolean): Promise<PreparedActio
     plan_digest: hash(raw.plan_digest, "action.plan_digest"),
     batches,
   };
-  if (!snapshotID.test(normalized.source.snapshot_id) || await snapshotMemberHash(allMembers) !== normalized.source.member_hash ||
-      await actionPlanDigest(normalized) !== normalized.plan_digest) malformed("immutable action identity does not match its digest");
+  if (
+    !snapshotID.test(normalized.source.snapshot_id) ||
+    (await snapshotMemberHash(allMembers)) !== normalized.source.member_hash ||
+    (await actionPlanDigest(normalized)) !== normalized.plan_digest
+  )
+    malformed("immutable action identity does not match its digest");
   return normalized;
 }
 
@@ -363,7 +514,12 @@ function recoveryValue(action: PreparedAction): unknown {
     assign: plan.assign,
     created_at: plan.created_at,
     plan_digest: action.plan_digest,
-    batches: planBatches.map((batch, index) => ({ ...batch, ...(action.batches[index].receipt ? { receipt: receiptProjection(action.batches[index].receipt!) } : {}) })),
+    batches: planBatches.map((batch, index) => ({
+      ...batch,
+      ...(action.batches[index].receipt
+        ? { receipt: receiptProjection(action.batches[index].receipt!) }
+        : {}),
+    })),
   };
 }
 
@@ -375,7 +531,8 @@ export async function encodeRecovery(action: PreparedAction): Promise<Uint8Array
 }
 
 export async function decodeRecovery(bytes: Uint8Array): Promise<PreparedAction> {
-  if (!(bytes instanceof Uint8Array) || bytes.length > ACTION_MAX_BYTES) throw new Error("The action recovery file exceeds 128 MiB.");
+  if (!(bytes instanceof Uint8Array) || bytes.length > ACTION_MAX_BYTES)
+    throw new Error("The action recovery file exceeds 128 MiB.");
   let raw: unknown;
   try {
     raw = JSON.parse(decoder.decode(bytes));

@@ -27,14 +27,17 @@ interface MarkOptions {
   queryTerms?: string[];
 }
 
-interface Candidate extends TextMatch { priority: number }
+interface Candidate extends TextMatch {
+  priority: number;
+}
 
 const maxMatches = 5_000;
 const maxCandidatesPerTerm = maxMatches + 1;
 
 export function markText(text: string, options: MarkOptions): TextMarkResult {
   const terms: { text: string; color: string; source: TextMarkSource; priority: number }[] = [];
-  if (options.find) terms.push({ text: options.find, color: "#f97316", source: "find", priority: 0 });
+  if (options.find)
+    terms.push({ text: options.find, color: "#f97316", source: "find", priority: 0 });
   for (const [index, term] of (options.highlightTerms ?? []).entries()) {
     terms.push({ ...term, source: "highlight", priority: 100 + index });
   }
@@ -60,8 +63,9 @@ export function markText(text: string, options: MarkOptions): TextMarkResult {
       if (++count >= maxCandidatesPerTerm) break;
     }
   }
-  candidates.sort((left, right) =>
-    left.start - right.start || left.priority - right.priority || right.end - left.end,
+  candidates.sort(
+    (left, right) =>
+      left.start - right.start || left.priority - right.priority || right.end - left.end,
   );
 
   const matches: TextMatch[] = [];

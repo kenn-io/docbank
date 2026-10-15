@@ -1,10 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-} from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import BackupDrawer from "./BackupDrawer.svelte";
 
 afterEach(() => {
@@ -64,18 +59,14 @@ describe("backup snapshots drawer", () => {
 
     expect(await screen.findByText("/var/backups/docbank")).toBeTruthy();
     expect(
-      screen
-        .getByText("weekly")
-        .compareDocumentPosition(screen.getByText("first import")) &
+      screen.getByText("weekly").compareDocumentPosition(screen.getByText("first import")) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(screen.getByText("Incremental")).toBeTruthy();
     expect(screen.getByText("Full")).toBeTruthy();
     expect(screen.getByText(/Snapshot presence is not recovery proof/)).toBeTruthy();
 
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Close backup snapshots" }),
-    );
+    await fireEvent.click(screen.getByRole("button", { name: "Close backup snapshots" }));
     expect(close).toHaveBeenCalledOnce();
   });
 });

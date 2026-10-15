@@ -36,9 +36,7 @@ const snapshot: SnapshotRow = {
   media_family: "text",
   modified_at: "2026-09-01T12:00:00Z",
   sort_key: "original.txt",
-  tags: [
-    { id: "11111111-1111-4111-8111-111111111111", name: "frozen", revision: 2 },
-  ],
+  tags: [{ id: "11111111-1111-4111-8111-111111111111", name: "frozen", revision: 2 }],
   collection_ids: ["22222222-2222-4222-8222-222222222222"],
   display_collection_id: "22222222-2222-4222-8222-222222222222",
   display_collection_label: "September import",
@@ -88,10 +86,7 @@ describe("selected source normalization", () => {
 
   it("rejects legacy files without complete selected authority", () => {
     expect(() =>
-      selectedSourceFromNode(
-        { ...node, blob_hash: undefined },
-        node.path ?? "",
-      ),
+      selectedSourceFromNode({ ...node, blob_hash: undefined }, node.path ?? ""),
     ).toThrow("complete selected-source authority");
   });
 

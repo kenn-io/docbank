@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseCSV } from "../test-support/csv.js";
 import type { Node } from "./generated/docbank.js";
-import {
-  buildVisiblePageCSV,
-  selectedVisibleCSVRows,
-  type VisibleCSVRow,
-} from "./csv.js";
+import { buildVisiblePageCSV, selectedVisibleCSVRows, type VisibleCSVRow } from "./csv.js";
 
 const headers = [
   "node_id",
@@ -47,9 +43,7 @@ describe("visible-page CSV", () => {
   });
 
   it("reports an unterminated quoted field", () => {
-    expect(() => parseCSV('"unterminated')).toThrowError(
-      "CSV has an unterminated quoted field",
-    );
+    expect(() => parseCSV('"unterminated')).toThrowError("CSV has an unterminated quoted field");
   });
 
   it("reports data after a closing quote", () => {
@@ -163,9 +157,7 @@ describe("visible-page CSV", () => {
     ];
 
     expect(
-      selectedVisibleCSVRows(displayed, new Set([1, 99, 3, 2])).map(
-        (row) => row.node.id,
-      ),
+      selectedVisibleCSVRows(displayed, new Set([1, 99, 3, 2])).map((row) => row.node.id),
     ).toEqual([3, 1]);
   });
 

@@ -34,27 +34,51 @@ export interface SessionOptions extends RequestInit {
 }
 
 // Orval's transport hook adds the scoped credential and preserves problem details.
-export async function sessionResponse<_T>(url: string, { session = "", ...init }: SessionOptions, allowNotModified = false): Promise<Response> {
+export async function sessionResponse<_T>(
+  url: string,
+  { session = "", ...init }: SessionOptions,
+  allowNotModified = false,
+): Promise<Response> {
   const headers = new Headers(init.headers);
   if (init.body instanceof Blob && init.body.type.startsWith("multipart/form-data;")) {
     headers.set("Content-Type", init.body.type);
   }
   if (!headers.has("Accept")) headers.set("Accept", "application/json");
   headers.set("X-Docbank-Web-Session", session);
-  const response = await fetch(url, { ...init, headers, credentials: "same-origin", redirect: "error" });
+  const response = await fetch(url, {
+    ...init,
+    headers,
+    credentials: "same-origin",
+    redirect: "error",
+  });
   if (!response.ok && !(allowNotModified && response.status === 304)) {
     let problem: Problem = {};
-    try { const body: unknown = await response.json(); if (body && typeof body === "object") problem = body as Problem; } catch { /* An empty error still carries its HTTP status. */ }
-    const errors = Array.isArray(problem.errors) ? problem.errors.filter((entry): entry is string => typeof entry === "string") : [];
-    const error = new APIError(problem.detail || problem.title || `HTTP ${response.status}`,
-      response.status, problem.code ?? "", problem.position, errors);
+    try {
+      const body: unknown = await response.json();
+      if (body && typeof body === "object") problem = body as Problem;
+    } catch {
+      /* An empty error still carries its HTTP status. */
+    }
+    const errors = Array.isArray(problem.errors)
+      ? problem.errors.filter((entry): entry is string => typeof entry === "string")
+      : [];
+    const error = new APIError(
+      problem.detail || problem.title || `HTTP ${response.status}`,
+      response.status,
+      problem.code ?? "",
+      problem.position,
+      errors,
+    );
     requestSessionByError.set(error, session);
     throw error;
   }
   return response;
 }
 
-export async function sessionPhotoPreview<_T>(url: string, options: SessionOptions): Promise<Response> {
+export async function sessionPhotoPreview<_T>(
+  url: string,
+  options: SessionOptions,
+): Promise<Response> {
   return sessionResponse<Response>(url, options, true);
 }
 

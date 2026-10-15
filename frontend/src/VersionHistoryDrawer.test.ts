@@ -1,10 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-} from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import VersionHistoryDrawer from "./VersionHistoryDrawer.svelte";
 import type { ContentVersion, Node } from "./generated/docbank.js";
 
@@ -80,16 +75,14 @@ describe("version history drawer", () => {
     });
 
     expect(await screen.findByText("3 retained versions")).toBeTruthy();
-    expect(
-      screen.getByText("Current").closest("button")?.getAttribute("aria-label"),
-    ).toContain("Reverted");
+    expect(screen.getByText("Current").closest("button")?.getAttribute("aria-label")).toContain(
+      "Reverted",
+    );
     expect(screen.getByText(currentVersionID)).toBeTruthy();
     expect(screen.getByText(createdVersionID)).toBeTruthy();
     expect(screen.getByText("Revert source")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Download this version" })).toBeTruthy();
-    expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      "/api/v1/nodes/42/versions?limit=1000&offset=0",
-    );
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/nodes/42/versions?limit=1000&offset=0");
 
     const createdHeading = screen.getByText("Created");
     const createdButton = createdHeading.closest("button");
@@ -100,9 +93,7 @@ describe("version history drawer", () => {
     expect(screen.queryByText("Revert source")).toBeNull();
     expect(screen.getByRole("button", { name: "Download this version" })).toBeTruthy();
 
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Close version history" }),
-    );
+    await fireEvent.click(screen.getByRole("button", { name: "Close version history" }));
     expect(close).toHaveBeenCalledOnce();
   });
 
@@ -144,9 +135,7 @@ describe("version history drawer", () => {
     });
 
     expect(await screen.findByText("2 retained versions")).toBeTruthy();
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Download this version" }),
-    );
+    await fireEvent.click(screen.getByRole("button", { name: "Download this version" }));
     await vi.waitFor(() => expect(downloadSignal).toBeTruthy());
 
     await fireEvent.click(screen.getByText("Created").closest("button")!);

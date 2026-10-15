@@ -77,14 +77,20 @@
       };
       prepared = source
         ? await prepareExactDownload(
-            activeSession, source, authorizationRevision ?? source.mutationRevision,
-            "native", active.signal, report,
+            activeSession,
+            source,
+            authorizationRevision ?? source.mutationRevision,
+            "native",
+            active.signal,
+            report,
           )
         : version && node
           ? await prepareVersionDownload(activeSession, node, version, active.signal, report)
           : node
             ? await prepareCurrentDownload(activeSession, node, active.signal, report)
-            : (() => { throw new Error("The selected document does not have download authority."); })();
+            : (() => {
+                throw new Error("The selected document does not have download authority.");
+              })();
       if (controller !== active) {
         await cancelPreparedDownload(activeSession, prepared).catch(() => undefined);
         return;

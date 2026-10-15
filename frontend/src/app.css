@@ -72,12 +72,24 @@ body .app-shell .kit-button--sm {
 }
 
 .photo-toggle {
-  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  font-family: inherit; font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); line-height: normal;
-  border: var(--border-width) solid var(--border-default); border-radius: var(--kit-control-radius, var(--radius-md));
-  background: var(--bg-surface); color: var(--text-primary); cursor: pointer; white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  line-height: normal;
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--kit-control-radius, var(--radius-md));
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  cursor: pointer;
+  white-space: nowrap;
 }
-.photo-toggle:hover { background: var(--bg-surface-hover); }
+.photo-toggle:hover {
+  background: var(--bg-surface-hover);
+}
 .photo-toggle[aria-pressed="true"] {
   color: color-mix(in srgb, var(--accent-blue) 72%, var(--text-primary));
   border-color: color-mix(in srgb, var(--accent-blue) 40%, var(--border-default));
@@ -203,7 +215,9 @@ body .app-shell .app-top-bar {
   font-size: var(--font-size-md);
   text-align: left;
   cursor: pointer;
-  transition: background-color var(--transition-fast) ease, color var(--transition-fast) ease;
+  transition:
+    background-color var(--transition-fast) ease,
+    color var(--transition-fast) ease;
 }
 
 .nav-item svg {
@@ -729,7 +743,9 @@ dd {
     box-shadow: var(--shadow-lg);
     transform: translateX(-100%);
     visibility: hidden;
-    transition: transform 0.2s cubic-bezier(0.2, 0, 0, 1), visibility 0s linear 0.2s;
+    transition:
+      transform 0.2s cubic-bezier(0.2, 0, 0, 1),
+      visibility 0s linear 0.2s;
   }
 
   .app-nav.open {

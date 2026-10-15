@@ -80,7 +80,7 @@ it("reads missing inventory without rendering until the explicit action, and own
   await fireEvent.click(screen.getByRole("button", { name: "Render page 1" }));
   await screen.findByRole("button", { name: "Cancel render" });
   await view.rerender({ ...props, source: { ...source } });
-  expect(paths.filter(path => path.endsWith("inventory"))).toHaveLength(1);
+  expect(paths.filter((path) => path.endsWith("inventory"))).toHaveLength(1);
   await fireEvent.click(screen.getByRole("button", { name: "Cancel render" }));
   await screen.findByText(/Render canceled/);
   expect(paths.some((p) => p.endsWith(`/${operation}/cancel`))).toBe(true);
@@ -91,7 +91,11 @@ it("reads missing inventory without rendering until the explicit action, and own
   expect(operation).not.toBe(canceledOperation);
 });
 
-for (const [state, failureCode] of [["failed", "interrupted"], ["failed", "limit"], ["canceled", ""]]) {
+for (const [state, failureCode] of [
+  ["failed", "interrupted"],
+  ["failed", "limit"],
+  ["canceled", ""],
+]) {
   it(`uses a new operation to retry a ${state} render (${failureCode})`, async () => {
     const operations: string[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -173,7 +177,11 @@ function renderedInventory(dpis = [144]) {
     contract: "page-image-v1",
     dpi,
     format: "png",
-    renderer_identity: { executable: "synthetic-renderer", version: String(index + 1), options: ["rgb"] },
+    renderer_identity: {
+      executable: "synthetic-renderer",
+      version: String(index + 1),
+      options: ["rgb"],
+    },
   }));
   const frames = [
     {
@@ -219,32 +227,41 @@ function renderedInventory(dpis = [144]) {
       ],
     },
   ];
-  const bytes = dpis.flatMap(dpi => [[dpi, dpi * 2], [dpi * 2, dpi]]).map(([w, h]) => {
-    const b = new Uint8Array(33);
-    b.set([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82]);
-    const v = new DataView(b.buffer);
-    v.setUint32(16, w!);
-    v.setUint32(20, h!);
-    return b;
-  });
-  const images = recipes.flatMap((recipe, recipeIndex) => frames.map((f, i) => ({
-    contract: "page-image-v1",
-    source: binding.source,
-    page: i + 1,
-    frame_sha256: digest(f),
-    recipe_sha256: digest(recipe),
-    sha256: createHash("sha256").update(bytes[recipeIndex * 2 + i]!).digest("hex"),
-    size: 33,
-    width: i === 0 ? recipe.dpi : recipe.dpi * 2,
-    height: i === 0 ? recipe.dpi * 2 : recipe.dpi,
-  })));
+  const bytes = dpis
+    .flatMap((dpi) => [
+      [dpi, dpi * 2],
+      [dpi * 2, dpi],
+    ])
+    .map(([w, h]) => {
+      const b = new Uint8Array(33);
+      b.set([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82]);
+      const v = new DataView(b.buffer);
+      v.setUint32(16, w!);
+      v.setUint32(20, h!);
+      return b;
+    });
+  const images = recipes.flatMap((recipe, recipeIndex) =>
+    frames.map((f, i) => ({
+      contract: "page-image-v1",
+      source: binding.source,
+      page: i + 1,
+      frame_sha256: digest(f),
+      recipe_sha256: digest(recipe),
+      sha256: createHash("sha256")
+        .update(bytes[recipeIndex * 2 + i]!)
+        .digest("hex"),
+      size: 33,
+      width: i === 0 ? recipe.dpi : recipe.dpi * 2,
+      height: i === 0 ? recipe.dpi * 2 : recipe.dpi,
+    })),
+  );
   const inventory = {
     runtime_available: false,
     inventory: {
       source: binding.source,
       page_count: 2,
       frames: frames.map((frame) => ({ frame, sha256: digest(frame) })),
-      recipes: recipes.map(recipe => ({ recipe, sha256: digest(recipe) })),
+      recipes: recipes.map((recipe) => ({ recipe, sha256: digest(recipe) })),
       images,
     },
   };
@@ -267,8 +284,17 @@ it("navigates retained mixed-size pages within bounds and revokes URLs on page a
   const fixture = renderedInventory(),
     revoke = vi.fn(),
     close = vi.fn();
-  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
-  Object.defineProperty(Element.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
   let sequence = 0,
     decode = 0;
   Object.defineProperty(URL, "createObjectURL", {
@@ -361,26 +387,41 @@ for (const { dpis, expectedDPI, runtime, png = false } of [
     fixture.inventory.runtime_available = runtime;
     if (png) {
       const frame = {
-        ...inventory.frames[0]!.frame, input_units: "pixel",
-        pixel_width: 254, pixel_height: 508, pixels_per_metre_x: 10000, pixels_per_metre_y: 10000,
+        ...inventory.frames[0]!.frame,
+        input_units: "pixel",
+        pixel_width: 254,
+        pixel_height: 508,
+        pixels_per_metre_x: 10000,
+        pixels_per_metre_y: 10000,
         transform: [
-          { numerator: 5000, denominator: 127 }, { numerator: 0, denominator: 1 },
-          { numerator: 0, denominator: 1 }, { numerator: 5000, denominator: 127 },
-          { numerator: 0, denominator: 1 }, { numerator: 0, denominator: 1 },
+          { numerator: 5000, denominator: 127 },
+          { numerator: 0, denominator: 1 },
+          { numerator: 0, denominator: 1 },
+          { numerator: 5000, denominator: 127 },
+          { numerator: 0, denominator: 1 },
+          { numerator: 0, denominator: 1 },
         ],
       };
       inventory.page_count = 1;
       inventory.frames = [{ frame, sha256: pageDigest(frame) }];
-      inventory.images = images.filter(image => image.page === 1);
+      inventory.images = images.filter((image) => image.page === 1);
       for (const image of inventory.images) image.frame_sha256 = pageDigest(frame);
     }
     let selectedImage = images[0]!;
     const requests: { dpi: number; pages: number[] }[] = [];
-    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:retained") });
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: vi.fn(() => "blob:retained"),
+    });
     Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
-    vi.stubGlobal("createImageBitmap", vi.fn(async () => ({
-      width: selectedImage.width, height: selectedImage.height, close: vi.fn(),
-    })));
+    vi.stubGlobal(
+      "createImageBitmap",
+      vi.fn(async () => ({
+        width: selectedImage.width,
+        height: selectedImage.height,
+        close: vi.fn(),
+      })),
+    );
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
       if (url.endsWith("inventory")) return response(fixture.inventory);
@@ -390,13 +431,24 @@ for (const { dpis, expectedDPI, runtime, png = false } of [
         return response(job(request.operation_id));
       }
       const query = new URL(url, "http://localhost").searchParams;
-      const index = images.findIndex(image => image.recipe_sha256 === query.get("recipe_sha256") && image.page === Number(query.get("page")));
+      const index = images.findIndex(
+        (image) =>
+          image.recipe_sha256 === query.get("recipe_sha256") &&
+          image.page === Number(query.get("page")),
+      );
       selectedImage = images[index]!;
       return fixture.imageResponse(index);
     });
-    render(VerifiedPreview, { ...props, source: png ? { ...source, mimeType: "image/png", name: "native.png" } : source });
-    await screen.findByRole("img", { name: `Verified page 1 of ${png ? "native.png" : "mixed.pdf"}` });
-    expect(inventory.recipes.find(recipe => recipe.sha256 === selectedImage.recipe_sha256)!.recipe.dpi).toBe(expectedDPI);
+    render(VerifiedPreview, {
+      ...props,
+      source: png ? { ...source, mimeType: "image/png", name: "native.png" } : source,
+    });
+    await screen.findByRole("img", {
+      name: `Verified page 1 of ${png ? "native.png" : "mixed.pdf"}`,
+    });
+    expect(
+      inventory.recipes.find((recipe) => recipe.sha256 === selectedImage.recipe_sha256)!.recipe.dpi,
+    ).toBe(expectedDPI);
     expect(requests).toHaveLength(0);
     const renderButton = screen.queryByRole("button", { name: "Render page 1 at 144 DPI" });
     if (!png && !dpis.includes(144) && runtime) {
@@ -411,9 +463,13 @@ for (const { dpis, expectedDPI, runtime, png = false } of [
 }
 
 it.each(["page_selection_stale", "page_limit", "page_unsupported"])(
-  "offers refresh instead of resubmitting deterministic %s errors", async code => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(async input => String(input).endsWith("inventory")
-      ? response(empty) : new Response(JSON.stringify({ code, detail: "Rejected render" }), { status: 422 }));
+  "offers refresh instead of resubmitting deterministic %s errors",
+  async (code) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+      String(input).endsWith("inventory")
+        ? response(empty)
+        : new Response(JSON.stringify({ code, detail: "Rejected render" }), { status: 422 }),
+    );
     render(PageViewer, props);
     await fireEvent.click(await screen.findByRole("button", { name: "Render page 1" }));
     await screen.findByRole("alert");
@@ -431,12 +487,26 @@ it("bounds polling by elapsed client time and can resume its owned job after the
   const operations: string[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     if (String(input).endsWith("inventory")) return response(empty);
-    const operation = String(input).endsWith("/jobs") ? JSON.parse(String(init?.body)).operation_id : operations[0];
+    const operation = String(input).endsWith("/jobs")
+      ? JSON.parse(String(init?.body)).operation_id
+      : operations[0];
     if (String(input).endsWith("/jobs")) operations.push(operation);
     else polls++;
-    return response({ ...job(operation), created_at: new Date(start.getTime() - 700000).toISOString() });
+    return response({
+      ...job(operation),
+      created_at: new Date(start.getTime() - 700000).toISOString(),
+    });
   });
-  const viewer = new PageViewerSession("session", source, 2, "test", next => { state = next; }, vi.fn());
+  const viewer = new PageViewerSession(
+    "session",
+    source,
+    2,
+    "test",
+    (next) => {
+      state = next;
+    },
+    vi.fn(),
+  );
   try {
     await viewer.load();
     const rendering = viewer.render();
@@ -454,11 +524,14 @@ it("bounds polling by elapsed client time and can resume its owned job after the
     expect(operations).toEqual([operations[0], operations[0]]);
     viewer.dispose();
     await retrying;
-  } finally { viewer.dispose(); }
+  } finally {
+    viewer.dispose();
+  }
 });
 
 it("keeps cancellation available after losing a cancel response", async () => {
-  let operation = "", cancellations = 0;
+  let operation = "",
+    cancellations = 0;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path.endsWith("inventory")) return response(empty);

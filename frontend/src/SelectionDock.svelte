@@ -73,35 +73,62 @@
 >
   {#snippet header()}
     <div class="selection-summary">
-      <strong>{allResults && selectedCount > 0 ? `All ${wholeQueryCount.toLocaleString()} photos selected` : `${selectedCount} selected ${context === "photos" ? (selectedCount === 1 ? "photo" : "photos") : `on this ${context === "snapshot" ? "frozen page" : "page"}`}`}</strong>
+      <strong
+        >{allResults && selectedCount > 0
+          ? `All ${wholeQueryCount.toLocaleString()} photos selected`
+          : `${selectedCount} selected ${context === "photos" ? (selectedCount === 1 ? "photo" : "photos") : `on this ${context === "snapshot" ? "frozen page" : "page"}`}`}</strong
+      >
       {#if outsideCount}<span>{outsideCount} outside this view</span>{/if}
       {#if context === "snapshot"}
         <span>Visible selection only · whole query has {wholeQueryCount} documents</span>
-      {:else if truncated && context !== "photos"}<span>More results exist beyond this page</span>{/if}
+      {:else if truncated && context !== "photos"}<span>More results exist beyond this page</span
+        >{/if}
     </div>
   {/snippet}
 
   <div class="selection-actions">
     <Button
       size="sm"
-      disabled={context === "photos" && retainOpen && selectedCount === 0 || visibleSelected && selectedCount === visibleDocumentCount && !allResults}
+      disabled={(context === "photos" && retainOpen && selectedCount === 0) ||
+        (visibleSelected && selectedCount === visibleDocumentCount && !allResults)}
       onclick={onselectvisible}
-    >{context === "photos" ? selectVisible ? "Select visible photos" : "Select loaded photos" : "Select visible documents"}</Button>
-    <Button size="sm" disabled={context === "photos" && selectedCount === 0} onclick={onclear}>Clear selection</Button>
-    {#if context === "photos" && onallresults && !allResults && visibleSelected && wholeQueryCount > 0}<Button size="sm" tone="info" onclick={onallresults}>Select all {wholeQueryCount.toLocaleString()} photos</Button>{/if}
+      >{context === "photos"
+        ? selectVisible
+          ? "Select visible photos"
+          : "Select loaded photos"
+        : "Select visible documents"}</Button
+    >
+    <Button size="sm" disabled={context === "photos" && selectedCount === 0} onclick={onclear}
+      >Clear selection</Button
+    >
+    {#if context === "photos" && onallresults && !allResults && visibleSelected && wholeQueryCount > 0}<Button
+        size="sm"
+        tone="info"
+        onclick={onallresults}>Select all {wholeQueryCount.toLocaleString()} photos</Button
+      >{/if}
     {#if photoActions}{@render photoActions()}{/if}
     {#if ontags}
-      <Button size="sm" disabled={tagsDisabled} onclick={ontags}>{context === "snapshot" ? "Tag visible selection" : "Edit tags"}</Button>
+      <Button size="sm" disabled={tagsDisabled} onclick={ontags}
+        >{context === "snapshot" ? "Tag visible selection" : "Edit tags"}</Button
+      >
     {/if}
     {#if context === "snapshot" && onwholequerytags}
-      <Button size="sm" tone="info" disabled={tagsDisabled} onclick={onwholequerytags}>Tag whole query</Button>
+      <Button size="sm" tone="info" disabled={tagsDisabled} onclick={onwholequerytags}
+        >Tag whole query</Button
+      >
     {/if}
-    {#if ontrash}<Button size="sm" tone="danger" disabled={trashDisabled} onclick={ontrash}>Move to trash</Button>{/if}
+    {#if ontrash}<Button size="sm" tone="danger" disabled={trashDisabled} onclick={ontrash}
+        >Move to trash</Button
+      >{/if}
     {#if oncsv}<Button size="sm" onclick={oncsv}>Export page CSV</Button>{/if}
     {#if onreport}<Button size="sm" onclick={onreport}>Report selected documents</Button>{/if}
-    {#if onexport}<Button size="sm" disabled={exportDisabled} onclick={onexport}>Export selection</Button>{/if}
+    {#if onexport}<Button size="sm" disabled={exportDisabled} onclick={onexport}
+        >Export selection</Button
+      >{/if}
     {#if exportHelp}<span>{exportHelp}</span>{/if}
-    {#if context === "snapshot" && onexportquery}<Button size="sm" onclick={onexportquery}>Export frozen query</Button>{/if}
+    {#if context === "snapshot" && onexportquery}<Button size="sm" onclick={onexportquery}
+        >Export frozen query</Button
+      >{/if}
   </div>
 </BottomDock>
 

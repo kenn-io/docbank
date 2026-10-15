@@ -191,10 +191,7 @@ it("inspects and downloads a frozen snapshot version under separately labeled li
           "X-Docbank-Blob-Size": String(bytes.length),
         },
       });
-    if (
-      url.startsWith("/api/daemon/web-download?ticket=") &&
-      init?.method === "DELETE"
-    )
+    if (url.startsWith("/api/daemon/web-download?ticket=") && init?.method === "DELETE")
       return new Response(null, { status: 204 });
     throw new Error(`unexpected request: ${url}`);
   });

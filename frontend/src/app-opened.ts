@@ -16,7 +16,8 @@ export function startAppOpenedReporting(session: string): () => void {
         session,
       }).then(
         (response) => ({ status: response.status }),
-        (cause: unknown) => (cause instanceof APIError ? { status: cause.status } : Promise.reject(cause)),
+        (cause: unknown) =>
+          cause instanceof APIError ? { status: cause.status } : Promise.reject(cause),
       ),
   });
 }

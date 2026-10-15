@@ -90,9 +90,9 @@ export function validateUploadReceipt(
 }
 
 interface UploadMessage {
-	container_id?: string;
-	chunk_index?: number;
-	chunk_receipt?: { index: number; sha256: string; size: number };
+  container_id?: string;
+  chunk_index?: number;
+  chunk_receipt?: { index: number; sha256: string; size: number };
   type: string;
   nonce?: string;
   proof?: string;
@@ -125,10 +125,10 @@ export class UploadChannelError extends Error {
 type SocketFactory = (url: string) => WebSocket;
 
 function base64URLBytes(value: string): Uint8Array {
-  const padded = value.replaceAll("-", "+").replaceAll("_", "/").padEnd(
-    Math.ceil(value.length / 4) * 4,
-    "=",
-  );
+  const padded = value
+    .replaceAll("-", "+")
+    .replaceAll("_", "/")
+    .padEnd(Math.ceil(value.length / 4) * 4, "=");
   return Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
 }
 
@@ -138,20 +138,17 @@ function base64URL(bytes: Uint8Array): string {
   return btoa(raw).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
 }
 
-function expectedProof(
-  secret: string,
-  token: string,
-  nonce: string,
-): string {
+function expectedProof(secret: string, token: string, nonce: string): string {
   const input = utf8ToBytes(`${uploadProofDomain}${token}\u0000${nonce}`);
   return base64URL(hmac(sha256, base64URLBytes(secret), input));
 }
 
 export class VerifiedUploadChannel implements UploadTransport {
   private socket: WebSocket | null = null;
-  private waiter:
-    | { resolve: (message: UploadMessage) => void; reject: (cause: Error) => void }
-    | null = null;
+  private waiter: {
+    resolve: (message: UploadMessage) => void;
+    reject: (cause: Error) => void;
+  } | null = null;
   private unusable = false;
   private busy = false;
 
@@ -175,20 +172,15 @@ export class VerifiedUploadChannel implements UploadTransport {
     await this.waitForOpen(socket);
     const nonceBytes = crypto.getRandomValues(new Uint8Array(32));
     const nonce = base64URL(nonceBytes);
-    socket.send(JSON.stringify({
-      type: "authenticate",
-      token: this.session.token,
-      nonce,
-    }));
-    const authenticated = await this.nextMessage(
-      undefined,
-      uploadHandshakeTimeoutMs,
+    socket.send(
+      JSON.stringify({
+        type: "authenticate",
+        token: this.session.token,
+        nonce,
+      }),
     );
-    const proof = expectedProof(
-      this.session.uploadSecret,
-      this.session.token,
-      nonce,
-    );
+    const authenticated = await this.nextMessage(undefined, uploadHandshakeTimeoutMs);
+    const proof = expectedProof(this.session.uploadSecret, this.session.token, nonce);
     if (authenticated.type !== "authenticated" || authenticated.proof !== proof) {
       this.fail();
       throw new Error(
@@ -254,9 +246,7 @@ export class VerifiedUploadChannel implements UploadTransport {
         validateUploadReceipt(terminal.receipt, parentID, name, expectedHash, file.size);
       } catch (cause) {
         this.fail();
-        throw new UploadChannelError(
-          cause instanceof Error ? cause.message : String(cause),
-        );
+        throw new UploadChannelError(cause instanceof Error ? cause.message : String(cause));
       }
       return terminal.receipt;
     } catch (cause) {
@@ -329,8 +319,12 @@ export class VerifiedUploadChannel implements UploadTransport {
   }
 
   async uploadMailboxChunk(
-    containerID: string, index: number, data: Blob, expectedHash: string,
-    signal: AbortSignal, onprogress: (progress: TransferProgress) => void,
+    containerID: string,
+    index: number,
+    data: Blob,
+    expectedHash: string,
+    signal: AbortSignal,
+    onprogress: (progress: TransferProgress) => void,
   ): Promise<void> {
     if (this.busy) throw new Error("Another browser upload is already active.");
     throwIfAborted(signal);
@@ -338,9 +332,14 @@ export class VerifiedUploadChannel implements UploadTransport {
     const requestID = randomUUID();
     let readyForBytes = false;
     try {
-      this.send({ type: "begin_mailbox_chunk", request_id: requestID,
-        container_id: containerID, chunk_index: index,
-        expected_hash: expectedHash, expected_size: data.size });
+      this.send({
+        type: "begin_mailbox_chunk",
+        request_id: requestID,
+        container_id: containerID,
+        chunk_index: index,
+        expected_hash: expectedHash,
+        expected_size: data.size,
+      });
       const ready = await this.nextMessage(signal);
       this.requireMessage(ready, requestID);
       this.throwProblem(ready);
@@ -358,14 +357,19 @@ export class VerifiedUploadChannel implements UploadTransport {
       const terminal = await this.nextMessage(signal);
       this.requireMessage(terminal, requestID);
       this.throwProblem(terminal);
-      if (terminal.type !== "mailbox_chunk_receipt" ||
-          terminal.chunk_receipt?.index !== index ||
-          terminal.chunk_receipt?.sha256 !== expectedHash ||
-          terminal.chunk_receipt?.size !== data.size) throw this.protocolError();
+      if (
+        terminal.type !== "mailbox_chunk_receipt" ||
+        terminal.chunk_receipt?.index !== index ||
+        terminal.chunk_receipt?.sha256 !== expectedHash ||
+        terminal.chunk_receipt?.size !== data.size
+      )
+        throw this.protocolError();
     } catch (cause) {
       if (readyForBytes && !(cause instanceof APIError)) this.fail();
       throw cause;
-    } finally { this.busy = false; }
+    } finally {
+      this.busy = false;
+    }
   }
 
   private sendBinary(bytes: ArrayBuffer): void {
@@ -425,10 +429,7 @@ export class VerifiedUploadChannel implements UploadTransport {
   private async cancelUpload(requestID: string): Promise<never> {
     this.send({ type: "cancel", request_id: requestID });
     try {
-      const canceled = await this.nextMessage(
-        undefined,
-        uploadHandshakeTimeoutMs,
-      );
+      const canceled = await this.nextMessage(undefined, uploadHandshakeTimeoutMs);
       this.requireMessage(canceled, requestID, "error");
     } catch {
       this.fail();
@@ -502,11 +503,7 @@ export class VerifiedUploadChannel implements UploadTransport {
     waiter.resolve(message);
   }
 
-  private requireMessage(
-    message: UploadMessage,
-    requestID: string,
-    type?: string,
-  ): void {
+  private requireMessage(message: UploadMessage, requestID: string, type?: string): void {
     if (message.request_id !== requestID || (type && message.type !== type)) {
       throw this.protocolError();
     }
@@ -524,9 +521,7 @@ export class VerifiedUploadChannel implements UploadTransport {
 
   private protocolError(): Error {
     this.fail();
-    return new UploadChannelError(
-      "The verified upload channel returned an invalid response.",
-    );
+    return new UploadChannelError("The verified upload channel returned an invalid response.");
   }
 
   private channelError(): Error {

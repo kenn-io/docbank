@@ -16,13 +16,11 @@
   const presented = $derived(presentTag(tag));
 </script>
 
-<span
-  class="tag-label tag-label--{size}"
-  title={title ?? tag.name}
->
+<span class="tag-label tag-label--{size}" title={title ?? tag.name}>
   <span class="tag-label__visual" aria-hidden="true">
     <span class="tag-label__dot" style:background={presented.color}></span><span
-      class="tag-label__name">{presented.label}</span>
+      class="tag-label__name">{presented.label}</span
+    >
   </span>
   <span class="kit-sr-only">{tag.name}</span>
 </span>

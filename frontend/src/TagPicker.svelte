@@ -1,11 +1,7 @@
 <script lang="ts">
   import CheckIcon from "@lucide/svelte/icons/check";
   import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
-  import {
-    autoReposition,
-    dismissable,
-    floatingPopoverStyle,
-  } from "@kenn-io/kit-ui";
+  import { autoReposition, dismissable, floatingPopoverStyle } from "@kenn-io/kit-ui";
   import { tick } from "svelte";
   import type { Tag } from "./generated/docbank.js";
   import { groupTags } from "./tagPresentation.js";
@@ -73,9 +69,7 @@
     }
     return items;
   });
-  const optionIndexes = $derived(
-    new Map(options.map((option, index) => [option.id, index])),
-  );
+  const optionIndexes = $derived(new Map(options.map((option, index) => [option.id, index])));
   const selected = $derived(options.find((option) => option.id === value));
   const triggerText = $derived(selected?.label ?? placeholder);
   const triggerFullName = $derived(selected?.fullName ?? placeholder);
@@ -127,9 +121,7 @@
     highlightedIndex = Math.max(0, optionIndexes.get(value) ?? 0);
     await tick();
     positionList();
-    document
-      .getElementById(optionID(highlightedIndex))
-      ?.scrollIntoView({ block: "nearest" });
+    document.getElementById(optionID(highlightedIndex))?.scrollIntoView({ block: "nearest" });
   }
 
   function toggle(): void {
@@ -146,11 +138,8 @@
 
   function moveHighlight(delta: number): void {
     if (options.length === 0) return;
-    highlightedIndex =
-      (highlightedIndex + delta + options.length) % options.length;
-    document
-      .getElementById(optionID(highlightedIndex))
-      ?.scrollIntoView({ block: "nearest" });
+    highlightedIndex = (highlightedIndex + delta + options.length) % options.length;
+    document.getElementById(optionID(highlightedIndex))?.scrollIntoView({ block: "nearest" });
   }
 
   function onFocusout(event: FocusEvent): void {
@@ -173,9 +162,7 @@
     if (open && (event.key === "Home" || event.key === "End")) {
       event.preventDefault();
       highlightedIndex = event.key === "Home" ? 0 : options.length - 1;
-      document
-        .getElementById(optionID(highlightedIndex))
-        ?.scrollIntoView({ block: "nearest" });
+      document.getElementById(optionID(highlightedIndex))?.scrollIntoView({ block: "nearest" });
       return;
     }
     if (event.key === "Enter" || event.key === " ") {
@@ -229,13 +216,10 @@
   </button>
 {/snippet}
 
-<div
-  class={["tag-picker", className]}
-  bind:this={containerEl}
-  onfocusout={onFocusout}
->
-  <!-- kit-ui-check-ignore: pinned kit dropdowns cannot render each inactive tag's color. -->
-  <button role="combobox"
+<div class={["tag-picker", className]} bind:this={containerEl} onfocusout={onFocusout}>
+  <button
+    // kit-ui-check-ignore: pinned kit dropdowns cannot render each inactive tag's color.
+    role="combobox"
     bind:this={buttonEl}
     class="tag-picker__trigger"
     type="button"
@@ -258,17 +242,13 @@
       ></span>
     {/if}
     <span class="tag-picker__value">{triggerText}</span>
-    <ChevronDownIcon
-      class="tag-picker__chevron"
-      size="12"
-      strokeWidth="2"
-      aria-hidden="true"
-    />
+    <ChevronDownIcon class="tag-picker__chevron" size="12" strokeWidth="2" aria-hidden="true" />
   </button>
 
   {#if open}
-    <!-- kit-ui-check-ignore: paired with the scoped color-aware combobox above. -->
-    <div role="listbox"
+    <div
+      // kit-ui-check-ignore: paired with the scoped color-aware combobox above.
+      role="listbox"
       id={listboxID}
       class="tag-picker__list kit-popover-card"
       style={listStyle}
@@ -278,11 +258,7 @@
         {@render optionRow(options[0], 0)}
       {/if}
       {#each groups as group}
-        <div
-          class="tag-picker__group"
-          role="group"
-          aria-label={group.name ?? "Ungrouped tags"}
-        >
+        <div class="tag-picker__group" role="group" aria-label={group.name ?? "Ungrouped tags"}>
           {#if group.name}
             <div class="tag-picker__group-heading">{group.name}</div>
           {/if}

@@ -23,13 +23,21 @@ test("qualifies selected reports and original exports", async ({ page }) => {
   await access(binary);
   const scratch = await mkdtemp(path.join(tmpdir(), "docbank-report-export-"));
   const vault = path.join(scratch, "vault");
-  const run = async (...args: string[]) => (await exec(binary, args, {
-    cwd: repository, env: { ...process.env, DOCBANK_HOME: vault }, timeout: 90_000,
-  })).stdout.trim();
+  const run = async (...args: string[]) =>
+    (
+      await exec(binary, args, {
+        cwd: repository,
+        env: { ...process.env, DOCBANK_HOME: vault },
+        timeout: 90_000,
+      })
+    ).stdout.trim();
   const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
   const history = async () => JSON.parse(await run("search-export", "history", "--json"));
-  const post = (route: string) => page.waitForResponse(response =>
-    new URL(response.url()).pathname === route && response.request().method() === "POST");
+  const post = (route: string) =>
+    page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === route && response.request().method() === "POST",
+    );
   let started = false;
   let failure: unknown;
   const stop = async () => {
@@ -42,8 +50,9 @@ test("qualifies selected reports and original exports", async ({ page }) => {
       const after = JSON.parse(await run("daemon", "status", "--json"));
       if (after.running !== false) throw new Error("Daemon is still running");
     } catch (cause) {
-      throw new Error(`Synthetic daemon ${pid ?? "unknown"} did not stop; retained ${scratch}`,
-        { cause });
+      throw new Error(`Synthetic daemon ${pid ?? "unknown"} did not stop; retained ${scratch}`, {
+        cause,
+      });
     }
   };
   try {
@@ -67,22 +76,34 @@ test("qualifies selected reports and original exports", async ({ page }) => {
     }
     const [one, two, missing, excluded] = nodes as [Node, Node, Node, Node];
     expect(missing.mime_type).toBe("application/octet-stream");
-    for (const [term, hit] of [["alpha", one], ["beta", two]] as const) {
-      await expect.poll(async () => {
-        const result = JSON.parse(await run("search", term, "--json"));
-        return result.hits.map((row: { node: Node }) => row.node.id)
-          .sort((a: number, b: number) => a - b);
-      }, { timeout: 30_000 }).toEqual([hit.id, excluded.id].sort((a, b) => a - b));
+    for (const [term, hit] of [
+      ["alpha", one],
+      ["beta", two],
+    ] as const) {
+      await expect
+        .poll(
+          async () => {
+            const result = JSON.parse(await run("search", term, "--json"));
+            return result.hits
+              .map((row: { node: Node }) => row.node.id)
+              .sort((a: number, b: number) => a - b);
+          },
+          { timeout: 30_000 },
+        )
+        .toEqual([hit.id, excluded.id].sort((a, b) => a - b));
     }
-    const identities: Identity[] = nodes.slice(0, 3).map(node => ({
-      node_id: node.id, version_id: node.current_version_id!, sha256: node.blob_hash!,
+    const identities: Identity[] = nodes.slice(0, 3).map((node) => ({
+      node_id: node.id,
+      version_id: node.current_version_id!,
+      sha256: node.blob_hash!,
     }));
     const members = identities.map((id, i) => ({ ...id, size: nodes[i]!.size }));
     const issued = new URL(await run("web", "--no-browser"));
     const session = new URLSearchParams(issued.hash.slice(1)).get("web_session");
     if (!session) throw new Error("Synthetic web session missing");
-    try { await page.goto(issued.toString()); }
-    catch (cause) {
+    try {
+      await page.goto(issued.toString());
+    } catch (cause) {
       const detail = String(cause).replaceAll(session, "[redacted]");
       throw new Error("Could not open the synthetic browser session", { cause: new Error(detail) });
     }
@@ -123,8 +144,9 @@ test("qualifies selected reports and original exports", async ({ page }) => {
       expect(source.status()).toBe(200);
       const submittedSource = source.request().postDataJSON();
       expect(submittedSource.kind).toBe("explicit");
-      expect(submittedSource.members.toSorted((a: Identity, b: Identity) => a.node_id - b.node_id))
-        .toEqual(members);
+      expect(
+        submittedSource.members.toSorted((a: Identity, b: Identity) => a.node_id - b.node_id),
+      ).toEqual(members);
       const response = await planning;
       expect(response.status()).toBe(200);
       const plan: Plan = await response.json();
@@ -135,16 +157,20 @@ test("qualifies selected reports and original exports", async ({ page }) => {
       fingerprint = plan.fingerprint;
       await expect(exportDrawer.getByTestId("export-plan-fingerprint")).toHaveText(fingerprint);
       await exportDrawer.getByRole("button", { name: "Start reviewed export" }).click();
-      await expect(exportDrawer.getByText("Archive verified and ready", { exact: true }))
-        .toBeVisible({ timeout: 30_000 });
-      await exportDrawer.getByRole("button", { name: "Download verified ZIP" })
+      await expect(
+        exportDrawer.getByText("Archive verified and ready", { exact: true }),
+      ).toBeVisible({ timeout: 30_000 });
+      await exportDrawer
+        .getByRole("button", { name: "Download verified ZIP" })
         .scrollIntoViewIfNeeded();
       await page.screenshot({
-        path: path.join(captures!, "export-ready.png"), animations: "disabled",
+        path: path.join(captures!, "export-ready.png"),
+        animations: "disabled",
       });
       const hash = await exportDrawer.getByTestId("export-archive-hash").innerText();
-      const size = Number(await exportDrawer.getByTestId("export-archive-size")
-        .getAttribute("data-bytes"));
+      const size = Number(
+        await exportDrawer.getByTestId("export-archive-size").getAttribute("data-bytes"),
+      );
       const downloading = page.waitForEvent("download");
       await exportDrawer.getByRole("button", { name: "Download verified ZIP" }).click();
       const download = await downloading;
@@ -166,15 +192,19 @@ test("qualifies selected reports and original exports", async ({ page }) => {
       await drawer.getByRole("textbox", { name: "Expression for term 1" }).fill("alpha");
       await drawer.getByRole("button", { name: "Add term", exact: true }).click();
       await drawer.getByRole("textbox", { name: "Expression for term 2" }).fill("beta");
-      await drawer.getByRole("combobox", { name: "Coverage policy" })
+      await drawer
+        .getByRole("combobox", { name: "Coverage policy" })
         .selectOption("available_only");
       const creating = post("/api/v1/search-exports");
       await drawer.getByRole("button", { name: "Create export", exact: true }).click();
       const response = await creating;
       expect(response.status()).toBe(200);
       const submitted = response.request().postDataJSON();
-      expect(submitted.selected_documents.documents
-        .toSorted((a: Identity, b: Identity) => a.node_id - b.node_id)).toEqual(identities);
+      expect(
+        submitted.selected_documents.documents.toSorted(
+          (a: Identity, b: Identity) => a.node_id - b.node_id,
+        ),
+      ).toEqual(identities);
       expect(submitted.all_documents).toBe(false);
       expect(submitted.collection_ids ?? []).toEqual([]);
       expect(submitted.timezone).toBe("UTC");
@@ -188,29 +218,35 @@ test("qualifies selected reports and original exports", async ({ page }) => {
       expect(parent.counts ?? []).toEqual([]);
       await expect(drawer.getByRole("table")).toHaveCount(0);
       await expect(drawer.getByRole("button", { name: "Download evidence ZIP" })).toHaveCount(0);
-      const loading = page.waitForResponse(r =>
-        new URL(r.url()).pathname === `/api/v1/search-exports/${parent.id}/dates`);
+      const loading = page.waitForResponse(
+        (r) => new URL(r.url()).pathname === `/api/v1/search-exports/${parent.id}/dates`,
+      );
       await drawer.getByRole("button", { name: "Review dates", exact: true }).click();
       const dates: DatePage = await (await loading).json();
-      const member = dates.members.find(member => member.document.node_id === two.id)!;
+      const member = dates.members.find((member) => member.document.node_id === two.id)!;
       expect(member.selection.date).toBe("");
-      const candidate = member.candidates.find(candidate =>
-        candidate.source_class === "content" && candidate.value === "2024-05-06")!;
+      const candidate = member.candidates.find(
+        (candidate) => candidate.source_class === "content" && candidate.value === "2024-05-06",
+      )!;
       expect(candidate).toBeDefined();
       const review = drawer.locator(".review-item").filter({
         has: page.getByText(`Document ${two.id}`, { exact: true }),
       });
       await review.getByRole("radio", { name: "document_date · 2024-05-06 · content" }).check();
-      await review.getByRole("textbox", { name: "Reason", exact: true })
+      await review
+        .getByRole("textbox", { name: "Reason", exact: true })
         .fill("Use the first stated document date.");
       reviewedChoice = {
-        action: "select", candidate_id: candidate.id, document: identities[1],
+        action: "select",
+        candidate_id: candidate.id,
+        document: identities[1],
         evidence_sha256: candidate.locator.evidence_sha256,
         reason: "Use the first stated document date.",
       };
       await review.scrollIntoViewIfNeeded();
       await page.screenshot({
-        path: path.join(captures!, "date-review.png"), animations: "disabled",
+        path: path.join(captures!, "date-review.png"),
+        animations: "disabled",
       });
       const revising = post(`/api/v1/search-exports/${parent.id}/revisions`);
       await drawer.getByRole("button", { name: "Create reviewed revision" }).click();
@@ -220,46 +256,73 @@ test("qualifies selected reports and original exports", async ({ page }) => {
       child = await revision.json();
       expect(child!.id).not.toBe(parent.id);
       expect(child!).toMatchObject({
-        state: "complete", parent_id: parent.id, unresolved_dates: 0,
+        state: "complete",
+        parent_id: parent.id,
+        unresolved_dates: 0,
       });
-      const parentRead = await page.evaluate(async ({ url, session }) => {
-        const response = await fetch(url, {
-          headers: { "X-Docbank-Web-Session": session },
-        });
-        return { status: response.status, summary: await response.json() };
-      }, { url: getGetTermReportUrl(parent.id), session });
+      const parentRead = await page.evaluate(
+        async ({ url, session }) => {
+          const response = await fetch(url, {
+            headers: { "X-Docbank-Web-Session": session },
+          });
+          return { status: response.status, summary: await response.json() };
+        },
+        { url: getGetTermReportUrl(parent.id), session },
+      );
       expect(parentRead).toMatchObject({ status: 200, summary: { state: "needs_review" } });
-      const counts = { hits: 1, hits_plus_family: 1, unique_hits: 1,
-        unique_families: 1, unique_hits_plus_family: 1 };
-      const coverage = { scoped: 3, searchable: 2, missing_text: 1,
-        incomplete_families: 0, fallback_dates: 1 };
+      const counts = {
+        hits: 1,
+        hits_plus_family: 1,
+        unique_hits: 1,
+        unique_families: 1,
+        unique_hits_plus_family: 1,
+      };
+      const coverage = {
+        scoped: 3,
+        searchable: 2,
+        missing_text: 1,
+        incomplete_families: 0,
+        fallback_dates: 1,
+      };
       expect(child!.counts).toEqual([counts, counts]);
       expect(child!.coverage).toMatchObject(coverage);
       expect(child!.row_coverage).toHaveLength(2);
       for (const row of child!.row_coverage!) expect(row).toMatchObject(coverage);
       const table = drawer.getByRole("table", { name: "Search export counts" });
       for (const [index, term] of ["alpha", "beta"].entries()) {
-        const cells = table.getByRole("row").nth(index + 1).locator("span");
+        const cells = table
+          .getByRole("row")
+          .nth(index + 1)
+          .locator("span");
         expect(await cells.allTextContents()).toEqual([
-          String(index + 1), term,
+          String(index + 1),
+          term,
           `${submitted.terms[index].dates.start} to ${submitted.terms[index].dates.end}`,
-          "1", "1", "1", "1", "1",
+          "1",
+          "1",
+          "1",
+          "1",
+          "1",
         ]);
       }
-      await expect(drawer.getByText(
-        "3 scoped · 2 searchable · 1 missing text · 0 incomplete families · 1 fallback dates",
-        { exact: true },
-      )).toBeVisible();
+      await expect(
+        drawer.getByText(
+          "3 scoped · 2 searchable · 1 missing text · 0 incomplete families · 1 fallback dates",
+          { exact: true },
+        ),
+      ).toBeVisible();
       await table.scrollIntoViewIfNeeded();
       await page.screenshot({
-        path: path.join(captures!, "report-counts.png"), animations: "disabled",
+        path: path.join(captures!, "report-counts.png"),
+        animations: "disabled",
       });
     });
 
     const packet = path.join(scratch, "report.zip");
     const browserCSV = path.join(scratch, "browser.csv");
     for (const [label, destination] of [
-      ["Download evidence ZIP", packet], ["Download CSV", browserCSV],
+      ["Download evidence ZIP", packet],
+      ["Download CSV", browserCSV],
     ]) {
       const downloading = page.waitForEvent("download");
       await drawer.getByRole("button", { name: label!, exact: true }).click();
@@ -273,12 +336,28 @@ test("qualifies selected reports and original exports", async ({ page }) => {
 
     // Independent readers use fixture bytes and literal outcomes, never the report calculator.
     const evidence = path.join(scratch, "expected.json");
-    await writeFile(evidence, JSON.stringify({ identities, fingerprint, reviewedChoice,
-      missingDate: missing.created_at.slice(0, 10), terms: child!.terms,
-      originals: nodes.slice(0, 3).map(node => ({ ...members.find(m => m.node_id === node.id),
-        hex: sources.get(node.name)!.toString("hex") })),
-    }), { mode: 0o600 });
-    const verifyArtifacts = async () => exec("python3", ["-E", "-c", String.raw`
+    await writeFile(
+      evidence,
+      JSON.stringify({
+        identities,
+        fingerprint,
+        reviewedChoice,
+        missingDate: missing.created_at.slice(0, 10),
+        terms: child!.terms,
+        originals: nodes.slice(0, 3).map((node) => ({
+          ...members.find((m) => m.node_id === node.id),
+          hex: sources.get(node.name)!.toString("hex"),
+        })),
+      }),
+      { mode: 0o600 },
+    );
+    const verifyArtifacts = async () =>
+      exec(
+        "python3",
+        [
+          "-E",
+          "-c",
+          String.raw`
 import csv, hashlib, io, json, sys, zipfile
 from pathlib import Path
 expected = json.loads(Path(sys.argv[1]).read_text())
@@ -362,34 +441,44 @@ with zipfile.ZipFile(sys.argv[5]) as z:
         digest.update(canonical(doc)+b'\n')
     assert digest.hexdigest() == fingerprint
 print('Verified report evidence, CSV and all three original byte streams')
-`, evidence, packet, browserCSV, extractedCSV, archive], { timeout: 30_000 });
+`,
+          evidence,
+          packet,
+          browserCSV,
+          extractedCSV,
+          archive,
+        ],
+        { timeout: 30_000 },
+      );
     await verifyArtifacts();
 
     await test.step("frozen downloads survive replacement but a stale rerun is refused", async () => {
-      await writeFile(path.join(scratch, "one.txt"),
-        "Replacement content. Document dated 2024-05-06.\n", { mode: 0o600 });
+      await writeFile(
+        path.join(scratch, "one.txt"),
+        "Replacement content. Document dated 2024-05-06.\n",
+        { mode: 0o600 },
+      );
       await run("add", path.join(scratch, "one.txt"), "--dest", "/", "--replace");
       const replaced: Node = JSON.parse(await run("stat", "/one.txt", "--json"));
       expect(replaced.current_version_id).not.toBe(one.current_version_id);
       expect(replaced.blob_hash).not.toBe(one.blob_hash);
       const downloading = page.waitForEvent("download");
-      await drawer.getByRole("button", { name: "Download evidence ZIP", exact: true })
-        .click();
+      await drawer.getByRole("button", { name: "Download evidence ZIP", exact: true }).click();
       const download = await downloading;
       const later = path.join(scratch, "after-replacement.zip");
       await download.saveAs(later);
       expect(await download.failure()).toBeNull();
       expect(await readFile(later)).toEqual(await readFile(packet));
       const before = await history();
-      expect(before.items.map((item: { summary: Summary }) => item.summary.id))
-        .toContain(child!.id);
+      expect(before.items.map((item: { summary: Summary }) => item.summary.id)).toContain(
+        child!.id,
+      );
       const completed = drawer.locator(".history-item").filter({ hasText: "Counts ready" });
       await completed.getByRole("button", { name: "Use as draft" }).click();
       const creating = post("/api/v1/search-exports");
       await drawer.getByRole("button", { name: "Create export", exact: true }).click();
       const response = await creating;
-      expect(response.request().postDataJSON().selected_documents.documents)
-        .toEqual(identities);
+      expect(response.request().postDataJSON().selected_documents.documents).toEqual(identities);
       expect(response.status()).toBe(409);
       expect(await response.json()).toMatchObject({ code: "report_selection_changed" });
       await expect(drawer.getByRole("alert")).toHaveText(
@@ -403,7 +492,12 @@ print('Verified report evidence, CSV and all three original byte streams')
     expect(await run("search-export", "verify", packet)).toContain("internally consistent: true");
     await verifyArtifacts();
     expect(JSON.parse(await run("daemon", "status", "--json")).running).toBe(false);
-    await exec("python3", ["-E", "-c", String.raw`
+    await exec(
+      "python3",
+      [
+        "-E",
+        "-c",
+        String.raw`
 import sqlite3, sys
 from pathlib import Path
 database = Path(sys.argv[1]).resolve()
@@ -416,7 +510,11 @@ try:
     assert connection.execute('SELECT COUNT(*) FROM embedding_jobs').fetchone() == (0,)
 finally:
     connection.close()
-`, path.join(vault, "docbank.db")], { timeout: 30_000 });
+`,
+        path.join(vault, "docbank.db"),
+      ],
+      { timeout: 30_000 },
+    );
   } catch (error) {
     failure = error;
     throw error;
@@ -426,8 +524,9 @@ finally:
       await rm(scratch, { recursive: true, force: true });
     } catch (cleanupError) {
       if (failure !== undefined) {
-        throw new Error(`Browser qualification cleanup failed: ${inspect(cleanupError)}`,
-          { cause: failure });
+        throw new Error(`Browser qualification cleanup failed: ${inspect(cleanupError)}`, {
+          cause: failure,
+        });
       }
       throw cleanupError;
     }

@@ -16,26 +16,71 @@
   let { facets, query, disabled = false, unit = "documents", onchange }: Props = $props();
 
   const names: Record<Facet["dimension"], string> = {
-    camera: "Camera", lens: "Lens", year: "Year", location: "Location", set: "Albums",
-    collections: "Collections", tags: "Tags", media_family: "Media family", extension: "Extension",
-    modified: "Modified", size: "Size", text_coverage: "Text coverage", duplicates: "Duplicates",
+    camera: "Camera",
+    lens: "Lens",
+    year: "Year",
+    location: "Location",
+    set: "Albums",
+    collections: "Collections",
+    tags: "Tags",
+    media_family: "Media family",
+    extension: "Extension",
+    modified: "Modified",
+    size: "Size",
+    text_coverage: "Text coverage",
+    duplicates: "Duplicates",
   };
   // media_family, size, text_coverage, and duplicates have zero missing and other counts by construction because their fixed value lists cover every row in internal/store/query_snapshot_facets.go.
-  const summary: Partial<Record<Facet["dimension"], { missing: string; other?: (count: number) => string }>> = {
-    camera: { missing: "with no camera", other: n => `${n} ${n === 1 ? "use" : "uses"} of unlisted camera names` },
-    lens: { missing: "with no lens", other: n => `${n} ${n === 1 ? "use" : "uses"} of unlisted lens names` },
-    year: { missing: "with no capture date", other: n => `${n} in unlisted ${n === 1 ? "year" : "years"}` },
-    location: { missing: "with no location", other: n => `${n} in unlisted ${n === 1 ? "location" : "locations"}` },
-    set: { missing: "not in an album", other: n => `${n} ${n === 1 ? "membership" : "memberships"} in unlisted albums` },
-    collections: { missing: "not in a collection", other: n => `${n} ${n === 1 ? "membership" : "memberships"} in unlisted collections` },
-    tags: { missing: "with no tags", other: n => `${n} ${n === 1 ? "use" : "uses"} of unlisted tags` },
-    extension: { missing: "with no extension", other: n => `${n} in unlisted ${n === 1 ? "extension" : "extensions"}` },
-    modified: { missing: "with no modified date", other: n => `${n} in unlisted ${n === 1 ? "month" : "months"}` },
+  const summary: Partial<
+    Record<Facet["dimension"], { missing: string; other?: (count: number) => string }>
+  > = {
+    camera: {
+      missing: "with no camera",
+      other: (n) => `${n} ${n === 1 ? "use" : "uses"} of unlisted camera names`,
+    },
+    lens: {
+      missing: "with no lens",
+      other: (n) => `${n} ${n === 1 ? "use" : "uses"} of unlisted lens names`,
+    },
+    year: {
+      missing: "with no capture date",
+      other: (n) => `${n} in unlisted ${n === 1 ? "year" : "years"}`,
+    },
+    location: {
+      missing: "with no location",
+      other: (n) => `${n} in unlisted ${n === 1 ? "location" : "locations"}`,
+    },
+    set: {
+      missing: "not in an album",
+      other: (n) => `${n} ${n === 1 ? "membership" : "memberships"} in unlisted albums`,
+    },
+    collections: {
+      missing: "not in a collection",
+      other: (n) => `${n} ${n === 1 ? "membership" : "memberships"} in unlisted collections`,
+    },
+    tags: {
+      missing: "with no tags",
+      other: (n) => `${n} ${n === 1 ? "use" : "uses"} of unlisted tags`,
+    },
+    extension: {
+      missing: "with no extension",
+      other: (n) => `${n} in unlisted ${n === 1 ? "extension" : "extensions"}`,
+    },
+    modified: {
+      missing: "with no modified date",
+      other: (n) => `${n} in unlisted ${n === 1 ? "month" : "months"}`,
+    },
   };
   const arrayFields = {
-    camera: "cameras", lens: "lenses", location: "locations", set: "set_ids",
-    collections: "collection_ids", tags: "tag_ids", media_family: "media_families",
-    extension: "extensions", text_coverage: "text_coverage",
+    camera: "cameras",
+    lens: "lenses",
+    location: "locations",
+    set: "set_ids",
+    collections: "collection_ids",
+    tags: "tag_ids",
+    media_family: "media_families",
+    extension: "extensions",
+    text_coverage: "text_coverage",
   } as const;
   const sizeRanges: Record<string, { min?: number; max?: number; label: string }> = {
     lt_1_mib: { max: (1 << 20) - 1, label: "Less than 1 MiB" },
@@ -51,10 +96,16 @@
 
   function arrayQuery(dimension: keyof typeof arrayFields, key: string): Query {
     const field = arrayFields[dimension];
-    const current = dimension === "camera" || dimension === "lens"
-      ? facets.find((facet) => facet.dimension === dimension)?.values.filter((value) => value.selected).map((value) => value.key) ?? []
-      : (query.filters[field] as string[] | undefined) ?? [];
-    const values = current.includes(key) ? current.filter((value) => value !== key) : [...current, key];
+    const current =
+      dimension === "camera" || dimension === "lens"
+        ? (facets
+            .find((facet) => facet.dimension === dimension)
+            ?.values.filter((value) => value.selected)
+            .map((value) => value.key) ?? [])
+        : ((query.filters[field] as string[] | undefined) ?? []);
+    const values = current.includes(key)
+      ? current.filter((value) => value !== key)
+      : [...current, key];
     const filters = { ...query.filters, [field]: values.length ? values : undefined };
     if (dimension === "tags" && values.length) filters.no_tags = undefined;
     return changed(filters);
@@ -73,32 +124,52 @@
   function selected(dimension: Facet["dimension"], value: FacetValue): boolean {
     if (dimension === "modified") {
       const range = monthRange(value.key);
-      return Boolean(range && query.filters.modified_after === range.after && query.filters.modified_before === range.before);
+      return Boolean(
+        range &&
+        query.filters.modified_after === range.after &&
+        query.filters.modified_before === range.before,
+      );
     }
     if (dimension === "size") {
       const range = sizeRanges[value.key];
-      return Boolean(range && query.filters.size_min === range.min && query.filters.size_max === range.max);
+      return Boolean(
+        range && query.filters.size_min === range.min && query.filters.size_max === range.max,
+      );
     }
-    if (dimension === "duplicates") return value.key === "duplicate" && query.filters.has_duplicates === true;
+    if (dimension === "duplicates")
+      return value.key === "duplicate" && query.filters.has_duplicates === true;
     return value.selected;
   }
 
   function label(dimension: Facet["dimension"], value: FacetValue): string {
     if (dimension === "modified") {
       const range = monthRange(value.key);
-      if (range) return new Intl.DateTimeFormat("en-US", { timeZone: "UTC", month: "long", year: "numeric" }).format(new Date(range.after));
+      if (range)
+        return new Intl.DateTimeFormat("en-US", {
+          timeZone: "UTC",
+          month: "long",
+          year: "numeric",
+        }).format(new Date(range.after));
     }
     if (dimension === "size" && sizeRanges[value.key]) return sizeRanges[value.key].label;
     if (["camera", "lens", "location", "set"].includes(dimension)) return value.label;
     return value.label.replaceAll("_", " ");
   }
 
-  function yearBefore(year: string) { return year === "9999" ? undefined : `${String(Number(year) + 1).padStart(4, "0")}-01-01`; }
+  function yearBefore(year: string) {
+    return year === "9999" ? undefined : `${String(Number(year) + 1).padStart(4, "0")}-01-01`;
+  }
 
   function apply(dimension: Facet["dimension"], value: FacetValue): void {
     if (dimension === "year") {
       const active = selected(dimension, value);
-      onchange(changed({ ...query.filters, capture_after: active ? undefined : `${value.key}-01-01`, capture_before: active ? undefined : yearBefore(value.key) }));
+      onchange(
+        changed({
+          ...query.filters,
+          capture_after: active ? undefined : `${value.key}-01-01`,
+          capture_before: active ? undefined : yearBefore(value.key),
+        }),
+      );
       return;
     }
     if (dimension in arrayFields) {
@@ -109,28 +180,53 @@
       const range = monthRange(value.key);
       if (!range) return;
       const active = selected(dimension, value);
-      onchange(changed({ ...query.filters, modified_after: active ? undefined : range.after, modified_before: active ? undefined : range.before }));
+      onchange(
+        changed({
+          ...query.filters,
+          modified_after: active ? undefined : range.after,
+          modified_before: active ? undefined : range.before,
+        }),
+      );
       return;
     }
     if (dimension === "size") {
       const range = sizeRanges[value.key];
       if (!range) return;
       const active = selected(dimension, value);
-      onchange(changed({ ...query.filters, size_min: active ? undefined : range.min, size_max: active ? undefined : range.max }));
+      onchange(
+        changed({
+          ...query.filters,
+          size_min: active ? undefined : range.min,
+          size_max: active ? undefined : range.max,
+        }),
+      );
       return;
     }
     if (dimension === "duplicates" && value.key === "duplicate") {
-      onchange(changed({ ...query.filters, has_duplicates: query.filters.has_duplicates ? undefined : true }));
+      onchange(
+        changed({
+          ...query.filters,
+          has_duplicates: query.filters.has_duplicates ? undefined : true,
+        }),
+      );
     }
   }
 
   function actionable(dimension: Facet["dimension"], value: FacetValue): boolean {
     if (dimension in arrayFields) {
-      try { arrayQuery(dimension as keyof typeof arrayFields, value.key); return true; } catch { return false; }
+      try {
+        arrayQuery(dimension as keyof typeof arrayFields, value.key);
+        return true;
+      } catch {
+        return false;
+      }
     }
-    return dimension === "year" || (dimension === "modified" && monthRange(value.key) !== undefined) ||
+    return (
+      dimension === "year" ||
+      (dimension === "modified" && monthRange(value.key) !== undefined) ||
       (dimension === "size" && sizeRanges[value.key] !== undefined) ||
-      (dimension === "duplicates" && value.key === "duplicate");
+      (dimension === "duplicates" && value.key === "duplicate")
+    );
   }
 
   // A group where no photo has a value only repeats the scope total, so hide it unless a filter on it is active.
@@ -143,7 +239,13 @@
 
   function toggleMissingTags(): void {
     const enable = !query.filters.no_tags;
-    onchange(changed({ ...query.filters, no_tags: enable || undefined, tag_ids: enable ? undefined : query.filters.tag_ids }));
+    onchange(
+      changed({
+        ...query.filters,
+        no_tags: enable || undefined,
+        tag_ids: enable ? undefined : query.filters.tag_ids,
+      }),
+    );
   }
 </script>
 
@@ -151,59 +253,147 @@
   <h2>{unit === "photos" ? "Refine photos" : "Refine snapshot"}</h2>
   {#each facets as facet (facet.dimension)}
     {#if !empty(facet)}
-    <section role="group" aria-label={`${names[facet.dimension]} facet`}>
-      <h3>{names[facet.dimension]}</h3>
-      {#if !facet.available}
-        <p class="unavailable">Unavailable · {facet.reason?.replaceAll("_", " ")}</p>
-      {:else}
-        <div class="values">
-          {#each facet.values as value (value.key)}
-            {@const valueLabel = label(facet.dimension, value)}
-            {#if actionable(facet.dimension, value)}
-              <button type="button" class:selected={selected(facet.dimension, value)}
-                aria-pressed={selected(facet.dimension, value)} disabled={disabled}
-                aria-label={`${valueLabel}, ${value.count} ${unit}${selected(facet.dimension, value) ? ", selected" : ""}`}
-                onclick={() => apply(facet.dimension, value)}>
-                <span>{valueLabel}</span><strong>{value.count}</strong>
-              </button>
-            {:else}
-              <span class="informational">{valueLabel} · {value.count} · informational</span>
-            {/if}
-          {/each}
-        </div>
-        {@const wording = summary[facet.dimension]}
-        {@const missing = wording && (facet.missing ?? 0) > 0 ? `${facet.missing} ${wording.missing}` : ""}
-        {@const other = (facet.other ?? 0) > 0 ? wording?.other?.(facet.other!) : ""}
-        {#if missing || other || (facet.dimension === "tags" && (query.filters.no_tags || query.filters.tag_ids?.length))}
-          <div class="summary">
-            {#if facet.dimension === "tags" && (missing || query.filters.no_tags || query.filters.tag_ids?.length)}
-              <button type="button" class:selected={query.filters.no_tags === true} aria-pressed={query.filters.no_tags === true}
-                disabled={disabled} onclick={toggleMissingTags}>{missing || "No tags"}</button>
-            {:else if missing}<span>{missing}</span>{/if}
-            {#if other}<span>{other}</span>{/if}
+      <section role="group" aria-label={`${names[facet.dimension]} facet`}>
+        <h3>{names[facet.dimension]}</h3>
+        {#if !facet.available}
+          <p class="unavailable">Unavailable · {facet.reason?.replaceAll("_", " ")}</p>
+        {:else}
+          <div class="values">
+            {#each facet.values as value (value.key)}
+              {@const valueLabel = label(facet.dimension, value)}
+              {#if actionable(facet.dimension, value)}
+                <button
+                  type="button"
+                  class:selected={selected(facet.dimension, value)}
+                  aria-pressed={selected(facet.dimension, value)}
+                  {disabled}
+                  aria-label={`${valueLabel}, ${value.count} ${unit}${selected(facet.dimension, value) ? ", selected" : ""}`}
+                  onclick={() => apply(facet.dimension, value)}
+                >
+                  <span>{valueLabel}</span><strong>{value.count}</strong>
+                </button>
+              {:else}
+                <span class="informational">{valueLabel} · {value.count} · informational</span>
+              {/if}
+            {/each}
           </div>
+          {@const wording = summary[facet.dimension]}
+          {@const missing =
+            wording && (facet.missing ?? 0) > 0 ? `${facet.missing} ${wording.missing}` : ""}
+          {@const other = (facet.other ?? 0) > 0 ? wording?.other?.(facet.other!) : ""}
+          {#if missing || other || (facet.dimension === "tags" && (query.filters.no_tags || query.filters.tag_ids?.length))}
+            <div class="summary">
+              {#if facet.dimension === "tags" && (missing || query.filters.no_tags || query.filters.tag_ids?.length)}
+                <button
+                  type="button"
+                  class:selected={query.filters.no_tags === true}
+                  aria-pressed={query.filters.no_tags === true}
+                  {disabled}
+                  onclick={toggleMissingTags}>{missing || "No tags"}</button
+                >
+              {:else if missing}<span>{missing}</span>{/if}
+              {#if other}<span>{other}</span>{/if}
+            </div>
+          {/if}
         {/if}
-      {/if}
-    </section>
+      </section>
     {/if}
   {/each}
 </aside>
 
 <style>
-  .facets { display: grid; align-content: start; gap: var(--space-4); min-width: 0; padding: var(--space-4); border-right: 1px solid var(--border-default); background: var(--bg-inset); }
-  h2, h3, p { margin: 0; }
-  h2 { font-size: var(--font-size-md); }
-  h3 { margin-bottom: var(--space-2); color: var(--text-muted); font-size: var(--font-size-xs); }
-  .values { display: grid; gap: var(--space-1); }
-  button { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); width: 100%; min-height: 30px; padding: var(--space-1) var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-surface); color: var(--text-secondary); text-align: left; cursor: pointer; }
-  button:hover:not(:disabled), button.selected { border-color: var(--accent-blue); color: var(--text-primary); }
-  button.selected { background: color-mix(in srgb, var(--accent-blue) 10%, var(--bg-surface)); }
-  button:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 1px; }
-  button:disabled { cursor: not-allowed; opacity: var(--opacity-disabled); }
-  strong { font-variant-numeric: tabular-nums; }
-  .summary { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); color: var(--text-muted); font-size: var(--font-size-xs); }
-  .summary button { width: auto; min-height: 24px; font-size: inherit; }
-  .informational, .unavailable { color: var(--text-muted); font-size: var(--font-size-xs); overflow-wrap: anywhere; }
-  @media (max-width: 900px) { .facets { grid-template-columns: repeat(2, minmax(0, 1fr)); border-right: 0; border-bottom: 1px solid var(--border-default); } .facets > h2 { grid-column: 1 / -1; } }
-  @media (max-width: 640px) { .facets { grid-template-columns: minmax(0, 1fr); } }
+  .facets {
+    display: grid;
+    align-content: start;
+    gap: var(--space-4);
+    min-width: 0;
+    padding: var(--space-4);
+    border-right: 1px solid var(--border-default);
+    background: var(--bg-inset);
+  }
+  h2,
+  h3,
+  p {
+    margin: 0;
+  }
+  h2 {
+    font-size: var(--font-size-md);
+  }
+  h3 {
+    margin-bottom: var(--space-2);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+  .values {
+    display: grid;
+    gap: var(--space-1);
+  }
+  button {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    width: 100%;
+    min-height: 30px;
+    padding: var(--space-1) var(--space-2);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+    text-align: left;
+    cursor: pointer;
+  }
+  button:hover:not(:disabled),
+  button.selected {
+    border-color: var(--accent-blue);
+    color: var(--text-primary);
+  }
+  button.selected {
+    background: color-mix(in srgb, var(--accent-blue) 10%, var(--bg-surface));
+  }
+  button:focus-visible {
+    outline: 2px solid var(--accent-blue);
+    outline-offset: 1px;
+  }
+  button:disabled {
+    cursor: not-allowed;
+    opacity: var(--opacity-disabled);
+  }
+  strong {
+    font-variant-numeric: tabular-nums;
+  }
+  .summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+  .summary button {
+    width: auto;
+    min-height: 24px;
+    font-size: inherit;
+  }
+  .informational,
+  .unavailable {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    overflow-wrap: anywhere;
+  }
+  @media (max-width: 900px) {
+    .facets {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      border-right: 0;
+      border-bottom: 1px solid var(--border-default);
+    }
+    .facets > h2 {
+      grid-column: 1 / -1;
+    }
+  }
+  @media (max-width: 640px) {
+    .facets {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
 </style>

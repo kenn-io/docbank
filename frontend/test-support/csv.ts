@@ -16,11 +16,7 @@ export function parseCSV(csv: string): string[][] {
     record = [];
   };
 
-  for (
-    let index = csv.startsWith("\uFEFF") ? 1 : 0;
-    index < csv.length;
-    index += 1
-  ) {
+  for (let index = csv.startsWith("\uFEFF") ? 1 : 0; index < csv.length; index += 1) {
     const character = csv[index];
     if (quoted) {
       if (character === '"' && csv[index + 1] === '"') {

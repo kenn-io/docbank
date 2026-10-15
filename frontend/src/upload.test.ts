@@ -3,11 +3,7 @@ import { hmac } from "@noble/hashes/hmac.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { utf8ToBytes } from "@noble/hashes/utils.js";
 import type { UploadReceipt } from "./generated/docbank.js";
-import {
-  hashFile,
-  validateUploadReceipt,
-  VerifiedUploadChannel,
-} from "./upload.js";
+import { hashFile, validateUploadReceipt, VerifiedUploadChannel } from "./upload.js";
 
 const testToken = "browser-session";
 const testUploadSecret = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE";
@@ -16,16 +12,11 @@ function daemonProof(nonce: string): string {
   const proofBytes = hmac(
     sha256,
     new Uint8Array(32).fill(1),
-    utf8ToBytes(
-      `docbank-web-upload-v1\u0000${testToken}\u0000${nonce}`,
-    ),
+    utf8ToBytes(`docbank-web-upload-v1\u0000${testToken}\u0000${nonce}`),
   );
   let proof = "";
   for (const byte of proofBytes) proof += String.fromCharCode(byte);
-  return btoa(proof)
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replace(/=+$/, "");
+  return btoa(proof).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
 }
 
 class DaemonSocket extends EventTarget {
@@ -95,9 +86,11 @@ class DaemonSocket extends EventTarget {
 
   private emit(message: object): void {
     queueMicrotask(() =>
-      this.dispatchEvent(new MessageEvent("message", {
-        data: JSON.stringify(message),
-      })),
+      this.dispatchEvent(
+        new MessageEvent("message", {
+          data: JSON.stringify(message),
+        }),
+      ),
     );
   }
 }
@@ -130,15 +123,11 @@ describe("verified browser upload", () => {
     const file = new File(["abc"], "report.txt", { type: "text/plain" });
     const progress: number[] = [];
 
-    const digest = await hashFile(
-      file,
-      new AbortController().signal,
-      (current) => progress.push(current.processed),
+    const digest = await hashFile(file, new AbortController().signal, (current) =>
+      progress.push(current.processed),
     );
 
-    expect(digest).toBe(
-      "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
-    );
+    expect(digest).toBe("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
     expect(progress).toEqual([0, 3]);
   });
 
@@ -161,9 +150,9 @@ describe("verified browser upload", () => {
       },
     };
 
-    expect(() =>
-      validateUploadReceipt(receipt, 2, "report.txt", hash, 3),
-    ).toThrow(/did not match the declared file authority/);
+    expect(() => validateUploadReceipt(receipt, 2, "report.txt", hash, 3)).toThrow(
+      /did not match the declared file authority/,
+    );
   });
 
   it("accepts collision suffixes for additions and provenance matches for skips", () => {
@@ -185,18 +174,14 @@ describe("verified browser upload", () => {
       },
     };
 
-    expect(() =>
-      validateUploadReceipt(receipt, 2, "report.txt", hash, 3),
-    ).not.toThrow();
+    expect(() => validateUploadReceipt(receipt, 2, "report.txt", hash, 3)).not.toThrow();
     receipt.status = "skipped";
     receipt.node.name = "renamed-quarterly-report.txt";
-    expect(() =>
-      validateUploadReceipt(receipt, 2, "report.txt", hash, 3),
-    ).not.toThrow();
+    expect(() => validateUploadReceipt(receipt, 2, "report.txt", hash, 3)).not.toThrow();
     receipt.status = "added";
-    expect(() =>
-      validateUploadReceipt(receipt, 2, "report.txt", hash, 3),
-    ).toThrow(/did not match the declared file authority/);
+    expect(() => validateUploadReceipt(receipt, 2, "report.txt", hash, 3)).toThrow(
+      /did not match the declared file authority/,
+    );
   });
 
   it("sends no file bytes when an endpoint cannot prove daemon ownership", async () => {

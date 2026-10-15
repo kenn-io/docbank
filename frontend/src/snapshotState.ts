@@ -56,16 +56,32 @@ export class SnapshotSession {
     const started = this.begin(query, options);
     if (started === undefined) return;
     try {
-      const firstPage = await createSnapshot(this.session, started.query, started.options, started.signal);
+      const firstPage = await createSnapshot(
+        this.session,
+        started.query,
+        started.options,
+        started.signal,
+      );
       if (!this.current(started.epoch)) return;
       this.emit({
-        status: "ready", firstPage, page: firstPage, query: started.query,
-        options: started.options, offset: 0,
+        status: "ready",
+        firstPage,
+        page: firstPage,
+        query: started.query,
+        options: started.options,
+        offset: 0,
       });
     } catch (error) {
-      this.fail(started.epoch, error, this.accepted ?? {
-        status: "error", query: started.query, options: started.options, offset: 0,
-      });
+      this.fail(
+        started.epoch,
+        error,
+        this.accepted ?? {
+          status: "error",
+          query: started.query,
+          options: started.options,
+          offset: 0,
+        },
+      );
     }
   }
 
@@ -75,8 +91,15 @@ export class SnapshotSession {
     const firstPage = accepted.firstPage;
     const query = accepted.query;
     const options = accepted.options;
-    if (this.disposed || accepted.status !== "ready" || acceptedPage === undefined ||
-        firstPage === undefined || query === undefined || options === undefined) return false;
+    if (
+      this.disposed ||
+      accepted.status !== "ready" ||
+      acceptedPage === undefined ||
+      firstPage === undefined ||
+      query === undefined ||
+      options === undefined
+    )
+      return false;
     const cursor = direction === "next" ? acceptedPage.next_cursor : acceptedPage.previous_cursor;
     if (cursor === undefined) return false;
     this.request?.abort();
@@ -87,21 +110,32 @@ export class SnapshotSession {
     try {
       const page = await readSnapshotPage(this.session, acceptedPage, cursor, request.signal);
       if (!this.current(epoch)) return false;
-      const offset = direction === "next"
-        ? accepted.offset + acceptedPage.rows.length
-        : Math.max(0, accepted.offset - page.rows.length);
+      const offset =
+        direction === "next"
+          ? accepted.offset + acceptedPage.rows.length
+          : Math.max(0, accepted.offset - page.rows.length);
       const expected = Math.min(page.page_size, page.total - offset);
       if (offset < 0 || offset >= Math.max(page.total, 1) || page.rows.length !== expected) {
         throw new Error("Malformed snapshot receipt: page rows are inconsistent with its offset.");
       }
       this.emit({
-        status: "ready", firstPage, page, query, options, offset,
+        status: "ready",
+        firstPage,
+        page,
+        query,
+        options,
+        offset,
       });
       return true;
     } catch (error) {
       const status = error instanceof APIError && error.status === 410 ? "expired" : "ready";
       this.fail(epoch, error, {
-        status, firstPage, page: acceptedPage, query, options, offset: accepted.offset,
+        status,
+        firstPage,
+        page: acceptedPage,
+        query,
+        options,
+        offset: accepted.offset,
       });
       return false;
     }
@@ -116,7 +150,8 @@ export class SnapshotSession {
   }
 
   private begin(
-    query: Query, options: SnapshotOptions,
+    query: Query,
+    options: SnapshotOptions,
   ): { epoch: number; signal: AbortSignal; query: Query; options: SnapshotOptions } | undefined {
     if (this.disposed) return undefined;
     this.request?.abort();
@@ -125,9 +160,11 @@ export class SnapshotSession {
     const epoch = ++this.epoch;
     const acceptedQuery = copyQuery(query);
     const acceptedOptions = copyOptions(options);
-    this.emit(this.accepted
-      ? { ...this.accepted, status: "loading", error: undefined }
-      : { status: "loading", query: acceptedQuery, options: acceptedOptions, offset: 0 });
+    this.emit(
+      this.accepted
+        ? { ...this.accepted, status: "loading", error: undefined }
+        : { status: "loading", query: acceptedQuery, options: acceptedOptions, offset: 0 },
+    );
     return { epoch, signal: request.signal, query: acceptedQuery, options: acceptedOptions };
   }
 

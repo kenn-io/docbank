@@ -6,37 +6,57 @@
   import type { PhotoAlbum, PhotoAlbumMembersRequest } from "./generated/docbank.js";
   let { photos, albums }: { photos: Photos; albums: PhotoAlbums } = $props();
   let alive = true;
-  onDestroy(() => alive = false);
+  onDestroy(() => (alive = false));
   let error = $state("");
   let element = $state<HTMLDivElement>();
-  const target = $derived(albums.items.find(album => album.id === albums.targetID));
+  const target = $derived(albums.items.find((album) => album.id === albums.targetID));
   // Album names cannot contain NUL, so option keys cannot collide with valid names.
   const choiceKey = (id: string) => `\0${id}`;
 
   // Keys aren't names, so Typeahead can't see an exact name match itself; hide Create for one.
   let query = $state("");
   const oversized = $derived(!photos.allResults && photos.selectedIDs.size > 1000);
-  const exactName = $derived(albums.items.some(album => album.name === query.trim()));
+  const exactName = $derived(albums.items.some((album) => album.name === query.trim()));
 
-  export function focus() { if (alive) element?.querySelector<HTMLButtonElement>("button")?.click(); }
+  export function focus() {
+    if (alive) element?.querySelector<HTMLButtonElement>("button")?.click();
+  }
   async function add(album: PhotoAlbum | undefined, scope: PhotoAlbumMembersRequest) {
     error = "";
     // Check the scope captured when the user chose, not the live selection.
     if ((scope.asset_ids?.length ?? 0) > 1000) return false;
-    if (!album) { error = "This album is no longer available. Choose another album."; return false; }
+    if (!album) {
+      error = "This album is no longer available. Choose another album.";
+      return false;
+    }
     const result = await albums.members(album, scope);
-    if (!result && alive) { error = albums.error; albums.error = ""; }
+    if (!result && alive) {
+      error = albums.error;
+      albums.error = "";
+    }
     return !!result;
   }
-  export async function addToTarget() { const result = await add(target, photos.scope()); if (!result) focus(); return result; }
+  export async function addToTarget() {
+    const result = await add(target, photos.scope());
+    if (!result) focus();
+    return result;
+  }
   async function choose(value: string) {
     error = "";
     if (oversized) return false;
     const scope = photos.scope();
-    let album: PhotoAlbum | undefined = albums.items.find(item => choiceKey(item.id) === value || item.name === value.trim());
+    let album: PhotoAlbum | undefined = albums.items.find(
+      (item) => choiceKey(item.id) === value || item.name === value.trim(),
+    );
     if (!album) {
       album = await albums.create(value);
-      if (!album) { if (alive) { error = albums.error; albums.error = ""; } return false; }
+      if (!album) {
+        if (alive) {
+          error = albums.error;
+          albums.error = "";
+        }
+        return false;
+      }
     }
     albums.targetID = album.id;
     return add(album, scope);
@@ -44,13 +64,43 @@
 </script>
 
 <div class="album-picker" bind:this={element}>
-  <Typeahead options={albums.items.map(album => ({ name: choiceKey(album.id), label: album.name }))} value={albums.targetID ? choiceKey(albums.targetID) : ""} fallbackLabel="Add to album" triggerPrefix={target ? "Add to album · " : ""} placeholder="Find or create an album" title="Add to album" disabled={!photos.selectedIDs.size || oversized || albums.busy} allowCustom={!exactName && !albums.unconfirmed} onquery={value => query = value} customLabel={'Create album "{query}"'} placement="top" loading={albums.loading || albums.busy} onselect={choose} />
-  {#if oversized}<span>{photos.projection === "map" ? "Select 1,000 photos or fewer to add to an album." : `Select all ${photos.total.toLocaleString()} photos to add more than 1,000 at once.`}</span>{/if}
+  <Typeahead
+    options={albums.items.map((album) => ({ name: choiceKey(album.id), label: album.name }))}
+    value={albums.targetID ? choiceKey(albums.targetID) : ""}
+    fallbackLabel="Add to album"
+    triggerPrefix={target ? "Add to album · " : ""}
+    placeholder="Find or create an album"
+    title="Add to album"
+    disabled={!photos.selectedIDs.size || oversized || albums.busy}
+    allowCustom={!exactName && !albums.unconfirmed}
+    onquery={(value) => (query = value)}
+    customLabel={'Create album "{query}"'}
+    placement="top"
+    loading={albums.loading || albums.busy}
+    onselect={choose}
+  />
+  {#if oversized}<span
+      >{photos.projection === "map"
+        ? "Select 1,000 photos or fewer to add to an album."
+        : `Select all ${photos.total.toLocaleString()} photos to add more than 1,000 at once.`}</span
+    >{/if}
   {#if error}<span role="alert">{error}</span>{/if}
-  {#if target}<span class="target-hint"><KbdBadge keys={['B']} /> adds to {target.name}</span>{/if}
+  {#if target}<span class="target-hint"><KbdBadge keys={["B"]} /> adds to {target.name}</span>{/if}
 </div>
 
 <style>
-  .album-picker { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); --typeahead-panel-min-width: 240px; }
-  .target-hint { display: flex; gap: 6px; align-items: center; color: var(--text-muted); font-size: var(--font-size-xs); }
+  .album-picker {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    --typeahead-panel-min-width: 240px;
+  }
+  .target-hint {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
 </style>

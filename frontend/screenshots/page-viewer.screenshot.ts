@@ -63,12 +63,16 @@ test("DB19 real pages retain physical alignment across zoom and DPR", async ({ b
     inspector = path.join(scratch, "page-inspect");
   const run = async (...args: string[]) =>
     (
-      await exec(path.join(repository, "bin", process.platform === "win32" ? "docbank.exe" : "docbank"), args, {
-        cwd: repository,
-        env: { ...process.env, DOCBANK_HOME: vault },
-        timeout: 120000,
-        maxBuffer: 4 * 1024 * 1024,
-      })
+      await exec(
+        path.join(repository, "bin", process.platform === "win32" ? "docbank.exe" : "docbank"),
+        args,
+        {
+          cwd: repository,
+          env: { ...process.env, DOCBANK_HOME: vault },
+          timeout: 120000,
+          maxBuffer: 4 * 1024 * 1024,
+        },
+      )
     ).stdout.trim();
   let running = false;
   try {

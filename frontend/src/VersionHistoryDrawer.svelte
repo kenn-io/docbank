@@ -37,9 +37,7 @@
   let error = $state("");
   let generation = 0;
 
-  const selectedVersion = $derived(
-    page?.items.find((version) => version.id === selectedVersionID),
-  );
+  const selectedVersion = $derived(page?.items.find((version) => version.id === selectedVersionID));
 
   onMount(() => {
     void load();
@@ -53,7 +51,11 @@
     loading = true;
     error = "";
     try {
-      const next = await generated.listContentVersions((node.id), { limit: 1000, offset: 0 }, { session });
+      const next = await generated.listContentVersions(
+        node.id,
+        { limit: 1000, offset: 0 },
+        { session },
+      );
       if (request !== generation) return;
       page = next;
       selectedVersionID = next.items[0]?.id ?? "";
@@ -155,8 +157,8 @@
         </Timeline>
         {#if page.total > page.items.length}
           <p class="limit-note">
-            Showing the newest {page.items.length} of {page.total} versions.
-            Use the CLI or HTTP API for older history.
+            Showing the newest {page.items.length} of {page.total} versions. Use the CLI or HTTP API for
+            older history.
           </p>
         {/if}
       {/if}
@@ -179,11 +181,26 @@
                 <CopyButton text={selectedVersion.id} ariaLabel="Copy version ID" />
               </dd>
             </div>
-            <div><dt>Transition</dt><dd>{transitionLabel(selectedVersion.transition_kind)}</dd></div>
-            <div><dt>Recorded</dt><dd>{formatDate(selectedVersion.recorded_at)}</dd></div>
-            <div><dt>Canonical time</dt><dd><code>{selectedVersion.recorded_at}</code></dd></div>
-            <div><dt>Node</dt><dd>id:{selectedVersion.node_id}</dd></div>
-            <div><dt>Node revision</dt><dd>{selectedVersion.node_revision}</dd></div>
+            <div>
+              <dt>Transition</dt>
+              <dd>{transitionLabel(selectedVersion.transition_kind)}</dd>
+            </div>
+            <div>
+              <dt>Recorded</dt>
+              <dd>{formatDate(selectedVersion.recorded_at)}</dd>
+            </div>
+            <div>
+              <dt>Canonical time</dt>
+              <dd><code>{selectedVersion.recorded_at}</code></dd>
+            </div>
+            <div>
+              <dt>Node</dt>
+              <dd>id:{selectedVersion.node_id}</dd>
+            </div>
+            <div>
+              <dt>Node revision</dt>
+              <dd>{selectedVersion.node_revision}</dd>
+            </div>
             <div class="identity">
               <dt>SHA-256</dt>
               <dd>
@@ -214,7 +231,10 @@
                 <dt>Revert source</dt>
                 <dd>
                   <code>{selectedVersion.source_version_id}</code>
-                  <CopyButton text={selectedVersion.source_version_id} ariaLabel="Copy revert source version ID" />
+                  <CopyButton
+                    text={selectedVersion.source_version_id}
+                    ariaLabel="Copy revert source version ID"
+                  />
                 </dd>
               </div>
             {/if}

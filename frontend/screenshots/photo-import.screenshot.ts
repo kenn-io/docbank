@@ -9,7 +9,8 @@ import { createSyntheticCameraFiles } from "./camera-fixture";
 
 const exec = promisify(execFile);
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const binary = process.env.DOCBANK_SCREENSHOT_BINARY ??
+const binary =
+  process.env.DOCBANK_SCREENSHOT_BINARY ??
   path.join(repository, "bin", process.platform === "win32" ? "docbank.exe" : "docbank");
 const output = process.env.DOCBANK_SCREENSHOT_DIR;
 if (!output) throw new Error("DOCBANK_SCREENSHOT_DIR is required");
@@ -20,10 +21,18 @@ test("photo import progress and cancellation are visible", async ({ page }) => {
   const lock = path.join(workspace, "locks");
   const source = path.join(workspace, "camera");
   const run = async (...args: string[]) =>
-    (await exec(binary, args, { cwd: repository, env: { ...process.env, DOCBANK_HOME: vault, DOCBANK_LOCK_DIR: lock }, timeout: 60_000 })).stdout.trim();
+    (
+      await exec(binary, args, {
+        cwd: repository,
+        env: { ...process.env, DOCBANK_HOME: vault, DOCBANK_LOCK_DIR: lock },
+        timeout: 60_000,
+      })
+    ).stdout.trim();
   try {
     await createSyntheticCameraFiles(path.join(source, "trip"), 2000);
-    await writeFile(path.join(source, "trip", "IMG_0001.ARW"), Buffer.from("synthetic-raw"), { mode: 0o600 });
+    await writeFile(path.join(source, "trip", "IMG_0001.ARW"), Buffer.from("synthetic-raw"), {
+      mode: 0o600,
+    });
     const webURL = await run("web", "--no-browser");
     await page.goto(webURL, { waitUntil: "domcontentloaded" });
     await page.getByRole("button", { name: "Background jobs", exact: true }).click();
@@ -33,10 +42,12 @@ test("photo import progress and cancellation are visible", async ({ page }) => {
     await expect(progress).toBeVisible();
     const cancel = page.getByRole("button", { name: /^Cancel Photo import/ });
     await expect(cancel).toBeVisible();
-    await expect.poll(async () => {
-      await page.getByRole("button", { name: "Refresh background jobs" }).click();
-      return Number(await progress.getAttribute("aria-valuenow"));
-    }).toBeGreaterThan(0);
+    await expect
+      .poll(async () => {
+        await page.getByRole("button", { name: "Refresh background jobs" }).click();
+        return Number(await progress.getAttribute("aria-valuenow"));
+      })
+      .toBeGreaterThan(0);
     const drawer = page.getByLabel("Daemon background jobs");
     await cancel.scrollIntoViewIfNeeded();
     await drawer.screenshot({ path: path.join(output, "web-photo-import-dark.png") });

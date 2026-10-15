@@ -4,7 +4,9 @@ import { queryFromFragment, replaceQueryURL } from "./queryURL.js";
 import { parseQuery } from "./query.js";
 
 afterEach(() => history.replaceState(null, "", "/"));
-const query = parseQuery('{"text":"α OR beta","syntax":"advanced","mode":"hybrid","filters":{"extensions":["pdf"],"no_tags":true},"sort":{"field":"size","direction":"desc"}}');
+const query = parseQuery(
+  '{"text":"α OR beta","syntax":"advanced","mode":"hybrid","filters":{"extensions":["pdf"],"no_tags":true},"sort":{"field":"size","direction":"desc"}}',
+);
 
 it("round-trips the full query, strips session credentials and preserves history state", () => {
   history.replaceState({ fixtureIndex: 3 }, "", "/#web_session=secret&web_upload_secret=proof");
@@ -17,7 +19,11 @@ it("round-trips the full query, strips session credentials and preserves history
 });
 
 it("restores the query while consuming a combined sign-in fragment", () => {
-  history.replaceState(null, "", `/#web_session=secret&web_upload_secret=proof&query=${encodeURIComponent(JSON.stringify(query))}`);
+  history.replaceState(
+    null,
+    "",
+    `/#web_session=secret&web_upload_secret=proof&query=${encodeURIComponent(JSON.stringify(query))}`,
+  );
   const restored = queryFromFragment(location.hash);
   expect(takeFragmentSession()).toEqual({ token: "secret", uploadSecret: "proof" });
   expect(location.hash).toBe("");

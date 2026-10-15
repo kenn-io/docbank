@@ -1,11 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import TrashNodeModal from "./TrashNodeModal.svelte";
 
 afterEach(() => {
@@ -110,9 +104,6 @@ it("keeps the confirmation open when the inspected revision is stale", async () 
   });
 
   await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
-  expect(
-    await screen.findByText("node changed; refresh before moving it to trash"),
-  ).toBeTruthy();
-  expect(screen.getByRole("dialog", { name: "Move quarterly-report.txt to trash" }))
-    .toBeTruthy();
+  expect(await screen.findByText("node changed; refresh before moving it to trash")).toBeTruthy();
+  expect(screen.getByRole("dialog", { name: "Move quarterly-report.txt to trash" })).toBeTruthy();
 });

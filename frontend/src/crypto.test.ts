@@ -19,7 +19,7 @@ describe("browser crypto fallbacks", () => {
     vi.stubGlobal("crypto", { getRandomValues: vi.fn() });
 
     const digest = await sha256Digest(new TextEncoder().encode("abc"));
-    const hex = Array.from(digest, byte => byte.toString(16).padStart(2, "0")).join("");
+    const hex = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
 
     expect(hex).toBe("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
   });

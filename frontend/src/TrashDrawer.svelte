@@ -147,7 +147,11 @@
                   <div>
                     <strong>{node.name}</strong>
                     <Chip size="xs" tone="muted">
-                      {node.photo_asset_id ? `Photo · ${node.photo_file_count} trashed file${node.photo_file_count === 1 ? "" : "s"}` : node.kind === "dir" ? "Folder" : "Document"}
+                      {node.photo_asset_id
+                        ? `Photo · ${node.photo_file_count} trashed file${node.photo_file_count === 1 ? "" : "s"}`
+                        : node.kind === "dir"
+                          ? "Folder"
+                          : "Document"}
                     </Chip>
                   </div>
                   <span>Trashed {formatDate(node.trashed_at ?? "")}</span>
@@ -159,18 +163,19 @@
                         <CopyButton text={String(node.id)} ariaLabel={`Copy node ID ${node.id}`} />
                       </dd>
                     </div>
-                    <div><dt>Revision</dt><dd>{node.revision}</dd></div>
+                    <div>
+                      <dt>Revision</dt>
+                      <dd>{node.revision}</dd>
+                    </div>
                     {#if node.kind === "file"}
-                      <div><dt>Size</dt><dd>{formatBytes(node.size)}</dd></div>
+                      <div>
+                        <dt>Size</dt>
+                        <dd>{formatBytes(node.size)}</dd>
+                      </div>
                     {/if}
                   </dl>
                 </div>
-                <Button
-                  size="sm"
-                  tone="info"
-                  surface="soft"
-                  onclick={() => (restoreTarget = node)}
-                >
+                <Button size="sm" tone="info" surface="soft" onclick={() => (restoreTarget = node)}>
                   <RotateCcwIcon size="14" aria-hidden="true" />
                   Restore
                 </Button>
@@ -180,17 +185,17 @@
         </div>
         {#if page.total > page.items.length}
           <p class="bounded">
-            Showing the newest {page.items.length} of {page.total} restorable items.
-            Use the CLI or API for the complete listing.
+            Showing the newest {page.items.length} of {page.total} restorable items. Use the CLI or API
+            for the complete listing.
           </p>
         {/if}
       {/if}
       <aside class="retention-note">
         <strong>Trash is recoverable, not reclaimed space.</strong>
         <p>
-          Restore returns the same stable node and retained content. Only an
-          explicit <code>docbank trash empty</code> operation removes tree
-          metadata; content reclamation remains a separate garbage-collection
+          Restore returns the same stable node and retained content. Only an explicit <code
+            >docbank trash empty</code
+          > operation removes tree metadata; content reclamation remains a separate garbage-collection
           decision.
         </p>
       </aside>

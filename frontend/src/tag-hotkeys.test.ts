@@ -25,9 +25,7 @@ afterEach(() => vi.restoreAllMocks());
 describe("tag hotkey preferences", () => {
   it("persists only versioned digit-to-tag IDs in a vault UUID namespace", () => {
     const storage = memoryStorage();
-    expect(saveTagHotkeys(storage, vaultA, { "1": tax, "9": reviewed })).toBe(
-      true,
-    );
+    expect(saveTagHotkeys(storage, vaultA, { "1": tax, "9": reviewed })).toBe(true);
 
     expect(tagHotkeyStorageKey(vaultA)).toBe(`docbank:tag-hotkeys:v1:${vaultA}`);
     expect(storage.getItem(tagHotkeyStorageKey(vaultA))).toBe(
@@ -79,9 +77,7 @@ describe("tag hotkey preferences", () => {
     expect(isTagHotkeyVaultID(vaultA)).toBe(true);
     expect(isTagHotkeyVaultID("short-lived-session")).toBe(false);
     expect(loadTagHotkeys(storage, "short-lived-session")).toEqual({});
-    expect(saveTagHotkeys(storage, "short-lived-session", { "1": tax })).toBe(
-      false,
-    );
+    expect(saveTagHotkeys(storage, "short-lived-session", { "1": tax })).toBe(false);
     expect(saveTagHotkeys(storage, vaultA, { "1": "tax" })).toBe(false);
     expect(storage.entries.size).toBe(0);
   });

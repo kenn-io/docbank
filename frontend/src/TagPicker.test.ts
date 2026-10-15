@@ -85,9 +85,7 @@ it("shows grouped leaf labels with full accessible names and identity colors", a
     placeholder: "Choose a tag…",
     onchange,
   });
-  expect(trigger.getAttribute("aria-label")).toBe(
-    "Tag to assign: matter/acme/reviewed",
-  );
+  expect(trigger.getAttribute("aria-label")).toBe("Tag to assign: matter/acme/reviewed");
   expect(document.activeElement).toBe(trigger);
 });
 

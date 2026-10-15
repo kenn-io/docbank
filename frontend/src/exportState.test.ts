@@ -4,10 +4,16 @@ import { exportMemberHash, type ExportJob } from "./exports.js";
 import { parseQuery } from "./query.js";
 import type { SnapshotPage } from "./snapshots.js";
 
-const id = "11111111-1111-4111-8111-111111111111", hash = "a".repeat(64), future = "2099-01-01T00:00:00Z";
+const id = "11111111-1111-4111-8111-111111111111",
+  hash = "a".repeat(64),
+  future = "2099-01-01T00:00:00Z";
 const members = [{ node_id: 1, version_id: id, sha256: hash, size: 12 }];
-const response = (value: unknown) => new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
-afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+const response = (value: unknown) =>
+  new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
 
 async function harness() {
   const memberHash = await exportMemberHash(members);
@@ -16,39 +22,122 @@ async function harness() {
   let starts = 0;
   const startIDs: string[] = [];
   const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
-    const path = String(url), body = init?.body ? JSON.parse(String(init.body)) : undefined;
-    if (path.endsWith("/sources")) { source = { id: body.operation_id, request_sha256: hash, kind: body.kind, state: "sealed", member_hash: memberHash, total: 1, source_bytes: 12, created_at: "2026-01-01T00:00:00Z", expires_at: future }; return response(source); }
-    if (path.endsWith("/plans")) { plan = { format: "docbank-bundle-v1", id: body.operation_id, vault_id: id, toolchain: "go1.27", source, roles: body.roles, photo_render: body.photo_render, fingerprint: hash, total: 1, role_entries: 1, role_bytes: 12, metadata_bytes: 100, created_at: source.created_at, expires_at: future }; return response(plan); }
-    if (path.endsWith("/preview")) return response({ plan_id: plan.id, fingerprint: hash, member_hash: memberHash, total: 1, roles: [{ role: plan.roles[0].role, available_members: 1, unavailable_members: 0, files: 1, bytes: 12 }] });
-    if (path.endsWith("/jobs")) { starts++; startIDs.push(body.operation_id); job = { id: body.operation_id, plan_id: plan.id, fingerprint: hash, state: "queued", sequence: 1, completed_roles: 0, completed_bytes: 0, attempt: 0, created_at: source.created_at, deadline: future, expires_at: future }; throw new TypeError("start response lost"); }
-    if (path.includes("/events")) return new Response("", { headers: { "Content-Type": "application/x-ndjson" } });
-    if (path.endsWith("/cancel")) { job = { ...job, state: "canceled", sequence: 2 }; return new Response(null, { status: 204 }); }
+    const path = String(url),
+      body = init?.body ? JSON.parse(String(init.body)) : undefined;
+    if (path.endsWith("/sources")) {
+      source = {
+        id: body.operation_id,
+        request_sha256: hash,
+        kind: body.kind,
+        state: "sealed",
+        member_hash: memberHash,
+        total: 1,
+        source_bytes: 12,
+        created_at: "2026-01-01T00:00:00Z",
+        expires_at: future,
+      };
+      return response(source);
+    }
+    if (path.endsWith("/plans")) {
+      plan = {
+        format: "docbank-bundle-v1",
+        id: body.operation_id,
+        vault_id: id,
+        toolchain: "go1.27",
+        source,
+        roles: body.roles,
+        photo_render: body.photo_render,
+        fingerprint: hash,
+        total: 1,
+        role_entries: 1,
+        role_bytes: 12,
+        metadata_bytes: 100,
+        created_at: source.created_at,
+        expires_at: future,
+      };
+      return response(plan);
+    }
+    if (path.endsWith("/preview"))
+      return response({
+        plan_id: plan.id,
+        fingerprint: hash,
+        member_hash: memberHash,
+        total: 1,
+        roles: [
+          {
+            role: plan.roles[0].role,
+            available_members: 1,
+            unavailable_members: 0,
+            files: 1,
+            bytes: 12,
+          },
+        ],
+      });
+    if (path.endsWith("/jobs")) {
+      starts++;
+      startIDs.push(body.operation_id);
+      job = {
+        id: body.operation_id,
+        plan_id: plan.id,
+        fingerprint: hash,
+        state: "queued",
+        sequence: 1,
+        completed_roles: 0,
+        completed_bytes: 0,
+        attempt: 0,
+        created_at: source.created_at,
+        deadline: future,
+        expires_at: future,
+      };
+      throw new TypeError("start response lost");
+    }
+    if (path.includes("/events"))
+      return new Response("", { headers: { "Content-Type": "application/x-ndjson" } });
+    if (path.endsWith("/cancel")) {
+      job = { ...job, state: "canceled", sequence: 2 };
+      return new Response(null, { status: 204 });
+    }
     return response(job);
   });
-  const session = new ExportSession("s", next => state = next);
+  const session = new ExportSession("s", (next) => (state = next));
   session.choose({ label: "Selected documents", members }, [{ role: "original" }]);
   return { session, fetcher, state: () => state, starts: () => starts, startIDs };
 }
 
-it.each(["source", "roles"])("invalidates a reviewed plan when %s changes and fences late preview responses", async (changed) => {
-  const h = await harness();
-  await h.session.preview();
-  expect(h.state().status).toBe("ready");
-  expect(h.state().reviewed).toBeTruthy();
-  h.session.choose({ label: "Selected documents", members: changed === "source" ? [{ ...members[0]!, version_id: "99999999-9999-4999-8999-999999999999" }] : members }, [{ role: changed === "roles" ? "text" : "original" }]);
-  expect(h.state().reviewed).toBeUndefined();
-  let respond!: (value: Response) => void, markRequested!: () => void;
-  const responsePending = new Promise<Response>(resolve => respond = resolve);
-  const requested = new Promise<void>(resolve => markRequested = resolve);
-  h.fetcher.mockImplementationOnce(() => { markRequested(); return responsePending; });
-  const pending = h.session.preview();
-  await requested;
-  h.session.close();
-  respond(response({}));
-  await pending;
-  expect(h.state().reviewed).toBeUndefined();
-  h.session.dispose();
-});
+it.each(["source", "roles"])(
+  "invalidates a reviewed plan when %s changes and fences late preview responses",
+  async (changed) => {
+    const h = await harness();
+    await h.session.preview();
+    expect(h.state().status).toBe("ready");
+    expect(h.state().reviewed).toBeTruthy();
+    h.session.choose(
+      {
+        label: "Selected documents",
+        members:
+          changed === "source"
+            ? [{ ...members[0]!, version_id: "99999999-9999-4999-8999-999999999999" }]
+            : members,
+      },
+      [{ role: changed === "roles" ? "text" : "original" }],
+    );
+    expect(h.state().reviewed).toBeUndefined();
+    let respond!: (value: Response) => void, markRequested!: () => void;
+    const responsePending = new Promise<Response>((resolve) => (respond = resolve));
+    const requested = new Promise<void>((resolve) => (markRequested = resolve));
+    h.fetcher.mockImplementationOnce(() => {
+      markRequested();
+      return responsePending;
+    });
+    const pending = h.session.preview();
+    await requested;
+    h.session.close();
+    respond(response({}));
+    await pending;
+    expect(h.state().reviewed).toBeUndefined();
+    h.session.dispose();
+  },
+);
 
 it("keeps sealed membership when only policies change", async () => {
   const h = await harness();
@@ -67,7 +156,23 @@ it("discovers recipes against the same sealed source later used by preview", asy
   const underlying = h.fetcher.getMockImplementation()!;
   const memberHash = await exportMemberHash(members);
   h.fetcher.mockImplementation((url, init) => {
-    if (String(url).endsWith("/email-pdf-recipes")) return Promise.resolve(response({ source_id: String(url).split("/").at(-2), member_hash: memberHash, total: 1, recipes: [{ recipe_sha256: hash, paper: "A4", renderer_version: "151.0.7922.34", messages: 1, ambiguous: 0 }] }));
+    if (String(url).endsWith("/email-pdf-recipes"))
+      return Promise.resolve(
+        response({
+          source_id: String(url).split("/").at(-2),
+          member_hash: memberHash,
+          total: 1,
+          recipes: [
+            {
+              recipe_sha256: hash,
+              paper: "A4",
+              renderer_version: "151.0.7922.34",
+              messages: 1,
+              ambiguous: 0,
+            },
+          ],
+        }),
+      );
     return underlying(url, init);
   });
   await h.session.discoverRecipes();
@@ -102,41 +207,47 @@ it("recovers a lost start with the same UUID, retains the handle on close, and c
   h.session.dispose();
 });
 
-it.each(["start", "reconnect"] as const)("releases a refused admission during %s so the source can be previewed again", async (action) => {
-  for (const status of [409, 410]) {
-    const h = await harness();
-    await h.session.preview();
-    const original = h.fetcher.getMockImplementation()!;
-    let refuse = action === "start";
-    h.fetcher.mockImplementation(async (url, init) => {
-      if (String(url).endsWith("/jobs")) return new Response(JSON.stringify({ detail: "Admission refused" }), { status: refuse ? status : 503 });
-      if (String(url).includes("/jobs/")) return new Response(null, { status: 404 });
-      return original(url, init);
-    });
-    await h.session.start();
-    if (action === "reconnect") {
-      expect(h.state().active).toBeDefined();
-      expect(h.state().active?.job).toBeUndefined();
-      refuse = true;
-      await h.session.reconnect();
+it.each(["start", "reconnect"] as const)(
+  "releases a refused admission during %s so the source can be previewed again",
+  async (action) => {
+    for (const status of [409, 410]) {
+      const h = await harness();
+      await h.session.preview();
+      const original = h.fetcher.getMockImplementation()!;
+      let refuse = action === "start";
+      h.fetcher.mockImplementation(async (url, init) => {
+        if (String(url).endsWith("/jobs"))
+          return new Response(JSON.stringify({ detail: "Admission refused" }), {
+            status: refuse ? status : 503,
+          });
+        if (String(url).includes("/jobs/")) return new Response(null, { status: 404 });
+        return original(url, init);
+      });
+      await h.session.start();
+      if (action === "reconnect") {
+        expect(h.state().active).toBeDefined();
+        expect(h.state().active?.job).toBeUndefined();
+        refuse = true;
+        await h.session.reconnect();
+      }
+      expect(h.state().active).toBeUndefined();
+      expect(h.state().reviewed).toBeUndefined();
+      expect(h.state().status).toBe(status === 410 ? "expired" : "error");
+      expect(h.state().error?.message).toBe("Admission refused");
+      h.fetcher.mockImplementation(original);
+      await h.session.preview();
+      expect(h.state().status).toBe("ready");
+      h.session.dispose();
+      h.fetcher.mockRestore();
     }
-    expect(h.state().active).toBeUndefined();
-    expect(h.state().reviewed).toBeUndefined();
-    expect(h.state().status).toBe(status === 410 ? "expired" : "error");
-    expect(h.state().error?.message).toBe("Admission refused");
-    h.fetcher.mockImplementation(original);
-    await h.session.preview();
-    expect(h.state().status).toBe("ready");
-    h.session.dispose();
-    h.fetcher.mockRestore();
-  }
-});
+  },
+);
 
 it("does not release an ambiguous admission when a stale create response refuses it", async () => {
   const h = await harness();
   await h.session.preview();
   let refuse!: (value: Response) => void;
-  const refused = new Promise<Response>(resolve => refuse = resolve);
+  const refused = new Promise<Response>((resolve) => (refuse = resolve));
   h.fetcher.mockImplementationOnce(() => refused);
   const starting = h.session.start();
   h.session.close();
@@ -154,7 +265,8 @@ it.each(["job", "events"])("retains admission when the %s read expires", async (
   const original = h.fetcher.getMockImplementation()!;
   h.fetcher.mockImplementation(async (url, init) => {
     const path = String(url);
-    if (read === "events" ? path.includes("/events") : path.includes("/jobs/")) return new Response(null, { status: 410 });
+    if (read === "events" ? path.includes("/events") : path.includes("/jobs/"))
+      return new Response(null, { status: 410 });
     return original(url, init);
   });
   await h.session.start();
@@ -169,19 +281,46 @@ it("validates download filenames and retains completed exports through ticket re
   const original = h.fetcher.getMockImplementation()!;
   let completed: ExportJob;
   let ticketStatus = 503;
-  const requestedNames: string[] = [], offeredNames: string[] = [];
-  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) { offeredNames.push(this.download); });
+  const requestedNames: string[] = [],
+    offeredNames: string[] = [];
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(
+    function (this: HTMLAnchorElement) {
+      offeredNames.push(this.download);
+    },
+  );
   h.fetcher.mockImplementation(async (url, init) => {
     const path = String(url);
     if (path.endsWith("/jobs")) {
       const body = JSON.parse(String(init?.body));
-      completed = { id: body.operation_id, plan_id: body.plan_id, fingerprint: body.fingerprint, state: "completed", sequence: 2, completed_roles: 1, completed_bytes: 12, attempt: 1, created_at: "2026-01-01T00:00:00Z", deadline: future, expires_at: future, receipt: { format: "docbank-bundle-v1", plan_fingerprint: body.fingerprint, sha256: hash, size: 512, entries: 4 } };
+      completed = {
+        id: body.operation_id,
+        plan_id: body.plan_id,
+        fingerprint: body.fingerprint,
+        state: "completed",
+        sequence: 2,
+        completed_roles: 1,
+        completed_bytes: 12,
+        attempt: 1,
+        created_at: "2026-01-01T00:00:00Z",
+        deadline: future,
+        expires_at: future,
+        receipt: {
+          format: "docbank-bundle-v1",
+          plan_fingerprint: body.fingerprint,
+          sha256: hash,
+          size: 512,
+          entries: 4,
+        },
+      };
       return response(completed);
     }
     if (path.endsWith("/download")) {
       requestedNames.push(JSON.parse(String(init?.body)).basename);
       if (ticketStatus) return new Response(null, { status: ticketStatus });
-      return response({ url: `/api/daemon/web-download/file?ticket=${"a".repeat(43)}`, receipt: completed.receipt });
+      return response({
+        url: `/api/daemon/web-download/file?ticket=${"a".repeat(43)}`,
+        receipt: completed.receipt,
+      });
     }
     return original(url, init);
   });
@@ -209,7 +348,7 @@ it("validates download filenames and retains completed exports through ticket re
   let downloadSignal: AbortSignal | null | undefined;
   h.fetcher.mockImplementationOnce((_url, init) => {
     downloadSignal = init?.signal;
-    return new Promise<Response>(resolve => respond = resolve);
+    return new Promise<Response>((resolve) => (respond = resolve));
   });
   const pending = h.session.download("Pending.zip");
   expect(h.state().downloading).toBe(true);
@@ -217,7 +356,12 @@ it("validates download filenames and retains completed exports through ticket re
   expect(downloadSignal?.aborted).toBe(false);
   expect(h.fetcher.mock.calls.filter(([, init]) => init?.method === "DELETE")).toHaveLength(0);
   expect(h.state().active?.plan).toBe(reviewed?.plan);
-  respond(response({ url: `/api/daemon/web-download/file?ticket=${"a".repeat(43)}`, receipt: completed!.receipt }));
+  respond(
+    response({
+      url: `/api/daemon/web-download/file?ticket=${"a".repeat(43)}`,
+      receipt: completed!.receipt,
+    }),
+  );
   await pending;
   expect(h.state().downloading).toBe(false);
   expect(offeredNames).toEqual(["Retried.zip", "Pending.zip"]);
@@ -241,14 +385,43 @@ it("cannot start an expired reviewed plan", async () => {
 it("copies reactive snapshot inputs before caller changes and never promotes observed revisions to preconditions", async () => {
   const h = await harness();
   const snapshot: SnapshotPage = {
-    query: parseQuery("{}"), dependencies: [], query_fingerprint: `sha256:${hash}`,
-    member_hash: await exportMemberHash(members), snapshot_fingerprint: `sha256:${hash}`,
-    generation: { kind: "native" }, coverage: { configuration: "unconfigured" },
-    observed_at: "2026-01-01T00:00:00Z", page_size: 100, total: 1, total_bytes: 12,
-    rows: [{ node_id: 1, content_version_id: id, blob_hash: hash, size: 12, revision: 99, name: "synthetic.txt", path: "/synthetic.txt", mime_type: "text/plain", media_family: "text", modified_at: "2026-01-01T00:00:00Z", sort_key: "synthetic.txt", tags: [], collection_ids: [] }],
-    facets: [], snapshot: true, snapshot_id: "a".repeat(32), created_at: "2026-01-01T00:00:00Z", expires_at: future,
+    query: parseQuery("{}"),
+    dependencies: [],
+    query_fingerprint: `sha256:${hash}`,
+    member_hash: await exportMemberHash(members),
+    snapshot_fingerprint: `sha256:${hash}`,
+    generation: { kind: "native" },
+    coverage: { configuration: "unconfigured" },
+    observed_at: "2026-01-01T00:00:00Z",
+    page_size: 100,
+    total: 1,
+    total_bytes: 12,
+    rows: [
+      {
+        node_id: 1,
+        content_version_id: id,
+        blob_hash: hash,
+        size: 12,
+        revision: 99,
+        name: "synthetic.txt",
+        path: "/synthetic.txt",
+        mime_type: "text/plain",
+        media_family: "text",
+        modified_at: "2026-01-01T00:00:00Z",
+        sort_key: "synthetic.txt",
+        tags: [],
+        collection_ids: [],
+      },
+    ],
+    facets: [],
+    snapshot: true,
+    snapshot_id: "a".repeat(32),
+    created_at: "2026-01-01T00:00:00Z",
+    expires_at: future,
   };
-  h.session.choose({ label: "Frozen query", snapshot: new Proxy(snapshot, {}) }, [{ role: "original" }]);
+  h.session.choose({ label: "Frozen query", snapshot: new Proxy(snapshot, {}) }, [
+    { role: "original" },
+  ]);
   snapshot.rows[0]!.content_version_id = "99999999-9999-4999-8999-999999999999";
   await h.session.preview();
   expect(h.state().status).toBe("ready");
@@ -256,112 +429,161 @@ it("copies reactive snapshot inputs before caller changes and never promotes obs
   h.session.dispose();
 });
 
-it.each(["close", "settings"])("retries failed source preparation after %s and retains admitted jobs", async (abort) => {
-  const h = await harness();
-  const original = h.fetcher.getMockImplementation()!;
-  const sourceIDs: string[] = [];
-  let failedID = "";
-  h.fetcher.mockImplementation(async (url, init) => {
-    if (String(url).endsWith("/sources")) {
-      const operationID = JSON.parse(String(init?.body)).operation_id;
-      sourceIDs.push(operationID);
-      failedID ||= operationID;
-      if (operationID === failedID) return new Response(JSON.stringify({ detail: "Source preparation failed", code: "export_conflict" }), { status: 409 });
-    }
-    return original(url, init);
-  });
-  await h.session.discoverRecipes();
-  h.session.choose({ label: "Selected documents", members }, [{ role: "original" }]);
-  await h.session.preview();
-  expect(h.state().status).toBe("error");
-  expect(sourceIDs).toEqual([failedID, failedID]);
-  h.session.resetPreparation();
-  const input = { label: "Selected photos", photos: { query: { filters: {}, v: 1, syntax: "advanced", mode: "lexical", text: "", sort: { field: "name", direction: "asc" } }, hidden: false, asset_ids: [id] }, total: 1 };
-  const profile = { format: "jpeg", quality: 90, long_edge: 2048, include_metadata: true, remove_gps: true };
-  h.session.choose(input, [{ role: "photo_rendered" }], { photo_render: profile });
-  let respond!: (value: Response) => void, markRequested!: () => void;
-  const responsePending = new Promise<Response>(resolve => respond = resolve);
-  const requested = new Promise<void>(resolve => markRequested = resolve);
-  let abortedID = "", signal: AbortSignal | undefined;
-  h.fetcher.mockImplementationOnce((_url, init) => {
-    abortedID = JSON.parse(String(init?.body)).operation_id;
-    signal = init?.signal ?? undefined;
-    markRequested();
-    return responsePending;
-  });
-  const pending = h.session.preview();
-  await requested;
-  if (abort === "close") h.session.close();
-  else h.session.choose(input, [{ role: "photo_rendered" }], { photo_render: { ...profile, quality: 80 } });
-  expect(signal?.aborted).toBe(true);
-  respond(new Response(JSON.stringify({ detail: "Source preparation failed", code: "export_conflict" }), { status: 409 }));
-  await pending;
-  await h.session.preview();
-  expect(h.state().status).toBe("ready");
-  expect(sourceIDs[2]).not.toBe(failedID);
-  expect(sourceIDs[2]).not.toBe(abortedID);
-  if (abort === "close") {
-    const sealedID = sourceIDs[2];
-    h.session.choose(input, [{ role: "photo_rendered" }], { photo_render: profile });
-    let planID = "", planRequested!: () => void, respondPlan!: (value: Response) => void;
-    const planReached = new Promise<void>(resolve => planRequested = resolve);
-    const planResponse = new Promise<Response>(resolve => respondPlan = resolve);
-    h.fetcher.mockImplementationOnce((_url, init) => {
-      planID = JSON.parse(String(init?.body)).operation_id;
-      signal = init?.signal ?? undefined;
-      planRequested();
-      return planResponse;
+it.each(["close", "settings"])(
+  "retries failed source preparation after %s and retains admitted jobs",
+  async (abort) => {
+    const h = await harness();
+    const original = h.fetcher.getMockImplementation()!;
+    const sourceIDs: string[] = [];
+    let failedID = "";
+    h.fetcher.mockImplementation(async (url, init) => {
+      if (String(url).endsWith("/sources")) {
+        const operationID = JSON.parse(String(init?.body)).operation_id;
+        sourceIDs.push(operationID);
+        failedID ||= operationID;
+        if (operationID === failedID)
+          return new Response(
+            JSON.stringify({ detail: "Source preparation failed", code: "export_conflict" }),
+            { status: 409 },
+          );
+      }
+      return original(url, init);
     });
-    const planning = h.session.preview();
-    await planReached;
-    expect(sourceIDs).toHaveLength(3);
-    h.session.close();
+    await h.session.discoverRecipes();
+    h.session.choose({ label: "Selected documents", members }, [{ role: "original" }]);
+    await h.session.preview();
+    expect(h.state().status).toBe("error");
+    expect(sourceIDs).toEqual([failedID, failedID]);
+    h.session.resetPreparation();
+    const input = {
+      label: "Selected photos",
+      photos: {
+        query: {
+          filters: {},
+          v: 1,
+          syntax: "advanced",
+          mode: "lexical",
+          text: "",
+          sort: { field: "name", direction: "asc" },
+        },
+        hidden: false,
+        asset_ids: [id],
+      },
+      total: 1,
+    };
+    const profile = {
+      format: "jpeg",
+      quality: 90,
+      long_edge: 2048,
+      include_metadata: true,
+      remove_gps: true,
+    };
+    h.session.choose(input, [{ role: "photo_rendered" }], { photo_render: profile });
+    let respond!: (value: Response) => void, markRequested!: () => void;
+    const responsePending = new Promise<Response>((resolve) => (respond = resolve));
+    const requested = new Promise<void>((resolve) => (markRequested = resolve));
+    let abortedID = "",
+      signal: AbortSignal | undefined;
+    h.fetcher.mockImplementationOnce((_url, init) => {
+      abortedID = JSON.parse(String(init?.body)).operation_id;
+      signal = init?.signal ?? undefined;
+      markRequested();
+      return responsePending;
+    });
+    const pending = h.session.preview();
+    await requested;
+    if (abort === "close") h.session.close();
+    else
+      h.session.choose(input, [{ role: "photo_rendered" }], {
+        photo_render: { ...profile, quality: 80 },
+      });
     expect(signal?.aborted).toBe(true);
-    expect(h.state().status).toBe("idle");
-    respondPlan(new Response(null, { status: 503 }));
-    await planning;
+    respond(
+      new Response(
+        JSON.stringify({ detail: "Source preparation failed", code: "export_conflict" }),
+        { status: 409 },
+      ),
+    );
+    await pending;
     await h.session.preview();
     expect(h.state().status).toBe("ready");
-    expect(sourceIDs).toHaveLength(3);
-    expect(h.state().reviewed?.plan.source.id).toBe(sealedID);
-    expect(h.state().reviewed?.plan.id).toBe(planID);
-  }
-  await h.session.start();
-  const admitted = h.state();
-  h.session.resetPreparation();
-  expect(h.state()).toBe(admitted);
-  h.session.dispose();
-});
-
-it.each([false, true])("keeps plan expiry and readiness through problem paging (page fails: %s)", async (fails) => {
-  vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
-  vi.setSystemTime(Date.parse(future) - 1000);
-  const h = await harness();
-  const original = h.fetcher.getMockImplementation()!;
-  let pageFails = fails;
-  h.fetcher.mockImplementation(async (url, init) => {
-    if (String(url).includes("/problems")) {
-      if (pageFails) return new Response(null, { status: 503 });
-      return response({ plan_id: h.state().reviewed!.plan.id, fingerprint: hash, after: 0, next: 0, total: 0, items: [] });
+    expect(sourceIDs[2]).not.toBe(failedID);
+    expect(sourceIDs[2]).not.toBe(abortedID);
+    if (abort === "close") {
+      const sealedID = sourceIDs[2];
+      h.session.choose(input, [{ role: "photo_rendered" }], { photo_render: profile });
+      let planID = "",
+        planRequested!: () => void,
+        respondPlan!: (value: Response) => void;
+      const planReached = new Promise<void>((resolve) => (planRequested = resolve));
+      const planResponse = new Promise<Response>((resolve) => (respondPlan = resolve));
+      h.fetcher.mockImplementationOnce((_url, init) => {
+        planID = JSON.parse(String(init?.body)).operation_id;
+        signal = init?.signal ?? undefined;
+        planRequested();
+        return planResponse;
+      });
+      const planning = h.session.preview();
+      await planReached;
+      expect(sourceIDs).toHaveLength(3);
+      h.session.close();
+      expect(signal?.aborted).toBe(true);
+      expect(h.state().status).toBe("idle");
+      respondPlan(new Response(null, { status: 503 }));
+      await planning;
+      await h.session.preview();
+      expect(h.state().status).toBe("ready");
+      expect(sourceIDs).toHaveLength(3);
+      expect(h.state().reviewed?.plan.source.id).toBe(sealedID);
+      expect(h.state().reviewed?.plan.id).toBe(planID);
     }
-    return original(url, init);
-  });
-  await h.session.preview();
-  const reviewed = h.state().reviewed;
-  await h.session.problemPage(0);
-  expect(h.state().status).toBe("ready");
-  expect(h.state().reviewed).toBe(reviewed);
-  expect(h.state().problemsError?.message).toBe(fails ? "HTTP 503" : undefined);
-  expect(h.state().error).toBeUndefined();
-  pageFails = false;
-  await h.session.problemPage(0);
-  expect(h.state().status).toBe("ready");
-  expect(h.state().problemsError).toBeUndefined();
-  await vi.advanceTimersByTimeAsync(1001);
-  expect(h.state().status).toBe("expired");
-  expect(h.state().reviewed).toBeUndefined();
-  h.session.dispose();
-});
+    await h.session.start();
+    const admitted = h.state();
+    h.session.resetPreparation();
+    expect(h.state()).toBe(admitted);
+    h.session.dispose();
+  },
+);
+
+it.each([false, true])(
+  "keeps plan expiry and readiness through problem paging (page fails: %s)",
+  async (fails) => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    vi.setSystemTime(Date.parse(future) - 1000);
+    const h = await harness();
+    const original = h.fetcher.getMockImplementation()!;
+    let pageFails = fails;
+    h.fetcher.mockImplementation(async (url, init) => {
+      if (String(url).includes("/problems")) {
+        if (pageFails) return new Response(null, { status: 503 });
+        return response({
+          plan_id: h.state().reviewed!.plan.id,
+          fingerprint: hash,
+          after: 0,
+          next: 0,
+          total: 0,
+          items: [],
+        });
+      }
+      return original(url, init);
+    });
+    await h.session.preview();
+    const reviewed = h.state().reviewed;
+    await h.session.problemPage(0);
+    expect(h.state().status).toBe("ready");
+    expect(h.state().reviewed).toBe(reviewed);
+    expect(h.state().problemsError?.message).toBe(fails ? "HTTP 503" : undefined);
+    expect(h.state().error).toBeUndefined();
+    pageFails = false;
+    await h.session.problemPage(0);
+    expect(h.state().status).toBe("ready");
+    expect(h.state().problemsError).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1001);
+    expect(h.state().status).toBe("expired");
+    expect(h.state().reviewed).toBeUndefined();
+    h.session.dispose();
+  },
+);
 
 it("cancels pending problem pages when the drawer closes without accepting their late result", async () => {
   const h = await harness();
@@ -370,7 +592,7 @@ it("cancels pending problem pages when the drawer closes without accepting their
   let pageSignal: AbortSignal | undefined;
   h.fetcher.mockImplementationOnce((_url, init) => {
     pageSignal = init?.signal as AbortSignal;
-    return new Promise<Response>(resolve => respond = resolve);
+    return new Promise<Response>((resolve) => (respond = resolve));
   });
   const paging = h.session.problemPage(0);
   expect(h.state().problemsLoading).toBe(true);
@@ -385,10 +607,30 @@ it("cancels pending problem pages when the drawer closes without accepting their
 });
 
 it("asks for an attachment set and keeps the explicit choice across option changes", async () => {
-  const h = await harness(), memberHash = await exportMemberHash(members);
+  const h = await harness(),
+    memberHash = await exportMemberHash(members);
   const underlying = h.fetcher.getMockImplementation()!;
   h.fetcher.mockImplementation((url, init) => {
-    if (String(url).includes("/attachment-publications")) return Promise.resolve(response({ source_id: String(url).split("/").at(-2), member_hash: memberHash, after: 0, next: 0, total: 2, items: ["first", "second"].map(operation_id => ({ node_id: 1, version_id: id, name: "empty.eml", operation_id, generation_id: hash, created_at: "2026-01-01T00:00:00Z", state: "complete", attachments: 0 })) }));
+    if (String(url).includes("/attachment-publications"))
+      return Promise.resolve(
+        response({
+          source_id: String(url).split("/").at(-2),
+          member_hash: memberHash,
+          after: 0,
+          next: 0,
+          total: 2,
+          items: ["first", "second"].map((operation_id) => ({
+            node_id: 1,
+            version_id: id,
+            name: "empty.eml",
+            operation_id,
+            generation_id: hash,
+            created_at: "2026-01-01T00:00:00Z",
+            state: "complete",
+            attachments: 0,
+          })),
+        }),
+      );
     return underlying(url, init);
   });
   h.session.choose({ label: "Selected documents", members }, [{ role: "attachment_original" }]);
@@ -397,10 +639,14 @@ it("asks for an attachment set and keeps the explicit choice across option chang
   expect(h.state().publications?.items).toHaveLength(2);
   expect(h.fetcher.mock.calls.filter(([url]) => String(url).endsWith("/plans"))).toHaveLength(0);
   h.session.selectPublication(id, "second");
-  h.session.choose({ label: "Selected documents", members }, [{ role: "attachment_original", allow_unavailable: true }]);
+  h.session.choose({ label: "Selected documents", members }, [
+    { role: "attachment_original", allow_unavailable: true },
+  ]);
   await h.session.preview();
   const request = h.fetcher.mock.calls.find(([url]) => String(url).endsWith("/plans"));
-  expect(JSON.parse(String(request?.[1]?.body)).publications).toEqual([{ version_id: id, operation_id: "second" }]);
+  expect(JSON.parse(String(request?.[1]?.body)).publications).toEqual([
+    { version_id: id, operation_id: "second" },
+  ]);
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2100-01-01T00:00:00Z"));
   await h.session.publicationPage(0);
@@ -411,130 +657,215 @@ it("asks for an attachment set and keeps the explicit choice across option chang
   h.session.dispose();
 });
 
-it.each([503, 410])("keeps a reviewed plan independent of its initial details request (HTTP %s)", async (status) => {
-  vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
-  vi.setSystemTime(Date.parse(future) - 1000);
-  const h = await harness(), original = h.fetcher.getMockImplementation()!;
-  h.session.choose({ label: "Selected documents", members }, [{ role: "original" }, { role: "text", allow_unavailable: true }]);
-  let respond!: (response: Response) => void, requested!: () => void;
-  const reached = new Promise<void>(resolve => requested = resolve);
-  const pending = new Promise<Response>(resolve => respond = resolve);
-  h.fetcher.mockImplementation(async (url, init) => {
-    const path = String(url);
-    if (path.includes("/problems")) { requested(); return pending; }
-    const result = await original(url, init);
-    if (path.endsWith("/plans")) return response({ ...await result.json(), counts: { messages: 0, attachments: 0, email_pdfs: 0, attachment_pdfs: 0, pages: 0, collapsed: 0, unavailable: 1, unavailable_inventories: 0 } });
-    if (path.endsWith("/preview")) {
-      const preview = await result.json();
-      preview.roles.push({ role: "text", available_members: 0, unavailable_members: 1, files: 0, bytes: 0, unavailable_reason: "No retained text" });
-      return response(preview);
-    }
-    return result;
-  });
-  const previewing = h.session.preview();
-  await reached;
-  const readyWhilePending = h.state().status;
-  respond(new Response(null, { status }));
-  await previewing;
-  expect(readyWhilePending).toBe("ready");
-  expect(h.state().status).toBe(status === 410 ? "expired" : "ready");
-  expect(h.state().reviewed).toBeDefined();
-  expect(h.state().problemsError?.message).toBe(`HTTP ${status}`);
-  if (status === 503) {
-    expect(h.state().error).toBeUndefined();
-    await vi.advanceTimersByTimeAsync(1001);
-    expect(h.state().status).toBe("expired");
-    expect(h.state().reviewed).toBeUndefined();
-  }
-  h.session.dispose();
-});
-
-it.each(["canceled", "completed", "failed"])("releases each %s job before preparing three successive batches", async (terminal) => {
-  const h = await harness();
-  const original = h.fetcher.getMockImplementation()!;
-  const owned = new Set<string>();
-  h.fetcher.mockImplementation(async (url, init) => {
-    const path = String(url);
-    if (init?.method === "DELETE") {
-      owned.delete(path.split("/").at(-1)!);
-      return new Response(null, { status: 204 });
-    }
-    if (path.endsWith("/jobs")) {
-      const body = JSON.parse(String(init?.body));
-      if (!owned.has(body.operation_id) && owned.size >= 2) return new Response(null, { status: 429 });
-      owned.add(body.operation_id);
-    }
-    const result = await original(url, init);
-    if (terminal !== "canceled" && path.includes("/jobs/") && !path.includes("/events")) {
-      const job = await result.json();
-      return response({ ...job, state: terminal, sequence: 2, ...(terminal === "completed" ? { completed_roles: 1, completed_bytes: 12, receipt: { format: "docbank-bundle-v1", plan_fingerprint: hash, sha256: hash, size: 512, entries: 4 } } : { failure: "Synthetic export failure" }) });
-    }
-    return result;
-  });
-  for (let batch = 0; batch < 3; batch++) {
-    await h.session.preview();
-    await h.session.start();
-    if (terminal === "canceled") await h.session.cancel();
-    expect(h.state().status).toBe(terminal);
-    await h.session.clearFinished();
-    expect(h.state().status).toBe("idle");
-    expect(owned.size).toBe(0);
-  }
-  expect(h.fetcher.mock.calls.filter(([, init]) => init?.method === "DELETE")).toHaveLength(3);
-  h.session.dispose();
-});
-
-it.each([
-  { status: 404, interrupted: true, terminal: "canceled" },
-  { status: 503, interrupted: false, detail: "Release failed", message: "Release failed", terminal: "canceled" },
-  { status: 409, interrupted: false, detail: "Archive is retained", code: "export_retained", message: "Your browser is still downloading this export. Choose Prepare another export again once the download finishes.", terminal: "completed" },
-])("retains the finished job through release failure or interruption ($status)", async (failure) => {
-  const h = await harness();
-  if (failure.terminal === "completed") {
-    const original = h.fetcher.getMockImplementation()!;
+it.each([503, 410])(
+  "keeps a reviewed plan independent of its initial details request (HTTP %s)",
+  async (status) => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    vi.setSystemTime(Date.parse(future) - 1000);
+    const h = await harness(),
+      original = h.fetcher.getMockImplementation()!;
+    h.session.choose({ label: "Selected documents", members }, [
+      { role: "original" },
+      { role: "text", allow_unavailable: true },
+    ]);
+    let respond!: (response: Response) => void, requested!: () => void;
+    const reached = new Promise<void>((resolve) => (requested = resolve));
+    const pending = new Promise<Response>((resolve) => (respond = resolve));
     h.fetcher.mockImplementation(async (url, init) => {
+      const path = String(url);
+      if (path.includes("/problems")) {
+        requested();
+        return pending;
+      }
       const result = await original(url, init);
-      if (String(url).includes("/jobs/") && !String(url).includes("/events")) {
-        const job = await result.json();
-        return response({ ...job, state: "completed", sequence: 2, completed_roles: 1, completed_bytes: 12, receipt: { format: "docbank-bundle-v1", plan_fingerprint: hash, sha256: hash, size: 512, entries: 4 } });
+      if (path.endsWith("/plans"))
+        return response({
+          ...(await result.json()),
+          counts: {
+            messages: 0,
+            attachments: 0,
+            email_pdfs: 0,
+            attachment_pdfs: 0,
+            pages: 0,
+            collapsed: 0,
+            unavailable: 1,
+            unavailable_inventories: 0,
+          },
+        });
+      if (path.endsWith("/preview")) {
+        const preview = await result.json();
+        preview.roles.push({
+          role: "text",
+          available_members: 0,
+          unavailable_members: 1,
+          files: 0,
+          bytes: 0,
+          unavailable_reason: "No retained text",
+        });
+        return response(preview);
       }
       return result;
     });
-  }
-  await h.session.preview();
-  await h.session.start();
-  if (failure.terminal === "canceled") await h.session.cancel();
-  const active = h.state().active;
-  let respond!: (value: Response) => void;
-  h.fetcher.mockImplementationOnce(() => new Promise<Response>(resolve => respond = resolve));
-  const pending = h.session.clearFinished();
-  expect(h.state().active).toEqual(active);
-  expect(h.state().releasing).toBe(true);
-  await h.session.clearFinished();
-  if (failure.interrupted) {
-    h.session.close();
-    expect(h.state().releasing).toBe(false);
-    h.fetcher.mockResolvedValueOnce(new Response(null, { status: 404 }));
-    await h.session.clearFinished();
-    await h.session.preview();
-    expect(h.state().status).toBe("ready");
-    respond(new Response(null, { status: 204 }));
-    await pending;
-    expect(h.state().status).toBe("ready");
+    const previewing = h.session.preview();
+    await reached;
+    const readyWhilePending = h.state().status;
+    respond(new Response(null, { status }));
+    await previewing;
+    expect(readyWhilePending).toBe("ready");
+    expect(h.state().status).toBe(status === 410 ? "expired" : "ready");
+    expect(h.state().reviewed).toBeDefined();
+    expect(h.state().problemsError?.message).toBe(`HTTP ${status}`);
+    if (status === 503) {
+      expect(h.state().error).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1001);
+      expect(h.state().status).toBe("expired");
+      expect(h.state().reviewed).toBeUndefined();
+    }
     h.session.dispose();
-    return;
-  }
-  respond(new Response(JSON.stringify({ detail: failure.detail, code: failure.code }), { status: failure.status }));
-  await pending;
-  expect(h.state().active).toEqual(active);
-  expect(h.state().error?.message).toBe(failure.message);
-  expect(h.state().status).toBe(failure.status === 409 ? failure.terminal : "error");
-  expect(h.state().releasing).toBe(false);
-  expect(h.fetcher.mock.calls.filter(([, init]) => init?.method === "DELETE")).toHaveLength(1);
-  h.fetcher.mockResolvedValueOnce(new Response(null, { status: 204 }));
-  await h.session.clearFinished();
-  expect(h.state().active).toBeUndefined();
-  expect(h.state().status).toBe("idle");
-  expect(h.state().error).toBeUndefined();
-  h.session.dispose();
-});
+  },
+);
+
+it.each(["canceled", "completed", "failed"])(
+  "releases each %s job before preparing three successive batches",
+  async (terminal) => {
+    const h = await harness();
+    const original = h.fetcher.getMockImplementation()!;
+    const owned = new Set<string>();
+    h.fetcher.mockImplementation(async (url, init) => {
+      const path = String(url);
+      if (init?.method === "DELETE") {
+        owned.delete(path.split("/").at(-1)!);
+        return new Response(null, { status: 204 });
+      }
+      if (path.endsWith("/jobs")) {
+        const body = JSON.parse(String(init?.body));
+        if (!owned.has(body.operation_id) && owned.size >= 2)
+          return new Response(null, { status: 429 });
+        owned.add(body.operation_id);
+      }
+      const result = await original(url, init);
+      if (terminal !== "canceled" && path.includes("/jobs/") && !path.includes("/events")) {
+        const job = await result.json();
+        return response({
+          ...job,
+          state: terminal,
+          sequence: 2,
+          ...(terminal === "completed"
+            ? {
+                completed_roles: 1,
+                completed_bytes: 12,
+                receipt: {
+                  format: "docbank-bundle-v1",
+                  plan_fingerprint: hash,
+                  sha256: hash,
+                  size: 512,
+                  entries: 4,
+                },
+              }
+            : { failure: "Synthetic export failure" }),
+        });
+      }
+      return result;
+    });
+    for (let batch = 0; batch < 3; batch++) {
+      await h.session.preview();
+      await h.session.start();
+      if (terminal === "canceled") await h.session.cancel();
+      expect(h.state().status).toBe(terminal);
+      await h.session.clearFinished();
+      expect(h.state().status).toBe("idle");
+      expect(owned.size).toBe(0);
+    }
+    expect(h.fetcher.mock.calls.filter(([, init]) => init?.method === "DELETE")).toHaveLength(3);
+    h.session.dispose();
+  },
+);
+
+it.each([
+  { status: 404, interrupted: true, terminal: "canceled" },
+  {
+    status: 503,
+    interrupted: false,
+    detail: "Release failed",
+    message: "Release failed",
+    terminal: "canceled",
+  },
+  {
+    status: 409,
+    interrupted: false,
+    detail: "Archive is retained",
+    code: "export_retained",
+    message:
+      "Your browser is still downloading this export. Choose Prepare another export again once the download finishes.",
+    terminal: "completed",
+  },
+])(
+  "retains the finished job through release failure or interruption ($status)",
+  async (failure) => {
+    const h = await harness();
+    if (failure.terminal === "completed") {
+      const original = h.fetcher.getMockImplementation()!;
+      h.fetcher.mockImplementation(async (url, init) => {
+        const result = await original(url, init);
+        if (String(url).includes("/jobs/") && !String(url).includes("/events")) {
+          const job = await result.json();
+          return response({
+            ...job,
+            state: "completed",
+            sequence: 2,
+            completed_roles: 1,
+            completed_bytes: 12,
+            receipt: {
+              format: "docbank-bundle-v1",
+              plan_fingerprint: hash,
+              sha256: hash,
+              size: 512,
+              entries: 4,
+            },
+          });
+        }
+        return result;
+      });
+    }
+    await h.session.preview();
+    await h.session.start();
+    if (failure.terminal === "canceled") await h.session.cancel();
+    const active = h.state().active;
+    let respond!: (value: Response) => void;
+    h.fetcher.mockImplementationOnce(() => new Promise<Response>((resolve) => (respond = resolve)));
+    const pending = h.session.clearFinished();
+    expect(h.state().active).toEqual(active);
+    expect(h.state().releasing).toBe(true);
+    await h.session.clearFinished();
+    if (failure.interrupted) {
+      h.session.close();
+      expect(h.state().releasing).toBe(false);
+      h.fetcher.mockResolvedValueOnce(new Response(null, { status: 404 }));
+      await h.session.clearFinished();
+      await h.session.preview();
+      expect(h.state().status).toBe("ready");
+      respond(new Response(null, { status: 204 }));
+      await pending;
+      expect(h.state().status).toBe("ready");
+      h.session.dispose();
+      return;
+    }
+    respond(
+      new Response(JSON.stringify({ detail: failure.detail, code: failure.code }), {
+        status: failure.status,
+      }),
+    );
+    await pending;
+    expect(h.state().active).toEqual(active);
+    expect(h.state().error?.message).toBe(failure.message);
+    expect(h.state().status).toBe(failure.status === 409 ? failure.terminal : "error");
+    expect(h.state().releasing).toBe(false);
+    expect(h.fetcher.mock.calls.filter(([, init]) => init?.method === "DELETE")).toHaveLength(1);
+    h.fetcher.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await h.session.clearFinished();
+    expect(h.state().active).toBeUndefined();
+    expect(h.state().status).toBe("idle");
+    expect(h.state().error).toBeUndefined();
+    h.session.dispose();
+  },
+);

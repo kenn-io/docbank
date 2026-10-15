@@ -27,9 +27,12 @@ const modeLabels: Record<NaturalSearchMode, string> = {
 export function selectNaturalSearchProfile(
   profiles: ProcessingProfileSummary[],
 ): ProcessingProfileSummary | undefined {
-  return [...profiles].sort((left, right) => left.name.localeCompare(right.name))
-    .find((profile) => naturalQueryBindings(profile).length > 0)
-    ?? [...profiles].sort((left, right) => left.name.localeCompare(right.name))[0];
+  return (
+    [...profiles]
+      .sort((left, right) => left.name.localeCompare(right.name))
+      .find((profile) => naturalQueryBindings(profile).length > 0) ??
+    [...profiles].sort((left, right) => left.name.localeCompare(right.name))[0]
+  );
 }
 
 export function naturalSearchModes(
@@ -50,7 +53,8 @@ export function naturalSearchRequest(
   const bindingID = naturalQueryBindings(profile)[0];
   if ((mode === "semantic" || mode === "hybrid") && !bindingID) return undefined;
   if (mode === "auto" && bindingID) return { mode: "hybrid", binding_id: bindingID };
-  if ((mode === "semantic" || mode === "hybrid") && bindingID) return { mode, binding_id: bindingID };
+  if ((mode === "semantic" || mode === "hybrid") && bindingID)
+    return { mode, binding_id: bindingID };
   return { mode: mode as DocumentSearchRequestMode };
 }
 
@@ -64,11 +68,16 @@ export function naturalSearchRerank(
 
 export function evidenceKindLabel(kind: string): string {
   switch (kind) {
-    case "node_name": return "Name";
-    case "content_blob": return "Text";
-    case "rendition_segment": return "Document text";
-    case "embedding": return "Semantic";
-    default: return "Evidence";
+    case "node_name":
+      return "Name";
+    case "content_blob":
+      return "Text";
+    case "rendition_segment":
+      return "Document text";
+    case "embedding":
+      return "Semantic";
+    default:
+      return "Evidence";
   }
 }
 
@@ -78,10 +87,14 @@ export function evidenceKindLabels(kinds: string[]): string[] {
 
 export function rerankingNote(outcome: string, cause = ""): string {
   switch (outcome) {
-    case "applied": return "Reranked results applied.";
-    case "skipped": return "Reranking skipped because no candidates were available.";
-    case "degraded": return `Reranking unavailable (${cause || "provider unavailable"}). Base results remain.`;
-    default: return "Reranking failed. Base results remain.";
+    case "applied":
+      return "Reranked results applied.";
+    case "skipped":
+      return "Reranking skipped because no candidates were available.";
+    case "degraded":
+      return `Reranking unavailable (${cause || "provider unavailable"}). Base results remain.`;
+    default:
+      return "Reranking failed. Base results remain.";
   }
 }
 

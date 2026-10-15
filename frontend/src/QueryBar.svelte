@@ -1,6 +1,12 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import { Button, Chip, SelectDropdown, Spinner, type SelectDropdownOption } from "@kenn-io/kit-ui";
+  import {
+    Button,
+    Chip,
+    SelectDropdown,
+    Spinner,
+    type SelectDropdownOption,
+  } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
   import { canonicalQuery, parseQuery, type Query } from "./query.js";
   import { previewQuery, querySelection, type QueryPreview } from "./queryPreview.js";
@@ -16,7 +22,16 @@
     onclose: () => void;
     onauthfailure: (cause: unknown) => void;
   }
-  let { session, query, profile = "", onchange, onrun, onsave, onclose, onauthfailure }: Props = $props();
+  let {
+    session,
+    query,
+    profile = "",
+    onchange,
+    onrun,
+    onsave,
+    onclose,
+    onauthfailure,
+  }: Props = $props();
   let draft = $state<Query>(untrack(() => parseQuery(canonicalQuery(query))));
   let facets = $state(untrack(() => JSON.stringify(query.filters, null, 2)));
   let schemaError = $state("");
@@ -31,17 +46,48 @@
   let currentIdentity = "";
   let executionProfile = $state(untrack(() => profile));
   let pageSize = $state<50 | 100 | 250>(100);
-  const syntaxOptions: SelectDropdownOption[] = [{value:"simple",label:"Simple"},{value:"advanced",label:"Advanced"}];
-  const modeOptions: SelectDropdownOption[] = ["lexical","semantic","hybrid"].map((value) => ({value,label:value}));
-  const sortOptions: SelectDropdownOption[] = ["name","path","modified_at","size","media_type","relevance"].map((value) => ({value,label:value}));
-  const directionOptions: SelectDropdownOption[] = [{value:"asc",label:"Ascending"},{value:"desc",label:"Descending"}];
+  const syntaxOptions: SelectDropdownOption[] = [
+    { value: "simple", label: "Simple" },
+    { value: "advanced", label: "Advanced" },
+  ];
+  const modeOptions: SelectDropdownOption[] = ["lexical", "semantic", "hybrid"].map((value) => ({
+    value,
+    label: value,
+  }));
+  const sortOptions: SelectDropdownOption[] = [
+    "name",
+    "path",
+    "modified_at",
+    "size",
+    "media_type",
+    "relevance",
+  ].map((value) => ({ value, label: value }));
+  const directionOptions: SelectDropdownOption[] = [
+    { value: "asc", label: "Ascending" },
+    { value: "desc", label: "Descending" },
+  ];
   const selection = $derived(querySelection(draft.text, position));
-  const profileError = $derived(new TextEncoder().encode(executionProfile.trim()).length > 128 ? "Processing profile exceeds 128 bytes." : "");
-  const executionError = $derived(draft.mode !== "lexical"
-    ? "Frozen snapshots support lexical mode only."
-    : draft.sort.field === "relevance" ? "Frozen snapshots do not support relevance sorting. Choose another sort order." : "");
+  const profileError = $derived(
+    new TextEncoder().encode(executionProfile.trim()).length > 128
+      ? "Processing profile exceeds 128 bytes."
+      : "",
+  );
+  const executionError = $derived(
+    draft.mode !== "lexical"
+      ? "Frozen snapshots support lexical mode only."
+      : draft.sort.field === "relevance"
+        ? "Frozen snapshots do not support relevance sorting. Choose another sort order."
+        : "",
+  );
   const requestedFacets: SnapshotOptions["facets"] = [
-    "collections", "tags", "media_family", "extension", "modified", "size", "text_coverage", "duplicates",
+    "collections",
+    "tags",
+    "media_family",
+    "extension",
+    "modified",
+    "size",
+    "text_coverage",
+    "duplicates",
   ];
 
   function invalidate() {
@@ -81,17 +127,25 @@
       timer = undefined;
       const abort = new AbortController();
       controller = abort;
-      const current = () => requestGeneration === generation && identity === currentIdentity && !abort.signal.aborted;
-      void previewQuery(requestSession, valid, abort.signal).then((result) => {
-        if (current()) preview = result;
-      }).catch((cause: unknown) => {
-        if (!current()) return;
-        if (cause instanceof APIError && cause.status === 401) { onauthfailure(cause); return; }
-        failure = cause instanceof Error ? cause.message : String(cause);
-        if (cause instanceof APIError && cause.code === "invalid_query") position = cause.position;
-      }).finally(() => {
-        if (current()) pending = false;
-      });
+      const current = () =>
+        requestGeneration === generation && identity === currentIdentity && !abort.signal.aborted;
+      void previewQuery(requestSession, valid, abort.signal)
+        .then((result) => {
+          if (current()) preview = result;
+        })
+        .catch((cause: unknown) => {
+          if (!current()) return;
+          if (cause instanceof APIError && cause.status === 401) {
+            onauthfailure(cause);
+            return;
+          }
+          failure = cause instanceof Error ? cause.message : String(cause);
+          if (cause instanceof APIError && cause.code === "invalid_query")
+            position = cause.position;
+        })
+        .finally(() => {
+          if (current()) pending = false;
+        });
     }, 250);
   }
 
@@ -107,7 +161,10 @@
     return () => invalidate();
   });
 
-  function close() { invalidate(); onclose(); }
+  function close() {
+    invalidate();
+    onclose();
+  }
   function focusError() {
     if (!selection) return;
     expression.focus();
@@ -126,44 +183,121 @@
 </script>
 
 <section class="query-bar" aria-label="Query editor">
-  <div class="heading"><h2>Query editor</h2><Button size="sm" disabled={schemaError !== ""} onclick={close}>Close query editor</Button></div>
-  <p>Edit complete query intent. Draft edits do not change an accepted frozen snapshot until you run them.</p>
+  <div class="heading">
+    <h2>Query editor</h2>
+    <Button size="sm" disabled={schemaError !== ""} onclick={close}>Close query editor</Button>
+  </div>
+  <p>
+    Edit complete query intent. Draft edits do not change an accepted frozen snapshot until you run
+    them.
+  </p>
   <div class="controls">
-    <SelectDropdown value={draft.syntax} options={syntaxOptions} title="Query syntax" onchange={(value) => { draft = {...draft,syntax:value as Query["syntax"]}; validate(true); }} />
-    <SelectDropdown value={draft.mode} options={modeOptions} title="Query mode" onchange={(value) => { draft = {...draft,mode:value as Query["mode"]}; validate(true); }} />
-    <SelectDropdown value={draft.sort.field} options={sortOptions} title="Query sort" onchange={(value) => { draft = {...draft,sort:{...draft.sort,field:value as Query["sort"]["field"]}}; validate(true); }} />
-    <SelectDropdown value={draft.sort.direction} options={directionOptions} title="Query direction" onchange={(value) => { draft = {...draft,sort:{...draft.sort,direction:value as Query["sort"]["direction"]}}; validate(true); }} />
+    <SelectDropdown
+      value={draft.syntax}
+      options={syntaxOptions}
+      title="Query syntax"
+      onchange={(value) => {
+        draft = { ...draft, syntax: value as Query["syntax"] };
+        validate(true);
+      }}
+    />
+    <SelectDropdown
+      value={draft.mode}
+      options={modeOptions}
+      title="Query mode"
+      onchange={(value) => {
+        draft = { ...draft, mode: value as Query["mode"] };
+        validate(true);
+      }}
+    />
+    <SelectDropdown
+      value={draft.sort.field}
+      options={sortOptions}
+      title="Query sort"
+      onchange={(value) => {
+        draft = { ...draft, sort: { ...draft.sort, field: value as Query["sort"]["field"] } };
+        validate(true);
+      }}
+    />
+    <SelectDropdown
+      value={draft.sort.direction}
+      options={directionOptions}
+      title="Query direction"
+      onchange={(value) => {
+        draft = {
+          ...draft,
+          sort: { ...draft.sort, direction: value as Query["sort"]["direction"] },
+        };
+        validate(true);
+      }}
+    />
   </div>
   <label for="query-expression">Query expression</label>
-  <textarea id="query-expression" bind:this={expression} value={draft.text} rows="2" spellcheck="false"
-    oninput={(event) => { draft = {...draft,text:event.currentTarget.value}; validate(true); }}></textarea>
+  <textarea
+    id="query-expression"
+    bind:this={expression}
+    value={draft.text}
+    rows="2"
+    spellcheck="false"
+    oninput={(event) => {
+      draft = { ...draft, text: event.currentTarget.value };
+      validate(true);
+    }}></textarea>
   <details>
     <summary>Syntax help</summary>
-    <p>Simple syntax treats whitespace-separated words as literal prefixes. Advanced syntax supports quoted phrases, parentheses, AND, OR, NOT, suffix * prefixes, and NEAR/5 proximity.</p>
-    <p>Keep field operands in their Boolean scope, for example <code>name:manual OR collection:archive</code>. References use <code>tag:</code>, <code>collection:</code>, or <code>saved:</code>. The server validates supported fields and values; unknown exclusions block validation.</p>
+    <p>
+      Simple syntax treats whitespace-separated words as literal prefixes. Advanced syntax supports
+      quoted phrases, parentheses, AND, OR, NOT, suffix * prefixes, and NEAR/5 proximity.
+    </p>
+    <p>
+      Keep field operands in their Boolean scope, for example <code
+        >name:manual OR collection:archive</code
+      >. References use <code>tag:</code>, <code>collection:</code>, or <code>saved:</code>. The
+      server validates supported fields and values; unknown exclusions block validation.
+    </p>
   </details>
   <label for="query-facets">Structured facets JSON</label>
-  <textarea id="query-facets" value={facets} rows="3" spellcheck="false"
-    oninput={(event) => { facets = event.currentTarget.value; validate(true); }}></textarea>
+  <textarea
+    id="query-facets"
+    value={facets}
+    rows="3"
+    spellcheck="false"
+    oninput={(event) => {
+      facets = event.currentTarget.value;
+      validate(true);
+    }}></textarea>
   <div class="summaries" aria-label="Structured facet summaries">
-    {#each Object.entries(draft.filters).filter(([, value]) => value !== undefined) as [key, value]}<Chip>{key}: {JSON.stringify(value)}</Chip>{/each}
+    {#each Object.entries(draft.filters).filter(([, value]) => value !== undefined) as [key, value]}<Chip
+        >{key}: {JSON.stringify(value)}</Chip
+      >{/each}
   </div>
-  <label for="query-profile">Processing profile <span>(optional, exact configured name)</span></label>
-  <input id="query-profile" value={executionProfile} autocomplete="off" spellcheck="false"
-    oninput={(event) => (executionProfile = event.currentTarget.value)} />
+  <label for="query-profile"
+    >Processing profile <span>(optional, exact configured name)</span></label
+  >
+  <input
+    id="query-profile"
+    value={executionProfile}
+    autocomplete="off"
+    spellcheck="false"
+    oninput={(event) => (executionProfile = event.currentTarget.value)}
+  />
   <label for="query-page-size">Documents per page</label>
   <select id="query-page-size" bind:value={pageSize}>
     <option value={50}>50</option><option value={100}>100</option><option value={250}>250</option>
   </select>
   {#if profileError}<p role="alert">{profileError}</p>{/if}
   {#if executionError}<p role="alert">{executionError}</p>{/if}
-  {#if schemaError}<p role="alert">{schemaError} Correct the draft or choose Discard query draft before closing.</p>{/if}
+  {#if schemaError}<p role="alert">
+      {schemaError} Correct the draft or choose Discard query draft before closing.
+    </p>{/if}
   <div aria-live="polite">
     {#if pending}<span class="checking"><Spinner size={14} /> Validating query…</span>{/if}
     {#if preview}
       <p>Query validated.{executionError ? "" : " Run creates a new frozen snapshot."}</p>
       <div class="summaries" aria-label="Resolved query dependencies">
-        {#each preview.dependencies as dependency (`${dependency.kind}:${dependency.id}`)}<Chip>{dependency.kind}: {dependency.id} · revision {dependency.revision}</Chip>{/each}
+        {#each preview.dependencies as dependency (`${dependency.kind}:${dependency.id}`)}<Chip
+            >{dependency.kind}: {dependency.id} · revision {dependency.revision}</Chip
+          >{/each}
       </div>
     {/if}
     {#if failure}<p role="alert">{failure}</p>{/if}
@@ -171,20 +305,70 @@
   {#if selection}<Button size="sm" onclick={focusError}>Focus query error</Button>{/if}
   <div class="controls">
     <Button disabled={schemaError !== ""} onclick={onsave}>Save query draft</Button>
-    <Button tone="info" disabled={schemaError !== "" || profileError !== "" || executionError !== ""} onclick={run}>Run query</Button>
-    <span>Run executes the complete draft. Folder browsing and ordinary live search stay separate.</span>
+    <Button
+      tone="info"
+      disabled={schemaError !== "" || profileError !== "" || executionError !== ""}
+      onclick={run}>Run query</Button
+    >
+    <span
+      >Run executes the complete draft. Folder browsing and ordinary live search stay separate.</span
+    >
   </div>
 </section>
 
 <style>
-  .query-bar { display: grid; gap: var(--space-3); padding: var(--space-4); border-bottom: 1px solid var(--border-default); background: var(--bg-surface); }
-  .query-bar p, h2 { margin: 0; }
-  h2 { font-size: var(--font-size-md); }
-  .heading, .controls, .summaries, .checking { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-  .heading { justify-content: space-between; }
-  .controls > span { color: var(--text-muted); font-size: var(--font-size-sm); flex: 1; min-width: 200px; }
-  textarea, input, select { box-sizing: border-box; width: 100%; padding: var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-surface); color: var(--text-primary); font-family: var(--font-mono); }
-  textarea { resize: vertical; }
-  label span { color: var(--text-muted); font-size: var(--font-size-xs); }
-  .summaries { overflow-wrap: anywhere; }
+  .query-bar {
+    display: grid;
+    gap: var(--space-3);
+    padding: var(--space-4);
+    border-bottom: 1px solid var(--border-default);
+    background: var(--bg-surface);
+  }
+  .query-bar p,
+  h2 {
+    margin: 0;
+  }
+  h2 {
+    font-size: var(--font-size-md);
+  }
+  .heading,
+  .controls,
+  .summaries,
+  .checking {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+  }
+  .heading {
+    justify-content: space-between;
+  }
+  .controls > span {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    flex: 1;
+    min-width: 200px;
+  }
+  textarea,
+  input,
+  select {
+    box-sizing: border-box;
+    width: 100%;
+    padding: var(--space-2);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+  }
+  textarea {
+    resize: vertical;
+  }
+  label span {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+  .summaries {
+    overflow-wrap: anywhere;
+  }
 </style>

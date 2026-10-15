@@ -40,9 +40,7 @@ export interface InspectorSourceSelection {
   readonly duplicate?: SelectedSource;
 }
 
-export function inspectorSource(
-  selection: InspectorSourceSelection,
-): SelectedSource {
+export function inspectorSource(selection: InspectorSourceSelection): SelectedSource {
   return selection.duplicate ?? selection.frozen;
 }
 
@@ -69,10 +67,7 @@ function key(
   return `${kind}:${nodeID}:${versionID}:${blobHash}:${size}`;
 }
 
-export function selectedSourceFromNode(
-  node: Node,
-  path: string,
-): LiveSelectedSource {
+export function selectedSourceFromNode(node: Node, path: string): LiveSelectedSource {
   if (
     node.kind !== "file" ||
     !node.current_version_id ||
@@ -80,19 +75,11 @@ export function selectedSourceFromNode(
     node.revision < 1 ||
     node.size < 0
   ) {
-    throw new Error(
-      "The selected document does not have complete selected-source authority.",
-    );
+    throw new Error("The selected document does not have complete selected-source authority.");
   }
   return {
     kind: "live",
-    key: key(
-      "live",
-      node.id,
-      node.current_version_id,
-      node.blob_hash,
-      node.size,
-    ),
+    key: key("live", node.id, node.current_version_id, node.blob_hash, node.size),
     nodeID: node.id,
     mutationRevision: node.revision,
     versionID: node.current_version_id,
@@ -111,13 +98,7 @@ export function selectedSourceFromSnapshot(
 ): SnapshotSelectedSource {
   return {
     kind: "snapshot",
-    key: key(
-      "snapshot",
-      row.node_id,
-      row.content_version_id,
-      row.blob_hash,
-      row.size,
-    ),
+    key: key("snapshot", row.node_id, row.content_version_id, row.blob_hash, row.size),
     nodeID: row.node_id,
     mutationRevision: row.revision,
     versionID: row.content_version_id,

@@ -1,14 +1,12 @@
 {
   "name": "docbank-frontend",
-  "private": true,
   "version": "0.1.0",
+  "private": true,
   "type": "module",
-  "engines": {
-    "node": ">=24.11.0"
-  },
   "scripts": {
     "dev": "vp dev",
     "build": "vp build",
+    "fmt": "vp fmt",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "check:kit-ui": "kit-ui-check src",
     "docs-site:check": "tsc -p docs-site/tsconfig.json --noEmit",
@@ -46,6 +44,9 @@
   },
   "overrides": {
     "vite": "npm:@voidzero-dev/vite-plus-core@0.2.4"
+  },
+  "engines": {
+    "node": ">=24.11.0"
   },
   "packageManager": "npm@11.17.0"
 }

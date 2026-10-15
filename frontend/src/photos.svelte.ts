@@ -1,18 +1,48 @@
-import { getNode, hidePhotoAsset, unhidePhotoAsset, preparePhotoPreview, listPhotoAssets, trashPhotoAsset, preflightPhotoRejects, movePhotoRejects, type PhotoRejectsPreflight, type PhotoAuthoredPatch, type PhotoAuthoredReceipt, type PhotoPreviewSlot, type PhotoBrowseRow, type PhotoMapRow, type SavedQueryV1Schema, type PhotoAlbumMembersRequest } from "./generated/docbank.js";
+import {
+  getNode,
+  hidePhotoAsset,
+  unhidePhotoAsset,
+  preparePhotoPreview,
+  listPhotoAssets,
+  trashPhotoAsset,
+  preflightPhotoRejects,
+  movePhotoRejects,
+  type PhotoRejectsPreflight,
+  type PhotoAuthoredPatch,
+  type PhotoAuthoredReceipt,
+  type PhotoPreviewSlot,
+  type PhotoBrowseRow,
+  type PhotoMapRow,
+  type SavedQueryV1Schema,
+  type PhotoAlbumMembersRequest,
+} from "./generated/docbank.js";
 import { readVerifiedPreview } from "./download.js";
 import { selectedSourceFromNode } from "./selectedSource.js";
 import { localPreferenceStorage } from "./browser-storage.js";
 import { APIError } from "./api-transport.js";
 import { randomUUID } from "./crypto.js";
 import { ROW_HEIGHTS, type Density } from "./photoGrid.js";
-import { clearSelection, reconcileIDSelection, toggleIDSelection, type SelectionState } from "./selection.js";
+import {
+  clearSelection,
+  reconcileIDSelection,
+  toggleIDSelection,
+  type SelectionState,
+} from "./selection.js";
 import { fetchPhotoTimeline, type SnapshotPage } from "./snapshots.js";
-import { parseQuery, canonicalQuery, type Query, type QueryFilters, type QuerySort } from "./query.js";
+import {
+  parseQuery,
+  canonicalQuery,
+  type Query,
+  type QueryFilters,
+  type QuerySort,
+} from "./query.js";
 import { captureDateQuery, type CaptureDayFacet } from "./photoTimeline.js";
 import { PhotoAuthoredEditor, type PhotoUndoState } from "./photoAuthored.svelte.js";
 import type { HiddenAccess } from "./hiddenAccess.svelte.js";
 
-export const photoQuery = parseQuery('{"syntax":"simple","sort":{"field":"capture_time","direction":"desc"}}');
+export const photoQuery = parseQuery(
+  '{"syntax":"simple","sort":{"field":"capture_time","direction":"desc"}}',
+);
 export const mapPhotoLimit = 20_000;
 const mapPageLimit = 20;
 const photoFacets = ["camera", "lens", "year", "location", "set"] as const;
@@ -20,32 +50,58 @@ const photoFacets = ["camera", "lens", "year", "location", "set"] as const;
 const photoRejectsTimeout = 300_000;
 const densityKey = "docbank.photos.density";
 // Photo sorts, facets, and the timeline never read authored metadata; only search text and these filters do.
-const authoredFilters = ["rating_min", "rating_max", "flags", "labels", "tag_ids", "exclude_tag_ids", "no_tags", "modified_after", "modified_before"] as const satisfies readonly (keyof QueryFilters)[];
+const authoredFilters = [
+  "rating_min",
+  "rating_max",
+  "flags",
+  "labels",
+  "tag_ids",
+  "exclude_tag_ids",
+  "no_tags",
+  "modified_after",
+  "modified_before",
+] as const satisfies readonly (keyof QueryFilters)[];
 
 export function loadDensity(): Density {
   try {
     const value = localPreferenceStorage()?.getItem(densityKey);
     if (value && Object.hasOwn(ROW_HEIGHTS, value)) return value as Density;
-  } catch { /* Browsing also works when local storage is disabled. */ }
+  } catch {
+    /* Browsing also works when local storage is disabled. */
+  }
   return "comfortable";
 }
 
 let density = $state<Density>(loadDensity());
 
-export interface MapView { lat: number; lng: number; zoom: number }
-export interface PhotoReturn { contextID: string; assetID: string; control: "image" | "open" | "check" | "marker"; scrollTop: number }
+export interface MapView {
+  lat: number;
+  lng: number;
+  zoom: number;
+}
+export interface PhotoReturn {
+  contextID: string;
+  assetID: string;
+  control: "image" | "open" | "check" | "marker";
+  scrollTop: number;
+}
 
 export type PhotoRow = PhotoBrowseRow | PhotoMapRow;
 
 type PhotoTarget = Pick<PhotoBrowseRow, "asset_id" | "revision">;
-interface PhotosOptions { projection?: "map" | undefined; undoState?: PhotoUndoState | undefined; hiddenAccess?: HiddenAccess | undefined }
+interface PhotosOptions {
+  projection?: "map" | undefined;
+  undoState?: PhotoUndoState | undefined;
+  hiddenAccess?: HiddenAccess | undefined;
+}
 
 export class Photos {
   readonly authored: PhotoAuthoredEditor;
   editScopeRevision = $state(0);
   private changeEditScope() {
     if (!this.authored.canChangeTarget()) return false;
-    this.editScopeRevision++; this.authored.reset();
+    this.editScopeRevision++;
+    this.authored.reset();
     return true;
   }
   readonly contextID = randomUUID();
@@ -65,12 +121,24 @@ export class Photos {
   private rows = $state.raw<PhotoRow[]>([]);
   private seenIDs: Set<string> | undefined;
   appendedFrom = $state.raw<PhotoRow[]>();
-  get items() { return this.rows; }
-  set items(value: PhotoRow[]) { this.appendedFrom = undefined; this.seenIDs = undefined; this.rows = value; }
+  get items() {
+    return this.rows;
+  }
+  set items(value: PhotoRow[]) {
+    this.appendedFrom = undefined;
+    this.seenIDs = undefined;
+    this.rows = value;
+  }
   total = $state(0);
   private countStale = false;
   cursor = $state<string | undefined>();
-  get mapCapped() { return this.projection === "map" && this.items.length >= mapPhotoLimit && this.total > this.items.length; }
+  get mapCapped() {
+    return (
+      this.projection === "map" &&
+      this.items.length >= mapPhotoLimit &&
+      this.total > this.items.length
+    );
+  }
   loading = $state(false);
   trashing = $state(false);
   rejects = $state<PhotoRejectsPreflight>();
@@ -87,14 +155,24 @@ export class Photos {
   // Map remounts after every access check, so its position lives with the list, like scrollTop.
   mapView: MapView | undefined;
   grouping = $state<"months" | "sessions">("months");
-  get density() { return density; }
+  get density() {
+    return density;
+  }
   selection = $state<SelectionState<string>>(clearSelection<string>());
   allResults = $state(false);
   started = $state(false);
   private expired = false;
   private replacement: "refresh" | "expiry" | "date" | undefined;
   private replacementDate: string | undefined;
-  staged: { candidate: Map<string, PhotoRow>; cursor?: string; total: number; complete: boolean; pages: number } | undefined;
+  staged:
+    | {
+        candidate: Map<string, PhotoRow>;
+        cursor?: string;
+        total: number;
+        complete: boolean;
+        pages: number;
+      }
+    | undefined;
   private controller = new AbortController();
   private facetsController = new AbortController();
   private needsFacets = false;
@@ -106,7 +184,27 @@ export class Photos {
 
   readonly projection?: "map" | undefined;
   private readonly hiddenAccess?: HiddenAccess | undefined;
-  constructor(readonly session: string, readonly onauthfailure: (cause: unknown) => void, readonly hidden = false, query: Query = photoQuery, { projection, undoState, hiddenAccess }: PhotosOptions = {}) { this.projection = projection; this.hiddenAccess = hiddenAccess; this.authored = new PhotoAuthoredEditor(session, cause => { this.authFailure(cause); }, undoState, hidden ? hiddenAccess : undefined); this.baseQuery = query; this.query = query; this.withoutCounts = Boolean(query.filters?.set_ids?.length) || this.projection === "map"; }
+  constructor(
+    readonly session: string,
+    readonly onauthfailure: (cause: unknown) => void,
+    readonly hidden = false,
+    query: Query = photoQuery,
+    { projection, undoState, hiddenAccess }: PhotosOptions = {},
+  ) {
+    this.projection = projection;
+    this.hiddenAccess = hiddenAccess;
+    this.authored = new PhotoAuthoredEditor(
+      session,
+      (cause) => {
+        this.authFailure(cause);
+      },
+      undoState,
+      hidden ? hiddenAccess : undefined,
+    );
+    this.baseQuery = query;
+    this.query = query;
+    this.withoutCounts = Boolean(query.filters?.set_ids?.length) || this.projection === "map";
+  }
 
   setSort(sort: QuerySort) {
     if (this.disposed || !this.authored.canChangeTarget()) return;
@@ -117,19 +215,30 @@ export class Photos {
     this.staged = undefined;
     this.baseQuery = { ...this.baseQuery, sort };
     this.query = { ...this.query, sort };
-    this.items = []; this.total = 0; this.cursor = undefined; this.scrollTop = 0;
-    this.started = false; this.expired = false; this.replacement = undefined; this.error = "";
+    this.items = [];
+    this.total = 0;
+    this.cursor = undefined;
+    this.scrollTop = 0;
+    this.started = false;
+    this.expired = false;
+    this.replacement = undefined;
+    this.error = "";
     this.clearSelection();
     return this.loadMore();
   }
 
   private authFailure(cause: unknown) {
-    const expired = cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403);
+    const expired =
+      cause instanceof APIError && (cause.status === 401 || (this.hidden && cause.status === 403));
     if (expired) this.onauthfailure(cause);
     return expired;
   }
 
-  selectedIDs = $derived.by(() => !this.authored.inspectedID && this.authored.targets.length ? new Set(this.authored.targets.map(target => target.asset_id)) : this.selection.selectedIDs);
+  selectedIDs = $derived.by(() =>
+    !this.authored.inspectedID && this.authored.targets.length
+      ? new Set(this.authored.targets.map((target) => target.asset_id))
+      : this.selection.selectedIDs,
+  );
 
   private captureSelection() {
     const selectedIDs = this.selectedIDs;
@@ -138,15 +247,26 @@ export class Photos {
   }
 
   scope(): PhotoAlbumMembersRequest {
-    if (!this.authored.inspectedID && this.authored.targets.length) return { asset_ids: [...this.selectedIDs] };
-    return this.allResults ? { query: structuredClone(this.query) } : { asset_ids: [...this.selection.selectedIDs] };
+    if (!this.authored.inspectedID && this.authored.targets.length)
+      return { asset_ids: [...this.selectedIDs] };
+    return this.allResults
+      ? { query: structuredClone(this.query) }
+      : { asset_ids: [...this.selection.selectedIDs] };
   }
 
   async lookup(assetID: string, signal: AbortSignal): Promise<PhotoBrowseRow> {
     const query = photoQuery;
     try {
-      const page = await listPhotoAssets({ query: { ...query, filters: { ...query.filters, asset_ids: [assetID] } }, page_size: 1, hidden: this.hidden }, { session: this.session, signal });
-      if (!page.items[0]) throw new APIError("This photo is no longer in this view.", 404, "not_found");
+      const page = await listPhotoAssets(
+        {
+          query: { ...query, filters: { ...query.filters, asset_ids: [assetID] } },
+          page_size: 1,
+          hidden: this.hidden,
+        },
+        { session: this.session, signal },
+      );
+      if (!page.items[0])
+        throw new APIError("This photo is no longer in this view.", 404, "not_found");
       signal.throwIfAborted();
       return page.items[0];
     } catch (cause) {
@@ -162,24 +282,42 @@ export class Photos {
   async reload(assetID: string, signal: AbortSignal): Promise<PhotoBrowseRow> {
     const query = this.query;
     try {
-      if (query.filters.asset_ids && !query.filters.asset_ids.includes(assetID)) throw new APIError("This photo is no longer in this view.", 404, "not_found");
-      const row = (await this.page({ ...query, filters: { ...query.filters, asset_ids: [assetID] } }, signal).catch(cause => {
-        if (!signal.aborted) this.authFailure(cause);
-        throw cause;
-      })).items[0];
+      if (query.filters.asset_ids && !query.filters.asset_ids.includes(assetID))
+        throw new APIError("This photo is no longer in this view.", 404, "not_found");
+      const row = (
+        await this.page(
+          { ...query, filters: { ...query.filters, asset_ids: [assetID] } },
+          signal,
+        ).catch((cause) => {
+          if (!signal.aborted) this.authFailure(cause);
+          throw cause;
+        })
+      ).items[0];
       if (!row) throw new APIError("This photo is no longer in this view.", 404, "not_found");
       signal.throwIfAborted();
       if (!this.disposed && this.query === query) {
         this.cancelPending(true);
-        this.items = this.items.map(item => item.asset_id === assetID ? row : item);
-        this.trashTargets = this.trashTargets.map(item => item.asset_id === assetID ? row : item);
+        this.items = this.items.map((item) => (item.asset_id === assetID ? row : item));
+        this.trashTargets = this.trashTargets.map((item) =>
+          item.asset_id === assetID ? row : item,
+        );
         void this.resume();
       }
       return await this.detail(row, signal);
     } catch (cause) {
-      if (!signal.aborted && !this.disposed && this.query === query && cause instanceof APIError && cause.status === 404) {
+      if (
+        !signal.aborted &&
+        !this.disposed &&
+        this.query === query &&
+        cause instanceof APIError &&
+        cause.status === 404
+      ) {
         this.cancelPending(true);
-        if (this.items.some(item => item.asset_id === assetID) || this.trashTargets.some(item => item.asset_id === assetID)) this.removeTarget(assetID);
+        if (
+          this.items.some((item) => item.asset_id === assetID) ||
+          this.trashTargets.some((item) => item.asset_id === assetID)
+        )
+          this.removeTarget(assetID);
         void this.resume();
         return this.lookup(assetID, signal);
       }
@@ -188,14 +326,32 @@ export class Photos {
   }
 
   private async page(query: Query, signal: AbortSignal, cursor?: string) {
-    const page = await listPhotoAssets({ query, projection: this.projection, hidden: this.hidden, facets: [], page_size: this.projection ? 1000 : 250, ...(cursor ? { cursor } : {}) }, { session: this.session, signal });
-    return { ...page, items: this.projection ? page.map_items ?? [] : page.items };
+    const page = await listPhotoAssets(
+      {
+        query,
+        projection: this.projection,
+        hidden: this.hidden,
+        facets: [],
+        page_size: this.projection ? 1000 : 250,
+        ...(cursor ? { cursor } : {}),
+      },
+      { session: this.session, signal },
+    );
+    return { ...page, items: this.projection ? (page.map_items ?? []) : page.items };
   }
 
-  async preview(photo: PhotoBrowseRow, size: "fit" | "large", signal: AbortSignal): Promise<PhotoPreviewSlot> {
+  async preview(
+    photo: PhotoBrowseRow,
+    size: "fit" | "large",
+    signal: AbortSignal,
+  ): Promise<PhotoPreviewSlot> {
     if (photo.previews[size].state !== "missing") return photo.previews[size];
     try {
-      const slot = await preparePhotoPreview(photo.asset_id, { content_version_id: photo.content_version_id, size, hidden: this.hidden }, { session: this.session, signal });
+      const slot = await preparePhotoPreview(
+        photo.asset_id,
+        { content_version_id: photo.content_version_id, size, hidden: this.hidden },
+        { session: this.session, signal },
+      );
       signal.throwIfAborted();
       photo.previews[size] = slot;
       return slot;
@@ -206,18 +362,37 @@ export class Photos {
   }
 
   async original(photo: PhotoBrowseRow, signal: AbortSignal): Promise<string> {
-    const conflict = () => new APIError("The photo changed. Reload this photo before viewing its original.", 409, "photo_display_changed");
+    const conflict = () =>
+      new APIError(
+        "The photo changed. Reload this photo before viewing its original.",
+        409,
+        "photo_display_changed",
+      );
     const check = async () => {
       signal.throwIfAborted();
-      const current = await this.lookup(photo.asset_id, signal).catch(cause => { if (cause instanceof APIError && cause.status === 404) throw conflict(); throw cause; });
-      if (current.display_file_id !== photo.display_file_id || current.node_id !== photo.node_id || current.content_version_id !== photo.content_version_id) throw conflict();
+      const current = await this.lookup(photo.asset_id, signal).catch((cause) => {
+        if (cause instanceof APIError && cause.status === 404) throw conflict();
+        throw cause;
+      });
+      if (
+        current.display_file_id !== photo.display_file_id ||
+        current.node_id !== photo.node_id ||
+        current.content_version_id !== photo.content_version_id
+      )
+        throw conflict();
     };
     await check();
     let objectURL: string;
     try {
       const node = await getNode(photo.node_id, { session: this.session, signal });
       if (node.current_version_id !== photo.content_version_id) throw conflict();
-      const result = await readVerifiedPreview(this.session, selectedSourceFromNode(node, photo.name), node.revision, signal, () => {});
+      const result = await readVerifiedPreview(
+        this.session,
+        selectedSourceFromNode(node, photo.name),
+        node.revision,
+        signal,
+        () => {},
+      );
       if (result.kind !== "image") throw new Error("This original cannot be viewed as an image.");
       objectURL = result.url;
     } catch (cause) {
@@ -228,7 +403,10 @@ export class Photos {
       await check();
       signal.throwIfAborted();
       return objectURL;
-    } catch (cause) { URL.revokeObjectURL(objectURL); throw cause; }
+    } catch (cause) {
+      URL.revokeObjectURL(objectURL);
+      throw cause;
+    }
   }
 
   // setQuery replaces the search, filter, or album scope. It clears the selected
@@ -237,25 +415,48 @@ export class Photos {
     if (this.disposed || this.hiding || this.trashing || !this.authored.canChangeTarget()) return;
     this.cancelPending();
     let next: Query;
-    try { next = parseQuery(canonicalQuery(query)); } catch (cause) { this.error = cause instanceof Error ? cause.message : String(cause); return; }
-    this.baseQuery = next; this.query = next; this.date = undefined;
-    this.timeline = undefined; this.timelineError = "";
-    this.items = []; this.facets = []; this.total = 0; this.cursor = undefined;
-    this.facetsError = ""; this.needsFacets = false;
-    this.started = false; this.error = ""; this.expired = false; this.replacement = undefined;
-    this.scrollTop = 0; this.clearSelection();
+    try {
+      next = parseQuery(canonicalQuery(query));
+    } catch (cause) {
+      this.error = cause instanceof Error ? cause.message : String(cause);
+      return;
+    }
+    this.baseQuery = next;
+    this.query = next;
+    this.date = undefined;
+    this.timeline = undefined;
+    this.timelineError = "";
+    this.items = [];
+    this.facets = [];
+    this.total = 0;
+    this.cursor = undefined;
+    this.facetsError = "";
+    this.needsFacets = false;
+    this.started = false;
+    this.error = "";
+    this.expired = false;
+    this.replacement = undefined;
+    this.scrollTop = 0;
+    this.clearSelection();
     if (this.view === "timeline") void this.loadTimeline();
     return this.loadMore();
   }
 
   setDensity(value: Density) {
     density = value;
-    try { localPreferenceStorage()?.setItem(densityKey, value); } catch { /* Keep the current session's preference. */ }
+    try {
+      localPreferenceStorage()?.setItem(densityKey, value);
+    } catch {
+      /* Keep the current session's preference. */
+    }
   }
 
   async loadMore(preserve?: () => (() => Promise<void>) | undefined): Promise<void> {
     if (this.disposed || this.hiding || this.loading || this.trashing || this.error) return;
-    if (this.projection && this.replacement) { await this.retry(preserve); return; }
+    if (this.projection && this.replacement) {
+      await this.retry(preserve);
+      return;
+    }
     if (this.projection === "map" && this.items.length >= mapPhotoLimit) return;
     if (this.started && !this.cursor) return;
     this.loading = true;
@@ -265,16 +466,21 @@ export class Photos {
       const first = !this.started;
       let pages = 0;
       do {
-        signal = this.projection ? AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]) : controller.signal;
+        signal = this.projection
+          ? AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)])
+          : controller.signal;
         const page = await this.page(this.query, signal, this.cursor);
         if (signal.aborted) throw signal.reason;
         pages++;
-        const seen = this.seenIDs ??= new Set(this.items.map(item => item.asset_id));
+        const seen = (this.seenIDs ??= new Set(this.items.map((item) => item.asset_id)));
         const added: PhotoRow[] = [];
         let capped = false;
         for (const item of page.items) {
           if (seen.has(item.asset_id)) continue;
-          if (this.projection === "map" && this.items.length + added.length >= mapPhotoLimit) { capped = true; break; }
+          if (this.projection === "map" && this.items.length + added.length >= mapPhotoLimit) {
+            capped = true;
+            break;
+          }
           seen.add(item.asset_id);
           added.push(item);
         }
@@ -282,24 +488,52 @@ export class Photos {
         const previous = this.items;
         this.rows = [...previous, ...added];
         this.appendedFrom = previous;
-        if (this.allResults && !this.authored.targets.length) this.selection = { selectedIDs: new Set(this.items.map(item => item.asset_id)), anchorID: undefined };
+        if (this.allResults && !this.authored.targets.length)
+          this.selection = {
+            selectedIDs: new Set(this.items.map((item) => item.asset_id)),
+            anchorID: undefined,
+          };
         if (!this.started || !this.projection) this.total = page.total;
         this.cursor = capped ? this.cursor : page.next_cursor;
         this.started = true;
         await restore?.();
-      } while (this.projection && this.cursor && pages < mapPageLimit && this.items.length < mapPhotoLimit && !controller.signal.aborted);
-      if (first && !controller.signal.aborted) { this.needsFacets = true; void this.retryFacets(); }
+      } while (
+        this.projection &&
+        this.cursor &&
+        pages < mapPageLimit &&
+        this.items.length < mapPhotoLimit &&
+        !controller.signal.aborted
+      );
+      if (first && !controller.signal.aborted) {
+        this.needsFacets = true;
+        void this.retryFacets();
+      }
     } catch (cause) {
       if (controller.signal.aborted) return;
       this.authFailure(cause);
-      this.expired = cause instanceof APIError && (cause.code === "cursor_expired" || !!this.projection && cause.code === "invalid_photo_cursor");
-      this.error = this.projection && (signal.aborted || cause instanceof Error && cause.name === "TimeoutError") ? "Photo refresh timed out. Retry to keep browsing." : cause instanceof Error ? cause.message : String(cause);
+      this.expired =
+        cause instanceof APIError &&
+        (cause.code === "cursor_expired" ||
+          (!!this.projection && cause.code === "invalid_photo_cursor"));
+      this.error =
+        this.projection &&
+        (signal.aborted || (cause instanceof Error && cause.name === "TimeoutError"))
+          ? "Photo refresh timed out. Retry to keep browsing."
+          : cause instanceof Error
+            ? cause.message
+            : String(cause);
     } finally {
       if (!controller.signal.aborted) this.loading = false;
     }
   }
 
-  async setHidden(id: string, preserve?: () => (() => Promise<void>) | undefined, onhidden?: () => void | Promise<void>, onactionerror?: (error: string) => void, oninvalidate?: () => void | Promise<void>) {
+  async setHidden(
+    id: string,
+    preserve?: () => (() => Promise<void>) | undefined,
+    onhidden?: () => void | Promise<void>,
+    onactionerror?: (error: string) => void,
+    oninvalidate?: () => void | Promise<void>,
+  ) {
     if (this.hiding || this.trashing || this.disposed || !this.authored.canChangeTarget()) return;
     if (this.allResults && !this.authored.targets.length && this.selectedIDs.has(id)) {
       this.actionError = "Hide changes loaded photos only. Choose Select loaded photos first.";
@@ -317,28 +551,48 @@ export class Photos {
     this.actionError = "";
     let failure = "";
     let failures = 0;
-    await this.mutateBatch(members, async member => {
-      const signal = AbortSignal.timeout(60_000);
-      const receipt = await (this.hidden ? unhidePhotoAsset : hidePhotoAsset)(member.asset_id, { "If-Match": String(member.revision) }, { session: this.session, signal });
-      if (signal.aborted) throw signal.reason;
-      return receipt;
-    }, cause => {
-      failures++;
-      failure = cause instanceof APIError && cause.code === "hidden_not_configured" ? "Set a passcode in the Hidden view first."
-        : cause instanceof APIError && cause.code === "hidden_locked" && !this.hidden ? "This photo is already hidden."
-        : cause instanceof Error ? cause.message : String(cause);
-      if (this.authFailure(cause)) return true;
-      return false;
-    }, async changed => {
-      this.actionError = failures ? `${failures} photo${failures === 1 ? "" : "s"} failed: ${failure}` : "";
-      onactionerror?.(this.actionError);
-      if (changed) await onhidden?.();
-    }, "hiding", preserve, oninvalidate);
+    await this.mutateBatch(
+      members,
+      async (member) => {
+        const signal = AbortSignal.timeout(60_000);
+        const receipt = await (this.hidden ? unhidePhotoAsset : hidePhotoAsset)(
+          member.asset_id,
+          { "If-Match": String(member.revision) },
+          { session: this.session, signal },
+        );
+        if (signal.aborted) throw signal.reason;
+        return receipt;
+      },
+      (cause) => {
+        failures++;
+        failure =
+          cause instanceof APIError && cause.code === "hidden_not_configured"
+            ? "Set a passcode in the Hidden view first."
+            : cause instanceof APIError && cause.code === "hidden_locked" && !this.hidden
+              ? "This photo is already hidden."
+              : cause instanceof Error
+                ? cause.message
+                : String(cause);
+        if (this.authFailure(cause)) return true;
+        return false;
+      },
+      async (changed) => {
+        this.actionError = failures
+          ? `${failures} photo${failures === 1 ? "" : "s"} failed: ${failure}`
+          : "";
+        onactionerror?.(this.actionError);
+        if (changed) await onhidden?.();
+      },
+      "hiding",
+      preserve,
+      oninvalidate,
+    );
   }
 
   cancelPending(invalidateReplacement = false) {
     if (this.disposed) return;
-    if (invalidateReplacement && this.replacement && !this.error) this.error = "Photo list changed. Retry to finish loading.";
+    if (invalidateReplacement && this.replacement && !this.error)
+      this.error = "Photo list changed. Retry to finish loading.";
     this.controller.abort();
     this.controller = new AbortController();
     this.facetsController.abort();
@@ -358,25 +612,40 @@ export class Photos {
 
   resume(preserve?: () => (() => Promise<void>) | undefined) {
     if (this.needsFacets && !this.facetsError) void this.retryFacets();
-    if (this.view === "timeline" && !this.timeline && !this.timelineLoading && !this.timelineError) void this.loadTimeline();
+    if (this.view === "timeline" && !this.timeline && !this.timelineLoading && !this.timelineError)
+      void this.loadTimeline();
     if (this.error) return;
     if (this.countStale && !this.replacement) void this.recount(preserve);
     if (this.replacement) return this.retry(preserve);
-    if (!this.started || this.projection && this.cursor) return this.loadMore(preserve);
+    if (!this.started || (this.projection && this.cursor)) return this.loadMore(preserve);
   }
 
   async retry(preserve?: () => (() => Promise<void>) | undefined) {
-    if (this.replacement || this.expired) return this.replace(this.replacement ?? "expiry", preserve, this.replacementDate, this.projection === "map");
+    if (this.replacement || this.expired)
+      return this.replace(
+        this.replacement ?? "expiry",
+        preserve,
+        this.replacementDate,
+        this.projection === "map",
+      );
     this.error = "";
     this.expired = false;
     return this.loadMore(preserve);
   }
 
   metadataChanged(receipt: PhotoAuthoredReceipt) {
-    const before = new Map(receipt.before.map(file => [file.file_id, file]));
-    const rotations = new Map(receipt.after.filter(file => before.get(file.file_id)?.values.rotation !== file.values.rotation).map(file => [file.file_id, file.values.rotation]));
+    const before = new Map(receipt.before.map((file) => [file.file_id, file]));
+    const rotations = new Map(
+      receipt.after
+        .filter((file) => before.get(file.file_id)?.values.rotation !== file.values.rotation)
+        .map((file) => [file.file_id, file.values.rotation]),
+    );
     if (rotations.size) {
-      this.items = this.items.map(row => "display_file_id" in row && rotations.has(row.display_file_id) ? { ...row, rotation: rotations.get(row.display_file_id)! } : row);
+      this.items = this.items.map((row) =>
+        "display_file_id" in row && rotations.has(row.display_file_id)
+          ? { ...row, rotation: rotations.get(row.display_file_id)! }
+          : row,
+      );
     }
     return rotations;
   }
@@ -384,15 +653,20 @@ export class Photos {
   /** Whether a metadata edit can change which photos this view lists or how it orders them. */
   get dependsOnAuthored() {
     const filters = this.query.filters ?? {};
-    return Boolean(this.query.text.trim()) || authoredFilters.some(key => {
-      const value = filters[key];
-      return Array.isArray(value) ? value.length > 0 : value !== undefined && value !== false && value !== "";
-    });
+    return (
+      Boolean(this.query.text.trim()) ||
+      authoredFilters.some((key) => {
+        const value = filters[key];
+        return Array.isArray(value)
+          ? value.length > 0
+          : value !== undefined && value !== false && value !== "";
+      })
+    );
   }
 
   /** Whether this view must reload after an edit with these display-file rotations, because compact Map rows cannot be matched to rotated files. */
   reloadsAfter(rotations: ReadonlyMap<string, number>) {
-    return this.dependsOnAuthored || this.projection === "map" && rotations.size > 0;
+    return this.dependsOnAuthored || (this.projection === "map" && rotations.size > 0);
   }
 
   refresh(preserve?: () => (() => Promise<void>) | undefined) {
@@ -401,7 +675,9 @@ export class Photos {
     this.timelineError = "";
     this.timelineLoading = false;
     if (this.view === "timeline") void this.loadTimeline();
-    return this.replacement === "date" ? this.replace("date", undefined, this.replacementDate) : this.replace("refresh", preserve);
+    return this.replacement === "date"
+      ? this.replace("date", undefined, this.replacementDate)
+      : this.replace("refresh", preserve);
   }
 
   setView(view: "grid" | "timeline") {
@@ -412,7 +688,7 @@ export class Photos {
   async loadTimeline() {
     if (this.disposed || this.hidden) return;
     this.timelineController.abort();
-    const controller = this.timelineController = new AbortController();
+    const controller = (this.timelineController = new AbortController());
     this.timelineLoading = true;
     this.timelineError = "";
     try {
@@ -421,8 +697,21 @@ export class Photos {
     } catch (cause) {
       if (controller.signal.aborted) return;
       if (this.authFailure(cause)) return;
-      if (cause instanceof APIError && ["snapshot_too_large", "snapshot_capacity", "snapshot_busy", "snapshot_unavailable"].includes(cause.code)) {
-        this.timeline = { dimension: "capture_day", available: false, reason: cause.code, values: [] };
+      if (
+        cause instanceof APIError &&
+        [
+          "snapshot_too_large",
+          "snapshot_capacity",
+          "snapshot_busy",
+          "snapshot_unavailable",
+        ].includes(cause.code)
+      ) {
+        this.timeline = {
+          dimension: "capture_day",
+          available: false,
+          reason: cause.code,
+          values: [],
+        };
       } else this.timelineError = cause instanceof Error ? cause.message : String(cause);
     } finally {
       if (!controller.signal.aborted) this.timelineLoading = false;
@@ -431,12 +720,26 @@ export class Photos {
 
   private async eligibleSelection(ids: Iterable<string>, query: Query, signal: AbortSignal) {
     query = this.projection ? query : photoQuery;
-    if (this.projection && this.authored.targets.length) query = { ...photoQuery, filters: query.filters?.gps_bounds ? { gps_bounds: query.filters.gps_bounds } : {} };
+    if (this.projection && this.authored.targets.length)
+      query = {
+        ...photoQuery,
+        filters: query.filters?.gps_bounds ? { gps_bounds: query.filters.gps_bounds } : {},
+      };
     const eligible = new Set(ids);
-    const absent = [...new Set([...this.trashTargets.filter(row => this.selection.selectedIDs.has(row.asset_id)).map(row => row.asset_id), ...this.authored.targets.map(target => target.asset_id)])].filter(id => !eligible.has(id));
+    const absent = [
+      ...new Set([
+        ...this.trashTargets
+          .filter((row) => this.selection.selectedIDs.has(row.asset_id))
+          .map((row) => row.asset_id),
+        ...this.authored.targets.map((target) => target.asset_id),
+      ]),
+    ].filter((id) => !eligible.has(id));
     for (let offset = 0; offset < absent.length; offset += 64) {
       const asset_ids = absent.slice(offset, offset + 64);
-      const page = await this.page({ ...query, filters: { ...query.filters, asset_ids } }, AbortSignal.any([signal, AbortSignal.timeout(60_000)]));
+      const page = await this.page(
+        { ...query, filters: { ...query.filters, asset_ids } },
+        AbortSignal.any([signal, AbortSignal.timeout(60_000)]),
+      );
       signal.throwIfAborted();
       for (const row of page.items) eligible.add(row.asset_id);
     }
@@ -451,7 +754,10 @@ export class Photos {
       if (controller.signal.aborted || this.disposed || !valid()) return false;
       if (this.authored.targets.length) {
         this.captureSelection();
-        this.selection = { ...this.selection, selectedIDs: new Set([...this.selection.selectedIDs].filter(id => eligible.has(id))) };
+        this.selection = {
+          ...this.selection,
+          selectedIDs: new Set([...this.selection.selectedIDs].filter((id) => eligible.has(id))),
+        };
       }
       this.authored.revalidate(eligible);
       return true;
@@ -468,7 +774,14 @@ export class Photos {
   }
 
   async previewRejects(selected = false) {
-    if (this.disposed || this.trashing || this.hiding || this.rejectsLoading || !this.authored.canChangeTarget()) return;
+    if (
+      this.disposed ||
+      this.trashing ||
+      this.hiding ||
+      this.rejectsLoading ||
+      !this.authored.canChangeTarget()
+    )
+      return;
     this.rejects = undefined;
     this.rejectsError = "";
     this.rejectsSelected = selected;
@@ -483,24 +796,50 @@ export class Photos {
     }
     this.rejectsLoading = true;
     this.rejectsController.abort();
-    const controller = this.rejectsController = new AbortController();
+    const controller = (this.rejectsController = new AbortController());
     try {
-      const result = await preflightPhotoRejects({ query, hidden: this.hidden }, { session: this.session, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(photoRejectsTimeout)]) });
-      if (!controller.signal.aborted) { this.rejects = result; this.rejectsSelectionLimit = result.selection_limit; }
-    } catch (cause) { if (!controller.signal.aborted) this.rejectsFailure(cause); }
-    finally { if (this.rejectsController === controller) this.rejectsLoading = false; }
+      const result = await preflightPhotoRejects(
+        { query, hidden: this.hidden },
+        {
+          session: this.session,
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(photoRejectsTimeout)]),
+        },
+      );
+      if (!controller.signal.aborted) {
+        this.rejects = result;
+        this.rejectsSelectionLimit = result.selection_limit;
+      }
+    } catch (cause) {
+      if (!controller.signal.aborted) this.rejectsFailure(cause);
+    } finally {
+      if (this.rejectsController === controller) this.rejectsLoading = false;
+    }
   }
 
   async trashRejects(preserve?: () => (() => Promise<void>) | undefined, ontrashed?: () => void) {
-    if (this.disposed || this.trashing || this.hiding || !this.rejects?.targets.length || !this.authored.canChangeTarget()) return false;
+    if (
+      this.disposed ||
+      this.trashing ||
+      this.hiding ||
+      !this.rejects?.targets.length ||
+      !this.authored.canChangeTarget()
+    )
+      return false;
     const targets = this.rejects.targets;
     this.cancelPending();
     this.trashing = true;
     this.rejectsError = "";
     return this.write(async () => {
       try {
-        const result = await movePhotoRejects({ hidden: this.hidden, targets }, { session: this.session, signal: AbortSignal.timeout(photoRejectsTimeout) });
-        if (result.moved.length !== targets.length || result.moved.some((id, i) => id !== targets[i].asset_id)) throw new Error("Invalid rejects move response");
+        const result = await movePhotoRejects(
+          { hidden: this.hidden, targets },
+          { session: this.session, signal: AbortSignal.timeout(photoRejectsTimeout) },
+        );
+        if (
+          result.moved.length !== targets.length ||
+          result.moved.some((id, i) => id !== targets[i].asset_id)
+        )
+          throw new Error("Invalid rejects move response");
         await this.removeConfirmed(result.moved, preserve);
         this.rejects = undefined;
         ontrashed?.();
@@ -509,24 +848,35 @@ export class Photos {
       } catch (cause) {
         this.rejects = undefined;
         this.rejectsFailure(cause);
-        if (!(cause instanceof APIError) || cause.status >= 500 && cause.code !== "maintenance_busy") {
+        if (
+          !(cause instanceof APIError) ||
+          (cause.status >= 500 && cause.code !== "maintenance_busy")
+        ) {
           this.rejectsError = "The move may have completed. Refresh Photos before trying again.";
           ontrashed?.();
         }
         await this.refresh(preserve);
         return false;
-      } finally { this.trashing = false; }
+      } finally {
+        this.trashing = false;
+      }
     });
   }
 
   private rejectsFailure(cause: unknown) {
     if (this.disposed) return;
     this.rejectsError = cause instanceof Error ? cause.message : String(cause);
-    if (cause instanceof APIError && cause.code === "audit_mutation_unsupported") this.rejectsError += ` The batch stayed in Docbank. Close this dialog, select up to ${this.rejectsSelectionLimit} other photos, and choose Selected photos.`;
+    if (cause instanceof APIError && cause.code === "audit_mutation_unsupported")
+      this.rejectsError += ` The batch stayed in Docbank. Close this dialog, select up to ${this.rejectsSelectionLimit} other photos, and choose Selected photos.`;
     this.authFailure(cause);
   }
 
-  private async replace(mode: "refresh" | "expiry" | "date", preserve?: () => (() => Promise<void>) | undefined, date?: string, resume = false) {
+  private async replace(
+    mode: "refresh" | "expiry" | "date",
+    preserve?: () => (() => Promise<void>) | undefined,
+    date?: string,
+    resume = false,
+  ) {
     if (this.disposed) return false;
     this.authored.conceal();
     this.controller.abort();
@@ -542,7 +892,16 @@ export class Photos {
     this.error = "";
     const count = this.items.length;
     const tail = this.items.at(-1)?.asset_id;
-    const staged = this.staged = resume && this.staged ? this.staged : { candidate: new Map<string, PhotoRow>(), cursor: undefined, total: 0, complete: false, pages: 0 };
+    const staged = (this.staged =
+      resume && this.staged
+        ? this.staged
+        : {
+            candidate: new Map<string, PhotoRow>(),
+            cursor: undefined,
+            total: 0,
+            complete: false,
+            pages: 0,
+          });
     const candidate = staged.candidate;
     let cursor = staged.cursor;
     let total = staged.total;
@@ -556,7 +915,14 @@ export class Photos {
         staged.pages++;
         let capped = false;
         for (const item of page.items) {
-          if (this.projection === "map" && !candidate.has(item.asset_id) && candidate.size >= mapPhotoLimit) { capped = true; break; }
+          if (
+            this.projection === "map" &&
+            !candidate.has(item.asset_id) &&
+            candidate.size >= mapPhotoLimit
+          ) {
+            capped = true;
+            break;
+          }
           candidate.set(item.asset_id, item);
         }
         reachedPrefix ||= (!!tail && candidate.has(tail)) || candidate.size >= count;
@@ -564,9 +930,17 @@ export class Photos {
         cursor = capped ? cursor : page.next_cursor;
         staged.cursor = cursor;
         staged.total = total;
-        staged.complete = !cursor || !!this.projection && (candidate.size >= mapPhotoLimit || staged.pages >= mapPageLimit) || !this.projection && (mode === "date" || reachedPrefix && (mode === "refresh" || reachedPreviously));
+        staged.complete =
+          !cursor ||
+          (!!this.projection &&
+            (candidate.size >= mapPhotoLimit || staged.pages >= mapPageLimit)) ||
+          (!this.projection &&
+            (mode === "date" || (reachedPrefix && (mode === "refresh" || reachedPreviously))));
       }
-      const eligible = mode === "date" ? new Set(candidate.keys()) : await this.eligibleSelection(candidate.keys(), query, controller.signal);
+      const eligible =
+        mode === "date"
+          ? new Set(candidate.keys())
+          : await this.eligibleSelection(candidate.keys(), query, controller.signal);
       if (controller.signal.aborted) return false;
       const restore = mode === "date" ? undefined : preserve?.();
       const captured = !this.authored.inspectedID && !!this.authored.targets.length;
@@ -574,8 +948,10 @@ export class Photos {
       this.authored.revalidate(eligible);
       this.editScopeRevision++;
       this.items = [...candidate.values()];
-      this.total = total; this.countStale = false;
-      this.facets = []; this.facetsError = "";
+      this.total = total;
+      this.countStale = false;
+      this.facets = [];
+      this.facetsError = "";
       this.cursor = cursor;
       this.started = true;
       if (mode === "date") {
@@ -584,29 +960,52 @@ export class Photos {
         this.scrollTop = 0;
         this.clearSelection();
       } else {
-        if (!this.authored.targets.length) this.selection = this.allResults && !captured ? { selectedIDs: new Set(candidate.keys()), anchorID: undefined } : reconcileIDSelection(this.selection, eligible);
-        if (!this.authored.targets.length && !this.selection.selectedIDs.size) this.allResults = false;
-        this.trashTargets = this.trashTargets.filter(item => eligible.has(item.asset_id) && this.selectedIDs.has(item.asset_id));
+        if (!this.authored.targets.length)
+          this.selection =
+            this.allResults && !captured
+              ? { selectedIDs: new Set(candidate.keys()), anchorID: undefined }
+              : reconcileIDSelection(this.selection, eligible);
+        if (!this.authored.targets.length && !this.selection.selectedIDs.size)
+          this.allResults = false;
+        this.trashTargets = this.trashTargets.filter(
+          (item) => eligible.has(item.asset_id) && this.selectedIDs.has(item.asset_id),
+        );
       }
       this.expired = false;
       this.replacement = undefined;
       this.staged = undefined;
       await restore?.();
-      if (!controller.signal.aborted) { this.needsFacets = true; void this.retryFacets(); }
+      if (!controller.signal.aborted) {
+        this.needsFacets = true;
+        void this.retryFacets();
+      }
       return !controller.signal.aborted;
     } catch (cause) {
       if (controller.signal.aborted) return false;
       this.authFailure(cause);
-      if (cause instanceof APIError && ["cursor_expired", "invalid_photo_cursor"].includes(cause.code)) this.staged = undefined;
-      this.error = signal.aborted || cause instanceof Error && cause.name === "TimeoutError" ? "Photo refresh timed out. Retry to keep browsing." : cause instanceof Error ? cause.message : String(cause);
+      if (
+        cause instanceof APIError &&
+        ["cursor_expired", "invalid_photo_cursor"].includes(cause.code)
+      )
+        this.staged = undefined;
+      this.error =
+        signal.aborted || (cause instanceof Error && cause.name === "TimeoutError")
+          ? "Photo refresh timed out. Retry to keep browsing."
+          : cause instanceof Error
+            ? cause.message
+            : String(cause);
       return false;
     } finally {
-      if (this.controller === controller) { this.loading = false; this.authored.validating = false; }
+      if (this.controller === controller) {
+        this.loading = false;
+        this.authored.validating = false;
+      }
     }
   }
 
   async trashSelected(preserve?: () => (() => Promise<void>) | undefined, ontrashed?: () => void) {
-    if (this.trashing || this.hiding || this.disposed || !this.authored.canChangeTarget()) return false;
+    if (this.trashing || this.hiding || this.disposed || !this.authored.canChangeTarget())
+      return false;
     const selected = this.resolveTargets(this.scope().asset_ids ?? this.selectedIDs);
     if (!selected) {
       this.trashError = "Load and select the photos again before moving them to trash.";
@@ -615,20 +1014,35 @@ export class Photos {
     this.cancelPending();
     this.trashing = true;
     this.trashError = "";
-    const successes = await this.mutateBatch(selected, item => {
-      const options = { session: this.session, signal: AbortSignal.timeout(60_000) };
-      return trashPhotoAsset(item.asset_id, { "If-Match": String(item.revision) }, options);
-    }, cause => {
-      if (this.authFailure(cause)) return true;
-      this.trashError = cause instanceof Error ? cause.message : String(cause);
-      return false;
-    }, changed => {
-      if (changed) ontrashed?.();
-    }, "trashing", preserve);
+    const successes = await this.mutateBatch(
+      selected,
+      (item) => {
+        const options = { session: this.session, signal: AbortSignal.timeout(60_000) };
+        return trashPhotoAsset(item.asset_id, { "If-Match": String(item.revision) }, options);
+      },
+      (cause) => {
+        if (this.authFailure(cause)) return true;
+        this.trashError = cause instanceof Error ? cause.message : String(cause);
+        return false;
+      },
+      (changed) => {
+        if (changed) ontrashed?.();
+      },
+      "trashing",
+      preserve,
+    );
     return successes === selected.length;
   }
 
-  private async mutateBatch(targets: PhotoTarget[], request: (item: PhotoTarget) => Promise<{ id: string; revision: number }>, onerror: (cause: unknown) => boolean, oncomplete: (changed: boolean) => void | Promise<void>, action: "hiding" | "trashing", preserve?: () => (() => Promise<void>) | undefined, onconfirmed?: () => void | Promise<void>) {
+  private async mutateBatch(
+    targets: PhotoTarget[],
+    request: (item: PhotoTarget) => Promise<{ id: string; revision: number }>,
+    onerror: (cause: unknown) => boolean,
+    oncomplete: (changed: boolean) => void | Promise<void>,
+    action: "hiding" | "trashing",
+    preserve?: () => (() => Promise<void>) | undefined,
+    onconfirmed?: () => void | Promise<void>,
+  ) {
     const batch = async () => {
       let successes = 0;
       let uncertain = false;
@@ -636,7 +1050,10 @@ export class Photos {
         for (const item of targets) {
           try {
             const receipt = await request(item);
-            if (receipt.id !== item.asset_id || receipt.revision <= item.revision) throw new Error(`Photo${action === "trashing" ? " trash" : ""} response did not confirm the selected photo. Refresh and retry.`);
+            if (receipt.id !== item.asset_id || receipt.revision <= item.revision)
+              throw new Error(
+                `Photo${action === "trashing" ? " trash" : ""} response did not confirm the selected photo. Refresh and retry.`,
+              );
             this.cancelPending();
             successes++;
             await this.removeConfirmed([item.asset_id], preserve);
@@ -650,7 +1067,10 @@ export class Photos {
         if (!this.projection || successes !== targets.length) await this.refresh(preserve);
         else if (this.countStale) await this.recount(preserve);
         return successes;
-      } finally { this[action] = false; if (this.projection) void this.resume(preserve); }
+      } finally {
+        this[action] = false;
+        if (this.projection) void this.resume(preserve);
+      }
     };
     return this.write(batch, this.hidden || action === "hiding");
   }
@@ -672,21 +1092,31 @@ export class Photos {
   async retryFacets() {
     if (this.disposed || !this.started || this.facetsLoading || this.withoutCounts) return;
     this.facetsController.abort();
-    const controller = this.facetsController = new AbortController();
+    const controller = (this.facetsController = new AbortController());
     this.needsFacets = true;
-    this.facetsLoading = true; this.facetsError = ""; this.facetsRetryable = true;
+    this.facetsLoading = true;
+    this.facetsError = "";
+    this.facetsRetryable = true;
     try {
       // Counts describe the whole scope, like timeline counts, so a selected date does not narrow them.
       const query = parseQuery(canonicalQuery(this.baseQuery));
       query.sort = { field: "capture_time", direction: "desc" };
-      const page = await listPhotoAssets({ query, hidden: this.hidden, facets: [...photoFacets], page_size: 1 }, { session: this.session, signal: controller.signal });
+      const page = await listPhotoAssets(
+        { query, hidden: this.hidden, facets: [...photoFacets], page_size: 1 },
+        { session: this.session, signal: controller.signal },
+      );
       if (controller.signal.aborted) return;
       this.facets = (page.facets ?? []) as SnapshotPage["facets"];
       this.needsFacets = false;
-      const unavailable = this.facets.filter(facet => !facet.available);
+      const unavailable = this.facets.filter((facet) => !facet.available);
       if (unavailable.length) {
-        this.facetsRetryable = unavailable.some(facet => facet.reason !== "member_budget_exceeded" && facet.reason !== "byte_budget_exceeded");
-        this.facetsError = this.facetsRetryable ? "Some photo counts couldn't be loaded." : "Photo counts exceed the query's limits. Narrow your search or filters.";
+        this.facetsRetryable = unavailable.some(
+          (facet) =>
+            facet.reason !== "member_budget_exceeded" && facet.reason !== "byte_budget_exceeded",
+        );
+        this.facetsError = this.facetsRetryable
+          ? "Some photo counts couldn't be loaded."
+          : "Photo counts exceed the query's limits. Narrow your search or filters.";
       }
     } catch (cause) {
       if (controller.signal.aborted) return;
@@ -705,7 +1135,13 @@ export class Photos {
     this.changeEditScope();
     this.allResults = false;
     if (event.shiftKey || event.ctrlKey || event.metaKey) {
-      this.selection = toggleIDSelection(this.selection, orderedIDs, id, event.shiftKey || !this.selection.selectedIDs.has(id), event.shiftKey);
+      this.selection = toggleIDSelection(
+        this.selection,
+        orderedIDs,
+        id,
+        event.shiftKey || !this.selection.selectedIDs.has(id),
+        event.shiftKey,
+      );
     } else this.selection = { selectedIDs: new Set([id]), anchorID: id };
     this.pruneTrashTargets();
   }
@@ -721,12 +1157,20 @@ export class Photos {
 
   private resolveTargets(ids: Iterable<string>): PhotoTarget[] | undefined {
     this.pruneTrashTargets();
-    const rows = new Map([...this.trashTargets, ...this.items].map(item => [item.asset_id, item]));
-    if (!this.authored.inspectedID) for (const target of this.authored.targets) rows.set(target.asset_id, { asset_id: target.asset_id, revision: target.asset_revision });
-    const resolved = [...ids].map(id => rows.get(id));
-    if (!resolved.length || resolved.some(item => !item)) return;
-    const targets = resolved.filter((item): item is PhotoTarget => !!item).map(item => ({ ...item }));
-    this.trashTargets = [...new Map([...this.trashTargets, ...targets].map(item => [item.asset_id, item])).values()];
+    const rows = new Map(
+      [...this.trashTargets, ...this.items].map((item) => [item.asset_id, item]),
+    );
+    if (!this.authored.inspectedID)
+      for (const target of this.authored.targets)
+        rows.set(target.asset_id, { asset_id: target.asset_id, revision: target.asset_revision });
+    const resolved = [...ids].map((id) => rows.get(id));
+    if (!resolved.length || resolved.some((item) => !item)) return;
+    const targets = resolved
+      .filter((item): item is PhotoTarget => !!item)
+      .map((item) => ({ ...item }));
+    this.trashTargets = [
+      ...new Map([...this.trashTargets, ...targets].map((item) => [item.asset_id, item])).values(),
+    ];
     return targets;
   }
 
@@ -738,13 +1182,13 @@ export class Photos {
 
   private removeTarget(id: string) {
     const ids = new Set(this.selectedIDs);
-    const listed = this.items.some(item => item.asset_id === id);
-    this.authored.targets = this.authored.targets.filter(target => target.asset_id !== id);
-    this.items = this.items.filter(item => item.asset_id !== id);
+    const listed = this.items.some((item) => item.asset_id === id);
+    this.authored.targets = this.authored.targets.filter((target) => target.asset_id !== id);
+    this.items = this.items.filter((item) => item.asset_id !== id);
     // Map checks prepared targets only against its bounds, so an unlisted one may be beyond the loaded rows or outside the result.
     if (listed || !this.projection) this.total = Math.max(0, this.total - 1);
     else this.countStale = true;
-    this.trashTargets = this.trashTargets.filter(item => item.asset_id !== id);
+    this.trashTargets = this.trashTargets.filter((item) => item.asset_id !== id);
     ids.delete(id);
     if (!ids.size && !this.authored.targets.length) this.allResults = false;
     this.selection = { selectedIDs: ids, anchorID: undefined };
@@ -753,18 +1197,58 @@ export class Photos {
   private async recount(preserve?: () => (() => Promise<void>) | undefined) {
     const controller = this.controller;
     try {
-      const page = await listPhotoAssets({ query: this.query, projection: this.projection, hidden: this.hidden, facets: [], page_size: 1 }, { session: this.session, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]) });
-      if (!controller.signal.aborted) { this.total = page.total; this.countStale = false; }
+      const page = await listPhotoAssets(
+        {
+          query: this.query,
+          projection: this.projection,
+          hidden: this.hidden,
+          facets: [],
+          page_size: 1,
+        },
+        {
+          session: this.session,
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]),
+        },
+      );
+      if (!controller.signal.aborted) {
+        this.total = page.total;
+        this.countStale = false;
+      }
     } catch (cause) {
       if (controller.signal.aborted || this.authFailure(cause)) return;
       await this.refresh(preserve);
     }
   }
 
-  private pruneTrashTargets() { this.trashTargets = this.trashTargets.filter(item => this.selectedIDs.has(item.asset_id)); }
+  private pruneTrashTargets() {
+    this.trashTargets = this.trashTargets.filter((item) => this.selectedIDs.has(item.asset_id));
+  }
 
-  clearSelection() { if (!this.changeEditScope()) return; this.allResults = false; this.selection = clearSelection<string>(); this.trashTargets = []; }
-  selectLoaded(ids = this.items.map(item => item.asset_id)) { if (!this.changeEditScope()) return; this.allResults = false; this.selection = { selectedIDs: new Set(ids), anchorID: undefined }; this.pruneTrashTargets(); }
-  selectAllResults() { if (!this.authored.canChangeTarget()) return; this.selectLoaded(); this.allResults = true; }
-  dispose() { this.authored.dispose(); this.viewerReturn = undefined; this.disposed = true; this.staged = undefined; this.controller.abort(); this.timelineController.abort(); this.facetsController.abort(); this.rejectsController.abort(); }
+  clearSelection() {
+    if (!this.changeEditScope()) return;
+    this.allResults = false;
+    this.selection = clearSelection<string>();
+    this.trashTargets = [];
+  }
+  selectLoaded(ids = this.items.map((item) => item.asset_id)) {
+    if (!this.changeEditScope()) return;
+    this.allResults = false;
+    this.selection = { selectedIDs: new Set(ids), anchorID: undefined };
+    this.pruneTrashTargets();
+  }
+  selectAllResults() {
+    if (!this.authored.canChangeTarget()) return;
+    this.selectLoaded();
+    this.allResults = true;
+  }
+  dispose() {
+    this.authored.dispose();
+    this.viewerReturn = undefined;
+    this.disposed = true;
+    this.staged = undefined;
+    this.controller.abort();
+    this.timelineController.abort();
+    this.facetsController.abort();
+    this.rejectsController.abort();
+  }
 }

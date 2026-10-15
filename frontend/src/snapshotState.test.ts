@@ -41,19 +41,27 @@ async function receipt(overrides: Record<string, unknown> = {}): Promise<Record<
     total: 1,
     total_bytes: 10,
     rows: [{ ...snapshotRow(2), content_version_id: version, blob_hash: "c".repeat(64), size: 10 }],
-    facets: [], snapshot: true, snapshot_id: "0123456789abcdef0123456789abcdef",
-    created_at: "2026-09-11T00:00:00Z", expires_at: "2026-09-11T00:15:00Z",
+    facets: [],
+    snapshot: true,
+    snapshot_id: "0123456789abcdef0123456789abcdef",
+    created_at: "2026-09-11T00:00:00Z",
+    expires_at: "2026-09-11T00:15:00Z",
     ...overrides,
   };
 }
 
 function response(value: unknown): Response {
-  return new Response(JSON.stringify(value), { status: 200, headers: { "Content-Type": "application/json" } });
+  return new Response(JSON.stringify(value), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => { resolve = done; });
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
   return { promise, resolve };
 }
 
@@ -62,9 +70,22 @@ afterEach(() => vi.restoreAllMocks());
 describe("snapshot request-epoch state", () => {
   it("publishes immutable loading and ready states with the accepted original first page", async () => {
     const states: Readonly<SnapshotState>[] = [];
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(response(await receipt({ facets: [{
-      dimension: "tags", available: true, values: [], total: 1, missing: 1, other: 0,
-    }] })));
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      response(
+        await receipt({
+          facets: [
+            {
+              dimension: "tags",
+              available: true,
+              values: [],
+              total: 1,
+              missing: 1,
+              other: 0,
+            },
+          ],
+        }),
+      ),
+    );
     const session = new SnapshotSession("session", (state) => states.push(state));
 
     await session.run(query, { page_size: 50, facets: ["tags"] });
@@ -81,9 +102,24 @@ describe("snapshot request-epoch state", () => {
   it("pages in both directions while retaining the accepted first page", async () => {
     const states: Readonly<SnapshotState>[] = [];
     const firstRows = Array.from({ length: 50 }, (_, index) => snapshotRow(index + 1));
-    const first = await receipt({ rows: firstRows, total: 51, total_bytes: 1326, next_cursor: "next-1" });
-    const last = await receipt({ rows: [snapshotRow(51)], total: 51, total_bytes: 1326, previous_cursor: "previous-1" });
-    const firstAgain = await receipt({ rows: firstRows, total: 51, total_bytes: 1326, next_cursor: "next-2" });
+    const first = await receipt({
+      rows: firstRows,
+      total: 51,
+      total_bytes: 1326,
+      next_cursor: "next-1",
+    });
+    const last = await receipt({
+      rows: [snapshotRow(51)],
+      total: 51,
+      total_bytes: 1326,
+      previous_cursor: "previous-1",
+    });
+    const firstAgain = await receipt({
+      rows: firstRows,
+      total: 51,
+      total_bytes: 1326,
+      next_cursor: "next-2",
+    });
     vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(response(first))
       .mockResolvedValueOnce(response(last))
@@ -104,9 +140,16 @@ describe("snapshot request-epoch state", () => {
     const states: Readonly<SnapshotState>[] = [];
     const firstRows = Array.from({ length: 50 }, (_, index) => snapshotRow(index + 1));
     vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(response(await receipt({
-        rows: firstRows, total: 51, total_bytes: 1326, next_cursor: "next-1",
-      })))
+      .mockResolvedValueOnce(
+        response(
+          await receipt({
+            rows: firstRows,
+            total: 51,
+            total_bytes: 1326,
+            next_cursor: "next-1",
+          }),
+        ),
+      )
       .mockRejectedValueOnce(new APIError("gone", 410, "snapshot_gone"))
       .mockResolvedValueOnce(response(await receipt({ query: otherQuery })));
     const session = new SnapshotSession("session", (state) => states.push(state));
@@ -124,14 +167,27 @@ describe("snapshot request-epoch state", () => {
   it("retains the accepted page and retries after a transient paging failure", async () => {
     const states: Readonly<SnapshotState>[] = [];
     vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(response(await receipt({
-        rows: Array.from({ length: 50 }, (_, index) => snapshotRow(index + 1)),
-        total: 51, total_bytes: 1326, next_cursor: "next-1",
-      })))
+      .mockResolvedValueOnce(
+        response(
+          await receipt({
+            rows: Array.from({ length: 50 }, (_, index) => snapshotRow(index + 1)),
+            total: 51,
+            total_bytes: 1326,
+            next_cursor: "next-1",
+          }),
+        ),
+      )
       .mockRejectedValueOnce(new TypeError("Connection lost"))
-      .mockResolvedValueOnce(response(await receipt({
-        rows: [snapshotRow(51)], total: 51, total_bytes: 1326, previous_cursor: "previous-1",
-      })));
+      .mockResolvedValueOnce(
+        response(
+          await receipt({
+            rows: [snapshotRow(51)],
+            total: 51,
+            total_bytes: 1326,
+            previous_cursor: "previous-1",
+          }),
+        ),
+      );
     const session = new SnapshotSession("session", (state) => states.push(state));
     await session.run(query, { page_size: 50 });
     const accepted = states.at(-1)!;
@@ -146,10 +202,15 @@ describe("snapshot request-epoch state", () => {
     const states: Readonly<SnapshotState>[] = [];
     const first = await receipt({
       rows: Array.from({ length: 50 }, (_, index) => snapshotRow(index + 1)),
-      total: 51, total_bytes: 1326, next_cursor: "next-1",
+      total: 51,
+      total_bytes: 1326,
+      next_cursor: "next-1",
     });
     const last = await receipt({
-      rows: [snapshotRow(51)], total: 51, total_bytes: 1326, previous_cursor: "previous-1",
+      rows: [snapshotRow(51)],
+      total: 51,
+      total_bytes: 1326,
+      previous_cursor: "previous-1",
     });
     const pending = deferred<Response>();
     vi.spyOn(globalThis, "fetch")
@@ -208,5 +269,4 @@ describe("snapshot request-epoch state", () => {
 
     expect(states.map((state) => state.status)).toEqual(["idle", "loading"]);
   });
-
 });

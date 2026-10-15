@@ -3,9 +3,11 @@ import fixture from "../../internal/query/testdata/identity-vectors.json";
 import { parseQuery } from "./query.js";
 import { previewQuery, querySelection } from "./queryPreview.js";
 
-const defaults = fixture.queries.find((vector) => vector.name === "query_defaults") ?? (() => {
-  throw new Error("missing query_defaults identity fixture");
-})();
+const defaults =
+  fixture.queries.find((vector) => vector.name === "query_defaults") ??
+  (() => {
+    throw new Error("missing query_defaults identity fixture");
+  })();
 
 const tagID = "11111111-1111-4111-8111-111111111111";
 const savedID = "22222222-2222-4222-8222-222222222222";
@@ -13,20 +15,23 @@ const collectionID = "33333333-3333-4333-8333-333333333333";
 const query = parseQuery(defaults.input_json);
 
 function response(overrides: Record<string, unknown> = {}): Response {
-  return new Response(JSON.stringify({
-    $schema: "http://localhost/schemas/QueryPreview.json",
-    query: JSON.parse(defaults.canonical_utf8),
-    query_fingerprint: defaults.fingerprint,
-    dependencies: [
-      { kind: "tag", id: tagID, revision: 3 },
-      { kind: "saved", id: savedID, revision: 8 },
-      { kind: "collection", id: collectionID, revision: 5 },
-    ],
-    ...overrides,
-  }), {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
-  });
+  return new Response(
+    JSON.stringify({
+      $schema: "http://localhost/schemas/QueryPreview.json",
+      query: JSON.parse(defaults.canonical_utf8),
+      query_fingerprint: defaults.fingerprint,
+      dependencies: [
+        { kind: "tag", id: tagID, revision: 3 },
+        { kind: "saved", id: savedID, revision: 8 },
+        { kind: "collection", id: collectionID, revision: 5 },
+      ],
+      ...overrides,
+    }),
+    {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    },
+  );
 }
 
 describe("query preview transport", () => {
@@ -55,7 +60,10 @@ describe("query preview transport", () => {
   });
 
   it.each([
-    ["a different canonical query", { query: { ...JSON.parse(defaults.canonical_utf8), text: "changed" } }],
+    [
+      "a different canonical query",
+      { query: { ...JSON.parse(defaults.canonical_utf8), text: "changed" } },
+    ],
     ["a different fingerprint", { query_fingerprint: `sha256:${"0".repeat(64)}` }],
   ])("rejects a receipt with %s", async (_name, overrides) => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(response(overrides));
@@ -66,28 +74,56 @@ describe("query preview transport", () => {
 
   it.each([
     ["a non-object envelope", null],
-    ["a missing field", { query: JSON.parse(defaults.canonical_utf8), query_fingerprint: defaults.fingerprint }],
-    ["an unknown envelope field", {
-      query: JSON.parse(defaults.canonical_utf8), query_fingerprint: defaults.fingerprint,
-      dependencies: [], future: true,
-    }],
-    ["an invalid schema link", {
-      $schema: 7, query: JSON.parse(defaults.canonical_utf8),
-      query_fingerprint: defaults.fingerprint, dependencies: [],
-    }],
-    ["an incomplete query", { query: {}, query_fingerprint: defaults.fingerprint, dependencies: [] }],
-    ["an invalid QueryV1 value", {
-      query: { ...JSON.parse(defaults.canonical_utf8), syntax: "future" },
-      query_fingerprint: defaults.fingerprint, dependencies: [],
-    }],
-    ["an unknown dependency field", {
-      query: JSON.parse(defaults.canonical_utf8), query_fingerprint: defaults.fingerprint,
-      dependencies: [{ kind: "tag", id: tagID, revision: 1, name: "Synthetic" }],
-    }],
-    ["an invalid dependency ID", {
-      query: JSON.parse(defaults.canonical_utf8), query_fingerprint: defaults.fingerprint,
-      dependencies: [{ kind: "tag", id: "not-an-id", revision: 1 }],
-    }],
+    [
+      "a missing field",
+      { query: JSON.parse(defaults.canonical_utf8), query_fingerprint: defaults.fingerprint },
+    ],
+    [
+      "an unknown envelope field",
+      {
+        query: JSON.parse(defaults.canonical_utf8),
+        query_fingerprint: defaults.fingerprint,
+        dependencies: [],
+        future: true,
+      },
+    ],
+    [
+      "an invalid schema link",
+      {
+        $schema: 7,
+        query: JSON.parse(defaults.canonical_utf8),
+        query_fingerprint: defaults.fingerprint,
+        dependencies: [],
+      },
+    ],
+    [
+      "an incomplete query",
+      { query: {}, query_fingerprint: defaults.fingerprint, dependencies: [] },
+    ],
+    [
+      "an invalid QueryV1 value",
+      {
+        query: { ...JSON.parse(defaults.canonical_utf8), syntax: "future" },
+        query_fingerprint: defaults.fingerprint,
+        dependencies: [],
+      },
+    ],
+    [
+      "an unknown dependency field",
+      {
+        query: JSON.parse(defaults.canonical_utf8),
+        query_fingerprint: defaults.fingerprint,
+        dependencies: [{ kind: "tag", id: tagID, revision: 1, name: "Synthetic" }],
+      },
+    ],
+    [
+      "an invalid dependency ID",
+      {
+        query: JSON.parse(defaults.canonical_utf8),
+        query_fingerprint: defaults.fingerprint,
+        dependencies: [{ kind: "tag", id: "not-an-id", revision: 1 }],
+      },
+    ],
   ])("rejects %s", async (_name, receipt) => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify(receipt), {
@@ -103,18 +139,24 @@ describe("query preview transport", () => {
   it.each([
     ["unknown dependency kind", [{ kind: "folder", id: tagID, revision: 1 }]],
     ["coerced dependency kind", [{ kind: ["tag"], id: tagID, revision: 1 }]],
-    ["duplicate dependency identity", [
-      { kind: "tag", id: tagID, revision: 1 },
-      { kind: "tag", id: tagID, revision: 2 },
-    ]],
+    [
+      "duplicate dependency identity",
+      [
+        { kind: "tag", id: tagID, revision: 1 },
+        { kind: "tag", id: tagID, revision: 2 },
+      ],
+    ],
     ["unsafe dependency revision", [{ kind: "tag", id: tagID, revision: 9_007_199_254_740_992 }]],
     ["fractional dependency revision", [{ kind: "tag", id: tagID, revision: 1.5 }]],
     ["non-positive dependency revision", [{ kind: "tag", id: tagID, revision: 0 }]],
-    [">256 dependencies", Array.from({ length: 257 }, (_, index) => ({
-      kind: "tag",
-      id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
-      revision: 1,
-    }))],
+    [
+      ">256 dependencies",
+      Array.from({ length: 257 }, (_, index) => ({
+        kind: "tag",
+        id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+        revision: 1,
+      })),
+    ],
   ])("rejects %s", async (_name, dependencies) => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(response({ dependencies }));
     await expect(previewQuery("session", query, new AbortController().signal)).rejects.toThrow(

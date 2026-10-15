@@ -23,7 +23,9 @@
 
   let pending = $state(false);
   let destroyed = false;
-  onDestroy(() => { destroyed = true; });
+  onDestroy(() => {
+    destroyed = true;
+  });
   let failure = $state("");
 
   function close(): void {
@@ -72,15 +74,26 @@
       </div>
     </div>
     <p>
-      Docbank will return this {node.kind === "dir" ? "folder" : "document"} to
-      its original live parent when that directory still exists. Otherwise it
-      returns beneath <code>/</code>; a name collision receives a suffix.
+      Docbank will return this {node.kind === "dir" ? "folder" : "document"} to its original live parent
+      when that directory still exists. Otherwise it returns beneath <code>/</code>; a name
+      collision receives a suffix.
     </p>
-    {#if node.photo_asset_id}<p>Restoring this photo recovers {node.photo_file_count} trashed member file{node.photo_file_count === 1 ? "" : "s"} together, including companions in other folders.</p>{:else if node.kind === "dir"}<p>If this folder contains photo members, restoring it also recovers their companions in other folders.</p>{/if}
-    {#if node.photo_asset_id || node.kind === "dir"}<p>Companions inside trashed folders also restore those folders and their other contents, including other photos.</p>{/if}
+    {#if node.photo_asset_id}<p>
+        Restoring this photo recovers {node.photo_file_count} trashed member file{node.photo_file_count ===
+        1
+          ? ""
+          : "s"} together, including companions in other folders.
+      </p>{:else if node.kind === "dir"}<p>
+        If this folder contains photo members, restoring it also recovers their companions in other
+        folders.
+      </p>{/if}
+    {#if node.photo_asset_id || node.kind === "dir"}<p>
+        Companions inside trashed folders also restore those folders and their other contents,
+        including other photos.
+      </p>{/if}
     <p class="boundary">
-      Restore keeps the same stable node and retained content. It does not roll
-      back versions or alter permanent audited history.
+      Restore keeps the same stable node and retained content. It does not roll back versions or
+      alter permanent audited history.
     </p>
     {#if failure}
       <p class="failure" role="alert">{failure}</p>
@@ -88,12 +101,7 @@
   </div>
   {#snippet footer()}
     <Button surface="soft" disabled={pending} onclick={close}>Leave in trash</Button>
-    <Button
-      tone="info"
-      surface="solid"
-      disabled={pending}
-      onclick={() => void confirm()}
-    >
+    <Button tone="info" surface="solid" disabled={pending} onclick={() => void confirm()}>
       {#if pending}
         <Spinner size={14} /> Restoring…
       {:else}

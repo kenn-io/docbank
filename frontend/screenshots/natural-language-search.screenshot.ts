@@ -12,10 +12,12 @@ import * as generated from "../src/generated/docbank.js";
 
 const exec = promisify(execFile);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const binary = process.env.DOCBANK_SCREENSHOT_BINARY ?? path.join(root, "bin", process.platform === "win32" ? "docbank.exe" : "docbank");
+const binary =
+  process.env.DOCBANK_SCREENSHOT_BINARY ??
+  path.join(root, "bin", process.platform === "win32" ? "docbank.exe" : "docbank");
 const output = process.env.DOCBANK_NATURAL_SEARCH_SCREENSHOT_DIR;
 
-test("natural-language search renders processing controls and live rows", async ({page}) => {
+test("natural-language search renders processing controls and live rows", async ({ page }) => {
   test.skip(!output, "DOCBANK_NATURAL_SEARCH_SCREENSHOT_DIR is required");
   test.setTimeout(180_000);
   const workspace = await mkdtemp(path.join(tmpdir(), "docbank-natural-search-"));
@@ -23,26 +25,63 @@ test("natural-language search renders processing controls and live rows", async 
   let calls = 0;
   let daemon: ChildProcess | undefined;
   let daemonError = "";
-  let record: {address:string;metadata:Record<string,string>} | undefined;
+  let record: { address: string; metadata: Record<string, string> } | undefined;
   const originalFetch = globalThis.fetch;
   let baseURL = "";
-  globalThis.fetch = (input, init) => originalFetch(typeof input === "string" && input.startsWith("/") ? baseURL+input : input, init);
+  globalThis.fetch = (input, init) =>
+    originalFetch(
+      typeof input === "string" && input.startsWith("/") ? baseURL + input : input,
+      init,
+    );
   const server = createServer(async (request, response) => {
     calls += 1;
     let body = "";
     for await (const chunk of request) body += String(chunk);
-    const payload = JSON.parse(body) as {input: string | string[]};
+    const payload = JSON.parse(body) as { input: string | string[] };
     const inputs = Array.isArray(payload.input) ? payload.input : [payload.input];
-    response.writeHead(200, {"Content-Type":"application/json"});
-    response.end(JSON.stringify({object:"list",model:"synthetic-model",data:inputs.map((text,index) => ({object:"embedding",index,embedding:text.includes("garden") ? [0,1] : [1,0]})),usage:{prompt_tokens:inputs.length,total_tokens:inputs.length}}));
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end(
+      JSON.stringify({
+        object: "list",
+        model: "synthetic-model",
+        data: inputs.map((text, index) => ({
+          object: "embedding",
+          index,
+          embedding: text.includes("garden") ? [0, 1] : [1, 0],
+        })),
+        usage: { prompt_tokens: inputs.length, total_tokens: inputs.length },
+      }),
+    );
   });
   try {
-    await mkdir(vault,{recursive:true,mode:0o700});
-    await mkdir(output!,{recursive:true,mode:0o700});
-    await new Promise<void>((resolve) => server.listen(0,"127.0.0.1",resolve));
+    await mkdir(vault, { recursive: true, mode: 0o700 });
+    await mkdir(output!, { recursive: true, mode: 0o700 });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const embeddingOrigin = "http://127.0.0.1:" + (server.address() as AddressInfo).port;
-    const identities = JSON.parse((await exec("go",["run","-tags","fts5",path.join(root,"frontend/screenshots/processing-profile.go"),embeddingOrigin],{cwd:root,windowsHide:true,timeout:60_000})).stdout) as {rendition_id:string;rendition_fingerprint:string;embedding_id:string;embedding_fingerprint:string;compatibility_id:string};
-    await writeFile(path.join(vault,"config.toml"),`
+    const identities = JSON.parse(
+      (
+        await exec(
+          "go",
+          [
+            "run",
+            "-tags",
+            "fts5",
+            path.join(root, "frontend/screenshots/processing-profile.go"),
+            embeddingOrigin,
+          ],
+          { cwd: root, windowsHide: true, timeout: 60_000 },
+        )
+      ).stdout,
+    ) as {
+      rendition_id: string;
+      rendition_fingerprint: string;
+      embedding_id: string;
+      embedding_fingerprint: string;
+      compatibility_id: string;
+    };
+    await writeFile(
+      path.join(vault, "config.toml"),
+      `
 [credential_bindings.semantic]
 environment_variable = "DOCBANK_SCREENSHOT_EMBEDDING_KEY"
 
@@ -129,83 +168,175 @@ sanitizer_fingerprint = "ddddddddddddddddddddddddddddddddddddddddddddddddddddddd
 retain_sanitized_markdown = true
 retain_typed_artifacts = true
 trust_boundary = "local_process"
-`,{mode:0o600});
-    daemon = spawn(binary,["daemon","run"],{cwd:root,windowsHide:true,stdio:["ignore","ignore","pipe"],env:{...process.env,DOCBANK_HOME:vault,DOCBANK_SCREENSHOT_EMBEDDING_KEY:"synthetic-secret"}});
-    daemon.stderr!.on("data", (data: Buffer) => { daemonError += data.toString(); });
-    await expect.poll(async () => {
-      if (daemon!.exitCode !== null) throw Error(daemonError);
-      try { record = JSON.parse(await readFile(path.join(vault,`daemon.${daemon!.pid}.json`),"utf8")); return true; } catch { return false; }
-    },{timeout:60_000}).toBe(true);
-    baseURL = "http://"+record!.address;
-    const headers={"X-Api-Key":record!.metadata.api_key!};
-    for (const [name,text] of [["source.txt","Synthetic solar panel maintenance."],["solar-guide.txt","Synthetic solar panel cleaning."],["solar-copy.txt","Synthetic solar panel cleaning."],["garden.txt","Synthetic garden planting schedule."],["z-unembedded.txt","Synthetic document awaiting processing."]]) {
-      await generated.uploadFile({file:new Blob([text!],{type:"text/plain"})},{parent_id:1,name:name!},
-        {"X-Docbank-Blob-Hash":createHash("sha256").update(text!).digest("hex"),"X-Docbank-Blob-Size":String(Buffer.byteLength(text!))},{headers});
+`,
+      { mode: 0o600 },
+    );
+    daemon = spawn(binary, ["daemon", "run"], {
+      cwd: root,
+      windowsHide: true,
+      stdio: ["ignore", "ignore", "pipe"],
+      env: {
+        ...process.env,
+        DOCBANK_HOME: vault,
+        DOCBANK_SCREENSHOT_EMBEDDING_KEY: "synthetic-secret",
+      },
+    });
+    daemon.stderr!.on("data", (data: Buffer) => {
+      daemonError += data.toString();
+    });
+    await expect
+      .poll(
+        async () => {
+          if (daemon!.exitCode !== null) throw Error(daemonError);
+          try {
+            record = JSON.parse(
+              await readFile(path.join(vault, `daemon.${daemon!.pid}.json`), "utf8"),
+            );
+            return true;
+          } catch {
+            return false;
+          }
+        },
+        { timeout: 60_000 },
+      )
+      .toBe(true);
+    baseURL = "http://" + record!.address;
+    const headers = { "X-Api-Key": record!.metadata.api_key! };
+    for (const [name, text] of [
+      ["source.txt", "Synthetic solar panel maintenance."],
+      ["solar-guide.txt", "Synthetic solar panel cleaning."],
+      ["solar-copy.txt", "Synthetic solar panel cleaning."],
+      ["garden.txt", "Synthetic garden planting schedule."],
+      ["z-unembedded.txt", "Synthetic document awaiting processing."],
+    ]) {
+      await generated.uploadFile(
+        { file: new Blob([text!], { type: "text/plain" }) },
+        { parent_id: 1, name: name! },
+        {
+          "X-Docbank-Blob-Hash": createHash("sha256").update(text!).digest("hex"),
+          "X-Docbank-Blob-Size": String(Buffer.byteLength(text!)),
+        },
+        { headers },
+      );
     }
-    const browser=await generated.createWebSession({headers});
-    const session=browser.token;
-    const webURL=browser.url+"#"+new URLSearchParams({web_session:session,web_upload_secret:browser.upload_secret});
+    const browser = await generated.createWebSession({ headers });
+    const session = browser.token;
+    const webURL =
+      browser.url +
+      "#" +
+      new URLSearchParams({ web_session: session, web_upload_secret: browser.upload_secret });
     await page.goto(webURL);
-    await page.getByText("source.txt",{exact:true}).waitFor();
-    baseURL = "http://127.0.0.1:"+new URL(browser.url).port;
-    const sessionOptions={session,headers:{Host:new URL(browser.url).host}};
-      const children=await generated.listChildren(1,{limit:1000,offset:0},sessionOptions);
-      for (const node of children.items) {
-        if (node.name === "z-unembedded.txt") continue;
-        const selector={node_id:node.id,content_version_id:node.current_version_id!,profile:"private_text"};
-        const plan=await generated.planDocumentProcessing({selector},sessionOptions);
-        const started=await generated.startDocumentProcessing({selector,plan_fingerprint:plan.fingerprint,consent:true},sessionOptions);
-        const body=await started.text();
-        if (!started.ok || !body.includes('"state":"completed"')) throw Error(body);
-      }
-    const mode = page.getByRole("combobox",{name:"Search mode: Auto"});
+    await page.getByText("source.txt", { exact: true }).waitFor();
+    baseURL = "http://127.0.0.1:" + new URL(browser.url).port;
+    const sessionOptions = { session, headers: { Host: new URL(browser.url).host } };
+    const children = await generated.listChildren(1, { limit: 1000, offset: 0 }, sessionOptions);
+    for (const node of children.items) {
+      if (node.name === "z-unembedded.txt") continue;
+      const selector = {
+        node_id: node.id,
+        content_version_id: node.current_version_id!,
+        profile: "private_text",
+      };
+      const plan = await generated.planDocumentProcessing({ selector }, sessionOptions);
+      const started = await generated.startDocumentProcessing(
+        { selector, plan_fingerprint: plan.fingerprint, consent: true },
+        sessionOptions,
+      );
+      const body = await started.text();
+      if (!started.ok || !body.includes('"state":"completed"')) throw Error(body);
+    }
+    const mode = page.getByRole("combobox", { name: "Search mode: Auto" });
     await expect(mode).toBeVisible();
     await mode.click();
-    await expect(page.getByRole("option",{name:"Names and text"})).toBeVisible();
-    await expect(page.getByRole("option",{name:"Auto"})).toBeVisible();
-    await expect(page.getByRole("option",{name:"Lexical"})).toBeVisible();
-    await expect(page.getByRole("option",{name:"Semantic"})).toBeVisible();
-    await expect(page.getByRole("option",{name:"Hybrid"})).toBeVisible();
+    await expect(page.getByRole("option", { name: "Names and text" })).toBeVisible();
+    await expect(page.getByRole("option", { name: "Auto" })).toBeVisible();
+    await expect(page.getByRole("option", { name: "Lexical" })).toBeVisible();
+    await expect(page.getByRole("option", { name: "Semantic" })).toBeVisible();
+    await expect(page.getByRole("option", { name: "Hybrid" })).toBeVisible();
     await page.keyboard.press("Escape");
-    const search = page.getByRole("searchbox",{name:"Search documents"});
+    const search = page.getByRole("searchbox", { name: "Search documents" });
     await search.fill("solar maintenance");
     await search.press("Enter");
-    const resultPath = page.getByLabel("Vault browser").getByText("/source.txt",{exact:true});
+    const resultPath = page.getByLabel("Vault browser").getByText("/source.txt", { exact: true });
     await expect(resultPath).toBeVisible();
-    await expect(page.getByText("Document text",{exact:true}).first()).toBeVisible();
-    await expect(page.getByText("Text",{exact:true}).first()).toBeVisible();
-    for (const width of [1440,1280,768,400]) {
-      await page.setViewportSize({width,height:960});
+    await expect(page.getByText("Document text", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("Text", { exact: true }).first()).toBeVisible();
+    for (const width of [1440, 1280, 768, 400]) {
+      await page.setViewportSize({ width, height: 960 });
       if (width === 400) {
-        await page.getByRole("button", {name:"Open navigation"}).click();
-        for (const name of ["Recoverable trash", "Backup snapshots", "Saved queries and highlights"]) {
-          await expect(page.getByRole("button",{name})).toBeVisible();
+        await page.getByRole("button", { name: "Open navigation" }).click();
+        for (const name of [
+          "Recoverable trash",
+          "Backup snapshots",
+          "Saved queries and highlights",
+        ]) {
+          await expect(page.getByRole("button", { name })).toBeVisible();
         }
-        await page.getByRole("button", {name:"Close navigation"}).click();
+        await page.getByRole("button", { name: "Close navigation" }).click();
       }
       await resultPath.scrollIntoViewIfNeeded();
-      await page.screenshot({path:path.join(output!,"web-natural-"+width+".png")});
+      await page.screenshot({ path: path.join(output!, "web-natural-" + width + ".png") });
     }
-    console.log("natural search screenshot: modes=Names and text,Auto,Lexical,Semantic,Hybrid rows=live excerpt=true evidence=true widths=1440,1280,768,400");
+    console.log(
+      "natural search screenshot: modes=Names and text,Auto,Lexical,Semantic,Hybrid rows=live excerpt=true evidence=true widths=1440,1280,768,400",
+    );
     const socket = `docbank-natural-${process.pid}`;
-    const tmux = async (args: string[]) => (await exec(process.platform === "win32" ? "wsl.exe" : "tmux",
-      process.platform === "win32" ? ["-d","Ubuntu","--","tmux","-L",socket,...args] : ["-L",socket,...args],
-      {windowsHide:true,timeout:15_000,maxBuffer:1024*1024})).stdout;
+    const tmux = async (args: string[]) =>
+      (
+        await exec(
+          process.platform === "win32" ? "wsl.exe" : "tmux",
+          process.platform === "win32"
+            ? ["-d", "Ubuntu", "--", "tmux", "-L", socket, ...args]
+            : ["-L", socket, ...args],
+          { windowsHide: true, timeout: 15_000, maxBuffer: 1024 * 1024 },
+        )
+      ).stdout;
     try {
-      const executable = process.platform === "win32" ? (await exec("wsl.exe",["-d","Ubuntu","--","wslpath","-u",binary.replaceAll("\\","/")],{windowsHide:true})).stdout.trim() : binary;
-      await tmux(["new-session","-d","-x","120","-y","55","-s","natural","env",`DOCBANK_HOME=${vault.replaceAll("\\","/")}`,"WSLENV=DOCBANK_HOME",executable,"tui"]);
-      await expect.poll(() => tmux(["capture-pane","-p","-t","natural"]),{timeout:20_000}).toContain("source.txt");
-      await tmux(["send-keys","-t","natural","/","solar maintenance","Enter"]);
-      await expect.poll(() => tmux(["capture-pane","-p","-t","natural"]),{timeout:20_000}).toContain("solar maintenance");
-      const terminal = await tmux(["capture-pane","-p","-t","natural"]);
-      await writeFile(path.join(output!,"tui-natural-search.txt"),terminal);
-      await page.setViewportSize({width:1440,height:1100});
-      await page.setContent('<body style="margin:0;background:#07100f;color:#e8f1ef"><pre style="padding:16px;font:14px/19px monospace"></pre></body>');
-      await page.locator("pre").evaluate((element,text) => {element.textContent=text;},terminal);
-      await page.screenshot({path:path.join(output!,"tui-natural-search.png")});
+      const executable =
+        process.platform === "win32"
+          ? (
+              await exec(
+                "wsl.exe",
+                ["-d", "Ubuntu", "--", "wslpath", "-u", binary.replaceAll("\\", "/")],
+                { windowsHide: true },
+              )
+            ).stdout.trim()
+          : binary;
+      await tmux([
+        "new-session",
+        "-d",
+        "-x",
+        "120",
+        "-y",
+        "55",
+        "-s",
+        "natural",
+        "env",
+        `DOCBANK_HOME=${vault.replaceAll("\\", "/")}`,
+        "WSLENV=DOCBANK_HOME",
+        executable,
+        "tui",
+      ]);
+      await expect
+        .poll(() => tmux(["capture-pane", "-p", "-t", "natural"]), { timeout: 20_000 })
+        .toContain("source.txt");
+      await tmux(["send-keys", "-t", "natural", "/", "solar maintenance", "Enter"]);
+      await expect
+        .poll(() => tmux(["capture-pane", "-p", "-t", "natural"]), { timeout: 20_000 })
+        .toContain("solar maintenance");
+      const terminal = await tmux(["capture-pane", "-p", "-t", "natural"]);
+      await writeFile(path.join(output!, "tui-natural-search.txt"), terminal);
+      await page.setViewportSize({ width: 1440, height: 1100 });
+      await page.setContent(
+        '<body style="margin:0;background:#07100f;color:#e8f1ef"><pre style="padding:16px;font:14px/19px monospace"></pre></body>',
+      );
+      await page.locator("pre").evaluate((element, text) => {
+        element.textContent = text;
+      }, terminal);
+      await page.screenshot({ path: path.join(output!, "tui-natural-search.png") });
       console.log("natural TUI screenshot: mode=Auto excerpt=true evidence=true status=rendered");
     } catch (error) {
-      console.log("manual-owner-proof blocker: TUI capture: "+String(error));
+      console.log("manual-owner-proof blocker: TUI capture: " + String(error));
     } finally {
       await tmux(["kill-server"]).catch(() => {});
     }
@@ -215,16 +346,23 @@ trust_boundary = "local_process"
     throw error;
   } finally {
     if (record) {
-      baseURL = "http://"+record.address;
-      await generated.shutdownDaemon({"X-Docbank-Daemon-Token":record.metadata.shutdown_token!},{headers:{"X-Api-Key":record.metadata.api_key!}}).catch(() => {});
+      baseURL = "http://" + record.address;
+      await generated
+        .shutdownDaemon(
+          { "X-Docbank-Daemon-Token": record.metadata.shutdown_token! },
+          { headers: { "X-Api-Key": record.metadata.api_key! } },
+        )
+        .catch(() => {});
     }
     globalThis.fetch = originalFetch;
     if (daemon && daemon.exitCode === null) {
       daemon.kill();
-      await new Promise<void>((resolve) => daemon!.once("exit",() => resolve()));
+      await new Promise<void>((resolve) => daemon!.once("exit", () => resolve()));
     }
-    await new Promise<void>((resolve,reject) => server.close((err) => err ? reject(err) : resolve()));
-    await rm(workspace,{recursive:true,force:true,maxRetries:5,retryDelay:500});
+    await new Promise<void>((resolve, reject) =>
+      server.close((err) => (err ? reject(err) : resolve())),
+    );
+    await rm(workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
     console.log("natural search screenshot: synthetic vault and daemon removed");
   }
 });

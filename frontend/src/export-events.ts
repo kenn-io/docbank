@@ -1,4 +1,8 @@
-import { getExportJobEvents, type GetExportJobEvents200 as ExportProgressEvent, type GetExportJobEventsParams } from "./generated/docbank.js";
+import {
+  getExportJobEvents,
+  type GetExportJobEvents200 as ExportProgressEvent,
+  type GetExportJobEventsParams,
+} from "./generated/docbank.js";
 
 /** Read one progress stream and release its body when iteration stops. */
 export async function* streamExportJobEvents(
@@ -7,7 +11,10 @@ export async function* streamExportJobEvents(
   options?: Parameters<typeof getExportJobEvents>[2],
 ): AsyncGenerator<ExportProgressEvent, void> {
   const response = await getExportJobEvents(id, params, options);
-  if (!response.body || response.headers.get("Content-Type")?.split(";", 1)[0] !== "application/x-ndjson") {
+  if (
+    !response.body ||
+    response.headers.get("Content-Type")?.split(";", 1)[0] !== "application/x-ndjson"
+  ) {
     throw new Error("The export response did not contain a progress stream.");
   }
   const reader = response.body.getReader();
@@ -28,10 +35,12 @@ export async function* streamExportJobEvents(
         while ((newline = buffered.indexOf("\n")) >= 0) {
           const line = buffered.slice(0, newline);
           buffered = buffered.slice(newline + 1);
-          if (line.length > 64 * 1024) throw new Error("The export progress event was unexpectedly large.");
+          if (line.length > 64 * 1024)
+            throw new Error("The export progress event was unexpectedly large.");
           if (line.trim()) yield JSON.parse(line) as ExportProgressEvent;
         }
-        if (buffered.length > 64 * 1024) throw new Error("The export progress event was unexpectedly large.");
+        if (buffered.length > 64 * 1024)
+          throw new Error("The export progress event was unexpectedly large.");
       }
     }
   } finally {

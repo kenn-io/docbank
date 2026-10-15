@@ -24,7 +24,9 @@
 
   let pending = $state(false);
   let destroyed = false;
-  onDestroy(() => { destroyed = true; });
+  onDestroy(() => {
+    destroyed = true;
+  });
   let failure = $state("");
 
   function close(): void {
@@ -87,12 +89,7 @@
   </div>
   {#snippet footer()}
     <Button surface="soft" disabled={pending} onclick={close}>Keep in Docbank</Button>
-    <Button
-      tone="danger"
-      surface="solid"
-      disabled={pending}
-      onclick={() => void confirm()}
-    >
+    <Button tone="danger" surface="solid" disabled={pending} onclick={() => void confirm()}>
       {#if pending}<Spinner size={14} /> Moving…{:else}<Trash2Icon size="14" /> Move to trash{/if}
     </Button>
   {/snippet}

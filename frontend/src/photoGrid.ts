@@ -1,6 +1,9 @@
 import type { PhotoBrowseRow, PhotoPreviewSlot } from "./generated/docbank.js";
 
-export type PhotoGridRow = Pick<PhotoBrowseRow, "asset_id" | "name" | "capture_time" | "width_px" | "height_px" | "rotation"> & { previews: { grid: PhotoPreviewSlot } };
+export type PhotoGridRow = Pick<
+  PhotoBrowseRow,
+  "asset_id" | "name" | "capture_time" | "width_px" | "height_px" | "rotation"
+> & { previews: { grid: PhotoPreviewSlot } };
 import { rotatedDimensions } from "./photoRotation.js";
 
 export type LayoutItem = { aspect: number };
@@ -81,26 +84,42 @@ export function photoAspect(photo: PhotoGridRow): number {
 }
 
 export function monthLabel(key: string): string {
-  return new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${key}-01T00:00:00Z`));
+  return new Intl.DateTimeFormat(undefined, {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(`${key}-01T00:00:00Z`));
 }
 
 // Floating EXIF dates retain their recorded clock time regardless of the browser's zone.
 function captureClock(value: string): number {
-  const match = /^(\d{4}-\d{2}-\d{2})(?:T(\d{1,2})(?::(\d{2}))?(?::(\d{2})([.,]\d+)?)?)?(Z|[+-]\d{2}:\d{2})?$/.exec(value);
+  const match =
+    /^(\d{4}-\d{2}-\d{2})(?:T(\d{1,2})(?::(\d{2}))?(?::(\d{2})([.,]\d+)?)?)?(Z|[+-]\d{2}:\d{2})?$/.exec(
+      value,
+    );
   if (!match) return NaN;
   const [, date, hour = "00", minute = "00", second = "00", fraction = "", zone = "Z"] = match;
   if (Number(date.slice(0, 4)) < 1) return NaN;
-  const clock = Date.parse(`${date}T${hour.padStart(2, "0")}:${minute}:${second}${fraction.replace(",", ".")}${zone}`);
+  const clock = Date.parse(
+    `${date}T${hour.padStart(2, "0")}:${minute}:${second}${fraction.replace(",", ".")}${zone}`,
+  );
   const utcYear = new Date(clock).getUTCFullYear();
   return utcYear >= 1 && utcYear <= 9999 ? clock : NaN;
 }
 
-export function groupPhotos(items: PhotoGridRow[], grouping: "months" | "sessions" | "flat" | "relevance"): PhotoGroup[] {
-  if (grouping === "flat") return items.length ? [{ key: "all", label: "Photos", year: "", items }] : [];
-  if (grouping === "relevance") return items.length ? [{ key: grouping, label: "Search results", year: "", items }] : [];
-  const clocks = new Map(items.map(item => [item, item.capture_time ? captureClock(item.capture_time) : NaN]));
-  const undated = items.filter(item => !Number.isFinite(clocks.get(item)));
-  const dated = items.filter(item => Number.isFinite(clocks.get(item)));
+export function groupPhotos(
+  items: PhotoGridRow[],
+  grouping: "months" | "sessions" | "flat" | "relevance",
+): PhotoGroup[] {
+  if (grouping === "flat")
+    return items.length ? [{ key: "all", label: "Photos", year: "", items }] : [];
+  if (grouping === "relevance")
+    return items.length ? [{ key: grouping, label: "Search results", year: "", items }] : [];
+  const clocks = new Map(
+    items.map((item) => [item, item.capture_time ? captureClock(item.capture_time) : NaN]),
+  );
+  const undated = items.filter((item) => !Number.isFinite(clocks.get(item)));
+  const dated = items.filter((item) => Number.isFinite(clocks.get(item)));
   const groups: PhotoGroup[] = [];
   if (grouping === "months") {
     const byMonth = new Map<string, PhotoGroup>();
@@ -121,7 +140,12 @@ export function groupPhotos(items: PhotoGridRow[], grouping: "months" | "session
     for (const item of sorted) {
       const clock = clocks.get(item)!;
       if (clock - previous > 4 * 3600 * 1000) {
-        groups.push({ key: item.asset_id, label: `${item.capture_time!.slice(0, 10)} · Capture session`, year: item.capture_time!.slice(0, 4), items: [] });
+        groups.push({
+          key: item.asset_id,
+          label: `${item.capture_time!.slice(0, 10)} · Capture session`,
+          year: item.capture_time!.slice(0, 4),
+          items: [],
+        });
       }
       const group = groups[groups.length - 1];
       if (clock > previous) group.key = item.asset_id;
@@ -135,8 +159,15 @@ export function groupPhotos(items: PhotoGridRow[], grouping: "months" | "session
   return groups;
 }
 
-export function computeMonthLayout(items: PhotoGridRow[], containerWidth: number, targetRowHeight: number) {
-  const layout = computeJustified(items.map(item => ({ aspect: photoAspect(item) })), { containerWidth, targetRowHeight });
+export function computeMonthLayout(
+  items: PhotoGridRow[],
+  containerWidth: number,
+  targetRowHeight: number,
+) {
+  const layout = computeJustified(
+    items.map((item) => ({ aspect: photoAspect(item) })),
+    { containerWidth, targetRowHeight },
+  );
   return { ...layout, intrinsicHeight: items.length ? layout.totalHeight + HEADER_HEIGHT : 0 };
 }
 

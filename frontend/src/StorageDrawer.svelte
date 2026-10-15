@@ -7,14 +7,7 @@
   import ServerIcon from "@lucide/svelte/icons/server";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import XIcon from "@lucide/svelte/icons/x";
-  import {
-    Button,
-    Card,
-    Chip,
-    DetailDrawer,
-    IconButton,
-    Spinner,
-  } from "@kenn-io/kit-ui";
+  import { Button, Card, Chip, DetailDrawer, IconButton, Spinner } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
   import { type StorageStatus } from "./generated/docbank.js";
   import { formatBytes } from "./format.js";
@@ -32,9 +25,7 @@
   let error = $state("");
   let generation = 0;
 
-  const storedPayload = $derived(
-    status ? status.loose_bytes + status.pack_stored_bytes : 0,
-  );
+  const storedPayload = $derived(status ? status.loose_bytes + status.pack_stored_bytes : 0);
   const deadPackedBytes = $derived(status?.dead_packed_bytes ?? 0);
   const deadPercent = $derived(
     status && status.pack_stored_bytes > 0
@@ -55,7 +46,7 @@
     loading = true;
     error = "";
     try {
-      const next = await generated.storageStatus((true) ? { refresh: true } : undefined, { session });
+      const next = await generated.storageStatus(true ? { refresh: true } : undefined, { session });
       if (request !== generation) return;
       status = next;
     } catch (cause) {
@@ -72,11 +63,7 @@
   }
 </script>
 
-<DetailDrawer
-  width="min(760px, 100vw)"
-  ariaLabel="Physical storage status"
-  {onclose}
->
+<DetailDrawer width="min(760px, 100vw)" ariaLabel="Physical storage status" {onclose}>
   {#snippet header()}
     <div class="drawer-heading">
       <div>
@@ -128,8 +115,7 @@
           {#snippet actions()}<HardDriveIcon size="18" aria-hidden="true" />{/snippet}
           <p>
             {status.loose_blobs} physical file{status.loose_blobs === 1 ? "" : "s"}
-            stored as raw or zstd. This inventory can include untracked or
-            redundant loose files.
+            stored as raw or zstd. This inventory can include untracked or redundant loose files.
           </p>
         </Card>
 
@@ -141,8 +127,14 @@
         >
           {#snippet actions()}<ArchiveIcon size="18" aria-hidden="true" />{/snippet}
           <dl>
-            <div><dt>Objects</dt><dd>{status.packed_blobs}</dd></div>
-            <div><dt>Raw bytes</dt><dd>{formatBytes(status.packed_raw_bytes)}</dd></div>
+            <div>
+              <dt>Objects</dt>
+              <dd>{status.packed_blobs}</dd>
+            </div>
+            <div>
+              <dt>Raw bytes</dt>
+              <dd>{formatBytes(status.packed_raw_bytes)}</dd>
+            </div>
           </dl>
         </Card>
 
@@ -154,7 +146,9 @@
         >
           {#snippet actions()}<DatabaseIcon size="18" aria-hidden="true" />{/snippet}
           <p>
-            {status.packs} immutable pack{status.packs === 1 ? "" : "s"} contain{status.packs === 1 ? "s" : ""}
+            {status.packs} immutable pack{status.packs === 1 ? "" : "s"} contain{status.packs === 1
+              ? "s"
+              : ""}
             live and logically dead stored payload.
           </p>
         </Card>
@@ -166,10 +160,7 @@
           title={formatBytes(status.dead_packed_bytes)}
         >
           {#snippet actions()}
-            <Chip
-              size="xs"
-              tone={deadPackedBytes > 0 ? "warning" : "success"}
-            >
+            <Chip size="xs" tone={deadPackedBytes > 0 ? "warning" : "success"}>
               {deadPackedBytes > 0 ? `${deadPercent}% of packs` : "Compact"}
             </Chip>
           {/snippet}
@@ -204,7 +195,11 @@
                   </div>
                   <Chip
                     size="xs"
-                    tone={store.state === "online" ? "success" : store.state === "fenced" ? "danger" : "warning"}
+                    tone={store.state === "online"
+                      ? "success"
+                      : store.state === "fenced"
+                        ? "danger"
+                        : "warning"}
                   >
                     {store.state}
                   </Chip>
@@ -212,7 +207,9 @@
                 <dl>
                   <div>
                     <dt>Authority</dt>
-                    <dd>{store.authoritative_objects} objects · {formatBytes(store.logical_bytes)}</dd>
+                    <dd>
+                      {store.authoritative_objects} objects · {formatBytes(store.logical_bytes)}
+                    </dd>
                   </div>
                   <div>
                     <dt>Stored</dt>
@@ -243,8 +240,8 @@
         <strong>This view never changes storage.</strong>
         <p>
           Dead packed bytes are not reclaimed space. Run
-          <code>docbank storage repack</code> explicitly when you want Docbank
-          to rewrite eligible sparse packs and retire their old files.
+          <code>docbank storage repack</code> explicitly when you want Docbank to rewrite eligible sparse
+          packs and retire their old files.
         </p>
       </aside>
     {/if}

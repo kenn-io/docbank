@@ -4,10 +4,13 @@ import { startAppOpenedReporting } from "./app-opened.js";
 const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 function respond(status: number): Response {
-  return new Response(JSON.stringify(status === 202 ? { status: "disabled" } : { status, title: "Unauthorized" }), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
+  return new Response(
+    JSON.stringify(status === 202 ? { status: "disabled" } : { status, title: "Unauthorized" }),
+    {
+      status,
+      headers: { "Content-Type": "application/json" },
+    },
+  );
 }
 
 describe("app_opened reporting", () => {

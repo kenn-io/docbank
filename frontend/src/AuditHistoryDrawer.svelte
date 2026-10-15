@@ -17,7 +17,12 @@
     type TimelineTone,
   } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
-  import { type AuditAttachmentState, type AuditEvent, type AuditEventPage, type Node } from "./generated/docbank.js";
+  import {
+    type AuditAttachmentState,
+    type AuditEvent,
+    type AuditEventPage,
+    type Node,
+  } from "./generated/docbank.js";
   import {
     auditEventLabel,
     auditEventSummary,
@@ -44,17 +49,13 @@
   let error = $state("");
   let generation = 0;
 
-  const selectedEvent = $derived(
-    items.find((event) => event.id === selectedEventID),
-  );
+  const selectedEvent = $derived(items.find((event) => event.id === selectedEventID));
   const historyNode = $derived(page?.node ?? node);
   const historyPath = $derived(page ? page.path : path);
   const historyLabel = $derived(
     historyPath ? basename(historyPath) : `${historyNode.name} (trashed)`,
   );
-  const historyCoordinate = $derived(
-    historyPath ?? `Trashed node · id:${historyNode.id}`,
-  );
+  const historyCoordinate = $derived(historyPath ?? `Trashed node · id:${historyNode.id}`);
 
   onMount(() => {
     void loadPage("", false);
@@ -69,7 +70,10 @@
     else loading = true;
     error = "";
     try {
-      const next = await generated.auditNodeHistory({ node_id: node.id, limit: 50, ...((cursor) ? { cursor: cursor } : {}) }, { session });
+      const next = await generated.auditNodeHistory(
+        { node_id: node.id, limit: 50, ...(cursor ? { cursor: cursor } : {}) },
+        { session },
+      );
       if (request !== generation) return;
       page = next;
       items = append ? [...items, ...next.items] : next.items;
@@ -194,7 +198,12 @@
           <dl>
             <div class="identity">
               <dt>Event</dt>
-              <dd><code>{selectedEvent.id}</code><CopyButton text={selectedEvent.id} ariaLabel="Copy event ID" /></dd>
+              <dd>
+                <code>{selectedEvent.id}</code><CopyButton
+                  text={selectedEvent.id}
+                  ariaLabel="Copy event ID"
+                />
+              </dd>
             </div>
             <div class="identity">
               <dt>Operation</dt>
@@ -210,22 +219,43 @@
                 <CopyButton text={selectedEvent.scope_id} ariaLabel="Copy scope ID" />
               </dd>
             </div>
-            <div><dt>Node</dt><dd>id:{selectedEvent.node_id}</dd></div>
-            <div><dt>Recorded</dt><dd>{formatDate(selectedEvent.recorded_at)}</dd></div>
-            <div><dt>Canonical time</dt><dd><code>{selectedEvent.recorded_at}</code></dd></div>
-            <div><dt>Origin</dt><dd>{selectedEvent.origin}</dd></div>
+            <div>
+              <dt>Node</dt>
+              <dd>id:{selectedEvent.node_id}</dd>
+            </div>
+            <div>
+              <dt>Recorded</dt>
+              <dd>{formatDate(selectedEvent.recorded_at)}</dd>
+            </div>
+            <div>
+              <dt>Canonical time</dt>
+              <dd><code>{selectedEvent.recorded_at}</code></dd>
+            </div>
+            <div>
+              <dt>Origin</dt>
+              <dd>{selectedEvent.origin}</dd>
+            </div>
             {#if selectedEvent.agent_label}
-              <div><dt>Agent</dt><dd>{selectedEvent.agent_label}</dd></div>
+              <div>
+                <dt>Agent</dt>
+                <dd>{selectedEvent.agent_label}</dd>
+              </div>
             {/if}
             <div>
               <dt>Revision</dt>
               <dd>{selectedEvent.prior_node_revision} → {selectedEvent.resulting_node_revision}</dd>
             </div>
             {#if selectedEvent.old_path}
-              <div><dt>Before path</dt><dd><code>{auditPathLabel(selectedEvent.old_path)}</code></dd></div>
+              <div>
+                <dt>Before path</dt>
+                <dd><code>{auditPathLabel(selectedEvent.old_path)}</code></dd>
+              </div>
             {/if}
             {#if selectedEvent.new_path}
-              <div><dt>After path</dt><dd><code>{auditPathLabel(selectedEvent.new_path)}</code></dd></div>
+              <div>
+                <dt>After path</dt>
+                <dd><code>{auditPathLabel(selectedEvent.new_path)}</code></dd>
+              </div>
             {/if}
             {#if selectedEvent.prior_current_version_id !== undefined}
               <div class="identity">
@@ -233,7 +263,10 @@
                 <dd>
                   <code>{optional(selectedEvent.prior_current_version_id)}</code>
                   {#if selectedEvent.prior_current_version_id}
-                    <CopyButton text={selectedEvent.prior_current_version_id} ariaLabel="Copy prior version ID" />
+                    <CopyButton
+                      text={selectedEvent.prior_current_version_id}
+                      ariaLabel="Copy prior version ID"
+                    />
                   {/if}
                 </dd>
               </div>
@@ -244,7 +277,10 @@
                 <dd>
                   <code>{optional(selectedEvent.resulting_current_version_id)}</code>
                   {#if selectedEvent.resulting_current_version_id}
-                    <CopyButton text={selectedEvent.resulting_current_version_id} ariaLabel="Copy resulting version ID" />
+                    <CopyButton
+                      text={selectedEvent.resulting_current_version_id}
+                      ariaLabel="Copy resulting version ID"
+                    />
                   {/if}
                 </dd>
               </div>
@@ -254,19 +290,28 @@
                 <dt>Source version</dt>
                 <dd>
                   <code>{selectedEvent.source_version_id}</code>
-                  <CopyButton text={selectedEvent.source_version_id} ariaLabel="Copy source version ID" />
+                  <CopyButton
+                    text={selectedEvent.source_version_id}
+                    ariaLabel="Copy source version ID"
+                  />
                 </dd>
               </div>
             {/if}
             {#if selectedEvent.target_node_id}
-              <div><dt>Target node</dt><dd>id:{selectedEvent.target_node_id}</dd></div>
+              <div>
+                <dt>Target node</dt>
+                <dd>id:{selectedEvent.target_node_id}</dd>
+              </div>
             {/if}
             {#if selectedEvent.baseline_digest}
               <div class="identity">
                 <dt>Baseline</dt>
                 <dd>
                   <code>{selectedEvent.baseline_digest}</code>
-                  <CopyButton text={selectedEvent.baseline_digest} ariaLabel="Copy baseline digest" />
+                  <CopyButton
+                    text={selectedEvent.baseline_digest}
+                    ariaLabel="Copy baseline digest"
+                  />
                 </dd>
               </div>
             {/if}
@@ -284,19 +329,28 @@
                     <dt>Tag ID</dt>
                     <dd>
                       <code>{selectedEvent.attachment.identity.tag_id}</code>
-                      <CopyButton text={selectedEvent.attachment.identity.tag_id} ariaLabel="Copy tag ID" />
+                      <CopyButton
+                        text={selectedEvent.attachment.identity.tag_id}
+                        ariaLabel="Copy tag ID"
+                      />
                     </dd>
                   </div>
                 {/if}
                 {#if selectedEvent.attachment.identity.node_id}
-                  <div><dt>Attached node</dt><dd>id:{selectedEvent.attachment.identity.node_id}</dd></div>
+                  <div>
+                    <dt>Attached node</dt>
+                    <dd>id:{selectedEvent.attachment.identity.node_id}</dd>
+                  </div>
                 {/if}
                 {#if selectedEvent.attachment.identity.provenance_id}
                   <div class="identity">
                     <dt>Provenance ID</dt>
                     <dd>
                       <code>{selectedEvent.attachment.identity.provenance_id}</code>
-                      <CopyButton text={selectedEvent.attachment.identity.provenance_id} ariaLabel="Copy provenance ID" />
+                      <CopyButton
+                        text={selectedEvent.attachment.identity.provenance_id}
+                        ariaLabel="Copy provenance ID"
+                      />
                     </dd>
                   </div>
                 {/if}
@@ -325,27 +379,72 @@
     {#if state}
       <dl>
         {#if state.photo}
-          <div><dt>File</dt><dd><code>{selectedEvent?.attachment?.identity.file_id}</code></dd></div>
-          <div><dt>File revision</dt><dd>{state.photo.revision}</dd></div>
-          <div><dt>Rating</dt><dd>{state.photo.values.rating}</dd></div>
-          <div><dt>Flag</dt><dd>{state.photo.values.flag || "(empty)"}</dd></div>
-          <div><dt>Label</dt><dd>{state.photo.values.label || "(empty)"}</dd></div>
-          <div><dt>Caption</dt><dd>{state.photo.values.caption || "(empty)"}</dd></div>
-          <div><dt>Creator</dt><dd>{state.photo.values.creator || "(empty)"}</dd></div>
-          <div><dt>Copyright</dt><dd>{state.photo.values.copyright || "(empty)"}</dd></div>
-          <div><dt>Rotation</dt><dd>{state.photo.values.rotation}°</dd></div>
-          <div><dt>Confirmed fields</dt><dd>{photoConfirmedFieldNames(state.photo.values.confirmed_fields)}</dd></div>
+          <div>
+            <dt>File</dt>
+            <dd><code>{selectedEvent?.attachment?.identity.file_id}</code></dd>
+          </div>
+          <div>
+            <dt>File revision</dt>
+            <dd>{state.photo.revision}</dd>
+          </div>
+          <div>
+            <dt>Rating</dt>
+            <dd>{state.photo.values.rating}</dd>
+          </div>
+          <div>
+            <dt>Flag</dt>
+            <dd>{state.photo.values.flag || "(empty)"}</dd>
+          </div>
+          <div>
+            <dt>Label</dt>
+            <dd>{state.photo.values.label || "(empty)"}</dd>
+          </div>
+          <div>
+            <dt>Caption</dt>
+            <dd>{state.photo.values.caption || "(empty)"}</dd>
+          </div>
+          <div>
+            <dt>Creator</dt>
+            <dd>{state.photo.values.creator || "(empty)"}</dd>
+          </div>
+          <div>
+            <dt>Copyright</dt>
+            <dd>{state.photo.values.copyright || "(empty)"}</dd>
+          </div>
+          <div>
+            <dt>Rotation</dt>
+            <dd>{state.photo.values.rotation}°</dd>
+          </div>
+          <div>
+            <dt>Confirmed fields</dt>
+            <dd>{photoConfirmedFieldNames(state.photo.values.confirmed_fields)}</dd>
+          </div>
         {/if}
-        {#if state.tag_name}<div><dt>Tag name</dt><dd>{state.tag_name}</dd></div>{/if}
-        {#if state.ingest_id}<div><dt>Ingest</dt><dd><code>{state.ingest_id}</code></dd></div>{/if}
+        {#if state.tag_name}<div>
+            <dt>Tag name</dt>
+            <dd>{state.tag_name}</dd>
+          </div>{/if}
+        {#if state.ingest_id}<div>
+            <dt>Ingest</dt>
+            <dd><code>{state.ingest_id}</code></dd>
+          </div>{/if}
         {#if state.original_path !== undefined}
-          <div><dt>Original reference</dt><dd>{state.original_path ?? "(absent)"}</dd></div>
+          <div>
+            <dt>Original reference</dt>
+            <dd>{state.original_path ?? "(absent)"}</dd>
+          </div>
         {/if}
         {#if state.original_mtime !== undefined}
-          <div><dt>Original modified</dt><dd>{state.original_mtime ?? "(absent)"}</dd></div>
+          <div>
+            <dt>Original modified</dt>
+            <dd>{state.original_mtime ?? "(absent)"}</dd>
+          </div>
         {/if}
         {#if state.supersedes !== undefined}
-          <div><dt>Supersedes</dt><dd><code>{state.supersedes ?? "(none)"}</code></dd></div>
+          <div>
+            <dt>Supersedes</dt>
+            <dd><code>{state.supersedes ?? "(none)"}</code></dd>
+          </div>
         {/if}
       </dl>
     {/if}

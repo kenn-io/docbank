@@ -108,14 +108,9 @@ describe("document selection", () => {
 
   it("reconciles removed IDs and derives targets from current revisions", () => {
     const visible = [row(2, "file", 20), row(3, "file", 30), row(4, "dir", 40)];
-    const state = reconcileSelection(
-      { selectedIDs: new Set([1, 2, 4]), anchorID: 1 },
-      visible,
-    );
+    const state = reconcileSelection({ selectedIDs: new Set([1, 2, 4]), anchorID: 1 }, visible);
     expect([...state.selectedIDs]).toEqual([2]);
     expect(state.anchorID).toBeUndefined();
-    expect(selectedTargets(visible, state.selectedIDs)).toEqual([
-      { node_id: 2, revision: 20 },
-    ]);
+    expect(selectedTargets(visible, state.selectedIDs)).toEqual([{ node_id: 2, revision: 20 }]);
   });
 });

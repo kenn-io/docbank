@@ -9,11 +9,7 @@ import { publishScreenshots } from "./publish.mjs";
 // This suite uses Node's built-in test runner and is intentionally named so
 // Vitest does not discover it as part of the Svelte unit-test lane.
 
-
-const pngBytes = Buffer.from([
-  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00,
-]);
-
+const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
 
 async function workspace(t) {
   const root = await mkdtemp(path.join(tmpdir(), "docbank-screenshot-publish-"));
@@ -23,7 +19,6 @@ async function workspace(t) {
     staging: path.join(root, ".screenshots.next"),
   };
 }
-
 
 test("publishes a complete staged set atomically", async (t) => {
   const { output, staging } = await workspace(t);
@@ -37,7 +32,6 @@ test("publishes a complete staged set atomically", async (t) => {
   assert.deepEqual(await readdir(output), ["one.png"]);
   assert.deepEqual(await readFile(path.join(output, "one.png")), pngBytes);
 });
-
 
 test("keeps the previous set when the staged manifest is incomplete", async (t) => {
   const { output, staging } = await workspace(t);
@@ -58,7 +52,6 @@ test("keeps the previous set when the staged manifest is incomplete", async (t) 
   assert.deepEqual(await readdir(output), ["old.png"]);
   assert.deepEqual(await readFile(path.join(output, "old.png")), pngBytes);
 });
-
 
 test("restores the previous set when final rename fails", async (t) => {
   const { output, staging } = await workspace(t);
@@ -85,7 +78,6 @@ test("restores the previous set when final rename fails", async (t) => {
   assert.deepEqual(await readdir(output), ["old.png"]);
   assert.deepEqual(await readFile(path.join(output, "old.png")), pngBytes);
 });
-
 
 test("rejects unsafe manifest names before changing output", async (t) => {
   const { output, staging } = await workspace(t);

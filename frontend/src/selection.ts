@@ -42,8 +42,7 @@ export function toggleIDSelection<ID>(
   range: boolean,
 ): SelectionState<ID> {
   const targetIndex = displayedIDs.indexOf(targetID);
-  const anchorIndex =
-    state.anchorID === undefined ? -1 : displayedIDs.indexOf(state.anchorID);
+  const anchorIndex = state.anchorID === undefined ? -1 : displayedIDs.indexOf(state.anchorID);
   const selectedIDs = new Set(state.selectedIDs);
 
   if (targetIndex < 0) return { selectedIDs, anchorID: state.anchorID };
@@ -69,16 +68,15 @@ export function reconcileSelection(
   return reconcileIDSelection(state, new Set(eligibleIDs(rows)));
 }
 
-export function reconcileIDSelection<ID>(state: SelectionState<ID>, eligible: ReadonlySet<ID>): SelectionState<ID> {
-  const selectedIDs = new Set(
-    [...state.selectedIDs].filter((id) => eligible.has(id)),
-  );
+export function reconcileIDSelection<ID>(
+  state: SelectionState<ID>,
+  eligible: ReadonlySet<ID>,
+): SelectionState<ID> {
+  const selectedIDs = new Set([...state.selectedIDs].filter((id) => eligible.has(id)));
   return {
     selectedIDs,
     anchorID:
-      state.anchorID !== undefined && eligible.has(state.anchorID)
-        ? state.anchorID
-        : undefined,
+      state.anchorID !== undefined && eligible.has(state.anchorID) ? state.anchorID : undefined,
   };
 }
 export function selectedTargets(

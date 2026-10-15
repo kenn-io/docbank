@@ -1,7 +1,10 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import formatMetadata from "../../document/format_metadata.json";
-import { SavedQueryFiltersSchemaFlagsItem, SavedQueryFiltersSchemaLabelsItem } from "./generated/docbank.js";
+import {
+  SavedQueryFiltersSchemaFlagsItem,
+  SavedQueryFiltersSchemaLabelsItem,
+} from "./generated/docbank.js";
 import { timestampComparable } from "./format.js";
 
 const maxInputBytes = 128 * 1024;
@@ -9,32 +12,111 @@ const maxCanonicalBytes = 64 * 1024;
 const maxJSONDepth = 16;
 const maxSafeInteger = 9_007_199_254_740_991;
 const mediaFamilies = [
-  "email", "document", "spreadsheet", "presentation", "image", "audio_video",
-  "text", "source_code", "web", "calendar", "archive", "cad", "unknown",
+  "email",
+  "document",
+  "spreadsheet",
+  "presentation",
+  "image",
+  "audio_video",
+  "text",
+  "source_code",
+  "web",
+  "calendar",
+  "archive",
+  "cad",
+  "unknown",
 ] as const;
-const textCoverageValues = ["complete", "partial", "failed", "unprocessed", "none", "unavailable"] as const;
-const qualityFields = ["focus_min", "focus_max", "blur_min", "blur_max", "brightness_min", "brightness_max", "framing_min", "framing_max", "aesthetics_min", "aesthetics_max", "color_red_min", "color_red_max", "color_green_min", "color_green_max", "color_blue_min", "color_blue_max"] as const;
+const textCoverageValues = [
+  "complete",
+  "partial",
+  "failed",
+  "unprocessed",
+  "none",
+  "unavailable",
+] as const;
+const qualityFields = [
+  "focus_min",
+  "focus_max",
+  "blur_min",
+  "blur_max",
+  "brightness_min",
+  "brightness_max",
+  "framing_min",
+  "framing_max",
+  "aesthetics_min",
+  "aesthetics_max",
+  "color_red_min",
+  "color_red_max",
+  "color_green_min",
+  "color_green_max",
+  "color_blue_min",
+  "color_blue_max",
+] as const;
 const optionalFilterFields = new Set([
-  ...qualityFields, "unevaluated",
-  "paths", "exclude_paths", "collection_ids", "exclude_collection_ids", "tag_ids",
-  "exclude_tag_ids", "no_tags", "media_families", "mime_types", "extensions",
-  "modified_after", "modified_before", "size_min", "size_max", "text_coverage",
-  "rating_min", "rating_max", "flags", "labels", "has_duplicates", "collapse_duplicates", "kinds", "cameras", "lenses", "locations", "iso_min", "iso_max", "capture_after", "capture_before", "gps_bounds", "asset_ids", "set_ids",
+  ...qualityFields,
+  "unevaluated",
+  "paths",
+  "exclude_paths",
+  "collection_ids",
+  "exclude_collection_ids",
+  "tag_ids",
+  "exclude_tag_ids",
+  "no_tags",
+  "media_families",
+  "mime_types",
+  "extensions",
+  "modified_after",
+  "modified_before",
+  "size_min",
+  "size_max",
+  "text_coverage",
+  "rating_min",
+  "rating_max",
+  "flags",
+  "labels",
+  "has_duplicates",
+  "collapse_duplicates",
+  "kinds",
+  "cameras",
+  "lenses",
+  "locations",
+  "iso_min",
+  "iso_max",
+  "capture_after",
+  "capture_before",
+  "gps_bounds",
+  "asset_ids",
+  "set_ids",
 ]);
-export const uuidV4Pattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+export const uuidV4Pattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const extensionPattern = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 const colorPattern = /^#[0-9a-f]{6}$/;
 const encoder = new TextEncoder();
 
-export type MediaFamily = typeof mediaFamilies[number];
-export type TextCoverage = typeof textCoverageValues[number];
+export type MediaFamily = (typeof mediaFamilies)[number];
+export type TextCoverage = (typeof textCoverageValues)[number];
 
 export interface QuerySort {
-  field: "name" | "path" | "modified_at" | "size" | "media_type" | "relevance" | "capture_time" | "import_time" | "added_time";
+  field:
+    | "name"
+    | "path"
+    | "modified_at"
+    | "size"
+    | "media_type"
+    | "relevance"
+    | "capture_time"
+    | "import_time"
+    | "added_time";
   direction: "asc" | "desc";
 }
 
-export interface GPSBounds { south: string; west: string; north: string; east: string }
+export interface GPSBounds {
+  south: string;
+  west: string;
+  north: string;
+  east: string;
+}
 
 export interface QueryFilters {
   unevaluated?: boolean;
@@ -127,7 +209,11 @@ export function parseQuery(raw: string): Query {
     filters: parseFilters(filtersInput),
     sort: {
       field: optionalString(sortInput.field, "name", "sort.field") as QuerySort["field"],
-      direction: optionalString(sortInput.direction, "asc", "sort.direction") as QuerySort["direction"],
+      direction: optionalString(
+        sortInput.direction,
+        "asc",
+        "sort.direction",
+      ) as QuerySort["direction"],
     },
   });
   canonicalQuery(normalized);
@@ -137,34 +223,62 @@ export function parseQuery(raw: string): Query {
 export function canonicalQuery(value: Query): string {
   const normalized = normalizeQuery(value);
   const filters: Record<string, unknown> = {};
-  for (const field of qualityFields) { if (normalized.filters[field] !== undefined) filters[field] = normalized.filters[field]; }
+  for (const field of qualityFields) {
+    if (normalized.filters[field] !== undefined) filters[field] = normalized.filters[field];
+  }
   if (normalized.filters.unevaluated) filters.unevaluated = true;
   if (normalized.filters.collapse_duplicates) filters.collapse_duplicates = true;
-  if (normalized.filters.collection_ids?.length) filters.collection_ids = normalized.filters.collection_ids;
-  if (normalized.filters.exclude_collection_ids?.length) filters.exclude_collection_ids = normalized.filters.exclude_collection_ids;
-  if (normalized.filters.exclude_paths?.length) filters.exclude_paths = normalized.filters.exclude_paths;
-  if (normalized.filters.exclude_tag_ids?.length) filters.exclude_tag_ids = normalized.filters.exclude_tag_ids;
+  if (normalized.filters.collection_ids?.length)
+    filters.collection_ids = normalized.filters.collection_ids;
+  if (normalized.filters.exclude_collection_ids?.length)
+    filters.exclude_collection_ids = normalized.filters.exclude_collection_ids;
+  if (normalized.filters.exclude_paths?.length)
+    filters.exclude_paths = normalized.filters.exclude_paths;
+  if (normalized.filters.exclude_tag_ids?.length)
+    filters.exclude_tag_ids = normalized.filters.exclude_tag_ids;
   if (normalized.filters.extensions?.length) filters.extensions = normalized.filters.extensions;
   if (normalized.filters.has_duplicates) filters.has_duplicates = true;
-  if (normalized.filters.media_families?.length) filters.media_families = normalized.filters.media_families;
+  if (normalized.filters.media_families?.length)
+    filters.media_families = normalized.filters.media_families;
   if (normalized.filters.mime_types?.length) filters.mime_types = normalized.filters.mime_types;
   if (normalized.filters.modified_after) filters.modified_after = normalized.filters.modified_after;
-  if (normalized.filters.modified_before) filters.modified_before = normalized.filters.modified_before;
+  if (normalized.filters.modified_before)
+    filters.modified_before = normalized.filters.modified_before;
   if (normalized.filters.no_tags) filters.no_tags = true;
   if (normalized.filters.paths?.length) filters.paths = normalized.filters.paths;
   if (normalized.filters.size_max !== undefined) filters.size_max = normalized.filters.size_max;
   if (normalized.filters.size_min) filters.size_min = normalized.filters.size_min;
   if (normalized.filters.tag_ids?.length) filters.tag_ids = normalized.filters.tag_ids;
-  if (normalized.filters.text_coverage?.length) filters.text_coverage = normalized.filters.text_coverage;
-  for (const field of ["kinds", "cameras", "lenses", "locations", "asset_ids", "set_ids", "flags", "labels"] as const) {
+  if (normalized.filters.text_coverage?.length)
+    filters.text_coverage = normalized.filters.text_coverage;
+  for (const field of [
+    "kinds",
+    "cameras",
+    "lenses",
+    "locations",
+    "asset_ids",
+    "set_ids",
+    "flags",
+    "labels",
+  ] as const) {
     const values = normalized.filters[field];
     if (values?.length) filters[field] = values;
   }
-  for (const field of ["rating_min", "rating_max", "iso_min", "iso_max", "capture_after", "capture_before", "gps_bounds"] as const) {
+  for (const field of [
+    "rating_min",
+    "rating_max",
+    "iso_min",
+    "iso_max",
+    "capture_after",
+    "capture_before",
+    "gps_bounds",
+  ] as const) {
     if (normalized.filters[field] !== undefined) filters[field] = normalized.filters[field];
   }
   const encoded = JSON.stringify({
-    filters: Object.fromEntries(Object.entries(filters).sort(([a], [b]) => compareUnicodeScalars(a, b))),
+    filters: Object.fromEntries(
+      Object.entries(filters).sort(([a], [b]) => compareUnicodeScalars(a, b)),
+    ),
     mode: normalized.mode,
     sort: { direction: normalized.sort.direction, field: normalized.sort.field },
     syntax: normalized.syntax,
@@ -220,7 +334,12 @@ function parseFilters(input: Record<string, unknown>): QueryFilters {
     locations: optionalStringArray(input.locations, "filters.locations"),
     set_ids: optionalStringArray(input.set_ids, "filters.set_ids"),
     asset_ids: optionalStringArray(input.asset_ids, "filters.asset_ids"),
-    ...Object.fromEntries(qualityFields.map((field) => [field, optionalNullableString(input[field], `filters.${field}`)])),
+    ...Object.fromEntries(
+      qualityFields.map((field) => [
+        field,
+        optionalNullableString(input[field], `filters.${field}`),
+      ]),
+    ),
     unevaluated: optionalBoolean(input.unevaluated, "filters.unevaluated"),
     rating_min: optionalNullableInteger(input.rating_min, "filters.rating_min"),
     rating_max: optionalNullableInteger(input.rating_max, "filters.rating_max"),
@@ -230,22 +349,32 @@ function parseFilters(input: Record<string, unknown>): QueryFilters {
     iso_max: optionalNullableInteger(input.iso_max, "filters.iso_max"),
     capture_after: optionalNullableString(input.capture_after, "filters.capture_after"),
     capture_before: optionalNullableString(input.capture_before, "filters.capture_before"),
-    gps_bounds: input.gps_bounds === undefined || input.gps_bounds === null ? undefined : normalizeGPSBounds(input.gps_bounds),
+    gps_bounds:
+      input.gps_bounds === undefined || input.gps_bounds === null
+        ? undefined
+        : normalizeGPSBounds(input.gps_bounds),
     paths: optionalStringArray(input.paths, "filters.paths"),
     exclude_paths: optionalStringArray(input.exclude_paths, "filters.exclude_paths"),
     collection_ids: optionalStringArray(input.collection_ids, "filters.collection_ids"),
-    exclude_collection_ids: optionalStringArray(input.exclude_collection_ids, "filters.exclude_collection_ids"),
+    exclude_collection_ids: optionalStringArray(
+      input.exclude_collection_ids,
+      "filters.exclude_collection_ids",
+    ),
     tag_ids: optionalStringArray(input.tag_ids, "filters.tag_ids"),
     exclude_tag_ids: optionalStringArray(input.exclude_tag_ids, "filters.exclude_tag_ids"),
     no_tags: optionalBoolean(input.no_tags, "filters.no_tags"),
-    media_families: optionalStringArray(input.media_families, "filters.media_families") as MediaFamily[] | undefined,
+    media_families: optionalStringArray(input.media_families, "filters.media_families") as
+      | MediaFamily[]
+      | undefined,
     mime_types: optionalStringArray(input.mime_types, "filters.mime_types"),
     extensions: optionalStringArray(input.extensions, "filters.extensions"),
     modified_after: optionalNullableString(input.modified_after, "filters.modified_after"),
     modified_before: optionalNullableString(input.modified_before, "filters.modified_before"),
     size_min: optionalNullableInteger(input.size_min, "filters.size_min"),
     size_max: optionalNullableInteger(input.size_max, "filters.size_max"),
-    text_coverage: optionalStringArray(input.text_coverage, "filters.text_coverage") as TextCoverage[] | undefined,
+    text_coverage: optionalStringArray(input.text_coverage, "filters.text_coverage") as
+      | TextCoverage[]
+      | undefined,
     has_duplicates: optionalBoolean(input.has_duplicates, "filters.has_duplicates"),
     collapse_duplicates: optionalBoolean(input.collapse_duplicates, "filters.collapse_duplicates"),
   };
@@ -259,16 +388,45 @@ function normalizeQuery(value: Omit<Query, "v"> & { v: number }): Query {
   if (v !== 1) throw new Error("query version must be 1");
   validateUnicode(value.text, "query text");
   if (scalarLength(value.text) > 8192) throw new Error("query text exceeds 8192 Unicode scalars");
-  if (!(["simple", "advanced"] as string[]).includes(syntax)) throw new Error("query syntax is unknown");
-  if (!(["lexical", "semantic", "hybrid"] as string[]).includes(mode)) throw new Error("query mode is unknown");
-  if (!(["name", "path", "modified_at", "size", "media_type", "relevance", "capture_time", "import_time", "added_time"] as string[]).includes(sort.field) ||
-      !(["asc", "desc"] as string[]).includes(sort.direction)) throw new Error("query sort is invalid");
-  return { v, text: value.text, syntax, mode, filters: normalizeFilters(value.filters ?? {}), sort };
+  if (!(["simple", "advanced"] as string[]).includes(syntax))
+    throw new Error("query syntax is unknown");
+  if (!(["lexical", "semantic", "hybrid"] as string[]).includes(mode))
+    throw new Error("query mode is unknown");
+  if (
+    !(
+      [
+        "name",
+        "path",
+        "modified_at",
+        "size",
+        "media_type",
+        "relevance",
+        "capture_time",
+        "import_time",
+        "added_time",
+      ] as string[]
+    ).includes(sort.field) ||
+    !(["asc", "desc"] as string[]).includes(sort.direction)
+  )
+    throw new Error("query sort is invalid");
+  return {
+    v,
+    text: value.text,
+    syntax,
+    mode,
+    filters: normalizeFilters(value.filters ?? {}),
+    sort,
+  };
 }
 
 function normalizeFilters(value: QueryFilters): QueryFilters {
   const result: QueryFilters = {
-    kinds: normalizeSet(value.kinds, 64, (v) => v === "photo" || v === "video", "kinds") as QueryFilters["kinds"],
+    kinds: normalizeSet(
+      value.kinds,
+      64,
+      (v) => v === "photo" || v === "video",
+      "kinds",
+    ) as QueryFilters["kinds"],
     rating_min: normalizeRating(value.rating_min),
     rating_max: normalizeRating(value.rating_max),
     flags: normalizeSet(value.flags, 64, validPhotoFlag, "flags"),
@@ -278,7 +436,9 @@ function normalizeFilters(value: QueryFilters): QueryFilters {
     locations: normalizeSet(value.locations, 64, validPhotoLabel, "locations"),
     set_ids: normalizeSet(value.set_ids, 64, (v) => uuidV4Pattern.test(v), "set_ids"),
     asset_ids: normalizeSet(value.asset_ids, 64, (v) => uuidV4Pattern.test(v), "asset_ids"),
-    ...Object.fromEntries(qualityFields.map((field) => [field, normalizeQualityScore(value[field])])),
+    ...Object.fromEntries(
+      qualityFields.map((field) => [field, normalizeQualityScore(value[field])]),
+    ),
     unevaluated: Boolean(value.unevaluated) || undefined,
     iso_min: normalizeSize(value.iso_min, "iso_min"),
     iso_max: normalizeSize(value.iso_max, "iso_max"),
@@ -287,35 +447,86 @@ function normalizeFilters(value: QueryFilters): QueryFilters {
     gps_bounds: value.gps_bounds === undefined ? undefined : normalizeGPSBounds(value.gps_bounds),
     paths: normalizeSet(value.paths, 64, validVirtualPath, "paths"),
     exclude_paths: normalizeSet(value.exclude_paths, 64, validVirtualPath, "exclude_paths"),
-    collection_ids: normalizeSet(value.collection_ids, 64, (item) => uuidV4Pattern.test(item), "collection_ids"),
-    exclude_collection_ids: normalizeSet(value.exclude_collection_ids, 64, (item) => uuidV4Pattern.test(item), "exclude_collection_ids"),
+    collection_ids: normalizeSet(
+      value.collection_ids,
+      64,
+      (item) => uuidV4Pattern.test(item),
+      "collection_ids",
+    ),
+    exclude_collection_ids: normalizeSet(
+      value.exclude_collection_ids,
+      64,
+      (item) => uuidV4Pattern.test(item),
+      "exclude_collection_ids",
+    ),
     tag_ids: normalizeSet(value.tag_ids, 64, (item) => uuidV4Pattern.test(item), "tag_ids"),
-    exclude_tag_ids: normalizeSet(value.exclude_tag_ids, 64, (item) => uuidV4Pattern.test(item), "exclude_tag_ids"),
+    exclude_tag_ids: normalizeSet(
+      value.exclude_tag_ids,
+      64,
+      (item) => uuidV4Pattern.test(item),
+      "exclude_tag_ids",
+    ),
     no_tags: Boolean(value.no_tags) || undefined,
-    media_families: normalizeSet(value.media_families, 13, (item) => (mediaFamilies as readonly string[]).includes(item), "media_families") as MediaFamily[] | undefined,
+    media_families: normalizeSet(
+      value.media_families,
+      13,
+      (item) => (mediaFamilies as readonly string[]).includes(item),
+      "media_families",
+    ) as MediaFamily[] | undefined,
     mime_types: normalizeSet(value.mime_types, 64, validConcreteMIME, "mime_types"),
-    extensions: normalizeSet(value.extensions, 32, (item) => extensionPattern.test(item), "extensions"),
+    extensions: normalizeSet(
+      value.extensions,
+      32,
+      (item) => extensionPattern.test(item),
+      "extensions",
+    ),
     modified_after: normalizeTimestamp(value.modified_after, "modified_after"),
     modified_before: normalizeTimestamp(value.modified_before, "modified_before"),
     size_min: normalizeSize(value.size_min, "size_min") || undefined,
     size_max: normalizeSize(value.size_max, "size_max"),
-    text_coverage: normalizeSet(value.text_coverage, 6, (item) => (textCoverageValues as readonly string[]).includes(item), "text_coverage") as TextCoverage[] | undefined,
+    text_coverage: normalizeSet(
+      value.text_coverage,
+      6,
+      (item) => (textCoverageValues as readonly string[]).includes(item),
+      "text_coverage",
+    ) as TextCoverage[] | undefined,
     has_duplicates: Boolean(value.has_duplicates) || undefined,
     collapse_duplicates: Boolean(value.collapse_duplicates) || undefined,
   };
   for (let i = 0; i < qualityFields.length; i += 2) {
-    const lo = result[qualityFields[i]], hi = result[qualityFields[i + 1]];
-    if (lo !== undefined && hi !== undefined && lo > hi) throw new Error("quality minimum exceeds maximum");
+    const lo = result[qualityFields[i]],
+      hi = result[qualityFields[i + 1]];
+    if (lo !== undefined && hi !== undefined && lo > hi)
+      throw new Error("quality minimum exceeds maximum");
   }
-  if (result.rating_min !== undefined && result.rating_max !== undefined && result.rating_min > result.rating_max) throw new Error("rating_min exceeds rating_max");
-  if (result.iso_min !== undefined && result.iso_max !== undefined && result.iso_min > result.iso_max) throw new Error("iso_min exceeds iso_max");
-  if (result.capture_after && result.capture_before && result.capture_after >= result.capture_before) throw new Error("capture_after must precede capture_before");
+  if (
+    result.rating_min !== undefined &&
+    result.rating_max !== undefined &&
+    result.rating_min > result.rating_max
+  )
+    throw new Error("rating_min exceeds rating_max");
+  if (
+    result.iso_min !== undefined &&
+    result.iso_max !== undefined &&
+    result.iso_min > result.iso_max
+  )
+    throw new Error("iso_min exceeds iso_max");
+  if (
+    result.capture_after &&
+    result.capture_before &&
+    result.capture_after >= result.capture_before
+  )
+    throw new Error("capture_after must precede capture_before");
   if (result.no_tags && result.tag_ids?.length) throw new Error("no_tags conflicts with tag_ids");
-  if (result.modified_after && result.modified_before &&
-      timestampComparable(result.modified_after) >= timestampComparable(result.modified_before)) {
+  if (
+    result.modified_after &&
+    result.modified_before &&
+    timestampComparable(result.modified_after) >= timestampComparable(result.modified_before)
+  ) {
     throw new Error("modified_after must precede modified_before");
   }
-  if (result.size_max !== undefined && (result.size_min ?? 0) > result.size_max) throw new Error("size_min exceeds size_max");
+  if (result.size_max !== undefined && (result.size_min ?? 0) > result.size_max)
+    throw new Error("size_min exceeds size_max");
   return result;
 }
 
@@ -330,7 +541,8 @@ function normalizeHighlightSet(value: Omit<HighlightSet, "v"> & { v: number }): 
     validateUnicode(term.text, "highlight text");
     const length = scalarLength(term.text);
     if (length < 1 || length > 256) throw new Error("highlight text is outside its length bounds");
-    if (!colorPattern.test(term.color)) throw new Error("highlight color must be lowercase #rrggbb");
+    if (!colorPattern.test(term.color))
+      throw new Error("highlight color must be lowercase #rrggbb");
     if (seen.has(term.text)) throw new Error("highlight text is duplicated");
     seen.add(term.text);
     return { text: term.text, color: term.color };
@@ -346,11 +558,27 @@ function validPhotoColorLabel(value: string): value is SavedQueryFiltersSchemaLa
   return Object.values(SavedQueryFiltersSchemaLabelsItem).some((label) => label === value);
 }
 
-function normalizeSet<T extends string>(values: readonly string[] | undefined, limit: number, valid: (value: string) => value is T, field: string): T[] | undefined;
-function normalizeSet(values: readonly string[] | undefined, limit: number, valid: (value: string) => boolean, field: string): string[] | undefined;
-function normalizeSet(values: readonly string[] | undefined, limit: number, valid: (value: string) => boolean, field: string): string[] | undefined {
+function normalizeSet<T extends string>(
+  values: readonly string[] | undefined,
+  limit: number,
+  valid: (value: string) => value is T,
+  field: string,
+): T[] | undefined;
+function normalizeSet(
+  values: readonly string[] | undefined,
+  limit: number,
+  valid: (value: string) => boolean,
+  field: string,
+): string[] | undefined;
+function normalizeSet(
+  values: readonly string[] | undefined,
+  limit: number,
+  valid: (value: string) => boolean,
+  field: string,
+): string[] | undefined {
   if (values === undefined || values === null) return undefined;
-  if (!Array.isArray(values) || values.length > limit) throw new Error(`${field} exceeds its supplied-entry bound`);
+  if (!Array.isArray(values) || values.length > limit)
+    throw new Error(`${field} exceeds its supplied-entry bound`);
   for (const value of values) {
     if (typeof value !== "string") throw new Error(`${field} must contain strings`);
     validateUnicode(value, field);
@@ -372,44 +600,74 @@ function compareUnicodeScalars(left: string, right: string): number {
 function validVirtualPath(value: string): boolean {
   if (value === "/") return true;
   if (!value.startsWith("/") || value.endsWith("/") || value.includes("\0")) return false;
-  return value.slice(1).split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
+  return value
+    .slice(1)
+    .split("/")
+    .every((segment) => segment !== "" && segment !== "." && segment !== "..");
 }
 
 function validConcreteMIME(value: string): boolean {
   if (value !== value.toLowerCase()) return false;
   const slash = value.indexOf("/");
-  return slash > 0 && slash === value.lastIndexOf("/") &&
-    validMIMEToken(value.slice(0, slash), false) && validMIMEToken(value.slice(slash + 1), false);
+  return (
+    slash > 0 &&
+    slash === value.lastIndexOf("/") &&
+    validMIMEToken(value.slice(0, slash), false) &&
+    validMIMEToken(value.slice(slash + 1), false)
+  );
 }
 
 function validMIMEToken(value: string, allowWildcard: boolean): boolean {
   if (value === "") return false;
   for (const character of value) {
     const code = character.charCodeAt(0);
-    if (code <= 0x20 || code >= 0x7f || "()<>@,;:\\\"/[]?=".includes(character) ||
-        (!allowWildcard && character === "*")) return false;
+    if (
+      code <= 0x20 ||
+      code >= 0x7f ||
+      '()<>@,;:\\"/[]?='.includes(character) ||
+      (!allowWildcard && character === "*")
+    )
+      return false;
   }
   return true;
 }
 
 function normalizeSize(value: number | undefined, field: string): number | undefined {
   if (value === undefined) return undefined;
-  if (!Number.isSafeInteger(value) || value < 0 || value > maxSafeInteger) throw new Error(`${field} is not a safe nonnegative integer`);
+  if (!Number.isSafeInteger(value) || value < 0 || value > maxSafeInteger)
+    throw new Error(`${field} is not a safe nonnegative integer`);
   return value;
 }
 
 function normalizeTimestamp(value: string | undefined, field: string): string | undefined {
   if (value === undefined) return undefined;
   validateUnicode(value, field);
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})$/.exec(value);
+  const match =
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})$/.exec(
+      value,
+    );
   if (!match) throw new Error(`${field} is not RFC3339`);
-  const [, yearRaw, monthRaw, dayRaw, hourRaw, minuteRaw, secondRaw, fractionRaw = "", zone] = match;
-  const [year, month, day, hour, minute, second] = [yearRaw, monthRaw, dayRaw, hourRaw, minuteRaw, secondRaw].map(Number);
-  if (month < 1 || month > 12 || hour > 23 || minute > 59 || second > 59) throw new Error(`${field} is not RFC3339`);
+  const [, yearRaw, monthRaw, dayRaw, hourRaw, minuteRaw, secondRaw, fractionRaw = "", zone] =
+    match;
+  const [year, month, day, hour, minute, second] = [
+    yearRaw,
+    monthRaw,
+    dayRaw,
+    hourRaw,
+    minuteRaw,
+    secondRaw,
+  ].map(Number);
+  if (month < 1 || month > 12 || hour > 23 || minute > 59 || second > 59)
+    throw new Error(`${field} is not RFC3339`);
   const local = new Date(0);
   local.setUTCHours(hour, minute, second, Number(fractionRaw.padEnd(3, "0").slice(0, 3)));
   local.setUTCFullYear(year, month - 1, day);
-  if (local.getUTCFullYear() !== year || local.getUTCMonth() !== month - 1 || local.getUTCDate() !== day) throw new Error(`${field} is not RFC3339`);
+  if (
+    local.getUTCFullYear() !== year ||
+    local.getUTCMonth() !== month - 1 ||
+    local.getUTCDate() !== day
+  )
+    throw new Error(`${field} is not RFC3339`);
   let offsetMinutes = 0;
   if (zone !== "Z") {
     const offsetHour = Number(zone.slice(1, 3));
@@ -427,13 +685,19 @@ function normalizeTimestamp(value: string | undefined, field: string): string | 
 }
 
 function requireObject(value: unknown, field: string): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error(`${field} must be an object`);
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    throw new Error(`${field} must be an object`);
   return value as Record<string, unknown>;
 }
 
-function requireOnlyKeys(value: Record<string, unknown>, allowed: readonly string[], field: string): void {
+function requireOnlyKeys(
+  value: Record<string, unknown>,
+  allowed: readonly string[],
+  field: string,
+): void {
   const keys = new Set(allowed);
-  for (const key of Object.keys(value)) if (!keys.has(key)) throw new Error(`${field} contains an unknown member`);
+  for (const key of Object.keys(value))
+    if (!keys.has(key)) throw new Error(`${field} contains an unknown member`);
 }
 
 function requireString(value: unknown, field: string): string {
@@ -452,7 +716,8 @@ function optionalNullableString(value: unknown, field: string): string | undefin
 
 function optionalInteger(value: unknown, fallback: number, field: string): number {
   if (value === undefined) return fallback;
-  if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`${field} must be a safe integer`);
+  if (typeof value !== "number" || !Number.isSafeInteger(value))
+    throw new Error(`${field} must be a safe integer`);
   return value;
 }
 
@@ -468,18 +733,22 @@ function optionalBoolean(value: unknown, field: string): boolean | undefined {
 
 function optionalStringArray(value: unknown, field: string): string[] | undefined {
   if (value === undefined || value === null) return undefined;
-  if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) throw new Error(`${field} must be an array of strings`);
+  if (!Array.isArray(value) || !value.every((item) => typeof item === "string"))
+    throw new Error(`${field} must be an array of strings`);
   return [...value];
 }
 
-function scalarLength(value: string): number { return Array.from(value).length; }
+function scalarLength(value: string): number {
+  return Array.from(value).length;
+}
 
 function validateUnicode(value: string, field: string): void {
   for (let index = 0; index < value.length; index++) {
     const code = value.charCodeAt(index);
     if (code >= 0xd800 && code <= 0xdbff) {
       const next = value.charCodeAt(++index);
-      if (!(next >= 0xdc00 && next <= 0xdfff)) throw new Error(`${field} contains an invalid Unicode surrogate`);
+      if (!(next >= 0xdc00 && next <= 0xdfff))
+        throw new Error(`${field} contains an invalid Unicode surrogate`);
     } else if (code >= 0xdc00 && code <= 0xdfff) {
       throw new Error(`${field} contains an invalid Unicode surrogate`);
     }
@@ -487,12 +756,16 @@ function validateUnicode(value: string, field: string): void {
 }
 
 function requireCanonicalBound(encoded: string, kind: string): void {
-  if (encoder.encode(encoded).byteLength > maxCanonicalBytes) throw new Error(`canonical ${kind} exceeds 64 KiB`);
+  if (encoder.encode(encoded).byteLength > maxCanonicalBytes)
+    throw new Error(`canonical ${kind} exceeds 64 KiB`);
 }
 
 class StrictJSONScanner {
   private index = 0;
-  constructor(private readonly input: string, private readonly allowFilterNull: boolean) {}
+  constructor(
+    private readonly input: string,
+    private readonly allowFilterNull: boolean,
+  ) {}
 
   scan(): void {
     this.skipWhitespace();
@@ -506,12 +779,22 @@ class StrictJSONScanner {
     const character = this.input[this.index];
     if (character === "{") return this.object(path, depth + 1);
     if (character === "[") return this.array(path, depth + 1);
-    if (character === '"') { this.string(); return; }
+    if (character === '"') {
+      this.string();
+      return;
+    }
     if (character === "t") return this.literal("true");
     if (character === "f") return this.literal("false");
     if (character === "n") {
       this.literal("null");
-      if (!(this.allowFilterNull && path.length === 2 && path[0] === "filters" && optionalFilterFields.has(path[1]))) {
+      if (
+        !(
+          this.allowFilterNull &&
+          path.length === 2 &&
+          path[0] === "filters" &&
+          optionalFilterFields.has(path[1])
+        )
+      ) {
         throw new Error("null is allowed only for optional query filters");
       }
       return;
@@ -524,7 +807,10 @@ class StrictJSONScanner {
     this.index++;
     this.skipWhitespace();
     const names = new Set<string>();
-    if (this.input[this.index] === "}") { this.index++; return; }
+    if (this.input[this.index] === "}") {
+      this.index++;
+      return;
+    }
     while (true) {
       if (this.input[this.index] !== '"') throw new Error("object name must be a string");
       const name = this.string();
@@ -545,7 +831,10 @@ class StrictJSONScanner {
     if (depth > maxJSONDepth) throw new Error("JSON nesting exceeds 16 levels");
     this.index++;
     this.skipWhitespace();
-    if (this.input[this.index] === "]") { this.index++; return; }
+    if (this.input[this.index] === "]") {
+      this.index++;
+      return;
+    }
     while (true) {
       this.value([...path, "[]"], depth);
       this.skipWhitespace();
@@ -570,7 +859,8 @@ class StrictJSONScanner {
         const escape = this.input[this.index++];
         if (escape === "u") {
           const hex = this.input.slice(this.index, this.index + 4);
-          if (!/^[0-9a-fA-F]{4}$/.test(hex)) throw new Error("JSON string contains an invalid escape");
+          if (!/^[0-9a-fA-F]{4}$/.test(hex))
+            throw new Error("JSON string contains an invalid escape");
           this.index += 4;
         } else if (!'"\\/bfnrt'.includes(escape ?? "")) {
           throw new Error("JSON string contains an invalid escape");
@@ -581,7 +871,8 @@ class StrictJSONScanner {
   }
 
   private literal(literal: string): void {
-    if (this.input.slice(this.index, this.index + literal.length) !== literal) throw new Error("invalid JSON literal");
+    if (this.input.slice(this.index, this.index + literal.length) !== literal)
+      throw new Error("invalid JSON literal");
     this.index += literal.length;
   }
 
@@ -591,7 +882,8 @@ class StrictJSONScanner {
     const lexeme = match[0];
     this.index += lexeme.length;
     if (/[.eE]/.test(lexeme)) throw new Error("JSON numbers must use whole-number lexemes");
-    if (!Number.isSafeInteger(Number(lexeme))) throw new Error("JSON integer exceeds the safe range");
+    if (!Number.isSafeInteger(Number(lexeme)))
+      throw new Error("JSON integer exceeds the safe range");
   }
 
   private skipWhitespace(): void {
@@ -604,8 +896,14 @@ function preflightJSON(raw: string, allowFilterNull: boolean): void {
   new StrictJSONScanner(raw, allowFilterNull).scan();
 }
 
-const queryFamilyByMIME = new Map(formatMetadata.map((entry) => [entry.media_type, entry.query_family as MediaFamily]));
-const queryFamilyByExtension = new Map(formatMetadata.flatMap((entry) => entry.extensions.map((extension) => [extension, entry.query_family as MediaFamily] as const)));
+const queryFamilyByMIME = new Map(
+  formatMetadata.map((entry) => [entry.media_type, entry.query_family as MediaFamily]),
+);
+const queryFamilyByExtension = new Map(
+  formatMetadata.flatMap((entry) =>
+    entry.extensions.map((extension) => [extension, entry.query_family as MediaFamily] as const),
+  ),
+);
 
 export function classifyMedia(mediaType: string, filename: string): MediaFamily {
   const trimmed = trimASCIIWhitespace(mediaType);
@@ -624,12 +922,14 @@ export function classifyMedia(mediaType: string, filename: string): MediaFamily 
   const dot = base.lastIndexOf(".");
   if (dot <= 0 || dot === base.length - 1) return "unknown";
   const extension = lowerASCII(base.slice(dot + 1));
-  return extension === null ? "unknown" : queryFamilyByExtension.get(extension) ?? "unknown";
+  return extension === null ? "unknown" : (queryFamilyByExtension.get(extension) ?? "unknown");
 }
 
 export function parseMediaType(value: string): string | null {
   const semicolon = value.indexOf(";");
-  const essence = lowerASCII(trimASCIIWhitespace(value.slice(0, semicolon < 0 ? undefined : semicolon)));
+  const essence = lowerASCII(
+    trimASCIIWhitespace(value.slice(0, semicolon < 0 ? undefined : semicolon)),
+  );
   if (essence === null) return null;
   if (!validConcreteMIME(essence)) return null;
   if (semicolon < 0) return essence;
@@ -651,7 +951,10 @@ export function parseMediaType(value: string): string | null {
       let closed = false;
       while (index < value.length) {
         const character = value[index++];
-        if (character === '"') { closed = true; break; }
+        if (character === '"') {
+          closed = true;
+          break;
+        }
         if (character === "\\") {
           if (index >= value.length || invalidMIMEQuotedCharacter(value[index])) return null;
           index++;
@@ -685,7 +988,7 @@ function lowerASCII(value: string): string | null {
 
 function invalidMIMEQuotedCharacter(character: string): boolean {
   const code = character.charCodeAt(0);
-  return code < 0x20 && character !== "\t" || code === 0x7f;
+  return (code < 0x20 && character !== "\t") || code === 0x7f;
 }
 
 function validPhotoLabel(value: string): boolean {
@@ -694,15 +997,18 @@ function validPhotoLabel(value: string): boolean {
 
 export function normalizeCaptureDate(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
-  if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(value) || value.startsWith("0000")) throw new Error("capture date must be YYYY-MM-DD");
+  if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(value) || value.startsWith("0000"))
+    throw new Error("capture date must be YYYY-MM-DD");
   normalizeTimestamp(`${value}T00:00:00Z`, "capture date");
   return value;
 }
 
 function normalizeCoordinate(value: unknown, limit: number): string {
-  if (typeof value !== "string" || value.length > 64 || !/^-?[0-9]+(?:\.[0-9]+)?$/.test(value)) throw new Error("coordinate must be a bounded decimal string");
+  if (typeof value !== "string" || value.length > 64 || !/^-?[0-9]+(?:\.[0-9]+)?$/.test(value))
+    throw new Error("coordinate must be a bounded decimal string");
   const number = Number(value);
-  if (!Number.isFinite(number) || number < -limit || number > limit) throw new Error("coordinate outside geographic bounds");
+  if (!Number.isFinite(number) || number < -limit || number > limit)
+    throw new Error("coordinate outside geographic bounds");
   let sign = value.startsWith("-") ? "-" : "";
   const parts = (sign ? value.slice(1) : value).split(".");
   const whole = parts[0].replace(/^0+/, "") || "0";
@@ -714,7 +1020,12 @@ function normalizeCoordinate(value: unknown, limit: number): string {
 function normalizeGPSBounds(value: unknown): GPSBounds {
   const input = requireObject(value, "gps_bounds");
   requireOnlyKeys(input, ["south", "west", "north", "east"], "gps_bounds");
-  const result = { east: normalizeCoordinate(input.east, 180), north: normalizeCoordinate(input.north, 90), south: normalizeCoordinate(input.south, 90), west: normalizeCoordinate(input.west, 180) };
+  const result = {
+    east: normalizeCoordinate(input.east, 180),
+    north: normalizeCoordinate(input.north, 90),
+    south: normalizeCoordinate(input.south, 90),
+    west: normalizeCoordinate(input.west, 180),
+  };
   if (Number(result.south) > Number(result.north)) throw new Error("south exceeds north");
   return result;
 }
@@ -734,6 +1045,7 @@ function normalizeQualityScore(value: string | undefined): string | undefined {
 }
 
 function normalizeRating(value: number | undefined): number | undefined {
-  if (value !== undefined && (!Number.isInteger(value) || value < 0 || value > 5)) throw new Error("rating must be 0 through 5");
+  if (value !== undefined && (!Number.isInteger(value) || value < 0 || value > 5))
+    throw new Error("rating must be 0 through 5");
   return value;
 }

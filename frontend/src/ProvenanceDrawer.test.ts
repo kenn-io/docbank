@@ -1,10 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-} from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import ProvenanceDrawer from "./ProvenanceDrawer.svelte";
 import type { Node, ProvenanceFact } from "./generated/docbank.js";
 
@@ -88,9 +83,7 @@ describe("provenance drawer", () => {
     expect(screen.getByText("Active origin")).toBeTruthy();
     expect(screen.getByText(activeIdentity)).toBeTruthy();
     expect(screen.getByText("Supersedes")).toBeTruthy();
-    expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      "/api/v1/nodes/42/provenance?limit=1000&offset=0",
-    );
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/nodes/42/provenance?limit=1000&offset=0");
 
     const olderHeading = screen.getByText("quarterly reports");
     const olderButton = olderHeading.closest("button");
@@ -101,9 +94,7 @@ describe("provenance drawer", () => {
     expect(screen.getByText(olderIdentity)).toBeTruthy();
     expect(screen.queryByText("Supersedes")).toBeNull();
 
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Close provenance" }),
-    );
+    await fireEvent.click(screen.getByRole("button", { name: "Close provenance" }));
     expect(close).toHaveBeenCalledOnce();
   });
 });

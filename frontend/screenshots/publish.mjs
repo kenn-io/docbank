@@ -1,16 +1,8 @@
-import {
-  access,
-  open,
-  readdir,
-  rename as renamePath,
-  rm,
-} from "node:fs/promises";
+import { access, open, readdir, rename as renamePath, rm } from "node:fs/promises";
 import path from "node:path";
-
 
 const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const screenshotName = /^[A-Za-z0-9][A-Za-z0-9._-]*\.png$/;
-
 
 async function exists(target) {
   try {
@@ -21,7 +13,6 @@ async function exists(target) {
     throw error;
   }
 }
-
 
 function validateNames(names) {
   if (!Array.isArray(names) || names.length === 0) {
@@ -41,10 +32,12 @@ function validateNames(names) {
   }
 }
 
-
 async function validateStaging(staging, names) {
   const entries = await readdir(staging, { withFileTypes: true });
-  const files = entries.filter((entry) => entry.isFile()).map((entry) => entry.name).sort();
+  const files = entries
+    .filter((entry) => entry.isFile())
+    .map((entry) => entry.name)
+    .sort();
   const unexpectedEntry = entries.find((entry) => !entry.isFile());
   if (unexpectedEntry) {
     throw new Error(`unexpected screenshot entry: ${unexpectedEntry.name}`);
@@ -69,7 +62,6 @@ async function validateStaging(staging, names) {
   }
 }
 
-
 export async function publishScreenshots({
   output,
   staging,
@@ -82,10 +74,7 @@ export async function publishScreenshots({
   }
   await validateStaging(staging, names);
 
-  const previous = path.join(
-    path.dirname(output),
-    `.${path.basename(output)}.previous`,
-  );
+  const previous = path.join(path.dirname(output), `.${path.basename(output)}.previous`);
   await rm(previous, { recursive: true, force: true });
   const hadOutput = await exists(output);
   if (hadOutput) await rename(output, previous, renamePath);
