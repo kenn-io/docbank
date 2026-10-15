@@ -258,63 +258,6 @@ describe("document processing browser API", () => {
     },
   );
 
-  it("keeps jobs and search on exact identities", async () => {
-    const versionID = "11111111-1111-4111-8111-111111111111";
-    const fingerprint = "a".repeat(64);
-    const jobID = "b".repeat(64);
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, request) => {
-      const path = String(input);
-      if (path === "/api/v1/processing/jobs") {
-        expect(JSON.parse(String(request?.body))).toMatchObject({ consent: true });
-        return new Response(
-          `${JSON.stringify({ sequence: 1, type: "job", job: { id: jobID, embedding_job_ids: [], profile_fingerprint: fingerprint, content_version_id: versionID } })}\n${JSON.stringify({ sequence: 2, type: "status", status: { job_id: jobID, state: "completed", phase: "embedding", embedding_job_ids: [fingerprint], completed_bindings: 1 }, terminal: true })}\n`,
-          { headers: { "Content-Type": "application/x-ndjson" } },
-        );
-      }
-      if (path === "/api/v1/search") {
-        expect(request?.method).toBe("POST");
-        return Response.json({
-          requested_mode: "auto",
-          actual_mode: "lexical",
-          coverage: {
-            binding_required: false,
-            scoped_documents: 1,
-            complete_documents: 1,
-            state: "complete",
-          },
-          degradations: [],
-          results: [],
-          truncated: false,
-          trace: [],
-        });
-      }
-      throw new Error(`unexpected request: ${path}`);
-    });
-
-    await expect(
-      startProcessing(
-        "session",
-        { node_id: 42, content_version_id: versionID, profile: "private" },
-        "c".repeat(64),
-        fingerprint,
-        true,
-      ),
-    ).resolves.toMatchObject({
-      status: { state: "completed" },
-      job: { embedding_job_ids: [fingerprint] },
-    });
-    await expect(
-      documentSearch("session", {
-        query: "synthetic",
-        mode: "auto",
-        limit: 20,
-        profile: "private",
-        fence: { vault_uid: versionID, content_version_ids: [versionID] },
-        explain: true,
-      }),
-    ).resolves.toMatchObject({ actual_mode: "lexical" });
-  });
-
   it("delivers the durable job before a blocked terminal status", async () => {
     const versionID = "11111111-1111-4111-8111-111111111111";
     const fingerprint = "a".repeat(64);
@@ -444,6 +387,7 @@ describe("document processing browser API", () => {
     const controller = new AbortController();
     let receivedSignal: AbortSignal | null | undefined;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      expect(JSON.parse(String(init?.body))).toMatchObject({ consent: true });
       receivedSignal = init?.signal;
       return new Promise<Response>((_resolve, reject) => {
         init?.signal?.addEventListener(

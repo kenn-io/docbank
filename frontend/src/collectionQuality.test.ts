@@ -79,7 +79,7 @@ describe("collection quality receipts", () => {
       vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(value)));
       await expect(
         collectionQuality("session", id, "archive", new AbortController().signal),
-      ).rejects.toThrow();
+      ).rejects.toThrow(/Invalid collection quality receipt/);
     });
   }
   it("keeps unavailable configuration distinct from empty output", async () => {
