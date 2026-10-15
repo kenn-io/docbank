@@ -17,9 +17,6 @@ func TestPeopleCLIWorkflow(t *testing.T) {
 		command, _, err := peopleCmd.Find([]string{name})
 		require.NoError(t, err)
 		require.Equal(t, name, command.Name())
-		if name == "show" || name == "split" {
-			require.NotNil(t, command.Flags().Lookup("unlock-hidden"))
-		}
 	}
 
 	dir := t.TempDir()

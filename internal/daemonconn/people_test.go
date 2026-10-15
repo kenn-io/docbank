@@ -93,42 +93,52 @@ func TestPeopleClientRejectsMismatchedPersonAndMergeReceipt(t *testing.T) {
 	require.True(t, IsResponseDecodeError(err))
 }
 
-func TestSplitPersonForwardsAssignmentsAndHiddenCookie(t *testing.T) {
+func TestSplitPersonForwardsAssignments(t *testing.T) {
 	const (
 		sourceID    = "00000000-0000-4000-8000-000000000001"
 		newPersonID = "00000000-0000-4000-8000-000000000002"
 		operationID = "00000000-0000-4000-8000-000000000003"
 	)
-	assignments := make([]string, 201)
-	for i := range assignments {
-		assignments[i] = fmt.Sprintf("00000000-0000-4000-8000-%012x", i+1)
-	}
-	var assignmentCount atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "hidden=synthetic", r.Header.Get("Cookie"))
-		payload, err := io.ReadAll(r.Body)
-		var request api.SplitPersonRequest
-		if err == nil {
-			err = json.Unmarshal(payload, &request)
-		}
-		if err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		assignmentCount.Store(int32(len(request.AssignmentIDs)))
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("ETag", `"2"`)
-		w.WriteHeader(http.StatusOK)
-		_ = json.MarshalWrite(w, api.PersonSplitReceipt{OperationID: operationID, SourcePersonID: sourceID, NewPersonID: newPersonID, SourceRevisionAfter: 2, MovedIdentityIDs: []string{}, CreatedAt: "2026-09-28T00:00:00Z"})
-	}))
-	t.Cleanup(server.Close)
+	for _, test := range []struct {
+		name   string
+		count  int
+		cookie string
+	}{
+		{name: "201 assignments", count: 201}, {name: "hidden cookie", count: 1, cookie: "hidden=synthetic"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assignments := make([]string, test.count)
+			for i := range assignments {
+				assignments[i] = fmt.Sprintf("00000000-0000-4000-8000-%012x", i+1)
+			}
+			var assignmentCount atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, test.cookie, r.Header.Get("Cookie"))
+				payload, err := io.ReadAll(r.Body)
+				var request api.SplitPersonRequest
+				if err == nil {
+					err = json.Unmarshal(payload, &request)
+				}
+				if err != nil {
+					http.Error(w, "bad request", http.StatusBadRequest)
+					return
+				}
+				assignmentCount.Store(int32(len(request.AssignmentIDs)))
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("ETag", `"2"`)
+				w.WriteHeader(http.StatusOK)
+				_ = json.MarshalWrite(w, api.PersonSplitReceipt{OperationID: operationID, SourcePersonID: sourceID, NewPersonID: newPersonID, SourceRevisionAfter: 2, MovedIdentityIDs: []string{}, CreatedAt: "2026-09-28T00:00:00Z"})
+			}))
+			t.Cleanup(server.Close)
 
-	receipt, err := New(server.URL, "synthetic-key").SplitPerson(t.Context(), sourceID, 1, api.SplitPersonRequest{
-		OperationID: operationID, DisplayName: "Synthetic split", AssignmentIDs: assignments,
-	}, "hidden=synthetic")
-	require.NoError(t, err)
-	require.Equal(t, int32(len(assignments)), assignmentCount.Load())
-	require.Equal(t, operationID, receipt.OperationID)
+			receipt, err := New(server.URL, "synthetic-key").SplitPerson(t.Context(), sourceID, 1, api.SplitPersonRequest{
+				OperationID: operationID, DisplayName: "Synthetic split", AssignmentIDs: assignments,
+			}, test.cookie)
+			require.NoError(t, err)
+			require.Equal(t, int32(len(assignments)), assignmentCount.Load())
+			require.Equal(t, operationID, receipt.OperationID)
+		})
+	}
 }
 
 func TestSplitPersonValidatesHistoricalFence(t *testing.T) {

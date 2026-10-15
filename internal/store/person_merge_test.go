@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 )
@@ -302,4 +303,13 @@ func TestSplitPersonMovesCustodianAndExternalUID(t *testing.T) {
 	_, err = s.MergePersons(ctx, source.PersonID, receipt.NewPersonID, operationID, source.Revision, 1)
 	require.NoError(t, err)
 	require.ErrorIs(t, s.RetireCustodian(ctx, assignment.AssignmentID, assignments[0].Revision), ErrStaleRevision)
+}
+
+func TestPersonSplitMissingAssertion(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	p, err := s.CreatePerson(t.Context(), "Ada", "operator")
+	require.NoError(t, err)
+	_, err = s.SplitPerson(t.Context(), PersonSplitRequest{PersonID: p.PersonID, OperationID: uuid.NewString(), DisplayName: "Grace", Revision: p.Revision, AssertionIDs: []string{uuid.NewString()}})
+	require.ErrorIs(t, err, ErrPersonMergeConflict)
 }

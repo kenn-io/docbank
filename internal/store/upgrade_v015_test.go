@@ -610,7 +610,6 @@ func TestReleasedPhotoMarkSurvivesFaceRetraction(t *testing.T) {
 				require.Equal(t, assertionID, assertions[0].AssertionID)
 				require.True(t, assertions[0].PhotoMark)
 				require.Equal(t, personAssertionActionAssert, assertions[0].Action)
-				require.Equal(t, []int64{node.ID}, personMatchNodeIDs(t, s, compilerQuery(t, "person:"+personID)))
 			})
 		}
 	}

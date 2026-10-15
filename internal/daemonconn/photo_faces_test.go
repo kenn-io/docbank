@@ -122,14 +122,14 @@ func TestPhotoFaceDecisionClient(t *testing.T) {
 			c := New(server.URL, "synthetic-key")
 			result, err := c.DecidePhotoFace(t.Context(), version, api.PhotoFaceDecisionRequest{OperationID: receipt, FaceID: face, Action: "dismiss", Revision: 7}, "hidden=synthetic")
 			if invalid {
-				require.Error(t, err)
+				require.True(t, IsResponseDecodeError(err))
 			} else {
 				require.NoError(t, err)
 				require.Equal(t, receipt, result.ReceiptID)
 			}
 			_, err = c.UndoPhotoFaceDecisionWithOperationID(t.Context(), receipt, undoOperation, "hidden=synthetic")
 			if invalid {
-				require.Error(t, err)
+				require.True(t, IsResponseDecodeError(err))
 			} else {
 				require.NoError(t, err)
 			}

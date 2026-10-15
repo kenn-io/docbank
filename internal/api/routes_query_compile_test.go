@@ -171,18 +171,6 @@ func TestQueryHighlightPreviewIsAvailableToBoundedBrowserSessions(t *testing.T) 
 	require.Equal(t, http.StatusForbidden, resp.StatusCode, body)
 }
 
-func TestPersonAmbiguousQueryIsInvalid(t *testing.T) {
-	t.Parallel()
-	ts, s := newTestServer(t, nil)
-	for range 2 {
-		_, err := s.CreatePerson(t.Context(), "Ada", "operator")
-		require.NoError(t, err)
-	}
-	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", map[string]string{"X-Api-Key": testAPIKey}, `{"query":{"syntax":"advanced","text":"person:Ada"}}`)
-	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
-	require.Contains(t, body, `"code":"invalid_query"`)
-}
-
 func TestPersonStructuredQueryFilter(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)

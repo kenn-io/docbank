@@ -584,3 +584,27 @@ func TestPhotoFaceGenericDepictedAuthorization(t *testing.T) {
 	_, err = s.AssertDocumentPerson(WithPhotoHiddenToken(ctx, token), assertion)
 	require.NoError(t, err)
 }
+
+func TestPhotoFaceBoxStaysStoredWhenPhotoRotationChanges(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("a1"), "image/jpeg")
+	box := document.FaceBox{X: 0.1, Y: 0.2, Width: 0.3, Height: 0.4}
+	face, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), box, "")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	rotation := 90
+	_, err = s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{
+		FileID: asset.Files[0].ID, Revision: asset.Files[0].Revision, Patch: PhotoAuthoredPatch{Rotation: &rotation},
+	}})
+	require.NoError(t, err)
+	asset, err = s.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	require.Equal(t, 90, asset.Files[0].Rotation)
+
+	faces, _, err := s.PhotoFaces(ctx, node.CurrentVersionID)
+	require.NoError(t, err)
+	require.Equal(t, face.Box, faces[0].Box)
+}

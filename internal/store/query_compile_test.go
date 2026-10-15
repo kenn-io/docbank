@@ -6,8 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/query"
 )
 
@@ -362,4 +364,105 @@ func assertWholeExpressionError(t *testing.T, text string, err error) {
 	require.ErrorAs(t, err, &expressionErr)
 	assert.Equal(t, 0, expressionErr.Offset)
 	assert.Equal(t, len(text), expressionErr.End)
+}
+
+func personMatchNodeIDs(t *testing.T, s *Store, value query.Query) []int64 {
+	t.Helper()
+	compiled, err := compileQuery(t.Context(), value, queryResolver{q: s.db})
+	require.NoError(t, err)
+	predicate, args, err := compiled.Bind("")
+	require.NoError(t, err)
+	rows, err := s.db.QueryContext(t.Context(), `SELECT n.id FROM nodes n JOIN content_versions cv ON cv.node_id=n.id WHERE `+predicate+` ORDER BY n.id`, args...)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		require.NoError(t, rows.Scan(&id))
+		ids = append(ids, id)
+	}
+	require.NoError(t, rows.Err())
+	return ids
+}
+
+func TestQueryPersonDocumentsPhotosAliasesAndDuplicateNames(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	p, err := s.CreatePerson(ctx, "Ada Lovelace", "operator")
+	require.NoError(t, err)
+	node, _ := faceForDecisionTest(t, s, p.PersonID)
+	doc, version := seedPeopleVersion(t, s)
+	_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version, PersonID: p.PersonID, Role: "author", Action: "assert", Revision: 1})
+	require.NoError(t, err)
+	require.ElementsMatch(t, []int64{node.ID, doc}, personMatchNodeIDs(t, s, compilerQuery(t, `person:"ADA LOVELACE"`)))
+	typed := snapshotTestQuery(t, `{}`)
+	typed.Filters.PersonIDs = []string{p.PersonID}
+	require.ElementsMatch(t, []int64{node.ID, doc}, personMatchNodeIDs(t, s, typed))
+	page := browsePhotoPage(t, s, `{"syntax":"advanced","text":"person:\"Ada Lovelace\""}`)
+	require.Len(t, page.Items, 1)
+	duplicate, err := s.CreatePerson(ctx, "Ada Lovelace", "operator")
+	require.NoError(t, err)
+	_, err = compileQuery(ctx, compilerQuery(t, `person:"Ada Lovelace"`), queryResolver{q: s.db})
+	require.ErrorContains(t, err, "use a person ID")
+	_, err = s.MergePersons(ctx, p.PersonID, duplicate.PersonID, uuid.NewString(), 1, 1)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []int64{node.ID, doc}, personMatchNodeIDs(t, s, compilerQuery(t, "person:"+duplicate.PersonID)))
+	asset, err := s.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	page = browsePhotoPage(t, s, `{"filters":{"person_ids":["`+p.PersonID+`"]}}`)
+	require.Empty(t, page.Items)
+	require.ElementsMatch(t, []int64{node.ID, doc}, personMatchNodeIDs(t, s, typed))
+	require.ElementsMatch(t, []int64{node.ID, doc}, personMatchNodeIDs(t, s, compilerQuery(t, "person:"+p.PersonID)))
+	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+	page, err = s.ListPhotoAssets(WithPhotoHiddenToken(ctx, token), PhotoBrowseRequest{Query: typed, Hidden: true}, nil)
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+}
+
+func TestQueryPersonCurrentPublishedEdges(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	version := seedDocumentPeopleEvent(t, s, "author.txt", "d1", nil)
+	input, err := s.PrepareDocumentPeopleInputs(ctx, version.ID)
+	require.NoError(t, err)
+	publication := documentPeoplePublicationForInput(t, input)
+	_, err = s.PublishDocumentPeople(ctx, publication)
+	require.NoError(t, err)
+	require.NotEmpty(t, publication.People.Edges)
+	id := publication.People.Edges[0].PersonID
+	require.NotEmpty(t, personMatchNodeIDs(t, s, compilerQuery(t, "person:"+id)))
+	_, err = s.db.ExecContext(ctx, `UPDATE document_people_state SET binding_epoch=binding_epoch+1`)
+	require.NoError(t, err)
+	require.Empty(t, personMatchNodeIDs(t, s, compilerQuery(t, "person:"+id)))
+}
+
+func TestQueryPersonPhotoLiveSibling(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	asset, nodes := photoTrashFixture(t, s)
+	jpeg, _, err := s.ReplaceContent(ctx, nodes[1].ID, nodes[1].Revision, fakeHash("b2"), 20, "image/jpeg")
+	require.NoError(t, err)
+	nodes[1] = jpeg
+	image := fileByRole(asset.Files, PhotoRoleImage)
+	_, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &image.ID)
+	require.NoError(t, err)
+	p, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	_, _, err = s.CreatePhotoFace(ctx, nodes[0].CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, p.PersonID)
+	require.NoError(t, err)
+	filter := `{"filters":{"person_ids":["` + p.PersonID + `"]}}`
+	require.Len(t, browsePhotoPage(t, s, filter).Items, 1)
+	_, _, err = s.Trash(ctx, nodes[0].ID, nodes[0].Revision)
+	require.NoError(t, err)
+	require.Empty(t, browsePhotoPage(t, s, filter).Items)
+	_, _, err = s.CreatePhotoFace(ctx, nodes[1].CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, p.PersonID)
+	require.NoError(t, err)
+	require.Len(t, browsePhotoPage(t, s, filter).Items, 1)
 }

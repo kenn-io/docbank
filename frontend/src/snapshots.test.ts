@@ -92,13 +92,12 @@ function jsonResponse(value: unknown): Response {
 afterEach(() => vi.restoreAllMocks());
 
 describe("snapshot transport and receipt validation", () => {
-  it("accepts a person query snapshot and its dependency", async () => {
-    const personQuery = parseQuery(JSON.stringify({ filters: { person_ids: [tagID] } }));
+  it("accepts a person dependency", async () => {
     const dependencies = [{ kind: "person", id: tagID, revision: 4 }];
-    const receipt = await page({ query: personQuery, query_fingerprint: await queryFingerprint(personQuery), dependencies });
+    const receipt = await page({ dependencies });
     vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(receipt));
-    const result = await createSnapshot("session", personQuery, { profile: "archive", page_size: 50, facets: ["tags"] }, new AbortController().signal);
-    expect(result.query).toEqual(personQuery);
+    const result = await createSnapshot("session", query, { profile: "archive", page_size: 50, facets: ["tags"] }, new AbortController().signal);
+    expect(result.query).toEqual(query);
     expect(result.dependencies).toEqual(dependencies);
   });
 

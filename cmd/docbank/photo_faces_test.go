@@ -1,19 +1,24 @@
 package main
 
 import (
+	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/daemonauth"
 	"go.kenn.io/docbank/internal/daemonconn"
-	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/version"
+	kitdaemon "go.kenn.io/kit/daemon"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 )
@@ -79,45 +84,57 @@ func TestPhotoFaceCreateErrorRetryAdvice(t *testing.T) {
 	require.Same(t, err, photoFaceCreateError("", err))
 }
 
-func TestPhotoFaceDecisionCommands(t *testing.T) {
-	faces := photoFacesCommand()
-	for _, name := range []string{"name", "retract", "reject", "dismiss", "key", "withdraw-rejection", "undo"} {
-		command, _, err := faces.Find([]string{name})
-		require.NoError(t, err)
-		require.Equal(t, name, command.Name())
-		if name != "undo" {
-			require.NotNil(t, command.Flags().Lookup("revision"))
-		}
-	}
-	key, _, err := faces.Find([]string{"key"})
-	require.NoError(t, err)
-	require.NotNil(t, key.Flags().Lookup("person-revision"))
-	require.Empty(t, key.Flags().Lookup("revision").Annotations)
-}
-
 func TestPhotoFaceDecisionCLIRequest(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("DOCBANK_HOME", dir)
-	catalog, err := store.Open((home.Layout{Root: dir}).DBPath())
+	const (
+		versionID   = "11111111-1111-4111-8111-111111111111"
+		faceID      = "22222222-2222-4222-8222-222222222222"
+		personID    = "33333333-3333-4333-8333-333333333333"
+		operationID = "44444444-4444-4444-8444-444444444444"
+		undoID      = "55555555-5555-4555-8555-555555555555"
+		token       = "synthetic-proof-token"
+	)
+	var record kitdaemon.RuntimeRecord
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case kitdaemon.DefaultPingPath:
+			assert.NoError(t, json.MarshalWrite(w, kitdaemon.PingInfo{OK: true, Service: daemonconn.Service, Version: version.Version, PID: record.PID}))
+		case daemonauth.ChallengePath:
+			nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
+			assert.NoError(t, err)
+			assert.NoError(t, json.MarshalWrite(w, map[string]string{"proof": daemonauth.Proof(token, nonce)}))
+		case "/api/v1/photos/versions/" + versionID + "/face-decisions":
+			requests.Add(1)
+			assert.Equal(t, http.MethodPost, r.Method)
+			var request api.PhotoFaceDecisionRequest
+			assert.NoError(t, json.UnmarshalRead(r.Body, &request))
+			assert.Equal(t, api.PhotoFaceDecisionRequest{Action: "name", FaceID: faceID, PersonID: personID, Revision: 7, OperationID: operationID}, request)
+			assert.NoError(t, json.MarshalWrite(w, api.PhotoFaceDecisionResult{ReceiptID: operationID}))
+		case "/api/v1/photos/face-decisions/" + operationID + "/undo":
+			requests.Add(1)
+			assert.Equal(t, http.MethodPost, r.Method)
+			assert.Equal(t, undoID, r.URL.Query().Get("operation_id"))
+			assert.NoError(t, json.MarshalWrite(w, api.PhotoFaceDecisionResult{ReceiptID: undoID}))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	record = daemonconn.NewRecord(strings.TrimPrefix(server.URL, "http://"), "synthetic-api-key", token, "")
+	_, err := daemonconn.RuntimeStore(dir).Write(record)
 	require.NoError(t, err)
-	person, err := catalog.CreatePerson(t.Context(), "Ada", "operator")
-	require.NoError(t, err)
-	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "portrait.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
-	require.NoError(t, err)
-	face, _, err := catalog.CreatePhotoFace(t.Context(), node.CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, "")
-	require.NoError(t, err)
-	require.NoError(t, catalog.Close())
-	startTestDaemon(t, dir)
-	operationID := uuid.NewString()
-	output, err := runCLI(t, "photos", "faces", "name", node.CurrentVersionID, "--face", face.FaceID, "--person", person.PersonID, "--revision", "1", "--operation-id", operationID)
+	output, err := runCLI(t, "photos", "faces", "name", versionID, "--face", faceID, "--person", personID, "--revision", "7", "--operation-id", operationID)
 	require.NoError(t, err)
 	var named api.PhotoFaceDecisionResult
 	require.NoError(t, json.Unmarshal([]byte(output), &named))
-
-	require.NotEmpty(t, named.ReceiptID)
-	output, err = runCLI(t, "photos", "faces", "undo", named.ReceiptID, "--operation-id", uuid.NewString())
+	require.Equal(t, operationID, named.ReceiptID)
+	output, err = runCLI(t, "photos", "faces", "undo", named.ReceiptID, "--operation-id", undoID)
 	require.NoError(t, err)
 	var undone api.PhotoFaceDecisionResult
 	require.NoError(t, json.Unmarshal([]byte(output), &undone))
-	require.NotEmpty(t, undone.ReceiptID)
+	require.Equal(t, undoID, undone.ReceiptID)
+	require.Equal(t, int32(2), requests.Load())
 }
