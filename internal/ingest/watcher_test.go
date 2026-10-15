@@ -544,7 +544,7 @@ func TestWatchBindingOverlapHonorsCancellation(t *testing.T) {
 }
 
 func TestWatcherRejectsReservedCheckoutDestinations(t *testing.T) {
-	for _, state := range []store.StorageOperationState{store.StorageOperationCompleted, store.StorageOperationFailed, store.StorageOperationCancelled} {
+	for _, state := range []store.StorageOperationState{store.StorageOperationQueued, store.StorageOperationRunning, store.StorageOperationCompleted, store.StorageOperationFailed, store.StorageOperationCancelled} {
 		t.Run(string(state), func(t *testing.T) {
 			ing := newTestIngester(t)
 			ctx := t.Context()
@@ -555,19 +555,25 @@ func TestWatcherRejectsReservedCheckoutDestinations(t *testing.T) {
 			destination := t.TempDir()
 			checkout, op, err := ing.Store.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
 			require.NoError(t, err)
-			require.NoError(t, ing.Store.FinishPhotoCheckout(ctx, checkout.ID, op.ID, state, "{}", "", time.Now().Add(time.Hour)))
+			if state == store.StorageOperationRunning {
+				require.NoError(t, ing.Store.ClaimPhotoCheckout(ctx, checkout.ID, op.ID))
+			} else if state != store.StorageOperationQueued {
+				require.NoError(t, ing.Store.FinishPhotoCheckout(ctx, checkout.ID, op.ID, state, "{}", "", time.Now().Add(time.Hour)))
+			}
+			partial := filepath.Join(destination, "photo.jpg")
+			require.NoError(t, os.WriteFile(partial, []byte("working copy"), 0o600))
 			watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{Name: "checkout-watch", Source: destination, Destination: "/inbox"}, runTestMutation, nil)
 			require.NoError(t, err)
-			root, err := watcher.openRoot(ctx)
-			if state != store.StorageOperationCompleted {
-				require.NoError(t, err)
-				require.NoError(t, root.Close())
-				partial := filepath.Join(destination, "photo.jpg")
-				require.NoError(t, os.WriteFile(partial, []byte("partial"), 0o600))
-				_, err = watcher.openRoot(ctx)
+			_, err = watcher.openRoot(ctx)
+			if state == store.StorageOperationFailed || state == store.StorageOperationCancelled {
 				require.ErrorContains(t, err, "with partial files")
-				require.NoError(t, os.Remove(partial))
-				root, err = watcher.openRoot(ctx)
+			} else {
+				require.ErrorContains(t, err, "overlaps reserved checkout")
+			}
+			require.ErrorContains(t, err, checkout.ID)
+			require.NoError(t, os.Remove(partial))
+			root, err := watcher.openRoot(ctx)
+			if state == store.StorageOperationFailed || state == store.StorageOperationCancelled {
 				require.NoError(t, err)
 				require.NoError(t, root.Close())
 			} else {
@@ -576,6 +582,10 @@ func TestWatcherRejectsReservedCheckoutDestinations(t *testing.T) {
 			}
 			require.NoError(t, os.WriteFile(filepath.Join(destination, "edited.jpg"), []byte("edits"), 0o600))
 			_, err = ing.Store.RetirePhotoCheckout(ctx, checkout.ID)
+			if state == store.StorageOperationQueued || state == store.StorageOperationRunning {
+				require.ErrorContains(t, err, "cancel active checkout work before retirement")
+				return
+			}
 			require.NoError(t, err)
 			_, err = watcher.openRoot(ctx)
 			require.ErrorContains(t, err, "with partial files")

@@ -336,11 +336,14 @@ func TestStorageRegistrationProtectsCheckoutReservations(t *testing.T) {
 		previewFirst       bool
 		missingDestination bool
 		unrelatedBinding   bool
+		releasedState      store.StorageOperationState
 	}{
-		{"preview", false, false, false},
-		{"apply rechecks reservation", true, false, false},
-		{"missing destination remains reserved", false, true, false},
-		{"missing destination permits unrelated store", false, true, true},
+		{"preview", false, false, false, ""},
+		{"apply rechecks reservation", true, false, false, ""},
+		{"missing destination remains reserved", false, true, false, ""},
+		{"missing destination permits unrelated store", false, true, true, ""},
+		{"failed partial copies", false, false, false, store.StorageOperationFailed},
+		{"cancelled partial copies", true, false, false, store.StorageOperationCancelled},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			destination := t.TempDir()
@@ -369,7 +372,15 @@ func TestStorageRegistrationProtectsCheckoutReservations(t *testing.T) {
 			require.NoError(t, err)
 			checkout, operation, err := live.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
 			require.NoError(t, err)
-			require.NoError(t, live.FinishPhotoCheckout(t.Context(), checkout.ID, operation.ID, store.StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
+			state := store.StorageOperationCompleted
+			if tc.releasedState != "" {
+				state = tc.releasedState
+			}
+			require.NoError(t, live.FinishPhotoCheckout(t.Context(), checkout.ID, operation.ID, state, "{}", "", time.Now().Add(time.Hour)))
+			partial := filepath.Join(destination, "photo.jpg")
+			if tc.releasedState != "" {
+				require.NoError(t, os.WriteFile(partial, []byte("working copy"), 0o600))
+			}
 			if tc.missingDestination {
 				require.NoError(t, os.Remove(destination))
 			}
@@ -385,6 +396,15 @@ func TestStorageRegistrationProtectsCheckoutReservations(t *testing.T) {
 			require.Equal(t, http.StatusConflict, resp.StatusCode, body)
 			require.Contains(t, body, checkout.ID)
 			require.Contains(t, body, `"code":"storage_namespace_overlap"`)
+			if tc.releasedState != "" {
+				require.NoError(t, os.Remove(partial))
+				resp, body = do(t, ts, http.MethodPost, "/api/v1/storage/stores/preview", nil, map[string]any{"name": "archive", "binding": "checkout"})
+				require.Equal(t, http.StatusOK, resp.StatusCode, body)
+				var preview api.BlobStorePreview
+				require.NoError(t, json.Unmarshal([]byte(body), &preview))
+				resp, body = do(t, ts, http.MethodPost, "/api/v1/storage/stores", nil, map[string]any{"preview_token": preview.PreviewToken})
+				require.Equal(t, http.StatusOK, resp.StatusCode, body)
+			}
 		})
 	}
 }

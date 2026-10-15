@@ -31,7 +31,6 @@ import (
 	"go.kenn.io/docbank/internal/daemonauth"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
-	"go.kenn.io/docbank/internal/version"
 	kitdaemon "go.kenn.io/kit/daemon"
 )
 
@@ -40,21 +39,27 @@ func setupFakeDaemon(t *testing.T, handler http.HandlerFunc) {
 	vault := t.TempDir()
 	t.Setenv("DOCBANK_HOME", vault)
 	const token = "synthetic-proof-token"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case kitdaemon.DefaultPingPath:
-			assert.NoError(t, json.MarshalWrite(w, kitdaemon.PingInfo{OK: true, Service: daemonconn.Service, Version: version.Version, PID: os.Getpid()}))
-		case daemonauth.ChallengePath:
+	record := daemonconn.NewRecord("", "synthetic-key", token, "")
+	server := httptest.NewServer(fakeDaemonHandler(t, &record, token, handler))
+	t.Cleanup(server.Close)
+	_, err := daemonconn.RuntimeStore(vault).Write(daemonconn.NewRecord(strings.TrimPrefix(server.URL, "http://"), "synthetic-key", token, ""))
+	require.NoError(t, err)
+}
+
+func fakeDaemonHandler(t *testing.T, record *kitdaemon.RuntimeRecord, token string, handler http.HandlerFunc) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case "GET " + kitdaemon.DefaultPingPath:
+			assert.NoError(t, json.MarshalWrite(w, kitdaemon.PingInfo{OK: true, Service: record.Service, Version: record.Version, PID: record.PID}))
+		case "GET " + daemonauth.ChallengePath:
 			nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
 			assert.NoError(t, err)
 			assert.NoError(t, json.MarshalWrite(w, map[string]string{"proof": daemonauth.Proof(token, nonce)}))
 		default:
 			handler(w, r)
 		}
-	}))
-	t.Cleanup(server.Close)
-	_, err := daemonconn.RuntimeStore(vault).Write(daemonconn.NewRecord(strings.TrimPrefix(server.URL, "http://"), "synthetic-key", token, ""))
-	require.NoError(t, err)
+	}
 }
 
 // runCLI executes the root command against a test vault (caller must have

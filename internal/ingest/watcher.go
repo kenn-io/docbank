@@ -369,27 +369,15 @@ func (w *Watcher) openRoot(ctx context.Context) (*watchRoot, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, checkout := range checkouts {
-		if checkout.Destination == "" {
-			continue
+	checkoutID, overlaps, retired, err := CheckoutPathOverlap(ctx, checkouts, root)
+	if err != nil {
+		return nil, fmt.Errorf("checking watch %q against checkout %s: %w", w.config.Name, checkoutID, err)
+	}
+	if overlaps {
+		if retired {
+			return nil, fmt.Errorf("watch %q source overlaps checkout %s with partial files; clear the folder and restart Docbank", w.config.Name, checkoutID)
 		}
-		_, overlaps, err := WatchBindingOverlapContext(ctx, []config.WatchConfig{w.config}, config.StoreBindingConfig{Kind: "filesystem", Path: checkout.Destination})
-		if err != nil {
-			return nil, fmt.Errorf("checking watch %q against checkout %s: %w", w.config.Name, checkout.ID, err)
-		}
-		if overlaps {
-			if checkout.RetentionReleased {
-				protected, err := PhotoCheckoutProtectsDestination(checkout)
-				if err == nil && !protected {
-					continue
-				}
-				if err != nil {
-					return nil, fmt.Errorf("inspecting released checkout %s: %w", checkout.ID, err)
-				}
-				return nil, fmt.Errorf("watch %q source overlaps checkout %s with partial files; clear the folder and restart Docbank", w.config.Name, checkout.ID)
-			}
-			return nil, fmt.Errorf("watch %q source overlaps reserved checkout %s", w.config.Name, checkout.ID)
-		}
+		return nil, fmt.Errorf("watch %q source overlaps reserved checkout %s", w.config.Name, checkoutID)
 	}
 	vaultInfo, err := os.Stat(vaultRoot)
 	if err != nil {

@@ -178,6 +178,9 @@ func runServe(ctx context.Context) (retErr error) {
 	if err := validateConfiguredWatchStores(cfg, catalogStores); err != nil {
 		return err
 	}
+	if err := validateConfiguredCheckouts(sigCtx, cfg, catalogStores, s); err != nil {
+		return err
+	}
 	storeSpecs := make([]blob.StoreSpec, 0, len(catalogStores)-1)
 	for _, catalogStore := range catalogStores {
 		if catalogStore.Role == "primary" {
@@ -838,6 +841,34 @@ func startRetentionMaintenance(
 	return nil
 }
 
+func validateConfiguredCheckouts(ctx context.Context, cfg config.Config, stores []store.BlobStore, catalog *store.Store) error {
+	checkouts, err := catalog.ListPhotoCheckouts(ctx)
+	if err != nil {
+		return err
+	}
+	paths := make([]string, 0, len(cfg.Watches)+len(stores))
+	for _, watch := range cfg.Watches {
+		paths = append(paths, watch.Source)
+	}
+	for _, item := range stores {
+		if item.Role == "primary" || item.Lifecycle == "detached" || item.Kind != "filesystem" {
+			continue
+		}
+		if binding, ok := cfg.StoreBindings[item.Binding]; ok {
+			paths = append(paths, binding.Path)
+		}
+	}
+	for _, pathname := range paths {
+		id, overlap, _, err := ingest.CheckoutPathOverlap(ctx, checkouts, pathname)
+		if err != nil {
+			return fmt.Errorf("checking configured path against checkout %s: %w", id, err)
+		}
+		if overlap {
+			return fmt.Errorf("configured path %q overlaps reserved checkout %s", pathname, id)
+		}
+	}
+	return nil
+}
 func validateConfiguredWatchStores(
 	cfg config.Config, stores []store.BlobStore,
 ) error {

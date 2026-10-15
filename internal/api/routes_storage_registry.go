@@ -8,7 +8,6 @@ import (
 	"io/fs"
 	"maps"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -420,30 +419,12 @@ func validateStorageNamespace(
 			if err != nil {
 				return FromStoreError(err)
 			}
-			for _, checkout := range checkouts {
-				protected, err := ingest.PhotoCheckoutProtectsDestination(checkout)
-				if err != nil {
-					return NewError(http.StatusUnprocessableEntity, "storage_binding_invalid", err.Error())
-				}
-				if !protected {
-					continue
-				}
-				info, statErr := os.Stat(checkout.Destination)
-				if statErr != nil && !errors.Is(statErr, fs.ErrNotExist) {
-					return NewError(http.StatusUnprocessableEntity, "storage_binding_invalid", statErr.Error())
-				}
-				var overlap bool
-				if statErr == nil && info.IsDir() {
-					_, overlap, err = ingest.WatchBindingOverlapContext(ctx, []config.WatchConfig{{Source: checkout.Destination}}, binding)
-				} else {
-					overlap, err = ingest.PathsOverlapContext(ctx, binding.Path, checkout.Destination)
-				}
-				if err != nil && !errors.Is(err, fs.ErrNotExist) {
-					return NewError(http.StatusUnprocessableEntity, "storage_binding_invalid", err.Error())
-				}
-				if overlap {
-					return NewError(http.StatusConflict, "storage_namespace_overlap", fmt.Sprintf("binding %q overlaps protected checkout %s", bindingName, checkout.ID))
-				}
+			checkoutID, overlap, _, err := ingest.CheckoutPathOverlap(ctx, checkouts, binding.Path)
+			if err != nil {
+				return NewError(http.StatusUnprocessableEntity, "storage_binding_invalid", err.Error())
+			}
+			if overlap {
+				return NewError(http.StatusConflict, "storage_namespace_overlap", fmt.Sprintf("binding %q overlaps reserved checkout %s", bindingName, checkoutID))
 			}
 			watchName, watchOverlap, err := ingest.WatchBindingOverlapContext(
 				ctx, d.Cfg.Watches, binding,

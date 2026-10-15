@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -22,7 +23,7 @@ func TestPhotoRoutesReadAssets(t *testing.T) {
 	require.NoError(t, err)
 	asset, err := fixture.PhotoAssetForNode(t.Context(), node.ID)
 	require.NoError(t, err)
-	_, err = fixture.EditPhotoAuthored(t.Context(), []store.PhotoAuthoredTarget{{FileID: asset.Files[0].ID, Revision: 1, Patch: store.PhotoAuthoredPatch{Caption: new("")}}})
+	_, err = fixture.EditPhotoAuthoredBatch(t.Context(), store.PhotoAuthoredBatch{Targets: []store.PhotoAuthoredEditTarget{{AssetID: asset.ID, AssetRevision: asset.Revision, FileID: asset.Files[0].ID, Revision: asset.Files[0].Revision, NodeRevision: node.Revision}}, Patch: store.PhotoAuthoredPatch{Caption: new("")}})
 	require.NoError(t, err)
 
 	resp, body := get(t, ts, "/api/v1/photos/assets/"+asset.ID, nil)

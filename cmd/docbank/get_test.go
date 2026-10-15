@@ -112,6 +112,9 @@ func TestPublishGetFileNoReplacePreservesConcurrentDestination(t *testing.T) {
 	bytes, readErr := os.ReadFile(output)
 	require.NoError(t, readErr)
 	assert.Equal(t, "concurrent", string(bytes))
+	bytes, readErr = os.ReadFile(staged)
+	require.NoError(t, readErr)
+	assert.Equal(t, "download", string(bytes))
 }
 
 func TestGetIntegrityFailureNeverPublishesPartialDestination(t *testing.T) {
