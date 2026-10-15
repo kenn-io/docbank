@@ -1609,3 +1609,31 @@ func TestPhotoFaceNamingSupersedesOtherSuggestions(t *testing.T) {
 		})
 	}
 }
+
+func TestPhotoFaceWithdrawalUndoFencedByLaterRejection(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	p, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	q, err := s.CreatePerson(ctx, "Grace", "operator")
+	require.NoError(t, err)
+	n, f := faceForDecisionTest(t, s, "")
+	raw, err := json.Marshal([]PersonCandidateOccurrence{{ContentVersionID: n.CurrentVersionID, Role: "depicted", EvidenceKind: "face", EvidenceID: f.FaceID}})
+	require.NoError(t, err)
+	c, err := normalizePersonCandidate(PersonMatchCandidate{ActorKey: "face:" + f.FaceID, DisplayName: "Face", SuggestedPersonID: p.PersonID, Reason: "face_match", Evidence: raw})
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx, `WITH RECURSIVE slots(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM slots WHERE i<999) INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at) SELECT printf('00000000-0000-4000-8000-%012d',i),'Synthetic person','synthetic person','operator','curated',1,?,? FROM slots`, nowRFC3339(), nowRFC3339())
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx, `INSERT INTO person_match_candidates(candidate_id,actor_key,display_name,suggested_person_id,reason,evidence_json,evidence_sha256,occurrence_count,revision,state,created_at,decided_at) SELECT person_id,?,'Face',person_id,'face_match',?,?,1,1,'rejected',?,? FROM persons WHERE person_id NOT IN (?,?)`, c.ActorKey, c.Evidence, c.EvidenceSHA256, nowRFC3339(), nowRFC3339(), p.PersonID, q.PersonID)
+	require.NoError(t, err)
+	decideFaceForTest(t, s, n, f.FaceID, p.PersonID, "reject")
+	withdrawn := decideFaceForTest(t, s, n, f.FaceID, p.PersonID, "withdraw_rejection")
+	decideFaceForTest(t, s, n, f.FaceID, q.PersonID, "reject")
+	_, err = s.UndoPhotoFaceDecision(ctx, withdrawn.ReceiptID)
+	require.ErrorIs(t, err, ErrStaleRevision)
+	faces, _, err := s.PhotoFaces(ctx, n.CurrentVersionID)
+	require.NoError(t, err)
+	require.Len(t, faces[0].RejectedPersonIDs, 1000)
+	require.NoError(t, s.ValidateMetadata(ctx))
+}
