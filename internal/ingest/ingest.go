@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -97,6 +98,7 @@ const (
 )
 
 type progressTracker struct {
+	mu                   sync.Mutex
 	notify               func(ProgressEvent)
 	event                ProgressEvent
 	lastNotifiedBytes    int64
@@ -117,6 +119,8 @@ func (p *progressTracker) addBytes(n int) {
 	if p == nil || n <= 0 {
 		return
 	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.event.BytesRead += int64(n)
 	if p.event.BytesRead-p.lastNotifiedBytes >= progressByteInterval ||
 		time.Since(p.lastNotifiedAt) >= progressTimeInterval {
@@ -128,6 +132,8 @@ func (p *progressTracker) report(rep Report, final bool) {
 	if p == nil {
 		return
 	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.event.FilesDone = int64(rep.Added + rep.Skipped + len(rep.Failed))
 	p.event.Added = rep.Added
 	p.event.Skipped = rep.Skipped
@@ -486,12 +492,21 @@ func (ing *Ingester) AddPathsWithSelection(
 			return rep, err
 		}
 		if err := validateSourcePath(rawSource); err != nil {
+			if err := files.flush(ctx, &rep, progress); err != nil {
+				return rep, err
+			}
 			rep.Failed = append(rep.Failed, FileError{Path: reportPath(rawSource), Err: err})
 			progress.report(rep, false)
 			continue
 		}
 		src := filepath.Clean(rawSource)
 		info, err := os.Lstat(src)
+		if err != nil || !info.Mode().IsRegular() ||
+			selection.excluded(src, src) || !selection.included(src, src) {
+			if err := files.flush(ctx, &rep, progress); err != nil {
+				return rep, err
+			}
+		}
 		if err != nil {
 			// Per-file failure like any other: aborting here would leave
 			// already-imported files out of the report entirely.
@@ -572,6 +587,9 @@ func (ing *Ingester) AddPathsWithSelection(
 			progress.report(rep, false)
 		}
 	}
+	if err := files.flush(ctx, &rep, progress); err != nil {
+		return rep, err
+	}
 	if err := files.finalize(ctx, &rep, progress); err != nil {
 		return rep, err
 	}
@@ -593,6 +611,7 @@ type filesystemIngest struct {
 	destination       *ingestDirectory
 	directories       []*ingestDirectory // Deferred plans, including the destination.
 	admissionRejected bool
+	pending           []pendingLocalFile
 }
 
 func (files *filesystemIngest) applyResolution(
@@ -638,11 +657,17 @@ func (files *filesystemIngest) addTree(
 
 	directories := map[string]*ingestDirectory{}
 	directoryErrors := map[string]error{}
-	return filepath.WalkDir(walkRoot, func(p string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(walkRoot, func(p string, d fs.DirEntry, err error) error {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
 		sourcePath := sourceTreePath(sourceRoot, walkRoot, p)
+		if err != nil || validateSourcePath(sourcePath) != nil || !d.Type().IsRegular() ||
+			selection.excluded(sourceRoot, sourcePath) || !selection.included(sourceRoot, sourcePath) {
+			if err := files.flush(ctx, rep, progress); err != nil {
+				return err
+			}
+		}
 		if err != nil {
 			rep.Failed = append(rep.Failed, FileError{Path: sourcePath, Err: err})
 			progress.report(*rep, false)
@@ -686,6 +711,12 @@ func (files *filesystemIngest) addTree(
 				progress.report(*rep, false)
 				return nil
 			}
+			// Include filters can defer directory creation until its first file.
+			if directories[filepath.Dir(p)] == nil {
+				if err := files.flush(ctx, rep, progress); err != nil {
+					return err
+				}
+			}
 			parent, err := files.ensureSourceDirectory(
 				ctx, directories, directoryErrors, topName, sourceRoot, walkRoot, filepath.Dir(p),
 			)
@@ -717,6 +748,10 @@ func (files *filesystemIngest) addTree(
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	return files.flush(ctx, rep, progress)
 }
 
 func (files *filesystemIngest) prepareSourceDirectory(
@@ -786,9 +821,32 @@ func (files *filesystemIngest) addOne(
 	replace bool,
 	progress *progressTracker,
 ) error {
+	if err := validateSourcePath(sourcePath); err != nil {
+		if flushErr := files.flush(ctx, rep, progress); flushErr != nil {
+			return flushErr
+		}
+		return files.recordOutcome(ctx, rep, sourcePath, false, store.IngestDirectoryResolution{}, err, progress)
+	}
+	if !replace {
+		files.pending = append(files.pending, pendingLocalFile{
+			parent: parent, openPath: openPath, sourcePath: sourcePath,
+		})
+		if len(files.pending) < 8 {
+			return nil
+		}
+		return files.flush(ctx, rep, progress)
+	}
 	added, resolution, err := files.importFile(
 		ctx, parent, openPath, sourcePath, replace, progress,
 	)
+	return files.recordOutcome(ctx, rep, sourcePath, added, resolution, err, progress)
+}
+
+func (files *filesystemIngest) recordOutcome(
+	ctx context.Context, rep *Report, sourcePath string,
+	added bool, resolution store.IngestDirectoryResolution, err error,
+	progress *progressTracker,
+) error {
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
@@ -884,6 +942,12 @@ func (files *filesystemIngest) importFile(
 		}
 		return true, resolution, nil
 	}
+	return files.recordPreparedFile(ctx, parent, sourcePath, content)
+}
+
+func (files *filesystemIngest) recordPreparedFile(
+	ctx context.Context, parent *ingestDirectory, sourcePath string, content localFileContent,
+) (added bool, resolution store.IngestDirectoryResolution, err error) {
 	if parent.plan == nil {
 		_, added, err = files.ing.Store.IngestFileWithMembership(
 			ctx, files.run, parent.id, filepath.Base(sourcePath), content.hash, content.size,
@@ -1003,6 +1067,20 @@ func (ing *Ingester) readLocalFileWith(
 	ctx context.Context, open localFileOpener, sourcePath string, progress *progressTracker,
 	expected *localFileFingerprint,
 ) (result localFileContent, retErr error) {
+	result, retErr = ing.prepareLocalFileWith(ctx, open, sourcePath, progress, expected)
+	if retErr != nil && result.hash != "" {
+		retErr = errors.Join(retErr, ing.cleanupLoose(result.hash))
+	}
+	return result, retErr
+}
+
+// prepareLocalFileWith leaves loose-duplicate cleanup to its caller, including
+// on error. Concurrent preparations must all finish before cleanup can remove
+// a packed duplicate that another writer may still be verifying.
+func (ing *Ingester) prepareLocalFileWith(
+	ctx context.Context, open localFileOpener, sourcePath string, progress *progressTracker,
+	expected *localFileFingerprint,
+) (result localFileContent, retErr error) {
 	// No-follow plus fstat, not the earlier Lstat/WalkDir classification:
 	// the file could have been swapped since, and "symlinks are skipped"
 	// must hold for the file actually read, not the one classified.
@@ -1052,11 +1130,6 @@ func (ing *Ingester) readLocalFileWith(
 		return result, fmt.Errorf("storing content of %s: %w", sourcePath, err)
 	}
 	result.hash, result.size = written.Hash, written.Size
-	defer func() {
-		if retErr != nil {
-			retErr = errors.Join(retErr, ing.cleanupLoose(written.Hash))
-		}
-	}()
 	result.physical, err = physicalReceipt(written)
 	if err != nil {
 		return result, fmt.Errorf("recording physical content of %s: %w", sourcePath, err)

@@ -163,6 +163,23 @@ is harmless because no `blobs` row authorizes it; GC's physical scan can remove
 it. Reversing the order could commit a node whose bytes vanish after power
 loss, which is not recoverable through metadata.
 
+Ordinary local filesystem imports prepare up to eight files concurrently through
+the same durable writer. All preparations in a group finish before metadata
+transactions run in input order. Successful preparations share verified creation
+receipts for matching hashes, so an earlier duplicate can restore missing catalog
+authority even when a later input published the bytes first. Failed preparations
+cannot supply these receipts. Directory creation and traversal errors finish
+earlier pending files first, preserving name conflicts and report order.
+Replacement imports remain sequential so each target revision is observed after
+the preceding import. No sync or SQLite commit policy changes for either path.
+
+The importer serializes progress callbacks and waits for every writer before
+returning, including on cancellation. The caller's mutation lease covers this
+whole interval. Loose-duplicate cleanup also waits for the group's preparations;
+it cannot remove a packed duplicate while a sibling writer is verifying it.
+Cancellation cleans prepared duplicates backed by packs and leaves unreferenced
+loose content for exclusive GC, just as other failed writes do.
+
 Local add, automatic `docbank put`, and load-file package staging use the same
 pinned byte detector after reading the source prefix and keep the `.eml` rule
 first. A valid extension refines unknown bytes, including empty files, a
