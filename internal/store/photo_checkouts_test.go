@@ -249,7 +249,6 @@ func TestPhotoCheckoutMetadata(t *testing.T) {
 			}
 		})
 	}
-
 }
 
 func TestPhotoCheckoutCreateValidation(t *testing.T) {

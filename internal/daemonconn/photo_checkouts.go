@@ -13,8 +13,12 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
+// checkoutStateFailed names the terminal failed state, factored out because
+// the literal otherwise recurs often enough in this package to trip goconst.
+const checkoutStateFailed = "failed"
+
 func validatePhotoCheckoutResponse(c store.PhotoCheckout, id string) error {
-	if !validUUIDv4(c.ID) || id != "" && c.ID != id || c.ByteLimit < 0 || c.Selection.All && c.ByteLimit == 0 || !slices.Contains([]string{"unbound", "queued", "running", "completed", "failed", "cancelled"}, c.State) {
+	if !validUUIDv4(c.ID) || id != "" && c.ID != id || c.ByteLimit < 0 || c.Selection.All && c.ByteLimit == 0 || !slices.Contains([]string{"unbound", "queued", "running", "completed", checkoutStateFailed, "cancelled"}, c.State) {
 		return errors.New("invalid photo checkout response identity or state")
 	}
 	if c.State == "unbound" {
@@ -29,7 +33,7 @@ func validatePhotoCheckoutResponse(c store.PhotoCheckout, id string) error {
 		// cleared folder is admitted for reuse elsewhere, so an empty
 		// destination is only valid in that combination; an active checkout
 		// (queued or running) always keeps an absolute destination.
-		releasedTerminal := c.RetentionReleased && slices.Contains([]string{"completed", "failed", "cancelled"}, c.State)
+		releasedTerminal := c.RetentionReleased && slices.Contains([]string{"completed", checkoutStateFailed, "cancelled"}, c.State)
 		if c.Destination == "" {
 			if !releasedTerminal {
 				return errors.New("photo checkout response has invalid local bindings")
