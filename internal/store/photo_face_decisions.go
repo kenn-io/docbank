@@ -557,6 +557,7 @@ func (s *Store) UndoPhotoFaceDecisionWithOperationID(ctx context.Context, id, op
 		if err != nil {
 			return err
 		}
+		history := faceWithdrawalHistory{}
 		// Unchanged active dependencies fence identity while allowing automatic withdrawal.
 		fenced := current
 		fenced.Assertions = slices.Clone(current.Assertions)
@@ -566,7 +567,7 @@ func (s *Store) UndoPhotoFaceDecisionWithOperationID(ctx context.Context, id, op
 			}
 			observed := current.Assertions[i]
 			if observed.Action == personAssertionActionWithdrawn {
-				automatic, err := automaticFaceWithdrawalTx(ctx, tx, observed)
+				automatic, err := history.automatic(ctx, tx, observed)
 				if err != nil {
 					return err
 				}
@@ -637,7 +638,7 @@ func (s *Store) UndoPhotoFaceDecisionWithOperationID(ctx context.Context, id, op
 						return old.AssertionID == a.AssertionID && old.Action == "suppress"
 					})
 					if a.Action == personAssertionActionWithdrawn && !slices.ContainsFunc(r.After.Assertions, func(after PersonDocumentAssertion) bool { return after.AssertionID == a.AssertionID }) {
-						automatic, e := automaticFaceWithdrawalTx(ctx, tx, a)
+						automatic, e := history.automatic(ctx, tx, a)
 						if e != nil {
 							return e
 						}
@@ -996,26 +997,25 @@ func (s *Store) clearNamedFaceCandidatesTx(ctx context.Context, tx *sql.Tx, befo
 	return nil
 }
 
-func automaticFaceWithdrawalTx(ctx context.Context, tx *sql.Tx, assertion PersonDocumentAssertion) (bool, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT receipt_id,before_json,after_json FROM photo_change_receipts INDEXED BY photo_change_receipts_face_version WHERE operation='face_decision' AND json_extract(before_json,'$.content_version_id')=?`, assertion.ContentVersionID)
-	if err != nil {
-		return false, err
-	}
-	defer func() { _ = rows.Close() }()
-	automatic := false
-	for rows.Next() {
-		var id string
-		var before, after []byte
-		if err := rows.Scan(&id, &before, &after); err != nil {
-			return false, err
-		}
-		receipt, err := decodeFaceDecisionReceipt(before, after, id)
+// faceWithdrawalHistory decodes each content version's face decision
+// receipts at most once per undo. Undo writes its own receipt only after
+// every fence check, so the cached receipts stay current for the whole check.
+type faceWithdrawalHistory map[string][]PhotoFaceDecisionReceipt
+
+// automatic reports whether an earlier face decision withdrew the assertion
+// as a side effect of detaching its last face, rather than an operator
+// withdrawing it directly.
+func (h faceWithdrawalHistory) automatic(ctx context.Context, tx *sql.Tx, assertion PersonDocumentAssertion) (bool, error) {
+	receipts, ok := h[assertion.ContentVersionID]
+	if !ok {
+		var err error
+		receipts, err = faceDecisionReceiptsTx(ctx, tx, assertion.ContentVersionID)
 		if err != nil {
 			return false, err
 		}
-		if receipt.Before.VersionID != assertion.ContentVersionID {
-			continue
-		}
+		h[assertion.ContentVersionID] = receipts
+	}
+	for _, receipt := range receipts {
 		detached := slices.ContainsFunc(receipt.After.Assertions, func(a PersonDocumentAssertion) bool {
 			return a.AssertionID == assertion.AssertionID && a.Revision == assertion.Revision && a.Action == personAssertionActionWithdrawn
 		})
@@ -1023,9 +1023,35 @@ func automaticFaceWithdrawalTx(ctx context.Context, tx *sql.Tx, assertion Person
 			return a.AssertionID == assertion.AssertionID && a.Action == personAssertionActionAssert
 		})
 		referenced := slices.ContainsFunc(receipt.After.Faces, func(f PhotoFace) bool { return f.AssertionID == assertion.AssertionID })
-		automatic = automatic || detached && active && !referenced
+		if detached && active && !referenced {
+			return true, nil
+		}
 	}
-	return automatic, errors.Join(rows.Err(), rows.Close())
+	return false, nil
+}
+
+func faceDecisionReceiptsTx(ctx context.Context, tx *sql.Tx, versionID string) ([]PhotoFaceDecisionReceipt, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT receipt_id,before_json,after_json FROM photo_change_receipts INDEXED BY photo_change_receipts_face_version WHERE operation='face_decision' AND json_extract(before_json,'$.content_version_id')=?`, versionID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var receipts []PhotoFaceDecisionReceipt
+	for rows.Next() {
+		var id string
+		var before, after []byte
+		if err := rows.Scan(&id, &before, &after); err != nil {
+			return nil, err
+		}
+		receipt, err := decodeFaceDecisionReceipt(before, after, id)
+		if err != nil {
+			return nil, err
+		}
+		if receipt.Before.VersionID == versionID {
+			receipts = append(receipts, receipt)
+		}
+	}
+	return receipts, errors.Join(rows.Err(), rows.Close())
 }
 
 func faceStateCandidateIDs(state PhotoFaceDecisionState) []string {
