@@ -24,7 +24,7 @@ type auditScopeState struct {
 	chainHead  string
 }
 
-func auditAuthorityActiveTx(ctx context.Context, tx *sql.Tx) (bool, error) {
+func auditAuthorityActiveTx(ctx context.Context, tx rowQuerier) (bool, error) {
 	var active bool
 	if err := tx.QueryRowContext(ctx,
 		`SELECT EXISTS(SELECT 1 FROM audit_authority WHERE singleton=1)`,

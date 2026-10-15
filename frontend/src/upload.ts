@@ -13,6 +13,7 @@ const uploadHandshakeTimeoutMs = 10_000;
 const uploadResponseTimeoutMs = 60_000;
 
 export interface TransferProgress {
+  submitted?: boolean;
   processed: number;
   total: number;
 }
@@ -89,7 +90,44 @@ export function validateUploadReceipt(
   }
 }
 
+export interface PhotoImportPlan {
+  import_id: string;
+  groups: number[][];
+  unsupported: number[];
+  skip_reasons?: Record<number, string>;
+}
+
+export interface PhotoGroupReceipt {
+  status: "added" | "skipped" | "ambiguous";
+  asset_id: string;
+  reason?: string;
+}
+
+export interface PhotoImportTransport {
+  planPhotoImport(files: File[], destination: string): Promise<PhotoImportPlan>;
+  uploadPhotoGroup(
+    importID: string,
+    groupIndex: number,
+    group: File[],
+    signal: AbortSignal,
+    onprogress: (phase: "hashing" | "uploading", progress: TransferProgress) => void,
+  ): Promise<PhotoGroupReceipt>;
+}
+
+function photoRelativePath(file: File): string {
+  return (file.webkitRelativePath || file.name).normalize("NFC");
+}
+
 interface UploadMessage {
+  import_id?: string;
+  files?: { relative_path: string; size: number; modified_time?: number }[];
+  groups?: number[][];
+  unsupported?: number[];
+  skip_reasons?: Record<number, string>;
+  destination?: string;
+  group?: number;
+  hashes?: string[];
+  photo_group_receipt?: PhotoGroupReceipt;
   container_id?: string;
   chunk_index?: number;
   chunk_receipt?: { index: number; sha256: string; size: number };
@@ -143,7 +181,7 @@ function expectedProof(secret: string, token: string, nonce: string): string {
   return base64URL(hmac(sha256, base64URLBytes(secret), input));
 }
 
-export class VerifiedUploadChannel implements UploadTransport {
+export class VerifiedUploadChannel implements UploadTransport, PhotoImportTransport {
   private socket: WebSocket | null = null;
   private waiter: {
     resolve: (message: UploadMessage) => void;
@@ -151,6 +189,8 @@ export class VerifiedUploadChannel implements UploadTransport {
   } | null = null;
   private unusable = false;
   private busy = false;
+  private transmitting: string | null = null;
+  private earlyProblem: UploadMessage | null = null;
 
   constructor(
     private readonly session: BrowserSession,
@@ -203,7 +243,7 @@ export class VerifiedUploadChannel implements UploadTransport {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN || this.unusable) {
       throw this.channelError();
     }
-    if (this.busy) throw new Error("Another browser upload is already active.");
+    if (this.busy) throw new UploadChannelError("Another browser upload is already active.");
     throwIfAborted(signal);
     this.busy = true;
     const requestID = randomUUID();
@@ -224,19 +264,7 @@ export class VerifiedUploadChannel implements UploadTransport {
       this.throwProblem(ready);
       if (ready.type !== "ready") throw this.protocolError();
       readyForBytes = true;
-      onprogress({ processed: 0, total: file.size });
-      for (let offset = 0; offset < file.size; offset += hashChunkBytes) {
-        if (signal.aborted) {
-          await this.cancelUpload(requestID);
-        }
-        await this.waitForWritable(signal);
-        const end = Math.min(file.size, offset + hashChunkBytes);
-        this.sendBinary(await file.slice(offset, end).arrayBuffer());
-        onprogress({ processed: end, total: file.size });
-      }
-      if (signal.aborted) await this.cancelUpload(requestID);
-      this.send({ type: "end", request_id: requestID });
-      const terminal = await this.nextMessage(signal, uploadResponseTimeoutMs);
+      const terminal = await this.transmit(requestID, file, signal, onprogress);
       this.requireMessage(terminal, requestID);
       this.throwProblem(terminal);
       if (terminal.type !== "receipt" || !terminal.receipt) {
@@ -259,6 +287,131 @@ export class VerifiedUploadChannel implements UploadTransport {
     }
   }
 
+  async planPhotoImport(files: File[], destination: string): Promise<PhotoImportPlan> {
+    if (this.busy) throw new UploadChannelError("Another browser upload is already active.");
+    this.busy = true;
+    const requestID = randomUUID();
+    try {
+      const message = {
+        type: "plan_photo_import",
+        request_id: requestID,
+        destination,
+        files: files.map((file) => ({
+          relative_path: photoRelativePath(file),
+          size: file.size,
+          modified_time: file.lastModified,
+        })),
+      };
+      if (files.length > 32768 || utf8ToBytes(JSON.stringify(message)).byteLength > 8 * 1024 * 1024)
+        throw new Error(
+          "Choose fewer files or use `docbank photos import`. Photo selections allow 32,768 files and an 8 MiB declaration.",
+        );
+      this.send(message);
+      const plan = await this.nextMessage();
+      this.requireMessage(plan, requestID);
+      this.throwProblem(plan);
+      if (
+        plan.type !== "photo_import_plan" ||
+        typeof plan.import_id !== "string" ||
+        !plan.import_id ||
+        !Array.isArray(plan.groups) ||
+        !Array.isArray(plan.unsupported)
+      )
+        throw this.protocolError();
+      if (plan.groups.some((group) => !Array.isArray(group) || !group.length))
+        throw this.protocolError();
+      const indexes = [...plan.groups.flat(), ...plan.unsupported];
+      if (
+        indexes.length !== files.length ||
+        new Set(indexes).size !== files.length ||
+        indexes.some((index) => !Number.isInteger(index) || index < 0 || index >= files.length)
+      )
+        throw this.protocolError();
+      return {
+        import_id: plan.import_id,
+        groups: plan.groups,
+        unsupported: plan.unsupported,
+        skip_reasons: plan.skip_reasons,
+      };
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  async uploadPhotoGroup(
+    importID: string,
+    groupIndex: number,
+    group: File[],
+    signal: AbortSignal,
+    onprogress: (phase: "hashing" | "uploading", progress: TransferProgress) => void,
+  ): Promise<PhotoGroupReceipt> {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN || this.unusable) {
+      throw this.channelError();
+    }
+    if (this.busy) throw new UploadChannelError("Another browser upload is already active.");
+    throwIfAborted(signal);
+    this.busy = true;
+    const requestID = randomUUID();
+    let readyForBytes = false;
+    try {
+      const total = group.reduce((sum, file) => sum + file.size, 0);
+      const hashes = [];
+      let processed = 0;
+      for (const file of group) {
+        const hash = await hashFile(file, signal, (progress) =>
+          onprogress("hashing", { processed: processed + progress.processed, total }),
+        );
+        hashes.push(hash);
+        processed += file.size;
+      }
+      this.send({
+        type: "begin_photo_group",
+        request_id: requestID,
+        import_id: importID,
+        group: groupIndex,
+        hashes,
+      });
+      processed = 0;
+      let terminal = await this.nextMessage(signal);
+      for (const file of group) {
+        const ready = terminal;
+        this.requireMessage(ready, requestID);
+        this.throwProblem(ready);
+        if (ready.type !== "ready") throw this.protocolError();
+        readyForBytes = true;
+        terminal = await this.transmit(requestID, file, signal, (progress) =>
+          onprogress("uploading", {
+            ...progress,
+            processed: processed + progress.processed,
+            total,
+          }),
+        );
+        processed += file.size;
+      }
+      this.requireMessage(terminal, requestID);
+      this.throwProblem(terminal);
+      const receipt = terminal.photo_group_receipt;
+      if (
+        terminal.type !== "photo_group_receipt" ||
+        !receipt ||
+        !["added", "skipped", "ambiguous"].includes(receipt.status) ||
+        typeof receipt.asset_id !== "string"
+      )
+        throw this.protocolError();
+      return receipt;
+    } catch (cause) {
+      if (!readyForBytes || cause instanceof APIError || cause instanceof UploadChannelError)
+        throw cause;
+      this.fail();
+      if (cause instanceof DOMException && cause.name === "AbortError") throw cause;
+      throw new UploadChannelError(cause instanceof Error ? cause.message : String(cause), {
+        cause,
+      });
+    } finally {
+      this.busy = false;
+    }
+  }
+
   private send(message: UploadMessage): void {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN || this.unusable) {
       throw this.channelError();
@@ -276,7 +429,7 @@ export class VerifiedUploadChannel implements UploadTransport {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN || this.unusable) {
       throw this.channelError();
     }
-    if (this.busy) throw new Error("Another browser upload is already active.");
+    if (this.busy) throw new UploadChannelError("Another browser upload is already active.");
     throwIfAborted(signal);
     this.busy = true;
     const requestID = randomUUID();
@@ -294,17 +447,7 @@ export class VerifiedUploadChannel implements UploadTransport {
       this.throwProblem(ready);
       if (ready.type !== "ready") throw this.protocolError();
       readyForBytes = true;
-      onprogress({ processed: 0, total: data.size });
-      for (let offset = 0; offset < data.size; offset += hashChunkBytes) {
-        if (signal.aborted) await this.cancelUpload(requestID);
-        await this.waitForWritable(signal);
-        const end = Math.min(data.size, offset + hashChunkBytes);
-        this.sendBinary(await data.slice(offset, end).arrayBuffer());
-        onprogress({ processed: end, total: data.size });
-      }
-      if (signal.aborted) await this.cancelUpload(requestID);
-      this.send({ type: "end", request_id: requestID });
-      const terminal = await this.nextMessage(signal);
+      const terminal = await this.transmit(requestID, data, signal, onprogress);
       this.requireMessage(terminal, requestID);
       this.throwProblem(terminal);
       if (terminal.type !== "package_container_receipt" || terminal.container_id !== containerID) {
@@ -326,7 +469,7 @@ export class VerifiedUploadChannel implements UploadTransport {
     signal: AbortSignal,
     onprogress: (progress: TransferProgress) => void,
   ): Promise<void> {
-    if (this.busy) throw new Error("Another browser upload is already active.");
+    if (this.busy) throw new UploadChannelError("Another browser upload is already active.");
     throwIfAborted(signal);
     this.busy = true;
     const requestID = randomUUID();
@@ -345,16 +488,7 @@ export class VerifiedUploadChannel implements UploadTransport {
       this.throwProblem(ready);
       if (ready.type !== "ready") throw this.protocolError();
       readyForBytes = true;
-      for (let offset = 0; offset < data.size; offset += hashChunkBytes) {
-        if (signal.aborted) await this.cancelUpload(requestID);
-        await this.waitForWritable(signal);
-        const end = Math.min(data.size, offset + hashChunkBytes);
-        this.sendBinary(await data.slice(offset, end).arrayBuffer());
-        onprogress({ processed: end, total: data.size });
-      }
-      if (signal.aborted) await this.cancelUpload(requestID);
-      this.send({ type: "end", request_id: requestID });
-      const terminal = await this.nextMessage(signal);
+      const terminal = await this.transmit(requestID, data, signal, onprogress);
       this.requireMessage(terminal, requestID);
       this.throwProblem(terminal);
       if (
@@ -369,6 +503,37 @@ export class VerifiedUploadChannel implements UploadTransport {
       throw cause;
     } finally {
       this.busy = false;
+    }
+  }
+
+  private async transmit(
+    requestID: string,
+    data: Blob,
+    signal: AbortSignal,
+    onprogress: (progress: TransferProgress) => void,
+  ): Promise<UploadMessage> {
+    onprogress({ processed: 0, total: data.size });
+    this.transmitting = requestID;
+    try {
+      for (let offset = 0; offset < data.size; offset += hashChunkBytes) {
+        if (signal.aborted) await this.cancelUpload(requestID);
+        await this.waitForWritable(signal);
+        const end = Math.min(data.size, offset + hashChunkBytes);
+        const bytes = await data.slice(offset, end).arrayBuffer();
+        if (signal.aborted) await this.cancelUpload(requestID);
+        this.sendBinary(bytes);
+        onprogress({ processed: end, total: data.size });
+      }
+      if (signal.aborted) await this.cancelUpload(requestID);
+      this.send({ type: "end", request_id: requestID });
+      onprogress({ processed: data.size, total: data.size, submitted: true });
+      return await this.nextMessage(signal);
+    } catch (cause) {
+      if (this.earlyProblem) this.throwProblem(this.earlyProblem);
+      throw cause;
+    } finally {
+      this.transmitting = null;
+      this.earlyProblem = null;
     }
   }
 
@@ -488,7 +653,12 @@ export class VerifiedUploadChannel implements UploadTransport {
   }
 
   private receive(event: MessageEvent): void {
-    if (!this.waiter || typeof event.data !== "string") {
+    if (!this.waiter) {
+      this.keepEarlyProblem(event);
+      this.fail();
+      return;
+    }
+    if (typeof event.data !== "string") {
       this.fail();
       return;
     }
@@ -501,6 +671,20 @@ export class VerifiedUploadChannel implements UploadTransport {
     }
     const waiter = this.waiter;
     waiter.resolve(message);
+  }
+
+  // The server can reject an upload while bytes are still being sent. It
+  // writes the error and closes the socket, so the error arrives before
+  // anything waits for it; transmit reports it instead of a closed channel.
+  private keepEarlyProblem(event: MessageEvent): void {
+    if (!this.transmitting || typeof event.data !== "string") return;
+    try {
+      const message = JSON.parse(event.data) as UploadMessage;
+      if (message.type === "error" && message.request_id === this.transmitting)
+        this.earlyProblem = message;
+    } catch {
+      return;
+    }
   }
 
   private requireMessage(message: UploadMessage, requestID: string, type?: string): void {

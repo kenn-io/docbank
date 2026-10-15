@@ -50,8 +50,8 @@ func registerPhotoImportRoutes(api huma.API, d Deps, g *gate) {
 			return nil, NewError(http.StatusUnprocessableEntity, "validation",
 				fmt.Sprintf("source_root %q is not an existing daemon-host folder", in.Body.SourceRoot))
 		}
-		if in.Body.Destination == "" || in.Body.Destination[0] != '/' {
-			return nil, NewError(http.StatusUnprocessableEntity, "validation", "destination must be an absolute vault path")
+		if problem := validatePhotoImportDestination(in.Body.Destination); problem != nil {
+			return nil, problem
 		}
 		if d.Jobs == nil {
 			return nil, NewError(http.StatusServiceUnavailable, "photo_import_unavailable", "background job supervisor is unavailable")
@@ -70,4 +70,12 @@ func registerPhotoImportRoutes(api huma.API, d Deps, g *gate) {
 		}
 		return &photoImportStartOutput{Body: storageOperationAPI(operation)}, nil
 	})
+}
+
+func validatePhotoImportDestination(destination string) *Error {
+	if destination == "" || destination[0] != '/' {
+		return NewError(http.StatusUnprocessableEntity, "validation",
+			"destination must be an absolute vault path")
+	}
+	return nil
 }

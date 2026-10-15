@@ -30,7 +30,9 @@ type PhotoImportMember struct {
 // virtual folder node and zero means the vault root.
 type PhotoImportGroup struct {
 	DestinationID int64
-	Members       []PhotoImportMember
+	// Successful groups rebase the plan so later groups retain the directory identity.
+	DestinationPlan *IngestDirectoryPlan
+	Members         []PhotoImportMember
 }
 
 // Ambiguity reasons tell the operator why a group was left for manual pairing.
@@ -365,7 +367,24 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 	if group.DestinationID == 0 {
 		group.DestinationID = s.RootID()
 	}
-	return result, s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+	var resolution IngestDirectoryResolution
+	defer func() {
+		if retErr == nil && group.DestinationPlan != nil {
+			*group.DestinationPlan = resolution.Rebase(*group.DestinationPlan)
+		}
+	}()
+	retErr = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+		if group.DestinationPlan != nil {
+			destination, resolved, err := s.ensureIngestDirectoryTx(ctx, tx, *group.DestinationPlan)
+			if err != nil {
+				if errors.Is(err, ErrNotFound) {
+					return fmt.Errorf("photo import destination was trashed or removed; "+
+						"choose the folder again: %w", err)
+				}
+				return err
+			}
+			group.DestinationID, resolution = destination.ID, resolved
+		}
 		count := len(group.Members)
 		nodes := make([]Node, count)
 		roles := make([]string, count)
@@ -601,6 +620,7 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 		result.Skipped = !result.Added
 		return nil
 	})
+	return result, retErr
 }
 
 // importUnpairedPhotosTx gives each unowned RAW, image, or video its own
@@ -682,41 +702,38 @@ func photoImportAmbiguity(
 	return ambiguity
 }
 
-// EnsurePhotoImportDestination resolves or creates the complete destination
-// in one logical transaction, which also refuses an audited vault.
+// PreparePhotoImportDestination admits a stable destination without creating directories.
+func (s *Store) PreparePhotoImportDestination(
+	ctx context.Context, path string,
+) (IngestDirectoryPlan, error) {
+	plan, err := s.PrepareIngestDirectory(ctx, path)
+	if err != nil {
+		return plan, err
+	}
+	active, err := auditAuthorityActiveTx(ctx, s.db)
+	if err != nil {
+		return IngestDirectoryPlan{}, err
+	}
+	if active {
+		return IngestDirectoryPlan{}, ErrAuditMutationUnsupported
+	}
+	return plan, nil
+}
+
+// EnsurePhotoImportDestination resolves and creates the admitted path in one
+// logical transaction (unlike PreparePhotoImportDestination, which only
+// snapshots it) so a directory trashed between resolution and creation can't
+// leave this call racing against that removal.
 func (s *Store) EnsurePhotoImportDestination(ctx context.Context, path string) (Node, error) {
-	var destination Node
-	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		var err error
-		destination, err = liveDirTx(tx, s.rootID)
-		if err != nil {
-			return err
-		}
-		for _, segment := range splitPath(path) {
-			name, normalizeErr := NormalizeName(segment)
-			if normalizeErr != nil {
-				return fmt.Errorf("photo import destination %q: %w", path, normalizeErr)
-			}
-			next, childErr := childByName(ctx, tx, destination.ID, name)
-			switch {
-			case childErr == nil:
-				if !next.IsDir() {
-					return fmt.Errorf("%q is a file: %w", name, ErrNotDir)
-				}
-				destination = next
-			case errors.Is(childErr, ErrNotFound):
-				destination, err = s.mkdirTx(tx, destination.ID, name, nowRFC3339())
-				if err != nil {
-					return err
-				}
-			default:
-				return childErr
-			}
-		}
-		return nil
-	})
+	segments, err := normalizeIngestDirectorySegments(path, splitPath(path))
 	if err != nil {
 		return Node{}, err
 	}
-	return destination, nil
+	var destination Node
+	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+		plan := IngestDirectoryPlan{anchorID: s.rootID, segments: segments}
+		destination, _, err = s.ensureIngestDirectoryTx(ctx, tx, plan)
+		return err
+	})
+	return destination, err
 }

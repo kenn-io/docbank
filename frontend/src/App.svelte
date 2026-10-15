@@ -109,6 +109,7 @@
   import TagPicker from "./TagPicker.svelte";
   import TrashDrawer from "./TrashDrawer.svelte";
   import TrashNodeModal from "./TrashNodeModal.svelte";
+  import PhotoImportDrawer from "./PhotoImportDrawer.svelte";
   import UploadDrawer from "./UploadDrawer.svelte";
   import VerifiedPreview from "./VerifiedPreview.svelte";
   import MailboxImportDrawer from "./MailboxImportDrawer.svelte";
@@ -224,7 +225,8 @@
           | "collections"
           | "trash"
           | "tagCatalog"
-          | "telemetry";
+          | "telemetry"
+          | "photoImport";
       }
     | { kind: "termReports"; documents?: generated.Identity[] }
     | { kind: "processing"; target: Row; intent: "similar" | null; scope: string[] }
@@ -254,6 +256,7 @@
     mailbox: "mailbox",
     loadFile: "load_file",
     trashNode: null,
+    photoImport: null,
   };
 
   let webSession = $state("");
@@ -3310,6 +3313,11 @@
                 onloadmoretags={() => loadTagCatalog(true)}
                 onmetadatachanged={handlePhotoMetadataChanged}
                 shortcuts={shortcutManager}
+                uploadChannelError={uploadChannelError ||
+                  (!uploadChannel ? "The verified upload channel is unavailable." : "")}
+                onadd={uploadChannel && !uploadChannelError
+                  ? () => openPanel({ kind: "photoImport" })
+                  : undefined}
                 {mapMode}
                 {tiles}
                 bind:this={libraryWorkspace}
@@ -4550,6 +4558,27 @@
           disabled={loading || tagCatalogLoading}
           onclose={closePanel(panel)}
           onchanged={handleTagDefinitionChanged}
+          onauthfailure={handleFailure}
+        />
+      {/if}
+      {#if panel.kind === "photoImport" && uploadChannel}
+        <PhotoImportDrawer
+          channel={uploadChannel}
+          disabledReason={uploadChannelError}
+          onclose={closePanel(panel)}
+          oncomplete={async () => {
+            await Promise.all([
+              photosChanged(),
+              directory &&
+              !activeQuery &&
+              !searchPending &&
+              !activeTagID &&
+              !tagFilterID &&
+              !snapshotActive
+                ? loadDirectory(directory.id, false, selectedID, true)
+                : undefined,
+            ]);
+          }}
           onauthfailure={handleFailure}
         />
       {/if}

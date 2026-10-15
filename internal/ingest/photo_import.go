@@ -583,3 +583,41 @@ func (r PhotoImportRunner) Run(ctx context.Context, operationID string) error {
 		string(encoded), failure, time.Now().Add(photoImportRetention))
 	return errors.Join(importErr, finishErr)
 }
+
+// PhotoGroupCommit describes where a browser photo group lands and where its
+// members came from. Paths and Mtimes are aligned by index with the prepared
+// uploads; each Mtimes entry is a canonical UTC RFC3339Nano original modified
+// time, empty when the browser didn't report one.
+type PhotoGroupCommit struct {
+	Run         store.IngestRun
+	ImportID    string
+	Destination *store.IngestDirectoryPlan
+	Paths       []string
+	Mtimes      []string
+}
+
+// CommitPhotoGroup grants authority to verified browser members in one
+// group transaction and discards whatever the commit leaves unused.
+func (ing *Ingester) CommitPhotoGroup(
+	ctx context.Context, commit PhotoGroupCommit, prepared []*PreparedUpload,
+) (result store.PhotoImportResult, retErr error) {
+	defer func() {
+		for _, member := range prepared {
+			retErr = mutationCleanupResult(retErr, member.Discard())
+		}
+	}()
+	members := make([]store.PhotoImportMember, len(prepared))
+	for i, upload := range prepared {
+		members[i] = store.PhotoImportMember{
+			Name:          upload.name,
+			BlobHash:      upload.result.ComputedHash,
+			Size:          upload.result.ComputedSize,
+			Physical:      upload.result.physical,
+			OriginalPath:  "browser:" + commit.ImportID + "/" + commit.Paths[i],
+			OriginalMtime: commit.Mtimes[i],
+		}
+	}
+	return ing.Store.IngestPhotoGroup(ctx, commit.Run, store.PhotoImportGroup{
+		DestinationPlan: commit.Destination, Members: members,
+	})
+}

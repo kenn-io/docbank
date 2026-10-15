@@ -1194,6 +1194,8 @@ challenge proof over the upload secret before sending bytes, binds the socket
 to one session, and never reconnects it. An ordinary browser token is
 forbidden from `POST /api/v1/uploads`.
 
+Photo folders use `plan_photo_import` and `begin_photo_group` on `/api/daemon/web-upload`, with server grouping and hash verification before each group commits. The plan returns an `import_id` owned by that connection; each group must reference it and match the planned paths and sizes. The selection shares one ingest run, and browser source paths include the import ID to keep later selections separate. Receipts include the ambiguity reason when pairing needs manual review; daemon-host path imports still require the master key. Control messages are limited by their `type`: 8 MiB for `plan_photo_import`, about 2.1 MiB for `begin_photo_group`, and 4 KiB for every other message. The server closes the socket with status 1009 when a message is over its limit.
+
 Attachment navigation additionally permits exact `GET /api/v1/versions/{id}`,
 `GET /api/v1/email-document-publications/{operation_id}`, and bounded
 `GET /api/v1/email-document-relations` reads. Relation queries require exactly

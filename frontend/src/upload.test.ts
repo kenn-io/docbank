@@ -3,7 +3,15 @@ import { hmac } from "@noble/hashes/hmac.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { utf8ToBytes } from "@noble/hashes/utils.js";
 import type { UploadReceipt } from "./generated/docbank.js";
-import { hashFile, validateUploadReceipt, VerifiedUploadChannel } from "./upload.js";
+import { APIError } from "./api-transport.js";
+import {
+  hashFile,
+  UploadChannelError,
+  validateUploadReceipt,
+  VerifiedUploadChannel,
+} from "./upload.js";
+
+import { photoSelectionFiles, photoSelectionLastModified } from "./photo-test-fixtures.js";
 
 const testToken = "browser-session";
 const testUploadSecret = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE";
@@ -30,8 +38,11 @@ class DaemonSocket extends EventTarget {
   onbegin: (() => void) | undefined;
   onend: (() => void) | undefined;
   oncancel: (() => void) | undefined;
+  onbinary: (() => void) | undefined;
   packageContainerID = "";
   requestID = "";
+  photoMembers = 0;
+  frames: (string | ArrayBuffer)[] = [];
 
   constructor() {
     super();
@@ -39,15 +50,33 @@ class DaemonSocket extends EventTarget {
   }
 
   send(data: string | ArrayBuffer): void {
-    if (typeof data !== "string") return;
+    this.frames.push(data);
+    if (typeof data !== "string") {
+      this.onbinary?.();
+      return;
+    }
     const message = JSON.parse(data) as {
       type: string;
       nonce?: string;
       request_id?: string;
       container_id?: string;
+      hashes?: unknown[];
     };
     if (message.type === "authenticate" && this.authenticate) {
       this.emit({ type: "authenticated", proof: daemonProof(message.nonce ?? "") });
+    } else if (message.type === "plan_photo_import") {
+      this.emit({
+        type: "photo_import_plan",
+        request_id: message.request_id,
+        import_id: "import-1",
+        groups: [[0, 1], [2]],
+        unsupported: [3],
+        skip_reasons: { 3: "Unsupported type" },
+      });
+    } else if (message.type === "begin_photo_group") {
+      this.requestID = message.request_id ?? "";
+      this.photoMembers = message.hashes?.length ?? 0;
+      this.emit({ type: "ready", request_id: this.requestID });
     } else if (message.type === "begin") {
       this.packageContainerID = message.container_id ?? "";
       this.requestID = message.request_id ?? "";
@@ -57,7 +86,18 @@ class DaemonSocket extends EventTarget {
       }
     } else if (message.type === "end") {
       this.onend?.();
-      if (this.packageContainerID) {
+      if (this.photoMembers) {
+        this.photoMembers--;
+        this.emit(
+          this.photoMembers
+            ? { type: "ready", request_id: this.requestID }
+            : {
+                type: "photo_group_receipt",
+                request_id: this.requestID,
+                photo_group_receipt: { status: "added", asset_id: "photo-1" },
+              },
+        );
+      } else if (this.packageContainerID) {
         this.emit({
           type: "package_container_receipt",
           request_id: this.requestID,
@@ -84,7 +124,7 @@ class DaemonSocket extends EventTarget {
     this.dispatchEvent(new Event("close"));
   }
 
-  private emit(message: object): void {
+  emit(message: object): void {
     queueMicrotask(() =>
       this.dispatchEvent(
         new MessageEvent("message", {
@@ -383,4 +423,219 @@ describe("verified browser upload", () => {
     closeChannel.close();
     await expect(waitingClose).rejects.toThrow(/channel ended/);
   });
+});
+
+it("plans on the server and streams each photo member between ready and end", async () => {
+  const socket = new DaemonSocket();
+  const channel = new VerifiedUploadChannel(
+    { token: testToken, uploadSecret: testUploadSecret },
+    () => socket as unknown as WebSocket,
+  );
+  await channel.connect();
+  const files = photoSelectionFiles();
+  for (const file of files)
+    Object.defineProperty(file, "webkitRelativePath", { value: `Trip/${file.name}` });
+  expect(await channel.planPhotoImport(files, "/photos")).toEqual({
+    import_id: "import-1",
+    groups: [[0, 1], [2]],
+    unsupported: [3],
+    skip_reasons: { 3: "Unsupported type" },
+  });
+  const progress = vi.fn();
+  expect(
+    await channel.uploadPhotoGroup(
+      "import-1",
+      0,
+      files.slice(0, 2),
+      new AbortController().signal,
+      progress,
+    ),
+  ).toEqual({ status: "added", asset_id: "photo-1" });
+  const frames = socket.frames.map((frame) =>
+    typeof frame === "string" ? JSON.parse(frame) : "bytes",
+  );
+  expect(frames.map((frame) => (frame === "bytes" ? frame : frame.type))).toEqual([
+    "authenticate",
+    "plan_photo_import",
+    "begin_photo_group",
+    "bytes",
+    "end",
+    "bytes",
+    "end",
+  ]);
+  expect(frames[1].files[0]).toEqual({
+    relative_path: "Trip/capture.ARW",
+    size: 3,
+    modified_time: photoSelectionLastModified,
+  });
+  expect(frames[2].import_id).toBe("import-1");
+  expect(frames[1].destination).toBe("/photos");
+  expect(frames[2].group).toBe(0);
+  expect(frames[2].hashes).toEqual([
+    expect.stringMatching(/^[a-f0-9]{64}$/),
+    expect.stringMatching(/^[a-f0-9]{64}$/),
+  ]);
+  expect(progress).toHaveBeenLastCalledWith("uploading", {
+    processed: 7,
+    total: 7,
+    submitted: true,
+  });
+  channel.close();
+});
+
+it("rejects a photo plan that doesn't account for every selected file", async () => {
+  const socket = new DaemonSocket();
+  const channel = new VerifiedUploadChannel(
+    { token: testToken, uploadSecret: testUploadSecret },
+    () => socket as unknown as WebSocket,
+  );
+  await channel.connect();
+  await expect(channel.planPhotoImport([new File(["raw"], "capture.ARW")], "/")).rejects.toThrow(
+    /invalid response/,
+  );
+  expect(socket.closed).toBe(true);
+});
+
+it("rejects an oversized UTF-8 plan without touching the channel", async () => {
+  const socket = new DaemonSocket();
+  const channel = new VerifiedUploadChannel(
+    { token: testToken, uploadSecret: testUploadSecret },
+    () => socket as unknown as WebSocket,
+  );
+  await channel.connect();
+  const file = new File([], "capture.JPG");
+  Object.defineProperty(file, "webkitRelativePath", { value: `${"旅".repeat(300)}/capture.JPG` });
+  await expect(channel.planPhotoImport(Array(10000).fill(file), "/")).rejects.toThrow(
+    /fewer files.*docbank photos import/,
+  );
+  expect(socket.frames).toHaveLength(1);
+  expect(socket.closed).toBe(false);
+  await channel.planPhotoImport(photoSelectionFiles(), "/");
+  expect(socket.frames).toHaveLength(2);
+  channel.close();
+});
+
+it("reports terminal submission when an empty photo loses its receipt", async () => {
+  const socket = new DaemonSocket();
+  const channel = new VerifiedUploadChannel(
+    { token: testToken, uploadSecret: testUploadSecret },
+    () => socket as unknown as WebSocket,
+  );
+  await channel.connect();
+  socket.onend = () => queueMicrotask(() => socket.close());
+  const progress = vi.fn();
+  await expect(
+    channel.uploadPhotoGroup(
+      "import-1",
+      0,
+      [new File([], "empty.JPG")],
+      new AbortController().signal,
+      progress,
+    ),
+  ).rejects.toThrow(/channel ended/);
+  expect(progress).toHaveBeenLastCalledWith("uploading", {
+    processed: 0,
+    total: 0,
+    submitted: true,
+  });
+  expect(socket.frames.filter((frame) => typeof frame !== "string")).toHaveLength(0);
+});
+
+async function photoChannel(): Promise<{ socket: DaemonSocket; channel: VerifiedUploadChannel }> {
+  const socket = new DaemonSocket();
+  const channel = new VerifiedUploadChannel(
+    { token: testToken, uploadSecret: testUploadSecret },
+    () => socket as unknown as WebSocket,
+  );
+  await channel.connect();
+  return { socket, channel };
+}
+
+it("reports a server error that arrives while photo bytes are still sending", async () => {
+  const { socket, channel } = await photoChannel();
+  socket.onbinary = () => {
+    socket.onbinary = undefined;
+    socket.emit({
+      type: "error",
+      request_id: socket.requestID,
+      status: 507,
+      code: "storage_full",
+      detail: "Vault storage is full",
+    });
+    queueMicrotask(() => socket.close());
+  };
+  const large = new File([new Uint8Array(3 * 1024 * 1024)], "large.JPG");
+  const upload = channel.uploadPhotoGroup(
+    "import-1",
+    0,
+    [large],
+    new AbortController().signal,
+    vi.fn(),
+  );
+  await expect(upload).rejects.toBeInstanceOf(APIError);
+  await expect(upload).rejects.toMatchObject({
+    message: "Vault storage is full",
+    status: 507,
+    code: "storage_full",
+  });
+  expect(socket.frames.filter((frame) => typeof frame !== "string")).toHaveLength(1);
+  expect(socket.closed).toBe(true);
+});
+
+it("retires the channel when a photo file can't be read during upload", async () => {
+  const { socket, channel } = await photoChannel();
+  const unreadable = new File(["jpg"], "capture.JPG");
+  let reads = 0;
+  Object.defineProperty(unreadable, "slice", {
+    value: (...args: Parameters<Blob["slice"]>) =>
+      reads++ === 0
+        ? Blob.prototype.slice.apply(unreadable, args)
+        : {
+            arrayBuffer: () =>
+              Promise.reject(new DOMException("File changed on disk", "NotReadableError")),
+          },
+  });
+  const upload = channel.uploadPhotoGroup(
+    "import-1",
+    0,
+    [unreadable],
+    new AbortController().signal,
+    vi.fn(),
+  );
+  await expect(upload).rejects.toBeInstanceOf(UploadChannelError);
+  await expect(upload).rejects.toThrow("File changed on disk");
+  expect(socket.closed).toBe(true);
+  const progress = vi.fn();
+  await expect(
+    channel.uploadPhotoGroup(
+      "import-1",
+      1,
+      [new File(["jpg"], "next.JPG")],
+      new AbortController().signal,
+      progress,
+    ),
+  ).rejects.toThrow(/channel ended/);
+  expect(progress).not.toHaveBeenCalled();
+});
+
+it("refuses a second photo group while one is active", async () => {
+  const { channel } = await photoChannel();
+  const first = channel.uploadPhotoGroup(
+    "import-1",
+    0,
+    [new File(["jpg"], "first.JPG")],
+    new AbortController().signal,
+    vi.fn(),
+  );
+  await expect(
+    channel.uploadPhotoGroup(
+      "import-1",
+      1,
+      [new File(["jpg"], "second.JPG")],
+      new AbortController().signal,
+      vi.fn(),
+    ),
+  ).rejects.toBeInstanceOf(UploadChannelError);
+  await expect(first).resolves.toEqual({ status: "added", asset_id: "photo-1" });
+  channel.close();
 });
