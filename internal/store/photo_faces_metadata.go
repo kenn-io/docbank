@@ -37,3 +37,21 @@ func validatePhotoFaceMetadataState(ctx context.Context, q metadataQuerier) erro
 	}
 	return validatePhotoFaceReferences(ctx, q)
 }
+
+func validatePhotoFaceDecisionReferences(ctx context.Context, q metadataQuerier) error {
+	if err := requirePhotoFaceRejectionBound(ctx, q, "", "", ""); err != nil {
+		return fmt.Errorf("%w: validating face rejection bounds: %w", ErrInvalidPhotoFace, err)
+	}
+	return validatePersonKeyFaces(ctx, q, "", ErrInvalidPhotoFace)
+}
+
+func validatePersonKeyFaces(ctx context.Context, q metadataQuerier, personID string, invalidError error) error {
+	var invalid bool
+	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM persons p LEFT JOIN photo_faces f ON f.face_id=p.key_face_id LEFT JOIN person_document_assertions a ON a.assertion_id=f.assertion_id WHERE (?='' OR p.person_id=?) AND p.key_face_id IS NOT NULL AND (a.person_id IS NULL OR a.person_id<>p.person_id OR a.action<>'assert'))`, personID, personID).Scan(&invalid); err != nil {
+		return err
+	}
+	if invalid {
+		return invalidError
+	}
+	return nil
+}

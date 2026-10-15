@@ -5,13 +5,13 @@ export interface QueryPreview {
   query: Query;
   query_fingerprint: string;
   dependencies: {
-    kind: "tag" | "collection" | "saved";
+    kind: "tag" | "collection" | "saved" | "person";
     id: string;
     revision: number;
   }[];
 }
 
-const dependencyKinds = new Set(["tag", "collection", "saved"]);
+const dependencyKinds = new Set(["tag", "collection", "saved", "person"]);
 const uuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const encoder = new TextEncoder();
 

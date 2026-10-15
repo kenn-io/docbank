@@ -2278,8 +2278,12 @@ CREATE INDEX IF NOT EXISTS photo_change_receipts_asset
     ON photo_change_receipts(asset_id, receipt_id);
 CREATE INDEX IF NOT EXISTS photo_change_receipts_set ON photo_change_receipts(set_id,receipt_id);
 CREATE INDEX IF NOT EXISTS photo_change_receipts_operation ON photo_change_receipts(operation);
+CREATE INDEX IF NOT EXISTS photo_change_receipts_face_version
+    ON photo_change_receipts(json_extract(before_json,'$.content_version_id'),receipt_id)
+    WHERE operation='face_decision';
 
 CREATE TABLE IF NOT EXISTS persons (
+    key_face_id TEXT REFERENCES photo_faces(face_id) ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED,
     person_id TEXT PRIMARY KEY NOT NULL,
     display_name TEXT NOT NULL,
     display_name_folded TEXT NOT NULL,
@@ -2385,6 +2389,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS custodian_primary_document
     ON custodian_assignments(content_version_id) WHERE scope_kind='document' AND rank='primary' AND retired_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS person_document_assertions (
+	photo_mark INTEGER NOT NULL DEFAULT 0 CHECK (photo_mark IN (0,1)),
     assertion_id TEXT PRIMARY KEY NOT NULL,
     content_version_id TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
     person_id TEXT NOT NULL REFERENCES persons(person_id) ON DELETE CASCADE,
@@ -2580,3 +2585,19 @@ CREATE TABLE IF NOT EXISTS photo_hidden_failures (
     failure_id INTEGER PRIMARY KEY,
     occurred_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS person_candidate_faces (
+    candidate_id TEXT NOT NULL REFERENCES person_match_candidates(candidate_id) ON DELETE CASCADE,
+    face_id TEXT NOT NULL,
+    content_version_id TEXT NOT NULL,
+    PRIMARY KEY(candidate_id,face_id,content_version_id)
+);
+CREATE INDEX IF NOT EXISTS person_candidate_faces_face ON person_candidate_faces(face_id,candidate_id);
+CREATE INDEX IF NOT EXISTS person_candidate_faces_version ON person_candidate_faces(content_version_id,candidate_id);
+CREATE TRIGGER IF NOT EXISTS person_candidate_faces_insert AFTER INSERT ON person_match_candidates WHEN NEW.reason='face_match' BEGIN
+ INSERT OR IGNORE INTO person_candidate_faces SELECT NEW.candidate_id,json_extract(e.value,'$.evidence_id'),json_extract(e.value,'$.content_version_id') FROM json_each(CAST(NEW.evidence_json AS TEXT)) e WHERE json_extract(e.value,'$.evidence_kind')='face';
+END;
+CREATE TRIGGER IF NOT EXISTS person_candidate_faces_update AFTER UPDATE OF evidence_json ON person_match_candidates WHEN NEW.reason='face_match' BEGIN
+ DELETE FROM person_candidate_faces WHERE candidate_id=NEW.candidate_id;
+ INSERT OR IGNORE INTO person_candidate_faces SELECT NEW.candidate_id,json_extract(e.value,'$.evidence_id'),json_extract(e.value,'$.content_version_id') FROM json_each(CAST(NEW.evidence_json AS TEXT)) e WHERE json_extract(e.value,'$.evidence_kind')='face';
+END;

@@ -3,6 +3,7 @@ package daemonconn
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"uuid"
 
@@ -14,6 +15,16 @@ import (
 func validatePhotoFaceResponse(face api.PhotoFace, versionID string) error {
 	if !validUUIDv4(face.FaceID) || face.ContentVersionID != versionID || face.Revision < 1 || face.Box.Validate() != nil || (face.AssertionID != "" && !validUUIDv4(face.AssertionID)) {
 		return errors.New("invalid photo face response")
+	}
+	if len(face.RejectedPersonIDs) > 1000 {
+		return errors.New("face rejection response exceeds bound")
+	}
+	seen := map[string]bool{}
+	for _, id := range face.RejectedPersonIDs {
+		if !validUUIDv4(id) || seen[id] {
+			return errors.New("invalid face rejection response")
+		}
+		seen[id] = true
 	}
 	return nil
 }
@@ -100,8 +111,55 @@ func (c *Connection) CreatePhotoFace(ctx context.Context, versionID string, requ
 }
 
 func validatePhotoAssertionResponse(assertion api.PhotoPersonAssertion, versionID string) error {
-	if !validUUIDv4(assertion.AssertionID) || !validUUIDv4(assertion.PersonID) || assertion.ContentVersionID != versionID || assertion.Role != "depicted" || (assertion.Action != "assert" && assertion.Action != "suppress") || assertion.Revision < 1 || assertion.RecordedAt == "" {
+	if !validUUIDv4(assertion.AssertionID) || !validUUIDv4(assertion.PersonID) || assertion.ContentVersionID != versionID || assertion.Role != "depicted" || (assertion.Action != "assert" && assertion.Action != "suppress" && assertion.Action != "withdrawn") || assertion.Revision < 1 || assertion.RecordedAt == "" {
 		return errors.New("invalid photo assertion response")
 	}
 	return nil
+}
+
+func (c *Connection) DecidePhotoFace(ctx context.Context, versionID string, request api.PhotoFaceDecisionRequest, cookies ...string) (api.PhotoFaceDecisionResult, error) {
+	if !validUUIDv4(versionID) || request.Revision < 1 && (request.Action != "key" || request.FaceID != "") {
+		return api.PhotoFaceDecisionResult{}, errors.New("invalid face decision identity or revision")
+	}
+	id, err := uuid.Parse(versionID)
+	if err != nil {
+		return api.PhotoFaceDecisionResult{}, fmt.Errorf("parse face decision ID: %w", err)
+	}
+	var response *http.Response
+	body := request
+	result, err := c.apiWithResponse(&response).DecidePhotoFace(ctx, &apiclient.DecidePhotoFaceRequestOptions{PathParams: &apiclient.DecidePhotoFacePath{ContentVersionID: id}, Body: &body}, photoCookie(cookies))
+	if err != nil {
+		return api.PhotoFaceDecisionResult{}, mutationRequestError(response, err)
+	}
+	if result == nil || !validUUIDv4(result.ReceiptID) {
+		return api.PhotoFaceDecisionResult{}, &responseDecodeError{err: errors.New("invalid face decision receipt")}
+	}
+	return *result, nil
+}
+
+func (c *Connection) UndoPhotoFaceDecisionWithOperationID(ctx context.Context, receiptID, operationID string, cookies ...string) (api.PhotoFaceDecisionResult, error) {
+	if !validUUIDv4(receiptID) {
+		return api.PhotoFaceDecisionResult{}, errors.New("invalid face decision receipt ID")
+	}
+	id, err := uuid.Parse(receiptID)
+	if err != nil {
+		return api.PhotoFaceDecisionResult{}, fmt.Errorf("parse face decision ID: %w", err)
+	}
+	var response *http.Response
+	options := &apiclient.UndoPhotoFaceDecisionRequestOptions{PathParams: &apiclient.UndoPhotoFaceDecisionPath{ReceiptID: id}}
+	if operationID != "" {
+		operation, err := uuid.Parse(operationID)
+		if err != nil {
+			return api.PhotoFaceDecisionResult{}, fmt.Errorf("parse undo operation ID: %w", err)
+		}
+		options.Query = &apiclient.UndoPhotoFaceDecisionQuery{OperationID: &operation}
+	}
+	result, err := c.apiWithResponse(&response).UndoPhotoFaceDecision(ctx, options, photoCookie(cookies))
+	if err != nil {
+		return api.PhotoFaceDecisionResult{}, mutationRequestError(response, err)
+	}
+	if result == nil || !validUUIDv4(result.ReceiptID) {
+		return api.PhotoFaceDecisionResult{}, &responseDecodeError{err: errors.New("invalid face decision undo receipt")}
+	}
+	return *result, nil
 }

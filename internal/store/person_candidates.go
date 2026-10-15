@@ -17,9 +17,15 @@ import (
 )
 
 const (
-	maxOpenPersonCandidates     = 10000
-	maxPersonCandidateEvidence  = 16384
-	maxPersonAssertionNoteBytes = 1000
+	personAssertionRoleDepicted    = "depicted"
+	personAssertionActionAssert    = "assert"
+	personAssertionActionWithdrawn = "withdrawn"
+	personCandidateStateOpen       = "open"
+	personCandidateStateRejected   = "rejected"
+	personCandidateReasonFaceMatch = "face_match"
+	maxOpenPersonCandidates        = 10000
+	maxPersonCandidateEvidence     = 16384
+	maxPersonAssertionNoteBytes    = 1000
 )
 
 var ErrPersonCandidateDecided = errors.New("person candidate is no longer open")
@@ -39,6 +45,7 @@ type CandidateDecision struct {
 }
 
 type PersonDocumentAssertion struct {
+	PhotoMark                                                               bool `json:"PhotoMark,omitzero"`
 	AssertionID, ContentVersionID, PersonID, Role, Action, Note, RecordedAt string
 	Revision                                                                int64
 }
@@ -68,10 +75,10 @@ func normalizePersonCandidate(candidate PersonMatchCandidate) (PersonMatchCandid
 	if candidate.CandidateID != "" && validateUUIDv4(candidate.CandidateID) != nil {
 		return invalid("candidate id")
 	}
-	if document.ValidateActorKeyV1(candidate.ActorKey) != nil || !document.ValidPersonIdentityText(candidate.ActorKey) ||
+	if !document.ValidPersonCandidateActorKey(candidate.ActorKey) || !document.ValidPersonIdentityText(candidate.ActorKey) ||
 		!validPersonName(candidate.DisplayName) ||
-		!slices.Contains([]string{"name_only", "identifier_conflict", "external_uid_conflict", "transfer_unresolved"}, candidate.Reason) ||
-		(candidate.State != "" && candidate.State != "open") {
+		!slices.Contains([]string{"name_only", "identifier_conflict", "external_uid_conflict", "transfer_unresolved", personCandidateReasonFaceMatch}, candidate.Reason) ||
+		(candidate.State != "" && candidate.State != personCandidateStateOpen) {
 		return invalid("candidate fields")
 	}
 	if candidate.SuggestedPersonID != "" && validateUUIDv4(candidate.SuggestedPersonID) != nil {
@@ -89,7 +96,7 @@ func normalizePersonCandidate(candidate PersonMatchCandidate) (PersonMatchCandid
 		return invalid("candidate evidence is empty")
 	}
 	for _, occurrence := range occurrences {
-		if occurrence.Role == "depicted" {
+		if (occurrence.Role == personAssertionRoleDepicted) != (candidate.Reason == personCandidateReasonFaceMatch) || candidate.Reason == personCandidateReasonFaceMatch && (occurrence.EvidenceKind != "face" || validateUUIDv4(occurrence.EvidenceID) != nil) || candidate.Reason != personCandidateReasonFaceMatch && occurrence.EvidenceKind == "face" {
 			return invalid("depicted occurrence")
 		}
 		if validateUUIDv4(occurrence.ContentVersionID) != nil ||
@@ -98,6 +105,9 @@ func normalizePersonCandidate(candidate PersonMatchCandidate) (PersonMatchCandid
 			occurrence.EvidenceID == "" || len(occurrence.EvidenceID) > document.MaxPersonEvidenceIDBytes || !document.ValidPersonIdentityText(occurrence.EvidenceID) {
 			return invalid("candidate occurrence")
 		}
+	}
+	if candidate.Reason == personCandidateReasonFaceMatch && (!strings.HasPrefix(candidate.ActorKey, "face:") || !slices.ContainsFunc(occurrences, func(o PersonCandidateOccurrence) bool { return "face:"+o.EvidenceID == candidate.ActorKey })) {
+		return invalid("face candidate actor")
 	}
 	raw, err := canonical.Marshal(occurrences)
 	if err != nil {
@@ -115,7 +125,7 @@ func normalizePersonCandidate(candidate PersonMatchCandidate) (PersonMatchCandid
 	candidate.EvidenceSHA256 = wantDigest
 	candidate.OccurrenceCount = int64(len(occurrences))
 	candidate.Revision = 1
-	candidate.State = "open"
+	candidate.State = personCandidateStateOpen
 	candidate.DecidedPersonID = ""
 	candidate.DecidedAt = ""
 	return candidate, nil
@@ -127,6 +137,9 @@ func normalizePersonCandidate(candidate PersonMatchCandidate) (PersonMatchCandid
 func (s *Store) OpenPersonCandidate(
 	ctx context.Context, tx *sql.Tx, candidate PersonMatchCandidate,
 ) (PersonMatchCandidate, bool, error) {
+	return s.retainPersonCandidate(ctx, tx, candidate, false)
+}
+func (s *Store) retainPersonCandidate(ctx context.Context, tx *sql.Tx, candidate PersonMatchCandidate, terminal bool) (PersonMatchCandidate, bool, error) {
 	if tx == nil {
 		return PersonMatchCandidate{}, false, fmt.Errorf("%w: nil candidate transaction", ErrInvalidPerson)
 	}
@@ -135,12 +148,23 @@ func (s *Store) OpenPersonCandidate(
 		return PersonMatchCandidate{}, false, err
 	}
 	if candidate.SuggestedPersonID != "" {
-		resolved, err := resolveActiveCandidatePersonTx(ctx, tx, candidate.SuggestedPersonID)
-		if err != nil {
-			return PersonMatchCandidate{}, false, err
+		if terminal {
+			var exists bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM persons WHERE person_id=?)`, candidate.SuggestedPersonID).Scan(&exists); err != nil {
+				return PersonMatchCandidate{}, false, err
+			}
+			if !exists {
+				return PersonMatchCandidate{}, false, ErrNotFound
+			}
+		} else {
+			resolved, err := resolveActiveCandidatePersonTx(ctx, tx, candidate.SuggestedPersonID)
+			if err != nil {
+				return PersonMatchCandidate{}, false, err
+			}
+			candidate.SuggestedPersonID = resolved
 		}
-		candidate.SuggestedPersonID = resolved
 	}
+
 	existing, err := personCandidateByIdentityTx(ctx, tx, candidate)
 	if err == nil {
 		return existing, true, nil
@@ -152,7 +176,7 @@ func (s *Store) OpenPersonCandidate(
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_match_candidates WHERE state='open'`).Scan(&openCount); err != nil {
 		return PersonMatchCandidate{}, false, err
 	}
-	if openCount >= maxOpenPersonCandidates {
+	if !terminal && openCount >= maxOpenPersonCandidates {
 		return PersonMatchCandidate{}, false, nil
 	}
 	if candidate.CandidateID == "" {
@@ -184,12 +208,12 @@ func (s *Store) OpenPersonCandidate(
 
 func (s *Store) PersonCandidates(ctx context.Context, state string, limit, offset int) ([]PersonMatchCandidate, int64, error) {
 	if state == "" {
-		state = "open"
+		state = personCandidateStateOpen
 	}
 	if limit == 0 {
 		limit = 100
 	}
-	if !slices.Contains([]string{"open", "linked", "rejected", "superseded"}, state) || limit < 1 || limit > 250 || offset < 0 {
+	if !slices.Contains([]string{personCandidateStateOpen, "linked", personCandidateStateRejected, "superseded"}, state) || limit < 1 || limit > 250 || offset < 0 {
 		return nil, 0, ErrInvalidPerson
 	}
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
@@ -197,14 +221,18 @@ func (s *Store) PersonCandidates(ctx context.Context, state string, limit, offse
 		return nil, 0, fmt.Errorf("starting person candidate page snapshot: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	visible, err := s.personCandidateVisibility(ctx, tx)
+	if err != nil {
+		return nil, 0, err
+	}
 	var total int64
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_match_candidates WHERE state=?`, state).Scan(&total); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_match_candidates WHERE state=? AND `+visible, state).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT candidate_id,actor_key,display_name,
 		COALESCE(suggested_person_id,''),reason,evidence_json,evidence_sha256,revision,occurrence_count,
 		state,COALESCE(decided_person_id,''),created_at,COALESCE(decided_at,'')
-		FROM person_match_candidates WHERE state=? ORDER BY created_at,candidate_id LIMIT ? OFFSET ?`, state, limit, offset)
+		FROM person_match_candidates WHERE state=? AND `+visible+` ORDER BY created_at,candidate_id LIMIT ? OFFSET ?`, state, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -221,7 +249,19 @@ func (s *Store) PersonCandidates(ctx context.Context, state string, limit, offse
 }
 
 func (s *Store) OpenPersonCandidateCount(ctx context.Context) (int64, bool, error) {
-	return openPersonCandidateCount(ctx, s.db)
+	var count int64
+	var full bool
+	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+		visible, e := s.personCandidateVisibility(ctx, tx)
+		if e != nil {
+			return e
+		}
+		var global int64
+		e = tx.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(CASE WHEN `+visible+` THEN 1 ELSE 0 END),0) FROM person_match_candidates WHERE state='open'`).Scan(&global, &count)
+		full = global >= maxOpenPersonCandidates
+		return e
+	})
+	return count, full, err
 }
 
 func openPersonCandidateCount(ctx context.Context, q metadataQuerier) (int64, bool, error) {
@@ -245,11 +285,53 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDec
 		if err != nil {
 			return err
 		}
-		if candidate.State != "open" {
+		if candidate.State != personCandidateStateOpen {
 			return ErrPersonCandidateDecided
 		}
 		if candidate.Revision != decision.ExpectedRevision {
 			return ErrStaleRevision
+		}
+		var occurrences []PersonCandidateOccurrence
+		if candidate.Reason == personCandidateReasonFaceMatch || decision.Action != "reject" {
+			occurrences, err = decodeStoredCandidateEvidence(candidate.Evidence)
+			if err != nil {
+				return err
+			}
+		}
+		if candidate.Reason == personCandidateReasonFaceMatch {
+			activeOccurrences := occurrences[:0]
+			for _, occurrence := range occurrences {
+				if err := requireCandidateVersionTx(ctx, tx, occurrence.ContentVersionID); errors.Is(err, ErrNotFound) {
+					continue
+				} else if err != nil {
+					return err
+				}
+				activeOccurrences = append(activeOccurrences, occurrence)
+			}
+			occurrences = activeOccurrences
+			if len(occurrences) == 0 && decision.Action != "reject" {
+				return ErrNotFound
+			}
+			for _, o := range occurrences {
+				if e := s.facePhotoQuery(ctx, tx, o.ContentVersionID); e != nil {
+					return e
+				}
+				if e := requireFaceOccurrenceTx(ctx, tx, o); e != nil {
+					return e
+				}
+				if decision.Action == "reject" && candidate.SuggestedPersonID != "" {
+					var assigned bool
+					if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_faces f JOIN person_document_assertions a ON a.assertion_id=f.assertion_id WHERE f.face_id=? AND f.content_version_id=? AND a.person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=?),?))`, o.EvidenceID, o.ContentVersionID, candidate.SuggestedPersonID, candidate.SuggestedPersonID).Scan(&assigned); err != nil {
+						return err
+					}
+					if assigned {
+						return ErrPersonIdentityConflict
+					}
+				}
+				if _, e := tx.ExecContext(ctx, `UPDATE photo_faces SET revision=revision+1 WHERE face_id=? AND content_version_id=?`, o.EvidenceID, o.ContentVersionID); e != nil {
+					return e
+				}
+			}
 		}
 		personID := ""
 		switch decision.Action {
@@ -262,16 +344,12 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDec
 			return err
 		}
 		if personID != "" {
-			occurrences, err := decodeStoredCandidateEvidence(candidate.Evidence)
-			if err != nil {
-				return err
-			}
 			err = materializeCandidateAssertionsTx(ctx, tx, personID, occurrences)
 			if err != nil {
 				return err
 			}
 		}
-		state := "rejected"
+		state := personCandidateStateRejected
 		if personID != "" {
 			state = "linked"
 		}
@@ -288,6 +366,22 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDec
 		if changed != 1 {
 			return ErrStaleRevision
 		}
+		if candidate.Reason == personCandidateReasonFaceMatch && personID != "" {
+			for _, occurrence := range occurrences {
+				before, err := s.faceDecisionStateTx(ctx, tx, occurrence.ContentVersionID, occurrence.EvidenceID, []string{personID}, true)
+				if err != nil {
+					return err
+				}
+				if err := s.clearNamedFaceCandidatesTx(ctx, tx, &before, occurrence.EvidenceID, personID, faceDecisionName); err != nil {
+					return err
+				}
+			}
+		}
+		if candidate.Reason == personCandidateReasonFaceMatch && state == personCandidateStateRejected {
+			if err := requirePhotoFaceRejectionBound(ctx, tx, "", "", candidate.CandidateID); err != nil {
+				return err
+			}
+		}
 		if err := advancePersonBindingEpochTx(ctx, tx); err != nil {
 			return err
 		}
@@ -298,12 +392,13 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDec
 }
 
 func (s *Store) AssertDocumentPerson(ctx context.Context, assertion PersonDocumentAssertion) (PersonDocumentAssertion, error) {
+	assertion.PhotoMark = assertion.Role == personAssertionRoleDepicted && assertion.Action == personAssertionActionAssert
 	if err := validatePersonAssertion(assertion); err != nil {
 		return PersonDocumentAssertion{}, err
 	}
 	var saved PersonDocumentAssertion
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		if assertion.Role == "depicted" {
+		if assertion.Role == personAssertionRoleDepicted {
 			if err := s.facePhotoQuery(ctx, tx, assertion.ContentVersionID); err != nil {
 				return err
 			}
@@ -319,14 +414,19 @@ func (s *Store) AssertDocumentPerson(ctx context.Context, assertion PersonDocume
 		existing, err := personAssertionByIdentityTx(ctx, tx, assertion.ContentVersionID, assertion.PersonID, assertion.Role)
 		switch {
 		case err == nil:
+			if existing.Action == personAssertionActionWithdrawn && assertion.Action != personAssertionActionWithdrawn {
+				if err := requirePhotoAssertionCapacity(ctx, tx, assertion.ContentVersionID, assertion.Role, existing.AssertionID); err != nil {
+					return err
+				}
+			}
 			if assertion.AssertionID != "" && assertion.AssertionID != existing.AssertionID {
 				return ErrInvalidPerson
 			}
 			if assertion.Revision != existing.Revision {
 				return ErrStaleRevision
 			}
-			result, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET action=?,note=?,revision=revision+1 WHERE assertion_id=? AND revision=?`,
-				assertion.Action, assertion.Note, existing.AssertionID, existing.Revision)
+			result, err := tx.ExecContext(ctx, `UPDATE person_document_assertions SET action=?,note=?,photo_mark=?,revision=revision+1 WHERE assertion_id=? AND revision=?`,
+				assertion.Action, assertion.Note, assertion.Role == personAssertionRoleDepicted && assertion.Action == personAssertionActionAssert, existing.AssertionID, existing.Revision)
 			if err != nil {
 				return err
 			}
@@ -339,7 +439,7 @@ func (s *Store) AssertDocumentPerson(ctx context.Context, assertion PersonDocume
 			}
 			assertion.AssertionID = existing.AssertionID
 		case errors.Is(err, sql.ErrNoRows):
-			if err := requirePhotoAssertionCapacity(ctx, tx, assertion.ContentVersionID, assertion.Role); err != nil {
+			if err := requirePhotoAssertionCapacity(ctx, tx, assertion.ContentVersionID, assertion.Role, ""); err != nil {
 				return err
 			}
 			if assertion.Revision != 1 {
@@ -361,6 +461,19 @@ func (s *Store) AssertDocumentPerson(ctx context.Context, assertion PersonDocume
 		default:
 			return err
 		}
+		if assertion.Role == personAssertionRoleDepicted {
+			if _, err = tx.ExecContext(ctx, `UPDATE person_document_assertions SET photo_mark=? WHERE assertion_id=?`, assertion.Action == personAssertionActionAssert, assertion.AssertionID); err != nil {
+				return err
+			}
+			if _, err = tx.ExecContext(ctx, `UPDATE photo_faces SET revision=revision+1 WHERE assertion_id=?`, assertion.AssertionID); err != nil {
+				return err
+			}
+			if assertion.Action != personAssertionActionAssert {
+				if _, err = tx.ExecContext(ctx, `UPDATE persons SET key_face_id=NULL,revision=revision+1,updated_at=? WHERE key_face_id IN (SELECT face_id FROM photo_faces WHERE assertion_id=?)`, nowRFC3339(), assertion.AssertionID); err != nil {
+					return err
+				}
+			}
+		}
 		if err := advancePersonBindingEpochTx(ctx, tx); err != nil {
 			return err
 		}
@@ -374,14 +487,14 @@ func (s *Store) DocumentPersonAssertions(ctx context.Context, contentVersionID s
 	if validateUUIDv4(contentVersionID) != nil {
 		return nil, ErrInvalidPerson
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision FROM person_document_assertions WHERE content_version_id=? ORDER BY role,person_id,assertion_id`, contentVersionID)
+	rows, err := s.db.QueryContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision,photo_mark FROM person_document_assertions WHERE content_version_id=? ORDER BY role,person_id,assertion_id`, contentVersionID)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
 	assertions := make([]PersonDocumentAssertion, 0)
 	for rows.Next() {
-		assertion, err := scanPersonAssertion(rows)
+		assertion, err := scanMarkedPersonAssertion(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -391,12 +504,15 @@ func (s *Store) DocumentPersonAssertions(ctx context.Context, contentVersionID s
 }
 
 func validatePersonAssertion(assertion PersonDocumentAssertion) error {
+	if assertion.PhotoMark && (assertion.Role != personAssertionRoleDepicted || assertion.Action != personAssertionActionAssert) {
+		return ErrInvalidPerson
+	}
 	if assertion.AssertionID != "" && validateUUIDv4(assertion.AssertionID) != nil {
 		return ErrInvalidPerson
 	}
 	if validateUUIDv4(assertion.ContentVersionID) != nil || validateUUIDv4(assertion.PersonID) != nil || assertion.Revision < 1 ||
 		!document.ValidPersonRole(assertion.Role) ||
-		!slices.Contains([]string{"assert", "suppress"}, assertion.Action) ||
+		(!slices.Contains([]string{personAssertionActionAssert, "suppress"}, assertion.Action) && (assertion.Role != personAssertionRoleDepicted || assertion.Action != personAssertionActionWithdrawn)) ||
 		len(assertion.Note) > maxPersonAssertionNoteBytes || !utf8.ValidString(assertion.Note) {
 		return ErrInvalidPerson
 	}
@@ -435,35 +551,17 @@ func createCandidatePersonTx(ctx context.Context, tx *sql.Tx, displayName string
 func materializeCandidateAssertionsTx(
 	ctx context.Context, tx *sql.Tx, personID string, occurrences []PersonCandidateOccurrence,
 ) error {
-	seen := make(map[string]bool, len(occurrences))
 	for _, occurrence := range occurrences {
-		key := occurrence.ContentVersionID + "\x00" + occurrence.Role
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		existing, err := personAssertionByIdentityTx(ctx, tx, occurrence.ContentVersionID, personID, occurrence.Role)
-		if err == nil {
-			if existing.Action != "assert" {
-				return ErrPersonIdentityConflict
-			}
-			continue
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
 		if err := requireCandidateVersionTx(ctx, tx, occurrence.ContentVersionID); errors.Is(err, ErrNotFound) {
 			continue
 		} else if err != nil {
 			return err
 		}
-		assertionID, err := newUUIDv4()
+		assertion, _, err := ensurePersonAssertionTx(ctx, tx, occurrence.ContentVersionID, personID, occurrence.Role)
 		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision) VALUES(?,?,?,?,'assert','',?,1)`,
-			assertionID, occurrence.ContentVersionID, personID, occurrence.Role, nowRFC3339())
-		if err != nil {
+		if err := attachCandidateFaceTx(ctx, tx, occurrence, assertion.AssertionID); err != nil {
 			return err
 		}
 	}
@@ -528,16 +626,102 @@ func scanPersonCandidate(row scanner) (PersonMatchCandidate, error) {
 }
 
 func personAssertionByIdentityTx(ctx context.Context, tx *sql.Tx, versionID, personID, role string) (PersonDocumentAssertion, error) {
-	return scanPersonAssertion(tx.QueryRowContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision FROM person_document_assertions WHERE content_version_id=? AND person_id=? AND role=?`, versionID, personID, role))
+	return scanMarkedPersonAssertion(tx.QueryRowContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision,photo_mark FROM person_document_assertions WHERE content_version_id=? AND person_id=? AND role=?`, versionID, personID, role))
 }
 
 func personAssertionByIDTx(ctx context.Context, tx *sql.Tx, assertionID string) (PersonDocumentAssertion, error) {
-	return scanPersonAssertion(tx.QueryRowContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision FROM person_document_assertions WHERE assertion_id=?`, assertionID))
+	return scanMarkedPersonAssertion(tx.QueryRowContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision,photo_mark FROM person_document_assertions WHERE assertion_id=?`, assertionID))
 }
 
+// Projection rebuilds also read released schemas without photo ownership metadata.
 func scanPersonAssertion(row scanner) (PersonDocumentAssertion, error) {
 	var assertion PersonDocumentAssertion
-	err := row.Scan(&assertion.AssertionID, &assertion.ContentVersionID, &assertion.PersonID, &assertion.Role,
-		&assertion.Action, &assertion.Note, &assertion.RecordedAt, &assertion.Revision)
+	err := row.Scan(&assertion.AssertionID, &assertion.ContentVersionID, &assertion.PersonID, &assertion.Role, &assertion.Action, &assertion.Note, &assertion.RecordedAt, &assertion.Revision)
 	return assertion, err
 }
+
+func scanMarkedPersonAssertion(row scanner) (PersonDocumentAssertion, error) {
+	var assertion PersonDocumentAssertion
+	err := row.Scan(&assertion.AssertionID, &assertion.ContentVersionID, &assertion.PersonID, &assertion.Role,
+		&assertion.Action, &assertion.Note, &assertion.RecordedAt, &assertion.Revision, &assertion.PhotoMark)
+	return assertion, err
+}
+
+func ensurePersonAssertionTx(ctx context.Context, tx *sql.Tx, versionID, personID, role string) (PersonDocumentAssertion, bool, error) {
+	existing, err := personAssertionByIdentityTx(ctx, tx, versionID, personID, role)
+	if err == nil {
+		if existing.Action == personAssertionActionWithdrawn {
+			if err := requirePhotoAssertionCapacity(ctx, tx, versionID, role, existing.AssertionID); err != nil {
+				return PersonDocumentAssertion{}, false, err
+			}
+			if _, err = tx.ExecContext(ctx, `UPDATE person_document_assertions SET action='assert',revision=revision+1 WHERE assertion_id=?`, existing.AssertionID); err != nil {
+				return PersonDocumentAssertion{}, false, err
+			}
+			if _, err = tx.ExecContext(ctx, `UPDATE photo_faces SET revision=revision+1 WHERE assertion_id=?`, existing.AssertionID); err != nil {
+				return PersonDocumentAssertion{}, false, err
+			}
+			existing.Action = personAssertionActionAssert
+			existing.Revision++
+			return existing, true, nil
+		} else if existing.Action != personAssertionActionAssert {
+			return PersonDocumentAssertion{}, false, ErrPersonIdentityConflict
+		}
+		return existing, false, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return PersonDocumentAssertion{}, false, err
+	}
+	if err := requirePhotoAssertionCapacity(ctx, tx, versionID, role, ""); err != nil {
+		return PersonDocumentAssertion{}, false, err
+	}
+	id, err := newUUIDv4()
+	if err != nil {
+		return PersonDocumentAssertion{}, false, err
+	}
+	assertion := PersonDocumentAssertion{AssertionID: id, ContentVersionID: versionID, PersonID: personID, Role: role, Action: personAssertionActionAssert, Revision: 1, RecordedAt: nowRFC3339()}
+	_, err = tx.ExecContext(ctx, `INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision) VALUES(?,?,?,?,'assert','',?,1)`, id, versionID, personID, role, assertion.RecordedAt)
+	return assertion, true, err
+}
+
+func (s *Store) personCandidateVisibility(ctx context.Context, q metadataQuerier) (string, error) {
+	if _, err := s.hiddenSession(ctx, q); err == nil {
+		return "1=1", nil
+	} else if !errors.Is(err, ErrHiddenLocked) {
+		return "", err
+	}
+	return personCandidateVisibleSQL, nil
+}
+
+func requireFaceOccurrenceTx(ctx context.Context, tx *sql.Tx, occurrence PersonCandidateOccurrence) error {
+	if occurrence.Role != personAssertionRoleDepicted || validateUUIDv4(occurrence.EvidenceID) != nil {
+		return ErrInvalidPerson
+	}
+	var exists bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_faces WHERE face_id=? AND content_version_id=?)`, occurrence.EvidenceID, occurrence.ContentVersionID).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return ErrInvalidPhotoFace
+	}
+	return nil
+}
+
+func attachCandidateFaceTx(ctx context.Context, tx *sql.Tx, occurrence PersonCandidateOccurrence, assertionID string) error {
+	if occurrence.EvidenceKind != "face" {
+		return nil
+	}
+	var existing string
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(assertion_id,'') FROM photo_faces WHERE face_id=? AND content_version_id=?`, occurrence.EvidenceID, occurrence.ContentVersionID).Scan(&existing); err != nil {
+		return err
+	}
+	if existing != "" && existing != assertionID {
+		return ErrPersonIdentityConflict
+	}
+	if existing == assertionID {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE photo_faces SET assertion_id=?,revision=revision+1 WHERE face_id=? AND content_version_id=?`, assertionID, occurrence.EvidenceID, occurrence.ContentVersionID)
+	return err
+}
+
+var personCandidateVisibleSQL = `NOT EXISTS(SELECT 1 FROM person_candidate_faces e WHERE e.candidate_id=person_match_candidates.candidate_id AND NOT (` + personVersionVisibleSQL("e.content_version_id") + `))`

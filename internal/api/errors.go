@@ -18,13 +18,17 @@ import (
 // "code" extension member. Code is the contract clients branch on; Detail is
 // for humans and may change freely.
 type Error struct {
-	Title              string         `json:"title"`
-	Status             int            `json:"status"`
-	Detail             string         `json:"detail,omitzero"`
-	Code               string         `json:"code,omitzero"`
-	Errors             []string       `json:"errors,omitempty"`
-	ObservedScopeCount int            `json:"observed_scope_count,omitzero"`
-	Position           *ErrorPosition `json:"position,omitempty"`
+	Title                    string         `json:"title"`
+	Status                   int            `json:"status"`
+	Detail                   string         `json:"detail,omitzero"`
+	Code                     string         `json:"code,omitzero"`
+	Errors                   []string       `json:"errors,omitempty"`
+	ObservedScopeCount       int            `json:"observed_scope_count,omitzero"`
+	FaceIDs                  []string       `json:"face_ids,omitzero" maxItems:"20"`
+	More                     bool           `json:"more,omitzero"`
+	InaccessibleFaceConflict bool           `json:"inaccessible_face_conflict,omitzero"`
+	HiddenFaceConflict       bool           `json:"hidden_face_conflict,omitzero"`
+	Position                 *ErrorPosition `json:"position,omitempty"`
 }
 
 // ErrorPosition is a half-open UTF-8 byte span in the submitted query text.
@@ -141,6 +145,7 @@ var storeErrCodes = []struct {
 	{store.ErrHiddenPasscode, http.StatusForbidden, "hidden_passcode"},
 	{store.ErrInvalidHiddenPasscode, http.StatusUnprocessableEntity, "invalid_hidden_passcode"},
 	{store.ErrInvalidPhotoFace, http.StatusUnprocessableEntity, "invalid_photo_face"},
+	{store.ErrPhotoFaceRejectionLimit, http.StatusConflict, "photo_face_limit"},
 	{store.ErrPhotoFaceLimit, http.StatusConflict, "photo_face_limit"},
 	{store.ErrPhotoEditFileLimit, http.StatusUnprocessableEntity, "photo_edit_file_limit"},
 	{store.ErrPhotoEditReceiptLimit, http.StatusUnprocessableEntity, "photo_edit_receipt_limit"},
@@ -196,6 +201,14 @@ var storeErrCodes = []struct {
 // unrecognized error becomes an opaque 500 (message still surfaced — this
 // is a single-user local daemon, not a hardened multi-tenant service).
 func FromStoreError(err error) error {
+	if conflict, ok := errors.AsType[*store.PersonFaceMergeConflictError](err); ok {
+		out := NewError(http.StatusConflict, "person_merge_conflict", conflict.Error())
+		out.FaceIDs = conflict.FaceIDs
+		out.HiddenFaceConflict = conflict.HiddenConflict
+		out.More = conflict.More
+		out.InaccessibleFaceConflict = conflict.InaccessibleConflict
+		return out
+	}
 	if err == nil {
 		return nil
 	}

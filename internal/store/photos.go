@@ -262,7 +262,7 @@ type photoReceipt struct {
 
 func writePhotoReceiptTx(ctx context.Context, tx *sql.Tx, receipt photoReceipt) error {
 	marshal := marshalPhotoState
-	if receipt.Operation == "authored" || receipt.Operation == "authored_undo" || receipt.Operation == "authored_sidecar" {
+	if receipt.Operation == "face_decision" || receipt.Operation == "authored" || receipt.Operation == "authored_undo" || receipt.Operation == "authored_sidecar" {
 		marshal = func(v any) (string, error) {
 			b, err := json.Marshal(v, json.Deterministic(true))
 			return string(b), err
@@ -275,6 +275,9 @@ func writePhotoReceiptTx(ctx context.Context, tx *sql.Tx, receipt photoReceipt) 
 	afterJSON, err := marshal(receipt.After)
 	if err != nil {
 		return err
+	}
+	if receipt.Operation == "face_decision" && len(beforeJSON)+len(afterJSON) > maxBatchTagReceiptJSONBytes {
+		return ErrInvalidPhotoFace
 	}
 	receiptID := receipt.ReceiptID
 	if receiptID == "" {

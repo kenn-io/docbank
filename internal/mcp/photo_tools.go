@@ -35,14 +35,16 @@ type photoAssetToolOutput struct {
 
 // photoFaceToolItem carries its person so a face page needs no assertion lookup.
 type photoFaceToolItem struct {
-	FaceID           string           `json:"face_id"`
-	ContentVersionID string           `json:"content_version_id"`
-	Box              document.FaceBox `json:"box"`
-	Revision         int64            `json:"revision"`
-	AssertionID      string           `json:"assertion_id,omitzero"`
-	PersonID         string           `json:"person_id,omitzero"`
-	Action           string           `json:"action,omitzero"`
-	CreatedAt        string           `json:"created_at"`
+	RejectedPersonIDs []string         `json:"rejected_person_ids,omitzero"`
+	Dismissed         bool             `json:"dismissed"`
+	FaceID            string           `json:"face_id"`
+	ContentVersionID  string           `json:"content_version_id"`
+	Box               document.FaceBox `json:"box"`
+	Revision          int64            `json:"revision"`
+	AssertionID       string           `json:"assertion_id,omitzero"`
+	PersonID          string           `json:"person_id,omitzero"`
+	Action            string           `json:"action,omitzero"`
+	CreatedAt         string           `json:"created_at"`
 }
 
 type photoFacesToolOutput struct {
@@ -127,6 +129,24 @@ func getPhotoFaces(ctx context.Context, lease *daemonLease, raw []byte) (photoFa
 	if end < total {
 		output.NextOffset = new(end)
 	}
+	// Leave room for both the structured data and its escaped text copy.
+	const pageBudget = maxToolResponseBytes/3 - 8<<10
+	for {
+		encoded, err := json.Marshal(output)
+		if err != nil {
+			return photoFacesToolOutput{}, err
+		}
+		if len(encoded) <= pageBudget {
+			break
+		}
+		if end-start <= 1 {
+			return photoFacesToolOutput{}, errToolResultTooLarge
+		}
+		end = start + max(1, min(end-start-1, (end-start)*pageBudget/len(encoded)))
+		output.Faces = output.Faces[:min(end-start, len(output.Faces))]
+		output.Assertions = output.Assertions[:min(end-start, len(output.Assertions))]
+		output.NextOffset = new(end)
+	}
 	return output, nil
 }
 
@@ -139,7 +159,7 @@ func photoFaceToolItems(faces []api.PhotoFace, assertions []api.PhotoPersonAsser
 	for _, face := range faces {
 		assertion := byID[face.AssertionID]
 		items = append(items, photoFaceToolItem{
-			FaceID: face.FaceID, ContentVersionID: face.ContentVersionID, Box: face.Box, Revision: face.Revision,
+			RejectedPersonIDs: face.RejectedPersonIDs, Dismissed: face.Dismissed, FaceID: face.FaceID, ContentVersionID: face.ContentVersionID, Box: face.Box, Revision: face.Revision,
 			AssertionID: face.AssertionID, PersonID: assertion.PersonID, Action: assertion.Action, CreatedAt: face.CreatedAt,
 		})
 	}

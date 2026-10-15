@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/query"
 )
 
@@ -26,6 +27,8 @@ func (r queryResolver) Resolve(
 	} else {
 		var err error
 		switch kind {
+		case query.ReferencePerson:
+			value = document.FoldPersonName(value)
 		case query.ReferenceTag:
 			value, err = NormalizeTagName(value)
 		case query.ReferenceCollection:
@@ -42,6 +45,20 @@ func (r queryResolver) Resolve(
 	var ref query.Reference
 	var err error
 	switch kind {
+	case query.ReferencePerson:
+		ref.Dependency.Kind = kind
+		if byID {
+			err = r.q.QueryRowContext(ctx, `SELECT person_id,revision FROM persons WHERE person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=?),?) AND state<>'retired'`, value, value).Scan(&ref.Dependency.ID, &ref.Dependency.Revision)
+		} else {
+			var count int
+			err = r.q.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(MIN(person_id),''),COALESCE(MIN(revision),0) FROM persons WHERE display_name_folded=? AND state<>'retired'`, value).Scan(&count, &ref.Dependency.ID, &ref.Dependency.Revision)
+			if err == nil && count == 0 {
+				err = query.ErrUnknownReference
+			}
+			if err == nil && count > 1 {
+				err = &query.ExpressionError{Message: "several people have this name; use a person ID"}
+			}
+		}
 	case query.ReferenceTag:
 		selector := "name=?"
 		if byID {

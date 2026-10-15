@@ -28,9 +28,13 @@ type Person struct {
 type PersonDetail struct {
 	Person
 
-	ReachedThrough string
-	Identities     []PersonIdentity
-	External       []PersonExternalIdentity
+	KeyFaceID            string
+	Assertions           []PersonDocumentAssertion
+	AssertionsNextCursor string
+	AssertionsTruncated  bool
+	ReachedThrough       string
+	Identities           []PersonIdentity
+	External             []PersonExternalIdentity
 }
 
 type PersonIdentity struct {
@@ -335,7 +339,18 @@ func (s *Store) PersonIdentities(ctx context.Context, personID string) ([]Person
 	return personIdentitiesTx(ctx, s.db, person.PersonID)
 }
 
-func (s *Store) PersonDetail(ctx context.Context, personID string) (PersonDetail, error) {
+type PersonAssertionPage struct {
+	After string
+	Limit int
+}
+
+func (s *Store) PersonDetailPage(ctx context.Context, personID string, page PersonAssertionPage) (PersonDetail, error) {
+	if page.Limit == 0 {
+		page.Limit = 1000
+	}
+	if page.Limit < 1 || page.Limit > 1000 || page.After != "" && validateUUIDv4(page.After) != nil {
+		return PersonDetail{}, ErrInvalidPerson
+	}
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return PersonDetail{}, err
@@ -353,10 +368,18 @@ func (s *Store) PersonDetail(ctx context.Context, personID string) (PersonDetail
 	if err != nil {
 		return PersonDetail{}, err
 	}
+	assertions, key, truncated, err := s.personFaceDetailTx(ctx, tx, person.PersonID, page)
+	if err != nil {
+		return PersonDetail{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return PersonDetail{}, err
 	}
-	return PersonDetail{Person: person, ReachedThrough: reachedThrough, Identities: identities, External: external}, nil
+	next := ""
+	if truncated && len(assertions) > 0 {
+		next = assertions[len(assertions)-1].AssertionID
+	}
+	return PersonDetail{AssertionsNextCursor: next, KeyFaceID: key, Assertions: assertions, AssertionsTruncated: truncated, Person: person, ReachedThrough: reachedThrough, Identities: identities, External: external}, nil
 }
 
 func fencePersonTx(ctx context.Context, tx *sql.Tx, personID string, revision int64) error {

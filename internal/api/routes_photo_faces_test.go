@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestPhotoFaceRoutes(t *testing.T) {
@@ -71,4 +72,62 @@ func TestPhotoFaceRoutes(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &unlocked))
 	require.Equal(t, []api.PhotoFace{*created.Face}, unlocked.Faces)
 	require.Equal(t, []api.PhotoPersonAssertion{*created.Assertion}, unlocked.Assertions)
+}
+
+func TestPhotoFaceDecisionRoutes(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	ctx := t.Context()
+	hash, size, err := s.Blobs.Write(strings.NewReader("synthetic portrait"))
+	require.NoError(t, err)
+	node, err := s.CreateFile(ctx, s.RootID(), "portrait.jpg", hash, size, "image/jpeg")
+	require.NoError(t, err)
+	p, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	face, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, "")
+	require.NoError(t, err)
+	path := "/api/v1/photos/versions/" + node.CurrentVersionID + "/face-decisions"
+	response, body := do(t, ts, http.MethodPost, path, nil, api.PhotoFaceDecisionRequest{FaceID: face.FaceID, PersonID: p.PersonID, Action: "name", Revision: 1})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var receipt api.PhotoFaceDecisionResult
+	require.NoError(t, json.Unmarshal([]byte(body), &receipt))
+	require.NotEmpty(t, receipt.ReceiptID)
+	response, body = do(t, ts, http.MethodPost, path, nil, api.PhotoFaceDecisionRequest{FaceID: face.FaceID, Action: "dismiss", Revision: 1})
+	require.Equal(t, http.StatusPreconditionFailed, response.StatusCode, body)
+	require.Contains(t, body, "stale_revision")
+	operationID := uuid.NewString()
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/face-decisions/"+receipt.ReceiptID+"/undo?operation_id="+operationID, nil, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var undone api.PhotoFaceDecisionResult
+	require.NoError(t, json.Unmarshal([]byte(body), &undone))
+	require.Equal(t, operationID, undone.ReceiptID)
+}
+
+func TestPersonAssertionSelectorPageRoute(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	ctx := t.Context()
+	p, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	hash, size, err := s.Blobs.Write(strings.NewReader("synthetic letter"))
+	require.NoError(t, err)
+	n, err := s.CreateFile(ctx, s.RootID(), "letter.txt", hash, size, "text/plain")
+	require.NoError(t, err)
+	for _, role := range []string{"author", "recipient"} {
+		_, err = s.AssertDocumentPerson(ctx, store.PersonDocumentAssertion{ContentVersionID: n.CurrentVersionID, PersonID: p.PersonID, Role: role, Action: "assert", Revision: 1})
+		require.NoError(t, err)
+	}
+	path := "/api/v1/people/by-id/" + p.PersonID + "?assertion_limit=1"
+	response, body := get(t, ts, path, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var first api.PersonDetail
+	require.NoError(t, json.Unmarshal([]byte(body), &first))
+	require.Len(t, first.Assertions, 1)
+	require.NotEmpty(t, first.AssertionsNextCursor)
+	response, body = get(t, ts, path+"&assertion_cursor="+first.AssertionsNextCursor, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var second api.PersonDetail
+	require.NoError(t, json.Unmarshal([]byte(body), &second))
+	require.Len(t, second.Assertions, 1)
+	require.NotEqual(t, first.Assertions[0].AssertionID, second.Assertions[0].AssertionID)
 }

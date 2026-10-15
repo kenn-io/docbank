@@ -6427,6 +6427,17 @@ components:
           items:
             type: string
           type: array
+        face_ids:
+          items:
+            type: string
+          maxItems: 20
+          type: array
+        hidden_face_conflict:
+          type: boolean
+        inaccessible_face_conflict:
+          type: boolean
+        more:
+          type: boolean
         observed_scope_count:
           format: int64
           type: integer
@@ -6906,6 +6917,10 @@ components:
         no_tags:
           type: boolean
         paths:
+          items:
+            type: string
+          type: array
+        person_ids:
           items:
             type: string
           type: array
@@ -11058,6 +11073,16 @@ components:
           format: uri
           readOnly: true
           type: string
+        assertions:
+          items:
+            $ref: "#/components/schemas/PhotoPersonAssertion"
+          maxItems: 1000
+          type: array
+        assertions_next_cursor:
+          format: uuid
+          type: string
+        assertions_truncated:
+          type: boolean
         created_at:
           format: date-time
           type: string
@@ -11073,6 +11098,9 @@ components:
             $ref: "#/components/schemas/PersonIdentity"
           maxItems: 200
           type: array
+        key_face_id:
+          format: uuid
+          type: string
         origin:
           type: string
         person_id:
@@ -11091,6 +11119,8 @@ components:
           format: date-time
           type: string
       required:
+        - assertions_truncated
+        - assertions
         - identities
         - external_identities
         - person_id
@@ -11333,6 +11363,11 @@ components:
         created_at:
           format: date-time
           type: string
+        moved_assertion_ids:
+          items:
+            type: string
+          maxItems: 1000
+          type: array
         moved_identity_ids:
           items:
             type: string
@@ -12276,8 +12311,15 @@ components:
           type: string
         created_at:
           type: string
+        dismissed:
+          type: boolean
         face_id:
           type: string
+        rejected_person_ids:
+          items:
+            type: string
+          maxItems: 1000
+          type: array
         revision:
           format: int64
           type: integer
@@ -12287,11 +12329,74 @@ components:
         - box
         - revision
         - created_at
+        - dismissed
       type: object
       x-go-type: store.PhotoFace
       x-go-type-import:
         path: go.kenn.io/docbank/internal/store
         name: store
+    PhotoFaceDecisionRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoFaceDecisionRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        action:
+          enum:
+            - name
+            - retract
+            - reject
+            - dismiss
+            - key
+            - withdraw_rejection
+          type: string
+        face_id:
+          format: uuid
+          type: string
+        operation_id:
+          format: uuid
+          type: string
+        person_id:
+          format: uuid
+          type: string
+        person_revision:
+          format: int64
+          type: integer
+        revision:
+          format: int64
+          minimum: 0
+          type: integer
+      required:
+        - action
+      type: object
+      x-go-type: api.PhotoFaceDecisionRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoFaceDecisionResult:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoFaceDecisionResult.json
+          format: uri
+          readOnly: true
+          type: string
+        receipt_id:
+          format: uuid
+          type: string
+      required:
+        - receipt_id
+      type: object
+      x-go-type: api.PhotoFaceDecisionResult
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     PhotoFacePage:
       additionalProperties: false
       properties:
@@ -12664,6 +12769,8 @@ components:
         person_id:
           format: uuid
           type: string
+        photo_mark:
+          type: boolean
         recorded_at:
           type: string
         revision:
@@ -15865,6 +15972,12 @@ components:
             type: string
           maxItems: 64
           type: array
+        person_ids:
+          items:
+            format: uuid
+            type: string
+          maxItems: 64
+          type: array
         rating_max:
           format: int64
           maximum: 5
@@ -16676,6 +16789,11 @@ components:
           format: uri
           readOnly: true
           type: string
+        assertion_ids:
+          items:
+            type: string
+          maxItems: 1000
+          type: array
         assignment_ids:
           items:
             type: string
@@ -20931,6 +21049,17 @@ paths:
                     items:
                       type: string
                     type: array
+                  face_ids:
+                    items:
+                      type: string
+                    maxItems: 20
+                    type: array
+                  hidden_face_conflict:
+                    type: boolean
+                  inaccessible_face_conflict:
+                    type: boolean
+                  more:
+                    type: boolean
                   observed_scope_count:
                     format: int64
                     type: integer
@@ -24333,6 +24462,21 @@ paths:
           schema:
             format: uuid
             type: string
+        - explode: false
+          in: query
+          name: assertion_cursor
+          schema:
+            format: uuid
+            type: string
+        - explode: false
+          in: query
+          name: assertion_limit
+          schema:
+            default: 1000
+            format: int64
+            maximum: 1000
+            minimum: 1
+            type: integer
       responses:
         "200":
           content:
@@ -25347,6 +25491,36 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Undo photo fields and keywords if their revisions still match
+  /api/v1/photos/face-decisions/{receipt_id}/undo:
+    post:
+      operationId: undoPhotoFaceDecision
+      parameters:
+        - in: path
+          name: receipt_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - explode: false
+          in: query
+          name: operation_id
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoFaceDecisionResult"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Undo a face decision if its records are unchanged
   /api/v1/photos/hidden:
     get:
       operationId: getPhotoHiddenState
@@ -25718,6 +25892,36 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Set or reset the photo display preference
+  /api/v1/photos/versions/{content_version_id}/face-decisions:
+    post:
+      operationId: decidePhotoFace
+      parameters:
+        - in: path
+          name: content_version_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoFaceDecisionRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoFaceDecisionResult"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Name, retract, reject, dismiss, or choose a key face
   /api/v1/photos/versions/{content_version_id}/faces:
     get:
       operationId: listPhotoFaces

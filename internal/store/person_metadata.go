@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -26,15 +27,16 @@ const (
 )
 
 type metadataPerson struct {
-	Type              string `json:"type"`
-	PersonID          string `json:"person_id" db:"person_id"`
-	DisplayName       string `json:"display_name" db:"display_name"`
-	DisplayNameFolded string `json:"display_name_folded" db:"display_name_folded"`
-	Origin            string `json:"origin" db:"origin"`
-	State             string `json:"state" db:"state"`
-	Revision          int64  `json:"revision" db:"revision"`
-	CreatedAt         string `json:"created_at" db:"created_at"`
-	UpdatedAt         string `json:"updated_at" db:"updated_at"`
+	Type              string  `json:"type"`
+	PersonID          string  `json:"person_id" db:"person_id"`
+	DisplayName       string  `json:"display_name" db:"display_name"`
+	DisplayNameFolded string  `json:"display_name_folded" db:"display_name_folded"`
+	Origin            string  `json:"origin" db:"origin"`
+	State             string  `json:"state" db:"state"`
+	Revision          int64   `json:"revision" db:"revision"`
+	CreatedAt         string  `json:"created_at" db:"created_at"`
+	UpdatedAt         string  `json:"updated_at" db:"updated_at"`
+	KeyFaceID         *string `json:"key_face_id,omitempty" db:"key_face_id"`
 }
 
 type metadataPersonIdentity struct {
@@ -128,6 +130,7 @@ type metadataCustodianAssignment struct {
 }
 
 type metadataPersonDocumentAssertion struct {
+	PhotoMark        *bool  `json:"photo_mark,omitempty" db:"photo_mark"`
 	Type             string `json:"type"`
 	AssertionID      string `json:"assertion_id" db:"assertion_id"`
 	ContentVersionID string `json:"content_version_id" db:"content_version_id"`
@@ -175,13 +178,18 @@ var personMetadataTables = []metadataRecordCodec{
 	newMetadataTable(metadataTable[metadataCustodianAssignment]{record: metadataCustodianAssignment{Type: metadataCustodianAssignmentType}, table: "custodian_assignments",
 		suffix: "ORDER BY assignment_id", validate: validateMetadataCustodianAssignment, checkExport: true}),
 	newMetadataTable(metadataTable[metadataPersonDocumentAssertion]{record: metadataPersonDocumentAssertion{Type: metadataPersonAssertionType}, table: "person_document_assertions",
-		suffix: "ORDER BY assertion_id", validate: validateMetadataPersonAssertion, checkExport: true}),
+		suffix: "ORDER BY assertion_id", validate: validateMetadataPersonAssertion, checkExport: true, insert: func(ctx context.Context, tx *sql.Tx, v metadataPersonDocumentAssertion) error {
+			if v.PhotoMark == nil {
+				v.PhotoMark = new(v.Role == personAssertionRoleDepicted && v.Action == personAssertionActionAssert)
+			}
+			return insertMetadataRecord(ctx, tx, "person_document_assertions", v)
+		}}),
 	newMetadataTable(metadataTable[metadataPersonMatchCandidate]{record: metadataPersonMatchCandidate{Type: metadataPersonCandidateType}, table: "person_match_candidates",
 		suffix: "ORDER BY candidate_id", validate: validateMetadataPersonCandidate, checkExport: true}),
 }
 
 func validateMetadataPerson(r metadataPerson) error {
-	if r.Type != metadataPersonType || validateUUIDv4(r.PersonID) != nil || r.Revision < 1 ||
+	if r.Type != metadataPersonType || validateUUIDv4(r.PersonID) != nil || r.KeyFaceID != nil && validateUUIDv4(*r.KeyFaceID) != nil || r.Revision < 1 ||
 		!validPersonName(r.DisplayName) || r.DisplayNameFolded != document.FoldPersonName(r.DisplayName) ||
 		!validPersonOrigin(r.Origin) ||
 		!slices.Contains([]string{"provisional", "curated", "retired"}, r.State) {
@@ -260,6 +268,11 @@ func validateMetadataPersonMerge(r metadataPersonMerge) error {
 	if err != nil || !bytes.Equal(canonicalMoved, r.MovedJSON) {
 		return errors.New("person merge moved authority is not canonical")
 	}
+	for _, c := range moved.FaceCandidates {
+		if validateUUIDv4(c.CandidateID) != nil || validateUUIDv4(c.RetainedCandidateID) != nil {
+			return errors.New("invalid moved face candidate")
+		}
+	}
 	for _, ids := range [][]string{moved.IdentityIDs, moved.AssignmentIDs, moved.AssertionIDs, moved.SupersededCandidates} {
 		if err := validateUniqueMetadataUUIDs(ids); err != nil {
 			return err
@@ -292,7 +305,7 @@ func validateMetadataPersonMerge(r metadataPersonMerge) error {
 		if err := validateMetadataPersonAssertion(metadataPersonDocumentAssertion{
 			Type: metadataPersonAssertionType, AssertionID: assertion.AssertionID, ContentVersionID: assertion.ContentVersionID,
 			PersonID: assertion.PersonID, Role: assertion.Role, Action: assertion.Action, Note: assertion.Note,
-			RecordedAt: assertion.RecordedAt, Revision: assertion.Revision,
+			RecordedAt: assertion.RecordedAt, Revision: assertion.Revision, PhotoMark: new(assertion.PhotoMark),
 		}); err != nil {
 			return fmt.Errorf("invalid person merge deduplicated assertion: %w", err)
 		}
@@ -312,7 +325,7 @@ func validateMetadataPersonSplit(r metadataPersonSplit) error {
 	canonicalReceipt, err := canonical.Marshal(receipt)
 	if err != nil || !bytes.Equal(canonicalReceipt, r.ReceiptJSON) || receipt.OperationID != r.OperationID ||
 		validateUUIDv4(receipt.SourcePersonID) != nil || validateUUIDv4(receipt.NewPersonID) != nil ||
-		receipt.SourcePersonID == receipt.NewPersonID || validateUniqueMetadataUUIDs(receipt.MovedIdentityIDs) != nil ||
+		receipt.SourcePersonID == receipt.NewPersonID || validateUniqueMetadataUUIDs(receipt.MovedIdentityIDs) != nil || validateUniqueMetadataUUIDs(receipt.MovedAssertionIDs) != nil || len(receipt.MovedAssertionIDs) > 1000 ||
 		receipt.CreatedAt != r.CreatedAt {
 		return errors.New("invalid person split receipt authority")
 	}
@@ -381,7 +394,7 @@ func validateMetadataCustodianAssignment(r metadataCustodianAssignment) error {
 
 func validateMetadataPersonAssertion(r metadataPersonDocumentAssertion) error {
 	assertion := PersonDocumentAssertion{AssertionID: r.AssertionID, ContentVersionID: r.ContentVersionID,
-		PersonID: r.PersonID, Role: r.Role, Action: r.Action, Note: r.Note, Revision: r.Revision}
+		PersonID: r.PersonID, Role: r.Role, Action: r.Action, Note: r.Note, Revision: r.Revision, PhotoMark: r.PhotoMark != nil && *r.PhotoMark}
 	if r.Type != metadataPersonAssertionType || validatePersonAssertion(assertion) != nil {
 		return errors.New("invalid person document assertion metadata")
 	}
@@ -390,8 +403,8 @@ func validateMetadataPersonAssertion(r metadataPersonDocumentAssertion) error {
 
 func validateMetadataPersonCandidate(r metadataPersonMatchCandidate) error {
 	if r.Type != metadataPersonCandidateType || validateUUIDv4(r.CandidateID) != nil || r.Revision < 1 ||
-		document.ValidateActorKeyV1(r.ActorKey) != nil || !document.ValidPersonIdentityText(r.ActorKey) || !validPersonName(r.DisplayName) ||
-		!slices.Contains([]string{"open", "linked", "rejected", "superseded"}, r.State) ||
+		!document.ValidPersonCandidateActorKey(r.ActorKey) || !document.ValidPersonIdentityText(r.ActorKey) || !validPersonName(r.DisplayName) ||
+		!slices.Contains([]string{personCandidateStateOpen, "linked", personCandidateStateRejected, "superseded"}, r.State) ||
 		len(r.EvidenceJSON) == 0 || len(r.EvidenceJSON) > maxPersonCandidateEvidence || r.OccurrenceCount < 1 {
 		return errors.New("invalid person candidate metadata")
 	}
@@ -407,9 +420,9 @@ func validateMetadataPersonCandidate(r metadataPersonMatchCandidate) error {
 		normalized.EvidenceSHA256 != r.EvidenceSHA256 || !bytes.Equal(normalized.Evidence, r.EvidenceJSON) {
 		return errors.New("invalid person candidate evidence")
 	}
-	if r.State == "open" && (r.DecidedPersonID != nil || r.DecidedAt != nil) ||
+	if r.State == personCandidateStateOpen && (r.DecidedPersonID != nil || r.DecidedAt != nil) ||
 		r.State == "linked" && (r.DecidedPersonID == nil || r.DecidedAt == nil) ||
-		r.State == "rejected" && (r.DecidedPersonID != nil || r.DecidedAt == nil) ||
+		r.State == personCandidateStateRejected && (r.DecidedPersonID != nil || r.DecidedAt == nil) ||
 		r.State == "superseded" && (r.DecidedPersonID != nil || r.DecidedAt != nil) {
 		return errors.New("invalid person candidate decision state")
 	}
@@ -433,8 +446,8 @@ func validateUniqueMetadataUUIDs(ids []string) error {
 	return nil
 }
 
-func validatePersonMetadataState(ctx context.Context, q metadataQuerier) error {
-	for _, table := range personMetadataTables {
+func validatePersonMetadataState(ctx context.Context, q metadataQuerier, version int) error {
+	for _, table := range personMetadataTablesForSchema(version) {
 		if err := table.validateRows(ctx, q); err != nil {
 			return fmt.Errorf("validating person metadata records: %w", err)
 		}
@@ -563,4 +576,49 @@ func validatePersonSplitMetadataState(ctx context.Context, q metadataQuerier) er
 		}
 	}
 	return rows.Err()
+}
+
+type metadataPersonBeforeKey struct {
+	Type              string `json:"type"`
+	PersonID          string `json:"person_id" db:"person_id"`
+	DisplayName       string `json:"display_name" db:"display_name"`
+	DisplayNameFolded string `json:"display_name_folded" db:"display_name_folded"`
+	Origin            string `json:"origin" db:"origin"`
+	State             string `json:"state" db:"state"`
+	Revision          int64  `json:"revision" db:"revision"`
+	CreatedAt         string `json:"created_at" db:"created_at"`
+	UpdatedAt         string `json:"updated_at" db:"updated_at"`
+}
+
+type metadataPersonAssertionBeforePhotoMark struct {
+	Type             string `json:"type"`
+	AssertionID      string `json:"assertion_id" db:"assertion_id"`
+	ContentVersionID string `json:"content_version_id" db:"content_version_id"`
+	PersonID         string `json:"person_id" db:"person_id"`
+	Role             string `json:"role" db:"role"`
+	Action           string `json:"action" db:"action"`
+	Note             string `json:"note" db:"note"`
+	RecordedAt       string `json:"recorded_at" db:"recorded_at"`
+	Revision         int64  `json:"revision" db:"revision"`
+}
+
+func personMetadataTablesForSchema(version int) []metadataRecordCodec {
+	if version >= photoFaceDecisionsStorageSchemaVersion {
+		return personMetadataTables
+	}
+	legacy := map[string]metadataRecordCodec{
+		metadataPersonType: newMetadataTable(metadataTable[metadataPersonBeforeKey]{record: metadataPersonBeforeKey{Type: metadataPersonType}, table: "persons", suffix: "ORDER BY person_id", checkExport: true, validate: func(v metadataPersonBeforeKey) error {
+			return validateMetadataPerson(metadataPerson{Type: v.Type, PersonID: v.PersonID, DisplayName: v.DisplayName, DisplayNameFolded: v.DisplayNameFolded, Origin: v.Origin, State: v.State, Revision: v.Revision, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt})
+		}}),
+		metadataPersonAssertionType: newMetadataTable(metadataTable[metadataPersonAssertionBeforePhotoMark]{record: metadataPersonAssertionBeforePhotoMark{Type: metadataPersonAssertionType}, table: "person_document_assertions", suffix: "ORDER BY assertion_id", checkExport: true, validate: func(v metadataPersonAssertionBeforePhotoMark) error {
+			return validateMetadataPersonAssertion(metadataPersonDocumentAssertion{Type: v.Type, AssertionID: v.AssertionID, ContentVersionID: v.ContentVersionID, PersonID: v.PersonID, Role: v.Role, Action: v.Action, Note: v.Note, RecordedAt: v.RecordedAt, Revision: v.Revision})
+		}}),
+	}
+	tables := slices.Clone(personMetadataTables)
+	for i, table := range tables {
+		if codec, ok := legacy[table.kind()]; ok {
+			tables[i] = codec
+		}
+	}
+	return tables
 }

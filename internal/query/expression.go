@@ -563,7 +563,7 @@ func expressionTokenStartsOperand(kind expressionTokenKind) bool {
 }
 
 var expressionFields = withQualityFields(map[string]struct{}{
-	"name": {}, "path": {}, "tag": {}, "collection": {}, "saved": {},
+	"name": {}, "path": {}, "tag": {}, "collection": {}, "saved": {}, "person": {},
 	"mime": {}, "extension": {}, "media_family": {},
 	"rating": {}, "rating_min": {}, "rating_max": {}, "flag": {}, "label": {},
 	"modified_after": {}, "modified_before": {}, "size_min": {}, "size_max": {},

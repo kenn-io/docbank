@@ -186,6 +186,12 @@ end is exclusive, so adjacent ranges do not duplicate a boundary result.
 These filters use the live node's current `modified_at`, not the source file's
 modification time or the age of an older version.
 
+## Find documents and photos by person
+
+QueryV1 advanced expressions accept `person:"Ada Lovelace"` or `person:<person-id>`. Names match exactly after Unicode folding. Duplicate names require an ID; merged IDs resolve to the surviving person. Structured queries use `filters.person_ids`.
+
+Document queries include current published person links and direct assertions. Stale published links stay out until rebuilt. Photo queries match depicted-person assertions across the asset's live image and RAW members, using each member's current version and keep Hidden photos locked.
+
 ## Can I search with filters alone?
 
 Yes, when you provide `--tag`, `--modified-since`, or `--modified-before`.

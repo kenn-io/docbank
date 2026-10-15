@@ -42,6 +42,19 @@ func validatePersonDetailResponse(detail api.PersonDetail, etag, requestedID str
 	if len(detail.Identities) > document.MaxPersonIdentitiesPerPerson || len(detail.ExternalIdentities) > document.MaxPersonExternalIdentities {
 		return errors.New("person response exceeds identity bound")
 	}
+	if len(detail.Assertions) > 1000 || detail.KeyFaceID != "" && !validUUIDv4(detail.KeyFaceID) {
+		return errors.New("invalid person face details")
+	}
+	if detail.AssertionsNextCursor != "" && (!validUUIDv4(detail.AssertionsNextCursor) || !detail.AssertionsTruncated || len(detail.Assertions) == 0 || detail.Assertions[len(detail.Assertions)-1].AssertionID != detail.AssertionsNextCursor) {
+		return errors.New("invalid assertion cursor")
+	}
+	seen := map[string]bool{}
+	for _, a := range detail.Assertions {
+		if !validUUIDv4(a.AssertionID) || !validUUIDv4(a.ContentVersionID) || a.PersonID != detail.PersonID || a.Revision < 1 || !document.ValidPersonRole(a.Role) || seen[a.AssertionID] {
+			return errors.New("invalid person assertion selector")
+		}
+		seen[a.AssertionID] = true
+	}
 	for _, identity := range detail.Identities {
 		if !validUUIDv4(identity.IdentityID) {
 			return errors.New("person response has invalid identity ID")
@@ -82,13 +95,26 @@ func (c *Connection) People(ctx context.Context, query, cursor string, limit int
 	return *page, nil
 }
 
-func (c *Connection) Person(ctx context.Context, id string) (api.PersonDetail, error) {
+func (c *Connection) PersonPage(ctx context.Context, id string, page api.PersonAssertionPage) (api.PersonDetail, error) {
 	pathID, err := parsePersonID(id)
 	if err != nil {
 		return api.PersonDetail{}, err
 	}
 	var response *http.Response
-	detail, err := c.apiWithResponse(&response).GetPerson(ctx, &apiclient.GetPersonRequestOptions{PathParams: &apiclient.GetPersonPath{PersonID: pathID}})
+	options := &apiclient.GetPersonRequestOptions{PathParams: &apiclient.GetPersonPath{PersonID: pathID}}
+	if page.Limit == 0 {
+		page.Limit = 1000
+	}
+	limit := int64(page.Limit)
+	options.Query = &apiclient.GetPersonQuery{AssertionLimit: &limit}
+	if page.Cursor != "" {
+		cursor, err := parsePersonID(page.Cursor)
+		if err != nil {
+			return api.PersonDetail{}, err
+		}
+		options.Query.AssertionCursor = &cursor
+	}
+	detail, err := c.apiWithResponse(&response).GetPerson(ctx, options, photoCookie([]string{page.HiddenCookie}))
 	if err != nil {
 		return api.PersonDetail{}, err
 	}
@@ -158,7 +184,7 @@ func (c *Connection) MergePerson(ctx context.Context, survivorID string, survivo
 	return *receipt, nil
 }
 
-func (c *Connection) SplitPerson(ctx context.Context, id string, revision int64, request api.SplitPersonRequest) (api.PersonSplitReceipt, error) {
+func (c *Connection) SplitPerson(ctx context.Context, id string, revision int64, request api.SplitPersonRequest, cookies ...string) (api.PersonSplitReceipt, error) {
 	pathID, err := parsePersonID(id)
 	if err != nil || revision < 1 || !validUUIDv4(request.OperationID) {
 		return api.PersonSplitReceipt{}, fmt.Errorf("%w: invalid person split identity or revision", store.ErrInvalidPerson)
@@ -166,9 +192,9 @@ func (c *Connection) SplitPerson(ctx context.Context, id string, revision int64,
 	var response *http.Response
 	receipt, err := c.apiWithResponse(&response).SplitPerson(ctx, &apiclient.SplitPersonRequestOptions{
 		PathParams: &apiclient.SplitPersonPath{PersonID: pathID}, Header: &apiclient.SplitPersonHeaders{IfMatch: revisionIfMatch(revision)}, Body: &apiclient.SplitPersonBody{
-			OperationID: request.OperationID, DisplayName: request.DisplayName, IdentityIDs: request.IdentityIDs, AssignmentIDs: request.AssignmentIDs, ExternalIdentities: request.ExternalIdentities,
+			OperationID: request.OperationID, DisplayName: request.DisplayName, AssertionIDs: request.AssertionIDs, IdentityIDs: request.IdentityIDs, AssignmentIDs: request.AssignmentIDs, ExternalIdentities: request.ExternalIdentities,
 		},
-	})
+	}, photoCookie(cookies))
 	if err != nil {
 		return api.PersonSplitReceipt{}, mutationRequestError(response, err)
 	}

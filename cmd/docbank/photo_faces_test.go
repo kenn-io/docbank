@@ -1,16 +1,24 @@
 package main
 
 import (
+	"encoding/hex"
+	"encoding/json/v2"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/daemonauth"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/version"
+	kitdaemon "go.kenn.io/kit/daemon"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 )
@@ -74,4 +82,63 @@ func TestPhotoFaceCreateErrorRetryAdvice(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, photoFaceCreateError(faceID, err).Error(), "retry with --face-id "+faceID)
 	require.Same(t, err, photoFaceCreateError("", err))
+}
+
+func TestPhotoFaceDecisionCLIRequest(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DOCBANK_HOME", dir)
+	const (
+		versionID   = "11111111-1111-4111-8111-111111111111"
+		faceID      = "22222222-2222-4222-8222-222222222222"
+		personID    = "33333333-3333-4333-8333-333333333333"
+		operationID = "44444444-4444-4444-8444-444444444444"
+		token       = "synthetic-proof-token"
+	)
+	var record kitdaemon.RuntimeRecord
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case kitdaemon.DefaultPingPath:
+			assert.NoError(t, json.MarshalWrite(w, kitdaemon.PingInfo{OK: true, Service: daemonconn.Service, Version: version.Version, PID: record.PID}))
+		case daemonauth.ChallengePath:
+			nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
+			assert.NoError(t, err)
+			assert.NoError(t, json.MarshalWrite(w, map[string]string{"proof": daemonauth.Proof(token, nonce)}))
+		case "/api/v1/photos/versions/" + versionID + "/face-decisions":
+			requests.Add(1)
+			var request api.PhotoFaceDecisionRequest
+			assert.NoError(t, json.UnmarshalRead(r.Body, &request))
+			assert.Equal(t, faceID, request.FaceID)
+			assert.Equal(t, personID, request.PersonID)
+			assert.Equal(t, int64(7), request.Revision)
+			assert.Equal(t, operationID, request.OperationID)
+			assert.NoError(t, json.MarshalWrite(w, api.PhotoFaceDecisionResult{ReceiptID: operationID}))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	record = daemonconn.NewRecord(strings.TrimPrefix(server.URL, "http://"), "synthetic-api-key", token, "")
+	_, err := daemonconn.RuntimeStore(dir).Write(record)
+	require.NoError(t, err)
+	output, err := runCLI(t, "photos", "faces", "name", versionID, "--face", faceID, "--person", personID, "--revision", "7", "--operation-id", operationID)
+	require.NoError(t, err)
+	var named api.PhotoFaceDecisionResult
+	require.NoError(t, json.Unmarshal([]byte(output), &named))
+	require.Equal(t, operationID, named.ReceiptID)
+	require.Equal(t, int32(1), requests.Load())
+}
+
+func TestPhotoFaceKeyRequiresRevisionWithFace(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DOCBANK_HOME", dir)
+	const (
+		versionID = "11111111-1111-4111-8111-111111111111"
+		faceID    = "22222222-2222-4222-8222-222222222222"
+		personID  = "33333333-3333-4333-8333-333333333333"
+	)
+	_, err := runCLI(t, "photos", "faces", "key", versionID,
+		"--face", faceID, "--person", personID, "--person-revision", "1")
+	require.ErrorContains(t, err, "--revision is required when --face is set")
 }

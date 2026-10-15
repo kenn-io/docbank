@@ -30,9 +30,11 @@ func registerPeopleRoutes(api huma.API, d Deps, g *gate) {
 		OperationID: "getPerson", Method: http.MethodGet, Path: "/api/v1/people/by-id/{person_id}",
 		Summary: "Inspect one canonical person",
 	}, func(ctx context.Context, in *struct {
-		PersonID string `path:"person_id" format:"uuid"`
+		PersonID        string `path:"person_id" format:"uuid"`
+		AssertionCursor string `query:"assertion_cursor" format:"uuid"`
+		AssertionLimit  int    `query:"assertion_limit" default:"1000" minimum:"1" maximum:"1000"`
 	}) (*personDetailOutput, error) {
-		person, err := d.Store.PersonDetail(ctx, in.PersonID)
+		person, err := d.Store.PersonDetailPage(ctx, in.PersonID, store.PersonAssertionPage{After: in.AssertionCursor, Limit: in.AssertionLimit})
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
@@ -130,7 +132,7 @@ func registerPeopleRoutes(api huma.API, d Deps, g *gate) {
 				external[index] = store.PersonExternalUID{System: identity.System, ArchiveID: identity.ArchiveID, UID: identity.UID}
 			}
 			receipt, callErr := d.Store.SplitPerson(ctx, store.PersonSplitRequest{PersonID: in.PersonID, OperationID: in.Body.OperationID,
-				DisplayName: in.Body.DisplayName, Revision: revision, IdentityIDs: in.Body.IdentityIDs, AssignmentIDs: in.Body.AssignmentIDs, External: external})
+				DisplayName: in.Body.DisplayName, Revision: revision, AssertionIDs: in.Body.AssertionIDs, IdentityIDs: in.Body.IdentityIDs, AssignmentIDs: in.Body.AssignmentIDs, External: external})
 			if callErr != nil {
 				return FromStoreError(callErr)
 			}

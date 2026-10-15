@@ -90,3 +90,17 @@ func TestPersonIdentityScopeBounds(t *testing.T) {
 		})
 	}
 }
+
+func TestPersonFaceCandidateEvidence(t *testing.T) {
+	if !ValidPersonCandidateActorKey("face:00000000-0000-4000-8000-000000000001") {
+		t.Fatal("valid face key rejected")
+	}
+	for _, key := range []string{"face:", "face:invalid", "face:00000000-0000-0000-8000-000000000001"} {
+		if ValidPersonCandidateActorKey(key) {
+			t.Fatalf("accepted %q", key)
+		}
+	}
+	if ValidateActorKeyV1("face:00000000-0000-4000-8000-000000000001") == nil {
+		t.Fatal("face keys entered document event authority")
+	}
+}

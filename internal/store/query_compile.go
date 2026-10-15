@@ -251,6 +251,11 @@ func (c queryCompiler) compileExpressionLeaf(expression *query.ResolvedExpressio
 			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, err.Error())
 		}
 		return compilePathPredicate(syntax.Value), nil
+	case field == "person":
+		if expression.Dependency == nil {
+			return compiledQueryFragment{}, errors.New("resolved person operand lacks a dependency")
+		}
+		return c.compilePersonPredicate(expression.Dependency.ID), nil
 	case field == "tag":
 		if expression.Dependency == nil {
 			return compiledQueryFragment{}, errors.New("resolved tag operand lacks a dependency")
@@ -321,6 +326,9 @@ func (c queryCompiler) compileSavedPredicate(expression *query.ResolvedExpressio
 }
 
 func (c queryCompiler) compileScalarPredicate(field, value string, start, end int) (compiledQueryFragment, error) {
+	if field == "person" {
+		return c.compilePersonPredicate(value), nil
+	}
 	if isPhotoScalarField(field) {
 		part, err := c.compilePhotoScalarPredicate(field, value)
 		if err != nil {
