@@ -74,11 +74,11 @@ var peopleShowCmd = &cobra.Command{
 		}
 		cursor, err := cmd.Flags().GetString("assertion-cursor")
 		if err != nil {
-			return err
+			return fmt.Errorf("reading --assertion-cursor: %w", err)
 		}
 		limit, err := cmd.Flags().GetInt("assertion-limit")
 		if err != nil {
-			return err
+			return fmt.Errorf("reading --assertion-limit: %w", err)
 		}
 		cookie, err := peopleHiddenCookie(cmd, c)
 		if err != nil {
