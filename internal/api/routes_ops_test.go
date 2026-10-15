@@ -355,38 +355,51 @@ func TestTrashListAndEmpty(t *testing.T) {
 	require.NoError(t, err)
 	_, _, err = s.Trash(t.Context(), raw.ID, store.UnconditionalRev)
 	require.NoError(t, err)
+	old := createFileWithContent(t, ts, s, "/old.txt", "x")
+	_, etag := etagOf(t, ts, old.ID)
+	resp, _ := do(t, ts, http.MethodPost, fmt.Sprintf("/api/v1/nodes/%d/trash", old.ID),
+		map[string]string{"If-Match": etag}, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	resp, body := get(t, ts, "/api/v1/trash", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var trash api.TrashPage
 	require.NoError(t, json.Unmarshal([]byte(body), &trash))
-	require.Len(t, trash.Items, 1)
-	assert.Equal(t, "capture.raw", trash.Items[0].Name)
-	assert.Equal(t, 1, trash.Total)
+	require.Len(t, trash.Items, 2)
+	assert.ElementsMatch(t, []string{"capture.raw", "old.txt"}, []string{trash.Items[0].Name, trash.Items[1].Name})
+	assert.Equal(t, 2, trash.Total)
 	assert.Zero(t, trash.Limit)
 	assert.Zero(t, trash.Offset)
 
 	resp, body = get(t, ts, "/api/v1/trash?limit=1&offset=0", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NoError(t, json.Unmarshal([]byte(body), &trash))
-	assert.Equal(t, 1, trash.Total)
+	assert.Equal(t, 2, trash.Total)
 	assert.Equal(t, 1, trash.Limit)
 
 	expected, err := s.TrashEmpty(t.Context(), 0, false)
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), expected.Held)
+	require.Equal(t, int64(1), expected.Candidates)
+	require.Zero(t, expected.Retained)
+	require.Equal(t, int64(1), expected.Held)
 	for _, run := range []bool{false, true} {
 		resp, body = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil,
 			map[string]any{"older_than": "", "run": run})
 		require.Equal(t, http.StatusOK, resp.StatusCode, body)
 		var out api.TrashEmptyReport
 		require.NoError(t, json.Unmarshal([]byte(body), &out))
-		want := api.TrashEmptyReport{CandidateRoots: expected.Candidates, RetainedRoots: expected.Retained, HeldRoots: expected.Held, Run: run}
+		want := api.TrashEmptyReport{CandidateRoots: 1, RetainedRoots: 0, HeldRoots: 1, Run: run}
 		if run {
-			want.Deleted = expected.Candidates
+			want.Deleted = 1
 		}
 		assert.Equal(t, want, out)
 		if !run {
+			survived, err := s.NodeByID(t.Context(), raw.ID)
+			require.NoError(t, err)
+			require.NotNil(t, survived.TrashedAt)
+		} else {
+			_, err := s.NodeByID(t.Context(), old.ID)
+			require.ErrorIs(t, err, store.ErrNotFound)
 			survived, err := s.NodeByID(t.Context(), raw.ID)
 			require.NoError(t, err)
 			require.NotNil(t, survived.TrashedAt)

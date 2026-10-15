@@ -337,7 +337,7 @@ func waitForDaemon(t *testing.T, dir string) kitdaemon.RuntimeRecord {
 	return rec
 }
 
-func newCheckoutReservationFixture(t *testing.T) (*store.Store, string, string) {
+func newCheckoutReservationFixture(t *testing.T) (*store.Store, string, string, string) {
 	t.Helper()
 	layout := home.Layout{Root: t.TempDir()}
 	require.NoError(t, layout.Ensure())
@@ -348,9 +348,9 @@ func newCheckoutReservationFixture(t *testing.T) (*store.Store, string, string) 
 	asset, err := catalog.PhotoAssetForNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	destination := t.TempDir()
-	checkout, _, err := catalog.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
+	checkout, operation, err := catalog.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
 	require.NoError(t, err)
-	return catalog, checkout.ID, destination
+	return catalog, checkout.ID, operation.ID, destination
 }
 
 func TestConfiguredCheckoutValidationRejectsReservedPaths(t *testing.T) {
@@ -363,7 +363,7 @@ func TestConfiguredCheckoutValidationRejectsReservedPaths(t *testing.T) {
 		{name: "store binding", storeBound: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			catalog, checkoutID, destination := newCheckoutReservationFixture(t)
+			catalog, checkoutID, _, destination := newCheckoutReservationFixture(t)
 			defer func() { require.NoError(t, catalog.Close()) }()
 			cfg := config.Default()
 			var stores []store.BlobStore

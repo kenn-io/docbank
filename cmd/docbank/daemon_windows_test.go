@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -48,17 +47,10 @@ func TestConfiguredWatchStoresAllowUnavailableSecondaryDrive(t *testing.T) {
 }
 
 func TestConfiguredCheckoutStartupDefersInaccessibleDestination(t *testing.T) {
-	catalog, err := store.Open(filepath.Join(t.TempDir(), "docbank.db"))
-	require.NoError(t, err)
+	catalog, checkoutID, operationID, destination := newCheckoutReservationFixture(t)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
-	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
+	err := catalog.FinishPhotoCheckout(t.Context(), checkoutID, operationID, store.StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour))
 	require.NoError(t, err)
-	asset, err := catalog.PhotoAssetForNode(t.Context(), node.ID)
-	require.NoError(t, err)
-	destination := t.TempDir()
-	checkout, operation, err := catalog.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
-	require.NoError(t, err)
-	require.NoError(t, catalog.FinishPhotoCheckout(t.Context(), checkout.ID, operation.ID, store.StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
 	name, err := windows.UTF16PtrFromString(destination)
 	require.NoError(t, err)
 	handle, err := windows.CreateFile(name, windows.GENERIC_READ, 0, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
