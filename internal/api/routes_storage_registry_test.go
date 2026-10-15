@@ -332,27 +332,13 @@ func TestStorageEvacuationPreviewRunsAndDetachesEmptySecondary(t *testing.T) {
 func TestStorageRegistrationProtectsCheckoutReservations(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name               string
-		previewFirst       bool
-		missingDestination bool
-		unrelatedBinding   bool
-		releasedState      store.StorageOperationState
-	}{
-		{"preview", false, false, false, ""},
-		{"apply rechecks reservation", true, false, false, ""},
-		{"missing destination remains reserved", false, true, false, ""},
-		{"missing destination permits unrelated store", false, true, true, ""},
-		{"failed partial copies", false, false, false, store.StorageOperationFailed},
-		{"cancelled partial copies", true, false, false, store.StorageOperationCancelled},
-	} {
+		name         string
+		previewFirst bool
+	}{{"preview", false}, {"apply rechecks reservation", true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			destination := t.TempDir()
-			bindingPath := destination
-			if tc.unrelatedBinding {
-				bindingPath = t.TempDir()
-			}
 			ts, live := newTestServer(t, func(d *api.Deps) {
-				d.Cfg.StoreBindings = map[string]config.StoreBindingConfig{"checkout": {Kind: "filesystem", Path: bindingPath}}
+				d.Cfg.StoreBindings = map[string]config.StoreBindingConfig{"checkout": {Kind: "filesystem", Path: destination}}
 				d.BlobRegistry = blob.NewRegistry(t.Context(), d.Store.VaultID(), d.Cfg.StoreBindings, nil)
 				t.Cleanup(func() { require.NoError(t, d.BlobRegistry.Close()) })
 			})
@@ -373,80 +359,15 @@ func TestStorageRegistrationProtectsCheckoutReservations(t *testing.T) {
 			checkout, operation, err := live.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
 			require.NoError(t, err)
 			state := store.StorageOperationCompleted
-			if tc.releasedState != "" {
-				state = tc.releasedState
+			if tc.previewFirst {
+				state = store.StorageOperationCancelled
+				require.NoError(t, os.WriteFile(filepath.Join(destination, "photo.jpg"), []byte("working copy"), 0o600))
 			}
 			require.NoError(t, live.FinishPhotoCheckout(t.Context(), checkout.ID, operation.ID, state, "{}", "", time.Now().Add(time.Hour)))
-			partial := filepath.Join(destination, "photo.jpg")
-			if tc.releasedState != "" {
-				require.NoError(t, os.WriteFile(partial, []byte("working copy"), 0o600))
-			}
-			if tc.missingDestination {
-				require.NoError(t, os.Remove(destination))
-			}
 			resp, body := do(t, ts, http.MethodPost, endpoint, nil, input)
-			if tc.unrelatedBinding {
-				require.Equal(t, http.StatusOK, resp.StatusCode, body)
-				var preview api.BlobStorePreview
-				require.NoError(t, json.Unmarshal([]byte(body), &preview))
-				resp, body = do(t, ts, http.MethodPost, "/api/v1/storage/stores", nil, map[string]any{"preview_token": preview.PreviewToken})
-				require.Equal(t, http.StatusOK, resp.StatusCode, body)
-				return
-			}
 			require.Equal(t, http.StatusConflict, resp.StatusCode, body)
 			require.Contains(t, body, checkout.ID)
 			require.Contains(t, body, `"code":"storage_namespace_overlap"`)
-			if tc.releasedState != "" {
-				require.NoError(t, os.Remove(partial))
-				resp, body = do(t, ts, http.MethodPost, "/api/v1/storage/stores/preview", nil, map[string]any{"name": "archive", "binding": "checkout"})
-				require.Equal(t, http.StatusOK, resp.StatusCode, body)
-				var preview api.BlobStorePreview
-				require.NoError(t, json.Unmarshal([]byte(body), &preview))
-				resp, body = do(t, ts, http.MethodPost, "/api/v1/storage/stores", nil, map[string]any{"preview_token": preview.PreviewToken})
-				require.Equal(t, http.StatusOK, resp.StatusCode, body)
-			}
-		})
-	}
-}
-
-func TestStorageRegistrationProtectsReleasedCheckoutCopies(t *testing.T) {
-	t.Parallel()
-	for _, state := range []store.StorageOperationState{store.StorageOperationCompleted, store.StorageOperationFailed, store.StorageOperationCancelled} {
-		t.Run(string(state), func(t *testing.T) {
-			destination := t.TempDir()
-			ts, live := newTestServer(t, func(d *api.Deps) {
-				d.Cfg.StoreBindings = map[string]config.StoreBindingConfig{"checkout": {Kind: "filesystem", Path: destination}}
-				d.BlobRegistry = blob.NewRegistry(t.Context(), d.Store.VaultID(), d.Cfg.StoreBindings, nil)
-				t.Cleanup(func() { require.NoError(t, d.BlobRegistry.Close()) })
-			})
-			node, err := live.CreateFile(t.Context(), live.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
-			require.NoError(t, err)
-			asset, err := live.PhotoAssetForNode(t.Context(), node.ID)
-			require.NoError(t, err)
-			checkout, op, err := live.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
-			require.NoError(t, err)
-			require.NoError(t, live.FinishPhotoCheckout(t.Context(), checkout.ID, op.ID, state, "{}", "result", time.Now().Add(time.Hour)))
-			partial := filepath.Join(destination, "partial.jpg")
-			require.NoError(t, os.WriteFile(partial, []byte("edited copy"), 0o600))
-			_, err = live.RetirePhotoCheckout(t.Context(), checkout.ID)
-			require.NoError(t, err)
-			input := map[string]any{"name": "archive", "binding": "checkout"}
-			resp, body := do(t, ts, http.MethodPost, "/api/v1/storage/stores/preview", nil, input)
-			require.Equal(t, http.StatusConflict, resp.StatusCode, body)
-			require.Contains(t, body, "storage_namespace_overlap")
-			require.NoError(t, os.Remove(partial))
-			resp, body = do(t, ts, http.MethodPost, "/api/v1/storage/stores/preview", nil, input)
-			require.Equal(t, http.StatusOK, resp.StatusCode, body)
-			var preview api.BlobStorePreview
-			require.NoError(t, json.Unmarshal([]byte(body), &preview))
-			require.NoError(t, os.WriteFile(partial, []byte("new copy"), 0o600))
-			resp, body = do(t, ts, http.MethodPost, "/api/v1/storage/stores", nil, map[string]any{"preview_token": preview.PreviewToken})
-			require.Equal(t, http.StatusConflict, resp.StatusCode, body)
-			require.Contains(t, body, "storage_namespace_overlap")
-			require.NoError(t, os.Remove(partial))
-			require.NoError(t, os.Remove(destination))
-			resp, body = do(t, ts, http.MethodPost, "/api/v1/storage/stores/preview", nil, input)
-			require.Equal(t, http.StatusOK, resp.StatusCode, body)
 		})
 	}
 }

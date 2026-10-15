@@ -131,11 +131,11 @@ func TestStorageJobControlsFollowOperationState(t *testing.T) {
 	}
 }
 
-func TestJobRoutesListAndCancelQueuedWorkWithBrokenLaneControls(t *testing.T) {
+func TestJobListSurvivesBrokenLaneControls(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	operation, err := s.CreateLocalOperation(
-		t.Context(), store.StorageOperationKindPhotoImport, `{"source_root":"/camera/source"}`,
+		t.Context(), store.StorageOperationKindPhotoImport, `{"source_root":"example"}`,
 	)
 	require.NoError(t, err)
 	controls := filepath.Join(filepath.Dir(s.DBPath), "lane-controls.json")
@@ -177,47 +177,4 @@ func TestJobRoutesListAndCancelQueuedWorkWithBrokenLaneControls(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &cancelled))
 	assert.True(t, cancelled.CancelRequested)
 	assert.Equal(t, "queued", cancelled.State)
-}
-
-func TestJobListSurvivesBrokenLaneControls(t *testing.T) {
-	t.Parallel()
-	ts, s := newTestServer(t, nil)
-	operation, err := s.CreateLocalOperation(
-		t.Context(), store.StorageOperationKindPhotoImport, `{"source_root":"example"}`,
-	)
-	require.NoError(t, err)
-	controls := filepath.Join(filepath.Dir(s.DBPath), "lane-controls.json")
-	require.NoError(t, os.WriteFile(controls, []byte("{"), 0o600))
-
-	resp, body := get(t, ts, "/api/v1/jobs", nil)
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	var listed api.JobList
-	require.NoError(t, json.Unmarshal([]byte(body), &listed))
-	assert.Contains(t, listed.LaneControlsError, "decoding lane controls")
-	require.Len(t, listed.Items, 1)
-	assert.Equal(t, operation.ID, listed.Items[0].OperationID)
-	assert.False(t, listed.Items[0].Controllable)
-
-	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
-	resp, body = do(t, ts, http.MethodGet, "/api/v1/jobs", browser, nil)
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	assert.Contains(t, body, "lane controls are unavailable")
-	assert.NotContains(t, body, "lane-controls.json")
-
-	lane := "/api/v1/jobs/lanes/" + store.VisualPreviewLane
-	resp, body = do(t, ts, http.MethodPut, lane, map[string]string{"If-Match": "1"},
-		api.SetLaneControlRequest{Paused: true, Concurrency: 1})
-	require.Equal(t, http.StatusInternalServerError, resp.StatusCode, body)
-	assert.Contains(t, body, "lane_controls_unreadable")
-	assert.Contains(t, body, "repair or remove lane-controls.json")
-
-	browser["If-Match"] = "1"
-	resp, body = do(t, ts, http.MethodPut, lane, browser, api.SetLaneControlRequest{Concurrency: 1})
-	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode, body)
-	assert.Contains(t, body, "inspect with the Docbank CLI")
-	assert.NotContains(t, body, "lane-controls.json")
-	assert.NotContains(t, body, filepath.Dir(s.DBPath))
-
-	resp, body = do(t, ts, http.MethodPost, "/api/v1/jobs/"+operation.ID+"/cancel", nil, nil)
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 }

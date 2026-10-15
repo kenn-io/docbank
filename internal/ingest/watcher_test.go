@@ -535,12 +535,21 @@ func stringsReader(value string) io.Reader { return strings.NewReader(value) }
 
 func runTestMutation(fn func() error) error { return fn() }
 
-func TestWatchBindingOverlapHonorsCancellation(t *testing.T) {
+func TestWatchBindingOverlapHonorsContext(t *testing.T) {
 	t.Parallel()
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	_, _, err := WatchBindingOverlapContext(ctx, []config.WatchConfig{{Source: t.TempDir()}}, config.StoreBindingConfig{Kind: "filesystem", Path: t.TempDir()})
-	require.ErrorIs(t, err, context.Canceled)
+	for _, want := range []error{context.Canceled, context.DeadlineExceeded} {
+		t.Run(want.Error(), func(t *testing.T) {
+			ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+			if want == context.Canceled {
+				cancel()
+				ctx, cancel = context.WithCancel(t.Context())
+				cancel()
+			}
+			defer cancel()
+			_, _, err := WatchBindingOverlapContext(ctx, []config.WatchConfig{{Source: t.TempDir()}}, config.StoreBindingConfig{Kind: "filesystem", Path: t.TempDir()})
+			require.ErrorIs(t, err, want)
+		})
+	}
 }
 
 func TestWatcherRejectsReservedCheckoutDestinations(t *testing.T) {
@@ -580,6 +589,21 @@ func TestWatcherRejectsReservedCheckoutDestinations(t *testing.T) {
 				require.ErrorContains(t, err, "overlaps reserved checkout")
 				require.ErrorContains(t, err, checkout.ID)
 			}
+			require.NoError(t, os.Remove(destination))
+			checkouts, err := ing.Store.ListPhotoCheckouts(ctx)
+			require.NoError(t, err)
+			id, overlaps, _, err := CheckoutPathOverlap(ctx, checkouts, destination)
+			require.NoError(t, err)
+			if state == store.StorageOperationFailed || state == store.StorageOperationCancelled {
+				require.False(t, overlaps)
+			} else {
+				require.True(t, overlaps)
+				require.Equal(t, checkout.ID, id)
+			}
+			_, overlaps, _, err = CheckoutPathOverlap(ctx, checkouts, t.TempDir())
+			require.NoError(t, err)
+			require.False(t, overlaps)
+			require.NoError(t, os.Mkdir(destination, 0o700))
 			require.NoError(t, os.WriteFile(filepath.Join(destination, "edited.jpg"), []byte("edits"), 0o600))
 			if state == store.StorageOperationQueued || state == store.StorageOperationRunning {
 				require.NoError(t, ing.Store.FinishPhotoCheckout(ctx, checkout.ID, op.ID, store.StorageOperationCancelled, "{}", "cancelled", time.Now().Add(time.Hour)))
@@ -623,14 +647,6 @@ func TestWatchedFileReadRejectsConcurrentPathReplacement(t *testing.T) {
 	)
 	require.ErrorIs(t, err, ErrSourceChanged)
 	assert.True(t, replaced)
-}
-
-func TestWatchBindingOverlapHonorsDeadline(t *testing.T) {
-	t.Parallel()
-	ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
-	defer cancel()
-	_, _, err := WatchBindingOverlapContext(ctx, []config.WatchConfig{{Source: t.TempDir()}}, config.StoreBindingConfig{Kind: "filesystem", Path: t.TempDir()})
-	require.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
 func TestPathProtectionRejectsChangedRoots(t *testing.T) {

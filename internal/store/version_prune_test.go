@@ -2,9 +2,7 @@ package store
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -627,240 +625,157 @@ func TestPruneSoleWaiterKeepsRetriedProviderResumeFence(t *testing.T) {
 
 func TestPruneContentVersionsRetainsAuthoritiesAndCheckpointsAllPrior(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	created, err := s.CreateFile(ctx, s.RootID(), "reverted.txt", fakeHash("d4"), 40, "text/plain")
-	require.NoError(t, err)
-	replaced, replacement, err := s.ReplaceContent(
-		ctx, created.ID, created.Revision, fakeHash("e5"), 50, "text/markdown",
-	)
-	require.NoError(t, err)
-	reverted, revertVersion, _, err := s.RevertContent(
-		ctx, created.ID, replaced.Revision, created.CurrentVersionID,
-	)
-	require.NoError(t, err)
-
-	protected, err := s.PruneContentVersions(ctx, created.ID, reverted.Revision,
-		VersionPruneSelector{VersionIDs: []string{created.CurrentVersionID}}, false)
-	require.NoError(t, err)
-	assert.Empty(t, protected.Candidates)
-	require.Len(t, protected.DependencyRetained, 1)
-	assert.Equal(t, created.CurrentVersionID, protected.DependencyRetained[0].ID)
-	unchanged, err := s.PruneContentVersions(ctx, created.ID, reverted.Revision,
-		VersionPruneSelector{VersionIDs: []string{created.CurrentVersionID}}, true)
-	require.NoError(t, err)
-	assert.False(t, unchanged.Changed)
-	assert.Equal(t, reverted.Revision, unchanged.Node.Revision)
-
-	_, err = s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`, strings.Repeat("c", 64), nowRFC3339())
-	require.NoError(t, err)
-	require.NoError(t, s.PublishMediaSourceVersion(ctx, MediaSourceVersionInput{
-		ID: "source-version", SourceID: "source", Revision: 1,
-		ContentVersionID: revertVersion.ID, CaptureJSON: "{}",
-	}))
-	updated, replacementAfterRevert, err := s.ReplaceContent(ctx, created.ID, reverted.Revision, fakeHash("f6"), 60, "text/plain")
-	require.NoError(t, err)
-	selected, err := s.PruneContentVersions(ctx, created.ID, updated.Revision,
-		VersionPruneSelector{VersionIDs: []string{created.CurrentVersionID, replacement.ID, revertVersion.ID}}, false)
-	require.NoError(t, err)
-	require.ElementsMatch(t, []string{replacement.ID}, contentVersionIDs(selected.Candidates))
-	require.ElementsMatch(t, []string{created.CurrentVersionID, revertVersion.ID}, contentVersionIDs(selected.DependencyRetained))
-	current, currentRevert, _, err := s.RevertContent(ctx, created.ID, updated.Revision, replacement.ID)
-	require.NoError(t, err)
-
-	preview, err := s.PruneContentVersions(ctx, created.ID, current.Revision,
-		VersionPruneSelector{AllPrior: true}, false)
-	require.NoError(t, err)
-	assert.True(t, preview.CheckpointRequired)
-	require.ElementsMatch(t, []string{created.CurrentVersionID, revertVersion.ID}, contentVersionIDs(preview.DependencyRetained))
-	assert.Len(t, preview.Candidates, 3)
-	assert.Equal(t, int64(160), preview.LogicalBytes)
-	assert.Equal(t, 2, preview.UniqueBlobs)
-	assert.Equal(t, 1, preview.SharedBlobs,
-		"the checkpoint keeps the current/reverted blob reachable")
-	assert.Equal(t, 1, preview.ReleasableBlobs)
-	assert.Equal(t, int64(60), preview.LooseBytesPendingGC)
-
-	receipt, err := s.PruneContentVersions(ctx, created.ID, current.Revision,
-		VersionPruneSelector{AllPrior: true}, true)
-	require.NoError(t, err)
-	assert.True(t, receipt.Changed)
-	assert.Equal(t, 3, receipt.DeletedVersions)
-	require.Equal(t, preview.DependencyRetained, receipt.DependencyRetained)
-	require.NotNil(t, receipt.Checkpoint)
-	assert.Equal(t, "content_replace", receipt.Checkpoint.TransitionKind)
-	assert.Nil(t, receipt.Checkpoint.SourceVersionID)
-	assert.Equal(t, replacement.BlobHash, receipt.Checkpoint.BlobHash)
-	assert.Equal(t, current.Revision+1, receipt.Node.Revision)
-	assert.Equal(t, receipt.Checkpoint.ID, receipt.Node.CurrentVersionID)
-
-	versions, total, err := s.ContentVersions(ctx, created.ID, 10, 0)
-	require.NoError(t, err)
-	assert.Equal(t, 3, total)
-	require.Len(t, versions, 3)
-	require.ElementsMatch(t, []string{created.CurrentVersionID, revertVersion.ID, receipt.Checkpoint.ID}, contentVersionIDs(versions))
-	for _, id := range []string{replacement.ID, replacementAfterRevert.ID, currentRevert.ID} {
-		_, err = s.ContentVersionByID(ctx, id)
-		require.ErrorIs(t, err, ErrNotFound)
-	}
-	unreachable, err := s.UnreachableBlobs(ctx)
-	require.NoError(t, err)
-	require.Len(t, unreachable, 1)
-	assert.Equal(t, replacementAfterRevert.BlobHash, unreachable[0].Hash)
-	for _, authority := range []string{"input artifact", "checkout entry"} {
-		t.Run(authority, func(t *testing.T) {
+	for _, pinned := range []bool{false, true} {
+		t.Run(fmt.Sprintf("pinned=%t", pinned), func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
-			name, mediaType := "recording.mp3", "audio/mpeg"
-			if authority == "checkout entry" {
-				name, mediaType = "photo.jpg", "image/jpeg"
-			}
-			created, err := s.CreateFile(ctx, s.RootID(), name, fakeHash("a1"), 10, mediaType)
+			created, err := s.CreateFile(ctx, s.RootID(), "reverted.txt", fakeHash("d4"), 40, "text/plain")
 			require.NoError(t, err)
-			if authority == "checkout entry" {
-				checkout, operation, createErr := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{All: true}, "checkout", 10)
-				require.NoError(t, createErr)
-				require.NoError(t, s.FinishPhotoCheckout(ctx, checkout.ID, operation.ID, StorageOperationCompleted, `{}`, "", time.Time{}))
-			}
-			updated, _, err := s.ReplaceContent(ctx, created.ID, created.Revision, fakeHash("b2"), 20, mediaType)
+			replaced, replacement, err := s.ReplaceContent(
+				ctx, created.ID, created.Revision, fakeHash("e5"), 50, "text/markdown",
+			)
 			require.NoError(t, err)
-			if authority != "checkout entry" {
-				stamp := nowRFC3339()
-				_, err = s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
-					strings.Repeat("c", 64), stamp)
-				require.NoError(t, err)
-				_, err = s.db.Exec(`INSERT INTO media_occurrences VALUES(
-	'occurrence','source',NULL,'operator','ref','1','','','','{}',1,?,NULL)`, stamp)
-				require.NoError(t, err)
-				_, err = s.db.Exec(`INSERT INTO media_input_artifacts VALUES(
-	'input','occurrence','source',NULL,?,'recording','supplied','','',?,?)`,
-					created.CurrentVersionID, fakeHash("a1"), stamp)
-				require.NoError(t, err)
-			}
+			reverted, revertVersion, _, err := s.RevertContent(
+				ctx, created.ID, replaced.Revision, created.CurrentVersionID,
+			)
+			require.NoError(t, err)
 
-			preview, err := s.PruneContentVersions(ctx, created.ID, updated.Revision,
+			protected, err := s.PruneContentVersions(ctx, created.ID, reverted.Revision,
 				VersionPruneSelector{VersionIDs: []string{created.CurrentVersionID}}, false)
 			require.NoError(t, err)
-			require.Empty(t, preview.Candidates)
-			require.Len(t, preview.DependencyRetained, 1)
-			require.Equal(t, created.CurrentVersionID, preview.DependencyRetained[0].ID)
-
-			run, err := s.PruneContentVersions(ctx, created.ID, updated.Revision,
+			assert.Empty(t, protected.Candidates)
+			require.Len(t, protected.DependencyRetained, 1)
+			assert.Equal(t, created.CurrentVersionID, protected.DependencyRetained[0].ID)
+			unchanged, err := s.PruneContentVersions(ctx, created.ID, reverted.Revision,
 				VersionPruneSelector{VersionIDs: []string{created.CurrentVersionID}}, true)
 			require.NoError(t, err)
-			require.False(t, run.Changed)
-			require.Zero(t, run.DeletedVersions)
-			_, err = s.ContentVersionByID(ctx, created.CurrentVersionID)
+			assert.False(t, unchanged.Changed)
+			assert.Equal(t, reverted.Revision, unchanged.Node.Revision)
+
+			if !pinned {
+				preview, err := s.PruneContentVersions(ctx, created.ID, reverted.Revision,
+					VersionPruneSelector{AllPrior: true}, false)
+				require.NoError(t, err)
+				assert.True(t, preview.CheckpointRequired)
+				assert.Len(t, preview.Candidates, 3)
+				assert.Equal(t, int64(130), preview.LogicalBytes)
+				assert.Equal(t, 2, preview.UniqueBlobs)
+				assert.Equal(t, 1, preview.SharedBlobs,
+					"the checkpoint keeps the current/reverted blob reachable")
+				assert.Equal(t, 1, preview.ReleasableBlobs)
+				assert.Equal(t, int64(50), preview.LooseBytesPendingGC)
+
+				receipt, err := s.PruneContentVersions(ctx, created.ID, reverted.Revision,
+					VersionPruneSelector{AllPrior: true}, true)
+				require.NoError(t, err)
+				assert.True(t, receipt.Changed)
+				assert.Equal(t, 3, receipt.DeletedVersions)
+				require.NotNil(t, receipt.Checkpoint)
+				assert.Equal(t, "content_replace", receipt.Checkpoint.TransitionKind)
+				assert.Nil(t, receipt.Checkpoint.SourceVersionID)
+				assert.Equal(t, created.BlobHash, receipt.Checkpoint.BlobHash)
+				assert.Equal(t, reverted.Revision+1, receipt.Node.Revision)
+				assert.Equal(t, receipt.Checkpoint.ID, receipt.Node.CurrentVersionID)
+
+				versions, total, err := s.ContentVersions(ctx, created.ID, 10, 0)
+				require.NoError(t, err)
+				assert.Equal(t, 1, total)
+				require.Len(t, versions, 1)
+				assert.Equal(t, receipt.Checkpoint.ID, versions[0].ID)
+				for _, id := range []string{created.CurrentVersionID, replacement.ID, revertVersion.ID} {
+					_, err = s.ContentVersionByID(ctx, id)
+					require.ErrorIs(t, err, ErrNotFound)
+				}
+				unreachable, err := s.UnreachableBlobs(ctx)
+				require.NoError(t, err)
+				require.Len(t, unreachable, 1)
+				assert.Equal(t, replacement.BlobHash, unreachable[0].Hash)
+				return
+			}
+			_, err = s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`, strings.Repeat("c", 64), nowRFC3339())
 			require.NoError(t, err)
+			require.NoError(t, s.PublishMediaSourceVersion(ctx, MediaSourceVersionInput{
+				ID: "source-version", SourceID: "source", Revision: 1,
+				ContentVersionID: revertVersion.ID, CaptureJSON: "{}",
+			}))
+			updated, replacementAfterRevert, err := s.ReplaceContent(ctx, created.ID, reverted.Revision, fakeHash("f6"), 60, "text/plain")
+			require.NoError(t, err)
+			selected, err := s.PruneContentVersions(ctx, created.ID, updated.Revision,
+				VersionPruneSelector{VersionIDs: []string{created.CurrentVersionID, replacement.ID, revertVersion.ID}}, false)
+			require.NoError(t, err)
+			require.ElementsMatch(t, []string{replacement.ID}, contentVersionIDs(selected.Candidates))
+			require.ElementsMatch(t, []string{created.CurrentVersionID, revertVersion.ID}, contentVersionIDs(selected.DependencyRetained))
+			current, currentRevert, _, err := s.RevertContent(ctx, created.ID, updated.Revision, replacement.ID)
+			require.NoError(t, err)
+
+			preview, err := s.PruneContentVersions(ctx, created.ID, current.Revision,
+				VersionPruneSelector{AllPrior: true}, false)
+			require.NoError(t, err)
+			assert.True(t, preview.CheckpointRequired)
+			require.ElementsMatch(t, []string{created.CurrentVersionID, revertVersion.ID}, contentVersionIDs(preview.DependencyRetained))
+			assert.Len(t, preview.Candidates, 3)
+			assert.Equal(t, int64(160), preview.LogicalBytes)
+			assert.Equal(t, 2, preview.UniqueBlobs)
+			assert.Equal(t, 1, preview.SharedBlobs,
+				"the checkpoint keeps the current/reverted blob reachable")
+			assert.Equal(t, 1, preview.ReleasableBlobs)
+			assert.Equal(t, int64(60), preview.LooseBytesPendingGC)
+
+			receipt, err := s.PruneContentVersions(ctx, created.ID, current.Revision,
+				VersionPruneSelector{AllPrior: true}, true)
+			require.NoError(t, err)
+			assert.True(t, receipt.Changed)
+			assert.Equal(t, 3, receipt.DeletedVersions)
+			require.Equal(t, preview.DependencyRetained, receipt.DependencyRetained)
+			require.NotNil(t, receipt.Checkpoint)
+			assert.Equal(t, "content_replace", receipt.Checkpoint.TransitionKind)
+			assert.Nil(t, receipt.Checkpoint.SourceVersionID)
+			assert.Equal(t, replacement.BlobHash, receipt.Checkpoint.BlobHash)
+			assert.Equal(t, current.Revision+1, receipt.Node.Revision)
+			assert.Equal(t, receipt.Checkpoint.ID, receipt.Node.CurrentVersionID)
+
+			versions, total, err := s.ContentVersions(ctx, created.ID, 10, 0)
+			require.NoError(t, err)
+			assert.Equal(t, 3, total)
+			require.Len(t, versions, 3)
+			require.ElementsMatch(t, []string{created.CurrentVersionID, revertVersion.ID, receipt.Checkpoint.ID}, contentVersionIDs(versions))
+			for _, id := range []string{replacement.ID, replacementAfterRevert.ID, currentRevert.ID} {
+				_, err = s.ContentVersionByID(ctx, id)
+				require.ErrorIs(t, err, ErrNotFound)
+			}
+			unreachable, err := s.UnreachableBlobs(ctx)
+			require.NoError(t, err)
+			require.Len(t, unreachable, 1)
+			assert.Equal(t, replacementAfterRevert.BlobHash, unreachable[0].Hash)
 		})
 	}
-	t.Run("current pinned revert needs no checkpoint", func(t *testing.T) {
+	t.Run("checkout entry", func(t *testing.T) {
 		s := newTestStore(t)
 		ctx := t.Context()
-		created, err := s.CreateFile(ctx, s.RootID(), "recording.mp3", fakeHash("a1"), 10, "audio/mpeg")
+		name, mediaType := "photo.jpg", "image/jpeg"
+		created, err := s.CreateFile(ctx, s.RootID(), name, fakeHash("a1"), 10, mediaType)
 		require.NoError(t, err)
-		replaced, replacement, err := s.ReplaceContent(
-			ctx, created.ID, created.Revision, fakeHash("b2"), 20, "audio/mpeg")
+		checkout, operation, createErr := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{All: true}, "checkout", 10)
+		require.NoError(t, createErr)
+		require.NoError(t, s.FinishPhotoCheckout(ctx, checkout.ID, operation.ID, StorageOperationCompleted, `{}`, "", time.Time{}))
+		updated, _, err := s.ReplaceContent(ctx, created.ID, created.Revision, fakeHash("b2"), 20, mediaType)
 		require.NoError(t, err)
-		reverted, pinnedRevert, _, err := s.RevertContent(
-			ctx, created.ID, replaced.Revision, created.CurrentVersionID)
-		require.NoError(t, err)
-		_, err = s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
-			strings.Repeat("c", 64), nowRFC3339())
-		require.NoError(t, err)
-		require.NoError(t, s.PublishMediaSourceVersion(ctx, MediaSourceVersionInput{
-			ID: "source-version", SourceID: "source", Revision: 1,
-			ContentVersionID: pinnedRevert.ID, CaptureJSON: "{}",
-		}))
-		preview, err := s.PruneContentVersions(ctx, created.ID, reverted.Revision, VersionPruneSelector{AllPrior: true}, false)
-		require.NoError(t, err)
-		require.ElementsMatch(t,
-			[]string{replacement.ID},
-			contentVersionIDs(preview.Candidates))
-		require.ElementsMatch(t,
-			[]string{pinnedRevert.ID, created.CurrentVersionID},
-			contentVersionIDs(preview.DependencyRetained))
-		require.False(t, preview.CheckpointRequired)
 
-		run, err := s.PruneContentVersions(ctx, created.ID, reverted.Revision, VersionPruneSelector{AllPrior: true}, true)
+		preview, err := s.PruneContentVersions(ctx, created.ID, updated.Revision,
+			VersionPruneSelector{VersionIDs: []string{created.CurrentVersionID}}, false)
 		require.NoError(t, err)
-		require.Equal(t, preview.Candidates, run.Candidates)
-		require.Equal(t, preview.DependencyRetained, run.DependencyRetained)
-		require.Equal(t, 1, run.DeletedVersions)
-		require.Nil(t, run.Checkpoint)
-		for _, id := range []string{pinnedRevert.ID, created.CurrentVersionID} {
-			_, err = s.ContentVersionByID(ctx, id)
-			require.NoError(t, err)
-		}
-		_, err = s.ContentVersionByID(ctx, replacement.ID)
-		require.ErrorIs(t, err, ErrNotFound)
-	})
-	t.Run("sealed snapshot", func(t *testing.T) {
-		s := newTestStore(t)
-		body := []byte("Original package source")
-		hash := sha256.Sum256(body)
-		node, err := s.CreateFile(t.Context(), s.RootID(), "original.txt", hex.EncodeToString(hash[:]), int64(len(body)), "text/plain")
+		require.Empty(t, preview.Candidates)
+		require.Len(t, preview.DependencyRetained, 1)
+		require.Equal(t, created.CurrentVersionID, preview.DependencyRetained[0].ID)
+
+		run, err := s.PruneContentVersions(ctx, created.ID, updated.Revision,
+			VersionPruneSelector{VersionIDs: []string{created.CurrentVersionID}}, true)
 		require.NoError(t, err)
-		oldVersion := node.CurrentVersionID
-		snapshotID, err := newUUIDv4()
-		require.NoError(t, err)
-		occurrence := strings.Repeat("e", 32)
-		_, err = s.SealCollectionSnapshot(t.Context(), SnapshotSealRequest{
-			SnapshotID: snapshotID,
-			Members: []CollectionSnapshotMember{{
-				Ordinal: 1, OccurrenceID: occurrence, NodeID: node.ID,
-				ContentVersionID: oldVersion, BlobSHA256: hex.EncodeToString(hash[:]), Size: int64(len(body)),
-				FamilyID: occurrence, FamilyOrder: 1, DisplayName: node.Name,
-				FrozenFieldsJSON: "{}", DocumentKind: "other",
-			}},
-		})
-		require.NoError(t, err)
-		replacement := []byte("New current version")
-		replacementHash := sha256.Sum256(replacement)
-		updated, _, err := s.ReplaceContent(t.Context(), node.ID, node.Revision,
-			hex.EncodeToString(replacementHash[:]), int64(len(replacement)), "text/plain")
-		require.NoError(t, err)
-		selector := VersionPruneSelector{VersionIDs: []string{oldVersion}}
-		for _, run := range []bool{false, true} {
-			_, err = s.PruneContentVersions(t.Context(), node.ID, updated.Revision, selector, run)
-			require.ErrorIs(t, err, ErrPackageRetained)
-		}
-		_, err = s.ContentVersionByID(t.Context(), oldVersion)
+		require.False(t, run.Changed)
+		require.Zero(t, run.DeletedVersions)
+		_, err = s.ContentVersionByID(ctx, created.CurrentVersionID)
 		require.NoError(t, err)
 	})
-	for _, authority := range []string{"label", "receipt"} {
-		t.Run(authority, func(t *testing.T) {
-			s := newTestStore(t)
-			pkg, node := seedReceivedPackage(t, s, authority)
-			key, err := PackageRecordKey("VOL001.dat", 1, "DOC-A")
-			require.NoError(t, err)
-			occurrence := PackageOccurrenceID(pkg.PackageID, key)
-			switch authority {
-			case "label":
-				_, err = s.db.ExecContext(t.Context(), `INSERT INTO package_labels(
-					package_id,provenance,label_set,label,occurrence_id,content_version_id,
-					page_state,endpoint) VALUES(?,?,?,?,?,?,?,?)`, pkg.PackageID, "received", "EXT",
-					"EXT000001", occurrence, node.CurrentVersionID, "unknown", "begin")
-			case "receipt":
-				receiptID, idErr := newUUIDv4()
-				require.NoError(t, idErr)
-				_, err = s.db.ExecContext(t.Context(), `INSERT INTO package_import_receipts(
-					receipt_id,package_id,record_key,occurrence_id,content_version_id,state,receipt_json,recorded_at
-				) VALUES(?,?,?,?,?,?,?,?)`, receiptID, pkg.PackageID, key, occurrence, node.CurrentVersionID,
-					"committed", []byte(`{}`), nowRFC3339())
-				require.NoError(t, err)
-			}
-			require.NoError(t, err)
-			updated, _, err := s.ReplaceContent(t.Context(), node.ID, node.Revision,
-				fakeHash("d1"), 12, "text/plain")
-			require.NoError(t, err)
-			for _, run := range []bool{false, true} {
-				_, err = s.PruneContentVersions(t.Context(), node.ID, updated.Revision,
-					VersionPruneSelector{VersionIDs: []string{node.CurrentVersionID}}, run)
-				require.ErrorIs(t, err, ErrPackageRetained)
-			}
-		})
-	}
 }
 
 func TestPruneContentVersionsRemovesRenditionAttachment(t *testing.T) {
@@ -1151,85 +1066,4 @@ func TestRetainMediaAuthorityVersionsBatchesCandidateBindings(t *testing.T) {
 			require.NotContains(t, candidates, node.CurrentVersionID)
 		})
 	}
-}
-
-func TestVersionPruneBlobStatsBatchesCandidateHashes(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	tx, err := s.db.BeginTx(t.Context(), nil)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = tx.Rollback() })
-	hashes := make([]string, 501)
-	for index := range hashes {
-		hashes[index] = fmt.Sprintf("%064x", index+1)
-	}
-	stats, err := versionPruneBlobStatsTx(tx, hashes)
-	require.NoError(t, err)
-	assert.Empty(t, stats)
-}
-
-func TestPruneContentVersionsRetainsDependenciesAndCheckpointsAllPrior(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	created, err := s.CreateFile(ctx, s.RootID(), "reverted.txt", fakeHash("d4"), 40, "text/plain")
-	require.NoError(t, err)
-	replaced, replacement, err := s.ReplaceContent(
-		ctx, created.ID, created.Revision, fakeHash("e5"), 50, "text/markdown",
-	)
-	require.NoError(t, err)
-	reverted, revertVersion, _, err := s.RevertContent(
-		ctx, created.ID, replaced.Revision, created.CurrentVersionID,
-	)
-	require.NoError(t, err)
-
-	protected, err := s.PruneContentVersions(ctx, created.ID, reverted.Revision,
-		VersionPruneSelector{VersionIDs: []string{created.CurrentVersionID}}, false)
-	require.NoError(t, err)
-	assert.Empty(t, protected.Candidates)
-	require.Len(t, protected.DependencyRetained, 1)
-	assert.Equal(t, created.CurrentVersionID, protected.DependencyRetained[0].ID)
-	unchanged, err := s.PruneContentVersions(ctx, created.ID, reverted.Revision,
-		VersionPruneSelector{VersionIDs: []string{created.CurrentVersionID}}, true)
-	require.NoError(t, err)
-	assert.False(t, unchanged.Changed)
-	assert.Equal(t, reverted.Revision, unchanged.Node.Revision)
-
-	preview, err := s.PruneContentVersions(ctx, created.ID, reverted.Revision,
-		VersionPruneSelector{AllPrior: true}, false)
-	require.NoError(t, err)
-	assert.True(t, preview.CheckpointRequired)
-	assert.Len(t, preview.Candidates, 3)
-	assert.Equal(t, int64(130), preview.LogicalBytes)
-	assert.Equal(t, 2, preview.UniqueBlobs)
-	assert.Equal(t, 1, preview.SharedBlobs,
-		"the checkpoint keeps the current/reverted blob reachable")
-	assert.Equal(t, 1, preview.ReleasableBlobs)
-	assert.Equal(t, int64(50), preview.LooseBytesPendingGC)
-
-	receipt, err := s.PruneContentVersions(ctx, created.ID, reverted.Revision,
-		VersionPruneSelector{AllPrior: true}, true)
-	require.NoError(t, err)
-	assert.True(t, receipt.Changed)
-	assert.Equal(t, 3, receipt.DeletedVersions)
-	require.NotNil(t, receipt.Checkpoint)
-	assert.Equal(t, "content_replace", receipt.Checkpoint.TransitionKind)
-	assert.Nil(t, receipt.Checkpoint.SourceVersionID)
-	assert.Equal(t, created.BlobHash, receipt.Checkpoint.BlobHash)
-	assert.Equal(t, reverted.Revision+1, receipt.Node.Revision)
-	assert.Equal(t, receipt.Checkpoint.ID, receipt.Node.CurrentVersionID)
-
-	versions, total, err := s.ContentVersions(ctx, created.ID, 10, 0)
-	require.NoError(t, err)
-	assert.Equal(t, 1, total)
-	require.Len(t, versions, 1)
-	assert.Equal(t, receipt.Checkpoint.ID, versions[0].ID)
-	for _, id := range []string{created.CurrentVersionID, replacement.ID, revertVersion.ID} {
-		_, err = s.ContentVersionByID(ctx, id)
-		require.ErrorIs(t, err, ErrNotFound)
-	}
-	unreachable, err := s.UnreachableBlobs(ctx)
-	require.NoError(t, err)
-	require.Len(t, unreachable, 1)
-	assert.Equal(t, replacement.BlobHash, unreachable[0].Hash)
 }

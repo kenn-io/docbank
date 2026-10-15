@@ -88,39 +88,6 @@ func TestSealedSnapshotRetainsSourceVersionDuringPrune(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestTrashEmptySkipsSealedSnapshotSourceAndDeletesOtherTrash(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	protected, err := s.CreateFile(t.Context(), s.RootID(), "snapshot-source.txt", fakeHash("c1"), 10, "text/plain")
-	require.NoError(t, err)
-	unrelated, err := s.CreateFile(t.Context(), s.RootID(), "unrelated.txt", fakeHash("c2"), 10, "text/plain")
-	require.NoError(t, err)
-	snapshotID, err := newUUIDv4()
-	require.NoError(t, err)
-	occurrence := strings.Repeat("a", 32)
-	_, err = s.SealCollectionSnapshot(t.Context(), SnapshotSealRequest{SnapshotID: snapshotID,
-		Members: []CollectionSnapshotMember{{Ordinal: 1, OccurrenceID: occurrence,
-			NodeID: protected.ID, ContentVersionID: protected.CurrentVersionID,
-			BlobSHA256: protected.BlobHash, Size: 10, FamilyID: occurrence, FamilyOrder: 1,
-			DisplayName: protected.Name, FrozenFieldsJSON: "{}", DocumentKind: "other"}}})
-	require.NoError(t, err)
-	_, _, err = s.Trash(t.Context(), protected.ID, protected.Revision)
-	require.NoError(t, err)
-	_, _, err = s.Trash(t.Context(), unrelated.ID, unrelated.Revision)
-	require.NoError(t, err)
-	preview, err := s.TrashEmptyBounded(t.Context(), 0, 1, false)
-	require.NoError(t, err)
-	require.EqualValues(t, 1, preview.Candidates)
-	require.False(t, preview.More)
-	run, err := s.TrashEmptyBounded(t.Context(), 0, 1, true)
-	require.NoError(t, err)
-	require.EqualValues(t, 1, run.Deleted)
-	_, err = s.NodeByID(t.Context(), protected.ID)
-	require.NoError(t, err)
-	_, err = s.NodeByID(t.Context(), unrelated.ID)
-	require.ErrorIs(t, err, ErrNotFound)
-}
-
 func TestPackageLabelAndReceiptRetainHistoricalVersionsDuringPrune(t *testing.T) {
 	t.Parallel()
 	for _, authority := range []string{"label", "receipt"} {

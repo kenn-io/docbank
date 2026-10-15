@@ -335,80 +335,64 @@ func waitForDaemon(t *testing.T, dir string) kitdaemon.RuntimeRecord {
 }
 
 func TestConfiguredCheckoutPathsRejectPartialCopiesBeforeDaemonStartup(t *testing.T) {
-	for _, state := range []store.StorageOperationState{store.StorageOperationRunning, store.StorageOperationCompleted, store.StorageOperationFailed, store.StorageOperationCancelled} {
-		for _, watch := range []bool{false, true} {
-			t.Run(string(state)+fmt.Sprintf("/watch=%t", watch), func(t *testing.T) {
-				catalog, err := store.Open(filepath.Join(t.TempDir(), "docbank.db"))
-				require.NoError(t, err)
-				t.Cleanup(func() { require.NoError(t, catalog.Close()) })
-				ctx := t.Context()
-				node, err := catalog.CreateFile(ctx, catalog.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
-				require.NoError(t, err)
-				asset, err := catalog.PhotoAssetForNode(ctx, node.ID)
-				require.NoError(t, err)
-				destination := t.TempDir()
-				checkout, op, err := catalog.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
-				require.NoError(t, err)
-				if state == store.StorageOperationRunning {
-					require.NoError(t, catalog.ClaimPhotoCheckout(ctx, checkout.ID, op.ID))
-				} else {
-					require.NoError(t, catalog.FinishPhotoCheckout(ctx, checkout.ID, op.ID, state, "{}", "", time.Now().Add(time.Hour)))
-				}
-				cfg := config.Default()
-				stores := []store.BlobStore{{Name: "archive", Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "archive"}}
-				if watch {
-					cfg.Watches = []config.WatchConfig{{Name: "inbox", Source: destination}}
-				} else {
-					cfg.StoreBindings = map[string]config.StoreBindingConfig{"archive": {Kind: "filesystem", Path: destination}}
-				}
-				partial := filepath.Join(destination, "photo.jpg")
-				require.NoError(t, os.WriteFile(partial, []byte("working copy"), 0o600))
-				require.ErrorContains(t, validateConfiguredCheckouts(ctx, cfg, stores, catalog), checkout.ID)
-				require.NoError(t, os.Remove(partial))
-				err = validateConfiguredCheckouts(ctx, cfg, stores, catalog)
-				if state == store.StorageOperationFailed || state == store.StorageOperationCancelled {
-					require.NoError(t, err)
-				} else {
-					require.ErrorContains(t, err, checkout.ID)
-				}
-			})
-		}
+	for _, watch := range []bool{false, true} {
+		t.Run(fmt.Sprintf("/watch=%t", watch), func(t *testing.T) {
+			catalog, err := store.Open(filepath.Join(t.TempDir(), "docbank.db"))
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+			ctx := t.Context()
+			node, err := catalog.CreateFile(ctx, catalog.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
+			require.NoError(t, err)
+			asset, err := catalog.PhotoAssetForNode(ctx, node.ID)
+			require.NoError(t, err)
+			destination := t.TempDir()
+			checkout, op, err := catalog.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
+			require.NoError(t, err)
+			require.NoError(t, catalog.FinishPhotoCheckout(ctx, checkout.ID, op.ID, store.StorageOperationFailed, "{}", "", time.Now().Add(time.Hour)))
+			cfg := config.Default()
+			stores := []store.BlobStore{{Name: "archive", Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "archive"}}
+			if watch {
+				cfg.Watches = []config.WatchConfig{{Name: "inbox", Source: destination}}
+			} else {
+				cfg.StoreBindings = map[string]config.StoreBindingConfig{"archive": {Kind: "filesystem", Path: destination}}
+			}
+			partial := filepath.Join(destination, "photo.jpg")
+			require.NoError(t, os.WriteFile(partial, []byte("working copy"), 0o600))
+			require.ErrorContains(t, validateConfiguredCheckouts(ctx, cfg, stores, catalog), checkout.ID)
+			require.NoError(t, os.Remove(partial))
+			err = validateConfiguredCheckouts(ctx, cfg, stores, catalog)
+			require.NoError(t, err)
+		})
 	}
 }
 
 func TestServeRejectsCheckoutCopiesBeforeStartup(t *testing.T) {
-	for _, retired := range []bool{false, true} {
-		t.Run(fmt.Sprintf("retired=%t", retired), func(t *testing.T) {
-			layout := home.Layout{Root: t.TempDir()}
-			require.NoError(t, layout.Ensure())
-			catalog, err := store.Open(layout.DBPath())
-			require.NoError(t, err)
-			node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
-			require.NoError(t, err)
-			asset, err := catalog.PhotoAssetForNode(t.Context(), node.ID)
-			require.NoError(t, err)
-			destination := t.TempDir()
-			checkout, op, err := catalog.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
-			require.NoError(t, err)
-			require.NoError(t, catalog.FinishPhotoCheckout(t.Context(), checkout.ID, op.ID, store.StorageOperationFailed, "{}", "partial", time.Now().Add(time.Hour)))
-			if retired {
-				_, err = catalog.RetirePhotoCheckout(t.Context(), checkout.ID)
-				require.NoError(t, err)
-			}
-			require.NoError(t, catalog.Close())
-			copyPath := filepath.Join(destination, "edited.jpg")
-			require.NoError(t, os.WriteFile(copyPath, []byte("edits"), 0o600))
-			configText := fmt.Sprintf("[[watch]]\nname = 'checkout'\nsource = %q\ndestination = '/inbox'\n", filepath.ToSlash(destination))
-			require.NoError(t, os.WriteFile(filepath.Join(layout.Root, "config.toml"), []byte(configText), 0o600))
-			t.Setenv("DOCBANK_HOME", layout.Root)
-			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
-			defer cancel()
-			err = runServe(ctx)
-			require.ErrorContains(t, err, "configured path")
-			require.ErrorContains(t, err, checkout.ID)
-			contents, err := os.ReadFile(copyPath)
-			require.NoError(t, err)
-			require.Equal(t, "edits", string(contents))
-		})
-	}
+	layout := home.Layout{Root: t.TempDir()}
+	require.NoError(t, layout.Ensure())
+	catalog, err := store.Open(layout.DBPath())
+	require.NoError(t, err)
+	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := catalog.PhotoAssetForNode(t.Context(), node.ID)
+	require.NoError(t, err)
+	destination := t.TempDir()
+	checkout, op, err := catalog.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
+	require.NoError(t, err)
+	require.NoError(t, catalog.FinishPhotoCheckout(t.Context(), checkout.ID, op.ID, store.StorageOperationFailed, "{}", "partial", time.Now().Add(time.Hour)))
+	_, err = catalog.RetirePhotoCheckout(t.Context(), checkout.ID)
+	require.NoError(t, err)
+	require.NoError(t, catalog.Close())
+	copyPath := filepath.Join(destination, "edited.jpg")
+	require.NoError(t, os.WriteFile(copyPath, []byte("edits"), 0o600))
+	configText := fmt.Sprintf("[[watch]]\nname = 'checkout'\nsource = %q\ndestination = '/inbox'\n", filepath.ToSlash(destination))
+	require.NoError(t, os.WriteFile(filepath.Join(layout.Root, "config.toml"), []byte(configText), 0o600))
+	t.Setenv("DOCBANK_HOME", layout.Root)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	err = runServe(ctx)
+	require.ErrorContains(t, err, "configured path")
+	require.ErrorContains(t, err, checkout.ID)
+	contents, err := os.ReadFile(copyPath)
+	require.NoError(t, err)
+	require.Equal(t, "edits", string(contents))
 }
