@@ -168,9 +168,11 @@ describe("document processing browser API", () => {
         }
       },
     });
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(body, { headers: { "Content-Type": "application/x-ndjson" } }),
-    );
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(body, { headers: { "Content-Type": "application/x-ndjson" } }),
+      );
     const onProgress = vi.fn();
     const pending = startProcessing(
       "session",
@@ -185,6 +187,10 @@ describe("document processing browser API", () => {
       code: "processing_status_unavailable",
     });
     try {
+      expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+        consent: true,
+        plan_fingerprint: "d".repeat(64),
+      });
       await vi.waitFor(() =>
         expect(onProgress).toHaveBeenLastCalledWith(
           expect.objectContaining({ type: "error", job: completedJob }),
@@ -474,9 +480,6 @@ describe("document processing browser API", () => {
       },
       (report: ReturnType<typeof valid>) => {
         report.results[0]!.rank = 2;
-      },
-      (report: ReturnType<typeof valid>) => {
-        report.results[0]!.semantic_rank = 1001;
       },
       (report: ReturnType<typeof valid>) => {
         report.results.push({

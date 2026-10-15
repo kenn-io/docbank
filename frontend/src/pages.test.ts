@@ -410,6 +410,7 @@ for (const header of [
   "X-Docbank-Page-SHA256",
   "X-Docbank-Page-DPI",
   "Content-Type",
+  "Content-Digest",
 ]) {
   it(`rejects mismatched ${header}`, async () => {
     const fixture = pngResponse();
@@ -426,7 +427,11 @@ for (const header of [
         inventory().inventory.recipes[0]!.recipe,
         new AbortController().signal,
       ),
-    ).rejects.toThrow(/Page image headers disagree with the selected receipt/);
+    ).rejects.toThrow(
+      header === "Content-Digest"
+        ? /Invalid page image digest/
+        : /Page image headers disagree with the selected receipt/,
+    );
     expect(decode).not.toHaveBeenCalled();
   });
 }
@@ -447,5 +452,5 @@ for (const delta of [-1, 1])
         inventory().inventory.recipes[0]!.recipe,
         new AbortController().signal,
       ),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/Invalid page image size/);
   });

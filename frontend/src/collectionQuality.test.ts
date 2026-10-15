@@ -67,7 +67,10 @@ describe("collection quality receipts", () => {
     it(`rejects a malformed ${mutation} receipt`, async () => {
       const value = receipt();
       if (mutation === "identity") value.collection.id = "22222222-2222-4222-8222-222222222222";
-      if (mutation === "profile") value.collection.coverage.profile = "different";
+      if (mutation === "profile") {
+        value.collection.coverage.profile = "different";
+        value.collection.coverage.profiles = ["different"];
+      }
       if (mutation === "counts") Object.assign(value.collection.coverage, { counts: null });
       if (mutation === "sum") value.collection.coverage.counts.complete = 2;
       if (mutation === "dimension") value.dimensions[0].field = "invented";

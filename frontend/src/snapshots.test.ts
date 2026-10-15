@@ -135,6 +135,7 @@ describe("snapshot transport and receipt validation", () => {
       },
     ],
     ["an unsafe total", async () => page({ total: Number.MAX_SAFE_INTEGER + 1 })],
+    ["wrong count", async () => page({ rows: [], total: 51 })],
     [
       "an unsafe row identity",
       async () =>
@@ -258,14 +259,20 @@ describe("snapshot transport and receipt validation", () => {
     [
       "wrong snapshot ID",
       { snapshot_id: "fedcba9876543210fedcba9876543210", previous_cursor: "previous-1" },
+      /page does not match immutable snapshot authority/,
     ],
-    ["wrong member identity", { member_hash: "0".repeat(64), previous_cursor: "previous-1" }],
+    [
+      "wrong member identity",
+      { member_hash: "0".repeat(64), previous_cursor: "previous-1" },
+      /page does not match immutable snapshot authority/,
+    ],
     [
       "wrong snapshot identity",
       { snapshot_fingerprint: `sha256:${"0".repeat(64)}`, previous_cursor: "previous-1" },
+      /page does not match immutable snapshot authority/,
     ],
-    ["missing reverse cursor", {}],
-  ])("rejects a page with %s", async (_name, overrides) => {
+    ["missing reverse cursor", {}, /page cursor direction is inconsistent/],
+  ])("rejects a page with %s", async (_name, overrides, error) => {
     const first = (await page({
       total: 2,
       total_bytes: 30,
@@ -283,7 +290,7 @@ describe("snapshot transport and receipt validation", () => {
     );
     await expect(
       readSnapshotPage("session", first, "next-1", new AbortController().signal),
-    ).rejects.toThrow();
+    ).rejects.toThrow(error);
   });
 
   it("requires the requested cursor to belong to the supplied page", async () => {
@@ -376,6 +383,11 @@ describe("exact snapshot target capture", () => {
     });
     expect(first.rows[0].revision).toBe(1);
     expect(await snapshotMemberHash(result.members)).toBe(first.member_hash);
+    first.member_hash = "0".repeat(64);
+    fetchMock.mockResolvedValue(jsonResponse(await second({ member_hash: first.member_hash })));
+    await expect(
+      captureSnapshotTargets("session", first, new AbortController().signal),
+    ).rejects.toThrow(/member hash does not match its receipt/);
     expect(fetchMock.mock.calls.every(([url]) => String(url).includes("/workspace/queries/"))).toBe(
       true,
     );
@@ -391,19 +403,9 @@ describe("exact snapshot target capture", () => {
       "Snapshot capture contains a duplicate member.",
     ],
     [
-      "wrong count",
-      async () => second({ rows: [], previous_cursor: "previous-1" }),
-      "Malformed snapshot receipt: rows is inconsistent with total.",
-    ],
-    [
       "wrong bytes",
       async () => second({ rows: [{ ...captureRows[50], size: 52 }] }),
       "Snapshot capture byte total does not match its receipt.",
-    ],
-    [
-      "wrong member hash",
-      async () => second({ member_hash: "0".repeat(64) }),
-      "Malformed snapshot receipt: page does not match immutable snapshot authority.",
     ],
     [
       "premature next cursor",
