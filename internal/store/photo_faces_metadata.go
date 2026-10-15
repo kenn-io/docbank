@@ -39,7 +39,7 @@ func validatePhotoFaceMetadataState(ctx context.Context, q metadataQuerier) erro
 }
 
 func validatePhotoFaceDecisionReferences(ctx context.Context, q metadataQuerier) error {
-	if err := requirePhotoFaceRejectionBound(ctx, q, "", ""); err != nil {
+	if err := requirePhotoFaceRejectionBound(ctx, q, "", "", ""); err != nil {
 		return fmt.Errorf("%w: validating face rejection bounds: %w", ErrInvalidPhotoFace, err)
 	}
 	return validatePersonKeyFaces(ctx, q, "", ErrInvalidPhotoFace)

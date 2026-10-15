@@ -556,9 +556,11 @@ func validateMergedPhotoFaces(ctx context.Context, tx *sql.Tx, id string) error 
 	return validatePersonKeyFaces(ctx, tx, id, ErrPersonIdentityConflict)
 }
 
-// UNION deduplicates faces referenced by both assignments and candidates.
-const personMergeFaceRevisionSQL = `UPDATE photo_faces SET revision=revision+1 WHERE face_id IN (
- SELECT face_id FROM photo_faces WHERE assertion_id IN (SELECT assertion_id FROM person_document_assertions WHERE person_id IN (?,?))
- UNION
- SELECT face_id FROM person_candidate_faces WHERE candidate_id IN (SELECT candidate_id FROM person_match_candidates WHERE suggested_person_id IN (?,?))
+// UNION deduplicates face-version pairs referenced by assignments and candidates.
+const personMergeFaceRevisionSQL = `UPDATE photo_faces SET revision=revision+1 WHERE EXISTS (
+ SELECT 1 FROM (
+  SELECT face_id,content_version_id FROM photo_faces WHERE assertion_id IN (SELECT assertion_id FROM person_document_assertions WHERE person_id IN (?,?))
+  UNION
+  SELECT e.face_id,e.content_version_id FROM person_candidate_faces e JOIN person_match_candidates c ON c.candidate_id=e.candidate_id WHERE c.suggested_person_id IN (?,?)
+ ) affected WHERE affected.face_id=photo_faces.face_id AND affected.content_version_id=photo_faces.content_version_id
 )`

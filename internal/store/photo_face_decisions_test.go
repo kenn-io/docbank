@@ -1342,3 +1342,78 @@ func TestPhotoFaceMergeUnionsRejections(t *testing.T) {
 	require.Equal(t, []string{a.PersonID}, faces[0].RejectedPersonIDs)
 	require.NoError(t, s.ValidateMetadata(ctx))
 }
+
+func TestPhotoFaceCandidateHistoryDoesNotFollowReusedFaceID(t *testing.T) {
+	t.Parallel()
+	for _, action := range []string{"dismiss", "reject"} {
+		t.Run(action, func(t *testing.T) {
+			t.Parallel()
+			s := newTestStore(t)
+			ctx := t.Context()
+			oldPerson, err := s.CreatePerson(ctx, "Old suggestion", "operator")
+			require.NoError(t, err)
+			newPerson, err := s.CreatePerson(ctx, "New name", "operator")
+			require.NoError(t, err)
+			node, face := faceForDecisionTest(t, s, "")
+			personID := ""
+			if action == "reject" {
+				personID = oldPerson.PersonID
+			}
+			decision := decideFaceForTest(t, s, node, face.FaceID, personID, action)
+			require.Len(t, decision.After.Candidates, 1)
+			oldCandidate := decision.After.Candidates[0]
+
+			updated, current, err := s.ReplaceContent(ctx, node.ID, node.Revision, fakeHash("b2"), 20, "image/jpeg")
+			require.NoError(t, err)
+			_, err = s.PruneContentVersions(ctx, node.ID, updated.Revision, VersionPruneSelector{AllPrior: true}, true)
+			require.NoError(t, err)
+			_, _, err = s.CreatePhotoFace(ctx, current.ID, face.FaceID, face.Box, "")
+			require.NoError(t, err)
+			faces, _, err := s.PhotoFaces(ctx, current.ID)
+			require.NoError(t, err)
+			require.Len(t, faces, 1)
+			require.False(t, faces[0].Dismissed)
+			require.Empty(t, faces[0].RejectedPersonIDs)
+
+			decideFaceForTest(t, s, updated, face.FaceID, newPerson.PersonID, "name")
+			var afterCandidate PersonMatchCandidate
+			require.NoError(t, s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+				var err error
+				afterCandidate, err = personCandidateByIDTx(ctx, tx, oldCandidate.CandidateID)
+				return err
+			}))
+			require.Equal(t, oldCandidate.State, afterCandidate.State)
+			require.Equal(t, oldCandidate.Revision, afterCandidate.Revision)
+			require.Equal(t, oldCandidate.Evidence, afterCandidate.Evidence)
+		})
+	}
+}
+
+func TestPersonMergeIgnoresCandidateFromPrunedFaceVersion(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	survivor, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	absorbed, err := s.CreatePerson(ctx, "Grace", "operator")
+	require.NoError(t, err)
+	node, face := faceForDecisionTest(t, s, "")
+	decideFaceForTest(t, s, node, face.FaceID, absorbed.PersonID, "reject")
+	updated, current, err := s.ReplaceContent(ctx, node.ID, node.Revision, fakeHash("b2"), 20, "image/jpeg")
+	require.NoError(t, err)
+	_, err = s.PruneContentVersions(ctx, node.ID, updated.Revision, VersionPruneSelector{AllPrior: true}, true)
+	require.NoError(t, err)
+	_, _, err = s.CreatePhotoFace(ctx, current.ID, face.FaceID, face.Box, survivor.PersonID)
+	require.NoError(t, err)
+	survivor, _, err = s.PersonByID(ctx, survivor.PersonID)
+	require.NoError(t, err)
+	absorbed, _, err = s.PersonByID(ctx, absorbed.PersonID)
+	require.NoError(t, err)
+	_, err = s.MergePersons(ctx, survivor.PersonID, absorbed.PersonID, uuid.NewString(), survivor.Revision, absorbed.Revision)
+	require.NoError(t, err)
+	faces, _, err := s.PhotoFaces(ctx, current.ID)
+	require.NoError(t, err)
+	require.Len(t, faces, 1)
+	require.Empty(t, faces[0].RejectedPersonIDs)
+	require.NoError(t, s.ValidateMetadata(ctx))
+}
