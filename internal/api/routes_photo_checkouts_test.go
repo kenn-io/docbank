@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -42,9 +43,9 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &created))
 	require.Equal(t, request.ByteLimit, created.Checkout.ByteLimit)
 	require.Equal(t, request.Selection, created.Checkout.Selection)
-	stored, err := catalog.PhotoCheckout(t.Context(), created.Checkout.ID)
+	canonicalDestination, err := filepath.EvalSymlinks(request.Destination)
 	require.NoError(t, err)
-	require.Equal(t, stored.Destination, created.Checkout.Destination)
+	require.Equal(t, canonicalDestination, created.Checkout.Destination)
 	registered := supervisor.Snapshot()
 	require.Len(t, registered, 1)
 	response, body = do(t, ts, http.MethodGet, "/api/v1/photos/checkouts/"+created.Checkout.ID, nil, nil)

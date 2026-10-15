@@ -31,7 +31,7 @@ func authoredPair(t *testing.T, s *Store) PhotoAsset {
 	return asset
 }
 
-func TestPhotoMediaClassificationRoleInferenceAndNodeFacts(t *testing.T) {
+func TestClassifyPhotoMedia(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name, mime, filename, kind string

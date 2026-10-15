@@ -424,6 +424,49 @@ func TestCheckoutRunOutcomes(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "photo bytes", string(content))
 	})
+	t.Run("installed progress allows writes during sync", func(t *testing.T) {
+		t.Parallel()
+		s := checkoutService(t)
+		asset := checkoutPhoto(t, s, "photo.jpg", "verified bytes")
+		checkout, op, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, t.TempDir(), 0)
+		require.NoError(t, err)
+		defer func() { _ = root.Close() }()
+		ctx := t.Context()
+		started, release := make(chan struct{}), make(chan struct{})
+		var releaseOnce sync.Once
+		releaseSync := func() { releaseOnce.Do(func() { close(release) }) }
+		defer releaseSync()
+		failure := errors.New("synthetic parent directory sync failure")
+		s.syncParent = func(*filepublish.RootStage) error { close(started); <-release; return failure }
+		done := make(chan error, 1)
+		go func() { done <- s.Run(ctx, checkout, root) }()
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			t.Fatal("checkout never reached directory sync")
+		}
+		status, err := s.Store.PhotoCheckoutStatus(t.Context(), checkout.ID)
+		require.NoError(t, err)
+		require.Equal(t, int64(1), status.PublishedFiles)
+		writeCtx, stopWrite := context.WithTimeout(t.Context(), 2*time.Second)
+		defer stopWrite()
+		_, err = s.Store.MkdirAll(writeCtx, "/other-write")
+		require.NoError(t, err)
+		releaseSync()
+		var runErr error
+		select {
+		case runErr = <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("checkout did not finish")
+		}
+		finished, err := s.Store.StorageOperation(t.Context(), op.ID)
+		require.NoError(t, err)
+		require.Equal(t, int64(1), finished.CompletedObjects)
+		require.Equal(t, int64(1), finished.CopiedObjects)
+		require.Equal(t, int64(len("verified bytes")), finished.CopiedBytes)
+		require.ErrorIs(t, runErr, failure)
+		require.Equal(t, store.StorageOperationFailed, finished.State)
+	})
 
 	for _, failure := range []string{"operator cancellation", "daemon shutdown", "verification failure", "source excluded"} {
 		t.Run(failure, func(t *testing.T) {
@@ -523,50 +566,6 @@ func TestCheckoutRunOutcomes(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestCheckoutRecordsInstalledProgressAndAllowsWritesDuringSync(t *testing.T) {
-	t.Parallel()
-	s := checkoutService(t)
-	asset := checkoutPhoto(t, s, "photo.jpg", "verified bytes")
-	checkout, op, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, t.TempDir(), 0)
-	require.NoError(t, err)
-	defer func() { _ = root.Close() }()
-	ctx := t.Context()
-	started, release := make(chan struct{}), make(chan struct{})
-	var releaseOnce sync.Once
-	releaseSync := func() { releaseOnce.Do(func() { close(release) }) }
-	defer releaseSync()
-	failure := errors.New("synthetic parent directory sync failure")
-	s.syncParent = func(*filepublish.RootStage) error { close(started); <-release; return failure }
-	done := make(chan error, 1)
-	go func() { done <- s.Run(ctx, checkout, root) }()
-	select {
-	case <-started:
-	case <-time.After(5 * time.Second):
-		t.Fatal("checkout never reached directory sync")
-	}
-	status, err := s.Store.PhotoCheckoutStatus(t.Context(), checkout.ID)
-	require.NoError(t, err)
-	require.Equal(t, int64(1), status.PublishedFiles)
-	writeCtx, stopWrite := context.WithTimeout(t.Context(), 2*time.Second)
-	defer stopWrite()
-	_, err = s.Store.MkdirAll(writeCtx, "/other-write")
-	require.NoError(t, err)
-	releaseSync()
-	var runErr error
-	select {
-	case runErr = <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("checkout did not finish")
-	}
-	finished, err := s.Store.StorageOperation(t.Context(), op.ID)
-	require.NoError(t, err)
-	require.Equal(t, int64(1), finished.CompletedObjects)
-	require.Equal(t, int64(1), finished.CopiedObjects)
-	require.Equal(t, int64(len("verified bytes")), finished.CopiedBytes)
-	require.ErrorIs(t, runErr, failure)
-	require.Equal(t, store.StorageOperationFailed, finished.State)
 }
 
 func TestCheckoutPreflightsCollisionsBeforePublishingBytes(t *testing.T) {

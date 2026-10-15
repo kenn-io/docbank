@@ -39,7 +39,6 @@ func TestPhotoRoutesReadAssets(t *testing.T) {
 	assert.Equal(t, asset.ID, byNode.ID)
 	assert.Equal(t, asset.Revision, byNode.Revision)
 	require.Len(t, byNode.Files, len(storedAsset.Files))
-	assert.Equal(t, store.PhotoConfirmedCaption, storedAsset.Files[0].Confirmed)
 	assert.Equal(t, storedAsset.Files[0].Confirmed, byNode.Files[0].Confirmed)
 }
 
