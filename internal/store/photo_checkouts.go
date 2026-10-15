@@ -454,6 +454,11 @@ func (s *Store) PublishPhotoCheckoutEntry(ctx context.Context, e PhotoCheckoutEn
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	// Recovery needs durable intent if install succeeds before its entry mark commits.
+	result, err := s.writeDB.ExecContext(ctx, `UPDATE storage_operations SET cursor=?,updated_at=? WHERE operation_id=(SELECT operation_id FROM photo_checkouts WHERE checkout_id=?) AND state IN ('queued','running')`, e.FileID, nowRFC3339(), e.CheckoutID)
+	if err := requireOneStorageOperationRow(result, err, e.CheckoutID, "recording checkout publication intent"); err != nil {
+		return err
+	}
 	published, publicationErr := publish()
 	if !published {
 		return publicationErr

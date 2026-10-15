@@ -174,10 +174,26 @@ func (s Service) start(supervisor *jobs.Supervisor, c store.PhotoCheckout, root 
 		if root != nil {
 			defer func() { _ = root.Close() }()
 		}
-		if interrupted {
-			return s.reconcile(ctx, c)
-		}
-		return jobs.RetryStorageOperation(ctx, time.Second, func() error { return s.Run(ctx, c, root) })
+		return jobs.RetryStorageOperation(ctx, time.Second, func() error {
+			if interrupted {
+				if _, err := jobs.AdmitStorageOperation(ctx, s.Store, c.OperationID); err != nil {
+					return jobs.DeferStorageAdmission(ctx, s.Store, c.OperationID, err)
+				}
+				if err := s.Store.ClaimPhotoCheckout(ctx, c.ID, c.OperationID); err != nil {
+					return err
+				}
+				if err := s.reconcile(ctx, c); err != nil {
+					return jobs.DeferStorageOperation(ctx, s.Store, c.OperationID, err)
+				}
+				return nil
+			}
+			err := s.Run(ctx, c, root)
+			if errors.Is(err, store.ErrPhotoCheckoutPublicationUnrecorded) {
+				interrupted = true
+				return jobs.DeferStorageOperation(ctx, s.Store, c.OperationID, err)
+			}
+			return err
+		})
 	})
 }
 
@@ -251,6 +267,10 @@ func (s Service) reconcile(ctx context.Context, c store.PhotoCheckout) error {
 		if err != nil {
 			return err
 		}
+		operation, err := s.Store.StorageOperation(ctx, c.OperationID)
+		if err != nil {
+			return err
+		}
 		fsErr = filepublish.CleanupRootStages(root)
 		var observed []string
 		seen := map[string]bool{}
@@ -258,10 +278,13 @@ func (s Service) reconcile(ctx context.Context, c store.PhotoCheckout) error {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			if e.Published {
-				// Committed copies may contain edits; only a missing path releases their base.
+			if e.Published || e.FileID == operation.Cursor {
+				// A committed copy or install intent may already contain user edits.
 				_, err := root.Lstat(filepath.FromSlash(e.Path))
 				if !errors.Is(err, os.ErrNotExist) {
+					if err != nil && !e.Published {
+						return fmt.Errorf("file %s at %q: %w", e.FileID, e.Path, err)
+					}
 					observed = append(observed, e.FileID)
 					if err != nil {
 						fsErr = errors.Join(fsErr, fmt.Errorf("file %s at %q: %w", e.FileID, e.Path, err))
@@ -295,7 +318,15 @@ func (s Service) reconcile(ctx context.Context, c store.PhotoCheckout) error {
 	if fsErr != nil && !errors.Is(fsErr, os.ErrNotExist) {
 		failure += "; reconciliation failed: " + fsErr.Error()
 	}
-	return s.finish(ctx, c, store.StorageOperationFailed, failure)
+	cancelled, err := s.Store.FinalizeLocalOperation(ctx, c.OperationID)
+	if err != nil {
+		return err
+	}
+	state := store.StorageOperationFailed
+	if cancelled {
+		state = store.StorageOperationCancelled
+	}
+	return s.finish(ctx, c, state, failure)
 }
 
 func observeCheckoutFile(ctx context.Context, root *os.Root, entry store.PhotoCheckoutEntry) (bool, error) {
