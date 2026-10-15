@@ -111,8 +111,7 @@
   function jump(year: string) {
     const chunk = chunks.find(
       (chunk) =>
-        chunk.group.year &&
-        chunk.group.items.some((item) => photoDate(item)!.slice(0, 4) === year),
+        chunk.group.year && chunk.group.items.some((item) => photoDate(item)!.slice(0, 4) === year),
     );
     if (chunk && container) {
       container.scrollTo({ top: Math.ceil(chunk.offset) });

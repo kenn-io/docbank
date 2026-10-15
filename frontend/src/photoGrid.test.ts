@@ -133,7 +133,10 @@ it("labels a session by file modified time across the whole group, not just the 
   expect(modifiedGroups).toHaveLength(1);
   expect(modifiedGroups[0]!.label).toBe("2023-11-04 · File modified");
 
-  const captured = groupPhotos([photo(3, "2025-06-01T09:00:00"), photo(4, "2025-06-01T10:00:00")], "sessions");
+  const captured = groupPhotos(
+    [photo(3, "2025-06-01T09:00:00"), photo(4, "2025-06-01T10:00:00")],
+    "sessions",
+  );
   expect(captured).toHaveLength(1);
   expect(captured[0]!.label).toBe("2025-06-01 · Capture session");
 
@@ -158,7 +161,7 @@ it("labels a session by file modified time across the whole group, not just the 
   mtimeOnly.file_modified_time = "2025-06-01T10:00:00Z";
   const mixedGroups = groupPhotos([...mixed, mtimeOnly], "sessions");
   expect(mixedGroups).toHaveLength(1);
-  expect(mixedGroups[0]!.items.map(item => item.asset_id)).toEqual(["photo-8", "photo-7"]);
+  expect(mixedGroups[0]!.items.map((item) => item.asset_id)).toEqual(["photo-8", "photo-7"]);
   expect(mixedGroups[0]!.label).toBe("2025-06-01 · Capture session");
 });
 
@@ -169,7 +172,7 @@ it("places a row with only a file modified time in its month and keeps rows with
   items[1]!.capture_time = "2020-01-01T12:00:00";
   items[2]!.capture_time = null;
   const groups = groupPhotos(items, "months");
-  expect(groups.map(group => group.key)).toEqual(["2023-11", "2020-01", "undated"]);
+  expect(groups.map((group) => group.key)).toEqual(["2023-11", "2020-01", "undated"]);
   expect(groups[0]!.items).toEqual([items[0]]);
   expect(groups.at(-1)!.items).toEqual([items[2]]);
 });

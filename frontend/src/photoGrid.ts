@@ -90,7 +90,9 @@ export function photoAspect(photo: PhotoGridRow): number {
 }
 
 // The file's modified time places photos that carry no capture date.
-export function photoDate(item: Pick<PhotoGridRow, "capture_time" | "file_modified_time">): string | null {
+export function photoDate(
+  item: Pick<PhotoGridRow, "capture_time" | "file_modified_time">,
+): string | null {
   return item.file_modified_time ?? item.capture_time ?? null;
 }
 
@@ -169,7 +171,9 @@ export function groupPhotos(
       group.items.sort((a, b) => clocks.get(b)! - clocks.get(a)!);
       // A group with any genuinely captured photo is a real capture session, even if an
       // mtime-placed photo lands in the same window; only an all-mtime group is file-modified.
-      const label = group.items.every(item => item.file_modified_time) ? "File modified" : "Capture session";
+      const label = group.items.every((item) => item.file_modified_time)
+        ? "File modified"
+        : "Capture session";
       group.label = `${date} · ${label}`;
     }
     groups.reverse();
