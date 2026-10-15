@@ -66,6 +66,14 @@ func TestCheckoutPathOverlapProtectsReservationsAndReleasedCopies(t *testing.T) 
 			check(destination, true)
 			require.NoError(t, os.Remove(edited))
 			check(destination, false)
+
+			// Reusing a retired checkout's former destination for an
+			// unrelated regular file must not block admission at that
+			// path: the checkout no longer holds anything there.
+			require.NoError(t, os.Remove(destination))
+			require.NoError(t, os.WriteFile(destination, []byte("unrelated"), 0o600))
+			check(destination, false)
+			require.NoError(t, os.Remove(destination))
 		})
 	}
 }

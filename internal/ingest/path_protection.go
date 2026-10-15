@@ -67,6 +67,19 @@ func PhotoCheckoutProtectsDestination(c store.PhotoCheckout) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	info, statErr := folder.Stat()
+	if statErr != nil {
+		_ = folder.Close()
+		return false, statErr
+	}
+	if !info.IsDir() {
+		// Something other than the checkout's folder now occupies this path,
+		// so it no longer holds a copy and imposes no admission restriction.
+		if err := folder.Close(); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
 	_, readErr := folder.Readdirnames(1)
 	if err := folder.Close(); err != nil {
 		return false, err

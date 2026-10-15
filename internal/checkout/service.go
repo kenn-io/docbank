@@ -198,7 +198,7 @@ func (s Service) validateDestination(ctx context.Context, root *os.Root, destina
 			return err
 		}
 	}
-	return checkEmptyDestination(root, destination)
+	return nil
 }
 
 func (s Service) Start(supervisor *jobs.Supervisor, c store.PhotoCheckout, root *os.Root) error {
