@@ -206,95 +206,84 @@ describe("browser authentication", () => {
     expect(new Headers(fetchMock.mock.calls[2]?.[1]?.headers).get("If-Match")).toBe("2");
   });
 
-  it("trashes one stable node under its inspected revision", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          id: 42,
-          name: "report.txt",
-          kind: "file",
-          size: 12,
-          revision: 8,
-          created_at: "2026-07-28T12:00:00Z",
-          modified_at: "2026-07-28T12:00:00Z",
-          trashed_at: "2026-07-28T12:01:00Z",
-          path: "/Reports/report.txt",
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
-    );
-
-    await expect(trashNode("session", 42, 7)).resolves.toMatchObject({
-      id: 42,
-      revision: 8,
-      path: "/Reports/report.txt",
-    });
-    const [path, request] = fetchMock.mock.calls[0] ?? [];
-    expect(path).toBe("/api/v1/nodes/42/trash");
-    expect(request?.method).toBe("POST");
-    expect(new Headers(request?.headers).get("If-Match")).toBe("7");
-  });
-
-  it("restores one inspected root under its revision", async () => {
-    const restored = {
-      id: 42,
-      parent_id: 2,
-      name: "report.txt",
-      kind: "file",
-      size: 12,
-      revision: 9,
-      created_at: "2026-07-28T12:00:00Z",
-      modified_at: "2026-07-28T12:02:00Z",
-      path: "/Reports/report (2).txt",
-    };
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify(restored), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
-    await expect(restoreNode("session", 42, 8)).resolves.toEqual(restored);
-
-    const [path, request] = fetchMock.mock.calls[0] ?? [];
-    expect(path).toBe("/api/v1/nodes/42/restore");
-    expect(request?.method).toBe("POST");
-    expect(new Headers(request?.headers).get("If-Match")).toBe("8");
-  });
-
-  it("changes one tag assignment under the inspected node revision", async () => {
-    const receipt = {
-      tag: {
-        id: "11111111-1111-4111-8111-111111111111",
-        name: "reviewed",
-        revision: 2,
-        assignment_count: 4,
-      },
-      node: {
+  it.each([
+    {
+      operation: "trash",
+      revision: 7,
+      method: "POST",
+      path: "/api/v1/nodes/42/trash",
+      response: {
         id: 42,
         name: "report.txt",
         kind: "file",
         size: 12,
         revision: 8,
         created_at: "2026-07-28T12:00:00Z",
-        modified_at: "2026-07-28T12:02:00Z",
+        modified_at: "2026-07-28T12:00:00Z",
+        trashed_at: "2026-07-28T12:01:00Z",
         path: "/Reports/report.txt",
       },
-      changed: true,
-    };
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify(receipt), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
-
-    await expect(
-      changeNodeTag("session", 42, 7, "11111111-1111-4111-8111-111111111111", true),
-    ).resolves.toEqual(receipt);
-
-    const [path, request] = fetchMock.mock.calls[0] ?? [];
-    expect(path).toBe("/api/v1/nodes/42/tags/11111111-1111-4111-8111-111111111111");
-    expect(request?.method).toBe("PUT");
-    expect(new Headers(request?.headers).get("If-Match")).toBe("7");
-  });
+    },
+    {
+      operation: "restore",
+      revision: 8,
+      method: "POST",
+      path: "/api/v1/nodes/42/restore",
+      response: {
+        id: 42,
+        parent_id: 2,
+        name: "report.txt",
+        kind: "file",
+        size: 12,
+        revision: 9,
+        created_at: "2026-07-28T12:00:00Z",
+        modified_at: "2026-07-28T12:02:00Z",
+        path: "/Reports/report (2).txt",
+      },
+    },
+    {
+      operation: "tag assignment",
+      revision: 7,
+      method: "PUT",
+      path: "/api/v1/nodes/42/tags/11111111-1111-4111-8111-111111111111",
+      response: {
+        tag: {
+          id: "11111111-1111-4111-8111-111111111111",
+          name: "reviewed",
+          revision: 2,
+          assignment_count: 4,
+        },
+        node: {
+          id: 42,
+          name: "report.txt",
+          kind: "file",
+          size: 12,
+          revision: 8,
+          created_at: "2026-07-28T12:00:00Z",
+          modified_at: "2026-07-28T12:02:00Z",
+          path: "/Reports/report.txt",
+        },
+        changed: true,
+      },
+    },
+  ])(
+    "applies $operation under the inspected node revision",
+    async ({ operation, revision, method, path, response }) => {
+      const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(response));
+      const result = await (operation === "trash"
+        ? trashNode("session", 42, revision)
+        : operation === "restore"
+          ? restoreNode("session", 42, revision)
+          : changeNodeTag("session", 42, revision, "11111111-1111-4111-8111-111111111111", true));
+      if (operation === "trash") {
+        expect(result).toMatchObject({ id: 42, revision: 8, path: "/Reports/report.txt" });
+      } else {
+        expect(result).toEqual(response);
+      }
+      const [requestPath, request] = fetchMock.mock.calls[0] ?? [];
+      expect(requestPath).toBe(path);
+      expect(request?.method).toBe(method);
+      expect(new Headers(request?.headers).get("If-Match")).toBe(String(revision));
+    },
+  );
 });

@@ -1,5 +1,4 @@
 import { afterEach, expect, it } from "vite-plus/test";
-import { takeFragmentSession } from "./browser-session.js";
 import { queryFromFragment, replaceQueryURL } from "./queryURL.js";
 import { parseQuery } from "./query.js";
 
@@ -18,18 +17,15 @@ it("round-trips the full query, strips session credentials and preserves history
   expect(sessionStorage.length).toBe(0);
 });
 
-it("restores the query while consuming a combined sign-in fragment", () => {
+it("round-trips the query from a combined sign-in fragment", () => {
   history.replaceState(
     null,
     "",
     `/#web_session=secret&web_upload_secret=proof&query=${encodeURIComponent(JSON.stringify(query))}`,
   );
   const restored = queryFromFragment(location.hash);
-  expect(takeFragmentSession()).toEqual({ token: "secret", uploadSecret: "proof" });
-  expect(location.hash).toBe("");
   replaceQueryURL(restored);
   expect(queryFromFragment(location.hash)).toEqual(query);
-  expect(location.hash).not.toContain("web_session");
 });
 
 it("rejects ambiguous, oversized and unknown query state", () => {

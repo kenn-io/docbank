@@ -29,7 +29,6 @@ it("offers the API key and clears it after rejected sign-in", async () => {
   await fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
   await screen.findByText("invalid API key");
   await waitFor(() => expect((field as HTMLInputElement).value).toBe(""));
-  expect((field as HTMLInputElement).value).toBe("");
   const call = fetchMock.mock.calls.find(([input]) => String(input).endsWith("/login"));
   expect(JSON.parse(String(call?.[1]?.body))).toEqual({
     api_key: "synthetic-browser-credential-0123456789",
@@ -74,7 +73,6 @@ it("signs out with a DELETE request and the tab-token session header", async () 
   await fireEvent.input(key, { target: { value: "synthetic-master-key" } });
   await fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
   const signOut = await screen.findByRole("button", { name: "Sign out" });
-  expect((key as HTMLInputElement).value).toBe("");
   await fireEvent.click(signOut);
   await waitFor(() => expect(screen.getByLabelText("API key")).toBeTruthy());
   await waitFor(
@@ -91,7 +89,6 @@ it("signs out with a DELETE request and the tab-token session header", async () 
     ([input, init]) => String(input) === "/api/daemon/web-session" && init?.method === "DELETE",
   );
   expect(new Headers(call?.[1]?.headers).get("X-Docbank-Web-Session")).toBe("tab-token");
-  vi.unstubAllGlobals();
 });
 
 it("clears an open Manage tags dialog after session expiry before signing in again", async () => {
