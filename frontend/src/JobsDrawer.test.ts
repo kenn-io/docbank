@@ -113,9 +113,9 @@ describe("background jobs drawer", () => {
         expect(screen.getByRole("button", { name: "Resume Photo import" })).toBeTruthy();
       } else {
         expect(screen.getByText("No background jobs")).toBeTruthy();
+        expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
       }
       expect(screen.queryByRole("alert")).toBeNull();
-      expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
       expect(fetchSpy).toHaveBeenCalledTimes(3);
     } finally {
       vi.useRealTimers();

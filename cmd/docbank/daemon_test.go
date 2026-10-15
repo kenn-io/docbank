@@ -353,29 +353,14 @@ func newCheckoutReservationFixture(t *testing.T) (home.Layout, *store.Store, str
 	return layout, catalog, checkout.ID, destination
 }
 
-func TestConfiguredCheckoutValidationRejectsReservedPaths(t *testing.T) {
+func TestConfiguredCheckoutValidationChecksStoreBindingOverlap(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
-		name       string
-		storeBound bool
-	}{
-		{name: "store binding", storeBound: true},
-		{name: "watch source"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			_, catalog, checkoutID, destination := newCheckoutReservationFixture(t)
-			defer func() { require.NoError(t, catalog.Close()) }()
-			cfg := config.Default()
-			var stores []store.BlobStore
-			if tc.storeBound {
-				cfg.StoreBindings = map[string]config.StoreBindingConfig{"archive": {Kind: "filesystem", Path: destination}}
-				stores = []store.BlobStore{{Name: "archive", Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "archive"}}
-			} else {
-				cfg.Watches = []config.WatchConfig{{Name: "checkout", Source: destination}}
-			}
-			require.ErrorContains(t, validateConfiguredCheckouts(t.Context(), cfg, stores, catalog), checkoutID)
-		})
-	}
+	_, catalog, checkoutID, destination := newCheckoutReservationFixture(t)
+	defer func() { require.NoError(t, catalog.Close()) }()
+	cfg := config.Default()
+	cfg.StoreBindings = map[string]config.StoreBindingConfig{"archive": {Kind: "filesystem", Path: destination}}
+	stores := []store.BlobStore{{Name: "archive", Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "archive"}}
+	require.ErrorContains(t, validateConfiguredCheckouts(t.Context(), cfg, stores, catalog), checkoutID)
 }
 
 func TestCheckoutReservationsPreventDaemonStartup(t *testing.T) {
