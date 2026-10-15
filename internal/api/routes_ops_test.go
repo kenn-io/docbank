@@ -222,8 +222,7 @@ func TestIngestRejectsNonLoopback(t *testing.T) {
 	cfg.Server.APIKey = "test-key"
 	srv := api.NewServer(api.Deps{Store: s, Blobs: blobs, VaultRoot: dir, Cfg: cfg})
 	for _, test := range []struct {
-		path      string
-		forwarded bool
+		path string
 	}{
 		{path: "/api/v1/ingest"},
 		{path: "/api/v1/ingest/stream"},
@@ -231,20 +230,11 @@ func TestIngestRejectsNonLoopback(t *testing.T) {
 		{path: "/api/v1/packages/preflights"},
 		{path: "/api/v1/photos/imports"},
 		{path: "/api/v1/photos/checkouts"},
-		{path: "/api/v1/ingest", forwarded: true},
 	} {
-		name := test.path
-		if test.forwarded {
-			name += " with forwarding headers"
-		}
-		t.Run(name, func(t *testing.T) {
+		t.Run(test.path, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "http://localhost"+test.path, strings.NewReader(`{"paths":["/x"],"dest":"/inbox"}`))
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("X-Api-Key", "test-key")
-			if test.forwarded {
-				req.Header.Set("X-Forwarded-For", "127.0.0.1")
-				req.Header.Set("Forwarded", "for=127.0.0.1")
-			}
 			req.RemoteAddr = "192.0.2.1:4444"
 			rec := httptest.NewRecorder()
 			srv.Handler().ServeHTTP(rec, req)

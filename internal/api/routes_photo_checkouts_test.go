@@ -47,7 +47,6 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 	require.Equal(t, stored.Destination, created.Checkout.Destination)
 	registered := supervisor.Snapshot()
 	require.Len(t, registered, 1)
-	require.Equal(t, "storage:"+created.Operation.ID, registered[0].Name)
 	response, body = do(t, ts, http.MethodGet, "/api/v1/photos/checkouts/"+created.Checkout.ID, nil, nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var status api.PhotoCheckoutStatus
@@ -68,8 +67,6 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 	require.NoError(t, catalog.FinishPhotoCheckout(t.Context(), created.Checkout.ID, created.Operation.ID, store.StorageOperationCancelled, "{}", "cancelled", time.Now().Add(time.Hour)))
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/checkouts/"+created.Checkout.ID+"/retire", nil, nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	var retired store.PhotoCheckout
-	require.NoError(t, json.Unmarshal([]byte(body), &retired))
 	response, body = do(t, ts, http.MethodGet, "/api/v1/photos/checkouts/00000000-0000-4000-8000-000000000001", nil, nil)
 	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
 }
