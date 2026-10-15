@@ -8,24 +8,19 @@ const query = parseQuery(
 );
 
 it("round-trips the full query, strips session credentials and preserves history state", () => {
-  history.replaceState({ fixtureIndex: 3 }, "", "/#web_session=secret&web_upload_secret=proof");
-  replaceQueryURL(query);
+  history.replaceState(
+    { fixtureIndex: 3 },
+    "",
+    `/#web_session=secret&web_upload_secret=proof&query=${encodeURIComponent(JSON.stringify(query))}`,
+  );
+  const restored = queryFromFragment(location.hash);
+  expect(restored).toEqual(query);
+  replaceQueryURL(restored);
   expect(queryFromFragment(location.hash)).toEqual(query);
   expect(history.state).toEqual({ fixtureIndex: 3 });
   expect(location.hash).not.toContain("secret");
   expect(location.hash).not.toContain("proof");
   expect(sessionStorage.length).toBe(0);
-});
-
-it("round-trips the query from a combined sign-in fragment", () => {
-  history.replaceState(
-    null,
-    "",
-    `/#web_session=secret&web_upload_secret=proof&query=${encodeURIComponent(JSON.stringify(query))}`,
-  );
-  const restored = queryFromFragment(location.hash);
-  replaceQueryURL(restored);
-  expect(queryFromFragment(location.hash)).toEqual(query);
 });
 
 it("rejects ambiguous, oversized and unknown query state", () => {

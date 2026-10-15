@@ -132,7 +132,6 @@ describe("processing receipts", () => {
           kind: "rendition_segment",
           build_id: buildID,
           segment_id: "segment-1",
-          time_span: { start_ms: 1000, end_ms: 2000 },
           media_sources: [source],
         },
       ],
@@ -308,6 +307,15 @@ describe("search result authority", () => {
     report.results[0]!.path = `/${"p".repeat(17000)}`;
     expect(validateDocumentSearchReport(report, request)).toMatchObject({
       results: [{ content_version_id: versionID }],
+    });
+  });
+
+  it("accepts rendition-chunk embedding evidence with a build and time span", () => {
+    const report = valid();
+    const mediaIdentity = { build_id: "f".repeat(64), time_span: { start_ms: 1000, end_ms: 2000 } };
+    Object.assign(report.results[0]!.evidence[0]!, mediaIdentity);
+    expect(validateDocumentSearchReport(report, request)).toMatchObject({
+      results: [{ evidence: [mediaIdentity] }],
     });
   });
 });
