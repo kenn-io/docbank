@@ -140,20 +140,6 @@ func TestPhotoSettingsRecomputeInheritedAssets(t *testing.T) {
 	require.ErrorIs(t, err, ErrStaleRevision)
 	assert.Contains(t, receiptOperations(photoReceiptRows(t, s, group.ID)), "settings_recompute")
 	require.NoError(t, s.ValidateMetadata(ctx))
-	t.Run("detach display falls back to RAW", func(t *testing.T) {
-		s := newTestStore(t)
-		ctx := t.Context()
-		asset := authoredPair(t, s)
-		imageFileID := fileByRole(asset.Files, PhotoRoleImage).ID
-		rawFileID := fileByRole(asset.Files, PhotoRoleRAW).ID
-		asset, err := s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &imageFileID)
-		require.NoError(t, err)
-		asset, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, imageFileID, PhotoDetachOptions{})
-		require.NoError(t, err)
-		require.NotNil(t, asset.DisplayFileID)
-		assert.Equal(t, rawFileID, *asset.DisplayFileID)
-		assert.NoError(t, s.ValidateMetadata(ctx))
-	})
 }
 
 func TestPhotoAdmissionSurvivesRenameAndMetadataRoundTrip(t *testing.T) {
@@ -494,6 +480,20 @@ func TestPhotoSidecarTargetsAttachReceiptsAndNoDisplayableMember(t *testing.T) {
 			}
 		}
 		assert.NotEmpty(t, sidecarReceipt.AfterJSON)
+	})
+	t.Run("detach display falls back to RAW", func(t *testing.T) {
+		s := newTestStore(t)
+		ctx := t.Context()
+		asset := authoredPair(t, s)
+		imageFileID := fileByRole(asset.Files, PhotoRoleImage).ID
+		rawFileID := fileByRole(asset.Files, PhotoRoleRAW).ID
+		asset, err := s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &imageFileID)
+		require.NoError(t, err)
+		asset, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, imageFileID, PhotoDetachOptions{})
+		require.NoError(t, err)
+		require.NotNil(t, asset.DisplayFileID)
+		assert.Equal(t, rawFileID, *asset.DisplayFileID)
+		assert.NoError(t, s.ValidateMetadata(ctx))
 	})
 }
 

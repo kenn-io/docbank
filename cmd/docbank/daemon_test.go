@@ -373,11 +373,6 @@ func TestServeRejectsCheckoutCopiesBeforeStartup(t *testing.T) {
 		stores := []store.BlobStore{{Name: "archive", Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "archive"}}
 		require.ErrorContains(t, validateConfiguredCheckouts(t.Context(), cfg, stores, catalog), checkout.ID)
 	})
-	t.Run("watch source validation", func(t *testing.T) {
-		cfg := config.Default()
-		cfg.Watches = []config.WatchConfig{{Name: "checkout", Source: destination, Destination: "/inbox"}}
-		require.ErrorContains(t, validateConfiguredCheckouts(t.Context(), cfg, nil, catalog), checkout.ID)
-	})
 	require.NoError(t, catalog.Close())
 	configText := fmt.Sprintf("[[watch]]\nname = 'checkout'\nsource = %q\ndestination = '/inbox'\n", filepath.ToSlash(destination))
 	require.NoError(t, os.WriteFile(filepath.Join(layout.Root, "config.toml"), []byte(configText), 0o600))

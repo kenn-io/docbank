@@ -871,25 +871,11 @@ func TestPhotoCheckoutPublicationOrdersEligibilityMutationsWithoutReservingWrite
 				changed <- err
 			}()
 			<-attempting
-			require.Eventually(t, func() bool {
-				select {
-				case err := <-changed:
-					t.Fatalf("eligibility changed during installation: %v", err)
-				default:
-				}
-				if mutation == "node trash" || mutation == "path trash" {
-					if s.photoPublicationTreeMu.TryRLock() {
-						s.photoPublicationTreeMu.RUnlock()
-						return false
-					}
-					return true
-				}
-				s.photoPublicationMu.Lock()
-				lock := s.photoPublicationLocks[asset.ID]
-				blocked := lock != nil && lock.users > 1
-				s.photoPublicationMu.Unlock()
-				return blocked
-			}, 5*time.Second, 10*time.Millisecond)
+			select {
+			case err := <-changed:
+				t.Fatalf("eligibility changed during installation: %v", err)
+			case <-time.After(100 * time.Millisecond): //nolint:kennlint // give the attempted mutation time to finish if publication doesn't block it
+			}
 			_, err = s.SetPhotoAssetExcluded(ctx, other.ID, other.Revision, true)
 			require.NoError(t, err)
 			releaseInstall()

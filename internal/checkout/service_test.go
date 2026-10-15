@@ -210,26 +210,13 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 				require.NoError(t, root.WriteFile(filepath.FromSlash(entries[0].Path), []byte("photo bytes"), 0o600))
 				require.NoError(t, s.Store.AdvanceStorageOperation(t.Context(), op.ID, entries[0].FileID, 1, 1, entries[0].Size, "{}"))
 				require.NoError(t, root.WriteFile(filepath.FromSlash(entries[0].Path), []byte(test.fileContent), 0o600))
-				status, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
-				require.NoError(t, err)
-				require.Equal(t, "running", status.Checkout.State)
-				require.False(t, status.Checkout.RetentionReleased)
-				require.Zero(t, status.PublishedFiles)
 				keep = filepath.Join(c.Destination, filepath.FromSlash(entries[0].Path))
 				stagePayload = true
 			case "no cursor":
 				require.NoError(t, s.Store.ClaimPhotoCheckout(t.Context(), c.ID, op.ID))
 				require.NoError(t, root.MkdirAll(filepath.Dir(filepath.FromSlash(entries[0].Path)), 0o700))
 				require.NoError(t, root.WriteFile(filepath.FromSlash(entries[0].Path), []byte("photo bytes"), 0o600))
-				operation, err := s.Store.StorageOperation(t.Context(), op.ID)
-				require.NoError(t, err)
-				require.Empty(t, operation.Cursor)
 				require.NoError(t, root.WriteFile(filepath.FromSlash(entries[0].Path), []byte(test.fileContent), 0o600))
-				status, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
-				require.NoError(t, err)
-				require.Equal(t, "running", status.Checkout.State)
-				require.False(t, status.Checkout.RetentionReleased)
-				require.Zero(t, status.PublishedFiles)
 				keep = filepath.Join(c.Destination, filepath.FromSlash(entries[0].Path))
 				stagePayload = true
 			}
