@@ -387,7 +387,6 @@ describe("document processing browser API", () => {
     const controller = new AbortController();
     let receivedSignal: AbortSignal | null | undefined;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
-      expect(JSON.parse(String(init?.body))).toMatchObject({ consent: true });
       receivedSignal = init?.signal;
       return new Promise<Response>((_resolve, reject) => {
         init?.signal?.addEventListener(

@@ -12,6 +12,7 @@ import {
   sealPhotoExportSource,
 } from "./exports.js";
 import { snapshotMemberHash } from "./snapshots.js";
+import { streamExportJobEvents } from "./export-events.js";
 
 const id = "11111111-1111-4111-8111-111111111111";
 const planID = "22222222-2222-4222-8222-222222222222";
@@ -267,21 +268,39 @@ it("accepts current-state gaps and byte-identical duplicates, never treats EOF a
   ).rejects.toThrow(/closed/);
 });
 
-it("rejects conflicting duplicates, backwards, truncated and oversized progress", async () => {
+it("rejects conflicting duplicates and backwards progress", async () => {
   const line = (job: unknown) =>
     JSON.stringify({ delivery: "current_state", requested_after: 0, job });
   for (const [content, error] of [
     [events([line(queued), line({ ...queued, state: "running" })]), /captured authority/],
     [events([line({ ...queued, sequence: 3 }), line(queued)]), /captured authority/],
+  ] as const) {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(content);
+    await expect(
+      readExportEvents("s", plan, jobID, undefined, new AbortController().signal, () => {}),
+    ).rejects.toThrow(error);
+  }
+});
+
+it("rejects truncated and oversized progress streams", async () => {
+  for (const [content, error] of [
     [
-      new Response(line(complete), { headers: { "Content-Type": "application/x-ndjson" } }),
+      new Response(
+        JSON.stringify({ delivery: "current_state", requested_after: 0, job: complete }),
+        {
+          headers: { "Content-Type": "application/x-ndjson" },
+        },
+      ),
       /progress stream was truncated/,
     ],
     [events(["a".repeat(65537)]), /progress event was unexpectedly large/],
   ] as const) {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(content);
     await expect(
-      readExportEvents("s", plan, jobID, undefined, new AbortController().signal, () => {}),
+      streamExportJobEvents(jobID, undefined, {
+        session: "s",
+        signal: new AbortController().signal,
+      }).next(),
     ).rejects.toThrow(error);
   }
 });
