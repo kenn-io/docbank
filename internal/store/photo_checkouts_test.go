@@ -177,6 +177,21 @@ func TestPhotoCheckoutMetadata(t *testing.T) {
 			var roundtrip bytes.Buffer
 			require.NoError(t, restored.ExportMetadata(t.Context(), &roundtrip))
 			require.Equal(t, string(f.snapshot), roundtrip.String())
+
+			retired, err := s.RetirePhotoCheckout(t.Context(), c.ID)
+			require.NoError(t, err)
+			var retiredSnapshot bytes.Buffer
+			require.NoError(t, s.ExportMetadata(t.Context(), &retiredSnapshot))
+			retiredRestored, err := Open(filepath.Join(t.TempDir(), "retired-restored.db"), driver.driver)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, retiredRestored.Close()) })
+			require.NoError(t, retiredRestored.ImportMetadata(t.Context(), bytes.NewReader(retiredSnapshot.Bytes())))
+			actualRetired, err := retiredRestored.PhotoCheckout(t.Context(), c.ID)
+			require.NoError(t, err)
+			require.Equal(t, retired.RetiredAt, actualRetired.RetiredAt)
+			require.True(t, actualRetired.RetentionReleased)
+			_, err = retiredRestored.RetirePhotoCheckout(t.Context(), c.ID)
+			require.NoError(t, err)
 		})
 	}
 	t.Run("restore colon filename on Windows", func(t *testing.T) {
@@ -862,7 +877,7 @@ func TestPhotoCheckoutPublicationOrdersEligibilityMutationsWithoutReservingWrite
 	}
 }
 
-func TestRetirePhotoCheckoutRequiresFinishIsIdempotentAndRestoresTimestamp(t *testing.T) {
+func TestRetirePhotoCheckoutRequiresFinishAndIsIdempotent(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -886,14 +901,4 @@ func TestRetirePhotoCheckoutRequiresFinishIsIdempotentAndRestoresTimestamp(t *te
 	again, err := s.RetirePhotoCheckout(ctx, checkout.ID)
 	require.NoError(t, err)
 	require.Equal(t, retired, again)
-	var exported bytes.Buffer
-	require.NoError(t, s.ExportMetadata(ctx, &exported))
-	restored := newTestStore(t)
-	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
-	actual, err := restored.PhotoCheckout(ctx, checkout.ID)
-	require.NoError(t, err)
-	require.Equal(t, retired.RetiredAt, actual.RetiredAt)
-	require.True(t, actual.RetentionReleased)
-	_, err = restored.RetirePhotoCheckout(ctx, checkout.ID)
-	require.NoError(t, err)
 }
