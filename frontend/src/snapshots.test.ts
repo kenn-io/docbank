@@ -135,7 +135,7 @@ describe("snapshot transport and receipt validation", () => {
       },
     ],
     ["an unsafe total", async () => page({ total: Number.MAX_SAFE_INTEGER + 1 })],
-    ["wrong count", async () => page({ rows: [], total: 51 })],
+    ["empty rows with a nonzero total", async () => page({ rows: [], total: 51 })],
     [
       "an unsafe row identity",
       async () =>
@@ -383,17 +383,23 @@ describe("exact snapshot target capture", () => {
     });
     expect(first.rows[0].revision).toBe(1);
     expect(await snapshotMemberHash(result.members)).toBe(first.member_hash);
-    first.member_hash = "0".repeat(64);
-    fetchMock.mockResolvedValue(jsonResponse(await second({ member_hash: first.member_hash })));
-    await expect(
-      captureSnapshotTargets("session", first, new AbortController().signal),
-    ).rejects.toThrow(/member hash does not match its receipt/);
     expect(fetchMock.mock.calls.every(([url]) => String(url).includes("/workspace/queries/"))).toBe(
       true,
     );
     expect(
       fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/batch/tags")),
     ).toHaveLength(0);
+  });
+
+  it("rejects a capture whose member hash does not match its receipt", async () => {
+    const first = await twoPageFirst();
+    first.member_hash = "0".repeat(64);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse(await second({ member_hash: first.member_hash })),
+    );
+    await expect(
+      captureSnapshotTargets("session", first, new AbortController().signal),
+    ).rejects.toThrow(/member hash does not match its receipt/);
   });
 
   it.each([

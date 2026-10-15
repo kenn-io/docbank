@@ -140,7 +140,7 @@ describe("document processing browser API", () => {
     },
   );
 
-  it("retains final job identities when the stream reports unavailable status", async () => {
+  it("sends consent and plan_fingerprint and retains final job identities when status is unavailable", async () => {
     const job = {
       id: "a".repeat(64),
       embedding_job_ids: [],
@@ -187,15 +187,15 @@ describe("document processing browser API", () => {
       code: "processing_status_unavailable",
     });
     try {
-      expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
-        consent: true,
-        plan_fingerprint: "d".repeat(64),
-      });
       await vi.waitFor(() =>
         expect(onProgress).toHaveBeenLastCalledWith(
           expect.objectContaining({ type: "error", job: completedJob }),
         ),
       );
+      expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+        consent: true,
+        plan_fingerprint: "d".repeat(64),
+      });
     } finally {
       stream.close();
       await rejection;
