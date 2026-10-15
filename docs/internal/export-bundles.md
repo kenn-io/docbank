@@ -24,7 +24,7 @@ separate owners. Restarting an MCP process grants no independent allowance.
 
 ## Exact selection and preview
 
-CLI and MCP previews create an explicit source, then an originals-only plan.
+MCP previews create an explicit source, then an originals-only plan. CLI previews also accept a photo rendering profile and a Photos scope.
 They accept up to 1,000 node/version pairs without expanding folders,
 attachments, or families. Multiple retained versions of one node are valid;
 duplicate pairs are not. Historical versions need not be current, but the node
@@ -223,3 +223,13 @@ authenticity. Fixtures use isolated synthetic vaults and close setup stores
 before daemon ownership. These tests do not qualify recursive attachment
 export or family maintenance and restore. Local execution provides no evidence
 of an untested operating system.
+
+## Rendered photos
+
+Photo source resolution extends `ListPhotoAssets`, including its complete query population and Hidden unlock. Preparation captures the exact display versions, asset/file/node revisions, authored decisions, and keyword values. The renderer reads verified originals sequentially, collects container inspection and metadata once and shares EXIF interpretation and RAW preview selection with visual previews, and writes temporary outputs before entering publication. Publication writes up to 1 GiB of staged output into blob storage under the mutation lease. Sealing then rechecks those inputs and records durable blob receipts and existing export role roots in a database transaction. A concurrent edit refuses the plan.
+
+`photo_rendered` recipes bind the source, output dimensions, embedded-preview origin, and profile. The ZIP worker and independent archive verifier consume those receipts through the existing export flow. JPEG and PNG outputs use a bounded TIFF directory writer and an XMP merge. Rebuilding reachable EXIF directories removes GPS payloads and stale thumbnails. Only confirmed authored fields overwrite source decisions, including empty strings and zero ratings. Catalog tags replace embedded keywords only when at least one tag exists. Otherwise, a bounded IPTC reader transfers Photoshop resource 0x0404 keywords from JPEG APP13 and TIFF 0x8649, plus TIFF 0x83bb keywords into XMP, combining them with existing plain subjects while preserving unrelated and hierarchical properties. IPTC supports undeclared ASCII, declared UTF-8, and declared Latin-1; malformed records or unsupported keyword encodings refuse metadata-enabled preparation with a metadata-off remedy. Preparation refuses extended XMP when metadata is enabled; turn image metadata off to export that photo. Full preparation inputs stay internal; sealing compares their canonical JSON with current authority. ICC profiles travel with pixels, including metadata-off exports. Rendering runs outside the mutation gate; admission caps members, source bytes, pixels per image and output bytes before publication. Exported orientations normalize to 1 after pixel transforms.
+
+Rendered copies are temporary export artifacts. Their role roots protect them from garbage collection while retained. Portable backups include retained plans and their generated output.
+
+Preparation admits one photo export per vault, up to 16 photos, 100 million pixels per image, 512 MiB of source bytes, and 1 GiB of encoded output. The output limit counts delivered bytes. At 100 million pixels, a 16-bit decoded image can occupy 800 MB, with up to 400 MB each for resize, orientation, and JPEG matte buffers, alongside source bytes, encoded output, and metadata rewrite buffers. Peak process memory can exceed several GiB; the 1 GiB output cap is not a heap limit.

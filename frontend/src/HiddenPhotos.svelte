@@ -7,11 +7,12 @@
   import { PhotoPreviewCache } from "./photoPreviewCache.js";
   import { concealPhotoWorkspace, revalidatePhotoWorkspace, type PhotoWorkspace } from "./photoWorkspace.js";
   import type { ShortcutManager } from "@kenn-io/kit-ui";
+  import type { ExportInput } from "./exportState.js";
   import PhotosWorkspace from "./PhotosWorkspace.svelte";
   import { APIError } from "./api-transport.js";
   import { HiddenAccess } from "./hiddenAccess.svelte.js";
 
-  let { tags, tagsError = "", tagsLoading = false, tagsTotal = 0, onloadtags, onloadmoretags, onmetadatachanged, undoState, onhelp, shortcuts, photoID = "", onphotochange = () => {}, onconceal, access, photoActionError = "", ontrashed, onunhidden, onactionerror, onstate, onaccessfailure }: { tags?: import("./generated/docbank.js").Tag[]; tagsError?: string; tagsLoading?: boolean; tagsTotal?: number; onloadtags?: () => Promise<void>; onloadmoretags?: () => Promise<void>; onmetadatachanged?: (receipt: import("./generated/docbank.js").PhotoAuthoredReceipt, tags: import("./generated/docbank.js").Tag[]) => void; undoState?: PhotoUndoState; onhelp?: () => void; shortcuts?: ShortcutManager; photoID?: string; onphotochange?: (id: string, mode: "open" | "step" | "close") => void; onconceal?: (discarded: boolean) => void; access: HiddenAccess; photoActionError?: string; ontrashed?: () => void; onunhidden?: () => void; onactionerror?: (error: string) => void; onstate?: (state: PhotoHiddenState) => void; onaccessfailure?: () => void } = $props();
+  let { tags, tagsError = "", tagsLoading = false, tagsTotal = 0, onloadtags, onloadmoretags, onmetadatachanged, undoState, onhelp, shortcuts, photoID = "", onphotochange = () => {}, onconceal, access, photoActionError = "", ontrashed, onunhidden, onactionerror, onstate, onaccessfailure, onexport }: { tags?: import("./generated/docbank.js").Tag[]; tagsError?: string; tagsLoading?: boolean; tagsTotal?: number; onloadtags?: () => Promise<void>; onloadmoretags?: () => Promise<void>; onmetadatachanged?: (receipt: import("./generated/docbank.js").PhotoAuthoredReceipt, tags: import("./generated/docbank.js").Tag[]) => void; undoState?: PhotoUndoState; onhelp?: () => void; shortcuts?: ShortcutManager; photoID?: string; onphotochange?: (id: string, mode: "open" | "step" | "close") => void; onconceal?: (discarded: boolean) => void; access: HiddenAccess; photoActionError?: string; ontrashed?: () => void; onunhidden?: () => void; onactionerror?: (error: string) => void; onstate?: (state: PhotoHiddenState) => void; onaccessfailure?: () => void; onexport?: (input: ExportInput) => void } = $props();
   let hiddenState = $state<PhotoHiddenState>({ configured: false });
   let workspace = $state<PhotoWorkspace>();
   let photoWorkspace = $state<PhotosWorkspace>();
@@ -201,7 +202,7 @@
     <div class="hidden-gate"><h1>Hidden</h1>{#if reading}<Spinner />{/if}</div>
   {:else if workspace && remaining && workspaceVisible}
     <div id="hidden-controls" class="hidden-controls" tabindex="-1"><span>Locks in {Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, "0")}</span><Button size="sm" disabled={actionPending} onclick={() => void action("lock")}>Lock</Button></div>
-    {#each [workspace] as current (current)}<PhotosWorkspace {onhelp} {onloadtags} {onloadmoretags} {onmetadatachanged} {tags} {tagsError} {tagsLoading} {tagsTotal} {shortcuts} bind:this={photoWorkspace} photos={current.photos} cache={current.cache} title="Hidden" {photoID} {onphotochange} {ontrashed} onhidden={onunhidden} oninvalidate={conceal} {onactionerror} />{/each}
+    {#each [workspace] as current (current)}<PhotosWorkspace {onhelp} {onloadtags} {onloadmoretags} {onmetadatachanged} {tags} {tagsError} {tagsLoading} {tagsTotal} {shortcuts} bind:this={photoWorkspace} photos={current.photos} cache={current.cache} title="Hidden" {onexport} {photoID} {onphotochange} {ontrashed} onhidden={onunhidden} oninvalidate={conceal} {onactionerror} />{/each}
   {:else if workspace && remaining}
     <Spinner />
   {:else}

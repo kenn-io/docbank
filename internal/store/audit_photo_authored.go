@@ -41,7 +41,10 @@ func photoAuthoredAuditRecord(s PhotoAuthoredSnapshot) (audit.Record, error) {
 		}
 		fields = append(fields, audit.Field{Name: f.name, Value: text})
 	}
-	fields = append(fields, audit.Field{Name: "rotation", Value: audit.Unsigned(uint64(rotation))}, audit.Field{Name: "confirmed_fields", Value: audit.Unsigned(uint64(v.Confirmed))}) //nolint:gosec // ValidatePhotoAuthored bounds rotation to 0 through 270.
+	fields = append(fields,
+		audit.Field{Name: "rotation", Value: audit.Unsigned(uint64(rotation))}, //nolint:gosec // ValidatePhotoAuthored bounds rotation to 0 through 270.
+		audit.Field{Name: "confirmed_fields", Value: audit.Unsigned(uint64(v.Confirmed))},
+	)
 	return audit.Record{Kind: "photo_authored", Fields: fields}, nil
 }
 

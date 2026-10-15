@@ -33,7 +33,6 @@ const (
 )
 
 var (
-	uuidV4Pattern      = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 	extensionPattern   = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9_-]{0,31})$`)
 	rfc3339NanoPattern = regexp.MustCompile(
 		`^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?(?:Z|[+-][0-9]{2}:[0-9]{2})$`,
@@ -519,7 +518,7 @@ func validVirtualPath(value string) bool {
 	return true
 }
 
-func validUUIDv4(value string) bool { return uuidV4Pattern.MatchString(value) }
+func validUUIDv4(value string) bool { return canonical.ValidateUUIDv4(value) == nil }
 
 func validConcreteMIME(value string) bool {
 	if strings.ToLower(value) != value {

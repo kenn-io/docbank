@@ -11695,6 +11695,7 @@ components:
           minimum: 0
           type: integer
         rotation:
+          description: "Clockwise degrees on EXIF-normalized pixels: 0, 90, 180, or 270."
           enum:
             - 0
             - 90
@@ -11829,6 +11830,7 @@ components:
             - integer
             - "null"
         rotation:
+          description: "Clockwise degrees on EXIF-normalized pixels: 0, 90, 180, or 270."
           enum:
             - 0
             - 90
@@ -12244,6 +12246,25 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    PhotoExportSelection:
+      additionalProperties: false
+      properties:
+        asset_ids:
+          items:
+            type: string
+          type: array
+        hidden:
+          type: boolean
+        query:
+          $ref: "#/components/schemas/Query"
+      required:
+        - query
+        - hidden
+      type: object
+      x-go-type: bundle.PhotoExportSelection
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/bundle
+        name: bundle
     PhotoFace:
       additionalProperties: false
       properties:
@@ -12384,6 +12405,7 @@ components:
             - sidecar
           type: string
         rotation:
+          description: "Clockwise degrees on EXIF-normalized pixels: 0, 90, 180, or 270."
           enum:
             - 0
             - 90
@@ -12984,6 +13006,31 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    PhotoRenderProfile:
+      additionalProperties: false
+      properties:
+        format:
+          type: string
+        include_metadata:
+          type: boolean
+        long_edge:
+          format: int64
+          type: integer
+        quality:
+          format: int64
+          type: integer
+        remove_gps:
+          type: boolean
+      required:
+        - format
+        - long_edge
+        - include_metadata
+        - remove_gps
+      type: object
+      x-go-type: bundle.PhotoRenderProfile
+      x-go-type-import:
+        path: go.kenn.io/docbank/document/bundle
+        name: bundle
     PhotoSettings:
       additionalProperties: false
       properties:
@@ -13149,6 +13196,9 @@ components:
           type: integer
         duplicate_policy:
           type: string
+        embedded_previews:
+          format: int64
+          type: integer
         expires_at:
           type: string
         fingerprint:
@@ -13160,6 +13210,8 @@ components:
         metadata_bytes:
           format: int64
           type: integer
+        photo_render:
+          $ref: "#/components/schemas/PhotoRenderProfile"
         role_bytes:
           format: int64
           type: integer
@@ -13253,6 +13305,8 @@ components:
           type: string
         operation_id:
           type: string
+        photo_render:
+          $ref: "#/components/schemas/PhotoRenderProfile"
         publications:
           items:
             $ref: "#/components/schemas/PublicationSelection"
@@ -16590,6 +16644,8 @@ components:
           type: array
         operation_id:
           type: string
+        photos:
+          $ref: "#/components/schemas/PhotoExportSelection"
         query:
           $ref: "#/components/schemas/Query"
         saved_query_id:

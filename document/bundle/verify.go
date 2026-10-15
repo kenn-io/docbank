@@ -189,7 +189,7 @@ func Verify(ctx context.Context, r io.ReaderAt, size int64, wantFingerprint stri
 				}
 				continue
 			}
-			if role.Status != "available" || index >= plan.RoleEntries || role.Size > MaxRoleBytes-roleBytes {
+			if role.Status != roleAvailable || index >= plan.RoleEntries || role.Size > MaxRoleBytes-roleBytes {
 				return Receipt{}, ErrInvalidArchive
 			}
 			if volumes != nil {

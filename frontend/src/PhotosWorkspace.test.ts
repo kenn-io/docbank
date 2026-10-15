@@ -1100,3 +1100,92 @@ it("shows the Map date without Library controls", async () => {
  expect(screen.queryByRole("button",{name:"Move rejects"})).toBeNull();
  expect(screen.queryByRole("button",{name:"Timeline"})).toBeNull();expect(screen.queryByRole("button",{name:"Clear date"})).toBeNull();await screen.findByText("1 located photo in 2024");photos.dispose();
 });
+
+it("explains the photo export cap before offering scope or selected export", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = Array.from({ length: 17 }, (_, i) => photo(i + 1)); photos.total = 17; photos.started = true; photos.selectLoaded();
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ items: photos.items, total: 17 })));
+  const cache = new PhotoPreviewCache("scoped", vi.fn()); const onexport = vi.fn();
+  render(PhotosWorkspace, { photos, cache, onexport });
+  expect((screen.getByRole("button", { name: "Export photos" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole("button", { name: "Export selection" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.getByText(/Clear the selection to choose fewer photos/)).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Clear selection" }));
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Export selection" }));
+  expect(onexport).toHaveBeenCalledWith(expect.objectContaining({ total: 1 }));
+  photos.dispose(); await cache.dispose();
+});
+it("exports the visible scope, including album filters and all-results selections", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  const albumQuery = { ...photoQuery, filters: { set_ids: ["11111111-1111-4111-8111-111111111111"] } };
+  const photos = new Photos("scoped", vi.fn(), false, albumQuery);
+  photos.items = [photo(1), photo(2)]; photos.total = 3; photos.started = true;
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ items: photos.items, total: 3 })));
+  const cache = new PhotoPreviewCache("scoped", vi.fn()); const onexport = vi.fn();
+  render(PhotosWorkspace, { photos, cache, onexport });
+  await fireEvent.click(screen.getByRole("button", { name: "Export photos" }));
+  expect(onexport).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ label: "Library", total: 3, photos: { query: albumQuery, asset_ids: [], hidden: false } }));
+  onexport.mockClear();
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
+  photos.allResults = true;
+  await tick();
+  await fireEvent.click(screen.getByRole("button", { name: "Export selection" }));
+  expect(onexport).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ label: "Selected photos", total: 3, photos: { query: albumQuery, asset_ids: [], hidden: false } }));
+  photos.dispose(); await cache.dispose();
+});
+
+it("exports explicit Map selections without offering the broader Library query", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection: "map" });
+  photos.items = [mapPhoto(1), mapPhoto(2)]; photos.total = 2; photos.started = true; photos.selectLoaded();
+  vi.spyOn(photos, "resume").mockResolvedValue();
+  const onexport = vi.fn();
+  render(PhotosWorkspace, { photos, mapMode: true, tiles: { tile_url: "/api/daemon/web-map-tiles/{z}/{x}/{y}", host: "tiles.example.org", attribution: "Example", max_zoom: 19 }, cache: { get: vi.fn() } as unknown as PhotoPreviewCache, onexport });
+  await vi.dynamicImportSettled(); map.onvisible!([mapPhoto(1)]);
+  await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
+  expect(screen.queryByRole("button", { name: "Export photos" })).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: "Export selection" }));
+  expect(onexport).toHaveBeenCalledExactlyOnceWith({ label: "Selected photos", total: 2, photos: { query: photoQuery, asset_ids: ["photo-1", "photo-2"], hidden: false } });
+  photos.dispose();
+});
+
+it("exports the prepared metadata selection after the query grows beyond the export cap", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1)]; photos.total = 3; photos.started = true; photos.selectAllResults();
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+    expect(url).toBe("/api/v1/photos/authored/prepare");
+    expect(JSON.parse(String(init.body))).toEqual({ query: photoQuery });
+    return Response.json({ assets: [], targets: [preparedPhoto(1), preparedPhoto(2), preparedPhoto(3)] });
+  }));
+  await photos.authored.prepare(photos.scope());
+  photos.total = 17;
+  const onexport = vi.fn();
+  render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache, onexport });
+  expect(screen.getByText("All 3 photos selected")).toBeTruthy();
+  const button = screen.getByRole("button", { name: "Export selection" }) as HTMLButtonElement;
+  expect(button.disabled).toBe(false);
+  await fireEvent.click(button);
+  expect(onexport).toHaveBeenCalledExactlyOnceWith({ label: "Selected photos", total: 3, photos: { query: photoQuery, asset_ids: ["photo-1", "photo-2", "photo-3"], hidden: false } });
+  photos.dispose();
+});
+
+it("disables selected export when a metadata draft keeps an empty selection open", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1)]; photos.total = 1; photos.started = true;
+  photos.authored.stage({ caption: "Retained draft" });
+  const onexport = vi.fn();
+  render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache, onexport });
+  const button = screen.getByRole("button", { name: "Export selection" }) as HTMLButtonElement;
+  expect(button.disabled).toBe(true);
+  button.click();
+  expect(onexport).not.toHaveBeenCalled();
+  photos.dispose();
+});

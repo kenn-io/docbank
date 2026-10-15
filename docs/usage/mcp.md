@@ -541,6 +541,8 @@ pinned to a dead client.
 
 ## Native export jobs
 
+Photo-export preparation uses the CLI or Photos. MCP supports inspection of retained photo-export plans and jobs.
+
 `get_export_plan`, `get_export_problems`, and `get_export_status` are available
 with all write flags disabled, over stdio or HTTP. Plan inspection requires a
 retained plan ID. `get_export_plan` returns the complete `plan`, including

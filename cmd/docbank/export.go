@@ -1,14 +1,19 @@
 package main
 
 import (
+	"bufio"
+	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/store"
 )
 
 var (
@@ -20,63 +25,111 @@ var (
 )
 
 var exportCmd = &cobra.Command{
-	Long: `Export exact original versions in a verified ZIP. Get version identities from
-stat --json. Save sel.json with this shape (use your own UUIDv4s and receipt):
+	Long: `Export exact original versions or rendered photos in a verified ZIP. Get
+version identities from stat --json. Save sel.json with this shape (use your own
+UUIDv4s and receipt):
 {"source_operation_id":"<uuid>","plan_operation_id":"<uuid>","members":[
   {"node_id":12,"version_id":"<version-uuid>","sha256":"<sha256>","size":0}]}
+For originals, members contains 1 to 1,000 entries; revision is optional.
+For rendered photos, add photo_render with format (jpeg or png), JPEG quality
+(1 to 100), long_edge (0 keeps original size), include_metadata, and remove_gps.
+Choose up to 16 exact members or replace members with photos containing query,
+hidden, and optional asset_ids for selected photos.
 Typical flow: preview --request sel.json (plan ID and fingerprint) ->
 start <plan-id> --fingerprint F --operation-id <new-uuidv4> -> status <job-id>
 -> download <job-id> out.zip -> release <job-id>.
 Output: --json prints plans, jobs and verified download receipts.`,
 	GroupID: groupProductions,
 	Use:     "export",
-	Short:   "Export exact original versions as verified ZIP bundles",
+	Short:   "Export originals or rendered photos as verified ZIP bundles",
 }
 
 var exportPreviewCmd = &cobra.Command{
 	Example: `  docbank export preview --request sel.json --json`,
 	Use:     "preview --request selection.json",
-	Short:   "Freeze and review up to 1,000 exact original versions",
+	Short:   "Review up to 1,000 original versions or 16 rendered photos",
 	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		request, err := readExportRequest(exportRequestPath)
 		if err != nil {
 			return err
 		}
+		kind := "explicit"
+		if request.Photos != nil {
+			kind = "photos"
+		}
+		role := "original"
+		if request.PhotoRender != nil {
+			role = "photo_rendered"
+		}
 		connection, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
+		var cookie string
+		unlock := func() error {
+			passcode, err := readPhotoPasscode(cmd, bufio.NewReaderSize(cmd.InOrStdin(), 2048), "Hidden photos passcode")
+			if err != nil {
+				return err
+			}
+			_, cookie, err = connection.PhotoHidden(cmd.Context(), "unlock", passcode, "")
+			return err
+		}
+		withCookie := func(_ context.Context, r *http.Request) error {
+			if cookie != "" {
+				r.Header.Set("Cookie", cookie)
+			}
+			return nil
+		}
+		if request.Photos != nil && request.Photos.Hidden {
+			if err := unlock(); err != nil {
+				return err
+			}
+		}
 		source, err := connection.API().CreateExportSource(cmd.Context(),
 			&apiclient.CreateExportSourceRequestOptions{Body: &bundle.SourceRequest{
-				OperationID: request.SourceOperationID, Kind: "explicit", Members: request.Members,
-			}})
+				OperationID: request.SourceOperationID, Kind: kind, Members: request.Members, Photos: request.Photos,
+			}}, withCookie)
 		if err != nil {
 			return err
 		}
-		plan, err := connection.API().CreateExportPlan(cmd.Context(),
-			&apiclient.CreateExportPlanRequestOptions{Body: &bundle.PlanRequest{
-				OperationID: request.PlanOperationID, SourceID: source.ID,
-				MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: "original"}},
-			}})
+		planRequest := &apiclient.CreateExportPlanRequestOptions{Body: &bundle.PlanRequest{
+			OperationID: request.PlanOperationID, SourceID: source.ID,
+			MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: role}}, PhotoRender: request.PhotoRender,
+		}}
+		plan, err := connection.API().CreateExportPlan(cmd.Context(), planRequest, withCookie)
+		if request.PhotoRender != nil && cookie == "" && errors.Is(err, store.ErrHiddenLocked) {
+			if err := unlock(); err != nil {
+				return err
+			}
+			plan, err = connection.API().CreateExportPlan(cmd.Context(), planRequest, withCookie)
+		}
 		if err != nil {
 			return err
 		}
 		if exportJSON {
 			return writeCLIJSON(cmd.OutOrStdout(), plan)
 		}
-		_, err = fmt.Fprintf(cmd.OutOrStdout(),
-			"plan %s\nsource %s\nmember hash %s\nfingerprint %s\n"+
-				"planned contents: %d document versions, %d original bytes, %d metadata bytes\n"+
-				"admission expires %s\n"+
-				"Original contents are included without redaction or sanitization.\n",
-			plan.ID, plan.Source.ID, plan.Source.MemberHash, plan.Fingerprint,
-			plan.Total, plan.RoleBytes, plan.MetadataBytes, plan.ExpiresAt)
-		if err != nil {
-			return fmt.Errorf("writing export preview: %w", err)
-		}
-		return nil
+		return writeExportPreview(cmd.OutOrStdout(), *plan)
 	},
+}
+
+func writeExportPreview(w io.Writer, plan bundle.Plan) error {
+	note := "Original contents are included without redaction or sanitization."
+	byteLabel, memberLabel := "original bytes", "document versions"
+	if p := plan.PhotoRender; p != nil {
+		byteLabel, memberLabel = "output bytes", "photos"
+		quality := ""
+		if p.Format == "jpeg" {
+			quality = fmt.Sprintf(", quality %d", p.Quality)
+		}
+		note = fmt.Sprintf("photo format %s%s, long edge %d pixels (0 keeps original size), metadata %t, remove GPS %t\nembedded RAW previews %d", p.Format, quality, p.LongEdge, p.IncludeMetadata, p.RemoveGPS, plan.EmbeddedPreviews)
+	}
+	_, err := fmt.Fprintf(w, "plan %s\nsource %s\nmember hash %s\nfingerprint %s\nplanned contents: %d %s, %d %s, %d metadata bytes\nadmission expires %s\n%s\n", plan.ID, plan.Source.ID, plan.Source.MemberHash, plan.Fingerprint, plan.Total, memberLabel, plan.RoleBytes, byteLabel, plan.MetadataBytes, plan.ExpiresAt, note)
+	if err != nil {
+		return fmt.Errorf("writing export preview: %w", err)
+	}
+	return nil
 }
 
 var exportStartCmd = &cobra.Command{
@@ -239,7 +292,7 @@ func init() {
 	exportCmd.PersistentFlags().BoolVar(&exportJSON, "json", false, "print JSON to stdout")
 	exportPreviewCmd.Flags().StringVar(
 		&exportRequestPath, "request", "",
-		"explicit document-version request JSON file (at most 1 MiB) (required)",
+		"original-version or photo-scope request JSON file (at most 1 MiB) (required)",
 	)
 	exportStartCmd.Flags().StringVar(
 		&exportFingerprint, "fingerprint", "", "reviewed plan fingerprint (required)",

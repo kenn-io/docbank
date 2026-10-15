@@ -38,7 +38,7 @@ func (c *DuplicateCursor) Add(d *Document, seal bool) error {
 			}
 			continue
 		}
-		if r.Status != "available" && r.Status != "collapsed" {
+		if r.Status != roleAvailable && r.Status != "collapsed" {
 			return ErrConflict
 		}
 		key, err := collapseKey(*d, *r)

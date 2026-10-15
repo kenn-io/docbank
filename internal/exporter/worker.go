@@ -25,6 +25,9 @@ import (
 type Gate interface {
 	MutateContext(ctx context.Context, fn func() error) error
 }
+
+const ArchiveDirectory = "export-archives"
+
 type Worker struct {
 	catalog      *store.Store
 	blobs        *blob.Store
@@ -54,7 +57,7 @@ func New(catalog *store.Store, blobs *blob.Store, root string, gate Gate) (*Work
 	if catalog == nil || blobs == nil || root == "" || gate == nil {
 		return nil, bundle.ErrConflict
 	}
-	dir := filepath.Join(root, "export-archives")
+	dir := filepath.Join(root, ArchiveDirectory)
 	if err := safefileio.EnsurePrivateDir(dir); err != nil {
 		return nil, fmt.Errorf("secure export archive directory: %w", err)
 	}
@@ -68,6 +71,35 @@ func (w *Worker) Run(ctx context.Context) error {
 	if err := w.retryCatalogMutation(ctx, func() error { return w.catalog.RequeueExportJobs(ctx) }); err != nil {
 		return err
 	}
+	if err := w.cleanupAbandoned(ctx); err != nil {
+		return err
+	}
+	for {
+		if err := w.Cleanup(ctx); err != nil {
+			return err
+		}
+		processed, err := w.RunOne(ctx)
+		if err != nil {
+			return err
+		}
+		if !processed {
+			timer := time.NewTimer(time.Second)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
+		}
+	}
+}
+
+func (w *Worker) cleanupAbandoned(ctx context.Context) error {
+	release, err := w.catalog.AcquirePhotoExportPreparation(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
 	files, err := os.ReadDir(w.dir)
 	if err != nil {
 		return err
@@ -89,29 +121,12 @@ func (w *Worker) Run(ctx context.Context) error {
 			}
 		}
 		if remove {
-			if err = os.Remove(filepath.Join(w.dir, file.Name())); err != nil {
+			if err = os.RemoveAll(filepath.Join(w.dir, file.Name())); err != nil {
 				return err
 			}
 		}
 	}
-	for {
-		if err = w.Cleanup(ctx); err != nil {
-			return err
-		}
-		processed, err := w.RunOne(ctx)
-		if err != nil {
-			return err
-		}
-		if !processed {
-			timer := time.NewTimer(time.Second)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return ctx.Err()
-			case <-timer.C:
-			}
-		}
-	}
+	return nil
 }
 
 func (w *Worker) retryCatalog(ctx context.Context, operation func() error) error {

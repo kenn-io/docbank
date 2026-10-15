@@ -13,7 +13,7 @@ type PhotoFile struct {
 	Caption   string                    `json:"caption" maxLength:"16384" doc:"At most 16384 UTF-8 bytes."`
 	Creator   string                    `json:"creator" maxLength:"16384" doc:"At most 16384 UTF-8 bytes."`
 	Copyright string                    `json:"copyright" maxLength:"16384" doc:"At most 16384 UTF-8 bytes."`
-	Rotation  int                       `json:"rotation" enum:"0,90,180,270"`
+	Rotation  int                       `json:"rotation" enum:"0,90,180,270" doc:"Clockwise degrees on EXIF-normalized pixels: 0, 90, 180, or 270."`
 
 	ID          string  `json:"id" format:"uuid"`
 	AssetID     string  `json:"asset_id" format:"uuid"`

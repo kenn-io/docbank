@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/exporter"
+	"go.kenn.io/docbank/internal/filepublish"
 	"go.kenn.io/docbank/internal/store"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
@@ -64,6 +66,68 @@ func workerFixture(t *testing.T, gate exporter.Gate) (*exporter.Worker, *store.S
 	worker, err := exporter.New(catalog, blobs, root, gate)
 	require.NoError(t, err)
 	return worker, catalog, job, driver, path
+}
+
+func TestWorkerStartupRemovesOnlyAbandonedPhotoStages(t *testing.T) {
+	for _, state := range []string{"abandoned", "live"} {
+		t.Run(state, func(t *testing.T) {
+			started := make(chan struct{})
+			gate := api.NewOperationGate()
+			calls := 0
+			worker, catalog, job, _, path := workerFixture(t, mutationFunc(func(ctx context.Context, fn func() error) error {
+				calls++
+				if calls == 1 {
+					close(started)
+				}
+				return gate.MutateContext(ctx, fn)
+			}))
+			dir := filepath.Join(filepath.Dir(path), exporter.ArchiveDirectory)
+			stagePath := filepath.Join(dir, ".export-photo-abandoned")
+			var stage *filepublish.Stage
+			var release func()
+			if state == "live" {
+				var err error
+				release, err = catalog.AcquirePhotoExportPreparation(t.Context())
+				require.NoError(t, err)
+				defer func() {
+					if release != nil {
+						release()
+					}
+				}()
+				stage, err = filepublish.CreateStage(dir, ".export-photo-")
+				require.NoError(t, err)
+				defer func() { require.NoError(t, stage.Cleanup()) }()
+				stagePath = filepath.Dir(stage.Path())
+			} else {
+				require.NoError(t, os.Mkdir(stagePath, 0700))
+				require.NoError(t, os.WriteFile(filepath.Join(stagePath, "payload.tmp"), []byte("synthetic render"), 0600))
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { done <- worker.Run(ctx) }()
+			<-started
+			if stage != nil {
+				select {
+				case err := <-done:
+					t.Fatalf("worker stopped during live preparation: %v", err)
+				case <-time.After(50 * time.Millisecond): //nolint:kennlint // the held preparation slot must block startup cleanup
+				}
+				_, err := os.Stat(stage.Path())
+				require.NoError(t, err)
+				require.NoError(t, stage.Cleanup())
+				release()
+				release = nil
+			}
+			require.Eventually(t, func() bool {
+				_, err := os.Stat(stagePath)
+				stored, readErr := catalog.ExportJob(ctx, "master", job.ID)
+				return errors.Is(err, os.ErrNotExist) && readErr == nil && stored.State == "completed"
+			}, 5*time.Second, 10*time.Millisecond)
+			cancel()
+			require.ErrorIs(t, <-done, context.Canceled)
+		})
+	}
 }
 
 func TestWorkerRetriesCatalogContention(t *testing.T) {

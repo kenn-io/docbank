@@ -66,7 +66,7 @@ Email, media, photos, people:
 
 Exports and productions:
   bates  Plan and reserve Bates labels for exported PDFs
-  export  Export exact original versions as verified ZIP bundles
+  export  Export originals or rendered photos as verified ZIP bundles
   labels  Look up package-scoped received and assigned labels
   package  Inspect and exchange load-file packages
   transfer  Inspect portable transfer packages

@@ -34,6 +34,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/query"
@@ -933,22 +934,7 @@ func validSHA256Hex(hash string) bool {
 }
 
 func validUUIDv4(value string) bool {
-	if len(value) != 36 || value[8] != '-' || value[13] != '-' ||
-		value[18] != '-' || value[23] != '-' || value[14] != '4' {
-		return false
-	}
-	if !strings.ContainsRune("89ab", rune(value[19])) {
-		return false
-	}
-	for i, char := range value {
-		if i == 8 || i == 13 || i == 18 || i == 23 {
-			continue
-		}
-		if !strings.ContainsRune("0123456789abcdef", char) {
-			return false
-		}
-	}
-	return true
+	return canonical.ValidateUUIDv4(value) == nil
 }
 
 // IsCanonicalUUIDv4 reports whether value is a lowercase RFC 4122 UUIDv4.

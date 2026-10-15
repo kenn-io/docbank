@@ -95,6 +95,8 @@ Run either photo spec with the Playwright command above and its filename.
 Preview receipts contain synthetic session credentials. Keep them local. Stop
 retained daemons before removing their workspaces.
 
+`DOCBANK_PHOTO_EXPORT_SCREENSHOT_DIR` enables `photo-export.screenshot.ts`, which exports selected JPEGs and a complete-scope PNG archive through real verified downloads. Set `DOCBANK_SCREENSHOT_SCALE` to the host display scale; `DOCBANK_KEEP_PHOTO_EXPORT_PREVIEW=1` retains its synthetic server and writes the preview URL beside the captures.
+
 ## Report and original-export qualification
 
 Run the combined browser workflow from the repository root:

@@ -29,6 +29,7 @@ type Store struct {
 	driver                docsqlite.Driver
 	providerEgressMu      sync.RWMutex
 	laneControlsMu        sync.Mutex
+	photoExportSlot       chan struct{}
 	photoHiddenNow        func() time.Time
 	photoHiddenAuthMu     sync.Mutex // Serialize session creation and revocation across database commits.
 	photoHiddenSessionsMu sync.Mutex
@@ -112,7 +113,7 @@ func openCurrentStore(
 	// Queue writers in database/sql instead of racing SQLite's busy timeout.
 	// Read snapshots use the separate deferred pool and do not reserve the writer.
 	writeDB.SetMaxOpenConns(1)
-	s := &Store{db: db, writeDB: writeDB, path: path, driver: driver, photoHiddenSessions: make(map[string]time.Time)}
+	s := &Store{db: db, writeDB: writeDB, path: path, driver: driver, photoHiddenSessions: make(map[string]time.Time), photoExportSlot: make(chan struct{}, 1)}
 	if err := s.bootstrap(incarnation); err != nil {
 		_ = s.Close()
 		return nil, err

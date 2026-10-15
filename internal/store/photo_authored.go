@@ -62,7 +62,7 @@ type PhotoAuthored struct {
 	Caption   string              `json:"caption" doc:"At most 16384 UTF-8 bytes."`
 	Creator   string              `json:"creator" doc:"At most 16384 UTF-8 bytes."`
 	Copyright string              `json:"copyright" doc:"At most 16384 UTF-8 bytes."`
-	Rotation  int                 `json:"rotation" enum:"0,90,180,270"`
+	Rotation  int                 `json:"rotation" enum:"0,90,180,270" doc:"Clockwise degrees on EXIF-normalized pixels: 0, 90, 180, or 270."`
 }
 
 // ValidatePhotoAuthored checks stored authored values, including that every non-default value is
@@ -107,7 +107,7 @@ type PhotoAuthoredPatch struct {
 	Caption   *string `json:"caption,omitzero" doc:"At most 16384 UTF-8 bytes."`
 	Creator   *string `json:"creator,omitzero" doc:"At most 16384 UTF-8 bytes."`
 	Copyright *string `json:"copyright,omitzero" doc:"At most 16384 UTF-8 bytes."`
-	Rotation  *int    `json:"rotation,omitzero" enum:"0,90,180,270"`
+	Rotation  *int    `json:"rotation,omitzero" enum:"0,90,180,270" doc:"Clockwise degrees on EXIF-normalized pixels: 0, 90, 180, or 270."`
 }
 
 type photoAuthoredField struct {
