@@ -27,10 +27,12 @@ const (
 )
 
 var (
-	ErrSnapshotGone       = errors.New("query snapshot is gone")
-	ErrSnapshotAdmission  = errors.New("query snapshot cache capacity is unavailable")
-	ErrSnapshotBusy       = errors.New("query snapshot builders are busy")
-	ErrSnapshotMemberHash = errors.New("query snapshot member hash does not match")
+	ErrSnapshotGone                    = errors.New("query snapshot is gone")
+	ErrSnapshotAdmission               = errors.New("query snapshot cache capacity is unavailable")
+	ErrSnapshotBusy                    = errors.New("query snapshot builders are busy")
+	ErrSnapshotMemberHash              = errors.New("query snapshot member hash does not match")
+	ErrPhotoSnapshotMemberNotInLibrary = errors.New("photo snapshot member is no longer in Library")
+	ErrPhotoSnapshotExportUnsupported  = errors.New("photos snapshots cannot be exported here; use Photos to export complete photo assets")
 )
 
 // SnapshotPage carries complete frozen metadata and one caller-owned row page.
@@ -107,14 +109,15 @@ type cachedQuerySnapshot struct {
 }
 
 type querySnapshotBuild struct {
-	facetsOnly    bool
-	id            uint64
-	snapshotID    string
-	owner         string
-	cancel        context.CancelFunc
-	reservedRows  int64
-	reservedBytes int64
-	invalidated   bool
+	facetsOnly          bool
+	id                  uint64
+	snapshotID          string
+	owner               string
+	protectedSnapshotID string
+	cancel              context.CancelFunc
+	reservedRows        int64
+	reservedBytes       int64
+	invalidated         bool
 }
 
 type preparedQuerySnapshot struct {
@@ -274,9 +277,20 @@ func (s *QuerySnapshotService) RunSaved(
 			return SavedQueryRun{}, SnapshotPage{}, err
 		}
 	}
+	// Photo receipts vouch for every frozen member, not just the first page.
+	var frozen []SnapshotMember
+	if prepared.projection.Photos {
+		frozen, err = cachedSnapshotMembers(prepared.ctx, prepared.cached.rows)
+		if err != nil {
+			return SavedQueryRun{}, SnapshotPage{}, err
+		}
+	}
 	var run SavedQueryRun
 	write := func() error {
 		return s.store.withLogicalTx(prepared.ctx, func(tx *sql.Tx) error {
+			if err := validatePhotoSnapshotMembersTx(prepared.ctx, tx, frozen); err != nil {
+				return err
+			}
 			var insertErr error
 			run, insertErr = insertSavedQueryRunTx(
 				prepared.ctx, tx, id, expectedRevision, prepared.projection, prepared.page,
@@ -316,7 +330,7 @@ func (s *QuerySnapshotService) prepareSnapshot(
 		return preparedQuerySnapshot{}, errors.New("query snapshot owner is required")
 	}
 	buildCtx, cancel := context.WithCancel(ctx)
-	build, err := s.admitNewBuild(owner, cancel, request.FacetsOnly)
+	build, err := s.admitNewBuild(owner, cancel, request.FacetsOnly, request.ReplacesSnapshotID)
 	if err != nil {
 		cancel()
 		return preparedQuerySnapshot{}, err
@@ -459,7 +473,62 @@ func (s *QuerySnapshotService) Page(
 		payload.Offset%int64(metadata.PageSize) != 0 {
 		return SnapshotPage{}, ErrSnapshotCursor
 	}
-	return s.renderPage(&cached, payload.Offset)
+	page, err := s.renderPage(&cached, payload.Offset)
+	if err != nil {
+		return SnapshotPage{}, err
+	}
+	if err := s.validatePhotoSnapshotPage(ctx, page); err != nil {
+		return SnapshotPage{}, err
+	}
+	return page, nil
+}
+
+func (s *QuerySnapshotService) validatePhotoSnapshotPage(ctx context.Context, page SnapshotPage) error {
+	if !page.Photos {
+		return nil
+	}
+	members := make([]SnapshotMember, len(page.Rows))
+	for i := range page.Rows {
+		members[i] = page.Rows[i].SnapshotMember
+	}
+	return s.store.photoReadTx(ctx, func(tx *sql.Tx) error {
+		return validatePhotoSnapshotMembersTx(ctx, tx, members)
+	})
+}
+
+func validatePhotoSnapshotMembersTx(ctx context.Context, tx rowQuerier, members []SnapshotMember) error {
+	if len(members) == 0 {
+		return nil
+	}
+	assetIDs := make([]string, len(members))
+	nodeIDs := make([]int64, len(members))
+	for i, member := range members {
+		assetIDs[i] = member.AssetID
+		nodeIDs[i] = member.NodeID
+	}
+	assetIDsJSON, err := json.Marshal(assetIDs)
+	if err != nil {
+		return fmt.Errorf("encoding photo snapshot asset IDs: %w", err)
+	}
+	if err := photoSnapshotLibraryMembersTx(ctx, tx, assetIDsJSON, len(assetIDs)); err != nil {
+		return err
+	}
+	nodeIDsJSON, err := json.Marshal(nodeIDs)
+	if err != nil {
+		return fmt.Errorf("encoding photo snapshot node IDs: %w", err)
+	}
+	var eligible int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM json_each(?) frozen
+		JOIN nodes n ON n.id=frozen.value JOIN content_versions cv ON cv.version_id=n.current_version_id
+		WHERE n.kind='file' AND n.trashed_at IS NULL
+		AND (NOT EXISTS (SELECT 1 FROM photo_files owner WHERE owner.node_id=n.id AND owner.asset_id IS NOT NULL)
+		OR `+photoBrowseEligibleMemberPredicate(false)+`)`, string(nodeIDsJSON)).Scan(&eligible); err != nil {
+		return err
+	}
+	if eligible != len(nodeIDs) {
+		return ErrPhotoSnapshotMemberNotInLibrary
+	}
+	return nil
 }
 
 func (s *QuerySnapshotService) CopyMembers(
@@ -470,6 +539,15 @@ func (s *QuerySnapshotService) CopyMembers(
 
 // CopyMembersBounded rejects oversized membership before allocating its copy.
 func (s *QuerySnapshotService) CopyMembersBounded(ctx context.Context, owner, snapshotID, memberHash string, limit int) ([]SnapshotMember, error) {
+	return s.copyMembersBounded(ctx, owner, snapshotID, memberHash, limit, false)
+}
+
+// CopyExportMembersBounded accepts Documents snapshots; Photos exports need complete assets.
+func (s *QuerySnapshotService) CopyExportMembersBounded(ctx context.Context, owner, snapshotID, memberHash string, limit int) ([]SnapshotMember, error) {
+	return s.copyMembersBounded(ctx, owner, snapshotID, memberHash, limit, true)
+}
+
+func (s *QuerySnapshotService) copyMembersBounded(ctx context.Context, owner, snapshotID, memberHash string, limit int, exporting bool) ([]SnapshotMember, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -487,19 +565,30 @@ func (s *QuerySnapshotService) CopyMembersBounded(ctx context.Context, owner, sn
 	if memberHash != metadata.MemberHash {
 		return nil, ErrSnapshotMemberHash
 	}
-	members := make([]SnapshotMember, len(cached.rows))
-	for i := range cached.rows {
+	if exporting && metadata.Photos {
+		return nil, ErrPhotoSnapshotExportUnsupported
+	}
+	members, err := cachedSnapshotMembers(ctx, cached.rows)
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(members)) != metadata.Total || snapshotMemberHash(members) != metadata.MemberHash {
+		return nil, errors.New("cached query snapshot membership failed validation")
+	}
+	return members, nil
+}
+
+func cachedSnapshotMembers(ctx context.Context, rows [][]byte) ([]SnapshotMember, error) {
+	members := make([]SnapshotMember, len(rows))
+	for i := range rows {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		var row SnapshotRow
-		if err := json.Unmarshal(cached.rows[i], &row); err != nil {
+		if err := json.Unmarshal(rows[i], &row); err != nil {
 			return nil, fmt.Errorf("decoding cached query snapshot member: %w", err)
 		}
 		members[i] = row.SnapshotMember
-	}
-	if int64(len(members)) != metadata.Total || snapshotMemberHash(members) != metadata.MemberHash {
-		return nil, errors.New("cached query snapshot membership failed validation")
 	}
 	return members, nil
 }
@@ -576,9 +665,9 @@ func (s *QuerySnapshotService) newSnapshotID() (string, error) {
 	return hex.EncodeToString(raw), nil
 }
 
-func (s *QuerySnapshotService) admitNewBuild(owner string, cancel context.CancelFunc, facetsOnly bool) (*querySnapshotBuild, error) {
+func (s *QuerySnapshotService) admitNewBuild(owner string, cancel context.CancelFunc, facetsOnly bool, protectedSnapshotID string) (*querySnapshotBuild, error) {
 	if facetsOnly {
-		build, _, err := s.admitBuild("", owner, cancel, true)
+		build, _, err := s.admitBuild("", owner, cancel, true, "")
 		return build, err
 	}
 	for range 8 {
@@ -586,7 +675,7 @@ func (s *QuerySnapshotService) admitNewBuild(owner string, cancel context.Cancel
 		if err != nil {
 			return nil, err
 		}
-		build, collision, err := s.admitBuild(snapshotID, owner, cancel, false)
+		build, collision, err := s.admitBuild(snapshotID, owner, cancel, false, protectedSnapshotID)
 		if err != nil {
 			return nil, err
 		}
@@ -598,7 +687,7 @@ func (s *QuerySnapshotService) admitNewBuild(owner string, cancel context.Cancel
 }
 
 func (s *QuerySnapshotService) admitBuild(
-	snapshotID, owner string, cancel context.CancelFunc, facetsOnly bool,
+	snapshotID, owner string, cancel context.CancelFunc, facetsOnly bool, protectedSnapshotID string,
 ) (*querySnapshotBuild, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -618,16 +707,19 @@ func (s *QuerySnapshotService) admitBuild(
 			return nil, true, nil
 		}
 	}
+	if cached := s.snapshots[protectedSnapshotID]; cached == nil || cached.owner != owner {
+		protectedSnapshotID = ""
+	}
 	for !facetsOnly && (len(s.snapshots)+s.activeBuildsLocked(false) >= s.limits.MaxHandles ||
 		s.ownerHandles[owner] >= s.limits.MaxOwnerHandles) {
 		ownerOnly := s.ownerHandles[owner] >= s.limits.MaxOwnerHandles
-		if !s.evictLRULocked(owner, ownerOnly) {
+		if !s.evictLRULocked(owner, ownerOnly, protectedSnapshotID) {
 			return nil, false, ErrSnapshotAdmission
 		}
 	}
 	s.nextBuildID++
 	build := &querySnapshotBuild{
-		id: s.nextBuildID, snapshotID: snapshotID, owner: owner, cancel: cancel, facetsOnly: facetsOnly,
+		id: s.nextBuildID, snapshotID: snapshotID, owner: owner, cancel: cancel, facetsOnly: facetsOnly, protectedSnapshotID: protectedSnapshotID,
 	}
 	s.builds[build.id] = build
 	if !facetsOnly {
@@ -656,7 +748,7 @@ func (s *QuerySnapshotService) chargeBuild(build *querySnapshotBuild, rows, byte
 	}
 	for exceedsBound(s.cachedRows+s.reservedRows, rows, s.limits.MaxRows) ||
 		exceedsBound(s.cachedBytes+s.reservedBytes, bytes, s.limits.MaxBytes) {
-		if !s.evictLRULocked("", false) {
+		if !s.evictLRULocked("", false, "") {
 			return ErrSnapshotAdmission
 		}
 	}
@@ -796,10 +888,20 @@ func (s *QuerySnapshotService) purgeExpiredLocked(now time.Time) {
 	}
 }
 
-func (s *QuerySnapshotService) evictLRULocked(owner string, ownerOnly bool) bool {
+func (s *QuerySnapshotService) evictLRULocked(owner string, ownerOnly bool, protectedSnapshotID string) bool {
 	var oldest *cachedQuerySnapshot
 	for _, candidate := range s.snapshots {
-		if ownerOnly && candidate.owner != owner {
+		if candidate.id == protectedSnapshotID {
+			continue
+		}
+		protected := false
+		for _, build := range s.builds {
+			if candidate.id == build.protectedSnapshotID {
+				protected = true
+				break
+			}
+		}
+		if protected || ownerOnly && candidate.owner != owner {
 			continue
 		}
 		if oldest == nil || candidate.used < oldest.used {

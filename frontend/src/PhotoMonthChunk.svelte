@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { PhotoGroup, Row } from "./photoGrid.js";
-  import { HEADER_HEIGHT, visibleRows } from "./photoGrid.js";
+  import { visibleRows } from "./photoGrid.js";
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import PhotoCell from "./PhotoCell.svelte";
 
@@ -21,7 +21,7 @@
     ondragend,
   }: {
     group: PhotoGroup;
-    layout: { rows: Row[]; totalHeight: number; intrinsicHeight: number };
+    layout: { rows: Row[]; totalHeight: number; intrinsicHeight: number; contentOffset: number };
     offset: number;
     top: number;
     bottom: number;
@@ -38,7 +38,11 @@
   const inWindow = $derived(offset <= bottom && offset + layout.intrinsicHeight >= top);
   const rows = $derived(
     inWindow
-      ? visibleRows(layout.rows, top - offset - HEADER_HEIGHT, bottom - offset - HEADER_HEIGHT)
+      ? visibleRows(
+          layout.rows,
+          top - offset - layout.contentOffset,
+          bottom - offset - layout.contentOffset,
+        )
       : [],
   );
   const cells = $derived(
@@ -61,8 +65,14 @@
   aria-label={group.label}
 >
   {#if inWindow}
-    <h2>{group.label}<span>{group.items.length} loaded</span></h2>
-    <div class="cells" style:height={`${layout.totalHeight}px`}>
+    {#if group.key !== "relevance"}<h2>
+        {group.label}<span>{group.items.length} loaded</span>
+      </h2>{/if}
+    <div
+      class="cells"
+      style:top={`${layout.contentOffset}px`}
+      style:height={`${layout.totalHeight}px`}
+    >
       {#each cells as cell (cell.photo.asset_id)}
         {@const photo = cell.photo}
         <div
@@ -116,8 +126,8 @@
     font-weight: 400;
   }
   .cells {
-    position: relative;
-    margin-top: 12px;
+    position: absolute;
+    width: 100%;
   }
   .cell {
     position: absolute;

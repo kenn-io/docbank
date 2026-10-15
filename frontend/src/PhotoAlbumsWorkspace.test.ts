@@ -5,7 +5,15 @@ import PhotosWorkspace from "./PhotosWorkspace.svelte";
 import { Photos } from "./photos.svelte.js";
 import { PhotoAlbums } from "./photoAlbums.svelte.js";
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
-import { photo, mapPhoto, photoAlbum, albumResponse } from "./photo-test-fixtures.js";
+import {
+  photo,
+  mapPhoto,
+  photoAlbum,
+  albumResponse,
+  savedSmartSet,
+} from "./photo-test-fixtures.js";
+import { parseQuery, queryFingerprint } from "./query.js";
+import { createSavedQuery } from "./savedQueries.js";
 
 beforeEach(() =>
   vi.stubGlobal(
@@ -86,7 +94,7 @@ function setup(scoped = false, onnavigate = vi.fn(), mapMode = false) {
     };
   vi.spyOn(photos, "refresh").mockResolvedValue(true);
   const albums = new PhotoAlbums("scoped", vi.fn(), async (id) => {
-    if (photos.started && photos.query.filters?.set_ids?.includes(id)) await photos.refresh();
+    if (photos.started && id && photos.query.filters?.set_ids?.includes(id)) await photos.refresh();
   });
   albums.items = [album];
   const cache = new PhotoPreviewCache("scoped", vi.fn());
@@ -457,6 +465,118 @@ it("renders unavailable card observations and omits an unknown count from deleti
   albums.items = [{ ...album, included_count: 0 }];
   await screen.findByText("0 photos");
   await screen.findByText("No cover yet");
+});
+
+it("deduplicates shifted pages of smart sets", async () => {
+  const payload = parseQuery('{"filters":{"kinds":["photo"]}}');
+  const fingerprint = await queryFingerprint(payload);
+  const saved = (index: number) =>
+    savedSmartSet(payload, fingerprint, {
+      id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      name: `Smart set ${index}`,
+    });
+  const offsets: number[] = [];
+  const first = Array.from({ length: 100 }, (_, index) => saved(index));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const query = new URL(String(input), "https://example.test").searchParams;
+      const offset = query.get("offset");
+      offsets.push(Number(offset));
+      return offset === "0"
+        ? Response.json({ items: first, total: 200, limit: 100, offset: 0 })
+        : offset === "100"
+          ? Response.json({
+              items: [first[99], ...Array.from({ length: 99 }, (_, i) => saved(i + 100))],
+              total: 201,
+              limit: 100,
+              offset: 100,
+            })
+          : Response.json({ items: [saved(199)], total: 201, limit: 100, offset: 200 });
+    }),
+  );
+  const albums = new PhotoAlbums("scoped", vi.fn());
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotoAlbumsIndex, { albums, cache, onnavigate: vi.fn(), onopensmart: vi.fn() });
+  await screen.findByRole("button", { name: "Smart set 99" });
+  await fireEvent.click(screen.getByRole("button", { name: "Load more smart sets" }));
+  await screen.findByRole("button", { name: "Smart set 100" });
+  expect(screen.getAllByRole("button", { name: "Smart set 99" })).toHaveLength(1);
+  await fireEvent.click(screen.getByRole("button", { name: "Load more smart sets" }));
+  await screen.findByRole("button", { name: "Smart set 199" });
+  expect(offsets).toEqual([0, 100, 200]);
+  expect(screen.queryByRole("button", { name: "Load more smart sets" })).toBeNull();
+  albums.dispose();
+  await cache.dispose();
+});
+
+it("refreshes the smart-set subscription after creating a definition", async () => {
+  const scope = parseQuery('{"filters":{"kinds":["photo"]}}');
+  const initial = savedSmartSet(scope, await queryFingerprint(scope), { name: "Review" });
+  const newest = { ...initial, id: "00000000-0000-4000-8000-000000000002", name: "New smart set" };
+  let added = false;
+  const offsets: number[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init: RequestInit) => {
+      if (init?.method === "POST") {
+        added = true;
+        return Response.json(newest, { headers: { ETag: '"1"' } });
+      }
+      offsets.push(
+        Number(new URL(String(input), "https://example.test").searchParams.get("offset")),
+      );
+      return Response.json({
+        items: added ? [initial, newest] : [initial],
+        total: added ? 2 : 1,
+        limit: 100,
+        offset: 0,
+      });
+    }),
+  );
+  const albums = new PhotoAlbums("scoped", vi.fn());
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotoAlbumsIndex, { albums, cache, onnavigate: vi.fn(), onopensmart: vi.fn() });
+  await screen.findByRole("button", { name: initial.name });
+  await createSavedQuery("scoped", {
+    name: newest.name,
+    description: initial.description,
+    kind: "query",
+    payload: scope,
+  });
+  expect(await screen.findByRole("button", { name: "New smart set" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: initial.name })).toBeTruthy();
+  expect(offsets).toEqual([0, 0]);
+  cleanup();
+  albums.dispose();
+  await cache.dispose();
+});
+
+it("disables smart-set opening during a Library mutation", async () => {
+  const payload = parseQuery('{"filters":{"kinds":["photo","video"]}}');
+  const entry = savedSmartSet(payload, await queryFingerprint(payload));
+  vi.stubGlobal(
+    "fetch",
+    vi
+      .fn()
+      .mockResolvedValue(
+        Response.json(
+          { items: [entry], total: 1, limit: 100, offset: 0 },
+          { headers: { ETag: '"1"' } },
+        ),
+      ),
+  );
+  const albums = new PhotoAlbums("scoped", vi.fn());
+  render(PhotoAlbumsIndex, {
+    albums,
+    cache: new PhotoPreviewCache("scoped", vi.fn()),
+    onnavigate: vi.fn(),
+    onopensmart: vi.fn(),
+    smartDisabled: true,
+  });
+  const button = await screen.findByRole("button", { name: entry.name });
+  expect((button as HTMLButtonElement).disabled).toBe(true);
+  albums.dispose();
 });
 
 it("resets the empty index create dialog after cancelled attempts", async () => {

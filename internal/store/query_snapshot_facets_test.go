@@ -439,9 +439,11 @@ func TestQuerySnapshotFacetValidationAndParentCancellation(t *testing.T) {
 		_, err := s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Query: value, Facets: facets})
 		require.Error(t, err)
 	}
+	_, err := s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Photos: true, Query: value, Facets: []string{"tags"}})
+	require.ErrorIs(t, err, ErrInvalidSnapshotRequest)
 	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, err := s.MaterializeQuerySnapshot(canceled, SnapshotRequest{Query: value, Facets: []string{"tags"}})
+	_, err = s.MaterializeQuerySnapshot(canceled, SnapshotRequest{Query: value, Facets: []string{"tags"}})
 	require.ErrorIs(t, err, context.Canceled)
 }
 
@@ -465,7 +467,7 @@ func TestQuerySnapshotFacetDeadlineKeepsCompletedRows(t *testing.T) {
 	options := defaultSnapshotMaterializeOptions()
 	options.BuildTimeout = -time.Nanosecond
 	dimensions := []string{"camera", "lens", "year", "location", "set"}
-	facets, err := materializePhotoFacets(t.Context(), s.db, compiled, "", CoverageSelection{}, dimensions, options)
+	facets, err := materializePhotoFacets(t.Context(), s.db, compiled, "", CoverageSelection{}, dimensions, options, new(int64))
 	require.NoError(t, err)
 	require.Len(t, facets, len(dimensions))
 	for _, facet := range facets {

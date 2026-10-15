@@ -3144,6 +3144,33 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    CreatePhotoAlbumRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CreatePhotoAlbumRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        member_hash:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        name:
+          maxLength: 256
+          minLength: 1
+          type: string
+        snapshot_id:
+          pattern: ^[0-9a-f]{32}$
+          type: string
+      required:
+        - name
+      type: object
+      x-go-type: api.CreatePhotoAlbumRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     CreatePhotoAssetRequest:
       additionalProperties: false
       properties:
@@ -12056,6 +12083,8 @@ components:
           type: array
         next_cursor:
           type: string
+        relevance_available:
+          type: boolean
         total:
           format: int64
           minimum: 0
@@ -12064,6 +12093,7 @@ components:
         - items
         - total
         - facets
+        - relevance_available
       type: object
       x-go-type: api.PhotoBrowsePage
       x-go-type-import:
@@ -12092,8 +12122,11 @@ components:
               - year
               - location
               - set
+              - rating
+              - flag
+              - label
             type: string
-          maxItems: 5
+          maxItems: 8
           type: array
           uniqueItems: true
         hidden:
@@ -16118,6 +16151,8 @@ components:
         member_hash:
           pattern: ^[0-9a-f]{64}$
           type: string
+        photos:
+          type: boolean
         previous_member_hash:
           pattern: ^[0-9a-f]{64}$
           type: string
@@ -16161,6 +16196,7 @@ components:
           minimum: 0
           type: integer
       required:
+        - photos
         - run_id
         - saved_query_id
         - saved_query_revision
@@ -16229,8 +16265,14 @@ components:
             - 250
           format: int64
           type: integer
+        photos:
+          type: boolean
         profile:
           maxLength: 128
+          type: string
+        replaces_snapshot_id:
+          description: Owned photo snapshot to keep while building its replacement
+          maxLength: 32
           type: string
       type: object
       x-go-type: api.SavedQueryRunRequest
@@ -18957,6 +18999,9 @@ components:
     WorkspaceQueryRow:
       additionalProperties: false
       properties:
+        asset_id:
+          format: uuid
+          type: string
         blob_hash:
           pattern: ^[0-9a-f]{64}$
           type: string
@@ -24748,7 +24793,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/PhotoAlbumNameRequest"
+              $ref: "#/components/schemas/CreatePhotoAlbumRequest"
         required: true
       responses:
         "201":
@@ -24767,7 +24812,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
           description: Error
-      summary: Create an empty album
+      summary: Create an album, optionally from frozen photo results
   /api/v1/photos/albums/{set_id}:
     delete:
       operationId: deletePhotoAlbum
@@ -26695,6 +26740,13 @@ paths:
               - query
               - highlight_set
             type: string
+        - description: Only definitions explicitly scoped to photos or videos
+          explode: false
+          in: query
+          name: photos
+          schema:
+            description: Only definitions explicitly scoped to photos or videos
+            type: boolean
         - explode: false
           in: query
           name: limit

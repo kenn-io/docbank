@@ -36,6 +36,17 @@ export interface SavedQueryPatch {
   payload?: Query | HighlightSet;
 }
 
+const definitionListeners = new Set<(session: string) => void>();
+export function subscribeSavedQueries(listener: (session: string) => void) {
+  definitionListeners.add(listener);
+  return () => {
+    definitionListeners.delete(listener);
+  };
+}
+function definitionsChanged(session: string) {
+  for (const listener of definitionListeners) listener(session);
+}
+
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const encoder = new TextEncoder();
 
@@ -156,6 +167,7 @@ export async function listSavedQueries(
   kind?: SavedQueryKind,
   offset = 0,
   limit = 100,
+  photos = false,
 ): Promise<SavedQueryPage> {
   if (
     !Number.isSafeInteger(offset) ||
@@ -165,7 +177,12 @@ export async function listSavedQueries(
     (kind !== undefined && kind !== "query" && kind !== "highlight_set")
   )
     throw new Error("Invalid saved definition page.");
-  const page = object(await generated.listSavedQueries({ limit, offset, kind }, { session }));
+  const page = object(
+    await generated.listSavedQueries(
+      { limit, offset, kind, ...(photos ? { photos: true } : {}) },
+      { session },
+    ),
+  );
   requireReceipt(
     page.limit === limit &&
       page.offset === offset &&
@@ -179,6 +196,15 @@ export async function listSavedQueries(
   requireReceipt(
     new Set(items.map((item) => item.id)).size === items.length &&
       items.every((item) => !kind || item.kind === kind),
+  );
+  requireReceipt(
+    !photos ||
+      items.every(
+        (item) =>
+          item.kind === "query" &&
+          item.payload.filters.kinds?.length &&
+          item.payload.filters.kinds.every((kind) => kind === "photo" || kind === "video"),
+      ),
   );
   return { items, total: page.total, limit, offset };
 }
@@ -201,6 +227,7 @@ export async function createSavedQuery(
   };
   const saved = await readResponse(await generated.createSavedQuery(expected, { session }));
   requireReceipt(saved.revision === 1 && sameDefinition(saved, expected));
+  definitionsChanged(session);
   return saved;
 }
 
@@ -246,6 +273,7 @@ export async function updateSavedQuery(
       saved.created_at === observed.created_at &&
       sameDefinition(saved, expected),
   );
+  definitionsChanged(session);
   return saved;
 }
 
@@ -261,5 +289,6 @@ export async function deleteSavedQuery(session: string, observed: SavedQuery): P
       saved.updated_at === observed.updated_at &&
       sameDefinition(saved, observed),
   );
+  definitionsChanged(session);
   return saved;
 }

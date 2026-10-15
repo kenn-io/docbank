@@ -7,6 +7,29 @@ import type {
   PhotoAlbumSummary,
   PhotoPreparedTarget,
 } from "./generated/docbank.js";
+import type { Query } from "./query.js";
+import type { SavedQuery } from "./savedQueries.js";
+
+type SmartSetOverrides = Partial<Omit<SavedQuery, "kind" | "payload" | "fingerprint">>;
+
+export function savedSmartSet(
+  payload: Query,
+  fingerprint: string,
+  overrides: SmartSetOverrides = {},
+): Extract<SavedQuery, { kind: "query" }> {
+  return {
+    id: "00000000-0000-4000-8000-000000000001",
+    name: "Five stars",
+    description: "",
+    kind: "query",
+    payload,
+    fingerprint,
+    revision: 1,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    ...overrides,
+  };
+}
 
 export async function touchTap(
   target: HTMLElement,

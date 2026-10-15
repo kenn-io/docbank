@@ -15,6 +15,22 @@ import (
 	"go.kenn.io/docbank/internal/query"
 )
 
+func savedQueryRunCount(t *testing.T, s *Store, id string, photos bool) int {
+	t.Helper()
+	var count int
+	require.NoError(t, s.db.QueryRowContext(t.Context(),
+		`SELECT COUNT(*) FROM saved_query_runs WHERE saved_query_id=? AND photos=?`, id, photos,
+	).Scan(&count))
+	return count
+}
+
+func persistedSavedQueryRun(t *testing.T, s *Store, id string) SavedQueryRun {
+	t.Helper()
+	run, err := scanSavedQueryRun(s.db.QueryRowContext(t.Context(), savedQueryRunSelect+` WHERE run_id=?`, id))
+	require.NoError(t, err)
+	return run
+}
+
 func TestSavedQueryRunRechecksPreserveResolverErrors(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -61,16 +77,12 @@ func TestSavedQueryRunMaterializesBeforeEnteringMutationGate(t *testing.T) {
 	_, page, err := service.RunSaved(t.Context(), "owner", definition.ID, definition.Revision, SnapshotRequest{},
 		func(write func() error) error {
 			assert.Equal(t, int64(1), materializedRows, "materialization must finish before mutation admission")
-			runs, err := s.ListSavedQueryRuns(t.Context(), definition.ID, 100)
-			require.NoError(t, err)
-			assert.Empty(t, runs, "receipt must not be written before mutation admission")
+			assert.Zero(t, savedQueryRunCount(t, s, definition.ID, false), "receipt must not be written before mutation admission")
 			return write()
 		})
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), page.Total)
-	runs, err := s.ListSavedQueryRuns(t.Context(), definition.ID, 100)
-	require.NoError(t, err)
-	assert.Len(t, runs, 1)
+	assert.Equal(t, 1, savedQueryRunCount(t, s, definition.ID, false))
 }
 
 func TestSavedQueryRunUsesSavedDefinitionAndRetainsComparisonReceipts(t *testing.T) {
@@ -80,6 +92,8 @@ func TestSavedQueryRunUsesSavedDefinitionAndRetainsComparisonReceipts(t *testing
 			s := newTestStoreWithDriver(t, driverCase.driver)
 			_, err := s.CreateFile(t.Context(), s.RootID(), "first.txt", fakeHash("saved-run-first"), 7, "text/plain")
 			require.NoError(t, err)
+			browsePhotoNode(t, s, "visible.jpg", browseHash("saved-run-visible"), "image/jpeg")
+			browsePhotoNode(t, s, "second.jpg", browseHash("saved-run-second-photo"), "image/jpeg")
 			definition, err := s.CreateSavedQuery(t.Context(), "Everything", "", SavedQueryKindQuery, []byte(`{}`))
 			require.NoError(t, err)
 
@@ -90,8 +104,13 @@ func TestSavedQueryRunUsesSavedDefinitionAndRetainsComparisonReceipts(t *testing
 					now = now.Add(time.Nanosecond)
 					return result
 				},
-				Rand: bytes.NewReader(append(append(bytes.Repeat([]byte{0x41}, snapshotIDBytes),
-					bytes.Repeat([]byte{0x42}, snapshotIDBytes)...), bytes.Repeat([]byte{0x43}, snapshotIDBytes)...)),
+				Rand: bytes.NewReader(bytes.Join([][]byte{
+					bytes.Repeat([]byte{0x41}, snapshotIDBytes),
+					bytes.Repeat([]byte{0x42}, snapshotIDBytes),
+					bytes.Repeat([]byte{0x43}, snapshotIDBytes),
+					bytes.Repeat([]byte{0x44}, snapshotIDBytes),
+					bytes.Repeat([]byte{0x45}, snapshotIDBytes),
+				}, nil)),
 				HMACKey: bytes.Repeat([]byte{0x42}, 32),
 			})
 			t.Cleanup(func() { require.NoError(t, service.Close()) })
@@ -99,20 +118,33 @@ func TestSavedQueryRunUsesSavedDefinitionAndRetainsComparisonReceipts(t *testing
 			first, firstPage, err := service.RunSaved(t.Context(), "owner", definition.ID, definition.Revision,
 				SnapshotRequest{Query: snapshotTestQuery(t, `{"text":"must-not-override"}`)}, nil)
 			require.NoError(t, err)
-			assert.Equal(t, int64(1), first.Total)
+			assert.Equal(t, int64(3), first.Total)
 			assert.Equal(t, first.SnapshotID, firstPage.SnapshotID)
 			assert.Equal(t, definition.Fingerprint, first.QueryFingerprint)
 			assert.Empty(t, first.PreviousRunID)
 			assert.Equal(t, SavedQueryRunComparison{}, first.Comparison)
+			photoFirst, photoPage, err := service.RunSaved(t.Context(), "owner", definition.ID, definition.Revision,
+				SnapshotRequest{Photos: true}, nil)
+			require.NoError(t, err)
+			assert.True(t, photoFirst.Photos)
+			assert.Equal(t, int64(2), photoFirst.Total)
+			assert.Equal(t, definition.Fingerprint, photoPage.QueryFingerprint)
+			assert.Empty(t, photoFirst.PreviousRunID)
 
 			_, err = s.CreateFile(t.Context(), s.RootID(), "second.txt", fakeHash("saved-run-second"), 11, "text/plain")
 			require.NoError(t, err)
 			second, _, err := service.RunSaved(t.Context(), "owner", definition.ID, definition.Revision, SnapshotRequest{}, nil)
 			require.NoError(t, err)
+			assert.Equal(t, int64(4), second.Total)
 			assert.Equal(t, first.RunID, second.PreviousRunID)
 			assert.False(t, second.Comparison.DefinitionChanged)
 			assert.True(t, second.Comparison.HashChanged)
 			assert.Equal(t, int64(1), second.Comparison.TotalDelta)
+			photoSecond, _, err := service.RunSaved(t.Context(), "owner", definition.ID, definition.Revision,
+				SnapshotRequest{Photos: true}, nil)
+			require.NoError(t, err)
+			assert.Equal(t, photoFirst.RunID, photoSecond.PreviousRunID)
+			assert.False(t, photoSecond.Comparison.HashChanged)
 			updated, err := s.UpdateSavedQuery(t.Context(), definition.ID, definition.Revision,
 				SavedQueryPatch{Payload: new([]byte(`{"sort":{"direction":"desc","field":"name"}}`))})
 			require.NoError(t, err)
@@ -123,13 +155,10 @@ func TestSavedQueryRunUsesSavedDefinitionAndRetainsComparisonReceipts(t *testing
 			assert.False(t, third.Comparison.HashChanged)
 			assert.Zero(t, third.Comparison.TotalDelta)
 
-			runs, err := s.ListSavedQueryRuns(t.Context(), definition.ID, 100)
-			require.NoError(t, err)
-			require.Equal(t, []SavedQueryRun{third, second, first}, runs)
-			_, err = s.ListSavedQueryRuns(t.Context(), definition.ID, 0)
-			require.ErrorIs(t, err, ErrInvalidSavedQueryRun)
-			_, err = s.ListSavedQueryRuns(t.Context(), definition.ID, 101)
-			require.ErrorIs(t, err, ErrInvalidSavedQueryRun)
+			assert.Equal(t, 3, savedQueryRunCount(t, s, definition.ID, false))
+			assert.Equal(t, 2, savedQueryRunCount(t, s, definition.ID, true))
+			assert.Equal(t, third, persistedSavedQueryRun(t, s, third.RunID))
+			assert.Equal(t, photoSecond, persistedSavedQueryRun(t, s, photoSecond.RunID))
 		})
 	}
 }
@@ -205,9 +234,7 @@ func TestSavedQueryRunRejectsStaleDefinitionAndChangedDependencyWithoutReceiptOr
 			mutate(t, s)
 			close(release)
 			require.ErrorIs(t, <-result, ErrStaleRevision)
-			runs, listErr := s.ListSavedQueryRuns(t.Context(), definition.ID, 10)
-			require.NoError(t, listErr)
-			assert.Empty(t, runs)
+			assert.Zero(t, savedQueryRunCount(t, s, definition.ID, false))
 			assert.Equal(t, snapshotCacheStats{}, service.stats())
 		})
 	}
@@ -243,12 +270,14 @@ func TestSavedQueryRunConcurrentReceiptsFormOnePreviousRunChain(t *testing.T) {
 	for runErr := range errs {
 		require.NoError(t, runErr)
 	}
-	runs, err := s.ListSavedQueryRuns(t.Context(), definition.ID, 10)
-	require.NoError(t, err)
+	runs := make([]SavedQueryRun, 0, 2)
+	for run := range results {
+		runs = append(runs, run)
+	}
 	require.Len(t, runs, 2)
 	ids := map[string]bool{runs[0].RunID: true, runs[1].RunID: true}
 	linked := 0
-	for run := range results {
+	for _, run := range runs {
 		if run.PreviousRunID != "" {
 			linked++
 			assert.True(t, ids[run.PreviousRunID])
@@ -308,15 +337,9 @@ func TestSavedQueryRunConcurrentCommitOrderChoosesPreviousChainHead(t *testing.T
 	require.NoError(t, err)
 	assert.Equal(t, first.run.RunID, third.PreviousRunID,
 		"the next receipt must follow commit order even when materialization timestamps were inverted")
-	for _, limit := range []int{1, 2, 10} {
-		runs, err := s.ListSavedQueryRuns(t.Context(), definition.ID, limit)
-		require.NoError(t, err)
-		want := []SavedQueryRun{third, first.run, second}
-		assert.Equal(t, want[:min(limit, len(want))], runs)
-	}
-	runs, err := s.ListSavedQueryRuns(t.Context(), other.ID, 10)
-	require.NoError(t, err)
-	assert.Equal(t, []SavedQueryRun{unrelated}, runs)
+	assert.Equal(t, 3, savedQueryRunCount(t, s, definition.ID, false))
+	assert.Equal(t, 1, savedQueryRunCount(t, s, other.ID, false))
+	assert.Equal(t, unrelated, persistedSavedQueryRun(t, s, unrelated.RunID))
 }
 
 func TestSavedQueryRunCanceledAdmissionAndDefinitionDeletionLeaveNoAuthority(t *testing.T) {
@@ -330,9 +353,7 @@ func TestSavedQueryRunCanceledAdmissionAndDefinitionDeletionLeaveNoAuthority(t *
 	cancel()
 	_, _, err = service.RunSaved(canceled, "owner", definition.ID, definition.Revision, SnapshotRequest{}, nil)
 	require.ErrorIs(t, err, context.Canceled)
-	runs, err := s.ListSavedQueryRuns(t.Context(), definition.ID, 10)
-	require.NoError(t, err)
-	assert.Empty(t, runs)
+	assert.Zero(t, savedQueryRunCount(t, s, definition.ID, false))
 
 	run, _, err := service.RunSaved(t.Context(), "owner", definition.ID, definition.Revision, SnapshotRequest{}, nil)
 	require.NoError(t, err)
@@ -368,9 +389,7 @@ func TestSavedQueryRunFinalizationCancellationBoundaries(t *testing.T) {
 		<-entered
 		service.Revoke("owner")
 		require.ErrorIs(t, <-result, context.Canceled)
-		runs, err := s.ListSavedQueryRuns(t.Context(), definition.ID, 10)
-		require.NoError(t, err)
-		assert.Empty(t, runs)
+		assert.Zero(t, savedQueryRunCount(t, s, definition.ID, false))
 		assert.Equal(t, snapshotCacheStats{}, service.stats())
 	})
 
@@ -402,16 +421,14 @@ func TestSavedQueryRunFinalizationCancellationBoundaries(t *testing.T) {
 			}{run, page, runErr}
 		}()
 		<-committed
-		runs, err := s.ListSavedQueryRuns(t.Context(), definition.ID, 10)
-		require.NoError(t, err)
-		require.Len(t, runs, 1, "receipt is durable before cache finalization")
+		assert.Equal(t, 1, savedQueryRunCount(t, s, definition.ID, false), "receipt is durable before cache finalization")
 		shutdownCtx, cancel := context.WithCancel(context.Background())
 		cancel()
 		require.ErrorIs(t, service.Shutdown(shutdownCtx), context.Canceled)
 		close(release)
 		got := <-result
 		require.NoError(t, got.err)
-		assert.Equal(t, runs[0], got.run)
+		assert.Equal(t, got.run, persistedSavedQueryRun(t, s, got.run.RunID))
 		assert.Equal(t, got.run.SnapshotID, got.page.SnapshotID)
 		require.NoError(t, service.Close())
 		_, err = service.Page(t.Context(), "owner", got.run.SnapshotID, "")

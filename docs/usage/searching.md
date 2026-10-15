@@ -36,6 +36,8 @@ id:231     name     /taxes/2026/insurance-renewal.pdf
 id:198     content  /taxes/2026/car-insurance-notes.md
 ```
 
+[Photos search](photos.md#save-and-freeze-a-photo-search) supports saved smart sets, frozen albums, and authored captions and credits.
+
 QueryV1 and saved queries also support [photo quality filters](photos.md#quality-signals).
 For example, advanced search `brightness_min:0.4 color_blue_min:0.5` selects
 bright, blue-leaning photos, while `unevaluated:true` selects photos with

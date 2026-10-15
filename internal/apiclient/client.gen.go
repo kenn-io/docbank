@@ -8595,7 +8595,7 @@ func (c *Client) ListPhotoAlbums(ctx context.Context, reqEditors ...runtime.Requ
 	return responseParser(ctx, resp)
 }
 
-// CreatePhotoAlbum Create an empty album
+// CreatePhotoAlbum Create an album, optionally from frozen photo results
 func (c *Client) CreatePhotoAlbum(ctx context.Context, options *CreatePhotoAlbumRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreatePhotoAlbumResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
@@ -11432,6 +11432,7 @@ func (c *Client) ListSavedQueries(ctx context.Context, options *ListSavedQueries
 		"kind":   {Style: "form", Explode: &[]bool{false}[0]},
 		"limit":  {Style: "form", Explode: &[]bool{false}[0]},
 		"offset": {Style: "form", Explode: &[]bool{false}[0]},
+		"photos": {Style: "form", Explode: &[]bool{false}[0]},
 	}
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/saved-queries",
@@ -24796,7 +24797,7 @@ type SplitPersonBody = SplitPersonRequest
 
 type RebuildDocumentPeopleBody = PeopleRebuildRequest
 
-type CreatePhotoAlbumBody = PhotoAlbumNameRequest
+type CreatePhotoAlbumBody = CreatePhotoAlbumRequest
 
 type UpdatePhotoAlbumBody = UpdatePhotoAlbumRequest
 
@@ -25239,9 +25240,12 @@ type GetDocumentRenditionQuery struct {
 }
 
 type ListSavedQueriesQuery struct {
-	Kind   *ListSavedQueriesQueryKind `json:"kind,omitempty"`
-	Limit  *int64                     `json:"limit,omitempty"`
-	Offset *int64                     `json:"offset,omitempty"`
+	Kind *ListSavedQueriesQueryKind `json:"kind,omitempty"`
+
+	// Photos Only definitions explicitly scoped to photos or videos
+	Photos *bool  `json:"photos,omitempty"`
+	Limit  *int64 `json:"limit,omitempty"`
+	Offset *int64 `json:"offset,omitempty"`
 }
 
 type SearchQuery struct {
@@ -26851,6 +26855,8 @@ type CreateNodeRequest struct {
 }
 
 type CreatePersonRequest = api.CreatePersonRequest
+
+type CreatePhotoAlbumRequest = api.CreatePhotoAlbumRequest
 
 type CreatePhotoAssetRequest = api.CreatePhotoAssetRequest
 

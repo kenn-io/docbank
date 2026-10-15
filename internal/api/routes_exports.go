@@ -31,6 +31,8 @@ func exportOwner(ctx context.Context) (string, error) {
 }
 func exportProblem(err error) *Error {
 	switch {
+	case errors.Is(err, store.ErrPhotoSnapshotExportUnsupported):
+		return NewError(http.StatusUnprocessableEntity, "photo_snapshot_export_unsupported", err.Error())
 	case errors.Is(err, context.DeadlineExceeded):
 		return NewError(http.StatusGatewayTimeout, "export_timeout", "export operation timed out")
 	case errors.Is(err, context.Canceled):
@@ -110,7 +112,7 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 					id, hash = page.SnapshotID, page.MemberHash
 					queryFingerprint = page.QueryFingerprint
 				}
-				members, err := snapshots.CopyMembersBounded(ctx, snapshotOwner, id, hash, bundle.MaxMembers)
+				members, err := snapshots.CopyExportMembersBounded(ctx, snapshotOwner, id, hash, bundle.MaxMembers)
 				if err != nil {
 					return nil, err
 				}

@@ -1,3 +1,7 @@
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
+import { photoSearchSort } from "./photoSearch.js";
+import { getSavedQuery, type SavedQuery } from "./savedQueries.js";
 import {
   getNode,
   hidePhotoAsset,
@@ -15,6 +19,7 @@ import {
   type PhotoMapRow,
   type SavedQueryV1Schema,
   type PhotoAlbumMembersRequest,
+  type SavedQueryRunResult,
 } from "./generated/docbank.js";
 import { readVerifiedPreview } from "./download.js";
 import { selectedSourceFromNode } from "./selectedSource.js";
@@ -45,11 +50,22 @@ export const photoQuery = parseQuery(
 );
 export const mapPhotoLimit = 20_000;
 const mapPageLimit = 20;
-const photoFacets = ["camera", "lens", "year", "location", "set"] as const;
+const photoFacets = [
+  "camera",
+  "lens",
+  "year",
+  "location",
+  "set",
+  "rating",
+  "flag",
+  "label",
+] as const;
 // One move can audit-trash up to 1,000 files in a single writer transaction.
 const photoRejectsTimeout = 300_000;
 const densityKey = "docbank.photos.density";
-// Photo sorts, facets, and the timeline never read authored metadata; only search text and these filters do.
+const smartSetStorageKey = (session: string) =>
+  `docbank.photos.smart-set.${bytesToHex(sha256(utf8ToBytes(session)))}`;
+// Search text and these filters can change the listed photos after metadata edits.
 const authoredFilters = [
   "rating_min",
   "rating_max",
@@ -108,6 +124,135 @@ export class Photos {
   viewerReturn = $state.raw<PhotoReturn>();
   view = $state<"grid" | "timeline">("grid");
   date = $state<string | undefined>();
+  smartSet = $state.raw<SavedQuery>();
+  frozen = $state.raw<SavedQueryRunResult>();
+  frozenExpired = $state(false);
+  private frozenIdentity = "";
+  private frozenRevision = "";
+  private frozenTimer: ReturnType<typeof setTimeout> | undefined;
+  private smartSetRecoveryGeneration = 0;
+
+  get savedPhotoQuery() {
+    return parseQuery(
+      canonicalQuery({
+        ...this.query,
+        filters: {
+          ...this.query.filters,
+          kinds: this.query.filters.kinds?.length ? this.query.filters.kinds : ["photo", "video"],
+        },
+        sort: ["capture_time", "import_time", "added_time", "relevance"].includes(
+          this.query.sort.field,
+        )
+          ? { field: "name", direction: "asc" }
+          : this.query.sort,
+      }),
+    );
+  }
+  private smartIdentity(value = this.savedPhotoQuery) {
+    return canonicalQuery({ ...value, sort: { field: "name", direction: "asc" } });
+  }
+  get matchingSmartSet() {
+    return this.smartSet?.kind === "query" &&
+      this.smartIdentity(this.smartSet.payload) === this.smartIdentity()
+      ? this.smartSet
+      : undefined;
+  }
+  rememberSmartSet(saved: SavedQuery) {
+    this.smartSetRecoveryGeneration++;
+    this.smartSet = saved;
+    try {
+      localPreferenceStorage()?.setItem(smartSetStorageKey(this.session), saved.id);
+    } catch {
+      /* Keep the current view usable without storage. */
+    }
+  }
+  async recoverSmartSet() {
+    if (this.hidden || this.withoutCounts) return;
+    const storageKey = smartSetStorageKey(this.session);
+    let id = this.smartSet?.id;
+    try {
+      id ??= localPreferenceStorage()?.getItem(storageKey) ?? undefined;
+    } catch {
+      return;
+    }
+    if (!id) return;
+    const recovering = !this.smartSet;
+    const generation = ++this.smartSetRecoveryGeneration;
+    const current = () =>
+      !this.disposed &&
+      generation === this.smartSetRecoveryGeneration &&
+      (!this.smartSet || this.smartSet.id === id);
+    try {
+      const saved = await getSavedQuery(this.session, id);
+      if (!current() || (this.smartSet?.id === id && saved.revision < this.smartSet.revision))
+        return;
+      if (
+        recovering &&
+        (saved.kind !== "query" || this.smartIdentity(saved.payload) !== this.smartIdentity())
+      ) {
+        try {
+          if (localPreferenceStorage()?.getItem(storageKey) === id)
+            localPreferenceStorage()?.removeItem(storageKey);
+        } catch {
+          /* The mismatched definition stays unavailable in this view. */
+        }
+        return;
+      }
+      this.smartSet = saved;
+      this.reconcileFrozen();
+    } catch (cause) {
+      if (!current()) return;
+      if (cause instanceof APIError && cause.status === 404) {
+        this.smartSetRecoveryGeneration++;
+        this.smartSet = undefined;
+        this.clearFrozen();
+        try {
+          if (localPreferenceStorage()?.getItem(storageKey) === id)
+            localPreferenceStorage()?.removeItem(storageKey);
+        } catch {
+          /* The missing definition stays unavailable in this view. */
+        }
+      } else if (cause instanceof APIError && cause.status === 401) this.onauthfailure(cause);
+    }
+  }
+  openSmartSet(saved: SavedQuery) {
+    if (saved.kind !== "query" || this.disposed || this.hiding || this.trashing) return false;
+    const applied = this.setQuery({ ...saved.payload, sort: photoSearchSort(saved.payload) });
+    if (!applied) return false;
+    this.rememberSmartSet(saved);
+    return true;
+  }
+  clearFrozen() {
+    clearTimeout(this.frozenTimer);
+    this.frozen = undefined;
+    this.frozenExpired = false;
+  }
+  expireFrozen() {
+    this.clearFrozen();
+    this.frozenExpired = true;
+  }
+  reconcileFrozen() {
+    if (this.frozen && Date.parse(this.frozen.run.expires_at) <= Date.now()) {
+      this.expireFrozen();
+      return;
+    }
+    if (
+      (this.frozen || this.frozenExpired) &&
+      (this.frozenIdentity !== this.smartIdentity() ||
+        this.frozenRevision !== `${this.smartSet?.id}:${this.smartSet?.revision}`)
+    )
+      this.clearFrozen();
+  }
+  setFrozen(result: SavedQueryRunResult) {
+    this.clearFrozen();
+    this.frozenIdentity = this.smartIdentity();
+    this.frozenRevision = `${this.smartSet?.id}:${this.smartSet?.revision}`;
+    this.frozen = result;
+    this.frozenTimer = setTimeout(
+      () => this.expireFrozen(),
+      Math.max(0, Date.parse(result.run.expires_at) - Date.now()),
+    );
+  }
   baseQuery = $state.raw<Query>(photoQuery);
   query = $state.raw<Query>(photoQuery);
   timeline = $state<CaptureDayFacet | undefined>();
@@ -115,6 +260,7 @@ export class Photos {
   timelineError = $state("");
   private timelineController = new AbortController();
   facets = $state<SnapshotPage["facets"]>([]);
+  relevanceAvailable = $state(false);
   facetsLoading = $state(false);
   facetsError = $state("");
   facetsRetryable = $state(true);
@@ -169,6 +315,7 @@ export class Photos {
         candidate: Map<string, PhotoRow>;
         cursor?: string;
         total: number;
+        relevanceAvailable: boolean;
         complete: boolean;
         pages: number;
       }
@@ -207,6 +354,7 @@ export class Photos {
   }
 
   setSort(sort: QuerySort) {
+    if (sort.field === "relevance" && !this.relevanceAvailable) return;
     if (this.disposed || !this.authored.canChangeTarget()) return;
     // Timeline counts ignore sort, so only photo paging restarts.
     this.controller.abort();
@@ -424,12 +572,14 @@ export class Photos {
     this.baseQuery = next;
     this.query = next;
     this.date = undefined;
+    this.reconcileFrozen();
     this.timeline = undefined;
     this.timelineError = "";
     this.items = [];
     this.facets = [];
     this.total = 0;
     this.cursor = undefined;
+    this.relevanceAvailable = false;
     this.facetsError = "";
     this.needsFacets = false;
     this.started = false;
@@ -471,6 +621,7 @@ export class Photos {
           : controller.signal;
         const page = await this.page(this.query, signal, this.cursor);
         if (signal.aborted) throw signal.reason;
+        if (!this.started) this.relevanceAvailable = page.relevance_available;
         pages++;
         const seen = (this.seenIDs ??= new Set(this.items.map((item) => item.asset_id)));
         const added: PhotoRow[] = [];
@@ -647,6 +798,19 @@ export class Photos {
           : row,
       );
     }
+    if (
+      !this.dependsOnAuthored &&
+      receipt.after.some((file) => {
+        const previous = before.get(file.file_id)?.values;
+        return (
+          previous &&
+          (previous.rating !== file.values.rating ||
+            previous.flag !== file.values.flag ||
+            previous.label !== file.values.label)
+        );
+      })
+    )
+      void this.reloadCounts();
     return rotations;
   }
 
@@ -899,6 +1063,7 @@ export class Photos {
             candidate: new Map<string, PhotoRow>(),
             cursor: undefined,
             total: 0,
+            relevanceAvailable: false,
             complete: false,
             pages: 0,
           });
@@ -911,6 +1076,7 @@ export class Photos {
         signal = AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]);
         const page = await this.page(query, signal, cursor);
         if (signal.aborted) throw signal.reason;
+        if (!cursor) staged.relevanceAvailable = page.relevance_available;
         const reachedPreviously = reachedPrefix;
         staged.pages++;
         let capped = false;
@@ -950,11 +1116,13 @@ export class Photos {
       this.items = [...candidate.values()];
       this.total = total;
       this.countStale = false;
+      this.relevanceAvailable = staged.relevanceAvailable;
       this.facets = [];
       this.facetsError = "";
       this.cursor = cursor;
       this.started = true;
       if (mode === "date") {
+        this.clearFrozen();
         this.query = query;
         this.date = date;
         this.scrollTop = 0;
@@ -1242,6 +1410,7 @@ export class Photos {
     this.allResults = true;
   }
   dispose() {
+    this.clearFrozen();
     this.authored.dispose();
     this.viewerReturn = undefined;
     this.disposed = true;

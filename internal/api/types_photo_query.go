@@ -17,7 +17,7 @@ type PhotoBrowseRequest struct {
 	Query      QueryPayload           `json:"query"`
 	Coverage   WorkspaceQueryCoverage `json:"coverage,omitzero"`
 	PageSize   int                    `json:"page_size,omitempty,omitzero" minimum:"1" default:"50" doc:"Maximum 1000 only with projection: \"map\"; 250 otherwise."`
-	Facets     []string               `json:"facets,omitempty" maxItems:"5" uniqueItems:"true" enum:"camera,lens,year,location,set"`
+	Facets     []string               `json:"facets,omitempty" maxItems:"8" uniqueItems:"true" enum:"camera,lens,year,location,set,rating,flag,label"`
 	Cursor     string                 `json:"cursor,omitempty" maxLength:"32768"`
 }
 
@@ -97,11 +97,12 @@ type PhotoMapRow struct {
 }
 
 type PhotoBrowsePage struct {
-	MapItems   []PhotoMapRow    `json:"map_items,omitempty"`
-	Items      []PhotoBrowseRow `json:"items"`
-	Total      int64            `json:"total" minimum:"0"`
-	Facets     []WorkspaceFacet `json:"facets"`
-	NextCursor string           `json:"next_cursor,omitempty"`
+	MapItems           []PhotoMapRow    `json:"map_items,omitempty"`
+	Items              []PhotoBrowseRow `json:"items"`
+	Total              int64            `json:"total" minimum:"0"`
+	Facets             []WorkspaceFacet `json:"facets"`
+	NextCursor         string           `json:"next_cursor,omitempty"`
+	RelevanceAvailable bool             `json:"relevance_available"`
 }
 
 // Schema makes missing measurements nullable while sharing the signals definition.

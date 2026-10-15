@@ -3234,6 +3234,11 @@
                 albums={photoAlbums}
                 cache={photoState.cache}
                 onnavigate={navigatePhotos}
+                smartDisabled={photoState.photos.hiding || photoState.photos.trashing}
+                onopensmart={(saved) => {
+                  if (saved.kind === "query" && photoState && photoState.photos.openSmartSet(saved))
+                    navigatePhotos("/photos");
+                }}
               />{/if}
           {:else if albumID}{#if albumPhotos}{#key albumPhotos}<PhotosWorkspace
                   onhelp={openShortcutHelp}

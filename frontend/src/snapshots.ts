@@ -21,6 +21,7 @@ export type SnapshotOptions = {
 };
 
 export interface SnapshotRow {
+  asset_id?: string;
   node_id: number;
   content_version_id: string;
   blob_hash: string;
@@ -85,7 +86,10 @@ export interface WorkspaceQueryResponse {
       | "lens"
       | "year"
       | "location"
-      | "set";
+      | "set"
+      | "rating"
+      | "flag"
+      | "label";
     available: boolean;
     reason?: string;
     total?: number | null;
@@ -104,7 +108,7 @@ export interface WorkspaceQueryResponse {
 export type SnapshotPage = WorkspaceQueryResponse;
 export type SnapshotMember = Pick<
   SnapshotRow,
-  "node_id" | "content_version_id" | "blob_hash" | "size" | "revision"
+  "asset_id" | "node_id" | "content_version_id" | "blob_hash" | "size" | "revision"
 >;
 export type VerifiedSnapshotTargets = { snapshot: SnapshotPage; members: SnapshotMember[] };
 
@@ -157,6 +161,9 @@ const facetDimensions = new Set<WorkspaceQueryResponse["facets"][number]["dimens
   "year",
   "location",
   "set",
+  "rating",
+  "flag",
+  "label",
 ]);
 const encoder = new TextEncoder();
 
@@ -296,6 +303,7 @@ function parseRow(value: unknown, index: number): SnapshotRow {
       "coverage_build_id",
       "coverage_attachment_id",
       "excerpt",
+      "asset_id",
     ],
     `rows[${index}]`,
   );
@@ -341,7 +349,11 @@ function parseRow(value: unknown, index: number): SnapshotRow {
   ) as SnapshotRow["coverage_state"];
   if (coverageState !== undefined && !coverageStates.has(coverageState))
     malformed(`rows[${index}].coverage_state is invalid`);
+  const assetID = optionalString(raw.asset_id, `rows[${index}].asset_id`);
+  if (assetID !== undefined && !uuidV4.test(assetID))
+    malformed(`rows[${index}].asset_id is invalid`);
   return {
+    ...(assetID === undefined ? {} : { asset_id: assetID }),
     node_id: integer(raw.node_id, `rows[${index}].node_id`, 1),
     content_version_id: contentVersionID,
     blob_hash: blobHash,
@@ -837,10 +849,11 @@ export async function readSnapshotPage(
 }
 
 export async function snapshotMemberHash(
-  members: readonly Pick<SnapshotMember, "node_id" | "content_version_id">[],
+  members: readonly Pick<SnapshotMember, "asset_id" | "node_id" | "content_version_id">[],
 ): Promise<string> {
   const ordered = members
     .map((member) => ({
+      asset_id: member.asset_id,
       node_id: integer(member.node_id, "member.node_id", 1),
       content_version_id: string(member.content_version_id, "member.content_version_id"),
     }))
@@ -849,7 +862,12 @@ export async function snapshotMemberHash(
         left.node_id - right.node_id ||
         left.content_version_id.localeCompare(right.content_version_id),
     );
-  const text = ordered.map((member) => `${member.node_id}:${member.content_version_id}\n`).join("");
+  const text = ordered
+    .map(
+      (member) =>
+        `${member.node_id}:${member.content_version_id}\n${member.asset_id ? `asset:${member.asset_id}\n` : ""}`,
+    )
+    .join("");
   const digest = await sha256Digest(encoder.encode(text));
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
@@ -881,6 +899,7 @@ export async function captureSnapshotTargets(
         throw new Error("Snapshot capture contains a duplicate member.");
       identities.add(identity);
       members.push({
+        ...(row.asset_id === undefined ? {} : { asset_id: row.asset_id }),
         node_id: row.node_id,
         content_version_id: row.content_version_id,
         blob_hash: row.blob_hash,

@@ -300,6 +300,32 @@ func TestSavedQueryRunRouteRequiresRevisionAndUsesSavedDefinition(t *testing.T) 
 	assert.Equal(t, "stale_revision", decodeProblem(t, body).Code)
 }
 
+func TestSavedPhotoRunRouteOptions(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, func(d *api.Deps) {
+		renditionTextConfig(d)
+	})
+
+	saved, _ := createSavedQuery(t, ts.URL, "Photo run profile", `{"filters":{"kinds":["photo"]}}`)
+	path := "/api/v1/saved-queries/" + saved.ID + "/runs"
+	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, path,
+		map[string]string{"X-Api-Key": testAPIKey, "If-Match": `"1"`}, `{"photos":true,"page_size":50}`)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var result api.SavedQueryRunResult
+	require.NoError(t, json.Unmarshal([]byte(body), &result))
+	assert.Equal(t, "unconfigured", result.Snapshot.Coverage.Configuration)
+
+	response, body = rawJSONRequest(t, ts.URL, http.MethodPost, path,
+		map[string]string{"X-Api-Key": testAPIKey, "If-Match": `"1"`}, `{"photos":true,"profile":"archive","page_size":50}`)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &result))
+	assert.Equal(t, "configured", result.Snapshot.Coverage.Configuration)
+	response, body = rawJSONRequest(t, ts.URL, http.MethodPost, path,
+		map[string]string{"X-Api-Key": testAPIKey, "If-Match": `"1"`}, `{"replaces_snapshot_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`)
+	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	assert.Equal(t, "validation", decodeProblem(t, body).Code)
+}
+
 func TestSavedQueryRunRouteConcealsMissingAndHighlightDefinitions(t *testing.T) {
 	t.Parallel()
 	ts, _ := newTestServer(t, nil)

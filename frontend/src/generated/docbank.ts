@@ -1499,6 +1499,20 @@ export interface CreatePersonRequest {
   display_name: string;
 }
 
+export interface CreatePhotoAlbumRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  member_hash?: string;
+  /**
+     * @minLength 1
+     * @maxLength 256
+     */
+  name: string;
+  /** @pattern ^[0-9a-f]{32}$ */
+  snapshot_id?: string;
+}
+
 export type CreatePhotoAssetRequestKind = typeof CreatePhotoAssetRequestKind[keyof typeof CreatePhotoAssetRequestKind];
 
 
@@ -5547,6 +5561,7 @@ export interface PhotoBrowsePage {
   items: PhotoBrowseRow[];
   map_items?: PhotoMapRow[];
   next_cursor?: string;
+  relevance_available: boolean;
   /** @minimum 0 */
   total: number;
 }
@@ -5560,6 +5575,9 @@ export const PhotoBrowseRequestFacetsItem = {
   year: 'year',
   location: 'location',
   set: 'set',
+  rating: 'rating',
+  flag: 'flag',
+  label: 'label',
 } as const;
 
 export type PhotoBrowseRequestProjection = typeof PhotoBrowseRequestProjection[keyof typeof PhotoBrowseRequestProjection];
@@ -5575,7 +5593,7 @@ export interface PhotoBrowseRequest {
   coverage?: WorkspaceQueryCoverage;
   /** @maxLength 32768 */
   cursor?: string;
-  /** @maxItems 5 */
+  /** @maxItems 8 */
   facets?: PhotoBrowseRequestFacetsItem[];
   hidden?: boolean;
   /**
@@ -6814,6 +6832,7 @@ export interface SavedQueryRun {
   expires_at: string;
   /** @pattern ^[0-9a-f]{64}$ */
   member_hash: string;
+  photos: boolean;
   /** @pattern ^[0-9a-f]{64}$ */
   previous_member_hash?: string;
   /** @pattern ^sha256:[0-9a-f]{64}$ */
@@ -6868,8 +6887,14 @@ export interface SavedQueryRunRequest {
   /** @maxItems 8 */
   facets?: SavedQueryRunRequestFacetsItem[];
   page_size?: SavedQueryRunRequestPageSize;
+  photos?: boolean;
   /** @maxLength 128 */
   profile?: string;
+  /**
+     * Owned photo snapshot to keep while building its replacement
+     * @maxLength 32
+     */
+  replaces_snapshot_id?: string;
 }
 
 export type WorkspaceQueryResponsePageSize = typeof WorkspaceQueryResponsePageSize[keyof typeof WorkspaceQueryResponsePageSize];
@@ -6889,6 +6914,7 @@ export interface WorkspaceQueryTag {
 }
 
 export interface WorkspaceQueryRow {
+  asset_id?: string;
   /** @pattern ^[0-9a-f]{64}$ */
   blob_hash: string;
   collection_ids: string[];
@@ -8715,6 +8741,10 @@ Range?: string;
 
 export type ListSavedQueriesParams = {
 kind?: ListSavedQueriesKind;
+/**
+ * Only definitions explicitly scoped to photos or videos
+ */
+photos?: boolean;
 /**
  * @minimum 1
  * @maximum 1000
@@ -15253,9 +15283,9 @@ export const getCreatePhotoAlbumUrl = () => {
 }
 
 /**
- * @summary Create an empty album
+ * @summary Create an album, optionally from frozen photo results
  */
-export const createPhotoAlbum = (photoAlbumNameRequest: NonReadonly<PhotoAlbumNameRequest>, options?: Parameters<typeof sessionResponse>[1]) => {
+export const createPhotoAlbum = (createPhotoAlbumRequest: NonReadonly<CreatePhotoAlbumRequest>, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -15276,7 +15306,7 @@ return sessionResponse<PhotoAlbum>(getCreatePhotoAlbumUrl(),
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
-    body: JSON.stringify(photoAlbumNameRequest)
+    body: JSON.stringify(createPhotoAlbumRequest)
   }
 );}
 

@@ -25,6 +25,7 @@ type SavedQueryRunComparison struct {
 // SavedQueryRun is durable evidence that one saved definition was materialized.
 // Snapshot rows remain daemon-local and are not reconstructed from this receipt.
 type SavedQueryRun struct {
+	Photos                   bool                    `json:"photos"`
 	RunID                    string                  `json:"run_id"`
 	SavedQueryID             string                  `json:"saved_query_id"`
 	SavedQueryRevision       int64                   `json:"saved_query_revision"`
@@ -42,59 +43,10 @@ type SavedQueryRun struct {
 	Comparison               SavedQueryRunComparison `json:"comparison"`
 }
 
-// ListSavedQueryRuns returns the newest bounded receipt page for one definition.
-func (s *Store) ListSavedQueryRuns(
-	ctx context.Context, id string, limit int,
-) ([]SavedQueryRun, error) {
-	if err := validateUUIDv4(id); err != nil {
-		return nil, fmt.Errorf("%w: saved query ID: %w", ErrInvalidSavedQueryRun, err)
-	}
-	if limit < 1 || limit > 100 {
-		return nil, fmt.Errorf("%w: limit must be from 1 through 100", ErrInvalidSavedQueryRun)
-	}
-	rows, err := s.db.QueryContext(ctx, `WITH RECURSIVE history(
-		run_id,saved_query_id,saved_query_revision,query_fingerprint,snapshot_id,
-		member_hash,total,total_bytes,ran_at,expires_at,previous_run_id,
-		previous_member_hash,previous_total,previous_query_fingerprint,depth
-	) AS (
-		SELECT r.run_id,r.saved_query_id,r.saved_query_revision,r.query_fingerprint,r.snapshot_id,
-			r.member_hash,r.total,r.total_bytes,r.ran_at,r.expires_at,r.previous_run_id,
-			r.previous_member_hash,r.previous_total,r.previous_query_fingerprint,0
-		FROM saved_query_runs r WHERE r.saved_query_id=? AND NOT EXISTS(
-			SELECT 1 FROM saved_query_runs successor WHERE successor.previous_run_id=r.run_id
-		)
-		UNION ALL
-		SELECT p.run_id,p.saved_query_id,p.saved_query_revision,p.query_fingerprint,p.snapshot_id,
-			p.member_hash,p.total,p.total_bytes,p.ran_at,p.expires_at,p.previous_run_id,
-			p.previous_member_hash,p.previous_total,p.previous_query_fingerprint,h.depth+1
-		FROM saved_query_runs p JOIN history h ON p.run_id=h.previous_run_id
-	)
-	SELECT run_id,saved_query_id,saved_query_revision,query_fingerprint,snapshot_id,
-		member_hash,total,total_bytes,ran_at,expires_at,previous_run_id,
-		previous_member_hash,previous_total,previous_query_fingerprint
-	FROM history ORDER BY depth LIMIT ?`, id, limit)
-	if err != nil {
-		return nil, fmt.Errorf("listing saved query runs: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	result := make([]SavedQueryRun, 0)
-	for rows.Next() {
-		run, scanErr := scanSavedQueryRun(rows)
-		if scanErr != nil {
-			return nil, scanErr
-		}
-		result = append(result, run)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("listing saved query runs: %w", err)
-	}
-	return result, nil
-}
-
 const savedQueryRunSelect = `SELECT
 	run_id,saved_query_id,saved_query_revision,query_fingerprint,snapshot_id,
 	member_hash,total,total_bytes,ran_at,expires_at,previous_run_id,
-	previous_member_hash,previous_total,previous_query_fingerprint
+	previous_member_hash,previous_total,previous_query_fingerprint,photos
 	FROM saved_query_runs `
 
 func insertSavedQueryRunTx(
@@ -123,7 +75,7 @@ func insertSavedQueryRunTx(
 		return SavedQueryRun{}, fmt.Errorf("allocating saved query run ID: %w", err)
 	}
 	run := SavedQueryRun{
-		RunID: runID, SavedQueryID: savedQueryID, SavedQueryRevision: expectedRevision,
+		Photos: projection.Photos, RunID: runID, SavedQueryID: savedQueryID, SavedQueryRevision: expectedRevision,
 		QueryFingerprint: projection.QueryFingerprint, SnapshotID: page.SnapshotID,
 		MemberHash: projection.MemberHash, Total: projection.Total, TotalBytes: projection.TotalBytes,
 		RanAt: page.CreatedAt.UTC(), ExpiresAt: page.ExpiresAt.UTC(),
@@ -133,11 +85,11 @@ func insertSavedQueryRunTx(
 	// Keep unrelated run histories out of the successor lookup while holding
 	// the write transaction. Commit order, not materialization time, defines the head.
 	err = tx.QueryRowContext(ctx, `SELECT r.run_id,r.member_hash,r.total,r.query_fingerprint
-		FROM saved_query_runs r WHERE r.saved_query_id=? AND NOT EXISTS(
+		FROM saved_query_runs r WHERE r.saved_query_id=? AND r.photos=? AND NOT EXISTS(
 			SELECT 1 FROM saved_query_runs successor
-			WHERE successor.saved_query_id=r.saved_query_id AND successor.previous_run_id=r.run_id
+			WHERE successor.saved_query_id=r.saved_query_id AND successor.photos=r.photos AND successor.previous_run_id=r.run_id
 		) LIMIT 1`,
-		savedQueryID).Scan(&previousRunID, &previousHash, &previousTotal, &previousFingerprint)
+		savedQueryID, run.Photos).Scan(&previousRunID, &previousHash, &previousTotal, &previousFingerprint)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return SavedQueryRun{}, fmt.Errorf("selecting previous saved query run: %w", err)
 	}
@@ -158,13 +110,13 @@ func insertSavedQueryRunTx(
 	_, err = tx.ExecContext(ctx, `INSERT INTO saved_query_runs(
 		run_id,saved_query_id,saved_query_revision,query_fingerprint,snapshot_id,
 		member_hash,total,total_bytes,ran_at,expires_at,previous_run_id,
-		previous_member_hash,previous_total,previous_query_fingerprint
-	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, run.RunID, run.SavedQueryID,
+		previous_member_hash,previous_total,previous_query_fingerprint,photos
+	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, run.RunID, run.SavedQueryID,
 		run.SavedQueryRevision, run.QueryFingerprint, run.SnapshotID, run.MemberHash,
 		run.Total, run.TotalBytes, formatSavedQueryRunTime(run.RanAt),
 		formatSavedQueryRunTime(run.ExpiresAt), nullableString(run.PreviousRunID),
 		nullableString(run.PreviousMemberHash), nullablePreviousTotal(run),
-		nullableString(run.PreviousQueryFingerprint))
+		nullableString(run.PreviousQueryFingerprint), run.Photos)
 	if err != nil {
 		return SavedQueryRun{}, fmt.Errorf("inserting saved query run: %w", err)
 	}
@@ -195,7 +147,7 @@ func scanSavedQueryRun(row interface{ Scan(dest ...any) error }) (SavedQueryRun,
 	if err := row.Scan(&run.RunID, &run.SavedQueryID, &run.SavedQueryRevision,
 		&run.QueryFingerprint, &run.SnapshotID, &run.MemberHash, &run.Total,
 		&run.TotalBytes, &ranAt, &expiresAt, &previousRunID, &previousHash,
-		&previousTotal, &previousFingerprint); err != nil {
+		&previousTotal, &previousFingerprint, &run.Photos); err != nil {
 		return SavedQueryRun{}, fmt.Errorf("scanning saved query run: %w", err)
 	}
 	var err error

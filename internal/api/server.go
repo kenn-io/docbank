@@ -244,7 +244,7 @@ func NewServer(d Deps) *Server {
 	registerPhotoRejectRoutes(humaAPI, d, g)
 	registerPhotoAuthoredRoutes(humaAPI, d, g)
 	registerPhotoHiddenRoutes(humaAPI, d, g)
-	registerPhotoSetRoutes(humaAPI, d, g)
+	registerPhotoSetRoutes(humaAPI, d, g, s.snapshots)
 	registerPhotoQueryRoutes(humaAPI, d, cursorService, g)
 	registerPhotoTimelineRoute(humaAPI, s.snapshots)
 	registerPeopleRoutes(humaAPI, d, g)

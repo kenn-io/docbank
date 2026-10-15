@@ -1952,7 +1952,8 @@ CREATE TABLE IF NOT EXISTS saved_query_runs (
     previous_run_id            TEXT,
     previous_member_hash       TEXT,
     previous_total             INTEGER,
-    previous_query_fingerprint TEXT
+    previous_query_fingerprint TEXT,
+    photos                     INTEGER NOT NULL DEFAULT 0 CHECK(photos IN (0,1))
 );
 
 CREATE INDEX IF NOT EXISTS saved_query_runs_definition
@@ -2341,6 +2342,20 @@ CREATE TRIGGER IF NOT EXISTS photo_timeline_head_update AFTER UPDATE ON source_m
     INSERT OR REPLACE INTO photo_timeline_pending(node_id)
     SELECT DISTINCT f.node_id FROM content_versions v JOIN photo_files f ON f.node_id = v.node_id
     WHERE v.blob_hash = NEW.source_sha256;
+END;
+
+CREATE VIRTUAL TABLE IF NOT EXISTS photo_authored_fts USING fts5(caption, creator, copyright, tokenize='unicode61');
+CREATE TRIGGER IF NOT EXISTS photo_authored_fts_insert AFTER INSERT ON photo_files
+WHEN new.role<>'sidecar' AND (new.caption<>'' OR new.creator<>'' OR new.copyright<>'') BEGIN
+    INSERT INTO photo_authored_fts(rowid,caption,creator,copyright) VALUES(new.node_id,new.caption,new.creator,new.copyright);
+END;
+CREATE TRIGGER IF NOT EXISTS photo_authored_fts_update AFTER UPDATE OF caption,creator,copyright,node_id,role ON photo_files
+WHEN old.caption IS NOT new.caption OR old.creator IS NOT new.creator OR old.copyright IS NOT new.copyright OR old.node_id IS NOT new.node_id OR old.role IS NOT new.role BEGIN
+    DELETE FROM photo_authored_fts WHERE rowid=old.node_id;
+    INSERT INTO photo_authored_fts(rowid,caption,creator,copyright) SELECT new.node_id,new.caption,new.creator,new.copyright WHERE new.role<>'sidecar' AND (new.caption<>'' OR new.creator<>'' OR new.copyright<>'');
+END;
+CREATE TRIGGER IF NOT EXISTS photo_authored_fts_delete AFTER DELETE ON photo_files BEGIN
+    DELETE FROM photo_authored_fts WHERE rowid=old.node_id;
 END;
 
 CREATE TABLE IF NOT EXISTS photo_sidecar_considered (

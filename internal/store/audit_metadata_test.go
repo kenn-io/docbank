@@ -408,9 +408,7 @@ func TestSavedQueryRunRejectsActiveAuditAuthorityWithoutPublishingHandle(t *test
 
 	_, _, err = service.RunSaved(t.Context(), "owner", definition.ID, definition.Revision, SnapshotRequest{}, nil)
 	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
-	runs, err := s.ListSavedQueryRuns(t.Context(), definition.ID, 10)
-	require.NoError(t, err)
-	assert.Empty(t, runs)
+	assert.Zero(t, savedQueryRunCount(t, s, definition.ID, false))
 	assert.Equal(t, snapshotCacheStats{}, service.stats())
 }
 

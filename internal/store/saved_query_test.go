@@ -122,7 +122,7 @@ func TestSavedQueryNormalizesDescriptionLineEndings(t *testing.T) {
 	assert.Equal(t, updated, stored)
 }
 
-func TestSavedQueriesAreBoundedFilteredAndNameSorted(t *testing.T) {
+func TestSavedQueriesAreBoundedPhotoScopedFilteredAndNameSorted(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -130,18 +130,37 @@ func TestSavedQueriesAreBoundedFilteredAndNameSorted(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.CreateSavedQuery(ctx, "alpha", "", SavedQueryKindHighlightSet, []byte(savedHighlightPayload))
 	require.NoError(t, err)
+	_, err = s.CreateSavedQuery(ctx, "z document", "", SavedQueryKindQuery, []byte(`{}`))
+	require.NoError(t, err)
+	photo, err := s.CreateSavedQuery(ctx, "z photo", "", SavedQueryKindQuery, []byte(`{"filters":{"kinds":["photo"]}}`))
+	require.NoError(t, err)
+	video, err := s.CreateSavedQuery(ctx, "z video", "", SavedQueryKindQuery, []byte(`{"filters":{"kinds":["video"]}}`))
+	require.NoError(t, err)
 
 	page, total, err := s.SavedQueries(ctx, "", 1, 0)
 	require.NoError(t, err)
-	assert.Equal(t, 2, total)
+	assert.Equal(t, 5, total)
 	require.Len(t, page, 1)
 	assert.Equal(t, "alpha", page[0].Name)
 
 	page, total, err = s.SavedQueries(ctx, SavedQueryKindQuery, 10, 0)
 	require.NoError(t, err)
-	assert.Equal(t, 1, total)
-	require.Len(t, page, 1)
+	assert.Equal(t, 4, total)
+	require.Len(t, page, 4)
 	assert.Equal(t, "beta", page[0].Name)
+	assert.Equal(t, []string{"z document", "z photo", "z video"}, []string{page[1].Name, page[2].Name, page[3].Name})
+
+	for offset := range 3 {
+		items, total, err := s.PhotoSavedQueries(ctx, 1, offset)
+		require.NoError(t, err)
+		require.Equal(t, 2, total)
+		if offset < 2 {
+			require.Len(t, items, 1)
+			require.Equal(t, []string{photo.ID, video.ID}[offset], items[0].ID)
+		} else {
+			require.Empty(t, items)
+		}
+	}
 
 	for _, test := range []struct {
 		kind          string

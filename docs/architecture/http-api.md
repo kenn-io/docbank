@@ -946,7 +946,11 @@ requests share the daemon's master owner. All handles are daemon-lifetime
 cache state and disappear on restart or shutdown.
 
 `POST /saved-queries/{saved_query_id}/runs` executes the saved query revision
-named by `If-Match`. Its body accepts only `profile`, `page_size`, and `facets`.
+named by `If-Match`. Its body accepts only `profile`, `page_size`, `facets`, `photos`, and `replaces_snapshot_id`.
+Photo runs reject facets. With `photos: true`, `replaces_snapshot_id` protects a live snapshot owned by the caller from eviction while its replacement builds. Missing, expired, or foreign handles are ignored; the run proceeds without protection. After publication, the old handle returns to normal cache eviction.
+`photos` defaults to false for document-node execution; true freezes grouped Library
+photo assets and rejects hidden scope. Run receipts record this mode and compare
+only with earlier runs in the same mode.
 It cannot replace the saved QueryV1 payload. The response is
 `{run,snapshot}`. `run` durably records the definition revision, fingerprints,
 exact totals, expiry, and comparison with the previous run. The accompanying
@@ -955,13 +959,14 @@ not reconstruct rows or silently rerun the query. Run the saved query again
 after `410 snapshot_gone`.
 
 Each run compares with the preceding committed receipt for the same saved
-query, even when concurrent runs materialize out of order. The predecessor
+query and execution mode, even when concurrent runs materialize out of order. The predecessor
 lookup uses the saved-query index and reads only that definition's run history.
 
 Snapshot execution supports duplicate and text-coverage constraints.
 Text-coverage predicates require a configured processing profile. Semantic and
-hybrid modes and relevance ordering remain unsupported and return positioned
-`422 invalid_query` errors.
+hybrid modes remain unsupported and return positioned `422 invalid_query` errors.
+Relevance ordering is supported for Photos and rejected for Documents snapshots. A Photos snapshot executes a saved
+`path` sort as `name asc`, retaining the original definition and query fingerprint.
 
 ### Search exports
 
@@ -1111,7 +1116,9 @@ minimum greater than the maximum is rejected.
 
 `GET /saved-queries` returns a consistent name-then-ID-sorted page with
 `items`, `total`, `limit`, and `offset`. The default limit is 100, the maximum
-is 1,000, and an optional `kind` selects one definition type. The stable-ID
+is 1,000, and an optional `kind` selects one definition type. `photos=true` selects
+query definitions with a nonempty kind scope containing only photos or videos,
+before counting and paging. The stable-ID
 route returns one definition and its current ETag. `PATCH` accepts only
 `name`, `description`, and `payload`. Omitted fields stay unchanged, `null` and
 an empty patch are rejected, and `kind` cannot change. Update and delete both
@@ -1454,6 +1461,8 @@ as reads in this slice.
 
 `GET /photos/albums` lists albums with `member_count` for members that still have a file, `included_count` for visible included members, and current ready grid covers. `POST /photos/albums` creates one; `GET /photos/albums/{set_id}` inspects it. `PUT /photos/albums/{set_id}` changes optional `name` or `starred`. `PUT /photos/albums/{set_id}/cover` chooses a member through `asset_id`, or clears the override when omitted. `POST /photos/albums/{set_id}/duplicate` supplies a new `name`. `DELETE /photos/albums/{set_id}` deletes the album while retaining its photos. Existing-album writes require `If-Match` and return the album with its ETag.
 
+Album creation accepts `name` and optional paired `snapshot_id` and `member_hash`. A frozen snapshot copies all asset members atomically, up to 250,000. Expired snapshots or members no longer eligible for Library refuse the whole write. Later metadata or display-file edits preserve eligible frozen membership.
+
 Album summaries compute both counts in one membership scan. A display file proves
 that a member still has a file; members without one use a file-existence lookup.
 Visibility and trash filters apply only to the included count, so hidden,
@@ -1471,9 +1480,9 @@ skipped, changed, failed, ambiguous and unsupported counts, plus the groups
 left unpaired. `POST /jobs/{operation_id}/cancel` stops it before the next
 group. Starting an import requires the API key on a loopback connection.
 
-`POST /photos/assets/query` executes [photo asset browsing](../usage/photos.md#browse-photo-assets-over-http). It accepts strict `query`, optional `coverage`, `page_size` from 1 through 250, `facets`, `cursor`, and `hidden`. The default page size is 50. With `projection: "map"`, `page_size` allows up to 1,000. Larger pages return a validation error. Hidden defaults to false; true lists only hidden assets and validates the unlock on every request. It returns one item per eligible matching asset, the full `total`, and requested `camera`, `lens`, `year`, `location`, or `set` facets on the first page. Facets count distinct assets across the whole scope while omitting their own root filter. Camera and lens group Unicode-folded make/model identities and emit original spellings as keys; an asset can count under both make and model.
+`POST /photos/assets/query` executes [photo asset browsing](../usage/photos.md#browse-photo-assets-over-http). It accepts strict `query`, optional `coverage`, `page_size` from 1 through 250, `facets`, `cursor`, and `hidden`. The default page size is 50. With `projection: "map"`, `page_size` allows up to 1,000. Larger pages return a validation error. Hidden defaults to false; true lists only hidden assets and validates the unlock on every request. It returns one item per eligible matching asset, the full `total`, and requested `camera`, `lens`, `year`, `location`, `set`, `rating`, `flag`, or `label` facets on the first page, and `relevance_available`. Facets count distinct assets across the whole scope while omitting their own root filter. Camera and lens group Unicode-folded make/model identities and emit original spellings as keys; an asset can count under both make and model.
 
-The supported sort fields are `relevance`, `capture_time`, `import_time`, `added_time`, `name`, `modified_at`, `size` and `media_type`; default ordering is name ascending. Relevance returns one page of up to `page_size` matches with no `next_cursor`. It orders evidence tier and numeric score in the requested direction, then capture placement descending and asset UUID ascending. Descending relevance places filename evidence first, metadata evidence second, and retained content-only evidence third. Operands keep their field, prefix, phrase and NEAR meaning. Relevance has no snapshot row limit or build deadline. Passing a cursor with relevance returns `invalid_photo_cursor`.
+The supported sort fields are `relevance`, `capture_time`, `import_time`, `added_time`, `name`, `modified_at`, `size` and `media_type`; default ordering is name ascending. Relevance returns one page of up to `page_size` matches with no `next_cursor`. It orders evidence tier and numeric score in the requested direction, then capture placement descending and asset UUID ascending. Descending relevance places filename evidence first, authored text second, technical metadata third, and retained content-only evidence fourth. Scores are compared within each tier. Operands keep their field, prefix, phrase and NEAR meaning. Relevance has no snapshot row limit or build deadline. Passing a cursor with relevance returns `invalid_photo_cursor`.
 
 Other sorts return an optional forward `next_cursor`. Capture keys fall back to the recorded modified time of the displayed bytes, and sort photos with neither last in both directions, then use ascending asset UUID for ties. Text keys compare their first 1,024 characters, so names or media types that share that prefix fall back to UUID order. Album filters constrain the matching population before choosing duplicate representatives. `added_time` requires exactly one normalized `filters.set_ids` value and uses that album's added dates. Album-by-query membership ignores sort and selects the complete matching population. Document snapshots reject `capture_time`, `import_time`, and `added_time` with a field-specific error that directs callers to Photos.
 
@@ -2289,11 +2298,14 @@ include a `position` span:
 | `hidden_lockout` | 429 | five-minute lockout, with `Retry-After` |
 | `invalid_photo_asset` | 422 | asset kind, role, display pointer, sidecar target, or graph state is invalid |
 | `invalid_photo_album` | 422 | album name, member cover, explicit asset selection, or mutually exclusive selection fields are invalid |
+| `photo_snapshot_export_unsupported` | 422 | a Photos snapshot cannot use the generic export API because it would omit related RAW and sidecar files; export it from Photos |
 | `photo_node_not_eligible` | 422 | the selected node is not a live eligible file |
 | `photo_node_owned` | 409 | the selected node already belongs to another photo asset |
 | `invalid_query` | 422 | invalid or unsupported expression, missing reference, or query compilation bound exceeded |
 | `invalid_cursor` | 400 | malformed, tampered, wrong-direction, or otherwise invalid snapshot cursor |
 | `snapshot_gone` | 410 | snapshot is missing, expired, revoked, owned by another session, or lost with its daemon |
+| `snapshot_member_hash` | 400 | `store.ErrSnapshotMemberHash`: supplied member hash doesn't match the snapshot |
+| `photo_snapshot_member_not_in_library` | 412 | a frozen photo is missing, hidden, excluded, or trashed when a `photos: true` saved-query run commits, its results are opened, or its album is created |
 | `snapshot_capacity` | 429 | bounded snapshot cache admission could not reserve the requested rows or serialized bytes |
 | `snapshot_busy` | 429 | both bounded snapshot builders are already occupied |
 | `snapshot_too_large` | 413 | one materialization exceeded its row, per-row, or serialized-size bound |

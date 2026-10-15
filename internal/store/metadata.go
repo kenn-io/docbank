@@ -592,7 +592,7 @@ func exportMetadataSnapshotWithVaultIdentity(
 		if err := savedQueryMetadata.export(ctx, tx, write); err != nil {
 			return err
 		}
-		if err := exportSavedQueryRuns(ctx, tx, write); err != nil {
+		if err := exportSavedQueryRuns(ctx, tx, write, layout); err != nil {
 			return err
 		}
 	}
@@ -1139,6 +1139,13 @@ func (s *Store) importMetadataLines(
 func (s *Store) importMetadataRecord(
 	ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value,
 ) error {
+	if kind == metadataSavedQueryRunType {
+		var err error
+		raw, err = normalizeSavedQueryRunMetadata(raw)
+		if err != nil {
+			return err
+		}
+	}
 	if kind == metadataPhotoFileType {
 		var err error
 		raw, err = normalizePhotoFileMetadata(raw)
@@ -1558,7 +1565,7 @@ func validateMetadataStateWithVaultIdentity(
 		if err := validateCollectionLabelMetadataState(ctx, tx); err != nil {
 			return err
 		}
-		if err := validateSavedQueryRunMetadataState(ctx, tx); err != nil {
+		if err := validateSavedQueryRunMetadataState(ctx, tx, layout); err != nil {
 			return err
 		}
 		if layout.schemaVersion >= 21 {

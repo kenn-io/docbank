@@ -43,7 +43,12 @@
   const chunks = $derived.by(() => {
     let offset = 0;
     return groups.map((group) => {
-      const layout = computeMonthLayout(group.items, width, targetRowHeight);
+      const layout = computeMonthLayout(
+        group.items,
+        width,
+        targetRowHeight,
+        group.key === "relevance" ? 12 : HEADER_HEIGHT,
+      );
       const chunk = { group, layout, offset };
       offset += layout.intrinsicHeight;
       return chunk;
@@ -124,9 +129,11 @@
     if (!element) return async () => {};
     const oldTop = element.scrollTop;
     const viewportTop = element.getBoundingClientRect().top;
-    const cell = [...element.querySelectorAll<HTMLElement>("[data-asset]")].find(
-      (item) => item.getBoundingClientRect().bottom > viewportTop + HEADER_HEIGHT,
-    );
+    const cell = [...element.querySelectorAll<HTMLElement>("[data-asset]")].find((item) => {
+      const group = item.closest<HTMLElement>("[data-month]");
+      const chunk = chunks.find((chunk) => chunk.group.key === group?.dataset.month);
+      return item.getBoundingClientRect().bottom > viewportTop + (chunk?.layout.contentOffset ?? 0);
+    });
     const id = cell?.dataset.asset;
     const pixelOffset = cell ? cell.getBoundingClientRect().top - viewportTop : 0;
     return async () => {
@@ -138,7 +145,7 @@
           const row = chunk.layout.rows.find((row) =>
             row.items.some((item) => item.index === index),
           );
-          if (row) newTop = chunk.offset + HEADER_HEIGHT + row.y - pixelOffset;
+          if (row) newTop = chunk.offset + chunk.layout.contentOffset + row.y - pixelOffset;
           break;
         }
       }

@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"encoding/json/v2"
 	"net/http"
 	"strings"
 	"testing"
@@ -65,4 +66,35 @@ func TestPhotoAlbumRoutesAndClient(t *testing.T) {
 	album, err = c.DeletePhotoAlbum(ctx, album.ID, album.Revision)
 	require.NoError(t, err)
 	require.NotNil(t, album.DeletedAt)
+
+	saved, err := vault.CreateSavedQuery(ctx, "Frozen search", "", store.SavedQueryKindQuery,
+		[]byte(`{"filters":{"kinds":["photo","video"]},"sort":{"field":"name","direction":"asc"}}`))
+	require.NoError(t, err)
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/saved-queries/"+saved.ID+"/runs",
+		map[string]string{"If-Match": `"1"`}, map[string]any{"photos": true})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var result api.SavedQueryRunResult
+	require.NoError(t, json.Unmarshal([]byte(body), &result))
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/photos/albums", nil,
+		map[string]string{"name": "Frozen", "snapshot_id": result.Snapshot.SnapshotID, "member_hash": result.Snapshot.MemberHash})
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	var frozen api.PhotoAlbum
+	require.NoError(t, json.Unmarshal([]byte(body), &frozen))
+	require.NotEmpty(t, frozen.ID)
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/photos/albums", nil,
+		map[string]string{"name": "Invalid frozen album", "snapshot_id": result.Snapshot.SnapshotID})
+	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	require.Equal(t, "invalid_photo_album", decodeProblem(t, body).Code)
+	require.Contains(t, decodeProblem(t, body).Detail, "member_hash is required")
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/photos/albums", nil,
+		map[string]string{"name": "Missing snapshot", "member_hash": result.Snapshot.MemberHash})
+	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	require.Equal(t, "invalid_photo_album", decodeProblem(t, body).Code)
+	require.Contains(t, decodeProblem(t, body).Detail, "snapshot_id is required")
+	_, _, err = vault.Trash(ctx, node.ID, node.Revision)
+	require.NoError(t, err)
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/photos/albums", nil,
+		map[string]string{"name": "Photo left Library", "snapshot_id": result.Snapshot.SnapshotID, "member_hash": result.Snapshot.MemberHash})
+	require.Equal(t, http.StatusPreconditionFailed, resp.StatusCode, body)
+	require.Equal(t, "photo_snapshot_member_not_in_library", decodeProblem(t, body).Code)
 }

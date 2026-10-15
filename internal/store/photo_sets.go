@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"slices"
@@ -522,7 +523,7 @@ func (s *Store) ChangePhotoSetMembers(ctx context.Context, id string, revision i
 		if err != nil {
 			return err
 		}
-		out, err = changePhotoSetMembersTx(ctx, tx, before, add, ids)
+		out, err = changePhotoSetMembersTx(ctx, tx, before, add, ids, nil)
 		if err != nil {
 			return err
 		}
@@ -532,31 +533,59 @@ func (s *Store) ChangePhotoSetMembers(ctx context.Context, id string, revision i
 	return out, err
 }
 
-func changePhotoSetMembersTx(ctx context.Context, tx *sql.Tx, before PhotoSet, add bool, ids []string) (PhotoSet, error) {
+type photoSetMemberStamp struct {
+	ID      string `json:"id"`
+	AddedAt string `json:"added_at"`
+}
+
+func changePhotoSetMembersTx(ctx context.Context, tx *sql.Tx, before PhotoSet, add bool, ids []string, stamps []photoSetMemberStamp) (PhotoSet, error) {
 	out := before
-	changed := make([]string, 0, len(ids))
-	now := nowRFC3339()
-	for _, asset := range ids {
-		var result sql.Result
-		var err error
-		if add {
-			result, err = tx.ExecContext(ctx, `INSERT INTO photo_set_members(set_id,asset_id,added_at) VALUES(?,?,?) ON CONFLICT(set_id,asset_id) DO NOTHING`, before.ID, asset, now)
-		} else {
-			result, err = tx.ExecContext(ctx, `DELETE FROM photo_set_members WHERE set_id=? AND asset_id=?`, before.ID, asset)
-		}
-		if err != nil {
+	encoded, err := json.Marshal(ids)
+	if err != nil {
+		return PhotoSet{}, err
+	}
+	condition := `EXISTS(SELECT 1 FROM photo_set_members m WHERE m.set_id=? AND m.asset_id=j.value)`
+	if add {
+		condition = `NOT ` + condition
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT j.value FROM json_each(?) j WHERE `+condition+` GROUP BY j.value ORDER BY MIN(j.key)`, string(encoded), before.ID)
+	if err != nil {
+		return PhotoSet{}, err
+	}
+	defer func() { _ = rows.Close() }()
+	var changed []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
 			return PhotoSet{}, err
 		}
-		count, err := result.RowsAffected()
-		if err != nil {
-			return PhotoSet{}, err
-		}
-		if count > 0 {
-			changed = append(changed, asset)
-			if !add && out.CoverAssetID != nil && *out.CoverAssetID == asset {
-				out.CoverAssetID = nil
+		changed = append(changed, id)
+	}
+	err = rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return PhotoSet{}, err
+	}
+	if add {
+		if len(stamps) != 0 {
+			ordered, marshalErr := json.Marshal(stamps)
+			if marshalErr != nil {
+				return PhotoSet{}, marshalErr
 			}
+			_, err = tx.ExecContext(ctx, `INSERT INTO photo_set_members(set_id,asset_id,added_at) SELECT ?,json_extract(member.value,'$.id'),json_extract(member.value,'$.added_at') FROM json_each(?) member WHERE 1 ON CONFLICT(set_id,asset_id) DO NOTHING`, before.ID, string(ordered))
+		} else {
+			// SQLite needs a WHERE before ON CONFLICT on INSERT ... SELECT.
+			_, err = tx.ExecContext(ctx, `INSERT INTO photo_set_members(set_id,asset_id,added_at) SELECT ?,value,? FROM json_each(?) WHERE 1 ON CONFLICT(set_id,asset_id) DO NOTHING`, before.ID, nowRFC3339(), string(encoded))
 		}
+	} else {
+		_, err = tx.ExecContext(ctx, `DELETE FROM photo_set_members WHERE set_id=? AND asset_id IN (SELECT value FROM json_each(?))`, before.ID, string(encoded))
+		if out.CoverAssetID != nil && slices.Contains(changed, *out.CoverAssetID) {
+			out.CoverAssetID = nil
+		}
+	}
+	if err != nil {
+		return PhotoSet{}, err
 	}
 	if len(changed) == 0 {
 		return out, nil

@@ -10,7 +10,7 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func registerPhotoSetRoutes(api huma.API, d Deps, g *gate) {
+func registerPhotoSetRoutes(api huma.API, d Deps, g *gate, snapshots *store.QuerySnapshotService) {
 	recipe, err := processing.VisualPreviewRecipeForSize("grid")
 	if err != nil {
 		panic(err)
@@ -45,17 +45,34 @@ func registerPhotoSetRoutes(api huma.API, d Deps, g *gate) {
 			Body PhotoAlbumSummary
 		}{ETag: revisionETag(set.Revision), Body: fromStorePhotoAlbumSummary(set)}, nil
 	})
-	huma.Register(api, huma.Operation{OperationID: "createPhotoAlbum", Method: http.MethodPost, Path: "/api/v1/photos/albums", Summary: "Create an empty album", DefaultStatus: http.StatusCreated}, func(ctx context.Context, in *struct{ Body PhotoAlbumNameRequest }) (*photoAlbumOutput, error) {
-		var out *photoAlbumOutput
-		err := g.mutate(func() error {
-			set, err := d.Store.CreatePhotoSet(ctx, in.Body.Name)
-			if err != nil {
-				return FromStoreError(err)
+	huma.Register(api, huma.Operation{OperationID: "createPhotoAlbum", Method: http.MethodPost, Path: "/api/v1/photos/albums", Summary: "Create an album, optionally from frozen photo results", DefaultStatus: http.StatusCreated}, func(ctx context.Context, in *struct{ Body CreatePhotoAlbumRequest }) (*photoAlbumOutput, error) {
+		var set store.PhotoSet
+		var err error
+		if in.Body.SnapshotID != "" || in.Body.MemberHash != "" {
+			if in.Body.SnapshotID == "" {
+				return nil, NewError(http.StatusUnprocessableEntity, "invalid_photo_album", "snapshot_id is required with member_hash")
 			}
-			out = &photoAlbumOutput{ETag: revisionETag(set.Revision), Body: fromStorePhotoAlbum(set)}
-			return nil
-		})
-		return out, err
+			if in.Body.MemberHash == "" {
+				return nil, NewError(http.StatusUnprocessableEntity, "invalid_photo_album", "member_hash is required with snapshot_id")
+			}
+			owner, ok := workspaceSnapshotOwner(ctx)
+			if !ok {
+				return nil, NewError(http.StatusUnauthorized, "unauthorized", "authenticated snapshot owner is missing")
+			}
+			if snapshots == nil {
+				return nil, NewError(http.StatusServiceUnavailable, "workspace_unavailable", "workspace query snapshots are unavailable")
+			}
+			set, err = snapshots.CreatePhotoAlbum(ctx, owner, in.Body.SnapshotID, in.Body.MemberHash, in.Body.Name, g.mutate)
+			if err != nil {
+				return nil, workspaceQueryError(err)
+			}
+		} else {
+			err = g.mutate(func() error { set, err = d.Store.CreatePhotoSet(ctx, in.Body.Name); return err })
+			if err != nil {
+				return nil, FromStoreError(err)
+			}
+		}
+		return &photoAlbumOutput{ETag: revisionETag(set.Revision), Body: fromStorePhotoAlbum(set)}, nil
 	})
 	huma.Register(api, huma.Operation{OperationID: "updatePhotoAlbum", Method: http.MethodPut, Path: "/api/v1/photos/albums/{set_id}", Summary: "Rename or star an album"}, func(ctx context.Context, in *struct {
 		SetID   string `path:"set_id"`

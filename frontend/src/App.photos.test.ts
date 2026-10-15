@@ -3,10 +3,11 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import {
   photoMetadataResponse,
   preparedPhoto,
-  mapPhoto,
   photo,
+  mapPhoto,
   photoAlbum,
   albumResponse,
+  savedSmartSet,
   storage,
 } from "./photo-test-fixtures.js";
 import App from "./App.svelte";
@@ -754,9 +755,8 @@ it.each(["document trash", "delayed photo trash", "restore"])(
       }),
     );
     render(App);
-    await screen.findByText(
-      operation === "restore" ? "Your photo library is empty" : "1 photos · 1 loaded",
-    );
+    if (operation === "restore") await screen.findByText("Your photo library is empty");
+    else await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
     await fireEvent.click(screen.getByRole("button", { name: /^Trip/ }));
     await screen.findByText(
       operation === "restore" ? "This album is empty" : "1 photos · 1 loaded",
@@ -806,9 +806,9 @@ it.each(["document trash", "delayed photo trash", "restore"])(
     });
     if (operation === "document trash")
       await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
-    await screen.findByText(
-      operation === "restore" ? "1 photos · 1 loaded" : "This album is empty",
-    );
+    if (operation === "restore")
+      await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
+    else await screen.findByText("This album is empty");
   },
 );
 
@@ -930,10 +930,12 @@ it.each([false, true])(
     });
     expect(screen.getByRole("combobox", { name: "Group photos: Capture sessions" })).toBeTruthy();
     expect(screen.getByRole("combobox", { name: "Grid density: Compact" })).toBeTruthy();
-    expect(screen.getByText("59 photos · 59 loaded")).toBeTruthy();
     expect(
-      (screen.getByRole("checkbox", { name: "Select photo Photo 2.jpg" }) as HTMLInputElement)
-        .checked,
+      (
+        (await screen.findByRole("checkbox", {
+          name: "Select photo Photo 2.jpg",
+        })) as HTMLInputElement
+      ).checked,
     ).toBe(true);
     expect(screen.queryByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeNull();
     expect(screen.getByText("1 selected photo")).toBeTruthy();
@@ -2225,7 +2227,7 @@ it("restores photo scroll while resumed counts are pending and keeps subsequent 
   });
   render(App);
   await waitFor(() => expect(counts).toHaveLength(1));
-  await screen.findByText("100 photos · 100 loaded");
+  await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
   await act(async () => {});
   const original = screen.getByTestId("photo-scroll");
   original.scrollTop = 480;
@@ -2245,7 +2247,6 @@ it("restores photo scroll while resumed counts are pending and keeps subsequent 
   const resumed = await screen.findByTestId("photo-scroll");
   await waitFor(() => expect(counts).toHaveLength(2));
   await waitFor(() => expect(resumed.scrollTop).toBe(480));
-  expect(screen.getByText("100 photos · 100 loaded")).toBeTruthy();
   // Leaving Photos conceals the Library, so returning revalidates it with one refresh.
   expect(listings).toBe(2);
   resumed.scrollTop = 960;
@@ -2471,6 +2472,41 @@ it.each(["search", "tag", "snapshot"] as const)(
       ).toBe("a".repeat(32));
   },
 );
+
+it("opens a smart set through the Albums app route", async () => {
+  history.replaceState(null, "", "/photos/albums#web_session=synthetic&web_upload_secret=proof");
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
+  Element.prototype.scrollIntoView = vi.fn();
+  const payload = parseQuery(
+    '{"syntax":"advanced","text":"rating:5","filters":{"kinds":["photo"]},"sort":{"field":"size","direction":"desc"}}',
+  );
+  const saved = savedSmartSet(payload, await queryFingerprint(payload), { revision: 2 });
+  const open = vi.spyOn(Photos.prototype, "openSmartSet").mockReturnValue(true);
+  stubPhotoFetch(
+    vi.fn(async (url: string) => {
+      if (url.includes("/saved-queries?"))
+        return Response.json({ items: [saved], total: 1, limit: 100, offset: 0 });
+      if (url.endsWith("/photos/albums")) return albumResponse([]);
+      if (url.endsWith("/photos/assets/query"))
+        return albumResponse({ items: [photo(1)], total: 1 });
+      if (url.includes("/nodes/1"))
+        return albumResponse({ id: 1, kind: "dir", name: "", revision: 1, path: "/" });
+      return albumResponse({ items: [], nodes: [], tags: [], profiles: [] });
+    }),
+  );
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "Five stars" }));
+  await waitFor(() => expect(location.pathname).toBe("/photos"));
+  expect(open).toHaveBeenCalledWith(saved);
+});
 
 it("passes a registered Photos shortcut into the help dialog", async () => {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");

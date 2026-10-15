@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"encoding/json/v2"
 	"net/http"
 	"sync"
 	"testing"
@@ -15,7 +16,7 @@ import (
 func TestSavedQueryRunGatesOnlyReceiptMutation(t *testing.T) {
 	t.Parallel()
 	gate := api.NewOperationGate()
-	ts, s := newTestServer(t, func(d *api.Deps) { d.Gate = gate })
+	ts, _ := newTestServer(t, func(d *api.Deps) { d.Gate = gate })
 	saved, _ := createSavedQuery(t, ts.URL, "Synthetic maintenance query", `{}`)
 	entered, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
@@ -37,15 +38,12 @@ func TestSavedQueryRunGatesOnlyReceiptMutation(t *testing.T) {
 		"/api/v1/saved-queries/"+saved.ID+"/runs", headers, `{}`)
 	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode, body)
 	assert.Equal(t, "maintenance_busy", decodeProblem(t, body).Code)
-	runs, err := s.ListSavedQueryRuns(t.Context(), saved.ID, 100)
-	require.NoError(t, err)
-	assert.Empty(t, runs)
 	once.Do(func() { close(release) })
 	require.NoError(t, <-done)
 	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost,
 		"/api/v1/saved-queries/"+saved.ID+"/runs", headers, `{}`)
 	assert.Equal(t, http.StatusOK, resp.StatusCode, body)
-	runs, err = s.ListSavedQueryRuns(t.Context(), saved.ID, 100)
-	require.NoError(t, err)
-	assert.Len(t, runs, 1)
+	var result api.SavedQueryRunResult
+	require.NoError(t, json.Unmarshal([]byte(body), &result))
+	assert.Empty(t, result.Run.PreviousRunID, "the blocked request must not leave a receipt")
 }

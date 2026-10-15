@@ -186,12 +186,17 @@ export function computeMonthLayout(
   items: PhotoGridRow[],
   containerWidth: number,
   targetRowHeight: number,
+  contentOffset = HEADER_HEIGHT,
 ) {
   const layout = computeJustified(
     items.map((item) => ({ aspect: photoAspect(item) })),
     { containerWidth, targetRowHeight },
   );
-  return { ...layout, intrinsicHeight: items.length ? layout.totalHeight + HEADER_HEIGHT : 0 };
+  return {
+    ...layout,
+    contentOffset,
+    intrinsicHeight: items.length ? layout.totalHeight + contentOffset : 0,
+  };
 }
 
 export function visibleRows(rows: Row[], top: number, bottom: number): Row[] {

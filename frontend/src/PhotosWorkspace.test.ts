@@ -266,7 +266,6 @@ it("restores applied search after a facet click and keeps empty-library guidance
   await waitFor(() => expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull());
   await screen.findByText("Your photo library is empty");
   await fireEvent.click(screen.getByRole("combobox", { name: "Sort photos: Capture date" }));
-  expect(screen.queryByRole("option", { name: "Relevance" })).toBeNull();
   await fireEvent.click(screen.getByRole("option", { name: "Capture date" }));
   await photos.setQuery({ ...photos.query, filters: { iso_min: 0 } });
   await screen.findByText("No matching photos");
@@ -765,107 +764,123 @@ it("keeps the retained scroll position when density changed in another view", as
   await cache.dispose();
 });
 
-it.each(["density", "album trash"])(
-  "keeps the top photo after %s and pages that add no rows",
-  async (kind) => {
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        observe() {}
-        disconnect() {}
-      },
-    );
-    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
-    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
-      function (this: HTMLElement) {
-        const cell = this.closest<HTMLElement>(".cell");
-        const scroll = this.closest<HTMLElement>(".photo-scroll");
-        return cell && scroll
-          ? new DOMRect(
-              0,
-              Number.parseFloat(cell.style.top) + 56 - scroll.scrollTop,
-              Number.parseFloat(cell.style.width),
-              Number.parseFloat(cell.style.height),
-            )
-          : new DOMRect(0, 0, 1000, 400);
-      },
-    );
-    const photos = new Photos("scoped", vi.fn());
-    const cache = new PhotoPreviewCache("scoped", vi.fn());
-    const items = Array.from({ length: 60 }, (_, index) => photo(index + 1));
-    const page = (rows: typeof items, cursor?: string) =>
-      new Response(JSON.stringify({ items: rows, total: 60, next_cursor: cursor }));
-    const fetcher = vi.fn();
-    if (kind === "album trash") {
-      photos.query = {
-        ...photos.query,
-        filters: { set_ids: ["album"] },
-        sort: { field: "added_time", direction: "desc" },
-      };
-      photos.items = items;
-      photos.total = 60;
-      photos.started = true;
-      fetcher
-        .mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-1", revision: 2 })))
-        .mockResolvedValueOnce(new Response(JSON.stringify({ items: items.slice(1), total: 59 })));
-    } else {
-      fetcher
-        .mockResolvedValueOnce(page(items.slice(0, 2), "repeat"))
-        .mockResolvedValueOnce(page(items.slice(0, 2), "rest"))
-        .mockResolvedValueOnce(page(items.slice(2)));
-    }
-    stubPhotoFetch(fetcher);
-    render(PhotosWorkspace, {
-      photos,
-      cache,
-      albumID: kind === "album trash" ? "album" : undefined,
-      photoID: "",
-      onphotochange: vi.fn(),
-    });
+it.each([
+  { kind: "density", title: "density changes while repeated-cursor pages add no rows" },
+  { kind: "relevance density", title: "relevance density changes" },
+  { kind: "album trash", title: "album trash" },
+])("keeps the top photo after $title", async ({ kind }) => {
+  const density = kind.endsWith("density");
+  const relevance = kind === "relevance density";
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: HTMLElement) {
+      const cell = this.closest<HTMLElement>(".cell");
+      const scroll = this.closest<HTMLElement>(".photo-scroll");
+      const contentOffset = cell?.closest(".photo-month")?.querySelector("h2") ? 56 : 12;
+      return cell && scroll
+        ? new DOMRect(
+            0,
+            Number.parseFloat(cell.style.top) + contentOffset - scroll.scrollTop,
+            Number.parseFloat(cell.style.width),
+            Number.parseFloat(cell.style.height),
+          )
+        : new DOMRect(0, 0, 1000, 400);
+    },
+  );
+  const photos = new Photos("scoped", vi.fn());
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  if (relevance)
+    photos.query = photos.baseQuery = {
+      ...photos.query,
+      text: "Canon",
+      sort: { field: "relevance", direction: "desc" },
+    };
+  const items = Array.from({ length: 60 }, (_, index) => photo(index + 1));
+  const page = (rows: typeof items, cursor?: string) =>
+    new Response(JSON.stringify({ items: rows, total: 60, next_cursor: cursor }));
+  const fetcher = vi.fn();
+  if (kind === "album trash") {
+    photos.query = {
+      ...photos.query,
+      filters: { set_ids: ["album"] },
+      sort: { field: "added_time", direction: "desc" },
+    };
+    photos.items = items;
+    photos.total = 60;
+    photos.started = true;
+    fetcher
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-1", revision: 2 })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: items.slice(1), total: 59 })));
+  } else if (relevance) {
+    fetcher.mockResolvedValueOnce(page(items));
+  } else {
+    fetcher
+      .mockResolvedValueOnce(page(items.slice(0, 2), "repeat"))
+      .mockResolvedValueOnce(page(items.slice(0, 2), "rest"))
+      .mockResolvedValueOnce(page(items.slice(2)));
+  }
+  stubPhotoFetch(fetcher);
+  render(PhotosWorkspace, {
+    photos,
+    cache,
+    albumID: kind === "album trash" ? "album" : undefined,
+    photoID: "",
+    onphotochange: vi.fn(),
+  });
+  if (density) {
+    await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
+  } else {
     await screen.findByText("60 photos · 60 loaded");
-    if (kind === "density") {
-      expect(fetcher).toHaveBeenCalledTimes(3);
-      expect(fetcher.mock.calls.map((call) => JSON.parse(call[1].body).cursor)).toEqual([
-        undefined,
-        "repeat",
-        "rest",
-      ]);
-    }
-    await waitFor(() => expect(photos.loading).toBe(false));
-    const scroll = screen.getByTestId("photo-scroll");
-    scroll.scrollTop = 1000;
-    await fireEvent.scroll(scroll);
-    const anchor = [...scroll.querySelectorAll<HTMLElement>("[data-asset]")].find(
-      (cell) => cell.getBoundingClientRect().bottom > 56,
-    )!;
-    const offset = anchor.getBoundingClientRect().top;
-    if (kind === "album trash") {
-      photos.select(
-        "photo-1",
-        new MouseEvent("click"),
-        photos.items.map((item) => item.asset_id),
-      );
-      await fireEvent.click(await screen.findByRole("button", { name: "Move to trash" }));
-      await fireEvent.click(
-        within(screen.getByRole("dialog")).getByRole("button", { name: "Move to trash" }),
-      );
-      await waitFor(() => expect(photos.trashing).toBe(false));
-    } else {
-      Object.defineProperty(Element.prototype, "scrollIntoView", {
-        configurable: true,
-        value: vi.fn(),
-      });
-      await fireEvent.click(screen.getByRole("combobox", { name: "Grid density: Comfortable" }));
-      await fireEvent.click(screen.getByRole("option", { name: "Compact" }));
-      await waitFor(() => expect(scroll.scrollTop).not.toBe(1000));
-    }
-    const moved = scroll.querySelector<HTMLElement>(`[data-asset="${anchor.dataset.asset}"]`)!;
-    expect(moved.getBoundingClientRect().top).toBeCloseTo(offset);
-    photos.dispose();
-    await cache.dispose();
-  },
-);
+  }
+  if (kind === "density") {
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(3));
+    expect(fetcher.mock.calls.map((call) => JSON.parse(call[1].body).cursor)).toEqual([
+      undefined,
+      "repeat",
+      "rest",
+    ]);
+  }
+  await waitFor(() => expect(photos.loading).toBe(false));
+  const scroll = screen.getByTestId("photo-scroll");
+  scroll.scrollTop = 1000;
+  await fireEvent.scroll(scroll);
+  const anchor = [...scroll.querySelectorAll<HTMLElement>("[data-asset]")].find(
+    (cell) => cell.getBoundingClientRect().bottom > (relevance ? 12 : 56),
+  )!;
+  const offset = anchor.getBoundingClientRect().top;
+  if (kind === "album trash") {
+    photos.select(
+      "photo-1",
+      new MouseEvent("click"),
+      photos.items.map((item) => item.asset_id),
+    );
+    await fireEvent.click(await screen.findByRole("button", { name: "Move to trash" }));
+    await fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: "Move to trash" }),
+    );
+    await waitFor(() => expect(photos.trashing).toBe(false));
+  } else {
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    await fireEvent.click(screen.getByRole("combobox", { name: "Grid density: Comfortable" }));
+    await fireEvent.click(screen.getByRole("option", { name: "Compact" }));
+    await waitFor(() => expect(scroll.scrollTop).not.toBe(1000));
+  }
+  const moved = scroll.querySelector<HTMLElement>(`[data-asset="${anchor.dataset.asset}"]`)!;
+  expect(moved.getBoundingClientRect().top).toBeCloseTo(offset);
+  photos.dispose();
+  await cache.dispose();
+});
 
 it("opens on touch with empty selection and toggles membership on touch taps", async () => {
   vi.stubGlobal(
@@ -1694,12 +1709,42 @@ it("explains the relevance limit and hides it for complete results or capture da
   const note =
     "Showing the best 250 of 5,000 matches. Refine the search or sort by capture date to see all.";
   await screen.findByText(note);
-  expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
   photos.total = 1;
   await waitFor(() => expect(screen.queryByText(note)).toBeNull());
   photos.total = 5000;
   photos.query = { ...photos.query, sort: { field: "capture_time", direction: "desc" } };
   await waitFor(() => expect(screen.queryByText(note)).toBeNull());
+  photos.dispose();
+  await cache.dispose();
+});
+
+it("applies the selected Relevance sort", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  Element.prototype.scrollIntoView = vi.fn();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      Response.json({ items: [], total: 0, facets: [], relevance_available: false }),
+    ),
+  );
+  const photos = new Photos("scoped", vi.fn());
+  const setSort = vi.spyOn(photos, "setSort");
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotosWorkspace, { photos, cache });
+  await screen.findByText("Your photo library is empty");
+  await fireEvent.click(screen.getByRole("combobox", { name: "Sort photos: Capture date" }));
+  expect(screen.queryByRole("option", { name: "Relevance" })).toBeNull();
+  await fireEvent.keyDown(screen.getByRole("listbox"), { key: "Escape" });
+  photos.relevanceAvailable = true;
+  await fireEvent.click(screen.getByRole("combobox", { name: "Sort photos: Capture date" }));
+  await fireEvent.click(await screen.findByRole("option", { name: "Relevance" }));
+  expect(setSort).toHaveBeenCalledWith({ field: "relevance", direction: "desc" });
   photos.dispose();
   await cache.dispose();
 });

@@ -6,6 +6,7 @@ import {
   deleteSavedQuery,
   getSavedQuery,
   listSavedQueries,
+  subscribeSavedQueries,
   updateSavedQuery,
 } from "./savedQueries.js";
 
@@ -48,6 +49,36 @@ describe("saved definition receipts", () => {
     expect((await deleteSavedQuery("session", page.items[0])).id).toBe(id);
   });
 
+  it("notifies subscribers once after create, update and delete", async () => {
+    const listener = vi.fn();
+    const unsubscribe = subscribeSavedQueries(listener);
+    try {
+      const fetch = respond({ ...record, revision: 1 }, '"1"');
+      const saved = await createSavedQuery("session", {
+        name: record.name,
+        description: record.description,
+        kind: "query",
+        payload,
+      });
+      expect(listener).toHaveBeenCalledExactlyOnceWith("session");
+      listener.mockClear();
+      const renamed = { ...saved, name: "Renamed", revision: 2 };
+      fetch.mockResolvedValueOnce(
+        new Response(JSON.stringify(renamed), { headers: { ETag: '"2"' } }),
+      );
+      const updated = await updateSavedQuery("session", saved, { name: "Renamed" });
+      expect(listener).toHaveBeenCalledExactlyOnceWith("session");
+      listener.mockClear();
+      fetch.mockResolvedValueOnce(
+        new Response(JSON.stringify(updated), { headers: { ETag: '"2"' } }),
+      );
+      await deleteSavedQuery("session", updated);
+      expect(listener).toHaveBeenCalledExactlyOnceWith("session");
+    } finally {
+      unsubscribe();
+    }
+  });
+
   it("loads the complete expression, unsupported facets, mode and sort", async () => {
     respond(record);
     const loaded = await getSavedQuery("session", id);
@@ -83,6 +114,14 @@ describe("saved definition receipts", () => {
       new Response(JSON.stringify({ items: [record], total: 1, limit: 100, offset: 0 })),
     );
     await expect(listSavedQueries("session", "highlight_set")).rejects.toThrow(/receipt/i);
+  });
+
+  it("forwards the photo smart-set scope", async () => {
+    const fetch = respond({ items: [], total: 0, limit: 100, offset: 0 });
+    await listSavedQueries("session", "query", 0, 100, true);
+    expect(
+      new URL(String(fetch.mock.calls[0][0]), "https://example.test").searchParams.get("photos"),
+    ).toBe("true");
   });
 
   it("creates without changing the full definition and checks the returned content", async () => {

@@ -19,17 +19,24 @@ it("fits panoramas and full justified rows within the available width", () => {
   expect(layout.rows[0].height).toBe(40);
 });
 
-it("bounds the mounted rows in one month with 10,000 photos", () => {
-  expect(computeMonthLayout([], 800, 200).intrinsicHeight).toBe(0);
-  const items = Array.from({ length: 10_000 }, (_, index) => photo(index));
-  const layout = computeMonthLayout(items, 1200, 200);
-  expect(layout.intrinsicHeight).toBe(layout.totalHeight + 56);
-  for (const top of [0, 10_000, 100_000, layout.totalHeight - 1000]) {
-    const rows = visibleRows(layout.rows, top, top + 2000);
-    expect(rows.flatMap((row) => row.items).length).toBeLessThan(100);
-    expect(rows.every((row) => row.y + row.height >= top && row.y <= top + 2000)).toBe(true);
-  }
-});
+it.each([
+  ["default", undefined, 56],
+  ["explicit", 12, 12],
+] as const)(
+  "bounds mounted rows with the %s content offset and 10,000 photos",
+  (_label, contentOffset, expectedOffset) => {
+    expect(computeMonthLayout([], 800, 200).intrinsicHeight).toBe(0);
+    const items = Array.from({ length: 10_000 }, (_, index) => photo(index));
+    const layout = computeMonthLayout(items, 1200, 200, contentOffset);
+    expect(layout.contentOffset).toBe(expectedOffset);
+    expect(layout.intrinsicHeight).toBe(layout.totalHeight + expectedOffset);
+    for (const top of [0, 10_000, 100_000, layout.totalHeight - 1000]) {
+      const rows = visibleRows(layout.rows, top, top + 2000);
+      expect(rows.flatMap((row) => row.items).length).toBeLessThan(100);
+      expect(rows.every((row) => row.y + row.height >= top && row.y <= top + 2000)).toBe(true);
+    }
+  },
+);
 
 it("applies rotation to technical dimensions, prefers preview dimensions and falls back to a square", () => {
   const item = photo(1);

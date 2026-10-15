@@ -65,10 +65,11 @@ type PhotoBrowseRow struct {
 }
 
 type PhotoBrowsePage struct {
-	Items  []PhotoBrowseRow
-	Total  int64
-	Next   *PhotoBrowsePosition
-	Facets []SnapshotFacet
+	Items              []PhotoBrowseRow
+	Total              int64
+	Next               *PhotoBrowsePosition
+	Facets             []SnapshotFacet
+	RelevanceAvailable bool
 }
 
 const (
@@ -103,18 +104,20 @@ func (s *Store) ListPhotoAssets(
 		if err != nil {
 			return err
 		}
+		for _, operand := range compiled.predicate.lexical {
+			if !operand.negated {
+				page.RelevanceAvailable = true
+				break
+			}
+		}
 		sortField := compiled.Query.Sort.Field
+		if err := validatePhotoQuerySort(compiled.Query); err != nil {
+			return err
+		}
 		if sortField == "relevance" && boundary != nil {
 			return ErrInvalidPhotoCursor
 		}
 		from, sortKey, ok := photoBrowseOrder(sortField)
-		if sortField == "added_time" {
-			if len(compiled.Query.Filters.SetIDs) != 1 {
-				return fmt.Errorf("%w: added_time requires exactly one filters.set_ids album", ErrInvalidPhotoQuery)
-			}
-			from = `photo_set_members sm CROSS JOIN photo_assets a ON a.asset_id=sm.asset_id ` + strings.TrimPrefix(photoBrowseDisplayFrom, `photo_assets a`)
-			sortKey, ok = "sm.added_at", true
-		}
 		if !ok && sortField != "relevance" {
 			return fmt.Errorf("%w: unsupported sort", ErrInvalidPhotoQuery)
 		}
@@ -175,7 +178,7 @@ func (s *Store) ListPhotoAssets(
 			page.Total = boundary.Total
 		}
 		if boundary == nil && len(dimensions) > 0 {
-			page.Facets, err = materializePhotoFacets(ctx, q, compiled, generation.ID, coverage, dimensions, defaultSnapshotMaterializeOptions())
+			page.Facets, err = materializePhotoFacets(ctx, q, compiled, generation.ID, coverage, dimensions, defaultSnapshotMaterializeOptions(), new(int64))
 			if err != nil {
 				return err
 			}
@@ -294,6 +297,8 @@ const photoBrowseVersionJoins = `
 
 func photoBrowseOrder(field string) (from, key string, ok bool) {
 	switch field {
+	case "added_time":
+		return `photo_set_members sm CROSS JOIN photo_assets a ON a.asset_id=sm.asset_id ` + strings.TrimPrefix(photoBrowseDisplayFrom, `photo_assets a`), "sm.added_at", true
 	case "capture_time":
 		return `photo_timeline pl INDEXED BY photo_timeline_sort_key
  CROSS JOIN photo_files f ON f.file_id=pl.file_id
@@ -318,6 +323,13 @@ func photoBrowseOrder(field string) (from, key string, ok bool) {
 	default:
 		return "", "", false
 	}
+}
+
+func validatePhotoQuerySort(value query.Query) error {
+	if value.Sort.Field == "added_time" && len(value.Filters.SetIDs) != 1 {
+		return fmt.Errorf("%w: added_time requires exactly one filters.set_ids album", ErrInvalidPhotoQuery)
+	}
+	return nil
 }
 
 func photoBrowseMissingKey(field string) string {
@@ -397,7 +409,7 @@ func photoBrowseMatch(compiled CompiledQuery, generation string, coverage Covera
 	return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM photo_files member CROSS JOIN (` + population.sql + `) matched ON matched.node_id=member.node_id WHERE member.asset_id=a.asset_id)`, args: population.args, relations: population.relations}, nil
 }
 
-func rankedPhotoRows(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, coverage CoverageSelection, pageSize int) ([]PhotoBrowseRow, error) {
+func rankedPhotoStatement(compiled CompiledQuery, generation string, coverage CoverageSelection, pageSize int, snapshot bool) (string, []any, error) {
 	var names, content []string
 	for _, operand := range compiled.predicate.lexical {
 		if operand.negated {
@@ -410,7 +422,7 @@ func rankedPhotoRows(ctx context.Context, q metadataQuerier, compiled CompiledQu
 	}
 	population, err := photoBrowsePopulation(compiled, generation, coverage)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 	candidates := sqlquery.Query{SQL: `SELECT 0 node_id,0 tier,0.0 score WHERE 0`}
 	if len(names) > 0 {
@@ -420,12 +432,12 @@ func rankedPhotoRows(ctx context.Context, q metadataQuerier, compiled CompiledQu
 		}
 		candidates, err = photoSearchCandidates(strings.Join(names, " OR "), strings.Join(content, " OR "), generation, profile)
 		if err != nil {
-			return nil, err
+			return "", nil, err
 		}
 	}
 	ranking := `WITH eligible AS MATERIALIZED (` + population.sql + `), candidates AS (` + candidates.SQL + `), ranked AS (
  SELECT member.asset_id,COALESCE(MAX(candidates.tier),0) tier,
- COALESCE(MAX(CASE WHEN candidates.tier=3 THEN candidates.score END),MAX(CASE WHEN candidates.tier=2 THEN candidates.score END),MAX(CASE WHEN candidates.tier=1 THEN candidates.score END),0) score
+ COALESCE(MAX(CASE WHEN candidates.tier=4 THEN candidates.score END),MAX(CASE WHEN candidates.tier=3 THEN candidates.score END),MAX(CASE WHEN candidates.tier=2 THEN candidates.score END),MAX(CASE WHEN candidates.tier=1 THEN candidates.score END),0) score
  FROM eligible JOIN photo_files member ON member.node_id=eligible.node_id
 	 LEFT JOIN candidates ON candidates.node_id=eligible.node_id GROUP BY member.asset_id)`
 	args := append(append([]any(nil), population.args...), candidates.Args...)
@@ -433,18 +445,31 @@ func rankedPhotoRows(ctx context.Context, q metadataQuerier, compiled CompiledQu
 	if compiled.Query.Sort.Direction == "asc" {
 		order = "ASC"
 	}
-	ranking += ` SELECT ` + photoBrowseSelect + `,'' FROM ranked member
+	orderBy := `member.tier ` + order + `,member.score ` + order + `,COALESCE(pl.sort_key,'') DESC,member.asset_id ASC`
+	projection := photoBrowseSelect + `,''`
+	if snapshot {
+		projection = `n.id node_id,v.version_id content_version_id,a.asset_id,row_number() OVER (ORDER BY ` + orderBy + `) photo_position`
+	}
+	ranking += ` SELECT ` + projection + ` FROM ranked member
  CROSS JOIN photo_assets a ON a.asset_id=member.asset_id ` + strings.TrimPrefix(photoBrowseDisplayFrom, `photo_assets a`) +
-		` WHERE ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(compiled.photoHidden) + ` ORDER BY member.tier ` + order + `,member.score ` + order + `,COALESCE(pl.sort_key,'') DESC,member.asset_id ASC LIMIT ?`
+		` WHERE ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(compiled.photoHidden) + ` ORDER BY ` + orderBy + ` LIMIT ?`
 	args = append(args, pageSize)
 	statement, args, err := bindQueryPopulation(compiledQueryFragment{args: args, relations: population.relations}, coverage, generation)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 	if statement == "" {
 		statement = ranking
 	} else {
 		statement = strings.TrimSpace(statement) + ", " + strings.TrimPrefix(ranking, "WITH ")
+	}
+	return statement, args, nil
+}
+
+func rankedPhotoRows(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, coverage CoverageSelection, pageSize int) ([]PhotoBrowseRow, error) {
+	statement, args, err := rankedPhotoStatement(compiled, generation, coverage, pageSize, false)
+	if err != nil {
+		return nil, err
 	}
 	rows, err := q.QueryContext(ctx, statement, args...)
 	if err != nil {
@@ -527,7 +552,7 @@ func normalizePhotoBrowseRequest(request PhotoBrowseRequest) (PhotoBrowseRequest
 	if err != nil {
 		return request, err
 	}
-	request.Facets, err = normalizeFacetDimensions(request.Facets, []string{compiledCameraField, compiledLensField, snapshotFacetYear, compiledLocationField, compiledSetField})
+	request.Facets, err = normalizeFacetDimensions(request.Facets, photoFacetDimensions)
 	if err != nil {
 		return request, fmt.Errorf("%w: %w", ErrInvalidPhotoQuery, err)
 	}
