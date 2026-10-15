@@ -390,6 +390,7 @@ describe("background jobs drawer", () => {
     expect(await screen.findByText("75 of 300 groups")).toBeTruthy();
     const importProgress = screen.getByRole("progressbar", { name: "Photo import progress" });
     expect(importProgress.getAttribute("aria-valuenow")).toBe("75");
+    expect(importProgress.getAttribute("aria-valuemax")).toBe("301");
     expect(screen.getByText("Photo import")).toBeTruthy();
     expect(screen.getByText("1 of 2 files")).toBeTruthy();
     expect(screen.getAllByRole("button", { name: /^Cancel / })).toHaveLength(3);
