@@ -133,6 +133,18 @@ func TestEnsureDiscoveryRejectsProtocolMismatch(t *testing.T) {
 		"status/stop discovery must still see incompatible daemons")
 }
 
+// A daemon advertising protocol 81 predates checkout routes. The current
+// protocol must advance past it so discovery still forces its replacement,
+// the same way any other stale revision is rejected, instead of letting a
+// same-version-string coincidence reuse a daemon that 404s on checkouts.
+func TestEnsureDiscoveryRejectsRevision81DaemonLackingCheckoutRoutes(t *testing.T) {
+	rec := NewRecord("127.0.0.1:1", "key", "tok", "")
+	info := kitdaemon.PingInfo{Version: version.Version}
+	rec.Metadata[metaProtocolVersion] = "81"
+	assert.False(t, discoverOptions(true).Accept(rec, info), "protocol 81 lacks checkout routes")
+	assert.True(t, discoverOptions(false).Accept(rec, info), "status/stop discovery must still see incompatible daemons")
+}
+
 func TestWebDiscoveryRequiresAdvertisedCapability(t *testing.T) {
 	info := kitdaemon.PingInfo{Version: version.Version}
 	fallback := NewRecord("127.0.0.1:1", "key", "tok", "")
