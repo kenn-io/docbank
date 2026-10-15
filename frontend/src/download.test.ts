@@ -301,6 +301,11 @@ describe("exact selected-source preview", () => {
     ["declared size", { "X-Docbank-Blob-Size": String(source.size + 1) }, content],
     ["Content-Length header", { "Content-Length": String(source.size - 1) }, content],
     [
+      "short body",
+      { "Content-Length": String(source.size) },
+      content.subarray(0, content.length - 1),
+    ],
+    [
       "digest",
       {
         "Content-Digest": `sha-256=:${createHash("sha256").update("wrong").digest("base64")}:`,

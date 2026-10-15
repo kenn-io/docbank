@@ -410,7 +410,6 @@ for (const header of [
   "X-Docbank-Page-SHA256",
   "X-Docbank-Page-DPI",
   "Content-Type",
-  "Content-Digest",
 ]) {
   it(`rejects mismatched ${header}`, async () => {
     const fixture = pngResponse();

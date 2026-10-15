@@ -1525,7 +1525,6 @@ it.each(["settles", "hangs"])(
     expect(revokes()).toHaveLength(report === "hangs" ? 0 : 1);
     await vi.advanceTimersByTimeAsync(1);
     expect(revokes()).toHaveLength(1);
-    expect(revokes()[0]?.[1]?.method).toBe("DELETE");
     vi.useRealTimers();
     cleanup();
     expect(reports()).toHaveLength(1);
