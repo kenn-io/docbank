@@ -345,8 +345,14 @@ func TestPhotoFaceRetryAndBindingEpoch(t *testing.T) {
 		require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state`).Scan(&actual))
 		require.Equal(t, epoch, actual)
 		if personID == "" {
+			decideFaceForTest(t, s, node, id, "", "dismiss")
 			_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, id, box, person.PersonID)
 			require.ErrorIs(t, err, ErrExists)
+			faces, _, err := s.PhotoFaces(ctx, node.CurrentVersionID)
+			require.NoError(t, err)
+			require.Len(t, faces, 1)
+			require.True(t, faces[0].Dismissed)
+			require.Equal(t, int64(2), faces[0].Revision)
 		}
 
 		changed := box
@@ -528,10 +534,6 @@ func TestPhotoFaceAssertionCapacityAndRestore(t *testing.T) {
 	require.ErrorIs(t, err, ErrPhotoFaceLimit)
 	_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), box, overflow.PersonID)
 	require.ErrorIs(t, err, ErrPhotoFaceLimit)
-	unnamed, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), box, "")
-	require.NoError(t, err)
-	_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, unnamed.FaceID, box, overflow.PersonID)
-	require.ErrorIs(t, err, ErrExists)
 	overflowAssertion := PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: overflow.PersonID, Role: "depicted", Action: "assert", Revision: 1}
 	_, err = s.AssertDocumentPerson(ctx, overflowAssertion)
 	require.ErrorIs(t, err, ErrPhotoFaceLimit)

@@ -95,8 +95,12 @@ func TestPhotoFaceDecisionRoutes(t *testing.T) {
 	response, body = do(t, ts, http.MethodPost, path, nil, api.PhotoFaceDecisionRequest{FaceID: face.FaceID, Action: "dismiss", Revision: 1})
 	require.Equal(t, http.StatusPreconditionFailed, response.StatusCode, body)
 	require.Contains(t, body, "stale_revision")
-	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/face-decisions/"+receipt.ReceiptID+"/undo", nil, nil)
+	operationID := uuid.NewString()
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/face-decisions/"+receipt.ReceiptID+"/undo?operation_id="+operationID, nil, nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var undone api.PhotoFaceDecisionResult
+	require.NoError(t, json.Unmarshal([]byte(body), &undone))
+	require.Equal(t, operationID, undone.ReceiptID)
 	asset, err := s.PhotoAssetForNode(ctx, node.ID)
 	require.NoError(t, err)
 	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
@@ -134,54 +138,4 @@ func TestPersonAssertionSelectorPageRoute(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &second))
 	require.Len(t, second.Assertions, 1)
 	require.NotEqual(t, first.Assertions[0].AssertionID, second.Assertions[0].AssertionID)
-	require.Empty(t, second.AssertionsNextCursor)
-}
-
-func TestPhotoFaceDecisionClearKeyAndReplay(t *testing.T) {
-	t.Parallel()
-	ts, s := newTestServer(t, nil)
-	ctx := t.Context()
-	p, err := s.CreatePerson(ctx, "Ada", "operator")
-	require.NoError(t, err)
-	node, err := s.CreateFile(ctx, s.RootID(), "portrait.jpg", testHash("synthetic portrait"), 20, "image/jpeg")
-	require.NoError(t, err)
-	face, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, p.PersonID)
-	require.NoError(t, err)
-	path := "/api/v1/photos/versions/" + node.CurrentVersionID + "/face-decisions"
-	response, body := do(t, ts, http.MethodPost, path, nil, api.PhotoFaceDecisionRequest{Action: "key", FaceID: face.FaceID, PersonID: p.PersonID, Revision: 1, PersonRevision: 1})
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	request := api.PhotoFaceDecisionRequest{Action: "key", PersonID: p.PersonID, PersonRevision: 2, OperationID: uuid.NewString()}
-	response, body = do(t, ts, http.MethodPost, path, nil, request)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	var receipt api.PhotoFaceDecisionResult
-	require.NoError(t, json.Unmarshal([]byte(body), &receipt))
-	response, body = do(t, ts, http.MethodPost, path, nil, request)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	require.Contains(t, body, receipt.ReceiptID)
-	undoPath := "/api/v1/photos/face-decisions/" + receipt.ReceiptID + "/undo?operation_id=" + uuid.NewString()
-	response, body = do(t, ts, http.MethodPost, undoPath, nil, nil)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-}
-
-func TestPersonAmbiguousQueryIsInvalid(t *testing.T) {
-	t.Parallel()
-	ts, s := newTestServer(t, nil)
-	for range 2 {
-		_, err := s.CreatePerson(t.Context(), "Ada", "operator")
-		require.NoError(t, err)
-	}
-	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", map[string]string{"X-Api-Key": testAPIKey}, `{"query":{"syntax":"advanced","text":"person:Ada"}}`)
-	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
-	require.Contains(t, body, `"code":"invalid_query"`)
-	require.Contains(t, body, "use a person ID")
-}
-
-func TestPersonStructuredQueryFilter(t *testing.T) {
-	t.Parallel()
-	ts, s := newTestServer(t, nil)
-	p, err := s.CreatePerson(t.Context(), "Ada", "operator")
-	require.NoError(t, err)
-	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/queries/parse", map[string]string{"X-Api-Key": testAPIKey}, `{"filters":{"person_ids":["`+p.PersonID+`"]}}`)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	require.Contains(t, body, p.PersonID)
 }

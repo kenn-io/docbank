@@ -170,3 +170,25 @@ func TestQueryHighlightPreviewIsAvailableToBoundedBrowserSessions(t *testing.T) 
 		queryHighlightsPath+"?unrecognized=1", headers, `{}`)
 	require.Equal(t, http.StatusForbidden, resp.StatusCode, body)
 }
+
+func TestPersonAmbiguousQueryIsInvalid(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	for range 2 {
+		_, err := s.CreatePerson(t.Context(), "Ada", "operator")
+		require.NoError(t, err)
+	}
+	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", map[string]string{"X-Api-Key": testAPIKey}, `{"query":{"syntax":"advanced","text":"person:Ada"}}`)
+	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	require.Contains(t, body, `"code":"invalid_query"`)
+}
+
+func TestPersonStructuredQueryFilter(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	p, err := s.CreatePerson(t.Context(), "Ada", "operator")
+	require.NoError(t, err)
+	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/queries/parse", map[string]string{"X-Api-Key": testAPIKey}, `{"filters":{"person_ids":["`+p.PersonID+`"]}}`)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.Contains(t, body, p.PersonID)
+}

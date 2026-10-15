@@ -94,6 +94,7 @@ func TestPhotoFaceDecisionClient(t *testing.T) {
 	const version = "11111111-1111-4111-8111-111111111111"
 	const receipt = "22222222-2222-4222-8222-222222222222"
 	const face = "33333333-3333-4333-8333-333333333333"
+	const undoOperation = "44444444-4444-4444-8444-444444444444"
 	for _, invalid := range []bool{false, true} {
 		t.Run(map[bool]string{false: "valid receipt", true: "invalid receipt"}[invalid], func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -108,7 +109,7 @@ func TestPhotoFaceDecisionClient(t *testing.T) {
 					assert.Equal(t, receipt, request.OperationID)
 				} else {
 					assert.Equal(t, "/api/v1/photos/face-decisions/"+receipt+"/undo", r.URL.Path)
-					assert.Equal(t, face, r.URL.Query().Get("operation_id"))
+					assert.Equal(t, undoOperation, r.URL.Query().Get("operation_id"))
 				}
 				w.Header().Set("Content-Type", "application/json")
 				id := receipt
@@ -126,7 +127,7 @@ func TestPhotoFaceDecisionClient(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, receipt, result.ReceiptID)
 			}
-			_, err = c.UndoPhotoFaceDecisionWithOperationID(t.Context(), receipt, face, "hidden=synthetic")
+			_, err = c.UndoPhotoFaceDecisionWithOperationID(t.Context(), receipt, undoOperation, "hidden=synthetic")
 			if invalid {
 				require.Error(t, err)
 			} else {

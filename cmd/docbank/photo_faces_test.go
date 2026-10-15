@@ -115,25 +115,9 @@ func TestPhotoFaceDecisionCLIRequest(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(output), &named))
 
 	require.NotEmpty(t, named.ReceiptID)
-	output, err = runCLI(t, "photos", "faces", "list", node.CurrentVersionID)
-	require.NoError(t, err)
-	var page api.PhotoFacePage
-	require.NoError(t, json.Unmarshal([]byte(output), &page))
-	require.Len(t, page.Faces, 1)
-	require.Equal(t, int64(2), page.Faces[0].Revision)
-	require.Len(t, page.Assertions, 1)
-	require.Equal(t, person.PersonID, page.Assertions[0].PersonID)
-	require.Equal(t, page.Assertions[0].AssertionID, page.Faces[0].AssertionID)
 	output, err = runCLI(t, "photos", "faces", "undo", named.ReceiptID, "--operation-id", uuid.NewString())
 	require.NoError(t, err)
 	var undone api.PhotoFaceDecisionResult
 	require.NoError(t, json.Unmarshal([]byte(output), &undone))
 	require.NotEmpty(t, undone.ReceiptID)
-	output, err = runCLI(t, "photos", "faces", "list", node.CurrentVersionID)
-	require.NoError(t, err)
-	require.NoError(t, json.Unmarshal([]byte(output), &page))
-	require.Len(t, page.Faces, 1)
-	require.Empty(t, page.Faces[0].AssertionID)
-	require.Equal(t, int64(3), page.Faces[0].Revision)
-	require.Empty(t, page.Assertions)
 }

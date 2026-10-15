@@ -93,7 +93,7 @@ func TestPeopleClientRejectsMismatchedPersonAndMergeReceipt(t *testing.T) {
 	require.True(t, IsResponseDecodeError(err))
 }
 
-func TestSplitPersonAllowsTwoHundredOneAssignments(t *testing.T) {
+func TestSplitPersonForwardsAssignmentsAndHiddenCookie(t *testing.T) {
 	const (
 		sourceID    = "00000000-0000-4000-8000-000000000001"
 		newPersonID = "00000000-0000-4000-8000-000000000002"
