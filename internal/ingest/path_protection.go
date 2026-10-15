@@ -60,25 +60,28 @@ func PhotoCheckoutProtectsDestination(c store.PhotoCheckout) (bool, error) {
 	if !c.RetentionReleased {
 		return true, nil
 	}
-	folder, err := os.Open(c.Destination)
+	// Stat first, without opening: a non-directory occupying this path no
+	// longer holds a copy and imposes no admission restriction, whether or
+	// not it would even be readable. Opening it first (as this used to)
+	// could fail on an unreadable replacement before the type check ever
+	// ran, which admission then treated as still-uncertain and retried
+	// forever instead of recognizing the checkout folder is simply gone.
+	info, err := os.Stat(c.Destination)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	info, statErr := folder.Stat()
-	if statErr != nil {
-		_ = folder.Close()
-		return false, statErr
-	}
 	if !info.IsDir() {
-		// Something other than the checkout's folder now occupies this path,
-		// so it no longer holds a copy and imposes no admission restriction.
-		if err := folder.Close(); err != nil {
-			return false, err
-		}
 		return false, nil
+	}
+	folder, err := os.Open(c.Destination)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
 	}
 	_, readErr := folder.Readdirnames(1)
 	if err := folder.Close(); err != nil {

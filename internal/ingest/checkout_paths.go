@@ -6,18 +6,20 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"time"
 
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/store"
 )
 
-// CheckoutPathOverlap protects reservations and working copies left by released checkouts.
-// The retired result reports whether the matched checkout had already released retention,
-// meaning the overlap is a leftover working copy rather than an active reservation.
+// CheckoutPathOverlap protects reservations and working copies left by
+// released checkouts. It scans each checkout's destination tree, so its
+// running time follows the caller's own context: a fixed inner deadline
+// here would cut off a traversal that is still making progress on a large
+// library, turning a slow-but-successful check into a permanent failure
+// that a caller's retry loop can never outrun. The retired result reports
+// whether the matched checkout had already released retention, meaning
+// the overlap is a leftover working copy rather than an active reservation.
 func CheckoutPathOverlap(ctx context.Context, checkouts []store.PhotoCheckout, pathname string) (checkoutID string, overlap bool, retired bool, err error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
 	var pending error
 	var pendingID string
 	for _, checkout := range checkouts {
@@ -52,19 +54,23 @@ func checkoutPathOverlap(ctx context.Context, checkout store.PhotoCheckout, path
 		if errors.Is(err, os.ErrNotExist) {
 			return false, nil
 		}
-		if info.IsDir() {
-			dir, err := os.Open(checkout.Destination)
-			if err != nil {
-				return false, err
-			}
-			_, readErr := dir.Readdirnames(1)
-			closeErr := dir.Close()
-			if readErr != nil && readErr != io.EOF || closeErr != nil {
-				return false, errors.Join(readErr, closeErr)
-			}
-			if readErr == io.EOF {
-				return false, nil
-			}
+		if !info.IsDir() {
+			// Something other than the checkout's folder now occupies this
+			// path, so it no longer holds a copy and imposes no admission
+			// restriction, whether or not it would even be readable.
+			return false, nil
+		}
+		dir, err := os.Open(checkout.Destination)
+		if err != nil {
+			return false, err
+		}
+		_, readErr := dir.Readdirnames(1)
+		closeErr := dir.Close()
+		if readErr != nil && readErr != io.EOF || closeErr != nil {
+			return false, errors.Join(readErr, closeErr)
+		}
+		if readErr == io.EOF {
+			return false, nil
 		}
 	}
 	overlap, err := PathsOverlapContext(ctx, pathname, checkout.Destination)

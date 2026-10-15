@@ -3,6 +3,7 @@ package ingest
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -74,6 +75,15 @@ func TestCheckoutPathOverlapProtectsReservationsAndReleasedCopies(t *testing.T) 
 			require.NoError(t, os.WriteFile(destination, []byte("unrelated"), 0o600))
 			check(destination, false)
 			require.NoError(t, os.Remove(destination))
+
+			if runtime.GOOS != "windows" && os.Geteuid() != 0 {
+				// The replacement file's own permissions must not matter:
+				// the type check runs before anything tries to read it.
+				require.NoError(t, os.WriteFile(destination, []byte("unreadable"), 0o000))
+				check(destination, false)
+				require.NoError(t, os.Chmod(destination, 0o600))
+				require.NoError(t, os.Remove(destination))
+			}
 		})
 	}
 }

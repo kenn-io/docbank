@@ -114,8 +114,10 @@ func (s Service) protectedRoots(ctx context.Context, excludedID string) ([]strin
 }
 
 func (s Service) checkDestination(ctx context.Context, root *os.Root, destination, excludedID string) (*ingest.PathProtection, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
+	// Deliberately no inner deadline: this walks every protected root and a
+	// large library's scan can legitimately take longer than a fixed
+	// window, which a retry loop could never outrun. The caller's own
+	// context governs cancellation.
 	paths, err := s.protectedRoots(ctx, excludedID)
 	if err != nil {
 		return nil, err
