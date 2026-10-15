@@ -191,6 +191,8 @@ func mediaFilename(mediaType string) string {
 		return "sample.mp3"
 	case "audio/wav":
 		return "sample.wav"
+	case "audio/mp4":
+		return "sample.m4a"
 	default:
 		return "sample.mp4"
 	}
@@ -213,3 +215,12 @@ func assertCaptionCode(t *testing.T, err error, want document.RenditionErrorCode
 
 var _ document.AuthorizedUpload = (*testCaptionUpload)(nil)
 var _ io.ReadCloser = (*testCaptionUpload)(nil)
+
+func TestCaptionProviderSupportsM4A(t *testing.T) {
+	provider, upload, authorization := newCaptionFixture(t, mediatest.M4A("mp4a"), "audio/mp4")
+	provider.source = &captionStub{caption: Caption{Provider: "supplied", SRT: []byte("1\n00:00:00,000 --> 00:00:01,000\naudio cue\n")}}
+	result, err := document.RenderRendition(t.Context(), provider, upload, authorization)
+	require.NoError(t, err)
+	require.Equal(t, "audio", result.Evidence.Family)
+	require.Equal(t, int64(1000), result.Evidence.Units[0].Locator.End)
+}

@@ -424,6 +424,9 @@ func isMP4(data []byte) bool {
 }
 
 type mp4Info struct {
+	audioInspection           bool
+	tracks                    []*mp4TrackInfo
+	boxCount, maxBoxes        int64
 	width, height, durationMS int64
 	frameCount                int64
 	durationKnown             bool
@@ -501,6 +504,7 @@ func mp4MediaDataRanges(data []byte) ([]mp4ByteRange, bool) {
 const maxMP4Depth = 6
 
 type mp4TrackInfo struct {
+	audioFormats                                     []m4aAudioFormat
 	dinfCount, drefCount                             int
 	dataReferenceCount                               uint32
 	dataReferencesLocal                              bool
@@ -566,6 +570,10 @@ func scanMP4Boxes(data []byte, info *mp4Info, track *mp4TrackInfo, parent string
 		return false
 	}
 	for offset := 0; offset < len(data); {
+		info.boxCount++
+		if info.maxBoxes > 0 && info.boxCount > info.maxBoxes {
+			return false
+		}
 		headerLen, size, ok := mp4BoxHeader(data, offset)
 		if !ok {
 			return false
@@ -584,6 +592,9 @@ func scanMP4Boxes(data []byte, info *mp4Info, track *mp4TrackInfo, parent string
 			trackInfo := &mp4TrackInfo{}
 			if !scanMP4Boxes(payload, info, trackInfo, kind, depth+1) || !trackInfo.finish(info) {
 				return false
+			}
+			if info.audioInspection {
+				info.tracks = append(info.tracks, trackInfo)
 			}
 		case kind == "mdia" && parent == "trak":
 			if !scanMP4Boxes(payload, info, track, kind, depth+1) {
@@ -628,7 +639,7 @@ func scanMP4Boxes(data []byte, info *mp4Info, track *mp4TrackInfo, parent string
 				return false
 			}
 		case kind == "stsd" && parent == "stbl":
-			if track == nil || !parseSTSD(payload, track) {
+			if track == nil || !parseSTSD(payload, track, info.audioInspection) {
 				return false
 			}
 		case kind == "stts" && parent == "stbl":
@@ -826,7 +837,8 @@ func mp4Fixed1616Ceil(value uint32) int64 {
 // parseSTSD reads coded dimensions from visual sample entries. The entry
 // payload follows ISO/IEC 14496-12 VisualSampleEntry: width and height are
 // 16-bit integers at offsets 24 and 26 after the sample-entry box header.
-func parseSTSD(payload []byte, track *mp4TrackInfo) bool {
+// Audio inspection also records each entry's M4A frame geometry.
+func parseSTSD(payload []byte, track *mp4TrackInfo, audio bool) bool {
 	if len(payload) < 8 || payload[0] != 0 {
 		return false
 	}
@@ -845,6 +857,9 @@ func parseSTSD(payload []byte, track *mp4TrackInfo) bool {
 		seen++
 		kind := string(entries[offset+4 : offset+8])
 		entry := entries[offset+headerLen : offset+size]
+		if audio {
+			track.audioFormats = append(track.audioFormats, validM4ASampleEntry(kind, entry))
+		}
 		var referenceIndex uint16
 		if len(entry) >= 8 {
 			referenceIndex = binary.BigEndian.Uint16(entry[6:8])

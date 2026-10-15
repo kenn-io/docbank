@@ -2480,7 +2480,7 @@ func extensionForMediaType(value string) string {
 		"application/xml": ".xml", "application/yaml": ".yaml",
 		"text/x-go": ".go", "text/x-python": ".py", "text/javascript": ".js",
 		"image/jpeg": ".jpg", "audio/wav": ".wav", "audio/x-wav": ".wav", "video/mp4": ".mp4",
-		"audio/mpeg": ".mp3", "message/rfc822": ".eml",
+		"audio/mpeg": ".mp3", "audio/mp4": ".m4a", "audio/x-m4a": ".m4a", "message/rfc822": ".eml",
 	}[base]; extension != "" {
 		return extension
 	}

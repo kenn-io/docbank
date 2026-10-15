@@ -115,7 +115,7 @@ func TestMediaSuppliedOccurrencesReuseOneSealedVersion(t *testing.T) {
 	require.Equal(t, 1, versions.Total)
 }
 
-// TestMediaSuppliedTranscriptConsumer proves both admitted M1 codecs can use
+// TestMediaSuppliedTranscriptConsumer proves admitted audio containers can use
 // an occurrence-bound supplied transcript through the public embedded API.
 func TestMediaSuppliedTranscriptConsumer(t *testing.T) {
 	for _, test := range []struct {
@@ -124,6 +124,8 @@ func TestMediaSuppliedTranscriptConsumer(t *testing.T) {
 	}{
 		{"wav", "call.wav", "audio/wav", ".wav", mediatest.WAV()},
 		{"mp3", "call.mp3", "audio/mpeg", ".mp3", mediatest.MP3()},
+		{"m4a AAC", "call.m4a", "audio/mp4", ".m4a", mediatest.M4A("mp4a")},
+		{"m4a ALAC", "call.m4a", "audio/x-m4a", ".m4a", mediatest.M4A("alac")},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {

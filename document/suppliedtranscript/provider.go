@@ -84,6 +84,7 @@ func New(profile Profile) (*Provider, error) {
 		TrustBoundary:     document.RenditionTrustLocalProcess,
 		SupportedFormats: []document.RenditionFormatCapability{
 			{MediaFamily: "audio", MediaType: "audio/mpeg", InputKind: document.RenditionInputOriginalFile},
+			{MediaFamily: "audio", MediaType: "audio/mp4", InputKind: document.RenditionInputOriginalFile},
 			{MediaFamily: "audio", MediaType: "audio/wav", InputKind: document.RenditionInputOriginalFile},
 		},
 		ReturnsStructured: true,

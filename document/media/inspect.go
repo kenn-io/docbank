@@ -1392,6 +1392,8 @@ func inspectAudio(reader io.Reader, policy InspectionPolicy, baseType, ext strin
 	var err error
 	if baseType == "audio/wav" || baseType == "audio/x-wav" || ext == ".wav" {
 		record, err = inspectWAV(buffered, policy)
+	} else if baseType == "audio/mp4" || baseType == "audio/x-m4a" || ext == ".m4a" {
+		record, err = inspectM4A(buffered, policy)
 	} else {
 		record, err = inspectMP3(buffered, policy)
 	}
@@ -1415,7 +1417,8 @@ func inspectAudio(reader io.Reader, policy InspectionPolicy, baseType, ext strin
 	}
 	validIdentity := record.Format == "wav" && ext == ".wav" &&
 		(baseType == "audio/wav" || baseType == "audio/x-wav") ||
-		record.Format == "mp3" && ext == ".mp3" && baseType == "audio/mpeg"
+		record.Format == "mp3" && ext == ".mp3" && baseType == "audio/mpeg" ||
+		record.Format == "m4a" && ext == ".m4a" && (baseType == "audio/mp4" || baseType == "audio/x-m4a")
 	if record.Eligible && !validIdentity {
 		record.Eligible, record.Reason = false, CapabilityReasonMalformed
 	}

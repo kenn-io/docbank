@@ -20,6 +20,9 @@ func TestReferencedMediaUsesUploadEligibilityAndLimit(t *testing.T) {
 		maximum                                 int64
 		accepted                                bool
 	}{
+		{"m4a", "call.m4a", "audio/mp4", "audio/mp4", mediatest.M4A("mp4a"), 4096, true},
+		{"M4A declared alias", "call.m4a", "audio/x-m4a", "audio/mp4", mediatest.M4A("alac"), 4096, true},
+		{"M4A retained alias", "call.m4a", "audio/mp4", "audio/x-m4a", mediatest.M4A("mp4a"), 4096, true},
 		{"wav", "call.wav", "audio/wav", "audio/wav", mediatest.WAV(), 1024, true},
 		{"declared WAV alias", "call.wav", "audio/x-wav", "audio/wav", mediatest.WAV(), 1024, true},
 		{"retained WAV alias", "call.wav", "audio/wav", "audio/x-wav", mediatest.WAV(), 1024, true},

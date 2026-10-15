@@ -27,7 +27,7 @@ func TestMediaCLIKeepsPrivateReferencesOutOfArguments(t *testing.T) {
 func TestOpenMediaUploadUsesFixedMediaTypes(t *testing.T) {
 	for extension, want := range map[string]string{
 		".mp4": "video/mp4", ".srt": "application/x-subrip", ".wav": "audio/wav",
-		".mp3": "audio/mpeg", ".txt": "text/plain; charset=utf-8",
+		".m4a": "audio/mp4", ".mp3": "audio/mpeg", ".txt": "text/plain; charset=utf-8",
 	} {
 		t.Run(extension, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "upload"+extension)

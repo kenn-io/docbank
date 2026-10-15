@@ -1639,13 +1639,29 @@ later acquisition owner exists.
 `media operation` prints the saved receipt of a `media submit --reference-file`
 call by its operation ID, for use after a lost reply.
 
-`media submit` accepts bounded WAV and MP3 files. It verifies the declared
+`media submit` accepts bounded WAV, MP3, and M4A files. It verifies the declared
 size and SHA-256 computed by the CLI, retains the original bytes, and records
 the caller occurrence separately. Repeating the same bytes reuses one source
 version while a different occurrence remains independently revocable. An
 empty processing profile means retention only.
 
-Use `media import-artifact --kind media` to bind a supplied WAV, MP3, or
+M4A uses `.m4a` and `audio/mp4`; the HTTP and embedded APIs also accept
+`audio/x-m4a` and retain the canonical `audio/mp4` type. The MP4 container must
+have only sound tracks with AAC or ALAC audio. Docbank verifies local sample
+references and takes the longest of the movie, track, media, and sample-table
+durations and the length the stored frames decode to, so understated headers
+cannot pass the duration limit. It streams the sample bytes without decoding
+them. Fragmented files, unknown timelines, external references, encrypted
+entries, and video tracks are rejected. Movie metadata over 16 MiB, or over a
+smaller caller entry bound, reports `entry_bytes_exceeded`. More than 1,048,576
+sample chunks reports `entry_count_exceeded`. The existing 24-hour media
+duration limit applies.
+
+M4A shares the streaming audio source ceiling with WAV and MP3: 4 GiB by
+default, lowered with
+[`[media].max_source_bytes`](configuration.md#supplied-audio-transcription).
+
+Use `media import-artifact --kind media` to bind a supplied WAV, MP3, M4A, or
 remote MP4 to the exact visible occurrence of a remote source registered
 through the HTTP or embedded API. MP4 uses the `.mp4` extension and
 `video/mp4`, with limits of 20 MiB, 2,088,960 coded pixels, 300,000

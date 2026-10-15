@@ -247,7 +247,7 @@ func TestRemoteRecordingVideoAdmission(t *testing.T) {
 		MediaType: "video/mp4", SHA256: digest, ByteLength: int64(len(content)),
 		Occurrence: MediaOccurrenceInput{Ref: "supplied-video", Revision: "1", Filename: "loom.mp4"},
 	})
-	require.ErrorContains(t, err, "supplied media requires a WAV or MP3 filename and media type")
+	require.ErrorContains(t, err, "supplied media requires a WAV, MP3, or M4A filename and media type")
 
 	counting := &countingReader{}
 	_, err = service.ImportRecordingArtifact(t.Context(), MediaArtifactRequest{

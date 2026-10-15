@@ -310,7 +310,7 @@ type suppliedOperationIdentity struct {
 	Processing               *MediaProcessingRequest `json:"processing,omitempty"`
 }
 
-// SubmitSuppliedMedia retains one bounded WAV or MP3 and atomically binds its
+// SubmitSuppliedMedia retains one bounded WAV, MP3, or M4A and atomically binds its
 // immutable source and occurrence authority. Provider work is handled by the
 // authorized enqueue path and is never implied by retention.
 func (service *Service) SubmitSuppliedMedia(
@@ -477,7 +477,7 @@ func (service *Service) stageAndRetainMedia(
 	if err != nil {
 		return store.MediaPublicationReceipt{}, err
 	}
-	if !record.Eligible || (record.Format != "wav" && record.Format != "mp3") {
+	if !record.Eligible || (record.Format != "wav" && record.Format != "mp3" && record.Format != "m4a") {
 		return store.MediaPublicationReceipt{}, fmt.Errorf("unqualified_codec: %s", record.Reason)
 	}
 	if reuse != nil {
@@ -554,7 +554,7 @@ const (
 )
 
 // validateRemoteRecordingFile admits the exact original identities for a
-// remote occurrence: the supplied WAV/MP3 set plus MP4 video.
+// remote occurrence: the supplied WAV/MP3/M4A set plus MP4 video.
 func validateRemoteRecordingFile(filename, mediaType string) (video bool, err error) {
 	if !strings.EqualFold(path.Ext(filename), ".mp4") {
 		return false, validateMediaArtifactFile(filename, mediaType)
@@ -588,7 +588,7 @@ func remoteRecordingFormatAdmitted(record media.CapabilityRecord, video bool) bo
 	if video {
 		return record.Format == "mp4" && record.MediaFamily == "video" && record.MediaType == "video/mp4"
 	}
-	return record.Format == "wav" || record.Format == "mp3"
+	return record.MediaFamily == "audio" && (record.Format == "wav" || record.Format == "mp3" || record.Format == "m4a")
 }
 
 func (service *Service) reserveMediaBytes(size int64) bool {
@@ -647,9 +647,10 @@ func validateMediaArtifactFile(filename, mediaType string) error {
 	parsedMediaType, _, err := mime.ParseMediaType(mediaType)
 	ext := strings.ToLower(path.Ext(filename))
 	validIdentity := ext == ".wav" && (parsedMediaType == "audio/wav" || parsedMediaType == "audio/x-wav") ||
-		ext == ".mp3" && parsedMediaType == "audio/mpeg"
+		ext == ".mp3" && parsedMediaType == "audio/mpeg" ||
+		ext == ".m4a" && (parsedMediaType == "audio/mp4" || parsedMediaType == "audio/x-m4a")
 	if err != nil || !validIdentity {
-		return errors.New("supplied media requires a WAV or MP3 filename and media type")
+		return errors.New("supplied media requires a WAV, MP3, or M4A filename and media type")
 	}
 	return nil
 }
@@ -689,6 +690,12 @@ func mediaTypeMatches(declared, retained string) bool {
 	retainedType, _, retainedErr := mime.ParseMediaType(retained)
 	if declaredErr != nil || retainedErr != nil {
 		return false
+	}
+	if declaredType == "audio/x-m4a" {
+		declaredType = "audio/mp4"
+	}
+	if retainedType == "audio/x-m4a" {
+		retainedType = "audio/mp4"
 	}
 	if declaredType == "audio/x-wav" {
 		declaredType = "audio/wav"

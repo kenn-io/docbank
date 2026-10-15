@@ -10,9 +10,9 @@ import (
 // source ceiling. It does not change document, visual, or provider limits.
 const MaxMediaSourceBytes int64 = 4 << 30
 
-// InspectionSourceByteCeiling selects the structural source bound. WAV and MP3
-// inspection streams; every other inspector materializes the source and keeps
-// MaxInspectionSourceBytes.
+// InspectionSourceByteCeiling selects the structural source bound. WAV, MP3,
+// and M4A inspection streams; every other inspector materializes the source and
+// keeps MaxInspectionSourceBytes.
 func InspectionSourceByteCeiling(filename, mediaType string) int64 {
 	baseType, _, _ := mime.ParseMediaType(mediaType)
 	if streamingAudio(baseType, strings.ToLower(filepath.Ext(filename))) {
@@ -23,5 +23,6 @@ func InspectionSourceByteCeiling(filename, mediaType string) int64 {
 
 func streamingAudio(baseType, ext string) bool {
 	return baseType == "audio/wav" || baseType == "audio/x-wav" || baseType == "audio/mpeg" ||
-		ext == ".wav" || ext == ".mp3"
+		baseType == "audio/mp4" || baseType == "audio/x-m4a" ||
+		ext == ".wav" || ext == ".mp3" || ext == ".m4a"
 }

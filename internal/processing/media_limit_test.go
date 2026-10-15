@@ -130,7 +130,8 @@ func TestPlanStreamsLargeSourceOnlyForAdmittedAudio(t *testing.T) {
 		{"call.mp3", "audio/mpeg", 3 << 30, true, ""},
 		{"call.wav", "audio/wav", 1 << 30, false, ""},
 		{"call.wav", "audio/wav", (3 << 30) + 1, false, "source_bytes_exceeded"},
-		{"call.m4a", "audio/mp4", (1 << 30) + 1, false, "source_bytes_exceeded"},
+		{"call.m4a", "audio/mp4", 2 << 30, true, ""},
+		{"call.m4a", "audio/x-m4a", (3 << 30) + 1, false, "source_bytes_exceeded"},
 		{"notes.txt", "text/plain", 2 << 30, false, "source_bytes_exceeded"},
 	} {
 		hash := fmt.Sprintf("%064x", i+1)

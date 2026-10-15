@@ -72,7 +72,7 @@ func TestSuppliedTranscriptDescriptorFingerprintIsStable(t *testing.T) {
 	require.NoError(t, err)
 	descriptor := provider.Descriptor()
 	assert.Equal(t, "supplied-transcript.in-process-v1", descriptor.ID)
-	assert.Equal(t, "7747a03944819d6d7680421554af291da00b2f71d5bf1946317c05f4796b5908", descriptor.Fingerprint)
+	assert.Equal(t, "ded1d84ecb925b119febf999309b119322d68ddd02ac7a8d1f7ff441e8a93819", descriptor.Fingerprint)
 	assert.Equal(t, "1b8113130f962d949e050a4b44d0361dfb0931e11d2d91538c54492076c9b469", descriptor.PolicyFingerprint)
 }
 

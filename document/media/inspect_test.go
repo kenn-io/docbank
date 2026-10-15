@@ -2148,6 +2148,7 @@ func TestInspectAudioUsesBoundedMemory(t *testing.T) {
 	}{
 		{"recording.wav", "audio/wav", wavBytes(8_000, 16<<20)},
 		{"recording.mp3", "audio/mpeg", syntheticMP3Frames((16 << 20) / 417)},
+		{"recording.m4a", "audio/mp4", paddedM4A()},
 	} {
 		t.Run(test.filename, func(t *testing.T) {
 			policy := inspectionPolicy(test.data, test.filename, test.mediaType)
@@ -2176,6 +2177,7 @@ func TestInspectAudioValidatesCompleteStream(t *testing.T) {
 	}{
 		{"recording.wav", "audio/wav", mediatest.WAV()},
 		{"recording.mp3", "audio/mpeg", mediatest.MP3()},
+		{"recording.m4a", "audio/mp4", mediatest.M4A("mp4a")},
 	} {
 		t.Run(test.filename, func(t *testing.T) {
 			policy := inspectionPolicy(test.data, test.filename, test.mediaType)
@@ -2652,4 +2654,13 @@ func TestInspectCapabilityRequiresLocalMP4DataReferences(t *testing.T) {
 			assert.Equal(t, scenario == "local" || scenario == "local nonvisual first", authority)
 		})
 	}
+}
+
+func paddedM4A() []byte {
+	data := mediatest.M4A("mp4a")
+	movie := bytes.Index(data, []byte("moov")) - 4
+	padded := slices.Concat(data[:movie], make([]byte, 16<<20), data[movie:])
+	mdat := bytes.Index(padded, []byte("mdat")) - 4
+	binary.BigEndian.PutUint32(padded[mdat:mdat+4], (16<<20)+12)
+	return padded
 }
