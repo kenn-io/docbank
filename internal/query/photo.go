@@ -215,6 +215,23 @@ func CaptureTimeKey(normalized, precision, timezone, offset string) string {
 	return key
 }
 
+// FileModifiedSortKey converts a canonical UTC RFC3339Nano modified time into the
+// same fixed-width, fraction-precision sort-key format CaptureTimeKey's "fraction"
+// case produces, so a timeline row placed by mtime sorts on the same comparable key
+// as one placed by EXIF capture time. mtime is assumed to already have that shape,
+// as internal/store validates before storing it. A SQLite trigger cannot call this
+// Go function directly, so it is also registered as the SQL scalar function
+// docbank_query_file_modified_sort_key_v1 (see sqlite/mattn and sqlite/modernc) for
+// photo_timeline_refresh (internal/store/schema.sql) to call.
+func FileModifiedSortKey(mtime string) string {
+	civil := mtime[:19]
+	fraction := ""
+	if len(mtime) > 19 && mtime[19] == '.' {
+		fraction = mtime[20 : len(mtime)-1]
+	}
+	return civil + "." + (fraction + "000000000")[:9]
+}
+
 func PhotoFlags() []string { return []string{"", "pick", "reject"} }
 func PhotoColorLabels() []string {
 	return []string{"", "red", "yellow", "green", "blue", "purple"}

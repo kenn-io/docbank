@@ -149,7 +149,7 @@ the timeline does not block Documents queries.
 Search filenames, camera or lens names, and location labels in the Photos
 search box. Search opens in relevance order, with one tile per asset even
 when several paired files match. Choose Capture date to
-return to date browsing. Relevance shows the best 250 matches and the full total. Refine the search or sort by capture date to see all matches. Equal-score ties use capture time descending, then asset ID.
+return to date browsing. Relevance shows the best 250 matches and the full total. Refine the search or sort by capture date to see all matches. Equal-score ties use capture placement descending, then asset ID.
 
 Camera, Lens, Year, Location, and Albums narrow the grid. Counts cover the
 whole matching library, including photos beyond the loaded page. Tiles appear before the separate count request finishes. Counts have a 30-second budget. Unavailable counts show their reason. Choose Retry counts after a timeout. Member or byte limits require a narrower search or filters. Each facet
@@ -582,7 +582,7 @@ readable capture time sorts by its file's modified time when Docbank recorded
 one. Photos with neither sort last in both directions and do not match
 capture-date filters. Asset UUID orders equal keys. Names and media types compare only their
 first 1,024 characters, so longer values that share that prefix also fall back
-to UUID order. Relevance orders evidence tier and numeric score in the requested direction, then capture time descending and asset UUID ascending. Only members retained after duplicate collapse contribute scores. An unchanged library pages without duplicates or gaps with other sorts. `path` is
+to UUID order. Relevance orders evidence tier and numeric score in the requested direction, then capture placement descending and asset UUID ascending. Only members retained after duplicate collapse contribute scores. An unchanged library pages without duplicates or gaps with other sorts. `path` is
 unsupported by this route. Document
 snapshots reject `capture_time`, `import_time`, and `added_time` with an error naming Photos
 as the supported view.

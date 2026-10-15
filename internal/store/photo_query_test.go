@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"github.com/stretchr/testify/require"
@@ -1342,6 +1343,65 @@ func TestPhotoTimelineAppliesProvenanceCorrections(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, corrected, *photoModifiedTime(t, s, "photo.jpg"))
+}
+
+// TestPhotoTimelineRebuildsOnceDespiteSharedBlobVersions pins that publishing
+// technical metadata and a head for a blob enqueues and rebuilds a node's
+// placement once, even when two reverts leave three content_versions rows
+// sharing that blob_hash. Without DISTINCT on photo_timeline_technical_insert
+// and photo_timeline_head_insert's node_id lookups, each extra content_versions
+// row sharing the blob would cause an extra redundant rebuild of the same row;
+// this issues exactly the inserts those triggers watch, skipping the rest of
+// PublishSourceMetadata (document event invalidation legitimately scales with
+// the number of versions, which would otherwise mask the signal).
+func TestPhotoTimelineRebuildsOnceDespiteSharedBlobVersions(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	rebuildChanges := func(t *testing.T, reverts int) int64 {
+		t.Helper()
+		s := newTestStore(t)
+		run, err := s.BeginIngest(ctx, "cli", "reverts")
+		require.NoError(t, err)
+		node := ingestMtimePhoto(t, s, run, "photo.jpg", "2024-03-05T10:00:00Z")
+		original := node.CurrentVersionID
+		for i := range reverts {
+			observeMtime(t, s, run, node.ID, browseHash(fmt.Sprintf("cropped-%d", i)), "2024-08-09T10:00:00Z")
+			revertTo(t, s, node.ID, original)
+		}
+		generationID := sourceMetadataGenerationID(node.BlobHash, "v1", browseHash("fingerprint"), "checksum")
+		captureTime := "2024-06-10T12:00:00Z"
+		precision, timezone, offset := "second", "utc", ""
+		var before int64
+		require.NoError(t, s.writeDB.QueryRowContext(ctx, "SELECT total_changes()").Scan(&before))
+		require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO source_metadata_generations(
+				generation_id,source_sha256,contract_version,extractor_fingerprint,canonical_json,checksum,created_at
+			) VALUES(?,?,'v1',?,'{}','checksum',?)`,
+				generationID, node.BlobHash, browseHash("fingerprint"), nowRFC3339()); err != nil {
+				return err
+			}
+			if err := insertPhotoTechnicalMetadataTx(ctx, tx, generationID, PhotoTechnicalFields{
+				CaptureTime: &captureTime, CaptureTimePrecision: &precision,
+				CaptureTimeTimezone: &timezone, CaptureTimeOffset: &offset,
+			}); err != nil {
+				return err
+			}
+			_, err := tx.ExecContext(ctx, `INSERT INTO source_metadata_heads(source_sha256,generation_id,published_at)
+				VALUES(?,?,?)`, node.BlobHash, generationID, nowRFC3339())
+			return err
+		}))
+		var after int64
+		require.NoError(t, s.writeDB.QueryRowContext(ctx, "SELECT total_changes()").Scan(&after))
+		var day string
+		require.NoError(t, s.db.QueryRowContext(ctx,
+			"SELECT pl.day FROM photo_timeline pl JOIN photo_files f ON f.file_id=pl.file_id WHERE f.node_id=?",
+			node.ID).Scan(&day))
+		require.Equal(t, "2024-06-10", day)
+		return after - before
+	}
+	// Two reverts leave three content_versions rows sharing the original blob_hash;
+	// the write-level cost of placing the node must stay the same regardless.
+	require.Equal(t, rebuildChanges(t, 0), rebuildChanges(t, 2))
 }
 
 func TestPhotoTimelineRefillsOnRestore(t *testing.T) {

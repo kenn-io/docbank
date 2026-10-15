@@ -2227,11 +2227,15 @@ CREATE INDEX IF NOT EXISTS photo_files_sidecar_nodes ON photo_files(node_id) WHE
 -- read one indexed column. modified_time is set only when the mtime placed the
 -- photo. The mtime is the earliest observed unsuperseded claim bound to
 -- any version of the node with the displayed blob, so a revert regains the
--- original date. The key's fixed-width fraction format matches query.CaptureTimeKey
--- byte for byte so mixed EXIF/mtime sort order is stable; a trigger cannot call that
--- Go function, so the format is duplicated in SQL below and must be kept in sync by
--- hand. Derived like photo_technical_metadata: absent from export, refilled by the
--- triggers below when restore inserts the facts they watch.
+-- original date; finding it below walks provenance.supersedes the same way
+-- loadBoundDocumentEventEvidence does (document_events_evidence.go), which a
+-- table-valued recursive walk like this has no registered-function equivalent for.
+-- The key's fixed-width fraction format matches query.CaptureTimeKey byte for byte
+-- so mixed EXIF/mtime sort order is stable; the trigger below reaches that Go format
+-- through the registered docbank_query_file_modified_sort_key_v1 function
+-- (query.FileModifiedSortKey; see sqlite/mattn and sqlite/modernc) rather than
+-- duplicating it in SQL. Derived like photo_technical_metadata: absent from export,
+-- refilled by the triggers below when restore inserts the facts they watch.
 CREATE TABLE IF NOT EXISTS photo_timeline (
     file_id       TEXT PRIMARY KEY REFERENCES photo_files(file_id) ON DELETE CASCADE,
     sort_key      TEXT NOT NULL,
@@ -2248,9 +2252,7 @@ CREATE TRIGGER IF NOT EXISTS photo_timeline_refresh AFTER INSERT ON photo_timeli
     DELETE FROM photo_timeline WHERE file_id IN (SELECT file_id FROM photo_files WHERE node_id = NEW.node_id);
     INSERT INTO photo_timeline(file_id, sort_key, day, modified_time)
     SELECT file_id,
-        COALESCE(exif_key, substr(mtime, 1, 19) || '.' || substr(
-            CASE WHEN substr(mtime, 20, 1) = '.' THEN substr(mtime, 21, length(mtime) - 21) ELSE '' END
-            || '000000000', 1, 9)),
+        COALESCE(exif_key, docbank_query_file_modified_sort_key_v1(mtime)),
         COALESCE(exif_day, substr(mtime, 1, 10)),
         CASE WHEN exif_key IS NULL THEN mtime END
     FROM (
@@ -2312,28 +2314,32 @@ WHEN NEW.supersedes IS NOT NULL BEGIN
 END;
 
 CREATE TRIGGER IF NOT EXISTS photo_timeline_technical_insert AFTER INSERT ON photo_technical_metadata BEGIN
+    -- DISTINCT: several content_versions rows can share a blob_hash after a revert.
     INSERT OR REPLACE INTO photo_timeline_pending(node_id)
-    SELECT f.node_id FROM source_metadata_heads h
+    SELECT DISTINCT f.node_id FROM source_metadata_heads h
     JOIN content_versions v ON v.blob_hash = h.source_sha256
     JOIN photo_files f ON f.node_id = v.node_id WHERE h.generation_id = NEW.generation_id;
 END;
 
 CREATE TRIGGER IF NOT EXISTS photo_timeline_technical_delete AFTER DELETE ON photo_technical_metadata BEGIN
+    -- DISTINCT: several content_versions rows can share a blob_hash after a revert.
     INSERT OR REPLACE INTO photo_timeline_pending(node_id)
-    SELECT f.node_id FROM source_metadata_heads h
+    SELECT DISTINCT f.node_id FROM source_metadata_heads h
     JOIN content_versions v ON v.blob_hash = h.source_sha256
     JOIN photo_files f ON f.node_id = v.node_id WHERE h.generation_id = OLD.generation_id;
 END;
 
 CREATE TRIGGER IF NOT EXISTS photo_timeline_head_insert AFTER INSERT ON source_metadata_heads BEGIN
+    -- DISTINCT: several content_versions rows can share a blob_hash after a revert.
     INSERT OR REPLACE INTO photo_timeline_pending(node_id)
-    SELECT f.node_id FROM content_versions v JOIN photo_files f ON f.node_id = v.node_id
+    SELECT DISTINCT f.node_id FROM content_versions v JOIN photo_files f ON f.node_id = v.node_id
     WHERE v.blob_hash = NEW.source_sha256;
 END;
 
 CREATE TRIGGER IF NOT EXISTS photo_timeline_head_update AFTER UPDATE ON source_metadata_heads BEGIN
+    -- DISTINCT: several content_versions rows can share a blob_hash after a revert.
     INSERT OR REPLACE INTO photo_timeline_pending(node_id)
-    SELECT f.node_id FROM content_versions v JOIN photo_files f ON f.node_id = v.node_id
+    SELECT DISTINCT f.node_id FROM content_versions v JOIN photo_files f ON f.node_id = v.node_id
     WHERE v.blob_hash = NEW.source_sha256;
 END;
 
