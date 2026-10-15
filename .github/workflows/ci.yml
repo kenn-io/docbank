@@ -263,8 +263,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: windows-2025, goarch: amd64 }
-          # Split tests because the full suite saturates the 4 vCPU arm64 runners.
+          # Separate the heavy packages so daemon startup does not compete with the full suite.
+          - { runner: windows-2025, goarch: amd64, shard: 1 }
+          - { runner: windows-2025, goarch: amd64, shard: 2 }
+          - { runner: windows-2025, goarch: amd64, shard: 3 }
+          - { runner: windows-2025, goarch: amd64, shard: 4 }
           - { runner: windows-11-vs2026-arm, goarch: arm64, shard: 1 }
           - { runner: windows-11-vs2026-arm, goarch: arm64, shard: 2 }
           - { runner: windows-11-vs2026-arm, goarch: arm64, shard: 3 }
@@ -310,14 +313,14 @@ jobs:
           Add-Content -Path $env:GITHUB_ENV -Value "CC=$cc"
 
       - name: Build
-        if: matrix.goarch == 'amd64' || matrix.shard == 4
+        if: matrix.shard == 4
         env:
           CGO_ENABLED: "1"
           GOARCH: ${{ matrix.goarch }}
         run: go build -tags fts5 ./...
 
       - name: Vet
-        if: matrix.goarch == 'amd64' || matrix.shard == 4
+        if: matrix.shard == 4
         env:
           CGO_ENABLED: "1"
           GOARCH: ${{ matrix.goarch }}
