@@ -41,8 +41,16 @@ describe("query preview transport", () => {
     const personQuery = parseQuery(JSON.stringify({ syntax: "advanced", text: "person:Ada" }));
     const dependencies = [{ kind: "person", id: tagID, revision: 4 }];
     const fingerprint = await queryFingerprint(personQuery);
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(response({ query: JSON.parse(canonicalQuery(personQuery)), query_fingerprint: fingerprint, dependencies }));
-    await expect(previewQuery("session", personQuery, new AbortController().signal)).resolves.toEqual({ query: personQuery, query_fingerprint: fingerprint, dependencies });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      response({
+        query: JSON.parse(canonicalQuery(personQuery)),
+        query_fingerprint: fingerprint,
+        dependencies,
+      }),
+    );
+    await expect(
+      previewQuery("session", personQuery, new AbortController().signal),
+    ).resolves.toEqual({ query: personQuery, query_fingerprint: fingerprint, dependencies });
   });
 
   it("posts the canonical query with JSON content type and the caller's abort signal", async () => {

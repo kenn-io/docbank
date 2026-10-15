@@ -96,7 +96,12 @@ describe("snapshot transport and receipt validation", () => {
     const dependencies = [{ kind: "person", id: tagID, revision: 4 }];
     const receipt = await page({ dependencies });
     vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(receipt));
-    const result = await createSnapshot("session", query, { profile: "archive", page_size: 50, facets: ["tags"] }, new AbortController().signal);
+    const result = await createSnapshot(
+      "session",
+      query,
+      { profile: "archive", page_size: 50, facets: ["tags"] },
+      new AbortController().signal,
+    );
     expect(result.query).toEqual(query);
     expect(result.dependencies).toEqual(dependencies);
   });

@@ -51,8 +51,16 @@ it("accepts highlights bound to a person dependency", async () => {
   const personQuery = parseQuery(JSON.stringify({ syntax: "advanced", text: "alpha person:Ada" }));
   const personFingerprint = `sha256:${createHash("sha256").update(canonicalQuery(personQuery)).digest("hex")}`;
   const dependencies = [{ ...dependency, kind: "person" as const }];
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(receipt({ query_fingerprint: personFingerprint, dependencies }));
-  await expect(readQueryHighlights("session", { ...snapshot, query: personQuery, query_fingerprint: personFingerprint, dependencies }, new AbortController().signal)).resolves.toEqual(["alpha", "nested phrase"]);
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    receipt({ query_fingerprint: personFingerprint, dependencies }),
+  );
+  await expect(
+    readQueryHighlights(
+      "session",
+      { ...snapshot, query: personQuery, query_fingerprint: personFingerprint, dependencies },
+      new AbortController().signal,
+    ),
+  ).resolves.toEqual(["alpha", "nested phrase"]);
 });
 
 it.each([
