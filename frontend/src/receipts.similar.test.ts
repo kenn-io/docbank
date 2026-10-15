@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, afterEach } from "vitest";
+import { describe, expect, it, vi, afterEach } from "vite-plus/test";
 import contract from "../../internal/daemonconn/testdata/processing_responses.json";
 import { documentSimilar, validateDocumentSimilarReport } from "./receipts.js";
 import type { DocumentSimilarRequest } from "./generated/docbank.js";

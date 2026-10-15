@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { collectionQuality, qualitySuggestion } from "./collectionQuality.js";
 
 const id = "11111111-1111-4111-8111-111111111111";

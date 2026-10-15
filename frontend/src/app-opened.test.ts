@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vite-plus/test";
 import { startAppOpenedReporting } from "./app-opened.js";
 
 const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));

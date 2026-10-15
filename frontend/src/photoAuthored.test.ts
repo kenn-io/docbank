@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, render, screen, fireEvent, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import * as api from "./generated/docbank.js";

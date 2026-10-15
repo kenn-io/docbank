@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it } from "vite-plus/test";
 import type { BatchTagReceipt } from "./batch-tags.js";
 import {
   applySnapshotReceiptOverlay,

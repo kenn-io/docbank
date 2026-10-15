@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import formatMetadata from "../../document/format_metadata.json";
 import fixture from "../../internal/query/testdata/identity-vectors.json";
 import {

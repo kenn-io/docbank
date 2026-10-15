@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import fixture from "../../internal/query/testdata/identity-vectors.json";
 import { parseQuery } from "./query.js";
 import { previewQuery, querySelection } from "./queryPreview.js";

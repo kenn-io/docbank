@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vite-plus/test";
 import { canonicalQuery, parseQuery } from "./query.js";
 import { readQueryHighlights } from "./queryHighlights.js";
 import type { SnapshotPage } from "./snapshots.js";

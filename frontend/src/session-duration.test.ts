@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vite-plus/test";
 import { startSessionReporting } from "./session-duration.js";
 
 describe("session_ended reporting", () => {

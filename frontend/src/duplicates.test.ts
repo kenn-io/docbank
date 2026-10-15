@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vite-plus/test";
 import { readDuplicateContext } from "./duplicates.js";
 import type { SelectedSource } from "./selectedSource.js";
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import type { Job } from "./generated/docbank.js";
 import { jobLanes } from "./jobs.js";
 

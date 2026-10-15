@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vite-plus/test";
 import { APIError, isCurrentSessionError, sessionResponse } from "./api-transport.js";
 
 afterEach(() => vi.restoreAllMocks());

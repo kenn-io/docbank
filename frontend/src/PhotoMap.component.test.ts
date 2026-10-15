@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, render, screen, waitFor } from "@testing-library/svelte";
 import { tick } from "svelte";
 import { mapPhoto } from "./photo-test-fixtures.js";

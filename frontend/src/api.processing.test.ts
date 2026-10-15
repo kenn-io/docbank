@@ -1,6 +1,6 @@
 import * as generated from "./generated/docbank.js";
 import contract from "../../internal/daemonconn/testdata/processing_responses.json";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { documentSearch, renditionArtifact, startProcessing } from "./receipts.js";

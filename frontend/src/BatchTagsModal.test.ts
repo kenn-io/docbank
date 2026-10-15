@@ -1,5 +1,5 @@
 import { webcrypto } from "node:crypto";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import BatchTagsModal from "./BatchTagsModal.svelte";
 import { batchTagRequestDigest } from "./batch-tags.js";

@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vite-plus/test";
 import * as api from "./generated/docbank";
 import { streamExportJobEvents } from "./export-events";
 

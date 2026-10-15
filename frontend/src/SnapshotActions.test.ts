@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import SnapshotActions from "./SnapshotActions.svelte";
 import { ACTION_MAX_BYTES } from "./actionRecovery.js";

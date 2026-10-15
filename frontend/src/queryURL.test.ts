@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it } from "vite-plus/test";
 import { takeFragmentSession } from "./browser-session.js";
 import { queryFromFragment, replaceQueryURL } from "./queryURL.js";
 import { parseQuery } from "./query.js";

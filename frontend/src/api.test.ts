@@ -1,5 +1,5 @@
 import * as generated from "./generated/docbank.js";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { APIError } from "./api-transport.js";
 import {
   changeNodeTag,

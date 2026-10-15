@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { prepareAction } from "./actionRecovery.js";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import type { BatchTagReceipt } from "./batch-tags.js";
 import { type ActionJournalAccess, type PersistedAction } from "./actionJournal.js";
 import { runAction } from "./actionRunner.js";

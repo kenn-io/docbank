@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import type { Node } from "./generated/docbank.js";
 import type { SnapshotRow } from "./snapshots.js";
 import {

@@ -1,4 +1,4 @@
-import { afterEach, expect, it, onTestFinished, vi } from "vitest";
+import { afterEach, expect, it, onTestFinished, vi } from "vite-plus/test";
 import { waitFor } from "@testing-library/svelte";
 import { photoNavigationGuard } from "./photoNavigation.js";
 

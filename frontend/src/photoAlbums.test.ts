@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vite-plus/test";
 import { PhotoAlbums, photoDragType } from "./photoAlbums.svelte.js";
 import { Photos, photoQuery } from "./photos.svelte.js";
 import { photo, photoAlbum, albumResponse as response } from "./photo-test-fixtures.js";

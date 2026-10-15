@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vite-plus/test";
 import { APIError } from "./api-transport.js";
 import * as download from "./download.js";
 import { Photos, loadDensity, photoQuery, mapPhotoLimit, type PhotoRow } from "./photos.svelte.js";

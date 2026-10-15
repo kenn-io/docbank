@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it } from "vite-plus/test";
 import { markText } from "./textMarks.js";
 
 it("uses deterministic source priority for overlaps and preserves UTF-16 offsets", () => {

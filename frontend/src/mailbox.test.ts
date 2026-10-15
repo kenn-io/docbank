@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vite-plus/test";
 import * as api from "./api-transport.js";
 import { uploadMailboxArchive, type MailboxContainer } from "./mailbox.js";
 
