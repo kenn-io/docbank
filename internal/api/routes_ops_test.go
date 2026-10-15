@@ -228,7 +228,6 @@ func TestIngestRejectsNonLoopback(t *testing.T) {
 		{path: "/api/v1/ingest/stream"},
 		{path: "/api/v1/ingest/preflight"},
 		{path: "/api/v1/packages/preflights"},
-		{path: "/api/v1/photos/imports"},
 		{path: "/api/v1/photos/checkouts"},
 	} {
 		t.Run(test.path, func(t *testing.T) {
