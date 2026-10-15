@@ -147,19 +147,16 @@ export function groupPhotos(
     groups.sort((a, b) => b.key.localeCompare(a.key));
   } else {
     const sorted = [...dated].sort((a, b) => clocks.get(a)! - clocks.get(b)!);
-    const dates = new Map<PhotoGroup, string>();
     let previous = -Infinity;
     for (const item of sorted) {
       const clock = clocks.get(item)!;
       if (clock - previous > 4 * 3600 * 1000) {
-        const group: PhotoGroup = {
+        groups.push({
           key: item.asset_id,
           label: "",
           year: photoDate(item)!.slice(0, 4),
           items: [],
-        };
-        dates.set(group, photoDate(item)!.slice(0, 10));
-        groups.push(group);
+        });
       }
       const group = groups[groups.length - 1];
       if (clock > previous) group.key = item.asset_id;
@@ -167,11 +164,13 @@ export function groupPhotos(
       previous = clock;
     }
     for (const group of groups) {
+      // The seed item (still items[0] before the sort below reorders them) carries the date.
+      const date = photoDate(group.items[0])!.slice(0, 10);
       group.items.sort((a, b) => clocks.get(b)! - clocks.get(a)!);
       // A group with any genuinely captured photo is a real capture session, even if an
       // mtime-placed photo lands in the same window; only an all-mtime group is file-modified.
       const label = group.items.every(item => item.file_modified_time) ? "File modified" : "Capture session";
-      group.label = `${dates.get(group)} · ${label}`;
+      group.label = `${date} · ${label}`;
     }
     groups.reverse();
   }
