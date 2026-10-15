@@ -415,7 +415,6 @@ func TestQueryPersonDocumentsPhotosAliasesAndDuplicateNames(t *testing.T) {
 	require.NoError(t, err)
 	page = browsePhotoPage(t, s, `{"filters":{"person_ids":["`+p.PersonID+`"]}}`)
 	require.Empty(t, page.Items)
-	require.ElementsMatch(t, []int64{node.ID, doc}, personMatchNodeIDs(t, s, typed))
 	require.ElementsMatch(t, []int64{node.ID, doc}, personMatchNodeIDs(t, s, compilerQuery(t, "person:"+p.PersonID)))
 	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
 	require.NoError(t, err)

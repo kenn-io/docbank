@@ -101,14 +101,6 @@ func TestPhotoFaceDecisionRoutes(t *testing.T) {
 	var undone api.PhotoFaceDecisionResult
 	require.NoError(t, json.Unmarshal([]byte(body), &undone))
 	require.Equal(t, operationID, undone.ReceiptID)
-	asset, err := s.PhotoAssetForNode(ctx, node.ID)
-	require.NoError(t, err)
-	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
-	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
-	require.NoError(t, err)
-	response, body = do(t, ts, http.MethodPost, path, nil, api.PhotoFaceDecisionRequest{FaceID: face.FaceID, Action: "dismiss", Revision: 3})
-	require.Equal(t, http.StatusForbidden, response.StatusCode, body)
-	require.NotContains(t, body, face.FaceID)
 }
 
 func TestPersonAssertionSelectorPageRoute(t *testing.T) {

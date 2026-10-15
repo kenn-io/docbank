@@ -31,7 +31,7 @@ func TestParsePhotoFaceBox(t *testing.T) {
 	box, err = parsePhotoFaceBox("")
 	require.NoError(t, err)
 	require.Nil(t, box)
-	for _, value := range []string{"1,2,3", "a,0,0.1,0.1", "0.9,0,0.2,0.1", "NaN,0,0.1,0.1", "0,0,0,0.1", "-0.1,0,0.1,0.1"} {
+	for _, value := range []string{"1,2,3", "a,0,0.1,0.1", "NaN,0,0.1,0.1", "0,0,0,0.1", "0.9,0,0.2,0.1", "-0.1,0,0.2,0.1"} {
 		_, err := parsePhotoFaceBox(value)
 		require.Error(t, err, value)
 	}
