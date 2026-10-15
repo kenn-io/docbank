@@ -393,11 +393,11 @@ func TestCheckoutValidationDefersInternalDeadline(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := t.Context()
-			if tc.parent == context.Canceled {
+			if errors.Is(tc.parent, context.Canceled) {
 				var cancel context.CancelFunc
 				ctx, cancel = context.WithCancel(ctx)
 				cancel()
-			} else if tc.parent == context.DeadlineExceeded {
+			} else if errors.Is(tc.parent, context.DeadlineExceeded) {
 				var cancel context.CancelFunc
 				ctx, cancel = context.WithDeadline(ctx, time.Now().Add(-time.Second))
 				defer cancel()
