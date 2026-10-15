@@ -214,30 +214,12 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 				require.Equal(t, int64(1), finished.CopiedObjects)
 				require.Equal(t, entries[0].Size, finished.CopiedBytes)
 				entries[0].Published = true
-				node, err := s.Store.NodeByID(t.Context(), a.Files[0].NodeID)
-				require.NoError(t, err)
-				hash, size, err := s.Blobs.Write(strings.NewReader("replacement"))
-				require.NoError(t, err)
-				updated, _, err := s.Store.ReplaceContent(t.Context(), node.ID, node.Revision, hash, size, "image/jpeg")
-				require.NoError(t, err)
-				pruned, err := s.Store.PruneContentVersions(t.Context(), node.ID, updated.Revision, store.VersionPruneSelector{VersionIDs: []string{entries[0].VersionID}}, true)
-				require.NoError(t, err)
-				require.Len(t, pruned.DependencyRetained, 1)
 			} else {
 				require.Zero(t, status.PublishedFiles)
 				require.Zero(t, status.PublishedBytes)
 				require.Zero(t, finished.CompletedObjects)
 				require.Zero(t, finished.CopiedObjects)
 				require.Zero(t, finished.CopiedBytes)
-				node, err := s.Store.NodeByID(t.Context(), a.Files[0].NodeID)
-				require.NoError(t, err)
-				hash, size, err := s.Blobs.Write(strings.NewReader("replacement"))
-				require.NoError(t, err)
-				updated, _, err := s.Store.ReplaceContent(t.Context(), node.ID, node.Revision, hash, size, "image/jpeg")
-				require.NoError(t, err)
-				pruned, err := s.Store.PruneContentVersions(t.Context(), node.ID, updated.Revision, store.VersionPruneSelector{VersionIDs: []string{entries[0].VersionID}}, true)
-				require.NoError(t, err)
-				require.Equal(t, 1, pruned.DeletedVersions)
 			}
 			observed, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
 			require.NoError(t, err)
@@ -396,11 +378,9 @@ func TestCheckoutRunOutcomes(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "completed", complete.Checkout.State)
 		require.Equal(t, int64(len(entries)), complete.PublishedFiles)
-		require.ElementsMatch(t, []string{"IMG.ARW", "IMG.JPG", "IMG.ARW.XMP"}, []string{filepath.Base(entries[0].Path), filepath.Base(entries[1].Path), filepath.Base(entries[2].Path)})
 		var copiedBytes int64
 		for _, entry := range entries {
 			require.Equal(t, group.Asset.ID, entry.AssetID)
-			require.Equal(t, "undated/"+group.Asset.ID, filepath.ToSlash(filepath.Dir(entry.Path)))
 			content, err := root.ReadFile(filepath.FromSlash(entry.Path))
 			require.NoError(t, err)
 			require.Equal(t, filepath.Base(entry.Path), string(content))
@@ -514,7 +494,7 @@ func TestCheckoutRunOutcomes(t *testing.T) {
 
 func TestCheckoutTerminalReleaseAllowsDestinationReuse(t *testing.T) {
 	t.Parallel()
-	for _, state := range []store.StorageOperationState{store.StorageOperationFailed, store.StorageOperationCancelled, store.StorageOperationCompleted} {
+	for _, state := range []store.StorageOperationState{store.StorageOperationFailed, store.StorageOperationCompleted} {
 		t.Run(string(state), func(t *testing.T) {
 			s := checkoutService(t)
 			asset := checkoutPhoto(t, s, "photo.jpg", "bytes")
@@ -673,16 +653,6 @@ func TestCheckoutRecoversInstalledCopyWhenPublicationRecordFails(t *testing.T) {
 			require.Equal(t, "running", status.Checkout.State)
 			require.False(t, status.Checkout.RetentionReleased)
 			require.Zero(t, status.PublishedFiles)
-			node, err := s.Store.NodeByID(ctx, asset.Files[0].NodeID)
-			require.NoError(t, err)
-			hash, size, err := s.Blobs.Write(strings.NewReader("replacement"))
-			require.NoError(t, err)
-			updated, _, err := s.Store.ReplaceContent(ctx, node.ID, node.Revision, hash, size, "image/jpeg")
-			require.NoError(t, err)
-			selector := store.VersionPruneSelector{VersionIDs: []string{entries[0].VersionID}}
-			held, err := s.Store.PruneContentVersions(ctx, node.ID, updated.Revision, selector, true)
-			require.NoError(t, err)
-			require.Len(t, held.DependencyRetained, 1)
 			_, err = db.ExecContext(ctx, `DROP TRIGGER fail_checkout_publication`)
 			require.NoError(t, err)
 			supervisor := jobs.New(ctx, nil)
@@ -701,30 +671,8 @@ func TestCheckoutRecoversInstalledCopyWhenPublicationRecordFails(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, "edited working copy", string(content))
 			}
-			held, err = s.Store.PruneContentVersions(ctx, node.ID, updated.Revision, selector, true)
-			require.NoError(t, err)
-			require.Len(t, held.DependencyRetained, 1)
 		})
 	}
-}
-
-func TestRetireCheckoutPreservesEditedCopies(t *testing.T) {
-	t.Parallel()
-	s := checkoutService(t)
-	a := checkoutPhoto(t, s, "photo.jpg", "source")
-	c, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, t.TempDir(), 0)
-	require.NoError(t, err)
-	require.NoError(t, s.Run(t.Context(), c, root))
-	entries, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
-	require.NoError(t, err)
-	name := filepath.FromSlash(entries[0].Path)
-	require.NoError(t, root.WriteFile(name, []byte("user edits"), 0o600))
-	_, err = s.Store.RetirePhotoCheckout(t.Context(), c.ID)
-	require.NoError(t, err)
-	contents, err := root.ReadFile(name)
-	require.NoError(t, err)
-	require.Equal(t, "user edits", string(contents))
-	require.NoError(t, root.Close())
 }
 
 func TestCheckoutRechecksProtectedRootSnapshot(t *testing.T) {

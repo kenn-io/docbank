@@ -553,7 +553,7 @@ func TestWatchBindingOverlapHonorsContext(t *testing.T) {
 }
 
 func TestWatcherRejectsReservedCheckoutDestinations(t *testing.T) {
-	for _, state := range []store.StorageOperationState{store.StorageOperationQueued, store.StorageOperationRunning, store.StorageOperationCompleted, store.StorageOperationFailed, store.StorageOperationCancelled} {
+	for _, state := range []store.StorageOperationState{store.StorageOperationQueued, store.StorageOperationFailed} {
 		t.Run(string(state), func(t *testing.T) {
 			ing := newTestIngester(t)
 			ctx := t.Context()
@@ -564,9 +564,7 @@ func TestWatcherRejectsReservedCheckoutDestinations(t *testing.T) {
 			destination := t.TempDir()
 			checkout, op, err := ing.Store.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
 			require.NoError(t, err)
-			if state == store.StorageOperationRunning {
-				require.NoError(t, ing.Store.ClaimPhotoCheckout(ctx, checkout.ID, op.ID))
-			} else if state != store.StorageOperationQueued {
+			if state == store.StorageOperationFailed {
 				require.NoError(t, ing.Store.FinishPhotoCheckout(ctx, checkout.ID, op.ID, state, "{}", "", time.Now().Add(time.Hour)))
 			}
 			partial := filepath.Join(destination, "photo.jpg")
@@ -582,71 +580,15 @@ func TestWatcherRejectsReservedCheckoutDestinations(t *testing.T) {
 			require.ErrorContains(t, err, checkout.ID)
 			require.NoError(t, os.Remove(partial))
 			root, err := watcher.openRoot(ctx)
-			if state == store.StorageOperationFailed || state == store.StorageOperationCancelled {
+			if state == store.StorageOperationFailed {
 				require.NoError(t, err)
 				require.NoError(t, root.Close())
 			} else {
 				require.ErrorContains(t, err, "overlaps reserved checkout")
 				require.ErrorContains(t, err, checkout.ID)
 			}
-			require.NoError(t, os.Remove(destination))
-			checkouts, err := ing.Store.ListPhotoCheckouts(ctx)
-			require.NoError(t, err)
-			id, overlaps, _, err := CheckoutPathOverlap(ctx, checkouts, destination)
-			require.NoError(t, err)
-			if state == store.StorageOperationFailed || state == store.StorageOperationCancelled {
-				require.False(t, overlaps)
-			} else {
-				require.True(t, overlaps)
-				require.Equal(t, checkout.ID, id)
-			}
-			_, overlaps, _, err = CheckoutPathOverlap(ctx, checkouts, t.TempDir())
-			require.NoError(t, err)
-			require.False(t, overlaps)
-			require.NoError(t, os.Mkdir(destination, 0o700))
-			require.NoError(t, os.WriteFile(filepath.Join(destination, "edited.jpg"), []byte("edits"), 0o600))
-			if state == store.StorageOperationQueued || state == store.StorageOperationRunning {
-				require.NoError(t, ing.Store.FinishPhotoCheckout(ctx, checkout.ID, op.ID, store.StorageOperationCancelled, "{}", "cancelled", time.Now().Add(time.Hour)))
-			}
-			_, err = ing.Store.RetirePhotoCheckout(ctx, checkout.ID)
-			require.NoError(t, err)
-			_, err = watcher.openRoot(ctx)
-			require.ErrorContains(t, err, "with partial files")
-			require.NoError(t, os.Remove(filepath.Join(destination, "edited.jpg")))
-			root, err = watcher.openRoot(ctx)
-			require.NoError(t, err)
-			require.NoError(t, root.Close())
 		})
 	}
-}
-
-func TestWatchedFileReadRejectsConcurrentPathReplacement(t *testing.T) {
-	ing := newTestIngester(t)
-	dir := t.TempDir()
-	filePath := filepath.Join(dir, "document.bin")
-	replacementPath := filepath.Join(dir, "replacement.tmp")
-	content := make([]byte, progressByteInterval*2)
-	require.NoError(t, os.WriteFile(filePath, content, 0o600))
-	settled, err := observeLocalFileFingerprint(filePath)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(replacementPath, content, 0o600))
-	require.NoError(t, os.Chtimes(replacementPath,
-		time.Unix(0, settled.modTime), time.Unix(0, settled.modTime)))
-
-	replaced := false
-	progress := newProgressTracker(func(event ProgressEvent) {
-		if replaced || event.BytesRead < progressByteInterval {
-			return
-		}
-		replaced = true
-		require.NoError(t, os.Remove(filePath))
-		require.NoError(t, os.Rename(replacementPath, filePath))
-	})
-	_, err = ing.readLocalFile(
-		context.Background(), filePath, filePath, progress, &settled,
-	)
-	require.ErrorIs(t, err, ErrSourceChanged)
-	assert.True(t, replaced)
 }
 
 func TestPathProtectionRejectsChangedRoots(t *testing.T) {

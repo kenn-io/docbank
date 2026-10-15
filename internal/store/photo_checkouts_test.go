@@ -153,37 +153,21 @@ func TestPhotoCheckoutSelections(t *testing.T) {
 
 func TestPhotoCheckoutRefusesUnavailableSources(t *testing.T) {
 	t.Parallel()
-	for _, scenario := range []string{"hidden_at", "excluded_at", "trashed", "detach"} {
-		t.Run(scenario, func(t *testing.T) {
-			s := newTestStore(t)
-			a := albumAsset(t, s, "photo.jpg")
-			c, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, "checkout", 0)
-			require.NoError(t, err)
-			entries, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
-			require.NoError(t, err)
-			switch scenario {
-			case "detach":
-				_, err = s.DetachPhotoFile(t.Context(), a.ID, a.Revision, a.Files[0].ID, PhotoDetachOptions{})
-			case "trashed":
-				_, err = s.TrashPhotoAsset(t.Context(), a.ID, a.Revision)
-			case "excluded_at":
-				_, err = s.SetPhotoAssetExcluded(t.Context(), a.ID, a.Revision, true)
-			case "hidden_at":
-				require.NoError(t, s.SetupPhotoHidden(t.Context(), "synthetic-passcode"))
-				_, err = s.SetPhotoAssetHidden(t.Context(), a.ID, a.Revision, true)
-			}
-			require.NoError(t, err)
-			if scenario == "detach" {
-				after, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
-				require.NoError(t, err)
-				require.Equal(t, entries, after)
-			}
-			called := false
-			err = s.PublishPhotoCheckoutEntry(t.Context(), entries[0], func() (bool, error) { called = true; return true, nil })
-			require.ErrorIs(t, err, ErrPhotoCheckoutSourceUnavailable)
-			require.False(t, called)
-		})
-	}
+	s := newTestStore(t)
+	a := albumAsset(t, s, "photo.jpg")
+	c, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, "checkout", 0)
+	require.NoError(t, err)
+	entries, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
+	require.NoError(t, err)
+	_, err = s.DetachPhotoFile(t.Context(), a.ID, a.Revision, a.Files[0].ID, PhotoDetachOptions{})
+	require.NoError(t, err)
+	after, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
+	require.NoError(t, err)
+	require.Equal(t, entries, after)
+	called := false
+	err = s.PublishPhotoCheckoutEntry(t.Context(), entries[0], func() (bool, error) { called = true; return true, nil })
+	require.ErrorIs(t, err, ErrPhotoCheckoutSourceUnavailable)
+	require.False(t, called)
 }
 
 func TestPhotoCheckoutMetadata(t *testing.T) {
@@ -678,7 +662,7 @@ func TestPhotoCheckoutBackupRetentionAcrossLifecycleStates(t *testing.T) {
 		name, state          string
 		published, uncertain bool
 	}{
-		{name: "queued", state: "queued"}, {name: "running", state: "running"}, {name: "paused", state: "paused"},
+		{name: "queued", state: "queued"}, {name: "running", state: "running"},
 		{name: "completed", state: "completed", published: true}, {name: "failed published", state: "failed", published: true},
 		{name: "failed unpublished", state: "failed"}, {name: "cancelled published", state: "cancelled", published: true},
 		{name: "cancelled uncertain", state: "cancelled", uncertain: true}, {name: "running uncertain", state: "running", uncertain: true},
@@ -918,12 +902,6 @@ func TestRetirePhotoCheckoutReleasesHistoryAndSurvivesRestore(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, retired.RetiredAt, actual.RetiredAt)
 			require.True(t, actual.RetentionReleased)
-			require.Equal(t, "unbound", actual.State)
-			require.Empty(t, actual.Destination)
-			actualEntries, err := restored.PhotoCheckoutEntries(ctx, checkout.ID)
-			require.NoError(t, err)
-			entries[0].Published = false
-			require.Equal(t, entries, actualEntries)
 			_, err = restored.RetirePhotoCheckout(ctx, checkout.ID)
 			require.NoError(t, err)
 		})

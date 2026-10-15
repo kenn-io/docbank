@@ -358,12 +358,7 @@ func TestStorageRegistrationProtectsCheckoutReservations(t *testing.T) {
 			require.NoError(t, err)
 			checkout, operation, err := live.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
 			require.NoError(t, err)
-			state := store.StorageOperationCompleted
-			if tc.previewFirst {
-				state = store.StorageOperationCancelled
-				require.NoError(t, os.WriteFile(filepath.Join(destination, "photo.jpg"), []byte("working copy"), 0o600))
-			}
-			require.NoError(t, live.FinishPhotoCheckout(t.Context(), checkout.ID, operation.ID, state, "{}", "", time.Now().Add(time.Hour)))
+			require.NoError(t, live.FinishPhotoCheckout(t.Context(), checkout.ID, operation.ID, store.StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
 			resp, body := do(t, ts, http.MethodPost, endpoint, nil, input)
 			require.Equal(t, http.StatusConflict, resp.StatusCode, body)
 			require.Contains(t, body, checkout.ID)

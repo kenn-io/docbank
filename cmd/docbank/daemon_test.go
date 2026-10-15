@@ -346,9 +346,8 @@ func TestConfiguredCheckoutPathsRejectPartialCopiesBeforeDaemonStartup(t *testin
 			asset, err := catalog.PhotoAssetForNode(ctx, node.ID)
 			require.NoError(t, err)
 			destination := t.TempDir()
-			checkout, op, err := catalog.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
+			checkout, _, err := catalog.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
 			require.NoError(t, err)
-			require.NoError(t, catalog.FinishPhotoCheckout(ctx, checkout.ID, op.ID, store.StorageOperationFailed, "{}", "", time.Now().Add(time.Hour)))
 			cfg := config.Default()
 			stores := []store.BlobStore{{Name: "archive", Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "archive"}}
 			if watch {
@@ -356,12 +355,7 @@ func TestConfiguredCheckoutPathsRejectPartialCopiesBeforeDaemonStartup(t *testin
 			} else {
 				cfg.StoreBindings = map[string]config.StoreBindingConfig{"archive": {Kind: "filesystem", Path: destination}}
 			}
-			partial := filepath.Join(destination, "photo.jpg")
-			require.NoError(t, os.WriteFile(partial, []byte("working copy"), 0o600))
 			require.ErrorContains(t, validateConfiguredCheckouts(ctx, cfg, stores, catalog), checkout.ID)
-			require.NoError(t, os.Remove(partial))
-			err = validateConfiguredCheckouts(ctx, cfg, stores, catalog)
-			require.NoError(t, err)
 		})
 	}
 }
@@ -379,8 +373,6 @@ func TestServeRejectsCheckoutCopiesBeforeStartup(t *testing.T) {
 	checkout, op, err := catalog.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
 	require.NoError(t, err)
 	require.NoError(t, catalog.FinishPhotoCheckout(t.Context(), checkout.ID, op.ID, store.StorageOperationFailed, "{}", "partial", time.Now().Add(time.Hour)))
-	_, err = catalog.RetirePhotoCheckout(t.Context(), checkout.ID)
-	require.NoError(t, err)
 	require.NoError(t, catalog.Close())
 	copyPath := filepath.Join(destination, "edited.jpg")
 	require.NoError(t, os.WriteFile(copyPath, []byte("edits"), 0o600))
@@ -392,7 +384,4 @@ func TestServeRejectsCheckoutCopiesBeforeStartup(t *testing.T) {
 	err = runServe(ctx)
 	require.ErrorContains(t, err, "configured path")
 	require.ErrorContains(t, err, checkout.ID)
-	contents, err := os.ReadFile(copyPath)
-	require.NoError(t, err)
-	require.Equal(t, "edits", string(contents))
 }

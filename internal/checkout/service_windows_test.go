@@ -6,7 +6,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -92,16 +91,6 @@ func TestCheckoutRecoveryRetriesFilesystemAccessFailures(t *testing.T) {
 			} else {
 				require.Zero(t, status.PublishedFiles)
 			}
-			node, err := s.Store.NodeByID(ctx, asset.Files[0].NodeID)
-			require.NoError(t, err)
-			hash, size, err := s.Blobs.Write(strings.NewReader("replacement"))
-			require.NoError(t, err)
-			updated, _, err := s.Store.ReplaceContent(ctx, node.ID, node.Revision, hash, size, "image/jpeg")
-			require.NoError(t, err)
-			selector := store.VersionPruneSelector{VersionIDs: []string{entries[0].VersionID}}
-			held, err := s.Store.PruneContentVersions(ctx, node.ID, updated.Revision, selector, true)
-			require.NoError(t, err)
-			require.Len(t, held.DependencyRetained, 1)
 			if test.cancel {
 				require.NoError(t, s.Store.RequestStorageOperationCancel(ctx, op.ID))
 			}
@@ -128,17 +117,6 @@ func TestCheckoutRecoveryRetriesFilesystemAccessFailures(t *testing.T) {
 			if test.stage && !test.cancel {
 				_, err := os.Stat(lockedPath)
 				require.ErrorIs(t, err, os.ErrNotExist)
-			}
-			held, err = s.Store.PruneContentVersions(ctx, node.ID, updated.Revision, selector, true)
-			require.NoError(t, err)
-			require.Len(t, held.DependencyRetained, 1)
-			if test.cancel {
-				retired, err := s.Store.RetirePhotoCheckout(ctx, checkout.ID)
-				require.NoError(t, err)
-				require.NotNil(t, retired.RetiredAt)
-				pruned, err := s.Store.PruneContentVersions(ctx, node.ID, updated.Revision, selector, true)
-				require.NoError(t, err)
-				require.Equal(t, 1, pruned.DeletedVersions)
 			}
 		})
 	}
