@@ -521,7 +521,7 @@ func reconcileNativeVisibility(ctx context.Context, instance pdfium.Pdfium, docu
 					// Retain the pixel decision when no font proof applies.
 				case whitespaceBlank:
 					continue
-				case whitespaceUnproven:
+				case whitespaceInked:
 					glyphs[index].GapReason = "unproven_whitespace"
 					continue
 				}

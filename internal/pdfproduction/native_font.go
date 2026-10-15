@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/klippa-app/go-pdfium"
 	"github.com/klippa-app/go-pdfium/references"
@@ -19,7 +18,7 @@ type whitespaceProof uint8
 const (
 	whitespaceUnsupported whitespaceProof = iota
 	whitespaceBlank
-	whitespaceUnproven
+	whitespaceInked
 )
 
 const (
@@ -34,30 +33,22 @@ type nativeFontProof struct {
 	instance         pdfium.Pdfium
 	document         references.FPDF_DOCUMENT
 	programs         map[string][]byte
-	started          time.Time
 	batches, renders int
 }
 
 func newNativeFontProof(instance pdfium.Pdfium,
 	document references.FPDF_DOCUMENT) *nativeFontProof {
 	return &nativeFontProof{instance: instance, document: document,
-		programs: make(map[string][]byte), started: time.Now()}
-}
-
-func (p *nativeFontProof) available(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if time.Since(p.started) >= 10*time.Second {
-		return errFontUnproven
-	}
-	return nil
+		programs: make(map[string][]byte)}
 }
 
 func (p *nativeFontProof) check(ctx context.Context,
 	object references.FPDF_PAGEOBJECT) (whitespaceProof, error) {
 	if err := ctx.Err(); err != nil {
 		return whitespaceUnsupported, err
+	}
+	if p.batches >= maxFontBatches || p.renders >= maxFontRenders {
+		return whitespaceUnsupported, nil
 	}
 	font, err := p.instance.FPDFTextObj_GetFont(&requests.FPDFTextObj_GetFont{PageObject: object})
 	if err != nil {
@@ -67,22 +58,22 @@ func (p *nativeFontProof) check(ctx context.Context,
 	if err != nil || !matched {
 		return whitespaceUnsupported, err
 	}
-	if err = p.available(ctx); err == nil && p.batches < maxFontBatches {
-		p.batches++
-		var codes []uint32
-		codes, err = p.whitespaceCodes(ctx, font.Font)
-		if err == nil && len(codes) > 0 {
-			var blank bool
-			blank, err = p.blankCodes(ctx, font.Font, codes)
-			if err == nil && blank {
+	p.batches++
+	codes, err := p.whitespaceCodes(ctx, font.Font)
+	if err == nil && len(codes) > 0 {
+		var blank bool
+		blank, err = p.blankCodes(ctx, font.Font, codes)
+		if err == nil {
+			if blank {
 				return whitespaceBlank, nil
 			}
+			return whitespaceInked, nil
 		}
 	}
 	if err == errFontUnproven { //nolint:errorlint // Joined cleanup failures must remain errors.
 		err = nil
 	}
-	return whitespaceUnproven, err
+	return whitespaceUnsupported, err
 }
 
 func (p *nativeFontProof) qualifiedProgram(font references.FPDF_FONT) (bool, error) {

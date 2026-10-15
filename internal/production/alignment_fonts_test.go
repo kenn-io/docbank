@@ -3,6 +3,7 @@ package production
 import (
 	"bytes"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -34,6 +35,22 @@ func TestAlignQualifiedFontWhitespace(t *testing.T) {
 			require.Equal(t, text+"\f", string(sidecar))
 		})
 	}
+}
+
+func TestAlignFontProofMissingAnchorsUsesPixels(t *testing.T) {
+	runtime := redactiontest.PageRuntime(t)
+	data := redactiontest.FontPDF("BT /F1 12 Tf 72 720 Td (1 2) Tj ET",
+		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding "+
+			"/FirstChar 32 /LastChar 57 /Widths ["+strings.Repeat("600 ", 26)+"] >>", "")
+	pixels := alignFontFixture(t, data, "1 2", nil)
+	require.Empty(t, pixels.Gaps)
+	withProof := alignFontFixture(t, data, "1 2", runtime)
+	require.Equal(t, pixels, withProof, "unusable anchors must preserve the pixel-derived map")
+	plan, err := redaction.Resolve(withProof, "redact_selected", nil, pdfproduction.QualifiedRecipe())
+	require.NoError(t, err)
+	sidecar, err := redaction.Text(plan)
+	require.NoError(t, err)
+	require.Equal(t, "1 2\f", string(sidecar))
 }
 
 func alignFontFixture(t *testing.T, data []byte, text string,

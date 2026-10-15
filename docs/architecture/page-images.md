@@ -178,8 +178,9 @@ The 2,792 nonempty outlines must paint ink; the 24 empty glyphs must not.
 This finite-raster proof does not extend to arbitrary fonts.
 
 Each page admits at most 256 batches, 8,192 observations per batch and 2,048
-isolated renders. After ten seconds of proof work, unchecked qualified
-whitespace becomes an ordered `unproven_whitespace` gap. Program acceptance is
+isolated renders. Missing anchors, uncertain attribution and exhausted work
+limits leave whitespace to the existing pixel decision. There is no elapsed-time
+proof budget that changes the map with machine load. Program acceptance is
 limited to 64 KiB, after the bounded WASM instance retrieves the program. The
 existing hard runtime deadline and memory limits still apply. Proofs are not
 cached across source objects: equal program bytes and Unicode tables can hide
@@ -199,8 +200,9 @@ The pixel path samples the outward-rounded whitespace box without an extra
 border. It can still include neighboring ink in Courier, Times and Helvetica
 text. Ordinary glyph checks and ambiguity accounting retain their one-pixel
 border. Sampling never rounds inward to discard boundary pixels, which could
-miss small visible glyphs falsely mapped to whitespace. An uncertain font
-proof also retains a gap. Every such gap still needs complete masking.
+miss small visible glyphs falsely mapped to whitespace. A proof that observes
+an inked whitespace alias adds an ordered `unproven_whitespace` gap, even if
+that alias is unused on the source page. Every gap still needs complete masking.
 
 The qualification uses an upstream PDFium reader as a test-only evidence
 bridge. There is no operator redaction command or daemon operation connecting

@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/klippa-app/go-pdfium"
 	"github.com/klippa-app/go-pdfium/references"
@@ -32,15 +31,15 @@ func TestNativeFontProofActualEncoding(t *testing.T) {
 		{"Differences paints A", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding << " +
 			"/BaseEncoding /WinAnsiEncoding /Differences [32 /A] >> /ToUnicode 6 0 R >>",
 			"1 begincodespacerange <00> <FF> endcodespacerange 1 beginbfchar <20> <0020> endbfchar",
-			whitespaceUnproven},
+			whitespaceInked},
 		{"unused inked alias", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding " +
 			"/WinAnsiEncoding /ToUnicode 6 0 R >>",
 			"1 begincodespacerange <00> <FF> endcodespacerange 1 beginbfchar <41> <0020> endbfchar",
-			whitespaceUnproven},
+			whitespaceInked},
 		{"changed anchor", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding " +
 			"/WinAnsiEncoding /ToUnicode 6 0 R >>",
 			"1 begincodespacerange <00> <FF> endcodespacerange 1 beginbfchar <4C> <0041> endbfchar",
-			whitespaceUnproven},
+			whitespaceUnsupported},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			data := redactiontest.FontPDF("BT /F1 12 Tf 72 720 Td (L R) Tj ET", tc.font, tc.cmap)
@@ -73,10 +72,8 @@ func TestNativeFontProofLimitsAndRestoration(t *testing.T) {
 			want  whitespaceProof
 		}{
 			{"complete", func(p *nativeFontProof) {}, whitespaceBlank},
-			{"batches", func(p *nativeFontProof) { p.batches = maxFontBatches }, whitespaceUnproven},
-			{"renders", func(p *nativeFontProof) { p.renders = maxFontRenders }, whitespaceUnproven},
-			{"soft time", func(p *nativeFontProof) { p.started = time.Now().Add(-11 * time.Second) },
-				whitespaceUnproven},
+			{"batches", func(p *nativeFontProof) { p.batches = maxFontBatches }, whitespaceUnsupported},
+			{"renders", func(p *nativeFontProof) { p.renders = maxFontRenders - 1 }, whitespaceUnsupported},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				p := newNativeFontProof(proof.instance, proof.document)

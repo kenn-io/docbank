@@ -21,7 +21,7 @@ func (p *nativeFontProof) whitespaceCodes(ctx context.Context,
 	defer func() { finishFontScratch(&retErr, page.close()) }()
 	owners := make(map[structs.FPDF_FS_MATRIX]int, 256)
 	for code := range 256 {
-		if err := p.available(ctx); err != nil {
+		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		matrix := structs.FPDF_FS_MATRIX{A: 1, D: 1, E: float32(32 + (code%16)*384),
@@ -69,7 +69,7 @@ func (p *nativeFontProof) readFontMappings(ctx context.Context, text references.
 		return readings, errFontUnproven
 	}
 	for i := range count.Count {
-		if err := p.available(ctx); err != nil {
+		if err := ctx.Err(); err != nil {
 			return readings, err
 		}
 		generated, err := p.instance.FPDFText_IsGenerated(&requests.FPDFText_IsGenerated{TextPage: text,

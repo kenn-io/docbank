@@ -31,7 +31,7 @@ func (p *nativeFontProof) blankCodes(ctx context.Context, font references.FPDF_F
 		finishFontScratch(&retErr, err)
 	}()
 	for _, code := range codes {
-		if err := p.available(ctx); err != nil {
+		if err := ctx.Err(); err != nil {
 			return false, err
 		}
 		if p.renders >= maxFontRenders {
