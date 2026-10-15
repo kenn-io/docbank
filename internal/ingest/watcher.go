@@ -115,6 +115,7 @@ type watchObservation struct {
 	fingerprint watchFingerprint
 	stableSince time.Time
 	processed   bool
+	digest      string
 }
 
 type watchRoot struct {
@@ -266,6 +267,10 @@ func watchMountForRoot(root *os.Root) (watchMount, error) {
 // in memory: after every daemon restart a file must prove stability for a full
 // settle window again before Docbank opens it.
 type Watcher struct {
+	process       func(context.Context, string, *watchObservation, localFileOpener) error
+	reject        func(context.Context, string, error) error
+	rejected      map[string]struct{}
+	immediate     bool
 	ing           *Ingester
 	vaultRoot     string
 	vaultDirs     []fs.FileInfo
@@ -275,6 +280,7 @@ type Watcher struct {
 	logger        *slog.Logger
 	now           func() time.Time
 	beforeDescend func(string)
+	beforeObserve func(string)
 	sourceMount   watchMount
 	observations  map[string]watchObservation
 }
@@ -742,6 +748,9 @@ func pathContains(parent, child string) bool {
 }
 
 func (w *Watcher) scan(ctx context.Context, root *watchRoot) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	seen := make(map[string]struct{}, len(w.observations))
 	if err := w.scanDirectory(ctx, root, root.root, "", seen); err != nil {
 		return fmt.Errorf("scanning watch %q: %w", w.config.Name, err)
@@ -751,7 +760,40 @@ func (w *Watcher) scan(ctx context.Context, root *watchRoot) error {
 			delete(w.observations, rel)
 		}
 	}
+	for rel := range w.rejected {
+		if _, exists := seen[rel]; !exists {
+			delete(w.rejected, rel)
+		}
+	}
 	return nil
+}
+
+// unreadableDirectoryError marks a directory whose own entries could not be
+// listed, as opposed to a failure somewhere below it.
+type unreadableDirectoryError struct{ err error }
+
+func (e *unreadableDirectoryError) Error() string { return "listing directory: " + e.err.Error() }
+func (e *unreadableDirectoryError) Unwrap() error { return e.err }
+
+// reportsHeldEntry reports whether a transient observation failure must be
+// reported rather than skipped. A one-shot push never scans again, so an entry
+// another program holds open, such as a Windows sharing or lock violation,
+// would otherwise be left out silently. A watch scan retries it later, and an
+// entry that disappeared needs no report.
+func (w *Watcher) reportsHeldEntry(err error) bool {
+	return w.immediate && w.reject != nil && !errors.Is(err, fs.ErrNotExist)
+}
+
+// rejectEntry reports an unreadable file or directory once, until it becomes
+// readable or disappears, and lets the scan continue with its siblings.
+func (w *Watcher) rejectEntry(ctx context.Context, rel string, err error, seen map[string]struct{}) error {
+	seen[rel] = struct{}{}
+	delete(w.observations, rel)
+	if _, reported := w.rejected[rel]; reported {
+		return nil
+	}
+	w.rejected[rel] = struct{}{}
+	return w.reject(ctx, rel, err)
 }
 
 func (w *Watcher) scanDirectory(
@@ -763,12 +805,12 @@ func (w *Watcher) scanDirectory(
 	}
 	f, err := dir.Open(".")
 	if err != nil {
-		return err
+		return &unreadableDirectoryError{err: err}
 	}
 	entries, readErr := f.ReadDir(-1)
 	closeErr := f.Close()
 	if readErr != nil || closeErr != nil {
-		return errors.Join(readErr, closeErr)
+		return &unreadableDirectoryError{err: errors.Join(readErr, closeErr)}
 	}
 	slices.SortFunc(entries, func(left, right os.DirEntry) int {
 		return strings.Compare(left.Name(), right.Name())
@@ -784,7 +826,13 @@ func (w *Watcher) scanDirectory(
 		}
 		info, err := dir.Lstat(entry.Name())
 		if err != nil {
-			if transientWatchObservationError(err) {
+			if transientWatchObservationError(err) && !w.reportsHeldEntry(err) {
+				continue
+			}
+			if w.reject != nil {
+				if err := w.rejectEntry(ctx, rel, err, seen); err != nil {
+					return err
+				}
 				continue
 			}
 			return fmt.Errorf("checking entry %q: %w", rel, err)
@@ -798,7 +846,14 @@ func (w *Watcher) scanDirectory(
 			}
 			child, err := openWatchDirectory(dir, entry.Name())
 			if err != nil {
-				if errors.Is(err, ErrSourceChanged) || transientWatchObservationError(err) {
+				if errors.Is(err, ErrSourceChanged) ||
+					(transientWatchObservationError(err) && !w.reportsHeldEntry(err)) {
+					continue
+				}
+				if w.reject != nil {
+					if err := w.rejectEntry(ctx, rel, err, seen); err != nil {
+						return err
+					}
 					continue
 				}
 				return fmt.Errorf("opening directory %q: %w", rel, err)
@@ -824,24 +879,53 @@ func (w *Watcher) scanDirectory(
 			scanErr := w.scanDirectory(ctx, root, child, rel, seen)
 			_ = child.Close()
 			if scanErr != nil {
-				if errors.Is(scanErr, ErrSourceChanged) {
+				if errors.Is(scanErr, ErrSourceChanged) && !w.immediate {
+					continue
+				}
+				if unreadable, ok := errors.AsType[*unreadableDirectoryError](scanErr); ok && w.reject != nil {
+					if err := w.rejectEntry(ctx, rel, unreadable.err, seen); err != nil {
+						return err
+					}
 					continue
 				}
 				return scanErr
 			}
+			delete(w.rejected, rel)
 			continue
 		}
 		if !info.Mode().IsRegular() {
 			continue
 		}
 		if err := validateSourcePath(rel); err != nil {
+			if w.reject != nil {
+				if err := w.rejectEntry(ctx, rel, err, seen); err != nil {
+					return err
+				}
+				continue
+			}
 			return err
 		}
 		source := watchSource{root: root, ref: rel}
+		if w.beforeObserve != nil {
+			w.beforeObserve(rel)
+		}
 		fingerprint, sourceMount, err := source.observe()
 		if err != nil {
-			if errors.Is(err, ErrSourceChanged) || transientWatchObservationError(err) {
+			if errors.Is(err, ErrSourceChanged) {
 				delete(w.observations, rel)
+				if w.immediate {
+					return err
+				}
+				continue
+			}
+			if transientWatchObservationError(err) && !w.reportsHeldEntry(err) {
+				delete(w.observations, rel)
+				continue
+			}
+			if w.reject != nil {
+				if err := w.rejectEntry(ctx, rel, err, seen); err != nil {
+					return err
+				}
 				continue
 			}
 			return fmt.Errorf("checking entry %q: %w", rel, err)
@@ -853,38 +937,75 @@ func (w *Watcher) scanDirectory(
 		seen[rel] = struct{}{}
 		observation, exists := w.observations[rel]
 		if !exists || !observation.fingerprint.matches(fingerprint) {
-			w.observations[rel] = watchObservation{
-				fingerprint: fingerprint, stableSince: observedAt,
+			observation = watchObservation{
+				fingerprint: fingerprint, stableSince: observedAt, digest: observation.digest,
+			}
+			w.observations[rel] = observation
+		}
+		if observation.digest != "" {
+			var digest string
+			digest, err = source.digest(ctx, fingerprint)
+			if err == nil && digest != observation.digest {
+				observation = watchObservation{
+					fingerprint: fingerprint, stableSince: observedAt, digest: digest,
+				}
+				w.observations[rel] = observation
+			}
+		}
+		var result WatchResult
+		if err == nil {
+			minimumAge := w.config.MinimumAge.Std()
+			if observation.processed ||
+				(!w.immediate && observedAt.Sub(observation.stableSince) < w.config.SettleTime.Std()) ||
+				(minimumAge > 0 && observedAt.Sub(time.Unix(0, fingerprint.modTime)) < minimumAge) {
+				continue
+			}
+			if w.process != nil {
+				err = w.process(ctx, rel, &observation, source.open)
+			} else {
+				err = w.mutate(func() error {
+					return w.ing.Blobs.WithMutation(ctx, func() error {
+						var writeErr error
+						result, writeErr = w.ing.ingestWatchedFile(
+							ctx, w.config.Name, w.config.Destination, rel, fingerprint, source.open,
+						)
+						return writeErr
+					})
+				})
+			}
+		}
+		if access, ok := errors.AsType[*SourceAccessError](err); ok && w.reject != nil &&
+			!errors.Is(err, ErrSourceChanged) &&
+			(!transientWatchObservationError(err) || w.reportsHeldEntry(err)) {
+			if err := w.rejectEntry(ctx, rel, access.Err, seen); err != nil {
+				return err
 			}
 			continue
 		}
-		minimumAge := w.config.MinimumAge.Std()
-		if observation.processed ||
-			observedAt.Sub(observation.stableSince) < w.config.SettleTime.Std() ||
-			(minimumAge > 0 && observedAt.Sub(time.Unix(0, fingerprint.modTime)) < minimumAge) {
-			continue
-		}
-		var result WatchResult
-		err = w.mutate(func() error {
-			return w.ing.Blobs.WithMutation(ctx, func() error {
-				var writeErr error
-				result, writeErr = w.ing.ingestWatchedFile(
-					ctx, w.config.Name, w.config.Destination, rel, fingerprint, source.open,
-				)
-				return writeErr
-			})
-		})
-		if errors.Is(err, ErrSourceChanged) || transientWatchObservationError(err) {
-			delete(w.observations, rel)
+		if errors.Is(err, ErrSourceChanged) || errors.Is(err, ErrRetryLater) ||
+			transientWatchObservationError(err) {
+			if w.immediate {
+				return err
+			}
+			if observation.digest == "" {
+				delete(w.observations, rel)
+			} else {
+				observation.processed = false
+				observation.stableSince = w.now()
+				w.observations[rel] = observation
+			}
 			continue
 		}
 		if err != nil {
 			return fmt.Errorf("ingesting %q: %w", rel, err)
 		}
+		delete(w.rejected, rel)
 		observation.processed = true
 		w.observations[rel] = observation
-		w.logger.Info("watched inbox file processed", "watch", w.config.Name,
-			"source", rel, "node_id", result.Node.ID, "outcome", result.Outcome)
+		if w.process == nil {
+			w.logger.Info("watched inbox file processed", "watch", w.config.Name,
+				"source", rel, "node_id", result.Node.ID, "outcome", result.Outcome)
+		}
 	}
 	return nil
 }

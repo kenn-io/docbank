@@ -178,6 +178,10 @@ func newProvenClientForDial(
 	return c, nil
 }
 
+// errInvalidProofResponse marks a proof response that broke the exchange's
+// framing rules, as opposed to an I/O failure that a fresh socket may avoid.
+var errInvalidProofResponse = errors.New("daemon ownership response")
+
 // proofTransport finishes the credential-free exchange before handing its socket away.
 type proofTransport struct{ conn net.Conn }
 
@@ -188,23 +192,41 @@ func (t proofTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	reader := bufio.NewReader(io.LimitReader(t.conn, proofResponseLimit))
 	resp, err := http.ReadResponse(reader, req)
 	if err != nil {
+		if !proofIOFailure(err) {
+			return nil, fmt.Errorf("%w is not valid HTTP: %w", errInvalidProofResponse, err)
+		}
 		return nil, fmt.Errorf("reading daemon ownership response: %w", err)
 	}
-	if resp.Close {
-		return nil, errors.New("daemon ownership response closes its connection")
+	// A closing error response still reports its status, so a caller can tell
+	// a temporary outage from a refusal. Only a successful proof must leave
+	// the socket open for the requests that follow it.
+	succeeded := resp.StatusCode >= 200 && resp.StatusCode <= 299
+	if resp.Close && succeeded {
+		return nil, fmt.Errorf("%w closes its connection", errInvalidProofResponse)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, proofBodyLimit+1))
 	if err != nil {
 		return nil, fmt.Errorf("reading daemon ownership body: %w", err)
 	}
-	if len(body) > proofBodyLimit || reader.Buffered() != 0 {
-		return nil, errors.New("daemon ownership response exceeds its framing bounds")
+	if len(body) > proofBodyLimit || (succeeded && reader.Buffered() != 0) {
+		return nil, fmt.Errorf("%w exceeds its framing bounds", errInvalidProofResponse)
 	}
 	if err := resp.Body.Close(); err != nil {
 		return nil, fmt.Errorf("closing daemon ownership body: %w", err)
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(body))
 	return resp, nil
+}
+
+// proofIOFailure reports whether reading a proof response failed in the
+// connection itself, which a fresh socket may avoid, rather than because the
+// endpoint answered with something that is not HTTP.
+func proofIOFailure(err error) bool {
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, net.ErrClosed) {
+		return true
+	}
+	_, isNetErr := errors.AsType[net.Error](err)
+	return isNetErr
 }
 
 // singleConnDialer gives the HTTP transport exactly the socket that completed
@@ -674,7 +696,7 @@ func stopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
 		// so preserve the drain budget. A completed HTTP rejection proves this
 		// request did not initiate shutdown and uses the process-signal fallback.
 		shutdownErr := c.Shutdown(ctx, token)
-		if _, rejected := responseStatus(shutdownErr); rejected {
+		if _, rejected := ResponseStatus(shutdownErr); rejected {
 			return signalStopRecord(ctx, rec)
 		}
 		dead, err := waitDead(ctx, rec, daemon.GracefulExitTimeout)

@@ -61,6 +61,7 @@ Email, media, photos, people:
   media  Retain and inspect recordings
   people  Manage canonical people
   photos  Manage photo assets
+  push  Push a local folder to a remote daemon
   watch  Inspect configured watched inboxes
 
 Exports and productions:

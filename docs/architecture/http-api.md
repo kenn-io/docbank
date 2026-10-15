@@ -139,6 +139,8 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `POST /ingest` · `POST /ingest/stream` · `POST /ingest/preflight` | import with JSON or streamed progress / inventory server-side paths (see [addendum](#addendum-post-ingest-post-ingeststream-and-post-ingestpreflight)) | Implemented |
 | `GET /collections` · `GET /collections/{id}` · `GET /collections/{id}/members` · `GET\|PUT /collections/{id}/label` | browse live ingest-run membership and inspect, set, or clear its label under a revision precondition | Implemented |
 | `GET /collections/{id}/quality` | inspect bounded document distributions and processing coverage for one collection | Implemented |
+| `GET /push/sources?push_name=&after=&limit=` | page through a push name's last accepted source digests (see [addendum](#addendum-folder-push)) | Implemented |
+| `POST /push/uploads?parent_path=&name=&push_name=&source_ref=&run_id=` | verify and record one push source (see [addendum](#addendum-folder-push)) | Implemented |
 | `POST /uploads?parent_id=&name=` | stream one digest-checked remote file (see [addendum](#addendum-post-uploads)) | Implemented |
 | `PATCH /nodes/{id}` | move and/or rename, including resolving an absolute `dest_path` transactionally | Implemented |
 | `POST /path/move` · `POST /path/trash` | move / trash by virtual path, resolved and mutated in one store transaction | Implemented |
@@ -1958,6 +1960,81 @@ it. Malformed envelopes and extra parts are also rejected before authority.
 Request bodies are capped at the declared size plus bounded multipart overhead.
 The route is exempt from the ordinary timeout, so a large upload is governed
 by client cancellation rather than a one-minute deadline.
+
+## Addendum: folder push
+
+`GET /push/sources?push_name=<name>&after=<source_ref>&limit=<1-1000>` pages
+through one push name's cursors in `source_ref` byte order. `limit` defaults to
+1000. Each item has `source_ref`, `node_id`, `hash`, `size`, and `trashed`. The
+hash and size are the last accepted source observation, which can differ from
+the node's current head after an independent edit. `next` is the `after` value
+for the following page and is absent on the last page. The read grants no
+authority. The client reads every page at startup, which also checks its key
+and push name before it reads any file. In watch mode it reads them again at
+the start of each scan that has files to push.
+
+Both push routes refuse a `push_name` that matches a `[[watch]]` still
+configured on the daemon with `409 push_name_in_use`. Both producers would
+otherwise version the same source identities.
+
+Before any push observation exists, the listing includes the matching
+daemon-owned watch cursor for the same name and relative path. Its last
+accepted hash and size count as already pushed; an unchanged first push sends
+no upload or provenance mutation. Changed bytes version that same node and
+record a push observation, which takes precedence afterwards. The cursor
+survives metadata backup and restore. See the
+[switch-over steps](../usage/pushing.md#switch-from-a-daemon-owned-watch).
+
+`POST /push/uploads` uses the same multipart envelope, hash/size declarations,
+admission limits, maintenance gate, and timeout exemption as
+[`POST /uploads`](#addendum-post-uploads). It also requires:
+
+- `push_name`: 1–64 lowercase ASCII letters, digits, `-`, `_`, or `.`.
+- `source_ref`: a canonical source-relative slash path of at most 4096 bytes.
+  Each component must be a valid virtual name. Empty, absolute, and parent
+  traversal paths are rejected.
+- `parent_path`: the absolute virtual directory for a new identity's node.
+- `run_id`: a UUIDv4 the client picks for one scan. Every file accepted with
+  the same `run_id` joins one operational ingest run, which is one import
+  collection. A `run_id` that names another source's run returns `409`.
+
+Optional `modified_at` is the original source modification time in canonical
+UTC RFC3339Nano. `parent_path` and `name` place only a new node; the multipart
+filename must match `name`. Missing directories along `parent_path` are created
+in the same transaction as that node, and only when a node is created. An
+existing identity keeps its node wherever it now is, so a moved node or a
+trashed former parent does not affect it. No server-side source path is opened.
+The distinct route prevents older daemons from ignoring push identity fields.
+Responses use `PushUploadReceipt`; ordinary uploads keep `UploadReceipt`.
+
+Only verified payloads with a valid closing envelope reach the store. One
+transaction resolves the source identity and commits content versions and
+operational `push` provenance with exact version bindings. A new identity
+always gets its own exact-name node and returns `201 added`, even when another
+document has the same bytes; existing name collisions fail. Known unchanged
+sources return `200 skipped`. Changed sources follow their existing node and
+return `200 updated` when a new content version is created. A changed source
+whose bytes already equal the node's head records its new observation and
+returns `200 skipped` without an extra version. Mapped trash returns `409`.
+
+Each source's observations are strictly ordered by their run's start time. When
+a shared run does not start after a source's previous observation, after the
+wall clock steps backward or when one run sees a source twice, that observation
+gets its own run instead.
+
+Every upload success includes the independently computed `computed_hash` and
+`computed_size` plus the resulting node. The client checks the receipt before
+reporting success. A retry after a lost response resolves the committed source
+and returns `200 skipped`. Independent edits never replace the cursor's last
+accepted source digest. See [Push a folder](../usage/pushing.md) for the
+operator workflow.
+
+`GET /api/daemon/key-challenge?nonce=<64 hex>` needs no API key. It returns
+`{"proof": ...}`, an HMAC-SHA256 of the nonce under the daemon API key with
+its own domain separator. The push client sends this challenge on every new
+connection and sends the API key and document bytes only after the proof
+verifies. The challenge never carries the key, and its proof cannot be used as
+a credential.
 
 ## Addendum: `PUT /nodes/{id}/content`
 
