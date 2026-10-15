@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"maps"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -394,8 +395,17 @@ func validateStorageNamespace(
 			if checkout.RetentionReleased || checkout.Destination == "" {
 				continue
 			}
-			_, overlap, err := ingest.WatchBindingOverlapContext(ctx, []config.WatchConfig{{Source: checkout.Destination}}, binding)
-			if err != nil {
+			info, statErr := os.Stat(checkout.Destination)
+			if statErr != nil && !errors.Is(statErr, fs.ErrNotExist) {
+				return NewError(http.StatusUnprocessableEntity, "storage_binding_invalid", statErr.Error())
+			}
+			var overlap bool
+			if statErr == nil && info.IsDir() {
+				_, overlap, err = ingest.WatchBindingOverlapContext(ctx, []config.WatchConfig{{Source: checkout.Destination}}, binding)
+			} else {
+				overlap, err = ingest.PathsOverlapContext(ctx, binding.Path, checkout.Destination)
+			}
+			if err != nil && !errors.Is(err, fs.ErrNotExist) {
 				return NewError(http.StatusUnprocessableEntity, "storage_binding_invalid", err.Error())
 			}
 			if overlap {

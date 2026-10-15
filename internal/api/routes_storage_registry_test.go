@@ -329,19 +329,27 @@ func TestStorageEvacuationPreviewRunsAndDetachesEmptySecondary(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
 }
 
-func TestStorageRegistrationRejectsReservedCheckoutDestination(t *testing.T) {
+func TestStorageRegistrationProtectsCheckoutReservations(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name         string
-		previewFirst bool
+		name               string
+		previewFirst       bool
+		missingDestination bool
+		unrelatedBinding   bool
 	}{
-		{"preview", false},
-		{"apply rechecks reservation", true},
+		{"preview", false, false, false},
+		{"apply rechecks reservation", true, false, false},
+		{"missing destination remains reserved", false, true, false},
+		{"missing destination permits unrelated store", false, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			destination := t.TempDir()
+			bindingPath := destination
+			if tc.unrelatedBinding {
+				bindingPath = t.TempDir()
+			}
 			ts, live := newTestServer(t, func(d *api.Deps) {
-				d.Cfg.StoreBindings = map[string]config.StoreBindingConfig{"checkout": {Kind: "filesystem", Path: destination}}
+				d.Cfg.StoreBindings = map[string]config.StoreBindingConfig{"checkout": {Kind: "filesystem", Path: bindingPath}}
 				d.BlobRegistry = blob.NewRegistry(t.Context(), d.Store.VaultID(), d.Cfg.StoreBindings, nil)
 				t.Cleanup(func() { require.NoError(t, d.BlobRegistry.Close()) })
 			})
@@ -362,7 +370,18 @@ func TestStorageRegistrationRejectsReservedCheckoutDestination(t *testing.T) {
 			checkout, operation, err := live.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
 			require.NoError(t, err)
 			require.NoError(t, live.FinishPhotoCheckout(t.Context(), checkout.ID, operation.ID, store.StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
+			if tc.missingDestination {
+				require.NoError(t, os.Remove(destination))
+			}
 			resp, body := do(t, ts, http.MethodPost, endpoint, nil, input)
+			if tc.unrelatedBinding {
+				require.Equal(t, http.StatusOK, resp.StatusCode, body)
+				var preview api.BlobStorePreview
+				require.NoError(t, json.Unmarshal([]byte(body), &preview))
+				resp, body = do(t, ts, http.MethodPost, "/api/v1/storage/stores", nil, map[string]any{"preview_token": preview.PreviewToken})
+				require.Equal(t, http.StatusOK, resp.StatusCode, body)
+				return
+			}
 			require.Equal(t, http.StatusConflict, resp.StatusCode, body)
 			require.Contains(t, body, checkout.ID)
 			require.Contains(t, body, `"code":"storage_namespace_overlap"`)
