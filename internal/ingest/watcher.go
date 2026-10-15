@@ -672,8 +672,6 @@ func WatchBindingOverlap(
 }
 
 func WatchBindingOverlapContext(ctx context.Context, watches []config.WatchConfig, binding config.StoreBindingConfig) (string, bool, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
 	if err := ctx.Err(); err != nil {
 		return "", false, err
 	}

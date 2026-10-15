@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/store"
@@ -15,6 +16,8 @@ import (
 // The retired result reports whether the matched checkout had already released retention,
 // meaning the overlap is a leftover working copy rather than an active reservation.
 func CheckoutPathOverlap(ctx context.Context, checkouts []store.PhotoCheckout, pathname string) (checkoutID string, overlap bool, retired bool, err error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 	var pending error
 	var pendingID string
 	for _, checkout := range checkouts {

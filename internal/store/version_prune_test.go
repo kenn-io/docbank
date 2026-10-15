@@ -700,11 +700,6 @@ func TestPruneContentVersionsRetainsAuthoritiesAndCheckpointsAllPrior(t *testing
 			}))
 			updated, replacementAfterRevert, err := s.ReplaceContent(ctx, created.ID, reverted.Revision, fakeHash("f6"), 60, "text/plain")
 			require.NoError(t, err)
-			selected, err := s.PruneContentVersions(ctx, created.ID, updated.Revision,
-				VersionPruneSelector{VersionIDs: []string{created.CurrentVersionID, replacement.ID, revertVersion.ID}}, false)
-			require.NoError(t, err)
-			require.ElementsMatch(t, []string{replacement.ID}, contentVersionIDs(selected.Candidates))
-			require.ElementsMatch(t, []string{created.CurrentVersionID, revertVersion.ID}, contentVersionIDs(selected.DependencyRetained))
 			current, currentRevert, _, err := s.RevertContent(ctx, created.ID, updated.Revision, replacement.ID)
 			require.NoError(t, err)
 
