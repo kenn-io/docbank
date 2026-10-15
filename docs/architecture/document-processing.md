@@ -114,6 +114,21 @@ The [profile contract](https://github.com/kenn-io/docbank/blob/main/document/pro
 owns these identities. The [embedding contract](https://github.com/kenn-io/docbank/blob/main/document/embedding.go)
 owns provider requests and compatibility checks.
 
+## Keep text search ready across restarts
+
+On open, Docbank moves retained plain-text results into rendition authority
+when needed. The first migration publishes search state and queues missing or
+failed legacy extractions for repair in one transaction. Later checks use the
+same current document versions as the migration. Historical versions keep
+their immutable builds without requiring current search heads.
+
+After that first migration, a terminal failure from the current plain-text
+extractor remains completed work. Restarting or publishing another document's
+text does not queue it again. Missing results still need extraction, queued
+retries keep their schedule, and derivative purge suppressions still apply.
+When nothing needs publication or repair, opening the vault does not read and
+rebuild all cached text.
+
 ## Authorize disclosure before provider work
 
 Inspection binds the operation to the exact source hash, byte count, detected

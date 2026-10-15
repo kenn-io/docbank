@@ -73,6 +73,12 @@ func (s *Store) MigrateLegacyPlainText(
 		if err != nil || !pending {
 			return err
 		}
+		// The first cutover queues legacy failures for repair. Once published,
+		// the current extractor owns terminal outcomes and retry scheduling.
+		published, err := hasPublishedLexicalHeadTx(ctx, tx)
+		if err != nil {
+			return err
+		}
 		rows, err := readLegacyPlainTextRows(ctx, tx)
 		if err != nil {
 			return err
@@ -90,7 +96,12 @@ func (s *Store) MigrateLegacyPlainText(
 		}
 
 		eligible := make(map[string]legacyPlainTextRow)
+		terminalFailures := make(map[string]bool)
 		for _, row := range rows {
+			if published && row.extractor == legacyPlainTextExtractor &&
+				row.extractorVersion == legacyPlainTextExtractorVersion && row.status == ExtractionFailed {
+				terminalFailures[row.blobHash] = true
+			}
 			if row.extractor == legacyPlainTextExtractor &&
 				row.extractorVersion > legacyPlainTextExtractorVersion &&
 				row.status == ExtractionOK && row.text.Valid && utf8.ValidString(row.text.String) {
@@ -232,6 +243,9 @@ func (s *Store) MigrateLegacyPlainText(
 				}
 				continue
 			}
+			if terminalFailures[blobHash] {
+				continue
+			}
 			queued[blobHash] = struct{}{}
 			if _, err := tx.ExecContext(ctx, `
 				INSERT INTO text_extraction_queue(blob_hash,next_attempt_at) VALUES(?,?)
@@ -330,35 +344,41 @@ func revokeStaleLegacyPlainTextHeadsTx(
 // publish, revoke, queue, or fence. Open and every post-extraction publication
 // call the migration, so the common "catalog already agrees with the cache"
 // case must cost index lookups rather than a read of every cached text.
+// Search eligibility also retains historical versions; only current versions
+// need heads, matching readLegacySelectedVersions. A terminal failure completes
+// an extraction attempt and must not keep triggering another full migration.
 func legacyPlainTextWorkPendingTx(
 	ctx context.Context, tx *sql.Tx, profileFingerprint string,
 ) (bool, error) {
 	const usableText = `e.extractor=? AND e.extractor_version=? AND e.status=? AND e.text IS NOT NULL`
 	var pending bool
-	if err := tx.QueryRowContext(ctx, `SELECT
-		EXISTS(SELECT 1 FROM text_searchable_versions sv
-		       JOIN content_versions v ON v.version_id=sv.version_id
+	if err := tx.QueryRowContext(ctx, `WITH selected AS (
+		SELECT v.version_id,v.blob_hash FROM text_searchable_versions sv
+		JOIN content_versions v ON v.version_id=sv.version_id
+		JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id
+	) SELECT
+		EXISTS(SELECT 1 FROM selected v
 		       JOIN extracted_text e ON e.blob_hash=v.blob_hash
 		       WHERE e.extractor=? AND e.extractor_version>?)
 		OR EXISTS(SELECT 1 FROM rendition_heads h
 		          JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
 		          JOIN rendition_builds b ON b.build_id=a.build_id
 		          WHERE h.profile_fingerprint=? AND b.provider_operation_id=?
-		            AND NOT EXISTS (SELECT 1 FROM text_searchable_versions sv
-		                            WHERE sv.version_id=h.content_version_id))
-		OR EXISTS(SELECT 1 FROM text_searchable_versions sv
-		          JOIN content_versions v ON v.version_id=sv.version_id
+		            AND NOT EXISTS (SELECT 1 FROM selected v
+		                            WHERE v.version_id=h.content_version_id))
+		OR EXISTS(SELECT 1 FROM selected v
 		          WHERE NOT EXISTS (SELECT 1 FROM extracted_text e
-		                            WHERE e.blob_hash=v.blob_hash AND `+usableText+`)
+		                            WHERE e.blob_hash=v.blob_hash AND e.extractor=? AND e.extractor_version=?
+		                              AND ((e.status=? AND e.text IS NOT NULL) OR e.status=?))
 		            AND NOT EXISTS (SELECT 1 FROM text_extraction_queue q
 		                            WHERE q.blob_hash=v.blob_hash))
 		OR (EXISTS(SELECT 1 FROM content_fts) AND EXISTS(SELECT 1 FROM rendition_lexical_heads))
 		OR (NOT EXISTS(SELECT 1 FROM rendition_lexical_heads)
-		    AND (EXISTS(SELECT 1 FROM text_searchable_versions)
+		    AND (EXISTS(SELECT 1 FROM selected)
 		         OR EXISTS(SELECT 1 FROM extracted_text)))`,
 		legacyPlainTextExtractor, legacyPlainTextExtractorVersion,
 		profileFingerprint, legacyPlainTextProvider,
-		legacyPlainTextExtractor, legacyPlainTextExtractorVersion, ExtractionOK,
+		legacyPlainTextExtractor, legacyPlainTextExtractorVersion, ExtractionOK, ExtractionFailed,
 	).Scan(&pending); err != nil {
 		return false, fmt.Errorf("checking pending legacy plain-text work: %w", err)
 	}
@@ -377,6 +397,7 @@ func legacyPlainTextWorkPendingTx(
 		UNION ALL
 		SELECT v.version_id,v.blob_hash FROM text_searchable_versions sv
 		JOIN content_versions v ON v.version_id=sv.version_id
+		JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id
 		JOIN extracted_text e ON e.blob_hash=v.blob_hash
 		WHERE `+usableText+`
 		  AND NOT EXISTS (SELECT 1 FROM rendition_heads h

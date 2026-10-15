@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -777,6 +778,89 @@ func TestMigrateLegacyPlainTextRetryPreservesQueuedWork(t *testing.T) {
 		require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM `+table).Scan(&count))
 		assert.Equal(t, 1, count, table)
 	}
+}
+
+func TestLegacyMigrationSettlesSupersededText(t *testing.T) {
+	t.Parallel()
+	for _, alreadyMigrated := range []bool{false, true} {
+		t.Run(fmt.Sprintf("already_migrated=%t", alreadyMigrated), func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			hash := seedLegacyMigrationRow(t, s, "report.txt", "91", ExtractionResult{
+				Extractor: "plain-text", ExtractorVersion: 1,
+				Status: ExtractionOK, Text: "obsolete searchable content",
+			})
+			if alreadyMigrated {
+				_, err := s.MigrateLegacyPlainText(ctx)
+				require.NoError(t, err)
+			}
+			old, err := s.NodeByPath(ctx, "/report.txt")
+			require.NoError(t, err)
+			_, _, err = s.ReplaceContent(ctx, old.ID, old.Revision,
+				fakeHash("92"), 1, "application/octet-stream")
+			require.NoError(t, err)
+			first, err := s.MigrateLegacyPlainText(ctx)
+			require.NoError(t, err)
+			_, err = s.ActiveRendition(ctx, old.CurrentVersionID, first.ProfileFingerprint)
+			require.ErrorIs(t, err, ErrNotFound)
+
+			report, err := s.MigrateLegacyPlainText(ctx)
+			require.NoError(t, err)
+			assert.Zero(t, report.MigratedBuilds, "historical versions must not force repeated migration")
+			hits, _, err := s.SearchPage(ctx, "obsolete", 10)
+			require.NoError(t, err)
+			assert.Empty(t, hits)
+			var builds int
+			require.NoError(t, s.db.QueryRow(
+				`SELECT count(*) FROM rendition_builds WHERE source_sha256=?`, hash,
+			).Scan(&builds))
+			assert.Equal(t, 1, builds, "retained content keeps its immutable build")
+		})
+	}
+}
+
+func TestLegacyMigrationKeepsTerminalFailuresRetired(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "docbank.db")
+	s, err := Open(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	ctx := t.Context()
+	seedLegacyMigrationRow(t, s, "stable.txt", "93", ExtractionResult{
+		Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionOK, Text: "stable searchable content",
+	})
+	_, err = s.MigrateLegacyPlainText(ctx)
+	require.NoError(t, err)
+	seedLegacyMigrationRow(t, s, "failed.txt", "94", ExtractionResult{
+		Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionFailed, Error: "synthetic terminal failure",
+	})
+	report, err := s.MigrateLegacyPlainText(ctx)
+	require.NoError(t, err)
+	assert.Zero(t, report.MigratedBuilds)
+	pending, err := s.PendingTextExtractions(ctx, 10)
+	require.NoError(t, err)
+	assert.Empty(t, pending, "migration must not revive completed terminal failures")
+
+	seedLegacyMigrationRow(t, s, "fresh.txt", "95", ExtractionResult{
+		Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionOK, Text: "fresh searchable content",
+	})
+	pending, err = s.PendingTextExtractions(ctx, 10)
+	require.NoError(t, err)
+	assert.Empty(t, pending, "publishing new text must not revive unrelated terminal failures")
+
+	require.NoError(t, s.Close())
+	s, err = Open(path)
+	require.NoError(t, err)
+	require.NoError(t, s.SeedTextExtractionQueue(ctx, "plain-text", 1))
+	pending, err = s.PendingTextExtractions(ctx, 10)
+	require.NoError(t, err)
+	assert.Empty(t, pending, "restart keeps completed extraction work retired")
+	hits, _, err := s.SearchPage(ctx, "searchable", 10)
+	require.NoError(t, err)
+	require.Len(t, hits, 2)
 }
 
 func seedLegacyMigrationRow(
