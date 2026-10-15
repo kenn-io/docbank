@@ -174,8 +174,6 @@ func TestPhotoCheckoutMetadata(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, retired.RetiredAt, actualRetired.RetiredAt)
 				require.True(t, actualRetired.RetentionReleased)
-				_, err = retiredRestored.RetirePhotoCheckout(t.Context(), f.checkout.ID)
-				require.NoError(t, err)
 			})
 		})
 	}

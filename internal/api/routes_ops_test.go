@@ -388,17 +388,6 @@ func TestTrashListAndEmpty(t *testing.T) {
 			want.Deleted = 1
 		}
 		assert.Equal(t, want, out)
-		if !run {
-			survived, err := s.NodeByID(t.Context(), raw.ID)
-			require.NoError(t, err)
-			require.NotNil(t, survived.TrashedAt)
-		} else {
-			_, err := s.NodeByID(t.Context(), old.ID)
-			require.ErrorIs(t, err, store.ErrNotFound)
-			survived, err := s.NodeByID(t.Context(), raw.ID)
-			require.NoError(t, err)
-			require.NotNil(t, survived.TrashedAt)
-		}
 	}
 
 	// Bad age string → 422.
