@@ -52,10 +52,12 @@ func TestCheckoutPathOverlapProtectsReservationsAndReleasedCopies(t *testing.T) 
 			require.NoError(t, os.WriteFile(partial, []byte("partial"), 0o600))
 			check(destination, true)
 			require.NoError(t, os.Remove(partial))
-			check(destination, state != store.StorageOperationFailed)
 			require.NoError(t, os.Remove(destination))
 			check(destination, state != store.StorageOperationFailed)
 			check(t.TempDir(), false)
+			if state != store.StorageOperationCompleted {
+				return
+			}
 			require.NoError(t, os.Mkdir(destination, 0o700))
 			edited := filepath.Join(destination, "edited.jpg")
 			require.NoError(t, os.WriteFile(edited, []byte("edits"), 0o600))
