@@ -50,6 +50,8 @@
   let includeMetadata = $state(true),
     removeGPS = $state(true);
   const photo = $derived(input && "photos" in input);
+  const longEdgeValidationMessage =
+    "Enter a whole number from 1 to 100,000 pixels or leave Long edge blank to enable Prepare.";
   const validLongEdge = $derived(
     longEdge === "" || (/^\d+$/.test(longEdge) && +longEdge >= 1 && +longEdge <= 100000),
   );
@@ -273,7 +275,7 @@
               Up to 16 photos, each at most 100 million pixels.
             </p>
             {#if !validLongEdge}<p role="alert" class="error">
-                <!-- One string preserves the exact alert text through formatting. -->{"Enter a whole number from 1 to 100,000 pixels or leave Long edge blank to enable Prepare."}
+                {longEdgeValidationMessage}
               </p>{/if}
             <p>
               Supported sources: JPEG, PNG, GIF and static WebP; embedded JPEG previews from ARW,
