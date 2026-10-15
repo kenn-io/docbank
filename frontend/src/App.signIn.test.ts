@@ -39,7 +39,7 @@ it("offers the API key and clears it after rejected sign-in", async () => {
   ).toBe(false);
 });
 
-it("exchanges the key before reading the vault and offers sign out", async () => {
+it("signs out with a DELETE request and the tab-token session header", async () => {
   history.replaceState(null, "", "/");
   vi.stubGlobal(
     "ResizeObserver",
