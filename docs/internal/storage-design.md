@@ -163,7 +163,7 @@ is harmless because no `blobs` row authorizes it; GC's physical scan can remove
 it. Reversing the order could commit a node whose bytes vanish after power
 loss, which is not recoverable through metadata.
 
-Local filesystem imports prepare up to eight files concurrently through
+Local filesystem imports prepare up to 32 files concurrently through
 the same durable writer. All preparations in a group finish before metadata
 transactions run in input order. Successful preparations share verified creation
 receipts for matching hashes, so an earlier duplicate can restore missing catalog
