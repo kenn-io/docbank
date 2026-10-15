@@ -48,6 +48,8 @@ describe("browser authentication", () => {
       id: 1,
     });
     const request = fetchMock.mock.calls[0]?.[1];
+    expect(request?.redirect).toBe("error");
+    expect(request?.credentials).toBe("same-origin");
     const headers = new Headers(request?.headers);
     expect(headers.get("X-Docbank-Web-Session")).toBe("secret");
     expect(headers.get("X-Api-Key")).toBeNull();

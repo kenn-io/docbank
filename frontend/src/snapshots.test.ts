@@ -406,6 +406,11 @@ describe("exact snapshot target capture", () => {
       "Snapshot capture contains a duplicate member.",
     ],
     [
+      "wrong row count",
+      async () => second({ rows: [captureRows[49], captureRows[50]] }),
+      "Snapshot page row count is inconsistent.",
+    ],
+    [
       "wrong bytes",
       async () => second({ rows: [{ ...captureRows[50], size: 52 }] }),
       "Snapshot capture byte total does not match its receipt.",

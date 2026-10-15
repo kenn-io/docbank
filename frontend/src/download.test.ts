@@ -333,7 +333,7 @@ describe("exact selected-source preview", () => {
     ).rejects.toThrow("disagreed with the selected document");
   });
 
-  it("verifies the complete digest before decoding text", async () => {
+  it("decodes verified text", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(ready()).mockResolvedValueOnce(body()));
 
     await expect(

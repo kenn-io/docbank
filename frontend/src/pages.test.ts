@@ -287,7 +287,7 @@ function pngResponse() {
   return { bytes, receipt, headers };
 }
 
-it("bounds the body and verifies headers, encoded dimensions and decoded dimensions before a URL", async () => {
+it("returns a URL for verified dimensions and rejects mismatched encoded dimensions", async () => {
   const fixture = pngResponse();
   const create = vi.fn(() => "blob:page");
   vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: create }));
@@ -306,12 +306,6 @@ it("bounds the body and verifies headers, encoded dimensions and decoded dimensi
   ).toBe("blob:page");
   expect(close).toHaveBeenCalledOnce();
   expect(create).toHaveBeenCalledOnce();
-  fixture.headers["Content-Length"] = "33554433";
-  await expect(
-    readPageImage("session", binding, fixture.receipt, recipe, new AbortController().signal),
-  ).rejects.toThrow(/Page image headers disagree/);
-  expect(create).toHaveBeenCalledOnce();
-  fixture.headers["Content-Length"] = String(fixture.bytes.length);
   fixture.bytes[20] = 1;
   fixture.receipt.sha256 = createHash("sha256").update(fixture.bytes).digest("hex");
   fixture.headers["X-Docbank-Page-SHA256"] = fixture.receipt.sha256;
@@ -320,7 +314,7 @@ it("bounds the body and verifies headers, encoded dimensions and decoded dimensi
   await expect(
     readPageImage("session", binding, fixture.receipt, recipe, new AbortController().signal),
   ).rejects.toThrow(/Invalid encoded page image dimensions/);
-  expect(fetcher).toHaveBeenCalledTimes(3);
+  expect(fetcher).toHaveBeenCalledTimes(2);
 });
 
 it("fences late image decoding and releases its decoded resource", async () => {
@@ -414,12 +408,18 @@ for (const header of [
   "X-Docbank-Page-SHA256",
   "X-Docbank-Page-DPI",
   "Content-Type",
+  "Content-Length",
   "Content-Digest",
 ]) {
   it(`rejects mismatched ${header}`, async () => {
     const fixture = pngResponse();
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(fixture.bytes, { headers: { ...fixture.headers, [header]: "wrong" } }),
+      new Response(fixture.bytes, {
+        headers: {
+          ...fixture.headers,
+          [header]: header === "Content-Length" ? "33554433" : "wrong",
+        },
+      }),
     );
     const decode = vi.fn();
     vi.stubGlobal("createImageBitmap", decode);

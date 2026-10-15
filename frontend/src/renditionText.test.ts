@@ -151,7 +151,7 @@ it.each([
   ).rejects.toThrow(/Malformed rendition text receipt/);
 });
 
-it("verifies rendition headers, length, SHA-256 and UTF-8 before returning inert text", async () => {
+it("returns verified inert rendition text", async () => {
   const markdown = "Verified <script>alert('blocked')</script>";
   const envelope = {
     docbank: {
