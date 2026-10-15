@@ -144,7 +144,11 @@ func TestGetPersonMCPFitsAssertionEnvelope(t *testing.T) {
 // whose identities (not paginated, unlike assertions) alone exceed a
 // fraction of the response budget while the complete MCP envelope still
 // fits: get_person must not reject a response the real 1 MiB ceiling would
-// have carried.
+// have carried. Every identity and external identity below is a value the
+// store would actually accept: distinct per-row identifiers (the store
+// rejects duplicate identity and external-identity tuples), and evidence
+// kind, confidence, and UID classification drawn from the store's real
+// enumerations, so the fixture reflects a response the daemon could produce.
 func TestGetPersonMCPFitsUnpageableIdentitiesUnderEnvelopeBudget(t *testing.T) {
 	t.Parallel()
 	const stamp = "2026-10-01T00:00:00Z"
@@ -155,20 +159,22 @@ func TestGetPersonMCPFitsUnpageableIdentitiesUnderEnvelopeBudget(t *testing.T) {
 			PersonID: "00000000-0000-4000-8000-000000000002", Role: "author", Action: "assert", Revision: 1, RecordedAt: stamp,
 		}},
 	}
-	value := strings.Repeat("a", 300) + "@example.test"
 	for i := range 200 {
+		value := strings.Repeat("a", 297) + fmt.Sprintf("%03d", i) + "@example.test"
 		detail.Identities = append(detail.Identities, api.PersonIdentity{
 			IdentityID: fmt.Sprintf("00000000-0000-4000-8000-%012d", i+100),
 			Kind:       "email", ValueDisplay: value, ValueNormalized: value,
 			ScopeKind: strings.Repeat("k", 64), ScopeValue: strings.Repeat("s", 300),
-			Normalization: "email_v1", Origin: "operator", EvidenceKind: strings.Repeat("e", 128),
-			EvidenceID: strings.Repeat("i", 256), Confidence: strings.Repeat("c", 64), RecordedAt: stamp,
+			Normalization: "email_v1", Origin: "operator", EvidenceKind: "operator_assertion",
+			EvidenceID: strings.Repeat("i", 256), Confidence: "operator_asserted", RecordedAt: stamp,
 		})
 	}
-	for range 64 {
+	for i := range 64 {
 		detail.ExternalIdentities = append(detail.ExternalIdentities, api.PersonExternalIdentity{
-			System: "msgvault", ArchiveID: strings.Repeat("r", 128), UID: strings.Repeat("u", 256),
-			UIDKind: strings.Repeat("d", 64), UIDState: strings.Repeat("t", 64),
+			System:    "msgvault",
+			ArchiveID: strings.Repeat("r", 120) + fmt.Sprintf("%08d", i),
+			UID:       strings.Repeat("u", 248) + fmt.Sprintf("%08d", i),
+			UIDKind:   "vcard_uid", UIDState: "current",
 			DisplayNameSnapshot: strings.Repeat("n", 200), LinkedAt: stamp, UpdatedAt: stamp,
 		})
 	}
