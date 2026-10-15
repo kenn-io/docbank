@@ -28,6 +28,22 @@ asset. Removing the selected member chooses another displayable member
 atomically, or stores a null display when none remains. Assets are limited to
 256 files.
 
+## Add photos in the web app
+
+In **Photos > Library**, choose **Add photos** and set the vault destination, which defaults to `/`. Use **Choose folder** or **Choose files**, then start the import. An invalid destination fails before uploading. Changing the destination replans the selected files when you click **Add N groups**.
+
+RAW, JPEG, and XMP files in the same folder with the same name form one photo. Videos stay separate. The drawer lists skipped files with their reasons, including unsupported types, invalid names or sizes, and duplicate relative paths. Each selection accepts up to 32,768 files, and its path-and-size declaration must fit the 8 MiB message limit.
+
+The drawer reports additions, files already in the vault, ambiguous groups, and failures. Photos, album counts, and the plain Documents directory refresh after the import. Retained searches, tag filters, and frozen snapshots stay unchanged.
+
+Imported groups share one collection named `browser: Card` when you pick a folder named `Card`, or `browser: Choose files` for individual files. Reusing a filename in a later selection creates a separate photo; identical RAW, image, and video content still returns already in vault. A lone XMP stays an ordinary file and is added again when picked in a new selection.
+
+A lost receipt leaves the group unconfirmed. Reload the page and choose the folder again; identical RAW, image, and video content returns as already in vault. Other files, including lone XMP sidecars, may be added again. Failed groups remain available through **Add N groups**.
+
+Web imports run in the open tab. Control them in the drawer. **Stop after this group** finishes the current group before stopping the import.
+
+Keep the tab open until the import finishes. This also works when you sign in to hosted Docbank with an API key. For large camera cards already on the daemon's computer, use `docbank photos import`.
+
 ## Record faces and people
 
 Use a photo file's `current_version_id` from `docbank stat <path-or-id> --json` to record an observation:

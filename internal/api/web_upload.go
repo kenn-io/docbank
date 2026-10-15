@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -13,6 +14,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
+	"slices"
 	"strings"
 	"time"
 
@@ -26,19 +29,63 @@ import (
 )
 
 const (
-	webUploadSocketPath  = "/api/daemon/web-upload"
-	webUploadProofDomain = "docbank-web-upload-v1\x00"
-	webUploadChunkBytes  = 1 << 20
-	webUploadAuthTimeout = 10 * time.Second
-	webUploadInactivity  = 30 * time.Second
+	webUploadSocketPath   = "/api/daemon/web-upload"
+	webUploadProofDomain  = "docbank-web-upload-v1\x00"
+	webUploadChunkBytes   = 1 << 20
+	webPhotoMaxFiles      = 32768
+	webPhotoPlanBytes     = 8 << 20
+	webPhotoGroupBytes    = 4096 + 67*webPhotoMaxFiles
+	webUploadControlBytes = 4096
+	webUploadAuthTimeout  = 10 * time.Second
+	webUploadInactivity   = 30 * time.Second
 )
 
 var (
 	errWebUploadCanceled = errors.New("browser upload canceled")
 	errWebUploadProtocol = errors.New("invalid browser upload protocol")
+	errWebUploadTooBig   = errors.New("upload control message exceeds its limit")
 )
 
+type webPhotoFile struct {
+	RelativePath string `json:"relative_path"`
+	Size         int64  `json:"size"`
+	// ModifiedTime is the source file's last-modified time as JavaScript's
+	// File.lastModified: milliseconds since the Unix epoch, a pointer so a
+	// genuine zero or negative value (a file last modified at or before the
+	// epoch, which browsers do report) stays distinct from the field being
+	// absent altogether.
+	ModifiedTime *int64 `json:"modified_time,omitzero"`
+}
+
+// originalMtime canonicalizes a browser-supplied modified_time into the
+// canonical UTC RFC3339Nano string store.PhotoImportMember.OriginalMtime
+// requires, the same format the CLI importer derives from the filesystem's
+// own mtime. A nil value means the browser didn't report one, so provenance
+// records no original modified time for it; zero and negative values are
+// genuine timestamps and are preserved.
+func originalMtime(modifiedTimeMillis *int64) string {
+	if modifiedTimeMillis == nil {
+		return ""
+	}
+	return time.UnixMilli(*modifiedTimeMillis).UTC().Format(time.RFC3339Nano)
+}
+
+type webPhotoReceipt struct {
+	Status  string `json:"status"`
+	Reason  string `json:"reason,omitzero"`
+	AssetID string `json:"asset_id"`
+}
+
 type webUploadMessage struct {
+	ImportID     string              `json:"import_id,omitzero"`
+	Files        []webPhotoFile      `json:"files,omitzero"`
+	Groups       [][]int             `json:"groups,omitzero"`
+	Unsupported  []int               `json:"unsupported,omitzero"`
+	SkipReasons  map[int]string      `json:"skip_reasons,omitzero"`
+	Destination  string              `json:"destination,omitzero"`
+	Group        int                 `json:"group,omitzero"`
+	Hashes       []string            `json:"hashes,omitzero"`
+	PhotoReceipt *webPhotoReceipt    `json:"photo_group_receipt,omitempty"`
 	ContainerID  string              `json:"container_id,omitzero"`
 	ChunkIndex   int                 `json:"chunk_index,omitzero"`
 	ChunkReceipt *store.MailboxChunk `json:"chunk_receipt,omitempty"`
@@ -100,7 +147,7 @@ func registerWebUpload(
 		if err != nil {
 			return // Accept writes its own handshake error.
 		}
-		conn.SetReadLimit(webUploadChunkBytes + 4096)
+		conn.SetReadLimit(4096)
 		if !sessions.trackUpload(conn) {
 			_ = conn.Close(websocket.StatusGoingAway, "daemon is shutting down")
 			return
@@ -108,6 +155,49 @@ func registerWebUpload(
 		defer sessions.releaseTrackedUpload(conn)
 		handleWebUploadConnection(r.Context(), conn, d, g, sessions, r)
 	})
+}
+
+// webUploadControlLimit returns the largest control message the upload
+// socket accepts for a message type. Photo plans and groups list every file,
+// so they get larger limits than the fixed-size upload messages.
+func webUploadControlLimit(kind string) int {
+	switch kind {
+	case "plan_photo_import":
+		return webPhotoPlanBytes
+	case "begin_photo_group":
+		return webPhotoGroupBytes
+	default:
+		return webUploadControlBytes
+	}
+}
+
+// readWebUploadControl reads one text control message and enforces the
+// limit for its declared type. It decodes the type with the same decoder that
+// later decodes the whole message, so the limit always matches the handled
+// type.
+func readWebUploadControl(ctx context.Context, conn *websocket.Conn) (webUploadMessage, error) {
+	conn.SetReadLimit(webPhotoPlanBytes)
+	kind, data, err := conn.Read(ctx)
+	if err != nil {
+		return webUploadMessage{}, fmt.Errorf("reading web upload control message: %w", err)
+	}
+	if kind != websocket.MessageText {
+		return webUploadMessage{}, errWebUploadProtocol
+	}
+	var header struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(data, &header); err != nil {
+		return webUploadMessage{}, fmt.Errorf("decoding web upload control type: %w", err)
+	}
+	if len(data) > webUploadControlLimit(header.Type) {
+		return webUploadMessage{}, errWebUploadTooBig
+	}
+	var message webUploadMessage
+	if err := json.Unmarshal(data, &message); err != nil {
+		return webUploadMessage{}, fmt.Errorf("decoding web upload control message: %w", err)
+	}
+	return message, nil
 }
 
 func handleWebUploadConnection(
@@ -157,10 +247,29 @@ func handleWebUploadConnection(
 		return
 	}
 
+	var photoImport *webPhotoImport
 	for {
-		var begin webUploadMessage
-		if err := wsjson.Read(ctx, conn, &begin); err != nil {
+		begin, err := readWebUploadControl(ctx, conn)
+		if err != nil {
+			if errors.Is(err, errWebUploadTooBig) {
+				_ = conn.Close(websocket.StatusMessageTooBig,
+					"upload control message exceeds its limit")
+			}
 			return
+		}
+		if begin.Type == "plan_photo_import" {
+			var ok bool
+			photoImport, ok = handleWebPhotoPlan(ctx, conn, d, begin)
+			if !ok {
+				return
+			}
+			continue
+		}
+		if begin.Type == "begin_photo_group" {
+			if !handleWebPhotoGroup(ctx, conn, d, g, begin, photoImport) {
+				return
+			}
+			continue
 		}
 		if begin.Type == "begin_mailbox_chunk" {
 			if !handleWebMailboxChunk(ctx, conn, d, g, begin) {
@@ -233,13 +342,20 @@ func handleWebUploadConnection(
 	}
 }
 
+// isCanonicalHash reports whether hash is packstore's canonical lowercase
+// SHA-256 encoding of itself, the acceptance rule every expected_hash on the
+// browser upload socket shares, whether for one file or a photo group.
+func isCanonicalHash(hash string) bool {
+	parsed, err := packstore.ParseHash(hash)
+	return err == nil && parsed.String() == hash
+}
+
 func validateWebUploadBegin(begin webUploadMessage) (webUploadRequest, *Error) {
 	if begin.Type != "begin" || begin.RequestID == "" || len(begin.RequestID) > 128 {
 		return webUploadRequest{}, NewError(http.StatusUnprocessableEntity, "validation",
 			"upload begin requires a bounded request identity")
 	}
-	parsedHash, err := packstore.ParseHash(begin.ExpectedHash)
-	if err != nil || parsedHash.String() != begin.ExpectedHash {
+	if !isCanonicalHash(begin.ExpectedHash) {
 		return webUploadRequest{}, NewError(http.StatusUnprocessableEntity, "validation",
 			"expected_hash must be canonical lowercase SHA-256")
 	}
@@ -412,6 +528,7 @@ func (r *webUploadReader) Read(p []byte) (int, error) {
 		}
 		readCtx, cancel := context.WithTimeout(r.ctx, r.inactivity)
 		// Finish the bounded frame before consumer work can outlive its read deadline.
+		r.conn.SetReadLimit(webUploadChunkBytes + 4096)
 		messageType, data, err := r.conn.Read(readCtx)
 		cancel()
 		if err != nil {
@@ -469,4 +586,233 @@ func webUploadProof(secret [sha256.Size]byte, token, nonce string) string {
 	_, _ = mac.Write([]byte{0})
 	_, _ = mac.Write([]byte(nonce))
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func planWebPhotos(
+	requestID string, files []webPhotoFile,
+) ([][]int, []int, map[int]string, *Error) {
+	invalid := func() ([][]int, []int, map[int]string, *Error) {
+		return nil, nil, nil, NewError(http.StatusUnprocessableEntity, "validation",
+			"invalid photo import declaration")
+	}
+	if requestID == "" || len(requestID) > 128 || len(files) == 0 || len(files) > webPhotoMaxFiles {
+		return invalid()
+	}
+	indexes := make(map[string]int, len(files))
+	candidates := make([]ingest.PhotoImportCandidate, 0, len(files))
+	unsupported := []int{}
+	skipReasons := make(map[int]string)
+	for index, file := range files {
+		name := file.RelativePath
+		reason := ""
+		if file.Size < 0 || file.Size > blob.MaxIngestBytes {
+			reason = "Invalid size"
+		}
+		if strings.Contains(name, "\\") {
+			reason = "Invalid name"
+		}
+		for part := range strings.SplitSeq(name, "/") {
+			if _, err := store.NormalizeName(part); err != nil {
+				reason = "Invalid name"
+			}
+		}
+		if _, exists := indexes[name]; exists {
+			reason = "Duplicate path"
+		}
+		if reason != "" {
+			unsupported = append(unsupported, index)
+			skipReasons[index] = reason
+			continue
+		}
+		indexes[name] = index
+		source := store.ClassifyPhotoSource(name)
+		if source.Kind == store.PhotoSourceUnsupported {
+			unsupported = append(unsupported, index)
+			skipReasons[index] = "Unsupported type"
+			continue
+		}
+		candidates = append(candidates, ingest.PhotoImportCandidate{Path: name, Kind: source.Kind})
+	}
+	groups := [][]int{}
+	for _, group := range ingest.GroupPhotoCandidates(candidates) {
+		members := make([]int, 0, len(group.Members))
+		for _, member := range group.Members {
+			members = append(members, indexes[member.Path])
+		}
+		groups = append(groups, members)
+	}
+	return groups, unsupported, skipReasons, nil
+}
+
+type webPhotoImport struct {
+	id          string
+	files       []webPhotoFile
+	groups      [][]int
+	run         store.IngestRun
+	destination store.IngestDirectoryPlan
+	hashes      [][]string
+}
+
+func (p *webPhotoImport) sourceDescription() string {
+	folder, _, nested := strings.Cut(p.files[0].RelativePath, "/")
+	if nested {
+		for _, file := range p.files {
+			if !strings.HasPrefix(file.RelativePath, folder+"/") {
+				return "browser: Choose files"
+			}
+		}
+		return "browser: " + folder
+	}
+	return "browser: Choose files"
+}
+
+// handleWebPhotoPlan answers one plan_photo_import message. It returns the
+// new import, or nil when the plan was rejected, and false when the socket
+// must close.
+func handleWebPhotoPlan(
+	ctx context.Context, conn *websocket.Conn, d Deps, begin webUploadMessage,
+) (*webPhotoImport, bool) {
+	problem := validatePhotoImportDestination(begin.Destination)
+	var destination store.IngestDirectoryPlan
+	if problem == nil {
+		var err error
+		destination, err = d.Store.PreparePhotoImportDestination(ctx, begin.Destination)
+		if err != nil {
+			problem, _ = errors.AsType[*Error](FromStoreError(err))
+		}
+	}
+	var groups [][]int
+	var unsupported []int
+	var skipReasons map[int]string
+	if problem == nil {
+		groups, unsupported, skipReasons, problem = planWebPhotos(begin.RequestID, begin.Files)
+	}
+	if problem != nil {
+		return nil, writeWebUploadProblem(ctx, conn, begin.RequestID, problem) == nil
+	}
+	photoImport := &webPhotoImport{
+		id: rand.Text(), files: begin.Files, groups: groups, destination: destination,
+		hashes: make([][]string, len(groups)),
+	}
+	err := wsjson.Write(ctx, conn, webUploadMessage{
+		Type: "photo_import_plan", RequestID: begin.RequestID, ImportID: photoImport.id,
+		Groups: groups, Unsupported: unsupported, SkipReasons: skipReasons,
+	})
+	return photoImport, err == nil
+}
+
+// groupFiles checks that begin names a group of this import plan, with one
+// canonical hash per member that matches the group's first attempt, and
+// returns the group's declared files.
+func (p *webPhotoImport) groupFiles(begin webUploadMessage) ([]webPhotoFile, *Error) {
+	invalid := func(detail string) ([]webPhotoFile, *Error) {
+		return nil, NewError(http.StatusUnprocessableEntity, "validation", detail)
+	}
+	if p == nil || begin.ImportID != p.id || begin.Group < 0 || begin.Group >= len(p.groups) ||
+		begin.RequestID == "" || len(begin.RequestID) > 128 {
+		return invalid("photo group must belong to the current import plan")
+	}
+	group := p.groups[begin.Group]
+	firstAttempt := p.hashes[begin.Group]
+	if len(begin.Hashes) != len(group) ||
+		(firstAttempt != nil && !slices.Equal(begin.Hashes, firstAttempt)) {
+		return invalid("Photo files must match the planned group and its first attempt. " +
+			"Choose the folder again.")
+	}
+	files := make([]webPhotoFile, len(group))
+	for i, index := range group {
+		if !isCanonicalHash(begin.Hashes[i]) {
+			return invalid("expected_hash must be canonical lowercase SHA-256")
+		}
+		files[i] = p.files[index]
+	}
+	return files, nil
+}
+
+func handleWebPhotoGroup(
+	ctx context.Context, conn *websocket.Conn, d Deps, g *gate,
+	begin webUploadMessage, photoImport *webPhotoImport,
+) bool {
+	files, problem := photoImport.groupFiles(begin)
+	if problem != nil {
+		return writeWebUploadProblem(ctx, conn, begin.RequestID, problem) == nil
+	}
+	photoImport.hashes[begin.Group] = slices.Clone(begin.Hashes)
+	var reader *webUploadReader
+	var result store.PhotoImportResult
+	err := g.mutate(func() error {
+		return d.Blobs.WithMutation(ctx, func() (retErr error) {
+			ing := &ingest.Ingester{Store: d.Store, Blobs: d.Blobs}
+			prepared := make([]*ingest.PreparedUpload, 0, len(files))
+			defer func() {
+				for _, member := range prepared {
+					retErr = errors.Join(retErr, member.Discard())
+				}
+			}()
+			for i, member := range files {
+				err := wsjson.Write(ctx, conn, webUploadMessage{
+					Type: "ready", RequestID: begin.RequestID,
+				})
+				if err != nil {
+					return fmt.Errorf("ready photo member: %w", err)
+				}
+				reader = &webUploadReader{
+					ctx: ctx, conn: conn, requestID: begin.RequestID,
+					inactivity: webUploadInactivity,
+				}
+				mediaType := store.ClassifyPhotoSource(member.RelativePath).MediaType
+				body := &io.LimitedReader{R: reader, N: member.Size + 1}
+				upload, err := ing.PrepareUpload(ctx, d.Store.RootID(),
+					path.Base(member.RelativePath), mediaType, body, begin.Hashes[i], member.Size)
+				if err != nil {
+					return err
+				}
+				prepared = append(prepared, upload)
+			}
+			paths := make([]string, len(files))
+			mtimes := make([]string, len(files))
+			for i, member := range files {
+				paths[i] = member.RelativePath
+				mtimes[i] = originalMtime(member.ModifiedTime)
+			}
+			var err error
+			if photoImport.run.ID() == "" {
+				photoImport.run, err = d.Store.BeginIngest(ctx, "photo-import",
+					photoImport.sourceDescription())
+				if err != nil {
+					return err
+				}
+			}
+			result, err = ing.CommitPhotoGroup(ctx, ingest.PhotoGroupCommit{
+				Run: photoImport.run, ImportID: photoImport.id,
+				Destination: &photoImport.destination, Paths: paths, Mtimes: mtimes,
+			}, prepared)
+			prepared = nil
+			return err
+		})
+	})
+	if err != nil {
+		problem := uploadError(err)
+		if errors.Is(err, errWebUploadCanceled) {
+			problem = NewError(499, "canceled", "photo group upload canceled")
+		}
+		if writeWebUploadProblem(ctx, conn, begin.RequestID, problem) != nil {
+			return false
+		}
+		return reader == nil || reader.ended
+	}
+	status := "skipped"
+	if result.Ambiguity != nil {
+		status = "ambiguous"
+	} else if result.Added {
+		status = "added"
+	}
+	reason := ""
+	if result.Ambiguity != nil {
+		reason = result.Ambiguity.Reason
+	}
+	return wsjson.Write(ctx, conn, webUploadMessage{
+		Type: "photo_group_receipt", RequestID: begin.RequestID,
+		PhotoReceipt: &webPhotoReceipt{Status: status, AssetID: result.Asset.ID, Reason: reason},
+	}) == nil
 }

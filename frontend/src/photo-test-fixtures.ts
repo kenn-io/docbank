@@ -188,3 +188,15 @@ export function mapPhoto(id: number): PhotoMapRow {
     previews: { grid: previews.grid },
   };
 }
+
+// photoSelectionLastModified is a fixed last-modified time (ms since epoch)
+// so tests asserting on the wire-sent modified_time field get a stable value
+// instead of each File defaulting to the time it was constructed.
+export const photoSelectionLastModified = 1700000000000;
+
+export const photoSelectionFiles = () => [
+  new File(["raw"], "capture.ARW", { lastModified: photoSelectionLastModified }),
+  new File(["jpeg"], "capture.JPG", { lastModified: photoSelectionLastModified }),
+  new File(["video"], "movie.MP4", { lastModified: photoSelectionLastModified }),
+  new File(["text"], "notes.txt", { lastModified: photoSelectionLastModified }),
+];

@@ -68,6 +68,8 @@
     photoID = "",
     onphotochange = () => {},
     onexport,
+    onadd,
+    uploadChannelError = "",
   }: {
     photos: Photos;
     cache: PhotoPreviewCache;
@@ -96,6 +98,8 @@
     photoID?: string;
     onphotochange?: (id: string, mode: "open" | "step" | "close") => void;
     onexport?: (input: ExportInput) => void;
+    onadd?: () => void;
+    uploadChannelError?: string;
   } = $props();
   const album = $derived(albums?.items.find((item) => item.id === albumID));
   const editor = $derived(photos.authored);
@@ -731,6 +735,12 @@
                 >{/if}
             </div>
             <div class="toolbar-actions">
+              {#if !mapMode && !photos.hidden && !albumID}<Button
+                  size="sm"
+                  disabled={!onadd}
+                  title={uploadChannelError || undefined}
+                  onclick={onadd}>Add photos</Button
+                >{/if}
               {#if !mapMode && !photos.hidden}<nav class="photo-views" aria-label="Photo views">
                   <button
                     type="button"
@@ -1002,9 +1012,14 @@
                         ? "Choose Hide from a photo's actions menu in Library."
                         : albumID
                           ? "Go to Library, select photos, then choose Add to album or press B."
-                          : "Import photos with docbank photos import to browse them here."}
+                          : "Choose a folder or files with Add photos. Large camera cards on the daemon's own disk import faster with docbank photos import."}
                 >
                   {#snippet icon()}<ImageIcon size="24" />{/snippet}
+                  {#if !mapMode && !photos.hidden && !albumID && !filtered && !photos.date}<Button
+                      disabled={!onadd}
+                      title={uploadChannelError || undefined}
+                      onclick={onadd}>Add photos</Button
+                    >{/if}
                   {#if albumID && !photos.date}<Button onclick={() => onnavigate("/photos")}
                       >Go to Library</Button
                     >{/if}

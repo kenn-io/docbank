@@ -248,7 +248,11 @@ it("restores applied search after a facet click and keeps empty-library guidance
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   render(PhotosWorkspace, { photos, cache });
   await screen.findByText("Your photo library is empty");
-  expect(await screen.findByText(/Import photos with docbank photos import/)).toBeTruthy();
+  expect(
+    await screen.findByText(
+      /Choose a folder or files with Add photos\. Large camera cards on the daemon's own disk import faster with docbank photos import\./,
+    ),
+  ).toBeTruthy();
   const search = screen.getByRole("searchbox", { name: "Search photos" }) as HTMLInputElement;
   expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
   await fireEvent.input(search, { target: { value: "Nikon" } });
@@ -268,7 +272,11 @@ it("restores applied search after a facet click and keeps empty-library guidance
   await screen.findByText("No matching photos");
   await fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
   await screen.findByText("Your photo library is empty");
-  expect(screen.getByText(/Import photos with docbank photos import/)).toBeTruthy();
+  expect(
+    screen.getByText(
+      /Choose a folder or files with Add photos\. Large camera cards on the daemon's own disk import faster with docbank photos import\./,
+    ),
+  ).toBeTruthy();
   photos.dispose();
   await cache.dispose();
 });
@@ -2264,6 +2272,62 @@ it("shows the Map date without Library controls", async () => {
   expect(screen.queryByRole("button", { name: "Clear date" })).toBeNull();
   await screen.findByText("1 located photo in 2024");
   photos.dispose();
+});
+
+it.each(["library", "map", "hidden", "album"])(
+  "offers Add photos only in Library, scope=%s",
+  async (scope) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(Response.json({ items: [], total: 0, facets: [] })),
+    );
+    const photos = new Photos("scoped", vi.fn(), scope === "hidden");
+    photos.started = true;
+    const cache = new PhotoPreviewCache("scoped", vi.fn());
+    const add = vi.fn();
+    render(PhotosWorkspace, {
+      photos,
+      cache,
+      mapMode: scope === "map",
+      tiles: {
+        tile_url: "/api/daemon/web-map-tiles/{z}/{x}/{y}",
+        host: "tiles.example.org",
+        attribution: "Example",
+        max_zoom: 19,
+      },
+      albumID: scope === "album" ? "album-1" : "",
+      onadd: add,
+    });
+    if (scope === "library") {
+      const buttons = screen.getAllByRole("button", { name: "Add photos" });
+      expect(buttons).toHaveLength(2);
+      await fireEvent.click(buttons[0]);
+      await fireEvent.click(buttons[1]);
+      expect(add).toHaveBeenCalledTimes(2);
+    } else {
+      if (scope === "map") await screen.findByText("Photos in view");
+      expect(screen.queryByRole("button", { name: "Add photos" })).toBeNull();
+    }
+    photos.dispose();
+    await cache.dispose();
+  },
+);
+
+it("explains why Add photos is unavailable", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue(Response.json({ items: [], total: 0, facets: [] })),
+  );
+  const photos = new Photos("scoped", vi.fn());
+  photos.started = true;
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotosWorkspace, { photos, cache, uploadChannelError: "The upload channel ended." });
+  for (const button of screen.getAllByRole("button", { name: "Add photos" })) {
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    expect(button.title).toBe("The upload channel ended.");
+  }
+  photos.dispose();
+  await cache.dispose();
 });
 
 it("explains the photo export cap before offering scope or selected export", async () => {

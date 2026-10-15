@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -122,8 +123,15 @@ func TestPhotoImportAtomicGroup(t *testing.T) {
 		photoImportTestMember(filepath.Join(root, "IMG_0002.JPG"), PhotoRoleImage, fakeHash("jpg2"), "image/jpeg"),
 		photoImportTestMember(filepath.Join(root, "IMG_0002.XMP"), PhotoRoleSidecar, "", "application/rdf+xml"),
 	)
+	plan, err := s.PreparePhotoImportDestination(ctx, "/new/photos")
+	require.NoError(t, err)
+	beforePlan := plan
+	bad.DestinationPlan = &plan
 	_, err = s.IngestPhotoGroup(ctx, run, bad)
 	require.Error(t, err)
+	assert.Equal(t, beforePlan, plan)
+	_, err = s.NodeByPath(ctx, "/new")
+	require.ErrorIs(t, err, ErrNotFound)
 	var after int
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE kind='file'`).Scan(&after))
 	assert.Equal(t, nodes, after)
@@ -876,6 +884,8 @@ func TestPhotoImportDestinationRejectsAuditedVault(t *testing.T) {
 	_, err = s.EnableInitialAudit(ctx, plan)
 	require.NoError(t, err)
 
+	_, err = s.PreparePhotoImportDestination(ctx, "/audited/new/nested")
+	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
 	_, err = s.EnsurePhotoImportDestination(ctx, "/audited/new/nested")
 	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
 	_, err = s.NodeByPath(ctx, "/audited/new")
@@ -892,4 +902,32 @@ func mustPhotoAsset(t *testing.T, s *Store, nodeID int64) PhotoAsset {
 	asset, err := s.PhotoAssetForNode(t.Context(), nodeID)
 	require.NoError(t, err)
 	return asset
+}
+
+func TestPreparePhotoImportDestination(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	_, err := s.PreparePhotoImportDestination(ctx, "/")
+	require.NoError(t, err)
+	writer, err := s.writeDB.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer func() { _ = writer.Rollback() }()
+	readCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	_, err = s.PreparePhotoImportDestination(readCtx, "/missing/nested")
+	require.NoError(t, err)
+	require.NoError(t, writer.Rollback())
+	_, err = s.NodeByPath(ctx, "/missing")
+	require.ErrorIs(t, err, ErrNotFound)
+	_, err = s.EnsurePhotoImportDestination(ctx, "/photos/existing")
+	require.NoError(t, err)
+	_, err = s.PreparePhotoImportDestination(ctx, "/photos/existing/new")
+	require.NoError(t, err)
+	_, err = s.CreateFile(ctx, s.RootID(), "file", fakeHash("destination-check"), 4, "text/plain")
+	require.NoError(t, err)
+	_, err = s.PreparePhotoImportDestination(ctx, "/file/child")
+	require.ErrorIs(t, err, ErrNotDir)
+	_, err = s.PreparePhotoImportDestination(ctx, "/missing/.")
+	require.ErrorIs(t, err, ErrInvalidName)
 }

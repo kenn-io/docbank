@@ -11,8 +11,9 @@ import {
 } from "./photo-test-fixtures.js";
 import App from "./App.svelte";
 import { Photos } from "./photos.svelte.js";
+import { VerifiedUploadChannel } from "./upload.js";
+import { parseQuery, queryFingerprint, type Query } from "./query.js";
 import { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
-import type { Query } from "./query.js";
 
 // Answers background filter-count requests so tests that predate counts see only their own reads.
 const stubPhotoFetch = (fetcher: (url: string, init: RequestInit) => unknown) =>
@@ -2257,6 +2258,219 @@ it("restores photo scroll while resumed counts are pending and keeps subsequent 
   await act(async () => {});
   expect(resumed.scrollTop).toBe(960);
 });
+
+it("refreshes Documents, Library, and album counts after adding photos", async () => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
+  Element.prototype.scrollIntoView = vi.fn();
+  vi.spyOn(VerifiedUploadChannel.prototype, "connect").mockResolvedValue();
+  vi.spyOn(VerifiedUploadChannel.prototype, "planPhotoImport").mockResolvedValue({
+    import_id: "import-1",
+    groups: [[0]],
+    unsupported: [],
+  });
+  let imported = false;
+  vi.spyOn(VerifiedUploadChannel.prototype, "uploadPhotoGroup").mockImplementation(async () => {
+    imported = true;
+    return { status: "added", asset_id: "photo-1" };
+  });
+  const root = { id: 1, kind: "dir", name: "", revision: 1, path: "/" };
+  const file = {
+    id: 3,
+    parent_id: 1,
+    kind: "file",
+    name: "capture.JPG",
+    revision: 1,
+    path: "/capture.JPG",
+    mime_type: "image/jpeg",
+    size: 4,
+    current_version_id: "11111111-1111-4111-8111-111111111111",
+    blob_hash: "a".repeat(64),
+    created_at: "2026-07-28T12:00:00Z",
+    modified_at: "2026-07-28T12:00:00Z",
+  };
+  const reads = { documents: 0, albums: 0, library: 0 };
+  stubPhotoFetch(async (url: string) => {
+    if (url.endsWith("/photos/albums")) {
+      reads.albums++;
+      return albumResponse([photoAlbum({ included_count: imported ? 1 : 0 })]);
+    }
+    if (url.endsWith("/photos/assets/query")) {
+      reads.library++;
+      return albumResponse({ items: imported ? [photo(1)] : [], total: imported ? 1 : 0 });
+    }
+    if (url === "/api/v1/path?path=%2F") return albumResponse(root);
+    if (url.includes("/nodes/1/children")) {
+      reads.documents++;
+      return albumResponse({
+        directory: root,
+        items: imported ? [file] : [],
+        total: imported ? 1 : 0,
+      });
+    }
+    return albumResponse({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  render(App);
+  await screen.findByText("Your photo library is empty");
+  await waitFor(() => expect(reads.documents).toBe(1));
+  const before = { ...reads };
+  await fireEvent.click(screen.getAllByRole("button", { name: "Add photos" })[0]);
+  await fireEvent.change(await screen.findByLabelText("Choose photo files"), {
+    target: { files: [new File(["jpeg"], "capture.JPG")] },
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Add 1 group" }));
+  await waitFor(() => {
+    for (const key of Object.keys(reads) as (keyof typeof reads)[])
+      expect(reads[key]).toBeGreaterThan(before[key]);
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Close add photos" }));
+  await screen.findByRole("button", { name: "Select Photo 1.jpg" });
+  await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
+  await screen.findByRole("cell", { name: "capture.JPG" });
+});
+
+it.each(["search", "tag", "snapshot"] as const)(
+  "retains the Documents %s after adding photos",
+  async (mode) => {
+    const query = parseQuery("{}");
+    const fingerprint = await queryFingerprint(query);
+    history.replaceState(
+      null,
+      "",
+      `/#web_session=synthetic&web_upload_secret=proof${mode === "snapshot" ? `&query=${encodeURIComponent(JSON.stringify(query))}` : ""}`,
+    );
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
+    Element.prototype.scrollIntoView = vi.fn();
+    vi.spyOn(VerifiedUploadChannel.prototype, "connect").mockResolvedValue();
+    vi.spyOn(VerifiedUploadChannel.prototype, "planPhotoImport").mockResolvedValue({
+      import_id: "import-1",
+      groups: [[0]],
+      unsupported: [],
+    });
+    const upload = vi
+      .spyOn(VerifiedUploadChannel.prototype, "uploadPhotoGroup")
+      .mockResolvedValue({ status: "added", asset_id: "photo-1" });
+    const root = { id: 1, kind: "dir", name: "", revision: 1, path: "/" };
+    const tag = {
+      id: "33333333-3333-4333-8333-333333333333",
+      name: "reviewed",
+      revision: 1,
+      assignment_count: 1,
+    };
+    const reads = { directory: 0, search: 0, tag: 0, snapshot: 0, photos: 0 };
+    stubPhotoFetch(async (url: string, init: RequestInit) => {
+      if (url.endsWith("/processing/profiles")) return albumResponse([]);
+      if (url.endsWith("/photos/assets/query")) {
+        reads.photos++;
+        return albumResponse({ items: [], total: 0 });
+      }
+      if (url === "/api/v1/path?path=%2F") return albumResponse(root);
+      if (url.includes("/nodes/1/children")) {
+        reads.directory++;
+        return albumResponse({ directory: root, items: [], total: 0 });
+      }
+      if (url.startsWith("/api/v1/search?")) {
+        reads.search++;
+        return albumResponse({ hits: [], limit: 1000, truncated: false });
+      }
+      if (url.includes(`/tags/${tag.id}/nodes`)) {
+        reads.tag++;
+        return albumResponse({ items: [], total: 0, omitted_trashed: 0 });
+      }
+      if (url.startsWith("/api/v1/tags?")) return albumResponse({ items: [tag], total: 1 });
+      if (url.endsWith("/queries/parse"))
+        return albumResponse({ query, query_fingerprint: fingerprint, dependencies: [] });
+      if (url.endsWith("/workspace/queries")) {
+        reads.snapshot++;
+        return albumResponse({
+          query,
+          dependencies: [],
+          query_fingerprint: fingerprint,
+          member_hash: "a".repeat(64),
+          snapshot_fingerprint: `sha256:${"b".repeat(64)}`,
+          generation: { kind: "native" },
+          coverage: { configuration: "unconfigured" },
+          observed_at: "2026-10-14T12:00:00Z",
+          page_size: 100,
+          total: 0,
+          total_bytes: 0,
+          rows: [],
+          facets: JSON.parse(String(init.body)).facets.map((dimension: string) => ({
+            dimension,
+            available: false,
+            reason: "not_requested",
+            values: [],
+          })),
+          snapshot: true,
+          snapshot_id: "a".repeat(32),
+          created_at: "2026-10-14T12:00:00Z",
+          expires_at: "2026-10-14T12:30:00Z",
+        });
+      }
+      return albumResponse({ items: [], nodes: [], tags: [], profiles: [] });
+    });
+    render(App);
+    await waitFor(() => expect(reads.directory).toBe(1));
+    if (mode === "search") {
+      const input = await screen.findByRole("searchbox", { name: "Search documents" });
+      await fireEvent.input(input, { target: { value: "retained" } });
+      await fireEvent.submit(input.closest("form")!);
+      await screen.findByText("Search results");
+    } else if (mode === "tag") {
+      const filter = await screen.findByRole("combobox", {
+        name: "Browse or filter by tag: All tags",
+      });
+      await waitFor(() => expect(filter.hasAttribute("disabled")).toBe(false));
+      await fireEvent.click(filter);
+      await fireEvent.click(await screen.findByRole("option", { name: "reviewed (1)" }));
+      await screen.findByText("Documents tagged");
+    } else {
+      await fireEvent.click(await screen.findByRole("button", { name: "Run query" }));
+      await screen.findByRole("region", { name: "Frozen query results" });
+    }
+    const before = { ...reads };
+    await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
+    await fireEvent.click((await screen.findAllByRole("button", { name: "Add photos" }))[0]);
+    await fireEvent.change(await screen.findByLabelText("Choose photo files"), {
+      target: { files: [new File(["jpeg"], "capture.JPG")] },
+    });
+    await fireEvent.click(await screen.findByRole("button", { name: "Add 1 group" }));
+    await waitFor(() => expect(upload).toHaveBeenCalledOnce());
+    await waitFor(() => expect(reads.photos).toBeGreaterThan(before.photos + 1));
+    await fireEvent.click(screen.getByRole("button", { name: "Close add photos" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
+    expect(reads.directory).toBe(before.directory);
+    expect(reads[mode]).toBe(before[mode]);
+    if (mode === "search") {
+      expect(screen.getByText("Search results")).toBeTruthy();
+      expect(
+        (screen.getByRole("searchbox", { name: "Search documents" }) as HTMLInputElement).value,
+      ).toBe("retained");
+    } else if (mode === "tag") expect(screen.getByText("Documents tagged")).toBeTruthy();
+    else
+      expect(
+        screen
+          .getByRole("region", { name: "Frozen query results" })
+          .getAttribute("data-snapshot-id"),
+      ).toBe("a".repeat(32));
+  },
+);
 
 it("passes a registered Photos shortcut into the help dialog", async () => {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
