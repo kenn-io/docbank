@@ -272,10 +272,7 @@ it("rejects conflicting duplicates, backwards, truncated and oversized progress"
     JSON.stringify({ delivery: "current_state", requested_after: 0, job });
   for (const [content, error] of [
     [events([line(queued), line({ ...queued, state: "running" })]), /captured authority/],
-    [
-      events([line({ ...queued, sequence: 3 }), line(queued), line(complete)]),
-      /captured authority/,
-    ],
+    [events([line({ ...queued, sequence: 3 }), line(queued)]), /captured authority/],
     [
       new Response(line(complete), { headers: { "Content-Type": "application/x-ndjson" } }),
       /progress stream was truncated/,

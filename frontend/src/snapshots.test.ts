@@ -385,19 +385,39 @@ describe("exact snapshot target capture", () => {
   });
 
   it.each([
-    ["duplicate members", async () => second({ rows: [captureRows[0]] })],
-    ["wrong count", async () => second({ rows: [], previous_cursor: "previous-1" })],
-    ["wrong bytes", async () => second({ rows: [{ ...captureRows[50], size: 52 }] })],
-    ["wrong member hash", async () => second({ member_hash: "0".repeat(64) })],
-    ["premature next cursor", async () => second({ next_cursor: "next-2" })],
-  ])("rejects %s without sending a mutation", async (name, makeSecond) => {
+    [
+      "duplicate members",
+      async () => second({ rows: [captureRows[0]] }),
+      "Snapshot capture contains a duplicate member.",
+    ],
+    [
+      "wrong count",
+      async () => second({ rows: [], previous_cursor: "previous-1" }),
+      "Malformed snapshot receipt: rows is inconsistent with total.",
+    ],
+    [
+      "wrong bytes",
+      async () => second({ rows: [{ ...captureRows[50], size: 52 }] }),
+      "Snapshot capture byte total does not match its receipt.",
+    ],
+    [
+      "wrong member hash",
+      async () => second({ member_hash: "0".repeat(64) }),
+      "Malformed snapshot receipt: page does not match immutable snapshot authority.",
+    ],
+    [
+      "premature next cursor",
+      async () => second({ next_cursor: "next-2" }),
+      "Snapshot final page has a next cursor.",
+    ],
+  ])("rejects %s without sending a mutation", async (_name, makeSecond, error) => {
     const first = await twoPageFirst();
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(jsonResponse(await makeSecond()));
     await expect(
       captureSnapshotTargets("session", first, new AbortController().signal),
-    ).rejects.toThrow(name === "duplicate members" ? /duplicate member/ : undefined);
+    ).rejects.toThrow(error);
     expect(
       fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/batch/tags")),
     ).toHaveLength(0);

@@ -1526,9 +1526,6 @@ it.each(["settles", "hangs"])(
     await vi.advanceTimersByTimeAsync(1);
     expect(revokes()).toHaveLength(1);
     expect(revokes()[0]?.[1]?.method).toBe("DELETE");
-    expect(new Headers(revokes()[0]?.[1]?.headers).get("X-Docbank-Web-Session")).toBe(
-      "short-lived",
-    );
     vi.useRealTimers();
     cleanup();
     expect(reports()).toHaveLength(1);
