@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { onDestroy, untrack } from "svelte";
+  import { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
   import { Button, Modal, Notice } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
   import type { PhotoCull } from "./photoCull.svelte.js";
@@ -28,7 +30,10 @@
     onclose: () => void;
     onmetadatachanged?: (receipt: PhotoAuthoredReceipt, tags: Tag[]) => void;
   } = $props();
-  const editor = $derived(photos.authored);
+  const editor = untrack(
+    () => new PhotoAuthoredEditor(photos.session, photos.onauthfailure, photos.authored.undoState),
+  );
+  onDestroy(() => editor.dispose());
   let photo = $state<PhotoBrowseRow>();
   let error = $state("");
   let loading = $state(false);

@@ -375,6 +375,51 @@ export class Photos {
     return this.loadMore();
   }
 
+  async moveGroup(
+    ids: string[],
+    direction: -1 | 1,
+  ): Promise<
+    | { status: "moved"; ids: string[] }
+    | { status: "boundary" }
+    | { status: "failed"; error: string }
+  > {
+    if (this.disposed || this.loading) return { status: "boundary" };
+    const missingMember =
+      "A compared photo is no longer in this query. Exit compare and select photos again.";
+    while (!this.disposed) {
+      const order = this.items.map((item) => item.asset_id);
+      const positions = ids.map((id) => order.indexOf(id));
+      if (positions.every((index) => index >= 0)) {
+        if (positions.some((index) => index + direction < 0)) return { status: "boundary" };
+        if (positions.every((index) => index + direction < order.length))
+          return { status: "moved", ids: positions.map((index) => order[index + direction]!) };
+      }
+      if (this.error) {
+        await this.retry();
+        if (this.error) return { status: "failed", error: this.error };
+        continue;
+      }
+      if (!this.cursor)
+        return positions.some((index) => index < 0)
+          ? {
+              status: "failed",
+              error: missingMember,
+            }
+          : { status: "boundary" };
+      const cursor = this.cursor;
+      await this.loadMore();
+      if (this.error) return { status: "failed", error: this.error };
+      if (this.cursor === cursor && this.items.length === order.length)
+        return {
+          status: "failed",
+          error: positions.some((index) => index < 0)
+            ? missingMember
+            : "Could not load more photos. Retry navigation.",
+        };
+    }
+    return { status: "boundary" };
+  }
+
   private authFailure(cause: unknown) {
     const expired =
       cause instanceof APIError && (cause.status === 401 || (this.hidden && cause.status === 403));

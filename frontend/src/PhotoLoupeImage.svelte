@@ -13,6 +13,7 @@
     view,
     onview,
     onregion,
+    oncancelregion,
     regionMode = false,
   }: {
     url: string;
@@ -24,6 +25,7 @@
     view?: PhotoView;
     onview?: (value: PhotoView) => void;
     onregion?: (value: { x: number; y: number; width: number; height: number }) => void;
+    oncancelregion?: () => void;
     regionMode?: boolean;
   } = $props();
   let width = $state(0);
@@ -37,6 +39,17 @@
       ? photoViewGeometry(naturalWidth, naturalHeight, width, height, dpr, rotation)
       : undefined,
   );
+  let keyboardPoint = $state({ x: 0.5, y: 0.5 });
+  const keyboardRegion = $derived.by(() => {
+    if (!regionMode || !geometry || !view) return;
+    const scale = view.actual ? geometry.actualScale : view.scale;
+    return {
+      left: width / 2 + (keyboardPoint.x - view.x) * geometry.width * scale,
+      top: height / 2 + (keyboardPoint.y - view.y) * geometry.height * scale,
+      width: geometry.width * scale * 0.15,
+      height: geometry.height * scale * 0.15,
+    };
+  });
   $effect(() => {
     if (view && geometry && zoom) {
       const pan = toPanView(view, geometry);
@@ -92,6 +105,35 @@
     });
     origin = undefined;
   }
+  function regionKey(event: KeyboardEvent) {
+    if (!regionMode) return;
+    const step = event.shiftKey ? 0.01 : 0.05;
+    let point: { x: number; y: number } | undefined;
+    if (event.key === "ArrowLeft")
+      point = { ...keyboardPoint, x: Math.max(0.075, keyboardPoint.x - step) };
+    else if (event.key === "ArrowRight")
+      point = { ...keyboardPoint, x: Math.min(0.925, keyboardPoint.x + step) };
+    else if (event.key === "ArrowUp")
+      point = { ...keyboardPoint, y: Math.max(0.075, keyboardPoint.y - step) };
+    else if (event.key === "ArrowDown")
+      point = { ...keyboardPoint, y: Math.min(0.925, keyboardPoint.y + step) };
+    if (point) {
+      event.preventDefault();
+      event.stopPropagation();
+      keyboardPoint = point;
+    } else if (event.key === "Enter" || event.key === " ") {
+      event.stopPropagation();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      oncancelregion?.();
+    }
+  }
+  function confirmRegion(event: MouseEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    onregion?.({ ...keyboardPoint, width: 0.15, height: 0.15 });
+  }
 
   let viewport: HTMLElement | undefined;
   function panZoom(element: HTMLElement) {
@@ -133,6 +175,22 @@
   onpointerupcapture={endRegion}
   {@attach panZoom}
 >
+  {#if regionMode}<button
+      type="button"
+      class="region-keyboard"
+      aria-label={`Position closeup on ${name}`}
+      aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown Enter Escape"
+      onkeydown={regionKey}
+      onclick={confirmRegion}
+    ></button>{/if}
+  {#if keyboardRegion}<span
+      class="keyboard-region"
+      aria-hidden="true"
+      style:left={`${keyboardRegion.left}px`}
+      style:top={`${keyboardRegion.top}px`}
+      style:width={`${keyboardRegion.width}px`}
+      style:height={`${keyboardRegion.height}px`}
+    ></span>{/if}
   <div
     class="pan"
     {@attach (element) =>
@@ -156,14 +214,37 @@
 
 <style>
   .photo-viewport {
+    position: relative;
     flex: 1;
     min-width: 0;
     min-height: 0;
     overflow: hidden;
     touch-action: none;
   }
+  .photo-viewport:focus-within {
+    outline: 2px solid var(--border-focus, #ffcc00);
+    outline-offset: -2px;
+  }
+  .region-keyboard {
+    position: absolute;
+    z-index: 2;
+    inset: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: crosshair;
+    pointer-events: none;
+  }
   .region-mode {
     cursor: crosshair;
+  }
+  .keyboard-region {
+    position: absolute;
+    z-index: 1;
+    border: 2px solid var(--border-focus, #ffcc00);
+    background: color-mix(in srgb, var(--border-focus, #ffcc00) 12%, transparent);
+    transform: translate(-50%, -50%);
+    pointer-events: none;
   }
   .pan {
     position: relative;

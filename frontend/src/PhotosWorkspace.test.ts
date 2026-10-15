@@ -3,6 +3,7 @@ import { tick } from "svelte";
 import { createShortcutManager } from "@kenn-io/kit-ui";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import PhotosWorkspace from "./PhotosWorkspace.svelte";
+import { PhotoCull } from "./photoCull.svelte.js";
 import * as api from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
 import { Photos, photoQuery, mapPhotoLimit, type MapView } from "./photos.svelte.js";
@@ -2569,3 +2570,77 @@ it("disables selected export when a metadata draft keeps an empty selection open
   expect(onexport).not.toHaveBeenCalled();
   photos.dispose();
 });
+
+it.each([false, true])(
+  "reconciles grid selection after cull (one unavailable: %s)",
+  async (oneUnavailable) => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    vi.spyOn(PhotoCull.prototype, "restore").mockResolvedValue();
+    vi.spyOn(PhotoCull.prototype, "flush").mockResolvedValue();
+    const rows = [photo(1), photo(2)];
+    const photos = new Photos("scoped", vi.fn());
+    photos.items = rows;
+    photos.total = rows.length;
+    photos.started = true;
+    const ids = rows.map((row) => row.asset_id);
+    photos.select(ids[0]!, new MouseEvent("click"), ids);
+    photos.select(ids[1]!, new MouseEvent("click", { ctrlKey: true }), ids);
+    vi.spyOn(PhotoCull.prototype, "start").mockImplementation(async function (this: PhotoCull) {
+      this.run = {
+        ids,
+        checkpoint: {
+          runID: "run",
+          pass: ids,
+          position: 0,
+          visited: [ids[0]!],
+          skipped: [],
+          unavailable: [],
+          scope: "unrated",
+          autoAdvance: true,
+        },
+      };
+      return true;
+    });
+    vi.spyOn(photos, "lookup").mockImplementation(
+      async (id) => rows.find((row) => row.asset_id === id)!,
+    );
+    vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
+    const before = preparedPhoto(1);
+    const receipt = {
+      receipt_id: "picked",
+      before: [before],
+      after: [{ ...before, revision: 2, values: { ...before.values, flag: "pick" } }],
+    } as PhotoAuthoredReceipt;
+    stubPhotoFetch(async (url, init) => {
+      if (url.endsWith("/photos/authored/edit")) return Response.json(receipt);
+      if (url.endsWith("/photos/assets/query")) {
+        const requested = JSON.parse(String(init.body)).query.filters?.asset_ids;
+        const eligible = oneUnavailable ? [rows[1]!] : rows;
+        return Response.json({
+          items: requested ? eligible.filter((row) => requested.includes(row.asset_id)) : eligible,
+          total: eligible.length,
+        });
+      }
+      throw new Error(`Unexpected request ${url}`);
+    });
+    const cache = new PhotoPreviewCache("scoped", vi.fn());
+    render(PhotosWorkspace, { photos, cache, vaultID: "vault" });
+    await fireEvent.click(screen.getByRole("button", { name: "Cull" }));
+    const cull = await screen.findByRole("dialog", { name: "Cull photos" });
+    await within(cull).findByText("Photo 1.jpg");
+    await fireEvent.click(within(cull).getByRole("button", { name: "Pick (P)" }));
+    await waitFor(() => expect(photos.authored.receiptID).toBe("picked"));
+    expect([...photos.selectedIDs]).toEqual(ids);
+    expect(photos.authored.targets).toEqual([]);
+    await fireEvent.click(within(cull).getByRole("button", { name: "Exit cull" }));
+    await waitFor(() => expect([...photos.selectedIDs]).toEqual(oneUnavailable ? [ids[1]!] : ids));
+    photos.dispose();
+    await cache.dispose();
+  },
+);

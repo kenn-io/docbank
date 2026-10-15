@@ -3756,7 +3756,7 @@
                   {/snippet}
                 </EmptyState>
               {:else}
-                <Table ariaLabel="Documents" zebra={false}>
+                <Table ariaLabel="Documents" zebra={false} unsorted>
                   {#snippet header()}
                     <th class="selection-column" scope="col">
                       <Checkbox

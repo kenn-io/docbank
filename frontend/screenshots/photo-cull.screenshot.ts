@@ -63,6 +63,17 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
       )
       .toBe(true);
     await compare.getByRole("button", { name: "Manual closeup", exact: true }).click();
+    const comparedName = await compare.locator(".frames h2").first().innerText();
+    const keyboardTarget = compare.getByRole("button", {
+      name: `Position closeup on ${comparedName}`,
+    });
+    await page.keyboard.press("Tab");
+    await expect(keyboardTarget).toBeFocused();
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Enter");
+    await expect(compare.locator(".closeups section")).toHaveCount(2);
+    await compare.getByRole("button", { name: "Clear closeup", exact: true }).click();
+    await compare.getByRole("button", { name: "Manual closeup", exact: true }).click();
     await compare
       .locator(".frames .photo-viewport")
       .first()

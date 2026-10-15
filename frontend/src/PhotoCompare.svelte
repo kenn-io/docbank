@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import { Button, Modal } from "@kenn-io/kit-ui";
   import type { Photos } from "./photos.svelte.js";
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
@@ -17,6 +18,10 @@
   let view = $state<PhotoView>({ ...fittedPhotoView });
   let regionMode = $state(false);
   let crop = $state<PhotoView>();
+  let moving = $state(false);
+  let navigationError = $state("");
+  let retryDirection = $state<-1 | 1>(1);
+  let content = $state<HTMLDivElement>();
   $effect(() => {
     selected = [...ids];
   });
@@ -40,16 +45,18 @@
     });
     return () => controller.abort();
   });
-  function move(direction: -1 | 1) {
-    const order = photos.items.map((item) => item.asset_id);
-    const positions = selected.map((id) => order.indexOf(id));
-    if (
-      positions.some(
-        (index) => index < 0 || index + direction < 0 || index + direction >= order.length,
-      )
-    )
-      return;
-    selected = positions.map((index) => order[index + direction]!);
+  async function move(direction: -1 | 1) {
+    if (moving || photos.loading) return;
+    moving = true;
+    navigationError = "";
+    const result = await photos.moveGroup(selected, direction);
+    moving = false;
+    if (result.status === "failed") {
+      navigationError = result.error;
+      retryDirection = direction;
+    }
+    if (result.status !== "moved") return;
+    selected = result.ids;
     view = { ...fittedPhotoView };
     crop = undefined;
   }
@@ -60,7 +67,7 @@
       onclose();
     } else if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
       event.preventDefault();
-      move(event.key === "ArrowLeft" ? -1 : 1);
+      void move(event.key === "ArrowLeft" ? -1 : 1);
     } else if (event.key.toLowerCase() === "z") {
       event.preventDefault();
       view = view.actual ? { ...fittedPhotoView } : { ...view, actual: true };
@@ -74,11 +81,19 @@
       actual: false,
     };
     regionMode = false;
+    void restoreFocus();
+  }
+  function cancelRegion() {
+    regionMode = false;
+    void restoreFocus();
+  }
+  async function restoreFocus() {
+    await tick();
+    content?.focus({ preventScroll: true });
   }
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="review-shell" onkeydown={key}>
+<div class="review-shell">
   <Modal
     ariaLabel="Compare photos"
     closable={false}
@@ -88,13 +103,22 @@
     maxWidth="100vw"
     maxHeight="100svh"
   >
-    <div class="photo-compare">
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="photo-compare" tabindex="-1" bind:this={content} onkeydown={key}>
       <header>
         <Button size="sm" onclick={onclose}>Exit compare</Button><strong
           >Compare {selected.length} photos</strong
-        ><span>Zoom and navigation are linked</span><Button size="sm" onclick={() => move(-1)}
-          >Previous</Button
-        ><Button size="sm" onclick={() => move(1)}>Next</Button><Button
+        ><span>Zoom and navigation are linked</span><Button
+          size="sm"
+          disabled={moving || photos.loading}
+          onclick={() => void move(-1)}>Previous</Button
+        ><Button
+          size="sm"
+          disabled={moving ||
+            photos.loading ||
+            (!photos.cursor && selected.some((id) => id === photos.items.at(-1)?.asset_id))}
+          onclick={() => void move(1)}>Next</Button
+        ><Button
           size="sm"
           onclick={() => (view = view.actual ? { ...fittedPhotoView } : { ...view, actual: true })}
           >1:1 (Z)</Button
@@ -107,7 +131,16 @@
         >{#if crop}<Button size="sm" onclick={() => (crop = undefined)}>Clear closeup</Button>{/if}
       </header>
       {#if regionMode}<p role="status">
-          Click a face or draw a region on any frame. Matching closeups appear below.
+          Click or draw on a frame, or focus it and use arrow keys to position a closeup. Press
+          Enter to use that area. Matching closeups appear below.
+        </p>{/if}
+      {#if navigationError}<p role="alert">
+          {navigationError}<Button
+            size="sm"
+            disabled={moving || photos.loading}
+            onclick={() => void move(retryDirection)}
+            >Retry {retryDirection > 0 ? "next" : "previous"} photo</Button
+          >
         </p>{/if}
       {#each errors as error}<p role="alert">{error}</p>{/each}
       <div class="frames">
@@ -122,6 +155,7 @@
               onmove={move}
               {regionMode}
               onregion={region}
+              oncancelregion={cancelRegion}
             />
           </section>{/each}
       </div>

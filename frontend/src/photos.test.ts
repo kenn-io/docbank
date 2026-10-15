@@ -48,6 +48,53 @@ const savedSmartSet = async (revision = 1, id = "00000000-0000-4000-8000-0000000
 const savedSmartSetResponse = (saved: { revision: number }) =>
   Response.json(saved, { headers: { ETag: `"${saved.revision}"` } });
 
+it("moves compare backward locally after its next page fails", async () => {
+  const fetcher = vi
+    .fn()
+    .mockResolvedValue(Response.json({ detail: "Unavailable" }, { status: 503 }));
+  stubPhotoFetch(fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1), photo(2), photo(3)];
+  photos.started = true;
+  photos.cursor = "next";
+  const group = ["photo-2", "photo-3"];
+  expect(await photos.moveGroup(group, 1)).toEqual({ status: "failed", error: "Unavailable" });
+  expect(await photos.moveGroup(group, -1)).toEqual({
+    status: "moved",
+    ids: ["photo-1", "photo-2"],
+  });
+  expect(fetcher).toHaveBeenCalledOnce();
+  photos.dispose();
+});
+
+it.each(["replacement", "stalled continuation"])(
+  "reports a missing compare member after %s",
+  async (mode) => {
+    const replacing = mode === "replacement";
+    const fetcher = vi.fn();
+    if (replacing)
+      fetcher.mockResolvedValueOnce(Response.json({ code: "cursor_expired" }, { status: 410 }));
+    fetcher.mockResolvedValue(
+      response(
+        replacing ? [photo(1), photo(3)] : [photo(1), photo(2)],
+        replacing ? undefined : "same",
+      ),
+    );
+    stubPhotoFetch(fetcher);
+    const photos = new Photos("scoped", vi.fn());
+    photos.items = [photo(1), photo(2)];
+    photos.started = true;
+    photos.cursor = replacing ? "expired" : "same";
+    if (replacing) await photos.loadMore();
+    expect(await photos.moveGroup(["photo-1", replacing ? "photo-2" : "photo-3"], 1)).toEqual({
+      status: "failed",
+      error: "A compared photo is no longer in this query. Exit compare and select photos again.",
+    });
+    expect(fetcher).toHaveBeenCalledTimes(replacing ? 2 : 1);
+    photos.dispose();
+  },
+);
+
 it("keeps Library continuation totals without a page timeout", async () => {
   const timeout = vi.spyOn(AbortSignal, "timeout");
   const fetcher = vi

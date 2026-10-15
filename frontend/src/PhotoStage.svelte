@@ -14,6 +14,7 @@
     onview,
     onmove = () => {},
     onregion,
+    oncancelregion,
     regionMode = false,
   }: {
     photo: PhotoBrowseRow;
@@ -23,6 +24,7 @@
     onview?: (value: PhotoView) => void;
     onmove?: (direction: -1 | 1) => void;
     onregion?: (value: { x: number; y: number; width: number; height: number }) => void;
+    oncancelregion?: () => void;
     regionMode?: boolean;
   } = $props();
   let url = $state("");
@@ -95,6 +97,7 @@
     {onview}
     {onmove}
     {onregion}
+    {oncancelregion}
     {regionMode}
     onzoom={zoom}
     unavailable={!!error}
