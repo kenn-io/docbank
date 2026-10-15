@@ -87,7 +87,7 @@ describe("browser authentication", () => {
     ]);
   });
 
-  it.each(["revision", "duplicate", "count"])(
+  it.each(["revision", "duplicate", "duplicate across pages", "count"])(
     "rejects a live tag listing with inconsistent %s evidence",
     async (problem) => {
       const nodeResponse = (revision: number) =>
@@ -112,6 +112,18 @@ describe("browser authentication", () => {
       vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
         call += 1;
         if (call === 1) return nodeResponse(8);
+        if (problem === "duplicate across pages" && (call === 2 || call === 3))
+          return Response.json({
+            items: Array.from({ length: call === 2 ? 1000 : 1 }, (_, index) => ({
+              id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+              name: `tag-${index}`,
+              revision: 1,
+              assignment_count: 1,
+            })),
+            total: 1001,
+            limit: 1000,
+            offset: call === 2 ? 0 : 1000,
+          });
         if (call === 2)
           return new Response(
             JSON.stringify({

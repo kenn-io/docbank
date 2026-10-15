@@ -258,7 +258,7 @@ describe("document processing browser API", () => {
     },
   );
 
-  it("sends the processing request and delivers the durable job before a blocked terminal status", async () => {
+  it("sends consent and plan_fingerprint and delivers the durable job before the blocked terminal stream", async () => {
     const versionID = "11111111-1111-4111-8111-111111111111";
     const fingerprint = "a".repeat(64);
     const jobID = "b".repeat(64);
