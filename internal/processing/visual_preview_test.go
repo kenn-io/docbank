@@ -692,9 +692,9 @@ func TestVisualPreviewJPEGUnsupportedFeatureIsTerminal(t *testing.T) {
 	assert.Equal(t, "unsupported_jpeg_feature", product.Preview.Failure.Code)
 }
 
-func syntheticJPEGSegment(t testing.TB, source []byte, marker byte, payload []byte) []byte {
-	t.Helper()
-	require.LessOrEqual(t, len(payload)+2, int(^uint16(0)))
+func syntheticJPEGSegment(tb testing.TB, source []byte, marker byte, payload []byte) []byte {
+	tb.Helper()
+	require.LessOrEqual(tb, len(payload)+2, int(^uint16(0)))
 	header := []byte{0xff, marker, 0, 0}
 	binary.BigEndian.PutUint16(header[2:], uint16(len(payload)+2))
 	result := make([]byte, 0, len(source)+len(header)+len(payload))
@@ -1305,11 +1305,11 @@ func TestVisualPreviewJPEGDCStopsWhenCancelled(t *testing.T) {
 	}
 }
 
-func syntheticVisualJPEGDC(t testing.TB, width, height int, baseline bool) []byte {
-	t.Helper()
+func syntheticVisualJPEGDC(tb testing.TB, width, height int, baseline bool) []byte {
+	tb.Helper()
 	source := []byte{0xff, 0xd8}
 	segment := func(marker byte, payload []byte) {
-		source = append(source, syntheticJPEGSegment(t, []byte{0xff, 0xd8}, marker, payload)[2:]...)
+		source = append(source, syntheticJPEGSegment(tb, []byte{0xff, 0xd8}, marker, payload)[2:]...)
 	}
 	segment(0xdb, append([]byte{0}, bytes.Repeat([]byte{16}, 64)...))
 	frame := byte(0xc2)
