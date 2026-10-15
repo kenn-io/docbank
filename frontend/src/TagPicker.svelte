@@ -234,8 +234,9 @@
   bind:this={containerEl}
   onfocusout={onFocusout}
 >
-  <!-- kit-ui-check-ignore: pinned kit dropdowns cannot render each inactive tag's color. -->
-  <button role="combobox"
+  <button
+    // kit-ui-check-ignore: pinned kit dropdowns cannot render each inactive tag's color.
+    role="combobox"
     bind:this={buttonEl}
     class="tag-picker__trigger"
     type="button"
@@ -267,8 +268,9 @@
   </button>
 
   {#if open}
-    <!-- kit-ui-check-ignore: paired with the scoped color-aware combobox above. -->
-    <div role="listbox"
+    <div
+      // kit-ui-check-ignore: paired with the scoped color-aware combobox above.
+      role="listbox"
       id={listboxID}
       class="tag-picker__list kit-popover-card"
       style={listStyle}
