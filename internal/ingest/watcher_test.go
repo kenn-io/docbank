@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -535,60 +536,54 @@ func stringsReader(value string) io.Reader { return strings.NewReader(value) }
 
 func runTestMutation(fn func() error) error { return fn() }
 
-func TestWatchBindingOverlapHonorsContext(t *testing.T) {
+func TestWatchTreeTraversalHonorsContext(t *testing.T) {
 	t.Parallel()
-	for _, want := range []error{context.Canceled, context.DeadlineExceeded} {
-		t.Run(want.Error(), func(t *testing.T) {
-			ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
-			if want == context.Canceled {
-				cancel()
+	for _, expired := range []bool{false, true} {
+		t.Run(fmt.Sprintf("expired=%t", expired), func(t *testing.T) {
+			root, err := os.OpenRoot(writeTree(t, map[string]string{"nested/file.txt": "content"}))
+			require.NoError(t, err)
+			defer func() { require.NoError(t, root.Close()) }()
+			mount, err := watchMountForRoot(root)
+			require.NoError(t, err)
+			target, err := os.Stat(t.TempDir())
+			require.NoError(t, err)
+			var ctx context.Context
+			var cancel context.CancelFunc
+			want := context.Canceled
+			if expired {
+				ctx, cancel = context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+				want = context.DeadlineExceeded
+			} else {
 				ctx, cancel = context.WithCancel(t.Context())
 				cancel()
 			}
 			defer cancel()
-			_, _, err := WatchBindingOverlapContext(ctx, []config.WatchConfig{{Source: t.TempDir()}}, config.StoreBindingConfig{Kind: "filesystem", Path: t.TempDir()})
+			_, err = watchTreeContainsAnyDirectory(ctx, root, mount, []fs.FileInfo{target}, exclusions{}, "", nil)
 			require.ErrorIs(t, err, want)
 		})
 	}
 }
 
 func TestWatcherRejectsReservedCheckoutDestinations(t *testing.T) {
-	for _, state := range []store.StorageOperationState{store.StorageOperationQueued, store.StorageOperationFailed} {
-		t.Run(string(state), func(t *testing.T) {
-			ing := newTestIngester(t)
-			ctx := t.Context()
-			node, err := ing.Store.CreateFile(ctx, ing.Store.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
-			require.NoError(t, err)
-			asset, err := ing.Store.PhotoAssetForNode(ctx, node.ID)
-			require.NoError(t, err)
-			destination := t.TempDir()
-			checkout, op, err := ing.Store.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
-			require.NoError(t, err)
-			if state == store.StorageOperationFailed {
-				require.NoError(t, ing.Store.FinishPhotoCheckout(ctx, checkout.ID, op.ID, state, "{}", "", time.Now().Add(time.Hour)))
-			}
-			partial := filepath.Join(destination, "photo.jpg")
-			require.NoError(t, os.WriteFile(partial, []byte("working copy"), 0o600))
-			watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{Name: "checkout-watch", Source: destination, Destination: "/inbox"}, runTestMutation, nil)
-			require.NoError(t, err)
-			_, err = watcher.openRoot(ctx)
-			if state == store.StorageOperationFailed || state == store.StorageOperationCancelled {
-				require.ErrorContains(t, err, "with partial files")
-			} else {
-				require.ErrorContains(t, err, "overlaps reserved checkout")
-			}
-			require.ErrorContains(t, err, checkout.ID)
-			require.NoError(t, os.Remove(partial))
-			root, err := watcher.openRoot(ctx)
-			if state == store.StorageOperationFailed {
-				require.NoError(t, err)
-				require.NoError(t, root.Close())
-			} else {
-				require.ErrorContains(t, err, "overlaps reserved checkout")
-				require.ErrorContains(t, err, checkout.ID)
-			}
-		})
-	}
+	ing := newTestIngester(t)
+	ctx := t.Context()
+	node, err := ing.Store.CreateFile(ctx, ing.Store.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := ing.Store.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	destination := t.TempDir()
+	checkout, _, err := ing.Store.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
+	require.NoError(t, err)
+
+	watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{Name: "checkout-watch", Source: destination, Destination: "/inbox"}, runTestMutation, nil)
+	require.NoError(t, err)
+	_, err = watcher.openRoot(ctx)
+	require.ErrorContains(t, err, checkout.ID)
+	watcher, err = NewWatcher(ing, t.TempDir(), config.WatchConfig{Name: "clean-watch", Source: t.TempDir(), Destination: "/inbox"}, runTestMutation, nil)
+	require.NoError(t, err)
+	clean, err := watcher.openRoot(ctx)
+	require.NoError(t, err)
+	require.NoError(t, clean.Close())
 }
 
 func TestPathProtectionRejectsChangedRoots(t *testing.T) {

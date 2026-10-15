@@ -387,21 +387,25 @@ func TestTrashListAndEmpty(t *testing.T) {
 	require.NoError(t, err)
 	_, _, err = s.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{retainedAsset.ID}}, "checkout", 0)
 	require.NoError(t, err)
-	retainedImageID := retainedAsset.Files[0].ID
-	for _, name := range []string{"held-a.xmp", "held-b.xmp"} {
-		companion, err := s.CreateFile(t.Context(), s.RootID(), name, testHash(name), 1, "application/octet-stream")
-		require.NoError(t, err)
-		retainedAsset, err = s.AttachPhotoFile(t.Context(), retainedAsset.ID, retainedAsset.Revision, companion.ID, store.PhotoRoleSidecar, &retainedImageID)
-		require.NoError(t, err)
-	}
-	_, err = s.TrashPhotoAsset(t.Context(), retainedAsset.ID, retainedAsset.Revision)
+
+	_, _, err = s.Trash(t.Context(), retained.ID, store.UnconditionalRev)
+	require.NoError(t, err)
+	held, err := s.CreateFile(t.Context(), s.RootID(), "held.jpg", testHash("held"), 1, "image/jpeg")
+	require.NoError(t, err)
+	heldAsset, err := s.PhotoAssetForNode(t.Context(), held.ID)
+	require.NoError(t, err)
+	companion, err := s.CreateFile(t.Context(), s.RootID(), "held.xmp", testHash("sidecar"), 1, "application/octet-stream")
+	require.NoError(t, err)
+	imageID := heldAsset.Files[0].ID
+	_, err = s.AttachPhotoFile(t.Context(), heldAsset.ID, heldAsset.Revision, companion.ID, store.PhotoRoleSidecar, &imageID)
+	require.NoError(t, err)
+	_, _, err = s.Trash(t.Context(), companion.ID, store.UnconditionalRev)
 	require.NoError(t, err)
 
 	expected, err := s.TrashEmpty(t.Context(), 0, false)
 	require.NoError(t, err)
-	require.Positive(t, expected.Retained)
-	require.Positive(t, expected.Held)
-	require.NotEqual(t, expected.Retained, expected.Held)
+	require.EqualValues(t, 1, expected.Retained)
+	require.EqualValues(t, 1, expected.Held)
 	for _, run := range []bool{false, true} {
 		resp, body = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil,
 			map[string]any{"older_than": "", "run": run})
@@ -413,6 +417,11 @@ func TestTrashListAndEmpty(t *testing.T) {
 			want.Deleted = expected.Candidates
 		}
 		assert.Equal(t, want, out)
+		if !run {
+			survived, err := s.NodeByID(t.Context(), f.ID)
+			require.NoError(t, err)
+			require.NotNil(t, survived.TrashedAt)
+		}
 	}
 
 	// Bad age string → 422.

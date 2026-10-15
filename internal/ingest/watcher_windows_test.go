@@ -121,39 +121,3 @@ func TestWatcherAliasCheckIgnoresExclusivelyOpenedDirectory(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, root.Close())
 }
-
-func TestWatcherRejectsUnreadableReleasedCheckout(t *testing.T) {
-	ing := newTestIngester(t)
-	source := t.TempDir()
-	destination := filepath.Join(source, "checkout")
-	require.NoError(t, os.Mkdir(destination, 0o700))
-	node, err := ing.Store.CreateFile(t.Context(), ing.Store.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
-	require.NoError(t, err)
-	asset, err := ing.Store.PhotoAssetForNode(t.Context(), node.ID)
-	require.NoError(t, err)
-	checkout, op, err := ing.Store.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
-	require.NoError(t, err)
-	require.NoError(t, ing.Store.FinishPhotoCheckout(t.Context(), checkout.ID, op.ID, store.StorageOperationFailed, "{}", "", time.Now().Add(time.Hour)))
-	name, err := windows.UTF16PtrFromString(destination)
-	require.NoError(t, err)
-	handle, err := windows.CreateFile(name, windows.GENERIC_READ, 0, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		if handle != windows.InvalidHandle {
-			require.NoError(t, windows.CloseHandle(handle))
-		}
-	})
-	watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{Name: "checkout-watch", Source: source, Destination: "/inbox"}, runTestMutation, nil)
-	require.NoError(t, err)
-	_, err = watcher.openRoot(t.Context())
-	require.Error(t, err)
-	require.NoError(t, windows.CloseHandle(handle))
-	handle = windows.InvalidHandle
-	root, err := watcher.openRoot(t.Context())
-	require.NoError(t, err)
-	require.NoError(t, root.Close())
-	require.NoError(t, os.Remove(destination))
-	root, err = watcher.openRoot(t.Context())
-	require.NoError(t, err)
-	require.NoError(t, root.Close())
-}

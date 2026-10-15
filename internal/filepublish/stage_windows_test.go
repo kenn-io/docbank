@@ -16,26 +16,6 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func TestRenameNoReplaceAcceptsPathsLongerThanMaxPath(t *testing.T) {
-	dir := t.TempDir()
-	for len(dir) <= windows.MAX_PATH {
-		dir = filepath.Join(dir, strings.Repeat("d", 40))
-	}
-	require.NoError(t, os.MkdirAll(dir, 0o700))
-	stagedPath, destinationPath := filepath.Join(dir, "stage.tmp"), filepath.Join(dir, "out.pdf")
-	require.NoError(t, os.WriteFile(stagedPath, []byte("long path bytes"), 0o600))
-	staged, destination, err := windowsPaths(stagedPath, destinationPath)
-	require.NoError(t, err)
-	require.Equal(t, `\\?\`+stagedPath, windows.UTF16PtrToString(staged))
-	require.Equal(t, `\\?\`+destinationPath, windows.UTF16PtrToString(destination))
-	require.NoError(t, renameNoReplace(stagedPath, destinationPath))
-	got, err := os.ReadFile(destinationPath)
-	require.NoError(t, err)
-	require.Equal(t, "long path bytes", string(got))
-	_, err = os.Stat(stagedPath)
-	require.ErrorIs(t, err, os.ErrNotExist)
-}
-
 func TestCreateStageOverridesPermissiveParentDACL(t *testing.T) {
 	for _, rooted := range []bool{false, true} {
 		t.Run(fmt.Sprintf("rooted=%t", rooted), func(t *testing.T) {

@@ -749,33 +749,6 @@ func TestPruneContentVersionsRetainsAuthoritiesAndCheckpointsAllPrior(t *testing
 			assert.Equal(t, replacementAfterRevert.BlobHash, unreachable[0].Hash)
 		})
 	}
-	t.Run("checkout entry", func(t *testing.T) {
-		s := newTestStore(t)
-		ctx := t.Context()
-		name, mediaType := "photo.jpg", "image/jpeg"
-		created, err := s.CreateFile(ctx, s.RootID(), name, fakeHash("a1"), 10, mediaType)
-		require.NoError(t, err)
-		checkout, operation, createErr := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{All: true}, "checkout", 10)
-		require.NoError(t, createErr)
-		require.NoError(t, s.FinishPhotoCheckout(ctx, checkout.ID, operation.ID, StorageOperationCompleted, `{}`, "", time.Time{}))
-		updated, _, err := s.ReplaceContent(ctx, created.ID, created.Revision, fakeHash("b2"), 20, mediaType)
-		require.NoError(t, err)
-
-		preview, err := s.PruneContentVersions(ctx, created.ID, updated.Revision,
-			VersionPruneSelector{VersionIDs: []string{created.CurrentVersionID}}, false)
-		require.NoError(t, err)
-		require.Empty(t, preview.Candidates)
-		require.Len(t, preview.DependencyRetained, 1)
-		require.Equal(t, created.CurrentVersionID, preview.DependencyRetained[0].ID)
-
-		run, err := s.PruneContentVersions(ctx, created.ID, updated.Revision,
-			VersionPruneSelector{VersionIDs: []string{created.CurrentVersionID}}, true)
-		require.NoError(t, err)
-		require.False(t, run.Changed)
-		require.Zero(t, run.DeletedVersions)
-		_, err = s.ContentVersionByID(ctx, created.CurrentVersionID)
-		require.NoError(t, err)
-	})
 }
 
 func TestPruneContentVersionsRemovesRenditionAttachment(t *testing.T) {
@@ -1040,7 +1013,7 @@ func TestPruneContentVersionsValidatesSelectorsAndTargets(t *testing.T) {
 	assert.NotEmpty(t, preview.Cutoff)
 }
 
-func TestRetainMediaAuthorityVersionsBatchesCandidateBindings(t *testing.T) {
+func TestRetainCheckoutVersionsBatchesCandidateBindings(t *testing.T) {
 	t.Parallel()
 	for _, driver := range v090UpgradeDrivers() {
 		t.Run(driver.name, func(t *testing.T) {

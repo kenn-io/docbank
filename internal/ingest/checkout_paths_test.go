@@ -11,7 +11,7 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func TestCheckoutPathOverlapPrioritizesConfirmedReservation(t *testing.T) {
+func TestCheckoutPathOverlapProtectsReservationsAndReleasedCopies(t *testing.T) {
 	unavailable := store.PhotoCheckout{ID: "unavailable", Destination: filepath.Join(t.TempDir(), "invalid\x00path")}
 	reserved := store.PhotoCheckout{ID: "reserved", Destination: t.TempDir()}
 	for _, checkouts := range [][]store.PhotoCheckout{{unavailable, reserved}, {reserved, unavailable}} {

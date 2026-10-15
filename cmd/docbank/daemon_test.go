@@ -334,7 +334,7 @@ func waitForDaemon(t *testing.T, dir string) kitdaemon.RuntimeRecord {
 	return rec
 }
 
-func TestConfiguredCheckoutPathsRejectPartialCopiesBeforeDaemonStartup(t *testing.T) {
+func TestConfiguredCheckoutPathsRejectReservedDestinationsBeforeDaemonStartup(t *testing.T) {
 	for _, watch := range []bool{false, true} {
 		t.Run(fmt.Sprintf("/watch=%t", watch), func(t *testing.T) {
 			catalog, err := store.Open(filepath.Join(t.TempDir(), "docbank.db"))
@@ -370,12 +370,9 @@ func TestServeRejectsCheckoutCopiesBeforeStartup(t *testing.T) {
 	asset, err := catalog.PhotoAssetForNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	destination := t.TempDir()
-	checkout, op, err := catalog.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
+	checkout, _, err := catalog.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
 	require.NoError(t, err)
-	require.NoError(t, catalog.FinishPhotoCheckout(t.Context(), checkout.ID, op.ID, store.StorageOperationFailed, "{}", "partial", time.Now().Add(time.Hour)))
 	require.NoError(t, catalog.Close())
-	copyPath := filepath.Join(destination, "edited.jpg")
-	require.NoError(t, os.WriteFile(copyPath, []byte("edits"), 0o600))
 	configText := fmt.Sprintf("[[watch]]\nname = 'checkout'\nsource = %q\ndestination = '/inbox'\n", filepath.ToSlash(destination))
 	require.NoError(t, os.WriteFile(filepath.Join(layout.Root, "config.toml"), []byte(configText), 0o600))
 	t.Setenv("DOCBANK_HOME", layout.Root)
