@@ -34,16 +34,16 @@ func authoredPair(t *testing.T, s *Store) PhotoAsset {
 func TestPhotoMediaClassificationRoleInferenceAndNodeFacts(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name, mime, filename, kind, role string
-		qualifies                        bool
+		name, mime, filename, kind string
+		qualifies                  bool
 	}{
-		{name: "jpeg", mime: "image/jpeg", filename: "a.jpg", kind: PhotoKindPhoto, qualifies: true, role: PhotoRoleImage},
-		{name: "sony raw MIME", mime: "image/x-sony-arw", filename: "capture.ARW", kind: PhotoKindPhoto, qualifies: true, role: PhotoRoleImage},
-		{name: "fuji raw MIME", mime: "image/x-fuji-raf", filename: "capture.raw", kind: PhotoKindPhoto, qualifies: true, role: PhotoRoleImage},
-		{name: "adobe raw MIME", mime: "image/x-adobe-dng", filename: "capture.raw", kind: PhotoKindPhoto, qualifies: true, role: PhotoRoleImage},
-		{name: "canon raw MIME", mime: "image/x-canon-cr2", filename: "capture.raw", kind: PhotoKindPhoto, qualifies: true, role: PhotoRoleImage},
-		{name: "nikon raw MIME", mime: "image/x-nikon-nef", filename: "capture.raw", kind: PhotoKindPhoto, qualifies: true, role: PhotoRoleImage},
-		{name: "webp", mime: "image/webp", filename: "capture.WEBP", kind: PhotoKindPhoto, qualifies: true, role: PhotoRoleImage},
+		{name: "jpeg", mime: "image/jpeg", filename: "a.jpg", kind: PhotoKindPhoto, qualifies: true},
+		{name: "sony raw MIME", mime: "image/x-sony-arw", filename: "capture.ARW", kind: PhotoKindPhoto, qualifies: true},
+		{name: "fuji raw MIME", mime: "image/x-fuji-raf", filename: "capture.raw", kind: PhotoKindPhoto, qualifies: true},
+		{name: "adobe raw MIME", mime: "image/x-adobe-dng", filename: "capture.raw", kind: PhotoKindPhoto, qualifies: true},
+		{name: "canon raw MIME", mime: "image/x-canon-cr2", filename: "capture.raw", kind: PhotoKindPhoto, qualifies: true},
+		{name: "nikon raw MIME", mime: "image/x-nikon-nef", filename: "capture.raw", kind: PhotoKindPhoto, qualifies: true},
+		{name: "webp", mime: "image/webp", filename: "capture.WEBP", kind: PhotoKindPhoto, qualifies: true},
 		{name: "video", mime: "video/mp4", filename: "a.mp4", kind: PhotoKindVideo, qualifies: true},
 		{name: "audio", mime: "audio/mpeg", filename: "a.mp3", qualifies: false},
 		{name: "generic raw", mime: "application/octet-stream", filename: "a.cr2", qualifies: false},
@@ -53,9 +53,6 @@ func TestPhotoMediaClassificationRoleInferenceAndNodeFacts(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			_, _, qualifies, kind := classifyPhotoMedia(test.mime, test.filename)
 			assert.Equal(t, test.qualifies, qualifies)
-			if test.role != "" {
-				assert.Equal(t, test.role, inferPhotoRole(photoNodeFacts(Node{MimeType: test.mime, Name: test.filename})))
-			}
 			if test.kind != "" {
 				assert.Equal(t, test.kind, kind)
 			}

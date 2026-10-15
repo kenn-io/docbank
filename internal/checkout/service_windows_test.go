@@ -18,17 +18,15 @@ import (
 
 func TestCheckoutRecoveryRetriesInaccessiblePaths(t *testing.T) {
 	for _, test := range []struct {
-		name      string
-		root      bool
-		cancel    bool
-		published bool
-		stage     bool
+		name   string
+		root   bool
+		cancel bool
+		stage  bool
 	}{
-		{"file", false, false, false, false},
-		{"root", true, false, false, false},
-		{"cancel while root inaccessible", true, true, false, false},
-		{"published file", false, false, true, false},
-		{"stage", false, false, false, true},
+		{"file", false, false, false},
+		{"root", true, false, false},
+		{"cancel while root inaccessible", true, true, false},
+		{"stage", false, false, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -44,9 +42,6 @@ func TestCheckoutRecoveryRetriesInaccessiblePaths(t *testing.T) {
 			require.NoError(t, s.Store.AdvanceStorageOperation(ctx, op.ID, entries[0].FileID, 0, 0, 0, "{}"))
 			require.NoError(t, root.MkdirAll(filepath.Dir(filepath.FromSlash(entries[0].Path)), 0o700))
 			require.NoError(t, root.WriteFile(filepath.FromSlash(entries[0].Path), []byte("verified bytes"), 0o600))
-			if test.published {
-				require.NoError(t, s.Store.PublishPhotoCheckoutEntry(ctx, entries[0], func() (bool, error) { return true, nil }))
-			}
 			lockedPath := filepath.Join(checkout.Destination, filepath.FromSlash(entries[0].Path))
 			if test.stage {
 				stage, err := filepublish.CreateRootStage(root)

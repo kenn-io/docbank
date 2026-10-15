@@ -1219,11 +1219,9 @@ func TestVaultEmptyTrashBoundsEachBatch(t *testing.T) {
 		_, err = vault.TrashPath(t.Context(), path, RevisionOptions{})
 		require.NoError(t, err)
 	}
-
 	dryRun, err := vault.EmptyTrash(t.Context(), TrashEmptyOptions{MaxRoots: 2, DryRun: true})
 	require.NoError(t, err)
 	assert.Equal(t, TrashEmptyReport{Candidates: 2, More: true, DryRun: true}, dryRun)
-
 }
 
 func TestVaultEmptyTrashUsesFiniteDefault(t *testing.T) {
