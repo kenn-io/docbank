@@ -72,32 +72,17 @@ func TestCheckoutDestinationSafety(t *testing.T) {
 	reject(nonempty)
 	reject("relative")
 	reject(filepath.Join(t.TempDir(), "missing"))
-	for _, state := range []store.StorageOperationState{store.StorageOperationQueued, store.StorageOperationFailed, store.StorageOperationCompleted} {
-		t.Run(string(state), func(t *testing.T) {
-			destination := t.TempDir()
-			c, op, root, err := s.Prepare(t.Context(), selection, destination, 0)
-			require.NoError(t, err)
-			require.NoError(t, root.Close())
-			if state == store.StorageOperationQueued {
-				sub := filepath.Join(c.Destination, "nested")
-				require.NoError(t, os.Mkdir(sub, 0o755))
-				reject(sub)
-				return
-			}
-			require.NoError(t, s.Store.FinishPhotoCheckout(t.Context(), c.ID, op.ID, state, "{}", "", time.Now().Add(time.Hour)))
-			if state == store.StorageOperationCompleted {
-				reject(destination)
-			} else {
-				_, _, root, err = s.Prepare(t.Context(), selection, destination, 0)
-				require.NoError(t, err)
-				require.NoError(t, root.Close())
-			}
-		})
-	}
+	destination := t.TempDir()
+	c, _, root, err := s.Prepare(t.Context(), selection, destination, 0)
+	require.NoError(t, err)
+	require.NoError(t, root.Close())
+	sub := filepath.Join(c.Destination, "nested")
+	require.NoError(t, os.Mkdir(sub, 0o755))
+	reject(sub)
 	missing := filepath.Join(t.TempDir(), "missing")
 	s.Config.StoreBindings = map[string]config.StoreBindingConfig{"archive": {Kind: "filesystem", Path: filepath.Join(missing, "archive")}}
 	s.Config.Watches = []config.WatchConfig{{Source: filepath.Join(missing, "watch")}}
-	_, _, root, err := s.Prepare(t.Context(), selection, t.TempDir(), 0)
+	_, _, root, err = s.Prepare(t.Context(), selection, t.TempDir(), 0)
 	require.NoError(t, err)
 	require.NoError(t, root.Close())
 	t.Run("canonical symlink destination", func(t *testing.T) {

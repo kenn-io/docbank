@@ -24,7 +24,7 @@ func TestCheckoutPathOverlapProtectsReservationsAndReleasedCopies(t *testing.T) 
 	require.Error(t, err, "a binding with only inconclusive checks must stay closed")
 	require.False(t, overlap)
 
-	for _, state := range []store.StorageOperationState{store.StorageOperationQueued, store.StorageOperationFailed} {
+	for _, state := range []store.StorageOperationState{store.StorageOperationQueued, store.StorageOperationFailed, store.StorageOperationCompleted} {
 		t.Run(string(state), func(t *testing.T) {
 			ing := newTestIngester(t)
 			ctx := t.Context()
@@ -35,7 +35,7 @@ func TestCheckoutPathOverlapProtectsReservationsAndReleasedCopies(t *testing.T) 
 			destination := t.TempDir()
 			checkout, op, err := ing.Store.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
 			require.NoError(t, err)
-			if state == store.StorageOperationFailed {
+			if state != store.StorageOperationQueued {
 				require.NoError(t, ing.Store.FinishPhotoCheckout(ctx, checkout.ID, op.ID, state, "{}", "", time.Now().Add(time.Hour)))
 			}
 			check := func(path string, want bool) {
@@ -49,14 +49,14 @@ func TestCheckoutPathOverlapProtectsReservationsAndReleasedCopies(t *testing.T) 
 					require.Equal(t, checkout.ID, id)
 				}
 			}
-			check(destination, state == store.StorageOperationQueued)
+			check(destination, state != store.StorageOperationFailed)
 			partial := filepath.Join(destination, "photo.jpg")
 			require.NoError(t, os.WriteFile(partial, []byte("partial"), 0o600))
 			check(destination, true)
 			require.NoError(t, os.Remove(partial))
-			check(destination, state == store.StorageOperationQueued)
+			check(destination, state != store.StorageOperationFailed)
 			require.NoError(t, os.Remove(destination))
-			check(destination, state == store.StorageOperationQueued)
+			check(destination, state != store.StorageOperationFailed)
 			check(t.TempDir(), false)
 			require.NoError(t, os.Mkdir(destination, 0o700))
 			edited := filepath.Join(destination, "edited.jpg")

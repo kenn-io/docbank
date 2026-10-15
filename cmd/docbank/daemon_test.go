@@ -16,6 +16,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -405,28 +406,30 @@ func TestCheckoutValidationDefersInternalDeadline(t *testing.T) {
 			require.Equal(t, tc.pending, checkoutValidationPending(ctx, tc.err))
 		})
 	}
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	checked, admitted := make(chan struct{}, 1), make(chan error, 1)
-	var readable atomic.Bool
-	go func() {
-		admitted <- waitForCheckoutValidation(ctx, func(context.Context) error {
-			if readable.Load() {
-				return nil
-			}
-			select {
-			case checked <- struct{}{}:
-			default:
-			}
-			return context.DeadlineExceeded
-		}, slog.Default())
-	}()
-	<-checked
-	select {
-	case err := <-admitted:
-		t.Fatalf("admission finished before validation succeeded: %v", err)
-	default:
-	}
-	readable.Store(true)
-	require.NoError(t, <-admitted)
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		checked, admitted := make(chan struct{}, 1), make(chan error, 1)
+		var readable atomic.Bool
+		go func() {
+			admitted <- waitForCheckoutValidation(ctx, func(context.Context) error {
+				if readable.Load() {
+					return nil
+				}
+				select {
+				case checked <- struct{}{}:
+				default:
+				}
+				return context.DeadlineExceeded
+			}, slog.Default())
+		}()
+		<-checked
+		select {
+		case err := <-admitted:
+			t.Fatalf("admission finished before validation succeeded: %v", err)
+		case <-time.After(50 * time.Millisecond):
+		}
+		readable.Store(true)
+		require.NoError(t, <-admitted)
+	})
 }

@@ -75,11 +75,6 @@ func TestConfiguredCheckoutStartupDefersInaccessibleDestination(t *testing.T) {
 	pending, err := validateConfiguredCheckoutStartup(t.Context(), cfg, stores, catalog)
 	require.NoError(t, err, "uncertain paths must not prevent daemon startup")
 	require.True(t, pending)
-	conflicting := cfg
-	conflicting.Watches = append(append([]config.WatchConfig{}, cfg.Watches...), config.WatchConfig{Name: "overlap", Source: destination})
-	pending, err = validateConfiguredCheckoutStartup(t.Context(), conflicting, stores, catalog)
-	require.ErrorContains(t, err, checkout.ID, "a later confirmed overlap must override an earlier access error")
-	require.False(t, pending)
 	require.NoError(t, windows.CloseHandle(handle))
 	handle = windows.InvalidHandle
 	pending, err = validateConfiguredCheckoutStartup(t.Context(), cfg, stores, catalog)

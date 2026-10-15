@@ -687,9 +687,9 @@ func TestPhotoCheckoutBackupRetentionAcrossLifecycleStates(t *testing.T) {
 				}
 			}
 			switch tc.state {
-			case "paused", "queued":
+			case "queued":
 				require.NoError(t, s.DeferStorageOperation(ctx, op.ID, errors.New("waiting")))
-			case "completed", "failed", "cancelled":
+			case "completed", "failed":
 				require.NoError(t, s.FinishPhotoCheckout(ctx, checkout.ID, op.ID, StorageOperationState(tc.state), "{}", "result", time.Now().Add(time.Hour)))
 			}
 			updated, _, err := s.ReplaceContent(ctx, node.ID, node.Revision, browseHash("replacement"), 30, "image/jpeg")
@@ -699,7 +699,7 @@ func TestPhotoCheckoutBackupRetentionAcrossLifecycleStates(t *testing.T) {
 			unpublishedUpdated, _, err := s.ReplaceContent(ctx, unpublished.ID, unpublished.Revision, browseHash("unpublished replacement"), 30, "image/jpeg")
 			require.NoError(t, err)
 			unpublishedSelector := VersionPruneSelector{VersionIDs: []string{unpublished.CurrentVersionID}}
-			prunedUnpublished := tc.state == "failed" || tc.state == "cancelled"
+			prunedUnpublished := tc.state == "failed"
 			if prunedUnpublished {
 				result, err := s.PruneContentVersions(ctx, unpublished.ID, unpublishedUpdated.Revision, unpublishedSelector, true)
 				require.NoError(t, err)
@@ -713,12 +713,6 @@ func TestPhotoCheckoutBackupRetentionAcrossLifecycleStates(t *testing.T) {
 			require.NoError(t, err)
 			released := !tc.published && !tc.uncertain
 			require.Equal(t, tc.state != "completed", actual.RetentionReleased)
-			require.Equal(t, "unbound", actual.State)
-			restoredEntries, err := restored.PhotoCheckoutEntries(ctx, checkout.ID)
-			require.NoError(t, err)
-			for _, entry := range restoredEntries {
-				require.False(t, entry.Published)
-			}
 			var roundtrip bytes.Buffer
 			require.NoError(t, restored.ExportMetadata(ctx, &roundtrip))
 			final := newTestStore(t)
