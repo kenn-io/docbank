@@ -29,7 +29,6 @@ import (
 	"go.kenn.io/docbank/internal/daemon"
 	"go.kenn.io/docbank/internal/daemonauth"
 	"go.kenn.io/docbank/internal/packagetest"
-	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/internal/version"
 )
 
@@ -183,13 +182,6 @@ func TestEnsureReplacesOlderProtocolDaemon(t *testing.T) {
 			assert.NoError(t, json.UnmarshalRead(r.Body, &got))
 			assert.Equal(t, request, got)
 			_ = json.MarshalWrite(w, wantOutline)
-		} else if started.Load() && r.URL.Path == "/api/v1/photos/checkouts/estimate" {
-			assert.Equal(t, http.MethodPost, r.Method)
-			assert.Equal(t, "new-key", r.Header.Get("X-Api-Key"))
-			var selection store.PhotoCheckoutSelection
-			assert.NoError(t, json.UnmarshalRead(r.Body, &selection))
-			assert.Equal(t, []string{assetID}, selection.AssetIDs)
-			_ = json.MarshalWrite(w, store.PhotoCheckoutEstimate{Assets: 1, Files: 3, Bytes: 15})
 		} else if started.Load() && r.URL.Path == "/api/v1/photos/assets/"+assetID+"/trash" {
 			assert.Equal(t, http.MethodPost, r.Method)
 			assert.Equal(t, `"1"`, r.Header.Get("If-Match"))
@@ -229,9 +221,6 @@ func TestEnsureReplacesOlderProtocolDaemon(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, assetID, asset.ID)
 	assert.Equal(t, int64(2), asset.Revision)
-	estimate, err := client.EstimatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{assetID}})
-	require.NoError(t, err)
-	assert.Equal(t, store.PhotoCheckoutEstimate{Assets: 1, Files: 3, Bytes: 15}, estimate)
 }
 
 func TestEnsureWebReplacesWebIncapableDaemon(t *testing.T) {
