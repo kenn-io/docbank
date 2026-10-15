@@ -105,7 +105,7 @@ func moveFaceCandidatesTx(ctx context.Context, tx *sql.Tx, survivor, absorbed st
 			if e != nil {
 				return nil, e
 			}
-			if c.State == personCandidateStateRejected || keep.State == personCandidateStateOpen {
+			if c.State == personCandidateStateRejected || c.State == "linked" && keep.State == personCandidateStateOpen {
 				if _, err = tx.ExecContext(ctx, `UPDATE person_match_candidates SET state=?,decided_person_id=?,decided_at=?,revision=revision+1 WHERE candidate_id=?`, c.State, nullableString(c.DecidedPersonID), nullableString(c.DecidedAt), retained); err != nil {
 					return nil, err
 				}

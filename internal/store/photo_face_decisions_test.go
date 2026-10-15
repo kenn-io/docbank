@@ -1541,3 +1541,29 @@ func TestPersonMergeIgnoresCandidateFromPrunedFaceVersion(t *testing.T) {
 	require.Empty(t, faces[0].RejectedPersonIDs)
 	require.NoError(t, s.ValidateMetadata(ctx))
 }
+
+func TestPhotoFaceMergeKeepsSurvivorSuggestion(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	survivor, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	absorbed, err := s.CreatePerson(ctx, "Ada duplicate", "operator")
+	require.NoError(t, err)
+	n, f := faceForDecisionTest(t, s, "")
+	occurrence := []PersonCandidateOccurrence{{ContentVersionID: n.CurrentVersionID, Role: "depicted", EvidenceKind: "face", EvidenceID: f.FaceID}}
+	var suggestions []PersonMatchCandidate
+	for _, p := range []Person{survivor, absorbed} {
+		c := candidateForTest(t, "face:"+f.FaceID, "Face", p.PersonID, occurrence)
+		c.Reason = personCandidateReasonFaceMatch
+		suggestions = append(suggestions, openCandidateForTest(t, s, c))
+	}
+	_, err = s.MergePersons(ctx, survivor.PersonID, absorbed.PersonID, uuid.NewString(), survivor.Revision, absorbed.Revision)
+	require.NoError(t, err)
+	open, _, err := s.PersonCandidates(ctx, "open", 250, 0)
+	require.NoError(t, err)
+	require.Len(t, open, 1)
+	require.Equal(t, suggestions[0].CandidateID, open[0].CandidateID)
+	require.Equal(t, survivor.PersonID, open[0].SuggestedPersonID)
+	require.NoError(t, s.ValidateMetadata(ctx))
+}
