@@ -1297,6 +1297,7 @@ func TestVisualPreviewJPEGDCAboveCeiling(t *testing.T) {
 // cancelAfterContext reports cancellation once Err has been polled limit times.
 type cancelAfterContext struct {
 	context.Context
+
 	limit      int
 	calls      int
 	imageCalls int
