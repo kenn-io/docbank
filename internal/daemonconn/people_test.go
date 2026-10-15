@@ -39,7 +39,7 @@ func TestPeopleClientValidatesIdentityAndETag(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := New(server.URL, "synthetic-key")
-	got, err := client.Person(t.Context(), aliasID)
+	got, err := client.PersonPage(t.Context(), aliasID, api.PersonAssertionPage{})
 	require.NoError(t, err)
 	require.Equal(t, survivorID, got.PersonID)
 	require.Equal(t, aliasID, got.ReachedThroughPersonID)
@@ -83,7 +83,7 @@ func TestPeopleClientRejectsMismatchedPersonAndMergeReceipt(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client := New(server.URL, "synthetic-key")
-	_, err := client.Person(t.Context(), requestedID)
+	_, err := client.PersonPage(t.Context(), requestedID, api.PersonAssertionPage{})
 	require.Error(t, err)
 	require.True(t, IsResponseDecodeError(err))
 	_, err = client.MergePerson(t.Context(), requestedID, 1, api.MergePersonRequest{

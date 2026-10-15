@@ -208,13 +208,13 @@ func TestPhotoFaceDecisionKeyFaceAndSplit(t *testing.T) {
 				receipt, err := s.DecidePhotoFace(ctx, n.CurrentVersionID, PhotoFaceDecisionRequest{FaceID: next.FaceID, PersonID: p.PersonID, Action: "key", Revision: 1, PersonRevision: 2})
 				require.NoError(t, err)
 				require.Equal(t, next.FaceID, personKeyFaceForTest(t, s, p.PersonID))
-				detail, err := s.PersonDetail(ctx, p.PersonID)
+				detail, err := s.PersonDetailPage(ctx, p.PersonID, PersonAssertionPage{})
 				require.NoError(t, err)
 				require.Equal(t, next.FaceID, detail.KeyFaceID)
 				_, err = s.UndoPhotoFaceDecision(ctx, receipt.ReceiptID)
 				require.NoError(t, err)
 				require.Equal(t, face.FaceID, personKeyFaceForTest(t, s, p.PersonID))
-				detail, err = s.PersonDetail(ctx, p.PersonID)
+				detail, err = s.PersonDetailPage(ctx, p.PersonID, PersonAssertionPage{})
 				require.NoError(t, err)
 				require.Empty(t, detail.KeyFaceID)
 				var backup bytes.Buffer
@@ -225,7 +225,7 @@ func TestPhotoFaceDecisionKeyFaceAndSplit(t *testing.T) {
 				require.NoError(t, restored.ValidateMetadata(ctx))
 				return
 			}
-			detail, err := s.PersonDetail(ctx, p.PersonID)
+			detail, err := s.PersonDetailPage(ctx, p.PersonID, PersonAssertionPage{})
 			require.NoError(t, err)
 			require.Equal(t, face.FaceID, detail.KeyFaceID)
 			require.Len(t, detail.Assertions, 1)
@@ -236,14 +236,14 @@ func TestPhotoFaceDecisionKeyFaceAndSplit(t *testing.T) {
 			require.Empty(t, personKeyFaceForTest(t, s, p.PersonID))
 			restored, err := s.UndoPhotoFaceDecision(ctx, cleared.ReceiptID)
 			require.NoError(t, err)
-			detail, err = s.PersonDetail(ctx, p.PersonID)
+			detail, err = s.PersonDetailPage(ctx, p.PersonID, PersonAssertionPage{})
 			require.NoError(t, err)
 			split, err := s.SplitPerson(ctx, PersonSplitRequest{PersonID: p.PersonID, OperationID: uuid.NewString(), DisplayName: "Grace", Revision: detail.Revision, AssertionIDs: []string{detail.Assertions[0].AssertionID}})
 			require.NoError(t, err)
 			require.Equal(t, []string{face.AssertionID}, split.MovedAssertionIDs)
 			require.Empty(t, personKeyFaceForTest(t, s, p.PersonID))
 			require.Equal(t, face.FaceID, personKeyFaceForTest(t, s, split.NewPersonID))
-			moved, err := s.PersonDetail(ctx, split.NewPersonID)
+			moved, err := s.PersonDetailPage(ctx, split.NewPersonID, PersonAssertionPage{})
 			require.NoError(t, err)
 			require.Len(t, moved.Assertions, 1)
 			require.Equal(t, split.NewPersonID, moved.Assertions[0].PersonID)
@@ -446,7 +446,7 @@ func TestPhotoFaceMergeReviewsContradictions(t *testing.T) {
 			}
 			if test.excluded || test.trashed || test.retained {
 				if test.retained {
-					detail, err := s.PersonDetail(ctx, a.PersonID)
+					detail, err := s.PersonDetailPage(ctx, a.PersonID, PersonAssertionPage{})
 					require.NoError(t, err)
 					require.Len(t, detail.Assertions, 1)
 				}
@@ -544,7 +544,7 @@ func TestPhotoFaceDecisionUndoRejectsReusedPreviousKeyFace(t *testing.T) {
 	currentNode := browsePhotoNode(t, s, "second.jpg", fakeHash("c1"), "image/jpeg")
 	currentFace, _, err := s.CreatePhotoFace(ctx, currentNode.CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, person.PersonID)
 	require.NoError(t, err)
-	personDetail, err := s.PersonDetail(ctx, person.PersonID)
+	personDetail, err := s.PersonDetailPage(ctx, person.PersonID, PersonAssertionPage{})
 	require.NoError(t, err)
 	changed, err := s.DecidePhotoFace(ctx, currentNode.CurrentVersionID, PhotoFaceDecisionRequest{
 		FaceID: currentFace.FaceID, PersonID: person.PersonID, Action: "key",
@@ -903,7 +903,7 @@ func TestPhotoFaceDecisionUndoSharedAssertion(t *testing.T) {
 			require.ErrorIs(t, err, ErrStaleRevision)
 			require.NoError(t, s.ExportMetadata(ctx, &after))
 			require.Equal(t, before.String(), after.String())
-			detail, err := s.PersonDetail(ctx, split.NewPersonID)
+			detail, err := s.PersonDetailPage(ctx, split.NewPersonID, PersonAssertionPage{})
 			require.NoError(t, err)
 			require.Len(t, detail.Assertions, 1)
 			require.Equal(t, split.NewPersonID, detail.Assertions[0].PersonID)

@@ -95,10 +95,6 @@ func (c *Connection) People(ctx context.Context, query, cursor string, limit int
 	return *page, nil
 }
 
-func (c *Connection) Person(ctx context.Context, id string) (api.PersonDetail, error) {
-	return c.PersonPage(ctx, id, api.PersonAssertionPage{})
-}
-
 func (c *Connection) PersonPage(ctx context.Context, id string, page api.PersonAssertionPage) (api.PersonDetail, error) {
 	pathID, err := parsePersonID(id)
 	if err != nil {

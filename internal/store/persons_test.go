@@ -160,7 +160,7 @@ func TestPersonDetailResolvesAlias(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.MergePersons(ctx, survivor.PersonID, absorbed.PersonID, operationID, survivor.Revision, absorbed.Revision)
 	require.NoError(t, err)
-	detail, err := s.PersonDetail(ctx, absorbed.PersonID)
+	detail, err := s.PersonDetailPage(ctx, absorbed.PersonID, PersonAssertionPage{})
 	require.NoError(t, err)
 	require.Equal(t, survivor.PersonID, detail.PersonID)
 	require.Equal(t, absorbed.PersonID, detail.ReachedThrough)

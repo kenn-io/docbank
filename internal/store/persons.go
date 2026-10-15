@@ -344,10 +344,6 @@ type PersonAssertionPage struct {
 	Limit int
 }
 
-func (s *Store) PersonDetail(ctx context.Context, personID string) (PersonDetail, error) {
-	return s.PersonDetailPage(ctx, personID, PersonAssertionPage{})
-}
-
 func (s *Store) PersonDetailPage(ctx context.Context, personID string, page PersonAssertionPage) (PersonDetail, error) {
 	if page.Limit == 0 {
 		page.Limit = 1000

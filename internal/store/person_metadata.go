@@ -446,11 +446,7 @@ func validateUniqueMetadataUUIDs(ids []string) error {
 	return nil
 }
 
-func validatePersonMetadataState(ctx context.Context, q metadataQuerier, versions ...int) error {
-	version := currentStorageSchemaVersion
-	if len(versions) > 0 {
-		version = versions[0]
-	}
+func validatePersonMetadataState(ctx context.Context, q metadataQuerier, version int) error {
 	for _, table := range personMetadataTablesForSchema(version) {
 		if err := table.validateRows(ctx, q); err != nil {
 			return fmt.Errorf("validating person metadata records: %w", err)
@@ -610,12 +606,19 @@ func personMetadataTablesForSchema(version int) []metadataRecordCodec {
 	if version >= photoFaceDecisionsStorageSchemaVersion {
 		return personMetadataTables
 	}
+	legacy := map[string]metadataRecordCodec{
+		metadataPersonType: newMetadataTable(metadataTable[metadataPersonBeforeKey]{record: metadataPersonBeforeKey{Type: metadataPersonType}, table: "persons", suffix: "ORDER BY person_id", checkExport: true, validate: func(v metadataPersonBeforeKey) error {
+			return validateMetadataPerson(metadataPerson{Type: v.Type, PersonID: v.PersonID, DisplayName: v.DisplayName, DisplayNameFolded: v.DisplayNameFolded, Origin: v.Origin, State: v.State, Revision: v.Revision, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt})
+		}}),
+		metadataPersonAssertionType: newMetadataTable(metadataTable[metadataPersonAssertionBeforePhotoMark]{record: metadataPersonAssertionBeforePhotoMark{Type: metadataPersonAssertionType}, table: "person_document_assertions", suffix: "ORDER BY assertion_id", checkExport: true, validate: func(v metadataPersonAssertionBeforePhotoMark) error {
+			return validateMetadataPersonAssertion(metadataPersonDocumentAssertion{Type: v.Type, AssertionID: v.AssertionID, ContentVersionID: v.ContentVersionID, PersonID: v.PersonID, Role: v.Role, Action: v.Action, Note: v.Note, RecordedAt: v.RecordedAt, Revision: v.Revision})
+		}}),
+	}
 	tables := slices.Clone(personMetadataTables)
-	tables[0] = newMetadataTable(metadataTable[metadataPersonBeforeKey]{record: metadataPersonBeforeKey{Type: metadataPersonType}, table: "persons", suffix: "ORDER BY person_id", checkExport: true, validate: func(v metadataPersonBeforeKey) error {
-		return validateMetadataPerson(metadataPerson{Type: v.Type, PersonID: v.PersonID, DisplayName: v.DisplayName, DisplayNameFolded: v.DisplayNameFolded, Origin: v.Origin, State: v.State, Revision: v.Revision, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt})
-	}})
-	tables[8] = newMetadataTable(metadataTable[metadataPersonAssertionBeforePhotoMark]{record: metadataPersonAssertionBeforePhotoMark{Type: metadataPersonAssertionType}, table: "person_document_assertions", suffix: "ORDER BY assertion_id", checkExport: true, validate: func(v metadataPersonAssertionBeforePhotoMark) error {
-		return validateMetadataPersonAssertion(metadataPersonDocumentAssertion{Type: v.Type, AssertionID: v.AssertionID, ContentVersionID: v.ContentVersionID, PersonID: v.PersonID, Role: v.Role, Action: v.Action, Note: v.Note, RecordedAt: v.RecordedAt, Revision: v.Revision})
-	}})
+	for i, table := range tables {
+		if codec, ok := legacy[table.kind()]; ok {
+			tables[i] = codec
+		}
+	}
 	return tables
 }
