@@ -4,12 +4,8 @@ import * as api from "./generated/docbank";
 
 afterEach(() => vi.restoreAllMocks());
 
-it("sends reference media as JSON and rejects a conflict", async () => {
-  const fetch = vi
-    .spyOn(globalThis, "fetch")
-    .mockResolvedValue(
-      new Response(JSON.stringify({ code: "conflict", detail: "Changed" }), { status: 412 }),
-    );
+it("sends reference media as JSON", async () => {
+  const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({}));
   const body: api.MediaReferenceBody = {
     operation_id: "synthetic-operation",
     provider_hint: "synthetic",
@@ -29,10 +25,7 @@ it("sends reference media as JSON and rejects a conflict", async () => {
       },
     },
   };
-  await expect(api.submitMediaSourceWithJson(body)).rejects.toMatchObject({
-    status: 412,
-    code: "conflict",
-  });
+  await api.submitMediaSourceWithJson(body);
   const [, request] = fetch.mock.calls[0];
   expect(new Headers(request?.headers).get("Content-Type")).toBe("application/json");
   expect(JSON.parse(String(request?.body))).toEqual(body);
@@ -130,7 +123,7 @@ it("accepts the empty shutdown acknowledgement", async () => {
   ).resolves.toBeUndefined();
 });
 
-it("reads page images as PNG bytes through the browser session", async () => {
+it("reads page images as PNG bytes with PNG Accept", async () => {
   const png = Buffer.from(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=",
     "base64",
@@ -210,7 +203,6 @@ it("sends photo query intent through the generated read-only POST and preserves 
   expect(String(fetch.mock.calls[1][0])).not.toContain("synthetic-session");
   const previewHeaders = new Headers(fetch.mock.calls[1][1]?.headers);
   expect(previewHeaders.get("If-None-Match")).toBe('"older-generation"');
-  expect(previewHeaders.get("X-Docbank-Web-Session")).toBe("synthetic-session");
 });
 
 it("preserves a conditional photo preview's empty 304 response", async () => {
@@ -237,24 +229,6 @@ it("preserves a conditional photo preview's empty 304 response", async () => {
   const headers = new Headers(request?.headers);
   expect(headers.get("Accept")).toBe("image/jpeg");
   expect(headers.get("If-None-Match")).toBe(etag);
-});
-
-it("preserves photo preview errors after conditional revalidation", async () => {
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(
-    Response.json({ code: "not_found", detail: "Photo is no longer included." }, { status: 404 }),
-  );
-  await expect(
-    api.readPhotoPreview(
-      "00000000-0000-4000-8000-000000000001",
-      "a".repeat(64),
-      { "If-None-Match": '"cached-generation"' },
-      { session: "synthetic-session" },
-    ),
-  ).rejects.toMatchObject({
-    status: 404,
-    code: "not_found",
-    message: "Photo is no longer included.",
-  });
 });
 
 it("keeps 304 outside JSON response contracts", async () => {

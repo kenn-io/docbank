@@ -5,7 +5,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("exchanges a key without forwarding it as a vault header", async () => {
+it("sends the API key in the sign-in body", async () => {
   const fetchMock = vi
     .spyOn(globalThis, "fetch")
     .mockResolvedValue(new Response(JSON.stringify({ enabled: true })));

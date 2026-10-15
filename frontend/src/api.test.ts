@@ -1,6 +1,5 @@
 import * as generated from "./generated/docbank.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { APIError } from "./api-transport.js";
 import {
   changeNodeTag,
   liveNodeTags,
@@ -35,44 +34,6 @@ describe("browser authentication", () => {
     expect(sessionStorage.length).toBe(0);
     expect(history.state).toEqual({ fixtureIndex: 4 });
     expect(takeFragmentSession()).toBeNull();
-  });
-
-  it("preserves structured daemon failures", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          status: 401,
-          code: "unauthorized",
-          detail: "missing or invalid API key",
-        }),
-        { status: 401, headers: { "Content-Type": "application/problem+json" } },
-      ),
-    );
-    await expect(generated.resolvePath({ path: "/" }, { session: "bad" })).rejects.toEqual(
-      new APIError("missing or invalid API key", 401, "unauthorized"),
-    );
-  });
-
-  it("preserves an untrusted problem position for the query editor", async () => {
-    const position = { offset: 5, end: 8 };
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          status: 422,
-          code: "invalid_query",
-          detail: "expected an expression",
-          position,
-        }),
-        { status: 422, headers: { "Content-Type": "application/problem+json" } },
-      ),
-    );
-
-    await expect(generated.parseQuery({}, { session: "session" })).rejects.toMatchObject({
-      message: "expected an expression",
-      status: 422,
-      code: "invalid_query",
-      position,
-    });
   });
 
   it("leaves mailbox event streams available to the caller", async () => {

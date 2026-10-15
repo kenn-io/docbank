@@ -3,7 +3,7 @@ import { APIError, isCurrentSessionError, sessionResponse } from "./api-transpor
 
 afterEach(() => vi.restoreAllMocks());
 
-it("sends only the scoped browser session header and rejects redirects", async () => {
+it("sends only the scoped browser session header and sets redirect behavior", async () => {
   const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ id: 1 }));
   const response = await sessionResponse("/api/v1/tags", { session: "secret" });
   await expect(response.json()).resolves.toEqual({ id: 1 });
@@ -57,6 +57,30 @@ it("preserves server field diagnostics verbatim", async () => {
     status: 422,
     code: "validation",
     errors: ["expected number <= 5 (body.patch.rating: 6)"],
+  });
+});
+
+it("preserves an untrusted problem position for the query editor", async () => {
+  const position = { offset: 5, end: 8 };
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        status: 422,
+        code: "invalid_query",
+        detail: "expected an expression",
+        position,
+      }),
+      { status: 422, headers: { "Content-Type": "application/problem+json" } },
+    ),
+  );
+
+  await expect(
+    sessionResponse("/api/v1/query/parse", { session: "session" }),
+  ).rejects.toMatchObject({
+    message: "expected an expression",
+    status: 422,
+    code: "invalid_query",
+    position,
   });
 });
 
