@@ -379,6 +379,22 @@ func (w *Watcher) openRoot(ctx context.Context) (*watchRoot, error) {
 		}
 		return nil, fmt.Errorf("watch %q source overlaps reserved checkout %s", w.config.Name, checkoutID)
 	}
+	for _, checkout := range checkouts {
+		if !checkout.RetentionReleased || checkout.Destination == "" {
+			continue
+		}
+		// A watch source admitted over a retired checkout's cleared folder is
+		// reusing it, same as a store registration would. Persist the
+		// release before new files arrive there, so a later daemon startup
+		// does not mistake them for leftover checkout content.
+		related, relatedErr := PathsOverlapContext(ctx, checkout.Destination, root)
+		if relatedErr != nil || !related {
+			continue
+		}
+		if err := w.ing.Store.ReleaseCheckoutDestination(ctx, checkout.ID); err != nil {
+			return nil, err
+		}
+	}
 	vaultInfo, err := os.Stat(vaultRoot)
 	if err != nil {
 		return nil, fmt.Errorf("checking vault root for watch %q: %w", w.config.Name, err)

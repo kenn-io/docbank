@@ -104,7 +104,8 @@ describe("background jobs drawer", () => {
         expect(screen.getByText("1 running · 1 total")).toBeTruthy();
         expect(screen.getByText("1 of 2 groups")).toBeTruthy();
         expect(
-          (screen.getByRole("button", { name: "Cancel Photo import a" }) as HTMLButtonElement).disabled,
+          (screen.getByRole("button", { name: "Cancel Photo import a" }) as HTMLButtonElement)
+            .disabled,
         ).toBe(false);
       }
       await fireEvent.click(screen.getByRole("button", { name: test.retry }));
@@ -125,11 +126,23 @@ describe("background jobs drawer", () => {
   it("refreshes while work is active, recovers polling errors, and stops on unmount", async () => {
     vi.useFakeTimers();
     try {
-      const active = { name: "extract:plain-text", status: "running", started_at: "2026-07-23T12:00:00Z" };
-      const fetchSpy = vi.spyOn(globalThis, "fetch")
+      const active = {
+        name: "extract:plain-text",
+        status: "running",
+        started_at: "2026-07-23T12:00:00Z",
+      };
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
         .mockResolvedValueOnce(jobsResponse([active]))
-        .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "busy" }), { status: 503, headers: { "Content-Type": "application/json" } }))
-        .mockResolvedValueOnce(jobsResponse([{ ...active, status: "completed", finished_at: "2026-07-23T12:05:00Z" }]));
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ detail: "busy" }), {
+            status: 503,
+            headers: { "Content-Type": "application/json" },
+          }),
+        )
+        .mockResolvedValueOnce(
+          jobsResponse([{ ...active, status: "completed", finished_at: "2026-07-23T12:05:00Z" }]),
+        );
       render(JobsDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
       await vi.advanceTimersByTimeAsync(0);
       expect(screen.getByText("1 running · 1 total")).toBeTruthy();
@@ -296,7 +309,9 @@ describe("background jobs drawer", () => {
         screen.getByRole("button", { name: "Pause Visual previews" }).hasAttribute("disabled"),
       ).toBe(false),
     );
-    expect(screen.getByRole("combobox", { name: "Concurrency Visual previews: 3 workers" })).toBeTruthy();
+    expect(
+      screen.getByRole("combobox", { name: "Concurrency Visual previews: 3 workers" }),
+    ).toBeTruthy();
   });
 
   it("distinguishes running work from a terminal failure", async () => {
@@ -378,7 +393,9 @@ describe("background jobs drawer", () => {
     ];
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(
       async () =>
-        new Response(JSON.stringify({ items }), { headers: { "Content-Type": "application/json" } }),
+        new Response(JSON.stringify({ items }), {
+          headers: { "Content-Type": "application/json" },
+        }),
     );
 
     render(JobsDrawer, {

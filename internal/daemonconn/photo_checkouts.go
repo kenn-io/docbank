@@ -21,8 +21,22 @@ func validatePhotoCheckoutResponse(c store.PhotoCheckout, id string) error {
 		if c.Destination != "" || c.OperationID != "" {
 			return errors.New("unbound photo checkout has local bindings")
 		}
-	} else if !filepath.IsAbs(c.Destination) || !validUUIDv4(c.OperationID) {
-		return errors.New("photo checkout response has invalid local bindings")
+	} else {
+		if !validUUIDv4(c.OperationID) {
+			return errors.New("photo checkout response has invalid local bindings")
+		}
+		// A released, terminal checkout's destination is cleared once its
+		// cleared folder is admitted for reuse elsewhere, so an empty
+		// destination is only valid in that combination; an active checkout
+		// (queued or running) always keeps an absolute destination.
+		releasedTerminal := c.RetentionReleased && slices.Contains([]string{"completed", "failed", "cancelled"}, c.State)
+		if c.Destination == "" {
+			if !releasedTerminal {
+				return errors.New("photo checkout response has invalid local bindings")
+			}
+		} else if !filepath.IsAbs(c.Destination) {
+			return errors.New("photo checkout response has invalid local bindings")
+		}
 	}
 	return store.ValidatePhotoCheckoutSelection(c.Selection)
 }

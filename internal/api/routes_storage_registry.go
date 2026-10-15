@@ -432,10 +432,22 @@ func validateStorageNamespace(
 				return NewError(http.StatusConflict, "storage_namespace_overlap", fmt.Sprintf("binding %q overlaps reserved checkout %s", bindingName, checkoutID))
 			}
 			for _, checkout := range checkouts {
-				if checkout.RetentionReleased && checkout.Destination == binding.Path {
-					if err := d.Store.ReleaseCheckoutDestination(ctx, checkout.ID); err != nil {
-						return FromStoreError(err)
-					}
+				if !checkout.RetentionReleased || checkout.Destination == "" {
+					continue
+				}
+				// Identity-aware, matching the admission check above: a
+				// retired destination that is the same, a nested, or a
+				// filesystem-equivalent path to the binding is the folder
+				// this registration is reusing, so its release must be
+				// persisted before registration writes into it. A path that
+				// cannot be resolved is left alone rather than failing a
+				// registration admission already approved.
+				related, relatedErr := ingest.PathsOverlapContext(ctx, checkout.Destination, binding.Path)
+				if relatedErr != nil || !related {
+					continue
+				}
+				if err := d.Store.ReleaseCheckoutDestination(ctx, checkout.ID); err != nil {
+					return FromStoreError(err)
 				}
 			}
 			watchName, watchOverlap, err := ingest.WatchBindingOverlapContext(

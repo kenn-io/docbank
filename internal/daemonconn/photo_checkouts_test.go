@@ -102,3 +102,46 @@ func TestPhotoCheckoutClients(t *testing.T) {
 		require.ErrorContains(t, err, invalid.message)
 	}
 }
+
+// TestValidatePhotoCheckoutResponseAcceptsReleasedTerminalEmptyDestination
+// covers checkout status, retirement, and list responses after storage
+// registration or a watch admission reuses a retired checkout's cleared
+// destination: the server persists an empty destination for that record, and
+// the client validator must accept it in a terminal, released state while
+// still requiring one everywhere else.
+func TestValidatePhotoCheckoutResponseAcceptsReleasedTerminalEmptyDestination(t *testing.T) {
+	t.Parallel()
+	const id = "00000000-0000-4000-8000-0000000000aa"
+	const operationID = "00000000-0000-4000-8000-000000000012"
+	base := store.PhotoCheckout{
+		ID: id, OperationID: operationID, RetentionReleased: true,
+		Selection: store.PhotoCheckoutSelection{All: true}, ByteLimit: 10,
+	}
+	for _, tc := range []struct {
+		name  string
+		state string
+		valid bool
+	}{
+		{"completed released empty destination", "completed", true},
+		{"failed released empty destination", "failed", true},
+		{"cancelled released empty destination", "cancelled", true},
+		{"queued empty destination rejected", "queued", false},
+		{"running empty destination rejected", "running", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := base
+			c.State = tc.state
+			err := validatePhotoCheckoutResponse(c, id)
+			if tc.valid {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+		})
+	}
+	unreleased := base
+	unreleased.RetentionReleased = false
+	unreleased.State = "completed"
+	require.Error(t, validatePhotoCheckoutResponse(unreleased, id),
+		"a completed checkout that has not released retention must still require a destination")
+}

@@ -322,6 +322,45 @@ func TestWatcherRejectsVaultOverlapAndDestinationConflicts(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrExists)
 }
 
+// TestWatcherAdmitsReleasedCheckoutDestinationAndSurvivesRestart covers a
+// watch source reusing a retired checkout's cleared destination: admission
+// must succeed and persist the release, so that once new files arrive in
+// the folder, a later daemon startup (the production admission check,
+// CheckoutPathOverlap) does not mistake them for leftover checkout content.
+func TestWatcherAdmitsReleasedCheckoutDestinationAndSurvivesRestart(t *testing.T) {
+	ing := newTestIngester(t)
+	ctx := t.Context()
+	node, err := ing.Store.CreateFile(ctx, ing.Store.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := ing.Store.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	destination := t.TempDir()
+	checkout, operation, err := ing.Store.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
+	require.NoError(t, err)
+	require.NoError(t, ing.Store.FinishPhotoCheckout(ctx, checkout.ID, operation.ID, store.StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
+	_, err = ing.Store.RetirePhotoCheckout(ctx, checkout.ID)
+	require.NoError(t, err)
+
+	watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{
+		Name: "reused", Source: destination, Destination: "/inbox",
+	}, runTestMutation, nil)
+	require.NoError(t, err)
+	root := openWatcherRoot(t, watcher)
+	require.NoError(t, root.Close())
+
+	released, err := ing.Store.PhotoCheckout(ctx, checkout.ID)
+	require.NoError(t, err)
+	require.Empty(t, released.Destination)
+
+	require.NoError(t, os.WriteFile(filepath.Join(destination, "arrived.jpg"), []byte("new"), 0o600))
+
+	checkouts, err := ing.Store.ListPhotoCheckouts(ctx)
+	require.NoError(t, err)
+	id, overlap, _, err := CheckoutPathOverlap(ctx, checkouts, destination)
+	require.NoError(t, err)
+	require.False(t, overlap, "restart admission must not mistake the newly arrived file for leftover checkout content: %s", id)
+}
+
 func TestPathsOverlapUsesFilesystemIdentityForAliases(t *testing.T) {
 	vaultRoot := t.TempDir()
 	require.NoError(t, os.Mkdir(filepath.Join(vaultRoot, "incoming"), 0o700))
