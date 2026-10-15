@@ -901,6 +901,11 @@ processing `profile`, `page_size` of 50, 100, or 250 (default 100), and any
 subset of `collections`, `tags`, `media_family`, `extension`, `modified`,
 `size`, `text_coverage`, and `duplicates` facets, up to eight dimensions.
 
+Set `photos: true` to capture a Photos query in its photo ordering, with one
+display-file row per matching asset and an `asset_id` on each row. This mode
+uses Photos filters and sorts and requires an empty facet list. It uses the
+same snapshot paging and expiry rules below.
+
 The response freezes the canonical query, dependency revisions, selected
 lexical generation and processing coverage, ordered row metadata, and exact
 node/content-version membership observed at creation. It also carries exact
