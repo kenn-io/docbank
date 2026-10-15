@@ -567,44 +567,53 @@ func TestCheckoutRunOutcomes(t *testing.T) {
 	}
 }
 
-// TestPhotoCheckoutRejectsSelectionWithColliding destination names covers the
-// case where two selected files would land on the identical destination
-// name: CreatePhotoCheckout now rejects that before Prepare ever opens a
-// checkout (internal/store/photo_checkouts_test.go,
-// TestPhotoCheckoutRejectsDestinationNameCollision). This test instead
-// covers the filesystem-level preflight CheckRootPaths still runs in Run:
-// a path can collide with a file already sitting in the destination even
-// when every selected entry has a distinct destination name.
+// TestCheckoutPreflightsCollisionsBeforePublishingBytes covers the
+// filesystem-level preflight Run runs through CheckRootPaths. Two selected
+// files named "photo.jpg" and "PHOTO.JPG" get distinct destination names
+// (CreatePhotoCheckout's own duplicate-name rejection, covered by
+// internal/store/photo_checkouts_test.go's
+// TestPhotoCheckoutRejectsDestinationNameCollision, never triggers), but
+// collide under a case-insensitive destination filesystem's own name
+// rules. Removing Run's CheckRootPaths call would make this test fail on
+// such a filesystem: nothing else would catch the collision before bytes
+// start copying.
 func TestCheckoutPreflightsCollisionsBeforePublishingBytes(t *testing.T) {
 	t.Parallel()
 	s := checkoutService(t)
 	ctx := t.Context()
-	hash, size, err := s.Blobs.Write(strings.NewReader("content"))
-	require.NoError(t, err)
-	node, err := s.Store.CreateFile(ctx, s.Store.RootID(), "photo.jpg", hash, size, "image/jpeg")
-	require.NoError(t, err)
-	asset, err := s.Store.PhotoAssetForNode(ctx, node.ID)
-	require.NoError(t, err)
 	destination := t.TempDir()
-	checkout, op, root, err := s.Prepare(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
+	probe := filepath.Join(destination, "case-probe")
+	require.NoError(t, os.WriteFile(probe, nil, 0o600))
+	_, caseErr := os.Stat(filepath.Join(destination, "CASE-PROBE"))
+	require.NoError(t, os.Remove(probe))
+	caseInsensitive := caseErr == nil
+
+	first := checkoutPhoto(t, s, "photo.jpg", "first")
+	second := checkoutPhoto(t, s, "PHOTO.JPG", "second")
+	_, err := s.Store.DetachPhotoFile(ctx, second.ID, second.Revision, second.Files[0].ID, store.PhotoDetachOptions{})
+	require.NoError(t, err)
+	first, err = s.Store.AttachPhotoFile(ctx, first.ID, first.Revision, second.Files[0].NodeID, store.PhotoRoleImage, nil)
+	require.NoError(t, err)
+
+	checkout, op, root, err := s.Prepare(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{first.ID}}, destination, 0)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, root.Close()) }()
-	entries, err := s.Store.PhotoCheckoutEntries(ctx, checkout.ID)
-	require.NoError(t, err)
-	require.Len(t, entries, 1)
-	stray := filepath.Join(destination, filepath.FromSlash(entries[0].Path))
-	require.NoError(t, os.MkdirAll(filepath.Dir(stray), 0o700))
-	require.NoError(t, os.WriteFile(stray, []byte("already here"), 0o600))
 
 	runErr := s.Run(ctx, checkout, root)
 	status, err := s.Store.PhotoCheckoutStatus(ctx, checkout.ID)
 	require.NoError(t, err)
 	finished, err := s.Store.StorageOperation(ctx, op.ID)
 	require.NoError(t, err)
-	require.ErrorIs(t, runErr, os.ErrExist)
-	require.Equal(t, "failed", status.Checkout.State)
-	require.Zero(t, status.PublishedFiles)
-	require.Zero(t, finished.CopiedObjects)
+	if caseInsensitive {
+		require.ErrorIs(t, runErr, os.ErrExist)
+		require.Equal(t, "failed", status.Checkout.State)
+		require.Zero(t, status.PublishedFiles)
+		require.Zero(t, finished.CopiedObjects)
+		return
+	}
+	require.NoError(t, runErr)
+	require.Equal(t, "completed", status.Checkout.State)
+	require.Equal(t, int64(2), status.PublishedFiles)
 }
 
 func TestCheckoutRechecksProtectedRootSnapshot(t *testing.T) {

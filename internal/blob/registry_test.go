@@ -818,3 +818,54 @@ func TestRegistryAdmissionStaysClosedAcrossRefreshAndReattach(t *testing.T) {
 	require.Equal(t, StoreOnline, registry.AttachSpec(t.Context(), spec).State)
 	require.EqualValues(t, 2, openings.Load())
 }
+
+func TestRegistryAdmissionRunsOutsideOwnershipProbeDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const (
+			vaultID = "10000000-0000-4000-8000-000000000001"
+			storeID = "20000000-0000-4000-8000-000000000001"
+			epoch   = "30000000-0000-4000-8000-000000000001"
+		)
+		admitStarted := make(chan struct{})
+		releaseAdmit := make(chan struct{})
+		var releaseOnce sync.Once
+		open := func(
+			_ context.Context, _ config.StoreBindingConfig, expected *packstore.Ownership,
+		) (packstore.Backend, error) {
+			return &staticOwnershipBackend{ownership: *expected}, nil
+		}
+		admit := func(ctx context.Context, _ config.StoreBindingConfig) error {
+			close(admitStarted)
+			select {
+			case <-releaseAdmit:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		registryReady := make(chan *Registry, 1)
+		go func() {
+			registryReady <- newRegistryWithFactories(t.Context(), vaultID,
+				map[string]config.StoreBindingConfig{
+					"archive": {Kind: storeKindFilesystem},
+				}, []StoreSpec{{
+					ID: storeID, Kind: storeKindFilesystem, Role: "secondary",
+					Lifecycle: "active", Binding: "archive", OwnershipEpoch: epoch,
+				}}, open, open, admit)
+		}()
+		<-admitStarted
+		time.Sleep(registryProbeTimeout + time.Second)
+		synctest.Wait()
+		select {
+		case <-registryReady:
+			t.Fatal("registry finished before admission was released; admission must not inherit the ownership-probe deadline")
+		default:
+		}
+		releaseOnce.Do(func() { close(releaseAdmit) })
+		registry := <-registryReady
+		t.Cleanup(func() { require.NoError(t, registry.Close()) })
+		synctest.Wait()
+		assert.Equal(t, StoreOnline, registry.Observation(storeID).State,
+			"admission outlasting the ownership-probe deadline must still complete")
+	})
+}

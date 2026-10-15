@@ -208,8 +208,16 @@ func (r *Registry) Observation(id string) StoreObservation {
 	return observation
 }
 
-// Refresh performs a fresh marker check for one cataloged store.
+// Refresh performs a fresh marker check for one cataloged store. Admission
+// (such as checkout separation validation) runs first, under the caller's
+// own context rather than the bounded ownership-probe deadline below: a
+// large library's admission scan can legitimately take longer than that
+// deadline without being stuck, and the deadline exists to bound the
+// ownership marker read, not admission.
 func (r *Registry) Refresh(ctx context.Context, id string) StoreObservation {
+	if !r.admitRefresh(ctx, packstore.StoreID(id)) {
+		return r.Observation(id)
+	}
 	probeCtx, cancel := context.WithTimeoutCause(
 		ctx, registryProbeTimeout, errRegistryProbeTimeout,
 	)
@@ -217,18 +225,28 @@ func (r *Registry) Refresh(ctx context.Context, id string) StoreObservation {
 	return r.refresh(probeCtx, id)
 }
 
-// RefreshStores performs fresh marker checks concurrently under one deadline.
+// RefreshStores performs fresh marker checks concurrently under one
+// deadline, after admission (see Refresh) runs for every store under the
+// caller's own context.
 func (r *Registry) RefreshStores(
 	ctx context.Context, ids []string,
 ) map[string]StoreObservation {
+	observations := make(map[string]StoreObservation, len(ids))
+	admitted := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if r.admitRefresh(ctx, packstore.StoreID(id)) {
+			admitted = append(admitted, id)
+		} else {
+			observations[id] = r.Observation(id)
+		}
+	}
 	probeCtx, cancel := context.WithTimeoutCause(
 		ctx, registryProbeTimeout, errRegistryProbeTimeout,
 	)
 	defer cancel()
-	observations := make(map[string]StoreObservation, len(ids))
 	var mu sync.Mutex
 	var wait sync.WaitGroup
-	for _, id := range ids {
+	for _, id := range admitted {
 		wait.Go(func() {
 			observation := r.refresh(probeCtx, id)
 			mu.Lock()
@@ -425,10 +443,48 @@ func (r *Registry) admitBinding(ctx context.Context, binding config.StoreBinding
 	return nil
 }
 
-func (r *Registry) probeStore(ctx context.Context, refresh registryRefresh) registryProbe {
-	if err := r.admitBinding(ctx, refresh.binding); err != nil {
-		return registryProbe{state: StoreUnavailable, detail: err.Error(), priority: refresh.priority}
+// bindingFor resolves the catalog binding for a store with a read lock
+// only, so admission can run before any refresh bookkeeping begins.
+func (r *Registry) bindingFor(id packstore.StoreID) (config.StoreBindingConfig, int, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	spec, ok := r.specs[id]
+	if !ok || spec.Lifecycle == "detached" {
+		return config.StoreBindingConfig{}, 0, false
 	}
+	binding, ok := r.bindings[spec.Binding]
+	if !ok || binding.Kind != spec.Kind {
+		return config.StoreBindingConfig{}, 0, false
+	}
+	return binding, binding.Priority, true
+}
+
+// admitRefresh runs admission (such as checkout separation validation)
+// under ctx as given, before the ownership-probe deadline that follows
+// applies to anything. A store this can't resolve a binding for is left
+// to the normal refresh path, which already reports unbound or
+// misconfigured correctly; admitRefresh only short-circuits a resolvable
+// binding that admission itself rejects.
+func (r *Registry) admitRefresh(ctx context.Context, id packstore.StoreID) bool {
+	binding, priority, ok := r.bindingFor(id)
+	if !ok {
+		return true
+	}
+	if err := r.admitBinding(ctx, binding); err != nil {
+		r.mu.Lock()
+		// A prior online backend must also pass admission on every later
+		// refresh, the same guarantee probeStore's own admission check
+		// gave by always flowing through installProbe's retire-on-reject
+		// path; short-circuiting here still has to retire it explicitly.
+		r.retireBackendLocked(id)
+		r.observe(id, StoreUnavailable, err.Error(), priority)
+		r.mu.Unlock()
+		return false
+	}
+	return true
+}
+
+func (r *Registry) probeStore(ctx context.Context, refresh registryRefresh) registryProbe {
 	if prior := refresh.prior; prior != nil {
 		actual, err := prior.Ownership(ctx)
 		if err == nil && actual == refresh.expected {
