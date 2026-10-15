@@ -375,3 +375,40 @@ func TestConfiguredCheckoutPathsRejectPartialCopiesBeforeDaemonStartup(t *testin
 		}
 	}
 }
+
+func TestServeRejectsCheckoutCopiesBeforeStartup(t *testing.T) {
+	for _, retired := range []bool{false, true} {
+		t.Run(fmt.Sprintf("retired=%t", retired), func(t *testing.T) {
+			layout := home.Layout{Root: t.TempDir()}
+			require.NoError(t, layout.Ensure())
+			catalog, err := store.Open(layout.DBPath())
+			require.NoError(t, err)
+			node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
+			require.NoError(t, err)
+			asset, err := catalog.PhotoAssetForNode(t.Context(), node.ID)
+			require.NoError(t, err)
+			destination := t.TempDir()
+			checkout, op, err := catalog.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
+			require.NoError(t, err)
+			require.NoError(t, catalog.FinishPhotoCheckout(t.Context(), checkout.ID, op.ID, store.StorageOperationFailed, "{}", "partial", time.Now().Add(time.Hour)))
+			if retired {
+				_, err = catalog.RetirePhotoCheckout(t.Context(), checkout.ID)
+				require.NoError(t, err)
+			}
+			require.NoError(t, catalog.Close())
+			copyPath := filepath.Join(destination, "edited.jpg")
+			require.NoError(t, os.WriteFile(copyPath, []byte("edits"), 0o600))
+			configText := fmt.Sprintf("[[watch]]\nname = 'checkout'\nsource = %q\ndestination = '/inbox'\n", filepath.ToSlash(destination))
+			require.NoError(t, os.WriteFile(filepath.Join(layout.Root, "config.toml"), []byte(configText), 0o600))
+			t.Setenv("DOCBANK_HOME", layout.Root)
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			defer cancel()
+			err = runServe(ctx)
+			require.ErrorContains(t, err, "configured path")
+			require.ErrorContains(t, err, checkout.ID)
+			contents, err := os.ReadFile(copyPath)
+			require.NoError(t, err)
+			require.Equal(t, "edits", string(contents))
+		})
+	}
+}

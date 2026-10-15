@@ -581,11 +581,10 @@ func TestWatcherRejectsReservedCheckoutDestinations(t *testing.T) {
 				require.ErrorContains(t, err, checkout.ID)
 			}
 			require.NoError(t, os.WriteFile(filepath.Join(destination, "edited.jpg"), []byte("edits"), 0o600))
-			_, err = ing.Store.RetirePhotoCheckout(ctx, checkout.ID)
 			if state == store.StorageOperationQueued || state == store.StorageOperationRunning {
-				require.ErrorContains(t, err, "cancel active checkout work before retirement")
-				return
+				require.NoError(t, ing.Store.FinishPhotoCheckout(ctx, checkout.ID, op.ID, store.StorageOperationCancelled, "{}", "cancelled", time.Now().Add(time.Hour)))
 			}
+			_, err = ing.Store.RetirePhotoCheckout(ctx, checkout.ID)
 			require.NoError(t, err)
 			_, err = watcher.openRoot(ctx)
 			require.ErrorContains(t, err, "with partial files")

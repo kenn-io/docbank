@@ -3,10 +3,11 @@ package ingest
 import (
 	"errors"
 	"fmt"
-	"go.kenn.io/docbank/internal/store"
 	"io"
 	"os"
 	"slices"
+
+	"go.kenn.io/docbank/internal/store"
 )
 
 // PathProtection fences a checked set of roots against replacement or new roots.
