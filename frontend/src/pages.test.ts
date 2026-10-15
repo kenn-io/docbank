@@ -426,7 +426,7 @@ for (const header of [
         inventory().inventory.recipes[0]!.recipe,
         new AbortController().signal,
       ),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/Page image headers disagree with the selected receipt/);
     expect(decode).not.toHaveBeenCalled();
   });
 }

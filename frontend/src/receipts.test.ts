@@ -182,6 +182,6 @@ describe("processing receipts", () => {
         observed_scope_count: 4097,
         fence_fingerprint: fenceFingerprint(vault, oversizedIDs),
       }),
-    ).toThrow();
+    ).toThrow(/The daemon returned an invalid source fence/);
   });
 });

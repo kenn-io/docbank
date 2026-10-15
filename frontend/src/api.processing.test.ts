@@ -484,7 +484,6 @@ describe("document processing browser API", () => {
           node_id: 8,
           content_version_id: otherVersionID,
           rank: 2,
-          evidence: [{ ...report.results[0]!.evidence[0]!, embedding_set_id: "e".repeat(64) }],
         });
       },
       (report: ReturnType<typeof valid>) => {
