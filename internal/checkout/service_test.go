@@ -161,8 +161,8 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 		{name: "file", setup: "file", state: "failed", errorContains: []string{"interrupted", "reconciliation failed"}, operationProgress: "zero", checkPublishedBytes: true, fileContent: "keep"},
 		{name: "symlink", setup: "symlink", state: "failed", errorContains: []string{"interrupted"}, operationProgress: "zero", checkPublishedBytes: true, fileContent: "keep"},
 		{name: "edited published copy", setup: "published", state: "failed", errorContains: []string{"interrupted"}, publishedFiles: 1, checkPublishedBytes: true, publishedBytes: true, operationProgress: "copied", entryPublished: true, fileContent: "keep"},
-		{name: "edited", setup: "publication failure", state: "failed", publishedFiles: 1, entryPublished: true, fileContent: "edited working copy"},
-		{name: "edited without cursor", setup: "no cursor", state: "failed", checkPublishedBytes: true, operationProgress: "zero", fileContent: "edited working copy"},
+		{name: "records an unrecorded installed copy", setup: "unrecorded install", state: "failed", publishedFiles: 1, entryPublished: true, fileContent: "edited working copy"},
+		{name: "keeps edited copy without cursor", setup: "no cursor", state: "failed", checkPublishedBytes: true, operationProgress: "zero", fileContent: "edited working copy"},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -175,7 +175,7 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 			require.Len(t, entries, 1)
 			var keep, payload string
 			stagePayload := false
-			if test.setup != "publication failure" && test.setup != "no cursor" {
+			if test.setup != "unrecorded install" && test.setup != "no cursor" {
 				require.NoError(t, s.Store.ClaimPhotoCheckout(t.Context(), c.ID, op.ID))
 				require.NoError(t, s.Store.PublishPhotoCheckoutEntry(t.Context(), entries[0], func() (bool, error) { return true, nil }))
 				require.NoError(t, s.Store.ObservePhotoCheckout(t.Context(), c.ID, op.ID, []string{entries[0].FileID}))
@@ -204,31 +204,17 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 				require.NoError(t, os.MkdirAll(filepath.Dir(keep), 0o700))
 				require.NoError(t, os.WriteFile(keep, []byte(test.fileContent), 0o600))
 				stagePayload = true
-			case "publication failure":
-				db, err := s.Store.SQLiteDriver().Open(filepath.Join(s.VaultRoot, "docbank.db"), sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Deferred})
-				require.NoError(t, err)
-				defer func() { require.NoError(t, db.Close()) }()
-				_, err = db.ExecContext(t.Context(), `CREATE TRIGGER fail_checkout_publication BEFORE UPDATE OF published ON photo_checkout_entries WHEN NEW.published=1 BEGIN SELECT RAISE(ABORT,'synthetic publication-record failure'); END`)
-				require.NoError(t, err)
-				runErr := s.Run(t.Context(), c, root)
-				require.ErrorIs(t, runErr, store.ErrPhotoCheckoutPublicationUnrecorded)
-				require.ErrorContains(t, runErr, "synthetic publication-record failure")
-				operation, err := s.Store.StorageOperation(t.Context(), op.ID)
-				require.NoError(t, err)
-				require.Equal(t, store.StorageOperationRunning, operation.State)
-				require.Nil(t, operation.FinishedAt)
-				require.Equal(t, entries[0].FileID, operation.Cursor)
-				content, err := root.ReadFile(filepath.FromSlash(entries[0].Path))
-				require.NoError(t, err)
-				require.Equal(t, "photo bytes", string(content))
+			case "unrecorded install":
+				require.NoError(t, s.Store.ClaimPhotoCheckout(t.Context(), c.ID, op.ID))
+				require.NoError(t, root.MkdirAll(filepath.Dir(filepath.FromSlash(entries[0].Path)), 0o700))
+				require.NoError(t, root.WriteFile(filepath.FromSlash(entries[0].Path), []byte("photo bytes"), 0o600))
+				require.NoError(t, s.Store.AdvanceStorageOperation(t.Context(), op.ID, entries[0].FileID, 1, 1, entries[0].Size, "{}"))
 				require.NoError(t, root.WriteFile(filepath.FromSlash(entries[0].Path), []byte(test.fileContent), 0o600))
 				status, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
 				require.NoError(t, err)
 				require.Equal(t, "running", status.Checkout.State)
 				require.False(t, status.Checkout.RetentionReleased)
 				require.Zero(t, status.PublishedFiles)
-				_, err = db.ExecContext(t.Context(), `DROP TRIGGER fail_checkout_publication`)
-				require.NoError(t, err)
 				keep = filepath.Join(c.Destination, filepath.FromSlash(entries[0].Path))
 				stagePayload = true
 			case "no cursor":
@@ -419,6 +405,37 @@ func TestCheckoutRunOutcomes(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, int64(len(entries)), finished.CopiedObjects)
 		require.Equal(t, copiedBytes, finished.CopiedBytes)
+	})
+	t.Run("publication record failure preserves installed copy", func(t *testing.T) {
+		t.Parallel()
+		s := checkoutService(t)
+		asset := checkoutPhoto(t, s, "photo.jpg", "photo bytes")
+		checkout, op, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, t.TempDir(), 0)
+		require.NoError(t, err)
+		defer func() { require.NoError(t, root.Close()) }()
+		entries, err := s.Store.PhotoCheckoutEntries(t.Context(), checkout.ID)
+		require.NoError(t, err)
+		db, err := s.Store.SQLiteDriver().Open(filepath.Join(s.VaultRoot, "docbank.db"), sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Deferred})
+		require.NoError(t, err)
+		defer func() { require.NoError(t, db.Close()) }()
+		_, err = db.ExecContext(t.Context(), `CREATE TRIGGER fail_checkout_publication BEFORE UPDATE OF published ON photo_checkout_entries WHEN NEW.published=1 BEGIN SELECT RAISE(ABORT,'synthetic publication-record failure'); END`)
+		require.NoError(t, err)
+		err = s.Run(t.Context(), checkout, root)
+		require.ErrorIs(t, err, store.ErrPhotoCheckoutPublicationUnrecorded)
+		require.ErrorContains(t, err, "synthetic publication-record failure")
+		operation, err := s.Store.StorageOperation(t.Context(), op.ID)
+		require.NoError(t, err)
+		require.Equal(t, store.StorageOperationRunning, operation.State)
+		require.Nil(t, operation.FinishedAt)
+		require.Equal(t, entries[0].FileID, operation.Cursor)
+		status, err := s.Store.PhotoCheckoutStatus(t.Context(), checkout.ID)
+		require.NoError(t, err)
+		require.Equal(t, "running", status.Checkout.State)
+		require.False(t, status.Checkout.RetentionReleased)
+		require.Zero(t, status.PublishedFiles)
+		content, err := root.ReadFile(filepath.FromSlash(entries[0].Path))
+		require.NoError(t, err)
+		require.Equal(t, "photo bytes", string(content))
 	})
 
 	for _, failure := range []string{"operator cancellation", "daemon shutdown", "verification failure", "source excluded"} {
