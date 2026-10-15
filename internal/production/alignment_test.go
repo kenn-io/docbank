@@ -187,7 +187,7 @@ func TestNativeMultiColumnContentOrderUsesDistinctPositions(t *testing.T) {
 	source := document.PageSource{VersionID: "00000000-0000-4000-8000-000000000001", SHA256: sum(data), Size: int64(len(data))}
 	frame, err := document.NewPDFPageFrame(source, 1, [4]float64{0, 0, 612, 792}, [4]float64{0, 0, 612, 792}, 0)
 	require.NoError(t, err)
-	inspected, err := pdfproduction.InspectNativeText(t.Context(), pdfproduction.Source{Reader: bytes.NewReader(data), Size: int64(len(data)), SHA256: sum(data)}, []document.PageFrameV1{frame})
+	inspected, err := pdfproduction.InspectNativeText(t.Context(), pdfproduction.Source{Reader: bytes.NewReader(data), Size: int64(len(data)), SHA256: sum(data)}, []document.PageFrameV1{frame}, nil)
 	require.NoError(t, err)
 	_, frameSHA, err := document.MarshalPageFrameV1(frame)
 	require.NoError(t, err)

@@ -1,10 +1,12 @@
 package formatdetect
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"math"
 
+	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
@@ -13,14 +15,25 @@ import (
 type PDFPageGeometry struct {
 	MediaBox, CropBox [4]float64
 	Rotation          int
+	SimpleFontsOnly   bool
 }
 
 func ReadPDFPageGeometry(data []byte, maxPages int) ([]PDFPageGeometry, error) {
 	if len(data) == 0 || len(data) > 64<<20 || maxPages < 1 || maxPages > 1000 {
 		return nil, errors.New("PDF geometry exceeds source/page limits")
 	}
-	ctx, err := validatePDFObjectGraph(data, PDFLimits{MaxExpandedBytes: 256 << 20, MaxEntryBytes: 64 << 20, MaxEntries: 100000})
+	limits := PDFLimits{MaxExpandedBytes: 256 << 20, MaxEntryBytes: 64 << 20, MaxEntries: 100000}
+	ctx, err := api.ReadContext(bytes.NewReader(data), pdfConfiguration(len(data), limits))
 	if err != nil {
+		return nil, fmt.Errorf("read PDF geometry: %w", err)
+	}
+	// Validation may repair a missing font by substituting a different resource.
+	// Classify the original parsed dictionaries before those repairs occur.
+	domains := unvalidatedPageFontDomains(ctx, maxPages)
+	if err := api.ValidateContext(ctx); err != nil {
+		return nil, fmt.Errorf("validate PDF geometry: %w", err)
+	}
+	if _, err := checkPDFReferences(ctx); err != nil {
 		return nil, err
 	}
 	if ctx.PageCount < 1 || ctx.PageCount > maxPages {
@@ -64,7 +77,11 @@ func ReadPDFPageGeometry(data []byte, maxPages int) ([]PDFPageGeometry, error) {
 		coordinates := func(r *types.Rectangle) [4]float64 {
 			return [4]float64{min(r.LL.X, r.UR.X), min(r.LL.Y, r.UR.Y), max(r.LL.X, r.UR.X), max(r.LL.Y, r.UR.Y)}
 		}
-		frames[page-1] = PDFPageGeometry{MediaBox: coordinates(attrs.MediaBox), CropBox: coordinates(crop), Rotation: ((attrs.Rotate % 360) + 360) % 360}
+		frames[page-1] = PDFPageGeometry{
+			MediaBox: coordinates(attrs.MediaBox), CropBox: coordinates(crop),
+			Rotation:        ((attrs.Rotate % 360) + 360) % 360,
+			SimpleFontsOnly: len(domains) == ctx.PageCount && domains[page-1],
+		}
 	}
 	return frames, nil
 }

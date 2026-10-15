@@ -15,7 +15,9 @@ import (
 	"go.kenn.io/docbank/document/internal/formatdetect"
 )
 
-const Protocol = "docbank-page-inspect/v1"
+const Protocol = "docbank-page-inspect/v2"
+
+const ParserIdentity = "pdfcpu/v0.15.0"
 
 // VerifyPNG verifies the entire bounded image against its retained receipt.
 // Publication, HTTP reads and portable restore use the same decoder.
@@ -37,12 +39,19 @@ func VerifyPNG(data []byte, receipt document.PageImageV1) error {
 	return nil
 }
 
+type PageFontDomain struct {
+	Page            int   `json:"page"`
+	SimpleFontsOnly *bool `json:"simple_fonts_only"`
+}
+
 type Inspection struct {
-	Contract  string                 `json:"contract"`
-	Complete  bool                   `json:"complete"`
-	Source    document.PageSource    `json:"source"`
-	PageCount int                    `json:"page_count"`
-	Frames    []document.PageFrameV1 `json:"frames"`
+	ParserIdentity string                 `json:"parser_identity"`
+	FontDomains    []PageFontDomain       `json:"font_domains"`
+	Contract       string                 `json:"contract"`
+	Complete       bool                   `json:"complete"`
+	Source         document.PageSource    `json:"source"`
+	PageCount      int                    `json:"page_count"`
+	Frames         []document.PageFrameV1 `json:"frames"`
 }
 
 func verifySource(data []byte, source document.PageSource) error {
@@ -58,36 +67,42 @@ func verifySource(data []byte, source document.PageSource) error {
 
 // InspectSource is the compiled inspection child's entry point. Daemons use
 // Runtime.Inspect so PDF parsing and image decoding execute under a memory cap.
-func InspectSource(data []byte, source document.PageSource, mediaType string) ([]document.PageFrameV1, error) {
+func InspectSource(data []byte, source document.PageSource, mediaType string) (Inspection, error) {
+	result := Inspection{Contract: Protocol, Complete: true, Source: source, ParserIdentity: ParserIdentity}
 	if err := verifySource(data, source); err != nil {
-		return nil, err
+		return Inspection{}, err
 	}
 	switch mediaType {
 	case "application/pdf":
 		pages, err := formatdetect.ReadPDFPageGeometry(data, document.MaxDocumentPages)
 		if err != nil {
-			return nil, err
+			return Inspection{}, err
 		}
 		frames := make([]document.PageFrameV1, len(pages))
+		result.FontDomains = make([]PageFontDomain, len(pages))
 		for index, page := range pages {
+			result.FontDomains[index] = PageFontDomain{Page: index + 1, SimpleFontsOnly: new(page.SimpleFontsOnly)}
 			frames[index], err = document.NewPDFPageFrame(source, index+1, page.MediaBox, page.CropBox, page.Rotation)
 			if err != nil {
-				return nil, err
+				return Inspection{}, err
 			}
 		}
-		return frames, nil
+		result.Frames, result.PageCount = frames, len(frames)
+		return result, nil
 	case "image/png":
 		width, height, ppmX, ppmY, err := inspectPNG(data, true)
 		if err != nil {
-			return nil, err
+			return Inspection{}, err
 		}
 		frame, err := document.NewPNGPageFrame(source, width, height, ppmX, ppmY)
 		if err != nil {
-			return nil, err
+			return Inspection{}, err
 		}
-		return []document.PageFrameV1{frame}, nil
+		result.Frames, result.PageCount = []document.PageFrameV1{frame}, 1
+		result.FontDomains = []PageFontDomain{{Page: 1, SimpleFontsOnly: new(false)}}
+		return result, nil
 	default:
-		return nil, errors.New("page source media type is unsupported")
+		return Inspection{}, errors.New("page source media type is unsupported")
 	}
 }
 
@@ -166,9 +181,5 @@ func InspectInput(reader io.Reader, versionID, mediaType string) (Inspection, er
 	defer clear(data)
 	hash := sha256.Sum256(data)
 	source := document.PageSource{VersionID: versionID, SHA256: hex.EncodeToString(hash[:]), Size: int64(len(data))}
-	frames, err := InspectSource(data, source, mediaType)
-	if err != nil {
-		return Inspection{}, err
-	}
-	return Inspection{Contract: Protocol, Complete: true, Source: source, PageCount: len(frames), Frames: frames}, nil
+	return InspectSource(data, source, mediaType)
 }

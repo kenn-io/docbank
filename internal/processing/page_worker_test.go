@@ -28,7 +28,11 @@ func pageWorkerRuntime(t *testing.T) *pagerender.Runtime {
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
 		t.Skip("page runtime is Linux amd64 only")
 	}
-	renderer, err := exec.LookPath("pdftoppm")
+	renderer := os.Getenv("DOCBANK_TEST_PDFTOPPM")
+	var err error
+	if renderer == "" {
+		renderer, err = exec.LookPath("pdftoppm")
+	}
 	if err != nil {
 		t.Skip("Poppler unavailable")
 	}

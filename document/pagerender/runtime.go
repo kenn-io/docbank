@@ -122,7 +122,7 @@ func New(ctx context.Context, p Profile) (*Runtime, error) {
 		return line, nil
 	}
 	inspectorVersion, err := version(engine.inspector, inspectorMemoryBytes, "--version")
-	if err != nil || !strings.HasPrefix(inspectorVersion, Protocol+" ") {
+	if err != nil || !strings.HasPrefix(inspectorVersion, Protocol+" ") || !strings.HasSuffix(inspectorVersion, " "+ParserIdentity) {
 		return nil, ErrUnavailable
 	}
 	limiterVersion, err := version(engine.limiter, rendererMemoryBytes, "--version")
@@ -203,35 +203,51 @@ func (e *Runtime) command(ctx context.Context, pinned *providerutil.PinnedExecut
 	return stdout.Bytes(), stderr.Bytes(), nil
 }
 
-func (e *Runtime) Inspect(ctx context.Context, data []byte, source document.PageSource, mediaType string) ([]document.PageFrameV1, error) {
+func (e *Runtime) Inspect(ctx context.Context, data []byte, source document.PageSource, mediaType string) (Inspection, error) {
 	release, err := e.acquire(ctx)
 	if err != nil {
-		return nil, err
+		return Inspection{}, err
 	}
 	defer release()
 	if err := verifySource(data, source); err != nil {
-		return nil, err
+		return Inspection{}, err
 	}
 	if mediaType != "application/pdf" && mediaType != "image/png" {
-		return nil, ErrUnsupported
+		return Inspection{}, ErrUnsupported
 	}
 	out, diag, err := e.command(ctx, e.inspector, data, inspectorMemoryBytes, maxGeometryBytes, "--protocol", Protocol, "--version-id", source.VersionID, "--media-type", mediaType)
 	if err != nil {
-		return nil, err
+		return Inspection{}, err
 	}
 	if len(diag) != 0 {
-		return nil, ErrInvalidOutput
+		return Inspection{}, ErrInvalidOutput
 	}
 	value, err := canonical.Decode[Inspection](out)
-	if err != nil || value.Contract != Protocol || !value.Complete || value.Source != source || value.PageCount < 1 || value.PageCount > document.MaxDocumentPages || len(value.Frames) != value.PageCount {
-		return nil, ErrInvalidOutput
+	if err != nil {
+		return Inspection{}, ErrInvalidOutput
+	}
+	if err := validateInspection(value, source, mediaType); err != nil {
+		return Inspection{}, err
+	}
+	return value, nil
+}
+
+func validateInspection(value Inspection, source document.PageSource, mediaType string) error {
+	if value.Contract != Protocol || !value.Complete || value.ParserIdentity != ParserIdentity ||
+		value.Source != source || value.PageCount < 1 || value.PageCount > document.MaxDocumentPages ||
+		len(value.Frames) != value.PageCount || len(value.FontDomains) != value.PageCount {
+		return ErrInvalidOutput
 	}
 	for index, frame := range value.Frames {
-		if frame.Source != source || frame.Page != index+1 || document.ValidatePageFrameV1(frame) != nil || mediaType == "application/pdf" && frame.InputUnits != "point/10000" || mediaType == "image/png" && (frame.InputUnits != "pixel" || value.PageCount != 1) {
-			return nil, ErrInvalidOutput
+		domain := value.FontDomains[index]
+		if domain.Page != index+1 || domain.SimpleFontsOnly == nil ||
+			frame.Source != source || frame.Page != index+1 || document.ValidatePageFrameV1(frame) != nil ||
+			mediaType == "application/pdf" && frame.InputUnits != "point/10000" ||
+			mediaType == "image/png" && (frame.InputUnits != "pixel" || value.PageCount != 1 || *domain.SimpleFontsOnly) {
+			return ErrInvalidOutput
 		}
 	}
-	return value.Frames, nil
+	return nil
 }
 
 func (e *Runtime) pdfRecipe(dpi float64) document.PageRecipeV1 {

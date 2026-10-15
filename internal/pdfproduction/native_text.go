@@ -20,6 +20,7 @@ import (
 	"github.com/klippa-app/go-pdfium/requests"
 	"github.com/klippa-app/go-pdfium/responses"
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/pagerender"
 	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/canonical"
 )
@@ -44,13 +45,13 @@ type NativeTextPage struct {
 // InspectNativeText freezes and hashes source once, then inspects individual
 // characters. It deliberately does not use GetPageText: that API includes
 // generated and out-of-crop characters and obscures object visibility.
-func InspectNativeText(ctx context.Context, source Source, frames []document.PageFrameV1) ([]NativeTextPage, error) {
+func InspectNativeText(ctx context.Context, source Source, frames []document.PageFrameV1, pageRuntime *pagerender.Runtime) ([]NativeTextPage, error) {
 	// Retained observations have a separate document budget. A working page
 	// remains bounded by its own character limit before it joins this result.
-	return inspectNativeText(ctx, source, frames, 128<<20)
+	return inspectNativeText(ctx, source, frames, pageRuntime, 128<<20)
 }
 
-func inspectNativeText(ctx context.Context, source Source, frames []document.PageFrameV1, maxObservationBytes int64) (_ []NativeTextPage, resultErr error) {
+func inspectNativeText(ctx context.Context, source Source, frames []document.PageFrameV1, pageRuntime *pagerender.Runtime, maxObservationBytes int64) (_ []NativeTextPage, resultErr error) {
 	if len(frames) == 0 || len(frames) > maxPageCount {
 		return nil, errors.New("invalid native text page inventory")
 	}
@@ -75,6 +76,10 @@ func inspectNativeText(ctx context.Context, source Source, frames []document.Pag
 			return nil, errors.New("native text pages are not contiguous")
 		}
 	}
+	domains, err := nativeFontDomains(ctx, pageRuntime, staged, source, frames)
+	if err != nil {
+		return nil, err
+	}
 	for index, frame := range frames {
 		var observed NativeTextPage
 		err = e.withInstanceContext(ctx, func(pageCtx context.Context, instance pdfium.Pdfium) (operationErr error) {
@@ -90,7 +95,7 @@ func inspectNativeText(ctx context.Context, source Source, frames []document.Pag
 			if err != nil || count.PageCount != len(frames) {
 				return errors.New("native PDF page inventory mismatch")
 			}
-			observed, err = inspectLoadedNativePage(pageCtx, instance, doc.Document, index, frame, maxTextBytes)
+			observed, err = inspectLoadedNativePage(pageCtx, instance, doc.Document, index, frame, maxTextBytes, len(domains) != 0 && domains[index])
 			return err
 		})
 		if err != nil {
@@ -111,7 +116,7 @@ func inspectNativeText(ctx context.Context, source Source, frames []document.Pag
 	return result, nil
 }
 
-func inspectLoadedNativePage(ctx context.Context, instance pdfium.Pdfium, documentRef references.FPDF_DOCUMENT, index int, frame document.PageFrameV1, remaining int) (result NativeTextPage, resultErr error) {
+func inspectLoadedNativePage(ctx context.Context, instance pdfium.Pdfium, documentRef references.FPDF_DOCUMENT, index int, frame document.PageFrameV1, remaining int, simpleFonts bool) (result NativeTextPage, resultErr error) {
 	loaded, err := instance.FPDF_LoadPage(&requests.FPDF_LoadPage{Document: documentRef, Index: index})
 	if err != nil {
 		return result, fmt.Errorf("load native PDF page: %w", err)
@@ -124,7 +129,7 @@ func inspectLoadedNativePage(ctx context.Context, instance pdfium.Pdfium, docume
 	if err := checkNativePageFrame(instance, ref, frame); err != nil {
 		return result, err
 	}
-	return inspectNativePage(ctx, instance, documentRef, ref, frame, remaining)
+	return inspectNativePage(ctx, instance, documentRef, ref, frame, remaining, simpleFonts)
 }
 
 func checkNativePageFrame(instance pdfium.Pdfium, ref requests.Page, frame document.PageFrameV1) error {
@@ -179,7 +184,7 @@ type nativeGlyphObservation struct {
 
 type nativeObjectKey [10]uint32
 
-func inspectNativePage(ctx context.Context, instance pdfium.Pdfium, documentRef references.FPDF_DOCUMENT, page requests.Page, frame document.PageFrameV1, remaining int) (result NativeTextPage, resultErr error) {
+func inspectNativePage(ctx context.Context, instance pdfium.Pdfium, documentRef references.FPDF_DOCUMENT, page requests.Page, frame document.PageFrameV1, remaining int, simpleFonts bool) (result NativeTextPage, resultErr error) {
 	loaded, err := instance.FPDFText_LoadPage(&requests.FPDFText_LoadPage{Page: page})
 	if err != nil {
 		return result, fmt.Errorf("load native PDF text page: %w", err)
@@ -208,7 +213,7 @@ func inspectNativePage(ctx context.Context, instance pdfium.Pdfium, documentRef 
 		observed = append(observed, nativeGlyphObservation{NativeGlyph: glyph, object: object, objectKey: key})
 	}
 	var nonText [][4]int64
-	if err := reconcileNativeVisibility(ctx, instance, documentRef, page, frame, observed, &nonText); err != nil {
+	if err := reconcileNativeVisibility(ctx, instance, documentRef, page, frame, observed, &nonText, simpleFonts); err != nil {
 		return result, err
 	}
 	result.NonTextBounds = nonText
@@ -341,7 +346,7 @@ func nativeTextObjectKey(instance pdfium.Pdfium, object references.FPDF_PAGEOBJE
 // contributes pixels to the final rendered page. Removing one complete text
 // object preserves every later paint operation, so a covered or clipped glyph
 // produces no pixel delta and is retained only as an explicit gap.
-func reconcileNativeVisibility(ctx context.Context, instance pdfium.Pdfium, documentRef references.FPDF_DOCUMENT, page requests.Page, frame document.PageFrameV1, glyphs []nativeGlyphObservation, nonText *[][4]int64) error {
+func reconcileNativeVisibility(ctx context.Context, instance pdfium.Pdfium, documentRef references.FPDF_DOCUMENT, page requests.Page, frame document.PageFrameV1, glyphs []nativeGlyphObservation, nonText *[][4]int64, simpleFonts bool) error {
 	type objectGroup struct {
 		object  references.FPDF_PAGEOBJECT
 		indexes []int
@@ -408,6 +413,24 @@ func reconcileNativeVisibility(ctx context.Context, instance pdfium.Pdfium, docu
 		}
 		return false
 	})
+	proofs := make(map[nativeObjectKey]whitespaceProof)
+	if simpleFonts {
+		proof := newNativeFontProof(instance, documentRef)
+		for _, key := range keys {
+			group := groups[key]
+			hasWhitespace := slices.ContainsFunc(group.indexes, func(i int) bool {
+				return nativeWhitespaceText(glyphs[i].Text)
+			})
+			if !hasWhitespace {
+				continue
+			}
+			state, err := proof.check(ctx, group.object)
+			if err != nil {
+				return err
+			}
+			proofs[key] = state
+		}
+	}
 	baseline, baselineCleanup, err := renderNativePage(instance, documentRef, page, frame)
 	if err != nil {
 		return err
@@ -492,6 +515,18 @@ func reconcileNativeVisibility(ctx context.Context, instance pdfium.Pdfium, docu
 				return err
 			}
 			whitespace := nativeWhitespaceText(glyphs[index].Text)
+			if whitespace {
+				switch proofs[key] {
+				case whitespaceUnsupported:
+					// Retain the pixel decision when no font proof applies.
+				case whitespaceBlank:
+					continue
+				case whitespaceUnproven:
+					glyphs[index].GapReason = "unproven_whitespace"
+					continue
+				}
+			}
+
 			padding := int64(1)
 			counts := ambiguity
 			if whitespace {

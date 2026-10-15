@@ -630,6 +630,10 @@ func validatePDFObjectGraph(data []byte, limits PDFLimits) (*model.Context, erro
 		}
 		return nil, fmt.Errorf("validate PDF object graph: %w", err)
 	}
+	return checkPDFReferences(context)
+}
+
+func checkPDFReferences(context *model.Context) (*model.Context, error) {
 	if context.Encrypt != nil {
 		return nil, ErrPDFEncrypted
 	}
