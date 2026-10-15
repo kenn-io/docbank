@@ -69,9 +69,12 @@ describe("collection quality receipts", () => {
       if (mutation === "identity") value.collection.id = "22222222-2222-4222-8222-222222222222";
       if (mutation === "profile") value.collection.coverage.profile = "different";
       if (mutation === "counts") Object.assign(value.collection.coverage, { counts: null });
-      if (mutation === "sum") value.collection.coverage.counts.complete = 4;
+      if (mutation === "sum") value.collection.coverage.counts.complete = 2;
       if (mutation === "dimension") value.dimensions[0].field = "invented";
-      if (mutation === "buckets") value.dimensions[0].values[0].count = -1;
+      if (mutation === "buckets") {
+        value.dimensions[0].values[0].count = -1;
+        value.dimensions[0].values.push({ value: "html", count: 2 });
+      }
       if (mutation === "fingerprint") value.source_fingerprint = "not-a-digest";
       vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(value)));
       await expect(
