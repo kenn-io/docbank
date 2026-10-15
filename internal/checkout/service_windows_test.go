@@ -45,6 +45,7 @@ func TestCheckoutRecoveryRetriesFilesystemAccessFailures(t *testing.T) {
 			entries, err := s.Store.PhotoCheckoutEntries(ctx, checkout.ID)
 			require.NoError(t, err)
 			// Model a crash after install but before its publication record is committed.
+			require.NoError(t, s.Store.AdvanceStorageOperation(ctx, op.ID, entries[0].FileID, 0, 0, 0, "{}"))
 			require.NoError(t, root.MkdirAll(filepath.Dir(filepath.FromSlash(entries[0].Path)), 0o700))
 			require.NoError(t, root.WriteFile(filepath.FromSlash(entries[0].Path), []byte("verified bytes"), 0o600))
 			if test.published {
@@ -104,8 +105,10 @@ func TestCheckoutRecoveryRetriesFilesystemAccessFailures(t *testing.T) {
 			if test.cancel {
 				require.NoError(t, s.Store.RequestStorageOperationCancel(ctx, op.ID))
 			}
-			require.NoError(t, windows.CloseHandle(handle))
-			handle = windows.InvalidHandle
+			if !test.cancel {
+				require.NoError(t, windows.CloseHandle(handle))
+				handle = windows.InvalidHandle
+			}
 			require.Eventually(t, func() bool {
 				operation, err := s.Store.StorageOperation(ctx, op.ID)
 				return err == nil && operation.FinishedAt != nil
@@ -117,14 +120,26 @@ func TestCheckoutRecoveryRetriesFilesystemAccessFailures(t *testing.T) {
 				wantState = "cancelled"
 			}
 			require.Equal(t, wantState, status.Checkout.State)
-			require.Equal(t, int64(1), status.PublishedFiles)
-			if test.stage {
+			if !test.cancel || test.published {
+				require.Equal(t, int64(1), status.PublishedFiles)
+			} else {
+				require.Zero(t, status.PublishedFiles)
+			}
+			if test.stage && !test.cancel {
 				_, err := os.Stat(lockedPath)
 				require.ErrorIs(t, err, os.ErrNotExist)
 			}
 			held, err = s.Store.PruneContentVersions(ctx, node.ID, updated.Revision, selector, true)
 			require.NoError(t, err)
 			require.Len(t, held.DependencyRetained, 1)
+			if test.cancel {
+				retired, err := s.Store.RetirePhotoCheckout(ctx, checkout.ID)
+				require.NoError(t, err)
+				require.NotNil(t, retired.RetiredAt)
+				pruned, err := s.Store.PruneContentVersions(ctx, node.ID, updated.Revision, selector, true)
+				require.NoError(t, err)
+				require.Equal(t, 1, pruned.DeletedVersions)
+			}
 		})
 	}
 }

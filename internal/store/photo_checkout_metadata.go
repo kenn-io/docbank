@@ -9,6 +9,7 @@ import (
 const photoCheckoutsStorageSchemaVersion = 36
 
 type metadataPhotoCheckout struct {
+	RetiredAt         *string                `json:"retired_at,omitempty" db:"retired_at"`
 	RetentionReleased bool                   `json:"retention_released" db:"retention_released"`
 	Type              string                 `json:"type"`
 	ID                string                 `json:"checkout_id" db:"checkout_id"`
@@ -46,12 +47,20 @@ func validatePhotoCheckoutMetadata(v metadataPhotoCheckout) error {
 	if err := ValidatePhotoCheckoutSelection(v.Selection); err != nil {
 		return err
 	}
+	if v.RetiredAt != nil {
+		if !v.RetentionReleased {
+			return ErrInvalidPhotoCheckout
+		}
+		if err := validateMetadataTime("photo checkout retired_at", *v.RetiredAt); err != nil {
+			return err
+		}
+	}
 	return validateMetadataTime("photo checkout created_at", v.CreatedAt)
 }
 
 func validatePhotoCheckoutReferences(ctx context.Context, q metadataQuerier) error {
 	var invalid int
-	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_checkout_entries e LEFT JOIN content_versions v ON v.version_id=e.version_id LEFT JOIN photo_files f ON f.file_id=e.file_id LEFT JOIN photo_assets a ON a.asset_id=e.asset_id LEFT JOIN photo_checkouts c ON c.checkout_id=e.checkout_id WHERE c.checkout_id IS NULL OR (e.sidecar_of_file_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM photo_checkout_entries target WHERE target.checkout_id=e.checkout_id AND target.file_id=e.sidecar_of_file_id AND target.asset_id=e.asset_id AND target.sidecar_of_file_id IS NULL AND target.file_id<>e.file_id)) OR ((c.retention_released=0 OR e.published=1) AND (v.version_id IS NULL OR f.file_id IS NULL OR a.asset_id IS NULL OR v.node_id<>f.node_id OR v.blob_hash<>e.blob_hash OR v.size<>e.size))`).Scan(&invalid); err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_checkout_entries e LEFT JOIN content_versions v ON v.version_id=e.version_id LEFT JOIN photo_files f ON f.file_id=e.file_id LEFT JOIN photo_assets a ON a.asset_id=e.asset_id LEFT JOIN photo_checkouts c ON c.checkout_id=e.checkout_id WHERE c.checkout_id IS NULL OR (e.sidecar_of_file_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM photo_checkout_entries target WHERE target.checkout_id=e.checkout_id AND target.file_id=e.sidecar_of_file_id AND target.asset_id=e.asset_id AND target.sidecar_of_file_id IS NULL AND target.file_id<>e.file_id)) OR ((`+photoCheckoutHoldPredicate+`) AND (v.version_id IS NULL OR f.file_id IS NULL OR a.asset_id IS NULL OR v.node_id<>f.node_id OR v.blob_hash<>e.blob_hash OR v.size<>e.size))`).Scan(&invalid); err != nil {
 		return err
 	}
 	if invalid > 0 {
@@ -61,7 +70,7 @@ func validatePhotoCheckoutReferences(ctx context.Context, q metadataQuerier) err
 }
 
 func exportPhotoCheckoutMetadata(ctx context.Context, q metadataQuerier, write metadataWrite) error {
-	rows, err := q.QueryContext(ctx, `SELECT c.checkout_id,c.selection_json,c.byte_limit,c.created_at,c.retention_released OR COALESCE(o.state,c.state) IN ('queued','running','paused') FROM photo_checkouts c LEFT JOIN storage_operations o ON o.operation_id=c.operation_id ORDER BY c.checkout_id`)
+	rows, err := q.QueryContext(ctx, `SELECT c.checkout_id,c.selection_json,c.byte_limit,c.created_at,c.retention_released OR COALESCE(o.state,c.state) IN ('queued','running','paused'),c.retired_at FROM photo_checkouts c LEFT JOIN storage_operations o ON o.operation_id=c.operation_id ORDER BY c.checkout_id`)
 	if err != nil {
 		return err
 	}
@@ -69,7 +78,7 @@ func exportPhotoCheckoutMetadata(ctx context.Context, q metadataQuerier, write m
 	for rows.Next() {
 		record := metadataPhotoCheckout{Type: "photo_checkout"}
 		var selection string
-		if err := rows.Scan(&record.ID, &selection, &record.ByteLimit, &record.CreatedAt, &record.RetentionReleased); err != nil {
+		if err := rows.Scan(&record.ID, &selection, &record.ByteLimit, &record.CreatedAt, &record.RetentionReleased, &record.RetiredAt); err != nil {
 			return err
 		}
 		if err := json.Unmarshal([]byte(selection), &record.Selection); err != nil {

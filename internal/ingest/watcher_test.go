@@ -574,6 +574,62 @@ func TestWatcherRejectsReservedCheckoutDestinations(t *testing.T) {
 				require.ErrorContains(t, err, "overlaps reserved checkout")
 				require.ErrorContains(t, err, checkout.ID)
 			}
+			require.NoError(t, os.WriteFile(filepath.Join(destination, "edited.jpg"), []byte("edits"), 0o600))
+			_, err = ing.Store.RetirePhotoCheckout(ctx, checkout.ID)
+			require.NoError(t, err)
+			root, err = watcher.openRoot(ctx)
+			require.NoError(t, err)
+			require.NoError(t, root.Close())
 		})
 	}
+}
+
+func TestWatchedFileReadRejectsConcurrentPathReplacement(t *testing.T) {
+	ing := newTestIngester(t)
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "document.bin")
+	replacementPath := filepath.Join(dir, "replacement.tmp")
+	content := make([]byte, progressByteInterval*2)
+	require.NoError(t, os.WriteFile(filePath, content, 0o600))
+	settled, err := observeLocalFileFingerprint(filePath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(replacementPath, content, 0o600))
+	require.NoError(t, os.Chtimes(replacementPath,
+		time.Unix(0, settled.modTime), time.Unix(0, settled.modTime)))
+
+	replaced := false
+	progress := newProgressTracker(func(event ProgressEvent) {
+		if replaced || event.BytesRead < progressByteInterval {
+			return
+		}
+		replaced = true
+		require.NoError(t, os.Remove(filePath))
+		require.NoError(t, os.Rename(replacementPath, filePath))
+	})
+	_, err = ing.readLocalFile(
+		context.Background(), filePath, filePath, progress, &settled,
+	)
+	require.ErrorIs(t, err, ErrSourceChanged)
+	assert.True(t, replaced)
+}
+
+func TestWatchBindingOverlapHonorsDeadline(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+	defer cancel()
+	_, _, err := WatchBindingOverlapContext(ctx, []config.WatchConfig{{Source: t.TempDir()}}, config.StoreBindingConfig{Kind: "filesystem", Path: t.TempDir()})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+func TestPathProtectionRejectsChangedRoots(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "root")
+	require.NoError(t, os.Mkdir(path, 0o700))
+	proof, err := CapturePathProtection([]string{path})
+	require.NoError(t, err)
+	require.NoError(t, proof.Check([]string{path}))
+	require.ErrorContains(t, proof.Check([]string{path, t.TempDir()}), "protected roots changed")
+	require.NoError(t, os.Rename(path, path+"-previous"))
+	require.NoError(t, os.Mkdir(path, 0o700))
+	require.ErrorContains(t, proof.Check([]string{path}), "changed during validation")
 }

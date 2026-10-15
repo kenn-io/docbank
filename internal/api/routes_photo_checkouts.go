@@ -81,4 +81,15 @@ func registerPhotoCheckoutRoutes(api huma.API, d Deps, g *gate) {
 		}
 		return &struct{ Body PhotoCheckoutStatus }{status}, nil
 	})
+	huma.Register(api, huma.Operation{OperationID: "retirePhotoCheckout", Method: http.MethodPost, Path: "/api/v1/photos/checkouts/{id}/retire", Summary: "Release photo checkout holds and destination"}, func(ctx context.Context, in *struct {
+		ID string `path:"id" format:"uuid"`
+	}) (*struct{ Body store.PhotoCheckout }, error) {
+		var out store.PhotoCheckout
+		err := g.MutateContext(ctx, func() error { var err error; out, err = d.Store.RetirePhotoCheckout(ctx, in.ID); return err })
+		if err != nil {
+			return nil, FromStoreError(err)
+		}
+		return &struct{ Body store.PhotoCheckout }{out}, nil
+	})
+
 }

@@ -97,3 +97,24 @@ func (c *Connection) PhotoCheckoutStatus(ctx context.Context, id string) (api.Ph
 	}
 	return *out, nil
 }
+
+func (c *Connection) RetirePhotoCheckout(ctx context.Context, id string) (store.PhotoCheckout, error) {
+	parsed, err := uuid.Parse(id)
+	if err != nil {
+		return store.PhotoCheckout{}, fmt.Errorf("parsing checkout ID: %w", err)
+	}
+	out, err := c.API().RetirePhotoCheckout(ctx, &apiclient.RetirePhotoCheckoutRequestOptions{PathParams: &apiclient.RetirePhotoCheckoutPath{ID: parsed}})
+	if err != nil {
+		return store.PhotoCheckout{}, err
+	}
+	if out == nil {
+		return store.PhotoCheckout{}, errors.New("missing photo checkout retirement response")
+	}
+	if err := validatePhotoCheckoutResponse(*out, parsed.String()); err != nil {
+		return store.PhotoCheckout{}, err
+	}
+	if out.RetiredAt == nil || !out.RetentionReleased {
+		return store.PhotoCheckout{}, errors.New("photo checkout retirement did not release retention")
+	}
+	return *out, nil
+}

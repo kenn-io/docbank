@@ -71,8 +71,13 @@ func (s Service) Prepare(ctx context.Context, selection store.PhotoCheckoutSelec
 	if err != nil {
 		return checkout, operation, nil, fmt.Errorf("%w: opening destination: %w", store.ErrInvalidPhotoCheckout, err)
 	}
+	proof, err := s.checkDestination(ctx, root, canonical, "")
+	if err != nil {
+		_ = root.Close()
+		return checkout, operation, nil, err
+	}
 	err = s.mutate(ctx, func() error {
-		if err := s.validateDestination(ctx, root, canonical, ""); err != nil {
+		if err := s.recheckDestination(ctx, root, canonical, "", proof); err != nil {
 			return err
 		}
 		var err error
@@ -86,7 +91,58 @@ func (s Service) Prepare(ctx context.Context, selection store.PhotoCheckoutSelec
 	return checkout, operation, root, nil
 }
 
-func (s Service) validateDestination(ctx context.Context, root *os.Root, destination, excludedID string) error {
+func (s Service) protectedRoots(ctx context.Context, excludedID string) ([]string, error) {
+	roots := []string{s.VaultRoot}
+	for _, b := range s.Config.StoreBindings {
+		if b.Path != "" {
+			roots = append(roots, b.Path)
+		}
+	}
+	for _, w := range s.Config.Watches {
+		roots = append(roots, w.Source)
+	}
+	checkouts, err := s.Store.ListPhotoCheckouts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range checkouts {
+		if c.ID != excludedID && c.Destination != "" && !c.RetentionReleased {
+			roots = append(roots, c.Destination)
+		}
+	}
+	return roots, nil
+}
+
+func (s Service) checkDestination(ctx context.Context, root *os.Root, destination, excludedID string) (*ingest.PathProtection, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	paths, err := s.protectedRoots(ctx, excludedID)
+	if err != nil {
+		return nil, err
+	}
+	paths = append(paths, destination)
+	proof, err := ingest.CapturePathProtection(paths)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.validateDestination(ctx, root, destination, excludedID); err != nil {
+		return nil, err
+	}
+	return proof, nil
+}
+
+func (s Service) recheckDestination(ctx context.Context, root *os.Root, destination, excludedID string, proof *ingest.PathProtection) error {
+	paths, err := s.protectedRoots(ctx, excludedID)
+	if err != nil {
+		return err
+	}
+	if err := proof.Check(append(paths, destination)); err != nil {
+		return err
+	}
+	return checkEmptyDestination(root, destination)
+}
+
+func checkEmptyDestination(root *os.Root, destination string) error {
 	dir, err := root.Open(".")
 	if err != nil {
 		return err
@@ -99,23 +155,27 @@ func (s Service) validateDestination(ctx context.Context, root *os.Root, destina
 	if closeErr != nil {
 		return closeErr
 	}
-	roots := []string{s.VaultRoot}
-	for _, b := range s.Config.StoreBindings {
-		if b.Path != "" {
-			roots = append(roots, b.Path)
-		}
-	}
-	for _, w := range s.Config.Watches {
-		roots = append(roots, w.Source)
-	}
-	checkouts, err := s.Store.ListPhotoCheckouts(ctx)
+	held, err := root.Stat(".")
 	if err != nil {
 		return err
 	}
-	for _, c := range checkouts {
-		if c.ID != excludedID && c.Destination != "" && !c.RetentionReleased {
-			roots = append(roots, c.Destination)
-		}
+	named, err := os.Stat(destination)
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(held, named) {
+		return fmt.Errorf("%w: destination changed during validation", store.ErrInvalidPhotoCheckout)
+	}
+	return nil
+}
+
+func (s Service) validateDestination(ctx context.Context, root *os.Root, destination, excludedID string) error {
+	if err := checkEmptyDestination(root, destination); err != nil {
+		return err
+	}
+	roots, err := s.protectedRoots(ctx, excludedID)
+	if err != nil {
+		return err
 	}
 	for _, other := range roots {
 		if other == "" {
@@ -138,19 +198,7 @@ func (s Service) validateDestination(ctx context.Context, root *os.Root, destina
 			return err
 		}
 	}
-	// Reject a replacement between opening the handle and checking its pathname.
-	held, err := root.Stat(".")
-	if err != nil {
-		return err
-	}
-	named, err := os.Stat(destination)
-	if err != nil {
-		return err
-	}
-	if !os.SameFile(held, named) {
-		return fmt.Errorf("%w: destination changed during validation", store.ErrInvalidPhotoCheckout)
-	}
-	return nil
+	return checkEmptyDestination(root, destination)
 }
 
 func (s Service) Start(supervisor *jobs.Supervisor, c store.PhotoCheckout, root *os.Root) error {
@@ -234,6 +282,16 @@ func (s Service) reconcile(ctx context.Context, c store.PhotoCheckout) error {
 		if s.ActivityEnd != nil {
 			defer s.ActivityEnd()
 		}
+	}
+	operation, err := s.Store.StorageOperation(ctx, c.OperationID)
+	if err != nil {
+		return err
+	}
+	if operation.CancelRequested {
+		if _, err := s.Store.FinalizeLocalOperation(ctx, c.OperationID); err != nil {
+			return err
+		}
+		return s.finish(ctx, c, store.StorageOperationCancelled, "checkout recovery cancelled; uncertain copies retain their source holds until retirement")
 	}
 	failure := "checkout creation was interrupted; partial copies are retained; unpublished source holds and destination reservation are released"
 	canonical, fsErr := filepath.EvalSymlinks(c.Destination)
@@ -390,7 +448,11 @@ func (s Service) Run(ctx context.Context, c store.PhotoCheckout, root *os.Root) 
 		}
 		defer func() { _ = root.Close() }()
 		if !started {
-			if err := s.mutate(ctx, func() error { return s.validateDestination(ctx, root, c.Destination, c.ID) }); err != nil {
+			proof, err := s.checkDestination(ctx, root, c.Destination, c.ID)
+			if err == nil {
+				err = s.mutate(ctx, func() error { return s.recheckDestination(ctx, root, c.Destination, c.ID, proof) })
+			}
+			if err != nil {
 				return errors.Join(err, s.finish(ctx, c, store.StorageOperationFailed, err.Error()))
 			}
 		}

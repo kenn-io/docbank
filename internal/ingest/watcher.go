@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -370,7 +371,7 @@ func (w *Watcher) openRoot(ctx context.Context) (*watchRoot, error) {
 		return nil, err
 	}
 	for _, checkout := range checkouts {
-		if checkout.Destination == "" {
+		if checkout.Destination == "" || checkout.RetiredAt != nil {
 			continue
 		}
 		_, overlaps, err := WatchBindingOverlapContext(ctx, []config.WatchConfig{w.config}, config.StoreBindingConfig{Kind: "filesystem", Path: checkout.Destination})
@@ -379,8 +380,18 @@ func (w *Watcher) openRoot(ctx context.Context) (*watchRoot, error) {
 		}
 		if overlaps {
 			if checkout.RetentionReleased {
-				entries, err := os.ReadDir(checkout.Destination)
-				if errors.Is(err, os.ErrNotExist) || err == nil && len(entries) == 0 {
+				folder, err := os.Open(checkout.Destination)
+				if errors.Is(err, os.ErrNotExist) {
+					continue
+				}
+				if err == nil {
+					_, readErr := folder.Readdirnames(1)
+					err = readErr
+					if closeErr := folder.Close(); closeErr != nil {
+						err = closeErr
+					}
+				}
+				if errors.Is(err, io.EOF) {
 					continue
 				}
 				if err != nil {
@@ -684,6 +695,8 @@ func WatchBindingOverlap(
 }
 
 func WatchBindingOverlapContext(ctx context.Context, watches []config.WatchConfig, binding config.StoreBindingConfig) (string, bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 	if err := ctx.Err(); err != nil {
 		return "", false, err
 	}

@@ -42,3 +42,21 @@ func TestNetworkHostGuardPrecedesAuthentication(t *testing.T) {
 		})
 	}
 }
+
+func TestNetworkServerPathRoutesIgnoreForwardingHeaders(t *testing.T) {
+	t.Parallel()
+	handler := loopbackMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	for _, path := range []string{"/api/v1/ingest", "/api/v1/ingest/stream", "/api/v1/ingest/preflight", "/api/v1/packages/preflights", "/api/v1/photos/imports"} {
+		r := httptest.NewRequest(http.MethodPost, "http://docbank:8485"+path, nil)
+		r.RemoteAddr = "192.0.2.20:1234"
+		r.Header.Set("X-Forwarded-For", "127.0.0.1")
+		r.Header.Set("Forwarded", "for=127.0.0.1")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		assert.Equal(t, 403, w.Code, path)
+		r.RemoteAddr = "127.0.0.1:1234"
+		w = httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		assert.Equal(t, 204, w.Code, path)
+	}
+}

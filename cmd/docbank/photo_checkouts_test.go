@@ -22,6 +22,11 @@ func TestPhotoCheckoutCLICreateEstimateListStatusAndYears(t *testing.T) {
 	created := api.PhotoCheckoutCreateResult{Checkout: checkout, Operation: api.StorageOperation{ID: operationID, Kind: "photo_checkout", State: "queued"}}
 	listed := []store.PhotoCheckout{checkout}
 	status := api.PhotoCheckoutStatus{Checkout: checkout, Files: 7, Bytes: 101, PublishedFiles: 3, PublishedBytes: 42}
+	retired := checkout
+	retired.State = "completed"
+	retired.RetentionReleased = true
+	retiredAt := "2026-01-01T00:00:00Z"
+	retired.RetiredAt = &retiredAt
 	estimate := store.PhotoCheckoutEstimate{Assets: 2, Files: 3, Bytes: 42}
 	inputs := make(chan api.PhotoCheckoutCreateRequest, 1)
 	estimates := make(chan store.PhotoCheckoutSelection, 1)
@@ -38,6 +43,9 @@ func TestPhotoCheckoutCLICreateEstimateListStatusAndYears(t *testing.T) {
 			} else {
 				assert.NoError(t, json.MarshalWrite(w, api.PhotoCheckoutList{Items: listed}))
 			}
+		case "/api/v1/photos/checkouts/" + checkoutID + "/retire":
+			assert.Equal(t, http.MethodPost, r.Method)
+			assert.NoError(t, json.MarshalWrite(w, retired))
 		case "/api/v1/photos/checkouts/" + checkoutID:
 			assert.NoError(t, json.MarshalWrite(w, status))
 		case "/api/v1/photos/checkouts/estimate":
@@ -69,6 +77,11 @@ func TestPhotoCheckoutCLICreateEstimateListStatusAndYears(t *testing.T) {
 	var statusOutput api.PhotoCheckoutStatus
 	require.NoError(t, json.Unmarshal([]byte(out), &statusOutput))
 	require.Equal(t, status, statusOutput)
+	out, err = runCLI(t, "photos", "checkout", "retire", checkoutID)
+	require.NoError(t, err, out)
+	var retireOutput store.PhotoCheckout
+	require.NoError(t, json.Unmarshal([]byte(out), &retireOutput))
+	require.Equal(t, retired, retireOutput)
 	for _, tc := range []struct {
 		years     string
 		expected  *store.PhotoCheckoutYears

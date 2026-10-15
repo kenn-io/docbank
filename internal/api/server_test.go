@@ -759,3 +759,15 @@ func TestValidationErrorEnvelope(t *testing.T) {
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
 	assert.Contains(t, body, `"code":"validation"`, body)
 }
+
+func TestKeylessConfigStillRequiresAuth(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	resp, _ := get(t, ts, "/api/v1/nodes/1", map[string]string{"X-Api-Key": ""})
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}
+
+// TestNewServerRefusesEmptyKey pins the defense-in-depth invariant behind
+// TestKeylessConfigStillRequiresAuth: even if some future caller reproduced
+// the old bug and built Deps with an empty key, NewServer itself refuses to
+// construct rather than silently falling back to unauthenticated.

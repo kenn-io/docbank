@@ -2745,7 +2745,8 @@ CREATE TABLE IF NOT EXISTS photo_checkouts (
     operation_id TEXT,
     state TEXT NOT NULL DEFAULT 'unbound',
     error TEXT NOT NULL DEFAULT '',
-    retention_released INTEGER NOT NULL DEFAULT 0
+    retention_released INTEGER NOT NULL DEFAULT 0,
+    retired_at TEXT
 );
 CREATE TABLE IF NOT EXISTS photo_checkout_entries (
     checkout_id TEXT NOT NULL REFERENCES photo_checkouts(checkout_id),

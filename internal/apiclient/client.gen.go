@@ -9767,6 +9767,52 @@ func (c *Client) UndoPhotoFaceDecision(ctx context.Context, options *UndoPhotoFa
 	return responseParser(ctx, resp)
 }
 
+// RetirePhotoCheckout Release photo checkout holds and destination
+func (c *Client) RetirePhotoCheckout(ctx context.Context, options *RetirePhotoCheckoutRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RetirePhotoCheckoutResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/photos/checkouts/{id}/retire",
+		Method:     "POST",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RetirePhotoCheckoutResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RetirePhotoCheckoutResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RetirePhotoCheckoutResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[RetirePhotoCheckoutErrorResponse](resp, "RetirePhotoCheckoutErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/checkouts/{id}/retire")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // GetPhotoHiddenState Read hidden photos configuration and current unlock expiry
 func (c *Client) GetPhotoHiddenState(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetPhotoHiddenStateResponse, error) {
 	var err error
@@ -20845,6 +20891,37 @@ func (o *UndoPhotoFaceDecisionRequestOptions) GetHeader() (map[string]string, er
 	return nil, nil
 }
 
+// RetirePhotoCheckoutRequestOptions is the options needed to make a request to RetirePhotoCheckout.
+type RetirePhotoCheckoutRequestOptions struct {
+	PathParams *RetirePhotoCheckoutPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RetirePhotoCheckoutRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *RetirePhotoCheckoutRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RetirePhotoCheckoutRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *RetirePhotoCheckoutRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ChangePhotoHiddenRequestOptions is the options needed to make a request to ChangePhotoHidden.
 type ChangePhotoHiddenRequestOptions struct {
 	Body *ChangePhotoHiddenBody
@@ -24477,6 +24554,10 @@ type UndoPhotoFaceDecisionPath struct {
 	ReceiptID uuid.UUID `json:"receipt_id"`
 }
 
+type RetirePhotoCheckoutPath struct {
+	ID uuid.UUID `json:"id"`
+}
+
 type GetPhotoAssetByNodePath struct {
 	NodeID int64 `json:"node_id"`
 }
@@ -26188,6 +26269,10 @@ type UndoPhotoAuthoredErrorResponse = Error
 type UndoPhotoFaceDecisionResponse = api.PhotoFaceDecisionResult
 
 type UndoPhotoFaceDecisionErrorResponse = Error
+
+type RetirePhotoCheckoutResponse = store.PhotoCheckout
+
+type RetirePhotoCheckoutErrorResponse = Error
 
 type GetPhotoHiddenStateResponse = store.PhotoHiddenState
 

@@ -156,6 +156,7 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 			require.Len(t, entries, 1)
 			require.NoError(t, s.Store.PublishPhotoCheckoutEntry(t.Context(), entries[0], func() (bool, error) { return true, nil }))
 			require.NoError(t, s.Store.ObservePhotoCheckout(t.Context(), c.ID, op.ID, []string{entries[0].FileID}))
+			require.NoError(t, s.Store.AdvanceStorageOperation(t.Context(), op.ID, entries[0].FileID, 1, 1, entries[0].Size, "{}"))
 			if replacement != "edited published copy" {
 				require.NoError(t, os.Remove(c.Destination))
 			}
@@ -228,6 +229,15 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 				require.Zero(t, finished.CompletedObjects)
 				require.Zero(t, finished.CopiedObjects)
 				require.Zero(t, finished.CopiedBytes)
+				node, err := s.Store.NodeByID(t.Context(), a.Files[0].NodeID)
+				require.NoError(t, err)
+				hash, size, err := s.Blobs.Write(strings.NewReader("replacement"))
+				require.NoError(t, err)
+				updated, _, err := s.Store.ReplaceContent(t.Context(), node.ID, node.Revision, hash, size, "image/jpeg")
+				require.NoError(t, err)
+				pruned, err := s.Store.PruneContentVersions(t.Context(), node.ID, updated.Revision, store.VersionPruneSelector{VersionIDs: []string{entries[0].VersionID}}, true)
+				require.NoError(t, err)
+				require.Equal(t, 1, pruned.DeletedVersions)
 			}
 			observed, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
 			require.NoError(t, err)
@@ -696,4 +706,41 @@ func TestCheckoutRecoversInstalledCopyWhenPublicationRecordFails(t *testing.T) {
 			require.Len(t, held.DependencyRetained, 1)
 		})
 	}
+}
+
+func TestRetireCheckoutPreservesEditedCopies(t *testing.T) {
+	t.Parallel()
+	s := checkoutService(t)
+	a := checkoutPhoto(t, s, "photo.jpg", "source")
+	c, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, t.TempDir(), 0)
+	require.NoError(t, err)
+	require.NoError(t, s.Run(t.Context(), c, root))
+	entries, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
+	require.NoError(t, err)
+	name := filepath.FromSlash(entries[0].Path)
+	require.NoError(t, root.WriteFile(name, []byte("user edits"), 0o600))
+	_, err = s.Store.RetirePhotoCheckout(t.Context(), c.ID)
+	require.NoError(t, err)
+	contents, err := root.ReadFile(name)
+	require.NoError(t, err)
+	require.Equal(t, "user edits", string(contents))
+	require.NoError(t, root.Close())
+}
+
+func TestCheckoutRechecksProtectedRootSnapshot(t *testing.T) {
+	t.Parallel()
+	s := checkoutService(t)
+	a := checkoutPhoto(t, s, "photo.jpg", "source")
+	selection := store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}
+	other := t.TempDir()
+	s.Mutate = func(ctx context.Context, fn func() error) error {
+		_, _, err := s.Store.CreatePhotoCheckout(ctx, selection, other, 0)
+		if err != nil {
+			return err
+		}
+		return fn()
+	}
+	_, _, root, err := s.Prepare(t.Context(), selection, t.TempDir(), 0)
+	require.ErrorContains(t, err, "protected roots changed")
+	require.Nil(t, root)
 }

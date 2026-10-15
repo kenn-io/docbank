@@ -1152,3 +1152,84 @@ func TestRetainMediaAuthorityVersionsBatchesCandidateBindings(t *testing.T) {
 		})
 	}
 }
+
+func TestVersionPruneBlobStatsBatchesCandidateHashes(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	tx, err := s.db.BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback() })
+	hashes := make([]string, 501)
+	for index := range hashes {
+		hashes[index] = fmt.Sprintf("%064x", index+1)
+	}
+	stats, err := versionPruneBlobStatsTx(tx, hashes)
+	require.NoError(t, err)
+	assert.Empty(t, stats)
+}
+
+func TestPruneContentVersionsRetainsDependenciesAndCheckpointsAllPrior(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	created, err := s.CreateFile(ctx, s.RootID(), "reverted.txt", fakeHash("d4"), 40, "text/plain")
+	require.NoError(t, err)
+	replaced, replacement, err := s.ReplaceContent(
+		ctx, created.ID, created.Revision, fakeHash("e5"), 50, "text/markdown",
+	)
+	require.NoError(t, err)
+	reverted, revertVersion, _, err := s.RevertContent(
+		ctx, created.ID, replaced.Revision, created.CurrentVersionID,
+	)
+	require.NoError(t, err)
+
+	protected, err := s.PruneContentVersions(ctx, created.ID, reverted.Revision,
+		VersionPruneSelector{VersionIDs: []string{created.CurrentVersionID}}, false)
+	require.NoError(t, err)
+	assert.Empty(t, protected.Candidates)
+	require.Len(t, protected.DependencyRetained, 1)
+	assert.Equal(t, created.CurrentVersionID, protected.DependencyRetained[0].ID)
+	unchanged, err := s.PruneContentVersions(ctx, created.ID, reverted.Revision,
+		VersionPruneSelector{VersionIDs: []string{created.CurrentVersionID}}, true)
+	require.NoError(t, err)
+	assert.False(t, unchanged.Changed)
+	assert.Equal(t, reverted.Revision, unchanged.Node.Revision)
+
+	preview, err := s.PruneContentVersions(ctx, created.ID, reverted.Revision,
+		VersionPruneSelector{AllPrior: true}, false)
+	require.NoError(t, err)
+	assert.True(t, preview.CheckpointRequired)
+	assert.Len(t, preview.Candidates, 3)
+	assert.Equal(t, int64(130), preview.LogicalBytes)
+	assert.Equal(t, 2, preview.UniqueBlobs)
+	assert.Equal(t, 1, preview.SharedBlobs,
+		"the checkpoint keeps the current/reverted blob reachable")
+	assert.Equal(t, 1, preview.ReleasableBlobs)
+	assert.Equal(t, int64(50), preview.LooseBytesPendingGC)
+
+	receipt, err := s.PruneContentVersions(ctx, created.ID, reverted.Revision,
+		VersionPruneSelector{AllPrior: true}, true)
+	require.NoError(t, err)
+	assert.True(t, receipt.Changed)
+	assert.Equal(t, 3, receipt.DeletedVersions)
+	require.NotNil(t, receipt.Checkpoint)
+	assert.Equal(t, "content_replace", receipt.Checkpoint.TransitionKind)
+	assert.Nil(t, receipt.Checkpoint.SourceVersionID)
+	assert.Equal(t, created.BlobHash, receipt.Checkpoint.BlobHash)
+	assert.Equal(t, reverted.Revision+1, receipt.Node.Revision)
+	assert.Equal(t, receipt.Checkpoint.ID, receipt.Node.CurrentVersionID)
+
+	versions, total, err := s.ContentVersions(ctx, created.ID, 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 1, total)
+	require.Len(t, versions, 1)
+	assert.Equal(t, receipt.Checkpoint.ID, versions[0].ID)
+	for _, id := range []string{created.CurrentVersionID, replacement.ID, revertVersion.ID} {
+		_, err = s.ContentVersionByID(ctx, id)
+		require.ErrorIs(t, err, ErrNotFound)
+	}
+	unreachable, err := s.UnreachableBlobs(ctx)
+	require.NoError(t, err)
+	require.Len(t, unreachable, 1)
+	assert.Equal(t, replacement.BlobHash, unreachable[0].Hash)
+}

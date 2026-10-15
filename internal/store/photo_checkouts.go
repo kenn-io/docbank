@@ -49,6 +49,7 @@ type PhotoCheckoutEstimate struct {
 }
 
 type PhotoCheckout struct {
+	RetiredAt         *string                `json:"retired_at"`
 	RetentionReleased bool                   `json:"retention_released"`
 	ID                string                 `json:"id"`
 	Selection         PhotoCheckoutSelection `json:"selection"`
@@ -321,12 +322,12 @@ func validateCheckoutPath(name string) error {
 	return nil
 }
 
-const photoCheckoutSelect = `SELECT c.checkout_id,c.selection_json,c.byte_limit,c.created_at,COALESCE(c.destination,''),COALESCE(c.operation_id,''),COALESCE(o.state,c.state),COALESCE(o.error,c.error),c.retention_released FROM photo_checkouts c LEFT JOIN storage_operations o ON o.operation_id=c.operation_id`
+const photoCheckoutSelect = `SELECT c.checkout_id,c.selection_json,c.byte_limit,c.created_at,COALESCE(c.destination,''),COALESCE(c.operation_id,''),COALESCE(o.state,c.state),COALESCE(o.error,c.error),c.retention_released,c.retired_at FROM photo_checkouts c LEFT JOIN storage_operations o ON o.operation_id=c.operation_id`
 
 func scanPhotoCheckout(row scanner) (PhotoCheckout, error) {
 	var out PhotoCheckout
 	var encoded string
-	if err := row.Scan(&out.ID, &encoded, &out.ByteLimit, &out.CreatedAt, &out.Destination, &out.OperationID, &out.State, &out.Error, &out.RetentionReleased); err != nil {
+	if err := row.Scan(&out.ID, &encoded, &out.ByteLimit, &out.CreatedAt, &out.Destination, &out.OperationID, &out.State, &out.Error, &out.RetentionReleased, &out.RetiredAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return out, ErrNotFound
 		}
@@ -465,7 +466,8 @@ func (s *Store) PublishPhotoCheckoutEntry(ctx context.Context, e PhotoCheckoutEn
 	}
 	published, publicationErr := publish()
 	if !published {
-		return publicationErr
+		_, err := s.writeDB.ExecContext(context.WithoutCancel(ctx), `UPDATE storage_operations SET cursor='' WHERE operation_id=(SELECT operation_id FROM photo_checkouts WHERE checkout_id=?) AND cursor=?`, e.CheckoutID, e.FileID)
+		return errors.Join(publicationErr, err)
 	}
 	_, err = s.writeDB.ExecContext(context.WithoutCancel(ctx), `UPDATE photo_checkout_entries SET published=1 WHERE checkout_id=? AND file_id=?`, e.CheckoutID, e.FileID)
 	if err != nil {
@@ -506,7 +508,7 @@ func (s *Store) ObservePhotoCheckout(ctx context.Context, id, operationID string
 		if _, err := tx.ExecContext(ctx, `UPDATE photo_checkout_entries SET published=(file_id IN (SELECT value FROM json_each(?))) WHERE checkout_id=?`, string(encoded), id); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `UPDATE storage_operations SET completed_objects=(SELECT COUNT(*) FROM photo_checkout_entries WHERE checkout_id=? AND published=1),copied_objects=(SELECT COUNT(*) FROM photo_checkout_entries WHERE checkout_id=? AND published=1),copied_bytes=(SELECT COALESCE(SUM(size),0) FROM photo_checkout_entries WHERE checkout_id=? AND published=1) WHERE operation_id=?`, id, id, id, operationID)
+		_, err := tx.ExecContext(ctx, `UPDATE storage_operations SET cursor='',completed_objects=(SELECT COUNT(*) FROM photo_checkout_entries WHERE checkout_id=? AND published=1),copied_objects=(SELECT COUNT(*) FROM photo_checkout_entries WHERE checkout_id=? AND published=1),copied_bytes=(SELECT COALESCE(SUM(size),0) FROM photo_checkout_entries WHERE checkout_id=? AND published=1) WHERE operation_id=?`, id, id, id, operationID)
 		return err
 	})
 }
@@ -517,3 +519,34 @@ func (s *Store) PhotoCheckoutStarted(ctx context.Context, id string) (bool, erro
 	err := s.db.QueryRowContext(ctx, `SELECT state='running' FROM photo_checkouts WHERE checkout_id=?`, id).Scan(&started)
 	return started, err
 }
+
+// RetirePhotoCheckout releases local holds without changing copies or job history.
+func (s *Store) RetirePhotoCheckout(ctx context.Context, id string) (PhotoCheckout, error) {
+	var out PhotoCheckout
+	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		out, err = scanPhotoCheckout(tx.QueryRowContext(ctx, photoCheckoutSelect+` WHERE c.checkout_id=?`, id))
+		if err != nil {
+			return err
+		}
+		switch out.State {
+		case "unbound", "completed", "failed", "cancelled":
+		default:
+			return fmt.Errorf("%w: cancel active checkout work before retirement", ErrInvalidPhotoCheckout)
+		}
+		if out.RetiredAt != nil {
+			return nil
+		}
+		retired := nowRFC3339()
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_checkouts SET retired_at=?,retention_released=1 WHERE checkout_id=?`, retired, id); err != nil {
+			return err
+		}
+		out.RetiredAt = &retired
+		out.RetentionReleased = true
+		return nil
+	})
+	return out, err
+}
+
+// e and c are the entry and checkout aliases in every retained-version query.
+const photoCheckoutHoldPredicate = `c.retired_at IS NULL AND (c.retention_released=0 OR e.published=1 OR EXISTS(SELECT 1 FROM storage_operations pending WHERE pending.operation_id=c.operation_id AND pending.cursor=e.file_id))`

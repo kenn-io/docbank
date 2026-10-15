@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
@@ -61,6 +62,16 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 	expectedList, err := catalog.ListPhotoCheckouts(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, expectedList, list.Items)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/checkouts/"+created.Checkout.ID+"/retire", nil, nil)
+	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	require.NoError(t, supervisor.Shutdown(context.Background()))
+	require.NoError(t, catalog.FinishPhotoCheckout(t.Context(), created.Checkout.ID, created.Operation.ID, store.StorageOperationCancelled, "{}", "cancelled", time.Now().Add(time.Hour)))
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/checkouts/"+created.Checkout.ID+"/retire", nil, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var retired store.PhotoCheckout
+	require.NoError(t, json.Unmarshal([]byte(body), &retired))
+	require.NotNil(t, retired.RetiredAt)
+	require.True(t, retired.RetentionReleased)
 	response, body = do(t, ts, http.MethodGet, "/api/v1/photos/checkouts/00000000-0000-4000-8000-000000000001", nil, nil)
 	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
 }

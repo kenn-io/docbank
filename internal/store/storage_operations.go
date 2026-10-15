@@ -257,6 +257,11 @@ func pruneExpiredStorageOperationsTx(
 		  AND retention_until IS NOT NULL
 		  AND retention_until<=?
 		  AND NOT EXISTS (
+			SELECT 1 FROM photo_checkouts c JOIN photo_checkout_entries e ON e.checkout_id=c.checkout_id
+			WHERE c.operation_id=storage_operations.operation_id AND c.retired_at IS NULL
+			  AND e.file_id=storage_operations.cursor AND e.published=0
+		  )
+		  AND NOT EXISTS (
 			SELECT 1 FROM storage_operation_cleanup cleanup
 			WHERE cleanup.operation_id=storage_operations.operation_id
 		  )`,

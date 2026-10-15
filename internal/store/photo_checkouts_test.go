@@ -20,6 +20,9 @@ import (
 
 func TestPhotoCheckoutReportsAllInvalidFilenames(t *testing.T) {
 	t.Parallel()
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows filename restrictions")
+	}
 	s := newTestStore(t)
 	for _, name := range []string{"first?.jpg", "second:.jpg", "valid.jpg"} {
 		_, err := s.CreateFile(t.Context(), s.RootID(), name, browseHash(name), 10, "image/jpeg")
@@ -865,4 +868,102 @@ func TestPhotoCheckoutPublicationOrdersEligibilityMutationsWithoutReservingWrite
 			require.ErrorIs(t, err, ErrPhotoCheckoutSourceUnavailable)
 		})
 	}
+}
+
+func TestRetirePhotoCheckoutReleasesHistoryAndSurvivesRestore(t *testing.T) {
+	t.Parallel()
+	for _, state := range []StorageOperationState{StorageOperationCompleted, StorageOperationFailed, StorageOperationCancelled} {
+		t.Run(string(state), func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			asset := albumAsset(t, s, "photo.jpg")
+			node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
+			require.NoError(t, err)
+			checkout, op, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+			require.NoError(t, err)
+			_, err = s.RetirePhotoCheckout(ctx, checkout.ID)
+			require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
+			entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
+			require.NoError(t, err)
+			require.NoError(t, s.PublishPhotoCheckoutEntry(ctx, entries[0], func() (bool, error) { return true, nil }))
+			require.NoError(t, s.FinishPhotoCheckout(ctx, checkout.ID, op.ID, state, "{}", "saved job result", time.Now().Add(time.Hour)))
+			before, err := s.PhotoCheckout(ctx, checkout.ID)
+			require.NoError(t, err)
+			updated, _, err := s.ReplaceContent(ctx, node.ID, node.Revision, browseHash("replacement"), 30, "image/jpeg")
+			require.NoError(t, err)
+			selector := VersionPruneSelector{VersionIDs: []string{node.CurrentVersionID}}
+			held, err := s.PruneContentVersions(ctx, node.ID, updated.Revision, selector, true)
+			require.NoError(t, err)
+			require.Len(t, held.DependencyRetained, 1)
+			retired, err := s.RetirePhotoCheckout(ctx, checkout.ID)
+			require.NoError(t, err)
+			require.NotNil(t, retired.RetiredAt)
+			before.RetentionReleased = true
+			before.RetiredAt = retired.RetiredAt
+			require.Equal(t, before, retired)
+			again, err := s.RetirePhotoCheckout(ctx, checkout.ID)
+			require.NoError(t, err)
+			require.Equal(t, retired, again)
+			pruned, err := s.PruneContentVersions(ctx, node.ID, updated.Revision, selector, true)
+			require.NoError(t, err)
+			require.Equal(t, 1, pruned.DeletedVersions)
+			_, _, err = s.Trash(ctx, node.ID, pruned.Node.Revision)
+			require.NoError(t, err)
+			empty, err := s.TrashEmptyBounded(ctx, 0, 10, true)
+			require.NoError(t, err)
+			require.Zero(t, empty.Retained)
+			var exported bytes.Buffer
+			require.NoError(t, s.ExportMetadata(ctx, &exported))
+			restored := newTestStore(t)
+			require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
+			actual, err := restored.PhotoCheckout(ctx, checkout.ID)
+			require.NoError(t, err)
+			require.Equal(t, retired.RetiredAt, actual.RetiredAt)
+			require.True(t, actual.RetentionReleased)
+			require.Equal(t, "unbound", actual.State)
+			require.Empty(t, actual.Destination)
+			actualEntries, err := restored.PhotoCheckoutEntries(ctx, checkout.ID)
+			require.NoError(t, err)
+			entries[0].Published = false
+			require.Equal(t, entries, actualEntries)
+			_, err = restored.RetirePhotoCheckout(ctx, checkout.ID)
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestPhotoCheckoutUncertainHoldSurvivesOperationExpiry(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	asset := albumAsset(t, s, "photo.jpg")
+	checkout, op, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+	require.NoError(t, err)
+	entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
+	require.NoError(t, err)
+	node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
+	require.NoError(t, err)
+	updated, _, err := s.ReplaceContent(ctx, node.ID, node.Revision, browseHash("replacement"), 30, "image/jpeg")
+	require.NoError(t, err)
+	selector := VersionPruneSelector{VersionIDs: []string{entries[0].VersionID}}
+	require.NoError(t, s.ClaimPhotoCheckout(ctx, checkout.ID, op.ID))
+	require.NoError(t, s.AdvanceStorageOperation(ctx, op.ID, entries[0].FileID, 0, 0, 0, "{}"))
+	require.NoError(t, s.FinishPhotoCheckout(ctx, checkout.ID, op.ID, StorageOperationCancelled, "{}", "offline", time.Now().Add(-time.Hour)))
+	_, err = s.PruneExpiredStorageOperations(ctx, time.Now())
+	require.NoError(t, err)
+	_, err = s.StorageOperation(ctx, op.ID)
+	require.NoError(t, err)
+	held, err := s.PruneContentVersions(ctx, node.ID, updated.Revision, selector, true)
+	require.NoError(t, err)
+	require.Zero(t, held.DeletedVersions)
+	require.Len(t, held.DependencyRetained, 1)
+	_, err = s.RetirePhotoCheckout(ctx, checkout.ID)
+	require.NoError(t, err)
+	_, err = s.PruneExpiredStorageOperations(ctx, time.Now())
+	require.NoError(t, err)
+	_, err = s.StorageOperation(ctx, op.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+	pruned, err := s.PruneContentVersions(ctx, node.ID, updated.Revision, selector, true)
+	require.NoError(t, err)
+	require.Equal(t, 1, pruned.DeletedVersions)
 }

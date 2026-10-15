@@ -205,6 +205,7 @@ docbank photos checkout estimate [--asset ID] [--album ID] [--years YYYY:YYYY] [
 docbank photos checkout create <destination> [--asset ID] [--album ID] [--years YYYY:YYYY] [--all] [--byte-limit N]
 docbank photos checkout list
 docbank photos checkout status <checkout-id>
+docbank photos checkout retire <checkout-id>
 ```
 
 Photo commands emit JSON through the daemon. Image and concrete video files are
@@ -217,7 +218,7 @@ image member and never become the display member. `timeline` counts the photos
 a QueryV1 scope selects by recorded capture day; see
 [Count photos by capture day](usage/photos.md#count-photos-by-capture-day).
 
-Photo assets, albums, memberships, settings, bounded decision receipts, and checkout definitions with historical bases and retention release are included in JSONL backup and restore. Sidecars require a selected eligible original; invalid selections fail as a whole. Failed and cancelled checkouts release source holds and destination reservations. Restored checkouts are unbound. See [Create writable copies](usage/photos.md#create-writable-copies) for destination, capacity, and retention rules.
+Photo assets, albums, memberships, settings, bounded decision receipts, and checkout definitions with historical bases and retention release are included in JSONL backup and restore. Sidecars require a selected eligible original; invalid selections fail as a whole. Failed and cancelled checkouts release unpublished source holds and destination reservations. Published or uncertain copies retain their bases until `photos checkout retire <checkout-id>` releases all holds. Retirement preserves copies and history; cancel active work first. Restored checkouts are unbound. See [Create writable copies](usage/photos.md#create-writable-copies) for destination, capacity, and retention rules.
 
 ### Photo albums
 

@@ -1989,3 +1989,21 @@ func TestTrashEmptyDeletesOnlyOnRun(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "trash is empty")
 }
+
+func TestTrashEmptyRejectsNegativeAge(t *testing.T) {
+	setupVaultHome(t)
+	src := writeSourceFile(t, "a.txt", "alpha")
+	_, err := runCLI(t, "add", src, "--dest", "/inbox")
+	require.NoError(t, err)
+	_, err = runCLI(t, "rm", "/inbox/a.txt")
+	require.NoError(t, err)
+
+	_, err = runCLI(t, "trash", "empty", "--older-than=-1h")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "negative")
+
+	// Nothing was deleted.
+	out, err := runCLI(t, "trash", "list")
+	require.NoError(t, err)
+	assert.Contains(t, out, "a.txt")
+}

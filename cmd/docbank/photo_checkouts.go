@@ -113,6 +113,17 @@ The folder must be on the daemon's computer. List or inspect saved checkouts.`, 
 		}
 		return writeCLIJSON(cmd.OutOrStdout(), out)
 	}})
+	command.AddCommand(&cobra.Command{Use: "retire <checkout-id>", Short: "Release a checkout's source holds and destination", Example: "  docbank photos checkout retire 00000000-0000-4000-8000-000000000001", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		connection, err := daemonconn.Ensure(cmd.Context())
+		if err != nil {
+			return err
+		}
+		out, err := connection.RetirePhotoCheckout(cmd.Context(), args[0])
+		if err != nil {
+			return err
+		}
+		return writeCLIJSON(cmd.OutOrStdout(), out)
+	}})
 	return command
 }
 
