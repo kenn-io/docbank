@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 
 	"go.kenn.io/docbank/document"
@@ -30,15 +29,7 @@ var photoFaceMetadata = newMetadataTable(metadataTable[metadataPhotoFace]{record
 		face.AssertionID = *v.AssertionID
 	}
 	return validatePhotoFace(face)
-}, checkExport: true, insert: func(ctx context.Context, tx *sql.Tx, v metadataPhotoFace) error {
-	if err := insertMetadataRecord(ctx, tx, "photo_faces", v); err != nil {
-		return err
-	}
-	if v.AssertionID == nil {
-		return nil
-	}
-	return resolveLegacyDepictedMarkTx(ctx, tx, *v.AssertionID)
-}})
+}, checkExport: true})
 
 func validatePhotoFaceMetadataState(ctx context.Context, q metadataQuerier) error {
 	if err := photoFaceMetadata.validateRows(ctx, q); err != nil {

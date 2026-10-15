@@ -179,23 +179,10 @@ var personMetadataTables = []metadataRecordCodec{
 		suffix: "ORDER BY assignment_id", validate: validateMetadataCustodianAssignment, checkExport: true}),
 	newMetadataTable(metadataTable[metadataPersonDocumentAssertion]{record: metadataPersonDocumentAssertion{Type: metadataPersonAssertionType}, table: "person_document_assertions",
 		suffix: "ORDER BY assertion_id", validate: validateMetadataPersonAssertion, checkExport: true, insert: func(ctx context.Context, tx *sql.Tx, v metadataPersonDocumentAssertion) error {
-			defaulted := v.PhotoMark == nil
-			if defaulted {
+			if v.PhotoMark == nil {
 				v.PhotoMark = new(v.Role == personAssertionRoleDepicted && v.Action == personAssertionActionAssert)
 			}
-			if err := insertMetadataRecord(ctx, tx, "person_document_assertions", v); err != nil {
-				return err
-			}
-			// A backup predating photo_mark cannot say whether a depicted
-			// assertion was a whole-photo mark or just the person behind a
-			// face box: both wrote the same row. Default it to a mark, but
-			// once the matching photo_faces record (imported right after
-			// this table) shows a box, hand it off to resolveLegacyDepictedMarkTx
-			// to flip the guess to box-only.
-			if defaulted && *v.PhotoMark {
-				markLegacyDepictedAssertion(ctx, v.AssertionID)
-			}
-			return nil
+			return insertMetadataRecord(ctx, tx, "person_document_assertions", v)
 		}}),
 	newMetadataTable(metadataTable[metadataPersonMatchCandidate]{record: metadataPersonMatchCandidate{Type: metadataPersonCandidateType}, table: "person_match_candidates",
 		suffix: "ORDER BY candidate_id", validate: validateMetadataPersonCandidate, checkExport: true}),

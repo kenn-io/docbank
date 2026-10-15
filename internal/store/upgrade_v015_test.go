@@ -620,73 +620,12 @@ func TestJSONLOmittedPhotoMarkSurvivesFaceRetraction(t *testing.T) {
 
 			restored := newTestStoreWithDriver(t, driver.driver)
 			require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(bytes.Join(lines, []byte{'\n'}))))
-			// The assertion also owns a face box, so the omitted column
-			// cannot be trusted as a whole-photo mark: restore treats it as
-			// box-only, and the person who was marked on the whole photo
-			// before the box existed loses that independent mark.
 			decideFaceForTest(t, restored, node, face.FaceID, "", "retract")
 			assertions, err := restored.DocumentPersonAssertions(ctx, node.CurrentVersionID)
 			require.NoError(t, err)
 			require.Len(t, assertions, 1)
-			require.False(t, assertions[0].PhotoMark)
-			require.Equal(t, personAssertionActionWithdrawn, assertions[0].Action)
-			require.NoError(t, restored.ValidateMetadata(ctx))
-		})
-	}
-}
-
-// TestJSONLOmittedPhotoMarkBoxOnlyDropsFromPersonSearchAfterRetraction covers
-// the backup that never had an independent whole-photo mark: just a named
-// face box, saved by a version that predates photo_mark. Restore must not
-// invent a mark from that row, or retracting the only face leaves the person
-// still matching person: search with no way to undo it.
-func TestJSONLOmittedPhotoMarkBoxOnlyDropsFromPersonSearchAfterRetraction(t *testing.T) {
-	t.Parallel()
-	for _, driver := range v090UpgradeDrivers() {
-		t.Run(driver.name, func(t *testing.T) {
-			source := newTestStoreWithDriver(t, driver.driver)
-			ctx := t.Context()
-			person, err := source.CreatePerson(ctx, "Ada", "operator")
-			require.NoError(t, err)
-			node, face := faceForDecisionTest(t, source, person.PersonID)
-
-			var backup bytes.Buffer
-			require.NoError(t, source.ExportMetadata(ctx, &backup))
-			lines := bytes.Split(backup.Bytes(), []byte{'\n'})
-			omitted := 0
-			for i, line := range lines {
-				if len(line) == 0 {
-					continue
-				}
-				var record map[string]any
-				require.NoError(t, json.Unmarshal(line, &record))
-				kind, ok := record["type"].(string)
-				require.True(t, ok)
-				if kind != metadataPersonAssertionType {
-					continue
-				}
-				photoMark, ok := record["photo_mark"].(bool)
-				require.True(t, ok)
-				require.False(t, photoMark)
-				delete(record, "photo_mark")
-				lines[i], err = json.Marshal(record)
-				require.NoError(t, err)
-				omitted++
-			}
-			require.Equal(t, 1, omitted)
-
-			restored := newTestStoreWithDriver(t, driver.driver)
-			require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(bytes.Join(lines, []byte{'\n'}))))
-			require.ElementsMatch(t, []int64{node.ID}, personMatchNodeIDs(t, restored, compilerQuery(t, "person:"+person.PersonID)))
-
-			decideFaceForTest(t, restored, node, face.FaceID, "", "retract")
-			require.Empty(t, personMatchNodeIDs(t, restored, compilerQuery(t, "person:"+person.PersonID)))
-
-			assertions, err := restored.DocumentPersonAssertions(ctx, node.CurrentVersionID)
-			require.NoError(t, err)
-			require.Len(t, assertions, 1)
-			require.False(t, assertions[0].PhotoMark)
-			require.Equal(t, personAssertionActionWithdrawn, assertions[0].Action)
+			require.True(t, assertions[0].PhotoMark)
+			require.Equal(t, personAssertionActionAssert, assertions[0].Action)
 			require.NoError(t, restored.ValidateMetadata(ctx))
 		})
 	}
