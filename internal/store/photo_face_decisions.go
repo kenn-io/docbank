@@ -87,7 +87,11 @@ func (s *Store) faceDecisionStateTx(ctx context.Context, tx *sql.Tx, versionID s
 	if err != nil {
 		return state, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision,photo_mark FROM person_document_assertions WHERE content_version_id=? AND role='depicted' AND person_id IN (SELECT value FROM json_each(?)) ORDER BY assertion_id`, versionID, personIDsJSON(personIDs))
+	people, err := stringListJSON(personIDs)
+	if err != nil {
+		return state, err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision,photo_mark FROM person_document_assertions WHERE content_version_id=? AND role='depicted' AND person_id IN (SELECT value FROM json_each(?)) ORDER BY assertion_id`, versionID, people)
 	if err != nil {
 		return state, err
 	}
@@ -103,7 +107,7 @@ func (s *Store) faceDecisionStateTx(ctx context.Context, tx *sql.Tx, versionID s
 	if err != nil {
 		return state, err
 	}
-	faceRows, err := tx.QueryContext(ctx, `SELECT `+photoFaceColumns+` FROM photo_faces WHERE content_version_id=? AND face_id<>? AND assertion_id IN (SELECT assertion_id FROM person_document_assertions WHERE content_version_id=? AND role='depicted' AND person_id IN (SELECT value FROM json_each(?))) ORDER BY face_id`, versionID, faceID, versionID, personIDsJSON(personIDs))
+	faceRows, err := tx.QueryContext(ctx, `SELECT `+photoFaceColumns+` FROM photo_faces WHERE content_version_id=? AND face_id<>? AND assertion_id IN (SELECT assertion_id FROM person_document_assertions WHERE content_version_id=? AND role='depicted' AND person_id IN (SELECT value FROM json_each(?))) ORDER BY face_id`, versionID, faceID, versionID, people)
 	if err != nil {
 		return state, err
 	}
@@ -668,8 +672,12 @@ func (s *Store) UndoPhotoFaceDecisionWithOperationID(ctx context.Context, id, op
 				for _, face := range r.After.Faces {
 					faceIDs = append(faceIDs, face.FaceID)
 				}
+				faces, err := stringListJSON(faceIDs)
+				if err != nil {
+					return err
+				}
 				var shared bool
-				if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_faces WHERE assertion_id=? AND face_id NOT IN (SELECT value FROM json_each(?)))`, a.AssertionID, personIDsJSON(faceIDs)).Scan(&shared); err != nil {
+				if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_faces WHERE assertion_id=? AND face_id NOT IN (SELECT value FROM json_each(?)))`, a.AssertionID, faces).Scan(&shared); err != nil {
 					return err
 				}
 				if shared {
@@ -1028,7 +1036,11 @@ func faceStateCandidateIDs(state PhotoFaceDecisionState) []string {
 	return ids
 }
 
-func personIDsJSON(ids []string) string { raw, _ := json.Marshal(ids); return string(raw) }
+func stringListJSON(ids []string) (string, error) {
+	raw, err := json.Marshal(ids)
+	return string(raw), err
+}
+
 func changedFaceRows[T any](before, after []T) ([]T, []T) {
 	var b, a []T
 	for i := range after {

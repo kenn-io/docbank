@@ -74,9 +74,9 @@ func withPhotoHidden[T any](cmd *cobra.Command, connection *daemonconn.Connectio
 }
 
 func peopleHiddenCookie(cmd *cobra.Command, c *daemonconn.Connection) (string, error) {
-	unlock, _ := cmd.Flags().GetBool("unlock-hidden")
-	if !unlock {
-		return "", nil
+	unlock, err := cmd.Flags().GetBool("unlock-hidden")
+	if err != nil || !unlock {
+		return "", err
 	}
 	passcode, err := readPhotoPasscode(cmd, bufio.NewReaderSize(cmd.InOrStdin(), 2048), "Passcode")
 	if err != nil {
