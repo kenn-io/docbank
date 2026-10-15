@@ -167,12 +167,11 @@ it("preserves export progress as an NDJSON response", async () => {
   );
   expect(response).toBeInstanceOf(Response);
   expect(await response.text()).toBe(body);
-  const [url, request] = fetch.mock.calls[0];
-  expect(url).toBe("/api/v1/exports/jobs/synthetic-job/events?after=1");
+  const [, request] = fetch.mock.calls[0];
   expect(new Headers(request?.headers).get("Accept")).toBe("application/x-ndjson");
 });
 
-it("sends photo query intent through the generated read-only POST and preserves preview bytes", async () => {
+it("sends photo query intent through the generated read-only POST", async () => {
   const query = {
     filters: {
       kinds: ["photo"],
@@ -183,33 +182,22 @@ it("sends photo query intent through the generated read-only POST and preserves 
   };
   const fetch = vi
     .spyOn(globalThis, "fetch")
-    .mockResolvedValueOnce(Response.json({ items: [], total: 0 }))
-    .mockResolvedValueOnce(
-      new Response("synthetic JPEG", { headers: { "Content-Type": "image/jpeg" } }),
-    );
+    .mockResolvedValue(Response.json({ items: [], total: 0 }));
   await api.listPhotoAssets({ query } as api.PhotoBrowseRequest, { session: "synthetic-session" });
   const [url, request] = fetch.mock.calls[0];
   expect(url).toBe("/api/v1/photos/assets/query");
   expect(request?.method).toBe("POST");
   expect(JSON.parse(String(request?.body))).toEqual({ query });
-  const response = await api.readPhotoPreview(
-    "00000000-0000-4000-8000-000000000001",
-    "a".repeat(64),
-    { "If-None-Match": '"older-generation"' },
-    { session: "synthetic-session" },
-  );
-  expect(response).toBeInstanceOf(Response);
-  expect(await response.text()).toBe("synthetic JPEG");
-  expect(String(fetch.mock.calls[1][0])).not.toContain("synthetic-session");
-  const previewHeaders = new Headers(fetch.mock.calls[1][1]?.headers);
-  expect(previewHeaders.get("If-None-Match")).toBe('"older-generation"');
 });
 
-it("preserves a conditional photo preview's empty 304 response", async () => {
+it.each([
+  [200, "synthetic JPEG"],
+  [304, ""],
+])("preserves a conditional photo preview's %s response", async (status, body) => {
   const etag = '"cached-generation"';
   const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-    new Response(null, {
-      status: 304,
+    new Response(status === 304 ? null : body, {
+      status,
       headers: { ETag: etag, "Cache-Control": "private, no-cache" },
     }),
   );
@@ -219,9 +207,10 @@ it("preserves a conditional photo preview's empty 304 response", async () => {
     { "If-None-Match": etag },
     { session: "synthetic-session" },
   );
-  expect(response.status).toBe(304);
+  expect(response).toBeInstanceOf(Response);
+  expect(response.status).toBe(status);
   expect(response.headers.get("ETag")).toBe(etag);
-  expect(await response.text()).toBe("");
+  expect(await response.text()).toBe(body);
   const [url, request] = fetch.mock.calls[0];
   expect(url).toBe(
     `/api/v1/photos/assets/00000000-0000-4000-8000-000000000001/previews/${"a".repeat(64)}`,

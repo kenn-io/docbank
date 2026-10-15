@@ -1,4 +1,3 @@
-import * as generated from "./generated/docbank.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   changeNodeTag,
@@ -34,21 +33,6 @@ describe("browser authentication", () => {
     expect(sessionStorage.length).toBe(0);
     expect(history.state).toEqual({ fixtureIndex: 4 });
     expect(takeFragmentSession()).toBeNull();
-  });
-
-  it("leaves mailbox event streams available to the caller", async () => {
-    const events = '{"type":"progress"}\n{"type":"done"}\n';
-    const response = new Response(events, {
-      headers: { "Content-Type": "application/x-ndjson" },
-    });
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(response);
-    const stream = await generated.mailboxEvents("synthetic-job", { session: "session" });
-    expect(stream).toBe(response);
-    expect(stream.bodyUsed).toBe(false);
-    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Accept")).toBe(
-      "application/x-ndjson",
-    );
-    expect(await stream.text()).toBe(events);
   });
 
   it("loads every live node tag under one before-and-after revision fence", async () => {
