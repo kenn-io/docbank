@@ -371,7 +371,14 @@ func (s *Store) DecidePhotoFace(ctx context.Context, versionID string, request P
 			oldAction = a.Action
 			personIDs = append(personIDs, oldPerson)
 		}
-		before, err := s.faceDecisionStateTx(ctx, tx, versionID, face.FaceID, personIDs, slices.Contains([]string{faceDecisionName, faceDecisionReject, "dismiss", "withdraw_rejection"}, request.Action))
+		stateVersion := versionID
+		if request.Action == "key" && request.FaceID == "" {
+			stateVersion, err = keyFaceVersionTx(ctx, tx, request.PersonID, versionID)
+			if err != nil {
+				return err
+			}
+		}
+		before, err := s.faceDecisionStateTx(ctx, tx, stateVersion, face.FaceID, personIDs, slices.Contains([]string{faceDecisionName, faceDecisionReject, "dismiss", "withdraw_rejection"}, request.Action))
 		if err != nil {
 			return err
 		}
@@ -452,10 +459,10 @@ func (s *Store) DecidePhotoFace(ctx context.Context, versionID string, request P
 				return err
 			}
 		}
-		if err = advancePersonBindingEpochForVersionTx(ctx, tx, versionID); err != nil {
+		if err = advancePersonBindingEpochForVersionTx(ctx, tx, stateVersion); err != nil {
 			return err
 		}
-		after, err := s.faceDecisionStateTx(ctx, tx, versionID, face.FaceID, personIDs, slices.Contains([]string{faceDecisionName, faceDecisionReject, "dismiss", "withdraw_rejection"}, request.Action), faceStateCandidateIDs(before)...)
+		after, err := s.faceDecisionStateTx(ctx, tx, stateVersion, face.FaceID, personIDs, slices.Contains([]string{faceDecisionName, faceDecisionReject, "dismiss", "withdraw_rejection"}, request.Action), faceStateCandidateIDs(before)...)
 		if err != nil {
 			return err
 		}
@@ -463,6 +470,19 @@ func (s *Store) DecidePhotoFace(ctx context.Context, versionID string, request P
 		return err
 	})
 	return result, err
+}
+
+// keyFaceVersionTx returns the content version that holds the person's key
+// face, or fallback when the person has none. Clearing a key files its
+// receipt there, so undo depends on the key face's own photo rather than
+// on whichever photo the request named.
+func keyFaceVersionTx(ctx context.Context, tx *sql.Tx, personID, fallback string) (string, error) {
+	var versionID string
+	err := tx.QueryRowContext(ctx, `SELECT COALESCE(f.content_version_id,'') FROM persons p LEFT JOIN photo_faces f ON f.face_id=p.key_face_id WHERE p.person_id=?`, personID).Scan(&versionID)
+	if err != nil || versionID == "" {
+		return fallback, err
+	}
+	return versionID, nil
 }
 
 func requirePhotoFaceRejectionBound(ctx context.Context, tx metadataQuerier, faceID, versionID, candidateID string) error {

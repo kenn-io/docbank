@@ -1637,3 +1637,24 @@ func TestPhotoFaceWithdrawalUndoFencedByLaterRejection(t *testing.T) {
 	require.Len(t, faces[0].RejectedPersonIDs, 1000)
 	require.NoError(t, s.ValidateMetadata(ctx))
 }
+
+func TestPhotoFaceClearedKeyUndoIgnoresRequestPhoto(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	p, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	n, f := faceForDecisionTest(t, s, p.PersonID)
+	_, err = s.DecidePhotoFace(ctx, n.CurrentVersionID, PhotoFaceDecisionRequest{FaceID: f.FaceID, PersonID: p.PersonID, Action: "key", Revision: f.Revision, PersonRevision: p.Revision})
+	require.NoError(t, err)
+	unrelated := browsePhotoNode(t, s, "unrelated.jpg", fakeHash("c1"), "image/jpeg")
+	cleared, err := s.DecidePhotoFace(ctx, unrelated.CurrentVersionID, PhotoFaceDecisionRequest{PersonID: p.PersonID, Action: "key", PersonRevision: p.Revision + 1})
+	require.NoError(t, err)
+	require.Empty(t, personKeyFaceForTest(t, s, p.PersonID))
+	_, _, err = s.Trash(ctx, unrelated.ID, unrelated.Revision)
+	require.NoError(t, err)
+	_, err = s.UndoPhotoFaceDecision(ctx, cleared.ReceiptID)
+	require.NoError(t, err)
+	require.Equal(t, f.FaceID, personKeyFaceForTest(t, s, p.PersonID))
+	require.NoError(t, s.ValidateMetadata(ctx))
+}
