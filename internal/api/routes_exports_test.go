@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -261,6 +262,22 @@ func TestExportAPIWorkerVerifiedTicketPreservesRetainedArchive(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrNotFound)
 }
 
+func TestExportRejectsSavedPhotoSnapshot(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	saved, err := s.CreateSavedQuery(t.Context(), "Photos", "", store.SavedQueryKindQuery, []byte(`{}`))
+	require.NoError(t, err)
+	response, body := do(t, ts, http.MethodPost, "/api/v1/saved-queries/"+saved.ID+"/runs",
+		map[string]string{"If-Match": `"1"`}, map[string]any{"photos": true})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var result api.SavedQueryRunResult
+	require.NoError(t, json.Unmarshal([]byte(body), &result))
+	response, body = do(t, ts, http.MethodPost, "/api/v1/exports/sources", nil,
+		bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "snapshot", SnapshotID: result.Snapshot.SnapshotID, MemberHash: result.Snapshot.MemberHash})
+	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	require.Equal(t, "photo_snapshot_export_unsupported", decodeProblem(t, body).Code)
+}
+
 func TestExportSavedQueryRetryDoesNotRerunChangedDefinition(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
@@ -281,9 +298,10 @@ func TestExportSavedQueryRetryDoesNotRerunChangedDefinition(t *testing.T) {
 	var retry bundle.Source
 	require.NoError(t, json.Unmarshal([]byte(body), &retry))
 	require.Equal(t, first, retry)
-	runs, err := s.ListSavedQueryRuns(t.Context(), saved.ID, 100)
-	require.NoError(t, err)
-	require.Len(t, runs, 1)
+	var backup bytes.Buffer
+	require.NoError(t, s.ExportMetadata(t.Context(), &backup))
+	require.Equal(t, 1, strings.Count(backup.String(), `"type":"saved_query_run"`),
+		"the retry must not write a second run receipt")
 	response, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/exports/sources", map[string]string{"X-Api-Key": testAPIKey}, fmt.Sprintf(`{"operation_id":%q,"kind":"nodes","node_ids":[%d],"destination":"/arbitrary"}`, uuid.New().String(), n.ID))
 	require.True(t, response.StatusCode == http.StatusBadRequest || response.StatusCode == http.StatusUnprocessableEntity, body)
 }

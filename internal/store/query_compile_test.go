@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -467,4 +468,29 @@ func TestQueryPersonPhotoLiveSibling(t *testing.T) {
 	_, _, err = s.CreatePhotoFace(ctx, nodes[1].CurrentVersionID, uuid.NewString(), document.FaceBox{Width: .2, Height: .2}, p.PersonID)
 	require.NoError(t, err)
 	require.Len(t, browsePhotoPage(t, s, filter).Items, 1)
+}
+
+func TestCompilePhotoPickShorthandAndLiteralDocumentSearch(t *testing.T) {
+	t.Parallel()
+	compile := func(text, syntax string, photo bool) CompiledQuery {
+		value, err := query.Parse([]byte(`{"syntax":` + strconv.Quote(syntax) + `,"text":` + strconv.Quote(text) + `}`))
+		require.NoError(t, err)
+		compiled, err := (queryCompiler{photoDisplayMetadata: photo}).compile(t.Context(), value, nil)
+		require.NoError(t, err, text)
+		return compiled
+	}
+	photoPick := compile("pick", "advanced", true)
+	photoFlag := compile("flag:pick", "advanced", true)
+	require.Equal(t, photoFlag.predicate, photoPick.predicate)
+	nested := compilerQuery(t, "pick")
+	saved, err := (queryCompiler{photoDisplayMetadata: true}).compile(t.Context(), compilerQuery(t, "saved:inside"), compilerResolver(&nested))
+	require.NoError(t, err)
+	nestedFlag := compilerQuery(t, "flag:pick")
+	savedFlag, err := (queryCompiler{photoDisplayMetadata: true}).compile(t.Context(), compilerQuery(t, "saved:inside"), compilerResolver(&nestedFlag))
+	require.NoError(t, err)
+	require.Equal(t, savedFlag.predicate, saved.predicate)
+	documents := compile("pick", "advanced", false)
+	require.Equal(t, compile(`"pick"`, "advanced", false).predicate, documents.predicate)
+	simple := compile("pick", "simple", true)
+	require.Equal(t, compile(`"pick"*`, "advanced", true).predicate, simple.predicate)
 }

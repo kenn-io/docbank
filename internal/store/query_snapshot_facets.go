@@ -17,6 +17,8 @@ import (
 	"golang.org/x/text/cases"
 )
 
+var photoFacetDimensions = []string{compiledCameraField, compiledLensField, snapshotFacetYear, compiledLocationField, compiledSetField, snapshotFacetRating, snapshotFacetFlag, snapshotFacetLabel}
+
 var snapshotFacetDimensions = [...]string{
 	"collections", snapshotFacetTags, snapshotFacetMediaFamily, "extension", "modified", "size", snapshotFacetTextCoverage, "duplicates", "capture_day",
 }
@@ -26,11 +28,10 @@ const (
 	snapshotFacetMediaFamily  = "media_family"
 	snapshotFacetTextCoverage = "text_coverage"
 	snapshotFacetYear         = "year"
+	snapshotFacetRating       = "rating"
+	snapshotFacetFlag         = "flag"
+	snapshotFacetLabel        = "label"
 )
-
-func normalizeSnapshotFacets(values []string) ([]string, error) {
-	return normalizeFacetDimensions(values, snapshotFacetDimensions[:])
-}
 
 func normalizeFacetDimensions(values, dimensions []string) ([]string, error) {
 	seen := make(map[string]struct{}, len(values))
@@ -134,7 +135,7 @@ func materializeSnapshotFacet(
 	if dimension != "duplicates" && reflect.DeepEqual(facetQuery.Filters, compiled.Query.Filters) {
 		return materializeSnapshotFacetFromRows(ctx, q, compiled.Query, dimension, snapshotRows, memberLimit)
 	}
-	facetCompiled, err := compileQuery(ctx, facetQuery, queryResolver{q: q})
+	facetCompiled, err := (queryCompiler{}).compile(ctx, facetQuery, queryResolver{q: q})
 	if err != nil {
 		return SnapshotFacet{}, err
 	}
@@ -146,6 +147,7 @@ func materializeSnapshotFacet(
 	if err != nil {
 		return SnapshotFacet{}, err
 	}
+	identity := `CAST(n.id AS TEXT)`
 	ctes, join, key, label := "", "", `''`, `''`
 	switch dimension {
 	case "collections":
@@ -166,23 +168,23 @@ func materializeSnapshotFacet(
 		label = key
 	}
 	rows, err := q.QueryContext(ctx, `WITH matched_members AS (`+statement+`)`+ctes+`
-		SELECT n.id,n.name,COALESCE(cv.mime_type,''),cv.size,n.modified_at,`+key+`,`+label+`
+		SELECT `+identity+`,n.name,COALESCE(cv.mime_type,''),cv.size,n.modified_at,`+key+`,`+label+`
 		FROM matched_members m JOIN nodes n ON n.id=m.node_id
 		JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=m.content_version_id
-		`+join+` ORDER BY n.id,`+key, args...)
+		`+join+` ORDER BY `+identity+`,`+key, args...)
 	if err != nil {
 		return SnapshotFacet{}, fmt.Errorf("materializing %s facet: %w", dimension, err)
 	}
 	defer func() { _ = rows.Close() }()
 	observation, limited, err := observeSnapshotFacet(rows, dimension, memberLimit, func() (string, string, string, error) {
-		var nodeID, size int64
-		var name, mimeType, modifiedAt, value, label string
-		err := rows.Scan(&nodeID, &name, &mimeType, &size, &modifiedAt, &value, &label)
+		var size int64
+		var id, name, mimeType, modifiedAt, value, label string
+		err := rows.Scan(&id, &name, &mimeType, &size, &modifiedAt, &value, &label)
 		if dimension != "collections" && dimension != snapshotFacetTags && dimension != snapshotFacetTextCoverage && dimension != "duplicates" {
 			value = snapshotFacetScalarValue(dimension, name, mimeType, modifiedAt, size)
 			label = value
 		}
-		return strconv.FormatInt(nodeID, 10), value, label, err
+		return id, value, label, err
 	})
 	if err != nil {
 		return SnapshotFacet{}, fmt.Errorf("materializing %s facet: %w", dimension, err)
@@ -356,6 +358,12 @@ func finishSnapshotFacet(
 // nested saved queries retain their constraints in the same read transaction.
 func queryWithoutSnapshotFacet(value query.Query, dimension string) query.Query {
 	switch dimension {
+	case snapshotFacetRating:
+		value.Filters.RatingMin, value.Filters.RatingMax = nil, nil
+	case snapshotFacetFlag:
+		value.Filters.Flags = nil
+	case snapshotFacetLabel:
+		value.Filters.Labels = nil
 	case compiledCameraField:
 		value.Filters.Cameras = nil
 	case compiledLensField:
@@ -441,6 +449,14 @@ func snapshotFacetSelected(value query.Query, dimension string) map[string]bool 
 	selected := make(map[string]bool)
 	var values []string
 	switch dimension {
+	case snapshotFacetRating:
+		if value.Filters.RatingMin != nil && value.Filters.RatingMax != nil && *value.Filters.RatingMin == *value.Filters.RatingMax {
+			values = []string{strconv.FormatInt(*value.Filters.RatingMin, 10)}
+		}
+	case snapshotFacetFlag:
+		values = value.Filters.Flags
+	case snapshotFacetLabel:
+		values = value.Filters.Labels
 	case compiledCameraField:
 		values = value.Filters.Cameras
 	case compiledLensField:
@@ -475,6 +491,9 @@ func snapshotFacetSelected(value query.Query, dimension string) map[string]bool 
 	for _, item := range values {
 		if dimension == compiledCameraField || dimension == compiledLensField {
 			item = cases.Fold().String(item)
+		}
+		if item == "" && (dimension == snapshotFacetFlag || dimension == snapshotFacetLabel) {
+			item = "none"
 		}
 		selected[item] = true
 	}
@@ -567,7 +586,7 @@ func finalizeSnapshotFacetValues(
 	return values, other
 }
 
-func materializePhotoFacets(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, coverage CoverageSelection, dimensions []string, options snapshotMaterializeOptions) ([]SnapshotFacet, error) {
+func materializePhotoFacets(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, coverage CoverageSelection, dimensions []string, options snapshotMaterializeOptions, used *int64) ([]SnapshotFacet, error) {
 	options.FacetTimeout = options.BuildTimeout
 	results := make(map[string]SnapshotFacet)
 	options.MaterializeFacet = func(ctx context.Context, dimension string) (SnapshotFacet, error) {
@@ -577,7 +596,7 @@ func materializePhotoFacets(ctx context.Context, q metadataQuerier, compiled Com
 		filters := queryWithoutSnapshotFacet(compiled.Query, dimension).Filters
 		var shared []string
 		for _, candidate := range dimensions {
-			if (candidate == compiledSetField) == (dimension == compiledSetField) && reflect.DeepEqual(filters, queryWithoutSnapshotFacet(compiled.Query, candidate).Filters) {
+			if slices.Contains(photoFacetDimensions, candidate) && (candidate == compiledSetField) == (dimension == compiledSetField) && reflect.DeepEqual(filters, queryWithoutSnapshotFacet(compiled.Query, candidate).Filters) {
 				shared = append(shared, candidate)
 			}
 		}
@@ -590,7 +609,7 @@ func materializePhotoFacets(ctx context.Context, q metadataQuerier, compiled Com
 		}
 		return results[dimension], nil
 	}
-	return materializeSnapshotFacets(ctx, q, compiled, generation, coverage, dimensions, nil, options, new(int64))
+	return materializeSnapshotFacets(ctx, q, compiled, generation, coverage, dimensions, nil, options, used)
 }
 
 func materializeSharedPhotoFacets(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, coverage CoverageSelection, dimensions []string, options snapshotMaterializeOptions) ([]SnapshotFacet, error) {
@@ -618,7 +637,7 @@ func materializeSharedPhotoFacets(ctx context.Context, q metadataQuerier, compil
 		albumJoin = ` LEFT JOIN photo_set_members sm ON sm.asset_id=a.asset_id LEFT JOIN photo_sets ps ON ps.set_id=sm.set_id AND ps.deleted_at IS NULL`
 		albumValues = `COALESCE(ps.set_id,''),COALESCE(ps.name,'')`
 	}
-	statement, args, err := bindQueryPopulation(compiledQueryFragment{sql: `SELECT a.asset_id,COALESCE(p.camera_make,''),COALESCE(p.camera_model,''),COALESCE(p.lens_make,''),COALESCE(p.lens_model,''),substr(COALESCE(pl.day,''),1,4),COALESCE(p.location_label,''),` + albumValues + ` FROM ` + photoBrowseDisplayFrom + albumJoin + ` WHERE ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(compiled.photoHidden) + ` AND ` + match.sql + ` ORDER BY a.asset_id LIMIT ?`, args: append(match.args, options.FacetMemberLimit+1), relations: match.relations}, coverage, generation)
+	statement, args, err := bindQueryPopulation(compiledQueryFragment{sql: `SELECT a.asset_id,COALESCE(p.camera_make,''),COALESCE(p.camera_model,''),COALESCE(p.lens_make,''),COALESCE(p.lens_model,''),substr(COALESCE(pl.day,''),1,4),COALESCE(p.location_label,''),` + albumValues + `,CAST(f.rating AS TEXT),f.flag,f.label FROM ` + photoBrowseDisplayFrom + albumJoin + ` WHERE ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(compiled.photoHidden) + ` AND ` + match.sql + ` ORDER BY a.asset_id LIMIT ?`, args: append(match.args, options.FacetMemberLimit+1), relations: match.relations}, coverage, generation)
 	if err != nil {
 		return nil, err
 	}
@@ -634,12 +653,12 @@ func materializeSharedPhotoFacets(ctx context.Context, q metadataQuerier, compil
 	var projected, bytes int64
 	exceeded := false
 	for rows.Next() {
-		var id, cameraMake, cameraModel, lensMake, lensModel, year, location, set, name string
-		if err := rows.Scan(&id, &cameraMake, &cameraModel, &lensMake, &lensModel, &year, &location, &set, &name); err != nil {
+		var id, cameraMake, cameraModel, lensMake, lensModel, year, location, set, name, rating, flag, label string
+		if err := rows.Scan(&id, &cameraMake, &cameraModel, &lensMake, &lensModel, &year, &location, &set, &name, &rating, &flag, &label); err != nil {
 			return nil, err
 		}
 		projected++
-		bytes += int64(len(id) + len(cameraMake) + len(cameraModel) + len(lensMake) + len(lensModel) + len(year) + len(location) + len(set) + len(name))
+		bytes += int64(len(id) + len(cameraMake) + len(cameraModel) + len(lensMake) + len(lensModel) + len(year) + len(location) + len(set) + len(name) + len(rating) + len(flag) + len(label))
 		if projected > options.FacetMemberLimit || bytes > options.MaxSerializedBytes {
 			exceeded = true
 			break
@@ -647,6 +666,12 @@ func materializeSharedPhotoFacets(ctx context.Context, q metadataQuerier, compil
 		for _, dimension := range dimensions {
 			values := []string{}
 			switch dimension {
+			case snapshotFacetRating:
+				values = []string{rating}
+			case snapshotFacetFlag:
+				values = []string{flag}
+			case snapshotFacetLabel:
+				values = []string{label}
 			case compiledCameraField:
 				values = []string{cameraMake, cameraModel}
 			case compiledLensField:
@@ -660,7 +685,7 @@ func materializeSharedPhotoFacets(ctx context.Context, q metadataQuerier, compil
 			}
 			have := false
 			for _, label := range values {
-				if label == "" {
+				if label == "" && dimension != snapshotFacetFlag && dimension != snapshotFacetLabel {
 					continue
 				}
 				have = true
@@ -670,6 +695,10 @@ func materializeSharedPhotoFacets(ctx context.Context, q metadataQuerier, compil
 				}
 				if dimension == compiledSetField {
 					label = name
+				}
+				if key == "" {
+					key = "none"
+					label = "None"
 				}
 				observations[dimension].add(dimension, id, key, label, options.FacetMemberLimit)
 			}

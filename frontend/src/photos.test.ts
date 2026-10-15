@@ -1,12 +1,19 @@
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { APIError } from "./api-transport.js";
 import * as download from "./download.js";
 import { Photos, loadDensity, photoQuery, mapPhotoLimit, type PhotoRow } from "./photos.svelte.js";
+import {
+  photo,
+  preparedPhoto,
+  mapPhoto,
+  savedSmartSet as savedSmartSetFixture,
+} from "./photo-test-fixtures.js";
 import type { Query } from "./query.js";
-import { photo, preparedPhoto, mapPhoto } from "./photo-test-fixtures.js";
 import * as snapshots from "./snapshots.js";
+import { parseQuery, queryFingerprint } from "./query.js";
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   localStorage.clear();
@@ -32,6 +39,14 @@ const stubPhotoFetch = (
       ? Promise.resolve(new Response(JSON.stringify({ facets })))
       : fetcher(url, init),
   );
+const savedSmartSet = async (revision = 1, id = "00000000-0000-4000-8000-000000000001") => {
+  const payload = parseQuery(
+    '{"syntax":"advanced","text":"rating:5","filters":{"kinds":["photo","video"]},"sort":{"field":"name","direction":"asc"}}',
+  );
+  return savedSmartSetFixture(payload, await queryFingerprint(payload), { id, revision });
+};
+const savedSmartSetResponse = (saved: { revision: number }) =>
+  Response.json(saved, { headers: { ETag: `"${saved.revision}"` } });
 
 it("keeps Library continuation totals without a page timeout", async () => {
   const timeout = vi.spyOn(AbortSignal, "timeout");
@@ -1133,6 +1148,25 @@ it("stages multiple replacement pages and preserves accepted rows on a failed re
   await refresh;
   expect(photos.error).toContain("timed out");
   photos.dispose();
+});
+
+it("copies page relevance availability on load and refresh", async () => {
+  let relevanceAvailable = true;
+  let nextID = 13;
+  const capabilityFetch = vi.fn(async () =>
+    Response.json({ items: [photo(nextID++)], total: 1, relevance_available: relevanceAvailable }),
+  );
+  stubPhotoFetch(capabilityFetch);
+  const capabilityPhotos = new Photos("session", vi.fn());
+  await capabilityPhotos.loadMore();
+  expect(capabilityPhotos.relevanceAvailable).toBe(true);
+  expect(await capabilityPhotos.refresh(), capabilityPhotos.error).toBe(true);
+  expect(capabilityPhotos.items[0].asset_id).toBe("photo-14");
+  relevanceAvailable = false;
+  await capabilityPhotos.refresh();
+  expect(capabilityPhotos.relevanceAvailable).toBe(false);
+  expect(capabilityPhotos.items[0].asset_id).toBe("photo-15");
+  capabilityPhotos.dispose();
 });
 
 it("restarts Library expiry recovery after its second page fails", async () => {
@@ -2348,7 +2382,16 @@ it("publishes and pages rows before optional counts, and isolates count retry, c
   expect(photos.facets).toEqual([]);
   expect(counts[4].request.query.text).toBe("Canon");
   expect(counts[4].request.query.sort).toEqual({ field: "capture_time", direction: "desc" });
-  expect(counts[4].request.facets).toEqual(["camera", "lens", "year", "location", "set"]);
+  expect(counts[4].request.facets).toEqual([
+    "camera",
+    "lens",
+    "year",
+    "location",
+    "set",
+    "rating",
+    "flag",
+    "label",
+  ]);
   expect(counts[4].request.cursor).toBeUndefined();
   const rowRequests = rows.mock.calls.length;
   await photos.loadMore();
@@ -2426,6 +2469,218 @@ it("requests filter counts for the library but not for an album", async () => {
     expect(counted).toBe(album ? 0 : 1);
     photos.dispose();
   }
+});
+
+describe("frozen photo runs", () => {
+  let photos: Photos;
+  let fetcher: ReturnType<typeof vi.fn<() => Promise<Response>>>;
+  let result: Parameters<Photos["setFrozen"]>[0];
+  beforeEach(() => {
+    vi.useFakeTimers();
+    fetcher = vi.fn(async () => response([]));
+    stubPhotoFetch(fetcher);
+    photos = new Photos("session", vi.fn());
+    result = {
+      run: { expires_at: new Date(Date.now() + 1000).toISOString() },
+      snapshot: { snapshot_id: "frozen" },
+    } as Parameters<Photos["setFrozen"]>[0];
+    photos.setFrozen(result);
+  });
+  afterEach(() => photos.dispose());
+
+  it.each(["query change", "date replacement"])(
+    "clears frozen results after %s completes",
+    async (path) => {
+      if (path === "query change") {
+        await photos.setQuery({ ...photoQuery, text: "river" });
+      } else {
+        let finish!: (value: Response) => void;
+        fetcher
+          .mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))
+          .mockResolvedValueOnce(
+            new Response(JSON.stringify({ detail: "Try again" }), { status: 503 }),
+          );
+        const interrupted = photos.selectDate("2024");
+        photos.cancelPending();
+        await photos.resume();
+        finish(response([]));
+        await interrupted;
+        expect(photos.frozen).toBe(result);
+        await photos.retry();
+      }
+      expect(photos.frozen).toBeUndefined();
+    },
+  );
+
+  it("clears frozen results when the saved revision changes", async () => {
+    const payload = photos.savedPhotoQuery;
+    photos.smartSet = savedSmartSetFixture(payload, await queryFingerprint(payload), {
+      name: "River",
+    });
+    photos.setFrozen(result);
+    photos.smartSet = { ...photos.smartSet, revision: 2 };
+    photos.reconcileFrozen();
+    expect(photos.frozen).toBeUndefined();
+  });
+
+  it("replaces frozen handles and expires only the current result", async () => {
+    const replacement = {
+      ...result,
+      run: { ...result.run, expires_at: new Date(Date.now() + 10_000).toISOString() },
+      snapshot: { ...result.snapshot, snapshot_id: "replacement" },
+    };
+    photos.setFrozen(replacement);
+    expect(photos.frozen?.snapshot.snapshot_id).toBe("replacement");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(photos.frozen?.snapshot.snapshot_id).toBe("replacement");
+    expect(photos.frozenExpired).toBe(false);
+    await vi.advanceTimersByTimeAsync(9000);
+    expect(photos.frozen).toBeUndefined();
+    expect(photos.frozenExpired).toBe(true);
+    await photos.setQuery({ ...photoQuery, text: "new query" });
+    expect(photos.frozenExpired).toBe(false);
+  });
+});
+
+it("recovers smart sets without stale identities", async () => {
+  const saved = await savedSmartSet();
+  const original = new Photos("session", vi.fn());
+  original.rememberSmartSet(saved);
+  original.dispose();
+  const fetcher = vi.fn(async () => savedSmartSetResponse(saved));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("session", vi.fn());
+  photos.query = photos.baseQuery = saved.payload;
+  await photos.recoverSmartSet();
+  expect(photos.smartSet?.id).toBe(saved.id);
+  const otherSession = new Photos("other-session", vi.fn());
+  await otherSession.recoverSmartSet();
+  expect(otherSession.smartSet).toBeUndefined();
+  expect(fetcher).toHaveBeenCalledOnce();
+  otherSession.dispose();
+  photos.dispose();
+
+  localStorage.clear();
+  const mismatched = new Photos("session", vi.fn());
+  mismatched.rememberSmartSet(saved);
+  mismatched.smartSet = undefined;
+  await mismatched.recoverSmartSet();
+  expect(mismatched.smartSet).toBeUndefined();
+  expect(localStorage.length).toBe(0);
+  mismatched.dispose();
+
+  localStorage.clear();
+  const old = await savedSmartSet(1),
+    current = await savedSmartSet(2),
+    newest = await savedSmartSet(3);
+  let finishOld!: (response: Response) => void;
+  const overlappingFetch = vi
+    .fn()
+    .mockImplementationOnce(() => new Promise<Response>((resolve) => (finishOld = resolve)))
+    .mockResolvedValueOnce(savedSmartSetResponse(current));
+  stubPhotoFetch(overlappingFetch);
+  const overlapping = new Photos("session", vi.fn());
+  overlapping.rememberSmartSet(old);
+  const first = overlapping.recoverSmartSet();
+  await overlapping.recoverSmartSet();
+  expect(overlapping.smartSet?.revision).toBe(2);
+  finishOld(savedSmartSetResponse(old));
+  await first;
+  expect(overlapping.smartSet?.revision).toBe(2);
+  overlapping.rememberSmartSet(newest);
+  overlappingFetch.mockResolvedValueOnce(savedSmartSetResponse(current));
+  await overlapping.recoverSmartSet();
+  expect(overlapping.smartSet?.revision).toBe(3);
+  overlapping.dispose();
+
+  localStorage.clear();
+  const opened = await savedSmartSet(2, "00000000-0000-4000-8000-000000000002");
+  let finishPending!: (response: Response) => void;
+  const selectionFetch = vi.fn((url: string) =>
+    url.endsWith("/photos/assets/query")
+      ? Promise.resolve(response([]))
+      : new Promise<Response>((resolve) => (finishPending = resolve)),
+  );
+  stubPhotoFetch(selectionFetch);
+  const selection = new Photos("session", vi.fn());
+  selection.rememberSmartSet(old);
+  const pending = selection.recoverSmartSet();
+  selection.openSmartSet(opened);
+  finishPending(savedSmartSetResponse(old));
+  await pending;
+  expect(selection.smartSet?.id).toBe(opened.id);
+  selection.dispose();
+
+  localStorage.clear();
+  const prior = new Photos("session", vi.fn());
+  prior.rememberSmartSet(old);
+  prior.smartSet = undefined;
+  prior.dispose();
+  let finishDeleted!: (response: Response) => void;
+  const deletionFetch = vi
+    .fn()
+    .mockImplementationOnce(() => new Promise<Response>((resolve) => (finishDeleted = resolve)))
+    .mockResolvedValueOnce(Response.json({ detail: "gone", code: "not_found" }, { status: 404 }));
+  stubPhotoFetch(deletionFetch);
+  const deleted = new Photos("session", vi.fn());
+  const recovery = deleted.recoverSmartSet();
+  await deleted.recoverSmartSet();
+  expect(deleted.smartSet).toBeUndefined();
+  finishDeleted(savedSmartSetResponse(old));
+  await recovery;
+  expect(deleted.smartSet).toBeUndefined();
+  expect(localStorage.length).toBe(0);
+  deleted.dispose();
+});
+
+it.each(["hiding", "trashing"] as const)(
+  "rejects smart-set opening during %s",
+  async (mutation) => {
+    const saved = await savedSmartSet();
+    const fetcher = vi.fn().mockResolvedValue(response([]));
+    stubPhotoFetch(fetcher);
+    const photos = new Photos("session", vi.fn());
+    photos[mutation] = true;
+    expect(photos.openSmartSet(saved)).toBe(false);
+    expect(photos.smartSet).toBeUndefined();
+    expect(fetcher).not.toHaveBeenCalled();
+    photos[mutation] = false;
+    expect(photos.openSmartSet(saved)).toBe(true);
+    expect(photos.smartSet?.id).toBe(saved.id);
+    expect(JSON.parse(fetcher.mock.calls[0][1].body).query).toMatchObject({
+      text: "rating:5",
+      syntax: "advanced",
+      filters: { kinds: ["photo", "video"] },
+    });
+    photos.dispose();
+  },
+);
+
+it("saves photo ordering as a Documents-compatible search", () => {
+  for (const field of ["capture_time", "relevance"] as const) {
+    const photos = new Photos("session", vi.fn());
+    photos.query = {
+      ...photoQuery,
+      text: "rating:5 pick label:red",
+      syntax: "advanced",
+      sort: { field, direction: "desc" },
+    };
+    expect(photos.savedPhotoQuery.sort).toEqual({ field: "name", direction: "asc" });
+    expect(photos.savedPhotoQuery.filters.kinds).toEqual(["photo", "video"]);
+    expect(photos.savedPhotoQuery).toMatchObject({
+      syntax: "advanced",
+      text: "rating:5 pick label:red",
+    });
+    expect(photos.query.sort.field).toBe(field);
+    photos.dispose();
+  }
+});
+
+it("ignores relevance sorting while unavailable", () => {
+  const photos = new Photos("session", vi.fn());
+  photos.setSort({ field: "relevance", direction: "desc" });
+  expect(photos.query.sort.field).toBe("capture_time");
+  photos.dispose();
 });
 
 it.each([
@@ -2629,3 +2884,19 @@ it("retries a cancelled Map recount when the Map resumes", async () => {
   ).toBe(true);
   photos.dispose();
 });
+
+it.each([{ rating: 5 }, { flag: "pick" as const }, { label: "red" as const }])(
+  "refreshes authored facet counts after %j edits in an unfiltered view",
+  (patch) => {
+    const photos = new Photos("scoped", vi.fn());
+    const counts = vi.spyOn(photos, "reloadCounts").mockReturnValue(undefined);
+    const before = preparedPhoto(1);
+    photos.metadataChanged({
+      receipt_id: "facet-edit",
+      before: [before],
+      after: [{ ...before, values: { ...before.values, ...patch } }],
+    });
+    expect(counts).toHaveBeenCalledOnce();
+    photos.dispose();
+  },
+);

@@ -59,7 +59,7 @@ func BenchmarkSavedQueryRunReceipt(b *testing.B) {
 					}
 					return nil
 				}))
-				require.NoError(b, validateSavedQueryRunMetadataState(ctx, s.db))
+				require.NoError(b, validateSavedQueryRunMetadataState(ctx, s.db, currentMetadataLayout()))
 				b.Run("receipt", func(b *testing.B) {
 					projection := SnapshotProjection{QueryFingerprint: definition.Fingerprint, MemberHash: hash}
 					page := SnapshotPage{

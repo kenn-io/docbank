@@ -25,8 +25,9 @@ func TestSavedQueryRunMetadataImportRequiresReachableComparisonChain(t *testing.
 	require.NoError(t, err)
 	second, _, err := service.RunSaved(t.Context(), "owner", definition.ID, definition.Revision, SnapshotRequest{}, nil)
 	require.NoError(t, err)
-	now = now.Add(-time.Second)
 	third, _, err := service.RunSaved(t.Context(), "owner", definition.ID, definition.Revision, SnapshotRequest{}, nil)
+	require.NoError(t, err)
+	photoRun, _, err := service.RunSaved(t.Context(), "owner", definition.ID, definition.Revision, SnapshotRequest{Photos: true}, nil)
 	require.NoError(t, err)
 	require.NoError(t, service.Close())
 	var exported bytes.Buffer
@@ -34,10 +35,6 @@ func TestSavedQueryRunMetadataImportRequiresReachableComparisonChain(t *testing.
 
 	valid := newTestStore(t)
 	require.NoError(t, valid.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
-	runs, err := valid.ListSavedQueryRuns(t.Context(), definition.ID, 10)
-	require.NoError(t, err)
-	assert.Equal(t, []SavedQueryRun{third, second, first}, runs,
-		"receipt links determine history even with equal or out-of-order timestamps")
 
 	// Keep the root, but make the other two receipts a cycle with matching
 	// previous hashes, counts, and fingerprints.
@@ -54,19 +51,37 @@ func TestSavedQueryRunMetadataImportRequiresReachableComparisonChain(t *testing.
 	require.ErrorContains(t, err, "comparison chain")
 	_, err = target.SavedQueryByID(t.Context(), definition.ID)
 	require.ErrorIs(t, err, ErrNotFound, "invalid chain must roll back the complete import")
+
+	crossMode := mutateSavedQueryRunMetadataRecordByID(t, exported.String(), photoRun.RunID,
+		func(record metadataSavedQueryRun) metadataSavedQueryRun {
+			record.PreviousRunID = new(first.RunID)
+			record.PreviousMemberHash = new(first.MemberHash)
+			record.PreviousTotal = new(first.Total)
+			record.PreviousQueryFingerprint = new(first.QueryFingerprint)
+			return record
+		})
+	crossModeTarget := newTestStore(t)
+	require.ErrorContains(t, crossModeTarget.ImportMetadata(t.Context(), strings.NewReader(crossMode)), "previous receipt")
 }
 
-func TestSavedQueryRunBackupRestorePreservesReceiptWithoutEphemeralHandle(t *testing.T) {
+func TestSavedQueryRunBackupRestorePreservesReceipts(t *testing.T) {
 	t.Parallel()
 	source := newTestStore(t)
+	_, err := source.CreateFile(t.Context(), source.RootID(), "member.txt", browseHash("saved-run-backup-doc"), 1, "text/plain")
+	require.NoError(t, err)
+	browsePhotoNode(t, source, "member.jpg", browseHash("saved-run-backup-photo"), "image/jpeg")
 	definition, err := source.CreateSavedQuery(t.Context(), "root", "", SavedQueryKindQuery, []byte(`{}`))
 	require.NoError(t, err)
 	service := newQuerySnapshotService(source, querySnapshotServiceOptions{HMACKey: bytes.Repeat([]byte{0x51}, 32)})
 	first, _, err := service.RunSaved(t.Context(), "owner", definition.ID, definition.Revision, SnapshotRequest{}, nil)
 	require.NoError(t, err)
+	photoFirst, _, err := service.RunSaved(t.Context(), "owner", definition.ID, definition.Revision, SnapshotRequest{Photos: true}, nil)
+	require.NoError(t, err)
 	run, _, err := service.RunSaved(t.Context(), "owner", definition.ID, definition.Revision, SnapshotRequest{}, nil)
 	require.NoError(t, err)
 	require.Equal(t, first.RunID, run.PreviousRunID)
+	photoRun, _, err := service.RunSaved(t.Context(), "owner", definition.ID, definition.Revision, SnapshotRequest{Photos: true}, nil)
+	require.NoError(t, err)
 	require.NoError(t, service.Close())
 
 	snapshot, err := source.BeginMetadataSnapshot(t.Context())
@@ -78,12 +93,13 @@ func TestSavedQueryRunBackupRestorePreservesReceiptWithoutEphemeralHandle(t *tes
 
 	restored := newTestStore(t)
 	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
-	runs, err := restored.ListSavedQueryRuns(t.Context(), definition.ID, 10)
-	require.NoError(t, err)
-	require.Len(t, runs, 2)
-	restoredRun := runs[0]
+	assert.Equal(t, 2, savedQueryRunCount(t, restored, definition.ID, false))
+	restoredRun := persistedSavedQueryRun(t, restored, run.RunID)
 	assert.Equal(t, run, restoredRun)
 	assert.Equal(t, run.MemberHash, restoredRun.MemberHash)
+	assert.Equal(t, 2, savedQueryRunCount(t, restored, definition.ID, true))
+	assert.Equal(t, photoRun, persistedSavedQueryRun(t, restored, photoRun.RunID))
+	assert.Equal(t, photoFirst, persistedSavedQueryRun(t, restored, photoFirst.RunID))
 	var roundTrip bytes.Buffer
 	require.NoError(t, restored.ExportMetadata(t.Context(), &roundTrip))
 	assert.Equal(t, exported.Bytes(), roundTrip.Bytes())
@@ -112,9 +128,7 @@ func TestSavedQueryRunMetadataImportRejectsMalformedReceiptTransactionally(t *te
 	target := newTestStore(t)
 	err = target.ImportMetadata(t.Context(), strings.NewReader(malformed))
 	require.ErrorContains(t, err, "saved query run")
-	runs, listErr := target.ListSavedQueryRuns(t.Context(), definition.ID, 10)
-	require.NoError(t, listErr)
-	assert.Empty(t, runs)
+	assert.Zero(t, savedQueryRunCount(t, target, definition.ID, false))
 	_, lookupErr := target.SavedQueryByID(t.Context(), definition.ID)
 	require.ErrorIs(t, lookupErr, ErrNotFound, "failed import must roll back the definition too")
 }

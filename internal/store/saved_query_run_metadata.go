@@ -2,12 +2,15 @@ package store
 
 import (
 	"context"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"time"
 )
 
 type metadataSavedQueryRun struct {
+	Photos                   bool    `json:"photos,omitzero" db:"photos"`
 	Type                     string  `json:"type"`
 	RunID                    string  `json:"run_id" db:"run_id"`
 	SavedQueryID             string  `json:"saved_query_id" db:"saved_query_id"`
@@ -25,8 +28,31 @@ type metadataSavedQueryRun struct {
 	PreviousQueryFingerprint *string `json:"previous_query_fingerprint" db:"previous_query_fingerprint"`
 }
 
-func exportSavedQueryRuns(ctx context.Context, q metadataQuerier, write metadataWrite) error {
-	rows, err := q.QueryContext(ctx, savedQueryRunSelect+`
+func normalizeSavedQueryRunMetadata(raw jsontext.Value) (jsontext.Value, error) {
+	fields, err := decodeMetadataFields(raw)
+	if err != nil {
+		return nil, err
+	}
+	if _, exists := fields["photos"]; exists {
+		return raw, nil
+	}
+	fields["photos"] = jsontext.Value("false")
+	return json.Marshal(fields, json.Deterministic(true))
+}
+
+func savedQueryRunProjection(layout metadataSourceLayout) string {
+	if layout.schemaVersion < photoSavedQueryRunsStorageSchemaVersion {
+		return `SELECT
+			run_id,saved_query_id,saved_query_revision,query_fingerprint,snapshot_id,
+			member_hash,total,total_bytes,ran_at,expires_at,previous_run_id,
+			previous_member_hash,previous_total,previous_query_fingerprint,0 AS photos
+			FROM saved_query_runs `
+	}
+	return savedQueryRunSelect
+}
+
+func exportSavedQueryRuns(ctx context.Context, q metadataQuerier, write metadataWrite, layout metadataSourceLayout) error {
+	rows, err := q.QueryContext(ctx, savedQueryRunProjection(layout)+`
 		ORDER BY saved_query_id,ran_at,run_id`)
 	if err != nil {
 		return fmt.Errorf("exporting saved query runs: %w", err)
@@ -50,7 +76,7 @@ func exportSavedQueryRuns(ctx context.Context, q metadataQuerier, write metadata
 
 func savedQueryRunMetadata(run SavedQueryRun) metadataSavedQueryRun {
 	record := metadataSavedQueryRun{
-		Type: metadataSavedQueryRunType, RunID: run.RunID, SavedQueryID: run.SavedQueryID,
+		Photos: run.Photos, Type: metadataSavedQueryRunType, RunID: run.RunID, SavedQueryID: run.SavedQueryID,
 		SavedQueryRevision: run.SavedQueryRevision, QueryFingerprint: run.QueryFingerprint,
 		SnapshotID: run.SnapshotID, MemberHash: run.MemberHash, Total: run.Total,
 		TotalBytes: run.TotalBytes, RanAt: formatSavedQueryRunTime(run.RanAt),
@@ -82,7 +108,7 @@ func validateSavedQueryRunMetadataRecord(record metadataSavedQueryRun) error {
 		return errors.New("saved query run expires_at is not canonical")
 	}
 	run := SavedQueryRun{
-		RunID: record.RunID, SavedQueryID: record.SavedQueryID,
+		Photos: record.Photos, RunID: record.RunID, SavedQueryID: record.SavedQueryID,
 		SavedQueryRevision: record.SavedQueryRevision,
 		QueryFingerprint:   record.QueryFingerprint, SnapshotID: record.SnapshotID,
 		MemberHash: record.MemberHash, Total: record.Total, TotalBytes: record.TotalBytes,
@@ -109,13 +135,14 @@ func validateSavedQueryRunMetadataRecord(record metadataSavedQueryRun) error {
 	return validateSavedQueryRun(run)
 }
 
-func validateSavedQueryRunMetadataState(ctx context.Context, q metadataQuerier) error {
-	if err := exportSavedQueryRuns(ctx, q, func(any) error { return nil }); err != nil {
+func validateSavedQueryRunMetadataState(ctx context.Context, q metadataQuerier, layout metadataSourceLayout) error {
+	if err := exportSavedQueryRuns(ctx, q, func(any) error { return nil }, layout); err != nil {
 		return err
 	}
+	projection := savedQueryRunProjection(layout)
 	var invalid bool
-	if err := q.QueryRowContext(ctx, `SELECT EXISTS(
-		SELECT 1 FROM saved_query_runs r
+	if err := q.QueryRowContext(ctx, `WITH runs AS (`+projection+`) SELECT EXISTS(
+		SELECT 1 FROM runs r
 		LEFT JOIN saved_queries q ON q.id=r.saved_query_id
 		WHERE q.id IS NULL OR q.revision<r.saved_query_revision
 	)`).Scan(&invalid); err != nil {
@@ -124,11 +151,11 @@ func validateSavedQueryRunMetadataState(ctx context.Context, q metadataQuerier) 
 	if invalid {
 		return errors.New("saved query run references an absent definition or future revision")
 	}
-	if err := q.QueryRowContext(ctx, `SELECT EXISTS(
-		SELECT 1 FROM saved_query_runs r
-		LEFT JOIN saved_query_runs p ON p.run_id=r.previous_run_id
+	if err := q.QueryRowContext(ctx, `WITH runs AS (`+projection+`) SELECT EXISTS(
+		SELECT 1 FROM runs r
+		LEFT JOIN runs p ON p.run_id=r.previous_run_id
 		WHERE r.previous_run_id IS NOT NULL AND (
-			p.run_id IS NULL OR p.saved_query_id<>r.saved_query_id OR
+			p.run_id IS NULL OR p.saved_query_id<>r.saved_query_id OR p.photos<>r.photos OR
 			p.member_hash<>r.previous_member_hash OR p.total<>r.previous_total OR
 			p.query_fingerprint<>r.previous_query_fingerprint
 		)
@@ -138,19 +165,19 @@ func validateSavedQueryRunMetadataState(ctx context.Context, q metadataQuerier) 
 	if invalid {
 		return errors.New("saved query run previous receipt does not match durable authority")
 	}
-	if err := q.QueryRowContext(ctx, `WITH RECURSIVE chain(run_id) AS (
-		SELECT run_id FROM saved_query_runs WHERE previous_run_id IS NULL
+	if err := q.QueryRowContext(ctx, `WITH RECURSIVE runs AS (`+projection+`), chain(run_id) AS (
+		SELECT run_id FROM runs WHERE previous_run_id IS NULL
 		UNION ALL
-		SELECT r.run_id FROM saved_query_runs r JOIN chain ON r.previous_run_id=chain.run_id
+		SELECT r.run_id FROM runs r JOIN chain ON r.previous_run_id=chain.run_id
 	)
 	SELECT EXISTS(
-		SELECT saved_query_id FROM saved_query_runs
-		GROUP BY saved_query_id
+		SELECT saved_query_id FROM runs
+		GROUP BY saved_query_id,photos
 		HAVING SUM(CASE WHEN previous_run_id IS NULL THEN 1 ELSE 0 END)<>1
 	) OR EXISTS(
-		SELECT previous_run_id FROM saved_query_runs WHERE previous_run_id IS NOT NULL
+		SELECT previous_run_id FROM runs WHERE previous_run_id IS NOT NULL
 		GROUP BY previous_run_id HAVING COUNT(*)<>1
-	) OR (SELECT COUNT(*) FROM chain)<>(SELECT COUNT(*) FROM saved_query_runs)`).Scan(&invalid); err != nil {
+	) OR (SELECT COUNT(*) FROM chain)<>(SELECT COUNT(*) FROM runs)`).Scan(&invalid); err != nil {
 		return fmt.Errorf("validating saved query run comparison chain: %w", err)
 	}
 	if invalid {

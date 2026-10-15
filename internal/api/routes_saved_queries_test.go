@@ -255,6 +255,18 @@ func TestSavedQueryHTTPRoundTripPaginationAndFences(t *testing.T) {
 	assert.Equal(t, http.StatusPreconditionFailed, resp.StatusCode, body)
 	assert.Equal(t, "stale_revision", decodeProblem(t, body).Code)
 
+	photoQuery, _ := createSavedQuery(t, ts.URL, "Photo scope", `{"filters":{"kinds":["photo"]}}`)
+	resp, body = rawJSONRequest(t, ts.URL, http.MethodGet,
+		"/api/v1/saved-queries?kind=query&photos=true",
+		map[string]string{"X-Api-Key": testAPIKey}, "")
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &page))
+	require.Len(t, page.Items, 1)
+	assert.Equal(t, photoQuery.ID, page.Items[0].ID)
+	resp, body = rawJSONRequest(t, ts.URL, http.MethodGet, "/api/v1/saved-queries?kind=highlight_set&photos=true",
+		map[string]string{"X-Api-Key": testAPIKey}, "")
+	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+
 	resp, body = rawJSONRequest(t, ts.URL, http.MethodDelete,
 		"/api/v1/saved-queries/"+created.ID,
 		map[string]string{"X-Api-Key": testAPIKey, "If-Match": `"2"`}, "")

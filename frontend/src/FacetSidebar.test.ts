@@ -6,6 +6,39 @@ import type { SnapshotPage } from "./snapshots.js";
 
 afterEach(cleanup);
 
+it("selects unrated photos and empty flags and labels", async () => {
+  const onchange = vi.fn();
+  render(FacetSidebar, {
+    unit: "photos",
+    query: originalQuery,
+    onchange,
+    facets: [
+      facet("rating", {
+        values: [0, 1, 5].map((rating) => ({
+          key: String(rating),
+          label: String(rating),
+          count: 2,
+          selected: false,
+        })),
+      }),
+      facet("flag", { values: [{ key: "none", label: "None", count: 2, selected: false }] }),
+      facet("label", { values: [{ key: "none", label: "None", count: 2, selected: false }] }),
+    ],
+  });
+  expect(screen.getByRole("button", { name: "1 star, 2 photos" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "5 stars, 2 photos" })).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Unrated, 2 photos" }));
+  expect(onchange.mock.lastCall?.[0].filters).toMatchObject({ rating_min: 0, rating_max: 0 });
+  await fireEvent.click(
+    within(screen.getByRole("group", { name: "Flag facet" })).getByRole("button"),
+  );
+  expect(onchange.mock.lastCall?.[0].filters.flags).toEqual([""]);
+  await fireEvent.click(
+    within(screen.getByRole("group", { name: "Color label facet" })).getByRole("button"),
+  );
+  expect(onchange.mock.lastCall?.[0].filters.labels).toEqual([""]);
+});
+
 const tagID = "11111111-1111-4111-8111-111111111111";
 const excludedTagID = "22222222-2222-4222-8222-222222222222";
 const originalQuery: Query = {

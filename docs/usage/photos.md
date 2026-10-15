@@ -192,6 +192,16 @@ Refresh previews to reload the listing after background preview work finishes.
 If a page fails to load, the earlier photos remain visible. Retry requests the
 failed page again. Refresh and expired-cursor recovery keep the current grid visible until the refreshed range succeeds. Refresh keeps selections and the range anchor only within the refreshed pages, plus failed trash targets. Whole-query selection keeps its query scope. Failed attempts keep the earlier view available for Retry. Each refresh page has a one-minute deadline.
 
+## Save and freeze a photo search
+
+Choose Text for ordinary words, or Filters for expressions such as `rating:5 pick label:red`. In Filters, `pick` means `flag:pick`; quote `"pick"` to search for that word. Authored-text search matches caption, creator, and copyright on any live RAW, image, or video member. Photo search also includes camera and location metadata, filenames, and extracted text. Rating, flag, and color label facets use each asset's display file. Select None to find an empty flag or label.
+
+Choose Save search to save the applied search. Albums lists saved queries whose kind filter contains only photos or videos as Smart sets. A `kind:photo` expression alone does not put a Documents query in this list; saving from Photos adds the kind filter. Ordering stays in the current view; reopening uses capture date, or relevance for a text query. The saved definition also runs in Documents: bare `pick` searches for the word, while `rating:` and `flag:` test each document file's authored decisions rather than the asset's display file. Hidden photo files remain accessible there. Use its saved-query editor to change or delete the definition.
+
+Choose Freeze results after saving a smart set. A freeze uses the smart set's saved sort, with asset ID breaking ties, not the current browsing order. Smart sets saved from Photos store name ascending, so their freezes order photos by name. A smart set saved in Documents keeps its own sort; a `path` sort freezes by name ascending. Frozen runs contain Library photos only. The frozen result includes all matches, including those beyond the first 250 relevance results. Its count and expiry appear beside Save as album and remain available when you return from Albums. Saving the album preserves the frozen asset membership and result order and clears the freeze, even if the live query's matches have changed. Frozen results expire with the daemon's snapshot session; the album persists.
+
+A frozen result can contain at most 250,000 assets. Larger freeze requests fail before saving a run receipt. A freeze also fails without a receipt if any matching photo leaves Library before the run is saved. Expired snapshots and assets that are missing, hidden, excluded, or trashed also fail before creating an album. Authored-field, tag, content, and display-file edits keep the frozen asset membership. If results expire while naming an album, choose Freeze again; the album name stays in the form.
+
 ## Hidden photos
 
 Choose Hidden in the Photos sidebar and set a passcode. Open a photo's actions menu or right-click it and choose Hide. If the photo belongs to the selection, the action applies to each selected photo. A stale photo reports an error while successful changes remain saved.
@@ -550,10 +560,11 @@ Hidden unlock and lock remain available. Setup, change, disable, reset, hide, an
 optional `coverage`, `page_size` from 1 through 250, `facets`, `cursor`, and `hidden`. With `projection: "map"`, `page_size` allows up to 1,000. Larger pages return a validation error.
 Omit `hidden` or set it to `false` for visible photos. `hidden: true` selects
 only hidden photos and requires an active unlock on every page.
-Request `camera`, `lens`, `year`, `location`, or `set` facets. It returns
-`items`, the matching asset `total`, first-page `facets`, and an optional
-`next_cursor`. Facets count distinct eligible assets across the whole scope
-and omit their own root structured filter. Keep them across continuations.
+Request `camera`, `lens`, `year`, `location`, `set`, `rating`, `flag`, or
+`label` facets. The response includes `relevance_available`, `items`, the
+matching asset `total`, first-page `facets`, and an optional `next_cursor`.
+Facets count distinct eligible assets across the whole scope and omit their
+own root structured filter. Keep them across continuations.
 The web app requests counts separately from tile pages, with `page_size: 1` and a time sort.
 Facet time, member, or byte limits return an unavailable reason. Later pages keep that total. Start a new browse to refresh it.
 The default page size is 50. Send the same query and page options with each
@@ -570,7 +581,7 @@ case using Unicode case folding. Values in one typed filter array combine with
 OR. Separate filters combine with AND. `locations` and `location:` match
 the complete location label exactly.
 
-Use typed `flags:[""]` or `labels:[""]` to select unflagged or unlabeled photos. Expression operands must be nonempty. `NOT flag:pick` selects unflagged and rejected photos; `NOT label:red` selects unlabeled photos and other colors.
+Use typed `flags:[""]` or `labels:[""]` to select unflagged or unlabeled photos. Use `flag:""` or `label:""` for the same filters in expressions. `NOT flag:pick` selects unflagged and rejected photos; `NOT label:red` selects unlabeled photos and other colors.
 
 Dates use the photo's recorded local calendar day, with an inclusive lower
 bound and exclusive upper bound. A January 1 photo remains in January 1 date
@@ -585,9 +596,9 @@ and `lens:B` does not. A sidecar without camera metadata cannot make
 `NOT camera:A` match. Changing the display file changes these metadata matches.
 
 Photos text also searches camera and lens makes/models and location labels from
-active metadata heads. `name:` searches filenames only. Relevance orders filename matches, then metadata matches, then retained content-only matches. Each group uses its own BM25 scores. Prefix, phrase and NEAR operands keep their matching meaning when scored.
+active metadata heads. `name:` searches filenames only. Relevance orders filename matches, authored text, technical metadata, then retained content-only matches. Each group uses its own BM25 scores. Prefix, phrase and NEAR operands keep their matching meaning when scored.
 The best matching member supplies an asset's score, after the complete
-expression restricts eligible members. Ordinary text, name, extension, tag, and collection predicates still match
+expression restricts eligible members. Authored caption, creator, and copyright match any live non-sidecar member of the asset, so a JPEG caption can match an asset selected by `extension:cr2`. Filename, technical metadata, retained content, name, extension, tag, and collection predicates still match
 individual members. One member must satisfy the complete expression, using
 the display file for its photo metadata predicates. For example,
 `extension:xmp AND camera:A` can match a sidecar paired with a display image

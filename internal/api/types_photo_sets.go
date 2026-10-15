@@ -23,6 +23,13 @@ type PhotoAlbumSummary struct {
 	CoverGenerationID     *string `json:"cover_generation_id,omitzero"`
 }
 
+type CreatePhotoAlbumRequest struct {
+	PhotoAlbumNameRequest
+
+	SnapshotID string `json:"snapshot_id,omitempty" pattern:"^[0-9a-f]{32}$"`
+	MemberHash string `json:"member_hash,omitempty" pattern:"^[0-9a-f]{64}$"`
+}
+
 type PhotoAlbumNameRequest struct {
 	Name string `json:"name" minLength:"1" maxLength:"256"`
 }

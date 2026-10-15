@@ -204,6 +204,43 @@ func TestQuerySnapshotCacheReservationsEvictionAndExpiry(t *testing.T) {
 	})
 }
 
+func TestQuerySnapshotCacheReplacementPreservesAcceptedHandle(t *testing.T) {
+	t.Parallel()
+	for _, budget := range []string{"owner", "rows"} {
+		t.Run(budget, func(t *testing.T) {
+			s := newTestStore(t)
+			browsePhotoNode(t, s, "accepted.jpg", browseHash("accepted"), "image/jpeg")
+			definition, err := s.CreateSavedQuery(t.Context(), "Photos", "", SavedQueryKindQuery, []byte(`{}`))
+			require.NoError(t, err)
+			options := querySnapshotServiceOptions{Limits: snapshotCacheLimits{MaxOwnerHandles: 2}}
+			if budget == "rows" {
+				options.Limits.MaxRows = 1
+			}
+			service := newQuerySnapshotService(s, options)
+			t.Cleanup(func() { require.NoError(t, service.Close()) })
+			request := SnapshotRequest{Photos: true}
+			_, accepted, err := service.RunSaved(t.Context(), "owner", definition.ID, definition.Revision, request, nil)
+			require.NoError(t, err)
+			if budget == "owner" {
+				_, _, err = service.RunSaved(t.Context(), "owner", definition.ID, definition.Revision, request, nil)
+				require.NoError(t, err)
+			}
+			request.ReplacesSnapshotID = accepted.SnapshotID
+			if budget == "rows" {
+				_, _, err = service.RunSaved(t.Context(), "owner", definition.ID, definition.Revision, request, nil)
+				require.ErrorIs(t, err, ErrSnapshotAdmission, "row budget rejects replacement")
+				_, err = service.CopyMembers(t.Context(), "owner", accepted.SnapshotID, accepted.MemberHash)
+				require.NoError(t, err, "row budget rejection preserves accepted handle")
+			} else {
+				_, _, err = service.RunSaved(t.Context(), "owner", definition.ID, definition.Revision, request, nil)
+				require.NoError(t, err)
+				_, err = service.CopyMembers(t.Context(), "owner", accepted.SnapshotID, accepted.MemberHash)
+				require.NoError(t, err, "owner budget replacement preserves the accepted LRU handle")
+			}
+		})
+	}
+}
+
 func TestQuerySnapshotCacheRevokeAndShutdownCancelBuilders(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

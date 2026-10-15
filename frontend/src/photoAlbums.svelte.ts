@@ -39,6 +39,7 @@ export class PhotoAlbums {
   initialized = $state(false);
   busy = $state(false);
   error = $state("");
+  errorCode = $state("");
   unconfirmed = $state<{ name: string }>();
   loadError = $state("");
   notice = $state("");
@@ -48,9 +49,9 @@ export class PhotoAlbums {
   private controller = new AbortController();
   private generation = 0;
   constructor(
-    private session: string,
-    private onauthfailure: (cause: unknown) => void,
-    private onmemberschange?: (id: string) => Promise<void>,
+    readonly session: string,
+    readonly onauthfailure: (cause: unknown) => void,
+    private onmemberschange?: (id?: string) => Promise<void>,
   ) {}
 
   async load() {
@@ -95,6 +96,7 @@ export class PhotoAlbums {
     if (this.controller.signal.aborted || this.rejectBusy()) return;
     this.busy = true;
     this.error = "";
+    this.errorCode = "";
     this.notice = "";
     this.noticeID = "";
     let result: api.PhotoAlbum | undefined;
@@ -108,6 +110,7 @@ export class PhotoAlbums {
         this.items = acknowledged.deleted_at ? remaining : [...remaining, acknowledged];
         if (acknowledged.deleted_at && this.targetID === acknowledged.id) this.targetID = "";
       } catch (cause) {
+        this.errorCode = cause instanceof APIError ? cause.code : "";
         this.error = this.failure(cause);
         changed = !(cause instanceof APIError && cause.status >= 400 && cause.status < 500);
         if (creation !== undefined && changed) {
@@ -128,12 +131,15 @@ export class PhotoAlbums {
     return result;
   }
 
-  create(name: string) {
-    if (this.unconfirmed) return Promise.resolve(undefined);
-    return this.write(
-      async () => readAlbum(await api.createPhotoAlbum({ name: name.trim() }, this.options())),
+  async create(name: string, frozen?: { snapshot_id: string; member_hash: string }) {
+    if (this.unconfirmed) return;
+    const result = await this.write(
+      async () =>
+        readAlbum(await api.createPhotoAlbum({ name: name.trim(), ...frozen }, this.options())),
       name.trim(),
     );
+    if (frozen && (result || this.unconfirmed)) void this.onmemberschange?.(result?.id);
+    return result;
   }
   update(album: api.PhotoAlbum, changes: api.UpdatePhotoAlbumRequest) {
     return this.write(async () =>

@@ -65,10 +65,21 @@ func registerSavedQueryRoutes(api huma.API, d Deps, g *gate, snapshots *store.Qu
 		Summary: "List saved query and highlight definitions by name",
 	}, func(ctx context.Context, in *struct {
 		Kind   string `query:"kind" enum:"query,highlight_set"`
+		Photos bool   `query:"photos" doc:"Only definitions explicitly scoped to photos or videos"`
 		Limit  int    `query:"limit" default:"100" minimum:"1" maximum:"1000"`
 		Offset int    `query:"offset" default:"0" minimum:"0"`
 	}) (*savedQueryPageOutput, error) {
-		items, total, err := d.Store.SavedQueries(ctx, in.Kind, in.Limit, in.Offset)
+		var items []store.SavedQuery
+		var total int
+		var err error
+		if in.Photos {
+			if in.Kind == store.SavedQueryKindHighlightSet {
+				return nil, NewError(http.StatusUnprocessableEntity, "validation", "photo scope requires query definitions")
+			}
+			items, total, err = d.Store.PhotoSavedQueries(ctx, in.Limit, in.Offset)
+		} else {
+			items, total, err = d.Store.SavedQueries(ctx, in.Kind, in.Limit, in.Offset)
+		}
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
@@ -211,15 +222,22 @@ func registerSavedQueryRunRoute(
 		if !ok {
 			return nil, NewError(http.StatusUnauthorized, "unauthorized", "authenticated snapshot owner is missing")
 		}
-		selection, err := selectCollectionProfile(d.Cfg, in.Body.Profile)
-		if err != nil {
-			return nil, err
+		if !in.Body.Photos && in.Body.ReplacesSnapshotID != "" {
+			return nil, NewError(http.StatusUnprocessableEntity, "validation", "replacement handles require photos")
+		}
+		coverage := store.CoverageSelection{Configuration: "unconfigured"}
+		if !in.Body.Photos || in.Body.Profile != "" {
+			selection, err := selectCollectionProfile(d.Cfg, in.Body.Profile)
+			if err != nil {
+				return nil, err
+			}
+			coverage = selection.Coverage
 		}
 		if snapshots == nil {
 			return nil, NewError(http.StatusServiceUnavailable, "workspace_unavailable", "workspace query snapshots are unavailable")
 		}
 		run, page, err := snapshots.RunSaved(ctx, owner, in.SavedQueryID, revision, store.SnapshotRequest{
-			Coverage: selection.Coverage, PageSize: in.Body.PageSize, Facets: in.Body.Facets,
+			ReplacesSnapshotID: in.Body.ReplacesSnapshotID, Photos: in.Body.Photos, Coverage: coverage, PageSize: in.Body.PageSize, Facets: in.Body.Facets,
 		}, g.mutate)
 		if err != nil {
 			return nil, workspaceQueryError(err)

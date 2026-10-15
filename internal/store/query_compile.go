@@ -230,8 +230,11 @@ func (c queryCompiler) compileAssociativeChildren(
 
 func (c queryCompiler) compileExpressionLeaf(expression *query.ResolvedExpression, field string) (compiledQueryFragment, error) {
 	syntax := expression.Syntax
-	if syntax.Value == "" {
+	if syntax.Value == "" && field != "flag" && field != "label" {
 		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "field operand cannot be empty")
+	}
+	if c.photoDisplayMetadata && field == "" && syntax.Kind == query.ExpressionTerm && syntax.Value == "pick" && !syntax.Prefix {
+		return c.compileScalarPredicate("flag", "pick", syntax.Start, syntax.End)
 	}
 	switch {
 	case isPhotoScalarField(field), slices.Contains([]string{"mime", "extension", "media_family", "modified_after", "modified_before", "size_min", "size_max", "text_coverage", "has_duplicates"}, field):
@@ -575,7 +578,7 @@ func (c queryCompiler) compileLexicalPredicate(fts string, includeContent bool) 
 	metadata := compiledQueryFragment{sql: `cv.blob_hash IN (SELECT h.source_sha256 FROM photo_metadata_fts JOIN source_metadata_heads h ON h.generation_id=photo_metadata_fts.generation_id WHERE photo_metadata_fts MATCH ?)`, args: []any{"text : (" + fts + ")"}}
 	parts := []compiledQueryFragment{name, content}
 	if c.photoDisplayMetadata {
-		parts = append(parts, metadata)
+		parts = append(parts, metadata, compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM photo_files candidate JOIN photo_files pf ON pf.asset_id=candidate.asset_id JOIN nodes sibling ON sibling.id=pf.node_id JOIN content_versions sibling_version ON sibling_version.version_id=sibling.current_version_id AND sibling_version.node_id=sibling.id WHERE candidate.node_id=n.id AND pf.role<>'sidecar' AND sibling.kind='file' AND sibling.trashed_at IS NULL AND pf.node_id IN (SELECT rowid FROM photo_authored_fts WHERE photo_authored_fts MATCH ?))`, args: []any{fts}})
 	}
 	return joinCompiledFragments(parts, ` OR `)
 }

@@ -111,13 +111,25 @@ func (s *Store) SavedQueryByID(ctx context.Context, id string) (SavedQuery, erro
 func (s *Store) SavedQueries(
 	ctx context.Context, kind string, limit, offset int,
 ) ([]SavedQuery, int, error) {
+	return s.listSavedQueries(ctx, kind, limit, offset, false)
+}
+
+// PhotoSavedQueries returns definitions explicitly scoped to photos or videos.
+func (s *Store) PhotoSavedQueries(ctx context.Context, limit, offset int) ([]SavedQuery, int, error) {
+	return s.listSavedQueries(ctx, SavedQueryKindQuery, limit, offset, true)
+}
+
+func (s *Store) listSavedQueries(ctx context.Context, kind string, limit, offset int, photos bool) ([]SavedQuery, int, error) {
 	if err := validateSavedQueryPage(kind, limit, offset); err != nil {
 		return nil, 0, err
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		WITH filtered AS (
 		  SELECT id,name,description,kind,payload,fingerprint,revision,created_at,updated_at
-		  FROM saved_queries WHERE ?='' OR kind=?
+		  FROM saved_queries WHERE (?='' OR kind=?) AND (NOT ? OR (
+		    kind='query' AND json_array_length(payload,'$.filters.kinds')>0
+		    AND NOT EXISTS(SELECT 1 FROM json_each(payload,'$.filters.kinds') WHERE value NOT IN ('photo','video'))
+		  ))
 		), page AS (
 		  SELECT * FROM filtered ORDER BY name,id LIMIT ? OFFSET ?
 		), totals AS (SELECT COUNT(*) AS total FROM filtered)
@@ -126,7 +138,7 @@ func (s *Store) SavedQueries(
 		       COALESCE(page.fingerprint,''), COALESCE(page.revision,0),
 		       COALESCE(page.created_at,''), COALESCE(page.updated_at,'')
 		FROM totals LEFT JOIN page ON true ORDER BY page.name,page.id`,
-		kind, kind, limit, offset)
+		kind, kind, photos, limit, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("listing saved queries: %w", err)
 	}

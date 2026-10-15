@@ -69,7 +69,10 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 		if err != nil {
 			return nil, workspaceQueryError(err)
 		}
-		wire := PhotoBrowsePage{Items: make([]PhotoBrowseRow, len(page.Items)), Total: page.Total, Facets: fromStoreFacets(page.Facets)}
+		wire := PhotoBrowsePage{
+			Items: make([]PhotoBrowseRow, len(page.Items)), Total: page.Total,
+			Facets: fromStoreFacets(page.Facets), RelevanceAvailable: page.RelevanceAvailable,
+		}
 		if in.Body.Projection == "map" {
 			wire.Items = []PhotoBrowseRow{}
 			wire.MapItems = make([]PhotoMapRow, len(page.Items))

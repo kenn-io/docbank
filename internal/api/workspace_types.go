@@ -29,9 +29,11 @@ type WorkspaceQueryPageRequest struct {
 // SavedQueryRunRequest supplies execution options without allowing callers to
 // replace the revision-fenced saved QueryV1 definition.
 type SavedQueryRunRequest struct {
-	Profile  string   `json:"profile,omitempty" maxLength:"128"`
-	PageSize int      `json:"page_size,omitempty" enum:"50,100,250" default:"100"`
-	Facets   []string `json:"facets,omitempty" maxItems:"8" uniqueItems:"true" enum:"collections,tags,media_family,extension,modified,size,text_coverage,duplicates"`
+	ReplacesSnapshotID string   `json:"replaces_snapshot_id,omitempty" maxLength:"32" doc:"Owned photo snapshot to keep while building its replacement"`
+	Photos             bool     `json:"photos,omitempty"`
+	Profile            string   `json:"profile,omitempty" maxLength:"128"`
+	PageSize           int      `json:"page_size,omitempty" enum:"50,100,250" default:"100"`
+	Facets             []string `json:"facets,omitempty" maxItems:"8" uniqueItems:"true" enum:"collections,tags,media_family,extension,modified,size,text_coverage,duplicates"`
 }
 
 // WorkspaceQueryDependency is the explicit snake-case wire form of an
@@ -59,6 +61,7 @@ type WorkspaceQueryTag struct {
 }
 
 type WorkspaceQueryRow struct {
+	AssetID                string              `json:"asset_id,omitempty" format:"uuid"`
 	NodeID                 int64               `json:"node_id" minimum:"1"`
 	ContentVersionID       string              `json:"content_version_id" format:"uuid"`
 	BlobHash               string              `json:"blob_hash" pattern:"^[0-9a-f]{64}$"`
@@ -143,6 +146,7 @@ type SavedQueryRunComparison struct {
 }
 
 type SavedQueryRun struct {
+	Photos                   bool                    `json:"photos"`
 	RunID                    string                  `json:"run_id" format:"uuid"`
 	SavedQueryID             string                  `json:"saved_query_id" format:"uuid"`
 	SavedQueryRevision       int64                   `json:"saved_query_revision" minimum:"1"`
@@ -188,7 +192,7 @@ func fromStoreWorkspacePage(page store.SnapshotPage) (WorkspaceQueryResponse, er
 	}
 	for _, row := range page.Rows {
 		wire := WorkspaceQueryRow{
-			NodeID: row.NodeID, ContentVersionID: row.ContentVersionID, BlobHash: row.BlobHash,
+			AssetID: row.AssetID, NodeID: row.NodeID, ContentVersionID: row.ContentVersionID, BlobHash: row.BlobHash,
 			Size: row.Size, Revision: row.Revision, Name: row.Name, Path: row.Path,
 			MIMEType: row.MIMEType, MediaFamily: row.MediaFamily, ModifiedAt: row.ModifiedAt,
 			SortKey: row.SortKey, Tags: []WorkspaceQueryTag{}, CollectionIDs: row.CollectionIDs,
@@ -207,7 +211,7 @@ func fromStoreWorkspacePage(page store.SnapshotPage) (WorkspaceQueryResponse, er
 
 func fromStoreSavedQueryRun(run store.SavedQueryRun) SavedQueryRun {
 	out := SavedQueryRun{
-		RunID: run.RunID, SavedQueryID: run.SavedQueryID,
+		Photos: run.Photos, RunID: run.RunID, SavedQueryID: run.SavedQueryID,
 		SavedQueryRevision: run.SavedQueryRevision, QueryFingerprint: run.QueryFingerprint,
 		SnapshotID: run.SnapshotID, MemberHash: run.MemberHash, Total: run.Total,
 		TotalBytes: run.TotalBytes, RanAt: run.RanAt, ExpiresAt: run.ExpiresAt,

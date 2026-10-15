@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { APIError } from "./api-transport.js";
+  import { onMount, onDestroy } from "svelte";
   import { Button, EmptyState, Modal, Spinner, TextInput } from "@kenn-io/kit-ui";
   import StarIcon from "@lucide/svelte/icons/star";
   import ImageIcon from "@lucide/svelte/icons/image";
@@ -7,12 +8,63 @@
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import PhotoAlbumCover from "./PhotoAlbumCover.svelte";
   import PhotoAlbumPending from "./PhotoAlbumPending.svelte";
+  import { listSavedQueries, subscribeSavedQueries, type SavedQuery } from "./savedQueries.js";
   let {
     albums,
     cache,
     onnavigate,
-  }: { albums: PhotoAlbums; cache: PhotoPreviewCache; onnavigate: (path: string) => void } =
-    $props();
+    onopensmart,
+    smartDisabled = false,
+  }: {
+    albums: PhotoAlbums;
+    cache: PhotoPreviewCache;
+    onnavigate: (path: string) => void;
+    onopensmart?: (saved: SavedQuery) => void;
+    smartDisabled?: boolean;
+  } = $props();
+  let smartSets = $state<SavedQuery[]>([]);
+  let smartError = $state("");
+  let smartOffset = $state(0);
+  let smartTotal = $state(0);
+  let smartLoading = $state(false);
+  let smartGeneration = 0;
+  async function loadSmartSets(reset = false) {
+    if (smartLoading && !reset) return;
+    const generation = reset ? ++smartGeneration : smartGeneration;
+    if (reset) {
+      smartSets = [];
+      smartOffset = 0;
+      smartTotal = 0;
+    }
+    smartLoading = true;
+    smartError = "";
+    try {
+      const page = await listSavedQueries(albums.session, "query", smartOffset, 100, true);
+      if (!alive || generation !== smartGeneration) return;
+      const seen = new Set(smartSets.map((saved) => saved.id));
+      for (const saved of page.items)
+        if (!seen.has(saved.id)) {
+          seen.add(saved.id);
+          smartSets.push(saved);
+        }
+      smartOffset += page.items.length;
+      smartTotal = page.items.length ? page.total : smartOffset;
+    } catch (cause) {
+      if (alive && generation === smartGeneration) {
+        if (cause instanceof APIError && cause.status === 401) albums.onauthfailure(cause);
+        smartError = cause instanceof Error ? cause.message : String(cause);
+      }
+    } finally {
+      if (alive && generation === smartGeneration) smartLoading = false;
+    }
+  }
+  onMount(() => {
+    if (!onopensmart) return;
+    void loadSmartSets();
+    return subscribeSavedQueries((session) => {
+      if (session === albums.session) void loadSmartSets(true);
+    });
+  });
   let alive = true;
   onDestroy(() => (alive = false));
   let creating = $state(false);
@@ -50,6 +102,26 @@
     </div>
     <Button size="sm" tone="info" onclick={beginCreate}>New album</Button>
   </div>
+  <section class="smart-sets" aria-label="Smart sets">
+    {#if smartSets.length}<h2>Smart sets</h2>
+      <ul>
+        {#each smartSets as saved (saved.id)}<li>
+            <Button
+              disabled={smartDisabled}
+              onclick={() => {
+                if (!smartDisabled) onopensmart?.(saved);
+              }}>{saved.name}</Button
+            ><span>Smart set</span>
+          </li>{/each}
+      </ul>{/if}
+    {#if smartError}<p role="alert">
+        {smartError}<Button onclick={() => void loadSmartSets()}>Retry smart sets</Button>
+      </p>{/if}
+    {#if smartOffset < smartTotal}<Button
+        disabled={smartLoading}
+        onclick={() => void loadSmartSets()}>Load more smart sets</Button
+      >{/if}
+  </section>
   {#if !creating}<PhotoAlbumPending {albums} {onnavigate} />{/if}
   {#if albums.error}<div class="album-error" role="alert">{albums.error}</div>{/if}
   {#if albums.loadError}<div class="album-error" role="alert">
@@ -135,6 +207,28 @@
 {/if}
 
 <style>
+  .smart-sets {
+    padding: 12px;
+  }
+  .smart-sets h2 {
+    margin: 0 0 8px;
+    font-size: var(--font-size-sm);
+  }
+  .smart-sets ul {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 0;
+    margin: 0;
+    list-style: none;
+  }
+  .smart-sets li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: var(--font-size-xs);
+    color: var(--text-muted);
+  }
   .albums-workspace {
     flex: 1;
     min-width: 0;

@@ -18,10 +18,12 @@
   } from "@kenn-io/kit-ui";
   import StarIcon from "@lucide/svelte/icons/star";
   import ImageIcon from "@lucide/svelte/icons/image";
+  import { photoSearchSort } from "./photoSearch.js";
   import { mapPhotoLimit, type Photos, type PhotoReturn } from "./photos.svelte.js";
   import { groupPhotos, monthLabel, ROW_HEIGHTS, type Density } from "./photoGrid.js";
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import { isAppShortcutSuppressed } from "./shortcuts.js";
+  import PhotoSmartSet from "./PhotoSmartSet.svelte";
   import PhotoGrid from "./PhotoGrid.svelte";
   import PhotoInspector from "./PhotoInspector.svelte";
   import type {
@@ -502,12 +504,16 @@
     { value: "large", label: "Large" },
   ];
   let search = $state(untrack(() => photos.baseQuery.text));
+  let syntax = $state(untrack(() => photos.baseQuery.syntax));
   $effect(() => {
     search = photos.query.text;
+    syntax = photos.query.syntax;
   });
   const sortOptions = $derived([
     { value: "capture_time", label: "Capture date" },
-    ...(photos.baseQuery.text.trim() ? [{ value: "relevance", label: "Relevance" }] : []),
+    ...(photos.relevanceAvailable || photos.query.sort.field === "relevance"
+      ? [{ value: "relevance", label: "Relevance" }]
+      : []),
   ]);
   const groupingOptions = [
     { value: "months", label: "Months" },
@@ -727,9 +733,13 @@
                       ? photos.loading
                         ? "Loading photos"
                         : "Photos"
-                      : `${photos.total.toLocaleString()} photos`}{!mapMode && photos.date
+                      : searchable && photos.view === "grid" && !photos.date
+                        ? `${photos.items.length.toLocaleString()} loaded`
+                        : `${photos.total.toLocaleString()} photos`}{!mapMode && photos.date
                     ? ` ${photos.date.length === 10 ? "on" : "in"} ${dateLabel}`
-                    : ""}{!mapMode && photos.started
+                    : ""}{!mapMode &&
+                  photos.started &&
+                  !(searchable && photos.view === "grid" && !photos.date)
                     ? ` · ${photos.items.length.toLocaleString()} loaded`
                     : ""}</span
                 >{/if}
@@ -838,11 +848,20 @@
                 void photos.setQuery({
                   ...photos.baseQuery,
                   text: search,
-                  syntax: "simple",
-                  sort: { field: search.trim() ? "relevance" : "capture_time", direction: "desc" },
+                  syntax,
+                  sort: photoSearchSort({ text: search, syntax }),
                 });
               }}
             >
+              <SelectDropdown
+                title="Search syntax"
+                value={syntax}
+                options={[
+                  { value: "simple", label: "Text" },
+                  { value: "advanced", label: "Filters" },
+                ]}
+                onchange={(value) => (syntax = value as "simple" | "advanced")}
+              />
               <SearchInput
                 disabled={photos.loading || photos.hiding || photos.trashing}
                 ariaLabel="Search photos"
@@ -945,6 +964,19 @@
               </div>
             {/if}
             <div class="photo-results">
+              {#if searchable}
+                <div class="photo-results-toolbar">
+                  <div class="photo-results-summary">
+                    <h2>Search results</h2>
+                    <span
+                      >{photos.loading && !photos.items.length
+                        ? "Loading…"
+                        : `${photos.total.toLocaleString()} photos`}</span
+                    >
+                  </div>
+                  {#if albums}<PhotoSmartSet {photos} {albums} {onnavigate} />{/if}
+                </div>
+              {/if}
               {#if !photoID && editor.error}<Notice tone="error" message={editor.error} />{/if}
               {#if !photoID && editor.receiptID}<Notice
                   tone="success"
@@ -1330,6 +1362,31 @@
     min-width: 0;
     min-height: 0;
   }
+  .photo-results-toolbar {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-7);
+    border-bottom: 1px solid var(--border-default);
+  }
+  .photo-results-summary {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    min-width: 0;
+  }
+  .photo-results-summary h2 {
+    margin: 0;
+    font-size: var(--font-size-sm);
+    color: var(--text-primary);
+  }
+  .photo-results-summary span {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    white-space: nowrap;
+  }
   @media (max-width: 640px) {
     .photos-workspace:has(.grid-inspector) {
       overflow: auto;
@@ -1353,6 +1410,10 @@
       width: auto;
       max-height: 180px;
     }
+    .photo-results-toolbar {
+      align-items: flex-start;
+      flex-direction: column;
+    }
     .grid-inspector {
       width: auto;
       min-height: 0;
@@ -1362,6 +1423,11 @@
   }
   .photo-toolbar {
     border-bottom: 1px solid var(--border-default);
+  }
+  @media (max-width: 640px) {
+    .photo-results-toolbar {
+      padding-inline: var(--space-6);
+    }
   }
   .photo-date-selection {
     display: flex;

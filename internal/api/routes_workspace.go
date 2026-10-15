@@ -96,6 +96,10 @@ func workspaceQueryError(err error) error {
 		return NewError(http.StatusUnprocessableEntity, "validation", err.Error())
 	case errors.Is(err, store.ErrSnapshotGone):
 		return NewError(http.StatusGone, "snapshot_gone", "query snapshot is missing, expired, or revoked")
+	case errors.Is(err, store.ErrSnapshotMemberHash):
+		return NewError(http.StatusBadRequest, "snapshot_member_hash", "query snapshot member hash does not match")
+	case errors.Is(err, store.ErrPhotoSnapshotMemberNotInLibrary):
+		return NewError(http.StatusPreconditionFailed, "photo_snapshot_member_not_in_library", "a frozen photo is no longer in Library")
 	case errors.Is(err, store.ErrSnapshotCursor):
 		return NewError(http.StatusBadRequest, "invalid_cursor", "query snapshot cursor is invalid")
 	case errors.Is(err, store.ErrSnapshotAdmission):

@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -287,7 +288,7 @@ func TestOpenRejectsUnreleasedSchemaWithoutCutover(t *testing.T) {
 			if reopened != nil {
 				require.NoError(t, reopened.Close())
 			}
-			require.ErrorContains(t, err, "has no supported JSONL cutover")
+			require.ErrorContains(t, err, fmt.Sprintf("development schema version %d has no supported JSONL cutover; recreate the vault", unreleased))
 		})
 	}
 }

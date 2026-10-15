@@ -69,7 +69,7 @@ func (c *Connection) PhotoAlbum(ctx context.Context, id string) (api.PhotoAlbumS
 
 func (c *Connection) CreatePhotoAlbum(ctx context.Context, name string) (api.PhotoAlbum, error) {
 	var response *http.Response
-	album, err := c.apiWithResponse(&response).CreatePhotoAlbum(ctx, &apiclient.CreatePhotoAlbumRequestOptions{Body: &api.PhotoAlbumNameRequest{Name: name}})
+	album, err := c.apiWithResponse(&response).CreatePhotoAlbum(ctx, &apiclient.CreatePhotoAlbumRequestOptions{Body: &api.CreatePhotoAlbumRequest{Name: name}})
 	return photoAlbumMutationResponse(response, album, err, "")
 }
 

@@ -9,6 +9,22 @@ afterEach(() => {
 });
 const album = photoAlbum();
 
+it("refreshes album dependents when frozen creation loses its response", async () => {
+  const frozen = { snapshot_id: "a".repeat(32), member_hash: "b".repeat(64) };
+  vi.stubGlobal(
+    "fetch",
+    vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("Response lost"))
+      .mockResolvedValueOnce(response([album])),
+  );
+  const membersChanged = vi.fn();
+  const albums = new PhotoAlbums("session", vi.fn(), membersChanged);
+  await albums.create("Delivery", frozen);
+  expect(membersChanged).toHaveBeenCalledExactlyOnceWith(undefined);
+  albums.dispose();
+});
+
 it.each(["create", "update", "cover", "duplicate", "delete", "add", "remove"] as const)(
   "applies %s before reload and retains it when reload fails",
   async (operation) => {

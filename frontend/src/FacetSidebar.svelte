@@ -16,6 +16,9 @@
   let { facets, query, disabled = false, unit = "documents", onchange }: Props = $props();
 
   const names: Record<Facet["dimension"], string> = {
+    rating: "Rating",
+    flag: "Flag",
+    label: "Color label",
     camera: "Camera",
     lens: "Lens",
     year: "Year",
@@ -142,6 +145,8 @@
   }
 
   function label(dimension: Facet["dimension"], value: FacetValue): string {
+    if (unit === "photos" && dimension === "rating")
+      return value.key === "0" ? "Unrated" : `${value.key} ${value.key === "1" ? "star" : "stars"}`;
     if (dimension === "modified") {
       const range = monthRange(value.key);
       if (range)
@@ -161,6 +166,28 @@
   }
 
   function apply(dimension: Facet["dimension"], value: FacetValue): void {
+    if (dimension === "rating") {
+      const rating = Number(value.key);
+      const active = selected(dimension, value);
+      onchange(
+        changed({
+          ...query.filters,
+          rating_min: active ? undefined : rating,
+          rating_max: active ? undefined : rating,
+        }),
+      );
+      return;
+    }
+    if (dimension === "flag" || dimension === "label") {
+      const field = dimension === "flag" ? "flags" : "labels";
+      const key = value.key === "none" ? "" : value.key;
+      const current = query.filters[field] ?? [];
+      const values = current.includes(key as never)
+        ? current.filter((v) => v !== key)
+        : [...current, key];
+      onchange(changed({ ...query.filters, [field]: values.length ? values : undefined }));
+      return;
+    }
     if (dimension === "year") {
       const active = selected(dimension, value);
       onchange(
@@ -222,6 +249,9 @@
       }
     }
     return (
+      dimension === "rating" ||
+      dimension === "flag" ||
+      dimension === "label" ||
       dimension === "year" ||
       (dimension === "modified" && monthRange(value.key) !== undefined) ||
       (dimension === "size" && sizeRanges[value.key] !== undefined) ||

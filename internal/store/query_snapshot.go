@@ -37,15 +37,18 @@ var ErrQuerySnapshotTooLarge = errors.New("query snapshot exceeds its materializ
 
 // SnapshotRequest selects one frozen QueryV1 projection and its optional facets.
 type SnapshotRequest struct {
-	FacetsOnly bool              `json:"facets_only,omitempty"`
-	Query      query.Query       `json:"query"`
-	Coverage   CoverageSelection `json:"coverage"`
-	PageSize   int               `json:"page_size"`
-	Facets     []string          `json:"facets"`
+	ReplacesSnapshotID string            `json:"replaces_snapshot_id,omitempty"`
+	Photos             bool              `json:"photos,omitempty"`
+	FacetsOnly         bool              `json:"facets_only,omitempty"`
+	Query              query.Query       `json:"query"`
+	Coverage           CoverageSelection `json:"coverage"`
+	PageSize           int               `json:"page_size"`
+	Facets             []string          `json:"facets"`
 }
 
 // SnapshotMember is the exact node/content authority frozen by a snapshot.
 type SnapshotMember struct {
+	AssetID          string `json:"asset_id,omitempty"`
 	NodeID           int64  `json:"node_id"`
 	ContentVersionID string `json:"content_version_id"`
 	BlobHash         string `json:"blob_hash"`
@@ -107,6 +110,7 @@ type SnapshotFacet struct {
 
 // SnapshotProjection is a complete immutable materialization without cache ownership.
 type SnapshotProjection struct {
+	Photos              bool               `json:"photos,omitempty"`
 	Query               query.Query        `json:"query"`
 	Dependencies        []query.Dependency `json:"dependencies"`
 	QueryFingerprint    string             `json:"query_fingerprint"`
@@ -133,6 +137,7 @@ type snapshotMaterializeOptions struct {
 	FacetTimeout       time.Duration
 	Now                func() time.Time
 	Charge             func(rows, bytes int64) error
+	Photos             bool
 	SavedQuery         *savedQuerySnapshotInput
 }
 
@@ -229,13 +234,14 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 			}
 			value = *resolved.Query
 		}
-		compiler := queryCompiler{photoDisplayMetadata: request.FacetsOnly}
+		options.Photos = request.Photos
+		compiler := queryCompiler{photoDisplayMetadata: request.FacetsOnly || options.Photos}
 		compiled, err := compiler.compile(ctx, value, queryResolver{q: q})
 		if err != nil {
 			return err
 		}
 		photoSort := slices.Contains([]string{"capture_time", "import_time", "added_time"}, compiled.Query.Sort.Field)
-		if !request.FacetsOnly && photoSort {
+		if !request.FacetsOnly && !options.Photos && photoSort {
 			return compileExpressionError(0, len(compiled.Query.Text), fmt.Sprintf("sort %q is only supported in Photos", compiled.Query.Sort.Field))
 		}
 		if coverage.Configuration == "configured" {
@@ -244,7 +250,7 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 			}
 		}
 		projection = SnapshotProjection{
-			Query: compiled.Query, Dependencies: slices.Clone(compiled.Dependencies),
+			Photos: options.Photos, Query: compiled.Query, Dependencies: slices.Clone(compiled.Dependencies),
 			Coverage: coverage, PageSize: pageSize,
 			ObservedAt: options.Now().UTC(), Rows: make([]SnapshotRow, 0), Facets: make([]SnapshotFacet, 0, len(facets)),
 			Generation: SnapshotGeneration{Kind: "native"},
@@ -257,7 +263,12 @@ func (s *Store) materializeNormalizedQuerySnapshot(
 			if err != nil {
 				return err
 			}
-			if err := materializeSnapshotRows(ctx, q, compiled, generation.ID, coverage, options, &projection); err != nil {
+			execution := compiled
+			if options.Photos && execution.Query.Sort.Field == "path" {
+				execution.Query.Sort.Field = "name"
+				execution.Query.Sort.Direction = "asc"
+			}
+			if err := materializeSnapshotRows(ctx, q, execution, generation.ID, coverage, options, &projection); err != nil {
 				return err
 			}
 			projection.MemberHash = snapshotMemberHash(snapshotMembers(projection.Rows))
@@ -296,7 +307,10 @@ func normalizeQuerySnapshotRequest(request SnapshotRequest) (SnapshotRequest, er
 	if err != nil {
 		return SnapshotRequest{}, fmt.Errorf("%w: %w", ErrInvalidSnapshotRequest, err)
 	}
-	facets, err := normalizeSnapshotFacets(request.Facets)
+	if request.Photos && len(request.Facets) > 0 {
+		return SnapshotRequest{}, fmt.Errorf("%w: photo snapshots do not support facets", ErrInvalidSnapshotRequest)
+	}
+	facets, err := normalizeFacetDimensions(request.Facets, snapshotFacetDimensions[:])
 	if err != nil {
 		return SnapshotRequest{}, fmt.Errorf("%w: %w", ErrInvalidSnapshotRequest, err)
 	}
@@ -340,13 +354,23 @@ func materializeSnapshotRows(
 	if err := chargeSnapshotMaterialization(options, &projection.SerializedBytes, 0, 2); err != nil {
 		return err
 	}
-	population, err := matchedPopulation(compiled, generationID, nil)
+	var population compiledQueryFragment
+	var err error
+	if options.Photos {
+		population, err = photoSnapshotPopulation(compiled, generationID, coverage, options.MaxRows)
+	} else {
+		population, err = matchedPopulation(compiled, generationID, nil)
+	}
 	if err != nil {
 		return err
 	}
 	statement, args, err := bindQueryPopulation(population, coverage, generationID)
 	if err != nil {
 		return err
+	}
+	photoColumns := `'',''`
+	if options.Photos {
+		photoColumns = `m.asset_id,printf('%020d',m.photo_position)`
 	}
 	coverageCTE, coverageJoin, coverageColumns := "", "", `'', '', ''`
 	if coverage.Configuration == "configured" {
@@ -374,7 +398,7 @@ func materializeSnapshotRows(
 			COALESCE((SELECT ingest_id FROM collection_members WHERE node_id=n.id ORDER BY ingest_id LIMIT 1),''),
 			(SELECT l.label FROM collection_members cm LEFT JOIN collection_labels l ON l.ingest_id=cm.ingest_id
 				WHERE cm.node_id=n.id ORDER BY cm.ingest_id LIMIT 1),
-			`+coverageColumns+`
+			`+coverageColumns+`,`+photoColumns+`
 		FROM matched_members m JOIN nodes n ON n.id=m.node_id
 		JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=m.content_version_id
 		JOIN tree_paths tp ON tp.node_id=n.id AND tp.parent_id IS NULL `+coverageJoin, args...)
@@ -392,7 +416,7 @@ func materializeSnapshotRows(
 		if err := rows.Scan(&row.NodeID, &row.ContentVersionID, &row.BlobHash, &row.Size, &row.Revision,
 			&row.Name, &row.Path, &row.MIMEType, &row.ModifiedAt, &tagsJSON, &collectionsJSON,
 			&row.DisplayCollectionID, &displayLabel, &row.CoverageState, &row.CoverageBuildID,
-			&row.CoverageAttachmentID); err != nil {
+			&row.CoverageAttachmentID, &row.AssetID, &row.SortKey); err != nil {
 			return fmt.Errorf("scanning query snapshot row: %w", err)
 		}
 		if int64(len(tagsJSON)) > options.MaxRowBytes || int64(len(collectionsJSON)) > options.MaxRowBytes {
@@ -414,7 +438,9 @@ func materializeSnapshotRows(
 			row.DisplayCollectionLabel = new(displayLabel.String)
 		}
 		row.MediaFamily = query.ClassifyMedia(row.MIMEType, row.Name)
-		row.SortKey, err = snapshotSortKey(row, compiled.Query.Sort.Field)
+		if !options.Photos {
+			row.SortKey, err = snapshotSortKey(row, compiled.Query.Sort.Field)
+		}
 		if err != nil {
 			return err
 		}
@@ -442,7 +468,11 @@ func materializeSnapshotRows(
 		return fmt.Errorf("closing query snapshot rows: %w", err)
 	}
 	projection.Total = int64(len(projection.Rows))
-	sortSnapshotRows(projection.Rows, compiled.Query.Sort)
+	if options.Photos {
+		slices.SortFunc(projection.Rows, func(a, b SnapshotRow) int { return strings.Compare(a.SortKey, b.SortKey) })
+	} else {
+		sortSnapshotRows(projection.Rows, compiled.Query.Sort)
+	}
 	return nil
 }
 
@@ -507,11 +537,15 @@ func snapshotMemberHash(members []SnapshotMember) string {
 	digest := sha256.New()
 	for _, member := range members {
 		_, _ = fmt.Fprintf(digest, "%d:%s\n", member.NodeID, member.ContentVersionID)
+		if member.AssetID != "" {
+			_, _ = fmt.Fprintf(digest, "asset:%s\n", member.AssetID)
+		}
 	}
 	return hex.EncodeToString(digest.Sum(nil))
 }
 
 type snapshotFingerprintPayload struct {
+	Photos       bool               `json:"photos"`
 	Query        query.Query        `json:"query"`
 	Dependencies []query.Dependency `json:"dependencies"`
 	Generation   SnapshotGeneration `json:"generation"`
@@ -523,7 +557,7 @@ type snapshotFingerprintPayload struct {
 func snapshotProjectionFingerprint(projection SnapshotProjection) (string, error) {
 	digest := sha256.New()
 	err := json.MarshalWrite(digest, snapshotFingerprintPayload{
-		Query: projection.Query, Dependencies: projection.Dependencies, Generation: projection.Generation,
+		Photos: projection.Photos, Query: projection.Query, Dependencies: projection.Dependencies, Generation: projection.Generation,
 		Coverage: projection.Coverage, Rows: projection.Rows, Facets: projection.Facets,
 	}, json.Deterministic(true))
 	if err != nil {
