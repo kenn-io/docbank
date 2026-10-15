@@ -159,9 +159,12 @@ func TestWebMapTileProxy(t *testing.T) {
 			}))
 			defer upstream.Close()
 			client := upstream.Client()
-			client.Timeout = time.Second
+			client.Timeout = mapTileTimeout
+			if tc.timeout {
+				client.Timeout = time.Second
+			}
 			if tc.untrusted {
-				client = &http.Client{Timeout: time.Second}
+				client = &http.Client{Timeout: mapTileTimeout}
 			}
 			rig := newTileRig(t, upstream, client)
 			tile := webMapTilePath + "/1/1/0"
