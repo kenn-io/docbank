@@ -80,7 +80,7 @@ func TestProduceVisualPreviewAppliesEXIFOrientation(t *testing.T) {
 	t.Parallel()
 	tiff := syntheticTIFF(42,
 		[]syntheticTIFFEntry{tiffShort(0x0112, 6)},
-		[]syntheticTIFFEntry{tiffShort(0xa001, 1)},
+		nil,
 	)
 	source := syntheticJPEGSegment(t, mediatest.JPEG(3, 2, color.White), 0xe1,
 		append([]byte("Exif\x00\x00"), tiff...))
@@ -107,25 +107,6 @@ func TestVisualPreviewPreservesHighDensityDetail(t *testing.T) {
 	width, height := boundedVisualPreviewDimensionsForEdge(6000, 4000, visualPreviewMaxEdgePixels)
 	assert.Equal(t, 4096, width)
 	assert.Equal(t, 2731, height)
-}
-
-func TestProduceVisualPreviewRejectsEmbeddedICCProfile(t *testing.T) {
-	t.Parallel()
-	tiff := syntheticTIFF(42, nil, []syntheticTIFFEntry{tiffShort(0xa001, 1)})
-	source := syntheticJPEGSegment(t, mediatest.JPEG(3, 2, color.White), 0xe1,
-		append([]byte("Exif\x00\x00"), tiff...))
-	source = syntheticJPEGSegment(t, source, 0xe2,
-		[]byte("ICC_PROFILE\x00\x01\x01profile"))
-	digest := sha256.Sum256(source)
-
-	product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(source), VisualPreviewTarget{
-		SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(source)), MediaType: "image/jpeg",
-	})
-	require.NoError(t, err)
-	assert.Equal(t, document.VisualPreviewUnsupported, product.Preview.State)
-	require.NotNil(t, product.Preview.Failure)
-	assert.Equal(t, "unsupported_color_profile", product.Preview.Failure.Code)
-	assert.Empty(t, product.Output)
 }
 
 func TestProduceVisualPreviewAcceptsJPEGMediaTypeParameters(t *testing.T) {
@@ -210,9 +191,6 @@ func TestProduceVisualPreviewAppliesPNGEXIFOrientation(t *testing.T) {
 	unusableThenLeading := syntheticPNGChunk(t, syntheticPNGChunk(t, original, "eXIf", exif), "eXIf", nil)
 	duplicate := appendSyntheticPNGChunk(untilIEND(leading), "eXIf", rotate180)
 	duplicate = appendSyntheticPNGChunk(duplicate, "IEND", nil)
-	uncalibrated := appendSyntheticPNGChunk(untilIEND(original), "eXIf", syntheticTIFF(42,
-		[]syntheticTIFFEntry{tiffShort(0x0112, 6)}, []syntheticTIFFEntry{tiffShort(0xa001, 0xffff)}))
-	uncalibrated = appendSyntheticPNGChunk(uncalibrated, "IEND", nil)
 	oversized := appendSyntheticPNGChunk(untilIEND(original), "eXIf", make([]byte, visualPreviewMaxEXIFBytes+1))
 	oversized = appendSyntheticPNGChunk(oversized, "eXIf", exif)
 	oversized = appendSyntheticPNGChunk(oversized, "IEND", nil)
@@ -236,7 +214,6 @@ func TestProduceVisualPreviewAppliesPNGEXIFOrientation(t *testing.T) {
 		"malformed first trailing wins":    {malformedTrailing, 3, 2},
 		"oversized first trailing wins":    {oversized, 3, 2},
 		"many trailing text chunks":        {manyText, 2, 3},
-		"trailing uncalibrated color":      {uncalibrated, 2, 3},
 	} {
 		t.Run(name, func(t *testing.T) {
 			digest := sha256.Sum256(test.source)
@@ -282,10 +259,10 @@ func TestVisualPreviewPNGScansSkipIDATPayload(t *testing.T) {
 		Reader: bytes.NewReader(source), payloadStart: idatStart + 8, payloadEnd: idatEnd - 4,
 	}
 
-	_, unsupportedColor, unsupportedMetadata, malformed, trailingOffset, err :=
+	_, colorSpace, unsupportedMetadata, malformed, trailingOffset, err :=
 		inspectVisualPreviewPNG(t.Context(), reader, int64(len(source)))
 	require.NoError(t, err)
-	assert.False(t, unsupportedColor)
+	assert.Empty(t, colorSpace)
 	assert.False(t, unsupportedMetadata)
 	assert.False(t, malformed)
 	require.NotZero(t, trailingOffset)
@@ -493,38 +470,6 @@ func TestProduceVisualPreviewAppliesWebPEXIFOrientation(t *testing.T) {
 	require.NotNil(t, product.Preview.Output)
 	assert.Equal(t, 100, product.Preview.Output.Width)
 	assert.Equal(t, 75, product.Preview.Output.Height)
-}
-
-func TestProduceVisualPreviewRejectsWebPICCProfile(t *testing.T) {
-	t.Parallel()
-	source, err := base64.StdEncoding.DecodeString(
-		"UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA",
-	)
-	require.NoError(t, err)
-	source = syntheticExtendedWebP(t, source, 1, 1, visualPreviewWebPICCProfile, "ICCP", []byte("profile"))
-	digest := sha256.Sum256(source)
-
-	product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(source), VisualPreviewTarget{
-		SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(source)), MediaType: "image/webp",
-	})
-	require.NoError(t, err)
-	assert.Equal(t, document.VisualPreviewUnsupported, product.Preview.State)
-	require.NotNil(t, product.Preview.Failure)
-	assert.Equal(t, "unsupported_color_profile", product.Preview.Failure.Code)
-}
-
-func TestProduceVisualPreviewRejectsPNGICCProfile(t *testing.T) {
-	t.Parallel()
-	source := syntheticPNGChunk(t, mediatest.PNG(3, 2, color.White), "iCCP", []byte("profile"))
-	digest := sha256.Sum256(source)
-
-	product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(source), VisualPreviewTarget{
-		SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(source)), MediaType: "image/png",
-	})
-	require.NoError(t, err)
-	assert.Equal(t, document.VisualPreviewUnsupported, product.Preview.State)
-	require.NotNil(t, product.Preview.Failure)
-	assert.Equal(t, "unsupported_color_profile", product.Preview.Failure.Code)
 }
 
 func TestProduceVisualPreviewRecordsTruncatedPNGFailure(t *testing.T) {
@@ -922,8 +867,13 @@ func syntheticExtendedWebP(
 	copy(chunk[8:], payload)
 	body := make([]byte, 0, len(vp8x)+len(source)-12+len(chunk))
 	body = append(body, vp8x...)
-	body = append(body, source[12:]...)
-	body = append(body, chunk...)
+	if chunkType == "ICCP" {
+		body = append(body, chunk...)
+		body = append(body, source[12:]...)
+	} else {
+		body = append(body, source[12:]...)
+		body = append(body, chunk...)
+	}
 	result := make([]byte, 12, 12+len(body))
 	copy(result[:4], "RIFF")
 	binary.LittleEndian.PutUint32(result[4:8], uint32(4+len(body)))

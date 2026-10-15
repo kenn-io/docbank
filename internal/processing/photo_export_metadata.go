@@ -317,9 +317,9 @@ func photoSourcePackets(ctx context.Context, data []byte, metadata, retainKeywor
 		if len(payload) > visualPreviewMaxEXIFBytes {
 			return errVisualMetadataLimit
 		}
-		if orientation, colorSpace, found := visualPreviewEXIF(payload); found {
-			result.orientation = orientation
-			result.unsupportedColor = result.unsupportedColor || colorSpace != 0 && colorSpace != 1
+		if fields, found := visualPreviewEXIF(payload); found {
+			result.orientation = fields.orientation
+			result.unsupportedColor = result.unsupportedColor || fields.colorSpace != 0 && fields.colorSpace != 1
 		}
 		if metadata {
 			reader, ok := newExifReader(payload)
