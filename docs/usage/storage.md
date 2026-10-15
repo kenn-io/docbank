@@ -22,7 +22,7 @@ The web application and TUI show this inventory read-only. Registration,
 placement, repair, takeover, evacuation, and removal are CLI or master-key API
 operations.
 
-Photo checkouts hold source versions while queued, running, or completed. Failed and cancelled checkouts release those holds and their destination reservation while retaining historical entries. See [Create writable copies](photos.md#create-writable-copies).
+Photo checkouts hold source versions while queued, running, or completed. Failed and cancelled checkouts release unpublished source holds and their destination reservation. Published and uncertain copies retain their source bases until retirement. Backup preserves those holds through restore. Watches and storage bindings protect released checkout folders, including retired ones, until empty or missing. See [Create writable copies](photos.md#create-writable-copies).
 
 ## Configure a binding
 

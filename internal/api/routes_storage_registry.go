@@ -421,7 +421,11 @@ func validateStorageNamespace(
 				return FromStoreError(err)
 			}
 			for _, checkout := range checkouts {
-				if checkout.RetentionReleased || checkout.Destination == "" {
+				protected, err := ingest.PhotoCheckoutProtectsDestination(checkout)
+				if err != nil {
+					return NewError(http.StatusUnprocessableEntity, "storage_binding_invalid", err.Error())
+				}
+				if !protected {
 					continue
 				}
 				info, statErr := os.Stat(checkout.Destination)
@@ -438,7 +442,7 @@ func validateStorageNamespace(
 					return NewError(http.StatusUnprocessableEntity, "storage_binding_invalid", err.Error())
 				}
 				if overlap {
-					return NewError(http.StatusConflict, "storage_namespace_overlap", fmt.Sprintf("binding %q overlaps reserved checkout %s", bindingName, checkout.ID))
+					return NewError(http.StatusConflict, "storage_namespace_overlap", fmt.Sprintf("binding %q overlaps protected checkout %s", bindingName, checkout.ID))
 				}
 			}
 			watchName, watchOverlap, err := ingest.WatchBindingOverlapContext(
@@ -650,7 +654,11 @@ func storageProtectionPaths(ctx context.Context, d Deps, binding config.StoreBin
 		return nil, FromStoreError(err)
 	}
 	for _, c := range checkouts {
-		if !c.RetentionReleased && c.Destination != "" {
+		protected, err := ingest.PhotoCheckoutProtectsDestination(c)
+		if err != nil {
+			return nil, NewError(http.StatusUnprocessableEntity, "storage_binding_invalid", err.Error())
+		}
+		if protected {
 			paths = append(paths, c.Destination)
 		}
 	}

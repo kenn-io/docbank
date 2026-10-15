@@ -2758,6 +2758,7 @@ CREATE TABLE IF NOT EXISTS photo_checkout_entries (
     size INTEGER NOT NULL,
     relative_path TEXT NOT NULL,
     published INTEGER NOT NULL DEFAULT 0,
+    base_held INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (checkout_id,file_id)
 );
 CREATE INDEX IF NOT EXISTS photo_checkout_entries_version ON photo_checkout_entries(version_id);

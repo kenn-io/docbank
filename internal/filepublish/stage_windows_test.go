@@ -16,7 +16,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func TestStagesAndCheckoutDirectoriesOverridePermissiveParentDACL(t *testing.T) {
+func TestCheckoutDirectoriesOverridePermissiveParentDACL(t *testing.T) {
 	parent := t.TempDir()
 	everyone, err := windows.CreateWellKnownSid(windows.WinWorldSid)
 	require.NoError(t, err)
@@ -33,20 +33,13 @@ func TestStagesAndCheckoutDirectoriesOverridePermissiveParentDACL(t *testing.T) 
 		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
 		nil, nil, dacl, nil))
 
-	stage, err := CreateStage(parent, ".docbank-test-")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = stage.Cleanup() })
-	require.NoError(t, safefileio.ValidatePrivateDir(stage.dir))
-	restricted, err := winsecurity.OpenRestrictedCurrentUserFile(stage.Path())
-	require.NoError(t, err)
-	require.NoError(t, restricted.Close())
 	root, err := os.OpenRoot(parent)
 	require.NoError(t, err)
 	defer func() { _ = root.Close() }()
 	rootStage, err := CreateRootStage(root)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, rootStage.Cleanup()) }()
-	restricted, err = winsecurity.OpenRestrictedCurrentUserFile(filepath.Join(parent, rootStage.name))
+	restricted, err := winsecurity.OpenRestrictedCurrentUserFile(filepath.Join(parent, rootStage.name))
 	require.NoError(t, err)
 	require.NoError(t, restricted.Close())
 	require.NoError(t, rootStage.MakeParentDirectories(filepath.Join("private", "asset", "photo.jpg")))

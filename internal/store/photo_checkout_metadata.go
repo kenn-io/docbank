@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json/v2"
 	"errors"
 )
@@ -19,6 +20,7 @@ type metadataPhotoCheckout struct {
 }
 
 type metadataPhotoCheckoutEntry struct {
+	BaseHeld    *bool   `json:"base_held,omitempty"`
 	SidecarOfID *string `json:"sidecar_of_file_id" db:"sidecar_of_file_id"`
 	Type        string  `json:"type"`
 	CheckoutID  string  `json:"checkout_id" db:"checkout_id"`
@@ -32,12 +34,14 @@ type metadataPhotoCheckoutEntry struct {
 
 var photoCheckoutMetadataTables = []metadataRecordCodec{
 	newMetadataTable(metadataTable[metadataPhotoCheckout]{record: metadataPhotoCheckout{Type: "photo_checkout"}, table: "photo_checkouts", suffix: "ORDER BY checkout_id", checkExport: true, exportAll: exportPhotoCheckoutMetadata, validate: validatePhotoCheckoutMetadata}),
-	newMetadataTable(metadataTable[metadataPhotoCheckoutEntry]{record: metadataPhotoCheckoutEntry{Type: "photo_checkout_entry"}, table: "photo_checkout_entries", suffix: "ORDER BY checkout_id,file_id", checkExport: true, validate: func(v metadataPhotoCheckoutEntry) error {
-		if v.Type != "photo_checkout_entry" || validateUUIDv4(v.CheckoutID) != nil || validateUUIDv4(v.FileID) != nil || validateUUIDv4(v.AssetID) != nil || validateUUIDv4(v.VersionID) != nil || v.SidecarOfID != nil && validateUUIDv4(*v.SidecarOfID) != nil || v.Size < 0 || validateCheckoutPath(v.Path) != nil {
-			return ErrInvalidPhotoCheckout
-		}
-		return validateCatalogSHA256(v.Hash, "photo checkout blob hash")
-	}}),
+	newMetadataTable(metadataTable[metadataPhotoCheckoutEntry]{record: metadataPhotoCheckoutEntry{Type: "photo_checkout_entry"}, table: "photo_checkout_entries", suffix: "ORDER BY checkout_id,file_id", checkExport: true, exportAll: exportPhotoCheckoutEntryMetadata, insert: insertPhotoCheckoutEntryMetadata, validate: validatePhotoCheckoutEntryMetadata}),
+}
+
+func validatePhotoCheckoutEntryMetadata(v metadataPhotoCheckoutEntry) error {
+	if v.Type != "photo_checkout_entry" || validateUUIDv4(v.CheckoutID) != nil || validateUUIDv4(v.FileID) != nil || validateUUIDv4(v.AssetID) != nil || validateUUIDv4(v.VersionID) != nil || v.SidecarOfID != nil && validateUUIDv4(*v.SidecarOfID) != nil || v.Size < 0 || validateCheckoutPath(v.Path) != nil {
+		return ErrInvalidPhotoCheckout
+	}
+	return validateCatalogSHA256(v.Hash, "photo checkout blob hash")
 }
 
 func validatePhotoCheckoutMetadata(v metadataPhotoCheckout) error {
@@ -85,6 +89,37 @@ func exportPhotoCheckoutMetadata(ctx context.Context, q metadataQuerier, write m
 			return err
 		}
 		if err := validatePhotoCheckoutMetadata(record); err != nil {
+			return err
+		}
+		if err := write(record); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+func insertPhotoCheckoutEntryMetadata(ctx context.Context, tx *sql.Tx, v metadataPhotoCheckoutEntry) error {
+	held := v.BaseHeld != nil && *v.BaseHeld
+	_, err := tx.ExecContext(ctx, `INSERT INTO photo_checkout_entries(checkout_id,file_id,asset_id,version_id,blob_hash,size,relative_path,sidecar_of_file_id,base_held) VALUES(?,?,?,?,?,?,?,?,?)`, v.CheckoutID, v.FileID, v.AssetID, v.VersionID, v.Hash, v.Size, v.Path, v.SidecarOfID, held)
+	return err
+}
+
+func exportPhotoCheckoutEntryMetadata(ctx context.Context, q metadataQuerier, write metadataWrite) error {
+	rows, err := q.QueryContext(ctx, `SELECT e.checkout_id,e.file_id,e.asset_id,e.version_id,e.blob_hash,e.size,e.relative_path,e.sidecar_of_file_id,c.retired_at IS NULL AND (e.base_held=1 OR e.published=1 OR e.file_id=COALESCE(o.cursor,'')) FROM photo_checkout_entries e JOIN photo_checkouts c ON c.checkout_id=e.checkout_id LEFT JOIN storage_operations o ON o.operation_id=c.operation_id ORDER BY e.checkout_id,e.file_id`)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		record := metadataPhotoCheckoutEntry{Type: "photo_checkout_entry"}
+		var held bool
+		if err := rows.Scan(&record.CheckoutID, &record.FileID, &record.AssetID, &record.VersionID, &record.Hash, &record.Size, &record.Path, &record.SidecarOfID, &held); err != nil {
+			return err
+		}
+		if held {
+			record.BaseHeld = new(true)
+		}
+		if err := validatePhotoCheckoutEntryMetadata(record); err != nil {
 			return err
 		}
 		if err := write(record); err != nil {

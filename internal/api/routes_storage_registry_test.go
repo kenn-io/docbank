@@ -388,3 +388,45 @@ func TestStorageRegistrationProtectsCheckoutReservations(t *testing.T) {
 		})
 	}
 }
+
+func TestStorageRegistrationProtectsReleasedCheckoutCopies(t *testing.T) {
+	t.Parallel()
+	for _, state := range []store.StorageOperationState{store.StorageOperationCompleted, store.StorageOperationFailed, store.StorageOperationCancelled} {
+		t.Run(string(state), func(t *testing.T) {
+			destination := t.TempDir()
+			ts, live := newTestServer(t, func(d *api.Deps) {
+				d.Cfg.StoreBindings = map[string]config.StoreBindingConfig{"checkout": {Kind: "filesystem", Path: destination}}
+				d.BlobRegistry = blob.NewRegistry(t.Context(), d.Store.VaultID(), d.Cfg.StoreBindings, nil)
+				t.Cleanup(func() { require.NoError(t, d.BlobRegistry.Close()) })
+			})
+			node, err := live.CreateFile(t.Context(), live.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
+			require.NoError(t, err)
+			asset, err := live.PhotoAssetForNode(t.Context(), node.ID)
+			require.NoError(t, err)
+			checkout, op, err := live.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
+			require.NoError(t, err)
+			require.NoError(t, live.FinishPhotoCheckout(t.Context(), checkout.ID, op.ID, state, "{}", "result", time.Now().Add(time.Hour)))
+			partial := filepath.Join(destination, "partial.jpg")
+			require.NoError(t, os.WriteFile(partial, []byte("edited copy"), 0o600))
+			_, err = live.RetirePhotoCheckout(t.Context(), checkout.ID)
+			require.NoError(t, err)
+			input := map[string]any{"name": "archive", "binding": "checkout"}
+			resp, body := do(t, ts, http.MethodPost, "/api/v1/storage/stores/preview", nil, input)
+			require.Equal(t, http.StatusConflict, resp.StatusCode, body)
+			require.Contains(t, body, "storage_namespace_overlap")
+			require.NoError(t, os.Remove(partial))
+			resp, body = do(t, ts, http.MethodPost, "/api/v1/storage/stores/preview", nil, input)
+			require.Equal(t, http.StatusOK, resp.StatusCode, body)
+			var preview api.BlobStorePreview
+			require.NoError(t, json.Unmarshal([]byte(body), &preview))
+			require.NoError(t, os.WriteFile(partial, []byte("new copy"), 0o600))
+			resp, body = do(t, ts, http.MethodPost, "/api/v1/storage/stores", nil, map[string]any{"preview_token": preview.PreviewToken})
+			require.Equal(t, http.StatusConflict, resp.StatusCode, body)
+			require.Contains(t, body, "storage_namespace_overlap")
+			require.NoError(t, os.Remove(partial))
+			require.NoError(t, os.Remove(destination))
+			resp, body = do(t, ts, http.MethodPost, "/api/v1/storage/stores/preview", nil, input)
+			require.Equal(t, http.StatusOK, resp.StatusCode, body)
+		})
+	}
+}

@@ -3,6 +3,8 @@ package ingest
 import (
 	"errors"
 	"fmt"
+	"go.kenn.io/docbank/internal/store"
+	"io"
 	"os"
 	"slices"
 )
@@ -47,4 +49,29 @@ func (p *PathProtection) Check(paths []string) error {
 		}
 	}
 	return nil
+}
+
+// PhotoCheckoutProtectsDestination retains admission protection until copies are cleared.
+func PhotoCheckoutProtectsDestination(c store.PhotoCheckout) (bool, error) {
+	if c.Destination == "" {
+		return false, nil
+	}
+	if !c.RetentionReleased {
+		return true, nil
+	}
+	folder, err := os.Open(c.Destination)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	_, readErr := folder.Readdirnames(1)
+	if err := folder.Close(); err != nil {
+		return false, err
+	}
+	if errors.Is(readErr, io.EOF) {
+		return false, nil
+	}
+	return readErr == nil, readErr
 }

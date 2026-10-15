@@ -541,6 +541,9 @@ func (s *Store) RetirePhotoCheckout(ctx context.Context, id string) (PhotoChecko
 		if _, err := tx.ExecContext(ctx, `UPDATE photo_checkouts SET retired_at=?,retention_released=1 WHERE checkout_id=?`, retired, id); err != nil {
 			return err
 		}
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_checkout_entries SET base_held=0 WHERE checkout_id=?`, id); err != nil {
+			return err
+		}
 		out.RetiredAt = &retired
 		out.RetentionReleased = true
 		return nil
@@ -549,4 +552,4 @@ func (s *Store) RetirePhotoCheckout(ctx context.Context, id string) (PhotoChecko
 }
 
 // e and c are the entry and checkout aliases in every retained-version query.
-const photoCheckoutHoldPredicate = `c.retired_at IS NULL AND (c.retention_released=0 OR e.published=1 OR EXISTS(SELECT 1 FROM storage_operations pending WHERE pending.operation_id=c.operation_id AND pending.cursor=e.file_id))`
+const photoCheckoutHoldPredicate = `c.retired_at IS NULL AND (c.retention_released=0 OR e.base_held=1 OR e.published=1 OR EXISTS(SELECT 1 FROM storage_operations pending WHERE pending.operation_id=c.operation_id AND pending.cursor=e.file_id))`
