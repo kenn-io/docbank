@@ -592,24 +592,12 @@ func TestCheckoutPreflightsCollisionsBeforePublishingBytes(t *testing.T) {
 	first, err = s.Store.AttachPhotoFile(ctx, first.ID, first.Revision, second.Files[0].NodeID, store.PhotoRoleImage, nil)
 	require.NoError(t, err)
 	destination := t.TempDir()
-	checkout, op, root, err := s.Prepare(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{first.ID}}, destination, 0)
+	_, _, _, err = s.Prepare(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{first.ID}}, destination, 0)
+	require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
+	require.ErrorContains(t, err, "collides")
+	checkouts, err := s.Store.ListPhotoCheckouts(ctx)
 	require.NoError(t, err)
-	defer func() { require.NoError(t, root.Close()) }()
-	runErr := s.Run(ctx, checkout, root)
-	status, err := s.Store.PhotoCheckoutStatus(ctx, checkout.ID)
-	require.NoError(t, err)
-	finished, err := s.Store.StorageOperation(ctx, op.ID)
-	require.NoError(t, err)
-	require.ErrorIs(t, runErr, os.ErrExist)
-	require.Equal(t, "failed", status.Checkout.State)
-	require.Zero(t, status.PublishedFiles)
-	require.Zero(t, finished.CopiedObjects)
-	entries, err := s.Store.PhotoCheckoutEntries(ctx, checkout.ID)
-	require.NoError(t, err)
-	for _, entry := range entries {
-		_, err := root.Stat(filepath.FromSlash(entry.Path))
-		require.ErrorIs(t, err, os.ErrNotExist)
-	}
+	require.Empty(t, checkouts, "a rejected selection must not leave a checkout or its holds behind")
 }
 
 func TestCheckoutRechecksProtectedRootSnapshot(t *testing.T) {

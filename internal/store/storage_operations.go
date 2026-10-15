@@ -251,16 +251,27 @@ func (s *Store) PruneExpiredStorageOperations(
 func pruneExpiredStorageOperationsTx(
 	ctx context.Context, tx *sql.Tx, now time.Time,
 ) (int64, error) {
+	// A store mid-upgrade from a schema older than this feature has no
+	// photo_checkouts table yet; such a store holds no checkouts, so the
+	// retention clause simply doesn't apply.
+	var hasCheckouts bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='photo_checkouts')`).Scan(&hasCheckouts); err != nil {
+		return 0, err
+	}
+	checkoutRetention := ""
+	if hasCheckouts {
+		checkoutRetention = `AND NOT EXISTS (
+   SELECT 1 FROM photo_checkouts c JOIN photo_checkout_entries e ON e.checkout_id=c.checkout_id
+   WHERE c.operation_id=storage_operations.operation_id AND c.retired_at IS NULL
+     AND e.file_id=storage_operations.cursor AND e.published=0
+  )`
+	}
 	result, err := tx.ExecContext(ctx, `
 		DELETE FROM storage_operations
 		WHERE state IN (?,?,?)
 		  AND retention_until IS NOT NULL
 		  AND retention_until<=?
-		  AND NOT EXISTS (
-			SELECT 1 FROM photo_checkouts c JOIN photo_checkout_entries e ON e.checkout_id=c.checkout_id
-			WHERE c.operation_id=storage_operations.operation_id AND c.retired_at IS NULL
-			  AND e.file_id=storage_operations.cursor AND e.published=0
-		  )
+		  `+checkoutRetention+`
 		  AND NOT EXISTS (
 			SELECT 1 FROM storage_operation_cleanup cleanup
 			WHERE cleanup.operation_id=storage_operations.operation_id
