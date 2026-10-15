@@ -5,7 +5,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("sends the API key in the sign-in body", async () => {
+it("sends the API key in the sign-in body without an X-Api-Key header", async () => {
   const fetchMock = vi
     .spyOn(globalThis, "fetch")
     .mockResolvedValue(new Response(JSON.stringify({ enabled: true })));

@@ -258,7 +258,7 @@ describe("document processing browser API", () => {
     },
   );
 
-  it("sends consent and plan_fingerprint and delivers the durable job before the blocked terminal stream", async () => {
+  it("includes consent and plan_fingerprint in the request body and delivers the job before the terminal stream unblocks", async () => {
     const versionID = "11111111-1111-4111-8111-111111111111";
     const fingerprint = "a".repeat(64);
     const jobID = "b".repeat(64);
@@ -338,7 +338,7 @@ describe("document processing browser API", () => {
     });
   });
 
-  it("rejects malformed, trailing, and oversized incremental progress", async () => {
+  it("rejects trailing and oversized incremental progress", async () => {
     const jobID = "b".repeat(64);
     const job = `${JSON.stringify({
       sequence: 1,

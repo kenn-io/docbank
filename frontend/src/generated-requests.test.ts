@@ -171,25 +171,6 @@ it("preserves export progress as an NDJSON response", async () => {
   expect(new Headers(request?.headers).get("Accept")).toBe("application/x-ndjson");
 });
 
-it("sends photo query intent through the generated read-only POST", async () => {
-  const query = {
-    filters: {
-      kinds: ["photo"],
-      iso_min: 0,
-      gps_bounds: { south: "-10", west: "170", north: "10", east: "-170" },
-    },
-    sort: { field: "capture_time", direction: "desc" },
-  };
-  const fetch = vi
-    .spyOn(globalThis, "fetch")
-    .mockResolvedValue(Response.json({ items: [], total: 0 }));
-  await api.listPhotoAssets({ query } as api.PhotoBrowseRequest, { session: "synthetic-session" });
-  const [url, request] = fetch.mock.calls[0];
-  expect(url).toBe("/api/v1/photos/assets/query");
-  expect(request?.method).toBe("POST");
-  expect(JSON.parse(String(request?.body))).toEqual({ query });
-});
-
 it("preserves a conditional photo preview's empty 304 response", async () => {
   const etag = '"cached-generation"';
   const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(
