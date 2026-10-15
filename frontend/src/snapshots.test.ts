@@ -125,7 +125,11 @@ describe("snapshot transport and receipt validation", () => {
   });
 
   it.each([
-    ["an unknown envelope field", async () => ({ ...(await page()), future: true })],
+    [
+      "an unknown envelope field",
+      async () => ({ ...(await page()), future: true }),
+      "receipt has missing or unknown fields",
+    ],
     [
       "a missing receipt field",
       async () => {
@@ -133,9 +137,18 @@ describe("snapshot transport and receipt validation", () => {
         delete value.member_hash;
         return value;
       },
+      "receipt has missing or unknown fields",
     ],
-    ["an unsafe total", async () => page({ total: Number.MAX_SAFE_INTEGER + 1 })],
-    ["empty rows with a nonzero total", async () => page({ rows: [], total: 51 })],
+    [
+      "an unsafe total",
+      async () => page({ total: Number.MAX_SAFE_INTEGER + 1 }),
+      "total must be a safe integer of at least 0",
+    ],
+    [
+      "empty rows with a nonzero total",
+      async () => page({ rows: [], total: 51 }),
+      "rows is inconsistent with total",
+    ],
     [
       "an unsafe row identity",
       async () =>
@@ -144,6 +157,7 @@ describe("snapshot transport and receipt validation", () => {
           total: 1,
           total_bytes: 20,
         }),
+      "rows[0].node_id must be a safe integer of at least 1",
     ],
     [
       "an oversized serialized row",
@@ -153,6 +167,7 @@ describe("snapshot transport and receipt validation", () => {
           total: 1,
           total_bytes: 20,
         }),
+      "rows[0] exceeds 64 KiB",
     ],
     [
       "invented unavailable counts",
@@ -168,6 +183,7 @@ describe("snapshot transport and receipt validation", () => {
             },
           ],
         }),
+      "facets[0] fabricates unavailable counts",
     ],
     [
       "missing unavailable reason",
@@ -175,6 +191,7 @@ describe("snapshot transport and receipt validation", () => {
         page({
           facets: [{ dimension: "tags", available: false, values: [] }],
         }),
+      "facets[0] fabricates unavailable counts",
     ],
     [
       "unknown nested row field",
@@ -184,8 +201,9 @@ describe("snapshot transport and receipt validation", () => {
           total: 1,
           total_bytes: 20,
         }),
+      "rows[0] has missing or unknown fields",
     ],
-  ])("rejects %s", async (_name, makeReceipt) => {
+  ])("rejects %s", async (_name, makeReceipt, error) => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(await makeReceipt()));
     await expect(
       createSnapshot(
@@ -194,7 +212,7 @@ describe("snapshot transport and receipt validation", () => {
         { profile: "archive", page_size: 50, facets: ["tags"] },
         new AbortController().signal,
       ),
-    ).rejects.toThrow(/malformed snapshot receipt/i);
+    ).rejects.toThrow(`Malformed snapshot receipt: ${error}.`);
   });
 
   it("rejects a receipt for a different query", async () => {

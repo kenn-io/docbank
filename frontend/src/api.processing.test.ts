@@ -418,7 +418,7 @@ describe("document processing browser API", () => {
     expect(receivedSignal).toBe(controller.signal);
   });
 
-  it("rejects search results outside the fence and malformed result identities", async () => {
+  describe("search result authority", () => {
     const vaultID = "11111111-1111-4111-8111-111111111111";
     const versionID = "22222222-2222-4222-8222-222222222222";
     const otherVersionID = "55555555-5555-4555-8555-555555555555";
@@ -466,60 +466,94 @@ describe("document processing browser API", () => {
         },
       ],
     });
-    const malformed = [
-      (report: ReturnType<typeof valid>) => {
-        report.results[0]!.vault_uid = "33333333-3333-4333-8333-333333333333";
-      },
-      (report: ReturnType<typeof valid>) => {
-        report.results[0]!.content_version_id = "44444444-4444-4444-8444-444444444444";
-      },
-      (report: ReturnType<typeof valid>) => {
-        report.results.push({ ...report.results[0]!, rank: 2, semantic_rank: 2 });
-      },
-      (report: ReturnType<typeof valid>) => {
-        report.results[0]!.rank = 2;
-      },
-      (report: ReturnType<typeof valid>) => {
-        report.results.push({
-          ...report.results[0]!,
-          node_id: 8,
-          content_version_id: otherVersionID,
-          rank: 2,
-        });
-      },
-      (report: ReturnType<typeof valid>) => {
-        report.results[0]!.evidence.push({ ...report.results[0]!.evidence[0]! });
-      },
-      (report: ReturnType<typeof valid>) => {
-        report.results[0]!.evidence[0]!.input_generation_id = "";
-      },
-      (report: ReturnType<typeof valid>) => {
-        report.results[0]!.path = "visible.pdf";
-      },
-      (report: ReturnType<typeof valid>) => {
-        report.results[0]!.excerpt = "e".repeat(513);
-      },
-    ];
-    const fetchMock = vi.spyOn(globalThis, "fetch");
-    for (const mutate of malformed) {
+    it.each([
+      [
+        "foreign vault",
+        (report: ReturnType<typeof valid>) => {
+          report.results[0]!.vault_uid = "33333333-3333-4333-8333-333333333333";
+        },
+      ],
+      [
+        "foreign version",
+        (report: ReturnType<typeof valid>) => {
+          report.results[0]!.content_version_id = "44444444-4444-4444-8444-444444444444";
+        },
+      ],
+      [
+        "duplicate result identity",
+        (report: ReturnType<typeof valid>) => {
+          report.results.push({ ...report.results[0]!, rank: 2, semantic_rank: 2 });
+        },
+      ],
+      [
+        "nonconsecutive rank",
+        (report: ReturnType<typeof valid>) => {
+          report.results[0]!.rank = 2;
+        },
+      ],
+      [
+        "duplicate semantic rank",
+        (report: ReturnType<typeof valid>) => {
+          report.results.push({
+            ...report.results[0]!,
+            node_id: 8,
+            content_version_id: otherVersionID,
+            rank: 2,
+          });
+        },
+      ],
+      [
+        "duplicate evidence",
+        (report: ReturnType<typeof valid>) => {
+          report.results[0]!.evidence.push({ ...report.results[0]!.evidence[0]! });
+        },
+      ],
+      [
+        "missing input generation",
+        (report: ReturnType<typeof valid>) => {
+          report.results[0]!.evidence[0]!.input_generation_id = "";
+        },
+      ],
+      [
+        "relative path",
+        (report: ReturnType<typeof valid>) => {
+          report.results[0]!.path = "visible.pdf";
+        },
+      ],
+      [
+        "oversized excerpt",
+        (report: ReturnType<typeof valid>) => {
+          report.results[0]!.excerpt = "e".repeat(513);
+        },
+      ],
+    ] as const)("rejects %s", async (_name, mutate) => {
       const report = valid();
       mutate(report);
-      fetchMock.mockResolvedValueOnce(Response.json(report));
-      await expect(documentSearch("session", request)).rejects.toThrow(/search response/i);
-    }
-    const longPath = valid();
-    longPath.results[0]!.path = `/${"p".repeat(17000)}`;
-    fetchMock.mockResolvedValueOnce(Response.json(longPath));
-    await expect(documentSearch("session", request)).resolves.toMatchObject({
-      results: [{ content_version_id: versionID }],
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(report));
+      await expect(documentSearch("session", request)).rejects.toThrow(
+        "The daemon returned an invalid search response.",
+      );
     });
 
-    const media = valid();
-    const mediaIdentity = { build_id: "f".repeat(64), time_span: { start_ms: 1000, end_ms: 2000 } };
-    Object.assign(media.results[0]!.evidence[0]!, mediaIdentity);
-    fetchMock.mockResolvedValueOnce(Response.json(media));
-    await expect(documentSearch("session", request)).resolves.toMatchObject({
-      results: [{ evidence: [mediaIdentity] }],
+    it("accepts long absolute paths and media evidence", async () => {
+      const fetchMock = vi.spyOn(globalThis, "fetch");
+      const longPath = valid();
+      longPath.results[0]!.path = `/${"p".repeat(17000)}`;
+      fetchMock.mockResolvedValueOnce(Response.json(longPath));
+      await expect(documentSearch("session", request)).resolves.toMatchObject({
+        results: [{ content_version_id: versionID }],
+      });
+
+      const media = valid();
+      const mediaIdentity = {
+        build_id: "f".repeat(64),
+        time_span: { start_ms: 1000, end_ms: 2000 },
+      };
+      Object.assign(media.results[0]!.evidence[0]!, mediaIdentity);
+      fetchMock.mockResolvedValueOnce(Response.json(media));
+      await expect(documentSearch("session", request)).resolves.toMatchObject({
+        results: [{ evidence: [mediaIdentity] }],
+      });
     });
   });
 

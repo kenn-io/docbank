@@ -3,7 +3,7 @@ import { APIError, isCurrentSessionError, sessionResponse } from "./api-transpor
 
 afterEach(() => vi.restoreAllMocks());
 
-it("sends only the scoped browser session header and sets redirect behavior", async () => {
+it("sends the scoped browser session header and sets redirect behavior", async () => {
   const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ id: 1 }));
   const response = await sessionResponse("/api/v1/tags", { session: "secret" });
   await expect(response.json()).resolves.toEqual({ id: 1 });
