@@ -61,14 +61,35 @@ func TestAudioAdmissionUsesSmallerCeilingAndProfile(t *testing.T) {
 	_, profile, err := NewSuppliedMediaProfile(f.catalog, f.blobs, "synthetic:operator")
 	require.NoError(t, err)
 	configured := configuredProfile{portable: profile.Profile, provider: profile.RenditionProvider, mediaMaxBytes: 3 << 30}
-	admitted := func(filename, mediaType string) int64 {
-		return admittedSourceBytes(inspectionPolicy(filename, store.ContentVersion{MimeType: mediaType}, configured), configured)
+	admitted := func(filename, mediaType string, size int64) int64 {
+		version := store.ContentVersion{MimeType: mediaType, Size: size}
+		return admittedSourceBytes(inspectionPolicy(filename, version, configured), configured)
 	}
-	require.Equal(t, int64(3<<30), admitted("call.wav", "audio/wav"))
+	require.Equal(t, int64(3<<30), admitted("call.wav", "audio/wav", 2<<30))
 	configured.portable.Rendition.MaxDocumentBytes = 2 << 30
-	require.Equal(t, int64(2<<30), admitted("call.wav", "audio/wav"))
+	require.Equal(t, int64(2<<30), admitted("call.wav", "audio/wav", 2<<30))
 	configured.mediaMaxBytes = 64
-	require.Equal(t, int64(1<<30), admitted("notes.txt", "text/plain"), "the media ceiling does not bound documents")
+	require.Equal(t, int64(1<<30), admitted("notes.txt", "text/plain", 2<<30), "the media ceiling does not bound documents")
+}
+
+func TestSmallAudioKeepsDocumentInspectionBound(t *testing.T) {
+	t.Parallel()
+	f := newPublicationFixture(t)
+	_, profile, err := NewSuppliedMediaProfile(f.catalog, f.blobs, "synthetic:operator")
+	require.NoError(t, err)
+	// A custom profile above 1 GiB queued audio work under the 1 GiB inspection
+	// bound before WAV and MP3 could stream past it. Small sources must keep
+	// that policy so their queued execution identities still match.
+	configured := configuredProfile{portable: profile.Profile, provider: profile.RenditionProvider, mediaMaxBytes: 4 << 30}
+	configured.portable.Rendition.MaxDocumentBytes = 2 << 30
+	for _, size := range []int64{64, 1 << 30} {
+		policy := inspectionPolicy("call.wav", store.ContentVersion{MimeType: "audio/wav", Size: size}, configured)
+		require.Equal(t, int64(1<<30), policy.MaxSourceBytes, "size %d", size)
+		require.Equal(t, int64(1<<30), policy.MaxExpandedBytes, "size %d", size)
+		require.Equal(t, int64(1<<30), policy.MaxEntryBytes, "size %d", size)
+	}
+	large := inspectionPolicy("call.wav", store.ContentVersion{MimeType: "audio/wav", Size: (1 << 30) + 1}, configured)
+	require.Equal(t, int64(2<<30), large.MaxSourceBytes)
 }
 
 func TestConfiguredCeilingAppliesToRetainedAudioPlanAndRuntime(t *testing.T) {

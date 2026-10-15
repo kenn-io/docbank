@@ -2171,8 +2171,14 @@ func admittedSourceBytes(policy media.InspectionPolicy, profile configuredProfil
 }
 
 func inspectionPolicy(filename string, version store.ContentVersion, profile configuredProfile) media.InspectionPolicy {
-	maximum := min(profile.portable.Rendition.MaxDocumentBytes,
-		media.InspectionSourceByteCeiling(filename, version.MimeType))
+	// A source within the document bound inspects under it. Only a larger
+	// streaming source selects the 4 GiB ceiling, so admitting larger sources
+	// never changes the inspection record sealed for an admissible one.
+	ceiling := media.MaxInspectionSourceBytes
+	if version.Size > ceiling {
+		ceiling = media.InspectionSourceByteCeiling(filename, version.MimeType)
+	}
+	maximum := min(profile.portable.Rendition.MaxDocumentBytes, ceiling)
 	maxUnits := int64(profile.portable.Rendition.MaxUnits)
 	declaredMediaType := version.MimeType
 	if baseType, _, err := mime.ParseMediaType(declaredMediaType); err == nil {
