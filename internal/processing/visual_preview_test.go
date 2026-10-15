@@ -3,6 +3,7 @@ package processing
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
@@ -1026,7 +1027,7 @@ func TestVisualPreviewJPEGDCBlockMeans(t *testing.T) {
 			}
 			config, err := jpeg.DecodeConfig(bytes.NewReader(source))
 			require.NoError(t, err)
-			reduced, err := decodeVisualPreviewJPEGDC(bufio.NewReader(bytes.NewReader(source)))
+			reduced, err := decodeVisualPreviewJPEGDC(context.Background(), bufio.NewReader(bytes.NewReader(source)))
 			require.NoError(t, err)
 			assert.Equal(t, image.Rect(0, 0, (config.Width+7)/8, (config.Height+7)/8), reduced.Bounds())
 			decoded, err := jpeg.Decode(bytes.NewReader(source))
@@ -1186,7 +1187,7 @@ func TestVisualPreviewJPEGDCMarkerAndTableHandling(t *testing.T) {
 			data := test.data
 			_, err := jpeg.DecodeConfig(bytes.NewReader(data))
 			require.NoError(t, err)
-			got, err := decodeVisualPreviewJPEGDC(bufio.NewReader(bytes.NewReader(data)))
+			got, err := decodeVisualPreviewJPEGDC(context.Background(), bufio.NewReader(bytes.NewReader(data)))
 			if test.wantKind != "" {
 				require.Error(t, err)
 				if test.wantKind == "format" {
@@ -1201,7 +1202,7 @@ func TestVisualPreviewJPEGDCMarkerAndTableHandling(t *testing.T) {
 			}
 			require.NoError(t, err)
 			if test.reference != nil {
-				original, err := decodeVisualPreviewJPEGDC(bufio.NewReader(bytes.NewReader(test.reference)))
+				original, err := decodeVisualPreviewJPEGDC(context.Background(), bufio.NewReader(bytes.NewReader(test.reference)))
 				require.NoError(t, err)
 				assert.Equal(t, original, got)
 				if test.name != "standalone TEM" && test.name != "damaged AC entropy" {
@@ -1232,7 +1233,7 @@ func TestVisualPreviewJPEGDCReadErrors(t *testing.T) {
 	readErr := errors.New("injected read failure")
 	for _, prefix := range [][]byte{nil, {0xff, 0xd8}, {0xff, 0xd8, 0xff}} {
 		reader := io.MultiReader(bytes.NewReader(prefix), iotest.ErrReader(readErr))
-		_, err := decodeVisualPreviewJPEGDC(bufio.NewReader(reader))
+		_, err := decodeVisualPreviewJPEGDC(context.Background(), bufio.NewReader(reader))
 		require.ErrorIs(t, err, readErr)
 	}
 }
@@ -1247,25 +1248,61 @@ func FuzzVisualPreviewJPEGDC(f *testing.F) {
 	f.Add(syntheticVisualJPEGDC(f, 24, 16, true))
 	f.Fuzz(func(t *testing.T, data []byte) {
 		// A panic fails the fuzz run; any error or image is acceptable.
-		_, _ = decodeVisualPreviewJPEGDC(bufio.NewReader(bytes.NewReader(data)))
+		_, _ = decodeVisualPreviewJPEGDC(context.Background(), bufio.NewReader(bytes.NewReader(data)))
 	})
 }
 
 func TestVisualPreviewJPEGDCAboveCeiling(t *testing.T) {
 	t.Parallel()
-	header := syntheticVisualJPEGDC(t, 8, 8, false)
-	frame := bytes.Index(header, []byte{0xff, 0xc2})
-	binary.BigEndian.PutUint16(header[frame+5:frame+7], 65535)
-	binary.BigEndian.PutUint16(header[frame+7:frame+9], 65535)
-	header = header[:bytes.Index(header, []byte{0xff, 0xda})+14]
-	digest := sha256.Sum256(header)
-	product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(header), VisualPreviewTarget{
-		SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(header)), MediaType: "image/jpeg",
-	})
-	require.NoError(t, err)
-	assert.Equal(t, document.VisualPreviewFailed, product.Preview.State)
-	require.NotNil(t, product.Preview.Failure)
-	assert.Equal(t, "source_dimensions_exceed_limit", product.Preview.Failure.Code)
+	for _, test := range []struct {
+		name          string
+		baseline      bool
+		width, height int
+		exceeds       bool
+	}{
+		{"progressive above ceiling", false, 65535, 65535, true},
+		{"baseline above ceiling", true, 65535, 65535, true},
+		// 400 MP sits between the baseline and progressive ceilings.
+		{"baseline between ceilings", true, 20000, 20000, true},
+		{"progressive between ceilings", false, 20000, 20000, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			header := syntheticVisualJPEGDC(t, 8, 8, test.baseline)
+			marker := []byte{0xff, 0xc2}
+			if test.baseline {
+				marker = []byte{0xff, 0xc0}
+			}
+			frame := bytes.Index(header, marker)
+			binary.BigEndian.PutUint16(header[frame+5:frame+7], uint16(test.height))
+			binary.BigEndian.PutUint16(header[frame+7:frame+9], uint16(test.width))
+			header = header[:bytes.Index(header, []byte{0xff, 0xda})+14]
+			digest := sha256.Sum256(header)
+			product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(header), VisualPreviewTarget{
+				SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(header)), MediaType: "image/jpeg",
+			})
+			require.NoError(t, err)
+			assert.Equal(t, document.VisualPreviewFailed, product.Preview.State)
+			require.NotNil(t, product.Preview.Failure)
+			if test.exceeds {
+				assert.Equal(t, "source_dimensions_exceed_limit", product.Preview.Failure.Code)
+			} else {
+				// The truncated header passes the size check and then fails on data.
+				assert.NotEqual(t, "source_dimensions_exceed_limit", product.Preview.Failure.Code)
+			}
+		})
+	}
+}
+
+func TestVisualPreviewJPEGDCStopsWhenCancelled(t *testing.T) {
+	t.Parallel()
+	for _, baseline := range []bool{true, false} {
+		source := syntheticVisualJPEGDC(t, 2048, 2048, baseline)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err := decodeVisualPreviewJPEGDC(ctx, bufio.NewReader(bytes.NewReader(source)))
+		require.ErrorIs(t, err, context.Canceled, "baseline=%v", baseline)
+	}
 }
 
 func syntheticVisualJPEGDC(t testing.TB, width, height int, baseline bool) []byte {
@@ -1309,7 +1346,7 @@ func syntheticVisualJPEGDC(t testing.TB, width, height int, baseline bool) []byt
 func TestVisualPreviewJPEGDCPanicFailsDurably(t *testing.T) {
 	t.Parallel()
 	// A reader that panics stands in for any decoder bug the bounds checks miss.
-	_, err := decodeVisualPreviewJPEGDCSafely(bufio.NewReader(&panicReader{}))
+	_, err := decodeVisualPreviewJPEGDCSafely(context.Background(), bufio.NewReader(&panicReader{}))
 	require.Error(t, err)
 	_, isFormat := errors.AsType[jpeg.FormatError](err)
 	require.True(t, isFormat, "panic must classify as a durable JPEG format error")

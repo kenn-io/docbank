@@ -59,9 +59,17 @@ func decodeVisualPixels(ctx context.Context, source io.ReadSeeker, format string
 				return result, err
 			}
 			result.header = false
-			result.image, err = decodeVisualPreviewJPEGDCSafely(bufio.NewReaderSize(reader, 64*1024))
+			result.image, err = decodeVisualPreviewJPEGDCSafely(ctx, bufio.NewReaderSize(reader, 64*1024))
+			if errors.Is(err, errVisualDimensions) {
+				// Baseline JPEGs have a lower reduced-decode ceiling.
+				result.header = true
+				return result, errVisualDimensions
+			}
 			if err != nil {
 				return result, fmt.Errorf("decoding image pixels: %w", err)
+			}
+			if bounds := result.image.Bounds(); bounds.Dx() != (config.Width+7)/8 || bounds.Dy() != (config.Height+7)/8 {
+				return result, errVisualDecodeBounds
 			}
 			return result, ctx.Err()
 		}
@@ -90,11 +98,11 @@ func decodeVisualPixels(ctx context.Context, source io.ReadSeeker, format string
 // decodeVisualPreviewJPEGDCSafely turns a decoder panic into a durable JPEG
 // format error so one malformed original fails its own preview once instead of
 // stopping the worker or retrying forever.
-func decodeVisualPreviewJPEGDCSafely(reader *bufio.Reader) (img image.Image, err error) {
+func decodeVisualPreviewJPEGDCSafely(ctx context.Context, reader *bufio.Reader) (img image.Image, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			img, err = nil, jpeg.FormatError(fmt.Sprintf("decoder panic: %v", r))
 		}
 	}()
-	return decodeVisualPreviewJPEGDC(reader)
+	return decodeVisualPreviewJPEGDC(ctx, reader)
 }

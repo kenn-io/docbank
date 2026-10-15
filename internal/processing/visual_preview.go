@@ -28,16 +28,22 @@ const (
 	visualPreviewProcessorDescriptor = document.VisualPreviewProcessorDescriptor
 	visualPreviewMaxEdgePixels       = document.VisualPreviewMaxEdgePixels
 	visualPreviewMaxSourcePixels     = document.VisualPreviewMaxSourcePixels
-	visualPreviewMaxDCSourcePixels   = document.VisualPreviewMaxDCSourcePixels
-	visualPreviewJPEGQuality         = document.VisualPreviewJPEGQuality
-	visualPreviewMaxJPEGSegments     = 1024
-	visualPreviewMaxPNGChunks        = 1024
-	visualPreviewMaxWebPChunks       = 1024
-	visualPreviewMaxEXIFBytes        = 1 << 20
-	visualPreviewMaxICCBytes         = 1 << 20
-	visualPreviewWebPAnimation       = 1 << 1
-	visualPreviewWebPEXIF            = 1 << 3
-	visualPreviewWebPICCProfile      = 1 << 5
+	visualPreviewMaxDCSourcePixels   = 1_000_000_000
+	// Baseline JPEGs Huffman-decode every AC symbol even at one-eighth scale.
+	// Measured on noisy 4:2:0 quality-90 images: 108 MP 5.8 s, 150 MP 8.9 s,
+	// 200 MP 10.6 s, 300 MP 23.2 s (about 55 s per gigapixel). 120 MP keeps
+	// decode near 6.5 s, well under the 30 s preview timeout. Progressive
+	// JPEGs skip AC scans and keep the full ceiling.
+	visualPreviewMaxBaselineDCSourcePixels = 120_000_000
+	visualPreviewJPEGQuality               = document.VisualPreviewJPEGQuality
+	visualPreviewMaxJPEGSegments           = 1024
+	visualPreviewMaxPNGChunks              = 1024
+	visualPreviewMaxWebPChunks             = 1024
+	visualPreviewMaxEXIFBytes              = 1 << 20
+	visualPreviewMaxICCBytes               = 1 << 20
+	visualPreviewWebPAnimation             = 1 << 1
+	visualPreviewWebPEXIF                  = 1 << 3
+	visualPreviewWebPICCProfile            = 1 << 5
 )
 
 var visualPreviewRecipe = func() document.VisualPreviewRecipeV1 {

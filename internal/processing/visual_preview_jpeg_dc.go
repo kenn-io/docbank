@@ -2,6 +2,7 @@ package processing
 
 import (
 	"bufio"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"image"
@@ -39,10 +40,21 @@ type visualJPEGDCDecoder struct {
 	maxH, maxV          int
 	bits                byte
 	nbits               int
+	ctx                 context.Context
+	steps               int
 }
 
-func decodeVisualPreviewJPEGDC(reader *bufio.Reader) (image.Image, error) {
-	d := visualJPEGDCDecoder{reader: reader}
+// check polls for cancellation every 4096 calls so the hot loops stay cheap.
+func (d *visualJPEGDCDecoder) check() error {
+	d.steps++
+	if d.steps%4096 == 0 {
+		return d.ctx.Err()
+	}
+	return nil
+}
+
+func decodeVisualPreviewJPEGDC(ctx context.Context, reader *bufio.Reader) (image.Image, error) {
+	d := visualJPEGDCDecoder{reader: reader, ctx: ctx}
 	if _, err := reader.Discard(2); err != nil {
 		return nil, fmt.Errorf("reading JPEG start: %w", err)
 	}
@@ -146,6 +158,9 @@ func (d *visualJPEGDCDecoder) frame(p []byte, marker byte) error {
 	}
 	d.height, d.width = int(binary.BigEndian.Uint16(p[1:3])), int(binary.BigEndian.Uint16(p[3:5]))
 	d.progressive, d.baseline = marker == 0xc2, marker == 0xc0
+	if !d.progressive && d.width*d.height > visualPreviewMaxBaselineDCSourcePixels {
+		return errVisualDimensions
+	}
 	d.components = make([]visualJPEGDCComponent, count)
 	for i := range d.components {
 		c := &d.components[i]
@@ -326,6 +341,9 @@ func (d *visualJPEGDCDecoder) scan(p []byte) error {
 			}
 			predictors = [3]int32{}
 		}
+		if err := d.check(); err != nil {
+			return err
+		}
 		for i := range n {
 			c := &d.components[indices[i]]
 			h, v := int(c.h), int(c.v)
@@ -381,6 +399,9 @@ func (d *visualJPEGDCDecoder) scan(p []byte) error {
 
 func (d *visualJPEGDCDecoder) discardAC(table *visualJPEGDCHuffman) error {
 	for k := 1; k < 64; {
+		if err := d.check(); err != nil {
+			return err
+		}
 		symbol, err := d.symbol(table)
 		if err != nil {
 			return err
