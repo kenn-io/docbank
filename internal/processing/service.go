@@ -98,6 +98,7 @@ type ServiceConfig struct {
 }
 
 type configuredProfile struct {
+	mediaMaxBytes          int64
 	portable               document.ProcessingProfileV1
 	record                 store.ProcessingProfileRecord
 	provider               document.RenditionProvider
@@ -431,10 +432,10 @@ func NewService(config ServiceConfig) (*Service, error) {
 		return nil, errors.New("processing service media token key is required when origins are configured")
 	}
 	if service.mediaMaxBytes == 0 {
-		service.mediaMaxBytes = 512 << 20
+		service.mediaMaxBytes = media.MaxMediaSourceBytes
 	}
-	if service.mediaMaxBytes < 1 || service.mediaMaxBytes > media.MaxInspectionSourceBytes {
-		return nil, fmt.Errorf("processing service media byte limit must be between 1 and %d", media.MaxInspectionSourceBytes)
+	if service.mediaMaxBytes < 1 || service.mediaMaxBytes > media.MaxMediaSourceBytes {
+		return nil, fmt.Errorf("processing service media byte limit must be between 1 and %d", media.MaxMediaSourceBytes)
 	}
 	registeredRenditions := make(map[string]document.RenditionProvider)
 	registeredEmbeddings := make(map[string]document.EmbeddingProvider)
@@ -452,6 +453,7 @@ func NewService(config ServiceConfig) (*Service, error) {
 			return nil, fmt.Errorf("processing profile %q canonical decode: %w", name, err)
 		}
 		configured := configuredProfile{portable: profile, provider: supplied.RenditionProvider,
+			mediaMaxBytes:     service.mediaMaxBytes,
 			rerankingProvider: supplied.RerankingProvider, rerankingProfile: supplied.RerankingProfile,
 			rerankingDeadline: supplied.RerankingDeadline, rerankingFailurePolicy: supplied.RerankingFailurePolicy,
 			embedders:         make(map[string]document.EmbeddingProvider, len(supplied.EmbeddingProviders)),
@@ -494,7 +496,8 @@ func NewService(config ServiceConfig) (*Service, error) {
 				return nil, fmt.Errorf("processing profile %q rendition disclosure: %w", name, err)
 			}
 			runtime := &providerRenditionRuntime{provider: supplied.RenditionProvider,
-				blobs: config.Blobs, spoolDirectory: config.SpoolDirectory, clock: config.Clock}
+				blobs: config.Blobs, spoolDirectory: config.SpoolDirectory, clock: config.Clock,
+				mediaMaxBytes: service.mediaMaxBytes}
 			if existing, exists := registeredRenditions[descriptor.Fingerprint]; !exists {
 				if err := service.renditions.Register(descriptor.Fingerprint, runtime); err != nil {
 					return nil, fmt.Errorf("processing profile %q: %w", name, err)
@@ -640,6 +643,19 @@ func (service *Service) Profiles() []ProfileSummary {
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
 	return result
+}
+
+// PlanStreamsLargeSource reports whether Plan will inspect a source larger
+// than media.MaxInspectionSourceBytes. Only streaming audio admits such a
+// source, and its inspection reads every byte, so it can outlast an ordinary
+// request deadline. Unresolvable selectors report false; Plan reports their error.
+func (service *Service) PlanStreamsLargeSource(ctx context.Context, selector Selector) bool {
+	node, version, profile, err := service.resolve(ctx, selector)
+	if err != nil || profile.portable.Rendition == nil {
+		return false
+	}
+	policy := renditionInspectionPolicy(node, version, profile)
+	return version.Size > media.MaxInspectionSourceBytes && version.Size <= admittedSourceBytes(policy, profile)
 }
 
 func (service *Service) Plan(ctx context.Context, selector Selector) (Plan, error) {
@@ -1935,7 +1951,7 @@ func (service *Service) prepareRendition(ctx context.Context, node store.Node, v
 	profile configuredProfile, withUpload bool,
 ) (preparedRendition, error) {
 	execution, err := prepareProviderExecution(ctx, service.blobs, service.spoolDirectory,
-		node, version, profile, service.clock(), withUpload)
+		node, version, profile, service.clock, withUpload)
 	if err != nil {
 		return preparedRendition{}, err
 	}
@@ -1952,6 +1968,7 @@ func (service *Service) prepareRendition(ctx context.Context, node store.Node, v
 }
 
 type providerRenditionRuntime struct {
+	mediaMaxBytes  int64
 	provider       document.RenditionProvider
 	blobs          *blob.Store
 	spoolDirectory string
@@ -1979,8 +1996,10 @@ func (upload *boundAuthorizedUpload) CapabilityProof() document.UploadCapability
 	return carrier.CapabilityProof()
 }
 
+// Prepare stamps the authorization from runtime.clock once preparation ends,
+// rather than at the caller's start time.
 func (runtime *providerRenditionRuntime) Prepare(ctx context.Context, work store.RenditionJobWork,
-	now time.Time,
+	_ time.Time,
 ) (RenditionExecution, error) {
 	var portable document.ProcessingProfileV1
 	if err := json.Unmarshal(work.Profile.CanonicalProfile, &portable, json.RejectUnknownMembers(true)); err != nil {
@@ -1989,9 +2008,10 @@ func (runtime *providerRenditionRuntime) Prepare(ctx context.Context, work store
 	version := runtimeVersion(work)
 	node := store.Node{ID: version.NodeID, Name: work.ExecutionIdentity.Upload.Filename,
 		CurrentVersionID: version.ID, BlobHash: version.BlobHash, Size: version.Size, MimeType: version.MimeType}
-	profile := configuredProfile{portable: portable, provider: runtime.provider, record: work.Profile}
+	profile := configuredProfile{portable: portable, provider: runtime.provider, record: work.Profile,
+		mediaMaxBytes: runtime.mediaMaxBytes}
 	prepared, err := prepareProviderExecution(ctx, runtime.blobs, runtime.spoolDirectory, node, version,
-		profile, now, true)
+		profile, runtime.clock, true)
 	if err != nil {
 		return RenditionExecution{}, err
 	}
@@ -2021,7 +2041,8 @@ type providerExecution struct {
 }
 
 func prepareProviderExecution(ctx context.Context, blobs *blob.Store, spool string,
-	node store.Node, version store.ContentVersion, profile configuredProfile, now time.Time, withUpload bool,
+	node store.Node, version store.ContentVersion, profile configuredProfile, clock func() time.Time,
+	withUpload bool,
 ) (providerExecution, error) {
 	if profile.portable.Rendition == nil {
 		return providerExecution{}, errors.New("processing profile has no rendition binding")
@@ -2041,7 +2062,6 @@ func prepareProviderExecution(ctx context.Context, blobs *blob.Store, spool stri
 		CapabilityRecordChecksum: capability.Checksum,
 		ProviderMetadataChecksum: hex.EncodeToString(emptyDigest[:]),
 		InputKind:                document.RenditionInputOriginalFile}
-	authorizedAt := now.UTC()
 	maximum := int(min(profile.portable.Rendition.MaxResponseBytes, int64(math.MaxInt)))
 	markdownMaximum, artifactMaximum := 0, 0
 	var artifactRoles []document.EvidenceArtifactRole
@@ -2065,8 +2085,7 @@ func prepareProviderExecution(ctx context.Context, blobs *blob.Store, spool stri
 		AllowedArtifactRoles:     artifactRoles,
 		MaxProviderMarkdownBytes: markdownMaximum, MaxArtifactBytes: artifactMaximum,
 		MaxArtifacts:        len(artifactRoles),
-		MaxTotalResultBytes: maximum, AuthorizedAt: authorizedAt.Format(timestampForm),
-		ExpiresAt: authorizedAt.Add(10 * time.Minute).Format(timestampForm)}
+		MaxTotalResultBytes: maximum}
 	evidence, rendition, err := document.RenditionExecutionPoliciesForProfileV1(profile.portable)
 	if err != nil {
 		return providerExecution{}, err
@@ -2074,9 +2093,12 @@ func prepareProviderExecution(ctx context.Context, blobs *blob.Store, spool stri
 	result := providerExecution{Provider: profile.provider,
 		Authorization: authorization, EvidencePolicy: evidence, RenditionPolicy: rendition, metadata: metadata}
 	if withUpload {
-		source, err := blobs.OpenContext(ctx, version.BlobHash)
+		source, size, err := blobs.OpenStreamContext(ctx, version.BlobHash)
 		if err != nil {
 			return providerExecution{}, err
+		}
+		if size != version.Size {
+			return providerExecution{}, errors.Join(errors.New("upload source size changed"), source.Close())
 		}
 		result.Upload, err = upload.Authorize(ctx, upload.Source{Reader: source, Directory: spool},
 			capability, upload.UploadMetadata{Filename: filename})
@@ -2085,6 +2107,12 @@ func prepareProviderExecution(ctx context.Context, blobs *blob.Store, spool stri
 		}
 		result.metadata = result.Upload.Metadata()
 	}
+	// Start the interval after inspection and spooling. A 4 GiB source on slow
+	// storage can take longer than the interval to prepare, and an interval that
+	// expired during preparation would fail every retry the same way.
+	authorizedAt := clock().UTC()
+	result.Authorization.AuthorizedAt = authorizedAt.Format(timestampForm)
+	result.Authorization.ExpiresAt = authorizedAt.Add(10 * time.Minute).Format(timestampForm)
 	return result, nil
 }
 
@@ -2101,17 +2129,19 @@ func runtimeVersion(work store.RenditionJobWork) store.ContentVersion {
 func inspectRenditionSource(ctx context.Context, blobs *blob.Store, node store.Node,
 	version store.ContentVersion, profile configuredProfile,
 ) (media.CapabilityRecord, error) {
-	filename := syntheticFilename(node.Name, version.MimeType, profile.portable.Rendition.DiscloseFilename)
-	policy := inspectionPolicy(filename, version, profile)
+	policy := renditionInspectionPolicy(node, version, profile)
 	switch {
 	case version.Size == 0:
 		return media.CapabilityRecord{Reason: media.CapabilityReasonEmptySource}, nil
-	case version.Size > policy.MaxSourceBytes:
+	case version.Size > admittedSourceBytes(policy, profile):
 		return media.CapabilityRecord{Reason: media.CapabilityReasonSourceBytes}, nil
 	}
-	reader, err := blobs.OpenContext(ctx, version.BlobHash)
+	reader, size, err := blobs.OpenStreamContext(ctx, version.BlobHash)
 	if err != nil {
 		return media.CapabilityRecord{}, err
+	}
+	if size != version.Size {
+		return media.CapabilityRecord{}, errors.Join(errors.New("inspection source size changed"), reader.Close())
 	}
 	capability, inspectErr := media.InspectCapability(reader, policy)
 	closeErr := reader.Close()
@@ -2121,8 +2151,34 @@ func inspectRenditionSource(ctx context.Context, blobs *blob.Store, node store.N
 	return capability, nil
 }
 
+func renditionInspectionPolicy(
+	node store.Node, version store.ContentVersion, profile configuredProfile,
+) media.InspectionPolicy {
+	filename := syntheticFilename(node.Name, version.MimeType, profile.portable.Rendition.DiscloseFilename)
+	return inspectionPolicy(filename, version, profile)
+}
+
+// admittedSourceBytes is the largest source a plan or runtime admits. The
+// configured media ceiling applies here rather than in the inspection policy.
+// The policy is sealed into queued execution identities, so a configuration
+// change must not alter it for a source that both ceilings admit.
+func admittedSourceBytes(policy media.InspectionPolicy, profile configuredProfile) int64 {
+	if media.InspectionSourceByteCeiling(policy.Filename, policy.DeclaredMediaType) == media.MaxMediaSourceBytes &&
+		profile.mediaMaxBytes > 0 {
+		return min(policy.MaxSourceBytes, profile.mediaMaxBytes)
+	}
+	return policy.MaxSourceBytes
+}
+
 func inspectionPolicy(filename string, version store.ContentVersion, profile configuredProfile) media.InspectionPolicy {
-	maximum := min(profile.portable.Rendition.MaxDocumentBytes, int64(1<<30))
+	// A source within the document bound inspects under it. Only a larger
+	// streaming source selects the 4 GiB ceiling, so admitting larger sources
+	// never changes the inspection record sealed for an admissible one.
+	ceiling := media.MaxInspectionSourceBytes
+	if version.Size > ceiling {
+		ceiling = media.InspectionSourceByteCeiling(filename, version.MimeType)
+	}
+	maximum := min(profile.portable.Rendition.MaxDocumentBytes, ceiling)
 	maxUnits := int64(profile.portable.Rendition.MaxUnits)
 	declaredMediaType := version.MimeType
 	if baseType, _, err := mime.ParseMediaType(declaredMediaType); err == nil {

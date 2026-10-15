@@ -13,6 +13,7 @@ import (
 	"image/gif"
 	"image/jpeg"
 	"image/png"
+	"io"
 	"math"
 	"slices"
 )
@@ -331,3 +332,24 @@ func solid(width, height int, fill color.Color) image.Image {
 	}
 	return img
 }
+
+// SizedWAV generates a synthetic PCM WAV with an exact int64 length, retaining
+// only its header. It supports sizes through 4 GiB without allocating samples.
+func SizedWAV(size int64) io.Reader {
+	if size < 44 || size > 4<<30 || size%4 != 0 {
+		panic("invalid synthetic WAV size")
+	}
+	header := WAV()[:44]
+	binary.LittleEndian.PutUint32(header[4:8], uint32(size-8))
+	binary.LittleEndian.PutUint16(header[22:24], 2)
+	binary.LittleEndian.PutUint32(header[24:28], 48_000)
+	binary.LittleEndian.PutUint32(header[28:32], 192_000)
+	binary.LittleEndian.PutUint16(header[32:34], 4)
+	binary.LittleEndian.PutUint16(header[34:36], 16)
+	binary.LittleEndian.PutUint32(header[40:44], uint32(size-44))
+	return io.MultiReader(bytes.NewReader(header), io.LimitReader(zeroReader{}, size-44))
+}
+
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) { clear(p); return len(p), nil }

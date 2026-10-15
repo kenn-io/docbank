@@ -385,3 +385,56 @@ own these rules.
 The [Document derivatives](document-derivatives.md) reference describes the
 sanitized Markdown envelope, body-relative navigation, and consumer source
 identity contract.
+
+## How are large audio sources bounded?
+
+`document/media.MaxMediaSourceBytes` is the default and maximum streaming
+media source ceiling: 4 GiB, represented as `int64`. The daemon's
+`[media].max_source_bytes` and embedded `ProcessingOptions.MediaMaxBytes` may
+lower it. HTTP envelopes add only 128 KiB for multipart metadata and framing.
+Source staging, aggregate staging reservations, publication and rendition
+inspection use the same configured ceiling. Sequential rendition inspection
+and sealed upload preparation use verified blob streams, including terminal
+verification and a catalog size check, instead of materializing a seekable copy.
+Audio admission and worker runtime preparation intersect it with the selected
+profile's source limit. The configured ceiling is a separate size check, not part
+of the sealed inspection policy, so changing it leaves queued execution
+identities intact. Sources up to 1 GiB inspect under the 1 GiB document bound
+even when the profile allows more; only larger streaming sources select the
+4 GiB ceiling. Raising the ceiling therefore leaves the inspection records of
+already admissible sources unchanged. A queued source the lowered ceiling refuses fails with
+`stale_authority`; a new plan re-admits it once the ceiling allows it again. The built-in supplied-transcript and supplied-captions
+profiles allow 4 GiB original sources;
+their 16 MiB transcript, caption and response limits remain separate.
+
+Audio retains its 24-hour duration and codec qualification bounds.
+WAV and MP3 inspection hash every byte while retaining parser headers and a
+fixed copy buffer. WAV chunk skipping uses `int64` counts, including on 32-bit
+systems. Source lengths never select a sample allocation size. Document
+inspectors retain their existing 1 GiB ceiling because they materialize the
+source. Visual detection and remote MP4 originals remain bounded at 20 MiB.
+Only identities that select the streaming WAV or MP3 inspector use the audio
+ceiling. Other audio, including M4A, keeps the 1 GiB document bound, so a larger
+source receives a `source_bytes_exceeded` refusal before inspection. Hosted-provider
+limits continue to apply before uploads to those providers.
+
+Staging reserves the declared length before creating its private file. The
+reservation is an aggregate service quota, not a claim about filesystem free
+space. Disk or filesystem quota exhaustion while creating, writing or syncing the
+stage, or while writing the durable loose copy at publication, returns
+`ErrMediaStagingUnavailable`; HTTP exposes this as retryable 503
+`media_staging_unavailable`. Failed staging closes and removes its file and
+releases the reservation. Operators can free space and retry the same operation.
+
+The HTTP processing plan route applies the 60-second handler deadline itself
+instead of through `timeoutMiddleware`. Huma's five-second body-read deadline
+still bounds JSON decoding. The handler resolves the selector under the
+60-second deadline and asks `Service.PlanStreamsLargeSource` whether the plan
+will inspect a source above 1 GiB that the profile admits. Only streaming audio
+qualifies. For that plan, the handler clears the socket read deadline and
+inspects under the request context, so client cancellation, caller deadlines and
+browser-session revocation still stop it. Every other plan, including sources
+the profile refuses by size, keeps the 60-second deadline.
+
+A source may need both its stage and durable loose copy on disk during
+publication. Provider execution may also hold a sealed spool copy.

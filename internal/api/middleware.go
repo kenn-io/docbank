@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json/v2"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -19,6 +21,26 @@ import (
 )
 
 const requestTimeout = 60 * time.Second
+
+type responseControllerContextKey struct{}
+
+// processingPlansPath applies requestTimeout in its handler, because only the
+// handler can tell whether the plan must stream a large audio source.
+const processingPlansPath = "/api/v1/processing/plans"
+
+// clearRequestReadDeadline removes Huma's request-body socket deadline once a
+// handler commits to long-running work. Left in place, its expiry makes the
+// connection's background read cancel the request.
+func clearRequestReadDeadline(ctx context.Context) error {
+	controller, ok := ctx.Value(responseControllerContextKey{}).(*http.ResponseController)
+	if !ok {
+		return errors.New("clearing request read deadline: response controller is unavailable")
+	}
+	if err := controller.SetReadDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		return fmt.Errorf("clearing request read deadline: %w", err)
+	}
+	return nil
+}
 
 type authenticationContextKey struct{}
 type remoteAddressContextKey struct{}
@@ -294,6 +316,11 @@ func timeoutMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if timeoutExemptRequest(r) {
 			next.ServeHTTP(w, r)
+			return
+		}
+		if r.Method == http.MethodPost && r.URL.Path == processingPlansPath {
+			ctx := context.WithValue(r.Context(), responseControllerContextKey{}, http.NewResponseController(w))
+			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)

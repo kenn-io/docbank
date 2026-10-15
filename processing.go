@@ -10,11 +10,14 @@ import (
 )
 
 var (
-	ErrEvidenceUnavailable          = internalprocessing.ErrEvidenceUnavailable
-	ErrInvalidEvidenceRequest       = internalprocessing.ErrInvalidEvidenceRequest
-	ErrInvalidRenditionWindow       = internalprocessing.ErrInvalidRenditionWindow
-	ErrInvalidRenditionEncoding     = internalprocessing.ErrInvalidRenditionEncoding
-	ErrMediaSearchInvalid           = internalprocessing.ErrMediaSearchInvalid
+	ErrEvidenceUnavailable      = internalprocessing.ErrEvidenceUnavailable
+	ErrInvalidEvidenceRequest   = internalprocessing.ErrInvalidEvidenceRequest
+	ErrInvalidRenditionWindow   = internalprocessing.ErrInvalidRenditionWindow
+	ErrInvalidRenditionEncoding = internalprocessing.ErrInvalidRenditionEncoding
+	ErrMediaSearchInvalid       = internalprocessing.ErrMediaSearchInvalid
+	// ErrMediaStagingUnavailable means staging or publishing a media source ran
+	// out of disk space or quota. Free space and retry.
+	ErrMediaStagingUnavailable      = internalprocessing.ErrMediaStagingUnavailable
 	ErrForeignVault                 = internalprocessing.ErrForeignVault
 	ErrProcessingProfileUnavailable = internalprocessing.ErrProfileNotConfigured
 	ErrProcessingPlanChanged        = internalprocessing.ErrPlanChanged

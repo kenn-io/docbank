@@ -190,6 +190,16 @@ if err != nil {
 _ = artifact // retain the provider transcript with the source record
 ```
 
+The daemon accepts supported audio originals up to 4 GiB by default. Upload,
+staging, hashing, inspection, publication, and sealed provider spooling use
+bounded buffers. The built-in supplied-transcript and supplied-captions profiles
+accept these originals without loading their audio into memory. Their transcript
+and response limits remain 16 MiB. Configure a smaller source ceiling in
+[`[media].max_source_bytes`](configuration.md#supplied-audio-transcription), or
+use `ProcessingOptions.MediaMaxBytes` for an embedded vault. Smaller caller
+inspection and profile policies still apply. Hosted transcription providers keep
+their own input limits. Audio duration remains limited to 24 hours.
+
 Use a lowercase identifier for the provider. The `supplied-transcript/v1`
 JSON artifact keeps the exact provider name and transcript text. Normalized
 evidence and the rendition (the derived document result) still apply their

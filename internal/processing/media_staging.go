@@ -10,8 +10,21 @@ import (
 	"os"
 	"sync"
 
+	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/internal/canonical"
 )
+
+// ErrMediaStagingUnavailable means staging or the durable copy written at
+// publication ran out of disk space or quota. The failed stage is cleaned up;
+// callers may free space and retry.
+var ErrMediaStagingUnavailable = errors.New("media staging disk space is unavailable; free space and retry")
+
+func mediaStagingError(err error) error {
+	if mediaDiskFull(err) {
+		return errors.Join(ErrMediaStagingUnavailable, err)
+	}
+	return err
+}
 
 // StagedMediaContent holds one exact verified input under the service-wide
 // staging reservation until Close. It is accepted only by the service that
@@ -59,7 +72,7 @@ func (service *Service) StageMediaContent(
 	ctx context.Context, source io.Reader, expectedSize, maximum int64, expectedSHA string,
 ) (*StagedMediaContent, error) {
 	if service == nil || expectedSize < 1 || maximum < 1 || expectedSize > maximum ||
-		expectedSize > service.mediaMaxBytes {
+		expectedSize > service.mediaMaxBytes || maximum > media.MaxMediaSourceBytes {
 		return nil, errors.New("byte_limit")
 	}
 	if !service.reserveMediaBytes(expectedSize) {
@@ -67,7 +80,7 @@ func (service *Service) StageMediaContent(
 	}
 	fail := func(err error) (*StagedMediaContent, error) {
 		service.releaseMediaBytes(expectedSize)
-		return nil, err
+		return nil, mediaStagingError(err)
 	}
 	if err := os.MkdirAll(service.spoolDirectory, 0o700); err != nil {
 		return fail(fmt.Errorf("creating media staging directory: %w", err))
@@ -80,19 +93,19 @@ func (service *Service) StageMediaContent(
 		size: expectedSize, digest: expectedSHA}
 	if err := file.Chmod(0o600); err != nil {
 		_ = content.Close()
-		return nil, err
+		return nil, mediaStagingError(err)
 	}
 	if _, err := stageMedia(ctx, source, file, expectedSize, expectedSize, expectedSHA); err != nil {
 		_ = content.Close()
-		return nil, err
+		return nil, mediaStagingError(err)
 	}
 	if err := file.Sync(); err != nil {
 		_ = content.Close()
-		return nil, err
+		return nil, mediaStagingError(err)
 	}
 	if err := content.rewind(); err != nil {
 		_ = content.Close()
-		return nil, err
+		return nil, mediaStagingError(err)
 	}
 	return content, nil
 }
@@ -100,6 +113,9 @@ func (service *Service) StageMediaContent(
 func (service *Service) mediaStagedContent(
 	ctx context.Context, source io.Reader, expectedSize, maximum int64, expectedSHA string,
 ) (*StagedMediaContent, bool, error) {
+	if expectedSize < 1 || maximum < 1 || expectedSize > maximum || expectedSize > service.mediaMaxBytes {
+		return nil, false, errors.New("byte_limit")
+	}
 	if staged, ok := source.(*StagedMediaContent); ok {
 		if staged.service != service || staged.size != expectedSize || staged.digest != expectedSHA {
 			return nil, false, errors.New("staged media authority changed")
@@ -137,7 +153,7 @@ func stageMedia(
 	if r == nil || dst == nil {
 		return 0, errors.New("media staging requires source and destination")
 	}
-	if expectedSize < 0 || maxBytes < 1 || maxBytes > 2<<30 || expectedSize > maxBytes {
+	if expectedSize < 0 || maxBytes < 1 || maxBytes > media.MaxMediaSourceBytes || expectedSize > maxBytes {
 		return 0, errors.New("byte_limit")
 	}
 	if !canonical.IsSHA256Hex(expectedSHA) {

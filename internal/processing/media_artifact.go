@@ -173,7 +173,7 @@ func (service *Service) ImportRecordingArtifact(
 		return service.blobs.WithMutation(ctx, func() error {
 			written, err := service.blobs.WriteDetailedContext(ctx, staged)
 			if err != nil {
-				return err
+				return mediaStagingError(err)
 			}
 			if written.Hash != request.SHA256 || written.Size != request.ByteLength {
 				return errors.New("media artifact staged identity changed during seal")
@@ -226,7 +226,7 @@ func (service *Service) importRemoteRecordingMedia(
 		return service.blobs.WithMutation(ctx, func() error {
 			written, err := service.blobs.WriteDetailedContext(ctx, staged)
 			if err != nil {
-				return err
+				return mediaStagingError(err)
 			}
 			if written.Hash != request.SHA256 || written.Size != request.ByteLength {
 				return errors.New("media artifact staged identity changed during seal")

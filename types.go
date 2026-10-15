@@ -76,7 +76,10 @@ type DocumentPeopleCoverage struct {
 // implementations. Secrets remain inside the provider values; profiles and
 // plans contain only immutable non-secret identity.
 type ProcessingOptions struct {
-	Profiles map[string]ProcessingProfileConfig
+	// MediaMaxBytes lowers the streaming media source ceiling. Zero defaults to
+	// 4 GiB; values above 4 GiB or below zero are rejected.
+	MediaMaxBytes int64
+	Profiles      map[string]ProcessingProfileConfig
 	// SpoolDirectory selects an existing absolute directory for private upload
 	// copies. The default is the vault's blob temporary directory. One open Vault
 	// owns the directory until Close; another owner returns ErrProcessingSpoolLocked.

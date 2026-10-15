@@ -42,6 +42,8 @@ func TestLongRunningRequestTimeoutBoundary(t *testing.T) {
 		{http.MethodGet, "/api/v1/bates/exports/a2b864dd-bcd9-4c63-a1bd-321293fbbd34", true},
 		{http.MethodGet, "/api/v1/bates/exports/candidates", true},
 		{http.MethodGet, "/api/v1/bates/exports/not-an-export/content", true},
+		{http.MethodPost, "/api/v1/processing/plans", false},
+		{http.MethodGet, "/api/v1/processing/plans", true},
 	} {
 		t.Run(test.method+test.path, func(t *testing.T) {
 			parent, cancel := context.WithCancel(t.Context())
@@ -371,4 +373,27 @@ func TestMailboxTimeoutBoundary(t *testing.T) {
 			})
 		})
 	}
+}
+
+func TestLargeAudioPlanClearsHandlerReadDeadline(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		mux := http.NewServeMux()
+		humaAPI := humago.New(mux, huma.DefaultConfig("test", "test"))
+		huma.Register(humaAPI, huma.Operation{OperationID: "testLargeAudioPlan", Method: http.MethodPost, Path: processingPlansPath}, func(ctx context.Context, _ *struct{ Body struct{} }) (*struct{ Body string }, error) {
+			if err := clearRequestReadDeadline(ctx); err != nil {
+				return nil, err
+			}
+			time.Sleep(61 * time.Second)
+			return &struct{ Body string }{Body: "planned"}, ctx.Err()
+		})
+		server := httptest.NewTestServer(t, timeoutMiddleware(mux))
+		response, err := server.Client().Post(server.URL+processingPlansPath, "application/json", strings.NewReader("{}"))
+		require.NoError(t, err)
+		defer func() { require.NoError(t, response.Body.Close()) }()
+		body, err := io.ReadAll(response.Body)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, response.StatusCode, string(body))
+		require.JSONEq(t, `"planned"`, string(body))
+	})
 }

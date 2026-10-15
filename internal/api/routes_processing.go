@@ -80,15 +80,27 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 	type planOutput struct{ Body ProcessingPlan }
 	huma.Register(api, huma.Operation{
 		OperationID: "planDocumentProcessing", Method: http.MethodPost,
-		Path: "/api/v1/processing/plans", Summary: "Preview provider disclosure for one document version",
+		Path: processingPlansPath, Summary: "Preview provider disclosure for one document version",
 	}, func(ctx context.Context, input *planInput) (*planOutput, error) {
 		if d.Processing == nil {
 			return nil, processingUnavailable()
 		}
-		plan, err := d.Processing.Plan(ctx, processing.Selector{
+		selector := processing.Selector{
 			NodeID: input.Body.Selector.NodeID, ContentVersionID: input.Body.Selector.ContentVersionID,
 			Profile: input.Body.Selector.Profile,
-		})
+		}
+		// timeoutMiddleware leaves this route's deadline to the handler. Inspecting
+		// large streaming audio reads every source byte, so only the caller bounds it.
+		bounded, cancel := context.WithTimeout(ctx, requestTimeout)
+		defer cancel()
+		planCtx := bounded
+		if d.Processing.PlanStreamsLargeSource(bounded, selector) {
+			if err := clearRequestReadDeadline(ctx); err != nil {
+				return nil, fromProcessingError(err)
+			}
+			planCtx = ctx
+		}
+		plan, err := d.Processing.Plan(planCtx, selector)
 		if err != nil {
 			return nil, fromProcessingError(err)
 		}

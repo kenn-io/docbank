@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/suppliedtranscript"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
@@ -180,7 +181,7 @@ func NewSuppliedMediaProfile(
 			CredentialBinding:        "credential:local-supplied-transcript",
 			DeploymentFingerprint:    sourceBinding, DisclosureFingerprint: stableHash(
 				"docbank/supplied-media-disclosure/v1", sourceBinding),
-			TrustBoundary: string(descriptor.TrustBoundary), MaxDocumentBytes: 1 << 30,
+			TrustBoundary: string(descriptor.TrustBoundary), MaxDocumentBytes: media.MaxMediaSourceBytes,
 			MaxResponseBytes: 16 << 20, MaxUnits: 1,
 			RequestedArtifacts:       []document.EvidenceArtifactRole{document.EvidenceArtifactTranscript},
 			UploadOptionsFingerprint: stableHash("docbank/supplied-media-upload/v1", sourceBinding),
@@ -235,7 +236,7 @@ func NewSuppliedCaptionProfile(
 			CredentialBinding:        "credential:local-supplied-captions",
 			DeploymentFingerprint:    sourceBinding, DisclosureFingerprint: stableHash(
 				"docbank/supplied-captions-disclosure/v1", sourceBinding),
-			TrustBoundary: string(descriptor.TrustBoundary), MaxDocumentBytes: 1 << 30,
+			TrustBoundary: string(descriptor.TrustBoundary), MaxDocumentBytes: media.MaxMediaSourceBytes,
 			MaxResponseBytes: 16 << 20, MaxUnits: 25_000,
 			RequestedArtifacts:       []document.EvidenceArtifactRole{document.EvidenceArtifactTranscript},
 			UploadOptionsFingerprint: stableHash("docbank/supplied-captions-upload/v1", sourceBinding),

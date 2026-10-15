@@ -500,7 +500,7 @@ func (service *Service) stageAndRetainMedia(
 			if reuse == nil {
 				written, err := service.blobs.WriteDetailedContext(ctx, staged)
 				if err != nil {
-					return err
+					return mediaStagingError(err)
 				}
 				if written.Hash != request.SHA256 || written.Size != request.ByteLength {
 					return errors.New("media staged identity changed during seal")
@@ -698,3 +698,6 @@ func mediaTypeMatches(declared, retained string) bool {
 	}
 	return declaredType == retainedType
 }
+
+// MediaSourceMaxBytes exposes the same ceiling used by staging and admission.
+func (service *Service) MediaSourceMaxBytes() int64 { return service.mediaMaxBytes }
