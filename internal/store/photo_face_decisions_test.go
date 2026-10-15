@@ -1567,3 +1567,45 @@ func TestPhotoFaceMergeKeepsSurvivorSuggestion(t *testing.T) {
 	require.Equal(t, survivor.PersonID, open[0].SuggestedPersonID)
 	require.NoError(t, s.ValidateMetadata(ctx))
 }
+
+func TestPhotoFaceNamingSupersedesOtherSuggestions(t *testing.T) {
+	t.Parallel()
+	for _, decision := range []string{"name", "link"} {
+		t.Run(decision, func(t *testing.T) {
+			t.Parallel()
+			s := newTestStore(t)
+			ctx := t.Context()
+			named, err := s.CreatePerson(ctx, "Ada", "operator")
+			require.NoError(t, err)
+			other, err := s.CreatePerson(ctx, "Grace", "operator")
+			require.NoError(t, err)
+			n, f := faceForDecisionTest(t, s, "")
+			suggest := func(personID string) PersonMatchCandidate {
+				c := candidateForTest(t, "face:"+f.FaceID, "Face", personID, []PersonCandidateOccurrence{{ContentVersionID: n.CurrentVersionID, Role: "depicted", EvidenceKind: "face", EvidenceID: f.FaceID}})
+				c.Reason = personCandidateReasonFaceMatch
+				return openCandidateForTest(t, s, c)
+			}
+			stale := suggest(other.PersonID)
+			var receipt PhotoFaceDecisionReceipt
+			if decision == "name" {
+				receipt = decideFaceForTest(t, s, n, f.FaceID, named.PersonID, "name")
+			} else {
+				chosen := suggest(named.PersonID)
+				_, err = s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: chosen.CandidateID, ExpectedRevision: chosen.Revision, Action: "link", PersonID: named.PersonID})
+				require.NoError(t, err)
+			}
+			open, _, err := s.PersonCandidates(ctx, "open", 250, 0)
+			require.NoError(t, err)
+			require.Empty(t, open)
+			require.NoError(t, s.ValidateMetadata(ctx))
+			if decision == "name" {
+				_, err = s.UndoPhotoFaceDecision(ctx, receipt.ReceiptID)
+				require.NoError(t, err)
+				open, _, err = s.PersonCandidates(ctx, "open", 250, 0)
+				require.NoError(t, err)
+				require.Len(t, open, 1)
+				require.Equal(t, stale.CandidateID, open[0].CandidateID)
+			}
+		})
+	}
+}

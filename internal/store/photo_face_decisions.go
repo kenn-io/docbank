@@ -894,7 +894,9 @@ func (s *Store) clearNamedFaceCandidatesTx(ctx context.Context, tx *sql.Tx, befo
 		if action == "withdraw_rejection" && (c.State != personCandidateStateRejected || c.SuggestedPersonID != personID) {
 			continue
 		}
-		if c.State != personCandidateStateOpen && c.State != personCandidateStateRejected || (action != "dismiss" || c.State != personCandidateStateOpen) && c.SuggestedPersonID != "" && c.SuggestedPersonID != personID {
+		// Dismissing or naming the face settles every open suggestion for it.
+		settlesOpen := (action == "dismiss" || action == faceDecisionName) && c.State == personCandidateStateOpen
+		if c.State != personCandidateStateOpen && c.State != personCandidateStateRejected || !settlesOpen && c.SuggestedPersonID != "" && c.SuggestedPersonID != personID {
 			continue
 		}
 		occurrences, err := decodeStoredCandidateEvidence(c.Evidence)
