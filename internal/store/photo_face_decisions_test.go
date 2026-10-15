@@ -13,6 +13,66 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
+// buildFaceMatchCandidateForTest inserts an open face_match candidate linked
+// to face via the person_candidate_faces trigger, padded with extra occurrence
+// entries so its evidence (and so the receipt that touches it) can be grown to
+// a controlled size.
+func buildFaceMatchCandidateForTest(t *testing.T, s *Store, versionID, faceID string, slot, padOccurrences int) {
+	t.Helper()
+	occ := []PersonCandidateOccurrence{{ContentVersionID: versionID, Role: "depicted", EvidenceKind: "face", EvidenceID: faceID}}
+	for j := range padOccurrences {
+		occ = append(occ, PersonCandidateOccurrence{ContentVersionID: versionID, Role: "depicted", EvidenceKind: "face", EvidenceID: fmt.Sprintf("00000000-0000-4000-9001-%03d%09d", slot, j)})
+	}
+	raw, err := json.Marshal(occ)
+	require.NoError(t, err)
+	normalized, err := normalizePersonCandidate(PersonMatchCandidate{ActorKey: "face:" + faceID, DisplayName: "Face", Reason: personCandidateReasonFaceMatch, Evidence: raw})
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO person_match_candidates(
+		candidate_id,actor_key,display_name,suggested_person_id,reason,evidence_json,evidence_sha256,occurrence_count,revision,state,created_at,decided_at
+	) VALUES(printf('00000000-0000-4000-9000-%012d', ?), ?, ?, NULL, 'face_match', ?, ?, ?, 1, 'open', ?, NULL)`,
+		slot, normalized.ActorKey, normalized.DisplayName, normalized.Evidence, normalized.EvidenceSHA256, normalized.OccurrenceCount, nowRFC3339())
+	require.NoError(t, err)
+}
+
+// TestPhotoFaceDecisionDismissReservesUndoBudget covers a dismiss whose own
+// receipt fits the 1 MiB limit by a handful of bytes, but whose undo -- which
+// adds undo_of and advances every touched revision -- would not have. Before
+// reserving that headroom, the dismiss above would have been accepted and
+// then stuck: no undo could ever be written for it.
+func TestPhotoFaceDecisionDismissReservesUndoBudget(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	node, face := faceForDecisionTest(t, s, "")
+	for i := range 12 {
+		buildFaceMatchCandidateForTest(t, s, node.CurrentVersionID, face.FaceID, i, 100)
+	}
+	buildFaceMatchCandidateForTest(t, s, node.CurrentVersionID, face.FaceID, 12, 25)
+	_, err := s.DecidePhotoFace(ctx, node.CurrentVersionID, PhotoFaceDecisionRequest{FaceID: face.FaceID, Action: "dismiss", Revision: face.Revision})
+	require.ErrorIs(t, err, ErrInvalidPhotoFace)
+	require.NoError(t, s.ValidateMetadata(ctx))
+}
+
+// TestPhotoFaceDecisionDismissNearLimitUndoes covers the same shape of
+// dismiss sized so its reserved budget (and so its eventual undo) still
+// fits, confirming the reservation in TestPhotoFaceDecisionDismissReservesUndoBudget
+// does not block a large dismiss that is genuinely undoable.
+func TestPhotoFaceDecisionDismissNearLimitUndoes(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	node, face := faceForDecisionTest(t, s, "")
+	for i := range 12 {
+		buildFaceMatchCandidateForTest(t, s, node.CurrentVersionID, face.FaceID, i, 100)
+	}
+	buildFaceMatchCandidateForTest(t, s, node.CurrentVersionID, face.FaceID, 12, 15)
+	receipt, err := s.DecidePhotoFace(ctx, node.CurrentVersionID, PhotoFaceDecisionRequest{FaceID: face.FaceID, Action: "dismiss", Revision: face.Revision})
+	require.NoError(t, err)
+	_, err = s.UndoPhotoFaceDecision(ctx, receipt.ReceiptID)
+	require.NoError(t, err)
+	require.NoError(t, s.ValidateMetadata(ctx))
+}
+
 func faceForDecisionTest(t *testing.T, s *Store, person string) (Node, PhotoFace) {
 	t.Helper()
 	node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("f1"), "image/jpeg")

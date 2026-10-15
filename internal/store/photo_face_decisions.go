@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
+	"math"
 	"reflect"
 	"slices"
 )
@@ -235,6 +236,9 @@ func writeFaceDecisionReceiptTx(ctx context.Context, tx *sql.Tx, before, after P
 	if err = validateFaceDecisionReceipt(result, id); err != nil {
 		return result, err
 	}
+	if err = checkFaceDecisionReceiptSize(result); err != nil {
+		return result, err
+	}
 	afterState := photoFaceReceiptAfter{RequestSHA256: requestSHA, ReceiptID: id, After: after, UndoOf: undo}
 	var assetID string
 	if err = tx.QueryRowContext(ctx, `SELECT f.asset_id FROM content_versions v JOIN photo_files f ON f.node_id=v.node_id WHERE v.version_id=?`, before.VersionID).Scan(&assetID); err != nil {
@@ -242,6 +246,52 @@ func writeFaceDecisionReceiptTx(ctx context.Context, tx *sql.Tx, before, after P
 	}
 	err = writePhotoReceiptTx(ctx, tx, photoReceipt{ReceiptID: id, Operation: "face_decision", AssetID: assetID, Before: before, After: afterState, BeforeRevision: 0, AfterRevision: 1})
 	return result, err
+}
+
+// checkFaceDecisionReceiptSize rejects a decision whose inverse would not
+// fit the receipt limit, instead of accepting a decision that can never be
+// undone. It reserves the largest digit width a revision counter can reach
+// and a full receipt reference for undo_of, so the real undo (built the
+// same way, with smaller actual values) is guaranteed to fit once this
+// reserved estimate does.
+func checkFaceDecisionReceiptSize(r PhotoFaceDecisionReceipt) error {
+	const id = "00000000-0000-4000-8000-000000000000"
+	before, after := reserveFaceDecisionRevisions(r.Before), reserveFaceDecisionRevisions(r.After)
+	state := photoFaceReceiptAfter{RequestSHA256: r.RequestSHA256, ReceiptID: id, After: after, UndoOf: id}
+	b, err := json.Marshal(before, json.Deterministic(true))
+	if err != nil {
+		return err
+	}
+	a, err := json.Marshal(state, json.Deterministic(true))
+	if err != nil {
+		return err
+	}
+	if len(b)+len(a) > maxBatchTagReceiptJSONBytes {
+		return ErrInvalidPhotoFace
+	}
+	return nil
+}
+
+// reserveFaceDecisionRevisions clones state and maxes every revision field,
+// reserving the largest digit width an undo's incremented revisions could add.
+func reserveFaceDecisionRevisions(state PhotoFaceDecisionState) PhotoFaceDecisionState {
+	state.Faces = slices.Clone(state.Faces)
+	for i := range state.Faces {
+		state.Faces[i].Revision = math.MaxInt64
+	}
+	state.Assertions = slices.Clone(state.Assertions)
+	for i := range state.Assertions {
+		state.Assertions[i].Revision = math.MaxInt64
+	}
+	state.Candidates = slices.Clone(state.Candidates)
+	for i := range state.Candidates {
+		state.Candidates[i].Revision = math.MaxInt64
+	}
+	state.People = slices.Clone(state.People)
+	for i := range state.People {
+		state.People[i].Revision = math.MaxInt64
+	}
+	return state
 }
 
 func (s *Store) DecidePhotoFace(ctx context.Context, versionID string, request PhotoFaceDecisionRequest) (PhotoFaceDecisionReceipt, error) {
