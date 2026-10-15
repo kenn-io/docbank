@@ -904,3 +904,80 @@ func TestRegistryPreservesBackendWhenAdmissionIsCancelled(t *testing.T) {
 	require.True(t, available,
 		"the existing backend must survive an interrupted admission check")
 }
+
+// TestRegistryRejectionDuringProbeInvalidatesStaleOnlineReport covers a
+// refresh whose ownership probe is already in flight, reusing the prior
+// backend, when a second, concurrent refresh's admission check rejects and
+// retires that backend. The in-flight probe's generation predates the
+// rejection, so without bumping the generation on rejection too, its late,
+// successful keepPrior result would land afterward and report StoreOnline
+// while the backend it refers to stays removed until another refresh.
+func TestRegistryRejectionDuringProbeInvalidatesStaleOnlineReport(t *testing.T) {
+	const (
+		vaultID = "10000000-0000-4000-8000-000000000001"
+		storeID = "20000000-0000-4000-8000-000000000001"
+		epoch   = "30000000-0000-4000-8000-000000000001"
+	)
+	root := t.TempDir()
+	require.NoError(t, EnsureFilesystemNamespace(root))
+	expected := packstore.Ownership{
+		Format: packstore.OwnershipFormatV1, Vault: vaultID,
+		Store: storeID, Epoch: epoch,
+	}
+	unattached, err := NewFilesystemBackend(root, nil)
+	require.NoError(t, err)
+	require.NoError(t, unattached.ReplaceOwnership(t.Context(), expected, nil))
+	require.NoError(t, unattached.Close())
+
+	probeStarted := make(chan struct{})
+	releaseProbe := make(chan struct{})
+	var rejectAdmission atomic.Bool
+	registry := newRegistryWithFactories(t.Context(), vaultID,
+		map[string]config.StoreBindingConfig{"archive": {Kind: storeKindFilesystem, Path: root}},
+		[]StoreSpec{{
+			ID: storeID, Kind: storeKindFilesystem, Role: "secondary",
+			Lifecycle: "active", Binding: "archive", OwnershipEpoch: epoch,
+		}}, func(
+			ctx context.Context, binding config.StoreBindingConfig, ownership *packstore.Ownership,
+		) (packstore.Backend, error) {
+			backend, openErr := NewConfiguredBackend(ctx, binding, ownership)
+			if openErr != nil {
+				return nil, openErr
+			}
+			return &blockingOwnershipBackend{
+				Backend: backend, probeStarted: probeStarted, releaseProbe: releaseProbe,
+			}, nil
+		}, nil, func(ctx context.Context, _ config.StoreBindingConfig) error {
+			if rejectAdmission.Load() {
+				return errors.New("checkout inspection failed")
+			}
+			return nil
+		})
+	t.Cleanup(func() { require.NoError(t, registry.Close()) })
+	require.Equal(t, StoreOnline, registry.Observation(storeID).State)
+
+	// This refresh reuses the construction-time backend as prior and blocks
+	// on its second ownership read, mid-probe, having already passed
+	// admission while it was still permissive.
+	probeDone := make(chan StoreObservation, 1)
+	go func() { probeDone <- registry.Refresh(t.Context(), storeID) }()
+	<-probeStarted
+
+	// A second, concurrent refresh now has admission reject it and retire
+	// the backend the blocked probe above is still reading from.
+	rejectAdmission.Store(true)
+	rejected := registry.Refresh(t.Context(), storeID)
+	require.Equal(t, StoreUnavailable, rejected.State)
+	_, available := registry.Backend(storeID)
+	require.False(t, available, "rejection must retire the backend immediately")
+
+	close(releaseProbe)
+	stale := <-probeDone
+	require.Equal(t, StoreUnavailable, stale.State,
+		"a probe that started before the rejection must not resurrect a stale online report")
+	final := registry.Observation(storeID)
+	require.Equal(t, StoreUnavailable, final.State)
+	_, stillAvailable := registry.Backend(storeID)
+	require.False(t, stillAvailable,
+		"observation must not report online while no backend is installed")
+}

@@ -485,6 +485,13 @@ func (r *Registry) admitRefresh(ctx context.Context, id packstore.StoreID) bool 
 		// path; short-circuiting here still has to retire it explicitly.
 		r.retireBackendLocked(id)
 		r.observe(id, StoreUnavailable, err.Error(), priority)
+		// Advance the generation too: a concurrent refresh that already
+		// passed admission and is mid-probe captured the generation this
+		// rejection leaves unchanged, so installProbe's staleness check
+		// would otherwise let that probe's result land after this
+		// rejection, re-reporting StoreOnline while the backend this just
+		// retired stays absent until another successful refresh.
+		r.refreshes[id]++
 		r.mu.Unlock()
 		return false
 	}
