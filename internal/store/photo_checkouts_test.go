@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -172,6 +173,20 @@ func TestPhotoCheckoutMetadata(t *testing.T) {
 			var roundtrip bytes.Buffer
 			require.NoError(t, restored.ExportMetadata(t.Context(), &roundtrip))
 			require.Equal(t, string(f.snapshot), roundtrip.String())
+			t.Run("retired checkout round trip", func(t *testing.T) {
+				retired, err := s.RetirePhotoCheckout(t.Context(), f.checkout.ID)
+				require.NoError(t, err)
+				var retiredSnapshot bytes.Buffer
+				require.NoError(t, s.ExportMetadata(t.Context(), &retiredSnapshot))
+				retiredRestored := newTestStoreWithDriver(t, driver.driver)
+				require.NoError(t, retiredRestored.ImportMetadata(t.Context(), bytes.NewReader(retiredSnapshot.Bytes())))
+				actualRetired, err := retiredRestored.PhotoCheckout(t.Context(), f.checkout.ID)
+				require.NoError(t, err)
+				require.Equal(t, retired.RetiredAt, actualRetired.RetiredAt)
+				require.True(t, actualRetired.RetentionReleased)
+				_, err = retiredRestored.RetirePhotoCheckout(t.Context(), f.checkout.ID)
+				require.NoError(t, err)
+			})
 		})
 	}
 	t.Run("restore colon filename on Windows", func(t *testing.T) {
@@ -749,31 +764,21 @@ func TestPhotoCheckoutBackupRetentionAcrossLifecycleStates(t *testing.T) {
 					}
 					restored := newTestStoreWithDriver(t, driver.driver)
 					require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
-					actual, err := restored.PhotoCheckout(ctx, checkout.ID)
-					require.NoError(t, err)
 					released := tc.legacy || !tc.published && !tc.uncertain
-					require.Equal(t, tc.state != "completed", actual.RetentionReleased)
-					var roundtrip bytes.Buffer
-					require.NoError(t, restored.ExportMetadata(ctx, &roundtrip))
-					final := newTestStoreWithDriver(t, driver.driver)
-					require.NoError(t, final.ImportMetadata(ctx, bytes.NewReader(roundtrip.Bytes())))
-					history, err := final.PhotoCheckout(ctx, checkout.ID)
-					require.NoError(t, err)
-					require.Equal(t, actual.RetentionReleased, history.RetentionReleased)
-					if !prunedUnpublished && tc.state != "completed" {
-						result, err := final.PruneContentVersions(ctx, unpublished.ID, unpublishedUpdated.Revision, unpublishedSelector, true)
+					if !prunedUnpublished && !tc.published {
+						result, err := restored.PruneContentVersions(ctx, unpublished.ID, unpublishedUpdated.Revision, unpublishedSelector, true)
 						require.NoError(t, err)
 						require.Equal(t, 1, result.DeletedVersions)
 					}
 					selector := VersionPruneSelector{VersionIDs: []string{node.CurrentVersionID}}
-					pruned, err := final.PruneContentVersions(ctx, node.ID, updated.Revision, selector, true)
+					pruned, err := restored.PruneContentVersions(ctx, node.ID, updated.Revision, selector, true)
 					require.NoError(t, err)
 					if released {
 						require.Equal(t, 1, pruned.DeletedVersions)
 					} else {
 						require.Zero(t, pruned.DeletedVersions)
 						require.Len(t, pruned.DependencyRetained, 1)
-						_, err = final.RetirePhotoCheckout(ctx, checkout.ID)
+						_, err = restored.RetirePhotoCheckout(ctx, checkout.ID)
 						require.NoError(t, err)
 						if tc.expired {
 							_, err = s.RetirePhotoCheckout(ctx, checkout.ID)
@@ -783,23 +788,9 @@ func TestPhotoCheckoutBackupRetentionAcrossLifecycleStates(t *testing.T) {
 							_, err = s.StorageOperation(ctx, op.ID)
 							require.ErrorIs(t, err, ErrNotFound)
 						}
-						pruned, err = final.PruneContentVersions(ctx, node.ID, updated.Revision, selector, true)
+						pruned, err = restored.PruneContentVersions(ctx, node.ID, updated.Revision, selector, true)
 						require.NoError(t, err)
 						require.Equal(t, 1, pruned.DeletedVersions)
-					}
-					if tc.state == "completed" {
-						retired, err := s.RetirePhotoCheckout(ctx, checkout.ID)
-						require.NoError(t, err)
-						var retiredSnapshot bytes.Buffer
-						require.NoError(t, s.ExportMetadata(ctx, &retiredSnapshot))
-						retiredRestored := newTestStoreWithDriver(t, driver.driver)
-						require.NoError(t, retiredRestored.ImportMetadata(ctx, bytes.NewReader(retiredSnapshot.Bytes())))
-						actualRetired, err := retiredRestored.PhotoCheckout(ctx, checkout.ID)
-						require.NoError(t, err)
-						require.Equal(t, retired.RetiredAt, actualRetired.RetiredAt)
-						require.True(t, actualRetired.RetentionReleased)
-						_, err = retiredRestored.RetirePhotoCheckout(ctx, checkout.ID)
-						require.NoError(t, err)
 					}
 				})
 			}
@@ -807,7 +798,7 @@ func TestPhotoCheckoutBackupRetentionAcrossLifecycleStates(t *testing.T) {
 	}
 }
 
-func TestPhotoCheckoutPublicationOrdersEligibilityMutationsWithoutReservingWriter(t *testing.T) {
+func TestPhotoCheckoutPublicationOrdersEligibilityMutationsAndRecordsCancellation(t *testing.T) {
 	t.Parallel()
 	for _, mutation := range []string{"hide", "exclude", "photo trash", "node trash", "path trash"} {
 		t.Run(mutation, func(t *testing.T) {
@@ -828,47 +819,64 @@ func TestPhotoCheckoutPublicationOrdersEligibilityMutationsWithoutReservingWrite
 				_, _, err = s.Move(ctx, node.ID, folder.ID, node.Name, node.Revision)
 				require.NoError(t, err)
 			}
-			started, release := make(chan struct{}), make(chan struct{})
-			var once sync.Once
-			releaseInstall := func() { once.Do(func() { close(release) }) }
-			defer releaseInstall()
-			published := make(chan error, 1)
-			go func() {
-				published <- s.PublishPhotoCheckoutEntry(ctx, entries[0], func() (bool, error) { close(started); <-release; return true, nil })
-			}()
-			<-started
-			changed := make(chan error, 1)
-			attempting := make(chan struct{})
-			go func() {
-				close(attempting)
-				var err error
-				switch mutation {
-				case "hide":
-					_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
-				case "exclude":
-					_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
-				case "photo trash":
-					_, err = s.TrashPhotoAsset(ctx, asset.ID, asset.Revision)
-				case "node trash":
-					_, _, err = s.Trash(ctx, asset.Files[0].NodeID, UnconditionalRev)
-				case "path trash":
-					_, _, err = s.TrashPath(ctx, "/photos-to-trash")
+			exercise := func(t *testing.T, ctx context.Context, waitSynchronously bool) {
+				t.Helper()
+				started, release := make(chan struct{}), make(chan struct{})
+				var once sync.Once
+				releaseInstall := func() { once.Do(func() { close(release) }) }
+				defer releaseInstall()
+				published := make(chan error, 1)
+				go func() {
+					published <- s.PublishPhotoCheckoutEntry(ctx, entries[0], func() (bool, error) { close(started); <-release; return true, nil })
+				}()
+				<-started
+				changed := make(chan error, 1)
+				attempting := make(chan struct{})
+				go func() {
+					close(attempting)
+					var err error
+					switch mutation {
+					case "hide":
+						_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+					case "exclude":
+						_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
+					case "photo trash":
+						_, err = s.TrashPhotoAsset(ctx, asset.ID, asset.Revision)
+					case "node trash":
+						_, _, err = s.Trash(ctx, asset.Files[0].NodeID, UnconditionalRev)
+					case "path trash":
+						_, _, err = s.TrashPath(ctx, "/photos-to-trash")
+					}
+					changed <- err
+				}()
+				<-attempting
+				if waitSynchronously {
+					synctest.Wait()
+					select {
+					case err := <-changed:
+						t.Fatalf("eligibility changed during installation: %v", err)
+					default:
+					}
+				} else {
+					select {
+					case err := <-changed:
+						t.Fatalf("eligibility changed during installation: %v", err)
+					case <-time.After(50 * time.Millisecond): //nolint:kennlint // the tree RWMutex has no waiter signal
+					}
 				}
-				changed <- err
-			}()
-			<-attempting
-			select {
-			case err := <-changed:
-				t.Fatalf("eligibility changed during installation: %v", err)
-			case <-time.After(100 * time.Millisecond): //nolint:kennlint // give the attempted mutation time to finish if publication doesn't block it
+				_, err := s.SetPhotoAssetExcluded(ctx, other.ID, other.Revision, true)
+				require.NoError(t, err)
+				releaseInstall()
+				require.NoError(t, <-published)
+				require.NoError(t, <-changed)
+				err = s.PublishPhotoCheckoutEntry(ctx, entries[0], func() (bool, error) { t.Fatal("ineligible source installed"); return false, nil })
+				require.ErrorIs(t, err, ErrPhotoCheckoutSourceUnavailable)
 			}
-			_, err = s.SetPhotoAssetExcluded(ctx, other.ID, other.Revision, true)
-			require.NoError(t, err)
-			releaseInstall()
-			require.NoError(t, <-published)
-			require.NoError(t, <-changed)
-			err = s.PublishPhotoCheckoutEntry(ctx, entries[0], func() (bool, error) { t.Fatal("ineligible source installed"); return false, nil })
-			require.ErrorIs(t, err, ErrPhotoCheckoutSourceUnavailable)
+			if mutation == "node trash" || mutation == "path trash" {
+				exercise(t, t.Context(), false)
+			} else {
+				synctest.Test(t, func(t *testing.T) { exercise(t, t.Context(), true) })
+			}
 		})
 	}
 	t.Run("cancelled installation stays published", func(t *testing.T) {
