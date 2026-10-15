@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 
 	"go.kenn.io/docbank/internal/config"
@@ -40,38 +39,12 @@ func CheckoutPathOverlap(ctx context.Context, checkouts []store.PhotoCheckout, p
 }
 
 func checkoutPathOverlap(ctx context.Context, checkout store.PhotoCheckout, pathname string) (bool, error) {
-	if checkout.Destination == "" {
-		return false, nil
+	protected, err := PhotoCheckoutProtectsDestination(checkout)
+	if err != nil || !protected {
+		return false, err
 	}
 	if !checkout.RetentionReleased && (pathContains(pathname, checkout.Destination) || pathContains(checkout.Destination, pathname)) {
 		return true, nil
-	}
-	info, err := os.Stat(checkout.Destination)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return false, err
-	}
-	if checkout.RetentionReleased {
-		if errors.Is(err, os.ErrNotExist) {
-			return false, nil
-		}
-		if !info.IsDir() {
-			// Something other than the checkout's folder now occupies this
-			// path, so it no longer holds a copy and imposes no admission
-			// restriction, whether or not it would even be readable.
-			return false, nil
-		}
-		dir, err := os.Open(checkout.Destination)
-		if err != nil {
-			return false, err
-		}
-		_, readErr := dir.Readdirnames(1)
-		closeErr := dir.Close()
-		if readErr != nil && readErr != io.EOF || closeErr != nil {
-			return false, errors.Join(readErr, closeErr)
-		}
-		if readErr == io.EOF {
-			return false, nil
-		}
 	}
 	return CheckoutDestinationRelatesToPath(ctx, checkout.Destination, pathname)
 }

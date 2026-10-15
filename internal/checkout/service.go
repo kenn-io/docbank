@@ -431,12 +431,9 @@ func (s Service) Run(ctx context.Context, c store.PhotoCheckout, root *os.Root) 
 	if err != nil {
 		return jobs.DeferStorageAdmission(ctx, s.Store, c.OperationID, err)
 	}
-	started := false
-	if root == nil {
-		started, err = s.Store.PhotoCheckoutStarted(ctx, c.ID)
-		if err != nil {
-			return err
-		}
+	started, err := s.Store.PhotoCheckoutStarted(ctx, c.ID)
+	if err != nil {
+		return err
 	}
 	if err := s.Store.ClaimPhotoCheckout(ctx, c.ID, c.OperationID); err != nil {
 		return err
@@ -456,14 +453,14 @@ func (s Service) Run(ctx context.Context, c store.PhotoCheckout, root *os.Root) 
 			return s.finish(ctx, c, store.StorageOperationFailed, err.Error())
 		}
 		defer func() { _ = root.Close() }()
-		if !started {
-			proof, err := s.checkDestination(ctx, root, c.Destination, c.ID)
-			if err == nil {
-				err = s.mutate(ctx, func() error { return s.recheckDestination(ctx, root, c.Destination, c.ID, proof) })
-			}
-			if err != nil {
-				return errors.Join(err, s.finish(ctx, c, store.StorageOperationFailed, err.Error()))
-			}
+	}
+	if !started {
+		proof, err := s.checkDestination(ctx, root, c.Destination, c.ID)
+		if err == nil {
+			err = s.mutate(ctx, func() error { return s.recheckDestination(ctx, root, c.Destination, c.ID, proof) })
+		}
+		if err != nil {
+			return errors.Join(err, s.finish(ctx, c, store.StorageOperationFailed, err.Error()))
 		}
 	}
 	entries, copyErr := s.Store.PhotoCheckoutEntries(ctx, c.ID)

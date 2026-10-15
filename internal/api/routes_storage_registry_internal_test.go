@@ -1,6 +1,7 @@
 package api
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -19,7 +20,9 @@ func TestStorageProtectionPathsSkipS3AndClassifyProtectionErrors(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	_, err = catalog.CreateFile(t.Context(), catalog.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
 	require.NoError(t, err)
-	checkout, operation, err := catalog.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{All: true}, "unavailable\x00checkout", 100)
+	parent := filepath.Join(t.TempDir(), "file")
+	require.NoError(t, os.WriteFile(parent, nil, 0o600))
+	checkout, operation, err := catalog.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{All: true}, filepath.Join(parent, "checkout"), 100)
 	require.NoError(t, err)
 	require.NoError(t, catalog.FinishPhotoCheckout(t.Context(), checkout.ID, operation.ID, store.StorageOperationFailed, "{}", "partial", time.Now().Add(time.Hour)))
 	_, err = catalog.RetirePhotoCheckout(t.Context(), checkout.ID)
@@ -27,7 +30,7 @@ func TestStorageProtectionPathsSkipS3AndClassifyProtectionErrors(t *testing.T) {
 	d := Deps{Store: catalog, VaultRoot: t.TempDir(), Cfg: config.Default()}
 	d.BlobRegistry = blob.NewRegistry(t.Context(), catalog.VaultID(), nil, nil)
 	t.Cleanup(func() { require.NoError(t, d.BlobRegistry.Close()) })
-	d.Cfg.Watches = []config.WatchConfig{{Source: "unavailable\x00watch"}}
+	d.Cfg.Watches = []config.WatchConfig{{Source: filepath.Join(parent, "watch")}}
 	paths, err := storageProtectionPaths(t.Context(), d, config.StoreBindingConfig{Kind: "s3", Bucket: "archive", Region: "us-east-1"})
 	require.NoError(t, err)
 	require.Empty(t, paths)

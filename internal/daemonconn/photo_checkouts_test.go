@@ -21,7 +21,6 @@ func TestPhotoCheckoutClients(t *testing.T) {
 	const operationID = "00000000-0000-4000-8000-000000000012"
 	selection := store.PhotoCheckoutSelection{All: true, AssetIDs: []string{"00000000-0000-4000-8000-000000000021"}, AlbumIDs: []string{"00000000-0000-4000-8000-000000000022"}, Years: &store.PhotoCheckoutYears{From: 2024, To: 2025}}
 	checkout := store.PhotoCheckout{ID: id, Selection: selection, ByteLimit: 100, Destination: filepath.Join(t.TempDir(), "destination"), OperationID: operationID, State: "queued"}
-	expectedEstimate := store.PhotoCheckoutEstimate{Assets: 1, Files: 2, Bytes: 5}
 	expectedStatus := api.PhotoCheckoutStatus{Checkout: checkout, Files: 2, Bytes: 5, PublishedFiles: 1, PublishedBytes: 3}
 	created := api.PhotoCheckoutCreateResult{Checkout: checkout, Operation: api.StorageOperation{ID: operationID, Kind: "photo_checkout", State: "queued"}}
 	request := api.PhotoCheckoutCreateRequest{Selection: selection, Destination: checkout.Destination, ByteLimit: 100}
@@ -33,13 +32,6 @@ func TestPhotoCheckoutClients(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		var out any
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/photos/checkouts/estimate":
-			var body store.PhotoCheckoutSelection
-			if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {
-				return
-			}
-			assert.Equal(t, selection, body)
-			out = expectedEstimate
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/photos/checkouts":
 			var body api.PhotoCheckoutCreateRequest
 			if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {
@@ -66,9 +58,6 @@ func TestPhotoCheckoutClients(t *testing.T) {
 		mu.Unlock()
 		return client.CreatePhotoCheckout(t.Context(), request)
 	}
-	estimate, err := client.EstimatePhotoCheckout(t.Context(), selection)
-	require.NoError(t, err)
-	require.Equal(t, expectedEstimate, estimate)
 	result, err := create(created)
 	require.NoError(t, err)
 	require.Equal(t, created, result)

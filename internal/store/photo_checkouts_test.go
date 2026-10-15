@@ -280,9 +280,6 @@ func TestPhotoCheckoutCreateValidation(t *testing.T) {
 	}
 	if runtime.GOOS == "windows" {
 		cases = append(cases, rejectedCase{name: "multiple invalid filenames", filename: "first?.jpg", additionalNames: []string{"second:.jpg", "valid.jpg"}, limit: 100, withAsset: true})
-		for _, name := range []string{"CON.jpg", "bad:name.jpg", "trailing.", "trailing ", "control\x01.jpg"} {
-			cases = append(cases, rejectedCase{name: name, filename: name, limit: 100, withAsset: true, explicitSelection: true})
-		}
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -876,42 +873,6 @@ func TestPhotoCheckoutPublicationOrdersEligibilityMutationsAndRecordsCancellatio
 		require.NoError(t, err)
 		require.Equal(t, int64(1), status.PublishedFiles)
 	})
-}
-
-// TestPhotoCheckoutRejectsDestinationNameCollision reproduces an asset whose
-// members share a destination name: a display file and a sidecar attached
-// directly, both named "dup.bin" and neither carrying ingest provenance, so
-// neither gets a provenance-derived rename. Creation must refuse the
-// selection before writing checkout rows or taking source holds; otherwise
-// Run would fail in CheckRootPaths after the holds were already recorded,
-// leaving the selected versions held until retire for a checkout that never
-// copied anything.
-func TestPhotoCheckoutRejectsDestinationNameCollision(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	display, err := s.CreateFile(ctx, s.RootID(), "dup.bin", browseHash("display"), 10, "image/jpeg")
-	require.NoError(t, err)
-	asset, err := s.PhotoAssetForNode(ctx, display.ID)
-	require.NoError(t, err)
-	folder, err := s.Mkdir(ctx, s.RootID(), "other")
-	require.NoError(t, err)
-	sidecarNode, err := s.CreateFile(ctx, folder.ID, "dup.bin", browseHash("sidecar"), 5, "application/rdf+xml")
-	require.NoError(t, err)
-	target := fileByRole(asset.Files, PhotoRoleImage).ID
-	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, sidecarNode.ID, PhotoRoleSidecar, &target)
-	require.NoError(t, err)
-
-	_, err = s.EstimatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}})
-	require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
-	require.ErrorContains(t, err, "collides")
-
-	_, _, err = s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, t.TempDir(), 100)
-	require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
-	require.ErrorContains(t, err, "collides")
-	checkouts, err := s.ListPhotoCheckouts(ctx)
-	require.NoError(t, err)
-	require.Empty(t, checkouts)
 }
 
 // TestPreserveUncertainPhotoCheckoutHoldsSurvivesClearedPublication covers

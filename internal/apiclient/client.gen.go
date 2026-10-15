@@ -9716,18 +9716,12 @@ func (c *Client) UndoPhotoAuthored(ctx context.Context, options *UndoPhotoAuthor
 	return responseParser(ctx, resp)
 }
 
-// UndoPhotoFaceDecision Undo a face decision if its records are unchanged
-func (c *Client) UndoPhotoFaceDecision(ctx context.Context, options *UndoPhotoFaceDecisionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UndoPhotoFaceDecisionResponse, error) {
+// ListPhotoCheckouts List photo checkouts
+func (c *Client) ListPhotoCheckouts(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListPhotoCheckoutsResponse, error) {
 	var err error
-
-	queryEncoding := map[string]runtime.QueryEncoding{
-		"operation_id": {Style: "form", Explode: &[]bool{false}[0]},
-	}
 	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/photos/face-decisions/{receipt_id}/undo",
-		Method:        "POST",
-		Options:       options,
-		QueryEncoding: queryEncoding,
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/photos/checkouts",
+		Method:     "GET",
 	}
 
 	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
@@ -9735,16 +9729,16 @@ func (c *Client) UndoPhotoFaceDecision(ctx context.Context, options *UndoPhotoFa
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(_ context.Context, resp *runtime.Response) (*UndoPhotoFaceDecisionResponse, error) {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListPhotoCheckoutsResponse, error) {
 		switch resp.StatusCode {
 
 		case 200:
 
-			target := new(UndoPhotoFaceDecisionResponse)
+			target := new(ListPhotoCheckoutsResponse)
 			if err := json.Unmarshal(resp.Content, target); err != nil {
 				return nil, &runtime.ResponseDecodeError{
 					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
-					ContentLength: len(resp.Content), TargetType: "UndoPhotoFaceDecisionResponse", Body: resp.Content, Err: err,
+					ContentLength: len(resp.Content), TargetType: "ListPhotoCheckoutsResponse", Body: resp.Content, Err: err,
 				}
 			}
 
@@ -9752,12 +9746,152 @@ func (c *Client) UndoPhotoFaceDecision(ctx context.Context, options *UndoPhotoFa
 
 		default:
 
-			return nil, decodeAPIError[UndoPhotoFaceDecisionErrorResponse](resp, "UndoPhotoFaceDecisionErrorResponse")
+			return nil, decodeAPIError[ListPhotoCheckoutsErrorResponse](resp, "ListPhotoCheckoutsErrorResponse")
 
 		}
 	}
 
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/face-decisions/{receipt_id}/undo")
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/checkouts")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CreatePhotoCheckout Create verified writable photo copies in an empty daemon-host folder
+func (c *Client) CreatePhotoCheckout(ctx context.Context, options *CreatePhotoCheckoutRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreatePhotoCheckoutResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/checkouts",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreatePhotoCheckoutResponse, error) {
+		switch resp.StatusCode {
+
+		case 202:
+
+			target := new(CreatePhotoCheckoutResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreatePhotoCheckoutResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreatePhotoCheckoutErrorResponse](resp, "CreatePhotoCheckoutErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/checkouts")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 202)
+	}
+	return responseParser(ctx, resp)
+}
+
+// EstimatePhotoCheckout Estimate writable photo copies
+func (c *Client) EstimatePhotoCheckout(ctx context.Context, options *EstimatePhotoCheckoutRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EstimatePhotoCheckoutResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/checkouts/estimate",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*EstimatePhotoCheckoutResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(EstimatePhotoCheckoutResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "EstimatePhotoCheckoutResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[EstimatePhotoCheckoutErrorResponse](resp, "EstimatePhotoCheckoutErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/checkouts/estimate")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetPhotoCheckout Inspect photo checkout progress
+func (c *Client) GetPhotoCheckout(ctx context.Context, options *GetPhotoCheckoutRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPhotoCheckoutResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/photos/checkouts/{id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetPhotoCheckoutResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetPhotoCheckoutResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetPhotoCheckoutResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetPhotoCheckoutErrorResponse](resp, "GetPhotoCheckoutErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/checkouts/{id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -9804,6 +9938,57 @@ func (c *Client) RetirePhotoCheckout(ctx context.Context, options *RetirePhotoCh
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/checkouts/{id}/retire")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// UndoPhotoFaceDecision Undo a face decision if its records are unchanged
+func (c *Client) UndoPhotoFaceDecision(ctx context.Context, options *UndoPhotoFaceDecisionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UndoPhotoFaceDecisionResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"operation_id": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/photos/face-decisions/{receipt_id}/undo",
+		Method:        "POST",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*UndoPhotoFaceDecisionResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(UndoPhotoFaceDecisionResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "UndoPhotoFaceDecisionResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[UndoPhotoFaceDecisionErrorResponse](resp, "UndoPhotoFaceDecisionErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/face-decisions/{receipt_id}/undo")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -20853,6 +21038,124 @@ func (o *UndoPhotoAuthoredRequestOptions) GetHeader() (map[string]string, error)
 	return nil, nil
 }
 
+// CreatePhotoCheckoutRequestOptions is the options needed to make a request to CreatePhotoCheckout.
+type CreatePhotoCheckoutRequestOptions struct {
+	Body *CreatePhotoCheckoutBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreatePhotoCheckoutRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreatePhotoCheckoutRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreatePhotoCheckoutRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreatePhotoCheckoutRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// EstimatePhotoCheckoutRequestOptions is the options needed to make a request to EstimatePhotoCheckout.
+type EstimatePhotoCheckoutRequestOptions struct {
+	Body *EstimatePhotoCheckoutBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *EstimatePhotoCheckoutRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *EstimatePhotoCheckoutRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *EstimatePhotoCheckoutRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *EstimatePhotoCheckoutRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetPhotoCheckoutRequestOptions is the options needed to make a request to GetPhotoCheckout.
+type GetPhotoCheckoutRequestOptions struct {
+	PathParams *GetPhotoCheckoutPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetPhotoCheckoutRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetPhotoCheckoutRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetPhotoCheckoutRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetPhotoCheckoutRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// RetirePhotoCheckoutRequestOptions is the options needed to make a request to RetirePhotoCheckout.
+type RetirePhotoCheckoutRequestOptions struct {
+	PathParams *RetirePhotoCheckoutPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RetirePhotoCheckoutRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *RetirePhotoCheckoutRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RetirePhotoCheckoutRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *RetirePhotoCheckoutRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // UndoPhotoFaceDecisionRequestOptions is the options needed to make a request to UndoPhotoFaceDecision.
 type UndoPhotoFaceDecisionRequestOptions struct {
 	PathParams *UndoPhotoFaceDecisionPath
@@ -20888,37 +21191,6 @@ func (o *UndoPhotoFaceDecisionRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *UndoPhotoFaceDecisionRequestOptions) GetHeader() (map[string]string, error) {
-	return nil, nil
-}
-
-// RetirePhotoCheckoutRequestOptions is the options needed to make a request to RetirePhotoCheckout.
-type RetirePhotoCheckoutRequestOptions struct {
-	PathParams *RetirePhotoCheckoutPath
-}
-
-// GetPathParams returns the path params as a map.
-func (o *RetirePhotoCheckoutRequestOptions) GetPathParams() (map[string]any, error) {
-	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
-	if err != nil {
-		return nil, err
-	}
-	var params map[string]any
-	err = json.Unmarshal(encoded, &params)
-	return params, err
-}
-
-// GetQuery returns the query params as a map.
-func (o *RetirePhotoCheckoutRequestOptions) GetQuery() (map[string]any, error) {
-	return nil, nil
-}
-
-// GetBody returns the payload in any type that can be marshalled to JSON by the client.
-func (o *RetirePhotoCheckoutRequestOptions) GetBody() any {
-	return nil
-}
-
-// GetHeader returns the headers as a map.
-func (o *RetirePhotoCheckoutRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -24550,12 +24822,16 @@ type UndoPhotoAuthoredPath struct {
 	ReceiptID uuid.UUID `json:"receipt_id"`
 }
 
-type UndoPhotoFaceDecisionPath struct {
-	ReceiptID uuid.UUID `json:"receipt_id"`
+type GetPhotoCheckoutPath struct {
+	ID uuid.UUID `json:"id"`
 }
 
 type RetirePhotoCheckoutPath struct {
 	ID uuid.UUID `json:"id"`
+}
+
+type UndoPhotoFaceDecisionPath struct {
+	ReceiptID uuid.UUID `json:"receipt_id"`
 }
 
 type GetPhotoAssetByNodePath struct {
@@ -24907,6 +25183,10 @@ type PreparePhotoPreviewBody = PreparePhotoPreviewRequest
 type EditPhotoAuthoredBody = PhotoAuthoredEditRequest
 
 type PreparePhotoAuthoredBody = PhotoAuthoredPrepareRequest
+
+type CreatePhotoCheckoutBody = PhotoCheckoutCreateRequest
+
+type EstimatePhotoCheckoutBody = PhotoCheckoutSelection
 
 type ChangePhotoHiddenBody = PhotoHiddenPasscodeRequest
 
@@ -26266,13 +26546,29 @@ type UndoPhotoAuthoredResponse = store.PhotoAuthoredReceipt
 
 type UndoPhotoAuthoredErrorResponse = Error
 
-type UndoPhotoFaceDecisionResponse = api.PhotoFaceDecisionResult
+type ListPhotoCheckoutsResponse = api.PhotoCheckoutList
 
-type UndoPhotoFaceDecisionErrorResponse = Error
+type ListPhotoCheckoutsErrorResponse = Error
+
+type CreatePhotoCheckoutResponse = api.PhotoCheckoutCreateResult
+
+type CreatePhotoCheckoutErrorResponse = Error
+
+type EstimatePhotoCheckoutResponse = store.PhotoCheckoutEstimate
+
+type EstimatePhotoCheckoutErrorResponse = Error
+
+type GetPhotoCheckoutResponse = store.PhotoCheckoutStatus
+
+type GetPhotoCheckoutErrorResponse = Error
 
 type RetirePhotoCheckoutResponse = store.PhotoCheckout
 
 type RetirePhotoCheckoutErrorResponse = Error
+
+type UndoPhotoFaceDecisionResponse = api.PhotoFaceDecisionResult
+
+type UndoPhotoFaceDecisionErrorResponse = Error
 
 type GetPhotoHiddenStateResponse = store.PhotoHiddenState
 
@@ -27536,6 +27832,22 @@ type PhotoBrowsePage = api.PhotoBrowsePage
 type PhotoBrowseRequest = api.PhotoBrowseRequest
 
 type PhotoBrowseRow = api.PhotoBrowseRow
+
+type PhotoCheckout = store.PhotoCheckout
+
+type PhotoCheckoutCreateRequest = api.PhotoCheckoutCreateRequest
+
+type PhotoCheckoutCreateResult = api.PhotoCheckoutCreateResult
+
+type PhotoCheckoutEstimate = store.PhotoCheckoutEstimate
+
+type PhotoCheckoutList = api.PhotoCheckoutList
+
+type PhotoCheckoutSelection = store.PhotoCheckoutSelection
+
+type PhotoCheckoutStatus = store.PhotoCheckoutStatus
+
+type PhotoCheckoutYears = store.PhotoCheckoutYears
 
 type PhotoExportSelection = bundle.PhotoExportSelection
 

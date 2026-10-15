@@ -388,6 +388,9 @@ func TestStorageRegistrationAdmitsReleasedCheckoutDestinationAndSurvivesRestart(
 			resp, body := do(t, ts, http.MethodPost, "/api/v1/storage/stores/preview", nil,
 				map[string]any{"name": "archive", "binding": "archive"})
 			require.Equal(t, http.StatusOK, resp.StatusCode, body)
+			previewed, err := live.PhotoCheckout(t.Context(), checkout.ID)
+			require.NoError(t, err)
+			require.Equal(t, destination, previewed.Destination)
 			var preview api.BlobStorePreview
 			require.NoError(t, json.Unmarshal([]byte(body), &preview))
 			resp, body = do(t, ts, http.MethodPost, "/api/v1/storage/stores", nil,

@@ -3,6 +3,7 @@ package checkout
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -97,21 +98,31 @@ func TestCheckoutDestinationSafety(t *testing.T) {
 		defer func() { require.NoError(t, root.Close()) }()
 		require.Equal(t, canonical, created.Destination)
 	})
-	t.Run("Run rechecks destination after Prepare", func(t *testing.T) {
-		c, _, root, err := s.Prepare(t.Context(), selection, t.TempDir(), 0)
-		require.NoError(t, err)
-		require.NoError(t, root.Close())
-		require.NoError(t, os.WriteFile(filepath.Join(c.Destination, "keep"), []byte("keep"), 0600))
-		err = s.Run(t.Context(), c, nil)
-		status, statusErr := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
-		require.NoError(t, statusErr)
-		require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
-		require.Equal(t, "failed", status.Checkout.State)
-		require.Zero(t, status.PublishedFiles)
-		content, err := os.ReadFile(filepath.Join(c.Destination, "keep"))
-		require.NoError(t, err)
-		require.Equal(t, "keep", string(content))
-	})
+	for _, reopen := range []bool{false, true} {
+		t.Run(fmt.Sprintf("Run rechecks destination after Prepare reopen=%t", reopen), func(t *testing.T) {
+			c, _, root, err := s.Prepare(t.Context(), selection, t.TempDir(), 0)
+			require.NoError(t, err)
+			defer func() {
+				if root != nil {
+					require.NoError(t, root.Close())
+				}
+			}()
+			if reopen {
+				require.NoError(t, root.Close())
+				root = nil
+			}
+			require.NoError(t, os.WriteFile(filepath.Join(c.Destination, "keep"), []byte("keep"), 0600))
+			err = s.Run(t.Context(), c, root)
+			status, statusErr := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
+			require.NoError(t, statusErr)
+			require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
+			require.Equal(t, "failed", status.Checkout.State)
+			require.Zero(t, status.PublishedFiles)
+			content, err := os.ReadFile(filepath.Join(c.Destination, "keep"))
+			require.NoError(t, err)
+			require.Equal(t, "keep", string(content))
+		})
+	}
 }
 
 func TestCheckoutStartFailurePersistsFailureAndClosesRoot(t *testing.T) {
@@ -203,18 +214,13 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 				require.NoError(t, os.MkdirAll(filepath.Dir(keep), 0o700))
 				require.NoError(t, os.WriteFile(keep, []byte(test.fileContent), 0o600))
 				stagePayload = true
-			case "unrecorded install":
+			case "unrecorded install", "no cursor":
 				require.NoError(t, s.Store.ClaimPhotoCheckout(t.Context(), c.ID, op.ID))
 				require.NoError(t, root.MkdirAll(filepath.Dir(filepath.FromSlash(entries[0].Path)), 0o700))
 				require.NoError(t, root.WriteFile(filepath.FromSlash(entries[0].Path), []byte("photo bytes"), 0o600))
-				require.NoError(t, s.Store.AdvanceStorageOperation(t.Context(), op.ID, entries[0].FileID, 1, 1, entries[0].Size, "{}"))
-				require.NoError(t, root.WriteFile(filepath.FromSlash(entries[0].Path), []byte(test.fileContent), 0o600))
-				keep = filepath.Join(c.Destination, filepath.FromSlash(entries[0].Path))
-				stagePayload = true
-			case "no cursor":
-				require.NoError(t, s.Store.ClaimPhotoCheckout(t.Context(), c.ID, op.ID))
-				require.NoError(t, root.MkdirAll(filepath.Dir(filepath.FromSlash(entries[0].Path)), 0o700))
-				require.NoError(t, root.WriteFile(filepath.FromSlash(entries[0].Path), []byte("photo bytes"), 0o600))
+				if test.setup == "unrecorded install" {
+					require.NoError(t, s.Store.AdvanceStorageOperation(t.Context(), op.ID, entries[0].FileID, 1, 1, entries[0].Size, "{}"))
+				}
 				require.NoError(t, root.WriteFile(filepath.FromSlash(entries[0].Path), []byte(test.fileContent), 0o600))
 				keep = filepath.Join(c.Destination, filepath.FromSlash(entries[0].Path))
 				stagePayload = true
@@ -567,16 +573,7 @@ func TestCheckoutRunOutcomes(t *testing.T) {
 	}
 }
 
-// TestCheckoutPreflightsCollisionsBeforePublishingBytes covers the
-// filesystem-level preflight Run runs through CheckRootPaths. Two selected
-// files named "photo.jpg" and "PHOTO.JPG" get distinct destination names
-// (CreatePhotoCheckout's own duplicate-name rejection, covered by
-// internal/store/photo_checkouts_test.go's
-// TestPhotoCheckoutRejectsDestinationNameCollision, never triggers), but
-// collide under a case-insensitive destination filesystem's own name
-// rules. Removing Run's CheckRootPaths call would make this test fail on
-// such a filesystem: nothing else would catch the collision before bytes
-// start copying.
+// Destination name equivalence must be checked before any bytes are published.
 func TestCheckoutPreflightsCollisionsBeforePublishingBytes(t *testing.T) {
 	t.Parallel()
 	s := checkoutService(t)

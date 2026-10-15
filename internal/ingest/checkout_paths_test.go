@@ -13,7 +13,9 @@ import (
 )
 
 func TestCheckoutPathOverlapProtectsReservationsAndReleasedCopies(t *testing.T) {
-	unavailable := store.PhotoCheckout{ID: "unavailable", Destination: filepath.Join(t.TempDir(), "invalid\x00path"), RetentionReleased: true}
+	parent := filepath.Join(t.TempDir(), "file")
+	require.NoError(t, os.WriteFile(parent, nil, 0o600))
+	unavailable := store.PhotoCheckout{ID: "unavailable", Destination: filepath.Join(parent, "checkout"), RetentionReleased: true}
 	reserved := store.PhotoCheckout{ID: "reserved", Destination: t.TempDir()}
 	for _, checkouts := range [][]store.PhotoCheckout{{unavailable, reserved}, {reserved, unavailable}} {
 		id, overlap, _, err := CheckoutPathOverlap(t.Context(), checkouts, filepath.Join(reserved.Destination, "child"))
