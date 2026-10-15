@@ -28,8 +28,11 @@ func TestImportRefusesSymlinkAtOpen(t *testing.T) {
 	ingestID, err := ing.Store.BeginIngest(ctx, "cli", "test")
 	require.NoError(t, err)
 	files := &filesystemIngest{ing: ing, run: ingestID}
-	_, _, err = files.importFile(ctx, &ingestDirectory{id: ing.Store.RootID()}, link, link, false, nil)
-	require.Error(t, err)
+	var report Report
+	require.NoError(t, files.addOne(ctx, &report, &ingestDirectory{id: ing.Store.RootID()}, link, link, false, nil))
+	require.NoError(t, files.flush(ctx, &report, nil))
+	require.Len(t, report.Failed, 1)
+	require.Error(t, report.Failed[0].Err)
 }
 
 func TestAddOneRejectsNonUTF8SourcePathWithoutPoisoningMetadata(t *testing.T) {
