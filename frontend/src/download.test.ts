@@ -299,7 +299,7 @@ describe("exact selected-source preview", () => {
   it.each([
     ["version", { "X-Docbank-Content-Version": node.current_version_id ?? "" }, content],
     ["declared size", { "X-Docbank-Blob-Size": String(source.size + 1) }, content],
-    ["received size", { "Content-Length": String(source.size - 1) }, content.slice(0, -1)],
+    ["Content-Length header", { "Content-Length": String(source.size - 1) }, content],
     [
       "digest",
       {
