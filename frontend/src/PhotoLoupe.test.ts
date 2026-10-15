@@ -632,3 +632,14 @@ it("hides an unreadable capture time when the file modified time placed the phot
   expect(screen.getByText("2023-11-04 18:22 UTC")).toBeTruthy();
   expect(screen.queryByText("Captured")).toBeNull();
 });
+
+it("shows the capture time and no file modified time for a photo placed by EXIF", async () => {
+  const { props } = setup();
+  props.photo.capture_time = "2023-11-04T18:22:03";
+  props.photo.file_modified_time = null;
+  render(PhotoLoupe, props);
+  await fireEvent.click(await screen.findByRole("button", { name: "Metadata" }));
+  expect(screen.getByText("Captured")).toBeTruthy();
+  expect(screen.getByText("2023-11-04T18:22:03")).toBeTruthy();
+  expect(screen.queryByText("File modified")).toBeNull();
+});

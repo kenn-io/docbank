@@ -2228,14 +2228,12 @@ CREATE INDEX IF NOT EXISTS photo_files_sidecar_nodes ON photo_files(node_id) WHE
 -- photo. The mtime is the earliest observed unsuperseded claim bound to
 -- any version of the node with the displayed blob, so a revert regains the
 -- original date; finding it below walks provenance.supersedes the same way
--- loadBoundDocumentEventEvidence does (document_events_evidence.go), which a
--- table-valued recursive walk like this has no registered-function equivalent for.
--- The key's fixed-width fraction format matches query.CaptureTimeKey byte for byte
--- so mixed EXIF/mtime sort order is stable; the trigger below reaches that Go format
--- through the registered docbank_query_file_modified_sort_key_v1 function
--- (query.FileModifiedSortKey; see sqlite/mattn and sqlite/modernc) rather than
--- duplicating it in SQL. Derived like photo_technical_metadata: absent from export,
--- refilled by the triggers below when restore inserts the facts they watch.
+-- loadBoundDocumentEventEvidence does (document_events_evidence.go).
+-- The mtime key pads the canonical UTC RFC3339Nano fraction to the fixed
+-- nine digits query.CaptureTimeKey produces, so EXIF and mtime keys sort together.
+-- Derived like photo_technical_metadata: absent from export, refilled by the
+-- triggers below when restore inserts the facts they watch. These triggers have
+-- no recipe marker, so changing them or the key format needs a schema bump.
 CREATE TABLE IF NOT EXISTS photo_timeline (
     file_id       TEXT PRIMARY KEY REFERENCES photo_files(file_id) ON DELETE CASCADE,
     sort_key      TEXT NOT NULL,
@@ -2252,7 +2250,9 @@ CREATE TRIGGER IF NOT EXISTS photo_timeline_refresh AFTER INSERT ON photo_timeli
     DELETE FROM photo_timeline WHERE file_id IN (SELECT file_id FROM photo_files WHERE node_id = NEW.node_id);
     INSERT INTO photo_timeline(file_id, sort_key, day, modified_time)
     SELECT file_id,
-        COALESCE(exif_key, docbank_query_file_modified_sort_key_v1(mtime)),
+        COALESCE(exif_key, substr(mtime, 1, 19) || '.' || substr(
+            CASE WHEN substr(mtime, 20, 1) = '.' THEN substr(mtime, 21, length(mtime) - 21) ELSE '' END
+            || '000000000', 1, 9)),
         COALESCE(exif_day, substr(mtime, 1, 10)),
         CASE WHEN exif_key IS NULL THEN mtime END
     FROM (

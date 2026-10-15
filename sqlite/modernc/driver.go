@@ -27,14 +27,6 @@ func init() {
 			}
 			return query.ClassifyMedia(mediaType, filename), nil
 		})
-	modernsqlite.MustRegisterDeterministicScalarFunction("docbank_query_file_modified_sort_key_v1", 1,
-		func(_ *modernsqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
-			mtime, ok := args[0].(string)
-			if !ok {
-				return nil, errors.New("file modified sort key requires a text mtime")
-			}
-			return query.FileModifiedSortKey(mtime), nil
-		})
 }
 
 const (

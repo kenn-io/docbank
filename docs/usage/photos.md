@@ -136,7 +136,8 @@ Dates use the selected display file's recorded calendar day, so a capture near
 midnight keeps its date regardless of the browser's timezone. A RAW/JPEG pair
 counts once. A photo without a capture date counts on the UTC day its file was
 last modified. When the same bytes were seen several times, the first
-sighting decides, so re-importing copies never moves a photo. Reverting a photo
+sighting that recorded a modified time decides, so re-importing copies never
+moves a photo. Reverting a photo
 restores the date of the original bytes; a photo replaced by content recorded
 without a modified time is undated until reverted. The Undated total includes
 photos with neither.
