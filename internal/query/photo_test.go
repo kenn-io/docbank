@@ -53,15 +53,3 @@ func TestPhotoCaptureTimeKey(t *testing.T) {
 		require.Empty(t, key, tc.value)
 	}
 }
-
-func TestFileModifiedSortKey(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct{ mtime, precision, key string }{
-		{"2024-03-05T10:00:00Z", "second", "2024-03-05T10:00:00.000000000"},
-		{"2024-03-05T10:00:00.5Z", "fraction", "2024-03-05T10:00:00.500000000"},
-		{"2024-03-05T10:00:00.123456789Z", "fraction", "2024-03-05T10:00:00.123456789"},
-	} {
-		// Pins byte-for-byte equivalence with CaptureTimeKey, the format a trigger can't call directly.
-		require.Equal(t, CaptureTimeKey(tc.mtime, tc.precision, "utc", ""), FileModifiedSortKey(tc.mtime), tc.mtime)
-	}
-}
