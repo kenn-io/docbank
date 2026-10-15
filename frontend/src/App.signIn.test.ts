@@ -84,7 +84,9 @@ it("exchanges the key before reading the vault and offers sign out", async () =>
       ).toBe(true),
     { timeout: 10_000 },
   );
-  const call = fetchMock.mock.calls.find(([input]) => String(input) === "/api/daemon/web-session");
+  const call = fetchMock.mock.calls.find(
+    ([input, init]) => String(input) === "/api/daemon/web-session" && init?.method === "DELETE",
+  );
   expect(new Headers(call?.[1]?.headers).get("X-Docbank-Web-Session")).toBe("tab-token");
   vi.unstubAllGlobals();
 });
