@@ -33,6 +33,7 @@ const (
 	visualPreviewMaxPNGChunks        = 1024
 	visualPreviewMaxWebPChunks       = 1024
 	visualPreviewMaxEXIFBytes        = 1 << 20
+	visualPreviewMaxICCBytes         = 1 << 20
 	visualPreviewWebPAnimation       = 1 << 1
 	visualPreviewWebPEXIF            = 1 << 3
 	visualPreviewWebPICCProfile      = 1 << 5
@@ -133,7 +134,7 @@ func ProduceVisualPreviewForRecipe(
 	case "png":
 		return produceVisualPreviewPNG(ctx, source, target.Size, base)
 	case "gif":
-		return decodeAndEncodeVisualPreview(ctx, source, base, "gif", 1)
+		return decodeAndEncodeVisualPreview(ctx, source, base, "gif", 1, visualPreviewColorSpace{})
 	case "webp":
 		return produceVisualPreviewWebP(ctx, source, target.Size, base)
 	case "raw":
@@ -151,7 +152,7 @@ func ProduceVisualPreviewForRecipe(
 func produceVisualPreviewWebP(
 	ctx context.Context, source io.ReadSeeker, sourceSize int64, base document.VisualPreviewV1,
 ) (VisualPreviewProduct, error) {
-	orientation, unsupportedColor, unsupportedMetadata, animated, malformed, err :=
+	orientation, colorSpace, unsupportedMetadata, animated, malformed, err :=
 		inspectVisualPreviewWebP(ctx, source, sourceSize)
 	if err != nil {
 		return VisualPreviewProduct{}, sourceContentUnavailable(
@@ -167,13 +168,6 @@ func produceVisualPreviewWebP(
 		}
 		return VisualPreviewProduct{Preview: base}, nil
 	}
-	if unsupportedColor {
-		base.State = document.VisualPreviewUnsupported
-		base.Failure = &document.VisualPreviewFailureV1{
-			Code: "unsupported_color_profile", Detail: "the built-in preview producer requires an sRGB WebP original",
-		}
-		return VisualPreviewProduct{Preview: base}, nil
-	}
 	if unsupportedMetadata {
 		base.State = document.VisualPreviewUnsupported
 		base.Failure = &document.VisualPreviewFailureV1{
@@ -181,7 +175,7 @@ func produceVisualPreviewWebP(
 		}
 		return VisualPreviewProduct{Preview: base}, nil
 	}
-	return decodeAndEncodeVisualPreview(ctx, source, base, "webp", orientation)
+	return decodeAndEncodeVisualPreview(ctx, source, base, "webp", orientation, colorSpace)
 }
 
 func produceVisualPreviewJPEG(
@@ -193,7 +187,7 @@ func produceVisualPreviewJPEG(
 func produceVisualPreviewJPEGWithOrientation(
 	ctx context.Context, source io.ReadSeeker, base document.VisualPreviewV1, containerOrientation int,
 ) (VisualPreviewProduct, error) {
-	orientation, unsupportedColor, malformed, err := inspectVisualPreviewJPEG(ctx, source)
+	orientation, colorSpace, malformed, err := inspectVisualPreviewJPEG(ctx, source)
 	if err != nil {
 		return VisualPreviewProduct{}, sourceContentUnavailable(
 			fmt.Errorf("inspecting visual preview JPEG: %w", err))
@@ -201,23 +195,16 @@ func produceVisualPreviewJPEGWithOrientation(
 	if malformed {
 		return failedVisualPreview(base, "decode_failed", "the verified JPEG header is malformed"), nil
 	}
-	if unsupportedColor {
-		base.State = document.VisualPreviewUnsupported
-		base.Failure = &document.VisualPreviewFailureV1{
-			Code: "unsupported_color_profile", Detail: "the built-in preview producer requires sRGB JPEG originals",
-		}
-		return VisualPreviewProduct{Preview: base}, nil
-	}
 	if containerOrientation >= 1 && containerOrientation <= 8 {
 		orientation = containerOrientation
 	}
-	return decodeAndEncodeVisualPreview(ctx, source, base, "jpeg", orientation)
+	return decodeAndEncodeVisualPreview(ctx, source, base, "jpeg", orientation, colorSpace)
 }
 
 func produceVisualPreviewPNG(
 	ctx context.Context, source io.ReadSeeker, sourceSize int64, base document.VisualPreviewV1,
 ) (VisualPreviewProduct, error) {
-	orientation, unsupportedColor, unsupportedMetadata, malformed, trailingOffset, err :=
+	orientation, colorSpace, unsupportedMetadata, malformed, trailingOffset, err :=
 		inspectVisualPreviewPNG(ctx, source, sourceSize)
 	if err != nil {
 		return VisualPreviewProduct{}, sourceContentUnavailable(
@@ -225,13 +212,6 @@ func produceVisualPreviewPNG(
 	}
 	if malformed {
 		return failedVisualPreview(base, "decode_failed", "the verified PNG header is malformed"), nil
-	}
-	if unsupportedColor {
-		base.State = document.VisualPreviewUnsupported
-		base.Failure = &document.VisualPreviewFailureV1{
-			Code: "unsupported_color_profile", Detail: "the built-in preview producer requires sRGB PNG originals",
-		}
-		return VisualPreviewProduct{Preview: base}, nil
 	}
 	if unsupportedMetadata {
 		base.State = document.VisualPreviewUnsupported
@@ -250,7 +230,7 @@ func produceVisualPreviewPNG(
 			return VisualPreviewProduct{}, sourceContentUnavailable(fmt.Errorf("inspecting visual preview PNG: %w", err))
 		}
 	}
-	return encodeVisualPreview(ctx, base, pixels.image, orientation)
+	return encodeVisualPreview(ctx, base, pixels.image, orientation, colorSpace)
 }
 
 func encodeVisualPreview(
@@ -258,9 +238,13 @@ func encodeVisualPreview(
 	base document.VisualPreviewV1,
 	decoded image.Image,
 	orientation int,
+	colorSpace visualPreviewColorSpace,
 ) (VisualPreviewProduct, error) {
 	preview, err := transformPhotoPixels(ctx, decoded, orientation, base.Recipe.MaxEdgePixels)
 	if err != nil {
+		return VisualPreviewProduct{}, err
+	}
+	if err := applyVisualPreviewColor(ctx, preview, colorSpace.transform()); err != nil {
 		return VisualPreviewProduct{}, err
 	}
 	width, height := preview.Bounds().Dx(), preview.Bounds().Dy()
@@ -290,8 +274,8 @@ func visualPreviewSourceMediaType(value string) string {
 	return mediaType
 }
 
-func inspectVisualPreviewPNG(ctx context.Context, source io.ReadSeeker, sourceSize int64) (orientation int, unsupportedColor, unsupportedMetadata, malformed bool, trailingOffset int64, err error) {
-	orientation, unsupportedColor, unsupportedMetadata, _, malformed, trailingOffset, err = inspectVisualPreviewContainer(ctx, source, visualFormatPNG, sourceSize)
+func inspectVisualPreviewPNG(ctx context.Context, source io.ReadSeeker, sourceSize int64) (orientation int, colorSpace visualPreviewColorSpace, unsupportedMetadata, malformed bool, trailingOffset int64, err error) {
+	orientation, colorSpace, unsupportedMetadata, _, malformed, trailingOffset, err = inspectVisualPreviewContainer(ctx, source, visualFormatPNG, sourceSize)
 	return
 }
 
@@ -340,26 +324,28 @@ func visualPreviewPNGEXIFOrientation(source io.Reader, length int64) (int, error
 		}
 		return 0, err
 	}
-	orientation, _, _ := visualPreviewEXIF(payload)
-	return orientation, nil
+	fields, _ := visualPreviewEXIF(payload)
+	return fields.orientation, nil
 }
 
-func inspectVisualPreviewWebP(ctx context.Context, source io.ReadSeeker, sourceSize int64) (orientation int, unsupportedColor, unsupportedMetadata, animated, malformed bool, err error) {
-	orientation, unsupportedColor, unsupportedMetadata, animated, malformed, _, err = inspectVisualPreviewContainer(ctx, source, visualFormatWebP, sourceSize)
+func inspectVisualPreviewWebP(ctx context.Context, source io.ReadSeeker, sourceSize int64) (orientation int, colorSpace visualPreviewColorSpace, unsupportedMetadata, animated, malformed bool, err error) {
+	orientation, colorSpace, unsupportedMetadata, animated, malformed, _, err = inspectVisualPreviewContainer(ctx, source, visualFormatWebP, sourceSize)
 	return
 }
 
-func inspectVisualPreviewJPEG(ctx context.Context, source io.ReadSeeker) (orientation int, unsupportedColor, malformed bool, err error) {
-	orientation, unsupportedColor, _, _, malformed, _, err = inspectVisualPreviewContainer(ctx, source, visualFormatJPEG, -1) //nolint:dogsled // JPEG only consumes orientation, color, and validity.
+func inspectVisualPreviewJPEG(ctx context.Context, source io.ReadSeeker) (orientation int, colorSpace visualPreviewColorSpace, malformed bool, err error) {
+	orientation, colorSpace, _, _, malformed, _, err = inspectVisualPreviewContainer(ctx, source, visualFormatJPEG, -1) //nolint:dogsled // JPEG only consumes orientation, color, and validity.
 	return
 }
 
 var errVisualInspectionDone = errors.New("preview inspection complete")
 
-func inspectVisualPreviewContainer(ctx context.Context, source io.ReadSeeker, format string, size int64) (orientation int, unsupportedColor, unsupportedMetadata, animated, malformed bool, trailingOffset int64, err error) {
+func inspectVisualPreviewContainer(ctx context.Context, source io.ReadSeeker, format string, size int64) (orientation int, colorSpace visualPreviewColorSpace, unsupportedMetadata, animated, malformed bool, trailingOffset int64, err error) {
 	orientation = 1
 	chunks := 0
 	sawPNGEXIF := false
+	webpICCFlag := false
+	var jpegICC visualPreviewJPEGICC
 	err = walkVisualContainer(ctx, source, format, size, func(kind string, reader io.Reader, length, offset int64) error {
 		chunks++
 		if format == visualFormatPNG && chunks > visualPreviewMaxPNGChunks {
@@ -374,8 +360,16 @@ func inspectVisualPreviewContainer(ctx context.Context, source io.ReadSeeker, fo
 		if format == visualFormatPNG && kind == "IEND" {
 			return errVisualContainer
 		}
-		if format == visualFormatPNG && kind == "iCCP" || format == visualFormatWebP && kind == "ICCP" {
-			unsupportedColor = true
+		if format == visualFormatPNG && kind == "iCCP" || format == visualFormatWebP && kind == "ICCP" && webpICCFlag {
+			profile, err := readVisualPreviewICCChunk(reader, length)
+			if err != nil {
+				return err
+			}
+			if format == visualFormatPNG {
+				profile = visualPreviewPNGICC(profile)
+			}
+			colorSpace.profile = profile
+			return nil
 		}
 		if format == visualFormatWebP {
 			switch kind {
@@ -388,7 +382,7 @@ func inspectVisualPreviewContainer(ctx context.Context, source io.ReadSeeker, fo
 					return err
 				}
 				colorProfile, animation := visualPreviewWebPFlags(flags[0])
-				unsupportedColor = unsupportedColor || colorProfile
+				webpICCFlag = colorProfile
 				animated = animated || animation
 			case "ANIM", "ANMF":
 				animated = true
@@ -411,7 +405,9 @@ func inspectVisualPreviewContainer(ctx context.Context, source io.ReadSeeker, fo
 				return io.ErrUnexpectedEOF
 			}
 			if format == visualFormatJPEG && kind == "\xe2" {
-				unsupportedColor = unsupportedColor || bytes.HasPrefix(payload, []byte("ICC_PROFILE\x00"))
+				if bytes.HasPrefix(payload, []byte("ICC_PROFILE\x00")) {
+					jpegICC.add(payload)
+				}
 				return nil
 			}
 			if format == visualFormatJPEG && !bytes.HasPrefix(payload, []byte("Exif\x00\x00")) {
@@ -420,11 +416,9 @@ func inspectVisualPreviewContainer(ctx context.Context, source io.ReadSeeker, fo
 			if format != visualFormatPNG {
 				payload = bytes.TrimPrefix(payload, []byte("Exif\x00\x00"))
 			}
-			if value, colorSpace, found := visualPreviewEXIF(payload); found {
-				if format != visualFormatPNG || firstEXIF {
-					orientation = value
-				}
-				unsupportedColor = unsupportedColor || colorSpace != 0 && colorSpace != 1
+			if fields, found := visualPreviewEXIF(payload); found && (format != visualFormatPNG || firstEXIF) {
+				orientation = fields.orientation
+				colorSpace.adobeRGB = fields.adobeRGB
 			}
 		}
 		return nil
@@ -433,18 +427,21 @@ func inspectVisualPreviewContainer(ctx context.Context, source io.ReadSeeker, fo
 		err = nil
 	}
 	if errors.Is(err, errVisualMetadataLimit) && format == visualFormatWebP {
-		return 0, false, true, false, false, 0, nil
+		return 0, visualPreviewColorSpace{}, true, false, false, 0, nil
 	}
 	if errors.Is(err, errVisualContainer) || errors.Is(err, errVisualMetadataLimit) {
-		return 0, false, false, false, true, 0, nil
+		return 0, visualPreviewColorSpace{}, false, false, true, 0, nil
 	}
-	return orientation, unsupportedColor, unsupportedMetadata, animated, malformed, trailingOffset, err
+	if format == visualFormatJPEG {
+		colorSpace.profile = jpegICC.profile()
+	}
+	return orientation, colorSpace, unsupportedMetadata, animated, malformed, trailingOffset, err
 }
 
-func decodeAndEncodeVisualPreview(ctx context.Context, source io.ReadSeeker, base document.VisualPreviewV1, format string, orientation int) (VisualPreviewProduct, error) {
+func decodeAndEncodeVisualPreview(ctx context.Context, source io.ReadSeeker, base document.VisualPreviewV1, format string, orientation int, colorSpace visualPreviewColorSpace) (VisualPreviewProduct, error) {
 	pixels, err := decodeVisualPixels(ctx, source, format)
 	if err == nil {
-		return encodeVisualPreview(ctx, base, pixels.image, orientation)
+		return encodeVisualPreview(ctx, base, pixels.image, orientation, colorSpace)
 	}
 	return visualPreviewDecodeResult(base, format, pixels, err)
 }
@@ -453,7 +450,7 @@ func visualPreviewDecodeResult(base document.VisualPreviewV1, format string, pix
 	name := map[string]string{visualFormatJPEG: "JPEG", visualFormatPNG: "PNG", visualFormatWebP: "WebP", "gif": "GIF"}[format]
 	if errors.Is(err, errVisualColor) {
 		base.State = document.VisualPreviewUnsupported
-		base.Failure = &document.VisualPreviewFailureV1{Code: "unsupported_color_profile", Detail: "the built-in preview producer requires sRGB JPEG originals"}
+		base.Failure = &document.VisualPreviewFailureV1{Code: "unsupported_color_profile", Detail: "CMYK and YCCK JPEGs are unsupported by the built-in preview producer"}
 		return VisualPreviewProduct{Preview: base}, nil
 	}
 	if errors.Is(err, errVisualDimensions) {
@@ -481,22 +478,34 @@ func visualPreviewDecodeResult(base document.VisualPreviewV1, format string, pix
 	}
 }
 
-func visualPreviewEXIF(data []byte) (orientation, colorSpace int, found bool) {
+type visualPreviewEXIFFields struct {
+	orientation int
+	colorSpace  int
+	// adobeRGB reports the DCF Adobe RGB marker: ColorSpace Uncalibrated
+	// (0xffff) with InteropIndex R03.
+	adobeRGB bool
+}
+
+func visualPreviewEXIF(data []byte) (fields visualPreviewEXIFFields, found bool) {
+	fields.orientation = 1
 	reader, root, ok := sourceMetadataTIFFRoot(data)
 	if !ok {
-		return 1, 0, false
+		return fields, false
 	}
-	orientation = 1
 	if value, ok := exifUnsigned(reader, root[0x0112]); ok && value >= 1 && value <= 8 {
-		orientation = int(value)
+		fields.orientation = int(value)
 	}
 	if raw := root[0x8769]; len(raw) >= 4 {
 		exif := reader.entries(reader.order.Uint32(raw))
 		if value, ok := exifUnsigned(reader, exif[0xa001]); ok {
-			colorSpace = int(value)
+			fields.colorSpace = int(value)
+		}
+		if raw := exif[0xa005]; fields.colorSpace == 0xffff && len(raw) >= 4 {
+			interop := reader.entries(reader.order.Uint32(raw))
+			fields.adobeRGB = exifASCII(interop[0x0001]) == "R03"
 		}
 	}
-	return orientation, colorSpace, true
+	return fields, true
 }
 
 func visualPreviewJPEGColorModelSupported(model color.Model) bool {

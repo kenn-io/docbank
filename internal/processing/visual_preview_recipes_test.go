@@ -29,8 +29,8 @@ func TestVisualPreviewRecipes(t *testing.T) {
 		edge        int
 		fingerprint string
 	}{
-		{"grid", 512, "45686eef8025f90a0c43a133337b184b1cec830e10136ee77a25f34bab9151ef"},
-		{"fit", 2560, "33595890b8aad9ab8fae15e91cb1db37b4541a1cc9be90fee30a64f8aa93eb87"},
+		{"grid", 512, "9e3b7a88a010496241fb97247ad20fdfce89bc6dc4e3bdb30645309dfa6392ff"},
+		{"fit", 2560, "c9eba2188ef339b59da382cfefb537b127a1b1fe88a330d3be52152794b15c89"},
 	} {
 		recipe, err := VisualPreviewRecipeForSize(test.size)
 		require.NoError(t, err)

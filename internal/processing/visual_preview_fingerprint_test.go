@@ -17,8 +17,8 @@ import (
 )
 
 const (
-	pinnedVisualPreviewProcessorFingerprint = "d36c2fa90498646614283303489e61a4bcdabbb8f8d1a1a397a0e06624b1123d"
-	pinnedVisualPreviewRecipeFingerprint    = "0ad743c037500e1a496fe4a2bc9ec51560e07ae9de356c58542fa1aca9a65324"
+	pinnedVisualPreviewProcessorFingerprint = "13e099735c888d186defdbd153acac419b2cf6598da349825adcc09598256993"
+	pinnedVisualPreviewRecipeFingerprint    = "826b726be8a64e19501e7d01a0f32302c36aa873f63dddb844d96af3e586bf54"
 )
 
 func TestVisualPreviewProcessorFingerprintIsPinned(t *testing.T) {

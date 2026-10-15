@@ -89,15 +89,36 @@ NEF files. It reads only bounded container metadata and the embedded preview.
 The complete original is still verified before decoding. A well-formed RAW file
 without a supported embedded preview records an `unsupported` result.
 
-JPEG inputs may be grayscale or three-component images. CMYK, YCCK, and
-embedded ICC profiles remain unsupported rather than receiving an unmanaged
-color conversion. PNG inputs apply bounded EXIF orientation, reject embedded ICC
-profiles, and composite transparency onto white because the canonical output
-is JPEG. PNG orientation comes from the first eXIf chunk, before or after the
-image data; a first eXIf without a valid orientation leaves the image upright.
+JPEG inputs may be grayscale or three-component images. CMYK and YCCK remain
+unsupported.
+
+JPEG, PNG, and WebP previews convert colors to sRGB after resizing. Embedded
+JPEG previews inside RAW files follow the same rules, using the embedded
+preview's own profile and EXIF. Photo exports keep source pixels and profiles;
+see [export bundles](../usage/export-bundles.md).
+
+- An embedded RGB ICC v2 or v4 profile converts with its colorant tags (`rXYZ`,
+  `gXYZ`, `bXYZ`) and tone-curve tags (`rTRC`, `gTRC`, `bTRC`). A profile that
+  also carries `A2B` lookup tables uses the colorants and curves; the producer
+  does not evaluate lookup tables.
+- A profile within 0.001 of the sRGB matrix and 0.0003 of the sRGB curve leaves
+  pixels unchanged.
+- Without a usable profile, EXIF ColorSpace Uncalibrated (`0xffff`) with
+  InteropIndex `R03` converts from Adobe RGB (1998). Cameras write this DCF
+  marker for Adobe RGB photos that carry no profile.
+- Everything else uses the stored pixel values as sRGB: lookup-table-only,
+  gray, CMYK, malformed, and other-version profiles; profile data over 1 MiB,
+  including inflated PNG profiles; WebP `ICCP` chunks without the `VP8X` ICC
+  flag; and other EXIF ColorSpace values. These previews record no failure,
+  just as browsers ignore a profile they cannot use.
+
+PNG inputs apply bounded EXIF orientation and composite transparency onto white
+because the canonical output is JPEG. PNG orientation comes from the first eXIf
+chunk, before or after the image data; a first eXIf without a valid orientation
+leaves the image upright.
 Trailing eXIf supplies orientation only. GIF inputs use their primary frame,
 including for animated sources.
-WebP inputs apply bounded EXIF orientation and reject embedded ICC profiles.
+WebP inputs apply bounded EXIF orientation.
 Animated WebP remains unsupported by the built-in decoder.
 
 Accepted images scale without upscaling to the selected recipe's maximum edge
@@ -107,7 +128,7 @@ dimensions and no more than 100,000,000 pixels. A larger image records
 limit applies to the embedded JPEG being decoded.
 
 Malformed source bytes become a durable `failed` result. Unsupported media
-types, decoder features, and color profiles become a durable `unsupported`
+types, decoder features, and color models become a durable `unsupported`
 result. Read, verification, storage, and cancellation failures are retryable.
 
 Every uncached attempt reads and verifies the full source before checking
@@ -125,6 +146,6 @@ synchronous producer themselves.
 
 Reading source metadata from ORF, RW2, CR3, or MP4 does not mean the built-in
 producer can preview those formats. Other still-image formats, RAW containers
-without a supported embedded JPEG, video frames, and managed color conversion
+without a supported embedded JPEG, video frames, and lookup-table color conversion
 require additional producers, but they use the same generation, retention,
 backup, and read contracts.
