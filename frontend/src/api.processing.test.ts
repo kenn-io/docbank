@@ -140,7 +140,7 @@ describe("document processing browser API", () => {
     },
   );
 
-  it("sends consent and plan_fingerprint and retains final job identities when status is unavailable", async () => {
+  it("retains final job identities when the stream reports unavailable status", async () => {
     const job = {
       id: "a".repeat(64),
       embedding_job_ids: [],
@@ -168,11 +168,9 @@ describe("document processing browser API", () => {
         }
       },
     });
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(
-        new Response(body, { headers: { "Content-Type": "application/x-ndjson" } }),
-      );
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(body, { headers: { "Content-Type": "application/x-ndjson" } }),
+    );
     const onProgress = vi.fn();
     const pending = startProcessing(
       "session",
@@ -192,10 +190,6 @@ describe("document processing browser API", () => {
           expect.objectContaining({ type: "error", job: completedJob }),
         ),
       );
-      expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
-        consent: true,
-        plan_fingerprint: "d".repeat(64),
-      });
     } finally {
       stream.close();
       await rejection;
@@ -270,7 +264,7 @@ describe("document processing browser API", () => {
     const jobID = "b".repeat(64);
     const encoder = new TextEncoder();
     let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         new ReadableStream<Uint8Array>({
           start(controller) {
@@ -337,6 +331,10 @@ describe("document processing browser API", () => {
     await expect(pending).resolves.toMatchObject({
       job: { id: jobID },
       status: { state: "completed" },
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+      consent: true,
+      plan_fingerprint: "c".repeat(64),
     });
   });
 
@@ -480,6 +478,9 @@ describe("document processing browser API", () => {
       },
       (report: ReturnType<typeof valid>) => {
         report.results[0]!.rank = 2;
+      },
+      (report: ReturnType<typeof valid>) => {
+        report.results[0]!.semantic_rank = 1001;
       },
       (report: ReturnType<typeof valid>) => {
         report.results.push({

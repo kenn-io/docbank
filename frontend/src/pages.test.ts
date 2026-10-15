@@ -309,13 +309,17 @@ it("bounds the body and verifies headers, encoded dimensions and decoded dimensi
   fixture.headers["Content-Length"] = "33554433";
   await expect(
     readPageImage("session", binding, fixture.receipt, recipe, new AbortController().signal),
-  ).rejects.toThrow();
+  ).rejects.toThrow(/Page image headers disagree/);
   expect(create).toHaveBeenCalledOnce();
   fixture.headers["Content-Length"] = String(fixture.bytes.length);
   fixture.bytes[20] = 1;
+  fixture.receipt.sha256 = createHash("sha256").update(fixture.bytes).digest("hex");
+  fixture.headers["X-Docbank-Page-SHA256"] = fixture.receipt.sha256;
+  fixture.headers["Content-Digest"] =
+    `sha-256=:${createHash("sha256").update(fixture.bytes).digest("base64")}:`;
   await expect(
     readPageImage("session", binding, fixture.receipt, recipe, new AbortController().signal),
-  ).rejects.toThrow();
+  ).rejects.toThrow(/Invalid encoded page image dimensions/);
   expect(fetcher).toHaveBeenCalledTimes(3);
 });
 
