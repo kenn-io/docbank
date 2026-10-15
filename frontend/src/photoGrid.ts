@@ -151,9 +151,10 @@ export function groupPhotos(
     for (const item of sorted) {
       const clock = clocks.get(item)!;
       if (clock - previous > 4 * 3600 * 1000) {
+        const label = item.capture_time ? "Capture session" : "File modified";
         groups.push({
           key: item.asset_id,
-          label: `${photoDate(item)!.slice(0, 10)} · Capture session`,
+          label: `${photoDate(item)!.slice(0, 10)} · ${label}`,
           year: photoDate(item)!.slice(0, 4),
           items: [],
         });

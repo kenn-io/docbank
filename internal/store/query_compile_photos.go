@@ -130,11 +130,15 @@ func (c queryCompiler) compilePhotoScalarPredicate(field, value string) (compile
 		if field == "capture_before" {
 			operator = "<"
 		}
-		// The timeline day places photo files; other versions, such as an EXIF JPEG with no photo row, match their own capture date.
+		// The timeline day places photo files; other versions, such as an EXIF JPEG with no photo row, match their own
+		// capture date. The second branch's guard against a timeline row would be redundant even when one exists:
+		// photo_timeline_refresh derives pl.day's EXIF component from this same source_metadata_heads/
+		// photo_technical_metadata join on the version's blob_hash, and photo_technical_metadata only ever sets
+		// capture_date alongside a non-empty capture_sort_key, so a placed file's EXIF day already equals pl.day.
 		return c.compilePhotoVersionPredicate(func(alias string) string {
 			timeline := `SELECT 1 FROM photo_files tf JOIN photo_timeline pl ON pl.file_id=tf.file_id WHERE tf.node_id=` + alias + `.node_id`
-			return `(EXISTS (` + timeline + ` AND pl.day` + operator + ` ?) OR (NOT EXISTS (` + timeline + `) AND EXISTS (` +
-				`SELECT 1 FROM source_metadata_heads h JOIN photo_technical_metadata p ON p.generation_id=h.generation_id WHERE h.source_sha256=` + alias + `.blob_hash AND p.capture_date<>'' AND p.capture_date` + operator + ` ?)))`
+			return `(EXISTS (` + timeline + ` AND pl.day` + operator + ` ?) OR EXISTS (` +
+				`SELECT 1 FROM source_metadata_heads h JOIN photo_technical_metadata p ON p.generation_id=h.generation_id WHERE h.source_sha256=` + alias + `.blob_hash AND p.capture_date<>'' AND p.capture_date` + operator + ` ?))`
 		}, value, value), nil
 	case "gps":
 		bounds, err := query.ParseGPSOperand(value)

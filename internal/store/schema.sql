@@ -2227,9 +2227,11 @@ CREATE INDEX IF NOT EXISTS photo_files_sidecar_nodes ON photo_files(node_id) WHE
 -- read one indexed column. modified_time is set only when the mtime placed the
 -- photo. The mtime is the earliest observed unsuperseded claim bound to
 -- any version of the node with the displayed blob, so a revert regains the
--- original date. The key is formatted like query.CaptureTimeKey. Derived like
--- photo_technical_metadata: absent from export, refilled by the triggers below
--- when restore inserts the facts they watch.
+-- original date. The key's fixed-width fraction format matches query.CaptureTimeKey
+-- byte for byte so mixed EXIF/mtime sort order is stable; a trigger cannot call that
+-- Go function, so the format is duplicated in SQL below and must be kept in sync by
+-- hand. Derived like photo_technical_metadata: absent from export, refilled by the
+-- triggers below when restore inserts the facts they watch.
 CREATE TABLE IF NOT EXISTS photo_timeline (
     file_id       TEXT PRIMARY KEY REFERENCES photo_files(file_id) ON DELETE CASCADE,
     sort_key      TEXT NOT NULL,
