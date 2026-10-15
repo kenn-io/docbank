@@ -73,19 +73,37 @@ func checkoutPathOverlap(ctx context.Context, checkout store.PhotoCheckout, path
 			return false, nil
 		}
 	}
-	overlap, err := PathsOverlapContext(ctx, pathname, checkout.Destination)
+	return CheckoutDestinationRelatesToPath(ctx, checkout.Destination, pathname)
+}
+
+// CheckoutDestinationRelatesToPath reports whether pathname is the same
+// location as, nested beneath or above, or a filesystem-equivalent alias
+// (such as a bind mount) of destination. It always runs the full identity
+// traversal, including through WatchBindingOverlapContext's directory-tree
+// walk, regardless of whether destination currently holds any files — the
+// shortcut checkoutPathOverlap takes for an empty, released destination
+// skips that traversal because an empty folder restricts nothing, but a
+// caller deciding whether destination is the same folder as pathname (to
+// release its recorded protection on reuse) needs the real relationship,
+// not just the absence of a restriction.
+func CheckoutDestinationRelatesToPath(ctx context.Context, destination, pathname string) (bool, error) {
+	overlap, err := PathsOverlapContext(ctx, pathname, destination)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return false, err
 	}
-	if !overlap && info != nil && info.IsDir() {
-		_, overlap, err = WatchBindingOverlapContext(ctx, []config.WatchConfig{{Source: checkout.Destination}}, config.StoreBindingConfig{Kind: "filesystem", Path: pathname})
-		if err != nil {
-			return false, fmt.Errorf("checking checkout destination: %w", err)
+	if !overlap {
+		if info, statErr := os.Stat(destination); statErr == nil && info.IsDir() {
+			_, overlap, err = WatchBindingOverlapContext(ctx, []config.WatchConfig{{Source: destination}}, config.StoreBindingConfig{Kind: "filesystem", Path: pathname})
+			if err != nil {
+				return false, fmt.Errorf("checking checkout destination: %w", err)
+			}
+		} else if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+			return false, statErr
 		}
 	}
 	if !overlap {
 		if candidate, statErr := os.Stat(pathname); statErr == nil && candidate.IsDir() {
-			_, overlap, err = WatchBindingOverlapContext(ctx, []config.WatchConfig{{Source: pathname}}, config.StoreBindingConfig{Kind: "filesystem", Path: checkout.Destination})
+			_, overlap, err = WatchBindingOverlapContext(ctx, []config.WatchConfig{{Source: pathname}}, config.StoreBindingConfig{Kind: "filesystem", Path: destination})
 			if err != nil {
 				return false, err
 			}

@@ -437,12 +437,13 @@ func validateStorageNamespace(
 				}
 				// Identity-aware, matching the admission check above: a
 				// retired destination that is the same, a nested, or a
-				// filesystem-equivalent path to the binding is the folder
-				// this registration is reusing, so its release must be
-				// persisted before registration writes into it. A path that
-				// cannot be resolved is left alone rather than failing a
+				// filesystem-equivalent (including bind-mount alias) path
+				// to the binding is the folder this registration is
+				// reusing, so its release must be persisted before
+				// registration writes into it. A path that cannot be
+				// resolved is left alone rather than failing a
 				// registration admission already approved.
-				related, relatedErr := ingest.PathsOverlapContext(ctx, checkout.Destination, binding.Path)
+				related, relatedErr := ingest.CheckoutDestinationRelatesToPath(ctx, checkout.Destination, binding.Path)
 				if relatedErr != nil || !related {
 					continue
 				}

@@ -386,8 +386,10 @@ func (w *Watcher) openRoot(ctx context.Context) (*watchRoot, error) {
 		// A watch source admitted over a retired checkout's cleared folder is
 		// reusing it, same as a store registration would. Persist the
 		// release before new files arrive there, so a later daemon startup
-		// does not mistake them for leftover checkout content.
-		related, relatedErr := PathsOverlapContext(ctx, checkout.Destination, root)
+		// does not mistake them for leftover checkout content. Use the full
+		// identity traversal so a bind-mounted alias of the destination is
+		// recognized as the same folder, not just an exact or nested path.
+		related, relatedErr := CheckoutDestinationRelatesToPath(ctx, checkout.Destination, root)
 		if relatedErr != nil || !related {
 			continue
 		}
