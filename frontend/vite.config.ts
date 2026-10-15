@@ -8,6 +8,24 @@ export default defineConfig({
     svelte: true,
     ignorePatterns: ["src/generated/docbank.ts"],
   },
+  lint: {
+    jsPlugins: [{ name: "vite-plus", specifier: "vite-plus/oxlint-plugin" }],
+    rules: {
+      "vite-plus/prefer-vite-plus-imports": "error",
+    },
+    overrides: [
+      {
+        // Mock assertions pass methods without calling them.
+        files: ["**/*.test.ts"],
+        rules: { "typescript/unbound-method": "off" },
+      },
+    ],
+    options: {
+      typeAware: true,
+      // svelte-check validates types, including Svelte component exports.
+      typeCheck: false,
+    },
+  },
   plugins: [svelte()],
   resolve: {
     conditions: ["browser"],
