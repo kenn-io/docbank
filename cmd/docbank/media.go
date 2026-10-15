@@ -454,7 +454,7 @@ func mediaProcessingFlags() *api.MediaProcessingBody {
 }
 
 var mediaUploadTypes = map[string]string{
-	".mp3": "audio/mpeg", ".mp4": "video/mp4", ".srt": "application/x-subrip",
+	".m4a": "audio/mp4", ".mp3": "audio/mpeg", ".mp4": "video/mp4", ".srt": "application/x-subrip",
 	".txt": "text/plain; charset=utf-8", ".wav": "audio/wav",
 }
 

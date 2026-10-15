@@ -49,7 +49,7 @@ provider descriptor and profile, not to a filename extension.
 |------------------|---------------|--------------------|
 | `document/epub` | In process | EPUB XHTML spine text and virtual usage |
 | [`document/plaintext`](https://github.com/kenn-io/docbank/tree/main/document/plaintext) | In process | UTF-8 text, including declared source, structured-text, CSV, and mail formats; one generic unit with degraded provenance |
-| [`document/suppliedtranscript`](https://github.com/kenn-io/docbank/tree/main/document/suppliedtranscript) | In process | Caller-held transcript text for bounded WAV and MP3, plus supplied SubRip captions for WAV, MP3, and MP4 originals; captions produce timed segment units with supplied provenance |
+| [`document/suppliedtranscript`](https://github.com/kenn-io/docbank/tree/main/document/suppliedtranscript) | In process | Caller-held transcript text for bounded WAV, MP3, and M4A, plus supplied SubRip captions for WAV, MP3, M4A, and MP4 originals; captions produce timed segment units with supplied provenance |
 | [`document/pymupdf`](https://github.com/kenn-io/docbank/tree/main/document/pymupdf) | Local process | PDF text through a pinned, digest-verified executable |
 | [`document/trafilatura`](https://github.com/kenn-io/docbank/tree/main/document/trafilatura) | Local process | Supplied HTML through a pinned isolated runner; the native runner requires Linux namespace and Landlock support |
 | [`document/docling`](https://github.com/kenn-io/docbank/tree/main/document/docling) | Operator-hosted | Uploaded files through Docling Serve; structured output and Markdown |
@@ -218,6 +218,14 @@ sealed audio digest as its key. The provider identity includes the caller's
 source binding. Use a different binding for each transcript source to give it
 a distinct descriptor. Docbank cannot verify that the binding identifies the
 `Source` implementation or the transcripts it returns.
+
+The audio capability path also accepts M4A originals with `.m4a` and
+`audio/mp4` (`audio/x-m4a` is an alias). It verifies sound-only AAC/ALAC track
+metadata, local sample ranges, and finite duration while streaming the original.
+The local transcript and caption providers can use that capability without
+decoding audio. See [media recordings](cli-reference.md#docbank-media) for the
+container requirements and byte ceilings. Docling ASR and Gemini audio
+qualification remain limited to WAV and MP3.
 
 Use `document/mediatranscript` when the source supplies segment timing. Its
 `media-transcript/v1` artifact retains ordered text, start and end

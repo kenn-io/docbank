@@ -82,6 +82,7 @@ func NewCaptions(profile CaptionProfile) (*CaptionProvider, error) {
 		TrustBoundary:     document.RenditionTrustLocalProcess,
 		SupportedFormats: []document.RenditionFormatCapability{
 			{MediaFamily: "audio", MediaType: "audio/mpeg", InputKind: document.RenditionInputOriginalFile},
+			{MediaFamily: "audio", MediaType: "audio/mp4", InputKind: document.RenditionInputOriginalFile},
 			{MediaFamily: "audio", MediaType: "audio/wav", InputKind: document.RenditionInputOriginalFile},
 			{MediaFamily: "video", MediaType: "video/mp4", InputKind: document.RenditionInputOriginalFile},
 		},
@@ -214,7 +215,7 @@ func (provider *CaptionProvider) captionDuration(
 
 func captionFormatSupported(family, mediaType string) bool {
 	switch {
-	case family == "audio" && mediaType == "audio/mpeg":
+	case family == "audio" && (mediaType == "audio/mpeg" || mediaType == "audio/mp4"):
 		return true
 	case family == "audio" && mediaType == "audio/wav":
 		return true

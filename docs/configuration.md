@@ -481,7 +481,7 @@ it. Lowering it fails queued processing for larger sources; raise it again and
 retry that work. Embedded Go applications use `ProcessingOptions.MediaMaxBytes`; zero uses
 the 4 GiB default.
 
-This setting does not raise document inspection, image/video, M4A, transcript,
+This setting does not raise document inspection, image/video, transcript,
 caption, or hosted-provider bounds. Audio retains its 24-hour duration and codec
 qualification bounds. Remote MP4 video originals keep their 20 MiB limit.
 Transcript and caption uploads and the built-in profiles' responses
@@ -492,7 +492,7 @@ returns the same error. Embedded callers can match
 `docbank.ErrMediaStagingUnavailable` with `errors.Is`. The staging reservation
 limits aggregate bytes, so one maximum-size source occupies the whole reservation
 until its stage closes.
-Processing plans for retained WAV or MP3 audio above 1 GiB may run beyond the
+Processing plans for retained WAV, MP3, or M4A audio above 1 GiB may run beyond the
 ordinary 60-second request deadline while the full source is verified. Client
 cancellation and caller deadlines still apply.
 
@@ -509,8 +509,9 @@ that used either profile:
   lexical search still return the earlier evidence.
 
 The daemon also registers two local media profiles. `supplied-transcript`
-processes supplied WAV and MP3 transcript text as untimed evidence.
-`supplied-captions` processes supplied SubRip captions for WAV, MP3, and MP4
+processes supplied WAV, MP3, and M4A transcript text as untimed evidence.
+M4A requires audio-only AAC or ALAC; see the [media input contract](cli-reference.md#docbank-media).
+`supplied-captions` processes supplied SubRip captions for WAV, MP3, M4A, and MP4
 originals as timed evidence. Both names are reserved for these built-in
 profiles. A configured profile with either name prevents startup.
 

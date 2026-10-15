@@ -28,8 +28,10 @@ func TestSuppliedAudioTranscriptRendersThroughAuthorizedUpload(t *testing.T) {
 		filename string
 		media    string
 	}{
-		"wav": {data: mediatest.WAV(), filename: "sample.wav", media: "audio/wav"},
-		"mp3": {data: mediatest.MP3(), filename: "sample.mp3", media: "audio/mpeg"},
+		"wav":      {data: mediatest.WAV(), filename: "sample.wav", media: "audio/wav"},
+		"m4a AAC":  {data: mediatest.M4A("mp4a"), filename: "sample.m4a", media: "audio/mp4"},
+		"m4a ALAC": {data: mediatest.M4A("alac"), filename: "sample.m4a", media: "audio/x-m4a"},
+		"mp3":      {data: mediatest.MP3(), filename: "sample.mp3", media: "audio/mpeg"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			source := &testSource{transcript: transcript}

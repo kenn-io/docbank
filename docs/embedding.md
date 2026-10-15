@@ -339,11 +339,11 @@ operation ID. `ErrNotFound` describes only that read. A submission still in
 flight can commit afterward.
 
 Obtain the file through the caller's own approved path, then attach it with
-its SHA-256 and byte count. WAV and MP3 files use the existing media
+its SHA-256 and byte count. WAV, MP3, and M4A files use the existing media
 rules. Remote MP4 originals use `video/mp4`, a `.mp4` filename, and limits of
 20 MiB, 2,088,960 coded pixels, 300,000 milliseconds, and 18,000 frames. The
-service's default byte limit is 512 MiB, its hard maximum is 1 GiB, and the
-audio duration limit is 24 hours.
+service's default and maximum audio byte limit is 4 GiB, and the audio duration
+limit is 24 hours.
 
 ```go
 original, err := vault.ImportRecordingArtifact(

@@ -139,7 +139,7 @@ type MediaOccurrenceInput struct {
 	Message      MediaTimestamp `json:"message"`
 }
 
-// SuppliedMediaRequest retains exact caller-provided WAV or MP3 bytes. A nil
+// SuppliedMediaRequest retains exact caller-provided WAV, MP3, or M4A bytes. A nil
 // Processing value means retention only.
 type SuppliedMediaRequest struct {
 	OperationID              string
