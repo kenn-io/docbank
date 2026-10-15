@@ -1,13 +1,13 @@
 package store
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"strings"
 	"testing"
 
-	"crypto/sha256"
-	"encoding/hex"
 	"github.com/stretchr/testify/require"
-	"strings"
 )
 
 func TestPackageManifestAndSelectedRepresentationRemainBlobRoots(t *testing.T) {
