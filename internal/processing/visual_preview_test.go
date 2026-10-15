@@ -16,6 +16,7 @@ import (
 	"image/jpeg"
 	"image/png"
 	"io"
+	"log/slog"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
@@ -1400,11 +1401,17 @@ func syntheticVisualJPEGDC(tb testing.TB, width, height int, baseline bool) []by
 	return append(source, 0xff, 0xd9)
 }
 
+//nolint:paralleltest // Replaces the process-wide default logger to capture the panic report.
 func TestVisualPreviewJPEGDCPanicFailsDurably(t *testing.T) {
-	t.Parallel()
+	var logged bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
 	// A reader that panics stands in for any decoder bug the bounds checks miss.
 	_, err := decodeVisualPreviewJPEGDCSafely(context.Background(), bufio.NewReader(&panicReader{}))
 	require.Error(t, err)
+	assert.Contains(t, logged.String(), "injected decoder panic")
+	assert.Contains(t, logged.String(), "panicReader")
 	_, isFormat := errors.AsType[jpeg.FormatError](err)
 	require.True(t, isFormat, "panic must classify as a durable JPEG format error")
 	product, err := visualPreviewJPEGDecodeResult(document.VisualPreviewV1{}, "cannot be decoded", err)

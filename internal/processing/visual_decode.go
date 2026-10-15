@@ -8,6 +8,8 @@ import (
 	"image"
 	"image/jpeg"
 	"io"
+	"log/slog"
+	"runtime/debug"
 
 	_ "golang.org/x/image/webp" // Register WebP for the shared image decoder.
 )
@@ -97,10 +99,13 @@ func decodeVisualPixels(ctx context.Context, source io.ReadSeeker, format string
 
 // decodeVisualPreviewJPEGDCSafely turns a decoder panic into a durable JPEG
 // format error so one malformed original fails its own preview once instead of
-// stopping the worker or retrying forever.
+// stopping the worker or retrying forever. The stored failure is generic, so the
+// panic and its stack go to the log for diagnosis.
 func decodeVisualPreviewJPEGDCSafely(ctx context.Context, reader *bufio.Reader) (img image.Image, err error) {
 	defer func() {
 		if r := recover(); r != nil {
+			slog.ErrorContext(ctx, "reduced JPEG preview decoder panicked",
+				"panic", r, "stack", string(debug.Stack()))
 			img, err = nil, jpeg.FormatError(fmt.Sprintf("decoder panic: %v", r))
 		}
 	}()
