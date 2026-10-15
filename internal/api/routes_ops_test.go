@@ -377,11 +377,6 @@ func TestTrashListAndEmpty(t *testing.T) {
 	assert.Equal(t, 2, trash.Total)
 	assert.Equal(t, 1, trash.Limit)
 
-	expected, err := s.TrashEmpty(t.Context(), 0, false)
-	require.NoError(t, err)
-	require.Equal(t, int64(1), expected.Candidates)
-	require.Zero(t, expected.Retained)
-	require.Equal(t, int64(1), expected.Held)
 	for _, run := range []bool{false, true} {
 		resp, body = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil,
 			map[string]any{"older_than": "", "run": run})

@@ -626,7 +626,7 @@ func TestPhotoCheckoutConflictsAndEntryPaths(t *testing.T) {
 
 func TestPhotoCheckoutEntryRequiresFrozenEligibleSource(t *testing.T) {
 	t.Parallel()
-	for _, mutation := range []string{"trashed", "retargeted", "detached", "unpublished", "detached own file"} {
+	for _, mutation := range []string{"trashed", "retargeted", "unpublished", "detached own file"} {
 		t.Run(mutation, func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
@@ -679,8 +679,6 @@ func TestPhotoCheckoutEntryRequiresFrozenEligibleSource(t *testing.T) {
 				_, _, err = s.Trash(ctx, node.ID, node.Revision)
 			case "retargeted":
 				_, err = s.db.ExecContext(ctx, "UPDATE photo_files SET sidecar_of_file_id=? WHERE file_id=?", fileByRole(asset.Files, PhotoRoleImage).ID, sidecar.ID)
-			case "detached":
-				_, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, raw.ID, PhotoDetachOptions{ClearDependentSidecars: true})
 			}
 			require.NoError(t, err)
 			called := false

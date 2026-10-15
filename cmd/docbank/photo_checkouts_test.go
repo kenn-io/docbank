@@ -12,7 +12,7 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func TestPhotoCheckoutCLICreateEstimateListStatusRetireAndYears(t *testing.T) {
+func TestPhotoCheckoutCLICreateEstimateListRetireAndYears(t *testing.T) {
 	const checkoutID = "00000000-0000-4000-8000-000000000001"
 	const operationID = "00000000-0000-4000-8000-000000000002"
 	destination := filepath.Join("relative", "checkout")
