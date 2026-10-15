@@ -507,14 +507,15 @@ func TestPhotoFaceDecisionWithdrawalMerge(t *testing.T) {
 func TestPhotoFaceDecisionUndoSharedAssertion(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
-		name                                                  string
-		reverse, key, undoBoth, explicitWithdrawal, roundTrip bool
+		name                                                             string
+		reverse, key, undoBoth, explicitWithdrawal, roundTrip, moveAsset bool
 	}{
 		{name: "first with key", key: true},
 		{name: "second with key", reverse: true, key: true},
 		{name: "first then second", undoBoth: true},
 		{name: "second then first", reverse: true, undoBoth: true},
 		{name: "earlier retraction", roundTrip: true},
+		{name: "earlier retraction after asset move", roundTrip: true, moveAsset: true},
 		{name: "explicit withdrawal", explicitWithdrawal: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -584,6 +585,15 @@ func TestPhotoFaceDecisionUndoSharedAssertion(t *testing.T) {
 				asset, err := s.PhotoAssetForNode(ctx, n.ID)
 				require.NoError(t, err)
 				require.Equal(t, asset.ID, assetID)
+				if test.moveAsset {
+					targetNode := browsePhotoNode(t, s, "other-portrait.jpg", fakeHash("a2"), "image/jpeg")
+					targetAsset, err := s.PhotoAssetForNode(ctx, targetNode.ID)
+					require.NoError(t, err)
+					_, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, asset.Files[0].ID, PhotoDetachOptions{})
+					require.NoError(t, err)
+					_, err = s.AttachPhotoFile(ctx, targetAsset.ID, targetAsset.Revision, n.ID, PhotoRoleImage, nil)
+					require.NoError(t, err)
+				}
 				remaining = first
 				undo, err := s.UndoPhotoFaceDecision(ctx, r.ReceiptID)
 				require.NoError(t, err)

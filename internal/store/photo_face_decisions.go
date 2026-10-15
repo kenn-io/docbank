@@ -878,7 +878,7 @@ func (s *Store) clearNamedFaceCandidatesTx(ctx context.Context, tx *sql.Tx, befo
 }
 
 func automaticFaceWithdrawalTx(ctx context.Context, tx *sql.Tx, assertion PersonDocumentAssertion) (bool, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT receipt_id,before_json,after_json FROM photo_change_receipts INDEXED BY photo_change_receipts_asset WHERE asset_id IN (SELECT f.asset_id FROM content_versions v JOIN photo_files f ON f.node_id=v.node_id WHERE v.version_id=?) AND operation='face_decision'`, assertion.ContentVersionID)
+	rows, err := tx.QueryContext(ctx, `SELECT receipt_id,before_json,after_json FROM photo_change_receipts INDEXED BY photo_change_receipts_face_version WHERE operation='face_decision' AND json_extract(before_json,'$.content_version_id')=?`, assertion.ContentVersionID)
 	if err != nil {
 		return false, err
 	}

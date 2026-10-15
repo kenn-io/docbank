@@ -2278,6 +2278,9 @@ CREATE INDEX IF NOT EXISTS photo_change_receipts_asset
     ON photo_change_receipts(asset_id, receipt_id);
 CREATE INDEX IF NOT EXISTS photo_change_receipts_set ON photo_change_receipts(set_id,receipt_id);
 CREATE INDEX IF NOT EXISTS photo_change_receipts_operation ON photo_change_receipts(operation);
+CREATE INDEX IF NOT EXISTS photo_change_receipts_face_version
+    ON photo_change_receipts(json_extract(before_json,'$.content_version_id'),receipt_id)
+    WHERE operation='face_decision';
 
 CREATE TABLE IF NOT EXISTS persons (
     key_face_id TEXT REFERENCES photo_faces(face_id) ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED,
