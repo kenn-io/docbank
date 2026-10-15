@@ -10,6 +10,7 @@ import (
 )
 
 const (
+	roleAvailable           = "available"
 	Format                  = "docbank-bundle-v1"
 	MaxMembers              = 100000
 	ChunkMembers            = 1000
@@ -40,20 +41,28 @@ type Member struct {
 	Revision  int64  `json:"revision,omitzero"`
 }
 
+// PhotoExportSelection selects photos from a query or explicit asset IDs.
+type PhotoExportSelection struct {
+	Query    query.Query `json:"query"`
+	AssetIDs []string    `json:"asset_ids,omitzero"`
+	Hidden   bool        `json:"hidden"`
+}
+
 // SourceRequest selects exactly one source kind. Revision is a precondition
 // only when the caller explicitly supplies it.
 type SourceRequest struct {
-	OperationID        string       `json:"operation_id"`
-	Kind               string       `json:"kind"`
-	Members            []Member     `json:"members,omitzero"`
-	NodeIDs            []int64      `json:"node_ids,omitzero"`
-	Query              *query.Query `json:"query,omitzero"`
-	SavedQueryID       string       `json:"saved_query_id,omitzero"`
-	SavedQueryRevision int64        `json:"saved_query_revision,omitzero"`
-	SnapshotID         string       `json:"snapshot_id,omitzero"`
-	CollectionID       string       `json:"collection_id,omitzero"`
-	MemberHash         string       `json:"member_hash,omitzero"`
-	Total              int          `json:"total,omitzero"`
+	Photos             *PhotoExportSelection `json:"photos,omitzero"`
+	OperationID        string                `json:"operation_id"`
+	Kind               string                `json:"kind"`
+	Members            []Member              `json:"members,omitzero"`
+	NodeIDs            []int64               `json:"node_ids,omitzero"`
+	Query              *query.Query          `json:"query,omitzero"`
+	SavedQueryID       string                `json:"saved_query_id,omitzero"`
+	SavedQueryRevision int64                 `json:"saved_query_revision,omitzero"`
+	SnapshotID         string                `json:"snapshot_id,omitzero"`
+	CollectionID       string                `json:"collection_id,omitzero"`
+	MemberHash         string                `json:"member_hash,omitzero"`
+	Total              int                   `json:"total,omitzero"`
 }
 
 type Source struct {
@@ -80,6 +89,7 @@ type RolePolicy struct {
 }
 
 type PlanRequest struct {
+	PhotoRender     *PhotoRenderProfile    `json:"photo_render,omitzero"`
 	OperationID     string                 `json:"operation_id"`
 	SourceID        string                 `json:"source_id"`
 	MemberHash      string                 `json:"member_hash"`
@@ -150,24 +160,26 @@ type Document struct {
 // Plan is the bounded header. Documents are streamed separately in identity
 // order; Fingerprint covers the header with Fingerprint empty plus those rows.
 type Plan struct {
-	Format          string        `json:"format"`
-	ID              string        `json:"id"`
-	VaultID         string        `json:"vault_id"`
-	Toolchain       string        `json:"toolchain"`
-	Source          Source        `json:"source"`
-	Roles           []RolePolicy  `json:"roles"`
-	Fingerprint     string        `json:"fingerprint"`
-	Total           int           `json:"total"`
-	DocumentRows    int           `json:"document_rows,omitzero"`
-	VolumeLimits    *VolumeLimits `json:"volume_limits,omitzero"`
-	Volumes         int           `json:"volumes,omitzero"`
-	DuplicatePolicy string        `json:"duplicate_policy,omitzero"`
-	Counts          *OutputCounts `json:"counts,omitzero"`
-	RoleEntries     int           `json:"role_entries"`
-	RoleBytes       int64         `json:"role_bytes"`
-	MetadataBytes   int64         `json:"metadata_bytes"`
-	CreatedAt       string        `json:"created_at"`
-	ExpiresAt       string        `json:"expires_at"`
+	EmbeddedPreviews int                 `json:"embedded_previews,omitzero"`
+	PhotoRender      *PhotoRenderProfile `json:"photo_render,omitzero"`
+	Format           string              `json:"format"`
+	ID               string              `json:"id"`
+	VaultID          string              `json:"vault_id"`
+	Toolchain        string              `json:"toolchain"`
+	Source           Source              `json:"source"`
+	Roles            []RolePolicy        `json:"roles"`
+	Fingerprint      string              `json:"fingerprint"`
+	Total            int                 `json:"total"`
+	DocumentRows     int                 `json:"document_rows,omitzero"`
+	VolumeLimits     *VolumeLimits       `json:"volume_limits,omitzero"`
+	Volumes          int                 `json:"volumes,omitzero"`
+	DuplicatePolicy  string              `json:"duplicate_policy,omitzero"`
+	Counts           *OutputCounts       `json:"counts,omitzero"`
+	RoleEntries      int                 `json:"role_entries"`
+	RoleBytes        int64               `json:"role_bytes"`
+	MetadataBytes    int64               `json:"metadata_bytes"`
+	CreatedAt        string              `json:"created_at"`
+	ExpiresAt        string              `json:"expires_at"`
 }
 
 type JobRequest struct {

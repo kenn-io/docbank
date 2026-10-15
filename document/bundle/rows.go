@@ -27,6 +27,7 @@ type RowValidator struct {
 	paths                   map[string]bool
 	volumes                 VolumeCursor
 	duplicates              DuplicateCursor
+	embeddedPreviews        int
 }
 
 func (v *RowValidator) finishParent() error {
@@ -38,6 +39,9 @@ func (v *RowValidator) finishParent() error {
 
 func (v *RowValidator) Add(d Document) error {
 	if v.rows == 0 {
+		if v.Plan.PhotoRender != nil && (v.Plan.PhotoRender.Validate() != nil || *v.Plan.PhotoRender != v.Plan.PhotoRender.Canonical() || len(v.Plan.Roles) != 1 || v.Plan.Roles[0] != (RolePolicy{Role: "photo_rendered"})) {
+			return ErrConflict
+		}
 		v.volumes.Limits = v.Plan.VolumeLimits
 		v.duplicates.Policy = v.Plan.DuplicatePolicy
 	}
@@ -51,7 +55,7 @@ func (v *RowValidator) Add(d Document) error {
 		return err
 	}
 	for _, r := range d.Roles {
-		if r.Status != "available" {
+		if r.Status != roleAvailable {
 			if r.Volume != 0 {
 				return ErrConflict
 			}
@@ -75,6 +79,11 @@ func (v *RowValidator) Add(d Document) error {
 		}
 		v.parent, v.children, v.paths = d, 0, map[string]bool{}
 		v.members++
+		embedded, err := validatePhotoRoles(v.Plan, d)
+		if err != nil {
+			return err
+		}
+		v.embeddedPreviews += embedded
 		if err := ValidateEmailPDFRoles(v.Plan, d); err != nil {
 			return err
 		}
@@ -136,7 +145,7 @@ func (v *RowValidator) Add(d Document) error {
 		r := d.Roles[index]
 		index++
 		if r.Status == "collapsed" {
-			r.Status = "available"
+			r.Status = roleAvailable
 		}
 		if r.Page != nil {
 			return ErrConflict
@@ -147,7 +156,7 @@ func (v *RowValidator) Add(d Document) error {
 			}
 			continue
 		}
-		if r.Status != "available" || rel.Child == nil || r.Reason != "" {
+		if r.Status != roleAvailable || rel.Child == nil || r.Reason != "" {
 			return ErrConflict
 		}
 		base := fmt.Sprintf("documents/%d/%s/attachments/%04d/", d.NodeID, d.VersionID, rel.Order)
@@ -174,7 +183,7 @@ func (v *RowValidator) Add(d Document) error {
 }
 
 func (v *RowValidator) Finish() error {
-	if v.rows != v.Plan.Rows() || v.members != v.Plan.Total || v.volumes.Index != v.Plan.Volumes || v.Plan.Counts != nil && v.Counts != *v.Plan.Counts {
+	if v.embeddedPreviews != v.Plan.EmbeddedPreviews || v.rows != v.Plan.Rows() || v.members != v.Plan.Total || v.volumes.Index != v.Plan.Volumes || v.Plan.Counts != nil && v.Counts != *v.Plan.Counts {
 		return ErrConflict
 	}
 	return v.finishParent()
@@ -206,7 +215,7 @@ func (v *RowValidator) count(d Document) error {
 		if d.Inventory != nil && d.Inventory.OperationID != "" && d.Inventory.GenerationID != receipt.Binding.GenerationID {
 			return ErrConflict
 		}
-		if r.Status == "available" {
+		if r.Status == roleAvailable {
 			if r.Role == "email_pdf" {
 				v.Counts.EmailPDFs++
 			} else {

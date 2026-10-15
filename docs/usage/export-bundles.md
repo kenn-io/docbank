@@ -7,9 +7,8 @@ description: Download document versions, verified email PDFs, and attachment set
 # Verified export bundles
 
 Use the web app or authenticated HTTP API to export document versions,
-retained email PDFs, attachment originals, Markdown text, and page images.
-Use `docbank export` or the [native MCP export tools](mcp.md#native-export-jobs)
-for original files selected by exact document-version identity.
+retained email PDFs, rendered photos, attachment originals, Markdown text, and page images.
+Use `docbank export` for originals or rendered photos. The [native MCP export tools](mcp.md#native-export-jobs) select original files by exact document-version identity.
 
 Docbank freezes the selection and role receipts before writing the archive. A
 later edit to a saved query, tag, document head, or processing result does not
@@ -93,6 +92,63 @@ existing destination is preserved unless you pass `--overwrite`. Replacement
 happens only after verification. Pre-publication failures leave it untouched.
 An error after publication reports that the verified file is already saved.
 Download does not release the retained job automatically.
+
+## Export photos
+
+In Photos, choose **Export photos** for the current scope or **Export selection** for selected photos. Choose **Prepare**, review the frozen plan, then **Start reviewed export** and **Download verified ZIP**.
+
+Opening a new photo export captures current membership when you prepare it.
+Retries and output-setting changes reuse that preparation's frozen selection.
+Closing the drawer keeps an export job that has already started.
+
+### Output settings
+
+- Choose JPEG or PNG, JPEG quality from 1 to 100, and an optional long edge in pixels. Blank keeps the original size; exports never enlarge an image. JPEG gives transparent areas a white background. PNG copies use 8-bit RGB or, with a retained Gray ICC profile, 8-bit grayscale.
+- Source orientation and your rotation apply once; exported orientation is 1. XMP orientation and dimensions become plain values for the rendered pixels; their original qualifiers are omitted.
+- **Include image metadata** carries source EXIF and unrelated XMP, then applies confirmed ratings, flags, labels, captions, creators, copyright and assigned keywords. Supported EXIF and XMP credits stay intact; confirmed empty values clear them.
+- Current catalog tags on the display file replace embedded keywords when that file has at least one tag. Tags on companion files are excluded. Otherwise, embedded XMP subjects and IPTC keywords are combined in XMP without duplicates. Qualified or structured XMP subjects that cannot be combined safely stop preparation; add catalog tags or turn image metadata off.
+- **Remove GPS** starts checked. It removes GPS coordinates and related GPS fields; descriptive location names stay intact. Turning metadata off removes EXIF and XMP from every delivered file and makes the GPS setting irrelevant.
+- Color profiles remain attached to preserve appearance without conversion.
+
+These options control embedded metadata in rendered photos. Bundle manifests retain vault paths, original filenames, and source identities, including SHA-256. Rendered files use `documents/<node>/<version>/photo.jpg` or `photo.png` inside the ZIP. In `bundle.json`, each document's `name` and `path` identify the original, and `roles[].path` identifies its rendered file. Older Docbank versions refuse photo bundles; upgrade Docbank to read them.
+
+### Supported sources and metadata
+
+- JPEG, PNG, GIF, and static WebP sources are supported. GIF exports use the first frame on its full canvas, with its ICC profile and XMP application extensions read like other formats.
+- ARW, DNG, CR2, NEF, and RAF display members use their embedded JPEG previews. The drawer reports the preview count; the manifest labels each member. RAW exports try previews largest first and fall back to the next usable preview. A RAW file without a supported embedded preview stops preparation.
+- HEIC, CR3, ORF, RW2, video, APNG, and animated WebP are unsupported.
+- With metadata enabled, EXIF and XMP packets are limited to 1 MiB each, and JPEG APP1 payloads to 65,533 bytes. A retained RAW EXIF value over 1 MiB stops preparation; omitted values of any size do not. If retained metadata exceeds the JPEG segment limit, preparation names the photo and stops. Choose PNG or turn image metadata off to export it.
+- JPEG APP13, TIFF IPTC-NAA/IPTC-IIM and Photoshop resources, EXIF MakerNote, source pixel layout, DNG/RAW calibration, color matrices, camera profiles, raw digests and embedded original raw data, and embedded thumbnails are omitted. DNG camera model, serial number, lens, and original file name remain. IPTC keywords transfer into XMP before those containers are omitted. XMP thumbnails, Camera Raw crop settings, and container or gain-map references are also omitted.
+- IPTC keywords support ASCII without a charset declaration, declared UTF-8, and declared Latin-1. Malformed records, unsupported encodings and characters XML cannot represent stop preparation only when embedded keywords are retained; turn image metadata off to export that photo.
+- Extended XMP stops preparation when metadata is enabled; turn image metadata off to export that photo.
+- Authored values join the XMP description for the photo, the first top-level `rdf:Description`. Descriptions of other subjects keep their values. An `rdf:ID` subject stops preparation when metadata is enabled. Changing only the rating preserves an embedded reject flag, including when the source rating has XMP qualifiers and GPS is retained.
+- A valid non-identity XMP orientation that differs from the source orientation stops preparation when metadata is enabled, including when the orientation has XMP qualifiers. Turn image metadata off to export the viewed pixels.
+- ICC profiles must use RGB and fit within 1 MiB. A Gray profile is accepted on grayscale pixels without transparency; those photos export as grayscale JPEG or PNG. RAW copies retain the selected embedded JPEG's profile; an unassociated TIFF profile stops preparation if that JPEG has none. PNG cICP color declarations are unsupported, including with image metadata off.
+
+### Preparation limits and recovery
+
+- Each preparation allows at most 16 photos, 512 MiB of source bytes and 1 GiB of rendered copies, within five minutes. Sources over 512 MiB and images over 100 million pixels stop preparation. JPEG output is limited to 65,535 pixels per side; set a smaller long edge or choose PNG for wider images.
+- Full-size 100-million-pixel exports can use several GiB of memory for source bytes, decoded pixels, transforms, and encoding; the 1 GiB limit covers encoded output.
+- Preparation reserves one minute of its five-minute deadline for publication. Cancellation and the rendering deadline interrupt pixel transforms and encoding, including after decoding completes.
+- A changed or unavailable photo, unsupported color profile, or malformed metadata stops the complete preparation; the error names the photo. A source that fails integrity verification also stops preparation; run `docbank verify` to check the vault. A source read failure such as a permissions error returns a server error instead. Switch to **Export selection** and select photos without that photo, or remove it from your existing selection and retry. For unsupported color, export the untouched original through the document export flow.
+
+The CLI prompts for the Hidden photos passcode when needed and keeps its unlock cookie only for that invocation. See [Free a finished job slot](#free-a-finished-job-slot) for release behavior and export limits.
+
+For the CLI, add `photo_render` to an exact-member request, or replace `members` with a `photos` selection. JPEG requires `quality` from 1 to 100. PNG accepts omitted or zero `quality`; supplied values from 0 to 100 become 0 before plan identity and rendering. With `include_metadata: false`, `remove_gps` becomes false before plan identity and rendering. This selection exports the complete current scope; `asset_ids` restricts it to selected display members:
+
+```json
+{
+  "source_operation_id": "11111111-1111-4111-8111-111111111111",
+  "plan_operation_id": "22222222-2222-4222-8222-222222222222",
+  "photos": {
+    "query": {"v": 1, "syntax": "advanced", "mode": "lexical", "text": "", "filters": {}, "sort": {"field": "name", "direction": "asc"}},
+    "hidden": false
+  },
+  "photo_render": {"format": "png", "long_edge": 2048, "include_metadata": true, "remove_gps": true}
+}
+```
+
+Use the same preview, start, status, download, and release commands shown above. The HTTP source request uses `kind: "photos"` with the same `photos` selection. Its plan request uses `roles: [{"role": "photo_rendered"}]` and `photo_render`. Preparation freezes the display version, decisions, keywords, and revisions; changes during rendering require a fresh preview. Generated copies remain retained for the export.
 
 ## Inspect a retained plan
 
@@ -200,13 +256,13 @@ paths keep repeated subjects separate.
 
 1. `POST /api/v1/exports/sources` with an `operation_id` UUID and exactly one
    source kind: `explicit`, `nodes`, `query`, `saved_query`, `snapshot`,
-   `mailbox_collection`, or `upload`. Explicit members contain `node_id`,
+   `mailbox_collection`, `upload`, or `photos`. The `photos` kind takes the selection described above and allows at most 16 photos. Explicit members contain `node_id`,
    `version_id`, `sha256`, and `size`. An optional `revision` is a
    precondition. Distinct historical versions of the same document are allowed.
 2. `POST /api/v1/exports/plans` with a new `operation_id`, the returned
    `source_id` and `member_hash`, and `roles`. Each role policy selects
-   `original`, `text`, `pages`, `email_pdf`, `attachment_original`, or
-   `attachment_pdf`. Missing requested roles fail planning unless that policy
+   `original`, `text`, `pages`, `email_pdf`, `attachment_original`,
+   `attachment_pdf`, or `photo_rendered`. The photo role requires `photo_render`, cannot mix with other roles, and refuses the complete preparation if any photo is unavailable. Missing other requested roles fail planning unless that policy
    sets `allow_unavailable: true`.
 3. `POST /api/v1/exports/jobs` with a new `operation_id`, `plan_id`, and the
    plan's `fingerprint`. The daemon queues a durable job.
@@ -364,3 +420,5 @@ globally, and two per owner. Completed, failed, and canceled jobs count until
 release or cleanup removes them. All clients using the daemon API key share the
 `master` owner and its two-job allowance. Over-limit work fails without
 truncating the selection.
+
+Photo preparation renders one request at a time per vault. Locking Hidden prevents new preparation; already issued exports follow ordinary retention, release, and download expiry.

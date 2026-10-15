@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"net/http"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -12,6 +13,9 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/document/bundle"
+	"go.kenn.io/docbank/internal/exporter"
+	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -72,6 +76,13 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 		}
 		var resolver func(context.Context) ([]bundle.Member, error)
 		var queryFingerprint string
+		if request.Kind == "photos" && request.Photos != nil {
+			resolver = func(ctx context.Context) ([]bundle.Member, error) {
+				members, identity, err := d.Store.ResolvePhotoExportMembers(ctx, *request.Photos)
+				queryFingerprint = identity
+				return members, err
+			}
+		}
 		if request.Kind == "mailbox_collection" {
 			// Mailbox imports are vault-scoped and already readable by this
 			// authenticated session. The resulting source/plan remains private
@@ -124,6 +135,9 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 			return err
 		})
 		if err != nil {
+			if _, ok := errors.AsType[*query.ExpressionError](err); ok {
+				return nil, workspaceQueryError(err)
+			}
 			return nil, exportProblem(err)
 		}
 		return &sourceOutput{Body: source}, nil
@@ -177,8 +191,16 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 			return nil, NewError(400, "validation", "invalid export plan")
 		}
 		var p bundle.Plan
-		err = g.MutateContext(ctx, func() error { var err error; p, err = d.Store.CreateExportPlan(ctx, owner, in.Body); return err })
+		if in.Body.PhotoRender != nil {
+			p, err = processing.PreparePhotoExportPlan(ctx, d.Store, d.Blobs, filepath.Join(d.VaultRoot, exporter.ArchiveDirectory), owner, in.Body, g.MutateContext)
+		} else {
+			err = g.MutateContext(ctx, func() error { var e error; p, e = d.Store.CreateExportPlan(ctx, owner, in.Body); return e })
+		}
+
 		if err != nil {
+			if readErr, ok := errors.AsType[*processing.PhotoSourceReadError](err); ok {
+				d.Logger.ErrorContext(ctx, "photo export source read failed", "plan", in.Body.OperationID, "error", err, "cause", readErr.Cause())
+			}
 			return nil, exportProblem(err)
 		}
 		return &planOutput{Body: p}, nil

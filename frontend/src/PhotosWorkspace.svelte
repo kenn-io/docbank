@@ -14,6 +14,8 @@
   import PhotoTimeline from "./PhotoTimeline.svelte";
   import type { PhotoBrowseRow, PhotoMapRow } from "./generated/docbank.js";
   import FacetSidebar from "./FacetSidebar.svelte";
+  import type { ExportInput } from "./exportState.js";
+  import { maxPhotoExportMembers } from "./exports.js";
   import SelectionDock from "./SelectionDock.svelte";
   import PhotoAlbumPicker from "./PhotoAlbumPicker.svelte";
   import PhotoAlbumPending from "./PhotoAlbumPending.svelte";
@@ -22,7 +24,7 @@
 
   import type PhotoMap from "./PhotoMap.svelte";
   import type { MapTiles } from "./photoMap.js";
-  let { photos, cache, shortcuts, tags, tagsError = "", tagsLoading = false, tagsTotal = 0, onloadtags, onloadmoretags, onmetadatachanged, onhelp, title = "Library", mapMode = false, tiles = { tile_url: "", host: "", attribution: "", max_zoom: 19 }, albums, albumID = "", onnavigate = () => {}, ontrashed, onhidden, onactionerror, oninvalidate, photoID = "", onphotochange = () => {} }: { photos: Photos; cache: PhotoPreviewCache; shortcuts?: ShortcutManager; tags?: import("./generated/docbank.js").Tag[]; tagsError?: string; tagsLoading?: boolean; tagsTotal?: number; onloadtags?: () => Promise<void>; onloadmoretags?: () => Promise<void>; onmetadatachanged?: (receipt: PhotoAuthoredReceipt, tags: import("./generated/docbank.js").Tag[]) => void; onhelp?: () => void; title?: string; mapMode?: boolean; tiles?: MapTiles; albums?: PhotoAlbums; albumID?: string; onnavigate?: (path: string) => void; ontrashed?: (source: Photos) => void; onhidden?: () => void | Promise<void>; onactionerror?: (error: string) => void; oninvalidate?: () => void | Promise<void>; photoID?: string; onphotochange?: (id: string, mode: "open" | "step" | "close") => void } = $props();
+  let { photos, cache, shortcuts, tags, tagsError = "", tagsLoading = false, tagsTotal = 0, onloadtags, onloadmoretags, onmetadatachanged, onhelp, title = "Library", mapMode = false, tiles = { tile_url: "", host: "", attribution: "", max_zoom: 19 }, albums, albumID = "", onnavigate = () => {}, ontrashed, onhidden, onactionerror, oninvalidate, photoID = "", onphotochange = () => {}, onexport }: { photos: Photos; cache: PhotoPreviewCache; shortcuts?: ShortcutManager; tags?: import("./generated/docbank.js").Tag[]; tagsError?: string; tagsLoading?: boolean; tagsTotal?: number; onloadtags?: () => Promise<void>; onloadmoretags?: () => Promise<void>; onmetadatachanged?: (receipt: PhotoAuthoredReceipt, tags: import("./generated/docbank.js").Tag[]) => void; onhelp?: () => void; title?: string; mapMode?: boolean; tiles?: MapTiles; albums?: PhotoAlbums; albumID?: string; onnavigate?: (path: string) => void; ontrashed?: (source: Photos) => void; onhidden?: () => void | Promise<void>; onactionerror?: (error: string) => void; oninvalidate?: () => void | Promise<void>; photoID?: string; onphotochange?: (id: string, mode: "open" | "step" | "close") => void; onexport?: (input: ExportInput) => void } = $props();
   const album = $derived(albums?.items.find(item => item.id === albumID));
   const editor = $derived(photos.authored);
   let editing = $state(false);
@@ -212,6 +214,12 @@
   const listedRow = $derived(photos.items.find(item => item.asset_id === photoID));
   const listedDetail = $derived(!!listedRow && "content_version_id" in listedRow);
   const current = $derived(photoID ? fromGrid && listedRow && "content_version_id" in listedRow ? listedRow : direct : undefined);
+  const exportSelection = $derived(photos.scope());
+  const exportSelectionCount = $derived(exportSelection.asset_ids?.length ?? photos.total);
+  function exportPhotos(selected = false): void {
+    const ids = selected ? exportSelection.asset_ids ?? [] : [];
+    onexport?.({ label: selected ? "Selected photos" : title, photos: { query: photos.query, asset_ids: ids, hidden: photos.hidden }, total: selected ? exportSelectionCount : photos.total });
+  }
   const orderedIDs = $derived(groups.flatMap(group => group.items.map(item => item.asset_id)));
   const dateLabel = $derived(photos.date?.length === 7 ? monthLabel(photos.date) : photos.date);
   const densityOptions = [{ value: "compact", label: "Compact" }, { value: "comfortable", label: "Comfortable" }, { value: "large", label: "Large" }];
@@ -308,10 +316,12 @@
       {#if album && albums}
         <IconButton ariaLabel={album.starred ? "Unstar album" : "Star album"} title={album.starred ? "Unstar album" : "Star album"} ariaPressed={album.starred} disabled={albums.busy || renaming} onclick={() => void albums!.update(album!, { starred: !album!.starred })}><StarIcon size="16" fill={album.starred ? "currentColor" : "none"} /></IconButton>
         <Menu align="end"><MenuTrigger ariaLabel="Album actions" disabled={albums.busy || renaming}>More</MenuTrigger><MenuContent ariaLabel="Album actions"><MenuItem onselect={beginRename}>Rename</MenuItem><MenuItem onselect={() => openModal("duplicate")}>Duplicate…</MenuItem><MenuItem tone="danger" onselect={() => openModal("delete")}>Delete album…</MenuItem></MenuContent></Menu>
-      {/if}<Button size="sm" disabled={photos.loading || photos.hiding || photos.trashing || albums?.busy} onclick={() => void refreshView()}>Refresh previews</Button>
+      {/if}{#if !mapMode}<Button size="sm" disabled={photos.loading || photos.total === 0 || photos.total > maxPhotoExportMembers} onclick={() => exportPhotos()}>Export photos</Button>{/if}
+      <Button size="sm" disabled={photos.loading || photos.hiding || photos.trashing || albums?.busy} onclick={() => void refreshView()}>Refresh previews</Button>
       {#if !mapMode}<Button size="sm" disabled={photos.loading || photos.hiding || photos.trashing || photos.rejectsLoading} onclick={() => { if (!editor.canChangeTarget()) return; rejectsOpen = true; void photos.previewRejects(); }}>Move rejects</Button>{/if}
     </div>
   </div>
+  {#if photos.total > maxPhotoExportMembers}<p class="photo-export-limit">Select up to {maxPhotoExportMembers} photos to export.</p>{/if}
   {#if photos.actionError && !onactionerror}<p role="alert">{photos.actionError}</p>{/if}
   {#if searchable}
   <form class="photo-search" onsubmit={event => { event.preventDefault(); void photos.setQuery({ ...photos.baseQuery, text: search, syntax: "simple", sort: { field: search.trim() ? "relevance" : "capture_time", direction: "desc" } }); }}>
@@ -364,7 +374,7 @@
   {#if !mapMode}<div class="photo-loading" role="status">{#if photos.loading}<Spinner size={14} />Loading photos…{:else if photos.cursor && !photos.error}<Button size="sm" onclick={() => void photos.loadMore(preserve)}>Load more</Button>{/if}</div>{/if}
   </div>{#if editing && (editCount || editor.dirty)}<aside class="grid-inspector"><PhotoInspector {editor} {actionDisabled} count={editCount} onedit={edit} /></aside>{/if}</div>
   {#if !photoID}
-  <SelectionDock retainOpen={editor.dirty} context="photos" selectVisible={mapMode} outsideCount={outsideSelection} selectedCount={photos.selectedIDs.size} visibleDocumentCount={shown.length} loadedSelected={shown.every(item => photos.selectedIDs.has(item.asset_id))} wholeQueryCount={photos.allResults && editor.count ? editor.count : photos.total} allResults={photos.allResults} onallresults={mapMode ? undefined : () => photos.selectAllResults()} onclear={() => photos.clearSelection()} onselectvisible={() => photos.selectLoaded(mapMode ? orderedIDs : undefined)} ontrash={() => { photos.trashError = ""; trashOpen = true; }} trashDisabled={!photos.selectedIDs.size || photos.trashing || photos.hiding || !mapMode && (photos.loading || photos.allResults && !editor.targets.length)}>
+  <SelectionDock exportDisabled={exportSelectionCount === 0 || exportSelectionCount > maxPhotoExportMembers} exportHelp={exportSelectionCount > maxPhotoExportMembers ? `Select up to ${maxPhotoExportMembers} photos to export. Clear the selection to choose fewer photos.` : ""} onexport={() => exportPhotos(true)} retainOpen={editor.dirty} context="photos" selectVisible={mapMode} outsideCount={outsideSelection} selectedCount={photos.selectedIDs.size} visibleDocumentCount={shown.length} loadedSelected={shown.every(item => photos.selectedIDs.has(item.asset_id))} wholeQueryCount={photos.allResults && editor.count ? editor.count : photos.total} allResults={photos.allResults} onallresults={mapMode ? undefined : () => photos.selectAllResults()} onclear={() => photos.clearSelection()} onselectvisible={() => photos.selectLoaded(mapMode ? orderedIDs : undefined)} ontrash={() => { photos.trashError = ""; trashOpen = true; }} trashDisabled={!photos.selectedIDs.size || photos.trashing || photos.hiding || !mapMode && (photos.loading || photos.allResults && !editor.targets.length)}>
     {#snippet photoActions()}
       <Button size="sm" disabled={!editCount && !editor.dirty} onclick={() => editing = !editing}>Metadata</Button>
       {#if albums}<PhotoAlbumPicker bind:this={picker} {photos} {albums} />{/if}
@@ -446,5 +456,6 @@
   form, .modal-actions { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
   .modal-actions { justify-content: flex-end; margin-top: var(--space-4); }
   @media (max-width: 640px) { .photo-toolbar { flex-wrap: wrap; gap: var(--space-3); } }
+  .photo-export-limit { margin: 0; padding: var(--space-2) var(--space-5); font-size: var(--font-size-sm); color: var(--text-muted); }
   .photo-loading { height: 38px; flex-shrink: 0; display: flex; gap: var(--space-2); align-items: center; justify-content: center; padding: var(--space-2); color: var(--text-muted); font-size: var(--font-size-sm); }
 </style>

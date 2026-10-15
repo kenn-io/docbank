@@ -26902,6 +26902,8 @@ type PhotoBrowseRequest = api.PhotoBrowseRequest
 
 type PhotoBrowseRow = api.PhotoBrowseRow
 
+type PhotoExportSelection = bundle.PhotoExportSelection
+
 type PhotoFace = store.PhotoFace
 
 type PhotoFacePage = api.PhotoFacePage
@@ -26949,6 +26951,8 @@ type PhotoRejectsMoved = store.PhotoRejectsMoved
 type PhotoRejectsPreflight = store.PhotoRejectsPreflight
 
 type PhotoRejectsRequest = api.PhotoRejectsRequest
+
+type PhotoRenderProfile = bundle.PhotoRenderProfile
 
 type PhotoSettings = api.PhotoSettings
 

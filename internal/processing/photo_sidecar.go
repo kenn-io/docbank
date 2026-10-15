@@ -17,6 +17,41 @@ import (
 )
 
 const teststripXMPNamespace = "https://teststrip.app/xmp/1.0/"
+const photoshopXMPNamespace = "http://ns.adobe.com/photoshop/1.0/"
+
+// photoXMPFlag reads an XMP rating the same way for import and export. XMP
+// types Rating as a real number, so "3.0" is a valid three-star rating; -1 is
+// the legacy reject marker and overrides pick.
+func photoXMPFlag(rating, pick string) (flag string, n int, valid bool) {
+	value, err := strconv.ParseFloat(strings.TrimSpace(rating), 64)
+	if err != nil || value != math.Trunc(value) || value < -1 || value > 5 {
+		return strings.TrimSpace(pick), 0, false
+	}
+	n = int(value)
+	if n == -1 {
+		return "reject", n, true
+	}
+	return strings.TrimSpace(pick), n, true
+}
+
+// photoXMPField names the authored XMP properties shared by sidecar import and export.
+func photoXMPField(n xml.Name) string {
+	switch n.Space {
+	case xmpBasicNamespace:
+		if n.Local == "Rating" || n.Local == "Label" {
+			return n.Local
+		}
+	case teststripXMPNamespace:
+		if n.Local == "Pick" || n.Local == "Rotation" {
+			return n.Local
+		}
+	case xmpDublinCoreNamespace:
+		if n.Local == "description" || n.Local == "creator" || n.Local == "rights" {
+			return n.Local
+		}
+	}
+	return ""
+}
 
 // ReadPhotoSidecar validates the complete packet before returning supported decisions.
 func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, error) {
@@ -68,7 +103,7 @@ func readPhotoSidecar(ctx context.Context, data []byte) (photoSidecarPacket, err
 	if len(data) > maxSourceMetadataOriginalBytes || !utf8.Valid(data) {
 		return result, errors.New("invalid photo sidecar bytes")
 	}
-	decoder := xml.NewDecoder(bytes.NewReader(bytes.TrimPrefix(data, []byte{0xef, 0xbb, 0xbf})))
+	decoder := newPhotoXMLDecoder(data)
 	stack := []xml.Name{}
 	rootCount := 0
 	description := false
@@ -86,25 +121,10 @@ func readPhotoSidecar(ctx context.Context, data []byte) (photoSidecarPacket, err
 	var defaultText string
 	var hasDefault bool
 	fieldFor := func(n xml.Name) string {
-		switch n.Space {
-		case "http://ns.adobe.com/photoshop/1.0/":
-			if n.Local == "SidecarForExtension" {
-				return n.Local
-			}
-		case xmpBasicNamespace:
-			if n.Local == "Rating" || n.Local == "Label" {
-				return n.Local
-			}
-		case teststripXMPNamespace:
-			if n.Local == "Pick" || n.Local == "Rotation" {
-				return n.Local
-			}
-		case xmpDublinCoreNamespace:
-			if n.Local == "description" || n.Local == "creator" || n.Local == "rights" {
-				return n.Local
-			}
+		if n == (xml.Name{Space: photoshopXMPNamespace, Local: "SidecarForExtension"}) {
+			return n.Local
 		}
-		return ""
+		return photoXMPField(n)
 	}
 	save := func(key, value string) error {
 		if _, exists := values[key]; exists {
@@ -148,13 +168,6 @@ func readPhotoSidecar(ctx context.Context, data []byte) (photoSidecarPacket, err
 				parent = stack[len(stack)-1]
 			}
 			stack = append(stack, t.Name)
-			attributes := map[xml.Name]bool{}
-			for _, attr := range t.Attr {
-				if attributes[attr.Name] {
-					return result, errors.New("duplicate XML attribute")
-				}
-				attributes[attr.Name] = true
-			}
 			if field != "" && len(stack) > fieldDepth {
 				valid := t.Name.Space == rdfNamespace
 				if len(stack) == fieldDepth+1 {
@@ -299,12 +312,11 @@ func readPhotoSidecar(ctx context.Context, data []byte) (photoSidecarPacket, err
 			*text = ""
 		}
 	}
-	// XMP types Rating as a real number, so "3.0" is a valid three-star rating.
-	if n, err := strconv.ParseFloat(values["Rating"], 64); err == nil && n == math.Trunc(n) && n >= -1 && n <= 5 {
+	if flag, n, valid := photoXMPFlag(values["Rating"], result.Flag); valid {
 		if n == -1 {
-			result.Flag = "reject"
+			result.Flag = flag
 		} else {
-			result.Rating = int(n)
+			result.Rating = n
 		}
 	}
 	if value, ok := values["Rotation"]; ok {

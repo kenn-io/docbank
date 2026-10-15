@@ -1098,7 +1098,9 @@ it("switches panels while retaining the admitted export and its selected source"
       return json(job);
     }
     if (path.startsWith(`/api/v1/exports/jobs/${job?.id}/events`)) return new Response("", { headers: { "Content-Type": "application/x-ndjson" } });
-    if (path === `/api/v1/exports/jobs/${job?.id}`) return json(job);
+    if (path === `/api/v1/exports/jobs/${job?.id}`) {
+      return json(job);
+    }
     return original(input, init);
   });
   render(App);
@@ -1113,6 +1115,7 @@ it("switches panels while retaining the admitted export and its selected source"
   expect(screen.queryByRole("dialog", { name: "Verified export" })).toBeNull();
   await fireEvent.click(within(jobs).getByRole("button", { name: "Close background jobs" }));
   await fireEvent.click(screen.getByRole("checkbox", { name: "Select readme.txt" }));
+  job = { ...job!, state: "canceled", sequence: 2 };
   await fireEvent.click(screen.getByRole("button", { name: "Export" }));
   const reopened = await screen.findByRole("dialog", { name: "Verified export" });
   expect(within(reopened).getByText("Selected documents on this page")).toBeTruthy();

@@ -25,6 +25,7 @@ type PhotoBrowseRequest struct {
 	PageSize int
 	Recipes  map[string]string
 	Facets   []string
+	assetIDs []string
 }
 
 // PhotoBrowsePosition is the selected SQL key bound to the resolved query.
@@ -115,9 +116,24 @@ func (s *Store) ListPhotoAssets(
 		if !ok && sortField != "relevance" {
 			return fmt.Errorf("%w: unsupported sort", ErrInvalidPhotoQuery)
 		}
+		if len(request.assetIDs) > 0 {
+			// Selected exports seek asset IDs before sorting their small result.
+			from = photoBrowseDisplayFrom
+			if sortField == "added_time" {
+				from += ` CROSS JOIN photo_set_members sm ON sm.asset_id=a.asset_id`
+			}
+		}
 		scope, err := newPhotoBrowseScope(ctx, q, compiled, generation.ID, coverage, request.Hidden)
 		if err != nil {
 			return err
+		}
+		if len(request.assetIDs) > 0 {
+			scope.match.sql = `a.asset_id IN (` + placeholders(len(request.assetIDs)) + `) AND (` + scope.match.sql + `)`
+			args := make([]any, 0, len(request.assetIDs)+len(scope.match.args))
+			for _, id := range request.assetIDs {
+				args = append(args, id)
+			}
+			scope.match.args = append(args, scope.match.args...)
 		}
 		canonical, err := query.Canonical(compiled.Query)
 		if err != nil {
@@ -130,7 +146,8 @@ func (s *Store) ListPhotoAssets(
 			Hidden       bool
 			PageSize     int
 			Facets       []string
-		}{canonical, compiled.Dependencies, coverage, request.Hidden, request.PageSize, dimensions})
+			AssetIDs     []string `json:",omitzero"`
+		}{canonical, compiled.Dependencies, coverage, request.Hidden, request.PageSize, dimensions, request.assetIDs})
 		if err != nil {
 			return err
 		}

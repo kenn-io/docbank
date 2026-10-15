@@ -13,6 +13,7 @@ import (
 	"io"
 	"math"
 	"net/mail"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -1829,6 +1830,8 @@ type exifReader struct {
 type exifEntry struct {
 	kind  uint16
 	value []byte
+	// oversized marks an export-mode value over 1 MiB that was not read.
+	oversized bool
 }
 
 func newExifReader(data []byte) (exifReader, bool) {
@@ -1863,6 +1866,12 @@ func (r exifReader) entries(offset uint32) map[uint16][]byte {
 }
 
 func (r exifReader) typedEntries(offset uint32) (map[uint16]exifEntry, bool) {
+	return r.readTypedEntries(offset, false)
+}
+
+var exifTypeWidths = map[uint16]uint8{1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8, 13: 4}
+
+func (r exifReader) readTypedEntries(offset uint32, export bool, tags ...uint16) (map[uint16]exifEntry, bool) {
 	result := map[uint16]exifEntry{}
 	count, ok := r.u16(int(offset))
 	if !ok || count > 1024 {
@@ -1874,14 +1883,24 @@ func (r exifReader) typedEntries(offset uint32) (map[uint16]exifEntry, bool) {
 			return result, false
 		}
 		tag := r.order.Uint16(r.data[base:])
+		if len(tags) > 0 && !slices.Contains(tags, tag) {
+			continue
+		}
 		kind := r.order.Uint16(r.data[base+2:])
 		items := r.order.Uint32(r.data[base+4:])
 		if _, duplicate := result[tag]; duplicate {
 			return result, false
 		}
-		width := map[uint16]uint64{1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 7: 1, 9: 4, 10: 8}[kind]
+		width := uint64(exifTypeWidths[kind])
+		if !export && slices.Contains([]uint16{6, 8, 11, 12, 13}, kind) {
+			width = 0
+		}
 		result[tag] = exifEntry{kind: kind}
 		size := uint64(items) * width
+		if export && size > 1<<20 {
+			result[tag] = exifEntry{kind: kind, oversized: true}
+			continue
+		}
 		if width == 0 || size > 1<<20 {
 			continue
 		}

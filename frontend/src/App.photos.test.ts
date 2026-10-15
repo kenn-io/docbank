@@ -1619,3 +1619,68 @@ it("resume requests Map authored revalidation", async () => {
   visibility.mockReturnValue("visible"); await fireEvent(document, new Event("visibilitychange"));
   await waitFor(() => expect(revalidate).toHaveBeenCalled());
 });
+
+
+it.each([false, true])("keeps a finished photo job through Documents export and prepares the current selection, hidden=%s", async hidden => {
+  history.replaceState(null, "", `${hidden ? "/photos/hidden" : "/photos"}#web_session=synthetic&web_upload_secret=proof`);
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  storage();
+  const hash = "a".repeat(64), future = "2099-01-01T00:00:00Z";
+  const root = { id: 1, name: "", kind: "dir", size: 0, revision: 1, path: "/", created_at: "2026-01-01T00:00:00Z", modified_at: "2026-01-01T00:00:00Z" };
+  const document = { ...root, id: 2, parent_id: 1, name: "Synthetic document.txt", kind: "file", mime_type: "text/plain", current_version_id: "22222222-2222-4222-8222-222222222222", blob_hash: hash };
+  const selections: { asset_ids: string[]; hidden: boolean }[] = [];
+  let source: any, plan: any;
+  vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
+    const body = options?.body ? JSON.parse(String(options.body)) : undefined;
+    if (url.startsWith("/api/v1/path?") || url === "/api/v1/nodes/1") return Response.json(root);
+    if (url.startsWith("/api/v1/nodes/1/children")) return Response.json({ directory: root, items: [document], total: 1, limit: 1000, offset: 0 });
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: true, change_id: "synthetic", expires_at: future, expires_in: 300 });
+    if (url.includes("/assets/query")) return Response.json({ items: [photo(1), photo(2), photo(3)], total: 3 });
+    if (url.endsWith("/sources")) {
+      selections.push({ asset_ids: body.photos.asset_ids, hidden: body.photos.hidden });
+      source = { id: body.operation_id, request_sha256: hash, kind: "photos", state: "sealed", member_hash: hash, total: body.photos.asset_ids.length, source_bytes: 12 * body.photos.asset_ids.length, created_at: "2026-01-01T00:00:00Z", expires_at: future };
+      return Response.json(source);
+    }
+    if (url.endsWith("/plans")) {
+      plan = { format: "docbank-bundle-v1", id: body.operation_id, vault_id: "synthetic", toolchain: "go1.27", source, roles: body.roles, photo_render: body.photo_render, fingerprint: hash, total: source.total, role_entries: source.total, role_bytes: source.source_bytes, metadata_bytes: 100, created_at: source.created_at, expires_at: future };
+      return Response.json(plan);
+    }
+    if (url.endsWith("/preview")) return Response.json({ plan_id: plan.id, fingerprint: hash, member_hash: hash, total: source.total, roles: [{ role: "photo_rendered", available_members: source.total, unavailable_members: 0, files: source.total, bytes: source.source_bytes }] });
+    if (url.endsWith("/jobs")) return Response.json({ id: body.operation_id, plan_id: plan.id, fingerprint: hash, state: "completed", receipt: { format: "docbank-bundle-v1", plan_fingerprint: hash, sha256: hash, size: 512, entries: 4 }, sequence: 1, completed_roles: 1, completed_bytes: 12, attempt: 1, created_at: source.created_at, deadline: future, expires_at: future });
+    if (options?.method === "DELETE") {
+      return new Response(null, { status: 204 });
+    }
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  }));
+  render(App);
+  await fireEvent.click(await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Export selection" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Prepare" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Start reviewed export" }));
+  await screen.findByRole("button", { name: "Download verified ZIP" });
+  await fireEvent.click(screen.getByRole("button", { name: "Close export" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Clear selection" }));
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 2.jpg" }));
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 3.jpg" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Export selection" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Close export" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
+  await screen.findByRole("cell", { name: "Synthetic document.txt" });
+  await fireEvent.click(screen.getByRole("button", { name: "Export" }));
+  expect(screen.getByText("Photo export")).toBeTruthy();
+  expect(screen.getByText("1 photo")).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Prepare another export" }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Close export" })).toBeNull());
+  await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
+  if (hidden) await fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
+  const third = await screen.findByRole("checkbox", { name: "Select photo Photo 3.jpg" });
+  const clear = screen.queryByRole("button", { name: "Clear selection" });
+  if (clear) await fireEvent.click(clear);
+  await fireEvent.click(third);
+  await fireEvent.click(screen.getByRole("button", { name: "Export selection" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Prepare" }));
+  await screen.findByRole("button", { name: "Start reviewed export" });
+  expect(selections).toEqual([{ asset_ids: ["photo-1"], hidden }, { asset_ids: ["photo-3"], hidden }]);
+});

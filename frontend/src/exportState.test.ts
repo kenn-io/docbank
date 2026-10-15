@@ -17,9 +17,9 @@ async function harness() {
   const startIDs: string[] = [];
   const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
     const path = String(url), body = init?.body ? JSON.parse(String(init.body)) : undefined;
-    if (path.endsWith("/sources")) { source = { id: body.operation_id, request_sha256: hash, kind: "explicit", state: "sealed", member_hash: memberHash, total: 1, source_bytes: 12, created_at: "2026-01-01T00:00:00Z", expires_at: future }; return response(source); }
-    if (path.endsWith("/plans")) { plan = { format: "docbank-bundle-v1", id: body.operation_id, vault_id: id, toolchain: "go1.27", source, roles: body.roles, fingerprint: hash, total: 1, role_entries: 1, role_bytes: 12, metadata_bytes: 100, created_at: source.created_at, expires_at: future }; return response(plan); }
-    if (path.endsWith("/preview")) return response({ plan_id: plan.id, fingerprint: hash, member_hash: memberHash, total: 1, roles: [{ role: "original", available_members: 1, unavailable_members: 0, files: 1, bytes: 12 }] });
+    if (path.endsWith("/sources")) { source = { id: body.operation_id, request_sha256: hash, kind: body.kind, state: "sealed", member_hash: memberHash, total: 1, source_bytes: 12, created_at: "2026-01-01T00:00:00Z", expires_at: future }; return response(source); }
+    if (path.endsWith("/plans")) { plan = { format: "docbank-bundle-v1", id: body.operation_id, vault_id: id, toolchain: "go1.27", source, roles: body.roles, photo_render: body.photo_render, fingerprint: hash, total: 1, role_entries: 1, role_bytes: 12, metadata_bytes: 100, created_at: source.created_at, expires_at: future }; return response(plan); }
+    if (path.endsWith("/preview")) return response({ plan_id: plan.id, fingerprint: hash, member_hash: memberHash, total: 1, roles: [{ role: plan.roles[0].role, available_members: 1, unavailable_members: 0, files: 1, bytes: 12 }] });
     if (path.endsWith("/jobs")) { starts++; startIDs.push(body.operation_id); job = { id: body.operation_id, plan_id: plan.id, fingerprint: hash, state: "queued", sequence: 1, completed_roles: 0, completed_bytes: 0, attempt: 0, created_at: source.created_at, deadline: future, expires_at: future }; throw new TypeError("start response lost"); }
     if (path.includes("/events")) return new Response("", { headers: { "Content-Type": "application/x-ndjson" } });
     if (path.endsWith("/cancel")) { job = { ...job, state: "canceled", sequence: 2 }; return new Response(null, { status: 204 }); }
@@ -164,7 +164,7 @@ it.each(["job", "events"])("retains admission when the %s read expires", async (
   h.session.dispose();
 });
 
-it("validates the download filename without changing the completed export and allows ticket retries", async () => {
+it("validates download filenames and retains completed exports through ticket retries and pending downloads", async () => {
   const h = await harness();
   const original = h.fetcher.getMockImplementation()!;
   let completed: ExportJob;
@@ -204,6 +204,24 @@ it("validates the download filename without changing the completed export and al
   expect(h.state().error).toBeUndefined();
   expect(h.state().reviewed).toBe(reviewed);
   expect(h.state().active?.plan).toBe(reviewed?.plan);
+  const underlying = h.fetcher.getMockImplementation()!;
+  let respond!: (value: Response) => void;
+  let downloadSignal: AbortSignal | null | undefined;
+  h.fetcher.mockImplementationOnce((_url, init) => {
+    downloadSignal = init?.signal;
+    return new Promise<Response>(resolve => respond = resolve);
+  });
+  const pending = h.session.download("Pending.zip");
+  expect(h.state().downloading).toBe(true);
+  await h.session.clearFinished();
+  expect(downloadSignal?.aborted).toBe(false);
+  expect(h.fetcher.mock.calls.filter(([, init]) => init?.method === "DELETE")).toHaveLength(0);
+  expect(h.state().active?.plan).toBe(reviewed?.plan);
+  respond(response({ url: `/api/daemon/web-download/file?ticket=${"a".repeat(43)}`, receipt: completed!.receipt }));
+  await pending;
+  expect(h.state().downloading).toBe(false);
+  expect(offeredNames).toEqual(["Retried.zip", "Pending.zip"]);
+  h.fetcher.mockImplementation(underlying);
   ticketStatus = 410;
   await h.session.download("Expired.zip");
   expect(h.state().status).toBe("expired");
@@ -238,7 +256,7 @@ it("copies reactive snapshot inputs before caller changes and never promotes obs
   h.session.dispose();
 });
 
-it("starts over after a failed source without changing ordinary retry identity or an admitted job", async () => {
+it.each(["close", "settings"])("retries failed source preparation after %s and retains admitted jobs", async (abort) => {
   const h = await harness();
   const original = h.fetcher.getMockImplementation()!;
   const sourceIDs: string[] = [];
@@ -258,9 +276,56 @@ it("starts over after a failed source without changing ordinary retry identity o
   expect(h.state().status).toBe("error");
   expect(sourceIDs).toEqual([failedID, failedID]);
   h.session.resetPreparation();
+  const input = { label: "Selected photos", photos: { query: { filters: {}, v: 1, syntax: "advanced", mode: "lexical", text: "", sort: { field: "name", direction: "asc" } }, hidden: false, asset_ids: [id] }, total: 1 };
+  const profile = { format: "jpeg", quality: 90, long_edge: 2048, include_metadata: true, remove_gps: true };
+  h.session.choose(input, [{ role: "photo_rendered" }], { photo_render: profile });
+  let respond!: (value: Response) => void, markRequested!: () => void;
+  const responsePending = new Promise<Response>(resolve => respond = resolve);
+  const requested = new Promise<void>(resolve => markRequested = resolve);
+  let abortedID = "", signal: AbortSignal | undefined;
+  h.fetcher.mockImplementationOnce((_url, init) => {
+    abortedID = JSON.parse(String(init?.body)).operation_id;
+    signal = init?.signal ?? undefined;
+    markRequested();
+    return responsePending;
+  });
+  const pending = h.session.preview();
+  await requested;
+  if (abort === "close") h.session.close();
+  else h.session.choose(input, [{ role: "photo_rendered" }], { photo_render: { ...profile, quality: 80 } });
+  expect(signal?.aborted).toBe(true);
+  respond(new Response(JSON.stringify({ detail: "Source preparation failed", code: "export_conflict" }), { status: 409 }));
+  await pending;
   await h.session.preview();
   expect(h.state().status).toBe("ready");
   expect(sourceIDs[2]).not.toBe(failedID);
+  expect(sourceIDs[2]).not.toBe(abortedID);
+  if (abort === "close") {
+    const sealedID = sourceIDs[2];
+    h.session.choose(input, [{ role: "photo_rendered" }], { photo_render: profile });
+    let planID = "", planRequested!: () => void, respondPlan!: (value: Response) => void;
+    const planReached = new Promise<void>(resolve => planRequested = resolve);
+    const planResponse = new Promise<Response>(resolve => respondPlan = resolve);
+    h.fetcher.mockImplementationOnce((_url, init) => {
+      planID = JSON.parse(String(init?.body)).operation_id;
+      signal = init?.signal ?? undefined;
+      planRequested();
+      return planResponse;
+    });
+    const planning = h.session.preview();
+    await planReached;
+    expect(sourceIDs).toHaveLength(3);
+    h.session.close();
+    expect(signal?.aborted).toBe(true);
+    expect(h.state().status).toBe("idle");
+    respondPlan(new Response(null, { status: 503 }));
+    await planning;
+    await h.session.preview();
+    expect(h.state().status).toBe("ready");
+    expect(sourceIDs).toHaveLength(3);
+    expect(h.state().reviewed?.plan.source.id).toBe(sealedID);
+    expect(h.state().reviewed?.plan.id).toBe(planID);
+  }
   await h.session.start();
   const admitted = h.state();
   h.session.resetPreparation();
@@ -381,5 +446,95 @@ it.each([503, 410])("keeps a reviewed plan independent of its initial details re
     expect(h.state().status).toBe("expired");
     expect(h.state().reviewed).toBeUndefined();
   }
+  h.session.dispose();
+});
+
+it.each(["canceled", "completed", "failed"])("releases each %s job before preparing three successive batches", async (terminal) => {
+  const h = await harness();
+  const original = h.fetcher.getMockImplementation()!;
+  const owned = new Set<string>();
+  h.fetcher.mockImplementation(async (url, init) => {
+    const path = String(url);
+    if (init?.method === "DELETE") {
+      owned.delete(path.split("/").at(-1)!);
+      return new Response(null, { status: 204 });
+    }
+    if (path.endsWith("/jobs")) {
+      const body = JSON.parse(String(init?.body));
+      if (!owned.has(body.operation_id) && owned.size >= 2) return new Response(null, { status: 429 });
+      owned.add(body.operation_id);
+    }
+    const result = await original(url, init);
+    if (terminal !== "canceled" && path.includes("/jobs/") && !path.includes("/events")) {
+      const job = await result.json();
+      return response({ ...job, state: terminal, sequence: 2, ...(terminal === "completed" ? { completed_roles: 1, completed_bytes: 12, receipt: { format: "docbank-bundle-v1", plan_fingerprint: hash, sha256: hash, size: 512, entries: 4 } } : { failure: "Synthetic export failure" }) });
+    }
+    return result;
+  });
+  for (let batch = 0; batch < 3; batch++) {
+    await h.session.preview();
+    await h.session.start();
+    if (terminal === "canceled") await h.session.cancel();
+    expect(h.state().status).toBe(terminal);
+    await h.session.clearFinished();
+    expect(h.state().status).toBe("idle");
+    expect(owned.size).toBe(0);
+  }
+  expect(h.fetcher.mock.calls.filter(([, init]) => init?.method === "DELETE")).toHaveLength(3);
+  h.session.dispose();
+});
+
+it.each([
+  { status: 404, interrupted: true, terminal: "canceled" },
+  { status: 503, interrupted: false, detail: "Release failed", message: "Release failed", terminal: "canceled" },
+  { status: 409, interrupted: false, detail: "Archive is retained", code: "export_retained", message: "Your browser is still downloading this export. Choose Prepare another export again once the download finishes.", terminal: "completed" },
+])("retains the finished job through release failure or interruption ($status)", async (failure) => {
+  const h = await harness();
+  if (failure.terminal === "completed") {
+    const original = h.fetcher.getMockImplementation()!;
+    h.fetcher.mockImplementation(async (url, init) => {
+      const result = await original(url, init);
+      if (String(url).includes("/jobs/") && !String(url).includes("/events")) {
+        const job = await result.json();
+        return response({ ...job, state: "completed", sequence: 2, completed_roles: 1, completed_bytes: 12, receipt: { format: "docbank-bundle-v1", plan_fingerprint: hash, sha256: hash, size: 512, entries: 4 } });
+      }
+      return result;
+    });
+  }
+  await h.session.preview();
+  await h.session.start();
+  if (failure.terminal === "canceled") await h.session.cancel();
+  const active = h.state().active;
+  let respond!: (value: Response) => void;
+  h.fetcher.mockImplementationOnce(() => new Promise<Response>(resolve => respond = resolve));
+  const pending = h.session.clearFinished();
+  expect(h.state().active).toEqual(active);
+  expect(h.state().releasing).toBe(true);
+  await h.session.clearFinished();
+  if (failure.interrupted) {
+    h.session.close();
+    expect(h.state().releasing).toBe(false);
+    h.fetcher.mockResolvedValueOnce(new Response(null, { status: 404 }));
+    await h.session.clearFinished();
+    await h.session.preview();
+    expect(h.state().status).toBe("ready");
+    respond(new Response(null, { status: 204 }));
+    await pending;
+    expect(h.state().status).toBe("ready");
+    h.session.dispose();
+    return;
+  }
+  respond(new Response(JSON.stringify({ detail: failure.detail, code: failure.code }), { status: failure.status }));
+  await pending;
+  expect(h.state().active).toEqual(active);
+  expect(h.state().error?.message).toBe(failure.message);
+  expect(h.state().status).toBe(failure.status === 409 ? failure.terminal : "error");
+  expect(h.state().releasing).toBe(false);
+  expect(h.fetcher.mock.calls.filter(([, init]) => init?.method === "DELETE")).toHaveLength(1);
+  h.fetcher.mockResolvedValueOnce(new Response(null, { status: 204 }));
+  await h.session.clearFinished();
+  expect(h.state().active).toBeUndefined();
+  expect(h.state().status).toBe("idle");
+  expect(h.state().error).toBeUndefined();
   h.session.dispose();
 });

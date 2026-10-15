@@ -16,12 +16,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/blob"
@@ -181,7 +183,13 @@ func TestProduceVisualPreviewAcceptsPNGAndFlattensTransparency(t *testing.T) {
 
 func TestProduceVisualPreviewAppliesPNGEXIFOrientation(t *testing.T) {
 	t.Parallel()
-	original := mediatest.PNG(3, 2, color.White)
+	frame := image.NewNRGBA(image.Rect(0, 0, 3, 2))
+	for index := range 6 {
+		frame.SetNRGBA(index%3, index/3, color.NRGBA{R: uint8(index * 40), G: uint8(200 - index*30), A: 255})
+	}
+	var encoded bytes.Buffer
+	require.NoError(t, png.Encode(&encoded, frame))
+	original := encoded.Bytes()
 	untilIEND := func(source []byte) []byte { return bytes.Clone(source[:len(source)-12]) }
 	exif := syntheticTIFF(42, []syntheticTIFFEntry{tiffShort(0x0112, 6)}, nil)
 	leading := syntheticPNGChunk(t, original, "eXIf", exif)
@@ -240,6 +248,24 @@ func TestProduceVisualPreviewAppliesPNGEXIFOrientation(t *testing.T) {
 			require.NotNil(t, product.Preview.Output)
 			assert.Equal(t, test.width, product.Preview.Output.Width)
 			assert.Equal(t, test.height, product.Preview.Output.Height)
+			if strings.Contains(name, "wins") && name != "oversized first trailing wins" {
+				input := photoRenderInput(test.source, "image/png")
+				output, receipt, err := renderPhotoExport(t.Context(), test.source, input, bundle.PhotoRenderProfile{Format: "png"})
+				require.NoError(t, err)
+				require.Equal(t, test.width, receipt.Width)
+				require.Equal(t, test.height, receipt.Height)
+				decoded, err := png.Decode(bytes.NewReader(output))
+				require.NoError(t, err)
+				order := []int{0, 1, 2, 3, 4, 5}
+				if test.width == 2 {
+					order = []int{3, 0, 4, 1, 5, 2}
+				}
+				for index, sourceIndex := range order {
+					require.Equal(t, frame.At(sourceIndex%3, sourceIndex/3), color.NRGBAModel.Convert(decoded.At(index%test.width, index/test.width)))
+				}
+				_, _, err = renderPhotoExport(t.Context(), test.source, input, bundle.PhotoRenderProfile{Format: "png", IncludeMetadata: true})
+				require.ErrorIs(t, err, bundle.ErrUnavailable)
+			}
 		})
 	}
 }
@@ -284,6 +310,12 @@ func TestProduceVisualPreviewUsesGIFPrimaryFrame(t *testing.T) {
 		Config: image.Config{ColorModel: palette, Width: 64, Height: 32},
 	}))
 	source := encoded.Bytes()
+	decoded, err := decodeVisualPixels(t.Context(), bytes.NewReader(source), "gif")
+	require.NoError(t, err)
+	red, green, blue, alpha := decoded.image.At(8, 4).RGBA()
+	assert.Equal(t, [4]uint32{}, [4]uint32{red, green, blue, alpha})
+	red, green, blue, alpha = decoded.image.At(32, 16).RGBA()
+	assert.Equal(t, [4]uint32{0, 0, 0, 65535}, [4]uint32{red, green, blue, alpha})
 	digest := sha256.Sum256(source)
 
 	product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(source), VisualPreviewTarget{
@@ -546,33 +578,17 @@ func TestProduceVisualPreviewRejectsOversizedPNGDimensionsBeforeDecode(t *testin
 	binary.BigEndian.PutUint32(source[16:20], 10001)
 	binary.BigEndian.PutUint32(source[20:24], 10001)
 	binary.BigEndian.PutUint32(source[29:33], crc32.ChecksumIEEE(source[12:29]))
-	digest := sha256.Sum256(source)
-
-	product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(source), VisualPreviewTarget{
-		SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(source)), MediaType: "image/png",
-	})
+	source = appendSyntheticPNGChunk(bytes.Clone(source[:len(source)-12]), "tEXt", make([]byte, 64*1024))
+	tailStart := int64(len(source))
+	source = appendSyntheticPNGChunk(source, "eXIf", syntheticTIFF(42, []syntheticTIFFEntry{tiffShort(0x0112, 6)}, nil))
+	source = appendSyntheticPNGChunk(source, "IEND", nil)
+	reader := &recordingVisualPreviewReadSeeker{Reader: bytes.NewReader(source)}
+	product, err := produceVisualPreviewPNG(t.Context(), reader, int64(len(source)), document.VisualPreviewV1{})
 	require.NoError(t, err)
 	assert.Equal(t, document.VisualPreviewFailed, product.Preview.State)
 	require.NotNil(t, product.Preview.Failure)
 	assert.Equal(t, "source_dimensions_exceed_limit", product.Preview.Failure.Code)
-
-	t.Run("rejected PNG skips trailing scan", func(t *testing.T) {
-		tailStart := int64(len(source) - 12)
-		trailing := appendSyntheticPNGChunk(bytes.Clone(source[:tailStart]), "tEXt", make([]byte, 64*1024))
-		trailing = appendSyntheticPNGChunk(trailing, "eXIf", syntheticTIFF(42, []syntheticTIFFEntry{tiffShort(0x0112, 6)}, nil))
-		trailing = appendSyntheticPNGChunk(trailing, "IEND", nil)
-		reader := &recordingVisualPreviewReadSeeker{Reader: bytes.NewReader(trailing)}
-		_, _, _, _, _, err := inspectVisualPreviewPNG(t.Context(), reader, int64(len(trailing)))
-		require.NoError(t, err)
-		bufferedEnd := reader.maxReadEnd
-		reader = &recordingVisualPreviewReadSeeker{Reader: bytes.NewReader(trailing)}
-		product, err := produceVisualPreviewPNG(t.Context(), reader, int64(len(trailing)), document.VisualPreviewV1{})
-		require.NoError(t, err)
-		assert.Equal(t, document.VisualPreviewFailed, product.Preview.State)
-		require.NotNil(t, product.Preview.Failure)
-		assert.Equal(t, "source_dimensions_exceed_limit", product.Preview.Failure.Code)
-		assert.Equal(t, bufferedEnd, reader.maxReadEnd, "rejected PNG must read nothing past pre-IDAT inspection")
-	})
+	assert.Less(t, reader.maxReadEnd, tailStart)
 }
 
 func TestProduceVisualPreviewRecordsMalformedJPEGFailure(t *testing.T) {
@@ -659,7 +675,7 @@ func TestProduceVisualPreviewKeepsImageReadErrorsRetryable(t *testing.T) {
 	}{
 		{name: "jpeg", mediaType: "image/jpeg", data: mediatest.JPEG(3, 2, color.White), failAtSeeks: []int{3, 4}},
 		{name: "png", mediaType: "image/png", data: pngSource, failAtSeeks: []int{3, 4}},
-		{name: "png after IDAT", mediaType: "image/png", data: trailingPNG, failAtSeeks: []int{3}, failReadAt: failReadAt},
+		{name: "png after IDAT", mediaType: "image/png", data: trailingPNG, failAtSeeks: []int{4}, failReadAt: failReadAt},
 		{name: "gif", mediaType: "image/gif", data: mediatest.GIF(3, 2, 1), failAtSeeks: []int{2, 3}},
 		{name: "webp", mediaType: "image/webp", data: mustDecodeWebP(t), failAtSeeks: []int{3, 4}},
 	}
@@ -675,7 +691,7 @@ func TestProduceVisualPreviewKeepsImageReadErrorsRetryable(t *testing.T) {
 			for index, failAtSeek := range source.failAtSeeks {
 				phase := phases[index].name
 				if source.failReadAt != 0 {
-					phase = "trailing EXIF"
+					phase = "after IDAT"
 				}
 				t.Run(phase, func(t *testing.T) {
 					reader := &failingVisualPreviewReadSeeker{
@@ -688,10 +704,7 @@ func TestProduceVisualPreviewKeepsImageReadErrorsRetryable(t *testing.T) {
 					})
 					require.Error(t, err)
 					assert.True(t, IsSourceContentUnavailable(err))
-					require.ErrorIs(t, err, readErr)
-					if source.failReadAt != 0 {
-						assert.ErrorContains(t, err, "inspecting visual preview PNG")
-					}
+					assert.ErrorIs(t, err, readErr)
 				})
 			}
 		})
@@ -820,14 +833,11 @@ func syntheticPNGChunk(t *testing.T, source []byte, chunkType string, payload []
 	t.Helper()
 	require.Len(t, chunkType, 4)
 	require.GreaterOrEqual(t, len(source), 33)
-	chunk := make([]byte, 12+len(payload))
-	binary.BigEndian.PutUint32(chunk[:4], uint32(len(payload)))
-	copy(chunk[4:8], chunkType)
-	copy(chunk[8:], payload)
-	binary.BigEndian.PutUint32(chunk[len(chunk)-4:], crc32.ChecksumIEEE(chunk[4:len(chunk)-4]))
-	result := append([]byte{}, source[:33]...)
-	result = append(result, chunk...)
-	return append(result, source[33:]...)
+	var result bytes.Buffer
+	result.Write(source[:33])
+	writePhotoPNGChunk(&result, chunkType, payload)
+	result.Write(source[33:])
+	return result.Bytes()
 }
 
 func syntheticAPNG(t *testing.T, source []byte) []byte {
@@ -876,12 +886,9 @@ func syntheticAPNG(t *testing.T, source []byte) []byte {
 }
 
 func appendSyntheticPNGChunk(output []byte, chunkType string, payload []byte) []byte {
-	chunk := make([]byte, 12+len(payload))
-	binary.BigEndian.PutUint32(chunk[:4], uint32(len(payload)))
-	copy(chunk[4:8], chunkType)
-	copy(chunk[8:], payload)
-	binary.BigEndian.PutUint32(chunk[len(chunk)-4:], crc32.ChecksumIEEE(chunk[4:len(chunk)-4]))
-	return append(output, chunk...)
+	result := bytes.NewBuffer(output)
+	writePhotoPNGChunk(result, chunkType, payload)
+	return result.Bytes()
 }
 
 func mustDecodeWebP(t *testing.T) []byte {

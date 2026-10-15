@@ -539,6 +539,7 @@
   let activePanel = $state<Panel | null>(null);
   let exportHasJob = $state(false);
   let exportInput = $state<ExportInput | null>(null);
+  let exportNotice = $state("");
   $effect(() => { if (!webSession) { activePanel = null; exportInput = null; exportHasJob = false; } });
 
   let queryBarOpen = $state(false);
@@ -1913,18 +1914,23 @@
     activePanel = { kind: "termReports", documents };
   }
 
+  function requestExport(input: ExportInput | null): void {
+    if (exportHasJob) exportNotice = "Your previous export is still retained. When it finishes, choose Prepare another export, then export your current selection again.";
+    else if (input) { exportInput = input; exportNotice = ""; }
+    activePanel = { kind: "export" };
+  }
+
   function openExport(selectionOnly = false): void {
-    if (exportHasJob) { activePanel = { kind: "export" }; return; }
+    if (exportHasJob) { requestExport(null); return; }
     try {
       if (snapshotActive && snapshot.state.firstPage && !selectionOnly) {
-        exportInput = { label: "Whole frozen query", snapshot: snapshot.state.firstPage };
+        requestExport({ label: "Whole frozen query", snapshot: snapshot.state.firstPage });
       } else if (snapshotActive && snapshotPage) {
-        exportInput = { label: "Selected documents on frozen page", members: copyExportMembers(snapshotPage.rows.filter(row => snapshot.selection.has(row.node_id))) };
+        requestExport({ label: "Selected documents on frozen page", members: copyExportMembers(snapshotPage.rows.filter(row => snapshot.selection.has(row.node_id))) });
       } else {
         const rows = sortedRows.filter(row => row.node.kind === "file" && (!selectionOnly || bulkSelection.selectedIDs.has(row.node.id)));
-        exportInput = { label: selectionOnly ? "Selected documents on this page" : "Documents on this page", members: copyExportMembers(rows.map(({ node }) => ({ node_id: node.id, content_version_id: node.current_version_id ?? "", blob_hash: node.blob_hash ?? "", size: node.size }))) };
+        requestExport({ label: selectionOnly ? "Selected documents on this page" : "Documents on this page", members: copyExportMembers(rows.map(({ node }) => ({ node_id: node.id, content_version_id: node.current_version_id ?? "", blob_hash: node.blob_hash ?? "", size: node.size }))) });
       }
-      activePanel = { kind: "export" };
     } catch (cause) { handleFailure(cause); }
   }
 
@@ -2455,13 +2461,13 @@
 
     {#if hiddenAccess?.lockError}<div class="photo-access-error"><p role="alert">Hidden did not lock. {hiddenAccess.lockError}</p><Button onclick={() => void (hiddenWorkspace ? hiddenWorkspace.lock() : hiddenAccess?.lock())}>Retry lock</Button></div>{/if}
     {#if photoMode}
-      {#if hiddenMode && hiddenAccess}<HiddenPhotos access={hiddenAccess} undoState={photoUndo} onhelp={openShortcutHelp} tags={tagCatalog} tagsError={tagCatalogError} tagsLoading={tagCatalogLoading} tagsTotal={tagCatalogTotal} onloadtags={loadTagCatalog} onloadmoretags={() => loadTagCatalog(true)} onmetadatachanged={handlePhotoMetadataChanged} shortcuts={shortcutManager} bind:this={hiddenWorkspace} {photoID} onphotochange={changePhoto} onconceal={clearPhoto} onstate={result => { void acceptPhotoAccess(result).catch(cause => { void invalidateLibrary(); photoAccessError = cause instanceof Error ? cause.message : String(cause); }); }} onaccessfailure={invalidateLibrary} ontrashed={() => { handleTrashed(); void hiddenWorkspace?.refresh(); }} onunhidden={() => { void invalidateLibrary(); void hiddenWorkspace?.refresh(); }} onactionerror={error => hiddenPhotoActionError = error} photoActionError={hiddenPhotoActionError} />{:else if photoValidated && photoState}
+      {#if hiddenMode && hiddenAccess}<HiddenPhotos access={hiddenAccess} undoState={photoUndo} onhelp={openShortcutHelp} tags={tagCatalog} tagsError={tagCatalogError} tagsLoading={tagCatalogLoading} tagsTotal={tagCatalogTotal} onloadtags={loadTagCatalog} onloadmoretags={() => loadTagCatalog(true)} onmetadatachanged={handlePhotoMetadataChanged} shortcuts={shortcutManager} bind:this={hiddenWorkspace} onexport={requestExport} {photoID} onphotochange={changePhoto} onconceal={clearPhoto} onstate={result => { void acceptPhotoAccess(result).catch(cause => { void invalidateLibrary(); photoAccessError = cause instanceof Error ? cause.message : String(cause); }); }} onaccessfailure={invalidateLibrary} ontrashed={() => { handleTrashed(); void hiddenWorkspace?.refresh(); }} onunhidden={() => { void invalidateLibrary(); void hiddenWorkspace?.refresh(); }} onactionerror={error => hiddenPhotoActionError = error} photoActionError={hiddenPhotoActionError} />{:else if photoValidated && photoState}
       {#if hiddenPhotoActionError}<p role="alert">{hiddenPhotoActionError}</p>{/if}
       {#if photoPath === "/photos/albums"}{#if photoAlbums}<PhotoAlbumsIndex albums={photoAlbums} cache={photoState.cache} onnavigate={navigatePhotos} />{/if}
-      {:else if albumID}{#if albumPhotos}{#key albumPhotos}<PhotosWorkspace onhelp={openShortcutHelp} tags={tagCatalog} tagsError={tagCatalogError} tagsLoading={tagCatalogLoading} tagsTotal={tagCatalogTotal} onloadtags={loadTagCatalog} onloadmoretags={() => loadTagCatalog(true)} onmetadatachanged={handlePhotoMetadataChanged} shortcuts={shortcutManager} bind:this={libraryWorkspace} photos={albumPhotos} cache={photoState.cache} albums={photoAlbums} {albumID} onnavigate={navigatePhotos} {photoID} onphotochange={changePhoto} ontrashed={source => handleTrashed(undefined, source)} onactionerror={error => hiddenPhotoActionError = error} onhidden={invalidateLibrary} oninvalidate={invalidateLibrary} />{/key}{/if}
+      {:else if albumID}{#if albumPhotos}{#key albumPhotos}<PhotosWorkspace onhelp={openShortcutHelp} tags={tagCatalog} tagsError={tagCatalogError} tagsLoading={tagCatalogLoading} tagsTotal={tagCatalogTotal} onloadtags={loadTagCatalog} onloadmoretags={() => loadTagCatalog(true)} onmetadatachanged={handlePhotoMetadataChanged} shortcuts={shortcutManager} bind:this={libraryWorkspace} onexport={requestExport} photos={albumPhotos} cache={photoState.cache} albums={photoAlbums} {albumID} onnavigate={navigatePhotos} {photoID} onphotochange={changePhoto} ontrashed={source => handleTrashed(undefined, source)} onactionerror={error => hiddenPhotoActionError = error} onhidden={invalidateLibrary} oninvalidate={invalidateLibrary} />{/key}{/if}
       {:else if mapMode}{#if mapAlbumID && photoAlbums?.initialized && !photoAlbums.loading && !photoAlbums.busy && !photoAlbums.loadError && !photoAlbums.items.some(album => album.id === mapAlbumID)}<EmptyState title="Album not found"><Button onclick={() => navigatePhotos("/photos/albums")}>Back to albums</Button></EmptyState>
-      {:else if !tiles.tile_url}<PhotosWorkspace onhelp={openShortcutHelp} tags={tagCatalog} tagsError={tagCatalogError} tagsLoading={tagCatalogLoading} tagsTotal={tagCatalogTotal} onloadtags={loadTagCatalog} onloadmoretags={() => loadTagCatalog(true)} onmetadatachanged={handlePhotoMetadataChanged} shortcuts={shortcutManager} {mapMode} {tiles} photos={photoState.photos} cache={photoState.cache} />{:else if mapPhotos}{#key mapPhotos}<PhotosWorkspace onhelp={openShortcutHelp} tags={tagCatalog} tagsError={tagCatalogError} tagsLoading={tagCatalogLoading} tagsTotal={tagCatalogTotal} onloadtags={loadTagCatalog} onloadmoretags={() => loadTagCatalog(true)} onmetadatachanged={handlePhotoMetadataChanged} shortcuts={shortcutManager} {mapMode} {tiles} bind:this={libraryWorkspace} photos={mapPhotos} cache={photoState.cache} albums={photoAlbums} onnavigate={navigatePhotos} {photoID} onphotochange={changePhoto} ontrashed={source => handleTrashed(undefined, source)} onactionerror={error => hiddenPhotoActionError = error} onhidden={invalidateLibrary} oninvalidate={invalidateLibrary} />{/key}{/if}
-      {:else}{#key photoState.photos.contextID}<PhotosWorkspace onhelp={openShortcutHelp} tags={tagCatalog} tagsError={tagCatalogError} tagsLoading={tagCatalogLoading} tagsTotal={tagCatalogTotal} onloadtags={loadTagCatalog} onloadmoretags={() => loadTagCatalog(true)} onmetadatachanged={handlePhotoMetadataChanged} shortcuts={shortcutManager} {mapMode} {tiles} bind:this={libraryWorkspace} photos={photoState.photos} cache={photoState.cache} albums={photoAlbums} onnavigate={navigatePhotos} {photoID} onphotochange={changePhoto} ontrashed={source => handleTrashed(undefined, source)} onactionerror={error => hiddenPhotoActionError = error} onhidden={invalidateLibrary} oninvalidate={invalidateLibrary} />{/key}{/if}
+      {:else if !tiles.tile_url}<PhotosWorkspace onhelp={openShortcutHelp} tags={tagCatalog} tagsError={tagCatalogError} tagsLoading={tagCatalogLoading} tagsTotal={tagCatalogTotal} onloadtags={loadTagCatalog} onloadmoretags={() => loadTagCatalog(true)} onmetadatachanged={handlePhotoMetadataChanged} shortcuts={shortcutManager} {mapMode} {tiles} photos={photoState.photos} cache={photoState.cache} />{:else if mapPhotos}{#key mapPhotos}<PhotosWorkspace onhelp={openShortcutHelp} tags={tagCatalog} tagsError={tagCatalogError} tagsLoading={tagCatalogLoading} tagsTotal={tagCatalogTotal} onloadtags={loadTagCatalog} onloadmoretags={() => loadTagCatalog(true)} onmetadatachanged={handlePhotoMetadataChanged} shortcuts={shortcutManager} {mapMode} {tiles} bind:this={libraryWorkspace} onexport={requestExport} photos={mapPhotos} cache={photoState.cache} albums={photoAlbums} onnavigate={navigatePhotos} {photoID} onphotochange={changePhoto} ontrashed={source => handleTrashed(undefined, source)} onactionerror={error => hiddenPhotoActionError = error} onhidden={invalidateLibrary} oninvalidate={invalidateLibrary} />{/key}{/if}
+      {:else}{#key photoState.photos.contextID}<PhotosWorkspace onhelp={openShortcutHelp} tags={tagCatalog} tagsError={tagCatalogError} tagsLoading={tagCatalogLoading} tagsTotal={tagCatalogTotal} onloadtags={loadTagCatalog} onloadmoretags={() => loadTagCatalog(true)} onmetadatachanged={handlePhotoMetadataChanged} shortcuts={shortcutManager} {mapMode} {tiles} bind:this={libraryWorkspace} onexport={requestExport} photos={photoState.photos} cache={photoState.cache} albums={photoAlbums} onnavigate={navigatePhotos} {photoID} onphotochange={changePhoto} ontrashed={source => handleTrashed(undefined, source)} onactionerror={error => hiddenPhotoActionError = error} onhidden={invalidateLibrary} oninvalidate={invalidateLibrary} />{/key}{/if}
       {:else if photoAccessError}<div class="photo-access-error"><p role="alert">{photoAccessError}</p><Button onclick={() => void checkPhotoAccess?.()}>Retry</Button></div>{:else}<Spinner />
       {/if}
     {:else}
@@ -3373,11 +3379,7 @@
             if (activePanel === panel) await loadDirectory(panel.target.id, false);
           }}
           onauthfailure={handleFailure}
-          onexport={(collectionID, total) => {
-            if (exportHasJob) { activePanel = { kind: "export" }; return; }
-            exportInput = { label: "Completed mailbox import", collectionID, total };
-            activePanel = { kind: "export" };
-          }}
+          onexport={(collectionID, total) => requestExport({ label: "Completed mailbox import", collectionID, total })}
         />
       {/if}
       {#if panel.kind === "loadFile" && uploadChannel}
@@ -3404,7 +3406,7 @@
       {/if}
     {/each}
     {#key webSession}
-      <ExportDrawer session={webSession} open={activePanel?.kind === "export"} input={exportInput} onclose={closePanel(activePanel?.kind === "export" ? activePanel : null)} onauthfailure={handleFailure} onactivechange={active => exportHasJob = active} />
+      <ExportDrawer session={webSession} open={activePanel?.kind === "export"} input={exportInput} notice={exportHasJob ? exportNotice : ""} onclose={() => { exportNotice = ""; closePanel(activePanel?.kind === "export" ? activePanel : null)(); }} onauthfailure={handleFailure} onactivechange={active => exportHasJob = active} onprepareanother={() => { activePanel = null; exportInput = null; }} />
     {/key}
     {#if manageTagsTarget}
       <ManageTagsModal

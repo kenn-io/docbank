@@ -6,6 +6,8 @@ const (
 	xImageDrawVersion = "x-image-draw-v0.44.0"
 	// VisualPreviewMaxEdgePixels bounds the large built-in preview.
 	VisualPreviewMaxEdgePixels = 4096
+	// VisualPreviewMaxSourcePixels bounds decoded source images and photo exports.
+	VisualPreviewMaxSourcePixels = 100_000_000
 	// VisualPreviewJPEGQuality is the encoder quality for every built-in preview.
 	VisualPreviewJPEGQuality = 90
 	// VisualPreviewProcessorDescriptor names every byte-producing choice. Bump

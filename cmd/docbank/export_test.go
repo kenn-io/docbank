@@ -2,8 +2,10 @@ package main
 
 import (
 	"archive/zip"
+	"bytes"
 	"encoding/json/v2"
 	"fmt"
+	"image/color"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,8 +17,10 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/bundle"
+	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/query"
 )
 
 func TestExportPreflightDoesNotContactDaemon(t *testing.T) {
@@ -24,7 +28,10 @@ func TestExportPreflightDoesNotContactDaemon(t *testing.T) {
 	t.Setenv("DOCBANK_HOME", vault)
 	valid := `{"source_operation_id":"11111111-1111-4111-8111-111111111111","plan_operation_id":"22222222-2222-4222-8222-222222222222","members":[{"node_id":1,"version_id":"33333333-3333-4333-8333-333333333333","sha256":"` + strings.Repeat("a", 64) + `","size":0}]}`
 	member := valid[strings.Index(valid, `[{`)+1 : len(valid)-2]
+	photo := strings.TrimSuffix(valid, "}") + `,"photo_render":{"format":"png","long_edge":0,"include_metadata":true,"remove_gps":true}}`
+	scopedPhoto := strings.Replace(photo, `"members":[`+member+`]`, `"photos":{"query":{"v":1,"syntax":"advanced","mode":"lexical","sort":{"field":"name","direction":"asc"}}}`, 1)
 	for _, tc := range []struct{ name, body, field string }{
+		{"photos without profile", strings.Split(scopedPhoto, `,"photo_render"`)[0] + `}`, "photo_render"},
 		{"malformed", "{", "JSON"},
 		{"unknown", strings.Replace(valid, `"size":0`, `"unknown":0`, 1), "JSON"},
 		{"source ID", strings.Replace(valid, "11111111-1111-4111-8111-111111111111", "bad", 1), "source_operation_id"},
@@ -189,4 +196,59 @@ func releaseCLIExport(t *testing.T, id string) string {
 	}, 30*time.Second, 25*time.Millisecond)
 	require.NoError(t, err)
 	return output
+}
+
+func TestPhotoExportPreviewDescribesDeliveredCopies(t *testing.T) {
+	var output bytes.Buffer
+	plan := bundle.Plan{PhotoRender: &bundle.PhotoRenderProfile{Format: "png", LongEdge: 2048}, EmbeddedPreviews: 2}
+	require.NoError(t, writeExportPreview(&output, plan))
+	require.Contains(t, output.String(), "photo format png")
+	require.Contains(t, output.String(), "planned contents: 0 photos")
+	require.Contains(t, output.String(), "long edge 2048 pixels")
+	require.Contains(t, output.String(), "metadata false, remove GPS false")
+	require.Contains(t, output.String(), "embedded RAW previews 2")
+	require.NotContains(t, output.String(), "Original contents")
+	output.Reset()
+	plan.PhotoRender = nil
+	require.NoError(t, writeExportPreview(&output, plan))
+	require.Contains(t, output.String(), "original bytes")
+	require.Contains(t, output.String(), "Original contents")
+}
+
+func TestPhotoExportCLIHiddenAuthentication(t *testing.T) {
+	setupVaultHome(t)
+	file := writeSourceFile(t, "synthetic-hidden.jpg", string(mediatest.JPEG(3, 2, color.White)))
+	_, err := runCLI(t, "add", file, "--dest", "/")
+	require.NoError(t, err)
+	connection, err := daemonconn.Ensure(t.Context())
+	require.NoError(t, err)
+	node, err := connection.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: "/synthetic-hidden.jpg"}})
+	require.NoError(t, err)
+	asset, err := connection.PhotoAssetForNode(t.Context(), node.ID)
+	require.NoError(t, err)
+	_, _, err = connection.PhotoHidden(t.Context(), "setup", "synthetic-passcode", "")
+	require.NoError(t, err)
+	_, err = connection.SetPhotoAssetHidden(t.Context(), asset.ID, asset.Revision, true, "")
+	require.NoError(t, err)
+	t.Cleanup(func() { exportPreviewCmd.SetIn(nil) })
+	for _, exact := range []bool{false, true} {
+		r := exportPreviewRequest{SourceOperationID: uuid.New().String(), PlanOperationID: uuid.New().String(), PhotoRender: &bundle.PhotoRenderProfile{Format: "png"}}
+		if exact {
+			r.Members = []bundle.Member{{NodeID: node.ID, VersionID: node.CurrentVersionID, SHA256: node.BlobHash, Size: node.Size}}
+		} else {
+			r.Photos = &bundle.PhotoExportSelection{Hidden: true, Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}}
+		}
+		encoded, err := json.Marshal(r)
+		require.NoError(t, err)
+		input := writeSourceFile(t, "hidden-export.json", string(encoded))
+		exportPreviewCmd.SetIn(strings.NewReader("synthetic-passcode\n"))
+		output, err := runCLI(t, "export", "preview", "--request", input, "--json")
+		require.NoError(t, err)
+		var plan bundle.Plan
+		require.NoError(t, json.Unmarshal([]byte(output), &plan))
+		require.Equal(t, 1, plan.Total)
+		require.Equal(t, r.PlanOperationID, plan.ID)
+		_, _, err = connection.PhotoHidden(t.Context(), "lock", "", "")
+		require.NoError(t, err)
+	}
 }

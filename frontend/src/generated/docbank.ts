@@ -116,6 +116,9 @@ export const PhotoAuthoredLabel = {
   purple: 'purple',
 } as const;
 
+/**
+ * Clockwise degrees on EXIF-normalized pixels: 0, 90, 180, or 270.
+ */
 export type PhotoAuthoredRotation = typeof PhotoAuthoredRotation[keyof typeof PhotoAuthoredRotation];
 
 
@@ -146,6 +149,7 @@ export interface PhotoAuthored {
      * @maximum 5
      */
   rating: number;
+  /** Clockwise degrees on EXIF-normalized pixels: 0, 90, 180, or 270. */
   rotation: PhotoAuthoredRotation;
 }
 
@@ -5024,6 +5028,9 @@ export const PhotoFileRole = {
   sidecar: 'sidecar',
 } as const;
 
+/**
+ * Clockwise degrees on EXIF-normalized pixels: 0, 90, 180, or 270.
+ */
 export type PhotoFileRotation = typeof PhotoFileRotation[keyof typeof PhotoFileRotation];
 
 
@@ -5071,6 +5078,7 @@ export interface PhotoFile {
   /** @minimum 1 */
   revision: number;
   role: PhotoFileRole;
+  /** Clockwise degrees on EXIF-normalized pixels: 0, 90, 180, or 270. */
   rotation: PhotoFileRotation;
   /** @nullable */
   sidecar_of_file_id?: string | null;
@@ -5142,6 +5150,7 @@ export const PhotoAuthoredPatchLabel = {
 } as const;
 
 /**
+ * Clockwise degrees on EXIF-normalized pixels: 0, 90, 180, or 270.
  * @nullable
  */
 export type PhotoAuthoredPatchRotation = typeof PhotoAuthoredPatchRotation[keyof typeof PhotoAuthoredPatchRotation] | null;
@@ -5180,7 +5189,10 @@ export interface PhotoAuthoredPatch {
      * @nullable
      */
   rating?: number | null;
-  /** @nullable */
+  /**
+     * Clockwise degrees on EXIF-normalized pixels: 0, 90, 180, or 270.
+     * @nullable
+     */
   rotation?: PhotoAuthoredPatchRotation;
 }
 
@@ -5539,6 +5551,26 @@ export interface PhotoBrowseRequest {
   query: SavedQueryV1Schema;
 }
 
+export interface Sort {
+  direction: string;
+  field: string;
+}
+
+export interface Query {
+  filters: Filters;
+  mode: string;
+  sort: Sort;
+  syntax: string;
+  text: string;
+  v: number;
+}
+
+export interface PhotoExportSelection {
+  asset_ids?: string[];
+  hidden: boolean;
+  query: Query;
+}
+
 export interface PhotoFace {
   assertion_id?: string;
   box: FaceBox;
@@ -5650,6 +5682,14 @@ export interface PhotoRejectsRequest {
   coverage?: WorkspaceQueryCoverage;
   hidden?: boolean;
   query: SavedQueryV1Schema;
+}
+
+export interface PhotoRenderProfile {
+  format: string;
+  include_metadata: boolean;
+  long_edge: number;
+  quality?: number;
+  remove_gps: boolean;
 }
 
 /**
@@ -5770,11 +5810,13 @@ export interface Plan {
   created_at: string;
   document_rows?: number;
   duplicate_policy?: string;
+  embedded_previews?: number;
   expires_at: string;
   fingerprint: string;
   format: string;
   id: string;
   metadata_bytes: number;
+  photo_render?: PhotoRenderProfile;
   role_bytes: number;
   role_entries: number;
   roles: RolePolicy[];
@@ -5817,6 +5859,7 @@ export interface PlanRequest {
   duplicate_policy?: string;
   member_hash: string;
   operation_id: string;
+  photo_render?: PhotoRenderProfile;
   publications?: PublicationSelection[];
   roles: RolePolicy[];
   source_id: string;
@@ -6232,20 +6275,6 @@ export interface PutExportChunkRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   members: Member[];
-}
-
-export interface Sort {
-  direction: string;
-  field: string;
-}
-
-export interface Query {
-  filters: Filters;
-  mode: string;
-  sort: Sort;
-  syntax: string;
-  text: string;
-  v: number;
 }
 
 export interface QueryDependency {
@@ -6936,6 +6965,7 @@ export interface SourceRequest {
   members?: Member[];
   node_ids?: number[];
   operation_id: string;
+  photos?: PhotoExportSelection;
   query?: Query;
   saved_query_id?: string;
   saved_query_revision?: number;
