@@ -44,6 +44,8 @@ const currentStorageSchemaVersion = 35
 const peopleStorageSchemaVersion = 15
 const photoFacesStorageSchemaVersion = 35
 
+const pushSourcesStorageSchemaVersion = 35
+
 // DefaultSQLiteDriver returns the build's standalone-compatible adapter: CGO
 // builds use mattn/go-sqlite3 and no-CGO builds use modernc.org/sqlite.
 func DefaultSQLiteDriver() docsqlite.Driver { return defaultSQLiteDriver() }

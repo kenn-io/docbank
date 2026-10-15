@@ -16,3 +16,13 @@ func TestProofVerification(t *testing.T) {
 	assert.False(t, Verify("runtime-secret", append([]byte{0x00}, nonce...), proof))
 	assert.False(t, Verify("runtime-secret", nonce, "not-hex"))
 }
+
+func TestKeyProofIsDomainSeparatedFromOwnershipProof(t *testing.T) {
+	nonce := bytes.Repeat([]byte{0x42}, NonceBytes)
+	proof := KeyProof("api-key", nonce)
+
+	assert.True(t, VerifyKey("api-key", nonce, proof))
+	assert.False(t, VerifyKey("other-key", nonce, proof))
+	assert.False(t, Verify("api-key", nonce, proof), "an API key proof is not an ownership proof")
+	assert.False(t, VerifyKey("api-key", nonce, Proof("api-key", nonce)))
+}

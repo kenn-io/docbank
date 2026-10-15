@@ -12,12 +12,14 @@ import (
 	"net/url"
 	"strconv"
 	"testing"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -28,6 +30,10 @@ type uploadRequest struct {
 	expectedHash string
 	expectedSize int64
 	extraPart    bool
+	pushName     string
+	sourceRef    string
+	runID        string
+	parentPath   string
 }
 
 func sendUpload(
@@ -52,7 +58,22 @@ func sendUpload(
 	require.NoError(t, writer.Close())
 
 	query := url.Values{"parent_id": {strconv.FormatInt(parentID, 10)}, "name": {in.name}}
-	req, err := http.NewRequest(http.MethodPost, tsURL+"/api/v1/uploads?"+query.Encode(), &body)
+	route := "/api/v1/uploads"
+	if in.pushName != "" {
+		route = "/api/v1/push/uploads"
+		query.Del("parent_id")
+		query.Set("parent_path", in.parentPath)
+		if in.parentPath == "" {
+			query.Set("parent_path", "/")
+		}
+		query.Set("push_name", in.pushName)
+		query.Set("source_ref", in.sourceRef)
+		query.Set("run_id", in.runID)
+		if in.runID == "" {
+			query.Set("run_id", uuid.NewV4().String())
+		}
+	}
+	req, err := http.NewRequest(http.MethodPost, tsURL+route+"?"+query.Encode(), &body)
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.Header.Set(api.BlobHashHeader, in.expectedHash)
@@ -215,6 +236,162 @@ func TestUploadRejectsTruncatedMultipartAsValidation(t *testing.T) {
 	assert.Contains(t, response.String(), `"code":"validation"`)
 	_, err = s.NodeByPath(t.Context(), "/bad.txt")
 	require.ErrorIs(t, err, store.ErrNotFound)
+	blobs, err := s.AllBlobs(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, blobs)
+}
+
+func TestPushUploadIdentityVersionsAndIdempotence(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	in := uploadRequest{name: "report.txt", pushName: "laptop", sourceRef: "report.txt", content: []byte("first")}
+	in.expectedHash, in.expectedSize = uploadIdentity(in.content), int64(len(in.content))
+	resp, body := sendUpload(t, ts.URL, ts.Client(), s.RootID(), in)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	var first api.PushUploadReceipt
+	require.NoError(t, json.Unmarshal([]byte(body), &first))
+	resp, body = sendUpload(t, ts.URL, ts.Client(), s.RootID(), in)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var repeated api.PushUploadReceipt
+	require.NoError(t, json.Unmarshal([]byte(body), &repeated))
+	assert.Equal(t, first.Node.ID, repeated.Node.ID)
+	assert.Equal(t, first.Node.Revision, repeated.Node.Revision)
+	in.content = []byte("second")
+	in.expectedHash, in.expectedSize = uploadIdentity(in.content), int64(len(in.content))
+	resp, body = sendUpload(t, ts.URL, ts.Client(), s.RootID(), in)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var changed api.PushUploadReceipt
+	require.NoError(t, json.Unmarshal([]byte(body), &changed))
+	assert.Equal(t, "updated", changed.Status)
+	assert.Equal(t, first.Node.ID, changed.Node.ID)
+	assert.NotEqual(t, first.Node.CurrentVersionID, changed.Node.CurrentVersionID)
+}
+
+func TestPushUploadGivesIdenticalSourcesSeparateNodesInOneRun(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	runID := uuid.NewV4().String()
+	nodes := map[int64]bool{}
+	for _, name := range []string{"first.txt", "second.txt"} {
+		in := uploadRequest{name: name, pushName: "laptop", sourceRef: name, runID: runID, content: []byte("same bytes")}
+		in.expectedHash, in.expectedSize = uploadIdentity(in.content), int64(len(in.content))
+		resp, body := sendUpload(t, ts.URL, ts.Client(), 0, in)
+		require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+		var receipt api.PushUploadReceipt
+		require.NoError(t, json.Unmarshal([]byte(body), &receipt))
+		assert.Equal(t, "added", receipt.Status)
+		nodes[receipt.Node.ID] = true
+	}
+	assert.Len(t, nodes, 2, "identical bytes from two sources make two documents")
+	_, total, err := s.Collections(t.Context(), 100, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 1, total, "one run is one collection")
+
+	in := uploadRequest{name: "third.txt", pushName: "desktop", sourceRef: "third.txt", runID: runID, content: []byte("other")}
+	in.expectedHash, in.expectedSize = uploadIdentity(in.content), int64(len(in.content))
+	resp, body := sendUpload(t, ts.URL, ts.Client(), 0, in)
+	assert.Equal(t, http.StatusConflict, resp.StatusCode, body)
+	in.runID = "not-a-uuid"
+	resp, body = sendUpload(t, ts.URL, ts.Client(), 0, in)
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	assert.Contains(t, body, "push run ID")
+}
+
+func TestPushSourcesPageThroughCursors(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	runID := uuid.NewV4().String()
+	for _, name := range []string{"c.txt", "a.txt", "b.txt"} {
+		in := uploadRequest{name: name, pushName: "laptop", sourceRef: name, runID: runID, content: []byte(name)}
+		in.expectedHash, in.expectedSize = uploadIdentity(in.content), int64(len(in.content))
+		resp, body := sendUpload(t, ts.URL, ts.Client(), 0, in)
+		require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	}
+	var refs []string
+	after := ""
+	for range 3 {
+		resp, body := get(t, ts, "/api/v1/push/sources?push_name=laptop&limit=2&after="+url.QueryEscape(after), nil)
+		require.Equal(t, http.StatusOK, resp.StatusCode, body)
+		var page api.PushSourcePage
+		require.NoError(t, json.Unmarshal([]byte(body), &page))
+		for _, cursor := range page.Items {
+			refs = append(refs, cursor.SourceRef)
+			assert.Equal(t, uploadIdentity([]byte(cursor.SourceRef)), cursor.Hash)
+		}
+		if page.Next == "" {
+			break
+		}
+		after = page.Next
+	}
+	assert.Equal(t, []string{"a.txt", "b.txt", "c.txt"}, refs)
+	resp, body := get(t, ts, "/api/v1/push/sources?push_name=Laptop", nil)
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+}
+
+func TestPushUploadMismatchGrantsNoSourceAuthority(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	in := uploadRequest{name: "bad.txt", pushName: "laptop", sourceRef: "bad.txt", content: []byte("bytes"), expectedHash: uploadIdentity([]byte("other")), expectedSize: 5}
+	resp, body := sendUpload(t, ts.URL, ts.Client(), s.RootID(), in)
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	assert.Contains(t, body, "digest_mismatch")
+	blobs, err := s.AllBlobs(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, blobs)
+}
+
+func TestPushUploadCreatesItsDestinationOnlyForANewNode(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	in := uploadRequest{name: "notes.txt", pushName: "laptop", sourceRef: "a/notes.txt", parentPath: "/archive/a", content: []byte("first")}
+	in.expectedHash, in.expectedSize = uploadIdentity(in.content), int64(len(in.content))
+	resp, body := sendUpload(t, ts.URL, ts.Client(), 0, in)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
+	created, err := s.NodeByPath(t.Context(), "/archive/a/notes.txt")
+	require.NoError(t, err)
+
+	moved, err := s.MkdirAll(t.Context(), "/moved")
+	require.NoError(t, err)
+	_, _, err = s.Move(t.Context(), created.ID, moved.ID, "notes.txt", store.UnconditionalRev)
+	require.NoError(t, err)
+	archive, err := s.NodeByPath(t.Context(), "/archive")
+	require.NoError(t, err)
+	_, _, err = s.Trash(t.Context(), archive.ID, archive.Revision)
+	require.NoError(t, err)
+	in.content = []byte("second")
+	in.expectedHash, in.expectedSize = uploadIdentity(in.content), int64(len(in.content))
+	resp, body = sendUpload(t, ts.URL, ts.Client(), 0, in)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var receipt api.PushUploadReceipt
+	require.NoError(t, json.Unmarshal([]byte(body), &receipt))
+	assert.Equal(t, "updated", receipt.Status)
+	assert.Equal(t, created.ID, receipt.Node.ID)
+	_, err = s.NodeByPath(t.Context(), "/archive")
+	require.ErrorIs(t, err, store.ErrNotFound, "a stale destination is neither required nor recreated")
+
+	in.parentPath = "relative"
+	in.sourceRef = "other.txt"
+	in.name = "other.txt"
+	resp, body = sendUpload(t, ts.URL, ts.Client(), 0, in)
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	assert.Contains(t, body, "absolute virtual path")
+}
+
+func TestPushRoutesRefuseTheNameOfAConfiguredWatch(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, func(d *api.Deps) {
+		d.Cfg.Watches = []config.WatchConfig{{Name: "laptop", Source: t.TempDir(), Destination: "/watched"}}
+	})
+	resp, body := get(t, ts, "/api/v1/push/sources?push_name=laptop", nil)
+	assert.Equal(t, http.StatusConflict, resp.StatusCode, body)
+	assert.Contains(t, body, "push_name_in_use")
+	in := uploadRequest{name: "notes.txt", pushName: "laptop", sourceRef: "notes.txt", content: []byte("bytes")}
+	in.expectedHash, in.expectedSize = uploadIdentity(in.content), int64(len(in.content))
+	resp, body = sendUpload(t, ts.URL, ts.Client(), 0, in)
+	assert.Equal(t, http.StatusConflict, resp.StatusCode, body)
+	assert.Contains(t, body, "push_name_in_use")
+	resp, body = get(t, ts, "/api/v1/push/sources?push_name=desktop", nil)
+	assert.Equal(t, http.StatusOK, resp.StatusCode, body)
 	blobs, err := s.AllBlobs(t.Context())
 	require.NoError(t, err)
 	assert.Empty(t, blobs)

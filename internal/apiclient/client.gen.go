@@ -108,6 +108,51 @@ func (c *Client) ChallengeDaemon(ctx context.Context, options *ChallengeDaemonRe
 	return responseParser(ctx, resp)
 }
 
+func (c *Client) ChallengeAPIKey(ctx context.Context, options *ChallengeAPIKeyRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ChallengeAPIKeyResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/daemon/key-challenge",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ChallengeAPIKeyResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ChallengeAPIKeyResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ChallengeAPIKeyResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/daemon/key-challenge")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 func (c *Client) ShutdownDaemon(ctx context.Context, options *ShutdownDaemonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
@@ -10823,6 +10868,124 @@ func (c *Client) ResolveDocumentSourceFence(ctx context.Context, options *Resolv
 	return responseParser(ctx, resp)
 }
 
+// ListPushSources List the last accepted bytes of a push name's sources
+func (c *Client) ListPushSources(ctx context.Context, options *ListPushSourcesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPushSourcesResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"after":     {Style: "form", Explode: &[]bool{false}[0]},
+		"limit":     {Style: "form", Explode: &[]bool{false}[0]},
+		"push_name": {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/push/sources",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListPushSourcesResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListPushSourcesResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListPushSourcesResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListPushSourcesErrorResponse](resp, "ListPushSourcesErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/push/sources")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// UploadPushFile Upload one digest-checked push source
+func (c *Client) UploadPushFile(ctx context.Context, options *UploadPushFileRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UploadPushFileResult, error) {
+	var err error
+	bodyEncoding := make(map[string]runtime.FieldEncoding)
+	bodyEncoding["file"] = runtime.FieldEncoding{
+		ContentType: "*/*",
+		Style:       "",
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:   c.apiClient.GetBaseURL() + "/api/v1/push/uploads",
+		Method:       "POST",
+		Options:      options,
+		ContentType:  "multipart/form-data",
+		BodyEncoding: bodyEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*UploadPushFileResult, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(UploadPushFileResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "UploadPushFileResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return &UploadPushFileResult{Status200: target}, nil
+
+		case 201:
+
+			target := new(UploadPushFileResponseJSON)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "UploadPushFileResponseJSON", Body: resp.Content, Err: err,
+				}
+			}
+
+			return &UploadPushFileResult{Status201: target}, nil
+
+		default:
+
+			return nil, decodeAPIError[UploadPushFileErrorResponse](resp, "UploadPushFileErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/push/uploads")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
 // PreviewQueryHighlights Preview positive document-text highlight terms
 func (c *Client) PreviewQueryHighlights(ctx context.Context, options *PreviewQueryHighlightsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewQueryHighlightsResponse, error) {
 	var err error
@@ -14109,6 +14272,12 @@ type ReadPhotoPreviewResult struct {
 	Status304 *struct{}
 }
 
+// UploadPushFileResult contains the decoded body for the returned success status.
+type UploadPushFileResult struct {
+	Status200 *UploadPushFileResponse
+	Status201 *UploadPushFileResponseJSON
+}
+
 // GetDocumentRenditionResult contains the decoded body for the returned success status.
 type GetDocumentRenditionResult struct {
 	Status200 *GetDocumentRenditionResponse
@@ -14155,6 +14324,37 @@ func (o *ChallengeDaemonRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *ChallengeDaemonRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ChallengeAPIKeyRequestOptions is the options needed to make a request to ChallengeAPIKey.
+type ChallengeAPIKeyRequestOptions struct {
+	Query *ChallengeAPIKeyQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ChallengeAPIKeyRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ChallengeAPIKeyRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ChallengeAPIKeyRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ChallengeAPIKeyRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -21120,6 +21320,79 @@ func (o *ResolveDocumentSourceFenceRequestOptions) GetHeader() (map[string]strin
 	return nil, nil
 }
 
+// ListPushSourcesRequestOptions is the options needed to make a request to ListPushSources.
+type ListPushSourcesRequestOptions struct {
+	Query *ListPushSourcesQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListPushSourcesRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListPushSourcesRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListPushSourcesRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListPushSourcesRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// UploadPushFileRequestOptions is the options needed to make a request to UploadPushFile.
+type UploadPushFileRequestOptions struct {
+	Query  *UploadPushFileQuery
+	Body   *UploadPushFileBody
+	Header *UploadPushFileHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *UploadPushFileRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *UploadPushFileRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *UploadPushFileRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *UploadPushFileRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
 // PreviewQueryHighlightsRequestOptions is the options needed to make a request to PreviewQueryHighlights.
 type PreviewQueryHighlightsRequestOptions struct {
 	Body *PreviewQueryHighlightsBody
@@ -23527,6 +23800,14 @@ type SetPhotoSettingsHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
 
+type UploadPushFileHeaders struct {
+	// XDocbankBlobHash Expected lowercase hexadecimal SHA-256 of the file payload
+	XDocbankBlobHash string `json:"X-Docbank-Blob-Hash"`
+
+	// XDocbankBlobSize Expected raw file byte length
+	XDocbankBlobSize int64 `json:"X-Docbank-Blob-Size"`
+}
+
 type GetDocumentRenditionHeaders struct {
 	Range *string `json:"Range,omitempty"`
 }
@@ -24389,6 +24670,10 @@ type PlanDocumentProcessingBody = ProcessingPlanRequest
 
 type ResolveDocumentSourceFenceBody = DocumentSourceFenceResolveRequest
 
+type UploadPushFileBody struct {
+	File runtime.File `json:"file"`
+}
+
 type PreviewQueryHighlightsBody = SavedQueryV1Schema
 
 type ParseQueryBody = SavedQueryV1Schema
@@ -24468,6 +24753,10 @@ type CreateWorkspaceQueryBody = WorkspaceQueryCreateRequest
 type ReadWorkspaceQueryPageBody = WorkspaceQueryPageRequest
 
 type ChallengeDaemonQuery struct {
+	Nonce string `json:"nonce"`
+}
+
+type ChallengeAPIKeyQuery struct {
 	Nonce string `json:"nonce"`
 }
 
@@ -24703,6 +24992,32 @@ type DetachPhotoFileQuery struct {
 	ClearDependentSidecars *bool `json:"clear_dependent_sidecars,omitempty"`
 }
 
+type ListPushSourcesQuery struct {
+	PushName string  `json:"push_name"`
+	After    *string `json:"after,omitempty"`
+	Limit    *int64  `json:"limit,omitempty"`
+}
+
+type UploadPushFileQuery struct {
+	// Name Virtual filename; must equal the multipart filename
+	Name string `json:"name"`
+
+	// ParentPath Absolute virtual directory for a new source; missing directories are created with its node
+	ParentPath string `json:"parent_path"`
+
+	// PushName Portable push identity; lowercase letters, digits, -, _, .
+	PushName string `json:"push_name"`
+
+	// SourceRef Canonical relative slash path
+	SourceRef string `json:"source_ref"`
+
+	// ModifiedAt Original source modification time in canonical UTC RFC3339Nano
+	ModifiedAt *string `json:"modified_at,omitempty"`
+
+	// RunID UUIDv4 naming the client's scan; every file one run accepts joins one ingest run
+	RunID uuid.UUID `json:"run_id"`
+}
+
 type ReadRenditionTextQuery struct {
 	NodeID             *int64     `json:"node_id,omitempty"`
 	Revision           *int64     `json:"revision,omitempty"`
@@ -24779,6 +25094,10 @@ type UploadFileQuery struct {
 }
 
 type ChallengeDaemonResponse struct {
+	Proof string `json:"proof"`
+}
+
+type ChallengeAPIKeyResponse struct {
 	Proof string `json:"proof"`
 }
 
@@ -25754,6 +26073,16 @@ type ListDocumentProcessingProfilesErrorResponse = Error
 type ResolveDocumentSourceFenceResponse = api.DocumentSourceFenceResolution
 
 type ResolveDocumentSourceFenceErrorResponse = Error
+
+type ListPushSourcesResponse = api.PushSourcePage
+
+type ListPushSourcesErrorResponse = Error
+
+type UploadPushFileResponse = api.PushUploadReceipt
+
+type UploadPushFileResponseJSON = api.PushUploadReceipt
+
+type UploadPushFileErrorResponse = Error
 
 type PreviewQueryHighlightsResponse = api.QueryHighlightPreview
 
@@ -27081,6 +27410,12 @@ type ProvenancePage = api.ProvenancePage
 type ProviderDescriptorV1 = document.ProviderDescriptorV1
 
 type PublicationSelection = bundle.PublicationSelection
+
+type PushSourceCursor = api.PushSourceCursor
+
+type PushSourcePage = api.PushSourcePage
+
+type PushUploadReceipt = api.PushUploadReceipt
 
 type PutExportChunkRequest struct {
 	// Schema A URL to the JSON Schema for this object.

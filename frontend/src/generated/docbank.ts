@@ -6228,6 +6228,43 @@ export interface ProvenancePage {
   total: number;
 }
 
+export interface PushSourceCursor {
+  /** @pattern ^[0-9a-f]{64}$ */
+  hash: string;
+  /** @minimum 1 */
+  node_id: number;
+  /** @minimum 0 */
+  size: number;
+  source_ref: string;
+  trashed: boolean;
+}
+
+export interface PushSourcePage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: PushSourceCursor[];
+  next?: string;
+}
+
+export type PushUploadReceiptStatus = typeof PushUploadReceiptStatus[keyof typeof PushUploadReceiptStatus];
+
+
+export const PushUploadReceiptStatus = {
+  added: 'added',
+  updated: 'updated',
+  skipped: 'skipped',
+} as const;
+
+export interface PushUploadReceipt {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  computed_hash: string;
+  computed_size: number;
+  node: Node;
+  status: PushUploadReceiptStatus;
+}
+
 export interface PutExportChunkRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -7662,6 +7699,14 @@ export type ChallengeDaemon200 = {
   proof: string;
 };
 
+export type ChallengeAPIKeyParams = {
+nonce: string;
+};
+
+export type ChallengeAPIKey200 = {
+  proof: string;
+};
+
 export type ShutdownDaemonHeaders = {
 'X-Docbank-Daemon-Token': string;
 };
@@ -8442,6 +8487,71 @@ export type SetPhotoSettingsHeaders = {
 'If-Match': string;
 };
 
+export type ListPushSourcesParams = {
+/**
+ * @maxLength 64
+ */
+push_name: string;
+/**
+ * @maxLength 4096
+ */
+after?: string;
+/**
+ * @minimum 1
+ * @maximum 1000
+ */
+limit?: number;
+};
+
+export type UploadPushFileParams = {
+/**
+ * Virtual filename; must equal the multipart filename
+ * @minLength 1
+ */
+name: string;
+/**
+ * Absolute virtual directory for a new source; missing directories are created with its node
+ * @maxLength 4096
+ */
+parent_path: string;
+/**
+ * Portable push identity; lowercase letters, digits, -, _, .
+ * @maxLength 64
+ */
+push_name: string;
+/**
+ * Canonical relative slash path
+ * @maxLength 4096
+ */
+source_ref: string;
+/**
+ * Original source modification time in canonical UTC RFC3339Nano
+ * @maxLength 64
+ */
+modified_at?: string;
+/**
+ * UUIDv4 naming the client's scan; every file one run accepts joins one ingest run
+ */
+run_id: string;
+};
+
+export type UploadPushFileHeaders = {
+/**
+ * Expected lowercase hexadecimal SHA-256 of the file payload
+ * @pattern ^[0-9a-f]{64}$
+ */
+'X-Docbank-Blob-Hash': string;
+/**
+ * Expected raw file byte length
+ * @minimum 0
+ */
+'X-Docbank-Blob-Size': string;
+};
+
+export type UploadPushFileBody = {
+  file: Blob | File;
+};
+
 export type ReadRenditionTextParams = {
 /**
  * @minimum 1
@@ -8682,6 +8792,34 @@ export const getChallengeDaemonUrl = (params: ChallengeDaemonParams,) => {
 export const challengeDaemon = async (params: ChallengeDaemonParams, options?: Parameters<typeof sessionJSON>[1]): Promise<ChallengeDaemon200> => {
 
   return sessionJSON<ChallengeDaemon200>(getChallengeDaemonUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getChallengeAPIKeyUrl = (params: ChallengeAPIKeyParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/daemon/key-challenge?${stringifiedParams}` : `/api/daemon/key-challenge`
+}
+
+export const challengeAPIKey = async (params: ChallengeAPIKeyParams, options?: Parameters<typeof sessionJSON>[1]): Promise<ChallengeAPIKey200> => {
+
+  return sessionJSON<ChallengeAPIKey200>(getChallengeAPIKeyUrl(params),
   {
     ...options,
     method: 'GET'
@@ -16748,6 +16886,88 @@ return sessionJSON<DocumentSourceFenceResolution>(getResolveDocumentSourceFenceU
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(documentSourceFenceResolveRequest)
+  }
+);}
+
+
+
+export const getListPushSourcesUrl = (params: ListPushSourcesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/push/sources?${stringifiedParams}` : `/api/v1/push/sources`
+}
+
+/**
+ * Pages through one push name's cursors in source_ref byte order. Before a push accepts a source, the cursor of a daemon watch with the same name and source_ref stands in for it. A cursor can differ from its node's current version. A push name that matches a configured daemon watch is refused with push_name_in_use.
+ * @summary List the last accepted bytes of a push name's sources
+ */
+export const listPushSources = async (params: ListPushSourcesParams, options?: Parameters<typeof sessionJSON>[1]): Promise<PushSourcePage> => {
+
+  return sessionJSON<PushSourcePage>(getListPushSourcesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getUploadPushFileUrl = (params: UploadPushFileParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/push/uploads?${stringifiedParams}` : `/api/v1/push/uploads`
+}
+
+/**
+ * Streams exactly one multipart field named `file`. X-Docbank-Blob-Hash and X-Docbank-Blob-Size are required declarations for the file payload, not the multipart envelope. Success grants node/blob authority only after both match. Records push provenance atomically. Existing source identities keep their node and version changed source bytes; parent_path and name place only new nodes. A new identity always gets its own node.
+ * @summary Upload one digest-checked push source
+ */
+export const uploadPushFile = async (uploadPushFileBody: UploadPushFileBody,
+    params: UploadPushFileParams,
+    headers: UploadPushFileHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PushUploadReceipt> => {
+    const formData = new FormData();
+formData.append(`file`, uploadPushFileBody.file);
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PushUploadReceipt>(getUploadPushFileUrl(params),
+  {
+    ...options,
+    method: 'POST',
+    headers: { ...headers, ...getHeaders(options?.headers) },
+    body: formData
   }
 );}
 
