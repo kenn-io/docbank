@@ -1294,6 +1294,48 @@ func TestVisualPreviewJPEGDCAboveCeiling(t *testing.T) {
 	}
 }
 
+// cancelAfterContext reports cancellation once Err has been polled limit times.
+type cancelAfterContext struct {
+	context.Context
+	limit      int
+	calls      int
+	imageCalls int
+}
+
+func (c *cancelAfterContext) Err() error {
+	c.calls++
+	pcs := make([]uintptr, 8)
+	frames := runtime.CallersFrames(pcs[:runtime.Callers(2, pcs)])
+	for frame, more := frames.Next(); more || frame.Function != ""; frame, more = frames.Next() {
+		if strings.HasSuffix(frame.Function, "visualJPEGDCDecoder).image") {
+			c.imageCalls++
+			break
+		}
+		if !more {
+			break
+		}
+	}
+	if c.limit >= 0 && c.calls > c.limit {
+		return context.Canceled
+	}
+	return nil
+}
+
+func TestVisualPreviewJPEGDCReconstructionStopsWhenCancelled(t *testing.T) {
+	t.Parallel()
+	source := syntheticVisualJPEGDC(t, 2048, 2048, false)
+	decode := func(ctx context.Context) error {
+		_, err := decodeVisualPreviewJPEGDC(ctx, bufio.NewReader(bytes.NewReader(source)))
+		return err
+	}
+	counter := &cancelAfterContext{Context: context.Background(), limit: -1}
+	require.NoError(t, decode(counter))
+	// One poll before allocating plus periodic polls in the pixel loop.
+	require.Greater(t, counter.imageCalls, 1)
+	// The last poll happens while reconstructing pixels, after entropy decoding.
+	require.ErrorIs(t, decode(&cancelAfterContext{Context: context.Background(), limit: counter.calls - 1}), context.Canceled)
+}
+
 func TestVisualPreviewJPEGDCStopsWhenCancelled(t *testing.T) {
 	t.Parallel()
 	for _, baseline := range []bool{true, false} {

@@ -472,10 +472,16 @@ func (d *visualJPEGDCDecoder) image() (image.Image, error) {
 			return nil, jpeg.FormatError("missing DC scan or quantization table")
 		}
 	}
+	if err := d.ctx.Err(); err != nil {
+		return nil, err
+	}
 	bounds := image.Rect(0, 0, (d.width+7)/8, (d.height+7)/8)
 	if len(d.components) == 1 {
 		gray := image.NewGray(bounds)
 		for i := range gray.Pix {
+			if err := d.check(); err != nil {
+				return nil, err
+			}
 			gray.Pix[i] = d.components[0].sample(i)
 		}
 		return gray, nil
@@ -484,6 +490,9 @@ func (d *visualJPEGDCDecoder) image() (image.Image, error) {
 	rgb := d.isRGB()
 	for y := range bounds.Dy() {
 		for x := range bounds.Dx() {
+			if err := d.check(); err != nil {
+				return nil, err
+			}
 			var values [3]byte
 			for i, c := range d.components {
 				if !rgb && i > 0 {
