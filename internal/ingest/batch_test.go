@@ -135,9 +135,11 @@ func TestAddOverlapsDurableWritesBeforeMetadata(t *testing.T) {
 	} {
 		t.Run(fmt.Sprintf("%s/replace=%t", tc.outcome, tc.replace), func(t *testing.T) {
 			ing := newTestIngester(t)
+			// These contents use distinct publication stripes, so the test can
+			// hold all 32 writers at the directory sync together.
 			contents := map[string]string{}
-			for i := range 9 {
-				contents[fmt.Sprintf("%02d.txt", i)] = fmt.Sprintf("synthetic content %d", i)
+			for i := range 33 {
+				contents[fmt.Sprintf("%02d.txt", i)] = fmt.Sprintf("parallel import content %d", i)
 			}
 			source := writeTree(t, contents)
 			if tc.replace {
@@ -147,14 +149,14 @@ func TestAddOverlapsDurableWritesBeforeMetadata(t *testing.T) {
 				seed, err := ing.AddPaths(t.Context(), []string{source}, "/inbox")
 				require.NoError(t, err)
 				require.Empty(t, seed.Failed)
-				require.Equal(t, 9, seed.Added)
+				require.Equal(t, 33, seed.Added)
 				for name, content := range contents {
 					require.NoError(t, os.WriteFile(filepath.Join(source, name), []byte(content), 0o600))
 				}
 			}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			entered := make(chan struct{}, 8)
+			entered := make(chan struct{}, 32)
 			release := make(chan struct{})
 			var releaseOnce sync.Once
 			var calls, active atomic.Int32
@@ -162,7 +164,7 @@ func TestAddOverlapsDurableWritesBeforeMetadata(t *testing.T) {
 			failedHash := fmt.Sprintf("%x", sha256.Sum256([]byte(contents["03.txt"])))
 			originalSync := pack.SyncDir
 			pack.SyncDir = func(dir string) error {
-				if filepath.Base(dir) == "blobs" && calls.Add(1) <= 8 {
+				if filepath.Base(dir) == "blobs" && calls.Add(1) <= 32 {
 					active.Add(1)
 					entered <- struct{}{}
 					<-release
@@ -192,7 +194,7 @@ func TestAddOverlapsDurableWritesBeforeMetadata(t *testing.T) {
 			})
 			deadline := time.NewTimer(5 * time.Second)
 			defer deadline.Stop()
-			for i := range 8 {
+			for i := range 32 {
 				select {
 				case <-entered:
 				case <-deadline.C:
@@ -205,14 +207,14 @@ func TestAddOverlapsDurableWritesBeforeMetadata(t *testing.T) {
 			children, err := ing.Store.Children(t.Context(), parent.ID)
 			require.NoError(t, err)
 			if tc.replace {
-				require.Len(t, children, 9)
+				require.Len(t, children, 33)
 				for _, node := range children {
 					assert.Equal(t, fmt.Sprintf("%x", sha256.Sum256([]byte("original "+node.Name))), node.BlobHash)
 				}
 			} else {
 				assert.Empty(t, children, "blocked publication must not grant metadata authority")
 			}
-			assert.EqualValues(t, 8, active.Load())
+			assert.EqualValues(t, 32, active.Load())
 			if tc.outcome == "cancel" {
 				cancel()
 			}
@@ -232,26 +234,26 @@ func TestAddOverlapsDurableWritesBeforeMetadata(t *testing.T) {
 				if !tc.replace {
 					assert.Empty(t, children)
 				} else {
-					require.Len(t, children, 9)
+					require.Len(t, children, 33)
 				}
 			case "sync failure":
 				require.NoError(t, importErr)
 				require.Len(t, report.Failed, 1)
 				assert.Equal(t, filepath.Join(source, "03.txt"), report.Failed[0].Path)
 				require.ErrorIs(t, report.Failed[0].Err, syncErr)
-				assert.Equal(t, 8, report.Added)
+				assert.Equal(t, 32, report.Added)
 				if tc.replace {
-					require.Len(t, children, 9)
+					require.Len(t, children, 33)
 				} else {
-					require.Len(t, children, 8)
+					require.Len(t, children, 32)
 				}
 				_, err = ing.Store.PhysicalContent(t.Context(), failedHash)
 				require.ErrorIs(t, err, store.ErrNotFound)
 			case "success":
 				require.NoError(t, importErr)
 				assert.Empty(t, report.Failed)
-				assert.Equal(t, 9, report.Added)
-				require.Len(t, children, 9)
+				assert.Equal(t, 33, report.Added)
+				require.Len(t, children, 33)
 			}
 			for _, node := range children {
 				reader, err := ing.Blobs.OpenContext(t.Context(), node.BlobHash)

@@ -846,7 +846,7 @@ func (files *filesystemIngest) addOne(
 		}
 	}
 	files.pending = append(files.pending, file)
-	if len(files.pending) < 8 {
+	if len(files.pending) < 32 {
 		return nil
 	}
 	return files.flush(ctx, rep, progress)
