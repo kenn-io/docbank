@@ -266,6 +266,7 @@ func TestCheckRootPathsUsesDestinationNameEquivalence(t *testing.T) {
 		paths     []string
 		collision bool
 	}{
+		{"distinct", []string{"asset/photo.jpg", "asset/other.jpg"}, false},
 		{"identical", []string{"asset/photo.jpg", "asset/photo.jpg"}, true},
 		{"case distinct", []string{"asset/photo.jpg", "asset/PHOTO.JPG"}, caseErr == nil},
 	} {

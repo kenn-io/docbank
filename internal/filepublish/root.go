@@ -192,20 +192,20 @@ func CheckRootPaths(ctx context.Context, root *os.Root, paths []string) (retErr 
 	if err != nil {
 		return err
 	}
-	defer func() { retErr = errors.Join(retErr, probes.Close()) }()
 	info, err := probes.Stat(".")
 	if err != nil {
-		return err
+		return errors.Join(err, probes.Close())
 	}
 	defer func() {
 		current, err := root.Lstat(name)
 		if err == nil && !os.SameFile(info, current) {
 			err = errors.New("checkout probe directory changed during validation")
 		}
+		closeErr := probes.Close()
 		if err == nil {
 			err = root.RemoveAll(name)
 		}
-		retErr = errors.Join(retErr, err)
+		retErr = errors.Join(retErr, closeErr, err)
 	}()
 	for _, path := range paths {
 		if err := ctx.Err(); err != nil {

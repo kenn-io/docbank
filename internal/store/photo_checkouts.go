@@ -26,6 +26,8 @@ var ErrInvalidPhotoCheckout = errors.New("invalid photo checkout")
 
 var ErrPhotoCheckoutSourceUnavailable = fmt.Errorf("%w: selected photo is hidden, excluded, detached, or trashed", ErrInvalidPhotoCheckout)
 
+var ErrPhotoCheckoutPublicationUnrecorded = errors.New("installed checkout copy has not been recorded")
+
 const StorageOperationKindPhotoCheckout = "photo_checkout"
 
 type PhotoCheckoutYears struct {
@@ -457,6 +459,9 @@ func (s *Store) PublishPhotoCheckoutEntry(ctx context.Context, e PhotoCheckoutEn
 		return publicationErr
 	}
 	_, err = s.writeDB.ExecContext(context.WithoutCancel(ctx), `UPDATE photo_checkout_entries SET published=1 WHERE checkout_id=? AND file_id=?`, e.CheckoutID, e.FileID)
+	if err != nil {
+		err = fmt.Errorf("%w: %w", ErrPhotoCheckoutPublicationUnrecorded, err)
+	}
 	return errors.Join(err, publicationErr)
 }
 

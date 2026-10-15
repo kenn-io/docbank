@@ -403,6 +403,10 @@ func (s Service) Run(ctx context.Context, c store.PhotoCheckout, root *os.Root) 
 				err = errors.Join(err, s.Store.AdvanceStorageOperation(context.WithoutCancel(ctx), c.OperationID, entry.FileID, copied, copied, bytes, "{}"))
 			}
 			if err != nil {
+				if errors.Is(err, store.ErrPhotoCheckoutPublicationUnrecorded) {
+					// Recovery must adopt the installed copy before releasing its source hold.
+					return err
+				}
 				if copyErr == nil {
 					copyErr = err
 				}

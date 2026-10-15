@@ -20,6 +20,7 @@ import (
 	"go.kenn.io/docbank/internal/filepublish"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/sqlite"
 	"go.kenn.io/kit/packstore"
 )
 
@@ -610,4 +611,62 @@ func TestCheckoutPreflightsCollisionsBeforePublishingBytes(t *testing.T) {
 		_, err := root.Stat(filepath.FromSlash(entry.Path))
 		require.ErrorIs(t, err, os.ErrNotExist)
 	}
+}
+
+func TestCheckoutRecoversInstalledCopyWhenPublicationRecordFails(t *testing.T) {
+	t.Parallel()
+	s := checkoutService(t)
+	ctx := t.Context()
+	asset := checkoutPhoto(t, s, "photo.jpg", "verified bytes")
+	checkout, op, root, err := s.Prepare(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, t.TempDir(), 0)
+	require.NoError(t, err)
+	defer func() { _ = root.Close() }()
+	entries, err := s.Store.PhotoCheckoutEntries(ctx, checkout.ID)
+	require.NoError(t, err)
+	db, err := s.Store.SQLiteDriver().Open(filepath.Join(s.VaultRoot, "docbank.db"), sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Deferred})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, db.Close()) }()
+	_, err = db.ExecContext(ctx, `CREATE TRIGGER fail_checkout_publication BEFORE UPDATE OF published ON photo_checkout_entries WHEN NEW.published=1 BEGIN SELECT RAISE(ABORT,'synthetic publication-record failure'); END`)
+	require.NoError(t, err)
+	runErr := s.Run(ctx, checkout, root)
+	require.ErrorIs(t, runErr, store.ErrPhotoCheckoutPublicationUnrecorded)
+	require.ErrorContains(t, runErr, "synthetic publication-record failure")
+	operation, err := s.Store.StorageOperation(ctx, op.ID)
+	require.NoError(t, err)
+	require.Equal(t, store.StorageOperationRunning, operation.State)
+	require.Nil(t, operation.FinishedAt)
+	content, err := root.ReadFile(filepath.FromSlash(entries[0].Path))
+	require.NoError(t, err)
+	require.Equal(t, "verified bytes", string(content))
+	status, err := s.Store.PhotoCheckoutStatus(ctx, checkout.ID)
+	require.NoError(t, err)
+	require.Equal(t, "running", status.Checkout.State)
+	require.False(t, status.Checkout.RetentionReleased)
+	require.Zero(t, status.PublishedFiles)
+	node, err := s.Store.NodeByID(ctx, asset.Files[0].NodeID)
+	require.NoError(t, err)
+	hash, size, err := s.Blobs.Write(strings.NewReader("replacement"))
+	require.NoError(t, err)
+	updated, _, err := s.Store.ReplaceContent(ctx, node.ID, node.Revision, hash, size, "image/jpeg")
+	require.NoError(t, err)
+	selector := store.VersionPruneSelector{VersionIDs: []string{entries[0].VersionID}}
+	held, err := s.Store.PruneContentVersions(ctx, node.ID, updated.Revision, selector, true)
+	require.NoError(t, err)
+	require.Len(t, held.DependencyRetained, 1)
+	_, err = db.ExecContext(ctx, `DROP TRIGGER fail_checkout_publication`)
+	require.NoError(t, err)
+	supervisor := jobs.New(ctx, nil)
+	defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
+	require.NoError(t, s.Resume(ctx, supervisor))
+	require.Eventually(t, func() bool {
+		operation, err := s.Store.StorageOperation(ctx, op.ID)
+		return err == nil && operation.FinishedAt != nil
+	}, 5*time.Second, 10*time.Millisecond)
+	status, err = s.Store.PhotoCheckoutStatus(ctx, checkout.ID)
+	require.NoError(t, err)
+	require.Equal(t, "failed", status.Checkout.State)
+	require.Equal(t, int64(1), status.PublishedFiles)
+	held, err = s.Store.PruneContentVersions(ctx, node.ID, updated.Revision, selector, true)
+	require.NoError(t, err)
+	require.Len(t, held.DependencyRetained, 1)
 }
