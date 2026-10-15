@@ -221,16 +221,9 @@ func TestIngestRejectsNonLoopback(t *testing.T) {
 	cfg := config.Default()
 	cfg.Server.APIKey = "test-key"
 	srv := api.NewServer(api.Deps{Store: s, Blobs: blobs, VaultRoot: dir, Cfg: cfg})
-	for _, test := range []struct {
-		path string
-	}{
-		{path: "/api/v1/ingest"},
-		{path: "/api/v1/ingest/stream"},
-		{path: "/api/v1/ingest/preflight"},
-		{path: "/api/v1/packages/preflights"},
-	} {
-		t.Run(test.path, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, "http://localhost"+test.path, strings.NewReader(`{"paths":["/x"],"dest":"/inbox"}`))
+	for _, path := range []string{"/api/v1/ingest", "/api/v1/ingest/stream", "/api/v1/ingest/preflight", "/api/v1/packages/preflights"} {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "http://localhost"+path, strings.NewReader(`{"paths":["/x"],"dest":"/inbox"}`))
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("X-Api-Key", "test-key")
 			req.RemoteAddr = "192.0.2.1:4444"

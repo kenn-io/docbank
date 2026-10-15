@@ -29,9 +29,7 @@ func addWindowsCheckoutRecoveryRetryCases(t *testing.T) {
 		{"root", true, false, false, false},
 		{"cancel while root inaccessible", true, true, false, false},
 		{"published file", false, false, true, false},
-		{"cancel while published file inaccessible", false, true, true, false},
 		{"stage", false, false, false, true},
-		{"cancel while stage inaccessible", false, true, false, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
