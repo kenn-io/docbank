@@ -142,7 +142,7 @@ func getPhotoFaces(ctx context.Context, lease *daemonLease, raw []byte) (photoFa
 		if end-start <= 1 {
 			return photoFacesToolOutput{}, errToolResultTooLarge
 		}
-		end--
+		end = start + max(1, min(end-start-1, (end-start)*pageBudget/len(encoded)))
 		output.Faces = output.Faces[:min(end-start, len(output.Faces))]
 		output.Assertions = output.Assertions[:min(end-start, len(output.Assertions))]
 		output.NextOffset = new(end)
