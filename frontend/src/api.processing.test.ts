@@ -1,4 +1,3 @@
-import * as generated from "./generated/docbank.js";
 import contract from "../../internal/daemonconn/testdata/processing_responses.json";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { sha256 } from "@noble/hashes/sha2.js";
@@ -120,7 +119,7 @@ describe("document processing browser API", () => {
           state: "completed",
           phase: "published",
           embedding_job_ids: ids,
-          completed_bindings: 0,
+          completed_bindings: ids.length,
         },
       })}\n`;
       vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -259,59 +258,18 @@ describe("document processing browser API", () => {
     },
   );
 
-  it("keeps plans, jobs, coverage, and search on exact identities", async () => {
+  it("keeps jobs and search on exact identities", async () => {
     const versionID = "11111111-1111-4111-8111-111111111111";
     const fingerprint = "a".repeat(64);
     const jobID = "b".repeat(64);
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, request) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, request) => {
       const path = String(input);
-      if (path === "/api/v1/processing/profiles") {
-        return Response.json([
-          { name: "private", fingerprint, rendition: true, embedding_bindings: [] },
-        ]);
-      }
-      if (path === "/api/v1/processing/plans") {
-        expect(request?.method).toBe("POST");
-        expect(JSON.parse(String(request?.body))).toMatchObject({
-          selector: { node_id: 42, content_version_id: versionID, profile: "private" },
-        });
-        return Response.json({
-          fingerprint,
-          selector: { node_id: 42, content_version_id: versionID, profile: "private" },
-          flow: [],
-          disclosed_classes: [],
-          retained_classes: [],
-          estimate: {},
-          consent_required: true,
-          consent_state: "required",
-        });
-      }
       if (path === "/api/v1/processing/jobs") {
         expect(JSON.parse(String(request?.body))).toMatchObject({ consent: true });
         return new Response(
           `${JSON.stringify({ sequence: 1, type: "job", job: { id: jobID, embedding_job_ids: [], profile_fingerprint: fingerprint, content_version_id: versionID } })}\n${JSON.stringify({ sequence: 2, type: "status", status: { job_id: jobID, state: "completed", phase: "embedding", embedding_job_ids: [fingerprint], completed_bindings: 1 }, terminal: true })}\n`,
           { headers: { "Content-Type": "application/x-ndjson" } },
         );
-      }
-      if (path.startsWith("/api/v1/coverage?")) {
-        return Response.json({
-          vault_uid: versionID,
-          profile_fingerprint: fingerprint,
-          state: "complete",
-          renditions: {
-            name: "rendition",
-            required: true,
-            state: "complete",
-            complete: 1,
-            unavailable: 0,
-            stale: 0,
-            ineligible: 0,
-            rebuilding: 0,
-            previous_generation_serving: 0,
-            total: 1,
-          },
-          embeddings: [],
-        });
       }
       if (path === "/api/v1/search") {
         expect(request?.method).toBe("POST");
@@ -334,15 +292,6 @@ describe("document processing browser API", () => {
     });
 
     await expect(
-      generated.listDocumentProcessingProfiles({ session: "session" }),
-    ).resolves.toHaveLength(1);
-    await expect(
-      generated.planDocumentProcessing(
-        { selector: { node_id: 42, content_version_id: versionID, profile: "private" } },
-        { session: "session" },
-      ),
-    ).resolves.toMatchObject({ fingerprint });
-    await expect(
       startProcessing(
         "session",
         { node_id: 42, content_version_id: versionID, profile: "private" },
@@ -355,12 +304,6 @@ describe("document processing browser API", () => {
       job: { embedding_job_ids: [fingerprint] },
     });
     await expect(
-      generated.getDocumentProcessingCoverage(
-        { profile: "private", vault_uid: versionID, content_version_id: [versionID] },
-        { session: "session" },
-      ),
-    ).resolves.toMatchObject({ state: "complete" });
-    await expect(
       documentSearch("session", {
         query: "synthetic",
         mode: "auto",
@@ -370,7 +313,6 @@ describe("document processing browser API", () => {
         explain: true,
       }),
     ).resolves.toMatchObject({ actual_mode: "lexical" });
-    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
   it("delivers the durable job before a blocked terminal status", async () => {

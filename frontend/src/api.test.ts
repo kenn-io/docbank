@@ -186,34 +186,15 @@ describe("browser authentication", () => {
         if (call === 2)
           return new Response(
             JSON.stringify({
-              items: [
-                {
-                  id: "00000000-0000-4000-8000-000000000001",
-                  name: "one",
-                  revision: 1,
-                  assignment_count: 1,
-                },
-              ],
+              items: Array.from({ length: problem === "duplicate" ? 2 : 1 }, () => ({
+                id: "00000000-0000-4000-8000-000000000001",
+                name: "one",
+                revision: 1,
+                assignment_count: 1,
+              })),
               total: problem === "count" ? 2 : problem === "duplicate" ? 2 : 1,
               limit: 1000,
               offset: 0,
-            }),
-            { headers: { "Content-Type": "application/json" } },
-          );
-        if (problem === "duplicate" && call === 3)
-          return new Response(
-            JSON.stringify({
-              items: [
-                {
-                  id: "00000000-0000-4000-8000-000000000001",
-                  name: "one",
-                  revision: 1,
-                  assignment_count: 1,
-                },
-              ],
-              total: 2,
-              limit: 1000,
-              offset: 1,
             }),
             { headers: { "Content-Type": "application/json" } },
           );
