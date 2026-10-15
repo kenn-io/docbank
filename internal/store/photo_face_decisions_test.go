@@ -1389,6 +1389,31 @@ func TestPhotoFaceCandidateHistoryDoesNotFollowReusedFaceID(t *testing.T) {
 	}
 }
 
+func TestFaceCandidateRetainsMembershipForReusedFaceID(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	person, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	node, face := faceForDecisionTest(t, s, "")
+	// This missing UUID sorts first, like a pruned version during candidate normalization.
+	const staleVersionID = "00000000-0000-4000-8000-000000000000"
+	require.NotEqual(t, staleVersionID, node.CurrentVersionID)
+
+	candidate := candidateForTest(t, "face:"+face.FaceID, "Face", person.PersonID, []PersonCandidateOccurrence{
+		{ContentVersionID: staleVersionID, Role: "depicted", EvidenceKind: "face", EvidenceID: face.FaceID},
+		{ContentVersionID: node.CurrentVersionID, Role: "depicted", EvidenceKind: "face", EvidenceID: face.FaceID},
+	})
+	candidate.Reason = personCandidateReasonFaceMatch
+	candidate = openCandidateForTest(t, s, candidate)
+	_, err = s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: candidate.CandidateID, ExpectedRevision: candidate.Revision, Action: "reject"})
+	require.NoError(t, err)
+
+	faces, _, err := s.PhotoFaces(ctx, node.CurrentVersionID)
+	require.NoError(t, err)
+	require.Equal(t, []string{person.PersonID}, faces[0].RejectedPersonIDs)
+}
+
 func TestPersonMergeIgnoresCandidateFromPrunedFaceVersion(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

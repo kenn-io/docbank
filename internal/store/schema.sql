@@ -2590,7 +2590,7 @@ CREATE TABLE IF NOT EXISTS person_candidate_faces (
     candidate_id TEXT NOT NULL REFERENCES person_match_candidates(candidate_id) ON DELETE CASCADE,
     face_id TEXT NOT NULL,
     content_version_id TEXT NOT NULL,
-    PRIMARY KEY(candidate_id,face_id)
+    PRIMARY KEY(candidate_id,face_id,content_version_id)
 );
 CREATE INDEX IF NOT EXISTS person_candidate_faces_face ON person_candidate_faces(face_id,candidate_id);
 CREATE INDEX IF NOT EXISTS person_candidate_faces_version ON person_candidate_faces(content_version_id,candidate_id);
