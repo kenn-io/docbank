@@ -2,32 +2,13 @@ package processing
 
 import (
 	"bufio"
-	"context"
 	"encoding/binary"
 	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
 	"io"
-
-	"go.kenn.io/docbank/document"
 )
-
-func produceVisualPreviewJPEGDC(ctx context.Context, source io.ReadSeeker, base document.VisualPreviewV1, orientation int, config image.Config) (VisualPreviewProduct, error) {
-	if _, err := source.Seek(0, io.SeekStart); err != nil {
-		return VisualPreviewProduct{}, sourceContentUnavailable(fmt.Errorf("seeking visual preview source: %w", err))
-	}
-	recorder := &visualPreviewReadErrorRecorder{reader: &contextReader{ctx: ctx, reader: source}}
-	decoded, err := decodeVisualPreviewJPEGDC(bufio.NewReaderSize(recorder, 64*1024))
-	if recorder.err != nil {
-		err = recorder.err
-	}
-	if err != nil {
-		return visualPreviewJPEGDecodeResult(base, "the verified JPEG cannot be decoded", err)
-	}
-	w, h := (config.Width+7)/8, (config.Height+7)/8
-	return encodeVisualPreview(base, decoded, w, h, orientation)
-}
 
 type visualJPEGDCComponent struct {
 	id, h, v, quant byte
@@ -156,15 +137,23 @@ func (d *visualJPEGDCDecoder) marker() (byte, error) {
 }
 
 func (d *visualJPEGDCDecoder) frame(p []byte, marker byte) error {
-	if len(d.components) != 0 {
+	if len(d.components) != 0 || len(p) < 6 {
+		return jpeg.FormatError("bad frame header")
+	}
+	count := int(p[5])
+	if (count != 1 && count != 3) || len(p) < 6+3*count {
 		return jpeg.FormatError("bad frame header")
 	}
 	d.height, d.width = int(binary.BigEndian.Uint16(p[1:3])), int(binary.BigEndian.Uint16(p[3:5]))
 	d.progressive, d.baseline = marker == 0xc2, marker == 0xc0
-	d.components = make([]visualJPEGDCComponent, int(p[5]))
+	d.components = make([]visualJPEGDCComponent, count)
 	for i := range d.components {
 		c := &d.components[i]
 		c.id, c.h, c.v, c.quant = p[6+3*i], p[7+3*i]>>4, p[7+3*i]&15, p[8+3*i]
+		if c.h < 1 || c.h > 4 || c.v < 1 || c.v > 4 || c.quant > 3 {
+			d.components = nil
+			return jpeg.FormatError("bad frame header")
+		}
 		c.precision = -1
 		d.maxH, d.maxV = max(d.maxH, int(c.h)), max(d.maxV, int(c.v))
 	}

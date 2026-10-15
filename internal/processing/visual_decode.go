@@ -1,6 +1,7 @@
 package processing
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -46,7 +47,23 @@ func decodeVisualPixels(ctx context.Context, source io.ReadSeeker, format string
 	if format == visualFormatJPEG && !visualPreviewJPEGColorModelSupported(config.ColorModel) {
 		return result, errVisualColor
 	}
-	if !visualPreviewDimensionsAllowed(config.Width, config.Height) {
+	if !visualPreviewDimensionsAllowed(config.Width, config.Height, visualPreviewMaxSourcePixels) {
+		if format == visualFormatJPEG &&
+			visualPreviewDimensionsAllowed(config.Width, config.Height, visualPreviewMaxDCSourcePixels) {
+			// Decode only the DC coefficients: the image comes back at one
+			// eighth width and height, so the bounds check below is skipped.
+			if _, err = source.Seek(0, io.SeekStart); err != nil {
+				result.readErr = err
+				result.seekFailed = true
+				return result, err
+			}
+			result.header = false
+			result.image, err = decodeVisualPreviewJPEGDCSafely(bufio.NewReaderSize(reader, 64*1024))
+			if err != nil {
+				return result, fmt.Errorf("decoding image pixels: %w", err)
+			}
+			return result, ctx.Err()
+		}
 		return result, errVisualDimensions
 	}
 	if _, err = source.Seek(0, io.SeekStart); err != nil {
@@ -67,4 +84,15 @@ func decodeVisualPixels(ctx context.Context, source io.ReadSeeker, format string
 		return result, errVisualDecodeBounds
 	}
 	return result, ctx.Err()
+}
+
+// decodeVisualPreviewJPEGDCSafely turns a decoder panic into an error so one
+// malformed original fails its own preview instead of stopping the worker.
+func decodeVisualPreviewJPEGDCSafely(reader *bufio.Reader) (img image.Image, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			img, err = nil, fmt.Errorf("JPEG DC decoder panic: %v", r)
+		}
+	}()
+	return decodeVisualPreviewJPEGDC(reader)
 }

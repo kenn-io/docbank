@@ -17,8 +17,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"runtime"
+	"strings"
 	"testing"
 	"testing/iotest"
 
@@ -691,7 +691,7 @@ func TestVisualPreviewJPEGUnsupportedFeatureIsTerminal(t *testing.T) {
 	assert.Equal(t, "unsupported_jpeg_feature", product.Preview.Failure.Code)
 }
 
-func syntheticJPEGSegment(t *testing.T, source []byte, marker byte, payload []byte) []byte {
+func syntheticJPEGSegment(t testing.TB, source []byte, marker byte, payload []byte) []byte {
 	t.Helper()
 	require.LessOrEqual(t, len(payload)+2, int(^uint16(0)))
 	header := []byte{0xff, marker, 0, 0}
@@ -1237,6 +1237,20 @@ func TestVisualPreviewJPEGDCReadErrors(t *testing.T) {
 	}
 }
 
+func FuzzVisualPreviewJPEGDC(f *testing.F) {
+	for _, name := range []string{"progressive-420.jpg", "progressive-444.jpg", "baseline-422.jpg"} {
+		data, err := os.ReadFile(filepath.Join("testdata", name))
+		require.NoError(f, err)
+		f.Add(data)
+	}
+	f.Add(syntheticVisualJPEGDC(f, 24, 16, false))
+	f.Add(syntheticVisualJPEGDC(f, 24, 16, true))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		// A panic fails the fuzz run; any error or image is acceptable.
+		_, _ = decodeVisualPreviewJPEGDC(bufio.NewReader(bytes.NewReader(data)))
+	})
+}
+
 func TestVisualPreviewJPEGDCAboveCeiling(t *testing.T) {
 	t.Parallel()
 	header := syntheticVisualJPEGDC(t, 8, 8, false)
@@ -1254,7 +1268,7 @@ func TestVisualPreviewJPEGDCAboveCeiling(t *testing.T) {
 	assert.Equal(t, "source_dimensions_exceed_limit", product.Preview.Failure.Code)
 }
 
-func syntheticVisualJPEGDC(t *testing.T, width, height int, baseline bool) []byte {
+func syntheticVisualJPEGDC(t testing.TB, width, height int, baseline bool) []byte {
 	t.Helper()
 	source := []byte{0xff, 0xd8}
 	segment := func(marker byte, payload []byte) {

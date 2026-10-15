@@ -28,6 +28,7 @@ const (
 	visualPreviewProcessorDescriptor = document.VisualPreviewProcessorDescriptor
 	visualPreviewMaxEdgePixels       = document.VisualPreviewMaxEdgePixels
 	visualPreviewMaxSourcePixels     = document.VisualPreviewMaxSourcePixels
+	visualPreviewMaxDCSourcePixels   = 1_000_000_000
 	visualPreviewJPEGQuality         = document.VisualPreviewJPEGQuality
 	visualPreviewMaxJPEGSegments     = 1024
 	visualPreviewMaxPNGChunks        = 1024
