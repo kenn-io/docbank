@@ -504,6 +504,21 @@ func (s *Store) FinishPhotoCheckout(ctx context.Context, id, operationID string,
 	})
 }
 
+// PreserveUncertainPhotoCheckoutHolds marks every entry that is currently
+// published, or that the operation was mid-copy on, as independently held.
+// Call it before an ObservePhotoCheckout that may clear those entries'
+// published flag because their current state can no longer be confirmed
+// (a moved or inaccessible destination, or a file missing from an
+// otherwise-reachable one): base_held keeps photoCheckoutHoldPredicate
+// protecting their source versions until the checkout is retired, even
+// after publication can no longer be observed directly.
+func (s *Store) PreserveUncertainPhotoCheckoutHolds(ctx context.Context, id, operationID string) error {
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE photo_checkout_entries SET base_held=1 WHERE checkout_id=? AND (published=1 OR file_id=(SELECT cursor FROM storage_operations WHERE operation_id=? AND cursor<>''))`, id, operationID)
+		return err
+	})
+}
+
 // ObservePhotoCheckout rebuilds machine-local copy observations from verified files.
 func (s *Store) ObservePhotoCheckout(ctx context.Context, id, operationID string, fileIDs []string) error {
 	encoded, err := json.Marshal(fileIDs)

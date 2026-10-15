@@ -3,7 +3,6 @@ package checkout
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -568,36 +567,44 @@ func TestCheckoutRunOutcomes(t *testing.T) {
 	}
 }
 
+// TestPhotoCheckoutRejectsSelectionWithColliding destination names covers the
+// case where two selected files would land on the identical destination
+// name: CreatePhotoCheckout now rejects that before Prepare ever opens a
+// checkout (internal/store/photo_checkouts_test.go,
+// TestPhotoCheckoutRejectsDestinationNameCollision). This test instead
+// covers the filesystem-level preflight CheckRootPaths still runs in Run:
+// a path can collide with a file already sitting in the destination even
+// when every selected entry has a distinct destination name.
 func TestCheckoutPreflightsCollisionsBeforePublishingBytes(t *testing.T) {
 	t.Parallel()
 	s := checkoutService(t)
 	ctx := t.Context()
-	var assets []store.PhotoAsset
-	for i, content := range []string{"first", "second"} {
-		hash, size, err := s.Blobs.Write(strings.NewReader(content))
-		require.NoError(t, err)
-		source := t.TempDir()
-		run, err := s.Store.BeginIngest(ctx, "photo-import", source)
-		require.NoError(t, err)
-		name := "photo.JPG"
-		node, err := s.Store.IngestFileExact(ctx, run, s.Store.RootID(), fmt.Sprintf("virtual-%d.jpg", i), hash, size, "image/jpeg", filepath.Join(source, name), "")
-		require.NoError(t, err)
-		asset, err := s.Store.PhotoAssetForNode(ctx, node.ID)
-		require.NoError(t, err)
-		assets = append(assets, asset)
-	}
-	first, second := assets[0], assets[1]
-	_, err := s.Store.DetachPhotoFile(ctx, second.ID, second.Revision, second.Files[0].ID, store.PhotoDetachOptions{})
+	hash, size, err := s.Blobs.Write(strings.NewReader("content"))
 	require.NoError(t, err)
-	first, err = s.Store.AttachPhotoFile(ctx, first.ID, first.Revision, second.Files[0].NodeID, store.PhotoRoleImage, nil)
+	node, err := s.Store.CreateFile(ctx, s.Store.RootID(), "photo.jpg", hash, size, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := s.Store.PhotoAssetForNode(ctx, node.ID)
 	require.NoError(t, err)
 	destination := t.TempDir()
-	_, _, _, err = s.Prepare(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{first.ID}}, destination, 0)
-	require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
-	require.ErrorContains(t, err, "collides")
-	checkouts, err := s.Store.ListPhotoCheckouts(ctx)
+	checkout, op, root, err := s.Prepare(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
 	require.NoError(t, err)
-	require.Empty(t, checkouts, "a rejected selection must not leave a checkout or its holds behind")
+	defer func() { require.NoError(t, root.Close()) }()
+	entries, err := s.Store.PhotoCheckoutEntries(ctx, checkout.ID)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	stray := filepath.Join(destination, filepath.FromSlash(entries[0].Path))
+	require.NoError(t, os.MkdirAll(filepath.Dir(stray), 0o700))
+	require.NoError(t, os.WriteFile(stray, []byte("already here"), 0o600))
+
+	runErr := s.Run(ctx, checkout, root)
+	status, err := s.Store.PhotoCheckoutStatus(ctx, checkout.ID)
+	require.NoError(t, err)
+	finished, err := s.Store.StorageOperation(ctx, op.ID)
+	require.NoError(t, err)
+	require.ErrorIs(t, runErr, os.ErrExist)
+	require.Equal(t, "failed", status.Checkout.State)
+	require.Zero(t, status.PublishedFiles)
+	require.Zero(t, finished.CopiedObjects)
 }
 
 func TestCheckoutRechecksProtectedRootSnapshot(t *testing.T) {

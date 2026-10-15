@@ -939,3 +939,47 @@ func TestPhotoCheckoutRejectsDestinationNameCollision(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, checkouts)
 }
+
+// TestPreserveUncertainPhotoCheckoutHoldsSurvivesClearedPublication covers
+// recovery after a destination can no longer be confirmed: a reconcile that
+// cannot verify a previously published entry still clears its published
+// flag (ObservePhotoCheckout), but PreserveUncertainPhotoCheckoutHolds must
+// run first so the source version stays held, matching the documented
+// "published or uncertain copies retain their bases until retirement"
+// guarantee.
+func TestPreserveUncertainPhotoCheckoutHoldsSurvivesClearedPublication(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	asset := albumAsset(t, s, "photo.jpg")
+	node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
+	require.NoError(t, err)
+	checkout, op, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+	require.NoError(t, err)
+	require.NoError(t, s.ClaimPhotoCheckout(ctx, checkout.ID, op.ID))
+	entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
+	require.NoError(t, err)
+	require.NoError(t, s.PublishPhotoCheckoutEntry(ctx, entries[0], func() (bool, error) { return true, nil }))
+
+	require.NoError(t, s.PreserveUncertainPhotoCheckoutHolds(ctx, checkout.ID, op.ID))
+	require.NoError(t, s.ObservePhotoCheckout(ctx, checkout.ID, op.ID, nil))
+	require.NoError(t, s.FinishPhotoCheckout(ctx, checkout.ID, op.ID, StorageOperationFailed, "{}", "destination unreachable", time.Now().Add(time.Hour)))
+
+	entries, err = s.PhotoCheckoutEntries(ctx, checkout.ID)
+	require.NoError(t, err)
+	require.False(t, entries[0].Published, "publication can no longer be confirmed")
+
+	updated, _, err := s.ReplaceContent(ctx, node.ID, node.Revision, browseHash("replacement"), 30, "image/jpeg")
+	require.NoError(t, err)
+	selector := VersionPruneSelector{VersionIDs: []string{node.CurrentVersionID}}
+	pruned, err := s.PruneContentVersions(ctx, node.ID, updated.Revision, selector, true)
+	require.NoError(t, err)
+	require.Zero(t, pruned.DeletedVersions, "an uncertain copy must keep its source base until retirement")
+	require.Len(t, pruned.DependencyRetained, 1)
+
+	_, err = s.RetirePhotoCheckout(ctx, checkout.ID)
+	require.NoError(t, err)
+	pruned, err = s.PruneContentVersions(ctx, node.ID, updated.Revision, selector, true)
+	require.NoError(t, err)
+	require.Equal(t, 1, pruned.DeletedVersions, "retirement releases the hold")
+}

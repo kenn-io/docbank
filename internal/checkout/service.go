@@ -293,6 +293,13 @@ func (s Service) reconcile(ctx context.Context, c store.PhotoCheckout) error {
 		}
 		return s.finish(ctx, c, store.StorageOperationCancelled, "checkout recovery cancelled; uncertain copies retain their source holds until retirement")
 	}
+	// A reconcile below may be unable to confirm a previously published or
+	// in-flight entry still exists, which clears its published flag. Fix
+	// that entry's hold in place first so losing the observation never
+	// releases a source version a published or uncertain copy still needs.
+	if err := s.Store.PreserveUncertainPhotoCheckoutHolds(ctx, c.ID, c.OperationID); err != nil {
+		return err
+	}
 	failure := "checkout creation was interrupted; partial copies are retained; unpublished source holds and destination reservation are released"
 	canonical, fsErr := filepath.EvalSymlinks(c.Destination)
 	invalidDestination := fsErr == nil && canonical != c.Destination
