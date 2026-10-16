@@ -19,7 +19,7 @@ import (
 	kitdaemon "go.kenn.io/kit/daemon"
 	"go.kenn.io/kit/packstore"
 
-	docbank "go.kenn.io/docbank"
+	docbank "go.kenn.io/docbank/docbank"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/api"

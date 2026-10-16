@@ -196,7 +196,7 @@ for how to operate stores and what each one is trusted with.
 - Follow progress as one JSON record per line, ending with a final result.
 - Look up a job by its durable ID after a client loses track of it or the
   daemon restarts.
-- Embed a vault through `go.kenn.io/docbank` with CGO or pure-Go SQLite. An
+- Embed a vault through `go.kenn.io/docbank/docbank` with CGO or pure-Go SQLite. An
   embedded vault has the same exclusive ownership and content checks.
 
 See [Docbank for agents](agents.md), the

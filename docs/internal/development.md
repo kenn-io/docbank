@@ -8,7 +8,7 @@ lists the checks contributors must preserve.
 
 | Location | Contents |
 | --- | --- |
-| Root Go files | Public `go.kenn.io/docbank` embedded API and its tests |
+| `docbank/` | Public `go.kenn.io/docbank/docbank` embedded API and its tests |
 | `cmd/docbank/` | Standalone command and daemon composition |
 | `document/`, `report/`, `sqlite/` | Public processing, reporting, and SQLite packages |
 | `internal/` | Vault implementation, HTTP API, generated Go client, and embedded web assets |
@@ -21,9 +21,9 @@ lists the checks contributors must preserve.
 | `LICENSES/` | Third-party license texts |
 
 The root also holds project entry points, legal notices, module metadata, and
-configuration discovered there by development tools. The root Go files form a
-single public package; moving them into a directory would change its import
-path. Keep tests beside the package they exercise.
+configuration discovered there by development tools. Go code lives in
+packages under directories, never at the root. Keep tests beside the package
+they exercise.
 
 `make build` writes the local executable to ignored `bin/` (`bin/docbank.exe`
 on Windows). `make clean` removes those binaries and built frontend assets.
@@ -60,7 +60,7 @@ with their independent contracts in `document/bridge/` and
 | `internal/telemetry` | the daemon's PostHog reporter options, event allowlist and its wiring of kit's install ID and heartbeat | vault data, HTTP auth, embedded vault paths |
 | `document/mistral` | Mistral OCR, capability evidence, unit limits, and the optional office render-to-PDF route | generic format detection, office conversion, or storage authority |
 | `cmd/docbank` | Cobra ergonomics and human output | store business logic |
-| root package `docbank` | lifecycle and bounded public operations for one exclusively owned embedded vault | standalone CLI paths or a second storage implementation |
+| `docbank` | lifecycle and bounded public operations for one exclusively owned embedded vault | standalone CLI paths or a second storage implementation |
 
 The Mistral text lane uses `UnitBoundProviderResponse`. The authenticated probe
 records provider acceptance and page usage for each format; text results have

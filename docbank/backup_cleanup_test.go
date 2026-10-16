@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	docbank "go.kenn.io/docbank"
+	docbank "go.kenn.io/docbank/docbank"
 )
 
 func TestRepositoryCleanupWithoutSourcePreservesRetainedRestore(t *testing.T) {
