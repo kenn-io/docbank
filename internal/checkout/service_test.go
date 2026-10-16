@@ -299,6 +299,71 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 	}
 }
 
+func TestCheckoutRecoveryFinishesReplacedDirectories(t *testing.T) {
+	t.Parallel()
+	for _, location := range []string{"destination ancestor", "entry subdirectory"} {
+		for _, publication := range []string{"published", "in flight", "unrecorded"} {
+			t.Run(location+"/"+publication, func(t *testing.T) {
+				s := checkoutService(t)
+				a := checkoutPhoto(t, s, "photo.jpg", "source bytes")
+				node, err := s.Store.NodeByID(t.Context(), a.Files[0].NodeID)
+				require.NoError(t, err)
+				parent := filepath.Join(t.TempDir(), "parent")
+				destination := filepath.Join(parent, "checkout")
+				require.NoError(t, os.MkdirAll(destination, 0o700))
+				c, op, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, destination, 0)
+				require.NoError(t, err)
+				require.NoError(t, s.Store.ClaimPhotoCheckout(t.Context(), c.ID, op.ID))
+				entries, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
+				require.NoError(t, err)
+				require.Len(t, entries, 1)
+				if publication == "published" {
+					require.NoError(t, s.Store.PublishPhotoCheckoutEntry(t.Context(), entries[0], func() (bool, error) { return true, nil }))
+				} else if publication == "in flight" {
+					require.NoError(t, s.Store.AdvanceStorageOperation(t.Context(), op.ID, entries[0].FileID, 0, 0, 0, "{}"))
+				}
+				require.NoError(t, root.Close())
+				replaced := parent
+				if location == "entry subdirectory" {
+					replaced = filepath.Join(destination, filepath.Dir(filepath.FromSlash(entries[0].Path)))
+					require.NotEqual(t, destination, replaced)
+					require.NoError(t, os.MkdirAll(filepath.Dir(replaced), 0o700))
+				} else {
+					require.NoError(t, os.RemoveAll(parent))
+				}
+				require.NoError(t, os.WriteFile(replaced, []byte("user replacement"), 0o600))
+				supervisor := jobs.New(t.Context(), nil)
+				defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
+				require.NoError(t, s.Resume(t.Context(), supervisor))
+				require.Eventually(t, func() bool {
+					status, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
+					return err == nil && status.Checkout.State == "failed" && status.Checkout.RetentionReleased
+				}, 3*time.Second, 10*time.Millisecond)
+				finished, err := s.Store.StorageOperation(t.Context(), op.ID)
+				require.NoError(t, err)
+				require.Equal(t, store.StorageOperationFailed, finished.State)
+				require.NotNil(t, finished.FinishedAt)
+				observed, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
+				require.NoError(t, err)
+				require.False(t, observed[0].Published)
+				updated, _, err := s.Store.ReplaceContent(t.Context(), node.ID, node.Revision, strings.Repeat("a", 64), 20, "image/jpeg")
+				require.NoError(t, err)
+				pruned, err := s.Store.PruneContentVersions(t.Context(), node.ID, updated.Revision, store.VersionPruneSelector{VersionIDs: []string{node.CurrentVersionID}}, true)
+				require.NoError(t, err)
+				if publication == "unrecorded" {
+					require.Equal(t, 1, pruned.DeletedVersions)
+				} else {
+					require.Zero(t, pruned.DeletedVersions)
+					require.Len(t, pruned.DependencyRetained, 1)
+				}
+				content, err := os.ReadFile(replaced)
+				require.NoError(t, err)
+				require.Equal(t, "user replacement", string(content))
+			})
+		}
+	}
+}
+
 func TestCheckoutRunOutcomes(t *testing.T) {
 	t.Parallel()
 

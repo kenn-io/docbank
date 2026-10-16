@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	"go.kenn.io/docbank/internal/blob"
@@ -317,7 +318,7 @@ func (s Service) reconcile(ctx context.Context, c store.PhotoCheckout) error {
 			}
 		}
 	}
-	if invalidDestination || errors.Is(fsErr, os.ErrNotExist) {
+	if invalidDestination || checkoutPathMissing(fsErr) {
 		if err := s.Store.ObservePhotoCheckout(ctx, c.ID, c.OperationID, nil); err != nil {
 			return err
 		}
@@ -346,7 +347,7 @@ func (s Service) reconcile(ctx context.Context, c store.PhotoCheckout) error {
 			if e.Published || e.FileID == operation.Cursor {
 				// A committed copy or install intent may already contain user edits.
 				_, err := root.Lstat(filepath.FromSlash(e.Path))
-				if !errors.Is(err, os.ErrNotExist) {
+				if !checkoutPathMissing(err) {
 					if err != nil {
 						return jobs.DeferStorageAdmission(ctx, s.Store, c.OperationID, fmt.Errorf("file %s at %q: %w", e.FileID, e.Path, err))
 					}
@@ -391,10 +392,14 @@ func (s Service) reconcile(ctx context.Context, c store.PhotoCheckout) error {
 	return s.finish(ctx, c, state, failure)
 }
 
+func checkoutPathMissing(err error) bool {
+	return errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)
+}
+
 func observeCheckoutFile(ctx context.Context, root *os.Root, entry store.PhotoCheckoutEntry) (bool, error) {
 	name := filepath.FromSlash(entry.Path)
 	info, err := root.Lstat(name)
-	if errors.Is(err, os.ErrNotExist) {
+	if checkoutPathMissing(err) {
 		return false, nil
 	}
 	if err != nil {

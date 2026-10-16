@@ -384,7 +384,7 @@ func TestConfiguredCheckoutValidationDefersOnlyOverlappingPaths(t *testing.T) {
 			err = validateCheckoutPath(t.Context(), catalog, destination)
 			require.ErrorIs(t, err, errCheckoutPathOverlap)
 			require.ErrorContains(t, err, checkoutID)
-			require.ErrorContains(t, err, destination)
+			require.ErrorContains(t, err, fmt.Sprintf("%q", destination))
 			require.NoError(t, validateCheckoutPath(t.Context(), catalog, t.TempDir()))
 		})
 	}
