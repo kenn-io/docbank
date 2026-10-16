@@ -65,9 +65,9 @@ type SnapshotTag struct {
 
 // SnapshotRow freezes display metadata around one exact snapshot member.
 type SnapshotRow struct {
-	Flag *string `json:"flag,omitzero"`
 	SnapshotMember
 
+	Flag                   *string       `json:"flag,omitzero"`
 	Name                   string        `json:"name"`
 	Path                   string        `json:"path"`
 	MIMEType               string        `json:"mime_type"`
