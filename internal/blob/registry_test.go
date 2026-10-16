@@ -814,37 +814,16 @@ func TestRegistryAdmissionStaysClosedAcrossRefreshAndReattach(t *testing.T) {
 	require.EqualValues(t, 1, openings.Load())
 }
 
-func TestRegistryStartupAdmitsModerateAdmission(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		binding := config.StoreBindingConfig{Kind: storeKindFilesystem, Path: "archive"}
-		open := func(_ context.Context, _ config.StoreBindingConfig, expected *packstore.Ownership) (packstore.Backend, error) {
-			return &staticOwnershipBackend{ownership: *expected}, nil
-		}
-		registry := newRegistryWithFactories(t.Context(), "vault", map[string]config.StoreBindingConfig{"archive": binding},
-			[]StoreSpec{{ID: "archive", Kind: storeKindFilesystem, Role: "secondary", Lifecycle: "active", Binding: "archive", OwnershipEpoch: "epoch"}}, open, open,
-			func(ctx context.Context, _ config.StoreBindingConfig) error {
-				select {
-				case <-time.After(300 * time.Millisecond):
-					return nil
-				case <-ctx.Done():
-					return ctx.Err()
-				}
-			})
-		t.Cleanup(func() { require.NoError(t, registry.Close()) })
-		require.Equal(t, StoreOnline, registry.Observation("archive").State)
-		_, available := registry.Backend("archive")
-		require.True(t, available)
-	})
-}
-
 func TestRegistryStartupDefersSlowAdmission(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		bindings := map[string]config.StoreBindingConfig{
+			"moderate":  {Kind: storeKindFilesystem, Path: "moderate"},
 			"slow":      {Kind: storeKindFilesystem, Path: "slow"},
 			"also-slow": {Kind: storeKindFilesystem, Path: "also-slow"},
 			"fast":      {Kind: storeKindFilesystem, Path: "fast"},
 		}
 		stores := []StoreSpec{
+			{ID: "moderate", Kind: storeKindFilesystem, Role: "secondary", Lifecycle: "active", Binding: "moderate", OwnershipEpoch: "epoch"},
 			{ID: "slow", Kind: storeKindFilesystem, Role: "secondary", Lifecycle: "active", Binding: "slow", OwnershipEpoch: "epoch"},
 			{ID: "also-slow", Kind: storeKindFilesystem, Role: "secondary", Lifecycle: "active", Binding: "also-slow", OwnershipEpoch: "epoch"},
 			{ID: "fast", Kind: storeKindFilesystem, Role: "secondary", Lifecycle: "active", Binding: "fast", OwnershipEpoch: "epoch"},
@@ -854,6 +833,14 @@ func TestRegistryStartupDefersSlowAdmission(t *testing.T) {
 		}
 		released := make(chan struct{})
 		admit := func(ctx context.Context, binding config.StoreBindingConfig) error {
+			if binding.Path == "moderate" {
+				select {
+				case <-time.After(300 * time.Millisecond):
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
 			if binding.Path == "fast" {
 				return nil
 			}
@@ -882,6 +869,9 @@ func TestRegistryStartupDefersSlowAdmission(t *testing.T) {
 		_, available := registry.Backend("slow")
 		require.False(t, available)
 		require.Equal(t, StoreOnline, registry.Observation("fast").State)
+		require.Equal(t, StoreOnline, registry.Observation("moderate").State)
+		_, available = registry.Backend("moderate")
+		require.True(t, available)
 
 		// The supervisor's refresh must allow a long admission to finish.
 		refreshed := make(chan StoreObservation, 1)

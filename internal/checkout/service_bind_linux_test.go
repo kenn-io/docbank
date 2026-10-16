@@ -8,8 +8,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
-
-	"go.kenn.io/docbank/internal/store"
 )
 
 func TestCheckoutRejectsStartupCleanupDescendantBindMount(t *testing.T) {
@@ -21,15 +19,7 @@ func TestCheckoutRejectsStartupCleanupDescendantBindMount(t *testing.T) {
 			require.NoError(t, os.MkdirAll(owned, 0o700))
 			destination := t.TempDir()
 			bindMountForTest(t, owned, destination)
-			_, _, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, destination, 0)
-			if root != nil {
-				require.NoError(t, root.Close())
-			}
-			require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
-			require.ErrorContains(t, err, "destination overlaps a vault, storage root, watched folder, or checkout")
-			checkouts, err := s.Store.ListPhotoCheckouts(t.Context())
-			require.NoError(t, err)
-			require.Empty(t, checkouts)
+			assertStartupCleanupCheckoutRejected(t, s, a, destination)
 		})
 	}
 }

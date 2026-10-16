@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -389,65 +388,53 @@ func TestConfiguredCheckoutValidationDefersOnlyOverlappingBindings(t *testing.T)
 	require.ErrorContains(t, err, fmt.Sprintf("%q", destination))
 }
 
-func TestConfiguredCheckoutStartupAdmitsModerateBinding(t *testing.T) {
-	catalog, _, _, _ := newCheckoutReservationFixture(t)
-	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
-	cfg := config.Default()
-	binding := config.StoreBindingConfig{Kind: "filesystem", Path: t.TempDir()}
-	cfg.StoreBindings = map[string]config.StoreBindingConfig{"archive": binding}
-	admission := &checkoutBindingAdmission{catalog: catalog, logger: slog.New(slog.DiscardHandler),
-		check: func(ctx context.Context, _ []store.PhotoCheckout, _ string) error {
-			select {
-			case <-time.After(300 * time.Millisecond):
-				return nil
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		},
-	}
-	pending, err := validateConfiguredCheckoutStartup(t.Context(), cfg, []store.BlobStore{
-		{Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "archive"},
-	}, admission.admit)
-	require.NoError(t, err)
-	require.False(t, pending, "a 300ms separation walk should finish during startup")
-	_, admitted := admission.checked[binding]
-	require.True(t, admitted)
-}
-
 func TestConfiguredCheckoutStartupDefersSlowBinding(t *testing.T) {
-	t.Parallel()
-	catalog, _, _, _ := newCheckoutReservationFixture(t)
-	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
-	cfg := config.Default()
-	cfg.StoreBindings = map[string]config.StoreBindingConfig{
-		"slow": {Kind: "filesystem", Path: t.TempDir()},
-		"fast": {Kind: "filesystem", Path: t.TempDir()},
-	}
-	var fastChecked bool
-	admission := &checkoutBindingAdmission{catalog: catalog, logger: slog.New(slog.DiscardHandler),
-		check: func(ctx context.Context, _ []store.PhotoCheckout, path string) error {
-			if path == cfg.StoreBindings["slow"].Path {
-				<-ctx.Done()
-				return ctx.Err()
-			}
-			fastChecked = true
-			return nil
-		},
-	}
-	ctx, cancel := context.WithTimeout(t.Context(), 2*blob.RegistryProbeTimeout)
-	defer cancel()
-	pending, err := validateConfiguredCheckoutStartup(ctx, cfg, []store.BlobStore{
-		{Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "slow"},
-		{Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "fast"},
-	}, admission.admit)
-	require.NoError(t, err)
-	require.NoError(t, ctx.Err())
-	require.True(t, pending)
-	require.True(t, fastChecked)
-	_, admitted := admission.checked[cfg.StoreBindings["slow"]]
-	require.False(t, admitted)
-	_, admitted = admission.checked[cfg.StoreBindings["fast"]]
-	require.True(t, admitted)
+	synctest.Test(t, func(t *testing.T) {
+		catalog, _, _, _ := newCheckoutReservationFixture(t)
+		t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+		cfg := config.Default()
+		cfg.StoreBindings = map[string]config.StoreBindingConfig{
+			"moderate": {Kind: "filesystem", Path: t.TempDir()},
+			"slow":     {Kind: "filesystem", Path: t.TempDir()},
+			"fast":     {Kind: "filesystem", Path: t.TempDir()},
+		}
+		var fastChecked bool
+		admission := &checkoutBindingAdmission{catalog: catalog, logger: slog.New(slog.DiscardHandler),
+			check: func(ctx context.Context, _ []store.PhotoCheckout, path string) error {
+				if path == cfg.StoreBindings["slow"].Path {
+					<-ctx.Done()
+					return ctx.Err()
+				}
+				if path == cfg.StoreBindings["moderate"].Path {
+					select {
+					case <-time.After(300 * time.Millisecond):
+						return nil
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}
+				fastChecked = true
+				return nil
+			},
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), 2*blob.RegistryProbeTimeout)
+		defer cancel()
+		pending, err := validateConfiguredCheckoutStartup(ctx, cfg, []store.BlobStore{
+			{Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "moderate"},
+			{Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "slow"},
+			{Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "fast"},
+		}, admission.admit)
+		require.NoError(t, err)
+		require.NoError(t, ctx.Err())
+		require.True(t, pending)
+		require.True(t, fastChecked)
+		_, admitted := admission.checked[cfg.StoreBindings["slow"]]
+		require.False(t, admitted)
+		_, admitted = admission.checked[cfg.StoreBindings["fast"]]
+		require.True(t, admitted)
+		_, admitted = admission.checked[cfg.StoreBindings["moderate"]]
+		require.True(t, admitted, "a 300ms separation walk should finish during startup")
+	})
 }
 
 func TestCheckoutValidationDefersInternalDeadline(t *testing.T) {
@@ -500,40 +487,6 @@ func TestCheckoutValidationDefersInternalDeadline(t *testing.T) {
 	})
 }
 
-func TestCheckoutBindingAdmissionCachesSuccessfulSeparation(t *testing.T) {
-	t.Parallel()
-	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
-		t.Skip("requires Unix directory permissions")
-	}
-	catalog, checkoutID, operationID, destination := newCheckoutReservationFixture(t)
-	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
-	var log bytes.Buffer
-	admit := newCheckoutBindingAdmission(catalog, slog.New(slog.NewTextHandler(&log, nil)))
-	binding := config.StoreBindingConfig{Kind: "filesystem", Path: t.TempDir()}
-	child := filepath.Join(binding.Path, "unreadable")
-	require.NoError(t, os.Mkdir(child, 0o700))
-	t.Cleanup(func() { require.NoError(t, os.Chmod(child, 0o700)) })
-	require.NoError(t, admit(t.Context(), binding))
-	require.NoError(t, os.Chmod(child, 0o000))
-	// A refresh uses the previous separation result, without opening descendants.
-	require.NoError(t, admit(t.Context(), binding))
-	changedBinding := binding
-	changedBinding.Priority++
-	require.ErrorIs(t, admit(t.Context(), changedBinding), os.ErrPermission)
-	// A checkout change invalidates the cached result for the original binding.
-	require.NoError(t, catalog.FinishPhotoCheckout(t.Context(), checkoutID, operationID, store.StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
-	_, err := catalog.RetirePhotoCheckout(t.Context(), checkoutID)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(destination, "copy.jpg"), []byte("copy"), 0o600))
-	require.ErrorIs(t, admit(t.Context(), binding), os.ErrPermission)
-	require.NoError(t, os.Chmod(child, 0o700))
-	require.NoError(t, admit(t.Context(), binding), "failed checks must retry")
-	binding.Path = destination
-	require.ErrorIs(t, admit(t.Context(), binding), errCheckoutPathOverlap)
-	require.Contains(t, log.String(), checkoutID)
-	require.Contains(t, log.String(), destination)
-}
-
 func TestCheckoutBindingAdmissionPersistsFolderReuseAcrossRestart(t *testing.T) {
 	t.Parallel()
 	layout := home.Layout{Root: t.TempDir()}
@@ -564,13 +517,18 @@ func TestCheckoutBindingAdmissionPersistsFolderReuseAcrossRestart(t *testing.T) 
 
 func TestCheckoutBindingAdmissionCacheAndSnapshotChanges(t *testing.T) {
 	t.Parallel()
-	catalog, checkoutID, operationID, _ := newCheckoutReservationFixture(t)
+	catalog, checkoutID, operationID, destination := newCheckoutReservationFixture(t)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	walks := 0
+	var log bytes.Buffer
+	var checkErr error
 	admission := &checkoutBindingAdmission{
-		catalog: catalog, logger: slog.New(slog.DiscardHandler),
+		catalog: catalog, logger: slog.New(slog.NewTextHandler(&log, nil)),
 		check: func(ctx context.Context, checkouts []store.PhotoCheckout, path string) error {
 			walks++
+			if checkErr != nil {
+				return checkErr
+			}
 			return validateCheckoutPathSnapshot(ctx, checkouts, path)
 		},
 	}
@@ -590,8 +548,17 @@ func TestCheckoutBindingAdmissionCacheAndSnapshotChanges(t *testing.T) {
 	require.NoError(t, catalog.FinishPhotoCheckout(t.Context(), checkoutID, operationID, store.StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
 	_, err := catalog.RetirePhotoCheckout(t.Context(), checkoutID)
 	require.NoError(t, err)
-	require.NoError(t, admission.admit(t.Context(), binding))
+	checkErr = &os.PathError{Op: "open", Path: binding.Path, Err: os.ErrPermission}
+	require.ErrorIs(t, admission.admit(t.Context(), binding), os.ErrPermission)
 	require.Equal(t, 4, walks, "retirement invalidates the successful snapshot")
+	checkErr = nil
+	require.NoError(t, admission.admit(t.Context(), binding), "failed checks must retry")
+	require.Equal(t, 5, walks)
+	require.NoError(t, os.WriteFile(filepath.Join(destination, "copy.jpg"), []byte("copy"), 0o600))
+	binding.Path = destination
+	require.ErrorIs(t, admission.admit(t.Context(), binding), errCheckoutPathOverlap)
+	require.Contains(t, log.String(), checkoutID)
+	require.Contains(t, log.String(), destination)
 }
 
 func TestCheckoutBindingAdmissionRechecksSnapshotChangedDuringWalk(t *testing.T) {

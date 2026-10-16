@@ -320,31 +320,6 @@ func TestKeylessConfigStillRequiresAuth(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }
 
-func TestNetworkHostGuardPrecedesAuthentication(t *testing.T) {
-	t.Parallel()
-	_, catalog := newTestServer(t, func(d *api.Deps) {
-		d.Cfg.Server.BindAddr = "0.0.0.0"
-		d.Cfg.Server.AllowedHosts = []string{"docbank:8485"}
-	})
-	for _, tc := range []struct {
-		host, key string
-		status    int
-	}{
-		{"attacker.example:8485", "wrong", http.StatusForbidden},
-		{"docbank:8485", "wrong", http.StatusUnauthorized},
-		{"docbank:8485", testAPIKey, http.StatusOK},
-	} {
-		t.Run(tc.host+tc.key, func(t *testing.T) {
-			r := httptest.NewRequest(http.MethodGet, "http://localhost/api/v1/info", nil)
-			r.Host = tc.host
-			r.Header.Set("X-Api-Key", tc.key)
-			w := httptest.NewRecorder()
-			catalog.Server.Handler().ServeHTTP(w, r)
-			require.Equal(t, tc.status, w.Code, w.Body.String())
-		})
-	}
-}
-
 // TestNewServerRefusesEmptyKey pins the defense-in-depth invariant behind
 // TestKeylessConfigStillRequiresAuth: even if some future caller reproduced
 // the old bug and built Deps with an empty key, NewServer itself refuses to

@@ -53,9 +53,6 @@ func TestPhotoCheckoutSelections(t *testing.T) {
 		browsePhotoMetadata(t, s, n, v.date, photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp(v.date, v.date, document.SourceMetadataPrecisionDate, document.SourceMetadataTimezoneOmitted, "")))
 	}
 	a, b, c := assets[0], assets[1], assets[2]
-	_, err := s.EstimatePhotoCheckout(ctx, PhotoCheckoutSelection{All: true, AssetIDs: []string{a.ID}})
-	require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
-	require.ErrorContains(t, err, "all cannot be combined")
 	set, err := s.CreatePhotoSet(ctx, "Trip")
 	require.NoError(t, err)
 	_, err = s.ChangePhotoSetMembers(ctx, set.ID, set.Revision, true, PhotoSetSelection{AssetIDs: []string{a.ID, b.ID}})
@@ -267,6 +264,7 @@ func TestPhotoCheckoutCreateValidation(t *testing.T) {
 		errorText                                  string
 	}
 	cases := []rejectedCase{
+		{name: "all with assets", limit: 100, setSelection: true, selection: PhotoCheckoutSelection{All: true, AssetIDs: []string{"00000000-0000-4000-8000-000000000001"}}, errorText: "all cannot be combined"},
 		{name: "empty all", limit: 100, errorText: "selection contains no files"},
 		{name: "empty selection", limit: 100, setSelection: true, errorText: "select assets, albums, years, or all"},
 		{name: "invalid asset ID", limit: 100, setSelection: true, selection: PhotoCheckoutSelection{AssetIDs: []string{"bad"}}},
@@ -1033,45 +1031,39 @@ func TestPhotoCheckoutCreationRejectsSelectionPurgedBeforeCommit(t *testing.T) {
 
 func TestPhotoCheckoutSkipsInvalidNamesWithBoundedDetails(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"bad\x00.jpg", "CON.jpg"} {
-		t.Run(name, func(t *testing.T) {
-			if name == "CON.jpg" && runtime.GOOS != "windows" {
-				t.Skip("reserved device names are invalid on Windows")
-			}
-			s := newTestStore(t)
-			good := albumAsset(t, s, "good.jpg")
-			badAssets := map[string]string{}
-			for i := range 25 {
-				dir, err := s.Mkdir(t.Context(), s.RootID(), fmt.Sprintf("bad-%d", i))
-				require.NoError(t, err)
-				node, err := s.CreateFile(t.Context(), dir.ID, "original.jpg", browseHash(fmt.Sprintf("bad-%d", i)), 20, "image/jpeg")
-				require.NoError(t, err)
-				asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
-				require.NoError(t, err)
-				_, err = s.db.ExecContext(t.Context(), "UPDATE nodes SET name=? WHERE id=?", name, asset.Files[0].NodeID)
-				require.NoError(t, err)
-				badAssets[asset.ID] = asset.Files[0].ID
-			}
-			selection := PhotoCheckoutSelection{All: true}
-			estimate, err := s.EstimatePhotoCheckout(t.Context(), selection)
-			require.NoError(t, err)
-			require.Equal(t, int64(1), estimate.Assets)
-			require.Equal(t, int64(1), estimate.Files)
-			require.Equal(t, int64(20), estimate.Bytes)
-			require.Equal(t, int64(25), estimate.SkippedPhotoCount)
-			require.Len(t, estimate.SkippedPhotos, 20)
-			for _, skip := range estimate.SkippedPhotos {
-				require.Equal(t, badAssets[skip.AssetID], skip.FileID)
-				require.Equal(t, name, skip.Name)
-				require.NotEmpty(t, skip.Reason)
-			}
-			checkout, _, createdEstimate, err := s.CreatePhotoCheckout(t.Context(), selection, "checkout", 20)
-			require.NoError(t, err)
-			require.Equal(t, estimate, createdEstimate)
-			entries, err := s.PhotoCheckoutEntries(t.Context(), checkout.ID)
-			require.NoError(t, err)
-			require.Len(t, entries, 1)
-			require.Equal(t, good.ID, entries[0].AssetID)
-		})
+	name := "bad\x00.jpg"
+	s := newTestStore(t)
+	good := albumAsset(t, s, "good.jpg")
+	badAssets := map[string]string{}
+	for i := range 25 {
+		dir, err := s.Mkdir(t.Context(), s.RootID(), fmt.Sprintf("bad-%d", i))
+		require.NoError(t, err)
+		node, err := s.CreateFile(t.Context(), dir.ID, "original.jpg", browseHash(fmt.Sprintf("bad-%d", i)), 20, "image/jpeg")
+		require.NoError(t, err)
+		asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
+		require.NoError(t, err)
+		_, err = s.db.ExecContext(t.Context(), "UPDATE nodes SET name=? WHERE id=?", name, asset.Files[0].NodeID)
+		require.NoError(t, err)
+		badAssets[asset.ID] = asset.Files[0].ID
 	}
+	selection := PhotoCheckoutSelection{All: true}
+	estimate, err := s.EstimatePhotoCheckout(t.Context(), selection)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), estimate.Assets)
+	require.Equal(t, int64(1), estimate.Files)
+	require.Equal(t, int64(20), estimate.Bytes)
+	require.Equal(t, int64(25), estimate.SkippedPhotoCount)
+	require.Len(t, estimate.SkippedPhotos, 20)
+	for _, skip := range estimate.SkippedPhotos {
+		require.Equal(t, badAssets[skip.AssetID], skip.FileID)
+		require.Equal(t, name, skip.Name)
+		require.NotEmpty(t, skip.Reason)
+	}
+	checkout, _, createdEstimate, err := s.CreatePhotoCheckout(t.Context(), selection, "checkout", 20)
+	require.NoError(t, err)
+	require.Equal(t, estimate, createdEstimate)
+	entries, err := s.PhotoCheckoutEntries(t.Context(), checkout.ID)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, good.ID, entries[0].AssetID)
 }

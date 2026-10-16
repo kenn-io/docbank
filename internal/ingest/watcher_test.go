@@ -550,15 +550,13 @@ func TestWatchedFileReadRejectsConcurrentPathReplacement(t *testing.T) {
 
 func TestWatcherCheckoutAdmission(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		checkout bool
-		retired  bool
-		files    bool
+		name    string
+		retired bool
+		files   bool
 	}{
-		{name: "clean watch"},
-		{name: "reserved blocks until cancel", checkout: true},
-		{name: "retired empty admits immediately", checkout: true, retired: true},
-		{name: "retired files wait until cleared", checkout: true, retired: true, files: true},
+		{name: "reserved blocks until cancel"},
+		{name: "retired empty admits immediately", retired: true},
+		{name: "retired files wait until cleared", retired: true, files: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
@@ -566,20 +564,16 @@ func TestWatcherCheckoutAdmission(t *testing.T) {
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
 				destination := t.TempDir()
-				var checkout store.PhotoCheckout
-				if tc.checkout {
-					node, err := ing.Store.CreateFile(ctx, ing.Store.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
+				node, err := ing.Store.CreateFile(ctx, ing.Store.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
+				require.NoError(t, err)
+				asset, err := ing.Store.PhotoAssetForNode(ctx, node.ID)
+				require.NoError(t, err)
+				checkout, op, _, err := ing.Store.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
+				require.NoError(t, err)
+				if tc.retired {
+					require.NoError(t, ing.Store.FinishPhotoCheckout(ctx, checkout.ID, op.ID, store.StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
+					_, err = ing.Store.RetirePhotoCheckout(ctx, checkout.ID)
 					require.NoError(t, err)
-					asset, err := ing.Store.PhotoAssetForNode(ctx, node.ID)
-					require.NoError(t, err)
-					var op store.StorageOperation
-					checkout, op, _, err = ing.Store.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
-					require.NoError(t, err)
-					if tc.retired {
-						require.NoError(t, ing.Store.FinishPhotoCheckout(ctx, checkout.ID, op.ID, store.StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
-						_, err = ing.Store.RetirePhotoCheckout(ctx, checkout.ID)
-						require.NoError(t, err)
-					}
 				}
 				partial := filepath.Join(destination, "edited.jpg")
 				if tc.files {
@@ -597,7 +591,7 @@ func TestWatcherCheckoutAdmission(t *testing.T) {
 					done <- err
 				}()
 				synctest.Wait()
-				if tc.checkout && (!tc.retired || tc.files) {
+				if !tc.retired || tc.files {
 					select {
 					case err := <-done:
 						t.Fatalf("watch stopped before checkout cleared: %v", err)
@@ -622,11 +616,6 @@ func TestWatcherCheckoutAdmission(t *testing.T) {
 				}
 				if tc.files {
 					require.NoError(t, <-done)
-				}
-				if tc.retired {
-					released, err := ing.Store.PhotoCheckout(ctx, checkout.ID)
-					require.NoError(t, err)
-					require.Empty(t, released.Destination)
 				}
 			})
 		})

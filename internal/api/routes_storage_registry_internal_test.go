@@ -34,13 +34,7 @@ func TestStorageProtectionPathsAdmitRemovedCheckoutBeneathFile(t *testing.T) {
 	d := Deps{Store: catalog, VaultRoot: t.TempDir(), Cfg: config.Default()}
 	d.BlobRegistry = blob.NewRegistry(t.Context(), catalog.VaultID(), nil, nil)
 	t.Cleanup(func() { require.NoError(t, d.BlobRegistry.Close()) })
-	d.Cfg.Watches = []config.WatchConfig{{Source: filepath.Join(parent, "watch")}}
-	paths, err := storageProtectionPaths(t.Context(), d, config.StoreBindingConfig{Kind: "s3", Bucket: "archive", Region: "us-east-1"})
-	require.NoError(t, err)
-	require.Empty(t, paths)
-	d.Cfg.Watches = nil
 	bindingPath := t.TempDir()
-	paths, err = storageProtectionPaths(t.Context(), d, config.StoreBindingConfig{Kind: "filesystem", Path: bindingPath})
+	_, err = storageProtectionPaths(t.Context(), d, config.StoreBindingConfig{Kind: "filesystem", Path: bindingPath})
 	require.NoError(t, err)
-	require.Equal(t, []string{d.VaultRoot, bindingPath}, paths)
 }

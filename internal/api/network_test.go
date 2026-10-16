@@ -10,7 +10,7 @@ import (
 	"go.kenn.io/docbank/internal/config"
 )
 
-func TestNetworkHostGuard(t *testing.T) {
+func TestNetworkHostGuardPrecedesAuthentication(t *testing.T) {
 	t.Parallel()
 	cfg := config.Default().Server
 	cfg.BindAddr = "0.0.0.0"
