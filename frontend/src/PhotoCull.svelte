@@ -73,19 +73,18 @@
     const ids = rail;
     const controller = new AbortController();
     neighbors = [];
-    void Promise.all(
-      ids.map(async (id) => {
-        try {
-          return await photos.lookup(id, controller.signal);
-        } catch {
-          return undefined;
-        }
-      }),
-    ).then((rows) => {
-      if (!controller.signal.aborted)
-        neighbors = rows.filter((row): row is PhotoBrowseRow => !!row);
-    });
+    void photos
+      .lookupMany(ids, controller.signal)
+      .then((rows) => {
+        if (!controller.signal.aborted) neighbors = rows;
+      })
+      .catch(() => {});
     return () => controller.abort();
+  });
+  $effect(() => {
+    const complete = cull.complete;
+    const passID = checkpoint.passID;
+    if (complete && passID) untrack(() => void cull.checkRemainder());
   });
   function move(direction: -1 | 1) {
     if (editor.canChangeTarget()) cull.move(direction);
@@ -97,7 +96,7 @@
     if (photo && after) photo = { ...photo, flag: after.values.flag, rating: after.values.rating };
   }
   async function decide(patch: PhotoAuthoredPatch) {
-    if (!photo || loading || cull.busy || !editor.canChangeTarget()) return;
+    if (!photo || loading || cull.stale || cull.busy || !editor.canChangeTarget()) return;
     editor.reset();
     const id = photo.asset_id;
     await editor.edit({ asset_ids: [id] }, patch, false, refresh);
@@ -153,12 +152,15 @@
         >
         <Button
           size="sm"
-          disabled={cull.busy || editor.busy}
+          disabled={cull.busy || cull.stale || editor.busy}
           onclick={() => {
             if (editor.canChangeTarget()) void cull.nextPass();
           }}>Scope: {checkpoint.scope}</Button
         >
-        <Button size="sm" onclick={() => cull.toggleAutoAdvance()}
+        <Button
+          size="sm"
+          disabled={cull.stale || cull.busy}
+          onclick={() => cull.toggleAutoAdvance()}
           >Auto-advance: {checkpoint.autoAdvance ? "on" : "off"}</Button
         >
         <Button size="sm" onclick={() => (help = !help)}>Keys (?)</Button>
@@ -166,6 +168,7 @@
       {#if cull.error || editor.error || editor.notice}<p role="alert">
           {cull.error || editor.error || editor.notice}
         </p>{/if}
+      {#if cull.progress && !cull.complete}<p role="status">{cull.progress}</p>{/if}
       {#if editor.dirty || editor.conflict}<div class="controls">
           <Button
             onclick={() => {
@@ -185,16 +188,13 @@
             {checkpoint.visited.length} viewed · {checkpoint.skipped.length} skipped · {checkpoint
               .unavailable.length} unavailable
           </p>
-          <p>
-            Review the still-unflagged photos from this pass, including skipped and never-viewed
-            photos.
-          </p>
-          <Button
-            disabled={cull.busy}
-            onclick={() => {
-              if (editor.canChangeTarget()) void cull.nextPass(true);
-            }}>Review undecided remainder</Button
-          >
+          {#if cull.progress}<p role="status">{cull.progress}</p>{/if}
+          {#if cull.remainder}<Button
+              disabled={cull.busy || cull.stale}
+              onclick={() => {
+                if (editor.canChangeTarget()) void cull.nextPass(true);
+              }}>Review unflagged remainder</Button
+            >{/if}
           <Button onclick={close}>Back to photos</Button>
         </section>
       {:else}
@@ -228,22 +228,22 @@
           >
           <Button
             size="sm"
-            disabled={!photo || editor.busy}
+            disabled={!photo || cull.stale || editor.busy}
             onclick={() => void decide({ flag: "pick" })}>Pick (P)</Button
           >
           <Button
             size="sm"
-            disabled={!photo || editor.busy}
+            disabled={!photo || cull.stale || editor.busy}
             onclick={() => void decide({ flag: "reject" })}>Reject (X)</Button
           >
           <Button
             size="sm"
-            disabled={!photo || editor.busy}
+            disabled={!photo || cull.stale || editor.busy}
             onclick={() => void decide({ flag: "" })}>Clear flag (U)</Button
           >
           <Button
             size="sm"
-            disabled={editor.busy}
+            disabled={cull.stale || editor.busy}
             onclick={() => {
               if (editor.canChangeTarget()) cull.skip();
             }}>Skip</Button
@@ -256,7 +256,9 @@
             >1:1 (Z)</Button
           >
           <Button size="sm" onclick={() => (info = (info + 1) % 3)}>EXIF (I)</Button>
-          <Button size="sm" disabled={editor.busy} onclick={() => move(1)}>Next</Button>
+          <Button size="sm" disabled={cull.stale || editor.busy} onclick={() => move(1)}
+            >Next</Button
+          >
         </div>
         <nav class="filmstrip" aria-label="Cull pass">
           {#each rail as id}{@const row = neighbors.find((item) => item.asset_id === id)}
@@ -284,7 +286,7 @@
       {#if editor.receiptID}<Notice
           tone="success"
           message={editor.undoState.summary}
-          actionLabel={editor.busy || editor.dirty ? undefined : "Undo"}
+          actionLabel={cull.stale || editor.busy || editor.dirty ? undefined : "Undo"}
           onaction={() => void editor.undo(refresh)}
         />{/if}
       <span class="kit-sr-only" aria-live="polite">{announcement}</span>

@@ -48,6 +48,40 @@ import type { HiddenAccess } from "./hiddenAccess.svelte.js";
 export const photoQuery = parseQuery(
   '{"syntax":"simple","sort":{"field":"capture_time","direction":"desc"}}',
 );
+// QueryV1 accepts at most 64 asset IDs per request.
+export async function lookupPhotoRows(
+  session: string,
+  ids: string[],
+  signal?: AbortSignal,
+  onprogress?: (loaded: number, total: number) => void,
+  hidden = false,
+): Promise<PhotoBrowseRow[]> {
+  const rows: PhotoBrowseRow[] = [];
+  let offset = 0,
+    loaded = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(4, Math.ceil(ids.length / 64)) }, async () => {
+      while (offset < ids.length) {
+        signal?.throwIfAborted();
+        const batch = ids.slice(offset, (offset += 64));
+        const page = await listPhotoAssets(
+          {
+            query: { ...photoQuery, filters: { ...photoQuery.filters, asset_ids: batch } },
+            page_size: 250,
+            hidden,
+          },
+          { session, signal },
+        );
+        signal?.throwIfAborted();
+        rows.push(...page.items);
+        loaded += batch.length;
+        onprogress?.(loaded, ids.length);
+      }
+    }),
+  );
+  const byID = new Map(rows.map((row) => [row.asset_id, row]));
+  return ids.flatMap((id) => (byID.has(id) ? [byID.get(id)!] : []));
+}
 export const mapPhotoLimit = 20_000;
 const mapPageLimit = 20;
 const photoFacets = [
@@ -445,6 +479,15 @@ export class Photos {
     return this.allResults
       ? { query: structuredClone(this.query) }
       : { asset_ids: [...this.selection.selectedIDs] };
+  }
+
+  async lookupMany(ids: string[], signal: AbortSignal) {
+    try {
+      return await lookupPhotoRows(this.session, ids, signal, undefined, this.hidden);
+    } catch (cause) {
+      if (!signal.aborted) this.authFailure(cause);
+      throw cause;
+    }
   }
 
   async lookup(assetID: string, signal: AbortSignal): Promise<PhotoBrowseRow> {

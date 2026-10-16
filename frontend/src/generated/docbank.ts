@@ -6921,6 +6921,18 @@ export const WorkspaceQueryResponsePageSize = {
   NUMBER_250: 250,
 } as const;
 
+/**
+ * Display-file flag in a photo snapshot; absent in a document snapshot.
+ */
+export type WorkspaceQueryRowFlag = typeof WorkspaceQueryRowFlag[keyof typeof WorkspaceQueryRowFlag];
+
+
+export const WorkspaceQueryRowFlag = {
+  '': '',
+  pick: 'pick',
+  reject: 'reject',
+} as const;
+
 export interface WorkspaceQueryTag {
   id: string;
   name: string;
@@ -6941,6 +6953,8 @@ export interface WorkspaceQueryRow {
   /** @nullable */
   display_collection_label?: string | null;
   excerpt?: string;
+  /** Display-file flag in a photo snapshot; absent in a document snapshot. */
+  flag?: WorkspaceQueryRowFlag;
   media_family: string;
   mime_type: string;
   modified_at: string;

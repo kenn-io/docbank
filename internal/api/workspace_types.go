@@ -62,6 +62,7 @@ type WorkspaceQueryTag struct {
 }
 
 type WorkspaceQueryRow struct {
+	Flag                   *string             `json:"flag,omitzero" nullable:"false" enum:",pick,reject" doc:"Display-file flag in a photo snapshot; absent in a document snapshot."`
 	AssetID                string              `json:"asset_id,omitempty" format:"uuid"`
 	NodeID                 int64               `json:"node_id" minimum:"1"`
 	ContentVersionID       string              `json:"content_version_id" format:"uuid"`
@@ -193,7 +194,7 @@ func fromStoreWorkspacePage(page store.SnapshotPage) (WorkspaceQueryResponse, er
 	}
 	for _, row := range page.Rows {
 		wire := WorkspaceQueryRow{
-			AssetID: row.AssetID, NodeID: row.NodeID, ContentVersionID: row.ContentVersionID, BlobHash: row.BlobHash,
+			Flag: row.Flag, AssetID: row.AssetID, NodeID: row.NodeID, ContentVersionID: row.ContentVersionID, BlobHash: row.BlobHash,
 			Size: row.Size, Revision: row.Revision, Name: row.Name, Path: row.Path,
 			MIMEType: row.MIMEType, MediaFamily: row.MediaFamily, ModifiedAt: row.ModifiedAt,
 			SortKey: row.SortKey, Tags: []WorkspaceQueryTag{}, CollectionIDs: row.CollectionIDs,

@@ -16,12 +16,25 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
     await mkdir(output!, { recursive: true });
     const url = new URL(await fixture.run("web", "--no-browser"));
     url.pathname = "/photos";
+    let acceptDialogs = true;
+    page.on("dialog", (dialog) => (acceptDialogs ? dialog.accept() : dialog.dismiss()));
     await page.goto(url.href);
     await expect(page.locator(".photo-cell img").first()).toBeVisible();
+    await page.locator(".photo-image").first().click();
+    await page.getByRole("button", { name: "Metadata", exact: true }).click();
+    const inspector = page.getByRole("region", { name: "Photo metadata" });
+    await expect(inspector.getByRole("combobox", { name: /^Rating:/ })).toBeVisible();
     await page.getByRole("button", { name: "Cull", exact: true }).click();
     const cull = page.getByRole("dialog", { name: "Cull photos" });
     await expect(cull.locator(".photo-stage img")).toBeVisible();
     const firstName = await cull.locator("header strong").innerText();
+    acceptDialogs = false;
+    const canceledScope = page.waitForEvent("dialog");
+    await page.keyboard.press("s");
+    await canceledScope;
+    await expect(cull.getByRole("button", { name: "Scope: unflagged", exact: true })).toBeVisible();
+    await expect(cull.locator("header strong")).toHaveText(firstName);
+    acceptDialogs = true;
     await page.evaluate(() => {
       const writes: { store: string; bytes: number }[] = [];
       (window as unknown as Window & { cullWrites: typeof writes }).cullWrites = writes;
@@ -43,7 +56,16 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
       path: path.join(output!, "web-photo-cull.png"),
       animations: "disabled",
     });
+    await cull.getByRole("button", { name: "Undo", exact: true }).click();
+    await expect(cull.getByRole("button", { name: "Undo", exact: true })).toHaveCount(0);
     await cull.getByRole("button", { name: "Exit cull", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Cull", exact: true })).toBeFocused();
+    await expect(inspector.getByRole("combobox", { name: /^Flag:/ })).toContainText("Unflagged");
+    await inspector.getByRole("combobox", { name: /^Rating:/ }).click();
+    await page.getByRole("option", { name: "4 stars", exact: true }).click();
+    await inspector.getByRole("button", { name: "Apply", exact: true }).click();
+    await expect(inspector.getByRole("button", { name: "Apply", exact: true })).toBeDisabled();
+    await expect(page.getByRole("alert")).toHaveCount(0);
     const readCheckpoint = () =>
       page.evaluate(async () => {
         const db = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -85,10 +107,19 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
     expect(writes.every((write) => write.store !== "members" && write.bytes < 256)).toBe(true);
     expect(Object.keys(originalCheckpoint).sort()).toEqual([
       "autoAdvance",
+      "passID",
       "position",
+      "revision",
       "runID",
       "scope",
     ]);
+    acceptDialogs = false;
+    const canceledReplacement = page.waitForEvent("dialog");
+    await page.getByRole("button", { name: "Cull", exact: true }).click();
+    await canceledReplacement;
+    await expect(cull).toHaveCount(0);
+    expect(await readCheckpoint()).toEqual(originalCheckpoint);
+    acceptDialogs = true;
     await page.getByRole("button", { name: "Resume cull", exact: true }).click();
     await expect(cull.locator("header strong")).toHaveText(resumedName);
     const other = await page.context().newPage();
@@ -96,18 +127,37 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
       const otherURL = new URL(await fixture.run("web", "--no-browser"));
       otherURL.pathname = "/photos";
       await other.goto(otherURL.href);
-      await other.getByRole("button", { name: "Cull", exact: true }).click();
+      other.on("dialog", (dialog) => dialog.accept());
+      await other.getByRole("button", { name: "Resume cull", exact: true }).click();
       const otherCull = other.getByRole("dialog", { name: "Cull photos" });
       await expect(otherCull.locator(".photo-stage img")).toBeVisible();
+      await other.keyboard.press("s");
+      await expect(
+        otherCull.getByRole("button", { name: "Scope: picks", exact: true }),
+      ).toBeVisible();
+      await expect(
+        otherCull.getByRole("button", { name: "Review unflagged remainder", exact: true }),
+      ).toBeVisible();
+      const changedPass = await readCheckpoint();
+      await page.keyboard.press("ArrowRight");
+      await expect(cull.getByRole("alert")).toContainText("Cull progress changed in another tab");
+      expect(await readCheckpoint()).toEqual(changedPass);
+      await cull.getByRole("button", { name: "Exit cull", exact: true }).click();
+      await otherCull.getByRole("button", { name: "Exit cull", exact: true }).click();
+      await other.getByRole("button", { name: "Cull", exact: true }).click();
+      await expect(otherCull.locator(".photo-stage img")).toBeVisible();
+      await page.getByRole("button", { name: "Resume cull", exact: true }).click();
+      await expect(cull.locator(".photo-stage img")).toBeVisible();
       for (let i = 0; i < 10; i++) await other.keyboard.press("ArrowRight");
       for (let i = 0; i < 9; i++) await other.keyboard.press("ArrowLeft");
       await expect(otherCull.locator(".photo-stage img")).toBeVisible();
       const replacementName = await otherCull.locator("header strong").innerText();
       await otherCull.getByRole("button", { name: "Exit cull", exact: true }).click();
+      await expect(other.getByRole("button", { name: "Cull", exact: true })).toBeFocused();
       const replacement = await readCheckpoint();
       expect(replacement.runID).not.toBe(originalCheckpoint.runID);
       await page.keyboard.press("ArrowRight");
-      await expect(cull.getByRole("alert")).toContainText("Another cull run replaced this run");
+      await expect(cull.getByRole("alert")).toContainText("Cull progress changed in another tab");
       expect(await readCheckpoint()).toEqual(replacement);
       await cull.getByRole("button", { name: "Exit cull", exact: true }).click();
       await page.getByRole("button", { name: "Resume cull", exact: true }).click();
@@ -115,6 +165,37 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
       await page.keyboard.press("ArrowRight");
       await cull.getByRole("button", { name: "Exit cull", exact: true }).click();
       expect((await readCheckpoint()).position).toBe(replacement.position + 1);
+      await page.getByRole("button", { name: "Resume cull", exact: true }).click();
+      await expect(cull.locator(".photo-stage img")).toBeVisible();
+      resumedName = await cull.locator("header strong").innerText();
+      await cull.getByRole("button", { name: "Exit cull", exact: true }).click();
+      await other.getByRole("button", { name: "Resume cull", exact: true }).click();
+      await expect(otherCull.locator(".photo-stage img")).toBeVisible();
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let captured!: () => void;
+      const started = new Promise<void>((resolve) => {
+        captured = resolve;
+      });
+      await page.route("**/api/v1/workspace/queries", async (route) => {
+        const response = await route.fetch();
+        captured();
+        await held;
+        await route.fulfill({ response });
+      });
+      await page.getByRole("button", { name: "Cull", exact: true }).click();
+      await started;
+      await other.keyboard.press("ArrowRight");
+      await expect(otherCull.locator(".photo-stage img")).toBeVisible();
+      await otherCull.getByRole("button", { name: "Exit cull", exact: true }).click();
+      await expect(other.getByRole("button", { name: "Resume cull", exact: true })).toBeFocused();
+      const newer = await readCheckpoint();
+      release();
+      await expect(page.getByRole("alert")).toContainText("Resume before replacing it");
+      expect(await readCheckpoint()).toEqual(newer);
+      await page.unroute("**/api/v1/workspace/queries");
       await page.getByRole("button", { name: "Resume cull", exact: true }).click();
       await expect(cull.locator(".photo-stage img")).toBeVisible();
       resumedName = await cull.locator("header strong").innerText();

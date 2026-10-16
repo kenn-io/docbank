@@ -65,6 +65,7 @@ type SnapshotTag struct {
 
 // SnapshotRow freezes display metadata around one exact snapshot member.
 type SnapshotRow struct {
+	Flag *string `json:"flag,omitzero"`
 	SnapshotMember
 
 	Name                   string        `json:"name"`
@@ -368,9 +369,9 @@ func materializeSnapshotRows(
 	if err != nil {
 		return err
 	}
-	photoColumns := `'',''`
+	photoColumns := `'','',NULL`
 	if options.Photos {
-		photoColumns = `m.asset_id,printf('%020d',m.photo_position)`
+		photoColumns = `m.asset_id,printf('%020d',m.photo_position),(SELECT f.flag FROM photo_files f JOIN photo_assets a ON a.display_file_id=f.file_id WHERE a.asset_id=m.asset_id)`
 	}
 	coverageCTE, coverageJoin, coverageColumns := "", "", `'', '', ''`
 	if coverage.Configuration == "configured" {
@@ -416,7 +417,7 @@ func materializeSnapshotRows(
 		if err := rows.Scan(&row.NodeID, &row.ContentVersionID, &row.BlobHash, &row.Size, &row.Revision,
 			&row.Name, &row.Path, &row.MIMEType, &row.ModifiedAt, &tagsJSON, &collectionsJSON,
 			&row.DisplayCollectionID, &displayLabel, &row.CoverageState, &row.CoverageBuildID,
-			&row.CoverageAttachmentID, &row.AssetID, &row.SortKey); err != nil {
+			&row.CoverageAttachmentID, &row.AssetID, &row.SortKey, &row.Flag); err != nil {
 			return fmt.Errorf("scanning query snapshot row: %w", err)
 		}
 		if int64(len(tagsJSON)) > options.MaxRowBytes || int64(len(collectionsJSON)) > options.MaxRowBytes {

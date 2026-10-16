@@ -440,5 +440,6 @@ func TestWorkspaceAdHocPhotoSnapshot(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &page))
 	require.EqualValues(t, 3, page.Total)
 	require.Len(t, page.Rows, 3)
+	require.Equal(t, new(""), page.Rows[0].Flag)
 	require.Equal(t, []string{ids["c.jpg"], ids["b.jpg"], ids["a.jpg"]}, []string{page.Rows[0].AssetID, page.Rows[1].AssetID, page.Rows[2].AssetID})
 }

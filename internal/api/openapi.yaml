@@ -19041,6 +19041,13 @@ components:
             - "null"
         excerpt:
           type: string
+        flag:
+          description: Display-file flag in a photo snapshot; absent in a document snapshot.
+          enum:
+            - ""
+            - pick
+            - reject
+          type: string
         media_family:
           type: string
         mime_type:

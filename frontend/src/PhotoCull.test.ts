@@ -27,12 +27,14 @@ it("decides once with P, advances, announces the decision and offers receipt Und
     ids: rows.map((row) => row.asset_id),
     checkpoint: {
       runID: "run",
+      passID: "pass",
+      revision: 0,
       pass: rows.map((row) => row.asset_id),
       position: 0,
       visited: [rows[0]!.asset_id],
       skipped: [],
       unavailable: [],
-      scope: "unrated",
+      scope: "unflagged",
       autoAdvance: true,
     },
   };
@@ -46,6 +48,7 @@ it("decides once with P, advances, announces the decision and offers receipt Und
   vi.spyOn(photos, "lookup").mockImplementation(
     async (id) => rows.find((row) => row.asset_id === id)!,
   );
+  vi.spyOn(photos, "lookupMany").mockResolvedValue([]);
   vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
   const receipt = {
     after: [{ file_id: rows[0]!.display_file_id, values: { flag: "pick", rating: 0 } }],
@@ -112,6 +115,8 @@ it("keeps a failed decision on screen and guards exit while its draft remains", 
     ids: [row.asset_id],
     checkpoint: {
       runID: "run",
+      passID: "pass",
+      revision: 0,
       pass: [row.asset_id],
       position: 0,
       visited: [],
@@ -123,6 +128,7 @@ it("keeps a failed decision on screen and guards exit while its draft remains", 
   };
   const photos = new Photos("session", vi.fn());
   vi.spyOn(photos, "lookup").mockResolvedValue(row);
+  vi.spyOn(photos, "lookupMany").mockResolvedValue([]);
   vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
   vi.spyOn(PhotoAuthoredEditor.prototype, "edit").mockImplementation(
     async function (this: PhotoAuthoredEditor) {

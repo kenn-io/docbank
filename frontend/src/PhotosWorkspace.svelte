@@ -115,7 +115,7 @@
   let compareIDs = $state<string[]>([]);
   let returnFocus: HTMLElement | undefined;
   $effect(() => {
-    void cull.restore();
+    void cull.restore(true);
     return () => cull.cancel();
   });
   async function startCull(resume = false) {
@@ -133,6 +133,7 @@
     culling = comparing = false;
     await cull.flush();
     await refresh();
+    await editor.reload();
     await tick();
     if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
   }
@@ -824,6 +825,7 @@
                   onclick={compare}>Compare</Button
                 >
                 {#if selectionCount > 4}<span>Select 2–4 photos to compare.</span>{/if}
+                {#if cull.progress}<span role="status">{cull.progress}</span>{/if}
                 {#if cull.error}<span role="alert">{cull.error}</span>{/if}
               {/if}
               {#if !mapMode && !photos.hidden && !albumID}<Button

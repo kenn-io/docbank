@@ -1,7 +1,15 @@
+import { waitFor } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { APIError } from "./api-transport.js";
 import * as download from "./download.js";
-import { Photos, loadDensity, photoQuery, mapPhotoLimit, type PhotoRow } from "./photos.svelte.js";
+import {
+  Photos,
+  lookupPhotoRows,
+  loadDensity,
+  photoQuery,
+  mapPhotoLimit,
+  type PhotoRow,
+} from "./photos.svelte.js";
 import {
   photo,
   preparedPhoto,
@@ -2947,3 +2955,34 @@ it.each([{ rating: 5 }, { flag: "pick" as const }, { label: "red" as const }])(
     photos.dispose();
   },
 );
+
+it("looks up large captured sets in at most four concurrent 64-ID queries, preserving input order", async () => {
+  const ids = Array.from({ length: 321 }, (_, index) => `photo-${index + 1}`);
+  let active = 0,
+    peak = 0;
+  const sizes: number[] = [],
+    progress: number[] = [];
+  const waiting: (() => void)[] = [];
+  stubPhotoFetch(async (_url, init) => {
+    const batch: string[] = JSON.parse(String(init.body)).query.filters.asset_ids;
+    sizes.push(batch.length);
+    peak = Math.max(peak, ++active);
+    await new Promise<void>((resolve) => waiting.push(resolve));
+    active--;
+    return response(
+      batch
+        .slice()
+        .reverse()
+        .map((id) => ({ ...photo(1), asset_id: id })),
+    );
+  });
+  const result = lookupPhotoRows("session", ids, undefined, (count) => progress.push(count));
+  await waitFor(() => expect(waiting).toHaveLength(4));
+  waiting.splice(0).forEach((resolve) => resolve());
+  await waitFor(() => expect(waiting).toHaveLength(2));
+  waiting.splice(0).forEach((resolve) => resolve());
+  expect((await result).map((row) => row.asset_id)).toEqual(ids);
+  expect(peak).toBe(4);
+  expect(sizes).toEqual([64, 64, 64, 64, 64, 1]);
+  expect(progress.at(-1)).toBe(321);
+});

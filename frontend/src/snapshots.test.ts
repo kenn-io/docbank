@@ -387,10 +387,21 @@ describe("exact snapshot target capture", () => {
   it("copies and verifies every member before returning mutation-ready targets", async () => {
     const first = await twoPageFirst();
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(await second()));
-    const result = await captureSnapshotTargets("session", first, new AbortController().signal, {
-      1: { expectedRevision: 1, revision: 4 },
-      51: { expectedRevision: 48, revision: 49 },
-    });
+    const progress = vi.fn();
+    const result = await captureSnapshotTargets(
+      "session",
+      first,
+      new AbortController().signal,
+      {
+        1: { expectedRevision: 1, revision: 4 },
+        51: { expectedRevision: 48, revision: 49 },
+      },
+      progress,
+    );
+    expect(progress.mock.calls).toEqual([
+      [50, 51],
+      [51, 51],
+    ]);
 
     expect(result.snapshot).toBe(first);
     expect(result.members).toHaveLength(51);

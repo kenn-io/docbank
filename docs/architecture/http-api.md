@@ -902,7 +902,7 @@ subset of `collections`, `tags`, `media_family`, `extension`, `modified`,
 `size`, `text_coverage`, and `duplicates` facets, up to eight dimensions.
 
 Set `photos: true` to capture a Photos query in its photo ordering, with one
-display-file row per matching asset and an `asset_id` on each row. This mode
+display-file row per matching asset, an `asset_id`, and its frozen display-file `flag` on each row. Document snapshot rows omit `flag`. This mode
 uses Photos filters and sorts and requires an empty facet list. It uses the
 same snapshot paging and expiry rules below.
 

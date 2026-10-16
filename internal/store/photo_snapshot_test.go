@@ -34,6 +34,8 @@ func TestPhotoSnapshotOrderMatchesBrowse(t *testing.T) {
 		asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
 		require.NoError(t, err)
 		assetIDs = append(assetIDs, asset.ID)
+		_, err = s.db.Exec(`UPDATE photo_files SET flag='pick' WHERE file_id=?`, asset.DisplayFileID)
+		require.NoError(t, err)
 	}
 	service := NewQuerySnapshotService(s)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
@@ -53,6 +55,7 @@ func TestPhotoSnapshotOrderMatchesBrowse(t *testing.T) {
 		require.Len(t, page.Rows, 4)
 		for i, row := range page.Rows {
 			require.Equal(t, browse.Items[i].AssetID, row.AssetID, field)
+			require.Equal(t, new("pick"), row.Flag, field)
 		}
 	}
 }
@@ -89,7 +92,7 @@ func TestPhotoSnapshotPageChecksRequestedMembershipAndPreservesFrozenRows(t *tes
 					}
 				}
 				require.NotEmpty(t, frozenFile.ID)
-				_, err = editPhotoAuthored(t.Context(), s, []PhotoAuthoredTarget{{FileID: frozenFile.ID, Revision: frozenFile.Revision, Patch: PhotoAuthoredPatch{Caption: new("Updated caption")}}})
+				_, err = editPhotoAuthored(t.Context(), s, []PhotoAuthoredTarget{{FileID: frozenFile.ID, Revision: frozenFile.Revision, Patch: PhotoAuthoredPatch{Caption: new("Updated caption"), Flag: new("reject")}}})
 				require.NoError(t, err)
 				tag, err := s.CreateTag(t.Context(), "Later tag")
 				require.NoError(t, err)

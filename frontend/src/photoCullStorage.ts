@@ -1,8 +1,10 @@
 import { idbRequest, transactionDone } from "./indexedDB.js";
 
-export type CullScope = "unrated" | "picks" | "rejects" | "all";
+export type CullScope = "unflagged" | "picks" | "rejects" | "all";
 export interface CullCheckpoint {
   runID: string;
+  passID: string;
+  revision: number;
   pass: string[];
   position: number;
   visited: string[];
@@ -16,9 +18,14 @@ export interface CullRun {
   checkpoint: CullCheckpoint;
 }
 type MarkerKind = "visited" | "skipped" | "unavailable";
-type Header = Pick<CullCheckpoint, "runID" | "position" | "scope" | "autoAdvance">;
+type Header = Pick<
+  CullCheckpoint,
+  "runID" | "passID" | "revision" | "position" | "scope" | "autoAdvance"
+>;
 export interface CullProgress {
   runID: string;
+  passID: string;
+  revision: number;
   position?: number;
   autoAdvance?: boolean;
   marker?: { kind: MarkerKind; id: string; index: number };
@@ -26,14 +33,28 @@ export interface CullProgress {
 }
 export interface CullStorage {
   load(): Promise<CullRun | undefined>;
-  replace(run: CullRun, signal?: AbortSignal): Promise<void>;
+  replace(run: CullRun, signal?: AbortSignal, expected?: CullCheckpoint): Promise<void>;
   checkpoint(value: CullProgress): Promise<void>;
 }
 
+const sameCheckpoint = (
+  a: Pick<CullCheckpoint, "runID" | "passID" | "revision">,
+  b: Pick<CullCheckpoint, "runID" | "passID" | "revision">,
+) => a.runID === b.runID && a.passID === b.passID && a.revision === b.revision;
+
 const stores = ["members", "checkpoints", "markers"];
 const markerKinds: MarkerKind[] = ["visited", "skipped", "unavailable"];
-const header = ({ runID, position, scope, autoAdvance }: CullCheckpoint): Header => ({
+const header = ({
   runID,
+  passID,
+  revision,
+  position,
+  scope,
+  autoAdvance,
+}: CullCheckpoint): Header => ({
+  runID,
+  passID,
+  revision,
   position,
   scope,
   autoAdvance,
@@ -89,7 +110,7 @@ export function photoCullStorage(vaultID: string): CullStorage {
         db.close();
       }
     },
-    async replace(run, signal) {
+    async replace(run, signal, expected) {
       const db = await open();
       try {
         const tx = db.transaction(stores, "readwrite"),
@@ -98,6 +119,14 @@ export function photoCullStorage(vaultID: string): CullStorage {
         signal?.addEventListener("abort", cancel, { once: true });
         try {
           signal?.throwIfAborted();
+          const current = await idbRequest<Header | undefined>(
+            tx.objectStore("checkpoints").get(vaultID),
+          );
+          if (current ? !expected || !sameCheckpoint(current, expected) : !!expected) {
+            tx.abort();
+            await done.catch(() => {});
+            throw new Error("Cull progress changed in another tab. Resume before replacing it.");
+          }
           tx.objectStore("members").put({ ids: run.ids, pass: run.checkpoint.pass }, vaultID);
           await savePass(tx, run.checkpoint);
           await done;
@@ -115,10 +144,10 @@ export function photoCullStorage(vaultID: string): CullStorage {
           done = transactionDone(tx);
         const store = tx.objectStore("checkpoints");
         const current = await idbRequest<Header | undefined>(store.get(vaultID));
-        if (current?.runID !== value.runID) {
+        if (!current || !sameCheckpoint(current, value)) {
           tx.abort();
           await done.catch(() => {});
-          throw new Error("Another cull run replaced this run. Close and resume it.");
+          throw new Error("Cull progress changed in another tab. Close and resume it.");
         }
         if (value.pass) {
           const members = tx.objectStore("members");
@@ -126,10 +155,11 @@ export function photoCullStorage(vaultID: string): CullStorage {
             members.get(vaultID),
           );
           members.put({ ...membership, pass: value.pass.pass }, vaultID);
-          await savePass(tx, value.pass);
+          await savePass(tx, { ...value.pass, revision: current.revision + 1 });
         } else {
           if (value.position !== undefined) current.position = value.position;
           if (value.autoAdvance !== undefined) current.autoAdvance = value.autoAdvance;
+          current.revision++;
           store.put(current, vaultID);
           if (value.marker) {
             const { kind, id, index } = value.marker;

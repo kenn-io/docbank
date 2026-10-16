@@ -2596,12 +2596,14 @@ it.each([false, true])(
         ids,
         checkpoint: {
           runID: "run",
+          passID: "pass",
+          revision: 0,
           pass: ids,
           position: 0,
           visited: [ids[0]!],
           skipped: [],
           unavailable: [],
-          scope: "unrated",
+          scope: "unflagged",
           autoAdvance: true,
         },
       };
@@ -2669,6 +2671,8 @@ it("reloads a replacement durable run before opening Resume cull", async () => {
         ids: [durableID],
         checkpoint: {
           runID: durableID,
+          passID: "pass",
+          revision: 0,
           pass: [durableID],
           position: 0,
           visited: [],

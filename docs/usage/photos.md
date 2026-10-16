@@ -700,7 +700,7 @@ Map uses album membership when opened from an album. Otherwise it inherits Libra
 
 ## Cull and compare
 
-Choose **Cull** in Library or an album to review the whole current query full-screen. Docbank captures its order and membership before starting. Flag or rating changes keep photos in the current pass; the next pass refreshes eligibility. The initial **unrated** scope means unflagged, regardless of star rating. **S** cycles through unrated, picks, rejects, and all.
+Choose **Cull** in Library or an album to review the whole current query full-screen. Docbank captures its order and membership before starting. Flag or rating changes keep photos in the current pass; the next pass refreshes eligibility. Cull decisions are flags. Star ratings leave a photo unflagged. **S** cycles through unflagged, picks, rejects, and all, with confirmation before resetting an unfinished pass.
 
 | Key | Action |
 | --- | --- |
@@ -716,6 +716,6 @@ Choose **Cull** in Library or an album to review the whole current query full-sc
 
 Use **Skip** to record a skipped photo. The decision toast offers **Undo**. Ctrl, Cmd, and Alt shortcuts pause during cull. Apply or clear pending metadata edits before entering, moving, or leaving.
 
-**Resume cull** restores the saved pass, position, visited and skipped photos, scope, and auto-advance setting for this vault in this browser. Its captured membership survives snapshot expiry and browser restarts. Storage failures appear on screen. At completion, **Review undecided remainder** starts a pass over still-unflagged photos from that pass, including skipped and never-viewed photos. Missing or newly hidden photos are counted as unavailable. Hidden has no persisted cull run.
+**Resume cull** restores the saved pass, position, visited and skipped photos, scope, and auto-advance setting for this vault in this browser. Its captured membership survives snapshot expiry and browser restarts. Starting another cull asks before replacing saved progress. Storage failures appear when you choose Cull or Resume. If another tab changes the saved progress, close and resume the latest pass. At completion, **Review unflagged remainder** appears when unflagged photos remain anywhere in the captured set, including skipped and never-viewed photos. Missing or newly hidden photos are counted as unavailable. Hidden has no persisted cull run.
 
 Select 2–4 photos and choose **Compare**. Zoom, pan, and arrow-key navigation move the panes together. **Z** toggles 1:1 for each displayed preview. Choose **Manual closeup**, then click a face or draw a region on a full frame. Matching crop tiles appear below the full frames; **Clear closeup** removes them. The closeup uses your chosen location rather than automatic face detection.
