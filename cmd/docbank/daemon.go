@@ -1004,7 +1004,10 @@ func validateConfiguredCheckouts(ctx context.Context, cfg config.Config, stores 
 		if _, err := os.Stat(binding.Path); errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
-		if err := admit(ctx, binding); err != nil {
+		admissionCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+		err := admit(admissionCtx, binding)
+		cancel()
+		if err != nil {
 			if err := ctx.Err(); err != nil {
 				return err
 			}

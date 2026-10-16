@@ -177,7 +177,18 @@ func newRegistryWithFactories(
 	for _, spec := range stores {
 		ids = append(ids, spec.ID)
 	}
+	// Startup only waits briefly for each binding's admission. Later refreshes
+	// use their caller's full context so a large separation walk can finish.
+	registry.admitBindings = nil
+	for _, admit := range admitBindings {
+		registry.admitBindings = append(registry.admitBindings, func(ctx context.Context, binding config.StoreBindingConfig) error {
+			admissionCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+			defer cancel()
+			return admit(admissionCtx, binding)
+		})
+	}
 	registry.RefreshStores(ctx, ids)
+	registry.admitBindings = admitBindings
 	return registry
 }
 

@@ -114,7 +114,7 @@ func TestEnsureDiscoveryRejectsKeylessRecords(t *testing.T) {
 }
 
 // Same-version development builds can still have incompatible HTTP behavior.
-// A missing protocol revision or main's protocol 83 must force replacement;
+// A missing or mismatched protocol revision must therefore force replacement;
 // status/stop discovery remains permissive so the old daemon can be stopped.
 func TestEnsureDiscoveryRejectsProtocolMismatch(t *testing.T) {
 	rec := NewRecord("127.0.0.1:1", "key", "tok", "")
@@ -122,7 +122,7 @@ func TestEnsureDiscoveryRejectsProtocolMismatch(t *testing.T) {
 
 	require.True(t, discoverOptions(true).Accept(rec, info))
 
-	rec.Metadata[metaProtocolVersion] = "83"
+	rec.Metadata[metaProtocolVersion] = daemonProtocolVersion + "-other"
 	assert.False(t, discoverOptions(true).Accept(rec, info), "mismatched protocol revision must be replaced")
 	assert.True(t, discoverOptions(false).Accept(rec, info), "status/stop discovery must still see incompatible daemons")
 

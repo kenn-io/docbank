@@ -138,7 +138,7 @@ func (s Service) recheckDestination(ctx context.Context, root *os.Root, destinat
 		return err
 	}
 	if err := proof.Check(append(paths, destination)); err != nil {
-		return err
+		return fmt.Errorf("%w: %w", store.ErrPhotoCheckoutConflict, err)
 	}
 	return checkEmptyDestination(root, destination)
 }

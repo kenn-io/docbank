@@ -389,6 +389,42 @@ func TestConfiguredCheckoutValidationDefersOnlyOverlappingBindings(t *testing.T)
 	require.ErrorContains(t, err, fmt.Sprintf("%q", destination))
 }
 
+func TestConfiguredCheckoutStartupDefersSlowBinding(t *testing.T) {
+	t.Parallel()
+	catalog, _, _, _ := newCheckoutReservationFixture(t)
+	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+	cfg := config.Default()
+	cfg.StoreBindings = map[string]config.StoreBindingConfig{
+		"slow": {Kind: "filesystem", Path: t.TempDir()},
+		"fast": {Kind: "filesystem", Path: t.TempDir()},
+	}
+	var fastChecked bool
+	admission := &checkoutBindingAdmission{catalog: catalog, logger: slog.New(slog.DiscardHandler),
+		check: func(ctx context.Context, _ []store.PhotoCheckout, path string) error {
+			if path == cfg.StoreBindings["slow"].Path {
+				<-ctx.Done()
+				return ctx.Err()
+			}
+			fastChecked = true
+			return nil
+		},
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	pending, err := validateConfiguredCheckoutStartup(ctx, cfg, []store.BlobStore{
+		{Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "slow"},
+		{Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "fast"},
+	}, admission.admit)
+	require.NoError(t, err)
+	require.NoError(t, ctx.Err())
+	require.True(t, pending)
+	require.True(t, fastChecked)
+	_, admitted := admission.checked[cfg.StoreBindings["slow"]]
+	require.False(t, admitted)
+	_, admitted = admission.checked[cfg.StoreBindings["fast"]]
+	require.True(t, admitted)
+}
+
 func TestCheckoutValidationDefersInternalDeadline(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

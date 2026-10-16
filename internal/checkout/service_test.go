@@ -764,20 +764,37 @@ func TestCheckoutNameCollisionsPreservePublishedCopies(t *testing.T) {
 
 func TestCheckoutRechecksProtectedRootSnapshot(t *testing.T) {
 	t.Parallel()
-	s := checkoutService(t)
-	a := checkoutPhoto(t, s, "photo.jpg", "source")
-	selection := store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}
-	other := t.TempDir()
-	s.Mutate = func(ctx context.Context, fn func() error) error {
-		_, _, _, err := s.Store.CreatePhotoCheckout(ctx, selection, other, 0)
-		if err != nil {
-			return err
-		}
-		return fn()
+	for _, state := range []store.StorageOperationState{"created", store.StorageOperationFailed, store.StorageOperationCancelled} {
+		t.Run(string(state), func(t *testing.T) {
+			s := checkoutService(t)
+			a := checkoutPhoto(t, s, "photo.jpg", "source")
+			selection := store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}
+			destination := t.TempDir()
+			var other store.PhotoCheckout
+			var op store.StorageOperation
+			if state != "created" {
+				var err error
+				other, op, _, err = s.Store.CreatePhotoCheckout(t.Context(), selection, destination, 0)
+				require.NoError(t, err)
+			}
+			s.Mutate = func(ctx context.Context, fn func() error) error {
+				var err error
+				if state == "created" {
+					_, _, _, err = s.Store.CreatePhotoCheckout(ctx, selection, destination, 0)
+				} else {
+					err = s.Store.FinishPhotoCheckout(ctx, other.ID, op.ID, state, "{}", "", time.Now().Add(time.Hour))
+				}
+				if err != nil {
+					return err
+				}
+				return fn()
+			}
+			_, _, _, root, err := s.Prepare(t.Context(), selection, t.TempDir(), 0)
+			require.ErrorContains(t, err, "protected roots changed")
+			require.ErrorIs(t, err, store.ErrPhotoCheckoutConflict)
+			require.Nil(t, root)
+		})
 	}
-	_, _, _, root, err := s.Prepare(t.Context(), selection, t.TempDir(), 0)
-	require.ErrorContains(t, err, "protected roots changed")
-	require.Nil(t, root)
 }
 
 func TestCheckoutSeparationAvoidsRepeatedAndObjectTreeWalks(t *testing.T) {

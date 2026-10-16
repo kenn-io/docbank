@@ -22,6 +22,8 @@ import (
 
 var ErrInvalidPhotoCheckout = errors.New("invalid photo checkout")
 
+var ErrPhotoCheckoutConflict = errors.New("photo checkout conflict")
+
 var ErrPhotoCheckoutSourceUnavailable = fmt.Errorf("%w: selected photo is hidden, excluded, detached, or trashed", ErrInvalidPhotoCheckout)
 
 var ErrPhotoCheckoutPublicationUnrecorded = errors.New("installed checkout copy has not been recorded")
@@ -315,9 +317,6 @@ func (s *Store) insertPhotoCheckout(ctx context.Context, selection PhotoCheckout
 		}
 		if byteLimit > 0 && estimate.Bytes > byteLimit {
 			return fmt.Errorf("%w: selected bytes exceed byte_limit", ErrInvalidPhotoCheckout)
-		}
-		if len(entries) == 0 {
-			return fmt.Errorf("%w: selection contains no files", ErrInvalidPhotoCheckout)
 		}
 		id, err := newUUIDv4()
 		if err != nil {

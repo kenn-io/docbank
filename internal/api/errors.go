@@ -151,6 +151,7 @@ var storeErrCodes = []struct {
 	{store.ErrPhotoEditReceiptLimit, http.StatusUnprocessableEntity, "photo_edit_receipt_limit"},
 	{store.ErrInvalidPhotoAsset, http.StatusUnprocessableEntity, "invalid_photo_asset"},
 	{store.ErrInvalidPhotoCheckout, http.StatusUnprocessableEntity, "invalid_photo_checkout"},
+	{store.ErrPhotoCheckoutConflict, http.StatusConflict, "photo_checkout_conflict"},
 	{store.ErrInvalidPhotoAlbum, http.StatusUnprocessableEntity, "invalid_photo_album"},
 	{store.ErrPhotoNodeNotEligible, http.StatusUnprocessableEntity, "photo_node_not_eligible"},
 	{store.ErrPhotoNodeOwned, http.StatusConflict, "photo_node_owned"},

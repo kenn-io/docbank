@@ -51,6 +51,7 @@ func TestFromStoreErrorMappings(t *testing.T) {
 		code   string
 	}{
 		{store.ErrPersonMergeConflict, http.StatusConflict, "person_merge_conflict"},
+		{store.ErrPhotoCheckoutConflict, http.StatusConflict, "photo_checkout_conflict"},
 		{store.ErrPersonMergeTooLarge, http.StatusUnprocessableEntity, "person_merge_too_large"},
 		{store.ErrPersonRetired, http.StatusConflict, "person_retired"},
 		{store.ErrPhotoEditReceiptLimit, http.StatusUnprocessableEntity, "photo_edit_receipt_limit"},

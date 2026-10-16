@@ -488,6 +488,9 @@ func watchTreeContainsAnyDirectory(
 		if excludes.matchRelative(rel) {
 			continue
 		}
+		if !entry.IsDir() {
+			continue
+		}
 		if beforeDescend != nil {
 			beforeDescend(rel)
 		}
