@@ -446,7 +446,7 @@
   let photoConcealed = false;
   let photoAccessVersion = 0;
   const maxPhotoAccessFailures = 3;
-  let checkPhotoAccess: ((live?: boolean) => Promise<void>) | undefined;
+  let checkPhotoAccess: ((live?: boolean) => Promise<Photos | undefined>) | undefined;
   function discardLibrary() {
     revalidatedChangeID = null;
     photoAccessVersion++;
@@ -526,11 +526,14 @@
     return true;
   }
   async function acceptPhotoAccess(result: generated.PhotoHiddenState) {
+    let refreshed: Photos | undefined;
     photoUnlockExpiry = result.expires_at ?? undefined;
     if (photoAccessChecked && result.change_id !== photoChangeID) void photoAlbums?.load();
     if (photoState && result.change_id !== photoChangeID) {
       if (photoID && photoValidated && libraryWorkspace && !hiddenMode) {
+        const photos = activePhotos();
         if (!(await recheckOpenPhoto(photoState, libraryWorkspace))) return;
+        refreshed = photos;
       } else await invalidateLibrary(false);
     }
     photoAccessChecked = true;
@@ -568,6 +571,7 @@
           !valid()
         )
           return;
+        refreshed = photos;
         revalidatedChangeID = result.change_id;
       }
     }
@@ -583,12 +587,14 @@
     photoConcealed = false;
     photoValidated = true;
     photoAccessError = "";
+    return refreshed;
   }
 
   $effect(() => {
     if (!webSession) return;
     return () => {
       hiddenPhotoActionError = "";
+      tagCatalogController?.abort();
       discardLibrary();
       photoValidated = false;
       photoChangeID = undefined;
@@ -689,7 +695,7 @@
           signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]),
         });
         failures = 0;
-        if (current && !controller.signal.aborted) await acceptPhotoAccess(result);
+        if (current && !controller.signal.aborted) return await acceptPhotoAccess(result);
       } catch (cause) {
         if (!current || controller.signal.aborted) return;
         const denied = cause instanceof APIError && (cause.status === 401 || cause.status === 403);
@@ -731,16 +737,17 @@
     if (!session || !photoMode) return;
     void photoUnlockExpiry;
     let refreshFailed = false;
+    const owner = new AbortController();
     const stop = watchPhotoEvents(
       session,
       async (changes) => {
-        if (changes.refetch) await checkPhotoAccess?.(true);
+        const source = changes.refetch ? await checkPhotoAccess?.(true) : undefined;
         // A Hidden recheck owns the open viewer until it confirms visibility. It handles its own
         // failure by concealing the library, so this refresh only waits for it to finish.
         await photoRecheckRun?.catch(() => {});
         if (session !== webSession || document.visibilityState !== "visible") return;
         const results = await Promise.allSettled([
-          refreshPhotoChanges(changes),
+          refreshPhotoChanges(changes, source, owner.signal),
           hiddenWorkspace?.refresh(changes),
         ]);
         const failed = results.find(
@@ -772,6 +779,7 @@
       },
     );
     return () => {
+      owner.abort();
       stop();
       photoEventError = "";
     };
@@ -913,6 +921,7 @@
   let auditGeneration = 0;
   let tagGeneration = 0;
   let tagCatalogGeneration = 0;
+  let tagCatalogController: AbortController | undefined;
   let tagHotkeyGeneration = 0;
   let naturalSearchController: AbortController | undefined;
   let pendingSelectionRange = false;
@@ -2197,7 +2206,14 @@
     }
   }
 
-  async function loadTagCatalog(append = false, live = false): Promise<void> {
+  async function loadTagCatalog(append = false, live = false, owner?: AbortSignal): Promise<void> {
+    tagCatalogController?.abort();
+    const controller = (tagCatalogController = new AbortController());
+    const signal = AbortSignal.any([
+      controller.signal,
+      AbortSignal.timeout(60_000),
+      ...(owner ? [owner] : []),
+    ]);
     const request = ++tagCatalogGeneration;
     const session = webSession;
     const selectedTagID = tagFilterID;
@@ -2206,7 +2222,7 @@
     try {
       const page = await generated.listTags(
         { limit: 1000, offset: append ? tagCatalogListed : 0 },
-        { session },
+        { session, signal },
       );
       if (request !== tagCatalogGeneration || session !== webSession) return;
       let items = append
@@ -2220,7 +2236,7 @@
       ) {
         if (page.total > page.items.length) {
           try {
-            const selectedTag = await generated.getTag(selectedTagID, { session });
+            const selectedTag = await generated.getTag(selectedTagID, { session, signal });
             if (request !== tagCatalogGeneration || session !== webSession) return;
             items = [selectedTag, ...items];
           } catch (cause) {
@@ -2371,19 +2387,37 @@
     else void loadRoot();
   }
 
-  async function refreshPhotoChanges(changes: PhotoEventBatch): Promise<void> {
+  async function refreshPhotoChanges(
+    changes: PhotoEventBatch,
+    source?: Photos,
+    signal?: AbortSignal,
+  ): Promise<void> {
     await Promise.all([
-      changes.refetch ? refreshPhotoDefinitions() : undefined,
-      photosChanged(undefined, undefined, changes),
+      changes.refetch ? refreshPhotoDefinitions(signal) : undefined,
+      photosChanged(source, undefined, changes),
     ]);
   }
 
-  async function refreshPhotoDefinitions(): Promise<void> {
+  async function refreshPhotoDefinitions(signal?: AbortSignal): Promise<void> {
     const session = webSession;
     // The catalog page shows unassigned renames; assigned definitions may sit outside that page.
-    const [tags] = await Promise.all([assignedPhotoTags(), loadTagCatalog(false, true)]);
+    const [tags] = await Promise.all([assignedPhotoTags(), loadTagCatalog(false, true, signal)]);
     if (session === webSession) tagCatalog = sortTags(mergePhotoTags(tagCatalog, tags));
   }
+
+  $effect(() => {
+    for (const photos of [
+      photoState?.photos,
+      albumPhotos,
+      mapPhotos,
+      hiddenWorkspace?.activePhotos(),
+    ]) {
+      if (photos)
+        photos.authored.onTagDeleted = (id) => {
+          tagCatalog = tagCatalog.filter((tag) => tag.id !== id);
+        };
+    }
+  });
 
   async function assignedPhotoTags(): Promise<Tag[]> {
     const retained = new Set([

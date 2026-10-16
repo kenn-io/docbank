@@ -15,6 +15,7 @@ test("six visible tabs retain HTTP/1.1 request capacity", async ({ context }) =>
   const fixture = photoFixture(workspace);
   const tabs: { page: Page; session: string }[] = [];
   const streams = new Set<Request>();
+  let holder: Page | undefined;
   try {
     await fixture.seed(6);
     for (let index = 0; index < 6; index++) {
@@ -30,6 +31,7 @@ test("six visible tabs retain HTTP/1.1 request capacity", async ({ context }) =>
           new URL(response.url()).pathname === "/api/v1/photos/events" &&
           response.status() === 200
         ) {
+          holder = page;
           streams.add(response.request());
           console.log("Active photo event streams:", streams.size);
         }
@@ -64,6 +66,27 @@ test("six visible tabs retain HTTP/1.1 request capacity", async ({ context }) =>
       ]);
     }
     await expect.poll(() => streams.size).toBe(1);
+    const first = await tabs[0]!.page.locator("[data-asset]").first().getAttribute("data-asset");
+    await fixture.run("photos", "assets", "exclude", first!);
+    for (const { page } of tabs) {
+      await expect(page.locator(`[data-asset="${first}"]`)).toHaveCount(0);
+      await expect(page.locator("[data-asset]")).toHaveCount(5);
+    }
+    expect(holder).toBeTruthy();
+    const departed = holder!;
+    await departed.close();
+    const remaining = tabs.filter(({ page }) => page !== departed);
+    await expect.poll(() => streams.size).toBe(1);
+    await expect.poll(() => holder !== departed).toBe(true);
+    const second = await remaining[0]!.page
+      .locator("[data-asset]")
+      .first()
+      .getAttribute("data-asset");
+    await fixture.run("photos", "assets", "exclude", second!);
+    for (const { page } of remaining) {
+      await expect(page.locator(`[data-asset="${second}"]`)).toHaveCount(0);
+      await expect(page.locator("[data-asset]")).toHaveCount(4);
+    }
     console.log(
       "Six distinct sessions: six visible HTTP/1.1 tabs, six authenticated 200 responses, one active event stream",
     );

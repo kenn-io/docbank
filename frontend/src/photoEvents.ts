@@ -92,64 +92,58 @@ export async function readPhotoEvents(
 // tab holds the stream and forwards an ID-free refetch pulse; other tabs refresh with their own
 // session, so Hidden identifiers and revisions never cross tabs.
 const photoEventLock = "docbank-photo-events";
-const refetchFrame = new TextEncoder().encode('event: change\ndata: {"refetch":true}\n\n');
-const keepaliveFrame = new TextEncoder().encode(": keepalive\n\n");
 type PhotoEventOptions = NonNullable<Parameters<typeof photoEvents>[0]> & { signal: AbortSignal };
 
-async function openPhotoEvents(options: PhotoEventOptions): Promise<Response> {
-  if (typeof navigator.locks === "undefined" || typeof BroadcastChannel === "undefined")
-    return photoEvents(options);
-  return (await leadPhotoEvents(options)) ?? followPhotoEvents(options.signal);
-}
-
-function leadPhotoEvents(options: PhotoEventOptions): Promise<Response | undefined> {
-  return new Promise((resolve, reject) => {
-    // The lock lasts until this stream ends, including when its tab is hidden or closed.
-    navigator.locks
-      .request(photoEventLock, { ifAvailable: true }, async (lock) => {
-        if (!lock) return resolve(undefined);
-        const response = await photoEvents(options);
-        if (!response.body) return resolve(response);
-        const [own, shared] = response.body.tee();
-        resolve(new Response(own, { status: response.status, headers: response.headers }));
-        const channel = new BroadcastChannel(photoEventLock);
-        try {
-          await readPhotoEvents(shared, options.signal, () => channel.postMessage("refetch"));
-        } finally {
-          channel.close();
-        }
-      })
-      .catch(reject);
-  });
-}
-
-function followPhotoEvents(signal: AbortSignal): Response {
-  const channel = new BroadcastChannel(photoEventLock);
-  let keepalive: ReturnType<typeof setInterval> | undefined;
-  let open = true;
-  const close = () => {
-    open = false;
-    clearInterval(keepalive);
-    channel.close();
+async function consumePhotoEvents(
+  options: PhotoEventOptions,
+  schedule: (event: PhotoEvent) => void,
+  connected: () => void,
+): Promise<void> {
+  const consume = async (channel?: BroadcastChannel) => {
+    const connecting = new AbortController();
+    const deadline = setTimeout(
+      () => connecting.abort(new Error("Photo event stream did not respond")),
+      photoEventIdleTimeout,
+    );
+    try {
+      const response = await photoEvents({
+        ...options,
+        signal: AbortSignal.any([options.signal, connecting.signal]),
+      });
+      clearTimeout(deadline);
+      if (options.signal.aborted) return;
+      if (!response.body || !response.headers.get("Content-Type")?.startsWith("text/event-stream"))
+        throw new Error("Photo event stream unavailable");
+      connected();
+      await readPhotoEvents(response.body, options.signal, (event) => {
+        schedule(event);
+        channel?.postMessage("refetch");
+      });
+    } finally {
+      clearTimeout(deadline);
+    }
   };
-  const body = new ReadableStream<Uint8Array>({
-    start(controller) {
-      const send = (frame: Uint8Array) => open && controller.enqueue(frame);
-      // Like a reconnect, following starts with a refetch.
-      send(refetchFrame);
-      channel.onmessage = () => send(refetchFrame);
-      keepalive = setInterval(() => send(keepaliveFrame), 15_000);
-      // When the holder leaves, end so the watcher reconnects and one visible tab takes over.
-      navigator.locks
-        .request(photoEventLock, { signal }, () => {})
-        .then(() => {
-          if (open) controller.close();
-          close();
-        }, close);
-    },
-    cancel: close,
-  });
-  return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
+  if (typeof navigator.locks === "undefined" || typeof BroadcastChannel === "undefined")
+    return consume();
+  const channel = new BroadcastChannel(photoEventLock);
+  try {
+    let held = false;
+    await navigator.locks.request(photoEventLock, { ifAvailable: true }, async (lock) => {
+      if (!lock) return;
+      held = true;
+      await consume(channel);
+    });
+    if (held || options.signal.aborted) return;
+    channel.onmessage = () => schedule({ refetch: true });
+    connected();
+    schedule({ refetch: true });
+    // Wait for the holder to leave, then reconnect while owning the lock.
+    await navigator.locks.request(photoEventLock, { signal: options.signal }, () =>
+      consume(channel),
+    );
+  } finally {
+    channel.close();
+  }
 }
 
 export function watchPhotoEvents(
@@ -221,25 +215,19 @@ export function watchPhotoEvents(
     const current = new AbortController();
     controller = current;
     let connectedAt: number | undefined;
-    // A response that never sends headers has no keepalives to watch; give up and reconnect.
-    const connecting = new AbortController();
-    const deadline = setTimeout(
-      () => connecting.abort(new Error("Photo event stream did not respond")),
-      photoEventIdleTimeout,
-    );
     try {
-      const response = await openPhotoEvents({
-        session,
-        signal: AbortSignal.any([current.signal, connecting.signal]),
-        cache: "no-store",
-      });
-      clearTimeout(deadline);
-      if (stopped || current.signal.aborted) return;
-      if (!response.body || !response.headers.get("Content-Type")?.startsWith("text/event-stream"))
-        throw new Error("Photo event stream unavailable");
-      onconnected();
-      connectedAt = Date.now();
-      await readPhotoEvents(response.body, current.signal, schedule);
+      await consumePhotoEvents(
+        {
+          session,
+          signal: current.signal,
+          cache: "no-store",
+        },
+        schedule,
+        () => {
+          onconnected();
+          connectedAt = Date.now();
+        },
+      );
     } catch (cause) {
       if (cause instanceof APIError && (cause.status === 401 || cause.status === 403)) {
         if (!current.signal.aborted && !stopped) {
@@ -251,7 +239,6 @@ export function watchPhotoEvents(
       if (cause instanceof APIError && cause.status === 429 && !current.signal.aborted && !stopped)
         onfailure(cause);
     } finally {
-      clearTimeout(deadline);
       if (controller === current) controller = undefined;
     }
     if (connectedAt !== undefined && Date.now() - connectedAt >= 30_000) failures = 0;

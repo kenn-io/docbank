@@ -48,7 +48,12 @@ export class PhotoAuthoredEditor {
   loadTags?: () => Promise<void>;
   loadMoreTags?: () => Promise<void>;
   catalog(tags: api.Tag[]) {
-    const assigned = new Set(this.targets.flatMap((target) => target.tags));
+    for (const tag of tags) if (this.deletedTags.has(tag.id)) this.onTagDeleted?.(tag.id);
+    tags = tags.filter((tag) => !this.deletedTags.has(tag.id));
+    const assigned = new Set([
+      ...this.targets.flatMap((target) => target.tags),
+      ...this.keywords.map((keyword) => keyword.tag_id),
+    ]);
     this.tags = mergePhotoTags(
       tags,
       this.tags.filter((tag) => assigned.has(tag.id)),
@@ -58,9 +63,22 @@ export class PhotoAuthoredEditor {
   private definitionRefresh = 0;
   async refreshAssignedTags() {
     const generation = ++this.definitionRefresh;
-    const ids = [...new Set(this.targets.flatMap((target) => target.tags))];
+    const ids = [
+      ...new Set([
+        ...this.targets.flatMap((target) => target.tags),
+        ...this.keywords.map((keyword) => keyword.tag_id),
+      ]),
+    ];
     const results = await Promise.allSettled(
-      ids.map((id) => this.request(() => api.getTag(id, this.boundedOptions()))),
+      ids.map(async (id) => {
+        try {
+          return await this.request(() => api.getTag(id, this.boundedOptions()));
+        } catch (cause) {
+          if (!(cause instanceof APIError && cause.status === 404)) throw cause;
+          if (generation === this.definitionRefresh && !this.controller.signal.aborted)
+            this.deleteTag(id);
+        }
+      }),
     );
     if (generation !== this.definitionRefresh || this.controller.signal.aborted) return [];
     const failed = results.find((result) => result.status === "rejected");
@@ -69,24 +87,30 @@ export class PhotoAuthoredEditor {
         failed.reason instanceof Error ? failed.reason.message : String(failed.reason);
       throw failed.reason;
     }
-    const retained = results.flatMap((result) =>
-      result.status === "fulfilled" &&
-      this.targets.some((target) => target.tags.includes(result.value.id))
-        ? [result.value]
-        : [],
-    );
+    const retained = results.flatMap((result) => {
+      if (result.status !== "fulfilled" || !result.value) return [];
+      const tag = result.value;
+      return ids.includes(tag.id) ? [tag] : [];
+    });
     this.tags = mergePhotoTags(this.tags, retained);
     this.tagsError = "";
     return this.tags.filter((tag) => ids.includes(tag.id));
+  }
+  onTagDeleted?: (id: string) => void;
+  private deletedTags = new Set<string>();
+  private deleteTag(id: string) {
+    this.deletedTags.add(id);
+    this.tags = this.tags.filter((tag) => tag.id !== id);
+    this.onTagDeleted?.(id);
   }
   private pendingTags = new Map<string, Promise<void>>();
   private async resolveAssignedTags() {
     const known = new Set(this.tags.map((tag) => tag.id));
     const missing = [...new Set(this.targets.flatMap((target) => target.tags))].filter(
-      (id) => !known.has(id) && !this.pendingTags.has(id),
+      (id) => !known.has(id) && !this.deletedTags.has(id) && !this.pendingTags.has(id),
     );
     for (const id of missing) {
-      const request = this.request(() => api.getTag(id, this.options()))
+      const request = this.request(() => api.getTag(id, this.boundedOptions()))
         .then((tag) => {
           if (
             this.pendingTags.get(id) === request &&
@@ -97,8 +121,10 @@ export class PhotoAuthoredEditor {
             this.tags = [...this.tags, tag];
         })
         .catch((cause) => {
-          if (this.pendingTags.get(id) === request && !this.controller.signal.aborted)
-            this.tagsError = this.failure(cause);
+          if (this.pendingTags.get(id) === request && !this.controller.signal.aborted) {
+            if (cause instanceof APIError && cause.status === 404) this.deleteTag(id);
+            else this.tagsError = this.failure(cause);
+          }
         })
         .finally(() => {
           if (this.pendingTags.get(id) === request) this.pendingTags.delete(id);
@@ -114,7 +140,7 @@ export class PhotoAuthoredEditor {
     const refreshed = await Promise.all(
       [...changed].map(async (id) => {
         try {
-          const tag = await this.request(() => api.getTag(id, this.options()));
+          const tag = await this.request(() => api.getTag(id, this.boundedOptions()));
           if (this.controller.signal.aborted) return;
           if (this.tags.some((value) => value.id === id))
             this.tags = this.tags.map((value) => (value.id === id ? tag : value));
@@ -166,6 +192,7 @@ export class PhotoAuthoredEditor {
   // Another writer changed a target. Writes reconcile once they settle; unsaved drafts keep the conflict.
   // A change stays pending until a read that started after it succeeds.
   private remoteChange = false;
+  private membershipConflict = false;
   private remoteChanges = 0;
   private reconciling?: { read: AbortController; done: Promise<void> };
   affectedBy(changes: PhotoEventBatch) {
@@ -177,18 +204,20 @@ export class PhotoAuthoredEditor {
     this.remoteChanges++;
   }
   async reconcile() {
-    if (!this.remoteChange || this.busy || this.dirty) return;
+    if (!this.remoteChange || this.busy) return;
     if (!this.targets.length) {
       this.remoteChange = false;
-      this.conflict = false;
+      this.conflict = this.dirty || this.membershipChanged;
       return;
     }
     // Share a live reconcile; a failed one waits for Reload metadata or the next change.
     if (!this.reconciling || this.reconciling.read.signal.aborted) {
-      const done = this.prepare(this.reloadScope(), true);
+      const done = this.prepare(this.reloadScope(), true, true);
       this.reconciling = { read: this.read, done };
     }
-    await this.reconciling.done;
+    const reconciling = this.reconciling;
+    await reconciling.done;
+    if (this.reconciling === reconciling) this.reconciling = undefined;
   }
   canChangeTarget() {
     if (this.loading) {
@@ -206,6 +235,7 @@ export class PhotoAuthoredEditor {
   reset() {
     this.read.abort();
     this.remoteChange = false;
+    this.membershipConflict = false;
     this.targets = [];
     this.asset = undefined;
     this.fileID = "";
@@ -231,6 +261,7 @@ export class PhotoAuthoredEditor {
     if (targets.length !== this.targets.length) {
       this.fileID = "";
       if (this.dirty || this.busy) {
+        this.membershipConflict = true;
         this.membershipChanged = false;
         this.conflict = true;
       }
@@ -242,7 +273,7 @@ export class PhotoAuthoredEditor {
     // A list refresh conceals the editor and aborts its reads, including a pending reconcile.
     void this.reconcile();
   }
-  async prepare(scope: api.PhotoAuthoredPrepareRequest, reload = false) {
+  async prepare(scope: api.PhotoAuthoredPrepareRequest, reload = false, compare = false) {
     this.read.abort();
     const controller = (this.read = new AbortController());
     const signal = AbortSignal.any([controller.signal, this.controller.signal]);
@@ -259,6 +290,25 @@ export class PhotoAuthoredEditor {
       if (!Array.isArray(prepared.assets) || !Array.isArray(prepared.targets))
         throw new Error("Metadata response was incomplete. Reload metadata.");
       if (signal.aborted) return;
+      if (compare) {
+        const same =
+          prepared.targets.length === this.targets.length &&
+          this.targets.every((base) =>
+            prepared.targets.some(
+              (target) =>
+                target.file_id === base.file_id &&
+                target.asset_id === base.asset_id &&
+                target.node_id === base.node_id &&
+                target.asset_revision === base.asset_revision &&
+                target.revision === base.revision &&
+                target.node_revision === base.node_revision,
+            ),
+          );
+        if (change === this.remoteChanges) this.remoteChange = false;
+        this.conflict =
+          this.membershipChanged || this.membershipConflict || this.remoteChange || !same;
+        if (this.dirty) return;
+      }
       if (
         previous &&
         (prepared.targets.length !== previous.size ||
@@ -280,6 +330,7 @@ export class PhotoAuthoredEditor {
           }
         : undefined;
       this.scope = scope;
+      this.membershipConflict = false;
       if (change === this.remoteChanges) this.remoteChange = false;
       this.conflict = this.membershipChanged || this.remoteChange;
       void this.resolveAssignedTags();

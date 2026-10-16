@@ -3016,3 +3016,25 @@ it("reconciles pending viewer details after timeout", async () => {
   expectActiveViewerLookups(fixture);
   view.unmount();
 });
+
+it("keeps Apply available after an unrelated ID-free refresh", async () => {
+  const before = preparedPhoto(1);
+  const photos = workspaceWithPreparedPhoto(before);
+  const prepare = vi
+    .spyOn(api, "preparePhotoAuthored")
+    .mockResolvedValue({ assets: [], targets: [before] });
+  vi.spyOn(photos, "refresh").mockResolvedValue(true);
+  const view = render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+  const caption = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Caption" });
+  await fireEvent.input(caption, { target: { value: "Unrelated draft" } });
+  await view.component.refresh({ assets: new Map(), albums: new Map(), refetch: true });
+  expect(prepare).toHaveBeenCalledOnce();
+  expect(caption.value).toBe("Unrelated draft");
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Apply" }).disabled).toBe(false);
+  view.unmount();
+  photos.dispose();
+});

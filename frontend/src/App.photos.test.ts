@@ -3605,7 +3605,7 @@ it("revalidates the library when a Hidden recheck is replaced before it confirms
   expect(fixture.workspaceProps.concealed).toBe(false);
 });
 
-it.each(["rename", "create", "delete", "rename and assign"])(
+it.each(["rename", "create", "delete", "delete assigned", "rename and assign"])(
   "refreshes the displayed keyword catalog after %s",
   async (change) => {
     const original = { id: "tag", name: "Trip keyword", revision: 1, assignment_count: 0 };
@@ -3622,12 +3622,20 @@ it.each(["rename", "create", "delete", "rename and assign"])(
       name: "Holiday keyword",
       revision: 2,
     };
-    const current =
-      change === "delete" ? [] : change === "create" ? [original, changed] : [changed];
+    const current = change.startsWith("delete")
+      ? []
+      : change === "create"
+        ? [original, changed]
+        : [changed];
     const listed = change === "rename and assign" ? [] : current;
     list.mockResolvedValue({ items: listed, total: current.length, limit: 1000, offset: 0 });
-    vi.spyOn(api, "getTag").mockResolvedValue(changed);
-    if (change === "rename and assign") editor.targets[0]!.tags = [original.id];
+    const lookup = vi.spyOn(api, "getTag").mockResolvedValue(changed);
+    if (change === "delete assigned") {
+      lookup.mockRejectedValue(new APIError("Deleted", 404, "not_found"));
+      editor.stage({ caption: "Draft caption" });
+    }
+    if (change === "rename and assign" || change === "delete assigned")
+      editor.targets[0]!.tags = [original.id];
     await act(async () =>
       fixture.refresh({
         assets: new Map(change === "rename and assign" ? [["photo-1", 2]] : []),
@@ -3637,5 +3645,86 @@ it.each(["rename", "create", "delete", "rename and assign"])(
     );
     expect(fixture.workspaceProps.tags).toEqual(expect.arrayContaining(current));
     expect(fixture.workspaceProps.tags).toHaveLength(current.length);
+    if (change === "delete assigned") {
+      expect(editor.tagsError).toBe("");
+      expect(editor.patch.caption).toBe("Draft caption");
+    }
   },
 );
+
+it("refreshes Library once for the batch that rechecks Hidden access", async () => {
+  const fixture = await watcherFixture();
+  await act(async () => fixture.workspaceProps.onphotochange?.("photo-1", "open"));
+  await waitFor(() => expect(fixture.workspaceProps.photoID).toBe("photo-1"));
+  fixture.workspaceRefresh.mockClear();
+  fixture.workspaceRefresh.mockResolvedValue(true);
+  fixture.access.change_id = "second";
+  const batch = {
+    assets: new Map<string, number>(),
+    albums: new Map<string, number>(),
+    refetch: true,
+  };
+  await act(async () => fixture.refresh(batch));
+  expect(fixture.workspaceRefresh).toHaveBeenCalledExactlyOnceWith(batch);
+  fixture.workspaceRefresh.mockClear();
+  await act(async () => fixture.refresh(batch));
+  expect(fixture.workspaceRefresh).toHaveBeenCalledExactlyOnceWith(batch);
+});
+
+it.each(["catalog", "assigned keyword"])("retries a timed-out %s request", async (kind) => {
+  const fixture = await watcherFixture();
+  const deadline = new AbortController();
+  const timeout = vi
+    .spyOn(AbortSignal, "timeout")
+    .mockImplementation((duration) =>
+      duration === 60_000 ? deadline.signal : new AbortController().signal,
+    );
+  const stall = async (_input: unknown, options?: { signal?: AbortSignal | null }) =>
+    new Promise<never>((_, reject) => {
+      options!.signal!.addEventListener("abort", () => reject(options!.signal!.reason), {
+        once: true,
+      });
+    });
+  const list = vi
+    .spyOn(api, "listTags")
+    .mockResolvedValue({ items: [], total: 0, limit: 1000, offset: 0 });
+  const get = vi
+    .spyOn(api, "getTag")
+    .mockResolvedValue({ id: "assigned", name: "Assigned", revision: 1, assignment_count: 1 });
+  if (kind === "catalog") list.mockImplementationOnce(stall);
+  else {
+    fixture.workspaceProps.photos.authored.targets = [preparedPhoto(1, { tags: ["assigned"] })];
+    get.mockImplementationOnce(stall);
+  }
+  const batch = {
+    assets: new Map<string, number>(),
+    albums: new Map<string, number>(),
+    refetch: true,
+  };
+  const refreshing = fixture.refresh(batch);
+  const failed = expect(refreshing).rejects.toThrow("Timed out");
+  await waitFor(() => expect(kind === "catalog" ? list : get).toHaveBeenCalledOnce());
+  deadline.abort(new DOMException("Timed out", "TimeoutError"));
+  await failed;
+  timeout.mockRestore();
+  await act(async () => fixture.refresh(batch));
+  expect(kind === "catalog" ? list : get).toHaveBeenCalledTimes(2);
+});
+
+it("cancels catalog reads when their watcher is disposed", async () => {
+  const fixture = await watcherFixture();
+  let signal!: AbortSignal;
+  const list = vi.spyOn(api, "listTags").mockImplementationOnce(async (_params, options) => {
+    signal = options!.signal!;
+    return new Promise((_, reject) =>
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true }),
+    );
+  });
+  const refreshing = fixture.refresh({ assets: new Map(), albums: new Map(), refetch: true });
+  // Register rejection handling before unmount aborts the request.
+  const cancelled = expect(refreshing).rejects.toThrow();
+  await waitFor(() => expect(list).toHaveBeenCalledOnce());
+  cleanup();
+  await cancelled;
+  expect(signal.aborted).toBe(true);
+});

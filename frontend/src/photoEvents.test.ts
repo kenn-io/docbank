@@ -331,3 +331,47 @@ it("reconnects a stream whose response headers never arrive", async () => {
   expect(fetch).toHaveBeenCalledTimes(2);
   stop();
 });
+
+it("broadcasts one ID-free pulse from the holder's parsed change", async () => {
+  vi.useFakeTimers();
+  let writer!: ReadableStreamDefaultController<Uint8Array>;
+  const postMessage = vi.fn();
+  const close = vi.fn();
+  vi.stubGlobal(
+    "BroadcastChannel",
+    class {
+      postMessage = postMessage;
+      close = close;
+    },
+  );
+  vi.stubGlobal("navigator", {
+    locks: {
+      request: vi.fn(async (_name, _options, run) => run({ name: "docbank-photo-events" })),
+    },
+  });
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(
+      new ReadableStream({
+        start(c) {
+          writer = c;
+        },
+      }),
+      { headers: { "Content-Type": "text/event-stream" } },
+    ),
+  );
+  const refresh = vi.fn();
+  const stop = watchPhotoEvents("holder", refresh, vi.fn());
+  await vi.advanceTimersByTimeAsync(0);
+  writer.enqueue(encoder.encode('data: {"asset_id":"private-photo","revision":7}\n\n'));
+  await vi.advanceTimersByTimeAsync(100);
+  expect(postMessage).toHaveBeenCalledExactlyOnceWith("refetch");
+  expect(refresh).toHaveBeenCalledExactlyOnceWith({
+    assets: new Map([["private-photo", 7]]),
+    albums: new Map(),
+    refetch: false,
+  });
+  stop();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(close).toHaveBeenCalledOnce();
+  vi.unstubAllGlobals();
+});

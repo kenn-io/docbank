@@ -780,7 +780,7 @@ it.each([
     respond();
     await write;
     if (failed) {
-      expect(prepare).not.toHaveBeenCalled();
+      await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
       expect(editor.conflict).toBe(true);
       expect(editor.patch.caption).toBe("Saved");
     } else {
@@ -880,5 +880,85 @@ it("closes clean metadata when a live change removes its only target", async () 
   await editor.reconcile();
   expect(editor.targets).toHaveLength(0);
   expect(editor.conflict).toBe(false);
+  editor.dispose();
+});
+
+it.each(["unchanged", "asset", "file", "node", "membership"])(
+  "rechecks an ID-free refresh with %s targets while retaining a draft",
+  async (change) => {
+    const editor = editorWithTargets();
+    editor.stage({ caption: "Draft caption" });
+    const latest = structuredClone(targets);
+    if (change === "asset") latest[0]!.asset_revision++;
+    if (change === "file") latest[0]!.revision++;
+    if (change === "node") latest[0]!.node_revision++;
+    if (change === "membership") latest.pop();
+    vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue({ assets: [asset], targets: latest });
+    expect(editor.affectedBy({ assets: new Map(), albums: new Map(), refetch: true })).toBe(true);
+    editor.changedElsewhere();
+    await editor.reconcile();
+    expect(editor.patch.caption).toBe("Draft caption");
+    expect(editor.conflict).toBe(change !== "unchanged");
+    expect(editor.targets).toEqual(targets);
+    if (change === "unchanged") {
+      const edit = vi
+        .spyOn(api, "editPhotoAuthored")
+        .mockResolvedValue({ receipt_id: "", before: [], after: [] });
+      await editor.edit({}, {}, false, vi.fn());
+      expect(edit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          targets: targets.map(
+            ({ asset_id, asset_revision, file_id, revision, node_revision }) => ({
+              asset_id,
+              asset_revision,
+              file_id,
+              revision,
+              node_revision,
+            }),
+          ),
+        }),
+        expect.anything(),
+      );
+    }
+    editor.dispose();
+  },
+);
+
+it("retains a staged keyword beyond the first catalog page", async () => {
+  const editor = editorWithTargets();
+  const keyword = { id: "later-page", name: "Later page", revision: 1, assignment_count: 0 };
+  editor.tags = [keyword];
+  editor.stage({ caption: "Draft" }, [{ tag_id: keyword.id, assign: true }]);
+  const renamed = { ...keyword, name: "Renamed later page", revision: 2 };
+  vi.spyOn(api, "getTag").mockResolvedValue(renamed);
+  await editor.refreshAssignedTags();
+  editor.catalog([{ id: "first-page", name: "First page", revision: 1, assignment_count: 0 }]);
+  expect(editor.tags).toContainEqual(renamed);
+  expect(editor.keywordState(keyword.id)).toBe("assigned");
+  expect(editor.patch.caption).toBe("Draft");
+  editor.dispose();
+});
+
+it.each(["refresh", "resolve"])("removes a deleted assigned keyword during %s", async (path) => {
+  const editor = editorWithTargets();
+  editor.targets[0]!.tags = ["deleted"];
+  editor.stage({ caption: "Draft" });
+  const deleted = vi.fn();
+  editor.onTagDeleted = deleted;
+  const lookup = vi
+    .spyOn(api, "getTag")
+    .mockRejectedValue(new APIError("Deleted", 404, "not_found"));
+  if (path === "refresh") {
+    editor.tags = [{ id: "deleted", name: "Deleted", revision: 1, assignment_count: 1 }];
+    await editor.refreshAssignedTags();
+  } else {
+    editor.catalog([]);
+    await vi.waitFor(() => expect(deleted).toHaveBeenCalledWith("deleted"));
+    editor.catalog([]);
+  }
+  expect(editor.tags).toEqual([]);
+  expect(editor.tagsError).toBe("");
+  expect(editor.patch.caption).toBe("Draft");
+  expect(lookup).toHaveBeenCalledTimes(1);
   editor.dispose();
 });
