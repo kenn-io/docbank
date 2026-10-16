@@ -195,7 +195,7 @@ export function photoMetadataResponse(
   init?: RequestInit,
 ): Promise<Response> | undefined {
   if (/\/photos\/versions\/[^/]+\/faces$/.test(url) && (!init?.method || init.method === "GET"))
-    return Promise.resolve(Response.json({ faces: [], assertions: [] }));
+    return Promise.resolve(Response.json({ faces: [], assertions: [], people: [] }));
   if (url.endsWith("/photos/authored/prepare")) {
     const scope = JSON.parse(String(init?.body ?? "{}"));
     const ids: string[] = scope.asset_ids ?? [];
@@ -264,12 +264,22 @@ export function photoPersonAssertion(
     assertion_id: "assertion-a",
     content_version_id: "version-a",
     person_id: "person-a",
-    display_name: "Ada",
     action: "assert",
     role: "depicted",
     revision: 1,
     recorded_at: "2026-01-01T00:00:00Z",
     note: "",
+    ...overrides,
+  };
+}
+
+export function photoFacePage(
+  overrides: Partial<import("./generated/docbank.js").PhotoFacePage> = {},
+): import("./generated/docbank.js").PhotoFacePage {
+  return {
+    faces: [photoFace()],
+    assertions: [photoPersonAssertion()],
+    people: [{ person_id: "person-a", display_name: "Ada" }],
     ...overrides,
   };
 }

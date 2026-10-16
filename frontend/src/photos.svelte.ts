@@ -1655,3 +1655,19 @@ export class Photos {
     this.rejectsController.abort();
   }
 }
+
+// The source workspace refreshes itself while preserving its scroll position.
+export async function refreshPersonPhotoViews(source: Photos, views: Iterable<Photos | undefined>) {
+  await Promise.all(
+    [...new Set(views)]
+      .filter(
+        (photos): photos is Photos =>
+          !!photos &&
+          photos !== source &&
+          photos.hidden === source.hidden &&
+          (photos.started || photos.loading) &&
+          !!(photos.query.filters.person_ids?.length || /\bperson:/i.test(photos.query.text)),
+      )
+      .map((photos) => photos.refresh()),
+  );
+}

@@ -21,7 +21,7 @@
       .filter((row) => row.photo_mark && row.action === "assert")
       .map((row) => ({
         id: row.assertion_id,
-        label: row.display_name,
+        label: faces.personLabel(row.person_id),
         box: undefined as FaceBox | undefined,
       })),
     ...[...faces.faces]

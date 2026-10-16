@@ -1,4 +1,4 @@
-import { photoFace, photoPersonAssertion } from "./photo-test-fixtures.js";
+import { photoFace, photoPersonAssertion, photoFacePage } from "./photo-test-fixtures.js";
 import { APIError } from "./api-transport.js";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { PhotoFaces } from "./photoFaces.svelte.js";
@@ -11,8 +11,12 @@ const assertion = photoPersonAssertion();
 it("names the face with its current revision and refreshes its active label", async () => {
   const read = vi
     .spyOn(api, "listPhotoFaces")
-    .mockResolvedValueOnce({ faces: [face], assertions: [] })
-    .mockResolvedValue({ faces: [{ ...face, revision: 8 }], assertions: [assertion] });
+    .mockResolvedValueOnce({ faces: [face], assertions: [], people: [] })
+    .mockResolvedValue({
+      faces: [{ ...face, revision: 8 }],
+      assertions: [assertion],
+      people: [{ person_id: "person-a", display_name: "Ada" }],
+    });
   const write = vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "receipt-a" });
   const faces = new PhotoFaces("session", vi.fn());
   await faces.load("version-a");
@@ -36,21 +40,21 @@ it("clears rows on navigation and ignores a late old page", async () => {
   let finish!: (page: api.PhotoFacePage) => void;
   const read = vi
     .spyOn(api, "listPhotoFaces")
-    .mockResolvedValueOnce({ faces: [face], assertions: [assertion] })
+    .mockResolvedValueOnce(photoFacePage())
     .mockImplementationOnce(
       () =>
         new Promise((resolve) => {
           finish = resolve;
         }),
     )
-    .mockResolvedValue({ faces: [], assertions: [] });
+    .mockResolvedValue({ faces: [], assertions: [], people: [] });
   const faces = new PhotoFaces("session", vi.fn());
   await faces.load("version-a");
   const pending = faces.load("version-b");
   expect(faces.faces).toEqual([]);
   expect(faces.assertions).toEqual([]);
   await faces.load("version-c");
-  finish({ faces: [face], assertions: [assertion] });
+  finish(photoFacePage());
   await pending;
   expect(faces.version).toBe("version-c");
   expect(faces.faces).toEqual([]);
@@ -74,7 +78,7 @@ it.each([
     expect(stored[field]).toBeCloseTo(face.box[field]);
 });
 it("creates the manually drawn face on the loaded version", async () => {
-  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [], assertions: [] });
+  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [], assertions: [], people: [] });
   const write = vi.spyOn(api, "createPhotoFace").mockResolvedValue({ face });
   const faces = new PhotoFaces("session", vi.fn());
   await faces.load("version-a");
@@ -93,7 +97,7 @@ it("creates the manually drawn face on the loaded version", async () => {
 it("notifies a successful clear before reload even when the reload fails", async () => {
   const events: string[] = [];
   vi.spyOn(api, "listPhotoFaces")
-    .mockResolvedValueOnce({ faces: [face], assertions: [assertion] })
+    .mockResolvedValueOnce(photoFacePage())
     .mockImplementation(async () => {
       events.push("reload");
       throw new Error("Read failed");
@@ -113,8 +117,12 @@ it("notifies a successful clear before reload even when the reload fails", async
 it("reloads the current face revision after a conflicting write", async () => {
   const read = vi
     .spyOn(api, "listPhotoFaces")
-    .mockResolvedValueOnce({ faces: [face], assertions: [] })
-    .mockResolvedValue({ faces: [{ ...face, revision: 8 }], assertions: [assertion] });
+    .mockResolvedValueOnce({ faces: [face], assertions: [], people: [] })
+    .mockResolvedValue({
+      faces: [{ ...face, revision: 8 }],
+      assertions: [assertion],
+      people: [{ person_id: "person-a", display_name: "Ada" }],
+    });
   vi.spyOn(api, "decidePhotoFace").mockRejectedValue(
     new APIError("Changed", 412, "stale_revision"),
   );

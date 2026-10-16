@@ -20,7 +20,7 @@
   import { PhotoPreviewLoader, prefetchPreviews } from "./photoPreview.svelte.js";
   import PhotoLoupeImage from "./PhotoLoupeImage.svelte";
 
-  import { PhotoFaces } from "./photoFaces.svelte.js";
+  import type { PhotoFaces } from "./photoFaces.svelte.js";
   import { drawnPhotoFace } from "./photoRotation.js";
 
   let {
@@ -30,7 +30,7 @@
     onedit,
     onundo,
     onperson,
-    onfacedecision,
+    faces,
     photo,
     error,
     note = "",
@@ -52,7 +52,7 @@
     onedit?: (patch: PhotoAuthoredPatch, keywords?: PhotoKeywordEdit[]) => void;
     onundo?: () => void;
     onperson?: (id: string, name: string) => void;
-    onfacedecision?: () => void;
+    faces: PhotoFaces;
     photo?: PhotoBrowseRow;
     error: string;
     note?: string;
@@ -70,18 +70,11 @@
   } = $props();
   let loader = $state.raw<PhotoPreviewLoader>(untrack(() => new PhotoPreviewLoader(photos, cache)));
   const unavailable = $derived(!loader.retrying && !!(error || loader.failure));
-  const faces = untrack(
-    () =>
-      new PhotoFaces(photos.session, photos.onauthfailure, photos.hidden, () => onfacedecision?.()),
-  );
   let addingFace = $state(false);
   $effect(() => {
-    const version = photo?.kind === "photo" ? photo.content_version_id : "";
+    void photo?.content_version_id;
     addingFace = false;
-    untrack(() => void faces.load(version));
-    return () => faces.dispose();
   });
-  onDestroy(() => faces.dispose());
   let busy = $state(false);
   let image = $state<PhotoLoupeImage>();
   let dialog = $state<HTMLDivElement>();

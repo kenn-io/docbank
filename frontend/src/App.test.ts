@@ -2385,6 +2385,7 @@ it.each([true, false])(
         return Response.json({ items: [item], total: 1, facets: [] });
       if (url.endsWith("/faces"))
         return Response.json({
+          people: [{ person_id: personID, display_name: "Ada" }],
           faces: [photoFace({ content_version_id: item.content_version_id })],
           assertions: [
             photoPersonAssertion({
@@ -2412,7 +2413,11 @@ it.each([true, false])(
     const before = location.href;
     await fireEvent.click(card);
     expect(query).toHaveBeenCalledWith(
-      expect.objectContaining({ text: "", filters: { person_ids: [personID] } }),
+      expect.objectContaining({
+        text: "",
+        sort: { field: "capture_time", direction: "desc" },
+        filters: { person_ids: [personID] },
+      }),
     );
     if (refused) {
       expect(location.href).toBe(before);

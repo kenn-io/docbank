@@ -153,9 +153,7 @@ func fromStorePersonExternalIdentity(value store.PersonExternalIdentity) PersonE
 func fromStorePersonDetail(value store.PersonDetail) PersonDetail {
 	out := PersonDetail{AssertionsNextCursor: value.AssertionsNextCursor, AssertionsTruncated: value.AssertionsTruncated, KeyFaceID: value.KeyFaceID, Assertions: make([]PhotoPersonAssertion, 0, len(value.Assertions)), Person: fromStorePerson(value.Person, value.ReachedThrough), Identities: make([]PersonIdentity, 0, len(value.Identities)), ExternalIdentities: make([]PersonExternalIdentity, 0, len(value.External))}
 	for _, a := range value.Assertions {
-		assertion := photoAssertion(a)
-		assertion.DisplayName = value.Person.DisplayName
-		out.Assertions = append(out.Assertions, assertion)
+		out.Assertions = append(out.Assertions, photoAssertion(a))
 	}
 	for _, identity := range value.Identities {
 		out.Identities = append(out.Identities, fromStorePersonIdentity(identity))

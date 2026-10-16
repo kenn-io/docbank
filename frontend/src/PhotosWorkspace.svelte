@@ -191,36 +191,39 @@
   const inspectorFaces = untrack(
     () => new PhotoFaces(photos.session, photos.onauthfailure, photos.hidden, faceDecision),
   );
+  let faceAssetID = "";
   $effect(() => {
     const id =
-      editing && !photoID && !photos.allResults && photos.selectedIDs.size === 1
+      photoID ||
+      (editing && !photos.allResults && photos.selectedIDs.size === 1
         ? [...photos.selectedIDs][0]
-        : undefined;
+        : undefined);
+    const row = photoID ? (current ?? listedRow) : photos.items.find((row) => row.asset_id === id);
     const controller = new AbortController();
     untrack(() => {
-      void inspectorFaces.load("");
-      const row = photos.items.find((row) => row.asset_id === id);
-      if (row && "content_version_id" in row) {
-        void inspectorFaces.load(row.kind === "photo" ? row.content_version_id : "");
-        return;
+      const target = (row: PhotoBrowseRow | undefined) => {
+        const version = row?.kind === "photo" ? row.content_version_id : "";
+        if (version !== inspectorFaces.version) void inspectorFaces.load(version);
+      };
+      if (row && "content_version_id" in row) target(row);
+      else {
+        if (!id || id !== faceAssetID) target(undefined);
+        if (id && !photoID)
+          void photos
+            .lookup(id, controller.signal)
+            .then((row) => {
+              if (!controller.signal.aborted) target(row);
+            })
+            .catch((cause) => {
+              if (!controller.signal.aborted)
+                inspectorFaces.error = cause instanceof Error ? cause.message : String(cause);
+            });
       }
-      if (id)
-        void photos
-          .lookup(id, controller.signal)
-          .then((row) => {
-            if (!controller.signal.aborted)
-              void inspectorFaces.load(row.kind === "photo" ? row.content_version_id : "");
-          })
-          .catch((cause) => {
-            if (!controller.signal.aborted)
-              inspectorFaces.error = cause instanceof Error ? cause.message : String(cause);
-          });
+      faceAssetID = id ?? "";
     });
-    return () => {
-      controller.abort();
-      inspectorFaces.dispose();
-    };
+    return () => controller.abort();
   });
+  onDestroy(() => inspectorFaces.dispose());
   let editing = $state(false);
   let loupeMetadata = $state(false);
   const selectionCount = $derived(photos.selectedIDs.size);
@@ -1464,7 +1467,7 @@
     </div>
   {/if}
   {#if photoID}<PhotoLoupe
-      onfacedecision={faceDecision}
+      faces={inspectorFaces}
       {onperson}
       bind:metadataOpen={loupeMetadata}
       {editor}

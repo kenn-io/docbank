@@ -18,7 +18,6 @@ type CreatePhotoFaceRequest struct {
 }
 
 type PhotoPersonAssertion struct {
-	DisplayName      string `json:"display_name"`
 	PhotoMark        bool   `json:"photo_mark,omitzero"`
 	AssertionID      string `json:"assertion_id" format:"uuid"`
 	ContentVersionID string `json:"content_version_id" format:"uuid"`
@@ -39,7 +38,13 @@ type PhotoFaceResult struct {
 	Assertion *PhotoPersonAssertion `json:"assertion,omitzero"`
 }
 
+type PhotoFacePerson struct {
+	PersonID    string `json:"person_id" format:"uuid"`
+	DisplayName string `json:"display_name"`
+}
+
 type PhotoFacePage struct {
+	People     []PhotoFacePerson      `json:"people" maxItems:"1000"`
 	Faces      []PhotoFace            `json:"faces" maxItems:"1000"`
 	Assertions []PhotoPersonAssertion `json:"assertions" maxItems:"1000"`
 }
@@ -60,11 +65,16 @@ func registerPhotoFaceRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		page := PhotoFacePage{Faces: faces, Assertions: make([]PhotoPersonAssertion, 0, len(assertions))}
+		page := PhotoFacePage{Faces: faces, People: make([]PhotoFacePerson, 0, len(names)), Assertions: make([]PhotoPersonAssertion, 0, len(assertions))}
 		for _, assertion := range assertions {
 			row := photoAssertion(assertion)
-			row.DisplayName = names[assertion.PersonID]
 			page.Assertions = append(page.Assertions, row)
+		}
+		for _, id := range ids {
+			if name, ok := names[id]; ok {
+				page.People = append(page.People, PhotoFacePerson{PersonID: id, DisplayName: name})
+				delete(names, id)
+			}
 		}
 		return &struct{ Body PhotoFacePage }{Body: page}, nil
 	})
@@ -99,13 +109,6 @@ func registerPhotoFaceRoutes(api huma.API, d Deps, g *gate) {
 		})
 		if err != nil {
 			return nil, err
-		}
-		if result.Assertion != nil {
-			names, err := d.Store.PhotoFacePersonNames(ctx, []string{result.Assertion.PersonID})
-			if err != nil {
-				return nil, FromStoreError(err)
-			}
-			result.Assertion.DisplayName = names[result.Assertion.PersonID]
 		}
 		return &struct{ Body PhotoFaceResult }{Body: result}, nil
 	})

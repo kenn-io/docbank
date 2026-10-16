@@ -5,6 +5,7 @@ import {
   type PhotoFace,
   type PhotoPersonAssertion,
   type FaceBox,
+  type PhotoFacePerson,
 } from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
 import { randomUUID } from "./crypto.js";
@@ -12,6 +13,7 @@ import { randomUUID } from "./crypto.js";
 export class PhotoFaces {
   faces = $state.raw<PhotoFace[]>([]);
   assertions = $state.raw<PhotoPersonAssertion[]>([]);
+  people = $state.raw<PhotoFacePerson[]>([]);
   version = $state("");
   loading = $state(false);
   busy = $state(false);
@@ -30,7 +32,11 @@ export class PhotoFaces {
     );
   }
   label(face: PhotoFace) {
-    return this.person(face)?.display_name || "Unnamed face";
+    const person = this.person(face);
+    return person ? this.personLabel(person.person_id) : "Unnamed face";
+  }
+  personLabel(id: string) {
+    return this.people.find((person) => person.person_id === id)?.display_name ?? "Unnamed person";
   }
   async load(version: string) {
     this.controller?.abort();
@@ -41,6 +47,7 @@ export class PhotoFaces {
     if (changed || !version) {
       this.faces = [];
       this.assertions = [];
+      this.people = [];
     }
     this.error = "";
     this.loading = !!version;
@@ -54,6 +61,7 @@ export class PhotoFaces {
       if (!controller.signal.aborted) {
         this.faces = page.faces;
         this.assertions = page.assertions;
+        this.people = page.people;
       }
     } catch (cause) {
       if (!controller.signal.aborted) this.failed(cause);

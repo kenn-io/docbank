@@ -15,6 +15,7 @@ it("keeps every caption without a matching fit preview and fills tiles after ret
     }),
     photoFace(),
   ];
+  faces.people = [{ person_id: "person-a", display_name: "Ada" }];
   faces.assertions = [
     photoPersonAssertion(),
     photoPersonAssertion({ assertion_id: "mark", photo_mark: true }),
@@ -33,7 +34,7 @@ it("keeps every caption without a matching fit preview and fills tiles after ret
   expect(images.map((img) => img.getAttribute("alt"))).toEqual(["Ada", "Ada", "Unnamed face"]);
   expect(images.every((img) => img.getAttribute("src") === "blob:fit")).toBe(true);
   expect(images[1]!.getAttribute("style")).toContain("rotate(90deg)");
-  faces.assertions = faces.assertions.map((row) => ({ ...row, display_name: "Grace" }));
+  faces.people = faces.people.map((row) => ({ ...row, display_name: "Grace" }));
   await component.rerender({
     photo: selected,
     faces,

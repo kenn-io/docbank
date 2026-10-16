@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { tick } from "svelte";
 import { APIError } from "./api-transport.js";
+import { PhotoFaces } from "./photoFaces.svelte.js";
 import PhotoLoupe from "./PhotoLoupe.svelte";
 import PhotoLoupeImage from "./PhotoLoupeImage.svelte";
 import { Photos } from "./photos.svelte.js";
@@ -15,7 +16,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 function setup() {
-  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [], assertions: [] });
+  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [], assertions: [], people: [] });
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -46,7 +47,10 @@ function setup() {
     generation_id: `${size}-${item.node_id}`,
   }));
   const get = vi.fn(async (_asset: string, _generation: string) => new Blob(["synthetic-jpeg"]));
+  const faces = new PhotoFaces("scoped", vi.fn());
+  faces.version = items[4]!.content_version_id;
   const props = {
+    faces,
     photo: items[4]!,
     error: "",
     photos,
@@ -649,10 +653,10 @@ it("shows the capture time and no file modified time for a photo placed by EXIF"
   expect(screen.queryByText("File modified")).toBeNull();
 });
 
-it("loads faces once when the loupe mounts", async () => {
+it("uses the supplied workspace faces without another read", async () => {
   const { props } = setup();
   render(PhotoLoupe, props);
   await screen.findByText("Fit preview");
   await tick();
-  expect(api.listPhotoFaces).toHaveBeenCalledTimes(1);
+  expect(api.listPhotoFaces).not.toHaveBeenCalled();
 });

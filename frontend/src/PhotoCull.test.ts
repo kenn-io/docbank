@@ -1281,7 +1281,9 @@ it("reloads cached stack siblings after preparation loses a member", async () =>
 });
 
 it("loads faces once when cull mounts", async () => {
-  const read = vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [], assertions: [] });
+  const read = vi
+    .spyOn(api, "listPhotoFaces")
+    .mockResolvedValue({ faces: [], assertions: [], people: [] });
   vi.stubGlobal(
     "ResizeObserver",
     class {

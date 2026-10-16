@@ -15,6 +15,7 @@ import { PhotoPreviewCache } from "./photoPreviewCache.js";
 import {
   photoMetadataResponse,
   photoPreparation,
+  photoFacePage,
   preparedPhoto,
   mapPhoto,
   photo,
@@ -3254,4 +3255,64 @@ it("shows the clicked person's name while its ID remains in the query", async ()
   expect(photos.query.filters.person_ids).toBeUndefined();
   photos.dispose();
   await cache.dispose();
+});
+
+it("keeps the selected row's face state when opening its loupe", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: vi.fn(() => "blob:synthetic"),
+  });
+  Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+  Object.defineProperty(HTMLImageElement.prototype, "decode", {
+    configurable: true,
+    value: vi.fn(async () => {}),
+  });
+  const read = vi.spyOn(api, "listPhotoFaces").mockResolvedValue(photoFacePage());
+  stubPhotoFetch(async () => Response.json({ items: [photo(1)], total: 1, facets: [] }));
+  const photos = new Photos("session", vi.fn());
+  photos.items = [photo(1)];
+  photos.selectedIDs = new Set(["photo-1"]);
+  photos.total = 1;
+  photos.started = true;
+  vi.spyOn(photos, "preview").mockResolvedValue({
+    state: "ready",
+    generation_id: "fit",
+    width: 1000,
+    height: 800,
+  });
+  const onphotochange = vi.fn();
+  const props = {
+    onphotochange,
+    photos,
+    cache: { get: vi.fn(async () => new Blob(["synthetic"])) } as unknown as PhotoPreviewCache,
+  };
+  const component = render(PhotosWorkspace, props);
+  await fireEvent.click(await screen.findByRole("button", { name: "Metadata" }));
+  await screen.findByRole("button", { name: "Find or create a person: Ada" });
+  await waitFor(() =>
+    expect(screen.getByRole("combobox", { name: /^Rotation:/ }).hasAttribute("disabled")).toBe(
+      false,
+    ),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Open Photo 1.jpg" }));
+  expect(onphotochange).toHaveBeenCalledWith("photo-1", "open");
+  await component.rerender({ ...props, photoID: "photo-1" });
+  const loupe = await screen.findByRole("dialog", { name: /^Photo viewer,/ });
+  const image = await within(loupe).findByRole("img", { name: "Photo 1.jpg" });
+  Object.defineProperty(image, "naturalWidth", { value: 1000 });
+  Object.defineProperty(image, "naturalHeight", { value: 800 });
+  await fireEvent.load(image);
+  await waitFor(() => expect(loupe.querySelector(".face-box")?.textContent).toBe("Ada"));
+  await fireEvent.click(within(loupe).getByRole("button", { name: "Metadata" }));
+  await within(loupe).findByRole("button", { name: "Find or create a person: Ada" });
+  expect(read).toHaveBeenCalledOnce();
 });

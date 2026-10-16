@@ -224,3 +224,99 @@ test("keeps face tools and requests out of video loupe, inspector, and cull", as
     await fixture.dispose();
   }
 });
+
+test("pages to every person match after leaving a relevance search", async ({ page }) => {
+  test.setTimeout(300_000);
+  await mkdir(path.join(repository, ".superpowers"), { recursive: true });
+  const workspace = await mkdtemp(path.join(repository, ".superpowers", "faces-pagination-proof-"));
+  const fixture = photoFixture(workspace);
+  try {
+    await fixture.seed(251);
+    const url = new URL(await fixture.run("web", "--no-browser"));
+    const session = new URLSearchParams(url.hash.slice(1)).get("web_session")!;
+    url.pathname = "/photos";
+    await page.goto(url.href);
+    const { personID, lastName } = await page.evaluate(
+      async ({ session }) => {
+        const headers = { "Content-Type": "application/json", "X-Docbank-Web-Session": session };
+        const person = await (
+          await fetch("/api/v1/people", {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ display_name: "Ada" }),
+          })
+        ).json();
+        let cursor: string | undefined;
+        const rows: { content_version_id: string; name: string }[] = [];
+        do {
+          const response = await fetch("/api/v1/photos/assets/query", {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              query: {
+                v: 1,
+                text: "",
+                syntax: "simple",
+                mode: "lexical",
+                filters: {},
+                sort: { field: "capture_time", direction: "desc" },
+              },
+              page_size: 250,
+              cursor,
+            }),
+          });
+          if (!response.ok) throw new Error(await response.text());
+          const result = await response.json();
+          rows.push(...result.items);
+          cursor = result.next_cursor;
+        } while (cursor);
+        if (rows.length !== 251) throw new Error(`Expected 251 rows, got ${rows.length}`);
+        for (const row of rows) {
+          const result = await fetch(`/api/v1/photos/versions/${row.content_version_id}/faces`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ person_id: person.person_id }),
+          });
+          if (!result.ok) throw new Error(await result.text());
+        }
+        return { personID: person.person_id as string, lastName: rows.at(-1)!.name };
+      },
+      { session },
+    );
+    await page.getByRole("searchbox", { name: "Search photos" }).fill("Synthetic");
+    await page.getByRole("button", { name: "Search", exact: true }).click();
+    await expect(page.locator(".photo-results-summary")).toContainText("251 photos");
+    await page.locator(".photo-image").first().dblclick();
+    const loupe = page.getByRole("dialog", { name: /^Photo viewer,/ });
+    await loupe.getByRole("button", { name: "Metadata", exact: true }).click();
+    const query = page.waitForRequest(
+      (request) =>
+        request.url().endsWith("/photos/assets/query") &&
+        request.postDataJSON()?.query?.filters?.person_ids?.includes(personID),
+    );
+    const personPage = page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/photos/assets/query") &&
+        response.request().postDataJSON()?.query?.filters?.person_ids?.includes(personID) &&
+        response.request().postDataJSON()?.page_size === 250,
+    );
+    await loupe.getByRole("button", { name: "Ada", exact: true }).click();
+    const firstPage = await (await personPage).json();
+    expect(firstPage.total).toBe(251);
+    expect(firstPage.items).toHaveLength(250);
+    expect(firstPage.next_cursor).toBeTruthy();
+    expect((await query).postDataJSON().query.sort.field).toBe("capture_time");
+    await expect(page.locator(".photo-results-summary")).toContainText("251 photos");
+    await expect(page.getByRole("searchbox", { name: "Search photos" })).toHaveValue("");
+    await expect
+      .poll(async () => {
+        await page.getByTestId("photo-scroll").evaluate((element) => {
+          element.scrollTop = element.scrollHeight;
+        });
+        return page.getByRole("button", { name: `Select ${lastName}`, exact: true }).count();
+      })
+      .toBe(1);
+  } finally {
+    await fixture.dispose();
+  }
+});

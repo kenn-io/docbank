@@ -12556,11 +12556,33 @@ components:
             $ref: "#/components/schemas/PhotoFace"
           maxItems: 1000
           type: array
+        people:
+          items:
+            $ref: "#/components/schemas/PhotoFacePerson"
+          maxItems: 1000
+          type: array
       required:
+        - people
         - faces
         - assertions
       type: object
       x-go-type: api.PhotoFacePage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoFacePerson:
+      additionalProperties: false
+      properties:
+        display_name:
+          type: string
+        person_id:
+          format: uuid
+          type: string
+      required:
+        - person_id
+        - display_name
+      type: object
+      x-go-type: api.PhotoFacePerson
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -12910,8 +12932,6 @@ components:
         content_version_id:
           format: uuid
           type: string
-        display_name:
-          type: string
         note:
           type: string
         person_id:
@@ -12927,7 +12947,6 @@ components:
         role:
           type: string
       required:
-        - display_name
         - assertion_id
         - content_version_id
         - person_id

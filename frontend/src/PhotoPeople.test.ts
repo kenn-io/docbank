@@ -22,10 +22,11 @@ const face = photoFace({ revision: 3, assertion_id: undefined });
 it("chooses an existing person by ID and opens their photos from the person card", async () => {
   const assertion = photoPersonAssertion();
   vi.spyOn(api, "listPhotoFaces")
-    .mockResolvedValueOnce({ faces: [face], assertions: [] })
+    .mockResolvedValueOnce({ faces: [face], assertions: [], people: [] })
     .mockResolvedValue({
       faces: [{ ...face, assertion_id: "assertion-a", revision: 4 }],
       assertions: [assertion],
+      people: [{ person_id: "person-a", display_name: "Ada" }],
     });
   const search = vi.spyOn(api, "listPeople").mockResolvedValue({
     items: [{ person_id: "person-a", display_name: "Ada", revision: 1, state: "curated" }],
@@ -56,7 +57,7 @@ it("chooses an existing person by ID and opens their photos from the person card
   faces.dispose();
 });
 it("creates a person only after choosing Create", async () => {
-  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [face], assertions: [] });
+  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [face], assertions: [], people: [] });
   vi.spyOn(api, "listPeople").mockResolvedValue({ items: [] });
   const create = vi.spyOn(api, "createPerson").mockResolvedValue({
     person_id: "person-new",
@@ -93,7 +94,7 @@ it("creates a person only after choosing Create", async () => {
 });
 
 it("keeps a created person for retry and disables the picker throughout creation", async () => {
-  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [face], assertions: [] });
+  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [face], assertions: [], people: [] });
   vi.spyOn(api, "listPeople").mockResolvedValue({ items: [] });
   let finish!: (person: api.Person) => void;
   const create = vi.spyOn(api, "createPerson").mockImplementation(
@@ -142,10 +143,12 @@ it("offers Clear name for named faces and keeps whole-photo marks as person link
     .mockResolvedValueOnce({
       faces: [{ ...face, assertion_id: assertion.assertion_id }],
       assertions: [assertion, photoPersonAssertion({ assertion_id: "whole", photo_mark: true })],
+      people: [{ person_id: "person-a", display_name: "Ada" }],
     })
     .mockResolvedValue({
       faces: [face],
       assertions: [photoPersonAssertion({ assertion_id: "whole", photo_mark: true })],
+      people: [{ person_id: "person-a", display_name: "Ada" }],
     });
   vi.spyOn(api, "listPeople").mockResolvedValue({ items: [] });
   const write = vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "receipt" });
@@ -174,7 +177,11 @@ it("offers Clear name for named faces and keeps whole-photo marks as person link
 it.each(["Ada", "ada"])(
   "offers the existing folded match instead of Create for %s",
   async (query) => {
-    vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [face], assertions: [] });
+    vi.spyOn(api, "listPhotoFaces").mockResolvedValue({
+      faces: [face],
+      assertions: [],
+      people: [],
+    });
     vi.spyOn(api, "listPeople").mockResolvedValue({
       exact_match: true,
       items: [{ person_id: "person-a", display_name: "Ada", state: "curated", revision: 1 }],
@@ -196,13 +203,16 @@ it.each(["Ada", "ada"])(
 
 it("keeps the other face label while searching a picker", async () => {
   vi.spyOn(api, "listPhotoFaces").mockResolvedValue({
+    people: [
+      { person_id: "person-a", display_name: "Ada" },
+      { person_id: "person-b", display_name: "Grace" },
+    ],
     faces: [photoFace(), photoFace({ face_id: "face-b", assertion_id: "assertion-b" })],
     assertions: [
       photoPersonAssertion(),
       photoPersonAssertion({
         assertion_id: "assertion-b",
         person_id: "person-b",
-        display_name: "Grace",
       }),
     ],
   });
@@ -222,7 +232,11 @@ it.each(["name", "clear"] as const)(
   async (action) => {
     let finish!: (page: api.PhotoFacePage) => void;
     vi.spyOn(api, "listPhotoFaces")
-      .mockResolvedValueOnce({ faces: [photoFace()], assertions: [photoPersonAssertion()] })
+      .mockResolvedValueOnce({
+        faces: [photoFace()],
+        assertions: [photoPersonAssertion()],
+        people: [{ person_id: "person-a", display_name: "Ada" }],
+      })
       .mockImplementationOnce(
         () =>
           new Promise((resolve) => {
@@ -243,9 +257,10 @@ it.each(["name", "clear"] as const)(
       action === "name"
         ? {
             faces: [photoFace()],
-            assertions: [photoPersonAssertion({ person_id: "person-b", display_name: "Grace" })],
+            assertions: [photoPersonAssertion({ person_id: "person-b" })],
+            people: [{ person_id: "person-b", display_name: "Grace" }],
           }
-        : { faces: [photoFace({ assertion_id: undefined })], assertions: [] },
+        : { faces: [photoFace({ assertion_id: undefined })], assertions: [], people: [] },
     );
     await pending;
     await screen.findByRole("button", {

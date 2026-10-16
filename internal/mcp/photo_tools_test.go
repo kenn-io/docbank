@@ -64,7 +64,7 @@ func TestGetPhotoFacesMCPPaginatesFacesAndAssertions(t *testing.T) {
 	}
 	faces[0].RejectedPersonIDs = []string{"00000000-0000-4000-8000-000000000203"}
 	faces[2].Dismissed = true
-	page := api.PhotoFacePage{Faces: faces, Assertions: assertions}
+	page := api.PhotoFacePage{Faces: faces, Assertions: assertions, People: []api.PhotoFacePerson{{PersonID: assertions[0].PersonID, DisplayName: "Ada"}, {PersonID: assertions[1].PersonID, DisplayName: "Grace"}}}
 	daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		assert.Equal(t, http.MethodGet, request.Method)
 		assert.Equal(t, "/api/v1/photos/versions/"+versionID+"/faces", request.URL.Path)

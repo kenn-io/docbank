@@ -4514,7 +4514,6 @@ export interface PhotoPersonAssertion {
   action: string;
   assertion_id: string;
   content_version_id: string;
-  display_name: string;
   note: string;
   person_id: string;
   photo_mark?: boolean;
@@ -5753,6 +5752,11 @@ export interface PhotoFaceDecisionResult {
   receipt_id: string;
 }
 
+export interface PhotoFacePerson {
+  display_name: string;
+  person_id: string;
+}
+
 export interface PhotoFacePage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -5760,6 +5764,8 @@ export interface PhotoFacePage {
   assertions: PhotoPersonAssertion[];
   /** @maxItems 1000 */
   faces: PhotoFace[];
+  /** @maxItems 1000 */
+  people: PhotoFacePerson[];
 }
 
 export interface PhotoFaceResult {

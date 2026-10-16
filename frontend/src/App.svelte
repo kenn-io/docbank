@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { photoSearchSort } from "./photoSearch.js";
+  import { refreshPersonPhotoViews } from "./photos.svelte.js";
   import * as generated from "./generated/docbank.js";
   import { onMount, tick, untrack } from "svelte";
   import ActivityIcon from "@lucide/svelte/icons/activity";
@@ -688,6 +690,7 @@
       !photoState.photos.setQuery({
         ...photoState.photos.query,
         text: "",
+        sort: photoSearchSort({ text: "", syntax: photoState.photos.query.syntax }),
         filters: { person_ids: [personID] },
       })
     )
@@ -2294,21 +2297,12 @@
   }
 
   function handleFaceDecision(source: Photos): void {
-    for (const photos of new Set([
+    void refreshPersonPhotoViews(source, [
       photoState?.photos,
       albumPhotos,
       mapPhotos,
       hiddenWorkspace?.activePhotos(),
-    ])) {
-      if (
-        photos &&
-        photos !== source &&
-        photos.hidden === source.hidden &&
-        (photos.started || photos.loading) &&
-        (photos.query.filters.person_ids?.length || /\bperson:/i.test(photos.query.text))
-      )
-        void photos.refresh();
-    }
+    ]);
     if (!source.hidden && /\bperson:/i.test(activeQuery)) refreshDocumentsView();
   }
 

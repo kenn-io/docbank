@@ -119,14 +119,16 @@
       />
       {#if person && onperson}<Button
           size="sm"
-          onclick={() => onperson?.(person.person_id, person.display_name)}
-          >{person.display_name}</Button
+          onclick={() => onperson?.(person.person_id, faces.personLabel(person.person_id))}
+          >{faces.personLabel(person.person_id)}</Button
         >{/if}
     </div>
   {/each}
   {#each faces.assertions.filter((row) => row.photo_mark && row.action === "assert") as person (person.assertion_id)}
-    <Button size="sm" onclick={() => onperson?.(person.person_id, person.display_name)}
-      >{person.display_name}</Button
+    <Button
+      size="sm"
+      onclick={() => onperson?.(person.person_id, faces.personLabel(person.person_id))}
+      >{faces.personLabel(person.person_id)}</Button
     >
   {/each}
   {#if faces.error || error}<Notice tone="error" message={faces.error || error} />{/if}

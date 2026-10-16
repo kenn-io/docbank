@@ -4,6 +4,7 @@ import { APIError } from "./api-transport.js";
 import * as download from "./download.js";
 import {
   Photos,
+  refreshPersonPhotoViews,
   lookupPhotoRows,
   loadDensity,
   photoQuery,
@@ -3232,5 +3233,67 @@ it.each(["unloaded", "singleton", "stack", "unknown", "representative", "represe
       kind !== "singleton" && kind !== "unloaded",
     );
     photos.dispose();
+  },
+);
+
+it.each([false, true])(
+  "refreshes old and new person results only in the decision's Hidden scope=%s",
+  async (hidden) => {
+    const ada = "00000000-0000-4000-8000-000000000001",
+      grace = "00000000-0000-4000-8000-000000000002";
+    let assigned = ada;
+    const requests: { hidden: boolean; query: Query }[] = [];
+    stubPhotoFetch(async (_url, init) => {
+      const request = JSON.parse(String(init.body));
+      requests.push(request);
+      const id =
+        request.query.filters.person_ids?.[0] ?? request.query.text.slice("person:".length);
+      const items = id === assigned ? [photo(1)] : [];
+      return Response.json({ items, total: items.length, facets: [] });
+    });
+    const source = new Photos("session", vi.fn(), hidden);
+    const oldPerson = new Photos("session", vi.fn(), hidden, {
+      ...photoQuery,
+      filters: { person_ids: [ada] },
+    });
+    const newPerson = new Photos("session", vi.fn(), hidden, {
+      ...photoQuery,
+      text: `person:${grace}`,
+    });
+    const otherScope = new Photos("session", vi.fn(), !hidden, {
+      ...photoQuery,
+      filters: { person_ids: [ada] },
+    });
+    const unopened = new Photos("session", vi.fn(), hidden, {
+      ...photoQuery,
+      filters: { person_ids: [ada] },
+    });
+    const unfiltered = new Photos("session", vi.fn(), hidden);
+    await Promise.all(
+      [oldPerson, newPerson, otherScope, unfiltered].map((view) => view.loadMore()),
+    );
+    expect([oldPerson.total, newPerson.total]).toEqual([1, 0]);
+    requests.length = 0;
+    assigned = grace;
+    await refreshPersonPhotoViews(source, [
+      source,
+      oldPerson,
+      newPerson,
+      otherScope,
+      unopened,
+      unfiltered,
+      oldPerson,
+    ]);
+    expect([
+      oldPerson.items.length,
+      oldPerson.total,
+      newPerson.items.length,
+      newPerson.total,
+    ]).toEqual([0, 0, 1, 1]);
+    expect(otherScope.total).toBe(1);
+    expect(requests).toHaveLength(2);
+    expect(requests.every((request) => request.hidden === hidden)).toBe(true);
+    for (const view of [source, oldPerson, newPerson, otherScope, unopened, unfiltered])
+      view.dispose();
   },
 );
