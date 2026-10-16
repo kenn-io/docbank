@@ -12,7 +12,7 @@ import (
 // BenchmarkSmallBlobWrite includes durable publication or deduplication on
 // disk. Set TMPDIR to disk-backed storage when measuring filesystem costs.
 func BenchmarkSmallBlobWrite(b *testing.B) {
-	for _, size := range []int{1024, 4096} {
+	for _, size := range []int{1024, 4096, 16 << 10, 64 << 10} {
 		for _, existing := range []bool{false, true} {
 			b.Run(fmt.Sprintf("bytes=%d/existing=%t", size, existing), func(b *testing.B) {
 				bs, err := newReaderStoreWithOptions(alwaysMemberResolver{}, b.TempDir(), ManagedOptions())

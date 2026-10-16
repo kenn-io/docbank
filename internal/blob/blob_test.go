@@ -29,7 +29,8 @@ func TestWriteReceiptIncludesAuxiliaryMD5WithoutChangingSHA256Identity(t *testin
 	for name, content := range map[string][]byte{
 		"content":  []byte("synthetic auxiliary checksum bytes"),
 		"empty":    {},
-		"streamed": bytes.Repeat([]byte("synthetic streamed checksum bytes"), 256),
+		"buffered": bytes.Repeat([]byte("synthetic buffered checksum bytes"), 256),
+		"streamed": bytes.Repeat([]byte("synthetic streamed checksum bytes"), 4096),
 	} {
 		t.Run(name, func(t *testing.T) {
 			first, err := bs.WriteDetailedContext(t.Context(), bytes.NewReader(content))
@@ -116,26 +117,42 @@ func TestCompressedWriteKeepsSmallObjectRaw(t *testing.T) {
 }
 
 func TestBufferedDuplicateDoesNotStageContent(t *testing.T) {
-	bs := newTestBlobStoreWithOptions(t, ManagedOptions())
-	content := []byte("synthetic duplicate content")
-	first, err := bs.WriteDetailedContext(t.Context(), bytes.NewReader(content))
-	require.NoError(t, err)
+	for _, tc := range []struct {
+		name     string
+		content  []byte
+		opts     Options
+		encoding packstore.LooseEncoding
+	}{
+		{"small", []byte("synthetic duplicate content"), ManagedOptions(), packstore.LooseEncodingRaw},
+		{"compressed", bytes.Repeat([]byte("a"), 4096), ManagedOptions(), packstore.LooseEncodingZstd},
+		{"incompressible", deterministicIncompressibleBytes(16 << 10), ManagedOptions(), packstore.LooseEncodingRaw},
+		{"compression-disabled", bytes.Repeat([]byte("a"), 16<<10), Options{}, packstore.LooseEncodingRaw},
+		{"buffer-limit", bytes.Repeat([]byte("a"), (64<<10)-1), ManagedOptions(), packstore.LooseEncodingZstd},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bs := newTestBlobStoreWithOptions(t, tc.opts)
+			first, err := bs.WriteDetailedContext(t.Context(), bytes.NewReader(tc.content))
+			require.NoError(t, err)
+			require.Equal(t, tc.encoding, first.Encoding)
 
-	// A duplicate whose bytes are already buffered needs no temporary file.
-	// Make staging unavailable to detect an unnecessary second publication.
-	require.NoError(t, os.Remove(bs.tmpDir()))
-	require.NoError(t, os.WriteFile(bs.tmpDir(), []byte("not a directory"), 0o600))
-	second, err := bs.WriteDetailedContext(t.Context(), bytes.NewReader(content))
-	require.NoError(t, err)
-	assert.Equal(t, first.Hash, second.Hash)
-	assert.Equal(t, first.MD5, second.MD5)
-	assert.Equal(t, first.Size, second.Size)
-	assert.False(t, second.Created)
-	assertVerifiedBlob(t, bs, second.Hash, content)
+			// A duplicate whose bytes are already buffered needs no temporary file.
+			// Make staging unavailable to detect an unnecessary second publication.
+			require.NoError(t, os.Remove(bs.tmpDir()))
+			require.NoError(t, os.WriteFile(bs.tmpDir(), []byte("not a directory"), 0o600))
+			second, err := bs.WriteDetailedContext(t.Context(), bytes.NewReader(tc.content))
+			require.NoError(t, err)
+			assert.Equal(t, first.Hash, second.Hash)
+			assert.Equal(t, first.MD5, second.MD5)
+			assert.Equal(t, first.Size, second.Size)
+			assert.Equal(t, first.Encoding, second.Encoding)
+			assert.False(t, second.Created)
+			assertVerifiedBlob(t, bs, second.Hash, tc.content)
+		})
+	}
 }
 
 func TestCompressedWriteMinimumAcrossShortReads(t *testing.T) {
-	for _, size := range []int{0, 1023, 1024, 1025, 4097} {
+	for _, size := range []int{0, 1023, 1024, 1025, 4097, 64 << 10, (64 << 10) + 1} {
 		t.Run(strconv.Itoa(size), func(t *testing.T) {
 			bs := newTestBlobStoreWithOptions(t, Options{LooseCompression: testLooseCompression()})
 			content := bytes.Repeat([]byte("a"), size)
