@@ -69,7 +69,6 @@
     target = result.ids;
     view = { ...fittedPhotoView };
     crop = undefined;
-    void restoreFocus();
   }
   function key(event: KeyboardEvent) {
     if (event.ctrlKey || event.altKey || event.metaKey || event.isComposing || event.repeat) return;
@@ -92,17 +91,17 @@
       actual: false,
     };
     regionMode = false;
-    void restoreFocus();
   }
   function cancelRegion() {
     regionMode = false;
-    void restoreFocus();
   }
   async function restoreFocus() {
     await tick();
     content?.focus({ preventScroll: true });
   }
 </script>
+
+<svelte:document onkeydown={(event) => event.target === document.body && key(event)} />
 
 <div class="review-shell">
   <Modal

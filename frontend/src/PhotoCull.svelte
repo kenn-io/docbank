@@ -126,12 +126,9 @@
     return editor.canChangeTarget();
   }
   async function nextPass(followUp = false) {
-    focus();
     if (canChangeTarget()) await cull.nextPass(followUp);
-    focus();
   }
   function move(direction: -1 | 1) {
-    focus();
     if (canChangeTarget()) cull.move(direction);
   }
   async function refresh(receipt: PhotoAuthoredReceipt, tags: Tag[]) {
@@ -161,7 +158,6 @@
     await applyDecision(photo, patch);
   }
   async function applyDecision(selected: PhotoBrowseRow, patch: PhotoAuthoredPatch, retry = false) {
-    focus();
     const id = selected.asset_id;
     await editor.edit(
       { asset_ids: [id] },
@@ -178,7 +174,6 @@
           },
     );
     await tick();
-    focus();
     if (editor.error || editor.dirty || editor.conflict) return;
     reconcile(editor.targets);
     announcement =
@@ -189,7 +184,6 @@
   }
   async function retryDecision() {
     if (!photo || busy || editor.loading) return;
-    focus();
     if (!editor.conflict) {
       await applyDecision(photo, { ...editor.patch }, true);
       return;
@@ -206,7 +200,6 @@
         editor.error = cause instanceof Error ? cause.message : String(cause);
     } finally {
       editor.loading = false;
-      focus();
     }
   }
   function close() {
@@ -232,6 +225,8 @@
     else if (typeof action === "number") void decide({ rating: action });
   }
 </script>
+
+<svelte:document onkeydown={(event) => event.target === document.body && key(event)} />
 
 <div class="review-shell">
   <Modal
@@ -276,7 +271,6 @@
             onclick={() => {
               editor.clearDraft();
               editor.reset();
-              focus();
             }}>Discard edit</Button
           >
         </div>{/if}
@@ -357,7 +351,6 @@
             size="sm"
             disabled={cull.stale || busy}
             onclick={() => {
-              focus();
               if (canChangeTarget()) cull.skip();
             }}>Skip</Button
           >

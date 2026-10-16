@@ -140,6 +140,46 @@ it("decides once with P, advances, announces the decision and offers receipt Und
   await fireEvent.keyDown(document.querySelector(".photo-cull")!, { key: "Escape" });
   expect(close).toHaveBeenCalledOnce();
 });
+it("navigates with keyboard focus after activating Undo", async () => {
+  const before = preparedPhoto(1);
+  const picked = { ...before, revision: 2, values: { ...before.values, flag: "pick" as const } };
+  vi.spyOn(api, "editPhotoAuthored").mockResolvedValue({
+    receipt_id: "pick",
+    before: [before],
+    after: [picked],
+  });
+  const undo = vi.spyOn(api, "undoPhotoAuthored").mockResolvedValue({
+    receipt_id: "undo",
+    before: [picked],
+    after: [{ ...before, revision: 3 }],
+  });
+  const rows = [photo(1), photo(2), photo(3)];
+  const { cull, photos } = await reviewPhoto(rows[0], true);
+  vi.spyOn(photos, "metadataChanged").mockReturnValue(new Map());
+  vi.mocked(photos.lookup).mockImplementation(
+    async (id) => rows.find((row) => row.asset_id === id)!,
+  );
+  await act(() => {
+    cull.run = {
+      ...cull.run!,
+      ids: rows.map((row) => row.asset_id),
+      checkpoint: { ...cull.run!.checkpoint, pass: rows.map((row) => row.asset_id) },
+    };
+  });
+  await fireEvent.click(await readyButton("Pick (P)"));
+  await screen.findByText("Photo 2.jpg");
+  const button = await readyButton(/^Undo$/);
+  button.focus();
+  expect(document.activeElement).toBe(button);
+  await fireEvent.click(button);
+  await waitFor(() => expect(screen.queryByRole("button", { name: /^Undo$/ })).toBeNull());
+  expect(undo).toHaveBeenCalledWith("pick", expect.anything());
+  await readyButton("Next");
+  await fireEvent.keyDown(document.activeElement!, { key: "ArrowRight" });
+  await waitFor(() => expect(cull.currentID).toBe("photo-3"));
+  await screen.findByText("Photo 3.jpg");
+});
+
 it("blocks navigation during preparation and the write", async () => {
   let finishPrepare!: (value: api.PhotoAuthoredPreparation) => void;
   const pendingPrepare = new Promise<api.PhotoAuthoredPreparation>(

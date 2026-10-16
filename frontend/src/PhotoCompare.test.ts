@@ -124,6 +124,32 @@ it("creates a manual closeup from keyboard position and confirmation", async () 
   photos.dispose();
 });
 
+it("navigates with keyboard focus after activating Clear closeup", async () => {
+  const { photos, dialog } = compare();
+  try {
+    await waitFor(() => expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]));
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Manual closeup" }));
+    const frame = within(dialog).getByRole("button", {
+      name: "Position closeup on Photo 1.jpg",
+    });
+    await fireEvent.keyDown(frame, { key: "Enter" });
+    await fireEvent.click(frame);
+    await within(dialog).findByLabelText("Matching closeups");
+    await waitFor(() =>
+      expect(document.activeElement).toBe(dialog.querySelector(".photo-compare")),
+    );
+    const button = within(dialog).getByRole("button", { name: "Clear closeup" });
+    button.focus();
+    expect(document.activeElement).toBe(button);
+    await fireEvent.click(button);
+    await waitFor(() => expect(within(dialog).queryByLabelText("Matching closeups")).toBeNull());
+    await fireEvent.keyDown(document.activeElement!, { key: "ArrowRight" });
+    await waitFor(() => expect(names(dialog)).toEqual(["Photo 2.jpg", "Photo 3.jpg"]));
+  } finally {
+    photos.dispose();
+  }
+});
+
 it("navigates with the initial keyboard focus", async () => {
   const { photos, dialog } = compare();
   await waitFor(() => expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]));
