@@ -23,6 +23,10 @@ export class PhotoCull {
   remainder = $state(false);
   private capture?: AbortController;
   private flagRead?: AbortController;
+  // nextPass snapshots the checkpoint revision, so no other update may bump it until the pass is saved.
+  private changingPass = false;
+  // Sets of the ids in each marker list, so a new mark costs O(1) however large the query is.
+  private marked = new WeakMap<string[], Set<string>>();
   private writes: Promise<void> = Promise.resolve();
   constructor(
     readonly session: string,
@@ -39,6 +43,11 @@ export class PhotoCull {
     this.error = "";
     try {
       this.run = await this.storage.load();
+      if (this.run)
+        for (const kind of ["visited", "skipped", "unavailable"] as const) {
+          const list = this.run.checkpoint[kind];
+          this.marked.set(list, new Set(list));
+        }
       this.stale = false;
       return !!this.run;
     } catch (cause) {
@@ -126,7 +135,7 @@ export class PhotoCull {
       Pick<CullCheckpoint, "position" | "autoAdvance" | "visited" | "skipped" | "unavailable">
     >,
   ) {
-    if (!this.run || this.stale) return;
+    if (!this.run || this.stale || this.changingPass) return;
     const previous = this.run.checkpoint;
     const checkpoint = { ...previous, ...patch, revision: previous.revision + 1 };
     this.run = { ...this.run, checkpoint };
@@ -149,10 +158,20 @@ export class PhotoCull {
         this.error = `Progress could not be saved: ${failure(cause)}`;
       });
   }
+  // Appends in place: copying a 250,000-photo list on every photo would make culling quadratic.
+  private mark(kind: "visited" | "skipped" | "unavailable", id: string) {
+    if (!this.run || this.stale || this.changingPass) return;
+    const list = this.run.checkpoint[kind];
+    let ids = this.marked.get(list);
+    if (!ids) this.marked.set(list, (ids = new Set(list)));
+    if (ids.has(id)) return;
+    ids.add(id);
+    list.push(id);
+    this.update({ [kind]: list });
+  }
   private visit() {
     const id = this.currentID;
-    if (id && !this.run!.checkpoint.visited.includes(id))
-      this.update({ visited: [...this.run!.checkpoint.visited, id] });
+    if (id) this.mark("visited", id);
   }
   choose(id: string) {
     if (this.busy || this.stale) return;
@@ -174,12 +193,11 @@ export class PhotoCull {
   }
   skip() {
     if (!this.currentID || this.busy || this.stale) return;
-    this.update({ skipped: [...new Set([...this.run!.checkpoint.skipped, this.currentID])] });
+    this.mark("skipped", this.currentID);
     this.move(1);
   }
   unavailable(id: string) {
-    if (this.run && !this.run.checkpoint.unavailable.includes(id))
-      this.update({ unavailable: [...this.run.checkpoint.unavailable, id] });
+    this.mark("unavailable", id);
   }
   toggleAutoAdvance() {
     if (this.run) this.update({ autoAdvance: !this.run.checkpoint.autoAdvance });
@@ -214,6 +232,8 @@ export class PhotoCull {
     if (!followUp && !this.complete && !confirm("Change scope and reset this pass's progress?"))
       return;
     const controller = this.beginFlagRead();
+    this.changingPass = true;
+    let changed = false;
     this.error = "";
     try {
       await this.writes;
@@ -260,12 +280,14 @@ export class PhotoCull {
       }
       this.run = { ...this.run, checkpoint };
       this.remainder = false;
-      this.visit();
+      changed = true;
     } catch (cause) {
       if (!controller.signal.aborted) this.error = failure(cause);
     } finally {
+      this.changingPass = false;
       this.finishFlagRead(controller);
     }
+    if (changed) this.visit();
   }
   flush() {
     return this.writes;

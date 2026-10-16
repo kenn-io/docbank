@@ -76,6 +76,31 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
     let resumedName = await cull.locator("header strong").innerText();
     await expect(cull.locator(".filmstrip img").first()).toBeVisible();
     await captureThemes(page, "web-photo-cull");
+    let failLarge = true;
+    await page.route("**/api/v1/photos/assets/*/preview", async (route) => {
+      if (!failLarge || !route.request().postData()?.includes('"large"')) return route.fallback();
+      failLarge = false;
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({
+          title: "Service Unavailable",
+          status: 503,
+          code: "photo_preview_unavailable",
+          detail: "Preview preparation timed out. Retry.",
+        }),
+      });
+    });
+    await page.keyboard.press("z");
+    const retry = cull.getByRole("button", { name: "Retry preview", exact: true });
+    await expect(retry).toBeVisible();
+    await expect(cull.locator(".photo-stage img")).toBeVisible();
+    await captureThemes(page, "web-photo-cull-retry");
+    await retry.click();
+    await expect(retry).toHaveCount(0);
+    await expect(cull.locator(".photo-stage").getByRole("status")).toHaveCount(0);
+    await page.unroute("**/api/v1/photos/assets/*/preview");
+    await page.keyboard.press("z");
     await cull.getByRole("button", { name: "Undo", exact: true }).click();
     await expect(cull.getByRole("button", { name: "Undo", exact: true })).toHaveCount(0);
     await cull.getByRole("button", { name: "Exit cull", exact: true }).click();

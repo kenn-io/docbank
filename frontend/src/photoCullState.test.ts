@@ -170,6 +170,110 @@ it("starts from frozen flags without another query and reports capture progress"
   expect(cull.run?.checkpoint.pass).toEqual([rows[1]!.asset_id]);
   expect(list).not.toHaveBeenCalled();
 });
+it("ignores auto-advance and unavailable updates while a scope change reads flags", async () => {
+  const rows = [photo(1), photo(2)],
+    store = storage();
+  vi.spyOn(api, "createWorkspaceQuery").mockResolvedValue(
+    new Response(JSON.stringify(await snapshot(rows.map((row) => row.asset_id)))),
+  );
+  const list = vi.spyOn(api, "listPhotoAssets");
+  const cull = new PhotoCull("session", store);
+  await cull.start(query);
+  await cull.flush();
+  let release!: () => void;
+  list.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        release = () => resolve({ items: rows, total: 2, facets: [], relevance_available: false });
+      }),
+  );
+  const changing = cull.nextPass(false, () => true);
+  await vi.waitFor(() => expect(cull.busy).toBe(true));
+  await vi.waitFor(() => expect(list).toHaveBeenCalled());
+  cull.toggleAutoAdvance();
+  cull.unavailable(rows[1]!.asset_id);
+  release();
+  await changing;
+  await cull.flush();
+  expect(cull.error).toBe("");
+  expect(cull.stale).toBe(false);
+  expect(cull.run?.checkpoint.scope).toBe("picks");
+  expect((await store.load())?.checkpoint).toEqual(cull.run?.checkpoint);
+});
+it("keeps per-photo marker work independent of how many photos were already marked", async () => {
+  const rows = Array.from({ length: 8 }, (_, i) => photo(i + 1)),
+    ids = rows.map((row) => row.asset_id),
+    size = 2000;
+  const seed = (kind: string) => Array.from({ length: size }, (_, i) => `${kind}-${i}`);
+  let reads = 0;
+  // Counts every indexed read of a marker list, however it is scanned or copied.
+  const counted = (list: string[]) =>
+    new Proxy(list, {
+      get(target, key, receiver) {
+        if (typeof key === "string" && /^\d+$/.test(key)) reads++;
+        return Reflect.get(target, key, receiver);
+      },
+    });
+  const store = storage();
+  await store.replace({
+    ids,
+    checkpoint: {
+      runID: "run",
+      passID: "pass",
+      revision: 0,
+      pass: ids,
+      position: 0,
+      visited: seed("visited"),
+      skipped: seed("skipped"),
+      unavailable: seed("unavailable"),
+      scope: "unflagged",
+      autoAdvance: true,
+    },
+  });
+  const load = store.load;
+  store.load = vi.fn(async () => {
+    const run = await load();
+    const { visited, skipped, unavailable } = run!.checkpoint;
+    run!.checkpoint = {
+      ...run!.checkpoint,
+      visited: counted(visited),
+      skipped: counted(skipped),
+      unavailable: counted(unavailable),
+    };
+    return run;
+  });
+  const cull = new PhotoCull("session", store);
+  await cull.restore();
+  // Restoring may read each list once. Marking afterwards must not read them again.
+  reads = 0;
+  cull.move(1);
+  for (let step = 0; step < 3; step++) {
+    cull.move(1);
+    cull.skip();
+    cull.unavailable(`missing-${step}`);
+  }
+  cull.move(-1);
+  cull.move(1);
+  cull.unavailable("missing-0");
+  expect(reads).toBeLessThan(size / 10);
+  await cull.flush();
+  const checkpoint = cull.run!.checkpoint;
+  expect([
+    checkpoint.visited.length,
+    checkpoint.skipped.length,
+    checkpoint.unavailable.length,
+  ]).toEqual([size + 7, size + 3, size + 3]);
+  const resumed = new PhotoCull("new-session", store);
+  await resumed.restore();
+  expect(resumed.currentID).toBe(cull.currentID);
+  expect(resumed.run?.checkpoint.visited.slice(size)).toEqual(ids.slice(1));
+  expect(resumed.run?.checkpoint.skipped.slice(size)).toEqual([ids[2], ids[4], ids[6]]);
+  expect(resumed.run?.checkpoint.unavailable.slice(size)).toEqual([
+    "missing-0",
+    "missing-1",
+    "missing-2",
+  ]);
+});
 it("reports checkpoint failures and preserves navigation within the live pass", async () => {
   const rows = [photo(1), photo(2)],
     store = storage();

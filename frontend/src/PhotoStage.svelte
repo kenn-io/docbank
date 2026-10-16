@@ -6,6 +6,7 @@
   import type { PhotoView } from "./photoView.js";
   import { loadPhotoPreview, PhotoPreviewDisplay } from "./photoPreview.js";
   import PhotoLoupeImage from "./PhotoLoupeImage.svelte";
+  import { Button } from "@kenn-io/kit-ui";
   let {
     photo,
     photos,
@@ -30,6 +31,7 @@
   let url = $state("");
   let error = $state("");
   let large = false;
+  let retryable = $state(false);
   let active: PhotoPreviewDisplay;
   async function load(
     selected: PhotoBrowseRow,
@@ -42,6 +44,7 @@
       if (controller.signal.aborted) return;
       if (!result.blob) {
         if (size !== "grid") error = "Preview unavailable";
+        if (size === "large") failLarge();
         return;
       }
       const objectURL = URL.createObjectURL(result.blob);
@@ -50,9 +53,16 @@
         error = "";
       });
     } catch (cause) {
-      if (!controller.signal.aborted)
+      if (!controller.signal.aborted) {
         error = cause instanceof Error ? cause.message : String(cause);
+        if (size === "large") failLarge();
+      }
     }
+  }
+  // A failed large request must not latch: the fitted image stays and the photographer can retry.
+  function failLarge() {
+    large = false;
+    retryable = true;
   }
   $effect(() => {
     const selected = photo;
@@ -60,6 +70,7 @@
     url = "";
     error = "";
     large = false;
+    retryable = false;
     void load(selected, "grid", controller).then(() => {
       if (!controller.signal.aborted) return load(selected, "fit", controller);
     });
@@ -68,6 +79,7 @@
   function zoom() {
     if (large || !active) return;
     large = true;
+    retryable = false;
     void load(
       untrack(() => photo),
       "large",
@@ -90,7 +102,16 @@
     onzoom={zoom}
     unavailable={!!error}
   />
-  {#if error}<p role="status">{error}</p>{/if}
+  {#if error}<p role="status">
+      {error}{#if retryable}
+        <Button
+          size="sm"
+          onclick={() => {
+            error = "";
+            zoom();
+          }}>Retry preview</Button
+        >{/if}
+    </p>{/if}
 </div>
 
 <style>
@@ -102,6 +123,9 @@
     position: relative;
   }
   p {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     position: absolute;
     bottom: 0;
     padding: 8px;
