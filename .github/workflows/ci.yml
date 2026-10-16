@@ -201,7 +201,11 @@ jobs:
       - name: Embedded modernc restore without FTS5 build tags
         env:
           CGO_ENABLED: "1"
-        run: go test -race -count=1 -run '^TestRepositoryRestoreAfterSourceLoss/modernc$' .
+        # Remove the root fallback once the embedded API lives in docbank/ on main.
+        run: |
+          pkg=.
+          if [ -d docbank ]; then pkg=./docbank; fi
+          go test -race -count=1 -run '^TestRepositoryRestoreAfterSourceLoss/modernc$' "$pkg"
 
       - name: Stop S3-compatible test service
         if: always()
