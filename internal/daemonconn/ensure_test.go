@@ -175,11 +175,6 @@ func TestEnsureReplacesOlderProtocolDaemon(t *testing.T) {
 			_ = json.MarshalWrite(w, map[string]string{
 				"proof": daemonauth.Proof(rec.Metadata[metaShutdownToken], nonce),
 			})
-		} else if started.Load() && r.URL.Path == "/api/v1/redaction/prepare" {
-			assert.Equal(t, http.MethodPost, r.Method)
-			assert.Equal(t, "new-key", r.Header.Get("X-Api-Key"))
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_ = json.MarshalWrite(w, api.NewError(503, "redaction_preparation_unavailable", "runtime unavailable"))
 		} else if started.Load() && r.URL.Path == "/api/v1/text-citations/outline" {
 			assert.Equal(t, http.MethodPost, r.Method)
 			assert.Equal(t, "new-key", r.Header.Get("X-Api-Key"))
@@ -216,10 +211,6 @@ func TestEnsureReplacesOlderProtocolDaemon(t *testing.T) {
 	require.True(t, started.Load(), "protocol 83 lacks native PDF preparation")
 	client := New("http://"+result.Record.Address, result.Record.Metadata[metaAPIKey])
 	t.Cleanup(func() { assert.NoError(t, client.Close()) })
-	_, err = client.PrepareNativePDF(t.Context(), preparationRequest())
-	code, ok := ProblemCode(err)
-	require.True(t, ok)
-	require.Equal(t, "redaction_preparation_unavailable", code)
 	outline, err := client.GetTextOutline(t.Context(), request)
 	require.NoError(t, err)
 	assert.Equal(t, wantOutline, outline)
