@@ -131,6 +131,7 @@ type Service struct {
 	mediaEvidence       *retrieval.MediaEvidenceResolver
 	runsMu              sync.Mutex
 	runs                int
+	preparationActive   bool
 	stopping            bool
 	stop                context.CancelFunc
 	drained             chan struct{}
@@ -780,26 +781,12 @@ func (service *Service) Start(ctx context.Context, request StartRequest) (Job, e
 func (service *Service) StartWithProgress(ctx context.Context, request StartRequest,
 	onEnqueued func(Job),
 ) (Job, error) {
-	service.runsMu.Lock()
-	if err := service.lifecycle.Err(); err != nil {
-		service.runsMu.Unlock()
+	ctx, finish, err := service.beginRun(ctx)
+	if err != nil {
 		return Job{}, err
 	}
-	service.runs++
-	service.runsMu.Unlock()
-	defer func() {
-		service.runsMu.Lock()
-		defer service.runsMu.Unlock()
-		service.runs--
-		if service.stopping && service.runs == 0 {
-			close(service.drained)
-		}
-	}()
-	// Shutdown also cancels validation and enqueue before a job is accepted.
-	ctx, cancel := context.WithCancel(ctx)
-	stop := context.AfterFunc(service.lifecycle, cancel)
-	defer stop()
-	defer cancel()
+	defer finish()
+
 	node, version, profile, err := service.resolve(ctx, request.Selector)
 	if err != nil {
 		return Job{}, err
@@ -2511,4 +2498,26 @@ func classifyEmbeddingProviderError(err error) (EmbeddingProviderFailure, time.D
 		return EmbeddingProviderPermanent, 0
 	}
 	return EmbeddingProviderTransient, 0
+}
+
+// beginRun registers request work atomically with shutdown.
+func (service *Service) beginRun(ctx context.Context) (context.Context, func(), error) {
+	service.runsMu.Lock()
+	defer service.runsMu.Unlock()
+	if err := service.lifecycle.Err(); err != nil {
+		return nil, nil, err
+	}
+	service.runs++
+	ctx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(service.lifecycle, cancel)
+	return ctx, func() {
+		stop()
+		cancel()
+		service.runsMu.Lock()
+		defer service.runsMu.Unlock()
+		service.runs--
+		if service.stopping && service.runs == 0 {
+			close(service.drained)
+		}
+	}, nil
 }
