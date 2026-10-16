@@ -553,7 +553,7 @@ Docbank preserves original filenames under capture-date and asset-ID folders so 
 
 A photo hidden, excluded, detached, or trashed during copying is skipped. Docbank copies the remaining eligible files, then marks the checkout failed with the first error.
 
-Creation rejects selections with no files, incompatible paired source names, or invalid filenames. On Windows, reserved names, forbidden punctuation, control characters, and trailing dots or spaces are invalid. Filename errors identify every invalid name, file, and asset. Rename those originals or narrow the selection before retrying. Pairing errors identify the file and asset. Docbank checks filename collisions on the destination filesystem before copying photo bytes.
+Creation rejects selections with no files, incompatible paired source names, invalid filenames, or two files in one photo with the same name. On Windows, reserved names, forbidden punctuation, control characters, and trailing dots or spaces are invalid. Filename errors identify every invalid or duplicate name, file, and asset. Rename those originals or narrow the selection before retrying. Pairing errors identify the file and asset. Docbank checks filename collisions on the destination filesystem before copying photo bytes.
 
 Creation returns the checkout and operation IDs as JSON. Jobs reports progress and accepts cancellation. Pause or resume the `photo_checkout` lane to control copying. Failed and cancelled creations keep their ID, partial files, and error. They release the destination reservation and holds for files that were never published. Published copies keep their base-version holds.
 

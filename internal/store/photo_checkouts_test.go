@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -956,4 +957,80 @@ func TestPhotoCheckoutYearFolderUsesTimelineDay(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.Equal(t, "2026/03/14/"+asset.ID+"/photo.jpg", entries[0].Path)
+}
+
+// Two members of one asset cannot share a copy path, so creation refuses them
+// instead of queueing a job that fails on the destination.
+func TestPhotoCheckoutRejectsDuplicateNamesInAsset(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	var assets []PhotoAsset
+	for _, folder := range []string{"first", "second"} {
+		dir, err := s.Mkdir(ctx, s.RootID(), folder)
+		require.NoError(t, err)
+		node, err := s.CreateFile(ctx, dir.ID, "photo.jpg", browseHash(folder), 10, "image/jpeg")
+		require.NoError(t, err)
+		asset, err := s.PhotoAssetForNode(ctx, node.ID)
+		require.NoError(t, err)
+		assets = append(assets, asset)
+	}
+	first, second := assets[0], assets[1]
+	_, err := s.DetachPhotoFile(ctx, second.ID, second.Revision, second.Files[0].ID, PhotoDetachOptions{})
+	require.NoError(t, err)
+	first, err = s.AttachPhotoFile(ctx, first.ID, first.Revision, second.Files[0].NodeID, PhotoRoleImage, nil)
+	require.NoError(t, err)
+	selection := PhotoCheckoutSelection{AssetIDs: []string{first.ID}}
+
+	_, estimateErr := s.EstimatePhotoCheckout(ctx, selection)
+	require.ErrorIs(t, estimateErr, ErrInvalidPhotoCheckout)
+	_, _, err = s.CreatePhotoCheckout(ctx, selection, "checkout", 0)
+	require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
+	require.EqualError(t, err, estimateErr.Error())
+	for _, file := range first.Files {
+		require.ErrorContains(t, err, file.ID)
+	}
+	checkouts, err := s.ListPhotoCheckouts(ctx)
+	require.NoError(t, err)
+	require.Empty(t, checkouts)
+}
+
+// Creation resolves the selection without the write lock. A base purged
+// before the lock must not be frozen into a checkout.
+func TestPhotoCheckoutCreationRejectsSelectionPurgedBeforeCommit(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	kept := albumAsset(t, s, "kept.jpg")
+	purged := albumAsset(t, s, "purged.jpg")
+	selection := PhotoCheckoutSelection{AssetIDs: []string{kept.ID, purged.ID}}
+	var entries []PhotoCheckoutEntry
+	var estimate PhotoCheckoutEstimate
+	require.NoError(t, s.photoReadTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		entries, estimate, err = s.checkoutEntriesTx(ctx, tx, selection)
+		return err
+	}))
+	require.Len(t, entries, 2)
+	node, err := s.NodeByID(ctx, purged.Files[0].NodeID)
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, node.ID, node.Revision)
+	require.NoError(t, err)
+	_, err = s.TrashEmpty(ctx, 0, true)
+	require.NoError(t, err)
+
+	_, _, err = s.insertPhotoCheckout(ctx, selection, "checkout", 0, func(*sql.Tx) ([]PhotoCheckoutEntry, PhotoCheckoutEstimate, error) {
+		return entries, estimate, nil
+	})
+	require.ErrorIs(t, err, errPhotoCheckoutSelectionStale)
+	checkouts, err := s.ListPhotoCheckouts(ctx)
+	require.NoError(t, err)
+	require.Empty(t, checkouts)
+
+	checkout, _, err := s.CreatePhotoCheckout(ctx, selection, "checkout", 0)
+	require.NoError(t, err)
+	frozen, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
+	require.NoError(t, err)
+	require.Len(t, frozen, 1)
+	require.Equal(t, kept.Files[0].ID, frozen[0].FileID)
 }

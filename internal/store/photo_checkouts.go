@@ -181,6 +181,7 @@ func (s *Store) checkoutEntriesTx(ctx context.Context, tx *sql.Tx, selection Pho
 	}
 	defer func() { _ = rows.Close() }()
 	var invalidNames []error
+	pathOwners := map[string]string{}
 	for rows.Next() {
 		var entry PhotoCheckoutEntry
 		var name, date string
@@ -212,6 +213,11 @@ func (s *Store) checkoutEntriesTx(ctx context.Context, tx *sql.Tx, selection Pho
 			continue
 		}
 		entry.Path = path.Join(folder, entry.AssetID, name)
+		if owner, exists := pathOwners[entry.Path]; exists {
+			invalidNames = append(invalidNames, fmt.Errorf("file %s in asset %s, filename %q: %w: file %s has the same name", entry.FileID, entry.AssetID, name, ErrInvalidPhotoCheckout, owner))
+			continue
+		}
+		pathOwners[entry.Path] = entry.FileID
 		entries = append(entries, entry)
 		estimate.Files++
 		estimate.Bytes += entry.Size
@@ -236,18 +242,45 @@ func (s *Store) EstimatePhotoCheckout(ctx context.Context, selection PhotoChecko
 	return out, err
 }
 
-// CreatePhotoCheckout freezes all bases and the local operation in one transaction.
+var errPhotoCheckoutSelectionStale = errors.New("photo checkout selection changed before creation")
+
+// CreatePhotoCheckout freezes all bases and the local operation in one
+// transaction. It resolves the selection before taking the write lock, because
+// a full-library selection can take seconds, then verifies the resolved bases
+// still exist. If pruning or purging removed one in between, it resolves again
+// under the write lock.
 func (s *Store) CreatePhotoCheckout(ctx context.Context, selection PhotoCheckoutSelection, destination string, byteLimit int64) (PhotoCheckout, StorageOperation, error) {
-	var checkout PhotoCheckout
-	var operation StorageOperation
 	if byteLimit < 0 {
-		return checkout, operation, fmt.Errorf("%w: byte_limit must be nonnegative", ErrInvalidPhotoCheckout)
+		return PhotoCheckout{}, StorageOperation{}, fmt.Errorf("%w: byte_limit must be nonnegative", ErrInvalidPhotoCheckout)
 	}
 	if selection.All && byteLimit == 0 {
-		return checkout, operation, fmt.Errorf("%w: all requires a positive byte_limit", ErrInvalidPhotoCheckout)
+		return PhotoCheckout{}, StorageOperation{}, fmt.Errorf("%w: all requires a positive byte_limit", ErrInvalidPhotoCheckout)
 	}
+	var entries []PhotoCheckoutEntry
+	var estimate PhotoCheckoutEstimate
+	if err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		entries, estimate, err = s.checkoutEntriesTx(ctx, tx, selection)
+		return err
+	}); err != nil {
+		return PhotoCheckout{}, StorageOperation{}, err
+	}
+	checkout, operation, err := s.insertPhotoCheckout(ctx, selection, destination, byteLimit, func(*sql.Tx) ([]PhotoCheckoutEntry, PhotoCheckoutEstimate, error) {
+		return entries, estimate, nil
+	})
+	if errors.Is(err, errPhotoCheckoutSelectionStale) {
+		checkout, operation, err = s.insertPhotoCheckout(ctx, selection, destination, byteLimit, func(tx *sql.Tx) ([]PhotoCheckoutEntry, PhotoCheckoutEstimate, error) {
+			return s.checkoutEntriesTx(ctx, tx, selection)
+		})
+	}
+	return checkout, operation, err
+}
+
+func (s *Store) insertPhotoCheckout(ctx context.Context, selection PhotoCheckoutSelection, destination string, byteLimit int64, resolve func(*sql.Tx) ([]PhotoCheckoutEntry, PhotoCheckoutEstimate, error)) (PhotoCheckout, StorageOperation, error) {
+	var checkout PhotoCheckout
+	var operation StorageOperation
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		entries, estimate, err := s.checkoutEntriesTx(ctx, tx, selection)
+		entries, estimate, err := resolve(tx)
 		if err != nil {
 			return err
 		}
@@ -289,6 +322,14 @@ func (s *Store) CreatePhotoCheckout(ctx context.Context, selection PhotoCheckout
 			if _, err := insert.ExecContext(ctx, id, e.FileID, e.AssetID, e.VersionID, e.Hash, e.Size, e.Path, e.SidecarOfID); err != nil {
 				return err
 			}
+		}
+		var stale bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_checkout_entries e LEFT JOIN content_versions v ON v.version_id=e.version_id LEFT JOIN photo_files f ON f.file_id=e.file_id
+ WHERE e.checkout_id=? AND (v.version_id IS NULL OR f.file_id IS NULL OR v.node_id<>f.node_id))`, id).Scan(&stale); err != nil {
+			return err
+		}
+		if stale {
+			return errPhotoCheckoutSelectionStale
 		}
 		return nil
 	})
