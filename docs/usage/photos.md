@@ -700,7 +700,7 @@ Map uses album membership when opened from an album. Otherwise it inherits Libra
 
 ## Cull and compare
 
-Choose **Cull** in Library or an album to review the whole current query full-screen. Docbank captures its order and membership before starting. Flag or rating changes keep photos in the current pass; the next pass refreshes eligibility. Cull decisions are flags. Star ratings leave a photo unflagged. **S** cycles through unflagged, picks, rejects, and all, with confirmation before resetting an unfinished pass.
+Choose **Cull** in Library or an album to review the whole current query full-screen. Docbank captures its order and membership before starting. A cull accepts up to 250,000 photos; narrow larger queries before starting. Flag or rating changes keep photos in the current pass; the next pass refreshes eligibility. Cull decisions are flags. Star ratings leave a photo unflagged. **S** cycles through unflagged, picks, rejects, and all, with confirmation before resetting an unfinished pass.
 
 | Key | Action |
 | --- | --- |

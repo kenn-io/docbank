@@ -14,7 +14,7 @@
   } from "./generated/docbank.js";
   import PhotoStage from "./PhotoStage.svelte";
   import PhotoCell from "./PhotoCell.svelte";
-  import { fittedPhotoView, type PhotoView } from "./photoView.js";
+  import { fittedPhotoView, toggleActualPhotoView, type PhotoView } from "./photoView.js";
   import { photoFacts } from "./photoFacts.js";
   import { cullKey } from "./shortcuts.js";
   let {
@@ -33,7 +33,10 @@
   const editor = untrack(
     () => new PhotoAuthoredEditor(photos.session, photos.onauthfailure, photos.authored.undoState),
   );
-  onDestroy(() => editor.dispose());
+  onDestroy(() => {
+    editor.dispose();
+    cull.cancel();
+  });
   let photo = $state<PhotoBrowseRow>();
   let error = $state("");
   let loading = $state(false);
@@ -94,6 +97,7 @@
     photos.metadataChanged(receipt);
     const after = receipt.after.find((file) => file.file_id === photo?.display_file_id);
     if (photo && after) photo = { ...photo, flag: after.values.flag, rating: after.values.rating };
+    if (cull.complete) await cull.checkRemainder();
   }
   async function decide(patch: PhotoAuthoredPatch) {
     if (!photo || loading || cull.stale || cull.busy || !editor.canChangeTarget()) return;
@@ -120,8 +124,7 @@
     else if (action === "next") move(1);
     else if (action === "auto") cull.toggleAutoAdvance();
     else if (action === "scope" && editor.canChangeTarget()) void cull.nextPass();
-    else if (action === "zoom")
-      view = view.actual ? { ...fittedPhotoView } : { ...view, actual: true };
+    else if (action === "zoom") view = toggleActualPhotoView(view);
     else if (action === "info") info = (info + 1) % 3;
     else if (action === "help") help = !help;
     else if (action === "pick") void decide({ flag: "pick" });
@@ -249,12 +252,7 @@
             }}>Skip</Button
           >
           <span>{photo ? `${photo.flag || "Unflagged"} · ${photo.rating} stars` : ""}</span>
-          <Button
-            size="sm"
-            onclick={() =>
-              (view = view.actual ? { ...fittedPhotoView } : { ...view, actual: true })}
-            >1:1 (Z)</Button
-          >
+          <Button size="sm" onclick={() => (view = toggleActualPhotoView(view))}>1:1 (Z)</Button>
           <Button size="sm" onclick={() => (info = (info + 1) % 3)}>EXIF (I)</Button>
           <Button size="sm" disabled={cull.stale || editor.busy} onclick={() => move(1)}
             >Next</Button

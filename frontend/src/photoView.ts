@@ -8,6 +8,9 @@ export interface PhotoView {
   actual: boolean;
 }
 export const fittedPhotoView: PhotoView = { scale: 1, x: 0.5, y: 0.5, actual: false };
+export function toggleActualPhotoView(view: PhotoView): PhotoView {
+  return view.actual ? { ...fittedPhotoView } : { ...view, actual: true };
+}
 export function photoViewGeometry(
   width: number,
   height: number,

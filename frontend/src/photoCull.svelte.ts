@@ -22,6 +22,7 @@ export class PhotoCull {
   progress = $state("");
   remainder = $state(false);
   private capture?: AbortController;
+  private flagRead?: AbortController;
   private writes: Promise<void> = Promise.resolve();
   constructor(
     readonly session: string,
@@ -47,6 +48,10 @@ export class PhotoCull {
   }
   cancel() {
     this.capture?.abort();
+    if (this.flagRead) {
+      this.flagRead.abort();
+      this.finishFlagRead(this.flagRead);
+    }
   }
   async start(query: Query, confirm = (message: string) => window.confirm(message)) {
     if (this.capturing) return false;
@@ -179,32 +184,45 @@ export class PhotoCull {
   toggleAutoAdvance() {
     if (this.run) this.update({ autoAdvance: !this.run.checkpoint.autoAdvance });
   }
-  async checkRemainder() {
-    if (!this.run || !this.complete || this.busy || this.stale) return;
+  private beginFlagRead() {
+    this.flagRead?.abort();
     this.busy = true;
+    return (this.flagRead = new AbortController());
+  }
+  private finishFlagRead(controller: AbortController) {
+    if (this.flagRead !== controller) return;
+    this.flagRead = undefined;
+    this.busy = false;
+    this.progress = "";
+  }
+  async checkRemainder() {
+    if (!this.run || !this.complete || this.stale) return;
+    const controller = this.beginFlagRead();
     this.remainder = false;
     try {
-      const flags = await this.refreshFlags(this.run.ids);
+      const flags = await this.refreshFlags(this.run.ids, controller.signal);
+      controller.signal.throwIfAborted();
       this.remainder = [...flags.values()].includes("");
     } catch (cause) {
-      this.error = failure(cause);
+      if (!controller.signal.aborted) this.error = failure(cause);
     } finally {
-      this.busy = false;
-      this.progress = "";
+      this.finishFlagRead(controller);
     }
   }
   async nextPass(followUp = false, confirm = (message: string) => window.confirm(message)) {
     if (!this.run || this.busy || this.stale) return;
     if (!followUp && !this.complete && !confirm("Change scope and reset this pass's progress?"))
       return;
-    this.busy = true;
+    const controller = this.beginFlagRead();
     this.error = "";
     try {
       await this.writes;
+      controller.signal.throwIfAborted();
       if (this.stale) return;
       const previous = this.run.checkpoint;
       const ids = this.run.ids;
-      const flags = await this.refreshFlags(ids);
+      const flags = await this.refreshFlags(ids, controller.signal);
+      controller.signal.throwIfAborted();
       const scope = followUp
         ? "unflagged"
         : scopes[(scopes.indexOf(this.run.checkpoint.scope) + 1) % scopes.length]!;
@@ -244,10 +262,9 @@ export class PhotoCull {
       this.remainder = false;
       this.visit();
     } catch (cause) {
-      this.error = failure(cause);
+      if (!controller.signal.aborted) this.error = failure(cause);
     } finally {
-      this.progress = "";
-      this.busy = false;
+      this.finishFlagRead(controller);
     }
   }
   flush() {

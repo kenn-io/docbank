@@ -4,7 +4,7 @@
   import type { Photos } from "./photos.svelte.js";
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import type { PhotoBrowseRow } from "./generated/docbank.js";
-  import { fittedPhotoView, type PhotoView } from "./photoView.js";
+  import { fittedPhotoView, toggleActualPhotoView, type PhotoView } from "./photoView.js";
   import PhotoStage from "./PhotoStage.svelte";
   let {
     ids,
@@ -70,7 +70,7 @@
       void move(event.key === "ArrowLeft" ? -1 : 1);
     } else if (event.key.toLowerCase() === "z") {
       event.preventDefault();
-      view = view.actual ? { ...fittedPhotoView } : { ...view, actual: true };
+      view = toggleActualPhotoView(view);
     }
   }
   function region(value: { x: number; y: number; width: number; height: number }) {
@@ -118,10 +118,7 @@
             photos.loading ||
             (!photos.cursor && selected.some((id) => id === photos.items.at(-1)?.asset_id))}
           onclick={() => void move(1)}>Next</Button
-        ><Button
-          size="sm"
-          onclick={() => (view = view.actual ? { ...fittedPhotoView } : { ...view, actual: true })}
-          >1:1 (Z)</Button
+        ><Button size="sm" onclick={() => (view = toggleActualPhotoView(view))}>1:1 (Z)</Button
         ><Button
           size="sm"
           onclick={() => {

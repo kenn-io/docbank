@@ -260,6 +260,24 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
       path: path.join(output!, "web-photo-compare-closeup.png"),
       animations: "disabled",
     });
+    await compare.getByRole("button", { name: "Exit compare", exact: true }).click();
+    await page
+      .getByRole("searchbox", { name: "Search photos", exact: true })
+      .fill("Synthetic-photo-00001");
+    await page.getByRole("button", { name: "Search", exact: true }).click();
+    await expect(page.locator(".photo-cell")).toHaveCount(1);
+    await page.getByRole("button", { name: "Cull", exact: true }).click();
+    await expect(cull.locator(".photo-stage img")).toBeVisible();
+    const finalPhoto = await cull.locator("header strong").innerText();
+    await page.keyboard.press("p");
+    await expect(cull.getByRole("heading", { name: "Pass complete", exact: true })).toBeVisible();
+    await expect(cull.locator("p[role=status]")).toHaveCount(0);
+    await expect(
+      cull.getByRole("button", { name: "Review unflagged remainder", exact: true }),
+    ).toHaveCount(0);
+    await cull.getByRole("button", { name: "Undo", exact: true }).click();
+    await cull.getByRole("button", { name: "Review unflagged remainder", exact: true }).click();
+    await expect(cull.locator("header strong")).toHaveText(finalPhoto);
   } finally {
     await fixture.dispose();
   }

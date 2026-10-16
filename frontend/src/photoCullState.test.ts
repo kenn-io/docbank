@@ -266,3 +266,45 @@ it("keeps automatic storage probes quiet and reports explicit failures", async (
   expect(await cull.restore()).toBe(false);
   expect(cull.error).toBe("Storage unavailable");
 });
+
+it.each([false, true])(
+  "cancels full-run flag reads without replacing a pass (completion: %s)",
+  async (complete) => {
+    const row = photo(1),
+      store = storage(),
+      cull = new PhotoCull("session", store);
+    cull.run = {
+      ids: [row.asset_id],
+      checkpoint: {
+        runID: "run",
+        passID: "pass",
+        revision: 0,
+        pass: [row.asset_id],
+        position: complete ? 1 : 0,
+        visited: [],
+        skipped: [],
+        unavailable: [],
+        scope: "unflagged",
+        autoAdvance: true,
+      },
+    };
+    const list = vi.spyOn(api, "listPhotoAssets").mockImplementation(
+      (_request, options) =>
+        new Promise((_resolve, reject) => {
+          options!.signal!.addEventListener("abort", () => reject(options!.signal!.reason), {
+            once: true,
+          });
+        }),
+    );
+    const before = cull.run;
+    const read = complete ? cull.checkRemainder() : cull.nextPass(false, () => true);
+    await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(1));
+    cull.cancel();
+    await read;
+    expect(list.mock.calls[0]![1]!.signal!.aborted).toBe(true);
+    expect(cull.run).toBe(before);
+    expect(cull.busy).toBe(false);
+    expect(cull.error).toBe("");
+    expect(store.checkpoint).not.toHaveBeenCalled();
+  },
+);
