@@ -2285,6 +2285,25 @@
     else void loadRoot();
   }
 
+  function handleFaceDecision(source: Photos): void {
+    for (const photos of new Set([
+      photoState?.photos,
+      albumPhotos,
+      mapPhotos,
+      hiddenWorkspace?.activePhotos(),
+    ])) {
+      if (
+        photos &&
+        photos !== source &&
+        photos.hidden === source.hidden &&
+        (photos.started || photos.loading) &&
+        (photos.query.filters.person_ids?.length || /\bperson:/i.test(photos.query.text))
+      )
+        void photos.refresh();
+    }
+    if (!source.hidden && /\bperson:/i.test(activeQuery)) refreshDocumentsView();
+  }
+
   function handlePhotoMetadataChanged(
     receipt: import("./generated/docbank.js").PhotoAuthoredReceipt,
     tags: Tag[],
@@ -3230,6 +3249,7 @@
             onloadtags={loadTagCatalog}
             onloadmoretags={() => loadTagCatalog(true)}
             onmetadatachanged={handlePhotoMetadataChanged}
+            onfacedecision={handleFaceDecision}
             shortcuts={shortcutManager}
             bind:this={hiddenWorkspace}
             onexport={requestExport}
@@ -3276,6 +3296,7 @@
                   onloadtags={loadTagCatalog}
                   onloadmoretags={() => loadTagCatalog(true)}
                   onmetadatachanged={handlePhotoMetadataChanged}
+                  onfacedecision={handleFaceDecision}
                   shortcuts={shortcutManager}
                   bind:this={libraryWorkspace}
                   onexport={requestExport}
@@ -3307,6 +3328,7 @@
                 onloadtags={loadTagCatalog}
                 onloadmoretags={() => loadTagCatalog(true)}
                 onmetadatachanged={handlePhotoMetadataChanged}
+                onfacedecision={handleFaceDecision}
                 shortcuts={shortcutManager}
                 {mapMode}
                 {tiles}
@@ -3323,6 +3345,7 @@
                   onloadtags={loadTagCatalog}
                   onloadmoretags={() => loadTagCatalog(true)}
                   onmetadatachanged={handlePhotoMetadataChanged}
+                  onfacedecision={handleFaceDecision}
                   shortcuts={shortcutManager}
                   {mapMode}
                   {tiles}
@@ -3350,6 +3373,7 @@
                 onloadtags={loadTagCatalog}
                 onloadmoretags={() => loadTagCatalog(true)}
                 onmetadatachanged={handlePhotoMetadataChanged}
+                onfacedecision={handleFaceDecision}
                 shortcuts={shortcutManager}
                 uploadChannelError={uploadChannelError ||
                   (!uploadChannel ? "The verified upload channel is unavailable." : "")}

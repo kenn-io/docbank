@@ -18,6 +18,9 @@
   let searching = $state(false);
   let error = $state("");
   let controller: AbortController | undefined;
+  let writer: AbortController | undefined;
+  let choosing = $state(false);
+  const created = new Map<string, PersonSummary>();
   const key = (id: string) => `\0${id}`;
   const exact = $derived(people.some((person) => person.display_name === query.trim()));
   $effect(() => {
@@ -25,9 +28,16 @@
     people = [];
     query = "";
     error = "";
-    return () => controller?.abort();
+    return () => {
+      controller?.abort();
+      writer?.abort();
+      created.clear();
+    };
   });
-  onDestroy(() => controller?.abort());
+  onDestroy(() => {
+    controller?.abort();
+    writer?.abort();
+  });
   async function search(value: string) {
     query = value;
     controller?.abort();
@@ -48,20 +58,29 @@
     }
   }
   async function choose(face: PhotoFace, value: string) {
+    if (choosing) return false;
+    choosing = true;
+    error = "";
     const version = faces.version;
-    const request = (controller ??= new AbortController());
-    let person = people.find((person) => key(person.person_id) === value);
+    const request = (writer = new AbortController());
     try {
-      if (!person)
+      if (!value) return await faces.clear(face);
+      let person =
+        people.find((person) => key(person.person_id) === value) ?? created.get(value.trim());
+      if (!person) {
         person = await createPerson(
           { display_name: value.trim() },
           { session, signal: request.signal },
         );
+        created.set(value.trim(), person);
+      }
       if (request.signal.aborted || faces.version !== version) return false;
       return await faces.name(face, person.person_id);
     } catch (cause) {
       if (!request.signal.aborted) error = cause instanceof Error ? cause.message : String(cause);
       return false;
+    } finally {
+      choosing = false;
     }
   }
 </script>
@@ -82,10 +101,12 @@
           name: key(person.person_id),
           label: person.display_name,
         }))}
-        allowCustom={!exact && !searching && !error}
+        allowCustom={!!query.trim() && !exact && !searching && !error}
         customLabel={'Create person "{query}"'}
         loading={searching}
-        disabled={faces.busy || faces.loading}
+        allowClear={!!person}
+        clearLabel="Clear name"
+        disabled={choosing || faces.busy || faces.loading}
         onquery={search}
         onselect={(value) => choose(face, value)}
       />

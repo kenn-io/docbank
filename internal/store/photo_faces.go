@@ -328,32 +328,3 @@ func (s *Store) PhotoFacePersonNames(ctx context.Context, assertions []PersonDoc
 	}
 	return names, rows.Err()
 }
-
-// PhotoFaceCrop binds one face or whole-photo assertion to the displayed preview.
-func (s *Store) PhotoFaceCrop(ctx context.Context, assetID, versionID, generationID, recipe, faceID, assertionID string) (VisualPreviewView, *document.FaceBox, error) {
-	if (faceID == "") == (assertionID == "") {
-		return VisualPreviewView{}, nil, ErrInvalidPhotoFace
-	}
-	view, err := s.PhotoVisualPreviewByGeneration(ctx, assetID, generationID)
-	if err != nil {
-		return view, nil, err
-	}
-	if view.Version.ID != versionID || view.Generation.RecipeFingerprint != recipe {
-		return view, nil, ErrNotFound
-	}
-	faces, assertions, err := s.PhotoFaces(ctx, versionID)
-	if err != nil {
-		return view, nil, err
-	}
-	for _, face := range faces {
-		if face.FaceID == faceID {
-			return view, &face.Box, nil
-		}
-	}
-	for _, assertion := range assertions {
-		if assertion.AssertionID == assertionID && assertion.PhotoMark && assertion.Action == "assert" {
-			return view, nil, nil
-		}
-	}
-	return view, nil, ErrNotFound
-}

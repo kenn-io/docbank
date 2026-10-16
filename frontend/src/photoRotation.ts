@@ -55,3 +55,22 @@ export function drawnPhotoFace(region: NormalizedBox, rotation: number): Normali
     360 - rotation,
   );
 }
+
+// Square closeups use displayed coordinates after rotation.
+export function photoFaceCrop(box: NormalizedBox, width: number, height: number, rotation = 0) {
+  const displayed = rotatePhotoBox(box, rotation);
+  const size = rotatedDimensions(width, height, rotation);
+  const side = Math.min(
+    Math.min(size.width, size.height),
+    Math.max(24, 1.6 * Math.max(displayed.width * size.width, displayed.height * size.height)),
+  );
+  const x = Math.max(
+    0,
+    Math.min(size.width - side, (displayed.x + displayed.width / 2) * size.width - side / 2),
+  );
+  const y = Math.max(
+    0,
+    Math.min(size.height - side, (displayed.y + displayed.height / 2) * size.height - side / 2),
+  );
+  return { x, y, side, ...size };
+}

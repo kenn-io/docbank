@@ -59,11 +59,12 @@
     void focus();
   });
   let photo = $state<PhotoBrowseRow>();
-  const faces = untrack(() => new PhotoFaces(photos.session, photos.onauthfailure));
+  const faces = untrack(() => new PhotoFaces(photos.session, photos.onauthfailure, photos.hidden));
   $effect(() => {
     void faces.load(photo?.content_version_id ?? "");
     return () => faces.dispose();
   });
+  let fit = $state<{ url: string; content_version_id: string; width: number; height: number }>();
   let error = $state("");
   let loading = $state(false);
   let lookupAttempt = $state(0);
@@ -484,6 +485,7 @@
       {:else}
         <div class="body">
           {#if photo}<PhotoStage
+              onfit={(value) => (fit = value)}
               {photo}
               {photos}
               {cache}
@@ -514,7 +516,7 @@
               </dl>
             </aside>{/if}
         </div>
-        {#if photo}<PhotoFaceCloseups {photo} {faces} {cache} />{/if}
+        {#if photo}<PhotoFaceCloseups {photo} {faces} {fit} />{/if}
         <div class="controls">
           {#if cull.currentStack}
             <Button

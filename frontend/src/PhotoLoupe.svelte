@@ -30,6 +30,7 @@
     onedit,
     onundo,
     onperson,
+    onfacedecision,
     photo,
     error,
     note = "",
@@ -51,6 +52,7 @@
     onedit?: (patch: PhotoAuthoredPatch, keywords?: PhotoKeywordEdit[]) => void;
     onundo?: () => void;
     onperson?: (id: string) => void;
+    onfacedecision?: () => void;
     photo?: PhotoBrowseRow;
     error: string;
     note?: string;
@@ -68,7 +70,10 @@
   } = $props();
   let loader = $state.raw<PhotoPreviewLoader>(untrack(() => new PhotoPreviewLoader(photos, cache)));
   const unavailable = $derived(!loader.retrying && !!(error || loader.failure));
-  const faces = untrack(() => new PhotoFaces(photos.session, photos.onauthfailure));
+  const faces = untrack(
+    () =>
+      new PhotoFaces(photos.session, photos.onauthfailure, photos.hidden, () => onfacedecision?.()),
+  );
   let addingFace = $state(false);
   $effect(() => {
     const version = photo?.content_version_id ?? "";

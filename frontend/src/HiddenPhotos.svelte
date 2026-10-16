@@ -31,6 +31,7 @@
     onloadtags,
     onloadmoretags,
     onmetadatachanged,
+    onfacedecision,
     undoState,
     onhelp,
     shortcuts,
@@ -53,6 +54,7 @@
     tagsTotal?: number;
     onloadtags?: () => Promise<void>;
     onloadmoretags?: () => Promise<void>;
+    onfacedecision?: (source: Photos) => void;
     onmetadatachanged?: (
       receipt: import("./generated/docbank.js").PhotoAuthoredReceipt,
       tags: import("./generated/docbank.js").Tag[],
@@ -389,6 +391,7 @@
         {onloadtags}
         {onloadmoretags}
         {onmetadatachanged}
+        {onfacedecision}
         {tags}
         {tagsError}
         {tagsLoading}

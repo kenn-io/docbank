@@ -242,3 +242,34 @@ export const photoSelectionFiles = () => [
   new File(["video"], "movie.MP4", { lastModified: photoSelectionLastModified }),
   new File(["text"], "notes.txt", { lastModified: photoSelectionLastModified }),
 ];
+
+export function photoFace(
+  overrides: Partial<import("./generated/docbank.js").PhotoFace> = {},
+): import("./generated/docbank.js").PhotoFace {
+  return {
+    face_id: "face-a",
+    content_version_id: "version-a",
+    box: { x: 0.1, y: 0.2, width: 0.3, height: 0.4 },
+    revision: 7,
+    assertion_id: "assertion-a",
+    created_at: "2026-01-01T00:00:00Z",
+    dismissed: false,
+    ...overrides,
+  };
+}
+export function photoPersonAssertion(
+  overrides: Partial<import("./generated/docbank.js").PhotoPersonAssertion> = {},
+): import("./generated/docbank.js").PhotoPersonAssertion {
+  return {
+    assertion_id: "assertion-a",
+    content_version_id: "version-a",
+    person_id: "person-a",
+    display_name: "Ada",
+    action: "assert",
+    role: "depicted",
+    revision: 1,
+    recorded_at: "2026-01-01T00:00:00Z",
+    note: "",
+    ...overrides,
+  };
+}

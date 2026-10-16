@@ -1,10 +1,4 @@
-import {
-  getReadPhotoFaceCropUrl,
-  readPhotoFaceCrop,
-  type ReadPhotoFaceCropParams,
-  getReadPhotoPreviewUrl,
-  readPhotoPreview,
-} from "./generated/docbank.js";
+import { getReadPhotoPreviewUrl, readPhotoPreview } from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
 import { randomUUID } from "./crypto.js";
 
@@ -19,22 +13,11 @@ export function previewObjectURL(
   onfailure: (cause: unknown) => void,
   reload = false,
 ) {
-  return photoObjectURL(
-    (signal) => cache.get(assetID, generationID, signal, reload),
-    onload,
-    onfailure,
-  );
-}
-
-export function photoObjectURL(
-  read: (signal: AbortSignal) => Promise<Blob>,
-  onload: (url: string) => void,
-  onfailure: (cause: unknown) => void,
-) {
   const controller = new AbortController();
   let current = true;
   let url = "";
-  void read(controller.signal)
+  void cache
+    .get(assetID, generationID, controller.signal, reload)
     .then((blob) => {
       if (current) {
         url = URL.createObjectURL(blob);
@@ -108,42 +91,12 @@ export class PhotoPreviewCache {
     });
   }
 
-  getFaceCrop(
-    assetID: string,
-    params: ReadPhotoFaceCropParams,
-    caller?: AbortSignal,
-  ): Promise<Blob> {
-    const signal = AbortSignal.any([this.controller.signal, ...(caller ? [caller] : [])]);
-    return this.read(
-      assetID,
-      params.generation_id,
-      getReadPhotoFaceCropUrl(assetID, params),
-      signal,
-      true,
-      (fetchSignal) =>
-        readPhotoFaceCrop(assetID, params, {
-          session: this.session,
-          signal: fetchSignal,
-          cache: "no-store",
-        }),
-    ).catch((cause) => {
-      if (
-        !signal.aborted &&
-        cause instanceof APIError &&
-        (cause.status === 401 || (this.hidden && cause.status === 403))
-      )
-        this.onauthfailure(cause);
-      throw cause;
-    });
-  }
-
   private async read(
     assetID: string,
     generationID: string,
     path: string,
     signal: AbortSignal,
     reload: boolean,
-    fetcher?: (signal: AbortSignal) => Promise<Response>,
   ): Promise<Blob> {
     signal.throwIfAborted();
     let onabort: () => void;
@@ -173,13 +126,11 @@ export class PhotoPreviewCache {
       try {
         const fetchSignal = AbortSignal.any([signal, AbortSignal.timeout(30_000)]);
         // The browser HTTP cache would keep bytes of photos hidden later; this class owns retention.
-        const response = await (fetcher
-          ? fetcher(fetchSignal)
-          : readPhotoPreview(assetID, generationID, undefined, {
-              session: this.session,
-              signal: fetchSignal,
-              cache: "no-store",
-            }));
+        const response = await readPhotoPreview(assetID, generationID, undefined, {
+          session: this.session,
+          signal: fetchSignal,
+          cache: "no-store",
+        });
         noStore = /(?:^|,)\s*no-store\s*(?:,|$)/i.test(response.headers.get("Cache-Control") ?? "");
         bytes = await response.arrayBuffer();
       } finally {

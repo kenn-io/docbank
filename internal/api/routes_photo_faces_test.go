@@ -1,15 +1,8 @@
 package api_test
 
 import (
-	"bytes"
 	"encoding/json/v2"
-	"go.kenn.io/docbank/document/media/mediatest"
-	"go.kenn.io/docbank/internal/processing"
-	"image"
-	"image/color"
-	"image/jpeg"
 	"net/http"
-	"net/url"
 	"strings"
 	"testing"
 
@@ -139,31 +132,14 @@ func TestPersonAssertionSelectorPageRoute(t *testing.T) {
 	require.NotEqual(t, first.Assertions[0].AssertionID, second.Assertions[0].AssertionID)
 }
 
-func TestPhotoFaceCropBrowser(t *testing.T) {
+func TestPhotoFaceBrowserDecisions(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	ctx := t.Context()
-	data := mediatest.JPEG(100, 80, color.RGBA{R: 180, A: 255})
-	hash, size, err := s.Blobs.Write(bytes.NewReader(data))
+	hash, size, err := s.Blobs.Write(strings.NewReader("synthetic portrait"))
 	require.NoError(t, err)
 	node, err := s.CreateFile(ctx, s.RootID(), "synthetic-portrait.jpg", hash, size, "image/jpeg")
 	require.NoError(t, err)
-	asset, err := s.PhotoAssetForNode(ctx, node.ID)
-	require.NoError(t, err)
-	receipt, err := s.Blobs.WriteDetailedContext(ctx, bytes.NewReader(data))
-	require.NoError(t, err)
-	encoding, err := receipt.EncodingName()
-	require.NoError(t, err)
-	publish := func(size string) store.VisualPreviewGeneration {
-		recipe, e := processing.VisualPreviewRecipeForSize(size)
-		require.NoError(t, e)
-		canonical, _, e := document.MarshalVisualPreviewV1(document.VisualPreviewV1{ContractVersion: document.VisualPreviewContractV1, SourceSHA256: node.BlobHash, Recipe: recipe, State: document.VisualPreviewReady, Output: &document.VisualPreviewOutputV1{BlobSHA256: receipt.Hash, Size: receipt.Size, MediaType: "image/jpeg", Width: 100, Height: 80}})
-		require.NoError(t, e)
-		generation, e := s.PublishVisualPreviewGeneration(ctx, node.CurrentVersionID, canonical, &store.BlobPhysical{Encoding: encoding, StoredBytes: receipt.StoredSize, Created: receipt.Created, PackEligible: receipt.PackEligible})
-		require.NoError(t, e)
-		return generation
-	}
-	fit, grid := publish("fit"), publish("grid")
 	response, body := do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
 	require.Equal(t, http.StatusCreated, response.StatusCode, body)
 	var issued struct {
@@ -188,47 +164,17 @@ func TestPhotoFaceCropBrowser(t *testing.T) {
 	response, body = get(t, ts, path, headers)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	require.Contains(t, body, `"display_name":"Ada"`)
-	for _, action := range []string{"dismiss", "reject", "key", "retract", "withdraw_rejection"} {
+	for _, action := range []string{"dismiss", "reject", "key", "withdraw_rejection"} {
 		response, body = do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: action, FaceID: faceID, PersonID: person.PersonID, Revision: 2, OperationID: uuid.NewString()})
 		require.Equal(t, http.StatusForbidden, response.StatusCode, body)
 	}
-	response, body = do(t, ts, http.MethodPost, path, headers, api.CreatePhotoFaceRequest{PersonID: person.PersonID})
-	require.Equal(t, http.StatusCreated, response.StatusCode, body)
-	var mark api.PhotoFaceResult
-	require.NoError(t, json.Unmarshal([]byte(body), &mark))
-	cropPath := "/api/v1/photos/assets/" + asset.ID + "/face-crop?"
-	params := url.Values{"content_version_id": {node.CurrentVersionID}, "generation_id": {fit.GenerationID}, "face_id": {faceID}}
-	response, body = get(t, ts, cropPath+params.Encode(), headers)
+	response, body = do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: "retract", FaceID: faceID, Revision: 1})
+	require.Equal(t, http.StatusPreconditionFailed, response.StatusCode, body)
+	response, body = do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: "retract", FaceID: faceID, Revision: 2})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	cropped, err := jpeg.Decode(strings.NewReader(body))
-	require.NoError(t, err)
-	require.Equal(t, image.Rect(0, 0, 24, 24), cropped.Bounds())
-	require.Equal(t, "no-store", response.Header.Get("Cache-Control"))
-	params.Del("face_id")
-	params.Set("assertion_id", mark.Assertion.AssertionID)
-	response, body = get(t, ts, cropPath+params.Encode(), headers)
+	response, body = get(t, ts, path, headers)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	require.Equal(t, data, []byte(body))
-	params.Del("assertion_id")
-	params.Set("face_id", faceID)
-	for _, change := range []struct{ key, value string }{{"face_id", uuid.NewString()}, {"content_version_id", uuid.NewString()}, {"generation_id", strings.Repeat("a", 64)}, {"generation_id", grid.GenerationID}} {
-		invalid, e := url.ParseQuery(params.Encode())
-		require.NoError(t, e)
-		invalid.Set(change.key, change.value)
-		response, body = get(t, ts, cropPath+invalid.Encode(), headers)
-		require.Equal(t, http.StatusNotFound, response.StatusCode, body)
-	}
-	for _, invalid := range []url.Values{{"content_version_id": {node.CurrentVersionID}, "generation_id": {fit.GenerationID}}, {"content_version_id": {node.CurrentVersionID}, "generation_id": {fit.GenerationID}, "face_id": {faceID}, "assertion_id": {mark.Assertion.AssertionID}}} {
-		response, body = get(t, ts, cropPath+invalid.Encode(), nil)
-		require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
-	}
-	for _, denied := range []string{"/api/v1/people/by-id/" + person.PersonID, decisions + "?unexpected=1", cropPath + params.Encode() + "&unexpected=1"} {
-		response, body = get(t, ts, denied, headers)
-		require.Equal(t, http.StatusForbidden, response.StatusCode, body)
-	}
-	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
-	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
-	require.NoError(t, err)
-	response, body = get(t, ts, cropPath+params.Encode(), headers)
-	require.Equal(t, http.StatusForbidden, response.StatusCode, body)
+	var cleared api.PhotoFacePage
+	require.NoError(t, json.Unmarshal([]byte(body), &cleared))
+	require.Empty(t, cleared.Faces[0].AssertionID)
 }

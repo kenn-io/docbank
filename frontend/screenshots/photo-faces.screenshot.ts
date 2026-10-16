@@ -4,6 +4,7 @@ import path from "node:path";
 import { photoFixture, repository } from "./photo-fixture.js";
 
 const output = process.env.DOCBANK_FACES_SCREENSHOT_DIR;
+test.use({ actionTimeout: 15_000 });
 test.skip(!output, "DOCBANK_FACES_SCREENSHOT_DIR enables synthetic face review proof");
 
 async function captureThemes(page: Page, name: string) {
@@ -62,6 +63,34 @@ test("draws and names faces, opens person-filtered Library, and reads cull close
     await people.getByRole("button", { name: "Find or create a person: Unnamed face" }).click();
     await people.getByRole("combobox").fill("Ada");
     await people.getByRole("option", { name: 'Create person "Ada"' }).click();
+    await expect(loupe.locator(".face-box")).toHaveText("Ada");
+    await people.getByRole("button", { name: "Ada", exact: true }).click();
+    await expect(loupe).toHaveCount(0);
+    await expect(page.locator(".photo-cell")).toHaveCount(1);
+    await expect(page.locator(".photo-results-summary")).toContainText("1 photos");
+    await page.locator(".photo-image").first().dblclick();
+    await expect(loupe.locator(".face-box")).toHaveText("Ada");
+    if (!(await people.isVisible()))
+      await loupe.getByRole("button", { name: "Metadata", exact: true }).click();
+    await people.locator(".kit-typeahead__trigger").click();
+    await people.getByRole("combobox").fill("Grace");
+    await people.getByRole("option", { name: 'Create person "Grace"' }).click();
+    await expect(loupe.locator(".face-box")).toHaveText("Grace");
+    await loupe.getByRole("button", { name: "Close photo viewer", exact: true }).click();
+    await expect(page.locator(".photo-cell")).toHaveCount(0);
+    await expect(page.locator(".photo-results-summary")).toContainText("0 photos");
+    await page.getByRole("button", { name: "Clear filters", exact: true }).click();
+    await expect(page.locator(".photo-cell")).toHaveCount(3);
+    await page.locator(".photo-image").first().dblclick();
+    await expect(loupe.locator(".face-box")).toHaveText("Grace");
+    if (!(await people.isVisible()))
+      await loupe.getByRole("button", { name: "Metadata", exact: true }).click();
+    await people.locator(".kit-typeahead__trigger").click();
+    await people.getByRole("option", { name: "Clear name", exact: true }).click();
+    await expect(loupe.locator(".face-box")).toHaveText("Unnamed face");
+    await people.locator(".kit-typeahead__trigger").click();
+    await people.getByRole("combobox").fill("Ada");
+    await people.getByRole("option", { name: "Ada", exact: true }).click();
     await expect(loupe.locator(".face-box")).toHaveText("Ada");
     await loupe.getByRole("combobox", { name: /^Rotation:/ }).click();
     await page.getByRole("option", { name: "90°", exact: true }).click();

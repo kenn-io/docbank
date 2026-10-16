@@ -17,9 +17,12 @@ export class PhotoFaces {
   busy = $state(false);
   error = $state("");
   private controller?: AbortController;
+  private writer?: AbortController;
   constructor(
     private session: string,
     private onauthfailure: (cause: unknown) => void,
+    private hidden = false,
+    private ondecision: () => void = () => {},
   ) {}
   person(face: PhotoFace) {
     return this.assertions.find(
@@ -31,6 +34,7 @@ export class PhotoFaces {
   }
   async load(version: string) {
     this.controller?.abort();
+    if (version !== this.version) this.writer?.abort();
     const controller = (this.controller = new AbortController());
     this.version = version;
     this.faces = [];
@@ -56,40 +60,69 @@ export class PhotoFaces {
   }
   private failed(cause: unknown) {
     this.error = cause instanceof Error ? cause.message : String(cause);
-    if (cause instanceof APIError && (cause.status === 401 || cause.status === 403))
+    if (
+      cause instanceof APIError &&
+      (cause.status === 401 || (this.hidden && cause.status === 403))
+    )
       this.onauthfailure(cause);
   }
-  private async write(action: (version: string, signal: AbortSignal) => Promise<unknown>) {
+  private async write(
+    action: (version: string, signal: AbortSignal) => Promise<unknown>,
+    decision = false,
+  ) {
     if (this.loading || this.busy || !this.version) return false;
     const version = this.version,
-      controller = this.controller!;
+      controller = (this.writer = new AbortController());
     this.busy = true;
     this.error = "";
     try {
       await action(version, controller.signal);
       if (controller.signal.aborted) return false;
-      await this.load(version);
-      return !this.error;
+      if (decision) this.ondecision();
+      if (this.version === version) await this.load(version);
+      return true;
     } catch (cause) {
-      if (!controller.signal.aborted) this.failed(cause);
+      if (!controller.signal.aborted) {
+        if (cause instanceof APIError && (cause.status === 409 || cause.status === 412))
+          await this.load(version);
+        this.failed(cause);
+      }
       return false;
     } finally {
       if (!controller.signal.aborted) this.busy = false;
     }
   }
   name(face: PhotoFace, personID: string) {
-    return this.write((version, signal) =>
-      decidePhotoFace(
-        version,
-        {
-          action: "name",
-          face_id: face.face_id,
-          revision: face.revision,
-          person_id: personID,
-          operation_id: randomUUID(),
-        },
-        { session: this.session, signal },
-      ),
+    return this.write(
+      (version, signal) =>
+        decidePhotoFace(
+          version,
+          {
+            action: "name",
+            face_id: face.face_id,
+            revision: face.revision,
+            person_id: personID,
+            operation_id: randomUUID(),
+          },
+          { session: this.session, signal },
+        ),
+      true,
+    );
+  }
+  clear(face: PhotoFace) {
+    return this.write(
+      (version, signal) =>
+        decidePhotoFace(
+          version,
+          {
+            action: "retract",
+            face_id: face.face_id,
+            revision: face.revision,
+            operation_id: randomUUID(),
+          },
+          { session: this.session, signal },
+        ),
+      true,
     );
   }
   add(box: FaceBox) {
@@ -99,5 +132,6 @@ export class PhotoFaces {
   }
   dispose() {
     this.controller?.abort();
+    this.writer?.abort();
   }
 }

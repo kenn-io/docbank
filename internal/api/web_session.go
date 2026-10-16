@@ -725,23 +725,5 @@ func photoFaceBrowserRequestAllowed(r *http.Request) bool {
 		}
 		return parts[1] == "faces" && (r.Method == http.MethodGet || r.Method == http.MethodPost) || parts[1] == "face-decisions" && r.Method == http.MethodPost
 	}
-	if after, ok := strings.CutPrefix(r.URL.Path, "/api/v1/photos/assets/"); ok {
-		parts := strings.Split(after, "/")
-		if len(parts) != 2 || parts[1] != "face-crop" || r.Method != http.MethodGet || query.ValidateTextOperand("asset", parts[0]) != nil {
-			return false
-		}
-		values, err := url.ParseQuery(r.URL.RawQuery)
-		if err != nil || len(values) != 3 || len(values["content_version_id"]) != 1 || len(values["generation_id"]) != 1 {
-			return false
-		}
-		if query.ValidateTextOperand("asset", values.Get("content_version_id")) != nil || !validPhotoPreviewPath(parts[0], values.Get("generation_id")) {
-			return false
-		}
-		for _, key := range []string{"face_id", "assertion_id"} {
-			if len(values[key]) == 1 && query.ValidateTextOperand("asset", values.Get(key)) == nil {
-				return true
-			}
-		}
-	}
 	return false
 }

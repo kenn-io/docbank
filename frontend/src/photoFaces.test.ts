@@ -1,29 +1,13 @@
+import { photoFace, photoPersonAssertion } from "./photo-test-fixtures.js";
+import { APIError } from "./api-transport.js";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { PhotoFaces } from "./photoFaces.svelte.js";
-import { drawnPhotoFace, rotatePhotoBox } from "./photoRotation.js";
+import { drawnPhotoFace, rotatePhotoBox, photoFaceCrop } from "./photoRotation.js";
 import * as api from "./generated/docbank.js";
 
 afterEach(() => vi.restoreAllMocks());
-const face: api.PhotoFace = {
-  face_id: "face-a",
-  content_version_id: "version-a",
-  box: { x: 0.1, y: 0.2, width: 0.3, height: 0.4 },
-  revision: 7,
-  assertion_id: "assertion-a",
-  created_at: "2026-01-01T00:00:00Z",
-  dismissed: false,
-};
-const assertion: api.PhotoPersonAssertion = {
-  assertion_id: "assertion-a",
-  content_version_id: "version-a",
-  person_id: "person-a",
-  display_name: "Ada",
-  action: "assert",
-  role: "depicted",
-  revision: 1,
-  recorded_at: "2026-01-01T00:00:00Z",
-  note: "",
-};
+const face = photoFace();
+const assertion = photoPersonAssertion();
 it("names the face with its current revision and refreshes its active label", async () => {
   const read = vi
     .spyOn(api, "listPhotoFaces")
@@ -105,3 +89,67 @@ it("creates the manually drawn face on the loaded version", async () => {
   );
   faces.dispose();
 });
+
+it("notifies a successful clear before reload even when the reload fails", async () => {
+  const events: string[] = [];
+  vi.spyOn(api, "listPhotoFaces")
+    .mockResolvedValueOnce({ faces: [face], assertions: [assertion] })
+    .mockImplementation(async () => {
+      events.push("reload");
+      throw new Error("Read failed");
+    });
+  const write = vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "receipt" });
+  const faces = new PhotoFaces("session", vi.fn(), false, () => events.push("notify"));
+  await faces.load("version-a");
+  expect(await faces.clear(face)).toBe(true);
+  expect(events).toEqual(["notify", "reload"]);
+  expect(write).toHaveBeenCalledWith(
+    "version-a",
+    expect.objectContaining({ action: "retract", face_id: face.face_id, revision: 7 }),
+    expect.anything(),
+  );
+  expect(faces.error).toBe("Read failed");
+});
+it("reloads the current face revision after a conflicting write", async () => {
+  const read = vi
+    .spyOn(api, "listPhotoFaces")
+    .mockResolvedValueOnce({ faces: [face], assertions: [] })
+    .mockResolvedValue({ faces: [{ ...face, revision: 8 }], assertions: [assertion] });
+  vi.spyOn(api, "decidePhotoFace").mockRejectedValue(
+    new APIError("Changed", 412, "stale_revision"),
+  );
+  const notify = vi.fn(),
+    faces = new PhotoFaces("session", vi.fn(), false, notify);
+  await faces.load("version-a");
+  expect(await faces.name(face, "person-a")).toBe(false);
+  expect(faces.faces[0]!.revision).toBe(8);
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(notify).not.toHaveBeenCalled();
+});
+it.each([
+  [false, 401, true],
+  [false, 403, false],
+  [true, 403, true],
+])("routes auth errors with hidden=%s status=%i", async (hidden, status, escalates) => {
+  const cause = new APIError("Denied", status as number, "denied");
+  vi.spyOn(api, "listPhotoFaces").mockRejectedValue(cause);
+  const auth = vi.fn(),
+    faces = new PhotoFaces("session", auth, hidden as boolean);
+  await faces.load("version-a");
+  expect(auth).toHaveBeenCalledTimes(escalates ? 1 : 0);
+  expect(faces.error).toBe("Denied");
+});
+
+it.each([0, 90, 180, 270])(
+  "pads and clamps closeups inside the displayed image at %i degrees",
+  (rotation) => {
+    const crop = photoFaceCrop({ x: 0.98, y: 0.98, width: 0.01, height: 0.01 }, 100, 80, rotation);
+    expect(crop.side).toBe(24);
+    expect(crop.x).toBeGreaterThanOrEqual(0);
+    expect(crop.y).toBeGreaterThanOrEqual(0);
+    expect(crop.x + crop.side).toBeLessThanOrEqual(crop.width);
+    expect(crop.y + crop.side).toBeLessThanOrEqual(crop.height);
+    const padded = photoFaceCrop({ x: 0.1, y: 0.2, width: 0.3, height: 0.4 }, 100, 80, rotation);
+    expect(padded.side).toBeCloseTo(51.2);
+  },
+);

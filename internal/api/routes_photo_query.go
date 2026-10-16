@@ -237,12 +237,22 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 				hctx.SetStatus(http.StatusNotModified)
 			}}, nil
 		}
-		body, err := verifiedPhotoPreviewBytes(ctx, d, output)
+		stream, size, err := d.Blobs.OpenStreamContext(ctx, output.BlobSHA256)
 		if err != nil {
-			return nil, err
+			return nil, NewError(http.StatusServiceUnavailable, "photo_preview_unavailable", "The photo preview bytes are unavailable.")
 		}
-		size := int64(len(body))
+		defer func() { _ = stream.Close() }()
+		if size != output.Size {
+			return nil, NewError(http.StatusInternalServerError, "photo_preview_corrupt", "The photo preview size disagrees with its generation.")
+		}
+		body, err := io.ReadAll(io.LimitReader(stream, size+1))
+		if err != nil || int64(len(body)) != size || !stream.Verified() {
+			return nil, NewError(http.StatusInternalServerError, "photo_preview_corrupt", "The photo preview failed verification.")
+		}
 		digest := sha256.Sum256(body)
+		if hex.EncodeToString(digest[:]) != output.BlobSHA256 {
+			return nil, NewError(http.StatusInternalServerError, "photo_preview_corrupt", "The photo preview digest disagrees with its generation.")
+		}
 		return &huma.StreamResponse{Body: func(hctx huma.Context) {
 			setCacheHeaders(hctx)
 			hctx.SetHeader("Content-Type", output.MediaType)
@@ -329,31 +339,4 @@ func photoPreviewSlot(assetID, state string, generation *store.VisualPreviewGene
 		slot.MediaType = output.MediaType
 	}
 	return slot
-}
-
-func verifiedPhotoPreviewBytes(ctx context.Context, d Deps, output *document.VisualPreviewOutputV1) ([]byte, error) {
-	if output == nil {
-		return nil, FromStoreError(store.ErrNotFound)
-	}
-	if output.Size <= 0 || output.Size > webPreviewImageMaxBytes || output.MediaType != "image/jpeg" {
-		return nil, NewError(http.StatusInternalServerError, "photo_preview_corrupt", "The photo preview has invalid output metadata.")
-	}
-
-	stream, size, err := d.Blobs.OpenStreamContext(ctx, output.BlobSHA256)
-	if err != nil {
-		return nil, NewError(http.StatusServiceUnavailable, "photo_preview_unavailable", "The photo preview bytes are unavailable.")
-	}
-	defer func() { _ = stream.Close() }()
-	if size != output.Size {
-		return nil, NewError(http.StatusInternalServerError, "photo_preview_corrupt", "The photo preview size disagrees with its generation.")
-	}
-	body, err := io.ReadAll(io.LimitReader(stream, size+1))
-	if err != nil || int64(len(body)) != size || !stream.Verified() {
-		return nil, NewError(http.StatusInternalServerError, "photo_preview_corrupt", "The photo preview failed verification.")
-	}
-	digest := sha256.Sum256(body)
-	if hex.EncodeToString(digest[:]) != output.BlobSHA256 {
-		return nil, NewError(http.StatusInternalServerError, "photo_preview_corrupt", "The photo preview digest disagrees with its generation.")
-	}
-	return body, nil
 }

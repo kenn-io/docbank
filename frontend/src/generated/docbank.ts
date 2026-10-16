@@ -8734,13 +8734,6 @@ export type ExcludePhotoAssetHeaders = {
 'If-Match': string;
 };
 
-export type ReadPhotoFaceCropParams = {
-content_version_id: string;
-generation_id: string;
-face_id?: string;
-assertion_id?: string;
-};
-
 export type AttachPhotoFileHeaders = {
 'If-Match': string;
 };
@@ -15947,53 +15940,6 @@ return sessionJSON<PhotoAsset>(getExcludePhotoAssetUrl(assetId),
     method: 'POST',
     headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
     body: JSON.stringify(setPhotoExcludedRequest)
-  }
-);}
-
-
-
-export const getReadPhotoFaceCropUrl = (assetId: string,
-    params: ReadPhotoFaceCropParams,) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? 'null' : String(value))
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0 ? `/api/v1/photos/assets/${encodeURIComponent(String(assetId))}/face-crop?${stringifiedParams}` : `/api/v1/photos/assets/${encodeURIComponent(String(assetId))}/face-crop`
-}
-
-/**
- * @summary Read a face closeup from the displayed fit preview
- */
-export const readPhotoFaceCrop = (assetId: string,
-    params: ReadPhotoFaceCropParams, options?: Parameters<typeof sessionResponse>[1]) => {
-
-    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Symbol.iterator in h) {
-      return Object.fromEntries(
-        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
-      );
-    }
-    const headers: Record<string, string | readonly string[]> = {};
-    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
-      if (value !== undefined) headers[name] = value;
-    }
-    return headers;
-  };
-return sessionResponse<Blob>(getReadPhotoFaceCropUrl(assetId,params),
-  {
-    ...options,
-    method: 'GET',
-    headers: { 'Accept': `image/jpeg`, ...getHeaders(options?.headers) }
-
   }
 );}
 

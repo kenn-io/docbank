@@ -78,6 +78,7 @@
     albumID = "",
     onnavigate = () => {},
     onperson,
+    onfacedecision,
     ontrashed,
     onhidden,
     onactionerror,
@@ -110,6 +111,7 @@
     albumID?: string;
     onnavigate?: (path: string) => void;
     onperson?: (id: string) => void;
+    onfacedecision?: (source: Photos) => void;
     ontrashed?: (source: Photos) => void;
     onhidden?: () => void | Promise<void>;
     onactionerror?: (error: string) => void;
@@ -186,7 +188,9 @@
   }
   const album = $derived(albums?.items.find((item) => item.id === albumID));
   const editor = $derived(photos.authored);
-  const inspectorFaces = untrack(() => new PhotoFaces(photos.session, photos.onauthfailure));
+  const inspectorFaces = untrack(
+    () => new PhotoFaces(photos.session, photos.onauthfailure, photos.hidden, faceDecision),
+  );
   $effect(() => {
     const id =
       editing && !photoID && !photos.allResults && photos.selectedIDs.size === 1
@@ -565,6 +569,11 @@
   let grid = $state<{ preservePosition: () => () => Promise<void> }>();
   let rejectsOpen = $state(false);
   const preserve = () => grid?.preservePosition();
+  function faceDecision() {
+    if (photos.query.filters.person_ids?.length || /\bperson:/i.test(photos.query.text))
+      void refresh();
+    onfacedecision?.(photos);
+  }
   export function refresh() {
     return photos.refresh(preserve);
   }
@@ -1451,6 +1460,7 @@
     </div>
   {/if}
   {#if photoID}<PhotoLoupe
+      onfacedecision={faceDecision}
       {onperson}
       bind:metadataOpen={loupeMetadata}
       {editor}
