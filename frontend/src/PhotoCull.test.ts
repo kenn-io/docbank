@@ -376,6 +376,32 @@ async function reviewPhoto(row = photo(1), autoAdvance = false) {
   return { cull, photos, ...view };
 }
 
+it("shows prepared flag and rating after a no-op decision without replacing Undo", async () => {
+  const target = preparedPhoto(1);
+  target.values = { ...target.values, flag: "pick", rating: 4 };
+  vi.mocked(api.preparePhotoAuthored).mockResolvedValue(preparation([target]));
+  const edit = vi.spyOn(api, "editPhotoAuthored").mockResolvedValue({
+    receipt_id: "",
+    before: [],
+    after: [],
+  });
+  const { cull, photos } = await reviewPhoto();
+  photos.authored.undoState.receiptID = "previous-decision";
+  photos.authored.undoState.summary = "Previous edit";
+  expect(screen.getByText("Unflagged · 0 stars")).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Pick (P)" }));
+  await screen.findByText("No changes to apply");
+  expect(edit).toHaveBeenCalledOnce();
+  expect(edit.mock.calls[0]![0]).toMatchObject({
+    targets: [{ file_id: target.file_id, revision: target.revision }],
+    patch: { flag: "pick" },
+  });
+  await screen.findByText("pick · 4 stars");
+  expect(cull.currentID).toBe("photo-1");
+  expect(photos.authored.undoState.receiptID).toBe("previous-decision");
+  expect(photos.authored.undoState.summary).toBe("Previous edit");
+});
+
 it("returns to fit after Z, pan, Z in Cull", async () => {
   vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:synthetic-photo");
   vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});

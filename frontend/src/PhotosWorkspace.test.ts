@@ -2819,18 +2819,21 @@ it("compares eight selected photos and asks to narrow a larger selection", async
 });
 
 it.each(["compare", "draft"])(
-  "keeps a competing %s action while cull capture finishes",
+  "handles a competing %s action while cull capture finishes",
   async (action) => {
     const { photos, ids, finish } = await captureWorkspace();
     if (action === "compare") {
       photos.select(ids[0]!, new MouseEvent("click"), ids);
       photos.select(ids[1]!, new MouseEvent("click", { ctrlKey: true }), ids);
       await fireEvent.click(screen.getByRole("button", { name: "Compare" }));
+      expect(screen.queryByRole("dialog", { name: "Compare photos" })).toBeNull();
+      expect(screen.queryByRole("dialog", { name: "Cull photos" })).toBeNull();
     } else photos.authored.stage({ caption: "Draft written while capturing" });
     await act(async () => finish());
-    if (action === "compare")
-      expect(screen.queryAllByRole("dialog", { name: /^(Cull|Compare) photos$/ })).toHaveLength(1);
-    else {
+    if (action === "compare") {
+      expect(screen.queryByRole("dialog", { name: "Compare photos" })).toBeNull();
+      expect(screen.getByRole("dialog", { name: "Cull photos" })).toBeTruthy();
+    } else {
       expect(screen.queryByRole("dialog", { name: "Cull photos" })).toBeNull();
       expect(photos.authored.dirty).toBe(true);
     }

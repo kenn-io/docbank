@@ -441,9 +441,12 @@ it("reports checkpoint failures and freezes navigation after a failed save", asy
 
 it("keeps automatic storage probes quiet and reports explicit failures", async () => {
   const store = storage();
+  vi.mocked(store.saved).mockRejectedValue(new Error("Storage unavailable"));
   vi.mocked(store.load).mockRejectedValue(new Error("Storage unavailable"));
   const cull = new PhotoCull("session", store);
-  expect(await cull.restore(true)).toBe(false);
+  cull.saved = true;
+  await expect(cull.probe()).resolves.toBeUndefined();
+  expect(cull.saved).toBe(false);
   expect(cull.error).toBe("");
   expect(await cull.restore()).toBe(false);
   expect(cull.error).toBe("Storage unavailable");

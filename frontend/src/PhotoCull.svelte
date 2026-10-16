@@ -151,6 +151,15 @@
     await tick();
     focus();
     if (editor.error || editor.dirty || editor.conflict) return;
+    const target = editor.targets.find((target) => target.file_id === selected.display_file_id);
+    if (target) {
+      const updated = (row: PhotoBrowseRow) =>
+        row.display_file_id === target.file_id
+          ? { ...row, flag: target.values.flag, rating: target.values.rating }
+          : row;
+      if (photo) photo = updated(photo);
+      neighbors = neighbors.map(updated);
+    }
     announcement =
       patch.flag !== undefined
         ? `${selected.name}: ${patch.flag || "flag cleared"}`
