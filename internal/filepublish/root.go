@@ -1,7 +1,6 @@
 package filepublish
 
 import (
-	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -9,7 +8,6 @@ import (
 )
 
 const rootStagePrefix = ".docbank-checkout-"
-const rootProbePrefix = ".docbank-checkout-probe-"
 
 type RootStage struct {
 	File          *os.File
@@ -151,7 +149,7 @@ func (s *RootStage) Cleanup() error {
 	return err
 }
 
-// CleanupRootStages removes exact stage files and isolated probe directories.
+// CleanupRootStages removes exact stage files.
 func CleanupRootStages(root *os.Root) error {
 	dir, err := root.Open(".")
 	if err != nil {
@@ -163,66 +161,10 @@ func CleanupRootStages(root *os.Root) error {
 		return err
 	}
 	for _, entry := range entries {
-		if entry.IsDir() && isStageName(entry.Name(), rootProbePrefix) {
-			if err := root.RemoveAll(entry.Name()); err != nil {
-				return err
-			}
-		} else if entry.Type().IsRegular() && isStageName(entry.Name(), rootStagePrefix) {
+		if entry.Type().IsRegular() && isStageName(entry.Name(), rootStagePrefix) {
 			if err := root.Remove(entry.Name()); err != nil {
 				return err
 			}
-		}
-	}
-	return nil
-}
-
-// CheckRootPaths probes name equivalence in an isolated directory on the destination filesystem.
-func CheckRootPaths(ctx context.Context, root *os.Root, paths []string) (retErr error) {
-	if len(paths) == 0 {
-		return ctx.Err()
-	}
-	name, err := newStageName(rootProbePrefix)
-	if err != nil {
-		return err
-	}
-	if err := createPrivateRootDirectory(root, name); err != nil {
-		return err
-	}
-	probes, err := root.OpenRoot(name)
-	if err != nil {
-		return err
-	}
-	info, err := probes.Stat(".")
-	if err != nil {
-		return errors.Join(err, probes.Close())
-	}
-	defer func() {
-		current, err := root.Lstat(name)
-		if err == nil && !os.SameFile(info, current) {
-			err = errors.New("checkout probe directory changed during validation")
-		}
-		closeErr := probes.Close()
-		if err == nil {
-			err = root.RemoveAll(name)
-		}
-		retErr = errors.Join(retErr, closeErr, err)
-	}()
-	for _, path := range paths {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if !filepath.IsLocal(path) {
-			return errors.New("checkout destination must be root-relative")
-		}
-		if err := probes.MkdirAll(filepath.Dir(path), 0700); err != nil {
-			return err
-		}
-		file, err := probes.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-		if err != nil {
-			return &os.PathError{Op: "reserving checkout path", Path: path, Err: err}
-		}
-		if err := file.Close(); err != nil {
-			return err
 		}
 	}
 	return nil

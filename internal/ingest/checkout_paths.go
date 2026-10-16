@@ -7,6 +7,9 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"time"
+
+	"github.com/cenkalti/backoff/v7"
 
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/store"
@@ -83,6 +86,30 @@ func RelatedCheckouts(ctx context.Context, checkouts []store.PhotoCheckout, path
 		}
 	}
 	return related, nil
+}
+
+// ReleaseClearedCheckoutDestinations persists folder reuse after separation succeeds.
+func ReleaseClearedCheckoutDestinations(ctx context.Context, catalog *store.Store, checkouts []store.PhotoCheckout, pathname string) error {
+	var released []store.PhotoCheckout
+	for _, checkout := range checkouts {
+		if !checkout.RetentionReleased || checkout.Destination == "" {
+			continue
+		}
+		if protected, err := PhotoCheckoutProtectsDestination(checkout); err != nil || protected {
+			continue
+		}
+		released = append(released, checkout)
+	}
+	related, err := RelatedCheckouts(ctx, released, pathname)
+	if err != nil {
+		return err
+	}
+	for _, checkout := range related {
+		if err := catalog.ReleaseCheckoutDestination(ctx, checkout.ID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type destinationCheck struct {
@@ -162,4 +189,29 @@ func checkoutDestinationsRelateToPath(ctx context.Context, checkouts []store.Pho
 		checks[i].related, checks[i].err = watchTreeContainsAny(ctx, watch, targets[n:n+1])
 	}
 	return checks, ctx.Err()
+}
+
+// WaitForCheckoutSeparation retries until the path clears or the caller cancels.
+// It reports each changed failure once and caps the delay at thirty seconds.
+func WaitForCheckoutSeparation(ctx context.Context, check func(context.Context) error, notify func(error)) error {
+	delay := backoff.NewExponentialBackOff()
+	delay.InitialInterval = time.Second
+	delay.MaxInterval = 30 * time.Second
+	delay.RandomizationFactor = 0
+	var previous string
+	_, err := backoff.Retry(ctx, func() (struct{}, error) {
+		return struct{}{}, check(ctx)
+	}, backoff.WithBackOff(delay), backoff.WithMaxElapsedTime(0), backoff.WithNotify(func(err error, _ time.Duration) {
+		if message := err.Error(); message != previous {
+			notify(err)
+			previous = message
+		}
+	}))
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if err != nil {
+		return backoff.AsRetryError(err).LastErr
+	}
+	return nil
 }

@@ -605,7 +605,7 @@ func TestCheckoutRunOutcomes(t *testing.T) {
 		require.Equal(t, store.StorageOperationFailed, finished.State)
 	})
 
-	for _, failure := range []string{"operator cancellation", "daemon shutdown", "verification failure", "source excluded"} {
+	for _, failure := range []string{"operator cancellation", "daemon shutdown", "verification failure", "source excluded", "destination collision"} {
 		t.Run(failure, func(t *testing.T) {
 			s := checkoutService(t)
 			names := []string{"first.jpg", "second.jpg", "third.jpg"}
@@ -646,6 +646,12 @@ func TestCheckoutRunOutcomes(t *testing.T) {
 					require.NoError(t, err)
 					require.NoError(t, os.WriteFile(layout.LoosePath(hash), []byte(strings.Repeat("x", int(entries[1].Size))), 0o600))
 				}
+				if failure == "destination collision" {
+					interrupted = true
+					path := filepath.FromSlash(entries[1].Path)
+					require.NoError(t, root.MkdirAll(filepath.Dir(path), 0o700))
+					require.NoError(t, root.WriteFile(path, []byte("user copy"), 0o600))
+				}
 				if failure == "operator cancellation" {
 					interrupted = true
 					require.NoError(t, s.Store.RequestStorageOperationCancel(ctx, op.ID))
@@ -668,6 +674,12 @@ func TestCheckoutRunOutcomes(t *testing.T) {
 				require.ErrorIs(t, runErr, packstore.ErrContentMismatch)
 				_, err := root.Stat(filepath.FromSlash(entries[1].Path))
 				require.ErrorIs(t, err, os.ErrNotExist)
+			case "destination collision":
+				require.ErrorContains(t, runErr, entries[1].Path)
+				require.ErrorContains(t, runErr, entries[1].FileID)
+				content, err := root.ReadFile(filepath.FromSlash(entries[1].Path))
+				require.NoError(t, err)
+				require.Equal(t, "user copy", string(content))
 			case "daemon shutdown":
 				require.ErrorIs(t, runErr, context.Canceled)
 			}
@@ -705,8 +717,7 @@ func TestCheckoutRunOutcomes(t *testing.T) {
 	}
 }
 
-// Destination name equivalence must be checked before any bytes are published.
-func TestCheckoutPreflightsCollisionsBeforePublishingBytes(t *testing.T) {
+func TestCheckoutNameCollisionsPreservePublishedCopies(t *testing.T) {
 	t.Parallel()
 	s := checkoutService(t)
 	ctx := t.Context()
@@ -734,10 +745,16 @@ func TestCheckoutPreflightsCollisionsBeforePublishingBytes(t *testing.T) {
 	finished, err := s.Store.StorageOperation(ctx, op.ID)
 	require.NoError(t, err)
 	if caseInsensitive {
-		require.ErrorIs(t, runErr, os.ErrExist)
+		require.Error(t, runErr)
 		require.Equal(t, "failed", status.Checkout.State)
-		require.Zero(t, status.PublishedFiles)
-		require.Zero(t, finished.CopiedObjects)
+		require.Equal(t, int64(1), status.PublishedFiles)
+		require.Equal(t, int64(1), finished.CopiedObjects)
+		entries, err := s.Store.PhotoCheckoutEntries(ctx, checkout.ID)
+		require.NoError(t, err)
+		require.ErrorContains(t, runErr, entries[1].Path)
+		content, err := root.ReadFile(filepath.FromSlash(entries[0].Path))
+		require.NoError(t, err)
+		require.Contains(t, []string{"first", "second"}, string(content))
 		return
 	}
 	require.NoError(t, runErr)

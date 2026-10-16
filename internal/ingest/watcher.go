@@ -13,8 +13,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cenkalti/backoff/v7"
+
 	"go.kenn.io/docbank/internal/config"
-	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -337,21 +338,25 @@ func (w *Watcher) Run(ctx context.Context) error {
 	}
 }
 
+var errWatchCheckoutOverlap = errors.New("watch source overlaps checkout destination")
+
 func (w *Watcher) waitForCheckoutSeparation(ctx context.Context, root string) ([]store.PhotoCheckout, error) {
-	for {
-		checkouts, err := w.ing.Store.ListPhotoCheckouts(ctx)
+	var checkouts []store.PhotoCheckout
+	err := WaitForCheckoutSeparation(ctx, func(ctx context.Context) error {
+		var err error
+		checkouts, err = w.ing.Store.ListPhotoCheckouts(ctx)
 		if err != nil {
-			return nil, err
+			return backoff.Permanent(err)
 		}
 		id, overlaps, _, err := CheckoutPathOverlap(ctx, checkouts, root)
-		if err == nil && !overlaps {
-			return checkouts, nil
+		if err != nil || overlaps {
+			return fmt.Errorf("checkout %s overlaps watch %q at %q: %w", id, w.config.Name, root, errors.Join(err, errWatchCheckoutOverlap))
 		}
-		w.logger.Warn("watch is waiting for checkout separation", "watch", w.config.Name, "path", root, "checkout", id, "error", err)
-		if err := jobs.Wait(ctx, time.Second); err != nil {
-			return nil, err
-		}
-	}
+		return nil
+	}, func(err error) {
+		w.logger.Warn("watch is waiting for checkout separation", "watch", w.config.Name, "path", root, "error", err)
+	})
+	return checkouts, err
 }
 
 func (w *Watcher) openRoot(ctx context.Context) (*watchRoot, error) {
@@ -387,32 +392,8 @@ func (w *Watcher) openRoot(ctx context.Context) (*watchRoot, error) {
 	if err != nil {
 		return nil, err
 	}
-	var released []store.PhotoCheckout
-	for _, checkout := range checkouts {
-		if !checkout.RetentionReleased || checkout.Destination == "" {
-			continue
-		}
-		// A released folder that still holds copies already passed the
-		// overlap check above, so only cleared folders can be reused here.
-		if protected, err := PhotoCheckoutProtectsDestination(checkout); err != nil || protected {
-			continue
-		}
-		released = append(released, checkout)
-	}
-	// A watch source admitted over a retired checkout's cleared folder is
-	// reusing it, same as a store registration would. Persist the release
-	// before new files arrive there, so a later daemon startup does not
-	// mistake them for leftover checkout content. Use the full identity
-	// traversal so a bind-mounted alias of the destination is recognized as
-	// the same folder, not just an exact or nested path.
-	related, err := RelatedCheckouts(ctx, released, root)
-	if err != nil {
+	if err := ReleaseClearedCheckoutDestinations(ctx, w.ing.Store, checkouts, root); err != nil {
 		return nil, err
-	}
-	for _, checkout := range related {
-		if err := w.ing.Store.ReleaseCheckoutDestination(ctx, checkout.ID); err != nil {
-			return nil, err
-		}
 	}
 	vaultInfo, err := os.Stat(vaultRoot)
 	if err != nil {

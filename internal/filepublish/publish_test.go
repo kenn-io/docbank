@@ -242,53 +242,11 @@ func TestRootStageCleanupPreservesDecoysAndUserFiles(t *testing.T) {
 	require.NoError(t, root.Mkdir(decoy, 0700))
 	require.NoError(t, root.WriteFile(filepath.Join(decoy, "my-edit.jpg"), []byte("keep"), 0600))
 	require.NoError(t, root.WriteFile(wrongName, []byte("keep"), 0600))
-	probeName := rootProbePrefix + strings.Repeat("d", 32)
-	require.NoError(t, root.Mkdir(probeName, 0700))
-	require.NoError(t, root.WriteFile(filepath.Join(probeName, "photo.jpg"), nil, 0600))
 	require.NoError(t, CleanupRootStages(root))
 	_, err = root.Stat(stage.name)
-	require.ErrorIs(t, err, os.ErrNotExist)
-	_, err = root.Stat(probeName)
 	require.ErrorIs(t, err, os.ErrNotExist)
 	for _, name := range []string{decoy, wrongName} {
 		_, err = root.Stat(name)
 		require.NoError(t, err)
-	}
-}
-
-func TestCheckRootPathsUsesDestinationNameEquivalence(t *testing.T) {
-	t.Parallel()
-	root, err := os.OpenRoot(t.TempDir())
-	require.NoError(t, err)
-	defer func() { require.NoError(t, root.Close()) }()
-	require.NoError(t, root.WriteFile("case-probe", nil, 0600))
-	_, caseErr := root.Stat("CASE-PROBE")
-	require.NoError(t, root.Remove("case-probe"))
-	for _, tc := range []struct {
-		name      string
-		paths     []string
-		collision bool
-	}{
-		{"distinct", []string{"asset/photo.jpg", "asset/other.jpg"}, false},
-		{"identical", []string{"asset/photo.jpg", "asset/photo.jpg"}, true},
-		{"case distinct", []string{"asset/photo.jpg", "asset/PHOTO.JPG"}, caseErr == nil},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			err := CheckRootPaths(t.Context(), root, tc.paths)
-			if tc.collision {
-				require.ErrorIs(t, err, os.ErrExist)
-			} else {
-				require.NoError(t, err)
-			}
-			dir, err := root.Open(".")
-			require.NoError(t, err)
-			entries, err := dir.ReadDir(-1)
-			require.NoError(t, errors.Join(err, dir.Close()))
-			require.Empty(t, entries)
-			for _, name := range tc.paths {
-				_, err := root.Lstat(name)
-				require.ErrorIs(t, err, os.ErrNotExist)
-			}
-		})
 	}
 }

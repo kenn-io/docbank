@@ -479,10 +479,8 @@ func (r *Registry) admitRefresh(ctx context.Context, id packstore.StoreID) bool 
 			return false
 		}
 		r.mu.Lock()
-		// A prior online backend must also pass admission on every later
-		// refresh, the same guarantee probeStore's own admission check
-		// gave by always flowing through installProbe's retire-on-reject
-		// path; short-circuiting here still has to retire it explicitly.
+		// Admission runs before probing, so retire any existing backend here
+		// when its binding no longer passes checkout separation.
 		r.retireBackendLocked(id)
 		r.observe(id, StoreUnavailable, err.Error(), priority)
 		// Advance the generation too: a concurrent refresh that already

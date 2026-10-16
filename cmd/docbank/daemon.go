@@ -895,53 +895,99 @@ func validateCheckoutPathSnapshot(ctx context.Context, checkouts []store.PhotoCh
 
 // Successful binding checks survive refreshes until checkout reservations or
 // the binding's configuration or root identity changes. Failed checks retry.
+type checkoutBindingCheck struct {
+	snapshot []store.PhotoCheckout
+	root     os.FileInfo
+}
+
+type checkoutBindingAdmission struct {
+	catalog  *store.Store
+	logger   *slog.Logger
+	check    func(context.Context, []store.PhotoCheckout, string) error
+	mu       sync.Mutex
+	checked  map[config.StoreBindingConfig]checkoutBindingCheck
+	failures map[config.StoreBindingConfig]string
+}
+
 func newCheckoutBindingAdmission(catalog *store.Store, logger *slog.Logger) func(context.Context, config.StoreBindingConfig) error {
-	var mu sync.Mutex
-	var snapshot []store.PhotoCheckout
-	checked := map[config.StoreBindingConfig]os.FileInfo{}
-	return func(ctx context.Context, binding config.StoreBindingConfig) error {
-		if binding.Kind != "filesystem" {
-			return nil
-		}
-		mu.Lock()
-		defer mu.Unlock()
-		checkouts, err := catalog.ListPhotoCheckouts(ctx)
-		if err != nil {
+	return (&checkoutBindingAdmission{catalog: catalog, logger: logger, check: validateCheckoutPathSnapshot}).admit
+}
+
+func sameCheckoutPaths(a, b []store.PhotoCheckout) bool {
+	return slices.EqualFunc(a, b, func(a, b store.PhotoCheckout) bool {
+		return a.ID == b.ID && a.Destination == b.Destination && a.RetentionReleased == b.RetentionReleased
+	})
+}
+
+func (a *checkoutBindingAdmission) admit(ctx context.Context, binding config.StoreBindingConfig) error {
+	if binding.Kind != "filesystem" {
+		return nil
+	}
+	for {
+		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if !slices.EqualFunc(snapshot, checkouts, func(a, b store.PhotoCheckout) bool {
-			return a.ID == b.ID && a.Destination == b.Destination && a.RetentionReleased == b.RetentionReleased
-		}) {
-			clear(checked)
-			snapshot = checkouts
+		checkouts, err := a.catalog.ListPhotoCheckouts(ctx)
+		if err != nil {
+			return err
 		}
 		info, err := os.Stat(binding.Path)
 		if err != nil {
 			return err
 		}
-		if prior := checked[binding]; prior != nil && os.SameFile(prior, info) {
+		a.mu.Lock()
+		prior, ok := a.checked[binding]
+		a.mu.Unlock()
+		if ok && sameCheckoutPaths(prior.snapshot, checkouts) && os.SameFile(prior.root, info) {
 			return nil
 		}
-		if err := validateCheckoutPathSnapshot(ctx, checkouts, binding.Path); err != nil {
-			logger.Warn("storage binding is waiting for checkout separation", "path", binding.Path, "error", err)
+		if err := a.check(ctx, checkouts, binding.Path); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			a.mu.Lock()
+			if a.failures == nil {
+				a.failures = make(map[config.StoreBindingConfig]string)
+			}
+			changed := a.failures[binding] != err.Error()
+			a.failures[binding] = err.Error()
+			a.mu.Unlock()
+			if changed {
+				a.logger.Warn("storage binding is waiting for checkout separation", "path", binding.Path, "error", err)
+			}
 			return err
 		}
-		checked[binding] = info
+		if err := ingest.ReleaseClearedCheckoutDestinations(ctx, a.catalog, checkouts, binding.Path); err != nil {
+			return err
+		}
+		current, err := a.catalog.ListPhotoCheckouts(ctx)
+		if err != nil {
+			return err
+		}
+		named, err := os.Stat(binding.Path)
+		if err != nil {
+			return err
+		}
+		// A checkout or root changed while the walk was in progress. Check
+		// the new snapshot before admitting or caching this binding.
+		if !sameCheckoutPaths(checkouts, current) || !os.SameFile(info, named) {
+			continue
+		}
+		a.mu.Lock()
+		if a.checked == nil {
+			a.checked = make(map[config.StoreBindingConfig]checkoutBindingCheck)
+		}
+		a.checked[binding] = checkoutBindingCheck{snapshot: checkouts, root: info}
+		delete(a.failures, binding)
+		a.mu.Unlock()
 		return nil
 	}
 }
 
 func waitForCheckoutValidation(ctx context.Context, check func(context.Context) error, logger *slog.Logger) error {
-	for {
-		err := check(ctx)
-		if err == nil {
-			return nil
-		}
+	return ingest.WaitForCheckoutSeparation(ctx, check, func(err error) {
 		logger.Warn("checkout path validation is waiting", "error", err)
-		if err := jobs.Wait(ctx, time.Second); err != nil {
-			return err
-		}
-	}
+	})
 }
 
 func validateConfiguredCheckouts(ctx context.Context, cfg config.Config, stores []store.BlobStore, admit func(context.Context, config.StoreBindingConfig) error) error {

@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -584,7 +585,8 @@ func TestWatcherCheckoutAdmission(t *testing.T) {
 				if tc.files {
 					require.NoError(t, os.WriteFile(partial, []byte("edits"), 0o600))
 				}
-				watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{Name: "inbox", Source: destination, Destination: "/inbox"}, runTestMutation, nil)
+				var log bytes.Buffer
+				watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{Name: "inbox", Source: destination, Destination: "/inbox"}, runTestMutation, slog.New(slog.NewTextHandler(&log, nil)))
 				require.NoError(t, err)
 				done := make(chan error, 1)
 				go func() {
@@ -606,6 +608,9 @@ func TestWatcherCheckoutAdmission(t *testing.T) {
 						require.ErrorIs(t, <-done, context.Canceled)
 						return
 					}
+					time.Sleep(2 * time.Minute)
+					synctest.Wait()
+					require.Equal(t, 1, strings.Count(log.String(), "watch is waiting"))
 					require.NoError(t, os.Remove(partial))
 				} else {
 					select {

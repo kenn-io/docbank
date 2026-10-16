@@ -472,3 +472,159 @@ func TestCheckoutBindingAdmissionCachesSuccessfulSeparation(t *testing.T) {
 	require.Contains(t, log.String(), checkoutID)
 	require.Contains(t, log.String(), destination)
 }
+
+func TestCheckoutBindingAdmissionPersistsFolderReuseAcrossRestart(t *testing.T) {
+	t.Parallel()
+	layout := home.Layout{Root: t.TempDir()}
+	require.NoError(t, layout.Ensure())
+	catalog, err := store.Open(layout.DBPath())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := catalog.PhotoAssetForNode(t.Context(), node.ID)
+	require.NoError(t, err)
+	destination := t.TempDir()
+	checkout, operation, err := catalog.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
+	require.NoError(t, err)
+	require.NoError(t, catalog.FinishPhotoCheckout(t.Context(), checkout.ID, operation.ID, store.StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
+	_, err = catalog.RetirePhotoCheckout(t.Context(), checkout.ID)
+	require.NoError(t, err)
+	binding := config.StoreBindingConfig{Kind: "filesystem", Path: destination}
+	admit := newCheckoutBindingAdmission(catalog, slog.New(slog.DiscardHandler))
+	require.NoError(t, admit(t.Context(), binding))
+	require.NoError(t, blob.EnsureFilesystemNamespace(destination))
+	require.NoError(t, catalog.Close())
+	catalog, err = store.Open(layout.DBPath())
+	require.NoError(t, err)
+	admit = newCheckoutBindingAdmission(catalog, slog.New(slog.DiscardHandler))
+	require.NoError(t, admit(t.Context(), binding), "a new daemon must accept the reused store folder")
+}
+
+func TestCheckoutBindingAdmissionCacheAndSnapshotChanges(t *testing.T) {
+	t.Parallel()
+	catalog, checkoutID, operationID, _ := newCheckoutReservationFixture(t)
+	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+	walks := 0
+	admission := &checkoutBindingAdmission{
+		catalog: catalog, logger: slog.New(slog.DiscardHandler),
+		check: func(ctx context.Context, checkouts []store.PhotoCheckout, path string) error {
+			walks++
+			return validateCheckoutPathSnapshot(ctx, checkouts, path)
+		},
+	}
+	binding := config.StoreBindingConfig{Kind: "filesystem", Path: filepath.Join(t.TempDir(), "store")}
+	require.NoError(t, os.Mkdir(binding.Path, 0o700))
+	require.NoError(t, admission.admit(t.Context(), binding))
+	require.NoError(t, admission.admit(t.Context(), binding))
+	require.Equal(t, 1, walks, "refresh must reuse the successful separation check")
+	changed := binding
+	changed.Priority++
+	require.NoError(t, admission.admit(t.Context(), changed))
+	require.Equal(t, 2, walks)
+	require.NoError(t, os.Rename(binding.Path, binding.Path+"-old"))
+	require.NoError(t, os.Mkdir(binding.Path, 0o700))
+	require.NoError(t, admission.admit(t.Context(), binding))
+	require.Equal(t, 3, walks, "a replacement root requires a new walk")
+	require.NoError(t, catalog.FinishPhotoCheckout(t.Context(), checkoutID, operationID, store.StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
+	_, err := catalog.RetirePhotoCheckout(t.Context(), checkoutID)
+	require.NoError(t, err)
+	require.NoError(t, admission.admit(t.Context(), binding))
+	require.Equal(t, 4, walks, "retirement invalidates the successful snapshot")
+}
+
+func TestCheckoutBindingAdmissionRechecksSnapshotChangedDuringWalk(t *testing.T) {
+	t.Parallel()
+	catalog, checkoutID, _, _ := newCheckoutReservationFixture(t)
+	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+	original, err := catalog.PhotoCheckout(t.Context(), checkoutID)
+	require.NoError(t, err)
+	entries, err := catalog.PhotoCheckoutEntries(t.Context(), original.ID)
+	require.NoError(t, err)
+	binding := config.StoreBindingConfig{Kind: "filesystem", Path: t.TempDir()}
+	changed := false
+	var log bytes.Buffer
+	admission := &checkoutBindingAdmission{
+		catalog: catalog, logger: slog.New(slog.NewTextHandler(&log, nil)),
+		check: func(ctx context.Context, checkouts []store.PhotoCheckout, path string) error {
+			err := validateCheckoutPathSnapshot(ctx, checkouts, path)
+			if !changed && err == nil {
+				changed = true
+				_, _, createErr := catalog.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{entries[0].AssetID}}, binding.Path, 0)
+				require.NoError(t, createErr)
+			}
+			return err
+		},
+	}
+	require.ErrorIs(t, admission.admit(t.Context(), binding), errCheckoutPathOverlap)
+	require.ErrorIs(t, admission.admit(t.Context(), binding), errCheckoutPathOverlap)
+	require.Equal(t, 1, strings.Count(log.String(), "storage binding is waiting"))
+}
+
+func TestCheckoutBindingAdmissionWalkDoesNotBlockOtherBindings(t *testing.T) {
+	t.Parallel()
+	catalog, _, _, _ := newCheckoutReservationFixture(t)
+	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+	blocked := config.StoreBindingConfig{Kind: "filesystem", Path: t.TempDir()}
+	other := config.StoreBindingConfig{Kind: "filesystem", Path: t.TempDir()}
+	entered := make(chan struct{})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	admission := &checkoutBindingAdmission{
+		catalog: catalog, logger: slog.New(slog.DiscardHandler),
+		check: func(ctx context.Context, checkouts []store.PhotoCheckout, path string) error {
+			if path == blocked.Path {
+				close(entered)
+				<-ctx.Done()
+				return ctx.Err()
+			}
+			return validateCheckoutPathSnapshot(ctx, checkouts, path)
+		},
+	}
+	done := make(chan error, 1)
+	go func() { done <- admission.admit(ctx, blocked) }()
+	<-entered
+	otherDone := make(chan error, 1)
+	go func() { otherDone <- admission.admit(t.Context(), other) }()
+	select {
+	case err := <-otherDone:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		cancel()
+		<-done
+		<-otherDone
+		t.Fatal("one binding's walk blocked another binding")
+	}
+	cancel()
+	require.ErrorIs(t, <-done, context.Canceled)
+}
+
+func TestCheckoutValidationBacksOffAndLogsChangedErrors(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		var log bytes.Buffer
+		attempts := 0
+		var times []time.Time
+		done := make(chan error, 1)
+		go func() {
+			done <- waitForCheckoutValidation(ctx, func(context.Context) error {
+				attempts++
+				times = append(times, time.Now())
+				if attempts > 6 {
+					return errors.New("folder changed")
+				}
+				return errors.New("folder holds copies")
+			}, slog.New(slog.NewTextHandler(&log, nil)))
+		}()
+		time.Sleep(5 * time.Minute)
+		synctest.Wait()
+		cancel()
+		require.ErrorIs(t, <-done, context.Canceled)
+		require.Equal(t, 1, strings.Count(log.String(), "folder holds copies"))
+		require.Equal(t, 1, strings.Count(log.String(), "folder changed"))
+		require.Less(t, attempts, 25, "a permanent wait must back off")
+		require.Greater(t, times[2].Sub(times[1]), times[1].Sub(times[0]))
+		require.Equal(t, 30*time.Second, times[len(times)-1].Sub(times[len(times)-2]))
+	})
+}

@@ -477,23 +477,6 @@ func (s Service) Run(ctx context.Context, c store.PhotoCheckout, root *os.Root) 
 		}
 	}
 	entries, copyErr := s.Store.PhotoCheckoutEntries(ctx, c.ID)
-	if copyErr == nil {
-		var paths []string
-		for _, entry := range entries {
-			if !entry.Published {
-				paths = append(paths, filepath.FromSlash(entry.Path))
-			}
-		}
-		copyErr = filepublish.CheckRootPaths(ctx, root, paths)
-		if pathErr, ok := errors.AsType[*os.PathError](copyErr); ok {
-			for _, entry := range entries {
-				if filepath.FromSlash(entry.Path) == pathErr.Path {
-					copyErr = fmt.Errorf("asset %s file %s at %q: %w", entry.AssetID, entry.FileID, entry.Path, copyErr)
-					break
-				}
-			}
-		}
-	}
 	var copied, bytes int64
 	if copyErr == nil && !cancelled {
 		for _, entry := range entries {
