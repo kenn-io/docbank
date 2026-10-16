@@ -130,7 +130,28 @@
   }
   async function decide(patch: PhotoAuthoredPatch) {
     if (!photo || loading || cull.stale || cull.busy || !editor.canChangeTarget()) return;
+    const selected = photo;
     editor.reset();
+    await editor.prepare({ asset_ids: [selected.asset_id], hidden: false });
+    if (editor.error || !editor.targets.length) return;
+    editor.loading = true;
+    try {
+      const current = await photos.lookup(selected.asset_id, new AbortController().signal);
+      if (
+        editor.asset?.display_file_id !== selected.display_file_id ||
+        current.display_file_id !== selected.display_file_id ||
+        current.content_version_id !== selected.content_version_id
+      ) {
+        editor.conflict = true;
+        editor.error = "This photo changed. Reload the photo before deciding.";
+        return;
+      }
+    } catch (cause) {
+      editor.error = cause instanceof Error ? cause.message : String(cause);
+      return;
+    } finally {
+      editor.loading = false;
+    }
     await applyDecision(patch);
   }
   async function applyDecision(patch: PhotoAuthoredPatch, retry = false) {
@@ -149,6 +170,19 @@
     if (checkpoint.autoAdvance && cull.currentID === id) cull.move(1);
   }
   async function retryDecision() {
+    if (!editor.dirty && photo) {
+      editor.loading = true;
+      try {
+        photo = await photos.lookup(photo.asset_id, new AbortController().signal);
+        editor.reset();
+      } catch (cause) {
+        editor.error = cause instanceof Error ? cause.message : String(cause);
+      } finally {
+        editor.loading = false;
+        focus();
+      }
+      return;
+    }
     const patch = { ...editor.patch };
     focus();
     if (editor.conflict) {
@@ -232,7 +266,8 @@
       {#if editor.dirty || editor.conflict}<div class="controls">
           <Button
             disabled={editor.busy || editor.loading || editor.membershipChanged}
-            onclick={() => void retryDecision()}>Reload and retry</Button
+            onclick={() => void retryDecision()}
+            >{editor.dirty ? "Reload and retry" : "Reload photo"}</Button
           >
           <Button
             disabled={editor.busy || editor.loading}

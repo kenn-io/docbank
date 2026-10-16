@@ -72,10 +72,9 @@ export function photoCullStorage(vaultID: string): CullStorage {
     };
     return idbRequest(opening);
   }
-  async function savePass(tx: IDBTransaction, checkpoint: CullCheckpoint) {
+  function savePass(tx: IDBTransaction, checkpoint: CullCheckpoint) {
     const markers = tx.objectStore("markers");
-    const keys = await idbRequest(markers.getAllKeys(markerRange()));
-    for (const key of keys) markers.delete(key);
+    markers.delete(markerRange());
     for (const kind of markerKinds)
       checkpoint[kind].forEach((id, index) => markers.put(id, [vaultID, kind, index]));
     tx.objectStore("checkpoints").put(header(checkpoint), vaultID);
@@ -143,7 +142,7 @@ export function photoCullStorage(vaultID: string): CullStorage {
             throw new Error("Cull progress changed in another tab. Resume before replacing it.");
           }
           tx.objectStore("members").put({ ids: run.ids, pass: run.checkpoint.pass }, vaultID);
-          await savePass(tx, run.checkpoint);
+          savePass(tx, run.checkpoint);
           await done;
         } finally {
           signal?.removeEventListener("abort", cancel);
@@ -170,7 +169,7 @@ export function photoCullStorage(vaultID: string): CullStorage {
             members.get(vaultID),
           );
           members.put({ ...membership, pass: value.pass.pass }, vaultID);
-          await savePass(tx, { ...value.pass, revision: current.revision + 1 });
+          savePass(tx, { ...value.pass, revision: current.revision + 1 });
         } else {
           if (value.position !== undefined) current.position = value.position;
           if (value.autoAdvance !== undefined) current.autoAdvance = value.autoAdvance;

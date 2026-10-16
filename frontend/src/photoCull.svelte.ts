@@ -142,7 +142,7 @@ export class PhotoCull {
           position: 0,
           visited: [],
           skipped: [],
-          unavailable: ids.filter((id) => !flags.has(id)),
+          unavailable: [],
           scope: "unflagged",
           autoAdvance: true,
         },

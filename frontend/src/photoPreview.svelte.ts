@@ -119,6 +119,7 @@ export class PhotoPreviewLoader {
           });
         return;
       }
+      if (active.signal.aborted) return;
       const objectURL = URL.createObjectURL(result.blob!);
       await this.show(objectURL, level, size);
     } catch (cause) {

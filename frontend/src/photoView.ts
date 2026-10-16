@@ -51,6 +51,6 @@ export function fromPanView(
     scale: view.scale,
     x: 0.5 - view.offsetX / (geometry.width * view.scale),
     y: 0.5 - view.offsetY / (geometry.height * view.scale),
-    actual: false,
+    actual: view.scale === geometry.actualScale,
   };
 }

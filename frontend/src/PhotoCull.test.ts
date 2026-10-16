@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { beforeEach, afterEach, expect, it, vi } from "vite-plus/test";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
 import { APIError } from "./api-transport.js";
@@ -10,6 +10,38 @@ import type { PhotoPreviewCache } from "./photoPreviewCache.js";
 import type { CullRun } from "./photoCullStorage.js";
 import * as api from "./generated/docbank.js";
 import type { PhotoAuthoredReceipt } from "./generated/docbank.js";
+
+function preparation(targets: api.PhotoPreparedTarget[]): api.PhotoAuthoredPreparation {
+  return {
+    targets,
+    assets: [...new Set(targets.map((target) => target.asset_id))].map((id) => ({
+      id,
+      revision: 1,
+      kind: "photo",
+      agreement: {},
+      display_source: "default",
+      display_file_id: targets.find((target) => target.asset_id === id)!.file_id,
+      created_at: "2025-01-01T00:00:00Z",
+      updated_at: "2025-01-01T00:00:00Z",
+      files: targets
+        .filter((target) => target.asset_id === id)
+        .map((target) => ({
+          ...target.values,
+          id: target.file_id,
+          asset_id: id,
+          node_id: target.node_id,
+          revision: target.revision,
+          role: "image",
+          created_at: "2025-01-01T00:00:00Z",
+        })),
+    })),
+  };
+}
+beforeEach(() => {
+  vi.spyOn(api, "preparePhotoAuthored").mockImplementation(async (scope) =>
+    preparation((scope.asset_ids ?? []).map((id) => preparedPhoto(Number(id.slice(6))))),
+  );
+});
 
 afterEach(() => {
   cleanup();
@@ -177,7 +209,7 @@ it("refreshes the visible completion offer after Undo", async () => {
     values: { ...before.values, flag: "pick" },
   };
   const restored = { ...picked, revision: 3, values: { ...before.values } };
-  vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue({ assets: [], targets: [before] });
+  vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue(preparation([before]));
   vi.spyOn(api, "editPhotoAuthored").mockImplementation(async () => {
     row.flag = "pick";
     return { receipt_id: "pick", before: [before], after: [picked] };
@@ -344,11 +376,91 @@ async function reviewPhoto(row = photo(1), autoAdvance = false) {
   return { cull, photos, ...view };
 }
 
+it("returns to fit after Z, pan, Z in Cull", async () => {
+  vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:synthetic-photo");
+  vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+  Object.defineProperty(HTMLImageElement.prototype, "decode", {
+    configurable: true,
+    value: async () => {},
+  });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(600);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  vi.spyOn(HTMLImageElement.prototype, "naturalWidth", "get").mockReturnValue(1200);
+  vi.spyOn(HTMLImageElement.prototype, "naturalHeight", "get").mockReturnValue(800);
+  const row = photo(1);
+  row.previews.grid = { state: "ready", generation_id: "grid-1" };
+  const { container } = await reviewPhoto(row);
+  const image = await waitFor(() => {
+    const image = container.querySelector<HTMLImageElement>(".photo-stage img");
+    expect(image).toBeTruthy();
+    return image!;
+  });
+  await fireEvent.load(image);
+  const shell = container.querySelector(".photo-cull")!;
+  const viewport = container.querySelector(".photo-viewport")!;
+  const pan = container.querySelector<HTMLElement>(".photo-stage .pan")!;
+  await fireEvent.keyDown(shell, { key: "z" });
+  await waitFor(() => expect(pan.style.transform).toBe("translate(0px, 0px) scale(2)"));
+  for (const [type, x] of [
+    ["pointerdown", 100],
+    ["pointermove", 250],
+    ["pointerup", 250],
+  ] as const) {
+    const event = new MouseEvent(type, { bubbles: true, clientX: x, clientY: 100, button: 0 });
+    Object.defineProperties(event, { pointerType: { value: "mouse" }, pointerId: { value: 1 } });
+    await fireEvent(viewport, event);
+  }
+  expect(pan.style.transform).toBe("translate(150px, 0px) scale(2)");
+  await fireEvent.keyDown(shell, { key: "z" });
+  await waitFor(() => expect(pan.style.transform).toBe("translate(0px, 0px) scale(1)"));
+});
+
+it.each(["file", "version"])(
+  "refuses a decision on a replaced display %s until the photo reloads",
+  async (change) => {
+    const row = photo(1);
+    const replacement = {
+      ...row,
+      display_file_id: change === "file" ? "replacement-file" : row.display_file_id,
+      content_version_id: "replacement-version",
+    };
+    const target = preparedPhoto(1, { file_id: replacement.display_file_id });
+    const prepare = vi.mocked(api.preparePhotoAuthored).mockResolvedValue(preparation([target]));
+    const edit = vi.spyOn(api, "editPhotoAuthored").mockResolvedValue({
+      receipt_id: "reject",
+      before: [target],
+      after: [{ ...target, values: { ...target.values, flag: "reject" } }],
+    });
+    const { cull, photos, container } = await reviewPhoto(row, true);
+    vi.mocked(photos.lookup).mockResolvedValue(change === "file" ? row : replacement);
+    await fireEvent.click(screen.getByRole("button", { name: "Reject (X)" }));
+    await screen.findByText("This photo changed. Reload the photo before deciding.");
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(edit).not.toHaveBeenCalled();
+    expect(cull.currentID).toBe(row.asset_id);
+    expect(photos.cullEditor!.dirty).toBe(false);
+    expect(container.querySelector(".photo-cull > .kit-sr-only")!.textContent).toBe("");
+    vi.mocked(photos.lookup).mockResolvedValue(replacement);
+    await fireEvent.click(screen.getByRole("button", { name: "Reload photo" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByText("This photo changed. Reload the photo before deciding."),
+      ).toBeNull(),
+    );
+    await fireEvent.click(screen.getByRole("button", { name: "Reject (X)" }));
+    await waitFor(() => expect(edit).toHaveBeenCalledOnce());
+    expect(edit.mock.calls[0]![0]).toMatchObject({
+      targets: [{ file_id: replacement.display_file_id }],
+      patch: { flag: "reject" },
+    });
+  },
+);
+
 it("includes the last photo picked after completion when S starts Picks", async () => {
   const row = photo(1),
     before = preparedPhoto(1);
   vi.spyOn(window, "confirm").mockReturnValue(true);
-  vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue({ assets: [], targets: [before] });
+  vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue(preparation([before]));
   vi.spyOn(api, "editPhotoAuthored").mockImplementation(async () => {
     row.flag = "pick";
     return {
@@ -445,11 +557,8 @@ it.each([false, true])(
       extra = preparedPhoto(1, { file_id: "other-file", file_name: "Other.jpg" });
     const prepare = vi
       .spyOn(api, "preparePhotoAuthored")
-      .mockResolvedValueOnce({
-        assets: [],
-        targets: membershipChanged ? [before, extra] : [before],
-      })
-      .mockResolvedValue({ assets: [], targets: [{ ...before, revision: 2 }] });
+      .mockResolvedValueOnce(preparation(membershipChanged ? [before, extra] : [before]))
+      .mockResolvedValue(preparation([{ ...before, revision: 2 }]));
     const edit = vi
       .spyOn(api, "editPhotoAuthored")
       .mockRejectedValueOnce(new APIError("Photo changed", 412, "precondition_failed"))

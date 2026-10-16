@@ -1,5 +1,11 @@
 import { expect, it } from "vite-plus/test";
-import { photoViewGeometry, toPanView, fromPanView } from "./photoView.js";
+import {
+  photoViewGeometry,
+  toPanView,
+  fromPanView,
+  fittedPhotoView,
+  toggleActualPhotoView,
+} from "./photoView.js";
 it("keeps the chosen image point through resize, density changes and a quarter turn", () => {
   const view = { scale: 2, x: 0.75, y: 0.25, actual: true };
   const first = photoViewGeometry(1200, 800, 600, 400, 1, 0);
@@ -12,6 +18,19 @@ it("keeps the chosen image point through resize, density changes and a quarter t
     scale: 2,
     x: 0.75,
     y: 0.25,
-    actual: false,
+    actual: true,
   });
+});
+it("returns to fit after Z, pan, Z and clears actual mode when the scale changes", () => {
+  const geometry = photoViewGeometry(1200, 800, 600, 400, 1, 0);
+  const actual = toPanView(toggleActualPhotoView(fittedPhotoView), geometry);
+  const panned = fromPanView({ ...actual, offsetX: 100, offsetY: 50 }, geometry);
+  expect(toPanView(toggleActualPhotoView(panned), geometry)).toEqual({
+    scale: 1,
+    offsetX: 0,
+    offsetY: 0,
+  });
+  const scaled = fromPanView({ ...actual, scale: 3 }, geometry);
+  expect(scaled.actual).toBe(false);
+  expect(toPanView(toggleActualPhotoView(scaled), geometry).scale).toBe(2);
 });
