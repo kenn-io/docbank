@@ -31,17 +31,14 @@
     onmetadatachanged?: (receipt: PhotoAuthoredReceipt, tags: Tag[]) => void;
   } = $props();
   const editor = untrack(
-    () => new PhotoAuthoredEditor(photos.session, photos.onauthfailure, photos.authored.undoState),
+    () =>
+      (photos.cullEditor ??= new PhotoAuthoredEditor(
+        photos.session,
+        photos.onauthfailure,
+        photos.authored.undoState,
+      )),
   );
-  $effect(() => {
-    const owner = photos;
-    owner.cullEditor = editor;
-    return () => {
-      if (owner.cullEditor === editor) owner.cullEditor = undefined;
-    };
-  });
   onDestroy(() => {
-    editor.dispose();
     cull.cancel();
   });
   let photo = $state<PhotoBrowseRow>();
@@ -216,6 +213,12 @@
               {photos}
               {cache}
               {view}
+              onreload={(row) => (photo = row)}
+              onunavailable={(message) => {
+                cull.unavailable(photo!.asset_id);
+                photo = undefined;
+                error = message;
+              }}
               onview={(value) => (view = value)}
               onmove={move}
             />

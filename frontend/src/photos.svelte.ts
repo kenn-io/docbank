@@ -44,6 +44,7 @@ import {
 import { captureDateQuery, type CaptureDayFacet } from "./photoTimeline.js";
 import { PhotoAuthoredEditor, type PhotoUndoState } from "./photoAuthored.svelte.js";
 import type { HiddenAccess } from "./hiddenAccess.svelte.js";
+import type { PhotoCull } from "./photoCull.svelte.js";
 
 export const photoQuery = parseQuery(
   '{"syntax":"simple","sort":{"field":"capture_time","direction":"desc"}}',
@@ -155,6 +156,8 @@ interface PhotosOptions {
 export class Photos {
   readonly authored: PhotoAuthoredEditor;
   cullEditor = $state.raw<PhotoAuthoredEditor>();
+  cull?: PhotoCull;
+  culling = $state(false);
   editScopeRevision = $state(0);
   private changeEditScope() {
     if (!this.authored.canChangeTarget()) return false;
@@ -1508,6 +1511,8 @@ export class Photos {
   dispose() {
     this.clearFrozen();
     this.authored.dispose();
+    this.cullEditor?.dispose();
+    this.cull?.cancel();
     this.viewerReturn = undefined;
     this.disposed = true;
     this.staged = undefined;

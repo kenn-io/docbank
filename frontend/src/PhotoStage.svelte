@@ -7,6 +7,7 @@
   import { loadPhotoPreview, PhotoPreviewDisplay } from "./photoPreview.js";
   import PhotoLoupeImage from "./PhotoLoupeImage.svelte";
   import { Button } from "@kenn-io/kit-ui";
+  import { APIError } from "./api-transport.js";
   let {
     photo,
     photos,
@@ -17,6 +18,8 @@
     onregion,
     oncancelregion,
     regionMode = false,
+    onreload,
+    onunavailable,
   }: {
     photo: PhotoBrowseRow;
     photos: Photos;
@@ -27,20 +30,35 @@
     onregion?: (value: { x: number; y: number; width: number; height: number }) => void;
     oncancelregion?: () => void;
     regionMode?: boolean;
+    onreload?: (row: PhotoBrowseRow) => void;
+    onunavailable?: (message: string) => void;
   } = $props();
   let url = $state("");
   let error = $state("");
   let large = false;
   let retrySize = $state<"fit" | "large">();
   let active: PhotoPreviewDisplay;
+  let current = $state.raw(untrack(() => photo));
+  let stale = false;
+  $effect(() => {
+    current = photo;
+  });
   async function load(
     selected: PhotoBrowseRow,
     size: "grid" | "fit" | "large",
     controller: PhotoPreviewDisplay,
+    reload = false,
   ) {
     const level = size === "grid" ? 0 : size === "fit" ? 1 : 2;
     try {
-      const result = await loadPhotoPreview(photos, cache, selected, size, controller.signal);
+      const result = await loadPhotoPreview(
+        photos,
+        cache,
+        selected,
+        size,
+        controller.signal,
+        reload,
+      );
       if (controller.signal.aborted) return;
       if (!result.blob) {
         if (size !== "grid") error = "Preview unavailable";
@@ -55,6 +73,11 @@
     } catch (cause) {
       if (!controller.signal.aborted) {
         error = cause instanceof Error ? cause.message : String(cause);
+        if (
+          cause instanceof APIError &&
+          (cause.status === 404 || (cause.status === 409 && cause.code === "photo_display_changed"))
+        )
+          stale = true;
         if (size !== "grid") failed(size);
       }
     }
@@ -64,60 +87,71 @@
     retrySize = size;
   }
   $effect(() => {
-    const selected = photo;
+    const selected = current;
     const controller = (active = new PhotoPreviewDisplay());
     url = "";
     error = "";
     large = false;
     retrySize = undefined;
+    stale = false;
     void load(selected, "grid", controller).then(() => {
       if (!controller.signal.aborted) return load(selected, "fit", controller);
     });
     return () => controller.dispose();
   });
-  function zoom() {
+  function zoom(reload = false) {
     if (large || !active) return;
     large = true;
     retrySize = undefined;
     void load(
-      untrack(() => photo),
+      untrack(() => current),
       "large",
       active,
+      reload,
     );
+  }
+  async function retry() {
+    const size = retrySize;
+    if (!size) return;
+    retrySize = undefined;
+    error = "";
+    if (stale) {
+      const controller = active;
+      try {
+        const row = await photos.lookup(current.asset_id, controller.signal);
+        if (controller.signal.aborted) return;
+        current = row;
+        onreload?.(row);
+      } catch (cause) {
+        if (controller.signal.aborted) return;
+        error = cause instanceof Error ? cause.message : String(cause);
+        if (cause instanceof APIError && cause.status === 404) {
+          url = "";
+          onunavailable?.(error);
+        } else retrySize = size;
+      }
+    } else if (size === "large") zoom(true);
+    else void load(current, size, active, true);
   }
 </script>
 
 <div class="photo-stage">
   <PhotoLoupeImage
     {url}
-    name={photo.name}
-    rotation={photo.rotation}
+    name={current.name}
+    rotation={current.rotation}
     {view}
     {onview}
     {onmove}
     {onregion}
     {oncancelregion}
     {regionMode}
-    onzoom={zoom}
+    onzoom={() => zoom()}
     unavailable={!!error}
   />
   {#if error}<p role="status">
       {error}{#if retrySize}
-        <Button
-          size="sm"
-          onclick={() => {
-            const size = retrySize;
-            retrySize = undefined;
-            error = "";
-            if (size === "large") zoom();
-            else if (size)
-              void load(
-                untrack(() => photo),
-                size,
-                active,
-              );
-          }}>Retry preview</Button
-        >{/if}
+        <Button size="sm" onclick={() => void retry()}>Retry preview</Button>{/if}
     </p>{/if}
 </div>
 

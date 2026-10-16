@@ -109,14 +109,16 @@
     onadd?: () => void;
     uploadChannelError?: string;
   } = $props();
-  const cull = $derived(new CullRun(photos.session, photoCullStorage(vaultID)));
-  let culling = $state(false);
+  const cull = untrack(
+    () => (photos.cull ??= new CullRun(photos.session, photoCullStorage(vaultID))),
+  );
+  const culling = $derived(photos.culling);
   let comparing = $state(false);
   let enteringReview = false;
   let compareIDs = $state<string[]>([]);
   let returnFocus: HTMLElement | undefined;
   $effect(() => {
-    void cull.restore(true);
+    if (!untrack(() => photos.culling)) void cull.restore(true);
     return () => cull.cancel();
   });
   async function startCull(resume = false) {
@@ -125,7 +127,7 @@
     returnFocus = document.activeElement as HTMLElement;
     try {
       const captured = resume ? await cull.restore() : await cull.start(photos.query);
-      if (captured && !culling && !comparing && editor.canChangeTarget()) culling = true;
+      if (captured && !culling && !comparing && editor.canChangeTarget()) photos.culling = true;
     } finally {
       enteringReview = false;
     }
@@ -137,7 +139,9 @@
     if (compareIDs.length >= 2 && compareIDs.length <= 4) comparing = true;
   }
   async function closeReview() {
-    culling = comparing = false;
+    photos.culling = comparing = false;
+    photos.cullEditor?.dispose();
+    photos.cullEditor = undefined;
     await cull.flush();
     await refresh();
     await editor.reload();

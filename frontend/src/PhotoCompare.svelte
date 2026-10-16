@@ -148,6 +148,12 @@
               {photos}
               {cache}
               {view}
+              onreload={(row) =>
+                (rows = rows.map((item) => (item.asset_id === row.asset_id ? row : item)))}
+              onunavailable={(message) => {
+                rows = rows.filter((item) => item.asset_id !== photo.asset_id);
+                errors = [...errors, message];
+              }}
               onview={(value) => (view = value)}
               onmove={move}
               {regionMode}
