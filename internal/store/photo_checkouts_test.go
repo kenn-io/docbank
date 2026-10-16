@@ -985,8 +985,9 @@ func TestPhotoCheckoutSkipsDuplicateNamesInAsset(t *testing.T) {
 	selection = PhotoCheckoutSelection{AssetIDs: []string{first.ID}}
 	_, err = s.EstimatePhotoCheckout(ctx, selection)
 	require.ErrorContains(t, err, "selection contains no files")
-	_, _, _, err = s.CreatePhotoCheckout(ctx, selection, "checkout", 0)
+	checkout, _, _, err = s.CreatePhotoCheckout(ctx, selection, "checkout", 0)
 	require.ErrorContains(t, err, "selection contains no files")
+	require.Empty(t, checkout.ID)
 }
 
 // Creation resolves the selection without the write lock. A base purged
@@ -1013,15 +1014,16 @@ func TestPhotoCheckoutCreationRejectsSelectionPurgedBeforeCommit(t *testing.T) {
 	_, err = s.TrashEmpty(ctx, 0, true)
 	require.NoError(t, err)
 
-	_, _, _, err = s.insertPhotoCheckout(ctx, selection, "checkout", 0, func(*sql.Tx) ([]PhotoCheckoutEntry, PhotoCheckoutEstimate, error) {
+	checkout, _, _, err := s.insertPhotoCheckout(ctx, selection, "checkout", 0, func(*sql.Tx) ([]PhotoCheckoutEntry, PhotoCheckoutEstimate, error) {
 		return entries, estimate, nil
 	})
 	require.ErrorIs(t, err, errPhotoCheckoutSelectionStale)
+	require.NotEmpty(t, checkout.ID)
 	checkouts, err := s.ListPhotoCheckouts(ctx)
 	require.NoError(t, err)
 	require.Empty(t, checkouts)
 
-	checkout, _, _, err := s.CreatePhotoCheckout(ctx, selection, "checkout", 0)
+	checkout, _, _, err = s.CreatePhotoCheckout(ctx, selection, "checkout", 0)
 	require.NoError(t, err)
 	frozen, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
 	require.NoError(t, err)
@@ -1029,22 +1031,30 @@ func TestPhotoCheckoutCreationRejectsSelectionPurgedBeforeCommit(t *testing.T) {
 	require.Equal(t, kept.Files[0].ID, frozen[0].FileID)
 }
 
-func TestPhotoCheckoutSkipsInvalidNamesWithBoundedDetails(t *testing.T) {
+func TestPhotoCheckoutSkipsDuplicateNamesWithBoundedDetails(t *testing.T) {
 	t.Parallel()
-	name := "bad\x00.jpg"
 	s := newTestStore(t)
+	ctx := t.Context()
 	good := albumAsset(t, s, "good.jpg")
-	badAssets := map[string]string{}
+	duplicateAssets := map[string][]string{}
 	for i := range 25 {
-		dir, err := s.Mkdir(t.Context(), s.RootID(), fmt.Sprintf("bad-%d", i))
+		var assets []PhotoAsset
+		for _, folder := range []string{"first", "second"} {
+			name := fmt.Sprintf("%s-%d", folder, i)
+			dir, err := s.Mkdir(ctx, s.RootID(), name)
+			require.NoError(t, err)
+			node, err := s.CreateFile(ctx, dir.ID, "photo.jpg", browseHash(name), 20, "image/jpeg")
+			require.NoError(t, err)
+			asset, err := s.PhotoAssetForNode(ctx, node.ID)
+			require.NoError(t, err)
+			assets = append(assets, asset)
+		}
+		first, second := assets[0], assets[1]
+		_, err := s.DetachPhotoFile(ctx, second.ID, second.Revision, second.Files[0].ID, PhotoDetachOptions{})
 		require.NoError(t, err)
-		node, err := s.CreateFile(t.Context(), dir.ID, "original.jpg", browseHash(fmt.Sprintf("bad-%d", i)), 20, "image/jpeg")
+		first, err = s.AttachPhotoFile(ctx, first.ID, first.Revision, second.Files[0].NodeID, PhotoRoleImage, nil)
 		require.NoError(t, err)
-		asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
-		require.NoError(t, err)
-		_, err = s.db.ExecContext(t.Context(), "UPDATE nodes SET name=? WHERE id=?", name, asset.Files[0].NodeID)
-		require.NoError(t, err)
-		badAssets[asset.ID] = asset.Files[0].ID
+		duplicateAssets[first.ID] = []string{first.Files[0].ID, first.Files[1].ID}
 	}
 	selection := PhotoCheckoutSelection{All: true}
 	estimate, err := s.EstimatePhotoCheckout(t.Context(), selection)
@@ -1055,9 +1065,9 @@ func TestPhotoCheckoutSkipsInvalidNamesWithBoundedDetails(t *testing.T) {
 	require.Equal(t, int64(25), estimate.SkippedPhotoCount)
 	require.Len(t, estimate.SkippedPhotos, 20)
 	for _, skip := range estimate.SkippedPhotos {
-		require.Equal(t, badAssets[skip.AssetID], skip.FileID)
-		require.Equal(t, name, skip.Name)
-		require.NotEmpty(t, skip.Reason)
+		require.Contains(t, duplicateAssets[skip.AssetID], skip.FileID)
+		require.Equal(t, "photo.jpg", skip.Name)
+		require.Contains(t, skip.Reason, "has the same name")
 	}
 	checkout, _, createdEstimate, err := s.CreatePhotoCheckout(t.Context(), selection, "checkout", 20)
 	require.NoError(t, err)

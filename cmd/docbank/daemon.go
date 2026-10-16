@@ -204,8 +204,10 @@ func runServe(ctx context.Context) (retErr error) {
 		})
 	}
 	blobRegistry := blob.NewRegistry(sigCtx, s.VaultID(), cfg.StoreBindings, storeSpecs, func(ctx context.Context, binding config.StoreBindingConfig) error {
-		if err, ok := startupFailures.Load(binding); ok {
-			return err.(error)
+		if failure, ok := startupFailures.Load(binding); ok {
+			if err, ok := failure.(error); ok {
+				return err
+			}
 		}
 		return bindingAdmission(ctx, binding)
 	})

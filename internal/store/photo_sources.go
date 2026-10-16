@@ -147,7 +147,7 @@ func photoSourcesTx(ctx context.Context, tx *sql.Tx, assets string, checkout boo
 		}
 		if !resolved {
 			source := sources[files[0]]
-			source.nameError = fmt.Sprintf("incompatible source names for target %s", target)
+			source.nameError = "incompatible source names for target " + target
 			sources[files[0]] = source
 		}
 	}

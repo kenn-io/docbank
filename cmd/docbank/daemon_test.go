@@ -591,9 +591,9 @@ func TestCheckoutBindingAdmissionRechecksSnapshotChangedDuringWalk(t *testing.T)
 
 func TestCheckoutBindingAdmissionWalkDoesNotBlockOtherBindings(t *testing.T) {
 	t.Parallel()
-	catalog, _, _, _ := newCheckoutReservationFixture(t)
+	catalog, _, _, destination := newCheckoutReservationFixture(t)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
-	blocked := config.StoreBindingConfig{Kind: "filesystem", Path: t.TempDir()}
+	blocked := config.StoreBindingConfig{Kind: "filesystem", Path: destination}
 	other := config.StoreBindingConfig{Kind: "filesystem", Path: t.TempDir()}
 	entered := make(chan struct{})
 	ctx, cancel := context.WithCancel(t.Context())

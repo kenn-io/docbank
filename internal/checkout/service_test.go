@@ -95,11 +95,12 @@ func TestCheckoutRejectsStartupCleanupDirectoryAlias(t *testing.T) {
 
 func assertStartupCleanupCheckoutRejected(t *testing.T, s Service, a store.PhotoAsset, destination string) {
 	t.Helper()
-	_, _, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, destination, 0)
+	checkout, _, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, destination, 0)
 	if root != nil {
 		require.NoError(t, root.Close())
 	}
 	require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
+	require.Empty(t, checkout.ID)
 	require.ErrorContains(t, err, "destination overlaps a vault, storage root, watched folder, or checkout")
 	checkouts, err := s.Store.ListPhotoCheckouts(t.Context())
 	require.NoError(t, err)
@@ -116,11 +117,12 @@ func TestCheckoutDestinationSafety(t *testing.T) {
 	s.Config.Watches = []config.WatchConfig{{Source: watchRoot}}
 	reject := func(destination string) {
 		t.Helper()
-		_, _, _, root, err := s.Prepare(t.Context(), selection, destination, 0)
+		checkout, _, _, root, err := s.Prepare(t.Context(), selection, destination, 0)
 		if root != nil {
 			require.NoError(t, root.Close())
 		}
 		require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
+		require.Empty(t, checkout.ID)
 	}
 	for _, base := range []string{s.VaultRoot, storageRoot, watchRoot} {
 		destination := filepath.Join(base, "checkout")
@@ -142,8 +144,9 @@ func TestCheckoutDestinationSafety(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing")
 	s.Config.StoreBindings = map[string]config.StoreBindingConfig{"archive": {Kind: "filesystem", Path: filepath.Join(missing, "archive")}}
 	s.Config.Watches = []config.WatchConfig{{Source: filepath.Join(missing, "watch")}}
-	_, _, _, root, err = s.Prepare(t.Context(), selection, t.TempDir(), 0)
+	c, _, _, root, err = s.Prepare(t.Context(), selection, t.TempDir(), 0)
 	require.NoError(t, err)
+	require.NotEmpty(t, c.ID)
 	require.NoError(t, root.Close())
 	t.Run("canonical symlink destination", func(t *testing.T) {
 		destination := t.TempDir()
