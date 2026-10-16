@@ -977,3 +977,18 @@ func TestRetainMediaAuthorityVersionsBatchesCheckoutHolds(t *testing.T) {
 		})
 	}
 }
+
+func TestVersionPruneBlobStatsBatchesCandidateHashes(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	tx, err := s.db.BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback() })
+	hashes := make([]string, 501)
+	for index := range hashes {
+		hashes[index] = fmt.Sprintf("%064x", index+1)
+	}
+	stats, err := versionPruneBlobStatsTx(tx, hashes)
+	require.NoError(t, err)
+	assert.Empty(t, stats)
+}

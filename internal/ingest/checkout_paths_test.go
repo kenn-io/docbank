@@ -13,20 +13,6 @@ import (
 )
 
 func TestCheckoutPathOverlapProtectsReservationsAndReleasedCopies(t *testing.T) {
-	parent := filepath.Join(t.TempDir(), "file")
-	require.NoError(t, os.WriteFile(parent, nil, 0o600))
-	unavailable := store.PhotoCheckout{ID: "unavailable", Destination: filepath.Join(parent, "checkout"), RetentionReleased: true}
-	reserved := store.PhotoCheckout{ID: "reserved", Destination: t.TempDir()}
-	for _, checkouts := range [][]store.PhotoCheckout{{unavailable, reserved}, {reserved, unavailable}} {
-		id, overlap, _, err := CheckoutPathOverlap(t.Context(), checkouts, filepath.Join(reserved.Destination, "child"))
-		require.NoError(t, err)
-		require.True(t, overlap)
-		require.Equal(t, reserved.ID, id)
-	}
-	_, overlap, _, err := CheckoutPathOverlap(t.Context(), []store.PhotoCheckout{unavailable}, t.TempDir())
-	require.Error(t, err, "a binding with only inconclusive checks must stay closed")
-	require.False(t, overlap)
-
 	for _, state := range []store.StorageOperationState{store.StorageOperationFailed, store.StorageOperationCompleted} {
 		t.Run(string(state), func(t *testing.T) {
 			ing := newTestIngester(t)
@@ -67,6 +53,15 @@ func TestCheckoutPathOverlapProtectsReservationsAndReleasedCopies(t *testing.T) 
 			_, err = ing.Store.RetirePhotoCheckout(ctx, checkout.ID)
 			require.NoError(t, err)
 			check(destination, true)
+			if runtime.GOOS != "windows" && os.Geteuid() != 0 {
+				require.NoError(t, os.Chmod(destination, 0o000))
+				t.Cleanup(func() { _ = os.Chmod(destination, 0o700) })
+				checkouts, err := ing.Store.ListPhotoCheckouts(ctx)
+				require.NoError(t, err)
+				_, _, _, err = CheckoutPathOverlap(ctx, checkouts, t.TempDir())
+				require.ErrorIs(t, err, os.ErrPermission)
+				require.NoError(t, os.Chmod(destination, 0o700))
+			}
 			require.NoError(t, os.Remove(edited))
 			check(destination, false)
 

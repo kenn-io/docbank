@@ -535,3 +535,114 @@ func TestRestoreAfterParentHardDeleteNeverRetargets(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "/f.txt", p)
 }
+
+func TestTrashEmpty(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+
+	a, err := s.Mkdir(ctx, s.RootID(), "a")
+	require.NoError(t, err)
+	_, err = s.CreateFile(ctx, a.ID, "f.txt", fakeHash("a1"), 1, "text/plain")
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, a.ID, -1)
+	require.NoError(t, err)
+
+	roots, err := s.TrashedRoots(ctx)
+	require.NoError(t, err)
+	require.Len(t, roots, 1)
+
+	// Nothing older than an hour.
+	rep, err := s.TrashEmpty(ctx, time.Hour, false)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), rep.Candidates)
+	assert.False(t, rep.Run)
+
+	// A dry run reports everything without deleting it.
+	rep, err = s.TrashEmpty(ctx, 0, false)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), rep.Candidates)
+	assert.Zero(t, rep.Deleted)
+	roots, err = s.TrashedRoots(ctx)
+	require.NoError(t, err)
+	require.Len(t, roots, 1)
+
+	// --run semantics delete exactly the reported roots.
+	rep, err = s.TrashEmpty(ctx, 0, true)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), rep.Candidates)
+	assert.Equal(t, int64(1), rep.Deleted)
+	assert.True(t, rep.Run)
+
+	// Subtree rows are gone (cascade), blob row remains (GC's job).
+	var nodeCount, blobCount int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodeCount))
+	assert.Equal(t, 1, nodeCount) // just the root
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM blobs`).Scan(&blobCount))
+	assert.Equal(t, 1, blobCount)
+}
+
+func TestTrashEmptyRetainsMediaAuthorityAndDeletesUnrelatedRoots(t *testing.T) {
+	t.Parallel()
+	for _, authority := range []string{"source version", "input artifact"} {
+		t.Run(authority, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			protected, err := s.CreateFile(
+				ctx, s.RootID(), "protected.bin", fakeHash("a1"), 10, "application/octet-stream")
+			require.NoError(t, err)
+			unrelated, err := s.CreateFile(
+				ctx, s.RootID(), "unrelated.bin", fakeHash("b2"), 20, "application/octet-stream")
+			require.NoError(t, err)
+			stamp := nowRFC3339()
+			_, err = s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
+				fakeHash("a1"), stamp)
+			require.NoError(t, err)
+			switch authority {
+			case "source version":
+				_, err = s.db.Exec(`INSERT INTO media_source_versions VALUES(
+					'source-version','source',1,?,?,?)`, protected.CurrentVersionID, `{}`, stamp)
+			case "input artifact":
+				_, err = s.db.Exec(`INSERT INTO media_occurrences VALUES(
+					'occurrence','source',NULL,'operator','ref','1','','','','{}',1,?,NULL)`, stamp)
+				require.NoError(t, err)
+				_, err = s.db.Exec(`INSERT INTO media_input_artifacts VALUES(
+					'input','occurrence','source',NULL,?,'recording','supplied','','',?,?)`,
+					protected.CurrentVersionID, protected.BlobHash, stamp)
+			}
+			require.NoError(t, err)
+			_, _, err = s.Trash(ctx, protected.ID, protected.Revision)
+			require.NoError(t, err)
+			_, _, err = s.Trash(ctx, unrelated.ID, unrelated.Revision)
+			require.NoError(t, err)
+
+			preview, err := s.TrashEmpty(ctx, 0, false)
+			require.NoError(t, err)
+			require.Equal(t, int64(1), preview.Candidates)
+			run, err := s.TrashEmpty(ctx, 0, true)
+			require.NoError(t, err)
+			require.Equal(t, preview.Candidates, run.Candidates)
+			require.Equal(t, int64(1), run.Deleted)
+			_, err = s.NodeByID(ctx, protected.ID)
+			require.NoError(t, err)
+			_, err = s.NodeByID(ctx, unrelated.ID)
+			require.ErrorIs(t, err, ErrNotFound)
+		})
+	}
+}
+
+func TestTrashEmptyRemovesRenditionAttachment(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	versions, profiles, _ := seedProcessingMetadataCatalog(t, s)
+	node, err := s.NodeByPath(t.Context(), "/synthetic-source-a.pdf")
+	require.NoError(t, err)
+	_, _, err = s.Trash(t.Context(), node.ID, node.Revision)
+	require.NoError(t, err)
+
+	receipt, err := s.TrashEmpty(t.Context(), 0, true)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), receipt.Deleted)
+	_, err = s.ActiveRendition(t.Context(), versions[0], profiles[0].Fingerprint)
+	require.ErrorIs(t, err, ErrNotFound)
+}

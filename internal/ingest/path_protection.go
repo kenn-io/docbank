@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"slices"
+	"syscall"
 
 	"go.kenn.io/docbank/internal/store"
 )
@@ -60,14 +61,9 @@ func PhotoCheckoutProtectsDestination(c store.PhotoCheckout) (bool, error) {
 	if !c.RetentionReleased {
 		return true, nil
 	}
-	// Stat first, without opening: a non-directory occupying this path no
-	// longer holds a copy and imposes no admission restriction, whether or
-	// not it would even be readable. Opening it first (as this used to)
-	// could fail on an unreadable replacement before the type check ever
-	// ran, which admission then treated as still-uncertain and retried
-	// forever instead of recognizing the checkout folder is simply gone.
+	// A replacement file at the destination or an ancestor holds no copies.
 	info, err := os.Stat(c.Destination)
-	if errors.Is(err, os.ErrNotExist) {
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
 		return false, nil
 	}
 	if err != nil {
@@ -77,7 +73,7 @@ func PhotoCheckoutProtectsDestination(c store.PhotoCheckout) (bool, error) {
 		return false, nil
 	}
 	folder, err := os.Open(c.Destination)
-	if errors.Is(err, os.ErrNotExist) {
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
 		return false, nil
 	}
 	if err != nil {

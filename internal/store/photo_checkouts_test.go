@@ -52,6 +52,9 @@ func TestPhotoCheckoutSelections(t *testing.T) {
 		browsePhotoMetadata(t, s, n, v.date, photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp(v.date, v.date, document.SourceMetadataPrecisionDate, document.SourceMetadataTimezoneOmitted, "")))
 	}
 	a, b, c := assets[0], assets[1], assets[2]
+	_, err := s.EstimatePhotoCheckout(ctx, PhotoCheckoutSelection{All: true, AssetIDs: []string{a.ID}})
+	require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
+	require.ErrorContains(t, err, "all cannot be combined")
 	set, err := s.CreatePhotoSet(ctx, "Trip")
 	require.NoError(t, err)
 	_, err = s.ChangePhotoSetMembers(ctx, set.ID, set.Revision, true, PhotoSetSelection{AssetIDs: []string{a.ID, b.ID}})

@@ -55,6 +55,8 @@ func TestOrdinaryPhotoMediaEnrollment(t *testing.T) {
 		role string
 	}{
 		{name: "capture.ARW", mime: "image/x-sony-arw", role: PhotoRoleImage},
+		{name: "capture.JPG", mime: "image/jpeg", role: PhotoRoleImage},
+		{name: "capture.WEBP", mime: "image/webp", role: PhotoRoleImage},
 	} {
 		file, err := s.CreateFile(ctx, s.RootID(), test.name, fakeHash(test.name), 4, test.mime)
 		require.NoError(t, err)

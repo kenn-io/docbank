@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -629,4 +630,37 @@ func TestCheckoutRechecksProtectedRootSnapshot(t *testing.T) {
 	_, _, root, err := s.Prepare(t.Context(), selection, t.TempDir(), 0)
 	require.ErrorContains(t, err, "protected roots changed")
 	require.Nil(t, root)
+}
+
+func TestCheckoutSeparationAvoidsRepeatedAndObjectTreeWalks(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("requires Unix directory permissions")
+	}
+	for _, vaultTree := range []bool{false, true} {
+		t.Run(fmt.Sprintf("vault tree=%t", vaultTree), func(t *testing.T) {
+			s := checkoutService(t)
+			asset := checkoutPhoto(t, s, "photo.jpg", "source")
+			protected := s.VaultRoot
+			if !vaultTree {
+				protected = t.TempDir()
+				s.Config.Watches = []config.WatchConfig{{Source: protected}}
+			}
+			child := filepath.Join(protected, "unreadable")
+			require.NoError(t, os.Mkdir(child, 0o700))
+			t.Cleanup(func() { require.NoError(t, os.Chmod(child, 0o700)) })
+			if vaultTree {
+				require.NoError(t, os.Chmod(child, 0o000))
+			}
+			checkout, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, t.TempDir(), 0)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, root.Close()) }()
+			require.NoError(t, os.Chmod(child, 0o000))
+			require.NoError(t, s.Run(t.Context(), checkout, root))
+			status, err := s.Store.PhotoCheckoutStatus(t.Context(), checkout.ID)
+			require.NoError(t, err)
+			require.EqualValues(t, 1, status.PublishedFiles)
+			require.Equal(t, "completed", status.Checkout.State)
+		})
+	}
 }

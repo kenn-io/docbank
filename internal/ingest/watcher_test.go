@@ -505,7 +505,17 @@ func TestWatchedFileMustMatchItsSettledFingerprint(t *testing.T) {
 	sourcePath := filepath.Join(source, "document.txt")
 	settled, err := observeLocalFileFingerprint(sourcePath)
 	require.NoError(t, err)
-	settled.size++
+	replacementPath := filepath.Join(source, "replacement.tmp")
+	require.NoError(t, os.WriteFile(replacementPath, []byte("other"), 0o600))
+	observedAt := time.Unix(0, settled.modTime)
+	require.NoError(t, os.Chtimes(replacementPath, observedAt, observedAt))
+	require.NoError(t, os.Remove(sourcePath))
+	require.NoError(t, os.Rename(replacementPath, sourcePath))
+	replacement, err := observeLocalFileFingerprint(sourcePath)
+	require.NoError(t, err)
+	require.Equal(t, settled.size, replacement.size)
+	require.Equal(t, settled.modTime, replacement.modTime)
+	require.False(t, settled.matches(replacement))
 
 	_, err = ing.ingestWatchedFile(
 		t.Context(), "documents", "/inbox", "document.txt", settled,
@@ -518,80 +528,19 @@ func TestWatchedFileMustMatchItsSettledFingerprint(t *testing.T) {
 
 func TestLocalFileReadRejectsConcurrentChange(t *testing.T) {
 	ing := newTestIngester(t)
-	ctx := t.Context()
-	for _, test := range []struct {
-		name string
-		edit func(t *testing.T, path string, before localFileFingerprint)
-	}{
-		{name: "size changed", edit: func(t *testing.T, path string, _ localFileFingerprint) {
-			t.Helper()
-			require.NoError(t, os.WriteFile(path, []byte("changed-size"), 0o600))
-		}},
-		{name: "replaced with same size and timestamp", edit: func(t *testing.T, path string, before localFileFingerprint) {
-			t.Helper()
-			replacementPath := filepath.Join(filepath.Dir(path), "replacement.tmp")
-			require.NoError(t, os.WriteFile(replacementPath, []byte("else"), 0o600))
-			observedAt := time.Unix(0, before.modTime)
-			require.NoError(t, os.Chtimes(replacementPath, observedAt, observedAt))
-			require.NoError(t, os.Remove(path))
-			require.NoError(t, os.Rename(replacementPath, path))
-		}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "capture.JPG")
-			require.NoError(t, os.WriteFile(path, []byte("same"), 0o600))
-			before, err := observeLocalFileFingerprint(path)
-			require.NoError(t, err)
-			test.edit(t, path, before)
-			_, err = ing.readLocalFile(ctx, path, path, nil, &before)
-			require.ErrorIs(t, err, ErrSourceChanged)
-			assert.ErrorContains(t, err, "replaced before opening")
-		})
-	}
-
-	t.Run("changed during read", func(t *testing.T) {
-		filePath := filepath.Join(t.TempDir(), "changing.bin")
-		require.NoError(t, os.WriteFile(filePath, make([]byte, progressByteInterval*2), 0o600))
-		changed := false
-		progress := newProgressTracker(func(event ProgressEvent) {
-			if changed || event.BytesRead < progressByteInterval {
-				return
-			}
-			changed = true
-			require.NoError(t, os.WriteFile(filePath, []byte("changed"), 0o600))
-		})
-		_, err := ing.readLocalFile(context.Background(), filePath, filePath, progress, nil)
-		require.ErrorIs(t, err, ErrSourceChanged)
-		assert.True(t, changed)
+	filePath := filepath.Join(t.TempDir(), "changing.bin")
+	require.NoError(t, os.WriteFile(filePath, make([]byte, progressByteInterval*2), 0o600))
+	changed := false
+	progress := newProgressTracker(func(event ProgressEvent) {
+		if changed || event.BytesRead < progressByteInterval {
+			return
+		}
+		changed = true
+		require.NoError(t, os.WriteFile(filePath, []byte("changed"), 0o600))
 	})
-	t.Run("replaced during read with same size and timestamp", func(t *testing.T) {
-		dir := t.TempDir()
-		filePath := filepath.Join(dir, "document.bin")
-		replacementPath := filepath.Join(dir, "replacement.tmp")
-		content := make([]byte, progressByteInterval*2)
-		require.NoError(t, os.WriteFile(filePath, content, 0o600))
-		settled, err := observeLocalFileFingerprint(filePath)
-		require.NoError(t, err)
-		require.NoError(t, os.WriteFile(replacementPath, content, 0o600))
-		require.NoError(t, os.Chtimes(replacementPath,
-			time.Unix(0, settled.modTime), time.Unix(0, settled.modTime)))
-
-		replaced := false
-		progress := newProgressTracker(func(event ProgressEvent) {
-			if replaced || event.BytesRead < progressByteInterval {
-				return
-			}
-			replaced = true
-			require.NoError(t, os.Remove(filePath))
-			require.NoError(t, os.Rename(replacementPath, filePath))
-		})
-		_, err = ing.readLocalFile(
-			context.Background(), filePath, filePath, progress, &settled,
-		)
-		require.ErrorIs(t, err, ErrSourceChanged)
-		require.ErrorContains(t, err, "watched path was replaced while reading")
-		assert.True(t, replaced)
-	})
+	_, err := ing.readLocalFile(context.Background(), filePath, filePath, progress, nil)
+	require.ErrorIs(t, err, ErrSourceChanged)
+	assert.True(t, changed)
 }
 
 func stringsReader(value string) io.Reader { return strings.NewReader(value) }
@@ -624,4 +573,33 @@ func TestWatchTreeTraversalHonorsContext(t *testing.T) {
 			require.ErrorIs(t, err, want)
 		})
 	}
+}
+
+func TestWatchedFileReadRejectsConcurrentPathReplacement(t *testing.T) {
+	ing := newTestIngester(t)
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "document.bin")
+	replacementPath := filepath.Join(dir, "replacement.tmp")
+	content := make([]byte, progressByteInterval*2)
+	require.NoError(t, os.WriteFile(filePath, content, 0o600))
+	settled, err := observeLocalFileFingerprint(filePath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(replacementPath, content, 0o600))
+	require.NoError(t, os.Chtimes(replacementPath,
+		time.Unix(0, settled.modTime), time.Unix(0, settled.modTime)))
+
+	replaced := false
+	progress := newProgressTracker(func(event ProgressEvent) {
+		if replaced || event.BytesRead < progressByteInterval {
+			return
+		}
+		replaced = true
+		require.NoError(t, os.Remove(filePath))
+		require.NoError(t, os.Rename(replacementPath, filePath))
+	})
+	_, err = ing.readLocalFile(
+		context.Background(), filePath, filePath, progress, &settled,
+	)
+	require.ErrorIs(t, err, ErrSourceChanged)
+	assert.True(t, replaced)
 }

@@ -190,3 +190,40 @@ func TestPhotoImportClients(t *testing.T) {
 		assert.True(t, IsResponseDecodeError(err))
 	}
 }
+
+func TestPhotoNodeAddressedResponsesMustContainTheNode(t *testing.T) {
+	assetID := "00000000-0000-4000-8000-000000000001"
+	fileID := "00000000-0000-4000-8000-000000000010"
+	createdAt := "2026-09-22T00:00:00Z"
+	asset := api.PhotoAsset{
+		ID: assetID, Kind: "photo", Revision: 2,
+		DisplayFileID: &fileID, DisplaySource: "default",
+		CreatedAt: createdAt, UpdatedAt: createdAt,
+		Files: []api.PhotoFile{{ID: fileID, AssetID: assetID, NodeID: 1, Role: "image", CreatedAt: createdAt}},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("ETag", `"2"`)
+		body, err := json.Marshal(asset)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(server.Close)
+	client := New(server.URL, "synthetic-key")
+
+	_, err := client.PhotoAssetForNode(t.Context(), 2)
+	require.ErrorContains(t, err, "does not contain node 2")
+	_, err = client.AttachPhotoFile(t.Context(), assetID, 1, 2, "image", nil)
+	require.True(t, IsResponseDecodeError(err))
+	_, err = client.DetachPhotoFile(t.Context(), assetID, 1, fileID, false)
+	require.True(t, IsResponseDecodeError(err))
+	_, err = client.AttachPhotoFile(t.Context(), assetID, 1, 1, "image", nil)
+	require.NoError(t, err)
+
+	asset.Files[0].Confirmed = 128
+	_, err = client.PhotoAsset(t.Context(), assetID)
+	require.ErrorContains(t, err, "unsupported confirmation bits")
+}

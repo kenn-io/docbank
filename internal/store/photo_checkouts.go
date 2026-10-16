@@ -82,6 +82,9 @@ type PhotoCheckoutStatus struct {
 }
 
 func ValidatePhotoCheckoutSelection(selection PhotoCheckoutSelection) error {
+	if selection.All && (len(selection.AssetIDs)+len(selection.AlbumIDs) > 0 || selection.Years != nil) {
+		return fmt.Errorf("%w: all cannot be combined with assets, albums, or years", ErrInvalidPhotoCheckout)
+	}
 	if !selection.All && len(selection.AssetIDs)+len(selection.AlbumIDs) == 0 && selection.Years == nil {
 		return fmt.Errorf("%w: select assets, albums, years, or all", ErrInvalidPhotoCheckout)
 	}

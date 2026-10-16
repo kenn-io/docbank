@@ -114,10 +114,6 @@ func (s Service) protectedRoots(ctx context.Context, excludedID string) ([]strin
 }
 
 func (s Service) checkDestination(ctx context.Context, root *os.Root, destination, excludedID string) (*ingest.PathProtection, error) {
-	// Deliberately no inner deadline: this walks every protected root and a
-	// large library's scan can legitimately take longer than a fixed
-	// window, which a retry loop could never outrun. The caller's own
-	// context governs cancellation.
 	paths, err := s.protectedRoots(ctx, excludedID)
 	if err != nil {
 		return nil, err
@@ -188,7 +184,7 @@ func (s Service) validateDestination(ctx context.Context, root *os.Root, destina
 			return statErr
 		}
 		var overlap bool
-		if statErr == nil && info.IsDir() {
+		if statErr == nil && info.IsDir() && other != s.VaultRoot {
 			_, overlap, err = ingest.WatchBindingOverlapContext(ctx, []config.WatchConfig{{Name: "checkout protection", Source: other}}, config.StoreBindingConfig{Kind: "filesystem", Path: destination})
 		} else {
 			overlap, err = ingest.PathsOverlapContext(ctx, destination, other)
@@ -441,6 +437,7 @@ func (s Service) Run(ctx context.Context, c store.PhotoCheckout, root *os.Root) 
 	if cancelled {
 		return s.finish(ctx, c, store.StorageOperationCancelled, "")
 	}
+	prepared := root != nil
 	if root == nil {
 		canonical, err := filepath.EvalSymlinks(c.Destination)
 		if err == nil && canonical != c.Destination {
@@ -455,9 +452,17 @@ func (s Service) Run(ctx context.Context, c store.PhotoCheckout, root *os.Root) 
 		defer func() { _ = root.Close() }()
 	}
 	if !started {
-		proof, err := s.checkDestination(ctx, root, c.Destination, c.ID)
-		if err == nil {
-			err = s.mutate(ctx, func() error { return s.recheckDestination(ctx, root, c.Destination, c.ID, proof) })
+		// Prepare already checked aliases before reserving this pinned root.
+		// A reopened root still needs the full separation check.
+		var err error
+		if prepared {
+			err = checkEmptyDestination(root, c.Destination)
+		} else {
+			var proof *ingest.PathProtection
+			proof, err = s.checkDestination(ctx, root, c.Destination, c.ID)
+			if err == nil {
+				err = s.mutate(ctx, func() error { return s.recheckDestination(ctx, root, c.Destination, c.ID, proof) })
+			}
 		}
 		if err != nil {
 			return errors.Join(err, s.finish(ctx, c, store.StorageOperationFailed, err.Error()))

@@ -76,6 +76,10 @@ func TestPublishAcceptsPathsLongerThanMaxPath(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, published)
 	}
+	moved := filepath.Join(dir, "moved.pdf")
+	staged := filepath.Join(dir, "rename.tmp")
+	require.NoError(t, os.WriteFile(staged, []byte("rename"), 0o600))
+	require.NoError(t, renameNoReplace(staged, moved), "MoveFileW must accept a path longer than MAX_PATH")
 	got, err := os.ReadFile(destination)
 	require.NoError(t, err)
 	require.Equal(t, "true", string(got))

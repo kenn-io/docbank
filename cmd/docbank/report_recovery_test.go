@@ -204,6 +204,7 @@ func TestReportCLIRecoversKnownResult(t *testing.T) {
 			created := recordedCLIResult(t, parentID)
 			require.ErrorContains(t, err, created.ID)
 			require.ErrorContains(t, err, "inspect")
+			require.ErrorContains(t, err, "file published")
 			if parentID != "" {
 				require.NotContains(t, err.Error(), parentID)
 			}

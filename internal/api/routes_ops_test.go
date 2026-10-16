@@ -335,7 +335,7 @@ func TestIngestRoutesAcceptPairedSurrogatePath(t *testing.T) {
 	}
 }
 
-func TestTrashListAndEmpty(t *testing.T) {
+func TestTrashListAndEmptyReportsRetainedRoots(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	rawHash, rawSize, err := s.Blobs.Write(strings.NewReader("synthetic raw"))
@@ -1109,4 +1109,55 @@ func TestMaintenanceGateReportsBusyToMutations(t *testing.T) {
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/nodes", nil,
 		map[string]any{"parent_id": s.RootID(), "name": "after-maintenance", "kind": "dir"})
 	assert.Equal(t, http.StatusCreated, resp.StatusCode, body)
+}
+
+func TestTrashListAndEmpty(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	f := createFileWithContent(t, ts, s, "/old.txt", "x")
+	_, etag := etagOf(t, ts, f.ID)
+	resp, _ := do(t, ts, http.MethodPost, fmt.Sprintf("/api/v1/nodes/%d/trash", f.ID),
+		map[string]string{"If-Match": etag}, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	resp, body := get(t, ts, "/api/v1/trash", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var trash api.TrashPage
+	require.NoError(t, json.Unmarshal([]byte(body), &trash))
+	require.Len(t, trash.Items, 1)
+	assert.Equal(t, "old.txt", trash.Items[0].Name)
+	assert.Equal(t, 1, trash.Total)
+	assert.Zero(t, trash.Limit)
+	assert.Zero(t, trash.Offset)
+
+	resp, body = get(t, ts, "/api/v1/trash?limit=1&offset=0", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NoError(t, json.Unmarshal([]byte(body), &trash))
+	assert.Equal(t, 1, trash.Total)
+	assert.Equal(t, 1, trash.Limit)
+
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil,
+		map[string]any{"older_than": ""})
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var out api.TrashEmptyReport
+	require.NoError(t, json.Unmarshal([]byte(body), &out))
+	assert.Equal(t, int64(1), out.CandidateRoots)
+	assert.Zero(t, out.Deleted)
+	assert.False(t, out.Run)
+
+	// Dry run leaves the node restorable; run performs the deletion.
+	resp, body = get(t, ts, "/api/v1/trash", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, body, "old.txt")
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil,
+		map[string]any{"older_than": "", "run": true})
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NoError(t, json.Unmarshal([]byte(body), &out))
+	assert.Equal(t, int64(1), out.Deleted)
+	assert.True(t, out.Run)
+
+	// Bad age string → 422.
+	resp, _ = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil,
+		map[string]any{"older_than": "-3d"})
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
 }

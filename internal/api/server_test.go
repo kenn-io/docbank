@@ -307,6 +307,10 @@ func TestAuthRequiredWhenKeySet(t *testing.T) {
 	}
 }
 
+// TestNewServerRefusesEmptyKey pins the defense-in-depth invariant behind
+// TestKeylessConfigStillRequiresAuth: even if some future caller reproduced
+// the old bug and built Deps with an empty key, NewServer itself refuses to
+// construct rather than silently falling back to unauthenticated.
 func TestNewServerRefusesEmptyKey(t *testing.T) {
 	t.Parallel()
 	assert.Panics(t, func() {
@@ -758,4 +762,17 @@ func TestValidationErrorEnvelope(t *testing.T) {
 	resp, body := get(t, ts, "/api/v1/nodes/not-a-number", nil)
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
 	assert.Contains(t, body, `"code":"validation"`, body)
+}
+
+// TestKeylessConfigStillRequiresAuth is the regression test for the
+// keyless-loopback finding: NewServer must never let an empty-configured
+// key fall back to unauthenticated access. newTestServer's default already
+// configures a non-empty key (mirroring production, which always computes
+// one — see cmd/docbank/daemon.go); this test proves a request without
+// that key is refused rather than silently allowed through.
+func TestKeylessConfigStillRequiresAuth(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	resp, _ := get(t, ts, "/api/v1/nodes/1", map[string]string{"X-Api-Key": ""})
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }
