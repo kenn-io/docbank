@@ -13,6 +13,7 @@
     onclose,
   }: { ids: string[]; photos: Photos; cache: PhotoPreviewCache; onclose: () => void } = $props();
   let selected = $state<string[]>([]);
+  let target = $state<string[]>([]);
   let rows = $state.raw<PhotoBrowseRow[]>([]);
   let unavailable = $state(0);
   let errors = $state.raw<string[]>([]);
@@ -23,17 +24,15 @@
   let navigationError = $state("");
   let retryDirection = $state<-1 | 1>(1);
   let content = $state<HTMLDivElement>();
-  let retry = $state(0);
   let loading = $state(false);
   onMount(() => {
     void restoreFocus();
   });
   $effect(() => {
-    selected = [...ids];
+    selected = target = [...ids];
   });
   $effect(() => {
-    const members = selected;
-    void retry;
+    const members = target;
     const controller = new AbortController();
     errors = [];
     loading = true;
@@ -41,6 +40,7 @@
       .lookupMany(members, controller.signal)
       .then((values) => {
         if (!controller.signal.aborted) {
+          selected = members;
           rows = values;
           unavailable = members.length - values.length;
           void restoreFocus();
@@ -66,7 +66,7 @@
       retryDirection = direction;
     }
     if (result.status !== "moved") return;
-    selected = result.ids;
+    target = result.ids;
     view = { ...fittedPhotoView };
     crop = undefined;
     void restoreFocus();
@@ -154,8 +154,10 @@
       {#if unavailable}<p role="status">
           {unavailable} selected {unavailable === 1 ? "photo is" : "photos are"} unavailable.
         </p>{/if}
-      {#if errors.length || unavailable}<Button size="sm" disabled={loading} onclick={() => retry++}
-          >Retry</Button
+      {#if errors.length || unavailable}<Button
+          size="sm"
+          disabled={loading}
+          onclick={() => (target = [...target])}>Retry</Button
         >{/if}
       <div class="frames" style={`--columns: ${Math.min(4, rows.length)}`}>
         {#each rows as photo (photo.asset_id)}<section aria-label={photo.name}>

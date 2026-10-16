@@ -134,6 +134,91 @@ it("decides once with P, advances, announces the decision and offers receipt Und
   await fireEvent.keyDown(document.querySelector(".photo-cull")!, { key: "Escape" });
   expect(close).toHaveBeenCalledOnce();
 });
+it("keeps a decision tied to its original photo when navigation races a deferred lookup", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const rows = [photo(1), photo(2), photo(3)];
+  const cull = new PhotoCull("session", {
+    saved: vi.fn(),
+    load: vi.fn(),
+    replace: vi.fn(),
+    checkpoint: vi.fn(),
+  });
+  cull.run = {
+    ids: rows.map((row) => row.asset_id),
+    checkpoint: {
+      runID: "run",
+      passID: "pass",
+      revision: 0,
+      pass: rows.map((row) => row.asset_id),
+      position: 0,
+      visited: [],
+      skipped: [],
+      unavailable: [],
+      scope: "all",
+      autoAdvance: true,
+    },
+  };
+  const photos = new Photos("session", vi.fn());
+  const lookup = vi
+    .spyOn(photos, "lookup")
+    .mockImplementation(async (id) => rows.find((row) => row.asset_id === id)!);
+  vi.spyOn(photos, "lookupMany").mockResolvedValue([]);
+  vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
+  const target = preparedPhoto(1);
+  const edit = vi.spyOn(api, "editPhotoAuthored").mockResolvedValue({
+    receipt_id: "pick-photo-1",
+    before: [target],
+    after: [{ ...target, values: { ...target.values, flag: "pick" } }],
+  });
+  render(PhotoCullView, {
+    cull,
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+    onclose: vi.fn(),
+  });
+  await screen.findByText("Photo 1.jpg");
+  let finishLookup!: (row: api.PhotoBrowseRow) => void;
+  const pendingLookup = new Promise<api.PhotoBrowseRow>((resolve) => (finishLookup = resolve));
+  lookup.mockImplementationOnce((id) => {
+    expect(id).toBe("photo-1");
+    return pendingLookup;
+  });
+  const shell = document.querySelector(".photo-cull")!;
+  await fireEvent.keyDown(shell, { key: "p" });
+  await waitFor(() => {
+    expect(photos.cullEditor!.targets).toHaveLength(1);
+    expect(photos.cullEditor!.loading).toBe(false);
+  });
+  expect(edit).not.toHaveBeenCalled();
+  await fireEvent.keyDown(shell, { key: "ArrowRight" });
+  if (cull.currentID === "photo-2") await screen.findByText("Photo 2.jpg");
+  await act(async () => {
+    finishLookup(rows[0]!);
+    await pendingLookup;
+    await cull.flush();
+  });
+  await waitFor(() => expect(photos.cullEditor!.busy).toBe(false));
+  if (edit.mock.calls.length) {
+    await waitFor(() => expect(document.querySelector(".kit-sr-only")?.textContent).not.toBe(""));
+    expect.soft(edit.mock.calls).toHaveLength(1);
+    expect.soft(edit.mock.calls[0]![0]).toMatchObject({
+      targets: [{ asset_id: "photo-1", file_id: "file-1" }],
+      patch: { flag: "pick" },
+    });
+    expect.soft(document.querySelector(".kit-sr-only")?.textContent).toBe("Photo 1.jpg: pick");
+  } else {
+    expect.soft(document.querySelector(".kit-sr-only")?.textContent).toBe("");
+  }
+  expect(cull.currentID).toBe("photo-2");
+  await screen.findByText("Photo 2.jpg");
+});
+
 it("keeps a failed decision on screen and guards exit while its draft remains", async () => {
   vi.stubGlobal(
     "ResizeObserver",

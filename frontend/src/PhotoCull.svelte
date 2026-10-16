@@ -136,7 +136,7 @@
     if (!photo || loading || cull.stale || cull.busy || !editor.canChangeTarget()) return;
     const selected = photo;
     editor.reset();
-    if (await prepareDecision(selected)) await applyDecision(patch);
+    if (await prepareDecision(selected)) await applyDecision(selected, patch);
   }
   async function prepareDecision(selected: PhotoBrowseRow, reload = false) {
     loading = true;
@@ -167,10 +167,8 @@
     editor.error = "This photo changed. Reload the photo before deciding.";
     return (editor.conflict = true);
   }
-  async function applyDecision(patch: PhotoAuthoredPatch, retry = false) {
-    if (!photo) return;
+  async function applyDecision(selected: PhotoBrowseRow, patch: PhotoAuthoredPatch, retry = false) {
     focus();
-    const selected = photo;
     const id = selected.asset_id;
     await editor.edit({ asset_ids: [id] }, retry ? {} : patch, false, refresh);
     await tick();
@@ -208,7 +206,7 @@
       )
         return;
     }
-    await applyDecision(patch, true);
+    if (photo) await applyDecision(photo, patch, true);
   }
   function close() {
     if (editor.canChangeTarget()) onclose();

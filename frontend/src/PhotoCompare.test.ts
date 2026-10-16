@@ -86,6 +86,18 @@ it("offers directional retry after linked navigation fails and keeps the pair un
   photos.dispose();
 });
 
+it("retries the next visible pair after its lookup fails instead of skipping a photo", async () => {
+  const { photos, dialog } = compare([photo(1), photo(2), photo(3), photo(4)]);
+  await waitFor(() => expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]));
+  vi.mocked(photos.lookupMany).mockRejectedValueOnce(new Error("Lookup unavailable"));
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
+  await within(dialog).findByText("Lookup unavailable");
+  expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]);
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
+  await waitFor(() => expect(names(dialog)).toEqual(["Photo 2.jpg", "Photo 3.jpg"]));
+  photos.dispose();
+});
+
 it("creates a manual closeup from keyboard position and confirmation", async () => {
   const { photos, dialog, onclose } = compare([photo(1), photo(2), photo(3), photo(4)]);
   const shell = dialog.querySelector(".photo-compare")!;
