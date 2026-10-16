@@ -19,7 +19,12 @@
   import StarIcon from "@lucide/svelte/icons/star";
   import ImageIcon from "@lucide/svelte/icons/image";
   import { photoSearchSort } from "./photoSearch.js";
-  import { mapPhotoLimit, type Photos, type PhotoReturn } from "./photos.svelte.js";
+  import {
+    mapPhotoLimit,
+    maxComparePhotos,
+    type Photos,
+    type PhotoReturn,
+  } from "./photos.svelte.js";
   import { groupPhotos, monthLabel, ROW_HEIGHTS, type Density } from "./photoGrid.js";
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import { isAppShortcutSuppressed } from "./shortcuts.js";
@@ -151,7 +156,7 @@
     if (enteringReview || culling || comparing || !editor.canChangeTarget()) return;
     returnFocus = document.activeElement as HTMLElement;
     compareIDs = [...photos.selectedIDs];
-    if (compareIDs.length >= 2 && compareIDs.length <= 4) comparing = true;
+    if (compareIDs.length >= 2 && compareIDs.length <= maxComparePhotos) comparing = true;
   }
   async function closeReview() {
     photos.culling = comparing = false;
@@ -846,11 +851,15 @@
                   >{/if}
                 <Button
                   size="sm"
-                  disabled={selectionCount < 2 || selectionCount > 4 || photos.allResults}
-                  title="Select 2–4 photos to compare"
+                  disabled={selectionCount < 2 ||
+                    selectionCount > maxComparePhotos ||
+                    photos.allResults}
+                  title={`Select 2–${maxComparePhotos} photos to compare`}
                   onclick={compare}>Compare</Button
                 >
-                {#if selectionCount > 4}<span>Select 2–4 photos to compare.</span>{/if}
+                {#if selectionCount > maxComparePhotos}<span
+                    >Select 2–{maxComparePhotos} photos to compare.</span
+                  >{/if}
                 {#if cull?.progress}<span role="status">{cull.progress}</span>{/if}
                 {#if cull?.error}<span role="alert">{cull.error}</span>{/if}
               {/if}

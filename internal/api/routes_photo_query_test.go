@@ -168,7 +168,7 @@ func TestPhotoBrowseRouteContract(t *testing.T) {
 	require.NoError(t, err)
 	prepared, err := s.PreparePhotoAuthored(t.Context(), store.PhotoSetSelection{AssetIDs: []string{asset.ID}})
 	require.NoError(t, err)
-	_, err = s.EditPhotoAuthoredBatch(t.Context(), store.PhotoAuthoredBatch{Targets: apiEditTargets(prepared.Targets), Patch: store.PhotoAuthoredPatch{Rotation: new(90)}})
+	_, err = s.EditPhotoAuthoredBatch(t.Context(), store.PhotoAuthoredBatch{Targets: apiEditTargets(prepared.Targets), Patch: store.PhotoAuthoredPatch{Rotation: new(90), Rating: new(4), Flag: new("pick")}})
 	require.NoError(t, err)
 	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, api.PhotoBrowseRequest{Query: api.QueryPayload(`{"filters":{"kinds":["photo"]}}`), PageSize: 1})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
@@ -209,6 +209,8 @@ func TestPhotoBrowseRouteContract(t *testing.T) {
 	require.Equal(t, http.StatusOK, mapResponse.StatusCode, mapBody)
 	require.NotContains(t, mapBody, `"map_items"`)
 	row := page.Items[0]
+	require.Equal(t, 4, row.Rating)
+	require.Equal(t, "pick", row.Flag)
 	require.NotContains(t, body, `"latitude"`)
 	require.NotContains(t, body, `"longitude"`)
 	require.Equal(t, new("Synthetic Camera"), row.CameraMake)

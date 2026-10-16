@@ -2769,6 +2769,55 @@ async function captureWorkspace() {
   return { photos, ids, finish: () => finish() };
 }
 
+it("compares eight selected photos and asks to narrow a larger selection", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const rows = Array.from({ length: 9 }, (_, index) => photo(index + 1));
+  const ids = rows.map((row) => row.asset_id);
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = rows;
+  photos.total = rows.length;
+  photos.started = true;
+  vi.spyOn(photos, "lookup").mockImplementation(
+    async (id) => rows.find((row) => row.asset_id === id)!,
+  );
+  vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
+  for (const id of ids) photos.select(id, new MouseEvent("click", { ctrlKey: true }), ids);
+  render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
+  expect((screen.getByRole("button", { name: "Compare" }) as HTMLButtonElement).disabled).toBe(
+    true,
+  );
+  expect(screen.getByText("Select 2–8 photos to compare.")).toBeTruthy();
+  await act(() => photos.select(ids[8]!, new MouseEvent("click", { ctrlKey: true }), ids));
+  const compare = screen.getByRole("button", { name: "Compare" });
+  expect((compare as HTMLButtonElement).disabled).toBe(false);
+  expect(compare.title).toBe("Select 2–8 photos to compare");
+  await fireEvent.click(compare);
+  const dialog = await screen.findByRole("dialog", { name: "Compare photos" });
+  await waitFor(() =>
+    expect(
+      within(dialog)
+        .getAllByRole("heading")
+        .map((heading) => heading.textContent),
+    ).toEqual([
+      "Photo 1.jpg",
+      "Photo 2.jpg",
+      "Photo 3.jpg",
+      "Photo 4.jpg",
+      "Photo 5.jpg",
+      "Photo 6.jpg",
+      "Photo 7.jpg",
+      "Photo 8.jpg",
+    ]),
+  );
+  photos.dispose();
+});
+
 it.each(["compare", "draft"])(
   "keeps a competing %s action while cull capture finishes",
   async (action) => {

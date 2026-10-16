@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, untrack, tick } from "svelte";
+  import { onDestroy, onMount, untrack, tick } from "svelte";
   import { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
   import { Button, Modal, Notice } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
@@ -44,6 +44,9 @@
   });
   let container = $state<HTMLDivElement>();
   const focus = () => container?.focus({ preventScroll: true });
+  onMount(() => {
+    void tick().then(focus);
+  });
   let photo = $state<PhotoBrowseRow>();
   let error = $state("");
   let loading = $state(false);

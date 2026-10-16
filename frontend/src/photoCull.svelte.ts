@@ -24,8 +24,6 @@ export class PhotoCull {
   remainder = $state(false);
   private capture?: AbortController;
   private flagRead?: AbortController;
-  private flags?: Map<string, PhotoBrowseRowFlag>;
-  private flagsPassID?: string;
   saved = $state(false);
   async probe() {
     try {
@@ -84,8 +82,6 @@ export class PhotoCull {
           throw new Error("Saved cull progress is invalid. Start a new cull.");
       }
       this.run = run;
-      this.flags = undefined;
-      this.flagsPassID = undefined;
       this.saved = !!run;
       if (this.run)
         for (const kind of ["visited", "skipped", "unavailable"] as const) {
@@ -158,8 +154,6 @@ export class PhotoCull {
       this.stale = false;
       this.run = run;
       this.saved = true;
-      this.flags = undefined;
-      this.flagsPassID = undefined;
       this.visit();
       return true;
     } catch (cause) {
@@ -175,9 +169,7 @@ export class PhotoCull {
       this.progress = `Checking ${loaded} of ${total} photos…`;
     });
     signal.throwIfAborted();
-    this.flags = new Map(rows.map((row) => [row.asset_id, row.flag]));
-    this.flagsPassID = this.run!.checkpoint.passID;
-    return this.flags;
+    return new Map(rows.map((row) => [row.asset_id, row.flag]));
   }
   private matches(scope: CullScope, flags: Map<string, PhotoBrowseRowFlag>) {
     const flag = scope === "picks" ? "pick" : scope === "rejects" ? "reject" : "";
@@ -276,6 +268,7 @@ export class PhotoCull {
     try {
       const flags = await this.refreshFlags(controller.signal);
       controller.signal.throwIfAborted();
+      for (const id of this.run.ids) if (!flags.has(id)) this.unavailable(id);
       this.remainder = this.matches("unflagged", flags).length > 0;
     } catch (cause) {
       if (!controller.signal.aborted) this.error = failure(cause);
@@ -297,16 +290,15 @@ export class PhotoCull {
       if (this.stale) return;
       const previous = this.run.checkpoint;
       const ids = this.run.ids;
-      const flags =
-        this.flags && this.flagsPassID === previous.passID
-          ? this.flags
-          : await this.refreshFlags(controller.signal);
+      const flags = await this.refreshFlags(controller.signal);
       controller.signal.throwIfAborted();
       const scope = followUp
         ? "unflagged"
         : scopes[(scopes.indexOf(this.run.checkpoint.scope) + 1) % scopes.length]!;
       const pass = this.matches(scope, flags);
       if (followUp && !pass.length) {
+        this.changingPass = false;
+        for (const id of ids) if (!flags.has(id)) this.unavailable(id);
         this.remainder = false;
         return;
       }

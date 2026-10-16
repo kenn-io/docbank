@@ -76,7 +76,12 @@ it("decides once with P, advances, announces the decision and offers receipt Und
     onclose: close,
   });
   await screen.findByText("Photo 1.jpg");
-  await fireEvent.keyDown(document.querySelector(".photo-cull")!, { key: "p" });
+  await fireEvent.keyDown(document.activeElement!, { key: "ArrowRight" });
+  await screen.findByText("Photo 2.jpg");
+  expect(cull.currentID).toBe(rows[1]!.asset_id);
+  await fireEvent.keyDown(document.activeElement!, { key: "ArrowLeft" });
+  await screen.findByText("Photo 1.jpg");
+  await fireEvent.keyDown(document.activeElement!, { key: "p" });
   await waitFor(() => expect(cull.currentID).toBe(rows[1]!.asset_id));
   expect(edit.mock.calls[0]?.slice(0, 3)).toEqual([
     { asset_ids: [rows[0]!.asset_id] },
@@ -338,6 +343,60 @@ async function reviewPhoto(row = photo(1), autoAdvance = false) {
   await screen.findByText(row.name);
   return { cull, photos, ...view };
 }
+
+it("includes the last photo picked after completion when S starts Picks", async () => {
+  const row = photo(1),
+    before = preparedPhoto(1);
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue({ assets: [], targets: [before] });
+  vi.spyOn(api, "editPhotoAuthored").mockImplementation(async () => {
+    row.flag = "pick";
+    return {
+      receipt_id: "pick",
+      before: [before],
+      after: [{ ...before, revision: 2, values: { ...before.values, flag: "pick" } }],
+    };
+  });
+  vi.spyOn(api, "listPhotoAssets").mockImplementation(async () => ({
+    items: [{ ...row }],
+    total: 1,
+    facets: [],
+    relevance_available: false,
+  }));
+  const { cull } = await reviewPhoto(row);
+  await act(() => {
+    cull.run = { ...cull.run!, checkpoint: { ...cull.run!.checkpoint, scope: "unflagged" } };
+  });
+  await fireEvent.keyDown(document.activeElement!, { key: "ArrowRight" });
+  await screen.findByRole("heading", { name: "Pass complete" });
+  await waitFor(() => expect(cull.busy).toBe(false));
+  await fireEvent.click(screen.getByRole("button", { name: "Previous" }));
+  await screen.findByText(row.name);
+  await fireEvent.click(screen.getByRole("button", { name: "Pick (P)" }));
+  await waitFor(() => expect(screen.getByText("pick · 0 stars")).toBeTruthy());
+  await fireEvent.keyDown(document.activeElement!, { key: "s" });
+  await screen.findByRole("button", { name: "Scope: picks" });
+  expect(cull.run!.checkpoint.pass).toEqual([row.asset_id]);
+  expect(screen.queryByRole("heading", { name: "Pass complete" })).toBeNull();
+});
+
+it("counts a captured photo lost before the completion refresh as unavailable", async () => {
+  const row = photo(1);
+  vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
+    items: [row],
+    total: 1,
+    facets: [],
+    relevance_available: false,
+  });
+  const { cull } = await reviewPhoto(row);
+  await act(() => {
+    cull.run = { ...cull.run!, ids: [row.asset_id, photo(2).asset_id] };
+  });
+  await fireEvent.keyDown(document.activeElement!, { key: "ArrowRight" });
+  await screen.findByRole("heading", { name: "Pass complete" });
+  await screen.findByText(/1 unavailable/);
+  expect(cull.run!.checkpoint.unavailable).toEqual([photo(2).asset_id]);
+});
 
 it("shows the restored rotation in the cull stage after Undo", async () => {
   let url = 0;

@@ -46,6 +46,7 @@ import { PhotoAuthoredEditor, type PhotoUndoState } from "./photoAuthored.svelte
 import type { HiddenAccess } from "./hiddenAccess.svelte.js";
 import type { PhotoCull } from "./photoCull.svelte.js";
 
+export const maxComparePhotos = 8;
 export const photoQuery = parseQuery(
   '{"syntax":"simple","sort":{"field":"capture_time","direction":"desc"}}',
 );

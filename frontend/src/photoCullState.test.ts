@@ -171,7 +171,7 @@ it("captures the entire ordered photo snapshot from its frozen flags and resumes
   });
   expect(capture).toHaveBeenCalledTimes(1);
 });
-it("filters captured IDs locally and reuses completion flags at the next pass boundary", async () => {
+it("filters captured IDs locally with fresh flags at each pass boundary", async () => {
   const rows = Array.from({ length: 10 }, (_, index) => photo(index + 1));
   const full = await snapshot(rows.map((row) => row.asset_id));
   for (let index = 2; index < rows.length; index++) {
@@ -210,11 +210,11 @@ it("filters captured IDs locally and reuses completion flags at the next pass bo
   expect(cull.error).toBe("");
   expect(cull.run?.checkpoint.scope).toBe("picks");
   expect(cull.run?.checkpoint.pass).toEqual([
-    rows[3]!.asset_id,
+    rows[2]!.asset_id,
     ...rows.slice(4).map((row) => row.asset_id),
   ]);
   expect(cull.run?.checkpoint.unavailable).toEqual([]);
-  expect(list).not.toHaveBeenCalled();
+  expect(list).toHaveBeenCalledTimes(1);
   rows[2]!.flag = "";
   cull.choose(rows[9]!.asset_id);
   cull.move(1);
@@ -232,6 +232,29 @@ it("filters captured IDs locally and reuses completion flags at the next pass bo
     ),
   ).toBe(true);
 });
+it("saves newly unavailable photos when the follow-up remainder disappears", async () => {
+  const row = photo(1),
+    store = storage();
+  vi.spyOn(api, "createWorkspaceQuery").mockResolvedValue(
+    Response.json(await snapshot([row.asset_id])),
+  );
+  const list = vi
+    .spyOn(api, "listPhotoAssets")
+    .mockImplementation(async (request) => browsePage([row], request));
+  const cull = new PhotoCull("session", store);
+  await cull.start(query);
+  cull.move(1);
+  await cull.checkRemainder();
+  expect(cull.remainder).toBe(true);
+  list.mockImplementation(async (request) => browsePage([], request));
+  await cull.nextPass(true);
+  await cull.flush();
+  expect(cull.complete).toBe(true);
+  expect(cull.remainder).toBe(false);
+  expect(cull.run!.checkpoint.unavailable).toEqual([row.asset_id]);
+  expect((await store.load())!.checkpoint.unavailable).toEqual([row.asset_id]);
+});
+
 it("loads restored flags once and removes missing current-pass rows from later scopes", async () => {
   const rows = [photo(1), photo(2), photo(3)],
     ids = rows.map((row) => row.asset_id),

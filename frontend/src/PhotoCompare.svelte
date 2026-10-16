@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from "svelte";
+  import { onMount, tick } from "svelte";
   import { Button, Modal } from "@kenn-io/kit-ui";
   import type { Photos } from "./photos.svelte.js";
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
@@ -22,27 +22,31 @@
   let navigationError = $state("");
   let retryDirection = $state<-1 | 1>(1);
   let content = $state<HTMLDivElement>();
+  let retry = $state(0);
+  let loading = $state(false);
+  onMount(() => {
+    void restoreFocus();
+  });
   $effect(() => {
     selected = [...ids];
   });
   $effect(() => {
     const members = selected;
+    void retry;
     const controller = new AbortController();
-    rows = [];
     errors = [];
-    void Promise.all(
-      members.map(async (id) => {
-        try {
-          return await photos.lookup(id, controller.signal);
-        } catch (cause) {
-          if (!controller.signal.aborted)
-            errors = [...errors, cause instanceof Error ? cause.message : String(cause)];
-          return undefined;
-        }
-      }),
-    ).then((values) => {
-      if (!controller.signal.aborted) rows = values.filter((row): row is PhotoBrowseRow => !!row);
-    });
+    loading = true;
+    void Promise.all(members.map((id) => photos.lookup(id, controller.signal)))
+      .then((values) => {
+        if (!controller.signal.aborted) rows = values;
+      })
+      .catch((cause) => {
+        if (!controller.signal.aborted)
+          errors = [cause instanceof Error ? cause.message : String(cause)];
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) loading = false;
+      });
     return () => controller.abort();
   });
   async function move(direction: -1 | 1) {
@@ -140,7 +144,9 @@
           >
         </p>{/if}
       {#each errors as error}<p role="alert">{error}</p>{/each}
-      <div class="frames">
+      {#if errors.length}<Button size="sm" disabled={loading} onclick={() => retry++}>Retry</Button
+        >{/if}
+      <div class="frames" style={`--columns: ${Math.min(4, rows.length)}`}>
         {#each rows as photo (photo.asset_id)}<section aria-label={photo.name}>
             <h2>{photo.name}</h2>
             <PhotoStage
@@ -162,7 +168,11 @@
             />
           </section>{/each}
       </div>
-      {#if crop}<div class="closeups" aria-label="Matching closeups">
+      {#if crop}<div
+          class="closeups"
+          aria-label="Matching closeups"
+          style={`--columns: ${Math.min(4, rows.length)}`}
+        >
           {#each rows as photo (photo.asset_id)}<section aria-label={`Closeup of ${photo.name}`}>
               <h2>{photo.name}</h2>
               <PhotoStage {photo} {photos} {cache} view={crop} onview={(value) => (crop = value)} />
@@ -207,7 +217,9 @@
   }
   .frames,
   .closeups {
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(var(--columns), minmax(0, 1fr));
+    grid-auto-rows: minmax(0, 1fr);
     flex: 1;
     min-height: 0;
   }
@@ -218,8 +230,8 @@
   section {
     display: flex;
     flex-direction: column;
-    flex: 1;
     min-width: 0;
+    min-height: 0;
     border-right: 1px solid var(--border-default);
   }
   h2 {
