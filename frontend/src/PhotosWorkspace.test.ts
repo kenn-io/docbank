@@ -2783,8 +2783,8 @@ it("compares eight selected photos and asks to narrow a larger selection", async
   photos.items = rows;
   photos.total = rows.length;
   photos.started = true;
-  vi.spyOn(photos, "lookup").mockImplementation(
-    async (id) => rows.find((row) => row.asset_id === id)!,
+  vi.spyOn(photos, "lookupMany").mockImplementation(async (members) =>
+    members.map((id) => rows.find((row) => row.asset_id === id)!),
   );
   vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
   for (const id of ids) photos.select(id, new MouseEvent("click", { ctrlKey: true }), ids);
