@@ -19,7 +19,7 @@ func TestPhotoCheckoutClients(t *testing.T) {
 	t.Parallel()
 	const id = "00000000-0000-4000-8000-0000000000aa"
 	const operationID = "00000000-0000-4000-8000-000000000012"
-	selection := store.PhotoCheckoutSelection{All: true, AssetIDs: []string{"00000000-0000-4000-8000-000000000021"}, AlbumIDs: []string{"00000000-0000-4000-8000-000000000022"}, Years: &store.PhotoCheckoutYears{From: 2024, To: 2025}}
+	selection := store.PhotoCheckoutSelection{AssetIDs: []string{"00000000-0000-4000-8000-000000000021"}, AlbumIDs: []string{"00000000-0000-4000-8000-000000000022"}, Years: &store.PhotoCheckoutYears{From: 2024, To: 2025}}
 	checkout := store.PhotoCheckout{ID: id, Selection: selection, ByteLimit: 100, Destination: filepath.Join(t.TempDir(), "destination"), OperationID: operationID, State: "queued"}
 	expectedStatus := api.PhotoCheckoutStatus{Checkout: checkout, Files: 2, Bytes: 5, PublishedFiles: 1, PublishedBytes: 3}
 	created := api.PhotoCheckoutCreateResult{Checkout: checkout, Operation: api.StorageOperation{ID: operationID, Kind: "photo_checkout", State: "queued"}}

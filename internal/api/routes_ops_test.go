@@ -19,7 +19,6 @@ import (
 	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
 
-	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
@@ -335,77 +334,50 @@ func TestIngestRoutesAcceptPairedSurrogatePath(t *testing.T) {
 	}
 }
 
-func TestTrashListAndEmptyReportsRetainedRoots(t *testing.T) {
+func TestTrashListAndEmpty(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
-	rawHash, rawSize, err := s.Blobs.Write(strings.NewReader("synthetic raw"))
-	require.NoError(t, err)
-	raw, err := s.CreateFile(t.Context(), s.RootID(), "capture.raw", rawHash, rawSize, "application/octet-stream")
-	require.NoError(t, err)
-	jpegHash, jpegSize, err := s.Blobs.Write(strings.NewReader("synthetic jpeg"))
-	require.NoError(t, err)
-	jpeg, err := s.CreateFile(t.Context(), s.RootID(), "capture.jpg", jpegHash, jpegSize, "image/jpeg")
-	require.NoError(t, err)
-	auto, err := s.PhotoAssetForNode(t.Context(), jpeg.ID)
-	require.NoError(t, err)
-	_, err = s.DetachPhotoFile(t.Context(), auto.ID, auto.Revision, auto.Files[0].ID, store.PhotoDetachOptions{})
-	require.NoError(t, err)
-	asset, err := s.CreatePhotoAsset(t.Context(), raw.ID, store.PhotoRoleRAW, store.PhotoKindPhoto)
-	require.NoError(t, err)
-	_, err = s.AttachPhotoFile(t.Context(), asset.ID, asset.Revision, jpeg.ID, store.PhotoRoleImage, nil)
-	require.NoError(t, err)
-	_, _, err = s.Trash(t.Context(), raw.ID, store.UnconditionalRev)
-	require.NoError(t, err)
-	version := createEmailVersion(t, s, "synthetic-retained.eml", "Subject: Synthetic\r\n\r\nRetained body")
-	emailResp, emailBody := do(t, ts, http.MethodPost, "/api/v1/versions/"+version.ID+"/email", nil, struct{}{})
-	require.Equal(t, http.StatusOK, emailResp.StatusCode, emailBody)
-	view, err := s.EmailMetadata(t.Context(), version.ID)
-	require.NoError(t, err)
-	root, err := s.NodeByID(t.Context(), s.RootID())
-	require.NoError(t, err)
-	_, err = s.PublishEmailDocuments(t.Context(), document.EmailDocumentPublicationRequest{
-		OperationID:  "synthetic-retention",
-		Parent:       document.EmailDocumentIdentity{NodeID: version.NodeID, VersionID: version.ID, SHA256: version.BlobHash, Size: version.Size},
-		GenerationID: view.Generation.ID, AttachmentID: view.Attachment.ID,
-		DestinationID: root.ID, DestinationRevision: root.Revision,
-	})
-	require.NoError(t, err)
-	old := createFileWithContent(t, ts, s, "/old.txt", "x")
-	_, etag := etagOf(t, ts, old.ID)
-	resp, _ := do(t, ts, http.MethodPost, fmt.Sprintf("/api/v1/nodes/%d/trash", old.ID),
+	f := createFileWithContent(t, ts, s, "/old.txt", "x")
+	_, etag := etagOf(t, ts, f.ID)
+	resp, _ := do(t, ts, http.MethodPost, fmt.Sprintf("/api/v1/nodes/%d/trash", f.ID),
 		map[string]string{"If-Match": etag}, nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	_, _, err = s.Trash(t.Context(), version.NodeID, store.UnconditionalRev)
-	require.NoError(t, err)
 
 	resp, body := get(t, ts, "/api/v1/trash", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var trash api.TrashPage
 	require.NoError(t, json.Unmarshal([]byte(body), &trash))
-	require.Len(t, trash.Items, 3)
-	assert.ElementsMatch(t, []string{"capture.raw", "old.txt", "synthetic-retained.eml"}, []string{trash.Items[0].Name, trash.Items[1].Name, trash.Items[2].Name})
-	assert.Equal(t, 3, trash.Total)
+	require.Len(t, trash.Items, 1)
+	assert.Equal(t, "old.txt", trash.Items[0].Name)
+	assert.Equal(t, 1, trash.Total)
 	assert.Zero(t, trash.Limit)
 	assert.Zero(t, trash.Offset)
 
 	resp, body = get(t, ts, "/api/v1/trash?limit=1&offset=0", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NoError(t, json.Unmarshal([]byte(body), &trash))
-	assert.Equal(t, 3, trash.Total)
+	assert.Equal(t, 1, trash.Total)
 	assert.Equal(t, 1, trash.Limit)
 
-	for _, run := range []bool{false, true} {
-		resp, body = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil,
-			map[string]any{"older_than": "", "run": run})
-		require.Equal(t, http.StatusOK, resp.StatusCode, body)
-		var out api.TrashEmptyReport
-		require.NoError(t, json.Unmarshal([]byte(body), &out))
-		want := api.TrashEmptyReport{CandidateRoots: 1, RetainedRoots: 1, HeldRoots: 1, Run: run}
-		if run {
-			want.Deleted = 1
-		}
-		assert.Equal(t, want, out)
-	}
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil,
+		map[string]any{"older_than": ""})
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var out api.TrashEmptyReport
+	require.NoError(t, json.Unmarshal([]byte(body), &out))
+	assert.Equal(t, int64(1), out.CandidateRoots)
+	assert.Zero(t, out.Deleted)
+	assert.False(t, out.Run)
+
+	// Dry run leaves the node restorable; run performs the deletion.
+	resp, body = get(t, ts, "/api/v1/trash", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, body, "old.txt")
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil,
+		map[string]any{"older_than": "", "run": true})
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NoError(t, json.Unmarshal([]byte(body), &out))
+	assert.Equal(t, int64(1), out.Deleted)
+	assert.True(t, out.Run)
 
 	// Bad age string → 422.
 	resp, _ = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil,
@@ -1109,55 +1081,4 @@ func TestMaintenanceGateReportsBusyToMutations(t *testing.T) {
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/nodes", nil,
 		map[string]any{"parent_id": s.RootID(), "name": "after-maintenance", "kind": "dir"})
 	assert.Equal(t, http.StatusCreated, resp.StatusCode, body)
-}
-
-func TestTrashListAndEmpty(t *testing.T) {
-	t.Parallel()
-	ts, s := newTestServer(t, nil)
-	f := createFileWithContent(t, ts, s, "/old.txt", "x")
-	_, etag := etagOf(t, ts, f.ID)
-	resp, _ := do(t, ts, http.MethodPost, fmt.Sprintf("/api/v1/nodes/%d/trash", f.ID),
-		map[string]string{"If-Match": etag}, nil)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-
-	resp, body := get(t, ts, "/api/v1/trash", nil)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	var trash api.TrashPage
-	require.NoError(t, json.Unmarshal([]byte(body), &trash))
-	require.Len(t, trash.Items, 1)
-	assert.Equal(t, "old.txt", trash.Items[0].Name)
-	assert.Equal(t, 1, trash.Total)
-	assert.Zero(t, trash.Limit)
-	assert.Zero(t, trash.Offset)
-
-	resp, body = get(t, ts, "/api/v1/trash?limit=1&offset=0", nil)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.NoError(t, json.Unmarshal([]byte(body), &trash))
-	assert.Equal(t, 1, trash.Total)
-	assert.Equal(t, 1, trash.Limit)
-
-	resp, body = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil,
-		map[string]any{"older_than": ""})
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	var out api.TrashEmptyReport
-	require.NoError(t, json.Unmarshal([]byte(body), &out))
-	assert.Equal(t, int64(1), out.CandidateRoots)
-	assert.Zero(t, out.Deleted)
-	assert.False(t, out.Run)
-
-	// Dry run leaves the node restorable; run performs the deletion.
-	resp, body = get(t, ts, "/api/v1/trash", nil)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Contains(t, body, "old.txt")
-	resp, body = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil,
-		map[string]any{"older_than": "", "run": true})
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.NoError(t, json.Unmarshal([]byte(body), &out))
-	assert.Equal(t, int64(1), out.Deleted)
-	assert.True(t, out.Run)
-
-	// Bad age string → 422.
-	resp, _ = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil,
-		map[string]any{"older_than": "-3d"})
-	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
 }

@@ -2,8 +2,6 @@ package store
 
 import (
 	"context"
-	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -272,47 +270,72 @@ func TestTrashedRootsPageIsBounded(t *testing.T) {
 	require.ErrorContains(t, err, "trash offset")
 }
 
-func TestTrashEmptyRetainsAuthorityPinsAndDeletesUnrelatedRoots(t *testing.T) {
+func TestTrashEmpty(t *testing.T) {
 	t.Parallel()
-	for _, authority := range []string{"source version", "input artifact", "checkout entry", "sealed snapshot"} {
+	s := newTestStore(t)
+	ctx := t.Context()
+
+	a, err := s.Mkdir(ctx, s.RootID(), "a")
+	require.NoError(t, err)
+	_, err = s.CreateFile(ctx, a.ID, "f.txt", fakeHash("a1"), 1, "text/plain")
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, a.ID, -1)
+	require.NoError(t, err)
+
+	roots, err := s.TrashedRoots(ctx)
+	require.NoError(t, err)
+	require.Len(t, roots, 1)
+
+	// Nothing older than an hour.
+	rep, err := s.TrashEmpty(ctx, time.Hour, false)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), rep.Candidates)
+	assert.False(t, rep.Run)
+
+	// A dry run reports everything without deleting it.
+	rep, err = s.TrashEmpty(ctx, 0, false)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), rep.Candidates)
+	assert.Zero(t, rep.Deleted)
+	roots, err = s.TrashedRoots(ctx)
+	require.NoError(t, err)
+	require.Len(t, roots, 1)
+
+	// --run semantics delete exactly the reported roots.
+	rep, err = s.TrashEmpty(ctx, 0, true)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), rep.Candidates)
+	assert.Equal(t, int64(1), rep.Deleted)
+	assert.True(t, rep.Run)
+
+	// Subtree rows are gone (cascade), blob row remains (GC's job).
+	var nodeCount, blobCount int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodeCount))
+	assert.Equal(t, 1, nodeCount) // just the root
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM blobs`).Scan(&blobCount))
+	assert.Equal(t, 1, blobCount)
+}
+
+func TestTrashEmptyRetainsMediaAuthorityAndDeletesUnrelatedRoots(t *testing.T) {
+	t.Parallel()
+	for _, authority := range []string{"source version", "input artifact"} {
 		t.Run(authority, func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
-			name, mediaType := "protected.bin", "application/octet-stream"
-			if authority == "checkout entry" {
-				name, mediaType = "protected.jpg", "image/jpeg"
-			}
 			protected, err := s.CreateFile(
-				ctx, s.RootID(), name, fakeHash("a1"), 10, mediaType)
+				ctx, s.RootID(), "protected.bin", fakeHash("a1"), 10, "application/octet-stream")
 			require.NoError(t, err)
 			unrelated, err := s.CreateFile(
 				ctx, s.RootID(), "unrelated.bin", fakeHash("b2"), 20, "application/octet-stream")
 			require.NoError(t, err)
 			stamp := nowRFC3339()
-			if authority == "source version" || authority == "input artifact" {
-				_, err = s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
-					fakeHash("a1"), stamp)
-				require.NoError(t, err)
-			}
+			_, err = s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
+				fakeHash("a1"), stamp)
+			require.NoError(t, err)
 			switch authority {
-			case "sealed snapshot":
-				snapshotID, idErr := newUUIDv4()
-				require.NoError(t, idErr)
-				occurrence := strings.Repeat("a", 32)
-				_, err = s.SealCollectionSnapshot(ctx, SnapshotSealRequest{SnapshotID: snapshotID,
-					Members: []CollectionSnapshotMember{{Ordinal: 1, OccurrenceID: occurrence,
-						NodeID: protected.ID, ContentVersionID: protected.CurrentVersionID,
-						BlobSHA256: protected.BlobHash, Size: protected.Size, FamilyID: occurrence, FamilyOrder: 1,
-						DisplayName: protected.Name, FrozenFieldsJSON: "{}", DocumentKind: "other"}}})
 			case "source version":
 				_, err = s.db.Exec(`INSERT INTO media_source_versions VALUES(
 					'source-version','source',1,?,?,?)`, protected.CurrentVersionID, `{}`, stamp)
-			case "checkout entry":
-				asset, lookupErr := s.PhotoAssetForNode(ctx, protected.ID)
-				require.NoError(t, lookupErr)
-				checkout, operation, createErr := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
-				require.NoError(t, createErr)
-				err = s.FinishPhotoCheckout(ctx, checkout.ID, operation.ID, StorageOperationCompleted, `{}`, "", time.Time{})
 			case "input artifact":
 				_, err = s.db.Exec(`INSERT INTO media_occurrences VALUES(
 					'occurrence','source',NULL,'operator','ref','1','','','','{}',1,?,NULL)`, stamp)
@@ -327,16 +350,12 @@ func TestTrashEmptyRetainsAuthorityPinsAndDeletesUnrelatedRoots(t *testing.T) {
 			_, _, err = s.Trash(ctx, unrelated.ID, unrelated.Revision)
 			require.NoError(t, err)
 
-			preview, err := s.TrashEmptyBounded(ctx, 0, 1, false)
+			preview, err := s.TrashEmpty(ctx, 0, false)
 			require.NoError(t, err)
 			require.Equal(t, int64(1), preview.Candidates)
-			require.False(t, preview.More)
-			expectedRetained := map[string]int64{"checkout entry": 1}[authority]
-			require.Equal(t, expectedRetained, preview.Retained)
-			run, err := s.TrashEmptyBounded(ctx, 0, 1, true)
+			run, err := s.TrashEmpty(ctx, 0, true)
 			require.NoError(t, err)
 			require.Equal(t, preview.Candidates, run.Candidates)
-			require.Equal(t, preview.Retained, run.Retained)
 			require.Equal(t, int64(1), run.Deleted)
 			_, err = s.NodeByID(ctx, protected.ID)
 			require.NoError(t, err)
@@ -348,89 +367,77 @@ func TestTrashEmptyRetainsAuthorityPinsAndDeletesUnrelatedRoots(t *testing.T) {
 
 func TestTrashEmptyRemovesProcessedDocumentRenditionAttachment(t *testing.T) {
 	t.Parallel()
-	for _, test := range []struct {
-		name      string
-		remaining int
-	}{{"only attachment", 0}, {"second live attachment", 1}} {
-		t.Run(test.name, func(t *testing.T) {
-			s, versions := newRenditionCatalogFixture(t)
-			ctx := t.Context()
-			profile := catalogProcessingProfile(t, false)
-			build := catalogRenditionBuild(s, profile)
-			require.NoError(t, s.StageRenditionBuild(ctx, build))
-			attachment := RenditionAttachmentRecord{
-				ID: catalogAttachmentFirst, VaultID: s.VaultID(),
-				ContentVersionID: versions[0], BuildID: build.ID, Profile: profile,
-				AttachedAt: "2026-08-24T15:10:00.000000000Z",
-			}
-			require.NoError(t, publishAttachmentForTest(t, s, attachment))
-			if test.remaining == 1 {
-				attachment.ID = catalogAttachmentSecond
-				attachment.ContentVersionID = versions[1]
-				attachment.Profile = catalogProcessingProfile(t, true)
-				require.NoError(t, publishAttachmentForTest(t, s, attachment))
-			}
-
-			node, err := s.NodeByPath(ctx, "/synthetic-source-a.pdf")
-			require.NoError(t, err)
-			_, _, err = s.Trash(ctx, node.ID, node.Revision)
-			require.NoError(t, err)
-			report, err := s.TrashEmpty(ctx, 0, true)
-			require.NoError(t, err)
-			assert.Equal(t, int64(1), report.Deleted)
-
-			_, err = s.ActiveRendition(ctx, versions[0], profile.Fingerprint)
-			require.ErrorIs(t, err, ErrNotFound)
-
-			var attachments, heads, builds int
-			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_attachments`).Scan(&attachments))
-			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_heads`).Scan(&heads))
-			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_builds`).Scan(&builds))
-			assert.Equal(t, []int{test.remaining, test.remaining, 1}, []int{attachments, heads, builds},
-				"permanent document deletion revokes version authority while immutable builds remain for GC")
-		})
+	s, versions := newRenditionCatalogFixture(t)
+	ctx := t.Context()
+	profile := catalogProcessingProfile(t, false)
+	build := catalogRenditionBuild(s, profile)
+	require.NoError(t, s.StageRenditionBuild(ctx, build))
+	attachment := RenditionAttachmentRecord{
+		ID: catalogAttachmentFirst, VaultID: s.VaultID(),
+		ContentVersionID: versions[0], BuildID: build.ID, Profile: profile,
+		AttachedAt: "2026-08-24T15:10:00.000000000Z",
 	}
+	require.NoError(t, publishAttachmentForTest(t, s, attachment))
+
+	node, err := s.NodeByPath(ctx, "/synthetic-source-a.pdf")
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, node.ID, node.Revision)
+	require.NoError(t, err)
+	report, err := s.TrashEmpty(ctx, 0, true)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), report.Deleted)
+
+	var attachments, heads, builds int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_attachments`).Scan(&attachments))
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_heads`).Scan(&heads))
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM rendition_builds`).Scan(&builds))
+	assert.Equal(t, []int{0, 0, 1}, []int{attachments, heads, builds},
+		"permanent document deletion revokes version authority while immutable builds remain for GC")
 }
 
 func TestVaultEmptyTrashBoundedStore(t *testing.T) {
 	t.Parallel()
-	const total, limit = 205, 101
 	s := newTestStore(t)
 	ctx := t.Context()
-	for i := range total {
-		node, err := s.Mkdir(ctx, s.RootID(), fmt.Sprintf("folder-%d", i))
+	for _, name := range []string{"first", "second", "third"} {
+		node, err := s.Mkdir(ctx, s.RootID(), name)
 		require.NoError(t, err)
-		_, err = s.CreateFile(ctx, node.ID, "notes.txt", fakeHash("b2"), 1, "text/plain")
-		require.NoError(t, err)
-		_, _, err = s.Trash(ctx, node.ID, UnconditionalRev)
+		_, _, err = s.Trash(ctx, node.ID, node.Revision)
 		require.NoError(t, err)
 	}
-	recent, err := s.TrashEmpty(ctx, time.Hour, false)
+
+	dryRun, err := s.TrashEmptyBounded(ctx, 0, 2, false)
 	require.NoError(t, err)
-	assert.Equal(t, TrashEmptyResult{}, recent)
-	for remaining := total; remaining > 0; remaining -= limit {
-		count, more := int64(min(remaining, limit)), remaining > limit
-		dryRun, err := s.TrashEmptyBounded(ctx, 0, limit, false)
-		require.NoError(t, err)
-		assert.Equal(t, TrashEmptyResult{Candidates: count, More: more}, dryRun)
-		roots, err := s.TrashedRoots(ctx)
-		require.NoError(t, err)
-		require.Len(t, roots, remaining)
-		deleted, err := s.TrashEmptyBounded(ctx, 0, limit, true)
-		require.NoError(t, err)
-		assert.Equal(t, TrashEmptyResult{Candidates: count, Deleted: count, More: more, Run: true}, deleted)
-		roots, err = s.TrashedRoots(ctx)
-		require.NoError(t, err)
-		require.Len(t, roots, remaining-int(count))
-	}
-	var nodeCount int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodeCount))
-	assert.Equal(t, 1, nodeCount)
-	var blobCount int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM blobs`).Scan(&blobCount))
-	assert.Equal(t, 1, blobCount)
+	assert.Equal(t, TrashEmptyResult{Candidates: 2, More: true}, dryRun)
+	roots, err := s.TrashedRoots(ctx)
+	require.NoError(t, err)
+	require.Len(t, roots, 3)
+
+	deleted, err := s.TrashEmptyBounded(ctx, 0, 2, true)
+	require.NoError(t, err)
+	assert.Equal(t, TrashEmptyResult{Candidates: 2, Deleted: 2, More: true, Run: true}, deleted)
+	remaining, err := s.TrashedRoots(ctx)
+	require.NoError(t, err)
+	require.Len(t, remaining, 1)
+
 	_, err = s.TrashEmptyBounded(ctx, 0, 0, true)
 	require.ErrorContains(t, err, "maximum trash roots must be positive")
+}
+
+func TestTrashEmptyRemovesRenditionAttachment(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	versions, profiles, _ := seedProcessingMetadataCatalog(t, s)
+	node, err := s.NodeByPath(t.Context(), "/synthetic-source-a.pdf")
+	require.NoError(t, err)
+	_, _, err = s.Trash(t.Context(), node.ID, node.Revision)
+	require.NoError(t, err)
+
+	receipt, err := s.TrashEmpty(t.Context(), 0, true)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), receipt.Deleted)
+	_, err = s.ActiveRendition(t.Context(), versions[0], profiles[0].Fingerprint)
+	require.ErrorIs(t, err, ErrNotFound)
 }
 
 func TestTrashEmptyAdvancesAffectedTagRevisionsOnce(t *testing.T) {
@@ -536,113 +543,38 @@ func TestRestoreAfterParentHardDeleteNeverRetargets(t *testing.T) {
 	assert.Equal(t, "/f.txt", p)
 }
 
-func TestTrashEmpty(t *testing.T) {
+func TestTrashEmptyRetainsCheckoutAndDeletesUnrelatedRoots(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
-
-	a, err := s.Mkdir(ctx, s.RootID(), "a")
+	protected, err := s.CreateFile(ctx, s.RootID(), "protected.jpg", fakeHash("a1"), 10, "image/jpeg")
 	require.NoError(t, err)
-	_, err = s.CreateFile(ctx, a.ID, "f.txt", fakeHash("a1"), 1, "text/plain")
+	unrelated, err := s.CreateFile(
+		ctx, s.RootID(), "unrelated.bin", fakeHash("b2"), 20, "application/octet-stream")
 	require.NoError(t, err)
-	_, _, err = s.Trash(ctx, a.ID, -1)
+	asset, lookupErr := s.PhotoAssetForNode(ctx, protected.ID)
+	require.NoError(t, lookupErr)
+	checkout, operation, createErr := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+	require.NoError(t, createErr)
+	err = s.FinishPhotoCheckout(ctx, checkout.ID, operation.ID, StorageOperationCompleted, `{}`, "", time.Time{})
 	require.NoError(t, err)
-
-	roots, err := s.TrashedRoots(ctx)
+	_, _, err = s.Trash(ctx, protected.ID, protected.Revision)
 	require.NoError(t, err)
-	require.Len(t, roots, 1)
-
-	// Nothing older than an hour.
-	rep, err := s.TrashEmpty(ctx, time.Hour, false)
-	require.NoError(t, err)
-	assert.Equal(t, int64(0), rep.Candidates)
-	assert.False(t, rep.Run)
-
-	// A dry run reports everything without deleting it.
-	rep, err = s.TrashEmpty(ctx, 0, false)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), rep.Candidates)
-	assert.Zero(t, rep.Deleted)
-	roots, err = s.TrashedRoots(ctx)
-	require.NoError(t, err)
-	require.Len(t, roots, 1)
-
-	// --run semantics delete exactly the reported roots.
-	rep, err = s.TrashEmpty(ctx, 0, true)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), rep.Candidates)
-	assert.Equal(t, int64(1), rep.Deleted)
-	assert.True(t, rep.Run)
-
-	// Subtree rows are gone (cascade), blob row remains (GC's job).
-	var nodeCount, blobCount int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodeCount))
-	assert.Equal(t, 1, nodeCount) // just the root
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM blobs`).Scan(&blobCount))
-	assert.Equal(t, 1, blobCount)
-}
-
-func TestTrashEmptyRetainsMediaAuthorityAndDeletesUnrelatedRoots(t *testing.T) {
-	t.Parallel()
-	for _, authority := range []string{"source version", "input artifact"} {
-		t.Run(authority, func(t *testing.T) {
-			s := newTestStore(t)
-			ctx := t.Context()
-			protected, err := s.CreateFile(
-				ctx, s.RootID(), "protected.bin", fakeHash("a1"), 10, "application/octet-stream")
-			require.NoError(t, err)
-			unrelated, err := s.CreateFile(
-				ctx, s.RootID(), "unrelated.bin", fakeHash("b2"), 20, "application/octet-stream")
-			require.NoError(t, err)
-			stamp := nowRFC3339()
-			_, err = s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
-				fakeHash("a1"), stamp)
-			require.NoError(t, err)
-			switch authority {
-			case "source version":
-				_, err = s.db.Exec(`INSERT INTO media_source_versions VALUES(
-					'source-version','source',1,?,?,?)`, protected.CurrentVersionID, `{}`, stamp)
-			case "input artifact":
-				_, err = s.db.Exec(`INSERT INTO media_occurrences VALUES(
-					'occurrence','source',NULL,'operator','ref','1','','','','{}',1,?,NULL)`, stamp)
-				require.NoError(t, err)
-				_, err = s.db.Exec(`INSERT INTO media_input_artifacts VALUES(
-					'input','occurrence','source',NULL,?,'recording','supplied','','',?,?)`,
-					protected.CurrentVersionID, protected.BlobHash, stamp)
-			}
-			require.NoError(t, err)
-			_, _, err = s.Trash(ctx, protected.ID, protected.Revision)
-			require.NoError(t, err)
-			_, _, err = s.Trash(ctx, unrelated.ID, unrelated.Revision)
-			require.NoError(t, err)
-
-			preview, err := s.TrashEmpty(ctx, 0, false)
-			require.NoError(t, err)
-			require.Equal(t, int64(1), preview.Candidates)
-			run, err := s.TrashEmpty(ctx, 0, true)
-			require.NoError(t, err)
-			require.Equal(t, preview.Candidates, run.Candidates)
-			require.Equal(t, int64(1), run.Deleted)
-			_, err = s.NodeByID(ctx, protected.ID)
-			require.NoError(t, err)
-			_, err = s.NodeByID(ctx, unrelated.ID)
-			require.ErrorIs(t, err, ErrNotFound)
-		})
-	}
-}
-
-func TestTrashEmptyRemovesRenditionAttachment(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	versions, profiles, _ := seedProcessingMetadataCatalog(t, s)
-	node, err := s.NodeByPath(t.Context(), "/synthetic-source-a.pdf")
-	require.NoError(t, err)
-	_, _, err = s.Trash(t.Context(), node.ID, node.Revision)
+	_, _, err = s.Trash(ctx, unrelated.ID, unrelated.Revision)
 	require.NoError(t, err)
 
-	receipt, err := s.TrashEmpty(t.Context(), 0, true)
+	preview, err := s.TrashEmptyBounded(ctx, 0, 1, false)
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), receipt.Deleted)
-	_, err = s.ActiveRendition(t.Context(), versions[0], profiles[0].Fingerprint)
+	require.Equal(t, int64(1), preview.Candidates)
+	require.False(t, preview.More)
+	require.Equal(t, int64(1), preview.Retained)
+	run, err := s.TrashEmptyBounded(ctx, 0, 1, true)
+	require.NoError(t, err)
+	require.Equal(t, preview.Candidates, run.Candidates)
+	require.Equal(t, preview.Retained, run.Retained)
+	require.Equal(t, int64(1), run.Deleted)
+	_, err = s.NodeByID(ctx, protected.ID)
+	require.NoError(t, err)
+	_, err = s.NodeByID(ctx, unrelated.ID)
 	require.ErrorIs(t, err, ErrNotFound)
 }

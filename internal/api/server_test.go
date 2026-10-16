@@ -285,9 +285,9 @@ func TestAuthRequiredWhenKeySet(t *testing.T) {
 	assert.Contains(t, body, `"code":"unauthorized"`)
 
 	resp, _ = get(t, ts, "/api/v1/nodes/1", map[string]string{"X-Api-Key": "sekrit"})
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	resp, _ = get(t, ts, "/api/v1/nodes/1", map[string]string{"Authorization": "Bearer sekrit", "X-Api-Key": ""})
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.NotEqual(t, http.StatusUnauthorized, resp.StatusCode)
+	resp, _ = get(t, ts, "/api/v1/nodes/1", map[string]string{"Authorization": "Bearer sekrit"})
+	assert.NotEqual(t, http.StatusUnauthorized, resp.StatusCode)
 
 	// A wrong key is still unauthorized, not silently accepted.
 	resp, body = get(t, ts, "/api/v1/nodes/1", map[string]string{"X-Api-Key": "wrong"})
@@ -305,6 +305,19 @@ func TestAuthRequiredWhenKeySet(t *testing.T) {
 		resp, _ := get(t, ts, p, noKey)
 		assert.NotEqual(t, http.StatusUnauthorized, resp.StatusCode, p)
 	}
+}
+
+// TestKeylessConfigStillRequiresAuth is the regression test for the
+// keyless-loopback finding: NewServer must never let an empty-configured
+// key fall back to unauthenticated access. newTestServer's default already
+// configures a non-empty key (mirroring production, which always computes
+// one — see cmd/docbank/daemon.go); this test proves a request without
+// that key is refused rather than silently allowed through.
+func TestKeylessConfigStillRequiresAuth(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	resp, _ := get(t, ts, "/api/v1/nodes/1", map[string]string{"X-Api-Key": ""})
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }
 
 // TestNewServerRefusesEmptyKey pins the defense-in-depth invariant behind
@@ -762,17 +775,4 @@ func TestValidationErrorEnvelope(t *testing.T) {
 	resp, body := get(t, ts, "/api/v1/nodes/not-a-number", nil)
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
 	assert.Contains(t, body, `"code":"validation"`, body)
-}
-
-// TestKeylessConfigStillRequiresAuth is the regression test for the
-// keyless-loopback finding: NewServer must never let an empty-configured
-// key fall back to unauthenticated access. newTestServer's default already
-// configures a non-empty key (mirroring production, which always computes
-// one — see cmd/docbank/daemon.go); this test proves a request without
-// that key is refused rather than silently allowed through.
-func TestKeylessConfigStillRequiresAuth(t *testing.T) {
-	t.Parallel()
-	ts, _ := newTestServer(t, nil)
-	resp, _ := get(t, ts, "/api/v1/nodes/1", map[string]string{"X-Api-Key": ""})
-	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }

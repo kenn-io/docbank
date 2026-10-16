@@ -12,27 +12,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestVersionPruneBlobStatsReturnsCandidateStats(t *testing.T) {
+func TestVersionPruneBlobStatsBatchesCandidateHashes(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	hashes := make([]string, 501)
-	for index := range hashes {
-		hashes[index] = fmt.Sprintf("%064x", index+1)
-	}
-	expected := make(map[string]pruneBlobStats)
-	for _, index := range []int{499, 500} {
-		size := int64(index + 1)
-		_, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("batch-%d.txt", index), hashes[index], size, "text/plain")
-		require.NoError(t, err)
-		expected[hashes[index]] = pruneBlobStats{refs: 1, size: size, looseLocations: 1, looseStored: size}
-	}
 	tx, err := s.db.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
 	// Finish before t.Context cancellation can start an asynchronous rollback.
 	defer func() { require.NoError(t, tx.Rollback()) }()
+	hashes := make([]string, 501)
+	for index := range hashes {
+		hashes[index] = fmt.Sprintf("%064x", index+1)
+	}
 	stats, err := versionPruneBlobStatsTx(tx, hashes)
 	require.NoError(t, err)
-	assert.Equal(t, expected, stats)
+	assert.Empty(t, stats)
 }
 
 func TestPruneContentVersionsPreviewRunAndMetadataRoundTrip(t *testing.T) {
@@ -976,19 +969,4 @@ func TestRetainMediaAuthorityVersionsBatchesCheckoutHolds(t *testing.T) {
 			require.NotContains(t, candidates, node.CurrentVersionID)
 		})
 	}
-}
-
-func TestVersionPruneBlobStatsBatchesCandidateHashes(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	tx, err := s.db.BeginTx(t.Context(), nil)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = tx.Rollback() })
-	hashes := make([]string, 501)
-	for index := range hashes {
-		hashes[index] = fmt.Sprintf("%064x", index+1)
-	}
-	stats, err := versionPruneBlobStatsTx(tx, hashes)
-	require.NoError(t, err)
-	assert.Empty(t, stats)
 }

@@ -541,7 +541,7 @@ func (s *Store) PhotoCheckoutStarted(ctx context.Context, id string) (bool, erro
 // RetirePhotoCheckout releases local holds without changing copies or job history.
 func (s *Store) RetirePhotoCheckout(ctx context.Context, id string) (PhotoCheckout, error) {
 	var out PhotoCheckout
-	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var err error
 		out, err = scanPhotoCheckout(tx.QueryRowContext(ctx, photoCheckoutSelect+` WHERE c.checkout_id=?`, id))
 		if err != nil {

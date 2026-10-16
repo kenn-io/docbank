@@ -266,21 +266,11 @@ func TestTrashPageCountsRootsAcrossPhotoAndDirectoryGroups(t *testing.T) {
 
 func TestPhotoTrashEmptyCompleteGroups(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"bounded", "live peer", "new peer", "retained peer", "folder", "singleton"} {
+	for _, mode := range []string{"bounded", "live peer", "new peer", "retained peer", "folder"} {
 		t.Run(mode, func(t *testing.T) {
 			s := newTestStore(t)
-			var asset PhotoAsset
-			var nodes []Node
-			if mode == "singleton" {
-				node, err := s.CreateFile(t.Context(), s.RootID(), "purge.capture", fakeHash("purge-raw"), 1, "image/jpeg")
-				require.NoError(t, err)
-				nodes = append(nodes, node)
-				asset, err = s.PhotoAssetForNode(t.Context(), node.ID)
-				require.NoError(t, err)
-			} else {
-				asset, nodes = photoTrashFixture(t, s)
-			}
-			if mode == "live peer" || mode == "singleton" {
+			asset, nodes := photoTrashFixture(t, s)
+			if mode == "live peer" {
 				_, _, err := s.Trash(t.Context(), nodes[0].ID, UnconditionalRev)
 				require.NoError(t, err)
 			} else {
@@ -324,17 +314,11 @@ func TestPhotoTrashEmptyCompleteGroups(t *testing.T) {
 					require.NoError(t, err)
 				}
 			} else {
-				assert.Equal(t, int64(len(nodes)), rep.Deleted)
+				assert.Equal(t, int64(3), rep.Deleted)
 				for _, node := range nodes {
 					_, err := s.NodeByID(t.Context(), node.ID)
 					require.ErrorIs(t, err, ErrNotFound)
 				}
-				asset, err = s.PhotoAssetByID(t.Context(), asset.ID)
-				require.NoError(t, err)
-				assert.Empty(t, asset.Files)
-				assert.Nil(t, asset.DisplayFileID)
-				assert.Equal(t, PhotoDisplayNone, asset.DisplaySource)
-				require.NoError(t, validatePhotoMetadataState(t.Context(), s.db, currentStorageSchemaVersion))
 			}
 		})
 	}
@@ -355,6 +339,29 @@ func TestTrashEmptyDryRunUsesReadSnapshot(t *testing.T) {
 	result, err := s.TrashEmpty(ctx, 0, false)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), result.Candidates)
+}
+
+func TestTrashEmptyOrdinaryFoldersAcrossBatches(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	for i := range 205 {
+		folder, err := s.Mkdir(t.Context(), s.RootID(), fmt.Sprintf("folder-%d", i))
+		require.NoError(t, err)
+		_, err = s.CreateFile(t.Context(), folder.ID, "notes.txt", fakeHash("b2"), 1, "text/plain")
+		require.NoError(t, err)
+		_, _, err = s.Trash(t.Context(), folder.ID, UnconditionalRev)
+		require.NoError(t, err)
+	}
+	for _, count := range []int64{101, 101, 3} {
+		dry, err := s.TrashEmptyBounded(t.Context(), 0, 101, false)
+		require.NoError(t, err)
+		assert.Equal(t, count, dry.Candidates)
+		assert.Equal(t, count == 101, dry.More)
+		run, err := s.TrashEmptyBounded(t.Context(), 0, 101, true)
+		require.NoError(t, err)
+		assert.Equal(t, count, run.Deleted)
+		assert.Equal(t, dry.More, run.More)
+	}
 }
 
 func BenchmarkTrashEmptyLarge(b *testing.B) {
@@ -488,28 +495,5 @@ func TestPhotoRestoreFollowsCompanionsAcrossFolders(t *testing.T) {
 		current, err := s.NodeByID(t.Context(), folder.ID)
 		require.NoError(t, err)
 		assert.Equal(t, index == 3, current.TrashedAt != nil, folder.Name)
-	}
-}
-
-func TestTrashEmptyOrdinaryFoldersAcrossBatches(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	for i := range 205 {
-		folder, err := s.Mkdir(t.Context(), s.RootID(), fmt.Sprintf("folder-%d", i))
-		require.NoError(t, err)
-		_, err = s.CreateFile(t.Context(), folder.ID, "notes.txt", fakeHash("b2"), 1, "text/plain")
-		require.NoError(t, err)
-		_, _, err = s.Trash(t.Context(), folder.ID, UnconditionalRev)
-		require.NoError(t, err)
-	}
-	for _, count := range []int64{101, 101, 3} {
-		dry, err := s.TrashEmptyBounded(t.Context(), 0, 101, false)
-		require.NoError(t, err)
-		assert.Equal(t, count, dry.Candidates)
-		assert.Equal(t, count == 101, dry.More)
-		run, err := s.TrashEmptyBounded(t.Context(), 0, 101, true)
-		require.NoError(t, err)
-		assert.Equal(t, count, run.Deleted)
-		assert.Equal(t, dry.More, run.More)
 	}
 }

@@ -7,7 +7,7 @@ import (
 	"errors"
 )
 
-const photoCheckoutsStorageSchemaVersion = 36
+const photoCheckoutsStorageSchemaVersion = 39
 
 type metadataPhotoCheckout struct {
 	RetiredAt         *string                `json:"retired_at,omitempty" db:"retired_at"`

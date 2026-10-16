@@ -921,3 +921,24 @@ func TestPreserveUncertainPhotoCheckoutHoldsSurvivesClearedPublication(t *testin
 	require.NoError(t, err)
 	require.Equal(t, 1, pruned.DeletedVersions, "retirement releases the hold")
 }
+
+func TestPhotoCheckoutRetireAfterAuditActivation(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	asset := albumAsset(t, s, "photo.jpg")
+	checkout, operation, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+	require.NoError(t, err)
+	require.NoError(t, s.FinishPhotoCheckout(ctx, checkout.ID, operation.ID, StorageOperationCompleted, "{}", "", time.Time{}))
+	seedInitialAuditAuthority(t, s, s.RootID())
+	retired, err := s.RetirePhotoCheckout(ctx, checkout.ID)
+	require.NoError(t, err)
+	require.NotNil(t, retired.RetiredAt)
+	require.True(t, retired.RetentionReleased)
+	persisted, err := s.PhotoCheckout(ctx, checkout.ID)
+	require.NoError(t, err)
+	require.Equal(t, retired, persisted)
+	again, err := s.RetirePhotoCheckout(ctx, checkout.ID)
+	require.NoError(t, err)
+	require.Equal(t, retired, again)
+}

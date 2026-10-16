@@ -18,7 +18,7 @@ func TestPhotoCheckoutCLICreateEstimateListRetireAndYears(t *testing.T) {
 	destination := filepath.Join("relative", "checkout")
 	absoluteDestination, err := filepath.Abs(destination)
 	require.NoError(t, err)
-	checkout := store.PhotoCheckout{ID: checkoutID, OperationID: operationID, State: "queued", Selection: store.PhotoCheckoutSelection{All: true, AssetIDs: []string{checkoutID}, AlbumIDs: []string{operationID}}, Destination: absoluteDestination, ByteLimit: 100000}
+	checkout := store.PhotoCheckout{ID: checkoutID, OperationID: operationID, State: "queued", Selection: store.PhotoCheckoutSelection{AssetIDs: []string{checkoutID}, AlbumIDs: []string{operationID}}, Destination: absoluteDestination, ByteLimit: 100000}
 	created := api.PhotoCheckoutCreateResult{Checkout: checkout, Operation: api.StorageOperation{ID: operationID, Kind: "photo_checkout", State: "queued"}}
 	listed := []store.PhotoCheckout{checkout}
 	retired := checkout
@@ -54,7 +54,7 @@ func TestPhotoCheckoutCLICreateEstimateListRetireAndYears(t *testing.T) {
 			http.NotFound(w, r)
 		}
 	})
-	out, err := runCLI(t, "photos", "checkout", "create", destination, "--all", "--asset", checkoutID, "--album", operationID, "--byte-limit", "100000")
+	out, err := runCLI(t, "photos", "checkout", "create", destination, "--asset", checkoutID, "--album", operationID, "--byte-limit", "100000")
 	require.NoError(t, err, out)
 	var createOutput api.PhotoCheckoutCreateResult
 	require.NoError(t, json.Unmarshal([]byte(out), &createOutput))
