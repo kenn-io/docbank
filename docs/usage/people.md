@@ -21,6 +21,11 @@ display-name order. The CLI equivalent is:
 MCP clients use `find_people`. Cursors are bound to the query and the
 requested person page.
 
+`GET /api/v1/people` and `find_people` include `exact_match: true` when the
+returned page contains a name equal to the query after Unicode folding. For
+example, searching for `ada` matches `Ada`. The field is omitted when the page
+has no exact match.
+
 ## Create and inspect
 
 Create an operator-owned person with `docbank people create "Ada Lovelace"`.

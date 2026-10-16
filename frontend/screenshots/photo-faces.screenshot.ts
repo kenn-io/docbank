@@ -49,15 +49,44 @@ test("draws and names faces, opens person-filtered Library, and reads cull close
     await page.locator(".photo-image").first().dblclick();
     const loupe = page.getByRole("dialog", { name: /^Photo viewer,/ });
     await expect(loupe.locator(".photo-viewport img")).toBeVisible();
+    await expect
+      .poll(() =>
+        loupe
+          .locator(".photo-viewport img")
+          .evaluate((image) => (image as HTMLImageElement).naturalWidth > 512),
+      )
+      .toBe(true);
+    const viewport = loupe.locator(".photo-viewport");
+    await viewport.dblclick();
+    const bounds = (await viewport.boundingBox())!;
+    await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(bounds.x + bounds.width / 2 + 80, bounds.y + bounds.height / 2 + 30, {
+      steps: 5,
+    });
+    await page.mouse.up();
     await loupe.getByRole("button", { name: "Add face", exact: true }).click();
     const faceCreated = page.waitForResponse(
       (response) => response.request().method() === "POST" && response.url().endsWith("/faces"),
     );
     await loupe.getByRole("button", { name: /^Position face on/ }).focus();
     await page.keyboard.press("ArrowLeft");
+    const marker = loupe.locator(".keyboard-region");
+    await expect(marker).toBeVisible();
+    const target = (await marker.boundingBox())!;
+    await page.screenshot({
+      path: path.join(output!, "web-photo-faces-keyboard.png"),
+      animations: "disabled",
+    });
     await page.keyboard.press("Enter");
     const face = (await (await faceCreated).json()).face;
     await expect(loupe.locator(".face-box")).toHaveCount(1);
+    const placed = (await loupe.locator(".face-box").boundingBox())!;
+    expect(placed.x).toBeCloseTo(target.x, 0);
+    expect(placed.y).toBeCloseTo(target.y, 0);
+    expect(placed.width).toBeCloseTo(target.width, 0);
+    expect(placed.height).toBeCloseTo(target.height, 0);
+    await loupe.getByRole("button", { name: "Reset zoom", exact: true }).click();
     await loupe.getByRole("button", { name: "Metadata", exact: true }).click();
     const people = loupe.getByRole("region", { name: "People", exact: true });
     await people.getByRole("button", { name: "Find or create a person: Unnamed face" }).click();
@@ -82,6 +111,19 @@ test("draws and names faces, opens person-filtered Library, and reads cull close
       path: path.join(output!, "web-photo-faces-library.png"),
       animations: "disabled",
     });
+    const renamedPersonID = (
+      await page.request
+        .get(new URL("/api/v1/people?query=Ada", url).href, {
+          headers: { "X-Docbank-Web-Session": session },
+        })
+        .then((response) => response.json())
+    ).items[0].person_id;
+    await fixture.run("people", "rename", renamedPersonID, "Ada Updated", "--revision", "1");
+    await page.locator(".photo-image").first().dblclick();
+    await expect(loupe.locator(".face-box")).toHaveText("Ada Updated");
+    await loupe.getByRole("button", { name: "Close photo viewer", exact: true }).click();
+    await expect(page.getByText("Person: Ada Updated", { exact: true })).toBeVisible();
+    await fixture.run("people", "rename", renamedPersonID, "Ada", "--revision", "2");
     await page.locator(".photo-image").first().dblclick();
     await expect(loupe.locator(".face-box")).toHaveText("Ada");
     if (!(await people.isVisible()))

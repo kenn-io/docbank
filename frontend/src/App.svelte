@@ -2303,7 +2303,6 @@
       mapPhotos,
       hiddenWorkspace?.activePhotos(),
     ]);
-    if (!source.hidden && /\bperson:/i.test(activeQuery)) refreshDocumentsView();
   }
 
   function handlePhotoMetadataChanged(

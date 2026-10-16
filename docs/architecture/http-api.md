@@ -1416,6 +1416,13 @@ interpreting omissions from a truncated tag listing. Both routes require
 authentication. Browser sessions permit only these exact POST paths without
 query arguments.
 
+## People search
+
+`GET /api/v1/people` and MCP `find_people` return `items`, an optional
+`next_cursor`, and optional `exact_match`. `exact_match: true` means the returned
+page contains an active person whose display name equals the query after
+Unicode folding (`ada` matches `Ada`). The field is omitted otherwise.
+
 ## Photo faces
 
 `GET /api/v1/photos/versions/{content_version_id}/faces` reads a current or retained image/RAW version of a live photo member. It returns `faces`, `assertions`, and `people` (at most 1,000 each). The page-only `people` list maps each referenced `person_id` to its canonical `display_name`; assertions carry person IDs. Assertions include saved `depicted` links with action `assert` and suppressed links still referenced by a face. Check `action` before treating a person as depicted. Each assertion includes its ID, canonical `person_id`, version, revision and recording time. Whole-photo marks appear in `assertions` even when there are no face boxes.

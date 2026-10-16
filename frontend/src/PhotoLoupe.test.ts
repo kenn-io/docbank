@@ -8,7 +8,7 @@ import PhotoLoupeImage from "./PhotoLoupeImage.svelte";
 import { Photos } from "./photos.svelte.js";
 import type { PhotoPreviewCache } from "./photoPreviewCache.js";
 import * as api from "./generated/docbank.js";
-import { photo, mapPhoto } from "./photo-test-fixtures.js";
+import { photo, mapPhoto, photoFace } from "./photo-test-fixtures.js";
 
 afterEach(() => {
   cleanup();
@@ -64,6 +64,35 @@ function setup() {
   };
   return { props, preview, get };
 }
+it("shows the keyboard face target and saves the marked box", async () => {
+  const { props } = setup();
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  const add = vi.spyOn(api, "createPhotoFace").mockResolvedValue({ face: photoFace() });
+  const component = render(PhotoLoupe, { ...props, items: [] });
+  await screen.findByText("Fit preview");
+  const image = screen.getByRole("img", { name: "Photo 5.jpg" });
+  Object.defineProperty(image, "naturalWidth", { value: 1000 });
+  Object.defineProperty(image, "naturalHeight", { value: 800 });
+  await fireEvent.load(image);
+  await fireEvent.click(screen.getByRole("button", { name: "Add face" }));
+  const position = screen.getByRole("button", { name: "Position face on Photo 5.jpg" });
+  await fireEvent.keyDown(position, { key: "ArrowLeft" });
+  const marker = component.container.querySelector<HTMLElement>(".keyboard-region")!;
+  expect(marker).toBeTruthy();
+  expect(marker.style.left).toBe("475px");
+  expect(marker.style.top).toBe("200px");
+  expect(marker.style.width).toBe("75px");
+  expect(marker.style.height).toBe("60px");
+  await fireEvent.click(position);
+  expect(add).toHaveBeenCalledWith(
+    props.photo.content_version_id,
+    { face_id: expect.any(String), box: { x: 0.375, y: 0.425, width: 0.15, height: 0.15 } },
+    expect.objectContaining({ session: "scoped" }),
+  );
+  await waitFor(() => expect(component.container.querySelector(".keyboard-region")).toBeNull());
+});
+
 it("shows grid, fit and large and preserves zoom", async () => {
   const { props, preview } = setup();
   const view = render(PhotoLoupe, props);

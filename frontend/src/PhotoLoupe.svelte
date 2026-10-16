@@ -22,6 +22,7 @@
 
   import type { PhotoFaces } from "./photoFaces.svelte.js";
   import { drawnPhotoFace } from "./photoRotation.js";
+  import { fittedPhotoView, type PhotoView } from "./photoView.js";
 
   let {
     metadataOpen = $bindable(false),
@@ -79,6 +80,11 @@
   let image = $state<PhotoLoupeImage>();
   let dialog = $state<HTMLDivElement>();
   const identity = $derived(photo ? `${photo.asset_id}:${photo.content_version_id}` : "");
+  let view = $state<PhotoView>({ ...fittedPhotoView });
+  $effect(() => {
+    void identity;
+    view = { ...fittedPhotoView };
+  });
   const index = $derived(items.findIndex((item) => item.asset_id === photo?.asset_id));
   const rail = $derived(index < 0 ? [] : items.slice(Math.max(0, index - 4), index + 5));
   const previous = $derived(index > 0);
@@ -272,6 +278,8 @@
         >
       </div>
       {#key identity}<PhotoLoupeImage
+          {view}
+          onview={(value) => (view = value)}
           rotation={photo?.rotation ?? 0}
           faces={faces.faces.map((face) => ({
             id: face.face_id,
