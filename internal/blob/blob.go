@@ -621,32 +621,30 @@ func (s *Store) WriteDetailedContext(ctx context.Context, r io.Reader) (WriteRec
 		MaxBytes:    MaxIngestBytes,
 		Compression: s.compression,
 	}
-	if opts.Compression.Enabled && opts.Compression.MinBytes > 0 {
-		// Kit decides whether to keep compressed bytes after encoding. Avoid
-		// constructing an encoder at all for files below our minimum. Bound
-		// read-ahead even when embedded callers configure a larger minimum.
-		prefix := int(min(opts.Compression.MinBytes, 4<<10))
-		buffered := bufio.NewReaderSize(contextReader{ctx: ctx, reader: r}, prefix)
-		head, err := buffered.Peek(prefix)
-		switch err {
-		case nil:
-			r = buffered
-		case io.EOF: // Match io.Copy: only exact EOF ends the stream successfully.
+	// Identify complete small inputs before touching staging, including those
+	// eligible for compression. Larger inputs stream through the same buffer.
+	const readAheadBytes = 64 << 10
+	buffered := bufio.NewReaderSize(contextReader{ctx: ctx, reader: r}, readAheadBytes)
+	head, err := buffered.Peek(readAheadBytes)
+	switch err {
+	case nil:
+		r = buffered
+	case io.EOF: //nolint:errorlint // Match io.Copy: a wrapped EOF is a failure.
+		if int64(len(head)) < opts.Compression.MinBytes {
 			opts.Compression.Enabled = false
-			// The complete content is already buffered. Let Kit identify a
-			// duplicate before writing and syncing another staging file.
-			result, err := s.loose.WriteBytes(ctx, head, opts)
-			if err != nil {
-				return WriteReceipt{}, fmt.Errorf("writing blob: %w", err)
-			}
-			receipt := writeReceipt(result)
-			sum := md5.Sum(head) //nolint:gosec // Auxiliary interoperability digest.
-			receipt.MD5 = hex.EncodeToString(sum[:])
-			return receipt, nil
-		default:
-			return WriteReceipt{}, fmt.Errorf("reading blob prefix: %w", err)
 		}
+		result, err := s.loose.WriteBytes(ctx, head, opts)
+		if err != nil {
+			return WriteReceipt{}, fmt.Errorf("writing blob: %w", err)
+		}
+		receipt := writeReceipt(result)
+		sum := md5.Sum(head) //nolint:gosec // Auxiliary interoperability digest.
+		receipt.MD5 = hex.EncodeToString(sum[:])
+		return receipt, nil
+	default:
+		return WriteReceipt{}, fmt.Errorf("reading blob prefix: %w", err)
 	}
+
 	auxiliary := md5.New() //nolint:gosec // Interoperability-only digest; SHA-256 remains authoritative.
 	result, err := s.loose.Write(ctx, io.TeeReader(r, auxiliary), opts)
 	if err != nil {

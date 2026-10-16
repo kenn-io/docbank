@@ -199,15 +199,16 @@ that doubles common-path I/O without systematically protecting existing
 references. Full content validation belongs to `verify`, which covers every
 authorized blob.
 
-With loose compression enabled, read-ahead buffers up to the smaller of the
-compression minimum and 4 KiB. If the source ends before the buffer fills, Docbank
-passes the complete bytes to Kit's in-memory writer. Kit hashes those bytes
-before touching staging, so a duplicate avoids a temporary write and its syncs.
-The existing object's type, size, and durability checks still apply. Larger
-sources continue through the streaming writer. Once it knows the hash, Kit
-checks for a durable existing object before syncing the staging file. A duplicate
-discards that unsynced temporary copy. This check holds the same per-hash lock as
-repair, so repair cannot change the object during verification. New content is
+Read-ahead buffers at most 64 KiB per blob writer. If the source ends before
+that buffer fills, Docbank passes the complete bytes to Kit's in-memory writer.
+Kit hashes those bytes before touching staging, so a duplicate avoids temporary
+writes, compression, and cleanup. The compression minimum and savings policy
+still govern new blobs, and the existing object's type, size, and durability
+checks still apply. A 32-file local import batch can retain at most 2 MiB of
+read-ahead buffers. Larger sources continue through the streaming writer. Once
+it knows the hash, Kit checks for a durable existing object before syncing the
+staging file. A duplicate discards that unsynced temporary copy. This check holds
+the same per-hash lock as repair, so repair cannot change the object during verification. New content is
 synced outside that lock and checked again under the lock before publication.
 
 Content replacement uses the same ordering. A cheap node/revision check occurs
