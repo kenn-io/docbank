@@ -67,7 +67,7 @@ func TestPhotoClientAcceptsCreateTimestampsAndNoOpMutations(t *testing.T) {
 		CreatedAt: createdAt, UpdatedAt: createdAt,
 		Files: []api.PhotoFile{{ID: fileID, AssetID: assetID, NodeID: 1, Role: "raw", CreatedAt: createdAt}},
 	}
-	settings := api.PhotoSettings{Revision: 1, UpdatedAt: createdAt}
+	settings := api.PhotoSettings{Revision: 1, UpdatedAt: createdAt, BurstGapSeconds: 2}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		writeJSON := func(value any) {

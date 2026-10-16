@@ -15,6 +15,7 @@ export interface CullCheckpoint {
 }
 export interface CullRun {
   ids: string[];
+  captureTimeOrder?: "asc" | "desc";
   checkpoint: CullCheckpoint;
 }
 type MarkerKind = "visited" | "skipped" | "unavailable";
@@ -100,9 +101,9 @@ export function photoCullStorage(vaultID: string): CullStorage {
         const tx = db.transaction(stores, "readonly"),
           done = transactionDone(tx);
         const [membership, saved, keys, values] = await Promise.all([
-          idbRequest<{ ids: string[]; pass: string[] } | undefined>(
-            tx.objectStore("members").get(vaultID),
-          ),
+          idbRequest<
+            { ids: string[]; pass: string[]; captureTimeOrder?: "asc" | "desc" } | undefined
+          >(tx.objectStore("members").get(vaultID)),
           idbRequest<Header | undefined>(tx.objectStore("checkpoints").get(vaultID)),
           idbRequest(tx.objectStore("markers").getAllKeys(markerRange())),
           idbRequest<string[]>(tx.objectStore("markers").getAll(markerRange())),
@@ -119,7 +120,7 @@ export function photoCullStorage(vaultID: string): CullStorage {
         keys.forEach((key, index) =>
           checkpoint[(key as [string, MarkerKind, number])[1]].push(values[index]!),
         );
-        return { ids: membership.ids, checkpoint };
+        return { ids: membership.ids, captureTimeOrder: membership.captureTimeOrder, checkpoint };
       } finally {
         db.close();
       }
@@ -141,7 +142,10 @@ export function photoCullStorage(vaultID: string): CullStorage {
             await done.catch(() => {});
             throw new Error("Cull progress changed in another tab. Resume before replacing it.");
           }
-          tx.objectStore("members").put({ ids: run.ids, pass: run.checkpoint.pass }, vaultID);
+          tx.objectStore("members").put(
+            { ids: run.ids, pass: run.checkpoint.pass, captureTimeOrder: run.captureTimeOrder },
+            vaultID,
+          );
           savePass(tx, run.checkpoint);
           await done;
         } finally {
@@ -165,9 +169,11 @@ export function photoCullStorage(vaultID: string): CullStorage {
         }
         if (value.pass) {
           const members = tx.objectStore("members");
-          const membership = await idbRequest<{ ids: string[]; pass: string[] }>(
-            members.get(vaultID),
-          );
+          const membership = await idbRequest<{
+            ids: string[];
+            pass: string[];
+            captureTimeOrder?: "asc" | "desc";
+          }>(members.get(vaultID));
           members.put({ ...membership, pass: value.pass.pass }, vaultID);
           savePass(tx, { ...value.pass, revision: current.revision + 1 });
         } else {

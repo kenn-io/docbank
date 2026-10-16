@@ -12,6 +12,8 @@
     selected,
     onclick,
     oncheck,
+    expanded = false,
+    onexpand,
     onhidden,
     hidden = false,
     onopen,
@@ -22,6 +24,8 @@
     photo: PhotoGridRow;
     cache: PhotoPreviewCache;
     selected: boolean;
+    expanded?: boolean;
+    onexpand?: () => void;
     onhidden?: () => void;
     hidden?: boolean;
     onclick: (event: MouseEvent, touch: boolean) => void;
@@ -224,6 +228,14 @@
       onclick={(event) => onopen?.(event.currentTarget)}>Open</button
     >
   {/if}
+  {#if !compact && photo.stack && photo.stack.asset_ids.length > 1}
+    <button
+      type="button"
+      class="stack-count"
+      aria-label={`${expanded ? "Collapse" : "Expand"} stack of ${photo.stack.asset_ids.length} photos`}
+      onclick={onexpand}>{photo.stack.asset_ids.length}</button
+    >
+  {/if}
   {#if failed}<button
       type="button"
       class="retry-preview"
@@ -237,6 +249,16 @@
 </div>
 
 <style>
+  .stack-count {
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    padding: 4px 8px;
+  }
   .photo-cell {
     position: relative;
     height: 100%;

@@ -9,13 +9,24 @@ import type {
   CullStorage,
 } from "./photoCullStorage.js";
 import { lookupPhotoRows } from "./photos.svelte.js";
-import type { PhotoBrowseRowFlag } from "./generated/docbank.js";
+import {
+  getPhotoSettings,
+  type PhotoBrowseRow,
+  type PhotoBrowseRowFlag,
+} from "./generated/docbank.js";
+import { groupBursts, type PhotoStack } from "./photoStacks.js";
 
 const scopes: CullScope[] = ["unflagged", "picks", "rejects", "all"];
 const failure = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause));
 
 export class PhotoCull {
   run = $state.raw<CullRun>();
+  stacks = $state.raw<ReadonlyMap<string, PhotoStack>>(new Map());
+  burstGapSeconds = $state(2);
+  private rows: PhotoBrowseRow[] = [];
+  private stackRead?: AbortController;
+  stackError = $state("");
+  stackLoading = $state(false);
   busy = $state(false);
   error = $state("");
   capturing = $state(false);
@@ -44,6 +55,117 @@ export class PhotoCull {
   get currentID() {
     return this.run?.checkpoint.pass[this.run.checkpoint.position];
   }
+  get currentStack() {
+    return this.currentID ? this.stacks.get(this.currentID) : undefined;
+  }
+  async checkSettings() {
+    if (!this.run?.captureTimeOrder || this.stackLoading) return;
+    try {
+      const settings = await getPhotoSettings({ session: this.session });
+      if (settings.burst_gap_seconds !== this.burstGapSeconds) {
+        this.burstGapSeconds = settings.burst_gap_seconds;
+        this.groupRows();
+      }
+    } catch (cause) {
+      this.stackError = failure(cause);
+    }
+  }
+  private groupRows() {
+    const stacks = new Map<string, PhotoStack>();
+    if (this.run?.captureTimeOrder)
+      for (const stack of groupBursts(this.rows, this.burstGapSeconds))
+        for (const id of stack.asset_ids) stacks.set(id, stack);
+    this.stacks = stacks;
+  }
+  async regroup() {
+    if (!this.run?.captureTimeOrder) {
+      this.stacks = new Map();
+      return;
+    }
+    const controller = new AbortController();
+    this.stackRead?.abort();
+    this.stackRead = controller;
+    this.stackLoading = true;
+    this.stackError = "";
+    this.stacks = new Map();
+    try {
+      const settings = await getPhotoSettings({ session: this.session, signal: controller.signal });
+      this.burstGapSeconds = settings.burst_gap_seconds;
+      await this.refreshFlags(controller.signal);
+    } catch (cause) {
+      if (!controller.signal.aborted) this.stackError = failure(cause);
+    } finally {
+      if (this.stackRead === controller) {
+        this.stackLoading = false;
+        this.progress = "";
+      }
+    }
+  }
+  async refreshMembers(ids: string[]) {
+    if (!this.run?.captureTimeOrder) return;
+    if (!ids.length) {
+      await this.regroup();
+      return;
+    }
+    this.stackLoading = true;
+    this.stackError = "";
+    try {
+      const rows = await lookupPhotoRows(this.session, ids);
+      const requested = new Set(ids),
+        updated = new Map(rows.map((row) => [row.asset_id, row]));
+      this.rows = this.rows.flatMap((row) =>
+        requested.has(row.asset_id)
+          ? updated.has(row.asset_id)
+            ? [updated.get(row.asset_id)!]
+            : []
+          : [row],
+      );
+      this.groupRows();
+    } catch (cause) {
+      this.stacks = new Map();
+      this.stackError = failure(cause);
+      throw cause;
+    } finally {
+      this.stackLoading = false;
+    }
+  }
+  private passStacks() {
+    const groups: string[][] = [];
+    const byKey = new Map<string, string[]>();
+    for (const id of this.run?.checkpoint.pass ?? []) {
+      const key = this.stacks.get(id)?.asset_ids[0] ?? id;
+      let group = byKey.get(key);
+      if (!group) {
+        group = [];
+        byKey.set(key, group);
+        groups.push(group);
+      }
+      group.push(id);
+    }
+    return groups;
+  }
+  moveStack(direction: -1 | 1) {
+    if (!this.run || this.busy || this.stale || this.stackLoading) return;
+    if (!this.currentStack) {
+      this.move(direction);
+      return;
+    }
+    const groups = this.passStacks();
+    const index = groups.findIndex((group) => group.includes(this.currentID!));
+    const next = groups[index + direction];
+    if (next) this.choose(next[0]!);
+    else if (direction === 1) this.update({ position: this.run.checkpoint.pass.length });
+  }
+  moveFrame(direction: -1 | 1) {
+    if (!this.run || this.busy || this.stale || this.stackLoading) return;
+    if (!this.currentStack) {
+      this.move(direction);
+      return;
+    }
+    const group = this.passStacks().find((group) => group.includes(this.currentID!));
+    const next = group?.[group.indexOf(this.currentID!) + direction];
+    if (next) this.choose(next);
+  }
   get complete() {
     return !!this.run && !this.currentID;
   }
@@ -57,6 +179,9 @@ export class PhotoCull {
         if (
           !run ||
           !checkpoint ||
+          (run.captureTimeOrder !== undefined &&
+            run.captureTimeOrder !== "asc" &&
+            run.captureTimeOrder !== "desc") ||
           typeof checkpoint.runID !== "string" ||
           !checkpoint.runID.trim() ||
           typeof checkpoint.passID !== "string" ||
@@ -97,6 +222,7 @@ export class PhotoCull {
   }
   cancel() {
     this.capture?.abort();
+    this.stackRead?.abort();
     if (this.flagRead) {
       this.flagRead.abort();
       this.finishFlagRead(this.flagRead);
@@ -134,6 +260,7 @@ export class PhotoCull {
       const flags = new Map(captured.members.map((member) => [member.asset_id!, member.flag!]));
       const run: CullRun = {
         ids,
+        ...(query.sort.field === "capture_time" ? { captureTimeOrder: query.sort.direction } : {}),
         checkpoint: {
           runID: randomUUID(),
           passID: randomUUID(),
@@ -169,6 +296,8 @@ export class PhotoCull {
       this.progress = `Checking ${loaded} of ${total} photos…`;
     });
     signal.throwIfAborted();
+    this.rows = rows;
+    this.groupRows();
     return new Map(rows.map((row) => [row.asset_id, row.flag]));
   }
   private matches(scope: CullScope, flags: Map<string, PhotoBrowseRowFlag>) {

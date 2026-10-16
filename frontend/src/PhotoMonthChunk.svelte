@@ -14,6 +14,8 @@
     selectedIDs,
     onselect,
     oncheck,
+    expandedStacks = new Set<string>(),
+    onexpand,
     onhidden,
     hidden = false,
     onopen,
@@ -28,6 +30,8 @@
     cache: PhotoPreviewCache;
     selectedIDs: ReadonlySet<string>;
     onselect: (id: string, event: MouseEvent, touch: boolean) => void;
+    expandedStacks?: ReadonlySet<string>;
+    onexpand?: (id: string) => void;
     onhidden?: (id: string) => void;
     hidden?: boolean;
     onopen: (id: string, element: HTMLElement) => void;
@@ -35,6 +39,16 @@
     ondragstart?: (id: string, event: DragEvent) => void;
     ondragend?: () => void;
   } = $props();
+  const loadedCount = $derived(
+    group.items.reduce(
+      (count, photo) =>
+        count +
+        (photo.stack && !expandedStacks.has(photo.stack.asset_ids[0]!)
+          ? photo.stack.asset_ids.length
+          : 1),
+      0,
+    ),
+  );
   const inWindow = $derived(offset <= bottom && offset + layout.intrinsicHeight >= top);
   const rows = $derived(
     inWindow
@@ -66,7 +80,7 @@
 >
   {#if inWindow}
     {#if group.key !== "relevance"}<h2>
-        {group.label}<span>{group.items.length} loaded</span>
+        {group.label}<span>{loadedCount} loaded</span>
       </h2>{/if}
     <div
       class="cells"
@@ -85,6 +99,8 @@
           <PhotoCell
             {hidden}
             onhidden={() => onhidden?.(photo.asset_id)}
+            onexpand={onexpand ? () => onexpand(photo.asset_id) : undefined}
+            expanded={!!photo.stack && expandedStacks.has(photo.stack.asset_ids[0]!)}
             {photo}
             {cache}
             selected={selectedIDs.has(photo.asset_id)}

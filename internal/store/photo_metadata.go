@@ -92,11 +92,40 @@ func normalizePhotoFileMetadata(raw jsontext.Value) (jsontext.Value, error) {
 }
 
 type metadataPhotoSettings struct {
+	BurstGapSeconds *int    `json:"burst_gap_seconds" db:"burst_gap_seconds"`
+	Type            string  `json:"type"`
+	Preference      *string `json:"preference" db:"preference"`
+	Revision        int64   `json:"revision" db:"revision"`
+	UpdatedAt       string  `json:"updated_at" db:"updated_at"`
+	Singleton       int     `json:"-" db:"singleton"`
+}
+
+// Released settings records predate the burst gap. Their missing value restores as 2.
+type metadataPhotoSettingsBeforeBurst struct {
 	Type       string  `json:"type"`
 	Preference *string `json:"preference" db:"preference"`
 	Revision   int64   `json:"revision" db:"revision"`
 	UpdatedAt  string  `json:"updated_at" db:"updated_at"`
 	Singleton  int     `json:"-" db:"singleton"`
+}
+
+var photoSettingsBeforeBurstMetadata = newMetadataTable(metadataTable[metadataPhotoSettingsBeforeBurst]{
+	record: metadataPhotoSettingsBeforeBurst{Type: metadataPhotoSettingsType, Singleton: 1}, table: "photo_library_settings",
+	suffix: "WHERE singleton=1", validate: func(v metadataPhotoSettingsBeforeBurst) error {
+		return validatePhotoSettingsMetadataRecord(metadataPhotoSettings{Type: v.Type, Preference: v.Preference, Revision: v.Revision, UpdatedAt: v.UpdatedAt, Singleton: v.Singleton})
+	}, checkExport: true,
+})
+
+func normalizePhotoSettingsMetadata(raw jsontext.Value) (jsontext.Value, error) {
+	var fields map[string]jsontext.Value
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, err
+	}
+	if _, exists := fields["burst_gap_seconds"]; exists {
+		return raw, nil
+	}
+	fields["burst_gap_seconds"] = jsontext.Value("null")
+	return json.Marshal(fields, json.Deterministic(true))
 }
 
 type metadataPhotoSet struct {
@@ -238,7 +267,7 @@ func validatePhotoFileMetadataRecord(v metadataPhotoFile) error {
 }
 
 func validatePhotoSettingsMetadataRecord(v metadataPhotoSettings) error {
-	if v.Type != metadataPhotoSettingsType || v.Revision < 1 || !photoPreferenceValid(v.Preference) {
+	if v.Type != metadataPhotoSettingsType || v.Revision < 1 || !photoPreferenceValid(v.Preference) || v.BurstGapSeconds != nil && (*v.BurstGapSeconds < 1 || *v.BurstGapSeconds > 30) {
 		return errors.New("invalid photo settings metadata")
 	}
 	if v.UpdatedAt != "" {
@@ -422,6 +451,9 @@ func photoMetadataTablesForSchema(version int) []metadataRecordCodec {
 	}
 	tables = append([]metadataRecordCodec(nil), tables...)
 	for i, table := range tables {
+		if version < 39 && table.kind() == metadataPhotoSettingsType {
+			tables[i] = photoSettingsBeforeBurstMetadata
+		}
 		if version < photoAuthoredStorageSchemaVersion && table.kind() == metadataPhotoFileType {
 			tables[i] = photoFileBeforeAuthoredMetadata
 		}

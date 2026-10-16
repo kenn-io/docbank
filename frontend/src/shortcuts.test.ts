@@ -130,3 +130,15 @@ it("maps only the cull keys and ignores modifier chords, repeated keys and text 
   Object.defineProperty(event, "target", { value: document.createElement("input") });
   expect(cullKey(event)).toBeUndefined();
 });
+
+it.each(["button", "a", "div"])("leaves Enter and Space to focused %s controls", (tag) => {
+  const target = document.createElement(tag);
+  if (tag === "a") target.setAttribute("href", "https://example.com");
+  if (tag === "div") target.setAttribute("role", "button");
+  for (const key of ["Enter", " "]) {
+    const event = new KeyboardEvent("keydown", { key });
+    Object.defineProperty(event, "target", { value: target });
+    expect(cullKey(event)).toBeUndefined();
+  }
+  expect(cullKey(new KeyboardEvent("keydown", { key: "Enter" }))).toBe("keep-current");
+});

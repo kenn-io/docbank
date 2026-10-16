@@ -37,7 +37,12 @@ function browsePage(rows: api.PhotoBrowseRow[], request: api.PhotoBrowseRequest)
       (!filters?.asset_ids || filters.asset_ids.includes(row.asset_id)) &&
       (!filters?.flags || filters.flags.includes(row.flag)),
   );
-  return { items, total: items.length, facets: [], relevance_available: false };
+  return {
+    items,
+    total: items.length,
+    facets: [],
+    relevance_available: false,
+  };
 }
 it("probes saved headers and replaces a run without loading its membership", async () => {
   const store = storage(),
@@ -586,4 +591,95 @@ it("reports a failed flag lookup and clears its progress", async () => {
   expect(cull.error).toBe("Lookup unavailable");
   expect(cull.progress).toBe("");
   expect(cull.busy).toBe(false);
+});
+
+it("groups frozen rows, projects interleaved passes and stops at frame edges", async () => {
+  const rows = [photo(1), photo(3), photo(2)].map((row, i) => ({
+    ...row,
+    source_folder_key: i < 2 ? "burst" : "other",
+    capture_time: i === 1 ? "2025-06-01T12:00:02" : "2025-06-01T12:00:00",
+  }));
+  const ids = rows.map((row) => row.asset_id),
+    pass = [ids[0]!, ids[2]!, ids[1]!];
+  const store = storage();
+  await store.replace({
+    ids,
+    captureTimeOrder: "asc",
+    checkpoint: {
+      runID: "run",
+      passID: "pass",
+      revision: 0,
+      pass,
+      position: 0,
+      visited: [],
+      skipped: [],
+      unavailable: [],
+      scope: "all",
+      autoAdvance: true,
+    },
+  });
+  const list = vi
+    .spyOn(api, "listPhotoAssets")
+    .mockImplementation(async (request) => browsePage(rows, request));
+  const settings = vi
+    .spyOn(api, "getPhotoSettings")
+    .mockResolvedValue({ revision: 1, preference: null, burst_gap_seconds: 2 });
+  const cull = new PhotoCull("session", store);
+  await cull.restore();
+  await cull.regroup();
+  expect(cull.currentStack?.asset_ids).toEqual([ids[0], ids[1]]);
+  cull.stackLoading = true;
+  cull.moveFrame(1);
+  cull.moveStack(1);
+  expect(cull.currentID).toBe(ids[0]);
+  cull.stackLoading = false;
+  cull.moveFrame(-1);
+  expect(cull.currentID).toBe(ids[0]);
+  cull.moveFrame(1);
+  expect(cull.currentID).toBe(ids[1]);
+  cull.moveFrame(1);
+  expect(cull.currentID).toBe(ids[1]);
+  cull.moveStack(1);
+  expect(cull.currentID).toBe(ids[2]);
+  cull.moveStack(-1);
+  expect(cull.currentID).toBe(ids[0]);
+  list.mockClear();
+  settings.mockResolvedValue({ revision: 2, preference: "raw", burst_gap_seconds: 2 });
+  await cull.checkSettings();
+  expect(list).not.toHaveBeenCalled();
+  settings.mockResolvedValue({ revision: 3, preference: "raw", burst_gap_seconds: 1 });
+  await cull.checkSettings();
+  expect(list).not.toHaveBeenCalled();
+  cull.moveStack(1);
+  expect(cull.currentID).toBe(ids[2]);
+  await cull.flush();
+  const resumed = new PhotoCull("session", store);
+  await resumed.restore();
+  expect(resumed.run?.captureTimeOrder).toBe("asc");
+});
+
+it("keeps filename-sorted cull passes flat and preserves their captured order", async () => {
+  const rows = [photo(3), photo(1), photo(2)];
+  const store = storage();
+  const list = vi
+    .spyOn(api, "listPhotoAssets")
+    .mockImplementation(async (request) => browsePage(rows, request));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => Response.json(await snapshot(rows.map((row) => row.asset_id)))),
+  );
+  const cull = new PhotoCull("session", store);
+  expect(await cull.start(query, () => true)).toBe(true);
+  await cull.regroup();
+  expect(cull.currentStack).toBeUndefined();
+  cull.moveStack(1);
+  expect(cull.currentID).toBe(rows[1]!.asset_id);
+  cull.moveFrame(1);
+  expect(cull.currentID).toBe(rows[2]!.asset_id);
+  await cull.flush();
+  const resumed = new PhotoCull("new-session", store);
+  await resumed.restore();
+  await resumed.regroup();
+  expect(resumed.currentStack).toBeUndefined();
+  expect(list).not.toHaveBeenCalled();
 });

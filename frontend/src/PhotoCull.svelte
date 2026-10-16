@@ -40,6 +40,9 @@
         photos.authored.undoState,
       )),
   );
+  onMount(() => {
+    void cull.regroup();
+  });
   onDestroy(() => {
     cull.cancel();
     reloadController.abort();
@@ -71,7 +74,7 @@
     const id = currentID;
     void lookupAttempt;
     const controller = new AbortController();
-    photo = undefined;
+    if (!id) photo = undefined;
     error = "";
     loading = !!id;
     view = { ...fittedPhotoView };
@@ -133,8 +136,11 @@
   }
   async function refresh(receipt: PhotoAuthoredReceipt, tags: Tag[]) {
     onmetadatachanged?.(receipt, tags);
-    photos.metadataChanged(receipt);
+    const changes = photos.metadataChanged(receipt);
+    if (photos.started && photos.reloadsAfter(changes)) await photos.refresh();
     reconcile(receipt.after);
+    if (cull.run?.captureTimeOrder)
+      await cull.refreshMembers([...new Set(editor.targets.map((target) => target.asset_id))]);
     if (cull.complete) await cull.checkRemainder();
   }
   function reconcile(targets: PhotoAuthoredSnapshot[]) {
@@ -195,12 +201,54 @@
       photo = row;
       view = { ...fittedPhotoView };
       editor.reset();
+      await cull.regroup();
     } catch (cause) {
       if (!reloadController.signal.aborted)
         editor.error = cause instanceof Error ? cause.message : String(cause);
     } finally {
       editor.loading = false;
     }
+  }
+  async function decideStack(decision: "current" | "all" | "representative") {
+    if (
+      !photo ||
+      !cull.run ||
+      !cull.currentStack ||
+      cull.stackLoading ||
+      cull.stackError ||
+      editor.conflict ||
+      loading ||
+      cull.busy ||
+      cull.stale ||
+      !editor.canChangeTarget()
+    )
+      return;
+    const selected = photo;
+    const id = selected.asset_id;
+    const stack = cull.currentStack;
+    await editor.decideStack(
+      {
+        hidden: photos.hidden,
+        asset_ids: stack.asset_ids,
+        current_id: id,
+        decision,
+      },
+      refresh,
+      selected.display_file_id,
+      async () => {
+        const current = await photos.lookup(id, new AbortController().signal);
+        return (
+          current.display_file_id === selected.display_file_id &&
+          current.content_version_id === selected.content_version_id
+        );
+      },
+      selected.content_version_id,
+    );
+    if (editor.error || editor.conflict) {
+      if (editor.conflict) await cull.regroup();
+      return;
+    }
+    if (checkpoint.autoAdvance && cull.currentID === id) cull.moveStack(1);
   }
   function close() {
     if (canChangeTarget()) onclose();
@@ -211,6 +259,11 @@
     event.preventDefault();
     event.stopPropagation();
     if (action === "close") close();
+    else if (action === "keep-current") void decideStack("current");
+    else if (action === "previous-stack" && editor.canChangeTarget()) cull.moveStack(-1);
+    else if (action === "next-stack" && editor.canChangeTarget()) cull.moveStack(1);
+    else if (action === "previous-frame" && editor.canChangeTarget()) cull.moveFrame(-1);
+    else if (action === "next-frame" && editor.canChangeTarget()) cull.moveFrame(1);
     else if (action === "previous") move(-1);
     else if (action === "next") move(1);
     else if (action === "auto") {
@@ -226,6 +279,7 @@
   }
 </script>
 
+<svelte:window onfocus={() => void cull.checkSettings()} />
 <svelte:document onkeydown={(event) => event.target === document.body && key(event)} />
 
 <div class="review-shell">
@@ -258,9 +312,11 @@
         >
         <Button size="sm" onclick={() => (help = !help)}>Keys (?)</Button>
       </header>
-      {#if cull.error || editor.error || editor.notice}<p role="alert">
-          {cull.error || editor.error || editor.notice}
-        </p>{/if}
+      {#if cull.error || cull.stackError}<p role="alert">{cull.error || cull.stackError}</p>{/if}
+      {#if cull.stackError}<Button disabled={cull.stackLoading} onclick={() => void cull.regroup()}
+          >Retry stacks</Button
+        >{/if}
+      {#if editor.error || editor.notice}<p role="alert">{editor.error || editor.notice}</p>{/if}
       {#if cull.progress && !cull.complete}<p role="status">{cull.progress}</p>{/if}
       {#if editor.dirty || editor.conflict}<div class="controls">
           <Button disabled={busy} onclick={() => void retryDecision()}
@@ -271,12 +327,14 @@
             onclick={() => {
               editor.clearDraft();
               editor.reset();
+              void cull.regroup();
             }}>Discard edit</Button
           >
         </div>{/if}
       {#if help}<p class="key-map">
-          ← / ↑ previous · → / ↓ next · P pick · X reject · U clear flag · 0–5 rating · A
-          auto-advance · S next scope · Z 1:1 · I EXIF · ? keys · Esc exit
+          H / L stack · J / K frame · Return keep current · ← / ↑ previous · → / ↓ next · P pick · X
+          reject · U clear flag · 0–5 rating · A auto-advance · S next scope · Z 1:1 · I EXIF · ?
+          keys · Esc exit
         </p>{/if}
       {#if cull.complete}
         <section class="completion">
@@ -329,6 +387,38 @@
             </aside>{/if}
         </div>
         <div class="controls">
+          {#if cull.currentStack && cull.currentStack.asset_ids.length > 1}
+            <Button
+              size="sm"
+              disabled={busy ||
+                loading ||
+                editor.conflict ||
+                cull.stackLoading ||
+                !!cull.stackError ||
+                cull.stale}
+              onclick={() => void decideStack("current")}>Keep current (Return)</Button
+            >
+            <Button
+              size="sm"
+              disabled={busy ||
+                loading ||
+                editor.conflict ||
+                cull.stackLoading ||
+                !!cull.stackError ||
+                cull.stale}
+              onclick={() => void decideStack("all")}>Keep all</Button
+            >
+            <Button
+              size="sm"
+              disabled={busy ||
+                loading ||
+                editor.conflict ||
+                cull.stackLoading ||
+                !!cull.stackError ||
+                cull.stale}
+              onclick={() => void decideStack("representative")}>Choose representative</Button
+            >
+          {/if}
           <Button size="sm" disabled={checkpoint.position === 0 || busy} onclick={() => move(-1)}
             >Previous</Button
           >
@@ -362,7 +452,11 @@
         {#if railError}<p role="alert">{railError}</p>{/if}
         <nav class="filmstrip" aria-label="Cull pass">
           <fieldset disabled={busy} style="display: contents">
-            {#each rail as id}{@const row = neighbors.find((item) => item.asset_id === id)}
+            {#each rail as id, index}{@const row = neighbors.find((item) => item.asset_id === id)}
+              {#if cull.stacks.size && (index === 0 || cull.stacks.get(rail[index - 1]!) !== cull.stacks.get(id))}<span
+                  class="stack-divider"
+                  aria-label="Stack boundary"
+                ></span>{/if}
               <div class:current={id === cull.currentID} class="thumb">
                 {#if row}<PhotoCell
                     photo={row}
@@ -451,6 +545,10 @@
     justify-content: center;
     padding: 12px;
     overflow: auto;
+  }
+  .stack-divider {
+    border-left: 2px solid var(--border-default);
+    align-self: stretch;
   }
   .thumb {
     width: 88px;

@@ -205,7 +205,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 
 	huma.Register(api, huma.Operation{
 		OperationID: "getPhotoSettings", Method: http.MethodGet,
-		Path: "/api/v1/photos/settings", Summary: "Inspect the photo display preference",
+		Path: "/api/v1/photos/settings", Summary: "Inspect photo settings",
 	}, func(ctx context.Context, _ *struct{}) (*photoSettingsOutput, error) {
 		settings, err := d.Store.PhotoSettings(ctx)
 		if err != nil {
@@ -216,7 +216,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 
 	huma.Register(api, huma.Operation{
 		OperationID: "setPhotoSettings", Method: http.MethodPut,
-		Path: "/api/v1/photos/settings", Summary: "Set or reset the photo display preference",
+		Path: "/api/v1/photos/settings", Summary: "Set photo settings",
 	}, func(ctx context.Context, in *struct {
 		IfMatch string `header:"If-Match"`
 		Body    SetPhotoSettingsRequest
@@ -230,6 +230,25 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 			settings, callErr := d.Store.SetPhotoSettings(ctx, revision, in.Body.Preference)
 			if callErr != nil {
 				return FromStoreError(callErr)
+			}
+			out = &photoSettingsOutput{ETag: revisionETag(settings.Revision), Body: fromStorePhotoSettings(settings)}
+			return nil
+		})
+		return out, err
+	})
+	huma.Register(api, huma.Operation{OperationID: "setPhotoBurstGap", Method: http.MethodPut, Path: "/api/v1/photos/settings/burst-gap", Summary: "Change the burst gap"}, func(ctx context.Context, in *struct {
+		IfMatch string `header:"If-Match"`
+		Body    SetPhotoBurstGapRequest
+	}) (*photoSettingsOutput, error) {
+		revision, err := parseIfMatch(in.IfMatch)
+		if err != nil {
+			return nil, err
+		}
+		var out *photoSettingsOutput
+		err = g.mutate(func() error {
+			settings, err := d.Store.SetPhotoBurstGap(ctx, revision, in.Body.Seconds)
+			if err != nil {
+				return FromStoreError(err)
 			}
 			out = &photoSettingsOutput{ETag: revisionETag(settings.Revision), Body: fromStorePhotoSettings(settings)}
 			return nil

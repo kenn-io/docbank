@@ -401,6 +401,7 @@ docbank photos settings show
 docbank photos settings set raw [--revision REV]
 docbank photos settings set image [--revision REV]
 docbank photos settings reset [--revision REV]
+docbank photos settings set --burst-gap-seconds 5 [--revision REV]
 ```
 
 Asset and settings commands emit bounded JSON. Exit code 4 means the revision is stale: the
@@ -698,6 +699,16 @@ Configure [photo map tiles](../configuration.md#photo-map-tiles) in `[web.map_ti
 
 Map uses album membership when opened from an album. Otherwise it inherits Library's text, filters and date. It sorts by capture date, then adds GPS eligibility. Each visit starts a fresh result and selection. Map fetches the newest 20,000 matching located photos by capture date in pages of 1,000, at most 20 requests. When more match, Map says how many it's showing. Narrow the search, filters or date to see older photos. Returning to the Map rechecks access and reloads only after a hide or unhide. Like Library, the Map picks up other clients' trash, imports or edits on refresh. Markers and the grid show each page as it arrives. Earlier results stay visible during a refresh or if it fails. Retry resumes the failed page. An expired cursor starts a fresh load. The viewer and arrow keys follow the Map query, while the viewport filters only the grid. Panning retains selection, and the trash confirmation discloses selections outside the grid.
 
+## Burst stacks
+
+With capture-time sorting, adjacent photos from the same imported source folder collapse into a tile with a count. Each gap must be within the vault's **Burst gap (seconds)**, initially 2 and adjustable from 1 to 30. A chain can last longer than the gap. Each stack holds at most 500 frames; frame 501 starts another stack. Missing capture times, dates without seconds, videos, and unknown source folders stay separate. Other sorts and Map keep individual tiles.
+
+Filters group only matching photos. Selecting a collapsed tile selects all its matching frames. Click the count to expand or collapse it; expanded frames can be selected separately. One picked frame represents the stack, including a pick on its RAW or JPEG companion. With zero or several picks, the first frame in browse order represents it.
+
+The selection dock offers **Keep all** to pick every file in the stack, including rejects, **Keep selected** to pick selected frames and reject other undecided frames, and **Choose representative** for one selected frame. Choosing a representative picks its files and clears other file-level picks while preserving rejects. A frame is undecided when none of its files has a flag. Existing rejects survive automatic sibling decisions.
+
+A stack decision checks the displayed members, every file revision, and their capture-time chain against the current gap in one transaction. It records one receipt with **Undo**. Changed members refuse the whole decision; refresh before retrying. Newly adjacent frames stay undecided until the refreshed view includes them. Change the same vault gap from the CLI with `docbank photos settings set --burst-gap-seconds 5`.
+
 ## Cull and compare
 
 Choose **Cull** in Library or an album to review the whole current query full-screen. Docbank captures its order and membership before starting. A cull accepts up to 250,000 photos; narrow larger queries before starting. Flag or rating changes keep photos in the current pass; the next pass refreshes eligibility. Cull decisions are flags. Star ratings leave a photo unflagged. **S** cycles through unflagged, picks, rejects, and all, with confirmation before resetting an unfinished pass.
@@ -705,6 +716,9 @@ Choose **Cull** in Library or an album to review the whole current query full-sc
 | Key | Action |
 | --- | --- |
 | Arrow keys | Previous or next photo |
+| H / L | Previous or next stack |
+| J / K | Next or previous frame within the stack |
+| Return | Pick the current frame and reject undecided siblings |
 | P / X / U | Pick, reject, or clear the flag |
 | 0–5 | Clear or set the star rating |
 | A | Toggle auto-advance, initially on |
@@ -714,8 +728,10 @@ Choose **Cull** in Library or an album to review the whole current query full-sc
 | ? | Show the key map |
 | Esc | Leave cull mode |
 
+Capture-time cull runs group the frozen run IDs using the current gap, including siblings outside the current flag pass. Stack navigation follows each group’s first frame in the captured pass. Frame navigation stays within that group in pass order, even after capture-time metadata changes. Resuming regroups those IDs. Returning to the browser window checks the gap and regroups when it changes. **Keep all** and **Choose representative** are also available in Cull.
+
 Use **Skip** to record a skipped photo. The decision toast offers **Undo**. Ctrl, Cmd, and Alt shortcuts pause during cull. Apply or clear pending metadata edits before entering, moving, or leaving.
 
-**Resume cull** restores the saved pass, position, visited and skipped photos, scope, and auto-advance setting for this vault in this browser. Its captured membership survives snapshot expiry and browser restarts. Starting another cull asks before replacing saved progress. Storage failures appear when you choose Cull or Resume. If another tab changes the saved progress, close and resume the latest pass. At completion, **Review unflagged remainder** appears when unflagged photos remain anywhere in the captured set, including skipped and never-viewed photos. Missing or newly hidden photos are counted as unavailable. Cull is not offered in Hidden.
+**Resume cull** restores the saved pass, position, visited and skipped photos, scope, and auto-advance setting for this vault in this browser. Its captured membership survives snapshot expiry and browser restarts. Starting another cull asks before replacing saved progress. Storage failures appear when you choose Cull or Resume. If another tab changes the saved progress, close and resume the latest pass. At completion, **Review unflagged remainder** appears when unflagged photos remain anywhere in the captured set, including skipped and never-viewed photos. Missing or newly hidden photos are counted as unavailable. Cull is not offered in Hidden. Runs captured with another sort keep individual frames and their captured order.
 
 Select 2–8 photos and choose **Compare**. Zoom, pan, and arrow-key navigation move the panes together. **Z** toggles 1:1 for each displayed preview. Choose **Manual closeup**, then click a face or draw a region on a full frame. Matching crop tiles appear below the full frames; **Clear closeup** removes them. The closeup uses your chosen location rather than automatic face detection.

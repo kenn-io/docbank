@@ -774,3 +774,76 @@ it("keeps a later edit busy when an earlier refresh finishes during its write", 
   expect(editor.busy).toBe(false);
   editor.dispose();
 });
+
+it.each(["current", "replaced", "content-replaced", "unchanged"])(
+  "prepares one stack and checks its displayed file (%s)",
+  async (scenario) => {
+    const target = preparedPhoto(1);
+    const request = {
+      asset_ids: [target.asset_id],
+      current_id: target.asset_id,
+      decision: "current" as const,
+    };
+    const receipt = {
+      receipt_id: scenario === "unchanged" ? "" : "stack-receipt",
+      before: [],
+      after: [],
+    };
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit) => {
+        calls.push(url);
+        if (url.endsWith("/prepare")) {
+          expect(JSON.parse(String(init.body))).toEqual({ asset_ids: [target.asset_id] });
+          return response({
+            assets: [],
+            targets: [
+              {
+                ...target,
+                display_file_id: scenario === "replaced" ? "replacement" : target.file_id,
+              },
+            ],
+          });
+        }
+        expect(url).toBe("/api/v1/photos/authored/stack");
+        expect(JSON.parse(String(init.body))).toEqual({
+          ...request,
+          targets: [
+            {
+              asset_id: target.asset_id,
+              asset_revision: target.asset_revision,
+              file_id: target.file_id,
+              revision: target.revision,
+              node_revision: target.node_revision,
+            },
+          ],
+        });
+        return response(receipt);
+      }),
+    );
+    const editor = new PhotoAuthoredEditor("session", vi.fn());
+    const refresh = vi.fn(async () => {});
+    await editor.decideStack(
+      request,
+      refresh,
+      target.file_id,
+      async () => scenario !== "content-replaced",
+    );
+    if (scenario === "replaced" || scenario === "content-replaced") {
+      expect(editor.error).toBe("This photo changed. Reload the photo before deciding.");
+      expect(editor.conflict).toBe(true);
+      expect(calls).toHaveLength(1);
+      return;
+    }
+    if (scenario === "unchanged") {
+      expect(editor.error).toBe("These photos already have those flags.");
+      expect(editor.receiptID).toBe("");
+      expect(refresh).not.toHaveBeenCalled();
+    } else {
+      expect(editor.receiptID).toBe("stack-receipt");
+      expect(refresh).toHaveBeenCalledWith(receipt, []);
+    }
+    expect(calls).toHaveLength(2);
+  },
+);

@@ -19,6 +19,7 @@ const photoBrowseConfiguredCoverage = "configured"
 
 // PhotoBrowseRequest supplies query meaning and exact preview recipe identities.
 type PhotoBrowseRequest struct {
+	Stacks   bool
 	Hidden   bool
 	Query    query.Query
 	Coverage CoverageSelection
@@ -43,7 +44,9 @@ type PhotoPreviewSlot struct {
 }
 
 type PhotoBrowseRow struct {
-	Quality *document.PhotoQualitySignals
+	SourceFolderKey string
+	Picked          bool
+	Quality         *document.PhotoQualitySignals
 	// QualityUnavailable marks a terminal evaluator result with no signals.
 	QualityUnavailable bool
 	AssetID            string
@@ -72,6 +75,7 @@ type PhotoBrowsePage struct {
 	Next               *PhotoBrowsePosition
 	Facets             []SnapshotFacet
 	RelevanceAvailable bool
+	BurstGapSeconds    int
 }
 
 const (
@@ -112,7 +116,19 @@ func (s *Store) ListPhotoAssets(
 				break
 			}
 		}
+		settings, err := photoSettingsTx(ctx, q)
+		if err != nil {
+			return err
+		}
+		page.BurstGapSeconds = settings.BurstGapSeconds
 		sortField := compiled.Query.Sort.Field
+		stackSort := sortField == "capture_time" && request.Stacks
+		cursorGap := 0
+		readLimit := request.PageSize + 1
+		if stackSort {
+			cursorGap = settings.BurstGapSeconds
+			readLimit += MaxPhotoStackFrames
+		}
 		if err := validatePhotoQuerySort(compiled.Query); err != nil {
 			return err
 		}
@@ -154,7 +170,9 @@ func (s *Store) ListPhotoAssets(
 			PageSize     int
 			Facets       []string
 			AssetIDs     []string `json:",omitzero"`
-		}{canonical, compiled.Dependencies, coverage, request.Hidden, request.PageSize, dimensions, request.assetIDs})
+			BurstGap     int
+			Stacks       bool
+		}{canonical, compiled.Dependencies, coverage, request.Hidden, request.PageSize, dimensions, request.assetIDs, cursorGap, request.Stacks})
 		if err != nil {
 			return err
 		}
@@ -230,7 +248,7 @@ func (s *Store) ListPhotoAssets(
 					`? OR (` + key + `=? AND a.asset_id>?))`
 				args = append(args, boundary.Key, boundary.Key, boundary.Key, boundary.AssetID)
 			}
-			args = append(args, request.PageSize+1-len(page.Items))
+			args = append(args, readLimit-len(page.Items))
 			pageSQL, pageArgs, err := scope.bind(`SELECT `+photoBrowseSelect+`,`+key+` FROM `+pageFrom+` WHERE `+scope.where()+` AND `+where+
 				` ORDER BY `+order+` LIMIT ?`, args...)
 			if err != nil {
@@ -245,21 +263,35 @@ func (s *Store) ListPhotoAssets(
 				return err
 			}
 			page.Items = append(page.Items, items...)
-			if len(page.Items) > request.PageSize {
+			if len(page.Items) >= readLimit {
 				break
 			}
 		}
-		if len(page.Items) > request.PageSize {
-			page.Items = page.Items[:request.PageSize]
+		end := request.PageSize
+		if err := hydratePhotoStackFolders(ctx, q, page.Items); err != nil {
+			return err
+		}
+		if stackSort && end < len(page.Items) && end > 0 {
+			// Count the final group's phase using this page only. Pages always
+			// begin at a group boundary, including capped continuations.
+			start := 0
+			for i := 1; i < end; i++ {
+				if i-start == MaxPhotoStackFrames || !photoStackNeighbors(page.Items[i-1], page.Items[i], settings.BurstGapSeconds) {
+					start = i
+				}
+			}
+			for end < len(page.Items) && end-start < MaxPhotoStackFrames && photoStackNeighbors(page.Items[end-1], page.Items[end], settings.BurstGapSeconds) {
+				end++
+			}
+		}
+		if len(page.Items) > end {
+			page.Items = page.Items[:end]
 			position := page.Items[len(page.Items)-1].position
 			page.Next = &position
 		}
 		return s.hydratePhotoPreviews(ctx, q, request, page.Items)
 	})
-	if err != nil {
-		return PhotoBrowsePage{}, err
-	}
-	return page, nil
+	return page, err
 }
 
 // Force the outer relation to be the indexed sort source. Every following join

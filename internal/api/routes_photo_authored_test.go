@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -54,4 +55,23 @@ func apiEditTargets(prepared []store.PhotoPreparedTarget) []store.PhotoAuthoredE
 		targets[i] = target.PhotoAuthoredEditTarget
 	}
 	return targets
+}
+
+func TestPhotoStackDecisionBounds(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	ids := make([]string, 500)
+	targets := make([]store.PhotoAuthoredEditTarget, 1000)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("40000000-0000-4000-8000-%012d", i)
+	}
+	for i := range targets {
+		targets[i] = store.PhotoAuthoredEditTarget{AssetID: ids[i/2], AssetRevision: 1, FileID: fmt.Sprintf("50000000-0000-4000-8000-%012d", i), Revision: 1, NodeRevision: 1}
+	}
+	request := api.PhotoStackDecisionRequest{AssetIDs: ids, Targets: targets, Decision: "selected", CurrentID: ids[0], SelectedIDs: ids}
+	res, body := do(t, ts, http.MethodPost, "/api/v1/photos/authored/stack", nil, request)
+	require.Equal(t, http.StatusConflict, res.StatusCode, body)
+	require.Contains(t, body, "photo_stack_changed")
+	res, body = do(t, ts, http.MethodPost, "/api/v1/photos/authored/stack", nil, map[string]any{"padding": strings.Repeat("x", 1<<20)})
+	require.Equal(t, http.StatusRequestEntityTooLarge, res.StatusCode, body)
 }

@@ -31,7 +31,31 @@ type PhotoAuthoredPreparation struct {
 	Targets []store.PhotoPreparedTarget `json:"targets"`
 }
 
+type PhotoStackDecisionRequest struct {
+	Hidden      bool                            `json:"hidden,omitempty"`
+	AssetIDs    []string                        `json:"asset_ids" minItems:"1" maxItems:"500" uniqueItems:"true"`
+	Targets     []store.PhotoAuthoredEditTarget `json:"targets" minItems:"1" maxItems:"1000"`
+	Decision    string                          `json:"decision" enum:"current,all,selected,representative"`
+	CurrentID   string                          `json:"current_id" format:"uuid"`
+	SelectedIDs []string                        `json:"selected_ids,omitempty" maxItems:"500" uniqueItems:"true"`
+}
+
 func registerPhotoAuthoredRoutes(api huma.API, d Deps, g *gate) {
+	// Bound 500 observed frames and 1,000 file revisions.
+	huma.Register(api, huma.Operation{OperationID: "decidePhotoStack", Method: http.MethodPost, Path: "/api/v1/photos/authored/stack", Summary: "Decide one observed stack atomically", MaxBodyBytes: 512 << 10}, func(ctx context.Context, in *struct{ Body PhotoStackDecisionRequest }) (*struct{ Body store.PhotoAuthoredReceipt }, error) {
+		body := in.Body
+		request := store.PhotoStackDecision{Hidden: body.Hidden, AssetIDs: body.AssetIDs, Targets: body.Targets, Decision: body.Decision, CurrentID: body.CurrentID, SelectedIDs: body.SelectedIDs}
+		var result store.PhotoAuthoredReceipt
+		err := g.mutate(func() error {
+			var callErr error
+			result, callErr = d.Store.DecidePhotoStack(ctx, request)
+			if errors.Is(callErr, store.ErrStalePhotoStack) {
+				return NewError(http.StatusConflict, "photo_stack_changed", callErr.Error())
+			}
+			return workspaceQueryError(callErr)
+		})
+		return &struct{ Body store.PhotoAuthoredReceipt }{result}, err
+	})
 	huma.Register(api, huma.Operation{OperationID: "preparePhotoAuthored", Method: http.MethodPost, Path: "/api/v1/photos/authored/prepare", Summary: "Resolve a revision-bound metadata editing session"}, func(ctx context.Context, in *struct{ Body PhotoAuthoredPrepareRequest }) (*struct {
 		Body PhotoAuthoredPreparation
 	}, error) {
@@ -81,7 +105,7 @@ func registerPhotoAuthoredRoutes(api huma.API, d Deps, g *gate) {
 
 func photoAuthoredBrowserRequestAllowed(r *http.Request) bool {
 	if r.URL.RawQuery == "" {
-		if r.URL.Path == "/api/v1/photos/authored/edit" || r.URL.Path == "/api/v1/photos/authored/prepare" {
+		if r.URL.Path == "/api/v1/photos/authored/stack" || r.URL.Path == "/api/v1/photos/authored/edit" || r.URL.Path == "/api/v1/photos/authored/prepare" {
 			return r.Method == http.MethodPost
 		}
 		if after, ok := strings.CutPrefix(r.URL.Path, "/api/v1/photos/authored/"); ok {

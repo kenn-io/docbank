@@ -39,9 +39,10 @@ type PhotoAsset struct {
 }
 
 type PhotoSettings struct {
-	Preference *string `json:"preference,omitzero" enum:"raw,image"`
-	Revision   int64   `json:"revision" minimum:"1"`
-	UpdatedAt  string  `json:"updated_at,omitzero" format:"date-time"`
+	BurstGapSeconds int     `json:"burst_gap_seconds" minimum:"1" maximum:"30"`
+	Preference      *string `json:"preference,omitzero" enum:"raw,image"`
+	Revision        int64   `json:"revision" minimum:"1"`
+	UpdatedAt       string  `json:"updated_at,omitzero" format:"date-time"`
 }
 
 type CreatePhotoAssetRequest struct {
@@ -91,5 +92,9 @@ func fromStorePhotoAsset(asset store.PhotoAsset) PhotoAsset {
 }
 
 func fromStorePhotoSettings(settings store.PhotoSettings) PhotoSettings {
-	return PhotoSettings{Preference: settings.Preference, Revision: settings.Revision, UpdatedAt: settings.UpdatedAt}
+	return PhotoSettings{BurstGapSeconds: settings.BurstGapSeconds, Preference: settings.Preference, Revision: settings.Revision, UpdatedAt: settings.UpdatedAt}
+}
+
+type SetPhotoBurstGapRequest struct {
+	Seconds int `json:"seconds" minimum:"1" maximum:"30"`
 }

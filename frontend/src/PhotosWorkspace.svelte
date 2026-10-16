@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { type PhotoBrowseRow } from "./photoRows.js";
   import { onDestroy, onMount, tick, untrack } from "svelte";
   import {
     Button,
@@ -38,7 +39,7 @@
   } from "./generated/docbank.js";
   import PhotoLoupe from "./PhotoLoupe.svelte";
   import PhotoTimeline from "./PhotoTimeline.svelte";
-  import type { PhotoBrowseRow, PhotoMapRow } from "./generated/docbank.js";
+  import type { PhotoMapRow } from "./generated/docbank.js";
   import FacetSidebar from "./FacetSidebar.svelte";
   import type { ExportInput } from "./exportState.js";
   import { maxPhotoExportMembers } from "./exports.js";
@@ -523,9 +524,50 @@
     onactionerror?.("");
     await photos.setHidden(id, preserve, onhidden, onactionerror, oninvalidate);
   }
+  const collapsed = $derived(
+    shown.filter(
+      (row) =>
+        !("stack" in row) ||
+        !row.stack ||
+        photos.expandedStacks.has(row.stack.asset_ids[0]!) ||
+        row.asset_id === row.stack.representative_id,
+    ),
+  );
+  const selectedStack = $derived.by(() => {
+    if (photos.allResults) return;
+    const selected = shown.filter((row) => photos.selectedIDs.has(row.asset_id));
+    const row = selected[0];
+    if (
+      selected.length !== photos.selectedIDs.size ||
+      !row ||
+      !("stack" in row) ||
+      !row.stack ||
+      row.stack.asset_ids.length < 2
+    )
+      return;
+    const ids = new Set(row.stack.asset_ids);
+    return selected.every((item) => ids.has(item.asset_id)) ? row.stack : undefined;
+  });
+  async function decideStack(decision: "all" | "selected" | "representative") {
+    if (!selectedStack) return;
+    await editor.decideStack(
+      {
+        hidden: photos.hidden,
+        asset_ids: selectedStack.asset_ids,
+        decision,
+        current_id: [...photos.selectedIDs][0]!,
+        selected_ids: [...photos.selectedIDs],
+      },
+      async (receipt, tags) => {
+        photos.metadataChanged(receipt);
+        onmetadatachanged?.(receipt, tags);
+        await refresh();
+      },
+    );
+  }
   const groups = $derived(
     groupPhotos(
-      shown,
+      collapsed,
       photos.query.sort?.field === "relevance"
         ? "relevance"
         : albumID && photos.query.sort?.field !== "capture_time"
@@ -567,7 +609,7 @@
       total: selected ? exportSelectionCount : photos.total,
     });
   }
-  const orderedIDs = $derived(groups.flatMap((group) => group.items.map((item) => item.asset_id)));
+  const orderedIDs = $derived(shown.map((item) => item.asset_id));
   const dateLabel = $derived(photos.date?.length === 7 ? monthLabel(photos.date) : photos.date);
   const densityOptions = [
     { value: "compact", label: "Compact" },
@@ -709,6 +751,7 @@
 {/snippet}
 
 <svelte:window
+  onfocus={() => void photos.checkBurstGap(preserve)}
   onkeydown={escape}
   onkeydowncapture={(event) => {
     if ((culling || comparing) && (event.ctrlKey || event.metaKey || event.altKey))
@@ -940,6 +983,21 @@
                 disabled={photos.loading || photos.hiding || photos.trashing || albums?.busy}
                 onclick={() => void refreshView()}>Refresh previews</Button
               >
+              {#if !mapMode}<label class="burst-gap"
+                  >Burst gap (seconds) <input
+                    aria-label="Burst gap (seconds)"
+                    type="number"
+                    min="1"
+                    max="30"
+                    value={photos.burstGapSeconds}
+                    disabled={photos.loading || editor.busy}
+                    onchange={async (event) => {
+                      const input = event.currentTarget;
+                      await photos.setBurstGap(input.valueAsNumber, preserve);
+                      input.value = String(photos.burstGapSeconds);
+                    }}
+                  /></label
+                >{/if}
               {#if !mapMode}<Button
                   size="sm"
                   disabled={photos.loading ||
@@ -1117,6 +1175,8 @@
                     bind:this={grid}
                     bind:scrollTop={photos.scrollTop}
                     {groups}
+                    expandedStacks={photos.expandedStacks}
+                    onexpand={(id) => photos.toggleStack(id)}
                     targetRowHeight={ROW_HEIGHTS[photos.density]}
                     loading={photos.loading || !!photoID}
                     {cache}
@@ -1216,6 +1276,24 @@
                 (!mapMode && (photos.loading || (photos.allResults && !editor.targets.length)))}
             >
               {#snippet photoActions()}
+                {#if selectedStack}
+                  <Button
+                    size="sm"
+                    disabled={photos.loading || editor.busy || editor.loading || editor.conflict}
+                    onclick={() => void decideStack("all")}>Keep all</Button
+                  >
+                  <Button
+                    size="sm"
+                    disabled={photos.loading || editor.busy || editor.loading || editor.conflict}
+                    onclick={() => void decideStack("selected")}>Keep selected</Button
+                  >
+                  {#if photos.selectedIDs.size === 1}<Button
+                      size="sm"
+                      disabled={photos.loading || editor.busy || editor.loading || editor.conflict}
+                      onclick={() => void decideStack("representative")}
+                      >Choose representative</Button
+                    >{/if}
+                {/if}
                 <Button
                   size="sm"
                   disabled={!editCount && !editor.dirty}
@@ -1374,6 +1452,20 @@
 {/if}
 
 <style>
+  .burst-gap {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: var(--font-size-sm);
+  }
+  .burst-gap input {
+    width: 4rem;
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    padding: 4px 8px;
+  }
   .photo-layout {
     display: flex;
     flex: 1;

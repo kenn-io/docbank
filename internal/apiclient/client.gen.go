@@ -9670,6 +9670,53 @@ func (c *Client) PreparePhotoAuthored(ctx context.Context, options *PreparePhoto
 	return responseParser(ctx, resp)
 }
 
+// DecidePhotoStack Decide one observed stack atomically
+func (c *Client) DecidePhotoStack(ctx context.Context, options *DecidePhotoStackRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DecidePhotoStackResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/authored/stack",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*DecidePhotoStackResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(DecidePhotoStackResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "DecidePhotoStackResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[DecidePhotoStackErrorResponse](resp, "DecidePhotoStackErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/authored/stack")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // UndoPhotoAuthored Undo photo fields and keywords if their revisions still match
 func (c *Client) UndoPhotoAuthored(ctx context.Context, options *UndoPhotoAuthoredRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UndoPhotoAuthoredResponse, error) {
 	var err error
@@ -10328,7 +10375,7 @@ func (c *Client) MovePhotoRejects(ctx context.Context, options *MovePhotoRejects
 	return responseParser(ctx, resp)
 }
 
-// GetPhotoSettings Inspect the photo display preference
+// GetPhotoSettings Inspect photo settings
 func (c *Client) GetPhotoSettings(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetPhotoSettingsResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
@@ -10373,7 +10420,7 @@ func (c *Client) GetPhotoSettings(ctx context.Context, reqEditors ...runtime.Req
 	return responseParser(ctx, resp)
 }
 
-// SetPhotoSettings Set or reset the photo display preference
+// SetPhotoSettings Set photo settings
 func (c *Client) SetPhotoSettings(ctx context.Context, options *SetPhotoSettingsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetPhotoSettingsResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
@@ -10411,6 +10458,53 @@ func (c *Client) SetPhotoSettings(ctx context.Context, options *SetPhotoSettings
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/settings")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// SetPhotoBurstGap Change the burst gap
+func (c *Client) SetPhotoBurstGap(ctx context.Context, options *SetPhotoBurstGapRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetPhotoBurstGapResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/settings/burst-gap",
+		Method:      "PUT",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*SetPhotoBurstGapResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(SetPhotoBurstGapResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "SetPhotoBurstGapResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[SetPhotoBurstGapErrorResponse](resp, "SetPhotoBurstGapErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/settings/burst-gap")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -20776,6 +20870,34 @@ func (o *PreparePhotoAuthoredRequestOptions) GetHeader() (map[string]string, err
 	return nil, nil
 }
 
+// DecidePhotoStackRequestOptions is the options needed to make a request to DecidePhotoStack.
+type DecidePhotoStackRequestOptions struct {
+	Body *DecidePhotoStackBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *DecidePhotoStackRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *DecidePhotoStackRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *DecidePhotoStackRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *DecidePhotoStackRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // UndoPhotoAuthoredRequestOptions is the options needed to make a request to UndoPhotoAuthored.
 type UndoPhotoAuthoredRequestOptions struct {
 	PathParams *UndoPhotoAuthoredPath
@@ -21196,6 +21318,41 @@ func (o *SetPhotoSettingsRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *SetPhotoSettingsRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// SetPhotoBurstGapRequestOptions is the options needed to make a request to SetPhotoBurstGap.
+type SetPhotoBurstGapRequestOptions struct {
+	Body   *SetPhotoBurstGapBody
+	Header *SetPhotoBurstGapHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *SetPhotoBurstGapRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *SetPhotoBurstGapRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *SetPhotoBurstGapRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *SetPhotoBurstGapRequestOptions) GetHeader() (map[string]string, error) {
 	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
 	if err != nil {
 		return nil, err
@@ -23985,6 +24142,10 @@ type SetPhotoSettingsHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
 
+type SetPhotoBurstGapHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
 type UploadPushFileHeaders struct {
 	// XDocbankBlobHash Expected lowercase hexadecimal SHA-256 of the file payload
 	XDocbankBlobHash string `json:"X-Docbank-Blob-Hash"`
@@ -24827,6 +24988,8 @@ type EditPhotoAuthoredBody = PhotoAuthoredEditRequest
 
 type PreparePhotoAuthoredBody = PhotoAuthoredPrepareRequest
 
+type DecidePhotoStackBody = PhotoStackDecisionRequest
+
 type ChangePhotoHiddenBody = PhotoHiddenPasscodeRequest
 
 type DisablePhotoHiddenBody = PhotoHiddenPasscodeRequest
@@ -24848,6 +25011,8 @@ type PreflightPhotoRejectsBody = PhotoRejectsRequest
 type MovePhotoRejectsBody = MovePhotoRejectsRequest
 
 type SetPhotoSettingsBody = SetPhotoSettingsRequest
+
+type SetPhotoBurstGapBody = SetPhotoBurstGapRequest
 
 type DecidePhotoFaceBody = PhotoFaceDecisionRequest
 
@@ -26181,6 +26346,10 @@ type PreparePhotoAuthoredResponse = api.PhotoAuthoredPreparation
 
 type PreparePhotoAuthoredErrorResponse = Error
 
+type DecidePhotoStackResponse = store.PhotoAuthoredReceipt
+
+type DecidePhotoStackErrorResponse = Error
+
 type UndoPhotoAuthoredResponse = store.PhotoAuthoredReceipt
 
 type UndoPhotoAuthoredErrorResponse = Error
@@ -26244,6 +26413,10 @@ type GetPhotoSettingsErrorResponse = Error
 type SetPhotoSettingsResponse = api.PhotoSettings
 
 type SetPhotoSettingsErrorResponse = Error
+
+type SetPhotoBurstGapResponse = api.PhotoSettings
+
+type SetPhotoBurstGapErrorResponse = Error
 
 type DecidePhotoFaceResponse = api.PhotoFaceDecisionResult
 
@@ -27512,6 +27685,8 @@ type PhotoSettings = api.PhotoSettings
 
 type PhotoSidecarProvenance = store.PhotoSidecarProvenance
 
+type PhotoStackDecisionRequest = api.PhotoStackDecisionRequest
+
 type PhotoTimeline = api.PhotoTimeline
 
 type PhotoTimelineRequest = api.PhotoTimelineRequest
@@ -27893,6 +28068,8 @@ type SetCollectionLabelRequest struct {
 }
 
 type SetLaneControlRequest = api.SetLaneControlRequest
+
+type SetPhotoBurstGapRequest = api.SetPhotoBurstGapRequest
 
 type SetPhotoDisplayRequest = api.SetPhotoDisplayRequest
 

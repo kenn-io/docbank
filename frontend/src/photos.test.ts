@@ -3031,3 +3031,98 @@ it("looks up large captured sets in at most four concurrent 64-ID queries, prese
   expect(sizes).toEqual([64, 64, 64, 64, 64, 1]);
   expect(progress.at(-1)).toBe(321);
 });
+
+it("selects collapsed bursts and expanded frames, including range selection and deselection", () => {
+  const photos = new Photos("session", vi.fn());
+  const rows = [1, 2, 3, 4, 5, 6].map((id) => photo(id));
+  const ids = rows.map((row) => row.asset_id);
+  photos.items = rows.map((row, i) => ({
+    ...row,
+    stack: {
+      asset_ids: i < 3 ? ids.slice(0, 3) : ids.slice(3),
+      representative_id: i < 3 ? ids[1]! : ids[4]!,
+    },
+  }));
+  photos.select(ids[1]!, new MouseEvent("click", { button: 0 }), ids);
+  expect([...photos.selectedIDs]).toEqual(ids.slice(0, 3));
+  photos.check(ids[1]!, false, false, ids);
+  expect(photos.selectedIDs.size).toBe(0);
+  photos.toggleStack(ids[1]!);
+  photos.select(ids[1]!, new MouseEvent("click", { button: 0 }), ids);
+  expect([...photos.selectedIDs]).toEqual([ids[1]]);
+  photos.check(ids[2]!, true, false, ids);
+  expect([...photos.selectedIDs]).toEqual([ids[1], ids[2]]);
+  photos.toggleStack(ids[1]!);
+  photos.select(ids[4]!, new MouseEvent("click", { button: 0 }), ids);
+  photos.check(ids[1]!, true, true, ids);
+  expect([...photos.selectedIDs].sort()).toEqual([...ids].sort());
+  photos.check(ids[1]!, false, true, ids);
+  expect(photos.selectedIDs.size).toBe(0);
+});
+
+it("groups capture-time rows and chooses the only picked frame", async () => {
+  const rows = [photo(1), photo(2)].map((row, i) => ({
+    ...row,
+    source_folder_key: "folder",
+    picked: i === 1,
+  }));
+  const stack = {
+    asset_ids: rows.map((row) => row.asset_id),
+    representative_id: rows[1]!.asset_id,
+  };
+  stubPhotoFetch(async () =>
+    Response.json({
+      items: rows,
+      total: 2,
+      facets: [],
+      relevance_available: false,
+    }),
+  );
+  const photos = new Photos("session", vi.fn());
+  await photos.resume();
+  expect(photos.items.map((row) => "stack" in row && row.stack)).toEqual([stack, stack]);
+  photos.dispose();
+});
+
+it("refreshes stack representatives from the server after companion flags and Undo", async () => {
+  const photos = new Photos("session", vi.fn());
+  const rows = [photo(1), photo(2)].map((row) => ({ ...row, source_folder_key: "folder" }));
+  const fetch = vi.fn().mockResolvedValue(
+    Response.json({
+      items: rows,
+      total: 2,
+      facets: [],
+      relevance_available: false,
+    }),
+  );
+  vi.stubGlobal("fetch", fetch);
+  await photos.resume();
+  vi.spyOn(photos, "reloadCounts").mockReturnValue(undefined);
+  const before = { ...preparedPhoto(2), file_id: "raw-companion" };
+  const after = { ...before, revision: 2, values: { ...before.values, flag: "pick" as const } };
+  for (const [previous, next, representative] of [
+    [before, after, rows[1]!.asset_id],
+    [after, before, rows[0]!.asset_id],
+  ] as const) {
+    fetch.mockResolvedValue(
+      Response.json({
+        items: rows.map((row) => ({ ...row, picked: row.asset_id === representative })),
+        total: 2,
+        facets: [],
+        relevance_available: false,
+      }),
+    );
+    const changes = photos.metadataChanged({
+      receipt_id: "change",
+      before: [previous],
+      after: [next],
+    });
+    expect(photos.reloadsAfter(changes)).toBe(true);
+    await photos.refresh();
+    expect(photos.items.map((row) => "stack" in row && row.stack?.representative_id)).toEqual([
+      representative,
+      representative,
+    ]);
+  }
+  photos.dispose();
+});

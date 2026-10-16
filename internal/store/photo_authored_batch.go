@@ -55,10 +55,11 @@ type photoAuthoredLoaded struct {
 type PhotoPreparedTarget struct {
 	PhotoAuthoredEditTarget
 
-	FileName string        `json:"file_name"`
-	NodeID   int64         `json:"node_id"`
-	Values   PhotoAuthored `json:"values"`
-	Tags     []string      `json:"tags"`
+	DisplayFileID string        `json:"display_file_id" format:"uuid"`
+	FileName      string        `json:"file_name"`
+	NodeID        int64         `json:"node_id"`
+	Values        PhotoAuthored `json:"values"`
+	Tags          []string      `json:"tags"`
 }
 
 type PhotoAuthoredPreparation struct {
@@ -228,6 +229,7 @@ func (p photoAuthoredPreparer) appendAsset(id string, asset PhotoAsset, targets 
 		if !exists {
 			return ErrNotFound
 		}
+		target.DisplayFileID = *asset.DisplayFileID
 		target.AssetID, target.AssetRevision, target.FileID, target.Revision, target.NodeID, target.Values = id, asset.Revision, file.ID, file.Revision, file.NodeID, file.Authored()
 		p.result.Targets = append(p.result.Targets, target)
 	}

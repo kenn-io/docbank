@@ -39,7 +39,7 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 	huma.Register(api, huma.Operation{
 		OperationID: "listPhotoAssets", Method: http.MethodPost, Path: "/api/v1/photos/assets/query",
 		Summary:      "Browse matching photo assets",
-		MaxBodyBytes: query.MaxInputBytes + (64 << 10),
+		MaxBodyBytes: query.MaxInputBytes,
 	}, func(ctx context.Context, in *struct{ Body PhotoBrowseRequest }) (*struct{ Body PhotoBrowsePage }, error) {
 		if in.Body.Projection != "map" && in.Body.PageSize > store.MaxDocumentCatalogPageSize {
 			return nil, NewError(http.StatusUnprocessableEntity, "invalid_photo_query", fmt.Sprintf("page_size must be at most %d without projection map", store.MaxDocumentCatalogPageSize))
@@ -49,7 +49,7 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 			return nil, NewError(http.StatusUnprocessableEntity, "invalid_query", err.Error())
 		}
 		request := store.PhotoBrowseRequest{
-			Query: value, Hidden: in.Body.Hidden,
+			Query: value, Hidden: in.Body.Hidden, Stacks: in.Body.Stacks && in.Body.Projection != "map",
 			Coverage: store.CoverageSelection{Configuration: in.Body.Coverage.Configuration, ProfileFingerprint: in.Body.Coverage.ProfileFingerprint},
 			PageSize: in.Body.PageSize, Recipes: recipes, Facets: in.Body.Facets,
 		}
@@ -70,7 +70,7 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 			return nil, workspaceQueryError(err)
 		}
 		wire := PhotoBrowsePage{
-			Items: make([]PhotoBrowseRow, len(page.Items)), Total: page.Total,
+			Items: make([]PhotoBrowseRow, len(page.Items)), Total: page.Total, BurstGapSeconds: page.BurstGapSeconds,
 			Facets: fromStoreFacets(page.Facets), RelevanceAvailable: page.RelevanceAvailable,
 		}
 		if in.Body.Projection == "map" {
@@ -97,7 +97,7 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 			wire.Items[i] = PhotoBrowseRow{
 				AssetID: row.AssetID, Kind: row.Kind, Revision: row.Revision,
 				Rotation: row.Rotation,
-				Rating:   row.Rating, Flag: row.Flag,
+				Rating:   row.Rating, Flag: row.Flag, SourceFolderKey: row.SourceFolderKey, Picked: row.Picked,
 				DisplayFileID: row.DisplayFileID, NodeID: row.NodeID,
 				ContentVersionID: row.ContentVersionID, Name: row.Name, MediaType: row.MediaType,
 				ImportTime: row.ImportTime, CaptureTime: row.Fields.CaptureTime,

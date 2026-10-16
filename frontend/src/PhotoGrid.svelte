@@ -13,6 +13,8 @@
     selectedIDs,
     onselect,
     oncheck,
+    expandedStacks = new Set<string>(),
+    onexpand,
     onhidden,
     hidden = false,
     onopen,
@@ -29,6 +31,8 @@
     onselect: (id: string, event: MouseEvent, touch: boolean) => void;
     onopen: (id: string, element: HTMLElement) => void;
     oncheck: (id: string, checked: boolean, range: boolean) => void;
+    expandedStacks?: ReadonlySet<string>;
+    onexpand?: (id: string) => void;
     onhidden?: (id: string) => void;
     hidden?: boolean;
     onloadmore: () => void;
@@ -188,6 +192,8 @@
           {onselect}
           {oncheck}
           {onopen}
+          {expandedStacks}
+          {onexpand}
           {onhidden}
           {hidden}
           {ondragstart}

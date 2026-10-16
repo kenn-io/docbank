@@ -425,6 +425,78 @@ export class PhotoAuthoredEditor {
       this.endWrite(write);
     }
   }
+  async decideStack(
+    request: Omit<api.PhotoStackDecisionRequest, "targets">,
+    refresh: (receipt: api.PhotoAuthoredReceipt, tags: api.Tag[]) => Promise<void>,
+    expectedDisplayFileID?: string,
+    checkCurrent?: () => Promise<boolean>,
+    expectedContentVersionID?: string,
+  ) {
+    if (this.conflict) {
+      this.unavailable("Reload metadata before editing.");
+      return;
+    }
+    if (!this.canChangeTarget() || this.concealed || this.controller.signal.aborted) return;
+    this.reset();
+    const write = this.beginWrite();
+    try {
+      const prepared = await this.request(() =>
+        api.preparePhotoAuthored(
+          { asset_ids: request.asset_ids, hidden: request.hidden },
+          this.options(),
+        ),
+      );
+      if (
+        (expectedDisplayFileID &&
+          prepared.targets.find((target) => target.asset_id === request.current_id)
+            ?.display_file_id !== expectedDisplayFileID) ||
+        (checkCurrent && !(await checkCurrent()))
+      ) {
+        this.error = "This photo changed. Reload the photo before deciding.";
+        this.conflict = true;
+        return;
+      }
+      this.targets = prepared.targets;
+      const decide = () =>
+        this.request(() =>
+          api.decidePhotoStack(
+            {
+              ...request,
+              targets: prepared.targets.map(
+                ({ asset_id, asset_revision, file_id, revision, node_revision }) => ({
+                  asset_id,
+                  asset_revision,
+                  file_id,
+                  revision,
+                  node_revision,
+                  ...(file_id === expectedDisplayFileID && expectedContentVersionID
+                    ? { content_version_id: expectedContentVersionID }
+                    : {}),
+                }),
+              ),
+            },
+            this.options(),
+          ),
+        );
+      const receipt = await decide();
+      this.accept(receipt);
+      if (receipt.receipt_id) {
+        this.receiptID = receipt.receipt_id;
+        this.undoState.summary = "Stack updated";
+        await refresh(receipt, []);
+      } else {
+        this.error = "These photos already have those flags.";
+      }
+    } catch (cause) {
+      if (!this.controller.signal.aborted) {
+        this.error = this.failure(cause);
+        if (cause instanceof APIError && cause.errors.length) this.error = cause.errors.join("; ");
+        this.conflict = cause instanceof APIError && [404, 409, 412].includes(cause.status);
+      }
+    } finally {
+      this.endWrite(write);
+    }
+  }
   async undo(refresh: (receipt: api.PhotoAuthoredReceipt, tags: api.Tag[]) => Promise<void>) {
     if (this.busy || this.loading || this.concealed) {
       this.unavailable();

@@ -2871,3 +2871,27 @@ it("uses the resolved vault identity when Cull mounted before audit status arriv
   expect(open).toHaveBeenCalledWith("docbank-photo-cull-v1", 1);
   photos.dispose();
 });
+
+it("restores invalid burst gaps and shows the range correction", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1)];
+  photos.total = 1;
+  photos.started = true;
+  const get = vi.spyOn(api, "getPhotoSettings");
+  render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
+  const input = screen.getByRole("spinbutton", { name: "Burst gap (seconds)" }) as HTMLInputElement;
+  for (const value of ["", "1.5", "31"]) {
+    await fireEvent.change(input, { target: { value } });
+    await waitFor(() => expect(input.value).toBe("2"));
+    expect(screen.getByRole("alert").textContent).toBe("burst gap must be 1 to 30 seconds");
+  }
+  expect(get).not.toHaveBeenCalled();
+  photos.dispose();
+});

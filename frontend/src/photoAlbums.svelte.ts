@@ -211,7 +211,7 @@ export class PhotoAlbums {
   startDrag(id: string, event: DragEvent, source: Photos) {
     if (!event.dataTransfer) return;
     const selected = source.selectedIDs.has(id);
-    this.drag = selected ? source.scope() : { asset_ids: [id] };
+    this.drag = selected ? source.scope() : { asset_ids: source.stackMembers(id) };
     if (this.drag.asset_ids && this.drag.asset_ids.length > 1000) {
       this.error =
         source.projection === "map"

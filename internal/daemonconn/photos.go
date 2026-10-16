@@ -59,7 +59,7 @@ func validatePhotoETag(etag string, revision int64) error {
 }
 
 func validatePhotoSettingsResponse(settings api.PhotoSettings, etag string) error {
-	if settings.Revision < 1 || settings.Preference != nil && *settings.Preference != "raw" && *settings.Preference != "image" {
+	if settings.Revision < 1 || settings.BurstGapSeconds < 1 || settings.BurstGapSeconds > 30 || settings.Preference != nil && *settings.Preference != "raw" && *settings.Preference != "image" {
 		return errors.New("photo settings response is invalid")
 	}
 	return validatePhotoETag(etag, settings.Revision)
@@ -269,6 +269,21 @@ func (c *Connection) SetPhotoSettings(ctx context.Context, revision int64, prefe
 		Header: &apiclient.SetPhotoSettingsHeaders{IfMatch: revisionIfMatch(revision)},
 		Body:   &apiclient.SetPhotoSettingsBody{Preference: preference},
 	})
+	if err != nil {
+		return api.PhotoSettings{}, mutationRequestError(response, err)
+	}
+	if err := validatePhotoSettingsResponse(*settings, response.Header.Get("ETag")); err != nil {
+		return api.PhotoSettings{}, &responseDecodeError{err: err}
+	}
+	return *settings, nil
+}
+
+func (c *Connection) SetPhotoBurstGap(ctx context.Context, revision int64, seconds int) (api.PhotoSettings, error) {
+	if revision < 1 || seconds < 1 || seconds > 30 {
+		return api.PhotoSettings{}, errors.New("invalid photo settings revision or burst gap")
+	}
+	var response *http.Response
+	settings, err := c.apiWithResponse(&response).SetPhotoBurstGap(ctx, &apiclient.SetPhotoBurstGapRequestOptions{Header: &apiclient.SetPhotoBurstGapHeaders{IfMatch: revisionIfMatch(revision)}, Body: &apiclient.SetPhotoBurstGapBody{Seconds: seconds}})
 	if err != nil {
 		return api.PhotoSettings{}, mutationRequestError(response, err)
 	}

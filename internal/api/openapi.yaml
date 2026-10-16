@@ -12040,6 +12040,11 @@ components:
           format: uri
           readOnly: true
           type: string
+        burst_gap_seconds:
+          format: int64
+          maximum: 30
+          minimum: 1
+          type: integer
         facets:
           items:
             additionalProperties: false
@@ -12147,6 +12152,9 @@ components:
           type: string
         query:
           $ref: "#/components/schemas/SavedQueryV1Schema"
+        stacks:
+          description: Extend capture-time pages through the final burst, capped at 500 frames.
+          type: boolean
       required:
         - query
       type: object
@@ -12260,6 +12268,8 @@ components:
           type:
             - integer
             - "null"
+        picked:
+          type: boolean
         previews:
           $ref: "#/components/schemas/PhotoPreviewSlots"
         quality:
@@ -12296,12 +12306,16 @@ components:
             - 270
           format: int64
           type: integer
+        source_folder_key:
+          type: string
         width_px:
           format: int64
           type:
             - integer
             - "null"
       required:
+        - source_folder_key
+        - picked
         - rating
         - flag
         - asset_id
@@ -12868,6 +12882,9 @@ components:
         content_version_id:
           format: uuid
           type: string
+        display_file_id:
+          format: uuid
+          type: string
         file_id:
           format: uuid
           type: string
@@ -12891,6 +12908,7 @@ components:
         values:
           $ref: "#/components/schemas/PhotoAuthored"
       required:
+        - display_file_id
         - file_name
         - node_id
         - values
@@ -13214,6 +13232,11 @@ components:
           format: uri
           readOnly: true
           type: string
+        burst_gap_seconds:
+          format: int64
+          maximum: 30
+          minimum: 1
+          type: integer
         preference:
           enum:
             - raw
@@ -13229,6 +13252,7 @@ components:
           format: date-time
           type: string
       required:
+        - burst_gap_seconds
         - revision
       type: object
       x-go-type: api.PhotoSettings
@@ -13254,6 +13278,57 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/store
         name: store
+    PhotoStackDecisionRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoStackDecisionRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        asset_ids:
+          items:
+            type: string
+          maxItems: 500
+          minItems: 1
+          type: array
+          uniqueItems: true
+        current_id:
+          format: uuid
+          type: string
+        decision:
+          enum:
+            - current
+            - all
+            - selected
+            - representative
+          type: string
+        hidden:
+          type: boolean
+        selected_ids:
+          items:
+            type: string
+          maxItems: 500
+          type: array
+          uniqueItems: true
+        targets:
+          items:
+            $ref: "#/components/schemas/PhotoAuthoredEditTarget"
+          maxItems: 1000
+          minItems: 1
+          type: array
+      required:
+        - asset_ids
+        - targets
+        - decision
+        - current_id
+      type: object
+      x-go-type: api.PhotoStackDecisionRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     PhotoTimeline:
       additionalProperties: false
       properties:
@@ -16507,6 +16582,28 @@ components:
         - concurrency
       type: object
       x-go-type: api.SetLaneControlRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    SetPhotoBurstGapRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/SetPhotoBurstGapRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        seconds:
+          format: int64
+          maximum: 30
+          minimum: 1
+          type: integer
+      required:
+        - seconds
+      type: object
+      x-go-type: api.SetPhotoBurstGapRequest
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -25554,6 +25651,29 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Resolve a revision-bound metadata editing session
+  /api/v1/photos/authored/stack:
+    post:
+      operationId: decidePhotoStack
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoStackDecisionRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoAuthoredReceipt"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Decide one observed stack atomically
   /api/v1/photos/authored/{receipt_id}/undo:
     post:
       operationId: undoPhotoAuthored
@@ -25946,7 +26066,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
           description: Error
-      summary: Inspect the photo display preference
+      summary: Inspect photo settings
     put:
       operationId: setPhotoSettings
       parameters:
@@ -25978,7 +26098,40 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
           description: Error
-      summary: Set or reset the photo display preference
+      summary: Set photo settings
+  /api/v1/photos/settings/burst-gap:
+    put:
+      operationId: setPhotoBurstGap
+      parameters:
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetPhotoBurstGapRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoSettings"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Change the burst gap
   /api/v1/photos/versions/{content_version_id}/face-decisions:
     post:
       operationId: decidePhotoFace

@@ -44,6 +44,9 @@ func TestWebSessionAllowsPhotoAlbumAndAuthoredRoutes(t *testing.T) {
 		{http.MethodPost, album + "/members/remove"},
 		{http.MethodPost, "/api/v1/photos/authored/prepare"},
 		{http.MethodPost, "/api/v1/photos/authored/edit"},
+		{http.MethodPost, "/api/v1/photos/authored/stack"},
+		{http.MethodGet, "/api/v1/photos/settings"},
+		{http.MethodPut, "/api/v1/photos/settings/burst-gap"},
 		{http.MethodPost, "/api/v1/photos/authored/40000000-0000-4000-8000-000000000001/undo"},
 	} {
 		require.True(t, webSessionRequestAllowed(httptest.NewRequest(route.method, route.path, nil)), route.method+" "+route.path)
@@ -58,6 +61,7 @@ func TestWebSessionAllowsPhotoAlbumAndAuthoredRoutes(t *testing.T) {
 	for _, path := range []string{"/api/v1/photos/albums/invalid", "/api/v1/photos/albums/11111111-1111-4111-8111-11111111111A", "/api/v1/photos/albums/"} {
 		require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodPut, path, nil)), path)
 	}
+	require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodPut, "/api/v1/photos/settings", nil)))
 	require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodGet, album, nil)))
 	require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodPatch, album, nil)))
 	require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodPost, "/api/v1/photos/assets", nil)))

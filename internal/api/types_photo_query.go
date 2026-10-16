@@ -12,6 +12,7 @@ import (
 
 // PhotoBrowseRequest carries strict QueryV1 JSON and live-page options.
 type PhotoBrowseRequest struct {
+	Stacks     bool                   `json:"stacks,omitempty" doc:"Extend capture-time pages through the final burst, capped at 500 frames."`
 	Projection string                 `json:"projection,omitempty" enum:"map"`
 	Hidden     bool                   `json:"hidden,omitempty"`
 	Query      QueryPayload           `json:"query"`
@@ -49,6 +50,8 @@ type PhotoQuality struct {
 }
 
 type PhotoBrowseRow struct {
+	SourceFolderKey      string            `json:"source_folder_key"`
+	Picked               bool              `json:"picked"`
 	Rating               int               `json:"rating" minimum:"0" maximum:"5"`
 	Flag                 string            `json:"flag" enum:",pick,reject"`
 	Quality              *PhotoQuality     `json:"quality,omitempty"`
@@ -99,6 +102,7 @@ type PhotoMapRow struct {
 }
 
 type PhotoBrowsePage struct {
+	BurstGapSeconds    int              `json:"burst_gap_seconds,omitempty" minimum:"1" maximum:"30"`
 	MapItems           []PhotoMapRow    `json:"map_items,omitempty"`
 	Items              []PhotoBrowseRow `json:"items"`
 	Total              int64            `json:"total" minimum:"0"`

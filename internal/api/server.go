@@ -385,6 +385,7 @@ func markRevisionPreconditionsRequired(api huma.API) {
 		{"/api/v1/photos/albums/{set_id}/members/add", http.MethodPost},
 		{"/api/v1/photos/albums/{set_id}/members/remove", http.MethodPost},
 		{"/api/v1/photos/settings", http.MethodPut},
+		{"/api/v1/photos/settings/burst-gap", http.MethodPut},
 		{"/api/v1/people/by-id/{person_id}", http.MethodPatch},
 		{"/api/v1/people/by-id/{person_id}/retire", http.MethodPost},
 		{"/api/v1/people/by-id/{person_id}/merge", http.MethodPost},

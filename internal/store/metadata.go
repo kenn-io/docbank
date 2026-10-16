@@ -1146,6 +1146,13 @@ func (s *Store) importMetadataRecord(
 			return err
 		}
 	}
+	if kind == metadataPhotoSettingsType {
+		var err error
+		raw, err = normalizePhotoSettingsMetadata(raw)
+		if err != nil {
+			return err
+		}
+	}
 	if kind == metadataPhotoFileType {
 		var err error
 		raw, err = normalizePhotoFileMetadata(raw)

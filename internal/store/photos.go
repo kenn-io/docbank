@@ -77,12 +77,12 @@ func photoSettingsTx(ctx context.Context, q metadataQuerier) (PhotoSettings, err
 	var settings PhotoSettings
 	var preference sql.NullString
 	err := q.QueryRowContext(ctx, `
-		SELECT preference, revision, updated_at
+		SELECT preference, revision, updated_at, COALESCE(burst_gap_seconds,2)
 		FROM photo_library_settings WHERE singleton=1`).Scan(
-		&preference, &settings.Revision, &settings.UpdatedAt,
+		&preference, &settings.Revision, &settings.UpdatedAt, &settings.BurstGapSeconds,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return PhotoSettings{Revision: 1, UpdatedAt: ""}, nil
+		return PhotoSettings{Revision: 1, UpdatedAt: "", BurstGapSeconds: 2}, nil
 	}
 	if err != nil {
 		return PhotoSettings{}, fmt.Errorf("reading photo settings: %w", err)
@@ -90,7 +90,7 @@ func photoSettingsTx(ctx context.Context, q metadataQuerier) (PhotoSettings, err
 	if preference.Valid {
 		settings.Preference = new(preference.String)
 	}
-	if !photoPreferenceValid(settings.Preference) || settings.Revision < 1 {
+	if !photoPreferenceValid(settings.Preference) || settings.Revision < 1 || settings.BurstGapSeconds < 1 || settings.BurstGapSeconds > 30 {
 		return PhotoSettings{}, fmt.Errorf("%w: invalid settings row", ErrInvalidPhotoAsset)
 	}
 	return settings, nil
@@ -230,9 +230,10 @@ func photoAssetState(asset PhotoAsset, changes []photoReceiptMemberChange) any {
 
 func photoSettingsState(settings PhotoSettings) any {
 	return struct {
-		Preference *string `json:"preference"`
-		Revision   int64   `json:"revision"`
-	}{settings.Preference, settings.Revision}
+		BurstGapSeconds int     `json:"burst_gap_seconds"`
+		Preference      *string `json:"preference"`
+		Revision        int64   `json:"revision"`
+	}{settings.BurstGapSeconds, settings.Preference, settings.Revision}
 }
 
 func marshalPhotoState(value any) (string, error) {
@@ -860,7 +861,7 @@ func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, preference
 		if err != nil {
 			return err
 		}
-		next := PhotoSettings{Preference: preference, Revision: current.Revision + 1, UpdatedAt: nowRFC3339()}
+		next := PhotoSettings{BurstGapSeconds: current.BurstGapSeconds, Preference: preference, Revision: current.Revision + 1, UpdatedAt: nowRFC3339()}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO photo_library_settings(singleton,preference,revision,updated_at) VALUES(1,?,?,?) ON CONFLICT(singleton) DO UPDATE SET preference=excluded.preference, revision=excluded.revision, updated_at=excluded.updated_at`, nullablePhotoString(preference), next.Revision, next.UpdatedAt); err != nil {
 			return err
 		}
@@ -922,4 +923,34 @@ func allPhotoAssetsTx(ctx context.Context, tx *sql.Tx) ([]PhotoAsset, error) {
 		assets = append(assets, asset)
 	}
 	return assets, nil
+}
+
+// SetPhotoBurstGap changes grouping without recomputing display-file choices.
+func (s *Store) SetPhotoBurstGap(ctx context.Context, revision int64, seconds int) (PhotoSettings, error) {
+	if seconds < 1 || seconds > 30 {
+		return PhotoSettings{}, fmt.Errorf("%w: burst gap must be 1 to 30 seconds", ErrInvalidPhotoAsset)
+	}
+	var result PhotoSettings
+	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+		current, err := photoSettingsTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if revision < 1 || current.Revision != revision {
+			return ErrStaleRevision
+		}
+		if current.BurstGapSeconds == seconds {
+			result = current
+			return nil
+		}
+		result = current
+		result.BurstGapSeconds = seconds
+		result.Revision++
+		result.UpdatedAt = nowRFC3339()
+		if _, err := tx.ExecContext(ctx, `INSERT INTO photo_library_settings(singleton,preference,revision,updated_at,burst_gap_seconds) VALUES(1,?,?,?,?) ON CONFLICT(singleton) DO UPDATE SET revision=excluded.revision,updated_at=excluded.updated_at,burst_gap_seconds=excluded.burst_gap_seconds`, nullablePhotoString(current.Preference), result.Revision, result.UpdatedAt, seconds); err != nil {
+			return err
+		}
+		return writePhotoReceiptTx(ctx, tx, photoReceipt{Operation: "settings", SettingsKey: "library", BeforeRevision: current.Revision, AfterRevision: result.Revision, Before: photoSettingsState(current), After: photoSettingsState(result)})
+	})
+	return result, err
 }

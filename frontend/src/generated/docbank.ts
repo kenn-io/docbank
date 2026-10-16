@@ -5269,6 +5269,7 @@ export interface PhotoPreparedTarget {
   /** @minimum 1 */
   asset_revision: number;
   content_version_id?: string;
+  display_file_id: string;
   file_id: string;
   file_name: string;
   node_id: number;
@@ -5519,6 +5520,7 @@ export interface PhotoBrowseRow {
   node_id: number;
   /** @nullable */
   orientation: number | null;
+  picked: boolean;
   previews: PhotoPreviewSlots;
   quality?: PhotoBrowseRowQuality;
   /**
@@ -5529,6 +5531,7 @@ export interface PhotoBrowseRow {
   /** @minimum 1 */
   revision: number;
   rotation: PhotoBrowseRowRotation;
+  source_folder_key: string;
   /** @nullable */
   width_px: number | null;
 }
@@ -5574,6 +5577,11 @@ export interface PhotoMapRow {
 export interface PhotoBrowsePage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /**
+     * @minimum 1
+     * @maximum 30
+     */
+  burst_gap_seconds?: number;
   facets: PhotoBrowsePageFacetsItem[];
   items: PhotoBrowseRow[];
   map_items?: PhotoMapRow[];
@@ -5621,6 +5629,8 @@ export interface PhotoBrowseRequest {
   page_size?: number;
   projection?: PhotoBrowseRequestProjection;
   query: SavedQueryV1Schema;
+  /** Extend capture-time pages through the final burst, capped at 500 frames. */
+  stacks?: boolean;
 }
 
 export interface Sort {
@@ -5800,11 +5810,46 @@ export const PhotoSettingsPreference = {
 export interface PhotoSettings {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /**
+     * @minimum 1
+     * @maximum 30
+     */
+  burst_gap_seconds: number;
   /** @nullable */
   preference?: PhotoSettingsPreference;
   /** @minimum 1 */
   revision: number;
   updated_at?: string;
+}
+
+export type PhotoStackDecisionRequestDecision = typeof PhotoStackDecisionRequestDecision[keyof typeof PhotoStackDecisionRequestDecision];
+
+
+export const PhotoStackDecisionRequestDecision = {
+  current: 'current',
+  all: 'all',
+  selected: 'selected',
+  representative: 'representative',
+} as const;
+
+export interface PhotoStackDecisionRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * @minItems 1
+     * @maxItems 500
+     */
+  asset_ids: string[];
+  current_id: string;
+  decision: PhotoStackDecisionRequestDecision;
+  hidden?: boolean;
+  /** @maxItems 500 */
+  selected_ids?: string[];
+  /**
+     * @minItems 1
+     * @maxItems 1000
+     */
+  targets: PhotoAuthoredEditTarget[];
 }
 
 export type PhotoTimelineFacetsItemDimension = typeof PhotoTimelineFacetsItemDimension[keyof typeof PhotoTimelineFacetsItemDimension];
@@ -7076,6 +7121,16 @@ export interface SetLaneControlRequest {
      */
   concurrency: number;
   paused: boolean;
+}
+
+export interface SetPhotoBurstGapRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * @minimum 1
+     * @maximum 30
+     */
+  seconds: number;
 }
 
 export interface SetPhotoDisplayRequest {
@@ -8651,6 +8706,10 @@ export type PromotePhotoNodeHeaders = {
 };
 
 export type SetPhotoSettingsHeaders = {
+'If-Match': string;
+};
+
+export type SetPhotoBurstGapHeaders = {
 'If-Match': string;
 };
 
@@ -16190,6 +16249,44 @@ return sessionJSON<PhotoAuthoredPreparation>(getPreparePhotoAuthoredUrl(),
 
 
 
+export const getDecidePhotoStackUrl = () => {
+
+
+
+
+  return `/api/v1/photos/authored/stack`
+}
+
+/**
+ * @summary Decide one observed stack atomically
+ */
+export const decidePhotoStack = async (photoStackDecisionRequest: NonReadonly<PhotoStackDecisionRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAuthoredReceipt> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoAuthoredReceipt>(getDecidePhotoStackUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(photoStackDecisionRequest)
+  }
+);}
+
+
+
 export const getUndoPhotoAuthoredUrl = (receiptId: string,) => {
 
 
@@ -16686,7 +16783,7 @@ export const getGetPhotoSettingsUrl = () => {
 }
 
 /**
- * @summary Inspect the photo display preference
+ * @summary Inspect photo settings
  */
 export const getPhotoSettings = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoSettings> => {
 
@@ -16710,7 +16807,7 @@ export const getSetPhotoSettingsUrl = () => {
 }
 
 /**
- * @summary Set or reset the photo display preference
+ * @summary Set photo settings
  */
 export const setPhotoSettings = async (setPhotoSettingsRequest: NonReadonly<SetPhotoSettingsRequest>,
     headers: SetPhotoSettingsHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoSettings> => {
@@ -16735,6 +16832,45 @@ return sessionJSON<PhotoSettings>(getSetPhotoSettingsUrl(),
     method: 'PUT',
     headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
     body: JSON.stringify(setPhotoSettingsRequest)
+  }
+);}
+
+
+
+export const getSetPhotoBurstGapUrl = () => {
+
+
+
+
+  return `/api/v1/photos/settings/burst-gap`
+}
+
+/**
+ * @summary Change the burst gap
+ */
+export const setPhotoBurstGap = async (setPhotoBurstGapRequest: NonReadonly<SetPhotoBurstGapRequest>,
+    headers: SetPhotoBurstGapHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoSettings> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoSettings>(getSetPhotoBurstGapUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(setPhotoBurstGapRequest)
   }
 );}
 

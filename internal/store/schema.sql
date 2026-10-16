@@ -2368,6 +2368,7 @@ CREATE TABLE IF NOT EXISTS photo_sidecar_considered (
 );
 
 CREATE TABLE IF NOT EXISTS photo_library_settings (
+    burst_gap_seconds INTEGER,
     singleton    INTEGER PRIMARY KEY,
     preference   TEXT,
     revision     INTEGER NOT NULL DEFAULT 1,

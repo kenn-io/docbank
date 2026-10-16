@@ -1,3 +1,4 @@
+import userEvent from "@testing-library/user-event";
 import { beforeEach, afterEach, expect, it, vi } from "vite-plus/test";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
@@ -776,4 +777,53 @@ it("shows the restored rotation in the cull stage after Undo", async () => {
     expect(container.querySelector(".photo-stage [style*='rotate(0deg)']")).toBeTruthy(),
   );
   expect(container.querySelector(".photo-stage img")!.getAttribute("src")).toBe(preview);
+});
+
+it("keeps the full frozen stack in a later pass decision and advances past its group", async () => {
+  const rows = [photo(1), { ...photo(2), flag: "pick" as const }, photo(3), photo(4)].map(
+    (row, i) => ({ ...row, source_folder_key: i < 3 ? "burst" : "next" }),
+  );
+  const ids = rows.map((row) => row.asset_id),
+    pass = [ids[0]!, ids[3]!, ids[2]!];
+  vi.spyOn(api, "getPhotoSettings").mockResolvedValue({
+    revision: 1,
+    preference: null,
+    burst_gap_seconds: 2,
+  });
+  vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) => ({
+    items: rows.filter((row) => request.query.filters?.asset_ids?.includes(row.asset_id)),
+    total: 4,
+    facets: [],
+    relevance_available: false,
+  }));
+  const decide = vi
+    .spyOn(api, "decidePhotoStack")
+    .mockResolvedValue({ receipt_id: "stack", before: [], after: [] });
+  const { cull, photos } = await reviewPhoto(rows[0], true);
+  vi.mocked(photos.lookup).mockImplementation(
+    async (id) => rows.find((row) => row.asset_id === id)!,
+  );
+  await act(async () => {
+    cull.run = {
+      ...cull.run!,
+      ids,
+      captureTimeOrder: "asc",
+      checkpoint: { ...cull.run!.checkpoint, pass, scope: "unflagged" },
+    };
+    await cull.regroup();
+  });
+  const keep = await readyButton("Keep current (Return)");
+  // Enter activates a focused control; the dialog shortcut must leave it alone.
+  await fireEvent.keyDown(keep, { key: "Enter" });
+  expect(decide).not.toHaveBeenCalled();
+  await fireEvent.click(keep);
+  await waitFor(() => expect(cull.currentID).toBe(ids[3]));
+  expect(decide.mock.calls[0]?.[0]).toMatchObject({
+    asset_ids: ids.slice(0, 3),
+    current_id: ids[0],
+    hidden: false,
+  });
+  expect(
+    Object.values(decide.mock.calls[0]?.[0].targets ?? {}).map((target) => target.asset_id),
+  ).toEqual(ids.slice(0, 3));
 });

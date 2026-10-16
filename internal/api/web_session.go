@@ -265,6 +265,12 @@ func (r *webSessionRegistry) waitRevocations() {
 }
 
 func webSessionRequestAllowed(r *http.Request) bool {
+	if r.URL.Path == "/api/v1/photos/settings" {
+		return r.Method == http.MethodGet && r.URL.RawQuery == ""
+	}
+	if r.URL.Path == "/api/v1/photos/settings/burst-gap" {
+		return r.Method == http.MethodPut && r.URL.RawQuery == ""
+	}
 	if photoAuthoredBrowserRequestAllowed(r) {
 		return true
 	}
