@@ -904,7 +904,8 @@ subset of `collections`, `tags`, `media_family`, `extension`, `modified`,
 Set `photos: true` to capture a Photos query in its photo ordering, with one
 display-file row per matching asset, an `asset_id`, and its frozen display-file `flag` on each row. Document snapshot rows omit `flag`. This mode
 uses Photos filters and sorts and requires an empty facet list. It uses the
-same snapshot paging and expiry rules below.
+same snapshot paging and expiry rules below. When `profile` is omitted, photo
+snapshots skip profile selection and use `unconfigured` processing coverage.
 
 The response freezes the canonical query, dependency revisions, selected
 lexical generation and processing coverage, ordered row metadata, and exact

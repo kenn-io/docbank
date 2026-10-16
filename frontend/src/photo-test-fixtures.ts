@@ -177,7 +177,6 @@ export function photoMetadataResponse(
             {
               id: target.file_id,
               node_id: target.node_id,
-              content_version_id: photo(target.node_id).content_version_id,
               revision: target.revision,
               role: "image",
             },

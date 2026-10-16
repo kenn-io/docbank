@@ -483,39 +483,65 @@ it("returns to fit after Z, pan, Z in Cull", async () => {
   await waitFor(() => expect(pan.style.transform).toBe("translate(0px, 0px) scale(1)"));
 });
 
-it("refuses a decision on a replaced display file until the photo reloads", async () => {
+it.each([false, true])(
+  "refuses a decision on a replaced photo until reload: same file=%s",
+  async (sameFile) => {
+    const row = photo(1);
+    const replacement = {
+      ...row,
+      display_file_id: sameFile ? row.display_file_id : "replacement-file",
+      content_version_id: "replacement-version",
+    };
+    const target = preparedPhoto(1, { file_id: replacement.display_file_id });
+    const prepare = vi.mocked(api.preparePhotoAuthored).mockResolvedValue(preparation([target]));
+    const edit = vi.spyOn(api, "editPhotoAuthored").mockResolvedValue({
+      receipt_id: "reject",
+      before: [target],
+      after: [{ ...target, values: { ...target.values, flag: "reject" } }],
+    });
+    const { cull, photos, container } = await reviewPhoto(row, true);
+    vi.mocked(photos.lookup).mockResolvedValue(replacement);
+    await fireEvent.click(screen.getByRole("button", { name: "Reject (X)" }));
+    await screen.findByText("This photo changed. Reload the photo before deciding.");
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(edit).not.toHaveBeenCalled();
+    expect(cull.currentID).toBe(row.asset_id);
+    expect(photos.cullEditor!.dirty).toBe(false);
+    expect(container.querySelector(".photo-cull > .kit-sr-only")!.textContent).toBe("");
+    await fireEvent.click(screen.getByRole("button", { name: "Reload photo" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByText("This photo changed. Reload the photo before deciding."),
+      ).toBeNull(),
+    );
+    await fireEvent.click(screen.getByRole("button", { name: "Reject (X)" }));
+    await waitFor(() => expect(edit).toHaveBeenCalledOnce());
+    expect(edit.mock.calls[0]![0]).toMatchObject({
+      targets: [{ file_id: replacement.display_file_id }],
+      patch: { flag: "reject" },
+    });
+  },
+);
+
+it("requires reloading the photo when a 412 retry finds new content on the same file", async () => {
   const row = photo(1);
-  const replacement = {
-    ...row,
-    display_file_id: "replacement-file",
-    content_version_id: "replacement-version",
-  };
-  const target = preparedPhoto(1, { file_id: replacement.display_file_id });
-  const prepare = vi.mocked(api.preparePhotoAuthored).mockResolvedValue(preparation([target]));
-  const edit = vi.spyOn(api, "editPhotoAuthored").mockResolvedValue({
-    receipt_id: "reject",
-    before: [target],
-    after: [{ ...target, values: { ...target.values, flag: "reject" } }],
-  });
-  const { cull, photos, container } = await reviewPhoto(row, true);
-  await fireEvent.click(screen.getByRole("button", { name: "Reject (X)" }));
+  const before = preparedPhoto(1);
+  vi.mocked(api.preparePhotoAuthored)
+    .mockResolvedValueOnce(preparation([before]))
+    .mockResolvedValue(preparation([{ ...before, revision: 2 }]));
+  const edit = vi
+    .spyOn(api, "editPhotoAuthored")
+    .mockRejectedValueOnce(new APIError("Photo changed", 412, "precondition_failed"))
+    .mockResolvedValue({ receipt_id: "pick", before: [], after: [] });
+  const { cull, photos } = await reviewPhoto(row);
+  await fireEvent.click(screen.getByRole("button", { name: "Pick (P)" }));
+  await screen.findByText("Photo changed");
+  vi.mocked(photos.lookup).mockResolvedValue({ ...row, content_version_id: "replacement-version" });
+  await fireEvent.click(screen.getByRole("button", { name: "Reload and retry" }));
   await screen.findByText("This photo changed. Reload the photo before deciding.");
-  expect(prepare).toHaveBeenCalledOnce();
-  expect(edit).not.toHaveBeenCalled();
+  expect(edit).toHaveBeenCalledOnce();
+  expect(screen.getByRole("button", { name: "Reload photo" })).toBeTruthy();
   expect(cull.currentID).toBe(row.asset_id);
-  expect(photos.cullEditor!.dirty).toBe(false);
-  expect(container.querySelector(".photo-cull > .kit-sr-only")!.textContent).toBe("");
-  vi.mocked(photos.lookup).mockResolvedValue(replacement);
-  await fireEvent.click(screen.getByRole("button", { name: "Reload photo" }));
-  await waitFor(() =>
-    expect(screen.queryByText("This photo changed. Reload the photo before deciding.")).toBeNull(),
-  );
-  await fireEvent.click(screen.getByRole("button", { name: "Reject (X)" }));
-  await waitFor(() => expect(edit).toHaveBeenCalledOnce());
-  expect(edit.mock.calls[0]![0]).toMatchObject({
-    targets: [{ file_id: replacement.display_file_id }],
-    patch: { flag: "reject" },
-  });
 });
 
 it("includes the last photo picked after completion when S starts Picks", async () => {
@@ -630,15 +656,14 @@ it("requires reloading the photo when a 412 retry prepares a different display f
     .spyOn(api, "editPhotoAuthored")
     .mockRejectedValueOnce(new APIError("Photo changed", 412, "precondition_failed"))
     .mockResolvedValue({ receipt_id: "pick", before: [], after: [] });
-  const { cull, photos } = await reviewPhoto(row);
+  const { cull } = await reviewPhoto(row);
   await fireEvent.click(screen.getByRole("button", { name: "Pick (P)" }));
   await screen.findByText("Photo changed");
   expect(edit).toHaveBeenCalledOnce();
   await fireEvent.click(screen.getByRole("button", { name: "Reload and retry" }));
   await waitFor(() => expect(prepare).toHaveBeenCalledTimes(2));
-  await waitFor(() => expect(photos.cullEditor!.busy).toBe(false));
+  await screen.findByRole("button", { name: "Reload photo" });
   expect(edit).toHaveBeenCalledOnce();
-  expect(screen.getByRole("button", { name: "Reload photo" })).toBeTruthy();
   expect(cull.currentID).toBe(row.asset_id);
 });
 

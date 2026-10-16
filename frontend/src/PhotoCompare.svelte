@@ -14,6 +14,7 @@
   }: { ids: string[]; photos: Photos; cache: PhotoPreviewCache; onclose: () => void } = $props();
   let selected = $state<string[]>([]);
   let rows = $state.raw<PhotoBrowseRow[]>([]);
+  let unavailable = $state(0);
   let errors = $state.raw<string[]>([]);
   let view = $state<PhotoView>({ ...fittedPhotoView });
   let regionMode = $state(false);
@@ -41,6 +42,7 @@
       .then((values) => {
         if (!controller.signal.aborted) {
           rows = values;
+          unavailable = members.length - values.length;
           void restoreFocus();
         }
       })
@@ -116,7 +118,7 @@
     <div class="photo-compare" tabindex="-1" bind:this={content} onkeydown={key}>
       <header>
         <Button size="sm" onclick={onclose}>Exit compare</Button><strong
-          >Compare {selected.length} photos</strong
+          >Compare {rows.length} photos</strong
         ><span>Zoom and navigation are linked</span><Button
           size="sm"
           disabled={moving || photos.loading}
@@ -149,7 +151,11 @@
           >
         </p>{/if}
       {#each errors as error}<p role="alert">{error}</p>{/each}
-      {#if errors.length}<Button size="sm" disabled={loading} onclick={() => retry++}>Retry</Button
+      {#if unavailable}<p role="status">
+          {unavailable} selected {unavailable === 1 ? "photo is" : "photos are"} unavailable.
+        </p>{/if}
+      {#if errors.length || unavailable}<Button size="sm" disabled={loading} onclick={() => retry++}
+          >Retry</Button
         >{/if}
       <div class="frames" style={`--columns: ${Math.min(4, rows.length)}`}>
         {#each rows as photo (photo.asset_id)}<section aria-label={photo.name}>

@@ -31,7 +31,7 @@ function compare(
   photos.items = rows;
   photos.started = true;
   vi.spyOn(photos, "lookupMany").mockImplementation(async (ids) =>
-    ids.map((id) => rows.find((row) => row.asset_id === id)!),
+    ids.flatMap((id) => rows.filter((row) => row.asset_id === id)),
   );
   vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
   const onclose = vi.fn();
@@ -43,6 +43,25 @@ function compare(
   });
   return { photos, onclose, dialog: screen.getByRole("dialog", { name: "Compare photos" }) };
 }
+
+it.each([1, 2])("reports %s unavailable selections and retries them", async (missing) => {
+  const rows = [photo(1), photo(2), photo(3)];
+  const { photos, dialog } = compare(
+    rows.slice(0, 3 - missing),
+    rows.map((row) => row.asset_id),
+  );
+  await within(dialog).findByText(
+    `${missing} selected ${missing === 1 ? "photo is" : "photos are"} unavailable.`,
+  );
+  expect(within(dialog).getByText(`Compare ${3 - missing} photos`)).toBeTruthy();
+  expect(names(dialog)).toEqual(missing === 1 ? ["Photo 1.jpg", "Photo 2.jpg"] : ["Photo 1.jpg"]);
+  vi.mocked(photos.lookupMany).mockResolvedValue(rows);
+  await fireEvent.click(within(dialog).getByRole("button", { name: /^Retry$/ }));
+  await within(dialog).findByText("Compare 3 photos");
+  expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg", "Photo 3.jpg"]);
+  expect(within(dialog).queryByText(/selected photos? (is|are) unavailable/)).toBeNull();
+  photos.dispose();
+});
 
 it("offers directional retry after linked navigation fails and keeps the pair until it succeeds", async () => {
   const rows = [photo(1), photo(2), photo(3)];

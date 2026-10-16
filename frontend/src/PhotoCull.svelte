@@ -136,12 +136,33 @@
     if (!photo || loading || cull.stale || cull.busy || !editor.canChangeTarget()) return;
     const selected = photo;
     editor.reset();
-    await editor.prepare({ asset_ids: [selected.asset_id], hidden: false });
-    if (!changedPhoto(selected)) await applyDecision(patch);
+    if (await prepareDecision(selected)) await applyDecision(patch);
   }
-  function changedPhoto(selected?: PhotoBrowseRow) {
+  async function prepareDecision(selected: PhotoBrowseRow, reload = false) {
+    loading = true;
+    try {
+      const [, current] = await Promise.all([
+        reload
+          ? editor.reload()
+          : editor.prepare({ asset_ids: [selected.asset_id], hidden: false }),
+        photos.lookup(selected.asset_id, new AbortController().signal),
+      ]);
+      return !changedPhoto(selected, current);
+    } catch (cause) {
+      editor.error = cause instanceof Error ? cause.message : String(cause);
+      return false;
+    } finally {
+      loading = false;
+    }
+  }
+  function changedPhoto(selected: PhotoBrowseRow, current: PhotoBrowseRow) {
     if (editor.error || !editor.targets.length) return true;
-    if (editor.asset?.display_file_id === selected?.display_file_id) return false;
+    if (
+      editor.asset?.display_file_id === selected.display_file_id &&
+      current.display_file_id === selected.display_file_id &&
+      current.content_version_id === selected.content_version_id
+    )
+      return false;
     editor.clearDraft();
     editor.error = "This photo changed. Reload the photo before deciding.";
     return (editor.conflict = true);
@@ -179,8 +200,13 @@
     const patch = { ...editor.patch };
     focus();
     if (editor.conflict) {
-      await editor.reload();
-      if (changedPhoto(photo) || editor.conflict || editor.membershipChanged) return;
+      if (
+        !photo ||
+        !(await prepareDecision(photo, true)) ||
+        editor.conflict ||
+        editor.membershipChanged
+      )
+        return;
     }
     await applyDecision(patch, true);
   }
@@ -195,8 +221,9 @@
     if (action === "close") close();
     else if (action === "previous") move(-1);
     else if (action === "next") move(1);
-    else if (action === "auto") cull.toggleAutoAdvance();
-    else if (action === "scope") void nextPass();
+    else if (action === "auto") {
+      if (!cull.busy && !cull.stale) cull.toggleAutoAdvance();
+    } else if (action === "scope") void nextPass();
     else if (action === "zoom") view = toggleActualPhotoView(view);
     else if (action === "info") info = (info + 1) % 3;
     else if (action === "help") help = !help;
