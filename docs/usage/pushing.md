@@ -101,7 +101,7 @@ Each run is one [import collection](web.md#browse-import-collections) holding
 the files that run added or changed. In `--watch` mode, each scan that uploads
 something is one collection.
 
-A one-shot push processes up to eight files at a time. Outcomes print as uploads
+A one-shot push processes up to 32 files at a time. Outcomes print as uploads
 finish, so their order can differ from the source directory's order. Source
 names that normalize to the same destination are processed in traversal order.
 Watch mode processes files one at a time after they settle.
