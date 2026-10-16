@@ -181,7 +181,14 @@ func runServe(ctx context.Context) (retErr error) {
 		return err
 	}
 	bindingAdmission := newCheckoutBindingAdmission(s, logger)
-	checkoutValidationPending, err := validateConfiguredCheckoutStartup(sigCtx, cfg, catalogStores, bindingAdmission)
+	var startupFailures sync.Map
+	checkoutValidationPending, err := validateConfiguredCheckoutStartup(sigCtx, cfg, catalogStores, func(ctx context.Context, binding config.StoreBindingConfig) error {
+		err := bindingAdmission(ctx, binding)
+		if err != nil {
+			startupFailures.Store(binding, err)
+		}
+		return err
+	})
 	if err != nil {
 		return err
 	}
@@ -196,7 +203,13 @@ func runServe(ctx context.Context) (retErr error) {
 			OwnershipEpoch: catalogStore.OwnershipEpoch,
 		})
 	}
-	blobRegistry := blob.NewRegistry(sigCtx, s.VaultID(), cfg.StoreBindings, storeSpecs, bindingAdmission)
+	blobRegistry := blob.NewRegistry(sigCtx, s.VaultID(), cfg.StoreBindings, storeSpecs, func(ctx context.Context, binding config.StoreBindingConfig) error {
+		if err, ok := startupFailures.Load(binding); ok {
+			return err.(error)
+		}
+		return bindingAdmission(ctx, binding)
+	})
+	startupFailures.Clear()
 	blobOptions := blob.ManagedOptions()
 	blobOptions.Registry = blobRegistry
 	blobs, err := blob.NewWithOptions(
@@ -991,7 +1004,10 @@ func waitForCheckoutValidation(ctx context.Context, check func(context.Context) 
 }
 
 func validateConfiguredCheckouts(ctx context.Context, cfg config.Config, stores []store.BlobStore, admit func(context.Context, config.StoreBindingConfig) error) error {
-	var pending error
+	admissionCtx, cancel := context.WithTimeout(ctx, blob.RegistryProbeTimeout)
+	defer cancel()
+	results := make(chan error, len(stores))
+	checks := 0
 	for _, item := range stores {
 		if item.Role == "primary" || item.Lifecycle == "detached" || item.Kind != "filesystem" {
 			continue
@@ -1004,18 +1020,20 @@ func validateConfiguredCheckouts(ctx context.Context, cfg config.Config, stores 
 		if _, err := os.Stat(binding.Path); errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
-		admissionCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
-		err := admit(admissionCtx, binding)
-		cancel()
-		if err != nil {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if !checkoutValidationPending(ctx, err) {
-				return err
-			}
+		checks++
+		go func() { results <- admit(admissionCtx, binding) }()
+	}
+	var pending, failure error
+	for range checks {
+		err := <-results
+		if err != nil && !checkoutValidationPending(ctx, err) {
+			failure = errors.Join(failure, err)
+		} else {
 			pending = errors.Join(pending, err)
 		}
+	}
+	if failure != nil {
+		return failure
 	}
 	return pending
 }

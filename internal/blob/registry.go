@@ -40,7 +40,8 @@ var errStoreOwnershipUnavailable = errors.New("store ownership is unavailable")
 
 var errRegistryProbeTimeout = errors.New("store ownership probe timed out")
 
-const registryProbeTimeout = 5 * time.Second
+// RegistryProbeTimeout bounds startup admission and ownership probes.
+const RegistryProbeTimeout = 5 * time.Second
 
 // StoreSpec is the catalog authority needed to bind one runtime backend.
 type StoreSpec struct {
@@ -177,13 +178,13 @@ func newRegistryWithFactories(
 	for _, spec := range stores {
 		ids = append(ids, spec.ID)
 	}
-	// Startup only waits briefly for each binding's admission. Later refreshes
-	// use their caller's full context so a large separation walk can finish.
+	// All startup admissions share one budget. Later refreshes use their
+	// caller's full context so a large separation walk can finish.
+	admissionCtx, cancel := context.WithTimeout(ctx, RegistryProbeTimeout)
+	defer cancel()
 	registry.admitBindings = nil
 	for _, admit := range admitBindings {
-		registry.admitBindings = append(registry.admitBindings, func(ctx context.Context, binding config.StoreBindingConfig) error {
-			admissionCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
-			defer cancel()
+		registry.admitBindings = append(registry.admitBindings, func(_ context.Context, binding config.StoreBindingConfig) error {
 			return admit(admissionCtx, binding)
 		})
 	}
@@ -230,7 +231,7 @@ func (r *Registry) Refresh(ctx context.Context, id string) StoreObservation {
 		return r.Observation(id)
 	}
 	probeCtx, cancel := context.WithTimeoutCause(
-		ctx, registryProbeTimeout, errRegistryProbeTimeout,
+		ctx, RegistryProbeTimeout, errRegistryProbeTimeout,
 	)
 	defer cancel()
 	return r.refresh(probeCtx, id)
@@ -252,7 +253,7 @@ func (r *Registry) RefreshStores(
 		}
 	}
 	probeCtx, cancel := context.WithTimeoutCause(
-		ctx, registryProbeTimeout, errRegistryProbeTimeout,
+		ctx, RegistryProbeTimeout, errRegistryProbeTimeout,
 	)
 	defer cancel()
 	var mu sync.Mutex

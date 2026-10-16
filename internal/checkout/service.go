@@ -10,9 +10,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sync"
 	"syscall"
 	"time"
+
+	"golang.org/x/sync/semaphore"
 
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
@@ -23,7 +24,7 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-var creationMu sync.Mutex
+var creationMu = semaphore.NewWeighted(1)
 
 type Service struct {
 	Store         *store.Store
@@ -58,11 +59,13 @@ func (s Service) mutate(ctx context.Context, fn func() error) error {
 
 // Prepare holds the empty destination until the supervised job closes it.
 func (s Service) Prepare(ctx context.Context, selection store.PhotoCheckoutSelection, destination string, byteLimit int64) (store.PhotoCheckout, store.StorageOperation, store.PhotoCheckoutEstimate, *os.Root, error) {
-	creationMu.Lock()
-	defer creationMu.Unlock()
 	var checkout store.PhotoCheckout
 	var operation store.StorageOperation
 	var estimate store.PhotoCheckoutEstimate
+	if err := creationMu.Acquire(ctx, 1); err != nil {
+		return checkout, operation, estimate, nil, fmt.Errorf("waiting for checkout creation: %w", err)
+	}
+	defer creationMu.Release(1)
 	if !filepath.IsAbs(destination) {
 		return checkout, operation, estimate, nil, fmt.Errorf("%w: destination must be an absolute daemon-host path", store.ErrInvalidPhotoCheckout)
 	}

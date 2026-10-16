@@ -389,6 +389,31 @@ func TestConfiguredCheckoutValidationDefersOnlyOverlappingBindings(t *testing.T)
 	require.ErrorContains(t, err, fmt.Sprintf("%q", destination))
 }
 
+func TestConfiguredCheckoutStartupAdmitsModerateBinding(t *testing.T) {
+	catalog, _, _, _ := newCheckoutReservationFixture(t)
+	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+	cfg := config.Default()
+	binding := config.StoreBindingConfig{Kind: "filesystem", Path: t.TempDir()}
+	cfg.StoreBindings = map[string]config.StoreBindingConfig{"archive": binding}
+	admission := &checkoutBindingAdmission{catalog: catalog, logger: slog.New(slog.DiscardHandler),
+		check: func(ctx context.Context, _ []store.PhotoCheckout, _ string) error {
+			select {
+			case <-time.After(300 * time.Millisecond):
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		},
+	}
+	pending, err := validateConfiguredCheckoutStartup(t.Context(), cfg, []store.BlobStore{
+		{Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "archive"},
+	}, admission.admit)
+	require.NoError(t, err)
+	require.False(t, pending, "a 300ms separation walk should finish during startup")
+	_, admitted := admission.checked[binding]
+	require.True(t, admitted)
+}
+
 func TestConfiguredCheckoutStartupDefersSlowBinding(t *testing.T) {
 	t.Parallel()
 	catalog, _, _, _ := newCheckoutReservationFixture(t)
@@ -409,7 +434,7 @@ func TestConfiguredCheckoutStartupDefersSlowBinding(t *testing.T) {
 			return nil
 		},
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*blob.RegistryProbeTimeout)
 	defer cancel()
 	pending, err := validateConfiguredCheckoutStartup(ctx, cfg, []store.BlobStore{
 		{Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "slow"},

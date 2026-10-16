@@ -47,6 +47,24 @@ func checkoutPhoto(t *testing.T, s Service, name, content string) store.PhotoAss
 	return asset
 }
 
+func TestPrepareCancelledWhileWaitingForCreation(t *testing.T) {
+	require.NoError(t, creationMu.Acquire(t.Context(), 1))
+	defer creationMu.Release(1)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	returned := make(chan error, 1)
+	go func() {
+		_, _, _, _, err := (Service{}).Prepare(ctx, store.PhotoCheckoutSelection{}, "", 0)
+		returned <- err
+	}()
+	select {
+	case err := <-returned:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(time.Second):
+		t.Error("Prepare stayed blocked on the creation lock after cancellation")
+	}
+}
+
 func TestCheckoutRejectsStartupCleanupDirectoryAlias(t *testing.T) {
 	t.Parallel()
 	for _, name := range []string{"blobs", "web-launch", "web-downloads"} {
