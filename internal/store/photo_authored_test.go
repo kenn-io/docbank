@@ -1494,7 +1494,7 @@ func editPhotoAuthored(ctx context.Context, s *Store, targets []PhotoAuthoredTar
 		if err != nil {
 			return PhotoAuthoredReceipt{}, err
 		}
-		request.Targets = append(request.Targets, PhotoAuthoredEditTarget{file.AssetID, asset.Revision, file.ID, target.Revision, node.Revision})
+		request.Targets = append(request.Targets, PhotoAuthoredEditTarget{AssetID: file.AssetID, AssetRevision: asset.Revision, FileID: file.ID, Revision: target.Revision, NodeRevision: node.Revision})
 	}
 	return s.EditPhotoAuthoredBatch(ctx, request)
 }

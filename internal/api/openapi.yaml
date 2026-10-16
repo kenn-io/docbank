@@ -11825,6 +11825,8 @@ components:
           format: int64
           minimum: 1
           type: integer
+        content_version_id:
+          type: string
         file_id:
           format: uuid
           type: string
@@ -12862,6 +12864,8 @@ components:
           format: int64
           minimum: 1
           type: integer
+        content_version_id:
+          type: string
         file_id:
           format: uuid
           type: string

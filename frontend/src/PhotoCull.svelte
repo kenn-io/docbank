@@ -42,6 +42,7 @@
   );
   onDestroy(() => {
     cull.cancel();
+    reloadController.abort();
   });
   let container = $state<HTMLDivElement>();
   const focus = () => container?.focus({ preventScroll: true });
@@ -51,8 +52,8 @@
   let photo = $state<PhotoBrowseRow>();
   let error = $state("");
   let loading = $state(false);
-  let deciding = $state(false);
-  const busy = $derived(deciding || editor.busy);
+  const reloadController = new AbortController();
+  const busy = $derived(editor.loading || editor.busy);
   let view = $state<PhotoView>({ ...fittedPhotoView });
   let info = $state(0);
   let help = $state(false);
@@ -62,6 +63,8 @@
     checkpoint.pass.slice(Math.max(0, checkpoint.position - 4), checkpoint.position + 5),
   );
   let neighbors = $state.raw<PhotoBrowseRow[]>([]);
+  let railError = $state("");
+  let railLoading = $state(false);
   const currentID = $derived(cull.currentID);
   $effect(() => {
     const id = currentID;
@@ -89,13 +92,20 @@
   $effect(() => {
     const ids = rail;
     const controller = new AbortController();
-    neighbors = [];
+    railError = "";
+    railLoading = true;
     void photos
       .lookupMany(ids, controller.signal)
       .then((rows) => {
         if (!controller.signal.aborted) neighbors = rows;
       })
-      .catch(() => {});
+      .catch((cause) => {
+        if (!controller.signal.aborted)
+          railError = cause instanceof Error ? cause.message : String(cause);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) railLoading = false;
+      });
     return () => controller.abort();
   });
   $effect(() => {
@@ -105,7 +115,7 @@
   });
   $effect(() => prefetchPreviews(photos, cache, neighbors));
   function canChangeTarget() {
-    return !deciding && editor.canChangeTarget();
+    return editor.canChangeTarget();
   }
   async function nextPass(followUp = false) {
     focus();
@@ -139,45 +149,26 @@
   }
   async function decide(patch: PhotoAuthoredPatch) {
     if (!photo || loading || cull.stale || cull.busy || !canChangeTarget()) return;
-    deciding = true;
-    const selected = photo;
-    try {
-      editor.reset();
-      if (await prepareDecision(selected)) await applyDecision(selected, patch);
-    } finally {
-      deciding = false;
-    }
-  }
-  async function prepareDecision(selected: PhotoBrowseRow, reload = false) {
-    try {
-      const [, current] = await Promise.all([
-        reload
-          ? editor.reload()
-          : editor.prepare({ asset_ids: [selected.asset_id], hidden: false }),
-        photos.lookup(selected.asset_id, new AbortController().signal),
-      ]);
-      return !changedPhoto(selected, current);
-    } catch (cause) {
-      editor.error = cause instanceof Error ? cause.message : String(cause);
-      return false;
-    }
-  }
-  function changedPhoto(selected: PhotoBrowseRow, current: PhotoBrowseRow) {
-    if (editor.error || !editor.targets.length) return true;
-    if (
-      editor.asset?.display_file_id === selected.display_file_id &&
-      current.display_file_id === selected.display_file_id &&
-      current.content_version_id === selected.content_version_id
-    )
-      return false;
-    editor.clearDraft();
-    editor.error = "This photo changed. Reload the photo before deciding.";
-    return (editor.conflict = true);
+    editor.reset();
+    await applyDecision(photo, patch);
   }
   async function applyDecision(selected: PhotoBrowseRow, patch: PhotoAuthoredPatch, retry = false) {
     focus();
     const id = selected.asset_id;
-    await editor.edit({ asset_ids: [id] }, retry ? {} : patch, false, refresh);
+    await editor.edit(
+      { asset_ids: [id] },
+      retry ? {} : patch,
+      false,
+      refresh,
+      undefined,
+      undefined,
+      retry
+        ? undefined
+        : {
+            file_id: selected.display_file_id,
+            content_version_id: selected.content_version_id,
+          },
+    );
     await tick();
     focus();
     if (editor.error || editor.dirty || editor.conflict) return;
@@ -190,22 +181,23 @@
   }
   async function retryDecision() {
     if (!photo || busy || editor.loading) return;
-    deciding = true;
     focus();
+    if (!editor.conflict) {
+      await applyDecision(photo, { ...editor.patch }, true);
+      return;
+    }
+    editor.loading = true;
     try {
-      if (!editor.dirty) {
-        photo = await photos.lookup(photo.asset_id, new AbortController().signal);
-        editor.reset();
-        return;
-      }
-      const patch = { ...editor.patch };
-      if (!(await prepareDecision(photo, true)) || editor.conflict || editor.membershipChanged)
-        return;
-      await applyDecision(photo, patch, true);
+      const row = await photos.lookup(photo.asset_id, reloadController.signal);
+      if (reloadController.signal.aborted) return;
+      photo = row;
+      view = { ...fittedPhotoView };
+      editor.reset();
     } catch (cause) {
-      editor.error = cause instanceof Error ? cause.message : String(cause);
+      if (!reloadController.signal.aborted)
+        editor.error = cause instanceof Error ? cause.message : String(cause);
     } finally {
-      deciding = false;
+      editor.loading = false;
       focus();
     }
   }
@@ -267,23 +259,9 @@
           {cull.error || editor.error || editor.notice}
         </p>{/if}
       {#if cull.progress && !cull.complete}<p role="status">{cull.progress}</p>{/if}
-      {#if editor.membershipChanged && editor.targets.length}
-        <Notice
-          tone="warning"
-          message="Photo membership changed. These remaining files will receive your edits."
-        />
-        <ul aria-label="Members to review">
-          {#each editor.files as target}<li>{target.file_name}</li>{/each}
-        </ul>
-        <Button disabled={busy || editor.loading} onclick={() => editor.reviewMembers()}
-          >Use reviewed members</Button
-        >
-      {/if}
       {#if editor.dirty || editor.conflict}<div class="controls">
-          <Button
-            disabled={busy || editor.loading || editor.membershipChanged}
-            onclick={() => void retryDecision()}
-            >{editor.dirty ? "Reload and retry" : "Reload photo"}</Button
+          <Button disabled={busy} onclick={() => void retryDecision()}
+            >{editor.conflict ? "Reload photo" : "Retry edit"}</Button
           >
           <Button
             disabled={busy || editor.loading}
@@ -378,6 +356,7 @@
           <Button size="sm" onclick={() => (info = (info + 1) % 3)}>EXIF (I)</Button>
           <Button size="sm" disabled={cull.stale || busy} onclick={() => move(1)}>Next</Button>
         </div>
+        {#if railError}<p role="alert">{railError}</p>{/if}
         <nav class="filmstrip" aria-label="Cull pass">
           <fieldset disabled={busy} style="display: contents">
             {#each rail as id}{@const row = neighbors.find((item) => item.asset_id === id)}
@@ -397,7 +376,8 @@
                     size="sm"
                     onclick={() => {
                       if (canChangeTarget()) cull.choose(id);
-                    }}>Unavailable</Button
+                    }}
+                    >{railLoading ? "Loading…" : railError ? "Retry photo" : "Unavailable"}</Button
                   >{/if}
               </div>{/each}
           </fieldset>

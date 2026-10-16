@@ -329,6 +329,7 @@ export class PhotoAuthoredEditor {
     refresh: (receipt: api.PhotoAuthoredReceipt, tags: api.Tag[]) => Promise<void>,
     keywords?: api.PhotoKeywordEdit[],
     rotationDelta?: api.PhotoAuthoredEditRequest["rotation_delta"],
+    viewed?: { file_id: string; content_version_id: string },
   ) {
     if (this.conflict) {
       this.unavailable("Reload metadata before editing.");
@@ -339,8 +340,24 @@ export class PhotoAuthoredEditor {
       return;
     }
     if (this.controller.signal.aborted) return;
-    if (!this.targets.length) await this.prepare({ ...scope, hidden });
-    if (!this.targets.length || this.conflict) return;
+    if (!this.targets.length) {
+      await this.prepare({ ...scope, hidden });
+      if (this.error) return;
+    }
+    if (this.conflict) return;
+    if (viewed && !this.files.some((target) => target.file_id === viewed.file_id)) {
+      this.error = "This photo changed. Reload the photo before deciding.";
+      this.conflict = true;
+      return;
+    }
+    if (!this.targets.length) return;
+    if (viewed) {
+      this.targets = this.targets.map((target) =>
+        target.file_id === viewed.file_id
+          ? { ...target, content_version_id: viewed.content_version_id }
+          : target,
+      );
+    }
     this.stage(patch, keywords);
     if (rotationDelta !== undefined) {
       const current = { ...this.patch };
@@ -362,12 +379,20 @@ export class PhotoAuthoredEditor {
         api.editPhotoAuthored(
           {
             targets: this.files.map(
-              ({ asset_id, asset_revision, file_id, revision, node_revision }) => ({
+              ({
                 asset_id,
                 asset_revision,
                 file_id,
                 revision,
                 node_revision,
+                content_version_id,
+              }) => ({
+                asset_id,
+                asset_revision,
+                file_id,
+                revision,
+                node_revision,
+                content_version_id,
               }),
             ),
             patch: this.patch,

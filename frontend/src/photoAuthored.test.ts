@@ -127,6 +127,44 @@ it("preserves multiline caption through rendered editing", async () => {
   editor.dispose();
 });
 
+it("binds only the viewed file to its displayed content version", async () => {
+  const editor = editorWithTargets();
+  const edit = vi
+    .spyOn(api, "editPhotoAuthored")
+    .mockResolvedValue({ receipt_id: "", before: [], after: [] });
+  await editor.edit({}, { flag: "pick" }, false, vi.fn(), undefined, undefined, {
+    file_id: "jpeg",
+    content_version_id: "viewed-version",
+  });
+  expect(edit.mock.calls[0]![0].targets).toEqual([
+    { asset_id: "asset", asset_revision: 1, file_id: "raw", revision: 1, node_revision: 1 },
+    {
+      asset_id: "asset",
+      asset_revision: 1,
+      file_id: "jpeg",
+      revision: 1,
+      node_revision: 1,
+      content_version_id: "viewed-version",
+    },
+  ]);
+});
+
+it.each([{ prepared: [] }, { prepared: targets }])(
+  "requires reload when prepared files omit the viewed file: $prepared",
+  async ({ prepared }) => {
+    const editor = new PhotoAuthoredEditor("session", vi.fn());
+    vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue({ assets: [], targets: prepared });
+    const edit = vi.spyOn(api, "editPhotoAuthored");
+    await editor.edit({}, { flag: "pick" }, false, vi.fn(), undefined, undefined, {
+      file_id: "missing",
+      content_version_id: "viewed-version",
+    });
+    expect(editor.conflict).toBe(true);
+    expect(editor.error).toBe("This photo changed. Reload the photo before deciding.");
+    expect(edit).not.toHaveBeenCalled();
+  },
+);
+
 it("merges a shortcut into the staged draft", async () => {
   const editor = editorWithTargets();
   editor.fileID = "jpeg";

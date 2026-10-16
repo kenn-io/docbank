@@ -39,11 +39,12 @@ var ErrPhotoEditFileLimit = errors.New("edit at most 1,000 files at once; RAW/JP
 var ErrPhotoEditReceiptLimit = errors.New("photo metadata receipt exceeds the 1 MiB limit")
 
 type PhotoAuthoredEditTarget struct {
-	AssetID       string `json:"asset_id" format:"uuid"`
-	AssetRevision int64  `json:"asset_revision" minimum:"1"`
-	FileID        string `json:"file_id" format:"uuid"`
-	Revision      int64  `json:"revision" minimum:"1"`
-	NodeRevision  int64  `json:"node_revision" minimum:"1"`
+	AssetID          string `json:"asset_id" format:"uuid"`
+	AssetRevision    int64  `json:"asset_revision" minimum:"1"`
+	FileID           string `json:"file_id" format:"uuid"`
+	Revision         int64  `json:"revision" minimum:"1"`
+	NodeRevision     int64  `json:"node_revision" minimum:"1"`
+	ContentVersionID string `json:"content_version_id,omitempty"`
 }
 
 type photoAuthoredLoaded struct {
@@ -279,8 +280,9 @@ type photoAuthoredBatchRows struct {
 }
 
 type photoAuthoredAssetAccess struct {
-	revision int64
-	hidden   bool
+	revision      int64
+	hidden        bool
+	displayFileID sql.NullString
 }
 
 // loadPhotoAuthoredBatchRowsTx reads every target's asset, file, and node in
@@ -293,10 +295,10 @@ func loadPhotoAuthoredBatchRowsTx(ctx context.Context, tx *sql.Tx, targets []Pho
 		assetIDs = append(assetIDs, target.AssetID)
 		fileIDs = append(fileIDs, target.FileID)
 	}
-	err := queryInChunks(ctx, tx, `SELECT asset_id, revision, hidden_at IS NOT NULL FROM photo_assets WHERE asset_id IN (`, uniqueSorted(assetIDs), func(rows *sql.Rows) error {
+	err := queryInChunks(ctx, tx, `SELECT asset_id, revision, hidden_at IS NOT NULL, display_file_id FROM photo_assets WHERE asset_id IN (`, uniqueSorted(assetIDs), func(rows *sql.Rows) error {
 		var id string
 		var access photoAuthoredAssetAccess
-		if err := rows.Scan(&id, &access.revision, &access.hidden); err != nil {
+		if err := rows.Scan(&id, &access.revision, &access.hidden, &access.displayFileID); err != nil {
 			return err
 		}
 		loaded.assets[id] = access
@@ -371,6 +373,9 @@ func (s *Store) photoAuthoredBatchTargetsTx(ctx context.Context, tx *sql.Tx, req
 		}
 		loaded[file.ID] = photoAuthoredLoaded{file, node}
 		if file.AssetID != expected.AssetID || asset.revision != expected.AssetRevision || len(request.Keywords) > 0 && node.Revision != expected.NodeRevision {
+			return nil, nil, ErrStaleRevision
+		}
+		if expected.ContentVersionID != "" && (asset.displayFileID.String != file.ID || node.CurrentVersionID != expected.ContentVersionID) {
 			return nil, nil, ErrStaleRevision
 		}
 		patch := request.Patch

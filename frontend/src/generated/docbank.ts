@@ -5241,6 +5241,7 @@ export interface PhotoAuthoredEditTarget {
   asset_id: string;
   /** @minimum 1 */
   asset_revision: number;
+  content_version_id?: string;
   file_id: string;
   /** @minimum 1 */
   node_revision: number;
@@ -5267,6 +5268,7 @@ export interface PhotoPreparedTarget {
   asset_id: string;
   /** @minimum 1 */
   asset_revision: number;
+  content_version_id?: string;
   file_id: string;
   file_name: string;
   node_id: number;
