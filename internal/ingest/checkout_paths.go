@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 
 	"go.kenn.io/docbank/internal/config"
@@ -39,14 +40,23 @@ func CheckoutPathOverlap(ctx context.Context, checkouts []store.PhotoCheckout, p
 }
 
 func checkoutPathOverlap(ctx context.Context, checkout store.PhotoCheckout, pathname string) (bool, error) {
-	protected, err := PhotoCheckoutProtectsDestination(checkout)
-	if err != nil || !protected {
-		return false, err
+	protected, lexicalOnly := checkoutPathProtection(checkout, pathname)
+	if !protected {
+		return false, nil
 	}
-	if !checkout.RetentionReleased && (pathContains(pathname, checkout.Destination) || pathContains(checkout.Destination, pathname)) {
+	if lexicalOnly || !checkout.RetentionReleased && (pathContains(pathname, checkout.Destination) || pathContains(checkout.Destination, pathname)) {
 		return true, nil
 	}
 	return CheckoutDestinationRelatesToPath(ctx, checkout.Destination, pathname)
+}
+
+func checkoutPathProtection(checkout store.PhotoCheckout, pathname string) (protected, lexicalOnly bool) {
+	protected, err := PhotoCheckoutProtectsDestination(checkout)
+	if err != nil {
+		slog.Warn("checkout destination cannot be inspected; using lexical path protection", "checkout", checkout.ID, "destination", checkout.Destination, "path", pathname, "error", err)
+		return pathContains(pathname, checkout.Destination) || pathContains(checkout.Destination, pathname), true
+	}
+	return protected, false
 }
 
 // CheckoutDestinationRelatesToPath reports whether pathname is the same

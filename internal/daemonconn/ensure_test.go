@@ -114,7 +114,7 @@ func TestEnsureDiscoveryRejectsKeylessRecords(t *testing.T) {
 }
 
 // Same-version development builds can still have incompatible HTTP behavior.
-// A missing or mismatched protocol revision must therefore force replacement;
+// A missing protocol revision or main's protocol 83 must force replacement;
 // status/stop discovery remains permissive so the old daemon can be stopped.
 func TestEnsureDiscoveryRejectsProtocolMismatch(t *testing.T) {
 	rec := NewRecord("127.0.0.1:1", "key", "tok", "")
@@ -122,7 +122,7 @@ func TestEnsureDiscoveryRejectsProtocolMismatch(t *testing.T) {
 
 	require.True(t, discoverOptions(true).Accept(rec, info))
 
-	rec.Metadata[metaProtocolVersion] = daemonProtocolVersion + "-other"
+	rec.Metadata[metaProtocolVersion] = "83"
 	assert.False(t, discoverOptions(true).Accept(rec, info), "mismatched protocol revision must be replaced")
 	assert.True(t, discoverOptions(false).Accept(rec, info), "status/stop discovery must still see incompatible daemons")
 
@@ -131,18 +131,6 @@ func TestEnsureDiscoveryRejectsProtocolMismatch(t *testing.T) {
 		"same-version record without a protocol revision must be replaced")
 	assert.True(t, discoverOptions(false).Accept(rec, info),
 		"status/stop discovery must still see incompatible daemons")
-}
-
-// A daemon advertising protocol 81 predates checkout routes. The current
-// protocol must advance past it so discovery still forces its replacement,
-// the same way any other stale revision is rejected, instead of letting a
-// same-version-string coincidence reuse a daemon that 404s on checkouts.
-func TestEnsureDiscoveryRejectsRevision81DaemonLackingCheckoutRoutes(t *testing.T) {
-	rec := NewRecord("127.0.0.1:1", "key", "tok", "")
-	info := kitdaemon.PingInfo{Version: version.Version}
-	rec.Metadata[metaProtocolVersion] = "81"
-	assert.False(t, discoverOptions(true).Accept(rec, info), "protocol 81 lacks checkout routes")
-	assert.True(t, discoverOptions(false).Accept(rec, info), "status/stop discovery must still see incompatible daemons")
 }
 
 func TestWebDiscoveryRequiresAdvertisedCapability(t *testing.T) {

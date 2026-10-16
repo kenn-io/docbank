@@ -942,3 +942,21 @@ func TestPhotoCheckoutRetireAfterAuditActivation(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, retired, again)
 }
+
+func TestPhotoCheckoutYearFolderUsesTimelineDay(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
+	require.NoError(t, err)
+	node, err := s.IngestFileExact(ctx, run, s.RootID(), "photo.jpg", browseHash("mtime-photo"), 1, "image/jpeg", "photo.jpg", "2026-03-14T12:00:00Z")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	checkout, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{Years: &PhotoCheckoutYears{From: 2026, To: 2026}}, t.TempDir(), 0)
+	require.NoError(t, err)
+	entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, "2026/03/14/"+asset.ID+"/photo.jpg", entries[0].Path)
+}

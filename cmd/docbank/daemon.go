@@ -470,14 +470,7 @@ func runServe(ctx context.Context) (retErr error) {
 		if err != nil {
 			return fmt.Errorf("configuring watch %q: %w", watchConfig.Name, err)
 		}
-		if err := jobSupervisor.Start("watch:"+watchConfig.Name, func(ctx context.Context) error {
-			if err := waitForCheckoutValidation(ctx, func(ctx context.Context) error {
-				return validateCheckoutPath(ctx, s, watchConfig.Source)
-			}, logger); err != nil {
-				return err
-			}
-			return watcher.Run(ctx)
-		}); err != nil {
+		if err := jobSupervisor.Start("watch:"+watchConfig.Name, watcher.Run); err != nil {
 			return fmt.Errorf("starting watch %q: %w", watchConfig.Name, err)
 		}
 	}

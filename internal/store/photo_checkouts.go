@@ -171,11 +171,10 @@ func (s *Store) checkoutEntriesTx(ctx context.Context, tx *sql.Tx, selection Pho
 	if err != nil {
 		return nil, estimate, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT f.file_id,f.asset_id,v.version_id,v.blob_hash,v.size,n.name,COALESCE(p.capture_date,'')
+	rows, err := tx.QueryContext(ctx, `SELECT f.file_id,f.asset_id,v.version_id,v.blob_hash,v.size,n.name,COALESCE(timeline.day,'')
  FROM photo_files f JOIN nodes n ON n.id=f.node_id JOIN content_versions v ON v.version_id=n.current_version_id
  JOIN photo_assets a ON a.asset_id=f.asset_id JOIN photo_files display ON display.file_id=a.display_file_id
- JOIN nodes display_node ON display_node.id=display.node_id JOIN content_versions display_version ON display_version.version_id=display_node.current_version_id
- LEFT JOIN source_metadata_heads h ON h.source_sha256=display_version.blob_hash LEFT JOIN photo_technical_metadata p ON p.generation_id=h.generation_id
+ LEFT JOIN photo_timeline timeline ON timeline.file_id=display.file_id
  WHERE f.asset_id IN (SELECT value FROM json_each(?)) AND n.trashed_at IS NULL ORDER BY f.asset_id,f.file_id`, string(encodedIDs))
 	if err != nil {
 		return nil, estimate, err

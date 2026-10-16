@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -272,33 +273,19 @@ func TestWatcherRetriesFileThatDisappearsBeforeIngest(t *testing.T) {
 func TestWatcherRejectsVaultOverlapAndDestinationConflicts(t *testing.T) {
 	ing := newTestIngester(t)
 	ctx := t.Context()
-	node, err := ing.Store.CreateFile(ctx, ing.Store.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
-	require.NoError(t, err)
-	asset, err := ing.Store.PhotoAssetForNode(ctx, node.ID)
-	require.NoError(t, err)
-	checkoutDestination := t.TempDir()
-	checkout, _, err := ing.Store.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, checkoutDestination, 0)
-	require.NoError(t, err)
 
 	vaultRoot := t.TempDir()
 	overlapping := filepath.Join(vaultRoot, "incoming")
 	require.NoError(t, os.Mkdir(overlapping, 0o700))
-	for _, tc := range []struct {
-		name, source, overlap string
-	}{
-		{name: "vault", source: overlapping, overlap: "overlaps the vault root"},
-		{name: "checkout", source: checkoutDestination, overlap: checkout.ID},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			watcher, err := NewWatcher(ing, vaultRoot, config.WatchConfig{
-				Name: tc.name, Source: tc.source, Destination: "/inbox",
-				SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(time.Second),
-			}, runTestMutation, nil)
-			require.NoError(t, err)
-			_, err = watcher.openRoot(ctx)
-			require.ErrorContains(t, err, tc.overlap)
-		})
-	}
+	t.Run("vault", func(t *testing.T) {
+		watcher, err := NewWatcher(ing, vaultRoot, config.WatchConfig{
+			Name: "vault", Source: overlapping, Destination: "/inbox",
+			SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(time.Second),
+		}, runTestMutation, nil)
+		require.NoError(t, err)
+		_, err = watcher.openRoot(ctx)
+		require.ErrorContains(t, err, "overlaps the vault root")
+	})
 	watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{Name: "clean-watch", Source: t.TempDir(), Destination: "/inbox"}, runTestMutation, nil)
 	require.NoError(t, err)
 	clean, err := watcher.openRoot(ctx)
@@ -602,4 +589,77 @@ func TestWatchedFileReadRejectsConcurrentPathReplacement(t *testing.T) {
 	)
 	require.ErrorIs(t, err, ErrSourceChanged)
 	assert.True(t, replaced)
+}
+
+func TestWatcherWaitsForRetiredCheckoutToClear(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ing := newTestIngester(t)
+		ctx := t.Context()
+		node, err := ing.Store.CreateFile(ctx, ing.Store.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
+		require.NoError(t, err)
+		asset, err := ing.Store.PhotoAssetForNode(ctx, node.ID)
+		require.NoError(t, err)
+		destination := t.TempDir()
+		checkout, op, err := ing.Store.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
+		require.NoError(t, err)
+		require.NoError(t, ing.Store.FinishPhotoCheckout(ctx, checkout.ID, op.ID, store.StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
+		_, err = ing.Store.RetirePhotoCheckout(ctx, checkout.ID)
+		require.NoError(t, err)
+		partial := filepath.Join(destination, "edited.jpg")
+		require.NoError(t, os.WriteFile(partial, []byte("edits"), 0o600))
+		watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{Name: "waiting", Source: destination, Destination: "/inbox"}, runTestMutation, nil)
+		require.NoError(t, err)
+		done := make(chan error, 1)
+		go func() {
+			root, err := watcher.openRoot(ctx)
+			if err == nil {
+				err = root.Close()
+			}
+			done <- err
+		}()
+		synctest.Wait()
+		select {
+		case err := <-done:
+			t.Fatalf("watch stopped while checkout still contains files: %v", err)
+		default:
+		}
+		require.NoError(t, os.Remove(partial))
+		require.NoError(t, <-done)
+		released, err := ing.Store.PhotoCheckout(ctx, checkout.ID)
+		require.NoError(t, err)
+		require.Empty(t, released.Destination)
+	})
+}
+
+func TestWatcherWaitForReservedCheckoutCancels(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ing := newTestIngester(t)
+		node, err := ing.Store.CreateFile(t.Context(), ing.Store.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
+		require.NoError(t, err)
+		asset, err := ing.Store.PhotoAssetForNode(t.Context(), node.ID)
+		require.NoError(t, err)
+		destination := t.TempDir()
+		_, _, err = ing.Store.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
+		require.NoError(t, err)
+		watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{Name: "reserved", Source: destination, Destination: "/inbox"}, runTestMutation, nil)
+		require.NoError(t, err)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() {
+			root, err := watcher.openRoot(ctx)
+			if err == nil {
+				_ = root.Close()
+			}
+			done <- err
+		}()
+		synctest.Wait()
+		select {
+		case err := <-done:
+			t.Fatalf("watch stopped while checkout is reserved: %v", err)
+		default:
+		}
+		cancel()
+		require.ErrorIs(t, <-done, context.Canceled)
+	})
 }

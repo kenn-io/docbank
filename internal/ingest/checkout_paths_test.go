@@ -53,15 +53,6 @@ func TestCheckoutPathOverlapProtectsReservationsAndReleasedCopies(t *testing.T) 
 			_, err = ing.Store.RetirePhotoCheckout(ctx, checkout.ID)
 			require.NoError(t, err)
 			check(destination, true)
-			if runtime.GOOS != "windows" && os.Geteuid() != 0 {
-				require.NoError(t, os.Chmod(destination, 0o000))
-				t.Cleanup(func() { _ = os.Chmod(destination, 0o700) })
-				checkouts, err := ing.Store.ListPhotoCheckouts(ctx)
-				require.NoError(t, err)
-				_, _, _, err = CheckoutPathOverlap(ctx, checkouts, t.TempDir())
-				require.ErrorIs(t, err, os.ErrPermission)
-				require.NoError(t, os.Chmod(destination, 0o700))
-			}
 			require.NoError(t, os.Remove(edited))
 			check(destination, false)
 
@@ -82,5 +73,25 @@ func TestCheckoutPathOverlapProtectsReservationsAndReleasedCopies(t *testing.T) 
 				require.NoError(t, os.Remove(destination))
 			}
 		})
+	}
+}
+
+func TestUnreadableRetiredCheckoutScopesProtection(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("requires Unix directory permissions")
+	}
+	destination := filepath.Join(t.TempDir(), "checkout")
+	require.NoError(t, os.Mkdir(destination, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(destination, 0o700) })
+	checkouts := []store.PhotoCheckout{{ID: "retired", Destination: destination, RetentionReleased: true}}
+	_, overlap, _, err := CheckoutPathOverlap(t.Context(), checkouts, t.TempDir())
+	require.NoError(t, err)
+	require.False(t, overlap)
+	for _, related := range []string{destination, filepath.Dir(destination), filepath.Join(destination, "nested")} {
+		id, overlap, retired, err := CheckoutPathOverlap(t.Context(), checkouts, related)
+		require.NoError(t, err)
+		require.True(t, overlap)
+		require.True(t, retired)
+		require.Equal(t, "retired", id)
 	}
 }

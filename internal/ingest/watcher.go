@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -336,6 +337,23 @@ func (w *Watcher) Run(ctx context.Context) error {
 	}
 }
 
+func (w *Watcher) waitForCheckoutSeparation(ctx context.Context, root string) ([]store.PhotoCheckout, error) {
+	for {
+		checkouts, err := w.ing.Store.ListPhotoCheckouts(ctx)
+		if err != nil {
+			return nil, err
+		}
+		id, overlaps, _, err := CheckoutPathOverlap(ctx, checkouts, root)
+		if err == nil && !overlaps {
+			return checkouts, nil
+		}
+		w.logger.Warn("watch is waiting for checkout separation", "watch", w.config.Name, "path", root, "checkout", id, "error", err)
+		if err := jobs.Wait(ctx, time.Second); err != nil {
+			return nil, err
+		}
+	}
+}
+
 func (w *Watcher) openRoot(ctx context.Context) (*watchRoot, error) {
 	root, err := filepath.EvalSymlinks(w.config.Source)
 	if err != nil {
@@ -365,19 +383,9 @@ func (w *Watcher) openRoot(ctx context.Context) (*watchRoot, error) {
 		return nil, fmt.Errorf("watch %q source %q overlaps the vault root %q",
 			w.config.Name, root, vaultRoot)
 	}
-	checkouts, err := w.ing.Store.ListPhotoCheckouts(ctx)
+	checkouts, err := w.waitForCheckoutSeparation(ctx, root)
 	if err != nil {
 		return nil, err
-	}
-	checkoutID, overlaps, retired, err := CheckoutPathOverlap(ctx, checkouts, root)
-	if err != nil {
-		return nil, fmt.Errorf("checking watch %q against checkout %s: %w", w.config.Name, checkoutID, err)
-	}
-	if overlaps {
-		if retired {
-			return nil, fmt.Errorf("watch %q source overlaps checkout %s with partial files; clear the folder and restart Docbank", w.config.Name, checkoutID)
-		}
-		return nil, fmt.Errorf("watch %q source overlaps reserved checkout %s", w.config.Name, checkoutID)
 	}
 	for _, checkout := range checkouts {
 		if !checkout.RetentionReleased || checkout.Destination == "" {

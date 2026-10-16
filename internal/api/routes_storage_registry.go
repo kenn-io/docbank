@@ -657,7 +657,7 @@ func storageProtectionPaths(ctx context.Context, d Deps, binding config.StoreBin
 		return nil, FromStoreError(err)
 	}
 	for _, c := range checkouts {
-		protected, err := ingest.PhotoCheckoutProtectsDestination(c)
+		protected, err := storageCheckoutProtectsPath(ctx, c, binding.Path)
 		if err != nil {
 			return nil, NewError(http.StatusUnprocessableEntity, "storage_binding_invalid", err.Error())
 		}
@@ -666,4 +666,13 @@ func storageProtectionPaths(ctx context.Context, d Deps, binding config.StoreBin
 		}
 	}
 	return paths, nil
+}
+
+func storageCheckoutProtectsPath(ctx context.Context, checkout store.PhotoCheckout, pathname string) (bool, error) {
+	protected, err := ingest.PhotoCheckoutProtectsDestination(checkout)
+	if err == nil {
+		return protected, nil
+	}
+	_, overlap, _, err := ingest.CheckoutPathOverlap(ctx, []store.PhotoCheckout{checkout}, pathname)
+	return overlap, err
 }
