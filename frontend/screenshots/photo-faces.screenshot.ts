@@ -1,10 +1,35 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { mkdir, mkdtemp } from "node:fs/promises";
 import path from "node:path";
 import { photoFixture, repository } from "./photo-fixture.js";
 
 const output = process.env.DOCBANK_FACES_SCREENSHOT_DIR;
 test.skip(!output, "DOCBANK_FACES_SCREENSHOT_DIR enables synthetic face review proof");
+
+async function captureThemes(page: Page, name: string) {
+  await expect
+    .poll(() =>
+      page
+        .locator(".photo-viewport img")
+        .evaluateAll(
+          (images) =>
+            images.length > 0 &&
+            images.every((image) => (image as HTMLImageElement).naturalWidth > 512),
+        ),
+    )
+    .toBe(true);
+  for (const theme of ["light", "dark"]) {
+    await page.evaluate((value) => {
+      localStorage.setItem("docbank-theme", value);
+      document.documentElement.classList.toggle("dark", value === "dark");
+      return document.fonts.ready.then(() => {});
+    }, theme);
+    await page.screenshot({
+      path: path.join(output!, `${name}${theme === "light" ? "-light" : ""}.png`),
+      animations: "disabled",
+    });
+  }
+}
 
 test("draws and names faces, opens person-filtered Library, and reads cull closeups", async ({
   page,
@@ -80,10 +105,7 @@ test("draws and names faces, opens person-filtered Library, and reads cull close
       { version: face.content_version_id, personID, session },
     );
     expect(marked).toBe(201);
-    await page.screenshot({
-      path: path.join(output!, "web-photo-faces-loupe.png"),
-      animations: "disabled",
-    });
+    await captureThemes(page, "web-photo-faces-loupe");
     const filtered = page.waitForRequest(
       (request) =>
         request.url().endsWith("/photos/assets/query") &&
@@ -107,10 +129,7 @@ test("draws and names faces, opens person-filtered Library, and reads cull close
       )
       .toBe(true);
     await expect(closeups.locator("figcaption")).toHaveText(["Ada", "Ada", "Unnamed face"]);
-    await page.screenshot({
-      path: path.join(output!, "web-photo-faces-cull.png"),
-      animations: "disabled",
-    });
+    await captureThemes(page, "web-photo-faces-cull");
   } finally {
     await fixture.dispose();
   }
