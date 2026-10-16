@@ -34,7 +34,7 @@ func TestFolderScanJoinsCanceledProcessorBeforeClosingSource(t *testing.T) {
 			close(entered)
 			<-ctx.Done()
 			<-release
-			_, err := file.File.Stat()
+			_, err := file.File.ReadAt(make([]byte, 1), 0)
 			return errors.Join(ctx.Err(), err)
 		}, failOnReject(t))
 		require.NoError(t, err)
@@ -63,7 +63,7 @@ func TestFolderScanJoinsCanceledProcessorBeforeClosingSource(t *testing.T) {
 		synctest.Wait()
 		require.ErrorIs(t, err, context.Canceled)
 		require.NotErrorIs(t, err, os.ErrClosed)
-		_, err = source.Stat()
+		_, err = source.ReadAt(make([]byte, 1), 0)
 		require.ErrorIs(t, err, os.ErrClosed)
 	})
 }
