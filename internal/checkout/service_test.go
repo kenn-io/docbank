@@ -79,6 +79,38 @@ func TestCheckoutRejectsStartupCleanupDirectoryAlias(t *testing.T) {
 	}
 }
 
+func TestCheckoutRejectsStartupCleanupDescendants(t *testing.T) {
+	t.Parallel()
+	for _, relative := range []string{filepath.Join("blobs", "tmp"), "web-launch"} {
+		t.Run(relative, func(t *testing.T) {
+			s := checkoutService(t)
+			a := checkoutPhoto(t, s, "photo.jpg", "bytes")
+			managed := filepath.Join(s.VaultRoot, relative)
+			if relative == "web-launch" {
+				require.NoError(t, os.Mkdir(managed, 0o700))
+			} else {
+				alias := filepath.Join(t.TempDir(), "staging")
+				require.NoError(t, os.Rename(managed, alias))
+				if err := os.Symlink(alias, managed); err != nil {
+					t.Skipf("symbolic links unavailable: %v", err)
+				}
+				managed = alias
+			}
+			destination := filepath.Join(managed, "nested", "checkout")
+			require.NoError(t, os.MkdirAll(destination, 0o700))
+			_, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, destination, 0)
+			if root != nil {
+				require.NoError(t, root.Close())
+			}
+			require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
+			require.ErrorContains(t, err, "destination aliases a vault startup cleanup directory")
+			checkouts, err := s.Store.ListPhotoCheckouts(t.Context())
+			require.NoError(t, err)
+			require.Empty(t, checkouts)
+		})
+	}
+}
+
 func TestCheckoutDestinationSafety(t *testing.T) {
 	t.Parallel()
 	s := checkoutService(t)
@@ -331,6 +363,16 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 	}
 }
 
+func recordCheckoutPublication(t *testing.T, s Service, op store.StorageOperation, entry store.PhotoCheckoutEntry, publication string) {
+	t.Helper()
+	switch publication {
+	case "published":
+		require.NoError(t, s.Store.PublishPhotoCheckoutEntry(t.Context(), entry, func() (bool, error) { return true, nil }))
+	case "in flight":
+		require.NoError(t, s.Store.AdvanceStorageOperation(t.Context(), op.ID, entry.FileID, 0, 0, 0, "{}"))
+	}
+}
+
 func TestCheckoutRecoveryFinishesReplacedDirectories(t *testing.T) {
 	t.Parallel()
 	for _, location := range []string{"destination ancestor", "entry subdirectory"} {
@@ -349,11 +391,7 @@ func TestCheckoutRecoveryFinishesReplacedDirectories(t *testing.T) {
 				entries, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
 				require.NoError(t, err)
 				require.Len(t, entries, 1)
-				if publication == "published" {
-					require.NoError(t, s.Store.PublishPhotoCheckoutEntry(t.Context(), entries[0], func() (bool, error) { return true, nil }))
-				} else if publication == "in flight" {
-					require.NoError(t, s.Store.AdvanceStorageOperation(t.Context(), op.ID, entries[0].FileID, 0, 0, 0, "{}"))
-				}
+				recordCheckoutPublication(t, s, op, entries[0], publication)
 				require.NoError(t, root.Close())
 				replaced := parent
 				if location == "entry subdirectory" {

@@ -145,20 +145,16 @@ func (s Service) checkCheckoutDestination(root *os.Root, destination string) err
 	if err := checkEmptyDestination(root, destination); err != nil {
 		return err
 	}
-	held, err := root.Stat(".")
-	if err != nil {
-		return err
-	}
-	// Compare only startup cleanup roots; walking the vault is unnecessary.
+	// Compare paths and ancestor identities without walking the vault.
 	for _, relative := range []string{filepath.Join("blobs", "tmp"), "web-launch"} {
-		info, err := os.Stat(filepath.Join(s.VaultRoot, relative))
+		overlap, err := ingest.PathsOverlap(destination, filepath.Join(s.VaultRoot, relative))
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
 		if err != nil {
 			return fmt.Errorf("checking vault startup cleanup directory: %w", err)
 		}
-		if os.SameFile(held, info) {
+		if overlap {
 			return fmt.Errorf("%w: destination aliases a vault startup cleanup directory (%s)", store.ErrInvalidPhotoCheckout, relative)
 		}
 	}
