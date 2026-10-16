@@ -8,7 +8,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 # Remove once the main-pinned caller passes -ShardCount 4; until then it needs these groups.
-$legacy = @('.', './internal/store', './cmd/docbank')
+$legacy = @('./docbank', './internal/store', './cmd/docbank')
 # Seed measured hot packages; distribute the remainder round-robin as a best-effort balance.
 $groups = @{
     1 = @($legacy[1])

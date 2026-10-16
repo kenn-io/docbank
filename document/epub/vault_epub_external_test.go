@@ -11,7 +11,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	docbank "go.kenn.io/docbank"
+	docbank "go.kenn.io/docbank/docbank"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/epub"
 )
