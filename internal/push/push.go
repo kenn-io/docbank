@@ -73,7 +73,7 @@ func Run(ctx context.Context, connection *daemonconn.Connection, opts Options) (
 	if opts.Watch {
 		err = scanner.Run(ctx)
 	} else {
-		err = scanner.ScanOnce(ctx, 8)
+		err = scanner.ScanOnce(ctx, 32)
 	}
 	if report.Failed > 0 {
 		err = errors.Join(err, fmt.Errorf("%w: %d failed", ErrFilesFailed, report.Failed))

@@ -2,6 +2,7 @@ package push_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -26,11 +27,20 @@ func TestPushOverlapsUploadsAndJoinsCancellation(t *testing.T) {
 		t.Run(fmt.Sprintf("canceled=%t", canceled), func(t *testing.T) {
 			f := newFixture(t)
 			source := t.TempDir()
-			for i := range 17 {
-				name := fmt.Sprintf("file-%d.bin", i)
+			var names []string
+			stripes := map[byte]bool{}
+			// Distinct content stripes keep the fixture free to fill every upload slot.
+			for i := 0; len(names) < 65; i++ {
+				name := fmt.Sprintf("file-%04d.bin", i)
+				digest := sha256.Sum256([]byte(name))
+				if stripes[digest[0]] {
+					continue
+				}
+				stripes[digest[0]] = true
+				names = append(names, name)
 				require.NoError(t, os.WriteFile(filepath.Join(source, name), []byte(name), 0o600))
 			}
-			arrived := make(chan struct{}, 17)
+			arrived := make(chan struct{}, 65)
 			release := make(chan struct{})
 			var active, peak, proofs atomic.Int64
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -80,7 +90,7 @@ func TestPushOverlapsUploadsAndJoinsCancellation(t *testing.T) {
 			defer func() { cancel(); unblock(); <-done }()
 			deadline := time.NewTimer(10 * time.Second)
 			defer deadline.Stop()
-			for i := range 8 {
+			for i := range 32 {
 				select {
 				case <-arrived:
 				case <-deadline.C:
@@ -100,7 +110,7 @@ func TestPushOverlapsUploadsAndJoinsCancellation(t *testing.T) {
 			unblock()
 			server.Close()
 			require.Zero(t, active.Load())
-			require.EqualValues(t, 8, peak.Load())
+			require.EqualValues(t, 32, peak.Load())
 			if canceled {
 				require.ErrorIs(t, runErr, context.Canceled)
 				require.Equal(t, push.Report{}, report)
@@ -108,11 +118,10 @@ func TestPushOverlapsUploadsAndJoinsCancellation(t *testing.T) {
 				return
 			}
 			require.NoError(t, runErr)
-			require.EqualValues(t, 8, proofs.Load(), "reuse authenticated connections across windows")
-			require.Equal(t, push.Report{Added: 17}, report)
-			require.Len(t, acknowledged, 17)
-			for i := range 17 {
-				name := fmt.Sprintf("file-%d.bin", i)
+			require.EqualValues(t, 32, proofs.Load(), "reuse authenticated connections across windows")
+			require.Equal(t, push.Report{Added: 65}, report)
+			require.Len(t, acknowledged, 65)
+			for _, name := range names {
 				node, err := f.store.NodeByPath(t.Context(), "/archive/"+name)
 				require.NoError(t, err)
 				require.Equal(t, name, readNode(t, f, node.ID))

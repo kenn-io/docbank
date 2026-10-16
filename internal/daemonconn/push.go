@@ -54,7 +54,7 @@ func NewPushConnection(origin, key string) (*Connection, error) {
 		ResponseHeaderTimeout: 30 * time.Second,
 		IdleConnTimeout:       90 * time.Second,
 		// Keep a complete folder-push window connected between batches.
-		MaxIdleConnsPerHost: 8,
+		MaxIdleConnsPerHost: 32,
 	}
 	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
 	if parsed.Scheme == "http" {
