@@ -306,7 +306,7 @@ it("refreshes the visible completion offer after Undo", async () => {
   await screen.findByRole("button", { name: "Review unflagged remainder" });
 });
 
-it("keeps the current photo and its pending decision when auto-advance is toggled", async () => {
+it("disables auto-advance changes while a decision is pending", async () => {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -342,9 +342,9 @@ it("keeps the current photo and its pending decision when auto-advance is toggle
   );
   vi.spyOn(photos, "lookupMany").mockResolvedValue([]);
   vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
-  let save!: () => void;
-  const saving = new Promise<void>((resolve) => (save = resolve));
-  vi.spyOn(PhotoAuthoredEditor.prototype, "edit").mockReturnValue(saving);
+  let save!: (receipt: PhotoAuthoredReceipt) => void;
+  const saving = new Promise<PhotoAuthoredReceipt>((resolve) => (save = resolve));
+  const edit = vi.spyOn(api, "editPhotoAuthored").mockReturnValue(saving);
   render(PhotoCullView, {
     cull,
     photos,
@@ -352,16 +352,76 @@ it("keeps the current photo and its pending decision when auto-advance is toggle
     onclose: vi.fn(),
   });
   await screen.findByText("Photo 1.jpg");
-  await fireEvent.keyDown(document.querySelector(".photo-cull")!, { key: "p" });
-  await fireEvent.click(screen.getByRole("button", { name: "Auto-advance: on" }));
-  await screen.findByRole("button", { name: "Auto-advance: off" });
-  await act(async () => {
-    save();
-    await saving;
-    await cull.flush();
-  });
-  expect(document.querySelector(".kit-sr-only")?.textContent).toContain("Photo 1.jpg: pick");
+  const shell = document.querySelector(".photo-cull")!;
+  await fireEvent.keyDown(shell, { key: "p" });
+  await waitFor(() => expect(edit).toHaveBeenCalledOnce());
+  const toggle = screen.getByRole("button", { name: "Auto-advance: on" });
+  expect(toggle.matches(":disabled")).toBe(true);
+  await act(() => (toggle as HTMLButtonElement).click());
+  await fireEvent.keyDown(shell, { key: "a" });
+  expect(cull.run!.checkpoint.autoAdvance).toBe(true);
+  expect(toggle.textContent).toContain("Auto-advance: on");
   expect(cull.currentID).toBe(rows[0]!.asset_id);
+  await act(async () => {
+    save({ receipt_id: "pick", before: [preparedPhoto(1)], after: [] });
+    await saving;
+  });
+  await screen.findByText("Photo 2.jpg");
+  expect(document.querySelector(".kit-sr-only")?.textContent).toContain("Photo 1.jpg: pick");
+  expect(cull.currentID).toBe(rows[1]!.asset_id);
+  await readyButton("Auto-advance: on");
+});
+
+it("retries a failed lookup without leaving the current photo", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const row = photo(1);
+  const cull = new PhotoCull("session", {
+    saved: vi.fn(),
+    load: vi.fn(),
+    replace: vi.fn(),
+    checkpoint: vi.fn(),
+  });
+  cull.run = {
+    ids: [row.asset_id],
+    checkpoint: {
+      runID: "run",
+      passID: "pass",
+      revision: 0,
+      pass: [row.asset_id],
+      position: 0,
+      visited: [],
+      skipped: [],
+      unavailable: [],
+      scope: "all",
+      autoAdvance: true,
+    },
+  };
+  const photos = new Photos("session", vi.fn());
+  const lookup = vi
+    .spyOn(photos, "lookup")
+    .mockRejectedValueOnce(new APIError("Temporarily unavailable", 503, "unavailable"))
+    .mockResolvedValueOnce(row);
+  vi.spyOn(photos, "lookupMany").mockResolvedValue([]);
+  vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
+  render(PhotoCullView, {
+    cull,
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+    onclose: vi.fn(),
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: /^Retry$/ }));
+  await screen.findByText(row.name);
+  expect(lookup).toHaveBeenCalledTimes(2);
+  expect(lookup.mock.calls.map(([id]) => id)).toEqual([row.asset_id, row.asset_id]);
+  expect(cull.currentID).toBe(row.asset_id);
+  expect(cull.run!.checkpoint.position).toBe(0);
+  expect(screen.queryByRole("button", { name: /^Retry$/ })).toBeNull();
 });
 
 async function reviewPhoto(row = photo(1), autoAdvance = false) {

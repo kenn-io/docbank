@@ -90,7 +90,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `POST /nodes/{id}/provenance` | append an immutable origin fact under the node revision | Implemented |
 | `GET /photos/assets/{asset_id}` · `GET /photos/nodes/{node_id}/asset` | inspect one bounded photo graph by asset or member node | Implemented |
 | `POST /photos/assets/query` | list matching assets once each with a first-page total and keyset cursor | Implemented |
-| `POST /photos/authored/prepare` · `POST /photos/authored/edit` · `POST /photos/authored/{receipt_id}/undo` | prepare bounded file targets from assets or a query, atomically edit fields and keywords with required asset, file, and node revision fences, and undo if revisions match | Implemented |
+| `POST /photos/authored/prepare` · `POST /photos/authored/edit` · `POST /photos/authored/{receipt_id}/undo` | prepare bounded file targets from assets or a query, atomically edit fields and keywords with required asset, file, and node revision fences and optional viewed `content_version_id`, and undo if revisions match | Implemented |
 | `POST /photos/assets/{asset_id}/preview` | prepare a fit or large preview for the current content version | Implemented |
 | `GET /photos/assets/{asset_id}/previews/{generation_id}` | read verified bytes for an eligible display preview | Implemented |
 | `POST /photos/assets` · `POST /photos/assets/{asset_id}/files` · `DELETE /photos/assets/{asset_id}/files/{file_id}` | create, attach, or detach photo membership | Implemented |
@@ -1494,7 +1494,9 @@ Other sorts return an optional forward `next_cursor`. Capture keys fall back to 
 
 Later pages reuse the first page's total while rows remain live; a new browse refreshes the count. Cursors expire 15 minutes after issuance and bind resolved saved-query revisions, effective coverage, canonical query, hidden scope, requested facet dimensions, and page size. Photo facets share a 30-second budget. Time, member, or byte limits return an unavailable reason. Timed-out counts can be retried; member or byte limits require a narrower query. Invalid options return `invalid_photo_query`; invalid or changed bindings return `invalid_photo_cursor`; expiry returns `cursor_expired`. Invalid expressions retain their operand positions.
 
-`POST /photos/authored/edit` returns an empty `receipt_id` and empty `before` and `after` arrays when nothing changes. A no-op creates no receipt; Undo still targets the last real edit.
+`POST /photos/authored/edit` targets accept optional `content_version_id`, the UUID of the content version the client viewed. If that version has been replaced or the asset now displays a different file, the edit returns HTTP 412 `stale_revision`.
+
+The endpoint returns an empty `receipt_id` and empty `before` and `after` arrays when nothing changes. A no-op creates no receipt; Undo still targets the last real edit.
 
 `POST /photos/assets/{asset_id}/hide` and `/unhide` require `If-Match` and return the asset and ETag. Interactive Photos reads and mutations of already-hidden assets require an unlock. Background imports continue updating hidden files and return ordinary import receipts. Hide requires configured credentials. Unhide of an already-hidden asset requires an unlock; a visible no-op still requires the current revision. Ordinary Documents reads retain file access.
 

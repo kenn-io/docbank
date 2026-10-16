@@ -44,7 +44,7 @@ type PhotoAuthoredEditTarget struct {
 	FileID           string `json:"file_id" format:"uuid"`
 	Revision         int64  `json:"revision" minimum:"1"`
 	NodeRevision     int64  `json:"node_revision" minimum:"1"`
-	ContentVersionID string `json:"content_version_id,omitempty"`
+	ContentVersionID string `json:"content_version_id,omitempty" format:"uuid"`
 }
 
 type photoAuthoredLoaded struct {

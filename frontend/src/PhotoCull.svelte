@@ -52,6 +52,7 @@
   let photo = $state<PhotoBrowseRow>();
   let error = $state("");
   let loading = $state(false);
+  let lookupAttempt = $state(0);
   const reloadController = new AbortController();
   const busy = $derived(editor.loading || editor.busy);
   let view = $state<PhotoView>({ ...fittedPhotoView });
@@ -68,6 +69,7 @@
   const currentID = $derived(cull.currentID);
   $effect(() => {
     const id = currentID;
+    void lookupAttempt;
     const controller = new AbortController();
     photo = undefined;
     error = "";
@@ -113,7 +115,13 @@
     const passID = checkpoint.passID;
     if (complete && passID) untrack(() => void cull.checkRemainder());
   });
-  $effect(() => prefetchPreviews(photos, cache, neighbors));
+  $effect(() =>
+    prefetchPreviews(
+      photos,
+      cache,
+      neighbors.filter((row) => row.asset_id !== currentID),
+    ),
+  );
   function canChangeTarget() {
     return editor.canChangeTarget();
   }
@@ -311,9 +319,11 @@
               onmove={move}
             />
           {:else}<div class="unavailable" role="status">
-              {loading ? "Loading photo…" : error}<Button disabled={busy} onclick={() => move(1)}
-                >Next photo</Button
-              >
+              {loading ? "Loading photo…" : error}
+              {#if !loading && error}<Button disabled={busy} onclick={() => lookupAttempt++}
+                  >Retry</Button
+                >{/if}
+              <Button disabled={busy} onclick={() => move(1)}>Next photo</Button>
             </div>{/if}
           {#if info && photo}<aside aria-label="Photo facts">
               <dl>
