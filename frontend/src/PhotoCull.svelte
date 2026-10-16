@@ -113,7 +113,7 @@
   }
   function key(event: KeyboardEvent) {
     const action = cullKey(event);
-    if (!action) return;
+    if (action === undefined) return;
     event.preventDefault();
     event.stopPropagation();
     if (action === "close") close();

@@ -2,7 +2,13 @@ import { createSnapshot, captureSnapshotTargets } from "./snapshots.js";
 import * as api from "./generated/docbank.js";
 import type { Query } from "./query.js";
 import { randomUUID } from "./crypto.js";
-import type { CullCheckpoint, CullRun, CullScope, CullStorage } from "./photoCullStorage.js";
+import type {
+  CullCheckpoint,
+  CullProgress,
+  CullRun,
+  CullScope,
+  CullStorage,
+} from "./photoCullStorage.js";
 import { photoQuery } from "./photos.svelte.js";
 
 const scopes: CullScope[] = ["unrated", "picks", "rejects", "all"];
@@ -26,10 +32,14 @@ export class PhotoCull {
     return !!this.run && !this.currentID;
   }
   async restore() {
+    await this.writes;
+    this.error = "";
     try {
       this.run = await this.storage.load();
+      return !!this.run;
     } catch (cause) {
       this.error = failure(cause);
+      return false;
     }
   }
   cancel() {
@@ -101,8 +111,14 @@ export class PhotoCull {
     if (!this.run) return;
     const checkpoint = { ...this.run.checkpoint, ...patch };
     this.run = { ...this.run, checkpoint };
+    const progress: CullProgress = patch.pass
+      ? { runID: checkpoint.runID, pass: checkpoint }
+      : { runID: checkpoint.runID, position: patch.position, autoAdvance: patch.autoAdvance };
+    for (const kind of ["visited", "skipped", "unavailable"] as const)
+      if (!patch.pass && patch[kind]?.length)
+        progress.marker = { kind, id: patch[kind].at(-1)!, index: patch[kind].length - 1 };
     this.writes = this.writes
-      .then(() => this.storage.checkpoint(checkpoint))
+      .then(() => this.storage.checkpoint(progress))
       .catch((cause) => {
         this.error = `Progress could not be saved: ${failure(cause)}`;
       });

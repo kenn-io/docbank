@@ -4,7 +4,7 @@
   import type { PhotoBrowseRow } from "./generated/docbank.js";
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import type { PhotoView } from "./photoView.js";
-  import { loadPhotoPreview } from "./photoPreview.js";
+  import { loadPhotoPreview, PhotoPreviewDisplay } from "./photoPreview.js";
   import PhotoLoupeImage from "./PhotoLoupeImage.svelte";
   let {
     photo,
@@ -30,13 +30,11 @@
   let url = $state("");
   let error = $state("");
   let large = false;
-  let rank = -1;
-  let active: AbortController;
-  let owned: string[] = [];
+  let active: PhotoPreviewDisplay;
   async function load(
     selected: PhotoBrowseRow,
     size: "grid" | "fit" | "large",
-    controller: AbortController,
+    controller: PhotoPreviewDisplay,
   ) {
     const level = size === "grid" ? 0 : size === "fit" ? 1 : 2;
     try {
@@ -47,15 +45,10 @@
         return;
       }
       const objectURL = URL.createObjectURL(result.blob);
-      owned.push(objectURL);
-      const image = new Image();
-      image.src = objectURL;
-      await image.decode();
-      if (!controller.signal.aborted && level >= rank) {
-        rank = level;
+      await controller.show(objectURL, level, () => {
         url = objectURL;
         error = "";
-      }
+      });
     } catch (cause) {
       if (!controller.signal.aborted)
         error = cause instanceof Error ? cause.message : String(cause);
@@ -63,19 +56,14 @@
   }
   $effect(() => {
     const selected = photo;
-    const controller = (active = new AbortController());
-    const urls: string[] = (owned = []);
+    const controller = (active = new PhotoPreviewDisplay());
     url = "";
     error = "";
     large = false;
-    rank = -1;
     void load(selected, "grid", controller).then(() => {
       if (!controller.signal.aborted) return load(selected, "fit", controller);
     });
-    return () => {
-      controller.abort();
-      for (const value of urls) URL.revokeObjectURL(value);
-    };
+    return () => controller.dispose();
   });
   function zoom() {
     if (large || !active) return;

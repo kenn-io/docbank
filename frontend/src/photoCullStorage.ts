@@ -1,3 +1,5 @@
+import { idbRequest, transactionDone } from "./indexedDB.js";
+
 export type CullScope = "unrated" | "picks" | "rejects" | "all";
 export interface CullCheckpoint {
   runID: string;
@@ -13,48 +15,76 @@ export interface CullRun {
   ids: string[];
   checkpoint: CullCheckpoint;
 }
+type MarkerKind = "visited" | "skipped" | "unavailable";
+type Header = Pick<CullCheckpoint, "runID" | "position" | "scope" | "autoAdvance">;
+export interface CullProgress {
+  runID: string;
+  position?: number;
+  autoAdvance?: boolean;
+  marker?: { kind: MarkerKind; id: string; index: number };
+  pass?: CullCheckpoint;
+}
 export interface CullStorage {
   load(): Promise<CullRun | undefined>;
   replace(run: CullRun, signal?: AbortSignal): Promise<void>;
-  checkpoint(value: CullCheckpoint): Promise<void>;
+  checkpoint(value: CullProgress): Promise<void>;
 }
 
-function request<T>(value: IDBRequest<T>): Promise<T> {
-  return new Promise((resolve, reject) => {
-    value.onsuccess = () => resolve(value.result);
-    value.onerror = () => reject(value.error);
-  });
-}
-function complete(tx: IDBTransaction): Promise<void> {
-  return new Promise((resolve, reject) => {
-    tx.oncomplete = () => resolve();
-    tx.onabort = tx.onerror = () => reject(tx.error ?? new Error("Could not save cull progress."));
-  });
-}
+const stores = ["members", "checkpoints", "markers"];
+const markerKinds: MarkerKind[] = ["visited", "skipped", "unavailable"];
+const header = ({ runID, position, scope, autoAdvance }: CullCheckpoint): Header => ({
+  runID,
+  position,
+  scope,
+  autoAdvance,
+});
 
-// Membership and the small checkpoint live separately. Replacing both is atomic.
+// Full membership/pass writes happen only at capture and pass boundaries.
 export function photoCullStorage(vaultID: string): CullStorage {
+  const markerRange = () => IDBKeyRange.bound([vaultID], [vaultID, []]);
   async function open() {
     if (!vaultID) throw new Error("The vault identity is unavailable. Reload before culling.");
     const opening = indexedDB.open("docbank-photo-cull-v1", 1);
     opening.onupgradeneeded = () => {
-      opening.result.createObjectStore("members");
-      opening.result.createObjectStore("checkpoints");
+      for (const name of stores) opening.result.createObjectStore(name);
     };
-    return request(opening);
+    return idbRequest(opening);
+  }
+  async function savePass(tx: IDBTransaction, checkpoint: CullCheckpoint) {
+    const markers = tx.objectStore("markers");
+    const keys = await idbRequest(markers.getAllKeys(markerRange()));
+    for (const key of keys) markers.delete(key);
+    for (const kind of markerKinds)
+      checkpoint[kind].forEach((id, index) => markers.put(id, [vaultID, kind, index]));
+    tx.objectStore("checkpoints").put(header(checkpoint), vaultID);
   }
   return {
     async load() {
       const db = await open();
       try {
-        const tx = db.transaction(["members", "checkpoints"], "readonly");
-        const done = complete(tx);
-        const [ids, checkpoint] = await Promise.all([
-          request<string[] | undefined>(tx.objectStore("members").get(vaultID)),
-          request<CullCheckpoint | undefined>(tx.objectStore("checkpoints").get(vaultID)),
+        const tx = db.transaction(stores, "readonly"),
+          done = transactionDone(tx);
+        const [membership, saved, keys, values] = await Promise.all([
+          idbRequest<{ ids: string[]; pass: string[] } | undefined>(
+            tx.objectStore("members").get(vaultID),
+          ),
+          idbRequest<Header | undefined>(tx.objectStore("checkpoints").get(vaultID)),
+          idbRequest(tx.objectStore("markers").getAllKeys(markerRange())),
+          idbRequest<string[]>(tx.objectStore("markers").getAll(markerRange())),
         ]);
         await done;
-        return ids && checkpoint ? { ids, checkpoint } : undefined;
+        if (!membership || !saved) return;
+        const checkpoint: CullCheckpoint = {
+          ...saved,
+          pass: membership.pass,
+          visited: [],
+          skipped: [],
+          unavailable: [],
+        };
+        keys.forEach((key, index) =>
+          checkpoint[(key as [string, MarkerKind, number])[1]].push(values[index]!),
+        );
+        return { ids: membership.ids, checkpoint };
       } finally {
         db.close();
       }
@@ -62,14 +92,14 @@ export function photoCullStorage(vaultID: string): CullStorage {
     async replace(run, signal) {
       const db = await open();
       try {
-        const tx = db.transaction(["members", "checkpoints"], "readwrite");
-        const done = complete(tx);
+        const tx = db.transaction(stores, "readwrite"),
+          done = transactionDone(tx);
         const cancel = () => tx.abort();
         signal?.addEventListener("abort", cancel, { once: true });
         try {
           signal?.throwIfAborted();
-          tx.objectStore("members").put(run.ids, vaultID);
-          tx.objectStore("checkpoints").put(run.checkpoint, vaultID);
+          tx.objectStore("members").put({ ids: run.ids, pass: run.checkpoint.pass }, vaultID);
+          await savePass(tx, run.checkpoint);
           await done;
         } finally {
           signal?.removeEventListener("abort", cancel);
@@ -81,16 +111,31 @@ export function photoCullStorage(vaultID: string): CullStorage {
     async checkpoint(value) {
       const db = await open();
       try {
-        const tx = db.transaction("checkpoints", "readwrite");
-        const done = complete(tx);
+        const tx = db.transaction(value.pass ? stores : ["checkpoints", "markers"], "readwrite"),
+          done = transactionDone(tx);
         const store = tx.objectStore("checkpoints");
-        const current = await request<CullCheckpoint | undefined>(store.get(vaultID));
+        const current = await idbRequest<Header | undefined>(store.get(vaultID));
         if (current?.runID !== value.runID) {
           tx.abort();
           await done.catch(() => {});
           throw new Error("Another cull run replaced this run. Close and resume it.");
         }
-        store.put(value, vaultID);
+        if (value.pass) {
+          const members = tx.objectStore("members");
+          const membership = await idbRequest<{ ids: string[]; pass: string[] }>(
+            members.get(vaultID),
+          );
+          members.put({ ...membership, pass: value.pass.pass }, vaultID);
+          await savePass(tx, value.pass);
+        } else {
+          if (value.position !== undefined) current.position = value.position;
+          if (value.autoAdvance !== undefined) current.autoAdvance = value.autoAdvance;
+          store.put(current, vaultID);
+          if (value.marker) {
+            const { kind, id, index } = value.marker;
+            tx.objectStore("markers").put(id, [vaultID, kind, index]);
+          }
+        }
         await done;
       } finally {
         db.close();

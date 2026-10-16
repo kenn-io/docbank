@@ -121,7 +121,7 @@
   async function startCull(resume = false) {
     if (!editor.canChangeTarget()) return;
     returnFocus = document.activeElement as HTMLElement;
-    if (resume || (await cull.start(photos.query))) culling = true;
+    if (resume ? await cull.restore() : await cull.start(photos.query)) culling = true;
   }
   function compare() {
     if (!editor.canChangeTarget()) return;

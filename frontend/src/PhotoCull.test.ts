@@ -22,7 +22,7 @@ it("decides once with P, advances, announces the decision and offers receipt Und
       disconnect() {}
     },
   );
-  const rows = [photo(1), photo(2)];
+  const rows = [photo(1), { ...photo(2), rating: 5 }];
   const run: CullRun = {
     ids: rows.map((row) => row.asset_id),
     checkpoint: {
@@ -83,6 +83,14 @@ it("decides once with P, advances, announces the decision and offers receipt Und
   expect(document.querySelector(".kit-sr-only")?.textContent).toContain("Photo 1.jpg: pick");
   await fireEvent.click(screen.getByRole("button", { name: /^Undo$/ }));
   expect(undo).toHaveBeenCalled();
+  await screen.findByText("Photo 2.jpg");
+  await fireEvent.keyDown(dialog, { key: "0" });
+  await waitFor(() => expect(edit).toHaveBeenCalledTimes(2));
+  expect(edit.mock.calls[1]?.slice(0, 3)).toEqual([
+    { asset_ids: [rows[1]!.asset_id] },
+    { rating: 0 },
+    false,
+  ]);
   await fireEvent.keyDown(dialog, { key: "Escape" });
   expect(close).toHaveBeenCalledOnce();
 });

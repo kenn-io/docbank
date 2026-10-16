@@ -306,7 +306,9 @@ it.each(["preview", "original"] as const)(
             : Promise.resolve();
         },
       );
-      await fireEvent.click(screen.getByRole("button", { name: "Retry preview" }));
+      const retry = screen.getByRole("button", { name: "Retry preview" }) as HTMLButtonElement;
+      await waitFor(() => expect(retry.disabled).toBe(false));
+      await fireEvent.click(retry);
       await screen.findByText("Fit preview");
       expect(screen.queryByText("Decode failed")).toBeNull();
     }

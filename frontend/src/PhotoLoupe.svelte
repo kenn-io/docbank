@@ -17,7 +17,7 @@
   import type { PhotoAuthoredPatch, PhotoKeywordEdit } from "./generated/docbank.js";
   import PhotoCell from "./PhotoCell.svelte";
   import { photoFacts } from "./photoFacts.js";
-  import { loadPhotoPreview } from "./photoPreview.js";
+  import { loadPhotoPreview, PhotoPreviewDisplay } from "./photoPreview.js";
   import PhotoLoupeImage from "./PhotoLoupeImage.svelte";
 
   let {
@@ -69,9 +69,7 @@
   let busy = $state(false);
   let image = $state<PhotoLoupeImage>();
   let dialog = $state<HTMLDivElement>();
-  let controller: AbortController;
-  let urls: string[] = [];
-  let rank = -1;
+  let controller: PhotoPreviewDisplay;
   let largeStarted = false;
   const identity = $derived(photo ? `${photo.asset_id}:${photo.content_version_id}` : "");
   const index = $derived(items.findIndex((item) => item.asset_id === photo?.asset_id));
@@ -98,22 +96,18 @@
     failure = undefined;
     busy = false;
     retrying = false;
-    urls = [];
-    rank = -1;
     largeStarted = false;
-    controller = new AbortController();
+    controller = new PhotoPreviewDisplay();
     const active = controller;
-    if (!selected) return () => active.abort();
+    if (!selected) return () => active.dispose();
     void load(selected, "grid", active);
     const timer = setTimeout(() => void load(selected, "fit", active), 150);
     void tick().then(() => {
       if (!active.signal.aborted && image?.isZoomed()) zoom();
     });
-    const ownedURLs = urls;
     return () => {
       clearTimeout(timer);
-      active.abort();
-      for (const objectURL of ownedURLs.splice(0)) URL.revokeObjectURL(objectURL);
+      active.dispose();
     };
   });
   $effect(() => {
@@ -140,38 +134,27 @@
       active.abort();
     };
   });
-  async function show(blobURL: string, level: number, label: string, active: AbortController) {
-    const ownedURLs = urls;
-    ownedURLs.push(blobURL);
-    try {
-      const decoded = new Image();
-      decoded.src = blobURL;
-      await decoded.decode();
-    } catch (cause) {
-      const index = ownedURLs.indexOf(blobURL);
-      if (index >= 0) {
-        ownedURLs.splice(index, 1);
-        URL.revokeObjectURL(blobURL);
-      }
-      throw cause;
-    }
-    if (!active.signal.aborted && level >= rank) {
-      rank = level;
+  function show(blobURL: string, level: number, label: string, active: PhotoPreviewDisplay) {
+    return active.show(blobURL, level, () => {
       url = blobURL;
       quality = label;
       if (failure && failure.rank <= level) failure = undefined;
-    }
+    });
   }
-  function fail(result: NonNullable<typeof failure>, active: AbortController) {
+  function fail(result: NonNullable<typeof failure>, active: PhotoPreviewDisplay) {
     untrack(() => {
-      if (!active.signal.aborted && result.rank >= rank && result.rank >= (failure?.rank ?? -1))
+      if (
+        !active.signal.aborted &&
+        result.rank >= active.rank &&
+        result.rank >= (failure?.rank ?? -1)
+      )
         failure = result;
     });
   }
   async function load(
     selected: PhotoBrowseRow,
     size: "grid" | "fit" | "large",
-    active: AbortController,
+    active: PhotoPreviewDisplay,
     reload = false,
   ) {
     if (size === "large") largeStarted = true;

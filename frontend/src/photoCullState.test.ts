@@ -1,9 +1,9 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
-import { snapshotMemberHash } from "./snapshots.js";
+import { snapshotEnvelope } from "./snapshot-test-fixtures.js";
 import { PhotoCull } from "./photoCull.svelte.js";
-import type { CullRun, CullStorage } from "./photoCullStorage.js";
+import type { CullRun, CullStorage, CullProgress } from "./photoCullStorage.js";
 import * as api from "./generated/docbank.js";
-import { parseQuery, queryFingerprint } from "./query.js";
+import { parseQuery } from "./query.js";
 import { photo as fixturePhoto } from "./photo-test-fixtures.js";
 
 const photo = (id: number) => ({
@@ -20,37 +20,25 @@ function storage() {
     replace: vi.fn(async (run) => {
       saved = structuredClone(run);
     }),
-    checkpoint: vi.fn(async (checkpoint) => {
-      if (saved) saved.checkpoint = structuredClone(checkpoint);
+    checkpoint: vi.fn(async (progress: CullProgress) => {
+      if (!saved) return;
+      if (saved.checkpoint.runID !== progress.runID)
+        throw new Error("Another cull run replaced this run. Close and resume it.");
+      if (progress.pass) saved.checkpoint = structuredClone(progress.pass);
+      else {
+        if (progress.position !== undefined) saved.checkpoint.position = progress.position;
+        if (progress.autoAdvance !== undefined) saved.checkpoint.autoAdvance = progress.autoAdvance;
+        if (progress.marker)
+          saved.checkpoint[progress.marker.kind][progress.marker.index] = progress.marker.id;
+      }
     }),
   };
   return store;
 }
 async function snapshot(ids: string[]) {
-  return {
+  return snapshotEnvelope(
     query,
-    dependencies: [],
-    query_fingerprint: await queryFingerprint(query),
-    member_hash: await snapshotMemberHash(
-      ids.map((asset_id, index) => ({
-        asset_id,
-        node_id: index + 1,
-        content_version_id: "11111111-1111-4111-8111-111111111111",
-      })),
-    ),
-    snapshot_fingerprint: `sha256:${"b".repeat(64)}`,
-    generation: { kind: "native" },
-    coverage: { configuration: "unconfigured" },
-    observed_at: "2026-10-01T00:00:00Z",
-    created_at: "2026-10-01T00:00:00Z",
-    expires_at: "2026-10-01T00:20:00Z",
-    snapshot: true,
-    snapshot_id: "c".repeat(32),
-    total: ids.length,
-    total_bytes: ids.length * 10,
-    page_size: 250,
-    facets: [],
-    rows: ids.map((asset_id, index) => ({
+    ids.map((asset_id, index) => ({
       asset_id,
       node_id: index + 1,
       content_version_id: "11111111-1111-4111-8111-111111111111",
@@ -66,7 +54,7 @@ async function snapshot(ids: string[]) {
       tags: [],
       collection_ids: [],
     })),
-  };
+  );
 }
 it("captures the entire ordered photo snapshot and resumes without reading the snapshot again", async () => {
   const rows = [photo(3), photo(1), photo(2)];

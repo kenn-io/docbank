@@ -2581,7 +2581,7 @@ it.each([false, true])(
         disconnect() {}
       },
     );
-    vi.spyOn(PhotoCull.prototype, "restore").mockResolvedValue();
+    vi.spyOn(PhotoCull.prototype, "restore").mockResolvedValue(false);
     vi.spyOn(PhotoCull.prototype, "flush").mockResolvedValue();
     const rows = [photo(1), photo(2)];
     const photos = new Photos("scoped", vi.fn());
@@ -2644,3 +2644,52 @@ it.each([false, true])(
     await cache.dispose();
   },
 );
+
+it("reloads a replacement durable run before opening Resume cull", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const rows = [photo(1), photo(2)];
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = rows;
+  photos.started = true;
+  vi.spyOn(photos, "lookup").mockImplementation(
+    async (id) => rows.find((row) => row.asset_id === id)!,
+  );
+  vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
+  let durableID = rows[0]!.asset_id;
+  const restore = vi
+    .spyOn(PhotoCull.prototype, "restore")
+    .mockImplementation(async function (this: PhotoCull) {
+      this.run = {
+        ids: [durableID],
+        checkpoint: {
+          runID: durableID,
+          pass: [durableID],
+          position: 0,
+          visited: [],
+          skipped: [],
+          unavailable: [],
+          scope: "all",
+          autoAdvance: true,
+        },
+      };
+      return true;
+    });
+  render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+    vaultID: "vault",
+  });
+  const resume = await screen.findByRole("button", { name: "Resume cull" });
+  durableID = rows[1]!.asset_id;
+  await fireEvent.click(resume);
+  const dialog = await screen.findByRole("dialog", { name: "Cull photos" });
+  await within(dialog).findByText("Photo 2.jpg");
+  expect(restore).toHaveBeenCalledTimes(2);
+  photos.dispose();
+});

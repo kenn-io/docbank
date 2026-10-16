@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { snapshotEnvelope } from "./snapshot-test-fixtures.js";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { parseQuery, queryFingerprint, type Query } from "./query.js";
 import {
@@ -50,20 +51,14 @@ function row(nodeID: number, version: string, blob: string, size: number): Snaps
 
 async function page(overrides: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
   const rows = (overrides.rows as SnapshotRow[] | undefined) ?? [row(2, version2, blob2, 20)];
-  return {
-    $schema: "http://localhost/schemas/WorkspaceQueryResponse.json",
-    query,
+  return snapshotEnvelope(query, rows, {
     dependencies: [{ kind: "tag", id: tagID, revision: 2 }],
-    query_fingerprint: await queryFingerprint(query),
     member_hash: await sha256OfUTF8("2:" + version2 + "\n"),
     snapshot_fingerprint: `sha256:${"f".repeat(64)}`,
     generation: { kind: "rendition", generation_id: "generation-synthetic" },
     coverage: { configuration: "configured", profile_fingerprint: "c".repeat(64) },
     observed_at: "2026-09-11T00:00:00Z",
     page_size: 50,
-    total: rows.length,
-    total_bytes: rows.reduce((total, item) => total + item.size, 0),
-    rows,
     facets: [
       {
         dimension: "tags",
@@ -79,7 +74,7 @@ async function page(overrides: Record<string, unknown> = {}): Promise<Record<str
     created_at: "2026-09-11T00:00:00Z",
     expires_at: "2026-09-11T00:15:00Z",
     ...overrides,
-  };
+  });
 }
 
 function jsonResponse(value: unknown): Response {
