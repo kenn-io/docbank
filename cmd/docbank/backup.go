@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
@@ -24,7 +25,7 @@ Typical flow: backup init -> backup create -> backup list -> backup verify;
 backup restore writes a separate vault directory and proves it (never in place).`,
 	GroupID: groupOperations,
 	Use:     "backup",
-	Short:   "Create and inspect immutable vault snapshots",
+	Short:   "Create, restore, and clean up vault snapshots",
 }
 
 var (
@@ -123,7 +124,7 @@ var backupCreateCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("writing backup create output: %w", err)
 		}
-		return nil
+		return writeBackupCoverage(cmd.OutOrStdout(), snapshot)
 	},
 }
 
@@ -345,29 +346,52 @@ func writeBackupJSON(w io.Writer, value any) error {
 
 func writeBackupList(w io.Writer, snapshots []api.BackupSnapshot) error {
 	if len(snapshots) == 0 {
-		_, err := fmt.Fprintln(w, "no snapshots found")
-		if err != nil {
+		if _, err := fmt.Fprintln(w, "no snapshots found"); err != nil {
 			return fmt.Errorf("writing empty backup list: %w", err)
 		}
 		return nil
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "SNAPSHOT\tCREATED\tFILES\tBLOBS\tBYTES ADDED\tTAG"); err != nil {
+	if _, err := fmt.Fprintln(tw, "SNAPSHOT\tCREATED\tFILES\tBLOBS\tBYTES ADDED\tTAG\tBLOB BYTES\tPHOTO ASSETS/FILES/BYTES\tALBUMS/MEMBERS\tHIDDEN/TRASHED\tCHECKOUTS/ENTRIES\tRECEIPTS"); err != nil {
 		return fmt.Errorf("writing backup list header: %w", err)
 	}
+	var warnings []string
+	var exclusions []string
 	for _, snapshot := range snapshots {
 		tag := snapshot.Tag
 		if tag == "" {
 			tag = "-"
 		}
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%s\n",
-			snapshot.ID, snapshot.CreatedAt, snapshot.Files, snapshot.Blobs,
-			snapshot.BytesAdded, tag); err != nil {
+		coverage := "unrecorded\t-\t-\t-\t-"
+		if snapshot.CoverageWarning != "" {
+			coverage = "unsupported\t-\t-\t-\t-"
+			warnings = append(warnings, snapshot.ID+": "+snapshot.CoverageWarning)
+		}
+		if snapshot.Coverage != nil {
+			c := snapshot.Coverage.Included
+			coverage = fmt.Sprintf("%d/%d/%d\t%d/%d\t%d/%d\t%d/%d\t%d", c.PhotoAssets, c.PhotoFiles, c.PhotoBlobBytes, c.Albums, c.AlbumMembers, c.HiddenPhotos, c.TrashedPhotos, c.CheckoutDefinitions, c.CheckoutEntries, c.RetainedReceipts)
+			for _, exclusion := range snapshot.Coverage.Excluded {
+				if !slices.Contains(exclusions, exclusion) {
+					exclusions = append(exclusions, exclusion)
+				}
+			}
+		}
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%s\t%d\t%s\n", snapshot.ID, snapshot.CreatedAt, snapshot.Files, snapshot.Blobs, snapshot.BytesAdded, tag, snapshot.BlobBytes, coverage); err != nil {
 			return fmt.Errorf("writing backup list row: %w", err)
 		}
 	}
 	if err := tw.Flush(); err != nil {
 		return fmt.Errorf("writing backup list: %w", err)
+	}
+	for _, warning := range warnings {
+		if _, err := fmt.Fprintln(w, warning); err != nil {
+			return fmt.Errorf("writing backup coverage warning: %w", err)
+		}
+	}
+	if len(exclusions) > 0 {
+		if _, err := fmt.Fprintf(w, "excluded: %s\n", strings.Join(exclusions, ", ")); err != nil {
+			return fmt.Errorf("writing backup exclusions: %w", err)
+		}
 	}
 	return nil
 }
@@ -471,6 +495,29 @@ func init() {
 	backupRestoreCmd.Flags().StringVar(&backupRestoreStoreMap, "store-map", "",
 		"owner-private TOML mapping from source store IDs to configured target bindings")
 	backupCmd.AddCommand(backupInitCmd, backupCreateCmd, backupListCmd, backupVerifyCmd,
-		backupRestoreCmd)
+		backupRestoreCmd, backupForgetCmd, backupPruneCmd)
 	rootCmd.AddCommand(backupCmd)
+}
+
+func writeBackupCoverage(w io.Writer, snapshot api.BackupSnapshot) error {
+	if snapshot.CoverageWarning != "" {
+		if _, err := fmt.Fprintf(w, "%s coverage: unsupported; %s\n", snapshot.ID, snapshot.CoverageWarning); err != nil {
+			return fmt.Errorf("writing backup coverage warning: %w", err)
+		}
+		return nil
+	}
+	if snapshot.Coverage == nil {
+		_, err := fmt.Fprintf(w, "%s coverage: unrecorded\n", snapshot.ID)
+		if err != nil {
+			return fmt.Errorf("writing backup coverage: %w", err)
+		}
+		return nil
+	}
+	c := snapshot.Coverage.Included
+	_, err := fmt.Fprintf(w, "%s coverage: %d photo asset(s), %d photo file(s), %d verified photo byte(s); %d album(s), %d member(s), %d hidden, %d trashed; %d checkout(s), %d entries, %d receipt(s)\nexcluded: %s\n", snapshot.ID,
+		c.PhotoAssets, c.PhotoFiles, c.PhotoBlobBytes, c.Albums, c.AlbumMembers, c.HiddenPhotos, c.TrashedPhotos, c.CheckoutDefinitions, c.CheckoutEntries, c.RetainedReceipts, strings.Join(snapshot.Coverage.Excluded, ", "))
+	if err != nil {
+		return fmt.Errorf("writing backup coverage: %w", err)
+	}
+	return nil
 }

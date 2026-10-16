@@ -1518,11 +1518,14 @@ docbank backup restore [<snapshot>] --target <dir> [--repo <dir>] [--overwrite]
                        [--store-map <owner-private-file>]
                        [--jobs <n>] [--force-unlock]
                        [--progress auto|bar|plain] [--json]
+docbank backup forget <snapshot> [<snapshot>...] [--repo <dir>] [--dry-run]
+                      [--allow-empty] [--force-unlock] [--json]
+docbank backup prune [--repo <dir>] [--dry-run] [--force-unlock] [--json]
 ```
 
-Creates, lists, verifies, and restores recovery points in a Kit backup
-repository. Supply `--repo` or configure `[backup] repo`; the flag takes
-precedence.
+Creates, lists, verifies, restores, and removes recovery points in a Kit backup
+repository and reclaims unused backup storage. Supply `--repo` or configure
+`[backup] repo`; the flag takes precedence.
 
 | Command | Behavior |
 |---------|----------|
@@ -1531,6 +1534,8 @@ precedence.
 | `list` | List snapshot history |
 | `verify` | Check the latest snapshot, a named snapshot, or every snapshot with `--all`; `--quick` skips content reads |
 | `restore` | Restore the latest or a named snapshot to a separate `--target` |
+| `forget` | Remove exact snapshot IDs; `--allow-empty` permits removing the last recovery point |
+| `prune` | Remove unused packs and rewrite eligible partly live packs; `--dry-run` reports the plan |
 
 `create` pauses mutations briefly to fix the metadata view for the snapshot.
 It then streams loose or packed content while normal daemon work resumes.

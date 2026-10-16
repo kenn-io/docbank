@@ -1693,6 +1693,8 @@ func TestBackupInitCreateListVerifyCLI(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "created snapshot")
 	assert.Contains(t, out, "1 file(s), 1 blob(s)")
+	assert.Contains(t, out, "0 photo asset(s), 0 photo file(s), 0 verified photo byte(s)")
+	createOutput := out
 	for _, stage := range []string{"freeze:", "metadata:", "attachments:", "seal:"} {
 		assert.Contains(t, out, stage)
 	}
@@ -1713,6 +1715,8 @@ func TestBackupInitCreateListVerifyCLI(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &listed))
 	require.Len(t, listed.Items, 2)
 	assert.Equal(t, backupapp.MetadataFormat, listed.Items[0].MetadataFormat)
+	snapshot := listed.Items[0]
+	assert.Contains(t, strings.Split(createOutput, "\n"), fmt.Sprintf("created snapshot %s (parent: initial); %d file(s), %d blob(s), %d byte(s) added", snapshot.ID, snapshot.Files, snapshot.Blobs, snapshot.BytesAdded))
 
 	out, err = runCLI(t, "backup", "verify", "--all", "--jobs", "1", "--progress", "plain")
 	require.NoError(t, err)

@@ -289,19 +289,52 @@ func TestPhotoBackupRoundTrip(t *testing.T) {
 	node, err := fixture.metadata.CreateFile(ctx, fixture.metadata.RootID(), "photo.jpg",
 		hash, size, "image/jpeg")
 	require.NoError(t, err)
-	asset, err := fixture.metadata.PhotoAssetForNode(ctx, node.ID)
+	_, err = fixture.metadata.CreateFile(ctx, fixture.metadata.RootID(), "photo-copy.jpg", hash, size, "image/jpeg")
 	require.NoError(t, err)
-	asset, err = fixture.metadata.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
+	asset, err := fixture.metadata.PhotoAssetForNode(ctx, node.ID)
 	require.NoError(t, err)
 	preference := "image"
 	_, err = fixture.metadata.SetPhotoSettings(ctx, 1, &preference)
 	require.NoError(t, err)
 
+	album, err := fixture.metadata.CreatePhotoSet(ctx, "Recovered album")
+	require.NoError(t, err)
+	album, err = fixture.metadata.ChangePhotoSetMembers(ctx, album.ID, album.Revision, true, store.PhotoSetSelection{AssetIDs: []string{asset.ID}})
+	require.NoError(t, err)
+	checkout, _, err := fixture.metadata.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, filepath.Join(t.TempDir(), "checkout"), "synthetic-destination", 0)
+	require.NoError(t, err)
+	asset, err = fixture.metadata.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	require.NoError(t, fixture.metadata.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	token, _, err := fixture.metadata.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+	ctx = store.WithPhotoHiddenToken(ctx, token)
+	asset, err = fixture.metadata.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	asset, err = fixture.metadata.TrashPhotoAsset(ctx, asset.ID, asset.Revision)
+	require.NoError(t, err)
+
 	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
 	require.NoError(t, err)
-	_, err = backupapp.Create(ctx, repo, "photo-round-trip", fixture.metadata, fixture.blobs,
+	manifest, err := backupapp.Create(ctx, repo, "photo-round-trip", fixture.metadata, fixture.blobs,
 		backup.CreateOptions{})
 	require.NoError(t, err)
+	stats, err := backupapp.ParseStats(manifest.Stats)
+	require.NoError(t, err)
+	require.NotNil(t, stats.Coverage)
+	assert.Equal(t, 1, stats.Coverage.Version)
+	c := stats.Coverage.Included
+	assert.Equal(t, int64(2), c.PhotoAssets)
+	assert.Equal(t, int64(2), c.PhotoFiles)
+	assert.Equal(t, int64(11), c.PhotoBlobBytes)
+	assert.Equal(t, int64(1), c.Albums)
+	assert.Equal(t, int64(1), c.AlbumMembers)
+	assert.Equal(t, int64(1), c.HiddenPhotos)
+	assert.Equal(t, int64(1), c.TrashedPhotos)
+	assert.Equal(t, int64(1), c.CheckoutDefinitions)
+	assert.Equal(t, int64(1), c.CheckoutEntries)
+	assert.Positive(t, c.RetainedReceipts)
+
 	target := filepath.Join(t.TempDir(), "restored")
 	_, err = backupapp.Restore(ctx, repo, "photo-round-trip", backup.RestoreOptions{TargetDir: target})
 	require.NoError(t, err)
@@ -309,10 +342,48 @@ func TestPhotoBackupRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 
-	restoredAsset, err := restored.PhotoAssetByID(ctx, asset.ID)
+	hidden, err := restored.PhotoHiddenState(ctx)
+	require.NoError(t, err)
+	assert.Nil(t, hidden.ExpiresAt)
+	_, err = restored.PhotoAssetByID(ctx, asset.ID)
+	require.ErrorIs(t, err, store.ErrHiddenLocked)
+	restoredToken, _, err := restored.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+	restoredCtx := store.WithPhotoHiddenToken(t.Context(), restoredToken)
+	restoredAsset, err := restored.PhotoAssetByID(restoredCtx, asset.ID)
 	require.NoError(t, err)
 	assert.Equal(t, asset.ID, restoredAsset.ID)
 	assert.NotNil(t, restoredAsset.ExcludedAt)
+	assert.NotNil(t, restoredAsset.HiddenAt)
+	restoredAlbum, err := restored.PhotoSet(ctx, album.ID, "")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), restoredAlbum.MemberCount)
+	restoredCheckout, err := restored.PhotoCheckout(ctx, checkout.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "unbound", restoredCheckout.State)
+	assert.Empty(t, restoredCheckout.Destination)
+	assert.Empty(t, restoredCheckout.OperationID)
+	entries, err := restored.PhotoCheckoutEntries(ctx, checkout.ID)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, hash, entries[0].Hash)
+	restoredNode, err := restored.NodeByID(ctx, node.ID)
+	require.NoError(t, err)
+	assert.NotNil(t, restoredNode.TrashedAt)
+	restoredBlobs, err := blob.New(store.NewPackCatalog(restored), filepath.Join(target, "blobs"))
+	require.NoError(t, err)
+	stream, _, err := restoredBlobs.OpenStreamContext(ctx, hash)
+	require.NoError(t, err)
+	data, err := io.ReadAll(stream)
+	require.NoError(t, err)
+	assert.Equal(t, "photo bytes", string(data))
+	require.NoError(t, stream.Close())
+	recaptured, err := backupapp.Create(ctx, repo, "photo-round-trip", restored, restoredBlobs, backup.CreateOptions{})
+	require.NoError(t, err)
+	recapturedStats, err := backupapp.ParseStats(recaptured.Stats)
+	require.NoError(t, err)
+	assert.Equal(t, stats.Coverage, recapturedStats.Coverage)
+	require.NoError(t, restoredBlobs.Close())
 	settings, err := restored.PhotoSettings(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, settings.Preference)
@@ -3052,4 +3123,142 @@ func TestOverwriteCleanupFailurePreservesPublishedOwnership(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, reader.Close())
 	assert.Equal(t, content, got)
+}
+
+func TestSnapshotCoverageRestoreProofAndHistoricalManifest(t *testing.T) {
+	fixture := newArchiveFixture(t)
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	manifest, err := backupapp.Create(t.Context(), repo, "coverage", fixture.metadata, fixture.blobs, backup.CreateOptions{})
+	require.NoError(t, err)
+	stats, err := backupapp.ParseStats(manifest.Stats)
+	require.NoError(t, err)
+	require.NotNil(t, stats.Coverage)
+	stats.Coverage.Version = 2
+	manifest.Stats, err = json.Marshal(stats)
+	require.NoError(t, err)
+	unsupportedID, err := repo.WriteManifest(manifest)
+	require.NoError(t, err)
+	unsupportedTarget := filepath.Join(t.TempDir(), "unsupported")
+	_, err = backupapp.Restore(t.Context(), repo, "coverage", backup.RestoreOptions{SnapshotID: unsupportedID, TargetDir: unsupportedTarget})
+	require.ErrorContains(t, err, "unsupported backup coverage version 2")
+	assert.NoFileExists(t, filepath.Join(unsupportedTarget, "docbank.db"))
+	stats.Coverage.Version = 1
+	stats.Coverage.Included.PhotoAssets = 99
+	manifest.Stats, err = json.Marshal(stats)
+	require.NoError(t, err)
+	badID, err := repo.WriteManifest(manifest)
+	require.NoError(t, err)
+	target := filepath.Join(t.TempDir(), "rejected")
+	_, err = backupapp.Restore(t.Context(), repo, "coverage", backup.RestoreOptions{SnapshotID: badID, TargetDir: target})
+	require.ErrorContains(t, err, "do not match manifest stats")
+	assert.NoFileExists(t, filepath.Join(target, "docbank.db"))
+
+	stats.Coverage = nil
+	manifest.Stats, err = json.Marshal(stats)
+	require.NoError(t, err)
+	historicalID, err := repo.WriteManifest(manifest)
+	require.NoError(t, err)
+	restored, err := backupapp.Restore(t.Context(), repo, "coverage", backup.RestoreOptions{SnapshotID: historicalID, TargetDir: filepath.Join(t.TempDir(), "historical")})
+	require.NoError(t, err)
+	assert.FileExists(t, restored.DBPath)
+}
+
+func TestMalformedPhotoGraphRestoreLeavesNoPublishedDatabase(t *testing.T) {
+	fixture := newArchiveFixture(t)
+	hash, size, err := fixture.blobs.Write(strings.NewReader("photo bytes"))
+	require.NoError(t, err)
+	_, err = fixture.metadata.CreateFile(t.Context(), fixture.metadata.RootID(), "photo.jpg", hash, size, "image/jpeg")
+	require.NoError(t, err)
+	lines := bytes.Split(exportBackupMetadata(t, fixture.metadata), []byte("\n"))
+	changed := 0
+	for i, line := range lines {
+		if !bytes.Contains(line, []byte(`"type":"photo_file"`)) {
+			continue
+		}
+		var record map[string]any
+		require.NoError(t, json.Unmarshal(line, &record))
+		record["asset_id"] = "11111111-1111-4111-8111-111111111111"
+		lines[i], err = json.Marshal(record)
+		require.NoError(t, err)
+		changed++
+	}
+	require.Equal(t, 1, changed)
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	_, err = backup.Create(t.Context(), repo, backupapp.New("test"), backup.CreateOptions{
+		MetadataSource: overriddenMetadataSource{source: backupapp.NewMetadataSource(fixture.metadata), metadata: bytes.Join(lines, []byte("\n"))},
+		ContentSource:  backupapp.NewContentSource(fixture.blobs),
+	})
+	require.NoError(t, err)
+	target := filepath.Join(t.TempDir(), "rejected")
+	_, err = backupapp.Restore(t.Context(), repo, "test", backup.RestoreOptions{TargetDir: target})
+	require.ErrorContains(t, err, "has a stale display pointer")
+	assert.NoFileExists(t, filepath.Join(target, "docbank.db"))
+}
+
+func TestBackupCoverageCountsPartiallyTrashedPhotoAsset(t *testing.T) {
+	fixture := newArchiveFixture(t)
+	rawHash, rawSize, err := fixture.blobs.Write(strings.NewReader("raw bytes"))
+	require.NoError(t, err)
+	raw, err := fixture.metadata.CreateFile(t.Context(), fixture.metadata.RootID(), "photo.raw", rawHash, rawSize, "application/octet-stream")
+	require.NoError(t, err)
+	imageHash, imageSize, err := fixture.blobs.Write(strings.NewReader("jpeg bytes"))
+	require.NoError(t, err)
+	image, err := fixture.metadata.CreateFile(t.Context(), fixture.metadata.RootID(), "photo.jpg", imageHash, imageSize, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := fixture.metadata.PhotoAssetForNode(t.Context(), image.ID)
+	require.NoError(t, err)
+	_, err = fixture.metadata.AttachPhotoFile(t.Context(), asset.ID, asset.Revision, raw.ID, store.PhotoRoleRAW, nil)
+	require.NoError(t, err)
+	_, _, err = fixture.metadata.Trash(t.Context(), raw.ID, store.UnconditionalRev)
+	require.NoError(t, err)
+	raw, err = fixture.metadata.NodeByID(t.Context(), raw.ID)
+	require.NoError(t, err)
+	require.NotNil(t, raw.TrashedAt)
+	image, err = fixture.metadata.NodeByID(t.Context(), image.ID)
+	require.NoError(t, err)
+	require.Nil(t, image.TrashedAt)
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	manifest, err := backupapp.Create(t.Context(), repo, "partial-trash", fixture.metadata, fixture.blobs, backup.CreateOptions{})
+	require.NoError(t, err)
+	stats, err := backupapp.ParseStats(manifest.Stats)
+	require.NoError(t, err)
+	require.NotNil(t, stats.Coverage)
+	assert.Equal(t, int64(1), stats.Coverage.Included.PhotoAssets)
+	assert.Equal(t, int64(2), stats.Coverage.Included.PhotoFiles)
+	assert.Equal(t, int64(1), stats.Coverage.Included.TrashedPhotos)
+}
+
+func TestParseStatsCoverageVersionsAndMalformedPayloads(t *testing.T) {
+	stats, err := backupapp.ParseStats(jsontext.Value(`{"files":3,"coverage":{"version":2,"included":["future"]}}`))
+	var unsupported *backupapp.UnsupportedCoverageVersionError
+	require.ErrorAs(t, err, &unsupported)
+	assert.Equal(t, 2, unsupported.Version)
+	assert.Equal(t, int64(3), stats.Files)
+	assert.Nil(t, stats.Coverage)
+	for _, raw := range []string{
+		`{"files":"bad","coverage":{"version":2}}`,
+		`{"coverage":{"version":1,"included":["bad"]}}`,
+		`{"coverage":{"version":"bad"}}`,
+	} {
+		_, err := backupapp.ParseStats(jsontext.Value(raw))
+		require.Error(t, err)
+		assert.NotErrorAs(t, err, &unsupported)
+	}
+}
+
+func TestStatsCoverageV1EncodingGolden(t *testing.T) {
+	stats := backupapp.Stats{Nodes: 1, Files: 2, Directories: 3, TrashedNodes: 4, Blobs: 5, BlobBytes: 6, ContentVersions: 7, Ingests: 8, Provenance: 9, Tags: 10, NodeTags: 11, ExtractedText: 12,
+		Coverage: &backupapp.BackupCoverage{Version: 1, Included: backupapp.CoverageIncluded{PhotoAssets: 13, PhotoFiles: 14, PhotoBlobBytes: 15, Albums: 16, AlbumMembers: 17, HiddenPhotos: 18, TrashedPhotos: 19, CheckoutDefinitions: 20, CheckoutEntries: 21, RetainedReceipts: 22}, Excluded: []string{"browser_sessions", "photo_technical_metadata"}}}
+	encoded, err := json.Marshal(stats)
+	require.NoError(t, err)
+	const golden = `{"nodes":1,"files":2,"directories":3,"trashed_nodes":4,"blobs":5,"blob_bytes":6,"content_versions":7,"ingests":8,"provenance":9,"tags":10,"node_tags":11,"extracted_text":12,"coverage":{"version":1,"included":{"photo_assets":13,"photo_files":14,"photo_blob_bytes":15,"albums":16,"album_members":17,"hidden_photos":18,"trashed_photos":19,"checkout_definitions":20,"checkout_entries":21,"retained_receipts":22},"excluded":["browser_sessions","photo_technical_metadata"]}}`
+	assert.Equal(t, golden, string(encoded))
+}
+
+func TestCheckManifestNamesUnsupportedCoverage(t *testing.T) {
+	manifest := &backup.Manifest{Stats: jsontext.Value(`{"coverage":{"version":2,"included":["future"]}}`)}
+	assert.Equal(t, []string{"backupapp: unsupported backup coverage version 2; upgrade Docbank to verify this snapshot"}, backupapp.New("test").CheckManifest(manifest))
 }

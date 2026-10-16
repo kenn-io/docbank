@@ -53,6 +53,7 @@ type backupRestoreRequest struct {
 }
 
 func registerBackupRoutes(api huma.API, d Deps, g *gate) {
+	registerBackupCleanupRoutes(api, d)
 	type initOutput struct{ Body BackupRepository }
 	huma.Register(api, huma.Operation{
 		OperationID: "initBackupRepository", Method: http.MethodPost, Path: "/api/v1/backup/init",
@@ -749,7 +750,7 @@ func backupSnapshot(manifest *backup.Manifest) (BackupSnapshot, error) {
 	if manifest == nil {
 		return BackupSnapshot{}, errors.New("backup manifest is nil")
 	}
-	stats, err := backupapp.ParseStats(manifest.Stats)
+	stats, warning, err := backupapp.ParseSummaryStats(manifest.Stats)
 	if err != nil {
 		return BackupSnapshot{}, fmt.Errorf("snapshot %s: %w", manifest.SnapshotID, err)
 	}
@@ -758,9 +759,10 @@ func backupSnapshot(manifest *backup.Manifest) (BackupSnapshot, error) {
 		metadataFormat = manifest.Metadata.Format
 	}
 	return BackupSnapshot{
-		ID: manifest.SnapshotID, ParentID: manifest.ParentID, CreatedAt: manifest.CreatedAt,
+		CoverageWarning: warning,
+		ID:              manifest.SnapshotID, ParentID: manifest.ParentID, CreatedAt: manifest.CreatedAt,
 		Tag: manifest.Options.Tag, MetadataFormat: metadataFormat,
-		Nodes: stats.Nodes, Files: stats.Files, Blobs: stats.Blobs, BlobBytes: stats.BlobBytes,
+		Nodes: stats.Nodes, Files: stats.Files, Blobs: stats.Blobs, BlobBytes: stats.BlobBytes, Coverage: stats.Coverage,
 		PacksAdded: len(manifest.NewPacks), BytesAdded: manifest.BytesAdded,
 		DurationSeconds: manifest.DurationSeconds,
 	}, nil
@@ -773,6 +775,16 @@ func fromBackupError(err error) error {
 func backupProblem(err error) *Error {
 	if problem, ok := errors.AsType[*Error](err); ok {
 		return problem
+	}
+	if unsupported, ok := errors.AsType[*backupapp.UnsupportedCoverageVersionError](err); ok {
+		return NewError(http.StatusUnprocessableEntity, "backup_coverage_unsupported",
+			unsupported.Error()+"; upgrade Docbank to restore this snapshot")
+	}
+	if errors.Is(err, backup.ErrLastSnapshot) {
+		return NewError(http.StatusConflict, "backup_last_snapshot", err.Error())
+	}
+	if errors.Is(err, backup.ErrSnapshotRequired) {
+		return NewError(http.StatusConflict, "backup_snapshot_required", err.Error())
 	}
 	if errors.Is(err, backup.ErrRepoLocked) {
 		return NewError(http.StatusConflict, "backup_locked", err.Error())

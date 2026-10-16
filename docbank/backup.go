@@ -96,8 +96,13 @@ type BackupProgress struct {
 	Final      bool
 }
 
+// BackupCoverage records the logical records and verified bytes in a snapshot.
+type BackupCoverage = backupapp.BackupCoverage
+
 // BackupSnapshot summarizes one immutable recovery point.
 type BackupSnapshot struct {
+	CoverageWarning  string
+	Coverage         *BackupCoverage
 	ID               string
 	MinReaderVersion int
 	ParentID         string
@@ -418,7 +423,7 @@ func backupSnapshot(manifest *backup.Manifest) (BackupSnapshot, error) {
 	if manifest == nil {
 		return BackupSnapshot{}, errors.New("docbank backup manifest is nil")
 	}
-	stats, err := backupapp.ParseStats(manifest.Stats)
+	stats, warning, err := backupapp.ParseSummaryStats(manifest.Stats)
 	if err != nil {
 		return BackupSnapshot{}, fmt.Errorf("reading backup snapshot %s: %w", manifest.SnapshotID, err)
 	}
@@ -427,10 +432,11 @@ func backupSnapshot(manifest *backup.Manifest) (BackupSnapshot, error) {
 		metadataFormat = manifest.Metadata.Format
 	}
 	return BackupSnapshot{
-		ID: manifest.SnapshotID, ParentID: manifest.ParentID, CreatedAt: manifest.CreatedAt,
+		CoverageWarning: warning,
+		ID:              manifest.SnapshotID, ParentID: manifest.ParentID, CreatedAt: manifest.CreatedAt,
 		MinReaderVersion: manifest.MinReaderVersion,
 		Tag:              manifest.Options.Tag, MetadataFormat: metadataFormat,
-		Nodes: stats.Nodes, Files: stats.Files, Blobs: stats.Blobs, BlobBytes: stats.BlobBytes,
+		Nodes: stats.Nodes, Files: stats.Files, Blobs: stats.Blobs, BlobBytes: stats.BlobBytes, Coverage: stats.Coverage,
 		PacksAdded: len(manifest.NewPacks), BytesAdded: manifest.BytesAdded,
 		DurationSeconds: manifest.DurationSeconds,
 	}, nil
