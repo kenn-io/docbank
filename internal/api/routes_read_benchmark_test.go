@@ -11,6 +11,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -18,7 +19,10 @@ import (
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/plaintext"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/store"
 )
 
 // BenchmarkResolvePath includes loopback HTTP, node metadata, and response decoding.
@@ -199,6 +203,69 @@ func BenchmarkScopedSearchHTTP(b *testing.B) {
 							}
 						}
 					})
+				}
+			})
+		}
+	}
+}
+
+// Include evidence selection, path resolution, HTTP and response decoding.
+func BenchmarkDocumentContentSearchHTTP(b *testing.B) {
+	for _, files := range []int{1, 128} {
+		for _, depth := range []int{0, 16} {
+			b.Run(fmt.Sprintf("files=%d/depth=%d", files, depth), func(b *testing.B) {
+				ts, s := newTestServer(b, func(d *api.Deps) {
+					d.Logger = slog.New(slog.DiscardHandler)
+					provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+					require.NoError(b, err)
+					d.Gate = api.NewOperationGate()
+					d.Processing, err = processing.NewService(processing.ServiceConfig{
+						Catalog: d.Store, Blobs: d.Blobs, Gate: d.Gate,
+						SpoolDirectory: filepath.Join(d.VaultRoot, "blobs", "tmp"),
+						Profiles: map[string]processing.ProfileConfig{"private": {
+							Profile: processingTestProfile(provider.Descriptor()), RenditionProvider: provider,
+						}},
+					})
+					require.NoError(b, err)
+				})
+				ctx := b.Context()
+				prefix := strings.Repeat("/folder", depth)
+				parent, err := s.MkdirAll(ctx, prefix)
+				require.NoError(b, err)
+				fence := api.DocumentSourceFence{VaultUID: s.VaultID()}
+				for i := range files {
+					node, err := s.CreateFile(ctx, parent.ID, fmt.Sprintf("notes-%03d.txt", i),
+						testHash("synthetic content"), 32, "text/plain")
+					require.NoError(b, err)
+					fence.ContentVersionIDs = append(fence.ContentVersionIDs, node.CurrentVersionID)
+				}
+				require.NoError(b, s.RecordExtraction(ctx, store.ExtractionResult{
+					BlobHash: testHash("synthetic content"), Extractor: "plain-text", ExtractorVersion: 1,
+					Status: store.ExtractionOK, Text: "mercury quarterly notes",
+				}))
+				_, err = s.MigrateLegacyPlainText(ctx)
+				require.NoError(b, err)
+				const limit = 50
+				body, err := json.Marshal(api.DocumentSearchRequest{
+					Query: "mercury", Mode: "lexical", Profile: "private", Limit: limit, Fence: fence,
+				})
+				require.NoError(b, err)
+				b.ReportAllocs()
+				for b.Loop() {
+					response, err := ts.Client().Post(ts.URL+"/api/v1/search", "application/json", bytes.NewReader(body))
+					require.NoError(b, err)
+					var report api.DocumentSearchReport
+					decodeErr := json.UnmarshalRead(response.Body, &report)
+					closeErr := response.Body.Close()
+					require.NoError(b, decodeErr)
+					require.NoError(b, closeErr)
+					require.Equal(b, http.StatusOK, response.StatusCode)
+					require.Equal(b, files > limit, report.Truncated)
+					require.Len(b, report.Results, min(limit, files))
+					for i, result := range report.Results {
+						require.Equal(b, prefix+fmt.Sprintf("/notes-%03d.txt", i), result.Path)
+						require.Equal(b, fence.ContentVersionIDs[i], result.ContentVersionID)
+					}
 				}
 			})
 		}

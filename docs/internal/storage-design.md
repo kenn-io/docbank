@@ -133,7 +133,10 @@ member page. Candidate revalidation refreshes only the surviving candidates'
 paths in its revalidation transaction,
 after checking current versions, scope, and evidence. A single survivor keeps
 the single-node path lookup. Concurrent moves cannot mix those checks with
-paths from a later snapshot.
+paths from a later snapshot. Explained content search also resolves its selected
+paths in one batch, inside the same lexical-generation read that selects the
+content and evidence. The batch preserves candidate order and does not change
+ranking or truncation. One content candidate keeps the single-node lookup.
 
 Folder-scoped search builds a recursive set of the selected directory and its
 descendant directories, then tests each result's immediate parent. Files stay
