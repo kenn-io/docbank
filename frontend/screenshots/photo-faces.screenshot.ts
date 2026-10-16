@@ -65,7 +65,18 @@ test("draws and names faces, opens person-filtered Library, and reads cull close
       steps: 5,
     });
     await page.mouse.up();
+    let facePosts = 0;
+    page.on("request", (request) => {
+      if (request.method() === "POST" && request.url().endsWith("/faces")) facePosts++;
+    });
     await loupe.getByRole("button", { name: "Add face", exact: true }).click();
+    await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+    await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(bounds.x + bounds.width / 2 + 1, bounds.y + bounds.height / 2 + 1);
+    await page.mouse.up();
+    await expect(loupe.locator(".face-box")).toHaveCount(0);
+    expect(facePosts).toBe(0);
     const faceCreated = page.waitForResponse(
       (response) => response.request().method() === "POST" && response.url().endsWith("/faces"),
     );
@@ -185,18 +196,7 @@ test("draws and names faces, opens person-filtered Library, and reads cull close
       },
       { session },
     );
-    const marked = await page.evaluate(
-      async ({ version, personID, session }) => {
-        const response = await fetch(`/api/v1/photos/versions/${version}/faces`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "X-Docbank-Web-Session": session },
-          body: JSON.stringify({ person_id: personID }),
-        });
-        return response.status;
-      },
-      { version: face.content_version_id, personID, session },
-    );
-    expect(marked).toBe(201);
+    await fixture.run("photos", "faces", "create", face.content_version_id, "--person", personID);
     await captureThemes(page, "web-photo-faces-loupe");
     const filtered = page.waitForRequest(
       (request) =>
@@ -317,7 +317,11 @@ test("pages to every person match after leaving a relevance search", async ({ pa
           const result = await fetch(`/api/v1/photos/versions/${row.content_version_id}/faces`, {
             method: "POST",
             headers,
-            body: JSON.stringify({ person_id: person.person_id }),
+            body: JSON.stringify({
+              person_id: person.person_id,
+              face_id: crypto.randomUUID(),
+              box: { x: 0.1, y: 0.2, width: 0.3, height: 0.4 },
+            }),
           });
           if (!result.ok) throw new Error(await result.text());
         }
@@ -358,6 +362,115 @@ test("pages to every person match after leaving a relevance search", async ({ pa
         return page.getByRole("button", { name: `Select ${lastName}`, exact: true }).count();
       })
       .toBe(1);
+  } finally {
+    await fixture.dispose();
+  }
+});
+
+test("updates a mounted face picker's cached name after a CLI rename and another face decision", async ({
+  page,
+}) => {
+  test.setTimeout(300_000);
+  const workspace = await mkdtemp(path.join(repository, ".superpowers", "faces-rename-proof-"));
+  const fixture = photoFixture(workspace);
+  try {
+    await fixture.seed(1);
+    const url = new URL(await fixture.run("web", "--no-browser"));
+    const session = new URLSearchParams(url.hash.slice(1)).get("web_session")!;
+    url.pathname = "/photos";
+    await page.goto(url.href);
+    const ada = await page.evaluate(
+      async ({ session }) => {
+        const headers = { "Content-Type": "application/json", "X-Docbank-Web-Session": session };
+        const rows = await fetch("/api/v1/photos/assets/query", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            query: {
+              v: 1,
+              syntax: "simple",
+              text: "",
+              mode: "lexical",
+              filters: {},
+              sort: { field: "capture_time", direction: "desc" },
+            },
+            page_size: 250,
+          }),
+        }).then((response) => response.json());
+        let ada;
+        for (const display_name of ["Ada", "Grace"]) {
+          const response = await fetch("/api/v1/people", {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ display_name }),
+          });
+          if (!response.ok) throw new Error(await response.text());
+          const person = await response.json();
+          if (display_name === "Ada") ada = person;
+        }
+        for (const x of [0.1, 0.6]) {
+          const response = await fetch(
+            `/api/v1/photos/versions/${rows.items[0].content_version_id}/faces`,
+            {
+              method: "POST",
+              headers,
+              body: JSON.stringify({
+                face_id: crypto.randomUUID(),
+                box: { x, y: 0.2, width: 0.2, height: 0.3 },
+              }),
+            },
+          );
+          if (!response.ok) throw new Error(await response.text());
+        }
+        return ada as { person_id: string; revision: number };
+      },
+      { session },
+    );
+    await page.locator(".photo-image").first().dblclick();
+    const loupe = page.getByRole("dialog", { name: /^Photo viewer,/ });
+    await loupe.getByRole("button", { name: "Metadata", exact: true }).click();
+    const people = loupe.getByRole("region", { name: "People", exact: true });
+    await people
+      .getByRole("button", { name: "Find or create a person: Unnamed face" })
+      .first()
+      .click();
+    await people.getByRole("combobox").fill("Ada");
+    await people.getByRole("option", { name: "Ada", exact: true }).click();
+    await expect(
+      people.getByRole("button", { name: "Find or create a person: Ada" }),
+    ).toBeVisible();
+    await fixture.run(
+      "people",
+      "rename",
+      ada.person_id,
+      "Ada Updated",
+      "--revision",
+      String(ada.revision),
+    );
+    await people.getByRole("button", { name: "Find or create a person: Unnamed face" }).click();
+    await people.getByRole("combobox").fill("Grace");
+    await people.getByRole("option", { name: "Grace", exact: true }).click();
+    await expect(
+      people.getByRole("button", { name: "Find or create a person: Ada Updated" }),
+    ).toBeVisible();
+    await expect(people.getByRole("button", { name: "Ada Updated", exact: true })).toBeVisible();
+    await expect(
+      people.getByRole("button", { name: "Find or create a person: Grace" }),
+    ).toBeVisible();
+    await expect(loupe.locator(".face-box")).toHaveText(["Ada Updated", "Grace"]);
+    await expect
+      .poll(() =>
+        loupe
+          .locator(".photo-viewport img")
+          .evaluate((image) => (image as HTMLImageElement).naturalWidth > 512),
+      )
+      .toBe(true);
+    await page.evaluate(() => document.fonts.ready.then(() => {}));
+    await mkdir(output!, { recursive: true });
+    await page.screenshot({
+      path: path.join(output!, "web-photo-faces-canonical-rename.png"),
+      animations: "disabled",
+    });
   } finally {
     await fixture.dispose();
   }

@@ -1,4 +1,4 @@
-import { photoFace, photoPersonAssertion } from "./photo-test-fixtures.js";
+import { photoFace, photoPersonAssertion, photoFacePage } from "./photo-test-fixtures.js";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { PhotoFaces } from "./photoFaces.svelte.js";
@@ -224,6 +224,56 @@ it("keeps the other face label while searching a picker", async () => {
   await fireEvent.input(screen.getByRole("combobox"), { target: { value: "New person" } });
   await screen.findByRole("option", { name: 'Create person "New person"' });
   expect(screen.getByRole("button", { name: "Find or create a person: Grace" })).toBeTruthy();
+  faces.dispose();
+});
+
+it("replaces a cached selected name when another face's decision reloads canonical names", async () => {
+  const first = photoFace({ assertion_id: undefined });
+  const second = photoFace({ face_id: "face-b", assertion_id: undefined });
+  vi.spyOn(api, "listPhotoFaces")
+    .mockResolvedValueOnce(photoFacePage({ faces: [first, second], assertions: [], people: [] }))
+    .mockResolvedValueOnce(photoFacePage({ faces: [photoFace(), second] }))
+    .mockResolvedValue(
+      photoFacePage({
+        faces: [photoFace(), { ...second, assertion_id: "assertion-b" }],
+        assertions: [
+          photoPersonAssertion(),
+          photoPersonAssertion({ assertion_id: "assertion-b", person_id: "person-b" }),
+        ],
+        people: [
+          { person_id: "person-a", display_name: "Ada Updated" },
+          { person_id: "person-b", display_name: "Grace" },
+        ],
+      }),
+    );
+  vi.spyOn(api, "listPeople").mockImplementation(async ({ query } = {}) => ({
+    items: [
+      {
+        person_id: query === "Ada" ? "person-a" : "person-b",
+        display_name: query!,
+        state: "curated",
+        revision: 1,
+      },
+    ],
+  }));
+  vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "receipt" });
+  const faces = new PhotoFaces("session", vi.fn());
+  await faces.load("version-a");
+  render(PhotoPeople, { faces, session: "session", onperson: vi.fn() });
+  await fireEvent.click(
+    screen.getAllByRole("button", { name: "Find or create a person: Unnamed face" })[0]!,
+  );
+  await fireEvent.input(screen.getByRole("combobox"), { target: { value: "Ada" } });
+  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Ada" }));
+  await screen.findByRole("button", { name: "Find or create a person: Ada" });
+  await fireEvent.click(
+    screen.getByRole("button", { name: "Find or create a person: Unnamed face" }),
+  );
+  await fireEvent.input(screen.getByRole("combobox"), { target: { value: "Grace" } });
+  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Grace" }));
+  await screen.findByRole("button", { name: "Find or create a person: Ada Updated" });
+  expect(screen.getByRole("button", { name: "Ada Updated" })).toBeTruthy();
+  await screen.findByRole("button", { name: "Find or create a person: Grace" });
   faces.dispose();
 });
 

@@ -3316,3 +3316,44 @@ it("keeps the selected row's face state when opening its loupe", async () => {
   await within(loupe).findByRole("button", { name: "Find or create a person: Ada" });
   expect(read).toHaveBeenCalledOnce();
 });
+
+it.each([
+  ["advanced", '"person:Ada"', false],
+  ["advanced", 'person:"Ada"', true],
+  ["simple", "person:Ada", false],
+] as const)(
+  "refreshes a face decision only for a person filter: %s %s",
+  async (syntax, text, expected) => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    vi.spyOn(api, "listPhotoFaces").mockResolvedValue(photoFacePage());
+    const decision = vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "receipt" });
+    const requests: unknown[] = [];
+    stubPhotoFetch(async (url, init) => {
+      if (url.endsWith("/photos/assets/query")) requests.push(JSON.parse(String(init.body)));
+      return Response.json({ items: [photo(1)], total: 1, facets: [] });
+    });
+    const photos = new Photos("session", vi.fn(), false, { ...photoQuery, syntax, text });
+    photos.items = [photo(1)];
+    photos.selectedIDs = new Set(["photo-1"]);
+    photos.total = 1;
+    photos.started = true;
+    const cache = new PhotoPreviewCache("session", vi.fn());
+    render(PhotosWorkspace, { photos, cache });
+    await fireEvent.click(await screen.findByRole("button", { name: "Metadata" }));
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Find or create a person: Ada" }),
+    );
+    await fireEvent.mouseDown(await screen.findByRole("option", { name: "Clear name" }));
+    await waitFor(() => expect(decision).toHaveBeenCalledOnce());
+    await screen.findByRole("button", { name: "Find or create a person: Ada" });
+    expect(requests).toHaveLength(expected ? 1 : 0);
+    photos.dispose();
+    await cache.dispose();
+  },
+);

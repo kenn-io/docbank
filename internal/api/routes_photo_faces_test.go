@@ -186,6 +186,14 @@ func TestPhotoFaceBrowserDecisions(t *testing.T) {
 	require.False(t, prefix.ExactMatch)
 
 	path := "/api/v1/photos/versions/" + node.CurrentVersionID + "/faces"
+	response, body = do(t, ts, http.MethodPost, path, headers, api.CreatePhotoFaceRequest{PersonID: person.PersonID})
+	require.Equal(t, http.StatusForbidden, response.StatusCode, body)
+	require.Contains(t, body, "web_session_read_only")
+	response, body = get(t, ts, path, headers)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var unchanged api.PhotoFacePage
+	require.NoError(t, json.Unmarshal([]byte(body), &unchanged))
+	require.Empty(t, unchanged.Assertions)
 	faceID := uuid.NewString()
 	response, body = do(t, ts, http.MethodPost, path, headers, api.CreatePhotoFaceRequest{FaceID: faceID, Box: &document.FaceBox{X: .98, Y: .98, Width: .01, Height: .01}})
 	require.Equal(t, http.StatusCreated, response.StatusCode, body)

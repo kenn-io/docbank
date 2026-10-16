@@ -100,10 +100,17 @@
         placeholder="Find or create a person"
         fallbackLabel={faces.label(face)}
         value={person ? key(person.person_id) : ""}
-        options={(activeFace === face.face_id ? people : []).map((person) => ({
-          name: key(person.person_id),
-          label: person.display_name,
-        }))}
+        options={[
+          ...(person
+            ? [{ name: key(person.person_id), label: faces.personLabel(person.person_id) }]
+            : []),
+          ...(activeFace === face.face_id ? people : [])
+            .filter((candidate) => candidate.person_id !== person?.person_id)
+            .map((candidate) => ({
+              name: key(candidate.person_id),
+              label: candidate.display_name,
+            })),
+        ]}
         allowCustom={activeFace === face.face_id &&
           !!query.trim() &&
           !exact &&

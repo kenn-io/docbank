@@ -100,6 +100,10 @@
     const end = point(event);
     const w = Math.abs(end.x - origin.x),
       h = Math.abs(end.y - origin.y);
+    if (w < 0.01 && h < 0.01) {
+      origin = undefined;
+      return;
+    }
     onregion?.({
       x: (end.x + origin.x) / 2,
       y: (end.y + origin.y) / 2,
@@ -135,6 +139,7 @@
   function confirmRegion(event: MouseEvent) {
     event.preventDefault();
     event.stopPropagation();
+    if (event.detail > 0) return;
     onregion?.({ ...keyboardPoint, width: 0.15, height: 0.15 });
   }
 

@@ -82,6 +82,9 @@ func registerPhotoFaceRoutes(api huma.API, d Deps, g *gate) {
 		ContentVersionID string `path:"content_version_id" format:"uuid"`
 		Body             CreatePhotoFaceRequest
 	}) (*struct{ Body PhotoFaceResult }, error) {
+		if browserSessionRequest(ctx) && in.Body.Box == nil {
+			return nil, NewError(http.StatusForbidden, "web_session_read_only", "Browser sessions can only create boxed faces.")
+		}
 		var result PhotoFaceResult
 		err := g.mutate(func() error {
 			if in.Body.Box == nil {
