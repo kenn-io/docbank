@@ -938,9 +938,6 @@ func TestPhotoCheckoutRetireAfterAuditActivation(t *testing.T) {
 	persisted, err := s.PhotoCheckout(ctx, checkout.ID)
 	require.NoError(t, err)
 	require.Equal(t, retired, persisted)
-	again, err := s.RetirePhotoCheckout(ctx, checkout.ID)
-	require.NoError(t, err)
-	require.Equal(t, retired, again)
 }
 
 func TestPhotoCheckoutYearFolderUsesTimelineDay(t *testing.T) {

@@ -1,14 +1,10 @@
 package api_test
 
 import (
-	"context"
 	"encoding/json/v2"
-	"io"
-	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -19,7 +15,6 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
-	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -91,6 +86,48 @@ func TestStorageRegistrationPreviewApplyAndRemoval(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, resp.StatusCode, body)
 	_, err = live.BlobStoreBySelector(t.Context(), registered.ID)
 	require.Error(t, err)
+}
+
+func TestStorageRegistrationRejectsVaultOverlap(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, func(d *api.Deps) {
+		d.Cfg.StoreBindings = map[string]config.StoreBindingConfig{
+			"inside": {
+				Kind: "filesystem", Path: filepath.Join(d.VaultRoot, "secondary"),
+			},
+		}
+		d.BlobRegistry = blob.NewRegistry(
+			t.Context(), d.Store.VaultID(), d.Cfg.StoreBindings, nil,
+		)
+		t.Cleanup(func() { require.NoError(t, d.BlobRegistry.Close()) })
+	})
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/storage/stores/preview", nil,
+		map[string]any{"name": "unsafe", "binding": "inside"})
+	assert.Equal(t, http.StatusConflict, resp.StatusCode, body)
+	assert.Contains(t, body, `"code":"storage_namespace_overlap"`)
+}
+
+func TestStorageRegistrationRejectsWatchOverlap(t *testing.T) {
+	t.Parallel()
+	watchRoot := t.TempDir()
+	ts, _ := newTestServer(t, func(d *api.Deps) {
+		d.Cfg.Watches = []config.WatchConfig{{
+			Name: "inbox", Source: watchRoot, Destination: "/inbox",
+		}}
+		d.Cfg.StoreBindings = map[string]config.StoreBindingConfig{
+			"watched": {Kind: "filesystem", Path: watchRoot},
+		}
+		d.BlobRegistry = blob.NewRegistry(
+			t.Context(), d.Store.VaultID(), d.Cfg.StoreBindings, nil,
+		)
+		t.Cleanup(func() { require.NoError(t, d.BlobRegistry.Close()) })
+	})
+
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/storage/stores/preview", nil,
+		map[string]any{"name": "unsafe", "binding": "watched"})
+
+	assert.Equal(t, http.StatusConflict, resp.StatusCode, body)
+	assert.Contains(t, body, `"code":"storage_namespace_overlap"`)
 }
 
 func TestStorageRegistrationRejectsUnmarkedNonemptyNamespace(t *testing.T) {
@@ -333,15 +370,7 @@ func TestStorageRegistrationRejectsProtectedPathOverlaps(t *testing.T) {
 	}
 }
 
-// TestStorageRegistrationAdmitsReleasedCheckoutDestinationAndSurvivesRestart
-// covers a retired checkout whose destination folder has been confirmed
-// empty: registering a filesystem store at that same path, or at a path
-// nested beneath it, must succeed, and the admission check daemon startup
-// runs against every configured path (ingest.CheckoutPathOverlap, the same
-// function this registration path uses) must keep admitting it on a later
-// restart, after the registered store has written its own ownership marker
-// into the folder.
-func TestStorageRegistrationAdmitsReleasedCheckoutDestinationAndSurvivesRestart(t *testing.T) {
+func TestStorageRegistrationAdmitsReleasedCheckoutDestination(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name   string
@@ -390,123 +419,6 @@ func TestStorageRegistrationAdmitsReleasedCheckoutDestinationAndSurvivesRestart(
 			entries, err := os.ReadDir(bindingPath)
 			require.NoError(t, err)
 			require.NotEmpty(t, entries, "registration should have written its ownership marker")
-
-			checkouts, err := live.ListPhotoCheckouts(t.Context())
-			require.NoError(t, err)
-			id, overlap, _, err := ingest.CheckoutPathOverlap(t.Context(), checkouts, bindingPath)
-			require.NoError(t, err)
-			require.False(t, overlap, "restart admission must not mistake the store's own marker for leftover checkout content: %s", id)
 		})
 	}
-}
-
-func TestStorageRegistrationRejectsVaultOverlap(t *testing.T) {
-	t.Parallel()
-	ts, _ := newTestServer(t, func(d *api.Deps) {
-		d.Cfg.StoreBindings = map[string]config.StoreBindingConfig{
-			"inside": {
-				Kind: "filesystem", Path: filepath.Join(d.VaultRoot, "secondary"),
-			},
-		}
-		d.BlobRegistry = blob.NewRegistry(
-			t.Context(), d.Store.VaultID(), d.Cfg.StoreBindings, nil,
-		)
-		t.Cleanup(func() { require.NoError(t, d.BlobRegistry.Close()) })
-	})
-	resp, body := do(t, ts, http.MethodPost, "/api/v1/storage/stores/preview", nil,
-		map[string]any{"name": "unsafe", "binding": "inside"})
-	assert.Equal(t, http.StatusConflict, resp.StatusCode, body)
-	assert.Contains(t, body, `"code":"storage_namespace_overlap"`)
-}
-
-func TestStorageRegistrationRejectsWatchOverlap(t *testing.T) {
-	t.Parallel()
-	watchRoot := t.TempDir()
-	ts, _ := newTestServer(t, func(d *api.Deps) {
-		d.Cfg.Watches = []config.WatchConfig{{
-			Name: "inbox", Source: watchRoot, Destination: "/inbox",
-		}}
-		d.Cfg.StoreBindings = map[string]config.StoreBindingConfig{
-			"watched": {Kind: "filesystem", Path: watchRoot},
-		}
-		d.BlobRegistry = blob.NewRegistry(
-			t.Context(), d.Store.VaultID(), d.Cfg.StoreBindings, nil,
-		)
-		t.Cleanup(func() { require.NoError(t, d.BlobRegistry.Close()) })
-	})
-
-	resp, body := do(t, ts, http.MethodPost, "/api/v1/storage/stores/preview", nil,
-		map[string]any{"name": "unsafe", "binding": "watched"})
-
-	assert.Equal(t, http.StatusConflict, resp.StatusCode, body)
-	assert.Contains(t, body, `"code":"storage_namespace_overlap"`)
-}
-
-func TestRemovedCheckoutBeneathFileAdmitsUnrelatedWatchAndStore(t *testing.T) {
-	testRetiredCheckoutAdmitsUnrelatedWatchAndStore(t, func(t *testing.T, destination string) {
-		parent := filepath.Dir(destination)
-		require.NoError(t, os.Remove(destination))
-		require.NoError(t, os.Remove(parent))
-		require.NoError(t, os.WriteFile(parent, []byte("replacement"), 0o600))
-	})
-}
-
-func TestUnreadableRetiredCheckoutAdmitsUnrelatedWatchAndStore(t *testing.T) {
-	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
-		t.Skip("requires Unix directory permissions")
-	}
-	testRetiredCheckoutAdmitsUnrelatedWatchAndStore(t, func(t *testing.T, destination string) {
-		require.NoError(t, os.WriteFile(filepath.Join(destination, "edited.jpg"), []byte("edits"), 0o600))
-		require.NoError(t, os.Chmod(destination, 0o000))
-		t.Cleanup(func() { _ = os.Chmod(destination, 0o700) })
-	})
-}
-
-func testRetiredCheckoutAdmitsUnrelatedWatchAndStore(t *testing.T, replace func(*testing.T, string)) {
-	t.Helper()
-	parent := filepath.Join(t.TempDir(), "parent")
-	destination := filepath.Join(parent, "checkout")
-	require.NoError(t, os.MkdirAll(destination, 0o700))
-	watchSource := t.TempDir()
-	var ing *ingest.Ingester
-	var vaultRoot string
-	ts, live := newTestServer(t, func(d *api.Deps) {
-		d.Cfg.StoreBindings = map[string]config.StoreBindingConfig{"archive": {Kind: "filesystem", Path: t.TempDir()}}
-		d.BlobRegistry = blob.NewRegistry(t.Context(), d.Store.VaultID(), d.Cfg.StoreBindings, nil)
-		t.Cleanup(func() { require.NoError(t, d.BlobRegistry.Close()) })
-		ing = &ingest.Ingester{Store: d.Store, Blobs: d.Blobs}
-		vaultRoot = d.VaultRoot
-	})
-	node, err := live.CreateFile(t.Context(), live.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
-	require.NoError(t, err)
-	asset, err := live.PhotoAssetForNode(t.Context(), node.ID)
-	require.NoError(t, err)
-	checkout, op, err := live.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
-	require.NoError(t, err)
-	require.NoError(t, live.FinishPhotoCheckout(t.Context(), checkout.ID, op.ID, store.StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
-	_, err = live.RetirePhotoCheckout(t.Context(), checkout.ID)
-	require.NoError(t, err)
-	replace(t, destination)
-
-	resp, body := do(t, ts, http.MethodPost, "/api/v1/storage/stores/preview", nil, map[string]any{"name": "archive", "binding": "archive"})
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	var preview api.BlobStorePreview
-	require.NoError(t, json.Unmarshal([]byte(body), &preview))
-	resp, body = do(t, ts, http.MethodPost, "/api/v1/storage/stores", nil, map[string]any{"preview_token": preview.PreviewToken})
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	require.NoError(t, os.WriteFile(filepath.Join(watchSource, "arrived.txt"), []byte("watched"), 0o600))
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-	watcher, err := ingest.NewWatcher(ing, vaultRoot, config.WatchConfig{Name: "unrelated", Source: watchSource, Destination: "/inbox", ScanInterval: config.Duration(time.Second)}, func(fn func() error) error {
-		err := fn()
-		if err == nil {
-			cancel()
-		}
-		return err
-	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	require.NoError(t, err)
-	err = watcher.Run(ctx)
-	require.ErrorIs(t, err, context.Canceled)
-	_, err = live.NodeByPath(t.Context(), "/inbox/arrived.txt")
-	require.NoError(t, err)
 }

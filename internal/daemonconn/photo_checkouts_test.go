@@ -124,13 +124,13 @@ func TestValidatePhotoCheckoutResponseAcceptsReleasedTerminalEmptyDestination(t 
 			if tc.valid {
 				require.NoError(t, err)
 			} else {
-				require.Error(t, err)
+				require.ErrorContains(t, err, "invalid local bindings")
 			}
 		})
 	}
 	unreleased := base
 	unreleased.RetentionReleased = false
 	unreleased.State = "completed"
-	require.Error(t, validatePhotoCheckoutResponse(unreleased, id),
+	require.ErrorContains(t, validatePhotoCheckoutResponse(unreleased, id), "invalid local bindings",
 		"a completed checkout that has not released retention must still require a destination")
 }

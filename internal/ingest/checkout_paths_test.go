@@ -21,7 +21,9 @@ func TestCheckoutPathOverlapProtectsReservationsAndReleasedCopies(t *testing.T) 
 			require.NoError(t, err)
 			asset, err := ing.Store.PhotoAssetForNode(ctx, node.ID)
 			require.NoError(t, err)
-			destination := t.TempDir()
+			parent := filepath.Join(t.TempDir(), "parent")
+			destination := filepath.Join(parent, "checkout")
+			require.NoError(t, os.MkdirAll(destination, 0o700))
 			checkout, op, err := ing.Store.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
 			require.NoError(t, err)
 			require.NoError(t, ing.Store.FinishPhotoCheckout(ctx, checkout.ID, op.ID, state, "{}", "", time.Now().Add(time.Hour)))
@@ -72,26 +74,29 @@ func TestCheckoutPathOverlapProtectsReservationsAndReleasedCopies(t *testing.T) 
 				require.NoError(t, os.Chmod(destination, 0o600))
 				require.NoError(t, os.Remove(destination))
 			}
+			require.NoError(t, os.Remove(parent))
+			require.NoError(t, os.WriteFile(parent, []byte("replacement"), 0o600))
+			check(destination, false)
+			check(t.TempDir(), false)
 		})
 	}
-}
-
-func TestUnreadableRetiredCheckoutScopesProtection(t *testing.T) {
-	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
-		t.Skip("requires Unix directory permissions")
-	}
-	destination := filepath.Join(t.TempDir(), "checkout")
-	require.NoError(t, os.Mkdir(destination, 0o000))
-	t.Cleanup(func() { _ = os.Chmod(destination, 0o700) })
-	checkouts := []store.PhotoCheckout{{ID: "retired", Destination: destination, RetentionReleased: true}}
-	_, overlap, _, err := CheckoutPathOverlap(t.Context(), checkouts, t.TempDir())
-	require.NoError(t, err)
-	require.False(t, overlap)
-	for _, related := range []string{destination, filepath.Dir(destination), filepath.Join(destination, "nested")} {
-		id, overlap, retired, err := CheckoutPathOverlap(t.Context(), checkouts, related)
+	t.Run("unreadable retired destination", func(t *testing.T) {
+		if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+			t.Skip("requires Unix directory permissions")
+		}
+		destination := filepath.Join(t.TempDir(), "checkout")
+		require.NoError(t, os.Mkdir(destination, 0o000))
+		t.Cleanup(func() { _ = os.Chmod(destination, 0o700) })
+		checkouts := []store.PhotoCheckout{{ID: "retired", Destination: destination, RetentionReleased: true}}
+		_, overlap, _, err := CheckoutPathOverlap(t.Context(), checkouts, t.TempDir())
 		require.NoError(t, err)
-		require.True(t, overlap)
-		require.True(t, retired)
-		require.Equal(t, "retired", id)
-	}
+		require.False(t, overlap)
+		for _, related := range []string{destination, filepath.Dir(destination), filepath.Join(destination, "nested")} {
+			id, overlap, retired, err := CheckoutPathOverlap(t.Context(), checkouts, related)
+			require.NoError(t, err)
+			require.True(t, overlap)
+			require.True(t, retired)
+			require.Equal(t, "retired", id)
+		}
+	})
 }

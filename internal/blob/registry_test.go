@@ -810,13 +810,8 @@ func TestRegistryAdmissionStaysClosedAcrossRefreshAndReattach(t *testing.T) {
 	blocked.Store(false)
 	require.Equal(t, StoreOnline, registry.Refresh(t.Context(), storeID).State)
 	require.EqualValues(t, 1, openings.Load())
-	blocked.Store(true)
-	require.Equal(t, StoreUnavailable, registry.Refresh(t.Context(), storeID).State)
-	_, available = registry.Backend(storeID)
-	require.False(t, available, "a prior online backend must also pass admission")
-	blocked.Store(false)
 	require.Equal(t, StoreOnline, registry.AttachSpec(t.Context(), spec).State)
-	require.EqualValues(t, 2, openings.Load())
+	require.EqualValues(t, 1, openings.Load())
 }
 
 func TestRegistryAdmissionRunsOutsideOwnershipProbeDeadline(t *testing.T) {

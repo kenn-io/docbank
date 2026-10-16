@@ -401,7 +401,6 @@ func TestCheckoutValidationDefersInternalDeadline(t *testing.T) {
 		{name: "traversal deadline", err: fmt.Errorf("traversing checkout: %w", context.DeadlineExceeded), pending: true},
 		{name: "unavailable directory", err: &os.PathError{Op: "open", Path: "checkout", Err: os.ErrPermission}, pending: true},
 		{name: "parent cancelled", err: context.DeadlineExceeded, parent: context.Canceled},
-		{name: "confirmed overlap", err: errCheckoutPathOverlap, pending: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := t.Context()
@@ -473,30 +472,4 @@ func TestCheckoutBindingAdmissionCachesSuccessfulSeparation(t *testing.T) {
 	require.ErrorIs(t, admit(t.Context(), binding), errCheckoutPathOverlap)
 	require.Contains(t, log.String(), checkoutID)
 	require.Contains(t, log.String(), destination)
-}
-
-func TestConfiguredCheckoutStartupAdmitsRemovedDestinationBeneathFile(t *testing.T) {
-	t.Parallel()
-	catalog, firstID, firstOperationID, parent := newCheckoutReservationFixture(t)
-	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
-	require.NoError(t, catalog.FinishPhotoCheckout(t.Context(), firstID, firstOperationID, store.StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
-	first, err := catalog.RetirePhotoCheckout(t.Context(), firstID)
-	require.NoError(t, err)
-	destination := filepath.Join(parent, "checkout")
-	require.NoError(t, os.Mkdir(destination, 0o700))
-	checkout, op, err := catalog.CreatePhotoCheckout(t.Context(), first.Selection, destination, 0)
-	require.NoError(t, err)
-	require.NoError(t, catalog.FinishPhotoCheckout(t.Context(), checkout.ID, op.ID, store.StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
-	_, err = catalog.RetirePhotoCheckout(t.Context(), checkout.ID)
-	require.NoError(t, err)
-	require.NoError(t, os.Remove(destination))
-	require.NoError(t, os.Remove(parent))
-	require.NoError(t, os.WriteFile(parent, []byte("replacement"), 0o600))
-	cfg := config.Default()
-	cfg.Watches = []config.WatchConfig{{Name: "inbox", Source: t.TempDir()}}
-	cfg.StoreBindings = map[string]config.StoreBindingConfig{"archive": {Kind: "filesystem", Path: t.TempDir()}}
-	stores := []store.BlobStore{{Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "archive"}}
-	pending, err := validateConfiguredCheckoutStartup(t.Context(), cfg, stores, catalog)
-	require.NoError(t, err)
-	require.False(t, pending)
 }

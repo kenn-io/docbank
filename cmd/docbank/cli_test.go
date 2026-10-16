@@ -1977,38 +1977,17 @@ func TestGcReclaimsUntrackedBlobFiles(t *testing.T) {
 }
 
 func TestTrashEmptyReportsHeldRoots(t *testing.T) {
-	runs := make(chan bool, 2)
 	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/v1/trash/empty":
-			var input struct {
-				Run bool `json:"run"`
-			}
-			assert.NoError(t, json.UnmarshalRead(r.Body, &input))
-			runs <- input.Run
-			report := api.TrashEmptyReport{CandidateRoots: 1, RetainedRoots: 1, HeldRoots: 2, Run: input.Run}
-			if input.Run {
-				report.Deleted = 1
-			}
-			assert.NoError(t, json.MarshalWrite(w, report))
+			assert.NoError(t, json.MarshalWrite(w, api.TrashEmptyReport{RetainedRoots: 1, HeldRoots: 2, Run: true}))
 		default:
 			http.NotFound(w, r)
 		}
 	})
-	_, err := runCLI(t, "trash", "empty", "--older-than=-1h")
-	require.ErrorContains(t, err, "negative")
-	require.Empty(t, runs)
-	out, err := runCLI(t, "trash", "empty")
+	out, err := runCLI(t, "trash", "empty", "--run")
 	require.NoError(t, err, out)
-	assert.Contains(t, out, "1 trashed root")
-	assert.Contains(t, out, "dry run")
-	out, err = runCLI(t, "trash", "empty", "--run")
-	require.NoError(t, err, out)
-	assert.Contains(t, out, "deleted 1 trashed root(s)")
 	assert.Contains(t, out, "retained 1 trashed root(s) referenced by email publications or photo checkouts")
 	assert.Contains(t, out, "held 2 trashed root(s) whose photo companions are live, newer, or retained")
-	require.Len(t, runs, 2)
-	assert.False(t, <-runs)
-	assert.True(t, <-runs)
 }

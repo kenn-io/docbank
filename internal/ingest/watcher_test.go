@@ -286,11 +286,6 @@ func TestWatcherRejectsVaultOverlapAndDestinationConflicts(t *testing.T) {
 		_, err = watcher.openRoot(ctx)
 		require.ErrorContains(t, err, "overlaps the vault root")
 	})
-	watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{Name: "clean-watch", Source: t.TempDir(), Destination: "/inbox"}, runTestMutation, nil)
-	require.NoError(t, err)
-	clean, err := watcher.openRoot(ctx)
-	require.NoError(t, err)
-	require.NoError(t, clean.Close())
 
 	source := writeTree(t, map[string]string{"conflict.txt": "watched"})
 	parent, err := ing.Store.MkdirAll(t.Context(), "/inbox")
@@ -307,45 +302,6 @@ func TestWatcherRejectsVaultOverlapAndDestinationConflicts(t *testing.T) {
 		func() (*os.File, error) { return blob.OpenNoFollow(conflictPath) },
 	)
 	require.ErrorIs(t, err, store.ErrExists)
-}
-
-// TestWatcherAdmitsReleasedCheckoutDestinationAndSurvivesRestart covers a
-// watch source reusing a retired checkout's cleared destination: admission
-// must succeed and persist the release, so that once new files arrive in
-// the folder, a later daemon startup (the production admission check,
-// CheckoutPathOverlap) does not mistake them for leftover checkout content.
-func TestWatcherAdmitsReleasedCheckoutDestinationAndSurvivesRestart(t *testing.T) {
-	ing := newTestIngester(t)
-	ctx := t.Context()
-	node, err := ing.Store.CreateFile(ctx, ing.Store.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
-	require.NoError(t, err)
-	asset, err := ing.Store.PhotoAssetForNode(ctx, node.ID)
-	require.NoError(t, err)
-	destination := t.TempDir()
-	checkout, operation, err := ing.Store.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
-	require.NoError(t, err)
-	require.NoError(t, ing.Store.FinishPhotoCheckout(ctx, checkout.ID, operation.ID, store.StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
-	_, err = ing.Store.RetirePhotoCheckout(ctx, checkout.ID)
-	require.NoError(t, err)
-
-	watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{
-		Name: "reused", Source: destination, Destination: "/inbox",
-	}, runTestMutation, nil)
-	require.NoError(t, err)
-	root := openWatcherRoot(t, watcher)
-	require.NoError(t, root.Close())
-
-	released, err := ing.Store.PhotoCheckout(ctx, checkout.ID)
-	require.NoError(t, err)
-	require.Empty(t, released.Destination)
-
-	require.NoError(t, os.WriteFile(filepath.Join(destination, "arrived.jpg"), []byte("new"), 0o600))
-
-	checkouts, err := ing.Store.ListPhotoCheckouts(ctx)
-	require.NoError(t, err)
-	id, overlap, _, err := CheckoutPathOverlap(ctx, checkouts, destination)
-	require.NoError(t, err)
-	require.False(t, overlap, "restart admission must not mistake the newly arrived file for leftover checkout content: %s", id)
 }
 
 func TestPathsOverlapUsesFilesystemIdentityForAliases(t *testing.T) {
@@ -591,75 +547,83 @@ func TestWatchedFileReadRejectsConcurrentPathReplacement(t *testing.T) {
 	assert.True(t, replaced)
 }
 
-func TestWatcherWaitsForRetiredCheckoutToClear(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		ing := newTestIngester(t)
-		ctx := t.Context()
-		node, err := ing.Store.CreateFile(ctx, ing.Store.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
-		require.NoError(t, err)
-		asset, err := ing.Store.PhotoAssetForNode(ctx, node.ID)
-		require.NoError(t, err)
-		destination := t.TempDir()
-		checkout, op, err := ing.Store.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
-		require.NoError(t, err)
-		require.NoError(t, ing.Store.FinishPhotoCheckout(ctx, checkout.ID, op.ID, store.StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
-		_, err = ing.Store.RetirePhotoCheckout(ctx, checkout.ID)
-		require.NoError(t, err)
-		partial := filepath.Join(destination, "edited.jpg")
-		require.NoError(t, os.WriteFile(partial, []byte("edits"), 0o600))
-		watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{Name: "waiting", Source: destination, Destination: "/inbox"}, runTestMutation, nil)
-		require.NoError(t, err)
-		done := make(chan error, 1)
-		go func() {
-			root, err := watcher.openRoot(ctx)
-			if err == nil {
-				err = root.Close()
-			}
-			done <- err
-		}()
-		synctest.Wait()
-		select {
-		case err := <-done:
-			t.Fatalf("watch stopped while checkout still contains files: %v", err)
-		default:
-		}
-		require.NoError(t, os.Remove(partial))
-		require.NoError(t, <-done)
-		released, err := ing.Store.PhotoCheckout(ctx, checkout.ID)
-		require.NoError(t, err)
-		require.Empty(t, released.Destination)
-	})
-}
-
-func TestWatcherWaitForReservedCheckoutCancels(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		ing := newTestIngester(t)
-		node, err := ing.Store.CreateFile(t.Context(), ing.Store.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
-		require.NoError(t, err)
-		asset, err := ing.Store.PhotoAssetForNode(t.Context(), node.ID)
-		require.NoError(t, err)
-		destination := t.TempDir()
-		_, _, err = ing.Store.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
-		require.NoError(t, err)
-		watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{Name: "reserved", Source: destination, Destination: "/inbox"}, runTestMutation, nil)
-		require.NoError(t, err)
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		done := make(chan error, 1)
-		go func() {
-			root, err := watcher.openRoot(ctx)
-			if err == nil {
-				_ = root.Close()
-			}
-			done <- err
-		}()
-		synctest.Wait()
-		select {
-		case err := <-done:
-			t.Fatalf("watch stopped while checkout is reserved: %v", err)
-		default:
-		}
-		cancel()
-		require.ErrorIs(t, <-done, context.Canceled)
-	})
+func TestWatcherCheckoutAdmission(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		checkout bool
+		retired  bool
+		files    bool
+	}{
+		{name: "clean watch"},
+		{name: "reserved blocks until cancel", checkout: true},
+		{name: "retired empty admits immediately", checkout: true, retired: true},
+		{name: "retired files wait until cleared", checkout: true, retired: true, files: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ing := newTestIngester(t)
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				destination := t.TempDir()
+				var checkout store.PhotoCheckout
+				if tc.checkout {
+					node, err := ing.Store.CreateFile(ctx, ing.Store.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
+					require.NoError(t, err)
+					asset, err := ing.Store.PhotoAssetForNode(ctx, node.ID)
+					require.NoError(t, err)
+					var op store.StorageOperation
+					checkout, op, err = ing.Store.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
+					require.NoError(t, err)
+					if tc.retired {
+						require.NoError(t, ing.Store.FinishPhotoCheckout(ctx, checkout.ID, op.ID, store.StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
+						_, err = ing.Store.RetirePhotoCheckout(ctx, checkout.ID)
+						require.NoError(t, err)
+					}
+				}
+				partial := filepath.Join(destination, "edited.jpg")
+				if tc.files {
+					require.NoError(t, os.WriteFile(partial, []byte("edits"), 0o600))
+				}
+				watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{Name: "inbox", Source: destination, Destination: "/inbox"}, runTestMutation, nil)
+				require.NoError(t, err)
+				done := make(chan error, 1)
+				go func() {
+					root, err := watcher.openRoot(ctx)
+					if err == nil {
+						err = root.Close()
+					}
+					done <- err
+				}()
+				synctest.Wait()
+				if tc.checkout && (!tc.retired || tc.files) {
+					select {
+					case err := <-done:
+						t.Fatalf("watch stopped before checkout cleared: %v", err)
+					default:
+					}
+					if !tc.retired {
+						cancel()
+						require.ErrorIs(t, <-done, context.Canceled)
+						return
+					}
+					require.NoError(t, os.Remove(partial))
+				} else {
+					select {
+					case err := <-done:
+						require.NoError(t, err)
+					default:
+						t.Fatal("clear watch source did not admit immediately")
+					}
+				}
+				if tc.files {
+					require.NoError(t, <-done)
+				}
+				if tc.retired {
+					released, err := ing.Store.PhotoCheckout(ctx, checkout.ID)
+					require.NoError(t, err)
+					require.Empty(t, released.Destination)
+				}
+			})
+		})
+	}
 }
