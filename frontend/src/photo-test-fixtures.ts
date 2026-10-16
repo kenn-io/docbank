@@ -172,10 +172,12 @@ export function photoMetadataResponse(
       Response.json({
         assets: targets.map((target) => ({
           id: target.asset_id,
+          display_file_id: target.file_id,
           files: [
             {
               id: target.file_id,
               node_id: target.node_id,
+              content_version_id: photo(target.node_id).content_version_id,
               revision: target.revision,
               role: "image",
             },

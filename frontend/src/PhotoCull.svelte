@@ -133,26 +133,14 @@
     const selected = photo;
     editor.reset();
     await editor.prepare({ asset_ids: [selected.asset_id], hidden: false });
-    if (editor.error || !editor.targets.length) return;
-    editor.loading = true;
-    try {
-      const current = await photos.lookup(selected.asset_id, new AbortController().signal);
-      if (
-        editor.asset?.display_file_id !== selected.display_file_id ||
-        current.display_file_id !== selected.display_file_id ||
-        current.content_version_id !== selected.content_version_id
-      ) {
-        editor.conflict = true;
-        editor.error = "This photo changed. Reload the photo before deciding.";
-        return;
-      }
-    } catch (cause) {
-      editor.error = cause instanceof Error ? cause.message : String(cause);
-      return;
-    } finally {
-      editor.loading = false;
-    }
-    await applyDecision(patch);
+    if (!changedPhoto(selected)) await applyDecision(patch);
+  }
+  function changedPhoto(selected?: PhotoBrowseRow) {
+    if (editor.error || !editor.targets.length) return true;
+    if (editor.asset?.display_file_id === selected?.display_file_id) return false;
+    editor.clearDraft();
+    editor.error = "This photo changed. Reload the photo before deciding.";
+    return (editor.conflict = true);
   }
   async function applyDecision(patch: PhotoAuthoredPatch, retry = false) {
     if (!photo) return;
@@ -187,8 +175,7 @@
     focus();
     if (editor.conflict) {
       await editor.reload();
-      if (editor.conflict || editor.error || editor.membershipChanged || !editor.targets.length)
-        return;
+      if (changedPhoto(photo) || editor.conflict || editor.membershipChanged) return;
     }
     await applyDecision(patch, true);
   }
