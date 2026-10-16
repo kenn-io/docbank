@@ -193,3 +193,64 @@ it.each(["Ada", "ada"])(
     faces.dispose();
   },
 );
+
+it("keeps the other face label while searching a picker", async () => {
+  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({
+    faces: [photoFace(), photoFace({ face_id: "face-b", assertion_id: "assertion-b" })],
+    assertions: [
+      photoPersonAssertion(),
+      photoPersonAssertion({
+        assertion_id: "assertion-b",
+        person_id: "person-b",
+        display_name: "Grace",
+      }),
+    ],
+  });
+  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [] });
+  const faces = new PhotoFaces("session", vi.fn());
+  await faces.load("version-a");
+  render(PhotoPeople, { faces, session: "session" });
+  await fireEvent.click(screen.getByRole("button", { name: "Find or create a person: Ada" }));
+  await fireEvent.input(screen.getByRole("combobox"), { target: { value: "New person" } });
+  await screen.findByRole("option", { name: 'Create person "New person"' });
+  expect(screen.getByRole("button", { name: "Find or create a person: Grace" })).toBeTruthy();
+  faces.dispose();
+});
+
+it.each(["name", "clear"] as const)(
+  "keeps face rows visible during the %s refresh",
+  async (action) => {
+    let finish!: (page: api.PhotoFacePage) => void;
+    vi.spyOn(api, "listPhotoFaces")
+      .mockResolvedValueOnce({ faces: [photoFace()], assertions: [photoPersonAssertion()] })
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+    vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "receipt" });
+    const faces = new PhotoFaces("session", vi.fn());
+    await faces.load("version-a");
+    const component = render(PhotoPeople, { faces, session: "session" });
+    const row = component.container.querySelector(".person-row");
+    const pending =
+      action === "name" ? faces.name(faces.faces[0]!, "person-b") : faces.clear(faces.faces[0]!);
+    await screen.findByRole("status");
+    expect(component.container.querySelector(".person-row")).toBe(row);
+    expect(screen.getByRole("button", { name: "Find or create a person: Ada" })).toBeTruthy();
+    finish(
+      action === "name"
+        ? {
+            faces: [photoFace()],
+            assertions: [photoPersonAssertion({ person_id: "person-b", display_name: "Grace" })],
+          }
+        : { faces: [photoFace({ assertion_id: undefined })], assertions: [] },
+    );
+    await pending;
+    await screen.findByRole("button", {
+      name: `Find or create a person: ${action === "name" ? "Grace" : "Unnamed face"}`,
+    });
+    faces.dispose();
+  },
+);

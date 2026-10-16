@@ -94,7 +94,7 @@
     {onmove}
     {onregion}
     {oncancelregion}
-    {regionMode}
+    regionMode={current.kind === "photo" && regionMode}
     onzoom={() => loader.zoom()}
     unavailable={!!loader.failure && !loader.retrying}
   />

@@ -153,3 +153,14 @@ it.each([0, 90, 180, 270])(
     expect(padded.side).toBeCloseTo(51.2);
   },
 );
+
+it.each([
+  [0, 350, 280],
+  [90, 520, 350],
+  [180, 650, 520],
+  [270, 280, 650],
+])("centers a closeup on the displayed face at %i degrees", (rotation, x, y) => {
+  const crop = photoFaceCrop({ x: 0.3, y: 0.3, width: 0.1, height: 0.1 }, 1000, 800, rotation);
+  expect(crop.x + crop.side / 2).toBeCloseTo(x!);
+  expect(crop.y + crop.side / 2).toBeCloseTo(y!);
+});

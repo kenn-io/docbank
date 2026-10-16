@@ -34,11 +34,14 @@ export class PhotoFaces {
   }
   async load(version: string) {
     this.controller?.abort();
-    if (version !== this.version) this.writer?.abort();
+    const changed = version !== this.version;
+    if (changed) this.writer?.abort();
     const controller = (this.controller = new AbortController());
     this.version = version;
-    this.faces = [];
-    this.assertions = [];
+    if (changed || !version) {
+      this.faces = [];
+      this.assertions = [];
+    }
     this.error = "";
     this.loading = !!version;
     this.busy = false;

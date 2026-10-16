@@ -2367,41 +2367,62 @@ it("refreshes open audit history when a pending tag change completes", async () 
   expect(screen.queryByText("No events on this page")).toBeNull();
 });
 
-it("keeps the current photo open when the person query transition is refused", async () => {
-  prepareKeyboardApp();
-  installKeyboardBackend();
-  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
-  const original = vi.mocked(globalThis.fetch).getMockImplementation()!;
-  const item = photo(1);
-  vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
-    const url = String(input);
-    if (url === "/api/v1/photos/hidden") return Response.json({ configured: false });
-    if (url === "/api/v1/photos/albums") return Response.json([]);
-    if (url.endsWith("/photos/assets/query"))
-      return Response.json({ items: [item], total: 1, facets: [] });
-    if (url.endsWith("/faces"))
-      return Response.json({
-        faces: [photoFace({ content_version_id: item.content_version_id })],
-        assertions: [photoPersonAssertion({ content_version_id: item.content_version_id })],
-      });
-    return photoMetadataResponse(url, init as RequestInit) ?? original(input, init);
-  });
-  render(App);
-  await screen.findByRole("cell", { name: "zeta.txt" });
-  await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
-  const image = await screen.findByRole("button", { name: `Select ${item.name}` });
-  await fireEvent.doubleClick(image);
-  const loupe = await screen.findByRole("dialog", { name: /^Photo viewer,/ });
-  await fireEvent.click(within(loupe).getByRole("button", { name: "Metadata" }));
-  const card = await within(loupe).findByRole("button", { name: "Ada" });
-  vi.spyOn(PhotoAuthoredEditor.prototype, "canChangeTarget").mockReturnValue(true);
-  const query = vi.spyOn(Photos.prototype, "setQuery").mockReturnValue(undefined);
-  const before = location.href;
-  await fireEvent.click(card);
-  expect(query).toHaveBeenCalledWith(
-    expect.objectContaining({ filters: { person_ids: ["person-a"] } }),
-  );
-  expect(location.href).toBe(before);
-  expect(screen.getByRole("dialog", { name: /^Photo viewer,/ })).toBe(loupe);
-});
+it.each([true, false])(
+  "opens a person Library with empty search only when accepted (refused=%s)",
+  async (refused) => {
+    prepareKeyboardApp();
+    installKeyboardBackend();
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+    const original = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    const item = photo(1);
+    const personID = "00000000-0000-4000-8000-000000000001";
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === "/api/v1/photos/hidden") return Response.json({ configured: false });
+      if (url === "/api/v1/photos/albums") return Response.json([]);
+      if (url.endsWith("/photos/assets/query"))
+        return Response.json({ items: [item], total: 1, facets: [] });
+      if (url.endsWith("/faces"))
+        return Response.json({
+          faces: [photoFace({ content_version_id: item.content_version_id })],
+          assertions: [
+            photoPersonAssertion({
+              content_version_id: item.content_version_id,
+              person_id: personID,
+            }),
+          ],
+        });
+      return photoMetadataResponse(url, init as RequestInit) ?? original(input, init);
+    });
+    render(App);
+    await screen.findByRole("cell", { name: "zeta.txt" });
+    await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
+    const search = await screen.findByRole("searchbox", { name: "Search photos" });
+    await fireEvent.input(search, { target: { value: "stale search" } });
+    await fireEvent.click(screen.getByRole("button", { name: /^Search$/ }));
+    const image = await screen.findByRole("button", { name: `Select ${item.name}` });
+    await fireEvent.doubleClick(image);
+    const loupe = await screen.findByRole("dialog", { name: /^Photo viewer,/ });
+    await fireEvent.click(within(loupe).getByRole("button", { name: "Metadata" }));
+    const card = await within(loupe).findByRole("button", { name: "Ada" });
+    vi.spyOn(PhotoAuthoredEditor.prototype, "canChangeTarget").mockReturnValue(true);
+    const query = vi.spyOn(Photos.prototype, "setQuery");
+    if (refused) query.mockReturnValue(undefined);
+    const before = location.href;
+    await fireEvent.click(card);
+    expect(query).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "", filters: { person_ids: [personID] } }),
+    );
+    if (refused) {
+      expect(location.href).toBe(before);
+      expect(screen.getByRole("dialog", { name: /^Photo viewer,/ })).toBe(loupe);
+    } else {
+      await screen.findByText("Person: Ada");
+      expect(
+        (screen.getByRole("searchbox", { name: "Search photos" }) as HTMLInputElement).value,
+      ).toBe("");
+      expect(screen.queryByRole("dialog", { name: /^Photo viewer,/ })).toBeNull();
+    }
+  },
+);

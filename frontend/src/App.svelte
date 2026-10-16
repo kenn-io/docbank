@@ -687,6 +687,7 @@
     if (
       !photoState.photos.setQuery({
         ...photoState.photos.query,
+        text: "",
         filters: { person_ids: [personID] },
       })
     )

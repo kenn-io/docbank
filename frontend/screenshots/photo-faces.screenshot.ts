@@ -69,6 +69,14 @@ test("draws and names faces, opens person-filtered Library, and reads cull close
     await expect(page.locator(".photo-cell")).toHaveCount(1);
     await expect(page.locator(".photo-results-summary")).toContainText("1 photos");
     await expect(page.getByText("Person: Ada", { exact: true })).toBeVisible();
+    await expect
+      .poll(() =>
+        page
+          .locator(".photo-cell img")
+          .first()
+          .evaluate((image) => (image as HTMLImageElement).naturalWidth > 0),
+      )
+      .toBe(true);
     await page.evaluate(() => document.fonts.ready.then(() => {}));
     await page.screenshot({
       path: path.join(output!, "web-photo-faces-library.png"),
@@ -172,6 +180,46 @@ test("draws and names faces, opens person-filtered Library, and reads cull close
       .toBe(true);
     await expect(closeups.locator("figcaption")).toHaveText(["Ada", "Ada", "Unnamed face"]);
     await captureThemes(page, "web-photo-faces-cull");
+  } finally {
+    await fixture.dispose();
+  }
+});
+
+test("keeps face tools and requests out of video loupe, inspector, and cull", async ({ page }) => {
+  test.setTimeout(300_000);
+  await mkdir(path.join(repository, ".superpowers"), { recursive: true });
+  const workspace = await mkdtemp(path.join(repository, ".superpowers", "faces-video-proof-"));
+  const fixture = photoFixture(workspace);
+  const faceRequests: string[] = [];
+  page.on("request", (request) => {
+    if (/\/versions\/[^/]+\/faces/.test(request.url())) faceRequests.push(request.url());
+  });
+  try {
+    await fixture.seed(1, "--video");
+    const url = new URL(await fixture.run("web", "--no-browser"));
+    url.pathname = "/photos";
+    await page.goto(url.href);
+    const cell = page.getByRole("button", { name: "Select Synthetic-video.mp4" });
+    await cell.click();
+    await page.getByRole("button", { name: "Metadata", exact: true }).click();
+    const metadata = page.getByRole("region", { name: "Photo metadata", exact: true });
+    await expect(metadata).toBeVisible();
+    await expect(metadata.getByRole("region", { name: "People", exact: true })).toHaveCount(0);
+    await expect(metadata.getByRole("combobox", { name: /^Rotation:/ })).toBeEnabled();
+    await page.getByRole("button", { name: "Open Synthetic-video.mp4", exact: true }).focus();
+    await page.keyboard.press("Enter");
+    const loupe = page.getByRole("dialog", { name: /^Photo viewer,/ });
+    await expect(loupe).toBeVisible();
+    await expect(loupe.getByRole("button", { name: "Add face", exact: true })).toHaveCount(0);
+    await loupe.getByRole("button", { name: "Metadata", exact: true }).click();
+    await expect(loupe.getByRole("region", { name: "Photo metadata", exact: true })).toBeVisible();
+    await expect(loupe.getByRole("region", { name: "People", exact: true })).toHaveCount(0);
+    await loupe.getByRole("button", { name: "Close photo viewer", exact: true }).click();
+    await page.getByRole("button", { name: "Cull", exact: true }).click();
+    const cull = page.getByRole("dialog", { name: "Cull photos", exact: true });
+    await expect(cull.getByText("Synthetic-video.mp4", { exact: true })).toBeVisible();
+    await expect(cull.getByRole("region", { name: "Face closeups", exact: true })).toHaveCount(0);
+    expect(faceRequests).toEqual([]);
   } finally {
     await fixture.dispose();
   }

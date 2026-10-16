@@ -15,6 +15,7 @@
     $props();
   let people = $state.raw<PersonSummary[]>([]);
   let query = $state("");
+  let activeFace = $state("");
   let searching = $state(false);
   let error = $state("");
   let controller: AbortController | undefined;
@@ -27,6 +28,7 @@
     void faces.version;
     people = [];
     query = "";
+    activeFace = "";
     error = "";
     return () => {
       controller?.abort();
@@ -34,7 +36,8 @@
       created.clear();
     };
   });
-  async function search(value: string) {
+  async function search(faceID: string, value: string) {
+    activeFace = faceID;
     query = value;
     controller?.abort();
     const request = (controller = new AbortController());
@@ -97,17 +100,21 @@
         placeholder="Find or create a person"
         fallbackLabel={faces.label(face)}
         value={person ? key(person.person_id) : ""}
-        options={people.map((person) => ({
+        options={(activeFace === face.face_id ? people : []).map((person) => ({
           name: key(person.person_id),
           label: person.display_name,
         }))}
-        allowCustom={!!query.trim() && !exact && !searching && !error}
+        allowCustom={activeFace === face.face_id &&
+          !!query.trim() &&
+          !exact &&
+          !searching &&
+          !error}
         customLabel={'Create person "{query}"'}
-        loading={searching}
+        loading={activeFace === face.face_id && searching}
         allowClear={!!person}
         clearLabel="Clear name"
         disabled={choosing || faces.busy || faces.loading}
-        onquery={search}
+        onquery={(value) => search(face.face_id, value)}
         onselect={(value) => choose(face, value)}
       />
       {#if person && onperson}<Button

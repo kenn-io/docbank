@@ -32,6 +32,7 @@ func check(err error) {
 func main() {
 	bursts := flag.Bool("bursts", false, "Include synthetic burst stacks")
 	mapGPS := flag.Bool("map", false, "Include synthetic GPS locations")
+	video := flag.Bool("video", false, "Include a synthetic video member")
 	unavailable := flag.Bool("unavailable", false, "Include an undecodable photo")
 	rejects := flag.Bool("rejects", false, "Include confirmed rejects")
 	rotateCover := flag.Bool("rotate-cover", false, "Rotate the album cover for comparison")
@@ -159,6 +160,14 @@ func main() {
 	}
 	var firstAssetID string
 	for index := range count {
+		if *video && index == count-1 {
+			hash, size, err := blobs.Write(bytes.NewReader([]byte("synthetic unsupported MP4")))
+			check(err)
+			_, err = s.CreateFile(ctx, s.RootID(), "Synthetic-video.mp4", hash, size, "video/mp4")
+			check(err)
+			continue
+		}
+
 		if *unavailable && index == count-1 {
 			hash, size, err := blobs.Write(bytes.NewReader([]byte("synthetic undecodable JPEG")))
 			check(err)

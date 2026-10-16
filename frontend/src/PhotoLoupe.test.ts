@@ -648,3 +648,11 @@ it("shows the capture time and no file modified time for a photo placed by EXIF"
   expect(screen.getByText("2023-11-04T18:22:03")).toBeTruthy();
   expect(screen.queryByText("File modified")).toBeNull();
 });
+
+it("loads faces once when the loupe mounts", async () => {
+  const { props } = setup();
+  render(PhotoLoupe, props);
+  await screen.findByText("Fit preview");
+  await tick();
+  expect(api.listPhotoFaces).toHaveBeenCalledTimes(1);
+});

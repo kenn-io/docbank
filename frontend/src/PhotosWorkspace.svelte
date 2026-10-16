@@ -201,14 +201,15 @@
       void inspectorFaces.load("");
       const row = photos.items.find((row) => row.asset_id === id);
       if (row && "content_version_id" in row) {
-        void inspectorFaces.load(row.content_version_id);
+        void inspectorFaces.load(row.kind === "photo" ? row.content_version_id : "");
         return;
       }
       if (id)
         void photos
           .lookup(id, controller.signal)
           .then((row) => {
-            if (!controller.signal.aborted) void inspectorFaces.load(row.content_version_id);
+            if (!controller.signal.aborted)
+              void inspectorFaces.load(row.kind === "photo" ? row.content_version_id : "");
           })
           .catch((cause) => {
             if (!controller.signal.aborted)

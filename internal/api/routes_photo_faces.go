@@ -52,7 +52,11 @@ func registerPhotoFaceRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		names, err := d.Store.PhotoFacePersonNames(ctx, assertions)
+		ids := make([]string, 0, len(assertions))
+		for _, assertion := range assertions {
+			ids = append(ids, assertion.PersonID)
+		}
+		names, err := d.Store.PhotoFacePersonNames(ctx, ids)
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
@@ -97,7 +101,7 @@ func registerPhotoFaceRoutes(api huma.API, d Deps, g *gate) {
 			return nil, err
 		}
 		if result.Assertion != nil {
-			names, err := d.Store.PhotoFacePersonNames(ctx, []store.PersonDocumentAssertion{{PersonID: result.Assertion.PersonID}})
+			names, err := d.Store.PhotoFacePersonNames(ctx, []string{result.Assertion.PersonID})
 			if err != nil {
 				return nil, FromStoreError(err)
 			}

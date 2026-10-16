@@ -76,9 +76,9 @@
   );
   let addingFace = $state(false);
   $effect(() => {
-    const version = photo?.content_version_id ?? "";
+    const version = photo?.kind === "photo" ? photo.content_version_id : "";
     addingFace = false;
-    void faces.load(version);
+    untrack(() => void faces.load(version));
     return () => faces.dispose();
   });
   onDestroy(() => faces.dispose());
@@ -222,11 +222,11 @@
       onclick={original}
       >{#if busy}<Spinner size={14} />{/if}View original</Button
     >
-    <Button
-      size="sm"
-      disabled={!photo || faces.loading || faces.busy}
-      onclick={() => (addingFace = !addingFace)}>{addingFace ? "Cancel face" : "Add face"}</Button
-    >
+    {#if photo?.kind === "photo"}<Button
+        size="sm"
+        disabled={faces.loading || faces.busy}
+        onclick={() => (addingFace = !addingFace)}>{addingFace ? "Cancel face" : "Add face"}</Button
+      >{/if}
     <IconButton ariaLabel="Reset zoom" onclick={() => image?.reset()}
       ><RotateCcw size={18} /></IconButton
     >
@@ -285,7 +285,7 @@
             box: face.box,
             label: faces.label(face),
           }))}
-          regionMode={addingFace}
+          regionMode={photo?.kind === "photo" && addingFace}
           regionLabel={`Position face on ${photo?.name ?? "Photo"}`}
           oncancelregion={() => (addingFace = false)}
           onregion={(region) => {

@@ -1279,3 +1279,48 @@ it("reloads cached stack siblings after preparation loses a member", async () =>
     ]),
   );
 });
+
+it("loads faces once when cull mounts", async () => {
+  const read = vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [], assertions: [] });
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const row = photo(1);
+  const run: CullRun = {
+    ids: [row.asset_id],
+    checkpoint: {
+      runID: "run",
+      passID: "pass",
+      revision: 0,
+      pass: [row.asset_id],
+      position: 0,
+      visited: [],
+      skipped: [],
+      unavailable: [],
+      scope: "unflagged",
+      autoAdvance: true,
+    },
+  };
+  const cull = new PhotoCull("session", {
+    load: async () => run,
+    replace: vi.fn(),
+    checkpoint: vi.fn(),
+  });
+  await cull.restore();
+  const photos = new Photos("session", vi.fn());
+  vi.spyOn(photos, "lookup").mockResolvedValue(row);
+  vi.spyOn(photos, "lookupMany").mockResolvedValue([]);
+  vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
+  render(PhotoCullView, {
+    cull,
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+    onclose: vi.fn(),
+  });
+  await screen.findByText("Photo 1.jpg");
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+});
