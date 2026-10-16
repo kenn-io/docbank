@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 )
@@ -192,31 +193,38 @@ func (s *Store) Duplicates(
 	return page, nil
 }
 
-type duplicateReferenceIdentity struct {
-	nodeID    int64
-	versionID string
-}
-
 func duplicateReferences(
 	ctx context.Context, tx *sql.Tx, group DuplicateGroup,
 ) ([]DuplicateReference, error) {
-	rows, err := tx.QueryContext(ctx, `WITH `+CurrentContentMembershipCTE+`
-		SELECT node_id, version_id
-		FROM current_content_members
+	// Bound the group before loading metadata, then resolve its paths together.
+	rows, err := tx.QueryContext(ctx, `WITH `+CurrentContentMembershipCTE+`, selected AS (
+		SELECT node_id, modified_at FROM current_content_members
 		WHERE blob_hash = ? AND size = ?
-		ORDER BY `+DuplicateRepresentativeOrder+`
-		LIMIT ?`, group.Hash, group.Size, maxDuplicatePageReferences)
+		ORDER BY `+DuplicateRepresentativeOrder+` LIMIT ?
+	)
+	SELECT `+nodeCols+`, cv.recorded_at, cv.node_revision,
+	       cv.introduced_operation_id, cv.transition_kind, cv.source_version_id
+	FROM `+nodeFrom+` JOIN selected ON selected.node_id = n.id
+	ORDER BY selected.modified_at, selected.node_id`, group.Hash, group.Size, maxDuplicatePageReferences)
 	if err != nil {
 		return nil, fmt.Errorf("listing references for duplicate %s: %w", group.Hash, err)
 	}
 	defer func() { _ = rows.Close() }()
-	identities := make([]duplicateReferenceIdentity, 0, maxDuplicatePageReferences)
+	references := make([]DuplicateReference, 0, maxDuplicatePageReferences)
+	ids := make([]int64, 0, maxDuplicatePageReferences)
 	for rows.Next() {
-		var identity duplicateReferenceIdentity
-		if err := rows.Scan(&identity.nodeID, &identity.versionID); err != nil {
+		ref := DuplicateReference{Reference: ContentReference{IsCurrent: true}}
+		version := &ref.Reference.Version
+		node, err := scanNode(rows, &version.RecordedAt, &version.NodeRevision,
+			&version.IntroducedOperationID, &version.TransitionKind, &version.SourceVersionID)
+		if err != nil {
 			return nil, fmt.Errorf("scanning references for duplicate %s: %w", group.Hash, err)
 		}
-		identities = append(identities, identity)
+		ref.Reference.Node = node
+		version.ID, version.NodeID, version.BlobHash = node.CurrentVersionID, node.ID, node.BlobHash
+		version.MD5, version.Size, version.MimeType = node.MD5, node.Size, node.MimeType
+		references = append(references, ref)
+		ids = append(ids, node.ID)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("listing references for duplicate %s: %w", group.Hash, err)
@@ -224,81 +232,64 @@ func duplicateReferences(
 	if err := rows.Close(); err != nil {
 		return nil, fmt.Errorf("closing references for duplicate %s: %w", group.Hash, err)
 	}
-
-	references := make([]DuplicateReference, 0, len(identities))
-	for _, identity := range identities {
-		node, err := nodeByIDTx(tx, identity.nodeID)
-		if err != nil {
-			return nil, fmt.Errorf("reading duplicate node %d: %w", identity.nodeID, err)
-		}
-		version, err := scanContentVersion(tx.QueryRowContext(ctx,
-			`SELECT `+contentVersionCols+`
-			 FROM content_versions WHERE node_id=? AND version_id=?`,
-			identity.nodeID, identity.versionID))
-		if err != nil {
-			return nil, fmt.Errorf("reading duplicate node %d version: %w", identity.nodeID, err)
-		}
-		path, err := pathOf(ctx, tx, identity.nodeID)
-		if err != nil {
-			return nil, err
-		}
-		collections, collectionCount, err := duplicateCollections(ctx, tx, identity.nodeID)
-		if err != nil {
-			return nil, err
-		}
-		references = append(references, DuplicateReference{
-			Reference: ContentReference{
-				Version: version, Node: node, Path: path, IsCurrent: true,
-			},
-			Collections: collections, CollectionCount: collectionCount,
-			CollectionsTruncated: collectionCount > len(collections),
-		})
+	paths, err := pathsOf(ctx, tx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range references {
+		references[i].Reference.Path = paths[i]
+	}
+	if err := populateDuplicateCollections(ctx, tx, references); err != nil {
+		return nil, err
 	}
 	return references, nil
 }
 
-func duplicateCollections(
-	ctx context.Context, tx *sql.Tx, nodeID int64,
-) ([]DuplicateCollection, int, error) {
-	// One extra row tells us whether the preview supplies the exact total.
-	rows, err := tx.QueryContext(ctx, `WITH `+CollectionMembershipCTE+`
-		SELECT cm.ingest_id, l.label
-		FROM collection_members cm
-		LEFT JOIN collection_labels l ON l.ingest_id=cm.ingest_id
-		WHERE cm.node_id=?
-		ORDER BY cm.ingest_id ASC
-		LIMIT ?`, nodeID, maxDuplicateCollections+1)
+func populateDuplicateCollections(ctx context.Context, tx *sql.Tx, references []DuplicateReference) error {
+	ids := make([]int64, len(references))
+	positions := make(map[int64]int, len(references))
+	for i := range references {
+		ids[i] = references[i].Reference.Node.ID
+		positions[ids[i]] = i
+		references[i].Collections = make([]DuplicateCollection, 0)
+	}
+	encoded, err := json.Marshal(ids)
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing collections for duplicate node %d: %w", nodeID, err)
+		return fmt.Errorf("encoding duplicate nodes: %w", err)
+	}
+	rows, err := tx.QueryContext(ctx, `WITH `+CollectionMembershipCTE+`, ranked AS (
+		SELECT cm.node_id, cm.ingest_id,
+		       ROW_NUMBER() OVER (PARTITION BY cm.node_id ORDER BY cm.ingest_id) AS ordinal,
+		       COUNT(*) OVER (PARTITION BY cm.node_id) AS total
+		FROM collection_members cm
+		WHERE cm.node_id IN (SELECT value FROM json_each(?))
+	)
+	SELECT ranked.node_id, ranked.ingest_id, ranked.total, l.label
+	FROM ranked LEFT JOIN collection_labels l ON l.ingest_id=ranked.ingest_id
+	WHERE ordinal<=? ORDER BY ranked.node_id, ranked.ingest_id`, string(encoded), maxDuplicateCollections)
+	if err != nil {
+		return fmt.Errorf("listing duplicate collections: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	var total int
-	collections := make([]DuplicateCollection, 0)
 	for rows.Next() {
+		var id int64
 		var collection DuplicateCollection
+		var total int
 		var label sql.NullString
-		if err := rows.Scan(&collection.ID, &label); err != nil {
-			return nil, 0, fmt.Errorf(
-				"scanning collections for duplicate node %d: %w", nodeID, err,
-			)
+		if err := rows.Scan(&id, &collection.ID, &total, &label); err != nil {
+			return fmt.Errorf("scanning duplicate collections: %w", err)
 		}
-		total++
-		if total <= maxDuplicateCollections {
-			collection.Label = stringPtr(label)
-			collections = append(collections, collection)
-		}
+		ref := &references[positions[id]]
+		collection.Label = stringPtr(label)
+		ref.Collections = append(ref.Collections, collection)
+		ref.CollectionCount = total
+		ref.CollectionsTruncated = total > maxDuplicateCollections
 	}
 	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("listing collections for duplicate node %d: %w", nodeID, err)
+		return fmt.Errorf("listing duplicate collections: %w", err)
 	}
 	if err := rows.Close(); err != nil {
-		return nil, 0, fmt.Errorf("closing collections for duplicate node %d: %w", nodeID, err)
+		return fmt.Errorf("closing duplicate collections: %w", err)
 	}
-	if total > maxDuplicateCollections {
-		if err := tx.QueryRowContext(ctx, `WITH `+CollectionMembershipCTE+`
-			SELECT COUNT(*) FROM collection_members WHERE node_id=?`, nodeID).Scan(&total); err != nil {
-			return nil, 0, fmt.Errorf("counting collections for duplicate node %d: %w", nodeID, err)
-		}
-	}
-	return collections, total, nil
+	return nil
 }

@@ -173,3 +173,46 @@ func BenchmarkDuplicateCollectionPreviews(b *testing.B) {
 		})
 	}
 }
+
+// Exact group expansion must not load unrelated collection memberships.
+func BenchmarkDuplicateGroupWithUnrelatedCollections(b *testing.B) {
+	for _, unrelated := range []int{0, 10000} {
+		b.Run(fmt.Sprintf("unrelated=%d", unrelated), func(b *testing.B) {
+			s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+			require.NoError(b, err)
+			b.Cleanup(func() { require.NoError(b, s.Close()) })
+			ctx := b.Context()
+			run, err := s.BeginIngest(ctx, "cli", "Synthetic collection")
+			require.NoError(b, err)
+			hash := strings.Repeat("a1", 32)
+			require.NoError(b, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+				for i := range 16 + unrelated {
+					contentHash := hash
+					if i >= 16 {
+						contentHash = fmt.Sprintf("%064x", i)
+					}
+					name := fmt.Sprintf("file-%05d.bin", i)
+					_, _, _, err := s.ingestFileTx(ctx, tx, run, s.RootID(), name, contentHash, 1024,
+						"application/octet-stream", "/synthetic/"+name, "", ingestFileOptions{exact: true})
+					if err != nil {
+						return err
+					}
+				}
+				return nil
+			}))
+			b.ReportAllocs()
+			for b.Loop() {
+				group, err := s.DuplicateGroupByHash(ctx, hash, 1024)
+				if err != nil || group.ReferenceCount != 16 || len(group.References) != 16 {
+					b.Fatalf("group=%+v err=%v", group, err)
+				}
+				for i, ref := range group.References {
+					if ref.Reference.Path != fmt.Sprintf("/file-%05d.bin", i) || ref.CollectionCount != 1 ||
+						len(ref.Collections) != 1 || ref.Collections[0].ID != run.ID() || ref.CollectionsTruncated {
+						b.Fatal("duplicate reference or collection changed")
+					}
+				}
+			}
+		})
+	}
+}
