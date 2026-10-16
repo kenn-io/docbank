@@ -12,7 +12,7 @@ import (
 
 func TestPhotoEventsCaptureAssetAlbumAndRefetchChanges(t *testing.T) {
 	t.Parallel()
-	for _, rule := range []string{"asset exclusion", "album membership", "tags", "provenance", "metadata and indexing", "extraction", "directory refetch", "collection coverage", "visual previews", "global settings and Hidden credentials refetch"} {
+	for _, rule := range []string{"asset exclusion", "album membership", "tags", "tags/create", "tags/delete", "provenance", "metadata and indexing", "extraction", "directory refetch", "collection coverage", "visual previews", "global settings and Hidden credentials refetch"} {
 		t.Run(rule, func(t *testing.T) {
 			ctx := t.Context()
 			if rule == "collection coverage" {
@@ -74,6 +74,17 @@ func TestPhotoEventsCaptureAssetAlbumAndRefetchChanges(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, album.ID, nextPhotoEvent(t, events).AlbumID)
 
+			case "tags/create", "tags/delete":
+				if rule == "tags/create" {
+					_, err = s.CreateTag(ctx, "New keyword")
+				} else {
+					_, err = s.DeleteTag(ctx, tag.ID, tag.Revision)
+				}
+				require.NoError(t, err)
+				// Publication finishes with the write; close so a missing event fails immediately.
+				cancel()
+				require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
+
 			case "tags":
 				_, err = s.AssignTag(ctx, tag.ID, node.ID, node.Revision)
 				require.NoError(t, err)
@@ -81,7 +92,7 @@ func TestPhotoEventsCaptureAssetAlbumAndRefetchChanges(t *testing.T) {
 				noPhotoEvent(t, events)
 				_, err = s.RenameTag(ctx, tag.ID, tag.Revision+1, "holiday")
 				require.NoError(t, err)
-				require.Equal(t, asset.ID, nextPhotoEvent(t, events).AssetID)
+				require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
 				noPhotoEvent(t, events)
 				require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
 					_, err := tx.ExecContext(ctx, `DELETE FROM node_tags WHERE node_id=?`, node.ID)

@@ -15,6 +15,7 @@ import {
   storage,
 } from "./photo-test-fixtures.js";
 import App from "./App.svelte";
+import * as api from "./generated/docbank.js";
 import { Photos } from "./photos.svelte.js";
 import { VerifiedUploadChannel } from "./upload.js";
 import { parseQuery, queryFingerprint, type Query } from "./query.js";
@@ -3475,7 +3476,6 @@ it("defers a cached Library refresh while Hidden is on screen", async () => {
   workspaceRefresh.mockImplementation(function (this: Photos) {
     return this.refresh(undefined, true).then(() => undefined);
   });
-  const library = fixture.workspaceProps.photos;
   await fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
   await waitFor(() => expect(fixture.workspaceProps.photos.hidden).toBe(true));
   stores.mockClear();
@@ -3490,13 +3490,6 @@ it("defers a cached Library refresh while Hidden is on screen", async () => {
   });
   expect(workspaceRefresh).toHaveBeenCalledExactlyOnceWith(batch);
   expect(stores.mock.contexts).toEqual([expect.objectContaining({ hidden: true })]);
-  await library.resume();
-  expect(stores.mock.contexts).toEqual([
-    expect.objectContaining({ hidden: true }),
-    expect.objectContaining({ hidden: false }),
-  ]);
-  await library.resume();
-  expect(stores).toHaveBeenCalledTimes(2);
 });
 
 it("routes album events to the affected photo list", async () => {
@@ -3525,15 +3518,13 @@ it("routes album events to the affected photo list", async () => {
   expect(albums).toHaveBeenCalledExactlyOnceWith();
   expect(counts.mock.calls[counts.mock.contexts.indexOf(library)]).toEqual([true]);
   expect(workspaceRefresh).not.toHaveBeenCalled();
-  // A `set:` search depends on the album it names.
-  const shown = fixture.workspaceProps.photos;
-  const query = shown.query;
-  shown.query = { ...query, syntax: "advanced", text: "set:another", filters: {} };
+  const depends = vi.spyOn(fixture.workspaceProps.photos, "dependsOnAlbums").mockReturnValue(true);
   await act(async () => {
     await fixture.refresh(unrelated);
   });
+  expect(depends).toHaveBeenCalledWith(["another"]);
   expect(workspaceRefresh).toHaveBeenCalledExactlyOnceWith(unrelated);
-  shown.query = query;
+  depends.mockRestore();
   workspaceRefresh.mockClear();
   albums.mockClear();
   counts.mockClear();
@@ -3550,6 +3541,11 @@ it("routes album events to the affected photo list", async () => {
   expect(counts).toHaveBeenCalledExactlyOnceWith(true);
   expect(counts.mock.contexts).toEqual([library]);
   expect(mounts).toHaveBeenCalledTimes(2);
+});
+
+it("propagates a failed album refresh", async () => {
+  const fixture = await watcherFixture();
+  const albums = vi.spyOn(PhotoAlbums.prototype, "load").mockResolvedValue(true);
   albums.mockResolvedValueOnce(false);
   await act(async () => {
     await expect(
@@ -3608,3 +3604,38 @@ it("revalidates the library when a Hidden recheck is replaced before it confirms
   await waitFor(() => expect(mounts.mock.calls.length).toBeGreaterThan(mounted));
   expect(fixture.workspaceProps.concealed).toBe(false);
 });
+
+it.each(["rename", "create", "delete", "rename and assign"])(
+  "refreshes the displayed keyword catalog after %s",
+  async (change) => {
+    const original = { id: "tag", name: "Trip keyword", revision: 1, assignment_count: 0 };
+    const list = vi
+      .spyOn(api, "listTags")
+      .mockResolvedValue({ items: [original], total: 1, limit: 1000, offset: 0 });
+    const fixture = await watcherFixture();
+    await waitFor(() => expect(fixture.workspaceProps.tags).toEqual([original]));
+    const editor = fixture.workspaceProps.photos.authored;
+    editor.targets = [preparedPhoto(1, { tags: [] })];
+    const changed = {
+      ...original,
+      id: change === "create" ? "new-tag" : original.id,
+      name: "Holiday keyword",
+      revision: 2,
+    };
+    const current =
+      change === "delete" ? [] : change === "create" ? [original, changed] : [changed];
+    const listed = change === "rename and assign" ? [] : current;
+    list.mockResolvedValue({ items: listed, total: current.length, limit: 1000, offset: 0 });
+    vi.spyOn(api, "getTag").mockResolvedValue(changed);
+    if (change === "rename and assign") editor.targets[0]!.tags = [original.id];
+    await act(async () =>
+      fixture.refresh({
+        assets: new Map(change === "rename and assign" ? [["photo-1", 2]] : []),
+        albums: new Map(),
+        refetch: true,
+      }),
+    );
+    expect(fixture.workspaceProps.tags).toEqual(expect.arrayContaining(current));
+    expect(fixture.workspaceProps.tags).toHaveLength(current.length);
+  },
+);

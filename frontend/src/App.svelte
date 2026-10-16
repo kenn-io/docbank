@@ -74,7 +74,7 @@
   import ProvenanceDrawer from "./ProvenanceDrawer.svelte";
   import SelectionDock from "./SelectionDock.svelte";
   import { photoNavigationGuard } from "./photoNavigation.js";
-  import { PhotoUndoState } from "./photoAuthored.svelte.js";
+  import { PhotoUndoState, mergePhotoTags } from "./photoAuthored.svelte.js";
   import { mapTiles } from "./photoMap.js";
   import PhotosWorkspace from "./PhotosWorkspace.svelte";
   import HiddenPhotos from "./HiddenPhotos.svelte";
@@ -740,7 +740,7 @@
         await photoRecheckRun?.catch(() => {});
         if (session !== webSession || document.visibilityState !== "visible") return;
         const results = await Promise.allSettled([
-          photosChanged(undefined, undefined, changes),
+          refreshPhotoChanges(changes),
           hiddenWorkspace?.refresh(changes),
         ]);
         const failed = results.find(
@@ -2197,7 +2197,7 @@
     }
   }
 
-  async function loadTagCatalog(append = false): Promise<void> {
+  async function loadTagCatalog(append = false, live = false): Promise<void> {
     const request = ++tagCatalogGeneration;
     const session = webSession;
     const selectedTagID = tagFilterID;
@@ -2241,28 +2241,32 @@
       );
       tagCatalogTotal = page.total;
       tagCatalogListed = (append ? tagCatalogListed : 0) + page.items.length;
-      if (selectedMissing && tagFilterID === selectedTagID) {
-        const rerunSearch = Boolean(activeQuery || searchPending);
-        const leaveTagBrowse = activeQuery === "" && activeTagID === selectedTagID;
-        clearBulkSelection();
-        tagFilterID = "";
-        activeTagID = "";
-        taggedInspected = 0;
-        taggedTotal = 0;
-        taggedTrashed = 0;
-        if (rerunSearch && searchQuery.trim()) void runSearch();
-        else if (leaveTagBrowse && directory) void loadDirectory(directory.id, false);
-      }
+      if (selectedMissing && tagFilterID === selectedTagID) clearMissingTagFilter(selectedTagID);
     } catch (cause) {
       if (request !== tagCatalogGeneration || session !== webSession) return;
-      if (cause instanceof APIError && cause.status === 401) {
+      if (cause instanceof APIError && cause.status === 401 && !live) {
         handleFailure(cause);
         return;
       }
       tagCatalogError = cause instanceof Error ? cause.message : String(cause);
+      // A live refresh rejects so its watcher retries.
+      if (live) throw cause;
     } finally {
       if (request === tagCatalogGeneration) tagCatalogLoading = false;
     }
+  }
+
+  function clearMissingTagFilter(selectedTagID: string): void {
+    const rerunSearch = Boolean(activeQuery || searchPending);
+    const leaveTagBrowse = activeQuery === "" && activeTagID === selectedTagID;
+    clearBulkSelection();
+    tagFilterID = "";
+    activeTagID = "";
+    taggedInspected = 0;
+    taggedTotal = 0;
+    taggedTrashed = 0;
+    if (rerunSearch && searchQuery.trim()) void runSearch();
+    else if (leaveTagBrowse && directory) void loadDirectory(directory.id, false);
   }
 
   function inspectorRequestCurrent(
@@ -2367,14 +2371,38 @@
     else void loadRoot();
   }
 
+  async function refreshPhotoChanges(changes: PhotoEventBatch): Promise<void> {
+    await Promise.all([
+      changes.refetch ? refreshPhotoDefinitions() : undefined,
+      photosChanged(undefined, undefined, changes),
+    ]);
+  }
+
+  async function refreshPhotoDefinitions(): Promise<void> {
+    const session = webSession;
+    // The catalog page shows unassigned renames; assigned definitions may sit outside that page.
+    const [tags] = await Promise.all([assignedPhotoTags(), loadTagCatalog(false, true)]);
+    if (session === webSession) tagCatalog = sortTags(mergePhotoTags(tagCatalog, tags));
+  }
+
+  async function assignedPhotoTags(): Promise<Tag[]> {
+    const retained = new Set([
+      photoState?.photos,
+      albumPhotos,
+      mapPhotos,
+      hiddenWorkspace?.activePhotos(),
+    ]);
+    const tags = await Promise.all(
+      [...retained].map((photos) => photos?.authored.refreshAssignedTags() ?? []),
+    );
+    return tags.flat();
+  }
+
   function handlePhotoMetadataChanged(
     receipt: import("./generated/docbank.js").PhotoAuthoredReceipt,
     tags: Tag[],
   ): void {
-    const refreshed = new Map(tags.map((tag) => [tag.id, tag]));
-    for (const tag of tagCatalog)
-      if ((refreshed.get(tag.id)?.revision ?? 0) < tag.revision) refreshed.set(tag.id, tag);
-    tagCatalog = sortTags([...refreshed.values()]);
+    tagCatalog = sortTags(mergePhotoTags(tagCatalog, tags));
     if (
       receipt.after.some((after) =>
         receipt.before.some(

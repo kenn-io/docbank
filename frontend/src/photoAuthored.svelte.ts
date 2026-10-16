@@ -5,6 +5,14 @@ import type { PhotoEventBatch } from "./photoEvents.js";
 
 const prepareTimeout = 60_000;
 
+export function mergePhotoTags(current: api.Tag[], incoming: api.Tag[]) {
+  const merged = new Map(current.map((tag) => [tag.id, tag]));
+  for (const tag of incoming)
+    if (!merged.has(tag.id) || (merged.get(tag.id)!.revision ?? 0) <= (tag.revision ?? 0))
+      merged.set(tag.id, tag);
+  return [...merged.values()];
+}
+
 export class PhotoUndoState {
   receiptID = $state("");
   summary = $state("");
@@ -40,13 +48,36 @@ export class PhotoAuthoredEditor {
   loadTags?: () => Promise<void>;
   loadMoreTags?: () => Promise<void>;
   catalog(tags: api.Tag[]) {
-    const assigned = new Set(this.targets.flatMap((target) => target.tags)),
-      supplied = new Set(tags.map((tag) => tag.id));
-    this.tags = [
-      ...tags,
-      ...this.tags.filter((tag) => assigned.has(tag.id) && !supplied.has(tag.id)),
-    ];
+    const assigned = new Set(this.targets.flatMap((target) => target.tags));
+    this.tags = mergePhotoTags(
+      tags,
+      this.tags.filter((tag) => assigned.has(tag.id)),
+    );
     void this.resolveAssignedTags();
+  }
+  private definitionRefresh = 0;
+  async refreshAssignedTags() {
+    const generation = ++this.definitionRefresh;
+    const ids = [...new Set(this.targets.flatMap((target) => target.tags))];
+    const results = await Promise.allSettled(
+      ids.map((id) => this.request(() => api.getTag(id, this.boundedOptions()))),
+    );
+    if (generation !== this.definitionRefresh || this.controller.signal.aborted) return [];
+    const failed = results.find((result) => result.status === "rejected");
+    if (failed) {
+      this.tagsError =
+        failed.reason instanceof Error ? failed.reason.message : String(failed.reason);
+      throw failed.reason;
+    }
+    const retained = results.flatMap((result) =>
+      result.status === "fulfilled" &&
+      this.targets.some((target) => target.tags.includes(result.value.id))
+        ? [result.value]
+        : [],
+    );
+    this.tags = mergePhotoTags(this.tags, retained);
+    this.tagsError = "";
+    return this.tags.filter((tag) => ids.includes(tag.id));
   }
   private pendingTags = new Map<string, Promise<void>>();
   private async resolveAssignedTags() {
@@ -111,6 +142,11 @@ export class PhotoAuthoredEditor {
   }
   private options(signal = this.controller.signal) {
     return { session: this.session, signal };
+  }
+  private boundedOptions() {
+    return this.options(
+      AbortSignal.any([this.controller.signal, AbortSignal.timeout(prepareTimeout)]),
+    );
   }
   private failure(cause: unknown) {
     this.onfailure(cause);

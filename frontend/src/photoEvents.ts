@@ -88,6 +88,70 @@ export async function readPhotoEvents(
   }
 }
 
+// HTTP/1.1 allows six connections per origin, and a stream per tab would exhaust them. One visible
+// tab holds the stream and forwards an ID-free refetch pulse; other tabs refresh with their own
+// session, so Hidden identifiers and revisions never cross tabs.
+const photoEventLock = "docbank-photo-events";
+const refetchFrame = new TextEncoder().encode('event: change\ndata: {"refetch":true}\n\n');
+const keepaliveFrame = new TextEncoder().encode(": keepalive\n\n");
+type PhotoEventOptions = NonNullable<Parameters<typeof photoEvents>[0]> & { signal: AbortSignal };
+
+async function openPhotoEvents(options: PhotoEventOptions): Promise<Response> {
+  if (typeof navigator.locks === "undefined" || typeof BroadcastChannel === "undefined")
+    return photoEvents(options);
+  return (await leadPhotoEvents(options)) ?? followPhotoEvents(options.signal);
+}
+
+function leadPhotoEvents(options: PhotoEventOptions): Promise<Response | undefined> {
+  return new Promise((resolve, reject) => {
+    // The lock lasts until this stream ends, including when its tab is hidden or closed.
+    navigator.locks
+      .request(photoEventLock, { ifAvailable: true }, async (lock) => {
+        if (!lock) return resolve(undefined);
+        const response = await photoEvents(options);
+        if (!response.body) return resolve(response);
+        const [own, shared] = response.body.tee();
+        resolve(new Response(own, { status: response.status, headers: response.headers }));
+        const channel = new BroadcastChannel(photoEventLock);
+        try {
+          await readPhotoEvents(shared, options.signal, () => channel.postMessage("refetch"));
+        } finally {
+          channel.close();
+        }
+      })
+      .catch(reject);
+  });
+}
+
+function followPhotoEvents(signal: AbortSignal): Response {
+  const channel = new BroadcastChannel(photoEventLock);
+  let keepalive: ReturnType<typeof setInterval> | undefined;
+  let open = true;
+  const close = () => {
+    open = false;
+    clearInterval(keepalive);
+    channel.close();
+  };
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const send = (frame: Uint8Array) => open && controller.enqueue(frame);
+      // Like a reconnect, following starts with a refetch.
+      send(refetchFrame);
+      channel.onmessage = () => send(refetchFrame);
+      keepalive = setInterval(() => send(keepaliveFrame), 15_000);
+      // When the holder leaves, end so the watcher reconnects and one visible tab takes over.
+      navigator.locks
+        .request(photoEventLock, { signal }, () => {})
+        .then(() => {
+          if (open) controller.close();
+          close();
+        }, close);
+    },
+    cancel: close,
+  });
+  return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
+}
+
 export function watchPhotoEvents(
   session: string,
   refresh: (batch: PhotoEventBatch) => Promise<void>,
@@ -164,7 +228,7 @@ export function watchPhotoEvents(
       photoEventIdleTimeout,
     );
     try {
-      const response = await photoEvents({
+      const response = await openPhotoEvents({
         session,
         signal: AbortSignal.any([current.signal, connecting.signal]),
         cache: "no-store",

@@ -618,8 +618,15 @@ it.each(["assigned tags", "edit counts", "Undo counts"])(
       await fireEvent.click(option);
     };
     if (behavior === "assigned tags") {
+      const lookup = vi.spyOn(api, "getTag");
+      await editor.refreshAssignedTags();
+      expect(lookup).toHaveBeenCalledExactlyOnceWith(
+        assigned,
+        expect.objectContaining({ session: "session" }),
+      );
       expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
         "/api/v1/photos/authored/prepare",
+        `/api/v1/tags/${assigned}`,
         `/api/v1/tags/${assigned}`,
       ]);
       expect(editor.tags).toHaveLength(1002);
@@ -734,5 +741,144 @@ it("keeps a later edit busy when an earlier refresh finishes during its write", 
   finishWrite(response({ receipt_id: "second", before: targets, after: targets }));
   await second;
   expect(editor.busy).toBe(false);
+  editor.dispose();
+});
+
+it.each([
+  { failed: false, filtered: false },
+  { failed: false, filtered: true },
+  { failed: true, filtered: false },
+])(
+  "reconciles metadata once a write settles after its event, failed=$failed, filtered=$filtered",
+  async ({ failed, filtered }) => {
+    const editor = editorWithTargets();
+    const saved = targets.map((target) => ({
+      ...target,
+      revision: 7,
+      values: { ...target.values, caption: "Saved" },
+    }));
+    let respond!: () => void;
+    const prepare = vi
+      .spyOn(api, "preparePhotoAuthored")
+      .mockResolvedValue({ assets: [asset], targets: saved });
+    vi.spyOn(api, "editPhotoAuthored").mockImplementation(async () => {
+      await new Promise<void>((resolve) => (respond = resolve));
+      if (failed) throw new APIError("Metadata unavailable", 503, "unavailable");
+      return { receipt_id: "saved", before: targets, after: saved };
+    });
+    editor.stage({ caption: "Saved" });
+    const write = editor.edit({}, {}, false, async () => {
+      if (filtered) {
+        editor.conceal();
+        editor.revalidate(new Set(["asset"]));
+      }
+    });
+    await vi.waitFor(() => expect(respond).toBeTypeOf("function"));
+    editor.changedElsewhere();
+    await editor.reconcile();
+    expect(prepare).not.toHaveBeenCalled();
+    respond();
+    await write;
+    if (failed) {
+      expect(prepare).not.toHaveBeenCalled();
+      expect(editor.conflict).toBe(true);
+      expect(editor.patch.caption).toBe("Saved");
+    } else {
+      await vi.waitFor(() => expect(editor.conflict).toBe(false));
+      await vi.waitFor(() => expect(editor.loading).toBe(false));
+      expect(prepare).toHaveBeenCalled();
+      expect(editor.value("caption")).toBe("Saved");
+      editor.stage({ caption: "Again" });
+      expect(editor.dirty).toBe(true);
+    }
+    editor.dispose();
+  },
+);
+
+it("retries a metadata reconcile that a later list refresh interrupts", async () => {
+  const editor = editorWithTargets();
+  let finish!: () => void;
+  const remote = targets.map((target) => ({
+    ...target,
+    revision: 7,
+    values: { ...target.values, caption: "Remote" },
+  }));
+  const prepare = vi
+    .spyOn(api, "preparePhotoAuthored")
+    .mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => (finish = resolve));
+      return { assets: [asset], targets: remote };
+    })
+    .mockResolvedValue({ assets: [asset], targets: remote });
+  editor.changedElsewhere();
+  const affected = editor.reconcile();
+  await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+  editor.conceal();
+  editor.revalidate(new Set(["asset"]));
+  finish();
+  await affected;
+  await vi.waitFor(() => expect(editor.conflict).toBe(false));
+  expect(prepare).toHaveBeenCalledTimes(2);
+  expect(editor.value("caption")).toBe("Remote");
+  editor.dispose();
+});
+
+it.each(["503", "timeout"])(
+  "keeps metadata blocked after a %s live reload until a successful retry",
+  async (failure) => {
+    const editor = editorWithTargets();
+    const deadline = new AbortController();
+    if (failure === "timeout") vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+    const prepare = vi
+      .spyOn(api, "preparePhotoAuthored")
+      .mockImplementationOnce(async (_scope, options) => {
+        if (failure === "503") throw new APIError("Metadata unavailable", 503, "unavailable");
+        return new Promise((_, reject) =>
+          options!.signal!.addEventListener("abort", () => reject(options!.signal!.reason), {
+            once: true,
+          }),
+        );
+      })
+      .mockResolvedValue({
+        assets: [asset],
+        targets: targets.map((target) => ({
+          ...target,
+          values: { ...target.values, caption: "Remote caption" },
+        })),
+      });
+    editor.changedElsewhere();
+    const refreshing = editor.reconcile();
+    if (failure === "timeout") {
+      await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+      expect(editor.loading).toBe(true);
+      deadline.abort(new DOMException("The operation timed out.", "TimeoutError"));
+    }
+    await refreshing;
+    expect(editor.loading).toBe(false);
+    expect(editor.conflict).toBe(true);
+    ui(editor);
+    const caption = () => screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Caption" });
+    expect(caption().disabled).toBe(true);
+    if (failure === "timeout") expect(editor.error).toBe("Metadata timed out. Reload metadata.");
+    expect(
+      screen.getByRole<HTMLButtonElement>("button", { name: "Reload metadata" }).disabled,
+    ).toBe(false);
+    if (failure === "timeout")
+      vi.mocked(AbortSignal.timeout).mockReturnValue(new AbortController().signal);
+    await fireEvent.click(screen.getByRole("button", { name: "Reload metadata" }));
+    await vi.waitFor(() => expect(caption().value).toBe("Remote caption"));
+    expect(caption().disabled).toBe(false);
+    editor.dispose();
+  },
+);
+
+it("closes clean metadata when a live change removes its only target", async () => {
+  const editor = editorWithTargets();
+  editor.changedElsewhere();
+  editor.conceal();
+  editor.revalidate(new Set());
+  await editor.reconcile();
+  expect(editor.targets).toHaveLength(0);
+  expect(editor.conflict).toBe(false);
   editor.dispose();
 });

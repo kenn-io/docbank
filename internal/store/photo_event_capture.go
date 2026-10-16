@@ -176,7 +176,6 @@ func installPhotoChangeTriggers(ctx context.Context, tx *sql.Tx) error {
 	node := photoEventNodeSelection
 	version := photoEventVersionSelection
 	source := photoEventSourceSelection
-	metadata := photoEventMetadataSelection
 	global := func(_ string) string { return `SELECT 'refetch',''` }
 	rules := []struct {
 		table, key, columns string
@@ -188,11 +187,12 @@ func installPhotoChangeTriggers(ctx context.Context, tx *sql.Tx) error {
 		{"photo_set_members", "set_id", "", func(v string) string { return `SELECT 'album',` + v }},
 		{"nodes", "id", "revision,name,parent_id,current_version_id,trashed_at,created_at,modified_at", node},
 		{"node_tags", "node_id", "", node},
+		{"tags", "id", "name", global},
 		{"provenance", "node_id", "", node},
 		{"extracted_text", "blob_hash", "status,text", source},
 		{"text_searchable_versions", "version_id", "", version},
 		{"source_metadata_heads", "source_sha256", "generation_id", source},
-		{"photo_technical_metadata", "generation_id", "", metadata},
+		{"photo_technical_metadata", "generation_id", "", photoEventMetadataSelection},
 		{"photo_quality_signals", metadataContentVersionIDField, "", version},
 		{"visual_preview_generations", metadataContentVersionIDField, "", version},
 		{"visual_preview_heads", metadataContentVersionIDField, "generation_id", version},
