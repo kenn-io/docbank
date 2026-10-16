@@ -194,6 +194,8 @@ export function photoMetadataResponse(
   url: string,
   init?: RequestInit,
 ): Promise<Response> | undefined {
+  if (/\/photos\/versions\/[^/]+\/faces$/.test(url) && (!init?.method || init.method === "GET"))
+    return Promise.resolve(Response.json({ faces: [], assertions: [] }));
   if (url.endsWith("/photos/authored/prepare")) {
     const scope = JSON.parse(String(init?.body ?? "{}"));
     const ids: string[] = scope.asset_ids ?? [];

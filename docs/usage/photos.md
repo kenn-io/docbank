@@ -754,3 +754,12 @@ Use **Skip** to record a skipped photo. The decision toast offers **Undo**. Ctrl
 **Resume cull** restores the saved pass, position, visited and skipped photos, scope, and auto-advance setting for this vault in this browser. Its captured membership survives snapshot expiry and browser restarts. Each daemon restart gives local `docbank web` a new browser address, so saved progress from the previous address no longer appears; [signing in on a server or container](web.md#sign-in-on-a-server-or-container) keeps one address. Earlier progress stays in browser storage until site data is cleared. Starting another cull asks before replacing saved progress. Storage failures appear when you choose Cull or Resume. If another tab changes the saved progress, close and resume the latest pass. At completion, Docbank checks the captured set once; flag changes or Undo check it again, and **Previous** cancels a check in progress. **Review unflagged remainder** appears when unflagged photos remain anywhere in the captured set, including skipped and never-viewed photos. Missing or newly hidden photos are counted as unavailable. Cull is not offered in Hidden. Runs captured with another sort keep individual frames and their captured order.
 
 Select 2–8 photos and choose **Compare**. Zoom, pan, and arrow-key navigation move the panes together. **Z** toggles 1:1 for each displayed preview. Choose **Manual closeup**, then click a face or draw a region on a full frame. Matching crop tiles appear below the full frames; **Clear closeup** removes them. The closeup uses your chosen location rather than automatic face detection.
+
+### People in photos
+
+Open a photo and choose **Add face**. Drag a box around a face, or focus the photo's face control, position it with the arrow keys, and press Enter. Escape cancels the box.
+
+In the inspector's **People** section, choose a name from the search results or choose **Create person**. Each face has its own name picker. Choose the person's name beside the picker to open Library filtered to that person. Face labels follow the photo through rotation, zoom, and pan.
+
+Cull shows one closeup per face, ordered from largest to smallest. People marked in the whole photo appear first as whole-photo tiles. Closeups use the fit preview and rotate with the photo.
+

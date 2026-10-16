@@ -681,6 +681,13 @@
     }
   }
 
+  function openPersonPhotos(personID: string) {
+    if (retainedPhotoEditor() && !retainedPhotoEditor()!.canChangeTarget()) return;
+    if (!photoState) return;
+    photoState.photos.setQuery({ ...photoState.photos.query, filters: { person_ids: [personID] } });
+    navigatePhotos("/photos");
+  }
+
   function navigatePhotos(path: string) {
     if (
       photoMode &&
@@ -3212,6 +3219,7 @@
         </div>{/if}
       {#if photoMode}
         {#if hiddenMode && hiddenAccess}<HiddenPhotos
+            onperson={openPersonPhotos}
             access={hiddenAccess}
             undoState={photoUndo}
             onhelp={openShortcutHelp}
@@ -3258,6 +3266,7 @@
                 }}
               />{/if}
           {:else if albumID}{#if albumPhotos}{#key albumPhotos}<PhotosWorkspace
+                  onperson={openPersonPhotos}
                   {vaultID}
                   onhelp={openShortcutHelp}
                   tags={tagCatalog}
@@ -3288,6 +3297,7 @@
                 ></EmptyState
               >
             {:else if !tiles.tile_url}<PhotosWorkspace
+                onperson={openPersonPhotos}
                 {vaultID}
                 onhelp={openShortcutHelp}
                 tags={tagCatalog}
@@ -3303,6 +3313,7 @@
                 photos={photoState.photos}
                 cache={photoState.cache}
               />{:else if mapPhotos}{#key mapPhotos}<PhotosWorkspace
+                  onperson={openPersonPhotos}
                   {vaultID}
                   onhelp={openShortcutHelp}
                   tags={tagCatalog}
@@ -3329,6 +3340,7 @@
                   oninvalidate={invalidateLibrary}
                 />{/key}{/if}
           {:else}{#key photoState.photos.contextID}<PhotosWorkspace
+                onperson={openPersonPhotos}
                 {vaultID}
                 onhelp={openShortcutHelp}
                 tags={tagCatalog}

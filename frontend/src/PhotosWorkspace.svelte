@@ -32,6 +32,7 @@
   import { isAppShortcutSuppressed } from "./shortcuts.js";
   import PhotoSmartSet from "./PhotoSmartSet.svelte";
   import PhotoGrid from "./PhotoGrid.svelte";
+  import { PhotoFaces } from "./photoFaces.svelte.js";
   import PhotoInspector from "./PhotoInspector.svelte";
   import type {
     PhotoAuthoredPatch,
@@ -76,6 +77,7 @@
     albums,
     albumID = "",
     onnavigate = () => {},
+    onperson,
     ontrashed,
     onhidden,
     onactionerror,
@@ -107,6 +109,7 @@
     albums?: PhotoAlbums;
     albumID?: string;
     onnavigate?: (path: string) => void;
+    onperson?: (id: string) => void;
     ontrashed?: (source: Photos) => void;
     onhidden?: () => void | Promise<void>;
     onactionerror?: (error: string) => void;
@@ -183,6 +186,36 @@
   }
   const album = $derived(albums?.items.find((item) => item.id === albumID));
   const editor = $derived(photos.authored);
+  const inspectorFaces = untrack(() => new PhotoFaces(photos.session, photos.onauthfailure));
+  $effect(() => {
+    const id =
+      editing && !photoID && !photos.allResults && photos.selectedIDs.size === 1
+        ? [...photos.selectedIDs][0]
+        : undefined;
+    const controller = new AbortController();
+    untrack(() => {
+      void inspectorFaces.load("");
+      const row = photos.items.find((row) => row.asset_id === id);
+      if (row && "content_version_id" in row) {
+        void inspectorFaces.load(row.content_version_id);
+        return;
+      }
+      if (id)
+        void photos
+          .lookup(id, controller.signal)
+          .then((row) => {
+            if (!controller.signal.aborted) void inspectorFaces.load(row.content_version_id);
+          })
+          .catch((cause) => {
+            if (!controller.signal.aborted)
+              inspectorFaces.error = cause instanceof Error ? cause.message : String(cause);
+          });
+    });
+    return () => {
+      controller.abort();
+      inspectorFaces.dispose();
+    };
+  });
   let editing = $state(false);
   let loupeMetadata = $state(false);
   const selectionCount = $derived(photos.selectedIDs.size);
@@ -1282,7 +1315,15 @@
                 </div>{/if}
             </div>
             {#if editing && (editCount || editor.dirty)}<aside class="grid-inspector">
-                <PhotoInspector {editor} {actionDisabled} count={editCount} onedit={edit} />
+                <PhotoInspector
+                  {editor}
+                  {actionDisabled}
+                  count={editCount}
+                  onedit={edit}
+                  faces={inspectorFaces}
+                  session={photos.session}
+                  {onperson}
+                />
               </aside>{/if}
           </div>
           {#if !photoID}
@@ -1410,6 +1451,7 @@
     </div>
   {/if}
   {#if photoID}<PhotoLoupe
+      {onperson}
       bind:metadataOpen={loupeMetadata}
       {editor}
       {actionDisabled}

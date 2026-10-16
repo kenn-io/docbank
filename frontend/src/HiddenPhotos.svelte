@@ -45,6 +45,7 @@
     onstate,
     onaccessfailure,
     onexport,
+    onperson,
   }: {
     tags?: import("./generated/docbank.js").Tag[];
     tagsError?: string;
@@ -58,6 +59,7 @@
     ) => void;
     undoState?: PhotoUndoState;
     onhelp?: () => void;
+    onperson?: (id: string) => void;
     shortcuts?: ShortcutManager;
     photoID?: string;
     onphotochange?: (id: string, mode: "open" | "step" | "close") => void;
@@ -382,6 +384,7 @@
       ><Button size="sm" disabled={actionPending} onclick={() => void action("lock")}>Lock</Button>
     </div>
     {#each [workspace] as current (current)}<PhotosWorkspace
+        {onperson}
         {onhelp}
         {onloadtags}
         {onloadmoretags}

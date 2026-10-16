@@ -2,7 +2,7 @@
   import { devicePixelRatio } from "svelte/reactivity/window";
   import { attachPanZoom, type PanZoom } from "@kenn-io/kit-ui";
   import { photoViewGeometry, toPanView, fromPanView, type PhotoView } from "./photoView.js";
-  import { photoRotationStyle, observePhotoSize } from "./photoRotation.js";
+  import { photoRotationStyle, observePhotoSize, rotatePhotoBox } from "./photoRotation.js";
   let {
     url,
     name,
@@ -15,6 +15,8 @@
     onregion,
     oncancelregion,
     regionMode = false,
+    regionLabel,
+    faces = [],
   }: {
     url: string;
     name: string;
@@ -27,6 +29,8 @@
     onregion?: (value: { x: number; y: number; width: number; height: number }) => void;
     oncancelregion?: () => void;
     regionMode?: boolean;
+    regionLabel?: string;
+    faces?: { id: string; label: string; box: import("./photoRotation.js").NormalizedBox }[];
   } = $props();
   let width = $state(0);
   let height = $state(0);
@@ -176,7 +180,7 @@
   {#if regionMode}<button
       type="button"
       class="region-keyboard"
-      aria-label={`Position closeup on ${name}`}
+      aria-label={regionLabel ?? `Position closeup on ${name}`}
       aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown Enter Escape"
       onkeydown={regionKey}
       onclick={confirmRegion}
@@ -207,10 +211,53 @@
           naturalHeight = (event.currentTarget as HTMLImageElement).naturalHeight;
         }}
       />{:else}<span>{unavailable ? "No preview" : "Loading preview…"}</span>{/if}
+    {#if url && geometry}
+      <div
+        class="face-layer"
+        style:width={`${geometry.width}px`}
+        style:height={`${geometry.height}px`}
+      >
+        {#each faces as face (face.id)}
+          {@const box = rotatePhotoBox(face.box, rotation)}
+          <div
+            class="face-box"
+            style:left={`${box.x * 100}%`}
+            style:top={`${box.y * 100}%`}
+            style:width={`${box.width * 100}%`}
+            style:height={`${box.height * 100}%`}
+          >
+            <span>{face.label}</span>
+          </div>
+        {/each}
+      </div>
+    {/if}
   </div>
 </div>
 
 <style>
+  .face-layer {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+  }
+  .face-box {
+    position: absolute;
+    border: 2px solid var(--border-focus, #ffcc00);
+    box-sizing: border-box;
+  }
+  .face-box span {
+    position: absolute;
+    bottom: 100%;
+    left: -2px;
+    padding: 2px 4px;
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    font-size: var(--font-size-xs);
+    white-space: nowrap;
+  }
+
   .photo-viewport {
     position: relative;
     flex: 1;

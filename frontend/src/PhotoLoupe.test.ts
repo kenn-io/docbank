@@ -6,6 +6,7 @@ import PhotoLoupe from "./PhotoLoupe.svelte";
 import PhotoLoupeImage from "./PhotoLoupeImage.svelte";
 import { Photos } from "./photos.svelte.js";
 import type { PhotoPreviewCache } from "./photoPreviewCache.js";
+import * as api from "./generated/docbank.js";
 import { photo, mapPhoto } from "./photo-test-fixtures.js";
 
 afterEach(() => {
@@ -14,6 +15,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 function setup() {
+  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [], assertions: [] });
   vi.stubGlobal(
     "ResizeObserver",
     class {

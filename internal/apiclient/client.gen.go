@@ -9250,6 +9250,54 @@ func (c *Client) ExcludePhotoAsset(ctx context.Context, options *ExcludePhotoAss
 	return responseParser(ctx, resp)
 }
 
+// ReadPhotoFaceCrop Read a face closeup from the displayed fit preview
+func (c *Client) ReadPhotoFaceCrop(ctx context.Context, options *ReadPhotoFaceCropRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadPhotoFaceCropResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"assertion_id":       {Style: "form", Explode: &[]bool{false}[0]},
+		"content_version_id": {Style: "form", Explode: &[]bool{false}[0]},
+		"face_id":            {Style: "form", Explode: &[]bool{false}[0]},
+		"generation_id":      {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/photos/assets/{asset_id}/face-crop",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReadPhotoFaceCropResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ReadPhotoFaceCropResponse(resp.Content))
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ReadPhotoFaceCropErrorResponse](resp, "ReadPhotoFaceCropErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/assets/{asset_id}/face-crop")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // AttachPhotoFile Attach one node to a photo asset
 func (c *Client) AttachPhotoFile(ctx context.Context, options *AttachPhotoFileRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AttachPhotoFileResponse, error) {
 	var err error
@@ -20540,6 +20588,44 @@ func (o *ExcludePhotoAssetRequestOptions) GetHeader() (map[string]string, error)
 	return headers, err
 }
 
+// ReadPhotoFaceCropRequestOptions is the options needed to make a request to ReadPhotoFaceCrop.
+type ReadPhotoFaceCropRequestOptions struct {
+	PathParams *ReadPhotoFaceCropPath
+	Query      *ReadPhotoFaceCropQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ReadPhotoFaceCropRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ReadPhotoFaceCropRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ReadPhotoFaceCropRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ReadPhotoFaceCropRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // AttachPhotoFileRequestOptions is the options needed to make a request to AttachPhotoFile.
 type AttachPhotoFileRequestOptions struct {
 	PathParams *AttachPhotoFilePath
@@ -24589,6 +24675,10 @@ type ExcludePhotoAssetPath struct {
 	AssetID string `json:"asset_id"`
 }
 
+type ReadPhotoFaceCropPath struct {
+	AssetID string `json:"asset_id"`
+}
+
 type AttachPhotoFilePath struct {
 	AssetID string `json:"asset_id"`
 }
@@ -25340,6 +25430,13 @@ type ListPeopleQuery struct {
 type GetPersonQuery struct {
 	AssertionCursor *uuid.UUID `json:"assertion_cursor,omitempty"`
 	AssertionLimit  *int64     `json:"assertion_limit,omitempty"`
+}
+
+type ReadPhotoFaceCropQuery struct {
+	ContentVersionID uuid.UUID  `json:"content_version_id"`
+	GenerationID     string     `json:"generation_id"`
+	FaceID           *uuid.UUID `json:"face_id,omitempty"`
+	AssertionID      *uuid.UUID `json:"assertion_id,omitempty"`
 }
 
 type DetachPhotoFileQuery struct {
@@ -26300,6 +26397,10 @@ type SetPhotoDisplayErrorResponse = Error
 type ExcludePhotoAssetResponse = api.PhotoAsset
 
 type ExcludePhotoAssetErrorResponse = Error
+
+type ReadPhotoFaceCropResponse = []byte
+
+type ReadPhotoFaceCropErrorResponse = Error
 
 type AttachPhotoFileResponse = api.PhotoAsset
 

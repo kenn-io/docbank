@@ -17,6 +17,8 @@
     Tag,
   } from "./generated/docbank.js";
   import { prefetchPreviews } from "./photoPreview.svelte.js";
+  import PhotoFaceCloseups from "./PhotoFaceCloseups.svelte";
+  import { PhotoFaces } from "./photoFaces.svelte.js";
   import PhotoStage from "./PhotoStage.svelte";
   import PhotoCell from "./PhotoCell.svelte";
   import PhotoCullConfirmation from "./PhotoCullConfirmation.svelte";
@@ -57,6 +59,11 @@
     void focus();
   });
   let photo = $state<PhotoBrowseRow>();
+  const faces = untrack(() => new PhotoFaces(photos.session, photos.onauthfailure));
+  $effect(() => {
+    void faces.load(photo?.content_version_id ?? "");
+    return () => faces.dispose();
+  });
   let error = $state("");
   let loading = $state(false);
   let lookupAttempt = $state(0);
@@ -507,6 +514,7 @@
               </dl>
             </aside>{/if}
         </div>
+        {#if photo}<PhotoFaceCloseups {photo} {faces} {cache} />{/if}
         <div class="controls">
           {#if cull.currentStack}
             <Button

@@ -299,3 +299,61 @@ func photoAssertionCount(ctx context.Context, q metadataQuerier, versionID, exis
 	err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_document_assertions a WHERE a.content_version_id=? AND a.role='depicted' AND a.assertion_id<>? AND (a.action<>'withdrawn' OR EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=a.assertion_id))`, versionID, existingAssertionID).Scan(&count)
 	return count, err
 }
+
+// PhotoFacePersonNames resolves the distinct people in a bounded face page.
+func (s *Store) PhotoFacePersonNames(ctx context.Context, assertions []PersonDocumentAssertion) (map[string]string, error) {
+	if len(assertions) > document.MaxPhotoRecordsPerVersion {
+		return nil, ErrInvalidPhotoFace
+	}
+	ids := make([]string, 0, len(assertions))
+	for _, assertion := range assertions {
+		ids = append(ids, assertion.PersonID)
+	}
+	raw, err := stringListJSON(ids)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT person_id,display_name FROM persons WHERE person_id IN (SELECT value FROM json_each(?))`, raw)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	names := make(map[string]string)
+	for rows.Next() {
+		var id, name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, err
+		}
+		names[id] = name
+	}
+	return names, rows.Err()
+}
+
+// PhotoFaceCrop binds one face or whole-photo assertion to the displayed preview.
+func (s *Store) PhotoFaceCrop(ctx context.Context, assetID, versionID, generationID, recipe, faceID, assertionID string) (VisualPreviewView, *document.FaceBox, error) {
+	if (faceID == "") == (assertionID == "") {
+		return VisualPreviewView{}, nil, ErrInvalidPhotoFace
+	}
+	view, err := s.PhotoVisualPreviewByGeneration(ctx, assetID, generationID)
+	if err != nil {
+		return view, nil, err
+	}
+	if view.Version.ID != versionID || view.Generation.RecipeFingerprint != recipe {
+		return view, nil, ErrNotFound
+	}
+	faces, assertions, err := s.PhotoFaces(ctx, versionID)
+	if err != nil {
+		return view, nil, err
+	}
+	for _, face := range faces {
+		if face.FaceID == faceID {
+			return view, &face.Box, nil
+		}
+	}
+	for _, assertion := range assertions {
+		if assertion.AssertionID == assertionID && assertion.PhotoMark && assertion.Action == "assert" {
+			return view, nil, nil
+		}
+	}
+	return view, nil, ErrNotFound
+}

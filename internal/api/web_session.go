@@ -271,6 +271,9 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	if r.URL.Path == "/api/v1/photos/stacks/group" {
 		return r.Method == http.MethodPost && r.URL.RawQuery == ""
 	}
+	if photoFaceBrowserRequestAllowed(r) {
+		return true
+	}
 	if photoAuthoredBrowserRequestAllowed(r) {
 		return true
 	}
@@ -694,4 +697,51 @@ func validPhotoPreviewPath(assetID, generationID string) bool {
 	}
 	_, err := hex.DecodeString(generationID)
 	return err == nil && strings.ToLower(generationID) == generationID
+}
+
+func photoFaceBrowserRequestAllowed(r *http.Request) bool {
+	if r.URL.Path == "/api/v1/people" {
+		if r.Method == http.MethodPost {
+			return r.URL.RawQuery == ""
+		}
+		if r.Method != http.MethodGet {
+			return false
+		}
+		values, err := url.ParseQuery(r.URL.RawQuery)
+		if err != nil {
+			return false
+		}
+		for key, entries := range values {
+			if (key != "query" && key != "limit" && key != "cursor") || len(entries) != 1 {
+				return false
+			}
+		}
+		return true
+	}
+	if after, ok := strings.CutPrefix(r.URL.Path, "/api/v1/photos/versions/"); ok {
+		parts := strings.Split(after, "/")
+		if len(parts) != 2 || query.ValidateTextOperand("asset", parts[0]) != nil || r.URL.RawQuery != "" {
+			return false
+		}
+		return parts[1] == "faces" && (r.Method == http.MethodGet || r.Method == http.MethodPost) || parts[1] == "face-decisions" && r.Method == http.MethodPost
+	}
+	if after, ok := strings.CutPrefix(r.URL.Path, "/api/v1/photos/assets/"); ok {
+		parts := strings.Split(after, "/")
+		if len(parts) != 2 || parts[1] != "face-crop" || r.Method != http.MethodGet || query.ValidateTextOperand("asset", parts[0]) != nil {
+			return false
+		}
+		values, err := url.ParseQuery(r.URL.RawQuery)
+		if err != nil || len(values) != 3 || len(values["content_version_id"]) != 1 || len(values["generation_id"]) != 1 {
+			return false
+		}
+		if query.ValidateTextOperand("asset", values.Get("content_version_id")) != nil || !validPhotoPreviewPath(parts[0], values.Get("generation_id")) {
+			return false
+		}
+		for _, key := range []string{"face_id", "assertion_id"} {
+			if len(values[key]) == 1 && query.ValidateTextOperand("asset", values.Get(key)) == nil {
+				return true
+			}
+		}
+	}
+	return false
 }

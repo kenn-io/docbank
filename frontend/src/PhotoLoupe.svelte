@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick, untrack } from "svelte";
+  import { tick, untrack, onDestroy } from "svelte";
   import { Button, IconButton, Spinner, trapFocus, Notice } from "@kenn-io/kit-ui";
   import X from "@lucide/svelte/icons/x";
   import ChevronLeft from "@lucide/svelte/icons/chevron-left";
@@ -20,12 +20,16 @@
   import { PhotoPreviewLoader, prefetchPreviews } from "./photoPreview.svelte.js";
   import PhotoLoupeImage from "./PhotoLoupeImage.svelte";
 
+  import { PhotoFaces } from "./photoFaces.svelte.js";
+  import { drawnPhotoFace } from "./photoRotation.js";
+
   let {
     metadataOpen = $bindable(false),
     editor,
     actionDisabled = false,
     onedit,
     onundo,
+    onperson,
     photo,
     error,
     note = "",
@@ -46,6 +50,7 @@
     actionDisabled?: boolean;
     onedit?: (patch: PhotoAuthoredPatch, keywords?: PhotoKeywordEdit[]) => void;
     onundo?: () => void;
+    onperson?: (id: string) => void;
     photo?: PhotoBrowseRow;
     error: string;
     note?: string;
@@ -63,6 +68,15 @@
   } = $props();
   let loader = $state.raw<PhotoPreviewLoader>(untrack(() => new PhotoPreviewLoader(photos, cache)));
   const unavailable = $derived(!loader.retrying && !!(error || loader.failure));
+  const faces = untrack(() => new PhotoFaces(photos.session, photos.onauthfailure));
+  let addingFace = $state(false);
+  $effect(() => {
+    const version = photo?.content_version_id ?? "";
+    addingFace = false;
+    void faces.load(version);
+    return () => faces.dispose();
+  });
+  onDestroy(() => faces.dispose());
   let busy = $state(false);
   let image = $state<PhotoLoupeImage>();
   let dialog = $state<HTMLDivElement>();
@@ -203,6 +217,11 @@
       onclick={original}
       >{#if busy}<Spinner size={14} />{/if}View original</Button
     >
+    <Button
+      size="sm"
+      disabled={!photo || faces.loading || faces.busy}
+      onclick={() => (addingFace = !addingFace)}>{addingFace ? "Cancel face" : "Add face"}</Button
+    >
     <IconButton ariaLabel="Reset zoom" onclick={() => image?.reset()}
       ><RotateCcw size={18} /></IconButton
     >
@@ -238,6 +257,7 @@
           onclick={retry}>Retry preview</Button
         >{/if}
     </div>{/if}
+  {#if faces.error}<Notice tone="error" message={faces.error} />{/if}
   {#if editor?.error}<Notice tone="error" message={editor.error} />{/if}
   {#if editor?.receiptID}<Notice
       tone="success"
@@ -255,6 +275,19 @@
       </div>
       {#key identity}<PhotoLoupeImage
           rotation={photo?.rotation ?? 0}
+          faces={faces.faces.map((face) => ({
+            id: face.face_id,
+            box: face.box,
+            label: faces.label(face),
+          }))}
+          regionMode={addingFace}
+          regionLabel={`Position face on ${photo?.name ?? "Photo"}`}
+          oncancelregion={() => (addingFace = false)}
+          onregion={(region) => {
+            void faces.add(drawnPhotoFace(region, photo?.rotation ?? 0)).then((saved) => {
+              if (saved) addingFace = false;
+            });
+          }}
           bind:this={image}
           url={loader.url}
           {unavailable}
@@ -274,7 +307,14 @@
         >{/if}
     </div>
     {#if metadataOpen}<aside class="photo-info" aria-label="Photo details">
-        {#if editor && onedit}<PhotoInspector {editor} {actionDisabled} {onedit} />{/if}
+        {#if editor && onedit}<PhotoInspector
+            {editor}
+            {actionDisabled}
+            {onedit}
+            {faces}
+            session={photos.session}
+            {onperson}
+          />{/if}
         <h2>Photo details</h2>
         <dl>
           {#each facts as [label, value]}<dt>{label}</dt>

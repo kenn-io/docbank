@@ -3,13 +3,21 @@
   import TagPicker from "./TagPicker.svelte";
   import type { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
   import type { PhotoAuthoredPatch, PhotoKeywordEdit } from "./generated/docbank.js";
+  import PhotoPeople from "./PhotoPeople.svelte";
+  import type { PhotoFaces } from "./photoFaces.svelte.js";
   let {
     editor,
+    faces,
+    session = "",
+    onperson,
     count = 1,
     actionDisabled = false,
     onedit,
   }: {
     editor: PhotoAuthoredEditor;
+    faces?: PhotoFaces;
+    session?: string;
+    onperson?: (id: string) => void;
     count?: number;
     actionDisabled?: boolean;
     onedit: (patch: PhotoAuthoredPatch, keywords?: PhotoKeywordEdit[]) => void;
@@ -185,6 +193,7 @@
       disabled={editor.busy || editor.loading}
       onclick={() => editor.clearDraft()}>Clear edits</Button
     >{/if}
+  {#if count === 1 && faces}<PhotoPeople {faces} {session} {onperson} />{/if}
 </section>
 
 <style>

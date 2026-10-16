@@ -1365,6 +1365,7 @@ it.each(["edit", "Undo"] as const)(
     });
     const before = preparedPhoto(1, { file_id: "file-1" });
     const mapped = workspaceWithPreparedPhoto(before, "map");
+    vi.spyOn(mapped, "lookup").mockResolvedValue(photo(1));
     const fetcher = vi.fn(async () =>
       Response.json({ map_items: [{ ...mapPhoto(1), rotation: 90 }], total: 1 }),
     );
