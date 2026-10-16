@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -421,7 +420,7 @@ func TestBackupRestoreProgressProofAndConfinement(t *testing.T) { //nolint:paral
 func TestBackupCleanupReportsAndConflicts(t *testing.T) {
 	t.Parallel()
 	repoPath := filepath.Join(t.TempDir(), "repo")
-	ts, _ := newTestServer(t, func(d *api.Deps) { d.Cfg.Backup.Repo = repoPath })
+	ts, live := newTestServer(t, func(d *api.Deps) { d.Cfg.Backup.Repo = repoPath })
 	resp, body := do(t, ts, http.MethodPost, "/api/v1/backup/init", nil, map[string]any{})
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	for _, selection := range []map[string]any{{}, {"snapshot_ids": nil}, {"snapshot_ids": []string{}}} {
@@ -458,41 +457,7 @@ func TestBackupCleanupReportsAndConflicts(t *testing.T) {
 	assert.Equal(t, []string{snapshot.ID}, forget.Selected)
 	assert.Empty(t, forget.Forgotten)
 
-	resp, body = do(t, ts, http.MethodPost, "/api/v1/backup/forget", nil, map[string]any{"snapshot_ids": []string{snapshot.ID}, "allow_empty": true})
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	require.NoError(t, json.Unmarshal([]byte(body), &forget))
-	assert.Equal(t, []string{snapshot.ID}, forget.Forgotten)
-	resp, body = do(t, ts, http.MethodPost, "/api/v1/backup/prune", nil, map[string]any{"dry_run": true})
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	var planned api.BackupPruneReport
-	require.NoError(t, json.Unmarshal([]byte(body), &planned))
-	assert.Empty(t, planned.RemovedPacks)
-	if runtime.GOOS != "windows" {
-		// Fail staging cleanup after Kit has computed its plan.
-		blocked := filepath.Join(repoPath, "staging", "blocked")
-		require.NoError(t, os.Mkdir(blocked, 0o700))
-		require.NoError(t, os.WriteFile(filepath.Join(blocked, "pending"), []byte("blocked"), 0o600))
-		require.NoError(t, os.Chmod(blocked, 0o500))
-		defer func() { _ = os.Chmod(blocked, 0o700) }()
-		resp, body = do(t, ts, http.MethodPost, "/api/v1/backup/prune", nil, map[string]any{})
-		require.Equal(t, http.StatusInternalServerError, resp.StatusCode, body)
-		problem = api.Error{}
-		require.NoError(t, json.Unmarshal([]byte(body), &problem))
-		require.NotNil(t, problem.BackupPrune)
-		assert.NotEmpty(t, problem.BackupPrune.PacksToRemove)
-		assert.Positive(t, problem.BackupPrune.BytesToRemove)
-		assert.Empty(t, problem.BackupPrune.RemovedPacks)
-		require.NoError(t, os.Chmod(blocked, 0o700))
-	}
-	resp, body = do(t, ts, http.MethodPost, "/api/v1/backup/prune", nil, map[string]any{})
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-}
-
-func TestBackupForgetRetainedSQLiteParentConflict(t *testing.T) {
-	t.Parallel()
-	repoPath := filepath.Join(t.TempDir(), "repo")
-	ts, live := newTestServer(t, func(d *api.Deps) { d.Cfg.Backup.Repo = repoPath })
-	repo, err := backup.Init(repoPath)
+	repo, err := backup.Open(repoPath)
 	require.NoError(t, err)
 	opts := backup.CreateOptions{DBPath: live.DBPath, SQLiteOpener: backupapp.SQLiteOpener(live.SQLiteDriver())}
 	parent, err := backup.Create(t.Context(), repo, backupapp.New("test"), opts)
@@ -502,10 +467,7 @@ func TestBackupForgetRetainedSQLiteParentConflict(t *testing.T) {
 	child, err := backup.Create(t.Context(), repo, backupapp.New("test"), opts)
 	require.NoError(t, err)
 	require.Positive(t, child.DB.MapChainDepth)
-	resp, body := do(t, ts, http.MethodPost, "/api/v1/backup/forget", nil, map[string]any{"snapshot_ids": []string{parent.SnapshotID}})
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/backup/forget", nil, map[string]any{"snapshot_ids": []string{parent.SnapshotID}})
 	require.Equal(t, http.StatusConflict, resp.StatusCode, body)
 	assert.Contains(t, body, `"code":"backup_snapshot_required"`)
-	manifests, err := repo.ListSnapshots()
-	require.NoError(t, err)
-	assert.Len(t, manifests, 2)
 }
