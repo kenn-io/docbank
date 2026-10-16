@@ -2347,14 +2347,17 @@ func searchFilterSQL(opts SearchOptions) (string, []any) {
 		args = append(args, opts.MIMEType)
 	}
 	if opts.UnderNodeID != 0 {
-		clauses = append(clauses, `AND n.id IN (
-			WITH RECURSIVE descendants(id) AS (
-				SELECT id FROM nodes WHERE parent_id=?
+		// Only directories can parent a result. Keep files out of the recursive
+		// scope and match the immediate parent, so the scope itself stays excluded.
+		clauses = append(clauses, `AND n.parent_id IN (
+			WITH RECURSIVE directories(id) AS (
+				SELECT ?
 				UNION ALL
 				SELECT child.id FROM nodes child
-				JOIN descendants parent ON child.parent_id=parent.id
+				JOIN directories parent ON child.parent_id=parent.id
+				WHERE child.kind='dir'
 			)
-			SELECT id FROM descendants
+			SELECT id FROM directories
 		)`)
 		args = append(args, opts.UnderNodeID)
 	}

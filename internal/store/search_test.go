@@ -1136,6 +1136,64 @@ func TestSearchPageFiltersDescendantsByStableDirectory(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
+func TestSearchContentScopeFollowsMovedDirectories(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	scope, err := s.Mkdir(ctx, s.RootID(), "scope")
+	require.NoError(t, err)
+	branch, err := s.Mkdir(ctx, scope.ID, "branch")
+	require.NoError(t, err)
+	deep, err := s.Mkdir(ctx, branch.ID, "deep")
+	require.NoError(t, err)
+	file, err := s.CreateFile(ctx, deep.ID, "notes.txt", fakeHash("a1"), 4, "text/plain")
+	require.NoError(t, err)
+	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
+		BlobHash: file.BlobHash, Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionOK, Text: "quarterly notes",
+	}))
+	requested := []SearchCandidateIdentity{{NodeID: file.ID, ContentVersionID: file.CurrentVersionID,
+		Evidence: []SearchEvidenceIdentity{{Kind: "content_blob", BlobHash: file.BlobHash}}}}
+	opts := SearchOptions{UnderNodeID: scope.ID}
+	branch, err = s.NodeByID(ctx, branch.ID)
+	require.NoError(t, err)
+	for _, step := range []struct {
+		parent int64
+		path   string
+	}{
+		{scope.ID, "/scope/branch/deep/notes.txt"},
+		{s.RootID(), ""},
+		{scope.ID, "/scope/branch/deep/notes.txt"},
+	} {
+		branch, _, err = s.Move(ctx, branch.ID, step.parent, "branch", branch.Revision)
+		require.NoError(t, err)
+		hits, truncated, err := s.SearchPageWithOptions(ctx, "quarterly", 10, opts)
+		require.NoError(t, err)
+		require.False(t, truncated)
+		explained, truncated, err := s.SearchExplainedLexicalCandidates(ctx, "quarterly", 10, opts, false)
+		require.NoError(t, err)
+		require.False(t, truncated)
+		current, err := s.RevalidateSearchCandidates(ctx, requested, opts, "", "")
+		require.NoError(t, err)
+		if step.path == "" {
+			require.Empty(t, hits)
+			require.Empty(t, explained)
+			require.Empty(t, current.Candidates)
+			continue
+		}
+		require.Len(t, hits, 1)
+		require.Equal(t, file.ID, hits[0].Node.ID)
+		require.Equal(t, SearchMatchContent, hits[0].Match)
+		require.Equal(t, step.path, hits[0].Path)
+		require.Len(t, explained, 1)
+		require.Equal(t, file.ID, explained[0].Node.ID)
+		require.Equal(t, step.path, explained[0].Path)
+		require.Len(t, current.Candidates, 1)
+		require.Equal(t, file.ID, current.Candidates[0].NodeID)
+		require.Equal(t, step.path, current.Candidates[0].Path)
+	}
+}
+
 func TestSearchPageFiltersByModificationTime(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

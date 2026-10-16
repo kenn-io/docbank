@@ -150,3 +150,57 @@ func BenchmarkDuplicatePageHTTP(b *testing.B) {
 		})
 	}
 }
+
+// Include HTTP decoding and compare selective and broad queries in the same scope.
+func BenchmarkScopedSearchHTTP(b *testing.B) {
+	for _, files := range []int{100, 10000} {
+		for _, depth := range []int{0, 16} {
+			b.Run(fmt.Sprintf("files=%d/depth=%d", files, depth), func(b *testing.B) {
+				ts, s := newTestServer(b, func(d *api.Deps) { d.Logger = slog.New(slog.DiscardHandler) })
+				ctx := b.Context()
+				scope, err := s.MkdirAll(ctx, "/scope")
+				require.NoError(b, err)
+				prefix := "/scope" + strings.Repeat("/folder", depth)
+				parent, err := s.MkdirAll(ctx, prefix)
+				require.NoError(b, err)
+				for i := range files {
+					name := fmt.Sprintf("report-%05d.bin", i)
+					if i < 5 {
+						name = "needle-" + name
+					}
+					_, err := s.CreateFile(ctx, parent.ID, name, fmt.Sprintf("%064x", i+1),
+						1024, "application/octet-stream")
+					require.NoError(b, err)
+				}
+				_, err = s.CreateFile(ctx, s.RootID(), "needle-report-outside.bin",
+					fmt.Sprintf("%064x", files+1), 1024, "application/octet-stream")
+				require.NoError(b, err)
+				for _, query := range []string{"needle", "report"} {
+					b.Run(query, func(b *testing.B) {
+						endpoint := fmt.Sprintf("%s/api/v1/search?q=%s&under_node_id=%d&limit=50", ts.URL, query, scope.ID)
+						count, start, namePrefix := 50, 5, ""
+						if query == "needle" {
+							count, start, namePrefix = 5, 0, "needle-"
+						}
+						b.ReportAllocs()
+						for b.Loop() {
+							response, err := ts.Client().Get(endpoint)
+							require.NoError(b, err)
+							var report api.SearchReport
+							decodeErr := json.UnmarshalRead(response.Body, &report)
+							closeErr := response.Body.Close()
+							require.NoError(b, decodeErr)
+							require.NoError(b, closeErr)
+							require.Equal(b, http.StatusOK, response.StatusCode)
+							require.Equal(b, query == "report", report.Truncated)
+							require.Len(b, report.Hits, count)
+							for i, hit := range report.Hits {
+								require.Equal(b, prefix+"/"+namePrefix+fmt.Sprintf("report-%05d.bin", start+i), hit.Path)
+							}
+						}
+					})
+				}
+			})
+		}
+	}
+}
