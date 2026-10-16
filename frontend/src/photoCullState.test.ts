@@ -65,19 +65,25 @@ async function snapshot(ids: string[]) {
     })),
   );
 }
-it("captures the entire ordered photo snapshot and resumes without reading the snapshot again", async () => {
-  const rows = [photo(3), photo(1), photo(2)];
+it("captures the entire ordered photo snapshot from its frozen flags and resumes without reading it again", async () => {
+  const rows = [
+    photo(3),
+    photo(1),
+    photo(2),
+    ...Array.from({ length: 248 }, (_, i) => photo(i + 4)),
+  ];
+  const full = await snapshot(rows.map((row) => row.asset_id));
+  full.rows[1]!.flag = "pick";
+  full.rows[250]!.flag = "reject";
+  const first = { ...full, rows: full.rows.slice(0, 250), next_cursor: "next-page" };
+  const last = { ...full, rows: full.rows.slice(250), previous_cursor: "first-page" };
   const capture = vi
     .spyOn(api, "createWorkspaceQuery")
-    .mockResolvedValue(
-      new Response(JSON.stringify(await snapshot(rows.map((row) => row.asset_id)))),
-    );
-  vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
-    items: rows,
-    total: 3,
-    facets: [],
-    relevance_available: false,
-  });
+    .mockResolvedValue(new Response(JSON.stringify(first)));
+  const next = vi
+    .spyOn(api, "readWorkspaceQueryPage")
+    .mockResolvedValue(new Response(JSON.stringify(last)));
+  const list = vi.spyOn(api, "listPhotoAssets");
   const store = storage(),
     cull = new PhotoCull("session", store);
   expect(await cull.start(query), cull.error).toBe(true);
@@ -86,21 +92,28 @@ it("captures the entire ordered photo snapshot and resumes without reading the s
     query: { sort: { field: "name", direction: "desc" } },
     page_size: 250,
   });
-  expect(cull.run?.ids).toEqual([rows[0]!.asset_id, rows[1]!.asset_id, rows[2]!.asset_id]);
+  expect(next.mock.calls[0]?.slice(0, 2)).toEqual(["c".repeat(32), { cursor: "next-page" }]);
+  expect(cull.run?.ids).toEqual(rows.map((row) => row.asset_id));
+  const flagged = new Set([rows[1]!.asset_id, rows[250]!.asset_id]);
+  expect(cull.run?.checkpoint.pass).toEqual(
+    rows.map((row) => row.asset_id).filter((id) => !flagged.has(id)),
+  );
+  expect(store.replace).toHaveBeenCalledOnce();
+  expect(list).not.toHaveBeenCalled();
   cull.skip();
   cull.toggleAutoAdvance();
   await cull.flush();
   const resumed = new PhotoCull("new-session", store);
   await resumed.restore();
-  expect(resumed.currentID).toBe(rows[1]!.asset_id);
+  expect(resumed.currentID).toBe(rows[2]!.asset_id);
   expect(resumed.run?.checkpoint).toMatchObject({
     skipped: [rows[0]!.asset_id],
-    visited: [rows[0]!.asset_id, rows[1]!.asset_id],
+    visited: [rows[0]!.asset_id, rows[2]!.asset_id],
     autoAdvance: false,
   });
   expect(capture).toHaveBeenCalledTimes(1);
 });
-it("keeps decisions in the pass and refreshes scope from display flags, regardless of rating", async () => {
+it("keeps decisions in the pass and refreshes scope from display flags, regardless of rating or declined scope changes", async () => {
   const rows = [photo(1), photo(2), photo(3)];
   rows[0]!.rating = 5;
   vi.spyOn(api, "createWorkspaceQuery").mockResolvedValue(
@@ -118,6 +131,10 @@ it("keeps decisions in the pass and refreshes scope from display flags, regardle
   rows[1]!.flag = "reject";
   expect(cull.run?.checkpoint.pass).toEqual(rows.map((row) => row.asset_id));
   cull.move(1);
+  await cull.flush();
+  const before = structuredClone(cull.run);
+  await cull.nextPass(false, () => false);
+  expect(cull.run).toEqual(before);
   cull.skip();
   cull.move(1);
   expect(cull.complete).toBe(true);
@@ -127,6 +144,16 @@ it("keeps decisions in the pass and refreshes scope from display flags, regardle
   expect(cull.run?.checkpoint.scope).toBe("picks");
   expect(cull.run?.checkpoint.pass).toEqual([rows[0]!.asset_id]);
   expect(flags.mock.calls[0][0].query.filters?.asset_ids).toEqual(rows.map((row) => row.asset_id));
+  cull.move(1);
+  await cull.flush();
+  await cull.checkRemainder();
+  expect(cull.remainder).toBe(true);
+  await cull.nextPass(true);
+  expect(cull.run?.checkpoint.pass).toEqual([rows[2]!.asset_id]);
+  rows[2]!.flag = "pick";
+  cull.move(1);
+  await cull.checkRemainder();
+  expect(cull.remainder).toBe(false);
 });
 it("keeps the previous durable run after cancellation, capture failure or failed replacement", async () => {
   const row = photo(1),
@@ -135,15 +162,11 @@ it("keeps the previous durable run after cancellation, capture failure or failed
   const capture = vi
     .spyOn(api, "createWorkspaceQuery")
     .mockResolvedValue(new Response(JSON.stringify(await snapshot([row.asset_id]))));
-  vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
-    items: [row],
-    total: 1,
-    facets: [],
-    relevance_available: false,
-  });
   await cull.start(query);
   await cull.flush();
   const original = structuredClone(cull.run);
+  expect(await cull.start(query, () => false)).toBe(false);
+  expect(await store.load()).toEqual(original);
   capture.mockImplementationOnce(async (_request, options) => {
     cull.cancel();
     options?.signal?.throwIfAborted();
@@ -158,17 +181,6 @@ it("keeps the previous durable run after cancellation, capture failure or failed
   vi.mocked(store.replace).mockRejectedValueOnce(new Error("Storage full"));
   expect(await cull.start(query, () => true)).toBe(false);
   expect(await store.load()).toEqual(original);
-});
-it("starts from frozen flags without another query and reports capture progress", async () => {
-  const rows = [photo(1), photo(2)];
-  const receipt = await snapshot(rows.map((row) => row.asset_id));
-  receipt.rows[0]!.flag = "pick";
-  vi.spyOn(api, "createWorkspaceQuery").mockResolvedValue(new Response(JSON.stringify(receipt)));
-  const list = vi.spyOn(api, "listPhotoAssets");
-  const cull = new PhotoCull("session", storage());
-  expect(await cull.start(query), cull.error).toBe(true);
-  expect(cull.run?.checkpoint.pass).toEqual([rows[1]!.asset_id]);
-  expect(list).not.toHaveBeenCalled();
 });
 it("ignores auto-advance and unavailable updates while a scope change reads flags", async () => {
   const rows = [photo(1), photo(2)],
@@ -274,18 +286,12 @@ it("keeps per-photo marker work independent of how many photos were already mark
     "missing-2",
   ]);
 });
-it("reports checkpoint failures and preserves navigation within the live pass", async () => {
+it("reports checkpoint failures and freezes navigation after a failed save", async () => {
   const rows = [photo(1), photo(2)],
     store = storage();
   vi.spyOn(api, "createWorkspaceQuery").mockResolvedValue(
     new Response(JSON.stringify(await snapshot(rows.map((row) => row.asset_id)))),
   );
-  vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
-    items: rows,
-    total: 2,
-    facets: [],
-    relevance_available: false,
-  });
   const cull = new PhotoCull("session", store);
   await cull.start(query);
   await cull.flush();
@@ -298,69 +304,6 @@ it("reports checkpoint failures and preserves navigation within the live pass", 
   expect(cull.currentID).toBe(rows[1]!.asset_id);
 });
 
-it("captures later snapshot pages before publishing a run", async () => {
-  const rows = Array.from({ length: 251 }, (_, i) => photo(i + 1));
-  const full = await snapshot(rows.map((row) => row.asset_id));
-  full.rows[250]!.flag = "reject";
-  const first = { ...full, rows: full.rows.slice(0, 250), next_cursor: "next-page" };
-  const last = { ...full, rows: full.rows.slice(250), previous_cursor: "first-page" };
-  vi.spyOn(api, "createWorkspaceQuery").mockResolvedValue(new Response(JSON.stringify(first)));
-  const next = vi
-    .spyOn(api, "readWorkspaceQueryPage")
-    .mockResolvedValue(new Response(JSON.stringify(last)));
-  vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) => ({
-    items: rows.filter((row) => request.query.filters?.asset_ids?.includes(row.asset_id)),
-    total: 0,
-    facets: [],
-    relevance_available: false,
-  }));
-  const store = storage(),
-    cull = new PhotoCull("session", store);
-  expect(await cull.start(query), cull.error).toBe(true);
-  expect(cull.run?.checkpoint.pass).toHaveLength(250);
-  expect(cull.run?.checkpoint.pass).not.toContain(rows[250]!.asset_id);
-  expect(next.mock.calls[0]?.slice(0, 2)).toEqual(["c".repeat(32), { cursor: "next-page" }]);
-  expect(cull.run?.ids[250]).toBe("00000000-0000-4000-8000-000000000251");
-  expect(store.replace).toHaveBeenCalledOnce();
-});
-
-it("finds unflagged photos outside a picks pass and preserves progress when scope or replacement is canceled", async () => {
-  const rows = [photo(1), photo(2), photo(3)];
-  vi.spyOn(api, "createWorkspaceQuery").mockResolvedValue(
-    new Response(JSON.stringify(await snapshot(rows.map((row) => row.asset_id)))),
-  );
-  vi.spyOn(api, "listPhotoAssets").mockImplementation(async () => ({
-    items: rows,
-    total: 3,
-    facets: [],
-    relevance_available: false,
-  }));
-  const store = storage(),
-    cull = new PhotoCull("session", store);
-  await cull.start(query);
-  await cull.flush();
-  cull.move(1);
-  await cull.flush();
-  const before = structuredClone(cull.run);
-  await cull.nextPass(false, () => false);
-  expect(cull.run).toEqual(before);
-  expect(await cull.start(query, () => false)).toBe(false);
-  expect(await store.load()).toEqual(before);
-  rows[0]!.flag = "pick";
-  rows[1]!.flag = "reject";
-  await cull.nextPass(false, () => true);
-  expect(cull.run?.checkpoint.pass).toEqual([rows[0]!.asset_id]);
-  cull.move(1);
-  await cull.flush();
-  await cull.checkRemainder();
-  expect(cull.remainder).toBe(true);
-  await cull.nextPass(true);
-  expect(cull.run?.checkpoint.pass).toEqual([rows[2]!.asset_id]);
-  rows[2]!.flag = "pick";
-  cull.move(1);
-  await cull.checkRemainder();
-  expect(cull.remainder).toBe(false);
-});
 it("keeps automatic storage probes quiet and reports explicit failures", async () => {
   const store = storage();
   vi.mocked(store.load).mockRejectedValue(new Error("Storage unavailable"));

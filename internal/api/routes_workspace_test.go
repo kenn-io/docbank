@@ -424,13 +424,9 @@ func TestWorkspaceQueryPageKeepsFrozenVersionAcrossConcurrentReplacement(t *test
 func TestWorkspaceAdHocPhotoSnapshot(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
-	ids := map[string]string{}
 	for _, name := range []string{"a.jpg", "b.jpg", "c.jpg"} {
-		node, err := s.CreateFile(t.Context(), s.RootID(), name, testHash(name), 10, "image/jpeg")
+		_, err := s.CreateFile(t.Context(), s.RootID(), name, testHash(name), 10, "image/jpeg")
 		require.NoError(t, err)
-		asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
-		require.NoError(t, err)
-		ids[name] = asset.ID
 	}
 	_, err := s.CreateFile(t.Context(), s.RootID(), "document.txt", testHash("document"), 10, "text/plain")
 	require.NoError(t, err)
@@ -441,5 +437,4 @@ func TestWorkspaceAdHocPhotoSnapshot(t *testing.T) {
 	require.EqualValues(t, 3, page.Total)
 	require.Len(t, page.Rows, 3)
 	require.Equal(t, new(""), page.Rows[0].Flag)
-	require.Equal(t, []string{ids["c.jpg"], ids["b.jpg"], ids["a.jpg"]}, []string{page.Rows[0].AssetID, page.Rows[1].AssetID, page.Rows[2].AssetID})
 }

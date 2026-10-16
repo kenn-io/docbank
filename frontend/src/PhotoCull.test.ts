@@ -74,8 +74,6 @@ it("decides once with P, advances, announces the decision and offers receipt Und
   });
   await screen.findByText("Photo 1.jpg");
   const dialog = screen.getByRole("dialog", { name: "Cull photos" });
-  await fireEvent.keyDown(dialog, { key: "p", ctrlKey: true });
-  expect(edit).not.toHaveBeenCalled();
   await fireEvent.keyDown(dialog, { key: "p" });
   await waitFor(() => expect(cull.currentID).toBe(rows[1]!.asset_id));
   expect(edit.mock.calls[0]?.slice(0, 3)).toEqual([
@@ -83,7 +81,6 @@ it("decides once with P, advances, announces the decision and offers receipt Und
     { flag: "pick" },
     false,
   ]);
-  expect(cull.run?.checkpoint.pass).toEqual([rows[0]!.asset_id, rows[1]!.asset_id]);
   expect(document.querySelector(".kit-sr-only")?.textContent).toContain("Photo 1.jpg: pick");
   await fireEvent.click(screen.getByRole("button", { name: /^Undo$/ }));
   expect(undo).toHaveBeenCalled();

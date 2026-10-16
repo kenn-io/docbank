@@ -56,10 +56,11 @@ const savedSmartSet = async (revision = 1, id = "00000000-0000-4000-8000-0000000
 const savedSmartSetResponse = (saved: { revision: number }) =>
   Response.json(saved, { headers: { ETag: `"${saved.revision}"` } });
 
-it("moves compare backward locally after its next page fails", async () => {
+it("moves compare backward locally after its next page fails, then retries that page", async () => {
   const fetcher = vi
     .fn()
-    .mockResolvedValue(Response.json({ detail: "Unavailable" }, { status: 503 }));
+    .mockResolvedValueOnce(Response.json({ detail: "Unavailable" }, { status: 503 }))
+    .mockResolvedValue(Response.json({ items: [photo(4)], total: 4 }));
   stubPhotoFetch(fetcher);
   const photos = new Photos("scoped", vi.fn());
   photos.items = [photo(1), photo(2), photo(3)];
@@ -72,6 +73,12 @@ it("moves compare backward locally after its next page fails", async () => {
     ids: ["photo-1", "photo-2"],
   });
   expect(fetcher).toHaveBeenCalledOnce();
+  expect(await photos.moveGroup(group, 1)).toEqual({
+    status: "moved",
+    ids: ["photo-3", "photo-4"],
+  });
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(JSON.parse(fetcher.mock.calls[1]![1].body).cursor).toBe("next");
   photos.dispose();
 });
 
@@ -99,6 +106,44 @@ it.each(["replacement", "stalled continuation"])(
       error: "A compared photo is no longer in this query. Exit compare and select photos again.",
     });
     expect(fetcher).toHaveBeenCalledTimes(replacing ? 2 : 1);
+    photos.dispose();
+  },
+);
+
+it.each([-1, 1] as const)(
+  "replaces an expired cursor and retries compare direction %s atomically",
+  async (direction) => {
+    const rows = [photo(1), photo(2), photo(3), photo(4)];
+    const cursors: (string | undefined)[] = [];
+    stubPhotoFetch(async (_url, init) => {
+      const cursor = JSON.parse(String(init.body)).cursor;
+      cursors.push(cursor);
+      if (cursor === "expired")
+        return Response.json({ code: "cursor_expired", detail: "Cursor expired" }, { status: 410 });
+      if (!cursor)
+        return Response.json({ items: [rows[0]], total: 4, next_cursor: "replacement-2" });
+      if (cursor === "replacement-2")
+        return Response.json({ items: [rows[1]], total: 4, next_cursor: "replacement-3" });
+      if (cursor === "replacement-3")
+        return Response.json({ items: [rows[2]], total: 4, next_cursor: "replacement-4" });
+      return Response.json({ items: [rows[3]], total: 4 });
+    });
+    const photos = new Photos("scoped", vi.fn());
+    photos.items = rows.slice(0, 2);
+    photos.started = true;
+    photos.cursor = "expired";
+    const group = ["photo-2", "photo-3"];
+    expect(await photos.moveGroup(group, direction)).toMatchObject({ status: "failed" });
+    expect(photos.items.map((item) => item.asset_id)).toEqual(["photo-1", "photo-2"]);
+    expect(await photos.moveGroup(group, direction)).toEqual({
+      status: "moved",
+      ids: direction > 0 ? ["photo-3", "photo-4"] : ["photo-1", "photo-2"],
+    });
+    expect(cursors).toEqual(
+      direction > 0
+        ? ["expired", undefined, "replacement-2", "replacement-3", "replacement-4"]
+        : ["expired", undefined, "replacement-2", "replacement-3"],
+    );
     photos.dispose();
   },
 );

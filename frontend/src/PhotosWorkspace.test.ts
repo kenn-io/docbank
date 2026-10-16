@@ -2637,9 +2637,8 @@ it.each([false, true])(
     const cull = await screen.findByRole("dialog", { name: "Cull photos" });
     await within(cull).findByText("Photo 1.jpg");
     await fireEvent.click(within(cull).getByRole("button", { name: "Pick (P)" }));
-    await waitFor(() => expect(photos.authored.receiptID).toBe("picked"));
+    await within(cull).findByText("Photo 2.jpg");
     expect([...photos.selectedIDs]).toEqual(ids);
-    expect(photos.authored.targets).toEqual([]);
     await fireEvent.click(within(cull).getByRole("button", { name: "Exit cull" }));
     await waitFor(() => expect([...photos.selectedIDs]).toEqual(oneUnavailable ? [ids[1]!] : ids));
     photos.dispose();

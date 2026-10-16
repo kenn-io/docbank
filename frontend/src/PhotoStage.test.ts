@@ -8,11 +8,13 @@ import { photo } from "./photo-test-fixtures.js";
 
 afterEach(() => {
   cleanup();
+  // jsdom has no HTMLImageElement.decode, so the test defines it and this removes it again.
+  delete (HTMLImageElement.prototype as { decode?: unknown }).decode;
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
-it("retries a failed large preview on the same photo and keeps the fitted image and view", async () => {
+it("retries a failed large preview on the same photo and keeps the fitted image", async () => {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -21,11 +23,8 @@ it("retries a failed large preview on the same photo and keeps the fitted image 
     },
   );
   let counter = 0;
-  Object.defineProperty(URL, "createObjectURL", {
-    configurable: true,
-    value: vi.fn(() => `blob:synthetic-${++counter}`),
-  });
-  Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+  vi.spyOn(URL, "createObjectURL").mockImplementation(() => `blob:synthetic-${++counter}`);
+  vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
   Object.defineProperty(HTMLImageElement.prototype, "decode", {
     configurable: true,
     value: vi.fn(async () => {}),
@@ -39,14 +38,12 @@ it("retries a failed large preview on the same photo and keeps the fitted image 
     return { state: "ready", generation_id: `${size}-1` };
   });
   const get = vi.fn(async (_asset: string, _generation: string) => new Blob(["synthetic-jpeg"]));
-  const onview = vi.fn();
   const view = { ...fittedPhotoView };
   const { container } = render(PhotoStage, {
     photo: item,
     photos,
     cache: { get } as unknown as PhotoPreviewCache,
     view,
-    onview,
   });
   await waitFor(() => expect(preview).toHaveBeenCalledWith(item, "fit", expect.anything()));
   await waitFor(() => expect(container.querySelector("img")).toBeTruthy());
@@ -64,5 +61,4 @@ it("retries a failed large preview on the same photo and keeps the fitted image 
   );
   await waitFor(() => expect(screen.queryByText("Preview is still being prepared")).toBeNull());
   await waitFor(() => expect(container.querySelector("img")!.getAttribute("src")).not.toBe(fitted));
-  expect(onview).not.toHaveBeenCalledWith(fittedPhotoView);
 });
