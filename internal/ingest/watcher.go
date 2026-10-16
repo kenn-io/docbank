@@ -387,20 +387,29 @@ func (w *Watcher) openRoot(ctx context.Context) (*watchRoot, error) {
 	if err != nil {
 		return nil, err
 	}
+	var released []store.PhotoCheckout
 	for _, checkout := range checkouts {
 		if !checkout.RetentionReleased || checkout.Destination == "" {
 			continue
 		}
-		// A watch source admitted over a retired checkout's cleared folder is
-		// reusing it, same as a store registration would. Persist the
-		// release before new files arrive there, so a later daemon startup
-		// does not mistake them for leftover checkout content. Use the full
-		// identity traversal so a bind-mounted alias of the destination is
-		// recognized as the same folder, not just an exact or nested path.
-		related, relatedErr := CheckoutDestinationRelatesToPath(ctx, checkout.Destination, root)
-		if relatedErr != nil || !related {
+		// A released folder that still holds copies already passed the
+		// overlap check above, so only cleared folders can be reused here.
+		if protected, err := PhotoCheckoutProtectsDestination(checkout); err != nil || protected {
 			continue
 		}
+		released = append(released, checkout)
+	}
+	// A watch source admitted over a retired checkout's cleared folder is
+	// reusing it, same as a store registration would. Persist the release
+	// before new files arrive there, so a later daemon startup does not
+	// mistake them for leftover checkout content. Use the full identity
+	// traversal so a bind-mounted alias of the destination is recognized as
+	// the same folder, not just an exact or nested path.
+	related, err := RelatedCheckouts(ctx, released, root)
+	if err != nil {
+		return nil, err
+	}
+	for _, checkout := range related {
 		if err := w.ing.Store.ReleaseCheckoutDestination(ctx, checkout.ID); err != nil {
 			return nil, err
 		}
@@ -728,34 +737,46 @@ func WatchBindingOverlapContext(ctx context.Context, watches []config.WatchConfi
 // watch root remains protected even when an exclusion currently hides part of
 // it; removing an exclusion must not turn an existing store into watcher input.
 func existingPathPrefixMatchesWatch(ctx context.Context, pathname string, watch config.WatchConfig) (bool, error) {
-	current, err := filepath.Abs(pathname)
-	if err != nil {
+	prefix, ok, err := existingDirectoryPrefix(ctx, pathname)
+	if err != nil || !ok {
 		return false, err
 	}
-	var prefixInfo fs.FileInfo
+	return watchTreeContainsAny(ctx, watch, []fs.FileInfo{prefix})
+}
+
+// existingDirectoryPrefix returns the identity of pathname's nearest existing
+// prefix. It reports false when that prefix is not a directory or no prefix
+// exists.
+func existingDirectoryPrefix(ctx context.Context, pathname string) (fs.FileInfo, bool, error) {
+	current, err := filepath.Abs(pathname)
+	if err != nil {
+		return nil, false, err
+	}
 	for {
 		if err := ctx.Err(); err != nil {
-			return false, err
+			return nil, false, err
 		}
-		prefixInfo, err = os.Stat(current)
+		info, err := os.Stat(current)
 		if err == nil {
-			break
+			return info, info.IsDir(), nil
 		}
 		if !errors.Is(err, fs.ErrNotExist) {
-			return false, fmt.Errorf("checking path prefix %q: %w", current, err)
+			return nil, false, fmt.Errorf("checking path prefix %q: %w", current, err)
 		}
 		parent := filepath.Dir(current)
 		if parent == current {
 			// Windows drive and UNC roots can be unavailable while their
 			// configured stores remain active but offline. With no observable
 			// prefix, there is no filesystem identity to compare to the watch.
-			return false, nil
+			return nil, false, nil
 		}
 		current = parent
 	}
-	if !prefixInfo.IsDir() {
-		return false, nil
-	}
+}
+
+// watchTreeContainsAny reports whether any target directory appears in the
+// watch source's confined traversal.
+func watchTreeContainsAny(ctx context.Context, watch config.WatchConfig, targets []fs.FileInfo) (bool, error) {
 	root, err := os.OpenRoot(watch.Source)
 	if err != nil {
 		return false, fmt.Errorf("opening watch %q source %q: %w", watch.Name, watch.Source, err)
@@ -766,7 +787,7 @@ func existingPathPrefixMatchesWatch(ctx context.Context, pathname string, watch 
 		return false, fmt.Errorf("identifying watch %q source mount: %w", watch.Name, mountErr)
 	}
 	contains, traversalErr := watchTreeContainsAnyDirectory(
-		ctx, root, mount, []fs.FileInfo{prefixInfo}, exclusions{}, "", nil,
+		ctx, root, mount, targets, exclusions{}, "", nil,
 	)
 	closeErr := root.Close()
 	if traversalErr != nil || closeErr != nil {

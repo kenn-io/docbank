@@ -354,40 +354,39 @@ func newCheckoutReservationFixture(t *testing.T) (*store.Store, string, string, 
 	return catalog, checkout.ID, operation.ID, destination
 }
 
-func TestConfiguredCheckoutValidationDefersOnlyOverlappingPaths(t *testing.T) {
+func TestConfiguredCheckoutValidationDefersOnlyOverlappingBindings(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
-		name       string
-		storeBound bool
-	}{
-		{name: "watch source"},
-		{name: "store binding", storeBound: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			catalog, checkoutID, operationID, destination := newCheckoutReservationFixture(t)
-			defer func() { require.NoError(t, catalog.Close()) }()
-			require.NoError(t, catalog.FinishPhotoCheckout(t.Context(), checkoutID, operationID, store.StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
-			_, err := catalog.RetirePhotoCheckout(t.Context(), checkoutID)
-			require.NoError(t, err)
-			require.NoError(t, os.WriteFile(filepath.Join(destination, "edited.jpg"), []byte("copy"), 0o600))
-			cfg := config.Default()
-			var stores []store.BlobStore
-			if tc.storeBound {
-				cfg.StoreBindings = map[string]config.StoreBindingConfig{"archive": {Kind: "filesystem", Path: destination}}
-				stores = []store.BlobStore{{Name: "archive", Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "archive"}}
-			} else {
-				cfg.Watches = []config.WatchConfig{{Name: "checkout", Source: destination}}
-			}
-			pending, err := validateConfiguredCheckoutStartup(t.Context(), cfg, stores, catalog)
-			require.NoError(t, err)
-			require.True(t, pending)
-			err = validateCheckoutPath(t.Context(), catalog, destination)
-			require.ErrorIs(t, err, errCheckoutPathOverlap)
-			require.ErrorContains(t, err, checkoutID)
-			require.ErrorContains(t, err, fmt.Sprintf("%q", destination))
-			require.NoError(t, validateCheckoutPath(t.Context(), catalog, t.TempDir()))
-		})
+	catalog, checkoutID, operationID, destination := newCheckoutReservationFixture(t)
+	defer func() { require.NoError(t, catalog.Close()) }()
+	require.NoError(t, catalog.FinishPhotoCheckout(t.Context(), checkoutID, operationID, store.StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
+	_, err := catalog.RetirePhotoCheckout(t.Context(), checkoutID)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(destination, "edited.jpg"), []byte("copy"), 0o600))
+	admit := newCheckoutBindingAdmission(catalog, slog.New(slog.DiscardHandler))
+	cfg := config.Default()
+	cfg.StoreBindings = map[string]config.StoreBindingConfig{
+		"archive": {Kind: "filesystem", Path: destination},
+		"other":   {Kind: "filesystem", Path: t.TempDir()},
+		"missing": {Kind: "filesystem", Path: filepath.Join(destination, "missing")},
 	}
+	stores := []store.BlobStore{
+		{Name: "other", Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "other"},
+		{Name: "missing", Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "missing"},
+	}
+	// A watch over the copies waits in its own watcher, not at startup.
+	cfg.Watches = []config.WatchConfig{{Name: "checkout", Source: destination}}
+	pending, err := validateConfiguredCheckoutStartup(t.Context(), cfg, stores, admit)
+	require.NoError(t, err)
+	require.False(t, pending)
+
+	stores = append(stores, store.BlobStore{Name: "archive", Kind: "filesystem", Role: "secondary", Lifecycle: "active", Binding: "archive"})
+	pending, err = validateConfiguredCheckoutStartup(t.Context(), cfg, stores, admit)
+	require.NoError(t, err)
+	require.True(t, pending)
+	err = admit(t.Context(), cfg.StoreBindings["archive"])
+	require.ErrorIs(t, err, errCheckoutPathOverlap)
+	require.ErrorContains(t, err, checkoutID)
+	require.ErrorContains(t, err, fmt.Sprintf("%q", destination))
 }
 
 func TestCheckoutValidationDefersInternalDeadline(t *testing.T) {

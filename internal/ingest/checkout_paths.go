@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 
@@ -12,42 +13,45 @@ import (
 )
 
 // CheckoutPathOverlap protects reservations and working copies left by
-// released checkouts. It scans each checkout's destination tree, so its
-// running time follows the caller's own context: a fixed inner deadline
-// here would cut off a traversal that is still making progress on a large
-// library, turning a slow-but-successful check into a permanent failure
-// that a caller's retry loop can never outrun. The retired result reports
-// whether the matched checkout had already released retention, meaning
-// the overlap is a leftover working copy rather than an active reservation.
+// released checkouts. It scans each checkout's destination tree once and
+// pathname's tree once for all checkouts, so its running time follows the
+// caller's own context: a fixed inner deadline here would cut off a traversal
+// that is still making progress on a large library, turning a slow-but-
+// successful check into a permanent failure that a caller's retry loop can
+// never outrun. The retired result reports whether the matched checkout had
+// already released retention, meaning the overlap is a leftover working copy
+// rather than an active reservation.
 func CheckoutPathOverlap(ctx context.Context, checkouts []store.PhotoCheckout, pathname string) (checkoutID string, overlap bool, retired bool, err error) {
-	var pending error
-	var pendingID string
+	candidates := make([]store.PhotoCheckout, 0, len(checkouts))
 	for _, checkout := range checkouts {
 		if err := ctx.Err(); err != nil {
 			return "", false, false, err
 		}
-		overlaps, err := checkoutPathOverlap(ctx, checkout, pathname)
-		if err != nil {
-			pendingID = checkout.ID
-			pending = errors.Join(pending, fmt.Errorf("checkout %s: %w", checkout.ID, err))
+		protected, lexicalOnly := checkoutPathProtection(checkout, pathname)
+		if !protected {
 			continue
 		}
-		if overlaps {
+		if lexicalOnly || !checkout.RetentionReleased && (pathContains(pathname, checkout.Destination) || pathContains(checkout.Destination, pathname)) {
 			return checkout.ID, true, checkout.RetentionReleased, nil
+		}
+		candidates = append(candidates, checkout)
+	}
+	checks, err := checkoutDestinationsRelateToPath(ctx, candidates, pathname)
+	if err != nil {
+		return "", false, false, err
+	}
+	var pending error
+	var pendingID string
+	for i, check := range checks {
+		if check.related {
+			return candidates[i].ID, true, candidates[i].RetentionReleased, nil
+		}
+		if check.err != nil {
+			pendingID = candidates[i].ID
+			pending = errors.Join(pending, fmt.Errorf("checkout %s: %w", candidates[i].ID, check.err))
 		}
 	}
 	return pendingID, false, false, errors.Join(pending, ctx.Err())
-}
-
-func checkoutPathOverlap(ctx context.Context, checkout store.PhotoCheckout, pathname string) (bool, error) {
-	protected, lexicalOnly := checkoutPathProtection(checkout, pathname)
-	if !protected {
-		return false, nil
-	}
-	if lexicalOnly || !checkout.RetentionReleased && (pathContains(pathname, checkout.Destination) || pathContains(checkout.Destination, pathname)) {
-		return true, nil
-	}
-	return CheckoutDestinationRelatesToPath(ctx, checkout.Destination, pathname)
 }
 
 func checkoutPathProtection(checkout store.PhotoCheckout, pathname string) (protected, lexicalOnly bool) {
@@ -59,40 +63,103 @@ func checkoutPathProtection(checkout store.PhotoCheckout, pathname string) (prot
 	return protected, false
 }
 
-// CheckoutDestinationRelatesToPath reports whether pathname is the same
-// location as, nested beneath or above, or a filesystem-equivalent alias
-// (such as a bind mount) of destination. It always runs the full identity
-// traversal, including through WatchBindingOverlapContext's directory-tree
-// walk, regardless of whether destination currently holds any files — the
-// shortcut checkoutPathOverlap takes for an empty, released destination
-// skips that traversal because an empty folder restricts nothing, but a
-// caller deciding whether destination is the same folder as pathname (to
-// release its recorded protection on reuse) needs the real relationship,
-// not just the absence of a restriction.
-func CheckoutDestinationRelatesToPath(ctx context.Context, destination, pathname string) (bool, error) {
-	overlap, err := PathsOverlapContext(ctx, pathname, destination)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return false, err
+// RelatedCheckouts returns the checkouts whose destination is pathname,
+// nested beneath or above it, or a filesystem-equivalent alias (such as a bind
+// mount). It always runs the full identity traversal, including for an empty
+// destination: CheckoutPathOverlap skips an empty, released destination
+// because it restricts nothing, but a caller deciding whether a destination
+// is the same folder as pathname (to release its recorded protection on
+// reuse) needs the real relationship. Checkouts whose relationship cannot be
+// confirmed are omitted.
+func RelatedCheckouts(ctx context.Context, checkouts []store.PhotoCheckout, pathname string) ([]store.PhotoCheckout, error) {
+	checks, err := checkoutDestinationsRelateToPath(ctx, checkouts, pathname)
+	if err != nil {
+		return nil, err
 	}
-	if !overlap {
-		if info, statErr := os.Stat(destination); statErr == nil && info.IsDir() {
-			_, overlap, err = WatchBindingOverlapContext(ctx, []config.WatchConfig{{Source: destination}}, config.StoreBindingConfig{Kind: "filesystem", Path: pathname})
-			if err != nil {
-				return false, fmt.Errorf("checking checkout destination: %w", err)
-			}
-		} else if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
-			return false, statErr
+	var related []store.PhotoCheckout
+	for i, check := range checks {
+		if check.related {
+			related = append(related, checkouts[i])
 		}
 	}
-	if !overlap {
-		if candidate, statErr := os.Stat(pathname); statErr == nil && candidate.IsDir() {
-			_, overlap, err = WatchBindingOverlapContext(ctx, []config.WatchConfig{{Source: pathname}}, config.StoreBindingConfig{Kind: "filesystem", Path: destination})
-			if err != nil {
-				return false, err
+	return related, nil
+}
+
+type destinationCheck struct {
+	related bool
+	err     error
+}
+
+// checkoutDestinationsRelateToPath walks each destination's tree once for
+// pathname, then pathname's tree once for every remaining destination. The
+// returned error reports only cancellation; per-checkout failures are in the
+// checks.
+func checkoutDestinationsRelateToPath(ctx context.Context, checkouts []store.PhotoCheckout, pathname string) ([]destinationCheck, error) {
+	checks := make([]destinationCheck, len(checkouts))
+	var remaining []int
+	var targets []fs.FileInfo
+	for i, checkout := range checkouts {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		destination := checkout.Destination
+		overlap, err := PathsOverlapContext(ctx, pathname, destination)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			checks[i].err = err
+			continue
+		}
+		if !overlap {
+			if info, statErr := os.Stat(destination); statErr == nil && info.IsDir() {
+				overlap, err = existingPathPrefixMatchesWatch(ctx, pathname, config.WatchConfig{Source: destination})
+				if err != nil {
+					checks[i].err = fmt.Errorf("checking checkout destination: %w", err)
+					continue
+				}
+			} else if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+				checks[i].err = statErr
+				continue
 			}
-		} else if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
-			return false, statErr
+		}
+		if overlap {
+			checks[i].related = true
+			continue
+		}
+		target, ok, err := existingDirectoryPrefix(ctx, destination)
+		if err != nil {
+			checks[i].err = err
+			continue
+		}
+		if ok {
+			remaining = append(remaining, i)
+			targets = append(targets, target)
 		}
 	}
-	return overlap, nil
+	if len(remaining) == 0 {
+		return checks, ctx.Err()
+	}
+	candidate, statErr := os.Stat(pathname)
+	if statErr != nil || !candidate.IsDir() {
+		if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+			for _, i := range remaining {
+				checks[i].err = statErr
+			}
+		}
+		return checks, ctx.Err()
+	}
+	watch := config.WatchConfig{Source: pathname}
+	contains, err := watchTreeContainsAny(ctx, watch, targets)
+	if err != nil {
+		for _, i := range remaining {
+			checks[i].err = err
+		}
+		return checks, ctx.Err()
+	}
+	if !contains {
+		return checks, ctx.Err()
+	}
+	// Overlap is rare; identify the matching destinations one at a time.
+	for n, i := range remaining {
+		checks[i].related, checks[i].err = watchTreeContainsAny(ctx, watch, targets[n:n+1])
+	}
+	return checks, ctx.Err()
 }

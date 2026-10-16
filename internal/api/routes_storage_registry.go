@@ -296,15 +296,18 @@ func applyStorageRegistration(
 		if err != nil {
 			return BlobStore{}, FromStoreError(err)
 		}
+		released := make([]store.PhotoCheckout, 0, len(checkouts))
 		for _, checkout := range checkouts {
-			if !checkout.RetentionReleased || checkout.Destination == "" {
-				continue
+			if checkout.RetentionReleased && checkout.Destination != "" {
+				released = append(released, checkout)
 			}
-			// Clear related destinations before registration writes into them.
-			related, relatedErr := ingest.CheckoutDestinationRelatesToPath(ctx, checkout.Destination, plan.binding.Path)
-			if relatedErr != nil || !related {
-				continue
-			}
+		}
+		// Clear related destinations before registration writes into them.
+		related, err := ingest.RelatedCheckouts(ctx, released, plan.binding.Path)
+		if err != nil {
+			return BlobStore{}, err
+		}
+		for _, checkout := range related {
 			if err := d.Store.ReleaseCheckoutDestination(ctx, checkout.ID); err != nil {
 				return BlobStore{}, FromStoreError(err)
 			}

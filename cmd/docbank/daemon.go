@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -179,7 +180,8 @@ func runServe(ctx context.Context) (retErr error) {
 	if err := validateConfiguredWatchStores(cfg, catalogStores); err != nil {
 		return err
 	}
-	checkoutValidationPending, err := validateConfiguredCheckoutStartup(sigCtx, cfg, catalogStores, s)
+	bindingAdmission := newCheckoutBindingAdmission(s, logger)
+	checkoutValidationPending, err := validateConfiguredCheckoutStartup(sigCtx, cfg, catalogStores, bindingAdmission)
 	if err != nil {
 		return err
 	}
@@ -194,7 +196,6 @@ func runServe(ctx context.Context) (retErr error) {
 			OwnershipEpoch: catalogStore.OwnershipEpoch,
 		})
 	}
-	bindingAdmission := newCheckoutBindingAdmission(s, logger)
 	blobRegistry := blob.NewRegistry(sigCtx, s.VaultID(), cfg.StoreBindings, storeSpecs, bindingAdmission)
 	blobOptions := blob.ManagedOptions()
 	blobOptions.Registry = blobRegistry
@@ -862,9 +863,11 @@ func startRetentionMaintenance(
 
 var errCheckoutPathOverlap = errors.New("configured path overlaps a checkout")
 
-// Only affected paths wait; catalog errors still fail startup.
-func validateConfiguredCheckoutStartup(ctx context.Context, cfg config.Config, stores []store.BlobStore, catalog *store.Store) (bool, error) {
-	err := validateConfiguredCheckouts(ctx, cfg, stores, catalog)
+// Only affected bindings wait; catalog errors still fail startup. The registry
+// reuses each successful admission, and watches check separation when they
+// start, so startup does not walk checkout trees again for them.
+func validateConfiguredCheckoutStartup(ctx context.Context, cfg config.Config, stores []store.BlobStore, admit func(context.Context, config.StoreBindingConfig) error) (bool, error) {
+	err := validateConfiguredCheckouts(ctx, cfg, stores, admit)
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
@@ -877,14 +880,6 @@ func validateConfiguredCheckoutStartup(ctx context.Context, cfg config.Config, s
 func checkoutValidationPending(ctx context.Context, err error) bool {
 	_, pathError := errors.AsType[*os.PathError](err)
 	return ctx.Err() == nil && (pathError || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, errCheckoutPathOverlap))
-}
-
-func validateCheckoutPath(ctx context.Context, catalog *store.Store, pathname string) error {
-	checkouts, err := catalog.ListPhotoCheckouts(ctx)
-	if err != nil {
-		return err
-	}
-	return validateCheckoutPathSnapshot(ctx, checkouts, pathname)
 }
 
 func validateCheckoutPathSnapshot(ctx context.Context, checkouts []store.PhotoCheckout, pathname string) error {
@@ -949,22 +944,21 @@ func waitForCheckoutValidation(ctx context.Context, check func(context.Context) 
 	}
 }
 
-func validateConfiguredCheckouts(ctx context.Context, cfg config.Config, stores []store.BlobStore, catalog *store.Store) error {
-	paths := make([]string, 0, len(cfg.Watches)+len(stores))
-	for _, watch := range cfg.Watches {
-		paths = append(paths, watch.Source)
-	}
+func validateConfiguredCheckouts(ctx context.Context, cfg config.Config, stores []store.BlobStore, admit func(context.Context, config.StoreBindingConfig) error) error {
+	var pending error
 	for _, item := range stores {
 		if item.Role == "primary" || item.Lifecycle == "detached" || item.Kind != "filesystem" {
 			continue
 		}
-		if binding, ok := cfg.StoreBindings[item.Binding]; ok {
-			paths = append(paths, binding.Path)
+		binding, ok := cfg.StoreBindings[item.Binding]
+		if !ok {
+			continue
 		}
-	}
-	var pending error
-	for _, pathname := range paths {
-		if err := validateCheckoutPath(ctx, catalog, pathname); err != nil {
+		// A missing store has no copies to protect; the registry reports it offline.
+		if _, err := os.Stat(binding.Path); errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err := admit(ctx, binding); err != nil {
 			if err := ctx.Err(); err != nil {
 				return err
 			}

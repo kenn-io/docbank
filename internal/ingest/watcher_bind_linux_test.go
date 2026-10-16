@@ -11,6 +11,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestWatcherRejectsVaultHiddenBySeparateBindAliases(t *testing.T) {
@@ -85,4 +86,28 @@ func bindMountForTest(t *testing.T, source, target string) {
 	t.Cleanup(func() {
 		require.NoError(t, unix.Unmount(target, unix.MNT_DETACH))
 	})
+}
+
+// One traversal of the configured tree covers every retired checkout, and a
+// match still names the checkout whose copies the alias exposes.
+func TestCheckoutPathOverlapFindsAliasAmongRetiredCheckouts(t *testing.T) {
+	var checkouts []store.PhotoCheckout
+	for _, id := range []string{"first", "second", "third"} {
+		destination := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(destination, "edited.jpg"), []byte(id), 0o600))
+		checkouts = append(checkouts, store.PhotoCheckout{ID: id, Destination: destination, RetentionReleased: true})
+	}
+	watchSource := t.TempDir()
+	alias := filepath.Join(watchSource, "nested", "alias")
+	require.NoError(t, os.MkdirAll(alias, 0o700))
+	bindMountForTest(t, checkouts[1].Destination, alias)
+
+	id, overlap, retired, err := CheckoutPathOverlap(t.Context(), checkouts, watchSource)
+	require.NoError(t, err)
+	require.True(t, overlap)
+	require.True(t, retired)
+	require.Equal(t, "second", id)
+	related, err := RelatedCheckouts(t.Context(), checkouts, watchSource)
+	require.NoError(t, err)
+	require.Equal(t, []store.PhotoCheckout{checkouts[1]}, related)
 }

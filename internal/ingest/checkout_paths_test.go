@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -99,4 +100,40 @@ func TestCheckoutPathOverlapProtectsReservationsAndReleasedCopies(t *testing.T) 
 			require.Equal(t, "retired", id)
 		}
 	})
+}
+
+// A folder reused after several retired checkouts releases every one of them,
+// and leaves unrelated checkouts recorded.
+func TestWatcherReleasesEveryRetiredCheckoutOfReusedFolder(t *testing.T) {
+	ing := newTestIngester(t)
+	ctx := t.Context()
+	node, err := ing.Store.CreateFile(ctx, ing.Store.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := ing.Store.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	reused, unrelated := t.TempDir(), t.TempDir()
+	retire := func(destination string) store.PhotoCheckout {
+		checkout, op, err := ing.Store.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
+		require.NoError(t, err)
+		require.NoError(t, ing.Store.FinishPhotoCheckout(ctx, checkout.ID, op.ID, store.StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
+		checkout, err = ing.Store.RetirePhotoCheckout(ctx, checkout.ID)
+		require.NoError(t, err)
+		return checkout
+	}
+	first, second, other := retire(reused), retire(reused), retire(unrelated)
+
+	watcher, err := NewWatcher(ing, t.TempDir(), config.WatchConfig{Name: "inbox", Source: reused, Destination: "/inbox"}, runTestMutation, nil)
+	require.NoError(t, err)
+	root, err := watcher.openRoot(ctx)
+	require.NoError(t, err)
+	require.NoError(t, root.Close())
+
+	for _, tc := range []struct {
+		checkout    store.PhotoCheckout
+		destination string
+	}{{first, ""}, {second, ""}, {other, unrelated}} {
+		current, err := ing.Store.PhotoCheckout(ctx, tc.checkout.ID)
+		require.NoError(t, err)
+		require.Equal(t, tc.destination, current.Destination)
+	}
 }
