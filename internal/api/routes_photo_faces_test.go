@@ -178,6 +178,7 @@ func TestPhotoFaceBrowserDecisions(t *testing.T) {
 		require.Equal(t, person.PersonID, page.Items[0].PersonID)
 	}
 	response, body = get(t, ts, "/api/v1/people?query=Ad", headers)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var prefix api.PersonPage
 	require.NoError(t, json.Unmarshal([]byte(body), &prefix))
 	require.False(t, prefix.ExactMatch)

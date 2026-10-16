@@ -1,11 +1,28 @@
 import { expect, test, type Page } from "@playwright/test";
 import { mkdir, mkdtemp } from "node:fs/promises";
 import path from "node:path";
+import * as api from "../src/generated/docbank.js";
 import { photoFixture, repository } from "./photo-fixture.js";
 
 const output = process.env.DOCBANK_FACES_SCREENSHOT_DIR;
 test.use({ actionTimeout: 15_000 });
 test.skip(!output, "DOCBANK_FACES_SCREENSHOT_DIR enables synthetic face review proof");
+
+async function withPhotoAPI<T>(url: URL, run: () => Promise<T>): Promise<T> {
+  const fetcher = globalThis.fetch;
+  try {
+    globalThis.fetch = (input, init) => {
+      const address = new URL(String(input), url.origin);
+      const headers = new Headers(init?.headers);
+      headers.set("Host", address.host);
+      address.hostname = "127.0.0.1";
+      return fetcher(address, { ...init, headers });
+    };
+    return await run();
+  } finally {
+    globalThis.fetch = fetcher;
+  }
+}
 
 async function captureThemes(page: Page, name: string) {
   await expect
@@ -122,13 +139,10 @@ test("draws and names faces, opens person-filtered Library, and reads cull close
       path: path.join(output!, "web-photo-faces-library.png"),
       animations: "disabled",
     });
-    const renamedPersonID = (
-      await page.request
-        .get(new URL("/api/v1/people?query=Ada", url).href, {
-          headers: { "X-Docbank-Web-Session": session },
-        })
-        .then((response) => response.json())
-    ).items[0].person_id;
+    const renamedPersonID = await withPhotoAPI(
+      url,
+      async () => (await api.listPeople({ query: "Ada" }, { session })).items[0]!.person_id,
+    );
     await fixture.run("people", "rename", renamedPersonID, "Ada Updated", "--revision", "1");
     await page.locator(".photo-image").first().dblclick();
     await expect(loupe.locator(".face-box")).toHaveText("Ada Updated");
@@ -186,15 +200,10 @@ test("draws and names faces, opens person-filtered Library, and reads cull close
     await expect(loupe.locator(".face-box")).toHaveCount(2);
     if (!(await people.isVisible()))
       await loupe.getByRole("button", { name: "Metadata", exact: true }).click();
-    const personID = await page.evaluate(
-      async ({ session }) => {
-        const response = await fetch("/api/v1/people?query=Ada&limit=100", {
-          headers: { "X-Docbank-Web-Session": session },
-        });
-        if (!response.ok) throw new Error(await response.text());
-        return (await response.json()).items[0].person_id as string;
-      },
-      { session },
+    const personID = await withPhotoAPI(
+      url,
+      async () =>
+        (await api.listPeople({ query: "Ada", limit: 100 }, { session })).items[0]!.person_id,
     );
     await fixture.run("photos", "faces", "create", face.content_version_id, "--person", personID);
     await captureThemes(page, "web-photo-faces-loupe");
@@ -278,57 +287,43 @@ test("pages to every person match after leaving a relevance search", async ({ pa
     const session = new URLSearchParams(url.hash.slice(1)).get("web_session")!;
     url.pathname = "/photos";
     await page.goto(url.href);
-    const { personID, lastName } = await page.evaluate(
-      async ({ session }) => {
-        const headers = { "Content-Type": "application/json", "X-Docbank-Web-Session": session };
-        const person = await (
-          await fetch("/api/v1/people", {
-            method: "POST",
-            headers,
-            body: JSON.stringify({ display_name: "Ada" }),
-          })
-        ).json();
-        let cursor: string | undefined;
-        const rows: { content_version_id: string; name: string }[] = [];
-        do {
-          const response = await fetch("/api/v1/photos/assets/query", {
-            method: "POST",
-            headers,
-            body: JSON.stringify({
-              query: {
-                v: 1,
-                text: "",
-                syntax: "simple",
-                mode: "lexical",
-                filters: {},
-                sort: { field: "capture_time", direction: "desc" },
-              },
-              page_size: 250,
-              cursor,
-            }),
-          });
-          if (!response.ok) throw new Error(await response.text());
-          const result = await response.json();
-          rows.push(...result.items);
-          cursor = result.next_cursor;
-        } while (cursor);
-        if (rows.length !== 251) throw new Error(`Expected 251 rows, got ${rows.length}`);
-        for (const row of rows) {
-          const result = await fetch(`/api/v1/photos/versions/${row.content_version_id}/faces`, {
-            method: "POST",
-            headers,
-            body: JSON.stringify({
-              person_id: person.person_id,
-              face_id: crypto.randomUUID(),
-              box: { x: 0.1, y: 0.2, width: 0.3, height: 0.4 },
-            }),
-          });
-          if (!result.ok) throw new Error(await result.text());
-        }
-        return { personID: person.person_id as string, lastName: rows.at(-1)!.name };
-      },
-      { session },
-    );
+    const { personID, lastName } = await withPhotoAPI(url, async () => {
+      const person = await api.createPerson({ display_name: "Ada" }, { session });
+      let cursor: string | undefined;
+      const rows: api.PhotoBrowseRow[] = [];
+      do {
+        const result = await api.listPhotoAssets(
+          {
+            query: {
+              v: 1,
+              text: "",
+              syntax: "simple",
+              mode: "lexical",
+              filters: {},
+              sort: { field: "capture_time", direction: "desc" },
+            },
+            page_size: 250,
+            cursor,
+          },
+          { session },
+        );
+        rows.push(...result.items);
+        cursor = result.next_cursor;
+      } while (cursor);
+      if (rows.length !== 251) throw new Error(`Expected 251 rows, got ${rows.length}`);
+      for (const row of rows) {
+        await api.createPhotoFace(
+          row.content_version_id,
+          {
+            person_id: person.person_id,
+            face_id: crypto.randomUUID(),
+            box: { x: 0.1, y: 0.2, width: 0.3, height: 0.4 },
+          },
+          { session },
+        );
+      }
+      return { personID: person.person_id, lastName: rows.at(-1)!.name };
+    });
     await page.getByRole("searchbox", { name: "Search photos" }).fill("Synthetic");
     await page.getByRole("button", { name: "Search", exact: true }).click();
     await expect(page.locator(".photo-results-summary")).toContainText("251 photos");
@@ -379,53 +374,35 @@ test("updates a mounted face picker's cached name after a CLI rename and another
     const session = new URLSearchParams(url.hash.slice(1)).get("web_session")!;
     url.pathname = "/photos";
     await page.goto(url.href);
-    const ada = await page.evaluate(
-      async ({ session }) => {
-        const headers = { "Content-Type": "application/json", "X-Docbank-Web-Session": session };
-        const rows = await fetch("/api/v1/photos/assets/query", {
-          method: "POST",
-          headers,
-          body: JSON.stringify({
-            query: {
-              v: 1,
-              syntax: "simple",
-              text: "",
-              mode: "lexical",
-              filters: {},
-              sort: { field: "capture_time", direction: "desc" },
-            },
-            page_size: 250,
-          }),
-        }).then((response) => response.json());
-        let ada;
-        for (const display_name of ["Ada", "Grace"]) {
-          const response = await fetch("/api/v1/people", {
-            method: "POST",
-            headers,
-            body: JSON.stringify({ display_name }),
-          });
-          if (!response.ok) throw new Error(await response.text());
-          const person = await response.json();
-          if (display_name === "Ada") ada = person;
-        }
-        for (const x of [0.1, 0.6]) {
-          const response = await fetch(
-            `/api/v1/photos/versions/${rows.items[0].content_version_id}/faces`,
-            {
-              method: "POST",
-              headers,
-              body: JSON.stringify({
-                face_id: crypto.randomUUID(),
-                box: { x, y: 0.2, width: 0.2, height: 0.3 },
-              }),
-            },
-          );
-          if (!response.ok) throw new Error(await response.text());
-        }
-        return ada as { person_id: string; revision: number };
-      },
-      { session },
-    );
+    const ada = await withPhotoAPI(url, async () => {
+      const rows = await api.listPhotoAssets(
+        {
+          query: {
+            v: 1,
+            syntax: "simple",
+            text: "",
+            mode: "lexical",
+            filters: {},
+            sort: { field: "capture_time", direction: "desc" },
+          },
+          page_size: 250,
+        },
+        { session },
+      );
+      const ada = await api.createPerson({ display_name: "Ada" }, { session });
+      await api.createPerson({ display_name: "Grace" }, { session });
+      for (const x of [0.1, 0.6]) {
+        await api.createPhotoFace(
+          rows.items[0]!.content_version_id,
+          {
+            face_id: crypto.randomUUID(),
+            box: { x, y: 0.2, width: 0.2, height: 0.3 },
+          },
+          { session },
+        );
+      }
+      return ada;
+    });
     await page.locator(".photo-image").first().dblclick();
     const loupe = page.getByRole("dialog", { name: /^Photo viewer,/ });
     await loupe.getByRole("button", { name: "Metadata", exact: true }).click();
