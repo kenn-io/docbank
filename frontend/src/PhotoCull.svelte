@@ -51,6 +51,8 @@
   let photo = $state<PhotoBrowseRow>();
   let error = $state("");
   let loading = $state(false);
+  let deciding = $state(false);
+  const busy = $derived(deciding || editor.busy);
   let view = $state<PhotoView>({ ...fittedPhotoView });
   let info = $state(0);
   let help = $state(false);
@@ -102,14 +104,17 @@
     if (complete && passID) untrack(() => void cull.checkRemainder());
   });
   $effect(() => prefetchPreviews(photos, cache, neighbors));
+  function canChangeTarget() {
+    return !deciding && editor.canChangeTarget();
+  }
   async function nextPass(followUp = false) {
     focus();
-    if (editor.canChangeTarget()) await cull.nextPass(followUp);
+    if (canChangeTarget()) await cull.nextPass(followUp);
     focus();
   }
   function move(direction: -1 | 1) {
     focus();
-    if (editor.canChangeTarget()) cull.move(direction);
+    if (canChangeTarget()) cull.move(direction);
   }
   async function refresh(receipt: PhotoAuthoredReceipt, tags: Tag[]) {
     onmetadatachanged?.(receipt, tags);
@@ -133,13 +138,17 @@
     neighbors = neighbors.map(updated);
   }
   async function decide(patch: PhotoAuthoredPatch) {
-    if (!photo || loading || cull.stale || cull.busy || !editor.canChangeTarget()) return;
+    if (!photo || loading || cull.stale || cull.busy || !canChangeTarget()) return;
+    deciding = true;
     const selected = photo;
-    editor.reset();
-    if (await prepareDecision(selected)) await applyDecision(selected, patch);
+    try {
+      editor.reset();
+      if (await prepareDecision(selected)) await applyDecision(selected, patch);
+    } finally {
+      deciding = false;
+    }
   }
   async function prepareDecision(selected: PhotoBrowseRow, reload = false) {
-    loading = true;
     try {
       const [, current] = await Promise.all([
         reload
@@ -151,8 +160,6 @@
     } catch (cause) {
       editor.error = cause instanceof Error ? cause.message : String(cause);
       return false;
-    } finally {
-      loading = false;
     }
   }
   function changedPhoto(selected: PhotoBrowseRow, current: PhotoBrowseRow) {
@@ -182,34 +189,28 @@
     if (checkpoint.autoAdvance && cull.currentID === id) cull.move(1);
   }
   async function retryDecision() {
-    if (!editor.dirty && photo) {
-      editor.loading = true;
-      try {
+    if (!photo || busy || editor.loading) return;
+    deciding = true;
+    focus();
+    try {
+      if (!editor.dirty) {
         photo = await photos.lookup(photo.asset_id, new AbortController().signal);
         editor.reset();
-      } catch (cause) {
-        editor.error = cause instanceof Error ? cause.message : String(cause);
-      } finally {
-        editor.loading = false;
-        focus();
-      }
-      return;
-    }
-    const patch = { ...editor.patch };
-    focus();
-    if (editor.conflict) {
-      if (
-        !photo ||
-        !(await prepareDecision(photo, true)) ||
-        editor.conflict ||
-        editor.membershipChanged
-      )
         return;
+      }
+      const patch = { ...editor.patch };
+      if (!(await prepareDecision(photo, true)) || editor.conflict || editor.membershipChanged)
+        return;
+      await applyDecision(photo, patch, true);
+    } catch (cause) {
+      editor.error = cause instanceof Error ? cause.message : String(cause);
+    } finally {
+      deciding = false;
+      focus();
     }
-    if (photo) await applyDecision(photo, patch, true);
   }
   function close() {
-    if (editor.canChangeTarget()) onclose();
+    if (canChangeTarget()) onclose();
   }
   function key(event: KeyboardEvent) {
     const action = cullKey(event);
@@ -220,7 +221,7 @@
     else if (action === "previous") move(-1);
     else if (action === "next") move(1);
     else if (action === "auto") {
-      if (!cull.busy && !cull.stale) cull.toggleAutoAdvance();
+      if (!busy && !cull.busy && !cull.stale) cull.toggleAutoAdvance();
     } else if (action === "scope") void nextPass();
     else if (action === "zoom") view = toggleActualPhotoView(view);
     else if (action === "info") info = (info + 1) % 3;
@@ -245,20 +246,18 @@
     <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_static_element_interactions -->
     <div class="photo-cull" tabindex="-1" bind:this={container} onkeydown={key}>
       <header>
-        <Button size="sm" onclick={close}>Exit cull</Button>
+        <Button size="sm" disabled={busy} onclick={close}>Exit cull</Button>
         <strong>{photo?.name ?? (cull.complete ? "Pass complete" : "Cull photos")}</strong>
         <span
           >{Math.min(checkpoint.position + 1, checkpoint.pass.length)} of {checkpoint.pass
             .length}</span
         >
-        <Button
-          size="sm"
-          disabled={cull.busy || cull.stale || editor.busy}
-          onclick={() => void nextPass()}>Scope: {checkpoint.scope}</Button
+        <Button size="sm" disabled={cull.busy || cull.stale || busy} onclick={() => void nextPass()}
+          >Scope: {checkpoint.scope}</Button
         >
         <Button
           size="sm"
-          disabled={cull.stale || cull.busy}
+          disabled={cull.stale || cull.busy || busy}
           onclick={() => cull.toggleAutoAdvance()}
           >Auto-advance: {checkpoint.autoAdvance ? "on" : "off"}</Button
         >
@@ -276,18 +275,18 @@
         <ul aria-label="Members to review">
           {#each editor.files as target}<li>{target.file_name}</li>{/each}
         </ul>
-        <Button disabled={editor.busy || editor.loading} onclick={() => editor.reviewMembers()}
+        <Button disabled={busy || editor.loading} onclick={() => editor.reviewMembers()}
           >Use reviewed members</Button
         >
       {/if}
       {#if editor.dirty || editor.conflict}<div class="controls">
           <Button
-            disabled={editor.busy || editor.loading || editor.membershipChanged}
+            disabled={busy || editor.loading || editor.membershipChanged}
             onclick={() => void retryDecision()}
             >{editor.dirty ? "Reload and retry" : "Reload photo"}</Button
           >
           <Button
-            disabled={editor.busy || editor.loading}
+            disabled={busy || editor.loading}
             onclick={() => {
               editor.clearDraft();
               editor.reset();
@@ -308,13 +307,13 @@
           </p>
           {#if cull.progress}<p role="status">{cull.progress}</p>{/if}
           {#if cull.remainder}<Button
-              disabled={cull.busy || cull.stale}
+              disabled={cull.busy || cull.stale || busy}
               onclick={() => void nextPass(true)}>Review unflagged remainder</Button
             >{/if}
-          <Button disabled={editor.busy || cull.busy || cull.stale} onclick={() => move(-1)}
+          <Button disabled={busy || cull.busy || cull.stale} onclick={() => move(-1)}
             >Previous</Button
           >
-          <Button onclick={close}>Back to photos</Button>
+          <Button disabled={busy} onclick={close}>Back to photos</Button>
         </section>
       {:else}
         <div class="body">
@@ -334,7 +333,8 @@
               onmove={move}
             />
           {:else}<div class="unavailable" role="status">
-              {loading ? "Loading photo…" : error}<Button onclick={() => move(1)}>Next photo</Button
+              {loading ? "Loading photo…" : error}<Button disabled={busy} onclick={() => move(1)}
+                >Next photo</Button
               >
             </div>{/if}
           {#if info && photo}<aside aria-label="Photo facts">
@@ -347,68 +347,66 @@
             </aside>{/if}
         </div>
         <div class="controls">
-          <Button
-            size="sm"
-            disabled={checkpoint.position === 0 || editor.busy}
-            onclick={() => move(-1)}>Previous</Button
+          <Button size="sm" disabled={checkpoint.position === 0 || busy} onclick={() => move(-1)}
+            >Previous</Button
           >
           <Button
             size="sm"
-            disabled={!photo || cull.stale || editor.busy}
+            disabled={!photo || cull.stale || busy}
             onclick={() => void decide({ flag: "pick" })}>Pick (P)</Button
           >
           <Button
             size="sm"
-            disabled={!photo || cull.stale || editor.busy}
+            disabled={!photo || cull.stale || busy}
             onclick={() => void decide({ flag: "reject" })}>Reject (X)</Button
           >
           <Button
             size="sm"
-            disabled={!photo || cull.stale || editor.busy}
+            disabled={!photo || cull.stale || busy}
             onclick={() => void decide({ flag: "" })}>Clear flag (U)</Button
           >
           <Button
             size="sm"
-            disabled={cull.stale || editor.busy}
+            disabled={cull.stale || busy}
             onclick={() => {
               focus();
-              if (editor.canChangeTarget()) cull.skip();
+              if (canChangeTarget()) cull.skip();
             }}>Skip</Button
           >
           <span>{photo ? `${photo.flag || "Unflagged"} · ${photo.rating} stars` : ""}</span>
           <Button size="sm" onclick={() => (view = toggleActualPhotoView(view))}>1:1 (Z)</Button>
           <Button size="sm" onclick={() => (info = (info + 1) % 3)}>EXIF (I)</Button>
-          <Button size="sm" disabled={cull.stale || editor.busy} onclick={() => move(1)}
-            >Next</Button
-          >
+          <Button size="sm" disabled={cull.stale || busy} onclick={() => move(1)}>Next</Button>
         </div>
         <nav class="filmstrip" aria-label="Cull pass">
-          {#each rail as id}{@const row = neighbors.find((item) => item.asset_id === id)}
-            <div class:current={id === cull.currentID} class="thumb">
-              {#if row}<PhotoCell
-                  photo={row}
-                  selected={id === cull.currentID}
-                  compact={true}
-                  onclick={() => {
-                    if (editor.canChangeTarget()) cull.choose(id);
-                  }}
-                  {cache}
-                  onopen={() => {
-                    if (editor.canChangeTarget()) cull.choose(id);
-                  }}
-                />{:else}<Button
-                  size="sm"
-                  onclick={() => {
-                    if (editor.canChangeTarget()) cull.choose(id);
-                  }}>Unavailable</Button
-                >{/if}
-            </div>{/each}
+          <fieldset disabled={busy} style="display: contents">
+            {#each rail as id}{@const row = neighbors.find((item) => item.asset_id === id)}
+              <div class:current={id === cull.currentID} class="thumb">
+                {#if row}<PhotoCell
+                    photo={row}
+                    selected={id === cull.currentID}
+                    compact={true}
+                    onclick={() => {
+                      if (canChangeTarget()) cull.choose(id);
+                    }}
+                    {cache}
+                    onopen={() => {
+                      if (canChangeTarget()) cull.choose(id);
+                    }}
+                  />{:else}<Button
+                    size="sm"
+                    onclick={() => {
+                      if (canChangeTarget()) cull.choose(id);
+                    }}>Unavailable</Button
+                  >{/if}
+              </div>{/each}
+          </fieldset>
         </nav>
       {/if}
       {#if editor.receiptID}<Notice
           tone="success"
           message={editor.undoState.summary}
-          actionLabel={cull.stale || editor.busy || editor.dirty ? undefined : "Undo"}
+          actionLabel={cull.stale || busy || editor.dirty ? undefined : "Undo"}
           onaction={() => void editor.undo(refresh)}
         />{/if}
       <span class="kit-sr-only" aria-live="polite">{announcement}</span>
