@@ -70,8 +70,8 @@ func TestInspectionRejectsUnboundFontDomains(t *testing.T) {
 	} {
 		changed := result
 		mutate(&changed)
-		require.ErrorIs(t, validateInspection(changed, testSource(data), "application/pdf"),
+		require.ErrorIs(t, ValidateInspection(changed, testSource(data), "application/pdf"),
 			ErrInvalidOutput)
 	}
-	require.NoError(t, validateInspection(result, testSource(data), "application/pdf"))
+	require.NoError(t, ValidateInspection(result, testSource(data), "application/pdf"))
 }

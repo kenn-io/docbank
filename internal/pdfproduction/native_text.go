@@ -29,17 +29,17 @@ import (
 // points quantized to point/10000. A nonempty GapReason means the character was
 // not accepted as visible native text and must never become a text atom.
 type NativeGlyph struct {
-	Text      string
-	Bounds    [4]int64 // left, bottom, right, top
-	GapReason string
+	Text      string   `json:"text"`
+	Bounds    [4]int64 `json:"bounds"` // left, bottom, right, top
+	GapReason string   `json:"gap_reason"`
 }
 
 type NativeTextPage struct {
-	Number int
-	Glyphs []NativeGlyph
+	Number int           `json:"number"`
+	Glyphs []NativeGlyph `json:"glyphs"`
 	// NonTextBounds conservatively marks painted image/path/shading/form
 	// regions that may contain visible text unavailable to native extraction.
-	NonTextBounds [][4]int64
+	NonTextBounds [][4]int64 `json:"non_text_bounds"`
 }
 
 // InspectNativeText freezes and hashes source once, then inspects individual
@@ -48,10 +48,35 @@ type NativeTextPage struct {
 func InspectNativeText(ctx context.Context, source Source, frames []document.PageFrameV1, pageRuntime *pagerender.Runtime) ([]NativeTextPage, error) {
 	// Retained observations have a separate document budget. A working page
 	// remains bounded by its own character limit before it joins this result.
-	return inspectNativeText(ctx, source, frames, pageRuntime, 128<<20)
+	return inspectNativeText(ctx, nativeTextInput{source: source, frames: frames, runtime: pageRuntime, maxObservationBytes: 128 << 20})
 }
 
-func inspectNativeText(ctx context.Context, source Source, frames []document.PageFrameV1, pageRuntime *pagerender.Runtime, maxObservationBytes int64) (_ []NativeTextPage, resultErr error) {
+// NativeInspectionInput reuses the complete geometry inspection of a source.
+type NativeInspectionInput struct {
+	Source              Source
+	Inspection          pagerender.Inspection
+	MaxObservationBytes int64
+}
+
+func InspectNativeTextFromInspection(ctx context.Context, input NativeInspectionInput) ([]NativeTextPage, error) {
+	return inspectNativeText(ctx, nativeTextInput{source: input.Source,
+		frames: input.Inspection.Frames, inspection: &input.Inspection,
+		maxObservationBytes: input.MaxObservationBytes})
+}
+
+type nativeTextInput struct {
+	source              Source
+	frames              []document.PageFrameV1
+	runtime             *pagerender.Runtime
+	inspection          *pagerender.Inspection
+	maxObservationBytes int64
+}
+
+func inspectNativeText(ctx context.Context, input nativeTextInput) (_ []NativeTextPage, resultErr error) {
+	source, frames, maxObservationBytes := input.source, input.frames, input.maxObservationBytes
+	if maxObservationBytes < 1 {
+		return nil, &redaction.Problem{Code: "render_limit"}
+	}
 	if len(frames) == 0 || len(frames) > maxPageCount {
 		return nil, errors.New("invalid native text page inventory")
 	}
@@ -76,7 +101,7 @@ func inspectNativeText(ctx context.Context, source Source, frames []document.Pag
 			return nil, errors.New("native text pages are not contiguous")
 		}
 	}
-	domains, err := nativeFontDomains(ctx, pageRuntime, staged, source, frames)
+	domains, err := input.fontDomains(ctx, staged)
 	if err != nil {
 		return nil, err
 	}
