@@ -18,17 +18,19 @@ import (
 // "code" extension member. Code is the contract clients branch on; Detail is
 // for humans and may change freely.
 type Error struct {
-	Title                    string         `json:"title"`
-	Status                   int            `json:"status"`
-	Detail                   string         `json:"detail,omitzero"`
-	Code                     string         `json:"code,omitzero"`
-	Errors                   []string       `json:"errors,omitempty"`
-	ObservedScopeCount       int            `json:"observed_scope_count,omitzero"`
-	FaceIDs                  []string       `json:"face_ids,omitzero" maxItems:"20"`
-	More                     bool           `json:"more,omitzero"`
-	InaccessibleFaceConflict bool           `json:"inaccessible_face_conflict,omitzero"`
-	HiddenFaceConflict       bool           `json:"hidden_face_conflict,omitzero"`
-	Position                 *ErrorPosition `json:"position,omitempty"`
+	BackupForget             *BackupForgetReport `json:"backup_forget,omitempty"`
+	BackupPrune              *BackupPruneReport  `json:"backup_prune,omitempty"`
+	Title                    string              `json:"title"`
+	Status                   int                 `json:"status"`
+	Detail                   string              `json:"detail,omitzero"`
+	Code                     string              `json:"code,omitzero"`
+	Errors                   []string            `json:"errors,omitempty"`
+	ObservedScopeCount       int                 `json:"observed_scope_count,omitzero"`
+	FaceIDs                  []string            `json:"face_ids,omitzero" maxItems:"20"`
+	More                     bool                `json:"more,omitzero"`
+	InaccessibleFaceConflict bool                `json:"inaccessible_face_conflict,omitzero"`
+	HiddenFaceConflict       bool                `json:"hidden_face_conflict,omitzero"`
+	Position                 *ErrorPosition      `json:"position,omitempty"`
 }
 
 // ErrorPosition is a half-open UTF-8 byte span in the submitted query text.

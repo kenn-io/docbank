@@ -27,6 +27,8 @@ func TestLongRunningRequestTimeoutBoundary(t *testing.T) {
 		deadline     bool
 	}{
 		{http.MethodPost, download, false},
+		{http.MethodPost, "/api/v1/backup/forget", false},
+		{http.MethodPost, "/api/v1/backup/prune", false},
 		{http.MethodPost, "/api/v1/photos/rejects/trash", false},
 		{http.MethodPost, "/api/v1/photos/rejects/preflight", false},
 		{http.MethodPost, "/api/v1/push/uploads", false},

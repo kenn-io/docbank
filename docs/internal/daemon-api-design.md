@@ -630,3 +630,11 @@ origin, completeness, omission and truncation flags, and per-unit optional
 - Compatibility changes require a protocol revision bump and old-runtime tests.
 - Non-loopback service, multi-user auth, or app-owned TLS would be a product
   boundary change, not a local middleware tweak.
+
+## Backup coverage and cleanup
+
+Snapshot summaries expose optional versioned `coverage` from manifest stats. Historical manifests omit it. Restore proves recorded coverage before publication and restores photo checkouts unbound.
+
+`POST /api/v1/backup/forget` accepts exact `snapshot_ids`, `dry_run`, `allow_empty`, and `force_unlock`. Empty selections return 422; last-snapshot and retained-parent conflicts return 409. Unknown selected snapshot IDs return 404; filesystem I/O failures remain server errors. `POST /api/v1/backup/prune` accepts `dry_run` and `force_unlock`. Both accept the existing repository selection, require the master API credential, and reject browser mutations. Explicit repository paths remain loopback-only. Both routes exempt maintenance from the ordinary request timeout and retain caller cancellation.
+
+Cleanup responses report planned and completed work. Error envelopes retain `backup_forget` or `backup_prune` reports, including partial progress. The daemon client preserves these reports for text and JSON CLI output before returning the original error. Protocol 86 carries these summaries and operations. Fresh-home recovery uses a temporary daemon home and restores into a separate target, then starts the restored vault as described in the [backup guide](../usage/backup.md#recover-on-a-fresh-installation).

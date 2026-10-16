@@ -29,10 +29,7 @@ type BackupForgetOptions struct {
 // BackupForgetReport lists the dependency-safe selection and completed removals.
 // Forgotten can be partial on error; its last removal may not be durable if
 // directory syncing failed. Removing snapshots does not reclaim packed bytes.
-type BackupForgetReport struct {
-	Selected  []string
-	Forgotten []string
-}
+type BackupForgetReport = backupapp.BackupForgetReport
 
 // BackupPruneOptions controls unused backup storage cleanup, not live-vault GC.
 type BackupPruneOptions struct {
@@ -44,15 +41,7 @@ type BackupPruneOptions struct {
 // BackupPruneReport counts pack files, excluding indexes and temporary scratch.
 // Planned bytes are not net savings: replacement encoding and framing affect
 // the final size. Actual counts may be partial on error. Cleanup is not secure erasure.
-type BackupPruneReport struct {
-	PacksToRemove      []string // includes old packs selected for rewriting
-	PacksToRepack      []string
-	BytesToRemove      int64
-	LiveBytesToRewrite uint64 // current encoded payload bytes to copy
-	RemovedPacks       []string
-	BytesRemoved       int64
-	BytesWritten       int64
-}
+type BackupPruneReport = backupapp.BackupPruneReport
 
 // Forget removes recovery points under Kit's exclusive repository lock.
 // It refuses a selection needed by a retained snapshot or the last recovery
@@ -66,10 +55,7 @@ func (r *BackupRepository) Forget(ctx context.Context, opts BackupForgetOptions)
 		SnapshotIDs: opts.SnapshotIDs, DryRun: opts.DryRun,
 		AllowEmpty: opts.AllowEmpty, ForceUnlock: opts.ForceUnlock,
 	})
-	var report BackupForgetReport
-	if result != nil {
-		report = BackupForgetReport{Selected: result.Selected, Forgotten: result.Forgotten}
-	}
+	report := backupapp.ForgetReport(result)
 	if err != nil {
 		return report, fmt.Errorf("removing backup snapshots: %w", err)
 	}
@@ -89,14 +75,7 @@ func (r *BackupRepository) Prune(ctx context.Context, opts BackupPruneOptions) (
 		DryRun: opts.DryRun, ForceUnlock: opts.ForceUnlock,
 		Progress: backupProgressCallback(opts.Progress),
 	})
-	var report BackupPruneReport
-	if result != nil {
-		report = BackupPruneReport{
-			PacksToRemove: result.PacksToRemove, PacksToRepack: result.PacksToRepack,
-			BytesToRemove: result.BytesToRemove, LiveBytesToRewrite: result.LiveBytesToRewrite,
-			RemovedPacks: result.RemovedPacks, BytesRemoved: result.BytesRemoved, BytesWritten: result.BytesWritten,
-		}
-	}
+	report := backupapp.PruneReport(result)
 	if err != nil {
 		return report, fmt.Errorf("pruning backup repository: %w", err)
 	}

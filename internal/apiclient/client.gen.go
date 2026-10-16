@@ -13,6 +13,7 @@ import (
 	document "go.kenn.io/docbank/document"
 	bundle "go.kenn.io/docbank/document/bundle"
 	api "go.kenn.io/docbank/internal/api"
+	backupapp "go.kenn.io/docbank/internal/backupapp"
 	loadfile "go.kenn.io/docbank/internal/loadfile"
 	mailbox "go.kenn.io/docbank/internal/mailbox"
 	pdfstamp "go.kenn.io/docbank/internal/pdfstamp"
@@ -880,6 +881,53 @@ func (c *Client) VerifyAudit(ctx context.Context, options *VerifyAuditRequestOpt
 	return responseParser(ctx, resp)
 }
 
+// ForgetBackupSnapshots Remove selected backup recovery points
+func (c *Client) ForgetBackupSnapshots(ctx context.Context, options *ForgetBackupSnapshotsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ForgetBackupSnapshotsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/backup/forget",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ForgetBackupSnapshotsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ForgetBackupSnapshotsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ForgetBackupSnapshotsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ForgetBackupSnapshotsErrorResponse](resp, "ForgetBackupSnapshotsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/backup/forget")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // InitBackupRepository Initialize an immutable backup repository
 func (c *Client) InitBackupRepository(ctx context.Context, options *InitBackupRepositoryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*InitBackupRepositoryResponse, error) {
 	var err error
@@ -918,6 +966,53 @@ func (c *Client) InitBackupRepository(ctx context.Context, options *InitBackupRe
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/backup/init")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// PruneBackupRepository Reclaim unused backup storage
+func (c *Client) PruneBackupRepository(ctx context.Context, options *PruneBackupRepositoryRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PruneBackupRepositoryResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/backup/prune",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PruneBackupRepositoryResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PruneBackupRepositoryResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PruneBackupRepositoryResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[PruneBackupRepositoryErrorResponse](resp, "PruneBackupRepositoryErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/backup/prune")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -15200,6 +15295,34 @@ func (o *VerifyAuditRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// ForgetBackupSnapshotsRequestOptions is the options needed to make a request to ForgetBackupSnapshots.
+type ForgetBackupSnapshotsRequestOptions struct {
+	Body *ForgetBackupSnapshotsBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ForgetBackupSnapshotsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ForgetBackupSnapshotsRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ForgetBackupSnapshotsRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ForgetBackupSnapshotsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // InitBackupRepositoryRequestOptions is the options needed to make a request to InitBackupRepository.
 type InitBackupRepositoryRequestOptions struct {
 	Body *InitBackupRepositoryBody
@@ -15225,6 +15348,34 @@ func (o *InitBackupRepositoryRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *InitBackupRepositoryRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// PruneBackupRepositoryRequestOptions is the options needed to make a request to PruneBackupRepository.
+type PruneBackupRepositoryRequestOptions struct {
+	Body *PruneBackupRepositoryBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *PruneBackupRepositoryRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *PruneBackupRepositoryRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *PruneBackupRepositoryRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *PruneBackupRepositoryRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -25254,7 +25405,11 @@ type PreviewAuditEnrollmentBody = PreviewAuditEnrollmentRequest
 
 type VerifyAuditBody = AuditVerifyRequest
 
+type ForgetBackupSnapshotsBody = ForgetBackupSnapshotsRequest
+
 type InitBackupRepositoryBody = InitBackupRepositoryRequest
+
+type PruneBackupRepositoryBody = PruneBackupRepositoryRequest
 
 type RestoreBackupSnapshotBody = BackupRestoreRequest
 
@@ -25988,9 +26143,17 @@ type VerifyAuditResponse = api.AuditVerifyReport
 
 type VerifyAuditErrorResponse = Error
 
+type ForgetBackupSnapshotsResponse = backupapp.BackupForgetReport
+
+type ForgetBackupSnapshotsErrorResponse = Error
+
 type InitBackupRepositoryResponse = api.BackupRepository
 
 type InitBackupRepositoryErrorResponse = Error
+
+type PruneBackupRepositoryResponse = backupapp.BackupPruneReport
+
+type PruneBackupRepositoryErrorResponse = Error
 
 type RestoreBackupSnapshotResponse = api.BackupRestoreReport
 
@@ -26191,17 +26354,19 @@ type DownloadExportArchiveErrorResponse = Error
 type GetExportJobEventsResponse = []byte
 
 type GetExportJobEventsErrorResponse struct {
-	Code                     *string        `json:"code,omitempty"`
-	Detail                   *string        `json:"detail,omitempty"`
-	Errors                   []string       `json:"errors,omitempty"`
-	FaceIds                  []string       `json:"face_ids,omitempty"`
-	HiddenFaceConflict       *bool          `json:"hidden_face_conflict,omitempty"`
-	InaccessibleFaceConflict *bool          `json:"inaccessible_face_conflict,omitempty"`
-	More                     *bool          `json:"more,omitempty"`
-	ObservedScopeCount       *int64         `json:"observed_scope_count,omitempty"`
-	Position                 *ErrorPosition `json:"position,omitempty"`
-	Status                   int64          `json:"status"`
-	Title                    string         `json:"title"`
+	BackupForget             *BackupForgetReport `json:"backup_forget,omitempty"`
+	BackupPrune              *BackupPruneReport  `json:"backup_prune,omitempty"`
+	Code                     *string             `json:"code,omitempty"`
+	Detail                   *string             `json:"detail,omitempty"`
+	Errors                   []string            `json:"errors,omitempty"`
+	FaceIds                  []string            `json:"face_ids,omitempty"`
+	HiddenFaceConflict       *bool               `json:"hidden_face_conflict,omitempty"`
+	InaccessibleFaceConflict *bool               `json:"inaccessible_face_conflict,omitempty"`
+	More                     *bool               `json:"more,omitempty"`
+	ObservedScopeCount       *int64              `json:"observed_scope_count,omitempty"`
+	Position                 *ErrorPosition      `json:"position,omitempty"`
+	Status                   int64               `json:"status"`
+	Title                    string              `json:"title"`
 }
 
 type CreateExportPlanResponse = bundle.Plan
@@ -27342,6 +27507,8 @@ type AuditVerifyRequest = api.AuditVerifyRequest
 
 type AuthorizedUploadMetadata = document.AuthorizedUploadMetadata
 
+type BackupCoverage = backupapp.BackupCoverage
+
 type BackupCreateEvent = api.BackupCreateEvent
 
 type BackupCreateRequest struct {
@@ -27353,7 +27520,11 @@ type BackupCreateRequest struct {
 	Tag         *string `json:"tag,omitempty"`
 }
 
+type BackupForgetReport = backupapp.BackupForgetReport
+
 type BackupProgress = api.BackupProgress
+
+type BackupPruneReport = backupapp.BackupPruneReport
 
 type BackupRepository = api.BackupRepository
 
@@ -27502,6 +27673,8 @@ type Coverage = report.Coverage
 type CoverageClass = api.CoverageClass
 
 type CoverageCounts = api.CoverageCounts
+
+type CoverageIncluded = backupapp.CoverageIncluded
 
 type CoverageReport = api.CoverageReport
 
@@ -27763,6 +27936,16 @@ type ExportJob = bundle.ExportJob
 type FaceBox = document.FaceBox
 
 type Filters = query.Filters
+
+type ForgetBackupSnapshotsRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema      *string  `json:"$schema,omitempty"`
+	AllowEmpty  *bool    `json:"allow_empty,omitempty"`
+	DryRun      *bool    `json:"dry_run,omitempty"`
+	ForceUnlock *bool    `json:"force_unlock,omitempty"`
+	Repo        *string  `json:"repo,omitempty"`
+	SnapshotIds []string `json:"snapshot_ids"`
+}
 
 type FormatCapabilityV1 = document.FormatCapabilityV1
 
@@ -28320,6 +28503,14 @@ type ProvenanceFact = api.ProvenanceFact
 type ProvenancePage = api.ProvenancePage
 
 type ProviderDescriptorV1 = document.ProviderDescriptorV1
+
+type PruneBackupRepositoryRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema      *string `json:"$schema,omitempty"`
+	DryRun      *bool   `json:"dry_run,omitempty"`
+	ForceUnlock *bool   `json:"force_unlock,omitempty"`
+	Repo        *string `json:"repo,omitempty"`
+}
 
 type PublicationSelection = bundle.PublicationSelection
 

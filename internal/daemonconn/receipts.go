@@ -491,7 +491,11 @@ func apiProblemError(e api.Error) error {
 	} else {
 		cause = fmt.Errorf("daemon error (%d %s): %s", e.Status, e.Code, e.Detail)
 	}
-	return &problemError{code: e.Code, observedScopeCount: observedScopeCount, detail: detail, err: cause}
+	problem := &problemError{code: e.Code, observedScopeCount: observedScopeCount, detail: detail, err: cause}
+	if e.BackupForget != nil || e.BackupPrune != nil {
+		return &BackupCleanupError{Forget: e.BackupForget, Prune: e.BackupPrune, err: problem}
+	}
+	return problem
 }
 
 // Children fetches every page. Callers that need bounded traversal should use

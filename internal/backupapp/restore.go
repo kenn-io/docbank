@@ -148,29 +148,36 @@ func RestoreWithPlacement(
 		Enabled: true, MinBytes: blob.ManagedLooseCompressionMinBytes,
 		MinSavingsPercent: blob.ManagedLooseCompressionMinSavingsPercent,
 	}
+	var manifest *backup.Manifest
+	var selectErr error
+	if opts.SnapshotID == "" {
+		manifest, selectErr = repo.LatestSnapshot()
+	} else {
+		manifest, selectErr = repo.LoadManifest(opts.SnapshotID)
+	}
+	if selectErr != nil {
+		return nil, fmt.Errorf("backupapp: selecting restore snapshot: %w", selectErr)
+	}
+	if manifest == nil {
+		return nil, errors.New("backupapp: repository has no snapshots to restore")
+	}
+	stats, err := ParseStats(manifest.Stats)
+	if err != nil {
+		return nil, err
+	}
+	opts.SnapshotID = manifest.SnapshotID
+	restoreApp := New(version)
+	restoreApp.omitCoverage = stats.Coverage == nil
 	var sourcePlacement placementManifest
-	var app backup.App = New(version)
+	var app backup.App = restoreApp
 	var primaryHandoff *blob.PrimaryRestoreHandoff
 	if placement.Map == nil {
 		opts.PackedContent = newPackedRestoreTarget()
-		app = &packedRestoreApp{App: New(version)}
+		app = &packedRestoreApp{App: restoreApp}
 	} else {
 		var err error
-		snapshotID := opts.SnapshotID
-		if snapshotID == "" {
-			latest, latestErr := repo.LatestSnapshot()
-			if latestErr != nil {
-				return nil, fmt.Errorf(
-					"backupapp: selecting latest restore snapshot: %w", latestErr,
-				)
-			}
-			if latest == nil {
-				return nil, errors.New("backupapp: repository has no snapshots to restore")
-			}
-			snapshotID = latest.SnapshotID
-		}
 		sourcePlacement, opts.SnapshotID, err = loadPlacementManifest(
-			ctx, repo, snapshotID, app.PackFileExtension(),
+			ctx, repo, opts.SnapshotID, app.PackFileExtension(),
 		)
 		if err != nil {
 			return nil, fmt.Errorf("backupapp: loading restore placement: %w", err)

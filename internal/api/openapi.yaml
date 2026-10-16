@@ -818,6 +818,27 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document
         name: document
+    BackupCoverage:
+      additionalProperties: false
+      properties:
+        excluded:
+          items:
+            type: string
+          type: array
+        included:
+          $ref: "#/components/schemas/CoverageIncluded"
+        version:
+          format: int64
+          type: integer
+      required:
+        - version
+        - included
+        - excluded
+      type: object
+      x-go-type: backupapp.BackupCoverage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/backupapp
+        name: backupapp
     BackupCreateEvent:
       additionalProperties: false
       properties:
@@ -869,6 +890,32 @@ components:
           maxLength: 256
           type: string
       type: object
+    BackupForgetReport:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/BackupForgetReport.json
+          format: uri
+          readOnly: true
+          type: string
+        forgotten:
+          items:
+            type: string
+          type: array
+        selected:
+          items:
+            type: string
+          type: array
+      required:
+        - selected
+        - forgotten
+      type: object
+      x-go-type: backupapp.BackupForgetReport
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/backupapp
+        name: backupapp
     BackupProgress:
       additionalProperties: false
       properties:
@@ -900,6 +947,54 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    BackupPruneReport:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/BackupPruneReport.json
+          format: uri
+          readOnly: true
+          type: string
+        bytes_removed:
+          format: int64
+          type: integer
+        bytes_to_remove:
+          format: int64
+          type: integer
+        bytes_written:
+          format: int64
+          type: integer
+        live_bytes_to_rewrite:
+          format: int64
+          minimum: 0
+          type: integer
+        packs_to_remove:
+          items:
+            type: string
+          type: array
+        packs_to_repack:
+          items:
+            type: string
+          type: array
+        removed_packs:
+          items:
+            type: string
+          type: array
+      required:
+        - packs_to_remove
+        - packs_to_repack
+        - bytes_to_remove
+        - live_bytes_to_rewrite
+        - removed_packs
+        - bytes_removed
+        - bytes_written
+      type: object
+      x-go-type: backupapp.BackupPruneReport
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/backupapp
+        name: backupapp
     BackupRepository:
       additionalProperties: false
       properties:
@@ -1111,6 +1206,10 @@ components:
         bytes_added:
           format: int64
           type: integer
+        coverage:
+          $ref: "#/components/schemas/BackupCoverage"
+        coverage_warning:
+          type: string
         created_at:
           type: string
         duration_seconds:
@@ -3042,6 +3141,55 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    CoverageIncluded:
+      additionalProperties: false
+      properties:
+        album_members:
+          format: int64
+          type: integer
+        albums:
+          format: int64
+          type: integer
+        checkout_definitions:
+          format: int64
+          type: integer
+        checkout_entries:
+          format: int64
+          type: integer
+        hidden_photos:
+          format: int64
+          type: integer
+        photo_assets:
+          format: int64
+          type: integer
+        photo_blob_bytes:
+          format: int64
+          type: integer
+        photo_files:
+          format: int64
+          type: integer
+        retained_receipts:
+          format: int64
+          type: integer
+        trashed_photos:
+          format: int64
+          type: integer
+      required:
+        - photo_assets
+        - photo_files
+        - photo_blob_bytes
+        - albums
+        - album_members
+        - hidden_photos
+        - trashed_photos
+        - checkout_definitions
+        - checkout_entries
+        - retained_receipts
+      type: object
+      x-go-type: backupapp.CoverageIncluded
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/backupapp
+        name: backupapp
     CoverageReport:
       additionalProperties: false
       properties:
@@ -6446,6 +6594,10 @@ components:
           format: uri
           readOnly: true
           type: string
+        backup_forget:
+          $ref: "#/components/schemas/BackupForgetReport"
+        backup_prune:
+          $ref: "#/components/schemas/BackupPruneReport"
         code:
           type: string
         detail:
@@ -6988,6 +7140,32 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/query
         name: query
+    ForgetBackupSnapshotsRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ForgetBackupSnapshotsRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        allow_empty:
+          type: boolean
+        dry_run:
+          type: boolean
+        force_unlock:
+          type: boolean
+        repo:
+          type: string
+        snapshot_ids:
+          items:
+            type: string
+          minItems: 1
+          type: array
+      required:
+        - snapshot_ids
+      type: object
     FormatCapabilityV1:
       additionalProperties: false
       properties:
@@ -14857,6 +15035,23 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document
         name: document
+    PruneBackupRepositoryRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PruneBackupRepositoryRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        dry_run:
+          type: boolean
+        force_unlock:
+          type: boolean
+        repo:
+          type: string
+      type: object
     PublicationSelection:
       additionalProperties: false
       properties:
@@ -19970,6 +20165,29 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Replay audit authority and verify every protected blob
+  /api/v1/backup/forget:
+    post:
+      operationId: forgetBackupSnapshots
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ForgetBackupSnapshotsRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupForgetReport"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Remove selected backup recovery points
   /api/v1/backup/init:
     post:
       operationId: initBackupRepository
@@ -19993,6 +20211,29 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Initialize an immutable backup repository
+  /api/v1/backup/prune:
+    post:
+      operationId: pruneBackupRepository
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PruneBackupRepositoryRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupPruneReport"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Reclaim unused backup storage
   /api/v1/backup/restore:
     post:
       operationId: restoreBackupSnapshot
@@ -21478,6 +21719,10 @@ paths:
               schema:
                 additionalProperties: false
                 properties:
+                  backup_forget:
+                    $ref: "#/components/schemas/BackupForgetReport"
+                  backup_prune:
+                    $ref: "#/components/schemas/BackupPruneReport"
                   code:
                     type: string
                   detail:
