@@ -574,8 +574,15 @@ it("reports a failed flag lookup and clears its progress", async () => {
       autoAdvance: true,
     },
   };
-  vi.spyOn(photoQueries, "lookupPhotoRows").mockRejectedValue(new Error("Lookup unavailable"));
-  await cull.checkRemainder();
+  vi.spyOn(photoQueries, "lookupPhotoRows").mockImplementation(
+    async (_session, _ids, _signal, onprogress) => {
+      onprogress?.(1, 2);
+      throw new Error("Lookup unavailable");
+    },
+  );
+  const check = cull.checkRemainder();
+  expect(cull.busy).toBe(true);
+  await check;
   expect(cull.error).toBe("Lookup unavailable");
   expect(cull.progress).toBe("");
   expect(cull.busy).toBe(false);
