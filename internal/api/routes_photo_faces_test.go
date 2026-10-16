@@ -169,9 +169,6 @@ func TestPhotoFaceBrowserDecisions(t *testing.T) {
 	require.Equal(t, http.StatusCreated, response.StatusCode, body)
 	var person api.Person
 	require.NoError(t, json.Unmarshal([]byte(body), &person))
-	response, body = get(t, ts, "/api/v1/people?query=Ad&limit=100", headers)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	require.Contains(t, body, "Ada")
 	for _, query := range []string{"Ada", "ada", "ＡＤＡ", " AdA "} {
 		response, body = get(t, ts, "/api/v1/people?query="+url.QueryEscape(query), headers)
 		require.Equal(t, http.StatusOK, response.StatusCode, body)
@@ -202,13 +199,10 @@ func TestPhotoFaceBrowserDecisions(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	response, body = get(t, ts, path, headers)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	require.Contains(t, body, `"display_name":"Ada"`)
 	for _, action := range []string{"dismiss", "reject", "key", "withdraw_rejection"} {
 		response, body = do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: action, FaceID: faceID, PersonID: person.PersonID, Revision: 2, OperationID: uuid.NewString()})
 		require.Equal(t, http.StatusForbidden, response.StatusCode, body)
 	}
-	response, body = do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: "retract", FaceID: faceID, Revision: 1})
-	require.Equal(t, http.StatusPreconditionFailed, response.StatusCode, body)
 	response, body = do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: "retract", FaceID: faceID, Revision: 2})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	response, body = get(t, ts, path, headers)

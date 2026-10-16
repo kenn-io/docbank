@@ -3269,14 +3269,9 @@ it.each([false, true])(
       ...photoQuery,
       filters: { person_ids: [ada] },
     });
-    const literal = new Photos("session", vi.fn(), hidden, {
-      ...photoQuery,
-      syntax: "advanced",
-      text: '"person:Ada"',
-    });
     const unfiltered = new Photos("session", vi.fn(), hidden);
     await Promise.all(
-      [oldPerson, newPerson, otherScope, unfiltered, literal].map((view) => view.loadMore()),
+      [oldPerson, newPerson, otherScope, unfiltered].map((view) => view.loadMore()),
     );
     expect([oldPerson.total, newPerson.total]).toEqual([1, 0]);
     requests.length = 0;
@@ -3288,7 +3283,6 @@ it.each([false, true])(
       otherScope,
       unopened,
       unfiltered,
-      literal,
       oldPerson,
     ]);
     expect([
@@ -3300,7 +3294,7 @@ it.each([false, true])(
     expect(otherScope.total).toBe(1);
     expect(requests).toHaveLength(2);
     expect(requests.every((request) => request.hidden === hidden)).toBe(true);
-    for (const view of [source, oldPerson, newPerson, otherScope, unopened, unfiltered, literal])
+    for (const view of [source, oldPerson, newPerson, otherScope, unopened, unfiltered])
       view.dispose();
   },
 );

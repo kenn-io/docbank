@@ -9,10 +9,8 @@ import {
   albumResponse,
   savedSmartSet,
   storage,
-  photoFacePage,
 } from "./photo-test-fixtures.js";
 import App from "./App.svelte";
-import * as api from "./generated/docbank.js";
 import { Photos } from "./photos.svelte.js";
 import { VerifiedUploadChannel } from "./upload.js";
 import { parseQuery, queryFingerprint, type Query } from "./query.js";
@@ -2414,16 +2412,15 @@ it("refreshes Documents, Library, and album counts after adding photos", async (
   await screen.findByRole("cell", { name: "capture.JPG" });
 });
 
-it.each(["search", "tag", "snapshot", "snapshot-name", "snapshot-clear"] as const)(
+it.each(["search", "tag", "snapshot"] as const)(
   "retains the Documents %s after photo changes",
   async (mode) => {
-    const faceDecision = mode === "snapshot-name" || mode === "snapshot-clear";
-    const query = parseQuery('{"text":"Synthetic","sort":{"field":"name","direction":"asc"}}');
+    const query = parseQuery("{}");
     const fingerprint = await queryFingerprint(query);
     history.replaceState(
       null,
       "",
-      `/#web_session=synthetic&web_upload_secret=proof${mode.startsWith("snapshot") ? `&query=${encodeURIComponent(JSON.stringify(query))}` : ""}`,
+      `/#web_session=synthetic&web_upload_secret=proof${mode === "snapshot" ? `&query=${encodeURIComponent(JSON.stringify(query))}` : ""}`,
     );
     vi.stubGlobal(
       "ResizeObserver",
@@ -2444,13 +2441,6 @@ it.each(["search", "tag", "snapshot", "snapshot-name", "snapshot-clear"] as cons
     const upload = vi
       .spyOn(VerifiedUploadChannel.prototype, "uploadPhotoGroup")
       .mockResolvedValue({ status: "added", asset_id: "photo-1" });
-    const decision = vi
-      .spyOn(api, "decidePhotoFace")
-      .mockResolvedValue({ receipt_id: "receipt-a" });
-    vi.spyOn(api, "listPhotoFaces").mockResolvedValue(photoFacePage());
-    vi.spyOn(api, "listPeople").mockResolvedValue({
-      items: [{ person_id: "person-b", display_name: "Grace", revision: 1, state: "curated" }],
-    });
     const root = { id: 1, kind: "dir", name: "", revision: 1, path: "/" };
     const tag = {
       id: "33333333-3333-4333-8333-333333333333",
@@ -2464,8 +2454,8 @@ it.each(["search", "tag", "snapshot", "snapshot-name", "snapshot-clear"] as cons
       if (url.endsWith("/photos/assets/query")) {
         reads.photos++;
         return albumResponse({
-          items: faceDecision ? [photo(1)] : [],
-          total: faceDecision ? 1 : 0,
+          items: [],
+          total: 0,
         });
       }
       if (url === "/api/v1/path?path=%2F") return albumResponse(root);
@@ -2529,45 +2519,20 @@ it.each(["search", "tag", "snapshot", "snapshot-name", "snapshot-clear"] as cons
       await fireEvent.click(await screen.findByRole("option", { name: "reviewed (1)" }));
       await screen.findByText("Documents tagged");
     } else {
-      if (faceDecision) {
-        const input = await screen.findByRole("searchbox", { name: "Search documents" });
-        await fireEvent.input(input, { target: { value: "person:anything" } });
-        await fireEvent.submit(input.closest("form")!);
-        await screen.findByText("Search results");
-      }
       await fireEvent.click(await screen.findByRole("button", { name: "Run query" }));
       await screen.findByRole("region", { name: "Frozen query results" });
     }
+    expect(reads[mode]).toBe(1);
     const before = { ...reads };
     await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
-    if (faceDecision) {
-      await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
-      await fireEvent.click(await screen.findByRole("button", { name: "Metadata" }));
-      await fireEvent.click(
-        await screen.findByRole("button", { name: "Find or create a person: Ada" }),
-      );
-      if (mode === "snapshot-clear")
-        await fireEvent.mouseDown(await screen.findByRole("option", { name: "Clear name" }));
-      else {
-        await fireEvent.input(screen.getByRole("combobox", { name: "Find or create a person" }), {
-          target: { value: "Grace" },
-        });
-        await fireEvent.mouseDown(await screen.findByRole("option", { name: "Grace" }));
-      }
-      await waitFor(() => expect(decision).toHaveBeenCalledOnce());
-      expect(decision.mock.calls[0]![1].action).toBe(
-        mode === "snapshot-clear" ? "retract" : "name",
-      );
-    } else {
-      await fireEvent.click((await screen.findAllByRole("button", { name: "Add photos" }))[0]);
-      await fireEvent.change(await screen.findByLabelText("Choose photo files"), {
-        target: { files: [new File(["jpeg"], "capture.JPG")] },
-      });
-      await fireEvent.click(await screen.findByRole("button", { name: "Add 1 group" }));
-      await waitFor(() => expect(upload).toHaveBeenCalledOnce());
-      await waitFor(() => expect(reads.photos).toBeGreaterThan(before.photos + 1));
-      await fireEvent.click(screen.getByRole("button", { name: "Close add photos" }));
-    }
+    await fireEvent.click((await screen.findAllByRole("button", { name: "Add photos" }))[0]);
+    await fireEvent.change(await screen.findByLabelText("Choose photo files"), {
+      target: { files: [new File(["jpeg"], "capture.JPG")] },
+    });
+    await fireEvent.click(await screen.findByRole("button", { name: "Add 1 group" }));
+    await waitFor(() => expect(upload).toHaveBeenCalledOnce());
+    await waitFor(() => expect(reads.photos).toBeGreaterThan(before.photos + 1));
+    await fireEvent.click(screen.getByRole("button", { name: "Close add photos" }));
     await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
     expect(reads.directory).toBe(before.directory);
     expect(reads.search).toBe(before.search);

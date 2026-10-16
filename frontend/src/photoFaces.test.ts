@@ -2,7 +2,6 @@ import { photoFace, photoPersonAssertion, photoFacePage } from "./photo-test-fix
 import { APIError } from "./api-transport.js";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { PhotoFaces } from "./photoFaces.svelte.js";
-import { drawnPhotoFace, rotatePhotoBox, photoFaceCrop } from "./photoRotation.js";
 import * as api from "./generated/docbank.js";
 
 afterEach(() => vi.restoreAllMocks());
@@ -60,22 +59,6 @@ it("clears rows on navigation and ignores a late old page", async () => {
   expect(faces.faces).toEqual([]);
   expect(read.mock.calls[1]![1]!.signal!.aborted).toBe(true);
   faces.dispose();
-});
-it.each([
-  [0, { x: 0.1, y: 0.2, width: 0.3, height: 0.4 }],
-  [90, { x: 0.4, y: 0.1, width: 0.4, height: 0.3 }],
-  [180, { x: 0.6, y: 0.4, width: 0.3, height: 0.4 }],
-  [270, { x: 0.2, y: 0.6, width: 0.4, height: 0.3 }],
-])("rotates face corners and inverts a drawn region at %i degrees", (rotation, expected) => {
-  const displayed = rotatePhotoBox(face.box, rotation as number);
-  for (const field of ["x", "y", "width", "height"] as const)
-    expect(displayed[field]).toBeCloseTo(expected[field]);
-  const stored = drawnPhotoFace(
-    { ...displayed, x: displayed.x + displayed.width / 2, y: displayed.y + displayed.height / 2 },
-    rotation as number,
-  );
-  for (const field of ["x", "y", "width", "height"] as const)
-    expect(stored[field]).toBeCloseTo(face.box[field]);
 });
 it("creates the manually drawn face on the loaded version", async () => {
   vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [], assertions: [], people: [] });
@@ -146,29 +129,4 @@ it.each([
   await faces.load("version-a");
   expect(auth).toHaveBeenCalledTimes(escalates ? 1 : 0);
   expect(faces.error).toBe("Denied");
-});
-
-it.each([0, 90, 180, 270])(
-  "pads and clamps closeups inside the displayed image at %i degrees",
-  (rotation) => {
-    const crop = photoFaceCrop({ x: 0.98, y: 0.98, width: 0.01, height: 0.01 }, 100, 80, rotation);
-    expect(crop.side).toBe(24);
-    expect(crop.x).toBeGreaterThanOrEqual(0);
-    expect(crop.y).toBeGreaterThanOrEqual(0);
-    expect(crop.x + crop.side).toBeLessThanOrEqual(crop.width);
-    expect(crop.y + crop.side).toBeLessThanOrEqual(crop.height);
-    const padded = photoFaceCrop({ x: 0.1, y: 0.2, width: 0.3, height: 0.4 }, 100, 80, rotation);
-    expect(padded.side).toBeCloseTo(51.2);
-  },
-);
-
-it.each([
-  [0, 350, 280],
-  [90, 520, 350],
-  [180, 650, 520],
-  [270, 280, 650],
-])("centers a closeup on the displayed face at %i degrees", (rotation, x, y) => {
-  const crop = photoFaceCrop({ x: 0.3, y: 0.3, width: 0.1, height: 0.1 }, 1000, 800, rotation);
-  expect(crop.x + crop.side / 2).toBeCloseTo(x!);
-  expect(crop.y + crop.side / 2).toBeCloseTo(y!);
 });

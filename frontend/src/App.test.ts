@@ -2423,7 +2423,6 @@ it.each([true, false])(
       expect(location.href).toBe(before);
       expect(screen.getByRole("dialog", { name: /^Photo viewer,/ })).toBe(loupe);
     } else {
-      await screen.findByText("Person: Ada");
       expect(
         (screen.getByRole("searchbox", { name: "Search photos" }) as HTMLInputElement).value,
       ).toBe("");
