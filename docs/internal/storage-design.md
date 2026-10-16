@@ -135,6 +135,13 @@ after checking current versions, scope, and evidence. A single survivor keeps
 the single-node path lookup. Concurrent moves cannot mix those checks with
 paths from a later snapshot.
 
+Folder-scoped search builds a recursive set of the selected directory and its
+descendant directories, then tests each result's immediate parent. Files stay
+out of that set, and the selected directory is not its own descendant. The
+query reads current topology, so moving a subdirectory into or out of the scope
+changes which descendants match. Traversal cost still grows with the number of
+child entries examined.
+
 Collection list pages discover active membership once for both the exact total
 and page selection. File counts and current byte totals are calculated only for
 the selected collections. The single statement keeps membership, labels, totals,
