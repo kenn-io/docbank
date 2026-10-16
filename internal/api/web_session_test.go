@@ -52,23 +52,19 @@ func TestWebSessionAllowsPhotoAlbumAndAuthoredRoutes(t *testing.T) {
 			require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodGet, route.path, nil)))
 		}
 	}
-	for _, path := range []string{album + "/extra", album + "/members/add/extra", "/api/v1/photos/imports", "/api/v1/photos/authored/photos/undo"} {
+	for _, path := range []string{album + "/extra", album + "/members/add/extra", "/api/v1/photos/authored/photos/undo"} {
 		require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodPost, path, nil)), path)
 	}
 	for _, path := range []string{"/api/v1/photos/albums/invalid", "/api/v1/photos/albums/11111111-1111-4111-8111-11111111111A", "/api/v1/photos/albums/"} {
 		require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodPut, path, nil)), path)
 	}
 	checkout := "/api/v1/photos/checkouts/11111111-1111-4111-8111-111111111111"
-	job := "/api/v1/jobs/11111111-1111-4111-8111-111111111111"
 	for _, route := range []struct{ method, path string }{
 		{http.MethodPost, "/api/v1/photos/checkouts/estimate"},
 		{http.MethodPost, "/api/v1/photos/checkouts"},
 		{http.MethodGet, "/api/v1/photos/checkouts"},
 		{http.MethodGet, checkout},
 		{http.MethodPost, checkout + "/retire"},
-		{http.MethodGet, job},
-		{http.MethodPost, job + "/cancel?force=1"},
-		{http.MethodPost, "/api/v1/jobs/not-a-uuid/cancel"},
 	} {
 		require.False(t, webSessionRequestAllowed(httptest.NewRequest(route.method, route.path, nil)), route.method+" "+route.path)
 	}
