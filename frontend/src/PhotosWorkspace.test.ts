@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { tick } from "svelte";
 import { createShortcutManager } from "@kenn-io/kit-ui";
+import * as photoLoupe from "./PhotoLoupe.svelte";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import PhotosWorkspace from "./PhotosWorkspace.svelte";
 import * as api from "./generated/docbank.js";
@@ -1030,11 +1031,16 @@ it.each(["success", "grid", "removed", "pending"])(
       expect(screen.getByText("This photo is no longer in the refreshed result.")).toBeTruthy();
       expect(location.href).toBe(currentURL);
       expect(photos.viewerReturn).toBe(returnRecord);
+      // Navigation continues from the removed photo's former position.
       expect(
         screen
-          .getAllByRole("button", { name: /^(Previous|Next) photo$/ })
-          .every((button) => (button as HTMLButtonElement).disabled),
+          .getAllByRole("button", { name: "Previous photo" })
+          .every((button) => !(button as HTMLButtonElement).disabled),
       ).toBe(true);
+      if (scenario === "removed") {
+        await fireEvent.keyDown(screen.getByRole("dialog"), { key: "ArrowLeft" });
+        await waitFor(() => expect(onphotochange).toHaveBeenLastCalledWith("photo-1", "step"));
+      }
       if (scenario === "pending") {
         finishPage();
         await new Promise((resolve) => setTimeout(resolve, 0));
@@ -1045,8 +1051,15 @@ it.each(["success", "grid", "removed", "pending"])(
         expect(
           screen
             .getAllByRole("button", { name: /^(Previous|Next) photo$/ })
-            .every((button) => (button as HTMLButtonElement).disabled),
+            .every((button) => !(button as HTMLButtonElement).disabled),
         ).toBe(true);
+        expect(
+          within(screen.getByRole("navigation", { name: "Photos in current result" }))
+            .getAllByRole("button")
+            .map((button) => button.getAttribute("aria-label")),
+        ).toEqual(["Show Photo 1.jpg", "Show Photo 3.jpg"]);
+        await fireEvent.keyDown(screen.getByRole("dialog"), { key: "ArrowRight" });
+        await waitFor(() => expect(onphotochange).toHaveBeenLastCalledWith("photo-3", "step"));
         return;
       }
       await view.rerender({ photos, cache, photoID: "photo-1", onphotochange });
@@ -1292,6 +1305,421 @@ function workspaceWithPreparedPhoto(target = preparedPhoto(1), projection?: "map
   return photos;
 }
 
+it.each([
+  { dirty: false, refetch: false },
+  { dirty: false, refetch: true },
+  { dirty: true, refetch: false },
+  { dirty: true, refetch: true },
+])(
+  "reconciles open metadata after live changes, dirty=$dirty, refetch=$refetch",
+  async ({ dirty, refetch }) => {
+    const before = preparedPhoto(1);
+    before.values.caption = "Before";
+    const photos = workspaceWithPreparedPhoto(before);
+    const updated = preparedPhoto(1, {
+      asset_revision: 2,
+      revision: 7,
+      node_revision: 9,
+      values: { ...before.values, caption: "Remote caption", rating: 4 },
+    });
+    const fetcher = vi.fn(async (url: string, init: RequestInit) => {
+      if (url.endsWith("/photos/assets/query"))
+        return Response.json({ items: [{ ...photo(1), revision: 2 }], total: 1, facets: [] });
+      if (url.endsWith("/photos/authored/prepare"))
+        return Response.json({ assets: [], targets: [updated] });
+      if (url.endsWith("/photos/authored/edit")) {
+        const input = JSON.parse(String(init.body));
+        return Response.json({
+          receipt_id: "saved",
+          before: [updated],
+          after: [{ ...updated, values: { ...updated.values, ...input.patch } }],
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const view = render(PhotosWorkspace, {
+      photos,
+      cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+    const caption = () => screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Caption" });
+    expect(caption().value).toBe("Before");
+    if (dirty) await fireEvent.input(caption(), { target: { value: "Local draft" } });
+    await view.component.refresh({
+      assets: new Map([["photo-2", 2]]),
+      albums: new Map(),
+      refetch: false,
+    });
+    expect(caption().value).toBe(dirty ? "Local draft" : "Before");
+    expect(fetcher.mock.calls.some(([url]) => url.endsWith("/photos/authored/prepare"))).toBe(
+      false,
+    );
+
+    await view.component.refresh({
+      assets: new Map(refetch ? [] : [["photo-1", 2]]),
+      albums: new Map(),
+      refetch,
+    });
+    await tick();
+    if (dirty) {
+      expect(caption().value).toBe("Local draft");
+      expect(screen.getByRole<HTMLButtonElement>("button", { name: "Apply" }).disabled).toBe(true);
+      await fireEvent.click(screen.getByRole("button", { name: "Reload metadata" }));
+      await waitFor(() => expect(caption().disabled).toBe(false));
+      expect(caption().value).toBe("Local draft");
+    } else {
+      expect(caption().value).toBe("Remote caption");
+      await fireEvent.input(caption(), { target: { value: "Local draft" } });
+    }
+    expect(screen.getByRole("combobox", { name: "Rating: 4 stars" })).toBeTruthy();
+    await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(photos.authored.busy).toBe(false));
+    const saved = fetcher.mock.calls.find(([url]) => url.endsWith("/photos/authored/edit"));
+    expect(JSON.parse(String(saved?.[1].body))).toMatchObject({
+      targets: [
+        {
+          asset_id: "photo-1",
+          asset_revision: 2,
+          file_id: "file-1",
+          revision: 7,
+          node_revision: 9,
+        },
+      ],
+      patch: { caption: "Local draft" },
+    });
+    view.unmount();
+    photos.dispose();
+  },
+);
+
+it.each([
+  { failed: false, filtered: false },
+  { failed: false, filtered: true },
+  { failed: true, filtered: false },
+])(
+  "reconciles metadata once a write settles after its event, failed=$failed, filtered=$filtered",
+  async ({ failed, filtered }) => {
+    const before = preparedPhoto(1);
+    before.values.caption = "Before";
+    const photos = workspaceWithPreparedPhoto(before);
+    // A filtered view reloads after the save, which conceals the editor mid-reconcile.
+    if (filtered) photos.query = { ...photos.query, filters: { rating_min: 1 } };
+    const saved = preparedPhoto(1, {
+      asset_revision: 2,
+      revision: 7,
+      node_revision: 9,
+      values: { ...before.values, caption: "Saved" },
+    });
+    let respond!: () => void;
+    let prepares = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/photos/assets/query"))
+          return Response.json({ items: [{ ...photo(1), revision: 2 }], total: 1, facets: [] });
+        if (url.endsWith("/photos/authored/prepare")) {
+          prepares++;
+          return Response.json({ assets: [], targets: [saved] });
+        }
+        if (url.endsWith("/photos/authored/edit")) {
+          await new Promise<void>((resolve) => (respond = resolve));
+          if (failed) return Response.json({ detail: "Metadata unavailable" }, { status: 503 });
+          return Response.json({ receipt_id: "saved", before: [before], after: [saved] });
+        }
+        throw new Error(`Unexpected request: ${url}`);
+      }),
+    );
+    const view = render(PhotosWorkspace, {
+      photos,
+      cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+    const caption = () => screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Caption" });
+    await fireEvent.input(caption(), { target: { value: "Saved" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(respond).toBeTypeOf("function"));
+    await view.component.refresh({
+      assets: new Map([["photo-1", 2]]),
+      albums: new Map(),
+      refetch: false,
+    });
+    expect(prepares).toBe(0);
+    respond();
+    await waitFor(() => expect(photos.authored.busy).toBe(false));
+    if (failed) {
+      // The unsaved draft keeps its conflict until the user reloads.
+      await tick();
+      expect(prepares).toBe(0);
+      expect(photos.authored.conflict).toBe(true);
+      expect(caption().value).toBe("Saved");
+    } else {
+      await waitFor(() => expect(photos.authored.conflict).toBe(false));
+      await waitFor(() => expect(photos.authored.loading).toBe(false));
+      expect(prepares).toBeGreaterThan(0);
+      expect(photos.authored.conflict).toBe(false);
+      expect(caption().value).toBe("Saved");
+      await fireEvent.input(caption(), { target: { value: "Again" } });
+      expect(screen.getByRole<HTMLButtonElement>("button", { name: "Apply" }).disabled).toBe(false);
+    }
+    view.unmount();
+    photos.dispose();
+  },
+);
+
+it("retries a metadata reconcile that a later list refresh interrupts", async () => {
+  const before = preparedPhoto(1);
+  const photos = workspaceWithPreparedPhoto(before);
+  const remote = preparedPhoto(1, { revision: 7, values: { ...before.values, caption: "Remote" } });
+  const held: (() => void)[] = [];
+  let prepares = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/photos/assets/query"))
+        return Response.json({ items: [photo(1)], total: 1, facets: [] });
+      if (url.endsWith("/photos/authored/prepare")) {
+        if (!prepares++) await new Promise<void>((resolve) => held.push(resolve));
+        return Response.json({ assets: [], targets: [remote] });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }),
+  );
+  const view = render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+  const affected = view.component.refresh({
+    assets: new Map([["photo-1", 7]]),
+    albums: new Map(),
+    refetch: false,
+  });
+  await waitFor(() => expect(held).toHaveLength(1));
+  await view.component.refresh({
+    assets: new Map([["photo-2", 3]]),
+    albums: new Map(),
+    refetch: false,
+  });
+  held[0]!();
+  await affected;
+  await waitFor(() => expect(photos.authored.conflict).toBe(false));
+  expect(prepares).toBe(2);
+  expect(screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Caption" }).value).toBe(
+    "Remote",
+  );
+  view.unmount();
+  photos.dispose();
+});
+
+it("keeps navigating from an open photo that another client deleted", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  let deleted = false;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init: RequestInit) => {
+      if (url.endsWith("/preview")) return Response.json({ state: "unsupported" });
+      const body = JSON.parse(String(init.body));
+      const rows = [photo(1), photo(2), photo(3)].filter(
+        (row) => !(deleted && row.asset_id === "photo-2"),
+      );
+      const ids: string[] | undefined = body.query?.filters?.asset_ids;
+      const items = ids ? rows.filter((row) => ids.includes(row.asset_id)) : rows;
+      return Response.json({ items, total: items.length, facets: [] });
+    }),
+  );
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1), photo(2), photo(3)];
+  photos.total = 3;
+  photos.started = true;
+  const cache = { get: vi.fn() } as unknown as PhotoPreviewCache;
+  let view: ReturnType<typeof render>;
+  const onphotochange = vi.fn((id: string) => {
+    void view.rerender({ photos, cache, photoID: id, onphotochange });
+  });
+  view = render(PhotosWorkspace, { photos, cache, photoID: "", onphotochange });
+  await fireEvent.keyDown(await screen.findByRole("button", { name: "Select Photo 2.jpg" }), {
+    key: "Enter",
+  });
+  await screen.findByRole("dialog", { name: "Photo viewer, Photo 2.jpg" });
+  deleted = true;
+  await view.component.refresh({
+    assets: new Map([["photo-2", 9]]),
+    albums: new Map(),
+    refetch: false,
+  });
+  await screen.findByText("This photo is no longer in the refreshed result.");
+  expect(screen.getByRole("dialog", { name: "Photo viewer" })).toBeTruthy();
+  const navigation = screen.getAllByRole<HTMLButtonElement>("button", {
+    name: /^(Previous|Next) photo$/,
+  });
+  expect(navigation.every((button) => !button.disabled)).toBe(true);
+  await fireEvent.keyDown(screen.getByRole("dialog"), { key: "ArrowRight" });
+  await waitFor(() => expect(onphotochange).toHaveBeenLastCalledWith("photo-3", "step"));
+  view.unmount();
+  photos.dispose();
+});
+
+it("settles a live refresh whose metadata reload stalls", async () => {
+  const photos = workspaceWithPreparedPhoto(preparedPhoto(1));
+  const deadlines: AbortController[] = [];
+  vi.spyOn(AbortSignal, "timeout").mockImplementation(() => {
+    const deadline = new AbortController();
+    deadlines.push(deadline);
+    return deadline.signal;
+  });
+  let prepareDeadline: AbortController | undefined;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init: RequestInit) => {
+      if (url.endsWith("/photos/assets/query"))
+        return Response.json({ items: [photo(1)], total: 1, facets: [] });
+      if (url.endsWith("/photos/authored/prepare")) {
+        prepareDeadline = deadlines.at(-1);
+        const signal = init.signal!;
+        return new Promise<Response>((_, reject) =>
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true }),
+        );
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }),
+  );
+  const view = render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+  const refreshing = view.component.refresh({
+    assets: new Map([["photo-1", 2]]),
+    albums: new Map(),
+    refetch: false,
+  });
+  await waitFor(() => expect(prepareDeadline).toBeDefined());
+  expect(photos.authored.loading).toBe(true);
+  prepareDeadline!.abort(new DOMException("The operation timed out.", "TimeoutError"));
+  await refreshing;
+  expect(photos.authored.loading).toBe(false);
+  expect(photos.authored.conflict).toBe(true);
+  expect(await screen.findByText("Metadata timed out. Reload metadata.")).toBeTruthy();
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Reload metadata" }).disabled).toBe(
+    false,
+  );
+  view.unmount();
+  photos.dispose();
+});
+
+it("reports a saved edit as saved when its follow-up refresh fails", async () => {
+  const before = preparedPhoto(1);
+  const photos = workspaceWithPreparedPhoto(before);
+  photos.query = { ...photos.query, text: "beach" };
+  const saved = preparedPhoto(1, { revision: 7, values: { ...before.values, caption: "Saved" } });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/photos/assets/query"))
+        return Response.json({ detail: "Listing unavailable" }, { status: 503 });
+      if (url.endsWith("/photos/authored/edit"))
+        return Response.json({ receipt_id: "saved", before: [before], after: [saved] });
+      throw new Error(`Unexpected request: ${url}`);
+    }),
+  );
+  const rejections = vi.fn();
+  window.addEventListener("unhandledrejection", rejections);
+  const view = render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+  const caption = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Caption" });
+  await fireEvent.input(caption, { target: { value: "Saved" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await waitFor(() => expect(photos.error).toBe("Listing unavailable"));
+  await waitFor(() => expect(photos.authored.busy).toBe(false));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(photos.authored.error).toBe("");
+  expect(photos.authored.conflict).toBe(false);
+  expect(photos.authored.receiptID).toBe("saved");
+  window.removeEventListener("unhandledrejection", rejections);
+  expect(rejections).not.toHaveBeenCalled();
+  view.unmount();
+  photos.dispose();
+});
+
+it("keeps metadata blocked after a failed live reload until a successful retry", async () => {
+  const before = preparedPhoto(1);
+  before.values.caption = "Before";
+  const photos = workspaceWithPreparedPhoto(before);
+  let attempts = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/photos/assets/query"))
+        return Response.json({ items: [photo(1)], total: 1, facets: [] });
+      if (url.endsWith("/photos/authored/prepare")) {
+        if (!attempts++) return Response.json({ detail: "Metadata unavailable" }, { status: 503 });
+        return Response.json({
+          assets: [],
+          targets: [{ ...before, values: { ...before.values, caption: "Remote caption" } }],
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }),
+  );
+  const view = render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+  await view.component.refresh({
+    assets: new Map([["photo-1", 2]]),
+    albums: new Map(),
+    refetch: false,
+  });
+  const caption = () => screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Caption" });
+  expect(caption().value).toBe("Before");
+  expect(caption().disabled).toBe(true);
+  await fireEvent.click(screen.getByRole("button", { name: "Reload metadata" }));
+  await waitFor(() => expect(caption().value).toBe("Remote caption"));
+  expect(caption().disabled).toBe(false);
+  view.unmount();
+  photos.dispose();
+});
+
+it("closes clean metadata when a live change removes its only target", async () => {
+  const photos = workspaceWithPreparedPhoto();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/photos/assets/query"))
+        return Response.json({ items: [], total: 0, facets: [] });
+      throw new Error(`Unexpected request: ${url}`);
+    }),
+  );
+  const view = render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+  await view.component.refresh({
+    assets: new Map([["photo-1", 2]]),
+    albums: new Map(),
+    refetch: false,
+  });
+  await tick();
+  expect(screen.queryByRole("region", { name: "Photo metadata" })).toBeNull();
+  expect(photos.authored.conflict).toBe(false);
+  view.unmount();
+  photos.dispose();
+});
+
 it("refreshes a filtered view and restarts pending reads after a metadata edit", async () => {
   Object.defineProperty(Element.prototype, "scrollIntoView", {
     configurable: true,
@@ -1308,7 +1736,10 @@ it("refreshes a filtered view and restarts pending reads after a metadata edit",
     display_file_id: "file-1",
     files: [{ id: "file-1", role: "image" }],
   } as PhotoAsset;
-  const lookup = vi.spyOn(photos, "lookup").mockImplementation(() => new Promise(() => {}));
+  const lookup = vi
+    .spyOn(photos, "lookup")
+    .mockImplementationOnce(() => new Promise(() => {}))
+    .mockResolvedValue({ ...old, rotation: 90 });
   const edit = vi.spyOn(photos.authored, "edit").mockResolvedValue(undefined);
   const fetcher = vi
     .fn()
@@ -1341,9 +1772,10 @@ it("refreshes a filtered view and restarts pending reads after a metadata edit",
   const oldSignal = fetcher.mock.calls[0]![1].signal as AbortSignal;
   const oldLookupSignal = lookup.mock.calls[0]![1];
   await notify(receipt, []);
-  await waitFor(() => expect(lookup).toHaveBeenCalledTimes(2));
   expect(oldSignal.aborted).toBe(true);
   expect(oldLookupSignal.aborted).toBe(true);
+  expect(lookup.mock.calls.at(-1)![1].aborted).toBe(false);
+  expect((photos.items[0] as PhotoBrowseRow).rotation).toBe(90);
   expect(JSON.parse(fetcher.mock.calls[1]![1].body as string).query.filters).toEqual({
     flags: ["pick"],
   });
@@ -1568,56 +2000,41 @@ it.each([
 it.each(["success", "failure", "interrupted", "late"] as const)(
   "consumes a %s reload before revisiting the listed photo",
   async (outcome) => {
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        observe() {}
-        disconnect() {}
-      },
-    );
-    const photos = new Photos("scoped", vi.fn());
-    photos.items = [photo(1), photo(2)];
-    photos.started = true;
-    photos.viewerReturn = {
-      contextID: photos.contextID,
-      assetID: "photo-1",
-      control: "open",
-      scrollTop: 0,
-    };
+    const fixture = viewerLookupFixture({
+      projection: "map",
+      rows: [mapPhoto(1), mapPhoto(2)],
+      fromGrid: true,
+      resolved: true,
+      renderLoupe: true,
+    });
+    const { photos, responses, view, props } = fixture;
+    responses.mockImplementation(async (id) => photo(id === "photo-1" ? 1 : 2));
     let finish!: (row: ReturnType<typeof photo>) => void;
-    const lookup = vi.spyOn(photos, "lookup");
-    if (outcome === "success") lookup.mockResolvedValue(photo(1));
-    else if (outcome === "failure") lookup.mockRejectedValue(new Error("Reload failed"));
+    const reload = vi.spyOn(photos, "reload");
+    if (outcome === "success") reload.mockResolvedValue({ ...photo(1), revision: 2 });
+    else if (outcome === "failure") reload.mockRejectedValue(new Error("Reload failed"));
     else if (outcome === "late")
-      lookup.mockImplementation(() => new Promise((resolve) => (finish = resolve)));
-    else lookup.mockImplementation(() => new Promise(() => {}));
+      reload.mockImplementation(() => new Promise((resolve) => (finish = resolve)));
+    else reload.mockImplementation(() => new Promise(() => {}));
     vi.spyOn(photos, "preview")
       .mockRejectedValueOnce(new APIError("Changed", 409, "photo_display_changed"))
       .mockResolvedValue({ state: "unsupported" });
-    const props = {
-      photos,
-      cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
-      photoID: "photo-1",
-      onphotochange: vi.fn(),
-    };
-    const view = render(PhotosWorkspace, props);
     await fireEvent.click(await screen.findByRole("button", { name: "Reload photo" }));
-    await waitFor(() => expect(lookup).toHaveBeenCalledOnce());
+    expectActiveViewerLookups(fixture);
+    await waitFor(() => expect(reload).toHaveBeenCalledOnce());
     if (outcome === "failure") await screen.findByText("Reload failed");
-    if (outcome === "success")
-      await waitFor(() => expect(screen.queryByText("Changed")).toBeNull());
+    expect(reload).toHaveBeenCalledWith("photo-1", expect.any(AbortSignal));
+    if (outcome === "success") await waitFor(() => expect(fixture.loupe.photo?.revision).toBe(2));
     await view.rerender({ ...props, photoID: "photo-2" });
-    await waitFor(() => expect(lookup.mock.calls[0]![1].aborted).toBe(true));
+    await waitFor(() => expect(reload.mock.calls[0]![1].aborted).toBe(true));
     if (outcome === "late") {
-      const version = (photos.items[0] as PhotoBrowseRow).content_version_id;
       finish({ ...photo(1), content_version_id: "late-version" });
       await new Promise((resolve) => setTimeout(resolve, 0));
-      expect((photos.items[0] as PhotoBrowseRow).content_version_id).toBe(version);
       expect(screen.getByRole("dialog", { name: "Photo viewer, Photo 2.jpg" })).toBeTruthy();
     }
     await view.rerender(props);
     await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
-    expect(lookup).toHaveBeenCalledOnce();
+    expect(reload).toHaveBeenCalledOnce();
   },
 );
 
@@ -2110,55 +2527,6 @@ it("disables viewer continuation at the Map ceiling while retaining its cursor",
   ).toBe(false);
   photos.dispose();
 });
-it("revalidates the open Map photo after a reload and a list refresh", async () => {
-  const setup = openMapViewerSetup();
-  const { photos, lookup, preview } = setup;
-  stubPhotoFetch(
-    vi.fn(async () =>
-      Response.json({ items: [], map_items: [{ ...mapPhoto(1), revision: 2 }], total: 1 }),
-    ),
-  );
-  preview.mockImplementation(async (row) => {
-    if (row.revision === 1) throw new APIError("Photo changed", 409, "photo_display_changed");
-    return { state: "unsupported" };
-  });
-  await openMapViewer(setup);
-  await screen.findByText("Photo changed");
-  lookup.mockResolvedValue({ ...photo(1), revision: 2 });
-  await fireEvent.click(screen.getByRole("button", { name: "Reload photo" }));
-  await waitFor(() =>
-    expect(preview).toHaveBeenCalledWith(
-      expect.objectContaining({ revision: 2 }),
-      "fit",
-      expect.any(AbortSignal),
-    ),
-  );
-  expect(lookup).toHaveBeenCalledTimes(2);
-  photos.items = [...photos.items, mapPhoto(3)];
-  await tick();
-  expect(lookup).toHaveBeenCalledTimes(2);
-  let finish!: (row: ReturnType<typeof photo>) => void;
-  lookup.mockImplementation(() => new Promise((resolve) => (finish = resolve)));
-  await photos.refresh();
-  await waitFor(() => expect(finish).toBeTypeOf("function"));
-  expect(screen.getByRole("dialog", { name: "Photo viewer, Photo 1.jpg" })).toBeTruthy();
-  finish({
-    ...photo(1),
-    revision: 3,
-    name: "Refreshed photo.jpg",
-    content_version_id: "refreshed-version",
-  });
-  await screen.findByRole("dialog", { name: "Photo viewer, Refreshed photo.jpg" });
-  await waitFor(() =>
-    expect(preview).toHaveBeenCalledWith(
-      expect.objectContaining({ content_version_id: "refreshed-version" }),
-      "fit",
-      expect.any(AbortSignal),
-    ),
-  );
-  photos.dispose();
-});
-
 it("keeps an open Map photo's detail request through appended pages", async () => {
   const setup = openMapViewerSetup();
   const { photos, lookup } = setup;
@@ -2569,3 +2937,345 @@ it("disables selected export when a metadata draft keeps an empty selection open
   expect(onexport).not.toHaveBeenCalled();
   photos.dispose();
 });
+
+function viewerLookupFixture({
+  old = photo(1),
+  rows = [photo(2)],
+  projection,
+  fromGrid = false,
+  resolved = false,
+  renderLoupe = false,
+}: {
+  old?: ReturnType<typeof photo>;
+  rows?: Array<PhotoBrowseRow | PhotoMapRow>;
+  projection?: "map";
+  fromGrid?: boolean;
+  resolved?: boolean;
+  renderLoupe?: boolean;
+} = {}) {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, { projection });
+  photos.started = true;
+  photos.items = rows;
+  if (fromGrid)
+    photos.viewerReturn = {
+      contextID: photos.contextID,
+      assetID: "photo-1",
+      control: "open",
+      scrollTop: 0,
+    };
+  let finish!: (row: ReturnType<typeof photo>) => void;
+  let reject!: (cause: Error) => void;
+  const responses = vi
+    .fn<(id: string, signal: AbortSignal) => Promise<ReturnType<typeof photo>>>()
+    .mockImplementation(
+      () =>
+        new Promise((resolve, fail) => {
+          finish = resolve;
+          reject = fail;
+        }),
+    );
+  const requests: { id: string; signal: AbortSignal; abortedAtCall: boolean | undefined }[] = [];
+  const lookup = vi.spyOn(photos, "lookup").mockImplementation((id, signal) => {
+    requests.push({ id, signal, abortedAtCall: signal?.aborted });
+    return responses(id, signal);
+  });
+  if (resolved) responses.mockResolvedValueOnce(old);
+  const Loupe = photoLoupe.default;
+  let loupe!: Parameters<typeof photoLoupe.default>[1];
+  vi.spyOn(photoLoupe, "default").mockImplementation((_anchor, inputs) => {
+    loupe = inputs;
+    return renderLoupe ? Loupe(_anchor, inputs) : {};
+  });
+  const props = {
+    photos,
+    cache: { get: vi.fn(async () => new Blob(["synthetic"])) } as unknown as PhotoPreviewCache,
+    photoID: "photo-1",
+    onphotochange: vi.fn(),
+  };
+  const view = render(PhotosWorkspace, props);
+  const refreshRows = vi.spyOn(photos, "refresh").mockImplementation(async () => {
+    photos.items = [...rows];
+    return true;
+  });
+  return {
+    old,
+    photos,
+    responses,
+    lookup,
+    requests,
+    props,
+    view,
+    refreshRows,
+    get rows() {
+      return rows;
+    },
+    set rows(value: typeof rows) {
+      rows = value;
+    },
+    get loupe() {
+      return loupe;
+    },
+    get finish() {
+      return finish;
+    },
+    get reject() {
+      return reject;
+    },
+    set reject(value: typeof reject) {
+      reject = value;
+    },
+  };
+}
+
+function expectActiveViewerLookups(fixture: ReturnType<typeof viewerLookupFixture>) {
+  for (const request of fixture.requests)
+    expect(request).toEqual({
+      id: "photo-1",
+      signal: expect.any(AbortSignal),
+      abortedAtCall: false,
+    });
+}
+
+async function pendingViewerRefresh(
+  fixture: ReturnType<typeof viewerLookupFixture>,
+  unrelated = false,
+  noBatch = false,
+) {
+  const { responses, lookup, view } = fixture;
+  let resolve!: (row: ReturnType<typeof photo>) => void;
+  responses.mockImplementationOnce(
+    () =>
+      new Promise((done, fail) => {
+        resolve = done;
+        fixture.reject = fail;
+      }),
+  );
+  await waitFor(() => expect(lookup).toHaveBeenCalledOnce());
+  const refresh = view.component.refresh(
+    noBatch
+      ? undefined
+      : {
+          assets: new Map([[unrelated ? "photo-2" : "photo-1", unrelated ? 2 : 1]]),
+          albums: new Map(),
+          refetch: false,
+        },
+  );
+  let settled = false;
+  void refresh.then(
+    () => (settled = true),
+    () => (settled = true),
+  );
+  await waitFor(() => expect(lookup).toHaveBeenCalledTimes(2));
+  await tick();
+  if (!unrelated) expect(settled).toBe(false);
+  expect(lookup).toHaveBeenCalledTimes(2);
+  return { refresh, resolve };
+}
+
+it.each([
+  "event revision stale",
+  "event revision new",
+  "event refresh false",
+  "event listing incomplete",
+  "event listing refetch",
+  "event listing count failure",
+  "event listing failure",
+])("reconciles refreshed Library rows with the open viewer: %s", async (scenario) => {
+  const old = photo(1);
+  if (scenario.startsWith("event listing ")) old.revision = 2;
+  const fixture = viewerLookupFixture({ old, rows: [old, photo(2)] });
+  const { photos, responses, lookup, view, refreshRows } = fixture;
+  await waitFor(() => expect(lookup).toHaveBeenCalledOnce());
+  fixture.finish(old);
+  await waitFor(() => expect(fixture.loupe.photo).toEqual(old));
+  await waitFor(() => expect(fixture.loupe.reloading).toBe(false));
+  responses.mockResolvedValue(old);
+  lookup.mockClear();
+  if (scenario === "event refresh false") {
+    refreshRows.mockImplementation(async () => {
+      photos.error = "Listing unavailable";
+      return false;
+    });
+    await expect(
+      view.component.refresh({ assets: new Map(), albums: new Map(), refetch: true }),
+    ).rejects.toThrow("Listing unavailable");
+  } else if (scenario === "event revision stale") {
+    await view.component.refresh({
+      assets: new Map([["photo-2", 2]]),
+      albums: new Map(),
+      refetch: false,
+    });
+    await tick();
+    expect(lookup).not.toHaveBeenCalled();
+    await view.component.refresh({
+      assets: new Map([["photo-1", 1]]),
+      albums: new Map(),
+      refetch: false,
+    });
+    await tick();
+    expect(lookup).not.toHaveBeenCalled();
+  } else if (scenario === "event revision new") {
+    responses.mockResolvedValue({ ...photo(1), revision: 2, name: "Event update.jpg" });
+    await view.component.refresh({
+      assets: new Map([["photo-1", 2]]),
+      albums: new Map(),
+      refetch: false,
+    });
+    await waitFor(() => expect(fixture.loupe.photo?.name).toBe("Event update.jpg"));
+    expect(lookup).toHaveBeenCalledTimes(1);
+  } else if (scenario === "event listing incomplete") {
+    refreshRows.mockResolvedValueOnce(false);
+    await view.component.refresh({
+      assets: new Map([["photo-1", 2]]),
+      albums: new Map(),
+      refetch: false,
+    });
+    await waitFor(() => expect(lookup).toHaveBeenCalledTimes(1));
+  } else if (scenario === "event listing refetch") {
+    await view.component.refresh({ assets: new Map(), albums: new Map(), refetch: true });
+    await waitFor(() => expect(lookup).toHaveBeenCalledTimes(1));
+  } else if (scenario === "event listing count failure") {
+    const cause = new Error("Counts unavailable");
+    fixture.rows = [
+      { ...photo(1), revision: 3, name: "Updated despite count failure.jpg" },
+      photo(2),
+    ];
+    refreshRows.mockImplementationOnce(async () => {
+      photos.items = [...fixture.rows];
+      throw cause;
+    });
+    await expect(
+      view.component.refresh({
+        assets: new Map([["photo-1", 3]]),
+        albums: new Map(),
+        refetch: false,
+      }),
+    ).rejects.toBe(cause);
+    await waitFor(() =>
+      expect(fixture.loupe.photo?.name).toBe("Updated despite count failure.jpg"),
+    );
+    expect(lookup).not.toHaveBeenCalled();
+  } else {
+    const previous = fixture.loupe.photo;
+    refreshRows.mockRejectedValueOnce(new Error("Listing unavailable"));
+    await expect(
+      view.component.refresh({
+        assets: new Map([["photo-1", 4]]),
+        albums: new Map(),
+        refetch: false,
+      }),
+    ).rejects.toThrow("Listing unavailable");
+    expect(lookup).not.toHaveBeenCalled();
+    expect(fixture.loupe.photo).toBe(previous);
+  }
+  expect(
+    refreshRows.mock.calls.every(
+      ([preserve, live]) => typeof preserve === "function" && live === true,
+    ),
+  ).toBe(true);
+  expectActiveViewerLookups(fixture);
+  view.unmount();
+});
+
+it.each(["abort-ignored", "error-propagated", "404-restored", "no-batch", "timeout"])(
+  "reconciles pending viewer details after %s",
+  async (outcome) => {
+    const fromMap = outcome === "abort-ignored";
+    const noBatch = outcome === "no-batch";
+    const timeout = outcome === "timeout";
+    const deadline = new AbortController();
+    if (noBatch) vi.spyOn(Photos.prototype, "preview").mockResolvedValue({ state: "unsupported" });
+    const fixture = viewerLookupFixture({
+      projection: fromMap || noBatch ? "map" : undefined,
+      rows: fromMap || noBatch ? [mapPhoto(1), mapPhoto(2)] : [photo(2)],
+      fromGrid: fromMap,
+      resolved: outcome === "404-restored" || timeout,
+      renderLoupe: noBatch,
+    });
+    const { old, lookup, view } = fixture;
+    await waitFor(() => expect(lookup).toHaveBeenCalledOnce());
+    const rejectInitial = fixture.reject;
+    const finishInitial = fixture.finish;
+    const dialog = noBatch
+      ? await screen.findByRole("dialog", { name: "Photo viewer" })
+      : undefined;
+    if (timeout) {
+      await waitFor(() => expect(fixture.loupe.reloading).toBe(false));
+      vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+    }
+    if (outcome === "404-restored")
+      await waitFor(() => expect(fixture.loupe.photo?.asset_id).toBe(old.asset_id));
+    if (fromMap) fixture.rows = [mapPhoto(1), mapPhoto(2)];
+    const refreshed = { ...photo(1), revision: 2, name: "Refreshed Map photo.jpg" };
+    if (noBatch) fixture.rows = [{ ...mapPhoto(1), revision: 2, name: refreshed.name }];
+    const { refresh, resolve } = await pendingViewerRefresh(fixture, fromMap, noBatch);
+    if (outcome !== "404-restored" && !timeout) expect(lookup.mock.calls[0]![1].aborted).toBe(true);
+    if (outcome === "abort-ignored") {
+      expect(lookup.mock.calls[1]![1].aborted).toBe(false);
+      rejectInitial(new DOMException("The operation was aborted", "AbortError"));
+      await tick();
+      expect(fixture.loupe.error).toBe("");
+      const recovered = { ...photo(1), name: "Recovered Map photo.jpg" };
+      resolve(recovered);
+      await refresh;
+      await waitFor(() => expect(fixture.loupe.photo).toEqual(recovered));
+      expect(lookup).toHaveBeenCalledTimes(2);
+    } else if (timeout) {
+      const cause = new DOMException("Photo details timed out", "TimeoutError");
+      const failed = expect(refresh).rejects.toBe(cause);
+      deadline.abort(cause);
+      resolve({ ...photo(1), revision: 2 });
+      await failed;
+      expect(fixture.loupe.error).toBe("Photo details timed out.");
+      expect(fixture.loupe.reloading).toBe(false);
+      vi.mocked(AbortSignal.timeout).mockReturnValue(new AbortController().signal);
+      fixture.responses.mockResolvedValue({ ...photo(1), revision: 2, name: "Recovered.jpg" });
+      await view.component.refresh({
+        assets: new Map([["photo-1", 2]]),
+        albums: new Map(),
+        refetch: false,
+      });
+      await waitFor(() => expect(fixture.loupe.photo?.name).toBe("Recovered.jpg"));
+      expect(fixture.loupe.error).toBe("");
+    } else if (noBatch) {
+      expect(fixture.refreshRows).toHaveBeenCalledExactlyOnceWith(expect.any(Function), false);
+      resolve(refreshed);
+      await refresh;
+      expect(await screen.findByRole("dialog", { name: `Photo viewer, ${refreshed.name}` })).toBe(
+        dialog,
+      );
+      finishInitial(old);
+      await tick();
+      expect(screen.getByRole("dialog", { name: `Photo viewer, ${refreshed.name}` })).toBe(dialog);
+      expect(fixture.loupe.photo).toEqual(refreshed);
+    } else if (outcome === "error-propagated") {
+      const cause = new Error("Temporary lookup failure");
+      fixture.reject(cause);
+      await expect(refresh).rejects.toBe(cause);
+    } else {
+      fixture.reject(new APIError("No longer available", 404, "not_found"));
+      await refresh;
+      await waitFor(() => expect(fixture.loupe.error).toBe("No longer available"));
+      expect(fixture.loupe.photo).toBeUndefined();
+      fixture.rows = [{ ...photo(1), revision: 3, name: "Restored photo.jpg" }];
+      lookup.mockClear();
+      await view.component.refresh({
+        assets: new Map([["photo-1", 3]]),
+        albums: new Map(),
+        refetch: false,
+      });
+      expect(fixture.loupe.photo).toEqual(fixture.rows[0]);
+      expect(fixture.loupe.error).toBe("");
+      expect(lookup).not.toHaveBeenCalled();
+    }
+    expectActiveViewerLookups(fixture);
+    view.unmount();
+  },
+);

@@ -88,6 +88,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `GET /nodes/{id}/versions` | list immutable content versions newest-first, paginated (`limit`/`offset`) | Implemented |
 | `GET /nodes/{id}/provenance` | inspect immutable ingest-origin facts newest-first, paginated (`limit`/`offset`) | Implemented |
 | `POST /nodes/{id}/provenance` | append an immutable origin fact under the node revision | Implemented |
+| `GET /photos/events` | stream committed photo and album changes as authenticated server-sent events | Implemented |
 | `GET /photos/assets/{asset_id}` · `GET /photos/nodes/{node_id}/asset` | inspect one bounded photo graph by asset or member node | Implemented |
 | `POST /photos/assets/query` | list matching assets once each with a first-page total and keyset cursor | Implemented |
 | `POST /photos/authored/prepare` · `POST /photos/authored/edit` · `POST /photos/authored/{receipt_id}/undo` | prepare bounded file targets from assets or a query, atomically edit fields and keywords with required asset, file, and node revision fences, and undo if revisions match | Implemented |
@@ -1364,6 +1365,14 @@ wildcard segment makes a route ambiguous for names containing
 encoding. The path must be absolute (leading `/`), and `?path=/`
 resolves the root. The server applies the store's existing NFC name
 normalization and validation and returns `422` for an invalid path.
+
+`GET /photos/events` returns `text/event-stream`. Each `change` event contains JSON with an `asset_id` or `album_id` and its current `revision`, or `{ "refetch": true }` for a full refresh. The first event requests a refresh. Events publish after commit and recheck Hidden access before delivery. Changes to existing hidden assets are omitted for locked or unconfigured viewers; missing assets request a full refresh. Each subscription buffers 64 events; overflow requests a full refresh. Reconnects start from current state rather than replaying history.
+
+Each daemon accepts up to 128 concurrent photo event streams across browser sessions and API clients. Further requests return `429` with the standard problem JSON and code `photo_event_stream_limit`. Closing a stream releases its slot.
+
+This daemon-wide limit bounds resource use for a single-user daemon; separate browser sessions share the same allowance.
+
+The browser batches events for 100 ms, retaining the highest revision per ID. Asset changes refresh query membership and counts for the view on screen; other loaded views refresh when they reopen. Album changes refresh views that filter by the album, including any advanced search with a field such as `set:` or `saved:`, and other views' album counts. A view that changes off screen also marks its open metadata for reload, so returning to it refreshes values and revisions before the next edit. An open photo reuses a successfully refreshed query row at or above the event revision. Its own asset event requests a lookup when that row is unavailable or older; a full refresh always requests a lookup. Event refresh waits for that lookup; transient failures retry and a missing photo becomes unavailable. The browser reconnects when 45 seconds pass without response headers, an event, or a keepalive.
 
 ## Batch tag assignment
 

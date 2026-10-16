@@ -297,3 +297,35 @@ it.each([false, true])(
     expect(albums.loading).toBe(false);
   },
 );
+
+it("recovers a timed-out album refresh without canceling later writes", async () => {
+  const deadline = new AbortController();
+  vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+  const fetcher = vi
+    .fn()
+    .mockImplementationOnce(
+      (_url: string, init: RequestInit) =>
+        new Promise<Response>((_, reject) =>
+          init.signal!.addEventListener("abort", () => reject(init.signal!.reason), { once: true }),
+        ),
+    )
+    .mockResolvedValueOnce(response({ ...album, revision: 2, starred: true }))
+    .mockResolvedValueOnce(response([{ ...album, revision: 2, starred: true }]));
+  vi.stubGlobal("fetch", fetcher);
+  const albums = new PhotoAlbums("scoped", vi.fn());
+  albums.items = [album];
+  const pending = albums.load();
+  deadline.abort(new Error("Album list timed out"));
+  expect(await pending).toBe(false);
+  expect(albums.loadError).toBe("Album list timed out");
+  expect(albums.loading).toBe(false);
+  expect(albums.items).toEqual([album]);
+  vi.mocked(AbortSignal.timeout).mockReturnValue(new AbortController().signal);
+  expect(await albums.update(album, { starred: true })).toMatchObject({
+    revision: 2,
+    starred: true,
+  });
+  expect(fetcher.mock.calls[1]![1].signal.aborted).toBe(false);
+  expect(albums.loadError).toBe("");
+  albums.dispose();
+});

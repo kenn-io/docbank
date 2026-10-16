@@ -1,6 +1,9 @@
 import * as api from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
 import type { HiddenAccess } from "./hiddenAccess.svelte.js";
+import type { PhotoEventBatch } from "./photoEvents.js";
+
+const prepareTimeout = 60_000;
 
 export class PhotoUndoState {
   receiptID = $state("");
@@ -120,7 +123,36 @@ export class PhotoAuthoredEditor {
     return ++this.writes;
   }
   private endWrite(write: number) {
-    if (write === this.writes) this.busy = false;
+    if (write !== this.writes) return;
+    this.busy = false;
+    void this.reconcile();
+  }
+  // Another writer changed a target. Writes reconcile once they settle; unsaved drafts keep the conflict.
+  // A change stays pending until a read that started after it succeeds.
+  private remoteChange = false;
+  private remoteChanges = 0;
+  private reconciling?: { read: AbortController; done: Promise<void> };
+  affectedBy(changes: PhotoEventBatch) {
+    return this.targets.some((target) => changes.refetch || changes.assets.has(target.asset_id));
+  }
+  changedElsewhere() {
+    this.conflict = true;
+    this.remoteChange = true;
+    this.remoteChanges++;
+  }
+  async reconcile() {
+    if (!this.remoteChange || this.busy || this.dirty) return;
+    if (!this.targets.length) {
+      this.remoteChange = false;
+      this.conflict = false;
+      return;
+    }
+    // Share a live reconcile; a failed one waits for Reload metadata or the next change.
+    if (!this.reconciling || this.reconciling.read.signal.aborted) {
+      const done = this.prepare(this.reloadScope(), true);
+      this.reconciling = { read: this.read, done };
+    }
+    await this.reconciling.done;
   }
   canChangeTarget() {
     if (this.loading) {
@@ -137,6 +169,7 @@ export class PhotoAuthoredEditor {
   }
   reset() {
     this.read.abort();
+    this.remoteChange = false;
     this.targets = [];
     this.asset = undefined;
     this.fileID = "";
@@ -170,17 +203,22 @@ export class PhotoAuthoredEditor {
     if (this.asset && !eligible.has(this.asset.id)) this.asset = undefined;
     this.validating = false;
     this.concealed = false;
+    // A list refresh conceals the editor and aborts its reads, including a pending reconcile.
+    void this.reconcile();
   }
   async prepare(scope: api.PhotoAuthoredPrepareRequest, reload = false) {
     this.read.abort();
     const controller = (this.read = new AbortController());
     const signal = AbortSignal.any([controller.signal, this.controller.signal]);
+    // A stalled read would hold a live refresh and leave Reload metadata unavailable.
+    const deadline = AbortSignal.timeout(prepareTimeout);
     this.loading = true;
     this.error = "";
     const previous = reload ? new Set(this.targets.map((target) => target.file_id)) : undefined;
+    const change = this.remoteChanges;
     try {
       const prepared = await this.request(() =>
-        api.preparePhotoAuthored(scope, this.options(signal)),
+        api.preparePhotoAuthored(scope, this.options(AbortSignal.any([signal, deadline]))),
       );
       if (!Array.isArray(prepared.assets) || !Array.isArray(prepared.targets))
         throw new Error("Metadata response was incomplete. Reload metadata.");
@@ -206,28 +244,32 @@ export class PhotoAuthoredEditor {
           }
         : undefined;
       this.scope = scope;
-      this.conflict = this.membershipChanged;
+      if (change === this.remoteChanges) this.remoteChange = false;
+      this.conflict = this.membershipChanged || this.remoteChange;
       void this.resolveAssignedTags();
       if (!this.tags.length && !this.tagsLoading && !this.tagsError)
         void this.loadTags?.().catch((cause) => {
           if (!signal.aborted) this.tagsError = this.failure(cause);
         });
     } catch (cause) {
-      if (!signal.aborted) this.error = this.failure(cause);
+      if (!signal.aborted)
+        this.error = deadline.aborted
+          ? "Metadata timed out. Reload metadata."
+          : this.failure(cause);
     } finally {
       if (!signal.aborted) this.loading = false;
     }
   }
   async reload() {
     if (this.busy || this.loading || !this.targets.length) return;
-    await this.prepare(
-      {
-        asset_ids: [...new Set(this.targets.map((target) => target.asset_id))],
-        hidden: this.scope?.hidden,
-        skip_unavailable: true,
-      },
-      true,
-    );
+    await this.prepare(this.reloadScope(), true);
+  }
+  private reloadScope(): api.PhotoAuthoredPrepareRequest {
+    return {
+      asset_ids: [...new Set(this.targets.map((target) => target.asset_id))],
+      hidden: this.scope?.hidden,
+      skip_unavailable: true,
+    };
   }
   reviewMembers() {
     this.membershipChanged = false;
@@ -394,7 +436,7 @@ export class PhotoAuthoredEditor {
       if (!this.controller.signal.aborted) {
         this.error = this.failure(cause);
         if (cause instanceof APIError && cause.errors.length) this.error = cause.errors.join("; ");
-        this.conflict = cause instanceof APIError && [404, 409, 412].includes(cause.status);
+        this.conflict ||= cause instanceof APIError && [404, 409, 412].includes(cause.status);
       }
     } finally {
       this.endWrite(write);

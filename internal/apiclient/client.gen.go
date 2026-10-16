@@ -9716,6 +9716,45 @@ func (c *Client) UndoPhotoAuthored(ctx context.Context, options *UndoPhotoAuthor
 	return responseParser(ctx, resp)
 }
 
+// PhotoEvents Observe photo changes as server-sent events
+func (c *Client) PhotoEvents(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*PhotoEventsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/photos/events",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PhotoEventsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PhotoEventsResponse(resp.Content))
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[PhotoEventsErrorResponse](resp, "PhotoEventsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/events")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // UndoPhotoFaceDecision Undo a face decision if its records are unchanged
 func (c *Client) UndoPhotoFaceDecision(ctx context.Context, options *UndoPhotoFaceDecisionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UndoPhotoFaceDecisionResponse, error) {
 	var err error
@@ -26184,6 +26223,10 @@ type PreparePhotoAuthoredErrorResponse = Error
 type UndoPhotoAuthoredResponse = store.PhotoAuthoredReceipt
 
 type UndoPhotoAuthoredErrorResponse = Error
+
+type PhotoEventsResponse = []byte
+
+type PhotoEventsErrorResponse api.Error
 
 type UndoPhotoFaceDecisionResponse = api.PhotoFaceDecisionResult
 

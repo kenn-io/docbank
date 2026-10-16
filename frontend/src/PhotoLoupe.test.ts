@@ -1,3 +1,4 @@
+import { fromStore, writable } from "svelte/store";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { tick } from "svelte";
@@ -43,7 +44,10 @@ function setup() {
     state: "ready",
     generation_id: `${size}-${item.node_id}`,
   }));
-  const get = vi.fn(async (_asset: string, _generation: string) => new Blob(["synthetic-jpeg"]));
+  const get = vi.fn(
+    async (_asset: string, _generation: string, _signal?: AbortSignal) =>
+      new Blob(["synthetic-jpeg"]),
+  );
   const props = {
     photo: items[4]!,
     error: "",
@@ -60,10 +64,20 @@ function setup() {
 }
 it("shows grid, fit and large and preserves zoom", async () => {
   const { props, preview } = setup();
-  const view = render(PhotoLoupe, props);
+  const currentPhoto = fromStore(writable(props.photo));
+  const reloadRevision = fromStore(writable(0));
+  const view = render(PhotoLoupe, {
+    ...props,
+    get photo() {
+      return currentPhoto.current;
+    },
+    get reloadRevision() {
+      return reloadRevision.current;
+    },
+  });
   await screen.findByText("Grid preview");
   await screen.findByText("Fit preview");
-  await view.rerender({ ...props, reloadRevision: 1 });
+  reloadRevision.current = 1;
   await waitFor(() =>
     expect(
       preview.mock.calls.filter(([item, size]) => item.node_id === 5 && size === "fit"),
@@ -80,7 +94,7 @@ it("shows grid, fit and large and preserves zoom", async () => {
   await fireEvent.doubleClick(viewport);
   await fireEvent.doubleClick(viewport);
   expect(preview.mock.calls.filter(([, size]) => size === "large")).toHaveLength(1);
-  await view.rerender({ ...props, reloadRevision: 2 });
+  reloadRevision.current = 2;
   await waitFor(() =>
     expect(preview.mock.calls.filter(([, size]) => size === "large")).toHaveLength(2),
   );
@@ -94,11 +108,7 @@ it("shows grid, fit and large and preserves zoom", async () => {
   expect(screen.getByText("Large preview")).toBeTruthy();
   expect(view.container.querySelector(".photo-viewport")).toBe(viewport);
   expect(pan.style.transform).toBe(transform);
-  await view.rerender({
-    ...props,
-    photo: { ...props.photo, content_version_id: "fresh-version" },
-    reloadRevision: 2,
-  });
+  currentPhoto.current = { ...props.photo, content_version_id: "fresh-version" };
   await screen.findByText("Fit preview");
   expect(preview.mock.calls.filter(([, size]) => size === "large")).toHaveLength(2);
   expect(view.container.querySelector(".photo-viewport")).not.toBe(viewport);
@@ -109,20 +119,9 @@ it("shows grid, fit and large and preserves zoom", async () => {
   expect(props.onmove).toHaveBeenCalledWith(1);
   await fireEvent.doubleClick(view.container.querySelector(".photo-viewport")!);
   await screen.findByText("Large preview");
-  const largeRequests = preview.mock.calls.filter(([, size]) => size === "large").length;
-  const pending = view.rerender({
-    ...props,
-    photo: { ...props.photo, content_version_id: "fresh-version" },
-    reloadRevision: 3,
-  });
-  view.unmount();
-  await pending;
-  await tick();
-  expect(preview.mock.calls.filter(([, size]) => size === "large")).toHaveLength(largeRequests);
-  expect(URL.revokeObjectURL).toHaveBeenCalled();
 });
 
-it("ignores late image bytes after navigation and retains fit on a failed upgrade", async () => {
+it("ignores late image bytes after navigation or unmount", async () => {
   const { props, preview, get } = setup();
   let finish!: (blob: Blob) => void;
   get.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
@@ -135,15 +134,24 @@ it("ignores late image bytes after navigation and retains fit on a failed upgrad
     "Photo 6.jpg",
   );
   expect(URL.createObjectURL).toHaveBeenCalledTimes(2);
-  preview.mockRejectedValueOnce(new Error("Upgrade failed"));
-  await fireEvent.doubleClick(view.container.querySelector(".photo-viewport")!);
-  await screen.findByText("Upgrade failed");
-  expect(screen.getByText("Fit preview")).toBeTruthy();
   expect(screen.queryByRole("navigation", { name: "Photos in current result" })).toBeNull();
-  await fireEvent.doubleClick(view.container.querySelector(".photo-viewport")!);
-  await fireEvent.doubleClick(view.container.querySelector(".photo-viewport")!);
-  await screen.findByText("Large preview");
-  expect(screen.queryByText("Upgrade failed")).toBeNull();
+  let finishUnmounted!: (blob: Blob) => void;
+  let unmountedSignal!: AbortSignal;
+  get.mockImplementationOnce((_asset, _generation, signal) => {
+    unmountedSignal = signal!;
+    return new Promise((resolve) => (finishUnmounted = resolve));
+  });
+  const pending = view.rerender({ ...props, photo: props.items[5]!, items: [], reloadRevision: 1 });
+  await waitFor(() => expect(finishUnmounted).toBeTypeOf("function"));
+  view.unmount();
+  await pending;
+  expect(unmountedSignal.aborted).toBe(true);
+  const createdURLs = vi.mocked(URL.createObjectURL).mock.calls.length;
+  const previewRequests = preview.mock.calls.length;
+  finishUnmounted(new Blob(["late"]));
+  await tick();
+  expect(URL.createObjectURL).toHaveBeenCalledTimes(createdURLs);
+  expect(preview).toHaveBeenCalledTimes(previewRequests);
 });
 
 it("shows paging recovery and preserves fractional exposure with readable orientation", async () => {
@@ -175,35 +183,45 @@ it("shows paging recovery and preserves fractional exposure with readable orient
   }
 });
 
-it("retries a large failure in place and reuses the large preview on zoom", async () => {
-  const { props, preview, get } = setup();
-  const note = "This photo is no longer in the refreshed result.";
-  const view = render(PhotoLoupe, { ...props, items: [], note });
-  await screen.findByText("Fit preview");
-  expect(screen.getByRole("alert").textContent).toContain(note);
-  expect(screen.getByRole("button", { name: "Reload photo" })).toBeTruthy();
-  get.mockRejectedValueOnce(new Error("Large unavailable"));
-  const viewport = view.container.querySelector(".photo-viewport")!;
-  await fireEvent.doubleClick(viewport);
-  await screen.findByText("Large unavailable");
-  await fireEvent.click(screen.getByRole("button", { name: "Retry preview" }));
-  await screen.findByText("Large preview");
-  expect(screen.queryByText("Large unavailable")).toBeNull();
-  const created = vi.mocked(URL.createObjectURL).mock.calls.length;
-  await fireEvent.doubleClick(viewport);
-  await fireEvent.doubleClick(viewport);
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  await tick();
-  expect(preview.mock.calls.filter(([, size]) => size === "large")).toHaveLength(2);
-  expect(get.mock.calls.filter(([, generation]) => generation === "large-5")).toHaveLength(2);
-  expect(get).toHaveBeenLastCalledWith(
-    props.photo.asset_id,
-    "large-5",
-    expect.any(AbortSignal),
-    true,
-  );
-  expect(URL.createObjectURL).toHaveBeenCalledTimes(created);
-});
+it.each(["preview", "cache"])(
+  "retains Fit after a %s failure, retries Large in place and reuses it on zoom",
+  async (source) => {
+    const { props, preview, get } = setup();
+    const note = "This photo is no longer in the refreshed result.";
+    const view = render(PhotoLoupe, { ...props, items: [], note });
+    await screen.findByText("Fit preview");
+    expect(screen.getByRole("alert").textContent).toContain(note);
+    expect(screen.getByRole("button", { name: "Reload photo" })).toBeTruthy();
+    if (source === "preview") preview.mockRejectedValueOnce(new Error("Large unavailable"));
+    else get.mockRejectedValueOnce(new Error("Large unavailable"));
+    const viewport = view.container.querySelector(".photo-viewport")!;
+    await fireEvent.doubleClick(viewport);
+    await screen.findByText("Large unavailable");
+    expect(screen.getByText("Fit preview")).toBeTruthy();
+    if (source === "preview") {
+      await fireEvent.doubleClick(viewport);
+      await fireEvent.doubleClick(viewport);
+    } else await fireEvent.click(screen.getByRole("button", { name: "Retry preview" }));
+    await screen.findByText("Large preview");
+    expect(screen.queryByText("Large unavailable")).toBeNull();
+    const created = vi.mocked(URL.createObjectURL).mock.calls.length;
+    await fireEvent.doubleClick(viewport);
+    await fireEvent.doubleClick(viewport);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await tick();
+    expect(preview.mock.calls.filter(([, size]) => size === "large")).toHaveLength(2);
+    expect(get.mock.calls.filter(([, generation]) => generation === "large-5")).toHaveLength(
+      source === "preview" ? 1 : 2,
+    );
+    expect(get).toHaveBeenLastCalledWith(
+      props.photo.asset_id,
+      "large-5",
+      expect.any(AbortSignal),
+      source === "cache",
+    );
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(created);
+  },
+);
 
 it.each(["photo", "reload"])(
   "keeps a newer retry busy after an obsolete retry settles on %s",
@@ -492,44 +510,6 @@ it.each(["success", "failure", "terminal", "fit-first"] as const)(
   },
 );
 
-it("replaces a ready filmstrip generation and releases the old thumbnail", async () => {
-  const { props, get } = setup();
-  const view = render(PhotoLoupe, props);
-  const selector = '.filmstrip [data-asset="photo-5"] img';
-  await waitFor(() =>
-    expect(view.container.querySelector<HTMLImageElement>(selector)?.src).toMatch(/^blob:/),
-  );
-  const old = view.container.querySelector<HTMLImageElement>(selector)!,
-    oldURL = old.src;
-  const current = {
-    ...props.photo,
-    previews: {
-      ...props.photo.previews,
-      grid: { state: "ready" as const, generation_id: "replacement-grid" },
-    },
-  };
-  await view.rerender({
-    ...props,
-    photo: current,
-    items: props.items.map((item) => (item.asset_id === current.asset_id ? current : item)),
-  });
-  await waitFor(() =>
-    expect(get).toHaveBeenCalledWith(
-      current.asset_id,
-      "replacement-grid",
-      expect.any(AbortSignal),
-      false,
-    ),
-  );
-  await waitFor(() => {
-    const url = view.container.querySelector<HTMLImageElement>(selector)?.src;
-    expect(url).toMatch(/^blob:/);
-    expect(url).not.toBe(oldURL);
-  });
-  expect(old.isConnected).toBe(false);
-  expect(URL.revokeObjectURL).toHaveBeenCalledWith(oldURL);
-});
-
 it("loads the new photo's large preview after an obsolete original finishes decoding", async () => {
   const { props, preview } = setup();
   let finish!: () => void;
@@ -590,26 +570,198 @@ it.each([
   expect(props.onclose).toHaveBeenCalledOnce();
 });
 
-it("retries a failed rail fetch without navigating", async () => {
-  const { props, get } = setup();
-  get.mockImplementation(async (_asset, generation) => {
-    if (generation === "grid-4") throw new Error("Rail unavailable");
-    return new Blob(["synthetic"]);
+function cacheSwapFixture() {
+  const { props } = setup();
+  const cache = fromStore(writable(props.cache));
+  const currentPhoto = fromStore(writable<ReturnType<typeof photo> | undefined>(props.photo));
+  const error = fromStore(writable(""));
+  const view = render(PhotoLoupe, {
+    ...props,
+    items: [],
+    get photo() {
+      return currentPhoto.current;
+    },
+    get error() {
+      return error.current;
+    },
+    get cache() {
+      return cache.current;
+    },
   });
-  const view = render(PhotoLoupe, props);
-  const selector = '.filmstrip [data-asset="photo-4"] img';
-  const retry = await screen.findByRole("button", { name: "Retry preview for Photo 4.jpg" });
-  get.mockResolvedValue(new Blob(["synthetic"]));
-  await fireEvent.click(retry);
-  await waitFor(() =>
-    expect(view.container.querySelector<HTMLImageElement>(selector)?.src).toMatch(/^blob:/),
+  return { props, cache, currentPhoto, error, view };
+}
+
+it("retains Original through row and cache changes and releases unavailable or replaced decoded previews", async () => {
+  const { props, cache, currentPhoto, error, view } = cacheSwapFixture();
+  await screen.findByText("Fit preview");
+  vi.spyOn(props.photos, "original").mockResolvedValue("blob:original");
+  await fireEvent.click(screen.getByRole("button", { name: "View original" }));
+  await screen.findByText("Original");
+  const revised: ReturnType<typeof photo> = {
+    ...props.photo,
+    revision: props.photo.revision + 1,
+    previews: { ...props.photo.previews, fit: { state: "ready", generation_id: "new-fit" } },
+  };
+  currentPhoto.current = revised;
+  await tick();
+  expect(screen.getByText("Original")).toBeTruthy();
+  expect(URL.revokeObjectURL).not.toHaveBeenCalledWith("blob:original");
+  cache.current = {
+    get: vi.fn(async () => new Blob(["replacement-cache"])),
+  } as unknown as PhotoPreviewCache;
+  await tick();
+  expect(screen.getByText("Original")).toBeTruthy();
+  expect(URL.revokeObjectURL).not.toHaveBeenCalledWith("blob:original");
+  currentPhoto.current = { ...revised, content_version_id: "fresh-version" };
+  await screen.findByText("Fit preview");
+  const displayed = () =>
+    view.container.querySelector<HTMLImageElement>(".photo-viewport img")?.src;
+  const revoked = vi.mocked(URL.revokeObjectURL);
+  const releases: { displayed: string | undefined; revoked: string }[] = [];
+  revoked.mockImplementation((url) => releases.push({ displayed: displayed(), revoked: url }));
+  const pending = new Map<string, () => void>();
+  vi.mocked(HTMLImageElement.prototype.decode).mockImplementation(
+    function (this: HTMLImageElement) {
+      const url = this.src;
+      return new Promise<void>((resolve) => pending.set(url, resolve));
+    },
   );
-  expect(get).toHaveBeenCalledWith("photo-4", "grid-4", expect.any(AbortSignal), true);
-  expect(props.onchoose).not.toHaveBeenCalled();
-  const button = view.container.querySelector<HTMLButtonElement>(
-    '.filmstrip [data-asset="photo-4"] .photo-image',
-  )!;
-  expect(document.activeElement).toBe(button);
+  const previous = displayed();
+  const created = vi.mocked(URL.createObjectURL).mock.results.length;
+  cache.current = {
+    get: vi.fn(async () => new Blob(["replacement"])),
+  } as unknown as PhotoPreviewCache;
+  await waitFor(() => expect(pending.size).toBe(2));
+  const [grid, fit] = [...pending.keys()];
+  expect(revoked).not.toHaveBeenCalledWith(grid);
+  expect(revoked).not.toHaveBeenCalledWith(fit);
+  pending.get(fit!)!();
+  await waitFor(() => expect(displayed()).toBe(fit));
+  await waitFor(() => expect(revoked).toHaveBeenCalledWith(previous));
+  expect(revoked).not.toHaveBeenCalledWith(grid);
+  pending.get(grid!)!();
+  await waitFor(() => expect(revoked).toHaveBeenCalledWith(grid));
+  expect(displayed()).toBe(fit);
+  const owned = vi
+    .mocked(URL.createObjectURL)
+    .mock.results.map((result) => result.value)
+    .filter((url) => !revoked.mock.calls.some(([released]) => released === url));
+  expect(owned).toEqual([fit]);
+  expect(vi.mocked(URL.createObjectURL).mock.results.length).toBe(created + 2);
+  expect(releases.every((release) => release.displayed !== release.revoked)).toBe(true);
+  const image = view.container.querySelector<HTMLImageElement>(".photo-viewport img")!;
+  const url = image.src;
+  currentPhoto.current = undefined;
+  error.current = "Photo unavailable";
+  await screen.findByText("Photo unavailable");
+  expect(view.container.querySelector(".photo-viewport img")).toBeNull();
+  expect(image.isConnected).toBe(false);
+  expect(URL.revokeObjectURL).toHaveBeenCalledWith(url);
+});
+
+it.each([
+  {
+    stage: "lookup failure",
+    behavior: "keeps the newest Large generation after an obsolete preparation rejects",
+  },
+  {
+    stage: "terminal",
+    behavior: "keeps the newest Large generation after an obsolete terminal result",
+  },
+  {
+    stage: "cache success",
+    behavior: "ignores obsolete cached bytes after the newest Large generation renders",
+  },
+])("$behavior", async ({ stage }) => {
+  const { props, preview, get } = setup();
+  const oldBlob = new Blob(["old"]),
+    newBlob = new Blob(["new"]);
+  vi.spyOn(URL, "createObjectURL").mockImplementation((blob) =>
+    blob === oldBlob ? "blob:old" : blob === newBlob ? "blob:new" : "blob:grid",
+  );
+  let finish!: () => void;
+  let first = true;
+  preview.mockImplementation(async (_photo, requested) => {
+    if (requested !== "large") return { state: "ready", generation_id: requested };
+    if (!first) return { state: "ready", generation_id: "new" };
+    first = false;
+    if (stage === "lookup failure" || stage === "terminal")
+      return new Promise((resolve, reject) => {
+        finish = () =>
+          stage === "terminal"
+            ? resolve({ state: "failed" })
+            : reject(new Error("Obsolete lookup failed"));
+      });
+    return { state: "ready", generation_id: "old" };
+  });
+  get.mockImplementation(async (_asset, generation) => {
+    if (generation === "new") return newBlob;
+    if (generation !== "old") return new Blob(["grid"]);
+    if (stage === "cache success")
+      return new Promise((resolve) => {
+        finish = () => resolve(oldBlob);
+      });
+    return oldBlob;
+  });
+  const view = render(PhotoLoupe, {
+    ...props,
+    items: [],
+    get photo() {
+      return props.photos.items[4] as ReturnType<typeof photo>;
+    },
+  });
+  await screen.findByText("Fit preview");
+  await fireEvent.doubleClick(view.container.querySelector(".photo-viewport")!);
+  await waitFor(() => expect(finish, stage).toBeTypeOf("function"));
+  const fitCalls = preview.mock.calls.filter(([, requested]) => requested === "fit").length;
+  const largeCalls = preview.mock.calls.filter(([, requested]) => requested === "large").length;
+  props.photos.items = props.photos.items.map((item, index) =>
+    index === 4
+      ? {
+          ...props.photo,
+          previews: {
+            ...props.photo.previews,
+            fit: { state: "ready", generation_id: "event-fit" },
+          },
+        }
+      : item,
+  );
+  await waitFor(() => {
+    expect(
+      preview.mock.calls.filter(([, requested]) => requested === "fit"),
+      stage,
+    ).toHaveLength(fitCalls + 1);
+    expect(
+      preview.mock.calls.filter(([, requested]) => requested === "large"),
+      stage,
+    ).toHaveLength(largeCalls + 1);
+  });
+  await waitFor(() =>
+    expect(view.container.querySelector<HTMLImageElement>(".photo-viewport img")?.src, stage).toBe(
+      "blob:new",
+    ),
+  );
+  await screen.findByText("Large preview");
+  const calls = preview.mock.calls.filter(([, requested]) => requested === "large").length;
+  finish();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await tick();
+  expect(view.container.querySelector<HTMLImageElement>(".photo-viewport img")?.src, stage).toBe(
+    "blob:new",
+  );
+  expect(screen.queryByRole("alert"), stage).toBeNull();
+  await fireEvent.doubleClick(view.container.querySelector(".photo-viewport")!);
+  await fireEvent.doubleClick(view.container.querySelector(".photo-viewport")!);
+  expect(
+    preview.mock.calls.filter(([, requested]) => requested === "large"),
+    stage,
+  ).toHaveLength(calls);
+  if (stage === "cache success")
+    expect(
+      vi.mocked(URL.createObjectURL).mock.calls.some(([blob]) => blob === oldBlob),
+      stage,
+    ).toBe(false);
+  view.unmount();
 });
 
 it("starts details closed, opens with Metadata and closes with I", async () => {

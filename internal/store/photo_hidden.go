@@ -393,8 +393,9 @@ func (s *Store) LockPhotoHidden(ctx context.Context) error {
 
 func (s *Store) clearHiddenSessions() {
 	s.photoHiddenSessionsMu.Lock()
-	defer s.photoHiddenSessionsMu.Unlock()
 	clear(s.photoHiddenSessions)
+	s.photoHiddenSessionsMu.Unlock()
+	s.publishPhotoChanges([]PhotoEvent{{Refetch: true}})
 }
 
 func (s *Store) SetPhotoAssetHidden(ctx context.Context, id string, revision int64, hidden bool) (PhotoAsset, error) {

@@ -16182,6 +16182,44 @@ export const undoPhotoAuthored = async (receiptId: string, options?: Parameters<
 
 
 
+export const getPhotoEventsUrl = () => {
+
+
+
+
+  return `/api/v1/photos/events`
+}
+
+/**
+ * @summary Observe photo changes as server-sent events
+ */
+export const photoEvents = ( options?: Parameters<typeof sessionResponse>[1]) => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionResponse<string>(getPhotoEventsUrl(),
+  {
+    ...options,
+    method: 'GET',
+    headers: { 'Accept': `text/event-stream`, ...getHeaders(options?.headers) }
+
+  }
+);}
+
+
+
 export const getUndoPhotoFaceDecisionUrl = (receiptId: string,
     params?: UndoPhotoFaceDecisionParams,) => {
   const normalizedParams = new URLSearchParams();

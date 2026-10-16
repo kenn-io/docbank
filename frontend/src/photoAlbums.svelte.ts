@@ -56,9 +56,11 @@ export class PhotoAlbums {
 
   async load() {
     const request = ++this.generation;
+    const signal = AbortSignal.any([this.controller.signal, AbortSignal.timeout(60_000)]);
     this.loading = true;
     try {
-      const items = await api.listPhotoAlbums(this.options());
+      const items = await api.listPhotoAlbums({ ...this.options(), signal });
+      signal.throwIfAborted();
       if (this.controller.signal.aborted || request !== this.generation) return;
       if (!Array.isArray(items)) throw new Error("Invalid album list response.");
       this.items = items;
@@ -67,8 +69,10 @@ export class PhotoAlbums {
       this.loadError = "";
       return true;
     } catch (cause) {
-      if (!this.controller.signal.aborted && request === this.generation)
+      if (!this.controller.signal.aborted && request === this.generation) {
         this.loadError = this.failure(cause);
+        return false;
+      }
     } finally {
       if (request === this.generation) this.loading = false;
     }

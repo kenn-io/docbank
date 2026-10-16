@@ -59,6 +59,9 @@ func browserSessionRequest(ctx context.Context) bool {
 // timeout-exempt: long-running maintenance, integrity reads, bulk ingest, and
 // export preparation.
 func timeoutExempt(method, path string) bool {
+	if path == photoEventsPath {
+		return method == http.MethodGet
+	}
 	if packageContainerTimeoutExempt(method, path) {
 		return true
 	}
@@ -334,6 +337,10 @@ func trackMiddleware(next http.Handler, t *ActivityTracker) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == photoEventsPath {
+			next.ServeHTTP(w, r)
+			return
+		}
 		t.Begin()
 		defer t.End()
 		next.ServeHTTP(w, r)

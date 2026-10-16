@@ -268,6 +268,9 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	if photoAuthoredBrowserRequestAllowed(r) {
 		return true
 	}
+	if r.URL.Path == photoEventsPath {
+		return r.Method == http.MethodGet && r.URL.RawQuery == ""
+	}
 	if photoAlbumBrowserRequestAllowed(r) {
 		return true
 	}

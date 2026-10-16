@@ -40,7 +40,7 @@
 </script>
 
 <section class="photo-timeline" aria-label="Photo timeline">
-  {#if loading}
+  {#if loading && !facet}
     <div role="status"><Spinner size={14} /> Loading timeline...</div>
   {:else if error}
     <div role="alert">{error} <Button size="sm" onclick={onretry}>Retry timeline</Button></div>

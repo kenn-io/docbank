@@ -1,3 +1,7 @@
+import * as photoWorkspace from "./PhotosWorkspace.svelte";
+import { PhotoAlbums } from "./photoAlbums.svelte.js";
+import { APIError } from "./api-transport.js";
+import * as photoEvents from "./photoEvents.js";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import {
@@ -1592,22 +1596,30 @@ it.each([false, true])(
       expect(location.hash).toBe("");
       await fireEvent.click(screen.getByRole("button", { name: "Open Photo 1.jpg" }));
       await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
-      const queries = () =>
-        vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith("/assets/query")).length;
-      let refreshed = queries();
-      changeID = "second";
-      await fireEvent(document, new Event("visibilitychange"));
-      await waitFor(() => expect(queries()).toBeGreaterThan(refreshed), { timeout: 5000 });
+      const viewer = screen.getByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+      const concealed = () =>
+        document.querySelector<HTMLElement>("main.photos-workspace")?.inert ?? false;
+      // The viewer stays mounted, but shows nothing while the replacement query is pending.
+      const holdChange = async (id: string) => {
+        changeID = id;
+        holdRefresh = true;
+        await fireEvent(document, new Event("visibilitychange"));
+        await waitFor(() => expect(holdRefresh).toBe(false), { timeout: 5000 });
+        expect(concealed()).toBe(true);
+        expect(viewer.isConnected).toBe(true);
+      };
+      await holdChange("second");
+      finishRefresh(Response.json({ items: [item], total: 1 }));
+      await waitFor(() => expect(concealed()).toBe(false));
       await screen.findByText("Fit preview");
-      expect(screen.getByRole("dialog", { name: "Photo viewer, Photo 1.jpg" })).toBeTruthy();
+      expect(screen.getByRole("dialog", { name: "Photo viewer, Photo 1.jpg" })).toBe(viewer);
       expect(location.hash).toBe("#photo=photo-1");
       const shown = revoke.mock.calls.length;
-      refreshed = queries();
       listed = false;
-      changeID = "third";
-      await fireEvent(document, new Event("visibilitychange"));
-      await waitFor(() => expect(queries()).toBeGreaterThan(refreshed), { timeout: 5000 });
+      await holdChange("third");
+      finishRefresh(Response.json({ items: [], total: 0 }));
       await screen.findByText("This photo is no longer in the refreshed result.");
+      await waitFor(() => expect(concealed()).toBe(false));
       expect(screen.queryByText("Fit preview")).toBeNull();
       expect(revoke.mock.calls.length).toBeGreaterThan(shown);
       return;
@@ -3323,3 +3335,276 @@ it.each([false, true])(
     ]);
   },
 );
+
+async function watcherFixture({
+  configured = false,
+  expiry,
+}: { configured?: boolean; expiry?: string } = {}) {
+  const album = photoAlbum();
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  storage();
+  let refresh!: Parameters<typeof photoEvents.watchPhotoEvents>[1];
+  let fail!: Parameters<typeof photoEvents.watchPhotoEvents>[2];
+  let connected!: NonNullable<Parameters<typeof photoEvents.watchPhotoEvents>[3]>;
+  let recovered!: NonNullable<Parameters<typeof photoEvents.watchPhotoEvents>[4]>;
+  const stop = vi.fn();
+  const watch = vi
+    .spyOn(photoEvents, "watchPhotoEvents")
+    .mockImplementation((_session, liveRefresh, onfailure, onconnected, onrefreshed) => {
+      recovered = onrefreshed!;
+      refresh = liveRefresh;
+      fail = onfailure;
+      connected = onconnected!;
+      return stop;
+    });
+  const access = { configured, change_id: "first", expires_at: expiry, expires_in: 300 };
+  const rows = [photo(1)];
+  const hiddenRows = [photo(2)];
+  vi.stubGlobal("fetch", async (url: string) => {
+    if (url.endsWith("/photos/hidden")) return albumResponse(access);
+    if (url.endsWith("/photos/albums")) return albumResponse([album]);
+    if (url.includes("/nodes/1"))
+      return albumResponse({ id: 1, kind: "dir", name: "", revision: 1, path: "/" });
+    return albumResponse({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  const stores = vi
+    .spyOn(Photos.prototype, "refresh")
+    .mockImplementation(async function (this: Photos) {
+      this.started = true;
+      this.items = this.hidden ? hiddenRows : rows;
+      return true;
+    });
+  vi.spyOn(Photos.prototype, "reloadCounts").mockResolvedValue(undefined);
+  const workspaceRefresh = vi.fn().mockResolvedValue(undefined);
+  let workspaceProps!: Parameters<typeof photoWorkspace.default>[1];
+  const mounts = vi.spyOn(photoWorkspace, "default");
+  mounts.mockImplementation((_anchor, inputs) => {
+    workspaceProps = inputs;
+    return { refresh: workspaceRefresh.bind(inputs.photos), captureReturn: vi.fn() };
+  });
+  render(App);
+  await waitFor(() => expect(mounts).toHaveBeenCalledOnce());
+  workspaceProps.photos.started = true;
+  workspaceProps.photos.items = rows;
+  return {
+    album,
+    access,
+    rows,
+    stores,
+    workspaceRefresh,
+    mounts,
+    watch,
+    stop,
+    get workspaceProps() {
+      return workspaceProps;
+    },
+    get refresh() {
+      return refresh;
+    },
+    get fail() {
+      return fail;
+    },
+    get connected() {
+      return connected;
+    },
+    get recovered() {
+      return recovered;
+    },
+  };
+}
+
+it("reconnects the watcher when Hidden access expiry changes", async () => {
+  const fixture = await watcherFixture({ configured: true });
+  const { access, watch, stop } = fixture;
+  await waitFor(() => expect(fixture.watch).toHaveBeenCalledTimes(1));
+  for (const [index, expiresAt] of ["2099-01-01T00:00:00Z", "2099-01-01T01:00:00Z"].entries()) {
+    access.expires_at = expiresAt;
+    await act(async () => {
+      await fixture.refresh({ assets: new Map(), albums: new Map(), refetch: true });
+    });
+    await waitFor(() => expect(watch).toHaveBeenCalledTimes(index + 2));
+    expect(stop).toHaveBeenCalledTimes(index + 1);
+  }
+  expect(watch.mock.calls.map(([session]) => session)).toEqual([
+    "synthetic",
+    "synthetic",
+    "synthetic",
+  ]);
+});
+
+it("keeps a refresh notice until recovery and preserves page errors", async () => {
+  const fixture = await watcherFixture();
+  await waitFor(() => expect(fixture.watch).toHaveBeenCalledTimes(1));
+  await act(async () =>
+    fixture.fail(
+      new APIError("Close another photo view and retry.", 429, "photo_event_stream_limit"),
+    ),
+  );
+  expect(await screen.findByRole("alert")).toHaveProperty(
+    "textContent",
+    "Close another photo view and retry.",
+  );
+  await act(async () => fixture.connected());
+  await waitFor(() => expect(screen.queryByText("Close another photo view and retry.")).toBeNull());
+  await act(async () => fixture.fail(new Error("Photo refresh unavailable")));
+  expect(await screen.findByText("Photo refresh unavailable")).toBeTruthy();
+  await act(async () => fixture.connected());
+  expect(screen.getByText("Photo refresh unavailable")).toBeTruthy();
+  await act(async () => fixture.fail(new Error("Photo refresh still unavailable")));
+  expect(await screen.findByText("Photo refresh still unavailable")).toBeTruthy();
+  await act(async () => fixture.workspaceProps.onactionerror?.("Unrelated action error"));
+  expect(await screen.findByText("Unrelated action error")).toBeTruthy();
+  await act(async () => fixture.recovered());
+  expect(screen.queryByText("Photo refresh still unavailable")).toBeNull();
+  expect(screen.getByText("Unrelated action error")).toBeTruthy();
+});
+
+it("defers a cached Library refresh while Hidden is on screen", async () => {
+  const fixture = await watcherFixture({ configured: true, expiry: "2099-01-01T00:00:00Z" });
+  const { stores, workspaceRefresh } = fixture;
+  await waitFor(() => expect(fixture.watch).toHaveBeenCalledTimes(2));
+  workspaceRefresh.mockImplementation(function (this: Photos) {
+    return this.refresh(undefined, true).then(() => undefined);
+  });
+  const library = fixture.workspaceProps.photos;
+  await fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
+  await waitFor(() => expect(fixture.workspaceProps.photos.hidden).toBe(true));
+  stores.mockClear();
+  const batch = {
+    assets: new Map([["photo-3", 2]]),
+    albums: new Map<string, number>(),
+    refetch: false,
+  };
+  workspaceRefresh.mockClear();
+  await act(async () => {
+    await fixture.refresh(batch);
+  });
+  expect(workspaceRefresh).toHaveBeenCalledExactlyOnceWith(batch);
+  expect(stores.mock.contexts).toEqual([expect.objectContaining({ hidden: true })]);
+  await library.resume();
+  expect(stores.mock.contexts).toEqual([
+    expect.objectContaining({ hidden: true }),
+    expect.objectContaining({ hidden: false }),
+  ]);
+  await library.resume();
+  expect(stores).toHaveBeenCalledTimes(2);
+});
+
+it("routes album events to the affected photo list", async () => {
+  const fixture = await watcherFixture();
+  const { album, rows, workspaceRefresh, mounts } = fixture;
+  await waitFor(() => expect(fixture.watch).toHaveBeenCalledTimes(1));
+  const albums = vi.spyOn(PhotoAlbums.prototype, "load").mockResolvedValue(true);
+  const library = fixture.workspaceProps.photos;
+  await fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${album.name}`) }));
+  await waitFor(() => expect(mounts).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(fixture.workspaceProps.albumID).toBe(album.id));
+  fixture.workspaceProps.photos.started = true;
+  fixture.workspaceProps.photos.items = rows;
+  workspaceRefresh.mockClear();
+  albums.mockClear();
+  expect(fixture.workspaceProps.albumID).toBe(album.id);
+  const counts = vi.spyOn(Photos.prototype, "reloadCounts").mockResolvedValue(undefined);
+  const unrelated = {
+    assets: new Map<string, number>(),
+    albums: new Map([["another", 2]]),
+    refetch: false,
+  };
+  await act(async () => {
+    await fixture.refresh(unrelated);
+  });
+  expect(albums).toHaveBeenCalledExactlyOnceWith();
+  expect(counts.mock.calls[counts.mock.contexts.indexOf(library)]).toEqual([true]);
+  expect(workspaceRefresh).not.toHaveBeenCalled();
+  // A `set:` search depends on the album it names.
+  const shown = fixture.workspaceProps.photos;
+  const query = shown.query;
+  shown.query = { ...query, syntax: "advanced", text: "set:another", filters: {} };
+  await act(async () => {
+    await fixture.refresh(unrelated);
+  });
+  expect(workspaceRefresh).toHaveBeenCalledExactlyOnceWith(unrelated);
+  shown.query = query;
+  workspaceRefresh.mockClear();
+  albums.mockClear();
+  counts.mockClear();
+  const batch = {
+    assets: new Map<string, number>(),
+    albums: new Map([[album.id, 3]]),
+    refetch: false,
+  };
+  await act(async () => {
+    await fixture.refresh(batch);
+  });
+  expect(workspaceRefresh).toHaveBeenCalledExactlyOnceWith(batch);
+  expect(albums).toHaveBeenCalledExactlyOnceWith();
+  expect(counts).toHaveBeenCalledExactlyOnceWith(true);
+  expect(counts.mock.contexts).toEqual([library]);
+  expect(mounts).toHaveBeenCalledTimes(2);
+  albums.mockResolvedValueOnce(false);
+  await act(async () => {
+    await expect(
+      fixture.refresh({ assets: new Map(), albums: new Map(), refetch: true }),
+    ).rejects.toThrow("Photo refresh failed.");
+  });
+});
+
+it.each(["refetch", "asset"])(
+  "keeps the viewer concealed until a Hidden recheck finishes before a %s event refresh",
+  async (kind) => {
+    const fixture = await watcherFixture();
+    const { access, workspaceRefresh } = fixture;
+    await waitFor(() => expect(fixture.watch).toHaveBeenCalledTimes(1));
+    await act(async () => fixture.workspaceProps.onphotochange?.("photo-1", "open"));
+    await waitFor(() => expect(fixture.workspaceProps.photoID).toBe("photo-1"));
+    let finishRecheck!: (completed: boolean) => void;
+    workspaceRefresh.mockImplementationOnce(
+      () => new Promise<boolean>((resolve) => (finishRecheck = resolve)),
+    );
+    workspaceRefresh.mockResolvedValue(true);
+    access.change_id = "second";
+    const recheck = fixture.refresh({ assets: new Map(), albums: new Map(), refetch: true });
+    await waitFor(() => expect(finishRecheck).toBeTypeOf("function"));
+    expect(fixture.workspaceProps.concealed).toBe(true);
+    const batch =
+      kind === "refetch"
+        ? { assets: new Map<string, number>(), albums: new Map<string, number>(), refetch: true }
+        : { assets: new Map([["photo-2", 2]]), albums: new Map<string, number>(), refetch: false };
+    const overlapping = fixture.refresh(batch);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(workspaceRefresh).toHaveBeenCalledOnce();
+    expect(fixture.workspaceProps.concealed).toBe(true);
+    await act(async () => {
+      finishRecheck(true);
+      await recheck;
+      await overlapping;
+    });
+    expect(fixture.workspaceProps.concealed).toBe(false);
+    expect(workspaceRefresh.mock.calls.slice(1)).toContainEqual([batch]);
+  },
+);
+
+it("revalidates the library when a Hidden recheck is replaced before it confirms visibility", async () => {
+  const fixture = await watcherFixture();
+  const { access, workspaceRefresh, mounts } = fixture;
+  await waitFor(() => expect(fixture.watch).toHaveBeenCalledTimes(1));
+  await act(async () => fixture.workspaceProps.onphotochange?.("photo-1", "open"));
+  await waitFor(() => expect(fixture.workspaceProps.photoID).toBe("photo-1"));
+  workspaceRefresh.mockResolvedValueOnce(false);
+  const mounted = mounts.mock.calls.length;
+  access.change_id = "second";
+  await act(async () => {
+    await fixture.refresh({ assets: new Map(), albums: new Map(), refetch: true });
+  });
+  await waitFor(() => expect(mounts.mock.calls.length).toBeGreaterThan(mounted));
+  expect(fixture.workspaceProps.concealed).toBe(false);
+});

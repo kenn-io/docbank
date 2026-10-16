@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { APIError } from "./api-transport.js";
   import { onDestroy, onMount, tick, untrack } from "svelte";
   import {
     Button,
@@ -20,6 +21,7 @@
   import ImageIcon from "@lucide/svelte/icons/image";
   import { photoSearchSort } from "./photoSearch.js";
   import { mapPhotoLimit, type Photos, type PhotoReturn } from "./photos.svelte.js";
+  import type { PhotoEventBatch } from "./photoEvents.js";
   import { groupPhotos, monthLabel, ROW_HEIGHTS, type Density } from "./photoGrid.js";
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import { isAppShortcutSuppressed } from "./shortcuts.js";
@@ -72,6 +74,7 @@
     onexport,
     onadd,
     uploadChannelError = "",
+    concealed = false,
   }: {
     photos: Photos;
     cache: PhotoPreviewCache;
@@ -102,13 +105,14 @@
     onexport?: (input: ExportInput) => void;
     onadd?: () => void;
     uploadChannelError?: string;
+    concealed?: boolean;
   } = $props();
   const album = $derived(albums?.items.find((item) => item.id === albumID));
   const editor = $derived(photos.authored);
   let editing = $state(false);
   let loupeMetadata = $state(false);
   const selectionCount = $derived(photos.selectedIDs.size);
-  const actionDisabled = $derived(photos.loading || photos.hiding || photos.trashing);
+  const actionDisabled = $derived(concealed || photos.loading || photos.hiding || photos.trashing);
   const editCount = $derived(
     photoID ? 1 : editor.count || (photos.allResults ? photos.total : photos.selectedIDs.size),
   );
@@ -158,16 +162,24 @@
     const displayFileID = editor.asset?.display_file_id ?? direct?.display_file_id;
     if (direct && rotations.has(direct.display_file_id))
       direct = { ...direct, rotation: rotations.get(direct.display_file_id)! };
+    if (refreshing || (photos.started && photos.reloadsAfter(rotations))) {
+      await refresh();
+      return;
+    }
     // A lookup that has not bound its display file yet may predate any rotation in this receipt.
     if (
       photoID &&
       detailLoading &&
       (displayFileID ? rotations.has(displayFileID) : rotations.size > 0)
     ) {
-      detailController?.abort();
-      reload = { id: photoID };
+      if (photos.projection) {
+        detailController?.abort();
+        reload = { id: photoID };
+      } else {
+        detailRequest?.controller.abort();
+        void loadDetail(photoID, true).catch(() => {});
+      }
     }
-    if (refreshing || (photos.started && photos.reloadsAfter(rotations))) await refresh();
   }
   function unavailable() {
     editor.unavailable(
@@ -244,7 +256,10 @@
     };
   });
   let alive = true;
-  onDestroy(() => (alive = false));
+  onDestroy(() => {
+    alive = false;
+    detailController?.abort();
+  });
   let picker = $state<{ focus: () => void; addToTarget: () => Promise<boolean> }>();
   let renaming = $state(false);
   let renameAlbum = $state<PhotoAlbumItem>();
@@ -272,6 +287,9 @@
   let reload = $state.raw<{ id: string }>();
   let consumedReload = $state.raw<typeof reload>();
   let reloadedRow: Photos["items"][number] | undefined;
+  let detailRequest:
+    | { id: string; controller: AbortController; signal: AbortSignal; promise: Promise<void> }
+    | undefined;
   let reloadRevision = $state(0);
   let detailController: AbortController | undefined;
   let visitController: AbortController | undefined;
@@ -286,6 +304,52 @@
   let openingElement: HTMLElement | undefined;
   let openingID = "";
   let restorePosition: (() => Promise<void>) | undefined;
+  function loadDetail(id: string, resetOriginal = false): Promise<void> {
+    if (detailRequest?.id === id && !detailRequest.signal.aborted) return detailRequest.promise;
+    detailRequest?.controller.abort();
+    const controller = new AbortController();
+    const owner = AbortSignal.any([
+      controller.signal,
+      ...(detailController ? [detailController.signal] : []),
+    ]);
+    const signal = AbortSignal.any([owner, AbortSignal.timeout(30_000)]);
+    const request = { id, controller, signal, promise: Promise.resolve() };
+    detailRequest = request;
+    detailLoading = true;
+    request.promise = photos
+      .lookup(id, signal)
+      .then((photo) => {
+        if (owner.aborted || photoID !== id || !alive) return;
+        signal.throwIfAborted();
+        const index = photos.items.findIndex((item) => item.asset_id === id);
+        if (index >= 0 && !photos.projection)
+          photos.items = photos.items.map((item) => (item.asset_id === id ? photo : item));
+        direct = photo;
+        detailError = "";
+        if (resetOriginal) reloadRevision++;
+      })
+      .catch((cause) => {
+        if (owner.aborted || photoID !== id || !alive) return;
+        detailError = signal.aborted
+          ? "Photo details timed out."
+          : cause instanceof Error
+            ? cause.message
+            : String(cause);
+        if (cause instanceof APIError && cause.status === 404) {
+          direct = undefined;
+          photos.items = photos.items.filter((item) => item.asset_id !== id);
+          return;
+        }
+        throw cause;
+      })
+      .finally(() => {
+        if (detailRequest === request) {
+          detailRequest = undefined;
+          detailLoading = false;
+        }
+      });
+    return request.promise;
+  }
   $effect(() => {
     if (!photoID) return;
     const controller = new AbortController();
@@ -293,6 +357,27 @@
     return () => controller.abort();
   });
   $effect(() => {
+    if (photos.projection) return;
+    const id = photoID;
+    if (!id) {
+      direct = undefined;
+      detailError = "";
+      if (fromGrid) void restoreGrid();
+      return;
+    }
+    const controller = new AbortController();
+    detailController = controller;
+    if (untrack(() => direct?.asset_id) !== id) direct = undefined;
+    detailError = "";
+    if (fromGrid && listedDetail) detailLoading = false;
+    else void loadDetail(id).catch(() => {});
+    return () => {
+      controller.abort();
+      if (detailRequest?.id === id) detailRequest.controller.abort();
+    };
+  });
+  $effect(() => {
+    if (!photos.projection) return;
     const id = photoID;
     if (!id) {
       direct = undefined;
@@ -324,6 +409,15 @@
     if (!explicit && fromGrid && listedDetail) {
       detailLoading = false;
       return () => controller.abort();
+    }
+    if (!explicit) {
+      void loadDetail(id).catch(() => {});
+      const request = detailRequest;
+      return () => {
+        controller.abort();
+        request?.controller.abort();
+        if (detailRequest === request) detailRequest = undefined;
+      };
     }
     detailLoading = true;
     const request = reload;
@@ -411,25 +505,34 @@
     captureReturn(element);
     onphotochange(id, "open");
   }
+  function neighbors(id: string) {
+    const index = ordered.findIndex((item) => item.asset_id === id);
+    if (index >= 0) return { previous: index - 1, next: index + 1 };
+    if (removedAt < 0) return undefined;
+    return { previous: removedAt - 1, next: removedAt };
+  }
   async function move(direction: -1 | 1) {
     if (!editor.canChangeTarget()) return;
     const controller = visitController;
-    if (!fromGrid || !current || !controller) return;
-    const id = current.asset_id;
-    const index = ordered.findIndex((item) => item.asset_id === id);
-    if (index < 0) return;
+    // A photo deleted elsewhere has no details, but still has a place in the list.
+    const id = photoID;
+    if (!fromGrid || !id || !controller) return;
+    const before = neighbors(id);
+    if (!before) return;
+    const wasListed = listed;
     if (
       photos.cursor &&
       (!mapMode || photos.items.length < mapPhotoLimit) &&
       direction === 1 &&
-      index === ordered.length - 1
+      before.next === ordered.length
     ) {
       await photos.loadMore(preserve);
     }
     if (controller.signal.aborted || photoID !== id) return;
-    const currentIndex = ordered.findIndex((item) => item.asset_id === id);
-    if (currentIndex < 0) return;
-    const next = ordered[currentIndex + direction];
+    // A refresh that removed the photo during the wait makes this step stale.
+    const after = neighbors(id);
+    if (!after || (wasListed && !listed)) return;
+    const next = ordered[direction === 1 ? after.next : after.previous];
     if (next) onphotochange(next.asset_id, "step");
   }
   async function retryNavigation() {
@@ -444,8 +547,64 @@
   let grid = $state<{ preservePosition: () => () => Promise<void> }>();
   let rejectsOpen = $state(false);
   const preserve = () => grid?.preservePosition();
-  export function refresh() {
-    return photos.refresh(preserve);
+  // A newer refresh owns the list and viewer; an older one reports that it was replaced.
+  let refreshes = 0;
+  /** Returns false when the refresh was cancelled or replaced before it finished. */
+  export async function refresh(changes?: PhotoEventBatch) {
+    const generation = ++refreshes;
+    const replaced = () => generation !== refreshes;
+    const id = photoID;
+    const revision = changes?.assets.get(id);
+    const affected = !changes || changes.refetch || revision !== undefined;
+    const metadataAffected = changes && editor.affectedBy(changes);
+    if (metadataAffected) editor.changedElsewhere();
+    if (affected) detailRequest?.controller.abort();
+    if (current) direct = current;
+    const previousItems = photos.items;
+    let refreshed: boolean;
+    let failure: { cause: unknown } | undefined;
+    try {
+      refreshed = await photos.refresh(preserve, !!changes);
+    } catch (cause) {
+      // Counts or timeline can fail after replace accepts a new row array.
+      if (photos.items === previousItems) throw cause;
+      refreshed = true;
+      failure = { cause };
+    }
+    if (replaced()) return false;
+    // Only live refreshes reject; other callers already show list and viewer errors.
+    if (!refreshed && photos.error) {
+      if (changes) throw new Error(photos.error);
+      return false;
+    }
+    try {
+      if (refreshed && metadataAffected) await editor.reconcile();
+      if (photos.projection) await tick();
+      if (replaced()) return false;
+      if (id && photoID === id) {
+        if (affected && !photos.projection) {
+          detailRequest?.controller.abort();
+          detailLoading = false;
+        }
+        const listed = refreshed ? photos.items.find((photo) => photo.asset_id === id) : undefined;
+        if (listed && "content_version_id" in listed) {
+          direct = listed;
+          if (revision !== undefined && listed.revision >= revision) detailError = "";
+        }
+        if (
+          !changes ||
+          changes.refetch ||
+          (revision !== undefined && (photos.projection || !listed || listed.revision < revision))
+        ) {
+          const lookup = loadDetail(id);
+          await (changes ? lookup : lookup.catch(() => {}));
+        }
+      }
+    } finally {
+      if (failure && !replaced()) throw failure.cause;
+    }
+    // An incomplete listing still looks up the open photo, but has not confirmed the list.
+    return refreshed && !replaced();
   }
   async function setHidden(id: string) {
     if (photos.hiding || photos.trashing) return;
@@ -474,6 +633,16 @@
         )),
   );
   const ordered = $derived(photos.items);
+  // A refresh can drop the open photo from the list; navigation continues from where it was.
+  let anchor = $state.raw<{ id: string; index: number }>();
+  $effect(() => {
+    const id = photoID;
+    const index = ordered.findIndex((item) => item.asset_id === id);
+    if (id && index >= 0) anchor = { id, index };
+  });
+  const removedAt = $derived(
+    fromGrid && !listed && anchor?.id === photoID ? Math.min(anchor.index, ordered.length) : -1,
+  );
   const outsideSelection = $derived(
     mapMode ? [...photos.selectedIDs].filter((id) => !shownIDs.has(id)).length : 0,
   );
@@ -562,7 +731,7 @@
     }
   }
   async function refreshView() {
-    await Promise.all([refresh(), albums?.load()]);
+    await Promise.allSettled([refresh(), albums?.load()]);
   }
   async function remove() {
     if (!albums || !album) return;
@@ -638,7 +807,12 @@
 {/snippet}
 
 <svelte:window onkeydown={escape} />
-<main class="photos-workspace" aria-label={albumID ? "Photo album" : "Photo library"}>
+<main
+  class="photos-workspace"
+  class:concealed
+  inert={concealed}
+  aria-label={albumID ? "Photo album" : "Photo library"}
+>
   {#if mapMode && !tiles.tile_url}
     <EmptyState
       title="Maps are disabled"
@@ -1160,11 +1334,15 @@
       note={membershipNote}
       reloading={detailLoading}
       {reloadRevision}
-      onreload={() => (reload = { id: photoID })}
+      onreload={() => {
+        if (photos.projection) reload = { id: photoID };
+        else void loadDetail(photoID, true).catch(() => {});
+      }}
       onretry={retryNavigation}
       {photos}
       {cache}
       items={fromGrid ? ordered : []}
+      {removedAt}
       canLoadMore={fromGrid && (!mapMode || photos.items.length < mapPhotoLimit) && !!photos.cursor}
       onmove={move}
       onchoose={(id) => onphotochange(id, "step")}
@@ -1307,6 +1485,9 @@
     flex-direction: column;
     flex: 1;
     min-height: 0;
+  }
+  .photos-workspace.concealed {
+    visibility: hidden;
   }
   .photos-workspace {
     position: relative;

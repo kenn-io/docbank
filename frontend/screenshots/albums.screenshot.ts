@@ -35,7 +35,9 @@ test("organizes a 10,000-photo query through the dock, B and sidebar drag", asyn
       .nth(1)
       .click({ modifiers: ["Control"] });
     await page.getByRole("button", { name: "Refresh previews", exact: true }).click();
-    await expect(page.locator(".photo-loading")).not.toContainText("Loading");
+    await expect(
+      page.locator(".photo-results > .photo-loading").filter({ hasText: "Loading photos" }),
+    ).toHaveCount(0);
     await page
       .locator(".photo-image")
       .nth(2)
@@ -46,7 +48,10 @@ test("organizes a 10,000-photo query through the dock, B and sidebar drag", asyn
         (theme) => document.documentElement.classList.toggle("dark", theme === "dark"),
         theme,
       );
-      await page.waitForLoadState("networkidle");
+      await expect(
+        page.locator(".photo-results > .photo-loading").filter({ hasText: "Loading photos" }),
+      ).toHaveCount(0);
+      await expect(page.locator(".photo-cell img").first()).toBeVisible();
       await page.screenshot({
         path: path.join(output!, `web-albums-refresh-range-${theme}.png`),
         animations: "disabled",
@@ -69,6 +74,7 @@ test("organizes a 10,000-photo query through the dock, B and sidebar drag", asyn
     await page.locator(".library-title h1").click();
     await page.keyboard.press("b");
     await expect.poll(() => adds.length).toBe(2);
+    await expect(page.getByRole("button", { name: /Add to album/ })).toBeEnabled();
     expect(adds[1]).toHaveProperty("asset_ids");
     await expect(page.getByText("Added to Trip")).toBeVisible();
     const nav = page.getByRole("navigation", { name: "Docbank navigation" });
@@ -77,6 +83,10 @@ test("organizes a 10,000-photo query through the dock, B and sidebar drag", asyn
       .first()
       .dragTo(nav.getByRole("button", { name: /Trip/ }));
     await expect.poll(() => adds.length).toBe(3);
+    await expect(page.getByRole("button", { name: /Add to album/ })).toBeEnabled();
+    await expect(
+      page.locator(".photo-results > .photo-loading").filter({ hasText: "Loading photos" }),
+    ).toHaveCount(0);
     await nav.getByRole("button", { name: "Albums", exact: true }).click();
     await expect(
       page.getByRole("main", { name: "Albums" }).getByText("10,000 photos"),
@@ -100,7 +110,9 @@ test("organizes a 10,000-photo query through the dock, B and sidebar drag", asyn
       .poll(() => page.getByTestId("photo-scroll").evaluate((element) => element.scrollTop))
       .toBe(500);
     await page.getByRole("button", { name: "Refresh previews", exact: true }).click();
-    await expect(page.locator(".photo-loading")).not.toContainText("Loading");
+    await expect(
+      page.locator(".photo-results > .photo-loading").filter({ hasText: "Loading photos" }),
+    ).toHaveCount(0);
     await page.getByRole("button", { name: "Clear selection", exact: true }).click();
     await page.reload();
     await expect(page.getByText("Open your Docbank", { exact: true })).toBeVisible();
@@ -116,7 +128,10 @@ test("organizes a 10,000-photo query through the dock, B and sidebar drag", asyn
         localStorage.setItem("docbank-theme", "dark");
         document.documentElement.classList.add("dark");
       });
-      await page.waitForLoadState("networkidle");
+      await expect(
+        page.locator(".photo-results > .photo-loading").filter({ hasText: "Loading photos" }),
+      ).toHaveCount(0);
+      await expect(page.locator(".photo-cell img").first()).toBeVisible();
       await page.screenshot({
         path: path.join(output!, `web-albums-detail-${width}-dark.png`),
         animations: "disabled",
@@ -132,7 +147,6 @@ test("organizes a 10,000-photo query through the dock, B and sidebar drag", asyn
       await page.getByRole("button", { name: "Clear selection", exact: true }).click();
       await page.locator(".album-back").click();
       await expect(page.locator(".album-cover img").first()).toBeVisible();
-      await page.waitForLoadState("networkidle");
       await page.screenshot({
         path: path.join(output!, `web-albums-index-${width}-dark.png`),
         animations: "disabled",
@@ -159,7 +173,8 @@ test("organizes a 10,000-photo query through the dock, B and sidebar drag", asyn
         (theme) => document.documentElement.classList.toggle("dark", theme === "dark"),
         theme,
       );
-      await page.waitForLoadState("networkidle");
+      await expect(createUUID).toBeVisible();
+      await expect(page.locator(".photo-cell img").first()).toBeVisible();
       await page.screenshot({
         path: path.join(output!, `web-albums-uuid-name-${theme}.png`),
         animations: "disabled",

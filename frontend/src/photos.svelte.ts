@@ -44,6 +44,7 @@ import {
 import { captureDateQuery, type CaptureDayFacet } from "./photoTimeline.js";
 import { PhotoAuthoredEditor, type PhotoUndoState } from "./photoAuthored.svelte.js";
 import type { HiddenAccess } from "./hiddenAccess.svelte.js";
+import type { PhotoEventBatch } from "./photoEvents.js";
 
 export const photoQuery = parseQuery(
   '{"syntax":"simple","sort":{"field":"capture_time","direction":"desc"}}',
@@ -277,6 +278,8 @@ export class Photos {
   }
   total = $state(0);
   private countStale = false;
+  // A live change arrived while this view was off screen; it refreshes when it resumes.
+  private changedOffscreen = false;
   cursor = $state<string | undefined>();
   get mapCapped() {
     return (
@@ -761,7 +764,27 @@ export class Photos {
     this.rejectsLoading = false;
   }
 
+  markChanged(changes: PhotoEventBatch) {
+    this.changedOffscreen = true;
+    // Retained metadata reconciles when the refresh on return revalidates it.
+    if (this.authored.affectedBy(changes)) this.authored.changedElsewhere();
+  }
+
+  /** Whether a membership change in these albums can change this view's results. */
+  dependsOnAlbums(ids: Iterable<string>) {
+    const filtered = new Set(this.query.filters?.set_ids ?? []);
+    // Advanced fields such as `set:` or `saved:` can select albums, and every field needs a
+    // colon. Treat any advanced search with one as depending on every album.
+    const fields = this.query.syntax === "advanced" && this.query.text.includes(":");
+    for (const id of ids) if (fields || filtered.has(id)) return true;
+    return false;
+  }
+
   resume(preserve?: () => (() => Promise<void>) | undefined) {
+    if (this.changedOffscreen) {
+      this.changedOffscreen = false;
+      if (this.started) return this.refresh(preserve);
+    }
     if (this.needsFacets && !this.facetsError) void this.retryFacets();
     if (this.view === "timeline" && !this.timeline && !this.timelineLoading && !this.timelineError)
       void this.loadTimeline();
@@ -777,6 +800,7 @@ export class Photos {
         this.replacement ?? "expiry",
         preserve,
         this.replacementDate,
+        false,
         this.projection === "map",
       );
     this.error = "";
@@ -833,15 +857,27 @@ export class Photos {
     return this.dependsOnAuthored || (this.projection === "map" && rotations.size > 0);
   }
 
-  refresh(preserve?: () => (() => Promise<void>) | undefined) {
+  refresh(preserve?: () => (() => Promise<void>) | undefined, live = false) {
+    this.changedOffscreen = false;
     this.timelineController.abort();
-    this.timeline = undefined;
+    // A live refresh keeps the current timeline on screen until its replacement arrives.
+    if (!live) this.timeline = undefined;
     this.timelineError = "";
     this.timelineLoading = false;
-    if (this.view === "timeline") void this.loadTimeline();
-    return this.replacement === "date"
-      ? this.replace("date", undefined, this.replacementDate)
-      : this.replace("refresh", preserve);
+    const timeline = this.view === "timeline" ? this.loadTimeline(live) : undefined;
+    const listing =
+      this.replacement === "date"
+        ? this.replace("date", undefined, this.replacementDate, live)
+        : this.replace("refresh", preserve, undefined, live);
+    if (!live) return listing;
+    const controller = this.controller;
+    return (async () => {
+      const result = await listing;
+      await timeline;
+      if (this.disposed || controller.signal.aborted) return false;
+      if (this.error || this.timelineError) throw new Error(this.error || this.timelineError);
+      return result;
+    })();
   }
 
   setView(view: "grid" | "timeline") {
@@ -849,14 +885,16 @@ export class Photos {
     if (view === "timeline" && !this.timeline && !this.timelineLoading) void this.loadTimeline();
   }
 
-  async loadTimeline() {
+  async loadTimeline(live = false) {
     if (this.disposed || this.hidden) return;
     this.timelineController.abort();
     const controller = (this.timelineController = new AbortController());
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]);
     this.timelineLoading = true;
     this.timelineError = "";
     try {
-      const page = await fetchPhotoTimeline(this.session, this.baseQuery, controller.signal);
+      const page = await fetchPhotoTimeline(this.session, this.baseQuery, signal);
+      signal.throwIfAborted();
       if (!controller.signal.aborted) this.timeline = page.facets[0];
     } catch (cause) {
       if (controller.signal.aborted) return;
@@ -876,6 +914,7 @@ export class Photos {
           reason: cause.code,
           values: [],
         };
+        if (live && cause.code !== "snapshot_too_large") this.timelineError = cause.message;
       } else this.timelineError = cause instanceof Error ? cause.message : String(cause);
     } finally {
       if (!controller.signal.aborted) this.timelineLoading = false;
@@ -1039,6 +1078,7 @@ export class Photos {
     mode: "refresh" | "expiry" | "date",
     preserve?: () => (() => Promise<void>) | undefined,
     date?: string,
+    live = false,
     resume = false,
   ) {
     if (this.disposed) return false;
@@ -1143,11 +1183,6 @@ export class Photos {
       this.replacement = undefined;
       this.staged = undefined;
       await restore?.();
-      if (!controller.signal.aborted) {
-        this.needsFacets = true;
-        void this.retryFacets();
-      }
-      return !controller.signal.aborted;
     } catch (cause) {
       if (controller.signal.aborted) return false;
       this.authFailure(cause);
@@ -1169,6 +1204,12 @@ export class Photos {
         this.authored.validating = false;
       }
     }
+    if (!controller.signal.aborted) {
+      this.needsFacets = true;
+      const facets = this.retryFacets(live);
+      if (live) await facets;
+    }
+    return !controller.signal.aborted;
   }
 
   async trashSelected(preserve?: () => (() => Promise<void>) | undefined, ontrashed?: () => void) {
@@ -1249,18 +1290,19 @@ export class Photos {
 
   // reloadCounts replaces counts that a change outside this listing made stale,
   // such as an album membership change, without reloading the photos.
-  reloadCounts() {
+  reloadCounts(live = false) {
     if (this.disposed || this.withoutCounts) return;
     this.facetsController.abort();
     this.facetsLoading = false;
     this.needsFacets = true;
-    return this.retryFacets();
+    return this.retryFacets(live);
   }
 
-  async retryFacets() {
+  async retryFacets(live = false) {
     if (this.disposed || !this.started || this.facetsLoading || this.withoutCounts) return;
     this.facetsController.abort();
     const controller = (this.facetsController = new AbortController());
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]);
     this.needsFacets = true;
     this.facetsLoading = true;
     this.facetsError = "";
@@ -1271,8 +1313,9 @@ export class Photos {
       query.sort = { field: "capture_time", direction: "desc" };
       const page = await listPhotoAssets(
         { query, hidden: this.hidden, facets: [...photoFacets], page_size: 1 },
-        { session: this.session, signal: controller.signal },
+        { session: this.session, signal },
       );
+      signal.throwIfAborted();
       if (controller.signal.aborted) return;
       this.facets = (page.facets ?? []) as SnapshotPage["facets"];
       this.needsFacets = false;
@@ -1285,12 +1328,14 @@ export class Photos {
         this.facetsError = this.facetsRetryable
           ? "Some photo counts couldn't be loaded."
           : "Photo counts exceed the query's limits. Narrow your search or filters.";
+        if (live && this.facetsRetryable) throw new Error(this.facetsError);
       }
     } catch (cause) {
       if (controller.signal.aborted) return;
       this.authFailure(cause);
       this.needsFacets = false;
       this.facetsError = cause instanceof Error ? cause.message : String(cause);
+      if (live) throw cause;
     } finally {
       if (!controller.signal.aborted) this.facetsLoading = false;
     }

@@ -11,6 +11,7 @@
   } from "./generated/docbank.js";
   import type { PhotoUndoState } from "./photoAuthored.svelte.js";
   import { Photos } from "./photos.svelte.js";
+  import type { PhotoEventBatch } from "./photoEvents.js";
   import { PhotoPreviewCache } from "./photoPreviewCache.js";
   import {
     concealPhotoWorkspace,
@@ -83,9 +84,13 @@
   export function captureReturn() {
     photoWorkspace?.captureReturn();
   }
-  export async function refresh() {
-    if (workspaceVisible) await photoWorkspace?.refresh();
-    else await checkAccess();
+  export async function refresh(changes?: PhotoEventBatch) {
+    if (workspaceVisible) {
+      const membership = changes && workspace?.photos.dependsOnAlbums(changes.albums.keys());
+      if (!changes || changes.refetch || changes.assets.size || membership)
+        await photoWorkspace?.refresh(changes);
+      else await workspace?.photos.reloadCounts(!!changes);
+    } else if (!changes || changes.refetch) await checkAccess(!!changes);
   }
   export function lock() {
     return action("lock");
@@ -180,7 +185,7 @@
       workspaceVisible = true;
     }
   }
-  async function checkAccess() {
+  async function checkAccess(live = false) {
     if (document.visibilityState !== "visible") return;
     refreshController.abort();
     refreshController = new AbortController();
@@ -214,6 +219,7 @@
           hiddenState.expires_at = undefined;
           if (cause.status === 401) access.onauthfailure(cause);
         } else void conceal();
+        if (live) throw cause;
       }
     } finally {
       if (!controller.signal.aborted) reading = false;

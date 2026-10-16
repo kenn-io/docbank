@@ -30,10 +30,11 @@ func TestWebSessionDeniesPersonRoutes(t *testing.T) {
 	}
 }
 
-func TestWebSessionAllowsPhotoAlbumAndAuthoredRoutes(t *testing.T) {
+func TestWebSessionAllowsPhotoAlbumAuthoredAndEventRoutes(t *testing.T) {
 	t.Parallel()
 	album := "/api/v1/photos/albums/11111111-1111-4111-8111-111111111111"
 	for _, route := range []struct{ method, path string }{
+		{http.MethodGet, photoEventsPath},
 		{http.MethodGet, "/api/v1/photos/albums"},
 		{http.MethodPost, "/api/v1/photos/albums"},
 		{http.MethodPut, album},

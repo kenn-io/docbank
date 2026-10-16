@@ -30,6 +30,7 @@ type Store struct {
 	providerEgressMu      sync.RWMutex
 	laneControlsMu        sync.Mutex
 	photoExportSlot       chan struct{}
+	photoEvents           photoEventFeed
 	photoHiddenNow        func() time.Time
 	photoHiddenAuthMu     sync.Mutex // Serialize session creation and revocation across database commits.
 	photoHiddenSessionsMu sync.Mutex
@@ -237,7 +238,10 @@ func (s *Store) PrimaryBlobStoreID() string { return s.primaryStoreID }
 func (s *Store) SQLiteDriver() docsqlite.Driver { return s.driver }
 
 // Close closes both database pools.
-func (s *Store) Close() error { return errors.Join(s.db.Close(), s.writeDB.Close()) }
+func (s *Store) Close() error {
+	s.closePhotoEvents()
+	return errors.Join(s.db.Close(), s.writeDB.Close())
+}
 
 // Checkpoint truncates the WAL after all application writes have completed.
 // Portable restore uses it before closing a freshly imported database so the
@@ -296,6 +300,9 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 			retErr = errors.Join(retErr, err)
 		}
 	}()
+	active, hidden, epoch := s.photoCaptureState()
+	cleaned := !active && s.prepareIdlePhotoCleanup(ctx, tx)
+	capture := active && s.preparePhotoChanges(ctx, tx, hidden)
 	if err := fn(tx); err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
 			return fmt.Errorf("%w (rollback also failed: %w)", err, rbErr)
@@ -305,9 +312,24 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 	if err := ctx.Err(); err != nil {
 		return errors.Join(err, tx.Rollback())
 	}
+	var events []PhotoEvent
+	if active {
+		events = s.readPhotoChanges(ctx, tx, capture)
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("committing transaction: %w", err)
 	}
+	if cleaned {
+		s.finishIdlePhotoCleanup(epoch)
+	}
+	if watching, watchingHidden, current := s.photoCaptureState(); watching && current != epoch {
+		if !active {
+			events = []PhotoEvent{{Refetch: true}}
+		} else if !hidden && watchingHidden {
+			events = append(events, PhotoEvent{Refetch: true, audience: photoHidden})
+		}
+	}
+	s.publishPhotoChanges(events)
 	return nil
 }
 

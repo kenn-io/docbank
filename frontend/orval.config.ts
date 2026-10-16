@@ -43,6 +43,10 @@ export default defineConfig({
             mutator: { path: "src/api-transport.ts", name: "sessionResponse", inferred: true },
             requestOptions: { headers: { Accept: "application/x-ndjson" } },
           },
+          photoEvents: {
+            mutator: { path: "src/api-transport.ts", name: "sessionResponse", inferred: true },
+            requestOptions: { headers: { Accept: "text/event-stream" } },
+          },
           mailboxEvents: {
             mutator: { path: "src/api-transport.ts", name: "sessionResponse", inferred: true },
             requestOptions: { headers: { Accept: "application/x-ndjson" } },
