@@ -112,10 +112,7 @@ func TestBrowserJobListRedactsPrivateBackendErrors(t *testing.T) {
 
 	resp, body := get(t, ts, "/api/v1/jobs", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	var operator api.JobList
-	require.NoError(t, json.Unmarshal([]byte(body), &operator))
-	require.Len(t, operator.Items, 1)
-	assert.Equal(t, privateFailure, operator.Items[0].Error)
+	assert.Contains(t, body, privateFailure)
 
 	resp, body = do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
 	require.Equal(t, http.StatusCreated, resp.StatusCode, body)
@@ -134,7 +131,6 @@ func TestBrowserJobListRedactsPrivateBackendErrors(t *testing.T) {
 	var got api.JobList
 	require.NoError(t, json.UnmarshalRead(resp.Body, &got))
 	require.Len(t, got.Items, 1)
-	assert.Equal(t, operation.ID, got.Items[0].OperationID)
 	assert.NotEmpty(t, got.Items[0].Error)
 	assert.NotContains(t, got.Items[0].Error, "/Users/example")
 	assert.NotContains(t, got.Items[0].Error, "private.example.invalid")

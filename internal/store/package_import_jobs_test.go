@@ -480,7 +480,7 @@ func TestPackageImportDiscardRepairsOrRetainsPhotoAssets(t *testing.T) {
 			asset, err := s.PhotoAssetForNode(t.Context(), image.ID)
 			require.NoError(t, err)
 			if outcome == "checkout-pinned" {
-				_, _, err = s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+				_, _, _, err = s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
 				require.NoError(t, err)
 			}
 			job := packageImportJobRequest(t, s, request)

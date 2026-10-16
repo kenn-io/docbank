@@ -21,7 +21,7 @@ func TestCheckoutRejectsStartupCleanupDescendantBindMount(t *testing.T) {
 			require.NoError(t, os.MkdirAll(owned, 0o700))
 			destination := t.TempDir()
 			bindMountForTest(t, owned, destination)
-			_, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, destination, 0)
+			_, _, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, destination, 0)
 			if root != nil {
 				require.NoError(t, root.Close())
 			}

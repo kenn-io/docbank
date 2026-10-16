@@ -33,7 +33,7 @@ func TestCheckoutRecoveryRetriesInaccessiblePaths(t *testing.T) {
 			s := checkoutService(t)
 			ctx := t.Context()
 			asset := checkoutPhoto(t, s, "photo.jpg", "verified bytes")
-			checkout, op, root, err := s.Prepare(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, t.TempDir(), 0)
+			checkout, op, _, root, err := s.Prepare(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, t.TempDir(), 0)
 			require.NoError(t, err)
 			require.NoError(t, s.Store.ClaimPhotoCheckout(ctx, checkout.ID, op.ID))
 			entries, err := s.Store.PhotoCheckoutEntries(ctx, checkout.ID)

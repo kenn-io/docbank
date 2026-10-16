@@ -57,40 +57,41 @@ func (s Service) mutate(ctx context.Context, fn func() error) error {
 }
 
 // Prepare holds the empty destination until the supervised job closes it.
-func (s Service) Prepare(ctx context.Context, selection store.PhotoCheckoutSelection, destination string, byteLimit int64) (store.PhotoCheckout, store.StorageOperation, *os.Root, error) {
+func (s Service) Prepare(ctx context.Context, selection store.PhotoCheckoutSelection, destination string, byteLimit int64) (store.PhotoCheckout, store.StorageOperation, store.PhotoCheckoutEstimate, *os.Root, error) {
 	creationMu.Lock()
 	defer creationMu.Unlock()
 	var checkout store.PhotoCheckout
 	var operation store.StorageOperation
+	var estimate store.PhotoCheckoutEstimate
 	if !filepath.IsAbs(destination) {
-		return checkout, operation, nil, fmt.Errorf("%w: destination must be an absolute daemon-host path", store.ErrInvalidPhotoCheckout)
+		return checkout, operation, estimate, nil, fmt.Errorf("%w: destination must be an absolute daemon-host path", store.ErrInvalidPhotoCheckout)
 	}
 	canonical, err := filepath.EvalSymlinks(destination)
 	if err != nil {
-		return checkout, operation, nil, fmt.Errorf("%w: destination must be an existing folder: %w", store.ErrInvalidPhotoCheckout, err)
+		return checkout, operation, estimate, nil, fmt.Errorf("%w: destination must be an existing folder: %w", store.ErrInvalidPhotoCheckout, err)
 	}
 	root, err := os.OpenRoot(canonical)
 	if err != nil {
-		return checkout, operation, nil, fmt.Errorf("%w: opening destination: %w", store.ErrInvalidPhotoCheckout, err)
+		return checkout, operation, estimate, nil, fmt.Errorf("%w: opening destination: %w", store.ErrInvalidPhotoCheckout, err)
 	}
 	proof, err := s.checkDestination(ctx, root, canonical, "")
 	if err != nil {
 		_ = root.Close()
-		return checkout, operation, nil, err
+		return checkout, operation, estimate, nil, err
 	}
 	err = s.mutate(ctx, func() error {
 		if err := s.recheckDestination(ctx, root, canonical, "", proof); err != nil {
 			return err
 		}
 		var err error
-		checkout, operation, err = s.Store.CreatePhotoCheckout(ctx, selection, canonical, byteLimit)
+		checkout, operation, estimate, err = s.Store.CreatePhotoCheckout(ctx, selection, canonical, byteLimit)
 		return err
 	})
 	if err != nil {
 		_ = root.Close()
-		return checkout, operation, nil, err
+		return checkout, operation, estimate, nil, err
 	}
-	return checkout, operation, root, nil
+	return checkout, operation, estimate, root, nil
 }
 
 func (s Service) protectedRoots(ctx context.Context, excludedID string) ([]string, error) {
@@ -155,18 +156,7 @@ func checkEmptyDestination(root *os.Root, destination string) error {
 	if closeErr != nil {
 		return closeErr
 	}
-	held, err := root.Stat(".")
-	if err != nil {
-		return err
-	}
-	named, err := os.Stat(destination)
-	if err != nil {
-		return err
-	}
-	if !os.SameFile(held, named) {
-		return fmt.Errorf("%w: destination changed during validation", store.ErrInvalidPhotoCheckout)
-	}
-	return nil
+	return checkDestinationIdentity(root, destination)
 }
 
 // validateDestination walks protected roots except the vault root. Bind mounts
@@ -553,6 +543,9 @@ func (s Service) copy(ctx context.Context, root *os.Root, destination string, e 
 			retErr = fmt.Errorf("file %s at %q: %w", e.FileID, e.Path, retErr)
 		}
 	}()
+	if err := s.Store.CheckPhotoCheckoutEntry(ctx, e); err != nil {
+		return false, err
+	}
 	stage, err := filepublish.CreateRootStage(root)
 	if err != nil {
 		return false, err

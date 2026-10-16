@@ -14,6 +14,7 @@ import (
 
 type photoSource struct {
 	identity, path, asset, target string
+	nameError                     string
 	eligible                      bool
 }
 
@@ -145,7 +146,9 @@ func photoSourcesTx(ctx context.Context, tx *sql.Tx, assets string, checkout boo
 			}
 		}
 		if !resolved {
-			return nil, fmt.Errorf("%w: incompatible source names for file %s and target %s in asset %s", ErrInvalidPhotoCheckout, files[0], target, sources[target].asset)
+			source := sources[files[0]]
+			source.nameError = fmt.Sprintf("incompatible source names for target %s", target)
+			sources[files[0]] = source
 		}
 	}
 	return sources, nil

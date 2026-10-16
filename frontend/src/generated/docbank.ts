@@ -5678,11 +5678,21 @@ export interface StorageOperation {
   updated_at: string;
 }
 
+export interface PhotoCheckoutSkip {
+  asset_id: string;
+  file_id: string;
+  name: string;
+  reason: string;
+}
+
 export interface PhotoCheckoutCreateResult {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   checkout: PhotoCheckout;
   operation: StorageOperation;
+  skipped_photo_count: number;
+  /** @maxItems 20 */
+  skipped_photos: PhotoCheckoutSkip[];
 }
 
 export interface PhotoCheckoutEstimate {
@@ -5691,6 +5701,9 @@ export interface PhotoCheckoutEstimate {
   assets: number;
   bytes: number;
   files: number;
+  skipped_photo_count: number;
+  /** @maxItems 20 */
+  skipped_photos: PhotoCheckoutSkip[];
 }
 
 export interface PhotoCheckoutList {

@@ -2,9 +2,7 @@ package store
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -42,10 +40,19 @@ type PhotoCheckoutSelection struct {
 	All      bool                `json:"all,omitzero"`
 }
 
+type PhotoCheckoutSkip struct {
+	AssetID string `json:"asset_id"`
+	FileID  string `json:"file_id"`
+	Name    string `json:"name"`
+	Reason  string `json:"reason"`
+}
+
 type PhotoCheckoutEstimate struct {
-	Assets int64 `json:"assets"`
-	Files  int64 `json:"files"`
-	Bytes  int64 `json:"bytes"`
+	SkippedPhotos     []PhotoCheckoutSkip `json:"skipped_photos" maxItems:"20"`
+	SkippedPhotoCount int64               `json:"skipped_photo_count"`
+	Assets            int64               `json:"assets"`
+	Files             int64               `json:"files"`
+	Bytes             int64               `json:"bytes"`
 }
 
 type PhotoCheckout struct {
@@ -180,7 +187,7 @@ func (s *Store) checkoutEntriesTx(ctx context.Context, tx *sql.Tx, selection Pho
 		return nil, estimate, err
 	}
 	defer func() { _ = rows.Close() }()
-	var invalidNames []error
+	skipped := map[string]PhotoCheckoutSkip{}
 	pathOwners := map[string]string{}
 	for rows.Next() {
 		var entry PhotoCheckoutEntry
@@ -200,36 +207,56 @@ func (s *Store) checkoutEntriesTx(ctx context.Context, tx *sql.Tx, selection Pho
 		if source.path != "" {
 			name = path.Base(source.path)
 		}
-		if entry.Size < 0 || entry.Size > math.MaxInt64-estimate.Bytes {
-			_ = rows.Close()
-			return nil, estimate, fmt.Errorf("%w: selected bytes overflow", ErrInvalidPhotoCheckout)
-		}
 		folder := "undated"
 		if len(date) >= 10 {
 			folder = strings.ReplaceAll(date[:10], "-", "/")
 		}
+		if source.nameError != "" {
+			skipped[entry.AssetID] = PhotoCheckoutSkip{entry.AssetID, entry.FileID, name, source.nameError}
+			continue
+		}
 		if err := validateCheckoutFilename(name); err != nil {
-			invalidNames = append(invalidNames, fmt.Errorf("file %s in asset %s, filename %q: %w", entry.FileID, entry.AssetID, name, err))
+			skipped[entry.AssetID] = PhotoCheckoutSkip{entry.AssetID, entry.FileID, name, err.Error()}
 			continue
 		}
 		entry.Path = path.Join(folder, entry.AssetID, name)
 		if owner, exists := pathOwners[entry.Path]; exists {
-			invalidNames = append(invalidNames, fmt.Errorf("file %s in asset %s, filename %q: %w: file %s has the same name", entry.FileID, entry.AssetID, name, ErrInvalidPhotoCheckout, owner))
+			skipped[entry.AssetID] = PhotoCheckoutSkip{entry.AssetID, entry.FileID, name, fmt.Sprintf("file %s has the same name", owner)}
 			continue
 		}
 		pathOwners[entry.Path] = entry.FileID
 		entries = append(entries, entry)
-		estimate.Files++
-		estimate.Bytes += entry.Size
 	}
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return nil, estimate, err
 	}
-	if len(invalidNames) != 0 {
-		return nil, estimate, errors.Join(invalidNames...)
+	for _, id := range ids {
+		if skip, exists := skipped[id]; exists {
+			estimate.SkippedPhotoCount++
+			if len(estimate.SkippedPhotos) < 20 {
+				estimate.SkippedPhotos = append(estimate.SkippedPhotos, skip)
+			}
+		}
+	}
+	kept := entries[:0]
+	clear(assets)
+	for _, entry := range entries {
+		if _, skip := skipped[entry.AssetID]; skip {
+			continue
+		}
+		if entry.Size < 0 || entry.Size > math.MaxInt64-estimate.Bytes {
+			return nil, estimate, fmt.Errorf("%w: selected bytes overflow", ErrInvalidPhotoCheckout)
+		}
+		kept = append(kept, entry)
+		assets[entry.AssetID] = true
+		estimate.Files++
+		estimate.Bytes += entry.Size
 	}
 	estimate.Assets = int64(len(assets))
-	return entries, estimate, nil
+	if len(kept) == 0 {
+		return nil, estimate, fmt.Errorf("%w: selection contains no files", ErrInvalidPhotoCheckout)
+	}
+	return kept, estimate, nil
 }
 
 func (s *Store) EstimatePhotoCheckout(ctx context.Context, selection PhotoCheckoutSelection) (PhotoCheckoutEstimate, error) {
@@ -249,12 +276,12 @@ var errPhotoCheckoutSelectionStale = errors.New("photo checkout selection change
 // a full-library selection can take seconds, then verifies the resolved bases
 // still exist. If pruning or purging removed one in between, it resolves again
 // under the write lock.
-func (s *Store) CreatePhotoCheckout(ctx context.Context, selection PhotoCheckoutSelection, destination string, byteLimit int64) (PhotoCheckout, StorageOperation, error) {
+func (s *Store) CreatePhotoCheckout(ctx context.Context, selection PhotoCheckoutSelection, destination string, byteLimit int64) (PhotoCheckout, StorageOperation, PhotoCheckoutEstimate, error) {
 	if byteLimit < 0 {
-		return PhotoCheckout{}, StorageOperation{}, fmt.Errorf("%w: byte_limit must be nonnegative", ErrInvalidPhotoCheckout)
+		return PhotoCheckout{}, StorageOperation{}, PhotoCheckoutEstimate{}, fmt.Errorf("%w: byte_limit must be nonnegative", ErrInvalidPhotoCheckout)
 	}
 	if selection.All && byteLimit == 0 {
-		return PhotoCheckout{}, StorageOperation{}, fmt.Errorf("%w: all requires a positive byte_limit", ErrInvalidPhotoCheckout)
+		return PhotoCheckout{}, StorageOperation{}, PhotoCheckoutEstimate{}, fmt.Errorf("%w: all requires a positive byte_limit", ErrInvalidPhotoCheckout)
 	}
 	var entries []PhotoCheckoutEntry
 	var estimate PhotoCheckoutEstimate
@@ -263,24 +290,26 @@ func (s *Store) CreatePhotoCheckout(ctx context.Context, selection PhotoCheckout
 		entries, estimate, err = s.checkoutEntriesTx(ctx, tx, selection)
 		return err
 	}); err != nil {
-		return PhotoCheckout{}, StorageOperation{}, err
+		return PhotoCheckout{}, StorageOperation{}, PhotoCheckoutEstimate{}, err
 	}
-	checkout, operation, err := s.insertPhotoCheckout(ctx, selection, destination, byteLimit, func(*sql.Tx) ([]PhotoCheckoutEntry, PhotoCheckoutEstimate, error) {
+	checkout, operation, estimate, err := s.insertPhotoCheckout(ctx, selection, destination, byteLimit, func(*sql.Tx) ([]PhotoCheckoutEntry, PhotoCheckoutEstimate, error) {
 		return entries, estimate, nil
 	})
 	if errors.Is(err, errPhotoCheckoutSelectionStale) {
-		checkout, operation, err = s.insertPhotoCheckout(ctx, selection, destination, byteLimit, func(tx *sql.Tx) ([]PhotoCheckoutEntry, PhotoCheckoutEstimate, error) {
+		checkout, operation, estimate, err = s.insertPhotoCheckout(ctx, selection, destination, byteLimit, func(tx *sql.Tx) ([]PhotoCheckoutEntry, PhotoCheckoutEstimate, error) {
 			return s.checkoutEntriesTx(ctx, tx, selection)
 		})
 	}
-	return checkout, operation, err
+	return checkout, operation, estimate, err
 }
 
-func (s *Store) insertPhotoCheckout(ctx context.Context, selection PhotoCheckoutSelection, destination string, byteLimit int64, resolve func(*sql.Tx) ([]PhotoCheckoutEntry, PhotoCheckoutEstimate, error)) (PhotoCheckout, StorageOperation, error) {
+func (s *Store) insertPhotoCheckout(ctx context.Context, selection PhotoCheckoutSelection, destination string, byteLimit int64, resolve func(*sql.Tx) ([]PhotoCheckoutEntry, PhotoCheckoutEstimate, error)) (PhotoCheckout, StorageOperation, PhotoCheckoutEstimate, error) {
 	var checkout PhotoCheckout
 	var operation StorageOperation
+	var estimate PhotoCheckoutEstimate
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		entries, estimate, err := resolve(tx)
+		entries, resolved, err := resolve(tx)
+		estimate = resolved
 		if err != nil {
 			return err
 		}
@@ -300,8 +329,9 @@ func (s *Store) insertPhotoCheckout(ctx context.Context, selection PhotoCheckout
 		if err != nil {
 			return err
 		}
-		digest := sha256.Sum256(request)
-		operation, err = createStorageOperationTx(ctx, tx, StorageOperationCreate{Kind: StorageOperationKindPhotoCheckout, RequestJSON: string(request), RequestDigest: hex.EncodeToString(digest[:]), PlanJSON: "{}", TotalObjects: estimate.Files})
+		input := localOperationCreate(StorageOperationKindPhotoCheckout, string(request))
+		input.TotalObjects = estimate.Files
+		operation, err = createStorageOperationTx(ctx, tx, input)
 		if err != nil {
 			return err
 		}
@@ -333,7 +363,7 @@ func (s *Store) insertPhotoCheckout(ctx context.Context, selection PhotoCheckout
 		}
 		return nil
 	})
-	return checkout, operation, err
+	return checkout, operation, estimate, err
 }
 
 func validateCheckoutFilename(name string) error {
@@ -478,16 +508,8 @@ func (s *Store) lockPhotoPublication(ctx context.Context, assetID string) (func(
 	return func() { lock.gate.Release(1); drop() }, nil
 }
 
-// PublishPhotoCheckoutEntry checks visibility immediately before installing a copy.
-func (s *Store) PublishPhotoCheckoutEntry(ctx context.Context, e PhotoCheckoutEntry, publish func() (bool, error)) error {
-	// Subtree trash can invalidate members of several assets at once.
-	s.photoPublicationTreeMu.RLock()
-	defer s.photoPublicationTreeMu.RUnlock()
-	unlock, err := s.lockPhotoPublication(ctx, e.AssetID)
-	if err != nil {
-		return err
-	}
-	defer unlock()
+// CheckPhotoCheckoutEntry checks whether the frozen member is still eligible.
+func (s *Store) CheckPhotoCheckoutEntry(ctx context.Context, e PhotoCheckoutEntry) error {
 	var allowed bool
 	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_assets a JOIN photo_files f ON f.asset_id=a.asset_id JOIN nodes n ON n.id=f.node_id WHERE a.asset_id=? AND f.file_id=? AND a.hidden_at IS NULL AND a.excluded_at IS NULL AND n.trashed_at IS NULL
  AND f.sidecar_of_file_id IS ? AND (? IS NULL OR EXISTS(
@@ -498,6 +520,22 @@ func (s *Store) PublishPhotoCheckoutEntry(ctx context.Context, e PhotoCheckoutEn
 	}
 	if !allowed {
 		return ErrPhotoCheckoutSourceUnavailable
+	}
+	return nil
+}
+
+// PublishPhotoCheckoutEntry checks visibility immediately before installing a copy.
+func (s *Store) PublishPhotoCheckoutEntry(ctx context.Context, e PhotoCheckoutEntry, publish func() (bool, error)) error {
+	// Subtree trash can invalidate members of several assets at once.
+	s.photoPublicationTreeMu.RLock()
+	defer s.photoPublicationTreeMu.RUnlock()
+	unlock, err := s.lockPhotoPublication(ctx, e.AssetID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if err := s.CheckPhotoCheckoutEntry(ctx, e); err != nil {
+		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err

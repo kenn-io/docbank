@@ -25,22 +25,42 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 	require.NoError(t, err)
 	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "photo.jpg", hash, size, "image/jpeg")
 	require.NoError(t, err)
-	asset, err := catalog.PhotoAssetForNode(t.Context(), node.ID)
+	_, err = catalog.PhotoAssetForNode(t.Context(), node.ID)
 	require.NoError(t, err)
-	selection := store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}
+	var duplicates []store.PhotoAsset
+	for _, folder := range []string{"first", "second"} {
+		dir, err := catalog.Mkdir(t.Context(), catalog.RootID(), folder)
+		require.NoError(t, err)
+		node, err := catalog.CreateFile(t.Context(), dir.ID, "duplicate.jpg", hash, size, "image/jpeg")
+		require.NoError(t, err)
+		photo, err := catalog.PhotoAssetForNode(t.Context(), node.ID)
+		require.NoError(t, err)
+		duplicates = append(duplicates, photo)
+	}
+	_, err = catalog.DetachPhotoFile(t.Context(), duplicates[1].ID, duplicates[1].Revision, duplicates[1].Files[0].ID, store.PhotoDetachOptions{})
+	require.NoError(t, err)
+	_, err = catalog.AttachPhotoFile(t.Context(), duplicates[0].ID, duplicates[0].Revision, duplicates[1].Files[0].NodeID, store.PhotoRoleImage, nil)
+	require.NoError(t, err)
+	selection := store.PhotoCheckoutSelection{All: true}
 	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/checkouts/estimate", nil, selection)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var estimate store.PhotoCheckoutEstimate
 	require.NoError(t, json.Unmarshal([]byte(body), &estimate))
-	expectedEstimate, err := catalog.EstimatePhotoCheckout(t.Context(), selection)
-	require.NoError(t, err)
-	require.Equal(t, expectedEstimate, estimate)
+	require.Equal(t, int64(1), estimate.Assets)
+	require.Equal(t, int64(1), estimate.Files)
+	require.Equal(t, int64(11), estimate.Bytes)
+	require.Equal(t, int64(1), estimate.SkippedPhotoCount)
+	require.Len(t, estimate.SkippedPhotos, 1)
+	require.Equal(t, duplicates[0].ID, estimate.SkippedPhotos[0].AssetID)
+	require.Equal(t, "duplicate.jpg", estimate.SkippedPhotos[0].Name)
 	request := api.PhotoCheckoutCreateRequest{Selection: selection, Destination: t.TempDir(), ByteLimit: 100}
 	t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/checkouts", nil, request)
 	require.Equal(t, http.StatusAccepted, response.StatusCode, body)
 	var created api.PhotoCheckoutCreateResult
 	require.NoError(t, json.Unmarshal([]byte(body), &created))
+	require.Equal(t, int64(1), created.SkippedPhotoCount)
+	require.Equal(t, estimate.SkippedPhotos, created.SkippedPhotos)
 	require.Equal(t, request.ByteLimit, created.Checkout.ByteLimit)
 	require.Equal(t, request.Selection, created.Checkout.Selection)
 	canonicalDestination, err := filepath.EvalSymlinks(request.Destination)

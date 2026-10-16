@@ -16,8 +16,10 @@ type PhotoCheckoutCreateRequest struct {
 }
 
 type PhotoCheckoutCreateResult struct {
-	Checkout  store.PhotoCheckout `json:"checkout"`
-	Operation StorageOperation    `json:"operation"`
+	SkippedPhotos     []store.PhotoCheckoutSkip `json:"skipped_photos" maxItems:"20"`
+	SkippedPhotoCount int64                     `json:"skipped_photo_count"`
+	Checkout          store.PhotoCheckout       `json:"checkout"`
+	Operation         StorageOperation          `json:"operation"`
 }
 
 type PhotoCheckoutList struct {
@@ -52,7 +54,7 @@ func registerPhotoCheckoutRoutes(api huma.API, d Deps, g *gate) {
 		if d.Jobs == nil {
 			return nil, NewError(http.StatusServiceUnavailable, "photo_checkout_unavailable", "background job supervisor is unavailable")
 		}
-		c, op, root, err := service.Prepare(ctx, in.Body.Selection, in.Body.Destination, in.Body.ByteLimit)
+		c, op, estimate, root, err := service.Prepare(ctx, in.Body.Selection, in.Body.Destination, in.Body.ByteLimit)
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
@@ -63,7 +65,7 @@ func registerPhotoCheckoutRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		return &struct{ Body PhotoCheckoutCreateResult }{PhotoCheckoutCreateResult{Checkout: c, Operation: storageOperationAPI(op)}}, nil
+		return &struct{ Body PhotoCheckoutCreateResult }{PhotoCheckoutCreateResult{Checkout: c, Operation: storageOperationAPI(op), SkippedPhotos: estimate.SkippedPhotos, SkippedPhotoCount: estimate.SkippedPhotoCount}}, nil
 	})
 	huma.Register(api, huma.Operation{OperationID: "listPhotoCheckouts", Method: http.MethodGet, Path: "/api/v1/photos/checkouts", Summary: "List photo checkouts"}, func(ctx context.Context, _ *struct{}) (*struct{ Body PhotoCheckoutList }, error) {
 		items, err := d.Store.ListPhotoCheckouts(ctx)

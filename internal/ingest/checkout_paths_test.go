@@ -25,7 +25,7 @@ func TestCheckoutPathOverlapProtectsReservationsAndReleasedCopies(t *testing.T) 
 			parent := filepath.Join(t.TempDir(), "parent")
 			destination := filepath.Join(parent, "checkout")
 			require.NoError(t, os.MkdirAll(destination, 0o700))
-			checkout, op, err := ing.Store.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
+			checkout, op, _, err := ing.Store.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
 			require.NoError(t, err)
 			require.NoError(t, ing.Store.FinishPhotoCheckout(ctx, checkout.ID, op.ID, state, "{}", "", time.Now().Add(time.Hour)))
 			check := func(path string, want bool) {
@@ -113,7 +113,7 @@ func TestWatcherReleasesEveryRetiredCheckoutOfReusedFolder(t *testing.T) {
 	require.NoError(t, err)
 	reused, unrelated := t.TempDir(), t.TempDir()
 	retire := func(destination string) store.PhotoCheckout {
-		checkout, op, err := ing.Store.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
+		checkout, op, _, err := ing.Store.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
 		require.NoError(t, err)
 		require.NoError(t, ing.Store.FinishPhotoCheckout(ctx, checkout.ID, op.ID, store.StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
 		checkout, err = ing.Store.RetirePhotoCheckout(ctx, checkout.ID)

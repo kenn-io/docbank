@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/daemonauth"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/processing"
 	kitdaemon "go.kenn.io/kit/daemon"
@@ -140,9 +142,15 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 		w.WriteHeader(status)
 		assert.NoError(t, json.MarshalWrite(w, api.Error{Status: status, Code: code, Detail: "provider details must stay private", ObservedScopeCount: observed}))
 	}
-	return fakeDaemonHandler(t, record, "synthetic-token", func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.Method + " " + r.URL.Path {
+		case "GET /api/ping":
+			assert.NoError(t, json.MarshalWrite(w, kitdaemon.PingInfo{OK: true, Service: record.Service, Version: record.Version, PID: record.PID}))
+		case "GET /api/daemon/challenge":
+			nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
+			assert.NoError(t, err)
+			assert.NoError(t, json.MarshalWrite(w, map[string]string{"proof": daemonauth.Proof("synthetic-token", nonce)}))
 		case "GET /api/v1/search":
 			assert.Equal(t, tc.query, r.URL.Query().Get("q"))
 			assert.Equal(t, tc.wantSearch, *searchCalls, "lexical search must run after every hybrid attempt")
@@ -221,7 +229,7 @@ func automaticSearchDaemon(t *testing.T, tc automaticSearchCase, record *kitdaem
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 			http.Error(w, "unexpected", http.StatusNotFound)
 		}
-	})
+	}
 }
 
 func runAutomaticSearchCLI(t *testing.T, tc automaticSearchCase, serverURL string, record *kitdaemon.RuntimeRecord) {

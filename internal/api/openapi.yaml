@@ -12413,7 +12413,17 @@ components:
           $ref: "#/components/schemas/PhotoCheckout"
         operation:
           $ref: "#/components/schemas/StorageOperation"
+        skipped_photo_count:
+          format: int64
+          type: integer
+        skipped_photos:
+          items:
+            $ref: "#/components/schemas/PhotoCheckoutSkip"
+          maxItems: 20
+          type: array
       required:
+        - skipped_photos
+        - skipped_photo_count
         - checkout
         - operation
       type: object
@@ -12440,7 +12450,17 @@ components:
         files:
           format: int64
           type: integer
+        skipped_photo_count:
+          format: int64
+          type: integer
+        skipped_photos:
+          items:
+            $ref: "#/components/schemas/PhotoCheckoutSkip"
+          maxItems: 20
+          type: array
       required:
+        - skipped_photos
+        - skipped_photo_count
         - assets
         - files
         - bytes
@@ -12496,6 +12516,27 @@ components:
           $ref: "#/components/schemas/PhotoCheckoutYears"
       type: object
       x-go-type: store.PhotoCheckoutSelection
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    PhotoCheckoutSkip:
+      additionalProperties: false
+      properties:
+        asset_id:
+          type: string
+        file_id:
+          type: string
+        name:
+          type: string
+        reason:
+          type: string
+      required:
+        - asset_id
+        - file_id
+        - name
+        - reason
+      type: object
+      x-go-type: store.PhotoCheckoutSkip
       x-go-type-import:
         path: go.kenn.io/docbank/internal/store
         name: store

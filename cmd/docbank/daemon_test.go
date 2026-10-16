@@ -349,7 +349,7 @@ func newCheckoutReservationFixture(t *testing.T) (*store.Store, string, string, 
 	asset, err := catalog.PhotoAssetForNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	destination := t.TempDir()
-	checkout, operation, err := catalog.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
+	checkout, operation, _, err := catalog.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
 	require.NoError(t, err)
 	return catalog, checkout.ID, operation.ID, destination
 }
@@ -485,7 +485,7 @@ func TestCheckoutBindingAdmissionPersistsFolderReuseAcrossRestart(t *testing.T) 
 	asset, err := catalog.PhotoAssetForNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	destination := t.TempDir()
-	checkout, operation, err := catalog.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
+	checkout, operation, _, err := catalog.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
 	require.NoError(t, err)
 	require.NoError(t, catalog.FinishPhotoCheckout(t.Context(), checkout.ID, operation.ID, store.StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
 	_, err = catalog.RetirePhotoCheckout(t.Context(), checkout.ID)
@@ -550,7 +550,7 @@ func TestCheckoutBindingAdmissionRechecksSnapshotChangedDuringWalk(t *testing.T)
 			err := validateCheckoutPathSnapshot(ctx, checkouts, path)
 			if !changed && err == nil {
 				changed = true
-				_, _, createErr := catalog.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{entries[0].AssetID}}, binding.Path, 0)
+				_, _, _, createErr := catalog.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{entries[0].AssetID}}, binding.Path, 0)
 				require.NoError(t, createErr)
 			}
 			return err

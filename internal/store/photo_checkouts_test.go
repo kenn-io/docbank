@@ -76,7 +76,7 @@ func TestPhotoCheckoutSelections(t *testing.T) {
 		require.Equal(t, test.assets, estimate.Assets)
 		require.Equal(t, test.files, estimate.Files)
 		require.Equal(t, test.bytes, estimate.Bytes)
-		checkout, _, err := s.CreatePhotoCheckout(ctx, test.selection, t.TempDir(), test.bytes)
+		checkout, _, _, err := s.CreatePhotoCheckout(ctx, test.selection, t.TempDir(), test.bytes)
 		require.NoError(t, err)
 		entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
 		require.NoError(t, err)
@@ -112,7 +112,7 @@ func TestPhotoCheckoutSelections(t *testing.T) {
 		estimate, err := s.EstimatePhotoCheckout(ctx, selection)
 		require.NoError(t, err)
 		require.Equal(t, PhotoCheckoutEstimate{Assets: 1, Files: 3, Bytes: 33}, estimate)
-		checkout, _, err := s.CreatePhotoCheckout(ctx, selection, t.TempDir(), estimate.Bytes)
+		checkout, _, _, err := s.CreatePhotoCheckout(ctx, selection, t.TempDir(), estimate.Bytes)
 		require.NoError(t, err)
 		entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
 		require.NoError(t, err)
@@ -136,7 +136,7 @@ func TestPhotoCheckoutMetadata(t *testing.T) {
 		t.Helper()
 		a := albumAsset(t, s, "photo.jpg")
 		second := albumAsset(t, s, "second.jpg")
-		c, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, "machine-local-checkout", 100)
+		c, _, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, "machine-local-checkout", 100)
 		require.NoError(t, err)
 		entries, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
 		require.NoError(t, err)
@@ -258,14 +258,13 @@ func TestPhotoCheckoutMetadata(t *testing.T) {
 func TestPhotoCheckoutCreateValidation(t *testing.T) {
 	t.Parallel()
 	type rejectedCase struct {
-		name, filename                             string
+		name                                       string
 		limit                                      int64
 		withAsset, explicitSelection, auditRefusal bool
 		setSelection, overflow                     bool
 		selection                                  PhotoCheckoutSelection
 		expectedErr                                error
 		errorText                                  string
-		additionalNames                            []string
 	}
 	cases := []rejectedCase{
 		{name: "empty all", limit: 100, errorText: "selection contains no files"},
@@ -281,9 +280,6 @@ func TestPhotoCheckoutCreateValidation(t *testing.T) {
 		{name: "negative limit", limit: -1, withAsset: true, explicitSelection: true, errorText: "byte_limit must be nonnegative"},
 		{name: "all without limit", withAsset: true, errorText: "all requires a positive byte_limit"},
 		{name: "insufficient limit", limit: 19, withAsset: true, errorText: "selected bytes exceed byte_limit"},
-	}
-	if runtime.GOOS == "windows" {
-		cases = append(cases, rejectedCase{name: "multiple invalid filenames", filename: "first?.jpg", additionalNames: []string{"second:.jpg", "valid.jpg"}, limit: 100, withAsset: true})
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -302,10 +298,7 @@ func TestPhotoCheckoutCreateValidation(t *testing.T) {
 				if tc.explicitSelection {
 					selection = PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}
 				}
-				if tc.filename != "" {
-					_, err := s.db.ExecContext(t.Context(), "UPDATE nodes SET name=? WHERE id=?", tc.filename, asset.Files[0].NodeID)
-					require.NoError(t, err)
-				} else if tc.auditRefusal {
+				if tc.auditRefusal {
 					seedInitialAuditAuthority(t, s, s.RootID())
 					expectedErr = ErrAuditMutationUnsupported
 				}
@@ -314,30 +307,10 @@ func TestPhotoCheckoutCreateValidation(t *testing.T) {
 				_, err := s.CreateFile(t.Context(), s.RootID(), "large.jpg", browseHash("large"), math.MaxInt64, "image/jpeg")
 				require.NoError(t, err)
 			}
-			var estimateErr error
-			if tc.filename != "" {
-				for _, name := range tc.additionalNames {
-					_, err := s.CreateFile(t.Context(), s.RootID(), name, browseHash(name), 10, "image/jpeg")
-					require.NoError(t, err)
-				}
-				_, estimateErr = s.EstimatePhotoCheckout(t.Context(), selection)
-				require.ErrorIs(t, estimateErr, ErrInvalidPhotoCheckout)
-			}
-			_, _, err := s.CreatePhotoCheckout(t.Context(), selection, "checkout", tc.limit)
+			_, _, _, err := s.CreatePhotoCheckout(t.Context(), selection, "checkout", tc.limit)
 			require.ErrorIs(t, err, expectedErr)
 			if tc.errorText != "" {
 				require.ErrorContains(t, err, tc.errorText)
-			}
-			if tc.filename != "" {
-				require.ErrorContains(t, err, fmt.Sprintf("filename %q", tc.filename))
-				require.EqualError(t, err, estimateErr.Error())
-				for _, name := range tc.additionalNames {
-					if name != "valid.jpg" {
-						require.ErrorContains(t, err, fmt.Sprintf("filename %q", name))
-					}
-				}
-				require.Contains(t, err.Error(), asset.ID)
-				require.Contains(t, err.Error(), asset.Files[0].ID)
 			}
 			checkouts, err := s.ListPhotoCheckouts(t.Context())
 			require.NoError(t, err)
@@ -353,7 +326,7 @@ func TestPhotoCheckoutStatusTracksOperationAcrossPauseAndFinish(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	albumAsset(t, s, "photo.jpg")
-	checkout, op, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{All: true}, "checkout", 20)
+	checkout, op, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{All: true}, "checkout", 20)
 	require.NoError(t, err)
 	require.Equal(t, StorageOperationKindPhotoCheckout, op.Kind)
 	require.Equal(t, op.ID, checkout.OperationID)
@@ -406,12 +379,12 @@ func TestPhotoCheckoutConflictsAndEntryPaths(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, sidecar, trashRole, captureDate string
-		multipleSidecars, rejectConflict      bool
+		multipleSidecars, skipConflict        bool
 		paths                                 map[string]string
 	}{
 		{name: "separate ingests", sidecar: "IMG.ARW.XMP", captureDate: "2024-06-15", paths: map[string]string{"raw": "2024/06/15/%s/IMG.ARW", "jpeg": "2024/06/15/%s/IMG.JPG", "sidecar": "2024/06/15/%s/IMG.ARW.XMP"}},
 		{name: "trashed target", sidecar: "IMG.ARW.XMP", trashRole: PhotoRoleRAW, paths: map[string]string{"jpeg": "undated/%s/IMG.JPG"}},
-		{name: "conflicting pair", sidecar: "unrelated.XMP", rejectConflict: true},
+		{name: "conflicting pair", sidecar: "unrelated.XMP", skipConflict: true},
 		{name: "trashed conflicting sidecar", sidecar: "unrelated.XMP", trashRole: PhotoRoleSidecar, paths: map[string]string{"raw": "undated/%s/IMG.ARW", "jpeg": "undated/%s/IMG.JPG"}},
 		{name: "multiple sidecars", multipleSidecars: true, paths: map[string]string{"raw": "undated/%s/RENAMED.ARW", "jpeg": "undated/%s/IMG.JPG", "first sidecar": "undated/%s/RENAMED.XMP", "second sidecar": "undated/%s/RENAMED.ARW.XMP"}},
 	} {
@@ -447,11 +420,23 @@ func TestPhotoCheckoutConflictsAndEntryPaths(t *testing.T) {
 				target := fileByRole(result.Asset.Files, PhotoRoleRAW).ID
 				result.Asset, err = s.AttachPhotoFile(ctx, result.Asset.ID, result.Asset.Revision, node.ID, PhotoRoleSidecar, &target)
 				require.NoError(t, err)
-				if tc.rejectConflict {
-					_, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "checkout", 0)
-					require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
-					require.ErrorContains(t, err, result.Asset.ID)
-					require.ErrorContains(t, err, fileByRole(result.Asset.Files, PhotoRoleSidecar).ID)
+				if tc.skipConflict {
+					good := albumAsset(t, s, "good.jpg")
+					selection := PhotoCheckoutSelection{All: true}
+					estimate, err := s.EstimatePhotoCheckout(ctx, selection)
+					require.NoError(t, err)
+					require.Equal(t, int64(1), estimate.Assets)
+					require.Equal(t, int64(1), estimate.Files)
+					require.Equal(t, int64(20), estimate.Bytes)
+					require.Equal(t, []PhotoCheckoutSkip{{AssetID: result.Asset.ID, FileID: fileByRole(result.Asset.Files, PhotoRoleSidecar).ID, Name: "unrelated.XMP", Reason: "incompatible source names for target " + target}}, estimate.SkippedPhotos)
+					require.Equal(t, int64(1), estimate.SkippedPhotoCount)
+					checkout, _, createdEstimate, err := s.CreatePhotoCheckout(ctx, selection, "checkout", 20)
+					require.NoError(t, err)
+					require.Equal(t, estimate, createdEstimate)
+					entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
+					require.NoError(t, err)
+					require.Len(t, entries, 1)
+					require.Equal(t, good.ID, entries[0].AssetID)
 					return
 				}
 				for i, file := range result.Asset.Files {
@@ -475,7 +460,7 @@ func TestPhotoCheckoutConflictsAndEntryPaths(t *testing.T) {
 				require.NoError(t, err)
 				browsePhotoMetadata(t, s, node, tc.captureDate, photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp(tc.captureDate, tc.captureDate, document.SourceMetadataPrecisionDate, document.SourceMetadataTimezoneOmitted, "")))
 			}
-			checkout, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "checkout", 0)
+			checkout, _, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "checkout", 0)
 			require.NoError(t, err)
 			entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
 			require.NoError(t, err)
@@ -548,7 +533,7 @@ func TestPhotoCheckoutConflictsAndEntryPaths(t *testing.T) {
 			_, _, err = s.Move(ctx, node.ID, s.RootID(), fmt.Sprintf("virtual-%d.%s", i, strings.TrimPrefix(filepath.Ext(node.Name), ".")), node.Revision)
 			require.NoError(t, err)
 		}
-		checkout, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "checkout", 0)
+		checkout, _, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "checkout", 0)
 		require.NoError(t, err)
 		entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
 		require.NoError(t, err)
@@ -587,7 +572,7 @@ func TestPhotoCheckoutConflictsAndEntryPaths(t *testing.T) {
 				require.NoError(t, err)
 				asset = result.Asset
 			}
-			checkout, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+			checkout, _, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
 			require.NoError(t, err)
 			entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
 			require.NoError(t, err)
@@ -614,7 +599,7 @@ func TestPhotoCheckoutEntryRequiresFrozenEligibleSource(t *testing.T) {
 			asset := result.Asset
 			asset, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, new(fileByRole(asset.Files, PhotoRoleImage).ID))
 			require.NoError(t, err)
-			checkout, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+			checkout, _, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
 			require.NoError(t, err)
 			entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
 			require.NoError(t, err)
@@ -685,7 +670,7 @@ func TestPhotoCheckoutBackupRetentionAcrossLifecycleStates(t *testing.T) {
 					second := albumAsset(t, s, "unpublished.jpg")
 					node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
 					require.NoError(t, err)
-					checkout, op, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID, second.ID}}, "checkout", 0)
+					checkout, op, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID, second.ID}}, "checkout", 0)
 					require.NoError(t, err)
 					require.NoError(t, s.ClaimPhotoCheckout(ctx, checkout.ID, op.ID))
 					entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
@@ -789,7 +774,7 @@ func TestPhotoCheckoutPublicationOrdersEligibilityMutationsAndRecordsCancellatio
 			asset := albumAsset(t, s, "photo.jpg")
 			other := albumAsset(t, s, "other.jpg")
 			require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
-			checkout, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+			checkout, _, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
 			require.NoError(t, err)
 			entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
 			require.NoError(t, err)
@@ -865,7 +850,7 @@ func TestPhotoCheckoutPublicationOrdersEligibilityMutationsAndRecordsCancellatio
 		t.Parallel()
 		s := newTestStore(t)
 		asset := albumAsset(t, s, "photo.jpg")
-		checkout, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+		checkout, _, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
 		require.NoError(t, err)
 		entries, err := s.PhotoCheckoutEntries(t.Context(), checkout.ID)
 		require.NoError(t, err)
@@ -893,7 +878,7 @@ func TestPreserveUncertainPhotoCheckoutHoldsSurvivesClearedPublication(t *testin
 	asset := albumAsset(t, s, "photo.jpg")
 	node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
 	require.NoError(t, err)
-	checkout, op, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+	checkout, op, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
 	require.NoError(t, err)
 	require.NoError(t, s.ClaimPhotoCheckout(ctx, checkout.ID, op.ID))
 	entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
@@ -928,7 +913,7 @@ func TestPhotoCheckoutRetireAfterAuditActivation(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
 	asset := albumAsset(t, s, "photo.jpg")
-	checkout, operation, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+	checkout, operation, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
 	require.NoError(t, err)
 	require.NoError(t, s.FinishPhotoCheckout(ctx, checkout.ID, operation.ID, StorageOperationCompleted, "{}", "", time.Time{}))
 	seedInitialAuditAuthority(t, s, s.RootID())
@@ -951,7 +936,7 @@ func TestPhotoCheckoutYearFolderUsesTimelineDay(t *testing.T) {
 	require.NoError(t, err)
 	asset, err := s.PhotoAssetForNode(ctx, node.ID)
 	require.NoError(t, err)
-	checkout, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{Years: &PhotoCheckoutYears{From: 2026, To: 2026}}, t.TempDir(), 0)
+	checkout, _, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{Years: &PhotoCheckoutYears{From: 2026, To: 2026}}, t.TempDir(), 0)
 	require.NoError(t, err)
 	entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
 	require.NoError(t, err)
@@ -959,9 +944,7 @@ func TestPhotoCheckoutYearFolderUsesTimelineDay(t *testing.T) {
 	require.Equal(t, "2026/03/14/"+asset.ID+"/photo.jpg", entries[0].Path)
 }
 
-// Two members of one asset cannot share a copy path, so creation refuses them
-// instead of queueing a job that fails on the destination.
-func TestPhotoCheckoutRejectsDuplicateNamesInAsset(t *testing.T) {
+func TestPhotoCheckoutSkipsDuplicateNamesInAsset(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -980,19 +963,32 @@ func TestPhotoCheckoutRejectsDuplicateNamesInAsset(t *testing.T) {
 	require.NoError(t, err)
 	first, err = s.AttachPhotoFile(ctx, first.ID, first.Revision, second.Files[0].NodeID, PhotoRoleImage, nil)
 	require.NoError(t, err)
-	selection := PhotoCheckoutSelection{AssetIDs: []string{first.ID}}
-
-	_, estimateErr := s.EstimatePhotoCheckout(ctx, selection)
-	require.ErrorIs(t, estimateErr, ErrInvalidPhotoCheckout)
-	_, _, err = s.CreatePhotoCheckout(ctx, selection, "checkout", 0)
-	require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
-	require.EqualError(t, err, estimateErr.Error())
-	for _, file := range first.Files {
-		require.ErrorContains(t, err, file.ID)
-	}
-	checkouts, err := s.ListPhotoCheckouts(ctx)
+	good := albumAsset(t, s, "good.jpg")
+	selection := PhotoCheckoutSelection{All: true}
+	estimate, err := s.EstimatePhotoCheckout(ctx, selection)
 	require.NoError(t, err)
-	require.Empty(t, checkouts)
+	require.Equal(t, int64(1), estimate.Assets)
+	require.Equal(t, int64(1), estimate.Files)
+	require.Equal(t, int64(20), estimate.Bytes)
+	require.Equal(t, int64(1), estimate.SkippedPhotoCount)
+	require.Len(t, estimate.SkippedPhotos, 1)
+	require.Equal(t, first.ID, estimate.SkippedPhotos[0].AssetID)
+	require.Contains(t, []string{first.Files[0].ID, first.Files[1].ID}, estimate.SkippedPhotos[0].FileID)
+	require.Equal(t, "photo.jpg", estimate.SkippedPhotos[0].Name)
+	require.Contains(t, estimate.SkippedPhotos[0].Reason, "has the same name")
+	checkout, _, createdEstimate, err := s.CreatePhotoCheckout(ctx, selection, "checkout", 20)
+	require.NoError(t, err)
+	require.Equal(t, estimate, createdEstimate)
+	entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, good.ID, entries[0].AssetID)
+
+	selection = PhotoCheckoutSelection{AssetIDs: []string{first.ID}}
+	_, err = s.EstimatePhotoCheckout(ctx, selection)
+	require.ErrorContains(t, err, "selection contains no files")
+	_, _, _, err = s.CreatePhotoCheckout(ctx, selection, "checkout", 0)
+	require.ErrorContains(t, err, "selection contains no files")
 }
 
 // Creation resolves the selection without the write lock. A base purged
@@ -1019,7 +1015,7 @@ func TestPhotoCheckoutCreationRejectsSelectionPurgedBeforeCommit(t *testing.T) {
 	_, err = s.TrashEmpty(ctx, 0, true)
 	require.NoError(t, err)
 
-	_, _, err = s.insertPhotoCheckout(ctx, selection, "checkout", 0, func(*sql.Tx) ([]PhotoCheckoutEntry, PhotoCheckoutEstimate, error) {
+	_, _, _, err = s.insertPhotoCheckout(ctx, selection, "checkout", 0, func(*sql.Tx) ([]PhotoCheckoutEntry, PhotoCheckoutEstimate, error) {
 		return entries, estimate, nil
 	})
 	require.ErrorIs(t, err, errPhotoCheckoutSelectionStale)
@@ -1027,10 +1023,55 @@ func TestPhotoCheckoutCreationRejectsSelectionPurgedBeforeCommit(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, checkouts)
 
-	checkout, _, err := s.CreatePhotoCheckout(ctx, selection, "checkout", 0)
+	checkout, _, _, err := s.CreatePhotoCheckout(ctx, selection, "checkout", 0)
 	require.NoError(t, err)
 	frozen, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
 	require.NoError(t, err)
 	require.Len(t, frozen, 1)
 	require.Equal(t, kept.Files[0].ID, frozen[0].FileID)
+}
+
+func TestPhotoCheckoutSkipsInvalidNamesWithBoundedDetails(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"bad\x00.jpg", "CON.jpg"} {
+		t.Run(name, func(t *testing.T) {
+			if name == "CON.jpg" && runtime.GOOS != "windows" {
+				t.Skip("reserved device names are invalid on Windows")
+			}
+			s := newTestStore(t)
+			good := albumAsset(t, s, "good.jpg")
+			badAssets := map[string]string{}
+			for i := range 25 {
+				dir, err := s.Mkdir(t.Context(), s.RootID(), fmt.Sprintf("bad-%d", i))
+				require.NoError(t, err)
+				node, err := s.CreateFile(t.Context(), dir.ID, "original.jpg", browseHash(fmt.Sprintf("bad-%d", i)), 20, "image/jpeg")
+				require.NoError(t, err)
+				asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
+				require.NoError(t, err)
+				_, err = s.db.ExecContext(t.Context(), "UPDATE nodes SET name=? WHERE id=?", name, asset.Files[0].NodeID)
+				require.NoError(t, err)
+				badAssets[asset.ID] = asset.Files[0].ID
+			}
+			selection := PhotoCheckoutSelection{All: true}
+			estimate, err := s.EstimatePhotoCheckout(t.Context(), selection)
+			require.NoError(t, err)
+			require.Equal(t, int64(1), estimate.Assets)
+			require.Equal(t, int64(1), estimate.Files)
+			require.Equal(t, int64(20), estimate.Bytes)
+			require.Equal(t, int64(25), estimate.SkippedPhotoCount)
+			require.Len(t, estimate.SkippedPhotos, 20)
+			for _, skip := range estimate.SkippedPhotos {
+				require.Equal(t, badAssets[skip.AssetID], skip.FileID)
+				require.Equal(t, name, skip.Name)
+				require.NotEmpty(t, skip.Reason)
+			}
+			checkout, _, createdEstimate, err := s.CreatePhotoCheckout(t.Context(), selection, "checkout", 20)
+			require.NoError(t, err)
+			require.Equal(t, estimate, createdEstimate)
+			entries, err := s.PhotoCheckoutEntries(t.Context(), checkout.ID)
+			require.NoError(t, err)
+			require.Len(t, entries, 1)
+			require.Equal(t, good.ID, entries[0].AssetID)
+		})
+	}
 }

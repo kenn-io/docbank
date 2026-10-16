@@ -554,7 +554,7 @@ func TestTrashEmptyRetainsCheckoutAndDeletesUnrelatedRoots(t *testing.T) {
 	require.NoError(t, err)
 	asset, lookupErr := s.PhotoAssetForNode(ctx, protected.ID)
 	require.NoError(t, lookupErr)
-	checkout, operation, createErr := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+	checkout, operation, _, createErr := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
 	require.NoError(t, createErr)
 	err = s.FinishPhotoCheckout(ctx, checkout.ID, operation.ID, StorageOperationCompleted, `{}`, "", time.Time{})
 	require.NoError(t, err)

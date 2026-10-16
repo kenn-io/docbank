@@ -19,14 +19,15 @@ func TestPhotoCheckoutCLICreateEstimateListRetireAndYears(t *testing.T) {
 	absoluteDestination, err := filepath.Abs(destination)
 	require.NoError(t, err)
 	checkout := store.PhotoCheckout{ID: checkoutID, OperationID: operationID, State: "queued", Selection: store.PhotoCheckoutSelection{AssetIDs: []string{checkoutID}, AlbumIDs: []string{operationID}}, Destination: absoluteDestination, ByteLimit: 100000}
-	created := api.PhotoCheckoutCreateResult{Checkout: checkout, Operation: api.StorageOperation{ID: operationID, Kind: "photo_checkout", State: "queued"}}
+	skipped := []store.PhotoCheckoutSkip{{AssetID: operationID, FileID: checkoutID, Name: "duplicate.jpg", Reason: "duplicate filename"}}
+	created := api.PhotoCheckoutCreateResult{SkippedPhotos: skipped, SkippedPhotoCount: 1, Checkout: checkout, Operation: api.StorageOperation{ID: operationID, Kind: "photo_checkout", State: "queued"}}
 	listed := []store.PhotoCheckout{checkout}
 	retired := checkout
 	retired.State = "completed"
 	retired.RetentionReleased = true
 	retiredAt := "2026-01-01T00:00:00Z"
 	retired.RetiredAt = &retiredAt
-	estimate := store.PhotoCheckoutEstimate{Assets: 2, Files: 3, Bytes: 42}
+	estimate := store.PhotoCheckoutEstimate{Assets: 2, Files: 3, Bytes: 42, SkippedPhotos: skipped, SkippedPhotoCount: 1}
 	inputs := make(chan api.PhotoCheckoutCreateRequest, 1)
 	estimates := make(chan store.PhotoCheckoutSelection, 1)
 	setupFakeDaemon(t, func(w http.ResponseWriter, r *http.Request) {
@@ -58,7 +59,7 @@ func TestPhotoCheckoutCLICreateEstimateListRetireAndYears(t *testing.T) {
 	require.NoError(t, err, out)
 	var createOutput api.PhotoCheckoutCreateResult
 	require.NoError(t, json.Unmarshal([]byte(out), &createOutput))
-	require.Equal(t, checkoutID, createOutput.Checkout.ID)
+	require.Equal(t, created, createOutput)
 	require.Len(t, inputs, 1)
 	input := <-inputs
 	require.Equal(t, checkout.Selection, input.Selection)
@@ -90,7 +91,7 @@ func TestPhotoCheckoutCLICreateEstimateListRetireAndYears(t *testing.T) {
 			require.NoError(t, err, out)
 			var estimateOutput store.PhotoCheckoutEstimate
 			require.NoError(t, json.Unmarshal([]byte(out), &estimateOutput))
-			require.Equal(t, estimate.Bytes, estimateOutput.Bytes)
+			require.Equal(t, estimate, estimateOutput)
 			require.Len(t, estimates, 1)
 			received := <-estimates
 			received.AssetIDs = append([]string(nil), received.AssetIDs...)

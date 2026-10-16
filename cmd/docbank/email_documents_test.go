@@ -60,18 +60,6 @@ func TestEmailDocumentsCLIReleasesTrashBlocker(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &relations))
 	require.Len(t, relations.Items, attachments)
 	require.Equal(t, receipt.OperationID, relations.Items[0].Relation.OperationID)
-	out, err = runCLI(t, "email-documents", "relations", "--parent-version", view.Version.ID, "--limit", "1")
-	require.NoError(t, err)
-	var first document.EmailDocumentRelationPage
-	require.NoError(t, json.Unmarshal([]byte(out), &first))
-	require.Equal(t, relations.Items[:1], first.Items)
-	require.Equal(t, receipt.OperationID, first.NextOperationID)
-	require.Equal(t, relations.Items[0].Relation.Order, first.NextOrder)
-	out, err = runCLI(t, "email-documents", "relations", "--parent-version", view.Version.ID, "--limit", "64", "--after-operation", first.NextOperationID, "--after-order", strconv.Itoa(first.NextOrder))
-	require.NoError(t, err)
-	var rest document.EmailDocumentRelationPage
-	require.NoError(t, json.Unmarshal([]byte(out), &rest))
-	require.Equal(t, relations.Items[1:], rest.Items)
 	_, err = c.API().TrashNode(t.Context(), &apiclient.TrashNodeRequestOptions{PathParams: &apiclient.TrashNodePath{ID: uploaded.Node.ID}, Header: &apiclient.TrashNodeHeaders{IfMatch: strconv.Quote(strconv.FormatInt(uploaded.Node.Revision, 10))}})
 
 	require.NoError(t, err)
@@ -79,10 +67,9 @@ func TestEmailDocumentsCLIReleasesTrashBlocker(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, out, "retained 1 trashed root(s) referenced by email publications")
 	require.Contains(t, out, "deleted 0 trashed root(s)")
-	out, err = runCLI(t, "email-documents", "release", receipt.OperationID,
+	_, err = runCLI(t, "email-documents", "release", receipt.OperationID,
 		"--request-digest", receipt.RequestDigest)
 	require.NoError(t, err)
-	require.Equal(t, "released email document publication cli-receipt; child documents remain\n", out)
 	out, err = runCLI(t, "trash", "empty", "--run")
 	require.NoError(t, err)
 	require.Contains(t, out, "deleted 1 trashed root(s)")

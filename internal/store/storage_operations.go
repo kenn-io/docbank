@@ -186,11 +186,15 @@ func createStorageOperationTx(ctx context.Context, tx *sql.Tx, input StorageOper
 // CreateLocalOperation records a durable job that references no blob store.
 // It lists, reports progress, cancels, and resumes like a storage operation.
 func (s *Store) CreateLocalOperation(ctx context.Context, kind, requestJSON string) (StorageOperation, error) {
+	return s.CreateStorageOperation(ctx, localOperationCreate(kind, requestJSON))
+}
+
+func localOperationCreate(kind, requestJSON string) StorageOperationCreate {
 	digest := sha256.Sum256([]byte(requestJSON))
-	return s.CreateStorageOperation(ctx, StorageOperationCreate{
+	return StorageOperationCreate{
 		Kind: kind, RequestDigest: hex.EncodeToString(digest[:]),
 		RequestJSON: requestJSON, PlanJSON: "{}",
-	})
+	}
 }
 
 // FinalizeLocalOperation reports whether a cancel request already reached a

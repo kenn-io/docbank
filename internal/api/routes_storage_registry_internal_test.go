@@ -23,7 +23,7 @@ func TestStorageProtectionPathsAdmitRemovedCheckoutBeneathFile(t *testing.T) {
 	parent := filepath.Join(t.TempDir(), "parent")
 	destination := filepath.Join(parent, "checkout")
 	require.NoError(t, os.MkdirAll(destination, 0o700))
-	checkout, operation, err := catalog.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{All: true}, destination, 100)
+	checkout, operation, _, err := catalog.CreatePhotoCheckout(t.Context(), store.PhotoCheckoutSelection{All: true}, destination, 100)
 	require.NoError(t, err)
 	require.NoError(t, catalog.FinishPhotoCheckout(t.Context(), checkout.ID, operation.ID, store.StorageOperationFailed, "{}", "partial", time.Now().Add(time.Hour)))
 	_, err = catalog.RetirePhotoCheckout(t.Context(), checkout.ID)

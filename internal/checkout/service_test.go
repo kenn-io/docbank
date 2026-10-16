@@ -66,7 +66,7 @@ func TestCheckoutRejectsStartupCleanupDirectoryAlias(t *testing.T) {
 			if name == "blobs" {
 				destination = filepath.Join(alias, "tmp")
 			}
-			_, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, destination, 0)
+			_, _, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, destination, 0)
 			if root != nil {
 				require.NoError(t, root.Close())
 			}
@@ -94,7 +94,7 @@ func TestCheckoutRejectsStartupCleanupDescendants(t *testing.T) {
 			managed = alias
 			destination := filepath.Join(managed, "nested", "checkout")
 			require.NoError(t, os.MkdirAll(destination, 0o700))
-			_, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, destination, 0)
+			_, _, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, destination, 0)
 			if root != nil {
 				require.NoError(t, root.Close())
 			}
@@ -117,7 +117,7 @@ func TestCheckoutDestinationSafety(t *testing.T) {
 	s.Config.Watches = []config.WatchConfig{{Source: watchRoot}}
 	reject := func(destination string) {
 		t.Helper()
-		_, _, root, err := s.Prepare(t.Context(), selection, destination, 0)
+		_, _, _, root, err := s.Prepare(t.Context(), selection, destination, 0)
 		if root != nil {
 			require.NoError(t, root.Close())
 		}
@@ -134,7 +134,7 @@ func TestCheckoutDestinationSafety(t *testing.T) {
 	reject("relative")
 	reject(filepath.Join(t.TempDir(), "missing"))
 	destination := t.TempDir()
-	c, _, root, err := s.Prepare(t.Context(), selection, destination, 0)
+	c, _, _, root, err := s.Prepare(t.Context(), selection, destination, 0)
 	require.NoError(t, err)
 	require.NoError(t, root.Close())
 	sub := filepath.Join(c.Destination, "nested")
@@ -143,7 +143,7 @@ func TestCheckoutDestinationSafety(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing")
 	s.Config.StoreBindings = map[string]config.StoreBindingConfig{"archive": {Kind: "filesystem", Path: filepath.Join(missing, "archive")}}
 	s.Config.Watches = []config.WatchConfig{{Source: filepath.Join(missing, "watch")}}
-	_, _, root, err = s.Prepare(t.Context(), selection, t.TempDir(), 0)
+	_, _, _, root, err = s.Prepare(t.Context(), selection, t.TempDir(), 0)
 	require.NoError(t, err)
 	require.NoError(t, root.Close())
 	t.Run("canonical symlink destination", func(t *testing.T) {
@@ -154,14 +154,14 @@ func TestCheckoutDestinationSafety(t *testing.T) {
 		}
 		canonical, err := filepath.EvalSymlinks(alias)
 		require.NoError(t, err)
-		created, _, root, err := s.Prepare(t.Context(), selection, alias, 0)
+		created, _, _, root, err := s.Prepare(t.Context(), selection, alias, 0)
 		require.NoError(t, err)
 		defer func() { require.NoError(t, root.Close()) }()
 		require.Equal(t, canonical, created.Destination)
 	})
 	for _, reopen := range []bool{false, true} {
 		t.Run(fmt.Sprintf("Run rechecks destination after Prepare reopen=%t", reopen), func(t *testing.T) {
-			c, _, root, err := s.Prepare(t.Context(), selection, t.TempDir(), 0)
+			c, _, _, root, err := s.Prepare(t.Context(), selection, t.TempDir(), 0)
 			require.NoError(t, err)
 			defer func() {
 				if root != nil {
@@ -192,7 +192,7 @@ func TestCheckoutStartFailurePersistsFailureAndClosesRoot(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			s := checkoutService(t)
 			a := checkoutPhoto(t, s, "photo.jpg", "bytes")
-			c, op, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, t.TempDir(), 0)
+			c, op, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, t.TempDir(), 0)
 			require.NoError(t, err)
 			var supervisor *jobs.Supervisor
 			if name == "stopped supervisor" {
@@ -239,7 +239,7 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			s := checkoutService(t)
 			a := checkoutPhoto(t, s, "photo.jpg", "photo bytes")
-			c, op, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, t.TempDir(), 0)
+			c, op, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, t.TempDir(), 0)
 			require.NoError(t, err)
 			entries, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
 			require.NoError(t, err)
@@ -381,7 +381,7 @@ func TestCheckoutRecoveryFinishesReplacedDirectories(t *testing.T) {
 				parent := filepath.Join(t.TempDir(), "parent")
 				destination := filepath.Join(parent, "checkout")
 				require.NoError(t, os.MkdirAll(destination, 0o700))
-				c, op, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, destination, 0)
+				c, op, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, destination, 0)
 				require.NoError(t, err)
 				require.NoError(t, s.Store.ClaimPhotoCheckout(t.Context(), c.ID, op.ID))
 				entries, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
@@ -451,7 +451,7 @@ func TestCheckoutRunOutcomes(t *testing.T) {
 		group, err := s.Store.IngestPhotoGroup(t.Context(), run, store.PhotoImportGroup{DestinationID: s.Store.RootID(), Members: members})
 		require.NoError(t, err)
 		ctx := t.Context()
-		c, op, root, err := s.Prepare(ctx, store.PhotoCheckoutSelection{All: true}, t.TempDir(), 100)
+		c, op, _, root, err := s.Prepare(ctx, store.PhotoCheckoutSelection{All: true}, t.TempDir(), 100)
 		require.NoError(t, err)
 		defer func() { _ = root.Close() }()
 		entries, err := s.Store.PhotoCheckoutEntries(ctx, c.ID)
@@ -534,7 +534,7 @@ func TestCheckoutRunOutcomes(t *testing.T) {
 		t.Parallel()
 		s := checkoutService(t)
 		asset := checkoutPhoto(t, s, "photo.jpg", "photo bytes")
-		checkout, op, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, t.TempDir(), 0)
+		checkout, op, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, t.TempDir(), 0)
 		require.NoError(t, err)
 		defer func() { require.NoError(t, root.Close()) }()
 		entries, err := s.Store.PhotoCheckoutEntries(t.Context(), checkout.ID)
@@ -565,7 +565,7 @@ func TestCheckoutRunOutcomes(t *testing.T) {
 		t.Parallel()
 		s := checkoutService(t)
 		asset := checkoutPhoto(t, s, "photo.jpg", "verified bytes")
-		checkout, op, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, t.TempDir(), 0)
+		checkout, op, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, t.TempDir(), 0)
 		require.NoError(t, err)
 		defer func() { _ = root.Close() }()
 		ctx := t.Context()
@@ -612,7 +612,7 @@ func TestCheckoutRunOutcomes(t *testing.T) {
 			for _, name := range names {
 				checkoutPhoto(t, s, name, name)
 			}
-			c, op, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{All: true}, t.TempDir(), 100)
+			c, op, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{All: true}, t.TempDir(), 100)
 			require.NoError(t, err)
 			defer func() { _ = root.Close() }()
 			entries, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
@@ -735,7 +735,7 @@ func TestCheckoutNameCollisionsPreservePublishedCopies(t *testing.T) {
 	first, err = s.Store.AttachPhotoFile(ctx, first.ID, first.Revision, second.Files[0].NodeID, store.PhotoRoleImage, nil)
 	require.NoError(t, err)
 
-	checkout, op, root, err := s.Prepare(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{first.ID}}, destination, 0)
+	checkout, op, _, root, err := s.Prepare(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{first.ID}}, destination, 0)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, root.Close()) }()
 
@@ -769,13 +769,13 @@ func TestCheckoutRechecksProtectedRootSnapshot(t *testing.T) {
 	selection := store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}
 	other := t.TempDir()
 	s.Mutate = func(ctx context.Context, fn func() error) error {
-		_, _, err := s.Store.CreatePhotoCheckout(ctx, selection, other, 0)
+		_, _, _, err := s.Store.CreatePhotoCheckout(ctx, selection, other, 0)
 		if err != nil {
 			return err
 		}
 		return fn()
 	}
-	_, _, root, err := s.Prepare(t.Context(), selection, t.TempDir(), 0)
+	_, _, _, root, err := s.Prepare(t.Context(), selection, t.TempDir(), 0)
 	require.ErrorContains(t, err, "protected roots changed")
 	require.Nil(t, root)
 }
@@ -800,7 +800,7 @@ func TestCheckoutSeparationAvoidsRepeatedAndObjectTreeWalks(t *testing.T) {
 			if vaultTree {
 				require.NoError(t, os.Chmod(child, 0o000))
 			}
-			checkout, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, t.TempDir(), 0)
+			checkout, _, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, t.TempDir(), 0)
 			require.NoError(t, err)
 			defer func() { require.NoError(t, root.Close()) }()
 			require.NoError(t, os.Chmod(child, 0o000))
@@ -811,4 +811,33 @@ func TestCheckoutSeparationAvoidsRepeatedAndObjectTreeWalks(t *testing.T) {
 			require.Equal(t, "completed", status.Checkout.State)
 		})
 	}
+}
+
+func TestCheckoutSkipsExcludedPhotoWithUnavailableBlob(t *testing.T) {
+	t.Parallel()
+	s := checkoutService(t)
+	first := checkoutPhoto(t, s, "first.jpg", "excluded bytes")
+	second := checkoutPhoto(t, s, "second.jpg", "kept bytes")
+	c, _, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{All: true}, t.TempDir(), 100)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, root.Close()) }()
+	entries, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+	// Exclude the first frozen entry so a source-open failure would stop the loop.
+	assets := map[string]store.PhotoAsset{first.ID: first, second.ID: second}
+	excluded := assets[entries[0].AssetID]
+	_, err = s.Store.SetPhotoAssetExcluded(t.Context(), excluded.ID, excluded.Revision, true)
+	require.NoError(t, err)
+	require.NoError(t, s.Blobs.Remove(entries[0].Hash))
+	_, _, err = s.Blobs.OpenStreamContext(t.Context(), entries[0].Hash)
+	require.Error(t, err)
+	require.ErrorIs(t, s.Run(t.Context(), c, root), store.ErrPhotoCheckoutSourceUnavailable)
+	copied, err := os.ReadFile(filepath.Join(c.Destination, filepath.FromSlash(entries[1].Path)))
+	require.NoError(t, err)
+	expected := map[string]string{first.ID: "excluded bytes", second.ID: "kept bytes"}
+	require.Equal(t, expected[entries[1].AssetID], string(copied))
+	status, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), status.PublishedFiles)
 }

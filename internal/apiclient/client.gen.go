@@ -27845,6 +27845,8 @@ type PhotoCheckoutList = api.PhotoCheckoutList
 
 type PhotoCheckoutSelection = store.PhotoCheckoutSelection
 
+type PhotoCheckoutSkip = store.PhotoCheckoutSkip
+
 type PhotoCheckoutStatus = store.PhotoCheckoutStatus
 
 type PhotoCheckoutYears = store.PhotoCheckoutYears
