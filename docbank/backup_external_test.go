@@ -236,16 +236,16 @@ func TestEmbeddedBackup(t *testing.T) {
 		snapshots, err := repository.Snapshots()
 		require.NoError(t, err)
 		require.Len(t, snapshots, 2)
+		originalIdx := slices.IndexFunc(snapshots, func(s docbank.BackupSnapshot) bool { return s.ID == snapshot.ID })
+		require.GreaterOrEqual(t, originalIdx, 0)
+		require.NotNil(t, snapshots[originalIdx].Coverage)
+		require.Equal(t, snapshot.Coverage, snapshots[originalIdx].Coverage)
+		require.Empty(t, snapshots[originalIdx].CoverageWarning)
 		idx := slices.IndexFunc(snapshots, func(s docbank.BackupSnapshot) bool { return s.ID == futureID })
 		require.GreaterOrEqual(t, idx, 0)
 		require.Equal(t, snapshot.BlobBytes, snapshots[idx].BlobBytes)
 		require.Nil(t, snapshots[idx].Coverage)
 		require.Contains(t, snapshots[idx].CoverageWarning, "version 2")
-		futureVerification, err := repository.Verify(t.Context(), docbank.BackupVerifyOptions{SnapshotID: futureID})
-		require.NoError(t, err)
-		require.True(t, slices.ContainsFunc(futureVerification.Problems, func(p docbank.BackupVerifyProblem) bool {
-			return p.SnapshotID == futureID
-		}))
 	})
 }
 

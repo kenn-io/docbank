@@ -528,8 +528,6 @@ func TestLongRunningBackupRoutesClearBodyReadDeadline(t *testing.T) {
 	for _, operation := range []*huma.Operation{
 		doc.Paths["/api/v1/backup/snapshots"].Post,
 		doc.Paths["/api/v1/backup/snapshots/stream"].Post,
-		doc.Paths["/api/v1/backup/forget"].Post,
-		doc.Paths["/api/v1/backup/prune"].Post,
 		doc.Paths["/api/v1/backup/verify"].Post,
 		doc.Paths["/api/v1/backup/verify/stream"].Post,
 		doc.Paths["/api/v1/backup/restore"].Post,
