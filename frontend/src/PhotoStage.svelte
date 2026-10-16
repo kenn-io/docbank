@@ -61,6 +61,7 @@
       );
       if (controller.signal.aborted) return;
       if (!result.blob) {
+        if (level < controller.rank) return;
         if (size !== "grid") error = "Preview unavailable";
         if (size !== "grid") failed(size);
         return;
@@ -71,7 +72,7 @@
         error = "";
       });
     } catch (cause) {
-      if (!controller.signal.aborted) {
+      if (!controller.signal.aborted && level >= controller.rank) {
         error = cause instanceof Error ? cause.message : String(cause);
         if (
           cause instanceof APIError &&

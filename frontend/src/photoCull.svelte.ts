@@ -9,6 +9,7 @@ import type {
   CullStorage,
 } from "./photoCullStorage.js";
 import { lookupPhotoRows } from "./photos.svelte.js";
+import type { PhotoBrowseRowFlag } from "./generated/docbank.js";
 
 const scopes: CullScope[] = ["unflagged", "picks", "rejects", "all"];
 const failure = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause));
@@ -23,6 +24,7 @@ export class PhotoCull {
   remainder = $state(false);
   private capture?: AbortController;
   private flagRead?: AbortController;
+  private flags?: Map<string, PhotoBrowseRowFlag>;
   // nextPass snapshots the checkpoint revision, so no other update may bump it until the pass is saved.
   private changingPass = false;
   // Sets of the ids in each marker list, so a new mark costs O(1) however large the query is.
@@ -42,7 +44,38 @@ export class PhotoCull {
     await this.writes;
     this.error = "";
     try {
-      this.run = await this.storage.load();
+      const run = await this.storage.load();
+      if (run !== undefined) {
+        const checkpoint = run?.checkpoint;
+        if (
+          !run ||
+          !checkpoint ||
+          typeof checkpoint.runID !== "string" ||
+          !checkpoint.runID.trim() ||
+          typeof checkpoint.passID !== "string" ||
+          !checkpoint.passID.trim() ||
+          !Number.isSafeInteger(checkpoint.revision) ||
+          checkpoint.revision < 0 ||
+          typeof checkpoint.autoAdvance !== "boolean" ||
+          ![
+            run.ids,
+            checkpoint.pass,
+            checkpoint.visited,
+            checkpoint.skipped,
+            checkpoint.unavailable,
+          ].every((ids) => Array.isArray(ids) && ids.every((id) => typeof id === "string")) ||
+          !scopes.includes(checkpoint.scope) ||
+          !Number.isInteger(checkpoint.position) ||
+          checkpoint.position < 0 ||
+          checkpoint.position > checkpoint.pass.length
+        )
+          throw new Error("Saved cull progress is invalid. Start a new cull.");
+        const captured = new Set(run.ids);
+        if (!checkpoint.pass.every((id) => captured.has(id)))
+          throw new Error("Saved cull progress is invalid. Start a new cull.");
+      }
+      this.run = run;
+      this.flags = undefined;
       if (this.run)
         for (const kind of ["visited", "skipped", "unavailable"] as const) {
           const list = this.run.checkpoint[kind];
@@ -113,6 +146,7 @@ export class PhotoCull {
       await this.storage.replace(run, controller.signal, previous?.checkpoint);
       this.stale = false;
       this.run = run;
+      this.flags = flags;
       this.visit();
       return true;
     } catch (cause) {
@@ -123,11 +157,17 @@ export class PhotoCull {
       this.progress = "";
     }
   }
-  private async refreshFlags(ids: string[], signal?: AbortSignal) {
+  private async refreshFlags(signal: AbortSignal) {
+    const ids = this.flags ? this.run!.checkpoint.pass : this.run!.ids;
     const rows = await lookupPhotoRows(this.session, ids, signal, (loaded, total) => {
       this.progress = `Checking ${loaded} of ${total} photos…`;
     });
-    return new Map(rows.map((row) => [row.asset_id, row.flag]));
+    signal.throwIfAborted();
+    const flags = this.flags ?? new Map<string, PhotoBrowseRowFlag>();
+    for (const id of ids) flags.delete(id);
+    for (const row of rows) flags.set(row.asset_id, row.flag);
+    this.flags = flags;
+    return flags;
   }
 
   private update(
@@ -218,7 +258,7 @@ export class PhotoCull {
     const controller = this.beginFlagRead();
     this.remainder = false;
     try {
-      const flags = await this.refreshFlags(this.run.ids, controller.signal);
+      const flags = await this.refreshFlags(controller.signal);
       controller.signal.throwIfAborted();
       this.remainder = [...flags.values()].includes("");
     } catch (cause) {
@@ -241,7 +281,7 @@ export class PhotoCull {
       if (this.stale) return;
       const previous = this.run.checkpoint;
       const ids = this.run.ids;
-      const flags = await this.refreshFlags(ids, controller.signal);
+      const flags = await this.refreshFlags(controller.signal);
       controller.signal.throwIfAborted();
       const scope = followUp
         ? "unflagged"

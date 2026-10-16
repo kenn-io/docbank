@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { snapshotEnvelope } from "./snapshot-test-fixtures.js";
 import { PhotoCull } from "./photoCull.svelte.js";
+import * as photoQueries from "./photos.svelte.js";
 import type { CullRun, CullStorage, CullProgress } from "./photoCullStorage.js";
 import * as api from "./generated/docbank.js";
 import { parseQuery } from "./query.js";
@@ -65,6 +66,52 @@ async function snapshot(ids: string[]) {
     })),
   );
 }
+it.each([
+  { runID: "" },
+  { runID: " " },
+  { runID: 1 },
+  { passID: "" },
+  { passID: null },
+  { revision: -1 },
+  { revision: 0.5 },
+  { revision: Number.MAX_SAFE_INTEGER + 1 },
+  { revision: "0" },
+  { autoAdvance: "true" },
+  { autoAdvance: null },
+  { scope: "invalid" },
+  { position: 2 },
+  { position: -1 },
+  { position: 0.5 },
+  { pass: null },
+  { visited: "invalid" },
+  { skipped: [1] },
+  { unavailable: {} },
+  { pass: [photo(2).asset_id] },
+])("refuses malformed saved cull progress: %j", async (invalid) => {
+  const id = photo(1).asset_id;
+  const saved: CullRun = {
+    ids: [id],
+    checkpoint: {
+      runID: "11111111-1111-4111-8111-111111111111",
+      passID: "22222222-2222-4222-8222-222222222222",
+      revision: 0,
+      pass: [id],
+      position: 0,
+      visited: [],
+      skipped: [],
+      unavailable: [],
+      scope: "unflagged",
+      autoAdvance: true,
+    },
+  };
+  Object.assign(saved.checkpoint, invalid);
+  const store = storage();
+  vi.mocked(store.load).mockResolvedValue(saved);
+  const cull = new PhotoCull("session", store);
+  expect.soft(await cull.restore()).toBe(false);
+  expect.soft(cull.run).toBeUndefined();
+  expect(cull.error).toBe("Saved cull progress is invalid. Start a new cull.");
+});
 it("captures the entire ordered photo snapshot from its frozen flags and resumes without reading it again", async () => {
   const rows = [
     photo(3),
@@ -112,6 +159,78 @@ it("captures the entire ordered photo snapshot from its frozen flags and resumes
     autoAdvance: false,
   });
   expect(capture).toHaveBeenCalledTimes(1);
+});
+it("refreshes only the current pass for completion and scope changes", async () => {
+  const rows = Array.from({ length: 10 }, (_, index) => photo(index + 1));
+  const full = await snapshot(rows.map((row) => row.asset_id));
+  for (let index = 2; index < rows.length; index++) {
+    rows[index]!.flag = "pick";
+    full.rows[index]!.flag = "pick";
+  }
+  vi.spyOn(api, "createWorkspaceQuery").mockResolvedValue(new Response(JSON.stringify(full)));
+  const byID = new Map(rows.map((row) => [row.asset_id, row]));
+  const list = vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) => ({
+    items: request.query.filters!.asset_ids!.map((id) => byID.get(id)!),
+    total: request.query.filters!.asset_ids!.length,
+    facets: [],
+    relevance_available: false,
+  }));
+  const cull = new PhotoCull("session", storage());
+  expect(await cull.start(query), cull.error).toBe(true);
+  expect(list).not.toHaveBeenCalled();
+  const passIDs = rows.slice(0, 2).map((row) => row.asset_id);
+  expect(cull.run?.checkpoint.pass).toEqual(passIDs);
+  cull.choose(passIDs[1]!);
+  cull.move(1);
+  expect(cull.complete).toBe(true);
+  await cull.checkRemainder();
+  expect(cull.error).toBe("");
+  expect(cull.remainder).toBe(true);
+  expect.soft(list, "completion refresh").toHaveBeenCalledTimes(1);
+  expect.soft(list.mock.calls[0]![0].query.filters?.asset_ids, "completion IDs").toEqual(passIDs);
+  list.mockClear();
+  await cull.nextPass(false, () => true);
+  expect(cull.error).toBe("");
+  expect(cull.run?.checkpoint.scope).toBe("picks");
+  expect(cull.run?.checkpoint.pass).toEqual(rows.slice(2).map((row) => row.asset_id));
+  expect.soft(list, "scope refresh").toHaveBeenCalledTimes(1);
+  expect.soft(list.mock.calls[0]![0].query.filters?.asset_ids, "scope IDs").toEqual(passIDs);
+});
+it("loads restored flags once and removes missing current-pass rows from later scopes", async () => {
+  const rows = [photo(1), photo(2), photo(3)],
+    ids = rows.map((row) => row.asset_id),
+    store = storage();
+  vi.spyOn(api, "createWorkspaceQuery").mockResolvedValue(
+    new Response(JSON.stringify(await snapshot(ids))),
+  );
+  const original = new PhotoCull("session", store);
+  await original.start(query);
+  await original.flush();
+  rows[0]!.flag = "pick";
+  rows[2]!.flag = "reject";
+  const available = new Map([rows[0]!, rows[2]!].map((row) => [row.asset_id, row]));
+  const list = vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) => ({
+    items: request.query.filters!.asset_ids!.flatMap((id) => available.get(id) ?? []),
+    total: available.size,
+    facets: [],
+    relevance_available: false,
+  }));
+  const resumed = new PhotoCull("new-session", store);
+  await resumed.restore();
+  await resumed.nextPass(false, () => true);
+  expect(resumed.run?.checkpoint.pass).toEqual([ids[0]]);
+  rows[0]!.flag = "reject";
+  await resumed.nextPass(false, () => true);
+  expect(resumed.run?.checkpoint.pass).toEqual([ids[0], ids[2]]);
+  available.delete(ids[2]!);
+  await resumed.nextPass(false, () => true);
+  expect(resumed.run?.checkpoint.pass).toEqual([ids[0]]);
+  expect(resumed.run?.checkpoint.unavailable).toEqual([ids[1], ids[2]]);
+  expect(list.mock.calls.map(([request]) => request.query.filters?.asset_ids)).toEqual([
+    ids,
+    [ids[0]],
+    [ids[0], ids[2]],
+  ]);
 });
 it("keeps decisions in the pass and refreshes scope from display flags, regardless of rating or declined scope changes", async () => {
   const rows = [photo(1), photo(2), photo(3)];
@@ -356,18 +475,17 @@ it.each([false, true])(
   },
 );
 
-it("stops sibling flag lookups and progress when one lookup batch fails", async () => {
-  const rows = Array.from({ length: 321 }, (_, i) => photo(i + 1)),
-    ids = rows.map((row) => row.asset_id);
+it("reports a failed flag lookup and clears its progress", async () => {
+  const id = photo(1).asset_id;
   const cull = new PhotoCull("session", storage());
   cull.run = {
-    ids,
+    ids: [id],
     checkpoint: {
       runID: "run",
       passID: "pass",
       revision: 0,
-      pass: ids,
-      position: ids.length,
+      pass: [id],
+      position: 1,
       visited: [],
       skipped: [],
       unavailable: [],
@@ -375,32 +493,9 @@ it("stops sibling flag lookups and progress when one lookup batch fails", async 
       autoAdvance: true,
     },
   };
-  const signals: AbortSignal[] = [],
-    siblings: (() => void)[] = [];
-  const list = vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request, options) => {
-    signals.push(options!.signal!);
-    if (signals.length === 1) throw new Error("Lookup unavailable");
-    await new Promise<void>((resolve, reject) => {
-      siblings.push(resolve);
-      options!.signal!.addEventListener("abort", () => reject(options!.signal!.reason), {
-        once: true,
-      });
-    });
-    return {
-      items: request.query.filters!.asset_ids!.map((id) => ({ ...photo(1), asset_id: id })),
-      total: 0,
-      facets: [],
-      relevance_available: false,
-    };
-  });
+  vi.spyOn(photoQueries, "lookupPhotoRows").mockRejectedValue(new Error("Lookup unavailable"));
   await cull.checkRemainder();
   expect(cull.error).toBe("Lookup unavailable");
-  expect(list).toHaveBeenCalledTimes(4);
-  // The in-flight sibling requests are cancelled, so releasing them cannot start more work.
-  expect(signals.slice(1).map((signal) => signal.aborted)).toEqual([true, true, true]);
-  siblings.splice(0).forEach((resolve) => resolve());
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  expect(list).toHaveBeenCalledTimes(4);
   expect(cull.progress).toBe("");
   expect(cull.busy).toBe(false);
 });

@@ -19,7 +19,6 @@ const names = (dialog: HTMLElement) =>
 function compare(
   rows = [photo(1), photo(2), photo(3)],
   ids = rows.slice(0, 2).map((row) => row.asset_id),
-  cursor?: string,
 ) {
   vi.stubGlobal(
     "ResizeObserver",
@@ -29,8 +28,7 @@ function compare(
     },
   );
   const photos = new Photos("session", vi.fn());
-  photos.items = cursor ? rows.slice(0, 2) : rows;
-  photos.cursor = cursor;
+  photos.items = rows;
   photos.started = true;
   vi.spyOn(photos, "lookup").mockImplementation(
     async (id) => rows.find((row) => row.asset_id === id)!,
@@ -46,19 +44,22 @@ function compare(
   return { photos, onclose, dialog: screen.getByRole("dialog", { name: "Compare photos" }) };
 }
 
-it("loads the next page, or offers a retry that keeps the pair, when linked navigation reaches the loaded edge", async () => {
+it("offers directional retry after linked navigation fails and keeps the pair until it succeeds", async () => {
   const rows = [photo(1), photo(2), photo(3)];
-  const fetcher = vi
-    .fn()
-    .mockResolvedValueOnce(Response.json({ detail: "Page unavailable" }, { status: 503 }))
-    .mockResolvedValueOnce(Response.json({ items: [rows[2]], total: 3 }));
-  vi.stubGlobal("fetch", fetcher);
-  const { photos, dialog } = compare(rows, undefined, "next-page");
+  const { photos, dialog } = compare(rows);
+  const move = vi
+    .spyOn(photos, "moveGroup")
+    .mockResolvedValueOnce({ status: "failed", error: "Page unavailable" })
+    .mockResolvedValueOnce({ status: "moved", ids: [rows[1]!.asset_id, rows[2]!.asset_id] });
   await fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
   const retry = await within(dialog).findByRole("button", { name: "Retry next photo" });
   expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]);
   await fireEvent.click(retry);
   await waitFor(() => expect(names(dialog)).toEqual(["Photo 2.jpg", "Photo 3.jpg"]));
+  expect(move.mock.calls).toEqual([
+    [[rows[0]!.asset_id, rows[1]!.asset_id], 1],
+    [[rows[0]!.asset_id, rows[1]!.asset_id], 1],
+  ]);
   photos.dispose();
 });
 

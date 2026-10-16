@@ -12,7 +12,7 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-func TestPhotoSnapshotOrderMatchesBrowse(t *testing.T) {
+func TestPhotoSnapshotOrderAndFlagsMatchBrowse(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	var assetIDs []string
