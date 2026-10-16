@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, untrack } from "svelte";
+  import { onDestroy, untrack, tick } from "svelte";
   import { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
   import { Button, Modal, Notice } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
@@ -12,6 +12,7 @@
     PhotoBrowseRow,
     Tag,
   } from "./generated/docbank.js";
+  import { prefetchPreviews } from "./photoPreview.svelte.js";
   import PhotoStage from "./PhotoStage.svelte";
   import PhotoCell from "./PhotoCell.svelte";
   import { fittedPhotoView, toggleActualPhotoView, type PhotoView } from "./photoView.js";
@@ -41,6 +42,8 @@
   onDestroy(() => {
     cull.cancel();
   });
+  let container = $state<HTMLDivElement>();
+  const focus = () => container?.focus({ preventScroll: true });
   let photo = $state<PhotoBrowseRow>();
   let error = $state("");
   let loading = $state(false);
@@ -94,28 +97,63 @@
     const passID = checkpoint.passID;
     if (complete && passID) untrack(() => void cull.checkRemainder());
   });
+  $effect(() => prefetchPreviews(photos, cache, neighbors));
+  async function nextPass(followUp = false) {
+    focus();
+    if (editor.canChangeTarget()) await cull.nextPass(followUp);
+    focus();
+  }
   function move(direction: -1 | 1) {
+    focus();
     if (editor.canChangeTarget()) cull.move(direction);
   }
   async function refresh(receipt: PhotoAuthoredReceipt, tags: Tag[]) {
     onmetadatachanged?.(receipt, tags);
     photos.metadataChanged(receipt);
-    const after = receipt.after.find((file) => file.file_id === photo?.display_file_id);
-    if (photo && after) photo = { ...photo, flag: after.values.flag, rating: after.values.rating };
+    const updated = (row: PhotoBrowseRow) => {
+      const after = receipt.after.find((file) => file.file_id === row.display_file_id);
+      return after
+        ? {
+            ...row,
+            flag: after.values.flag,
+            rating: after.values.rating,
+            rotation: after.values.rotation,
+          }
+        : row;
+    };
+    if (photo) photo = updated(photo);
+    neighbors = neighbors.map(updated);
     if (cull.complete) await cull.checkRemainder();
   }
   async function decide(patch: PhotoAuthoredPatch) {
     if (!photo || loading || cull.stale || cull.busy || !editor.canChangeTarget()) return;
     editor.reset();
+    await applyDecision(patch);
+  }
+  async function applyDecision(patch: PhotoAuthoredPatch, retry = false) {
+    if (!photo) return;
+    focus();
     const selected = photo;
     const id = selected.asset_id;
-    await editor.edit({ asset_ids: [id] }, patch, false, refresh);
+    await editor.edit({ asset_ids: [id] }, retry ? {} : patch, false, refresh);
+    await tick();
+    focus();
     if (editor.error || editor.dirty || editor.conflict) return;
     announcement =
       patch.flag !== undefined
         ? `${selected.name}: ${patch.flag || "flag cleared"}`
         : `${selected.name}: ${patch.rating} stars`;
     if (checkpoint.autoAdvance && cull.currentID === id) cull.move(1);
+  }
+  async function retryDecision() {
+    const patch = { ...editor.patch };
+    focus();
+    if (editor.conflict) {
+      await editor.reload();
+      if (editor.conflict || editor.error || editor.membershipChanged || !editor.targets.length)
+        return;
+    }
+    await applyDecision(patch, true);
   }
   function close() {
     if (editor.canChangeTarget()) onclose();
@@ -129,7 +167,7 @@
     else if (action === "previous") move(-1);
     else if (action === "next") move(1);
     else if (action === "auto") cull.toggleAutoAdvance();
-    else if (action === "scope" && editor.canChangeTarget()) void cull.nextPass();
+    else if (action === "scope") void nextPass();
     else if (action === "zoom") view = toggleActualPhotoView(view);
     else if (action === "info") info = (info + 1) % 3;
     else if (action === "help") help = !help;
@@ -140,8 +178,7 @@
   }
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="review-shell" onkeydown={key}>
+<div class="review-shell">
   <Modal
     ariaLabel="Cull photos"
     closable={false}
@@ -151,7 +188,8 @@
     maxWidth="100vw"
     maxHeight="100svh"
   >
-    <div class="photo-cull">
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_static_element_interactions -->
+    <div class="photo-cull" tabindex="-1" bind:this={container} onkeydown={key}>
       <header>
         <Button size="sm" onclick={close}>Exit cull</Button>
         <strong>{photo?.name ?? (cull.complete ? "Pass complete" : "Cull photos")}</strong>
@@ -162,9 +200,7 @@
         <Button
           size="sm"
           disabled={cull.busy || cull.stale || editor.busy}
-          onclick={() => {
-            if (editor.canChangeTarget()) void cull.nextPass();
-          }}>Scope: {checkpoint.scope}</Button
+          onclick={() => void nextPass()}>Scope: {checkpoint.scope}</Button
         >
         <Button
           size="sm"
@@ -178,12 +214,30 @@
           {cull.error || editor.error || editor.notice}
         </p>{/if}
       {#if cull.progress && !cull.complete}<p role="status">{cull.progress}</p>{/if}
+      {#if editor.membershipChanged && editor.targets.length}
+        <Notice
+          tone="warning"
+          message="Photo membership changed. These remaining files will receive your edits."
+        />
+        <ul aria-label="Members to review">
+          {#each editor.files as target}<li>{target.file_name}</li>{/each}
+        </ul>
+        <Button disabled={editor.busy || editor.loading} onclick={() => editor.reviewMembers()}
+          >Use reviewed members</Button
+        >
+      {/if}
       {#if editor.dirty || editor.conflict}<div class="controls">
           <Button
+            disabled={editor.busy || editor.loading || editor.membershipChanged}
+            onclick={() => void retryDecision()}>Reload and retry</Button
+          >
+          <Button
+            disabled={editor.busy || editor.loading}
             onclick={() => {
               editor.clearDraft();
               editor.reset();
-            }}>Clear failed edit</Button
+              focus();
+            }}>Discard edit</Button
           >
         </div>{/if}
       {#if help}<p class="key-map">
@@ -200,10 +254,11 @@
           {#if cull.progress}<p role="status">{cull.progress}</p>{/if}
           {#if cull.remainder}<Button
               disabled={cull.busy || cull.stale}
-              onclick={() => {
-                if (editor.canChangeTarget()) void cull.nextPass(true);
-              }}>Review unflagged remainder</Button
+              onclick={() => void nextPass(true)}>Review unflagged remainder</Button
             >{/if}
+          <Button disabled={editor.busy || cull.busy || cull.stale} onclick={() => move(-1)}
+            >Previous</Button
+          >
           <Button onclick={close}>Back to photos</Button>
         </section>
       {:else}
@@ -260,6 +315,7 @@
             size="sm"
             disabled={cull.stale || editor.busy}
             onclick={() => {
+              focus();
               if (editor.canChangeTarget()) cull.skip();
             }}>Skip</Button
           >

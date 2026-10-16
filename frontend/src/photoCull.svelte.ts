@@ -8,8 +8,8 @@ import type {
   CullScope,
   CullStorage,
 } from "./photoCullStorage.js";
-import { lookupPhotoRows, photoQuery } from "./photos.svelte.js";
-import { listPhotoAssets, type PhotoBrowseRowFlag } from "./generated/docbank.js";
+import { lookupPhotoRows } from "./photos.svelte.js";
+import type { PhotoBrowseRowFlag } from "./generated/docbank.js";
 
 const scopes: CullScope[] = ["unflagged", "picks", "rejects", "all"];
 const failure = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause));
@@ -25,6 +25,15 @@ export class PhotoCull {
   private capture?: AbortController;
   private flagRead?: AbortController;
   private flags?: Map<string, PhotoBrowseRowFlag>;
+  private flagsPassID?: string;
+  saved = $state(false);
+  async probe() {
+    try {
+      this.saved = !!(await this.storage.saved());
+    } catch {
+      this.saved = false;
+    }
+  }
   // nextPass snapshots the checkpoint revision, so no other update may bump it until the pass is saved.
   private changingPass = false;
   // Sets of the ids in each marker list, so a new mark costs O(1) however large the query is.
@@ -76,6 +85,8 @@ export class PhotoCull {
       }
       this.run = run;
       this.flags = undefined;
+      this.flagsPassID = undefined;
+      this.saved = !!run;
       if (this.run)
         for (const kind of ["visited", "skipped", "unavailable"] as const) {
           const list = this.run.checkpoint[kind];
@@ -102,7 +113,7 @@ export class PhotoCull {
     this.error = "";
     try {
       await this.writes;
-      const previous = await this.storage.load();
+      const previous = await this.storage.saved();
       if (previous && !confirm("Replace saved cull progress?")) return false;
       this.progress = "Capturing photos…";
       const page = await createSnapshot(
@@ -143,10 +154,12 @@ export class PhotoCull {
       controller.signal.throwIfAborted();
       await this.writes;
       controller.signal.throwIfAborted();
-      await this.storage.replace(run, controller.signal, previous?.checkpoint);
+      await this.storage.replace(run, controller.signal, previous);
       this.stale = false;
       this.run = run;
-      this.flags = flags;
+      this.saved = true;
+      this.flags = undefined;
+      this.flagsPassID = undefined;
       this.visit();
       return true;
     } catch (cause) {
@@ -158,46 +171,19 @@ export class PhotoCull {
     }
   }
   private async refreshFlags(signal: AbortSignal) {
-    const ids = this.flags ? this.run!.checkpoint.pass : this.run!.ids;
-    const rows = await lookupPhotoRows(this.session, ids, signal, (loaded, total) => {
+    const rows = await lookupPhotoRows(this.session, this.run!.ids, signal, (loaded, total) => {
       this.progress = `Checking ${loaded} of ${total} photos…`;
     });
     signal.throwIfAborted();
-    const flags = this.flags ?? new Map<string, PhotoBrowseRowFlag>();
-    for (const id of ids) flags.delete(id);
-    for (const row of rows) flags.set(row.asset_id, row.flag);
-    this.flags = flags;
-    return flags;
+    this.flags = new Map(rows.map((row) => [row.asset_id, row.flag]));
+    this.flagsPassID = this.run!.checkpoint.passID;
+    return this.flags;
   }
-  private async browseScope(scope: CullScope, signal: AbortSignal, firstMatch = false) {
-    const captured = new Set(this.run!.ids);
-    const matches = new Set<string>();
+  private matches(scope: CullScope, flags: Map<string, PhotoBrowseRowFlag>) {
     const flag = scope === "picks" ? "pick" : scope === "rejects" ? "reject" : "";
-    let cursor: string | undefined;
-    do {
-      const page = await listPhotoAssets(
-        {
-          query: {
-            ...photoQuery,
-            filters: scope === "all" ? {} : { flags: [flag] },
-          },
-          page_size: 250,
-          hidden: false,
-          cursor,
-        },
-        { session: this.session, signal },
-      );
-      signal.throwIfAborted();
-      for (const row of page.items) {
-        if (!captured.has(row.asset_id)) continue;
-        matches.add(row.asset_id);
-        this.flags!.set(row.asset_id, row.flag);
-      }
-      if (firstMatch && matches.size) return matches;
-      cursor = page.next_cursor;
-    } while (cursor);
-    if (scope === "all") for (const id of captured) if (!matches.has(id)) this.flags!.delete(id);
-    return matches;
+    return this.run!.ids.filter(
+      (id) => flags.has(id) && (scope === "all" || flags.get(id) === flag),
+    );
   }
 
   private update(
@@ -288,10 +274,9 @@ export class PhotoCull {
     const controller = this.beginFlagRead();
     this.remainder = false;
     try {
-      await this.refreshFlags(controller.signal);
-      const matches = await this.browseScope("unflagged", controller.signal, true);
+      const flags = await this.refreshFlags(controller.signal);
       controller.signal.throwIfAborted();
-      this.remainder = matches.size > 0;
+      this.remainder = this.matches("unflagged", flags).length > 0;
     } catch (cause) {
       if (!controller.signal.aborted) this.error = failure(cause);
     } finally {
@@ -312,14 +297,15 @@ export class PhotoCull {
       if (this.stale) return;
       const previous = this.run.checkpoint;
       const ids = this.run.ids;
-      const flags = await this.refreshFlags(controller.signal);
+      const flags =
+        this.flags && this.flagsPassID === previous.passID
+          ? this.flags
+          : await this.refreshFlags(controller.signal);
       controller.signal.throwIfAborted();
       const scope = followUp
         ? "unflagged"
         : scopes[(scopes.indexOf(this.run.checkpoint.scope) + 1) % scopes.length]!;
-      const matches = await this.browseScope(scope, controller.signal);
-      controller.signal.throwIfAborted();
-      const pass = ids.filter((id) => matches.has(id));
+      const pass = this.matches(scope, flags);
       if (followUp && !pass.length) {
         this.remainder = false;
         return;

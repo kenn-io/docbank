@@ -32,8 +32,9 @@ export interface CullProgress {
   pass?: CullCheckpoint;
 }
 export interface CullStorage {
+  saved(): Promise<Header | undefined>;
   load(): Promise<CullRun | undefined>;
-  replace(run: CullRun, signal?: AbortSignal, expected?: CullCheckpoint): Promise<void>;
+  replace(run: CullRun, signal?: AbortSignal, expected?: Header): Promise<void>;
   checkpoint(value: CullProgress): Promise<void>;
 }
 
@@ -80,6 +81,20 @@ export function photoCullStorage(vaultID: string): CullStorage {
     tx.objectStore("checkpoints").put(header(checkpoint), vaultID);
   }
   return {
+    async saved() {
+      const db = await open();
+      try {
+        const tx = db.transaction("checkpoints", "readonly"),
+          done = transactionDone(tx);
+        const saved = await idbRequest<Header | undefined>(
+          tx.objectStore("checkpoints").get(vaultID),
+        );
+        await done;
+        return saved;
+      } finally {
+        db.close();
+      }
+    },
     async load() {
       const db = await open();
       try {

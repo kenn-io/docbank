@@ -2672,8 +2672,8 @@ it("guards reload for a failed cull decision after vault identity arrives", asyn
   await fireEvent.click(screen.getByRole("button", { name: "Cull" }));
   const dialog = await screen.findByRole("dialog", { name: "Cull photos" });
   await within(dialog).findByText("Photo 1.jpg");
-  await fireEvent.keyDown(dialog, { key: "x" });
-  await within(dialog).findByRole("button", { name: "Clear failed edit" });
+  await fireEvent.keyDown(dialog.querySelector(".photo-cull")!, { key: "x" });
+  await within(dialog).findByRole("button", { name: "Discard edit" });
   const event = new Event("beforeunload", { cancelable: true });
   window.dispatchEvent(event);
   expect(event.defaultPrevented).toBe(true);

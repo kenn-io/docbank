@@ -749,6 +749,14 @@
   let tagCatalogLoading = $state(false);
   let tagCatalogError = $state("");
   let vaultID = $state("");
+  function applyVaultID(id: string | undefined) {
+    const next = isTagHotkeyVaultID(id) ? id : "";
+    if (vaultID === next) return;
+    vaultID = next;
+    const storage = localPreferenceStorage();
+    tagHotkeys = storage && next ? loadTagHotkeys(storage, next) : {};
+  }
+
   $effect(() => {
     const session = webSession;
     if (!session || !photoMode || untrack(() => !!vaultID)) return;
@@ -757,11 +765,7 @@
       .auditStatus({}, { session, signal: controller.signal })
       .then((status) => {
         if (controller.signal.aborted) return;
-        if (isTagHotkeyVaultID(status.vault_id)) {
-          vaultID = status.vault_id;
-          const storage = localPreferenceStorage();
-          tagHotkeys = storage ? loadTagHotkeys(storage, vaultID) : {};
-        }
+        applyVaultID(status.vault_id);
       })
       .catch((cause) => {
         if (!controller.signal.aborted) handleFailure(cause);
@@ -2240,16 +2244,7 @@
       const status = await generated.auditStatus({ node_id: nodeID }, { session });
       if (!inspectorRequestCurrent(request, auditGeneration, session, nodeID, sourceKey)) return;
       selectedAudit = status;
-      if (isTagHotkeyVaultID(status.vault_id)) {
-        if (vaultID !== status.vault_id) {
-          vaultID = status.vault_id;
-          const storage = localPreferenceStorage();
-          tagHotkeys = storage ? loadTagHotkeys(storage, vaultID) : {};
-        }
-      } else {
-        vaultID = "";
-        tagHotkeys = {};
-      }
+      applyVaultID(status.vault_id);
     } catch (cause) {
       if (!inspectorRequestCurrent(request, auditGeneration, session, nodeID, sourceKey)) return;
       if (cause instanceof APIError && cause.status === 401) {

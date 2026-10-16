@@ -128,7 +128,7 @@
         owner.cull = new CullRun(owner.session, photoCullStorage(id));
         owner.cullVaultID = id;
       }
-      if (!owner.culling) void owner.cull!.restore(true);
+      if (!owner.culling) void owner.cull!.probe();
       return owner.cull;
     });
     cull = review;
@@ -839,7 +839,7 @@
                 {#if cull?.capturing}<Button size="sm" onclick={() => cull?.cancel()}
                     >Cancel capture</Button
                   >{/if}
-                {#if cull?.run}<Button
+                {#if cull?.saved}<Button
                     size="sm"
                     disabled={actionDisabled || cull.capturing}
                     onclick={() => void startCull(true)}>Resume cull</Button

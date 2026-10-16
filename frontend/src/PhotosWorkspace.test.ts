@@ -2663,6 +2663,9 @@ it("reloads durable culls and retains their draft only for the same vault", asyn
   );
   vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
   let durableID = rows[0]!.asset_id;
+  vi.spyOn(PhotoCull.prototype, "probe").mockImplementation(async function (this: PhotoCull) {
+    this.saved = true;
+  });
   const restore = vi
     .spyOn(PhotoCull.prototype, "restore")
     .mockImplementation(async function (this: PhotoCull) {
@@ -2694,21 +2697,21 @@ it("reloads durable culls and retains their draft only for the same vault", asyn
   await fireEvent.click(resume);
   const dialog = await screen.findByRole("dialog", { name: "Cull photos" });
   await within(dialog).findByText("Photo 2.jpg");
-  expect(restore).toHaveBeenCalledTimes(2);
+  expect(restore).toHaveBeenCalledTimes(1);
   const retained = photos.cullEditor!;
   const dispose = vi.spyOn(retained, "dispose");
   retained.stage({ caption: "Unsaved cull decision" });
   await view.rerender({ ...props, title: "Same vault" });
   expect(screen.getByRole("dialog", { name: "Cull photos" })).toBe(dialog);
-  expect(within(dialog).getByRole("button", { name: "Clear failed edit" })).toBeTruthy();
-  expect(restore).toHaveBeenCalledTimes(2);
+  expect(within(dialog).getByRole("button", { name: "Discard edit" })).toBeTruthy();
+  expect(restore).toHaveBeenCalledTimes(1);
   expect(dispose).not.toHaveBeenCalled();
   await view.rerender({ ...props, vaultID: "22222222-2222-4222-8222-222222222222" });
   expect(screen.queryByRole("dialog", { name: "Cull photos" })).toBeNull();
   expect(dispose).toHaveBeenCalledTimes(1);
   await fireEvent.click(screen.getByRole("button", { name: "Resume cull" }));
   const replacement = await screen.findByRole("dialog", { name: "Cull photos" });
-  expect(within(replacement).queryByRole("button", { name: "Clear failed edit" })).toBeNull();
+  expect(within(replacement).queryByRole("button", { name: "Discard edit" })).toBeNull();
   photos.dispose();
 });
 

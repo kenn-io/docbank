@@ -1,0 +1,102 @@
+import { beforeEach, afterEach, expect, it, vi } from "vite-plus/test";
+import { IDBFactory, IDBKeyRange, IDBDatabase } from "fake-indexeddb";
+import { photoCullStorage, type CullRun } from "./photoCullStorage.js";
+
+beforeEach(() => {
+  vi.stubGlobal("indexedDB", new IDBFactory());
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+});
+afterEach(() => vi.unstubAllGlobals());
+
+function run(runID = "run"): CullRun {
+  const ids = Array.from({ length: 14 }, (_, i) => `photo-${i}`);
+  return {
+    ids,
+    checkpoint: {
+      runID,
+      passID: "pass",
+      revision: 0,
+      pass: ids,
+      position: 0,
+      visited: ids,
+      skipped: ids.slice(1),
+      unavailable: ids.slice(2),
+      scope: "unflagged",
+      autoAdvance: true,
+    },
+  };
+}
+
+it("round trips membership and markers past index ten in numeric order", async () => {
+  const store = photoCullStorage("vault-a");
+  const captured = run();
+  await store.replace(captured);
+  expect(await photoCullStorage("vault-a").load()).toEqual(captured);
+});
+
+it("checkpoints position, markers and a replacement pass", async () => {
+  const store = photoCullStorage("vault-a"),
+    captured = run();
+  await store.replace(captured);
+  await store.checkpoint({
+    runID: "run",
+    passID: "pass",
+    revision: 0,
+    position: 3,
+    autoAdvance: false,
+    marker: { kind: "skipped", id: "photo-0", index: 13 },
+  });
+  expect((await store.load())?.checkpoint).toMatchObject({
+    position: 3,
+    revision: 1,
+    autoAdvance: false,
+    skipped: [...captured.checkpoint.skipped, "photo-0"],
+  });
+  const pass = {
+    ...captured.checkpoint,
+    passID: "follow-up",
+    pass: ["photo-4"],
+    position: 0,
+    visited: [],
+    skipped: [],
+    unavailable: [],
+  };
+  await store.checkpoint({ runID: "run", passID: "pass", revision: 1, pass });
+  expect(await store.load()).toEqual({ ids: captured.ids, checkpoint: { ...pass, revision: 2 } });
+});
+
+it("refuses writes from a handle whose run was replaced", async () => {
+  const old = photoCullStorage("vault-a"),
+    newer = photoCullStorage("vault-a");
+  const captured = run();
+  await old.replace(captured);
+  const replacement = run("new-run");
+  await newer.replace(replacement, undefined, captured.checkpoint);
+  await expect(
+    old.checkpoint({ runID: "run", passID: "pass", revision: 0, position: 2 }),
+  ).rejects.toThrow("changed in another tab");
+  await expect(old.replace(captured, undefined, captured.checkpoint)).rejects.toThrow(
+    "changed in another tab",
+  );
+  expect(await newer.load()).toEqual(replacement);
+});
+
+it("keeps separate vaults and reads only the saved header for the resume offer", async () => {
+  const a = photoCullStorage("vault-a"),
+    b = photoCullStorage("vault-b");
+  expect(await a.saved()).toBeUndefined();
+  await a.replace(run());
+  await b.replace(run("other-run"));
+  const transaction = vi.spyOn(IDBDatabase.prototype, "transaction");
+  expect(await a.saved()).toEqual({
+    runID: "run",
+    passID: "pass",
+    revision: 0,
+    position: 0,
+    scope: "unflagged",
+    autoAdvance: true,
+  });
+  expect(transaction).toHaveBeenCalledExactlyOnceWith("checkpoints", "readonly");
+  expect((await b.load())?.checkpoint.runID).toBe("other-run");
+  expect((await a.load())?.checkpoint.runID).toBe("run");
+});

@@ -50,16 +50,32 @@ export const photoQuery = parseQuery(
   '{"syntax":"simple","sort":{"field":"capture_time","direction":"desc"}}',
 );
 // QueryV1 accepts at most 64 asset IDs per request.
+export function lookupPhotoRows(
+  session: string,
+  ids: string[],
+  signal?: AbortSignal,
+  onprogress?: (loaded: number, total: number) => void,
+  hidden?: boolean,
+): Promise<PhotoBrowseRow[]>;
+export function lookupPhotoRows<Row extends { asset_id: string }>(
+  session: string,
+  ids: string[],
+  signal: AbortSignal | undefined,
+  onprogress: ((loaded: number, total: number) => void) | undefined,
+  hidden: boolean,
+  read: (batch: string[], signal: AbortSignal) => Promise<{ items: Row[] }>,
+): Promise<Row[]>;
 export async function lookupPhotoRows(
   session: string,
   ids: string[],
   signal?: AbortSignal,
   onprogress?: (loaded: number, total: number) => void,
   hidden = false,
-): Promise<PhotoBrowseRow[]> {
+  read?: (batch: string[], signal: AbortSignal) => Promise<{ items: { asset_id: string }[] }>,
+): Promise<{ asset_id: string }[]> {
   const controller = new AbortController();
   signal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
-  const rows: PhotoBrowseRow[] = [];
+  const rows: { asset_id: string }[] = [];
   let offset = 0,
     loaded = 0;
   try {
@@ -68,14 +84,16 @@ export async function lookupPhotoRows(
         while (offset < ids.length) {
           signal?.throwIfAborted();
           const batch = ids.slice(offset, (offset += 64));
-          const page = await listPhotoAssets(
-            {
-              query: { ...photoQuery, filters: { ...photoQuery.filters, asset_ids: batch } },
-              page_size: 250,
-              hidden,
-            },
-            { session, signal },
-          );
+          const page = read
+            ? await read(batch, signal!)
+            : await listPhotoAssets(
+                {
+                  query: { ...photoQuery, filters: { ...photoQuery.filters, asset_ids: batch } },
+                  page_size: 250,
+                  hidden,
+                },
+                { session, signal },
+              );
           signal?.throwIfAborted();
           rows.push(...page.items);
           loaded += batch.length;
@@ -998,15 +1016,19 @@ export class Photos {
         ...this.authored.targets.map((target) => target.asset_id),
       ]),
     ].filter((id) => !eligible.has(id));
-    for (let offset = 0; offset < absent.length; offset += 64) {
-      const asset_ids = absent.slice(offset, offset + 64);
-      const page = await this.page(
-        { ...query, filters: { ...query.filters, asset_ids } },
-        AbortSignal.any([signal, AbortSignal.timeout(60_000)]),
-      );
-      signal.throwIfAborted();
-      for (const row of page.items) eligible.add(row.asset_id);
-    }
+    const rows = await lookupPhotoRows<PhotoRow>(
+      this.session,
+      absent,
+      signal,
+      undefined,
+      this.hidden,
+      (asset_ids, signal) =>
+        this.page(
+          { ...query, filters: { ...query.filters, asset_ids } },
+          AbortSignal.any([signal, AbortSignal.timeout(60_000)]),
+        ),
+    );
+    for (const row of rows) eligible.add(row.asset_id);
     return eligible;
   }
 
