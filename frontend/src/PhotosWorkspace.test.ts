@@ -2766,26 +2766,25 @@ async function captureWorkspace() {
   return { photos, ids, finish: () => finish() };
 }
 
-it("does not mount Compare and Cull together when Compare is chosen during cull capture", async () => {
-  const { photos, ids, finish } = await captureWorkspace();
-  photos.select(ids[0]!, new MouseEvent("click"), ids);
-  photos.select(ids[1]!, new MouseEvent("click", { ctrlKey: true }), ids);
-  await fireEvent.click(screen.getByRole("button", { name: "Compare" }));
-  await act(async () => finish());
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  expect(screen.queryAllByRole("dialog", { name: /^(Cull|Compare) photos$/ })).toHaveLength(1);
-  photos.dispose();
-});
-
-it("does not open a captured cull over a metadata draft created during capture", async () => {
-  const { photos, finish } = await captureWorkspace();
-  photos.authored.stage({ caption: "Draft written while capturing" });
-  await act(async () => finish());
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  expect(screen.queryByRole("dialog", { name: "Cull photos" })).toBeNull();
-  expect(photos.authored.dirty).toBe(true);
-  photos.dispose();
-});
+it.each(["compare", "draft"])(
+  "keeps a competing %s action while cull capture finishes",
+  async (action) => {
+    const { photos, ids, finish } = await captureWorkspace();
+    if (action === "compare") {
+      photos.select(ids[0]!, new MouseEvent("click"), ids);
+      photos.select(ids[1]!, new MouseEvent("click", { ctrlKey: true }), ids);
+      await fireEvent.click(screen.getByRole("button", { name: "Compare" }));
+    } else photos.authored.stage({ caption: "Draft written while capturing" });
+    await act(async () => finish());
+    if (action === "compare")
+      expect(screen.queryAllByRole("dialog", { name: /^(Cull|Compare) photos$/ })).toHaveLength(1);
+    else {
+      expect(screen.queryByRole("dialog", { name: "Cull photos" })).toBeNull();
+      expect(photos.authored.dirty).toBe(true);
+    }
+    photos.dispose();
+  },
+);
 
 it("uses the resolved vault identity when Cull mounted before audit status arrived", async () => {
   vi.stubGlobal(

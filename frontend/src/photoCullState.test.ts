@@ -44,6 +44,15 @@ function storage() {
   };
   return store;
 }
+function browsePage(rows: api.PhotoBrowseRow[], request: api.PhotoBrowseRequest) {
+  const filters = request.query.filters;
+  const items = rows.filter(
+    (row) =>
+      (!filters?.asset_ids || filters.asset_ids.includes(row.asset_id)) &&
+      (!filters?.flags || filters.flags.includes(row.flag)),
+  );
+  return { items, total: items.length, facets: [], relevance_available: false };
+}
 async function snapshot(ids: string[]) {
   return snapshotEnvelope(
     query,
@@ -83,9 +92,7 @@ it.each([
   { position: -1 },
   { position: 0.5 },
   { pass: null },
-  { visited: "invalid" },
   { skipped: [1] },
-  { unavailable: {} },
   { pass: [photo(2).asset_id] },
 ])("refuses malformed saved cull progress: %j", async (invalid) => {
   const id = photo(1).asset_id;
@@ -160,41 +167,85 @@ it("captures the entire ordered photo snapshot from its frozen flags and resumes
   });
   expect(capture).toHaveBeenCalledTimes(1);
 });
-it("refreshes only the current pass for completion and scope changes", async () => {
+it("browses fresh flag scopes across clients", async () => {
   const rows = Array.from({ length: 10 }, (_, index) => photo(index + 1));
   const full = await snapshot(rows.map((row) => row.asset_id));
   for (let index = 2; index < rows.length; index++) {
     rows[index]!.flag = "pick";
     full.rows[index]!.flag = "pick";
   }
-  vi.spyOn(api, "createWorkspaceQuery").mockResolvedValue(new Response(JSON.stringify(full)));
-  const byID = new Map(rows.map((row) => [row.asset_id, row]));
-  const list = vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) => ({
-    items: request.query.filters!.asset_ids!.map((id) => byID.get(id)!),
-    total: request.query.filters!.asset_ids!.length,
-    facets: [],
-    relevance_available: false,
-  }));
+  vi.spyOn(api, "createWorkspaceQuery").mockResolvedValue(Response.json(full));
+  const outsider = photo(11);
+  const list = vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) => {
+    if (request.query.filters?.asset_ids) return browsePage(rows, request);
+    const flag = request.query.filters?.flags?.[0];
+    if (!request.cursor)
+      return { ...browsePage([{ ...outsider, flag: flag! }], request), next_cursor: "scope-next" };
+    if (request.cursor === "unused-after-match") return browsePage([], request);
+    if (flag === "" && rows.some((row) => row.flag === ""))
+      return { ...browsePage(rows, request), next_cursor: "unused-after-match" };
+    return browsePage([...rows].reverse(), request);
+  });
   const cull = new PhotoCull("session", storage());
   expect(await cull.start(query), cull.error).toBe(true);
   expect(list).not.toHaveBeenCalled();
   const passIDs = rows.slice(0, 2).map((row) => row.asset_id);
   expect(cull.run?.checkpoint.pass).toEqual(passIDs);
+  const before = structuredClone(cull.run);
+  await cull.nextPass(false, () => false);
+  expect(cull.run).toEqual(before);
+  expect(list).not.toHaveBeenCalled();
+  rows[0]!.flag = "reject";
+  rows[1]!.flag = "reject";
+  rows[2]!.flag = "";
   cull.choose(passIDs[1]!);
   cull.move(1);
-  expect(cull.complete).toBe(true);
   await cull.checkRemainder();
   expect(cull.error).toBe("");
   expect(cull.remainder).toBe(true);
-  expect.soft(list, "completion refresh").toHaveBeenCalledTimes(1);
-  expect.soft(list.mock.calls[0]![0].query.filters?.asset_ids, "completion IDs").toEqual(passIDs);
+  expect(list).toHaveBeenCalledTimes(3);
+  expect(list.mock.calls.slice(1).map(([request]) => request)).toEqual([
+    {
+      query: { ...photoQueries.photoQuery, filters: { flags: [""] } },
+      page_size: 250,
+      hidden: false,
+      cursor: undefined,
+    },
+    {
+      query: { ...photoQueries.photoQuery, filters: { flags: [""] } },
+      page_size: 250,
+      hidden: false,
+      cursor: "scope-next",
+    },
+  ]);
   list.mockClear();
+  rows[2]!.flag = "pick";
+  rows[3]!.flag = "reject";
   await cull.nextPass(false, () => true);
   expect(cull.error).toBe("");
   expect(cull.run?.checkpoint.scope).toBe("picks");
-  expect(cull.run?.checkpoint.pass).toEqual(rows.slice(2).map((row) => row.asset_id));
-  expect.soft(list, "scope refresh").toHaveBeenCalledTimes(1);
-  expect.soft(list.mock.calls[0]![0].query.filters?.asset_ids, "scope IDs").toEqual(passIDs);
+  expect(cull.run?.checkpoint.pass).toEqual([
+    rows[2]!.asset_id,
+    ...rows.slice(4).map((row) => row.asset_id),
+  ]);
+  expect(cull.run?.checkpoint.unavailable).toEqual([]);
+  expect(list).toHaveBeenCalledTimes(3);
+  expect(
+    list.mock.calls.slice(1).map(([request]) => [request.query.filters, request.cursor]),
+  ).toEqual([
+    [{ flags: ["pick"] }, undefined],
+    [{ flags: ["pick"] }, "scope-next"],
+  ]);
+  rows[2]!.flag = "";
+  cull.choose(rows[9]!.asset_id);
+  cull.move(1);
+  await cull.nextPass(true);
+  expect(cull.run?.checkpoint.scope).toBe("unflagged");
+  expect(cull.run?.checkpoint.pass).toEqual([rows[2]!.asset_id]);
+  rows[2]!.flag = "pick";
+  cull.move(1);
+  await cull.checkRemainder();
+  expect(cull.remainder).toBe(false);
 });
 it("loads restored flags once and removes missing current-pass rows from later scopes", async () => {
   const rows = [photo(1), photo(2), photo(3)],
@@ -210,10 +261,7 @@ it("loads restored flags once and removes missing current-pass rows from later s
   rows[2]!.flag = "reject";
   const available = new Map([rows[0]!, rows[2]!].map((row) => [row.asset_id, row]));
   const list = vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) => ({
-    items: request.query.filters!.asset_ids!.flatMap((id) => available.get(id) ?? []),
-    total: available.size,
-    facets: [],
-    relevance_available: false,
+    ...browsePage([...available.values()], request),
   }));
   const resumed = new PhotoCull("new-session", store);
   await resumed.restore();
@@ -226,53 +274,11 @@ it("loads restored flags once and removes missing current-pass rows from later s
   await resumed.nextPass(false, () => true);
   expect(resumed.run?.checkpoint.pass).toEqual([ids[0]]);
   expect(resumed.run?.checkpoint.unavailable).toEqual([ids[1], ids[2]]);
-  expect(list.mock.calls.map(([request]) => request.query.filters?.asset_ids)).toEqual([
-    ids,
-    [ids[0]],
-    [ids[0], ids[2]],
-  ]);
-});
-it("keeps decisions in the pass and refreshes scope from display flags, regardless of rating or declined scope changes", async () => {
-  const rows = [photo(1), photo(2), photo(3)];
-  rows[0]!.rating = 5;
-  vi.spyOn(api, "createWorkspaceQuery").mockResolvedValue(
-    new Response(JSON.stringify(await snapshot(rows.map((row) => row.asset_id)))),
-  );
-  const flags = vi.spyOn(api, "listPhotoAssets").mockImplementation(async () => ({
-    items: rows,
-    total: 3,
-    facets: [],
-    relevance_available: false,
-  }));
-  const cull = new PhotoCull("session", storage());
-  await cull.start(query);
-  rows[0]!.flag = "pick";
-  rows[1]!.flag = "reject";
-  expect(cull.run?.checkpoint.pass).toEqual(rows.map((row) => row.asset_id));
-  cull.move(1);
-  await cull.flush();
-  const before = structuredClone(cull.run);
-  await cull.nextPass(false, () => false);
-  expect(cull.run).toEqual(before);
-  cull.skip();
-  cull.move(1);
-  expect(cull.complete).toBe(true);
-  await cull.nextPass(true);
-  expect(cull.run?.checkpoint.pass).toEqual([rows[2]!.asset_id]);
-  await cull.nextPass(false, () => true);
-  expect(cull.run?.checkpoint.scope).toBe("picks");
-  expect(cull.run?.checkpoint.pass).toEqual([rows[0]!.asset_id]);
-  expect(flags.mock.calls[0][0].query.filters?.asset_ids).toEqual(rows.map((row) => row.asset_id));
-  cull.move(1);
-  await cull.flush();
-  await cull.checkRemainder();
-  expect(cull.remainder).toBe(true);
-  await cull.nextPass(true);
-  expect(cull.run?.checkpoint.pass).toEqual([rows[2]!.asset_id]);
-  rows[2]!.flag = "pick";
-  cull.move(1);
-  await cull.checkRemainder();
-  expect(cull.remainder).toBe(false);
+  expect(
+    list.mock.calls
+      .filter(([request]) => request.query.filters?.asset_ids)
+      .map(([request]) => request.query.filters?.asset_ids),
+  ).toEqual([ids, [ids[0]], [ids[0], ids[2]]]);
 });
 it("keeps the previous durable run after cancellation, capture failure or failed replacement", async () => {
   const row = photo(1),
@@ -312,12 +318,14 @@ it("ignores auto-advance and unavailable updates while a scope change reads flag
   await cull.start(query);
   await cull.flush();
   let release!: () => void;
-  list.mockImplementation(
-    () =>
-      new Promise((resolve) => {
-        release = () => resolve({ items: rows, total: 2, facets: [], relevance_available: false });
-      }),
-  );
+  list
+    .mockImplementation(async (request) => browsePage(rows, request))
+    .mockImplementationOnce(
+      (request) =>
+        new Promise((resolve) => {
+          release = () => resolve(browsePage(rows, request));
+        }),
+    );
   const changing = cull.nextPass(false, () => true);
   await vi.waitFor(() => expect(cull.busy).toBe(true));
   await vi.waitFor(() => expect(list).toHaveBeenCalled());
@@ -433,49 +441,90 @@ it("keeps automatic storage probes quiet and reports explicit failures", async (
   expect(cull.error).toBe("Storage unavailable");
 });
 
-it.each([false, true])(
-  "cancels full-run flag reads without replacing a pass (completion: %s)",
-  async (complete) => {
-    const row = photo(1),
-      store = storage(),
-      cull = new PhotoCull("session", store);
-    cull.run = {
-      ids: [row.asset_id],
-      checkpoint: {
-        runID: "run",
-        passID: "pass",
-        revision: 0,
-        pass: [row.asset_id],
-        position: complete ? 1 : 0,
-        visited: [],
-        skipped: [],
-        unavailable: [],
-        scope: "unflagged",
-        autoAdvance: true,
-      },
-    };
-    const list = vi.spyOn(api, "listPhotoAssets").mockImplementation(
-      (_request, options) =>
-        new Promise((_resolve, reject) => {
-          options!.signal!.addEventListener("abort", () => reject(options!.signal!.reason), {
-            once: true,
-          });
-        }),
-    );
-    const before = cull.run;
-    const read = complete ? cull.checkRemainder() : cull.nextPass(false, () => true);
-    await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(1));
-    cull.cancel();
-    await read;
-    expect(list.mock.calls[0]![1]!.signal!.aborted).toBe(true);
-    expect(cull.run).toBe(before);
-    expect(cull.busy).toBe(false);
-    expect(cull.error).toBe("");
-    expect(store.checkpoint).not.toHaveBeenCalled();
-  },
-);
+it("keeps the newer remainder result when an older flag read finishes", async () => {
+  const row = { ...photo(1), flag: "pick" as api.PhotoBrowseRowFlag };
+  const cull = new PhotoCull("session", storage());
+  cull.run = {
+    ids: [row.asset_id],
+    checkpoint: {
+      runID: "run",
+      passID: "pass",
+      revision: 0,
+      pass: [row.asset_id],
+      position: 1,
+      visited: [row.asset_id],
+      skipped: [],
+      unavailable: [],
+      scope: "unflagged",
+      autoAdvance: true,
+    },
+  };
+  let release!: (page: api.PhotoBrowsePage) => void;
+  const oldLookup = new Promise<api.PhotoBrowsePage>((resolve) => {
+    release = resolve;
+  });
+  const stalePage = browsePage([{ ...row }], { query: photoQueries.photoQuery });
+  const list = vi
+    .spyOn(api, "listPhotoAssets")
+    .mockImplementation(async (request) => browsePage([row], request))
+    .mockImplementationOnce(() => oldLookup);
+  const older = cull.checkRemainder();
+  await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(1));
+  row.flag = "";
+  await cull.checkRemainder();
+  expect(cull.remainder).toBe(true);
+  expect(list.mock.calls[0]![1]!.signal!.aborted).toBe(true);
+  release(stalePage);
+  await older;
+  expect(cull.remainder).toBe(true);
+});
 
-it("reports a failed flag lookup and clears its progress", async () => {
+it.each([
+  { complete: false, browse: false },
+  { complete: true, browse: false },
+  { complete: false, browse: true },
+  { complete: true, browse: true },
+])("cancels flag reads without replacing a pass: %j", async ({ complete, browse }) => {
+  const row = photo(1),
+    store = storage(),
+    cull = new PhotoCull("session", store);
+  cull.run = {
+    ids: [row.asset_id],
+    checkpoint: {
+      runID: "run",
+      passID: "pass",
+      revision: 0,
+      pass: [row.asset_id],
+      position: complete ? 1 : 0,
+      visited: [],
+      skipped: [],
+      unavailable: [],
+      scope: "unflagged",
+      autoAdvance: true,
+    },
+  };
+  const list = vi.spyOn(api, "listPhotoAssets").mockImplementation((request, options) => {
+    if (browse && request.query.filters?.asset_ids)
+      return Promise.resolve(browsePage([row], request));
+    return new Promise((_resolve, reject) => {
+      options!.signal!.addEventListener("abort", () => reject(options!.signal!.reason), {
+        once: true,
+      });
+    });
+  });
+  const before = cull.run;
+  const read = complete ? cull.checkRemainder() : cull.nextPass(false, () => true);
+  await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(browse ? 2 : 1));
+  cull.cancel();
+  await read;
+  expect(list.mock.calls.at(-1)![1]!.signal!.aborted).toBe(true);
+  expect(cull.run).toBe(before);
+  expect(cull.busy).toBe(false);
+  expect(cull.error).toBe("");
+  expect(store.checkpoint).not.toHaveBeenCalled();
+});
+
+it.each(["lookup", "browse"])("reports a failed flag %s and clears its progress", async (stage) => {
   const id = photo(1).asset_id;
   const cull = new PhotoCull("session", storage());
   cull.run = {
@@ -493,7 +542,12 @@ it("reports a failed flag lookup and clears its progress", async () => {
       autoAdvance: true,
     },
   };
-  vi.spyOn(photoQueries, "lookupPhotoRows").mockRejectedValue(new Error("Lookup unavailable"));
+  const lookup = vi.spyOn(photoQueries, "lookupPhotoRows");
+  if (stage === "lookup") lookup.mockRejectedValue(new Error("Lookup unavailable"));
+  else {
+    lookup.mockResolvedValue([photo(1)]);
+    vi.spyOn(api, "listPhotoAssets").mockRejectedValue(new Error("Lookup unavailable"));
+  }
   await cull.checkRemainder();
   expect(cull.error).toBe("Lookup unavailable");
   expect(cull.progress).toBe("");

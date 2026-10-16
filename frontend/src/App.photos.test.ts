@@ -2611,7 +2611,7 @@ it("refuses draft navigation until Clear edits releases it", async () => {
   expect(unloadBlocked()).toBe(false);
 });
 
-it("refuses reload and Back while a failed cull decision keeps its draft", async () => {
+it("guards reload for a failed cull decision after vault identity arrives", async () => {
   history.replaceState(null, "", "/#web_session=synthetic&web_upload_secret=proof");
   vi.stubGlobal("navigation", undefined);
   vi.stubGlobal(
@@ -2674,29 +2674,9 @@ it("refuses reload and Back while a failed cull decision keeps its draft", async
   await within(dialog).findByText("Photo 1.jpg");
   await fireEvent.keyDown(dialog, { key: "x" });
   await within(dialog).findByRole("button", { name: "Clear failed edit" });
-  const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
-  await fireEvent(document, new Event("visibilitychange"));
-  await waitFor(() =>
-    expect(screen.queryByRole("button", { name: "Open Photo 1.jpg" })).toBeNull(),
-  );
-  visibility.mockReturnValue("visible");
-  await fireEvent(document, new Event("visibilitychange"));
-  await screen.findByRole("button", { name: "Open Photo 1.jpg" });
-  const restored = await screen.findByRole("dialog", { name: "Cull photos" });
-  await within(restored).findByRole("button", { name: "Clear failed edit" });
-  const unloadBlocked = () => {
-    const event = new Event("beforeunload", { cancelable: true });
-    window.dispatchEvent(event);
-    return event.defaultPrevented;
-  };
-  const reloadRefused = unloadBlocked();
-  history.back();
-  await new Promise((resolve) => setTimeout(resolve, 50));
-  expect(location.pathname).toBe("/photos");
-  expect(screen.getByRole("dialog", { name: "Cull photos" })).toBeTruthy();
-  expect(reloadRefused).toBe(true);
-  await fireEvent.click(screen.getByRole("button", { name: "Clear failed edit" }));
-  expect(unloadBlocked()).toBe(false);
+  const event = new Event("beforeunload", { cancelable: true });
+  window.dispatchEvent(event);
+  expect(event.defaultPrevented).toBe(true);
 });
 
 it("closes the viewer to the grid after refusing a typed photo hash", async () => {

@@ -8,8 +8,8 @@ import type {
   CullScope,
   CullStorage,
 } from "./photoCullStorage.js";
-import { lookupPhotoRows } from "./photos.svelte.js";
-import type { PhotoBrowseRowFlag } from "./generated/docbank.js";
+import { lookupPhotoRows, photoQuery } from "./photos.svelte.js";
+import { listPhotoAssets, type PhotoBrowseRowFlag } from "./generated/docbank.js";
 
 const scopes: CullScope[] = ["unflagged", "picks", "rejects", "all"];
 const failure = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause));
@@ -169,6 +169,36 @@ export class PhotoCull {
     this.flags = flags;
     return flags;
   }
+  private async browseScope(scope: CullScope, signal: AbortSignal, firstMatch = false) {
+    const captured = new Set(this.run!.ids);
+    const matches = new Set<string>();
+    const flag = scope === "picks" ? "pick" : scope === "rejects" ? "reject" : "";
+    let cursor: string | undefined;
+    do {
+      const page = await listPhotoAssets(
+        {
+          query: {
+            ...photoQuery,
+            filters: scope === "all" ? {} : { flags: [flag] },
+          },
+          page_size: 250,
+          hidden: false,
+          cursor,
+        },
+        { session: this.session, signal },
+      );
+      signal.throwIfAborted();
+      for (const row of page.items) {
+        if (!captured.has(row.asset_id)) continue;
+        matches.add(row.asset_id);
+        this.flags!.set(row.asset_id, row.flag);
+      }
+      if (firstMatch && matches.size) return matches;
+      cursor = page.next_cursor;
+    } while (cursor);
+    if (scope === "all") for (const id of captured) if (!matches.has(id)) this.flags!.delete(id);
+    return matches;
+  }
 
   private update(
     patch: Partial<
@@ -258,9 +288,10 @@ export class PhotoCull {
     const controller = this.beginFlagRead();
     this.remainder = false;
     try {
-      const flags = await this.refreshFlags(controller.signal);
+      await this.refreshFlags(controller.signal);
+      const matches = await this.browseScope("unflagged", controller.signal, true);
       controller.signal.throwIfAborted();
-      this.remainder = [...flags.values()].includes("");
+      this.remainder = matches.size > 0;
     } catch (cause) {
       if (!controller.signal.aborted) this.error = failure(cause);
     } finally {
@@ -286,12 +317,9 @@ export class PhotoCull {
       const scope = followUp
         ? "unflagged"
         : scopes[(scopes.indexOf(this.run.checkpoint.scope) + 1) % scopes.length]!;
-      const pass = ids.filter(
-        (id) =>
-          flags.has(id) &&
-          (scope === "all" ||
-            flags.get(id) === (scope === "picks" ? "pick" : scope === "rejects" ? "reject" : "")),
-      );
+      const matches = await this.browseScope(scope, controller.signal);
+      controller.signal.throwIfAborted();
+      const pass = ids.filter((id) => matches.has(id));
       if (followUp && !pass.length) {
         this.remainder = false;
         return;

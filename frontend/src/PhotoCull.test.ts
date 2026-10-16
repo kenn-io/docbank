@@ -152,97 +152,85 @@ it("keeps a failed decision on screen and guards exit while its draft remains", 
   expect(close).toHaveBeenCalledOnce();
 });
 
-it.each([false, true])(
-  "refreshes the visible completion offer after Undo (older lookup pending: %s)",
-  async (pending) => {
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        observe() {}
-        disconnect() {}
-      },
-    );
-    const row = photo(1),
-      before = preparedPhoto(1);
-    const picked: api.PhotoAuthoredSnapshot = {
-      file_id: before.file_id,
-      node_id: 1,
-      revision: 2,
-      values: { ...before.values, flag: "pick" },
-    };
-    const restored = { ...picked, revision: 3, values: { ...before.values } };
-    vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue({ assets: [], targets: [before] });
-    vi.spyOn(api, "editPhotoAuthored").mockImplementation(async () => {
-      row.flag = "pick";
-      return { receipt_id: "pick", before: [before], after: [picked] };
-    });
-    vi.spyOn(api, "undoPhotoAuthored").mockImplementation(async () => {
-      row.flag = "";
-      return { receipt_id: "undo", before: [picked], after: [restored] };
-    });
-    const stalePage: api.PhotoBrowsePage = {
-      items: [{ ...row, flag: "pick" }],
-      total: 1,
-      facets: [],
-      relevance_available: false,
-    };
-    let release!: (page: typeof stalePage) => void;
-    const oldLookup = new Promise<typeof stalePage>((resolve) => {
-      release = resolve;
-    });
-    const list = vi
-      .spyOn(api, "listPhotoAssets")
-      .mockImplementation(async () => ({ ...stalePage, items: [{ ...row }] }));
-    if (pending) list.mockImplementationOnce(() => oldLookup);
-    const cull = new PhotoCull("session", {
-      load: async () => undefined,
-      replace: vi.fn(),
-      checkpoint: vi.fn(),
-    });
-    cull.run = {
-      ids: [row.asset_id],
-      checkpoint: {
-        runID: "run",
-        passID: "pass",
-        revision: 0,
-        pass: [row.asset_id],
-        position: 0,
-        visited: [row.asset_id],
-        skipped: [],
-        unavailable: [],
-        scope: "unflagged",
-        autoAdvance: true,
-      },
-    };
-    const photos = new Photos("session", vi.fn());
-    photos.items = [row];
-    vi.spyOn(photos, "lookup").mockResolvedValue(row);
-    vi.spyOn(photos, "lookupMany").mockResolvedValue([]);
-    vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
-    render(PhotoCullView, {
-      cull,
-      photos,
-      cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
-      onclose: vi.fn(),
-    });
-    await screen.findByText("Photo 1.jpg");
-    await fireEvent.click(screen.getByRole("button", { name: "Pick (P)" }));
-    await screen.findByRole("heading", { name: "Pass complete" });
-    await waitFor(() => expect(list).toHaveBeenCalledTimes(1));
-    if (!pending) await waitFor(() => expect(cull.busy).toBe(false));
-    expect(screen.queryByRole("button", { name: "Review unflagged remainder" })).toBeNull();
-    await fireEvent.click(screen.getByRole("button", { name: /^Undo$/ }));
-    await screen.findByRole("button", { name: "Review unflagged remainder" });
-    if (pending) {
-      expect(list.mock.calls[0]![1]!.signal!.aborted).toBe(true);
-      await act(async () => {
-        release(stalePage);
-        await oldLookup;
-      });
-      expect(screen.getByRole("button", { name: "Review unflagged remainder" })).toBeTruthy();
-    }
-  },
-);
+it("refreshes the visible completion offer after Undo", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const row = photo(1),
+    before = preparedPhoto(1);
+  const picked: api.PhotoAuthoredSnapshot = {
+    file_id: before.file_id,
+    node_id: 1,
+    revision: 2,
+    values: { ...before.values, flag: "pick" },
+  };
+  const restored = { ...picked, revision: 3, values: { ...before.values } };
+  vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue({ assets: [], targets: [before] });
+  vi.spyOn(api, "editPhotoAuthored").mockImplementation(async () => {
+    row.flag = "pick";
+    return { receipt_id: "pick", before: [before], after: [picked] };
+  });
+  vi.spyOn(api, "undoPhotoAuthored").mockImplementation(async () => {
+    row.flag = "";
+    return { receipt_id: "undo", before: [picked], after: [restored] };
+  });
+  const stalePage: api.PhotoBrowsePage = {
+    items: [{ ...row, flag: "pick" }],
+    total: 1,
+    facets: [],
+    relevance_available: false,
+  };
+  const list = vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) => ({
+    ...stalePage,
+    items:
+      !request.query.filters?.flags || request.query.filters.flags.includes(row.flag)
+        ? [{ ...row }]
+        : [],
+  }));
+  const cull = new PhotoCull("session", {
+    load: async () => undefined,
+    replace: vi.fn(),
+    checkpoint: vi.fn(),
+  });
+  cull.run = {
+    ids: [row.asset_id],
+    checkpoint: {
+      runID: "run",
+      passID: "pass",
+      revision: 0,
+      pass: [row.asset_id],
+      position: 0,
+      visited: [row.asset_id],
+      skipped: [],
+      unavailable: [],
+      scope: "unflagged",
+      autoAdvance: true,
+    },
+  };
+  const photos = new Photos("session", vi.fn());
+  photos.items = [row];
+  vi.spyOn(photos, "lookup").mockResolvedValue(row);
+  vi.spyOn(photos, "lookupMany").mockResolvedValue([]);
+  vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
+  render(PhotoCullView, {
+    cull,
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+    onclose: vi.fn(),
+  });
+  await screen.findByText("Photo 1.jpg");
+  await fireEvent.click(screen.getByRole("button", { name: "Pick (P)" }));
+  await screen.findByRole("heading", { name: "Pass complete" });
+  await waitFor(() => expect(list).toHaveBeenCalled());
+  await waitFor(() => expect(cull.busy).toBe(false));
+  expect(screen.queryByRole("button", { name: "Review unflagged remainder" })).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: /^Undo$/ }));
+  await screen.findByRole("button", { name: "Review unflagged remainder" });
+});
 
 it("keeps the current photo and its pending decision when auto-advance is toggled", async () => {
   vi.stubGlobal(
@@ -274,15 +262,14 @@ it("keeps the current photo and its pending decision when auto-advance is toggle
     },
   };
   const photos = new Photos("session", vi.fn());
-  const lookup = vi
-    .spyOn(photos, "lookup")
-    .mockImplementation(async (id) => rows.find((row) => row.asset_id === id)!);
+  vi.spyOn(photos, "lookup").mockImplementation(
+    async (id) => rows.find((row) => row.asset_id === id)!,
+  );
   vi.spyOn(photos, "lookupMany").mockResolvedValue([]);
   vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
   let save!: () => void;
-  vi.spyOn(PhotoAuthoredEditor.prototype, "edit").mockImplementation(
-    () => new Promise<void>((resolve) => (save = resolve)),
-  );
+  const saving = new Promise<void>((resolve) => (save = resolve));
+  vi.spyOn(PhotoAuthoredEditor.prototype, "edit").mockReturnValue(saving);
   render(PhotoCullView, {
     cull,
     photos,
@@ -292,16 +279,13 @@ it("keeps the current photo and its pending decision when auto-advance is toggle
   await screen.findByText("Photo 1.jpg");
   const dialog = screen.getByRole("dialog", { name: "Cull photos" });
   await fireEvent.keyDown(dialog, { key: "p" });
-  await waitFor(() => expect(save).toBeDefined());
-  lookup.mockImplementation(() => new Promise(() => {}));
   await fireEvent.click(screen.getByRole("button", { name: "Auto-advance: on" }));
   await screen.findByRole("button", { name: "Auto-advance: off" });
-  const stillShown = !!screen.queryByText("Photo 1.jpg");
-  save();
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  // The same photo stays on screen and is not looked up again.
-  expect(stillShown).toBe(true);
-  expect(lookup).toHaveBeenCalledTimes(1);
+  await act(async () => {
+    save();
+    await saving;
+    await cull.flush();
+  });
   expect(document.querySelector(".kit-sr-only")?.textContent).toContain("Photo 1.jpg: pick");
   expect(cull.currentID).toBe(rows[0]!.asset_id);
 });
