@@ -103,3 +103,50 @@ func BenchmarkContentDownload(b *testing.B) {
 		}
 	}
 }
+
+// Includes the authenticated HTTP handler, complete previews and JSON decoding.
+func BenchmarkDuplicatePageHTTP(b *testing.B) {
+	for _, depth := range []int{0, 16} {
+		b.Run(fmt.Sprintf("depth=%d", depth), func(b *testing.B) {
+			ts, s := newTestServer(b, func(d *api.Deps) { d.Logger = slog.New(slog.DiscardHandler) })
+			ctx := b.Context()
+			prefix := strings.Repeat("/folder", depth)
+			parent, err := s.MkdirAll(ctx, prefix)
+			require.NoError(b, err)
+			run, err := s.BeginIngest(ctx, "cli", "Synthetic duplicate page")
+			require.NoError(b, err)
+			for group := range 50 {
+				for copy := range 16 {
+					name := fmt.Sprintf("group-%03d-copy-%02d.bin", group, copy)
+					_, err := s.IngestFileExact(ctx, run, parent.ID, name, fmt.Sprintf("%064x", group+1),
+						1024, "application/octet-stream", "/synthetic/"+name, "")
+					require.NoError(b, err)
+				}
+			}
+			endpoint := ts.URL + "/api/v1/duplicates?limit=50"
+			b.ReportAllocs()
+			for b.Loop() {
+				response, err := ts.Client().Get(endpoint)
+				require.NoError(b, err)
+				var page api.DuplicatePage
+				decodeErr := json.UnmarshalRead(response.Body, &page)
+				closeErr := response.Body.Close()
+				require.NoError(b, decodeErr)
+				require.NoError(b, closeErr)
+				require.Equal(b, http.StatusOK, response.StatusCode)
+				require.Equal(b, 50, page.Total)
+				require.Equal(b, 800, page.TotalReferences)
+				require.Len(b, page.Items, 50)
+				for i, group := range page.Items {
+					require.Len(b, group.References, 16)
+					for j, ref := range group.References {
+						require.Equal(b, prefix+fmt.Sprintf("/group-%03d-copy-%02d.bin", i, j), ref.Reference.Path)
+						require.Equal(b, 1, ref.CollectionCount)
+						require.Len(b, ref.Collections, 1)
+						require.Equal(b, run.ID(), ref.Collections[0].ID)
+					}
+				}
+			}
+		})
+	}
+}

@@ -41,13 +41,13 @@ func TestFolderScanJoinsCanceledProcessorBeforeClosingSource(t *testing.T) {
 		scanner.watcher.beforeObserve = func(ref string) {
 			if ref == "b.txt" {
 				<-entered
-				<-ctx.Done()
+				// Finish cancellation of the scanner's child context before traversal resumes.
+				cancel()
 			}
 		}
 		done := make(chan error, 1)
 		go func() { done <- scanner.ScanOnce(ctx, 8) }()
 		<-entered
-		cancel()
 		synctest.Wait()
 		returned := false
 		select {

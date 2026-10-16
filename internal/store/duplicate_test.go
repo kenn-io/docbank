@@ -104,6 +104,39 @@ func TestDuplicateGroupByHashUsesExactLiveCurrentRelation(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
+func TestDuplicateReferencesKeepCurrentVersionMetadata(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	hash := fakeHash("74")
+	first, err := s.CreateFile(ctx, s.RootID(), "original.txt", hash, 12, "text/plain")
+	require.NoError(t, err)
+	original := first.CurrentVersionID
+	require.NoError(t, s.RecordVerifiedBlobChecksum(ctx, BlobChecksumRecord{
+		BlobSHA256: hash, MD5: "0123456789abcdef0123456789abcdef",
+	}))
+	first, _, err = s.ReplaceContent(ctx, first.ID, first.Revision,
+		fakeHash("75"), 20, "application/pdf")
+	require.NoError(t, err)
+	first, version, _, err := s.RevertContent(ctx, first.ID, first.Revision, original)
+	require.NoError(t, err)
+	parent, err := s.MkdirAll(ctx, "/nested/review")
+	require.NoError(t, err)
+	first, _, err = s.Move(ctx, first.ID, parent.ID, "renamed.txt", first.Revision)
+	require.NoError(t, err)
+	_, err = s.CreateFile(ctx, s.RootID(), "second.txt", hash, 12, "text/plain")
+	require.NoError(t, err)
+
+	group, err := s.DuplicateGroupByHash(ctx, hash, 12)
+	require.NoError(t, err)
+	require.Len(t, group.References, 2)
+	assert.Equal(t, ContentReference{
+		Node: first, Version: version, Path: "/nested/review/renamed.txt", IsCurrent: true,
+	}, group.References[0].Reference)
+	assert.NotEqual(t, first.Revision, version.NodeRevision)
+	assert.Equal(t, "/second.txt", group.References[1].Reference.Path)
+}
+
 func TestDuplicateCollectionPreviewCountsAtLimit(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
