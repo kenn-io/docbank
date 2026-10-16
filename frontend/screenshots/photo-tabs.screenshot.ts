@@ -1,6 +1,7 @@
 import { test, expect, type Page, type Request } from "@playwright/test";
 import { mkdtemp } from "node:fs/promises";
 import path from "node:path";
+import { getListPhotoAlbumsUrl } from "../src/generated/docbank.js";
 import { photoFixture, repository } from "./photo-fixture.js";
 
 test.skip(
@@ -47,13 +48,16 @@ test("six visible tabs retain HTTP/1.1 request capacity", async ({ context }) =>
               .nextHopProtocol,
         ),
       ).toBe("http/1.1");
-      const result = await page.evaluate(async (token) => {
-        const response = await fetch("/api/v1/photos/albums", {
-          signal: AbortSignal.timeout(5000),
-          headers: { "X-Docbank-Web-Session": token },
-        });
-        return { status: response.status, albums: await response.json() };
-      }, session);
+      const result = await page.evaluate(
+        async ({ url, session }) => {
+          const response = await fetch(url, {
+            signal: AbortSignal.timeout(5000),
+            headers: { "X-Docbank-Web-Session": session },
+          });
+          return { status: response.status, albums: await response.json() };
+        },
+        { url: getListPhotoAlbumsUrl(), session },
+      );
       expect(result.status).toBe(200);
       expect(result.albums).toEqual([
         expect.objectContaining({ name: "Paris walks", included_count: 3, member_count: 3 }),
