@@ -30,8 +30,8 @@ function compare(
   const photos = new Photos("session", vi.fn());
   photos.items = rows;
   photos.started = true;
-  vi.spyOn(photos, "lookup").mockImplementation(
-    async (id) => rows.find((row) => row.asset_id === id)!,
+  vi.spyOn(photos, "lookupMany").mockImplementation(async (ids) =>
+    ids.map((id) => rows.find((row) => row.asset_id === id)!),
   );
   vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
   const onclose = vi.fn();
@@ -46,7 +46,7 @@ function compare(
 
 it("offers directional retry after linked navigation fails and keeps the pair until it succeeds", async () => {
   const rows = [photo(1), photo(2), photo(3)];
-  const { photos, dialog } = compare(rows);
+  const { photos, dialog, onclose } = compare(rows);
   const move = vi
     .spyOn(photos, "moveGroup")
     .mockResolvedValueOnce({ status: "failed", error: "Page unavailable" })
@@ -54,12 +54,16 @@ it("offers directional retry after linked navigation fails and keeps the pair un
   await fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
   const retry = await within(dialog).findByRole("button", { name: "Retry next photo" });
   expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]);
+  retry.focus();
   await fireEvent.click(retry);
   await waitFor(() => expect(names(dialog)).toEqual(["Photo 2.jpg", "Photo 3.jpg"]));
   expect(move.mock.calls).toEqual([
     [[rows[0]!.asset_id, rows[1]!.asset_id], 1],
     [[rows[0]!.asset_id, rows[1]!.asset_id], 1],
   ]);
+  await waitFor(() => expect(document.activeElement).toBe(dialog.querySelector(".photo-compare")));
+  await fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+  expect(onclose).toHaveBeenCalledOnce();
   photos.dispose();
 });
 
@@ -101,12 +105,17 @@ it("keeps the last panes after a lookup failure and retries the selected group",
   const rows = [photo(1), photo(2), photo(3)];
   const { photos, dialog } = compare(rows);
   await waitFor(() => expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]));
-  vi.mocked(photos.lookup).mockRejectedValueOnce(new Error("Lookup unavailable"));
+  vi.mocked(photos.lookupMany).mockRejectedValueOnce(new Error("Lookup unavailable"));
   await fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
   await within(dialog).findByText("Lookup unavailable");
   expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]);
-  await fireEvent.click(within(dialog).getByRole("button", { name: /^Retry$/ }));
+  const retry = within(dialog).getByRole("button", { name: /^Retry$/ });
+  retry.focus();
+  await fireEvent.click(retry);
   await waitFor(() => expect(names(dialog)).toEqual(["Photo 2.jpg", "Photo 3.jpg"]));
   expect(within(dialog).queryByText("Lookup unavailable")).toBeNull();
+  await waitFor(() => expect(document.activeElement).toBe(dialog.querySelector(".photo-compare")));
+  await fireEvent.keyDown(document.activeElement!, { key: "ArrowLeft" });
+  await waitFor(() => expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]));
   photos.dispose();
 });

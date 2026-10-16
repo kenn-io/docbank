@@ -9,6 +9,7 @@
   import type {
     PhotoAuthoredPatch,
     PhotoAuthoredReceipt,
+    PhotoAuthoredSnapshot,
     PhotoBrowseRow,
     Tag,
   } from "./generated/docbank.js";
@@ -113,8 +114,12 @@
   async function refresh(receipt: PhotoAuthoredReceipt, tags: Tag[]) {
     onmetadatachanged?.(receipt, tags);
     photos.metadataChanged(receipt);
+    reconcile(receipt.after);
+    if (cull.complete) await cull.checkRemainder();
+  }
+  function reconcile(targets: PhotoAuthoredSnapshot[]) {
     const updated = (row: PhotoBrowseRow) => {
-      const after = receipt.after.find((file) => file.file_id === row.display_file_id);
+      const after = targets.find((file) => file.file_id === row.display_file_id);
       return after
         ? {
             ...row,
@@ -126,7 +131,6 @@
     };
     if (photo) photo = updated(photo);
     neighbors = neighbors.map(updated);
-    if (cull.complete) await cull.checkRemainder();
   }
   async function decide(patch: PhotoAuthoredPatch) {
     if (!photo || loading || cull.stale || cull.busy || !editor.canChangeTarget()) return;
@@ -151,15 +155,7 @@
     await tick();
     focus();
     if (editor.error || editor.dirty || editor.conflict) return;
-    const target = editor.targets.find((target) => target.file_id === selected.display_file_id);
-    if (target) {
-      const updated = (row: PhotoBrowseRow) =>
-        row.display_file_id === target.file_id
-          ? { ...row, flag: target.values.flag, rating: target.values.rating }
-          : row;
-      if (photo) photo = updated(photo);
-      neighbors = neighbors.map(updated);
-    }
+    reconcile(editor.targets);
     announcement =
       patch.flag !== undefined
         ? `${selected.name}: ${patch.flag || "flag cleared"}`
@@ -302,6 +298,7 @@
               {photos}
               {cache}
               {view}
+              onfocus={focus}
               onreload={(row) => (photo = row)}
               onunavailable={(message) => {
                 cull.unavailable(photo!.asset_id);

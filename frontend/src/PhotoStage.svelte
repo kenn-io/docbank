@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { tick, untrack } from "svelte";
   import type { Photos } from "./photos.svelte.js";
   import type { PhotoBrowseRow } from "./generated/docbank.js";
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
@@ -20,6 +20,7 @@
     regionMode = false,
     onreload,
     onunavailable,
+    onfocus,
   }: {
     photo: PhotoBrowseRow;
     photos: Photos;
@@ -32,6 +33,7 @@
     regionMode?: boolean;
     onreload?: (row: PhotoBrowseRow) => void;
     onunavailable?: (message: string) => void;
+    onfocus?: () => void;
   } = $props();
   let current = $state.raw(untrack(() => photo));
   let loader = $state.raw<PhotoPreviewLoader>(untrack(() => new PhotoPreviewLoader(photos, cache)));
@@ -52,7 +54,15 @@
     return () => active.dispose();
   });
   async function retry() {
-    if (loader.failure?.action !== "reload") return loader.retry();
+    if (loader.failure?.action !== "reload") {
+      const active = loader;
+      await active.retry();
+      if (!active.active.signal.aborted && !active.failure) {
+        await tick();
+        onfocus?.();
+      }
+      return;
+    }
     const active = loader;
     try {
       const row = await photos.lookup(current.asset_id, active.active.signal);
@@ -60,6 +70,8 @@
       current = row;
       reloadRevision++;
       onreload?.(row);
+      await tick();
+      onfocus?.();
     } catch (cause) {
       if (active.active.signal.aborted) return;
       const message = cause instanceof Error ? cause.message : String(cause);

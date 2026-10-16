@@ -44,7 +44,7 @@ it("checkpoints position, markers and a replacement pass", async () => {
     revision: 0,
     position: 3,
     autoAdvance: false,
-    marker: { kind: "skipped", id: "photo-0", index: 13 },
+    marker: { kind: "skipped", ids: ["photo-0"], index: 13 },
   });
   expect((await store.load())?.checkpoint).toMatchObject({
     position: 3,

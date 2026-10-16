@@ -376,16 +376,24 @@ async function reviewPhoto(row = photo(1), autoAdvance = false) {
   return { cull, photos, ...view };
 }
 
-it("shows prepared flag and rating after a no-op decision without replacing Undo", async () => {
+it("shows prepared flag, rating and rotation after a no-op decision without replacing Undo", async () => {
+  vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:synthetic-photo");
+  vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+  Object.defineProperty(HTMLImageElement.prototype, "decode", {
+    configurable: true,
+    value: async () => {},
+  });
   const target = preparedPhoto(1);
-  target.values = { ...target.values, flag: "pick", rating: 4 };
+  target.values = { ...target.values, flag: "pick", rating: 4, rotation: 90 };
   vi.mocked(api.preparePhotoAuthored).mockResolvedValue(preparation([target]));
   const edit = vi.spyOn(api, "editPhotoAuthored").mockResolvedValue({
     receipt_id: "",
     before: [],
     after: [],
   });
-  const { cull, photos } = await reviewPhoto();
+  const row = photo(1);
+  row.previews.grid = { state: "ready", generation_id: "grid-1" };
+  const { cull, photos, container } = await reviewPhoto(row);
   photos.authored.undoState.receiptID = "previous-decision";
   photos.authored.undoState.summary = "Previous edit";
   expect(screen.getByText("Unflagged · 0 stars")).toBeTruthy();
@@ -397,10 +405,44 @@ it("shows prepared flag and rating after a no-op decision without replacing Undo
     patch: { flag: "pick" },
   });
   await screen.findByText("pick · 4 stars");
+  await waitFor(() =>
+    expect(container.querySelector(".photo-stage img")?.getAttribute("style")).toContain(
+      "rotate(90deg)",
+    ),
+  );
   expect(cull.currentID).toBe("photo-1");
   expect(photos.authored.undoState.receiptID).toBe("previous-decision");
   expect(photos.authored.undoState.summary).toBe("Previous edit");
 });
+
+it.each([false, true])(
+  "restores keyboard review after preview retry: reload=%s",
+  async (reload) => {
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:synthetic-photo");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    Object.defineProperty(HTMLImageElement.prototype, "decode", {
+      configurable: true,
+      value: async () => {},
+    });
+    const { photos, cull, container } = await reviewPhoto();
+    vi.mocked(photos.preview)
+      .mockRejectedValueOnce(
+        reload
+          ? new APIError("Display changed", 409, "photo_display_changed")
+          : new Error("Preview unavailable"),
+      )
+      .mockResolvedValue({ state: "ready", generation_id: "fit-1" });
+    const retry = await screen.findByRole("button", { name: "Retry preview" });
+    retry.focus();
+    await fireEvent.click(retry);
+    await waitFor(() => expect(container.querySelector(".photo-stage img")).toBeTruthy());
+    await waitFor(() =>
+      expect(document.activeElement).toBe(container.querySelector(".photo-cull")),
+    );
+    await fireEvent.keyDown(document.activeElement!, { key: "a" });
+    expect(cull.run!.checkpoint.autoAdvance).toBe(true);
+  },
+);
 
 it("returns to fit after Z, pan, Z in Cull", async () => {
   vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:synthetic-photo");

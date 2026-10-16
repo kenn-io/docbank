@@ -28,7 +28,7 @@ export interface CullProgress {
   revision: number;
   position?: number;
   autoAdvance?: boolean;
-  marker?: { kind: MarkerKind; id: string; index: number };
+  marker?: { kind: MarkerKind; ids: string[]; index: number };
   pass?: CullCheckpoint;
 }
 export interface CullStorage {
@@ -176,8 +176,10 @@ export function photoCullStorage(vaultID: string): CullStorage {
           current.revision++;
           store.put(current, vaultID);
           if (value.marker) {
-            const { kind, id, index } = value.marker;
-            tx.objectStore("markers").put(id, [vaultID, kind, index]);
+            const { kind, ids, index } = value.marker;
+            ids.forEach((id, offset) =>
+              tx.objectStore("markers").put(id, [vaultID, kind, index + offset]),
+            );
           }
         }
         await done;

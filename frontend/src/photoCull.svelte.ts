@@ -182,6 +182,7 @@ export class PhotoCull {
     patch: Partial<
       Pick<CullCheckpoint, "position" | "autoAdvance" | "visited" | "skipped" | "unavailable">
     >,
+    marker?: CullProgress["marker"],
   ) {
     if (!this.run || this.stale || this.changingPass) return;
     const previous = this.run.checkpoint;
@@ -193,10 +194,8 @@ export class PhotoCull {
       revision: previous.revision,
       position: patch.position,
       autoAdvance: patch.autoAdvance,
+      marker,
     };
-    for (const kind of ["visited", "skipped", "unavailable"] as const)
-      if (patch[kind]?.length)
-        progress.marker = { kind, id: patch[kind].at(-1)!, index: patch[kind].length - 1 };
     this.writes = this.writes
       .then(async () => {
         if (!this.stale) await this.storage.checkpoint(progress);
@@ -207,19 +206,22 @@ export class PhotoCull {
       });
   }
   // Appends in place: copying a 250,000-photo list on every photo would make culling quadratic.
-  private mark(kind: "visited" | "skipped" | "unavailable", id: string) {
+  private mark(kind: "visited" | "skipped" | "unavailable", added: string[]) {
     if (!this.run || this.stale || this.changingPass) return;
     const list = this.run.checkpoint[kind];
     let ids = this.marked.get(list);
     if (!ids) this.marked.set(list, (ids = new Set(list)));
-    if (ids.has(id)) return;
-    ids.add(id);
-    list.push(id);
-    this.update({ [kind]: list });
+    const index = list.length;
+    for (const id of added) {
+      if (ids.has(id)) continue;
+      ids.add(id);
+      list.push(id);
+    }
+    if (list.length > index) this.update({ [kind]: list }, { kind, ids: list.slice(index), index });
   }
   private visit() {
     const id = this.currentID;
-    if (id) this.mark("visited", id);
+    if (id) this.mark("visited", [id]);
   }
   choose(id: string) {
     if (this.busy || this.stale) return;
@@ -241,11 +243,11 @@ export class PhotoCull {
   }
   skip() {
     if (!this.currentID || this.busy || this.stale) return;
-    this.mark("skipped", this.currentID);
+    this.mark("skipped", [this.currentID]);
     this.move(1);
   }
   unavailable(id: string) {
-    this.mark("unavailable", id);
+    this.mark("unavailable", [id]);
   }
   toggleAutoAdvance() {
     if (this.run) this.update({ autoAdvance: !this.run.checkpoint.autoAdvance });
@@ -268,7 +270,10 @@ export class PhotoCull {
     try {
       const flags = await this.refreshFlags(controller.signal);
       controller.signal.throwIfAborted();
-      for (const id of this.run.ids) if (!flags.has(id)) this.unavailable(id);
+      this.mark(
+        "unavailable",
+        this.run.ids.filter((id) => !flags.has(id)),
+      );
       this.remainder = this.matches("unflagged", flags).length > 0;
     } catch (cause) {
       if (!controller.signal.aborted) this.error = failure(cause);
@@ -298,7 +303,10 @@ export class PhotoCull {
       const pass = this.matches(scope, flags);
       if (followUp && !pass.length) {
         this.changingPass = false;
-        for (const id of ids) if (!flags.has(id)) this.unavailable(id);
+        this.mark(
+          "unavailable",
+          ids.filter((id) => !flags.has(id)),
+        );
         this.remainder = false;
         return;
       }

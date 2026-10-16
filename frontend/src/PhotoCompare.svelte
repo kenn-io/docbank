@@ -36,9 +36,13 @@
     const controller = new AbortController();
     errors = [];
     loading = true;
-    void Promise.all(members.map((id) => photos.lookup(id, controller.signal)))
+    void photos
+      .lookupMany(members, controller.signal)
       .then((values) => {
-        if (!controller.signal.aborted) rows = values;
+        if (!controller.signal.aborted) {
+          rows = values;
+          void restoreFocus();
+        }
       })
       .catch((cause) => {
         if (!controller.signal.aborted)
@@ -63,6 +67,7 @@
     selected = result.ids;
     view = { ...fittedPhotoView };
     crop = undefined;
+    void restoreFocus();
   }
   function key(event: KeyboardEvent) {
     if (event.ctrlKey || event.altKey || event.metaKey || event.isComposing || event.repeat) return;
@@ -154,6 +159,7 @@
               {photos}
               {cache}
               {view}
+              onfocus={restoreFocus}
               onreload={(row) =>
                 (rows = rows.map((item) => (item.asset_id === row.asset_id ? row : item)))}
               onunavailable={(message) => {
@@ -175,7 +181,14 @@
         >
           {#each rows as photo (photo.asset_id)}<section aria-label={`Closeup of ${photo.name}`}>
               <h2>{photo.name}</h2>
-              <PhotoStage {photo} {photos} {cache} view={crop} onview={(value) => (crop = value)} />
+              <PhotoStage
+                {photo}
+                {photos}
+                {cache}
+                view={crop}
+                onview={(value) => (crop = value)}
+                onfocus={restoreFocus}
+              />
             </section>{/each}
         </div>{/if}
     </div>
