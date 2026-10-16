@@ -2646,7 +2646,7 @@ it.each([false, true])(
   },
 );
 
-it("reloads a replacement durable run before opening Resume cull", async () => {
+it("reloads durable culls and retains their draft only for the same vault", async () => {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -2683,17 +2683,32 @@ it("reloads a replacement durable run before opening Resume cull", async () => {
       };
       return true;
     });
-  render(PhotosWorkspace, {
+  const props = {
     photos,
     cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
     vaultID: "vault",
-  });
+  };
+  const view = render(PhotosWorkspace, props);
   const resume = await screen.findByRole("button", { name: "Resume cull" });
   durableID = rows[1]!.asset_id;
   await fireEvent.click(resume);
   const dialog = await screen.findByRole("dialog", { name: "Cull photos" });
   await within(dialog).findByText("Photo 2.jpg");
   expect(restore).toHaveBeenCalledTimes(2);
+  const retained = photos.cullEditor!;
+  const dispose = vi.spyOn(retained, "dispose");
+  retained.stage({ caption: "Unsaved cull decision" });
+  await view.rerender({ ...props, title: "Same vault" });
+  expect(screen.getByRole("dialog", { name: "Cull photos" })).toBe(dialog);
+  expect(within(dialog).getByRole("button", { name: "Clear failed edit" })).toBeTruthy();
+  expect(restore).toHaveBeenCalledTimes(2);
+  expect(dispose).not.toHaveBeenCalled();
+  await view.rerender({ ...props, vaultID: "22222222-2222-4222-8222-222222222222" });
+  expect(screen.queryByRole("dialog", { name: "Cull photos" })).toBeNull();
+  expect(dispose).toHaveBeenCalledTimes(1);
+  await fireEvent.click(screen.getByRole("button", { name: "Resume cull" }));
+  const replacement = await screen.findByRole("dialog", { name: "Cull photos" });
+  expect(within(replacement).queryByRole("button", { name: "Clear failed edit" })).toBeNull();
   photos.dispose();
 });
 
@@ -2769,5 +2784,36 @@ it("does not open a captured cull over a metadata draft created during capture",
   await new Promise((resolve) => setTimeout(resolve, 20));
   expect(screen.queryByRole("dialog", { name: "Cull photos" })).toBeNull();
   expect(photos.authored.dirty).toBe(true);
+  photos.dispose();
+});
+
+it("uses the resolved vault identity when Cull mounted before audit status arrived", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  // Reaching IndexedDB distinguishes a valid binding from the empty-identity guard.
+  const open = vi.fn(() => {
+    throw new Error("Synthetic storage reached");
+  });
+  vi.stubGlobal("indexedDB", { open });
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1)];
+  photos.total = 1;
+  photos.started = true;
+  const cache = { get: vi.fn() } as unknown as PhotoPreviewCache;
+  const view = render(PhotosWorkspace, { photos, cache, vaultID: "" });
+  expect((screen.getByRole("button", { name: "Cull" }) as HTMLButtonElement).disabled).toBe(true);
+  await view.rerender({ photos, cache, vaultID: "11111111-1111-4111-8111-111111111111" });
+  const cull = screen.getByRole("button", { name: "Cull" }) as HTMLButtonElement;
+  expect(cull.disabled).toBe(false);
+  await fireEvent.click(cull);
+  await waitFor(() =>
+    expect(screen.getByRole("alert").textContent).toBe("Synthetic storage reached"),
+  );
+  expect(open).toHaveBeenCalledWith("docbank-photo-cull-v1", 1);
   photos.dispose();
 });

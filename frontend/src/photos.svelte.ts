@@ -157,6 +157,7 @@ export class Photos {
   readonly authored: PhotoAuthoredEditor;
   cullEditor = $state.raw<PhotoAuthoredEditor>();
   cull?: PhotoCull;
+  cullVaultID = "";
   culling = $state(false);
   editScopeRevision = $state(0);
   private changeEditScope() {

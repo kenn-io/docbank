@@ -109,25 +109,40 @@
     onadd?: () => void;
     uploadChannelError?: string;
   } = $props();
-  const cull = untrack(
-    () => (photos.cull ??= new CullRun(photos.session, photoCullStorage(vaultID))),
-  );
+  let cull = $state.raw<CullRun>();
   const culling = $derived(photos.culling);
   let comparing = $state(false);
   let enteringReview = false;
   let compareIDs = $state<string[]>([]);
   let returnFocus: HTMLElement | undefined;
   $effect(() => {
-    if (!untrack(() => photos.culling)) void cull.restore(true);
-    return () => cull.cancel();
+    const owner = photos;
+    const id = vaultID;
+    const review = untrack(() => {
+      if (!id) return;
+      if (owner.cullVaultID !== id) {
+        owner.cull?.cancel();
+        owner.cullEditor?.dispose();
+        owner.cullEditor = undefined;
+        owner.culling = false;
+        owner.cull = new CullRun(owner.session, photoCullStorage(id));
+        owner.cullVaultID = id;
+      }
+      if (!owner.culling) void owner.cull!.restore(true);
+      return owner.cull;
+    });
+    cull = review;
+    return () => review?.cancel();
   });
   async function startCull(resume = false) {
-    if (enteringReview || culling || comparing || !editor.canChangeTarget()) return;
+    const review = cull;
+    if (!review || enteringReview || culling || comparing || !editor.canChangeTarget()) return;
     enteringReview = true;
     returnFocus = document.activeElement as HTMLElement;
     try {
-      const captured = resume ? await cull.restore() : await cull.start(photos.query);
-      if (captured && !culling && !comparing && editor.canChangeTarget()) photos.culling = true;
+      const captured = resume ? await review.restore() : await review.start(photos.query);
+      if (captured && review === cull && !culling && !comparing && editor.canChangeTarget())
+        photos.culling = true;
     } finally {
       enteringReview = false;
     }
@@ -142,7 +157,7 @@
     photos.culling = comparing = false;
     photos.cullEditor?.dispose();
     photos.cullEditor = undefined;
-    await cull.flush();
+    await cull?.flush();
     await refresh();
     await editor.reload();
     await tick();
@@ -695,7 +710,7 @@
       event.stopPropagation();
   }}
 />
-{#if culling}<PhotoCull
+{#if culling && cull}<PhotoCull
     {cull}
     {photos}
     {cache}
@@ -818,13 +833,13 @@
               {#if !mapMode && !photos.hidden}
                 <Button
                   size="sm"
-                  disabled={actionDisabled || cull.capturing || !vaultID || !photos.total}
+                  disabled={actionDisabled || !cull || cull.capturing || !vaultID || !photos.total}
                   onclick={() => void startCull()}>Cull</Button
                 >
-                {#if cull.capturing}<Button size="sm" onclick={() => cull.cancel()}
+                {#if cull?.capturing}<Button size="sm" onclick={() => cull?.cancel()}
                     >Cancel capture</Button
                   >{/if}
-                {#if cull.run}<Button
+                {#if cull?.run}<Button
                     size="sm"
                     disabled={actionDisabled || cull.capturing}
                     onclick={() => void startCull(true)}>Resume cull</Button
@@ -836,8 +851,8 @@
                   onclick={compare}>Compare</Button
                 >
                 {#if selectionCount > 4}<span>Select 2–4 photos to compare.</span>{/if}
-                {#if cull.progress}<span role="status">{cull.progress}</span>{/if}
-                {#if cull.error}<span role="alert">{cull.error}</span>{/if}
+                {#if cull?.progress}<span role="status">{cull.progress}</span>{/if}
+                {#if cull?.error}<span role="alert">{cull.error}</span>{/if}
               {/if}
               {#if !mapMode && !photos.hidden && !albumID}<Button
                   size="sm"
