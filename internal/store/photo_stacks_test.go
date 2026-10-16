@@ -552,4 +552,25 @@ func TestPhotoBurstWatchNamespacesAndAmbiguousProvenance(t *testing.T) {
 	page, err = s.ListPhotoAssets(ctx, request, nil)
 	require.NoError(t, err)
 	require.Empty(t, page.Items[0].SourceFolderKey)
+	ids := rowIDs(page.Items[:2])
+	prepared, err := s.PreparePhotoAuthored(ctx, PhotoSetSelection{AssetIDs: ids})
+	require.NoError(t, err)
+	targets := make([]PhotoAuthoredEditTarget, len(prepared.Targets))
+	for i, target := range prepared.Targets {
+		targets[i] = target.PhotoAuthoredEditTarget
+	}
+	_, err = s.DecidePhotoStack(ctx, PhotoStackDecision{AssetIDs: ids, Targets: targets, CurrentID: ids[0], Decision: "current"})
+	require.ErrorIs(t, err, ErrStalePhotoStack)
+	prepared, err = s.PreparePhotoAuthored(ctx, PhotoSetSelection{AssetIDs: ids[:1]})
+	require.NoError(t, err)
+	receipt, err := s.DecidePhotoStack(ctx, PhotoStackDecision{AssetIDs: ids[:1], Targets: []PhotoAuthoredEditTarget{prepared.Targets[0].PhotoAuthoredEditTarget}, CurrentID: ids[0], Decision: "current"})
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetByID(ctx, ids[0])
+	require.NoError(t, err)
+	require.Equal(t, "pick", asset.Files[0].Flag)
+	_, err = s.UndoPhotoAuthored(ctx, receipt.ReceiptID)
+	require.NoError(t, err)
+	asset, err = s.PhotoAssetByID(ctx, ids[0])
+	require.NoError(t, err)
+	require.Empty(t, asset.Files[0].Flag)
 }

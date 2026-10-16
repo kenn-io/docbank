@@ -163,11 +163,8 @@ func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision
 		if len(rows) != len(request.AssetIDs) {
 			return ErrStalePhotoStack
 		}
-		for i := range rows {
-			if rows[i].SourceFolderKey == "" {
-				return ErrStalePhotoStack
-			}
-			if i > 0 && !photoStackNeighbors(rows[i-1], rows[i], settings.BurstGapSeconds) {
+		for i := 1; i < len(rows); i++ {
+			if !photoStackNeighbors(rows[i-1], rows[i], settings.BurstGapSeconds) {
 				return ErrStalePhotoStack
 			}
 		}

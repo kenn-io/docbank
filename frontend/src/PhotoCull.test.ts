@@ -413,6 +413,39 @@ it("disables auto-advance changes while a decision is pending", async () => {
   await readyButton("Auto-advance: on");
 });
 
+it("disables decisions when the next photo lookup fails and retries that photo", async () => {
+  const { cull, photos, container } = await reviewPhoto();
+  const edit = vi.spyOn(api, "editPhotoAuthored");
+  const next = photo(2);
+  vi.mocked(photos.lookup)
+    .mockRejectedValueOnce(new APIError("Temporarily unavailable", 503, "unavailable"))
+    .mockResolvedValueOnce(next);
+  await act(() => {
+    cull.run = {
+      ...cull.run!,
+      ids: ["photo-1", "photo-2"],
+      checkpoint: { ...cull.run!.checkpoint, pass: ["photo-1", "photo-2"] },
+    };
+    cull.move(1);
+  });
+  const retry = await screen.findByRole("button", { name: /^Retry$/ });
+  expect(screen.queryByText("Photo 1.jpg")).toBeNull();
+  expect(screen.getByRole("button", { name: "Pick (P)" }).matches(":disabled")).toBe(true);
+  expect(screen.getByRole("button", { name: "Reject (X)" }).matches(":disabled")).toBe(true);
+  await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key: "p" });
+  await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key: "x" });
+  expect(edit).not.toHaveBeenCalled();
+  expect(cull.currentID).toBe("photo-2");
+  await fireEvent.click(retry);
+  await screen.findByText("Photo 2.jpg");
+  await readyButton("Pick (P)");
+  expect(vi.mocked(photos.lookup).mock.calls.map(([id]) => id)).toEqual([
+    "photo-1",
+    "photo-2",
+    "photo-2",
+  ]);
+});
+
 it("retries a failed lookup without leaving the current photo", async () => {
   vi.stubGlobal(
     "ResizeObserver",

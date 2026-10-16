@@ -74,7 +74,7 @@
     const id = currentID;
     void lookupAttempt;
     const controller = new AbortController();
-    if (!id) photo = undefined;
+    if (untrack(() => photo?.asset_id) !== id) photo = undefined;
     error = "";
     loading = !!id;
     view = { ...fittedPhotoView };
@@ -391,6 +391,7 @@
             <Button
               size="sm"
               disabled={busy ||
+                !photo ||
                 loading ||
                 editor.conflict ||
                 cull.stackLoading ||
@@ -401,6 +402,7 @@
             <Button
               size="sm"
               disabled={busy ||
+                !photo ||
                 loading ||
                 editor.conflict ||
                 cull.stackLoading ||
@@ -411,6 +413,7 @@
             <Button
               size="sm"
               disabled={busy ||
+                !photo ||
                 loading ||
                 editor.conflict ||
                 cull.stackLoading ||
