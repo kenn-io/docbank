@@ -138,7 +138,31 @@ func (s Service) recheckDestination(ctx context.Context, root *os.Root, destinat
 	if err := proof.Check(append(paths, destination)); err != nil {
 		return err
 	}
-	return checkEmptyDestination(root, destination)
+	return s.checkCheckoutDestination(root, destination)
+}
+
+func (s Service) checkCheckoutDestination(root *os.Root, destination string) error {
+	if err := checkEmptyDestination(root, destination); err != nil {
+		return err
+	}
+	held, err := root.Stat(".")
+	if err != nil {
+		return err
+	}
+	// Compare only startup cleanup roots; walking the vault is unnecessary.
+	for _, relative := range []string{filepath.Join("blobs", "tmp"), "web-launch"} {
+		info, err := os.Stat(filepath.Join(s.VaultRoot, relative))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("checking vault startup cleanup directory: %w", err)
+		}
+		if os.SameFile(held, info) {
+			return fmt.Errorf("%w: destination aliases a vault startup cleanup directory (%s)", store.ErrInvalidPhotoCheckout, relative)
+		}
+	}
+	return nil
 }
 
 func checkEmptyDestination(root *os.Root, destination string) error {
@@ -169,7 +193,7 @@ func checkEmptyDestination(root *os.Root, destination string) error {
 }
 
 func (s Service) validateDestination(ctx context.Context, root *os.Root, destination, excludedID string) error {
-	if err := checkEmptyDestination(root, destination); err != nil {
+	if err := s.checkCheckoutDestination(root, destination); err != nil {
 		return err
 	}
 	roots, err := s.protectedRoots(ctx, excludedID)

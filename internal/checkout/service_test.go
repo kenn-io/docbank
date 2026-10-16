@@ -47,6 +47,38 @@ func checkoutPhoto(t *testing.T, s Service, name, content string) store.PhotoAss
 	return asset
 }
 
+func TestCheckoutRejectsStartupCleanupDirectoryAlias(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"blobs", "web-launch"} {
+		t.Run(name, func(t *testing.T) {
+			s := checkoutService(t)
+			a := checkoutPhoto(t, s, "photo.jpg", "bytes")
+			managed := filepath.Join(s.VaultRoot, name)
+			if name == "web-launch" {
+				require.NoError(t, os.Mkdir(managed, 0o700))
+			}
+			alias := filepath.Join(t.TempDir(), name)
+			require.NoError(t, os.Rename(managed, alias))
+			if err := os.Symlink(alias, managed); err != nil {
+				t.Skipf("symbolic links unavailable: %v", err)
+			}
+			destination := alias
+			if name == "blobs" {
+				destination = filepath.Join(alias, "tmp")
+			}
+			_, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, destination, 0)
+			if root != nil {
+				require.NoError(t, root.Close())
+			}
+			require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
+			require.ErrorContains(t, err, "destination aliases a vault startup cleanup directory")
+			checkouts, err := s.Store.ListPhotoCheckouts(t.Context())
+			require.NoError(t, err)
+			require.Empty(t, checkouts)
+		})
+	}
+}
+
 func TestCheckoutDestinationSafety(t *testing.T) {
 	t.Parallel()
 	s := checkoutService(t)
