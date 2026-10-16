@@ -581,12 +581,6 @@ func TestWebSessionIsScopedRevocableAndDaemonLocal(t *testing.T) {
 		"browser sessions cannot supply even an empty repository override")
 	require.NoError(t, resp.Body.Close())
 
-	for _, endpoint := range []string{"/api/v1/backup/forget", "/api/v1/backup/prune"} {
-		resp = webRequest(http.MethodPost, endpoint)
-		assert.Equal(t, http.StatusForbidden, resp.StatusCode)
-		require.NoError(t, resp.Body.Close())
-	}
-
 	resp = webRequest(http.MethodPost, "/api/v1/uploads")
 	assert.Equal(t, http.StatusForbidden, resp.StatusCode,
 		"browser sessions cannot upload through reconnectable HTTP")

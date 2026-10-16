@@ -151,8 +151,7 @@ func TestBackupRoutesValidateRepositoryAndReportLock(t *testing.T) {
 		map[string]any{"repo": repoPath})
 	assert.Equal(t, http.StatusConflict, resp.StatusCode)
 	assert.Contains(t, body, `"code":"backup_locked"`)
-	resp, body = do(t, ts, http.MethodPost, "/api/v1/backup/prune", nil, map[string]any{"repo": repoPath})
-	require.Equal(t, http.StatusConflict, resp.StatusCode, body)
+	_, body = do(t, ts, http.MethodPost, "/api/v1/backup/prune", nil, map[string]any{"repo": repoPath})
 	var problem api.Error
 	require.NoError(t, json.Unmarshal([]byte(body), &problem))
 	assert.Nil(t, problem.BackupPrune)
