@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/filepublish"
+	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
@@ -93,7 +94,7 @@ func (s Service) Prepare(ctx context.Context, selection store.PhotoCheckoutSelec
 }
 
 func (s Service) protectedRoots(ctx context.Context, excludedID string) ([]string, error) {
-	roots := []string{s.VaultRoot}
+	roots := []string{s.VaultRoot, (home.Layout{Root: s.VaultRoot}).BlobTmpDir(), filepath.Join(s.VaultRoot, "web-launch"), filepath.Join(s.VaultRoot, "web-downloads")}
 	for _, b := range s.Config.StoreBindings {
 		if b.Path != "" {
 			roots = append(roots, b.Path)
@@ -138,27 +139,7 @@ func (s Service) recheckDestination(ctx context.Context, root *os.Root, destinat
 	if err := proof.Check(append(paths, destination)); err != nil {
 		return err
 	}
-	return s.checkCheckoutDestination(root, destination)
-}
-
-func (s Service) checkCheckoutDestination(root *os.Root, destination string) error {
-	if err := checkEmptyDestination(root, destination); err != nil {
-		return err
-	}
-	// Compare paths and ancestor identities without walking the vault.
-	for _, relative := range []string{filepath.Join("blobs", "tmp"), "web-launch"} {
-		overlap, err := ingest.PathsOverlap(destination, filepath.Join(s.VaultRoot, relative))
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return fmt.Errorf("checking vault startup cleanup directory: %w", err)
-		}
-		if overlap {
-			return fmt.Errorf("%w: destination aliases a vault startup cleanup directory (%s)", store.ErrInvalidPhotoCheckout, relative)
-		}
-	}
-	return nil
+	return checkEmptyDestination(root, destination)
 }
 
 func checkEmptyDestination(root *os.Root, destination string) error {
@@ -188,8 +169,10 @@ func checkEmptyDestination(root *os.Root, destination string) error {
 	return nil
 }
 
+// validateDestination walks protected roots except the vault root. Bind mounts
+// of vault descendants outside those protected roots are not detected.
 func (s Service) validateDestination(ctx context.Context, root *os.Root, destination, excludedID string) error {
-	if err := s.checkCheckoutDestination(root, destination); err != nil {
+	if err := checkEmptyDestination(root, destination); err != nil {
 		return err
 	}
 	roots, err := s.protectedRoots(ctx, excludedID)

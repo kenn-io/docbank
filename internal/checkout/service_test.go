@@ -49,12 +49,12 @@ func checkoutPhoto(t *testing.T, s Service, name, content string) store.PhotoAss
 
 func TestCheckoutRejectsStartupCleanupDirectoryAlias(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"blobs", "web-launch"} {
+	for _, name := range []string{"blobs", "web-launch", "web-downloads"} {
 		t.Run(name, func(t *testing.T) {
 			s := checkoutService(t)
 			a := checkoutPhoto(t, s, "photo.jpg", "bytes")
 			managed := filepath.Join(s.VaultRoot, name)
-			if name == "web-launch" {
+			if name != "blobs" {
 				require.NoError(t, os.Mkdir(managed, 0o700))
 			}
 			alias := filepath.Join(t.TempDir(), name)
@@ -71,7 +71,7 @@ func TestCheckoutRejectsStartupCleanupDirectoryAlias(t *testing.T) {
 				require.NoError(t, root.Close())
 			}
 			require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
-			require.ErrorContains(t, err, "destination aliases a vault startup cleanup directory")
+			require.ErrorContains(t, err, "destination overlaps a vault, storage root, watched folder, or checkout")
 			checkouts, err := s.Store.ListPhotoCheckouts(t.Context())
 			require.NoError(t, err)
 			require.Empty(t, checkouts)
@@ -81,21 +81,17 @@ func TestCheckoutRejectsStartupCleanupDirectoryAlias(t *testing.T) {
 
 func TestCheckoutRejectsStartupCleanupDescendants(t *testing.T) {
 	t.Parallel()
-	for _, relative := range []string{filepath.Join("blobs", "tmp"), "web-launch"} {
+	for _, relative := range []string{filepath.Join("blobs", "tmp")} {
 		t.Run(relative, func(t *testing.T) {
 			s := checkoutService(t)
 			a := checkoutPhoto(t, s, "photo.jpg", "bytes")
 			managed := filepath.Join(s.VaultRoot, relative)
-			if relative == "web-launch" {
-				require.NoError(t, os.Mkdir(managed, 0o700))
-			} else {
-				alias := filepath.Join(t.TempDir(), "staging")
-				require.NoError(t, os.Rename(managed, alias))
-				if err := os.Symlink(alias, managed); err != nil {
-					t.Skipf("symbolic links unavailable: %v", err)
-				}
-				managed = alias
+			alias := filepath.Join(t.TempDir(), "staging")
+			require.NoError(t, os.Rename(managed, alias))
+			if err := os.Symlink(alias, managed); err != nil {
+				t.Skipf("symbolic links unavailable: %v", err)
 			}
+			managed = alias
 			destination := filepath.Join(managed, "nested", "checkout")
 			require.NoError(t, os.MkdirAll(destination, 0o700))
 			_, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, destination, 0)
@@ -103,7 +99,7 @@ func TestCheckoutRejectsStartupCleanupDescendants(t *testing.T) {
 				require.NoError(t, root.Close())
 			}
 			require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
-			require.ErrorContains(t, err, "destination aliases a vault startup cleanup directory")
+			require.ErrorContains(t, err, "destination overlaps a vault, storage root, watched folder, or checkout")
 			checkouts, err := s.Store.ListPhotoCheckouts(t.Context())
 			require.NoError(t, err)
 			require.Empty(t, checkouts)
