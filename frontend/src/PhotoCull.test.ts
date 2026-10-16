@@ -243,3 +243,65 @@ it.each([false, true])(
     }
   },
 );
+
+it("keeps the current photo and its pending decision when auto-advance is toggled", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const rows = [photo(1), photo(2)];
+  const cull = new PhotoCull("session", {
+    load: async () => undefined,
+    replace: vi.fn(),
+    checkpoint: vi.fn(),
+  });
+  cull.run = {
+    ids: rows.map((row) => row.asset_id),
+    checkpoint: {
+      runID: "run",
+      passID: "pass",
+      revision: 0,
+      pass: rows.map((row) => row.asset_id),
+      position: 0,
+      visited: [],
+      skipped: [],
+      unavailable: [],
+      scope: "all",
+      autoAdvance: true,
+    },
+  };
+  const photos = new Photos("session", vi.fn());
+  const lookup = vi
+    .spyOn(photos, "lookup")
+    .mockImplementation(async (id) => rows.find((row) => row.asset_id === id)!);
+  vi.spyOn(photos, "lookupMany").mockResolvedValue([]);
+  vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
+  let save!: () => void;
+  vi.spyOn(PhotoAuthoredEditor.prototype, "edit").mockImplementation(
+    () => new Promise<void>((resolve) => (save = resolve)),
+  );
+  render(PhotoCullView, {
+    cull,
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+    onclose: vi.fn(),
+  });
+  await screen.findByText("Photo 1.jpg");
+  const dialog = screen.getByRole("dialog", { name: "Cull photos" });
+  await fireEvent.keyDown(dialog, { key: "p" });
+  await waitFor(() => expect(save).toBeDefined());
+  lookup.mockImplementation(() => new Promise(() => {}));
+  await fireEvent.click(screen.getByRole("button", { name: "Auto-advance: on" }));
+  await screen.findByRole("button", { name: "Auto-advance: off" });
+  const stillShown = !!screen.queryByText("Photo 1.jpg");
+  save();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  // The same photo stays on screen and is not looked up again.
+  expect(stillShown).toBe(true);
+  expect(lookup).toHaveBeenCalledTimes(1);
+  expect(document.querySelector(".kit-sr-only")?.textContent).toContain("Photo 1.jpg: pick");
+  expect(cull.currentID).toBe(rows[0]!.asset_id);
+});

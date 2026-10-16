@@ -31,7 +31,7 @@
   let url = $state("");
   let error = $state("");
   let large = false;
-  let retryable = $state(false);
+  let retrySize = $state<"fit" | "large">();
   let active: PhotoPreviewDisplay;
   async function load(
     selected: PhotoBrowseRow,
@@ -44,7 +44,7 @@
       if (controller.signal.aborted) return;
       if (!result.blob) {
         if (size !== "grid") error = "Preview unavailable";
-        if (size === "large") failLarge();
+        if (size !== "grid") failed(size);
         return;
       }
       const objectURL = URL.createObjectURL(result.blob);
@@ -55,14 +55,13 @@
     } catch (cause) {
       if (!controller.signal.aborted) {
         error = cause instanceof Error ? cause.message : String(cause);
-        if (size === "large") failLarge();
+        if (size !== "grid") failed(size);
       }
     }
   }
-  // A failed large request must not latch: the fitted image stays and the photographer can retry.
-  function failLarge() {
-    large = false;
-    retryable = true;
+  function failed(size: "fit" | "large") {
+    if (size === "large") large = false;
+    retrySize = size;
   }
   $effect(() => {
     const selected = photo;
@@ -70,7 +69,7 @@
     url = "";
     error = "";
     large = false;
-    retryable = false;
+    retrySize = undefined;
     void load(selected, "grid", controller).then(() => {
       if (!controller.signal.aborted) return load(selected, "fit", controller);
     });
@@ -79,7 +78,7 @@
   function zoom() {
     if (large || !active) return;
     large = true;
-    retryable = false;
+    retrySize = undefined;
     void load(
       untrack(() => photo),
       "large",
@@ -103,12 +102,20 @@
     unavailable={!!error}
   />
   {#if error}<p role="status">
-      {error}{#if retryable}
+      {error}{#if retrySize}
         <Button
           size="sm"
           onclick={() => {
+            const size = retrySize;
+            retrySize = undefined;
             error = "";
-            zoom();
+            if (size === "large") zoom();
+            else if (size)
+              void load(
+                untrack(() => photo),
+                size,
+                active,
+              );
           }}>Retry preview</Button
         >{/if}
     </p>{/if}

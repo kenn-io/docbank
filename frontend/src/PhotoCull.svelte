@@ -33,6 +33,13 @@
   const editor = untrack(
     () => new PhotoAuthoredEditor(photos.session, photos.onauthfailure, photos.authored.undoState),
   );
+  $effect(() => {
+    const owner = photos;
+    owner.cullEditor = editor;
+    return () => {
+      if (owner.cullEditor === editor) owner.cullEditor = undefined;
+    };
+  });
   onDestroy(() => {
     editor.dispose();
     cull.cancel();
@@ -49,8 +56,9 @@
     checkpoint.pass.slice(Math.max(0, checkpoint.position - 4), checkpoint.position + 5),
   );
   let neighbors = $state.raw<PhotoBrowseRow[]>([]);
+  const currentID = $derived(cull.currentID);
   $effect(() => {
-    const id = cull.currentID;
+    const id = currentID;
     const controller = new AbortController();
     photo = undefined;
     error = "";
@@ -102,13 +110,14 @@
   async function decide(patch: PhotoAuthoredPatch) {
     if (!photo || loading || cull.stale || cull.busy || !editor.canChangeTarget()) return;
     editor.reset();
-    const id = photo.asset_id;
+    const selected = photo;
+    const id = selected.asset_id;
     await editor.edit({ asset_ids: [id] }, patch, false, refresh);
     if (editor.error || editor.dirty || editor.conflict) return;
     announcement =
       patch.flag !== undefined
-        ? `${photo.name}: ${patch.flag || "flag cleared"}`
-        : `${photo.name}: ${patch.rating} stars`;
+        ? `${selected.name}: ${patch.flag || "flag cleared"}`
+        : `${selected.name}: ${patch.rating} stars`;
     if (checkpoint.autoAdvance && cull.currentID === id) cull.move(1);
   }
   function close() {

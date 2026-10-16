@@ -56,29 +56,36 @@ export async function lookupPhotoRows(
   onprogress?: (loaded: number, total: number) => void,
   hidden = false,
 ): Promise<PhotoBrowseRow[]> {
+  const controller = new AbortController();
+  signal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
   const rows: PhotoBrowseRow[] = [];
   let offset = 0,
     loaded = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(4, Math.ceil(ids.length / 64)) }, async () => {
-      while (offset < ids.length) {
-        signal?.throwIfAborted();
-        const batch = ids.slice(offset, (offset += 64));
-        const page = await listPhotoAssets(
-          {
-            query: { ...photoQuery, filters: { ...photoQuery.filters, asset_ids: batch } },
-            page_size: 250,
-            hidden,
-          },
-          { session, signal },
-        );
-        signal?.throwIfAborted();
-        rows.push(...page.items);
-        loaded += batch.length;
-        onprogress?.(loaded, ids.length);
-      }
-    }),
-  );
+  try {
+    await Promise.all(
+      Array.from({ length: Math.min(4, Math.ceil(ids.length / 64)) }, async () => {
+        while (offset < ids.length) {
+          signal?.throwIfAborted();
+          const batch = ids.slice(offset, (offset += 64));
+          const page = await listPhotoAssets(
+            {
+              query: { ...photoQuery, filters: { ...photoQuery.filters, asset_ids: batch } },
+              page_size: 250,
+              hidden,
+            },
+            { session, signal },
+          );
+          signal?.throwIfAborted();
+          rows.push(...page.items);
+          loaded += batch.length;
+          onprogress?.(loaded, ids.length);
+        }
+      }),
+    );
+  } catch (cause) {
+    controller.abort();
+    throw cause;
+  }
   const byID = new Map(rows.map((row) => [row.asset_id, row]));
   return ids.flatMap((id) => (byID.has(id) ? [byID.get(id)!] : []));
 }
@@ -147,6 +154,7 @@ interface PhotosOptions {
 
 export class Photos {
   readonly authored: PhotoAuthoredEditor;
+  cullEditor = $state.raw<PhotoAuthoredEditor>();
   editScopeRevision = $state(0);
   private changeEditScope() {
     if (!this.authored.canChangeTarget()) return false;

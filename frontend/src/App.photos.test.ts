@@ -15,6 +15,7 @@ import { Photos } from "./photos.svelte.js";
 import { VerifiedUploadChannel } from "./upload.js";
 import { parseQuery, queryFingerprint, type Query } from "./query.js";
 import { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
+import { PhotoCull } from "./photoCull.svelte.js";
 
 // Answers background filter-count requests so tests that predate counts see only their own reads.
 const stubPhotoFetch = (fetcher: (url: string, init: RequestInit) => unknown) =>
@@ -2607,6 +2608,84 @@ it("refuses draft navigation until Clear edits releases it", async () => {
   await waitFor(() =>
     expect(screen.getByRole("textbox", { name: "Caption" }).hasAttribute("disabled")).toBe(false),
   );
+  expect(unloadBlocked()).toBe(false);
+});
+
+it("refuses reload and Back while a failed cull decision keeps its draft", async () => {
+  history.replaceState(null, "", "/#web_session=synthetic&web_upload_secret=proof");
+  vi.stubGlobal("navigation", undefined);
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  Element.prototype.scrollIntoView = vi.fn();
+  vi.spyOn(PhotoCull.prototype, "restore").mockResolvedValue(false);
+  vi.spyOn(PhotoCull.prototype, "flush").mockResolvedValue();
+  vi.spyOn(PhotoCull.prototype, "start").mockImplementation(async function (this: PhotoCull) {
+    this.run = {
+      ids: ["photo-1", "photo-2"],
+      checkpoint: {
+        runID: "run",
+        passID: "pass",
+        revision: 0,
+        pass: ["photo-1", "photo-2"],
+        position: 0,
+        visited: [],
+        skipped: [],
+        unavailable: [],
+        scope: "all",
+        autoAdvance: true,
+      },
+    };
+    return true;
+  });
+  const root = { id: 1, kind: "dir", name: "", revision: 1, path: "/" };
+  stubPhotoFetch(async (url) => {
+    if (url.endsWith("/photos/assets/query"))
+      return Response.json({ items: [photo(1), photo(2)], total: 2 });
+    if (url.endsWith("/photos/authored/edit"))
+      return Response.json(
+        { title: "Unavailable", status: 503, detail: "Metadata store offline" },
+        { status: 503 },
+      );
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+    if (url.includes("/audit/status"))
+      return Response.json({ vault_id: "11111111-1111-4111-8111-111111111111" });
+    if (url.startsWith("/api/v1/path?") || url === "/api/v1/nodes/1") return Response.json(root);
+    if (url.startsWith("/api/v1/nodes/1/children"))
+      return Response.json({ directory: root, items: [], total: 0 });
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "Photos" }));
+  await screen.findByRole("button", { name: "Open Photo 1.jpg" });
+  await waitFor(() =>
+    expect((screen.getByRole("button", { name: "Cull" }) as HTMLButtonElement).disabled).toBe(
+      false,
+    ),
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Cull" }));
+  const dialog = await screen.findByRole("dialog", { name: "Cull photos" });
+  await within(dialog).findByText("Photo 1.jpg");
+  await fireEvent.keyDown(dialog, { key: "x" });
+  await within(dialog).findByRole("button", { name: "Clear failed edit" });
+  const unloadBlocked = () => {
+    const event = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+  const reloadRefused = unloadBlocked();
+  history.back();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(location.pathname).toBe("/photos");
+  expect(screen.getByRole("dialog", { name: "Cull photos" })).toBeTruthy();
+  expect(reloadRefused).toBe(true);
+  await fireEvent.click(screen.getByRole("button", { name: "Clear failed edit" }));
   expect(unloadBlocked()).toBe(false);
 });
 

@@ -112,6 +112,7 @@
   const cull = $derived(new CullRun(photos.session, photoCullStorage(vaultID)));
   let culling = $state(false);
   let comparing = $state(false);
+  let enteringReview = false;
   let compareIDs = $state<string[]>([]);
   let returnFocus: HTMLElement | undefined;
   $effect(() => {
@@ -119,12 +120,18 @@
     return () => cull.cancel();
   });
   async function startCull(resume = false) {
-    if (!editor.canChangeTarget()) return;
+    if (enteringReview || culling || comparing || !editor.canChangeTarget()) return;
+    enteringReview = true;
     returnFocus = document.activeElement as HTMLElement;
-    if (resume ? await cull.restore() : await cull.start(photos.query)) culling = true;
+    try {
+      const captured = resume ? await cull.restore() : await cull.start(photos.query);
+      if (captured && !culling && !comparing && editor.canChangeTarget()) culling = true;
+    } finally {
+      enteringReview = false;
+    }
   }
   function compare() {
-    if (!editor.canChangeTarget()) return;
+    if (enteringReview || culling || comparing || !editor.canChangeTarget()) return;
     returnFocus = document.activeElement as HTMLElement;
     compareIDs = [...photos.selectedIDs];
     if (compareIDs.length >= 2 && compareIDs.length <= 4) comparing = true;

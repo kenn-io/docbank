@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { tick } from "svelte";
 import { createShortcutManager } from "@kenn-io/kit-ui";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import PhotosWorkspace from "./PhotosWorkspace.svelte";
 import { PhotoCull } from "./photoCull.svelte.js";
 import * as api from "./generated/docbank.js";
@@ -2694,5 +2694,80 @@ it("reloads a replacement durable run before opening Resume cull", async () => {
   const dialog = await screen.findByRole("dialog", { name: "Cull photos" });
   await within(dialog).findByText("Photo 2.jpg");
   expect(restore).toHaveBeenCalledTimes(2);
+  photos.dispose();
+});
+
+async function captureWorkspace() {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(PhotoCull.prototype, "restore").mockResolvedValue(false);
+  vi.spyOn(PhotoCull.prototype, "flush").mockResolvedValue();
+  const rows = [photo(1), photo(2)];
+  const ids = rows.map((row) => row.asset_id);
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = rows;
+  photos.total = rows.length;
+  photos.started = true;
+  vi.spyOn(photos, "lookup").mockImplementation(
+    async (id) => rows.find((row) => row.asset_id === id)!,
+  );
+  vi.spyOn(photos, "lookupMany").mockResolvedValue(rows);
+  vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
+  let finish!: () => void;
+  vi.spyOn(PhotoCull.prototype, "start").mockImplementation(function (this: PhotoCull) {
+    return new Promise<boolean>((resolve) => {
+      finish = () => {
+        this.run = {
+          ids,
+          checkpoint: {
+            runID: "run",
+            passID: "pass",
+            revision: 0,
+            pass: ids,
+            position: 0,
+            visited: [],
+            skipped: [],
+            unavailable: [],
+            scope: "all",
+            autoAdvance: true,
+          },
+        };
+        resolve(true);
+      };
+    });
+  });
+  render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+    vaultID: "vault",
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Cull" }));
+  await waitFor(() => expect(finish).toBeDefined());
+  return { photos, ids, finish: () => finish() };
+}
+
+it("does not mount Compare and Cull together when Compare is chosen during cull capture", async () => {
+  const { photos, ids, finish } = await captureWorkspace();
+  photos.select(ids[0]!, new MouseEvent("click"), ids);
+  photos.select(ids[1]!, new MouseEvent("click", { ctrlKey: true }), ids);
+  await fireEvent.click(screen.getByRole("button", { name: "Compare" }));
+  await act(async () => finish());
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(screen.queryAllByRole("dialog", { name: /^(Cull|Compare) photos$/ })).toHaveLength(1);
+  photos.dispose();
+});
+
+it("does not open a captured cull over a metadata draft created during capture", async () => {
+  const { photos, finish } = await captureWorkspace();
+  photos.authored.stage({ caption: "Draft written while capturing" });
+  await act(async () => finish());
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(screen.queryByRole("dialog", { name: "Cull photos" })).toBeNull();
+  expect(photos.authored.dirty).toBe(true);
   photos.dispose();
 });

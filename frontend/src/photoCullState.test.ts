@@ -355,3 +355,52 @@ it.each([false, true])(
     expect(store.checkpoint).not.toHaveBeenCalled();
   },
 );
+
+it("stops sibling flag lookups and progress when one lookup batch fails", async () => {
+  const rows = Array.from({ length: 321 }, (_, i) => photo(i + 1)),
+    ids = rows.map((row) => row.asset_id);
+  const cull = new PhotoCull("session", storage());
+  cull.run = {
+    ids,
+    checkpoint: {
+      runID: "run",
+      passID: "pass",
+      revision: 0,
+      pass: ids,
+      position: ids.length,
+      visited: [],
+      skipped: [],
+      unavailable: [],
+      scope: "unflagged",
+      autoAdvance: true,
+    },
+  };
+  const signals: AbortSignal[] = [],
+    siblings: (() => void)[] = [];
+  const list = vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request, options) => {
+    signals.push(options!.signal!);
+    if (signals.length === 1) throw new Error("Lookup unavailable");
+    await new Promise<void>((resolve, reject) => {
+      siblings.push(resolve);
+      options!.signal!.addEventListener("abort", () => reject(options!.signal!.reason), {
+        once: true,
+      });
+    });
+    return {
+      items: request.query.filters!.asset_ids!.map((id) => ({ ...photo(1), asset_id: id })),
+      total: 0,
+      facets: [],
+      relevance_available: false,
+    };
+  });
+  await cull.checkRemainder();
+  expect(cull.error).toBe("Lookup unavailable");
+  expect(list).toHaveBeenCalledTimes(4);
+  // The in-flight sibling requests are cancelled, so releasing them cannot start more work.
+  expect(signals.slice(1).map((signal) => signal.aborted)).toEqual([true, true, true]);
+  siblings.splice(0).forEach((resolve) => resolve());
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(list).toHaveBeenCalledTimes(4);
+  expect(cull.progress).toBe("");
+  expect(cull.busy).toBe(false);
+});

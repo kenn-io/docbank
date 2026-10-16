@@ -438,3 +438,25 @@ func TestWorkspaceAdHocPhotoSnapshot(t *testing.T) {
 	require.Len(t, page.Rows, 3)
 	require.Equal(t, new(""), page.Rows[0].Flag)
 }
+
+func TestWorkspacePhotoSnapshotWithoutProfileKeepsUnconfiguredCoverage(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, func(d *api.Deps) {
+		renditionTextConfig(d)
+	})
+	_, err := s.CreateFile(t.Context(), s.RootID(), "a.jpg", testHash("a.jpg"), 10, "image/jpeg")
+	require.NoError(t, err)
+	headers := map[string]string{"X-Api-Key": testAPIKey}
+
+	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", headers, `{"photos":true,"query":{},"page_size":50}`)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var page api.WorkspaceQueryResponse
+	require.NoError(t, json.Unmarshal([]byte(body), &page))
+	assert.Equal(t, "unconfigured", page.Coverage.Configuration)
+	assert.Empty(t, page.Coverage.ProfileFingerprint)
+
+	response, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", headers, `{"photos":true,"query":{},"profile":"archive","page_size":50}`)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &page))
+	assert.Equal(t, "configured", page.Coverage.Configuration)
+}

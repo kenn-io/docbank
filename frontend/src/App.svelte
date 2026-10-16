@@ -346,7 +346,9 @@
           ? mapPhotos
           : photoState?.photos;
   const retainedPhotoEditor = () =>
-    hiddenMode ? hiddenWorkspace?.retainedEditor() : activePhotos()?.authored;
+    hiddenMode
+      ? hiddenWorkspace?.retainedEditor()
+      : (activePhotos()?.cullEditor ?? activePhotos()?.authored);
   // A discarded workspace takes its draft with it, so the draft cannot hold the viewer open.
   function clearPhoto(discarded = false) {
     if (!photoID) return;
