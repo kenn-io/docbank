@@ -98,7 +98,8 @@ func (s Service) Prepare(ctx context.Context, selection store.PhotoCheckoutSelec
 }
 
 func (s Service) protectedRoots(ctx context.Context, excludedID string) ([]string, error) {
-	roots := []string{s.VaultRoot, (home.Layout{Root: s.VaultRoot}).BlobTmpDir(), filepath.Join(s.VaultRoot, "web-launch"), filepath.Join(s.VaultRoot, "web-downloads")}
+	layout := home.Layout{Root: s.VaultRoot}
+	roots := []string{s.VaultRoot, layout.BlobsDir(), layout.BlobTmpDir(), filepath.Join(s.VaultRoot, "web-launch"), filepath.Join(s.VaultRoot, "web-downloads")}
 	for _, b := range s.Config.StoreBindings {
 		if b.Path != "" {
 			roots = append(roots, b.Path)
@@ -162,8 +163,9 @@ func checkEmptyDestination(root *os.Root, destination string) error {
 	return checkDestinationIdentity(root, destination)
 }
 
-// validateDestination walks protected roots except the vault root. Bind mounts
-// of vault descendants outside those protected roots are not detected.
+// validateDestination uses ancestry checks for the vault and primary blobs roots
+// and walks other protected roots. Bind mounts of vault descendants outside
+// those protected roots are not detected.
 func (s Service) validateDestination(ctx context.Context, root *os.Root, destination, excludedID string) error {
 	if err := checkEmptyDestination(root, destination); err != nil {
 		return err
@@ -177,11 +179,11 @@ func (s Service) validateDestination(ctx context.Context, root *os.Root, destina
 			continue
 		}
 		info, statErr := os.Stat(other)
-		if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		if statErr != nil && !checkoutPathMissing(statErr) {
 			return statErr
 		}
 		var overlap bool
-		if statErr == nil && info.IsDir() && other != s.VaultRoot {
+		if statErr == nil && info.IsDir() && other != s.VaultRoot && other != (home.Layout{Root: s.VaultRoot}).BlobsDir() {
 			_, overlap, err = ingest.WatchBindingOverlapContext(ctx, []config.WatchConfig{{Name: "checkout protection", Source: other}}, config.StoreBindingConfig{Kind: "filesystem", Path: destination})
 		} else {
 			overlap, err = ingest.PathsOverlapContext(ctx, destination, other)
@@ -189,7 +191,7 @@ func (s Service) validateDestination(ctx context.Context, root *os.Root, destina
 		if overlap {
 			return fmt.Errorf("%w: destination overlaps a vault, storage root, watched folder, or checkout", store.ErrInvalidPhotoCheckout)
 		}
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err != nil && !checkoutPathMissing(err) {
 			return err
 		}
 	}

@@ -348,7 +348,7 @@ func (w *Watcher) waitForCheckoutSeparation(ctx context.Context, root string) ([
 		if err != nil {
 			return backoff.Permanent(err)
 		}
-		id, overlaps, _, err := CheckoutPathOverlap(ctx, checkouts, root)
+		id, overlaps, err := CheckoutPathOverlap(ctx, checkouts, root)
 		if err != nil || overlaps {
 			return fmt.Errorf("checkout %s overlaps watch %q at %q: %w", id, w.config.Name, root, errors.Join(err, errWatchCheckoutOverlap))
 		}

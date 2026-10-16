@@ -23,7 +23,7 @@ func CapturePathProtection(paths []string) (*PathProtection, error) {
 	p := &PathProtection{paths: paths}
 	for _, path := range paths {
 		info, err := os.Stat(path)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err != nil && !errors.Is(err, os.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR) {
 			return nil, err
 		}
 		p.identities = append(p.identities, info)
@@ -42,7 +42,7 @@ func (p *PathProtection) Check(paths []string) error {
 			return errors.New("protected roots changed during validation; retry")
 		}
 		current, err := os.Stat(path)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err != nil && !errors.Is(err, os.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR) {
 			return err
 		}
 		prior := p.identities[i]

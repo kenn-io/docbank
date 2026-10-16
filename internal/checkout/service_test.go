@@ -18,6 +18,7 @@ import (
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/filepublish"
+	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/sqlite"
@@ -63,6 +64,63 @@ func TestPrepareCancelledWhileWaitingForCreation(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Error("Prepare stayed blocked on the creation lock after cancellation")
 	}
+}
+
+func TestCheckoutRejectsRelocatedPrimaryBlobsRoot(t *testing.T) {
+	t.Parallel()
+	s := checkoutService(t)
+	a := checkoutPhoto(t, s, "photo.jpg", "bytes")
+	require.NoError(t, s.Blobs.Close())
+	managed := filepath.Join(s.VaultRoot, "blobs")
+	physical := filepath.Join(t.TempDir(), "primary")
+	require.NoError(t, os.Rename(managed, physical))
+	if err := os.Symlink(physical, managed); err != nil {
+		t.Skipf("symbolic links unavailable: %v", err)
+	}
+	var err error
+	s.Blobs, err = blob.New(store.NewPackCatalog(s.Store), managed)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Blobs.Close()) })
+	destination := filepath.Join(physical, "checkout")
+	require.NoError(t, os.Mkdir(destination, 0o700))
+	assertStartupCleanupCheckoutRejected(t, s, a, destination)
+}
+
+func TestCheckoutAllowsUnrelatedDestinationAfterReservedAncestorBecomesFile(t *testing.T) {
+	t.Parallel()
+	s := checkoutService(t)
+	a := checkoutPhoto(t, s, "photo.jpg", "bytes")
+	parent := filepath.Join(t.TempDir(), "parent")
+	reserved := filepath.Join(parent, "reserved")
+	require.NoError(t, os.MkdirAll(reserved, 0o700))
+	reservation, _, _, held, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, reserved, 0)
+	require.NoError(t, err)
+	require.NoError(t, held.Close())
+	require.NoError(t, os.Remove(reserved))
+	require.NoError(t, os.Remove(parent))
+	require.NoError(t, os.WriteFile(parent, []byte("replacement"), 0o600))
+	destination := t.TempDir()
+	t.Run("validation", func(t *testing.T) {
+		root, err := os.OpenRoot(destination)
+		require.NoError(t, err)
+		defer func() { require.NoError(t, root.Close()) }()
+		require.NoError(t, s.validateDestination(t.Context(), root, destination, ""))
+		checkouts, err := s.Store.ListPhotoCheckouts(t.Context())
+		require.NoError(t, err)
+		id, overlap, err := ingest.CheckoutPathOverlap(t.Context(), checkouts, filepath.Dir(parent))
+		require.NoError(t, err)
+		require.True(t, overlap, "the reservation still protects its lexical ancestors")
+		require.Equal(t, reservation.ID, id)
+	})
+	t.Run("prepare and run", func(t *testing.T) {
+		c, _, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, destination, 0)
+		require.NoError(t, err)
+		defer func() { require.NoError(t, root.Close()) }()
+		require.NoError(t, s.Run(t.Context(), c, root))
+		status, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
+		require.NoError(t, err)
+		require.EqualValues(t, 1, status.PublishedFiles)
+	})
 }
 
 func TestCheckoutRejectsStartupCleanupDirectoryAlias(t *testing.T) {
@@ -621,9 +679,15 @@ func TestCheckoutRunOutcomes(t *testing.T) {
 			defer cancel()
 			interrupted := false
 			s.Mutate = func(ctx context.Context, fn func() error) error {
-				progress, err := s.Store.PhotoCheckoutStatus(ctx, c.ID)
-				require.NoError(t, err)
-				if progress.PublishedFiles == 1 && !interrupted && failure == "source excluded" {
+				err := fn()
+				progress, statusErr := s.Store.PhotoCheckoutStatus(ctx, c.ID)
+				if !assert.NoError(t, statusErr) {
+					return statusErr
+				}
+				if progress.PublishedFiles != 1 || interrupted {
+					return err
+				}
+				if failure == "source excluded" {
 					interrupted = true
 					asset, err := s.Store.PhotoAssetByID(ctx, entries[1].AssetID)
 					require.NoError(t, err)
@@ -634,14 +698,6 @@ func TestCheckoutRunOutcomes(t *testing.T) {
 						_, _, err = s.Blobs.OpenStreamContext(ctx, entries[1].Hash)
 						require.Error(t, err)
 					}
-				}
-				err = fn()
-				progress, statusErr := s.Store.PhotoCheckoutStatus(ctx, c.ID)
-				if !assert.NoError(t, statusErr) {
-					return statusErr
-				}
-				if progress.PublishedFiles != 1 || interrupted {
-					return err
 				}
 				if failure == "verification failure" {
 					interrupted = true
@@ -809,19 +865,22 @@ func TestCheckoutSeparationAvoidsRepeatedAndObjectTreeWalks(t *testing.T) {
 	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
 		t.Skip("requires Unix directory permissions")
 	}
-	for _, vaultTree := range []bool{false, true} {
-		t.Run(fmt.Sprintf("vault tree=%t", vaultTree), func(t *testing.T) {
+	for _, tree := range []string{"vault", "blobs", "watch"} {
+		t.Run(tree, func(t *testing.T) {
 			s := checkoutService(t)
 			asset := checkoutPhoto(t, s, "photo.jpg", "source")
 			protected := s.VaultRoot
-			if !vaultTree {
+			if tree == "blobs" {
+				protected = filepath.Join(s.VaultRoot, "blobs")
+			}
+			if tree == "watch" {
 				protected = t.TempDir()
 				s.Config.Watches = []config.WatchConfig{{Source: protected}}
 			}
 			child := filepath.Join(protected, "unreadable")
 			require.NoError(t, os.Mkdir(child, 0o700))
 			t.Cleanup(func() { require.NoError(t, os.Chmod(child, 0o700)) })
-			if vaultTree {
+			if tree != "watch" {
 				require.NoError(t, os.Chmod(child, 0o000))
 			}
 			checkout, _, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, t.TempDir(), 0)

@@ -431,7 +431,7 @@ func validateStorageNamespace(
 			if err != nil {
 				return FromStoreError(err)
 			}
-			checkoutID, overlap, _, err := ingest.CheckoutPathOverlap(ctx, checkouts, binding.Path)
+			checkoutID, overlap, err := ingest.CheckoutPathOverlap(ctx, checkouts, binding.Path)
 			if err != nil {
 				return NewError(http.StatusUnprocessableEntity, "storage_binding_invalid", err.Error())
 			}
@@ -663,6 +663,6 @@ func storageCheckoutProtectsPath(ctx context.Context, checkout store.PhotoChecko
 	if err == nil {
 		return protected, nil
 	}
-	_, overlap, _, err := ingest.CheckoutPathOverlap(ctx, []store.PhotoCheckout{checkout}, pathname)
+	_, overlap, err := ingest.CheckoutPathOverlap(ctx, []store.PhotoCheckout{checkout}, pathname)
 	return overlap, err
 }

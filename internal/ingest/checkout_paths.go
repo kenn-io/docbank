@@ -21,40 +21,38 @@ import (
 // caller's own context: a fixed inner deadline here would cut off a traversal
 // that is still making progress on a large library, turning a slow-but-
 // successful check into a permanent failure that a caller's retry loop can
-// never outrun. The retired result reports whether the matched checkout had
-// already released retention, meaning the overlap is a leftover working copy
-// rather than an active reservation.
-func CheckoutPathOverlap(ctx context.Context, checkouts []store.PhotoCheckout, pathname string) (checkoutID string, overlap bool, retired bool, err error) {
+// never outrun.
+func CheckoutPathOverlap(ctx context.Context, checkouts []store.PhotoCheckout, pathname string) (checkoutID string, overlap bool, err error) {
 	candidates := make([]store.PhotoCheckout, 0, len(checkouts))
 	for _, checkout := range checkouts {
 		if err := ctx.Err(); err != nil {
-			return "", false, false, err
+			return "", false, err
 		}
 		protected, lexicalOnly := checkoutPathProtection(checkout, pathname)
 		if !protected {
 			continue
 		}
 		if lexicalOnly || !checkout.RetentionReleased && (pathContains(pathname, checkout.Destination) || pathContains(checkout.Destination, pathname)) {
-			return checkout.ID, true, checkout.RetentionReleased, nil
+			return checkout.ID, true, nil
 		}
 		candidates = append(candidates, checkout)
 	}
 	checks, err := checkoutDestinationsRelateToPath(ctx, candidates, pathname)
 	if err != nil {
-		return "", false, false, err
+		return "", false, err
 	}
 	var pending error
 	var pendingID string
 	for i, check := range checks {
 		if check.related {
-			return candidates[i].ID, true, candidates[i].RetentionReleased, nil
+			return candidates[i].ID, true, nil
 		}
 		if check.err != nil {
 			pendingID = candidates[i].ID
 			pending = errors.Join(pending, fmt.Errorf("checkout %s: %w", candidates[i].ID, check.err))
 		}
 	}
-	return pendingID, false, false, errors.Join(pending, ctx.Err())
+	return pendingID, false, errors.Join(pending, ctx.Err())
 }
 
 func checkoutPathProtection(checkout store.PhotoCheckout, pathname string) (protected, lexicalOnly bool) {

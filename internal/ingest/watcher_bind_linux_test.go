@@ -102,10 +102,9 @@ func TestCheckoutPathOverlapFindsAliasAmongRetiredCheckouts(t *testing.T) {
 	require.NoError(t, os.MkdirAll(alias, 0o700))
 	bindMountForTest(t, checkouts[1].Destination, alias)
 
-	id, overlap, retired, err := CheckoutPathOverlap(t.Context(), checkouts, watchSource)
+	id, overlap, err := CheckoutPathOverlap(t.Context(), checkouts, watchSource)
 	require.NoError(t, err)
 	require.True(t, overlap)
-	require.True(t, retired)
 	require.Equal(t, "second", id)
 	related, err := RelatedCheckouts(t.Context(), checkouts, watchSource)
 	require.NoError(t, err)

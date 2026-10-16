@@ -898,7 +898,7 @@ func checkoutValidationPending(ctx context.Context, err error) bool {
 }
 
 func validateCheckoutPathSnapshot(ctx context.Context, checkouts []store.PhotoCheckout, pathname string) error {
-	id, overlap, _, err := ingest.CheckoutPathOverlap(ctx, checkouts, pathname)
+	id, overlap, err := ingest.CheckoutPathOverlap(ctx, checkouts, pathname)
 	if err != nil {
 		return fmt.Errorf("checking configured path against checkout %s: %w", id, err)
 	}
