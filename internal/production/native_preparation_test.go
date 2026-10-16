@@ -42,7 +42,7 @@ func TestNativePreparationAssembly(t *testing.T) {
 	require.Equal(t, redaction.Span{Start: 0, End: 3}, result.Map.Pages[0].Span)
 	require.Equal(t, redaction.Span{Start: 3, End: 7}, result.Map.Pages[1].Span)
 	require.Len(t, result.Map.Atoms, 4)
-	for i, span := range []redaction.Span{{0, 1}, {1, 3}, {3, 6}, {6, 7}} {
+	for i, span := range []redaction.Span{{Start: 0, End: 1}, {Start: 1, End: 3}, {Start: 3, End: 6}, {Start: 6, End: 7}} {
 		require.Equal(t, span, result.Map.Atoms[i].Span)
 	}
 	require.Empty(t, result.Map.Units)

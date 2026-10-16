@@ -123,7 +123,6 @@ type linearMemoryPool struct {
 	buffer   []byte
 	active   *fixedLinearMemory
 	closed   bool
-	rssRead  func(context.Context) (uint64, error)
 }
 
 type fixedLinearMemory struct {

@@ -31,9 +31,10 @@ type RedactionPreparationRequest struct {
 }
 
 type RedactionPreparation struct {
+	production.NativePreparation
+
 	Contract  string            `json:"contract"`
 	Selection store.PageBinding `json:"selection"`
-	production.NativePreparation
 }
 
 func ValidateRedactionPreparationRequest(request RedactionPreparationRequest) error {
@@ -52,6 +53,10 @@ func ValidateRedactionPreparationRequest(request RedactionPreparationRequest) er
 
 // ValidateRedactionPreparation binds the complete envelope; a bare map is insufficient.
 func ValidateRedactionPreparation(result RedactionPreparation) error {
+	return validateRedactionPreparation(result, MaxRedactionPreparationBytes)
+}
+
+func validateRedactionPreparation(result RedactionPreparation, maxBytes int64) error {
 	if result.Contract != "native-pdf-preparation/v1" {
 		return ErrRedactionPreparationIntegrity
 	}
@@ -64,7 +69,7 @@ func ValidateRedactionPreparation(result RedactionPreparation) error {
 	if err := production.ValidateNativePreparation(result.NativePreparation); err != nil {
 		return err
 	}
-	if _, exceeded, err := canonical.BoundedSize(result, MaxRedactionPreparationBytes); err != nil {
+	if _, exceeded, err := canonical.BoundedSize(result, maxBytes); err != nil {
 		return err
 	} else if exceeded {
 		return ErrRedactionPreparationLimit
@@ -93,6 +98,10 @@ func (service *Service) prepareNativePDF(ctx context.Context, request RedactionP
 	}
 	defer finish()
 	service.runsMu.Lock()
+	if service.lifecycle.Err() != nil {
+		service.runsMu.Unlock()
+		return result, ErrRedactionPreparationUnavailable
+	}
 	if service.preparationActive {
 		service.runsMu.Unlock()
 		return result, ErrRedactionPreparationBusy
@@ -130,14 +139,13 @@ func (service *Service) prepareNativePDF(ctx context.Context, request RedactionP
 	}
 	result = RedactionPreparation{Contract: "native-pdf-preparation/v1",
 		Selection: request.Selection, NativePreparation: prepared}
-	if err := ValidateRedactionPreparation(result); err != nil {
+	if err := validateRedactionPreparation(result, maxResultBytes); err != nil {
+		if errors.Is(err, ErrRedactionPreparationLimit) {
+			return RedactionPreparation{}, err
+		}
 		return RedactionPreparation{}, fmt.Errorf("%w: %w", ErrRedactionPreparationIntegrity, err)
 	}
-	if _, exceeded, err := canonical.BoundedSize(result, maxResultBytes); err != nil {
-		return RedactionPreparation{}, err
-	} else if exceeded {
-		return RedactionPreparation{}, ErrRedactionPreparationLimit
-	}
+
 	if err := runCtx.Err(); err != nil {
 		return RedactionPreparation{}, err
 	}

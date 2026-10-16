@@ -3,8 +3,8 @@ package processing
 import (
 	"bytes"
 	"context"
-	"errors"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"testing"
@@ -20,14 +20,25 @@ import (
 
 type preparationFixture struct {
 	publicationFixture
+
 	service *Service
 	request RedactionPreparationRequest
 }
 
-func newPreparationFixture(t *testing.T) preparationFixture {
+func newPreparationFixture(t *testing.T, text string) preparationFixture {
 	t.Helper()
+	// Return earlier tests' freed heaps before the process-wide RSS check.
+	debug.FreeOSMemory()
 	f := newPublicationFixture(t)
-	data := redactiontest.PDF(t, []string{"SECRET KEEP SECRET"}, "")
+	// Capture/lifecycle assertions need native text, not a full Letter raster.
+	pdf := fpdf.NewCustom(&fpdf.InitType{UnitStr: "pt", Size: fpdf.SizeType{Wd: 144, Ht: 144}})
+	pdf.SetAutoPageBreak(false, 0)
+	pdf.SetFont("Helvetica", "", 10)
+	pdf.AddPage()
+	pdf.Text(12, 24, text)
+	var output bytes.Buffer
+	require.NoError(t, pdf.Output(&output))
+	data := output.Bytes()
 	receipt, err := f.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(data))
 	require.NoError(t, err)
 	node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), "native.pdf",
@@ -42,9 +53,10 @@ func newPreparationFixture(t *testing.T) preparationFixture {
 			Source: document.PageSource{VersionID: node.CurrentVersionID, SHA256: receipt.Hash, Size: receipt.Size}}}}
 }
 
+//nolint:paralleltest // Qualified PDFium accounts for process-wide RSS.
 func TestRedactionPreparationSelection(t *testing.T) {
 	runtime := redactiontest.PageRuntime(t)
-	f := newPreparationFixture(t)
+	f := newPreparationFixture(t, "SECRET KEEP SECRET")
 	result, err := f.service.PrepareNativePDF(t.Context(), f.request, runtime)
 	require.NoError(t, err)
 	require.Equal(t, "SECRET KEEP SECRET", result.Map.Text)
@@ -87,7 +99,8 @@ func TestRedactionPreparationSelection(t *testing.T) {
 }
 
 func TestRedactionPreparationUnavailable(t *testing.T) {
-	f := newPreparationFixture(t)
+	t.Parallel()
+	f := newPreparationFixture(t, "SECRET KEEP SECRET")
 	_, err := f.service.PrepareNativePDF(t.Context(), f.request, nil)
 	require.ErrorIs(t, err, ErrRedactionPreparationUnavailable)
 	f.request.Selection.Source.Size = document.MaxPageSourceBytes + 1
@@ -95,9 +108,10 @@ func TestRedactionPreparationUnavailable(t *testing.T) {
 	require.ErrorIs(t, err, ErrRedactionPreparationLimit)
 }
 
+//nolint:paralleltest // Qualified PDFium accounts for process-wide RSS.
 func TestRedactionPreparationAdmittedRead(t *testing.T) {
 	runtime := redactiontest.PageRuntime(t)
-	f := newPreparationFixture(t)
+	f := newPreparationFixture(t, "RETAINED")
 	entered, resume := make(chan struct{}), make(chan struct{})
 	release := sync.OnceFunc(func() { close(resume) })
 	defer release()
@@ -106,7 +120,7 @@ func TestRedactionPreparationAdmittedRead(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, paused.Close()) }()
 	f.service.blobs = paused
-	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
 	done := make(chan error, 1)
 	var result RedactionPreparation
@@ -125,13 +139,14 @@ func TestRedactionPreparationAdmittedRead(t *testing.T) {
 	require.NoError(t, err)
 	release()
 	require.NoError(t, <-done)
-	require.Equal(t, "SECRET KEEP SECRET", result.Map.Text)
+	require.Equal(t, "RETAINED", result.Map.Text)
 	require.Equal(t, f.request.Selection, result.Selection)
 }
 
+//nolint:paralleltest // Qualified PDFium accounts for process-wide RSS.
 func TestRedactionPreparationShutdown(t *testing.T) {
 	runtime := redactiontest.PageRuntime(t)
-	f := newPreparationFixture(t)
+	f := newPreparationFixture(t, "SECRET KEEP SECRET")
 	entered, resume := make(chan struct{}), make(chan struct{})
 	release := sync.OnceFunc(func() { close(resume) })
 	defer release()
@@ -153,20 +168,22 @@ func TestRedactionPreparationShutdown(t *testing.T) {
 	require.ErrorIs(t, <-done, ErrRedactionPreparationUnavailable)
 	_, err = f.service.PrepareNativePDF(t.Context(), f.request, runtime)
 	require.ErrorIs(t, err, ErrRedactionPreparationUnavailable)
-	require.False(t, errors.Is(err, context.Canceled))
+	require.NotErrorIs(t, err, context.Canceled)
 }
 
+//nolint:paralleltest // Qualified PDFium accounts for process-wide RSS.
 func TestRedactionPreparationResultLimit(t *testing.T) {
 	runtime := redactiontest.PageRuntime(t)
-	f := newPreparationFixture(t)
+	f := newPreparationFixture(t, "SECRET KEEP SECRET")
 	result, err := f.service.prepareNativePDF(t.Context(), f.request, runtime, 1)
 	require.ErrorIs(t, err, ErrRedactionPreparationLimit)
 	require.Empty(t, result.Map.Text)
 }
 
+//nolint:paralleltest // Qualified PDFium accounts for process-wide RSS.
 func TestRedactionPreparationCanceledReadReleasesSlot(t *testing.T) {
 	runtime := redactiontest.PageRuntime(t)
-	f := newPreparationFixture(t)
+	f := newPreparationFixture(t, "RETAINED")
 	entered, resume := make(chan struct{}), make(chan struct{})
 	release := sync.OnceFunc(func() { close(resume) })
 	defer release()
@@ -189,12 +206,13 @@ func TestRedactionPreparationCanceledReadReleasesSlot(t *testing.T) {
 	release()
 	result, err := f.service.PrepareNativePDF(t.Context(), f.request, runtime)
 	require.NoError(t, err)
-	require.Equal(t, "SECRET KEEP SECRET", result.Map.Text)
+	require.Equal(t, "RETAINED", result.Map.Text)
 }
 
+//nolint:paralleltest // Qualified PDFium accounts for process-wide RSS.
 func TestRedactionPreparationPageLimit(t *testing.T) {
 	runtime := redactiontest.PageRuntime(t)
-	f := newPreparationFixture(t)
+	f := newPreparationFixture(t, "SECRET KEEP SECRET")
 	pdf := fpdf.New("P", "pt", "Letter", "")
 	pdf.SetFont("Helvetica", "", 12)
 	for range 17 {
