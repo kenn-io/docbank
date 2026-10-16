@@ -71,7 +71,7 @@ func TestPushWatchStartsOneCollectionPerScanThatUploads(t *testing.T) {
 		for _, name := range []string{"a.txt", "b.txt"} {
 			require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content+name), 0o600))
 		}
-		require.NoError(t, scanner.ScanOnce(t.Context()))
+		require.NoError(t, scanner.ScanOnce(t.Context(), 1))
 	}
 	assert.Equal(t, Report{Added: 2, Updated: 2}, *p.report)
 	collections, total, err := s.Collections(t.Context(), 100, 0)
@@ -124,7 +124,7 @@ func TestPushReportsAnUploadReadFailureAndContinues(t *testing.T) {
 		return p.process(ctx, file)
 	}, p.reject)
 	require.NoError(t, err)
-	require.NoError(t, scanner.ScanOnce(t.Context()), "a source read failure must not abort the scan")
+	require.NoError(t, scanner.ScanOnce(t.Context(), 1), "a source read failure must not abort the scan")
 	assert.Equal(t, []string{"a.txt"}, failed)
 	assert.Equal(t, Report{Added: 1, Failed: 1}, *p.report)
 	_, err = s.NodeByPath(t.Context(), "/archive/b.txt")

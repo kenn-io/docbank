@@ -1,7 +1,7 @@
 ---
 title: Push a folder to another daemon
 description: Archive a local folder through a keyed daemon, resume by content hash, and continue an existing watch.
-last_edited: 2026-10-10
+last_edited: 2026-10-15
 ---
 
 # Push a folder to another daemon
@@ -101,6 +101,11 @@ Each run is one [import collection](web.md#browse-import-collections) holding
 the files that run added or changed. In `--watch` mode, each scan that uploads
 something is one collection.
 
+A one-shot push processes up to eight files at a time. Outcomes print as uploads
+finish, so their order can differ from the source directory's order. Source
+names that normalize to the same destination are processed in traversal order.
+Watch mode processes files one at a time after they settle.
+
 The client prints each acknowledged outcome and a final count. If the daemon
 rejects one file, for example because an unrelated entry occupies its
 destination name or its mapped document is in trash, push prints that file as
@@ -110,9 +115,10 @@ example because of their permissions or a read error during upload. In
 `--watch` mode an unreadable entry is reported once and pushed when it becomes
 readable. If the daemon cannot be reached, answers with a
 server error, or loses an acknowledgment, a one-shot push stops with an error
-and reports only acknowledged files. Ctrl+C stops the run and still prints the
-final count. Run the same command again to resume from server
-state. Files already committed do not need another upload. There is no local
+and reports only acknowledged files. Other uploads may already be in flight;
+push cancels them and waits for its source readers to finish. Ctrl+C stops the
+run and still prints the final count. Run the same command again to resume from
+server state. Files already committed do not need another upload. There is no local
 cursor database. [Backup and restore](backup.md) preserve push provenance and
 source cursors even when a source's accepted version was pruned. A cursor does
 not keep those pruned bytes in the backup; backups include bytes still required

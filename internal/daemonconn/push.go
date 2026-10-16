@@ -53,6 +53,8 @@ func NewPushConnection(origin, key string) (*Connection, error) {
 		Proxy:                 nil,
 		ResponseHeaderTimeout: 30 * time.Second,
 		IdleConnTimeout:       90 * time.Second,
+		// Keep a complete folder-push window connected between batches.
+		MaxIdleConnsPerHost: 8,
 	}
 	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
 	if parsed.Scheme == "http" {

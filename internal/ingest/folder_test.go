@@ -145,7 +145,7 @@ func TestFolderScanSkipsFileThatDisappearsBeforeObservation(t *testing.T) {
 		}
 	}
 
-	err = scanner.ScanOnce(t.Context())
+	err = scanner.ScanOnce(t.Context(), 1)
 	require.NoError(t, err, "a transiently missing entry must not abort the one-shot scan")
 	assert.Equal(t, []string{"b-stable.txt"}, observed)
 }
