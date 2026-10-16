@@ -1,10 +1,33 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { mkdir, mkdtemp } from "node:fs/promises";
 import path from "node:path";
 import { photoFixture, repository } from "./photo-fixture.js";
 
 const output = process.env.DOCBANK_CULL_SCREENSHOT_DIR;
 test.skip(!output, "DOCBANK_CULL_SCREENSHOT_DIR enables synthetic cull and compare proof");
+
+async function captureThemes(page: Page, name: string) {
+  await expect
+    .poll(() =>
+      page
+        .locator(".photo-stage img")
+        .evaluateAll((images) =>
+          images.every((image) => (image as HTMLImageElement).naturalWidth > 512),
+        ),
+    )
+    .toBe(true);
+  for (const theme of ["light", "dark"]) {
+    await page.evaluate((value) => {
+      localStorage.setItem("docbank-theme", value);
+      document.documentElement.classList.toggle("dark", value === "dark");
+      return document.fonts.ready.then(() => {});
+    }, theme);
+    await page.screenshot({
+      path: path.join(output!, `${name}${theme === "light" ? "-light" : ""}.png`),
+      animations: "disabled",
+    });
+  }
+}
 
 test("culls, resumes saved membership and compares manual closeups", async ({ page }) => {
   test.setTimeout(300_000);
@@ -52,10 +75,7 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
     await expect(cull.getByRole("button", { name: "Undo", exact: true })).toBeVisible();
     let resumedName = await cull.locator("header strong").innerText();
     await expect(cull.locator(".filmstrip img").first()).toBeVisible();
-    await page.screenshot({
-      path: path.join(output!, "web-photo-cull.png"),
-      animations: "disabled",
-    });
+    await captureThemes(page, "web-photo-cull");
     await cull.getByRole("button", { name: "Undo", exact: true }).click();
     await expect(cull.getByRole("button", { name: "Undo", exact: true })).toHaveCount(0);
     await cull.getByRole("button", { name: "Exit cull", exact: true }).click();
@@ -256,10 +276,7 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
     await page.mouse.move(frame!.x + frame!.width * 0.6, frame!.y + frame!.height * 0.65);
     await page.mouse.up();
     await expect(compare.getByRole("status")).toHaveCount(0);
-    await page.screenshot({
-      path: path.join(output!, "web-photo-compare-closeup.png"),
-      animations: "disabled",
-    });
+    await captureThemes(page, "web-photo-compare-closeup");
     await compare.getByRole("button", { name: "Exit compare", exact: true }).click();
     await page
       .getByRole("searchbox", { name: "Search photos", exact: true })
