@@ -101,6 +101,9 @@ func (s *Store) DuplicateGroupByHash(ctx context.Context, hash string, size int6
 	if err != nil {
 		return DuplicateGroup{}, err
 	}
+	if err := populateDuplicateReferenceDetails(ctx, tx, []DuplicateGroup{group}); err != nil {
+		return DuplicateGroup{}, err
+	}
 	group.ReferencesTruncated = group.ReferenceCount > len(group.References)
 	if err := tx.Commit(); err != nil {
 		return DuplicateGroup{}, fmt.Errorf("closing exact duplicate snapshot: %w", err)
@@ -187,6 +190,9 @@ func (s *Store) Duplicates(
 		page.Items[index].ReferencesTruncated =
 			page.Items[index].ReferenceCount > len(references)
 	}
+	if err := populateDuplicateReferenceDetails(ctx, tx, page.Items); err != nil {
+		return DuplicatePage{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return DuplicatePage{}, fmt.Errorf("closing duplicate snapshot: %w", err)
 	}
@@ -196,7 +202,7 @@ func (s *Store) Duplicates(
 func duplicateReferences(
 	ctx context.Context, tx *sql.Tx, group DuplicateGroup,
 ) ([]DuplicateReference, error) {
-	// Bound the group before loading metadata, then resolve its paths together.
+	// Bound the group before loading node and current-version metadata.
 	rows, err := tx.QueryContext(ctx, `WITH `+CurrentContentMembershipCTE+`, selected AS (
 		SELECT node_id, modified_at FROM current_content_members
 		WHERE blob_hash = ? AND size = ?
@@ -211,7 +217,6 @@ func duplicateReferences(
 	}
 	defer func() { _ = rows.Close() }()
 	references := make([]DuplicateReference, 0, maxDuplicatePageReferences)
-	ids := make([]int64, 0, maxDuplicatePageReferences)
 	for rows.Next() {
 		ref := DuplicateReference{Reference: ContentReference{IsCurrent: true}}
 		version := &ref.Reference.Version
@@ -224,7 +229,6 @@ func duplicateReferences(
 		version.ID, version.NodeID, version.BlobHash = node.CurrentVersionID, node.ID, node.BlobHash
 		version.MD5, version.Size, version.MimeType = node.MD5, node.Size, node.MimeType
 		references = append(references, ref)
-		ids = append(ids, node.ID)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("listing references for duplicate %s: %w", group.Hash, err)
@@ -232,26 +236,30 @@ func duplicateReferences(
 	if err := rows.Close(); err != nil {
 		return nil, fmt.Errorf("closing references for duplicate %s: %w", group.Hash, err)
 	}
-	paths, err := pathsOf(ctx, tx, ids)
-	if err != nil {
-		return nil, err
-	}
-	for i := range references {
-		references[i].Reference.Path = paths[i]
-	}
-	if err := populateDuplicateCollections(ctx, tx, references); err != nil {
-		return nil, err
-	}
 	return references, nil
 }
 
-func populateDuplicateCollections(ctx context.Context, tx *sql.Tx, references []DuplicateReference) error {
-	ids := make([]int64, len(references))
-	positions := make(map[int64]int, len(references))
-	for i := range references {
-		ids[i] = references[i].Reference.Node.ID
-		positions[ids[i]] = i
-		references[i].Collections = make([]DuplicateCollection, 0)
+func populateDuplicateReferenceDetails(ctx context.Context, tx *sql.Tx, groups []DuplicateGroup) error {
+	ids := make([]int64, 0, len(groups)*maxDuplicatePageReferences)
+	references := make(map[int64]*DuplicateReference, cap(ids))
+	for _, group := range groups {
+		for i := range group.References {
+			ref := &group.References[i]
+			id := ref.Reference.Node.ID
+			ids = append(ids, id)
+			references[id] = ref
+			ref.Collections = make([]DuplicateCollection, 0)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	paths, err := pathsOf(ctx, tx, ids)
+	if err != nil {
+		return err
+	}
+	for i, id := range ids {
+		references[id].Reference.Path = paths[i]
 	}
 	encoded, err := json.Marshal(ids)
 	if err != nil {
@@ -279,7 +287,7 @@ func populateDuplicateCollections(ctx context.Context, tx *sql.Tx, references []
 		if err := rows.Scan(&id, &collection.ID, &total, &label); err != nil {
 			return fmt.Errorf("scanning duplicate collections: %w", err)
 		}
-		ref := &references[positions[id]]
+		ref := references[id]
 		collection.Label = stringPtr(label)
 		ref.Collections = append(ref.Collections, collection)
 		ref.CollectionCount = total

@@ -308,11 +308,19 @@ func TestDuplicatesPagesGroupsByHashWithExactTotals(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
 	hashes := []string{fakeHash("c3"), fakeHash("a1"), fakeHash("b2")}
+	memberships := make(map[int64]DuplicateCollection)
 	for index, hash := range hashes {
+		label := new(fmt.Sprintf("Collection %d", index))
+		run, err := s.BeginIngestWithLabel(ctx, "cli", "Synthetic group", label)
+		require.NoError(t, err)
 		for copy := range index + 2 {
-			_, err := s.CreateFile(ctx, s.RootID(),
+			node, err := s.CreateFile(ctx, s.RootID(),
 				fmt.Sprintf("group-%d-copy-%d.txt", index, copy), hash, int64(index+1), "text/plain")
 			require.NoError(t, err)
+			if copy == 0 {
+				addCollectionMembership(t, s, run, node.ID, "/synthetic/source.txt", nil)
+				memberships[node.ID] = DuplicateCollection{ID: run.ID(), Label: label}
+			}
 		}
 	}
 	sort.Strings(hashes)
@@ -326,6 +334,16 @@ func TestDuplicatesPagesGroupsByHashWithExactTotals(t *testing.T) {
 	for index, group := range all.Items {
 		assert.Equal(t, hashes[index], group.Hash)
 		assert.Equal(t, counts[index], group.ReferenceCount)
+		require.Len(t, group.References, counts[index])
+		for _, ref := range group.References {
+			if want, ok := memberships[ref.Reference.Node.ID]; ok {
+				assert.Equal(t, []DuplicateCollection{want}, ref.Collections)
+				assert.Equal(t, 1, ref.CollectionCount)
+			} else {
+				assert.Empty(t, ref.Collections)
+				assert.Zero(t, ref.CollectionCount)
+			}
+		}
 	}
 
 	for offset, wantHash := range hashes {

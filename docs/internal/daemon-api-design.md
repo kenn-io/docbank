@@ -280,8 +280,9 @@ relation. An empty or exhausted page still returns the population totals.
 Reference paths and collection previews use the same read transaction as group
 selection, so concurrent replacements or trash operations cannot split the
 response across snapshots. Each group's bounded reference preview loads node
-and current-version metadata together, resolves its paths in one query, and
-reads collection previews with per-node ranks and exact totals. Collection
+and current-version metadata together. After selecting those references, the
+page resolves all their paths in one query and all their collection previews
+in another, preserving per-node ranks and exact totals. Collection
 membership is restricted to those references before ranking; unrelated imports
 do not enter that work. Grouping cost still grows with the live population.
 The [search guide](../usage/searching.md#find-documents-with-identical-content)
