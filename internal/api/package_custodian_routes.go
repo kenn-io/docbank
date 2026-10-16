@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -78,8 +79,10 @@ func registerPackageCustodianRoutes(mux *http.ServeMux, d Deps, g *gate) {
 			return
 		}
 		out := PersonPage{Items: make([]PersonSummary, min(limit, len(people)))}
+		foldedQuery := document.FoldPersonName(query)
 		for index := range out.Items {
 			person := people[index]
+			out.ExactMatch = out.ExactMatch || person.DisplayNameFolded == foldedQuery
 			out.Items[index] = PersonSummary{PersonID: person.PersonID, DisplayName: person.DisplayName,
 				State: person.State, Revision: person.Revision}
 		}

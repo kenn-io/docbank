@@ -48,7 +48,7 @@ it("chooses an existing person by ID and opens their photos from the person card
     ),
   );
   await fireEvent.click(await screen.findByRole("button", { name: "Ada" }));
-  expect(onperson).toHaveBeenCalledWith("person-a");
+  expect(onperson).toHaveBeenCalledWith("person-a", "Ada");
   expect(search).toHaveBeenCalledWith(
     { query: "Ad", limit: 100 },
     expect.objectContaining({ session: "session" }),
@@ -170,3 +170,26 @@ it("offers Clear name for named faces and keeps whole-photo marks as person link
   expect(screen.getByRole("button", { name: "Ada" })).toBeTruthy();
   faces.dispose();
 });
+
+it.each(["Ada", "ada"])(
+  "offers the existing folded match instead of Create for %s",
+  async (query) => {
+    vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [face], assertions: [] });
+    vi.spyOn(api, "listPeople").mockResolvedValue({
+      exact_match: true,
+      items: [{ person_id: "person-a", display_name: "Ada", state: "curated", revision: 1 }],
+    });
+    const create = vi.spyOn(api, "createPerson");
+    const faces = new PhotoFaces("session", vi.fn());
+    await faces.load("version-a");
+    render(PhotoPeople, { faces, session: "session" });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Find or create a person: Unnamed face" }),
+    );
+    await fireEvent.input(screen.getByRole("combobox"), { target: { value: query } });
+    expect(await screen.findByRole("option", { name: "Ada" })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: /Create person/ })).toBeNull();
+    expect(create).not.toHaveBeenCalled();
+    faces.dispose();
+  },
+);

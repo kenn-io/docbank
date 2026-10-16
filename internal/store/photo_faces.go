@@ -302,9 +302,6 @@ func photoAssertionCount(ctx context.Context, q metadataQuerier, versionID, exis
 
 // PhotoFacePersonNames resolves the distinct people in a bounded face page.
 func (s *Store) PhotoFacePersonNames(ctx context.Context, assertions []PersonDocumentAssertion) (map[string]string, error) {
-	if len(assertions) > document.MaxPhotoRecordsPerVersion {
-		return nil, ErrInvalidPhotoFace
-	}
 	ids := make([]string, 0, len(assertions))
 	for _, assertion := range assertions {
 		ids = append(ids, assertion.PersonID)

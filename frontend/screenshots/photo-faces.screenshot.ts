@@ -68,6 +68,12 @@ test("draws and names faces, opens person-filtered Library, and reads cull close
     await expect(loupe).toHaveCount(0);
     await expect(page.locator(".photo-cell")).toHaveCount(1);
     await expect(page.locator(".photo-results-summary")).toContainText("1 photos");
+    await expect(page.getByText("Person: Ada", { exact: true })).toBeVisible();
+    await page.evaluate(() => document.fonts.ready.then(() => {}));
+    await page.screenshot({
+      path: path.join(output!, "web-photo-faces-library.png"),
+      animations: "disabled",
+    });
     await page.locator(".photo-image").first().dblclick();
     await expect(loupe.locator(".face-box")).toHaveText("Ada");
     if (!(await people.isVisible()))
@@ -112,6 +118,13 @@ test("draws and names faces, opens person-filtered Library, and reads cull close
     expect(drawnFace.box.width).toBeCloseTo(0.1, 2);
     expect(drawnFace.box.height).toBeCloseTo(0.1, 2);
     await expect(loupe.locator(".face-box")).toHaveCount(2);
+    await page.goto("about:blank");
+    await page.goto(url.href);
+    await expect(page.locator(".photo-cell")).toHaveCount(3);
+    await page.locator(".photo-image").first().dblclick();
+    await expect(loupe.locator(".face-box")).toHaveCount(2);
+    if (!(await people.isVisible()))
+      await loupe.getByRole("button", { name: "Metadata", exact: true }).click();
     const personID = await page.evaluate(
       async ({ session }) => {
         const response = await fetch("/api/v1/people?query=Ada&limit=100", {

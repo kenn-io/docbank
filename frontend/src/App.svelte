@@ -681,10 +681,17 @@
     }
   }
 
-  function openPersonPhotos(personID: string) {
+  function openPersonPhotos(personID: string, name: string) {
     if (retainedPhotoEditor() && !retainedPhotoEditor()!.canChangeTarget()) return;
     if (!photoState) return;
-    photoState.photos.setQuery({ ...photoState.photos.query, filters: { person_ids: [personID] } });
+    if (
+      !photoState.photos.setQuery({
+        ...photoState.photos.query,
+        filters: { person_ids: [personID] },
+      })
+    )
+      return;
+    photoState.photos.personFilter = { id: personID, name };
     navigatePhotos("/photos");
   }
 

@@ -340,6 +340,7 @@ export class Photos {
   }
   baseQuery = $state.raw<Query>(photoQuery);
   query = $state.raw<Query>(photoQuery);
+  personFilter = $state<{ id: string; name: string }>();
   timeline = $state<CaptureDayFacet | undefined>();
   timelineLoading = $state(false);
   timelineError = $state("");

@@ -110,7 +110,7 @@
     albums?: PhotoAlbums;
     albumID?: string;
     onnavigate?: (path: string) => void;
-    onperson?: (id: string) => void;
+    onperson?: (id: string, name: string) => void;
     onfacedecision?: (source: Photos) => void;
     ontrashed?: (source: Photos) => void;
     onhidden?: () => void | Promise<void>;
@@ -1141,6 +1141,9 @@
                     direction: "desc",
                   })}
               />
+              {#if photos.personFilter && photos.query.filters.person_ids?.includes(photos.personFilter.id)}
+                <span>Person: {photos.personFilter.name}</span>
+              {/if}
               {#if filtered}
                 <Button
                   type="button"

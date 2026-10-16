@@ -3,6 +3,7 @@ package api_test
 import (
 	"encoding/json/v2"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -36,6 +37,17 @@ func TestPhotoFaceRoutes(t *testing.T) {
 	require.NotNil(t, created.Assertion)
 	require.Equal(t, faceID, created.Face.FaceID)
 	require.Equal(t, person.PersonID, created.Assertion.PersonID)
+	response, body = get(t, ts, "/api/v1/people/by-id/"+person.PersonID, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var detail api.PersonDetail
+	require.NoError(t, json.Unmarshal([]byte(body), &detail))
+	require.Len(t, detail.Assertions, 1)
+	require.Equal(t, created.Assertion.DisplayName, detail.Assertions[0].DisplayName)
+	response, body = get(t, ts, path, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var listed api.PhotoFacePage
+	require.NoError(t, json.Unmarshal([]byte(body), &listed))
+	require.Equal(t, listed.Assertions[0].DisplayName, detail.Assertions[0].DisplayName)
 
 	conflictBox := box
 	conflictBox.X = 0.5
@@ -154,6 +166,19 @@ func TestPhotoFaceBrowserDecisions(t *testing.T) {
 	response, body = get(t, ts, "/api/v1/people?query=Ad&limit=100", headers)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	require.Contains(t, body, "Ada")
+	for _, query := range []string{"Ada", "ada", "ＡＤＡ", " AdA "} {
+		response, body = get(t, ts, "/api/v1/people?query="+url.QueryEscape(query), headers)
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		var page api.PersonPage
+		require.NoError(t, json.Unmarshal([]byte(body), &page))
+		require.True(t, page.ExactMatch, query)
+		require.Equal(t, person.PersonID, page.Items[0].PersonID)
+	}
+	response, body = get(t, ts, "/api/v1/people?query=Ad", headers)
+	var prefix api.PersonPage
+	require.NoError(t, json.Unmarshal([]byte(body), &prefix))
+	require.False(t, prefix.ExactMatch)
+
 	path := "/api/v1/photos/versions/" + node.CurrentVersionID + "/faces"
 	faceID := uuid.NewString()
 	response, body = do(t, ts, http.MethodPost, path, headers, api.CreatePhotoFaceRequest{FaceID: faceID, Box: &document.FaceBox{X: .98, Y: .98, Width: .01, Height: .01}})

@@ -1,3 +1,5 @@
+import type { FaceBox } from "./generated/docbank.js";
+
 export function rotatedDimensions(width: number, height: number, rotation = 0) {
   return rotation === 90 || rotation === 270 ? { width: height, height: width } : { width, height };
 }
@@ -22,12 +24,7 @@ export function observePhotoSize(
   return () => observer.disconnect();
 }
 
-export interface NormalizedBox {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
+export type NormalizedBox = FaceBox;
 export function rotatePhotoBox(box: NormalizedBox, rotation: number): NormalizedBox {
   switch ((rotation + 360) % 360) {
     case 90:

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick, untrack, onDestroy } from "svelte";
+  import { tick, untrack } from "svelte";
   import { Button, IconButton, Spinner, trapFocus, Notice } from "@kenn-io/kit-ui";
   import X from "@lucide/svelte/icons/x";
   import ChevronLeft from "@lucide/svelte/icons/chevron-left";
@@ -51,7 +51,7 @@
     actionDisabled?: boolean;
     onedit?: (patch: PhotoAuthoredPatch, keywords?: PhotoKeywordEdit[]) => void;
     onundo?: () => void;
-    onperson?: (id: string) => void;
+    onperson?: (id: string, name: string) => void;
     onfacedecision?: () => void;
     photo?: PhotoBrowseRow;
     error: string;

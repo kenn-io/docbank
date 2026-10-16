@@ -17,7 +17,7 @@
     editor: PhotoAuthoredEditor;
     faces?: PhotoFaces;
     session?: string;
-    onperson?: (id: string) => void;
+    onperson?: (id: string, name: string) => void;
     count?: number;
     actionDisabled?: boolean;
     onedit: (patch: PhotoAuthoredPatch, keywords?: PhotoKeywordEdit[]) => void;

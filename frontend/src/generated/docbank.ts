@@ -4616,6 +4616,7 @@ export interface PersonSummary {
 export interface PersonPage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  exact_match?: boolean;
   items: PersonSummary[];
   next_cursor?: string;
 }

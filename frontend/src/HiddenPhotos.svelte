@@ -61,7 +61,7 @@
     ) => void;
     undoState?: PhotoUndoState;
     onhelp?: () => void;
-    onperson?: (id: string) => void;
+    onperson?: (id: string, name: string) => void;
     shortcuts?: ShortcutManager;
     photoID?: string;
     onphotochange?: (id: string, mode: "open" | "step" | "close") => void;

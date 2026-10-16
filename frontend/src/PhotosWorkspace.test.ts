@@ -3230,3 +3230,28 @@ it.each(
     photos.dispose();
   },
 );
+it("shows the clicked person's name while its ID remains in the query", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  stubPhotoFetch(async () => Response.json({ items: [], total: 0 }));
+  const photos = new Photos("scoped", vi.fn());
+  photos.personFilter = { id: "10000000-0000-4000-8000-000000000001", name: "Ada" };
+  await photos.setQuery({
+    ...photoQuery,
+    filters: { person_ids: ["10000000-0000-4000-8000-000000000001"] },
+  });
+  photos.started = true;
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotosWorkspace, { photos, cache });
+  expect(await screen.findByText("Person: Ada")).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+  await waitFor(() => expect(screen.queryByText("Person: Ada")).toBeNull());
+  expect(photos.query.filters.person_ids).toBeUndefined();
+  photos.dispose();
+  await cache.dispose();
+});

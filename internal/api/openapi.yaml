@@ -11425,6 +11425,8 @@ components:
           format: uri
           readOnly: true
           type: string
+        exact_match:
+          type: boolean
         items:
           items:
             $ref: "#/components/schemas/PersonSummary"

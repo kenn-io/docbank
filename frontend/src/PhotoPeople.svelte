@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
   import { Button, Typeahead, Notice } from "@kenn-io/kit-ui";
   import {
     listPeople,
@@ -12,7 +11,8 @@
     faces,
     session,
     onperson,
-  }: { faces: PhotoFaces; session: string; onperson?: (id: string) => void } = $props();
+  }: { faces: PhotoFaces; session: string; onperson?: (id: string, name: string) => void } =
+    $props();
   let people = $state.raw<PersonSummary[]>([]);
   let query = $state("");
   let searching = $state(false);
@@ -22,7 +22,7 @@
   let choosing = $state(false);
   const created = new Map<string, PersonSummary>();
   const key = (id: string) => `\0${id}`;
-  const exact = $derived(people.some((person) => person.display_name === query.trim()));
+  let exact = $state(false);
   $effect(() => {
     void faces.version;
     people = [];
@@ -34,23 +34,23 @@
       created.clear();
     };
   });
-  onDestroy(() => {
-    controller?.abort();
-    writer?.abort();
-  });
   async function search(value: string) {
     query = value;
     controller?.abort();
     const request = (controller = new AbortController());
     people = [];
     searching = true;
+    exact = false;
     error = "";
     try {
       const page = await listPeople(
         { query: value, limit: 100 },
         { session, signal: request.signal },
       );
-      if (!request.signal.aborted) people = page.items;
+      if (!request.signal.aborted) {
+        people = page.items;
+        exact = page.exact_match ?? false;
+      }
     } catch (cause) {
       if (!request.signal.aborted) error = cause instanceof Error ? cause.message : String(cause);
     } finally {
@@ -110,13 +110,17 @@
         onquery={search}
         onselect={(value) => choose(face, value)}
       />
-      {#if person && onperson}<Button size="sm" onclick={() => onperson?.(person.person_id)}
+      {#if person && onperson}<Button
+          size="sm"
+          onclick={() => onperson?.(person.person_id, person.display_name)}
           >{person.display_name}</Button
         >{/if}
     </div>
   {/each}
   {#each faces.assertions.filter((row) => row.photo_mark && row.action === "assert") as person (person.assertion_id)}
-    <Button size="sm" onclick={() => onperson?.(person.person_id)}>{person.display_name}</Button>
+    <Button size="sm" onclick={() => onperson?.(person.person_id, person.display_name)}
+      >{person.display_name}</Button
+    >
   {/each}
   {#if faces.error || error}<Notice tone="error" message={faces.error || error} />{/if}
 </section>
