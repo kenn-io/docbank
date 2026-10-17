@@ -296,17 +296,27 @@ func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(root, fmt.Sprintf("IMG_%d.JPG", i)), []byte(fmt.Sprint("jpeg-", i)), 0o600))
 	}
 	request := fmt.Sprintf(`{"source_root":%q,"destination":"/photos"}`, root)
-	runner := PhotoImportRunner{Ingester: ing}
+	var surfaces []string
+	runner := PhotoImportRunner{Ingester: ing, ImportResult: func(surface string) { surfaces = append(surfaces, surface) }}
 
 	stopped, stop := context.WithCancel(t.Context())
 	shutdown := runner
-	shutdown.Options.Mutate = func(ctx context.Context, _ func() error) error {
-		stop()
-		return ctx.Err()
+	calls := 0
+	shutdown.Options.Mutate = func(ctx context.Context, mutate func() error) error {
+		if err := mutate(); err != nil {
+			return err
+		}
+		calls++
+		if calls == 2 {
+			stop()
+			return ctx.Err()
+		}
+		return nil
 	}
-	interrupted, err := ing.Store.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport, request)
+	interrupted, err := ing.Store.CreatePhotoImport(t.Context(), store.PhotoImportRequest{SourceRoot: root, Destination: "/photos"}, "cli")
 	require.NoError(t, err)
 	require.ErrorIs(t, shutdown.Run(stopped, interrupted.ID), context.Canceled)
+	require.Equal(t, []string{"cli"}, surfaces)
 	resumable, err := ing.Store.ResumableStorageOperations(t.Context())
 	require.NoError(t, err)
 	require.Len(t, resumable, 1)
@@ -317,7 +327,8 @@ func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
 	assert.Equal(t, store.StorageOperationCompleted, completed.State)
 	assert.Equal(t, int64(3), completed.TotalObjects)
 	assert.Equal(t, int64(3), completed.CompletedObjects)
-	assert.JSONEq(t, `{"added":3,"skipped":0,"changed":0,"failed":0,"ambiguous":0,"unsupported":0}`, completed.ReceiptJSON)
+	require.Equal(t, []string{"cli"}, surfaces)
+	assert.JSONEq(t, `{"added":2,"skipped":1,"changed":0,"failed":0,"ambiguous":0,"unsupported":0}`, completed.ReceiptJSON)
 
 	cancelled, err := ing.Store.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport, request)
 	require.NoError(t, err)

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { afterEach, expect, it, vi } from "vite-plus/test";
+import userEvent from "@testing-library/user-event";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import * as download from "./download.js";
 import VerifiedPreview from "./VerifiedPreview.svelte";
@@ -358,11 +359,15 @@ it("loads one exact rendition only while Text is active and keeps hostile markup
   expect(await screen.findByText(/<script>alert\('blocked'\)<\/script>/)).toBeTruthy();
   expect(document.querySelector("script")).toBeNull();
   expect(document.querySelectorAll("mark[data-source='query']")).toHaveLength(2);
-  expect(fetchMock).toHaveBeenCalledTimes(3);
+  expect(
+    fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/")),
+  ).toHaveLength(3);
 
   await view.rerender({ ...props, queryTerms: ["alpha", "blocked"] });
   await waitFor(() => expect(document.querySelectorAll("mark")).toHaveLength(3));
-  expect(fetchMock).toHaveBeenCalledTimes(3);
+  expect(
+    fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/")),
+  ).toHaveLength(3);
 });
 
 it.each([
@@ -472,3 +477,55 @@ it("reports inspection gestures across UTC days and ignores unrelated keys", asy
   await fireEvent.pointerDown(screen.getByText("Synthetic inspected text"));
   expect(events).toEqual([opened, opened]);
 });
+
+it.each(["Text", "Email"])(
+  "reports keyboard activation of %s for an automatically selected document",
+  async (tabName) => {
+    const selected = source(
+      new TextEncoder().encode("Subject: Synthetic\r\n\r\nBody"),
+      "11111111-1111-4111-8111-111111111111",
+      "message/rfc822",
+    );
+    const events: unknown[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      if (String(input) === "/api/daemon/telemetry/events") {
+        events.push(JSON.parse(String(init?.body)));
+        return new Response(null, { status: 202 });
+      }
+      if (String(input) === "/api/v1/renditions/text")
+        return Response.json({
+          state: "unconfigured",
+          source: {
+            node_id: selected.nodeID,
+            revision: 8,
+            version_id: selected.versionID,
+            blob_hash: selected.blobHash,
+            size: selected.size,
+            media_type: selected.mimeType,
+          },
+          profile: { name: "", configuration: "unconfigured", fingerprint: "" },
+          generation_id: "",
+          attachment_id: "",
+          build_id: "",
+        });
+      return Response.json({ state: "pending" }, { status: 202 });
+    });
+    render(VerifiedPreview, {
+      session: "session",
+      source: selected,
+      authorizationRevision: 8,
+      onauthfailure: vi.fn(),
+    });
+    const tab = screen.getByRole("tab", { name: tabName });
+    const user = userEvent.setup();
+    for (let attempt = 0; attempt < 10 && document.activeElement !== tab; attempt++)
+      await user.tab();
+    expect(document.activeElement).toBe(tab);
+    expect(events).toEqual([]);
+    await user.keyboard("{Enter}");
+    expect(tab.getAttribute("aria-selected")).toBe("true");
+    await waitFor(() =>
+      expect(events).toEqual([{ event: "document_opened", properties: { surface: "web" } }]),
+    );
+  },
+);

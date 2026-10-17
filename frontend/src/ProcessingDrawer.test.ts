@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import ProcessingDrawer from "./ProcessingDrawer.svelte";
 import * as processingAPI from "./receipts.js";
 import contract from "../../internal/daemonconn/testdata/processing_responses.json";
@@ -1129,3 +1129,43 @@ function renderProcessingResponse(response: Promise<Response>, profiles = ["priv
     onauthfailure,
   };
 }
+
+it.each(["search", "similar"])(
+  "reports submitted %s before failure or drawer close",
+  async (kind) => {
+    let reject!: (error: Error) => void;
+    const pending = new Promise<never>((_resolve, fail) => {
+      reject = fail;
+    });
+    if (kind === "search") vi.spyOn(processingAPI, "documentSearch").mockReturnValue(pending);
+    else vi.spyOn(processingAPI, "documentSimilar").mockReturnValue(pending);
+    const view = renderProcessingResponse(Promise.resolve(completedProcessingResponse()));
+    await screen.findByRole("button", { name: "Run processing" });
+    await view.rerender({ scopeVersionIDs: [processingJob.content_version_id] });
+    if (kind === "search") {
+      await fireEvent.input(
+        screen.getByRole("searchbox", { name: "Search this document version" }),
+        { target: { value: "synthetic query" } },
+      );
+      await fireEvent.click(screen.getByRole("button", { name: "Search this version" }));
+    } else await fireEvent.click(screen.getByRole("button", { name: "Find similar" }));
+    const events = () =>
+      view.fetchMock.mock.calls
+        .filter(([input]) => String(input) === "/api/daemon/telemetry/events")
+        .map(([, init]) => JSON.parse(String(init?.body)));
+    const expected = [
+      {
+        event: "search_run",
+        properties: { surface: "web", search_type: kind === "search" ? "text" : "semantic" },
+      },
+    ];
+    await waitFor(() => expect(events()).toEqual(expected));
+    if (kind === "similar") view.unmount();
+    await act(async () => {
+      reject(new Error("Synthetic search failure"));
+      await pending.catch(() => {});
+    });
+    if (kind === "search") expect(await screen.findByText("Synthetic search failure")).toBeTruthy();
+    expect(events()).toEqual(expected);
+  },
+);

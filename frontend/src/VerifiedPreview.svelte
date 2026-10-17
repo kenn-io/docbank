@@ -133,6 +133,7 @@
     navigationPending = false;
   }
   function chooseTab(tab: typeof activeTab): void {
+    inspect();
     cancelNavigation();
     navigationError = "";
     activeTab = tab;

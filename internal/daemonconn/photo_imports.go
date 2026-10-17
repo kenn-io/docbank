@@ -17,7 +17,7 @@ func (c *Connection) StartPhotoImport(ctx context.Context, sourceRoot, destinati
 	}
 	operation, err := c.API().StartPhotoImport(ctx, &apiclient.StartPhotoImportRequestOptions{
 		Body: &apiclient.StartPhotoImportBody{SourceRoot: sourceRoot, Destination: destination},
-	})
+	}, SendActionSurface)
 	if err != nil {
 		return api.StorageOperation{}, err
 	}

@@ -268,7 +268,9 @@ func NewServer(d Deps) *Server {
 	registerWebSession(mux, d.Cfg.Web.Enabled, d.WebURL, s.webSessions)
 	registerWebSignIn(mux, s.webSessions)
 	registerWebSignInOpenAPI(humaAPI)
-	registerTelemetryEvents(mux, d.TelemetryCapture)
+	if d.TelemetryCapture != nil {
+		registerTelemetryEvents(mux, d.TelemetryCapture)
+	}
 	registerWebUpload(mux, d.Cfg.Web.Enabled, d.WebURL, d, g, s.webSessions)
 	registerWebDownload(mux, d.Cfg.Web.Enabled, d, s.webDownloads, s.webSessions, s.termReports)
 

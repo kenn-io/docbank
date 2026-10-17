@@ -91,7 +91,7 @@ func TestAutomaticSearchSelectionAndFallback(t *testing.T) {
 				runAutomaticSearchCLI(t, tc, server.URL, &record)
 			} else {
 				cmd, _ := processingTestCommand()
-				outcome, err := tryAutomaticSearch(cmd.Context(), daemonconn.New(server.URL, "key"), tc.query, tc.limit, tc.opts)
+				outcome, err := tryAutomaticSearch(cmd.Context(), daemonconn.New(server.URL, "key"), tc.query, tc.limit, tc.opts, nil)
 				if tc.wantError {
 					require.Error(t, err)
 					assert.Equal(t, automaticSearchOutcome{}, outcome)
@@ -314,13 +314,13 @@ func runAutomaticSearchCLI(t *testing.T, tc automaticSearchCase, serverURL strin
 
 func TestAutomaticSearchTransportAndCancellation(t *testing.T) {
 	cmd, _ := processingTestCommand()
-	outcome, err := tryAutomaticSearch(cmd.Context(), daemonconn.New("http://127.0.0.1:1", "key"), "query", 50, daemonconn.SearchOptions{})
+	outcome, err := tryAutomaticSearch(cmd.Context(), daemonconn.New("http://127.0.0.1:1", "key"), "query", 50, daemonconn.SearchOptions{}, nil)
 	require.NoError(t, err, "a hybrid transport failure falls back; the lexical search then reports it")
 	assert.Equal(t, "semantic_search_failed", outcome.reason)
 	require.Error(t, outcome.err)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err = tryAutomaticSearch(ctx, daemonconn.New("http://127.0.0.1:1", "key"), "query", 50, daemonconn.SearchOptions{})
+	_, err = tryAutomaticSearch(ctx, daemonconn.New("http://127.0.0.1:1", "key"), "query", 50, daemonconn.SearchOptions{}, nil)
 	require.ErrorIs(t, err, context.Canceled)
 }
 

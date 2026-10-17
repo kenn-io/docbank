@@ -2,8 +2,11 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -29,6 +32,7 @@ type PhotoImportMember struct {
 // PhotoImportGroup is one same-folder, same-stem unit. DestinationID is a
 // virtual folder node and zero means the vault root.
 type PhotoImportGroup struct {
+	OperationID   string
 	DestinationID int64
 	// Successful groups rebase the plan so later groups retain the directory identity.
 	DestinationPlan *IngestDirectoryPlan
@@ -56,17 +60,65 @@ type PhotoImportAmbiguousFile struct {
 }
 
 type PhotoImportResult struct {
-	Asset     PhotoAsset
-	Nodes     []Node
-	Added     bool
-	Skipped   bool
-	Ambiguity *PhotoImportAmbiguity
+	ReportAddition bool
+	Asset          PhotoAsset
+	Nodes          []Node
+	Added          bool
+	Skipped        bool
+	Ambiguity      *PhotoImportAmbiguity
 }
 
 // PhotoImportRequest is the request JSON of a photo_import operation.
 type PhotoImportRequest struct {
 	SourceRoot  string `json:"source_root"`
 	Destination string `json:"destination"`
+}
+
+// PhotoImportPlan keeps attribution outside the operation's request digest.
+type PhotoImportPlan struct {
+	ActionSurface       string `json:"action_surface,omitzero"`
+	ActionAddedReported bool   `json:"action_added_reported,omitzero"`
+}
+
+// CreatePhotoImport records a host-folder import with attribution outside its request identity.
+func (s *Store) CreatePhotoImport(ctx context.Context, request PhotoImportRequest, surface string) (StorageOperation, error) {
+	if !validActionSurface(surface) {
+		return StorageOperation{}, errors.New("invalid photo import surface")
+	}
+	requestJSON, err := json.Marshal(request)
+	if err != nil {
+		return StorageOperation{}, err
+	}
+	planJSON, err := json.Marshal(PhotoImportPlan{ActionSurface: surface})
+	if err != nil {
+		return StorageOperation{}, err
+	}
+	digest := sha256.Sum256(requestJSON)
+	return s.CreateStorageOperation(ctx, StorageOperationCreate{
+		Kind: StorageOperationKindPhotoImport, RequestDigest: hex.EncodeToString(digest[:]),
+		RequestJSON: string(requestJSON), PlanJSON: string(planJSON),
+	})
+}
+
+func claimPhotoImportAdditionTx(ctx context.Context, tx *sql.Tx, id string) (bool, error) {
+	var raw string
+	if err := tx.QueryRowContext(ctx, `SELECT plan_json FROM storage_operations WHERE operation_id=? AND kind='photo_import'`, id).Scan(&raw); err != nil {
+		return false, err
+	}
+	var plan PhotoImportPlan
+	if err := json.Unmarshal([]byte(raw), &plan); err != nil {
+		return false, err
+	}
+	if plan.ActionSurface == "" || plan.ActionAddedReported {
+		return false, nil
+	}
+	plan.ActionAddedReported = true
+	encoded, err := json.Marshal(plan)
+	if err != nil {
+		return false, err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE storage_operations SET plan_json=? WHERE operation_id=?`, string(encoded), id)
+	return err == nil, err
 }
 
 // PhotoImportReceipt is the progress and final receipt JSON of a
@@ -369,11 +421,19 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 	}
 	var resolution IngestDirectoryResolution
 	defer func() {
+		if retErr != nil {
+			result.ReportAddition = false
+		}
 		if retErr == nil && group.DestinationPlan != nil {
 			*group.DestinationPlan = resolution.Rebase(*group.DestinationPlan)
 		}
 	}()
-	retErr = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+	retErr = s.withLogicalTx(ctx, func(tx *sql.Tx) (err error) {
+		defer func() {
+			if err == nil && result.Added && group.OperationID != "" {
+				result.ReportAddition, err = claimPhotoImportAdditionTx(ctx, tx, group.OperationID)
+			}
+		}()
 		if group.DestinationPlan != nil {
 			destination, resolved, err := s.ensureIngestDirectoryTx(ctx, tx, *group.DestinationPlan)
 			if err != nil {

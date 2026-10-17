@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"os"
@@ -25,6 +24,9 @@ func NewPhotoImportRunner(d Deps) ingest.PhotoImportRunner {
 		Ingester: &ingest.Ingester{Store: d.Store, Blobs: d.Blobs},
 		Options:  ingest.PhotoImportOptions{SettleInterval: ingest.DefaultPhotoImportSettleInterval},
 	}
+	if d.TelemetryCapture != nil {
+		runner.ImportResult = d.TelemetryCapture.DocumentAdded
+	}
 	if d.Gate != nil {
 		runner.Options.Mutate = d.Gate.MutateContext
 	}
@@ -42,7 +44,10 @@ func registerPhotoImportRoutes(api huma.API, d Deps, g *gate) {
 		OperationID: "startPhotoImport", Method: http.MethodPost,
 		Path: "/api/v1/photos/imports", Summary: "Import grouped camera files from a daemon-host folder",
 		DefaultStatus: http.StatusAccepted,
-	}, func(ctx context.Context, in *struct{ Body PhotoImportStartRequest }) (*photoImportStartOutput, error) {
+	}, func(ctx context.Context, in *struct {
+		Body    PhotoImportStartRequest
+		Surface string `header:"X-Docbank-Surface" hidden:"true"`
+	}) (*photoImportStartOutput, error) {
 		if !filepath.IsAbs(in.Body.SourceRoot) {
 			return nil, NewError(http.StatusUnprocessableEntity, "validation", "source_root must be an absolute daemon-host path")
 		}
@@ -56,11 +61,11 @@ func registerPhotoImportRoutes(api huma.API, d Deps, g *gate) {
 		if d.Jobs == nil {
 			return nil, NewError(http.StatusServiceUnavailable, "photo_import_unavailable", "background job supervisor is unavailable")
 		}
-		request, err := json.Marshal(store.PhotoImportRequest{SourceRoot: in.Body.SourceRoot, Destination: in.Body.Destination})
-		if err != nil {
-			return nil, err
+		surface := ""
+		if in.Surface == "cli" && !browserSessionRequest(ctx) {
+			surface = "cli"
 		}
-		operation, err := d.Store.CreateLocalOperation(ctx, store.StorageOperationKindPhotoImport, string(request))
+		operation, err := d.Store.CreatePhotoImport(ctx, store.PhotoImportRequest{SourceRoot: in.Body.SourceRoot, Destination: in.Body.Destination}, surface)
 		if err != nil {
 			return nil, FromStoreError(err)
 		}

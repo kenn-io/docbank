@@ -42,7 +42,7 @@ func TestMailboxActionCancellationAndResume(t *testing.T) {
 			}
 			response, body := do(t, server, http.MethodPost, "/api/v1/mailbox/jobs", headers, request)
 			require.Equal(t, http.StatusCreated, response.StatusCode, body)
-			job, err := catalog.ClaimMailboxJob(t.Context())
+			_, err = catalog.ClaimMailboxJob(t.Context())
 			require.NoError(t, err)
 			response, body = do(t, server, http.MethodPost, "/api/v1/mailbox/jobs/synthetic-job/cancel", nil, nil)
 			require.Equal(t, http.StatusNoContent, response.StatusCode, body)
@@ -53,7 +53,7 @@ func TestMailboxActionCancellationAndResume(t *testing.T) {
 			require.Equal(t, http.StatusOK, response.StatusCode, body)
 			response, body = do(t, server, http.MethodPost, "/api/v1/mailbox/jobs/synthetic-job/resume", headers, api.MailboxResumeInput{Request: request})
 			require.Equal(t, http.StatusOK, response.StatusCode, body)
-			job, err = catalog.ClaimMailboxJob(t.Context())
+			job, err := catalog.ClaimMailboxJob(t.Context())
 			require.NoError(t, err)
 			require.NoError(t, service.RunJob(t.Context(), job))
 			if origin == "observed" {

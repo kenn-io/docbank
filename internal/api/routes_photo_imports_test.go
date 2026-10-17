@@ -276,3 +276,38 @@ func TestPhotoImportGate(t *testing.T) {
 	require.NoError(t, catalog.ExportMetadata(t.Context(), &after))
 	assert.Contains(t, after.String(), "IMG.ARW")
 }
+
+func TestPhotoImportReportsOnlyInteractiveCommittedAdditions(t *testing.T) {
+	t.Setenv("DOCBANK_TELEMETRY_ENABLED", "1")
+	t.Setenv("TELEMETRY_ENABLED", "1")
+	for _, surface := range []string{"", "cli"} {
+		t.Run("surface="+surface, func(t *testing.T) {
+			capture := newActionCollector(t)
+			supervisor := jobs.New(t.Context(), nil)
+			t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
+			server, catalog := newTestServer(t, func(d *api.Deps) { d.TelemetryCapture = capture.capture; d.Jobs = supervisor })
+			root := t.TempDir()
+			for _, name := range []string{"first.JPG", "second.JPG"} {
+				require.NoError(t, os.WriteFile(filepath.Join(root, name), []byte(name), 0o600))
+			}
+			response, body := do(t, server, http.MethodPost, "/api/v1/photos/imports", map[string]string{api.ActionSurfaceHeader: surface}, api.PhotoImportStartRequest{SourceRoot: root, Destination: "/photos"})
+			require.Equal(t, http.StatusAccepted, response.StatusCode, body)
+			var started api.StorageOperation
+			require.NoError(t, json.Unmarshal([]byte(body), &started))
+			require.Eventually(t, func() bool {
+				current, err := catalog.StorageOperation(t.Context(), started.ID)
+				return err == nil && current.State == store.StorageOperationCompleted
+			}, 10*time.Second, 10*time.Millisecond)
+			for _, name := range []string{"first.JPG", "second.JPG"} {
+				_, err := catalog.NodeByPath(t.Context(), "/photos/"+name)
+				require.NoError(t, err)
+			}
+			if surface == "" {
+				require.NoError(t, capture.reporter.Close())
+				require.Empty(t, capture.events)
+			} else {
+				capture.requireEvent(t, "document_added", map[string]any{"surface": "cli"})
+			}
+		})
+	}
+}

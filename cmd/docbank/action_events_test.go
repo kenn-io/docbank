@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -34,42 +35,44 @@ func TestPhotoInspectReportsInteractiveSuccess(t *testing.T) {
 }
 
 func TestInteractiveActionGateAndEndpoint(t *testing.T) {
-	terminal := actionTerminal(t)
-	redirected, err := os.CreateTemp(t.TempDir(), "redirected")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, redirected.Close()) }()
-	events := make(chan api.TelemetryEventRequest, 2)
-	timedOut := make(chan bool, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body api.TelemetryEventRequest
-		assert.NoError(t, json.UnmarshalRead(r.Body, &body))
-		if body.Event == "search_run" {
-			select {
-			case <-r.Context().Done():
-				timedOut <- true
-			case <-time.After(250 * time.Millisecond):
-				timedOut <- false
+	synctest.Test(t, func(t *testing.T) {
+		terminal := actionTerminal(t)
+		redirected, err := os.CreateTemp(t.TempDir(), "redirected")
+		require.NoError(t, err)
+		defer func() { require.NoError(t, redirected.Close()) }()
+		events := make(chan api.TelemetryEventRequest, 2)
+		timedOut := make(chan bool, 1)
+		server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var body api.TelemetryEventRequest
+			assert.NoError(t, json.UnmarshalRead(r.Body, &body))
+			if body.Event == "search_run" {
+				select {
+				case <-r.Context().Done():
+					timedOut <- true
+				case <-time.After(250 * time.Millisecond):
+					timedOut <- false
+				}
+				return
 			}
-			return
-		}
-		events <- body
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusAccepted)
-		_, _ = w.Write([]byte(`{"status":"queued"}`))
-	}))
-	defer server.Close()
-	connection := daemonconn.New(server.URL, "synthetic-key")
-	for _, tc := range []struct {
-		name          string
-		stdin, stdout *os.File
-		agent         bool
-		want          int
-	}{
-		{"terminal input with redirected output", terminal, redirected, false, 2},
-		{"unattended input with terminal output", redirected, terminal, false, 0},
-		{"agent", terminal, terminal, true, 0},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+			events <- body
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"status":"queued"}`))
+		}))
+		previousTransport := http.DefaultTransport
+		http.DefaultTransport = server.Client().Transport
+		defer func() { http.DefaultTransport = previousTransport }()
+		connection := daemonconn.New(server.URL, "synthetic-key")
+		for _, tc := range []struct {
+			name          string
+			stdin, stdout *os.File
+			agent         bool
+			want          int
+		}{
+			{"terminal input with redirected output", terminal, redirected, false, 2},
+			{"unattended input with terminal output", redirected, terminal, false, 0},
+			{"agent", terminal, terminal, true, 0},
+		} {
 			cmd := &cobra.Command{}
 			cmd.SetIn(tc.stdin)
 			cmd.SetOut(tc.stdout)
@@ -80,18 +83,75 @@ func TestInteractiveActionGateAndEndpoint(t *testing.T) {
 			cmd.SetContext(ctx)
 			reportAction(cmd, connection, "document_added", "add")
 			reportOpened(cmd, connection)
-			require.Len(t, events, tc.want)
+			require.Len(t, events, tc.want, tc.name)
 			if tc.want > 0 {
 				assert.Equal(t, []api.TelemetryEventRequest{
 					{Event: "document_added", Properties: &api.TelemetryEventProperties{Surface: "cli"}},
 					{Event: "document_opened", Properties: &api.TelemetryEventProperties{Surface: "cli"}},
 				}, []api.TelemetryEventRequest{<-events, <-events})
 			}
+		}
+		cmd := &cobra.Command{}
+		cmd.SetIn(terminal)
+		cmd.SetContext(t.Context())
+		reportAction(cmd, connection, "search_run", "hybrid")
+		assert.True(t, <-timedOut, "action request must cancel before the server stall ends")
+	})
+}
+
+func TestDocumentSearchReportsSubmissionBeforeFailure(t *testing.T) {
+	for _, mode := range []string{"lexical", "semantic", "hybrid", "auto", "similar"} {
+		t.Run(mode, func(t *testing.T) {
+			var events []api.TelemetryEventRequest
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/api/daemon/telemetry/events":
+					var event api.TelemetryEventRequest
+					assert.NoError(t, json.UnmarshalRead(r.Body, &event))
+					events = append(events, event)
+					w.WriteHeader(http.StatusAccepted)
+					_, _ = w.Write([]byte(`{"status":"queued"}`))
+				case "/api/v1/processing/profiles":
+					assert.NoError(t, json.MarshalWrite(w, []api.ProcessingProfileSummary{{Name: "synthetic", Fingerprint: strings.Repeat("a", 64), EmbeddingBindings: []string{"synthetic"}, QueryEmbeddingBindings: []string{"synthetic"}}}))
+				case "/api/v1/info":
+					assert.NoError(t, json.MarshalWrite(w, api.VaultInfo{VaultID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}))
+				case "/api/v1/nodes/42":
+					assert.NoError(t, json.MarshalWrite(w, api.Node{ID: 42, Kind: "file", CurrentVersionID: processingTestVersionID}))
+				case "/api/v1/search", "/api/v1/search/similar":
+					assert.Len(t, events, 1, "submission precedes the search request")
+					http.Error(w, `{"detail":"synthetic search failure"}`, http.StatusServiceUnavailable)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			cmd := &cobra.Command{}
+			cmd.SetContext(t.Context())
+			cmd.SetIn(actionTerminal(t))
+			connection := daemonconn.New(server.URL, "synthetic")
+			options := documentSearchCLIOptions{Mode: mode, Profile: "synthetic", ContentVersionIDs: []string{processingTestVersionID}, Limit: 10, Intent: true}
+			var err error
+			if mode == "similar" {
+				selector, parseErr := parseNodeSelector("id:42")
+				require.NoError(t, parseErr)
+				options.Mode = "semantic"
+				err = runSimilarSearch(cmd, connection, selector, "", options)
+			} else {
+				err = runDocumentSearch(cmd, connection, "synthetic query", options)
+			}
+			require.Error(t, err)
+			wantMode := mode
+			if mode == "auto" {
+				wantMode = "hybrid"
+			}
+			if mode == "similar" {
+				wantMode = "semantic"
+			}
+			if mode == "lexical" {
+				wantMode = "text"
+			}
+			require.Equal(t, []api.TelemetryEventRequest{{Event: "search_run", Properties: &api.TelemetryEventProperties{Surface: "cli", SearchType: wantMode}}}, events)
 		})
 	}
-	cmd := &cobra.Command{}
-	cmd.SetIn(terminal)
-	cmd.SetContext(t.Context())
-	reportAction(cmd, connection, "search_run", "hybrid")
-	assert.True(t, <-timedOut, "action request must cancel before the server stall ends")
 }

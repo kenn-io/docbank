@@ -42,7 +42,7 @@ type automaticSearchCandidate struct{ profile, binding string }
 // tryAutomaticSearch runs hybrid search when a profile has a query embedding
 // binding. Scope and semantic readiness decisions stay with the daemon.
 func tryAutomaticSearch(ctx context.Context, c *daemonconn.Connection, query string, limit int,
-	opts daemonconn.SearchOptions,
+	opts daemonconn.SearchOptions, submit func(string),
 ) (automaticSearchOutcome, error) {
 	if !automaticSearchEligible(query, limit, opts) {
 		return automaticSearchOutcome{}, nil
@@ -69,7 +69,10 @@ func tryAutomaticSearch(ctx context.Context, c *daemonconn.Connection, query str
 	}
 	fence := api.DocumentSourceFence{VaultUID: scope.Fence.VaultUID, ContentVersionIDs: scope.Fence.ContentVersionIDs}
 	var first automaticSearchOutcome
-	for _, candidate := range candidates {
+	for index, candidate := range candidates {
+		if index == 0 && submit != nil {
+			submit("hybrid")
+		}
 		report, searchErr := c.SearchDocuments(ctx, api.DocumentSearchRequest{Query: query, Mode: "hybrid",
 			Profile: candidate.profile, BindingID: candidate.binding, Limit: limit, Fence: fence})
 		if searchErr == nil {

@@ -231,6 +231,13 @@
 
   async function searchVersion(): Promise<void> {
     if (!plan || !node.current_version_id || !query.trim()) return;
+    reportAction(
+      session,
+      "search_run",
+      profiles.find((item) => item.name === profileName)?.query_embedding_bindings?.length
+        ? "hybrid"
+        : "text",
+    );
     const request = generation;
     searching = true;
     error = "";
@@ -246,7 +253,6 @@
       });
       if (request !== generation) return;
       searchReport = nextReport;
-      reportAction(session, "search_run", nextReport.actual_mode);
     } catch (cause) {
       if (request === generation) handleFailure(cause);
     } finally {
@@ -258,6 +264,7 @@
     if (!plan || scopeVersionIDs.length === 0 || scopeVersionIDs.length > 4096) return;
     const binding = profiles.find((item) => item.name === profileName)?.embedding_bindings[0];
     if (!binding) return;
+    reportAction(session, "search_run", "semantic");
     const request = generation;
     const id = ++similarID;
     similarBusy = true;
@@ -272,7 +279,6 @@
       });
       if (request === generation && id === similarID) {
         similarReport = report;
-        reportAction(session, "search_run", "semantic");
       }
     } catch (cause) {
       if (request === generation && id === similarID) {
