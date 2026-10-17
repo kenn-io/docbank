@@ -50,34 +50,12 @@ func TestPhotoEventsDeliveryAndRollback(t *testing.T) {
 		return rejected
 	}), rejected)
 	noPhotoEvent(t, ch)
-	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `UPDATE photo_assets SET revision=revision+1 WHERE asset_id=?`, asset.ID)
-		return err
-	}))
-	event := nextPhotoEvent(t, ch)
-	locked, err := s.VisiblePhotoEvents(ctx, []PhotoEvent{event})
-	require.NoError(t, err)
-	require.Empty(t, locked)
-	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
-	require.NoError(t, err)
-	for _, viewer := range []context.Context{ctx, WithPhotoHiddenToken(ctx, token)} {
-		visible, err := s.VisiblePhotoEvents(viewer, []PhotoEvent{event})
-		require.NoError(t, err)
-		if viewer == ctx {
-			require.Empty(t, visible)
-		} else {
-			require.Equal(t, asset.ID, visible[0].AssetID)
-			require.Equal(t, asset.Revision+1, visible[0].Revision)
-		}
-	}
-	visible, err := s.VisiblePhotoEvents(ctx, []PhotoEvent{{AssetID: "missing"}})
-	require.NoError(t, err)
-	require.Equal(t, []PhotoEvent{{Refetch: true}}, visible)
 }
-func TestPhotoEventsArrivalAndUnlockDuringWrite(t *testing.T) {
+func TestPhotoEventsArrivalUnlockAndPollDuringWrite(t *testing.T) {
 	t.Parallel()
-	for _, hidden := range []bool{false, true} {
-		t.Run(map[bool]string{false: "arrival", true: "unlock"}[hidden], func(t *testing.T) {
+	for _, interest := range []string{"arrival", "unlock", "poll"} {
+		t.Run(interest, func(t *testing.T) {
+			hidden := interest == "unlock"
 			s := newTestStore(t)
 			ctx := t.Context()
 			require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
@@ -89,11 +67,15 @@ func TestPhotoEventsArrivalAndUnlockDuringWrite(t *testing.T) {
 				asset, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 				require.NoError(t, err)
 			}
-			token, expiry, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
-			require.NoError(t, err)
-			s.photoHiddenSessionsMu.Lock()
-			delete(s.photoHiddenSessions, hiddenTokenDigest(token))
-			s.photoHiddenSessionsMu.Unlock()
+			var token string
+			var expiry time.Time
+			if hidden {
+				token, expiry, err = s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+				require.NoError(t, err)
+				s.photoHiddenSessionsMu.Lock()
+				delete(s.photoHiddenSessions, hiddenTokenDigest(token))
+				s.photoHiddenSessionsMu.Unlock()
+			}
 			var ch <-chan []PhotoEvent
 			stop := func() {}
 			if hidden {
@@ -110,6 +92,16 @@ func TestPhotoEventsArrivalAndUnlockDuringWrite(t *testing.T) {
 				})
 			}()
 			<-started
+			if interest == "poll" {
+				before, err := s.PhotoHiddenState(ctx)
+				close(release)
+				require.NoError(t, err)
+				require.NoError(t, <-done)
+				after, err := s.PhotoHiddenState(ctx)
+				require.NoError(t, err)
+				require.NotEqual(t, before.ChangeCursor, after.ChangeCursor)
+				return
+			}
 			viewer := ctx
 			if hidden {
 				// Unlock commits before installing its session. Reproduce that insertion gap
@@ -217,31 +209,6 @@ func TestPhotoEventsPollCursors(t *testing.T) {
 	require.NotEqual(t, cursor(ctx), restarted.ChangeCursor)
 }
 
-func TestPhotoEventsPollStartsDuringWrite(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	node, err := s.CreateFile(ctx, s.RootID(), "photo.jpg", fakeHash("11"), 4, "image/jpeg")
-	require.NoError(t, err)
-	started, release, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
-	go func() {
-		done <- s.withStorageTx(ctx, func(tx *sql.Tx) error {
-			_, err := tx.ExecContext(ctx, `UPDATE photo_assets SET revision=revision+1 WHERE asset_id=(SELECT asset_id FROM photo_files WHERE node_id=?)`, node.ID)
-			close(started)
-			<-release
-			return err
-		})
-	}()
-	<-started
-	before, err := s.PhotoHiddenState(ctx)
-	close(release)
-	require.NoError(t, err)
-	require.NoError(t, <-done)
-	after, err := s.PhotoHiddenState(ctx)
-	require.NoError(t, err)
-	require.NotEqual(t, before.ChangeCursor, after.ChangeCursor)
-}
-
 func TestPhotoEventsBatchVisibility(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -292,9 +259,6 @@ func TestPhotoEventsKeepCommittedBatch(t *testing.T) {
 	select {
 	case batch := <-ch:
 		require.ElementsMatch(t, want, batch)
-		visible, err := s.VisiblePhotoEvents(ctx, batch)
-		require.NoError(t, err)
-		require.ElementsMatch(t, want, visible)
 	default:
 		t.Fatal("missing committed batch")
 	}

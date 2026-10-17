@@ -496,7 +496,7 @@ it("keeps a frozen result when album saving waits for another album change", asy
   albums.dispose();
 });
 
-it("rejects active-definition failures, recovers the name, and accepts deletion", async () => {
+it("retains the name after a definition failure, recovers it, and accepts deletion", async () => {
   const photos = new Photos("session", vi.fn());
   const saved = savedSmartSetFixture(
     photos.savedPhotoQuery,
@@ -510,8 +510,8 @@ it("rejects active-definition failures, recovers the name, and accepts deletion"
   vi.stubGlobal("fetch", fetch);
   render(PhotoSmartSet, { photos, albums, onnavigate: vi.fn() });
   await tick();
-  await expect(definitionsChanged("session")).rejects.toThrow("Definition unavailable");
-  expect(photos.smartSet?.name).toBe(saved.name);
+  await definitionsChanged("session").catch(() => {});
+  expect(screen.getByText(saved.name)).toBeTruthy();
   fetch.mockResolvedValue(
     Response.json(
       { ...saved, name: "Renamed definition", revision: 2 },
@@ -522,7 +522,7 @@ it("rejects active-definition failures, recovers the name, and accepts deletion"
   await screen.findByText("Renamed definition");
   fetch.mockResolvedValue(Response.json({ detail: "gone" }, { status: 404 }));
   await definitionsChanged("session");
-  expect(photos.smartSet).toBeUndefined();
+  expect(screen.queryByText("Renamed definition")).toBeNull();
   photos.dispose();
   albums.dispose();
 });

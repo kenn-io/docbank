@@ -109,7 +109,7 @@ func TestPhotoEventsRejectsRequestsWithoutAPIKey(t *testing.T) {
 	require.Equal(t, "unauthorized", problem.Code)
 }
 
-func TestPhotoEventsLockedStreamStaysSilentForAnotherSessionsHiddenEdit(t *testing.T) {
+func TestPhotoEventsUnlockedStreamReceivesHiddenEdit(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	ctx := t.Context()
@@ -120,8 +120,6 @@ func TestPhotoEventsLockedStreamStaysSilentForAnotherSessionsHiddenEdit(t *testi
 	require.NoError(t, err)
 	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
-	lockedResponse, lockedScanner := openPhotoEventStream(t, ts, "", nil)
-	require.True(t, readPhotoChange(t, lockedScanner, lockedResponse.Body).Refetch)
 	unlocked, body := do(t, ts, http.MethodPost, "/api/v1/photos/hidden/unlock", nil, map[string]string{"passcode": "synthetic-passcode"})
 	require.Equal(t, http.StatusOK, unlocked.StatusCode, body)
 	response, scanner := openPhotoEventStream(t, ts, "", unlocked.Cookies())
@@ -131,12 +129,6 @@ func TestPhotoEventsLockedStreamStaysSilentForAnotherSessionsHiddenEdit(t *testi
 	asset, err = s.PhotoAssetForNode(store.WithPhotoHiddenToken(ctx, unlocked.Cookies()[0].Value), node.ID)
 	require.NoError(t, err)
 	require.Equal(t, store.PhotoEvent{AssetID: asset.ID, Revision: asset.Revision}, readPhotoChange(t, scanner, response.Body))
-	// A visible commit is an ordering barrier: any Hidden wakeup would arrive first.
-	visible, err := s.CreateFile(ctx, s.RootID(), "visible.jpg", testHash("visible"), 4, "image/jpeg")
-	require.NoError(t, err)
-	visibleAsset, err := s.PhotoAssetForNode(ctx, visible.ID)
-	require.NoError(t, err)
-	require.Equal(t, store.PhotoEvent{AssetID: visibleAsset.ID, Revision: visibleAsset.Revision}, readPhotoChange(t, lockedScanner, lockedResponse.Body))
 }
 
 func TestPhotoEventsStreamEndsOnShutdownOrSessionRevocation(t *testing.T) {

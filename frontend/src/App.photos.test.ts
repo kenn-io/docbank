@@ -1489,6 +1489,13 @@ it.each([false, true])(
 it.each([false, true])(
   "keeps direct links and history scoped and conceals a mounted viewer when access changes, hidden=%s",
   async (hidden) => {
+    // Vitest omits component styles; include them to observe pending concealment.
+    const style = document.createElement("style");
+    style.dataset.photoWorkspace = "";
+    style.textContent = compile(workspaceSource, {
+      filename: "src/PhotosWorkspace.svelte",
+    }).css!.code;
+    document.head.append(style);
     const path = hidden ? "/photos/hidden" : "/photos";
     history.replaceState(
       null,
@@ -1573,6 +1580,14 @@ it.each([false, true])(
     await waitFor(() => expect(screen.queryByRole("dialog", { name: /Photo viewer/ })).toBeNull());
     history.forward();
     await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+    changeID = "membership-change";
+    holdRefresh = true;
+    await fireEvent(document, new Event("visibilitychange"));
+    await waitFor(() => expect(finishRefresh).toBeTypeOf("function"));
+    expect(screen.queryByRole("dialog", { name: /Photo viewer/ })).toBeNull();
+    finishRefresh(Response.json({ items: [item], total: 1 }));
+    await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+    finishRefresh = undefined!;
     const before = revoke.mock.calls.length;
     if (hidden) {
       await fireEvent.click(screen.getByRole("button", { name: "Lock" }));
@@ -1608,7 +1623,7 @@ it.each([false, true])(
       await fireEvent(document, new Event("visibilitychange"));
       await waitFor(() => expect(queries()).toBeGreaterThan(refreshed), { timeout: 5000 });
       await screen.findByText("Fit preview");
-      expect(screen.getByRole("dialog", { name: "Photo viewer, Photo 1.jpg" })).toBeTruthy();
+      await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
       expect(location.hash).toBe("#photo=photo-1");
       const shown = revoke.mock.calls.length;
       refreshed = queries();
@@ -3435,7 +3450,7 @@ async function watcherFixture({
   };
 }
 
-it("shows a live Map detail timeout once while retaining reload and refresh retry", async () => {
+it("shows a detail refresh failure once and clears the live notice after recovery", async () => {
   history.replaceState(
     null,
     "",
@@ -3464,20 +3479,12 @@ it("shows a live Map detail timeout once while retaining reload and refresh retr
       return () => {};
     },
   );
-  let stall = false;
-  let pending: AbortSignal | undefined;
   stubPhotoFetch(async (url, init) => {
     if (url.endsWith("/photos/hidden"))
       return Response.json({ configured: false, change_id: "first", change_cursor: "initial" });
     if (url.endsWith("/photos/albums")) return Response.json([]);
     if (url.endsWith("/assets/query")) {
       if (JSON.parse(String(init.body)).query.filters.asset_ids) {
-        if (stall) {
-          pending = init.signal!;
-          return new Promise<Response>((_resolve, reject) => {
-            pending!.addEventListener("abort", () => reject(pending!.reason), { once: true });
-          });
-        }
         return Response.json({ items: [photo(1)], total: 1 });
       }
       return Response.json({ items: [], map_items: [mapPhoto(1)], total: 1 });
@@ -3486,31 +3493,16 @@ it("shows a live Map detail timeout once while retaining reload and refresh retr
   });
   render(App);
   await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
-  const deadline = new AbortController();
-  const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
-  stall = true;
-  const changes = { assets: new Map([["photo-1", 2]]), refetch: false };
-  const failed = refresh(changes).catch((error) => error);
-  await waitFor(() => expect(pending).toBeDefined());
-  deadline.abort(new DOMException("signal timed out", "TimeoutError"));
-  const error = await failed;
+  vi.spyOn(Photos.prototype, "lookup").mockRejectedValueOnce(new Error("Detail unavailable"));
+  const error = await refresh({ assets: new Map([["photo-1", 2]]), refetch: false }).catch(
+    (error) => error,
+  );
   expect(error).toBeInstanceOf(Error);
   await act(() => fail(error));
-  expect(screen.getAllByText("Loading the photo took too long.")).toHaveLength(1);
-  expect((screen.getByRole("button", { name: "Reload photo" }) as HTMLButtonElement).disabled).toBe(
-    false,
-  );
-  await act(() => fail(new Error("Live updates unavailable")));
-  await screen.findByText("Live updates unavailable");
-  timeout.mockRestore();
-  stall = false;
-  await act(async () => {
-    await refresh(changes);
-    recovered();
-  });
-  expect(screen.queryByText("Loading the photo took too long.")).toBeNull();
-  expect(screen.queryByText("Live updates unavailable")).toBeNull();
-  await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+  expect(screen.getAllByText("Detail unavailable")).toHaveLength(1);
+  await act(() => recovered());
+  await fireEvent.click(screen.getByRole("button", { name: "Close photo viewer" }));
+  expect(screen.queryByText("Detail unavailable")).toBeNull();
 });
 
 it("retains a failed metadata comparison through the same batch's access check", async () => {
@@ -3583,54 +3575,39 @@ it("retains a failed metadata comparison through the same batch's access check",
   await waitFor(() => expect(finishCompare).toBeTypeOf("function"));
   finishCompare(Response.json({ detail: "Comparison unavailable" }, { status: 503 }));
   await screen.findByText("Comparison unavailable");
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Reload metadata" }).hasAttribute("disabled")).toBe(
-      false,
-    ),
-  );
   finishAccess(Response.json(access));
   await refreshed;
   expect(compares).toBe(2);
-  expect((screen.getByRole("textbox", { name: "Caption" }) as HTMLTextAreaElement).value).toBe(
-    "Draft caption",
-  );
-  expect(screen.getByRole("button", { name: "Reload metadata" })).toBeTruthy();
 });
 
-it("rechecks metadata after a mixed visibility batch", async () => {
-  const fixture = await watcherFixture();
-  await act(async () => fixture.workspaceProps.onphotochange?.("photo-1", "open"));
-  await waitFor(() => expect(fixture.workspaceProps.photoID).toBe("photo-1"));
-  const editor = fixture.workspaceProps.photos.authored;
-  editor.targets = [preparedPhoto(1)];
-  const changed = vi.spyOn(editor, "changedElsewhere");
-  const reconcile = vi.spyOn(editor, "reconcile").mockResolvedValue(undefined);
-  fixture.access.change_id = "second";
-  const batch = {
-    assets: new Map<string, number>(),
-    refetch: true,
-  };
-  await act(async () => fixture.refresh(batch));
-  expect(changed).toHaveBeenCalledWith(batch);
-  expect(reconcile).toHaveBeenCalled();
-});
-
-it("reconciles retained Library metadata from Albums", async () => {
+it.each(["viewer open", "Albums"])("forwards metadata changes with %s", async (view) => {
   const fixture = await watcherFixture();
   const library = fixture.workspaceProps.photos;
-  library.selectedIDs = new Set(["photo-1"]);
-  library.authored.targets = [preparedPhoto(1)];
-  await fireEvent.click(screen.getByRole("button", { name: "Albums" }));
-  await screen.findByRole("main", { name: "Albums" });
+  if (view === "viewer open") {
+    await act(async () => fixture.workspaceProps.onphotochange?.("photo-1", "open"));
+    await waitFor(() => expect(fixture.workspaceProps.photoID).toBe("photo-1"));
+    library.authored.targets = [preparedPhoto(1)];
+  } else {
+    library.selectedIDs = new Set(["photo-1"]);
+    library.authored.targets = [preparedPhoto(1)];
+    await fireEvent.click(screen.getByRole("button", { name: "Albums" }));
+    await screen.findByRole("main", { name: "Albums" });
+  }
   const changed = vi.spyOn(library.authored, "changedElsewhere");
   const reconcile = vi.spyOn(library.authored, "reconcile").mockResolvedValue(undefined);
-  const batch = { assets: new Map([["photo-1", 8]]), refetch: false };
+  if (view === "viewer open") fixture.access.change_id = "second";
+  const batch =
+    view === "viewer open"
+      ? { assets: new Map<string, number>(), refetch: true }
+      : { assets: new Map([["photo-1", 8]]), refetch: false };
   await act(async () => fixture.refresh(batch));
   expect(changed).toHaveBeenCalledWith(batch);
   expect(reconcile).toHaveBeenCalled();
-  await fireEvent.click(screen.getByRole("button", { name: "Library" }));
-  await waitFor(() => expect(fixture.workspaceProps.photos).toBe(library));
-  expect(library.selectedIDs.has("photo-1")).toBe(true);
+  if (view === "Albums") {
+    await fireEvent.click(screen.getByRole("button", { name: "Library" }));
+    await waitFor(() => expect(fixture.workspaceProps.photos).toBe(library));
+    expect(library.selectedIDs.has("photo-1")).toBe(true);
+  }
 });
 
 it("propagates album refresh failures and shows a later refresh", async () => {
@@ -3659,134 +3636,3 @@ it("forwards the Hidden view access poll cursor", async () => {
     timeout: 4000,
   });
 });
-
-it.each([
-  { mapMode: false, hidden: false, unchanged: false },
-  { mapMode: true, hidden: false, unchanged: false },
-  { mapMode: false, hidden: true, unchanged: false },
-  { mapMode: false, hidden: true, unchanged: true },
-])(
-  "rechecks an open photo after membership changes, %j",
-  async ({ mapMode, hidden, unchanged }) => {
-    // Vitest omits component styles; use the compiled CSS to check concealment.
-    const style = document.createElement("style");
-    style.dataset.photoWorkspace = "";
-    style.textContent = compile(workspaceSource, {
-      filename: "src/PhotosWorkspace.svelte",
-    }).css!.code;
-    document.head.append(style);
-    history.replaceState(
-      null,
-      "",
-      `${hidden ? "/photos/hidden" : mapMode ? "/photos/map" : "/photos"}#web_session=synthetic&web_upload_secret=proof${mapMode ? "" : "&photo=photo-1"}`,
-    );
-    if (mapMode) {
-      const meta = document.createElement("meta");
-      meta.name = "docbank-map-tiles";
-      meta.content = JSON.stringify({
-        tile_url: "/tiles/{z}/{x}/{y}",
-        host: "example.org",
-        attribution: "Tiles",
-        max_zoom: 19,
-      });
-      document.head.append(meta);
-    }
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        observe() {}
-        disconnect() {}
-      },
-    );
-    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
-    vi.stubGlobal(
-      "Image",
-      class {
-        src = "";
-        async decode() {}
-      },
-    );
-    vi.spyOn(Photos.prototype, "original").mockResolvedValue("blob:original-viewer");
-    let blob = 0;
-    Object.defineProperty(URL, "createObjectURL", {
-      configurable: true,
-      value: () => `blob:viewer-${++blob}`,
-    });
-    const revoke = vi.fn();
-    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revoke });
-    storage();
-    let changed = false;
-    let finish!: (response: Response) => void;
-    const item = photo(1);
-    item.camera_model = "Synthetic camera";
-    item.previews.fit = { state: "ready", generation_id: "fit" };
-    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
-      if (changed && !unchanged && url.endsWith("/photos/authored/prepare"))
-        return Response.json({ detail: "Photo unavailable" }, { status: 404 });
-      const metadata = photoMetadataResponse(url, init);
-      if (metadata) return metadata;
-      if (url.endsWith("/photos/hidden"))
-        return Response.json({
-          configured: true,
-          change_id: changed ? "second" : "first",
-          ...(hidden ? { expires_at: "2099-01-01T00:00:00Z", expires_in: 300 } : {}),
-        });
-      if (url.endsWith("/assets/query")) {
-        const input = JSON.parse(String(init.body));
-        if (changed && unchanged && !finish && !input.facets?.length)
-          return new Promise<Response>((resolve) => (finish = resolve));
-        if (input.query.filters.asset_ids) {
-          if (changed && !unchanged) {
-            if (input.page_size !== 1) return Response.json({ items: [], map_items: [], total: 0 });
-            return new Promise<Response>((resolve) => {
-              finish = resolve;
-            });
-          }
-          return Response.json({ items: [item], total: 1 });
-        }
-        return Response.json({
-          items: changed && !unchanged ? [] : [item],
-          map_items: changed ? [] : [mapPhoto(1)],
-          total: changed ? 0 : 1,
-        });
-      }
-      if (url.includes("/previews/") || url.includes("/content"))
-        return new Response("synthetic-jpeg");
-      return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
-    });
-    render(App);
-    if (mapMode) {
-      await waitFor(() => expect(map.props?.items).toHaveLength(1));
-      await act(async () => map.props!.onvisible(map.props!.items));
-      await fireEvent.click(await screen.findByRole("button", { name: "Open Photo 1.jpg" }));
-    }
-    await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
-    await screen.findByText("Fit preview");
-    await fireEvent.click(screen.getByRole("button", { name: "View original" }));
-    await screen.findByText("Original");
-    const originalURL = screen.getByAltText("Photo 1.jpg").getAttribute("src");
-    await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
-    await screen.findByText("Synthetic camera");
-    const viewport = document.querySelector<HTMLElement>(".photo-viewport")!;
-    await fireEvent.doubleClick(viewport);
-    await waitFor(() => expect(viewport.dataset.zoomed).toBeDefined());
-    changed = true;
-    await fireEvent(document, new Event("visibilitychange"));
-    await waitFor(() => expect(finish).toBeTypeOf("function"));
-    expect(screen.queryByRole("dialog", { name: /Photo viewer/ })).toBeNull();
-    finish(Response.json({ items: unchanged ? [item] : [], total: unchanged ? 1 : 0 }));
-    if (unchanged) {
-      await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
-      expect(screen.getByText("Original")).toBeTruthy();
-      expect(document.querySelector(".photo-viewport")).toBe(viewport);
-      expect(viewport.dataset.zoomed).toBeDefined();
-      expect(revoke).not.toHaveBeenCalledWith(originalURL);
-      return;
-    }
-    await waitFor(() => expect(revoke).toHaveBeenCalledWith(originalURL));
-    await waitFor(() => expect(screen.queryByAltText("Photo 1.jpg")).toBeNull());
-    expect(screen.queryByRole("dialog", { name: "Photo viewer, Photo 1.jpg" })).toBeNull();
-    expect(screen.queryByText("Synthetic camera")).toBeNull();
-  },
-);

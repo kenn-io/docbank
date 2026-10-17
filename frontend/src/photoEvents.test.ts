@@ -1,11 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { APIError } from "./api-transport.js";
-import {
-  photoEventIdleTimeout,
-  readPhotoEvents,
-  type PhotoEventBatch,
-  watchPhotoEvents,
-} from "./photoEvents.js";
+import { readPhotoEvents, type PhotoEventBatch, watchPhotoEvents } from "./photoEvents.js";
 
 const encoder = new TextEncoder();
 function stream(chunks: string[]) {

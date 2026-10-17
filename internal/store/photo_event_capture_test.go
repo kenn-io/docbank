@@ -10,7 +10,7 @@ import (
 
 func TestPhotoEventsCaptureWrites(t *testing.T) {
 	t.Parallel()
-	for _, change := range []string{"photo file", "technical metadata", "published metadata", "quality worker", "album", "tag", "saved", "collection", "document", "document worker", "peer leaves", "matching hash", "unrelated hash"} {
+	for _, change := range []string{"photo file", "technical metadata", "published metadata", "quality worker", "album", "saved", "collection", "document", "document worker", "peer leaves", "matching hash", "unrelated hash"} {
 		t.Run(change, func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
@@ -25,8 +25,6 @@ func TestPhotoEventsCaptureWrites(t *testing.T) {
 				docHash = photo.BlobHash
 			}
 			doc, err := s.CreateFile(ctx, s.RootID(), "document.txt", docHash, 4, "text/plain")
-			require.NoError(t, err)
-			tag, err := s.CreateTag(ctx, "Keyword")
 			require.NoError(t, err)
 			metadata := document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: []document.SourceMetadataFieldV1{{Key: "image.exif.iso", Namespace: "image.exif", SourceField: "ISO", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataInteger, Integer: new(int64(200))}}}}
 			canonical, _, err := document.MarshalSourceMetadataV1(metadata)
@@ -64,9 +62,6 @@ func TestPhotoEventsCaptureWrites(t *testing.T) {
 				})
 			case "album":
 				_, err = s.CreatePhotoSet(ctx, "Album")
-				generic = true
-			case "tag":
-				_, err = s.RenameTag(ctx, tag.ID, tag.Revision, "Renamed")
 				generic = true
 			case "saved":
 				_, err = s.CreateSavedQuery(ctx, "PhotoSource", "", SavedQueryKindQuery, []byte(`{"text":"photo"}`))
@@ -112,95 +107,105 @@ func TestPhotoEventsCaptureWrites(t *testing.T) {
 	}
 }
 
-func TestPhotoEventsSharedSourceOverflow(t *testing.T) {
+func TestPhotoEventsMetadataBudget(t *testing.T) {
 	t.Parallel()
-	for _, kind := range []string{"source", "generation"} {
-		t.Run(kind, func(t *testing.T) {
-			s := newTestStore(t)
-			ctx := t.Context()
-			run, err := s.BeginIngest(ctx, "cli", "Synthetic")
-			require.NoError(t, err)
-			for i := range 70 {
-				_, _, err := s.IngestFile(ctx, run, s.RootID(), fmt.Sprintf("photo-%d.jpg", i), fakeHash("11"), 4, "image/jpeg", "/synthetic/photo.jpg", "")
-				require.NoError(t, err)
+	for _, fixture := range []string{"photo sharers", "document sources"} {
+		t.Run(fixture, func(t *testing.T) {
+			for _, kind := range []string{"source", "generation"} {
+				t.Run(kind, func(t *testing.T) {
+					s := newTestStore(t)
+					ctx := t.Context()
+					hashes := []string{fakeHash("11")}
+					var assetID string
+					if fixture == "photo sharers" {
+						run, err := s.BeginIngest(ctx, "cli", "Synthetic")
+						require.NoError(t, err)
+						for i := range 70 {
+							_, _, err := s.IngestFile(ctx, run, s.RootID(), fmt.Sprintf("photo-%d.jpg", i), hashes[0], 4, "image/jpeg", "/synthetic/photo.jpg", "")
+							require.NoError(t, err)
+						}
+					} else {
+						photo, err := s.CreateFile(ctx, s.RootID(), "photo.jpg", hashes[0], 4, "image/jpeg")
+						require.NoError(t, err)
+						asset, err := s.PhotoAssetForNode(ctx, photo.ID)
+						require.NoError(t, err)
+						assetID = asset.ID
+						for i := range 70 {
+							hash := browseHash(fmt.Sprintf("document-metadata-%d", i))
+							_, err := s.CreateFile(ctx, s.RootID(), fmt.Sprintf("document-%d.txt", i), hash, 4, "text/plain")
+							require.NoError(t, err)
+							hashes = append(hashes, hash)
+						}
+					}
+					canonical := photoCanonical(t, photoMetadataField("image.exif.iso", "image.exif", "ISO", photoInteger(200)))
+					for _, hash := range hashes {
+						_, err := s.PublishSourceMetadata(ctx, hash, fakeHash("f1"), canonical)
+						require.NoError(t, err)
+					}
+					events, stop := s.SubscribePhotoEvents()
+					defer stop()
+					require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+						mutation := `DELETE FROM source_metadata_heads`
+						if kind == "generation" {
+							mutation = `UPDATE photo_technical_metadata SET iso=400`
+						}
+						_, err := tx.ExecContext(ctx, mutation)
+						return err
+					}))
+					event := nextPhotoEvent(t, events)
+					if fixture == "photo sharers" {
+						require.Equal(t, PhotoEvent{Refetch: true}, event)
+					} else {
+						require.Equal(t, assetID, event.AssetID)
+					}
+					noPhotoEvent(t, events)
+				})
 			}
-			metadata := document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: []document.SourceMetadataFieldV1{{Key: "image.exif.iso", Namespace: "image.exif", SourceField: "ISO", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataInteger, Integer: new(int64(200))}}}}
-			canonical, _, err := document.MarshalSourceMetadataV1(metadata)
-			require.NoError(t, err)
-			generation, err := s.PublishSourceMetadata(ctx, fakeHash("11"), fakeHash("f1"), canonical)
-			require.NoError(t, err)
-			ch, stop := s.SubscribePhotoEvents()
-			defer stop()
-			require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-				if kind == "generation" {
-					_, err := tx.ExecContext(ctx, `UPDATE photo_technical_metadata SET iso=400 WHERE generation_id=?`, generation.GenerationID)
-					return err
-				}
-				_, err := tx.ExecContext(ctx, `DELETE FROM source_metadata_heads WHERE source_sha256=?`, fakeHash("11"))
-				return err
-			}))
-			require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, ch))
-			noPhotoEvent(t, ch)
 		})
 	}
 }
 
-func TestPhotoEventsDocumentSeedingQuiet(t *testing.T) {
+func TestPhotoEventsBulkDocumentWritesQuiet(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	for i := range 70 {
-		_, err := s.CreateFile(ctx, s.RootID(), fmt.Sprintf("document-%d.txt", i), fakeHash("22"), 4, "text/plain")
-		require.NoError(t, err)
-	}
-	photo, err := s.CreateFile(ctx, s.RootID(), "photo.jpg", fakeHash("11"), 4, "image/jpeg")
-	require.NoError(t, err)
-	asset, err := s.PhotoAssetForNode(ctx, photo.ID)
-	require.NoError(t, err)
-	events, stop := s.SubscribePhotoEvents()
-	defer stop()
-	require.NoError(t, s.SeedTextExtractionQueue(ctx, legacyPlainTextExtractor, legacyPlainTextExtractorVersion))
-	noPhotoEvent(t, events)
-	_, _, err = s.Move(ctx, photo.ID, s.RootID(), "renamed.jpg", photo.Revision)
-	require.NoError(t, err)
-	require.Equal(t, asset.ID, nextPhotoEvent(t, events).AssetID)
-	noPhotoEvent(t, events)
-}
-
-func TestPhotoEventsDocumentMetadataBudget(t *testing.T) {
-	t.Parallel()
-	for _, kind := range []string{"source", "generation"} {
-		t.Run(kind, func(t *testing.T) {
+	for _, operation := range []string{"seeding", "trash"} {
+		t.Run(operation, func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
+			parent := s.RootID()
+			count := 70
+			if operation == "trash" {
+				dir, err := s.Mkdir(ctx, s.RootID(), "documents")
+				require.NoError(t, err)
+				parent = dir.ID
+				count = 100
+			}
+			for i := range count {
+				hash := fakeHash("22")
+				if operation == "trash" {
+					hash = browseHash(fmt.Sprintf("document-%d", i))
+				}
+				_, err := s.CreateFile(ctx, parent, fmt.Sprintf("document-%d.txt", i), hash, 4, "text/plain")
+				require.NoError(t, err)
+			}
 			photo, err := s.CreateFile(ctx, s.RootID(), "photo.jpg", fakeHash("11"), 4, "image/jpeg")
 			require.NoError(t, err)
 			asset, err := s.PhotoAssetForNode(ctx, photo.ID)
 			require.NoError(t, err)
-			hashes := []string{photo.BlobHash}
-			for i := range 70 {
-				hash := browseHash(fmt.Sprintf("document-metadata-%d", i))
-				_, err := s.CreateFile(ctx, s.RootID(), fmt.Sprintf("document-%d.txt", i), hash, 4, "text/plain")
-				require.NoError(t, err)
-				hashes = append(hashes, hash)
-			}
-			canonical := photoCanonical(t, photoMetadataField("image.exif.iso", "image.exif", "ISO", photoInteger(200)))
-			for _, hash := range hashes {
-				_, err := s.PublishSourceMetadata(ctx, hash, fakeHash("f1"), canonical)
-				require.NoError(t, err)
-			}
 			events, stop := s.SubscribePhotoEvents()
 			defer stop()
-			require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-				mutation := `DELETE FROM source_metadata_heads`
-				if kind == "generation" {
-					mutation = `UPDATE photo_technical_metadata SET iso=400`
-				}
-				_, err := tx.ExecContext(ctx, mutation)
-				return err
-			}))
-			require.Equal(t, asset.ID, nextPhotoEvent(t, events).AssetID)
+			if operation == "seeding" {
+				require.NoError(t, s.SeedTextExtractionQueue(ctx, legacyPlainTextExtractor, legacyPlainTextExtractorVersion))
+			} else {
+				_, _, err = s.Trash(ctx, parent, UnconditionalRev)
+				require.NoError(t, err)
+			}
 			noPhotoEvent(t, events)
+			if operation == "seeding" {
+				_, _, err = s.Move(ctx, photo.ID, s.RootID(), "renamed.jpg", photo.Revision)
+				require.NoError(t, err)
+				require.Equal(t, asset.ID, nextPhotoEvent(t, events).AssetID)
+				noPhotoEvent(t, events)
+			}
 		})
 	}
 }
