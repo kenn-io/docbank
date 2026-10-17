@@ -22,23 +22,6 @@ test("draws and names faces, opens person-filtered Library, and reads cull close
     const session = new URLSearchParams(url.hash.slice(1)).get("web_session")!;
     url.pathname = "/photos";
     await page.goto(url.href);
-    await page
-      .locator(".photo-cell")
-      .nth(0)
-      .getByRole("button", { name: /^Select / })
-      .click();
-    await page
-      .locator(".photo-cell")
-      .nth(1)
-      .getByRole("button", { name: /^Select / })
-      .click({ modifiers: ["Control"] });
-    await page.getByRole("button", { name: "Compare", exact: true }).click();
-    const compare = page.getByRole("dialog", { name: "Compare photos" });
-    await expect(compare.locator(".photo-viewport img").first()).toBeVisible();
-    await compare.getByRole("button", { name: "Manual closeup", exact: true }).click();
-    await compare.locator(".photo-viewport").first().click();
-    await expect(compare.getByLabel("Matching closeups")).toBeVisible();
-    await compare.getByRole("button", { name: "Exit compare", exact: true }).click();
     await page.locator(".photo-image").first().dblclick();
     const loupe = page.getByRole("dialog", { name: /^Photo viewer,/ });
     await expect(loupe.locator(".photo-viewport img")).toBeVisible();

@@ -187,6 +187,5 @@ export class PhotoFaces {
   dispose() {
     this.disposed = true;
     this.controller?.abort();
-    if (!this.hiddenAccess) this.writer?.abort();
   }
 }

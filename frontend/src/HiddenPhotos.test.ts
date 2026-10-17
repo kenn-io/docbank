@@ -33,19 +33,21 @@ const props = (onauthfailure = vi.fn()) => ({
 const problem = (status: number, detail: string, code = "") =>
   new Response(JSON.stringify({ detail, code }), { status });
 
-it("lets a face clear settle after locking conceals Hidden", async () => {
+it.each(["lock", "tab"])("lets a face clear settle after %s conceals Hidden", async (target) => {
   prepare();
   storage();
   let finish!: () => void;
+  let signal!: AbortSignal;
   const events: string[] = [];
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (url: string) => {
+    vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith("/photos/hidden")) return Response.json(state(true));
       if (url.includes("/assets/query")) return Response.json({ items: [photo(1)], total: 1 });
       if (url.endsWith("/faces")) return Response.json(photoFacePage());
       if (url.includes("/people?")) return Response.json({ items: [] });
       if (url.endsWith("/face-decisions")) {
+        signal = init!.signal!;
         await new Promise<void>((resolve) => (finish = resolve));
         events.push("saved");
         return Response.json({ receipt_id: "receipt-a" });
@@ -66,12 +68,17 @@ it("lets a face clear settle after locking conceals Hidden", async () => {
   );
   await fireEvent.mouseDown(await screen.findByRole("option", { name: "Clear name" }));
   await waitFor(() => expect(finish).toBeTypeOf("function"));
-  const locking = view.component.lock();
+  const locking = target === "lock" ? view.component.lock() : Promise.resolve();
+  if (target === "tab") {
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    await fireEvent(document, new Event("visibilitychange"));
+  }
   await waitFor(() => expect(screen.queryByRole("main", { name: "Photo library" })).toBeNull());
   expect(events).toEqual([]);
+  expect(signal.aborted).toBe(false);
   finish();
   await locking;
-  expect(events).toEqual(["saved", "locked"]);
+  await waitFor(() => expect(events).toEqual(target === "lock" ? ["saved", "locked"] : ["saved"]));
 });
 
 it("waits for a held leave lock before redisplaying on return", async () => {

@@ -1432,7 +1432,7 @@
                 {/if}
                 <Button
                   size="sm"
-                  disabled={!editCount && !editor.dirty}
+                  disabled={inspectorFaces.busy || (!editCount && !editor.dirty)}
                   onclick={() => (editing = !editing)}>Metadata</Button
                 >
                 {#if albums}<PhotoAlbumPicker bind:this={picker} {photos} {albums} />{/if}
