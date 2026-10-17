@@ -230,7 +230,7 @@
         ? `${selected.name}: ${patch.flag || "flag cleared"}`
         : `${selected.name}: ${patch.rating} stars`;
     if (editor.fileID) announcement += " (shown file only)";
-    if (checkpoint.autoAdvance && cull.currentID === id) cull.move(1);
+    if (patch.flag !== undefined && checkpoint.autoAdvance && cull.currentID === id) cull.move(1);
   }
   async function retryDecision() {
     if (!photo || busy || editor.loading) return;

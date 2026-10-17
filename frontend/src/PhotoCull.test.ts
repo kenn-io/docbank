@@ -116,6 +116,57 @@ it("decides once with P, advances, announces the decision and offers receipt Und
   await fireEvent.keyDown(document.querySelector(".photo-cull")!, { key: "Escape" });
   expect(close).toHaveBeenCalledOnce();
 });
+it.each(
+  [false, true].flatMap((retry) =>
+    [
+      { key: "0", patch: { rating: 0 }, announcement: "0 stars", next: "photo-1" },
+      { key: "1", patch: { rating: 1 }, announcement: "1 stars", next: "photo-1" },
+      { key: "2", patch: { rating: 2 }, announcement: "2 stars", next: "photo-1" },
+      { key: "3", patch: { rating: 3 }, announcement: "3 stars", next: "photo-1" },
+      { key: "4", patch: { rating: 4 }, announcement: "4 stars", next: "photo-1" },
+      { key: "5", patch: { rating: 5 }, announcement: "5 stars", next: "photo-1" },
+      { key: "p", patch: { flag: "pick" }, announcement: "pick", next: "photo-2" },
+      { key: "x", patch: { flag: "reject" }, announcement: "reject", next: "photo-2" },
+      { key: "u", patch: { flag: "" }, announcement: "flag cleared", next: "photo-2" },
+    ].map((decision) => ({ ...decision, retry })),
+  ),
+)(
+  "auto-advance follows flag decisions for $key with retry=$retry",
+  async ({ key, patch, announcement, next, retry }) => {
+    const edit = vi
+      .spyOn(api, "editPhotoAuthored")
+      .mockResolvedValue({ receipt_id: "", before: [], after: [] });
+    if (retry) edit.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    const rows = [photo(1), photo(2)];
+    const { cull, photos, container } = await reviewPhoto(rows[0], true);
+    vi.mocked(photos.lookup).mockImplementation(
+      async (id) => rows.find((row) => row.asset_id === id)!,
+    );
+    await act(() => {
+      cull.run = {
+        ...cull.run!,
+        ids: rows.map((row) => row.asset_id),
+        checkpoint: { ...cull.run!.checkpoint, pass: rows.map((row) => row.asset_id) },
+      };
+    });
+    await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key });
+    if (retry) {
+      await screen.findByText("Failed to fetch");
+      expect(cull.currentID).toBe("photo-1");
+      await fireEvent.click(await readyButton("Retry edit"));
+    }
+    await waitFor(() =>
+      expect(container.querySelector(".photo-cull > span[aria-live='polite']")?.textContent).toBe(
+        `Photo 1.jpg: ${announcement}`,
+      ),
+    );
+    expect(edit).toHaveBeenCalledTimes(retry ? 2 : 1);
+    for (const [request] of edit.mock.calls) expect(request.patch).toEqual(patch);
+    expect(cull.currentID).toBe(next);
+    await screen.findByText(next === "photo-1" ? "Photo 1.jpg" : "Photo 2.jpg");
+  },
+);
+
 it("navigates with keyboard focus after activating Undo", async () => {
   const before = preparedPhoto(1);
   const picked = { ...before, revision: 2, values: { ...before.values, flag: "pick" as const } };
