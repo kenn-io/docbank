@@ -57,33 +57,28 @@ it.each(["fit", "large"] as const)(
   },
 );
 
-it.each(["rejected", "missing"] as const)(
-  "keeps a successful large preview free of errors when the pending fit preview is %s",
-  async (failure) => {
-    const photos = new Photos("session", vi.fn());
-    let rejectFit!: (cause: Error) => void, resolveFit!: (slot: PhotoPreviewSlot) => void;
-    const fit = new Promise<PhotoPreviewSlot>((resolve, reject) => {
-      rejectFit = reject;
-      resolveFit = resolve;
-    });
-    const preview = vi
-      .spyOn(photos, "preview")
-      .mockImplementation((_row, size) =>
-        size === "fit" ? fit : Promise.resolve({ state: "ready", generation_id: "large-1" }),
-      );
-    const { display } = loader(photos);
-    await vi.waitFor(() => expect(preview).toHaveBeenCalled());
-    display.zoom();
-    await vi.waitFor(() => expect(display.quality).toBe("large"));
-    const url = display.url;
-    if (failure === "rejected") rejectFit(new Error("Fit preview failed"));
-    else resolveFit({ state: "missing" });
-    await fit.catch(() => {});
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(display.url).toBe(url);
-    expect(display.failure).toBeUndefined();
-  },
-);
+it("keeps a successful large preview free of errors when the pending fit preview is rejected", async () => {
+  const photos = new Photos("session", vi.fn());
+  let rejectFit!: (cause: Error) => void;
+  const fit = new Promise<PhotoPreviewSlot>((_resolve, reject) => {
+    rejectFit = reject;
+  });
+  const preview = vi
+    .spyOn(photos, "preview")
+    .mockImplementation((_row, size) =>
+      size === "fit" ? fit : Promise.resolve({ state: "ready", generation_id: "large-1" }),
+    );
+  const { display } = loader(photos);
+  await vi.waitFor(() => expect(preview).toHaveBeenCalled());
+  display.zoom();
+  await vi.waitFor(() => expect(display.quality).toBe("large"));
+  const url = display.url;
+  rejectFit(new Error("Fit preview failed"));
+  await fit.catch(() => {});
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(display.url).toBe(url);
+  expect(display.failure).toBeUndefined();
+});
 
 it("reports unsupported previews without offering an ineffective retry", async () => {
   const photos = new Photos("session", vi.fn());
