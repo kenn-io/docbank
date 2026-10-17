@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-11
+last_edited: 2026-10-17
 title: Configuration
 description: Vault location, data layout, config.toml, and environment variables.
 ---
@@ -16,6 +16,21 @@ secondary-store connections. A vault with only a primary store needs no
 configuration file. Each registered secondary store needs a matching
 connection profile after restart. Backup commands need either a configured
 repository or a `--repo` flag.
+
+Docbank rejects TOML syntax errors and unknown keys when a command reads the
+file. The daemon validates every subsystem before starting. `docbank web`
+validates web options; `docbank mcp --transport http` validates its HTTP policy
+and selected credential binding. These launchers ignore semantic errors in
+unrelated sections and do not apply daemon-only environment overrides.
+
+Data commands such as `search` use the running daemon's configuration and
+credentials. An invalid unused section in the file produces a warning on stderr
+once per vault in the client process. Warnings check the file alone; the daemon's
+startup environment can satisfy requirements absent from the file.
+If no compatible daemon is running, the command must start one with a valid
+complete configuration. A startup validation failure reports
+`daemon config invalid:` followed by the section and reason. Correct that
+section or start the daemon with its intended environment before retrying.
 
 For optional pinned local email rendering, see
 [Email PDF configuration](usage/email-pdf.md#configure-the-renderer).

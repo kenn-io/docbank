@@ -42,7 +42,7 @@ browser credentials: do not paste it into logs, issue trackers, or chat.`,
 		if err != nil {
 			return err
 		}
-		cfg, err := config.Load(layout.Root)
+		cfg, err := config.LoadWeb(layout.Root)
 		if err != nil {
 			return err
 		}
