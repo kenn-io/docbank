@@ -10,9 +10,11 @@ import type {
   CullScope,
   CullStorage,
 } from "./photoCullStorage.js";
-import { lookupPhotoRows } from "./photos.svelte.js";
+import { lookupPhotoFlags } from "./generated/docbank.js";
 import type { PhotoBrowseRowFlag } from "./generated/docbank.js";
 
+// Keep in sync with lookupPhotoFlags asset_ids maxItems.
+const flagLookupLimit = 20_000;
 const scopes: CullScope[] = ["unflagged", "picks", "rejects", "all"];
 const failure = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause));
 
@@ -204,19 +206,20 @@ export class PhotoCull {
     }
   }
   private async refreshFlags(signal: AbortSignal) {
-    const rows = await lookupPhotoRows(
-      this.session,
-      this.run!.ids,
-      signal,
-      (loaded, total) => {
-        this.progress = `Checking ${loaded} of ${total} photos…`;
-      },
-      false,
-      undefined,
-      ({ asset_id, flag }) => ({ asset_id, flag }),
-    );
-    signal.throwIfAborted();
-    return new Map(rows.map((row) => [row.asset_id, row.flag]));
+    const ids = this.run!.ids;
+    const flags = new Map<string, PhotoBrowseRowFlag>();
+    for (let offset = 0; offset < ids.length; offset += flagLookupLimit) {
+      signal.throwIfAborted();
+      const batch = ids.slice(offset, offset + flagLookupLimit);
+      this.progress = `Checking ${offset} of ${ids.length} photos…`;
+      const { items } = await lookupPhotoFlags(
+        { asset_ids: batch },
+        { session: this.session, signal },
+      );
+      signal.throwIfAborted();
+      for (const row of items) flags.set(row.asset_id, row.flag);
+    }
+    return flags;
   }
   private matches(scope: CullScope, flags: Map<string, PhotoBrowseRowFlag>) {
     const flag = scope === "picks" ? "pick" : scope === "rejects" ? "reject" : "";

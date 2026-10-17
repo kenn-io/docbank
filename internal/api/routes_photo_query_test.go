@@ -24,6 +24,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -657,4 +658,40 @@ func TestPhotoBrowseRowsCarryFileModifiedTime(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &compact))
 	require.Len(t, compact.MapItems, 1)
 	require.Equal(t, new("2024-03-05T10:00:00Z"), compact.MapItems[0].FileModifiedTime)
+}
+
+func TestLookupPhotoFlags(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	ctx := t.Context()
+	node, err := s.CreateFile(ctx, s.RootID(), "live.jpg", testHash("live"), 10, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	liveID := asset.ID
+	for _, size := range []int{20000, 20001, 0, -2} {
+		t.Run(strconv.Itoa(size), func(t *testing.T) {
+			ids := []string{}
+			if size > 0 {
+				for i := range size {
+					ids = append(ids, fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1))
+				}
+				ids[0] = liveID
+			} else if size == -2 {
+				ids = []string{"ABCDEF01-2345-4678-89AB-CDEF01234567"}
+			}
+			response, body := do(t, ts, http.MethodPost, "/api/v1/photos/assets/flags", nil, api.LookupPhotoFlagsRequest{AssetIDs: ids})
+			if size <= 0 || size > 20000 {
+				require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+				if size < 0 {
+					require.Contains(t, body, ids[0])
+				}
+				return
+			}
+			require.Equal(t, http.StatusOK, response.StatusCode, body)
+			var result api.PhotoFlagsResponse
+			require.NoError(t, json.Unmarshal([]byte(body), &result))
+			require.Equal(t, []store.PhotoFlagRow{{AssetID: liveID, Flag: ""}}, result.Items)
+		})
+	}
 }

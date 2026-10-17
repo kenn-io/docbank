@@ -3396,6 +3396,16 @@ export interface JobRequest {
   plan_id: string;
 }
 
+export interface LookupPhotoFlagsRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * @minItems 1
+     * @maxItems 20000
+     */
+  asset_ids: string[];
+}
+
 export interface MailboxArchive {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -5698,6 +5708,26 @@ export interface PhotoFaceResult {
   readonly $schema?: string;
   assertion?: PhotoPersonAssertion;
   face?: PhotoFace;
+}
+
+export type PhotoFlagRowFlag = typeof PhotoFlagRowFlag[keyof typeof PhotoFlagRowFlag];
+
+
+export const PhotoFlagRowFlag = {
+  '': '',
+  pick: 'pick',
+  reject: 'reject',
+} as const;
+
+export interface PhotoFlagRow {
+  asset_id: string;
+  flag: PhotoFlagRowFlag;
+}
+
+export interface PhotoFlagsResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: PhotoFlagRow[];
 }
 
 export interface PhotoHiddenPasscodeRequest {
@@ -15639,6 +15669,44 @@ return sessionJSON<PhotoAsset>(getCreatePhotoAssetUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(createPhotoAssetRequest)
+  }
+);}
+
+
+
+export const getLookupPhotoFlagsUrl = () => {
+
+
+
+
+  return `/api/v1/photos/assets/flags`
+}
+
+/**
+ * @summary Read current flags for visible photo assets
+ */
+export const lookupPhotoFlags = async (lookupPhotoFlagsRequest: NonReadonly<LookupPhotoFlagsRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoFlagsResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoFlagsResponse>(getLookupPhotoFlagsUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(lookupPhotoFlagsRequest)
   }
 );}
 

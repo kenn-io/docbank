@@ -9016,6 +9016,53 @@ func (c *Client) CreatePhotoAsset(ctx context.Context, options *CreatePhotoAsset
 	return responseParser(ctx, resp)
 }
 
+// LookupPhotoFlags Read current flags for visible photo assets
+func (c *Client) LookupPhotoFlags(ctx context.Context, options *LookupPhotoFlagsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*LookupPhotoFlagsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/assets/flags",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*LookupPhotoFlagsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(LookupPhotoFlagsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "LookupPhotoFlagsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[LookupPhotoFlagsErrorResponse](resp, "LookupPhotoFlagsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/assets/flags")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ListPhotoAssets Browse matching photo assets
 func (c *Client) ListPhotoAssets(ctx context.Context, options *ListPhotoAssetsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPhotoAssetsResponse, error) {
 	var err error
@@ -20275,6 +20322,34 @@ func (o *CreatePhotoAssetRequestOptions) GetHeader() (map[string]string, error) 
 	return nil, nil
 }
 
+// LookupPhotoFlagsRequestOptions is the options needed to make a request to LookupPhotoFlags.
+type LookupPhotoFlagsRequestOptions struct {
+	Body *LookupPhotoFlagsBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *LookupPhotoFlagsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *LookupPhotoFlagsRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *LookupPhotoFlagsRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *LookupPhotoFlagsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ListPhotoAssetsRequestOptions is the options needed to make a request to ListPhotoAssets.
 type ListPhotoAssetsRequestOptions struct {
 	Body *ListPhotoAssetsBody
@@ -24811,6 +24886,8 @@ type RemovePhotoAlbumMembersBody = PhotoAlbumMembersRequest
 
 type CreatePhotoAssetBody = CreatePhotoAssetRequest
 
+type LookupPhotoFlagsBody = LookupPhotoFlagsRequest
+
 type ListPhotoAssetsBody = PhotoBrowseRequest
 
 type GetPhotoTimelineBody = PhotoTimelineRequest
@@ -26127,6 +26204,10 @@ type CreatePhotoAssetResponse = api.PhotoAsset
 
 type CreatePhotoAssetErrorResponse = Error
 
+type LookupPhotoFlagsResponse = api.PhotoFlagsResponse
+
+type LookupPhotoFlagsErrorResponse = Error
+
 type ListPhotoAssetsResponse = api.PhotoBrowsePage
 
 type ListPhotoAssetsErrorResponse = Error
@@ -27183,6 +27264,8 @@ type LaneControl = api.LaneControl
 
 type Locator = report.Locator
 
+type LookupPhotoFlagsRequest = api.LookupPhotoFlagsRequest
+
 type MailboxArchive = store.MailboxArchive
 
 type MailboxArchiveInput = api.MailboxArchiveInput
@@ -27465,6 +27548,10 @@ type PhotoFacePage = api.PhotoFacePage
 type PhotoFaceResult = api.PhotoFaceResult
 
 type PhotoFile = api.PhotoFile
+
+type PhotoFlagRow = store.PhotoFlagRow
+
+type PhotoFlagsResponse = api.PhotoFlagsResponse
 
 type PhotoHiddenPasscodeRequest = api.PhotoHiddenPasscodeRequest
 

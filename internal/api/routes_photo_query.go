@@ -23,7 +23,25 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
+type LookupPhotoFlagsRequest struct {
+	AssetIDs []string `json:"asset_ids" format:"uuid" minItems:"1" maxItems:"20000"`
+}
+
+type PhotoFlagsResponse struct {
+	Items []store.PhotoFlagRow `json:"items"`
+}
+
 func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryService, gate *OperationGate) {
+	huma.Register(api, huma.Operation{
+		OperationID: "lookupPhotoFlags", Method: http.MethodPost, Path: "/api/v1/photos/assets/flags",
+		Summary: "Read current flags for visible photo assets", MaxBodyBytes: 1 << 20,
+	}, func(ctx context.Context, in *struct{ Body LookupPhotoFlagsRequest }) (*struct{ Body PhotoFlagsResponse }, error) {
+		items, err := d.Store.LookupPhotoFlags(ctx, in.Body.AssetIDs)
+		if err != nil {
+			return nil, FromStoreError(err)
+		}
+		return &struct{ Body PhotoFlagsResponse }{Body: PhotoFlagsResponse{Items: items}}, nil
+	})
 	recipes := make(map[string]string, 3)
 	for _, size := range []string{"grid", "fit", "large"} {
 		recipe, err := processing.VisualPreviewRecipeForSize(size)

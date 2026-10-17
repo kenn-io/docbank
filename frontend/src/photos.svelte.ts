@@ -56,40 +56,26 @@ export function lookupPhotoRows(
   session: string,
   ids: string[],
   signal?: AbortSignal,
-  onprogress?: (loaded: number, total: number) => void,
   hidden?: boolean,
 ): Promise<PhotoBrowseRow[]>;
 export function lookupPhotoRows<Row extends { asset_id: string }>(
   session: string,
   ids: string[],
   signal: AbortSignal | undefined,
-  onprogress: ((loaded: number, total: number) => void) | undefined,
   hidden: boolean,
   read: (batch: string[], signal: AbortSignal) => Promise<{ items: Row[] }>,
-): Promise<Row[]>;
-export function lookupPhotoRows<Row extends { asset_id: string }>(
-  session: string,
-  ids: string[],
-  signal: AbortSignal | undefined,
-  onprogress: ((loaded: number, total: number) => void) | undefined,
-  hidden: boolean,
-  read: undefined,
-  project: (row: PhotoBrowseRow) => Row,
 ): Promise<Row[]>;
 export async function lookupPhotoRows(
   session: string,
   ids: string[],
   signal?: AbortSignal,
-  onprogress?: (loaded: number, total: number) => void,
   hidden = false,
   read?: (batch: string[], signal: AbortSignal) => Promise<{ items: { asset_id: string }[] }>,
-  project?: (row: PhotoBrowseRow) => { asset_id: string },
 ): Promise<{ asset_id: string }[]> {
   const controller = new AbortController();
   signal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
   const rows: { asset_id: string }[] = [];
-  let offset = 0,
-    loaded = 0;
+  let offset = 0;
   try {
     await Promise.all(
       Array.from({ length: Math.min(4, Math.ceil(ids.length / 64)) }, async () => {
@@ -107,12 +93,10 @@ export async function lookupPhotoRows(
               },
               { session, signal },
             );
-            items = project ? page.items.map(project) : page.items;
+            items = page.items;
           }
           signal?.throwIfAborted();
           rows.push(...items);
-          loaded += batch.length;
-          onprogress?.(loaded, ids.length);
         }
       }),
     );
@@ -532,7 +516,7 @@ export class Photos {
 
   async lookupMany(ids: string[], signal: AbortSignal) {
     try {
-      return await lookupPhotoRows(this.session, ids, signal, undefined, this.hidden);
+      return await lookupPhotoRows(this.session, ids, signal, this.hidden);
     } catch (cause) {
       if (!signal.aborted) this.authFailure(cause);
       throw cause;
@@ -541,7 +525,7 @@ export class Photos {
 
   async lookup(assetID: string, signal: AbortSignal): Promise<PhotoBrowseRow> {
     try {
-      const [row] = await lookupPhotoRows(this.session, [assetID], signal, undefined, this.hidden);
+      const [row] = await lookupPhotoRows(this.session, [assetID], signal, this.hidden);
       if (!row) throw new APIError("This photo is no longer in this view.", 404, "not_found");
       return row;
     } catch (cause) {
@@ -1029,7 +1013,6 @@ export class Photos {
       this.session,
       absent,
       signal,
-      undefined,
       this.hidden,
       (asset_ids, signal) =>
         this.page(

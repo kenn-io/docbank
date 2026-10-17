@@ -7802,6 +7802,30 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/report
         name: report
+    LookupPhotoFlagsRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/LookupPhotoFlagsRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        asset_ids:
+          items:
+            format: uuid
+            type: string
+          maxItems: 20000
+          minItems: 1
+          type: array
+      required:
+        - asset_ids
+      type: object
+      x-go-type: api.LookupPhotoFlagsRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     MailboxArchive:
       additionalProperties: false
       properties:
@@ -12595,6 +12619,47 @@ components:
         - created_at
       type: object
       x-go-type: api.PhotoFile
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoFlagRow:
+      additionalProperties: false
+      properties:
+        asset_id:
+          format: uuid
+          type: string
+        flag:
+          enum:
+            - ""
+            - pick
+            - reject
+          type: string
+      required:
+        - asset_id
+        - flag
+      type: object
+      x-go-type: store.PhotoFlagRow
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    PhotoFlagsResponse:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoFlagsResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/PhotoFlagRow"
+          type: array
+      required:
+        - items
+      type: object
+      x-go-type: api.PhotoFlagsResponse
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -25112,6 +25177,29 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Create a photo asset for one file
+  /api/v1/photos/assets/flags:
+    post:
+      operationId: lookupPhotoFlags
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LookupPhotoFlagsRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoFlagsResponse"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read current flags for visible photo assets
   /api/v1/photos/assets/query:
     post:
       operationId: listPhotoAssets

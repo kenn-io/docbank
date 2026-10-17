@@ -228,9 +228,9 @@ it("blocks decisions, navigation, scope changes and exit during checkpoint check
 
 it("retries a failed completion lookup and restores the unflagged remainder offer", async () => {
   const lookup = vi
-    .spyOn(api, "listPhotoAssets")
+    .spyOn(api, "lookupPhotoFlags")
     .mockRejectedValueOnce(new APIError("Service unavailable", 503, "unavailable"))
-    .mockResolvedValue({ items: [photo(1)], total: 1, facets: [], relevance_available: false });
+    .mockResolvedValue({ items: [photo(1)] });
   const { cull } = await reviewPhoto();
   await fireEvent.click(await readyButton("Next"));
   await screen.findByRole("heading", { name: "Pass complete" });
@@ -365,11 +365,8 @@ it("refreshes current and cached rows when a new pass starts on the same photo",
   await screen.findByText("Unflagged · 0 stars");
   rows[0] = { ...rows[0]!, flag: "pick" };
   rows[1] = { ...rows[1]!, flag: "pick" };
-  vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
+  vi.spyOn(api, "lookupPhotoFlags").mockResolvedValue({
     items: rows,
-    total: 2,
-    facets: [],
-    relevance_available: false,
   });
   await fireEvent.click(await readyButton("Scope: unflagged"));
   await fireEvent.click(screen.getByRole("button", { name: "Reset pass" }));
@@ -769,11 +766,8 @@ it.each(["Cancel", "Reset pass"])(
   "%s in the scope modal preserves or replaces the saved pass",
   async (answer) => {
     const { cull } = await reviewPhoto();
-    const list = vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
+    const list = vi.spyOn(api, "lookupPhotoFlags").mockResolvedValue({
       items: [photo(1)],
-      total: 1,
-      facets: [],
-      relevance_available: false,
     });
     await fireEvent.click(await readyButton("Scope: all"));
     await screen.findByRole("dialog", { name: "Change scope and reset this pass's progress?" });
@@ -827,11 +821,8 @@ it.each(["rating only", "flag change", "unavailable mark and auto-advance toggle
   async (kind) => {
     const row = photo(1);
     if (kind === "flag change") row.flag = "pick";
-    const flags = vi.spyOn(api, "listPhotoAssets").mockImplementation(async () => ({
+    const flags = vi.spyOn(api, "lookupPhotoFlags").mockImplementation(async () => ({
       items: [{ ...row }],
-      total: 1,
-      facets: [],
-      relevance_available: false,
     }));
     const before = preparedPhoto(1);
     const undo = vi.spyOn(api, "undoPhotoAuthored").mockImplementation(async () => {
