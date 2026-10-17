@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -21,6 +22,7 @@ func BenchmarkPhotoImportMetadata(b *testing.B) {
 			for _, audience := range []string{"none", "locked", "hidden"} {
 				b.Run(fmt.Sprintf("existing=%d/edit=%t/subscriber=%s", existing, edit, audience), func(b *testing.B) {
 					b.ReportAllocs()
+					var installation time.Duration
 					for b.Loop() {
 						b.StopTimer()
 						dir := b.TempDir()
@@ -58,7 +60,8 @@ func BenchmarkPhotoImportMetadata(b *testing.B) {
 								Size: 128, MediaType: "image/jpeg", OriginalPath: "/synthetic/" + name,
 							}}}
 						}
-						ctx, cancel := setupPhotoBenchmarkCapture(b, s, audience)
+						ctx, cancel, installed := setupPhotoBenchmarkCapture(b, s, audience)
+						installation += installed
 						require.NoError(b, s.Checkpoint(ctx))
 						b.StartTimer()
 						for i, group := range groups {
@@ -80,14 +83,15 @@ func BenchmarkPhotoImportMetadata(b *testing.B) {
 						b.StartTimer()
 					}
 					b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*batch), "ns/file")
+					b.ReportMetric(float64(installation.Microseconds())/float64(b.N)/1000, "capture-install-ms")
 				})
 			}
 		}
 	}
 }
 
-// Both workloads create the same tag before timing.
-func setupPhotoBenchmarkCapture(b *testing.B, s *Store, audience string) (context.Context, func()) {
+// Each audience creates a tag before timing to install capture when subscribed.
+func setupPhotoBenchmarkCapture(b *testing.B, s *Store, audience string) (context.Context, func(), time.Duration) {
 	b.Helper()
 	ctx := b.Context()
 	if audience == "hidden" {
@@ -101,8 +105,10 @@ func setupPhotoBenchmarkCapture(b *testing.B, s *Store, audience string) (contex
 	if audience != "none" {
 		events, cancel = s.SubscribePhotoEvents(ctx)
 	}
-	_, err := s.CreateTag(ctx, "Synthetic benchmark keyword")
+	started := time.Now()
+	_, err := s.CreateTag(ctx, "Synthetic benchmark keyword "+audience)
 	require.NoError(b, err)
+	installed := time.Since(started)
 	if events != nil {
 		select {
 		case event := <-events:
@@ -111,5 +117,5 @@ func setupPhotoBenchmarkCapture(b *testing.B, s *Store, audience string) (contex
 			b.Fatal("creating a tag did not publish a capture event")
 		}
 	}
-	return ctx, cancel
+	return ctx, cancel, installed
 }

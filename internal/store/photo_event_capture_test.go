@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -182,6 +183,7 @@ func TestPhotoEventsNonPhotoSharedBlobMembership(t *testing.T) {
 	require.NoError(t, err)
 	events, cancel := s.SubscribePhotoEvents(ctx)
 	defer cancel()
+	require.Zero(t, browsePhotoPage(t, s, `{"filters":{"has_duplicates":true}}`).Total)
 	baseline, err := s.CreateFile(ctx, s.RootID(), "note.txt", fakeHash("33"), 4, "text/plain")
 	require.NoError(t, err)
 	noPhotoEvent(t, events)
@@ -197,6 +199,9 @@ func TestPhotoEventsNonPhotoSharedBlobMembership(t *testing.T) {
 	doc, err := s.CreateFile(ctx, s.RootID(), "duplicate.bin", first.BlobHash, 4, "application/octet-stream")
 	require.NoError(t, err)
 	require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
+	duplicates := browsePhotoPage(t, s, `{"filters":{"has_duplicates":true}}`)
+	require.Equal(t, int64(1), duplicates.Total)
+	require.Equal(t, first.ID, duplicates.Items[0].NodeID)
 	doc, _, err = s.Move(ctx, doc.ID, s.RootID(), "renamed.bin", doc.Revision)
 	require.NoError(t, err)
 	noPhotoEvent(t, events)
@@ -213,18 +218,79 @@ func TestPhotoEventsNonPhotoSharedBlobMembership(t *testing.T) {
 	doc, _, err = s.Trash(ctx, doc.ID, doc.Revision)
 	require.NoError(t, err)
 	require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
+	require.Zero(t, browsePhotoPage(t, s, `{"filters":{"has_duplicates":true}}`).Total)
 	doc, _, err = s.Restore(ctx, doc.ID, doc.Revision)
 	require.NoError(t, err)
 	require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
 	doc, _, err = s.ReplaceContent(ctx, doc.ID, doc.Revision, second.BlobHash, 4, "application/octet-stream")
 	require.NoError(t, err)
 	require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
+	duplicates = browsePhotoPage(t, s, `{"filters":{"has_duplicates":true}}`)
+	require.Equal(t, int64(1), duplicates.Total)
+	require.Equal(t, second.ID, duplicates.Items[0].NodeID)
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `DELETE FROM nodes WHERE id=?`, doc.ID)
 		return err
 	}))
 	require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
 	noPhotoEvent(t, events)
+}
+
+func TestPhotoEventsPhotoPeerMembership(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	first, err := s.CreateFile(ctx, s.RootID(), "photo.jpg", fakeHash("11"), 4, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, first.ID)
+	require.NoError(t, err)
+	events, cancel := s.SubscribePhotoEvents(ctx)
+	defer cancel()
+	oldHash := first.BlobHash
+	first, _, err = s.ReplaceContent(ctx, first.ID, first.Revision, fakeHash("55"), 4, "image/jpeg")
+	require.NoError(t, err)
+	require.Equal(t, asset.ID, nextPhotoEvent(t, events).AssetID)
+	_, err = s.CreateFile(ctx, s.RootID(), "old-photo-content.bin", oldHash, 4, "application/octet-stream")
+	require.NoError(t, err)
+	noPhotoEvent(t, events)
+	_, err = s.CreateFile(ctx, s.RootID(), "new-photo-content.bin", first.BlobHash, 4, "application/octet-stream")
+	require.NoError(t, err)
+	require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
+	first, _, err = s.Trash(ctx, first.ID, first.Revision)
+	require.NoError(t, err)
+	require.Equal(t, asset.ID, nextPhotoEvent(t, events).AssetID)
+	_, err = s.CreateFile(ctx, s.RootID(), "trashed-photo-content.bin", first.BlobHash, 4, "application/octet-stream")
+	require.NoError(t, err)
+	noPhotoEvent(t, events)
+	first, _, err = s.Restore(ctx, first.ID, first.Revision)
+	require.NoError(t, err)
+	require.Equal(t, asset.ID, nextPhotoEvent(t, events).AssetID)
+	_, err = s.CreateFile(ctx, s.RootID(), "restored-photo-content.bin", first.BlobHash, 4, "application/octet-stream")
+	require.NoError(t, err)
+	require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
+	asset, err = s.PhotoAssetForNode(ctx, first.ID)
+	require.NoError(t, err)
+	asset, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, asset.Files[0].ID, PhotoDetachOptions{})
+	require.NoError(t, err)
+	require.Equal(t, asset.ID, nextPhotoEvent(t, events).AssetID)
+	_, err = s.CreateFile(ctx, s.RootID(), "detached-photo-content.bin", first.BlobHash, 4, "application/octet-stream")
+	require.NoError(t, err)
+	noPhotoEvent(t, events)
+	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, first.ID, PhotoRoleImage, nil)
+	require.NoError(t, err)
+	require.Equal(t, asset.ID, nextPhotoEvent(t, events).AssetID)
+	rejected := errors.New("synthetic rollback")
+	require.ErrorIs(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE nodes SET trashed_at=? WHERE id=?`, nowRFC3339(), first.ID)
+		if err != nil {
+			return err
+		}
+		return rejected
+	}), rejected)
+	noPhotoEvent(t, events)
+	_, err = s.CreateFile(ctx, s.RootID(), "reattached-photo-content.bin", first.BlobHash, 4, "application/octet-stream")
+	require.NoError(t, err)
+	require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
 }
 
 func TestPhotoEventsCaptureDepictedPeople(t *testing.T) {

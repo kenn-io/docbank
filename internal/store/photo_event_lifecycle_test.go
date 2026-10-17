@@ -13,7 +13,7 @@ import (
 func photoCaptureObjects(t *testing.T, s *Store) int {
 	t.Helper()
 	var count int
-	require.NoError(t, s.writeDB.QueryRowContext(t.Context(), `SELECT count(*) FROM temp.sqlite_schema WHERE name='docbank_photo_changes' OR name LIKE 'photo_events_%'`).Scan(&count))
+	require.NoError(t, s.writeDB.QueryRowContext(t.Context(), `SELECT count(*) FROM temp.sqlite_schema WHERE name LIKE 'docbank_photo_%' OR name LIKE 'photo_events_%'`).Scan(&count))
 	return count
 }
 
@@ -45,7 +45,7 @@ func TestPhotoEventsCaptureInstallAndUninstall(t *testing.T) {
 	require.Positive(t, photoCaptureObjects(t, s))
 	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
 		var count int
-		require.NoError(t, tx.QueryRowContext(t.Context(), `SELECT count(*) FROM temp.sqlite_schema WHERE name='docbank_photo_changes' OR name LIKE 'photo_events_%'`).Scan(&count))
+		require.NoError(t, tx.QueryRowContext(t.Context(), `SELECT count(*) FROM temp.sqlite_schema WHERE name LIKE 'docbank_photo_%' OR name LIKE 'photo_events_%'`).Scan(&count))
 		require.Zero(t, count)
 		_, err := insertPhotoSet(t.Context(), tx, "after disconnect")
 		return err
