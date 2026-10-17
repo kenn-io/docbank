@@ -23,7 +23,7 @@ async function captureThemes(page: Page, name: string) {
       return document.fonts.ready.then(() => {});
     }, theme);
     await page.screenshot({
-      path: path.join(output!, `${name}${theme === "light" ? "-light" : ""}.png`),
+      path: path.join(output!, `${name}-${theme}.png`),
       animations: "disabled",
     });
   }
