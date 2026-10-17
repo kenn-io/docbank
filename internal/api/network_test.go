@@ -50,6 +50,7 @@ func TestNetworkServerPathRoutesIgnoreForwardingHeaders(t *testing.T) {
 		{path: "/api/v1/packages/preflights"},
 		{path: "/api/v1/photos/imports"},
 		{path: "/api/v1/photos/checkouts", deniedReason: "daemon's computer"},
+		{path: "/api/v1/photos/checkouts/00000000-0000-4000-8000-000000000001/rebind", deniedReason: "daemon's computer"},
 	} {
 		r := httptest.NewRequest(http.MethodPost, "http://docbank:8485"+test.path, nil)
 		r.RemoteAddr = "192.0.2.20:1234"

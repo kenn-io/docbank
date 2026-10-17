@@ -106,7 +106,7 @@ func TestPhotoImportCancelThroughJobs(t *testing.T) {
 	var jobs api.JobList
 	require.NoError(t, json.Unmarshal([]byte(body), &jobs))
 	require.Len(t, jobs.Items, 1)
-	assert.Equal(t, api.Job{Name: "storage:" + operation.ID, Status: "queued",
+	assert.Equal(t, api.Job{Name: "storage:" + operation.ID, Lane: "photo_import", Status: "queued",
 		Controllable: true, Concurrency: 1, ControlRevision: 1,
 		StartedAt: operation.CreatedAt.Format(time.RFC3339Nano), OperationID: operation.ID,
 		Kind: store.StorageOperationKindPhotoImport, CanCancel: true, CancelRequested: true}, jobs.Items[0])

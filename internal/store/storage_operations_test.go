@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -92,6 +93,71 @@ func TestStorageOperationRejectsConcurrentEvacuationsForOneStore(t *testing.T) {
 		RequestJSON:   `{"version":1}`, PlanJSON: `{"hashes":[]}`,
 	})
 	require.NoError(t, err)
+}
+
+func TestStorageOperationRetryPreservesEvacuationFinalization(t *testing.T) {
+	t.Parallel()
+	for _, phase := range []string{"queued", "reclaimed"} {
+		t.Run(phase, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			primary, err := s.PrimaryBlobStore(ctx)
+			require.NoError(t, err)
+			secondary, err := s.PrepareSecondaryBlobStore("archive", "filesystem", "archive_nas")
+			require.NoError(t, err)
+			require.NoError(t, s.RegisterBlobStore(ctx, secondary))
+			require.NoError(t, s.BeginBlobStoreEvacuation(ctx, secondary.ID))
+			op, err := s.CreateStorageOperation(ctx, StorageOperationCreate{
+				Kind: storageOperationKindEvacuate, SourceStoreID: secondary.ID,
+				RequestDigest: fakeHash("ba"), RequestJSON: `{"version":1}`, PlanJSON: `{"hashes":[]}`,
+			})
+			require.NoError(t, err)
+			_, err = s.ClaimStorageOperation(ctx, op.ID)
+			require.NoError(t, err)
+			hash := fakeHash("bb")
+			_, err = s.db.ExecContext(ctx, `INSERT INTO blobs(hash,size,created_at) VALUES(?,4,?)`, hash, nowRFC3339())
+			require.NoError(t, err)
+			for _, location := range []struct{ storeID, generation string }{
+				{secondary.ID, "40000000-0000-4000-8000-000000000001"},
+				{primary.ID, "40000000-0000-4000-8000-000000000002"},
+			} {
+				_, err = s.db.ExecContext(ctx, `INSERT INTO blob_locations(blob_hash,store_id,generation,kind,encoding,stored_size,pack_eligible) VALUES(?,?,?,'loose','raw',4,1)`, hash, location.storeID, location.generation)
+				require.NoError(t, err)
+			}
+			finalized, err := s.FinalizeBlobStoreEvacuation(ctx, op.ID, secondary.ID, primary.ID)
+			require.NoError(t, err)
+			require.False(t, finalized.Detached)
+			require.Equal(t, int64(1), finalized.RevokedLocations)
+			remaining, err := s.ResolveBlobLocations(ctx, packstore.Hash(hash))
+			require.NoError(t, err)
+			require.Len(t, remaining.Candidates, 1)
+			require.Equal(t, packstore.StoreID(primary.ID), remaining.Candidates[0].StoreID)
+			cleanups, err := s.StorageOperationCleanups(ctx, op.ID)
+			require.NoError(t, err)
+			require.Equal(t, []StorageOperationCleanup{{StoreID: secondary.ID, Ref: packstore.ObjectRef{LooseHash: packstore.Hash(hash), LooseEncoding: packstore.LooseEncodingRaw}}}, cleanups)
+			draining, err := s.BlobStoreBySelector(ctx, secondary.ID)
+			require.NoError(t, err)
+			require.Equal(t, "draining", draining.Lifecycle)
+			require.ErrorIs(t, s.RequestStorageOperationCancel(ctx, op.ID), ErrStorageOperationTerminal)
+
+			// Physical cleanup can fail after source authority has been revoked.
+			require.NoError(t, s.DeferStorageOperation(ctx, op.ID, errors.New("cleanup unavailable")))
+			queued, err := s.StorageOperation(ctx, op.ID)
+			require.NoError(t, err)
+			require.Equal(t, StorageOperationQueued, queued.State)
+			require.Equal(t, "@finalizing", queued.Cursor)
+
+			if phase == "reclaimed" {
+				retried, err := s.ClaimStorageOperation(ctx, op.ID)
+				require.NoError(t, err)
+				assert.Equal(t, "@finalizing", retried.Cursor)
+			}
+			require.ErrorIs(t, s.RequestStorageOperationCancel(ctx, op.ID), ErrStorageOperationTerminal)
+			current, err := s.StorageOperation(ctx, op.ID)
+			require.NoError(t, err)
+			assert.False(t, current.CancelRequested, "retry must preserve the finalizing evacuation's cancellation boundary")
+		})
+	}
 }
 
 func TestStorageOperationRejectsCancellationAfterTerminalState(t *testing.T) {

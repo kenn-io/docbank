@@ -2745,6 +2745,10 @@ CREATE TABLE IF NOT EXISTS photo_checkouts (
     created_at TEXT NOT NULL,
     destination TEXT,
     operation_id TEXT,
+    last_operation_id TEXT,
+    destination_identity TEXT NOT NULL DEFAULT '',
+    destination_reserved INTEGER NOT NULL DEFAULT 0,
+    retirement_requested INTEGER NOT NULL DEFAULT 0,
     state TEXT NOT NULL DEFAULT 'unbound',
     error TEXT NOT NULL DEFAULT '',
     retention_released INTEGER NOT NULL DEFAULT 0,
@@ -2761,6 +2765,15 @@ CREATE TABLE IF NOT EXISTS photo_checkout_entries (
     relative_path TEXT NOT NULL,
     published INTEGER NOT NULL DEFAULT 0,
     base_held INTEGER NOT NULL DEFAULT 0,
+    observed_identity TEXT NOT NULL DEFAULT '',
+    observed_hash TEXT NOT NULL DEFAULT '',
+    observed_size INTEGER NOT NULL DEFAULT 0,
+    observed_mtime TEXT NOT NULL DEFAULT '',
+    observed_since TEXT NOT NULL DEFAULT '',
+    working_state TEXT NOT NULL DEFAULT 'unobserved',
     PRIMARY KEY (checkout_id,file_id)
 );
 CREATE INDEX IF NOT EXISTS photo_checkout_entries_version ON photo_checkout_entries(version_id);
+CREATE INDEX IF NOT EXISTS photo_change_receipts_checkout_commit ON photo_change_receipts(
+    json_extract(after_json,'$.operation_id'), json_extract(after_json,'$.file_id')
+) WHERE operation='checkout_commit';

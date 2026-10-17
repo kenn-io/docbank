@@ -15,8 +15,8 @@
   } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
   import { type Job, type LaneControl } from "./generated/docbank.js";
-  import { jobLanes } from "./jobs.js";
-  import { formatDate } from "./format.js";
+  import { jobLanes, laneTitle } from "./jobs.js";
+  import { formatDate, formatBytes } from "./format.js";
 
   interface Props {
     session: string;
@@ -162,8 +162,8 @@
     return { tone: lane.status, label: statusLabel(lane.status), details };
   }
 
-  function unit(kind: string | undefined): string {
-    return kind === "photo_import" ? "groups" : kind === "photo_checkout" ? "files" : "objects";
+  function unit(lane: string): string {
+    return lane === "photo_import" ? "groups" : lane === "photo_checkout" ? "files" : "objects";
   }
 
   function percent(completed: number, total: number): number {
@@ -276,6 +276,9 @@
                       {#if member.operation_id}
                         <div class="operation-head">
                           <code class="operation-id">{member.operation_id}</code>
+                          {#if member.lane === "photo_checkout" && member.kind !== member.lane}<span
+                              >{laneTitle(member.kind!)}</span
+                            >{/if}
                           {#if member.can_cancel && !member.cancel_requested}
                             <Button
                               size="sm"
@@ -287,6 +290,20 @@
                         </div>
                       {/if}
                       <dl class="facts">
+                        {#each Object.entries(member.checkout_results ?? {}) as [state, count] (state)}
+                          <div>
+                            <dt>{state.charAt(0).toUpperCase() + state.slice(1)}</dt>
+                            <dd>{count}</dd>
+                          </div>
+                        {/each}
+                        {#if member.total_bytes}<div>
+                            <dt>Verified</dt>
+                            <dd>
+                              {formatBytes(member.processed_bytes ?? 0)} of {formatBytes(
+                                member.total_bytes,
+                              )}
+                            </dd>
+                          </div>{/if}
                         {#if lane.members.length > 1}
                           <div>
                             <dt>Status</dt>
@@ -308,7 +325,7 @@
                             <dt>Progress</dt>
                             <dd>
                               {member.completed_objects ?? 0} of {member.total_objects}
-                              {unit(member.kind)}
+                              {unit(member.lane)}
                             </dd>
                           </div>
                         {/if}

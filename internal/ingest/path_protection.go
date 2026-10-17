@@ -63,7 +63,7 @@ func PhotoCheckoutProtectsDestination(c store.PhotoCheckout) (bool, error) {
 	if c.Destination == "" {
 		return false, nil
 	}
-	if !c.RetentionReleased {
+	if c.DestinationReserved {
 		return true, nil
 	}
 	// A replacement file at the destination or an ancestor holds no copies.

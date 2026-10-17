@@ -31,7 +31,7 @@ func CheckoutPathOverlap(ctx context.Context, checkouts []store.PhotoCheckout, p
 		if !checkoutPathProtection(checkout, pathname) {
 			continue
 		}
-		if !checkout.RetentionReleased && (pathContains(pathname, checkout.Destination) || pathContains(checkout.Destination, pathname)) {
+		if checkout.DestinationReserved && (pathContains(pathname, checkout.Destination) || pathContains(checkout.Destination, pathname)) {
 			return checkout.ID, true, nil
 		}
 		candidates = append(candidates, checkout)

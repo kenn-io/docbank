@@ -21,6 +21,11 @@ var ErrStorageOperationCancelled = errors.New("storage operation cancellation wa
 
 const storageOperationFinalizingCursor = "@finalizing"
 
+const boundPhotoCheckoutRebind = `kind='` + StorageOperationKindPhotoCheckoutRebind + `' AND EXISTS (
+ SELECT 1 FROM photo_checkouts c WHERE c.last_operation_id=storage_operations.operation_id
+ AND c.destination=json_extract(storage_operations.request_json,'$.destination')
+ AND c.destination_identity=json_extract(storage_operations.request_json,'$.identity') AND c.destination_reserved=1)`
+
 const (
 	storageOperationKindPlace       = "place"
 	storageOperationKindEvacuate    = "evacuate"
@@ -36,7 +41,7 @@ const (
 )
 
 var storageOperationKinds = []string{
-	storageOperationKindPlace, storageOperationKindEvacuate, "repair", "salvage", StorageOperationKindPhotoImport, StorageOperationKindPhotoCheckout,
+	storageOperationKindPlace, storageOperationKindEvacuate, "repair", "salvage", StorageOperationKindPhotoImport, StorageOperationKindPhotoCheckout, StorageOperationKindPhotoCheckoutCommit, StorageOperationKindPhotoCheckoutScan, StorageOperationKindPhotoCheckoutRebind,
 }
 
 type StorageOperationCreate struct {
@@ -367,9 +372,9 @@ func (s *Store) ClaimStorageOperation(
 	}
 	now := nowRFC3339()
 	result, err := s.db.ExecContext(ctx, `
-		UPDATE storage_operations SET state=?,error='',updated_at=?
+		UPDATE storage_operations SET state=?,cursor=CASE WHEN cursor=? AND kind IN (?,?,?) AND NOT (`+boundPhotoCheckoutRebind+`) THEN '' ELSE cursor END,error='',updated_at=?
 		WHERE operation_id=? AND state IN (?,?)`,
-		StorageOperationRunning, now, id,
+		StorageOperationRunning, storageOperationFinalizingCursor, StorageOperationKindPhotoCheckoutScan, StorageOperationKindPhotoCheckoutCommit, StorageOperationKindPhotoCheckoutRebind, now, id,
 		StorageOperationQueued, StorageOperationRunning,
 	)
 	if err != nil {
@@ -444,9 +449,9 @@ func (s *Store) AdvanceStorageOperation(
 func (s *Store) RequestStorageOperationCancel(ctx context.Context, id string) error {
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE storage_operations SET cancel_requested=1,updated_at=?
-		WHERE operation_id=? AND state IN (?,?) AND cursor<>?`,
-		nowRFC3339(), id, StorageOperationQueued, StorageOperationRunning,
-		storageOperationFinalizingCursor,
+		WHERE operation_id=? AND ((state=? AND (cursor<>? OR (kind IN (?,?,?) AND NOT (`+boundPhotoCheckoutRebind+`)))) OR (state=? AND cursor<>?))`,
+		nowRFC3339(), id, StorageOperationQueued, storageOperationFinalizingCursor,
+		StorageOperationKindPhotoCheckoutScan, StorageOperationKindPhotoCheckoutCommit, StorageOperationKindPhotoCheckoutRebind, StorageOperationRunning, storageOperationFinalizingCursor,
 	)
 	if err != nil {
 		return fmt.Errorf("requesting cancellation for storage operation %s: %w", id, err)

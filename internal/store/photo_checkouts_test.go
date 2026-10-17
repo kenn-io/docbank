@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -73,7 +74,7 @@ func TestPhotoCheckoutSelections(t *testing.T) {
 		require.Equal(t, test.assets, estimate.Assets)
 		require.Equal(t, test.files, estimate.Files)
 		require.Equal(t, test.bytes, estimate.Bytes)
-		checkout, _, _, err := s.CreatePhotoCheckout(ctx, test.selection, t.TempDir(), test.bytes)
+		checkout, _, _, err := s.CreatePhotoCheckout(ctx, test.selection, t.TempDir(), "", test.bytes)
 		require.NoError(t, err)
 		entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
 		require.NoError(t, err)
@@ -109,7 +110,7 @@ func TestPhotoCheckoutSelections(t *testing.T) {
 		estimate, err := s.EstimatePhotoCheckout(ctx, selection)
 		require.NoError(t, err)
 		require.Equal(t, PhotoCheckoutEstimate{Assets: 1, Files: 3, Bytes: 33}, estimate)
-		checkout, _, _, err := s.CreatePhotoCheckout(ctx, selection, t.TempDir(), estimate.Bytes)
+		checkout, _, _, err := s.CreatePhotoCheckout(ctx, selection, t.TempDir(), "", estimate.Bytes)
 		require.NoError(t, err)
 		entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
 		require.NoError(t, err)
@@ -143,7 +144,7 @@ func TestPhotoCheckoutMetadata(t *testing.T) {
 		require.NoError(t, err)
 		second, err = s.AttachPhotoFile(t.Context(), second.ID, second.Revision, node.ID, PhotoRoleImage, nil)
 		require.NoError(t, err)
-		c, _, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{a.ID, second.ID}}, "machine-local-checkout", 100)
+		c, _, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{a.ID, second.ID}}, "machine-local-checkout", "", 100)
 		require.NoError(t, err)
 		require.EqualValues(t, 1, c.SkippedPhotoCount)
 		require.Len(t, c.SkippedPhotos, 1)
@@ -178,6 +179,96 @@ func TestPhotoCheckoutMetadata(t *testing.T) {
 			var roundtrip bytes.Buffer
 			require.NoError(t, restored.ExportMetadata(t.Context(), &roundtrip))
 			require.Equal(t, string(f.snapshot), roundtrip.String())
+			t.Run("committed receipt survives scan and restore", func(t *testing.T) {
+				original := f.entries[0]
+				c, commit, err := s.PreparePhotoCheckoutOperation(t.Context(), PhotoCheckoutInspection{CheckoutID: f.checkout.ID}, StorageOperationKindPhotoCheckoutCommit)
+				require.NoError(t, err)
+				_, err = s.ClaimStorageOperation(t.Context(), commit.ID)
+				require.NoError(t, err)
+				hash := browseHash("committed edit")
+				require.NoError(t, s.CommitPhotoCheckoutEntry(t.Context(), c, original, hash, 23, "image/png", BlobPhysical{Encoding: "raw", StoredBytes: 23}))
+				require.NoError(t, s.FinishPhotoCheckoutOperation(t.Context(), c, StorageOperationCompleted, `{"files":1}`, ""))
+				scan, _, err := s.PreparePhotoCheckoutOperation(t.Context(), PhotoCheckoutInspection{CheckoutID: c.ID}, StorageOperationKindPhotoCheckoutScan)
+				require.NoError(t, err)
+				_, err = s.ClaimStorageOperation(t.Context(), scan.LastOperationID)
+				require.NoError(t, err)
+				require.NoError(t, s.FinishPhotoCheckoutOperation(t.Context(), scan, StorageOperationCompleted, `{"files":1}`, ""))
+				status, err := s.PhotoCheckoutStatus(t.Context(), c.ID, "", 100)
+				require.NoError(t, err)
+				require.NotEqual(t, commit.ID, status.Checkout.LastOperationID)
+				require.Equal(t, scan.LastOperationID, status.Checkout.LastOperationID)
+				_, err = s.CheckPhotoCheckoutCommitEntry(t.Context(), status.Checkout, status.Entries[0])
+				require.ErrorIs(t, err, ErrStaleRevision, "a scan cannot authorize a commit")
+				committed, err := s.CheckPhotoCheckoutCommitEntry(t.Context(), c, original)
+				require.NoError(t, err)
+				require.True(t, committed, "a later scan must preserve the earlier commit receipt")
+				var snapshot bytes.Buffer
+				require.NoError(t, s.ExportMetadata(t.Context(), &snapshot))
+				require.Contains(t, snapshot.String(), `"operation":"checkout_commit"`)
+				require.NotContains(t, snapshot.String(), `"observed_hash"`)
+				require.NotContains(t, snapshot.String(), c.Destination)
+				restored := newTestStoreWithDriver(t, driver.driver)
+				require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(snapshot.Bytes())))
+				actual, err := restored.PhotoCheckout(t.Context(), c.ID)
+				require.NoError(t, err)
+				require.Equal(t, "unbound", actual.State)
+				require.Empty(t, actual.LastOperationID)
+				actualEntries, err := restored.PhotoCheckoutEntries(t.Context(), c.ID)
+				require.NoError(t, err)
+				require.Len(t, actualEntries, 1)
+				require.Equal(t, status.Entries[0].VersionID, actualEntries[0].VersionID)
+				receiptFound, err := restored.CheckPhotoCheckoutCommitEntry(t.Context(), c, original)
+				require.NoError(t, err)
+				require.True(t, receiptFound, "restore preserves the receipt used to recognize a committed entry")
+				for _, field := range []string{"before_json", "after_json"} {
+					lines := strings.Split(snapshot.String(), "\n")
+					corrupted := false
+					for i, line := range lines {
+						if !strings.Contains(line, `"operation":"checkout_commit"`) {
+							continue
+						}
+						var receipt map[string]jsontext.Value
+						require.NoError(t, json.Unmarshal([]byte(line), &receipt))
+						var stateJSON string
+						require.NoError(t, json.Unmarshal(receipt[field], &stateJSON))
+						var state map[string]any
+						require.NoError(t, json.Unmarshal([]byte(stateJSON), &state))
+						state["future_member"] = true
+						encoded, err := json.Marshal(state)
+						require.NoError(t, err)
+						receipt[field], err = json.Marshal(string(encoded))
+						require.NoError(t, err)
+						encoded, err = json.Marshal(receipt)
+						require.NoError(t, err)
+						lines[i] = string(encoded)
+						corrupted = true
+					}
+					require.True(t, corrupted)
+					invalid := newTestStoreWithDriver(t, driver.driver)
+					require.ErrorContains(t, invalid.ImportMetadata(t.Context(), strings.NewReader(strings.Join(lines, "\n"))), `unknown object member name "future_member"`)
+				}
+				lines := bytes.Split(snapshot.Bytes(), []byte{'\n'})
+				corrupted := false
+				for i, line := range lines {
+					if !bytes.Contains(line, []byte(`"operation":"checkout_commit"`)) {
+						continue
+					}
+					var receipt metadataPhotoReceipt
+					require.NoError(t, json.Unmarshal(line, &receipt))
+					var after checkoutCommitState
+					require.NoError(t, json.Unmarshal([]byte(receipt.AfterJSON), &after))
+					after.FileID = ""
+					encoded, err := json.Marshal(after)
+					require.NoError(t, err)
+					receipt.AfterJSON = string(encoded)
+					lines[i], err = json.Marshal(receipt)
+					require.NoError(t, err)
+					corrupted = true
+				}
+				require.True(t, corrupted)
+				invalid := newTestStoreWithDriver(t, driver.driver)
+				require.ErrorIs(t, invalid.ImportMetadata(t.Context(), bytes.NewReader(bytes.Join(lines, []byte{'\n'}))), ErrInvalidPhotoCheckout)
+			})
 			t.Run("retired checkout round trip", func(t *testing.T) {
 				retired, err := s.RetirePhotoCheckout(t.Context(), f.checkout.ID)
 				require.NoError(t, err)
@@ -320,7 +411,7 @@ func TestPhotoCheckoutCreateValidation(t *testing.T) {
 				_, err := s.CreateFile(t.Context(), s.RootID(), "large.jpg", browseHash("large"), math.MaxInt64, "image/jpeg")
 				require.NoError(t, err)
 			}
-			_, _, _, err := s.CreatePhotoCheckout(t.Context(), selection, "checkout", tc.limit)
+			_, _, _, err := s.CreatePhotoCheckout(t.Context(), selection, "checkout", "", tc.limit)
 			require.ErrorIs(t, err, expectedErr)
 			if tc.errorText != "" {
 				require.ErrorContains(t, err, tc.errorText)
@@ -335,18 +426,58 @@ func TestPhotoCheckoutCreateValidation(t *testing.T) {
 	}
 }
 
+func TestPhotoCheckoutOperationEligibility(t *testing.T) {
+	t.Parallel()
+	for _, state := range []string{"queued", "running", "unbound", "retired", "retirement pending"} {
+		c := PhotoCheckout{Destination: "checkout", State: "completed", DestinationReserved: true}
+		require.NoError(t, ValidatePhotoCheckoutScanOrCommit(c, StorageOperationKindPhotoCheckoutScan))
+		require.NoError(t, ValidatePhotoCheckoutScanOrCommit(c, StorageOperationKindPhotoCheckoutCommit))
+		switch state {
+		case "queued", "running":
+			c.OperationState = state
+		case "unbound":
+			c.State, c.Destination = state, ""
+		case "retired":
+			c.RetiredAt = new("2026-01-01T00:00:00Z")
+		case "retirement pending":
+			c.RetirementRequested = true
+		}
+		for _, operation := range []struct{ kind, name string }{
+			{StorageOperationKindPhotoCheckoutScan, "scan"},
+			{StorageOperationKindPhotoCheckoutCommit, "commit"},
+			{StorageOperationKindPhotoCheckoutRebind, "rebind"},
+		} {
+			if state == "unbound" && operation.name == "rebind" {
+				continue
+			}
+			t.Run(state+"/"+operation.name, func(t *testing.T) {
+				var err error
+				if operation.name == "rebind" {
+					err = ValidatePhotoCheckoutRebind(c, "")
+				} else {
+					err = ValidatePhotoCheckoutScanOrCommit(c, operation.kind)
+				}
+				require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
+				require.ErrorContains(t, err, "before "+operation.name)
+			})
+		}
+	}
+}
+
 func TestPhotoCheckoutStatusTracksOperationAcrossPauseAndFinish(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	albumAsset(t, s, "photo.jpg")
-	checkout, op, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{All: true}, "checkout", 20)
+	checkout, op, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{All: true}, "checkout", "", 20)
 	require.NoError(t, err)
 	require.Equal(t, StorageOperationKindPhotoCheckout, op.Kind)
 	require.Equal(t, op.ID, checkout.OperationID)
 	require.Equal(t, int64(1), op.TotalObjects)
-	status, err := s.PhotoCheckoutStatus(t.Context(), checkout.ID)
+	status, err := s.PhotoCheckoutStatus(t.Context(), checkout.ID, "", 100)
 	require.NoError(t, err)
-	require.Equal(t, PhotoCheckoutStatus{Checkout: checkout, Files: 1, Bytes: 20}, status)
+	require.Equal(t, checkout, status.Checkout)
+	require.Equal(t, int64(1), status.Files)
+	require.Equal(t, int64(20), status.Bytes)
 	_, err = s.ClaimStorageOperation(t.Context(), op.ID)
 	require.NoError(t, err)
 	require.NoError(t, s.ClaimPhotoCheckout(t.Context(), checkout.ID, op.ID))
@@ -367,11 +498,15 @@ func TestPhotoCheckoutStatusTracksOperationAcrossPauseAndFinish(t *testing.T) {
 	entries, err := s.PhotoCheckoutEntries(t.Context(), checkout.ID)
 	require.NoError(t, err)
 	require.NoError(t, s.PublishPhotoCheckoutEntry(t.Context(), entries[0], func() (bool, error) { return true, nil }))
-	status, err = s.PhotoCheckoutStatus(t.Context(), checkout.ID)
+	status, err = s.PhotoCheckoutStatus(t.Context(), checkout.ID, "", 100)
 	require.NoError(t, err)
-	require.Equal(t, PhotoCheckoutStatus{Checkout: resumed, Files: 1, Bytes: 20, PublishedFiles: 1, PublishedBytes: 20}, status)
-	_, err = s.RetirePhotoCheckout(t.Context(), checkout.ID)
-	require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
+	require.Equal(t, resumed, status.Checkout)
+	require.Equal(t, int64(1), status.PublishedFiles)
+	require.Equal(t, int64(20), status.PublishedBytes)
+	pending, err := s.RetirePhotoCheckout(t.Context(), checkout.ID)
+	require.NoError(t, err)
+	require.True(t, pending.RetirementRequested)
+	require.Nil(t, pending.RetiredAt)
 	require.NoError(t, s.FinishStorageOperation(t.Context(), op.ID, StorageOperationFailed, "{}", "terminal error", time.Now().Add(time.Hour)))
 	finished, err := s.PhotoCheckout(t.Context(), checkout.ID)
 	require.NoError(t, err)
@@ -381,11 +516,65 @@ func TestPhotoCheckoutStatusTracksOperationAcrossPauseAndFinish(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, retired.RetiredAt)
 	finished.RetentionReleased = true
+	finished.DestinationReserved = false
+	finished.RetirementRequested = true
 	finished.RetiredAt = retired.RetiredAt
 	require.Equal(t, finished, retired)
 	again, err := s.RetirePhotoCheckout(t.Context(), checkout.ID)
 	require.NoError(t, err)
 	require.Equal(t, retired, again)
+	t.Run("status paging", func(t *testing.T) {
+		albumAsset(t, s, "second.jpg")
+		checkout, _, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{All: true}, "paged-checkout", "", 40)
+		require.NoError(t, err)
+		first, err := s.PhotoCheckoutStatus(t.Context(), checkout.ID, "", 1)
+		require.NoError(t, err)
+		require.Len(t, first.Entries, 1)
+		require.Equal(t, int64(2), first.Files)
+		require.Equal(t, first.Entries[0].FileID, first.NextAfter)
+		last, err := s.PhotoCheckoutStatus(t.Context(), checkout.ID, first.NextAfter, 1)
+		require.NoError(t, err)
+		require.Len(t, last.Entries, 1)
+		require.Empty(t, last.NextAfter)
+		require.Greater(t, last.Entries[0].FileID, first.Entries[0].FileID)
+	})
+	t.Run("child operations preserve lifecycle", func(t *testing.T) {
+		s := newTestStore(t)
+		albumAsset(t, s, "partial.jpg")
+		c, op, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{All: true}, "checkout", "identity", 20)
+		require.NoError(t, err)
+		require.NoError(t, s.ClaimPhotoCheckout(t.Context(), c.ID, op.ID))
+		require.NoError(t, s.FinishPhotoCheckout(t.Context(), c.ID, op.ID, StorageOperationFailed, "{}", "partial", time.Now().Add(time.Hour)))
+		c, op, err = s.PreparePhotoCheckoutOperation(t.Context(), PhotoCheckoutInspection{CheckoutID: c.ID}, StorageOperationKindPhotoCheckoutRebind)
+		require.NoError(t, err)
+		require.NoError(t, s.BindPhotoCheckout(t.Context(), c.ID, "checkout", "identity", op.ID, nil))
+		require.NoError(t, s.FinishPhotoCheckoutOperation(t.Context(), c, StorageOperationCompleted, "{}", ""))
+		for _, creationState := range []string{"failed", "completed"} {
+			outcome, operationError, wantError := StorageOperationCompleted, "", "partial"
+			if creationState == "completed" {
+				s = newTestStore(t)
+				albumAsset(t, s, "photo.jpg")
+				c, op, _, err = s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{All: true}, "checkout", "identity", 100)
+				require.NoError(t, err)
+				require.NoError(t, s.FinishPhotoCheckout(t.Context(), c.ID, op.ID, StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
+				outcome, operationError, wantError = StorageOperationFailed, "working file changed", "working file changed"
+			}
+			for _, kind := range []string{StorageOperationKindPhotoCheckoutScan, StorageOperationKindPhotoCheckoutCommit} {
+				c, op, err = s.PreparePhotoCheckoutOperation(t.Context(), PhotoCheckoutInspection{CheckoutID: c.ID}, kind)
+				require.NoError(t, err)
+				_, err = s.ClaimStorageOperation(t.Context(), op.ID)
+				require.NoError(t, err)
+				err = s.FinishPhotoCheckoutOperation(t.Context(), c, outcome, "{}", operationError)
+				require.NoError(t, err)
+				status, err := s.PhotoCheckoutStatus(t.Context(), c.ID, "", 100)
+				require.NoError(t, err)
+				require.Equal(t, creationState, status.Checkout.State, kind)
+				require.Equal(t, wantError, status.Checkout.Error, kind)
+				require.Equal(t, string(outcome), status.Checkout.OperationState)
+				require.Equal(t, kind, status.Checkout.OperationKind)
+			}
+		}
+	})
 }
 
 func TestPhotoCheckoutConflictsAndEntryPaths(t *testing.T) {
@@ -454,7 +643,7 @@ func TestPhotoCheckoutConflictsAndEntryPaths(t *testing.T) {
 				require.NoError(t, err)
 				browsePhotoMetadata(t, s, node, tc.captureDate, photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp(tc.captureDate, tc.captureDate, document.SourceMetadataPrecisionDate, document.SourceMetadataTimezoneOmitted, "")))
 			}
-			checkout, _, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "checkout", 0)
+			checkout, _, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "checkout", "", 0)
 			require.NoError(t, err)
 			entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
 			require.NoError(t, err)
@@ -527,7 +716,7 @@ func TestPhotoCheckoutConflictsAndEntryPaths(t *testing.T) {
 			_, _, err = s.Move(ctx, node.ID, s.RootID(), fmt.Sprintf("virtual-%d.%s", i, strings.TrimPrefix(filepath.Ext(node.Name), ".")), node.Revision)
 			require.NoError(t, err)
 		}
-		checkout, _, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "checkout", 0)
+		checkout, _, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "checkout", "", 0)
 		require.NoError(t, err)
 		entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
 		require.NoError(t, err)
@@ -566,7 +755,7 @@ func TestPhotoCheckoutConflictsAndEntryPaths(t *testing.T) {
 				require.NoError(t, err)
 				asset = result.Asset
 			}
-			checkout, _, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+			checkout, _, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", "", 0)
 			require.NoError(t, err)
 			entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
 			require.NoError(t, err)
@@ -584,7 +773,7 @@ func TestPhotoCheckoutPreservesNodeBasenameWithoutProvenance(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
 	asset := albumAsset(t, s, `C:\capture.jpg`)
-	checkout, _, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+	checkout, _, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", "", 0)
 	require.NoError(t, err)
 	entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
 	require.NoError(t, err)
@@ -634,7 +823,7 @@ func TestPhotoCheckoutEntryRequiresFrozenEligibleSource(t *testing.T) {
 			asset := result.Asset
 			asset, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, new(fileByRole(asset.Files, PhotoRoleImage).ID))
 			require.NoError(t, err)
-			checkout, _, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+			checkout, _, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", "", 0)
 			require.NoError(t, err)
 			entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
 			require.NoError(t, err)
@@ -705,7 +894,7 @@ func TestPhotoCheckoutBackupRetentionAcrossLifecycleStates(t *testing.T) {
 					second := albumAsset(t, s, "unpublished.jpg")
 					node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
 					require.NoError(t, err)
-					checkout, op, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID, second.ID}}, "checkout", 0)
+					checkout, op, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID, second.ID}}, "checkout", "", 0)
 					require.NoError(t, err)
 					require.NoError(t, s.ClaimPhotoCheckout(ctx, checkout.ID, op.ID))
 					entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
@@ -809,7 +998,7 @@ func TestPhotoCheckoutPublicationOrdersEligibilityMutationsAndRecordsCancellatio
 			asset := albumAsset(t, s, "photo.jpg")
 			other := albumAsset(t, s, "other.jpg")
 			require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
-			checkout, _, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+			checkout, _, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", "", 0)
 			require.NoError(t, err)
 			entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
 			require.NoError(t, err)
@@ -885,7 +1074,7 @@ func TestPhotoCheckoutPublicationOrdersEligibilityMutationsAndRecordsCancellatio
 		t.Parallel()
 		s := newTestStore(t)
 		asset := albumAsset(t, s, "photo.jpg")
-		checkout, _, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+		checkout, _, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", "", 0)
 		require.NoError(t, err)
 		entries, err := s.PhotoCheckoutEntries(t.Context(), checkout.ID)
 		require.NoError(t, err)
@@ -893,7 +1082,7 @@ func TestPhotoCheckoutPublicationOrdersEligibilityMutationsAndRecordsCancellatio
 		defer cancel()
 		err = s.PublishPhotoCheckoutEntry(ctx, entries[0], func() (bool, error) { cancel(); return true, context.Canceled })
 		require.ErrorIs(t, err, context.Canceled)
-		status, err := s.PhotoCheckoutStatus(t.Context(), checkout.ID)
+		status, err := s.PhotoCheckoutStatus(t.Context(), checkout.ID, "", 100)
 		require.NoError(t, err)
 		require.Equal(t, int64(1), status.PublishedFiles)
 	})
@@ -913,7 +1102,7 @@ func TestPreserveUncertainPhotoCheckoutHoldsSurvivesClearedPublication(t *testin
 	asset := albumAsset(t, s, "photo.jpg")
 	node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
 	require.NoError(t, err)
-	checkout, op, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+	checkout, op, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", "", 0)
 	require.NoError(t, err)
 	require.NoError(t, s.ClaimPhotoCheckout(ctx, checkout.ID, op.ID))
 	entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
@@ -948,7 +1137,7 @@ func TestPhotoCheckoutRetireAfterAuditActivation(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
 	asset := albumAsset(t, s, "photo.jpg")
-	checkout, operation, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+	checkout, operation, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", "", 0)
 	require.NoError(t, err)
 	require.NoError(t, s.FinishPhotoCheckout(ctx, checkout.ID, operation.ID, StorageOperationCompleted, "{}", "", time.Time{}))
 	seedInitialAuditAuthority(t, s, s.RootID())
@@ -971,7 +1160,7 @@ func TestPhotoCheckoutYearFolderUsesTimelineDay(t *testing.T) {
 	require.NoError(t, err)
 	asset, err := s.PhotoAssetForNode(ctx, node.ID)
 	require.NoError(t, err)
-	checkout, _, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{Years: &PhotoCheckoutYears{From: 2026, To: 2026}}, t.TempDir(), 0)
+	checkout, _, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{Years: &PhotoCheckoutYears{From: 2026, To: 2026}}, t.TempDir(), "", 0)
 	require.NoError(t, err)
 	entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
 	require.NoError(t, err)
@@ -1003,17 +1192,22 @@ func TestPhotoCheckoutCreationRejectsSelectionPurgedBeforeCommit(t *testing.T) {
 	_, err = s.TrashEmpty(ctx, 0, true)
 	require.NoError(t, err)
 
-	//nolint:dogsled // Only the stale-selection error matters after rollback.
-	_, _, _, err = s.insertPhotoCheckout(ctx, selection, "checkout", 0, func(*sql.Tx) ([]PhotoCheckoutEntry, PhotoCheckoutEstimate, error) {
+	checkout, operation, _, err := s.insertPhotoCheckout(ctx, selection, "checkout", "", 0, func(*sql.Tx) ([]PhotoCheckoutEntry, PhotoCheckoutEstimate, error) {
 		return entries, estimate, nil
 	})
 	require.ErrorIs(t, err, errPhotoCheckoutSelectionStale)
+	_, err = s.PhotoCheckout(ctx, checkout.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+	_, err = s.StorageOperation(ctx, operation.ID)
+	require.ErrorIs(t, err, ErrNotFound)
 	checkouts, err := s.ListPhotoCheckouts(ctx)
 	require.NoError(t, err)
 	require.Empty(t, checkouts)
 
-	checkout, _, _, err := s.CreatePhotoCheckout(ctx, selection, "checkout", 0)
+	checkout, operation, createdEstimate, err := s.CreatePhotoCheckout(ctx, selection, "checkout", "", 0)
 	require.NoError(t, err)
+	require.NotEmpty(t, operation.ID)
+	require.Equal(t, int64(1), createdEstimate.Files)
 	frozen, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
 	require.NoError(t, err)
 	require.Len(t, frozen, 1)
@@ -1058,7 +1252,7 @@ func TestPhotoCheckoutSkipsDuplicateNamesWithBoundedDetails(t *testing.T) {
 		require.Equal(t, "photo.jpg", skip.Name)
 		require.Contains(t, skip.Reason, "has the same name")
 	}
-	checkout, _, createdEstimate, err := s.CreatePhotoCheckout(t.Context(), selection, "checkout", 20)
+	checkout, _, createdEstimate, err := s.CreatePhotoCheckout(t.Context(), selection, "checkout", "", 20)
 	require.NoError(t, err)
 	require.Equal(t, estimate, createdEstimate)
 	require.Equal(t, int64(25), checkout.SkippedPhotoCount)
@@ -1068,7 +1262,7 @@ func TestPhotoCheckoutSkipsDuplicateNamesWithBoundedDetails(t *testing.T) {
 	require.Equal(t, checkout.SkippedPhotoCount, persisted.SkippedPhotoCount)
 	require.Equal(t, checkout.SkippedPhotos, persisted.SkippedPhotos)
 
-	status, err := s.PhotoCheckoutStatus(ctx, checkout.ID)
+	status, err := s.PhotoCheckoutStatus(ctx, checkout.ID, "", 100)
 	require.NoError(t, err)
 	listed, err := s.ListPhotoCheckouts(ctx)
 	require.NoError(t, err)
@@ -1096,7 +1290,7 @@ func TestPhotoCheckoutSkipsDuplicateNamesWithBoundedDetails(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			_, estimateErr := s.EstimatePhotoCheckout(ctx, test.selection)
-			checkout, _, _, createErr := s.CreatePhotoCheckout(ctx, test.selection, "checkout", 0)
+			checkout, _, _, createErr := s.CreatePhotoCheckout(ctx, test.selection, "checkout", "", 0)
 			require.Empty(t, checkout.ID)
 			require.ErrorIs(t, createErr, ErrInvalidPhotoCheckout)
 			require.ErrorIs(t, estimateErr, ErrInvalidPhotoCheckout)
@@ -1107,6 +1301,96 @@ func TestPhotoCheckoutSkipsDuplicateNamesWithBoundedDetails(t *testing.T) {
 				require.ErrorContains(t, estimateErr, "photo.jpg")
 				require.ErrorContains(t, estimateErr, skip.Reason)
 			}
+		})
+	}
+	t.Run("invalid Windows filenames", func(t *testing.T) {
+		if runtime.GOOS != "windows" {
+			t.Skip("Windows filename policy")
+		}
+		s := newTestStore(t)
+		asset := albumAsset(t, s, "photo.jpg")
+		_, err := s.db.ExecContext(t.Context(), "UPDATE nodes SET name=? WHERE id=?", "first?.jpg", asset.Files[0].NodeID)
+		require.NoError(t, err)
+		for _, name := range []string{"second:.jpg", "valid.jpg"} {
+			_, err := s.CreateFile(t.Context(), s.RootID(), name, browseHash(name), 10, "image/jpeg")
+			require.NoError(t, err)
+		}
+		selection := PhotoCheckoutSelection{All: true}
+		estimate, err := s.EstimatePhotoCheckout(t.Context(), selection)
+		require.NoError(t, err)
+		require.Equal(t, int64(2), estimate.SkippedPhotoCount)
+		var skippedNames []string
+		for _, skipped := range estimate.SkippedPhotos {
+			skippedNames = append(skippedNames, skipped.Name)
+		}
+		require.ElementsMatch(t, []string{"first?.jpg", "second:.jpg"}, skippedNames)
+		checkout, _, createdEstimate, err := s.CreatePhotoCheckout(t.Context(), selection, "checkout", "", 100)
+		require.NoError(t, err)
+		require.Equal(t, estimate, createdEstimate)
+		entries, err := s.PhotoCheckoutEntries(t.Context(), checkout.ID)
+		require.NoError(t, err)
+		require.Len(t, entries, 1)
+		require.Equal(t, "valid.jpg", filepath.Base(entries[0].Path))
+	})
+}
+
+func TestPhotoCheckoutObservationBatchesKeepSummaryAndRollback(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	for i := range 258 {
+		albumAsset(t, s, fmt.Sprintf("photo-%03d.jpg", i))
+	}
+	c, _, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{All: true}, "checkout", "identity", 1<<30)
+	require.NoError(t, err)
+	entries, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
+	require.NoError(t, err)
+	require.Len(t, entries, 258)
+	observations := make([]PhotoCheckoutObservation, 0, len(entries))
+	for i, e := range entries {
+		observation := PhotoCheckoutObservation{FileID: e.FileID, State: "missing"}
+		if i < 129 {
+			observation.Identity, observation.Hash, observation.Size, observation.State = "file-identity", e.Hash, e.Size, "edited"
+		}
+		observations = append(observations, observation)
+	}
+	require.NoError(t, s.ObservePhotoCheckoutEntries(t.Context(), c.ID, "identity", observations))
+	counts, paths, err := s.PhotoCheckoutWorkingSummary(t.Context(), c.ID, 10)
+	require.NoError(t, err)
+	require.Equal(t, map[string]int64{"clean": 129, "missing": 129}, counts)
+	require.Len(t, paths, 10)
+	for i, path := range paths {
+		require.Equal(t, entries[129+i].Path, path.Path)
+		require.Equal(t, "missing", path.WorkingState)
+	}
+	observations[0].Hash, observations[0].State = "", "pending"
+	// Refuse an update in the second batch after the first batch changed a row.
+	_, err = s.db.ExecContext(t.Context(), fmt.Sprintf(`CREATE TRIGGER fail_checkout_observation BEFORE UPDATE ON photo_checkout_entries WHEN NEW.file_id='%s' BEGIN SELECT RAISE(ABORT, 'observation write refused'); END`, entries[257].FileID))
+	require.NoError(t, err)
+	require.ErrorContains(t, s.ObservePhotoCheckoutEntries(t.Context(), c.ID, "identity", observations), "observation write refused")
+	counts, _, err = s.PhotoCheckoutWorkingSummary(t.Context(), c.ID, 10)
+	require.NoError(t, err)
+	require.Equal(t, map[string]int64{"clean": 129, "missing": 129}, counts)
+	_, err = s.db.ExecContext(t.Context(), `DROP TRIGGER fail_checkout_observation`)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	require.ErrorIs(t, s.ObservePhotoCheckoutEntries(ctx, c.ID, "identity", observations), context.Canceled)
+	counts, _, err = s.PhotoCheckoutWorkingSummary(t.Context(), c.ID, 10)
+	require.NoError(t, err)
+	require.Equal(t, map[string]int64{"clean": 129, "missing": 129}, counts)
+}
+
+func TestPhotoCheckoutScanOrCommitRequiresReservation(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []string{StorageOperationKindPhotoCheckoutScan, StorageOperationKindPhotoCheckoutCommit} {
+		t.Run(kind, func(t *testing.T) {
+			s := newTestStore(t)
+			albumAsset(t, s, "photo.jpg")
+			c, op, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{All: true}, "checkout", "identity", 100)
+			require.NoError(t, err)
+			require.NoError(t, s.FinishPhotoCheckout(t.Context(), c.ID, op.ID, StorageOperationCancelled, "{}", "cancelled", time.Now().Add(time.Hour)))
+			_, _, err = s.PreparePhotoCheckoutOperation(t.Context(), PhotoCheckoutInspection{CheckoutID: c.ID}, kind)
+			require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
 		})
 	}
 }

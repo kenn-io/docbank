@@ -204,7 +204,10 @@ docbank photos timeline [--query QUERY_JSON] [--coverage configured|unconfigured
 docbank photos checkout estimate [--asset ID] [--album ID] [--years YYYY:YYYY] [--all]
 docbank photos checkout create <destination> [--asset ID] [--album ID] [--years YYYY:YYYY] [--all] [--byte-limit N]
 docbank photos checkout list
-docbank photos checkout status <checkout-id>
+docbank photos checkout status <checkout-id> [--after <file-id>] [--limit 100]
+docbank photos checkout scan <checkout-id>
+docbank photos checkout commit <checkout-id>
+docbank photos checkout rebind <checkout-id> <destination>
 docbank photos checkout retire <checkout-id>
 ```
 
@@ -218,7 +221,11 @@ image member and never become the display member. `timeline` counts the photos
 a QueryV1 scope selects by recorded capture day; see
 [Count photos by capture day](usage/photos.md#count-photos-by-capture-day).
 
-Photo assets, albums, memberships, settings, bounded decision receipts, and checkout definitions with historical bases and retention release are included in JSONL backup and restore. Sidecars require a selected eligible original; name errors skip the whole affected photo; the estimate and the checkout in create, status, and list JSON report `skipped_photos` with up to 20 details and the total `skipped_photo_count`; a selection with no remaining files fails. Status and list also print a short skip summary to stderr when photos were skipped. Failed and cancelled checkouts release unpublished source holds and destination reservations. Published or uncertain copies retain their bases until `photos checkout retire <checkout-id>` releases all holds. Retirement preserves copies and history; cancel active work first. Restored checkouts are unbound. Published or uncertain copies preserve their source-base holds through restore until retirement or rebind. Watches and storage bindings require released folders, including retired ones, to be empty or missing. See [Create writable copies](usage/photos.md#create-writable-copies) for destination, capacity, and retention rules.
+Photo assets, albums, memberships, settings, receipts, and checkout definitions are included in JSONL backup and restore. Sidecars require a selected eligible original; name errors skip the whole affected photo. The estimate and the checkout in create, status, and list JSON report up to 20 `skipped_photos` details and the total `skipped_photo_count`; status and list also print a short skip summary to stderr. A selection with no remaining files fails. Failed and cancelled checkouts release unpublished source holds and destination reservations. Published or uncertain copies retain their bases until `photos checkout retire <checkout-id>` releases all holds. Retirement preserves copies and history. Queued or running work keeps retirement pending until it finishes or is cancelled; if the lane is paused, resume or cancel the job through Jobs first.
+
+Restored checkouts stay unbound until `rebind` verifies their daemon-host folder. Rebind hashes and classifies present tracked paths, records absent paths as missing, and requires at least one tracked regular file. It marks present files published and re-holds their surviving bases, preserves held bases whose working files are missing, and leaves pruned bases unheld. Commit holds each advanced base. Edits based on pruned unpublished references report conflicts. Creation and commit share the `photo_checkout` pause lane. Watches and storage bindings require released folders, including retired ones, to be empty or missing.
+
+`scan` previews working-file states and untracked paths. `commit` saves stable edits as new versions and leaves conflicting or changing files in the folder. Both report state counts and bounded path details. `status` pages entries by file ID, with 100 entries by default and `--limit` from 1 through 250; pass `next_after` as `--after` to continue. See [Create writable copies](usage/photos.md#create-writable-copies) for selection, destination, capacity, settlement, and retention rules.
 
 ### Photo albums
 

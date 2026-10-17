@@ -137,7 +137,7 @@ func insertPhotoCheckoutEntryMetadata(ctx context.Context, tx *sql.Tx, v metadat
 }
 
 func exportPhotoCheckoutEntryMetadata(ctx context.Context, q metadataQuerier, write metadataWrite) error {
-	rows, err := q.QueryContext(ctx, `SELECT e.checkout_id,e.file_id,e.asset_id,e.version_id,e.blob_hash,e.size,e.relative_path,e.sidecar_of_file_id,c.retired_at IS NULL AND (e.base_held=1 OR e.published=1 OR e.file_id=COALESCE(o.cursor,'')) FROM photo_checkout_entries e JOIN photo_checkouts c ON c.checkout_id=e.checkout_id LEFT JOIN storage_operations o ON o.operation_id=c.operation_id ORDER BY e.checkout_id,e.file_id`)
+	rows, err := q.QueryContext(ctx, `SELECT e.checkout_id,e.file_id,e.asset_id,e.version_id,e.blob_hash,e.size,e.relative_path,e.sidecar_of_file_id,c.retired_at IS NULL AND (e.base_held=1 OR e.file_id=COALESCE(o.cursor,'')) FROM photo_checkout_entries e JOIN photo_checkouts c ON c.checkout_id=e.checkout_id LEFT JOIN storage_operations o ON o.operation_id=c.operation_id ORDER BY e.checkout_id,e.file_id`)
 	if err != nil {
 		return err
 	}

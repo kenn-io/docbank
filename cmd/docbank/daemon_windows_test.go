@@ -48,7 +48,8 @@ func TestConfiguredWatchStoresAllowUnavailableSecondaryDrive(t *testing.T) {
 }
 
 func TestConfiguredCheckoutStartupDefersInaccessibleDestination(t *testing.T) {
-	catalog, checkoutID, operationID, destination := newCheckoutReservationFixture(t)
+	fixture := newCheckoutReservationFixture(t)
+	catalog, checkoutID, operationID, destination := fixture.catalog, fixture.checkoutID, fixture.operationID, fixture.destination
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
 	err := catalog.FinishPhotoCheckout(t.Context(), checkoutID, operationID, store.StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour))
 	require.NoError(t, err)
