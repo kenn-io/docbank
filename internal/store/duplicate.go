@@ -97,14 +97,11 @@ func (s *Store) DuplicateGroupByHash(ctx context.Context, hash string, size int6
 	if err != nil {
 		return DuplicateGroup{}, fmt.Errorf("reading exact duplicate group %s: %w", hash, err)
 	}
-	group.References, err = duplicateReferences(ctx, tx, group)
-	if err != nil {
+	groups := []DuplicateGroup{group}
+	if err := populateDuplicateReferences(ctx, tx, groups); err != nil {
 		return DuplicateGroup{}, err
 	}
-	if err := populateDuplicateReferenceDetails(ctx, tx, []DuplicateGroup{group}); err != nil {
-		return DuplicateGroup{}, err
-	}
-	group.ReferencesTruncated = group.ReferenceCount > len(group.References)
+	group = groups[0]
 	if err := tx.Commit(); err != nil {
 		return DuplicateGroup{}, fmt.Errorf("closing exact duplicate snapshot: %w", err)
 	}
@@ -181,16 +178,7 @@ func (s *Store) Duplicates(
 		return DuplicatePage{}, fmt.Errorf("closing duplicate groups: %w", err)
 	}
 
-	for index := range page.Items {
-		references, err := duplicateReferences(ctx, tx, page.Items[index])
-		if err != nil {
-			return DuplicatePage{}, err
-		}
-		page.Items[index].References = references
-		page.Items[index].ReferencesTruncated =
-			page.Items[index].ReferenceCount > len(references)
-	}
-	if err := populateDuplicateReferenceDetails(ctx, tx, page.Items); err != nil {
+	if err := populateDuplicateReferences(ctx, tx, page.Items); err != nil {
 		return DuplicatePage{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -199,44 +187,61 @@ func (s *Store) Duplicates(
 	return page, nil
 }
 
-func duplicateReferences(
-	ctx context.Context, tx *sql.Tx, group DuplicateGroup,
-) ([]DuplicateReference, error) {
-	// Bound the group before loading node and current-version metadata.
-	rows, err := tx.QueryContext(ctx, `WITH `+CurrentContentMembershipCTE+`, selected AS (
-		SELECT node_id, modified_at FROM current_content_members
-		WHERE blob_hash = ? AND size = ?
+func populateDuplicateReferences(ctx context.Context, tx *sql.Tx, groups []DuplicateGroup) error {
+	if len(groups) == 0 {
+		return nil
+	}
+	identities := make([]struct {
+		Hash string `json:"hash"`
+		Size int64  `json:"size"`
+	}, len(groups))
+	for i, group := range groups {
+		identities[i].Hash, identities[i].Size = group.Hash, group.Size
+		groups[i].References = make([]DuplicateReference, 0, maxDuplicatePageReferences)
+	}
+	encoded, err := json.Marshal(identities)
+	if err != nil {
+		return fmt.Errorf("encoding duplicate groups: %w", err)
+	}
+	// Select at most sixteen references per group before loading their metadata.
+	rows, err := tx.QueryContext(ctx, `WITH `+CurrentContentMembershipCTE+`
+	SELECT `+nodeCols+`, cv.recorded_at, cv.node_revision,
+	       cv.introduced_operation_id, cv.transition_kind, cv.source_version_id, g.key
+	FROM json_each(?) AS g CROSS JOIN `+nodeFrom+`
+	WHERE n.id IN (
+		SELECT node_id FROM current_content_members
+		WHERE blob_hash = json_extract(g.value, '$.hash') AND size = json_extract(g.value, '$.size')
 		ORDER BY `+DuplicateRepresentativeOrder+` LIMIT ?
 	)
-	SELECT `+nodeCols+`, cv.recorded_at, cv.node_revision,
-	       cv.introduced_operation_id, cv.transition_kind, cv.source_version_id
-	FROM `+nodeFrom+` JOIN selected ON selected.node_id = n.id
-	ORDER BY selected.modified_at, selected.node_id`, group.Hash, group.Size, maxDuplicatePageReferences)
+	ORDER BY g.key, n.modified_at, n.id`, string(encoded), maxDuplicatePageReferences)
 	if err != nil {
-		return nil, fmt.Errorf("listing references for duplicate %s: %w", group.Hash, err)
+		return fmt.Errorf("listing duplicate references: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	references := make([]DuplicateReference, 0, maxDuplicatePageReferences)
 	for rows.Next() {
+		var index int
 		ref := DuplicateReference{Reference: ContentReference{IsCurrent: true}}
 		version := &ref.Reference.Version
 		node, err := scanNode(rows, &version.RecordedAt, &version.NodeRevision,
-			&version.IntroducedOperationID, &version.TransitionKind, &version.SourceVersionID)
+			&version.IntroducedOperationID, &version.TransitionKind, &version.SourceVersionID, &index)
 		if err != nil {
-			return nil, fmt.Errorf("scanning references for duplicate %s: %w", group.Hash, err)
+			return fmt.Errorf("scanning duplicate references: %w", err)
 		}
 		ref.Reference.Node = node
 		version.ID, version.NodeID, version.BlobHash = node.CurrentVersionID, node.ID, node.BlobHash
 		version.MD5, version.Size, version.MimeType = node.MD5, node.Size, node.MimeType
-		references = append(references, ref)
+		groups[index].References = append(groups[index].References, ref)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("listing references for duplicate %s: %w", group.Hash, err)
+		return fmt.Errorf("listing duplicate references: %w", err)
 	}
 	if err := rows.Close(); err != nil {
-		return nil, fmt.Errorf("closing references for duplicate %s: %w", group.Hash, err)
+		return fmt.Errorf("closing duplicate references: %w", err)
 	}
-	return references, nil
+	for i := range groups {
+		groups[i].ReferencesTruncated = groups[i].ReferenceCount > len(groups[i].References)
+	}
+	return populateDuplicateReferenceDetails(ctx, tx, groups)
 }
 
 func populateDuplicateReferenceDetails(ctx context.Context, tx *sql.Tx, groups []DuplicateGroup) error {

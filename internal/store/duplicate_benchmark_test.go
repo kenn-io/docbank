@@ -67,7 +67,7 @@ func BenchmarkDuplicates(b *testing.B) {
 // Vary page size, references per group, and ancestor depth.
 // Fixture creation is excluded; reads include metadata, paths and collections.
 func BenchmarkDuplicateReferencePages(b *testing.B) {
-	for _, references := range []int{2, 16} {
+	for _, references := range []int{2, 16, 128} {
 		for _, groups := range []int{1, 50} {
 			for _, depth := range []int{0, 16} {
 				b.Run(fmt.Sprintf("references=%d/groups=%d/depth=%d", references, groups, depth), func(b *testing.B) {
@@ -108,7 +108,8 @@ func BenchmarkDuplicateReferencePages(b *testing.B) {
 							b.Fatalf("page=%+v err=%v", page, err)
 						}
 						for i, group := range page.Items {
-							if group.ReferenceCount != references || len(group.References) != references || group.ReferencesTruncated {
+							if group.ReferenceCount != references || len(group.References) != min(references, 16) ||
+								group.ReferencesTruncated != (references > 16) {
 								b.Fatalf("group=%+v", group)
 							}
 							for j, ref := range group.References {
