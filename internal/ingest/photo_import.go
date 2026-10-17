@@ -468,7 +468,7 @@ func admitOutsideActivity(ctx context.Context, opts PhotoImportOptions) (bool, e
 type PhotoImportRunner struct {
 	Ingester *Ingester
 	Options  PhotoImportOptions
-	// Telemetry reports a tracked operation's first new document; nil stays silent.
+	// Telemetry reports a claimed operation's first new document; nil stays silent.
 	Telemetry *telemetry.Capture
 	// admit replaces jobs.AdmitStorageOperation in tests that inject read failures.
 	admit func(ctx context.Context, metadata *store.Store, id string) (bool, error)
@@ -479,6 +479,28 @@ func (r PhotoImportRunner) admitOperation(ctx context.Context, id string) (bool,
 		return r.admit(ctx, r.Ingester.Store, id)
 	}
 	return jobs.AdmitStorageOperation(ctx, r.Ingester.Store, id)
+}
+
+// reportImportAdded reports an operation's first new document, once, to the
+// interface that started it. Reporting is best effort.
+func (r PhotoImportRunner) reportImportAdded(ctx context.Context, operationID string) {
+	if r.Telemetry == nil {
+		return
+	}
+	// The document is committed, so consume the claim even while the job stops.
+	ctx = context.WithoutCancel(ctx)
+	var surface string
+	consume := func() error {
+		var err error
+		surface, err = r.Ingester.Store.ConsumeImportClaim(ctx, store.PhotoImportOwner, operationID)
+		return err
+	}
+	if r.Options.Mutate != nil {
+		_ = r.Options.Mutate(ctx, consume)
+	} else {
+		_ = consume()
+	}
+	r.Telemetry.DocumentAdded(surface)
 }
 
 func (r PhotoImportRunner) Start(supervisor *jobs.Supervisor, operationID string) error {
@@ -522,13 +544,12 @@ func (r PhotoImportRunner) Run(ctx context.Context, operationID string) error {
 		return err
 	}
 	if cancelled || operation.CancelRequested {
-		r.Telemetry.ForgetImport(operationID)
 		finishErr := metadata.FinishStorageOperation(context.WithoutCancel(ctx), operationID,
 			store.StorageOperationCancelled, operation.ReceiptJSON, "", time.Now().Add(photoImportRetention))
 		return finishErr
 	}
 	opts := r.Options
-	opts.Created = func() { r.Telemetry.ImportAdded(operationID) }
+	opts.Created = func() { r.reportImportAdded(ctx, operationID) }
 	opts.Admit = func(ctx context.Context) (bool, error) {
 		cancelled, err := r.admitOperation(ctx, operationID)
 		if err != nil {
@@ -590,7 +611,6 @@ func (r PhotoImportRunner) Run(ctx context.Context, operationID string) error {
 	if err != nil {
 		return errors.Join(importErr, err)
 	}
-	r.Telemetry.ForgetImport(operationID)
 	finishErr := metadata.FinishStorageOperation(context.WithoutCancel(ctx), operationID, state,
 		string(encoded), failure, time.Now().Add(photoImportRetention))
 	return errors.Join(importErr, finishErr)

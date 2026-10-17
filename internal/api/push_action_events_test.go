@@ -3,69 +3,46 @@ package api_test
 import (
 	"fmt"
 	"net/http"
-	"net/http/httptest"
+	"sync"
 	"testing"
 	"uuid"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/daemonconn"
 )
 
-func TestPushClaimsStayActiveUntilFinish(t *testing.T) {
+func TestPushRunsReportFirstAdditionOnce(t *testing.T) {
 	t.Setenv("DOCBANK_TELEMETRY_ENABLED", "1")
 	t.Setenv("TELEMETRY_ENABLED", "1")
 	capture := newActionCollector(t)
 	server, catalog := newTestServer(t, func(d *api.Deps) { d.TelemetryCapture = capture.capture })
-	upload := func(runID, name string) {
+	upload := func(runID, name, surface string) {
 		data := []byte("synthetic content")
 		response, body := sendUpload(t, server.URL, server.Client(), catalog.RootID(), uploadRequest{
 			name: name, sourceRef: name, pushName: "synthetic", runID: runID,
-			content: data, expectedHash: uploadIdentity(data), expectedSize: int64(len(data)), surface: "cli",
+			content: data, expectedHash: uploadIdentity(data), expectedSize: int64(len(data)), surface: surface,
 		})
 		require.Equal(t, http.StatusCreated, response.StatusCode, body)
-	}
-	finish := func(id string, want int) {
-		response, body := do(t, server, http.MethodPost, "/api/v1/push/runs/"+id+"/finish", nil, nil)
-		require.Equal(t, want, response.StatusCode, body)
 	}
 	active := uuid.NewV4().String()
-	upload(active, "first.txt")
-	unreachable := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) }))
-	defer unreachable.Close()
-	require.Error(t, daemonconn.New(unreachable.URL, "synthetic-key").FinishPushRun(t.Context(), active))
-	for i := range 256 {
-		id := uuid.NewV4().String()
-		upload(id, fmt.Sprintf("file-%d.txt", i))
-		finish(id, http.StatusNoContent)
-		finish(id, http.StatusNoContent)
+	upload(active, "first.txt", "cli")
+	concurrent := uuid.NewV4().String()
+	var uploads sync.WaitGroup
+	for i := range 8 {
+		uploads.Go(func() { upload(concurrent, fmt.Sprintf("concurrent-%d.txt", i), "cli") })
 	}
-	upload(active, "last.txt")
-	finish(uuid.NewV4().String(), http.StatusNoContent)
-	finish("invalid", http.StatusUnprocessableEntity)
-	response, body := do(t, server, http.MethodPost, "/api/v1/push/runs/"+active+"/finish", map[string]string{"X-Api-Key": ""}, nil)
-	require.Equal(t, http.StatusUnauthorized, response.StatusCode, body)
-	require.NoError(t, capture.reporter.Close())
-	require.Len(t, capture.events, 257)
-	for len(capture.events) > 0 {
-		require.Equal(t, "document_added", (<-capture.events)["event"])
-	}
-}
-
-func TestPushAllActivePressureDropsNewAttribution(t *testing.T) {
-	t.Setenv("DOCBANK_TELEMETRY_ENABLED", "1")
-	t.Setenv("TELEMETRY_ENABLED", "1")
-	capture := newActionCollector(t)
-	server, catalog := newTestServer(t, func(d *api.Deps) { d.TelemetryCapture = capture.capture })
+	uploads.Wait()
+	// Interrupted runs never finish; they must not stop later runs from reporting.
 	for i := range 257 {
-		data := []byte("synthetic content")
-		name := fmt.Sprintf("active-%d.txt", i)
-		response, body := sendUpload(t, server.URL, server.Client(), catalog.RootID(), uploadRequest{
-			name: name, sourceRef: name, pushName: "synthetic", runID: uuid.NewV4().String(),
-			content: data, expectedHash: uploadIdentity(data), expectedSize: int64(len(data)), surface: "cli",
-		})
-		require.Equal(t, http.StatusCreated, response.StatusCode, body)
+		upload(uuid.NewV4().String(), fmt.Sprintf("file-%d.txt", i), "cli")
 	}
+	upload(active, "late.txt", "cli")
+	upload(uuid.NewV4().String(), "scripted.txt", "")
 	require.NoError(t, capture.reporter.Close())
-	require.Len(t, capture.events, 256)
+	require.Len(t, capture.events, 259)
+	for len(capture.events) > 0 {
+		event := <-capture.events
+		require.Equal(t, "document_added", event["event"])
+		require.Subset(t, event["properties"], map[string]any{"surface": "cli"})
+	}
 }

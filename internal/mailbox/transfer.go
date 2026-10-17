@@ -107,9 +107,26 @@ func (s *Service) transferSource(ctx context.Context, owner string, run store.In
 		})
 	})
 	if err == nil && commit != nil {
-		s.Telemetry.ImportAdded(commit.job.ID)
+		s.reportImportAdded(ctx, commit.job.ID)
 	}
 	return receipt, err
+}
+
+// reportImportAdded reports a job's first imported message, once, to the
+// interface that started the job. Reporting is best effort.
+func (s *Service) reportImportAdded(ctx context.Context, jobID string) {
+	if s.Telemetry == nil {
+		return
+	}
+	// The message is committed, so consume the claim even while the job stops.
+	ctx = context.WithoutCancel(ctx)
+	var surface string
+	_ = s.mutate(ctx, func() error {
+		var err error
+		surface, err = s.Store.ConsumeImportClaim(ctx, store.MailboxImportOwner, jobID)
+		return err
+	})
+	s.Telemetry.DocumentAdded(surface)
 }
 func (s *Service) stageBlob(ctx context.Context, r io.Reader, hash string, size int64) error {
 	wr, err := s.Blobs.WriteDetailedContext(ctx, io.LimitReader(r, size+1))

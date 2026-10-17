@@ -280,11 +280,3 @@ func validPushCursor(cursor api.PushSourceCursor) error {
 	}
 	return nil
 }
-
-// FinishPushRun retires attribution after all uploads in a one-shot run exit.
-func (c *Connection) FinishPushRun(ctx context.Context, runID string) error {
-	_, err := c.API().FinishPushRun(ctx, &apiclient.FinishPushRunRequestOptions{
-		PathParams: &apiclient.FinishPushRunPath{RunID: runID},
-	})
-	return err
-}

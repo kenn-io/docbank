@@ -61,6 +61,7 @@ type fakeBackend struct {
 	processingSearch          api.DocumentSearchReport
 	processingSearchCalls     int
 	naturalSearch             api.DocumentSearchReport
+	naturalSearchErr          error
 	naturalRerankSearch       api.DocumentSearchReport
 	naturalSearchRequests     []api.DocumentSearchRequest
 	processingJob             api.ProcessingJob
@@ -400,6 +401,9 @@ func (f *fakeBackend) SearchDocuments(_ context.Context, request api.DocumentSea
 	}
 	if len(request.Fence.ContentVersionIDs) != 1 || request.Mode != "auto" {
 		f.naturalSearchRequests = append(f.naturalSearchRequests, request)
+		if f.naturalSearchErr != nil {
+			return api.DocumentSearchReport{}, f.naturalSearchErr
+		}
 		if request.Rerank {
 			return f.naturalRerankSearch, nil
 		}
@@ -2977,6 +2981,27 @@ func TestSupersededSearchReportsTheModeThatRan(t *testing.T) {
 	assert.Equal(t, "second synthetic query", model.searchQuery)
 }
 
+func TestNaturalSearchFailureShowsAndReportsLexicalFallback(t *testing.T) {
+	backend := newFakeBackend()
+	backend.naturalSearchErr = errors.New("synthetic natural search failure")
+	backend.sourceFence.Fence.ContentVersionIDs = []string{"synthetic-a", "synthetic-b"}
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model, _ = updateModel(t, model, tea.WindowSizeMsg{Width: 120, Height: 40})
+	model.naturalMode = naturalAuto
+	model.naturalProfiles = []api.ProcessingProfileSummary{{Name: "synthetic", QueryEmbeddingBindings: []string{"synthetic"}}}
+	model, _ = updateModel(t, model, runeKey('/'))
+	model.searchInput.SetValue("synthetic query")
+	model, command := updateModel(t, model, key(tea.KeyEnter))
+	model = applyResults(t, model, command)
+	require.False(t, model.loading)
+	require.NoError(t, model.err)
+	require.Equal(t, "synthetic query", model.searchQuery)
+	require.NotEmpty(t, model.rows)
+	require.Contains(t, model.View().Content, "/docs/report.txt")
+	require.Equal(t, [][2]string{{"search_run", "text"}}, backend.actions)
+}
+
 // applyResults delivers cmd's messages and runs the commands each update
 // returns once, so result handlers' reports execute.
 func applyResults(t *testing.T, model Model, cmd tea.Cmd) Model {
@@ -2998,16 +3023,7 @@ func applyResults(t *testing.T, model Model, cmd tea.Cmd) Model {
 		return model
 	}
 	model, returned := updateModel(t, model, msg)
-	if returned != nil {
-		if batch, ok := returned().(tea.BatchMsg); ok {
-			for _, command := range batch {
-				if command != nil {
-					command()
-				}
-			}
-		}
-	}
-	return model
+	return applyResults(t, model, returned)
 }
 
 func TestInspectionRetriesAfterReportFailure(t *testing.T) {

@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/internal/mailbox"
@@ -131,7 +130,6 @@ func mailboxPage(r *http.Request) (string, int, error) {
 }
 func registerMailboxRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 	service := mailboxService(d)
-	var jobAdmission sync.Mutex
 	mux.HandleFunc("POST /api/v1/mailbox/containers", func(w http.ResponseWriter, r *http.Request) {
 		var input MailboxContainerInput
 		if !readMailboxJSON(w, r, &input) {
@@ -217,21 +215,8 @@ func registerMailboxRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 		}
 		var j store.MailboxJob
 		err := g.mutate(func() error {
-			// Ordinary mutations can overlap. Keep attribution and admission
-			// together so a failed duplicate cannot clear another request's origin.
-			jobAdmission.Lock()
-			defer jobAdmission.Unlock()
-			_, lookupErr := d.Store.MailboxJob(r.Context(), mailboxOwner(d), request.ID)
-			admitting := errors.Is(lookupErr, store.ErrNotFound)
-			if admitting {
-				// Register before the new job becomes visible to its worker.
-				d.TelemetryCapture.TrackImport(request.ID, importActionSurface(r))
-			}
 			var err error
-			j, err = d.Store.BeginMailboxJob(r.Context(), mailboxOwner(d), request.storeRequest())
-			if err != nil && admitting {
-				d.TelemetryCapture.ForgetImport(request.ID)
-			}
+			j, err = d.Store.BeginMailboxJob(r.Context(), mailboxOwner(d), request.storeRequest(), importActionSurface(r))
 			return err
 		})
 		if err != nil {

@@ -328,19 +328,17 @@ func TestPhotoImportRunnerReportsFirstNewDocumentOnce(t *testing.T) {
 		}
 		return nil
 	}
-	first, err := ing.Store.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport, request)
+	first, err := ing.Store.CreatePhotoImport(t.Context(), request, "cli")
 	require.NoError(t, err)
-	capture.TrackImport(first.ID, "cli")
 	require.ErrorIs(t, shutdown.Run(stopped, first.ID), context.Canceled)
 	require.Equal(t, []any{"cli"}, surfaces)
 	require.NoError(t, runner.Run(t.Context(), first.ID))
-	require.Equal(t, []any{"cli"}, surfaces, "a retry in the same daemon run reports nothing more")
+	require.Equal(t, []any{"cli"}, surfaces, "a resumed run reports nothing more")
 
 	// A revised source becomes a new version, which is not an addition.
 	require.NoError(t, os.WriteFile(filepath.Join(root, "IMG_0.JPG"), []byte("revised jpeg"), 0o600))
-	revised, err := ing.Store.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport, request)
+	revised, err := ing.Store.CreatePhotoImport(t.Context(), request, "cli")
 	require.NoError(t, err)
-	capture.TrackImport(revised.ID, "cli")
 	require.NoError(t, runner.Run(t.Context(), revised.ID))
 	completed, err := ing.Store.StorageOperation(t.Context(), revised.ID)
 	require.NoError(t, err)

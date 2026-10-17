@@ -181,7 +181,7 @@ func newPackageImportTestEnvWithNativeFile(t *testing.T, count int, acceptPartia
 	require.NoError(t, err)
 	job := store.PackageImportJobRequest{ID: uuid.NewString(), Owner: owner, OperationID: operationID,
 		RequestSHA256: packageImportTestHash([]byte("synthetic request")), PreflightID: preflightID,
-		PackageID: packageID, JobJSON: jobJSON}
+		PackageID: packageID, JobJSON: jobJSON, ActionSurface: "web"}
 	_, err = catalog.AdmitPackageImport(ctx, run, request, job)
 	require.NoError(t, err)
 	return &packageImportTestEnv{Catalog: catalog, Blobs: blobs, Root: root,
@@ -290,15 +290,13 @@ func TestPackageImportWorkerReportsFirstAdditionOnceAcrossRetry(t *testing.T) {
 	injected := errors.New("synthetic interruption before second record")
 	firstKey, err := store.PackageRecordKey("VOL001/DATA.DAT", 1, "DOC-A")
 	require.NoError(t, err)
-	job, err := env.Catalog.PackageImportJob(t.Context(), env.Owner, env.OperationID)
-	require.NoError(t, err)
 	capture, surfaces := recordingCapture(t)
-	capture.TrackImport(job.ID, "web")
 	var interrupted atomic.Bool
 	config := env.config()
 	config.Telemetry = capture
 	config.Mutate = func(ctx context.Context, fn func() error) error {
-		if _, headErr := env.Catalog.PackageImportHead(ctx, env.PackageID, firstKey); headErr == nil && interrupted.CompareAndSwap(false, true) {
+		// Interrupt the next record once the first one has committed and reported.
+		if _, headErr := env.Catalog.PackageImportHead(ctx, env.PackageID, firstKey); headErr == nil && len(*surfaces) == 1 && interrupted.CompareAndSwap(false, true) {
 			return injected
 		}
 		return fn()
@@ -330,10 +328,6 @@ func TestPackageImportWorkerReportsFirstAdditionOnceAcrossRetry(t *testing.T) {
 	require.Equal(t, "complete", pkg.State)
 	require.Equal(t, 2, pkg.MemberCount)
 	require.Equal(t, []any{"web"}, *surfaces, "the second record and retry add no event")
-	// Completion releases the import, so tracking the same ID again starts fresh.
-	capture.TrackImport(job.ID, "cli")
-	capture.ImportAdded(job.ID)
-	require.Equal(t, []any{"web", "cli"}, *surfaces)
 }
 
 func TestPackageImportWorkerPersistsSuppliedTextGenerationInReceipt(t *testing.T) {

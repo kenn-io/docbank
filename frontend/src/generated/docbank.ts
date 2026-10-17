@@ -17126,30 +17126,6 @@ return sessionJSON<DocumentSourceFenceResolution>(getResolveDocumentSourceFenceU
 
 
 
-export const getFinishPushRunUrl = (runId: string,) => {
-
-
-
-
-  return `/api/v1/push/runs/${encodeURIComponent(String(runId))}/finish`
-}
-
-/**
- * @summary Finish attribution for a push run
- */
-export const finishPushRun = async (runId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
-
-  return sessionJSON<void>(getFinishPushRunUrl(runId),
-  {
-    ...options,
-    method: 'POST'
-
-
-  }
-);}
-
-
-
 export const getListPushSourcesUrl = (params: ListPushSourcesParams,) => {
   const normalizedParams = new URLSearchParams();
 

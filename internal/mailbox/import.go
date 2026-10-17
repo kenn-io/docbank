@@ -242,10 +242,6 @@ func (s *Service) RunWorker(ctx context.Context) error {
 				}
 				logger.ErrorContext(ctx, "mailbox job failed", "job", j.ID, "error", err)
 			}
-			// Canceled and partial jobs can resume in this daemon run.
-			if current, readErr := s.Store.MailboxJob(ctx, j.Owner, j.ID); readErr == nil && current.ScannedTail {
-				s.Telemetry.ForgetImport(j.ID)
-			}
 			continue
 		}
 		if !errors.Is(err, store.ErrNotFound) && !errors.Is(err, store.ErrMailboxLimit) && !s.Store.RenditionJobErrorRetryable(err) {

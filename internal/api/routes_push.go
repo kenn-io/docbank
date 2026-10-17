@@ -75,19 +75,6 @@ func registerPushRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 		}
 		return &output{Body: page}, nil
 	})
-	type finishInput struct {
-		RunID string `path:"run_id"`
-	}
-	huma.Register(api, huma.Operation{
-		OperationID: "finishPushRun", Method: http.MethodPost, Path: "/api/v1/push/runs/{run_id}/finish",
-		Summary: "Finish attribution for a push run", DefaultStatus: http.StatusNoContent,
-	}, func(_ context.Context, in *finishInput) (*struct{}, error) {
-		if err := store.ValidatePushRunID(in.RunID); err != nil {
-			return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
-		}
-		d.TelemetryCapture.CompleteImport("push:" + in.RunID)
-		return &struct{}{}, nil
-	})
 	registerPushUploadOpenAPI(api)
 	mux.HandleFunc("POST "+pushUploadPath, func(w http.ResponseWriter, r *http.Request) {
 		handlePushUpload(w, r, d, g)
@@ -170,9 +157,18 @@ func handlePushUpload(w http.ResponseWriter, r *http.Request, d Deps, g *gate) {
 	if outcome == "added" {
 		httpStatus = http.StatusCreated
 		// One interactive push run reports its first addition; updates are not additions.
-		if surface := cliImportSurface(r.Context(), r.Header.Get(ActionSurfaceHeader)); surface != "" {
-			d.TelemetryCapture.TrackImport("push:"+runID, surface)
-			d.TelemetryCapture.ImportAdded("push:" + runID)
+		if surface := cliImportSurface(r.Context(), r.Header.Get(ActionSurfaceHeader)); surface != "" && d.TelemetryCapture != nil {
+			var claimed bool
+			err := g.MutateContext(r.Context(), func() error {
+				var claimErr error
+				claimed, claimErr = d.Store.ClaimPushRun(r.Context(), runID, surface)
+				return claimErr
+			})
+			if err != nil {
+				d.Logger.Warn("record push action claim", "run_id", runID, "error", err)
+			} else if claimed {
+				d.TelemetryCapture.DocumentAdded(surface)
+			}
 		}
 	}
 	writeJSON(w, httpStatus, PushUploadReceipt{

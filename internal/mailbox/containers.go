@@ -24,7 +24,7 @@ type Service struct {
 	// Mutate coordinates background publication with maintenance. HTTP and
 	// embedded callers already hold their owner gate and leave this nil.
 	Mutate func(context.Context, func() error) error
-	// Telemetry reports a tracked job's first imported message; nil stays silent.
+	// Telemetry reports a claimed job's first imported message; nil stays silent.
 	Telemetry *telemetry.Capture
 }
 

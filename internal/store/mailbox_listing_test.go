@@ -26,7 +26,7 @@ func TestMailboxJobsNewestFirstWithStablePages(t *testing.T) {
 		{"newer-b", "2026-02-01T00:00:00.000000000Z"},
 		{"newer-a", "2026-02-01T00:00:00.000000000Z"},
 	} {
-		j, err := s.BeginMailboxJob(ctx, c.Owner, MailboxJobRequest{ID: item.id, ContainerID: c.ID, ContainerSHA256: c.SHA256, Settings: MailboxSettings{DestinationID: s.RootID()}})
+		j, err := s.BeginMailboxJob(ctx, c.Owner, MailboxJobRequest{ID: item.id, ContainerID: c.ID, ContainerSHA256: c.SHA256, Settings: MailboxSettings{DestinationID: s.RootID()}}, "")
 		require.NoError(t, err)
 		j.StartedAt = item.started
 		require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error { return saveMailboxJob(ctx, tx, j, false) }))
@@ -47,7 +47,7 @@ func TestMailboxJobsNewestFirstWithStablePages(t *testing.T) {
 	_, err = s.BeginMailboxJob(ctx, other.Owner, MailboxJobRequest{
 		ID: "other-job", ContainerID: other.ID, ContainerSHA256: other.SHA256,
 		Settings: MailboxSettings{DestinationID: s.RootID()},
-	})
+	}, "")
 	require.NoError(t, err)
 	// Page order must not depend on SQLite's traversal of the selected-row join.
 	s.db.SetMaxOpenConns(1)

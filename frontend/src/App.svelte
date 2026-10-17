@@ -4607,8 +4607,8 @@
             </p>
             <p>
               Reports go to PostHog with a random ID for this vault, the app version, operating
-              system, and install age. They never include document content, filenames, paths, tags,
-              or search queries.
+              system, and install age, and whether you used Docbank in the web app or a terminal.
+              They never include document content, filenames, paths, tags, or search queries.
             </p>
             <p>
               To turn reporting off, set <code>DOCBANK_TELEMETRY_ENABLED=0</code> in the environment

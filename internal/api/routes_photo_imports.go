@@ -64,14 +64,12 @@ func registerPhotoImportRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, err
 		}
-		operation, err := d.Store.CreateLocalOperation(ctx, store.StorageOperationKindPhotoImport, string(request))
+		operation, err := d.Store.CreatePhotoImport(ctx, string(request), cliImportSurface(ctx, in.Surface))
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		d.TelemetryCapture.TrackImport(operation.ID, cliImportSurface(ctx, in.Surface))
 		runner := NewPhotoImportRunner(runnerDeps)
 		if err := runner.Start(d.Jobs, operation.ID); err != nil {
-			d.TelemetryCapture.ForgetImport(operation.ID)
 			d.Logger.Error("start queued photo import", "operation_id", operation.ID, "error", err)
 		}
 		return &photoImportStartOutput{Body: storageOperationAPI(operation)}, nil

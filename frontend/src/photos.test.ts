@@ -2932,13 +2932,13 @@ it("reports deliberate Photos searches when their first page arrives, not when t
   expect(events).toEqual([]);
 
   const stale = photos.setQuery({ ...photoQuery, text: "old" }, true);
-  const current = photos.setQuery({ ...photoQuery, text: "river", mode: "semantic" }, true);
+  const current = photos.setQuery({ ...photoQuery, text: "river", mode: "lexical" }, true);
   pages[1]!(response([photo(2)], "next"));
   await current;
-  expect(events).toEqual([search("semantic")]);
+  expect(events).toEqual([search("text")]);
   pages[0]!(response([photo(3)]));
   await stale;
-  expect(events).toEqual([search("semantic"), search("text")]);
+  expect(events).toEqual([search("text"), search("text")]);
   expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-2"]);
   pages.length = 0;
   const more = photos.loadMore();
@@ -2948,3 +2948,24 @@ it("reports deliberate Photos searches when their first page arrives, not when t
   expect(events).toHaveLength(2);
   photos.dispose();
 });
+
+it.each(["semantic", "hybrid"] as const)(
+  "keeps rejected %s Photos searches silent",
+  async (mode) => {
+    const events: unknown[] = [];
+    vi.stubGlobal("fetch", (url: string, init: RequestInit) => {
+      if (url === "/api/daemon/telemetry/events") {
+        events.push(JSON.parse(init.body as string));
+        return Promise.resolve(new Response(null, { status: 202 }));
+      }
+      return Promise.resolve(
+        Response.json({ detail: "Photos require lexical queries" }, { status: 422 }),
+      );
+    });
+    const photos = new Photos("scoped", vi.fn());
+    await photos.setQuery({ ...photoQuery, text: "river", mode }, true);
+    expect(photos.error).toContain("Photos require lexical queries");
+    expect(events).toEqual([]);
+    photos.dispose();
+  },
+);

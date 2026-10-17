@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -155,4 +156,40 @@ func TestMailboxActionCancellationAndResume(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMailboxCanceledImportsKeepLaterImportsReporting(t *testing.T) {
+	t.Setenv("DOCBANK_TELEMETRY_ENABLED", "1")
+	t.Setenv("TELEMETRY_ENABLED", "1")
+	capture := newActionCollector(t)
+	server, catalog := newTestServer(t, func(d *api.Deps) { d.TelemetryCapture = capture.capture })
+	owner := "vault:" + catalog.VaultID()
+	raw := []byte("From sender@example.com Sat Sep 12 10:00:00 2026\nSubject: Synthetic archive\nContent-Type: text/plain\n\nSynthetic body.\n")
+	digest := sha256.Sum256(raw)
+	container := store.MailboxContainerRequest{ID: "synthetic-source", Owner: owner, SHA256: hex.EncodeToString(digest[:]), Size: int64(len(raw)), Format: "mbox"}
+	_, err := catalog.BeginMailboxContainer(t.Context(), container)
+	require.NoError(t, err)
+	service := mailbox.Service{Store: catalog.Store, Blobs: catalog.Blobs, Spool: t.TempDir(), Telemetry: capture.capture}
+	require.NoError(t, service.UploadChunk(t.Context(), owner, container.ID, 0, container.SHA256, container.Size, bytes.NewReader(raw)))
+	_, err = service.Seal(t.Context(), owner, container.ID)
+	require.NoError(t, err)
+	request := func(id string) api.MailboxJobInput {
+		return api.MailboxJobInput{ID: id, ContainerID: container.ID, ContainerSHA256: container.SHA256, Settings: api.MailboxSettingsInput{DestinationID: catalog.RootID()}}
+	}
+	cli := map[string]string{api.ActionSurfaceHeader: "cli"}
+	for i := range 257 {
+		id := fmt.Sprintf("canceled-%d", i)
+		response, body := do(t, server, http.MethodPost, "/api/v1/mailbox/jobs", cli, request(id))
+		require.Equal(t, http.StatusCreated, response.StatusCode, body)
+		response, body = do(t, server, http.MethodPost, "/api/v1/mailbox/jobs/"+id+"/cancel", nil, nil)
+		require.Equal(t, http.StatusNoContent, response.StatusCode, body)
+	}
+	web := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, server)}
+	response, body := do(t, server, http.MethodPost, "/api/v1/mailbox/jobs", web, request("later"))
+	require.Equal(t, http.StatusCreated, response.StatusCode, body)
+	job, err := catalog.ClaimMailboxJob(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, "later", job.ID)
+	require.NoError(t, service.RunJob(t.Context(), job))
+	capture.requireEvent(t, "document_added", map[string]any{"surface": "web"})
 }

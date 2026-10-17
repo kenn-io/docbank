@@ -77,7 +77,7 @@ func TestExportCollectionResolvesVaultMailboxWithoutChangingSessionOwnership(t *
 	require.NoError(t, s.PutMailboxChunk(t.Context(), owner, "container", store.MailboxChunk{Index: 0, SHA256: n.BlobHash, Size: n.Size}))
 	_, err = s.SealMailboxContainer(t.Context(), owner, "container", n.BlobHash, n.Size)
 	require.NoError(t, err)
-	j, err := s.BeginMailboxJob(t.Context(), owner, store.MailboxJobRequest{ID: "job", ContainerID: "container", ContainerSHA256: n.BlobHash, Settings: store.MailboxSettings{DestinationID: s.RootID()}})
+	j, err := s.BeginMailboxJob(t.Context(), owner, store.MailboxJobRequest{ID: "job", ContainerID: "container", ContainerSHA256: n.BlobHash, Settings: store.MailboxSettings{DestinationID: s.RootID()}}, "")
 	require.NoError(t, err)
 	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
 	resp, body := do(t, ts, http.MethodPost, "/api/v1/exports/sources", headers, bundle.SourceRequest{OperationID: uuid.NewString(), Kind: "mailbox_collection", CollectionID: j.CollectionID})

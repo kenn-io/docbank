@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -35,16 +34,13 @@ import (
 )
 
 type fixture struct {
-	connection         *daemonconn.Connection
-	baseURL            string
-	store              *store.Store
-	blobs              *blob.Store
-	vaultRoot          string
-	uploads            atomic.Int64
-	finishes           atomic.Int64
-	activeUploads      atomic.Int64
-	finishDuringUpload atomic.Bool
-	drop               atomic.Bool
+	connection *daemonconn.Connection
+	baseURL    string
+	store      *store.Store
+	blobs      *blob.Store
+	vaultRoot  string
+	uploads    atomic.Int64
+	drop       atomic.Bool
 	// truncateReceipt sends success headers and only part of a committed receipt.
 	truncateReceipt atomic.Bool
 	// listings counts cursor list requests. In watch mode every scan with
@@ -118,15 +114,7 @@ func newFixture(t *testing.T, configure ...func(*config.Config)) *fixture {
 		if r.URL.Path == "/api/v1/push/sources" {
 			f.listings.Add(1)
 		}
-		if strings.HasSuffix(r.URL.Path, "/finish") {
-			f.finishes.Add(1)
-			if f.activeUploads.Load() != 0 {
-				f.finishDuringUpload.Store(true)
-			}
-		}
 		if r.URL.Path == "/api/v1/push/uploads" {
-			f.activeUploads.Add(1)
-			defer f.activeUploads.Add(-1)
 			f.uploads.Add(1)
 			if hook := f.onUpload.Swap(nil); hook != nil {
 				(*hook)()
@@ -860,10 +848,6 @@ func TestPushReportsRejectionWhenSourceBytesAreUnchanged(t *testing.T) {
 					w.WriteHeader(http.StatusUnprocessableEntity)
 					_, _ = fmt.Fprintf(w, `{"status":422,"code":%q,"detail":"rejected content"}`, rejection)
 				default:
-					if strings.HasSuffix(r.URL.Path, "/finish") {
-						w.WriteHeader(http.StatusNoContent)
-						return
-					}
 					t.Errorf("unexpected request: %s", r.URL.Path)
 					http.NotFound(w, r)
 				}
@@ -1084,34 +1068,4 @@ func TestPushWatchSurvivesAnOutageAtStartup(t *testing.T) {
 	assert.Empty(t, done)
 	cancel()
 	require.ErrorIs(t, <-done, context.Canceled)
-}
-
-func TestOneShotFinishesAfterWorkersExitOnCancellationAndError(t *testing.T) {
-	for _, canceled := range []bool{false, true} {
-		t.Run(fmt.Sprintf("canceled=%t", canceled), func(t *testing.T) {
-			f := newFixture(t)
-			dir := t.TempDir()
-			require.NoError(t, os.WriteFile(filepath.Join(dir, "synthetic.txt"), []byte("synthetic content"), 0o600))
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			opts := options(dir)
-			sentinel := errors.New("synthetic callback failure")
-			opts.Progress = func(_, outcome string) error {
-				assert.Equal(t, "added", outcome)
-				if canceled {
-					cancel()
-					return ctx.Err()
-				}
-				return sentinel
-			}
-			_, err := push.Run(ctx, f.connection, opts)
-			if canceled {
-				require.ErrorIs(t, err, context.Canceled)
-			} else {
-				require.ErrorIs(t, err, sentinel)
-			}
-			require.Equal(t, int64(1), f.finishes.Load())
-			require.False(t, f.finishDuringUpload.Load())
-		})
-	}
 }

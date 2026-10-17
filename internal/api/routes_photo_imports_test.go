@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json/v2"
-	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -311,21 +310,4 @@ func TestPhotoImportReportsOnlyInteractiveCommittedAdditions(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestPhotoImportStartFailureReleasesAttribution(t *testing.T) {
-	t.Setenv("DOCBANK_TELEMETRY_ENABLED", "1")
-	t.Setenv("TELEMETRY_ENABLED", "1")
-	capture := newActionCollector(t)
-	for i := range 255 {
-		capture.capture.TrackImport(fmt.Sprintf("active-%d", i), "cli")
-	}
-	supervisor := jobs.New(t.Context(), nil)
-	require.NoError(t, supervisor.Shutdown(t.Context()))
-	server, _ := newTestServer(t, func(d *api.Deps) { d.TelemetryCapture = capture.capture; d.Jobs = supervisor })
-	response, body := do(t, server, http.MethodPost, "/api/v1/photos/imports", map[string]string{api.ActionSurfaceHeader: "cli"}, api.PhotoImportStartRequest{SourceRoot: t.TempDir(), Destination: "/photos"})
-	require.Equal(t, http.StatusAccepted, response.StatusCode, body)
-	capture.capture.TrackImport("later-import", "cli")
-	capture.capture.ImportAdded("later-import")
-	capture.requireEvent(t, "document_added", map[string]any{"surface": "cli"})
 }

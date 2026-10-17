@@ -1038,6 +1038,7 @@ Allowed `screen` values are `browse`, `search`, `tags`, `snapshot`, `history`, `
 Each action requires `surface` as `web`, `tui`, or `cli`. `search_run` also
 requires `search_type` as `text`, `semantic`, or `hybrid`. Other properties
 are dropped. Missing or unsupported required values return HTTP 400.
+The interface label comes from the reporting client and does not identify who used Docbank.
 Only the daemon reports `document_added`, after it commits an addition; the
 event route returns HTTP 400 when an interface submits it.
 
@@ -1052,19 +1053,11 @@ host-folder `photos import` and status commands stay silent. CLI `add` reports
 confirmed additions from the daemon even when its progress stream fails. The
 browser Photos drawer uses upload groups.
 
-The daemon remembers which interface started a mailbox, load-file or
-host-folder Photos job only while it keeps running. A job therefore still
-reports after its drawer closes, and a retry or resume in the same run keeps
-its first interface and reports at most once. A daemon restart forgets that
-origin: a job that resumes after a restart, or comes back from a backup,
-reports nothing. Opening a drawer onto an existing job stays silent.
-
-Import attribution keeps at most 256 claims in memory. Push claims stay active
-until all one-shot uploads finish and the client sends its bounded completion
-request, including after cancellation or an error. Completed claims are evicted
-oldest first. While all claims are active, new imports receive no attribution.
-An unreachable completion keeps its claim active until the daemon restarts.
-Other import jobs release their claims when they reach a terminal state.
+The vault stores which interface started a mailbox, load-file or host-folder
+Photos job. A job still reports after its drawer closes or the daemon restarts;
+retries and resumes keep its first interface and report at most once. Portable
+backups omit these local claims, so restored jobs stay silent. Opening a drawer
+onto an existing job stays silent.
 
 `search_run` counts deliberate searches once their results arrive, including
 superseded results, facets and Smart Sets, once per surface and search type each
