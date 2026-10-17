@@ -38,6 +38,7 @@ type pdfiumEngine struct {
 	session  *backingLease
 	scavenge func()
 	closed   bool
+	rssRead  func(context.Context) (uint64, error)
 }
 
 // The worker contract allows one WASM session at a time. Keep exactly one
@@ -188,16 +189,20 @@ func (m *fixedLinearMemory) Free() {
 // Close a rendering engine before starting another engine or VerifyFresh;
 // concurrent sessions wait with their page context and deadline.
 func NewPDFium(recipe redaction.Recipe) (Engine, error) {
+	return newPDFium(recipe, readProcessRSS)
+}
+
+func newPDFium(recipe redaction.Recipe, read func(context.Context) (uint64, error)) (Engine, error) {
 	if err := validateRecipe(recipe); err != nil {
 		return nil, err
 	}
 	if hashBytes(wasmBytes) != wasmSHA256 || recipe.RendererSHA256 != "" && recipe.RendererSHA256 != wasmSHA256 {
 		return nil, errors.New("qualified PDFium WASM asset unavailable or hash mismatch")
 	}
-	if err := checkRSS(context.Background(), recipe.QualifiedPeakRSSBytes); err != nil {
+	if err := checkRSS(context.Background(), recipe.QualifiedPeakRSSBytes, read); err != nil {
 		return nil, err
 	}
-	return &pdfiumEngine{gate: make(chan struct{}, 1), recipe: recipe, cache: wasmCode, scavenge: debug.FreeOSMemory}, nil
+	return &pdfiumEngine{gate: make(chan struct{}, 1), recipe: recipe, cache: wasmCode, scavenge: debug.FreeOSMemory, rssRead: read}, nil
 }
 
 // VerifyFresh uses PDFium's independent parser, Unicode extraction, page-object
@@ -223,7 +228,7 @@ func verifyFresh(ctx context.Context, reader io.ReaderAt, size int64, input Veri
 	if reader == nil || size <= 0 || size > maxPayloadBytes || n == 0 || n > maxPageCount || len(input.ResolvedSHA256) != n || len(input.EndorsementsSHA256) != n || len(input.LayoutSHA256) != n || input.NextText == nil || input.NextPageArtifact == nil || input.NextEndorsements == nil {
 		return errors.New("invalid fresh PDF verification input")
 	}
-	ctx, stop, err := watchRSS(ctx, recipe.QualifiedPeakRSSBytes)
+	ctx, stop, err := watchRSS(ctx, recipe.QualifiedPeakRSSBytes, readProcessRSS)
 	if err != nil {
 		return err
 	}
@@ -562,17 +567,25 @@ func (e *pdfiumEngine) withInstance(ctx context.Context, fn func(pdfium.Pdfium) 
 	return e.withInstanceContext(ctx, func(_ context.Context, instance pdfium.Pdfium) error { return fn(instance) })
 }
 
-func (e *pdfiumEngine) withInstanceContext(ctx context.Context, fn func(context.Context, pdfium.Pdfium) error) error {
+func (e *pdfiumEngine) withInstanceContext(ctx context.Context, fn func(context.Context, pdfium.Pdfium) error) (resultErr error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(e.recipe.PageTimeoutSeconds)*time.Second)
 	defer cancel()
-	ctx, stop, err := watchRSS(ctx, e.recipe.QualifiedPeakRSSBytes)
+	ctx, stop, err := watchRSS(ctx, e.recipe.QualifiedPeakRSSBytes, e.rssRead)
 	if err != nil {
 		return err
 	}
 	defer stop()
+	// Keep a monitor's cause even when WASM initialization or lease acquisition exits early.
+	var completed bool
+	defer func() {
+		if cause := context.Cause(ctx); !completed && cause != nil {
+			resultErr = errors.Join(fmt.Errorf("PDF worker interrupted: %w", cause), resultErr)
+		}
+	}()
+
 	select {
 	case e.gate <- struct{}{}:
 	case <-ctx.Done():
@@ -621,11 +634,13 @@ func (e *pdfiumEngine) withInstanceContext(ctx context.Context, fn func(context.
 		return fmt.Errorf("instantiate PDFium: %w", err)
 	}
 	defer instance.Close() //nolint:errcheck // Pool closes the runtime even after a WASM trap.
-	err = fn(ctx, instance)
-	if ctx.Err() != nil {
-		return fmt.Errorf("PDF worker interrupted: %w", context.Cause(ctx))
+	resultErr = fn(ctx, instance)
+	// Teardown must not turn completed work into a new resource refusal.
+	if cause := context.Cause(ctx); cause != nil {
+		resultErr = errors.Join(fmt.Errorf("PDF worker interrupted: %w", cause), resultErr)
 	}
-	return err
+	completed = true
+	return resultErr
 }
 
 func (e *pdfiumEngine) Render(ctx context.Context, source Source, page redaction.Page, recipe redaction.Recipe) (result Raster, resultErr error) {
@@ -634,7 +649,7 @@ func (e *pdfiumEngine) Render(ctx context.Context, source Source, page redaction
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(recipe.PageTimeoutSeconds)*time.Second)
 	defer cancel()
-	ctx, stop, err := watchRSS(ctx, recipe.QualifiedPeakRSSBytes)
+	ctx, stop, err := watchRSS(ctx, recipe.QualifiedPeakRSSBytes, e.rssRead)
 	if err != nil {
 		return Raster{}, err
 	}

@@ -43,6 +43,25 @@ export interface AssignTagPathRequest {
   path: string;
 }
 
+export interface Box {
+  frame_sha256: string;
+  page: number;
+  x0: number;
+  x1: number;
+  y0: number;
+  y1: number;
+}
+
+export interface Span {
+  end: number;
+  start: number;
+}
+
+export interface Atom {
+  boxes: Box[];
+  span: Span;
+}
+
 export type AttachPhotoFileRequestRole = typeof AttachPhotoFileRequestRole[keyof typeof AttachPhotoFileRequestRole];
 
 
@@ -3161,6 +3180,12 @@ export interface GCReport {
   untracked_files: number;
 }
 
+export interface Gap {
+  anchor: number;
+  box: Box;
+  unordered?: boolean;
+}
+
 export interface GcRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -3851,6 +3876,40 @@ export interface MovePhotoRejectsRequest {
   targets: PhotoRejectTarget[];
 }
 
+export interface NativeGlyph {
+  /**
+     * @minItems 4
+     * @maxItems 4
+     */
+  bounds: number[];
+  gap_reason: string;
+  text: string;
+}
+
+export interface NativeTextPage {
+  glyphs: NativeGlyph[];
+  /**
+     * @items.minItems 4
+     * @items.maxItems 4
+     */
+  non_text_bounds: number[][];
+  number: number;
+}
+
+export interface PageSource {
+  sha256: string;
+  size: number;
+  version_id: string;
+}
+
+export interface NativePDFEvidence {
+  contract: string;
+  page_runtime_fingerprint: string;
+  pages: NativeTextPage[];
+  renderer_sha256: string;
+  source: PageSource;
+}
+
 export interface NodePage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -4253,10 +4312,12 @@ export interface PackageTimelineInputPage {
   next_after_row_id?: string;
 }
 
-export interface PageSource {
-  sha256: string;
-  size: number;
-  version_id: string;
+export interface Page {
+  frame_sha256: string;
+  height: number;
+  number: number;
+  span: Span;
+  width: number;
 }
 
 export interface PageBinding {
@@ -6414,6 +6475,42 @@ export interface QueryPreview {
   dependencies: QueryDependency[];
   query: SavedQueryV1Schema;
   query_fingerprint: string;
+}
+
+export interface Unit {
+  boxes: Box[];
+  id: string;
+  kind: string;
+  spans: Span[];
+}
+
+export interface TextMap {
+  atoms: Atom[];
+  contract: string;
+  evidence_sha256: string;
+  gaps: Gap[];
+  pages: Page[];
+  pdf_sha256: string;
+  sha256: string;
+  text: string;
+  units: Unit[];
+}
+
+export interface RedactionPreparation {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  contract: string;
+  evidence: NativePDFEvidence;
+  evidence_sha256: string;
+  frames: PageFrameV1[];
+  map: TextMap;
+  selection: PageBinding;
+}
+
+export interface RedactionPreparationRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  selection: PageBinding;
 }
 
 export interface RegisterBlobStoreRequest {
@@ -17266,6 +17363,82 @@ return sessionJSON<QueryPreview>(getParseQueryUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(savedQueryV1Schema)
+  }
+);}
+
+
+
+export const getPrepareNativePDFWithJsonUrl = () => {
+
+
+
+
+  return `/api/v1/redaction/prepare`
+}
+
+/**
+ * @summary Inspect an exact retained native PDF for redaction preparation
+ */
+export const prepareNativePDFWithJson = async (redactionPreparationRequest: NonReadonly<RedactionPreparationRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<RedactionPreparation> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<RedactionPreparation>(getPrepareNativePDFWithJsonUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(redactionPreparationRequest)
+  }
+);}
+
+
+
+export const getPrepareNativePDFWithBlobUrl = () => {
+
+
+
+
+  return `/api/v1/redaction/prepare`
+}
+
+/**
+ * @summary Inspect an exact retained native PDF for redaction preparation
+ */
+export const prepareNativePDFWithBlob = async (prepareNativePDFBody: Blob, options?: Parameters<typeof sessionJSON>[1]): Promise<RedactionPreparation> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<RedactionPreparation>(getPrepareNativePDFWithBlobUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream', ...getHeaders(options?.headers) },
+    body: prepareNativePDFBody
   }
 );}
 

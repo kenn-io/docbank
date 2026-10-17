@@ -47,6 +47,10 @@ jobs:
           command -v pdftoppm
           command -v prlimit
           go test -tags fts5 -v ./document/pagerender/ ./internal/processing/ -run '^(TestRealRuntimeInspectAndRenderPDFAndPNG|TestRealPageWorkerPublishesVerifiedImagesAndResumesExactJobs|TestRealPageAPIBackupRestoreAndGC)$' -count=1
+          go test -tags fts5 -v -p 1 \
+            ./internal/production/ ./internal/pdfproduction/ ./internal/processing/ \
+            ./internal/api/ ./internal/daemonconn/ -run '^(TestAlign(QualifiedFont|FontProof)|TestNativeFont|TestInspectNativeTextFromInspection|TestRedactionPreparation)' -count=1
+          go test -tags fts5 -v ./cmd/docbank/ -run '^TestNativePDFPreparationCLI$' -count=1
 
       - name: Run mandatory owner proof
         env:

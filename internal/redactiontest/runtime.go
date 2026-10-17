@@ -15,6 +15,14 @@ import (
 // PageRuntime runs the real compiled inspector under the configured process limits.
 func PageRuntime(t *testing.T) *pagerender.Runtime {
 	t.Helper()
+	runtime, err := pagerender.New(t.Context(), PageProfile(t))
+	require.NoError(t, err)
+	return runtime
+}
+
+// PageProfile pins the same real tools for in-process and daemon qualifications.
+func PageProfile(t *testing.T) pagerender.Profile {
+	t.Helper()
 	if !pagerender.SupportedPlatform() {
 		t.Skip("page runtime is Linux amd64 only")
 	}
@@ -44,9 +52,7 @@ func PageRuntime(t *testing.T) *pagerender.Runtime {
 		hash := sha256.Sum256(data)
 		return pagerender.Executable{Path: resolved, SHA256: hex.EncodeToString(hash[:])}
 	}
-	runtime, err := pagerender.New(t.Context(), pagerender.Profile{Inspector: pin(inspector),
+	return pagerender.Profile{Inspector: pin(inspector),
 		Renderer: pin(renderer), Limiter: pin(limiter),
-		DeploymentIdentity: "synthetic-font-qualification"})
-	require.NoError(t, err)
-	return runtime
+		DeploymentIdentity: "synthetic-font-qualification"}
 }

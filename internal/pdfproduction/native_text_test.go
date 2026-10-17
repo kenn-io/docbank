@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/redaction"
 	"go.kenn.io/docbank/internal/canonical"
+	"go.kenn.io/docbank/internal/redactiontest"
 )
 
 func TestNativeVisibilityAmbiguityStopsOnCancellation(t *testing.T) {
@@ -62,9 +63,32 @@ func TestInspectNativeTextAcrossPages(t *testing.T) {
 		require.NoError(t, err)
 		second, _, err := canonical.BoundedSize(pages[1], 1<<20)
 		require.NoError(t, err)
-		_, err = inspectNativeText(t.Context(), Source{bytes.NewReader(encoded.Bytes()), source.Size, source.SHA256}, frames, nil, first+second-1)
+		_, err = inspectNativeText(t.Context(), nativeTextInput{source: Source{bytes.NewReader(encoded.Bytes()), source.Size, source.SHA256}, frames: frames, maxObservationBytes: first + second - 1})
 		var problem *redaction.Problem
 		require.ErrorAs(t, err, &problem)
 		require.Equal(t, "render_limit", problem.Code)
 	}
+}
+
+func TestInspectNativeTextFromInspection(t *testing.T) {
+	runtime := redactiontest.PageRuntime(t)
+	const text = "of the staff of life, if it fits."
+	data := redactiontest.FontPDF("BT /F1 12 Tf 72.37 720 Td ("+text+") Tj ET",
+		"<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>", "")
+	source := document.PageSource{VersionID: "00000000-0000-4000-8000-000000000001",
+		SHA256: hashBytes(data), Size: int64(len(data))}
+	inspection, err := runtime.Inspect(t.Context(), data, source, "application/pdf")
+	require.NoError(t, err)
+	pages, err := InspectNativeTextFromInspection(t.Context(), NativeInspectionInput{
+		Source:     Source{Reader: bytes.NewReader(data), Size: source.Size, SHA256: source.SHA256},
+		Inspection: inspection, MaxObservationBytes: 8 << 20,
+	})
+	require.NoError(t, err)
+	require.Len(t, pages, 1)
+	var observed strings.Builder
+	for _, glyph := range pages[0].Glyphs {
+		require.Empty(t, glyph.GapReason)
+		observed.WriteString(glyph.Text)
+	}
+	require.Equal(t, text, observed.String())
 }
