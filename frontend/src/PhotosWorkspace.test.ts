@@ -2869,16 +2869,16 @@ it.each([false, true])("handles a Map detail deadline after navigation=%s", asyn
   deadline.abort(new DOMException("Photo request timed out", "TimeoutError"));
   if (navigate) {
     await screen.findByRole("dialog", { name: "Photo viewer, Photo 2.jpg" });
-    expect(screen.queryByText(/Photo request timed out/)).toBeNull();
+    expect(screen.queryByText("Loading the photo took too long.")).toBeNull();
   } else {
-    await screen.findByText(/Photo request timed out/);
+    await screen.findByText("Loading the photo took too long.");
     const reload = screen.getByRole("button", { name: "Reload photo" }) as HTMLButtonElement;
     expect(reload.disabled).toBe(false);
     vi.mocked(AbortSignal.timeout).mockRestore();
     stubPhotoFetch(() => Response.json({ items: [photo(1)], total: 1 }));
     await fireEvent.click(reload);
     await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
-    expect(screen.queryByText(/Photo request timed out/)).toBeNull();
+    expect(screen.queryByText("Loading the photo took too long.")).toBeNull();
   }
   photos.dispose();
 });

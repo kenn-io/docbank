@@ -366,7 +366,8 @@
     const request = reload;
     const version = untrack(() => current?.content_version_id);
     const manual = explicit && !request?.automatic;
-    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]);
+    const deadline = AbortSignal.timeout(30_000);
+    const signal = AbortSignal.any([controller.signal, deadline]);
     detailRequest = (
       photos.projection && manual ? photos.reload(id, signal) : photos.lookup(id, signal)
     )
@@ -385,6 +386,7 @@
       })
       .catch((cause) => {
         controller.signal.throwIfAborted();
+        if (deadline.aborted) cause = new Error("Loading the photo took too long.");
         detailError = cause instanceof Error ? cause.message : String(cause);
         if (cause instanceof APIError && cause.status === 404) {
           direct = undefined;
