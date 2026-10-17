@@ -193,13 +193,15 @@ func TestAddOverlapsDurableWritesBeforeMetadata(t *testing.T) {
 				<-done
 			})
 			// Allow slow CI filesystem I/O while bounding a stalled publication.
-			deadline := time.NewTimer(30 * time.Second)
+			const publicationTimeout = 30 * time.Second
+			waitStarted := time.Now()
+			deadline := time.NewTimer(publicationTimeout)
 			defer deadline.Stop()
 			for i := range 32 {
 				select {
 				case <-entered:
 				case <-deadline.C:
-					t.Fatalf("only %d writes reached durable publication concurrently", i)
+					t.Fatalf("only %d writes reached durable publication concurrently after %s; active writers: %d", i, time.Since(waitStarted), active.Load())
 				}
 			}
 			parentPath := "/inbox/" + filepath.Base(source)
