@@ -878,6 +878,37 @@ func TestPhotoRepresentativeSequenceSurvivesUndoAndRestore(t *testing.T) {
 	require.Equal(t, int64(4), *later.Representatives[0].After)
 }
 
+func TestPhotoRepresentativeImportRejectsSequenceBehindRanks(t *testing.T) {
+	t.Parallel()
+	for _, receiptOnly := range []bool{false, true} {
+		t.Run(fmt.Sprintf("receipt-only=%t", receiptOnly), func(t *testing.T) {
+			s := newTestStore(t)
+			ids := burstPhotos(t, s, 2)
+			// A retained high-water mark can outlive all current choices.
+			_, err := s.db.Exec(`INSERT INTO photo_library_settings(singleton,updated_at,representative_sequence) VALUES(1,'',9)`)
+			require.NoError(t, err)
+			receipt, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: stackTargets(t, s, ids), CurrentID: ids[1], Decision: "representative"})
+			require.NoError(t, err)
+			require.Equal(t, int64(10), *receipt.Representatives[0].After)
+			if receiptOnly {
+				_, err = s.UndoPhotoAuthored(t.Context(), receipt.ReceiptID)
+				require.NoError(t, err)
+				var choices int
+				require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_assets WHERE representative_rank IS NOT NULL`).Scan(&choices))
+				require.Zero(t, choices)
+			}
+			var backup bytes.Buffer
+			require.NoError(t, s.ExportMetadata(t.Context(), &backup))
+			require.Contains(t, backup.String(), `"representative_sequence":10`)
+			for _, sequence := range []string{"0", "null"} {
+				corrupt := bytes.ReplaceAll(backup.Bytes(), []byte(`"representative_sequence":10`), []byte(`"representative_sequence":`+sequence))
+				restored := newTestStore(t)
+				require.ErrorContains(t, restored.ImportMetadata(t.Context(), bytes.NewReader(corrupt)), "photo representative sequence is below retained ranks")
+			}
+		})
+	}
+}
+
 func TestPhotoRepresentativeReceiptRequiresAsset(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

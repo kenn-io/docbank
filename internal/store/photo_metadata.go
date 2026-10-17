@@ -365,6 +365,23 @@ func validatePhotoMetadataState(ctx context.Context, tx metadataQuerier, version
 			return err
 		}
 	}
+	if version >= photoBurstStorageSchemaVersion {
+		var behind bool
+		if err := tx.QueryRowContext(ctx, `SELECT
+ COALESCE((SELECT representative_sequence FROM photo_library_settings WHERE singleton=1),0) < COALESCE(MAX(rank),0)
+ FROM (
+ SELECT representative_rank AS rank FROM photo_assets
+ UNION ALL
+ SELECT MAX(COALESCE(json_extract(entry.value,'$.before'),0),COALESCE(json_extract(entry.value,'$.after'),0))
+ FROM photo_change_receipts r, json_each(r.after_json,'$.representatives') entry
+ WHERE r.operation IN ('authored','authored_undo')
+ )`).Scan(&behind); err != nil {
+			return fmt.Errorf("checking photo representative sequence: %w", err)
+		}
+		if behind {
+			return errors.New("photo representative sequence is below retained ranks")
+		}
+	}
 	return nil
 }
 
