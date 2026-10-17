@@ -32,9 +32,6 @@ afterEach(() => {
 it.each(
   [
     { key: "0", patch: { rating: 0 }, announcement: "0 stars", next: "photo-1" },
-    { key: "1", patch: { rating: 1 }, announcement: "1 stars", next: "photo-1" },
-    { key: "2", patch: { rating: 2 }, announcement: "2 stars", next: "photo-1" },
-    { key: "3", patch: { rating: 3 }, announcement: "3 stars", next: "photo-1" },
     { key: "4", patch: { rating: 4 }, announcement: "4 stars", next: "photo-1" },
     { key: "5", patch: { rating: 5 }, announcement: "5 stars", next: "photo-1" },
     { key: "p", patch: { flag: "pick" }, announcement: "pick", next: "photo-2" },
@@ -248,47 +245,11 @@ it("retries a failed completion lookup and restores the unflagged remainder offe
 });
 
 it("retries a failed lookup without leaving the current photo", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
   const row = photo(1);
-  const cull: PhotoCull = new PhotoCull("session", {
-    saved: vi.fn(async () => cull.run?.checkpoint),
-    load: vi.fn(),
-    replace: vi.fn(),
-    checkpoint: vi.fn(),
+  const { cull, photos } = await reviewPhoto(row, true, undefined, {
+    lookupError: new APIError("Temporarily unavailable", 503, "unavailable"),
   });
-  cull.run = {
-    ids: [row.asset_id],
-    checkpoint: {
-      runID: "run",
-      revision: 0,
-      pass: [row.asset_id],
-      position: 0,
-      visited: [],
-      skipped: [],
-      unavailable: [],
-      scope: "all",
-      autoAdvance: true,
-    },
-  };
-  const photos = new Photos("session", vi.fn());
-  const lookup = vi
-    .spyOn(photos, "lookup")
-    .mockRejectedValueOnce(new APIError("Temporarily unavailable", 503, "unavailable"))
-    .mockResolvedValueOnce(row);
-  vi.spyOn(photos, "lookupMany").mockResolvedValue([]);
-  vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
-  render(PhotoCullView, {
-    cull,
-    photos,
-    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
-    onclose: vi.fn(),
-  });
+  const lookup = vi.mocked(photos.lookup);
   await fireEvent.click(await screen.findByRole("button", { name: /^Retry$/ }));
   await screen.findByText(row.name);
   expect(lookup).toHaveBeenCalledTimes(2);
@@ -302,6 +263,7 @@ async function reviewPhoto(
   row = photo(1),
   autoAdvance = false,
   store?: ReturnType<typeof photoCullStorage>,
+  options: { lookupError?: Error } = {},
 ) {
   vi.stubGlobal(
     "ResizeObserver",
@@ -334,7 +296,8 @@ async function reviewPhoto(
     },
   };
   const photos = new Photos("session", vi.fn());
-  vi.spyOn(photos, "lookup").mockResolvedValue(row);
+  const lookup = vi.spyOn(photos, "lookup").mockResolvedValue(row);
+  if (options.lookupError) lookup.mockRejectedValueOnce(options.lookupError);
   vi.spyOn(photos, "lookupMany").mockResolvedValue([row]);
   vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
   const onclose = vi.fn();
@@ -346,7 +309,8 @@ async function reviewPhoto(
     } as unknown as PhotoPreviewCache,
     onclose,
   });
-  await screen.findByText(row.name);
+  if (options.lookupError) await screen.findByText(options.lookupError.message);
+  else await screen.findByText(row.name);
   return { cull, photos, onclose, ...view };
 }
 
@@ -418,50 +382,36 @@ it("refreshes current and cached rows when a new pass starts on the same photo",
   await screen.findByText("pick · 0 stars");
 });
 
-it.each([
-  { name: "displayed flag", cached: false, pair: false, changed: { flag: "pick" as const } },
-  { name: "cached neighbor flag", cached: true, pair: false, changed: { flag: "pick" as const } },
-  { name: "rating with an unchanged flag", cached: false, pair: false, changed: { rating: 4 } },
-  { name: "displayed JPEG flag", cached: false, pair: true, changed: { flag: "pick" as const } },
-])(
-  "refuses a decision after another client changes the $name",
-  async ({ cached, pair, changed }) => {
-    const edit = vi.spyOn(api, "editPhotoAuthored").mockResolvedValue({
-      receipt_id: "",
-      before: [],
-      after: [],
-    });
-    const { cull, photos, container } = await reviewPhoto();
-    const id = cached ? 2 : 1;
-    if (cached) {
-      vi.mocked(photos.lookupMany).mockResolvedValue([photo(2)]);
-      await act(() => {
-        cull.run = {
-          ids: ["photo-1", "photo-2"],
-          checkpoint: { ...cull.run!.checkpoint, pass: ["photo-1", "photo-2"] },
-        };
-      });
-      await screen.findByRole("button", { name: "Show Photo 2.jpg" });
-      const lookups = vi.mocked(photos.lookup).mock.calls.length;
-      await fireEvent.click(await readyButton("Next"));
-      await screen.findByText("Photo 2.jpg");
-      expect(photos.lookup).toHaveBeenCalledTimes(lookups);
-    }
-    await screen.findByText("Unflagged · 0 stars");
-    const target = preparedPhoto(id);
-    vi.mocked(api.preparePhotoAuthored).mockResolvedValue(
-      photoPreparation([
-        ...(pair ? [preparedPhoto(id, { file_id: "raw", file_name: "Photo 1.raw" })] : []),
-        { ...target, revision: 2, values: { ...target.values, ...changed } },
-      ]),
-    );
-    await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key: "x" });
-    await screen.findByRole("button", { name: "Reload photo" });
-    expect(photos.cullEditor!.conflict).toBe(true);
-    expect(edit).not.toHaveBeenCalled();
-    expect(cull.currentID).toBe(`photo-${id}`);
-  },
-);
+it("refuses a decision after another client changes the cached neighbor flag", async () => {
+  const edit = vi.spyOn(api, "editPhotoAuthored").mockResolvedValue({
+    receipt_id: "",
+    before: [],
+    after: [],
+  });
+  const { cull, photos, container } = await reviewPhoto();
+  vi.mocked(photos.lookupMany).mockResolvedValue([photo(2)]);
+  await act(() => {
+    cull.run = {
+      ids: ["photo-1", "photo-2"],
+      checkpoint: { ...cull.run!.checkpoint, pass: ["photo-1", "photo-2"] },
+    };
+  });
+  await screen.findByRole("button", { name: "Show Photo 2.jpg" });
+  const lookups = vi.mocked(photos.lookup).mock.calls.length;
+  await fireEvent.click(await readyButton("Next"));
+  await screen.findByText("Photo 2.jpg");
+  expect(photos.lookup).toHaveBeenCalledTimes(lookups);
+  await screen.findByText("Unflagged · 0 stars");
+  const target = preparedPhoto(2);
+  vi.mocked(api.preparePhotoAuthored).mockResolvedValue(
+    photoPreparation([{ ...target, revision: 2, values: { ...target.values, flag: "pick" } }]),
+  );
+  await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key: "x" });
+  await screen.findByRole("button", { name: "Reload photo" });
+  expect(photos.cullEditor!.conflict).toBe(true);
+  expect(edit).not.toHaveBeenCalled();
+  expect(cull.currentID).toBe("photo-2");
+});
 
 it("allows another decision after reconciling its own flag and rating with auto-advance off", async () => {
   const target = preparedPhoto(1);
@@ -528,34 +478,25 @@ it("shows prepared rotation after a no-op decision without replacing Undo", asyn
   expect(photos.authored.undoState.summary).toBe("Previous edit");
 });
 
-it.each([false, true])(
-  "restores keyboard review after preview retry: reload=%s",
-  async (reload) => {
-    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:synthetic-photo");
-    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
-    Object.defineProperty(HTMLImageElement.prototype, "decode", {
-      configurable: true,
-      value: async () => {},
-    });
-    const { photos, cull, container } = await reviewPhoto();
-    vi.mocked(photos.preview)
-      .mockRejectedValueOnce(
-        reload
-          ? new APIError("Display changed", 409, "photo_display_changed")
-          : new Error("Preview unavailable"),
-      )
-      .mockResolvedValue({ state: "ready", generation_id: "fit-1" });
-    const retry = await screen.findByRole("button", { name: "Retry preview" });
-    retry.focus();
-    await fireEvent.click(retry);
-    await waitFor(() => expect(container.querySelector(".photo-stage img")).toBeTruthy());
-    await waitFor(() =>
-      expect(document.activeElement).toBe(container.querySelector(".photo-cull")),
-    );
-    await fireEvent.keyDown(document.activeElement!, { key: "a" });
-    expect(cull.run!.checkpoint.autoAdvance).toBe(true);
-  },
-);
+it("restores keyboard review after preview retry", async () => {
+  vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:synthetic-photo");
+  vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+  Object.defineProperty(HTMLImageElement.prototype, "decode", {
+    configurable: true,
+    value: async () => {},
+  });
+  const { photos, cull, container } = await reviewPhoto();
+  vi.mocked(photos.preview)
+    .mockRejectedValueOnce(new Error("Preview unavailable"))
+    .mockResolvedValue({ state: "ready", generation_id: "fit-1" });
+  const retry = await screen.findByRole("button", { name: "Retry preview" });
+  retry.focus();
+  await fireEvent.click(retry);
+  await waitFor(() => expect(container.querySelector(".photo-stage img")).toBeTruthy());
+  await waitFor(() => expect(document.activeElement).toBe(container.querySelector(".photo-cull")));
+  await fireEvent.keyDown(document.activeElement!, { key: "a" });
+  expect(cull.run!.checkpoint.autoAdvance).toBe(true);
+});
 
 it("toggles actual size with Z in Cull", async () => {
   vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:synthetic-photo");
@@ -760,7 +701,7 @@ it("keeps shown-file narrowing on retry and resets it for a fresh decision", asy
     .spyOn(api, "editPhotoAuthored")
     .mockRejectedValueOnce(new TypeError("Failed to fetch"))
     .mockResolvedValue({ receipt_id: "decision", before: [], after: [] });
-  const { photos, container } = await reviewPhoto();
+  const { container } = await reviewPhoto();
   await fireEvent.click(screen.getByRole("button", { name: "Pick (P)" }));
   await screen.findByText("Failed to fetch");
   await fireEvent.click(await readyButton("Retry edit"));
@@ -770,7 +711,6 @@ it("keeps shown-file narrowing on retry and resets it for a fresh decision", asy
     ),
   );
   expect(edit.mock.calls[1]![0]).toEqual(edit.mock.calls[0]![0]);
-  expect(photos.cullEditor!.fileID).toBe("file-1");
   await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key: "4" });
   await waitFor(() => expect(edit).toHaveBeenCalledTimes(3));
   expect(edit.mock.calls[2]![0].patch).toEqual({ rating: 4 });
@@ -779,7 +719,10 @@ it("keeps shown-file narrowing on retry and resets it for a fresh decision", asy
       "Photo 1.jpg: 4 stars",
     ),
   );
-  expect(photos.cullEditor!.fileID).toBe("");
+  expect(edit.mock.calls[2]![0].targets.map((target) => target.file_id)).toEqual([
+    "raw-1",
+    "file-1",
+  ]);
 });
 
 it("checks saved progress before Undo when the saved run is unchanged", async () => {

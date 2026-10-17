@@ -127,15 +127,36 @@ it("preserves multiline caption through rendered editing", async () => {
   editor.dispose();
 });
 
-it.each([{ prepared: [] }, { prepared: targets }])(
-  "requires reload when prepared files omit the viewed file: $prepared",
-  async ({ prepared }) => {
+it.each([
+  { name: "empty preparation", prepared: [], fileID: "missing" },
+  { name: "missing viewed file", prepared: targets, fileID: "missing" },
+  {
+    name: "displayed flag",
+    prepared: [preparedPhoto(1, { values: { ...preparedPhoto(1).values, flag: "pick" } })],
+    fileID: "file-1",
+  },
+  {
+    name: "rating with an unchanged flag",
+    prepared: [preparedPhoto(1, { values: { ...preparedPhoto(1).values, rating: 4 } })],
+    fileID: "file-1",
+  },
+  {
+    name: "displayed JPEG flag",
+    prepared: [
+      preparedPhoto(1, { file_id: "raw", file_name: "Photo 1.raw" }),
+      preparedPhoto(1, { values: { ...preparedPhoto(1).values, flag: "pick" } }),
+    ],
+    fileID: "file-1",
+  },
+])(
+  "requires reload when prepared files differ from the viewed photo: $name",
+  async ({ prepared, fileID }) => {
     const editor = new PhotoAuthoredEditor("session", vi.fn());
     vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue({ assets: [], targets: prepared });
     const edit = vi.spyOn(api, "editPhotoAuthored");
     await editor.edit({}, { flag: "pick" }, false, vi.fn(), {
       viewed: {
-        file_id: "missing",
+        file_id: fileID,
         content_version_id: "viewed-version",
         flag: "",
         rating: 0,
