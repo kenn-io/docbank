@@ -75,6 +75,19 @@ func registerPushRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 		}
 		return &output{Body: page}, nil
 	})
+	type finishInput struct {
+		RunID string `path:"run_id"`
+	}
+	huma.Register(api, huma.Operation{
+		OperationID: "finishPushRun", Method: http.MethodPost, Path: "/api/v1/push/runs/{run_id}/finish",
+		Summary: "Finish attribution for a push run", DefaultStatus: http.StatusNoContent,
+	}, func(_ context.Context, in *finishInput) (*struct{}, error) {
+		if err := store.ValidatePushRunID(in.RunID); err != nil {
+			return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
+		}
+		d.TelemetryCapture.CompleteImport("push:" + in.RunID)
+		return &struct{}{}, nil
+	})
 	registerPushUploadOpenAPI(api)
 	mux.HandleFunc("POST "+pushUploadPath, func(w http.ResponseWriter, r *http.Request) {
 		handlePushUpload(w, r, d, g)

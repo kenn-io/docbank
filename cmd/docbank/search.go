@@ -12,6 +12,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/telemetry"
 )
 
 const (
@@ -207,10 +208,10 @@ See docs/usage/search.md.`,
 			return err
 		}
 		if automatic.report != nil {
-			reportAction(cmd, c, "search_run", automatic.report.ActualMode)
+			reportAction(cmd, c, telemetry.EventSearchRun, automatic.report.ActualMode)
 			return writeAutomaticSearch(cmd, query, *automatic.report, rep)
 		}
-		reportAction(cmd, c, "search_run", "text")
+		reportAction(cmd, c, telemetry.EventSearchRun, "text")
 		if err := writeSearchDegradation(cmd, automatic); err != nil {
 			return err
 		}
@@ -323,7 +324,7 @@ func runSimilarSearch(cmd *cobra.Command, c *daemonconn.Connection, selector nod
 		return err
 	}
 	if options.Intent {
-		reportAction(cmd, c, "search_run", "similar")
+		reportAction(cmd, c, telemetry.EventSearchRun, "similar")
 	}
 	if options.JSON {
 		return writeCLIJSON(cmd.OutOrStdout(), report)
@@ -391,7 +392,7 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 		return err
 	}
 	if options.Intent {
-		reportAction(cmd, c, "search_run", report.ActualMode)
+		reportAction(cmd, c, telemetry.EventSearchRun, report.ActualMode)
 	}
 	if options.JSON {
 		return writeCLIJSON(cmd.OutOrStdout(), report)

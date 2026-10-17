@@ -18,6 +18,7 @@ import (
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/telemetry"
 )
 
 const (
@@ -581,7 +582,7 @@ func (m Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case searchLoadedMsg:
 		if msg.intent && msg.err == nil {
 			next, _ := m.applySearch(msg)
-			return next, m.reportAction("search_run", "text")
+			return next, m.reportAction(telemetry.EventSearchRun, "text")
 		}
 		return m.applySearch(msg)
 	case naturalProfilesLoadedMsg:
@@ -606,7 +607,7 @@ func (m Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		next, cmd := m.applyNaturalSearchBase(msg)
 		// A failed natural search falls back to text, which reports its own result.
 		if msg.intent && msg.err == nil && msg.report.ActualMode != "" {
-			cmd = tea.Batch(m.reportAction("search_run", msg.report.ActualMode), cmd)
+			cmd = tea.Batch(m.reportAction(telemetry.EventSearchRun, msg.report.ActualMode), cmd)
 		}
 		return next, cmd
 	case naturalSearchRerankLoadedMsg:
@@ -750,7 +751,7 @@ func (m Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case processingSimilarLoadedMsg:
 		var reported tea.Cmd
 		if msg.err == nil {
-			reported = m.reportAction("search_run", "similar")
+			reported = m.reportAction(telemetry.EventSearchRun, "similar")
 		}
 		if !m.processingOpen || msg.requestID != m.processingRequestID || msg.similarID != m.processingSimilarID {
 			return m, reported
@@ -773,7 +774,7 @@ func (m Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case processingSearchLoadedMsg:
 		var reported tea.Cmd
 		if msg.err == nil {
-			reported = m.reportAction("search_run", msg.report.ActualMode)
+			reported = m.reportAction(telemetry.EventSearchRun, msg.report.ActualMode)
 		}
 		if !m.processingOpen || msg.requestID != m.processingRequestID || msg.searchID != m.processingSearchID {
 			return m, reported
@@ -847,7 +848,7 @@ func (m Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil {
 			m.processingRendition = &msg.rendition
 			m.wrapProcessingRendition()
-			cmd := m.reportAction("document_opened", "")
+			cmd := m.reportAction(telemetry.EventDocumentOpened, "")
 			return m, cmd
 		}
 		return m, nil
@@ -1568,7 +1569,7 @@ func (m Model) updateProcessingKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.searchInput.Focus()
 	}
 	if inspection && m.processingRendition != nil {
-		cmd := m.reportAction("document_opened", "")
+		cmd := m.reportAction(telemetry.EventDocumentOpened, "")
 		return m, cmd
 	}
 	return m, nil
@@ -1773,7 +1774,7 @@ func (m Model) updateDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.detailOffset = max(len(m.expandedDetailLines(m.width))-m.detailViewportHeight(), 0)
 	}
 	if inspection && m.detailNode.node.Kind == "file" {
-		cmd := m.reportAction("document_opened", "")
+		cmd := m.reportAction(telemetry.EventDocumentOpened, "")
 		return m, cmd
 	}
 	return m, nil
@@ -1794,7 +1795,7 @@ func (m Model) openDetail() (tea.Model, tea.Cmd) {
 	m.detailRequestID++
 	var opened tea.Cmd
 	if selected.node.Kind == "file" {
-		opened = m.reportAction("document_opened", "")
+		opened = m.reportAction(telemetry.EventDocumentOpened, "")
 	}
 	return m, tea.Batch(opened, m.loadDetailTags(
 		selected.node.ID, selected.node.Revision, m.detailRequestID,

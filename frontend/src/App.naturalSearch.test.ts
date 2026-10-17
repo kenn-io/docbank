@@ -114,6 +114,7 @@ interface HarnessOptions {
   legacyFailureAfter?: number;
   legacyFailurePending?: boolean;
   basePending?: boolean;
+  abortPending?: boolean;
   legacyPending?: boolean;
   childrenPending?: boolean;
   rerankReport?: unknown;
@@ -253,7 +254,17 @@ function installHarness(options: HarnessOptions) {
         return json(options.rerankReport ?? options.baseReport);
       }
       baseCalls += 1;
-      if (options.basePending && baseCalls === 1) return basePending;
+      if (options.basePending && baseCalls === 1) {
+        if (!options.abortPending) return basePending;
+        return new Promise<Response>((resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("Aborted", "AbortError")),
+            { once: true },
+          );
+          void basePending.then(resolve);
+        });
+      }
       return json(options.baseReport);
     }
     if (url.startsWith("/api/v1/search?") && method === "GET") {
@@ -952,9 +963,14 @@ it("does not fall back to GET after a processing 401", async () => {
   expect(searchTypes(harness)).toEqual([]);
 });
 
-it.each(["submit", "rerank"])(
-  "ignores stale search completions after a new %s",
-  async (replacement) => {
+it.each([
+  ["submit", false],
+  ["rerank", false],
+  ["submit", true],
+  ["rerank", true],
+] as const)(
+  "ignores stale search completions after a new %s with abort=%s",
+  async (replacement, abortPending) => {
     const file = node(2, "stale.txt", baseVersion);
     const harness = installHarness({
       profiles: [
@@ -969,6 +985,7 @@ it.each(["submit", "rerank"])(
       files: [file],
       baseReport: report("hybrid", [result(file, 1, "current excerpt")]),
       basePending: true,
+      abortPending,
     });
     render(App);
     await screen.findAllByText("stale.txt");
@@ -987,7 +1004,7 @@ it.each(["submit", "rerank"])(
     ).toBe(0);
     await waitFor(() =>
       expect(searchTypes(harness)).toEqual(
-        replacement === "rerank" ? ["hybrid"] : ["hybrid", "hybrid"],
+        replacement === "rerank" || abortPending ? ["hybrid"] : ["hybrid", "hybrid"],
       ),
     );
   },

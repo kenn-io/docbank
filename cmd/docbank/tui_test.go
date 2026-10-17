@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -20,6 +21,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/telemetry"
 	doctui "go.kenn.io/docbank/internal/tui"
 )
 
@@ -327,4 +329,34 @@ func TestTUIBackendReportsScreensAndActionsThroughGeneratedRoute(t *testing.T) {
 		{Event: "search_run", Properties: &api.TelemetryEventProperties{SearchType: "hybrid", Surface: "tui"}},
 		{Event: "document_opened", Properties: &api.TelemetryEventProperties{Surface: "tui"}},
 	}, events)
+}
+
+func TestTUIInspectionTransportRetriesAndClaimsSuccessfulDay(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var sends int
+		server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, "/api/daemon/telemetry/events", r.URL.Path)
+			sends++
+			if sends == 1 {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"status":"queued"}`))
+		}))
+		previous := http.DefaultTransport
+		http.DefaultTransport = server.Client().Transport
+		defer func() { http.DefaultTransport = previous }()
+		backend := &tuiDaemonBackend{ensure: func(context.Context) (*daemonconn.Connection, error) {
+			return daemonconn.New(server.URL, "synthetic-key"), nil
+		}}
+		require.Error(t, backend.ReportAction(t.Context(), telemetry.EventDocumentOpened, ""))
+		require.NoError(t, backend.ReportAction(t.Context(), telemetry.EventDocumentOpened, ""))
+		require.NoError(t, backend.ReportAction(t.Context(), telemetry.EventDocumentOpened, ""))
+		require.Equal(t, 2, sends)
+		time.Sleep(24 * time.Hour)
+		require.NoError(t, backend.ReportAction(t.Context(), telemetry.EventDocumentOpened, ""))
+		require.Equal(t, 3, sends)
+	})
 }

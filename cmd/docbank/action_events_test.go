@@ -205,16 +205,35 @@ func TestAutomaticSearchDiscoveryFailureStaysSilent(t *testing.T) {
 }
 
 func TestPhotoTimelineReportsInteractiveSearch(t *testing.T) {
-	f := newImportActionDaemon(t)
-	cmd := newPhotoTimelineCommand()
-	cmd.SetContext(t.Context())
-	cmd.SetIn(actionTerminal(t))
-	cmd.SetOut(actionTerminal(t))
-	cmd.SetArgs([]string{"--query", `{"text":"synthetic","mode":"lexical"}`})
-	require.NoError(t, cmd.Execute())
-	require.Len(t, f.requests, 1)
-	require.Equal(t, api.TelemetryEventRequest{Event: "search_run", Properties: &api.TelemetryEventProperties{Surface: "cli", SearchType: "text"}}, <-f.requests)
-	cmd.SetArgs([]string{"--query", `{"unknown":true}`})
-	require.Error(t, cmd.Execute())
-	require.Empty(t, f.requests)
+	for _, tc := range []struct {
+		raw  string
+		want bool
+	}{
+		{`{}`, false},
+		{`{"text":"   ","filters":{"paths":[]}}`, false},
+		{`{"text":"synthetic","mode":"lexical"}`, true},
+		{`{"filters":{"capture_after":"2024-01-01"}}`, true},
+		{`{"unknown":true}`, false},
+	} {
+		t.Run(tc.raw, func(t *testing.T) {
+			f := newImportActionDaemon(t)
+			cmd := newPhotoTimelineCommand()
+			cmd.SetContext(t.Context())
+			cmd.SetIn(actionTerminal(t))
+			cmd.SetOut(actionTerminal(t))
+			cmd.SetArgs([]string{"--query", tc.raw})
+			if tc.raw == `{"unknown":true}` {
+				require.Error(t, cmd.Execute())
+				require.Empty(t, f.requests)
+				return
+			}
+			require.NoError(t, cmd.Execute())
+			if tc.want {
+				require.Len(t, f.requests, 1)
+				require.Equal(t, api.TelemetryEventRequest{Event: "search_run", Properties: &api.TelemetryEventProperties{Surface: "cli", SearchType: "text"}}, <-f.requests)
+			} else {
+				require.Empty(t, f.requests)
+			}
+		})
+	}
 }

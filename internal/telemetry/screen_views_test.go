@@ -71,7 +71,7 @@ func TestCaptureHandlerRejectsInvalidRequests(t *testing.T) {
 			assert.Equal(t, tc.status, response.Code, response.Body.String())
 		})
 	}
-	for _, event := range []string{"document_added", "document_opened", "search_run"} {
+	for _, event := range []string{"document_opened", "search_run"} {
 		for _, props := range []string{`{"search_type":"text"}`, `{"surface":"invalid","search_type":"text"}`, `{"surface":42,"search_type":"text"}`} {
 			require.Equal(t, 400, postEvent(t, handler, fmt.Sprintf(`{"event":%q,"properties":%s}`, event, props)).Code)
 		}
@@ -237,6 +237,8 @@ func TestImportClaimsBoundCompletedRunsAndPreserveActiveOrigins(t *testing.T) {
 		handler.ImportAdded(id)
 		handler.TrackImport(id, "web")
 		handler.ImportAdded(id)
+		handler.CompleteImport(id)
+		handler.CompleteImport(id)
 		require.Contains(t, handler.imports, id)
 		require.Empty(t, handler.imports[id])
 		require.LessOrEqual(t, len(handler.imports), maxTrackedImports)

@@ -10972,6 +10972,46 @@ func (c *Client) ResolveDocumentSourceFence(ctx context.Context, options *Resolv
 	return responseParser(ctx, resp)
 }
 
+// FinishPushRun Finish attribution for a push run
+func (c *Client) FinishPushRun(ctx context.Context, options *FinishPushRunRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/push/runs/{run_id}/finish",
+		Method:     "POST",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*struct{}, error) {
+		switch resp.StatusCode {
+
+		case 204:
+
+			target := new(struct{})
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[FinishPushRunErrorResponse](resp, "FinishPushRunErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/push/runs/{run_id}/finish")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 204)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ListPushSources List the last accepted bytes of a push name's sources
 func (c *Client) ListPushSources(ctx context.Context, options *ListPushSourcesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPushSourcesResponse, error) {
 	var err error
@@ -21505,6 +21545,37 @@ func (o *ResolveDocumentSourceFenceRequestOptions) GetHeader() (map[string]strin
 	return nil, nil
 }
 
+// FinishPushRunRequestOptions is the options needed to make a request to FinishPushRun.
+type FinishPushRunRequestOptions struct {
+	PathParams *FinishPushRunPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *FinishPushRunRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *FinishPushRunRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *FinishPushRunRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *FinishPushRunRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ListPushSourcesRequestOptions is the options needed to make a request to ListPushSources.
 type ListPushSourcesRequestOptions struct {
 	Query *ListPushSourcesQuery
@@ -24501,6 +24572,10 @@ type GetDocumentProcessingJobPath struct {
 	ID string `json:"id"`
 }
 
+type FinishPushRunPath struct {
+	RunID string `json:"run_id"`
+}
+
 type GetDocumentRenditionPath struct {
 	AttachmentID string `json:"attachment_id"`
 }
@@ -26292,6 +26367,8 @@ type ListDocumentProcessingProfilesErrorResponse = Error
 type ResolveDocumentSourceFenceResponse = api.DocumentSourceFenceResolution
 
 type ResolveDocumentSourceFenceErrorResponse = Error
+
+type FinishPushRunErrorResponse = Error
 
 type ListPushSourcesResponse = api.PushSourcePage
 

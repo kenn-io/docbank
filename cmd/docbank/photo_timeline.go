@@ -1,11 +1,15 @@
 package main
 
 import (
+	"reflect"
+	"strings"
+
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/query"
+	"go.kenn.io/docbank/internal/telemetry"
 )
 
 func newPhotoTimelineCommand() *cobra.Command {
@@ -40,8 +44,8 @@ date, which are also counted in missing.`,
 				return err
 			}
 			executed, err := query.Parse(timeline.Query)
-			if err == nil {
-				reportAction(cmd, c, "search_run", executed.Mode)
+			if err == nil && (strings.TrimSpace(executed.Text) != "" || !reflect.DeepEqual(executed.Filters, query.Filters{})) {
+				reportAction(cmd, c, telemetry.EventSearchRun, executed.Mode)
 			}
 			return nil
 		},

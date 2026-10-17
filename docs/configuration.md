@@ -1059,6 +1059,13 @@ its first interface and reports at most once. A daemon restart forgets that
 origin: a job that resumes after a restart, or comes back from a backup,
 reports nothing. Opening a drawer onto an existing job stays silent.
 
+Import attribution keeps at most 256 claims in memory. Push claims stay active
+until all one-shot uploads finish and the client sends its bounded completion
+request, including after cancellation or an error. Completed claims are evicted
+oldest first. While all claims are active, new imports receive no attribution.
+An unreachable completion keeps its claim active until the daemon restarts.
+Other import jobs release their claims when they reach a terminal state.
+
 `search_run` counts deliberate searches once their results arrive, including
 superseded results, facets and Smart Sets, once per surface and search type each
 UTC day. A search that fails before Docbank chooses a mode stays silent.

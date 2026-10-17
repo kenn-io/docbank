@@ -22,7 +22,7 @@
   type HighlightChoice = { id: string; name: string; terms: HighlightTerm[] };
   let {
     session,
-    deliberate = false,
+    activation = 0,
     source,
     authorizationRevision,
     profileName = "",
@@ -41,7 +41,7 @@
     onauthfailure,
   }: {
     session: string;
-    deliberate?: boolean;
+    activation?: number;
     source: SelectedSource;
     authorizationRevision: number;
     profileName?: string;
@@ -90,7 +90,7 @@
 
   $effect(() => {
     void displayedSource.key;
-    if (deliberate || duplicateSource || relatedSource) inspect();
+    if (activation || duplicateSource || relatedSource) inspect();
   });
   const inspect = inspectionReporter("document_opened", () => session);
 

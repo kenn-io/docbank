@@ -40,7 +40,7 @@ func (c *Capture) DocumentAdded(surface string) {
 // restart forgets every import, so resumed work reports nothing.
 // The registry keeps at most 256 entries. Under pressure it evicts the oldest
 // completed claim, or drops new attribution while every entry is active.
-// An evicted ID can count again if its client submits more additions later.
+// Push clients complete their claims only after every upload has finished.
 func (c *Capture) TrackImport(id, surface string) {
 	if c == nil || id == "" || surface == "" {
 		return
@@ -73,11 +73,23 @@ func (c *Capture) ImportAdded(id string) {
 	surface := c.imports[id]
 	if surface != "" {
 		c.imports[id] = ""
-		c.completedImports = append(c.completedImports, id)
 	}
 	c.importsMu.Unlock()
 	if surface != "" {
 		c.DocumentAdded(surface)
+	}
+}
+
+// CompleteImport makes a finished push claim eligible for oldest-first eviction.
+// Repeated and unknown completions leave the registry unchanged.
+func (c *Capture) CompleteImport(id string) {
+	if c == nil {
+		return
+	}
+	c.importsMu.Lock()
+	defer c.importsMu.Unlock()
+	if _, ok := c.imports[id]; ok && !slices.Contains(c.completedImports, id) {
+		c.completedImports = append(c.completedImports, id)
 	}
 }
 

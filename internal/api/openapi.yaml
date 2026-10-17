@@ -26241,6 +26241,25 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Resolve exact current live document search authority
+  /api/v1/push/runs/{run_id}/finish:
+    post:
+      operationId: finishPushRun
+      parameters:
+        - in: path
+          name: run_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Finish attribution for a push run
   /api/v1/push/sources:
     get:
       description: Pages through one push name's cursors in source_ref byte order. Before a push accepts a source, the cursor of a daemon watch with the same name and source_ref stands in for it. A cursor can differ from its node's current version. A push name that matches a configured daemon watch is refused with push_name_in_use.

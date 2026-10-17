@@ -121,9 +121,11 @@ type tuiClientFactory func(context.Context) (*daemonconn.Connection, error)
 // proven client intentionally refuses to reconnect its pinned socket to a
 // replacement process.
 type tuiDaemonBackend struct {
-	mu      sync.Mutex
-	ensure  tuiClientFactory
-	initial *daemonconn.Connection
+	inspectionMu  sync.Mutex
+	inspectionDay string
+	mu            sync.Mutex
+	ensure        tuiClientFactory
+	initial       *daemonconn.Connection
 }
 
 func (b *tuiDaemonBackend) acquire(ctx context.Context) (*daemonconn.Connection, error) {
@@ -497,8 +499,20 @@ func init() {
 }
 
 func (b *tuiDaemonBackend) ReportAction(ctx context.Context, event, value string) error {
+	day := ""
+	if event == telemetry.EventDocumentOpened {
+		b.inspectionMu.Lock()
+		defer b.inspectionMu.Unlock()
+		day = time.Now().UTC().Format(time.DateOnly)
+		if b.inspectionDay == day {
+			return nil
+		}
+	}
 	_, err := withTUIClient(ctx, b, func(c *daemonconn.Connection) (*apiclient.ReportTelemetryEventResponse, error) {
 		return c.ReportAction(ctx, event, "tui", value)
 	})
+	if err == nil && event == telemetry.EventDocumentOpened {
+		b.inspectionDay = day
+	}
 	return err
 }

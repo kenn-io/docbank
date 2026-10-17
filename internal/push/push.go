@@ -74,6 +74,11 @@ func Run(ctx context.Context, connection *daemonconn.Connection, opts Options) (
 		err = scanner.Run(ctx)
 	} else {
 		err = scanner.ScanOnce(ctx, 32)
+		if p.runID != "" {
+			finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+			_ = connection.FinishPushRun(finishCtx, p.runID)
+			cancel()
+		}
 	}
 	if report.Failed > 0 {
 		err = errors.Join(err, fmt.Errorf("%w: %d failed", ErrFilesFailed, report.Failed))

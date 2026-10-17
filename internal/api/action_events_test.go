@@ -23,7 +23,7 @@ func newActionCollector(t *testing.T) *actionCollector {
 	if posthog.ProcessDisabled() {
 		t.Skip("built with kit_posthog_disabled")
 	}
-	c := &actionCollector{events: make(chan map[string]any, 256)}
+	c := &actionCollector{events: make(chan map[string]any, 512)}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var batch struct {
 			Batch []map[string]any `json:"batch"`
