@@ -27,7 +27,7 @@ export class PhotoFaces {
     private session: string,
     private onauthfailure: (cause: unknown) => void,
     private hidden = false,
-    private ondecision: () => void = () => {},
+    private ondecision: (error?: string, refresh?: boolean) => void = () => {},
     private readonly hiddenAccess?: HiddenAccess,
   ) {}
   private request<T>(request: () => Promise<T>) {
@@ -99,17 +99,16 @@ export class PhotoFaces {
     try {
       await this.request(() => action(version, controller.signal));
       if (controller.signal.aborted) return false;
-      if (this.disposed) return true;
       this.busy = false;
       this.ondecision();
       if (this.version === version) await this.load(version);
       return true;
     } catch (cause) {
-      if (!controller.signal.aborted && !this.disposed) {
+      if (!controller.signal.aborted) {
         this.busy = false;
-        if (!(cause instanceof APIError) || cause.status >= 500) this.ondecision();
         await this.load(version);
         this.failed(cause);
+        this.ondecision(this.error, !(cause instanceof APIError) || cause.status >= 500);
       }
       return false;
     } finally {

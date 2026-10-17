@@ -107,7 +107,7 @@ it("names the face with its current revision and refreshes its active label", as
   write.mockRejectedValueOnce(new APIError("Revision changed", 412, "precondition_failed"));
   expect(await faces.clear(faces.faces[0]!)).toBe(false);
   expect(read).toHaveBeenCalledTimes(4);
-  expect(ondecision).toHaveBeenCalledTimes(2);
+  expect(ondecision).toHaveBeenLastCalledWith("Revision changed", false);
   expect(faces.error).toBe("Revision changed");
   faces.dispose();
 });

@@ -10,7 +10,13 @@ import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import { idbRequest, transactionDone } from "./indexedDB.js";
 import * as api from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
-import { Photos, photoQuery, mapPhotoLimit, type MapView } from "./photos.svelte.js";
+import {
+  Photos,
+  photoQuery,
+  mapPhotoLimit,
+  refreshPersonPhotoViews,
+  type MapView,
+} from "./photos.svelte.js";
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
 import {
   photoFace,
@@ -3313,9 +3319,16 @@ it("keeps the selected row's face state when opening its loupe", async () => {
   expect(read).toHaveBeenCalledOnce();
 });
 
-it.each(["name", "clear"])(
-  "refreshes person-filtered rows after a committed %s loses its response",
-  async (action) => {
+it.each([
+  ["name", false, true],
+  ["clear", false, true],
+  ["name", true, false],
+  ["clear", true, false],
+  ["name", true, true],
+  ["clear", true, true],
+])(
+  "refreshes person-filtered rows after %s, concealed=%s lost response=%s",
+  async (action, concealed, lost) => {
     vi.stubGlobal(
       "ResizeObserver",
       class {
@@ -3327,6 +3340,7 @@ it.each(["name", "clear"])(
     vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
     const row = photo(1);
     let committed = false;
+    let finish!: () => void;
     vi.spyOn(api, "listPhotoFaces").mockImplementation(async () =>
       photoFacePage(
         committed
@@ -3342,12 +3356,15 @@ it.each(["name", "clear"])(
     vi.spyOn(api, "listPeople").mockResolvedValue({
       items: [{ person_id: "person-b", display_name: "Grace", revision: 1, state: "curated" }],
     });
-    vi.spyOn(api, "decidePhotoFace").mockImplementation(async (version, decision) => {
+    vi.spyOn(api, "decidePhotoFace").mockImplementation(async (version, decision, options) => {
       expect(version).toBe(row.content_version_id);
       expect(decision.action).toBe(action === "name" ? "name" : "retract");
       if (action === "name") expect(decision.person_id).toBe("person-b");
+      await new Promise<void>((resolve) => (finish = resolve));
+      expect(options!.signal!.aborted).toBe(false);
       committed = true;
-      throw new Error("Response lost");
+      if (lost) throw new Error("Response lost");
+      return { receipt_id: "receipt-a" };
     });
     stubPhotoFetch(async (url, init) => {
       if (!url.endsWith("/photos/assets/query")) return Response.json({ state: "unsupported" });
@@ -3356,16 +3373,27 @@ it.each(["name", "clear"])(
       const rows = committed && !query?.filters?.asset_ids ? [] : [row];
       return Response.json({ items: rows, total: rows.length, facets: [] });
     });
-    const photos = new Photos("session", vi.fn(), false, {
+    const query = {
       ...photoQuery,
       filters: { person_ids: ["person-a"] },
-    });
+    };
+    const photos = new Photos("session", vi.fn(), false, query);
+    const sibling = new Photos("session", vi.fn(), false, query);
+    sibling.items = [row];
+    sibling.total = 1;
+    sibling.started = true;
     photos.items = [row];
     photos.total = 1;
     photos.started = true;
-    const cache = new PhotoPreviewCache("session", vi.fn());
-    const props = { photos, cache, photoID: row.asset_id, onphotochange: vi.fn() };
-    const view = render(PhotosWorkspace, props);
+    let cache = new PhotoPreviewCache("session", vi.fn());
+    const props = {
+      photos,
+      cache,
+      photoID: row.asset_id,
+      onphotochange: vi.fn(),
+      onfacedecision: (source: Photos) => void refreshPersonPhotoViews(source, [sibling]),
+    };
+    let view = render(PhotosWorkspace, props);
     const loupe = await screen.findByRole("dialog", { name: /^Photo viewer,/ });
     await fireEvent.click(within(loupe).getByRole("button", { name: "Metadata" }));
     await fireEvent.click(
@@ -3378,15 +3406,31 @@ it.each(["name", "clear"])(
     await fireEvent.mouseDown(
       await screen.findByRole("option", { name: action === "name" ? "Grace" : "Clear name" }),
     );
-    expect((await screen.findAllByText("Response lost")).length).toBeGreaterThan(0);
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    if (concealed) {
+      view.unmount();
+      await cache.dispose();
+      cache = new PhotoPreviewCache("session", vi.fn());
+      if (!lost) {
+        view = render(PhotosWorkspace, { ...props, cache, photoID: "" });
+        expect(screen.getAllByText("1 photos").length).toBeGreaterThan(0);
+      }
+    }
+    finish();
     await waitFor(() => expect(photos.total).toBe(0));
+    await waitFor(() => expect(sibling.total).toBe(0));
     expect(photos.items).toEqual([]);
-    expect(screen.getAllByText("Response lost").length).toBeGreaterThan(0);
-    await fireEvent.click(within(loupe).getByRole("button", { name: "Close photo viewer" }));
-    await view.rerender({ ...props, photoID: "" });
+    expect(sibling.items).toEqual([]);
+    if (concealed && lost) view = render(PhotosWorkspace, { ...props, cache, photoID: "" });
+    if (lost) expect((await screen.findAllByText("Response lost")).length).toBeGreaterThan(0);
+    if (!concealed) {
+      await fireEvent.click(within(loupe).getByRole("button", { name: "Close photo viewer" }));
+      await view.rerender({ ...props, photoID: "" });
+    }
     await screen.findByText("No matching photos");
     expect(screen.getAllByText("0 photos").length).toBeGreaterThan(0);
     photos.dispose();
+    sibling.dispose();
     await cache.dispose();
   },
 );

@@ -188,16 +188,25 @@
   }
   const album = $derived(albums?.items.find((item) => item.id === albumID));
   const editor = $derived(photos.authored);
-  const inspectorFaces = untrack(
-    () =>
-      (photos.faceEditor = new PhotoFaces(
-        photos.session,
-        photos.onauthfailure,
-        photos.hidden,
-        faceDecision,
-        photos.hidden ? photos.hiddenAccess : undefined,
-      )),
-  );
+  const inspectorFaces = untrack(() => {
+    const owner = photos,
+      changed = onfacedecision,
+      actionError = onactionerror;
+    return (owner.faceEditor = new PhotoFaces(
+      owner.session,
+      owner.onauthfailure,
+      owner.hidden,
+      (error = "", refresh = true) => {
+        owner.actionError = error;
+        actionError?.(error);
+        if (refresh) {
+          void owner.refresh(alive ? preserve : undefined);
+          changed?.(owner);
+        }
+      },
+      owner.hidden ? owner.hiddenAccess : undefined,
+    ));
+  });
   $effect(() => {
     const filter = photos.personFilter;
     const person = inspectorFaces.people.find((person) => person.person_id === filter?.id);
@@ -589,10 +598,6 @@
   let grid = $state<{ preservePosition: () => () => Promise<void> }>();
   let rejectsOpen = $state(false);
   const preserve = () => grid?.preservePosition();
-  function faceDecision() {
-    void refresh();
-    onfacedecision?.(photos);
-  }
   export function refresh() {
     return photos.refresh(preserve);
   }
