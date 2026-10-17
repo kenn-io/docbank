@@ -2861,9 +2861,13 @@ it("uses the resolved vault identity when Cull mounted before audit status arriv
   const cache = { get: vi.fn() } as unknown as PhotoPreviewCache;
   const view = render(PhotosWorkspace, { photos, cache, vaultID: "" });
   expect((screen.getByRole("button", { name: "Cull" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.getByRole("button", { name: "Cull" }).title).toBe(
+    "Vault identity unavailable. Reload to retry.",
+  );
   await view.rerender({ photos, cache, vaultID: "11111111-1111-4111-8111-111111111111" });
   const cull = screen.getByRole("button", { name: "Cull" }) as HTMLButtonElement;
   expect(cull.disabled).toBe(false);
+  expect(cull.title).toBe("");
   await fireEvent.click(cull);
   await waitFor(() =>
     expect(screen.getByRole("alert").textContent).toBe("Synthetic storage reached"),

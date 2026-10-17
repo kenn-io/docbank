@@ -839,6 +839,7 @@
                 <Button
                   size="sm"
                   disabled={actionDisabled || !cull || cull.capturing || !vaultID || !photos.total}
+                  title={vaultID ? undefined : "Vault identity unavailable. Reload to retry."}
                   onclick={() => void startCull()}>Cull</Button
                 >
                 {#if cull?.capturing}<Button size="sm" onclick={() => cull?.cancel()}
