@@ -624,30 +624,6 @@ func TestPhotoAuthoredPurgeRemovesReceipts(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
-	t.Run("sidecar", func(t *testing.T) {
-		t.Parallel()
-		s, asset, raw, sidecar := authoredSidecar(t)
-		ctx := t.Context()
-		receipt := importXMP(t, s, raw.ID, PhotoAuthored{Rating: 4, Confirmed: PhotoConfirmedRating})
-		_, err := s.DetachPhotoFile(ctx, asset.ID, asset.Revision, receipt.Sidecar.FileID, PhotoDetachOptions{})
-		require.NoError(t, err)
-		node, err := s.NodeByID(ctx, sidecar.ID)
-		require.NoError(t, err)
-		_, _, err = s.Trash(ctx, node.ID, node.Revision)
-		require.NoError(t, err)
-		_, err = s.TrashEmpty(ctx, 0, true)
-		require.NoError(t, err)
-		_, err = loadPhotoAuthoredReceipt(ctx, s.db, receipt.ReceiptID)
-		require.ErrorIs(t, err, ErrNotFound)
-		var xmpReceipts int
-		require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM photo_change_receipts WHERE operation='xmp_sync'`).Scan(&xmpReceipts))
-		assert.Zero(t, xmpReceipts, "purging the sidecar removes the sync receipt naming it")
-		require.NoError(t, s.ValidateMetadata(ctx))
-		var backup bytes.Buffer
-		require.NoError(t, s.ExportMetadata(ctx, &backup))
-		restored := newTestStore(t)
-		require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(backup.Bytes())))
-	})
 }
 
 func TestPhotoAuthoredExpressionBrowse(t *testing.T) {

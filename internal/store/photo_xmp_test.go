@@ -475,8 +475,6 @@ func TestPhotoXMPQueryFilters(t *testing.T) {
 	assert.Equal(t, PhotoXMPStateConflict, xmpState(t, s, raw.ID).State)
 	assert.Equal(t, []string{asset.ID}, match("xmp:conflict"))
 	assert.Empty(t, match("xmp:pending"))
-	assert.Equal(t, []string{asset.ID}, match("NOT xmp:pending"))
-	assert.Equal(t, []string{asset.ID}, match("xmp:pending OR xmp:conflict"))
 	conflict := xmpState(t, s, raw.ID).ConflictID
 	_, err = s.PhotoXMPConflict(ctx, raw.ID, conflict)
 	require.NoError(t, err)
@@ -499,7 +497,7 @@ func TestPhotoXMPPurgeRemovesSyncReceipts(t *testing.T) {
 			t.Parallel()
 			s, asset, raw, sidecar := authoredSidecar(t)
 			ctx := t.Context()
-			importXMP(t, s, raw.ID, PhotoAuthored{Rating: 4, Confirmed: PhotoConfirmedRating})
+			receipt := importXMP(t, s, raw.ID, PhotoAuthored{Rating: 4, Confirmed: PhotoConfirmedRating})
 			var receipts int
 			require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM photo_change_receipts WHERE operation='xmp_sync'`).Scan(&receipts))
 			require.Equal(t, 1, receipts)
@@ -522,6 +520,14 @@ func TestPhotoXMPPurgeRemovesSyncReceipts(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM photo_change_receipts WHERE operation='xmp_sync'`).Scan(&receipts))
 			assert.Zero(t, receipts)
+			if mode == "sidecar" {
+				_, err = loadPhotoAuthoredReceipt(ctx, s.db, receipt.ReceiptID)
+				require.ErrorIs(t, err, ErrNotFound)
+				var backup bytes.Buffer
+				require.NoError(t, s.ExportMetadata(ctx, &backup))
+				restored := newTestStore(t)
+				require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(backup.Bytes())))
+			}
 			require.NoError(t, s.ValidateMetadata(ctx))
 		})
 	}

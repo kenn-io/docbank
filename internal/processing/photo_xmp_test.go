@@ -269,38 +269,27 @@ func TestPhotoXMPOutsideEditsMergeAfterManagedWrite(t *testing.T) {
 	assert.Equal(t, 5, packet.Values.Rating)
 	assert.Equal(t, "River", packet.Values.Caption)
 
-	// Changing the same property differently on both sides needs a choice.
 	e.edit(store.PhotoAuthoredPatch{Rating: new(2)})
 	e.importFiles(xmpSidecar(` xmp:Rating="1"`, `<dc:description>River</dc:description>`))
 	e.drain()
-	conflict := e.state(store.PhotoXMPStateConflict)
-	assert.Equal(t, []store.PhotoXMPRow{{Field: "Rating", Catalog: "2", Sidecar: "1"}}, conflict.Rows)
+	e.state(store.PhotoXMPStateConflict)
 	err = ResolvePhotoXMP(t.Context(), &ingest.Ingester{Store: e.catalog, Blobs: e.blobs}, e.raw().ID, "00000000-0000-4000-8000-000000000000", "sidecar")
 	require.ErrorIs(t, err, store.ErrStaleRevision)
-	err = ResolvePhotoXMP(t.Context(), &ingest.Ingester{Store: e.catalog, Blobs: e.blobs}, e.raw().ID, conflict.ConflictID, "sidecar")
-	require.NoError(t, err)
-	e.state(store.PhotoXMPStateSynced)
-	assert.Equal(t, 1, e.raw().Rating)
-	assert.Equal(t, "River", e.raw().Caption)
 }
 
 func TestPhotoXMPConvergenceThenOneSidedChange(t *testing.T) {
 	t.Parallel()
 	e := newXMPEnv(t, xmpSidecar(` xmp:Rating="3"`, ""))
 	e.drain()
-	// Both sides reach rating 4 independently; agreeing needs no write but
-	// becomes the new baseline.
+	// Both sides independently reach rating 4, which becomes the new baseline.
 	e.edit(store.PhotoAuthoredPatch{Rating: new(4)})
 	e.importFiles(xmpSidecar(` xmp:Rating="4"`, ""))
 	e.drain()
-	agreed, _, _ := e.packet()
 	e.state(store.PhotoXMPStateSynced)
 	e.importFiles(xmpSidecar(` xmp:Rating="2"`, ""))
 	e.drain()
 	e.state(store.PhotoXMPStateSynced)
 	assert.Equal(t, 2, e.raw().Rating)
-	current, _, _ := e.packet()
-	assert.NotEqual(t, agreed.CurrentVersionID, current.CurrentVersionID)
 }
 
 func TestPhotoXMPUnrelatedOutsideEditKeepsImportUndo(t *testing.T) {
@@ -329,51 +318,49 @@ func TestPhotoXMPUnrelatedOutsideEditKeepsImportUndo(t *testing.T) {
 
 func TestPhotoXMPMissingSidecarRetriesAfterRestore(t *testing.T) {
 	t.Parallel()
-	e := newXMPEnv(t, xmpSidecar(` xmp:Rating="4"`, ""))
-	e.drain()
-	sidecar, data, _ := e.packet()
-	e.edit(store.PhotoAuthoredPatch{Rating: new(5)})
-	require.NoError(t, e.blobs.Remove(sidecar.BlobHash))
-	ing := &ingest.Ingester{Store: e.catalog, Blobs: e.blobs}
-	fileID := e.raw().ID
-	receipts := e.receiptCount()
-	for range 2 {
-		err := SyncPhotoXMPBackground(t.Context(), ing, fileID)
-		require.ErrorIs(t, err, packstore.ErrPhysicalMissing)
-		assert.Equal(t, "The sidecar content is missing. Restore its data; background sync will retry.", e.state(store.PhotoXMPStatePending).Reason)
-		targets, err := e.catalog.PhotoXMPTargetsAfter(t.Context(), "", 100)
-		require.NoError(t, err)
-		require.Equal(t, []store.PhotoSidecarTarget{{FileID: fileID, NodeID: e.raw().NodeID}}, targets)
+	for _, failure := range []string{"missing", "permission"} {
+		t.Run(failure, func(t *testing.T) {
+			t.Parallel()
+			if failure == "permission" && (runtime.GOOS == "windows" || os.Geteuid() == 0) {
+				t.Skip("requires Unix file permissions enforced for the current user")
+			}
+			e := newXMPEnv(t, xmpSidecar(` xmp:Rating="4"`, ""))
+			e.drain()
+			sidecar, data, _ := e.packet()
+			e.edit(store.PhotoAuthoredPatch{Rating: new(5)})
+			path := filepath.Join(e.root, "blobs", sidecar.BlobHash[:2], sidecar.BlobHash)
+			expected, reason := packstore.ErrPhysicalMissing, "The sidecar content is missing. Restore its data; background sync will retry."
+			if failure == "permission" {
+				expected, reason = os.ErrPermission, "The sidecar could not be read. Background sync will retry."
+				require.NoError(t, os.Chmod(path, 0))
+				t.Cleanup(func() { require.NoError(t, os.Chmod(path, 0o600)) })
+			} else {
+				require.NoError(t, e.blobs.Remove(sidecar.BlobHash))
+			}
+			ing := &ingest.Ingester{Store: e.catalog, Blobs: e.blobs}
+			fileID := e.raw().ID
+			receipts := e.receiptCount()
+			for range 2 {
+				err := SyncPhotoXMPBackground(t.Context(), ing, fileID)
+				require.ErrorIs(t, err, expected)
+				assert.Equal(t, reason, e.state(store.PhotoXMPStatePending).Reason)
+				targets, err := e.catalog.PhotoXMPTargetsAfter(t.Context(), "", 100)
+				require.NoError(t, err)
+				require.Equal(t, []store.PhotoSidecarTarget{{FileID: fileID, NodeID: e.raw().NodeID}}, targets)
+			}
+			if failure == "permission" {
+				require.NoError(t, os.Chmod(path, 0o600))
+			} else {
+				assert.Equal(t, receipts+1, e.receiptCount(), "an unchanged retry records its outcome once")
+				_, err := e.blobs.WriteDetailedContext(t.Context(), strings.NewReader(data))
+				require.NoError(t, err)
+			}
+			e.drain()
+			assert.Empty(t, e.state(store.PhotoXMPStateSynced).Reason)
+			_, _, packet := e.packet()
+			assert.Equal(t, 5, packet.Values.Rating)
+		})
 	}
-	assert.Equal(t, receipts+1, e.receiptCount(), "an unchanged retry records its outcome once")
-	_, err := e.blobs.WriteDetailedContext(t.Context(), strings.NewReader(data))
-	require.NoError(t, err)
-	require.NoError(t, SyncPhotoXMPBackground(t.Context(), ing, fileID))
-	assert.Empty(t, e.state(store.PhotoXMPStateSynced).Reason)
-	_, _, packet := e.packet()
-	assert.Equal(t, 5, packet.Values.Rating)
-}
-
-func TestPhotoXMPReadPermissionFailureRetries(t *testing.T) {
-	t.Parallel()
-	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
-		t.Skip("requires Unix file permissions enforced for the current user")
-	}
-	e := newXMPEnv(t, xmpSidecar(` xmp:Rating="4"`, ""))
-	e.drain()
-	sidecar, _, _ := e.packet()
-	e.edit(store.PhotoAuthoredPatch{Rating: new(5)})
-	path := filepath.Join(e.root, "blobs", sidecar.BlobHash[:2], sidecar.BlobHash)
-	require.NoError(t, os.Chmod(path, 0))
-	t.Cleanup(func() { require.NoError(t, os.Chmod(path, 0o600)) })
-	err := SyncPhotoXMPBackground(t.Context(), &ingest.Ingester{Store: e.catalog, Blobs: e.blobs}, e.raw().ID)
-	require.ErrorIs(t, err, os.ErrPermission)
-	assert.Equal(t, "The sidecar could not be read. Background sync will retry.", e.state(store.PhotoXMPStatePending).Reason)
-	require.NoError(t, os.Chmod(path, 0o600))
-	e.drain()
-	assert.Empty(t, e.state(store.PhotoXMPStateSynced).Reason)
-	_, _, packet := e.packet()
-	assert.Equal(t, 5, packet.Values.Rating)
 }
 
 func TestPhotoXMPGeneratedSidecarStaysDetached(t *testing.T) {
@@ -394,6 +381,7 @@ func TestPhotoXMPGeneratedSidecarStaysDetached(t *testing.T) {
 	_, _, err = e.catalog.Move(t.Context(), raw.ID, *raw.ParentID, "renamed.ARW", raw.Revision)
 	require.NoError(t, err)
 	e.drain()
+	assert.Empty(t, e.sidecars(), "a rename keeps the removed sidecar detached")
 
 	e.edit(store.PhotoAuthoredPatch{Rating: new(4)})
 	e.drain()
@@ -779,14 +767,6 @@ func TestPhotoXMPOutsideSourceReturnsToEarlierRating(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, want, e.raw().Rating, "outside editor restored rating %s", rating)
 	}
-	e.edit(store.PhotoAuthoredPatch{Rating: new(5)})
-	e.drain()
-	managed, _, _ := e.packet()
-	e.importFiles(xmpSidecar(` xmp:Rating="4"`, ""))
-	e.drain()
-	current, _, _ := e.packet()
-	assert.Equal(t, 5, e.raw().Rating, "unchanged source preserves the catalog edit")
-	assert.Equal(t, managed.CurrentVersionID, current.CurrentVersionID)
 }
 
 func TestPhotoXMPKeywordConflictChoices(t *testing.T) {

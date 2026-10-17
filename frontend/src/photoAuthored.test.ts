@@ -761,7 +761,8 @@ it("shows conflicting properties and resolves the recorded conflict", async () =
   ui(editor);
   const panel = screen.getByRole("region", { name: "XMP for capture.raw" });
   expect(within(panel).getByText("XMP: Conflict")).toBeTruthy();
-  expect(within(panel).getByText("1")).toBeTruthy();
+  const rating = within(panel).getByRole("row", { name: "Rating 4 1" });
+  expect(within(rating).getAllByRole("cell")[1]?.textContent).toBe("1");
   await fireEvent.click(within(panel).getByRole("button", { name: "Use Sidecar" }));
   await vi.waitFor(() => expect(editor.targets[0]!.xmp?.state).toBe("synced"));
   expect(String(fetcher.mock.calls[0]![0])).toContain("/photos/authored/raw/xmp");

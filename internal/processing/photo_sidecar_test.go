@@ -157,17 +157,21 @@ func TestPhotoSidecarSourceMetadataWiring(t *testing.T) {
 	for _, test := range []struct {
 		name, packet string
 		valid        bool
+		warning      string
 	}{
-		{"valid", "\xef\xbb\xbf" + `<?xml version="1.0"?><?xpacket begin=""?>` + photoSidecarHeader + ` xmp:Rating="4">` + photoSidecarFooter + `<?xpacket end="w"?>`, true},
-		{"invalid", "<broken", false},
+		{"valid", "\xef\xbb\xbf" + `<?xml version="1.0"?><?xpacket begin=""?>` + photoSidecarHeader + ` xmp:Rating="4">` + photoSidecarFooter + `<?xpacket end="w"?>`, true, ""},
+		{"invalid", "<broken", false, "unsupported_format"},
+		{"nested RDF", photoSidecarHeader + ` xmp:Rating="4"><metadata><rdf:RDF><rdf:Description xmp:Rating="1"/></rdf:RDF></metadata>` + photoSidecarFooter, false, "unparseable_metadata"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := t.Context()
 			packet := []byte(test.packet)
 			catalog, blobs, _, sidecar := photoSidecarFixture(t, packet)
-			count, err := BackfillSourceMetadataTargets(ctx, catalog, blobs, sourceMetadataTestSpool(t), []store.SourceMetadataTarget{{SourceSHA256: sidecar.BlobHash, Size: sidecar.Size}})
+			targets, err := catalog.MissingSourceMetadataTargetsAfter(ctx, SourceMetadataExtractorFingerprint, "", 10)
 			require.NoError(t, err)
-			assert.Equal(t, 1, count)
+			count, err := BackfillSourceMetadataTargets(ctx, catalog, blobs, sourceMetadataTestSpool(t), targets)
+			require.NoError(t, err)
+			assert.Positive(t, count)
 			view, err := catalog.ContentVersionSourceMetadata(ctx, sidecar.CurrentVersionID)
 			require.NoError(t, err)
 			valid := false
@@ -178,7 +182,7 @@ func TestPhotoSidecarSourceMetadataWiring(t *testing.T) {
 			}
 			assert.Equal(t, test.valid, valid)
 			if !test.valid {
-				assert.NotEmpty(t, view.Metadata.Warnings)
+				assert.Contains(t, sourceMetadataWarningCodes(view.Metadata), test.warning)
 			}
 		})
 	}
