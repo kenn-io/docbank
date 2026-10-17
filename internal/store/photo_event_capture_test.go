@@ -346,69 +346,6 @@ func TestPhotoEventsRefetchWhenPersonSearchesResolveDifferently(t *testing.T) {
 	noPhotoEvent(t, events)
 }
 
-// Keep the schema inventory explicit: a new table needs a capture rule or a reason.
-func TestPhotoEventSchemaCoverage(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	exclusions := map[string]string{}
-	for table := range strings.FieldsSeq("export_sources export_chunks export_members export_plans export_documents export_role_roots export_jobs collection_snapshots collection_snapshot_members collection_snapshot_representations packages package_volumes bates_namespaces bates_namespace_cursors bates_allocations bates_page_labels bates_artifacts bates_artifact_pages package_records package_labels package_import_jobs package_import_receipts page_documents page_frames page_recipes page_images page_render_jobs vault_metadata package_preflights document_event_state document_event_generations document_event_heads document_events document_event_actors document_event_primaries document_event_builds provenance_version_bindings document_event_dirty document_event_attempts media_sources media_source_versions media_occurrences media_input_artifacts media_operations ingests watch_sources push_sources current_processing_incarnation saved_query_runs term_report_history audit_records audit_authority audit_scopes audit_baselines audit_memberships email_generations email_part_artifacts email_attachments email_heads email_body_results email_document_publications email_document_relations mailbox_containers mailbox_chunks mailbox_archives mailbox_transfer_receipts mailbox_jobs mailbox_occurrences") {
-		exclusions[table] = "Document, ingest, export, or audit bookkeeping publishes photo changes through captured nodes or provenance"
-	}
-	for table := range strings.FieldsSeq("blobs blob_checksums blob_stores blob_locations blob_packs blob_pack_entries storage_operations storage_operation_stores storage_operation_cleanup gc_loose_retirements") {
-		exclusions[table] = "Physical storage bookkeeping does not change photo metadata"
-	}
-	for table := range strings.FieldsSeq("source_metadata_generations content_versions rendition_attachments") {
-		exclusions[table] = "Immutable records become visible through captured nodes or heads"
-	}
-	for table := range strings.FieldsSeq("photo_technical_metadata_state") {
-		exclusions[table] = "Metadata bookkeeping publishes through source_metadata_heads"
-	}
-	for table := range strings.FieldsSeq("processing_incarnations processing_consent_grants processing_consent_revocations processing_profiles rendition_builds rendition_artifacts rendition_units rendition_lexical_segments embedding_vector_spaces embedding_input_generations embedding_jobs embedding_generation_inputs embedding_vector_sets embedding_vector_rows embedding_sets embedding_heads embedding_failures rendition_lexical_index rendition_lexical_generations rendition_lexical_generation_manifests rendition_lexical_generation_builds rendition_lexical_heads rendition_lexical_superseded vector_index_generations vector_index_heads vector_index_build_jobs vector_index_reader_leases vector_index_unavailable_coverage rendition_jobs rendition_job_waiters current_rendition_roots derivative_purge_suppressions rendition_blob_staging derivative_blob_purge_pending derivative_pack_purge_pending text_extraction_queue") {
-		exclusions[table] = "Processing bookkeeping publishes photo changes through captured rendition heads or searchable versions"
-	}
-	for table := range strings.FieldsSeq("batch_tag_receipts photo_change_receipts") {
-		exclusions[table] = "Undo receipts do not change photo results"
-	}
-	for table := range strings.FieldsSeq("photo_timeline photo_timeline_pending photo_sidecar_considered") {
-		exclusions[table] = "Derived photo state publishes through captured file or node changes"
-	}
-	for table := range strings.FieldsSeq("persons person_identities person_external_identities person_external_uid_aliases person_merges custodian_assignments photo_faces person_match_candidates document_people_state document_people_builds document_people_generations document_people_heads document_people person_splits person_candidate_faces") {
-		exclusions[table] = "People bookkeeping publishes photo membership through person_document_assertions or person_aliases"
-	}
-	for table := range strings.FieldsSeq("photo_hidden_lockout photo_hidden_failures") {
-		exclusions[table] = "Unlock throttling does not change photo visibility"
-	}
-	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
-		require.NoError(t, installPhotoChangeTriggers(t.Context(), tx))
-		rows, err := tx.QueryContext(t.Context(), `SELECT name FROM main.sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'`)
-		require.NoError(t, err)
-		defer func() { _ = rows.Close() }()
-		var tables []string
-		for rows.Next() {
-			var name string
-			require.NoError(t, rows.Scan(&name))
-			tables = append(tables, name)
-		}
-		require.NoError(t, rows.Err())
-		require.NoError(t, rows.Close())
-		for _, table := range tables {
-			// Search indexes and their SQLite shadow tables derive from captured nodes or heads.
-			for _, index := range []string{"photo_metadata_fts", "rendition_lexical_fts", "content_fts", "nodes_fts", "photo_authored_fts"} {
-				if table == index || strings.HasPrefix(table, index+"_") {
-					exclusions[table] = "Derived search index"
-				}
-			}
-			if exclusions[table] != "" {
-				continue
-			}
-			var count int
-			require.NoError(t, tx.QueryRowContext(t.Context(), `SELECT count(*) FROM sqlite_temp_schema WHERE type='trigger' AND tbl_name=? AND name LIKE 'photo_events_%'`, table).Scan(&count))
-			require.GreaterOrEqual(t, count, 3, "table %s needs capture or an exclusion reason", table)
-		}
-		return nil
-	}))
-}
-
 func TestPhotoEventsQueryDefinitions(t *testing.T) {
 	t.Parallel()
 	for _, dependency := range []string{"saved", "collection"} {

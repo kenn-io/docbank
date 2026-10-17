@@ -113,6 +113,12 @@
   let loupeMetadata = $state(false);
   const selectionCount = $derived(photos.selectedIDs.size);
   const actionDisabled = $derived(concealed || photos.loading || photos.hiding || photos.trashing);
+  const metadataDisabled = $derived(
+    concealed ||
+      photos.hiding ||
+      photos.trashing ||
+      (photos.loading && !editor.validating && !editor.comparing),
+  );
   const editCount = $derived(
     photoID ? 1 : editor.count || (photos.allResults ? photos.total : photos.selectedIDs.size),
   );
@@ -194,7 +200,14 @@
   }
   function edit(patch: PhotoAuthoredPatch, keywords?: PhotoKeywordEdit[], rotationDelta?: 90) {
     if (!editCount) return;
-    if (actionDisabled || editor.conflict || editor.busy || editor.loading || editor.concealed) {
+    if (
+      actionDisabled ||
+      editor.conflict ||
+      editor.busy ||
+      editor.loading ||
+      editor.validating ||
+      editor.concealed
+    ) {
       unavailable();
       return;
     }
@@ -203,7 +216,14 @@
   }
   function undoShortcut() {
     if (!editor.receiptID) return;
-    if (actionDisabled || editor.conflict || editor.busy || editor.loading || editor.concealed) {
+    if (
+      actionDisabled ||
+      editor.conflict ||
+      editor.busy ||
+      editor.loading ||
+      editor.validating ||
+      editor.concealed
+    ) {
       unavailable();
       return;
     }
@@ -1239,7 +1259,12 @@
                 </div>{/if}
             </div>
             {#if editing && (editCount || editor.dirty)}<aside class="grid-inspector">
-                <PhotoInspector {editor} {actionDisabled} count={editCount} onedit={edit} />
+                <PhotoInspector
+                  {editor}
+                  actionDisabled={metadataDisabled}
+                  count={editCount}
+                  onedit={edit}
+                />
               </aside>{/if}
           </div>
           {#if !photoID}
@@ -1326,7 +1351,7 @@
   {#if photoID}<PhotoLoupe
       bind:metadataOpen={loupeMetadata}
       {editor}
-      {actionDisabled}
+      actionDisabled={metadataDisabled}
       onedit={edit}
       onundo={() => void editor.undo(metadataRefresh)}
       photo={current}

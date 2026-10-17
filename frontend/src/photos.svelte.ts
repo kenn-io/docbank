@@ -1082,12 +1082,14 @@ export class Photos {
     resume = false,
   ) {
     if (this.disposed) return false;
-    this.authored.conceal();
+    if (live) this.authored.validating = true;
+    else this.authored.conceal();
     this.controller.abort();
     this.controller = new AbortController();
     this.facetsController.abort();
     this.facetsLoading = false;
     const controller = this.controller;
+    let membershipRevalidated = false;
     let signal = controller.signal;
     this.replacement = mode;
     this.replacementDate = date;
@@ -1152,6 +1154,7 @@ export class Photos {
       const captured = !this.authored.inspectedID && !!this.authored.targets.length;
       if (captured) this.captureSelection();
       this.authored.revalidate(eligible);
+      membershipRevalidated = true;
       this.editScopeRevision++;
       this.items = [...candidate.values()];
       this.total = total;
@@ -1185,6 +1188,7 @@ export class Photos {
       await restore?.();
     } catch (cause) {
       if (controller.signal.aborted) return false;
+      if (live && !membershipRevalidated) this.authored.changedElsewhere();
       this.authFailure(cause);
       if (
         cause instanceof APIError &&

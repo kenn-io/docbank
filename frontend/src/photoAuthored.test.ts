@@ -883,6 +883,41 @@ it("closes clean metadata when a live change removes its only target", async () 
   editor.dispose();
 });
 
+it.each(["Reload", "another event"])(
+  "blocks a retained draft after a failed ID-free comparison until %s",
+  async (recovery) => {
+    const editor = editorWithTargets();
+    editor.stage({ caption: "Draft caption" });
+    const prepare = vi
+      .spyOn(api, "preparePhotoAuthored")
+      .mockRejectedValueOnce(new APIError("Metadata unavailable", 503, "unavailable"))
+      .mockResolvedValue({ assets: [asset], targets });
+    ui(editor);
+    editor.changedElsewhere({ assets: new Map(), albums: new Map(), refetch: true });
+    expect(editor.conflict).toBe(false);
+    await editor.reconcile();
+    expect(editor.targets).toEqual(targets);
+    expect(screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Caption" }).value).toBe(
+      "Draft caption",
+    );
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Apply" }).disabled).toBe(true);
+    expect(prepare).toHaveBeenCalledOnce();
+    await editor.reconcile();
+    expect(prepare).toHaveBeenCalledOnce();
+    if (recovery === "Reload")
+      await fireEvent.click(screen.getByRole("button", { name: "Reload metadata" }));
+    else {
+      editor.changedElsewhere({ assets: new Map(), albums: new Map(), refetch: true });
+      await editor.reconcile();
+    }
+    await vi.waitFor(() => expect(editor.conflict).toBe(false));
+    expect(editor.patch.caption).toBe("Draft caption");
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Apply" }).disabled).toBe(false);
+    expect(prepare).toHaveBeenCalledTimes(2);
+    editor.dispose();
+  },
+);
+
 it.each(["unchanged", "asset", "file", "node", "membership"])(
   "rechecks an ID-free refresh with %s targets while retaining a draft",
   async (change) => {
@@ -949,24 +984,46 @@ it("retains a staged keyword beyond the first catalog page", async () => {
 it.each(["refresh", "resolve"])("removes a deleted assigned keyword during %s", async (path) => {
   const editor = editorWithTargets();
   editor.targets[0]!.tags = ["deleted"];
-  editor.stage({ caption: "Draft" });
+  const retained = { id: "retained", name: "Retained", revision: 1, assignment_count: 0 };
+  editor.tags = [retained];
+  editor.stage({ caption: "Draft" }, [
+    { tag_id: "deleted", assign: true },
+    { tag_id: "retained", assign: false },
+  ]);
+  editor.rotationDelta = 90;
   const deleted = vi.fn();
   editor.onTagDeleted = deleted;
-  const lookup = vi
-    .spyOn(api, "getTag")
-    .mockRejectedValue(new APIError("Deleted", 404, "not_found"));
+  const lookup = vi.spyOn(api, "getTag").mockImplementation(async (id) => {
+    if (id === "deleted") throw new APIError("Deleted", 404, "not_found");
+    return retained;
+  });
   if (path === "refresh") {
-    editor.tags = [{ id: "deleted", name: "Deleted", revision: 1, assignment_count: 1 }];
+    editor.tags = [retained, { id: "deleted", name: "Deleted", revision: 1, assignment_count: 1 }];
     await editor.refreshAssignedTags();
   } else {
     editor.catalog([]);
     await vi.waitFor(() => expect(deleted).toHaveBeenCalledWith("deleted"));
     editor.catalog([]);
   }
-  expect(editor.tags).toEqual([]);
+  expect(editor.tags).toEqual([retained]);
   expect(editor.tagsError).toBe("");
   expect(editor.patch.caption).toBe("Draft");
-  expect(lookup).toHaveBeenCalledTimes(1);
+  expect(editor.keywords).toEqual([{ tag_id: "retained", assign: false }]);
+  expect(editor.rotationDelta).toBe(90);
+  expect(editor.noticeTone).toBe("warning");
+  expect(editor.notice).toBe(
+    `${path === "refresh" ? "“Deleted”" : "A keyword"} was deleted. Its staged edit was removed.`,
+  );
+  expect(lookup).toHaveBeenCalledTimes(path === "refresh" ? 2 : 1);
+  const edit = vi
+    .spyOn(api, "editPhotoAuthored")
+    .mockResolvedValue({ receipt_id: "saved", before: targets, after: targets });
+  await editor.edit({}, {}, false, vi.fn());
+  expect(edit.mock.calls[0]![0]).toMatchObject({
+    patch: { caption: "Draft" },
+    rotation_delta: 90,
+    keywords: [{ tag_id: "retained", assign: false }],
+  });
   editor.dispose();
 });
 

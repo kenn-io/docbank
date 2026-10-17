@@ -1305,6 +1305,127 @@ function workspaceWithPreparedPhoto(target = preparedPhoto(1), projection?: "map
   return photos;
 }
 
+it("keeps metadata focus and selection through an unrelated live list and comparison", async () => {
+  const target = preparedPhoto(1);
+  const photos = workspaceWithPreparedPhoto(target);
+  photos.selectLoaded();
+  photos.authored.targets = [target];
+  const selected = [...photos.selectedIDs];
+  let finishList!: () => void;
+  let finishPrepare!: () => void;
+  const prepare = vi.spyOn(api, "preparePhotoAuthored").mockImplementation(async () => {
+    await new Promise<void>((resolve) => (finishPrepare = resolve));
+    return { assets: [], targets: [target] };
+  });
+  const edit = vi.spyOn(api, "editPhotoAuthored");
+  const undo = vi.spyOn(api, "undoPhotoAuthored");
+  stubPhotoFetch(async (url) => {
+    if (!url.endsWith("/photos/assets/query")) throw new Error(`Unexpected request: ${url}`);
+    await new Promise<void>((resolve) => (finishList = resolve));
+    return Response.json({ items: [photo(1)], total: 1, facets: [] });
+  });
+  const view = render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+  const caption = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Caption" });
+  await fireEvent.input(caption, { target: { value: "Local draft" } });
+  caption.focus();
+  caption.setSelectionRange(1, 6);
+  photos.authored.receiptID = "prior";
+  const refreshing = view.component.refresh({
+    assets: new Map(),
+    albums: new Map(),
+    refetch: true,
+  });
+  await waitFor(() => expect(finishList).toBeTypeOf("function"));
+  expect(caption.disabled).toBe(false);
+  expect(document.activeElement).toBe(caption);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Apply" }).disabled).toBe(true);
+  await photos.authored.edit({}, { rating: 5 }, false, vi.fn());
+  await photos.authored.undo(vi.fn());
+  expect(edit).not.toHaveBeenCalled();
+  expect(undo).not.toHaveBeenCalled();
+  finishList();
+  await waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+  expect(caption.disabled).toBe(false);
+  expect(document.activeElement).toBe(caption);
+  expect(screen.getByRole("textbox", { name: "Caption" })).toBe(caption);
+  expect([caption.selectionStart, caption.selectionEnd]).toEqual([1, 6]);
+  expect([...photos.selectedIDs]).toEqual(selected);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Apply" }).disabled).toBe(true);
+  finishPrepare();
+  await refreshing;
+  await tick();
+  expect(document.activeElement).toBe(caption);
+  expect([caption.selectionStart, caption.selectionEnd]).toEqual([1, 6]);
+  expect(caption.value).toBe("Local draft");
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Apply" }).disabled).toBe(false);
+  view.unmount();
+  photos.dispose();
+});
+
+it.each(["listing", "comparison"])(
+  "blocks retained metadata after a live %s failure",
+  async (phase) => {
+    const photos = workspaceWithPreparedPhoto();
+    const prepare = vi
+      .spyOn(api, "preparePhotoAuthored")
+      .mockRejectedValue(new APIError("Comparison failed", 503, "unavailable"));
+    stubPhotoFetch(async () => {
+      if (phase === "listing") throw new Error("Listing failed");
+      return Response.json({ items: [photo(1)], total: 1, facets: [] });
+    });
+    const view = render(PhotosWorkspace, {
+      photos,
+      cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+    await fireEvent.input(screen.getByRole("textbox", { name: "Caption" }), {
+      target: { value: "Local draft" },
+    });
+    const refreshing = view.component.refresh({
+      assets: new Map(),
+      albums: new Map(),
+      refetch: true,
+    });
+    if (phase === "listing") await expect(refreshing).rejects.toThrow("Listing failed");
+    else await refreshing;
+    await tick();
+    expect(photos.authored.patch.caption).toBe("Local draft");
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Apply" }).disabled).toBe(true);
+    expect(
+      screen.getByRole<HTMLButtonElement>("button", { name: "Reload metadata" }).disabled,
+    ).toBe(false);
+    if (phase === "comparison") expect(prepare).toHaveBeenCalledOnce();
+    view.unmount();
+    photos.dispose();
+  },
+);
+
+it("shows a warning when a deleted keyword's staged edit is removed", async () => {
+  const photos = workspaceWithPreparedPhoto();
+  vi.spyOn(api, "getTag").mockRejectedValue(new APIError("Deleted", 404, "not_found"));
+  const view = render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+  const caption = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Caption" });
+  await fireEvent.input(caption, { target: { value: "Local draft" } });
+  photos.authored.tags = [{ id: "deleted", name: "Travel", revision: 1, assignment_count: 0 }];
+  photos.authored.stage({}, [{ tag_id: "deleted", assign: true }]);
+  await photos.authored.refreshAssignedTags();
+  expect(
+    await screen.findByText("“Travel” was deleted. Its staged edit was removed."),
+  ).toBeTruthy();
+  expect(caption.value).toBe("Local draft");
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Apply" }).disabled).toBe(false);
+  view.unmount();
+  photos.dispose();
+});
+
 it.each([
   { dirty: false, refetch: true },
   { dirty: true, refetch: false },
@@ -1929,6 +2050,7 @@ it.each([
   ["hiding", "hiding"],
   ["trashing", "trashing"],
   ["busy", "busy"],
+  ["validating", "validating"],
 ] as const)("gates metadata shortcuts for %s", async (_scenario, pending) => {
   vi.stubGlobal(
     "ResizeObserver",
@@ -1955,7 +2077,7 @@ it.each([
     shortcuts,
   });
   if (pending) {
-    if (pending === "busy") photos.authored.busy = true;
+    if (pending === "busy" || pending === "validating") photos.authored[pending] = true;
     else photos[pending] = true;
     await tick();
   }

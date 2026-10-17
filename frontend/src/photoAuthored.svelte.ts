@@ -30,6 +30,7 @@ export class PhotoAuthoredEditor {
   rotationDelta = $state<api.PhotoAuthoredEditRequest["rotation_delta"]>();
   keywords = $state<api.PhotoKeywordEdit[]>([]);
   loading = $state(false);
+  comparing = $state(false);
   validating = $state(false);
   concealed = $state(false);
   busy = $state(false);
@@ -99,6 +100,12 @@ export class PhotoAuthoredEditor {
   onTagDeleted?: (id: string) => void;
   private deletedTags = new Set<string>();
   private deleteTag(id: string) {
+    const name = this.tags.find((tag) => tag.id === id)?.name;
+    if (this.keywords.some((keyword) => keyword.tag_id === id)) {
+      this.keywords = this.keywords.filter((keyword) => keyword.tag_id !== id);
+      this.notice = `${name ? `“${name}”` : "A keyword"} was deleted. Its staged edit was removed.`;
+      this.noticeTone = "warning";
+    }
     this.deletedTags.add(id);
     this.tags = this.tags.filter((tag) => tag.id !== id);
     this.onTagDeleted?.(id);
@@ -194,6 +201,7 @@ export class PhotoAuthoredEditor {
   private remoteChange = false;
   private membershipConflict = false;
   private remoteChanges = 0;
+  private failedComparison?: number;
   private reconciling?: { read: AbortController; done: Promise<void> };
   affectedBy(changes: PhotoEventBatch) {
     return this.targets.some((target) => changes.refetch || changes.assets.has(target.asset_id));
@@ -205,7 +213,7 @@ export class PhotoAuthoredEditor {
     this.remoteChanges++;
   }
   async reconcile() {
-    if (!this.remoteChange || this.busy) return;
+    if (!this.remoteChange || this.busy || this.failedComparison === this.remoteChanges) return;
     if (!this.targets.length) {
       this.remoteChange = false;
       this.conflict = this.dirty || this.membershipChanged;
@@ -236,6 +244,7 @@ export class PhotoAuthoredEditor {
   reset() {
     this.read.abort();
     this.remoteChange = false;
+    this.failedComparison = undefined;
     this.membershipConflict = false;
     this.targets = [];
     this.asset = undefined;
@@ -248,12 +257,14 @@ export class PhotoAuthoredEditor {
     this.conflict = false;
     this.membershipChanged = false;
     this.loading = false;
+    this.comparing = false;
     this.validating = false;
     this.concealed = false;
   }
   conceal() {
     this.read.abort();
     this.loading = false;
+    this.comparing = false;
     this.concealed = true;
     this.validating = true;
   }
@@ -281,6 +292,7 @@ export class PhotoAuthoredEditor {
     // A stalled read would hold a live refresh and leave Reload metadata unavailable.
     const deadline = AbortSignal.timeout(prepareTimeout);
     this.loading = true;
+    this.comparing = compare;
     this.error = "";
     const previous = reload ? new Set(this.targets.map((target) => target.file_id)) : undefined;
     const change = this.remoteChanges;
@@ -339,12 +351,20 @@ export class PhotoAuthoredEditor {
           if (!signal.aborted) this.tagsError = this.failure(cause);
         });
     } catch (cause) {
-      if (!signal.aborted)
+      if (!signal.aborted) {
+        if (compare) {
+          this.conflict = true;
+          this.failedComparison = change;
+        }
         this.error = deadline.aborted
           ? "Metadata timed out. Reload metadata."
           : this.failure(cause);
+      }
     } finally {
-      if (!signal.aborted) this.loading = false;
+      if (!signal.aborted) {
+        this.loading = false;
+        this.comparing = false;
+      }
     }
   }
   async reload() {
@@ -463,7 +483,7 @@ export class PhotoAuthoredEditor {
       this.unavailable("Reload metadata before editing.");
       return;
     }
-    if (this.busy || this.loading || this.concealed) {
+    if (this.busy || this.loading || this.validating || this.concealed) {
       this.unavailable();
       return;
     }
@@ -530,7 +550,7 @@ export class PhotoAuthoredEditor {
     }
   }
   async undo(refresh: (receipt: api.PhotoAuthoredReceipt, tags: api.Tag[]) => Promise<void>) {
-    if (this.busy || this.loading || this.concealed) {
+    if (this.busy || this.loading || this.validating || this.concealed) {
       this.unavailable();
       return;
     }
