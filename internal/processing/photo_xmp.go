@@ -3,35 +3,27 @@ package processing
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 
 	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/kit/packstore"
 )
-
-var ErrPhotoXMPSidecarRead = errors.New("reading photo XMP sidecar")
 
 const photoXMPMalformedReason = "The sidecar contains malformed or unsupported XMP. Repair the file, put a new version, or trash the sidecar. A later catalog change writes a fresh sidecar."
 
 func readPhotoXMPBytes(ctx context.Context, ing *ingest.Ingester, hash string) ([]byte, error) {
-	reader, size, err := ing.Blobs.OpenStreamContext(ctx, hash)
+	reader, _, err := ing.Blobs.OpenStreamContext(ctx, hash)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrPhotoXMPSidecarRead, err)
+		return nil, err
 	}
 	defer func() { _ = reader.Close() }()
-	if size > maxPhotoSidecarBytes {
-		return nil, bundle.ErrLimit
-	}
 	data, err := io.ReadAll(io.LimitReader(reader, maxPhotoSidecarBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrPhotoXMPSidecarRead, err)
-	}
-	if len(data) > maxPhotoSidecarBytes {
+	if err == nil && len(data) > maxPhotoSidecarBytes {
 		return nil, bundle.ErrLimit
 	}
-	return data, nil
+	return data, err
 }
 
 func photoXMPSnapshot(packet photoSidecarPacket) store.PhotoXMPPacket {
@@ -71,14 +63,21 @@ func syncPhotoXMP(ctx context.Context, ing *ingest.Ingester, work store.PhotoXMP
 	if work.Sidecar != nil {
 		var err error
 		data, err = readPhotoXMPBytes(ctx, ing, work.Sidecar.Node.BlobHash)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if err != nil && !errors.Is(err, bundle.ErrLimit) {
+			if !errors.Is(err, packstore.ErrPhysicalMissing) || errors.Is(err, packstore.ErrStoreUnavailable) {
+				return err
+			}
+			plan.Refusal, plan.RefusalState = "The sidecar content is missing. Restore its data, then refresh XMP.", store.PhotoXMPStateUnavailable
+			return ing.PublishPhotoXMP(ctx, plan, nil)
+		}
 		if err == nil {
 			packet, err = readPhotoSidecar(ctx, data)
 		}
 		if err == nil {
 			err = packet.Refusal
-		}
-		if errors.Is(err, ErrPhotoXMPSidecarRead) || ctx.Err() != nil {
-			return err
 		}
 		if err != nil {
 			plan.Refusal = photoXMPMalformedReason
@@ -127,8 +126,5 @@ func syncPhotoXMP(ctx context.Context, ing *ingest.Ingester, work store.PhotoXMP
 		}
 		plan.Packet.Orientation = written.Orientation
 	}
-	if err := ing.PublishPhotoXMP(ctx, plan, data); err != nil {
-		return fmt.Errorf("syncing XMP sidecar: %w", err)
-	}
-	return nil
+	return ing.PublishPhotoXMP(ctx, plan, data)
 }

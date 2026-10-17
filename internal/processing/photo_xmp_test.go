@@ -1,7 +1,9 @@
 package processing
 
 import (
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -264,6 +266,69 @@ func TestPhotoXMPUndoImportRewritesSidecar(t *testing.T) {
 	assert.Zero(t, packet.Confirmed&store.PhotoConfirmedRating)
 	assert.NotContains(t, data, "Rating")
 	assert.Nil(t, e.state(store.PhotoXMPStateSynced).Receipt)
+}
+
+func TestPhotoXMPUnrelatedOutsideEditKeepsImportUndo(t *testing.T) {
+	t.Parallel()
+	e := newXMPEnv(t, xmpSidecar(` xmp:Rating="4"`, ""))
+	e.drain()
+	imported := e.state(store.PhotoXMPStateSynced).Receipt
+	require.NotNil(t, imported)
+	outside := xmpSidecar(` xmp:Rating="4"`, "")
+	outside.payload = strings.ReplaceAll(outside.payload, `crs:Exposure="1.25"`, `crs:Exposure="2.5"`)
+	e.importFiles(outside)
+	e.drain()
+	current := e.state(store.PhotoXMPStateSynced).Receipt
+	require.NotNil(t, current, "an unrelated outside edit keeps the imported rating undoable")
+	require.Equal(t, imported.ReceiptID, current.ReceiptID)
+	_, err := e.catalog.UndoPhotoAuthored(t.Context(), current.ReceiptID)
+	require.NoError(t, err)
+	e.drain()
+	_, data, packet := e.packet()
+	assert.Zero(t, packet.Confirmed&store.PhotoConfirmedRating)
+	assert.Contains(t, data, `crs:Exposure="2.5"`)
+	assert.Nil(t, e.state(store.PhotoXMPStateSynced).Receipt)
+}
+
+func TestPhotoXMPMissingSidecarBecomesUnavailable(t *testing.T) {
+	t.Parallel()
+	e := newXMPEnv(t, xmpSidecar(` xmp:Rating="4"`, ""))
+	e.drain()
+	sidecar, data, _ := e.packet()
+	e.edit(store.PhotoAuthoredPatch{Rating: new(5)})
+	require.NoError(t, e.blobs.Remove(sidecar.BlobHash))
+	e.drain()
+	assert.Equal(t, "The sidecar content is missing. Restore its data, then refresh XMP.", e.state(store.PhotoXMPStateUnavailable).Reason)
+	assert.Equal(t, 5, e.raw().Rating)
+	_, err := e.blobs.WriteDetailedContext(t.Context(), strings.NewReader(data))
+	require.NoError(t, err)
+	e.edit(store.PhotoAuthoredPatch{Rating: new(3)})
+	e.drain()
+	e.state(store.PhotoXMPStateSynced)
+	_, _, packet := e.packet()
+	assert.Equal(t, 3, packet.Rating)
+}
+
+func TestPhotoXMPReadPermissionFailureRetries(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("requires Unix file permissions enforced for the current user")
+	}
+	e := newXMPEnv(t, xmpSidecar(` xmp:Rating="4"`, ""))
+	e.drain()
+	sidecar, _, _ := e.packet()
+	e.edit(store.PhotoAuthoredPatch{Rating: new(5)})
+	path := filepath.Join(e.root, "blobs", sidecar.BlobHash[:2], sidecar.BlobHash)
+	require.NoError(t, os.Chmod(path, 0))
+	t.Cleanup(func() { require.NoError(t, os.Chmod(path, 0o600)) })
+	err := SyncPhotoXMPBackground(t.Context(), &ingest.Ingester{Store: e.catalog, Blobs: e.blobs}, e.raw().ID)
+	require.ErrorIs(t, err, os.ErrPermission)
+	e.state(store.PhotoXMPStatePending)
+	require.NoError(t, os.Chmod(path, 0o600))
+	e.drain()
+	e.state(store.PhotoXMPStateSynced)
+	_, _, packet := e.packet()
+	assert.Equal(t, 5, packet.Rating)
 }
 
 func TestPhotoXMPGeneratedSidecarStaysDetached(t *testing.T) {

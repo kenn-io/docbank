@@ -10,20 +10,21 @@ import (
 )
 
 // PhotoXMPPlan is the worker's merge decision for one original. Rows records
-// a conflict and Refusal an invalid packet; otherwise Values and Keywords are
+// a conflict and Refusal a blocked sync; otherwise Values and Keywords are
 // the catalog after Import and Packet is the sidecar after Write.
 type PhotoXMPPlan struct {
-	Work      PhotoXMPWork
-	Choice    string
-	Extension string
-	Refusal   string
-	Rows      []PhotoXMPRow
-	Sidecar   PhotoXMPPacket
-	Packet    PhotoXMPPacket
-	Values    PhotoAuthored
-	Keywords  []string
-	Import    bool
-	Write     bool
+	Work         PhotoXMPWork
+	Choice       string
+	Extension    string
+	Refusal      string
+	RefusalState string
+	Rows         []PhotoXMPRow
+	Sidecar      PhotoXMPPacket
+	Packet       PhotoXMPPacket
+	Values       PhotoAuthored
+	Keywords     []string
+	Import       bool
+	Write        bool
 }
 
 // PublishPhotoXMP commits a plan's catalog import, sidecar version, receipt
@@ -72,7 +73,10 @@ func (s *Store) publishPhotoXMPTx(ctx context.Context, tx *sql.Tx, run IngestRun
 		}
 	}
 	if plan.Refusal != "" {
-		return setPhotoXMPStateTx(ctx, tx, w.Original.ID, PhotoXMPStateInvalid, photoXMPDetail{Reason: plan.Refusal})
+		if plan.RefusalState == "" {
+			plan.RefusalState = PhotoXMPStateInvalid
+		}
+		return setPhotoXMPStateTx(ctx, tx, w.Original.ID, plan.RefusalState, photoXMPDetail{Reason: plan.Refusal})
 	}
 	if plan.Rows != nil {
 		id, err := newUUIDv4()
@@ -85,7 +89,7 @@ func (s *Store) publishPhotoXMPTx(ctx context.Context, tx *sql.Tx, run IngestRun
 	if sc != nil {
 		r.Sidecar = PhotoSidecarProvenance{NodeID: sc.Node.ID, VersionID: sc.Node.CurrentVersionID, FileID: sc.FileID}
 		if old := w.receipt; old != nil && old.Sidecar.FileID == sc.FileID {
-			r.Source, r.SourceSHA256 = old.Source, old.SourceSHA256
+			r.Source, r.SourceSHA256, r.ImportReceiptID = old.Source, old.SourceSHA256, old.ImportReceiptID
 		}
 		accepted := sc.SourceSHA256
 		if accepted == "" && r.Source == nil && (w.receipt == nil || w.receipt.Sidecar.FileID != sc.FileID) {
