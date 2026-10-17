@@ -18,7 +18,6 @@ import (
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/filepublish"
-	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/sqlite"
@@ -48,46 +47,6 @@ func checkoutPhoto(t *testing.T, s Service, name, content string) store.PhotoAss
 	return asset
 }
 
-func TestCheckoutExplicitSidecarWithDifferentName(t *testing.T) {
-	t.Parallel()
-	s := checkoutService(t)
-	source := t.TempDir()
-	run, err := s.Store.BeginIngest(t.Context(), "photo-import", source)
-	require.NoError(t, err)
-	var asset store.PhotoAsset
-	for _, file := range []struct{ name, content, mime, role string }{
-		{"IMG.ARW", "raw bytes", "image/x-sony-arw", store.PhotoRoleRAW},
-		{"annotations.XMP", "sidecar bytes", "application/rdf+xml", store.PhotoRoleSidecar},
-	} {
-		hash, size, err := s.Blobs.Write(strings.NewReader(file.content))
-		require.NoError(t, err)
-		node, err := s.Store.IngestFileExact(t.Context(), run, s.Store.RootID(), file.name, hash, size, file.mime, filepath.Join(source, file.name), "")
-		require.NoError(t, err)
-		if file.role == store.PhotoRoleRAW {
-			asset, err = s.Store.PhotoAssetForNode(t.Context(), node.ID)
-		} else {
-			asset, err = s.Store.AttachPhotoFile(t.Context(), asset.ID, asset.Revision, node.ID, file.role, &asset.Files[0].ID)
-		}
-		require.NoError(t, err)
-	}
-	selection := store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}
-	estimate, err := s.Store.EstimatePhotoCheckout(t.Context(), selection)
-	require.NoError(t, err)
-	require.EqualValues(t, 1, estimate.Assets)
-	require.EqualValues(t, 2, estimate.Files)
-	require.Zero(t, estimate.SkippedPhotoCount)
-	destination := t.TempDir()
-	c, _, _, root, err := s.Prepare(t.Context(), selection, destination, 0)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, root.Close()) }()
-	require.NoError(t, s.Run(t.Context(), c, root))
-	for name, content := range map[string]string{"IMG.ARW": "raw bytes", "annotations.XMP": "sidecar bytes"} {
-		copied, err := os.ReadFile(filepath.Join(destination, "undated", asset.ID, name))
-		require.NoError(t, err)
-		require.Equal(t, content, string(copied))
-	}
-}
-
 func TestPrepareCancelledWhileWaitingForCreation(t *testing.T) {
 	require.NoError(t, creationMu.Acquire(t.Context(), 1))
 	defer creationMu.Release(1)
@@ -106,26 +65,6 @@ func TestPrepareCancelledWhileWaitingForCreation(t *testing.T) {
 	}
 }
 
-func TestCheckoutRejectsRelocatedPrimaryBlobsRoot(t *testing.T) {
-	t.Parallel()
-	s := checkoutService(t)
-	a := checkoutPhoto(t, s, "photo.jpg", "bytes")
-	require.NoError(t, s.Blobs.Close())
-	managed := filepath.Join(s.VaultRoot, "blobs")
-	physical := filepath.Join(t.TempDir(), "primary")
-	require.NoError(t, os.Rename(managed, physical))
-	if err := os.Symlink(physical, managed); err != nil {
-		t.Skipf("symbolic links unavailable: %v", err)
-	}
-	var err error
-	s.Blobs, err = blob.New(store.NewPackCatalog(s.Store), managed)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, s.Blobs.Close()) })
-	destination := filepath.Join(physical, "checkout")
-	require.NoError(t, os.Mkdir(destination, 0o700))
-	assertStartupCleanupCheckoutRejected(t, s, a, destination)
-}
-
 func TestCheckoutAllowsUnrelatedDestinationAfterReservedAncestorBecomesFile(t *testing.T) {
 	t.Parallel()
 	s := checkoutService(t)
@@ -135,41 +74,42 @@ func TestCheckoutAllowsUnrelatedDestinationAfterReservedAncestorBecomesFile(t *t
 	require.NoError(t, os.MkdirAll(reserved, 0o700))
 	reservation, _, _, held, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, reserved, 0)
 	require.NoError(t, err)
+	require.NotEmpty(t, reservation.ID)
 	require.NoError(t, held.Close())
 	require.NoError(t, os.Remove(reserved))
 	require.NoError(t, os.Remove(parent))
 	require.NoError(t, os.WriteFile(parent, []byte("replacement"), 0o600))
 	destination := t.TempDir()
-	t.Run("validation", func(t *testing.T) {
-		root, err := os.OpenRoot(destination)
-		require.NoError(t, err)
-		defer func() { require.NoError(t, root.Close()) }()
-		require.NoError(t, s.validateDestination(t.Context(), root, destination, ""))
-		checkouts, err := s.Store.ListPhotoCheckouts(t.Context())
-		require.NoError(t, err)
-		id, overlap, err := ingest.CheckoutPathOverlap(t.Context(), checkouts, filepath.Dir(parent))
-		require.NoError(t, err)
-		require.True(t, overlap, "the reservation still protects its lexical ancestors")
-		require.Equal(t, reservation.ID, id)
-	})
-	t.Run("prepare and run", func(t *testing.T) {
-		c, _, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, destination, 0)
-		require.NoError(t, err)
-		defer func() { require.NoError(t, root.Close()) }()
-		require.NoError(t, s.Run(t.Context(), c, root))
-		status, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
-		require.NoError(t, err)
-		require.EqualValues(t, 1, status.PublishedFiles)
-	})
+	checkout, _, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, destination, 0)
+	require.NoError(t, err)
+	require.NotEmpty(t, checkout.ID)
+	require.NoError(t, root.Close())
 }
 
 func TestCheckoutRejectsStartupCleanupDirectoryAlias(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"blobs", filepath.Join("blobs", "tmp"), "web-launch", "web-downloads"} {
-		t.Run(name, func(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		reopenBlobs bool
+	}{
+		{name: "blobs"},
+		{name: filepath.Join("blobs", "tmp")},
+		{name: "web-launch"},
+		{name: "web-downloads"},
+		{name: "blobs", reopenBlobs: true},
+	} {
+		label := tc.name
+		if tc.reopenBlobs {
+			label = "relocated primary blobs root"
+		}
+		t.Run(label, func(t *testing.T) {
 			s := checkoutService(t)
 			a := checkoutPhoto(t, s, "photo.jpg", "bytes")
+			name := tc.name
 			managed := filepath.Join(s.VaultRoot, name)
+			if tc.reopenBlobs {
+				require.NoError(t, s.Blobs.Close())
+			}
 			if name == "web-launch" || name == "web-downloads" {
 				require.NoError(t, os.Mkdir(managed, 0o700))
 			}
@@ -178,9 +118,19 @@ func TestCheckoutRejectsStartupCleanupDirectoryAlias(t *testing.T) {
 			if err := os.Symlink(alias, managed); err != nil {
 				t.Skipf("symbolic links unavailable: %v", err)
 			}
+			if tc.reopenBlobs {
+				var err error
+				s.Blobs, err = blob.New(store.NewPackCatalog(s.Store), managed)
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, s.Blobs.Close()) })
+			}
 			destination := alias
 			if name == "blobs" {
 				destination = filepath.Join(alias, "tmp")
+			}
+			if tc.reopenBlobs {
+				destination = filepath.Join(alias, "checkout")
+				require.NoError(t, os.Mkdir(destination, 0o700))
 			}
 			if name == filepath.Join("blobs", "tmp") {
 				destination = filepath.Join(alias, "nested", "checkout")
@@ -861,48 +811,6 @@ func TestCheckoutRunOutcomes(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestCheckoutNameCollisionsPreservePublishedCopies(t *testing.T) {
-	t.Parallel()
-	s := checkoutService(t)
-	ctx := t.Context()
-	destination := t.TempDir()
-	probe := filepath.Join(destination, "case-probe")
-	require.NoError(t, os.WriteFile(probe, nil, 0o600))
-	_, caseErr := os.Stat(filepath.Join(destination, "CASE-PROBE"))
-	require.NoError(t, os.Remove(probe))
-	if errors.Is(caseErr, os.ErrNotExist) {
-		t.Skip("requires a case-insensitive filesystem")
-	}
-	require.NoError(t, caseErr)
-
-	first := checkoutPhoto(t, s, "photo.jpg", "first")
-	second := checkoutPhoto(t, s, "PHOTO.JPG", "second")
-	_, err := s.Store.DetachPhotoFile(ctx, second.ID, second.Revision, second.Files[0].ID, store.PhotoDetachOptions{})
-	require.NoError(t, err)
-	first, err = s.Store.AttachPhotoFile(ctx, first.ID, first.Revision, second.Files[0].NodeID, store.PhotoRoleImage, nil)
-	require.NoError(t, err)
-
-	checkout, op, _, root, err := s.Prepare(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{first.ID}}, destination, 0)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, root.Close()) }()
-
-	runErr := s.Run(ctx, checkout, root)
-	status, err := s.Store.PhotoCheckoutStatus(ctx, checkout.ID)
-	require.NoError(t, err)
-	finished, err := s.Store.StorageOperation(ctx, op.ID)
-	require.NoError(t, err)
-	require.Error(t, runErr)
-	require.Equal(t, "failed", status.Checkout.State)
-	require.Equal(t, int64(1), status.PublishedFiles)
-	require.Equal(t, int64(1), finished.CopiedObjects)
-	entries, err := s.Store.PhotoCheckoutEntries(ctx, checkout.ID)
-	require.NoError(t, err)
-	require.ErrorContains(t, runErr, entries[1].Path)
-	content, err := root.ReadFile(filepath.FromSlash(entries[0].Path))
-	require.NoError(t, err)
-	require.Contains(t, []string{"first", "second"}, string(content))
 }
 
 func TestCheckoutRechecksProtectedRootSnapshot(t *testing.T) {

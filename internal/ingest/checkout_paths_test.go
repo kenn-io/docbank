@@ -135,14 +135,10 @@ func TestCheckoutPathOverlapWithReplacedAncestor(t *testing.T) {
 	checkouts, err := ing.Store.ListPhotoCheckouts(ctx)
 	require.NoError(t, err)
 	require.False(t, checkouts[0].RetentionReleased)
-	for _, name := range []string{"watch", "storage binding"} {
-		t.Run(name, func(t *testing.T) {
-			id, overlap, err := CheckoutPathOverlap(ctx, checkouts, t.TempDir())
-			require.NoError(t, err)
-			require.False(t, overlap)
-			require.Empty(t, id)
-		})
-	}
+	id, overlap, err := CheckoutPathOverlap(ctx, checkouts, t.TempDir())
+	require.NoError(t, err)
+	require.False(t, overlap)
+	require.Empty(t, id)
 	for _, path := range []string{parent, destination, filepath.Join(destination, "nested")} {
 		id, overlap, err := CheckoutPathOverlap(ctx, checkouts, path)
 		require.NoError(t, err)

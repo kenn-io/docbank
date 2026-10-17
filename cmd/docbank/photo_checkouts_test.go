@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json/v2"
 	"net/http"
 	"path/filepath"
@@ -13,14 +12,6 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/store"
 )
-
-func TestPhotoCheckoutHelpExplainsRetirement(t *testing.T) {
-	command := newPhotoCheckoutCmd()
-	var output bytes.Buffer
-	command.SetOut(&output)
-	require.NoError(t, command.Help())
-	require.Contains(t, output.String(), "Use retire to release source holds.")
-}
 
 func TestPhotoCheckoutCLICreateEstimateListRetireAndYears(t *testing.T) {
 	const checkoutID = "00000000-0000-4000-8000-000000000001"

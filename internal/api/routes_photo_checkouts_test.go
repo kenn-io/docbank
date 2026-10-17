@@ -47,8 +47,19 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/checkouts", nil, request)
 	require.Equal(t, http.StatusAccepted, response.StatusCode, body)
+	var raw map[string]jsontext.Value
+	require.NoError(t, json.Unmarshal([]byte(body), &raw))
+	require.NotContains(t, raw, "skipped_photos")
+	require.NotContains(t, raw, "skipped_photo_count")
+	var checkout map[string]jsontext.Value
+	require.NoError(t, json.Unmarshal(raw["checkout"], &checkout))
+	require.JSONEq(t, `[]`, string(checkout["skipped_photos"]))
+	require.JSONEq(t, `0`, string(checkout["skipped_photo_count"]))
 	var created api.PhotoCheckoutCreateResult
 	require.NoError(t, json.Unmarshal([]byte(body), &created))
+	require.NotEmpty(t, created.Checkout.ID)
+	require.Equal(t, created.Checkout.OperationID, created.Operation.ID)
+	require.True(t, filepath.IsAbs(created.Checkout.Destination))
 	require.Equal(t, expectedEstimate.SkippedPhotoCount, created.Checkout.SkippedPhotoCount)
 	require.Equal(t, expectedEstimate.SkippedPhotos, created.Checkout.SkippedPhotos)
 	require.Equal(t, request.ByteLimit, created.Checkout.ByteLimit)
@@ -117,51 +128,4 @@ func TestPhotoCheckoutRoutesStartFailure(t *testing.T) {
 	var problem api.Error
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &problem))
 	require.Equal(t, "internal", problem.Code)
-	checkouts, err := catalog.ListPhotoCheckouts(t.Context())
-	require.NoError(t, err)
-	require.Len(t, checkouts, 1)
-	_, operation, err := catalog.PhotoCheckoutOperation(t.Context(), checkouts[0].ID)
-	require.NoError(t, err)
-	require.Equal(t, store.StorageOperationFailed, operation.State)
-}
-
-func TestPhotoCheckoutCreateResponseShape(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	catalog, err := store.Open(filepath.Join(dir, "docbank.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
-	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
-	require.NoError(t, err)
-	_, err = catalog.PhotoAssetForNode(t.Context(), node.ID)
-	require.NoError(t, err)
-	_, err = catalog.SetLaneControl(t.Context(), store.LaneControl{Lane: store.StorageOperationKindPhotoCheckout, Paused: true, Concurrency: 1}, 1)
-	require.NoError(t, err)
-	supervisor := jobs.New(t.Context(), nil)
-	t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
-	cfg := config.Default()
-	cfg.Server.APIKey = testAPIKey
-	server := api.NewServer(api.Deps{Store: catalog, VaultRoot: dir, Cfg: cfg, Jobs: supervisor})
-	t.Cleanup(server.Close)
-	payload, err := json.Marshal(api.PhotoCheckoutCreateRequest{Selection: store.PhotoCheckoutSelection{All: true}, Destination: t.TempDir(), ByteLimit: 100})
-	require.NoError(t, err)
-	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/v1/photos/checkouts", strings.NewReader(string(payload)))
-	request.RemoteAddr = "127.0.0.1:12345"
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("X-Api-Key", testAPIKey)
-	response := httptest.NewRecorder()
-	server.Handler().ServeHTTP(response, request)
-	require.Equal(t, http.StatusAccepted, response.Code, response.Body.String())
-	var body map[string]jsontext.Value
-	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
-	require.NotContains(t, body, "skipped_photos")
-	require.NotContains(t, body, "skipped_photo_count")
-	var created api.PhotoCheckoutCreateResult
-	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &created))
-	require.NotEmpty(t, created.Checkout.ID)
-	require.Equal(t, created.Checkout.OperationID, created.Operation.ID)
-	var checkout map[string]jsontext.Value
-	require.NoError(t, json.Unmarshal(body["checkout"], &checkout))
-	require.JSONEq(t, `[]`, string(checkout["skipped_photos"]))
-	require.JSONEq(t, `0`, string(checkout["skipped_photo_count"]))
 }

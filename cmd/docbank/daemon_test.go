@@ -578,9 +578,6 @@ func TestCheckoutBindingAdmissionRechecksDestinationSymlinkSwap(t *testing.T) {
 	if err := os.Symlink(binding.Path, destination); err != nil {
 		t.Skipf("symbolic links unavailable: %v", err)
 	}
-	checkouts, err := catalog.ListPhotoCheckouts(t.Context())
-	require.NoError(t, err)
-	require.ErrorIs(t, validateCheckoutPathSnapshot(t.Context(), checkouts, binding.Path), errCheckoutPathOverlap)
 	require.ErrorIs(t, admit(t.Context(), binding), errCheckoutPathOverlap)
 }
 

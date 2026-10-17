@@ -133,8 +133,20 @@ func TestPhotoCheckoutMetadata(t *testing.T) {
 		t.Helper()
 		a := albumAsset(t, s, "photo.jpg")
 		second := albumAsset(t, s, "second.jpg")
-		c, _, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, "machine-local-checkout", 100)
+		dir, err := s.Mkdir(t.Context(), s.RootID(), "duplicate")
 		require.NoError(t, err)
+		node, err := s.CreateFile(t.Context(), dir.ID, "second.jpg", browseHash("duplicate"), 20, "image/jpeg")
+		require.NoError(t, err)
+		duplicate, err := s.PhotoAssetForNode(t.Context(), node.ID)
+		require.NoError(t, err)
+		_, err = s.DetachPhotoFile(t.Context(), duplicate.ID, duplicate.Revision, duplicate.Files[0].ID, PhotoDetachOptions{})
+		require.NoError(t, err)
+		second, err = s.AttachPhotoFile(t.Context(), second.ID, second.Revision, node.ID, PhotoRoleImage, nil)
+		require.NoError(t, err)
+		c, _, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{a.ID, second.ID}}, "machine-local-checkout", 100)
+		require.NoError(t, err)
+		require.EqualValues(t, 1, c.SkippedPhotoCount)
+		require.Len(t, c.SkippedPhotos, 1)
 		entries, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
 		require.NoError(t, err)
 		require.NoError(t, s.PublishPhotoCheckoutEntry(t.Context(), entries[0], func() (bool, error) { return true, nil }))
@@ -154,6 +166,8 @@ func TestPhotoCheckoutMetadata(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, f.checkout.Selection, actual.Selection)
 			require.Equal(t, f.checkout.ByteLimit, actual.ByteLimit)
+			require.EqualValues(t, 1, actual.SkippedPhotoCount)
+			require.Equal(t, f.checkout.SkippedPhotos, actual.SkippedPhotos)
 			require.Equal(t, "unbound", actual.State)
 			require.Empty(t, actual.Destination)
 			require.Empty(t, actual.OperationID)
@@ -939,81 +953,6 @@ func TestPhotoCheckoutYearFolderUsesTimelineDay(t *testing.T) {
 	require.Equal(t, "2026/03/14/"+asset.ID+"/photo.jpg", entries[0].Path)
 }
 
-func TestPhotoCheckoutSkipsDuplicateNamesInAsset(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	var assets []PhotoAsset
-	for _, folder := range []string{"first", "second"} {
-		dir, err := s.Mkdir(ctx, s.RootID(), folder)
-		require.NoError(t, err)
-		node, err := s.CreateFile(ctx, dir.ID, "photo.jpg", browseHash(folder), 10, "image/jpeg")
-		require.NoError(t, err)
-		asset, err := s.PhotoAssetForNode(ctx, node.ID)
-		require.NoError(t, err)
-		assets = append(assets, asset)
-	}
-	first, second := assets[0], assets[1]
-	_, err := s.DetachPhotoFile(ctx, second.ID, second.Revision, second.Files[0].ID, PhotoDetachOptions{})
-	require.NoError(t, err)
-	first, err = s.AttachPhotoFile(ctx, first.ID, first.Revision, second.Files[0].NodeID, PhotoRoleImage, nil)
-	require.NoError(t, err)
-	good := albumAsset(t, s, "good.jpg")
-	selection := PhotoCheckoutSelection{All: true}
-	estimate, err := s.EstimatePhotoCheckout(ctx, selection)
-	require.NoError(t, err)
-	require.Equal(t, int64(1), estimate.Assets)
-	require.Equal(t, int64(1), estimate.Files)
-	require.Equal(t, int64(20), estimate.Bytes)
-	require.Equal(t, int64(1), estimate.SkippedPhotoCount)
-	require.Len(t, estimate.SkippedPhotos, 1)
-	require.Equal(t, first.ID, estimate.SkippedPhotos[0].AssetID)
-	require.Contains(t, []string{first.Files[0].ID, first.Files[1].ID}, estimate.SkippedPhotos[0].FileID)
-	require.Equal(t, "photo.jpg", estimate.SkippedPhotos[0].Name)
-	require.Contains(t, estimate.SkippedPhotos[0].Reason, "has the same name")
-	checkout, _, createdEstimate, err := s.CreatePhotoCheckout(ctx, selection, "checkout", 20)
-	require.NoError(t, err)
-	require.Equal(t, estimate, createdEstimate)
-	entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
-	require.NoError(t, err)
-	require.Len(t, entries, 1)
-	require.Equal(t, good.ID, entries[0].AssetID)
-
-	for _, source := range []string{"created", "status", "list", "restored"} {
-		t.Run(source, func(t *testing.T) {
-			actual := checkout
-			switch source {
-			case "status":
-				status, err := s.PhotoCheckoutStatus(ctx, checkout.ID)
-				require.NoError(t, err)
-				actual = status.Checkout
-			case "list":
-				listed, err := s.ListPhotoCheckouts(ctx)
-				require.NoError(t, err)
-				require.Len(t, listed, 1)
-				actual = listed[0]
-			case "restored":
-				var snapshot bytes.Buffer
-				require.NoError(t, s.ExportMetadata(ctx, &snapshot))
-				restored := newTestStore(t)
-				require.NoError(t, restored.ImportMetadata(ctx, &snapshot))
-				var err error
-				actual, err = restored.PhotoCheckout(ctx, checkout.ID)
-				require.NoError(t, err)
-			}
-			require.Equal(t, int64(1), actual.SkippedPhotoCount)
-			require.Equal(t, estimate.SkippedPhotos, actual.SkippedPhotos)
-		})
-	}
-
-	selection = PhotoCheckoutSelection{AssetIDs: []string{first.ID}}
-	_, err = s.EstimatePhotoCheckout(ctx, selection)
-	require.ErrorContains(t, err, "selection contains no files")
-	checkout, _, _, err = s.CreatePhotoCheckout(ctx, selection, "checkout", 0)
-	require.ErrorContains(t, err, "selection contains no files")
-	require.Empty(t, checkout.ID)
-}
-
 // Creation resolves the selection without the write lock. A base purged
 // before the lock must not be frozen into a checkout.
 func TestPhotoCheckoutCreationRejectsSelectionPurgedBeforeCommit(t *testing.T) {
@@ -1103,8 +1042,24 @@ func TestPhotoCheckoutSkipsDuplicateNamesWithBoundedDetails(t *testing.T) {
 	require.Equal(t, checkout.SkippedPhotoCount, persisted.SkippedPhotoCount)
 	require.Equal(t, checkout.SkippedPhotos, persisted.SkippedPhotos)
 
+	status, err := s.PhotoCheckoutStatus(ctx, checkout.ID)
+	require.NoError(t, err)
+	listed, err := s.ListPhotoCheckouts(ctx)
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+	for _, actual := range []PhotoCheckout{status.Checkout, listed[0]} {
+		require.Equal(t, int64(25), actual.SkippedPhotoCount)
+		require.Equal(t, estimate.SkippedPhotos, actual.SkippedPhotos)
+	}
+
 	entries, err := s.PhotoCheckoutEntries(t.Context(), checkout.ID)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.Equal(t, good.ID, entries[0].AssetID)
+	selection = PhotoCheckoutSelection{AssetIDs: []string{estimate.SkippedPhotos[0].AssetID}}
+	_, err = s.EstimatePhotoCheckout(ctx, selection)
+	require.ErrorContains(t, err, "selection contains no files")
+	checkout, _, _, err = s.CreatePhotoCheckout(ctx, selection, "checkout", 0)
+	require.ErrorContains(t, err, "selection contains no files")
+	require.Empty(t, checkout.ID)
 }
