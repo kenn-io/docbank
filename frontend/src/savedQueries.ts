@@ -43,7 +43,7 @@ export function subscribeSavedQueries(listener: (session: string) => void) {
     definitionListeners.delete(listener);
   };
 }
-function definitionsChanged(session: string) {
+export function definitionsChanged(session: string) {
   for (const listener of definitionListeners) listener(session);
 }
 
@@ -168,6 +168,7 @@ export async function listSavedQueries(
   offset = 0,
   limit = 100,
   photos = false,
+  signal?: AbortSignal,
 ): Promise<SavedQueryPage> {
   if (
     !Number.isSafeInteger(offset) ||
@@ -180,7 +181,7 @@ export async function listSavedQueries(
   const page = object(
     await generated.listSavedQueries(
       { limit, offset, kind, ...(photos ? { photos: true } : {}) },
-      { session },
+      { session, signal },
     ),
   );
   requireReceipt(

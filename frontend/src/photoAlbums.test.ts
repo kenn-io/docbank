@@ -97,7 +97,12 @@ it.each(["update", "cover", "duplicate", "delete", "add", "remove"] as const)(
     const current = { ...album, revision: 3 };
     const fetcher = vi
       .fn()
-      .mockResolvedValueOnce(response({ detail: "Album changed", code: "stale_revision" }, 412))
+      .mockResolvedValueOnce(
+        response(
+          { detail: "Album changed", code: "stale_revision" },
+          operation === "update" ? 409 : 412,
+        ),
+      )
       .mockResolvedValueOnce(response([current]));
     vi.stubGlobal("fetch", fetcher);
     const onmemberschange = vi.fn();

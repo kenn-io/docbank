@@ -3033,28 +3033,7 @@ it("keeps the timeline on screen during a live refresh", async () => {
   photos.dispose();
 });
 
-it("refreshes a view changed off screen once when it resumes", async () => {
-  const fetcher = vi.fn().mockResolvedValue(response([photo(1)]));
-  stubPhotoFetch(fetcher);
-  const photos = new Photos("scoped", vi.fn());
-  await photos.resume();
-  const listings = () =>
-    fetcher.mock.calls.filter(([url]) => String(url).endsWith("/photos/assets/query")).length;
-  expect(listings()).toBe(1);
-  const changes = { assets: new Map([["photo-1", 2]]), albums: new Map(), refetch: false };
-  photos.markChanged(changes);
-  await photos.resume();
-  expect(listings()).toBe(2);
-  await photos.resume();
-  expect(listings()).toBe(2);
-  photos.markChanged(changes);
-  await photos.refresh();
-  await photos.resume();
-  expect(listings()).toBe(3);
-  photos.dispose();
-});
-
-it("reconciles retained metadata when a view changed off screen resumes", async () => {
+it("refreshes and reconciles retained metadata once when an off-screen view resumes", async () => {
   const before = preparedPhoto(1);
   const remote = preparedPhoto(1, { revision: 7, values: { ...before.values, caption: "Remote" } });
   const fetcher = vi.fn(async (url: string) =>
@@ -3064,16 +3043,24 @@ it("reconciles retained metadata when a view changed off screen resumes", async 
   );
   stubPhotoFetch(fetcher);
   const photos = new Photos("scoped", vi.fn());
-  photos.started = true;
-  photos.items = [photo(1)];
+  await photos.resume();
+  const listings = () =>
+    fetcher.mock.calls.filter(([url]) => url.endsWith("/photos/assets/query")).length;
+  expect(listings()).toBe(1);
   photos.authored.targets = [before];
-  photos.markChanged({ assets: new Map([["photo-2", 3]]), albums: new Map(), refetch: false });
-  expect(photos.authored.conflict).toBe(false);
-  photos.markChanged({ assets: new Map([["photo-1", 7]]), albums: new Map(), refetch: false });
+  const changes = { assets: new Map([["photo-1", 7]]), albums: new Map(), refetch: false };
+  photos.markChanged(changes);
   expect(photos.authored.conflict).toBe(true);
   await photos.resume();
   await vi.waitFor(() => expect(photos.authored.conflict).toBe(false));
   expect(photos.authored.targets).toEqual([remote]);
+  expect(listings()).toBe(2);
+  await photos.resume();
+  expect(listings()).toBe(2);
+  photos.markChanged(changes);
+  await photos.refresh();
+  await photos.resume();
+  expect(listings()).toBe(3);
   photos.dispose();
 });
 

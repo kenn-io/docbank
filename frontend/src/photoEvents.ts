@@ -171,7 +171,7 @@ export function watchPhotoEvents(
     try {
       await refresh(batch);
       refreshFailures = 0;
-      refreshAfter = 0;
+      refreshAfter = Date.now() + 1000;
       if (!stopped) onrefreshed();
     } catch (cause) {
       if (stopped) return;

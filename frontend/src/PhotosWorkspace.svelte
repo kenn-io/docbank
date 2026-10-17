@@ -557,7 +557,7 @@
     const revision = changes?.assets.get(id);
     const affected = !changes || changes.refetch || revision !== undefined;
     const metadataAffected = changes && editor.affectedBy(changes);
-    if (metadataAffected) editor.changedElsewhere();
+    if (metadataAffected) editor.changedElsewhere(changes);
     if (affected) detailRequest?.controller.abort();
     if (current) direct = current;
     const previousItems = photos.items;

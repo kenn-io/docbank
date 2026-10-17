@@ -198,8 +198,9 @@ export class PhotoAuthoredEditor {
   affectedBy(changes: PhotoEventBatch) {
     return this.targets.some((target) => changes.refetch || changes.assets.has(target.asset_id));
   }
-  changedElsewhere() {
-    this.conflict = true;
+  changedElsewhere(changes?: PhotoEventBatch) {
+    if (!changes || this.targets.some((target) => changes.assets.has(target.asset_id)))
+      this.conflict = true;
     this.remoteChange = true;
     this.remoteChanges++;
   }
@@ -305,8 +306,7 @@ export class PhotoAuthoredEditor {
             ),
           );
         if (change === this.remoteChanges) this.remoteChange = false;
-        this.conflict =
-          this.membershipChanged || this.membershipConflict || this.remoteChange || !same;
+        this.conflict = this.membershipChanged || this.membershipConflict || !same;
         if (this.dirty) return;
       }
       if (

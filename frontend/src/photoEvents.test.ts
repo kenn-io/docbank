@@ -13,6 +13,7 @@ function stream(chunks: string[]) {
 }
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
@@ -89,7 +90,9 @@ it("authenticates and coalesces changes while preserving a change during refresh
   await vi.advanceTimersByTimeAsync(100);
   expect(refresh).toHaveBeenCalledTimes(1);
   release();
-  await vi.advanceTimersByTimeAsync(100);
+  await vi.advanceTimersByTimeAsync(999);
+  expect(refresh).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(1);
   expect(refresh).toHaveBeenCalledTimes(2);
   expect(refresh.mock.calls[1][0]).toEqual({
     assets: new Map([["c", 2]]),
@@ -102,7 +105,7 @@ it("authenticates and coalesces changes while preserving a change during refresh
   await vi.advanceTimersByTimeAsync(100);
   expect(refresh).toHaveBeenCalledTimes(2);
   release();
-  await vi.advanceTimersByTimeAsync(100);
+  await vi.advanceTimersByTimeAsync(1000);
   expect(refresh).toHaveBeenCalledTimes(3);
   expect(refresh.mock.calls[2][0]).toEqual({ assets: new Map(), albums: new Map(), refetch: true });
   release();
@@ -202,7 +205,7 @@ it("retries failed refreshes with backoff and resets the delay after recovery", 
   expect(recovered).toHaveBeenCalledOnce();
   refresh.mockRejectedValueOnce(new Error("again"));
   send("new");
-  await vi.advanceTimersByTimeAsync(100);
+  await vi.advanceTimersByTimeAsync(1000);
   const calls = refresh.mock.calls.length;
   await vi.advanceTimersByTimeAsync(999);
   expect(refresh).toHaveBeenCalledTimes(calls);
@@ -274,27 +277,26 @@ it("ignores refresh completion after the watcher is disposed", async () => {
 it("reconnects a stream that stops sending keepalives", async () => {
   vi.useFakeTimers();
   vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
-  const cancelled = vi.fn();
   const silent = () =>
-    new Response(new ReadableStream<Uint8Array>({ cancel: cancelled }), {
+    new Response(new ReadableStream<Uint8Array>({}), {
       headers: { "Content-Type": "text/event-stream" },
     });
   const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => silent());
   const stop = watchPhotoEvents("synthetic", vi.fn(), vi.fn());
   await vi.advanceTimersByTimeAsync(photoEventIdleTimeout - 1);
   expect(fetch).toHaveBeenCalledOnce();
-  expect(cancelled).not.toHaveBeenCalled();
   await vi.advanceTimersByTimeAsync(1);
-  expect(cancelled).toHaveBeenCalledOnce();
   await vi.advanceTimersByTimeAsync(1000);
   expect(fetch).toHaveBeenCalledTimes(2);
   stop();
 });
 
-it("keeps reading while keepalives arrive", async () => {
+it("keeps reading through keepalives and cancels after the next idle deadline", async () => {
   vi.useFakeTimers();
   let writer!: ReadableStreamDefaultController<Uint8Array>;
+  const cancelled = vi.fn();
   const body = new ReadableStream<Uint8Array>({
+    cancel: cancelled,
     start(controller) {
       writer = controller;
     },
@@ -306,8 +308,11 @@ it("keeps reading while keepalives arrive", async () => {
     writer.enqueue(encoder.encode(": keepalive\n\n"));
   }
   await vi.advanceTimersByTimeAsync(999);
-  controller.abort();
-  await expect(reading).resolves.toBeUndefined();
+  expect(cancelled).not.toHaveBeenCalled();
+  const failed = expect(reading).rejects.toThrow();
+  await vi.advanceTimersByTimeAsync(1);
+  await failed;
+  expect(cancelled).toHaveBeenCalledOnce();
 });
 
 it("reconnects a stream whose response headers never arrive", async () => {
@@ -373,5 +378,4 @@ it("broadcasts one ID-free pulse from the holder's parsed change", async () => {
   stop();
   await vi.advanceTimersByTimeAsync(0);
   expect(close).toHaveBeenCalledOnce();
-  vi.unstubAllGlobals();
 });

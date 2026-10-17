@@ -894,9 +894,16 @@ it.each(["unchanged", "asset", "file", "node", "membership"])(
     if (change === "node") latest[0]!.node_revision++;
     if (change === "membership") latest.pop();
     vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue({ assets: [asset], targets: latest });
-    expect(editor.affectedBy({ assets: new Map(), albums: new Map(), refetch: true })).toBe(true);
-    editor.changedElsewhere();
-    await editor.reconcile();
+    const changes = {
+      assets: new Map<string, number>(),
+      albums: new Map<string, number>(),
+      refetch: true,
+    };
+    editor.changedElsewhere(changes);
+    expect(editor.conflict).toBe(false);
+    const reconciling = editor.reconcile();
+    expect(editor.conflict).toBe(false);
+    await reconciling;
     expect(editor.patch.caption).toBe("Draft caption");
     expect(editor.conflict).toBe(change !== "unchanged");
     expect(editor.targets).toEqual(targets);
@@ -960,5 +967,34 @@ it.each(["refresh", "resolve"])("removes a deleted assigned keyword during %s", 
   expect(editor.tagsError).toBe("");
   expect(editor.patch.caption).toBe("Draft");
   expect(lookup).toHaveBeenCalledTimes(1);
+  editor.dispose();
+});
+
+it("retries a timed-out assigned keyword request", async () => {
+  const editor = editorWithTargets();
+  editor.targets[0]!.tags = ["assigned"];
+  const deadline = new AbortController();
+  const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+  const get = vi
+    .spyOn(api, "getTag")
+    .mockImplementationOnce(
+      async (_id, options) =>
+        new Promise<never>((_, reject) =>
+          options!.signal!.addEventListener("abort", () => reject(options!.signal!.reason), {
+            once: true,
+          }),
+        ),
+    )
+    .mockResolvedValue({ id: "assigned", name: "Assigned", revision: 1, assignment_count: 1 });
+  const refreshing = editor.refreshAssignedTags();
+  const failed = expect(refreshing).rejects.toThrow("Timed out");
+  await vi.waitFor(() => expect(get).toHaveBeenCalledOnce());
+  deadline.abort(new DOMException("Timed out", "TimeoutError"));
+  await failed;
+  timeout.mockRestore();
+  expect(await editor.refreshAssignedTags()).toEqual([
+    { id: "assigned", name: "Assigned", revision: 1, assignment_count: 1 },
+  ]);
+  expect(get).toHaveBeenCalledTimes(2);
   editor.dispose();
 });

@@ -170,6 +170,7 @@ func photoEventNodeSelection(value string) string {
 }
 
 func installPhotoChangeTriggers(ctx context.Context, tx *sql.Tx) error {
+	const nodeTable = "nodes"
 	if _, err := tx.ExecContext(ctx, `CREATE TEMP TABLE docbank_photo_changes(kind TEXT,id TEXT,audience INTEGER,PRIMARY KEY(audience,kind,id)) WITHOUT ROWID`); err != nil {
 		return err
 	}
@@ -183,12 +184,14 @@ func installPhotoChangeTriggers(ctx context.Context, tx *sql.Tx) error {
 	}{
 		{"photo_assets", "asset_id", "revision,hidden_at,excluded_at,display_file_id", func(v string) string { return `SELECT 'asset',` + v }},
 		{"photo_files", "asset_id", "asset_id,revision,rating,flag,label,caption,creator,copyright,rotation,role,sidecar_of_file_id", func(v string) string { return `SELECT 'asset',` + v + ` WHERE ` + v + ` IS NOT NULL` }},
-		{"photo_sets", "set_id", "", func(v string) string { return `SELECT 'album',` + v }},
+		{"photo_sets", "set_id", "name,starred,cover_asset_id,deleted_at", func(v string) string { return `SELECT 'album',` + v }},
 		{"photo_set_members", "set_id", "", func(v string) string { return `SELECT 'album',` + v }},
-		{"nodes", "id", "revision,name,parent_id,current_version_id,trashed_at,created_at,modified_at", node},
+		{nodeTable, "id", "revision,name,parent_id,current_version_id,trashed_at,created_at,modified_at", node},
 		{"node_tags", "node_id", "", node},
 		{"tags", "id", "name", global},
-		{"provenance", "node_id", "", node},
+		{"saved_queries", "id", "", global},
+		{"collection_labels", "ingest_id", "", global},
+		{metadataProvenanceType, "node_id", "", node},
 		{"extracted_text", "blob_hash", "status,text", source},
 		{"text_searchable_versions", "version_id", "", version},
 		{"source_metadata_heads", "source_sha256", "generation_id", source},
@@ -210,13 +213,17 @@ func installPhotoChangeTriggers(ctx context.Context, tx *sql.Tx) error {
 		}
 		return fmt.Sprintf("EXISTS(SELECT 1 FROM docbank_photo_changes WHERE audience=%d AND %s)", bucket, predicate)
 	}
-	insert := func(selection, visibility string) string {
+	insert := func(selection, visibility string, indirect bool) string {
 		classified := photoEventAudienceSelection(selection, visibility)
 		var body strings.Builder
 		for _, bucket := range []int{1, 2} {
 			finished := done(bucket)
 			if bucket == 2 {
 				finished = "(" + done(1) + " OR " + finished + ")"
+			}
+			if indirect {
+				_, _ = fmt.Fprintf(&body, "INSERT OR IGNORE INTO docbank_photo_changes SELECT 'refetch','',%d WHERE NOT %s AND EXISTS(SELECT 1 FROM (%s) candidate WHERE candidate.audience=%d);", bucket, finished, classified, bucket)
+				continue
 			}
 			_, _ = fmt.Fprintf(&body, "INSERT INTO docbank_photo_changes SELECT DISTINCT candidate.kind,candidate.id,candidate.audience FROM (%s) candidate WHERE candidate.audience=%d AND NOT EXISTS(SELECT 1 FROM docbank_photo_changes recorded WHERE recorded.audience=candidate.audience AND recorded.kind=candidate.kind AND recorded.id=candidate.id) LIMIT CASE WHEN %s THEN 0 ELSE MAX(0,65-(SELECT count(*) FROM docbank_photo_changes WHERE audience=%d)) END;", classified, bucket, finished, bucket)
 			_, _ = fmt.Fprintf(&body, "UPDATE docbank_photo_changes SET kind='refetch',id='' WHERE (audience,kind,id) IN (SELECT audience,kind,id FROM docbank_photo_changes WHERE audience=%d ORDER BY kind,id LIMIT CASE WHEN %s THEN 0 ELSE 1 END OFFSET 64);", bucket, finished)
@@ -239,6 +246,13 @@ func installPhotoChangeTriggers(ctx context.Context, tx *sql.Tx) error {
 				timing = "BEFORE"
 			}
 			when := guard
+			if rule.table == nodeTable || rule.table == metadataProvenanceType || rule.table == "node_tags" {
+				var eligible []string
+				for _, ref := range refs {
+					eligible = append(eligible, "EXISTS(SELECT 1 FROM photo_files WHERE node_id="+ref+"."+rule.key+" AND asset_id IS NOT NULL)")
+				}
+				when += " AND (" + strings.Join(eligible, " OR ") + ")"
+			}
 			if action == "UPDATE" && rule.columns != "" {
 				var changed []string
 				for column := range strings.SplitSeq(rule.columns, ",") {
@@ -252,7 +266,16 @@ func installPhotoChangeTriggers(ctx context.Context, tx *sql.Tx) error {
 				if rule.table == "photo_assets" {
 					visibility = ref + ".hidden_at"
 				}
-				body.WriteString(insert(rule.selectIDs(ref+"."+rule.key), visibility))
+				if rule.table == "photo_set_members" {
+					visibility = "(SELECT hidden_at FROM photo_assets WHERE asset_id=" + ref + ".asset_id)"
+				}
+				if rule.table == "photo_sets" && action == "UPDATE" {
+					// Removing a member also clears its explicit cover. Keep that derived change
+					// in the member's audience; clearing a retained cover is a public album edit.
+					visibility = "CASE WHEN OLD.name IS NEW.name AND OLD.starred IS NEW.starred AND OLD.deleted_at IS NEW.deleted_at AND NEW.cover_asset_id IS NULL AND NOT EXISTS(SELECT 1 FROM photo_set_members WHERE set_id=OLD.set_id AND asset_id=OLD.cover_asset_id) THEN (SELECT hidden_at FROM photo_assets WHERE asset_id=OLD.cover_asset_id) END"
+				}
+				indirect := rule.table == metadataProvenanceType || rule.table == "extracted_text" || rule.table == "text_searchable_versions" || rule.table == "source_metadata_heads" || rule.table == "photo_technical_metadata" || rule.table == "photo_quality_signals" || rule.table == "visual_preview_generations" || rule.table == "visual_preview_heads" || rule.table == "rendition_heads" || rule.table == "person_document_assertions"
+				body.WriteString(insert(rule.selectIDs(ref+"."+rule.key), visibility, indirect))
 			}
 			statement := fmt.Sprintf("CREATE TEMP TRIGGER photo_events_%s_%s %s %s ON main.%s%s BEGIN %s END", rule.table, action, timing, action, rule.table, when, body.String())
 			if _, err := tx.ExecContext(ctx, statement); err != nil {
@@ -275,9 +298,14 @@ func installPhotoChangeTriggers(ctx context.Context, tx *sql.Tx) error {
 			refs = []string{"OLD", "NEW"}
 			when += " AND (OLD.current_version_id IS NOT NEW.current_version_id OR OLD.trashed_at IS NOT NEW.trashed_at)"
 		}
+		var eligible []string
+		for _, ref := range refs {
+			eligible = append(eligible, "EXISTS("+peers(ref+".current_version_id")+")")
+		}
+		when += " AND (" + strings.Join(eligible, " OR ") + ")"
 		var body strings.Builder
 		for _, ref := range refs {
-			body.WriteString(insert(peers(ref+".current_version_id"), ""))
+			body.WriteString(insert(peers(ref+".current_version_id"), "", true))
 		}
 		statement := fmt.Sprintf("CREATE TEMP TRIGGER photo_events_peers_%s %s %s ON main.nodes%s BEGIN %s END", action, timing, action, when, body.String())
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
@@ -286,7 +314,7 @@ func installPhotoChangeTriggers(ctx context.Context, tx *sql.Tx) error {
 	}
 	// Initial nodes precede their content version; the insert completes duplicate membership.
 	photoPeer := `EXISTS(SELECT 1 FROM content_versions peer INDEXED BY content_versions_blob CROSS JOIN nodes n ON n.id=peer.node_id AND n.current_version_id=peer.version_id AND n.trashed_at IS NULL CROSS JOIN photo_files f ON f.node_id=n.id WHERE peer.blob_hash=NEW.blob_hash AND peer.size=NEW.size AND f.asset_id IS NOT NULL)`
-	if _, err := tx.ExecContext(ctx, `CREATE TEMP TRIGGER photo_events_initial_content AFTER INSERT ON main.content_versions`+guard+` AND EXISTS(SELECT 1 FROM nodes WHERE id=NEW.node_id AND current_version_id=NEW.version_id AND trashed_at IS NULL) AND `+photoPeer+` BEGIN `+insert(peers("NEW.version_id"), "")+` END`); err != nil {
+	if _, err := tx.ExecContext(ctx, `CREATE TEMP TRIGGER photo_events_initial_content AFTER INSERT ON main.content_versions`+guard+` AND EXISTS(SELECT 1 FROM nodes WHERE id=NEW.node_id AND current_version_id=NEW.version_id AND trashed_at IS NULL) AND `+photoPeer+` BEGIN `+insert(peers("NEW.version_id"), "", true)+` END`); err != nil {
 		return err
 	}
 	// `person:` resolves names and revisions through persons. A new person changes resolution
@@ -297,13 +325,13 @@ func installPhotoChangeTriggers(ctx context.Context, tx *sql.Tx) error {
 		{"DELETE", ""},
 	}
 	for _, rule := range people {
-		statement := `CREATE TEMP TRIGGER photo_events_persons_` + rule.action + ` AFTER ` + rule.action + ` ON main.persons` + guard + rule.when + ` BEGIN ` + insert(global(""), "") + ` END`
+		statement := `CREATE TEMP TRIGGER photo_events_persons_` + rule.action + ` AFTER ` + rule.action + ` ON main.persons` + guard + rule.when + ` BEGIN ` + insert(global(""), "", true) + ` END`
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("installing photo trigger on persons: %w", err)
 		}
 	}
 	// Directory paths affect a query without updating descendant rows.
-	_, err := tx.ExecContext(ctx, `CREATE TEMP TRIGGER photo_events_subtree BEFORE UPDATE OF parent_id,name ON main.nodes`+guard+` AND OLD.kind='dir' AND (OLD.parent_id IS NOT NEW.parent_id OR OLD.name IS NOT NEW.name) BEGIN `+insert(global(""), "")+` END`)
+	_, err := tx.ExecContext(ctx, `CREATE TEMP TRIGGER photo_events_subtree BEFORE UPDATE OF parent_id,name ON main.nodes`+guard+` AND OLD.kind='dir' AND (OLD.parent_id IS NOT NEW.parent_id OR OLD.name IS NOT NEW.name) BEGIN `+insert(global(""), "", true)+` END`)
 
 	return err
 }
@@ -371,11 +399,11 @@ func photoEventAudienceSelection(selection, visibility string) string {
 }
 
 func photoEventPeerSelection(version string) string {
-	// The capture limit applies after photo eligibility and audience classification.
-	return `WITH ` + CurrentContentMembershipCTE + `
- SELECT 'asset',f.asset_id FROM content_versions changed CROSS JOIN current_content_members peer ON peer.blob_hash=changed.blob_hash AND peer.size=changed.size
- CROSS JOIN photo_files f ON f.node_id=peer.node_id
- WHERE changed.version_id=` + version + ` AND f.asset_id IS NOT NULL`
+	return `SELECT 'asset',f.asset_id FROM content_versions changed
+ CROSS JOIN content_versions peer INDEXED BY content_versions_blob ON peer.blob_hash=changed.blob_hash AND peer.size=changed.size
+ CROSS JOIN nodes n ON n.id=peer.node_id AND n.current_version_id=peer.version_id AND n.trashed_at IS NULL
+ CROSS JOIN photo_files f ON f.node_id=n.id
+ WHERE changed.version_id=` + version + ` AND peer.node_id<>changed.node_id AND f.asset_id IS NOT NULL`
 }
 
 func photoEventVersionSelection(value string) string {

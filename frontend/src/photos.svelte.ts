@@ -767,7 +767,7 @@ export class Photos {
   markChanged(changes: PhotoEventBatch) {
     this.changedOffscreen = true;
     // Retained metadata reconciles when the refresh on return revalidates it.
-    if (this.authored.affectedBy(changes)) this.authored.changedElsewhere();
+    if (this.authored.affectedBy(changes)) this.authored.changedElsewhere(changes);
   }
 
   /** Whether a membership change in these albums can change this view's results. */

@@ -371,10 +371,10 @@ func attachedAuditIdentity(record audit.Record) (audit.Record, error) {
 		if err != nil {
 			return audit.Record{}, err
 		}
-		contentVersionID, err := auditField(record, metadataContentVersionIDField)
+		contentVersionID, err := auditField(record, "content_version_id")
 		return audit.Record{Kind: "provenance_version_binding_identity", Fields: []audit.Field{
 			{Name: "provenance_identity", Value: provenanceIdentity},
-			{Name: metadataContentVersionIDField, Value: contentVersionID},
+			{Name: "content_version_id", Value: contentVersionID},
 		}}, err
 	case "photo_authored":
 		value, err := auditField(record, "file_id")

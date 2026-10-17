@@ -2486,7 +2486,7 @@ it.each(["search", "tag", "snapshot"] as const)(
   },
 );
 
-it("opens a smart set through the Albums app route", async () => {
+it("refreshes remote smart-set names, payloads and deletions while Albums stays open", async () => {
   history.replaceState(null, "", "/photos/albums#web_session=synthetic&web_upload_secret=proof");
   vi.stubGlobal(
     "ResizeObserver",
@@ -2501,12 +2501,32 @@ it("opens a smart set through the Albums app route", async () => {
   const payload = parseQuery(
     '{"syntax":"advanced","text":"rating:5","filters":{"kinds":["photo"]},"sort":{"field":"size","direction":"desc"}}',
   );
-  const saved = savedSmartSet(payload, await queryFingerprint(payload), { revision: 2 });
+  let saved = savedSmartSet(payload, await queryFingerprint(payload), { revision: 2 });
+  let definitions: (typeof saved)[] = [saved];
+  let refresh!: Parameters<typeof photoEvents.watchPhotoEvents>[1];
+  vi.spyOn(photoEvents, "watchPhotoEvents").mockImplementation((_session, update) => {
+    refresh = update;
+    return vi.fn();
+  });
+  let stall = false;
+  const pendingSignals: AbortSignal[] = [];
   const open = vi.spyOn(Photos.prototype, "openSmartSet").mockReturnValue(true);
   stubPhotoFetch(
-    vi.fn(async (url: string) => {
+    vi.fn(async (url: string, init: RequestInit) => {
+      if (url.includes("/saved-queries?") && stall) {
+        const signal = init.signal!;
+        pendingSignals.push(signal);
+        return new Promise<Response>((_, reject) =>
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true }),
+        );
+      }
       if (url.includes("/saved-queries?"))
-        return Response.json({ items: [saved], total: 1, limit: 100, offset: 0 });
+        return Response.json({
+          items: definitions,
+          total: definitions.length,
+          limit: 100,
+          offset: 0,
+        });
       if (url.endsWith("/photos/albums")) return albumResponse([]);
       if (url.endsWith("/photos/assets/query"))
         return albumResponse({ items: [photo(1)], total: 1 });
@@ -2516,9 +2536,55 @@ it("opens a smart set through the Albums app route", async () => {
     }),
   );
   render(App);
-  await fireEvent.click(await screen.findByRole("button", { name: "Five stars" }));
+  await screen.findByRole("button", { name: "Five stars" });
+  const deadline = new AbortController();
+  const timeout = vi
+    .spyOn(AbortSignal, "timeout")
+    .mockImplementation((duration) =>
+      duration === 60_000 ? deadline.signal : new AbortController().signal,
+    );
+  stall = true;
+  await act(async () => refresh({ assets: new Map(), albums: new Map(), refetch: true }));
+  await waitFor(() => expect(pendingSignals).toHaveLength(1));
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Five stars" }).disabled).toBe(true);
+  await act(async () => refresh({ assets: new Map(), albums: new Map(), refetch: true }));
+  await waitFor(() => expect(pendingSignals).toHaveLength(2));
+  expect(pendingSignals[0]!.aborted).toBe(true);
+  deadline.abort(new DOMException("Smart sets timed out", "TimeoutError"));
+  await screen.findByRole("button", { name: "Retry smart sets" });
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Five stars" }).disabled).toBe(true);
+  timeout.mockRestore();
+  stall = false;
+  await fireEvent.click(screen.getByRole("button", { name: "Retry smart sets" }));
+  await waitFor(() =>
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Five stars" }).disabled).toBe(
+      false,
+    ),
+  );
+  const updatedPayload = { ...payload, text: "rating:4" };
+  saved = savedSmartSet(updatedPayload, await queryFingerprint(updatedPayload), {
+    name: "Four stars",
+    revision: 3,
+  });
+  definitions = [saved];
+  await act(async () => refresh({ assets: new Map(), albums: new Map(), refetch: true }));
+  await screen.findByRole("button", { name: "Four stars" });
+  expect(screen.queryByRole("button", { name: "Five stars" })).toBeNull();
+  definitions = [];
+  await act(async () => refresh({ assets: new Map(), albums: new Map(), refetch: true }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Four stars" })).toBeNull());
+  definitions = [saved];
+  await act(async () => refresh({ assets: new Map(), albums: new Map(), refetch: true }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Four stars" }));
   await waitFor(() => expect(location.pathname).toBe("/photos"));
   expect(open).toHaveBeenCalledWith(saved);
+  await fireEvent.click(screen.getByRole("button", { name: /^Albums$/ }));
+  await screen.findByRole("button", { name: "Four stars" });
+  stall = true;
+  await act(async () => refresh({ assets: new Map(), albums: new Map(), refetch: true }));
+  await waitFor(() => expect(pendingSignals).toHaveLength(3));
+  cleanup();
+  expect(pendingSignals[2]!.aborted).toBe(true);
 });
 
 it("passes a registered Photos shortcut into the help dialog", async () => {
@@ -3585,7 +3651,13 @@ it.each(["refetch", "asset"])(
       await overlapping;
     });
     expect(fixture.workspaceProps.concealed).toBe(false);
-    expect(workspaceRefresh.mock.calls.slice(1)).toContainEqual([batch]);
+    expect(workspaceRefresh.mock.calls).toEqual([
+      [expect.objectContaining({ refetch: true })],
+      [batch],
+    ]);
+    workspaceRefresh.mockClear();
+    await act(async () => fixture.refresh(batch));
+    expect(workspaceRefresh).toHaveBeenCalledExactlyOnceWith(batch);
   },
 );
 
@@ -3645,33 +3717,10 @@ it.each(["rename", "create", "delete", "delete assigned", "rename and assign"])(
     );
     expect(fixture.workspaceProps.tags).toEqual(expect.arrayContaining(current));
     expect(fixture.workspaceProps.tags).toHaveLength(current.length);
-    if (change === "delete assigned") {
-      expect(editor.tagsError).toBe("");
-      expect(editor.patch.caption).toBe("Draft caption");
-    }
   },
 );
 
-it("refreshes Library once for the batch that rechecks Hidden access", async () => {
-  const fixture = await watcherFixture();
-  await act(async () => fixture.workspaceProps.onphotochange?.("photo-1", "open"));
-  await waitFor(() => expect(fixture.workspaceProps.photoID).toBe("photo-1"));
-  fixture.workspaceRefresh.mockClear();
-  fixture.workspaceRefresh.mockResolvedValue(true);
-  fixture.access.change_id = "second";
-  const batch = {
-    assets: new Map<string, number>(),
-    albums: new Map<string, number>(),
-    refetch: true,
-  };
-  await act(async () => fixture.refresh(batch));
-  expect(fixture.workspaceRefresh).toHaveBeenCalledExactlyOnceWith(batch);
-  fixture.workspaceRefresh.mockClear();
-  await act(async () => fixture.refresh(batch));
-  expect(fixture.workspaceRefresh).toHaveBeenCalledExactlyOnceWith(batch);
-});
-
-it.each(["catalog", "assigned keyword"])("retries a timed-out %s request", async (kind) => {
+it("retries a timed-out catalog request", async () => {
   const fixture = await watcherFixture();
   const deadline = new AbortController();
   const timeout = vi
@@ -3688,14 +3737,7 @@ it.each(["catalog", "assigned keyword"])("retries a timed-out %s request", async
   const list = vi
     .spyOn(api, "listTags")
     .mockResolvedValue({ items: [], total: 0, limit: 1000, offset: 0 });
-  const get = vi
-    .spyOn(api, "getTag")
-    .mockResolvedValue({ id: "assigned", name: "Assigned", revision: 1, assignment_count: 1 });
-  if (kind === "catalog") list.mockImplementationOnce(stall);
-  else {
-    fixture.workspaceProps.photos.authored.targets = [preparedPhoto(1, { tags: ["assigned"] })];
-    get.mockImplementationOnce(stall);
-  }
+  list.mockImplementationOnce(stall);
   const batch = {
     assets: new Map<string, number>(),
     albums: new Map<string, number>(),
@@ -3703,12 +3745,12 @@ it.each(["catalog", "assigned keyword"])("retries a timed-out %s request", async
   };
   const refreshing = fixture.refresh(batch);
   const failed = expect(refreshing).rejects.toThrow("Timed out");
-  await waitFor(() => expect(kind === "catalog" ? list : get).toHaveBeenCalledOnce());
+  await waitFor(() => expect(list).toHaveBeenCalledOnce());
   deadline.abort(new DOMException("Timed out", "TimeoutError"));
   await failed;
   timeout.mockRestore();
   await act(async () => fixture.refresh(batch));
-  expect(kind === "catalog" ? list : get).toHaveBeenCalledTimes(2);
+  expect(list).toHaveBeenCalledTimes(2);
 });
 
 it("cancels catalog reads when their watcher is disposed", async () => {

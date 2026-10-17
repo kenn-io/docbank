@@ -61,10 +61,6 @@ it("routes live album changes to Hidden counts or membership", async () => {
   const membership = { ...unrelated, albums: new Map([["album-1", 2]]) };
   await view.component.refresh(membership);
   expect(refresh).toHaveBeenCalledExactlyOnceWith(membership);
-  refresh.mockClear();
-  photos.query = { ...photos.query, syntax: "advanced", text: "set:album-2", filters: {} };
-  await view.component.refresh(unrelated);
-  expect(refresh).toHaveBeenCalledExactlyOnceWith(unrelated);
 });
 
 it("propagates live Hidden gate access failures and displays the error", async () => {

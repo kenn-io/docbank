@@ -154,7 +154,7 @@
   import { SnapshotWorkspace } from "./snapshotWorkspace.svelte.js";
   import { type SnapshotOptions, type SnapshotRow } from "./snapshots.js";
   import { selectedSourceFromNode, selectedSourceFromSnapshot } from "./selectedSource.js";
-  import { listSavedQueries } from "./savedQueries.js";
+  import { definitionsChanged, listSavedQueries } from "./savedQueries.js";
   import type { RenditionObservation } from "./renditionText.js";
   import {
     clearSelection,
@@ -2400,6 +2400,7 @@
 
   async function refreshPhotoDefinitions(signal?: AbortSignal): Promise<void> {
     const session = webSession;
+    definitionsChanged(session);
     // The catalog page shows unassigned renames; assigned definitions may sit outside that page.
     const [tags] = await Promise.all([assignedPhotoTags(), loadTagCatalog(false, true, signal)]);
     if (session === webSession) tagCatalog = sortTags(mergePhotoTags(tagCatalog, tags));

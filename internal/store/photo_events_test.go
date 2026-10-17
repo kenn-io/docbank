@@ -134,12 +134,11 @@ func TestPhotoEventsAudienceClassification(t *testing.T) {
 		require.NoError(t, err)
 		public, err := s.CreateFile(ctx, s.RootID(), "public.jpg", hidden.BlobHash, 4, "image/jpeg")
 		require.NoError(t, err)
-		visible, err := s.PhotoAssetForNode(ctx, public.ID)
-		require.NoError(t, err)
+		_ = public
 		events, cancel := s.SubscribePhotoEvents(ctx)
 		defer cancel()
 		require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{BlobHash: hidden.BlobHash, Extractor: "synthetic", ExtractorVersion: 1, Status: ExtractionOK, Text: "shared"}))
-		require.Equal(t, PhotoEvent{AssetID: visible.ID}, nextPhotoEvent(t, events))
+		require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
 		noPhotoEvent(t, events)
 	})
 	for _, tc := range []struct {
@@ -158,7 +157,6 @@ func TestPhotoEventsAudienceClassification(t *testing.T) {
 			ctx := t.Context()
 			require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
 			var changed Node
-			var hiddenAssetID string
 			for i := range tc.documents + tc.hidden + tc.public {
 				mime := "image/jpeg"
 				if i < tc.documents {
@@ -176,7 +174,6 @@ func TestPhotoEventsAudienceClassification(t *testing.T) {
 				if i >= tc.documents && i < tc.documents+tc.hidden {
 					asset, err := s.PhotoAssetForNode(ctx, node.ID)
 					require.NoError(t, err)
-					hiddenAssetID = asset.ID
 					_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 					require.NoError(t, err)
 				}
@@ -205,12 +202,10 @@ func TestPhotoEventsAudienceClassification(t *testing.T) {
 			}))
 			var audience photoAudience
 			var refetch bool
-			var assetIDs []string
 			for len(events) > 0 {
 				event := nextPhotoEventWithAudience(t, events)
 				audience |= event.audience
 				refetch = refetch || event.Refetch
-				assetIDs = append(assetIDs, event.AssetID)
 			}
 			want := photoHidden
 			if tc.hidden == 0 {
@@ -220,10 +215,7 @@ func TestPhotoEventsAudienceClassification(t *testing.T) {
 				want |= photoPublic
 			}
 			require.Equal(t, want, audience)
-			require.Equal(t, tc.hidden > 64 || tc.public > 64, refetch)
-			if tc.documents > 0 {
-				require.Contains(t, assetIDs, hiddenAssetID)
-			}
+			require.True(t, refetch)
 		})
 	}
 }

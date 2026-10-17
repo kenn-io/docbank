@@ -192,10 +192,14 @@ func TestAddOverlapsDurableWritesBeforeMetadata(t *testing.T) {
 				releaseOnce.Do(func() { close(release) })
 				<-done
 			})
-			// Every file has its own worker, so all 32 reach publication. Loaded Windows runners can
-			// take longer than a fixed deadline; the test timeout bounds a writer that never arrives.
-			for range 32 {
-				<-entered
+			deadline := time.NewTimer(5 * time.Second)
+			defer deadline.Stop()
+			for i := range 32 {
+				select {
+				case <-entered:
+				case <-deadline.C:
+					t.Fatalf("only %d writes reached durable publication concurrently", i)
+				}
 			}
 			parentPath := "/inbox/" + filepath.Base(source)
 			parent, err := ing.Store.NodeByPath(t.Context(), parentPath)

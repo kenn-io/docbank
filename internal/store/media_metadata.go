@@ -22,9 +22,9 @@ const (
 
 var mediaMetadataRequiredFields = map[string][]string{
 	metadataMediaSourceType:        {metadataTypeField, "source_id", "kind", "provider", "origin_scope", "identity_sha256", "created_at"},
-	metadataMediaSourceVersionType: {metadataTypeField, auditSourceVersionIDField, "source_id", "revision", metadataContentVersionIDField, "capture_json", "created_at"},
+	metadataMediaSourceVersionType: {metadataTypeField, auditSourceVersionIDField, "source_id", "revision", "content_version_id", "capture_json", "created_at"},
 	metadataMediaOccurrenceType:    {metadataTypeField, "occurrence_id", "source_id", auditSourceVersionIDField, "caller_principal", "caller_occurrence_ref", "caller_revision", "caller_filename", "caller_person_ref", "speaker_label", "message_json", "visible", "first_seen_at", "revoked_at"},
-	metadataMediaInputArtifactType: {metadataTypeField, "input_id", "occurrence_id", "source_id", auditSourceVersionIDField, metadataContentVersionIDField, "kind", "origin", "provider", "language", "input_sha256", "created_at"},
+	metadataMediaInputArtifactType: {metadataTypeField, "input_id", "occurrence_id", "source_id", auditSourceVersionIDField, "content_version_id", "kind", "origin", "provider", "language", "input_sha256", "created_at"},
 	metadataMediaOperationType:     {metadataTypeField, "operation_id", "principal", "verb", "request_sha256", "source_id", "receipt_json", "created_at", "updated_at"},
 }
 

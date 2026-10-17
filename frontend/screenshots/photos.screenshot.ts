@@ -32,6 +32,18 @@ test("photo inspector keeps Apply reachable at 400×480", async ({ page }) => {
     await page.getByRole("button", { name: "Select all 12 photos", exact: true }).click();
     await page.getByRole("button", { name: "Metadata", exact: true }).click();
     const inspector = page.getByRole("region", { name: "Photo metadata" });
+    const caption = inspector.getByRole("textbox", { name: "Caption", exact: true });
+    await caption.fill("Draft caption");
+    const revalidated = page.waitForResponse((response) =>
+      response.url().endsWith("/photos/authored/prepare"),
+    );
+    await fixture.run("tag", "create", "Remote keyword");
+    await revalidated;
+    await expect(caption).toHaveValue("Draft caption");
+    await expect(inspector.getByRole("button", { name: "Apply", exact: true })).toBeEnabled();
+    await expect(
+      inspector.getByRole("button", { name: "Reload metadata", exact: true }),
+    ).toHaveCount(0);
     await mkdir(output!, { recursive: true });
     await page.setViewportSize({ width: 400, height: 480 });
     const panel = page.locator(".grid-inspector");
@@ -73,6 +85,15 @@ test("photo inspector keeps Apply reachable at 400×480", async ({ page }) => {
         animations: "disabled",
       });
     }
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await panel.evaluate((element) => {
+      element.scrollTop = 0;
+    });
+    await caption.scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: path.join(output!, "web-photo-live-draft.png"),
+      animations: "disabled",
+    });
   } finally {
     await fixture.dispose();
   }

@@ -22,7 +22,7 @@ func registerPhotoEvents(shutdown context.Context, mux *http.ServeMux, api huma.
 		OperationID: "photoEvents", Method: http.MethodGet, Path: photoEventsPath,
 		Summary: "Observe photo changes as server-sent events",
 		Responses: map[string]*huma.Response{
-			"200": {Description: "An initial refetch followed by visible resource IDs and revisions. Reconnects refetch current state.", Content: map[string]*huma.MediaType{"text/event-stream": {Schema: &huma.Schema{Type: "string"}}}},
+			"200": {Description: "An initial refetch followed by visible resource IDs and revisions. Reconnects refetch current state.", Content: map[string]*huma.MediaType{"text/event-stream": {Schema: &huma.Schema{Type: openAPIStringType}}}},
 			"429": {Description: "The daemon's concurrent photo event stream limit is reached.", Content: map[string]*huma.MediaType{new(Error).ContentType("application/json"): {Schema: api.OpenAPI().Components.Schemas.Schema(reflect.TypeFor[Error](), true, "")}}},
 		},
 	})
