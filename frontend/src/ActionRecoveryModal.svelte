@@ -11,7 +11,7 @@
 
 <script lang="ts">
   import { onDestroy, untrack } from "svelte";
-  import { Button, Checkbox, Chip, Modal, Spinner } from "@kenn-io/kit-ui";
+  import { Button, Checkbox, Chip, Modal, Spinner, Table } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
   import type { Tag } from "./generated/docbank.js";
   import { ACTION_MAX_BYTES, encodeRecovery } from "./actionRecovery.js";
@@ -271,24 +271,28 @@
         {/each}
       </select>
       <div class="target-list">
-        <table aria-label="Exact action targets">
-          <thead
-            ><tr
-              ><th>Node ID</th><th>Content version</th><th>SHA-256</th><th>Bytes</th><th
-                >Expected revision</th
-              ></tr
-            ></thead
-          >
-          <tbody
-            >{#each visibleTargets as member (member.node_id)}
+        <Table
+          unsorted
+          ariaLabel="Exact action targets"
+          class="target-table"
+          zebra={false}
+          scroll="page"
+        >
+          {#snippet header()}
+            <th scope="col">Node ID</th><th scope="col">Content version</th><th scope="col"
+              >SHA-256</th
+            ><th scope="col">Bytes</th><th scope="col">Expected revision</th>
+          {/snippet}
+          {#snippet children()}
+            {#each visibleTargets as member (member.node_id)}
               <tr
                 ><td>{member.node_id}</td><td><code>{member.content_version_id}</code></td><td
                   ><code>{member.blob_hash}</code></td
                 ><td>{member.size}</td><td>{member.revision}</td></tr
               >
-            {/each}</tbody
-          >
-        </table>
+            {/each}
+          {/snippet}
+        </Table>
       </div>
       <nav class="actions" aria-label="Action target pages">
         <span
@@ -486,14 +490,12 @@
     overflow-x: auto;
     max-height: 300px;
   }
-  table {
-    width: 100%;
+  .target-list :global(.target-table .kit-table) {
     table-layout: fixed;
-    border-collapse: collapse;
     font-size: var(--font-size-xs);
   }
-  th,
-  td {
+  .target-list :global(.target-table th),
+  .target-list :global(.target-table td) {
     padding: var(--space-2);
     text-align: left;
     overflow-wrap: anywhere;

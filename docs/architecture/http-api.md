@@ -90,7 +90,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `POST /nodes/{id}/provenance` | append an immutable origin fact under the node revision | Implemented |
 | `GET /photos/assets/{asset_id}` · `GET /photos/nodes/{node_id}/asset` | inspect one bounded photo graph by asset or member node | Implemented |
 | `POST /photos/assets/query` | list matching assets once each with a first-page total and keyset cursor | Implemented |
-| `POST /photos/authored/prepare` · `POST /photos/authored/edit` · `POST /photos/authored/{receipt_id}/undo` | prepare bounded file targets from assets or a query, atomically edit fields and keywords with required asset, file, and node revision fences, and undo if revisions match | Implemented |
+| `POST /photos/authored/prepare` · `POST /photos/authored/edit` · `POST /photos/authored/{receipt_id}/undo` | prepare bounded file targets from assets or a query, atomically edit fields and keywords with required asset, file, and node revision fences and optional viewed `content_version_id`, and undo if revisions match | Implemented |
 | `POST /photos/assets/{asset_id}/preview` | prepare a fit or large preview for the current content version | Implemented |
 | `GET /photos/assets/{asset_id}/previews/{generation_id}` | read verified bytes for an eligible display preview | Implemented |
 | `POST /photos/assets` · `POST /photos/assets/{asset_id}/files` · `DELETE /photos/assets/{asset_id}/files/{file_id}` | create, attach, or detach photo membership | Implemented |
@@ -901,6 +901,12 @@ processing `profile`, `page_size` of 50, 100, or 250 (default 100), and any
 subset of `collections`, `tags`, `media_family`, `extension`, `modified`,
 `size`, `text_coverage`, and `duplicates` facets, up to eight dimensions.
 
+Set `photos: true` to capture a Photos query in its photo ordering, with one
+display-file row per matching asset, an `asset_id`, and its frozen display-file `flag` on each row. Document snapshot rows omit `flag`. This mode
+uses Photos filters and sorts and requires an empty facet list. It uses the
+same snapshot paging and expiry rules below. When `profile` is omitted, photo
+snapshots skip profile selection and use `unconfigured` processing coverage.
+
 The response freezes the canonical query, dependency revisions, selected
 lexical generation and processing coverage, ordered row metadata, and exact
 node/content-version membership observed at creation. It also carries exact
@@ -1488,7 +1494,9 @@ Other sorts return an optional forward `next_cursor`. Capture keys fall back to 
 
 Later pages reuse the first page's total while rows remain live; a new browse refreshes the count. Cursors expire 15 minutes after issuance and bind resolved saved-query revisions, effective coverage, canonical query, hidden scope, requested facet dimensions, and page size. Photo facets share a 30-second budget. Time, member, or byte limits return an unavailable reason. Timed-out counts can be retried; member or byte limits require a narrower query. Invalid options return `invalid_photo_query`; invalid or changed bindings return `invalid_photo_cursor`; expiry returns `cursor_expired`. Invalid expressions retain their operand positions.
 
-`POST /photos/authored/edit` returns an empty `receipt_id` and empty `before` and `after` arrays when nothing changes. A no-op creates no receipt; Undo still targets the last real edit.
+`POST /photos/authored/edit` targets accept optional `content_version_id`, the UUID of the content version the client viewed. If that version has been replaced or the asset now displays a different file, the edit returns HTTP 412 `stale_revision`.
+
+The endpoint returns an empty `receipt_id` and empty `before` and `after` arrays when nothing changes. A no-op creates no receipt; Undo still targets the last real edit.
 
 `POST /photos/assets/{asset_id}/hide` and `/unhide` require `If-Match` and return the asset and ETag. Interactive Photos reads and mutations of already-hidden assets require an unlock. Background imports continue updating hidden files and return ordinary import receipts. Hide requires configured credentials. Unhide of an already-hidden asset requires an unlock; a visible no-op still requires the current revision. Ordinary Documents reads retain file access.
 
@@ -1498,7 +1506,7 @@ Later pages reuse the first page's total while rows remain live; a new browse re
 
 Optional `projection: "map"` returns compact `map_items` with asset ID, revision, name, capture time, file modified time (set only when it, not a capture date, placed the photo), dimensions, display rotation, coordinates and the grid preview state/generation/dimensions; `items` is empty and `map_items` is omitted when empty. It uses the same query, total and cursor contract. Omit the projection for viewer metadata and fit/large previews.
 
-Browse rows include current-display camera make/model, lens make/model, ISO, aperture, exposure time/bias, focal length, orientation, and `rotation` (0, 90, 180, or 270 degrees). Album summaries include `cover_rotation` with the same values; absent metadata fields serialize as JSON null. Compact Map rows alone include `latitude` and `longitude`, decimal-degree numbers from the selected display file or JSON null when absent. Browser-session requests receive null for both unless `[web.map_tiles]` is configured; API-key responses are independent of tile configuration.
+Browse rows include current-display camera make/model, lens make/model, ISO, aperture, exposure time/bias, focal length, orientation, `rotation` (0, 90, 180, or 270 degrees), `rating` (0–5), and `flag` (`""`, `"pick"`, or `"reject"`). Album summaries include `cover_rotation` with the same values; absent metadata fields serialize as JSON null. Compact Map rows alone include `latitude` and `longitude`, decimal-degree numbers from the selected display file or JSON null when absent. Browser-session requests receive null for both unless `[web.map_tiles]` is configured; API-key responses are independent of tile configuration.
 
 `POST /photos/assets/{asset_id}/preview` accepts `content_version_id`, `size` (`fit` or `large`) and optional `hidden` (default false); hidden preparation requires an unlock and returns a preview slot. It verifies the current eligible display version before and after on-demand production under the mutation gate, with a 30-second request limit. A version mismatch at admission returns 409 `photo_display_changed`; a display replaced or excluded during production returns 404. Missing or mismatched source bytes return 503 `photo_preview_unavailable`; retry after restoring the source. Preparation timeouts and cancellation return 503 `photo_preview_unavailable` with distinct messages and a retry instruction. Retained failed and unsupported slots are returned unchanged.
 

@@ -225,13 +225,9 @@ func registerSavedQueryRunRoute(
 		if !in.Body.Photos && in.Body.ReplacesSnapshotID != "" {
 			return nil, NewError(http.StatusUnprocessableEntity, "validation", "replacement handles require photos")
 		}
-		coverage := store.CoverageSelection{Configuration: "unconfigured"}
-		if !in.Body.Photos || in.Body.Profile != "" {
-			selection, err := selectCollectionProfile(d.Cfg, in.Body.Profile)
-			if err != nil {
-				return nil, err
-			}
-			coverage = selection.Coverage
+		coverage, err := workspaceQueryCoverage(d.Cfg, in.Body.Photos, in.Body.Profile)
+		if err != nil {
+			return nil, err
 		}
 		if snapshots == nil {
 			return nil, NewError(http.StatusServiceUnavailable, "workspace_unavailable", "workspace query snapshots are unavailable")

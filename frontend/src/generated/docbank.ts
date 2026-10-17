@@ -5241,6 +5241,7 @@ export interface PhotoAuthoredEditTarget {
   asset_id: string;
   /** @minimum 1 */
   asset_revision: number;
+  content_version_id?: string;
   file_id: string;
   /** @minimum 1 */
   node_revision: number;
@@ -5345,6 +5346,15 @@ export type PhotoBrowsePageFacetsItem = {
   /** @maxItems 114 */
   values: WorkspaceFacetValue[];
 };
+
+export type PhotoBrowseRowFlag = typeof PhotoBrowseRowFlag[keyof typeof PhotoBrowseRowFlag];
+
+
+export const PhotoBrowseRowFlag = {
+  '': '',
+  pick: 'pick',
+  reject: 'reject',
+} as const;
 
 export type PhotoBrowseRowKind = typeof PhotoBrowseRowKind[keyof typeof PhotoBrowseRowKind];
 
@@ -5489,6 +5499,7 @@ export interface PhotoBrowseRow {
      * @nullable
      */
   file_modified_time: string | null;
+  flag: PhotoBrowseRowFlag;
   /** @nullable */
   focal_length_mm: number | null;
   /** @nullable */
@@ -5509,6 +5520,11 @@ export interface PhotoBrowseRow {
   orientation: number | null;
   previews: PhotoPreviewSlots;
   quality?: PhotoBrowseRowQuality;
+  /**
+     * @minimum 0
+     * @maximum 5
+     */
+  rating: number;
   /** @minimum 1 */
   revision: number;
   rotation: PhotoBrowseRowRotation;
@@ -6906,6 +6922,18 @@ export const WorkspaceQueryResponsePageSize = {
   NUMBER_250: 250,
 } as const;
 
+/**
+ * Display-file flag in a photo snapshot; absent in a document snapshot.
+ */
+export type WorkspaceQueryRowFlag = typeof WorkspaceQueryRowFlag[keyof typeof WorkspaceQueryRowFlag];
+
+
+export const WorkspaceQueryRowFlag = {
+  '': '',
+  pick: 'pick',
+  reject: 'reject',
+} as const;
+
 export interface WorkspaceQueryTag {
   id: string;
   name: string;
@@ -6926,6 +6954,8 @@ export interface WorkspaceQueryRow {
   /** @nullable */
   display_collection_label?: string | null;
   excerpt?: string;
+  /** Display-file flag in a photo snapshot; absent in a document snapshot. */
+  flag?: WorkspaceQueryRowFlag;
   media_family: string;
   mime_type: string;
   modified_at: string;
@@ -7793,6 +7823,7 @@ export interface WorkspaceQueryCreateRequest {
   /** @maxItems 8 */
   facets?: WorkspaceQueryCreateRequestFacetsItem[];
   page_size?: WorkspaceQueryCreateRequestPageSize;
+  photos?: boolean;
   /** @maxLength 128 */
   profile?: string;
   query: SavedQueryV1Schema;

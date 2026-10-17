@@ -15,12 +15,14 @@ import {
 import { snapshotTargetRevision, type SnapshotReceiptOverlay } from "./snapshotOverlays.js";
 
 export type SnapshotOptions = {
+  photos?: boolean;
   profile?: string;
   page_size?: 50 | 100 | 250;
   facets?: string[];
 };
 
 export interface SnapshotRow {
+  flag?: "" | "pick" | "reject";
   asset_id?: string;
   node_id: number;
   content_version_id: string;
@@ -108,7 +110,7 @@ export interface WorkspaceQueryResponse {
 export type SnapshotPage = WorkspaceQueryResponse;
 export type SnapshotMember = Pick<
   SnapshotRow,
-  "asset_id" | "node_id" | "content_version_id" | "blob_hash" | "size" | "revision"
+  "flag" | "asset_id" | "node_id" | "content_version_id" | "blob_hash" | "size" | "revision"
 >;
 export type VerifiedSnapshotTargets = { snapshot: SnapshotPage; members: SnapshotMember[] };
 
@@ -304,6 +306,7 @@ function parseRow(value: unknown, index: number): SnapshotRow {
       "coverage_attachment_id",
       "excerpt",
       "asset_id",
+      "flag",
     ],
     `rows[${index}]`,
   );
@@ -352,7 +355,13 @@ function parseRow(value: unknown, index: number): SnapshotRow {
   const assetID = optionalString(raw.asset_id, `rows[${index}].asset_id`);
   if (assetID !== undefined && !uuidV4.test(assetID))
     malformed(`rows[${index}].asset_id is invalid`);
+  const flag = optionalString(raw.flag, `rows[${index}].flag`);
+  if (assetID !== undefined && !["", "pick", "reject"].includes(flag!))
+    malformed(`rows[${index}].flag is invalid`);
+  if (assetID === undefined && flag !== undefined)
+    malformed(`rows[${index}].flag requires a photo identity`);
   return {
+    ...(flag === undefined ? {} : { flag: flag as SnapshotRow["flag"] }),
     ...(assetID === undefined ? {} : { asset_id: assetID }),
     node_id: integer(raw.node_id, `rows[${index}].node_id`, 1),
     content_version_id: contentVersionID,
@@ -723,6 +732,7 @@ function normalizedOptions(
   if (facets !== undefined && new Set(facets).size !== facets.length)
     throw new Error("Snapshot facets repeat a dimension.");
   return {
+    ...(options.photos === undefined ? {} : { photos: options.photos }),
     ...(profile === undefined ? {} : { profile }),
     ...(options.page_size === undefined ? {} : { page_size: options.page_size }),
     ...(facets === undefined ? {} : { facets }),
@@ -879,6 +889,7 @@ export async function captureSnapshotTargets(
   confirmedRevisions: Readonly<
     Record<number, Pick<SnapshotReceiptOverlay, "revision" | "expectedRevision">>
   > = {},
+  onprogress?: (loaded: number, total: number) => void,
 ): Promise<VerifiedSnapshotTargets> {
   if (first.previous_cursor !== undefined)
     throw new Error("Snapshot capture requires the accepted first page.");
@@ -899,6 +910,7 @@ export async function captureSnapshotTargets(
         throw new Error("Snapshot capture contains a duplicate member.");
       identities.add(identity);
       members.push({
+        ...(row.flag === undefined ? {} : { flag: row.flag }),
         ...(row.asset_id === undefined ? {} : { asset_id: row.asset_id }),
         node_id: row.node_id,
         content_version_id: row.content_version_id,
@@ -909,6 +921,7 @@ export async function captureSnapshotTargets(
       bytes += row.size;
       if (!Number.isSafeInteger(bytes)) throw new Error("Snapshot capture byte total is unsafe.");
     }
+    onprogress?.(members.length, first.total);
     if (members.length === first.total) {
       if (page.next_cursor !== undefined) throw new Error("Snapshot final page has a next cursor.");
       break;
