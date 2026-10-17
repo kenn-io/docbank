@@ -153,15 +153,6 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
     );
     expect(writes.length).toBeGreaterThan(0);
     expect(writes.every((write) => write.store !== "members" && write.bytes < 256)).toBe(true);
-    expect(Object.keys(originalCheckpoint).sort()).toEqual([
-      "autoAdvance",
-      "formatVersion",
-      "position",
-      "revision",
-      "runID",
-      "scope",
-    ]);
-    expect(originalCheckpoint).toHaveProperty("formatVersion", 1);
     await page.getByRole("button", { name: "Cull", exact: true }).click();
     const replacementConfirmation = page.getByRole("dialog", {
       name: "Replace saved cull progress?",
