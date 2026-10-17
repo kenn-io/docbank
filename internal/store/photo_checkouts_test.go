@@ -230,7 +230,7 @@ func TestPhotoCheckoutMetadata(t *testing.T) {
 					} {
 						t.Run(tc.name, func(t *testing.T) {
 							var lines [][]byte
-							for _, line := range bytes.Split(snapshot.Bytes(), []byte{'\n'}) {
+							for line := range bytes.SplitSeq(snapshot.Bytes(), []byte{'\n'}) {
 								if len(line) == 0 {
 									continue
 								}
