@@ -419,6 +419,10 @@
   }
   .duplicate-person small {
     display: block;
+    overflow-wrap: anywhere;
+  }
+  .duplicate-person > span:first-of-type {
+    min-width: 0;
   }
   .duplicate-person img {
     width: 64px;
