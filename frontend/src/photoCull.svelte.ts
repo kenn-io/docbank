@@ -217,6 +217,10 @@ export class PhotoCull {
         if (!checkpoint.pass.every((id) => captured.has(id)))
           throw new Error("Saved cull progress is invalid. Start a new cull.");
       }
+      this.stackRead?.abort();
+      this.stackRead = undefined;
+      this.stackError = "";
+      this.stackLoading = false;
       this.run = run;
       this.saved = !!run;
       if (this.run)
@@ -300,6 +304,10 @@ export class PhotoCull {
       await this.storage.replace(run, controller.signal, previous);
       this.error = "";
       this.stale = false;
+      this.stackRead?.abort();
+      this.stackRead = undefined;
+      this.stackError = "";
+      this.stackLoading = false;
       this.run = run;
       this.saved = true;
       await this.regroup();

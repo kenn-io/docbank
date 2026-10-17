@@ -1130,6 +1130,17 @@ func (s *Store) importMetadataLines(
 		if err := json.Unmarshal(raw, &kind); err != nil {
 			return metadataHeader{}, fmt.Errorf("decoding metadata record %d type: %w", record, err)
 		}
+		if header.Version == 1 && kind.Type == metadataPhotoSettingsType {
+			var settings map[string]jsontext.Value
+			if err := json.Unmarshal(raw, &settings); err != nil {
+				return metadataHeader{}, err
+			}
+			settings["representative_sequence"] = jsontext.Value("0")
+			raw, err = json.Marshal(settings)
+			if err != nil {
+				return metadataHeader{}, err
+			}
+		}
 		if err := s.importMetadataRecord(ctx, tx, kind.Type, raw); err != nil {
 			return metadataHeader{}, fmt.Errorf("importing metadata record %d (%s): %w", record, kind.Type, err)
 		}

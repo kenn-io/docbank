@@ -36,6 +36,7 @@ type PhotoBrowsePosition struct {
 	AssetID       string `json:"asset_id"`
 	QueryIdentity string `json:"query_identity"`
 	Total         int64  `json:"total"`
+	StackFrontier string `json:"stack_frontier,omitempty"`
 }
 
 type PhotoPreviewSlot struct {

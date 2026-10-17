@@ -435,8 +435,7 @@ The highest representative rank within a burst records its latest explicit choic
 every explicit choice, including rechoosing the displayed frame, gets a fresh rank.
 A choice or its Undo advances the asset revision and leaves file flags unchanged.
 Schema 39 adds the internal `representative_sequence` on `photo_library_settings`. It never rewinds
-with Undo and leaves the public settings revision unchanged. JSONL v2 omits this schema-39 sequence;
-the first choice after restore seeds it from live ranks and retained receipts.
+with Undo and leaves the public settings revision unchanged. JSONL v2 requires and preserves this sequence, including its empty NULL value. Released v1 backups initialize it to 0 on import. Pre-release v2 backups missing the field fail validation.
 Representative receipts must reference existing photo assets.
 `photo_library_settings` owns the vault-wide display preference, `burst_gap_seconds`
 (default 2, range 1–30), and their shared revision. One settings update can

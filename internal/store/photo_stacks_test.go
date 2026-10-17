@@ -264,6 +264,66 @@ func TestPhotoStackLibraryPagesQueryScopedBursts(t *testing.T) {
 	require.Equal(t, [][]string{{undated}, {a1}, {b1}, {a2}, {b2, b3}, {x}}, items)
 }
 
+func TestPhotoStackCursorMembershipFrontier(t *testing.T) {
+	t.Parallel()
+	for _, direction := range []string{"asc", "desc"} {
+		for _, offset := range []int{0, 1, 2} {
+			t.Run(fmt.Sprintf("%s/boundary-%d", direction, offset), func(t *testing.T) {
+				s := newTestStore(t)
+				run, err := s.BeginIngest(t.Context(), "cli", "synthetic cursor frontier")
+				require.NoError(t, err)
+				var ids []string
+				for i := range 4 {
+					ids = append(ids, stackPhoto(t, s, run, fmt.Sprintf("/A/frame-%d.jpg", i), fmt.Sprintf("2024-06-10T12:00:0%dZ", i), document.SourceMetadataPrecisionSecond))
+				}
+				joined := ids[3]
+				second := 1 + min(offset, 1)
+				if direction == "desc" {
+					joined = ids[0]
+					second = 1 - min(offset, 1)
+				}
+				base := time.Date(2024, 6, 10, 12, 0, 0, 0, time.UTC)
+				stamp := base.Add(time.Duration(second)*time.Second + 500*time.Millisecond)
+				other := stackPhoto(t, s, run, "/B/other.jpg", stamp.Format(time.RFC3339Nano), document.SourceMetadataPrecisionFraction)
+				expected := append(slices.Clone(ids), other)
+				if offset == 2 {
+					step := time.Second
+					if direction == "desc" {
+						step = -step
+					}
+					expected = append(expected, stackPhoto(t, s, run, "/B/other-2.jpg", stamp.Add(step).Format(time.RFC3339Nano), document.SourceMetadataPrecisionFraction))
+				}
+				expected = append(expected, stackPhoto(t, s, run, "/C/end.jpg", base.Add(10*time.Minute).Format(time.RFC3339), document.SourceMetadataPrecisionSecond), stackPhoto(t, s, run, "/C/start.jpg", base.Add(-10*time.Minute).Format(time.RFC3339), document.SourceMetadataPrecisionSecond))
+				_, err = s.db.Exec(`UPDATE photo_files SET flag='reject' WHERE asset_id=?`, joined)
+				require.NoError(t, err)
+				request := captureRequest(t, direction)
+				request.PageSize = 4
+				if offset == 2 {
+					request.PageSize = 5
+				}
+				request.Query = snapshotTestQuery(t, `{"filters":{"flags":[""]},"sort":{"field":"capture_time","direction":"`+direction+`"}}`)
+				first, err := s.ListPhotoAssets(t.Context(), request, nil)
+				require.NoError(t, err)
+				require.NotNil(t, first.Next)
+				unchanged, err := s.ListPhotoAssets(t.Context(), request, first.Next)
+				require.NoError(t, err)
+				if offset < 2 {
+					require.Contains(t, rowIDs(unchanged.Items), other)
+				} else {
+					require.Len(t, unchanged.Items, 1)
+				}
+				_, err = s.db.Exec(`UPDATE photo_files SET flag='' WHERE asset_id=?`, joined)
+				require.NoError(t, err)
+				_, err = s.ListPhotoAssets(t.Context(), request, first.Next)
+				require.ErrorIs(t, err, ErrInvalidPhotoCursor)
+				pages, stacks := stackPages(t, s, request)
+				require.Contains(t, stacks, ids)
+				require.ElementsMatch(t, expected, slices.Concat(pages...))
+			})
+		}
+	}
+}
+
 func TestPhotoStackPagesMatchExplicitGrouping(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -668,8 +728,14 @@ func TestPhotoSettingsUpdateValidatesBeforeOneRevision(t *testing.T) {
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
 	require.Contains(t, exported.String(), `"burst_gap_seconds":4`)
+	missingSequence := strings.ReplaceAll(exported.String(), `,"representative_sequence":null`, "")
+	require.ErrorContains(t, newTestStore(t).ImportMetadata(t.Context(), strings.NewReader(missingSequence)), "representative_sequence")
+	legacy := strings.ReplaceAll(strings.ReplaceAll(missingSequence, `,"burst_gap_seconds":4`, ""), `"version":2`, `"version":1`)
 	old := newTestStore(t)
-	require.NoError(t, old.ImportMetadata(t.Context(), strings.NewReader(strings.ReplaceAll(exported.String(), `,"burst_gap_seconds":4`, ""))))
+	require.NoError(t, old.ImportMetadata(t.Context(), strings.NewReader(legacy)))
+	var sequence int64
+	require.NoError(t, old.db.QueryRow(`SELECT representative_sequence FROM photo_library_settings`).Scan(&sequence))
+	require.Zero(t, sequence)
 	settings, err := old.PhotoSettings(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, 2, settings.BurstGapSeconds)
@@ -805,6 +871,7 @@ func TestPhotoRepresentativeSequenceSurvivesUndoAndRestore(t *testing.T) {
 	require.NoError(t, err)
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
+	require.Contains(t, exported.String(), `"representative_sequence":3`)
 	restored := newTestStore(t)
 	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
 	page, err := restored.ListPhotoAssets(t.Context(), captureRequest(t, "asc"), nil)

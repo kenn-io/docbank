@@ -1198,3 +1198,51 @@ it("finishes a Cull decision while the affected Library stack refresh is held", 
     await act(() => release(true));
   }
 });
+
+it("reloads cached stack siblings after preparation loses a member", async () => {
+  const { cull, photos } = await reviewPhoto();
+  const rows = [photo(1), photo(2)];
+  vi.mocked(photos.lookupMany).mockImplementation(async (ids) =>
+    rows.filter((row) => ids.includes(row.asset_id)),
+  );
+  vi.mocked(api.preparePhotoAuthored).mockRejectedValueOnce(
+    new APIError("Stack member gone", 404, "not_found"),
+  );
+  await act(() => {
+    cull.run = {
+      ...cull.run!,
+      ids: ["photo-1", "photo-2"],
+      groups: [["photo-1", "photo-2"]],
+      burstGapSeconds: 2,
+      checkpoint: { ...cull.run!.checkpoint, pass: ["photo-1", "photo-2"] },
+    };
+  });
+  await screen.findByText("Stack member gone");
+  await screen.findByRole("button", { name: "Show Photo 2.jpg" });
+  rows[1] = { ...photo(2), revision: 2, content_version_id: "replacement-version" };
+  vi.mocked(api.preparePhotoAuthored).mockImplementation(async (scope) =>
+    photoPreparation(
+      (scope.asset_ids ?? []).map((id) => ({
+        ...preparedPhoto(Number(id.slice(6))),
+        asset_revision: id === "photo-2" ? 2 : 1,
+        current_content_version_id:
+          id === "photo-2" ? "replacement-version" : photo(1).content_version_id,
+      })),
+    ),
+  );
+  const decide = vi
+    .spyOn(api, "decidePhotoStack")
+    .mockResolvedValue({ receipt_id: "", before: [], after: [] });
+  await fireEvent.click(await readyButton("Reload photo"));
+  await fireEvent.click(await readyButton("Keep all"));
+  await waitFor(() => expect(decide).toHaveBeenCalledOnce());
+  expect(decide.mock.calls[0]![0].targets).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        asset_id: "photo-2",
+        asset_revision: 2,
+        content_version_id: "replacement-version",
+      }),
+    ]),
+  );
+});

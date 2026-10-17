@@ -3015,6 +3015,11 @@ it.each(["Keep all", "Keep selected", "Choose representative"])(
         before.push({ ...target, values: { ...target.values } });
         target.revision++;
         target.node_revision++;
+        target.values.flag =
+          request.decision === "all" || request.selected_ids?.includes(target.asset_id)
+            ? "pick"
+            : target.values.flag || "reject";
+        rows.find((row) => row.asset_id === target.asset_id)!.flag = target.values.flag;
         after.push({ ...target, values: { ...target.values } });
       }
       return { receipt_id: after.length ? "stack" : "", before, after };
@@ -3026,6 +3031,7 @@ it.each(["Keep all", "Keep selected", "Choose representative"])(
     photos.expandedStacks = new Set(["photo-1"]);
     photos.selection = { selectedIDs: new Set(["photo-2"]), anchorID: "photo-2" };
     vi.spyOn(photos, "resume").mockResolvedValue();
+    const refresh = vi.spyOn(photos, "refresh");
     render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
     for (let i = 1; i <= 2; i++) {
       const button = await screen.findByRole("button", {
@@ -3035,6 +3041,7 @@ it.each(["Keep all", "Keep selected", "Choose representative"])(
       await fireEvent.click(button);
       await waitFor(() => expect(decide).toHaveBeenCalledTimes(i));
       await waitFor(() => expect(photos.authored.busy || photos.loading).toBe(false));
+      await Promise.all(refresh.mock.results.map((result) => result.value));
       expect([...photos.selectedIDs]).toEqual(["photo-2"]);
       expect(photos.scope()).toEqual({ asset_ids: ["photo-2"] });
     }
