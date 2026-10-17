@@ -226,3 +226,28 @@ it("retries failed refreshes with backoff and resets the delay after recovery", 
   expect(refresh).toHaveBeenCalledTimes(calls + 1);
   stop();
 });
+
+it.each(["locks", "channel"])("uses cursor polling when %s is unavailable", async (missing) => {
+  vi.useFakeTimers();
+  if (missing === "locks") vi.stubGlobal("navigator", {});
+  else vi.stubGlobal("BroadcastChannel", undefined);
+  const fetch = vi.spyOn(globalThis, "fetch");
+  const refresh = vi.fn().mockResolvedValue(undefined);
+  let receive!: (cursor?: string) => void;
+  const stop = watchPhotoEvents("synthetic", refresh, vi.fn(), vi.fn(), vi.fn(), (poll) => {
+    receive = poll;
+  });
+  receive("first");
+  await vi.advanceTimersByTimeAsync(100);
+  expect(refresh).toHaveBeenCalledOnce();
+  for (let i = 0; i < 4; i++) {
+    receive("first");
+    await vi.advanceTimersByTimeAsync(2000);
+  }
+  expect(refresh).toHaveBeenCalledOnce();
+  expect(fetch).not.toHaveBeenCalled();
+  receive("second");
+  await vi.advanceTimersByTimeAsync(100);
+  expect(refresh).toHaveBeenCalledTimes(2);
+  stop();
+});

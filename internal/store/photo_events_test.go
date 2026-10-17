@@ -6,6 +6,7 @@ import (
 	"errors"
 	"github.com/stretchr/testify/require"
 	"testing"
+	"time"
 )
 
 func nextPhotoEvent(t *testing.T, ch <-chan PhotoEvent) PhotoEvent {
@@ -143,4 +144,89 @@ func TestPhotoEventsOverflow(t *testing.T) {
 	s.publishPhotoChanges(events)
 	require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, ch))
 	noPhotoEvent(t, ch)
+}
+
+func TestPhotoEventsPollCursors(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	now := time.Now().UTC()
+	s.photoHiddenNow = func() time.Time { return now }
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	node, err := s.CreateFile(ctx, s.RootID(), "hidden.jpg", fakeHash("11"), 4, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	asset, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	cursor := func(viewer context.Context) string {
+		t.Helper()
+		value, err := s.PhotoChangeCursor(viewer)
+		require.NoError(t, err)
+		return value
+	}
+	write := func() {
+		t.Helper()
+		require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+			_, err := tx.ExecContext(ctx, `UPDATE photo_assets SET revision=revision+1 WHERE asset_id=?`, asset.ID)
+			return err
+		}))
+	}
+	locked := cursor(ctx)
+	require.Equal(t, locked, cursor(ctx))
+	write()
+	require.Equal(t, locked, cursor(ctx), "Hidden-only writes stay silent without an unlocked viewer")
+	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+	viewer := WithPhotoHiddenToken(ctx, token)
+	unlocked := cursor(viewer)
+	write()
+	require.NotEqual(t, locked, cursor(ctx), "locked holders receive the bare wakeup for unlocked followers")
+	require.NotEqual(t, unlocked, cursor(viewer))
+	locked = cursor(ctx)
+	rejected := errors.New("rollback")
+	require.ErrorIs(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE photo_assets SET revision=revision+1 WHERE asset_id=?`, asset.ID)
+		require.NoError(t, err)
+		return rejected
+	}), rejected)
+	require.Equal(t, locked, cursor(ctx))
+	_, err = s.CreatePhotoSet(ctx, "Album")
+	require.NoError(t, err)
+	require.NotEqual(t, locked, cursor(ctx))
+	locked = cursor(ctx)
+	now = now.Add(31 * time.Second)
+	write() // No subscriber or poll interest remains.
+	require.NotEqual(t, locked, cursor(ctx), "resuming expired interest must refetch uncaptured changes")
+	now = now.Add(5 * time.Minute)
+	require.Equal(t, cursor(ctx), cursor(viewer), "expired unlock uses the locked audience")
+	other := newTestStore(t)
+	restarted, err := other.PhotoChangeCursor(ctx)
+	require.NoError(t, err)
+	require.NotEqual(t, cursor(ctx), restarted)
+}
+
+func TestPhotoEventsPollStartsDuringWrite(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	node, err := s.CreateFile(ctx, s.RootID(), "photo.jpg", fakeHash("11"), 4, "image/jpeg")
+	require.NoError(t, err)
+	started, release, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	go func() {
+		done <- s.withStorageTx(ctx, func(tx *sql.Tx) error {
+			_, err := tx.ExecContext(ctx, `UPDATE photo_assets SET revision=revision+1 WHERE asset_id=(SELECT asset_id FROM photo_files WHERE node_id=?)`, node.ID)
+			close(started)
+			<-release
+			return err
+		})
+	}()
+	<-started
+	before, err := s.PhotoChangeCursor(ctx)
+	close(release)
+	require.NoError(t, err)
+	require.NoError(t, <-done)
+	after, err := s.PhotoChangeCursor(ctx)
+	require.NoError(t, err)
+	require.NotEqual(t, before, after)
 }

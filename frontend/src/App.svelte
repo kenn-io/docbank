@@ -446,6 +446,7 @@
   let photoConcealed = false;
   let photoAccessVersion = 0;
   const maxPhotoAccessFailures = 3;
+  let photoCursorChanged: ((cursor?: string) => void) | undefined;
   let checkPhotoAccess: ((live?: boolean) => Promise<Photos | undefined>) | undefined;
   function discardLibrary() {
     revalidatedChangeID = null;
@@ -694,7 +695,11 @@
           signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]),
         });
         failures = 0;
-        if (current && !controller.signal.aborted) return await acceptPhotoAccess(result);
+        if (current && !controller.signal.aborted) {
+          const source = await acceptPhotoAccess(result);
+          photoCursorChanged?.(result.change_cursor);
+          return source;
+        }
       } catch (cause) {
         if (!current || controller.signal.aborted) return;
         const denied = cause instanceof APIError && (cause.status === 401 || cause.status === 403);
@@ -741,16 +746,11 @@
       session,
       async (changes) => {
         // Access refreshes abort pending reads. Retain their affected scope before that happens.
-        if (changes.refetch) {
-          for (const photos of [photoState?.photos, albumPhotos, mapPhotos]) {
-            const editor = photos?.authored;
-            if (editor?.loading && !editor.targets.length && editor.affectedBy(changes))
-              editor.changedElsewhere(changes);
-          }
+        for (const photos of [photoState?.photos, albumPhotos, mapPhotos]) {
+          const editor = photos?.authored;
+          if (editor?.affectedBy(changes)) editor.changedElsewhere(changes);
         }
-        const source = changes.refetch
-          ? await checkPhotoAccess?.(typeof navigator.locks !== "undefined")
-          : undefined;
+        const source = changes.refetch ? await checkPhotoAccess?.(true) : undefined;
         // A Hidden recheck owns the open viewer until it confirms visibility. It handles its own
         // failure by concealing the library, so this refresh only waits for it to finish.
         await photoRecheckRun?.catch(() => {});
@@ -786,9 +786,13 @@
         refreshFailed = false;
         photoEventError = "";
       },
+      (receive) => {
+        photoCursorChanged = receive;
+      },
     );
     return () => {
       owner.abort();
+      photoCursorChanged = undefined;
       stop();
       photoEventError = "";
     };
@@ -2750,7 +2754,11 @@
       (photos): photos is Photos => !!(photos?.started || photos?.loading),
     );
     await Promise.all([
-      changes || !affectedAlbumID ? photoAlbums?.load() : undefined,
+      changes || !affectedAlbumID
+        ? photoAlbums?.load().then((loaded) => {
+            if (changes && loaded === false) throw new Error(photoAlbums?.loadError);
+          })
+        : undefined,
       ...loaded
         .filter(
           (photos) =>
@@ -2759,12 +2767,16 @@
               !affectedAlbumID ||
               photos.query.filters?.set_ids?.includes(affectedAlbumID)),
         )
-        .map((photos) =>
-          libraryWorkspace && photos === displayed
-            ? libraryWorkspace.refresh(changes)
-            : photos.refresh(undefined, !!changes),
-        ),
-      changes ? source?.reconcileMetadata(changes) : undefined,
+        .map(async (photos) => {
+          if (libraryWorkspace && photos === displayed) return libraryWorkspace.refresh(changes);
+          const refreshed = await photos.refresh(undefined, !!changes);
+          if (!refreshed) {
+            if (changes && photos.error) throw new Error(photos.error);
+            return;
+          }
+          if (changes) await photos.reconcileMetadata();
+        }),
+      changes ? source?.reconcileMetadata() : undefined,
       ...(!changes && affectedAlbumID
         ? loaded
             .filter(
@@ -3406,6 +3418,7 @@
             onphotochange={changePhoto}
             onconceal={clearPhoto}
             onstate={(result) => {
+              photoCursorChanged?.(result.change_cursor);
               void acceptPhotoAccess(result).catch((cause) => {
                 void invalidateLibrary();
                 photoAccessError = cause instanceof Error ? cause.message : String(cause);

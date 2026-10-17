@@ -13,6 +13,8 @@ import {
 import * as api from "./generated/docbank.js";
 import * as photoEvents from "./photoEvents.js";
 
+const realWatchPhotoEvents = photoEvents.watchPhotoEvents;
+
 beforeEach(() => vi.spyOn(photoEvents, "watchPhotoEvents").mockReturnValue(() => {}));
 import * as photoWorkspace from "./PhotosWorkspace.svelte";
 import App from "./App.svelte";
@@ -3350,16 +3352,26 @@ async function watcherFixture({
   let connected!: NonNullable<Parameters<typeof photoEvents.watchPhotoEvents>[3]>;
   let recovered!: NonNullable<Parameters<typeof photoEvents.watchPhotoEvents>[4]>;
   const stop = vi.fn();
+  const cursors = vi.fn();
   const watch = vi
     .spyOn(photoEvents, "watchPhotoEvents")
-    .mockImplementation((_session, liveRefresh, onfailure, onconnected, onrefreshed) => {
-      recovered = onrefreshed!;
-      refresh = liveRefresh;
-      fail = onfailure;
-      connected = onconnected!;
-      return stop;
-    });
-  const access = { configured, change_id: "first", expires_at: expiry, expires_in: 300 };
+    .mockImplementation(
+      (_session, liveRefresh, onfailure, onconnected, onrefreshed, pollCursor) => {
+        pollCursor?.(cursors);
+        recovered = onrefreshed!;
+        refresh = liveRefresh;
+        fail = onfailure;
+        connected = onconnected!;
+        return stop;
+      },
+    );
+  const access = {
+    configured,
+    change_id: "first",
+    change_cursor: "initial",
+    expires_at: expiry,
+    expires_in: 300,
+  };
   const rows = [photo(1)];
   const hiddenRows = [photo(2)];
   vi.stubGlobal("fetch", async (url: string) => {
@@ -3392,6 +3404,7 @@ async function watcherFixture({
   return {
     album,
     access,
+    cursors,
     rows,
     stores,
     workspaceRefresh,
@@ -3470,3 +3483,66 @@ it.each(["retained", "pending"])(
     expect(edit.mock.calls[0]![0].targets[0]!.revision).toBe(8);
   },
 );
+
+it.each([1, 8])(
+  "reconciles retained Library metadata from Albums at revision %s",
+  async (revision) => {
+    const fixture = await watcherFixture();
+    const library = fixture.workspaceProps.photos;
+    library.selectedIDs = new Set(["photo-1"]);
+    library.authored.targets = [preparedPhoto(1)];
+    await fireEvent.click(screen.getByRole("button", { name: "Albums" }));
+    await screen.findByRole("main", { name: "Albums" });
+    const prepare = vi
+      .spyOn(api, "preparePhotoAuthored")
+      .mockResolvedValue({ assets: [], targets: [{ ...preparedPhoto(1), revision }] });
+    await act(async () =>
+      fixture.refresh({ assets: new Map([["photo-1", revision]]), refetch: false }),
+    );
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(library.authored.targets[0]!.revision).toBe(revision);
+    expect(library.authored.conflict).toBe(false);
+    await fireEvent.click(screen.getByRole("button", { name: "Library" }));
+    await waitFor(() => expect(fixture.workspaceProps.photos).toBe(library));
+    expect(library.selectedIDs.has("photo-1")).toBe(true);
+  },
+);
+
+it("retries an album refresh after failure without another event", async () => {
+  const fixture = await watcherFixture();
+  const load = vi
+    .spyOn(api, "listPhotoAlbums")
+    .mockRejectedValueOnce(new Error("Albums unavailable"))
+    .mockResolvedValue([{ ...fixture.album, name: "Updated album" }]);
+  vi.stubGlobal("navigator", {});
+  const failure = vi.fn();
+  const stop = realWatchPhotoEvents(
+    "synthetic",
+    fixture.refresh,
+    failure,
+    undefined,
+    undefined,
+    (receive) => receive("changed"),
+  );
+  try {
+    await waitFor(() => expect(failure).toHaveBeenCalledOnce());
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(2), { timeout: 3000 });
+    await fireEvent.click(screen.getByRole("button", { name: "Albums" }));
+    await screen.findByRole("button", { name: /Updated album/ });
+  } finally {
+    stop();
+  }
+});
+
+it("forwards the Hidden view access poll cursor", async () => {
+  const fixture = await watcherFixture({
+    configured: true,
+    expiry: new Date(Date.now() + 300000).toISOString(),
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
+  await waitFor(() => expect(fixture.workspaceProps.photos.hidden).toBe(true));
+  fixture.access.change_cursor = "hidden-change";
+  await waitFor(() => expect(fixture.cursors).toHaveBeenCalledWith("hidden-change"), {
+    timeout: 4000,
+  });
+});

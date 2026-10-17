@@ -19,7 +19,6 @@ const emptyBatch = (): PhotoEventBatch => ({
 
 // The server sends a keepalive every 15 seconds; silence past this means the connection died.
 export const photoEventIdleTimeout = 45_000;
-const photoEventPollInterval = 5_000;
 
 // SSE frames can cross any network chunk boundary, including CRLF pairs.
 export async function readPhotoEvents(
@@ -147,8 +146,10 @@ export function watchPhotoEvents(
   onfailure: (cause: unknown) => void,
   onconnected: () => void = () => {},
   onrefreshed: () => void = () => {},
+  pollCursor?: (receive: (cursor?: string) => void) => void,
 ): () => void {
-  const polling = typeof navigator.locks === "undefined";
+  const polling = typeof navigator.locks === "undefined" || typeof BroadcastChannel === "undefined";
+  let cursor: string | undefined;
   let stopped = false;
   let controller: AbortController | undefined;
   let retry: ReturnType<typeof setTimeout> | undefined;
@@ -167,7 +168,7 @@ export function watchPhotoEvents(
     try {
       await refresh(batch);
       refreshFailures = 0;
-      refreshAfter = Date.now() + (polling ? photoEventPollInterval : 1000);
+      refreshAfter = Date.now() + 1000;
       if (!stopped) onrefreshed();
     } catch (cause) {
       if (stopped) return;
@@ -180,7 +181,6 @@ export function watchPhotoEvents(
       }
     } finally {
       refreshing = false;
-      if (polling) pending.refetch = true;
       if (hasPending() && !stopped) schedule();
     }
   };
@@ -205,7 +205,6 @@ export function watchPhotoEvents(
     if (stopped || document.visibilityState !== "visible") return;
     if (polling) {
       onconnected();
-      schedule({ refetch: true });
       return;
     }
     const current = new AbortController();
@@ -252,6 +251,13 @@ export function watchPhotoEvents(
       if (hasPending()) schedule();
     }
   };
+  if (polling)
+    pollCursor?.((next) => {
+      if (next && next !== cursor) {
+        cursor = next;
+        schedule({ refetch: true });
+      }
+    });
   document.addEventListener("visibilitychange", visibility);
   void connect();
   const dispose = () => {

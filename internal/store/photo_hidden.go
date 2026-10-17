@@ -47,12 +47,13 @@ func WithPhotoHiddenToken(ctx context.Context, token string) context.Context {
 // PhotoHiddenState reports deadlines both as server timestamps and as whole
 // seconds remaining, so clients can count down without trusting their clock.
 type PhotoHiddenState struct {
-	ChangeID    string  `json:"change_id,omitzero"`
-	Configured  bool    `json:"configured"`
-	ExpiresAt   *string `json:"expires_at,omitzero"`
-	ExpiresIn   *int64  `json:"expires_in,omitzero"`
-	LockedUntil *string `json:"locked_until,omitzero"`
-	LockedFor   *int64  `json:"locked_for,omitzero"`
+	ChangeCursor string  `json:"change_cursor,omitzero"`
+	ChangeID     string  `json:"change_id,omitzero"`
+	Configured   bool    `json:"configured"`
+	ExpiresAt    *string `json:"expires_at,omitzero"`
+	ExpiresIn    *int64  `json:"expires_in,omitzero"`
+	LockedUntil  *string `json:"locked_until,omitzero"`
+	LockedFor    *int64  `json:"locked_for,omitzero"`
 }
 
 func hiddenSecondsUntil(now, deadline time.Time) *int64 {

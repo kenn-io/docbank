@@ -4,7 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"sync"
+	"time"
+
+	"github.com/google/uuid"
 )
 
 // PhotoEvent tells a viewer which committed resource to refetch.
@@ -17,6 +21,10 @@ type PhotoEvent struct {
 type photoEventFeed struct {
 	sync.Mutex
 
+	pollUntil       time.Time
+	cursorID        uuid.UUID
+	visibleCursor   uint64
+	hiddenCursor    uint64
 	captureDegraded bool
 	epoch           uint64
 	closed          bool
@@ -58,7 +66,34 @@ func (s *Store) photoCaptureState() (bool, uint64) {
 	f := &s.photoEvents
 	f.Lock()
 	defer f.Unlock()
-	return len(f.subscribers) > 0, f.epoch
+	return len(f.subscribers) > 0 || s.hiddenNow().Before(f.pollUntil), f.epoch
+}
+
+// PhotoChangeCursor renews capture interest for polling viewers. Resuming after
+// expiry changes both cursors because uncaptured writes may have occurred.
+func (s *Store) PhotoChangeCursor(ctx context.Context) (string, error) {
+	_, err := s.hiddenSession(ctx, s.db)
+	unlocked := err == nil
+	if err != nil && !errors.Is(err, ErrHiddenLocked) && !errors.Is(err, ErrHiddenNotConfigured) {
+		return "", err
+	}
+	f := &s.photoEvents
+	f.Lock()
+	defer f.Unlock()
+	if f.cursorID == uuid.Nil {
+		f.cursorID = uuid.New()
+	}
+	now := s.hiddenNow()
+	if !now.Before(f.pollUntil) {
+		f.epoch++
+		f.visibleCursor++
+		f.hiddenCursor++
+	}
+	f.pollUntil = now.Add(30 * time.Second)
+	if unlocked {
+		return fmt.Sprintf("%s:hidden:%d", f.cursorID, f.hiddenCursor), nil
+	}
+	return fmt.Sprintf("%s:visible:%d", f.cursorID, f.visibleCursor), nil
 }
 
 func (s *Store) hasActivePhotoHiddenSession() bool {
@@ -93,11 +128,26 @@ func (s *Store) closePhotoEvents() {
 }
 
 func (s *Store) publishPhotoChanges(events []PhotoEvent) {
+	if len(events) == 0 {
+		return
+	}
+	visible := false
+	for _, event := range events {
+		delivery, err := s.VisiblePhotoEvent(context.Background(), event)
+		if err != nil || delivery.Refetch || delivery.AssetID != "" {
+			visible = true
+			break
+		}
+	}
 	f := &s.photoEvents
 	f.Lock()
 	defer f.Unlock()
 	if f.closed {
 		return
+	}
+	f.hiddenCursor++
+	if visible {
+		f.visibleCursor++
 	}
 	for ch := range f.subscribers {
 		for _, event := range events {
@@ -146,9 +196,7 @@ func (s *Store) VisiblePhotoEvent(ctx context.Context, event PhotoEvent) (PhotoE
 				return PhotoEvent{}, err
 			}
 		}
-		if event.AssetID != "" {
-			event.Revision = revision
-		}
+		event.Revision = revision
 	}
 	if event.Refetch {
 		return PhotoEvent{Refetch: true}, nil

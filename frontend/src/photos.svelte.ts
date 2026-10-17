@@ -45,7 +45,6 @@ import {
 import { captureDateQuery, type CaptureDayFacet } from "./photoTimeline.js";
 import { PhotoAuthoredEditor, type PhotoUndoState } from "./photoAuthored.svelte.js";
 import type { HiddenAccess } from "./hiddenAccess.svelte.js";
-import type { PhotoEventBatch } from "./photoEvents.js";
 
 export const photoQuery = parseQuery(
   '{"syntax":"simple","sort":{"field":"capture_time","direction":"desc"}}',
@@ -763,9 +762,7 @@ export class Photos {
     this.rejectsLoading = false;
   }
 
-  async reconcileMetadata(changes: PhotoEventBatch) {
-    if (!this.authored.affectedBy(changes)) return;
-    this.authored.changedElsewhere(changes);
+  async reconcileMetadata() {
     await this.authored.reconcile(this.authoredScope(this.selectedIDs));
   }
 

@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"testing"
@@ -115,6 +116,39 @@ func TestPhotoEventsCaptureWrites(t *testing.T) {
 				require.NoError(t, e)
 				require.Equal(t, current.Revision, event.Revision)
 			}
+			noPhotoEvent(t, ch)
+		})
+	}
+}
+
+func TestPhotoEventsSharedSourceOverflow(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []string{"source", "generation"} {
+		t.Run(kind, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			run, err := s.BeginIngest(ctx, "cli", "Synthetic")
+			require.NoError(t, err)
+			for i := range 70 {
+				_, _, err := s.IngestFile(ctx, run, s.RootID(), fmt.Sprintf("photo-%d.jpg", i), fakeHash("11"), 4, "image/jpeg", "/synthetic/photo.jpg", "")
+				require.NoError(t, err)
+			}
+			metadata := document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: []document.SourceMetadataFieldV1{{Key: "image.exif.iso", Namespace: "image.exif", SourceField: "ISO", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataInteger, Integer: new(int64(200))}}}}
+			canonical, _, err := document.MarshalSourceMetadataV1(metadata)
+			require.NoError(t, err)
+			generation, err := s.PublishSourceMetadata(ctx, fakeHash("11"), fakeHash("f1"), canonical)
+			require.NoError(t, err)
+			ch, stop := s.SubscribePhotoEvents()
+			defer stop()
+			require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+				if kind == "generation" {
+					_, err := tx.ExecContext(ctx, `UPDATE photo_technical_metadata SET iso=400 WHERE generation_id=?`, generation.GenerationID)
+					return err
+				}
+				_, err := tx.ExecContext(ctx, `DELETE FROM source_metadata_heads WHERE source_sha256=?`, fakeHash("11"))
+				return err
+			}))
+			require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, ch))
 			noPhotoEvent(t, ch)
 		})
 	}

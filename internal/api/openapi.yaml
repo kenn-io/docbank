@@ -12613,6 +12613,8 @@ components:
           format: uri
           readOnly: true
           type: string
+        change_cursor:
+          type: string
         change_id:
           type: string
         configured:

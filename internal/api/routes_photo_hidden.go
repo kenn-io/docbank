@@ -71,6 +71,9 @@ func photoHiddenMiddleware(next http.Handler) http.Handler {
 func registerPhotoHiddenRoutes(api huma.API, d Deps, g *gate) {
 	huma.Register(api, huma.Operation{OperationID: "getPhotoHiddenState", Method: http.MethodGet, Path: "/api/v1/photos/hidden", Summary: "Read hidden photos configuration and current unlock expiry"}, func(ctx context.Context, _ *struct{}) (*photoHiddenOutput, error) {
 		state, err := d.Store.PhotoHiddenState(ctx)
+		if err == nil {
+			state.ChangeCursor, err = d.Store.PhotoChangeCursor(ctx)
+		}
 		return &photoHiddenOutput{Body: state}, hiddenError(err)
 	})
 	for _, action := range []string{"setup", "change", "disable", "unlock", "lock", "reset"} {

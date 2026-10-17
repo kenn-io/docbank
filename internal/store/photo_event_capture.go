@@ -16,7 +16,7 @@ func (s *Store) warnPhotoCapture(err error) {
 	}
 	f := &s.photoEvents
 	f.Lock()
-	warn := len(f.subscribers) > 0 && !f.captureDegraded
+	warn := (len(f.subscribers) > 0 || s.hiddenNow().Before(f.pollUntil)) && !f.captureDegraded
 	if warn {
 		f.captureDegraded = true
 	}
@@ -215,9 +215,10 @@ func (s *Store) readPhotoChanges(ctx context.Context, tx *sql.Tx, capture bool) 
 		"source":          `SELECT a.asset_id,a.revision FROM content_versions v JOIN nodes n ON n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.blob_hash IN (SELECT value FROM json_each(?))`,
 		"generation":      `SELECT a.asset_id,a.revision FROM source_metadata_generations g JOIN content_versions v ON v.blob_hash=g.source_sha256 JOIN nodes n ON n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE g.generation_id IN (SELECT value FROM json_each(?))`,
 	}
+	resolved := 0
 	for kind, values := range keys {
 		encoded, _ := json.Marshal(values)
-		rows, err := tx.QueryContext(ctx, selections[kind], string(encoded))
+		rows, err := tx.QueryContext(ctx, selections[kind]+" LIMIT ?", string(encoded), 65-resolved)
 		if err != nil {
 			s.warnPhotoCapture(err)
 			return fallback, hashes
@@ -227,6 +228,11 @@ func (s *Store) readPhotoChanges(ctx context.Context, tx *sql.Tx, capture bool) 
 			var event PhotoEvent
 			if err = rows.Scan(&event.AssetID, &event.Revision); err != nil {
 				break
+			}
+			resolved++
+			if resolved == 65 {
+				_ = rows.Close()
+				return fallback, hashes
 			}
 			if !seen[event.AssetID] {
 				seen[event.AssetID] = true
@@ -238,9 +244,6 @@ func (s *Store) readPhotoChanges(ctx context.Context, tx *sql.Tx, capture bool) 
 			s.warnPhotoCapture(err)
 			return fallback, hashes
 		}
-	}
-	if len(events) > 64 {
-		return fallback, hashes
 	}
 	return events, hashes
 }
