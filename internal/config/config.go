@@ -454,6 +454,9 @@ func loadTOML(root string) (Config, error) {
 	if undec := md.Undecoded(); len(undec) > 0 {
 		return Config{}, fmt.Errorf("loading %s: unknown key %q (typo?)", path, undec[0].String())
 	}
+	if key, ok := unsupportedEmbedderKey(md); ok {
+		return Config{}, fmt.Errorf("loading %s: %q is not supported by the pinned embedding adapter", path, key)
+	}
 	if err := resolveBackupRepo(root, &c.Backup); err != nil {
 		return Config{}, fmt.Errorf("loading %s: %w", path, err)
 	}
