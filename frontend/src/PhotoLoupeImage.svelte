@@ -55,7 +55,6 @@
       const pan = toPanView(view, geometry);
       zoom.setLimits({ minScale: Math.min(0.4, pan.scale), maxScale: Math.max(8, pan.scale) });
       zoom.setView(pan);
-      if (pan.scale > 1) onzoom();
     }
   });
   let origin: { x: number; y: number } | undefined;
@@ -141,7 +140,6 @@
     zoom = attachPanZoom(element, element.querySelector<HTMLElement>(".pan")!, {
       onChange: (value) => {
         if (geometry && onview) onview(fromPanView(value, geometry));
-        if (value.scale > 1) onzoom();
       },
       onSwipe: (direction) => {
         zoom?.reset();
