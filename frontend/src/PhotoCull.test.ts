@@ -1,4 +1,3 @@
-import userEvent from "@testing-library/user-event";
 import { beforeEach, afterEach, expect, it, vi } from "vite-plus/test";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
