@@ -1074,8 +1074,8 @@ restarts preserve the day's counts.
 Interactive CLI imports send `X-Docbank-Surface: cli` to attribute their additions.
 Import requests authenticated with an API key alone have no user attribution and stay silent.
 
-CLI actions require terminal input and exclude `search --agent`. Piping output
-still counts; scripts that inherit terminal input may count. Reporting has a 100 ms deadline and never changes command results.
+CLI actions require terminal input and output and exclude `search --agent`.
+Piped or redirected input or output stays silent. Reporting has a 100 ms deadline and never changes command results.
 
 Each event carries these fields:
 

@@ -15,7 +15,7 @@ func actionTerminal(t *testing.T) *os.File {
 	if allocated != 0 {
 		t.Cleanup(func() { _, _, _ = kernel.NewProc("FreeConsole").Call() })
 	}
-	console, err := os.OpenFile("CONIN$", os.O_RDWR, 0)
+	console, err := os.OpenFile("CONOUT$", os.O_RDWR, 0)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, console.Close()) })
 	return console

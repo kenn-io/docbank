@@ -27,6 +27,8 @@ func TestPhotoInspectReportsInteractiveSuccess(t *testing.T) {
 	asset, err := f.catalog.PhotoAssetForNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	rootCmd.SetIn(actionTerminal(t))
+	photoInspectCmd.SetOut(actionTerminal(t))
+	defer photoInspectCmd.SetOut(nil)
 	defer rootCmd.SetIn(nil)
 	out, err := runCLI(t, "photos", "assets", "inspect", asset.ID)
 	require.NoError(t, err, out)
@@ -69,7 +71,8 @@ func TestInteractiveActionGateAndEndpoint(t *testing.T) {
 			agent         bool
 			want          int
 		}{
-			{"terminal input with redirected output", terminal, redirected, false, 2},
+			{"terminal input and output", terminal, terminal, false, 2},
+			{"terminal input with redirected output", terminal, redirected, false, 0},
 			{"unattended input with terminal output", redirected, terminal, false, 0},
 			{"agent", terminal, terminal, true, 0},
 		} {
@@ -93,6 +96,7 @@ func TestInteractiveActionGateAndEndpoint(t *testing.T) {
 		}
 		cmd := &cobra.Command{}
 		cmd.SetIn(terminal)
+		cmd.SetOut(terminal)
 		cmd.SetContext(t.Context())
 		reportAction(cmd, connection, "search_run", "hybrid")
 		assert.True(t, <-timedOut, "action request must cancel before the server stall ends")
@@ -129,6 +133,7 @@ func TestDocumentSearchReportsSubmissionBeforeFailure(t *testing.T) {
 			cmd := &cobra.Command{}
 			cmd.SetContext(t.Context())
 			cmd.SetIn(actionTerminal(t))
+			cmd.SetOut(actionTerminal(t))
 			connection := daemonconn.New(server.URL, "synthetic")
 			options := documentSearchCLIOptions{Mode: mode, Profile: "synthetic", ContentVersionIDs: []string{processingTestVersionID}, Limit: 10, Intent: true}
 			var err error

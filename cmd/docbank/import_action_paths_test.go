@@ -83,12 +83,12 @@ func TestPushCommandReportsOnlyNewDocumentsOnce(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(name), 0o600))
 	}
 	for _, step := range []struct {
-		name, summary string
-		want          int
+		name string
+		want int
 	}{
-		{"new documents", "added 2, updated 0", 1},
-		{"skip only", "added 0, updated 0, unchanged 2", 0},
-		{"update only", "added 0, updated 1, unchanged 1", 0},
+		{"new documents", 1},
+		{"skip only", 0},
+		{"update only", 0},
 	} {
 		t.Run(step.name, func(t *testing.T) {
 			if step.name == "update only" {
@@ -97,11 +97,10 @@ func TestPushCommandReportsOnlyNewDocumentsOnce(t *testing.T) {
 			cmd := newPushCmd()
 			cmd.SetIn(actionTerminal(t))
 			var out bytes.Buffer
-			cmd.SetOut(&out)
+			cmd.SetOut(actionTerminal(t))
 			cmd.SetErr(&out)
 			cmd.SetArgs([]string{dir, "--to", f.server.URL, "--name", "synthetic-source", "--dest", "/archive"})
 			require.NoError(t, cmd.ExecuteContext(t.Context()), out.String())
-			assert.Contains(t, out.String(), step.summary)
 			assert.Len(t, f.requests, step.want)
 			for len(f.requests) > 0 {
 				assert.Equal(t, api.TelemetryEventRequest{Event: "document_added", Properties: &api.TelemetryEventProperties{Surface: "cli"}}, <-f.requests)
