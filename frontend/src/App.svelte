@@ -460,10 +460,9 @@
     photoConcealed = true;
     photoAccessVersion++;
     albumPhotos?.cancelPending();
-    photoState?.photos.authored.conceal();
-    albumPhotos?.authored.conceal();
+    albumPhotos?.concealMetadata();
     mapPhotos?.cancelPending();
-    mapPhotos?.authored.conceal();
+    mapPhotos?.concealMetadata();
     return concealPhotoWorkspace(photoState);
   }
   // Album views share Library's preview cache, so revalidation refreshes whichever list is open.

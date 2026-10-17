@@ -18,6 +18,7 @@ export class PhotoFaces {
   people = $state.raw<PhotoFacePerson[]>([]);
   version = $state("");
   loading = $state(false);
+  concealed = $state(true);
   busy = $state(false);
   error = $state("");
   pending = $state.raw<{ version: string; box: FaceBox; face_id: string }>();
@@ -59,6 +60,19 @@ export class PhotoFaces {
   personActive(id: string) {
     return this.people.some((person) => person.person_id === id && person.state !== "retired");
   }
+  conceal() {
+    this.controller?.abort();
+    this.concealed = true;
+    this.loading = false;
+    this.faces = [];
+    this.assertions = [];
+    this.people = [];
+  }
+  private reloading() {
+    if (!this.loading && !this.concealed) return false;
+    this.error = "People are reloading; try again.";
+    return true;
+  }
   async load(version: string) {
     if (this.disposed) return;
     this.controller?.abort();
@@ -70,6 +84,7 @@ export class PhotoFaces {
     }
     const controller = (this.controller = new AbortController());
     this.version = version;
+    this.concealed = !version;
     if (changed || !version) {
       this.faces = [];
       this.assertions = [];
@@ -105,7 +120,7 @@ export class PhotoFaces {
       this.onauthfailure(cause);
   }
   private async write(action: (version: string, signal: AbortSignal) => Promise<unknown>) {
-    if (this.disposed || this.loading || this.busy || !this.version) return false;
+    if (this.disposed || this.reloading() || this.busy || !this.version) return false;
     const version = this.version,
       controller = (this.writer = new AbortController());
     this.busy = true;
@@ -114,11 +129,11 @@ export class PhotoFaces {
       await this.request(() => action(version, controller.signal));
       if (controller.signal.aborted) return false;
       this.ondecision();
-      if (this.version === version) await this.load(version);
+      if (this.version === version && !this.concealed) await this.load(version);
       return true;
     } catch (cause) {
       if (!controller.signal.aborted) {
-        await this.load(version);
+        if (this.version === version && !this.concealed) await this.load(version);
         this.failed(cause);
         this.ondecision(this.error, !(cause instanceof APIError) || cause.status >= 500);
       }
@@ -151,13 +166,20 @@ export class PhotoFaces {
     return this.decide({ action: "retract", assertion_id, revision });
   }
   async add(box: FaceBox) {
-    if (this.disposed || this.pending || this.loading || this.busy || !this.version) return false;
+    if (this.disposed || this.reloading() || this.pending || this.busy || !this.version)
+      return false;
     this.pending = { version: this.version, box: { ...box }, face_id: randomUUID() };
     return this.retryAdd();
   }
   async retryAdd() {
     const pending = this.pending;
-    if (this.disposed || !pending || this.loading || this.busy || pending.version !== this.version)
+    if (
+      this.disposed ||
+      this.reloading() ||
+      !pending ||
+      this.busy ||
+      pending.version !== this.version
+    )
       return false;
     const controller = (this.writer = new AbortController());
     this.busy = true;
@@ -173,13 +195,13 @@ export class PhotoFaces {
       if (controller.signal.aborted) return false;
       this.pending = undefined;
       if (this.disposed) return true;
-      await this.load(pending.version);
+      if (this.version === pending.version && !this.concealed) await this.load(pending.version);
       return !controller.signal.aborted;
     } catch (cause) {
       if (controller.signal.aborted || this.disposed) return false;
       if (cause instanceof APIError && cause.status >= 400 && cause.status < 500)
         this.pending = undefined;
-      await this.load(pending.version);
+      if (this.version === pending.version && !this.concealed) await this.load(pending.version);
       if (controller.signal.aborted) return false;
       if (!this.pending && this.faces.some((face) => face.face_id === pending.face_id)) return true;
       this.failed(cause);

@@ -3327,6 +3327,53 @@ it("clears loaded faces before failed Map navigation", async () => {
   expect(read).toHaveBeenCalledOnce();
 });
 
+it.each([false, true])(
+  "revalidates same-version People after refresh, readable=%s",
+  async (readable) => {
+    const { component, props, photos, read } = await facesWorkspaceSetup();
+    await fireEvent.click(screen.getByRole("button", { name: "Open Photo 1.jpg" }));
+    await component.rerender({ ...props, photoID: "photo-1" });
+    await fireEvent.click(
+      within(await screen.findByRole("dialog", { name: /^Photo viewer,/ })).getByRole("button", {
+        name: "Metadata",
+      }),
+    );
+    read.mockResolvedValue(
+      photoFacePage({
+        people: [{ person_id: "person-a", display_name: "Grace", state: "curated" }],
+      }),
+    );
+    let finish!: (page: Response) => void;
+    stubPhotoFetch(
+      () =>
+        new Promise<Response>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    vi.spyOn(photos, "lookup").mockImplementation(async () => {
+      if (!readable) throw new Error("Photo unavailable");
+      return photo(1);
+    });
+    let refreshing!: Promise<boolean>;
+    await act(() => {
+      refreshing = photos.refresh();
+    });
+    expect(screen.queryByRole("button", { name: "Find or create a person: Ada" })).toBeNull();
+    await act(async () => {
+      finish(Response.json({ items: readable ? [photo(1)] : [], total: readable ? 1 : 0 }));
+      await refreshing;
+    });
+    if (readable)
+      await within(screen.getByRole("dialog", { name: /^Photo viewer,/ })).findByRole("button", {
+        name: "Find or create a person: Grace",
+      });
+    else {
+      await waitFor(() => expect(photos.lookup).toHaveBeenCalled());
+      expect(screen.queryByRole("region", { name: "People" })).toBeNull();
+    }
+  },
+);
+
 it("reports an uncertain clear after remount", async () => {
   vi.stubGlobal(
     "ResizeObserver",

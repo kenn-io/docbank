@@ -1196,6 +1196,11 @@ export class Photos {
     this.authFailure(cause);
   }
 
+  concealMetadata() {
+    this.authored.conceal();
+    this.faceEditor.conceal();
+  }
+
   private async replace(
     mode: "refresh" | "expiry" | "date",
     preserve?: () => (() => Promise<void>) | undefined,
@@ -1203,7 +1208,7 @@ export class Photos {
     resume = false,
   ) {
     if (this.disposed) return false;
-    this.authored.conceal();
+    this.concealMetadata();
     this.controller.abort();
     this.controller = new AbortController();
     this.facetsController.abort();

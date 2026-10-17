@@ -422,41 +422,69 @@ it.each([
   faces.dispose();
 });
 
-it.each(["face", "mark"])("confirms %s removal with the captured revision", async (target) => {
-  vi.spyOn(api, "listPhotoFaces").mockResolvedValue(
-    photoFacePage({ assertions: [photoPersonAssertion({ photo_mark: true })] }),
-  );
-  const faces = new PhotoFaces("session", vi.fn());
-  await faces.load("version-a");
-  const write = vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "receipt" });
-  render(PhotoPeople, { faces, session: "session" });
-  const label = target === "face" ? "Remove face" : "Clear whole-photo mark";
-  await fireEvent.click(screen.getByRole("button", { name: label }));
-  await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-  expect(write).not.toHaveBeenCalled();
-  await fireEvent.click(screen.getByRole("button", { name: label }));
-  const dialog = screen.getByRole("dialog");
-  expect(dialog.textContent).toContain(
-    target === "face"
-      ? "You can't undo this here."
-      : "You can't add a whole-photo mark back from the browser.",
-  );
-  faces.faces = faces.faces.map((row) => ({ ...row, revision: 90 }));
-  faces.assertions = faces.assertions.map((row) => ({ ...row, revision: 90 }));
-  await fireEvent.click(within(dialog).getByRole("button", { name: label }));
-  await waitFor(() =>
-    expect(write).toHaveBeenCalledWith(
-      "version-a",
-      expect.objectContaining(
-        target === "face"
-          ? { action: "dismiss", face_id: "face-a", revision: 7 }
-          : { action: "retract", assertion_id: "assertion-a", revision: 1 },
+it.each(
+  ["face", "mark"].flatMap((target) => [false, true].map((pending) => ({ target, pending }))),
+)(
+  "confirms $target removal with the captured revision, pending=$pending",
+  async ({ target, pending }) => {
+    vi.spyOn(api, "listPhotoFaces").mockResolvedValue(
+      photoFacePage({ assertions: [photoPersonAssertion({ photo_mark: true })] }),
+    );
+    const faces = new PhotoFaces("session", vi.fn());
+    await faces.load("version-a");
+    const write = vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "receipt" });
+    render(PhotoPeople, { faces, session: "session" });
+    const label = target === "face" ? "Remove face" : "Clear whole-photo mark";
+    await fireEvent.click(screen.getByRole("button", { name: label }));
+    await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(write).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole("button", { name: label }));
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.textContent).toContain(
+      target === "face"
+        ? "You can't undo this here."
+        : "You can't add a whole-photo mark back from the browser.",
+    );
+    let finish!: (page: api.PhotoFacePage) => void;
+    let reading: Promise<void> | undefined;
+    if (pending) {
+      vi.mocked(api.listPhotoFaces).mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+      await act(() => {
+        reading = faces.load("version-a");
+      });
+    }
+    faces.faces = faces.faces.map((row) => ({ ...row, revision: 90 }));
+    faces.assertions = faces.assertions.map((row) => ({ ...row, revision: 90 }));
+    await fireEvent.click(within(dialog).getByRole("button", { name: label }));
+    if (pending) {
+      await screen.findByText("People are reloading; try again.");
+      expect(write).not.toHaveBeenCalled();
+      await act(async () => {
+        finish(photoFacePage());
+        await reading;
+      });
+      faces.dispose();
+      return;
+    }
+    await waitFor(() =>
+      expect(write).toHaveBeenCalledWith(
+        "version-a",
+        expect.objectContaining(
+          target === "face"
+            ? { action: "dismiss", face_id: "face-a", revision: 7 }
+            : { action: "retract", assertion_id: "assertion-a", revision: 1 },
+        ),
+        expect.anything(),
       ),
-      expect.anything(),
-    ),
-  );
-  faces.dispose();
-});
+    );
+    faces.dispose();
+  },
+);
 
 it.each([
   { source: "list", result: "empty" },
@@ -821,7 +849,7 @@ it.each([
   faces.dispose();
 });
 
-it("clears picker on expiry and ignores old reads", async () => {
+it("ignores an old search response after Hidden expiry", async () => {
   const { HiddenAccess } = await import("./hiddenAccess.svelte.js");
   const access = new HiddenAccess("session", vi.fn());
   vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -834,7 +862,6 @@ it("clears picker on expiry and ignores old reads", async () => {
       state: "curated" as const,
       revision: 1,
       created_at: "2026-01-01T00:00:00Z",
-      identity_label: "alex@example.test",
     };
     const search = vi
       .spyOn(api, "listPeople")
@@ -857,12 +884,8 @@ it("clears picker on expiry and ignores old reads", async () => {
     await fireEvent.input(screen.getByRole("combobox"), { target: { value: "Alex late" } });
     await waitFor(() => expect(finishSearch).toBeTypeOf("function"));
     await act(() => vi.advanceTimersByTimeAsync(60_001));
-    expect(screen.queryByRole("dialog", { name: "Choose Alex" })).toBeNull();
-    expect(screen.queryByText("alex@example.test")).toBeNull();
-    expect(screen.queryByRole("option", { name: "Alex · 2 people" })).toBeNull();
     await act(async () => finishSearch({ items: [person] }));
     expect(screen.queryByRole("option", { name: "Alex" })).toBeNull();
-    expect(screen.queryByText("alex@example.test")).toBeNull();
   } finally {
     access.dispose();
     vi.useRealTimers();

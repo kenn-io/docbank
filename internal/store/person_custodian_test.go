@@ -367,7 +367,7 @@ func TestPeopleByDisplayNameRequiresPublishedEvidence(t *testing.T) {
 	unlocked := WithPhotoHiddenToken(ctx, token)
 	visible := browsePhotoNode(t, s, "visible.jpg", fakeHash("search-visible"), "image/jpeg")
 	var hiddenOnlyID string
-	var hiddenFallbackIDs, visibleIDs []string
+	var visibleIDs []string
 	for _, action := range []string{"assert", "suppress", "withdrawn"} {
 		for _, version := range []string{hidden.CurrentVersionID, visible.CurrentVersionID} {
 			prefix := "Alex Z"
@@ -381,8 +381,6 @@ func TestPeopleByDisplayNameRequiresPublishedEvidence(t *testing.T) {
 			if version == hidden.CurrentVersionID {
 				if action == "assert" {
 					hiddenOnlyID = p.PersonID
-				} else {
-					hiddenFallbackIDs = append(hiddenFallbackIDs, p.PersonID)
 				}
 			} else {
 				visibleIDs = append(visibleIDs, p.PersonID)
@@ -390,7 +388,7 @@ func TestPeopleByDisplayNameRequiresPublishedEvidence(t *testing.T) {
 		}
 	}
 	afterName, afterID := "", ""
-	for _, id := range append(hiddenFallbackIDs, visibleIDs...) {
+	for _, id := range visibleIDs {
 		page, err := s.PeopleByDisplayName(ctx, "Alex", afterName, afterID, 1, true)
 		require.NoError(t, err)
 		require.Len(t, page, 1)

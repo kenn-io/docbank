@@ -225,10 +225,10 @@ var peopleByDisplayNameSQL = `SELECT person_id,display_name,display_name_folded,
 			AND dp.sensitive=0 AND (?=0 OR ` + personVersionVisibleSQL("dp.content_version_id") + `)))
 		ORDER BY CASE i.kind WHEN 'email' THEN 0 WHEN 'phone' THEN 1 ELSE 2 END,i.value_normalized,i.identity_id LIMIT 1),'')
 	FROM persons WHERE state<>'retired' AND docbank_person_name_has_word_prefix_v1(display_name_folded, ?)
-	AND (?=0 OR (origin='operator' AND NOT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=persons.person_id AND (a.action='assert' OR a.role<>'depicted'))
+	AND (?=0 OR (origin='operator' AND NOT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=persons.person_id)
 		AND NOT EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=persons.person_id)) OR EXISTS(
 		SELECT 1 FROM person_document_assertions a WHERE a.person_id=persons.person_id
-		AND a.role='depicted' AND a.action='assert' AND (?=0 OR ` + personVersionVisibleSQL("a.content_version_id") + `)) OR EXISTS(
+		AND a.role='depicted' AND (?=0 OR ` + personVersionVisibleSQL("a.content_version_id") + `)) OR EXISTS(
 		SELECT 1 FROM document_people p WHERE p.person_id=persons.person_id
 		AND p.sensitive=0 AND (?=0 OR ` + personVersionVisibleSQL("p.content_version_id") + `)))
 	AND (?='' OR display_name_folded>? OR (display_name_folded=? AND person_id>?))

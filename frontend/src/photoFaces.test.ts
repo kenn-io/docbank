@@ -202,3 +202,73 @@ it("numbers visible faces by creation time and ID, closing gaps after dismissal"
   expect(faces.label(added)).toBe("Face 2");
   faces.dispose();
 });
+
+it.each(
+  ["name", "clear", "remove", "mark", "draw", "retry"].flatMap((action) =>
+    [false, true].map((concealed) => ({ action, concealed })),
+  ),
+)("reports refused $action while concealed=$concealed", async ({ action, concealed }) => {
+  vi.spyOn(api, "listPhotoFaces").mockResolvedValue(photoFacePage());
+  const write = vi.spyOn(api, "decidePhotoFace");
+  const create = vi.spyOn(api, "createPhotoFace").mockRejectedValue(new Error("Unavailable"));
+  const faces = new PhotoFaces("session", vi.fn());
+  await faces.load("version-a");
+  if (action === "retry") await faces.add(face.box);
+  create.mockClear();
+  let finish!: (page: api.PhotoFacePage) => void;
+  vi.mocked(api.listPhotoFaces).mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const reading = concealed ? (faces.conceal(), Promise.resolve()) : faces.load("version-a");
+  const result =
+    action === "name"
+      ? faces.name(face, "person-a")
+      : action === "clear"
+        ? faces.clear(face)
+        : action === "remove"
+          ? faces.remove(face)
+          : action === "mark"
+            ? faces.clearMark(photoFacePage().assertions[0]!)
+            : action === "draw"
+              ? faces.add(face.box)
+              : faces.retryAdd();
+  expect(await result).toBe(false);
+  expect(faces.error).toBe("People are reloading; try again.");
+  expect(write).not.toHaveBeenCalled();
+  expect(create).not.toHaveBeenCalled();
+  if (!concealed) finish(photoFacePage());
+  await reading;
+  faces.dispose();
+});
+
+it("reports a held mutation across concealment and reconciles on an authorized read", async () => {
+  const read = vi.spyOn(api, "listPhotoFaces").mockResolvedValue(photoFacePage());
+  let finish!: () => void;
+  vi.spyOn(api, "decidePhotoFace").mockImplementation(async () => {
+    await new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    return { receipt_id: "receipt" };
+  });
+  const notice = vi.fn();
+  const faces = new PhotoFaces("session", vi.fn(), false, notice);
+  await faces.load("version-a");
+  const saving = faces.clear(face);
+  faces.conceal();
+  expect(faces.faces).toEqual([]);
+  expect(faces.people).toEqual([]);
+  expect(faces.assertions).toEqual([]);
+  finish();
+  expect(await saving).toBe(true);
+  expect(notice).toHaveBeenCalledOnce();
+  expect(read).toHaveBeenCalledTimes(1);
+  expect(faces.faces).toEqual([]);
+  expect(await faces.remove(face)).toBe(false);
+  expect(faces.error).toBe("People are reloading; try again.");
+  await faces.load("version-a");
+  expect(faces.faces).toEqual(photoFacePage().faces);
+  faces.dispose();
+});

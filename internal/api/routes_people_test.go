@@ -10,7 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
@@ -445,4 +447,74 @@ func TestPeoplePageContinuesFoldedName(t *testing.T) {
 		require.NotEmpty(t, page.NextCursor)
 		require.Equal(t, limit == "1", page.SameNameContinues)
 	}
+}
+
+func TestBrowserPeopleRetainsClearedPhotoEvidence(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	ctx := t.Context()
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	response, body := do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
+	require.Equal(t, http.StatusCreated, response.StatusCode, body)
+	var issued struct {
+		Token string `json:"token"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &issued))
+	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issued.Token}
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/hidden/unlock", headers, map[string]string{"passcode": "synthetic-passcode"})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	headers["Cookie"] = response.Cookies()[0].String()
+	var secretID string
+	for _, hidden := range []bool{true, false} {
+		name := "Secret Visible"
+		if hidden {
+			name = "Secret Hidden"
+		}
+		hash, size, err := s.Blobs.Write(strings.NewReader(name))
+		require.NoError(t, err)
+		node, err := s.CreateFile(ctx, s.RootID(), name+".jpg", hash, size, "image/jpeg")
+		require.NoError(t, err)
+		if hidden {
+			asset, err := s.PhotoAssetForNode(ctx, node.ID)
+			require.NoError(t, err)
+			_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+			require.NoError(t, err)
+		}
+		path := "/api/v1/photos/versions/" + node.CurrentVersionID
+		faceID := uuid.NewString()
+		response, body = do(t, ts, http.MethodPost, path+"/faces", headers, api.CreatePhotoFaceRequest{FaceID: faceID, Box: &document.FaceBox{Width: .2, Height: .2}})
+		require.Equal(t, http.StatusCreated, response.StatusCode, body)
+		response, body = do(t, ts, http.MethodPost, path+"/face-decisions", headers, api.PhotoFaceDecisionRequest{Action: "name", FaceID: faceID, PersonName: name, Revision: 1, OperationID: uuid.NewString()})
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		response, body = get(t, ts, "/api/v1/people?query=Secret", headers)
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		var page api.PersonPage
+		require.NoError(t, json.Unmarshal([]byte(body), &page))
+		if hidden {
+			require.Len(t, page.Items, 1)
+			secretID = page.Items[0].PersonID
+		}
+		response, body = do(t, ts, http.MethodPost, path+"/face-decisions", headers, api.PhotoFaceDecisionRequest{Action: "retract", FaceID: faceID, Revision: 2})
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+	}
+	_, err := s.CreatePerson(ctx, "Secret Standalone", "operator")
+	require.NoError(t, err)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/hidden/lock", headers, map[string]string{})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	response, body = get(t, ts, "/api/v1/people?query=Secret", headers)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var locked api.PersonPage
+	require.NoError(t, json.Unmarshal([]byte(body), &locked))
+	require.Len(t, locked.Items, 2)
+	require.Equal(t, "Secret Standalone", locked.Items[0].DisplayName)
+	require.Equal(t, "Secret Visible", locked.Items[1].DisplayName)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/hidden/unlock", headers, map[string]string{"passcode": "synthetic-passcode"})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	headers["Cookie"] = response.Cookies()[0].String()
+	response, body = get(t, ts, "/api/v1/people?query=Secret", headers)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var unlocked api.PersonPage
+	require.NoError(t, json.Unmarshal([]byte(body), &unlocked))
+	require.Len(t, unlocked.Items, 3)
+	require.Equal(t, secretID, unlocked.Items[0].PersonID)
 }

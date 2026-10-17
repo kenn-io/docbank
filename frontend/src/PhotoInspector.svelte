@@ -195,7 +195,7 @@
       disabled={editor.busy || editor.loading}
       onclick={() => editor.clearDraft()}>Clear edits</Button
     >{/if}
-  {#if count === 1 && faces?.version}<PhotoPeople
+  {#if count === 1 && faces?.version && !faces.concealed}<PhotoPeople
       {faces}
       {session}
       {onperson}

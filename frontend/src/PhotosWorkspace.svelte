@@ -210,17 +210,27 @@
       (editing && !photos.allResults && photos.selectedIDs.size === 1
         ? [...photos.selectedIDs][0]
         : undefined);
-    const row = photoID ? (current ?? listedRow) : photos.items.find((row) => row.asset_id === id);
+    const validating =
+      photos.loading || photos.error || (photoID && (detailLoading || detailError));
+    const row = photoID ? current : photos.items.find((row) => row.asset_id === id);
+    const concealed = untrack(() => inspectorFaces.concealed);
+    void reloadRevision;
     const controller = new AbortController();
     untrack(() => {
       const target = (row: PhotoBrowseRow | undefined) => {
         const version = row?.kind === "photo" ? row.content_version_id : "";
-        if (version !== inspectorFaces.version) void inspectorFaces.load(version);
+        if (version !== inspectorFaces.version || (version && concealed))
+          void inspectorFaces.load(version);
       };
+      if (validating) {
+        inspectorFaces.conceal();
+        return;
+      }
       if (!id && inspectorFaces.busy) return;
       if (id !== photos.faceAssetID) target(undefined);
       if (row && row.asset_id === id && "content_version_id" in row) target(row);
       else {
+        inspectorFaces.conceal();
         if (id && !photoID)
           void photos
             .lookup(id, controller.signal)
@@ -437,6 +447,11 @@
       if (fromGrid) void restoreGrid();
       return;
     }
+    if (photos.staged && photos.loading) {
+      direct = undefined;
+      detailLoading = true;
+      return;
+    }
     const controller = new AbortController();
     detailController = controller;
     const explicit =
@@ -462,6 +477,7 @@
       detailLoading = false;
       return () => controller.abort();
     }
+    inspectorFaces.conceal();
     detailLoading = true;
     const request = reload;
     const version = untrack(() => current?.content_version_id);
