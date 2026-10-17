@@ -97,7 +97,7 @@ func TestPhotoEventsSSEWireShape(t *testing.T) {
 	require.IsType(t, float64(0), fields["revision"])
 }
 
-func TestPhotoEventsCookieReachesHiddenFilter(t *testing.T) {
+func TestPhotoEventsLockedStreamOmitsHiddenChanges(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	ctx := t.Context()
@@ -108,13 +108,24 @@ func TestPhotoEventsCookieReachesHiddenFilter(t *testing.T) {
 	require.NoError(t, err)
 	asset, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
+	publicNode, err := s.CreateFile(ctx, s.RootID(), "public.jpg", testHash("public"), 4, "image/jpeg")
+	require.NoError(t, err)
+	publicAsset, err := s.PhotoAssetForNode(ctx, publicNode.ID)
+	require.NoError(t, err)
+	lockedResponse, lockedScanner := openPhotoEventStream(t, ts, "", nil)
+	require.True(t, readPhotoChange(t, lockedScanner, lockedResponse.Body).Refetch)
 	unlocked, body := do(t, ts, http.MethodPost, "/api/v1/photos/hidden/unlock", nil, map[string]string{"passcode": "synthetic-passcode"})
 	require.Equal(t, http.StatusOK, unlocked.StatusCode, body)
 	response, scanner := openPhotoEventStream(t, ts, "", unlocked.Cookies())
-	_ = readPhotoChange(t, scanner, response.Body)
+	require.True(t, readPhotoChange(t, scanner, response.Body).Refetch)
 	_, _, err = s.Move(ctx, node.ID, s.RootID(), "hidden-renamed.jpg", node.Revision)
 	require.NoError(t, err)
+	// The public change is a barrier: a leaked empty Hidden frame arrives before it.
+	_, _, err = s.Move(ctx, publicNode.ID, s.RootID(), "public-renamed.jpg", publicNode.Revision)
+	require.NoError(t, err)
 	require.Equal(t, asset.ID, readPhotoChange(t, scanner, response.Body).AssetID)
+	require.Equal(t, publicAsset.ID, readPhotoChange(t, scanner, response.Body).AssetID)
+	require.Equal(t, publicAsset.ID, readPhotoChange(t, lockedScanner, lockedResponse.Body).AssetID)
 }
 
 func TestPhotoEventsStreamEndsOnShutdownOrSessionRevocation(t *testing.T) {
