@@ -579,8 +579,9 @@ func (e *pdfiumEngine) withInstanceContext(ctx context.Context, fn func(context.
 	}
 	defer stop()
 	// Keep a monitor's cause even when WASM initialization or lease acquisition exits early.
+	var completed bool
 	defer func() {
-		if cause := context.Cause(ctx); cause != nil {
+		if cause := context.Cause(ctx); !completed && cause != nil {
 			resultErr = errors.Join(fmt.Errorf("PDF worker interrupted: %w", cause), resultErr)
 		}
 	}()
@@ -633,7 +634,13 @@ func (e *pdfiumEngine) withInstanceContext(ctx context.Context, fn func(context.
 		return fmt.Errorf("instantiate PDFium: %w", err)
 	}
 	defer instance.Close() //nolint:errcheck // Pool closes the runtime even after a WASM trap.
-	return fn(ctx, instance)
+	resultErr = fn(ctx, instance)
+	// Teardown must not turn completed work into a new resource refusal.
+	if cause := context.Cause(ctx); cause != nil {
+		resultErr = errors.Join(fmt.Errorf("PDF worker interrupted: %w", cause), resultErr)
+	}
+	completed = true
+	return resultErr
 }
 
 func (e *pdfiumEngine) Render(ctx context.Context, source Source, page redaction.Page, recipe redaction.Recipe) (result Raster, resultErr error) {

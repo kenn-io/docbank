@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -47,25 +46,27 @@ func TestRedactionPreparationClientBindings(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal(encoded, &expected))
 	for _, test := range []struct {
-		name   string
-		change func(*processing.RedactionPreparation)
+		name      string
+		change    func(*processing.RedactionPreparation)
+		oversized bool
 	}{
-		{"valid", nil},
-		{"selection", func(r *processing.RedactionPreparation) { r.Selection.NodeID++ }},
-		{"frame", func(r *processing.RedactionPreparation) {
+		{name: "valid"},
+		{name: "oversized", oversized: true},
+		{name: "selection", change: func(r *processing.RedactionPreparation) { r.Selection.NodeID++ }},
+		{name: "frame", change: func(r *processing.RedactionPreparation) {
 			frame, err := document.NewPDFPageFrame(r.Evidence.Source, 1, [4]float64{0, 0, 612, 792}, [4]float64{0, 0, 612, 792}, 180)
 			require.NoError(t, err)
 			r.Frames[0] = frame
 			_, _, err = document.MarshalPageFrameV1(r.Frames[0])
 			require.NoError(t, err)
 		}},
-		{"evidence", func(r *processing.RedactionPreparation) {
+		{name: "evidence", change: func(r *processing.RedactionPreparation) {
 			r.Evidence.Pages[0].Glyphs[0].Text = "X"
 			encodedEvidence, err := canonical.Marshal(r.Evidence)
 			require.NoError(t, err)
 			r.EvidenceSHA256 = fmt.Sprintf("%x", sha256.Sum256(encodedEvidence))
 		}},
-		{"map", func(r *processing.RedactionPreparation) { r.Map.SHA256 = strings.Repeat("0", 64) }},
+		{name: "map", change: func(r *processing.RedactionPreparation) { r.Map.SHA256 = strings.Repeat("0", 64) }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var result processing.RedactionPreparation
@@ -82,12 +83,15 @@ func TestRedactionPreparationClientBindings(t *testing.T) {
 
 					Schema string `json:"$schema"`
 				}{result, "synthetic"}))
+				if test.oversized {
+					_, _ = io.WriteString(w, strings.Repeat(" ", 16<<20))
+				}
 			}))
 			defer server.Close()
 			client := New(server.URL, "synthetic-key")
 			defer func() { require.NoError(t, client.Close()) }()
 			got, err := client.PrepareNativePDF(t.Context(), request)
-			if test.change == nil {
+			if test.change == nil && !test.oversized {
 				require.NoError(t, err)
 				require.Equal(t, expected, got)
 			} else {
@@ -99,27 +103,15 @@ func TestRedactionPreparationClientBindings(t *testing.T) {
 }
 
 func TestRedactionPreparationClientTransport(t *testing.T) {
-	for _, oversized := range []bool{false, true} {
-		t.Run(strconv.FormatBool(oversized), func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				if oversized {
-					_, _ = io.WriteString(w, strings.Repeat(" ", (16<<20)+1))
-					return
-				}
-				w.Header().Set("Content-Length", "500")
-				_, _ = io.WriteString(w, `{"contract":`)
-			}))
-			defer server.Close()
-			client := New(server.URL, "synthetic-key")
-			defer func() { require.NoError(t, client.Close()) }()
-			_, err := client.PrepareNativePDF(t.Context(), preparationRequest())
-			if oversized {
-				require.ErrorIs(t, err, ErrIntegrity)
-			} else {
-				require.ErrorIs(t, err, io.ErrUnexpectedEOF)
-				require.NotErrorIs(t, err, ErrIntegrity)
-			}
-		})
-	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", "500")
+		_, _ = io.WriteString(w, `{"contract":`)
+	}))
+	defer server.Close()
+	client := New(server.URL, "synthetic-key")
+	defer func() { require.NoError(t, client.Close()) }()
+	_, err := client.PrepareNativePDF(t.Context(), preparationRequest())
+	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+	require.NotErrorIs(t, err, ErrIntegrity)
 }

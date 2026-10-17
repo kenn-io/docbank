@@ -69,7 +69,7 @@ func selectPreparationSource(ctx context.Context, connection *daemonconn.Connect
 		return store.PageBinding{}, err
 	}
 	if node.Kind == "dir" {
-		return store.PageBinding{}, store.ErrNotFound
+		return store.PageBinding{}, fmt.Errorf("%q is a directory: %w", selector.raw, store.ErrNotFound)
 	}
 	source := document.PageSource{VersionID: node.CurrentVersionID, SHA256: node.BlobHash, Size: node.Size}
 	if versionID != "" {
@@ -79,7 +79,8 @@ func selectPreparationSource(ctx context.Context, connection *daemonconn.Connect
 			return store.PageBinding{}, err
 		}
 		if version.NodeID != node.ID {
-			return store.PageBinding{}, store.ErrNotFound
+			return store.PageBinding{}, fmt.Errorf("version %q does not belong to %q: %w",
+				versionID, selector.raw, store.ErrNotFound)
 		}
 		source = document.PageSource{VersionID: version.ID, SHA256: version.BlobHash, Size: version.Size}
 	}
@@ -134,7 +135,8 @@ func writeRedactionPreparation(output io.Writer, result processing.RedactionPrep
 			return fmt.Errorf("writing native PDF preparation: %w", err)
 		}
 	}
-	_, err := fmt.Fprintln(output, "Coverage gaps must be masked before resolution; zero gaps do not approve redaction.")
+	_, err := fmt.Fprintln(output, "Ordered gaps need covering masks; unordered gaps need whole-page masks.\n"+
+		"Zero gaps do not approve redaction.")
 	if err != nil {
 		return fmt.Errorf("writing native PDF preparation: %w", err)
 	}
