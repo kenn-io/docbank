@@ -16,7 +16,8 @@ func TestVersionPruneBlobStatsBatchesCandidateHashes(t *testing.T) {
 	s := newTestStore(t)
 	tx, err := s.db.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = tx.Rollback() })
+	// Finish before t.Context cancellation can start an asynchronous rollback.
+	defer func() { require.NoError(t, tx.Rollback()) }()
 	hashes := make([]string, 501)
 	for index := range hashes {
 		hashes[index] = fmt.Sprintf("%064x", index+1)

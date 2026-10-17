@@ -83,10 +83,9 @@ Instructions for autonomous coding agents working in this repository.
 
 ## Repository layout
 
-- Keep the root for the public `go.kenn.io/docbank` package, its tests, project
-  entry points, legal files, and configuration that tools discover there.
-  Moving the public package changes its import path; tidying files alone does
-  not justify that API change.
+- Keep the root for project entry points, legal files, module metadata, and
+  configuration that tools discover there. Put Go code in package directories,
+  never at the root; the public embedded API is `go.kenn.io/docbank/docbank`.
 - Put contributor guidance in `docs/internal/`, public guides in `docs/`,
   development tooling in `scripts/`, and service deployments in `deploy/`.
   Keep component-specific inputs beside their owner: the daemon API schema
