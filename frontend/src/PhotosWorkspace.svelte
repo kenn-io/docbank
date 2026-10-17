@@ -434,7 +434,8 @@
       detailLoading = false;
       return () => controller.abort();
     }
-    detailLoading = true;
+    // A Map revalidation of a photo already on screen leaves the viewed version usable.
+    detailLoading = !(photos.projection && !explicit && untrack(() => direct?.asset_id === id));
     const request = reload;
     const version = untrack(() => current?.content_version_id);
     const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]);

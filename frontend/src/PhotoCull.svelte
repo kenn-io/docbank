@@ -211,6 +211,28 @@
     }
     await editor.undo(refresh);
   }
+  function stageDecision(
+    selected: PhotoBrowseRow,
+    patch: PhotoAuthoredPatch,
+    targets: typeof editor.targets,
+  ) {
+    const displayed = targets.find((target) => target.file_id === selected.display_file_id);
+    if (
+      !displayed ||
+      displayed.values.flag !== selected.flag ||
+      displayed.values.rating !== selected.rating
+    )
+      return { error: "This photo changed. Reload the photo before deciding." };
+    const fields = Object.keys(patch) as (keyof PhotoAuthoredPatch)[];
+    if (
+      targets.some((target) =>
+        fields.some(
+          (field) => patch[field] !== undefined && target.values[field] !== displayed.values[field],
+        ),
+      )
+    )
+      return { fileID: selected.display_file_id };
+  }
   async function applyDecision(selected: PhotoBrowseRow, patch: PhotoAuthoredPatch, retry = false) {
     checkingDecision = true;
     try {
@@ -219,36 +241,9 @@
       checkingDecision = false;
     }
     const id = selected.asset_id;
-    if (!editor.targets.length) {
-      await editor.prepare({ asset_ids: [id], hidden: false });
-      if (editor.error) return;
-    }
-    if (!retry) {
-      const displayed = editor.targets.find(
-        (target) => target.file_id === selected.display_file_id,
-      );
-      if (
-        !displayed ||
-        displayed.values.flag !== selected.flag ||
-        displayed.values.rating !== selected.rating
-      ) {
-        editor.error = "This photo changed. Reload the photo before deciding.";
-        editor.conflict = true;
-        return;
-      }
-      const fields = Object.keys(patch) as (keyof PhotoAuthoredPatch)[];
-      if (
-        editor.targets.some((target) =>
-          fields.some(
-            (field) =>
-              patch[field] !== undefined && target.values[field] !== displayed.values[field],
-          ),
-        )
-      )
-        editor.fileID = selected.display_file_id;
-    }
     await editor.edit({ asset_ids: [id] }, retry ? {} : patch, false, refresh, {
       beforeWrite: () => cull.verifyDecision(),
+      beforeStage: retry ? undefined : (targets) => stageDecision(selected, patch, targets),
       viewed: retry
         ? undefined
         : {

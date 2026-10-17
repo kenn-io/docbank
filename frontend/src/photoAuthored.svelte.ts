@@ -331,11 +331,15 @@ export class PhotoAuthoredEditor {
       keywords,
       rotationDelta,
       viewed,
+      beforeStage,
       beforeWrite,
     }: {
       keywords?: api.PhotoKeywordEdit[];
       rotationDelta?: api.PhotoAuthoredEditRequest["rotation_delta"];
       viewed?: { content_version_id: string };
+      beforeStage?: (
+        targets: PhotoAuthoredEditor["targets"],
+      ) => { error?: string; fileID?: string } | void;
       beforeWrite?: () => Promise<boolean>;
     } = {},
   ) {
@@ -354,6 +358,13 @@ export class PhotoAuthoredEditor {
     }
     if (this.conflict) return;
     if (!this.targets.length) return;
+    const staging = beforeStage?.(this.targets);
+    if (staging?.error) {
+      this.error = staging.error;
+      this.conflict = true;
+      return;
+    }
+    if (staging?.fileID) this.fileID = staging.fileID;
     if (viewed) {
       this.targets = this.targets.map((target) => ({
         ...target,

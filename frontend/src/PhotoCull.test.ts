@@ -782,6 +782,10 @@ it.each([
     for (const [request] of edit.mock.calls)
       expect(Object.values(request.targets).map((target) => target.file_id)).toEqual(targets);
     expect(photos.cullEditor!.fileID).toBe(fileID);
+    if (fileID)
+      await waitFor(() =>
+        expect(screen.getByRole("alert").textContent).toContain("changed only the shown file"),
+      );
     await fireEvent.keyDown(shell, { key: nextKey });
     await waitFor(() => expect(edit).toHaveBeenCalledTimes(3));
     await readyButton("Pick (P)");
