@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-13
+last_edited: 2026-10-16
 title: Document processing
 description: Preview, consent to, and run document processing. The original version is never changed.
 ---
@@ -76,6 +76,47 @@ and query its status. The authenticated HTTP API provides the same preview,
 consent, run, status, rendition, and coverage contracts, plus search limited to
 an authorized source set (a source fence). See the
 [HTTP API](../architecture/http-api.md).
+
+## Prepare a native PDF
+
+Inspect the current PDF version before designing redaction decisions:
+
+```bash
+docbank redaction prepare /inbox/source.pdf
+docbank redaction prepare id:42 --version <retained-version-id> --json
+```
+
+This requires the configured [Linux amd64 page runtime](../architecture/page-images.md).
+The original must belong to a live file; an explicit retained historical version
+is allowed. The command checks the node revision and exact source identity.
+If the selection changed, inspect it again before retrying.
+
+Human output shows source, evidence and map digests, plus each page's byte span,
+accepted atom count and ordered/unordered gap counts. It does not print original
+text. `--json` returns the complete `native-pdf-preparation/v1` envelope,
+**including unredacted text**. Treat any saved JSON like the original document.
+Agents can use the same JSON command or authenticated
+`POST /api/v1/redaction/prepare`; no browser or MCP action is exposed.
+
+Preparation returns coverage gaps for inspection. Every ordered gap must be
+fully masked, and an unordered gap requires masking its whole page, before the
+internal resolver can proceed. A zero-gap result does not approve redaction or
+verify an output PDF. Keep the complete envelope with its evidence and frames;
+the map alone is not an execution authorization. This command applies no masks
+and creates no retained job or output PDF.
+
+The entire PDF must fit within 64 MiB and 16 pages. Retained evidence is capped
+at 8 MiB and the full result at 15 MiB. Work has a 60-second request deadline;
+limits or failure never return a partial preparation. One preparation runs at a
+time. Busy or memory refusals exit 5: wait for active work to finish, or retry
+when daemon memory use is lower. The renderer's 1 GiB RSS ceiling counts the
+whole daemon, so even a small PDF can be refused on a busy process.
+
+Malformed selections exit 2, unavailable documents exit 3, changed selections
+exit 4, and failed integrity checks exit 6. Missing runtime, unsupported PDFs,
+work limits, request cancellation and worker failures exit 1. Native text
+inspection does not add OCR; the [font and coverage limitations](../architecture/page-images.md#remaining-refusals)
+still apply.
 
 ## Convert documents with Docling
 

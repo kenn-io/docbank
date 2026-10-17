@@ -29,17 +29,17 @@ import (
 // points quantized to point/10000. A nonempty GapReason means the character was
 // not accepted as visible native text and must never become a text atom.
 type NativeGlyph struct {
-	Text      string
-	Bounds    [4]int64 // left, bottom, right, top
-	GapReason string
+	Text      string   `json:"text"`
+	Bounds    [4]int64 `json:"bounds"` // left, bottom, right, top
+	GapReason string   `json:"gap_reason"`
 }
 
 type NativeTextPage struct {
-	Number int
-	Glyphs []NativeGlyph
+	Number int           `json:"number"`
+	Glyphs []NativeGlyph `json:"glyphs"`
 	// NonTextBounds conservatively marks painted image/path/shading/form
 	// regions that may contain visible text unavailable to native extraction.
-	NonTextBounds [][4]int64
+	NonTextBounds [][4]int64 `json:"non_text_bounds"`
 }
 
 // InspectNativeText freezes and hashes source once, then inspects individual
@@ -48,10 +48,35 @@ type NativeTextPage struct {
 func InspectNativeText(ctx context.Context, source Source, frames []document.PageFrameV1, pageRuntime *pagerender.Runtime) ([]NativeTextPage, error) {
 	// Retained observations have a separate document budget. A working page
 	// remains bounded by its own character limit before it joins this result.
-	return inspectNativeText(ctx, source, frames, pageRuntime, 128<<20)
+	return inspectNativeText(ctx, nativeTextInput{source: source, frames: frames, runtime: pageRuntime, maxObservationBytes: 128 << 20})
 }
 
-func inspectNativeText(ctx context.Context, source Source, frames []document.PageFrameV1, pageRuntime *pagerender.Runtime, maxObservationBytes int64) (_ []NativeTextPage, resultErr error) {
+// NativeInspectionInput reuses the complete geometry inspection of a source.
+type NativeInspectionInput struct {
+	Source              Source
+	Inspection          pagerender.Inspection
+	MaxObservationBytes int64
+}
+
+func InspectNativeTextFromInspection(ctx context.Context, input NativeInspectionInput) ([]NativeTextPage, error) {
+	return inspectNativeText(ctx, nativeTextInput{source: input.Source,
+		frames: input.Inspection.Frames, inspection: &input.Inspection,
+		maxObservationBytes: input.MaxObservationBytes})
+}
+
+type nativeTextInput struct {
+	source              Source
+	frames              []document.PageFrameV1
+	runtime             *pagerender.Runtime
+	inspection          *pagerender.Inspection
+	maxObservationBytes int64
+}
+
+func inspectNativeText(ctx context.Context, input nativeTextInput) (_ []NativeTextPage, resultErr error) {
+	source, frames, maxObservationBytes := input.source, input.frames, input.maxObservationBytes
+	if maxObservationBytes < 1 {
+		return nil, &redaction.Problem{Code: "render_limit"}
+	}
 	if len(frames) == 0 || len(frames) > maxPageCount {
 		return nil, errors.New("invalid native text page inventory")
 	}
@@ -76,7 +101,7 @@ func inspectNativeText(ctx context.Context, source Source, frames []document.Pag
 			return nil, errors.New("native text pages are not contiguous")
 		}
 	}
-	domains, err := nativeFontDomains(ctx, pageRuntime, staged, source, frames)
+	domains, err := input.fontDomains(ctx, staged)
 	if err != nil {
 		return nil, err
 	}
@@ -194,8 +219,14 @@ func inspectNativePage(ctx context.Context, instance pdfium.Pdfium, documentRef 
 		resultErr = errors.Join(resultErr, closeErr)
 	}()
 	count, err := instance.FPDFText_CountChars(&requests.FPDFText_CountChars{TextPage: loaded.TextPage})
-	if err != nil || count.Count < 0 || count.Count > remaining {
-		return result, errors.New("native PDF text count is invalid or excessive")
+	if err != nil {
+		return result, fmt.Errorf("counting native PDF text: %w", err)
+	}
+	if count.Count < 0 {
+		return result, errors.New("native PDF text count is invalid")
+	}
+	if count.Count > remaining {
+		return result, nativeLimitError("native PDF text exceeds character limit")
 	}
 	result.Number = frame.Page
 	actualText := map[references.FPDF_PAGEOBJECT]bool{}
@@ -567,8 +598,14 @@ func nativeWhitespaceText(value string) bool {
 
 func nativePageObjects(ctx context.Context, instance pdfium.Pdfium, page requests.Page) (map[nativeObjectKey]references.FPDF_PAGEOBJECT, [][4]int64, error) {
 	count, err := instance.FPDFPage_CountObjects(&requests.FPDFPage_CountObjects{Page: page})
-	if err != nil || count.Count < 0 || count.Count > maxTextBytes {
-		return nil, nil, errors.New("native page object count is invalid or excessive")
+	if err != nil {
+		return nil, nil, fmt.Errorf("counting native PDF objects: %w", err)
+	}
+	if count.Count < 0 {
+		return nil, nil, errors.New("native page object count is invalid")
+	}
+	if count.Count > maxTextBytes {
+		return nil, nil, nativeLimitError("native page object count exceeds limit")
 	}
 	result := make(map[nativeObjectKey]references.FPDF_PAGEOBJECT)
 	duplicates := make(map[nativeObjectKey]bool)
@@ -624,7 +661,7 @@ func renderNativePage(instance pdfium.Pdfium, documentRef references.FPDF_DOCUME
 		value := new(big.Int).Mul(big.NewInt(physical), big.NewInt(300))
 		value.Add(value, big.NewInt(9999)).Quo(value, big.NewInt(10000))
 		if !value.IsInt64() || value.Sign() <= 0 || value.Int64() > document.MaxPageAxis {
-			return 0, errors.New("native visibility raster axis exceeds bounds")
+			return 0, nativeLimitError("native visibility raster axis exceeds bounds")
 		}
 		return int(value.Int64()), nil
 	}
@@ -634,7 +671,7 @@ func renderNativePage(instance pdfium.Pdfium, documentRef references.FPDF_DOCUME
 	}
 	height, err := axis(frame.Height)
 	if err != nil || int64(width) > document.MaxPagePixels/int64(height) {
-		return nil, nil, errors.New("native visibility raster exceeds pixel bounds")
+		return nil, nil, nativeLimitError("native visibility raster exceeds pixel bounds")
 	}
 	rendered, err := instance.RenderPageInPixels(&requests.RenderPageInPixels{Page: page, Width: width, Height: height, RenderForm: true, Document: &documentRef, RenderFlags: enums.FPDF_RENDER_FLAG_ANNOT})
 	if err != nil {
@@ -679,7 +716,7 @@ func nativeGlyphAmbiguity(ctx context.Context, bounds image.Rectangle, glyphs []
 			for x := rect.Min.X; x < rect.Max.X; x++ {
 				visits++
 				if visits > maxNativeVisibilityVisits {
-					return nil, errors.New("native visibility overlap work exceeds bounds")
+					return nil, nativeLimitError("native visibility overlap work exceeds bounds")
 				}
 				offset := (y-bounds.Min.Y)*bounds.Dx() + x - bounds.Min.X
 				if counts[offset] < 2 {
@@ -702,7 +739,7 @@ func nativeGlyphHasDelta(ctx context.Context, baseline, noText image.Image, glyp
 				}
 			}
 			if *visits > maxNativeVisibilityVisits {
-				return false, errors.New("native glyph visibility work exceeds bounds")
+				return false, nativeLimitError("native glyph visibility work exceeds bounds")
 			}
 			if baseline.At(x, y) == noText.At(x, y) {
 				continue
@@ -860,4 +897,8 @@ func quantizeBounds(values ...float64) ([4]int64, error) {
 		result[index] = quantized
 	}
 	return result, nil
+}
+
+func nativeLimitError(detail string) error {
+	return fmt.Errorf("%w: %s", &redaction.Problem{Code: "render_limit"}, detail)
 }
