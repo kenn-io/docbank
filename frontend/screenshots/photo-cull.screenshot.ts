@@ -39,8 +39,6 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
     await mkdir(output!, { recursive: true });
     const url = new URL(await fixture.run("web", "--no-browser"));
     url.pathname = "/photos";
-    let acceptDialogs = true;
-    page.on("dialog", (dialog) => (acceptDialogs ? dialog.accept() : dialog.dismiss()));
     await page.goto(url.href);
     await expect(page.locator(".photo-cell img").first()).toBeVisible();
     await page.locator(".photo-image").first().click();
@@ -51,13 +49,18 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
     const cull = page.getByRole("dialog", { name: "Cull photos" });
     await expect(cull.locator(".photo-stage img")).toBeVisible();
     const firstName = await cull.locator("header strong").innerText();
-    acceptDialogs = false;
-    const canceledScope = page.waitForEvent("dialog");
+    await expect(cull.getByRole("button", { name: "Scope: unflagged", exact: true })).toBeEnabled();
     await page.keyboard.press("s");
-    await canceledScope;
+    const scopeConfirmation = page.getByRole("dialog", {
+      name: "Change scope and reset this pass's progress?",
+    });
+    await expect(
+      scopeConfirmation.getByRole("button", { name: "Reset pass", exact: true }),
+    ).toBeVisible();
+    await scopeConfirmation.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(scopeConfirmation).toHaveCount(0);
     await expect(cull.getByRole("button", { name: "Scope: unflagged", exact: true })).toBeVisible();
     await expect(cull.locator("header strong")).toHaveText(firstName);
-    acceptDialogs = true;
     await page.evaluate(() => {
       const writes: { store: string; bytes: number }[] = [];
       (window as unknown as Window & { cullWrites: typeof writes }).cullWrites = writes;
@@ -152,19 +155,21 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
     expect(writes.every((write) => write.store !== "members" && write.bytes < 256)).toBe(true);
     expect(Object.keys(originalCheckpoint).sort()).toEqual([
       "autoAdvance",
-      "passID",
+      "formatVersion",
       "position",
       "revision",
       "runID",
       "scope",
     ]);
-    acceptDialogs = false;
-    const canceledReplacement = page.waitForEvent("dialog");
+    expect(originalCheckpoint).toHaveProperty("formatVersion", 1);
     await page.getByRole("button", { name: "Cull", exact: true }).click();
-    await canceledReplacement;
+    const replacementConfirmation = page.getByRole("dialog", {
+      name: "Replace saved cull progress?",
+    });
+    await replacementConfirmation.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(replacementConfirmation).toHaveCount(0);
     await expect(cull).toHaveCount(0);
     expect(await readCheckpoint()).toEqual(originalCheckpoint);
-    acceptDialogs = true;
     await page.getByRole("button", { name: "Resume cull", exact: true }).click();
     await expect(cull.locator("header strong")).toHaveText(resumedName);
     const other = await page.context().newPage();
@@ -172,11 +177,17 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
       const otherURL = new URL(await fixture.run("web", "--no-browser"));
       otherURL.pathname = "/photos";
       await other.goto(otherURL.href);
-      other.on("dialog", (dialog) => dialog.accept());
       await other.getByRole("button", { name: "Resume cull", exact: true }).click();
       const otherCull = other.getByRole("dialog", { name: "Cull photos" });
       await expect(otherCull.locator(".photo-stage img")).toBeVisible();
+      await expect(
+        otherCull.getByRole("button", { name: "Scope: unflagged", exact: true }),
+      ).toBeEnabled();
       await other.keyboard.press("s");
+      await other
+        .getByRole("dialog", { name: "Change scope and reset this pass's progress?" })
+        .getByRole("button", { name: "Reset pass", exact: true })
+        .click();
       await expect(
         otherCull.getByRole("button", { name: "Scope: picks", exact: true }),
       ).toBeVisible();
@@ -190,6 +201,10 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
       await cull.getByRole("button", { name: "Exit cull", exact: true }).click();
       await otherCull.getByRole("button", { name: "Exit cull", exact: true }).click();
       await other.getByRole("button", { name: "Cull", exact: true }).click();
+      await other
+        .getByRole("dialog", { name: "Replace saved cull progress?" })
+        .getByRole("button", { name: "Replace", exact: true })
+        .click();
       await expect(otherCull.locator(".photo-stage img")).toBeVisible();
       await page.getByRole("button", { name: "Resume cull", exact: true }).click();
       await expect(cull.locator(".photo-stage img")).toBeVisible();
@@ -231,6 +246,7 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
         await route.fulfill({ response });
       });
       await page.getByRole("button", { name: "Cull", exact: true }).click();
+      await replacementConfirmation.getByRole("button", { name: "Replace", exact: true }).click();
       await started;
       await other.keyboard.press("ArrowRight");
       await expect(otherCull.locator(".photo-stage img")).toBeVisible();
@@ -309,6 +325,7 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
     await page.getByRole("button", { name: "Search", exact: true }).click();
     await expect(page.locator(".photo-cell")).toHaveCount(1);
     await page.getByRole("button", { name: "Cull", exact: true }).click();
+    await replacementConfirmation.getByRole("button", { name: "Replace", exact: true }).click();
     await expect(cull.locator(".photo-stage img")).toBeVisible();
     const finalPhoto = await cull.locator("header strong").innerText();
     await page.keyboard.press("p");
