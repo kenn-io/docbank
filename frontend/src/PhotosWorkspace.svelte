@@ -1034,6 +1034,7 @@
                       const input = event.currentTarget;
                       await photos.setBurstGap(input.valueAsNumber, preserve);
                       input.value = String(photos.burstGapSeconds);
+                      onactionerror?.(photos.actionError);
                     }}
                   /></label
                 >{/if}

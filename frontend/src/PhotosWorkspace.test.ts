@@ -2890,7 +2890,39 @@ it("uses the resolved vault identity when Cull mounted before audit status arriv
   photos.dispose();
 });
 
-it("resets an invalid burst gap input to 2", async () => {
+it.each([false, true])(
+  "reports an invalid burst gap and restores 2, callback=%s",
+  async (callback) => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const photos = new Photos("scoped", vi.fn());
+    photos.items = [photo(1)];
+    photos.total = 1;
+    photos.started = true;
+    const onactionerror = callback ? vi.fn() : undefined;
+    render(PhotosWorkspace, {
+      photos,
+      cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+      onactionerror,
+    });
+    const input = screen.getByRole("spinbutton", {
+      name: "Burst gap (seconds)",
+    }) as HTMLInputElement;
+    await fireEvent.change(input, { target: { value: "1.5" } });
+    await waitFor(() => expect(input.value).toBe("2"));
+    const error = "burst gap must be a whole number of seconds from 1 to 30";
+    if (onactionerror) expect(onactionerror).toHaveBeenCalledWith(error);
+    else expect(screen.getByRole("alert").textContent).toBe(error);
+    photos.dispose();
+  },
+);
+
+it("reports a refused burst gap request through the workspace error callback", async () => {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -2898,14 +2930,33 @@ it("resets an invalid burst gap input to 2", async () => {
       disconnect() {}
     },
   );
+  vi.spyOn(api, "getPhotoSettings").mockResolvedValue({
+    revision: 1,
+    preference: null,
+    burst_gap_seconds: 2,
+  });
+  const update = vi
+    .spyOn(api, "setPhotoSettings")
+    .mockRejectedValue(new APIError("Burst settings unavailable", 503, "unavailable"));
   const photos = new Photos("scoped", vi.fn());
   photos.items = [photo(1)];
   photos.total = 1;
   photos.started = true;
-  render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
+  const onactionerror = vi.fn();
+  render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+    onactionerror,
+  });
   const input = screen.getByRole("spinbutton", { name: "Burst gap (seconds)" }) as HTMLInputElement;
-  await fireEvent.change(input, { target: { value: "1.5" } });
-  await waitFor(() => expect(input.value).toBe("2"));
+  await fireEvent.change(input, { target: { value: "5" } });
+  await waitFor(() => expect(onactionerror).toHaveBeenCalledWith("Burst settings unavailable"));
+  expect(input.value).toBe("2");
+  expect(update).toHaveBeenCalledWith(
+    { burst_gap_seconds: 5 },
+    { "If-Match": '"1"' },
+    { session: "scoped" },
+  );
   photos.dispose();
 });
 
