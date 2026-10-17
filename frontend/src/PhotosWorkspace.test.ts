@@ -13,8 +13,10 @@ import { APIError } from "./api-transport.js";
 import { Photos, photoQuery, mapPhotoLimit, type MapView } from "./photos.svelte.js";
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
 import {
+  photoFace,
   photoMetadataResponse,
   photoPreparation,
+  photoFacePage,
   preparedPhoto,
   mapPhoto,
   photo,
@@ -1365,6 +1367,7 @@ it.each(["edit", "Undo"] as const)(
     });
     const before = preparedPhoto(1, { file_id: "file-1" });
     const mapped = workspaceWithPreparedPhoto(before, "map");
+    vi.spyOn(mapped, "lookup").mockResolvedValue(photo(1));
     const fetcher = vi.fn(async () =>
       Response.json({ map_items: [{ ...mapPhoto(1), rotation: 90 }], total: 1 }),
     );
@@ -3323,3 +3326,211 @@ it.each(
     photos.dispose();
   },
 );
+it("shows the person filter chip and clears its query filter", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  stubPhotoFetch(async () => Response.json({ items: [], total: 0 }));
+  const photos = new Photos("scoped", vi.fn());
+  photos.personFilter = { id: "10000000-0000-4000-8000-000000000001", name: "Ada" };
+  await photos.setQuery({
+    ...photoQuery,
+    filters: { person_ids: ["10000000-0000-4000-8000-000000000001"] },
+  });
+  photos.started = true;
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotosWorkspace, { photos, cache });
+  expect(await screen.findByText("Person: Ada")).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+  await waitFor(() => expect(screen.queryByText("Person: Ada")).toBeNull());
+  expect(photos.query.filters.person_ids).toBeUndefined();
+  photos.dispose();
+  await cache.dispose();
+});
+
+async function facesWorkspaceSetup() {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: vi.fn(() => "blob:synthetic"),
+  });
+  Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+  Object.defineProperty(HTMLImageElement.prototype, "decode", {
+    configurable: true,
+    value: vi.fn(async () => {}),
+  });
+  const read = vi.spyOn(api, "listPhotoFaces").mockResolvedValue(photoFacePage());
+  stubPhotoFetch(async () => Response.json({ items: [photo(1)], total: 1, facets: [] }));
+  const photos = new Photos("session", vi.fn());
+  photos.items = [photo(1)];
+  photos.selectedIDs = new Set(["photo-1"]);
+  photos.total = 1;
+  photos.started = true;
+  vi.spyOn(photos, "preview").mockResolvedValue({
+    state: "ready",
+    generation_id: "fit",
+    width: 1000,
+    height: 800,
+  });
+  const onphotochange = vi.fn();
+  const props = {
+    onphotochange,
+    photos,
+    cache: { get: vi.fn(async () => new Blob(["synthetic"])) } as unknown as PhotoPreviewCache,
+  };
+  const component = render(PhotosWorkspace, props);
+  await fireEvent.click(await screen.findByRole("button", { name: "Metadata" }));
+  await screen.findByRole("button", { name: "Find or create a person: Ada" });
+  return { component, props, onphotochange, photos, read };
+}
+
+it("keeps loaded faces when opening Loupe", async () => {
+  const { component, props, onphotochange, read } = await facesWorkspaceSetup();
+  await fireEvent.click(screen.getByRole("button", { name: "Open Photo 1.jpg" }));
+  expect(onphotochange).toHaveBeenCalledWith("photo-1", "open");
+  await component.rerender({ ...props, photoID: "photo-1" });
+  const loupe = await screen.findByRole("dialog", { name: /^Photo viewer,/ });
+  const image = await within(loupe).findByRole("img", { name: "Photo 1.jpg" });
+  Object.defineProperty(image, "naturalWidth", { value: 1000 });
+  Object.defineProperty(image, "naturalHeight", { value: 800 });
+  await fireEvent.load(image);
+  await fireEvent.click(within(loupe).getByRole("button", { name: "Metadata" }));
+  await within(loupe).findByRole("button", { name: "Find or create a person: Ada" });
+  expect(read).toHaveBeenCalledOnce();
+});
+
+it("clears loaded faces before failed Map navigation", async () => {
+  const { component, props, photos, read } = await facesWorkspaceSetup();
+  vi.spyOn(photos, "lookup").mockRejectedValue(new Error("Photo unavailable"));
+  await component.rerender({ ...props, mapMode: true, photoID: "photo-2" });
+  await screen.findByText("Photo unavailable");
+  expect(screen.queryByRole("button", { name: "Find or create a person: Ada" })).toBeNull();
+  expect(photos.faceEditor?.version).toBe("");
+  expect(read).toHaveBeenCalledOnce();
+});
+
+it.each([false, true])(
+  "revalidates same-version People after refresh, readable=%s",
+  async (readable) => {
+    const { component, props, photos, read } = await facesWorkspaceSetup();
+    await fireEvent.click(screen.getByRole("button", { name: "Open Photo 1.jpg" }));
+    await component.rerender({ ...props, photoID: "photo-1" });
+    await fireEvent.click(
+      within(await screen.findByRole("dialog", { name: /^Photo viewer,/ })).getByRole("button", {
+        name: "Metadata",
+      }),
+    );
+    read.mockResolvedValue(
+      photoFacePage({
+        people: [{ person_id: "person-a", display_name: "Grace", state: "curated" }],
+      }),
+    );
+    let finish!: (page: Response) => void;
+    stubPhotoFetch(
+      () =>
+        new Promise<Response>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    vi.spyOn(photos, "lookup").mockImplementation(async () => {
+      if (!readable) throw new Error("Photo unavailable");
+      return photo(1);
+    });
+    let refreshing!: Promise<boolean>;
+    await act(() => {
+      refreshing = photos.refresh();
+    });
+    expect(screen.queryByRole("button", { name: "Find or create a person: Ada" })).toBeNull();
+    await act(async () => {
+      finish(Response.json({ items: readable ? [photo(1)] : [], total: readable ? 1 : 0 }));
+      await refreshing;
+    });
+    if (readable)
+      await within(screen.getByRole("dialog", { name: /^Photo viewer,/ })).findByRole("button", {
+        name: "Find or create a person: Grace",
+      });
+    else {
+      await waitFor(() => expect(photos.lookup).toHaveBeenCalled());
+      expect(screen.queryByRole("region", { name: "People" })).toBeNull();
+    }
+  },
+);
+
+it("reports an uncertain clear after remount", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  const row = photo(1);
+  let committed = false;
+  let finish!: () => void;
+  vi.spyOn(api, "listPhotoFaces").mockImplementation(async () =>
+    photoFacePage(
+      committed
+        ? { faces: [photoFace({ assertion_id: undefined })], assertions: [], people: [] }
+        : {},
+    ),
+  );
+  vi.spyOn(api, "listPeople").mockResolvedValue({ items: [] });
+  vi.spyOn(api, "decidePhotoFace").mockImplementation(async (version, decision, options) => {
+    expect(version).toBe(row.content_version_id);
+    expect(decision).toMatchObject({ action: "retract", face_id: "face-a", revision: 7 });
+    await new Promise<void>((resolve) => (finish = resolve));
+    expect(options!.signal!.aborted).toBe(false);
+    committed = true;
+    throw new Error("Response lost");
+  });
+  stubPhotoFetch(async (url, init) => {
+    if (!url.endsWith("/photos/assets/query")) return Response.json({ state: "unsupported" });
+    const query = JSON.parse(String(init.body ?? "{}")).query;
+    const dependent = !!query.filters.person_ids?.length || !!query.text;
+    const rows = committed && dependent && !query?.filters?.asset_ids ? [] : [row];
+    return Response.json({ items: rows, total: rows.length, facets: [] });
+  });
+  const photos = new Photos("session", vi.fn(), false, { ...photoQuery, text: "person:Ada" });
+  photos.items = [row];
+  photos.total = 1;
+  photos.started = true;
+  let cache = new PhotoPreviewCache("session", vi.fn());
+  const props = {
+    photos,
+    cache,
+    photoID: row.asset_id,
+    onphotochange: vi.fn(),
+  };
+  let view = render(PhotosWorkspace, props);
+  const loupe = await screen.findByRole("dialog", { name: /^Photo viewer,/ });
+  await fireEvent.click(within(loupe).getByRole("button", { name: "Metadata" }));
+  await fireEvent.click(
+    await within(loupe).findByRole("button", { name: "Find or create a person: Ada" }),
+  );
+  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Clear name" }));
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  view.unmount();
+  await cache.dispose();
+  cache = new PhotoPreviewCache("session", vi.fn());
+  finish();
+  await waitFor(() => expect(photos.total).toBe(0));
+  view = render(PhotosWorkspace, { ...props, cache, photoID: "" });
+  expect((await screen.findAllByText("Response lost")).length).toBeGreaterThan(0);
+  await screen.findByText("No matching photos");
+  photos.dispose();
+  await cache.dispose();
+});

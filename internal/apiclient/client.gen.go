@@ -27628,6 +27628,8 @@ type PhotoFaceDecisionResult = api.PhotoFaceDecisionResult
 
 type PhotoFacePage = api.PhotoFacePage
 
+type PhotoFacePerson = store.PhotoFacePerson
+
 type PhotoFaceResult = api.PhotoFaceResult
 
 type PhotoFile = api.PhotoFile

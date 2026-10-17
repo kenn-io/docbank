@@ -4606,7 +4606,10 @@ export interface PersonMergeReceipt {
 }
 
 export interface PersonSummary {
+  created_at: string;
   display_name: string;
+  display_name_folded: string;
+  identity_label?: string;
   person_id: string;
   revision: number;
   state: string;
@@ -4617,6 +4620,7 @@ export interface PersonPage {
   readonly $schema?: string;
   items: PersonSummary[];
   next_cursor?: string;
+  same_name_continues?: boolean;
 }
 
 export interface PersonSplitReceipt {
@@ -5737,9 +5741,12 @@ export interface PhotoFaceDecisionRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   action: PhotoFaceDecisionRequestAction;
+  assertion_id?: string;
   face_id?: string;
   operation_id?: string;
   person_id?: string;
+  /** @maxLength 200 */
+  person_name?: string;
   person_revision?: number;
   /** @minimum 0 */
   revision?: number;
@@ -5751,6 +5758,12 @@ export interface PhotoFaceDecisionResult {
   receipt_id: string;
 }
 
+export interface PhotoFacePerson {
+  display_name: string;
+  person_id: string;
+  state: string;
+}
+
 export interface PhotoFacePage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -5758,6 +5771,8 @@ export interface PhotoFacePage {
   assertions: PhotoPersonAssertion[];
   /** @maxItems 1000 */
   faces: PhotoFace[];
+  /** @maxItems 1000 */
+  people: PhotoFacePerson[];
 }
 
 export interface PhotoFaceResult {

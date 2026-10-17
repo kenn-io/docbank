@@ -44,3 +44,19 @@ export function photoFixture(workspace: string, binaryOverride?: string) {
   };
   return { run, seed, dispose };
 }
+
+export async function withPhotoAPI<T>(url: URL, run: () => Promise<T>): Promise<T> {
+  const fetcher = globalThis.fetch;
+  try {
+    globalThis.fetch = (input, init) => {
+      const address = new URL(String(input), url.origin);
+      const headers = new Headers(init?.headers);
+      headers.set("Host", address.host);
+      address.hostname = "127.0.0.1";
+      return fetcher(address, { ...init, headers });
+    };
+    return await run();
+  } finally {
+    globalThis.fetch = fetcher;
+  }
+}

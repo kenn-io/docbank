@@ -94,7 +94,15 @@ func (s *Store) facePhotoQuery(ctx context.Context, q metadataQuerier, versionID
 	return err
 }
 
-func (s *Store) PhotoFaces(ctx context.Context, versionID string) ([]PhotoFace, []PersonDocumentAssertion, error) {
+type PhotoFacePerson struct {
+	PersonID    string `json:"person_id" format:"uuid"`
+	DisplayName string `json:"display_name"`
+	State       string `json:"state"`
+}
+
+// PhotoFacePersonNames reads faces, assertions, and their people in one snapshot.
+func (s *Store) PhotoFacePersonNames(ctx context.Context, versionID string) ([]PhotoFace, []PersonDocumentAssertion, []PhotoFacePerson, error) {
+	people := make([]PhotoFacePerson, 0)
 	var faces []PhotoFace
 	assertions := make([]PersonDocumentAssertion, 0)
 	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
@@ -109,24 +117,31 @@ func (s *Store) PhotoFaces(ctx context.Context, versionID string) ([]PhotoFace, 
 		if err != nil {
 			return err
 		}
-		rows, err := tx.QueryContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision,photo_mark FROM person_document_assertions WHERE content_version_id=? AND role='depicted' AND (action='assert' OR EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=person_document_assertions.assertion_id)) ORDER BY person_id,assertion_id LIMIT ?`, versionID, document.MaxPhotoRecordsPerVersion+1)
+		rows, err := tx.QueryContext(ctx, `SELECT a.assertion_id,a.content_version_id,a.person_id,a.role,a.action,a.note,a.recorded_at,a.revision,a.photo_mark,p.display_name,p.state FROM person_document_assertions a JOIN persons p ON p.person_id=a.person_id WHERE a.content_version_id=? AND a.role='depicted' AND (a.action='assert' OR EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=a.assertion_id)) ORDER BY a.person_id,a.assertion_id LIMIT ?`, versionID, document.MaxPhotoRecordsPerVersion+1)
 		if err != nil {
 			return err
 		}
 		defer func() { _ = rows.Close() }()
 		for rows.Next() {
-			assertion, err := scanMarkedPersonAssertion(rows)
-			if err != nil {
+			var assertion PersonDocumentAssertion
+			var person PhotoFacePerson
+			if err := rows.Scan(&assertion.AssertionID, &assertion.ContentVersionID, &assertion.PersonID, &assertion.Role,
+				&assertion.Action, &assertion.Note, &assertion.RecordedAt, &assertion.Revision, &assertion.PhotoMark,
+				&person.DisplayName, &person.State); err != nil {
 				return err
 			}
 			if len(assertions) == document.MaxPhotoRecordsPerVersion {
 				return ErrInvalidPhotoFace
 			}
 			assertions = append(assertions, assertion)
+			person.PersonID = assertion.PersonID
+			if len(people) == 0 || people[len(people)-1].PersonID != person.PersonID {
+				people = append(people, person)
+			}
 		}
 		return rows.Err()
 	})
-	return faces, assertions, err
+	return faces, assertions, people, err
 }
 
 func insertPhotoFaceTx(ctx context.Context, tx *sql.Tx, face PhotoFace) error {

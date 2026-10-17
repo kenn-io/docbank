@@ -1,24 +1,11 @@
-import { expect, test, type Page } from "@playwright/test";
+import { captureThemes } from "./capture-themes.js";
+import { expect, test } from "@playwright/test";
 import { mkdir, mkdtemp } from "node:fs/promises";
 import path from "node:path";
-import { captureThemes } from "./capture-themes.js";
 import { photoFixture, repository } from "./photo-fixture.js";
 
 const output = process.env.DOCBANK_CULL_SCREENSHOT_DIR;
 test.skip(!output, "DOCBANK_CULL_SCREENSHOT_DIR enables synthetic cull and compare proof");
-
-async function captureReadyThemes(page: Page, name: string) {
-  await expect
-    .poll(() =>
-      page
-        .locator(".photo-stage img, .frames img, .closeups img")
-        .evaluateAll((images) =>
-          images.every((image) => (image as HTMLImageElement).naturalWidth > 512),
-        ),
-    )
-    .toBe(true);
-  await captureThemes(page, output!, name);
-}
 
 test("culls, resumes saved membership and compares manual closeups", async ({ page }) => {
   test.setTimeout(300_000);
@@ -48,7 +35,16 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
     await expect(
       scopeConfirmation.getByRole("button", { name: "Reset pass", exact: true }),
     ).toBeVisible();
-    await captureReadyThemes(page, "web-photo-cull-confirmation");
+    await expect
+      .poll(() =>
+        page
+          .locator(".photo-stage img")
+          .evaluateAll((images) =>
+            images.every((image) => (image as HTMLImageElement).naturalWidth > 512),
+          ),
+      )
+      .toBe(true);
+    await captureThemes(page, output!, "web-photo-cull-confirmation");
     await scopeConfirmation.getByRole("button", { name: "Cancel", exact: true }).click();
     await expect(scopeConfirmation).toHaveCount(0);
     await expect(cull.getByRole("button", { name: "Scope: unflagged", exact: true })).toBeVisible();
@@ -70,7 +66,16 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
     await expect(cull.getByRole("button", { name: "Undo", exact: true })).toBeVisible();
     let resumedName = await cull.locator("header strong").innerText();
     await expect(cull.locator(".filmstrip img").first()).toBeVisible();
-    await captureReadyThemes(page, "web-photo-cull");
+    await expect
+      .poll(() =>
+        page
+          .locator(".photo-stage img")
+          .evaluateAll((images) =>
+            images.every((image) => (image as HTMLImageElement).naturalWidth > 512),
+          ),
+      )
+      .toBe(true);
+    await captureThemes(page, output!, "web-photo-cull");
     // Commit a competing edit after preparation so the original write uses stale revisions.
     await page.route(
       "**/api/v1/photos/authored/edit",
@@ -86,7 +91,16 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
     await page.keyboard.press("p");
     const reload = cull.getByRole("button", { name: "Reload photo", exact: true });
     await expect(reload).toBeVisible();
-    await captureReadyThemes(page, "web-photo-cull-conflict");
+    await expect
+      .poll(() =>
+        page
+          .locator(".photo-stage img")
+          .evaluateAll((images) =>
+            images.every((image) => (image as HTMLImageElement).naturalWidth > 512),
+          ),
+      )
+      .toBe(true);
+    await captureThemes(page, output!, "web-photo-cull-conflict");
     await reload.click();
     await expect(reload).toHaveCount(0);
     let failLarge = true;
@@ -108,7 +122,16 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
     const retry = cull.getByRole("button", { name: "Retry preview", exact: true });
     await expect(retry).toBeVisible();
     await expect(cull.locator(".photo-stage img")).toBeVisible();
-    await captureReadyThemes(page, "web-photo-cull-retry");
+    await expect
+      .poll(() =>
+        page
+          .locator(".photo-stage img")
+          .evaluateAll((images) =>
+            images.every((image) => (image as HTMLImageElement).naturalWidth > 512),
+          ),
+      )
+      .toBe(true);
+    await captureThemes(page, output!, "web-photo-cull-retry");
     await retry.click();
     await expect(retry).toHaveCount(0);
     await expect(cull.locator(".photo-stage").getByRole("status")).toHaveCount(0);
@@ -318,7 +341,16 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
     await page.mouse.move(frame!.x + frame!.width * 0.6, frame!.y + frame!.height * 0.65);
     await page.mouse.up();
     await expect(compare.getByRole("status")).toHaveCount(0);
-    await captureReadyThemes(page, "web-photo-compare-closeup");
+    await expect
+      .poll(() =>
+        page
+          .locator(".frames img, .closeups img")
+          .evaluateAll((images) =>
+            images.every((image) => (image as HTMLImageElement).naturalWidth > 512),
+          ),
+      )
+      .toBe(true);
+    await captureThemes(page, output!, "web-photo-compare-closeup");
     await compare.getByRole("button", { name: "Exit compare", exact: true }).click();
     for (let i = 2; i < 6; i++)
       await page
@@ -327,7 +359,16 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
         .click({ modifiers: ["Control"] });
     await page.getByRole("button", { name: "Compare", exact: true }).click();
     await expect(compare.locator(".frames img")).toHaveCount(6);
-    await captureReadyThemes(page, "web-photo-compare-six");
+    await expect
+      .poll(() =>
+        compare
+          .locator(".frames img")
+          .evaluateAll((images) =>
+            images.every((image) => (image as HTMLImageElement).naturalWidth > 512),
+          ),
+      )
+      .toBe(true);
+    await captureThemes(page, output!, "web-photo-compare-six");
     await compare.getByRole("button", { name: "Exit compare", exact: true }).click();
     await page
       .getByRole("searchbox", { name: "Search photos", exact: true })

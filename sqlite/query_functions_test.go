@@ -48,6 +48,31 @@ func exerciseQueryFunctions(t *testing.T, driver docsqlite.Driver) {
 		require.Equal(t, want, key.String)
 	}
 
+	for _, tc := range []struct {
+		name, prefix string
+		match        bool
+	}{
+		{"john,smith", "smith", true},
+		{"john—smith", "smith", true},
+		{"ann (annie) lee", "annie", true},
+		{"mary_jane", "jane", true},
+		{"bob/rob", "rob", true},
+		{"李·明", "明", true},
+		{"李明", "明", false},
+		{"a\u0301jane", "jane", false},
+		{"2jane", "jane", false},
+		{"a smith%", "smith%", true},
+		{"a smith", "smith%", false},
+		{"a smith_", "smith_", true},
+		{"a smithy", "smith_", false},
+		{"any name", "", true},
+	} {
+		var match bool
+		require.NoError(t, db.QueryRowContext(t.Context(),
+			`SELECT docbank_person_name_has_word_prefix_v1(?, ?)`, tc.name, tc.prefix).Scan(&match))
+		require.Equal(t, tc.match, match, "%q / %q", tc.name, tc.prefix)
+	}
+
 	// Force a second physical connection: the predicate must not depend on the
 	// first connection's local registration or pool reuse.
 	first, err := db.Conn(t.Context())
@@ -60,4 +85,8 @@ func exerciseQueryFunctions(t *testing.T, driver docsqlite.Driver) {
 	require.NoError(t, second.QueryRowContext(t.Context(),
 		`SELECT docbank_query_media_family_v1('application/pdf', 'report.txt')`).Scan(&family))
 	require.Equal(t, "document", family)
+	var match bool
+	require.NoError(t, second.QueryRowContext(t.Context(),
+		`SELECT docbank_person_name_has_word_prefix_v1('john—smith', 'smith')`).Scan(&match))
+	require.True(t, match)
 }

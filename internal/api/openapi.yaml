@@ -11431,6 +11431,8 @@ components:
           type: array
         next_cursor:
           type: string
+        same_name_continues:
+          type: boolean
       required:
         - items
       type: object
@@ -11488,7 +11490,13 @@ components:
     PersonSummary:
       additionalProperties: false
       properties:
+        created_at:
+          type: string
         display_name:
+          type: string
+        display_name_folded:
+          type: string
+        identity_label:
           type: string
         person_id:
           type: string
@@ -11498,6 +11506,8 @@ components:
         state:
           type: string
       required:
+        - display_name_folded
+        - created_at
         - person_id
         - display_name
         - state
@@ -12491,6 +12501,9 @@ components:
             - key
             - withdraw_rejection
           type: string
+        assertion_id:
+          format: uuid
+          type: string
         face_id:
           format: uuid
           type: string
@@ -12499,6 +12512,9 @@ components:
           type: string
         person_id:
           format: uuid
+          type: string
+        person_name:
+          maxLength: 200
           type: string
         person_revision:
           format: int64
@@ -12554,7 +12570,13 @@ components:
             $ref: "#/components/schemas/PhotoFace"
           maxItems: 1000
           type: array
+        people:
+          items:
+            $ref: "#/components/schemas/PhotoFacePerson"
+          maxItems: 1000
+          type: array
       required:
+        - people
         - faces
         - assertions
       type: object
@@ -12562,6 +12584,25 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    PhotoFacePerson:
+      additionalProperties: false
+      properties:
+        display_name:
+          type: string
+        person_id:
+          format: uuid
+          type: string
+        state:
+          type: string
+      required:
+        - person_id
+        - display_name
+        - state
+      type: object
+      x-go-type: store.PhotoFacePerson
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
     PhotoFaceResult:
       additionalProperties: false
       properties:

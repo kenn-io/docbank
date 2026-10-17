@@ -535,17 +535,8 @@ func resolveActiveCandidatePersonTx(ctx context.Context, tx *sql.Tx, personID st
 }
 
 func createCandidatePersonTx(ctx context.Context, tx *sql.Tx, displayName string) (string, error) {
-	if !validPersonName(displayName) {
-		return "", ErrInvalidPerson
-	}
-	personID, err := newUUIDv4()
-	if err != nil {
-		return "", err
-	}
-	now := nowRFC3339()
-	_, err = tx.ExecContext(ctx, `INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at) VALUES(?,?,?,'operator','curated',1,?,?)`,
-		personID, displayName, document.FoldPersonName(displayName), now, now)
-	return personID, err
+	person, err := createPersonTx(ctx, tx, displayName, "operator")
+	return person.PersonID, err
 }
 
 func materializeCandidateAssertionsTx(

@@ -83,7 +83,7 @@ func faceForDecisionTest(t *testing.T, s *Store, person string) (Node, PhotoFace
 
 func decideFaceForTest(t *testing.T, s *Store, node Node, faceID, person, action string) PhotoFaceDecisionReceipt {
 	t.Helper()
-	faces, _, err := s.PhotoFaces(t.Context(), node.CurrentVersionID)
+	faces, _, _, err := s.PhotoFacePersonNames(t.Context(), node.CurrentVersionID)
 	require.NoError(t, err)
 	var rev int64
 	for _, f := range faces {
@@ -105,7 +105,7 @@ func TestPhotoFaceDecisionNameRetractUndo(t *testing.T) {
 	node, face := faceForDecisionTest(t, s, "")
 	named := decideFaceForTest(t, s, node, face.FaceID, p.PersonID, "name")
 	require.NotEmpty(t, named.ReceiptID)
-	faces, assertions, err := s.PhotoFaces(ctx, node.CurrentVersionID)
+	faces, assertions, _, err := s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), faces[0].Revision)
 	require.Equal(t, p.PersonID, assertions[0].PersonID)
@@ -113,18 +113,18 @@ func TestPhotoFaceDecisionNameRetractUndo(t *testing.T) {
 	require.ErrorIs(t, err, ErrStaleRevision)
 	undo, err := s.UndoPhotoFaceDecision(ctx, named.ReceiptID)
 	require.NoError(t, err)
-	faces, _, err = s.PhotoFaces(ctx, node.CurrentVersionID)
+	faces, _, _, err = s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 	require.NoError(t, err)
 	require.Empty(t, faces[0].AssertionID)
 	_, err = s.UndoPhotoFaceDecision(ctx, named.ReceiptID)
 	require.ErrorIs(t, err, ErrStaleRevision)
 	_, err = s.UndoPhotoFaceDecision(ctx, undo.ReceiptID)
 	require.NoError(t, err)
-	faces, _, err = s.PhotoFaces(ctx, node.CurrentVersionID)
+	faces, _, _, err = s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 	require.NoError(t, err)
 	require.NotEmpty(t, faces[0].AssertionID)
 	retracted := decideFaceForTest(t, s, node, face.FaceID, "", "retract")
-	faces, assertions, err = s.PhotoFaces(ctx, node.CurrentVersionID)
+	faces, assertions, _, err = s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 	require.NoError(t, err)
 	require.Empty(t, faces[0].AssertionID)
 	require.Empty(t, assertions)
@@ -143,7 +143,7 @@ func TestPhotoFaceDecisionRejectDismissRename(t *testing.T) {
 	require.NoError(t, err)
 	node, face := faceForDecisionTest(t, s, ada.PersonID)
 	rejected := decideFaceForTest(t, s, node, face.FaceID, ada.PersonID, "reject")
-	faces, assertions, err := s.PhotoFaces(ctx, node.CurrentVersionID)
+	faces, assertions, _, err := s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 	require.NoError(t, err)
 	require.Empty(t, faces[0].AssertionID)
 	require.Empty(t, assertions)
@@ -151,34 +151,34 @@ func TestPhotoFaceDecisionRejectDismissRename(t *testing.T) {
 	_, err = s.UndoPhotoFaceDecision(ctx, rejected.ReceiptID)
 	require.NoError(t, err)
 	decideFaceForTest(t, s, node, face.FaceID, grace.PersonID, "name")
-	_, assertions, err = s.PhotoFaces(ctx, node.CurrentVersionID)
+	_, assertions, _, err = s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 	require.NoError(t, err)
 	require.Equal(t, grace.PersonID, assertions[0].PersonID)
 	decideFaceForTest(t, s, node, face.FaceID, ada.PersonID, "reject")
-	faces, assertions, err = s.PhotoFaces(ctx, node.CurrentVersionID)
+	faces, assertions, _, err = s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 	require.NoError(t, err)
 	require.NotEmpty(t, faces[0].AssertionID)
 	require.Equal(t, grace.PersonID, assertions[0].PersonID)
 	dismissed := decideFaceForTest(t, s, node, face.FaceID, "", "dismiss")
-	faces, _, err = s.PhotoFaces(ctx, node.CurrentVersionID)
+	faces, _, _, err = s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 	require.NoError(t, err)
 	require.True(t, faces[0].Dismissed)
 	_, err = s.UndoPhotoFaceDecision(ctx, dismissed.ReceiptID)
 	require.NoError(t, err)
 	decideFaceForTest(t, s, node, face.FaceID, ada.PersonID, "name")
-	faces, _, err = s.PhotoFaces(ctx, node.CurrentVersionID)
+	faces, _, _, err = s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 	require.NoError(t, err)
 	require.Empty(t, faces[0].RejectedPersonIDs)
 	require.False(t, faces[0].Dismissed)
 	decideFaceForTest(t, s, node, face.FaceID, "", "dismiss")
 	receipt := decideFaceForTest(t, s, node, face.FaceID, ada.PersonID, "reject")
-	faces, _, err = s.PhotoFaces(ctx, node.CurrentVersionID)
+	faces, _, _, err = s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 	require.NoError(t, err)
 	require.True(t, faces[0].Dismissed)
 	require.Equal(t, []string{ada.PersonID}, faces[0].RejectedPersonIDs)
 	_, err = s.UndoPhotoFaceDecision(ctx, receipt.ReceiptID)
 	require.NoError(t, err)
-	faces, _, err = s.PhotoFaces(ctx, node.CurrentVersionID)
+	faces, _, _, err = s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 	require.NoError(t, err)
 	require.True(t, faces[0].Dismissed)
 	require.Empty(t, faces[0].RejectedPersonIDs)
@@ -430,13 +430,13 @@ func TestPhotoFaceMergeReviewsContradictions(t *testing.T) {
 					require.NoError(t, err)
 					ctx = WithPhotoHiddenToken(ctx, token)
 				}
-				faces, _, err := s.PhotoFaces(ctx, n.CurrentVersionID)
+				faces, _, _, err := s.PhotoFacePersonNames(ctx, n.CurrentVersionID)
 				require.NoError(t, err)
 				_, err = s.DecidePhotoFace(ctx, n.CurrentVersionID, PhotoFaceDecisionRequest{FaceID: f.FaceID, PersonID: rejectedPerson, Action: "withdraw_rejection", Revision: faces[0].Revision})
 				require.NoError(t, err)
 				_, err = s.MergePersons(ctx, a.PersonID, b.PersonID, uuid.NewString(), 1, 1)
 				require.NoError(t, err)
-				faces, assertions, err := s.PhotoFaces(ctx, n.CurrentVersionID)
+				faces, assertions, _, err := s.PhotoFacePersonNames(ctx, n.CurrentVersionID)
 				require.NoError(t, err)
 				require.Len(t, assertions, 1)
 				require.Equal(t, "assert", assertions[0].Action)
@@ -451,7 +451,7 @@ func TestPhotoFaceMergeReviewsContradictions(t *testing.T) {
 					require.Len(t, detail.Assertions, 1)
 				}
 				receipt := decideFaceForTest(t, s, n, f.FaceID, b.PersonID, "withdraw_rejection")
-				faces, _, err := s.PhotoFaces(ctx, n.CurrentVersionID)
+				faces, _, _, err := s.PhotoFacePersonNames(ctx, n.CurrentVersionID)
 				require.NoError(t, err)
 				require.NotEmpty(t, faces[0].AssertionID)
 				require.Empty(t, faces[0].RejectedPersonIDs)
@@ -507,7 +507,7 @@ func TestPhotoFaceDecisionGroupedRejection(t *testing.T) {
 					return nil
 				}))
 			}
-			faces, _, err := s.PhotoFaces(ctx, node.CurrentVersionID)
+			faces, _, _, err := s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 			require.NoError(t, err)
 			for _, f := range faces {
 				if f.FaceID == face.FaceID {
@@ -518,7 +518,7 @@ func TestPhotoFaceDecisionGroupedRejection(t *testing.T) {
 			}
 			_, err = s.UndoPhotoFaceDecision(ctx, receipt.ReceiptID)
 			require.NoError(t, err)
-			faces, _, err = s.PhotoFaces(ctx, node.CurrentVersionID)
+			faces, _, _, err = s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 			require.NoError(t, err)
 			for _, f := range faces {
 				require.Equal(t, []string{p.PersonID}, f.RejectedPersonIDs)
@@ -653,7 +653,7 @@ func TestPhotoFaceDecisionUndoSharedAssertion(t *testing.T) {
 				require.NoError(t, err)
 				lastUndo, err := s.UndoPhotoFaceDecision(ctx, b.ReceiptID)
 				require.NoError(t, err)
-				faces, assertions, err := s.PhotoFaces(ctx, n.CurrentVersionID)
+				faces, assertions, _, err := s.PhotoFacePersonNames(ctx, n.CurrentVersionID)
 				require.NoError(t, err)
 				for _, face := range faces {
 					require.Empty(t, face.AssertionID)
@@ -705,7 +705,7 @@ func TestPhotoFaceDecisionUndoSharedAssertion(t *testing.T) {
 				remaining = first
 				undo, err := s.UndoPhotoFaceDecision(ctx, r.ReceiptID)
 				require.NoError(t, err)
-				faces, assertions, err := s.PhotoFaces(ctx, n.CurrentVersionID)
+				faces, assertions, _, err := s.PhotoFacePersonNames(ctx, n.CurrentVersionID)
 				require.NoError(t, err)
 				require.Len(t, assertions, 1)
 				require.Equal(t, note, assertions[0].Note)
@@ -721,7 +721,7 @@ func TestPhotoFaceDecisionUndoSharedAssertion(t *testing.T) {
 				require.NoError(t, s.ValidateMetadata(ctx))
 				return
 			}
-			faces, assertions, err := s.PhotoFaces(ctx, n.CurrentVersionID)
+			faces, assertions, _, err := s.PhotoFacePersonNames(ctx, n.CurrentVersionID)
 			require.NoError(t, err)
 			require.Len(t, assertions, 1)
 			for _, face := range faces {
@@ -754,7 +754,7 @@ func TestPhotoFaceDecisionUndoSharedAssertion(t *testing.T) {
 			require.Equal(t, "suppress", rows[0].Action)
 			undo, err := s.UndoPhotoFaceDecision(ctx, receipt.ReceiptID)
 			require.NoError(t, err)
-			faces, assertions, err := s.PhotoFaces(ctx, n.CurrentVersionID)
+			faces, assertions, _, err := s.PhotoFacePersonNames(ctx, n.CurrentVersionID)
 			require.NoError(t, err)
 			require.Equal(t, "suppress", assertions[0].Action)
 			for _, face := range faces {
@@ -801,7 +801,7 @@ func TestPhotoFaceDecisionUndoSharedAssertion(t *testing.T) {
 			assertions, err = s.DocumentPersonAssertions(ctx, n.CurrentVersionID)
 			require.NoError(t, err)
 			require.Equal(t, "withdrawn", assertions[0].Action)
-			faces, _, err := s.PhotoFaces(ctx, n.CurrentVersionID)
+			faces, _, _, err := s.PhotoFacePersonNames(ctx, n.CurrentVersionID)
 			require.NoError(t, err)
 			for _, face := range faces {
 				if face.FaceID == first.FaceID {
@@ -852,7 +852,7 @@ func TestPhotoFaceDecisionUndoSharedAssertion(t *testing.T) {
 			}
 			redo, err := s.UndoPhotoFaceDecision(ctx, undo.ReceiptID)
 			require.NoError(t, err)
-			_, active, err := s.PhotoFaces(ctx, n.CurrentVersionID)
+			_, active, _, err := s.PhotoFacePersonNames(ctx, n.CurrentVersionID)
 			require.NoError(t, err)
 			require.Len(t, active, 2)
 			for _, assertion := range active {
@@ -968,7 +968,7 @@ func TestPhotoFaceDecisionKeepsPhotoMark(t *testing.T) {
 				decideFaceForTest(t, s, n, f.FaceID, p.PersonID, "name")
 			}
 			retracted := decideFaceForTest(t, s, n, f.FaceID, "", "retract")
-			faces, assertions, err := s.PhotoFaces(ctx, n.CurrentVersionID)
+			faces, assertions, _, err := s.PhotoFacePersonNames(ctx, n.CurrentVersionID)
 			require.NoError(t, err)
 			for _, face := range faces {
 				require.Empty(t, face.AssertionID)
@@ -981,7 +981,7 @@ func TestPhotoFaceDecisionKeepsPhotoMark(t *testing.T) {
 				require.NoError(t, s.ExportMetadata(ctx, &backup))
 				restored := newTestStore(t)
 				require.NoError(t, restored.ImportMetadata(ctx, &backup))
-				_, assertions, err = restored.PhotoFaces(ctx, n.CurrentVersionID)
+				_, assertions, _, err = restored.PhotoFacePersonNames(ctx, n.CurrentVersionID)
 				require.NoError(t, err)
 				require.True(t, assertions[0].PhotoMark)
 				_, err = restored.UndoPhotoFaceDecision(ctx, retracted.ReceiptID)
@@ -994,31 +994,88 @@ func TestPhotoFaceDecisionKeepsPhotoMark(t *testing.T) {
 	}
 }
 
-func TestPhotoFaceDecisionOperationReplay(t *testing.T) {
+func TestPhotoFaceNamingPreservesReplayDigestsAndClearedPeople(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	p, err := s.CreatePerson(ctx, "Ada", "operator")
-	require.NoError(t, err)
-	n, f := faceForDecisionTest(t, s, "")
-	request := PhotoFaceDecisionRequest{OperationID: uuid.NewString(), FaceID: f.FaceID, PersonID: p.PersonID, Action: "name", Revision: 1}
-	first, err := s.DecidePhotoFace(ctx, n.CurrentVersionID, request)
-	require.NoError(t, err)
-	replayed, err := s.DecidePhotoFace(ctx, n.CurrentVersionID, request)
-	require.NoError(t, err)
-	require.Equal(t, first.ReceiptID, replayed.ReceiptID)
-	require.Equal(t, first.RequestSHA256, replayed.RequestSHA256)
-	request.Action = "reject"
-	_, err = s.DecidePhotoFace(ctx, n.CurrentVersionID, request)
-	require.ErrorIs(t, err, ErrExists)
-	operationID := uuid.NewString()
-	undo, err := s.UndoPhotoFaceDecisionWithOperationID(ctx, first.ReceiptID, operationID)
-	require.NoError(t, err)
-	replayed, err = s.UndoPhotoFaceDecisionWithOperationID(ctx, first.ReceiptID, operationID)
-	require.NoError(t, err)
-	require.Equal(t, undo.ReceiptID, replayed.ReceiptID)
-	require.Equal(t, undo.After.Faces, replayed.After.Faces)
-	require.NoError(t, s.ValidateMetadata(ctx))
+	for _, mode := range []string{"existing person", "new person"} {
+		t.Run(mode, func(t *testing.T) {
+			newName := mode == "new person"
+			s := newTestStore(t)
+			ctx := t.Context()
+			p, err := s.CreatePerson(ctx, "Ada", "operator")
+			require.NoError(t, err)
+			n, f := faceForDecisionTest(t, s, "")
+			request := PhotoFaceDecisionRequest{OperationID: uuid.NewString(), FaceID: f.FaceID, PersonID: p.PersonID, Action: "name", Revision: 1}
+			var epoch, afterEpoch int64
+			if newName {
+				require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state`).Scan(&epoch))
+				for _, invalid := range []PhotoFaceDecisionRequest{
+					{Action: "name", FaceID: f.FaceID, PersonID: p.PersonID, PersonName: "Grace", Revision: 1},
+					{Action: "name", FaceID: f.FaceID, PersonName: " ", Revision: 1},
+					{Action: "retract", FaceID: f.FaceID, PersonName: "Grace", Revision: 1},
+				} {
+					_, err := s.DecidePhotoFace(ctx, n.CurrentVersionID, invalid)
+					require.ErrorIs(t, err, ErrInvalidPhotoFace)
+				}
+				request.PersonID = ""
+				request.PersonName = "Grace"
+			}
+			first, err := s.DecidePhotoFace(ctx, n.CurrentVersionID, request)
+			require.NoError(t, err)
+			if !newName {
+				legacyDigest, err := requestDigest([]any{n.CurrentVersionID, map[string]any{
+					"operation_id": request.OperationID, "face_id": f.FaceID, "person_id": p.PersonID, "action": "name", "revision": 1,
+				}})
+				require.NoError(t, err)
+				require.Equal(t, legacyDigest, first.RequestSHA256)
+			}
+			replayed, err := s.DecidePhotoFace(ctx, n.CurrentVersionID, request)
+			require.NoError(t, err)
+			require.Equal(t, first.ReceiptID, replayed.ReceiptID)
+			require.Equal(t, first.RequestSHA256, replayed.RequestSHA256)
+			if newName {
+				require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state`).Scan(&afterEpoch))
+				require.Equal(t, epoch+1, afterEpoch)
+				require.Equal(t, first.Before.People, first.After.People)
+				stale := request
+				stale.OperationID = uuid.NewString()
+				_, err = s.DecidePhotoFace(ctx, n.CurrentVersionID, stale)
+				require.ErrorIs(t, err, ErrStaleRevision)
+				var count int
+				require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM persons WHERE display_name='Grace'`).Scan(&count))
+				require.Equal(t, 1, count)
+			}
+			request.PersonName = ""
+			request.PersonID = p.PersonID
+			request.Action = "reject"
+			_, err = s.DecidePhotoFace(ctx, n.CurrentVersionID, request)
+			require.ErrorIs(t, err, ErrExists)
+			operationID := uuid.NewString()
+			undo, err := s.UndoPhotoFaceDecisionWithOperationID(ctx, first.ReceiptID, operationID)
+			require.NoError(t, err)
+			replayed, err = s.UndoPhotoFaceDecisionWithOperationID(ctx, first.ReceiptID, operationID)
+			require.NoError(t, err)
+			require.Equal(t, undo.ReceiptID, replayed.ReceiptID)
+			require.Equal(t, undo.After.Faces, replayed.After.Faces)
+			if newName {
+				var count int
+				require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM persons WHERE display_name='Grace'`).Scan(&count))
+				require.Equal(t, 1, count)
+				require.Empty(t, undo.After.Faces[0].AssertionID)
+				named, err := s.DecidePhotoFace(ctx, n.CurrentVersionID, PhotoFaceDecisionRequest{
+					FaceID: f.FaceID, PersonID: first.After.Assertions[0].PersonID, Action: "name", Revision: undo.After.Faces[0].Revision,
+				})
+				require.NoError(t, err)
+				_, err = s.DecidePhotoFace(ctx, n.CurrentVersionID, PhotoFaceDecisionRequest{
+					FaceID: f.FaceID, Action: "retract", Revision: named.After.Faces[0].Revision,
+				})
+				require.NoError(t, err)
+				cleared, _, err := s.PersonByID(ctx, first.After.Assertions[0].PersonID)
+				require.NoError(t, err)
+				require.Equal(t, "Grace", cleared.DisplayName)
+			}
+			require.NoError(t, s.ValidateMetadata(ctx))
+		})
+	}
 }
 
 func TestPhotoFaceDecisionRejectionBound(t *testing.T) {
@@ -1036,12 +1093,12 @@ func TestPhotoFaceDecisionRejectionBound(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.db.ExecContext(ctx, `INSERT INTO person_match_candidates(candidate_id,actor_key,display_name,suggested_person_id,reason,evidence_json,evidence_sha256,occurrence_count,revision,state,created_at,decided_at) SELECT person_id,?,'Face',person_id,'face_match',?,?,1,1,'rejected',?,? FROM persons WHERE person_id<>?`, c.ActorKey, c.Evidence, c.EvidenceSHA256, nowRFC3339(), nowRFC3339(), p.PersonID)
 	require.NoError(t, err)
-	faces, _, err := s.PhotoFaces(ctx, n.CurrentVersionID)
+	faces, _, _, err := s.PhotoFacePersonNames(ctx, n.CurrentVersionID)
 	require.NoError(t, err)
 	require.Len(t, faces[0].RejectedPersonIDs, 1000)
 	_, err = s.DecidePhotoFace(ctx, n.CurrentVersionID, PhotoFaceDecisionRequest{FaceID: f.FaceID, PersonID: p.PersonID, Action: "reject", Revision: f.Revision})
 	require.ErrorIs(t, err, ErrPhotoFaceRejectionLimit)
-	faces, _, err = s.PhotoFaces(ctx, n.CurrentVersionID)
+	faces, _, _, err = s.PhotoFacePersonNames(ctx, n.CurrentVersionID)
 	require.NoError(t, err)
 	require.Equal(t, f.Revision, faces[0].Revision)
 	require.Len(t, faces[0].RejectedPersonIDs, 1000)
@@ -1077,7 +1134,7 @@ func TestPhotoFaceDecisionRejectionBound(t *testing.T) {
 	decided, err := s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: grouped.CandidateID, ExpectedRevision: grouped.Revision, Action: "reject"})
 	require.NoError(t, err)
 	require.Equal(t, personCandidateStateRejected, decided.State)
-	faces, _, err = s.PhotoFaces(ctx, current.ID)
+	faces, _, _, err = s.PhotoFacePersonNames(ctx, current.ID)
 	require.NoError(t, err)
 	require.Equal(t, []string{p.PersonID}, faces[0].RejectedPersonIDs)
 	backup.Reset()
@@ -1107,7 +1164,7 @@ func TestPhotoFaceCandidateAcceptanceClearsDecisions(t *testing.T) {
 	c := openCandidateForTest(t, s, candidate)
 	_, err = s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: c.CandidateID, ExpectedRevision: c.Revision, Action: "link", PersonID: p.PersonID})
 	require.NoError(t, err)
-	faces, _, err := s.PhotoFaces(ctx, n.CurrentVersionID)
+	faces, _, _, err := s.PhotoFacePersonNames(ctx, n.CurrentVersionID)
 	require.NoError(t, err)
 	for _, face := range faces {
 		require.NotEmpty(t, face.AssertionID)
@@ -1129,7 +1186,7 @@ func TestPhotoFaceDecisionWithdrawalPreservesOpenSuggestion(t *testing.T) {
 	c.Reason = personCandidateReasonFaceMatch
 	c = openCandidateForTest(t, s, c)
 	decideFaceForTest(t, s, n, f.FaceID, p.PersonID, "withdraw_rejection")
-	faces, _, err := s.PhotoFaces(ctx, n.CurrentVersionID)
+	faces, _, _, err := s.PhotoFacePersonNames(ctx, n.CurrentVersionID)
 	require.NoError(t, err)
 	require.True(t, faces[0].Dismissed)
 	var state string
@@ -1276,7 +1333,7 @@ func TestPhotoFaceDecisionCandidateCapacity(t *testing.T) {
 		decideFaceForTest(t, s, n, f.FaceID, p.PersonID, "reject")
 		decideFaceForTest(t, s, n, f.FaceID, "", "dismiss")
 		decideFaceForTest(t, s, n, f.FaceID, p.PersonID, "withdraw_rejection")
-		faces, _, err := s.PhotoFaces(ctx, n.CurrentVersionID)
+		faces, _, _, err := s.PhotoFacePersonNames(ctx, n.CurrentVersionID)
 		require.NoError(t, err)
 		require.True(t, faces[0].Dismissed)
 		require.Empty(t, faces[0].RejectedPersonIDs)
@@ -1436,7 +1493,7 @@ func TestPhotoFaceMergeUnionsRejections(t *testing.T) {
 	moved, err := s.MergePersons(ctx, a.PersonID, b.PersonID, uuid.NewString(), 1, 1)
 	require.NoError(t, err)
 	require.Len(t, moved.Moved.FaceCandidates, 1)
-	faces, _, err := s.PhotoFaces(ctx, n.CurrentVersionID)
+	faces, _, _, err := s.PhotoFacePersonNames(ctx, n.CurrentVersionID)
 	require.NoError(t, err)
 	require.Equal(t, []string{a.PersonID}, faces[0].RejectedPersonIDs)
 	require.NoError(t, s.ValidateMetadata(ctx))
@@ -1468,7 +1525,7 @@ func TestPhotoFaceCandidateHistoryDoesNotFollowReusedFaceID(t *testing.T) {
 			require.NoError(t, err)
 			_, _, err = s.CreatePhotoFace(ctx, current.ID, face.FaceID, face.Box, "")
 			require.NoError(t, err)
-			faces, _, err := s.PhotoFaces(ctx, current.ID)
+			faces, _, _, err := s.PhotoFacePersonNames(ctx, current.ID)
 			require.NoError(t, err)
 			require.Len(t, faces, 1)
 			require.False(t, faces[0].Dismissed)
@@ -1508,7 +1565,7 @@ func TestFaceCandidateRetainsMembershipForReusedFaceID(t *testing.T) {
 	_, err = s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: candidate.CandidateID, ExpectedRevision: candidate.Revision, Action: "reject"})
 	require.NoError(t, err)
 
-	faces, _, err := s.PhotoFaces(ctx, node.CurrentVersionID)
+	faces, _, _, err := s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 	require.NoError(t, err)
 	require.Equal(t, []string{person.PersonID}, faces[0].RejectedPersonIDs)
 }
@@ -1535,7 +1592,7 @@ func TestPersonMergeIgnoresCandidateFromPrunedFaceVersion(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.MergePersons(ctx, survivor.PersonID, absorbed.PersonID, uuid.NewString(), survivor.Revision, absorbed.Revision)
 	require.NoError(t, err)
-	faces, _, err := s.PhotoFaces(ctx, current.ID)
+	faces, _, _, err := s.PhotoFacePersonNames(ctx, current.ID)
 	require.NoError(t, err)
 	require.Len(t, faces, 1)
 	require.Empty(t, faces[0].RejectedPersonIDs)
@@ -1632,7 +1689,7 @@ func TestPhotoFaceWithdrawalUndoFencedByLaterRejection(t *testing.T) {
 	decideFaceForTest(t, s, n, f.FaceID, q.PersonID, "reject")
 	_, err = s.UndoPhotoFaceDecision(ctx, withdrawn.ReceiptID)
 	require.ErrorIs(t, err, ErrStaleRevision)
-	faces, _, err := s.PhotoFaces(ctx, n.CurrentVersionID)
+	faces, _, _, err := s.PhotoFacePersonNames(ctx, n.CurrentVersionID)
 	require.NoError(t, err)
 	require.Len(t, faces[0].RejectedPersonIDs, 1000)
 	require.NoError(t, s.ValidateMetadata(ctx))
@@ -1657,4 +1714,75 @@ func TestPhotoFaceClearedKeyUndoIgnoresRequestPhoto(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, f.FaceID, personKeyFaceForTest(t, s, p.PersonID))
 	require.NoError(t, s.ValidateMetadata(ctx))
+}
+
+func TestPhotoWholeMarkClearReceipt(t *testing.T) {
+	t.Parallel()
+	for _, named := range []bool{false, true} {
+		t.Run(strconv.FormatBool(named), func(t *testing.T) {
+			t.Parallel()
+			s := newTestStore(t)
+			ctx := t.Context()
+			person, err := s.CreatePerson(ctx, "Ada", "operator")
+			require.NoError(t, err)
+			node, face := faceForDecisionTest(t, s, "")
+			if named {
+				_, err = s.DecidePhotoFace(ctx, node.CurrentVersionID, PhotoFaceDecisionRequest{FaceID: face.FaceID, Revision: 1, Action: "name", PersonID: person.PersonID})
+				require.NoError(t, err)
+			}
+			mark, err := s.MarkPersonInPhoto(ctx, node.CurrentVersionID, person.PersonID)
+			require.NoError(t, err)
+			request := PhotoFaceDecisionRequest{AssertionID: mark.AssertionID, Action: "retract", Revision: mark.Revision - 1}
+			_, err = s.DecidePhotoFace(ctx, node.CurrentVersionID, request)
+			require.ErrorIs(t, err, ErrStaleRevision)
+			request.Revision = mark.Revision
+			receipt, err := s.DecidePhotoFace(ctx, node.CurrentVersionID, request)
+			require.NoError(t, err)
+			_, err = s.DecidePhotoFace(ctx, node.CurrentVersionID, request)
+			require.ErrorIs(t, err, ErrStaleRevision)
+			require.False(t, receipt.After.Assertions[0].PhotoMark)
+			if named {
+				require.Equal(t, "assert", receipt.After.Assertions[0].Action)
+			} else {
+				require.Equal(t, "withdrawn", receipt.After.Assertions[0].Action)
+			}
+			var backup bytes.Buffer
+			require.NoError(t, s.ExportMetadata(ctx, &backup))
+			restored := newTestStore(t)
+			require.NoError(t, restored.ImportMetadata(ctx, &backup))
+			undo, err := restored.UndoPhotoFaceDecision(ctx, receipt.ReceiptID)
+			require.NoError(t, err)
+			faces, assertions, _, err := restored.PhotoFacePersonNames(ctx, node.CurrentVersionID)
+			require.NoError(t, err)
+			require.True(t, assertions[0].PhotoMark)
+			if named {
+				require.Equal(t, mark.AssertionID, faces[0].AssertionID)
+			}
+			_, err = restored.UndoPhotoFaceDecision(ctx, undo.ReceiptID)
+			require.NoError(t, err)
+			require.NoError(t, restored.ValidateMetadata(ctx))
+		})
+	}
+}
+
+func TestPhotoFaceNameReceiptRejectsWholePhotoMarkChange(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	person, err := s.CreatePerson(t.Context(), "Ada", "operator")
+	require.NoError(t, err)
+	node, face := faceForDecisionTest(t, s, "")
+	_, err = s.MarkPersonInPhoto(t.Context(), node.CurrentVersionID, person.PersonID)
+	require.NoError(t, err)
+	receipt := decideFaceForTest(t, s, node, face.FaceID, person.PersonID, "name")
+	require.NoError(t, validateFaceDecisionReceipt(receipt, receipt.ReceiptID))
+	require.True(t, receipt.Before.Assertions[0].PhotoMark)
+	require.True(t, receipt.After.Assertions[0].PhotoMark)
+	require.NotEqual(t, receipt.Before.Faces[0].AssertionID, receipt.After.Faces[0].AssertionID)
+	receipt.After.Assertions[0].PhotoMark = false
+	before, err := json.Marshal(receipt.Before)
+	require.NoError(t, err)
+	after, err := json.Marshal(photoFaceReceiptAfter{RequestSHA256: receipt.RequestSHA256, ReceiptID: receipt.ReceiptID, After: receipt.After})
+	require.NoError(t, err)
+	_, err = decodeFaceDecisionReceipt(before, after, receipt.ReceiptID)
+	require.ErrorIs(t, err, ErrInvalidPhotoFace)
 }

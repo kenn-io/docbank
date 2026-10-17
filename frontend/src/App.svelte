@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { photoSearchSort } from "./photoSearch.js";
   import * as generated from "./generated/docbank.js";
   import { onMount, tick, untrack } from "svelte";
   import ActivityIcon from "@lucide/svelte/icons/activity";
@@ -311,6 +312,7 @@
     window.addEventListener("pageshow", resume);
     if (document.visibilityState === "hidden") untrack(leave);
     return () => {
+      access.dispose();
       document.removeEventListener("visibilitychange", visibility);
       window.removeEventListener("pagehide", pagehide);
       window.removeEventListener("pageshow", resume);
@@ -458,10 +460,9 @@
     photoConcealed = true;
     photoAccessVersion++;
     albumPhotos?.cancelPending();
-    photoState?.photos.authored.conceal();
-    albumPhotos?.authored.conceal();
+    albumPhotos?.concealMetadata();
     mapPhotos?.cancelPending();
-    mapPhotos?.authored.conceal();
+    mapPhotos?.concealMetadata();
     return concealPhotoWorkspace(photoState);
   }
   // Album views share Library's preview cache, so revalidation refreshes whichever list is open.
@@ -478,7 +479,8 @@
     state.cache = view.cache;
     return revalidated;
   }
-  async function acceptPhotoAccess(result: generated.PhotoHiddenState) {
+  async function acceptPhotoAccess(result: generated.PhotoHiddenState, requestedAt: number) {
+    hiddenAccess?.acceptState(result, requestedAt);
     const changed = result.change_id !== photoChangeID;
     // The refreshed workspace reports an open photo that is no longer listed, so the viewer stays.
     if (photoState && changed) await invalidateLibrary(false);
@@ -534,12 +536,14 @@
     photoConcealed = false;
     photoValidated = true;
     photoAccessError = "";
+    applyPersonPhotos();
   }
 
   $effect(() => {
     if (!webSession) return;
     return () => {
       hiddenPhotoActionError = "";
+      pendingPerson = undefined;
       discardLibrary();
       photoValidated = false;
       photoChangeID = undefined;
@@ -635,12 +639,13 @@
       pending = true;
       controller = new AbortController();
       try {
+        const requestedAt = Date.now();
         const result = await generated.getPhotoHiddenState({
           session,
           signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]),
         });
         failures = 0;
-        if (current && !controller.signal.aborted) await acceptPhotoAccess(result);
+        if (current && !controller.signal.aborted) await acceptPhotoAccess(result, requestedAt);
       } catch (cause) {
         if (!current || controller.signal.aborted) return;
         const denied = cause instanceof APIError && (cause.status === 401 || cause.status === 403);
@@ -679,6 +684,37 @@
       photoAlbums.noticeID = "";
       photoAlbums.error = "";
     }
+  }
+
+  let pendingPerson = $state<{ id: string; name: string }>();
+  function applyPersonPhotos() {
+    if (!pendingPerson || !photoState || !photoValidated || hiddenMode) return false;
+    const { id: personID, name } = pendingPerson;
+    if (retainedPhotoEditor() && !retainedPhotoEditor()!.canChangeTarget()) {
+      pendingPerson = undefined;
+      return false;
+    }
+    if (
+      !photoState.photos.setQuery({
+        ...photoState.photos.query,
+        text: "",
+        sort: photoSearchSort({ text: "", syntax: photoState.photos.query.syntax }),
+        filters: { person_ids: [personID] },
+      })
+    ) {
+      pendingPerson = undefined;
+      return false;
+    }
+    photoState.photos.personFilter = { id: personID, name };
+    pendingPerson = undefined;
+    return true;
+  }
+  function openPersonPhotos(personID: string, name: string) {
+    if (retainedPhotoEditor() && !retainedPhotoEditor()!.canChangeTarget()) return;
+    pendingPerson = { id: personID, name };
+    if (photoState && photoValidated && !hiddenMode) {
+      if (applyPersonPhotos()) navigatePhotos("/photos");
+    } else navigatePhotos("/photos");
   }
 
   function navigatePhotos(path: string) {
@@ -3212,6 +3248,7 @@
         </div>{/if}
       {#if photoMode}
         {#if hiddenMode && hiddenAccess}<HiddenPhotos
+            onperson={openPersonPhotos}
             access={hiddenAccess}
             undoState={photoUndo}
             onhelp={openShortcutHelp}
@@ -3228,8 +3265,8 @@
             {photoID}
             onphotochange={changePhoto}
             onconceal={clearPhoto}
-            onstate={(result) => {
-              void acceptPhotoAccess(result).catch((cause) => {
+            onstate={(result, requestedAt) => {
+              void acceptPhotoAccess(result, requestedAt).catch((cause) => {
                 void invalidateLibrary();
                 photoAccessError = cause instanceof Error ? cause.message : String(cause);
               });
@@ -3258,6 +3295,7 @@
                 }}
               />{/if}
           {:else if albumID}{#if albumPhotos}{#key albumPhotos}<PhotosWorkspace
+                  onperson={openPersonPhotos}
                   {vaultID}
                   onhelp={openShortcutHelp}
                   tags={tagCatalog}
@@ -3288,6 +3326,7 @@
                 ></EmptyState
               >
             {:else if !tiles.tile_url}<PhotosWorkspace
+                onperson={openPersonPhotos}
                 {vaultID}
                 onhelp={openShortcutHelp}
                 tags={tagCatalog}
@@ -3303,6 +3342,7 @@
                 photos={photoState.photos}
                 cache={photoState.cache}
               />{:else if mapPhotos}{#key mapPhotos}<PhotosWorkspace
+                  onperson={openPersonPhotos}
                   {vaultID}
                   onhelp={openShortcutHelp}
                   tags={tagCatalog}
@@ -3329,6 +3369,7 @@
                   oninvalidate={invalidateLibrary}
                 />{/key}{/if}
           {:else}{#key photoState.photos.contextID}<PhotosWorkspace
+                onperson={openPersonPhotos}
                 {vaultID}
                 onhelp={openShortcutHelp}
                 tags={tagCatalog}

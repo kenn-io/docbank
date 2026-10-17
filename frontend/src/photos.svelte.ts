@@ -48,6 +48,7 @@ import { PhotoAuthoredEditor, type PhotoUndoState } from "./photoAuthored.svelte
 import type { HiddenAccess } from "./hiddenAccess.svelte.js";
 import type { PhotoCull } from "./photoCull.svelte.js";
 import { fittedPhotoView, type PhotoView } from "./photoView.js";
+import { PhotoFaces } from "./photoFaces.svelte.js";
 
 export const maxComparePhotos = 8;
 export const photoQuery = parseQuery(
@@ -191,6 +192,8 @@ interface PhotosOptions {
 export class Photos {
   readonly authored: PhotoAuthoredEditor;
   cullEditor = $state.raw<PhotoAuthoredEditor>();
+  readonly faceEditor: PhotoFaces;
+  faceAssetID = "";
   cull?: PhotoCull;
   cullVaultID = "";
   culling = $state(false);
@@ -340,6 +343,7 @@ export class Photos {
   }
   baseQuery = $state.raw<Query>(photoQuery);
   query = $state.raw<Query>(photoQuery);
+  personFilter = $state<{ id: string; name: string }>();
   timeline = $state<CaptureDayFacet | undefined>();
   timelineLoading = $state(false);
   timelineError = $state("");
@@ -417,7 +421,7 @@ export class Photos {
   private readonly withoutCounts: boolean;
 
   readonly projection?: "map" | undefined;
-  private readonly hiddenAccess?: HiddenAccess | undefined;
+  readonly hiddenAccess?: HiddenAccess | undefined;
   constructor(
     readonly session: string,
     readonly onauthfailure: (cause: unknown) => void,
@@ -427,6 +431,7 @@ export class Photos {
   ) {
     this.projection = projection;
     this.hiddenAccess = hiddenAccess;
+    this.faceEditor = new PhotoFaces(session, onauthfailure, hidden, undefined, hiddenAccess);
     this.authored = new PhotoAuthoredEditor(
       session,
       (cause) => {
@@ -434,6 +439,7 @@ export class Photos {
       },
       undoState,
       hidden ? hiddenAccess : undefined,
+      () => !!this.faceEditor?.busy,
     );
     this.baseQuery = query;
     this.query = query;
@@ -957,6 +963,10 @@ export class Photos {
     return Object.assign(rotations, { stacksUnresolved });
   }
 
+  get dependsOnPeople() {
+    return !!this.query.filters.person_ids?.length || !!this.query.text.trim();
+  }
+
   /** Whether a metadata edit can change which photos this view lists or how it orders them. */
   get dependsOnAuthored() {
     const filters = this.query.filters ?? {};
@@ -1186,6 +1196,11 @@ export class Photos {
     this.authFailure(cause);
   }
 
+  concealMetadata() {
+    this.authored.conceal();
+    this.faceEditor.conceal();
+  }
+
   private async replace(
     mode: "refresh" | "expiry" | "date",
     preserve?: () => (() => Promise<void>) | undefined,
@@ -1193,7 +1208,7 @@ export class Photos {
     resume = false,
   ) {
     if (this.disposed) return false;
-    this.authored.conceal();
+    this.concealMetadata();
     this.controller.abort();
     this.controller = new AbortController();
     this.facetsController.abort();
@@ -1643,6 +1658,7 @@ export class Photos {
   dispose() {
     this.clearFrozen();
     this.authored.dispose();
+    this.faceEditor.dispose();
     this.cullEditor?.dispose();
     this.cull?.cancel();
     this.viewerReturn = undefined;

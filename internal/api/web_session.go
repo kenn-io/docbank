@@ -271,6 +271,9 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	if r.URL.Path == "/api/v1/photos/stacks/group" {
 		return r.Method == http.MethodPost && r.URL.RawQuery == ""
 	}
+	if photoFaceBrowserRequestAllowed(r) {
+		return true
+	}
 	if photoAuthoredBrowserRequestAllowed(r) {
 		return true
 	}
@@ -694,4 +697,30 @@ func validPhotoPreviewPath(assetID, generationID string) bool {
 	}
 	_, err := hex.DecodeString(generationID)
 	return err == nil && strings.ToLower(generationID) == generationID
+}
+
+func photoFaceBrowserRequestAllowed(r *http.Request) bool {
+	if r.URL.Path == "/api/v1/people" {
+		if r.Method != http.MethodGet {
+			return false
+		}
+		values, err := url.ParseQuery(r.URL.RawQuery)
+		if err != nil {
+			return false
+		}
+		for key, entries := range values {
+			if (key != "query" && key != "limit" && key != "cursor") || len(entries) != 1 {
+				return false
+			}
+		}
+		return true
+	}
+	if after, ok := strings.CutPrefix(r.URL.Path, "/api/v1/photos/versions/"); ok {
+		parts := strings.Split(after, "/")
+		if len(parts) != 2 || query.ValidateTextOperand("asset", parts[0]) != nil || r.URL.RawQuery != "" {
+			return false
+		}
+		return parts[1] == "faces" && (r.Method == http.MethodGet || r.Method == http.MethodPost) || parts[1] == "face-decisions" && r.Method == http.MethodPost
+	}
+	return false
 }

@@ -10,6 +10,8 @@ beforeEach(() => {
   let counter = 0;
   vi.spyOn(URL, "createObjectURL").mockImplementation(() => `blob:preview-${++counter}`);
   vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+  vi.spyOn(HTMLImageElement.prototype, "naturalWidth", "get").mockReturnValue(1200);
+  vi.spyOn(HTMLImageElement.prototype, "naturalHeight", "get").mockReturnValue(800);
   Object.defineProperty(HTMLImageElement.prototype, "decode", {
     configurable: true,
     value: async () => {},
@@ -57,28 +59,47 @@ it.each(["fit", "large"] as const)(
   },
 );
 
-it("keeps a successful large preview free of errors when the pending fit preview is rejected", async () => {
-  const photos = new Photos("session", vi.fn());
-  let rejectFit!: (cause: Error) => void;
-  const fit = new Promise<PhotoPreviewSlot>((_resolve, reject) => {
-    rejectFit = reject;
-  });
-  const preview = vi
-    .spyOn(photos, "preview")
-    .mockImplementation((_row, size) =>
-      size === "fit" ? fit : Promise.resolve({ state: "ready", generation_id: "large-1" }),
-    );
-  const { display } = loader(photos);
-  await vi.waitFor(() => expect(preview).toHaveBeenCalled());
-  display.zoom();
-  await vi.waitFor(() => expect(display.quality).toBe("large"));
-  const url = display.url;
-  rejectFit(new Error("Fit preview failed"));
-  await fit.catch(() => {});
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  expect(display.url).toBe(url);
-  expect(display.failure).toBeUndefined();
-});
+it.each(["rejected", "missing"] as const)(
+  "retries a %s fit preview while preserving the successful large preview",
+  async (failure) => {
+    const photos = new Photos("session", vi.fn());
+    let rejectFit!: (cause: Error) => void, resolveFit!: (slot: PhotoPreviewSlot) => void;
+    const fit = new Promise<PhotoPreviewSlot>((resolve, reject) => {
+      rejectFit = reject;
+      resolveFit = resolve;
+    });
+    const preview = vi
+      .spyOn(photos, "preview")
+      .mockImplementation((_row, size) =>
+        size === "fit" ? fit : Promise.resolve({ state: "ready", generation_id: "large-1" }),
+      );
+    const { display, get } = loader(photos);
+    await vi.waitFor(() => expect(preview).toHaveBeenCalled());
+    display.zoom();
+    await vi.waitFor(() => expect(display.quality).toBe("large"));
+    const url = display.url;
+    if (failure === "rejected") rejectFit(new Error("Fit preview failed"));
+    else resolveFit({ state: "missing" });
+    await fit.catch(() => {});
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(display.url).toBe(url);
+    expect(display.failure).toBeUndefined();
+    expect(display.fit).toBeUndefined();
+    await vi.waitFor(() => expect(display.fitFailure?.action).toBe("fit"));
+    preview.mockResolvedValueOnce({ state: "ready", generation_id: "fit-retry" });
+    await display.retry(display.fitFailure?.action);
+    expect(display.fitFailure).toBeUndefined();
+    expect(display.fit).toEqual({
+      url: "blob:preview-2",
+      content_version_id: "version-1",
+      width: 1200,
+      height: 800,
+    });
+    expect(get).toHaveBeenLastCalledWith("photo-1", "fit-retry", expect.anything(), true);
+    expect(display.url).toBe(url);
+    expect(display.quality).toBe("large");
+  },
+);
 
 it("reports unsupported previews without offering an ineffective retry", async () => {
   const photos = new Photos("session", vi.fn());

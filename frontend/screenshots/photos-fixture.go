@@ -30,6 +30,8 @@ func check(err error) {
 }
 
 func main() {
+	namesakes := flag.Bool("namesakes", false, "Include people with the same name and distinct identities")
+	faceSearch := flag.Bool("face-search", false, "Include later people-search matches and a rotated namesake preview")
 	bursts := flag.Bool("bursts", false, "Include synthetic burst stacks")
 	mapGPS := flag.Bool("map", false, "Include synthetic GPS locations")
 	unavailable := flag.Bool("unavailable", false, "Include an undecodable photo")
@@ -57,6 +59,27 @@ func main() {
 	s, err := store.Open(layout.DBPath())
 	check(err)
 	defer func() { check(s.Close()) }()
+	if *namesakes {
+		for _, email := range []string{"alex-a@example.test", "alex-b@example.test"} {
+			person, err := s.CreatePerson(ctx, "Alex Smith", "operator")
+			check(err)
+			_, err = s.AddPersonIdentity(ctx, person.PersonID, person.Revision, store.PersonIdentity{
+				Kind: "email", ValueDisplay: email, Origin: "operator", EvidenceKind: "operator_assertion",
+				EvidenceID: "synthetic-chooser", Confidence: "operator_asserted",
+			})
+			check(err)
+		}
+	}
+	if *faceSearch {
+		for index := range 100 {
+			_, err := s.CreatePerson(ctx, fmt.Sprintf("Aaron %03d Smith", index), "operator")
+			check(err)
+		}
+		for _, name := range []string{"Smith", "Robin", "Robin"} {
+			_, err := s.CreatePerson(ctx, name, "operator")
+			check(err)
+		}
+	}
 	blobs, err := blob.New(store.NewPackCatalog(s), layout.BlobsDir())
 	check(err)
 	defer func() { check(blobs.Close()) }()
@@ -87,6 +110,25 @@ func main() {
 					shade = color.RGBA{uint8(40 + index), uint8(120 + index), uint8(130 + index), 255}
 				}
 				frame.SetRGBA(x, y, shade)
+			}
+		}
+		if *faceSearch {
+			for y := 0; y < height; y++ {
+				for x := 0; x < width; x++ {
+					for faceIndex, center := range []float64{0.25, 0.75} {
+						dx, dy := float64(x)/float64(width)-center, float64(y)/float64(height)-0.4
+						if dx*dx/0.01+dy*dy/0.01 < 1 {
+							shade := color.RGBA{240, 180, 100, 255}
+							if faceIndex == 1 {
+								shade = color.RGBA{120, 190, 240, 255}
+							}
+							if (math.Abs(dx-0.035) < 0.012 || math.Abs(dx+0.035) < 0.012) && math.Abs(dy+0.03) < 0.015 || math.Abs(dx) < 0.045 && math.Abs(dy-0.06) < 0.01 {
+								shade = color.RGBA{25, 30, 40, 255}
+							}
+							frame.SetRGBA(x, y, shade)
+						}
+					}
+				}
 			}
 		}
 		var encoded bytes.Buffer
@@ -185,7 +227,7 @@ func main() {
 			node, err = s.CreateFile(ctx, s.RootID(), name, item.hash, item.size, "image/jpeg")
 		}
 		check(err)
-		if (*rotateCover || *manyKeywords) && index == 0 {
+		if (*rotateCover || *manyKeywords || *faceSearch) && index == 0 {
 			asset, err := s.PhotoAssetForNode(ctx, node.ID)
 			check(err)
 			firstAssetID = asset.ID
@@ -246,18 +288,20 @@ func main() {
 		}
 		seedRejects(ctx, s)
 	}
-	if *rotateCover {
+	if *rotateCover || *faceSearch {
 		first, err := s.PhotoAssetByID(ctx, firstAssetID)
 		check(err)
 		prepared, err := s.PreparePhotoAuthored(ctx, store.PhotoSetSelection{AssetIDs: []string{first.ID}})
 		check(err)
 		_, err = s.EditPhotoAuthoredBatch(ctx, store.PhotoAuthoredBatch{Targets: editTargets(prepared.Targets), Patch: store.PhotoAuthoredPatch{Rotation: new(90)}})
 		check(err)
-		cover := &first.ID
-		current, err := s.PhotoSet(ctx, album.ID, "")
-		check(err)
-		_, err = s.UpdatePhotoSet(ctx, album.ID, current.Revision, nil, nil, &cover)
-		check(err)
+		if *rotateCover {
+			cover := &first.ID
+			current, err := s.PhotoSet(ctx, album.ID, "")
+			check(err)
+			_, err = s.UpdatePhotoSet(ctx, album.ID, current.Revision, nil, nil, &cover)
+			check(err)
+		}
 	}
 	check(s.Checkpoint(ctx))
 	fmt.Printf("seeded %d synthetic photos\n", count)

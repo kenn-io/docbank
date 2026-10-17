@@ -208,12 +208,12 @@ func listPackageCustodiansSchemas() (schema, schema) {
 func findPeopleSchemas() (schema, schema) {
 	person := objectSchema(schema{
 		personIDField: uuidSchema(), "display_name": stringSchema(document.MaxPersonDisplayNameBytes), schemaStateField: enumSchema("provisional", "curated"),
-		schemaRevisionField: integerSchema(1, 0),
+		schemaRevisionField: integerSchema(1, 0), "created_at": dateTimeSchema(), "display_name_folded": stringSchema(0), "identity_label": stringSchema(0),
 	}, personIDField, "display_name", schemaStateField, schemaRevisionField)
 	return rootObjectSchema(schema{
 			"query": stringSchema(document.MaxPersonDisplayNameBytes), "cursor": stringSchema(maxCursorCharacters), schemaLimitField: integerSchema(1, 250),
 		}), rootObjectSchema(withPrivateCache(schema{
-			"items": arraySchema(person, 250), "next_cursor": stringSchema(maxCursorCharacters),
+			"items": arraySchema(person, 250), "next_cursor": stringSchema(maxCursorCharacters), "same_name_continues": booleanSchema(),
 		}), cacheRequired("items")...)
 }
 

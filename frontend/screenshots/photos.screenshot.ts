@@ -6,7 +6,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { listPhotoAssets } from "../src/generated/docbank.js";
 import { output, withPhotoFixture } from "./photo-workspace-fixture.js";
-import { photoFixture, repository } from "./photo-fixture.js";
+import { photoFixture, repository, withPhotoAPI } from "./photo-fixture.js";
 
 const exec = promisify(execFile);
 const binary =
@@ -271,20 +271,7 @@ test("Hidden photos lock, unlock, unhide, expire, and discard previews", async (
     await expect(page.locator("[data-asset]")).toHaveCount(0);
     await tab.close();
     const token = new URLSearchParams(webURL.hash.slice(1)).get("web_session")!;
-    const fetcher = globalThis.fetch;
-    try {
-      globalThis.fetch = async (input, init) => {
-        const address = new URL(String(input), webURL.origin);
-        const host = address.host;
-        address.hostname = "127.0.0.1";
-        const headers = new Headers(init?.headers);
-        headers.set("Host", host);
-        return fetcher(address, { ...init, headers });
-      };
-      await revokeWebSession({ session: token });
-    } finally {
-      globalThis.fetch = fetcher;
-    }
+    await withPhotoAPI(webURL, () => revokeWebSession({ session: token }));
     await expect(
       page.getByText("The browser session expired or was rejected. Run `docbank web` again."),
     ).toBeVisible({ timeout: 6000 });
@@ -1417,19 +1404,7 @@ test("photo loupe opens, upgrades, navigates, restores focus and reloads a direc
     await page.keyboard.press("Escape");
     await expect(replacementCell).toBeFocused();
     await run("put", replacementFile, `/${replacementRow.name}`, "--mime-type", "image/jpeg");
-    const originalFetch = globalThis.fetch,
-      sourceURL = new URL(replacementURL);
-    const sourceHost = sourceURL.host;
-    sourceURL.hostname = "127.0.0.1";
-    globalThis.fetch = (input, init) => {
-      const headers = new Headers(init?.headers);
-      headers.set("Host", sourceHost);
-      return originalFetch(
-        typeof input === "string" && input.startsWith("/") ? sourceURL.origin + input : input,
-        { ...init, headers },
-      );
-    };
-    try {
+    await withPhotoAPI(replacementURL, async () => {
       await expect
         .poll(
           async () =>
@@ -1452,9 +1427,7 @@ test("photo loupe opens, upgrades, navigates, restores focus and reloads a direc
           { timeout: 60_000 },
         )
         .toBe("ready");
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+    });
     await page.evaluate(async () => {
       for (const name of await caches.keys()) {
         const cache = await caches.open(name);

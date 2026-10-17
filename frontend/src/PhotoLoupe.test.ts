@@ -2,11 +2,13 @@ import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { tick } from "svelte";
 import { APIError } from "./api-transport.js";
+import { PhotoFaces } from "./photoFaces.svelte.js";
 import PhotoLoupe from "./PhotoLoupe.svelte";
 import PhotoLoupeImage from "./PhotoLoupeImage.svelte";
 import { Photos } from "./photos.svelte.js";
 import type { PhotoPreviewCache } from "./photoPreviewCache.js";
-import { photo, mapPhoto } from "./photo-test-fixtures.js";
+import * as api from "./generated/docbank.js";
+import { photo, mapPhoto, photoFace } from "./photo-test-fixtures.js";
 
 afterEach(() => {
   cleanup();
@@ -14,6 +16,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 function setup() {
+  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [], assertions: [], people: [] });
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -44,7 +47,10 @@ function setup() {
     generation_id: `${size}-${item.node_id}`,
   }));
   const get = vi.fn(async (_asset: string, _generation: string) => new Blob(["synthetic-jpeg"]));
+  const faces = new PhotoFaces("scoped", vi.fn());
+  faces.version = items[4]!.content_version_id;
   const props = {
+    faces,
     photo: items[4]!,
     error: "",
     photos,
@@ -58,6 +64,49 @@ function setup() {
   };
   return { props, preview, get };
 }
+it("guards rotated face placement before saving", async () => {
+  const { props } = setup();
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  props.photo.rotation = 90;
+  const add = vi.spyOn(props.faces, "add").mockResolvedValue(true);
+  render(PhotoLoupe, { ...props, items: [] });
+  await screen.findByText("Fit preview");
+  const button = screen.getByRole("button", { name: "Add face" }) as HTMLButtonElement;
+  expect(button.disabled).toBe(true);
+  await fireEvent.click(button);
+  expect(screen.queryByRole("button", { name: "Position face on Photo 5.jpg" })).toBeNull();
+  const image = screen.getByRole("img", { name: "Photo 5.jpg" });
+  Object.defineProperty(image, "naturalWidth", { value: 1000 });
+  Object.defineProperty(image, "naturalHeight", { value: 800 });
+  await fireEvent.load(image);
+  await waitFor(() => expect(button.disabled).toBe(false));
+  await fireEvent.click(button);
+  button.focus();
+  await fireEvent.keyDown(button, { key: "Escape" });
+  expect(screen.queryByRole("button", { name: "Position face on Photo 5.jpg" })).toBeNull();
+  expect(add).not.toHaveBeenCalled();
+  expect(props.onclose).not.toHaveBeenCalled();
+  await fireEvent.click(button);
+  const viewport = image.closest<HTMLElement>(".photo-viewport")!;
+  viewport.setPointerCapture = vi.fn();
+  vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 1000, 400));
+  await fireEvent(
+    viewport,
+    new MouseEvent("pointerdown", { clientX: 500, clientY: 200, bubbles: true }),
+  );
+  await fireEvent(
+    viewport,
+    new MouseEvent("pointerup", { clientX: 600, clientY: 280, bubbles: true }),
+  );
+  expect(add).toHaveBeenCalledWith({
+    x: expect.closeTo(0.5, 8),
+    y: expect.closeTo(0.1875, 8),
+    width: expect.closeTo(0.2, 8),
+    height: expect.closeTo(0.3125, 8),
+  });
+});
+
 it("shows grid, fit and large and preserves zoom", async () => {
   const { props, preview } = setup();
   const view = render(PhotoLoupe, props);
@@ -645,4 +694,137 @@ it("shows the capture time and no file modified time for a photo placed by EXIF"
   expect(screen.getByText("Captured")).toBeTruthy();
   expect(screen.getByText("2023-11-04T18:22:03")).toBeTruthy();
   expect(screen.queryByText("File modified")).toBeNull();
+});
+
+async function regionImageSetup(minimumRegionDrag = true) {
+  setup();
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  const onregion = vi.fn();
+  const component = render(PhotoLoupeImage, {
+    url: "blob:synthetic",
+    name: "Portrait",
+    view: { scale: 1, x: 0.5, y: 0.5, actual: false },
+    onzoom: vi.fn(),
+    onmove: vi.fn(),
+    regionMode: true,
+    minimumRegionDrag,
+    onregion,
+    faces: [{ id: "face-a", label: "Ada", box: { x: 0.2, y: 0.3, width: 0.2, height: 0.2 } }],
+  });
+  const viewport = component.container.querySelector<HTMLElement>(".photo-viewport")!;
+  viewport.setPointerCapture = vi.fn();
+  vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue({
+    x: 0,
+    y: 0,
+    left: 0,
+    top: 0,
+    right: 1000,
+    bottom: 400,
+    width: 1000,
+    height: 400,
+    toJSON: vi.fn(),
+  });
+  const image = screen.getByRole("img", { name: "Portrait" });
+  Object.defineProperty(image, "naturalWidth", { value: 1000 });
+  Object.defineProperty(image, "naturalHeight", { value: 800 });
+  await fireEvent.load(image);
+  return { component, viewport, onregion };
+}
+
+it("discards a drag after leaving region mode", async () => {
+  const { component, viewport, onregion } = await regionImageSetup();
+  await fireEvent(
+    viewport,
+    new MouseEvent("pointerdown", { clientX: 500, clientY: 200, bubbles: true }),
+  );
+  await component.rerender({ regionMode: false });
+  await fireEvent(
+    viewport,
+    new MouseEvent("pointerup", { clientX: 600, clientY: 280, bubbles: true }),
+  );
+  expect(onregion).not.toHaveBeenCalled();
+  await component.rerender({ regionMode: true });
+  await fireEvent(
+    viewport,
+    new MouseEvent("pointerup", { clientX: 600, clientY: 280, bubbles: true }),
+  );
+  expect(onregion).not.toHaveBeenCalled();
+});
+
+it.each([true, false])(
+  "maps drags and click defaults with minimum drag=%s",
+  async (minimumRegionDrag) => {
+    const { component, viewport, onregion } = await regionImageSetup(minimumRegionDrag);
+    onregion.mockClear();
+    const position = screen.getByRole("button", { name: "Position closeup on Portrait" });
+    for (const [type, x, y] of [
+      ["pointerdown", 500, 200],
+      ["pointerup", 501, 201],
+    ] as const)
+      await fireEvent(position, new MouseEvent(type, { clientX: x, clientY: y, bubbles: true }));
+    if (minimumRegionDrag) expect(onregion).not.toHaveBeenCalled();
+    else expect(onregion).toHaveBeenCalledWith({ x: 0.501, y: 0.50125, width: 0.15, height: 0.15 });
+    onregion.mockClear();
+    for (const [type, x, y] of [
+      ["pointerdown", 500, 200],
+      ["pointerup", 600, 280],
+    ] as const)
+      await fireEvent(position, new MouseEvent(type, { clientX: x, clientY: y, bubbles: true }));
+    expect(onregion).toHaveBeenCalledOnce();
+    expect(onregion).toHaveBeenCalledWith({
+      x: 0.6,
+      y: 0.6,
+      width: expect.closeTo(0.2, 8),
+      height: expect.closeTo(0.2, 8),
+    });
+    onregion.mockClear();
+    await component.rerender({ view: { scale: 8, x: 0.5, y: 0.5, actual: false } });
+    if (minimumRegionDrag) {
+      for (const [type, x, y] of [
+        ["pointerdown", 500, 200],
+        ["pointerup", 520, 212],
+      ] as const)
+        await fireEvent(viewport, new MouseEvent(type, { clientX: x, clientY: y, bubbles: true }));
+      expect(onregion).toHaveBeenCalledWith({
+        x: 0.5025,
+        y: expect.closeTo(0.501875, 8),
+        width: expect.closeTo(0.005, 8),
+        height: expect.closeTo(0.00375, 8),
+      });
+    }
+  },
+);
+
+it("scales region markers and face labels with the image", async () => {
+  const { component } = await regionImageSetup();
+  const position = screen.getByRole("button", { name: "Position closeup on Portrait" });
+  await component.rerender({ view: { scale: 1, x: 0.5, y: 0.5, actual: false } });
+  await fireEvent.keyDown(position, { key: "ArrowLeft" });
+  const marker = component.container.querySelector<HTMLElement>(".keyboard-region")!;
+  expect(marker.style.left).toBe("475px");
+  expect(marker.style.top).toBe("200px");
+  expect(marker.style.width).toBe("75px");
+  expect(marker.style.height).toBe("60px");
+  await component.rerender({ view: { scale: 8, x: 0.5, y: 0.5, actual: false } });
+  expect(component.container.querySelector<HTMLElement>(".face-box span")!.style.transform).toBe(
+    "scale(0.125)",
+  );
+  expect(component.container.querySelector<HTMLElement>(".face-box")!.style.width).toBe("20%");
+});
+
+it("hides face boxes while a different photo version is displayed", async () => {
+  const { props } = setup();
+  props.faces.faces = [photoFace()];
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  const view = render(PhotoLoupe, { ...props, items: [] });
+  await screen.findByText("Fit preview");
+  const image = await screen.findByRole("img", { name: "Photo 5.jpg" });
+  Object.defineProperty(image, "naturalWidth", { value: 1000 });
+  Object.defineProperty(image, "naturalHeight", { value: 800 });
+  await fireEvent.load(image);
+  await waitFor(() => expect(view.container.querySelectorAll(".face-box").length).toBe(1));
+  await view.rerender({ ...props, photo: { ...props.photo, content_version_id: "next-version" } });
+  expect(view.container.querySelectorAll(".face-box")).toHaveLength(0);
 });

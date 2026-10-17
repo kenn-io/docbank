@@ -38,7 +38,10 @@ type PhotoFaceResult struct {
 	Assertion *PhotoPersonAssertion `json:"assertion,omitzero"`
 }
 
+type PhotoFacePerson = store.PhotoFacePerson
+
 type PhotoFacePage struct {
+	People     []PhotoFacePerson      `json:"people" maxItems:"1000"`
 	Faces      []PhotoFace            `json:"faces" maxItems:"1000"`
 	Assertions []PhotoPersonAssertion `json:"assertions" maxItems:"1000"`
 }
@@ -47,11 +50,11 @@ func registerPhotoFaceRoutes(api huma.API, d Deps, g *gate) {
 	huma.Register(api, huma.Operation{OperationID: "listPhotoFaces", Method: http.MethodGet, Path: "/api/v1/photos/versions/{content_version_id}/faces", Summary: "Read face boxes and people on one photo version"}, func(ctx context.Context, in *struct {
 		ContentVersionID string `path:"content_version_id" format:"uuid"`
 	}) (*struct{ Body PhotoFacePage }, error) {
-		faces, assertions, err := d.Store.PhotoFaces(ctx, in.ContentVersionID)
+		faces, assertions, people, err := d.Store.PhotoFacePersonNames(ctx, in.ContentVersionID)
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		page := PhotoFacePage{Faces: faces, Assertions: make([]PhotoPersonAssertion, 0, len(assertions))}
+		page := PhotoFacePage{Faces: faces, People: people, Assertions: make([]PhotoPersonAssertion, 0, len(assertions))}
 		for _, assertion := range assertions {
 			page.Assertions = append(page.Assertions, photoAssertion(assertion))
 		}
@@ -61,6 +64,9 @@ func registerPhotoFaceRoutes(api huma.API, d Deps, g *gate) {
 		ContentVersionID string `path:"content_version_id" format:"uuid"`
 		Body             CreatePhotoFaceRequest
 	}) (*struct{ Body PhotoFaceResult }, error) {
+		if browserSessionRequest(ctx) && in.Body.Box == nil {
+			return nil, NewError(http.StatusForbidden, "web_session_read_only", "Browser sessions can only create boxed faces.")
+		}
 		var result PhotoFaceResult
 		err := g.mutate(func() error {
 			if in.Body.Box == nil {
@@ -104,6 +110,9 @@ func registerPhotoFaceDecisionRoutes(api huma.API, d Deps, g *gate) {
 		ContentVersionID string `path:"content_version_id" format:"uuid"`
 		Body             PhotoFaceDecisionRequest
 	}) (*struct{ Body PhotoFaceDecisionResult }, error) {
+		if browserSessionRequest(ctx) && in.Body.Action != "name" && in.Body.Action != "retract" && in.Body.Action != "dismiss" {
+			return nil, NewError(http.StatusForbidden, "web_session_read_only", "Browser sessions can only name, clear, or remove faces and clear whole-photo marks.")
+		}
 		var receipt store.PhotoFaceDecisionReceipt
 		err := g.mutate(func() error {
 			var err error

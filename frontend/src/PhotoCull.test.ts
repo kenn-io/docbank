@@ -1,11 +1,11 @@
 import { beforeEach, afterEach, expect, it, vi } from "vite-plus/test";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import { APIError } from "./api-transport.js";
 import PhotoCullView from "./PhotoCull.svelte";
 import PhotoCullConfirmation from "./PhotoCullConfirmation.svelte";
 import { PhotoCull } from "./photoCull.svelte.js";
 import { Photos } from "./photos.svelte.js";
-import { photo, preparedPhoto, photoPreparation } from "./photo-test-fixtures.js";
+import { photo, preparedPhoto, photoPreparation, photoFacePage } from "./photo-test-fixtures.js";
 import type { PhotoPreviewCache } from "./photoPreviewCache.js";
 import { photoCullStorage, type CullRun } from "./photoCullStorage.js";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
@@ -18,6 +18,7 @@ async function readyButton(name: string | RegExp) {
   return button;
 }
 beforeEach(() => {
+  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [], assertions: [], people: [] });
   vi.spyOn(api, "getPhotoSettings").mockResolvedValue({
     revision: 1,
     preference: null,
@@ -774,9 +775,11 @@ it("keeps a failed decision on screen and guards exit while its draft remains", 
   await fireEvent.click(screen.getByRole("button", { name: "Pick (P)" }));
   await screen.findByText("Decision failed");
   await fireEvent.keyDown(document.querySelector(".photo-cull")!, { key: "Escape" });
-  expect(screen.getByRole("alert").textContent).toContain(
-    "Apply or clear your metadata edits before changing photos.",
-  );
+  expect(
+    screen
+      .getByText("Apply or clear your metadata edits before changing photos.")
+      .getAttribute("role"),
+  ).toBe("alert");
   expect(cull.currentID).toBe("photo-1");
   await fireEvent.click(screen.getByRole("button", { name: "Exit cull" }));
   expect(onclose).not.toHaveBeenCalled();
@@ -1304,5 +1307,26 @@ it("reloads cached stack siblings after preparation loses a member", async () =>
         content_version_id: "replacement-version",
       }),
     ]),
+  );
+});
+
+it("loads face closeups on mount and on the next photo", async () => {
+  const read = vi.spyOn(api, "listPhotoFaces").mockResolvedValue(photoFacePage());
+  const { cull, photos } = await reviewPhoto();
+  await waitFor(() =>
+    expect(read).toHaveBeenCalledExactlyOnceWith(photo(1).content_version_id, expect.anything()),
+  );
+  const next = photo(2);
+  cull.run = {
+    ...cull.run!,
+    ids: [photo(1).asset_id, next.asset_id],
+    checkpoint: { ...cull.run!.checkpoint, pass: [photo(1).asset_id, next.asset_id] },
+  };
+  vi.mocked(photos.lookup).mockResolvedValue(next);
+  vi.mocked(photos.lookupMany).mockResolvedValue([photo(1), next]);
+  await fireEvent.click(await readyButton("Next"));
+  await screen.findByText(next.name);
+  await waitFor(() =>
+    expect(read).toHaveBeenLastCalledWith(next.content_version_id, expect.anything()),
   );
 });
