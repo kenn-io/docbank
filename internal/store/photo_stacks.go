@@ -15,6 +15,9 @@ import (
 // connected run stays as individual photos rather than a misleading partial stack.
 const MaxPhotoStackFrames = 500
 
+// MaxPhotoStackTargets bounds every live file revision in one stack decision.
+const MaxPhotoStackTargets = 2_000
+
 // MaxPhotoStackGroupIDs bounds one explicit-ID grouping request to a Cull run.
 const MaxPhotoStackGroupIDs = 250_000
 
@@ -90,7 +93,7 @@ func eligiblePhotoStack(frames []photoStackFrame) bool {
 	for _, frame := range frames {
 		files += frame.Files
 	}
-	return len(frames) >= 2 && len(frames) <= MaxPhotoStackFrames && files <= maxBatchTagTargets
+	return len(frames) >= 2 && len(frames) <= MaxPhotoStackFrames && files <= MaxPhotoStackTargets
 }
 
 // newPhotoStack applies the representative rule: the latest explicit choice,
@@ -217,7 +220,7 @@ type PhotoStackDecision struct {
 // transaction. The submitted members must still form one stack under the
 // stored folder and capture keys, and every file must keep its observed revision.
 func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision) (PhotoAuthoredReceipt, error) {
-	if len(request.AssetIDs) < 2 || len(request.AssetIDs) > MaxPhotoStackFrames || len(request.Targets) == 0 || len(request.Targets) > maxBatchTagTargets {
+	if len(request.AssetIDs) < 2 || len(request.AssetIDs) > MaxPhotoStackFrames || len(request.Targets) == 0 || len(request.Targets) > MaxPhotoStackTargets {
 		return PhotoAuthoredReceipt{}, ErrInvalidPhotoAsset
 	}
 	if !slices.Contains([]string{"current", "all", "selected", "representative"}, request.Decision) || !slices.Contains(request.AssetIDs, request.CurrentID) || request.Decision == "selected" && len(request.SelectedIDs) == 0 {
@@ -265,7 +268,7 @@ func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision
 		// Prepare every live source file inside the transaction, so a client
 		// cannot omit a sibling or one half of a RAW/JPEG pair.
 		preparation := PhotoAuthoredPreparation{}
-		preparer := photoAuthoredPreparer{tx: tx, hidden: request.Hidden, settings: settings, result: &preparation}
+		preparer := photoAuthoredPreparer{tx: tx, hidden: request.Hidden, settings: settings, result: &preparation, limit: MaxPhotoStackTargets}
 		if err := preparer.prepare(ctx, request.AssetIDs); err != nil {
 			return err
 		}
@@ -298,7 +301,7 @@ func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision
 			}
 		}
 		if request.Decision == "representative" {
-			result, err = s.choosePhotoRepresentativeTx(ctx, tx, newPhotoStack(frames), found[request.CurrentID])
+			result, err = s.choosePhotoRepresentativeTx(ctx, tx, found[request.CurrentID])
 			return err
 		}
 		flagged := map[string]bool{}
@@ -341,12 +344,19 @@ func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision
 
 // choosePhotoRepresentativeTx stores an explicit choice with the next rank.
 // Flags stay unchanged, so every frame keeps its picks and rejects.
-func (s *Store) choosePhotoRepresentativeTx(ctx context.Context, tx *sql.Tx, stack PhotoStack, frame photoStackFrame) (PhotoAuthoredReceipt, error) {
-	if stack.RepresentativeID == frame.AssetID && frame.Rank > 0 {
-		return PhotoAuthoredReceipt{Before: []PhotoAuthoredSnapshot{}, After: []PhotoAuthoredSnapshot{}}, nil
+func (s *Store) choosePhotoRepresentativeTx(ctx context.Context, tx *sql.Tx, frame photoStackFrame) (PhotoAuthoredReceipt, error) {
+	// Portable snapshots omit the internal sequence. Seed it once from live
+	// ranks and both sides of receipts, including choices hidden by Undo.
+	if _, err := tx.ExecContext(ctx, `INSERT INTO photo_library_settings(singleton,updated_at) VALUES(1,?) ON CONFLICT(singleton) DO NOTHING`, nowRFC3339()); err != nil {
+		return PhotoAuthoredReceipt{}, err
 	}
 	var rank int64
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(representative_rank),0)+1 FROM photo_assets WHERE representative_rank IS NOT NULL`).Scan(&rank); err != nil {
+	if err := tx.QueryRowContext(ctx, `UPDATE photo_library_settings SET representative_sequence=COALESCE(representative_sequence,(
+ SELECT COALESCE(MAX(rank),0) FROM (
+ SELECT representative_rank AS rank FROM photo_assets
+ UNION ALL SELECT json_extract(entry.value,'$.before') FROM photo_change_receipts r,json_each(r.after_json,'$.representatives') entry
+ UNION ALL SELECT json_extract(entry.value,'$.after') FROM photo_change_receipts r,json_each(r.after_json,'$.representatives') entry
+ )))+1 WHERE singleton=1 RETURNING representative_sequence`).Scan(&rank); err != nil {
 		return PhotoAuthoredReceipt{}, err
 	}
 	change, err := setPhotoRepresentativeTx(ctx, tx, frame.AssetID, -1, &rank)
@@ -367,7 +377,7 @@ func setPhotoRepresentativeTx(ctx context.Context, tx *sql.Tx, assetID string, r
 		return change, ErrStaleRevision
 	}
 	change.AfterRevision = change.BeforeRevision + 1
-	_, err = tx.ExecContext(ctx, `UPDATE photo_assets SET representative_rank=?,revision=?,updated_at=? WHERE asset_id=?`, nullablePhotoInt(rank), change.AfterRevision, nowRFC3339(), assetID)
+	_, err = tx.ExecContext(ctx, `UPDATE photo_assets SET representative_rank=?,revision=?,updated_at=? WHERE asset_id=?`, rank, change.AfterRevision, nowRFC3339(), assetID)
 	return change, err
 }
 
@@ -392,13 +402,6 @@ func photoRepresentativeStateTx(ctx context.Context, tx *sql.Tx, assetID string,
 		change.Before = new(before.Int64)
 	}
 	return change, nil
-}
-
-func nullablePhotoInt(value *int64) any {
-	if value == nil {
-		return nil
-	}
-	return *value
 }
 
 // photoStackPager emits whole query-scoped stacks from the live capture-time

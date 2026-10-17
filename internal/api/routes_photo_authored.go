@@ -17,6 +17,7 @@ type PhotoAuthoredPrepareRequest struct {
 
 	Hidden          bool `json:"hidden,omitempty"`
 	SkipUnavailable bool `json:"skip_unavailable,omitempty"`
+	Stack           bool `json:"stack,omitempty" doc:"Prepare up to 2,000 live files for a complete stack decision."`
 }
 
 type PhotoAuthoredEditRequest struct {
@@ -35,14 +36,14 @@ type PhotoStackDecisionRequest struct {
 	BurstGapSeconds int                             `json:"burst_gap_seconds" minimum:"1" maximum:"30"`
 	Hidden          bool                            `json:"hidden,omitempty"`
 	AssetIDs        []string                        `json:"asset_ids" minItems:"2" maxItems:"500" uniqueItems:"true"`
-	Targets         []store.PhotoAuthoredEditTarget `json:"targets" minItems:"1" maxItems:"1000"`
+	Targets         []store.PhotoAuthoredEditTarget `json:"targets" minItems:"1" maxItems:"2000"`
 	Decision        string                          `json:"decision" enum:"current,all,selected,representative"`
 	CurrentID       string                          `json:"current_id" format:"uuid"`
 	SelectedIDs     []string                        `json:"selected_ids,omitempty" maxItems:"500" uniqueItems:"true"`
 }
 
 func registerPhotoAuthoredRoutes(api huma.API, d Deps, g *gate) {
-	// Bound 500 observed frames and 1,000 file revisions.
+	// Bound 500 observed frames and 2,000 file revisions.
 	huma.Register(api, huma.Operation{OperationID: "decidePhotoStack", Method: http.MethodPost, Path: "/api/v1/photos/authored/stack", Summary: "Decide one observed stack atomically", MaxBodyBytes: 512 << 10}, func(ctx context.Context, in *struct{ Body PhotoStackDecisionRequest }) (*struct{ Body store.PhotoAuthoredReceipt }, error) {
 		body := in.Body
 		request := store.PhotoStackDecision{BurstGapSeconds: body.BurstGapSeconds, Hidden: body.Hidden, AssetIDs: body.AssetIDs, Targets: body.Targets, Decision: body.Decision, CurrentID: body.CurrentID, SelectedIDs: body.SelectedIDs}
@@ -61,6 +62,9 @@ func registerPhotoAuthoredRoutes(api huma.API, d Deps, g *gate) {
 		Body PhotoAuthoredPreparation
 	}, error) {
 		selection := store.PhotoSetSelection{AssetIDs: in.Body.AssetIDs, Hidden: in.Body.Hidden, SkipUnavailable: in.Body.SkipUnavailable, Coverage: store.CoverageSelection{Configuration: in.Body.Coverage.Configuration, ProfileFingerprint: in.Body.Coverage.ProfileFingerprint}}
+		if in.Body.Stack {
+			selection.Limit = store.MaxPhotoStackTargets
+		}
 		if in.Body.Query != nil {
 			value, err := parseWorkspaceQuery(*in.Body.Query)
 			if err != nil {

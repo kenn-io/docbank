@@ -281,16 +281,15 @@
       !cull.stackLoading &&
       !cull.stackError &&
       !loading &&
-      !editor.error &&
       !editor.conflict &&
       editor.needsStack(stack, photos.hidden)
     )
       untrack(() => void prepareStack(stack));
   });
-  async function prepareStack(stack: string[]) {
+  async function prepareStack(stack: string[], retry = false) {
     checkingDecision = true;
     try {
-      if (await cull.verifyDecision()) await editor.prepareStack(stack, photos.hidden);
+      if (await cull.verifyDecision()) await editor.prepareStack(stack, photos.hidden, retry);
     } finally {
       checkingDecision = false;
     }
@@ -333,6 +332,13 @@
       },
     );
     if (!success) return;
+    announcement =
+      decision === "representative"
+        ? "Representative chosen"
+        : decision === "all"
+          ? "Stack kept"
+          : "Current frame kept";
+    await tick();
     if (decision !== "representative" && checkpoint.autoAdvance && cull.currentID === id)
       cull.moveStack(1);
   }
@@ -412,6 +418,10 @@
           >Retry stacks</Button
         >{/if}
       {#if cull.progress && !cull.complete}<p role="status">{cull.progress}</p>{/if}
+      {#if editor.stackError && !editor.conflict && cull.currentStack}<Button
+          disabled={busy}
+          onclick={() => void prepareStack(cull.currentStack!, true)}>Retry</Button
+        >{/if}
       {#if editor.dirty || editor.conflict}<div class="controls">
           <Button disabled={busy} onclick={() => void retryDecision()}
             >{editor.conflict ? "Reload photo" : "Retry edit"}</Button

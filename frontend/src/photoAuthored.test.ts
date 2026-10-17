@@ -18,21 +18,21 @@ afterEach(() => {
 it("prepares a Hidden stack's members once and re-prepares them after a conflict", async () => {
   const prepare = vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue({
     assets: [],
-    targets: [preparedPhoto(1)],
+    targets: [preparedPhoto(1), preparedPhoto(2)],
   });
   vi.spyOn(api, "decidePhotoStack").mockRejectedValue(
     new APIError("Stack changed", 409, "photo_stack_changed"),
   );
   const editor = new PhotoAuthoredEditor("session", vi.fn());
-  await editor.prepareStack(["photo-1"], true);
-  await editor.prepareStack(["photo-1"], true);
+  await editor.prepareStack(["photo-1", "photo-2"], true);
+  await editor.prepareStack(["photo-1", "photo-2"], true);
   expect(prepare).toHaveBeenCalledExactlyOnceWith(
-    { asset_ids: ["photo-1"], hidden: true },
+    { asset_ids: ["photo-1", "photo-2"], hidden: true, stack: true },
     expect.anything(),
   );
   await editor.decideStack(
     {
-      asset_ids: ["photo-1"],
+      asset_ids: ["photo-1", "photo-2"],
       current_id: "photo-1",
       decision: "current",
       hidden: true,
@@ -44,7 +44,7 @@ it("prepares a Hidden stack's members once and re-prepares them after a conflict
   expect(editor.conflict).toBe(true);
   await editor.reload();
   expect(editor.conflict).toBe(false);
-  await editor.prepareStack(["photo-1"], true);
+  await editor.prepareStack(["photo-1", "photo-2"], true);
   expect(prepare).toHaveBeenCalledTimes(2);
 });
 
@@ -816,7 +816,18 @@ it("keeps a later edit busy when an earlier refresh finishes during its write", 
   editor.dispose();
 });
 
-it.each(["current", "stale-asset", "replaced", "unchanged", "checkpoint"])(
+const stackScenarios = [
+  "current",
+  "stale-asset",
+  "replaced",
+  "stale-flag",
+  "stale-rating",
+  "stale-version",
+  "unchanged",
+  "checkpoint",
+];
+
+it.each(stackScenarios)(
   "decides a stack against held revisions and the observed rows (%s)",
   async (scenario) => {
     const selected = preparedPhoto(1),
@@ -829,17 +840,25 @@ it.each(["current", "stale-asset", "replaced", "unchanged", "checkpoint"])(
       decision: "selected" as const,
       burst_gap_seconds: 2,
     };
+    if (scenario === "unchanged") {
+      selected.values.flag = "pick";
+      sibling.values.flag = companion.values.flag = "reject";
+    }
     const receipt = {
       receipt_id: scenario === "unchanged" ? "" : "stack-receipt",
-      before: [],
-      after: [
-        {
-          file_id: "file-2",
-          node_id: 2,
-          revision: 2,
-          values: { ...sibling.values, flag: "reject" as const },
-        },
-      ],
+      before: scenario === "unchanged" ? [] : [selected, sibling, companion],
+      after:
+        scenario === "unchanged"
+          ? []
+          : [selected, sibling, companion].map((target) => ({
+              file_id: target.file_id,
+              node_id: target.node_id,
+              revision: 2,
+              values: {
+                ...target.values,
+                flag: target.asset_id === "photo-1" ? ("pick" as const) : ("reject" as const),
+              },
+            })),
     };
     const prepare = vi
       .spyOn(api, "preparePhotoAuthored")
@@ -849,7 +868,7 @@ it.each(["current", "stale-asset", "replaced", "unchanged", "checkpoint"])(
     editor.targets = [selected];
     await editor.prepareStack(request.asset_ids, false);
     expect(prepare).toHaveBeenCalledExactlyOnceWith(
-      { asset_ids: ["photo-1", "photo-2"], hidden: false },
+      { asset_ids: ["photo-1", "photo-2"], hidden: false, stack: true },
       expect.anything(),
     );
     const observed = [
@@ -857,7 +876,9 @@ it.each(["current", "stale-asset", "replaced", "unchanged", "checkpoint"])(
         asset_id: "photo-1",
         revision: scenario === "stale-asset" ? 2 : 1,
         display_file_id: scenario === "replaced" ? "replacement" : "file-1",
-        content_version_id: "version-1",
+        content_version_id: scenario === "stale-version" ? "replacement" : "version-1",
+        flag: scenario === "stale-flag" ? ("pick" as const) : selected.values.flag,
+        rating: scenario === "stale-rating" ? 5 : 0,
       },
     ];
     const refresh = vi.fn(async () => {});
@@ -867,7 +888,7 @@ it.each(["current", "stale-asset", "replaced", "unchanged", "checkpoint"])(
     });
     expect(prepare).toHaveBeenCalledOnce();
     expect(editor.targets.map((target) => target.asset_id)).toEqual(["photo-1"]);
-    if (scenario === "stale-asset" || scenario === "replaced" || scenario === "checkpoint") {
+    if (scenario.startsWith("stale-") || scenario === "replaced" || scenario === "checkpoint") {
       expect(success).toBe(false);
       expect(decide).not.toHaveBeenCalled();
       expect(editor.conflict).toBe(scenario !== "checkpoint");

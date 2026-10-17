@@ -628,7 +628,7 @@ func loadPhotoAuthoredReceipt(ctx context.Context, q metadataQuerier, id string)
 }
 
 func validatePhotoAuthoredReceipt(r PhotoAuthoredReceipt, id string) error {
-	if r.ReceiptID != id || validateUUIDv4(id) != nil || len(r.Before) < 1 && len(r.Representatives) == 0 || len(r.Before) > maxBatchTagTargets || len(r.Before) != len(r.After) || r.UndoOf != "" && validateUUIDv4(r.UndoOf) != nil {
+	if r.ReceiptID != id || validateUUIDv4(id) != nil || len(r.Before) < 1 && len(r.Representatives) == 0 || len(r.Before) > MaxPhotoStackTargets || len(r.Before) != len(r.After) || r.UndoOf != "" && validateUUIDv4(r.UndoOf) != nil {
 		return ErrInvalidPhotoAsset
 	}
 	if r.Sidecar != nil && (r.Sidecar.NodeID < 1 || validateUUIDv4(r.Sidecar.VersionID) != nil || validateUUIDv4(r.Sidecar.FileID) != nil || r.UndoOf != "") {

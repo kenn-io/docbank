@@ -706,7 +706,7 @@ With capture-time sorting, Library groups adjacent photos from one import folder
 - A stack holds only photos in the current search and filters. Frames that the query excludes stay out of the tile and out of its decisions.
 - A photo joins a stack only when its displayed file has an EXIF capture time to the second or finer and its current import records name one folder. Photos with only a date or minute, photos placed by file time, photos whose folder is unknown or ambiguous, and videos stay separate. Push and watch sources keep their folders apart.
 - Capture times with a zone or UTC offset compare as instants. Times without a zone compare only with each other.
-- A stack holds at most 500 frames. A connected run of more than 500 frames or 1,000 live non-sidecar files shows as individual photos.
+- A stack holds at most 500 frames. A connected run of more than 500 frames or 2,000 live non-sidecar files shows as individual photos.
 - Other sorts and Map keep individual tiles.
 
 Library pages stay live. A page finishes its last stack, so it can hold up to 499 frames more than usual, and a stack never splits across pages. Photos imported between pages join later pages. Changing the gap starts a fresh page.
@@ -721,7 +721,7 @@ With a stack selected, the selection dock offers these decisions:
 
 A frame is undecided when none of its files has a flag. Automatic rejects leave flagged frames unchanged.
 
-A stack decision checks the shown members, their capture-time chain and the observed gap, and every file revision in one transaction. It records one receipt with **Undo**. Gap and display-preference changes share a settings revision, so simultaneous writes can conflict. Undo restores an earlier representative only while that photo is unchanged since the choice. If a member changed, Docbank refuses the whole decision, keeps your selection, and offers a reload. Newly adjacent frames stay undecided until the reloaded view includes them. Audited vaults refuse burst-gap changes, representative choices, and representative Undo. Change the same vault gap from the CLI with `docbank photos settings set --burst-gap-seconds 5`.
+A stack decision checks the shown members, their capture-time chain and the observed gap, and every file revision in one transaction. It records one receipt with **Undo**. Gap and display-preference changes share a settings revision, so simultaneous writes can conflict. Undo restores an earlier representative only while that photo is unchanged since the choice. If a member changed, Docbank refuses the whole decision, keeps your selection, and offers **Reload stack** in Library or **Reload photo** in Cull. Newly adjacent frames stay undecided until the reloaded view includes them. Audited vaults refuse burst-gap changes, representative choices, and representative Undo. Change the same vault gap from the CLI with `docbank photos settings set --burst-gap-seconds 5`.
 
 ## Cull and compare
 
@@ -744,7 +744,7 @@ With auto-advance on, P, X, and U move to the next photo; 0-5 change the rating 
 | ? | Show the key map |
 | Esc | Leave cull mode |
 
-Cull freezes ordered photo IDs and recomputes stacks on start, resume, and a gap change. A stack holds only photos in the run, even when photos from other folders fall between its frames. **H** and **L** visit each stack's first frame in the current pass; **J** and **K** move between its frames in pass order. Lone photos count as stacks of one. Regrouping keeps the latest order and progress, even after the snapshot expires. Navigation stays available while groups load; decisions wait. If regrouping fails, choose **Retry stacks**. A refused stack decision reloads grouping for all frozen IDs. Cull offers **Keep current (Return)**, **Keep all**, and **Choose representative**. A decision covers the whole live stack, including frames outside the current pass.
+Cull freezes ordered photo IDs and records whether it used capture-time sorting. Runs captured with capture-time sorting recompute stacks on start, resume, and a gap change. Other sorts and older saved runs without this record keep frames separate. A stack holds only photos in the run, even when photos from other folders fall between its frames. **H** and **L** visit each stack's first frame in the current pass; **J** and **K** move between its frames in pass order. Lone photos count as stacks of one. Regrouping keeps the latest order and progress, even after the snapshot expires. Navigation stays available while groups load; decisions wait. If regrouping fails, choose **Retry stacks**. If preparing a stack fails, choose **Retry**. A refused stack decision reloads grouping for all frozen IDs. Cull offers **Keep current (Return)**, **Keep all**, and **Choose representative**. A decision covers the whole live stack, including frames outside the current pass.
 
 Use **Skip** to record a skipped photo. The decision toast offers **Undo**. Ctrl, Cmd, and Alt shortcuts pause during cull. Apply or clear pending metadata edits before entering, moving, or leaving.
 

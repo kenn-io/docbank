@@ -140,6 +140,7 @@ export function preparedPhoto(
   overrides: Partial<PhotoPreparedTarget> = {},
 ): PhotoPreparedTarget {
   return {
+    current_content_version_id: `version-${id}`,
     asset_id: `photo-${id}`,
     asset_revision: 1,
     display_file_id: `file-${id}`,

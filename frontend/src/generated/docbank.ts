@@ -5293,6 +5293,7 @@ export interface PhotoPreparedTarget {
   asset_id: string;
   /** @minimum 1 */
   asset_revision: number;
+  current_content_version_id?: string;
   display_file_id: string;
   file_id: string;
   file_name: string;
@@ -5321,6 +5322,8 @@ export interface PhotoAuthoredPrepareRequest {
   hidden?: boolean;
   query?: SavedQueryV1Schema;
   skip_unavailable?: boolean;
+  /** Prepare up to 2,000 live files for a complete stack decision. */
+  stack?: boolean;
 }
 
 export interface PhotoKeywordNode {
@@ -5905,7 +5908,7 @@ export interface PhotoStackDecisionRequest {
   selected_ids?: string[];
   /**
      * @minItems 1
-     * @maxItems 1000
+     * @maxItems 2000
      */
   targets: PhotoAuthoredEditTarget[];
 }

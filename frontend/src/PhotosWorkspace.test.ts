@@ -14,6 +14,7 @@ import { Photos, photoQuery, mapPhotoLimit, type MapView } from "./photos.svelte
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
 import {
   photoMetadataResponse,
+  photoPreparation,
   preparedPhoto,
   mapPhoto,
   photo,
@@ -2971,20 +2972,60 @@ it.each(["Keep all", "Keep selected", "Choose representative"])(
       asset_ids: rows.map((row) => row.asset_id),
       representative_id: "photo-1",
     };
-    stubPhotoFetch(
-      async (url, init) =>
-        photoMetadataResponse(url, init) ??
-        Response.json({
-          items: rows,
-          stacks: [stack],
-          total: 3,
-          facets: [],
-          relevance_available: false,
-        }),
+    const targets = rows.map((row) => preparedPhoto(Number(row.asset_id.slice(6))));
+    vi.spyOn(api, "preparePhotoAuthored").mockImplementation(async (scope) =>
+      photoPreparation(
+        targets
+          .filter((target) => scope.asset_ids?.includes(target.asset_id))
+          .map((target) => ({ ...target, values: { ...target.values } })),
+      ),
     );
-    const decide = vi
-      .spyOn(api, "decidePhotoStack")
-      .mockResolvedValue({ receipt_id: "stack", before: [], after: [] });
+    stubPhotoFetch(async () =>
+      Response.json({
+        items: rows,
+        stacks: [stack],
+        total: 3,
+        facets: [],
+        relevance_available: false,
+      }),
+    );
+    const decide = vi.spyOn(api, "decidePhotoStack").mockImplementation(async (request) => {
+      if (request.decision === "representative") {
+        const row = rows.find((row) => row.asset_id === request.current_id)!;
+        const before = row.revision;
+        row.revision++;
+        targets.find((target) => target.asset_id === row.asset_id)!.asset_revision++;
+        return {
+          receipt_id: "representative",
+          before: [],
+          after: [],
+          representatives: [
+            {
+              asset_id: row.asset_id,
+              before_revision: before,
+              after_revision: row.revision,
+              after: 1,
+            },
+          ],
+        };
+      }
+      const chosen = Object.values(
+        request.decision === "all" ? request.asset_ids : request.selected_ids!,
+      );
+      const before: api.PhotoAuthoredSnapshot[] = [],
+        after: api.PhotoAuthoredSnapshot[] = [];
+      for (const target of targets) {
+        const flag = chosen.includes(target.asset_id) ? "pick" : target.values.flag || "reject";
+        if (flag === target.values.flag) continue;
+        before.push({ ...target, values: { ...target.values } });
+        target.values = { ...target.values, flag };
+        target.revision++;
+        target.node_revision++;
+        rows.find((row) => row.asset_id === target.asset_id)!.flag = flag;
+        after.push({ ...target, values: { ...target.values } });
+      }
+      return { receipt_id: after.length ? "stack" : "", before, after };
+    });
     const photos = new Photos("scoped", vi.fn());
     photos.items = rows.map((row) => ({ ...row, stack }));
     photos.total = 3;
@@ -3000,7 +3041,7 @@ it.each(["Keep all", "Keep selected", "Choose representative"])(
       await waitFor(() => expect(button.matches(":disabled")).toBe(false));
       await fireEvent.click(button);
       await waitFor(() => expect(decide).toHaveBeenCalledTimes(i));
-      await waitFor(() => expect(photos.authored.busy).toBe(false));
+      await waitFor(() => expect(photos.authored.busy || photos.loading).toBe(false));
       expect([...photos.selectedIDs]).toEqual(["photo-2"]);
       expect(photos.scope()).toEqual({ asset_ids: ["photo-2"] });
     }
@@ -3023,6 +3064,46 @@ it.each(["Keep all", "Keep selected", "Choose representative"])(
     photos.dispose();
   },
 );
+
+it("reloads a stack conflict before Metadata opens and keeps the selection", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  const rows = [photo(1), photo(2)];
+  const stack = { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1" };
+  stubPhotoFetch(async () =>
+    Response.json({
+      items: rows,
+      stacks: [stack],
+      total: 2,
+      facets: [],
+      relevance_available: false,
+    }),
+  );
+  const prepare = vi
+    .spyOn(api, "preparePhotoAuthored")
+    .mockRejectedValueOnce(new APIError("Stack changed", 409, "photo_stack_changed"))
+    .mockResolvedValue(photoPreparation([preparedPhoto(1), preparedPhoto(2)]));
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = rows.map((row) => ({ ...row, stack }));
+  photos.total = 2;
+  photos.started = true;
+  photos.selection = { selectedIDs: new Set(["photo-1"]), anchorID: "photo-1" };
+  vi.spyOn(photos, "resume").mockResolvedValue();
+  render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
+  await fireEvent.click(await screen.findByRole("button", { name: "Reload stack" }));
+  await waitFor(() => expect(prepare).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(photos.authored.stackLoading || photos.authored.conflict).toBe(false));
+  expect([...photos.selectedIDs]).toEqual(["photo-1"]);
+  expect(screen.getByRole("button", { name: "Keep all" }).matches(":disabled")).toBe(false);
+  photos.dispose();
+});
 
 it("range selects in rendered month order across offset dates and a collapsed stack", async () => {
   vi.stubGlobal(
