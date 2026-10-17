@@ -220,6 +220,34 @@ func TestPhotoCheckoutMetadata(t *testing.T) {
 				receiptFound, err := restored.CheckPhotoCheckoutCommitEntry(t.Context(), c, original)
 				require.NoError(t, err)
 				require.True(t, receiptFound, "restore preserves the receipt used to recognize a committed entry")
+				t.Run("reject dangling commit receipt references", func(t *testing.T) {
+					for _, tc := range []struct {
+						name           string
+						removeCheckout bool
+					}{
+						{name: "checkout", removeCheckout: true},
+						{name: "entry"},
+					} {
+						t.Run(tc.name, func(t *testing.T) {
+							var lines [][]byte
+							for _, line := range bytes.Split(snapshot.Bytes(), []byte{'\n'}) {
+								if len(line) == 0 {
+									continue
+								}
+								var record struct {
+									Type string `json:"type"`
+								}
+								require.NoError(t, json.Unmarshal(line, &record))
+								if record.Type == "photo_checkout_entry" || tc.removeCheckout && record.Type == "photo_checkout" {
+									continue
+								}
+								lines = append(lines, line)
+							}
+							invalid := newTestStoreWithDriver(t, driver.driver)
+							require.ErrorIs(t, invalid.ImportMetadata(t.Context(), bytes.NewReader(bytes.Join(lines, []byte{'\n'}))), ErrInvalidPhotoCheckout)
+						})
+					}
+				})
 				for _, field := range []string{"before_json", "after_json"} {
 					lines := strings.Split(snapshot.String(), "\n")
 					corrupted := false
