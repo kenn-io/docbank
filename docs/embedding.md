@@ -917,6 +917,63 @@ to preserve in `ProtectedRoots`: the repository cannot infer their current
 locations. `Vault.RestoreBackup` also protects its open vault automatically
 and keeps that vault's configured SQLite driver.
 
+### Read selected files without restoring
+
+Use `BackupRepository.OpenSnapshot` to read content or host files directly from
+a backup, even when the original vault is gone. It requires an exact snapshot
+ID. It does not create a vault, restore a catalog, or copy unrelated content.
+
+`Object` looks up a whole-file SHA-256. `Extra` looks up the exact `RecordAs`
+name supplied at capture. Both return `BackupObject` with `SHA256` and `Bytes`.
+Only files listed in that snapshot are readable; a missing member or name
+wraps `fs.ErrNotExist`, even when another snapshot contains the file.
+
+For example, copy an application catalog to a private temporary file and
+release the reader before inspecting it:
+
+```go
+repository, err := docbank.OpenBackupRepository(backupRoot)
+if err != nil {
+    return err
+}
+reader, err := repository.OpenSnapshot(ctx, snapshotID)
+if err != nil {
+    return err
+}
+catalog, err := reader.Extra("application/catalog.sqlite")
+if err != nil {
+    return errors.Join(err, reader.Close())
+}
+fmt.Printf("Catalog: %d bytes\n", catalog.Bytes)
+file, err := os.CreateTemp("", "backup-catalog-*")
+if err != nil {
+    return errors.Join(err, reader.Close())
+}
+defer os.Remove(file.Name())
+_, copyErr := reader.CopyExtra(ctx, "application/catalog.sqlite", file)
+if err := errors.Join(copyErr, file.Close(), reader.Close()); err != nil {
+    return err
+}
+return inspectCatalog(file.Name())
+```
+
+`CopyObject` and `CopyExtra` stream both ordinary and chunked files, including
+files over 4 GiB. They verify the complete hash and size. Discard all output if
+copying or closing the destination fails. `Info`, `Object`, and `Extra` remain
+usable after `Close`; further copies fail with `fs.ErrClosed`.
+
+Use each reader sequentially and close it after copying one group of files.
+Opening loads the repository index, file lists, and recipes again. The reader
+caches up to 64 open packs but keeps no file payload cache.
+
+The repository must be writable for lease heartbeats. Opening during a backup
+or maintenance operation returns `ErrBackupRepositoryLocked`; retry later.
+A backup waits up to 60 seconds for readers, then returns the same error.
+Forced maintenance or 30 minutes without a heartbeat, such as during sleep,
+can invalidate the lease. Missing or damaged bytes then fail the copy. Closing
+and reopening reloads placement after maintenance; keep the same snapshot ID.
+A closed reader does not prevent that snapshot from being forgotten later.
+
 ### Remove recovery points and reclaim storage
 
 `BackupRepository.Forget` removes the snapshot records you select.
