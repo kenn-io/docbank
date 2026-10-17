@@ -1024,3 +1024,58 @@ it("keeps shown-file narrowing on retry and resets it for a fresh decision", asy
   );
   expect(photos.cullEditor!.fileID).toBe("");
 });
+
+it.each(["advanced", "replaced", "unchanged"])(
+  "checks saved progress before Undo when another tab is %s",
+  async (change) => {
+    vi.stubGlobal("indexedDB", new IDBFactory());
+    vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+    const store = photoCullStorage("synthetic-vault");
+    const { cull, photos } = await reviewPhoto(photo(1), false, store);
+    await store.replace(cull.run!);
+    const other = new PhotoCull("session", photoCullStorage("synthetic-vault"));
+    await other.restore();
+    if (change === "advanced") {
+      other.move(1);
+      await other.flush();
+    } else if (change === "replaced") {
+      await store.replace(
+        { ...other.run!, checkpoint: { ...other.run!.checkpoint, runID: "replacement" } },
+        undefined,
+        other.run!.checkpoint,
+      );
+    }
+    const undo = vi.spyOn(api, "undoPhotoAuthored").mockResolvedValue({
+      receipt_id: "undo",
+      before: [],
+      after: [],
+    });
+    await act(() => {
+      photos.cullEditor!.receiptID = "decision";
+      photos.cullEditor!.undoState.summary = "Photo picked";
+    });
+    let release!: () => void;
+    const saved = store.saved;
+    vi.spyOn(store, "saved").mockImplementation(async () => {
+      await new Promise<void>((resolve) => (release = resolve));
+      return saved();
+    });
+    await fireEvent.click(await readyButton(/^Undo$/));
+    await waitFor(() => expect(release).toBeTypeOf("function"));
+    expect(screen.getByRole("button", { name: "Exit cull" }).matches(":disabled")).toBe(true);
+    expect(undo).not.toHaveBeenCalled();
+    await act(() => release());
+    if (change === "unchanged") {
+      await waitFor(() =>
+        expect(undo).toHaveBeenCalledExactlyOnceWith("decision", expect.anything()),
+      );
+      expect(cull.stale).toBe(false);
+    } else {
+      await screen.findByText(
+        "Progress could not be saved: Cull progress changed in another tab. Close and resume it.",
+      );
+      expect(undo).not.toHaveBeenCalled();
+      expect(photos.cullEditor!.receiptID).toBe("decision");
+    }
+  },
+);

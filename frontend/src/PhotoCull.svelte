@@ -166,6 +166,16 @@
     editor.reset();
     await applyDecision(photo, patch);
   }
+  async function undo() {
+    if (cull.stale || cull.busy || !canChangeTarget()) return;
+    checkingDecision = true;
+    try {
+      if (!(await cull.verifyDecision())) return;
+    } finally {
+      checkingDecision = false;
+    }
+    await editor.undo(refresh);
+  }
   async function applyDecision(selected: PhotoBrowseRow, patch: PhotoAuthoredPatch, retry = false) {
     checkingDecision = true;
     try {
@@ -405,7 +415,7 @@
           tone="success"
           message={editor.undoState.summary}
           actionLabel={cull.stale || busy || editor.dirty ? undefined : "Undo"}
-          onaction={() => void editor.undo(refresh)}
+          onaction={() => void undo()}
         />{/if}
       <span class="kit-sr-only" aria-live="polite">{announcement}</span>
     </div>
