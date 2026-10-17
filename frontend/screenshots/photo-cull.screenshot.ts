@@ -330,7 +330,10 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
     await captureThemes(page, "web-photo-compare-closeup");
     await compare.getByRole("button", { name: "Exit compare", exact: true }).click();
     for (let i = 2; i < 6; i++)
-      await page.locator(".photo-image").nth(i).click({ modifiers: ["Control"] });
+      await page
+        .locator(".photo-image")
+        .nth(i)
+        .click({ modifiers: ["Control"] });
     await page.getByRole("button", { name: "Compare", exact: true }).click();
     await expect(compare.locator(".frames img")).toHaveCount(6);
     await captureThemes(page, "web-photo-compare-six");
