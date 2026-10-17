@@ -336,6 +336,97 @@ content identity. The watcher does not pack content itself. Configure
 `[storage] pack_interval` when accumulated loose content should be packed
 automatically. GC and repack still run only on request.
 
+### Photo descriptions
+
+Configure one vision rendition profile. It sends a stripped 1024px JPEG preview to an OpenAI-compatible
+`POST /v1/chat/completions` endpoint. The preview processor normalizes orientation and color in memory before scaling to 1024px. `max_document_bytes` limits this preview upload; the original may be larger. The provider also caps the preview at 4 MiB. Set `adapter_contract = "docbank-compatible-vision/v1"`,
+`descriptor_id = "compatible-vision.describe-v1"`, and `model` to the deployed model name.
+Use `requested_artifacts = ["structured_evidence"]`, `disclose_filename = false`,
+and `max_response_bytes` at most 1 MiB. Photo descriptions publish
+`photo_suggestion` records and retain no rendition artifacts, so the processing
+profile's retention settings do not apply to them. Pending suggestions rebuild
+after restore; accepted and dismissed decisions are included in backups.
+
+Use the [named credential and runtime settings below](#supplied-audio-transcription).
+The endpoint must be a root origin; `operator_network` allows HTTP on explicitly
+allowed private networks, while `hosted_provider` requires HTTPS. Request
+timeout must be positive and at most ten minutes. The environment credential
+is resolved for each request, including the synthetic readiness probe.
+
+Derive both configuration fingerprints without starting a daemon or contacting
+an endpoint:
+
+```sh
+docbank processing vision-fingerprints --model vision-model --boundary operator_network --endpoint http://127.0.0.1:8080 --deployment-fingerprint aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+```
+
+Copy the JSON values into `descriptor_fingerprint` and `disclosure_fingerprint`.
+Replace the example model, trust boundary, endpoint, and deployment fingerprint
+with the exact values from your configuration. The command uses `vision.Descriptor` and
+`vision.DisclosureFingerprint` from `go.kenn.io/docbank/document/vision`.
+The descriptor binds the model, prompt, preview encoding, and trust boundary;
+the disclosure binds the destination and deployment.
+Profiles sharing a descriptor must share their effective endpoint, credential,
+and runtime settings.
+
+Add the following tables to `config.toml`. Replace the two fingerprint placeholders with the command's output and set `DOCBANK_VISION_KEY` in the daemon's environment. The other fingerprints are synthetic policy identities for this example; use stable values for your own policies and change them when those policies change.
+
+```toml
+[credential_bindings.vision]
+environment_variable = "DOCBANK_VISION_KEY"
+
+[rendition_profiles.vision]
+adapter_contract = "docbank-compatible-vision/v1"
+model = "vision-model"
+descriptor_id = "compatible-vision.describe-v1"
+descriptor_fingerprint = "<descriptor_fingerprint>"
+disclosure_fingerprint = "<disclosure_fingerprint>"
+deployment_fingerprint = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+authorization_fingerprint = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+upload_options_fingerprint = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+credential_binding = "credential:vision"
+trust_boundary = "operator_network"
+disclose_filename = false
+requested_artifacts = ["structured_evidence"]
+max_document_bytes = 4194304
+max_response_bytes = 1048576
+max_units = 1
+
+[rendition_profiles.vision.runtime]
+endpoint = "http://127.0.0.1:8080"
+request_timeout = "2m"
+allowed_cidrs = ["127.0.0.0/8"]
+proxy_mode = "disabled"
+connect_timeout = "10s"
+keep_alive = "30s"
+tls_handshake_timeout = "10s"
+
+[retrieval_profiles.photos]
+lexical_limit = 40
+vector_limit = 60
+
+[processing_profiles.photos]
+rendition = "vision"
+retrieval = "photos"
+trust_boundary = "operator_network"
+attachment_policy_fingerprint = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+completeness_fingerprint = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+consent_fingerprint = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+lexical_segmenter_fingerprint = "1111111111111111111111111111111111111111111111111111111111111111"
+normalizer_fingerprint = "2222222222222222222222222222222222222222222222222222222222222222"
+sanitizer_fingerprint = "3333333333333333333333333333333333333333333333333333333333333333"
+max_document_chars = 100000
+max_segment_runes = 2000
+max_unit_runes = 100000
+retain_provider_markdown = false
+retain_sanitized_markdown = false
+retain_typed_artifacts = false
+```
+
+After restart, `processing profiles --json` reports `probe_state`. A successful
+synthetic probe and an [ongoing consent grant](usage/document-processing.md#describe-photos)
+enable automatic description of eligible photos.
+
 ### Document conversion with Docling
 
 The daemon can send an original PDF, PPTX, XLSX, plain text, Markdown, PNG,

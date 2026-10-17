@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -671,5 +672,33 @@ func seedReleasedMtime(t *testing.T, db *sql.DB, nodeID int64, mtime string) {
 	} {
 		_, err := db.Exec(statement.query, statement.args...)
 		require.NoError(t, err)
+	}
+}
+
+func TestReleasedSchemaExportsRenditionWaiter(t *testing.T) {
+	t.Parallel()
+	for version, schema := range releasedSchemaFixtures {
+		t.Run(strconv.Itoa(version), func(t *testing.T) {
+			db, legacy := newReleasedFixtureStore(t, filepath.Join(t.TempDir(), "released.db"), DefaultSQLiteDriver(), schema, version)
+			versions := seedRenditionCatalogVersions(t, legacy)
+			request := renditionJobTestRequest(versions[0], catalogProcessingProfile(t, false))
+			grantRenditionJobConsent(t, legacy, request)
+			_, waiter, err := legacy.EnqueueRenditionJob(t.Context(), request)
+			require.NoError(t, err)
+			var exported bytes.Buffer
+			require.NoError(t, exportReleasedMetadataSnapshot(t.Context(), db, &exported, version))
+			found := false
+			for line := range strings.SplitSeq(exported.String(), "\n") {
+				if !strings.Contains(line, `"type":"rendition_job_waiter"`) {
+					continue
+				}
+				var record metadataRenditionJobWaiter
+				require.NoError(t, json.Unmarshal([]byte(line), &record))
+				require.Equal(t, waiter.ID, record.ID)
+				require.Equal(t, waiter.State, record.State)
+				found = true
+			}
+			require.True(t, found, "the queued waiter must survive a released-schema export")
+		})
 	}
 }

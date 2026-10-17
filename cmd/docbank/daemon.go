@@ -331,9 +331,16 @@ func runServe(ctx context.Context) (retErr error) {
 	if err := jobSupervisor.Start("process:media-continuations", mediaContinuations.Run); err != nil {
 		return fmt.Errorf("starting media processing continuations: %w", err)
 	}
-	if len(mediaOriginProbes) > 0 {
-		if err := jobSupervisor.Start("probe:media-origins", processingService.ProbeMediaOrigins); err != nil {
+	if len(mediaOriginProbes) > 0 || processingService.HasPhotoDescriptionProfiles() {
+		if err := jobSupervisor.Start("probe:media-origins", processingService.RunMediaOriginProbes); err != nil {
 			return fmt.Errorf("starting media origin probes: %w", err)
+		}
+	}
+	if processingService.HasPhotoDescriptionProfiles() {
+		if err := jobSupervisor.Start("process:photo-descriptions", func(ctx context.Context) error {
+			return processingService.PhotoDescriptionBackfill(ctx, logger, renditionWorkers)
+		}); err != nil {
+			return fmt.Errorf("starting photo descriptions: %w", err)
 		}
 	}
 	if err := startEmbeddingWorkerIfReady(jobSupervisor, embeddingRuntimeRegistry,

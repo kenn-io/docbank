@@ -190,6 +190,26 @@ describe("document processing drawer", () => {
     expect(screen.getByRole("button", { name: "Consent and run" })).toBeTruthy();
   });
 
+  it("shows vault-wide photo consent scope before the consent action", async () => {
+    const consequence =
+      "Consent queues all eligible photos in the vault for description. The estimate is for the selected photo. Pending photo suggestions rebuild after restore; accepted and dismissed decisions are included in backups.";
+    renderProcessingResponse(
+      Promise.resolve(completedProcessingResponse()),
+      ["vision"],
+      "",
+      consequence,
+    );
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Revoke all processing consent" }),
+    );
+    const consent = await screen.findByRole("button", { name: "Consent and run" });
+    const disclosure = screen.getByText(consequence, { exact: false });
+    expect(disclosure.compareDocumentPosition(consent) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(consent.closest("section")?.contains(disclosure)).toBe(true);
+  });
+
   it("discards the previous profile plan and coverage when a new preview fails", async () => {
     const versionID = "11111111-1111-4111-8111-111111111111";
     const fingerprint = "a".repeat(64);
@@ -1037,6 +1057,15 @@ describe("document processing drawer", () => {
     expect(await screen.findByText(/search response/i)).toBeTruthy();
     expect(screen.queryByText("Revoked retained evidence")).toBeNull();
   });
+
+  it("shows provider probe guidance", async () => {
+    renderProcessingResponse(
+      Promise.resolve(completedProcessingResponse()),
+      ["vision"],
+      "Check the provider credential.",
+    );
+    expect(await screen.findByText("Check the provider credential.")).toBeTruthy();
+  });
 });
 
 const processingJob = {
@@ -1064,7 +1093,12 @@ function completedProcessingResponse(): Response {
   );
 }
 
-function renderProcessingResponse(response: Promise<Response>, profiles = ["private"]) {
+function renderProcessingResponse(
+  response: Promise<Response>,
+  profiles = ["private"],
+  probeReason = "",
+  backupConsequence = "none",
+) {
   let revoked = false;
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
@@ -1074,6 +1108,7 @@ function renderProcessingResponse(response: Promise<Response>, profiles = ["priv
           name,
           fingerprint: processingJob.profile_fingerprint,
           rendition: false,
+          probe_reason: probeReason,
           embedding_bindings: ["semantic"],
         })),
       );
@@ -1089,7 +1124,7 @@ function renderProcessingResponse(response: Promise<Response>, profiles = ["priv
         estimate: { source_bytes: 1, provider_calls: 1, vector_spaces: 1 },
         consent_required: revoked,
         consent_state: revoked ? "revoked" : "active",
-        backup_consequence: "none",
+        backup_consequence: backupConsequence,
       });
     if (path.startsWith("/api/v1/coverage?"))
       return Response.json({

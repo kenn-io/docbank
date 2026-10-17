@@ -556,7 +556,10 @@ func (s *Store) UndoPhotoAuthored(ctx context.Context, id string) (PhotoAuthored
 			}
 			plan.states[tagID] = photoKeywordState{tag, states}
 		}
-		return s.applyPhotoKeywordsTx(ctx, tx, &result, plan, nodes)
+		if err := s.applyPhotoKeywordsTx(ctx, tx, &result, plan, nodes); err != nil {
+			return err
+		}
+		return bumpUndonePhotoSuggestionRevisionsTx(ctx, tx, result)
 	})
 	return result, err
 }

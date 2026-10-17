@@ -49,6 +49,7 @@ type PhotoQuality struct {
 }
 
 type PhotoBrowseRow struct {
+	MatchedAISuggestion  bool              `json:"matched_ai_suggestion,omitempty"`
 	Quality              *PhotoQuality     `json:"quality,omitempty"`
 	AssetID              string            `json:"asset_id" format:"uuid"`
 	Kind                 string            `json:"kind" enum:"photo,video"`
@@ -94,6 +95,7 @@ type PhotoMapRow struct {
 	Previews         struct {
 		Grid PhotoPreviewSlot `json:"grid"`
 	} `json:"previews"`
+	MatchedAISuggestion bool `json:"matched_ai_suggestion,omitempty"`
 }
 
 type PhotoBrowsePage struct {

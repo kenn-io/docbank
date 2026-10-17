@@ -184,29 +184,68 @@ func TestListDocumentsDoesNotReplayPageAfterDaemonStops(t *testing.T) {
 	assert.Equal(t, int32(1), pageCalls.Load())
 }
 
-func TestProcessingPlanToolReportsIneligibleSource(t *testing.T) {
-	daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/api/v1/processing/plans" {
-			http.NotFound(response, request)
-			return
-		}
-		writeDaemonJSON(t, response, api.ProcessingPlan{
-			Fingerprint: strings.Repeat("a", 64), VaultUID: testVaultID,
-			Selector:           api.ProcessingSelector{NodeID: 7, ContentVersionID: testVersionID, Profile: "local"},
-			ProfileFingerprint: strings.Repeat("b", 64), Flow: []api.ProcessingFlowHop{},
-			DisclosedClasses: []string{}, RetainedClasses: []string{}, ConsentState: "required",
-			BackupConsequence: "derivatives are backed up", RenditionIneligibleReason: "unbounded_media_family",
+func TestProcessingPlanToolReportsSourceState(t *testing.T) {
+	for _, tc := range []struct {
+		name                 string
+		plan                 api.ProcessingPlan
+		args                 map[string]any
+		wantIneligibleReason string
+		wantInputClasses     []any
+	}{
+		{
+			name: "ineligible",
+			plan: api.ProcessingPlan{
+				Fingerprint: strings.Repeat("a", 64), VaultUID: testVaultID,
+				Selector:           api.ProcessingSelector{NodeID: 7, ContentVersionID: testVersionID, Profile: "local"},
+				ProfileFingerprint: strings.Repeat("b", 64), Flow: []api.ProcessingFlowHop{},
+				DisclosedClasses: []string{}, RetainedClasses: []string{}, ConsentState: "required",
+				BackupConsequence: "derivatives are backed up", RenditionIneligibleReason: "unbounded_media_family",
+			},
+			args:                 map[string]any{"node_id": 7, "content_version_id": testVersionID, "profile": "local"},
+			wantIneligibleReason: "unbounded_media_family",
+		},
+		{
+			name: "vision_input",
+			plan: api.ProcessingPlan{
+				Fingerprint: strings.Repeat("a", 64), VaultUID: testVaultID,
+				Selector:           api.ProcessingSelector{NodeID: 7, ContentVersionID: testVersionID, Profile: "vision"},
+				ProfileFingerprint: testProfileID,
+				Flow: []api.ProcessingFlowHop{{Capability: "rendition", ProviderID: "compatible-vision.describe-v1", TrustBoundary: "operator_network", InputClasses: []string{"derived_upload"},
+					RuntimeDisclosure: api.ProcessingRuntimeDisclosure{ImmediateProcessor: "compatible-vision.describe-v1", UltimateProcessor: "compatible-vision.describe-v1", Endpoint: "https://vision.example.com", Deployment: "synthetic", Model: "synthetic-vision", MetadataClasses: []string{}, RetainedArtifactRoles: []string{}}}},
+				DisclosedClasses: []string{"derived_upload"}, ConsentState: "required", ConsentRequired: true,
+			},
+			args:             map[string]any{"node_id": 7, "content_version_id": testVersionID, "profile": "vision"},
+			wantInputClasses: []any{"derived_upload"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				if request.URL.Path != "/api/v1/processing/plans" {
+					http.NotFound(response, request)
+					return
+				}
+				writeDaemonJSON(t, response, tc.plan)
+			}))
+			t.Cleanup(daemon.Close)
+			lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+				return daemonconn.New(daemon.URL, ""), nil
+			}, func(*daemonconn.Connection) error { return nil })
+			result, err := invokeReadTool(t.Context(), lease, "get_processing_plan", tc.args)
+			require.NoError(t, err)
+			output := structuredMap(t, result.StructuredContent)
+			if tc.wantIneligibleReason != "" {
+				require.Equal(t, tc.wantIneligibleReason, output["rendition_ineligible_reason"])
+			}
+			if tc.wantInputClasses != nil {
+				flow, ok := output["flow"].([]any)
+				require.True(t, ok)
+				require.Len(t, flow, 1)
+				hop, ok := flow[0].(map[string]any)
+				require.True(t, ok)
+				require.Equal(t, tc.wantInputClasses, hop["input_classes"])
+			}
 		})
-	}))
-	t.Cleanup(daemon.Close)
-	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
-		return daemonconn.New(daemon.URL, ""), nil
-	}, func(*daemonconn.Connection) error { return nil })
-	result, err := invokeReadTool(t.Context(), lease, "get_processing_plan", map[string]any{
-		"node_id": 7, "content_version_id": testVersionID, "profile": "local",
-	})
-	require.NoError(t, err)
-	require.Equal(t, "unbounded_media_family", structuredMap(t, result.StructuredContent)["rendition_ineligible_reason"])
+	}
 }
 
 func TestReadToolResultCapFailsClosed(t *testing.T) {

@@ -69,6 +69,19 @@ func scanTag(row interface{ Scan(args ...any) error }) (Tag, error) {
 
 // CreateTag defines a tag with a fresh stable identity.
 func (s *Store) CreateTag(ctx context.Context, name string) (Tag, error) {
+	var created Tag
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		created, err = s.createTagTx(ctx, tx, name)
+		return err
+	})
+	if err != nil {
+		return Tag{}, err
+	}
+	return created, nil
+}
+
+func (s *Store) createTagTx(ctx context.Context, tx *sql.Tx, name string) (Tag, error) {
 	name, err := NormalizeTagName(name)
 	if err != nil {
 		return Tag{}, err
@@ -78,26 +91,20 @@ func (s *Store) CreateTag(ctx context.Context, name string) (Tag, error) {
 		return Tag{}, fmt.Errorf("allocating tag ID: %w", err)
 	}
 	created := Tag{ID: id, Name: name, Revision: 1}
-	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		active, err := auditAuthorityActiveTx(ctx, tx)
-		if err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO tags(id, name) VALUES(?, ?)`, id, name); err != nil {
-			if s.driver.IsUniqueViolation(err) {
-				return fmt.Errorf("tag %q: %w", name, ErrExists)
-			}
-			return fmt.Errorf("creating tag %q: %w", name, err)
-		}
-		if !active {
-			return nil
-		}
-		return s.persistAuditedTagCreation(ctx, tx, created)
-	})
+	active, err := auditAuthorityActiveTx(ctx, tx)
 	if err != nil {
 		return Tag{}, err
 	}
-	return created, nil
+	if _, err := tx.ExecContext(ctx, `INSERT INTO tags(id, name) VALUES(?, ?)`, id, name); err != nil {
+		if s.driver.IsUniqueViolation(err) {
+			return Tag{}, fmt.Errorf("tag %q: %w", name, ErrExists)
+		}
+		return Tag{}, fmt.Errorf("creating tag %q: %w", name, err)
+	}
+	if active {
+		err = s.persistAuditedTagCreation(ctx, tx, created)
+	}
+	return created, err
 }
 
 // TagByID returns one tag by stable identity.
@@ -121,11 +128,15 @@ func tagByIDQuery(ctx context.Context, queryer rowQuerier, id string) (Tag, erro
 
 // TagByName returns the tag whose normalized name exactly matches name.
 func (s *Store) TagByName(ctx context.Context, name string) (Tag, error) {
+	return tagByNameQuery(ctx, s.db, name)
+}
+
+func tagByNameQuery(ctx context.Context, queryer rowQuerier, name string) (Tag, error) {
 	name, err := NormalizeTagName(name)
 	if err != nil {
 		return Tag{}, err
 	}
-	tag, err := scanTag(s.db.QueryRowContext(ctx, `
+	tag, err := scanTag(queryer.QueryRowContext(ctx, `
 		SELECT t.id, t.name, t.revision,
 		       (SELECT COUNT(*) FROM node_tags WHERE tag_id = t.id)
 		FROM tags t WHERE t.name = ?`, name))

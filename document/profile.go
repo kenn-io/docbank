@@ -469,6 +469,9 @@ func validateProcessingProfile(profile ProcessingProfileV1) error {
 			return fmt.Errorf("embedding binding name %q is duplicated", binding.Name)
 		}
 		names[binding.Name] = struct{}{}
+		if binding.InputKind == EmbeddingInputRenditionChunk && profile.Rendition != nil && profile.Rendition.AdapterContract == VisionAdapterContract {
+			return errors.New("rendition_chunk embeddings require a text rendition; photo descriptions publish suggestions")
+		}
 		if err := validateEmbeddingBinding(binding, profile.Rendition != nil); err != nil {
 			return fmt.Errorf("embedding binding %d: %w", index, err)
 		}

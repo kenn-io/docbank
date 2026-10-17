@@ -302,12 +302,9 @@ var processingMetadataTables = []metadataRecordCodec{
 		validate: validateMetadataRenditionJob, exportAll: exportRenditionJobs, insert: importMetadataRenditionJob}),
 	newMetadataTable(metadataTable[metadataRenditionJobWaiter]{
 		record: metadataRenditionJobWaiter{Type: metadataRenditionJobWaiterType}, table: "rendition_job_waiters",
-		suffix: "ORDER BY job_id,waiter_id", checkExport: true,
-		validate: func(value metadataRenditionJobWaiter) error {
-			_, err := validateMetadataRenditionJobWaiter(value)
-			return err
-		},
-		insert: importMetadataRenditionJobWaiter}),
+		suffix: "ORDER BY job_id,waiter_id", checkExport: true, exportAll: exportRenditionJobWaiters,
+		validate: validateMetadataRenditionJobWaiterRecord,
+		insert:   importMetadataRenditionJobWaiter}),
 }
 
 var (
@@ -335,6 +332,41 @@ var (
 		table:  "derivative_purge_suppressions", suffix: "ORDER BY source_sha256,profile_fingerprint,build_id",
 		validate: validateMetadataDerivativePurgeSuppression})
 )
+
+func validateMetadataRenditionJobWaiterRecord(value metadataRenditionJobWaiter) error {
+	_, err := validateMetadataRenditionJobWaiter(value)
+	return err
+}
+
+// A restored pending proposal needs fresh work; an empty published outcome stays
+// completed. Export changes only the snapshot's waiter, never the source vault.
+func exportRenditionJobWaiters(ctx context.Context, q metadataQuerier, write metadataWrite) error {
+	pending := `EXISTS(SELECT 1 FROM photo_suggestions s JOIN rendition_jobs j ON j.job_id=w.job_id WHERE s.content_version_id=w.content_version_id AND s.response='pending' AND s.producer_fingerprint=j.rendition_request_fingerprint AND json_extract(j.execution_identity_json,'$.upload.input_kind')='derived_upload')`
+	table := newMetadataTable(metadataTable[metadataRenditionJobWaiter]{
+		record: metadataRenditionJobWaiter{Type: metadataRenditionJobWaiterType}, table: "rendition_job_waiters",
+		suffix: "ORDER BY job_id,waiter_id", checkExport: true, validate: validateMetadataRenditionJobWaiterRecord,
+	})
+	var hasSuggestions bool
+	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='photo_suggestions')`).Scan(&hasSuggestions); err != nil {
+		return err
+	}
+	if !hasSuggestions {
+		return table.export(ctx, q, write)
+	}
+	columns := make([]string, 0, len(table.plan.columns))
+	for _, column := range table.plan.columns {
+		expression := "w." + column.name
+		if column.name == "state" {
+			expression = `CASE WHEN w.state='published' AND ` + pending + ` THEN 'rejected' ELSE w.state END`
+		}
+		if column.name == "failure_code" {
+			expression = `CASE WHEN w.state='published' AND ` + pending + ` THEN 'stale_authority' ELSE w.failure_code END`
+		}
+		columns = append(columns, expression+" AS "+column.name)
+	}
+	table.table = "(SELECT " + strings.Join(columns, ",") + " FROM rendition_job_waiters w)"
+	return table.export(ctx, q, write)
+}
 
 func exportRenditionJobs(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
 	rows, err := tx.QueryContext(ctx, `
@@ -765,15 +797,17 @@ func validateMetadataRenditionJob(value metadataRenditionJob) error {
 	if err != nil || fingerprint != value.ExecutionIdentityFingerprint {
 		return errors.Join(errors.New("rendition job execution identity is invalid"), err)
 	}
-	if value.ExecutionIdentity.Upload.SHA256 != value.SourceSHA256 ||
+	if value.ExecutionIdentity.Authorization.SourceSHA256 != value.SourceSHA256 ||
+		value.ExecutionIdentity.Upload.InputKind == document.RenditionInputOriginalFile && value.ExecutionIdentity.Upload.SHA256 != value.SourceSHA256 ||
 		value.ExecutionIdentity.Authorization.RenditionRequestFingerprint !=
 			value.RenditionRequestFingerprint {
 		return errors.New("rendition job execution identity disagrees with job authority")
 	}
-	if renditionSharedBuildID(value.VaultID, value.SourceSHA256,
+	expectedID := renditionSharedBuildID(value.VaultID, value.SourceSHA256,
 		value.RenditionRequestFingerprint, value.EvidenceLexicalFingerprint,
-		value.CapturedArtifactPolicyFingerprint, value.ExecutionIdentityFingerprint) != value.ID {
-		return errors.New("rendition job ID does not match immutable shared-build identity")
+		value.CapturedArtifactPolicyFingerprint, value.ExecutionIdentityFingerprint)
+	if expectedID != value.ID {
+		return errors.New("rendition job ID does not match immutable build identity")
 	}
 	if value.ExecutionSnapshot != nil {
 		if _, err := document.CanonicalRenditionExecutionSnapshotV1(*value.ExecutionSnapshot); err != nil {
@@ -872,7 +906,7 @@ func validateMetadataRenditionJobWaiter(
 	}
 	if value.FailureCode != nil {
 		if value.State != "rejected" || (*value.FailureCode != RenditionFailureConsent &&
-			*value.FailureCode != RenditionFailureStaleAuthority) {
+			*value.FailureCode != RenditionFailureStaleAuthority && *value.FailureCode != RenditionFailureTerminal && *value.FailureCode != RenditionFailureAmbiguous) {
 			return normalizedConsentAuthority{}, errors.New("invalid rendition job waiter failure")
 		}
 	}
@@ -902,7 +936,7 @@ func validateMetadataRenditionJobWaiter(
 		!slices.Equal(authority.retained, value.RetainedClasses) {
 		return normalizedConsentAuthority{}, errors.New("rendition waiter classes are not canonical")
 	}
-	if err := validateRenditionWaiterInputClasses(authority.inputs); err != nil {
+	if err := validateRenditionWaiterInputClasses(authority.inputs, ""); err != nil {
 		return normalizedConsentAuthority{}, err
 	}
 	if renditionScopedID("waiter", value.JobID, value.ContentVersionID,
@@ -1727,12 +1761,13 @@ func validateProcessingMetadataState(ctx context.Context, tx metadataQuerier) er
 	checks := []struct {
 		name  string
 		query string
+		args  []any
 	}{
 		{"rendition build belongs to another vault", `
 			SELECT EXISTS(
 			  SELECT 1 FROM rendition_builds b
 			  WHERE b.vault_uid != (SELECT vault_uid FROM vault_metadata WHERE singleton=1)
-			)`},
+			)`, nil},
 		{"rendition attachment profile identity disagrees", `
 			SELECT EXISTS(
 			  SELECT 1 FROM rendition_attachments a
@@ -1742,7 +1777,7 @@ func validateProcessingMetadataState(ctx context.Context, tx metadataQuerier) er
 			     OR a.consent_fingerprint != p.consent_fingerprint
 			     OR a.rendition_disclosure_fingerprint != p.rendition_disclosure_fingerprint
 			     OR a.trust_boundary != p.trust_boundary
-			)`},
+			)`, nil},
 		{"rendition attachment component identity disagrees", `
 			SELECT EXISTS(
 			  SELECT 1 FROM rendition_attachments a
@@ -1750,14 +1785,14 @@ func validateProcessingMetadataState(ctx context.Context, tx metadataQuerier) er
 			  JOIN rendition_builds b ON b.build_id=a.build_id
 			  WHERE b.rendition_request_fingerprint != p.rendition_request_fingerprint
 			     OR b.evidence_lexical_fingerprint != p.evidence_lexical_fingerprint
-			)`},
+			)`, nil},
 		{"rendition attachment source identity disagrees", `
 			SELECT EXISTS(
 			  SELECT 1 FROM rendition_attachments a
 			  JOIN content_versions v ON v.version_id=a.content_version_id
 			  JOIN rendition_builds b ON b.build_id=a.build_id
 			  WHERE v.blob_hash != b.source_sha256 OR a.vault_uid != b.vault_uid
-			)`},
+			)`, nil},
 		{"rendition head does not resolve through exact attachment", `
 			SELECT EXISTS(
 			  SELECT 1 FROM rendition_heads h
@@ -1766,12 +1801,12 @@ func validateProcessingMetadataState(ctx context.Context, tx metadataQuerier) er
 			   AND a.content_version_id=h.content_version_id
 			   AND a.profile_fingerprint=h.profile_fingerprint
 			  WHERE a.attachment_id IS NULL
-			)`},
+			)`, nil},
 		{"rendition job belongs to another vault", `
 			SELECT EXISTS(
 			  SELECT 1 FROM rendition_jobs j
 			  WHERE j.vault_uid != (SELECT vault_uid FROM vault_metadata WHERE singleton=1)
-			)`},
+			)`, nil},
 		{"rendition job waiter authority disagrees", `
 			SELECT EXISTS(
 			  SELECT 1 FROM rendition_job_waiters w
@@ -1782,25 +1817,26 @@ func validateProcessingMetadataState(ctx context.Context, tx metadataQuerier) er
 			     OR p.rendition_request_fingerprint != j.rendition_request_fingerprint
 			     OR p.evidence_lexical_fingerprint != j.evidence_lexical_fingerprint
 			     OR p.rendition_disclosure_fingerprint != w.disclosure_fingerprint
-			)`},
+			)`, nil},
 		{"rendition job selected waiter is missing", `
 			SELECT EXISTS(
 			  SELECT 1 FROM rendition_jobs j
 			  LEFT JOIN rendition_job_waiters w
 			    ON w.waiter_id=j.selected_waiter_id AND w.job_id=j.job_id
 			  WHERE j.selected_waiter_id IS NOT NULL AND w.waiter_id IS NULL
-			)`},
+			)`, nil},
 		{"rendition job staged build is missing", `
 			SELECT EXISTS(
 			  SELECT 1 FROM rendition_jobs j
 			  LEFT JOIN rendition_builds b ON b.build_id=j.job_id
 			  WHERE j.phase IN ('build_staged','generation_staged','published')
+			    AND json_extract(j.execution_identity_json,'$.upload.input_kind')<>?
 			    AND b.build_id IS NULL
-			)`},
+			)`, []any{document.RenditionInputDerivedUpload}},
 	}
 	for _, check := range checks {
 		var failed bool
-		if err := tx.QueryRowContext(ctx, check.query).Scan(&failed); err != nil {
+		if err := tx.QueryRowContext(ctx, check.query, check.args...).Scan(&failed); err != nil {
 			return fmt.Errorf("validating processing metadata (%s): %w", check.name, err)
 		}
 		if failed {
@@ -1915,8 +1951,9 @@ func validateProcessingMetadataState(ctx context.Context, tx metadataQuerier) er
 
 func validateRenditionJobExecutionProfiles(ctx context.Context, query metadataQuerier) (retErr error) {
 	rows, err := query.QueryContext(ctx, `
-		SELECT DISTINCT j.job_id,j.execution_identity_json,
-		       j.captured_artifact_policy_json,p.canonical_profile
+		SELECT DISTINCT j.job_id,
+		       j.execution_identity_json,j.captured_artifact_policy_json,
+	       p.canonical_profile,w.input_classes_json
 		FROM rendition_jobs j
 		JOIN rendition_job_waiters w ON w.job_id=j.job_id
 		JOIN processing_profiles p ON p.profile_fingerprint=w.profile_fingerprint
@@ -1926,13 +1963,22 @@ func validateRenditionJobExecutionProfiles(ctx context.Context, query metadataQu
 	}
 	defer func() { retErr = errors.Join(retErr, rows.Close()) }()
 	for rows.Next() {
-		var jobID, identityJSON, policyJSON, profileJSON string
-		if err := rows.Scan(&jobID, &identityJSON, &policyJSON, &profileJSON); err != nil {
+		var jobID, identityJSON, policyJSON, profileJSON, inputJSON string
+		if err := rows.Scan(&jobID, &identityJSON,
+			&policyJSON, &profileJSON, &inputJSON); err != nil {
 			return fmt.Errorf("reading rendition job execution profile: %w", err)
 		}
 		identity, err := document.ParseRenditionExecutionIdentityV1([]byte(identityJSON))
 		if err != nil {
 			return fmt.Errorf("rendition job %s execution identity: %w", jobID, err)
+		}
+
+		var inputs []string
+		if err := json.Unmarshal([]byte(inputJSON), &inputs); err != nil {
+			return err
+		}
+		if err := validateRenditionWaiterInputClasses(inputs, identity.Upload.InputKind); err != nil {
+			return err
 		}
 		var profile document.ProcessingProfileV1
 		if err := json.Unmarshal(

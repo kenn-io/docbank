@@ -18,9 +18,11 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/home"
+	"go.kenn.io/docbank/internal/phototest"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/sqlite"
 )
 
 func check(err error) {
@@ -30,6 +32,7 @@ func check(err error) {
 }
 
 func main() {
+	suggestions := flag.Bool("suggestions", false, "Include synthetic photo suggestions")
 	mapGPS := flag.Bool("map", false, "Include synthetic GPS locations")
 	unavailable := flag.Bool("unavailable", false, "Include an undecodable photo")
 	rejects := flag.Bool("rejects", false, "Include confirmed rejects")
@@ -178,6 +181,17 @@ func main() {
 		}
 		_, err = s.PublishVisualPreviewGeneration(ctx, node.CurrentVersionID, item.canonical, &item.physical)
 		check(err)
+		if *suggestions && index < 2 {
+			db, err := store.DefaultSQLiteDriver().Open(layout.DBPath(), sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Deferred})
+			check(err)
+			value := document.PhotoDescription{Caption: "A calm harbor under a blue sky.", Tags: []string{"coast", "harbor"}, VisibleText: "QUAYSIDE"}
+			if index == 1 {
+				value = document.PhotoDescription{Caption: "A forest beside a lake.", Tags: []string{"forest"}}
+			}
+			_, err = phototest.SeedSuggestion(ctx, db, node.CurrentVersionID, value)
+			check(err)
+			check(db.Close())
+		}
 		if *pair && index == 0 {
 			asset, err := s.PhotoAssetForNode(ctx, node.ID)
 			check(err)

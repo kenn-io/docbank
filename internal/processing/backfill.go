@@ -32,9 +32,10 @@ type Backfill[T any] struct {
 	Name string
 	// Page is the number of targets listed per catalog call.
 	Page int
-	// IdleDelay is the first wait after an empty scan; it doubles up to ten
-	// seconds while the scan stays empty.
+	// IdleDelay is the first wait after an empty scan.
 	IdleDelay time.Duration
+	// MaxIdleDelay caps empty-scan backoff; zero defaults to ten seconds.
+	MaxIdleDelay time.Duration
 	// DrainOnce makes Run return nil once a scan finds nothing to do and no
 	// retries are pending, for backfills that only cover pre-existing rows.
 	// Three consecutive listing failures or three failures of one target return
@@ -67,6 +68,10 @@ func (b *Backfill[T]) Run(ctx context.Context) error {
 	retries := newBackfillRetrySet()
 	cursor := ""
 	idleDelay := b.IdleDelay
+	maxIdleDelay := b.MaxIdleDelay
+	if maxIdleDelay == 0 {
+		maxIdleDelay = backfillMaxIdleDelay
+	}
 	listFailures := 0
 	for {
 		targets, err := b.List(ctx, cursor, b.Page)
@@ -94,7 +99,7 @@ func (b *Backfill[T]) Run(ctx context.Context) error {
 			if err := jobs.Wait(ctx, retries.waitDelay(b.now(), idleDelay)); err != nil {
 				return err
 			}
-			idleDelay = min(idleDelay*2, backfillMaxIdleDelay)
+			idleDelay = min(idleDelay*2, maxIdleDelay)
 			continue
 		}
 		idleDelay = b.IdleDelay

@@ -70,6 +70,7 @@ func TestProcessingErrorsPreserveRenditionOutcomes(t *testing.T) {
 		err  error
 		code string
 	}{
+		{processing.ErrRenditionRuntimeUnavailable, "rendition_runtime_unavailable"},
 		{processing.ErrRenditionFailed, "rendition_failed"},
 		{processing.ErrRenditionOperatorRequired, "rendition_operator_required"},
 		{vectorindex.ErrSimilarSearchScoringBudgetExceeded, "similar_search_too_large"},

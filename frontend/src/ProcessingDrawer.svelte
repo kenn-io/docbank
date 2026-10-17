@@ -380,6 +380,9 @@
         </select>
       </div>
 
+      {#if profiles.find((item) => item.name === profileName)?.probe_reason}
+        <p role="status">{profiles.find((item) => item.name === profileName)?.probe_reason}</p>
+      {/if}
       <section aria-label="Similar documents">
         <div class="section-heading"><strong>Similar documents</strong></div>
         <p>Search the {scopeVersionIDs.length} loaded file versions using stored embeddings.</p>
@@ -484,6 +487,7 @@
           Consent covers this processing profile and operator scope until revoked or expired. The
           exact plan fingerprint is still reviewed before each run.
         </p>
+        <p><strong>Processing and backup consequences:</strong> {plan.backup_consequence}</p>
         {#if plan.rendition_ineligible_reason}
           <p class="retention-warning">
             This profile can't process this file: {plan.rendition_ineligible_reason.replaceAll(
@@ -531,7 +535,6 @@
             ? ""
             : "s"}
         </p>
-        <p><strong>Backup consequence:</strong> {plan.backup_consequence}</p>
       </section>
 
       {#if job}

@@ -12092,6 +12092,10 @@ components:
           items:
             $ref: "#/components/schemas/PhotoAsset"
           type: array
+        suggestions:
+          items:
+            $ref: "#/components/schemas/PhotoSuggestion"
+          type: array
         targets:
           items:
             $ref: "#/components/schemas/PhotoPreparedTarget"
@@ -12409,6 +12413,8 @@ components:
           type:
             - string
             - "null"
+        matched_ai_suggestion:
+          type: boolean
         media_type:
           type: string
         name:
@@ -12492,6 +12498,26 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    PhotoDescription:
+      additionalProperties: false
+      properties:
+        caption:
+          type: string
+        tags:
+          items:
+            type: string
+          type: array
+        visible_text:
+          type: string
+      required:
+        - caption
+        - tags
+        - visible_text
+      type: object
+      x-go-type: document.PhotoDescription
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     PhotoExportSelection:
       additionalProperties: false
       properties:
@@ -12925,6 +12951,8 @@ components:
           type:
             - number
             - "null"
+        matched_ai_suggestion:
+          type: boolean
         name:
           type: string
         previews:
@@ -13403,6 +13431,91 @@ components:
         - file_id
       type: object
       x-go-type: store.PhotoSidecarProvenance
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    PhotoSuggestion:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoSuggestion.json
+          format: uri
+          readOnly: true
+          type: string
+        authored_receipt:
+          $ref: "#/components/schemas/PhotoAuthoredReceipt"
+        authored_receipt_id:
+          type: string
+        content_version_id:
+          type: string
+        created_at:
+          type: string
+        kind:
+          type: string
+        producer_fingerprint:
+          type: string
+        receipt_id:
+          type: string
+        response:
+          type: string
+        revision:
+          format: int64
+          type: integer
+        suggestion_id:
+          type: string
+        target:
+          type: string
+        value:
+          $ref: "#/components/schemas/PhotoDescription"
+      required:
+        - suggestion_id
+        - content_version_id
+        - producer_fingerprint
+        - kind
+        - target
+        - value
+        - response
+        - revision
+        - created_at
+      type: object
+      x-go-type: store.PhotoSuggestion
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    PhotoSuggestionResponse:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoSuggestionResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        caption:
+          type: boolean
+        response:
+          type: string
+        revision:
+          format: int64
+          type: integer
+        tags:
+          items:
+            type: string
+          type: array
+        targets:
+          items:
+            $ref: "#/components/schemas/PhotoAuthoredEditTarget"
+          type: array
+      required:
+        - revision
+        - response
+        - caption
+        - tags
+      type: object
+      x-go-type: store.PhotoSuggestionResponse
       x-go-type-import:
         path: go.kenn.io/docbank/internal/store
         name: store
@@ -14305,6 +14418,12 @@ components:
           pattern: ^[0-9a-f]{64}$
           type: string
         name:
+          type: string
+        probe_failure_code:
+          type: string
+        probe_reason:
+          type: string
+        probe_state:
           type: string
         query_embedding_bindings:
           items:
@@ -25727,6 +25846,32 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Read verified bytes of an eligible exact photo preview
+  /api/v1/photos/assets/{asset_id}/suggestions:
+    get:
+      operationId: listPhotoSuggestions
+      parameters:
+        - in: path
+          name: asset_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/PhotoSuggestion"
+                type: array
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: List proposals for the current display photo
   /api/v1/photos/assets/{asset_id}/trash:
     post:
       operationId: trashPhotoAsset
@@ -26263,6 +26408,36 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Set or reset the photo display preference
+  /api/v1/photos/suggestions/{suggestion_id}/response:
+    post:
+      operationId: respondPhotoSuggestion
+      parameters:
+        - in: path
+          name: suggestion_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoSuggestionResponse"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoSuggestion"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Accept selected fields or dismiss a photo proposal
   /api/v1/photos/versions/{content_version_id}/face-decisions:
     post:
       operationId: decidePhotoFace

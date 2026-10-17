@@ -92,7 +92,16 @@ test("photo map privacy, clusters, marker return and mobile grid", async ({ page
     const providerHost = `127.0.0.1:${(provider.address() as AddressInfo).port}`;
     await exec(
       "go",
-      ["run", "-tags", "fts5", "./frontend/screenshots/photos-fixture.go", "-map", vault, "15"],
+      [
+        "run",
+        "-tags",
+        "fts5",
+        "./frontend/screenshots/photos-fixture.go",
+        "-map",
+        "-suggestions",
+        vault,
+        "15",
+      ],
       { cwd: repository, env, timeout: 180_000 },
     );
     const disabledURL = new URL(await run("web", "--no-browser"));
@@ -612,6 +621,29 @@ test("photo map privacy, clusters, marker return and mobile grid", async ({ page
     await expect(page.getByText("13 located photos", { exact: true })).toBeVisible();
     await expect(page.locator(".photo-map-cluster").first()).toBeVisible();
     expect(errors).toEqual([]);
+    providerFails = false;
+    const libraryURL = new URL(enabledURL);
+    libraryURL.pathname = "/photos";
+    await page.goto(libraryURL.href);
+    await page.getByRole("searchbox", { name: "Search photos", exact: true }).fill("QUAYSIDE");
+    await page.getByRole("button", { name: "Search", exact: true }).click();
+    await expect(page.getByText("Matched AI suggestion")).toBeVisible();
+    await page
+      .getByRole("navigation", { name: "Docbank navigation" })
+      .getByRole("button", { name: "Map", exact: true })
+      .click();
+    await expect(page.getByText("Matched AI suggestion")).toBeVisible();
+    await expect(page.locator(".leaflet-tile-loaded").first()).toBeVisible();
+    for (const theme of ["light", "dark"]) {
+      await page.evaluate((theme) => {
+        localStorage.setItem("docbank-theme", theme);
+        document.documentElement.classList.toggle("dark", theme === "dark");
+      }, theme);
+      await page.screenshot({
+        path: path.join(output!, `photo-suggestions-map-${theme}.png`),
+        animations: "disabled",
+      });
+    }
     await writeFile(
       path.join(output!, "preview.json"),
       JSON.stringify({ url: enabledURL.href, workspace, binary }, null, 2),

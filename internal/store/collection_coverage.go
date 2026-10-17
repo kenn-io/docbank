@@ -81,6 +81,7 @@ coverage_versions AS MATERIALIZED (
 func processingVersionCoverageCTE() string {
 	return `coverage_attempts AS (
  SELECT w.content_version_id, w.waiter_id, w.job_id, w.state waiter_state,
+  (` + photoDescriptionPublishedSQL + `) photo_description_complete,
   j.state job_state, w.updated_at waiter_updated_at, j.updated_at job_updated_at,
   ROW_NUMBER() OVER (PARTITION BY w.content_version_id ORDER BY
    MAX(w.updated_at,j.updated_at) DESC, w.updated_at DESC, j.updated_at DESC,
@@ -127,6 +128,8 @@ processing_coverage AS (
     CASE WHEN b.truncated OR b.partial_success OR b.completeness='partial' THEN 'partial' ELSE 'complete' END
    WHEN serving.nonempty=0 THEN 'none'
    WHEN native.version_id IS NOT NULL THEN 'complete'
+   WHEN attempt.photo_description_complete THEN
+    CASE WHEN EXISTS(SELECT 1 FROM photo_suggestions s WHERE s.content_version_id=v.version_id) THEN 'complete' ELSE 'none' END
    WHEN attempt.waiter_state='rejected' OR attempt.job_state IN ('failed','operator_required') THEN 'failed'
    ELSE 'unprocessed'
   END state

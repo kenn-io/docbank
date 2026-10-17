@@ -52,6 +52,8 @@ type Request struct {
 	// MaxResponseBytes tightens the executor bound when positive.
 	MaxResponseBytes  int64
 	ResponseMediaType string
+	// OnSubmission runs immediately before HTTP dispatch, after local preparation.
+	OnSubmission func()
 }
 
 // Response is one fully read, bounded provider response.
@@ -93,6 +95,9 @@ func (executor *Executor) Do(operation *Operation, usage *Usage, request Request
 		return Response{}, err
 	}
 	usage.Requests++
+	if request.OnSubmission != nil {
+		request.OnSubmission()
+	}
 	httpResponse, err := executor.HTTP.Do(httpRequest)
 	if err != nil {
 		abortUpload(completion, err)

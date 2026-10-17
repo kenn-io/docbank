@@ -5324,39 +5324,6 @@ export interface PhotoAuthoredEditRequest {
   targets: PhotoAuthoredEditTarget[];
 }
 
-export interface PhotoPreparedTarget {
-  asset_id: string;
-  /** @minimum 1 */
-  asset_revision: number;
-  file_id: string;
-  file_name: string;
-  node_id: number;
-  /** @minimum 1 */
-  node_revision: number;
-  /** @minimum 1 */
-  revision: number;
-  tags: string[];
-  values: PhotoAuthored;
-}
-
-export interface PhotoAuthoredPreparation {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  assets: PhotoAsset[];
-  targets: PhotoPreparedTarget[];
-}
-
-export interface PhotoAuthoredPrepareRequest {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  /** @maxItems 1000 */
-  asset_ids?: string[];
-  coverage?: WorkspaceQueryCoverage;
-  hidden?: boolean;
-  query?: SavedQueryV1Schema;
-  skip_unavailable?: boolean;
-}
-
 export interface PhotoKeywordNode {
   after_revision: number;
   node_id: number;
@@ -5386,6 +5353,63 @@ export interface PhotoAuthoredReceipt {
   receipt_id: string;
   sidecar?: PhotoSidecarProvenance;
   undo_of?: string;
+}
+
+export interface PhotoDescription {
+  caption: string;
+  tags: string[];
+  visible_text: string;
+}
+
+export interface PhotoSuggestion {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  authored_receipt?: PhotoAuthoredReceipt;
+  authored_receipt_id?: string;
+  content_version_id: string;
+  created_at: string;
+  kind: string;
+  producer_fingerprint: string;
+  receipt_id?: string;
+  response: string;
+  revision: number;
+  suggestion_id: string;
+  target: string;
+  value: PhotoDescription;
+}
+
+export interface PhotoPreparedTarget {
+  asset_id: string;
+  /** @minimum 1 */
+  asset_revision: number;
+  file_id: string;
+  file_name: string;
+  node_id: number;
+  /** @minimum 1 */
+  node_revision: number;
+  /** @minimum 1 */
+  revision: number;
+  tags: string[];
+  values: PhotoAuthored;
+}
+
+export interface PhotoAuthoredPreparation {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  assets: PhotoAsset[];
+  suggestions?: PhotoSuggestion[];
+  targets: PhotoPreparedTarget[];
+}
+
+export interface PhotoAuthoredPrepareRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxItems 1000 */
+  asset_ids?: string[];
+  coverage?: WorkspaceQueryCoverage;
+  hidden?: boolean;
+  query?: SavedQueryV1Schema;
+  skip_unavailable?: boolean;
 }
 
 export interface WorkspaceFacetValue {
@@ -5562,6 +5586,7 @@ export interface PhotoBrowseRow {
   lens_make: string | null;
   /** @nullable */
   lens_model: string | null;
+  matched_ai_suggestion?: boolean;
   media_type: string;
   name: string;
   /** @minimum 1 */
@@ -5606,6 +5631,7 @@ export interface PhotoMapRow {
   latitude: number | null;
   /** @nullable */
   longitude: number | null;
+  matched_ai_suggestion?: boolean;
   name: string;
   previews: PhotoMapRowPreviewsStruct;
   /** @minimum 1 */
@@ -5849,6 +5875,16 @@ export interface PhotoSettings {
   /** @minimum 1 */
   revision: number;
   updated_at?: string;
+}
+
+export interface PhotoSuggestionResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  caption: boolean;
+  response: string;
+  revision: number;
+  tags: string[];
+  targets?: PhotoAuthoredEditTarget[];
 }
 
 export type PhotoTimelineFacetsItemDimension = typeof PhotoTimelineFacetsItemDimension[keyof typeof PhotoTimelineFacetsItemDimension];
@@ -6322,6 +6358,9 @@ export interface ProcessingProfileSummary {
   /** @pattern ^[0-9a-f]{64}$ */
   fingerprint: string;
   name: string;
+  probe_failure_code?: string;
+  probe_reason?: string;
+  probe_state?: string;
   query_embedding_bindings: string[];
   rendition: boolean;
   reranking_available?: boolean;
@@ -16100,6 +16139,30 @@ return sessionPhotoPreview<Blob>(getReadPhotoPreviewUrl(assetId,generationId),
 
 
 
+export const getListPhotoSuggestionsUrl = (assetId: string,) => {
+
+
+
+
+  return `/api/v1/photos/assets/${encodeURIComponent(String(assetId))}/suggestions`
+}
+
+/**
+ * @summary List proposals for the current display photo
+ */
+export const listPhotoSuggestions = async (assetId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoSuggestion[]> => {
+
+  return sessionJSON<PhotoSuggestion[]>(getListPhotoSuggestionsUrl(assetId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
 export const getTrashPhotoAssetUrl = (assetId: string,) => {
 
 
@@ -16800,6 +16863,45 @@ return sessionJSON<PhotoSettings>(getSetPhotoSettingsUrl(),
     method: 'PUT',
     headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
     body: JSON.stringify(setPhotoSettingsRequest)
+  }
+);}
+
+
+
+export const getRespondPhotoSuggestionUrl = (suggestionId: string,) => {
+
+
+
+
+  return `/api/v1/photos/suggestions/${encodeURIComponent(String(suggestionId))}/response`
+}
+
+/**
+ * @summary Accept selected fields or dismiss a photo proposal
+ */
+export const respondPhotoSuggestion = async (suggestionId: string,
+    photoSuggestionResponse: NonReadonly<PhotoSuggestionResponse>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoSuggestion> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoSuggestion>(getRespondPhotoSuggestionUrl(suggestionId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(photoSuggestionResponse)
   }
 );}
 

@@ -43,7 +43,7 @@ function editorWithTargets() {
   editor.asset = structuredClone(asset);
   return editor;
 }
-function ui(editor: PhotoAuthoredEditor, onedit = vi.fn()) {
+function ui(editor: PhotoAuthoredEditor, onedit = vi.fn(), onresponse = vi.fn()) {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -52,7 +52,7 @@ function ui(editor: PhotoAuthoredEditor, onedit = vi.fn()) {
     },
   );
   Element.prototype.scrollIntoView = vi.fn();
-  return render(PhotoInspector, { editor, onedit });
+  return render(PhotoInspector, { editor, onedit, onresponse });
 }
 
 it.each([
@@ -696,43 +696,594 @@ it.each(["edit", "Undo"])(
   },
 );
 
-it("keeps a later edit busy when an earlier refresh finishes during its write", async () => {
-  const editor = editorWithTargets();
-  let finishWrite!: (value: Response) => void;
-  const fetcher = vi
-    .fn()
-    .mockResolvedValueOnce(response({ receipt_id: "first", before: targets, after: targets }))
-    .mockImplementationOnce(
+it.each(["authored", "suggestion"] as const)(
+  "keeps a later edit busy when an earlier %s refresh finishes",
+  async (source) => {
+    const editor = editorWithTargets();
+    const suggestion: api.PhotoSuggestion = {
+      suggestion_id: "suggestion",
+      content_version_id: "version",
+      producer_fingerprint: "producer",
+      kind: "photo_description",
+      target: "jpeg",
+      value: { caption: "A harbor.", tags: [], visible_text: "" },
+      response: "pending",
+      revision: 1,
+      created_at: "2026-01-01T00:00:00Z",
+    };
+    let finishWrite!: (value: Response) => void;
+    let finishRefresh!: () => void;
+    const refresh = () =>
+      new Promise<void>((resolve) => {
+        finishRefresh = resolve;
+      });
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(
+        response(
+          source === "suggestion"
+            ? { ...suggestion, response: "accepted", revision: 2 }
+            : { receipt_id: "first", before: targets, after: targets },
+        ),
+      );
+    if (source === "suggestion")
+      fetcher.mockResolvedValueOnce(response({ assets: [asset], targets, suggestions: [] }));
+    fetcher.mockImplementationOnce(
       () =>
         new Promise<Response>((resolve) => {
           finishWrite = resolve;
         }),
     );
-  vi.stubGlobal("fetch", fetcher);
-  let finishRefresh!: () => void;
-  const first = editor.edit(
-    {},
-    { rating: 5 },
-    false,
-    () =>
-      new Promise<void>((resolve) => {
-        finishRefresh = resolve;
-      }),
-  );
-  await vi.waitFor(() => expect(finishRefresh).toBeTypeOf("function"));
-  const second = editor.edit(
-    {},
-    { rating: 3 },
-    false,
-    vi.fn(async () => {}),
-  );
-  await vi.waitFor(() => expect(finishWrite).toBeTypeOf("function"));
-  finishRefresh();
-  await first;
-  expect(editor.busy).toBe(true);
-  expect(editor.canChangeTarget()).toBe(false);
-  finishWrite(response({ receipt_id: "second", before: targets, after: targets }));
-  await second;
-  expect(editor.busy).toBe(false);
+    vi.stubGlobal("fetch", fetcher);
+    const first =
+      source === "suggestion"
+        ? editor.respondSuggestion(suggestion, true, [], false, refresh)
+        : editor.edit({}, { rating: 5 }, false, refresh);
+    await vi.waitFor(() => expect(finishRefresh).toBeTypeOf("function"));
+    const second = editor.edit(
+      {},
+      { rating: 3 },
+      false,
+      vi.fn(async () => {}),
+    );
+    await vi.waitFor(() => expect(finishWrite).toBeTypeOf("function"));
+    finishRefresh();
+    await first;
+    expect(editor.busy).toBe(true);
+    expect(editor.canChangeTarget()).toBe(false);
+    finishWrite(response({ receipt_id: "second", before: targets, after: targets }));
+    await second;
+    expect(editor.busy).toBe(false);
+    editor.dispose();
+  },
+);
+
+it.each([
+  "selection",
+  "busy",
+  "loading",
+  "conflict",
+  "dirty",
+  "action disabled",
+  "multiple photos",
+])("gates rendered suggestion controls for %s", async (state) => {
+  const editor = editorWithTargets();
+  editor.suggestions = [
+    {
+      suggestion_id: "suggestion",
+      content_version_id: "version",
+      producer_fingerprint: "producer",
+      kind: "photo_description",
+      target: "jpeg",
+      value: { caption: "A harbor.", tags: ["coast"], visible_text: "QUAYSIDE" },
+      response: "pending",
+      revision: 1,
+      created_at: "2026-01-01T00:00:00Z",
+    },
+  ];
+  const fetch = vi.fn();
+  vi.stubGlobal("fetch", fetch);
+  const view = ui(editor);
+  const accept = screen.getByRole("button", { name: "Accept selected" }) as HTMLButtonElement;
+  if (state === "selection") {
+    expect(accept.disabled).toBe(true);
+    await fireEvent.click(screen.getByRole("checkbox", { name: "A harbor." }));
+    expect(accept.disabled).toBe(false);
+    await fireEvent.click(screen.getByRole("checkbox", { name: "A harbor." }));
+    expect(accept.disabled).toBe(true);
+    await fireEvent.click(screen.getByRole("checkbox", { name: "coast" }));
+    expect(accept.disabled).toBe(false);
+  } else {
+    await fireEvent.click(screen.getByRole("checkbox", { name: "A harbor." }));
+    if (state === "busy") editor.busy = true;
+    if (state === "loading") editor.loading = true;
+    if (state === "conflict") editor.conflict = true;
+    if (state === "dirty") editor.stage({ rating: 5 });
+    await view.rerender({
+      actionDisabled: state === "action disabled",
+      count: state === "multiple photos" ? 2 : 1,
+    });
+    if (state === "multiple photos") {
+      expect(screen.queryByRole("region", { name: "Suggested photo metadata" })).toBeNull();
+    } else {
+      const section = within(screen.getByRole("region", { name: "Suggested photo metadata" }));
+      expect(accept.disabled).toBe(true);
+      expect((section.getByRole("button", { name: "Dismiss" }) as HTMLButtonElement).disabled).toBe(
+        true,
+      );
+      for (const checkbox of section.getAllByRole("checkbox"))
+        expect((checkbox as HTMLInputElement).disabled).toBe(true);
+      await userEvent.click(accept);
+      await userEvent.click(section.getByRole("button", { name: "Dismiss" }));
+    }
+  }
+  if (["busy", "loading", "conflict", "dirty"].includes(state))
+    await editor.respondSuggestion(editor.suggestions[0]!, true);
+  expect(fetch).not.toHaveBeenCalled();
   editor.dispose();
 });
+
+it.each(["IMAGE · capture.jpg", "Whole pair"])(
+  "accepts suggestions on RAW and then the remaining member through %s",
+  async (member) => {
+    const editor = editorWithTargets();
+    const suggestion: api.PhotoSuggestion = {
+      suggestion_id: "suggestion",
+      content_version_id: "version",
+      producer_fingerprint: "producer",
+      kind: "photo_description",
+      target: "jpeg",
+      value: { caption: "A harbor.", tags: ["coast", "küste"], visible_text: "" },
+      response: "pending",
+      revision: 1,
+      created_at: "2026-01-01T00:00:00Z",
+    };
+    editor.suggestions = [suggestion];
+    editor.tags = [
+      { id: "coast-id", name: "coast", assignment_count: 0, revision: 1 },
+      { id: "coast-unicode-id", name: "küste", assignment_count: 0, revision: 1 },
+    ];
+    const rawAccepted = structuredClone(targets);
+    rawAccepted[0]!.values.caption = "A harbor.";
+    rawAccepted[0]!.tags = ["coast-id", "coast-unicode-id"];
+    const allAccepted = structuredClone(rawAccepted);
+    allAccepted[1]!.values.caption = "A harbor.";
+    allAccepted[1]!.tags = ["coast-id", "coast-unicode-id"];
+    const accepted = {
+      ...suggestion,
+      response: "accepted" as const,
+      revision: 2,
+    };
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(response(accepted))
+      .mockResolvedValueOnce(
+        response({ assets: [asset], targets: rawAccepted, suggestions: [accepted] }),
+      )
+      .mockResolvedValueOnce(response({ ...accepted, revision: 3 }))
+      .mockResolvedValueOnce(
+        response({
+          assets: [asset],
+          targets: allAccepted,
+          suggestions: [{ ...accepted, revision: 3 }],
+        }),
+      );
+    vi.stubGlobal("fetch", fetcher);
+    ui(editor);
+    await fireEvent.click(screen.getByRole("combobox", { name: /Edit members/ }));
+    await fireEvent.click(screen.getByRole("option", { name: "RAW · capture.raw" }));
+    await fireEvent.click(screen.getByRole("checkbox", { name: "A harbor." }));
+    await fireEvent.click(screen.getByRole("checkbox", { name: "coast" }));
+    await fireEvent.click(screen.getByRole("checkbox", { name: "küste" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Accept selected" }));
+    await vi.waitFor(() => expect(editor.suggestions[0]?.revision).toBe(2));
+    expect(JSON.parse(fetcher.mock.calls[0]![1].body)).toMatchObject({
+      caption: true,
+      tags: ["coast", "küste"],
+      targets: [{ file_id: "raw" }],
+    });
+    expect(screen.queryByRole("checkbox", { name: "A harbor." })).toBeNull();
+    await fireEvent.click(screen.getByRole("combobox", { name: /Edit members/ }));
+    await fireEvent.click(screen.getByRole("option", { name: member }));
+    expect(screen.getByRole("checkbox", { name: "A harbor." })).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: "coast" })).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: "küste" })).toBeTruthy();
+    await fireEvent.click(screen.getByRole("button", { name: "Accept selected" }));
+    await vi.waitFor(() => expect(editor.suggestions[0]?.revision).toBe(3));
+    expect(JSON.parse(fetcher.mock.calls[2]![1].body)).toMatchObject({
+      caption: true,
+      tags: ["coast", "küste"],
+      targets:
+        member === "Whole pair" ? [{ file_id: "raw" }, { file_id: "jpeg" }] : [{ file_id: "jpeg" }],
+    });
+    expect(screen.queryByRole("region", { name: "Suggested photo metadata" })).toBeNull();
+    editor.dispose();
+  },
+);
+
+it("shows the displayed file's proposal and restores its decision when switching back", async () => {
+  const editor = editorWithTargets();
+  editor.fileID = "jpeg";
+  const accepted: api.PhotoSuggestion = {
+    suggestion_id: "jpeg-decision",
+    content_version_id: "jpeg-version",
+    producer_fingerprint: "producer",
+    kind: "photo_description",
+    target: "jpeg",
+    value: { caption: "A harbor.", tags: [], visible_text: "QUAYSIDE" },
+    response: "accepted",
+    revision: 2,
+    created_at: "2026-01-01T00:00:00Z",
+  };
+  const pending: api.PhotoSuggestion = {
+    ...accepted,
+    suggestion_id: "raw-proposal",
+    content_version_id: "raw-version",
+    target: "raw",
+    value: { caption: "A lighthouse.", tags: [], visible_text: "RAWQUAY" },
+    response: "pending",
+    revision: 1,
+  };
+  const jpegTargets = structuredClone(targets);
+  jpegTargets[1]!.values.caption = "A harbor.";
+  const fetcher = vi
+    .fn()
+    .mockResolvedValueOnce(
+      response({ assets: [asset], targets: jpegTargets, suggestions: [accepted] }),
+    )
+    .mockResolvedValueOnce(
+      response({
+        assets: [{ ...asset, display_file_id: "raw" }],
+        targets: jpegTargets,
+        suggestions: [pending],
+      }),
+    )
+    .mockResolvedValueOnce(
+      response({ assets: [asset], targets: jpegTargets, suggestions: [accepted] }),
+    );
+  vi.stubGlobal("fetch", fetcher);
+  await editor.prepare({ asset_ids: ["asset"] });
+  ui(editor);
+  expect(screen.getByText("QUAYSIDE")).toBeTruthy();
+  expect(screen.queryByText("RAWQUAY")).toBeNull();
+  expect(screen.queryByRole("checkbox", { name: "A harbor." })).toBeNull();
+  expect(screen.getAllByRole("region", { name: "Suggested photo metadata" })).toHaveLength(1);
+  editor.fileID = "raw";
+  await editor.reload();
+  await vi.waitFor(() => expect(screen.getByText("RAWQUAY")).toBeTruthy());
+  expect(screen.queryByText("QUAYSIDE")).toBeNull();
+  expect(editor.activeSuggestion).toMatchObject({
+    suggestion_id: "raw-proposal",
+    response: "pending",
+    revision: 1,
+  });
+  expect(screen.getByRole("checkbox", { name: "A lighthouse." })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Accept selected" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Dismiss" })).toBeTruthy();
+  editor.fileID = "jpeg";
+  await editor.reload();
+  await vi.waitFor(() => expect(screen.getByText("QUAYSIDE")).toBeTruthy());
+  expect(editor.activeSuggestion).toMatchObject({
+    suggestion_id: "jpeg-decision",
+    response: "accepted",
+    revision: 2,
+  });
+  expect(screen.queryByRole("checkbox", { name: "A harbor." })).toBeNull();
+  expect(screen.queryByText("RAWQUAY")).toBeNull();
+  expect(fetcher.mock.calls.map((call) => call[0])).toEqual([
+    "/api/v1/photos/authored/prepare",
+    "/api/v1/photos/authored/prepare",
+    "/api/v1/photos/authored/prepare",
+  ]);
+  editor.dispose();
+});
+
+it("reloads undone suggestion fields and keeps still-authored choices accepted", async () => {
+  const editor = editorWithTargets();
+  const suggestion: api.PhotoSuggestion = {
+    suggestion_id: "suggestion",
+    content_version_id: "version",
+    producer_fingerprint: "producer",
+    kind: "photo_description",
+    target: "jpeg",
+    value: { caption: "A harbor.", tags: ["coast", "boats"], visible_text: "" },
+    response: "accepted",
+    revision: 2,
+    created_at: "2026-01-01T00:00:00Z",
+  };
+  editor.suggestions = [suggestion];
+  editor.receiptID = "accepted";
+  for (const target of editor.targets) {
+    target.values.caption = "A harbor.";
+    target.tags = ["coast-id", "boats-id"];
+  }
+  editor.tags = [
+    { id: "coast-id", name: "coast", revision: 1, assignment_count: 2 },
+    { id: "boats-id", name: "boats", revision: 1, assignment_count: 2 },
+  ];
+  const restored = targets.map((target) => ({ ...target, tags: ["coast-id"] }));
+  const fetcher = vi
+    .fn()
+    .mockResolvedValueOnce(response({ receipt_id: "inverse", before: targets, after: restored }))
+    .mockResolvedValueOnce(
+      response({
+        assets: [asset],
+        targets: restored,
+        suggestions: [{ ...suggestion, revision: 3 }],
+      }),
+    );
+  vi.stubGlobal("fetch", fetcher);
+  ui(editor);
+  expect(screen.queryByRole("checkbox", { name: "A harbor." })).toBeNull();
+  await editor.undo(vi.fn());
+  expect(await screen.findByRole("checkbox", { name: "A harbor." })).toBeTruthy();
+  expect(screen.getByRole("checkbox", { name: "boats" })).toBeTruthy();
+  expect(screen.queryByRole("checkbox", { name: "coast" })).toBeNull();
+  expect(fetcher.mock.calls[0]![0]).toContain("/accepted/undo");
+  expect(fetcher.mock.calls[1]![0]).toContain("/photos/authored/prepare");
+  editor.dispose();
+});
+
+it.each(["accept", "dismiss"])(
+  "keeps remaining choices after caption acceptance, then %s",
+  async (action) => {
+    const editor = editorWithTargets();
+    editor.fileID = "jpeg";
+    const suggestion: api.PhotoSuggestion = {
+      suggestion_id: "suggestion",
+      content_version_id: "version",
+      producer_fingerprint: "producer",
+      kind: "photo_description",
+      target: "jpeg",
+      value: { caption: "A harbor.", tags: ["coast"], visible_text: "QUAYSIDE" },
+      response: "pending",
+      revision: 1,
+      created_at: "2026-01-01T00:00:00Z",
+    };
+    editor.suggestions = [suggestion];
+    const captionTargets = structuredClone(targets);
+    captionTargets[1]!.values.caption = "A harbor.";
+    const finalTargets = structuredClone(captionTargets);
+    if (action === "accept") finalTargets[1]!.tags = ["coast-id"];
+    editor.tags = [{ id: "coast-id", name: "coast", assignment_count: 0, revision: 1 }];
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        response({
+          ...suggestion,
+          response: "accepted",
+          revision: 2,
+          authored_receipt_id: "caption-receipt",
+        }),
+      )
+      .mockResolvedValueOnce(
+        response({
+          assets: [asset],
+          targets: captionTargets,
+          suggestions: [{ ...suggestion, response: "accepted", revision: 2 }],
+        }),
+      )
+      .mockResolvedValueOnce(
+        response({
+          ...suggestion,
+          response: action === "accept" ? "accepted" : "dismissed",
+          revision: 3,
+          authored_receipt_id: action === "accept" ? "tag-receipt" : undefined,
+        }),
+      )
+      .mockResolvedValueOnce(
+        response({
+          assets: [asset],
+          targets: finalTargets,
+          suggestions: [
+            {
+              ...suggestion,
+              response: action === "accept" ? "accepted" : "dismissed",
+              revision: 3,
+            },
+          ],
+        }),
+      );
+    vi.stubGlobal("fetch", fetch);
+    const refresh = vi.fn();
+    ui(editor, vi.fn(), refresh);
+    await fireEvent.click(screen.getByRole("checkbox", { name: "A harbor." }));
+    await fireEvent.click(screen.getByRole("button", { name: "Accept selected" }));
+    await vi.waitFor(() => expect(editor.suggestions[0]?.revision).toBe(2));
+    expect(screen.queryByRole("checkbox", { name: "A harbor." })).toBeNull();
+    expect(screen.getByRole("checkbox", { name: "coast" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Dismiss" })).toBeTruthy();
+    if (action === "accept") await fireEvent.click(screen.getByRole("checkbox", { name: "coast" }));
+    await fireEvent.click(
+      screen.getByRole("button", { name: action === "accept" ? "Accept selected" : "Dismiss" }),
+    );
+    await vi.waitFor(() => expect(editor.suggestions[0]?.revision).toBe(3));
+    expect((screen.getByRole("textbox", { name: "Caption" }) as HTMLTextAreaElement).value).toBe(
+      "A harbor.",
+    );
+    expect(fetch.mock.calls[2]![0]).toBe("/api/v1/photos/suggestions/suggestion/response");
+    expect(JSON.parse(fetch.mock.calls[2]![1].body)).toEqual({
+      revision: 2,
+      response: action === "accept" ? "accepted" : "dismissed",
+      caption: false,
+      tags: action === "accept" ? ["coast"] : [],
+      ...(action === "accept"
+        ? {
+            targets: [captionTargets[1]!].map((target) => ({
+              asset_id: target.asset_id,
+              asset_revision: target.asset_revision,
+              file_id: target.file_id,
+              revision: target.revision,
+              node_revision: target.node_revision,
+            })),
+          }
+        : {}),
+    });
+    await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(2));
+    if (action === "dismiss")
+      expect(screen.queryByRole("region", { name: "Suggested photo metadata" })).toBeNull();
+    else {
+      expect(screen.queryByRole("checkbox", { name: "coast" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Dismiss" })).toBeTruthy();
+      expect(editor.receiptID).toBe("tag-receipt");
+    }
+    editor.dispose();
+  },
+);
+
+it("reloads reviewed photo revisions after a stale suggestion response", async () => {
+  const editor = editorWithTargets();
+  editor.fileID = "jpeg";
+  const suggestion: api.PhotoSuggestion = {
+    suggestion_id: "suggestion",
+    content_version_id: "version",
+    producer_fingerprint: "producer",
+    kind: "photo_description",
+    target: "jpeg",
+    value: { caption: "A harbor.", tags: [], visible_text: "" },
+    response: "pending",
+    revision: 1,
+    created_at: "2026-01-01T00:00:00Z",
+  };
+  editor.suggestions = [suggestion];
+  const refreshed = targets.map((target) => ({ ...target, revision: 9, node_revision: 10 }));
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(response({ detail: "photo revision changed" }, 409))
+    .mockResolvedValueOnce(
+      response({ assets: [asset], targets: refreshed, suggestions: [suggestion] }),
+    )
+    .mockResolvedValueOnce(response({ ...suggestion, response: "accepted", revision: 2 }))
+    .mockResolvedValueOnce(
+      response({
+        assets: [asset],
+        targets: refreshed,
+        suggestions: [{ ...suggestion, response: "accepted", revision: 2 }],
+      }),
+    );
+  vi.stubGlobal("fetch", fetch);
+  ui(editor);
+  await fireEvent.click(screen.getByRole("checkbox", { name: "A harbor." }));
+  await fireEvent.click(screen.getByRole("button", { name: "Accept selected" }));
+  await screen.findByRole("button", { name: "Reload metadata" });
+  expect(editor.conflict).toBe(true);
+  await fireEvent.click(screen.getByRole("button", { name: "Reload metadata" }));
+  await vi.waitFor(() => expect(editor.conflict).toBe(false));
+  await fireEvent.click(screen.getByRole("button", { name: "Accept selected" }));
+  await vi.waitFor(() => expect(editor.suggestions[0]?.revision).toBe(2));
+  expect(JSON.parse(fetch.mock.calls[2]![1].body).targets).toEqual([
+    {
+      asset_id: "asset",
+      asset_revision: targets[1]!.asset_revision,
+      file_id: "jpeg",
+      revision: 9,
+      node_revision: 10,
+    },
+  ]);
+  editor.dispose();
+});
+
+it("conceals suggestion text when refresh removes a hidden target", async () => {
+  const editor = editorWithTargets();
+  editor.suggestions = [
+    {
+      suggestion_id: "suggestion",
+      content_version_id: "version",
+      producer_fingerprint: "producer",
+      kind: "photo_description",
+      target: "jpeg",
+      value: { caption: "A harbor.", tags: ["coast"], visible_text: "PRIVATE SIGN" },
+      response: "pending",
+      revision: 1,
+      created_at: "2026-01-01T00:00:00Z",
+    },
+  ];
+  ui(editor);
+  expect(screen.getByText("PRIVATE SIGN")).toBeTruthy();
+  editor.conceal();
+  editor.revalidate(new Set());
+  await vi.waitFor(() => expect(screen.queryByText("PRIVATE SIGN")).toBeNull());
+  expect(editor.suggestions).toEqual([]);
+  editor.dispose();
+});
+it("replaces an earlier rating undo summary when a caption is accepted", async () => {
+  const editor = editorWithTargets();
+  editor.fileID = "jpeg";
+  const suggestion: api.PhotoSuggestion = {
+    suggestion_id: "suggestion",
+    content_version_id: "version",
+    producer_fingerprint: "producer",
+    kind: "photo_description",
+    target: "jpeg",
+    value: { caption: "A harbor.", tags: [], visible_text: "" },
+    response: "pending",
+    revision: 1,
+    created_at: "2026-01-01T00:00:00Z",
+  };
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(
+      response({
+        receipt_id: "rating-receipt",
+        after: [{ file_id: "jpeg", revision: 2, values: { ...targets[1]!.values, rating: 5 } }],
+      }),
+    )
+    .mockResolvedValueOnce(
+      response({
+        ...suggestion,
+        response: "accepted",
+        revision: 2,
+        authored_receipt_id: "caption-receipt",
+      }),
+    )
+    .mockResolvedValueOnce(
+      response({
+        assets: [asset],
+        targets,
+        suggestions: [{ ...suggestion, response: "accepted", revision: 2 }],
+      }),
+    );
+  vi.stubGlobal("fetch", fetch);
+  await editor.edit({ asset_ids: ["asset"] }, { rating: 5 }, false, vi.fn());
+  expect(editor.undoState.summary).toBe("1 file updated: rating");
+  await editor.respondSuggestion(suggestion, true);
+  expect(editor.receiptID).toBe("caption-receipt");
+  expect(editor.undoState.summary).toBe("1 file updated: caption");
+  editor.dispose();
+});
+
+it.each([
+  { suggestion: "coast", names: ["Coast"], assigned: "tag-0" },
+  { suggestion: "cafe\u0301", names: ["CAFÉ"], assigned: "tag-0" },
+  { suggestion: "coast", names: ["Coast", "coast"], assigned: "tag-1" },
+  { suggestion: "coast", names: ["coAST", "Coast"], assigned: "tag-1" },
+])(
+  "hides the resolved existing tag from suggestion choices: $names",
+  ({ suggestion, names, assigned }) => {
+    const editor = editorWithTargets();
+    editor.suggestions = [
+      {
+        suggestion_id: "suggestion",
+        content_version_id: "version",
+        producer_fingerprint: "producer",
+        kind: "photo_description",
+        target: "jpeg",
+        value: { caption: "", tags: [suggestion], visible_text: "QUAYSIDE" },
+        response: "accepted",
+        revision: 2,
+        created_at: "2026-01-01T00:00:00Z",
+      },
+    ];
+    editor.tags = names.map((name, index) => ({
+      id: `tag-${index}`,
+      name,
+      assignment_count: 2,
+      revision: 1,
+    }));
+    for (const target of editor.targets) target.tags = [assigned];
+    ui(editor);
+    expect(screen.queryByRole("checkbox", { name: suggestion })).toBeNull();
+    expect(screen.getByText("QUAYSIDE")).toBeTruthy();
+    editor.dispose();
+  },
+);

@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"go.kenn.io/docbank/internal/config"
@@ -42,12 +43,19 @@ func TestWebSessionAllowsPhotoAlbumAndAuthoredRoutes(t *testing.T) {
 		{http.MethodPost, album + "/duplicate"},
 		{http.MethodPost, album + "/members/add"},
 		{http.MethodPost, album + "/members/remove"},
+		{http.MethodGet, "/api/v1/photos/assets/11111111-1111-4111-8111-111111111111/suggestions"},
+		{http.MethodPost, "/api/v1/photos/suggestions/11111111-1111-4111-8111-111111111111/response"},
 		{http.MethodPost, "/api/v1/photos/authored/prepare"},
 		{http.MethodPost, "/api/v1/photos/authored/edit"},
 		{http.MethodPost, "/api/v1/photos/authored/40000000-0000-4000-8000-000000000001/undo"},
 	} {
 		require.True(t, webSessionRequestAllowed(httptest.NewRequest(route.method, route.path, nil)), route.method+" "+route.path)
 		require.False(t, webSessionRequestAllowed(httptest.NewRequest(route.method, route.path+"?extra=1", nil)))
+		if strings.Contains(route.path, "suggestions") {
+			for _, path := range []string{route.path + "/extra", strings.Replace(route.path, "11111111-1111-4111-8111-111111111111", "invalid", 1)} {
+				require.False(t, webSessionRequestAllowed(httptest.NewRequest(route.method, path, nil)), path)
+			}
+		}
 		if route.method == http.MethodPost && route.path != "/api/v1/photos/albums" {
 			require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodGet, route.path, nil)))
 		}

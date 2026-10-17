@@ -84,6 +84,9 @@ func adjustPhotosForPurgedNodesTx(ctx context.Context, tx *sql.Tx, nodeIDs []int
 		if err != nil {
 			return fmt.Errorf("encoding purged photo nodes: %w", err)
 		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM photo_suggestions WHERE content_version_id IN (SELECT version_id FROM content_versions WHERE node_id IN (SELECT value FROM json_each(?)))`, string(encoded)); err != nil {
+			return fmt.Errorf("removing suggestions for purged photos: %w", err)
+		}
 		if _, err := tx.ExecContext(ctx, `WITH RECURSIVE nodes_to_purge(id) AS (SELECT value FROM json_each(?)), doomed(receipt_id) AS (
  SELECT r.receipt_id FROM photo_change_receipts r
  WHERE r.operation IN ('authored','authored_undo','authored_sidecar') AND

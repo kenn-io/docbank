@@ -74,6 +74,13 @@ type RenditionProvider interface {
 	Render(ctx context.Context, upload AuthorizedUpload, authorization RenditionAuthorization) (RenditionResult, error)
 }
 
+// RetryAuthorizedRenditionProvider rechecks authority before an adapter retries
+// a request whose response failed validation.
+type RetryAuthorizedRenditionProvider interface {
+	RenditionProvider
+	RenderWithRetryAuthorization(ctx context.Context, upload AuthorizedUpload, authorization RenditionAuthorization, beforeRetry func(context.Context) (context.Context, error)) (RenditionResult, error)
+}
+
 // RenditionResumeHandle is an opaque, provider-issued durable operation
 // identity. Core persists it only after the provider checkpoints it; callers
 // must never derive a handle from source or job identity.
@@ -1113,7 +1120,7 @@ func validateRenditionAuthorization(
 	if authorization.DiscloseFilename && metadata.Filename == "" {
 		return errors.New("authorization requires filename disclosure but upload filename is empty")
 	}
-	if authorization.SourceSHA256 != metadata.SHA256 || authorization.SourceBytes != metadata.ByteLength {
+	if metadata.InputKind == RenditionInputOriginalFile && (authorization.SourceSHA256 != metadata.SHA256 || authorization.SourceBytes != metadata.ByteLength) {
 		return errors.New("authorization does not match exact upload bytes")
 	}
 	if authorization.CapabilityRecordChecksum != metadata.CapabilityRecordChecksum {

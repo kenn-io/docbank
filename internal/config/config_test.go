@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/docling"
+	"go.kenn.io/docbank/document/vision"
 )
 
 func TestLoadMissingFileReturnsDefaults(t *testing.T) {
@@ -1150,6 +1151,73 @@ func TestMediaSourceCeilingConfig(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, maximum, cfg.Media.MaxSourceBytes)
 			}
+		})
+	}
+}
+
+func TestVisionRuntimeConfig(t *testing.T) {
+	profile := validRenditionRuntimeConfig(t).RenditionProfiles["primary"]
+	profile.AdapterContract = vision.AdapterContract
+	profile.Model = "synthetic-vision"
+	profile.RequestedArtifacts = []string{string(document.EvidenceArtifactStructured)}
+	profile.DiscloseFilename = false
+	profile.MaxResponseBytes = 1 << 20
+	profile.Runtime.TotalTimeout = 0
+	profile.Runtime.PollInterval = 0
+	profile.Runtime.MaxPollAttempts = 0
+	profile.Runtime.RequestTimeout = Duration(10 * time.Minute)
+	cfg := validRenditionRuntimeConfig(t)
+	cfg.RenditionProfiles["primary"] = profile
+	cfg.RenditionProfiles["second-vision"] = profile
+	require.ErrorContains(t, cfg.Validate(), "only one vision profile")
+	delete(cfg.RenditionProfiles, "second-vision")
+	descriptor, err := vision.Descriptor(profile.Model, document.RenditionTrustOperatorNetwork)
+	require.NoError(t, err)
+	profile.DescriptorID, profile.DescriptorFingerprint = descriptor.ID, descriptor.Fingerprint
+	cfg.RenditionProfiles["primary"] = profile
+	processingProfile := cfg.ProcessingProfiles["archive"]
+	processingProfile.RetainSanitizedMarkdown = false
+	processingProfile.Embeddings = nil
+	cfg.ProcessingProfiles["archive"] = processingProfile
+	require.NoError(t, cfg.Validate())
+	cfg.ProcessingProfiles["second-vision"] = processingProfile
+	require.ErrorContains(t, cfg.Validate(), "only one vision processing profile")
+
+	for _, tc := range []struct {
+		name      string
+		change    func(*RenditionProfileConfig)
+		wantError string
+	}{
+		{name: "zero timeout", change: func(p *RenditionProfileConfig) { p.Runtime.RequestTimeout = 0 }, wantError: "request_timeout"},
+		{name: "excessive timeout", change: func(p *RenditionProfileConfig) { p.Runtime.RequestTimeout = Duration(11 * time.Minute) }, wantError: "request_timeout"},
+		{name: "missing model", change: func(p *RenditionProfileConfig) { p.Model = "" }, wantError: "vision model is invalid"},
+		{name: "filename disclosure", change: func(p *RenditionProfileConfig) { p.DiscloseFilename = true }, wantError: "vision requires a withheld filename"},
+		{name: "excessive response", change: func(p *RenditionProfileConfig) { p.MaxResponseBytes = 1<<20 + 1 }, wantError: "at most 1 MiB response"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			current := profile
+			runtime := *profile.Runtime
+			current.Runtime = &runtime
+			tc.change(&current)
+			err := validateRenditionRuntimeConfig(current, "vision")
+			if tc.wantError != "" {
+				require.ErrorContains(t, err, tc.wantError)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestValidateRenditionEndpointRejectsInvalidOrigins(t *testing.T) {
+	t.Parallel()
+	for _, input := range []struct{ boundary, endpoint, reason string }{
+		{"hosted_provider", "http://example.com", "runtime HTTP endpoint requires operator_network"},
+		{"local_process", "https://example.com", "runtime trust_boundary must be operator_network or hosted_provider"},
+		{"operator_network", "http://127.0.0.1?", "provider runtime endpoint must be absolute and credential-free"},
+	} {
+		t.Run(input.boundary+input.endpoint, func(t *testing.T) {
+			require.EqualError(t, ValidateRenditionEndpoint(input.endpoint, document.RenditionTrustBoundary(input.boundary)), input.reason)
 		})
 	}
 }

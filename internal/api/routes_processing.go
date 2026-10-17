@@ -69,7 +69,7 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		profiles := d.Processing.Profiles()
 		result := make([]ProcessingProfileSummary, len(profiles))
 		for index, profile := range profiles {
-			result[index] = ProcessingProfileSummary{Name: profile.Name, Fingerprint: profile.Fingerprint,
+			result[index] = ProcessingProfileSummary{ProbeFailureCode: profile.ProbeFailureCode, ProbeState: profile.ProbeState, ProbeReason: profile.ProbeReason, Name: profile.Name, Fingerprint: profile.Fingerprint,
 				Rendition: profile.Rendition, EmbeddingBindings: profile.EmbeddingBindings,
 				QueryEmbeddingBindings: profile.QueryEmbeddingBindings,
 				RerankingAvailable:     profile.RerankingAvailable}
@@ -798,6 +798,7 @@ func fromProcessingError(err error) error {
 	}{
 		{processing.ErrMediaSearchInvalid, http.StatusUnprocessableEntity, "invalid_media_search",
 			"media search selectors or mode are invalid"},
+		{processing.ErrRenditionRuntimeUnavailable, http.StatusServiceUnavailable, "rendition_runtime_unavailable", "provider readiness check is unavailable; see processing profile status"},
 		{processing.ErrRenditionFailed, http.StatusUnprocessableEntity, "rendition_failed", "document rendition failed"},
 		{processing.ErrSourceIneligible, http.StatusUnprocessableEntity, "rendition_source_ineligible",
 			"source is not eligible for the rendition profile; see the plan's rendition_ineligible_reason"},

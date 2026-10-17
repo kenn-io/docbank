@@ -14,7 +14,9 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/canonical"
+	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -46,6 +48,9 @@ type MediaOrigin struct {
 
 type MediaOriginEvidence struct {
 	AdapterContract, DeploymentRevision, ProbeState string
+	ProbeFailureCode                                string
+	ProbeReason                                     string
+	RetryAfter                                      time.Duration
 }
 
 type MediaOriginProbe func(context.Context) (MediaOriginEvidence, error)
@@ -89,10 +94,30 @@ func (service *Service) MediaOrigins() ([]MediaOrigin, error) {
 	return result, nil
 }
 
-// ProbeMediaOrigins runs each configured probe and retains its bounded result.
+// RunMediaOriginProbes refreshes vision readiness while other origins run once.
+func (service *Service) RunMediaOriginProbes(ctx context.Context) error {
+	for {
+		if err := service.ProbeMediaOrigins(ctx); err != nil {
+			return err
+		}
+		if err := jobs.Wait(ctx, time.Minute); err != nil {
+			return err
+		}
+	}
+}
+
+// ProbeMediaOrigins is the sole writer of bounded origin evidence.
 func (service *Service) ProbeMediaOrigins(ctx context.Context) error {
 	if service == nil {
 		return ErrMediaCapabilityUnavailable
+	}
+	ctx, finish, err := service.beginRun(ctx)
+	if err != nil {
+		return err
+	}
+	defer finish()
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	ids := make([]string, 0, len(service.mediaOriginProbes))
 	for id := range service.mediaOriginProbes {
@@ -100,16 +125,74 @@ func (service *Service) ProbeMediaOrigins(ctx context.Context) error {
 	}
 	slices.Sort(ids)
 	for _, id := range ids {
-		evidence, err := service.mediaOriginProbes[id](ctx)
-		if contextErr := ctx.Err(); contextErr != nil {
-			return contextErr
+		var profile *configuredProfile
+		for _, candidate := range service.profiles {
+			if profileRenditionInput(candidate) == document.RenditionInputDerivedUpload && visionReadinessKey(candidate) == id {
+				profile = &candidate
+				break
+			}
 		}
-		if err != nil && evidence.ProbeState == "" {
-			evidence.ProbeState = "provider_unavailable"
+		for {
+			var consentErr error
+			if profile != nil {
+				_, consentErr = service.catalog.AuthorizeProviderOperation(ctx, service.renditionConsentRequest(*profile))
+			}
+			service.mediaOriginMu.Lock()
+			previous := service.mediaOriginEvidence[id]
+			if previous.Probing != nil {
+				done := previous.Probing
+				service.mediaOriginMu.Unlock()
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-done:
+				}
+				continue
+			}
+			now := service.clock().UTC()
+			if consentErr != nil {
+				if !errors.Is(consentErr, store.ErrProcessingConsentRequired) && !errors.Is(consentErr, store.ErrProcessingConsentExpired) && !errors.Is(consentErr, store.ErrProcessingConsentRevoked) {
+					service.mediaOriginMu.Unlock()
+					return consentErr
+				}
+				service.mediaOriginEvidence[id] = mediaOriginObservation{Evidence: MediaOriginEvidence{ProbeState: "consent_required"}, ProbedAt: now}
+				service.mediaOriginMu.Unlock()
+				break
+			}
+			delay := previous.Evidence.RetryAfter
+			if previous.Evidence.ProbeState == "ready" {
+				delay = 10 * time.Minute
+			}
+			if profile == nil && !previous.ProbedAt.IsZero() || profile != nil && delay > 0 && now.Before(previous.ProbedAt.Add(delay)) {
+				service.mediaOriginMu.Unlock()
+				break
+			}
+			previous.Probing = make(chan struct{})
+			service.mediaOriginEvidence[id] = previous
+			service.mediaOriginMu.Unlock()
+			evidence, err := service.mediaOriginProbes[id](ctx)
+			if profile != nil {
+				if _, err := service.catalog.AuthorizeProviderOperation(ctx, service.renditionConsentRequest(*profile)); err != nil {
+					evidence = MediaOriginEvidence{ProbeState: "consent_required"}
+				}
+			}
+			service.mediaOriginMu.Lock()
+			close(previous.Probing)
+			previous.Probing = nil
+			if ctx.Err() == nil {
+				if err != nil && evidence.ProbeState == "" {
+					evidence.ProbeState = "provider_unavailable"
+				}
+				previous.Evidence = evidence
+				previous.ProbedAt = service.clock().UTC()
+			}
+			service.mediaOriginEvidence[id] = previous
+			service.mediaOriginMu.Unlock()
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			break
 		}
-		service.mediaOriginMu.Lock()
-		service.mediaOriginEvidence[id] = mediaOriginObservation{Evidence: evidence, ProbedAt: service.clock().UTC()}
-		service.mediaOriginMu.Unlock()
 	}
 	return nil
 }
@@ -358,4 +441,66 @@ func verifyMediaToken(key [32]byte, token string) ([]byte, error) {
 		return nil, fail
 	}
 	return body, nil
+}
+
+// visionProbeReason maps provider classes to fixed operator guidance, never causes.
+func visionProbeReason(err error) string {
+	if classified, ok := errors.AsType[*document.RenditionProviderError](err); ok {
+		switch classified.Code() {
+		case document.RenditionErrorAuthentication:
+			return "Check the provider credential."
+		case document.RenditionErrorRateLimited:
+			return "Provider rate limit reached. Retry later."
+		case document.RenditionErrorTransient, document.RenditionErrorCapacity, document.RenditionErrorAmbiguousSubmission:
+			return "Provider unavailable. Check connectivity and retry."
+		case document.RenditionErrorPolicyRejected:
+			return "Check the provider model and endpoint."
+		case document.RenditionErrorMalformedEvidence:
+			return "Provider returned an invalid response. Check model compatibility."
+		case document.RenditionErrorUnsupportedInput,
+			document.RenditionErrorUnknownJob, document.RenditionErrorCanceled:
+		}
+	}
+	return "Provider probe failed. Check the provider configuration."
+}
+
+// Vision readiness follows the descriptor identity used by the shared runtime registry.
+func visionReadinessKey(profile configuredProfile) string {
+	return "vision:" + profile.provider.Descriptor().Fingerprint
+}
+
+// visionProbe receives only synthetic input after the origin owner checks consent.
+func (service *Service) visionProbe(profile configuredProfile) MediaOriginProbe {
+	return func(ctx context.Context) (MediaOriginEvidence, error) {
+		evidence := MediaOriginEvidence{AdapterContract: profile.portable.Rendition.AdapterContract, DeploymentRevision: profile.portable.Rendition.DeploymentFingerprint, ProbeState: "ready"}
+		probe, ok := profile.provider.(interface {
+			Probe(ctx context.Context) error
+		})
+		var err error
+		if !ok {
+			err = ErrRenditionRuntimeUnavailable
+		} else {
+			err = probe.Probe(ctx)
+		}
+		if err != nil {
+			evidence.ProbeState = "provider_unavailable"
+			evidence.ProbeReason = visionProbeReason(err)
+			evidence.ProbeFailureCode = visionProbeFailureCode(err)
+			evidence.RetryAfter = renditionProviderRetryDelay(1)
+			if classified, ok := errors.AsType[*document.RenditionProviderError](err); ok {
+				evidence.RetryAfter = max(evidence.RetryAfter, classified.RetryAfter())
+				if classified.Code() == document.RenditionErrorAuthentication || classified.Code() == document.RenditionErrorPolicyRejected || classified.Code() == document.RenditionErrorMalformedEvidence {
+					evidence.RetryAfter = max(evidence.RetryAfter, 10*time.Minute)
+				}
+			}
+		}
+		return evidence, nil
+	}
+}
+
+func visionProbeFailureCode(err error) string {
+	if classified, ok := errors.AsType[*document.RenditionProviderError](err); ok {
+		return string(classified.Code())
+	}
+	return "provider_unavailable"
 }

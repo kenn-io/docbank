@@ -645,6 +645,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 			return err
 		}
 	}
+	if layout.schemaVersion >= photoSuggestionsStorageSchemaVersion {
+		if err := photoSuggestionMetadata.export(ctx, tx, write); err != nil {
+			return err
+		}
+	}
 	return derivativePurgeSuppressionMetadata.export(ctx, tx, write)
 }
 

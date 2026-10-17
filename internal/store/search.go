@@ -2491,13 +2491,13 @@ func contentSearchMatches(match, generation string, profile *string) (cte, join,
 		`JOIN matched_versions mv ON mv.version_id=cv.version_id`, `mv.best_rank`, args
 }
 
-// Filename, authored text, and technical metadata precede retained content evidence.
+// Rank filename, authored text, suggestions, technical metadata, then retained content evidence.
 func photoSearchCandidates(namesMatch, textMatch, generation string, profile *string) (sqlquery.Query, error) {
 	names, err := nameSearchCandidates(namesMatch)
 	if err != nil {
 		return sqlquery.Query{}, err
 	}
-	result := sqlquery.Query{SQL: `SELECT doc_key node_id,4 tier,score FROM (` + names.SQL + `)`, Args: names.Args}
+	result := sqlquery.Query{SQL: `SELECT doc_key node_id,5 tier,score FROM (` + names.SQL + `)`, Args: names.Args}
 	if textMatch == "" {
 		return result, nil
 	}
@@ -2513,7 +2513,9 @@ func photoSearchCandidates(namesMatch, textMatch, generation string, profile *st
   JOIN source_metadata_heads h ON h.generation_id=matched.doc_key
   JOIN content_versions cv ON cv.blob_hash=h.source_sha256 JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id`
 	result.Args = append(result.Args, metadata.Args...)
-	result.SQL += ` UNION ALL SELECT member.node_id,3 tier,-bm25(photo_authored_fts) score FROM photo_authored_fts JOIN photo_files evidence ON evidence.node_id=photo_authored_fts.rowid JOIN nodes sibling ON sibling.id=evidence.node_id JOIN content_versions sibling_version ON sibling_version.version_id=sibling.current_version_id AND sibling_version.node_id=sibling.id JOIN photo_files member ON member.asset_id=evidence.asset_id WHERE evidence.role<>'sidecar' AND sibling.kind='file' AND sibling.trashed_at IS NULL AND photo_authored_fts MATCH ?`
+	result.SQL += ` UNION ALL SELECT member.node_id,4 tier,-bm25(photo_authored_fts) score FROM photo_authored_fts JOIN photo_files evidence ON evidence.node_id=photo_authored_fts.rowid JOIN nodes sibling ON sibling.id=evidence.node_id JOIN content_versions sibling_version ON sibling_version.version_id=sibling.current_version_id AND sibling_version.node_id=sibling.id JOIN photo_files member ON member.asset_id=evidence.asset_id WHERE evidence.role<>'sidecar' AND sibling.kind='file' AND sibling.trashed_at IS NULL AND photo_authored_fts MATCH ?`
+	result.Args = append(result.Args, textMatch)
+	result.SQL += ` UNION ALL SELECT member.node_id,3 tier,-bm25(photo_suggestion_fts) score FROM photo_suggestion_fts JOIN photo_suggestions s ON s.rowid=photo_suggestion_fts.rowid JOIN content_versions sv ON sv.version_id=s.content_version_id JOIN photo_files f ON f.node_id=sv.node_id JOIN photo_assets a ON a.asset_id=f.asset_id JOIN nodes n ON n.id=f.node_id JOIN photo_files member ON member.asset_id=a.asset_id JOIN nodes sibling ON sibling.id=member.node_id WHERE a.display_file_id=f.file_id AND member.role<>'sidecar' AND sibling.kind='file' AND sibling.trashed_at IS NULL AND f.role<>'sidecar' AND n.current_version_id=s.content_version_id AND n.trashed_at IS NULL AND s.response<>'dismissed' AND photo_suggestion_fts MATCH ?`
 	result.Args = append(result.Args, textMatch)
 	cte, _, rank, args := contentSearchMatches(textMatch, generation, profile)
 	from := `matched_blobs mb CROSS JOIN content_versions cv ON cv.blob_hash=mb.blob_hash CROSS JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id JOIN text_searchable_versions tsv ON tsv.version_id=cv.version_id`

@@ -99,6 +99,8 @@ reviewed plan and participate in its fingerprint. Changing them produces a
 different plan. It does not erase existing derivative records or backup
 snapshots. Use the previewed derivative-purge workflow for live data and apply
 the backup repository's own expiry or deletion process to retained snapshots.
+Photo description plans retain `photo_suggestion` records instead of rendition
+artifacts, so these settings do not change them.
 
 See the general [Configuration](../configuration.md) reference for daemon and
 vault settings, and [Document processing](document-processing.md) for the

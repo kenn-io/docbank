@@ -9488,6 +9488,52 @@ func (c *Client) ReadPhotoPreview(ctx context.Context, options *ReadPhotoPreview
 	return responseParser(ctx, resp)
 }
 
+// ListPhotoSuggestions List proposals for the current display photo
+func (c *Client) ListPhotoSuggestions(ctx context.Context, options *ListPhotoSuggestionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPhotoSuggestionsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/photos/assets/{asset_id}/suggestions",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListPhotoSuggestionsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListPhotoSuggestionsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListPhotoSuggestionsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListPhotoSuggestionsErrorResponse](resp, "ListPhotoSuggestionsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/assets/{asset_id}/suggestions")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // TrashPhotoAsset Move every photo asset member to recoverable trash
 func (c *Client) TrashPhotoAsset(ctx context.Context, options *TrashPhotoAssetRequestOptions, reqEditors ...runtime.RequestEditorFn) (*TrashPhotoAssetResponse, error) {
 	var err error
@@ -10415,6 +10461,53 @@ func (c *Client) SetPhotoSettings(ctx context.Context, options *SetPhotoSettings
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/settings")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RespondPhotoSuggestion Accept selected fields or dismiss a photo proposal
+func (c *Client) RespondPhotoSuggestion(ctx context.Context, options *RespondPhotoSuggestionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RespondPhotoSuggestionResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/suggestions/{suggestion_id}/response",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RespondPhotoSuggestionResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RespondPhotoSuggestionResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RespondPhotoSuggestionResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[RespondPhotoSuggestionErrorResponse](resp, "RespondPhotoSuggestionErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/suggestions/{suggestion_id}/response")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -20695,6 +20788,37 @@ func (o *ReadPhotoPreviewRequestOptions) GetHeader() (map[string]string, error) 
 	return headers, err
 }
 
+// ListPhotoSuggestionsRequestOptions is the options needed to make a request to ListPhotoSuggestions.
+type ListPhotoSuggestionsRequestOptions struct {
+	PathParams *ListPhotoSuggestionsPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListPhotoSuggestionsRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListPhotoSuggestionsRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListPhotoSuggestionsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListPhotoSuggestionsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // TrashPhotoAssetRequestOptions is the options needed to make a request to TrashPhotoAsset.
 type TrashPhotoAssetRequestOptions struct {
 	PathParams *TrashPhotoAssetPath
@@ -21254,6 +21378,41 @@ func (o *SetPhotoSettingsRequestOptions) GetHeader() (map[string]string, error) 
 	var headers map[string]string
 	err = json.Unmarshal(encoded, &headers)
 	return headers, err
+}
+
+// RespondPhotoSuggestionRequestOptions is the options needed to make a request to RespondPhotoSuggestion.
+type RespondPhotoSuggestionRequestOptions struct {
+	PathParams *RespondPhotoSuggestionPath
+	Body       *RespondPhotoSuggestionBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RespondPhotoSuggestionRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *RespondPhotoSuggestionRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RespondPhotoSuggestionRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *RespondPhotoSuggestionRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
 }
 
 // DecidePhotoFaceRequestOptions is the options needed to make a request to DecidePhotoFace.
@@ -24540,6 +24699,10 @@ type ReadPhotoPreviewPath struct {
 	GenerationID string `json:"generation_id"`
 }
 
+type ListPhotoSuggestionsPath struct {
+	AssetID uuid.UUID `json:"asset_id"`
+}
+
 type TrashPhotoAssetPath struct {
 	AssetID string `json:"asset_id"`
 }
@@ -24562,6 +24725,10 @@ type GetPhotoAssetByNodePath struct {
 
 type PromotePhotoNodePath struct {
 	NodeID int64 `json:"node_id"`
+}
+
+type RespondPhotoSuggestionPath struct {
+	SuggestionID uuid.UUID `json:"suggestion_id"`
 }
 
 type DecidePhotoFacePath struct {
@@ -24927,6 +25094,8 @@ type PreflightPhotoRejectsBody = PhotoRejectsRequest
 type MovePhotoRejectsBody = MovePhotoRejectsRequest
 
 type SetPhotoSettingsBody = SetPhotoSettingsRequest
+
+type RespondPhotoSuggestionBody = PhotoSuggestionResponse
 
 type DecidePhotoFaceBody = PhotoFaceDecisionRequest
 
@@ -26246,6 +26415,10 @@ type PreparePhotoPreviewErrorResponse = Error
 
 type ReadPhotoPreviewResponse = []byte
 
+type ListPhotoSuggestionsResponse []PhotoSuggestion
+
+type ListPhotoSuggestionsErrorResponse = Error
+
 type TrashPhotoAssetResponse = api.PhotoAsset
 
 type TrashPhotoAssetErrorResponse = Error
@@ -26325,6 +26498,10 @@ type GetPhotoSettingsErrorResponse = Error
 type SetPhotoSettingsResponse = api.PhotoSettings
 
 type SetPhotoSettingsErrorResponse = Error
+
+type RespondPhotoSuggestionResponse = store.PhotoSuggestion
+
+type RespondPhotoSuggestionErrorResponse = Error
 
 type DecidePhotoFaceResponse = api.PhotoFaceDecisionResult
 
@@ -27571,6 +27748,8 @@ type PhotoBrowseRequest = api.PhotoBrowseRequest
 
 type PhotoBrowseRow = api.PhotoBrowseRow
 
+type PhotoDescription = document.PhotoDescription
+
 type PhotoExportSelection = bundle.PhotoExportSelection
 
 type PhotoFace = store.PhotoFace
@@ -27630,6 +27809,10 @@ type PhotoRenderProfile = bundle.PhotoRenderProfile
 type PhotoSettings = api.PhotoSettings
 
 type PhotoSidecarProvenance = store.PhotoSidecarProvenance
+
+type PhotoSuggestion = store.PhotoSuggestion
+
+type PhotoSuggestionResponse = store.PhotoSuggestionResponse
 
 type PhotoTimeline = api.PhotoTimeline
 

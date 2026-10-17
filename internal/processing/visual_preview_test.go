@@ -82,14 +82,25 @@ func TestByteFirstPNGRefinementKeepsAnimatedPNGPreviewable(t *testing.T) {
 	}
 }
 
-func TestProduceVisualPreviewAppliesEXIFOrientation(t *testing.T) {
+func TestProduceVisualPreviewAppliesEXIFOrientationAndStripsMetadata(t *testing.T) {
 	t.Parallel()
+	gpsCoordinates := []byte{41, 0, 0, 0, 1, 0, 0, 0, 52, 0, 0, 0, 1, 0, 0, 0, 30, 0, 0, 0, 1, 0, 0, 0}
 	tiff := syntheticTIFF(42,
 		[]syntheticTIFFEntry{tiffShort(0x0112, 6)},
-		nil,
+		[]syntheticTIFFEntry{
+			tiffASCII(0x0001, "N"), tiffRationals(0x0002, [][2]uint32{{41, 1}, {52, 1}, {30, 1}}),
+			tiffASCII(0x0003, "W"), tiffRationals(0x0004, [][2]uint32{{87, 1}, {37, 1}, {30, 1}}),
+		},
 	)
+	binary.LittleEndian.PutUint16(tiff[22:24], 0x8825)
 	source := syntheticJPEGSegment(t, mediatest.JPEG(3, 2, color.White), 0xe1,
 		append([]byte("Exif\x00\x00"), tiff...))
+	source = syntheticJPEGSegment(t, source, 0xe1, []byte("http://ns.adobe.com/xap/1.0/\x00<x:xmpmeta>synthetic location</x:xmpmeta>"))
+	source = syntheticJPEGSegment(t, source, 0xe2, []byte("ICC_PROFILE\x00\x01\x01synthetic profile"))
+	markers := [][]byte{[]byte("Exif\x00\x00"), gpsCoordinates, []byte("ICC_PROFILE\x00"), []byte("http://ns.adobe.com/xap/1.0/\x00")}
+	for _, marker := range markers {
+		require.True(t, bytes.Contains(source, marker))
+	}
 	digest := sha256.Sum256(source)
 
 	product, err := ProduceVisualPreview(t.Context(), bytes.NewReader(source), VisualPreviewTarget{
@@ -104,6 +115,9 @@ func TestProduceVisualPreviewAppliesEXIFOrientation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, decoded.Bounds().Dx())
 	assert.Equal(t, 3, decoded.Bounds().Dy())
+	for _, marker := range markers {
+		assert.False(t, bytes.Contains(product.Output, marker))
+	}
 }
 
 func TestVisualPreviewPreservesHighDensityDetail(t *testing.T) {

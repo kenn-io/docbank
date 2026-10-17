@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 	"uuid"
 
@@ -290,4 +291,26 @@ func capRecordingRequest(operationID, reference, occurrence string) RemoteRecord
 	return RemoteRecordingRequest{OperationID: operationID, ReferenceURL: reference,
 		ProviderHint: capselfhosted.Provider, Occurrence: MediaOccurrenceInput{Ref: occurrence,
 			Revision: "1", Filename: occurrence + ".wav"}}
+}
+
+func TestMediaOriginProbeLoopRunsOtherOriginsOnceAndStops(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		calls := 0
+		service := &Service{lifecycle: t.Context(), drained: make(chan struct{}), clock: time.Now, mediaOriginEvidence: map[string]mediaOriginObservation{}, mediaOriginProbes: map[string]MediaOriginProbe{"synthetic": func(context.Context) (MediaOriginEvidence, error) {
+			calls++
+			return MediaOriginEvidence{ProbeState: "verified"}, nil
+		}}}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { done <- service.RunMediaOriginProbes(ctx) }()
+		synctest.Wait()
+		require.Equal(t, 1, calls)
+		time.Sleep(2 * time.Minute)
+		synctest.Wait()
+		require.Equal(t, 1, calls)
+		cancel()
+		require.ErrorIs(t, <-done, context.Canceled)
+	})
 }
