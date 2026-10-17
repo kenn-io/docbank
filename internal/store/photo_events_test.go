@@ -120,6 +120,37 @@ func TestPhotoEventsDeliveryFilteringAndAlbumRevisions(t *testing.T) {
 	require.Equal(t, PhotoEvent{AlbumID: album.ID, Revision: album.Revision}, visible)
 }
 
+func TestPhotoEventsLockRefetchSurvivesQueuedHiddenChange(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	node, err := s.CreateFile(ctx, s.RootID(), "private.jpg", fakeHash("a1"), 4, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+	unlocked := WithPhotoHiddenToken(ctx, token)
+	asset, err = s.SetPhotoAssetHidden(unlocked, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	events, cancel := s.SubscribePhotoEvents()
+	defer cancel()
+	_, err = editPhotoAuthored(unlocked, s, []PhotoAuthoredTarget{{
+		FileID:   asset.Files[0].ID,
+		Revision: asset.Files[0].Revision,
+		Patch:    PhotoAuthoredPatch{Caption: new("Hidden caption")},
+	}})
+	require.NoError(t, err)
+	require.NoError(t, s.LockPhotoHidden(unlocked))
+
+	queued := nextPhotoEventWithAudience(t, events)
+	require.Equal(t, PhotoEvent{Refetch: true, audience: photoHidden | photoControl}, queued)
+	visible, err := s.VisiblePhotoEvent(ctx, queued)
+	require.NoError(t, err)
+	require.Equal(t, PhotoEvent{Refetch: true}, visible)
+}
+
 func TestPhotoEventsAudienceClassification(t *testing.T) {
 	t.Parallel()
 	t.Run("locked subscriber with shared blob", func(t *testing.T) {

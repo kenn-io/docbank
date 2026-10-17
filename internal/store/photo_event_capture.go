@@ -119,7 +119,7 @@ func dropIdlePhotoCapture(ctx context.Context, tx *sql.Tx) error {
 			return err
 		}
 	}
-	_, err = tx.ExecContext(ctx, `DROP TABLE IF EXISTS temp.docbank_photo_changes`)
+	_, err = tx.ExecContext(ctx, `DROP TABLE IF EXISTS temp.docbank_photo_peers; DROP TABLE IF EXISTS temp.docbank_photo_changes`)
 	return err
 }
 
@@ -211,6 +211,9 @@ func photoFaceSelection(faceID string) string {
 
 func installPhotoChangeTriggers(ctx context.Context, tx *sql.Tx) error {
 	const nodeTable = "nodes"
+	if err := installPhotoPeerCapture(ctx, tx); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `CREATE TEMP TABLE docbank_photo_changes(kind TEXT,id TEXT,audience INTEGER,PRIMARY KEY(audience,kind,id)) WITHOUT ROWID`); err != nil {
 		return err
 	}
@@ -410,11 +413,32 @@ func photoEventAudienceSelection(selection, visibility string) string {
 }
 
 func photoEventPeerSelection(version string) string {
-	return `SELECT 'asset',f.asset_id FROM content_versions changed
- CROSS JOIN content_versions peer INDEXED BY content_versions_blob ON peer.blob_hash=changed.blob_hash AND peer.size=changed.size
- CROSS JOIN nodes n ON n.id=peer.node_id AND n.current_version_id=peer.version_id AND n.trashed_at IS NULL
- CROSS JOIN photo_files f ON f.node_id=n.id AND f.asset_id IS NOT NULL
+	return `SELECT 'asset',peer.asset_id FROM content_versions changed
+ CROSS JOIN docbank_photo_peers peer ON peer.blob_hash=changed.blob_hash AND peer.size=changed.size
  WHERE changed.version_id=` + version + ` AND peer.node_id<>changed.node_id`
+}
+
+func installPhotoPeerCapture(ctx context.Context, tx *sql.Tx) error {
+	// Ordinary files can share one blob without bound, so duplicate capture looks up photo
+	// peers in this writer-local, photo-only hash index. Installation copies the live photo
+	// catalog once per capture; each write then touches only its matching photo peers.
+	selection := `SELECT f.node_id,v.blob_hash,v.size,f.asset_id FROM photo_files f
+ CROSS JOIN nodes n ON n.id=f.node_id AND n.trashed_at IS NULL
+ CROSS JOIN content_versions v ON v.version_id=n.current_version_id WHERE f.asset_id IS NOT NULL`
+	for _, statement := range []string{
+		`CREATE TEMP TABLE docbank_photo_peers(node_id INTEGER PRIMARY KEY,blob_hash TEXT NOT NULL,size INTEGER NOT NULL,asset_id TEXT NOT NULL)`,
+		`CREATE INDEX temp.docbank_photo_peers_blob ON docbank_photo_peers(blob_hash,size)`,
+		`INSERT INTO docbank_photo_peers ` + selection,
+		`CREATE TEMP TRIGGER photo_events_peer_file_insert AFTER INSERT ON main.photo_files BEGIN INSERT INTO docbank_photo_peers ` + selection + ` AND f.node_id=NEW.node_id; END`,
+		`CREATE TEMP TRIGGER photo_events_peer_file_update AFTER UPDATE OF node_id,asset_id ON main.photo_files BEGIN DELETE FROM docbank_photo_peers WHERE node_id=OLD.node_id; INSERT INTO docbank_photo_peers ` + selection + ` AND f.node_id=NEW.node_id; END`,
+		`CREATE TEMP TRIGGER photo_events_peer_file_delete AFTER DELETE ON main.photo_files BEGIN DELETE FROM docbank_photo_peers WHERE node_id=OLD.node_id; END`,
+		`CREATE TEMP TRIGGER photo_events_peer_node_update AFTER UPDATE OF current_version_id,trashed_at ON main.nodes WHEN (OLD.current_version_id IS NOT NEW.current_version_id OR OLD.trashed_at IS NOT NEW.trashed_at) AND EXISTS(SELECT 1 FROM photo_files WHERE node_id=NEW.id) BEGIN DELETE FROM docbank_photo_peers WHERE node_id=NEW.id; INSERT INTO docbank_photo_peers ` + selection + ` AND f.node_id=NEW.id; END`,
+	} {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("installing photo duplicate capture: %w", err)
+		}
+	}
+	return nil
 }
 
 func photoEventVersionSelection(value string) string {

@@ -22,6 +22,7 @@ const emptyBatch = (): PhotoEventBatch => ({
 
 // The server sends a keepalive every 15 seconds; silence past this means the connection died.
 export const photoEventIdleTimeout = 45_000;
+const photoEventPollInterval = 5_000;
 
 // SSE frames can cross any network chunk boundary, including CRLF pairs.
 export async function readPhotoEvents(
@@ -169,7 +170,7 @@ export function watchPhotoEvents(
     try {
       await refresh(batch);
       refreshFailures = 0;
-      refreshAfter = Date.now() + 1000;
+      refreshAfter = Date.now() + (polling ? photoEventPollInterval : 1000);
       if (!stopped) onrefreshed();
     } catch (cause) {
       if (stopped) return;

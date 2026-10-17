@@ -73,6 +73,7 @@ func benchmarkCreateFilePhotoSubscriber(b *testing.B, sharedBlob bool, photos in
 				require.Equal(b, photos+1, photoFiles)
 			}
 			next := 0
+			writeCosts := make(map[string]float64, 3)
 			for _, audience := range []string{"none", "locked", "hidden"} {
 				b.Run("subscriber="+audience, func(b *testing.B) {
 					ctx, cancel, installed := setupPhotoBenchmarkCapture(b, s, audience)
@@ -88,9 +89,28 @@ func benchmarkCreateFilePhotoSubscriber(b *testing.B, sharedBlob bool, photos in
 						require.NoError(b, err)
 						next++
 					}
-					b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N), "ns/file")
+					writeCost := float64(b.Elapsed().Nanoseconds()) / float64(b.N)
+					writeCosts[audience] = writeCost
+					b.ReportMetric(writeCost, "ns/file")
 					b.ReportMetric(float64(installed.Microseconds())/1000, "capture-install-ms")
 				})
+			}
+			// This fixture has 100,000 ordinary versions of one hash and no matching photo peer.
+			if sharedBlob && existing == 100000 && photos == 0 {
+				baseline, baselineOK := writeCosts["none"]
+				if !baselineOK {
+					b.Fatal("shared-blob write budget requires a no-subscriber measurement")
+				}
+				const maxWriteCostFactor = 8
+				for _, audience := range []string{"locked", "hidden"} {
+					observed, ok := writeCosts[audience]
+					if !ok {
+						b.Fatalf("shared-blob write budget requires a %s measurement", audience)
+					}
+					if baseline > 0 && observed > baseline*maxWriteCostFactor {
+						b.Fatalf("shared-blob photo subscriber writes for %s cost %.1fx the no-subscriber baseline; budget is %dx", audience, observed/baseline, maxWriteCostFactor)
+					}
+				}
 			}
 		})
 	}

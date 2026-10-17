@@ -167,7 +167,7 @@ func (s *Store) VisiblePhotoEvent(ctx context.Context, event PhotoEvent) (PhotoE
 	if audience&photoHidden != 0 {
 		if _, err := s.hiddenSession(ctx, s.db); err != nil {
 			if errors.Is(err, ErrHiddenLocked) || errors.Is(err, ErrHiddenNotConfigured) {
-				if audience&photoPublic != 0 || s.hasActivePhotoHiddenSession() {
+				if audience&(photoPublic|photoControl) != 0 || s.hasActivePhotoHiddenSession() {
 					return PhotoEvent{Refetch: true}, nil
 				}
 				return PhotoEvent{}, nil

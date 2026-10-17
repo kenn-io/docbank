@@ -97,6 +97,21 @@ func TestPhotoEventsSSEWireShape(t *testing.T) {
 	require.IsType(t, float64(0), fields["revision"])
 }
 
+func TestPhotoEventsRejectsRequestsWithoutAPIKey(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	response, body := get(t, ts, "/api/v1/photos/events", map[string]string{"X-Api-Key": ""})
+	require.Equal(t, http.StatusUnauthorized, response.StatusCode, body)
+	require.Equal(t, new(api.Error).ContentType("application/json"), response.Header.Get("Content-Type"))
+	var problem api.Error
+	require.NoError(t, json.Unmarshal([]byte(body), &problem))
+	require.Equal(t, http.StatusUnauthorized, problem.Status)
+	require.Equal(t, "unauthorized", problem.Code)
+
+	stream, scanner := openPhotoEventStream(t, ts, "", nil)
+	require.True(t, readPhotoChange(t, scanner, stream.Body).Refetch)
+}
+
 func TestPhotoEventsLockedStreamHidesIDsAndRelaysRefetch(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)

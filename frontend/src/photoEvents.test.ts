@@ -457,11 +457,13 @@ it("refreshes six visible tabs without streams when Web Locks are unavailable", 
       albums: new Map(),
       refetch: true,
     });
-  await vi.advanceTimersByTimeAsync(2000);
+  await vi.advanceTimersByTimeAsync(4999);
   expect(refreshes[0]).toHaveBeenCalledOnce();
-  for (const refresh of refreshes.slice(1)) expect(refresh).toHaveBeenCalledTimes(3);
+  for (const refresh of refreshes.slice(1)) expect(refresh).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(1);
+  for (const refresh of refreshes.slice(1)) expect(refresh).toHaveBeenCalledTimes(2);
   finish();
-  await vi.advanceTimersByTimeAsync(999);
+  await vi.advanceTimersByTimeAsync(4999);
   expect(refreshes[0]).toHaveBeenCalledOnce();
   await vi.advanceTimersByTimeAsync(1);
   expect(refreshes[0]).toHaveBeenCalledTimes(2);
