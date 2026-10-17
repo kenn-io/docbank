@@ -2537,8 +2537,7 @@ it("passes a registered Photos shortcut into the help dialog", async () => {
       { label: "red" },
       false,
       expect.any(Function),
-      undefined,
-      undefined,
+      { keywords: undefined, rotationDelta: undefined },
     ),
   );
   await fireEvent.keyDown(window, { key: "r" });
@@ -2548,8 +2547,7 @@ it("passes a registered Photos shortcut into the help dialog", async () => {
       {},
       false,
       expect.any(Function),
-      undefined,
-      90,
+      { keywords: undefined, rotationDelta: 90 },
     ),
   );
   document.body.focus();

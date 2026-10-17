@@ -1782,8 +1782,7 @@ it.each([
     patch,
     false,
     expect.any(Function),
-    undefined,
-    undefined,
+    { keywords: undefined, rotationDelta: undefined },
   );
   photos.dispose();
 });
