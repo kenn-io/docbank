@@ -63,6 +63,27 @@ it.each(
     vi.mocked(photos.lookup).mockImplementation(
       async (id) => rows.find((row) => row.asset_id === id)!,
     );
+    const before = preparedPhoto(1);
+    const pickReceipt: PhotoAuthoredReceipt = {
+      receipt_id: "pick",
+      before: [before],
+      after: [{ ...before, revision: 2, values: { ...before.values, flag: "pick" } }],
+    };
+    const refresh = vi.spyOn(photos, "refresh");
+    if (key === "Enter") {
+      edit.mockResolvedValue(pickReceipt);
+      photos.started = true;
+      const stack = { asset_ids: rows.map((row) => row.asset_id), representative_id: "photo-1" };
+      photos.items = rows.map((row) => ({ ...row, stack }));
+      photos.selection = { selectedIDs: new Set(["photo-2"]), anchorID: "photo-2" };
+      vi.spyOn(photos, "reloadCounts").mockReturnValue(undefined);
+      vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
+        items: [{ ...rows[0]!, flag: "pick" }, rows[1]!],
+        total: 2,
+        facets: [],
+        relevance_available: false,
+      });
+    }
     await act(() => {
       cull.run = {
         ...cull.run!,
@@ -85,8 +106,79 @@ it.each(
     for (const [request] of edit.mock.calls) expect(request.patch).toEqual(patch);
     expect(cull.currentID).toBe(next);
     await screen.findByText(next === "photo-1" ? "Photo 1.jpg" : "Photo 2.jpg");
+    if (key === "Enter") {
+      await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+      expect(await refresh.mock.results[0]!.value).toBe(true);
+      const refreshed = photos.items.find((row) => row.asset_id === "photo-1");
+      expect(refreshed && "flag" in refreshed && refreshed.flag).toBe("pick");
+      expect(photos.selectedIDs).toEqual(new Set(["photo-2"]));
+      const second = preparedPhoto(2);
+      edit.mockResolvedValue({
+        receipt_id: "rating",
+        before: [second],
+        after: [{ ...second, revision: 2, values: { ...second.values, rating: 4 } }],
+      });
+      await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key: "4" });
+      await waitFor(() => expect(edit).toHaveBeenCalledTimes(2));
+      await waitFor(() =>
+        expect(container.querySelector(".photo-cull > span[aria-live='polite']")?.textContent).toBe(
+          "Photo 2.jpg: 4 stars",
+        ),
+      );
+      expect(edit.mock.calls[1]![0].targets[0]).toMatchObject({ file_id: "file-2", revision: 1 });
+      expect(photos.selectedIDs).toEqual(new Set(["photo-2"]));
+      expect(cull.currentID).toBe("photo-2");
+      expect(photos.cullEditor!.error).toBe("");
+    }
   },
 );
+
+it.each(["restore", "replacement"])("ignores a settings failure after run %s", async (method) => {
+  vi.stubGlobal("indexedDB", new IDBFactory());
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+  const store = photoCullStorage("synthetic-vault");
+  const { cull, photos } = await reviewPhoto(photo(1), false, store);
+  const before = preparedPhoto(1);
+  const edit = vi.spyOn(api, "editPhotoAuthored").mockResolvedValue({
+    receipt_id: "pick",
+    before: [before],
+    after: [{ ...before, revision: 2, values: { ...before.values, flag: "pick" } }],
+  });
+  vi.spyOn(photos, "reloadCounts").mockReturnValue(undefined);
+  cull.run = { ...cull.run!, stackEligible: true };
+  let reject!: (cause: Error) => void;
+  const settings = vi.mocked(api.getPhotoSettings).mockReturnValueOnce(
+    new Promise((_resolve, fail) => {
+      reject = fail;
+    }),
+  );
+  const pending = cull.checkSettings();
+  const signal = settings.mock.calls.at(-1)?.[0]?.signal;
+  const run = {
+    ...cull.run!,
+    stackEligible: false,
+    checkpoint: { ...cull.run!.checkpoint, runID: "relevance-run" },
+  };
+  await store.replace(run);
+  if (method === "restore") await act(() => cull.restore());
+  else
+    await act(() => {
+      cull.run = run;
+    });
+  // The response still fails even if the transport ignores cancellation.
+  await act(async () => {
+    reject(new Error("Old settings failed"));
+    await pending;
+  });
+  expect(cull.stackError).toBe("");
+  if (method === "restore") expect(signal?.aborted).toBe(true);
+  expect(cull.run?.checkpoint.runID).toBe("relevance-run");
+  expect(await cull.verifyDecision()).toBe(true);
+  await fireEvent.click(await readyButton("Pick (P)"));
+  await waitFor(() => expect(edit).toHaveBeenCalledOnce());
+  await screen.findByRole("button", { name: /^Undo$/ });
+  expect(photos.cullEditor!.error).toBe("");
+});
 
 it("navigates with keyboard focus after activating Undo", async () => {
   const before = preparedPhoto(1);

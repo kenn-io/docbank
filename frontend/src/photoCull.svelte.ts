@@ -24,6 +24,7 @@ export class PhotoCull {
   run = $state.raw<CullRun & { groups?: string[][]; burstGapSeconds?: number }>();
   private stackIndex = new WeakMap<string[][], ReadonlyMap<string, string[]>>();
   private stackRead?: AbortController;
+  private settingsRead?: AbortController;
   private passGroups?: { pass: string[]; source?: string[][]; groups: string[][] };
   stackError = $state("");
   stackLoading = $state(false);
@@ -83,12 +84,23 @@ export class PhotoCull {
   }
   /** Check whether the active run needs to regroup under a new gap. */
   async checkSettings() {
-    if (!this.run?.stackEligible || this.stackLoading) return;
+    const run = this.run;
+    if (!run?.stackEligible || this.stackLoading) return;
+    const controller = new AbortController();
+    this.settingsRead?.abort();
+    this.settingsRead = controller;
+    const current = () =>
+      !controller.signal.aborted &&
+      this.run?.checkpoint.runID === run.checkpoint.runID &&
+      this.run.ids === run.ids;
     try {
-      const settings = await getPhotoSettings({ session: this.session });
-      if (settings.burst_gap_seconds !== this.run.burstGapSeconds) await this.regroup();
+      const settings = await getPhotoSettings({ session: this.session, signal: controller.signal });
+      if (current() && settings.burst_gap_seconds !== this.run!.burstGapSeconds)
+        await this.regroup();
     } catch (cause) {
-      this.stackError = this.sessionFailure(cause);
+      if (current()) this.stackError = this.sessionFailure(cause);
+    } finally {
+      if (this.settingsRead === controller) this.settingsRead = undefined;
     }
   }
   /** Recompute all frozen IDs and merge into the latest active checkpoint. */
@@ -217,6 +229,7 @@ export class PhotoCull {
         if (!checkpoint.pass.every((id) => captured.has(id)))
           throw new Error("Saved cull progress is invalid. Start a new cull.");
       }
+      this.settingsRead?.abort();
       this.stackRead?.abort();
       this.stackRead = undefined;
       this.stackError = "";
@@ -237,6 +250,7 @@ export class PhotoCull {
     }
   }
   cancel() {
+    this.settingsRead?.abort();
     this.capture?.abort();
     this.stackRead?.abort();
     if (this.flagRead) {
@@ -304,6 +318,7 @@ export class PhotoCull {
       await this.storage.replace(run, controller.signal, previous);
       this.error = "";
       this.stale = false;
+      this.settingsRead?.abort();
       this.stackRead?.abort();
       this.stackRead = undefined;
       this.stackError = "";
