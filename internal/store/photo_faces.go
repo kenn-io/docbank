@@ -100,11 +100,6 @@ type PhotoFacePerson struct {
 	State       string `json:"state"`
 }
 
-func (s *Store) PhotoFaces(ctx context.Context, versionID string) ([]PhotoFace, []PersonDocumentAssertion, error) {
-	faces, assertions, _, err := s.PhotoFacePersonNames(ctx, versionID)
-	return faces, assertions, err
-}
-
 // PhotoFacePersonNames reads faces, assertions, and their people in one snapshot.
 func (s *Store) PhotoFacePersonNames(ctx context.Context, versionID string) ([]PhotoFace, []PersonDocumentAssertion, []PhotoFacePerson, error) {
 	people := make([]PhotoFacePerson, 0)

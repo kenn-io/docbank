@@ -46,7 +46,6 @@ it.each(["fit", "large"] as const)(
         get: vi.fn(async () => new Blob(["synthetic-preview"])),
       } as unknown as PhotoPreviewCache,
       view: { ...fittedPhotoView },
-      onfit: vi.fn(),
     });
     await screen.findByText("fit failed");
     if (size === "large") {

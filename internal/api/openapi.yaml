@@ -11492,6 +11492,8 @@ components:
           type: string
         display_name:
           type: string
+        display_name_folded:
+          type: string
         person_id:
           type: string
         revision:
@@ -11500,6 +11502,7 @@ components:
         state:
           type: string
       required:
+        - display_name_folded
         - created_at
         - person_id
         - display_name

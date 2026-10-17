@@ -771,4 +771,4 @@ Each face shares its number across the inspector, Loupe, and Cull closeup. Unnam
 
 Choose an active person's name beside the picker to open Library filtered to that person. This clears the text search and shows every match in capture-time order. Naming or clearing a face refreshes loaded views with person filters or search text in the same Hidden scope. Choose **Retry** after a People page error, including an empty first page. Retired names keep their labels and correction controls. Face labels follow the photo through rotation, zoom, and pan.
 
-Cull shows one closeup per face, ordered from largest to smallest. People marked in the whole photo appear first as whole-photo tiles. Closeups share the fit preview already loaded for the photo and rotate with it. If that preview is unavailable, each tile says **No preview**; choose **Retry preview** to try again.
+Cull shows whole-photo marks first, then one closeup per face in creation order, matching the Face N labels. Closeups share the fit preview already loaded for the photo and rotate with it. If that preview is unavailable, each tile says **No preview**; choose **Retry preview** to try again.

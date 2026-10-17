@@ -82,11 +82,12 @@ type PackageImportJob struct {
 }
 
 type PersonSummary struct {
-	CreatedAt   string `json:"created_at"`
-	PersonID    string `json:"person_id"`
-	DisplayName string `json:"display_name"`
-	State       string `json:"state"`
-	Revision    int64  `json:"revision"`
+	DisplayNameFolded string `json:"display_name_folded"`
+	CreatedAt         string `json:"created_at"`
+	PersonID          string `json:"person_id"`
+	DisplayName       string `json:"display_name"`
+	State             string `json:"state"`
+	Revision          int64  `json:"revision"`
 }
 
 type PersonPage struct {

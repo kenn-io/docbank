@@ -1,6 +1,6 @@
 import { photo, photoFace, photoPersonAssertion, photoFacePage } from "./photo-test-fixtures.js";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import { PhotoFaces } from "./photoFaces.svelte.js";
 import PhotoPeople from "./PhotoPeople.svelte";
 import * as api from "./generated/docbank.js";
@@ -34,6 +34,7 @@ it("chooses an existing person by ID and opens their photos from the person card
         person_id: "person-a",
         display_name: "Ada",
         revision: 1,
+        display_name_folded: "ada",
         created_at: "2026-01-01T00:00:00Z",
         state: "curated",
       },
@@ -65,6 +66,7 @@ it("chooses an existing person by ID and opens their photos from the person card
         person_id: "person-a",
         display_name: "Ada",
         revision: 1,
+        display_name_folded: "ada",
         created_at: "2026-01-01T00:00:00Z",
         state: "curated",
       },
@@ -105,6 +107,7 @@ it("searches again after a failed assignment and disables the picker throughout 
               person_id: "person-new",
               display_name: canonical,
               state: "curated",
+              display_name_folded: canonical.toLowerCase(),
               created_at: "2026-01-01T00:00:00Z",
               revision: 1,
             },
@@ -170,6 +173,7 @@ it("replaces a cached selected name when another face's decision reloads canonic
         display_name: query!,
         state: "curated",
         revision: 1,
+        display_name_folded: query!.toLowerCase(),
         created_at: "2026-01-01T00:00:00Z",
       },
     ],
@@ -238,6 +242,7 @@ it.each(["person-b", "new", "cancel", "assigned"])(
           display_name: "Alex",
           state: "curated",
           revision: 1,
+          display_name_folded: "alex",
           created_at: "2025-01-01T00:00:00Z",
         },
         {
@@ -245,6 +250,7 @@ it.each(["person-b", "new", "cancel", "assigned"])(
           display_name: "Alex",
           state: "curated",
           revision: 1,
+          display_name_folded: "alex",
           created_at: "2026-01-01T00:00:00Z",
         },
       ],
@@ -350,6 +356,7 @@ it.each(["empty", "failure", "relock"])("handles Hidden same-name previews: %s",
         display_name: "Alex",
         state: "curated",
         revision: 1,
+        display_name_folded: "alex",
         created_at: "2025-01-01T00:00:00Z",
       },
       {
@@ -357,6 +364,7 @@ it.each(["empty", "failure", "relock"])("handles Hidden same-name previews: %s",
         display_name: "Alex",
         state: "curated",
         revision: 1,
+        display_name_folded: "alex",
         created_at: "2026-01-01T00:00:00Z",
       },
     ],
@@ -457,6 +465,7 @@ it.each([403, 500])(
           display_name: "Alex",
           state: "curated",
           revision: 1,
+          display_name_folded: "alex",
           created_at: "2025-01-01T00:00:00Z",
         },
         {
@@ -464,6 +473,7 @@ it.each([403, 500])(
           display_name: "Alex",
           state: "curated",
           revision: 1,
+          display_name_folded: "alex",
           created_at: "2026-01-01T00:00:00Z",
         },
       ],
@@ -516,3 +526,118 @@ it.each([403, 500])(
     faces.dispose();
   },
 );
+
+it.each(["complete", "failure", "broad", "case", "unicode"])(
+  "completes only the last name group: %s",
+  async (result) => {
+    vi.spyOn(api, "listPhotoFaces").mockResolvedValue({
+      faces: [face],
+      assertions: [],
+      people: [],
+    });
+    const name = result === "unicode" ? "Straße" : "Alex";
+    const folded = result === "unicode" ? "strasse" : "alex";
+    const person = (index: number): api.PersonSummary => ({
+      person_id: `person-${index}`,
+      display_name: name,
+      state: "curated",
+      revision: 1,
+      display_name_folded: folded,
+      created_at: "2026-01-01T00:00:00Z",
+    });
+    const query = result === "broad" ? "Al" : name;
+    let finish!: (page: api.PersonPage) => void;
+    let fail!: (cause: Error) => void;
+    const search = vi
+      .spyOn(api, "listPeople")
+      .mockImplementation(async ({ query, cursor } = {}) => {
+        if (!query) return { items: [] };
+        if (!cursor)
+          return { items: Array.from({ length: 100 }, (_, i) => person(i)), next_cursor: "tail" };
+        return new Promise((resolve, reject) => {
+          finish = resolve;
+          fail = reject;
+        });
+      });
+    vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
+      items: [],
+    } as unknown as api.PhotoBrowsePage);
+    const write = vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "receipt" });
+    const faces = new PhotoFaces("session", vi.fn());
+    await faces.load("version-a");
+    render(PhotoPeople, { faces, session: "session" });
+    await fireEvent.click(screen.getByRole("button", { name: "Find or create a person: Face 1" }));
+    await fireEvent.input(screen.getByRole("combobox"), { target: { value: query } });
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    expect(screen.queryByRole("option", { name: new RegExp(name) })).toBeNull();
+    expect(screen.queryByRole("option", { name: `Create person "${query}"` })).toBeNull();
+    if (result === "failure") {
+      fail(new Error("Next page failed"));
+      await screen.findByText("Next page failed");
+      expect(screen.queryByRole("option", { name: new RegExp(name) })).toBeNull();
+    } else {
+      finish({
+        items: [
+          ...(result === "case" || result === "unicode"
+            ? [{ ...person(101), display_name: name.toUpperCase() }]
+            : []),
+          person(100),
+          ...(result === "broad"
+            ? [{ ...person(101), display_name: "Alice", display_name_folded: "alice" }]
+            : []),
+        ],
+        next_cursor: result === "broad" ? "more" : undefined,
+      });
+      await fireEvent.mouseDown(
+        await screen.findByRole("option", { name: `${name} · 101 people` }),
+      );
+      const dialog = await screen.findByRole("dialog", { name: `Choose ${name}` });
+      await fireEvent.click(dialog.querySelector('input[value="person-100"]')!);
+      await fireEvent.click(screen.getByRole("button", { name: "Name face" }));
+      await waitFor(() =>
+        expect(write).toHaveBeenCalledWith(
+          "version-a",
+          expect.objectContaining({ person_id: "person-100" }),
+          expect.anything(),
+        ),
+      );
+      expect(search.mock.calls.filter(([params]) => params?.query === query)).toHaveLength(2);
+      expect(search).toHaveBeenCalledWith({ query, limit: 100, cursor: "tail" }, expect.anything());
+    }
+    faces.dispose();
+  },
+);
+
+it("ignores an older continuation after a new search", async () => {
+  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [face], assertions: [], people: [] });
+  const person: api.PersonSummary = {
+    person_id: "person-a",
+    display_name: "Alex",
+    state: "curated",
+    revision: 1,
+    display_name_folded: "alex",
+    created_at: "2026-01-01T00:00:00Z",
+  };
+  let finish!: (page: api.PersonPage) => void;
+  vi.spyOn(api, "listPeople").mockImplementation(async ({ query, cursor } = {}) => {
+    if (cursor)
+      return new Promise((resolve) => {
+        finish = resolve;
+      });
+    return query === "Alex"
+      ? { items: [person], next_cursor: "tail" }
+      : { items: [{ ...person, display_name: "Bea", display_name_folded: "bea" }] };
+  });
+  const faces = new PhotoFaces("session", vi.fn());
+  await faces.load("version-a");
+  render(PhotoPeople, { faces, session: "session" });
+  await fireEvent.click(screen.getByRole("button", { name: "Find or create a person: Face 1" }));
+  await fireEvent.input(screen.getByRole("combobox"), { target: { value: "Alex" } });
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  await fireEvent.input(screen.getByRole("combobox"), { target: { value: "Bea" } });
+  await screen.findByRole("option", { name: "Bea" });
+  await act(() => finish({ items: [person] }));
+  await waitFor(() => expect(screen.queryByRole("option", { name: /Alex/ })).toBeNull());
+  expect(screen.getByRole("option", { name: "Bea" })).toBeTruthy();
+  faces.dispose();
+});

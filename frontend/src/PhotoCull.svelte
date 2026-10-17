@@ -17,7 +17,6 @@
     Tag,
   } from "./generated/docbank.js";
   import { prefetchPreviews } from "./photoPreview.svelte.js";
-  import PhotoFaceCloseups from "./PhotoFaceCloseups.svelte";
   import { PhotoFaces } from "./photoFaces.svelte.js";
   import PhotoStage from "./PhotoStage.svelte";
   import PhotoCell from "./PhotoCell.svelte";
@@ -65,7 +64,6 @@
     const version = photo?.kind === "photo" ? photo.content_version_id : "";
     untrack(() => void faces.load(version));
   });
-  let fit = $state<{ url: string; content_version_id: string; width: number; height: number }>();
   let error = $state("");
   let loading = $state(false);
   let lookupAttempt = $state(0);
@@ -486,7 +484,7 @@
       {:else}
         <div class="body">
           {#if photo}<PhotoStage
-              onfit={(value) => (fit = value)}
+              {faces}
               {photo}
               {photos}
               {cache}
@@ -517,7 +515,6 @@
               </dl>
             </aside>{/if}
         </div>
-        {#if photo?.kind === "photo"}<PhotoFaceCloseups {photo} {faces} {fit} />{/if}
         <div class="controls">
           {#if cull.currentStack}
             <Button

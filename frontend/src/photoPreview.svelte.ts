@@ -68,7 +68,6 @@ export class PhotoPreviewLoader {
   retrying = $state(false);
   fit = $state.raw<{ url: string; content_version_id: string; width: number; height: number }>();
   fitFailure = $state<PhotoPreviewLoader["failure"]>();
-  fitRetrying = $state(false);
   private largeStarted = false;
   readonly active = new PhotoPreviewDisplay();
   private timer?: ReturnType<typeof setTimeout>;
@@ -171,17 +170,7 @@ export class PhotoPreviewLoader {
     if (!this.photo || this.largeStarted || this.quality === "original") return;
     void this.load("large");
   }
-  async retryFit() {
-    if (this.fitRetrying || !this.photo || this.fitFailure?.action !== "fit") return;
-    this.fitRetrying = true;
-    try {
-      await this.load("fit", true);
-    } finally {
-      if (!this.active.signal.aborted) this.fitRetrying = false;
-    }
-  }
-  async retry() {
-    const action = this.failure?.action;
+  async retry(action = this.failure?.action) {
     if (this.retrying || !this.photo || (action !== "fit" && action !== "large")) return;
     this.retrying = true;
     try {

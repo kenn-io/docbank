@@ -7,6 +7,8 @@
   import { PhotoPreviewLoader } from "./photoPreview.svelte.js";
   import PhotoLoupeImage from "./PhotoLoupeImage.svelte";
   import { Button } from "@kenn-io/kit-ui";
+  import PhotoFaceCloseups from "./PhotoFaceCloseups.svelte";
+  import type { PhotoFaces } from "./photoFaces.svelte.js";
   import { APIError } from "./api-transport.js";
   let {
     photo,
@@ -21,7 +23,7 @@
     onreload,
     onunavailable,
     onfocus,
-    onfit,
+    faces,
   }: {
     photo: PhotoBrowseRow;
     photos: Photos;
@@ -35,12 +37,7 @@
     onreload?: (row: PhotoBrowseRow) => void;
     onunavailable?: (message: string) => void;
     onfocus?: () => void;
-    onfit?: (preview?: {
-      url: string;
-      content_version_id: string;
-      width: number;
-      height: number;
-    }) => void;
+    faces?: PhotoFaces;
   } = $props();
   let current = $state.raw(untrack(() => photo));
   let loader = $state.raw<PhotoPreviewLoader>(untrack(() => new PhotoPreviewLoader(photos, cache)));
@@ -60,15 +57,11 @@
     loader = active;
     return () => active.dispose();
   });
-  $effect(() => {
-    onfit?.(loader.fit);
-  });
-  const failure = $derived(loader.failure ?? (onfit ? loader.fitFailure : undefined));
+  const failure = $derived(loader.failure ?? (faces ? loader.fitFailure : undefined));
   async function retry() {
     if (failure?.action !== "reload") {
       const active = loader;
-      if (failure === active.fitFailure && failure?.action === "fit") await active.retryFit();
-      else await active.retry();
+      await active.retry(failure?.action);
       if (!active.active.signal.aborted && !active.failure) {
         await tick();
         onfocus?.();
@@ -97,23 +90,30 @@
 </script>
 
 <div class="photo-stage">
-  <PhotoLoupeImage
-    url={loader.url}
-    name={current.name}
-    rotation={current.rotation}
-    {view}
-    {onview}
-    {onmove}
-    {onregion}
-    {oncancelregion}
-    regionMode={current.kind === "photo" && regionMode}
-    onzoom={() => loader.zoom()}
-    unavailable={!!loader.failure && !loader.retrying}
-  />
-  {#if failure}<p role="status">
-      {failure.message}{#if failure.action}
-        <Button size="sm" onclick={() => void retry()}>Retry preview</Button>{/if}
-    </p>{/if}
+  <div class="image">
+    <PhotoLoupeImage
+      url={loader.url}
+      name={current.name}
+      rotation={current.rotation}
+      {view}
+      {onview}
+      {onmove}
+      {onregion}
+      {oncancelregion}
+      regionMode={current.kind === "photo" && regionMode}
+      onzoom={() => loader.zoom()}
+      unavailable={!!loader.failure && !loader.retrying}
+    />
+    {#if failure}<p role="status">
+        {failure.message}{#if failure.action}
+          <Button size="sm" onclick={() => void retry()}>Retry preview</Button>{/if}
+      </p>{/if}
+  </div>
+  {#if faces && current.kind === "photo"}<PhotoFaceCloseups
+      photo={current}
+      {faces}
+      fit={loader.fit}
+    />{/if}
 </div>
 
 <style>
@@ -121,6 +121,12 @@
     display: flex;
     flex: 1;
     min-width: 0;
+    min-height: 0;
+    flex-direction: column;
+  }
+  .image {
+    display: flex;
+    flex: 1;
     min-height: 0;
     position: relative;
   }

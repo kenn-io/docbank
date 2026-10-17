@@ -87,7 +87,7 @@ it.each(["rejected", "missing"] as const)(
     expect(display.fit).toBeUndefined();
     await vi.waitFor(() => expect(display.fitFailure?.action).toBe("fit"));
     preview.mockResolvedValueOnce({ state: "ready", generation_id: "fit-retry" });
-    await display.retryFit();
+    await display.retry(display.fitFailure?.action);
     expect(display.fitFailure).toBeUndefined();
     expect(display.fit).toEqual({
       url: "blob:preview-2",

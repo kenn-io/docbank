@@ -460,3 +460,30 @@ func seedBrowseProducedPackage(t *testing.T, catalog *testStore) store.Package {
 	require.NoError(t, err)
 	return pkg
 }
+
+func TestPeoplePagesReturnStoredUnicodeFold(t *testing.T) {
+	t.Parallel()
+	srv, catalog := newPackageTestServer(t)
+	for _, name := range []string{"Straße", "STRASSE"} {
+		_, err := catalog.CreatePerson(t.Context(), name, "operator")
+		require.NoError(t, err)
+	}
+	path := "/api/v1/people?query=strasse&limit=1"
+	var names []string
+	for index := range 2 {
+		response := srv.get(t, path)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		var page api.PersonPage
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &page))
+		require.Len(t, page.Items, 1)
+		require.Equal(t, "strasse", page.Items[0].DisplayNameFolded)
+		names = append(names, page.Items[0].DisplayName)
+		if index == 0 {
+			require.NotEmpty(t, page.NextCursor)
+			path += "&cursor=" + page.NextCursor
+		} else {
+			require.Empty(t, page.NextCursor)
+		}
+	}
+	require.ElementsMatch(t, []string{"Straße", "STRASSE"}, names)
+}

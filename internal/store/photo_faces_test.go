@@ -23,7 +23,7 @@ func TestPhotoFaceManualAndInvalidZeroAreaBox(t *testing.T) {
 	named, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), box, person.PersonID)
 	require.NoError(t, err)
 	require.NotEmpty(t, named.AssertionID)
-	faces, _, err := s.PhotoFaces(ctx, node.CurrentVersionID)
+	faces, _, _, err := s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 	require.NoError(t, err)
 	require.Equal(t, named, faces[0])
 	assertions, err := s.DocumentPersonAssertions(ctx, node.CurrentVersionID)
@@ -36,7 +36,7 @@ func TestPhotoFaceManualAndInvalidZeroAreaBox(t *testing.T) {
 	second, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), box, person.PersonID)
 	require.NoError(t, err)
 	require.Equal(t, named.AssertionID, second.AssertionID)
-	faces, _, err = s.PhotoFaces(ctx, node.CurrentVersionID)
+	faces, _, _, err = s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 	require.NoError(t, err)
 	require.Len(t, faces, 2)
 	_, _, people, err := s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
@@ -70,7 +70,7 @@ func TestPhotoFaceMergeRetargetsDuplicateAssertions(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.MergePersons(ctx, ada.PersonID, duplicate.PersonID, operation, 1, 1)
 	require.NoError(t, err)
-	faces, assertions, err := s.PhotoFaces(ctx, node.CurrentVersionID)
+	faces, assertions, _, err := s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 	require.NoError(t, err)
 	require.Len(t, faces, 2)
 	for _, face := range faces {
@@ -156,8 +156,9 @@ func TestPhotoFaceHiddenReadsAndWrites(t *testing.T) {
 	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
 	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
-	_, _, err = s.PhotoFaces(ctx, node.CurrentVersionID)
+	faces, _, _, err := s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 	require.ErrorIs(t, err, ErrHiddenLocked)
+	require.Empty(t, faces)
 	_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), document.FaceBox{Width: 0.2, Height: 0.2}, "")
 	require.ErrorIs(t, err, ErrHiddenLocked)
 	_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, face.FaceID, face.Box, "")
@@ -167,12 +168,13 @@ func TestPhotoFaceHiddenReadsAndWrites(t *testing.T) {
 	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
 	require.NoError(t, err)
 	unlocked := WithPhotoHiddenToken(ctx, token)
-	faces, _, err := s.PhotoFaces(unlocked, node.CurrentVersionID)
+	faces, _, _, err = s.PhotoFacePersonNames(unlocked, node.CurrentVersionID)
 	require.NoError(t, err)
 	require.Equal(t, []PhotoFace{face}, faces)
 	require.NoError(t, s.LockPhotoHidden(ctx))
-	_, _, err = s.PhotoFaces(unlocked, node.CurrentVersionID)
+	faces, _, _, err = s.PhotoFacePersonNames(unlocked, node.CurrentVersionID)
 	require.ErrorIs(t, err, ErrHiddenLocked)
+	require.Empty(t, faces)
 }
 
 func TestPhotoFaceMetadataRoundTripAndInvalidReferences(t *testing.T) {
@@ -189,7 +191,7 @@ func TestPhotoFaceMetadataRoundTripAndInvalidReferences(t *testing.T) {
 	require.NoError(t, s.ValidateMetadata(ctx))
 	target := newTestStore(t)
 	require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
-	faces, _, err := target.PhotoFaces(ctx, node.CurrentVersionID)
+	faces, _, _, err := target.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 	require.NoError(t, err)
 	require.Equal(t, []PhotoFace{face}, faces)
 	var roundtrip bytes.Buffer
@@ -394,7 +396,7 @@ func TestPhotoFaceBoxStaysStoredWhenPhotoRotationChanges(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 90, asset.Files[0].Rotation)
 
-	faces, _, err := s.PhotoFaces(ctx, node.CurrentVersionID)
+	faces, _, _, err := s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 	require.NoError(t, err)
 	require.Equal(t, face.Box, faces[0].Box)
 }
@@ -466,8 +468,9 @@ func TestPhotoFaceObservationTargetEligibility(t *testing.T) {
 				_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
 			}
 			require.NoError(t, err)
-			_, _, err = s.PhotoFaces(ctx, target.CurrentVersionID)
+			unavailable, _, _, err := s.PhotoFacePersonNames(ctx, target.CurrentVersionID)
 			require.ErrorIs(t, err, ErrNotFound)
+			require.Empty(t, unavailable)
 			_, _, err = s.CreatePhotoFace(ctx, target.CurrentVersionID, uuid.New().String(), box, person.PersonID)
 			require.ErrorIs(t, err, ErrNotFound)
 			_, err = s.MarkPersonInPhoto(ctx, target.CurrentVersionID, person.PersonID)
@@ -490,7 +493,7 @@ func TestPhotoFaceReadIncludesSuppressedReference(t *testing.T) {
 	assertion.Action = "suppress"
 	suppressed, err := s.AssertDocumentPerson(ctx, *assertion)
 	require.NoError(t, err)
-	faces, assertions, err := s.PhotoFaces(ctx, node.CurrentVersionID)
+	faces, assertions, _, err := s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 	require.NoError(t, err)
 	face.Revision++
 	require.Equal(t, []PhotoFace{face}, faces)
@@ -539,7 +542,7 @@ func TestPhotoFaceAssertionCapacityAndRestore(t *testing.T) {
 			overflowAssertion.Role = "author"
 			_, err = s.AssertDocumentPerson(ctx, overflowAssertion)
 			require.NoError(t, err)
-			_, assertions, err := s.PhotoFaces(ctx, node.CurrentVersionID)
+			_, assertions, _, err := s.PhotoFacePersonNames(ctx, node.CurrentVersionID)
 			require.NoError(t, err)
 			require.Len(t, assertions, document.MaxPhotoRecordsPerVersion)
 			var exported bytes.Buffer
@@ -563,7 +566,7 @@ func TestPhotoFaceAssertionCapacityAndRestore(t *testing.T) {
 			_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET action='withdrawn' WHERE content_version_id=?`, n.CurrentVersionID)
 			require.NoError(t, err)
 			decideFaceForTest(t, s, n, f.FaceID, p.PersonID, "name")
-			_, assertions, err := s.PhotoFaces(ctx, n.CurrentVersionID)
+			_, assertions, _, err := s.PhotoFacePersonNames(ctx, n.CurrentVersionID)
 			require.NoError(t, err)
 			require.Len(t, assertions, 1)
 			require.NoError(t, s.ValidateMetadata(ctx))
@@ -594,7 +597,7 @@ func TestPhotoFaceAssertionCapacityAndRestore(t *testing.T) {
 			withdrawn.Action = "assert"
 			_, err = s.AssertDocumentPerson(ctx, withdrawn)
 			require.NoError(t, err)
-			_, assertions, err := s.PhotoFaces(ctx, n.CurrentVersionID)
+			_, assertions, _, err := s.PhotoFacePersonNames(ctx, n.CurrentVersionID)
 			require.NoError(t, err)
 			require.Len(t, assertions, 1000)
 			require.NoError(t, s.ValidateMetadata(ctx))
@@ -612,7 +615,7 @@ func TestPhotoFaceAssertionCapacityAndRestore(t *testing.T) {
 			receipt := decideFaceForTest(t, s, n, f.FaceID, b.PersonID, "name")
 			_, err = s.UndoPhotoFaceDecision(ctx, receipt.ReceiptID)
 			require.NoError(t, err)
-			faces, assertions, err := s.PhotoFaces(ctx, n.CurrentVersionID)
+			faces, assertions, _, err := s.PhotoFacePersonNames(ctx, n.CurrentVersionID)
 			require.NoError(t, err)
 			require.Len(t, assertions, 1000)
 			require.Equal(t, f.AssertionID, faces[0].AssertionID)

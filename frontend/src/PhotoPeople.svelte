@@ -231,10 +231,26 @@
       return;
     }
     try {
-      const read = () =>
-        listPeople({ query: normalized, limit: 100 }, { session, signal: request.signal });
-      const page = await (faces.hiddenAccess ? faces.hiddenAccess.run(read) : read());
-      if (!request.signal.aborted) people = page.items;
+      const read = (cursor?: string) => {
+        const fetch = () => {
+          request.signal.throwIfAborted();
+          return listPeople(
+            { query: normalized, limit: 100, ...(cursor ? { cursor } : {}) },
+            { session, signal: request.signal },
+          );
+        };
+        return faces.hiddenAccess ? faces.hiddenAccess.run(fetch) : fetch();
+      };
+      let page = await read();
+      const matches = [...page.items];
+      const tail = matches.at(-1)?.display_name_folded;
+      while (!request.signal.aborted && page.next_cursor && tail !== undefined) {
+        page = await read(page.next_cursor);
+        const boundary = page.items.findIndex((person) => person.display_name_folded !== tail);
+        matches.push(...(boundary < 0 ? page.items : page.items.slice(0, boundary)));
+        if (boundary >= 0 || !page.items.length) break;
+      }
+      if (!request.signal.aborted) people = matches;
     } catch (cause) {
       if (!request.signal.aborted) error = cause instanceof Error ? cause.message : String(cause);
     } finally {

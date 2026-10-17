@@ -4608,6 +4608,7 @@ export interface PersonMergeReceipt {
 export interface PersonSummary {
   created_at: string;
   display_name: string;
+  display_name_folded: string;
   person_id: string;
   revision: number;
   state: string;

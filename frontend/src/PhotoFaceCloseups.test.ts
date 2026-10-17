@@ -10,6 +10,7 @@ it("keeps every caption without a matching fit preview and fills tiles after ret
   faces.faces = [
     photoFace({
       face_id: "small",
+      created_at: "2024-01-01T00:00:00Z",
       box: { x: 0, y: 0, width: 0.001, height: 0.001 },
       assertion_id: undefined,
     }),
@@ -32,15 +33,15 @@ it("keeps every caption without a matching fit preview and fills tiles after ret
     fit: { ...fit, content_version_id: "version-a" },
   });
   const images = screen.getAllByRole("img");
-  expect(images.map((img) => img.getAttribute("alt"))).toEqual(["Ada", "Face 2 · Ada", "Face 3"]);
+  expect(images.map((img) => img.getAttribute("alt"))).toEqual(["Ada", "Face 1", "Face 3 · Ada"]);
   expect(images.every((img) => img.getAttribute("src") === "blob:fit")).toBe(true);
-  expect(images[1]!.getAttribute("style")).toContain("rotate(90deg)");
+  expect(images[2]!.getAttribute("style")).toContain("rotate(90deg)");
   faces.people = faces.people.map((row) => ({ ...row, display_name: "Grace" }));
   await component.rerender({
     photo: selected,
     faces,
     fit: { ...fit, content_version_id: "version-a" },
   });
-  expect(screen.getAllByRole("img")[1]).toBe(images[1]);
-  expect(images[1]!.getAttribute("alt")).toBe("Face 2 · Grace");
+  expect(screen.getAllByRole("img")[2]).toBe(images[2]);
+  expect(images[2]!.getAttribute("alt")).toBe("Face 3 · Grace");
 });

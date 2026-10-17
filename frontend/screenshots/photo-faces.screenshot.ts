@@ -8,7 +8,7 @@ const output = process.env.DOCBANK_FACES_SCREENSHOT_DIR;
 test.use({ actionTimeout: 15_000 });
 test.skip(!output, "DOCBANK_FACES_SCREENSHOT_DIR enables synthetic face review proof");
 
-async function captureDarkDialog(
+async function captureDialogThemes(
   page: Page,
   dialog: Locator,
   directory: string,
@@ -17,24 +17,26 @@ async function captureDarkDialog(
   ready: () => Promise<unknown>,
 ) {
   await expect.poll(ready).toBe(true);
-  await page.evaluate(async () => {
-    localStorage.setItem("docbank-theme", "dark");
-    document.documentElement.classList.add("dark");
-    await document.fonts.ready;
-  });
-  const bounds = await dialog.boundingBox();
-  const viewport = page.viewportSize();
-  if (!bounds || !viewport) throw new Error("Photo dialog is not measurable");
-  await page.screenshot({
-    path: path.join(directory, name),
-    clip: {
-      x: bounds.x,
-      y: bounds.y,
-      width: bounds.width,
-      height: Math.min(cropHeight, bounds.height, viewport.height - bounds.y),
-    },
-    animations: "disabled",
-  });
+  for (const theme of ["light", "dark"]) {
+    await page.evaluate(async (theme) => {
+      localStorage.setItem("docbank-theme", theme);
+      document.documentElement.classList.toggle("dark", theme === "dark");
+      await document.fonts.ready;
+    }, theme);
+    const bounds = await dialog.boundingBox();
+    const viewport = page.viewportSize();
+    if (!bounds || !viewport) throw new Error("Photo dialog is not measurable");
+    await page.screenshot({
+      path: path.join(directory, `${name}-${theme}.png`),
+      clip: {
+        x: bounds.x,
+        y: bounds.y,
+        width: bounds.width,
+        height: Math.min(cropHeight, bounds.height, viewport.height - bounds.y),
+      },
+      animations: "disabled",
+    });
+  }
 }
 
 test("names and corrects faces in Loupe, inspector, and Cull", async ({ page }) => {
@@ -141,18 +143,12 @@ test("names and corrects faces in Loupe, inspector, and Cull", async ({ page }) 
     await people.getByRole("option", { name: "Ada · 2 people", exact: true }).click();
     const chooser = page.getByRole("dialog", { name: "Choose Ada" });
     await expect(chooser.getByRole("img")).toHaveCount(2);
-    await captureDarkDialog(
-      page,
-      chooser,
-      output!,
-      "after-photo-people-chooser-dark.png",
-      760,
-      async () =>
-        chooser
-          .getByRole("img")
-          .evaluateAll((images) =>
-            images.every((image) => (image as HTMLImageElement).naturalWidth > 0),
-          ),
+    await captureDialogThemes(page, chooser, output!, "after-photo-people-chooser", 760, async () =>
+      chooser
+        .getByRole("img")
+        .evaluateAll((images) =>
+          images.every((image) => (image as HTMLImageElement).naturalWidth > 0),
+        ),
     );
     await chooser.locator(`input[value="${personID}"]`).check();
     await chooser.getByRole("button", { name: "Name face", exact: true }).click();
@@ -209,11 +205,11 @@ test("names and corrects faces in Loupe, inspector, and Cull", async ({ page }) 
       expect(rows.faces.find((row) => row.face_id === drawnFace.face_id)?.dismissed).toBe(true);
     });
     await loupe.getByRole("button", { name: "Reset zoom", exact: true }).click();
-    await captureDarkDialog(
+    await captureDialogThemes(
       page,
       loupe,
       output!,
-      "after-photo-faces-loupe-dark.png",
+      "after-photo-faces-loupe",
       760,
       async () =>
         (await viewport
@@ -235,7 +231,7 @@ test("names and corrects faces in Loupe, inspector, and Cull", async ({ page }) 
     const closeups = cull.getByRole("region", { name: "Face closeups" });
     await expect(closeups.getByRole("img")).toHaveCount(1);
     await expect(closeups.locator("figcaption")).toHaveText(["Face 1 · Ada"]);
-    await captureDarkDialog(page, cull, output!, "after-photo-faces-cull-dark.png", 620, async () =>
+    await captureDialogThemes(page, cull, output!, "after-photo-faces-cull", 620, async () =>
       closeups.getByRole("img").evaluate((image) => (image as HTMLImageElement).naturalWidth > 0),
     );
     await cull.getByRole("button", { name: "Exit cull", exact: true }).click();
