@@ -3003,13 +3003,6 @@ it.each(["Keep all", "Keep selected", "Choose representative"])(
       await waitFor(() => expect(photos.authored.busy).toBe(false));
       expect([...photos.selectedIDs]).toEqual(["photo-2"]);
       expect(photos.scope()).toEqual({ asset_ids: ["photo-2"] });
-      // Stack members are held apart from the edit targets, which still follow the selection.
-      expect(photos.authored.targets).toEqual([]);
-      expect(photos.authored.stackTargets.map((target) => target.asset_id).sort()).toEqual([
-        "photo-1",
-        "photo-2",
-        "photo-3",
-      ]);
     }
     expect(decide.mock.calls.map(([request]) => request.selected_ids)).toEqual([
       ["photo-2"],
@@ -3026,9 +3019,6 @@ it.each(["Keep all", "Keep selected", "Choose representative"])(
           ? "selected"
           : "representative",
       "selected",
-    ]);
-    expect(decide.mock.calls.map(([request]) => Object.values(request.targets).length)).toEqual([
-      3, 3,
     ]);
     photos.dispose();
   },

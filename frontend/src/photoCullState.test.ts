@@ -86,12 +86,11 @@ it("probes saved headers and replaces a run without loading its membership", asy
   expect(await resumed.restore()).toBe(true);
   expect(store.load).toHaveBeenCalledOnce();
 });
-async function snapshot(ids: string[], _stacks: Record<string, string> = {}, frozen = query) {
+async function snapshot(ids: string[], frozen = query) {
   return snapshotEnvelope(
     frozen,
     ids.map((asset_id, index) => ({
       asset_id,
-
       flag: "" as "" | "pick" | "reject",
       node_id: index + 1,
       content_version_id: "11111111-1111-4111-8111-111111111111",
@@ -631,13 +630,7 @@ it("captures interleaved bursts and moves between stacks and frames in pass orde
   // Two imports interleave by capture time: A1, B1, A2, B2, then a lone frame.
   const [a1, b1, a2, b2, lone] = [1, 2, 3, 4, 5].map((id) => photo(id).asset_id);
   vi.spyOn(api, "createWorkspaceQuery").mockImplementation(async () =>
-    Response.json(
-      await snapshot(
-        [a1!, b1!, a2!, b2!, lone!],
-        { [a1!]: a1!, [a2!]: a1!, [b1!]: b1!, [b2!]: b1! },
-        captureQuery,
-      ),
-    ),
+    Response.json(await snapshot([a1!, b1!, a2!, b2!, lone!], captureQuery)),
   );
   vi.spyOn(api, "getPhotoSettings").mockResolvedValue({
     revision: 1,
@@ -809,7 +802,7 @@ it("retries grouping failures and ignores groups for a replaced run", async () =
   expect(cull.run.checkpoint.runID).toBe("replacement");
 });
 
-it.each(["capture", "next pass", "remainder"])(
+it.each(["capture", "next pass", "remainder", "settings", "grouping"])(
   "recovers the session after a 401 during %s",
   async (site) => {
     const store = storage();
@@ -825,14 +818,24 @@ it.each(["capture", "next pass", "remainder"])(
     } else {
       await cull.start(query);
       await cull.flush();
-      cull.move(1);
-      await cull.flush();
-      vi.spyOn(api, "listPhotoAssets").mockRejectedValueOnce(cause);
-      if (site === "next pass") await cull.nextPass();
-      else await cull.checkRemainder();
+      if (site === "settings") {
+        vi.spyOn(api, "getPhotoSettings").mockRejectedValueOnce(cause);
+        await cull.checkSettings();
+      } else if (site === "grouping") {
+        vi.mocked(api.groupPhotoStacks).mockRejectedValueOnce(cause);
+        await cull.regroup();
+      } else {
+        cull.move(1);
+        await cull.flush();
+        vi.spyOn(api, "listPhotoAssets").mockRejectedValueOnce(cause);
+        if (site === "next pass") await cull.nextPass();
+        else await cull.checkRemainder();
+      }
     }
     expect(onauthfailure).toHaveBeenCalledExactlyOnceWith(cause);
-    expect(cull.error).toBe("Session expired");
+    expect(site === "settings" || site === "grouping" ? cull.stackError : cull.error).toBe(
+      "Session expired",
+    );
   },
 );
 
@@ -970,38 +973,6 @@ it("verifies a decision against progress queued before the check", async () => {
   await cull.flush();
   expect(cull.stale).toBe(false);
   expect((await store.load())!.checkpoint.unavailable).toEqual([ids[1]]);
-});
-
-it.each(["settings", "grouping"])("recovers the session after a 401 from Cull %s", async (site) => {
-  const store = storage();
-  const ids = [photo(1).asset_id, photo(2).asset_id];
-  await store.replace({
-    ids,
-    checkpoint: {
-      runID: "auth",
-      revision: 0,
-      pass: ids,
-      position: 0,
-      visited: [],
-      skipped: [],
-      unavailable: [],
-      scope: "all",
-      autoAdvance: true,
-    },
-  });
-  const recover = vi.fn();
-  const cull = new PhotoCull("session", store, recover);
-  await cull.restore();
-  const unauthorized = new APIError("Session expired", 401, "unauthorized");
-  if (site === "settings") {
-    vi.spyOn(api, "getPhotoSettings").mockRejectedValue(unauthorized);
-    await cull.checkSettings();
-  } else {
-    vi.mocked(api.groupPhotoStacks).mockRejectedValue(unauthorized);
-    await cull.regroup();
-  }
-  expect(recover).toHaveBeenCalledExactlyOnceWith(unauthorized);
-  expect(cull.stackError).toBe("Session expired");
 });
 
 it("reuses pass navigation until the pass or grouping changes", async () => {

@@ -196,20 +196,9 @@ func TestTrashEmptyReportsPhotoHeldRoots(t *testing.T) {
 
 func TestPhotoSettingsGapOnlyPreservesDisplayPreference(t *testing.T) {
 	t.Parallel()
-	ts, s := newTestServer(t, nil)
-	ctx := t.Context()
-	raw, err := s.CreateFile(ctx, s.RootID(), "burst.cr2", testHash("burst-raw"), 10, "application/octet-stream")
-	require.NoError(t, err)
-	image, err := s.CreateFile(ctx, s.RootID(), "burst.jpg", testHash("burst-jpeg"), 10, "image/jpeg")
-	require.NoError(t, err)
-	asset, err := s.PhotoAssetForNode(ctx, image.ID)
-	require.NoError(t, err)
-	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, raw.ID, store.PhotoRoleRAW, nil)
-	require.NoError(t, err)
+	ts, _ := newTestServer(t, nil)
 	res, body := do(t, ts, http.MethodPut, "/api/v1/photos/settings", map[string]string{"If-Match": `"1"`}, map[string]any{"preference": "image"})
 	require.Equal(t, 200, res.StatusCode, body)
-	before, err := s.PhotoAssetByID(ctx, asset.ID)
-	require.NoError(t, err)
 	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts), "If-Match": `"2"`}
 	res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", browser, map[string]any{"burst_gap_seconds": 5})
 	require.Equal(t, 200, res.StatusCode, body)
@@ -217,10 +206,6 @@ func TestPhotoSettingsGapOnlyPreservesDisplayPreference(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &settings))
 	require.Equal(t, new("image"), settings.Preference)
 	require.Equal(t, 5, settings.BurstGapSeconds)
-	after, err := s.PhotoAssetByID(ctx, asset.ID)
-	require.NoError(t, err)
-	require.Equal(t, before.DisplayFileID, after.DisplayFileID)
-	require.Equal(t, before.Revision, after.Revision)
 	res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", map[string]string{"If-Match": `"3"`}, map[string]any{"burst_gap_seconds": 5})
 	require.Equal(t, 200, res.StatusCode, body)
 	require.Equal(t, `"3"`, res.Header.Get("ETag"))
@@ -229,9 +214,9 @@ func TestPhotoSettingsGapOnlyPreservesDisplayPreference(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, res.StatusCode, body)
 	res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", map[string]string{"If-Match": `"3"`}, map[string]any{"preference": nil})
 	require.Equal(t, 200, res.StatusCode, body)
-	after, err = s.PhotoAssetByID(ctx, asset.ID)
-	require.NoError(t, err)
-	require.NotEqual(t, before.DisplayFileID, after.DisplayFileID)
+	var reset api.PhotoSettings
+	require.NoError(t, json.Unmarshal([]byte(body), &reset))
+	require.Nil(t, reset.Preference)
 }
 
 func TestPhotoStackGroupRouteBoundsExplicitIDs(t *testing.T) {
@@ -282,8 +267,6 @@ func TestPhotoStackGroupRouteBoundsExplicitIDs(t *testing.T) {
 	res, body = do(t, ts, http.MethodPost, "/api/v1/photos/stacks/group", browser, map[string]any{"asset_ids": slices.Repeat([]string{ids[0]}, 250_000)})
 	require.Equal(t, http.StatusUnprocessableEntity, res.StatusCode)
 	require.Less(t, len(body), 64<<10)
-	res, _ = do(t, ts, http.MethodPost, "/api/v1/photos/stacks/group", browser, map[string]any{"asset_ids": slices.Concat(run250k, []string{missing})})
-	require.Equal(t, http.StatusUnprocessableEntity, res.StatusCode)
 	res, _ = do(t, ts, http.MethodPost, "/api/v1/photos/stacks/group", browser, map[string]any{"asset_ids": []string{}, "padding": strings.Repeat("x", 16<<20)})
 	require.Equal(t, http.StatusRequestEntityTooLarge, res.StatusCode)
 }

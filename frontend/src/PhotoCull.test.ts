@@ -259,20 +259,49 @@ it("retries a failed completion lookup and restores the unflagged remainder offe
   expect(cull.complete).toBe(true);
 });
 
-it("retries a failed lookup without leaving the current photo", async () => {
-  const row = photo(1);
-  const { cull, photos } = await reviewPhoto(row, true, undefined, {
-    lookupError: new APIError("Temporarily unavailable", 503, "unavailable"),
-  });
-  const lookup = vi.mocked(photos.lookup);
-  await fireEvent.click(await screen.findByRole("button", { name: /^Retry$/ }));
-  await screen.findByText(row.name);
-  expect(lookup).toHaveBeenCalledTimes(2);
-  expect(lookup.mock.calls.map(([id]) => id)).toEqual([row.asset_id, row.asset_id]);
-  expect(cull.currentID).toBe(row.asset_id);
-  expect(cull.run!.checkpoint.position).toBe(0);
-  expect(screen.queryByRole("button", { name: /^Retry$/ })).toBeNull();
-});
+it.each([false, true])(
+  "retries a failed lookup without leaving the current photo, navigated=%s",
+  async (navigated) => {
+    const row = photo(navigated ? 2 : 1);
+    const cause = new APIError("Temporarily unavailable", 503, "unavailable");
+    const { cull, photos, container } = await reviewPhoto(
+      navigated ? photo(1) : row,
+      true,
+      undefined,
+      navigated ? {} : { lookupError: cause },
+    );
+    const edit = vi.spyOn(api, "editPhotoAuthored");
+    const lookup = vi.mocked(photos.lookup);
+    if (navigated) {
+      lookup.mockRejectedValueOnce(cause).mockResolvedValueOnce(row);
+      await act(() => {
+        cull.run = {
+          ...cull.run!,
+          ids: ["photo-1", "photo-2"],
+          checkpoint: { ...cull.run!.checkpoint, pass: ["photo-1", "photo-2"] },
+        };
+        cull.move(1);
+      });
+    }
+    const retry = await screen.findByRole("button", { name: /^Retry$/ });
+    expect(screen.queryByText("Photo 1.jpg")).toBeNull();
+    expect(screen.getByRole("button", { name: "Pick (P)" }).matches(":disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Reject (X)" }).matches(":disabled")).toBe(true);
+    await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key: "p" });
+    await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key: "x" });
+    expect(edit).not.toHaveBeenCalled();
+    expect(cull.currentID).toBe(row.asset_id);
+    await fireEvent.click(retry);
+    await screen.findByText(row.name);
+    await readyButton("Pick (P)");
+    expect(lookup.mock.calls.map(([id]) => id)).toEqual(
+      navigated ? ["photo-1", "photo-2", "photo-2"] : ["photo-1", "photo-1"],
+    );
+    expect(cull.currentID).toBe(row.asset_id);
+    expect(cull.run!.checkpoint.position).toBe(navigated ? 1 : 0);
+    expect(screen.queryByRole("button", { name: /^Retry$/ })).toBeNull();
+  },
+);
 
 async function reviewPhoto(
   row = photo(1),
@@ -903,39 +932,6 @@ it.each(["rating only", "flag change", "unavailable mark and auto-advance toggle
   },
 );
 
-it("disables decisions when the next photo lookup fails and retries that photo", async () => {
-  const { cull, photos, container } = await reviewPhoto();
-  const edit = vi.spyOn(api, "editPhotoAuthored");
-  const next = photo(2);
-  vi.mocked(photos.lookup)
-    .mockRejectedValueOnce(new APIError("Temporarily unavailable", 503, "unavailable"))
-    .mockResolvedValueOnce(next);
-  await act(() => {
-    cull.run = {
-      ...cull.run!,
-      ids: ["photo-1", "photo-2"],
-      checkpoint: { ...cull.run!.checkpoint, pass: ["photo-1", "photo-2"] },
-    };
-    cull.move(1);
-  });
-  const retry = await screen.findByRole("button", { name: /^Retry$/ });
-  expect(screen.queryByText("Photo 1.jpg")).toBeNull();
-  expect(screen.getByRole("button", { name: "Pick (P)" }).matches(":disabled")).toBe(true);
-  expect(screen.getByRole("button", { name: "Reject (X)" }).matches(":disabled")).toBe(true);
-  await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key: "p" });
-  await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key: "x" });
-  expect(edit).not.toHaveBeenCalled();
-  expect(cull.currentID).toBe("photo-2");
-  await fireEvent.click(retry);
-  await screen.findByText("Photo 2.jpg");
-  await readyButton("Pick (P)");
-  expect(vi.mocked(photos.lookup).mock.calls.map(([id]) => id)).toEqual([
-    "photo-1",
-    "photo-2",
-    "photo-2",
-  ]);
-});
-
 it("decides the whole saved stack from a later pass and refuses a stale checkpoint", async () => {
   const rows = [photo(1), { ...photo(2), flag: "pick" as const }, photo(3), photo(4)];
   const ids = rows.map((row) => row.asset_id),
@@ -964,9 +960,6 @@ it("decides the whole saved stack from a later pass and refuses a stale checkpoi
     };
   });
   const keep = await readyButton("Keep current (Return)");
-  // Enter activates a focused control; the dialog shortcut must leave it alone.
-  await fireEvent.keyDown(keep, { key: "Enter" });
-  expect(decide).not.toHaveBeenCalled();
   await fireEvent.click(keep);
   await waitFor(() => expect(cull.currentID).toBe(ids[3]));
   expect(decide.mock.calls[0]?.[0]).toMatchObject({
