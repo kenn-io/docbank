@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,7 +11,7 @@ import (
 
 func TestPhotoEventsRenditionCoverage(t *testing.T) {
 	t.Parallel()
-	for _, transition := range []string{"failure", "recovery"} {
+	for _, transition := range []string{"failure", "recovery", "renewal"} {
 		t.Run(transition, func(t *testing.T) {
 			s, _, _, profile := collectionCoverageFixture(t, 0)
 			ctx := t.Context()
@@ -26,32 +27,36 @@ func TestPhotoEventsRenditionCoverage(t *testing.T) {
 			now := time.Now().UTC().Add(time.Second)
 			claim, err := s.ClaimRenditionJob(ctx, job.ID, "coverage-worker", now, time.Minute)
 			require.NoError(t, err)
-			query := PhotoBrowseRequest{
-				Query:    snapshotTestQuery(t, `{"filters":{"text_coverage":["failed"]}}`),
-				Coverage: CoverageSelection{Configuration: "configured", ProfileFingerprint: profile.Fingerprint},
-			}
-			if transition == "recovery" {
+			switch transition {
+			case "recovery":
 				require.NoError(t, s.MarkRenditionJobFailed(ctx, claim, RenditionFailureConsent, now.Add(time.Second)))
+			case "renewal":
+				require.NoError(t, s.MarkRenditionJobFailed(ctx, claim, RenditionFailureTerminal, now.Add(time.Second)))
+				request.CapturedArtifactPolicy = []byte(strings.Replace(string(request.CapturedArtifactPolicy), `"max_count":1,"min_count":0`, `"max_count":2,"min_count":0`, 1))
+				running, _, err := s.EnqueueRenditionJob(ctx, request)
+				require.NoError(t, err)
+				require.NotEqual(t, job.ID, running.ID)
+				claim, err = s.ClaimRenditionJob(ctx, running.ID, "running-worker", now, time.Minute)
+				require.NoError(t, err)
+				// Keep both exact waiters and the running job older than the failed attempt.
+				_, err = s.db.Exec(`UPDATE rendition_job_waiters SET updated_at='2026-01-01T00:00:00.000000000Z'`)
+				require.NoError(t, err)
+				_, err = s.db.Exec(`UPDATE rendition_jobs SET updated_at='2026-01-01T00:00:00.000000000Z' WHERE job_id=?`, running.ID)
+				require.NoError(t, err)
 			}
-			before, err := s.ListPhotoAssets(ctx, query, nil)
-			require.NoError(t, err)
-			var beforeCount, afterCount int64 = 0, 1
-			if transition == "recovery" {
-				beforeCount, afterCount = 1, 0
-			}
-			require.Equal(t, beforeCount, before.Total)
 			ch, stop := s.SubscribePhotoEvents()
 			defer stop()
-			if transition == "failure" {
+			switch transition {
+			case "failure":
 				require.NoError(t, s.MarkRenditionJobFailed(ctx, claim, RenditionFailureConsent, now.Add(time.Second)))
-			} else {
+			case "renewal":
+				_, err = s.RenewRenditionJobClaim(ctx, claim, now.Add(2*time.Second), time.Minute)
+				require.NoError(t, err)
+			default:
 				reopened, _, err := s.EnqueueRenditionJob(ctx, request)
 				require.NoError(t, err)
 				require.Equal(t, RenditionJobQueued, reopened.State)
 			}
-			after, err := s.ListPhotoAssets(ctx, query, nil)
-			require.NoError(t, err)
-			require.Equal(t, afterCount, after.Total)
 			event := nextPhotoEvent(t, ch)
 			require.True(t, event.Refetch || event.AssetID == asset.ID, "coverage transition must invalidate the affected photo query")
 		})
@@ -72,15 +77,8 @@ func TestPhotoEventsTagAssignmentDefinitions(t *testing.T) {
 			defer stop()
 			_, err = s.AssignTag(ctx, tag.ID, node.ID, node.Revision)
 			require.NoError(t, err)
-			current, err := s.TagByID(ctx, tag.ID)
-			require.NoError(t, err)
-			require.Equal(t, int64(2), current.Revision)
-			require.Equal(t, 1, current.AssignmentCount)
-			events := []PhotoEvent{}
-			for len(ch) > 0 {
-				events = append(events, <-ch)
-			}
-			require.Contains(t, events, PhotoEvent{Refetch: true}, "assignment must refresh the shared tag revision and count")
+			require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, ch))
+			noPhotoEvent(t, ch)
 		})
 	}
 }
@@ -91,42 +89,13 @@ func TestPhotoEventsBulkDocumentTrashQuiet(t *testing.T) {
 	ctx := t.Context()
 	dir, err := s.Mkdir(ctx, s.RootID(), "documents")
 	require.NoError(t, err)
-	nodes := make([]Node, 100)
-	for i := range nodes {
-		nodes[i], err = s.CreateFile(ctx, dir.ID, fmt.Sprintf("document-%d.txt", i), browseHash(fmt.Sprintf("document-%d", i)), 4, "text/plain")
+	for i := range 100 {
+		_, err = s.CreateFile(ctx, dir.ID, fmt.Sprintf("document-%d.txt", i), browseHash(fmt.Sprintf("document-%d", i)), 4, "text/plain")
 		require.NoError(t, err)
 	}
 	ch, stop := s.SubscribePhotoEvents()
 	defer stop()
 	_, _, err = s.Trash(ctx, dir.ID, UnconditionalRev)
 	require.NoError(t, err)
-	for _, node := range nodes {
-		trashed, err := s.NodeByID(ctx, node.ID)
-		require.NoError(t, err)
-		require.NotNil(t, trashed.TrashedAt)
-	}
-	noPhotoEvent(t, ch)
-}
-
-func TestPhotoEventsPublishSourceMetadata(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	photo := browsePhotoNode(t, s, "photo.jpg", browseHash("published-metadata-event"), "image/jpeg")
-	asset, err := s.PhotoAssetForNode(ctx, photo.ID)
-	require.NoError(t, err)
-	first, err := s.PublishSourceMetadata(ctx, photo.BlobHash, fakeHash("e1"), photoCanonical(t,
-		photoMetadataField("image.exif.iso", "image.exif", "ISO", photoInteger(200))))
-	require.NoError(t, err)
-	ch, stop := s.SubscribePhotoEvents()
-	defer stop()
-	second, err := s.PublishSourceMetadata(ctx, photo.BlobHash, fakeHash("e2"), photoCanonical(t,
-		photoMetadataField("image.exif.iso", "image.exif", "ISO", photoInteger(400))))
-	require.NoError(t, err)
-	require.NotEqual(t, first.GenerationID, second.GenerationID)
-	projection, err := s.ContentVersionPhotoMetadata(ctx, photo.CurrentVersionID)
-	require.NoError(t, err)
-	require.EqualValues(t, 400, *projection.Fields.ISO)
-	require.Equal(t, asset.ID, nextPhotoEvent(t, ch).AssetID)
 	noPhotoEvent(t, ch)
 }

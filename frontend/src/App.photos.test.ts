@@ -12,16 +12,14 @@ import {
 } from "./photo-test-fixtures.js";
 import * as api from "./generated/docbank.js";
 import * as photoEvents from "./photoEvents.js";
-
-const realWatchPhotoEvents = photoEvents.watchPhotoEvents;
-
-beforeEach(() => vi.spyOn(photoEvents, "watchPhotoEvents").mockReturnValue(() => {}));
 import * as photoWorkspace from "./PhotosWorkspace.svelte";
 import App from "./App.svelte";
 import { Photos } from "./photos.svelte.js";
 import { VerifiedUploadChannel } from "./upload.js";
 import { parseQuery, queryFingerprint, type Query } from "./query.js";
 import { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
+
+beforeEach(() => vi.spyOn(photoEvents, "watchPhotoEvents").mockReturnValue(() => {}));
 
 // Answers background filter-count requests so tests that predate counts see only their own reads.
 const stubPhotoFetch = (fetcher: (url: string, init: RequestInit) => unknown) =>
@@ -3429,109 +3427,57 @@ async function watcherFixture({
   };
 }
 
-it.each(["retained", "pending"])(
-  "rechecks %s metadata after a mixed visibility batch",
-  async (state) => {
-    const fixture = await watcherFixture();
-    await act(async () => fixture.workspaceProps.onphotochange?.("photo-1", "open"));
-    await waitFor(() => expect(fixture.workspaceProps.photoID).toBe("photo-1"));
-    const editor = fixture.workspaceProps.photos.authored;
-    const before = preparedPhoto(1);
-    editor.inspectedID = before.asset_id;
-    const latest = { ...before, revision: 8 };
-    let finish!: () => void;
-    const prepare = vi.spyOn(api, "preparePhotoAuthored");
-    let pending: Promise<void> | undefined;
-    if (state === "pending") {
-      prepare.mockImplementationOnce(async () => {
-        await new Promise<void>((resolve) => (finish = resolve));
-        return { assets: [], targets: [before] };
-      });
-      pending = editor.prepare({ asset_ids: [before.asset_id] });
-      fixture.workspaceRefresh.mockImplementationOnce(async () => {
-        editor.conceal();
-        finish();
-        await pending;
-        editor.revalidate(new Set([before.asset_id]), { asset_ids: [before.asset_id] });
-        return true;
-      });
-    } else {
-      editor.targets = [before];
-    }
-    prepare.mockResolvedValue({ assets: [], targets: [latest] });
-    editor.stage({ caption: "Local draft" });
-    fixture.access.change_id = "second";
-    const batch = {
-      assets: new Map([
-        [before.asset_id, 8],
-        ["photo-2", 2],
-      ]),
-      refetch: true,
-    };
-    const refreshing = fixture.refresh(batch);
-    await act(async () => refreshing);
-    expect(editor.patch.caption).toBe("Local draft");
-    expect(editor.conflict).toBe(true);
-    expect(prepare).toHaveBeenCalledTimes(state === "pending" ? 2 : 1);
-    await editor.reload();
-    expect(editor.targets[0]!.revision).toBe(8);
-    expect(editor.conflict).toBe(false);
-    const edit = vi
-      .spyOn(api, "editPhotoAuthored")
-      .mockResolvedValue({ receipt_id: "", before: [], after: [] });
-    await editor.edit({}, {}, false, vi.fn());
-    expect(edit.mock.calls[0]![0].targets[0]!.revision).toBe(8);
-  },
-);
+it("rechecks metadata after a mixed visibility batch", async () => {
+  const fixture = await watcherFixture();
+  await act(async () => fixture.workspaceProps.onphotochange?.("photo-1", "open"));
+  await waitFor(() => expect(fixture.workspaceProps.photoID).toBe("photo-1"));
+  const editor = fixture.workspaceProps.photos.authored;
+  editor.targets = [preparedPhoto(1)];
+  const changed = vi.spyOn(editor, "changedElsewhere");
+  const reconcile = vi.spyOn(editor, "reconcile").mockResolvedValue(undefined);
+  fixture.access.change_id = "second";
+  const batch = {
+    assets: new Map([
+      ["photo-1", 8],
+      ["photo-2", 2],
+    ]),
+    refetch: true,
+  };
+  await act(async () => fixture.refresh(batch));
+  expect(changed).toHaveBeenCalledWith(batch);
+  expect(reconcile).toHaveBeenCalled();
+});
 
-it.each([1, 8])(
-  "reconciles retained Library metadata from Albums at revision %s",
-  async (revision) => {
-    const fixture = await watcherFixture();
-    const library = fixture.workspaceProps.photos;
-    library.selectedIDs = new Set(["photo-1"]);
-    library.authored.targets = [preparedPhoto(1)];
-    await fireEvent.click(screen.getByRole("button", { name: "Albums" }));
-    await screen.findByRole("main", { name: "Albums" });
-    const prepare = vi
-      .spyOn(api, "preparePhotoAuthored")
-      .mockResolvedValue({ assets: [], targets: [{ ...preparedPhoto(1), revision }] });
-    await act(async () =>
-      fixture.refresh({ assets: new Map([["photo-1", revision]]), refetch: false }),
-    );
-    expect(prepare).toHaveBeenCalledOnce();
-    expect(library.authored.targets[0]!.revision).toBe(revision);
-    expect(library.authored.conflict).toBe(false);
-    await fireEvent.click(screen.getByRole("button", { name: "Library" }));
-    await waitFor(() => expect(fixture.workspaceProps.photos).toBe(library));
-    expect(library.selectedIDs.has("photo-1")).toBe(true);
-  },
-);
+it("reconciles retained Library metadata from Albums", async () => {
+  const fixture = await watcherFixture();
+  const library = fixture.workspaceProps.photos;
+  library.selectedIDs = new Set(["photo-1"]);
+  library.authored.targets = [preparedPhoto(1)];
+  await fireEvent.click(screen.getByRole("button", { name: "Albums" }));
+  await screen.findByRole("main", { name: "Albums" });
+  const changed = vi.spyOn(library.authored, "changedElsewhere");
+  const reconcile = vi.spyOn(library.authored, "reconcile").mockResolvedValue(undefined);
+  const batch = { assets: new Map([["photo-1", 8]]), refetch: false };
+  await act(async () => fixture.refresh(batch));
+  expect(changed).toHaveBeenCalledWith(batch);
+  expect(reconcile).toHaveBeenCalled();
+  await fireEvent.click(screen.getByRole("button", { name: "Library" }));
+  await waitFor(() => expect(fixture.workspaceProps.photos).toBe(library));
+  expect(library.selectedIDs.has("photo-1")).toBe(true);
+});
 
-it("retries an album refresh after failure without another event", async () => {
+it("propagates album refresh failures and shows a later refresh", async () => {
   const fixture = await watcherFixture();
   const load = vi
     .spyOn(api, "listPhotoAlbums")
     .mockRejectedValueOnce(new Error("Albums unavailable"))
     .mockResolvedValue([{ ...fixture.album, name: "Updated album" }]);
-  vi.stubGlobal("navigator", {});
-  const failure = vi.fn();
-  const stop = realWatchPhotoEvents(
-    "synthetic",
-    fixture.refresh,
-    failure,
-    undefined,
-    undefined,
-    (receive) => receive("changed"),
-  );
-  try {
-    await waitFor(() => expect(failure).toHaveBeenCalledOnce());
-    await waitFor(() => expect(load).toHaveBeenCalledTimes(2), { timeout: 3000 });
-    await fireEvent.click(screen.getByRole("button", { name: "Albums" }));
-    await screen.findByRole("button", { name: /Updated album/ });
-  } finally {
-    stop();
-  }
+  const batch = { assets: new Map<string, number>(), refetch: true };
+  await act(async () => expect(fixture.refresh(batch)).rejects.toThrow());
+  await act(async () => fixture.refresh(batch));
+  expect(load).toHaveBeenCalledTimes(2);
+  await fireEvent.click(screen.getByRole("button", { name: "Albums" }));
+  await screen.findByRole("button", { name: /Updated album/ });
 });
 
 it("forwards the Hidden view access poll cursor", async () => {

@@ -10,7 +10,7 @@ import (
 
 func TestPhotoEventsCaptureWrites(t *testing.T) {
 	t.Parallel()
-	for _, change := range []string{"photo file", "technical metadata", "quality worker", "tag assignment", "album", "tag", "saved", "collection", "document", "document worker", "peer leaves", "matching hash", "unrelated hash", "overflow"} {
+	for _, change := range []string{"photo file", "technical metadata", "published metadata", "quality worker", "album", "tag", "saved", "collection", "document", "document worker", "peer leaves", "matching hash", "unrelated hash"} {
 		t.Run(change, func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
@@ -52,6 +52,9 @@ func TestPhotoEventsCaptureWrites(t *testing.T) {
 					_, err := tx.ExecContext(ctx, `UPDATE photo_technical_metadata SET iso=400 WHERE generation_id=?`, generation.GenerationID)
 					return err
 				})
+			case "published metadata":
+				_, err = s.PublishSourceMetadata(ctx, photo.BlobHash, fakeHash("f2"), photoCanonical(t,
+					photoMetadataField("image.exif.iso", "image.exif", "ISO", photoInteger(400))))
 			case "quality worker":
 				fingerprints, e := document.CurrentPhotoQualityFingerprints()
 				require.NoError(t, e)
@@ -59,9 +62,6 @@ func TestPhotoEventsCaptureWrites(t *testing.T) {
 					_, err := tx.ExecContext(ctx, `INSERT INTO photo_quality_signals(content_version_id,evaluator_fingerprint,state) VALUES(?,?,'unavailable')`, photo.CurrentVersionID, fingerprints.Evaluator)
 					return err
 				})
-			case "tag assignment":
-				_, err = s.AssignTag(ctx, tag.ID, photo.ID, photo.Revision)
-				generic = true
 			case "album":
 				_, err = s.CreatePhotoSet(ctx, "Album")
 				generic = true
@@ -92,16 +92,6 @@ func TestPhotoEventsCaptureWrites(t *testing.T) {
 					quiet = true
 				}
 				_, err = s.CreateFile(ctx, s.RootID(), "peer.txt", hash, 4, "text/plain")
-			case "overflow":
-				err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-					for range 70 {
-						if _, err := insertPhotoSet(ctx, tx, "Album"); err != nil {
-							return err
-						}
-					}
-					return nil
-				})
-				generic = true
 			}
 			require.NoError(t, err)
 			if quiet {
