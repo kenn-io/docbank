@@ -26,14 +26,14 @@ func (s *Store) warnPhotoCapture(err error) {
 	}
 }
 
-// Temporary objects follow the writer connection; the flag is reset before every write.
+// Temporary objects follow the writer connection; capture is disabled before release.
 func (s *Store) preparePhotoChanges(ctx context.Context, conn *sql.Conn, active bool) bool {
+	if !active {
+		return false
+	}
 	var present int
 	err := conn.QueryRowContext(ctx, `SELECT count(*) FROM temp.sqlite_schema WHERE name='docbank_photo_capture'`).Scan(&present)
 	if err == nil && present == 0 {
-		if !active {
-			return false
-		}
 		// Commit installation separately so a rolled-back mutation retains the objects.
 		var tx *sql.Tx
 		tx, err = conn.BeginTx(context.WithoutCancel(ctx), nil)
@@ -46,15 +46,15 @@ func (s *Store) preparePhotoChanges(ctx context.Context, conn *sql.Conn, active 
 		}
 	}
 	if err == nil {
-		_, err = conn.ExecContext(ctx, `UPDATE docbank_photo_capture SET enabled=?`, active)
+		_, err = conn.ExecContext(ctx, `UPDATE docbank_photo_capture SET enabled=1`)
 	}
-	if err == nil && active {
+	if err == nil {
 		_, err = conn.ExecContext(ctx, `DELETE FROM docbank_photo_changes`)
 	}
 	if err != nil {
 		s.warnPhotoCapture(err)
 	}
-	return active && err == nil
+	return err == nil
 }
 
 const (

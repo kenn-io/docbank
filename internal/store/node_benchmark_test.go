@@ -1,11 +1,13 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -139,4 +141,37 @@ func BenchmarkPhotoEventSubscriptionChurn(b *testing.B) {
 		require.NoError(b, s.withStorageTx(b.Context(), func(*sql.Tx) error { return nil }))
 		cancel()
 	}
+}
+
+// Each audience creates a tag before timing to install capture when subscribed.
+func setupPhotoBenchmarkCapture(b *testing.B, s *Store, audience string) (context.Context, func(), time.Duration) {
+	b.Helper()
+	ctx := b.Context()
+	if audience == "hidden" {
+		require.NoError(b, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+		token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+		require.NoError(b, err)
+		ctx = WithPhotoHiddenToken(ctx, token)
+	}
+	var events <-chan []PhotoEvent
+	cancel := func() {}
+	if audience != "none" {
+		events, cancel = s.SubscribePhotoEvents()
+	}
+	started := time.Now()
+	_, err := s.CreateTag(ctx, "Synthetic benchmark keyword "+audience)
+	require.NoError(b, err)
+	installed := time.Since(started)
+	if events != nil {
+		select {
+		case event := <-events:
+			require.Equal(b, []PhotoEvent{{Refetch: true}}, event)
+		default:
+			b.Fatal("creating a tag did not publish a capture event")
+		}
+	}
+	if audience == "inactive" {
+		cancel()
+	}
+	return ctx, cancel, installed
 }

@@ -103,6 +103,7 @@ func init() {
 				if err != nil {
 					return err
 				}
+				state.ChangeCursor = ""
 				return writeCLIJSON(cmd.OutOrStdout(), state)
 			}
 			var passcode, next string
@@ -126,6 +127,7 @@ func init() {
 			if err != nil {
 				return err
 			}
+			state.ChangeCursor = ""
 			return writeCLIJSON(cmd.OutOrStdout(), state)
 		}}
 		hidden.AddCommand(command)

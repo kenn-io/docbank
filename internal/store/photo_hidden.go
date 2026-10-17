@@ -301,6 +301,17 @@ func (s *Store) UnlockPhotoHidden(ctx context.Context, passcode string) (string,
 	return token, expiry, denial
 }
 
+// Caller holds photoHiddenSessionsMu.
+func (s *Store) scanPhotoHiddenSessions() {
+	now := s.hiddenNow()
+	for digest, until := range s.photoHiddenSessions {
+		if until.After(now) {
+			continue
+		}
+		delete(s.photoHiddenSessions, digest)
+	}
+}
+
 func (s *Store) ChangePhotoHidden(ctx context.Context, old, next string) error {
 	if err := validHiddenPasscode(next); err != nil {
 		return err

@@ -12,7 +12,7 @@ import (
 )
 
 func (c *Connection) PhotoHiddenState(ctx context.Context) (store.PhotoHiddenState, error) {
-	state, err := c.API().GetPhotoHiddenState(ctx, nil)
+	state, err := c.API().GetPhotoHiddenState(ctx, &apiclient.GetPhotoHiddenStateRequestOptions{})
 	if err != nil {
 		return store.PhotoHiddenState{}, err
 	}

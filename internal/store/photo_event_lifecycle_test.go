@@ -1,7 +1,9 @@
 package store
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
@@ -73,4 +75,61 @@ func TestPhotoEventsCaptureFlagAndWriterReplacement(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, asset.ID, nextPhotoEvent(t, events).AssetID)
 	noPhotoEvent(t, events)
+}
+
+func TestPhotoEventsCaptureDisabledBeforeWriterRelease(t *testing.T) {
+	t.Parallel()
+	for _, outcome := range []string{"commit", "rollback", "cancel"} {
+		t.Run(outcome, func(t *testing.T) {
+			s := newTestStore(t)
+			_, stop := s.SubscribePhotoEvents()
+			defer stop()
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			rejected := errors.New("reject synthetic write")
+			err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+				_, err := tx.ExecContext(ctx, `INSERT INTO tags(id,name) VALUES('synthetic-capture-tag','Synthetic capture lifecycle')`)
+				if err != nil {
+					return err
+				}
+				switch outcome {
+				case "rollback":
+					return rejected
+				case "cancel":
+					cancel()
+				}
+				return nil
+			})
+			switch outcome {
+			case "commit":
+				require.NoError(t, err)
+			case "rollback":
+				require.ErrorIs(t, err, rejected)
+			case "cancel":
+				require.ErrorIs(t, err, context.Canceled)
+			}
+			conn, err := s.writeDB.Conn(t.Context())
+			require.NoError(t, err)
+			defer func() { require.NoError(t, conn.Close()) }()
+			var enabled int
+			require.NoError(t, conn.QueryRowContext(t.Context(), `SELECT enabled FROM docbank_photo_capture`).Scan(&enabled))
+			require.Zero(t, enabled, "pooled writers must leave capture disabled")
+		})
+	}
+}
+
+func TestPhotoEventsDiscardWriterWhenCaptureCannotBeDisabled(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	_, stop := s.SubscribePhotoEvents()
+	defer stop()
+	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(t.Context(), `DROP TABLE docbank_photo_capture`)
+		return err
+	}))
+	stop()
+	// The old connection's triggers refer to the missing table. A fresh writer
+	// must serve an ordinary write after capture cleanup fails.
+	_, err := s.CreateTag(t.Context(), "Synthetic replacement writer")
+	require.NoError(t, err)
 }

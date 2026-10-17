@@ -4,6 +4,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	_ "embed"
 	"errors"
 	"fmt"
@@ -277,9 +278,19 @@ func (s *Store) withStorageTx(ctx context.Context, fn func(tx *sql.Tx) error) (r
 	if err != nil {
 		return fmt.Errorf("acquiring transaction connection: %w", err)
 	}
-	closeConn := sync.OnceValue(conn.Close)
-	defer func() { retErr = errors.Join(retErr, closeConn()) }()
 	active, epoch := s.photoCaptureState()
+	closeConn := sync.OnceValue(func() error {
+		if active {
+			if _, err := conn.ExecContext(context.WithoutCancel(ctx), `UPDATE docbank_photo_capture SET enabled=0`); err != nil {
+				s.warnPhotoCapture(err)
+				// A writer with an unknown capture flag must never return to the pool.
+				_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+				return nil
+			}
+		}
+		return conn.Close()
+	})
+	defer func() { retErr = errors.Join(retErr, closeConn()) }()
 	capture := s.preparePhotoChanges(ctx, conn, active)
 	// Own cancellation so a mutation cannot return while database/sql is
 	// still rolling back and closing a connection in another goroutine.

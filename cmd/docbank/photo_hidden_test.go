@@ -164,3 +164,34 @@ func TestPhotoHiddenCLIUnhideBySelector(t *testing.T) {
 		require.NoError(t, err)
 	}
 }
+
+func TestPhotoHiddenCLIJSONContract(t *testing.T) {
+	_ = setupVaultHome(t)
+	for _, tc := range []struct{ action, input string }{
+		{"setup", "synthetic-passcode\n"},
+		{"state", ""},
+		{"change", "synthetic-passcode\nreplacement-passcode\n"},
+		{"lock", ""},
+		{"disable", "replacement-passcode\n"},
+		{"setup", "synthetic-passcode\n"},
+		{"reset", ""},
+	} {
+		t.Run(tc.action, func(t *testing.T) {
+			cmd, _, err := rootCmd.Find([]string{"photos", "hidden", tc.action})
+			require.NoError(t, err)
+			cmd.SetIn(strings.NewReader(tc.input))
+			t.Cleanup(func() { cmd.SetIn(nil) })
+			out, err := runCLI(t, "photos", "hidden", tc.action)
+			require.NoError(t, err)
+			var result map[string]any
+			require.NoError(t, json.Unmarshal([]byte(out), &result))
+			require.Contains(t, result, "configured")
+			require.NotContains(t, result, "change_cursor")
+			connection, err := daemonconn.Ensure(t.Context())
+			require.NoError(t, err)
+			state, err := connection.PhotoHiddenState(t.Context())
+			require.NoError(t, err)
+			require.NotEmpty(t, state.ChangeCursor, "the daemon retains its cursor")
+		})
+	}
+}

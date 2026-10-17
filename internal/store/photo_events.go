@@ -93,17 +93,6 @@ func (s *Store) photoChangeCursor(unlocked, watch bool) string {
 	return fmt.Sprintf("%s:visible:%d", f.cursorID, f.visibleCursor)
 }
 
-// Caller holds photoHiddenSessionsMu. Expiry cleanup is shared with unlock.
-func (s *Store) scanPhotoHiddenSessions() {
-	now := s.hiddenNow()
-	for digest, until := range s.photoHiddenSessions {
-		if until.After(now) {
-			continue
-		}
-		delete(s.photoHiddenSessions, digest)
-	}
-}
-
 func (s *Store) closePhotoEvents() {
 	f := &s.photoEvents
 	f.Lock()
