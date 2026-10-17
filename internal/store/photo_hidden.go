@@ -398,6 +398,10 @@ func (s *Store) clearHiddenSessions() {
 }
 
 func (s *Store) SetPhotoAssetHidden(ctx context.Context, id string, revision int64, hidden bool) (PhotoAsset, error) {
+	if hidden {
+		s.providerEgressMu.Lock()
+		defer s.providerEgressMu.Unlock()
+	}
 	operation := "hide"
 	if !hidden {
 		operation = "unhide"

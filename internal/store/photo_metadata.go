@@ -336,6 +336,12 @@ func validatePhotoMetadataState(ctx context.Context, tx metadataQuerier, version
 			return err
 		}
 	}
+	if version >= photoSuggestionsStorageSchemaVersion {
+		if err := photoSuggestionMetadata.validateRows(ctx, tx); err != nil {
+			return err
+		}
+		return validatePhotoSuggestionReferences(ctx, tx)
+	}
 	return nil
 }
 

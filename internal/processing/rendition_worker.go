@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http/httptrace"
 	"reflect"
 	"slices"
 	"strconv"
@@ -223,6 +224,7 @@ type renditionWorkerCatalog interface {
 		store.LexicalGeneration, error)
 	PublishRenditionJob(ctx context.Context, claim store.RenditionJobClaim, at time.Time) (
 		store.RenditionJobPublication, error)
+	PublishPhotoDescription(ctx context.Context, claim store.RenditionJobClaim, result document.RenditionResult, at time.Time) error
 	RenditionJobErrorRetryable(err error) bool
 }
 
@@ -570,7 +572,17 @@ func (worker *RenditionWorker) runClaim(ctx context.Context,
 		}
 	}
 	defer egressFence.Close()
-	execution.Provider = renditionProviderWithEgressFence(execution.Provider, egressFence)
+	execution.Provider = renditionProviderWithEgressFence(execution.Provider, egressFence, func(retryCtx context.Context) (*store.ProviderEgressFence, error) {
+		var fence *store.ProviderEgressFence
+		err := worker.mutate(retryCtx, func() error {
+			return worker.retryCatalog(retryCtx, func() error {
+				_, current, err := worker.catalog.BeginRenditionProviderEgress(retryCtx, claim, work.Waiter.ID, worker.clock().UTC(), snapshot)
+				fence = current
+				return err
+			})
+		})
+		return fence, err
+	})
 	checkpoint := func(handle document.RenditionResumeHandle) error {
 		err := worker.mutate(ctx, func() error {
 			return worker.retryCatalog(ctx, func() error {
@@ -598,8 +610,17 @@ func (worker *RenditionWorker) runClaim(ctx context.Context,
 			ctx, execution.Provider, execution.Upload, execution.Authorization, nil, checkpoint)
 	}
 	if err != nil {
-		return true, worker.classifyProviderError(
-			ctx, claim, err, durableResume.Load(), providerAttempt)
+		return true, worker.classifyRenderError(
+			ctx, claim, err, durableResume.Load(), providerAttempt, execution.Provider)
+	}
+	if execution.Authorization.InputKind == document.RenditionInputDerivedUpload {
+		err := worker.mutate(ctx, func() error {
+			return worker.retryCatalog(ctx, func() error { return worker.catalog.PublishPhotoDescription(ctx, claim, result, worker.clock().UTC()) })
+		})
+		if err != nil {
+			return true, worker.classifyPublicationError(ctx, claim, err)
+		}
+		return true, nil
 	}
 	staged, err := buildRenditionJobCandidate(
 		work, execution, result, claim.Epoch, worker.clock().UTC())
@@ -831,6 +852,20 @@ func renditionExecutionSnapshotForWork(
 		work.ExecutionIdentity, sealed.Authorization)
 }
 
+func (worker *RenditionWorker) classifyRenderError(
+	ctx context.Context, claim store.RenditionJobClaim, err error, durableResume bool,
+	providerAttempt int, provider document.RenditionProvider,
+) error {
+	if fenced, ok := provider.(*renditionEgressFencedProvider); ok && fenced.retryErr != nil {
+		return worker.classifyAuthorityError(ctx, claim, fenced.retryErr)
+	}
+	if fenced, ok := provider.(*renditionEgressFencedProvider); ok && !fenced.submitted.Load() && errors.Is(err, document.ErrRenditionAuthorizationExpired) {
+		return worker.markSafeTransient(ctx, claim)
+	}
+
+	return worker.classifyProviderError(ctx, claim, err, durableResume, providerAttempt)
+}
+
 func (worker *RenditionWorker) classifyProviderError(
 	ctx context.Context, claim store.RenditionJobClaim, err error, durableResume bool,
 	providerAttempt int,
@@ -840,6 +875,9 @@ func (worker *RenditionWorker) classifyProviderError(
 	}
 	if isRenditionWorkerFatal(err) {
 		return err
+	}
+	if errors.Is(err, ErrRenditionRuntimeUnavailable) {
+		return worker.markSafeTransient(ctx, claim)
 	}
 	if document.IsRenditionAuthorizationPolicyMismatch(err) {
 		return worker.markOperatorRequired(
@@ -1191,12 +1229,15 @@ func renditionBytesSHA256(value []byte) string {
 }
 
 type renditionEgressFencedProvider struct {
-	provider document.RenditionProvider
-	fence    *store.ProviderEgressFence
+	provider    document.RenditionProvider
+	fence       *store.ProviderEgressFence
+	submitted   atomic.Bool
+	beforeRetry func(context.Context) (*store.ProviderEgressFence, error)
+	retryErr    error
 }
 
 func renditionProviderWithEgressFence(
-	provider document.RenditionProvider, fence *store.ProviderEgressFence,
+	provider document.RenditionProvider, fence *store.ProviderEgressFence, beforeRetry ...func(context.Context) (*store.ProviderEgressFence, error),
 ) document.RenditionProvider {
 	if resumable, ok := provider.(document.ResumableRenditionProvider); ok {
 		return &renditionEgressFencedResumableProvider{
@@ -1204,7 +1245,11 @@ func renditionProviderWithEgressFence(
 			resumable: resumable,
 		}
 	}
-	return &renditionEgressFencedProvider{provider: provider, fence: fence}
+	wrapped := &renditionEgressFencedProvider{provider: provider, fence: fence}
+	if len(beforeRetry) > 0 {
+		wrapped.beforeRetry = beforeRetry[0]
+	}
+	return wrapped
 }
 
 func (provider *renditionEgressFencedProvider) Descriptor() document.RenditionDescriptor {
@@ -1215,7 +1260,27 @@ func (provider *renditionEgressFencedProvider) Render(
 	ctx context.Context, upload document.AuthorizedUpload,
 	authorization document.RenditionAuthorization,
 ) (document.RenditionResult, error) {
-	defer provider.fence.Close()
+	defer func() { provider.fence.Close() }()
+	traceDispatch := func(ctx context.Context, fence *store.ProviderEgressFence) context.Context {
+		return httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{WroteRequest: func(httptrace.WroteRequestInfo) { provider.submitted.Store(true); fence.Close() }})
+	}
+	if authorization.InputKind == document.RenditionInputDerivedUpload {
+		ctx = traceDispatch(ctx, provider.fence)
+	}
+	if retrying, ok := provider.provider.(document.RetryAuthorizedRenditionProvider); ok && provider.beforeRetry != nil {
+		return retrying.RenderWithRetryAuthorization(ctx, upload, authorization, func(ctx context.Context) (context.Context, error) {
+			fence, err := provider.beforeRetry(ctx)
+			if err != nil {
+				if fence != nil {
+					fence.Close()
+				}
+				provider.retryErr = err
+				return nil, err
+			}
+			provider.fence = fence
+			return traceDispatch(ctx, fence), nil
+		})
+	}
 	return provider.provider.Render(ctx, upload, authorization)
 }
 

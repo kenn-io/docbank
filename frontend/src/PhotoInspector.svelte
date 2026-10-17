@@ -1,20 +1,40 @@
 <script lang="ts">
-  import { Button, SelectDropdown, Spinner, Notice } from "@kenn-io/kit-ui";
+  import { Button, Checkbox, SelectDropdown, Spinner, Notice } from "@kenn-io/kit-ui";
   import TagPicker from "./TagPicker.svelte";
   import type { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
-  import type { PhotoAuthoredPatch, PhotoKeywordEdit } from "./generated/docbank.js";
+  import type {
+    PhotoAuthoredPatch,
+    PhotoKeywordEdit,
+    PhotoAuthoredReceipt,
+    Tag,
+  } from "./generated/docbank.js";
   let {
     editor,
     count = 1,
     actionDisabled = false,
     onedit,
+    onresponse,
   }: {
     editor: PhotoAuthoredEditor;
     count?: number;
     actionDisabled?: boolean;
+    onresponse?: (receipt?: PhotoAuthoredReceipt, tags?: Tag[]) => Promise<void>;
     onedit: (patch: PhotoAuthoredPatch, keywords?: PhotoKeywordEdit[]) => void;
   } = $props();
   let keyword = $state("");
+  let selections = $state<Record<string, { caption: boolean; tags: string[] }>>({});
+  function toggleSuggestion(id: string, tag?: string) {
+    const selected = selections[id] ?? { caption: false, tags: [] };
+    selections[id] =
+      tag === undefined
+        ? { ...selected, caption: !selected.caption }
+        : {
+            ...selected,
+            tags: selected.tags.includes(tag)
+              ? selected.tags.filter((value) => value !== tag)
+              : [...selected.tags, tag],
+          };
+  }
   const disabled = $derived(
     actionDisabled ||
       editor.concealed ||
@@ -177,6 +197,56 @@
         disabled={editor.busy || editor.loading}
         onclick={() => void editor.reload()}>Reload metadata</Button
       >{/if}
+    {#if count === 1}
+      {#if editor.activeSuggestion}
+        {@const suggestion = editor.activeSuggestion}
+        {@const choices = editor.suggestionChoices(suggestion)}
+        {@const selected = selections[suggestion.suggestion_id]}
+        {@const caption = choices.caption && !!selected?.caption}
+        {@const tags = choices.tags.filter((tag) => selected?.tags.includes(tag))}
+        {#if choices.caption || choices.tags.length || suggestion.value.visible_text}
+          <section class="suggestions" aria-label="Suggested photo metadata">
+            <h3>Suggested</h3>
+            {#if choices.caption}
+              <Checkbox
+                label={suggestion.value.caption}
+                checked={caption}
+                disabled={disabled || editor.dirty}
+                onchange={() => toggleSuggestion(suggestion.suggestion_id)}
+              />
+            {/if}
+            <div class="suggested-tags">
+              {#each choices.tags as tag (tag)}
+                <Checkbox
+                  label={tag}
+                  checked={tags.includes(tag)}
+                  disabled={disabled || editor.dirty}
+                  onchange={() => toggleSuggestion(suggestion.suggestion_id, tag)}
+                />
+              {/each}
+            </div>
+            {#if choices.caption || choices.tags.length}
+              <Button
+                size="sm"
+                disabled={disabled || editor.dirty || (!caption && !tags.length)}
+                onclick={() =>
+                  void editor.respondSuggestion(suggestion, caption, tags, false, onresponse)}
+                >Accept selected</Button
+              >
+            {/if}
+            {#if suggestion.value.visible_text}<h4>Visible text</h4>
+              <p>{suggestion.value.visible_text}</p>{/if}
+            <Button
+              size="sm"
+              disabled={disabled || editor.dirty}
+              onclick={() => void editor.respondSuggestion(suggestion, false, [], true, onresponse)}
+              >Dismiss</Button
+            >
+          </section>
+        {/if}
+      {/if}
+    {/if}
+    {#if editor.suggestionsError}<Notice tone="warning" message={editor.suggestionsError} />{/if}
     <Button disabled={disabled || editor.conflict || !editor.dirty} onclick={() => onedit({})}
       >Apply</Button
     >
@@ -188,6 +258,16 @@
 </section>
 
 <style>
+  .suggestions {
+    border-top: 1px solid var(--border-default);
+    padding-top: var(--space-3);
+  }
+  .suggested-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-block: var(--space-2);
+  }
   .photo-inspector {
     display: flex;
     flex-direction: column;

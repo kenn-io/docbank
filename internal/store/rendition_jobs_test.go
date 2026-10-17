@@ -1921,3 +1921,32 @@ func TestPublishRenditionJobPersistsRejectionsOnFailure(t *testing.T) {
 		})
 	}
 }
+
+func TestUnclaimedPhotoDescriptionWaiters(t *testing.T) {
+	t.Parallel()
+	s, versions := newRenditionCatalogFixture(t)
+	profile := catalogProcessingProfile(t, false)
+	request := renditionJobTestRequest(versions[0], profile)
+	grantRenditionJobConsent(t, s, request)
+	job, _, err := s.EnqueueRenditionJob(t.Context(), request)
+	require.NoError(t, err)
+	now := time.Now().UTC().Add(time.Second)
+	for _, state := range []struct {
+		state string
+		lease time.Time
+		count int
+	}{
+		{"queued", now, 1}, {"retry_wait", now, 1},
+		{"running", now.Add(time.Minute), 0}, {"running", now.Add(-time.Minute), 1},
+		{"failed", now, 0},
+	} {
+		_, err = s.db.Exec(`UPDATE rendition_jobs SET state=?,lease_expires_at=?,available_at=? WHERE job_id=?`, state.state, state.lease.Format(timestampLayout), now.Add(time.Hour).Format(timestampLayout), job.ID)
+		require.NoError(t, err)
+		count, err := s.UnclaimedPhotoDescriptionWaiters(t.Context(), profile.Fingerprint, now)
+		require.NoError(t, err)
+		require.Equal(t, state.count, count, state.state)
+		other, err := s.UnclaimedPhotoDescriptionWaiters(t.Context(), catalogProcessingProfile(t, true).Fingerprint, now)
+		require.NoError(t, err)
+		require.Zero(t, other)
+	}
+}

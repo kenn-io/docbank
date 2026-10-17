@@ -66,6 +66,7 @@ func compileQuery(
 type queryCompiler struct {
 	photoDisplayMetadata bool
 	photoHidden          bool
+	omitPhotoSuggestions bool
 }
 
 func (c queryCompiler) compile(
@@ -578,6 +579,9 @@ func (c queryCompiler) compileLexicalPredicate(fts string, includeContent bool) 
 	metadata := compiledQueryFragment{sql: `cv.blob_hash IN (SELECT h.source_sha256 FROM photo_metadata_fts JOIN source_metadata_heads h ON h.generation_id=photo_metadata_fts.generation_id WHERE photo_metadata_fts MATCH ?)`, args: []any{"text : (" + fts + ")"}}
 	parts := []compiledQueryFragment{name, content}
 	if c.photoDisplayMetadata {
+		if !c.omitPhotoSuggestions {
+			parts = append(parts, compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM photo_suggestions s JOIN content_versions sv ON sv.version_id=s.content_version_id JOIN photo_files sf ON sf.node_id=sv.node_id JOIN photo_assets sa ON sa.asset_id=sf.asset_id JOIN nodes source ON source.id=sf.node_id JOIN photo_files member ON member.asset_id=sa.asset_id WHERE sa.display_file_id=sf.file_id AND member.node_id=n.id AND member.role<>'sidecar' AND sf.role<>'sidecar' AND source.trashed_at IS NULL AND s.content_version_id=source.current_version_id AND s.response<>'dismissed' AND s.rowid IN (SELECT rowid FROM photo_suggestion_fts WHERE photo_suggestion_fts MATCH ?))`, args: []any{fts}})
+		}
 		parts = append(parts, metadata, compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM photo_files candidate JOIN photo_files pf ON pf.asset_id=candidate.asset_id JOIN nodes sibling ON sibling.id=pf.node_id JOIN content_versions sibling_version ON sibling_version.version_id=sibling.current_version_id AND sibling_version.node_id=sibling.id WHERE candidate.node_id=n.id AND pf.role<>'sidecar' AND sibling.kind='file' AND sibling.trashed_at IS NULL AND pf.node_id IN (SELECT rowid FROM photo_authored_fts WHERE photo_authored_fts MATCH ?))`, args: []any{fts}})
 	}
 	return joinCompiledFragments(parts, ` OR `)

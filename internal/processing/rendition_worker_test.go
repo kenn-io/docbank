@@ -544,6 +544,60 @@ func TestRenditionWorkerRetriesUnclassifiedResumeFailure(t *testing.T) {
 	assert.Equal(t, store.RenditionFailureTransient, current.FailureCode)
 }
 
+func TestRenditionWorkerClassifiesMalformedOutput(t *testing.T) {
+	t.Parallel()
+	t.Run("other", func(t *testing.T) {
+		fixture := newPublicationFixture(t)
+		provider := newWorkerProvider(t)
+		provider.renderErr = workerProviderError(t, document.RenditionErrorMalformedEvidence)
+		profile := workerProcessingProfile(t, provider.Descriptor())
+		fixture.profile = profile
+		request := workerJobRequest(fixture.versionID, profile, provider.Descriptor())
+		grantWorkerConsent(t, fixture.catalog, request)
+		job, _, err := fixture.catalog.EnqueueRenditionJob(t.Context(), request)
+		require.NoError(t, err)
+		worker, err := NewRenditionWorker(RenditionWorkerConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Runtime: workerRuntime{provider: provider}, Gate: newTestOperationGate(), Owner: "malformed-worker", LeaseDuration: time.Minute, IdleDelay: time.Millisecond})
+		require.NoError(t, err)
+		processed, err := worker.RunJob(t.Context(), job.ID)
+		require.NoError(t, err)
+		require.True(t, processed)
+		current, err := fixture.catalog.RenditionJobByID(t.Context(), job.ID)
+		require.NoError(t, err)
+		require.Equal(t, store.RenditionJobFailed, current.State)
+		require.Equal(t, store.RenditionFailureTerminal, current.FailureCode)
+		require.Equal(t, 1, provider.calls)
+	})
+	t.Run("vision", func(t *testing.T) {
+		f := newPhotoDescriptionFixture(t, photoDescriptionScenario{action: "malformed_description"})
+		ctx := t.Context()
+		profile := f.service.profiles["vision"]
+		require.NoError(t, f.service.grantProfileConsent(ctx, profile, nil))
+		require.NoError(t, f.service.ProbeMediaOrigins(ctx))
+		version, err := f.catalog.ContentVersionByID(ctx, f.node.CurrentVersionID)
+		require.NoError(t, err)
+		job, _, err := f.service.enqueueRendition(ctx, f.node, version, profile, f.service.renditionConsentRequest(profile), "")
+		require.NoError(t, err)
+		worker, err := NewRenditionWorker(RenditionWorkerConfig{Catalog: f.catalog, Blobs: f.blobs, Runtime: f.service.renditions, Gate: newTestOperationGate(), Owner: "malformed-vision-worker", LeaseDuration: time.Minute, IdleDelay: time.Millisecond})
+		require.NoError(t, err)
+		processed, err := worker.RunJob(ctx, job.ID)
+		require.NoError(t, err)
+		require.True(t, processed)
+		current, err := f.catalog.RenditionJobByID(ctx, job.ID)
+		require.NoError(t, err)
+		require.Equal(t, 2, f.descriptionCalls)
+		require.Equal(t, 1, current.ProviderAttempts)
+		require.Equal(t, store.RenditionJobFailed, current.State)
+		require.Equal(t, store.RenditionFailureTerminal, current.FailureCode)
+		processed, err = worker.RunJob(ctx, job.ID)
+		require.ErrorIs(t, err, store.ErrRenditionJobTerminal)
+		require.False(t, processed)
+		require.Equal(t, 2, f.descriptionCalls)
+		values, err := f.catalog.PhotoSuggestions(ctx, f.asset.ID)
+		require.NoError(t, err)
+		require.Empty(t, values)
+	})
+}
+
 func TestRenditionWorkerResubmitsDefinitiveTransientWithFreshSealedAuthority(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, resubmitsDefinitiveTransientWithFreshSealedAuthority)
@@ -2007,6 +2061,75 @@ func TestRenditionWorkerRejectsResumeAfterSourceChanges(t *testing.T) {
 			rejected, err := fixture.catalog.RenditionJobWaiterByID(t.Context(), waiter.ID)
 			require.NoError(t, err)
 			require.Equal(t, "rejected", rejected.State)
+		})
+	}
+}
+
+func TestRenditionWorkerContinuesAfterPreparedWorkIsPurged(t *testing.T) {
+	t.Parallel()
+	for _, shared := range []bool{false, true} {
+		t.Run(fmt.Sprint("shared=", shared), func(t *testing.T) {
+			fixture := newPublicationFixture(t)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			provider := newWorkerProvider(t)
+			profile := workerProcessingProfile(t, provider.Descriptor())
+			request := workerJobRequest(fixture.versionID, profile, provider.Descriptor())
+			grantWorkerConsent(t, fixture.catalog, request)
+			job, _, err := fixture.catalog.EnqueueRenditionJob(ctx, request)
+			require.NoError(t, err)
+			duplicate, err := fixture.catalog.CreateFile(ctx, fixture.catalog.RootID(), "next.pdf", fixture.mustSourceHash(), int64(len(workerSourceBytes)), "application/pdf")
+			require.NoError(t, err)
+			if shared {
+				request.ContentVersionID = duplicate.CurrentVersionID
+				next, _, err := fixture.catalog.EnqueueRenditionJob(ctx, request)
+				require.NoError(t, err)
+				require.Equal(t, job.ID, next.ID)
+			}
+			type purgeEvent struct {
+				remainingVersion string
+				err              error
+			}
+			prepared := make(chan purgeEvent, 1)
+			purged := false
+			runtime := &afterPrepareRenditionRuntime{RenditionRuntime: workerRuntime{provider: provider}, afterPrepare: func(work store.RenditionJobWork) {
+				if purged {
+					return
+				}
+				purged = true
+				_, err := fixture.catalog.PurgeDerivatives(ctx, store.PurgeRequest{ContentVersionIDs: []string{work.Waiter.ContentVersionID}})
+				if err == nil && !shared {
+					_, lookupErr := fixture.catalog.RenditionJobByID(ctx, job.ID)
+					if !errors.Is(lookupErr, store.ErrNotFound) {
+						err = errors.New("purge retained the job without waiters")
+					}
+					request.ContentVersionID = duplicate.CurrentVersionID
+					if err == nil {
+						_, _, err = fixture.catalog.EnqueueRenditionJob(ctx, request)
+					}
+				}
+				remaining := duplicate.CurrentVersionID
+				if remaining == work.Waiter.ContentVersionID {
+					remaining = fixture.versionID
+				}
+				prepared <- purgeEvent{remainingVersion: remaining, err: err}
+			}}
+			worker, err := NewRenditionWorker(RenditionWorkerConfig{Catalog: fixture.catalog, Blobs: fixture.blobs, Runtime: runtime, Gate: newTestOperationGate(), Owner: "purge-worker", LeaseDuration: time.Minute, IdleDelay: time.Millisecond})
+			require.NoError(t, err)
+			done := make(chan error, 1)
+			go func() { done <- worker.Run(ctx) }()
+			defer func() { cancel(); require.ErrorIs(t, <-done, context.Canceled); require.Equal(t, 1, provider.calls) }()
+			var event purgeEvent
+			select {
+			case event = <-prepared:
+			case <-time.After(3 * time.Second):
+				t.Fatal("worker did not prepare the queued job")
+			}
+			require.NoError(t, event.err)
+			require.Eventually(t, func() bool {
+				_, err := fixture.catalog.ActiveRendition(ctx, event.remainingVersion, profile.Fingerprint)
+				return err == nil
+			}, 3*time.Second, time.Millisecond)
 		})
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -327,4 +328,44 @@ func assertCode(t *testing.T, err error, want document.RenditionErrorCode) {
 	providerErr, ok := errors.AsType[*document.RenditionProviderError](err)
 	require.True(t, ok, "%T: %v", err, err)
 	assert.Equal(t, want, providerErr.Code())
+}
+
+func TestExecutorSubmissionFollowsCredentialAndExpiryChecks(t *testing.T) {
+	t.Parallel()
+	for _, expire := range []bool{false, true} {
+		t.Run(strconv.FormatBool(expire), func(t *testing.T) {
+			submissions, exchanges := 0, 0
+			operation, err := NewOperation(t.Context(), testProvider, time.Now().Add(time.Second).UTC().Format(TimestampForm), time.Minute)
+			require.NoError(t, err)
+			defer operation.Cancel()
+			executor := &Executor{Provider: testProvider, Origin: "https://provider.example", RequestTimeout: time.Minute, MaxResponseBytes: 1024,
+				Credential: BearerCredential("synthetic-key", resolverFunc(func(ctx context.Context, name string) (string, error) {
+					require.Equal(t, "synthetic-key", name)
+					require.Zero(t, submissions)
+					if expire {
+						<-ctx.Done()
+					}
+					return "synthetic-token", nil
+				})),
+				HTTP: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+					exchanges++
+					require.Equal(t, 1, submissions)
+					require.Equal(t, "Bearer synthetic-token", request.Header.Get("Authorization"))
+					return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+				})},
+			}
+			var usage Usage
+			_, err = executor.Do(operation, &usage, Request{Stage: StageResult, Method: http.MethodPost, Path: "/describe", Body: []byte(`{}`), OnSubmission: func() { submissions++ }})
+			if expire {
+				assertCode(t, err, document.RenditionErrorPolicyRejected)
+				require.Zero(t, submissions)
+				require.Zero(t, exchanges)
+				require.Zero(t, usage.Requests)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, 1, submissions)
+				require.Equal(t, 1, exchanges)
+			}
+		})
+	}
 }

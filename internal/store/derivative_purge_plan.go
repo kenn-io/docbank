@@ -14,13 +14,9 @@ import (
 // global lexical-generation replacements do not change this selection. Roots
 // and physical reachability are still checked by PurgeDerivatives at execution.
 func (s *Store) DerivativePurgeFingerprint(ctx context.Context, request PurgeRequest) (_ string, retErr error) {
-	args := []any{request.All}
-	for _, ids := range [][]string{request.ContentVersionIDs, request.AttachmentIDs, request.BuildIDs} {
-		encoded, err := json.Marshal(ids)
-		if err != nil {
-			return "", err
-		}
-		args = append(args, string(encoded))
+	args, err := derivativePurgeSelectionArgs(request)
+	if err != nil {
+		return "", err
 	}
 	rows, err := s.db.QueryContext(ctx, `WITH
  versions AS (SELECT value AS id FROM json_each(?2)),
@@ -62,6 +58,7 @@ func (s *Store) DerivativePurgeFingerprint(ctx context.Context, request PurgeReq
  UNION ALL SELECT json_array('rendition_waiter',j.job_id,w.waiter_id,w.content_version_id,w.profile_fingerprint,w.attachment_id)
  FROM rendition_jobs j LEFT JOIN rendition_job_waiters w ON w.job_id=j.job_id
  WHERE ?1 OR j.job_id IN builds OR w.content_version_id IN versions OR w.attachment_id IN attachments
+ UNION ALL SELECT json_array('photo_suggestion',s.suggestion_id) FROM photo_suggestions s WHERE `+pendingPhotoSuggestionPurgeSelection+`
  UNION ALL SELECT json_array('embedding_job',j.job_id)
  FROM embedding_jobs j
  WHERE ?1 OR j.content_version_id IN versions OR j.generation_id IN selected_generations
@@ -85,4 +82,25 @@ func (s *Store) DerivativePurgeFingerprint(ctx context.Context, request PurgeReq
 		return "", err
 	}
 	return hex.EncodeToString(digest.Sum(nil)), nil
+}
+
+// Use the same selection for plan sealing and transactional deletion, including
+// suggestions whose rebuildable job rows are no longer retained.
+const pendingPhotoSuggestionPurgeSelection = `s.response='pending' AND (
+ ?1 OR s.content_version_id IN (SELECT value FROM json_each(?2)) OR EXISTS (
+ SELECT 1 FROM rendition_job_waiters w JOIN rendition_jobs j ON j.job_id=w.job_id
+ WHERE w.content_version_id=s.content_version_id AND j.rendition_request_fingerprint=s.producer_fingerprint
+ AND (w.attachment_id IN (SELECT value FROM json_each(?3)) OR j.job_id IN (SELECT value FROM json_each(?4)))
+ ))`
+
+func derivativePurgeSelectionArgs(request PurgeRequest) ([]any, error) {
+	args := []any{request.All}
+	for _, ids := range [][]string{request.ContentVersionIDs, request.AttachmentIDs, request.BuildIDs} {
+		encoded, err := json.Marshal(ids)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, string(encoded))
+	}
+	return args, nil
 }

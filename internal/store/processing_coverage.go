@@ -77,6 +77,8 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 	filterSQL, filterArgs := searchFilterSQL(opts)
 	rows, err := tx.QueryContext(ctx, `SELECT COALESCE(h.attachment_id,''),
 		COALESCE(a.build_id,''), COALESCE(a.profile_fingerprint,''),
+		EXISTS(SELECT 1 FROM rendition_job_waiters w JOIN rendition_jobs j ON j.job_id=w.job_id
+			WHERE w.content_version_id=cv.version_id AND w.profile_fingerprint=? AND `+photoDescriptionPublishedSQL+`),
 		EXISTS(SELECT 1 FROM rendition_job_waiters w
 			JOIN rendition_jobs j ON j.job_id=w.job_id
 			WHERE w.content_version_id=cv.version_id AND w.profile_fingerprint=? AND w.state='waiting'
@@ -85,7 +87,7 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 		LEFT JOIN rendition_heads h ON h.content_version_id=cv.version_id AND h.profile_fingerprint=?
 		LEFT JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
 		WHERE n.kind='file' AND n.trashed_at IS NULL AND cv.version_id IS NOT NULL `+filterSQL,
-		append([]any{scope.ProcessingProfileFingerprint, scope.ProcessingProfileFingerprint}, filterArgs...)...)
+		append([]any{scope.ProcessingProfileFingerprint, scope.ProcessingProfileFingerprint, scope.ProcessingProfileFingerprint}, filterArgs...)...)
 	if err != nil {
 		return ProcessingCoverageSnapshot{}, err
 	}
@@ -94,14 +96,15 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 		buildID, profileFingerprint string
 	}
 	type renditionHead struct {
-		attachmentID string
-		rebuilding   bool
-		key          renditionValidationKey
+		attachmentID        string
+		rebuilding          bool
+		descriptionComplete bool
+		key                 renditionValidationKey
 	}
 	heads := make([]renditionHead, 0, len(opts.ContentVersionIDs))
 	for rows.Next() {
 		var head renditionHead
-		if err := rows.Scan(&head.attachmentID, &head.key.buildID, &head.key.profileFingerprint, &head.rebuilding); err != nil {
+		if err := rows.Scan(&head.attachmentID, &head.key.buildID, &head.key.profileFingerprint, &head.descriptionComplete, &head.rebuilding); err != nil {
 			return ProcessingCoverageSnapshot{}, err
 		}
 		heads = append(heads, head)
@@ -114,7 +117,7 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 	// this read snapshot. Keep counting each version's state independently.
 	validated := make(map[renditionValidationKey]bool)
 	for _, head := range heads {
-		complete := validated[head.key]
+		complete := head.descriptionComplete || validated[head.key]
 		if !complete {
 			complete, err = processingRenditionAvailableTx(ctx, tx, head.attachmentID)
 			if err != nil {

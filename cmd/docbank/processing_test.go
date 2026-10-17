@@ -35,6 +35,7 @@ func TestProcessingCLIProfilesPlanBuildAndStatus(t *testing.T) {
 		case "GET /api/v1/processing/profiles":
 			assert.NoError(t, json.MarshalWrite(w, []api.ProcessingProfileSummary{{
 				Name: "private", Fingerprint: profileFingerprint, Rendition: true,
+				ProbeState: "provider_unavailable", ProbeReason: "Check the provider credential.",
 				EmbeddingBindings: []string{"semantic"},
 			}}))
 		case "GET /api/v1/nodes/42":
@@ -85,6 +86,7 @@ func TestProcessingCLIProfilesPlanBuildAndStatus(t *testing.T) {
 	assert.Contains(t, profilesOutput.String(), "private")
 	assert.Contains(t, profilesOutput.String(), "rendition")
 	assert.Contains(t, profilesOutput.String(), "semantic")
+	assert.Contains(t, profilesOutput.String(), "Check the provider credential.")
 
 	planCommand, planOutput := processingTestCommand()
 	require.NoError(t, runProcessingPlan(planCommand, c, "id:42", "private", false))
@@ -329,4 +331,20 @@ func TestWriteProcessingPlanReportsIneligibleSource(t *testing.T) {
 			require.Regexp(t, `(?m)^ineligible:\s+unbounded_media_family$`, out.String())
 		})
 	}
+}
+
+func TestProcessingVisionFingerprintsCLI(t *testing.T) {
+	command, _, err := processingCmd.Find([]string{"vision-fingerprints"})
+	require.NoError(t, err)
+	require.Equal(t, "vision-fingerprints", command.Name())
+	command = newProcessingVisionFingerprintsCommand()
+	var output bytes.Buffer
+	command.SetOut(&output)
+	require.NoError(t, command.ParseFlags([]string{"--model", "synthetic-vision", "--boundary", "operator_network", "--endpoint", "http://127.0.0.1:8080", "--deployment-fingerprint", strings.Repeat("a", 64)}))
+	require.NoError(t, command.RunE(command, nil))
+	var values map[string]string
+	require.NoError(t, json.Unmarshal(output.Bytes(), &values))
+	require.Len(t, values, 2)
+	require.Equal(t, "c512bb73b55ad42f3704a2ca46cb8355de78e4be96a82e9ec2a44b0d361b2088", values["descriptor_fingerprint"])
+	require.Equal(t, "9e0db207ad80d5049c9bbe466840b90c6399f0cd4e0f9ed68c43de2584725a75", values["disclosure_fingerprint"])
 }

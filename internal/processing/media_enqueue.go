@@ -84,7 +84,7 @@ func (service *Service) EnqueueAuthorized(
 	if err != nil {
 		return Job{}, err
 	}
-	plan, err := service.planForSource(selector, node, version, profile)
+	plan, err := service.planForSource(ctx, selector, node, version, profile)
 	if err != nil {
 		return Job{}, err
 	}
@@ -130,11 +130,8 @@ func (service *Service) enqueueRendition(
 	var waiter store.RenditionJobWaiter
 	err = service.gate.MutateContext(ctx, func() error {
 		var enqueueErr error
-		job, waiter, enqueueErr = service.catalog.EnqueueRenditionJob(ctx, store.RenditionJobRequest{
-			ContentVersionID: version.ID, Profile: profile.record,
-			CapturedArtifactPolicy: prepared.capturedPolicy, ExecutionIdentity: prepared.identity,
-			Authorization: authorization,
-		})
+		job, waiter, enqueueErr = service.catalog.EnqueueRenditionJob(ctx,
+			store.RenditionJobRequest{ContentVersionID: version.ID, Profile: profile.record, CapturedArtifactPolicy: prepared.capturedPolicy, ExecutionIdentity: prepared.identity, Authorization: authorization})
 		return enqueueErr
 	})
 	return job, waiter, err

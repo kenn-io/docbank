@@ -118,6 +118,32 @@ work limits, request cancellation and worker failures exit 1. Native text
 inspection does not add OCR; the [font and coverage limitations](../architecture/page-images.md#remaining-refusals)
 still apply.
 
+## Describe photos
+
+Configure a [vision profile](../configuration.md#photo-descriptions), then review
+`processing plan` for a photo and grant consent with `processing build` as above.
+After consent, the probe sends a synthetic image with the configured credential; it sends no vault content. The grant covers eligible photos across the vault. After its synthetic probe
+succeeds, the daemon automatically queues photos with a ready display preview.
+Failed transient probes are cached for one second, or longer when the provider requests it. Credential, model/policy, and incompatible-response failures are cached for ten minutes. Explicit builds honor the same delay. The supervised minute loop refreshes due probes while consent holds; successful checks expire after ten minutes and show `pending` until the next probe succeeds. Description failures follow the shared rendition queue classification. After correcting a credential, restart the daemon to load it. Ambiguous submissions keep their existing resolution path. Profile status includes a fixed `probe_failure_code` and operator guidance. Renewing consent requeues attempts that stopped before provider egress because consent or photo authority changed.
+It normalizes the source through the preview processor in memory, then sends a metadata-free JPEG at most 1024 pixels on its longest edge. The consent estimate covers every eligible version that backfill will enqueue.
+Filenames and original bytes stay in the vault.
+
+Hidden, excluded, trashed, and superseded display versions are ineligible.
+A selected visible copy remains eligible when identical bytes belong to a hidden
+photo. An unlock allows editing hidden suggestions; it doesn't authorize
+provider processing. Workers recheck visibility and consent at egress and
+publication. Hiding or changing a photo during a readiness probe prevents the photo request. Edits remain available during an in-flight request; publication rejects output when the photo becomes ineligible. Unhiding a photo allows automatic backfill to retry a result rejected at publication. Empty results finish that version's attempt and remain completed after restore; terminal failures also finish the attempt.
+
+Malformed descriptions, including captions over 300 characters or any tag over 255 bytes, reject the whole result. The adapter rechecks consent, photo visibility, and preview binding before retrying malformed output once within the same queue attempt; a second malformed response ends the job without a suggestion.
+
+Caption, tags, and visible text arrive as one pending suggestion in the
+[photo inspector](photos.md#suggested-metadata). No authored field changes until
+you accept it. These jobs finish without creating a text rendition.
+Backups omit pending suggestions and rebuild them after fresh consent in the
+restored vault. Accepted field decisions, dismissal state, and authored receipts remain in the backup. Permanent photo purge removes its suggestions and associated authored receipts.
+
+Configure one vision rendition profile and one processing profile that uses it. Changing the model or deployment refreshes only pending proposals. An empty replacement removes the old pending text. Accepted and dismissed decisions stay attached to their source files through pairing, display changes, and splitting. The inspector and suggestion search use only the display file's current version. Switching paired files restores each file's retained proposal and decision.
+
 ## Convert documents with Docling
 
 Configure a [Docling document rendition profile](../configuration.md#document-conversion-with-docling)

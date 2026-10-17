@@ -44,6 +44,9 @@ type ProcessingSelector struct {
 
 // ProcessingProfileSummary is one locally executable deployment profile.
 type ProcessingProfileSummary struct {
+	ProbeFailureCode       string   `json:"probe_failure_code,omitempty"`
+	ProbeReason            string   `json:"probe_reason,omitempty"`
+	ProbeState             string   `json:"probe_state,omitempty"`
 	Name                   string   `json:"name"`
 	Fingerprint            string   `json:"fingerprint" pattern:"^[0-9a-f]{64}$"`
 	Rendition              bool     `json:"rendition"`

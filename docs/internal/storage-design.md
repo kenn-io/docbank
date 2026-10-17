@@ -480,6 +480,12 @@ Schema 38 adds `saved_query_runs.photos`, which distinguishes document-node runs
 
 Schema 38 also adds `photo_authored_fts`, which indexes captions, creator, and copyright from `photo_files` in separate columns so phrases stay within a field. It is derived, rebuilt on restore, and excluded from metadata backup.
 
+Schema 39 adds `photo_suggestions`, one caption, tags, and visible-text proposal per source content version. Reads and suggestion search expose only the current display file's row. Pairing preserves proposals and decisions on each source version. Empty replacements retire pending rows through the existing FTS delete trigger. Each row records the response, revision, first decision receipt, and stable tag IDs selected across partial acceptance batches. The API derives the target photo file from the source version.
+
+`photo_authored_fts` indexes current caption, creator, copyright, and explicitly accepted suggestion tags while their stable IDs remain assigned. Assignment, removal, rename, membership, and restore maintain that projection. `photo_suggestion_fts` indexes the full nondismissed proposal; insert, response/update, and delete triggers keep it current and remove dismissed suggestions from search. Metadata JSONL exports accepted and dismissed rows with their decision receipts; restore validates their references and rebuilds the FTS index through the triggers. Rebuildable pending suggestions and the FTS index stay out of metadata export and backups. Export resets only published waiters tied to omitted pending suggestions, so fresh consent can rebuild them after restore. Empty descriptions retain their published completion.
+
+`BeginRenditionProviderEgress` checks consent, photo eligibility, and the ready-preview binding before each request, including the adapter retry. Photo edits remain available during provider responses, and publication rejects stale output. The shared consent fence stays held through request-body dispatch.
+
 ### Photo technical projection
 
 `photo_technical_metadata` stores one derived row for each source metadata

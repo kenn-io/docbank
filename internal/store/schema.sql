@@ -2344,18 +2344,50 @@ CREATE TRIGGER IF NOT EXISTS photo_timeline_head_update AFTER UPDATE ON source_m
     WHERE v.blob_hash = NEW.source_sha256;
 END;
 
-CREATE VIRTUAL TABLE IF NOT EXISTS photo_authored_fts USING fts5(caption, creator, copyright, tokenize='unicode61');
-CREATE TRIGGER IF NOT EXISTS photo_authored_fts_insert AFTER INSERT ON photo_files
-WHEN new.role<>'sidecar' AND (new.caption<>'' OR new.creator<>'' OR new.copyright<>'') BEGIN
-    INSERT INTO photo_authored_fts(rowid,caption,creator,copyright) VALUES(new.node_id,new.caption,new.creator,new.copyright);
+-- Only explicitly accepted suggestion tags contribute authored search terms.
+CREATE VIEW IF NOT EXISTS photo_accepted_tag_assignments AS
+SELECT DISTINCT nt.node_id,nt.tag_id,t.name
+FROM node_tags nt JOIN tags t ON t.id=nt.tag_id
+JOIN photo_files target ON target.node_id=nt.node_id
+JOIN photo_files source ON source.asset_id=target.asset_id
+JOIN content_versions v ON v.node_id=source.node_id
+JOIN photo_suggestions ps ON ps.content_version_id=v.version_id
+JOIN json_each(ps.accepted_tag_ids_json) accepted ON accepted.value=nt.tag_id;
+
+CREATE VIRTUAL TABLE IF NOT EXISTS photo_authored_fts USING fts5(caption, creator, copyright, keywords, tokenize='unicode61');
+CREATE TRIGGER IF NOT EXISTS photo_authored_fts_insert AFTER INSERT ON photo_files BEGIN
+    INSERT INTO photo_authored_fts(rowid,caption,creator,copyright,keywords) SELECT new.node_id,new.caption,new.creator,new.copyright,COALESCE((SELECT group_concat(name,' ') FROM photo_accepted_tag_assignments WHERE node_id=new.node_id),'') WHERE new.role<>'sidecar' AND (new.caption<>'' OR new.creator<>'' OR new.copyright<>'' OR EXISTS(SELECT 1 FROM node_tags WHERE node_id=new.node_id));
 END;
 CREATE TRIGGER IF NOT EXISTS photo_authored_fts_update AFTER UPDATE OF caption,creator,copyright,node_id,role ON photo_files
 WHEN old.caption IS NOT new.caption OR old.creator IS NOT new.creator OR old.copyright IS NOT new.copyright OR old.node_id IS NOT new.node_id OR old.role IS NOT new.role BEGIN
     DELETE FROM photo_authored_fts WHERE rowid=old.node_id;
-    INSERT INTO photo_authored_fts(rowid,caption,creator,copyright) SELECT new.node_id,new.caption,new.creator,new.copyright WHERE new.role<>'sidecar' AND (new.caption<>'' OR new.creator<>'' OR new.copyright<>'');
+    INSERT INTO photo_authored_fts(rowid,caption,creator,copyright,keywords) SELECT new.node_id,new.caption,new.creator,new.copyright,COALESCE((SELECT group_concat(name,' ') FROM photo_accepted_tag_assignments WHERE node_id=new.node_id),'') WHERE new.role<>'sidecar' AND (new.caption<>'' OR new.creator<>'' OR new.copyright<>'' OR EXISTS(SELECT 1 FROM node_tags WHERE node_id=new.node_id));
 END;
 CREATE TRIGGER IF NOT EXISTS photo_authored_fts_delete AFTER DELETE ON photo_files BEGIN
     DELETE FROM photo_authored_fts WHERE rowid=old.node_id;
+END;
+CREATE TRIGGER IF NOT EXISTS photo_authored_keywords_insert AFTER INSERT ON node_tags
+WHEN EXISTS(SELECT 1 FROM photo_files WHERE node_id=new.node_id AND role<>'sidecar') BEGIN
+    DELETE FROM photo_authored_fts WHERE rowid=new.node_id;
+    INSERT INTO photo_authored_fts(rowid,caption,creator,copyright,keywords)
+    SELECT f.node_id,f.caption,f.creator,f.copyright,COALESCE((SELECT group_concat(name,' ') FROM photo_accepted_tag_assignments WHERE node_id=f.node_id),'') FROM photo_files f WHERE f.node_id=new.node_id AND f.role<>'sidecar' AND (f.caption<>'' OR f.creator<>'' OR f.copyright<>'' OR EXISTS(SELECT 1 FROM node_tags WHERE node_id=f.node_id));
+END;
+CREATE TRIGGER IF NOT EXISTS photo_authored_keywords_delete AFTER DELETE ON node_tags
+WHEN EXISTS(SELECT 1 FROM photo_files WHERE node_id=old.node_id AND role<>'sidecar') BEGIN
+    DELETE FROM photo_authored_fts WHERE rowid=old.node_id;
+    INSERT INTO photo_authored_fts(rowid,caption,creator,copyright,keywords)
+    SELECT f.node_id,f.caption,f.creator,f.copyright,COALESCE((SELECT group_concat(name,' ') FROM photo_accepted_tag_assignments WHERE node_id=f.node_id),'') FROM photo_files f WHERE f.node_id=old.node_id AND f.role<>'sidecar' AND (f.caption<>'' OR f.creator<>'' OR f.copyright<>'' OR EXISTS(SELECT 1 FROM node_tags WHERE node_id=f.node_id));
+END;
+CREATE TRIGGER IF NOT EXISTS photo_authored_keywords_update AFTER UPDATE OF node_id,tag_id ON node_tags
+WHEN (old.node_id IS NOT new.node_id OR old.tag_id IS NOT new.tag_id)
+AND EXISTS(SELECT 1 FROM photo_files WHERE node_id IN (old.node_id,new.node_id) AND role<>'sidecar') BEGIN
+    DELETE FROM photo_authored_fts WHERE rowid IN (old.node_id,new.node_id);
+    INSERT INTO photo_authored_fts(rowid,caption,creator,copyright,keywords)
+    SELECT f.node_id,f.caption,f.creator,f.copyright,COALESCE((SELECT group_concat(name,' ') FROM photo_accepted_tag_assignments WHERE node_id=f.node_id),'') FROM photo_files f WHERE f.node_id IN (old.node_id,new.node_id) AND f.role<>'sidecar' AND (f.caption<>'' OR f.creator<>'' OR f.copyright<>'' OR EXISTS(SELECT 1 FROM node_tags WHERE node_id=f.node_id));
+END;
+CREATE TRIGGER IF NOT EXISTS photo_authored_keywords_rename AFTER UPDATE OF name ON tags
+WHEN old.name IS NOT new.name AND EXISTS(SELECT 1 FROM node_tags nt JOIN photo_files f ON f.node_id=nt.node_id WHERE nt.tag_id=new.id AND f.role<>'sidecar') BEGIN
+    UPDATE photo_authored_fts SET keywords=COALESCE((SELECT group_concat(name,' ') FROM photo_accepted_tag_assignments WHERE node_id=photo_authored_fts.rowid),'') WHERE rowid IN (SELECT nt.node_id FROM node_tags nt JOIN photo_files f ON f.node_id=nt.node_id WHERE nt.tag_id=new.id AND f.role<>'sidecar');
 END;
 
 CREATE TABLE IF NOT EXISTS photo_sidecar_considered (
@@ -2733,4 +2765,45 @@ END;
 CREATE TRIGGER IF NOT EXISTS person_candidate_faces_update AFTER UPDATE OF evidence_json ON person_match_candidates WHEN NEW.reason='face_match' BEGIN
  DELETE FROM person_candidate_faces WHERE candidate_id=NEW.candidate_id;
  INSERT OR IGNORE INTO person_candidate_faces SELECT NEW.candidate_id,json_extract(e.value,'$.evidence_id'),json_extract(e.value,'$.content_version_id') FROM json_each(CAST(NEW.evidence_json AS TEXT)) e WHERE json_extract(e.value,'$.evidence_kind')='face';
+END;
+
+-- Each source version retains its proposal and owner decisions. Pending output
+-- can be rebuilt after restore.
+CREATE TABLE IF NOT EXISTS photo_suggestions (
+    id INTEGER PRIMARY KEY,
+    suggestion_id TEXT NOT NULL UNIQUE,
+    content_version_id TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    producer_fingerprint TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    value_json TEXT NOT NULL,
+    response TEXT NOT NULL,
+    accepted_tag_ids_json TEXT NOT NULL DEFAULT '[]',
+    revision INTEGER NOT NULL,
+    receipt_id TEXT REFERENCES photo_change_receipts(receipt_id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS photo_suggestions_version ON photo_suggestions(content_version_id,kind);
+CREATE VIRTUAL TABLE IF NOT EXISTS photo_suggestion_fts USING fts5(text,tokenize='unicode61');
+CREATE TRIGGER IF NOT EXISTS photo_suggestion_fts_insert AFTER INSERT ON photo_suggestions WHEN new.response<>'dismissed' BEGIN
+    INSERT INTO photo_suggestion_fts(rowid,text) VALUES(new.rowid,json_extract(new.value_json,'$.caption') || ' ' || json_extract(new.value_json,'$.visible_text') || ' ' || (SELECT COALESCE(group_concat(tag.value,' '),'') FROM json_each(new.value_json,'$.tags') tag));
+END;
+CREATE TRIGGER IF NOT EXISTS photo_suggestion_fts_response AFTER UPDATE OF response,value_json ON photo_suggestions BEGIN
+    DELETE FROM photo_suggestion_fts WHERE rowid=old.rowid;
+    INSERT INTO photo_suggestion_fts(rowid,text) SELECT new.rowid,json_extract(new.value_json,'$.caption') || ' ' || json_extract(new.value_json,'$.visible_text') || ' ' || (SELECT COALESCE(group_concat(tag.value,' '),'') FROM json_each(new.value_json,'$.tags') tag) WHERE new.response<>'dismissed';
+END;
+CREATE TRIGGER IF NOT EXISTS photo_suggestion_fts_delete AFTER DELETE ON photo_suggestions BEGIN
+    DELETE FROM photo_suggestion_fts WHERE rowid=old.rowid;
+END;
+CREATE TRIGGER IF NOT EXISTS photo_suggestion_source_replaced AFTER UPDATE OF current_version_id ON nodes
+WHEN old.current_version_id IS NOT new.current_version_id BEGIN
+    DELETE FROM photo_suggestions WHERE content_version_id=old.current_version_id AND response='pending';
+END;
+
+CREATE TRIGGER IF NOT EXISTS photo_suggestion_accepted_tags AFTER UPDATE OF accepted_tag_ids_json ON photo_suggestions
+WHEN old.accepted_tag_ids_json IS NOT new.accepted_tag_ids_json BEGIN
+    UPDATE photo_authored_fts SET keywords=COALESCE((SELECT group_concat(name,' ') FROM photo_accepted_tag_assignments WHERE node_id=photo_authored_fts.rowid),'') WHERE rowid IN (SELECT target.node_id FROM content_versions v JOIN photo_files source ON source.node_id=v.node_id JOIN photo_files target ON target.asset_id=source.asset_id WHERE v.version_id=new.content_version_id);
+END;
+CREATE TRIGGER IF NOT EXISTS photo_suggestion_accepted_tags_insert AFTER INSERT ON photo_suggestions
+WHEN json_array_length(new.accepted_tag_ids_json)>0 BEGIN
+    UPDATE photo_authored_fts SET keywords=COALESCE((SELECT group_concat(name,' ') FROM photo_accepted_tag_assignments WHERE node_id=photo_authored_fts.rowid),'') WHERE rowid IN (SELECT target.node_id FROM content_versions v JOIN photo_files source ON source.node_id=v.node_id JOIN photo_files target ON target.asset_id=source.asset_id WHERE v.version_id=new.content_version_id);
 END;

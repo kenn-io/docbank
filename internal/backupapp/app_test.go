@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"go.kenn.io/kit/pack"
+	"image/color"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +20,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/stretchr/testify/assert"
@@ -27,9 +29,13 @@ import (
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/media/mediatest"
+	"go.kenn.io/docbank/document/vision"
+	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/backupapp"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/phototest"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 	docsqlite "go.kenn.io/docbank/sqlite"
@@ -318,6 +324,90 @@ func TestPhotoBackupRoundTrip(t *testing.T) {
 	require.NotNil(t, settings.Preference)
 	assert.Equal(t, "image", *settings.Preference)
 	assert.Contains(t, string(exportMetadata(t, restored)), `"photo_change_receipt"`)
+}
+
+func TestDetachedPhotoSuggestionBackupRoundTrip(t *testing.T) {
+	for _, decision := range []string{"pending", "accepted", "dismissed"} {
+		t.Run(decision, func(t *testing.T) {
+			fixture := newArchiveFixture(t)
+			ctx := t.Context()
+			hash, size, err := fixture.blobs.Write(strings.NewReader("synthetic photo bytes"))
+			require.NoError(t, err)
+			node, err := fixture.metadata.CreateFile(ctx, fixture.metadata.RootID(), "detached.jpg", hash, size, "image/jpeg")
+			require.NoError(t, err)
+			asset, err := fixture.metadata.PhotoAssetForNode(ctx, node.ID)
+			require.NoError(t, err)
+			file := asset.Files[0]
+			db, err := store.DefaultSQLiteDriver().Open(filepath.Join(fixture.root, "docbank.db"), docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
+			require.NoError(t, err)
+			id, err := phototest.SeedSuggestion(ctx, db, node.CurrentVersionID, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast"}, VisibleText: "QUAYSIDE"})
+			require.NoError(t, err)
+			require.NoError(t, db.Close())
+			if decision != "pending" {
+				response := store.PhotoSuggestionResponse{Revision: 1, Response: decision}
+				if decision == "accepted" {
+					prepared, err := fixture.metadata.PreparePhotoAuthored(ctx, store.PhotoSetSelection{AssetIDs: []string{asset.ID}})
+					require.NoError(t, err)
+					response.Caption = true
+					response.Tags = []string{"coast"}
+					response.Targets = []store.PhotoAuthoredEditTarget{prepared.Targets[0].PhotoAuthoredEditTarget}
+				}
+				_, err = fixture.metadata.RespondPhotoSuggestion(ctx, id, response)
+				require.NoError(t, err)
+			}
+			asset, err = fixture.metadata.PhotoAssetByID(ctx, asset.ID)
+			require.NoError(t, err)
+			_, err = fixture.metadata.DetachPhotoFile(ctx, asset.ID, asset.Revision, file.ID, store.PhotoDetachOptions{})
+			require.NoError(t, err)
+			require.NoError(t, fixture.metadata.ValidateMetadata(ctx))
+			exported := string(exportMetadata(t, fixture.metadata))
+			if decision == "pending" {
+				require.NotContains(t, exported, id)
+			} else {
+				require.Contains(t, exported, id)
+			}
+			repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+			require.NoError(t, err)
+			_, err = backupapp.Create(ctx, repo, "detached-photo", fixture.metadata, fixture.blobs, backup.CreateOptions{})
+			require.NoError(t, err)
+			target := filepath.Join(t.TempDir(), "restored")
+			_, err = backupapp.Restore(ctx, repo, "detached-photo", backup.RestoreOptions{TargetDir: target})
+			require.NoError(t, err)
+			restored, err := store.Open(filepath.Join(target, "docbank.db"))
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, restored.Close()) })
+			require.NoError(t, restored.ValidateMetadata(ctx))
+			for _, catalog := range []*store.Store{fixture.metadata, restored} {
+				current, err := catalog.PhotoAssetByID(ctx, asset.ID)
+				require.NoError(t, err)
+				require.Empty(t, current.Files)
+				current, err = catalog.AttachPhotoFile(ctx, asset.ID, current.Revision, node.ID, store.PhotoRoleImage, nil)
+				require.NoError(t, err)
+				require.Equal(t, file.ID, current.Files[0].ID)
+				caption := ""
+				if decision == "accepted" {
+					caption = "A harbor."
+				}
+				require.Equal(t, caption, current.Files[0].Caption)
+				values, err := catalog.PhotoSuggestions(ctx, asset.ID)
+				require.NoError(t, err)
+				if decision == "pending" && catalog == restored {
+					require.Empty(t, values)
+				} else {
+					require.Len(t, values, 1)
+					require.Equal(t, id, values[0].ID)
+					require.Equal(t, decision, values[0].Response)
+					require.Equal(t, "QUAYSIDE", values[0].Value.VisibleText)
+					if decision == "accepted" {
+						tags, _, err := catalog.NodeTags(ctx, node.ID, 100, 0)
+						require.NoError(t, err)
+						require.Len(t, tags, 1)
+						require.Equal(t, []string{tags[0].ID}, values[0].AcceptedTagIDs)
+					}
+				}
+			}
+		})
+	}
 }
 
 func TestJSONLLooseSnapshotVerifyAndRestore(t *testing.T) {
@@ -3052,4 +3142,110 @@ func TestOverwriteCleanupFailurePreservesPublishedOwnership(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, reader.Close())
 	assert.Equal(t, content, got)
+}
+
+func TestPhotoDescriptionCompletionBackupRoundTrip(t *testing.T) {
+	for _, empty := range []bool{false, true} {
+		t.Run(fmt.Sprintf("empty_%t", empty), func(t *testing.T) {
+			f := newArchiveFixture(t)
+			ctx := t.Context()
+			var descriptions atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				raw, err := io.ReadAll(r.Body)
+				if !assert.NoError(t, err) {
+					return
+				}
+				content := "red,blue"
+				if !bytes.Contains(raw, []byte("left and right")) {
+					descriptions.Add(1)
+					content = `{"caption":"A harbor.","tags":["coast"],"visible_text":"QUAYSIDE"}`
+					if empty {
+						content = `{"caption":"","tags":[],"visible_text":""}`
+					}
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprintf(w, `{"choices":[{"message":{"content":%q},"finish_reason":"stop"}]}`, content)
+			}))
+			defer server.Close()
+			provider, err := vision.New(vision.Profile{Origin: server.URL, Model: "synthetic-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, server.Client())
+			require.NoError(t, err)
+			var profile document.ProcessingProfileV1
+			require.NoError(t, json.Unmarshal(backupProcessingProfile(t).CanonicalProfile, &profile))
+			profile.Rendition.AdapterContract = vision.AdapterContract
+			profile.Rendition.Descriptor = document.ProviderDescriptorV1{ID: provider.Descriptor().ID, Fingerprint: provider.Descriptor().Fingerprint}
+			profile.Rendition.TrustBoundary = string(document.RenditionTrustOperatorNetwork)
+			profile.RetentionDisclosure.TrustBoundary = string(document.RenditionTrustOperatorNetwork)
+			profile.RetentionDisclosure.RetainSanitizedMarkdown = false
+			configs := map[string]processing.ProfileConfig{"vision": {Profile: profile, RenditionProvider: provider, RenditionDisclosure: processing.RuntimeDisclosure{Endpoint: server.URL}}}
+			data := mediatest.JPEG(2048, 8, color.White)
+			written, err := f.blobs.WriteDetailedContext(ctx, bytes.NewReader(data))
+			require.NoError(t, err)
+			encoding, err := written.EncodingName()
+			require.NoError(t, err)
+			node, err := f.metadata.CreateFile(ctx, f.metadata.RootID(), "photo.jpg", written.Hash, written.Size, "image/jpeg", store.BlobPhysical{Encoding: encoding, StoredBytes: written.StoredSize, PackEligible: written.PackEligible, Created: written.Created})
+			require.NoError(t, err)
+			recipe, err := processing.VisualPreviewRecipeForSize("grid")
+			require.NoError(t, err)
+			_, err = processing.EnsureVisualPreview(ctx, f.metadata, f.blobs, node.CurrentVersionID, recipe)
+			require.NoError(t, err)
+			service, err := processing.NewService(processing.ServiceConfig{Catalog: f.metadata, Blobs: f.blobs, Gate: api.NewOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: ctx, Principal: "synthetic-owner", Scope: "document-processing", Profiles: configs})
+			require.NoError(t, err)
+			defer service.Stop()
+			selector := processing.Selector{NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Profile: "vision"}
+			plan, err := service.Plan(ctx, selector)
+			require.NoError(t, err)
+			job, err := service.Start(ctx, processing.StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
+			require.NoError(t, err)
+			require.Equal(t, int32(1), descriptions.Load())
+			repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+			require.NoError(t, err)
+			_, err = backupapp.Create(ctx, repo, "photo", f.metadata, f.blobs, backup.CreateOptions{})
+			require.NoError(t, err)
+			original, err := f.metadata.RenditionJobWaiterByID(ctx, job.ID)
+			require.NoError(t, err)
+			require.Equal(t, "published", original.State, "export leaves source completion intact")
+			target := filepath.Join(t.TempDir(), "restored")
+			_, err = backupapp.Restore(ctx, repo, "photo", backup.RestoreOptions{TargetDir: target})
+			require.NoError(t, err)
+			catalog, err := store.Open(filepath.Join(target, "docbank.db"))
+			require.NoError(t, err)
+			defer func() { require.NoError(t, catalog.Close()) }()
+			blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(target, "blobs"))
+			require.NoError(t, err)
+			defer func() { require.NoError(t, blobs.Close()) }()
+			restored, err := processing.NewService(processing.ServiceConfig{Catalog: catalog, Blobs: blobs, Gate: api.NewOperationGate(), SpoolDirectory: t.TempDir(), Lifecycle: ctx, Principal: "synthetic-owner", Scope: "document-processing", Profiles: configs})
+			require.NoError(t, err)
+			defer restored.Stop()
+			asset, err := catalog.PhotoAssetForNode(ctx, node.ID)
+			require.NoError(t, err)
+			suggestions, err := catalog.PhotoSuggestions(ctx, asset.ID)
+			require.NoError(t, err)
+			require.Empty(t, suggestions)
+			plan, err = restored.Plan(ctx, selector)
+			require.NoError(t, err)
+			require.True(t, plan.ConsentRequired)
+			_, err = restored.GrantConsent(ctx, processing.ConsentGrantRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
+			require.NoError(t, err)
+			targets, err := catalog.PhotoDescriptionTargets(ctx, restored.Profiles()[0].Fingerprint, "", 50)
+			require.NoError(t, err)
+			if empty {
+				require.Empty(t, targets)
+			} else {
+				require.Len(t, targets, 1)
+			}
+			plan, err = restored.Plan(ctx, selector)
+			require.NoError(t, err)
+			_, err = restored.Start(ctx, processing.StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
+			require.NoError(t, err)
+			suggestions, err = catalog.PhotoSuggestions(ctx, asset.ID)
+			require.NoError(t, err)
+			if empty {
+				require.Empty(t, suggestions)
+				require.Equal(t, int32(1), descriptions.Load())
+			} else {
+				require.Len(t, suggestions, 1)
+				require.Equal(t, int32(2), descriptions.Load())
+			}
+		})
+	}
 }

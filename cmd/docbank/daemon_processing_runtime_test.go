@@ -22,6 +22,7 @@ import (
 	"go.kenn.io/docbank/document/docling"
 	"go.kenn.io/docbank/document/epub"
 	"go.kenn.io/docbank/document/plaintext"
+	"go.kenn.io/docbank/document/vision"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/config"
@@ -649,4 +650,52 @@ func TestDaemonStartsConfiguredRenditionWorker(t *testing.T) {
 		}
 	}
 	t.Fatal("configured rendition worker did not start")
+}
+
+func TestExecutableProcessingProfilesRunsConfiguredVision(t *testing.T) {
+	cfg, _ := doclingASRProcessingConfig(t, "http://127.0.0.1:5001")
+	descriptor, err := vision.Descriptor("synthetic-vision", document.RenditionTrustOperatorNetwork)
+	require.NoError(t, err)
+	binding := cfg.RenditionProfiles["asr"]
+	binding.AdapterContract = vision.AdapterContract
+	binding.Model = "synthetic-vision"
+	binding.DescriptorID = descriptor.ID
+	binding.DescriptorFingerprint = descriptor.Fingerprint
+	binding.DisclosureFingerprint = vision.DisclosureFingerprint(descriptor, binding.Runtime.Endpoint, binding.DeploymentFingerprint)
+	binding.RequestedArtifacts = []string{string(document.EvidenceArtifactStructured)}
+	cfg.RenditionProfiles["asr"] = binding
+	processingProfile := cfg.ProcessingProfiles["asr"]
+	processingProfile.RetainSanitizedMarkdown = false
+	cfg.ProcessingProfiles["asr"] = processingProfile
+	require.NoError(t, cfg.Validate())
+	profiles, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
+	require.NoError(t, err)
+	require.Equal(t, descriptor, profiles["asr"].RenditionProvider.Descriptor())
+	require.Equal(t, vision.AdapterContract, profiles["asr"].RenditionDisclosure.ImmediateProcessor)
+	_, ok := profiles["asr"].RenditionProvider.(document.RetryAuthorizedRenditionProvider)
+	require.True(t, ok)
+
+	for _, change := range []struct {
+		name    string
+		mutate  func(*config.RenditionProfileConfig)
+		message string
+	}{
+		{"descriptor", func(p *config.RenditionProfileConfig) { p.DescriptorFingerprint = strings.Repeat("a", 64) }, "descriptor differs from portable binding"},
+		{"disclosure", func(p *config.RenditionProfileConfig) { p.DisclosureFingerprint = strings.Repeat("a", 64) }, "vision disclosure fingerprint does not bind runtime endpoint"},
+		{"endpoint", func(p *config.RenditionProfileConfig) { p.Runtime.Endpoint = "http://127.0.0.1:5002" }, "vision disclosure fingerprint does not bind runtime endpoint"},
+		{"model", func(p *config.RenditionProfileConfig) { p.Model = "replacement-vision" }, "vision disclosure fingerprint does not bind runtime endpoint"},
+		{"trust boundary", func(p *config.RenditionProfileConfig) {
+			p.TrustBoundary = string(document.RenditionTrustHostedProvider)
+		}, "vision disclosure fingerprint does not bind runtime endpoint"},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			current := binding
+			runtime := *binding.Runtime
+			current.Runtime = &runtime
+			change.mutate(&current)
+			cfg.RenditionProfiles["asr"] = current
+			_, err := executableProcessingProfiles(cfg, embeddingRuntimeBundle{})
+			require.ErrorContains(t, err, change.message)
+		})
+	}
 }

@@ -134,7 +134,7 @@ func runProcessingProfiles(cmd *cobra.Command, c *daemonconn.Connection, jsonOut
 		return nil
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "PROFILE\tRENDITION\tEMBEDDINGS\tFINGERPRINT")
+	_, _ = fmt.Fprintln(w, "PROFILE\tRENDITION\tEMBEDDINGS\tFINGERPRINT\tPROBE")
 	for _, profile := range *profiles {
 		rendition := "-"
 		if profile.Rendition {
@@ -144,8 +144,8 @@ func runProcessingProfiles(cmd *cobra.Command, c *daemonconn.Connection, jsonOut
 		if len(profile.EmbeddingBindings) > 0 {
 			embeddings = strings.Join(profile.EmbeddingBindings, ",")
 		}
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
-			profile.Name, rendition, embeddings, profile.Fingerprint)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+			profile.Name, rendition, embeddings, profile.Fingerprint, strings.TrimSpace(profile.ProbeState+" "+profile.ProbeReason))
 	}
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("writing processing profiles: %w", err)
@@ -353,7 +353,7 @@ func canonicalSHA256(value string) bool {
 }
 
 func init() {
-	processingCmd.AddCommand(newProcessingCoverageCommand())
+	processingCmd.AddCommand(newProcessingCoverageCommand(), newProcessingVisionFingerprintsCommand())
 	processingProfilesCmd.Flags().BoolVar(&processingProfilesJSON, "json", false, "print JSON to stdout")
 	processingPlanCmd.Flags().StringVar(&processingPlanProfile, "profile", "", "named executable processing profile")
 	processingPlanCmd.Flags().BoolVar(&processingPlanJSON, "json", false, "print JSON to stdout")

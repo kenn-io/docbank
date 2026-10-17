@@ -300,3 +300,14 @@ it("measures only quarter turns and releases the observer when rotation returns 
   expect(disconnect).toHaveBeenCalledOnce();
   expect(((await screen.findByRole("img")) as HTMLImageElement).style.width).toBe("100%");
 });
+
+it.each([true, false])("shows the machine-match badge when provenance is %s", (matched) => {
+  render(PhotoCell, {
+    photo: { ...photo(1), matched_ai_suggestion: matched },
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+    selected: false,
+    onclick: vi.fn(),
+    onopen: vi.fn(),
+  });
+  expect(screen.queryByText("Matched AI suggestion") !== null).toBe(matched);
+});

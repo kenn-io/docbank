@@ -175,6 +175,7 @@
     {ondragstart}
     {ondragend}
   >
+    {#if photo.matched_ai_suggestion}<span class="ai-match">Matched AI suggestion</span>{/if}
     {#if url}
       <img
         src={url}
@@ -237,6 +238,16 @@
 </div>
 
 <style>
+  .ai-match {
+    position: absolute;
+    inset: auto var(--space-2) var(--space-2);
+    z-index: 1;
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    font-size: 0.75rem;
+  }
   .photo-cell {
     position: relative;
     height: 100%;

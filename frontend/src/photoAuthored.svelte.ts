@@ -8,6 +8,14 @@ export class PhotoUndoState {
 }
 
 export class PhotoAuthoredEditor {
+  suggestions = $state<api.PhotoSuggestion[]>([]);
+  get activeSuggestion() {
+    return this.suggestions.find(
+      (suggestion) =>
+        suggestion.response !== "dismissed" && suggestion.target === this.asset?.display_file_id,
+    );
+  }
+  suggestionsError = $state("");
   asset = $state<api.PhotoAsset>();
   targets = $state<api.PhotoPreparedTarget[]>([]);
   tags = $state<api.Tag[]>([]);
@@ -139,6 +147,8 @@ export class PhotoAuthoredEditor {
     this.read.abort();
     this.targets = [];
     this.asset = undefined;
+    this.suggestions = [];
+    this.suggestionsError = "";
     this.fileID = "";
     this.patch = {};
     this.rotationDelta = undefined;
@@ -167,6 +177,9 @@ export class PhotoAuthoredEditor {
       }
     }
     this.targets = targets;
+    this.suggestions = this.suggestions.filter((suggestion) =>
+      targets.some((target) => target.file_id === suggestion.target),
+    );
     if (this.asset && !eligible.has(this.asset.id)) this.asset = undefined;
     this.validating = false;
     this.concealed = false;
@@ -205,6 +218,8 @@ export class PhotoAuthoredEditor {
             ),
           }
         : undefined;
+      this.suggestions = prepared.suggestions ?? [];
+      this.suggestionsError = "";
       this.scope = scope;
       this.conflict = this.membershipChanged;
       void this.resolveAssignedTags();
@@ -216,6 +231,70 @@ export class PhotoAuthoredEditor {
       if (!signal.aborted) this.error = this.failure(cause);
     } finally {
       if (!signal.aborted) this.loading = false;
+    }
+  }
+  suggestionChoices(suggestion: api.PhotoSuggestion) {
+    const targets = this.files;
+    return {
+      caption:
+        !!suggestion.value.caption &&
+        targets.some((target) => target.values.caption !== suggestion.value.caption),
+      tags: suggestion.value.tags.filter((name) => {
+        const normalized = name.normalize("NFC");
+        const tag = this.tags.find((tag) => tag.name === normalized);
+        return targets.some((target) => !tag || !target.tags.includes(tag.id));
+      }),
+    };
+  }
+  async respondSuggestion(
+    suggestion: api.PhotoSuggestion,
+    caption = false,
+    tags: string[] = [],
+    dismiss = false,
+    refresh?: (receipt?: api.PhotoAuthoredReceipt, tags?: api.Tag[]) => Promise<void>,
+  ) {
+    if (this.busy || this.dirty || this.concealed || this.conflict || this.loading) return;
+    const targets = this.files;
+    if (!dismiss && !targets.length) return;
+    const write = this.beginWrite();
+    this.suggestionsError = "";
+    try {
+      const result = await this.request(() =>
+        api.respondPhotoSuggestion(
+          suggestion.suggestion_id,
+          {
+            revision: suggestion.revision,
+            response: dismiss ? "dismissed" : "accepted",
+            caption,
+            tags,
+            targets: dismiss
+              ? undefined
+              : targets.map((target) => ({
+                  asset_id: target.asset_id,
+                  asset_revision: target.asset_revision,
+                  file_id: target.file_id,
+                  revision: target.revision,
+                  node_revision: target.node_revision,
+                })),
+          },
+          this.options(),
+        ),
+      );
+      if (result.authored_receipt_id) {
+        this.receiptID = result.authored_receipt_id;
+        this.undoState.summary = `${targets.length} ${targets.length === 1 ? "file" : "files"} updated: ${[...(caption ? ["caption"] : []), ...(tags.length ? ["keywords"] : [])].join(", ")}`;
+      }
+      this.endWrite(write);
+      await this.reload();
+      const refreshedTags = result.authored_receipt
+        ? await this.refreshKeywords(result.authored_receipt)
+        : [];
+      await refresh?.(result.authored_receipt, refreshedTags);
+    } catch (cause) {
+      this.suggestionsError = this.failure(cause);
+      this.conflict = cause instanceof APIError && [404, 409, 412].includes(cause.status);
+    } finally {
+      this.endWrite(write);
     }
   }
   async reload() {
@@ -420,6 +499,7 @@ export class PhotoAuthoredEditor {
       const tags = await this.refreshKeywords(receipt);
       this.endWrite(write);
       await refresh(receipt, tags);
+      if (this.suggestions.length) await this.reload();
     } catch (cause) {
       if (!this.controller.signal.aborted) this.error = this.failure(cause);
     } finally {

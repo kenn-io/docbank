@@ -73,8 +73,15 @@ func (s *Store) RenditionJobErrorRetryable(err error) bool {
 		errors.Is(err, sql.ErrConnDone) || errors.Is(err, driver.ErrBadConn))
 }
 
+// UnclaimedPhotoDescriptionWaiters counts waiting photos that consume admission slots.
+func (s *Store) UnclaimedPhotoDescriptionWaiters(ctx context.Context, profile string, now time.Time) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM rendition_job_waiters w JOIN rendition_jobs j ON j.job_id=w.job_id WHERE w.profile_fingerprint=? AND w.state='waiting' AND (j.state IN ('queued','retry_wait') OR j.state='running' AND j.lease_expires_at<=?)`, profile, now.UTC().Format(timestampLayout)).Scan(&count)
+	return count, err
+}
+
 // RenditionJobRequest joins one authorized version/profile waiter to the
-// immutable shared build identity.
+// immutable build identity.
 type RenditionJobRequest struct {
 	ContentVersionID       string
 	Profile                ProcessingProfileRecord
@@ -83,7 +90,7 @@ type RenditionJobRequest struct {
 	Authorization          ProviderOperationAuthorizationRequest
 }
 
-// RenditionJob is sanitized durable status for one shared immutable build.
+// RenditionJob is sanitized durable status for one immutable build.
 type RenditionJob struct {
 	ID                                string
 	SourceSHA256                      string
@@ -101,7 +108,7 @@ type RenditionJob struct {
 }
 
 // RenditionJobWaiter is one version/profile authority waiting to attach the
-// shared build. Its ID is not part of build identity or artifact bytes.
+// build. Its ID is not part of build identity or artifact bytes.
 type RenditionJobWaiter struct {
 	ID                           string
 	JobID                        string
@@ -140,7 +147,7 @@ type RenditionJobWork struct {
 	ExecutionSnapshot      *document.RenditionExecutionSnapshotV1
 }
 
-// EnqueueRenditionJob creates or joins the one immutable source/profile build.
+// EnqueueRenditionJob creates or joins the immutable source/profile build.
 func (s *Store) EnqueueRenditionJob(
 	ctx context.Context, request RenditionJobRequest,
 ) (RenditionJob, RenditionJobWaiter, error) {
@@ -183,7 +190,7 @@ func (s *Store) EnqueueRenditionJob(
 		return RenditionJob{}, RenditionJobWaiter{}, fmt.Errorf(
 			"%w: authorization does not match the exact profile disclosure", ErrInvalidRenditionJobRequest)
 	}
-	if err := validateRenditionWaiterInputClasses(authority.inputs); err != nil {
+	if err := validateRenditionWaiterInputClasses(authority.inputs, request.ExecutionIdentity.Upload.InputKind); err != nil {
 		return RenditionJob{}, RenditionJobWaiter{}, fmt.Errorf("%w: %w", ErrInvalidRenditionJobRequest, err)
 	}
 	if !slices.Equal(authority.retained, policy.retainedRoles()) {
@@ -214,7 +221,7 @@ func (s *Store) EnqueueRenditionJob(
 				request.ExecutionIdentity.Upload.Filename != filename {
 			return ErrRenditionJobStaleAuthority
 		}
-		if binding := request.ExecutionIdentity.Upload.InputBinding; binding != "" {
+		if binding := request.ExecutionIdentity.Upload.InputBinding; binding != "" && request.ExecutionIdentity.Upload.InputKind != document.RenditionInputDerivedUpload {
 			visible, err := mediaInputBindingVisibleForSourceTx(
 				ctx, tx, request.Authorization.Principal, binding, sourceSHA256)
 			if err != nil {
@@ -228,10 +235,8 @@ func (s *Store) EnqueueRenditionJob(
 			return err
 		}
 		policyFingerprint := digestCatalogJSON(policy.canonical)
-		jobID := renditionSharedBuildID(s.vaultID, sourceSHA256,
-			profile.RenditionRequestFingerprint, profile.EvidenceLexicalFingerprint,
-			policyFingerprint, executionFingerprint)
-		if request.ExecutionIdentity.Upload.SHA256 != sourceSHA256 ||
+		jobID := renditionSharedBuildID(s.vaultID, sourceSHA256, profile.RenditionRequestFingerprint, profile.EvidenceLexicalFingerprint, policyFingerprint, executionFingerprint)
+		if request.ExecutionIdentity.Upload.InputKind == document.RenditionInputOriginalFile && request.ExecutionIdentity.Upload.SHA256 != sourceSHA256 ||
 			request.ExecutionIdentity.Authorization.SourceSHA256 != sourceSHA256 {
 			return fmt.Errorf("%w: rendition execution identity does not match exact source authority", ErrRenditionJobStaleAuthority)
 		}
@@ -270,12 +275,35 @@ func (s *Store) EnqueueRenditionJob(
 			return fmt.Errorf("creating rendition job: %w", err)
 		}
 		var storedExecution string
-		if err := tx.QueryRowContext(ctx, `SELECT execution_identity_fingerprint
-			FROM rendition_jobs WHERE job_id=?`, jobID).Scan(&storedExecution); err != nil {
-			return fmt.Errorf("reading shared rendition job identity: %w", err)
+		if err := tx.QueryRowContext(ctx, `SELECT execution_identity_fingerprint FROM rendition_jobs WHERE job_id=?`, jobID).Scan(&storedExecution); err != nil {
+			return fmt.Errorf("reading rendition job identity: %w", err)
 		}
 		if storedExecution != executionFingerprint {
-			return errors.New("shared rendition build has an incompatible execution identity")
+			return errors.New("rendition build has an incompatible execution identity")
+		}
+		var published, alreadyActive bool
+		if request.ExecutionIdentity.Upload.InputKind == document.RenditionInputDerivedUpload {
+			var rejected, ambiguous, rebuildable bool
+			if err := tx.QueryRowContext(ctx, `SELECT
+				EXISTS(SELECT 1 FROM rendition_job_waiters WHERE job_id=?1 AND content_version_id=?2 AND profile_fingerprint=?3 AND state='rejected' AND failure_code='terminal'),
+				EXISTS(SELECT 1 FROM rendition_job_waiters WHERE job_id=?1 AND content_version_id=?2 AND profile_fingerprint=?3 AND state='rejected' AND failure_code='ambiguous'),
+				EXISTS(SELECT 1 FROM rendition_job_waiters WHERE job_id=?1 AND content_version_id=?2 AND profile_fingerprint=?3 AND state='published'),
+    EXISTS(SELECT 1 FROM rendition_job_waiters WHERE job_id=?1 AND content_version_id=?2 AND profile_fingerprint=?3 AND state='rejected' AND failure_code='stale_authority'),
+    `+photoSuggestionSettledSQL("?2", "?4"),
+				jobID, request.ContentVersionID, profile.Fingerprint, profile.RenditionRequestFingerprint).Scan(&rejected, &ambiguous, &published, &rebuildable, &alreadyActive); err != nil {
+				return err
+			}
+			if ambiguous {
+				return ErrRenditionJobOperatorRequired
+			}
+			if rejected {
+				return ErrRenditionJobTerminal
+			}
+			if rebuildable && !alreadyActive {
+				if _, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET state='queued',phase='queued',claim_owner=NULL,lease_expires_at=NULL,provider_started=0,execution_snapshot_json=NULL,provider_resume_handle=NULL,provider_attempts=0,selected_waiter_id=NULL,authorization_grant_id=NULL,authorization_incarnation_id=NULL,authorization_revocation_fence=NULL,failure_code=NULL,available_at=?,updated_at=? WHERE job_id=? AND (state='failed' AND failure_code='terminal' OR state='operator_required')`, now, now, jobID); err != nil {
+					return err
+				}
+			}
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET claim_epoch=max(
 			claim_epoch,COALESCE((SELECT MAX(fencing_token) FROM current_rendition_roots
@@ -313,10 +341,10 @@ func (s *Store) EnqueueRenditionJob(
 			return fmt.Errorf("checking rendition job join state: %w", err)
 		}
 		switch state {
-		case RenditionJobOperatorRequired:
-			return ErrRenditionJobOperatorRequired
-		case RenditionJobFailed:
-			return ErrRenditionJobTerminal
+		case RenditionJobOperatorRequired, RenditionJobFailed:
+			if !published && !alreadyActive {
+				return renditionJoinStateError(state)
+			}
 		case RenditionJobQueued, RenditionJobRunning, RenditionJobRetryWait,
 			RenditionJobCompleted:
 		}
@@ -325,6 +353,25 @@ func (s *Store) EnqueueRenditionJob(
 			authority.inputsJSON, authority.retainedJSON, admissionAuthorization.GrantID,
 			admissionAuthorization.ProcessingIncarnationID,
 			strconv.FormatInt(admissionAuthorization.RevocationFence, 10))
+		if request.ExecutionIdentity.Upload.InputKind == document.RenditionInputDerivedUpload {
+			var selected bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+				SELECT 1 FROM rendition_jobs j JOIN rendition_job_waiters w ON w.waiter_id=j.selected_waiter_id
+				WHERE j.job_id=? AND w.waiter_id=? AND w.state='waiting'
+				AND j.state IN ('queued','running','retry_wait'))`, jobID, waiterID).Scan(&selected); err != nil {
+				return err
+			}
+			// The in-flight call still needs its selected waiter to authorize
+			// publication, even when the owner has since accepted an older proposal.
+			if selected {
+				job, err = loadRenditionJobTx(ctx, tx, jobID)
+				if err != nil {
+					return err
+				}
+				waiter, err = loadRenditionJobWaiterTx(ctx, tx, waiterID)
+				return err
+			}
+		}
 		attachmentID := RenditionAttachmentID(jobID, request.ContentVersionID,
 			profile.Fingerprint)
 		waiterResult, err := tx.ExecContext(ctx, `
@@ -348,7 +395,29 @@ func (s *Store) EnqueueRenditionJob(
 		if _, err := waiterResult.RowsAffected(); err != nil {
 			return fmt.Errorf("checking rendition job waiter: %w", err)
 		}
-		var alreadyActive bool
+		if request.ExecutionIdentity.Upload.InputKind == document.RenditionInputDerivedUpload {
+			if published || alreadyActive {
+				if _, err := tx.ExecContext(ctx, `UPDATE rendition_job_waiters SET state='published',updated_at=? WHERE waiter_id=?`, now, waiterID); err != nil {
+					return err
+				}
+			} else if state == RenditionJobCompleted {
+				if _, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET state='queued',phase='queued',provider_started=0,execution_snapshot_json=NULL,provider_resume_handle=NULL,provider_attempts=0,available_at=?,updated_at=? WHERE job_id=?`, now, now, jobID); err != nil {
+					return err
+				}
+			}
+			if alreadyActive || published {
+				if _, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET state='completed',phase='published',failure_code=NULL,updated_at=? WHERE job_id=? AND state='queued' AND NOT EXISTS(SELECT 1 FROM rendition_job_waiters WHERE job_id=? AND state='waiting')`, now, jobID, jobID); err != nil {
+					return err
+				}
+			}
+			job, err = loadRenditionJobTx(ctx, tx, jobID)
+			if err != nil {
+				return err
+			}
+			waiter, err = loadRenditionJobWaiterTx(ctx, tx, waiterID)
+			return err
+		}
+
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
 				SELECT 1 FROM rendition_heads h
 				JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
@@ -552,6 +621,9 @@ func (s *Store) ClaimRenditionJob(
 					at.Format(timestampLayout), jobID); err != nil {
 					return fmt.Errorf("quarantining ambiguous rendition job: %w", err)
 				}
+				if _, err := tx.ExecContext(ctx, `UPDATE rendition_job_waiters SET state='rejected',failure_code='ambiguous',updated_at=? WHERE job_id=? AND state='waiting' AND EXISTS(SELECT 1 FROM rendition_jobs WHERE job_id=? AND json_extract(execution_identity_json,'$.upload.input_kind')=?)`, at.Format(timestampLayout), jobID, jobID, document.RenditionInputDerivedUpload); err != nil {
+					return err
+				}
 				operatorRequired = true
 				return nil
 			}
@@ -640,7 +712,7 @@ func (s *Store) ClaimNextRenditionJob(
 	return RenditionJobClaim{}, false, nil
 }
 
-// RenditionJobWorkByClaim snapshots the exact shared build and selected
+// RenditionJobWorkByClaim snapshots the exact build and selected
 // waiter after checking the live lease.
 func (s *Store) RenditionJobWorkByClaim(
 	ctx context.Context, claim RenditionJobClaim, at time.Time,
@@ -810,6 +882,10 @@ func (s *Store) BeginRenditionProvider(
 	ctx context.Context, claim RenditionJobClaim, waiterID string, at time.Time,
 	snapshots ...document.RenditionExecutionSnapshotV1,
 ) (ProviderOperationAuthorization, error) {
+	return s.beginRenditionProvider(ctx, claim, waiterID, at, snapshots...)
+}
+
+func (s *Store) beginRenditionProvider(ctx context.Context, claim RenditionJobClaim, waiterID string, at time.Time, snapshots ...document.RenditionExecutionSnapshotV1) (ProviderOperationAuthorization, error) {
 	if len(snapshots) > 1 {
 		return ProviderOperationAuthorization{}, errors.New(
 			"beginning rendition provider accepts at most one execution snapshot")
@@ -842,7 +918,11 @@ func (s *Store) BeginRenditionProvider(
 		if err != nil {
 			return err
 		}
+
 		request, requestErr := renditionWaiterAuthorizationTx(ctx, tx, job, waiterID)
+		if requestErr == nil {
+			requestErr = renditionPhotoInputAuthorityTx(ctx, tx, job, waiterID)
+		}
 		if requestErr != nil && !errors.Is(requestErr, ErrRenditionJobStaleAuthority) {
 			return requestErr
 		}
@@ -855,8 +935,7 @@ func (s *Store) BeginRenditionProvider(
 		if readErr := tx.QueryRowContext(ctx, `
 			SELECT selected_waiter_id,authorization_grant_id,
 			       authorization_incarnation_id,authorization_revocation_fence,
-			       execution_identity_fingerprint,execution_snapshot_json,
-			       provider_resume_handle
+			       execution_identity_fingerprint,execution_snapshot_json,provider_resume_handle
 			FROM rendition_jobs WHERE job_id=?`, claim.JobID).Scan(
 			&selected, &grant, &incarnation, &fence, &executionFingerprint,
 			&storedSnapshot, &resumeHandle); readErr != nil {
@@ -864,10 +943,14 @@ func (s *Store) BeginRenditionProvider(
 		}
 		if len(snapshotJSON) != 0 {
 			if snapshotFingerprint != executionFingerprint {
-				return errors.New("rendition execution snapshot does not match shared build identity")
+				return errors.New("rendition execution snapshot does not match build identity")
 			}
-			if storedSnapshot.Valid && storedSnapshot.String != string(snapshotJSON) {
-				return errors.New("rendition execution snapshot changed after provider start")
+			if storedSnapshot.Valid {
+				if storedSnapshot.String != string(snapshotJSON) {
+					return errors.New("rendition execution snapshot changed after provider start")
+				}
+				// Reauthorizing an adapter retry reuses this queue attempt's sealed inputs.
+				attemptIncrement = 0
 			}
 		} else if !storedSnapshot.Valid || !resumeHandle.Valid {
 			return errors.New("rendition provider start requires sealed execution authority")
@@ -963,7 +1046,7 @@ func (s *Store) BeginRenditionProviderEgress(
 ) (ProviderOperationAuthorization, *ProviderEgressFence, error) {
 	s.providerEgressMu.RLock()
 	fence := &ProviderEgressFence{release: s.providerEgressMu.RUnlock}
-	authorization, err := s.BeginRenditionProvider(ctx, claim, waiterID, at, snapshots...)
+	authorization, err := s.beginRenditionProvider(ctx, claim, waiterID, at, snapshots...)
 	if err != nil {
 		fence.Close()
 		return ProviderOperationAuthorization{}, nil, err
@@ -1182,6 +1265,15 @@ func (s *Store) finishRenditionJobClaim(
 		if changed != 1 {
 			return ErrRenditionJobFenced
 		}
+		if state == RenditionJobFailed && code == RenditionFailureTerminal || state == RenditionJobOperatorRequired && code == RenditionFailureAmbiguous {
+			if _, err := tx.ExecContext(ctx, `UPDATE rendition_job_waiters
+				SET state='rejected',failure_code=?,updated_at=?
+				WHERE job_id=? AND state='waiting' AND EXISTS(SELECT 1 FROM rendition_jobs j
+				WHERE j.job_id=? AND json_extract(j.execution_identity_json,'$.upload.input_kind')=?)`,
+				code, at.UTC().Format(timestampLayout), claim.JobID, claim.JobID, document.RenditionInputDerivedUpload); err != nil {
+				return fmt.Errorf("rejecting terminal photo description waiters: %w", err)
+			}
+		}
 		if reopenableStaged && hasWaiting {
 			return nil
 		}
@@ -1337,114 +1429,19 @@ func (s *Store) PublishRenditionJob(
 			return errors.New("rendition job is not ready for publication")
 		}
 		var generationID string
-		var providerStarted bool
-		var selectedWaiter, grantID, incarnationID sql.NullString
-		var revocationFence sql.NullInt64
-		var executionIdentityJSON string
-		if err := tx.QueryRowContext(ctx, `
-			SELECT lexical_generation_id,provider_started,selected_waiter_id,authorization_grant_id,
-			       authorization_incarnation_id,authorization_revocation_fence,execution_identity_json
-			FROM rendition_jobs WHERE job_id=?`, claim.JobID).Scan(
-			&generationID, &providerStarted, &selectedWaiter, &grantID, &incarnationID,
-			&revocationFence, &executionIdentityJSON); err != nil {
-			return fmt.Errorf("reading rendition publication authority: %w", err)
+		if err := tx.QueryRowContext(ctx, `SELECT lexical_generation_id FROM rendition_jobs WHERE job_id=?`, job.ID).Scan(&generationID); err != nil {
+			return fmt.Errorf("reading rendition publication generation: %w", err)
 		}
-		var executionIdentity document.RenditionExecutionIdentityV1
-		if err := json.Unmarshal([]byte(executionIdentityJSON), &executionIdentity,
-			json.RejectUnknownMembers(true)); err != nil {
-			return fmt.Errorf("decoding rendition publication identity: %w", err)
-		}
-		if providerStarted {
-			if !selectedWaiter.Valid || !grantID.Valid || !incarnationID.Valid ||
-				!revocationFence.Valid {
-				return errors.New("rendition publication lacks provider authorization authority")
-			}
-			providerRequest, err := renditionWaiterAuthorizationTx(
-				ctx, tx, job, selectedWaiter.String)
-			if err == nil {
-				providerRequest.PriorAuthorization = &ProviderOperationAuthorization{
-					GrantID: grantID.String, ProcessingIncarnationID: incarnationID.String,
-					RevocationFence: revocationFence.Int64,
-				}
-				_, err = authorizeProviderOperationTx(ctx, tx, s.vaultID, providerRequest, at.UTC())
-			}
-			if err != nil && !errors.Is(err, ErrRenditionJobStaleAuthority) &&
-				!errors.Is(err, ErrProcessingConsentRequired) &&
-				!errors.Is(err, ErrProcessingConsentExpired) &&
-				!errors.Is(err, ErrProcessingConsentRevoked) {
-				return err
-			}
-			publicationErr = err
-		}
-
-		waiterIDs, err := renditionWaitingIDsTx(ctx, tx, claim.JobID)
+		authority, err := s.authorizeRenditionJobPublicationTx(ctx, tx, job, at)
 		if err != nil {
 			return err
 		}
-		authorized := make([]renditionJobWaiterAuthority, 0, len(waiterIDs))
-		type rejectedWaiter struct {
-			id   string
-			code RenditionFailureCode
-		}
-		rejected := make([]rejectedWaiter, 0)
-		for _, waiterID := range waiterIDs {
-			request, err := renditionWaiterAuthorizationTx(ctx, tx, job, waiterID)
-			if err == nil && executionIdentity.Upload.InputBinding != "" {
-				var visible bool
-				visible, err = mediaInputBindingVisibleForSourceTx(ctx, tx, request.Principal,
-					executionIdentity.Upload.InputBinding, job.SourceSHA256)
-				if err == nil && !visible {
-					err = ErrRenditionJobStaleAuthority
-				}
-			}
-			if err == nil {
-				if waiterID == selectedWaiter.String && publicationErr != nil {
-					// A fresh grant cannot replace the authority used for provider egress.
-					err = publicationErr
-				} else {
-					_, err = authorizeProviderOperationTx(ctx, tx, s.vaultID, request, at.UTC())
-				}
-			}
-			if err != nil {
-				code := RenditionFailureConsent
-				if errors.Is(err, ErrRenditionJobStaleAuthority) {
-					code = RenditionFailureStaleAuthority
-				} else if !errors.Is(err, ErrProcessingConsentRequired) &&
-					!errors.Is(err, ErrProcessingConsentExpired) &&
-					!errors.Is(err, ErrProcessingConsentRevoked) {
-					return err
-				}
-				rejected = append(rejected, rejectedWaiter{waiterID, code})
-				continue
-			}
-			waiter, err := loadRenditionJobWaiterTx(ctx, tx, waiterID)
-			if err != nil {
-				return err
-			}
-			profile, err := loadProcessingProfile(ctx, tx, waiter.ProfileFingerprint)
-			if err != nil {
-				return err
-			}
-			authorized = append(authorized, renditionJobWaiterAuthority{
-				waiter: waiter, profile: profile,
-			})
-		}
-		publishedAt := at.UTC().Format(timestampLayout)
-		for _, waiter := range rejected {
-			if _, err := tx.ExecContext(ctx, `UPDATE rendition_job_waiters
-				SET state='rejected',failure_code=?,updated_at=? WHERE waiter_id=?`,
-				waiter.code, publishedAt, waiter.id); err != nil {
-				return fmt.Errorf("rejecting rendition waiter: %w", err)
-			}
-		}
-		// Commit rejection records before reporting an authorization failure.
+		publicationErr = authority.authorizationErr
 		if publicationErr != nil {
-			return nil //nolint:nilerr // Return publicationErr after the rejection records commit.
+			return nil //nolint:nilerr // Commit rejection records before reporting the authority error.
 		}
-		if len(authorized) == 0 {
-			publicationErr = ErrProcessingConsentRequired
-			return nil
-		}
+		authorized := authority.authorized
+		publishedAt := at.UTC().Format(timestampLayout)
 		pairs := make([]renditionPublicationPair, 0, len(authorized))
 		for _, authority := range authorized {
 			attachment := RenditionAttachmentRecord{
@@ -1470,23 +1467,12 @@ func (s *Store) PublishRenditionJob(
 				return fmt.Errorf("publishing rendition waiter: %w", err)
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET
-			state='completed',phase='published',claim_owner=NULL,lease_expires_at=NULL,
-			selected_waiter_id=NULL,authorization_grant_id=NULL,
-			authorization_incarnation_id=NULL,authorization_revocation_fence=NULL,
-			failure_code=NULL,updated_at=? WHERE job_id=? AND claim_epoch=?`,
-			publishedAt, claim.JobID, claim.Epoch); err != nil {
-			return fmt.Errorf("completing rendition job: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE current_rendition_roots
-			SET active=0,released_at=? WHERE root_id IN (?,?) AND fencing_token=? AND active=1`,
-			publishedAt, renditionJobRootID("build", claim.JobID),
-			renditionJobRootID("generation", claim.JobID), claim.Epoch); err != nil {
-			return fmt.Errorf("releasing rendition job roots: %w", err)
+		if err := completeRenditionPublicationTx(ctx, tx, claim, publishedAt); err != nil {
+			return err
 		}
 		publication.LexicalGenerationID = generationID
 		publication.PublishedWaiterCount = len(authorized)
-		publication.RejectedWaiterCount = len(rejected)
+		publication.RejectedWaiterCount = authority.rejectedCount
 		return nil
 	})
 	if err != nil {
@@ -1496,6 +1482,152 @@ func (s *Store) PublishRenditionJob(
 		return RenditionJobPublication{}, publicationErr
 	}
 	return publication, nil
+}
+
+type renditionPublicationAuthority struct {
+	authorized       []renditionJobWaiterAuthority
+	rejectedCount    int
+	authorizationErr error
+}
+
+// authorizeRenditionJobPublicationTx records rejected waiter outcomes even when
+// the selected provider egress authority prevents publishing any result.
+func (s *Store) authorizeRenditionJobPublicationTx(ctx context.Context, tx *sql.Tx, job RenditionJob, at time.Time) (renditionPublicationAuthority, error) {
+	publication := renditionPublicationAuthority{}
+	var providerStarted bool
+	var selectedWaiter, grantID, incarnationID sql.NullString
+	var revocationFence sql.NullInt64
+	var executionIdentityJSON string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT provider_started,selected_waiter_id,authorization_grant_id,
+		       authorization_incarnation_id,authorization_revocation_fence,execution_identity_json
+		FROM rendition_jobs WHERE job_id=?`, job.ID).Scan(
+		&providerStarted, &selectedWaiter, &grantID, &incarnationID,
+		&revocationFence, &executionIdentityJSON); err != nil {
+		return publication, fmt.Errorf("reading rendition publication authority: %w", err)
+	}
+	var executionIdentity document.RenditionExecutionIdentityV1
+	if err := json.Unmarshal([]byte(executionIdentityJSON), &executionIdentity,
+		json.RejectUnknownMembers(true)); err != nil {
+		return publication, fmt.Errorf("decoding rendition publication identity: %w", err)
+	}
+	if providerStarted {
+		if !selectedWaiter.Valid || !grantID.Valid || !incarnationID.Valid ||
+			!revocationFence.Valid {
+			return publication, errors.New("rendition publication lacks provider authorization authority")
+		}
+		providerRequest, err := renditionWaiterAuthorizationTx(
+			ctx, tx, job, selectedWaiter.String)
+		if err == nil {
+			err = renditionPhotoInputAuthorityTx(ctx, tx, job, selectedWaiter.String)
+		}
+		if err == nil {
+			providerRequest.PriorAuthorization = &ProviderOperationAuthorization{
+				GrantID: grantID.String, ProcessingIncarnationID: incarnationID.String,
+				RevocationFence: revocationFence.Int64,
+			}
+			_, err = authorizeProviderOperationTx(ctx, tx, s.vaultID, providerRequest, at.UTC())
+		}
+		if err != nil && !errors.Is(err, ErrRenditionJobStaleAuthority) &&
+			!errors.Is(err, ErrProcessingConsentRequired) &&
+			!errors.Is(err, ErrProcessingConsentExpired) &&
+			!errors.Is(err, ErrProcessingConsentRevoked) {
+			return publication, err
+		}
+		publication.authorizationErr = err
+	}
+
+	waiterIDs, err := renditionWaitingIDsTx(ctx, tx, job.ID)
+	if err != nil {
+		return publication, err
+	}
+	authorized := make([]renditionJobWaiterAuthority, 0, len(waiterIDs))
+	type rejectedWaiter struct {
+		id   string
+		code RenditionFailureCode
+	}
+	rejected := make([]rejectedWaiter, 0)
+	for _, waiterID := range waiterIDs {
+		request, err := renditionWaiterAuthorizationTx(ctx, tx, job, waiterID)
+		if err == nil {
+			err = renditionPhotoInputAuthorityTx(ctx, tx, job, waiterID)
+		}
+		if err == nil && executionIdentity.Upload.InputBinding != "" && executionIdentity.Upload.InputKind != document.RenditionInputDerivedUpload {
+			var visible bool
+			visible, err = mediaInputBindingVisibleForSourceTx(ctx, tx, request.Principal,
+				executionIdentity.Upload.InputBinding, job.SourceSHA256)
+			if err == nil && !visible {
+				err = ErrRenditionJobStaleAuthority
+			}
+		}
+		if err == nil {
+			if waiterID == selectedWaiter.String && publication.authorizationErr != nil {
+				// A fresh grant cannot replace the authority used for provider egress.
+				err = publication.authorizationErr
+			} else {
+				_, err = authorizeProviderOperationTx(ctx, tx, s.vaultID, request, at.UTC())
+			}
+		}
+		if err != nil {
+			code := RenditionFailureConsent
+			if errors.Is(err, ErrRenditionJobStaleAuthority) {
+				code = RenditionFailureStaleAuthority
+			} else if !errors.Is(err, ErrProcessingConsentRequired) &&
+				!errors.Is(err, ErrProcessingConsentExpired) &&
+				!errors.Is(err, ErrProcessingConsentRevoked) {
+				return publication, err
+			}
+			rejected = append(rejected, rejectedWaiter{waiterID, code})
+			continue
+		}
+		waiter, err := loadRenditionJobWaiterTx(ctx, tx, waiterID)
+		if err != nil {
+			return publication, err
+		}
+		profile, err := loadProcessingProfile(ctx, tx, waiter.ProfileFingerprint)
+		if err != nil {
+			return publication, err
+		}
+		authorized = append(authorized, renditionJobWaiterAuthority{
+			waiter: waiter, profile: profile,
+		})
+	}
+	publishedAt := at.UTC().Format(timestampLayout)
+	for _, waiter := range rejected {
+		if _, err := tx.ExecContext(ctx, `UPDATE rendition_job_waiters
+			SET state='rejected',failure_code=?,updated_at=? WHERE waiter_id=?`,
+			waiter.code, publishedAt, waiter.id); err != nil {
+			return publication, fmt.Errorf("rejecting rendition waiter: %w", err)
+		}
+	}
+
+	if executionIdentity.Upload.InputKind == document.RenditionInputDerivedUpload && len(authorized) > 0 && errors.Is(publication.authorizationErr, ErrRenditionJobStaleAuthority) {
+		publication.authorizationErr = nil
+	}
+	publication.authorized = authorized
+	publication.rejectedCount = len(rejected)
+	if publication.authorizationErr == nil && len(authorized) == 0 {
+		publication.authorizationErr = ErrProcessingConsentRequired
+	}
+	return publication, nil
+}
+
+func completeRenditionPublicationTx(ctx context.Context, tx *sql.Tx, claim RenditionJobClaim, publishedAt string) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET
+		state='completed',phase='published',claim_owner=NULL,lease_expires_at=NULL,
+		selected_waiter_id=NULL,authorization_grant_id=NULL,
+		authorization_incarnation_id=NULL,authorization_revocation_fence=NULL,
+		failure_code=NULL,updated_at=? WHERE job_id=? AND claim_epoch=?`,
+		publishedAt, claim.JobID, claim.Epoch); err != nil {
+		return fmt.Errorf("completing rendition job: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE current_rendition_roots
+		SET active=0,released_at=? WHERE root_id IN (?,?) AND fencing_token=? AND active=1`,
+		publishedAt, renditionJobRootID("build", claim.JobID),
+		renditionJobRootID("generation", claim.JobID), claim.Epoch); err != nil {
+		return fmt.Errorf("releasing rendition job roots: %w", err)
+	}
+	return nil
 }
 
 func mediaInputBindingVisibleForSourceTx(
@@ -1594,6 +1726,15 @@ func putRenditionJobRootTx(
 	return putCurrentRenditionRootTx(ctx, tx, root)
 }
 
+// renditionJoinStateError reports why a version without its own completed
+// outcome cannot join a quarantined or failed build.
+func renditionJoinStateError(state RenditionJobState) error {
+	if state == RenditionJobOperatorRequired {
+		return ErrRenditionJobOperatorRequired
+	}
+	return ErrRenditionJobTerminal
+}
+
 func loadRenditionJobTx(ctx context.Context, query rowQuerier, id string) (RenditionJob, error) {
 	var job RenditionJob
 	var failure sql.NullString
@@ -1686,6 +1827,42 @@ func requireRenditionClaimTx(
 	return job, nil
 }
 
+func renditionPhotoInputAuthorityTx(ctx context.Context, tx *sql.Tx, job RenditionJob, waiterID string) error {
+	var raw string
+	if err := tx.QueryRowContext(ctx, `SELECT execution_identity_json FROM rendition_jobs WHERE job_id=?`, job.ID).Scan(&raw); err != nil {
+		return err
+	}
+	execution, err := document.ParseRenditionExecutionIdentityV1([]byte(raw))
+	if err != nil {
+		return err
+	}
+	if execution.Upload.InputKind == document.RenditionInputDerivedUpload {
+		var versionID string
+		if err := tx.QueryRowContext(ctx, `SELECT content_version_id FROM rendition_job_waiters WHERE waiter_id=?`, waiterID).Scan(&versionID); err != nil {
+			return err
+		}
+		fingerprints, err := document.CurrentPhotoQualityFingerprints()
+		if err != nil {
+			return err
+		}
+		var bound bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM visual_preview_generations g WHERE g.content_version_id=? AND g.recipe_fingerprint=? AND g.checksum=? AND g.source_sha256=? AND g.state='ready')`, versionID, fingerprints.GridRecipe, execution.Upload.InputBinding, job.SourceSHA256).Scan(&bound); err != nil {
+			return err
+		}
+		if !bound {
+			return ErrRenditionJobStaleAuthority
+		}
+		eligible, err := photoDescriptionEligibleTx(ctx, tx, versionID)
+		if err != nil {
+			return err
+		}
+		if !eligible {
+			return ErrRenditionJobStaleAuthority
+		}
+	}
+	return nil
+}
+
 func renditionWaiterAuthorizationTx(
 	ctx context.Context, tx *sql.Tx, job RenditionJob, waiterID string,
 ) (ProviderOperationAuthorizationRequest, error) {
@@ -1723,6 +1900,7 @@ func renditionWaiterAuthorizationTx(
 	if err != nil {
 		return ProviderOperationAuthorizationRequest{}, fmt.Errorf("reading rendition execution authority: %w", err)
 	}
+
 	pdf, err := emailPDFBinding(ProcessingProfileRecord{CanonicalProfile: []byte(profileJSON)})
 	if err != nil {
 		return ProviderOperationAuthorizationRequest{}, fmt.Errorf("reading rendition profile authority: %w", err)
@@ -1738,7 +1916,7 @@ func renditionWaiterAuthorizationTx(
 	if err := json.Unmarshal([]byte(inputJSON), &request.InputClasses); err != nil {
 		return ProviderOperationAuthorizationRequest{}, fmt.Errorf("reading rendition waiter input classes: %w", err)
 	}
-	if err := validateRenditionWaiterInputClasses(request.InputClasses); err != nil {
+	if err := validateRenditionWaiterInputClasses(request.InputClasses, execution.Upload.InputKind); err != nil {
 		return ProviderOperationAuthorizationRequest{}, fmt.Errorf("%w: %w", err, ErrRenditionJobStaleAuthority)
 	}
 	if err := json.Unmarshal([]byte(retainedJSON), &request.RetainedArtifactClasses); err != nil {
@@ -1821,10 +1999,17 @@ func renditionJobProviderBoundaryAmbiguous(
 		phase != RenditionPhaseGenerationStaged
 }
 
-func validateRenditionWaiterInputClasses(inputs []string) error {
-	if !slices.Equal(inputs, []string{string(document.RenditionInputOriginalFile)}) {
+func validateRenditionWaiterInputClasses(inputs []string, expected document.RenditionInputKind) error {
+	if !slices.Equal(inputs, []string{string(document.RenditionInputOriginalFile)}) && !slices.Equal(inputs, []string{string(document.RenditionInputDerivedUpload)}) {
 		return errors.New("rendition waiter input classes do not match original source egress")
 	}
+	if expected != "" && inputs[0] != string(expected) {
+		if expected == document.RenditionInputOriginalFile {
+			return errors.New("rendition waiter input classes do not match original source egress")
+		}
+		return errors.New("rendition waiter input classes do not match derived source egress")
+	}
+
 	return nil
 }
 

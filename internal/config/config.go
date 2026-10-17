@@ -24,6 +24,7 @@ import (
 	"go.kenn.io/docbank/document/embedding"
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/pagerender"
+	"go.kenn.io/docbank/document/vision"
 	"go.kenn.io/docbank/internal/httpboundary"
 	"go.kenn.io/docbank/internal/storenamespace"
 	"go.kenn.io/kit/embedconfig"
@@ -186,6 +187,7 @@ type WatchConfig struct {
 // descriptor. CredentialBinding is resolved only by the eventual provider
 // adapter, never while loading config.toml.
 type RenditionProfileConfig struct {
+	Model                    string                  `toml:"model"`
 	AdapterContract          string                  `toml:"adapter_contract"`
 	AuthorizationFingerprint string                  `toml:"authorization_fingerprint"`
 	CredentialBinding        string                  `toml:"credential_binding"`
@@ -761,7 +763,14 @@ func validateProcessingProfiles(c Config) error {
 			return fmt.Errorf("[credential_bindings.%s] environment_variable must be a variable name", name)
 		}
 	}
+	visionProfiles := 0
 	for name, profile := range c.RenditionProfiles {
+		if profile.AdapterContract == vision.AdapterContract {
+			visionProfiles++
+			if visionProfiles > 1 {
+				return errors.New("configure only one vision profile")
+			}
+		}
 		prefix := fmt.Sprintf("[rendition_profiles.%s]", name)
 		if err := validateProfileName(name, prefix); err != nil {
 			return err
@@ -804,7 +813,14 @@ func validateProcessingProfiles(c Config) error {
 			return err
 		}
 	}
+	visionProcessingProfiles := 0
 	for name, profile := range c.ProcessingProfiles {
+		if c.RenditionProfiles[profile.Rendition].AdapterContract == vision.AdapterContract {
+			visionProcessingProfiles++
+			if visionProcessingProfiles > 1 {
+				return errors.New("configure only one vision processing profile")
+			}
+		}
 		prefix := fmt.Sprintf("[processing_profiles.%s]", name)
 		if err := validateProfileName(name, prefix); err != nil {
 			return err
@@ -952,18 +968,29 @@ func validateRenditionProfileConfig(profile RenditionProfileConfig, prefix strin
 
 func validateRenditionRuntimeConfig(profile RenditionProfileConfig, prefix string) error {
 	runtime := profile.Runtime
-	if profile.AdapterContract != DoclingASRAdapterContract && profile.AdapterContract != DoclingDocumentAdapterContract {
-		return fmt.Errorf("%s runtime is supported only for %s or %s", prefix, DoclingASRAdapterContract, DoclingDocumentAdapterContract)
+	if profile.AdapterContract != DoclingASRAdapterContract && profile.AdapterContract != DoclingDocumentAdapterContract && profile.AdapterContract != vision.AdapterContract {
+		return fmt.Errorf("%s runtime is supported only for %s, %s, or %s", prefix, DoclingASRAdapterContract, DoclingDocumentAdapterContract, vision.AdapterContract)
 	}
 	if profile.TrustBoundary != string(document.RenditionTrustOperatorNetwork) &&
 		profile.TrustBoundary != string(document.RenditionTrustHostedProvider) {
 		return fmt.Errorf("%s runtime trust_boundary must be operator_network or hosted_provider", prefix)
 	}
-	if profile.AdapterContract == DoclingASRAdapterContract {
+	switch profile.AdapterContract {
+	case vision.AdapterContract:
+		if runtime.RequestTimeout.Std() <= 0 || runtime.RequestTimeout.Std() > vision.MaxRequestTimeout {
+			return fmt.Errorf("%s runtime request_timeout must be positive and at most 10m", prefix)
+		}
+		if _, err := vision.Descriptor(profile.Model, document.RenditionTrustBoundary(profile.TrustBoundary)); err != nil {
+			return fmt.Errorf("%s: %w", prefix, err)
+		}
+		if profile.DiscloseFilename || len(profile.RequestedArtifacts) != 1 || profile.RequestedArtifacts[0] != string(document.EvidenceArtifactStructured) || profile.MaxResponseBytes > 1<<20 {
+			return fmt.Errorf("%s vision requires a withheld filename, structured evidence, and at most 1 MiB response", prefix)
+		}
+	case DoclingASRAdapterContract:
 		if len(profile.RequestedArtifacts) != 1 || profile.RequestedArtifacts[0] != string(document.EvidenceArtifactTranscript) {
 			return fmt.Errorf("%s runtime requires exactly the transcript artifact role", prefix)
 		}
-	} else {
+	default:
 		hasMarkdown := false
 		for _, role := range profile.RequestedArtifacts {
 			switch document.EvidenceArtifactRole(role) {
@@ -990,16 +1017,13 @@ func validateRenditionRuntimeConfig(profile RenditionProfileConfig, prefix strin
 			}
 		}
 	}
-	if parsed.Path != "" && parsed.Path != "/" {
-		return fmt.Errorf("%s runtime endpoint must be an absolute root origin", prefix)
+	if err := validateRenditionOrigin(parsed, document.RenditionTrustBoundary(profile.TrustBoundary)); err != nil {
+		return fmt.Errorf("%s: %w", prefix, err)
 	}
-	if parsed.Scheme == "http" && profile.TrustBoundary != string(document.RenditionTrustOperatorNetwork) {
-		return fmt.Errorf("%s runtime HTTP endpoint requires operator_network", prefix)
-	}
-	if runtime.RequestTimeout.Std() <= 0 || runtime.RequestTimeout.Std() > 24*time.Hour ||
+	if profile.AdapterContract != vision.AdapterContract && (runtime.RequestTimeout.Std() <= 0 || runtime.RequestTimeout.Std() > 24*time.Hour ||
 		runtime.TotalTimeout.Std() <= 0 || runtime.TotalTimeout.Std() > 24*time.Hour ||
 		runtime.PollInterval.Std() <= 0 || runtime.PollInterval.Std() > runtime.TotalTimeout.Std() ||
-		runtime.MaxPollAttempts <= 0 || runtime.MaxPollAttempts > 10_000 {
+		runtime.MaxPollAttempts <= 0 || runtime.MaxPollAttempts > 10_000) {
 		return fmt.Errorf("%s runtime request and poll bounds are invalid", prefix)
 	}
 	return nil
@@ -1023,9 +1047,9 @@ func privateRenditionNetwork(network netip.Prefix) bool {
 	return false
 }
 
-func validateProviderEgressConfig(runtime ProviderEgressConfig, prefix string) (*url.URL, error) {
-	parsed, err := url.Parse(runtime.Endpoint)
-	if err != nil || runtime.Endpoint != strings.TrimSpace(runtime.Endpoint) ||
+func validateProviderEndpoint(endpoint, prefix string) (*url.URL, error) {
+	parsed, err := url.Parse(endpoint)
+	if err != nil || endpoint != strings.TrimSpace(endpoint) ||
 		parsed.Scheme != "http" && parsed.Scheme != "https" || parsed.Hostname() == "" ||
 		parsed.User != nil || parsed.Opaque != "" || parsed.ForceQuery || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return nil, fmt.Errorf("%s runtime endpoint must be absolute and credential-free", prefix)
@@ -1035,6 +1059,36 @@ func validateProviderEgressConfig(runtime ProviderEgressConfig, prefix string) (
 		if err != nil || port == 0 {
 			return nil, fmt.Errorf("%s runtime endpoint port must be between 1 and 65535", prefix)
 		}
+	}
+	return parsed, nil
+}
+
+// ValidateRenditionEndpoint applies the configured provider origin and trust contract.
+func ValidateRenditionEndpoint(endpoint string, boundary document.RenditionTrustBoundary) error {
+	parsed, err := validateProviderEndpoint(endpoint, "provider")
+	if err != nil {
+		return err
+	}
+	return validateRenditionOrigin(parsed, boundary)
+}
+
+func validateRenditionOrigin(parsed *url.URL, boundary document.RenditionTrustBoundary) error {
+	if boundary != document.RenditionTrustOperatorNetwork && boundary != document.RenditionTrustHostedProvider {
+		return errors.New("runtime trust_boundary must be operator_network or hosted_provider")
+	}
+	if parsed.Path != "" && parsed.Path != "/" {
+		return errors.New("runtime endpoint must be an absolute root origin")
+	}
+	if parsed.Scheme == "http" && boundary != document.RenditionTrustOperatorNetwork {
+		return errors.New("runtime HTTP endpoint requires operator_network")
+	}
+	return nil
+}
+
+func validateProviderEgressConfig(runtime ProviderEgressConfig, prefix string) (*url.URL, error) {
+	parsed, err := validateProviderEndpoint(runtime.Endpoint, prefix)
+	if err != nil {
+		return nil, err
 	}
 	if len(runtime.SPKISHA256) != 0 && parsed.Scheme != "https" {
 		return nil, fmt.Errorf("%s runtime spki_sha256 requires an HTTPS endpoint", prefix)

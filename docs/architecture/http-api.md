@@ -91,6 +91,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `GET /photos/assets/{asset_id}` · `GET /photos/nodes/{node_id}/asset` | inspect one bounded photo graph by asset or member node | Implemented |
 | `POST /photos/assets/query` | list matching assets once each with a first-page total and keyset cursor | Implemented |
 | `POST /photos/authored/prepare` · `POST /photos/authored/edit` · `POST /photos/authored/{receipt_id}/undo` | prepare bounded file targets from assets or a query, atomically edit fields and keywords with required asset, file, and node revision fences, and undo if revisions match | Implemented |
+| `GET /photos/assets/{asset_id}/suggestions` · `POST /photos/suggestions/{suggestion_id}/response` | inspect machine suggestions, accept selected caption or tags with prepared revision fences, or dismiss the remainder; already-current values conflict | Implemented |
 | `POST /photos/assets/{asset_id}/preview` | prepare a fit or large preview for the current content version | Implemented |
 | `GET /photos/assets/{asset_id}/previews/{generation_id}` | read verified bytes for an eligible display preview | Implemented |
 | `POST /photos/assets` · `POST /photos/assets/{asset_id}/files` · `DELETE /photos/assets/{asset_id}/files/{file_id}` | create, attach, or detach photo membership | Implemented |

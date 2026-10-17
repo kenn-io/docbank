@@ -1292,6 +1292,67 @@ function workspaceWithPreparedPhoto(target = preparedPhoto(1), projection?: "map
   return photos;
 }
 
+it("refreshes an active text search once after accepting a suggestion", async () => {
+  const before = preparedPhoto(1, { file_id: "file-1" });
+  const photos = workspaceWithPreparedPhoto(before);
+  photos.query = { ...photos.query, text: "harbor" };
+  photos.selection = { selectedIDs: new Set(["photo-1"]), anchorID: "photo-1" };
+  const asset = {
+    id: "photo-1",
+    display_file_id: "file-1",
+    files: [{ id: "file-1", role: "image" }],
+  } as PhotoAsset;
+  const suggestion = {
+    suggestion_id: "suggestion",
+    content_version_id: "version-1",
+    producer_fingerprint: "producer",
+    kind: "photo_description",
+    target: "file-1",
+    value: { caption: "A harbor.", tags: [], visible_text: "QUAYSIDE" },
+    response: "pending",
+    revision: 1,
+    created_at: "2026-01-01T00:00:00Z",
+  };
+  const after = { ...before, revision: 2, values: { ...before.values, caption: "A harbor." } };
+  const receipt = { receipt_id: "accepted", before: [before], after: [after] };
+  let accepted = false;
+  let queryReads = 0;
+  vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+    if (url.endsWith("/suggestions/suggestion/response")) {
+      accepted = true;
+      return Response.json({
+        ...suggestion,
+        response: "accepted",
+        revision: 2,
+        authored_receipt: receipt,
+      });
+    }
+    if (url.endsWith("/photos/authored/prepare"))
+      return Response.json({
+        assets: [asset],
+        targets: [accepted ? after : before],
+        suggestions: [{ ...suggestion, response: accepted ? "accepted" : "pending" }],
+      });
+    if (url.endsWith("/photos/assets/query")) {
+      if (!JSON.parse(String(init?.body ?? "{}")).facets?.length) queryReads++;
+      return Response.json({ items: [photo(1)], total: 1 });
+    }
+    return photoMetadataResponse(url, init) ?? Response.json({ items: [], total: 0 });
+  });
+  await photos.authored.prepare({ asset_ids: ["photo-1"] });
+  const respond = vi.spyOn(photos.authored, "respondSuggestion");
+  render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
+  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+  await fireEvent.click(await screen.findByRole("checkbox", { name: "A harbor." }));
+  await fireEvent.click(screen.getByRole("button", { name: "Accept selected" }));
+  await respond.mock.results[0]!.value;
+  await waitFor(() => expect(photos.authored.targets[0]?.values.caption).toBe("A harbor."));
+  await waitFor(() => expect(queryReads).toBeGreaterThan(0));
+  await tick();
+  expect(queryReads).toBe(1);
+  photos.dispose();
+});
+
 it("refreshes a filtered view and restarts pending reads after a metadata edit", async () => {
   Object.defineProperty(Element.prototype, "scrollIntoView", {
     configurable: true,

@@ -2,6 +2,7 @@ import type { PhotoBrowseRow, PhotoPreviewSlot } from "./generated/docbank.js";
 
 export type PhotoGridRow = Pick<
   PhotoBrowseRow,
+  | "matched_ai_suggestion"
   | "asset_id"
   | "name"
   | "capture_time"

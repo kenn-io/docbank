@@ -291,6 +291,13 @@ func (s *Store) PurgeDerivatives(
 		if err != nil {
 			return err
 		}
+		selectionArgs, err := derivativePurgeSelectionArgs(request)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM photo_suggestions AS s WHERE `+pendingPhotoSuggestionPurgeSelection, selectionArgs...); err != nil {
+			return fmt.Errorf("purging pending photo suggestions: %w", err)
+		}
 		jobPurgeScopes, err := purgeRenditionJobWaitersTx(
 			ctx, tx, versionSet, attachmentSet, explicitBuilds, request.All, asOf)
 		if err != nil {

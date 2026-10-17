@@ -24,6 +24,7 @@
     actionDisabled = false,
     onedit,
     onundo,
+    onresponse,
     photo,
     error,
     note = "",
@@ -44,6 +45,10 @@
     actionDisabled?: boolean;
     onedit?: (patch: PhotoAuthoredPatch, keywords?: PhotoKeywordEdit[]) => void;
     onundo?: () => void;
+    onresponse?: (
+      receipt?: import("./generated/docbank.js").PhotoAuthoredReceipt,
+      tags?: import("./generated/docbank.js").Tag[],
+    ) => Promise<void>;
     photo?: PhotoBrowseRow;
     error: string;
     note?: string;
@@ -456,7 +461,12 @@
         >{/if}
     </div>
     {#if metadataOpen}<aside class="photo-info" aria-label="Photo details">
-        {#if editor && onedit}<PhotoInspector {editor} {actionDisabled} {onedit} />{/if}
+        {#if editor && onedit}<PhotoInspector
+            {editor}
+            {actionDisabled}
+            {onedit}
+            {onresponse}
+          />{/if}
         <h2>Photo details</h2>
         <dl>
           {#each facts as [label, value]}<dt>{label}</dt>
