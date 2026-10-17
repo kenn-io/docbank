@@ -98,9 +98,7 @@
       );
       if (
         row &&
-        (!expected?.content_version_id ||
-          (expected.file_id === row.display_file_id &&
-            expected.content_version_id === row.content_version_id))
+        (!expected?.content_version_id || expected.content_version_id === row.content_version_id)
       )
         return row;
     });
@@ -213,6 +211,28 @@
     }
     await editor.undo(refresh);
   }
+  function stageDecision(
+    selected: PhotoBrowseRow,
+    patch: PhotoAuthoredPatch,
+    targets: typeof editor.targets,
+  ) {
+    const displayed = targets.find((target) => target.file_id === selected.display_file_id);
+    if (
+      !displayed ||
+      displayed.values.flag !== selected.flag ||
+      displayed.values.rating !== selected.rating
+    )
+      return { error: "This photo changed. Reload the photo before deciding." };
+    const fields = Object.keys(patch) as (keyof PhotoAuthoredPatch)[];
+    if (
+      targets.some((target) =>
+        fields.some(
+          (field) => patch[field] !== undefined && target.values[field] !== displayed.values[field],
+        ),
+      )
+    )
+      return { fileID: selected.display_file_id };
+  }
   async function applyDecision(selected: PhotoBrowseRow, patch: PhotoAuthoredPatch, retry = false) {
     checkingDecision = true;
     try {
@@ -223,13 +243,11 @@
     const id = selected.asset_id;
     await editor.edit({ asset_ids: [id] }, retry ? {} : patch, false, refresh, {
       beforeWrite: () => cull.verifyDecision(),
+      beforeStage: retry ? undefined : (targets) => stageDecision(selected, patch, targets),
       viewed: retry
         ? undefined
         : {
-            file_id: selected.display_file_id,
             content_version_id: selected.content_version_id,
-            flag: selected.flag,
-            rating: selected.rating,
           },
     });
     await tick();

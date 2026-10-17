@@ -413,6 +413,35 @@ it("refuses a decision after another client changes the cached neighbor flag", a
   expect(cull.currentID).toBe("photo-2");
 });
 
+it.each([
+  {
+    name: "missing viewed file",
+    prepared: [preparedPhoto(1, { file_id: "raw-1", file_name: "Photo 1.ARW" })],
+  },
+  {
+    name: "rating differs with the same flag",
+    prepared: [preparedPhoto(1, { values: { ...preparedPhoto(1).values, rating: 4 } })],
+  },
+  {
+    name: "displayed JPEG flag in a pair",
+    prepared: [
+      preparedPhoto(1, { file_id: "raw-1", file_name: "Photo 1.ARW" }),
+      preparedPhoto(1, { values: { ...preparedPhoto(1).values, flag: "pick" } }),
+    ],
+  },
+])("refuses a viewed cull decision before staging: $name", async ({ prepared }) => {
+  vi.mocked(api.preparePhotoAuthored).mockResolvedValue(photoPreparation(prepared));
+  const edit = vi
+    .spyOn(api, "editPhotoAuthored")
+    .mockResolvedValue({ receipt_id: "", before: [], after: [] });
+  const { cull, photos } = await reviewPhoto();
+  await fireEvent.click(await readyButton("Pick (P)"));
+  await screen.findByText("This photo changed. Reload the photo before deciding.");
+  expect(edit).not.toHaveBeenCalled();
+  expect(photos.cullEditor!.dirty).toBe(false);
+  expect(cull.currentID).toBe("photo-1");
+});
+
 it("allows another decision after reconciling its own flag and rating with auto-advance off", async () => {
   const target = preparedPhoto(1);
   const edit = vi.spyOn(api, "editPhotoAuthored").mockImplementation(async (request) => {
@@ -689,45 +718,84 @@ it("fetches only rail photos that are neither displayed nor already held", async
   expect(photos.lookup).not.toHaveBeenCalled();
 });
 
-it("keeps shown-file narrowing on retry and resets it for a fresh decision", async () => {
+it("reuses the held row after a decision on a RAW/JPEG pair", async () => {
   const jpeg = preparedPhoto(1);
   const raw = preparedPhoto(2, {
     asset_id: jpeg.asset_id,
     file_id: "raw-1",
-    values: { ...jpeg.values, flag: "reject" },
+    file_name: "Photo 1.ARW",
   });
   vi.mocked(api.preparePhotoAuthored).mockResolvedValue(photoPreparation([raw, jpeg]));
-  const edit = vi
-    .spyOn(api, "editPhotoAuthored")
-    .mockRejectedValueOnce(new TypeError("Failed to fetch"))
-    .mockResolvedValue({ receipt_id: "decision", before: [], after: [] });
-  const { container } = await reviewPhoto();
-  await fireEvent.click(screen.getByRole("button", { name: "Pick (P)" }));
-  await screen.findByText("Failed to fetch");
-  await fireEvent.click(await readyButton("Retry edit"));
-  await waitFor(() =>
-    expect(container.querySelector(".photo-cull > span[aria-live='polite']")?.textContent).toBe(
-      "Photo 1.jpg: pick (shown file only)",
-    ),
-  );
-  expect(screen.getByRole("alert").textContent?.trim()).toBe(
-    "Photo 1.jpg: changed only the shown file. Its paired file has a different flag.",
-  );
-  expect(edit.mock.calls[1]![0]).toEqual(edit.mock.calls[0]![0]);
-  await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key: "4" });
-  await waitFor(() => expect(edit).toHaveBeenCalledTimes(3));
-  expect(edit.mock.calls[2]![0].patch).toEqual({ rating: 4 });
-  await waitFor(() =>
-    expect(container.querySelector(".photo-cull > span[aria-live='polite']")?.textContent).toBe(
-      "Photo 1.jpg: 4 stars",
-    ),
-  );
-  expect(
-    (edit.mock.calls[2]![0].targets as api.PhotoAuthoredEditTarget[]).map(
-      (target) => target.file_id,
-    ),
-  ).toEqual(["raw-1", "file-1"]);
+  vi.spyOn(api, "editPhotoAuthored").mockResolvedValue({
+    receipt_id: "pick",
+    before: [raw, jpeg],
+    after: [raw, jpeg].map((target) => ({
+      ...target,
+      revision: 2,
+      values: { ...target.values, flag: "pick" },
+    })),
+  });
+  const { cull, photos } = await reviewPhoto(photo(1), true);
+  vi.mocked(photos.lookupMany).mockResolvedValue([photo(2)]);
+  await act(() => {
+    cull.run = {
+      ...cull.run!,
+      ids: ["photo-1", "photo-2"],
+      checkpoint: { ...cull.run!.checkpoint, pass: ["photo-1", "photo-2"] },
+    };
+  });
+  await screen.findByRole("button", { name: "Show Photo 2.jpg" });
+  await screen.findByText("Photo 1.jpg");
+  const lookups = vi.mocked(photos.lookup).mock.calls.length;
+  await fireEvent.click(await readyButton("Pick (P)"));
+  await screen.findByText("Photo 2.jpg");
+  await fireEvent.click(await readyButton("Previous"));
+  await screen.findByText("Photo 1.jpg");
+  expect(photos.lookup).toHaveBeenCalledTimes(lookups);
 });
+
+it.each([
+  ["different flags", { flag: "reject" }, "p", "4", "file-1", ["file-1"]],
+  ["different ratings", { rating: 2 }, "4", "p", "file-1", ["file-1"]],
+  ["equal pair", {}, "p", "4", "", ["raw-1", "file-1"]],
+] as const)(
+  "keeps shown-file narrowing on retry and resets it for a fresh decision: %s",
+  async (_name, values, key, nextKey, fileID, targets) => {
+    const jpeg = preparedPhoto(1);
+    const raw = preparedPhoto(2, {
+      asset_id: jpeg.asset_id,
+      file_id: "raw-1",
+      values: { ...jpeg.values, ...values },
+    });
+    vi.mocked(api.preparePhotoAuthored).mockResolvedValue(photoPreparation([raw, jpeg]));
+    const edit = vi
+      .spyOn(api, "editPhotoAuthored")
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValue({ receipt_id: "decision", before: [], after: [] });
+    const { photos, container } = await reviewPhoto();
+    const shell = container.querySelector(".photo-cull")!;
+    await fireEvent.keyDown(shell, { key });
+    await screen.findByText("Failed to fetch");
+    await fireEvent.click(await readyButton("Retry edit"));
+    await readyButton("Pick (P)");
+    expect(edit).toHaveBeenCalledTimes(2);
+    for (const [request] of edit.mock.calls)
+      expect(Object.values(request.targets).map((target) => target.file_id)).toEqual(targets);
+    expect(photos.cullEditor!.fileID).toBe(fileID);
+    if (fileID)
+      await waitFor(() =>
+        expect(screen.getByRole("alert").textContent).toContain("changed only the shown file"),
+      );
+    await fireEvent.keyDown(shell, { key: nextKey });
+    await waitFor(() => expect(edit).toHaveBeenCalledTimes(3));
+    await readyButton("Pick (P)");
+    expect(Object.values(edit.mock.calls[2]![0].targets).map((target) => target.file_id)).toEqual([
+      "raw-1",
+      "file-1",
+    ]);
+    expect(photos.cullEditor!.fileID).toBe("");
+  },
+);
 
 it("checks saved progress before Undo when the saved run is unchanged", async () => {
   vi.stubGlobal("indexedDB", new IDBFactory());

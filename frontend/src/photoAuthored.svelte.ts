@@ -171,12 +171,12 @@ export class PhotoAuthoredEditor {
     this.validating = false;
     this.concealed = false;
   }
-  async prepare(scope: api.PhotoAuthoredPrepareRequest, reload = false) {
+  async prepare(scope: api.PhotoAuthoredPrepareRequest, reload = false, keepError = false) {
     this.read.abort();
     const controller = (this.read = new AbortController());
     const signal = AbortSignal.any([controller.signal, this.controller.signal]);
     this.loading = true;
-    this.error = "";
+    if (!keepError) this.error = "";
     const previous = reload ? new Set(this.targets.map((target) => target.file_id)) : undefined;
     try {
       const prepared = await this.request(() =>
@@ -218,7 +218,7 @@ export class PhotoAuthoredEditor {
       if (!signal.aborted) this.loading = false;
     }
   }
-  async reload() {
+  async reload(keepError = false) {
     if (this.busy || this.loading || !this.targets.length) return;
     await this.prepare(
       {
@@ -227,6 +227,7 @@ export class PhotoAuthoredEditor {
         skip_unavailable: true,
       },
       true,
+      keepError,
     );
   }
   reviewMembers() {
@@ -331,16 +332,15 @@ export class PhotoAuthoredEditor {
       keywords,
       rotationDelta,
       viewed,
+      beforeStage,
       beforeWrite,
     }: {
       keywords?: api.PhotoKeywordEdit[];
       rotationDelta?: api.PhotoAuthoredEditRequest["rotation_delta"];
-      viewed?: {
-        file_id: string;
-        content_version_id: string;
-        flag: api.PhotoBrowseRow["flag"];
-        rating: number;
-      };
+      viewed?: { content_version_id: string };
+      beforeStage?: (
+        targets: PhotoAuthoredEditor["targets"],
+      ) => { error?: string; fileID?: string } | void;
       beforeWrite?: () => Promise<boolean>;
     } = {},
   ) {
@@ -358,38 +358,25 @@ export class PhotoAuthoredEditor {
       if (this.error) return;
     }
     if (this.conflict) return;
-    if (
-      viewed &&
-      !this.files.some(
-        (target) =>
-          target.file_id === viewed.file_id &&
-          target.values.flag === viewed.flag &&
-          target.values.rating === viewed.rating,
-      )
-    ) {
-      this.error = "This photo changed. Reload the photo before deciding.";
+    if (!this.targets.length) return;
+    const staging = beforeStage?.(this.targets);
+    if (staging?.error) {
+      this.error = staging.error;
       this.conflict = true;
       return;
     }
-    if (!this.targets.length) return;
+    if (staging?.fileID) this.fileID = staging.fileID;
     if (viewed) {
-      this.targets = this.targets.map((target) =>
-        target.file_id === viewed.file_id
-          ? { ...target, content_version_id: viewed.content_version_id }
-          : target,
-      );
-      const displayed = this.targets.find((target) => target.file_id === viewed.file_id)!;
-      const fields = Object.keys(patch) as (keyof api.PhotoAuthoredPatch)[];
-      if (
-        this.targets.some((target) =>
-          fields.some(
-            (field) =>
-              patch[field] !== undefined && target.values[field] !== displayed.values[field],
-          ),
-        )
-      )
-        this.fileID = viewed.file_id;
+      this.targets = this.targets.map((target) => ({
+        ...target,
+        content_version_id: viewed.content_version_id,
+      }));
     }
+    const draft = viewed && {
+      patch: this.patch,
+      rotationDelta: this.rotationDelta,
+      keywords: this.keywords,
+    };
     this.stage(patch, keywords);
     if (rotationDelta !== undefined) {
       const current = { ...this.patch };
@@ -453,6 +440,11 @@ export class PhotoAuthoredEditor {
         this.error = this.failure(cause);
         if (cause instanceof APIError && cause.errors.length) this.error = cause.errors.join("; ");
         this.conflict = cause instanceof APIError && [404, 409, 412].includes(cause.status);
+        if (this.conflict && draft) {
+          this.patch = draft.patch;
+          this.rotationDelta = draft.rotationDelta;
+          this.keywords = draft.keywords;
+        }
       }
     } finally {
       this.endWrite(write);
