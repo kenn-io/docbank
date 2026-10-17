@@ -1,15 +1,27 @@
 package telemetry
 
+import (
+	_ "embed"
+	"encoding/json/v2"
+)
+
+//go:embed search_types.json
+var searchTypesJSON []byte
+
+var searchTypes map[string]string
+
+func init() {
+	if err := json.Unmarshal(searchTypesJSON, &searchTypes); err != nil {
+		panic(err)
+	}
+}
+
 // SearchType groups the executed search path without sending query text.
 func SearchType(mode string) string {
-	switch mode {
-	case "semantic", "similar":
-		return "semantic"
-	case "hybrid":
-		return "hybrid"
-	default:
-		return "text"
+	if value, ok := searchTypes[mode]; ok {
+		return value
 	}
+	return searchTypes["default"]
 }
 
 // DocumentAdded reports an addition claimed by a committed import transaction.

@@ -1,12 +1,10 @@
+import searchTypes from "../../internal/telemetry/search_types.json";
 import { sessionResponse } from "./api-transport.js";
 
 export function reportAction(session: string, event: string, value = ""): void {
-  const search_type =
-    value === "semantic" || value === "similar"
-      ? "semantic"
-      : value === "hybrid"
-        ? "hybrid"
-        : "text";
+  const search_type = Object.hasOwn(searchTypes, value)
+    ? searchTypes[value as keyof typeof searchTypes]
+    : searchTypes.default;
   void sessionResponse("/api/daemon/telemetry/events", {
     session,
     method: "POST",
