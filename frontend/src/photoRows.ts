@@ -4,6 +4,8 @@ import type {
   PhotoAuthoredReceipt,
 } from "./generated/docbank.js";
 
+import type { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
+
 export type { PhotoStack };
 export type PhotoBrowseRow = WirePhotoBrowseRow & { stack?: PhotoStack };
 
@@ -20,7 +22,7 @@ export function photoRows(page: {
 /** Patch file values and authoritative asset revisions from an accepted receipt. */
 export function patchPhotoRows(
   rows: PhotoBrowseRow[],
-  receipt: PhotoAuthoredReceipt,
+  receipt: Pick<PhotoAuthoredReceipt, "after" | "representatives">,
 ): PhotoBrowseRow[] {
   const files = new Map(receipt.after.map((file) => [file.file_id, file.values]));
   const choices = new Map(
@@ -36,4 +38,25 @@ export function patchPhotoRows(
       ...(choice && { revision: choice.after_revision }),
     };
   });
+}
+
+/** A changed companion's flag can change a loaded stack's representative. */
+export function photoStacksChanged(
+  rows: PhotoBrowseRow[],
+  receipt: PhotoAuthoredReceipt,
+  ...editors: (Pick<PhotoAuthoredEditor, "targets" | "stackTargets"> | undefined)[]
+): boolean {
+  const assets = new Map(rows.map((row) => [row.display_file_id, row.asset_id]));
+  for (const editor of editors)
+    for (const file of [...(editor?.targets ?? []), ...(editor?.stackTargets ?? [])])
+      assets.set(file.file_id, file.asset_id);
+  const before = new Map(receipt.before.map((file) => [file.file_id, file.values.flag]));
+  const affected = new Set([
+    ...(receipt.representatives ?? []).map((change) => change.asset_id),
+    ...receipt.after
+      .filter((file) => before.get(file.file_id) !== file.values.flag)
+      .map((file) => assets.get(file.file_id)),
+  ]);
+  // A receipt can mention a companion outside the current preparation, especially on Undo.
+  return rows.some((row) => row.stack && (affected.has(row.asset_id) || affected.has(undefined)));
 }

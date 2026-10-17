@@ -16773,6 +16773,9 @@ components:
           type:
             - string
             - "null"
+        reset_preference:
+          description: Reset the display preference, including when changing the burst gap. Conflicts with preference.
+          type: boolean
       type: object
       x-go-type: api.SetPhotoSettingsRequest
       x-go-type-import:

@@ -906,3 +906,90 @@ it("allows another tab to regroup but detects its progress changes", async () =>
   expect(await other.verifyDecision()).toBe(false);
   expect(other.stale).toBe(true);
 });
+
+it.each(["settings", "grouping"])("recovers the session after a 401 from Cull %s", async (site) => {
+  const store = storage();
+  const ids = [photo(1).asset_id, photo(2).asset_id];
+  await store.replace({
+    ids,
+    checkpoint: {
+      runID: "auth",
+      revision: 0,
+      pass: ids,
+      position: 0,
+      visited: [],
+      skipped: [],
+      unavailable: [],
+      scope: "all",
+      autoAdvance: true,
+    },
+  });
+  const recover = vi.fn();
+  const cull = new PhotoCull("session", store, recover);
+  await cull.restore();
+  const unauthorized = new APIError("Session expired", 401, "unauthorized");
+  if (site === "settings") {
+    vi.spyOn(api, "getPhotoSettings").mockRejectedValue(unauthorized);
+    await cull.checkSettings();
+  } else {
+    vi.mocked(api.groupPhotoStacks).mockRejectedValue(unauthorized);
+    await cull.regroup();
+  }
+  expect(recover).toHaveBeenCalledExactlyOnceWith(unauthorized);
+  expect(cull.stackError).toBe("Session expired");
+});
+
+it("reuses pass navigation until the pass or grouping changes", async () => {
+  const ids = Array.from({ length: 100 }, (_, index) => photo(index + 1).asset_id);
+  const pass = [...ids];
+  const scans = vi.spyOn(pass, Symbol.iterator);
+  const cull = new PhotoCull("session", {
+    saved: vi.fn(),
+    load: vi.fn(),
+    replace: vi.fn(),
+    checkpoint: vi.fn(),
+  });
+  cull.run = {
+    ids,
+    groups: [ids.slice(0, 2), ids.slice(2, 4)],
+    checkpoint: {
+      runID: "cached",
+      revision: 0,
+      pass,
+      position: 0,
+      visited: [],
+      skipped: [],
+      unavailable: [],
+      scope: "all",
+      autoAdvance: true,
+    },
+  };
+  cull.moveFrame(1);
+  expect(cull.currentID).toBe(ids[1]);
+  scans.mockClear();
+  cull.moveStack(1);
+  expect(cull.currentID).toBe(ids[2]);
+  cull.moveFrame(1);
+  expect(cull.currentID).toBe(ids[3]);
+  expect(scans).not.toHaveBeenCalled();
+  cull.run = {
+    ...cull.run!,
+    groups: [
+      [ids[0]!, ids[3]!],
+      [ids[1]!, ids[2]!],
+    ],
+  };
+  cull.moveFrame(-1);
+  expect(cull.currentID).toBe(ids[0]);
+  cull.run = {
+    ...cull.run!,
+    checkpoint: {
+      ...cull.run!.checkpoint,
+      pass: [ids[3]!, ids[2]!, ids[0]!, ids[1]!],
+      position: 2,
+    },
+  };
+  cull.moveFrame(-1);
+  expect(cull.currentID).toBe(ids[3]);
+  await cull.flush();
+});
