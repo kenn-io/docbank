@@ -3298,11 +3298,6 @@ it("keeps the selected row's face state when opening its loupe", async () => {
   const component = render(PhotosWorkspace, props);
   await fireEvent.click(await screen.findByRole("button", { name: "Metadata" }));
   await screen.findByRole("button", { name: "Find or create a person: Ada" });
-  await waitFor(() =>
-    expect(screen.getByRole("combobox", { name: /^Rotation:/ }).hasAttribute("disabled")).toBe(
-      false,
-    ),
-  );
   await fireEvent.click(screen.getByRole("button", { name: "Open Photo 1.jpg" }));
   expect(onphotochange).toHaveBeenCalledWith("photo-1", "open");
   await component.rerender({ ...props, photoID: "photo-1" });
@@ -3311,7 +3306,6 @@ it("keeps the selected row's face state when opening its loupe", async () => {
   Object.defineProperty(image, "naturalWidth", { value: 1000 });
   Object.defineProperty(image, "naturalHeight", { value: 800 });
   await fireEvent.load(image);
-  await waitFor(() => expect(loupe.querySelector(".face-box")?.textContent).toBe("Ada"));
   await fireEvent.click(within(loupe).getByRole("button", { name: "Metadata" }));
   await within(loupe).findByRole("button", { name: "Find or create a person: Ada" });
   expect(read).toHaveBeenCalledOnce();

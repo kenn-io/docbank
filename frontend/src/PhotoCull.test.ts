@@ -1282,7 +1282,7 @@ it("reloads cached stack siblings after preparation loses a member", async () =>
   );
 });
 
-it("loads faces once when cull mounts", async () => {
+it("loads face closeups on mount and on the next photo", async () => {
   const read = vi
     .spyOn(api, "listPhotoFaces")
     .mockResolvedValueOnce(photoFacePage())

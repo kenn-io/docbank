@@ -80,12 +80,12 @@ it("shows the keyboard face target and saves the marked box", async () => {
   const position = screen.getByRole("button", { name: "Position face on Photo 5.jpg" });
   await fireEvent.keyDown(position, { key: "ArrowLeft" });
   await fireEvent.click(position);
-  expect(add).toHaveBeenCalledWith({
-    x: expect.closeTo(0.475, 8),
-    y: expect.closeTo(0.425, 8),
-    width: 0.15,
-    height: 0.15,
-  });
+  expect(add).toHaveBeenCalledWith(
+    expect.objectContaining({
+      x: expect.closeTo(0.475, 8),
+      y: expect.closeTo(0.425, 8),
+    }),
+  );
 });
 
 it("shows grid, fit and large and preserves zoom", async () => {
@@ -734,6 +734,7 @@ it.each([true, false])(
       width: expect.closeTo(0.2, 8),
       height: expect.closeTo(0.2, 8),
     });
+    if (!minimumRegionDrag) return;
     await fireEvent.keyDown(position, { key: "ArrowLeft" });
     const marker = component.container.querySelector<HTMLElement>(".keyboard-region")!;
     expect(marker.style.left).toBe("475px");

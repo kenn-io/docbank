@@ -1,14 +1,6 @@
-import { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
-import { Photos } from "./photos.svelte.js";
-import {
-  photo,
-  photoFace,
-  photoPersonAssertion,
-  photoMetadataResponse,
-} from "./photo-test-fixtures.js";
 import { createHash } from "node:crypto";
 import { afterEach, expect, it, vi } from "vite-plus/test";
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import App from "./App.svelte";
 import { batchTagRequestDigest } from "./batch-tags.js";
 
@@ -2366,87 +2358,3 @@ it("refreshes open audit history when a pending tag change completes", async () 
   await screen.findByText("1 recorded event");
   expect(screen.queryByText("No events on this page")).toBeNull();
 });
-
-it.each([true, false])(
-  "opens a person Library with empty search only when accepted (refused=%s)",
-  async (refused) => {
-    prepareKeyboardApp();
-    installKeyboardBackend();
-    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
-    const original = vi.mocked(globalThis.fetch).getMockImplementation()!;
-    const item = photo(1);
-    const personID = "00000000-0000-4000-8000-000000000001";
-    vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
-      const url = String(input);
-      if (url === "/api/v1/photos/hidden") return Response.json({ configured: false });
-      if (url === "/api/v1/photos/albums") return Response.json([]);
-      if (url.endsWith("/photos/assets/query"))
-        return Response.json({ items: [item], total: 1, facets: [] });
-      if (url.endsWith("/faces"))
-        return Response.json({
-          people: [{ person_id: personID, display_name: "Ada" }],
-          faces: [photoFace({ content_version_id: item.content_version_id })],
-          assertions: [
-            photoPersonAssertion({
-              content_version_id: item.content_version_id,
-              person_id: personID,
-            }),
-          ],
-        });
-      return photoMetadataResponse(url, init as RequestInit) ?? original(input, init);
-    });
-    render(App);
-    await screen.findByRole("cell", { name: "zeta.txt" });
-    await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
-    const search = await screen.findByRole("searchbox", { name: "Search photos" });
-    await fireEvent.input(search, { target: { value: "stale search" } });
-    await fireEvent.click(screen.getByRole("button", { name: /^Search$/ }));
-    const image = await screen.findByRole("button", { name: `Select ${item.name}` });
-    await fireEvent.doubleClick(image);
-    const loupe = await screen.findByRole("dialog", { name: /^Photo viewer,/ });
-    await fireEvent.click(within(loupe).getByRole("button", { name: "Metadata" }));
-    const card = await within(loupe).findByRole("button", { name: "Ada" });
-    vi.spyOn(PhotoAuthoredEditor.prototype, "canChangeTarget").mockReturnValue(true);
-    const setQuery = Photos.prototype.setQuery;
-    const query = vi.spyOn(Photos.prototype, "setQuery");
-    if (refused) query.mockReturnValue(undefined);
-    const before = location.href;
-    await fireEvent.click(card);
-    expect(query).toHaveBeenCalledWith(
-      expect.objectContaining({
-        text: "",
-        sort: { field: "capture_time", direction: "desc" },
-        filters: { person_ids: [personID] },
-      }),
-    );
-    if (refused) {
-      expect(location.href).toBe(before);
-      expect(screen.getByRole("dialog", { name: /^Photo viewer,/ })).toBe(loupe);
-      query.mockImplementation(setQuery);
-      const accessReads = () =>
-        vi
-          .mocked(globalThis.fetch)
-          .mock.calls.filter(([url]) => String(url).endsWith("/photos/hidden")).length;
-      const previousReads = accessReads();
-      await act(async () => {
-        await fireEvent(document, new Event("visibilitychange"));
-      });
-      await waitFor(() => expect(accessReads()).toBeGreaterThan(previousReads));
-      expect(query).toHaveBeenCalledTimes(1);
-      expect(
-        (screen.getByRole("searchbox", { name: "Search photos" }) as HTMLInputElement).value,
-      ).toBe("stale search");
-      await fireEvent.click(card);
-      await waitFor(() =>
-        expect(screen.queryByRole("dialog", { name: /^Photo viewer,/ })).toBeNull(),
-      );
-      expect(query).toHaveBeenCalledTimes(2);
-    } else {
-      expect(
-        (screen.getByRole("searchbox", { name: "Search photos" }) as HTMLInputElement).value,
-      ).toBe("");
-      expect(screen.queryByRole("dialog", { name: /^Photo viewer,/ })).toBeNull();
-    }
-  },
-);

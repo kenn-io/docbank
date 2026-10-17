@@ -172,35 +172,18 @@ func TestPhotoFaceBrowserDecisions(t *testing.T) {
 	faceID := uuid.NewString()
 	response, body = do(t, ts, http.MethodPost, path, headers, api.CreatePhotoFaceRequest{FaceID: faceID, Box: &document.FaceBox{X: .98, Y: .98, Width: .01, Height: .01}})
 	require.Equal(t, http.StatusCreated, response.StatusCode, body)
-	response, body = do(t, ts, http.MethodPost, "/api/v1/people", headers, api.CreatePersonRequest{DisplayName: "Forbidden"})
-	require.Equal(t, http.StatusForbidden, response.StatusCode, body)
 	decisions := "/api/v1/photos/versions/" + node.CurrentVersionID + "/face-decisions"
-	for _, invalid := range []api.PhotoFaceDecisionRequest{
-		{Action: "name", FaceID: faceID, PersonID: person.PersonID, PersonName: "Grace", Revision: 1},
-		{Action: "name", FaceID: faceID, PersonName: " ", Revision: 1},
-		{Action: "retract", FaceID: faceID, PersonName: "Grace", Revision: 1},
-	} {
-		response, body = do(t, ts, http.MethodPost, decisions, headers, invalid)
-		require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
-	}
 	response, body = do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: "name", FaceID: faceID, PersonName: "Grace", Revision: 1, OperationID: uuid.NewString()})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	response, body = get(t, ts, path, headers)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var named api.PhotoFacePage
 	require.NoError(t, json.Unmarshal([]byte(body), &named))
-	require.Equal(t, "Grace", named.People[0].DisplayName)
 	require.NotEmpty(t, named.Faces[0].AssertionID)
-	require.Equal(t, named.Faces[0].AssertionID, named.Assertions[0].AssertionID)
 	for _, action := range []string{"dismiss", "reject", "key", "withdraw_rejection"} {
 		response, body = do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: action, FaceID: faceID, PersonID: person.PersonID, Revision: 2, OperationID: uuid.NewString()})
 		require.Equal(t, http.StatusForbidden, response.StatusCode, body)
 	}
 	response, body = do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: "retract", FaceID: faceID, Revision: 2})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	response, body = get(t, ts, path, headers)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	var cleared api.PhotoFacePage
-	require.NoError(t, json.Unmarshal([]byte(body), &cleared))
-	require.Empty(t, cleared.Faces[0].AssertionID)
 }

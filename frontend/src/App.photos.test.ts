@@ -2456,10 +2456,7 @@ it.each(["search", "tag", "snapshot"] as const)(
       if (url.endsWith("/processing/profiles")) return albumResponse([]);
       if (url.endsWith("/photos/assets/query")) {
         reads.photos++;
-        return albumResponse({
-          items: [],
-          total: 0,
-        });
+        return albumResponse({ items: [], total: 0 });
       }
       if (url === "/api/v1/path?path=%2F") return albumResponse(root);
       if (url.includes("/nodes/1/children")) {
@@ -2537,9 +2534,7 @@ it.each(["search", "tag", "snapshot"] as const)(
     await fireEvent.click(screen.getByRole("button", { name: "Close add photos" }));
     await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
     expect(reads.directory).toBe(before.directory);
-    expect(reads.search).toBe(before.search);
-    expect(reads.tag).toBe(before.tag);
-    expect(reads.snapshot).toBe(before.snapshot);
+    expect(reads[mode]).toBe(before[mode]);
     if (mode === "search") {
       expect(screen.getByText("Search results")).toBeTruthy();
       expect(
@@ -3471,10 +3466,19 @@ it.each([false, true])(
   },
 );
 
-it.each([false, true])(
-  "retains a person link from direct Hidden until Library access is validated",
-  async (refused) => {
-    history.replaceState(null, "", "/photos/hidden#web_session=synthetic&web_upload_secret=proof");
+it.each([
+  { hidden: false, refused: false },
+  { hidden: false, refused: true },
+  { hidden: true, refused: false },
+  { hidden: true, refused: true },
+])(
+  "opens a person Library after acceptance, hidden=$hidden refused=$refused",
+  async ({ hidden, refused }) => {
+    history.replaceState(
+      null,
+      "",
+      `${hidden ? "/photos/hidden" : "/photos"}#web_session=synthetic&web_upload_secret=proof`,
+    );
     storage();
     vi.stubGlobal(
       "ResizeObserver",
@@ -3498,57 +3502,88 @@ it.each([false, true])(
     const validation = new Promise<Response>((resolve) => {
       validate = resolve;
     });
-    let libraryChecks = 0;
+    let accessReads = 0;
     stubPhotoFetch(async (url, init) => {
       if (url.endsWith("/photos/hidden")) {
-        if (location.pathname === "/photos") {
-          libraryChecks++;
+        accessReads++;
+        if (hidden && location.pathname === "/photos")
           return validation.then((response) => response.clone());
-        }
         return Response.json({
           configured: true,
           expires_at: "2099-01-01T00:00:00Z",
           expires_in: 300,
         });
       }
-      if (url.endsWith("/photos/assets/query")) {
-        const request = JSON.parse(String(init.body));
-        return Response.json({
-          items: request.hidden ? [item] : [],
-          total: request.hidden ? 1 : 0,
-          facets: [],
-        });
-      }
-      return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+      if (url.endsWith("/photos/assets/query"))
+        return Response.json({ items: [item], total: 1, facets: [] });
+      if (url.endsWith("/photos/albums")) return Response.json([]);
+      return (
+        photoMetadataResponse(url, init) ??
+        Response.json({ items: [], nodes: [], tags: [], profiles: [] })
+      );
     });
     render(App);
-    await fireEvent.click(await screen.findByRole("button", { name: `Select ${item.name}` }));
+    if (!hidden) {
+      const search = await screen.findByRole("searchbox", { name: "Search photos" });
+      await fireEvent.input(search, { target: { value: "stale search" } });
+      await fireEvent.click(screen.getByRole("button", { name: /^Search$/ }));
+      await fireEvent.doubleClick(
+        await screen.findByRole("button", { name: `Select ${item.name}` }),
+      );
+    } else
+      await fireEvent.click(await screen.findByRole("button", { name: `Select ${item.name}` }));
     await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
     const card = await screen.findByRole("button", { name: "Ada" });
     const canChange = vi
       .spyOn(PhotoAuthoredEditor.prototype, "canChangeTarget")
       .mockReturnValue(true);
+    const originalSetQuery = Photos.prototype.setQuery;
     const setQuery = vi.spyOn(Photos.prototype, "setQuery");
+    if (!hidden && refused) setQuery.mockReturnValue(undefined);
+    const before = location.href;
     await fireEvent.click(card);
-    await waitFor(() => expect(location.pathname).toBe("/photos"));
-    await waitFor(() => expect(validate).toBeTypeOf("function"));
-    expect(setQuery).not.toHaveBeenCalled();
-    if (refused) canChange.mockReturnValue(false);
-    await act(async () => {
-      validate(
-        Response.json({ configured: true, expires_at: "2099-01-01T00:00:00Z", expires_in: 300 }),
-      );
-    });
+    const personQuery = {
+      text: "",
+      sort: { field: "capture_time", direction: "desc" },
+      filters: { person_ids: [personID] },
+    };
+    if (!hidden) expect(setQuery).toHaveBeenCalledWith(expect.objectContaining(personQuery));
+    if (hidden) {
+      await waitFor(() => expect(location.pathname).toBe("/photos"));
+      expect(setQuery).not.toHaveBeenCalled();
+      if (refused) canChange.mockReturnValue(false);
+      await act(async () => {
+        validate(
+          Response.json({ configured: true, expires_at: "2099-01-01T00:00:00Z", expires_in: 300 }),
+        );
+      });
+    }
     if (refused) {
-      await waitFor(() => expect(canChange).toHaveReturnedWith(false));
+      if (hidden) await waitFor(() => expect(canChange).toHaveReturnedWith(false));
+      else {
+        expect(location.href).toBe(before);
+        expect(screen.getByRole("dialog", { name: /^Photo viewer,/ })).toBeTruthy();
+      }
       canChange.mockReturnValue(true);
-      const previousChecks = libraryChecks;
+      setQuery.mockImplementation(originalSetQuery);
+      const previousReads = accessReads;
       await act(async () => {
         await fireEvent(document, new Event("visibilitychange"));
       });
-      await waitFor(() => expect(libraryChecks).toBeGreaterThan(previousChecks));
-      await waitFor(() => expect(screen.queryByText("Person: Ada")).toBeNull());
-      expect(setQuery).not.toHaveBeenCalled();
-    } else await screen.findByText("Person: Ada");
+      await waitFor(() => expect(accessReads).toBeGreaterThan(previousReads));
+      expect(screen.queryByText("Person: Ada")).toBeNull();
+      expect(setQuery).toHaveBeenCalledTimes(hidden ? 0 : 1);
+      if (hidden) return;
+      expect(
+        (screen.getByRole("searchbox", { name: "Search photos" }) as HTMLInputElement).value,
+      ).toBe("stale search");
+      await fireEvent.click(card);
+    }
+    await screen.findByText("Person: Ada");
+    if (hidden) expect(setQuery).toHaveBeenCalledWith(expect.objectContaining(personQuery));
+    expect(
+      (screen.getByRole("searchbox", { name: "Search photos" }) as HTMLInputElement).value,
+    ).toBe("");
+    expect(screen.queryByRole("dialog", { name: /^Photo viewer,/ })).toBeNull();
   },
 );

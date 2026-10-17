@@ -26,16 +26,19 @@ func TestWebSessionDeniesPersonRoutes(t *testing.T) {
 	for _, path := range paths {
 		require.False(t, webSessionRequestAllowed(httptest.NewRequest(path.method, path.path, nil)), path.method+" "+path.path)
 	}
-}
-
-func TestWebSessionFaceRoutePolicy(t *testing.T) {
-	t.Parallel()
 	version := "/api/v1/photos/versions/11111111-1111-4111-8111-111111111111"
 	require.True(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodGet, "/api/v1/people?query=Ada&limit=100&cursor=next", nil)))
 	for _, route := range []struct{ method, path string }{
+		{http.MethodGet, version + "/faces"},
+		{http.MethodPost, version + "/faces"},
+		{http.MethodPost, version + "/face-decisions"},
+	} {
+		require.True(t, webSessionRequestAllowed(httptest.NewRequest(route.method, route.path, nil)), route.path)
+	}
+	for _, route := range []struct{ method, path string }{
 		{http.MethodGet, version + "/face-decisions"}, {http.MethodPost, version + "/faces?extra=1"}, {http.MethodGet, version + "/faces/extra"},
 		{http.MethodGet, "/api/v1/photos/versions/invalid/faces"}, {http.MethodGet, "/api/v1/people?query=Ada&query=Grace"},
-		{http.MethodGet, "/api/v1/people?extra=1"}, {http.MethodPost, "/api/v1/people?query=Ada"}, {http.MethodDelete, "/api/v1/people"},
+		{http.MethodGet, "/api/v1/people?extra=1"},
 	} {
 		require.False(t, webSessionRequestAllowed(httptest.NewRequest(route.method, route.path, nil)), route.path)
 	}

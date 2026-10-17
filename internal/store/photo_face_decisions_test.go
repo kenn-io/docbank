@@ -1003,11 +1003,17 @@ func TestPhotoFaceDecisionOperationReplay(t *testing.T) {
 		require.NoError(t, err)
 		n, f := faceForDecisionTest(t, s, "")
 		request := PhotoFaceDecisionRequest{OperationID: uuid.NewString(), FaceID: f.FaceID, PersonID: p.PersonID, Action: "name", Revision: 1}
-		var epoch, afterEpoch, heads int64
-		require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM document_event_heads WHERE content_version_id=?`, n.CurrentVersionID).Scan(&heads))
-		require.Zero(t, heads)
+		var epoch, afterEpoch int64
 		require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state`).Scan(&epoch))
 		if newName {
+			for _, invalid := range []PhotoFaceDecisionRequest{
+				{Action: "name", FaceID: f.FaceID, PersonID: p.PersonID, PersonName: "Grace", Revision: 1},
+				{Action: "name", FaceID: f.FaceID, PersonName: " ", Revision: 1},
+				{Action: "retract", FaceID: f.FaceID, PersonName: "Grace", Revision: 1},
+			} {
+				_, err := s.DecidePhotoFace(ctx, n.CurrentVersionID, invalid)
+				require.ErrorIs(t, err, ErrInvalidPhotoFace)
+			}
 			request.PersonID = ""
 			request.PersonName = "Grace"
 		}

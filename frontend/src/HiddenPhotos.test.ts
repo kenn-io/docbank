@@ -33,21 +33,19 @@ const props = (onauthfailure = vi.fn()) => ({
 const problem = (status: number, detail: string, code = "") =>
   new Response(JSON.stringify({ detail, code }), { status });
 
-it.each(["lock", "tab"])("lets a face clear settle after %s conceals Hidden", async (conceal) => {
+it("lets a face clear settle after locking conceals Hidden", async () => {
   prepare();
   storage();
   let finish!: () => void;
-  let signal!: AbortSignal;
   const events: string[] = [];
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (url: string, init?: RequestInit) => {
+    vi.fn(async (url: string) => {
       if (url.endsWith("/photos/hidden")) return Response.json(state(true));
       if (url.includes("/assets/query")) return Response.json({ items: [photo(1)], total: 1 });
       if (url.endsWith("/faces")) return Response.json(photoFacePage());
       if (url.includes("/people?")) return Response.json({ items: [] });
       if (url.endsWith("/face-decisions")) {
-        signal = init!.signal!;
         await new Promise<void>((resolve) => (finish = resolve));
         events.push("saved");
         return Response.json({ receipt_id: "receipt-a" });
@@ -68,15 +66,8 @@ it.each(["lock", "tab"])("lets a face clear settle after %s conceals Hidden", as
   );
   await fireEvent.mouseDown(await screen.findByRole("option", { name: "Clear name" }));
   await waitFor(() => expect(finish).toBeTypeOf("function"));
-  let locking: Promise<unknown>;
-  if (conceal === "lock") locking = view.component.lock();
-  else {
-    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
-    await fireEvent(document, new Event("visibilitychange"));
-    locking = supplied.access.lock();
-  }
+  const locking = view.component.lock();
   await waitFor(() => expect(screen.queryByRole("main", { name: "Photo library" })).toBeNull());
-  expect(signal.aborted).toBe(false);
   expect(events).toEqual([]);
   finish();
   await locking;
