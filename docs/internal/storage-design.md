@@ -433,7 +433,7 @@ MIME data, or content versions. `photo_assets` owns asset kind, exclusion,
 revision, a nullable `representative_rank`, and selected or overridden display pointers.
 The highest representative rank within a burst records its latest explicit choice;
 a choice or its Undo advances the asset revision and leaves file flags unchanged.
-`photo_settings` owns the vault-wide display preference, `burst_gap_seconds`
+`photo_library_settings` owns the vault-wide display preference, `burst_gap_seconds`
 (default 2, range 1–30), and their shared revision. One settings update can
 change both values; API callers use `reset_preference: true` to reset the
 preference while changing the gap. Audited vaults refuse burst-gap changes,
