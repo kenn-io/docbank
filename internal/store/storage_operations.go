@@ -47,6 +47,8 @@ type StorageOperationCreate struct {
 	RequestJSON     string
 	PlanJSON        string
 	TotalObjects    int64
+	// ActionSurface is the interface that started a Photos import.
+	ActionSurface string
 }
 
 type StorageOperationStoreReference struct {
@@ -153,6 +155,9 @@ func (s *Store) CreateStorageOperation(
 		if err != nil {
 			return fmt.Errorf("creating storage operation: %w", err)
 		}
+		if err := insertImportClaimTx(ctx, tx, PhotoImportOwner, id, input.ActionSurface); err != nil {
+			return err
+		}
 		for _, reference := range storeReferences {
 			if _, err := tx.ExecContext(ctx, `
 				INSERT INTO storage_operation_stores(operation_id,store_id,role)
@@ -176,11 +181,21 @@ func (s *Store) CreateStorageOperation(
 // CreateLocalOperation records a durable job that references no blob store.
 // It lists, reports progress, cancels, and resumes like a storage operation.
 func (s *Store) CreateLocalOperation(ctx context.Context, kind, requestJSON string) (StorageOperation, error) {
+	return s.CreateStorageOperation(ctx, localOperation(kind, requestJSON, ""))
+}
+
+// CreatePhotoImport records a queued Photos import and the interface that
+// started it.
+func (s *Store) CreatePhotoImport(ctx context.Context, requestJSON, surface string) (StorageOperation, error) {
+	return s.CreateStorageOperation(ctx, localOperation(StorageOperationKindPhotoImport, requestJSON, surface))
+}
+
+func localOperation(kind, requestJSON, surface string) StorageOperationCreate {
 	digest := sha256.Sum256([]byte(requestJSON))
-	return s.CreateStorageOperation(ctx, StorageOperationCreate{
+	return StorageOperationCreate{
 		Kind: kind, RequestDigest: hex.EncodeToString(digest[:]),
-		RequestJSON: requestJSON, PlanJSON: "{}",
-	})
+		RequestJSON: requestJSON, PlanJSON: "{}", ActionSurface: surface,
+	}
 }
 
 // FinalizeLocalOperation reports whether a cancel request already reached a

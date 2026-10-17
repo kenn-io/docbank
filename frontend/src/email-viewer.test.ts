@@ -3,7 +3,7 @@ import {
   sanitizeEmail,
   resolveCID,
   rasterSize,
-  validFrameEscape,
+  validFrameAction,
   readBounded,
   readEmailPart,
   type EmailMetadata,
@@ -99,25 +99,29 @@ describe("offline email presentation", () => {
     controller.abort();
     await expect(readBounded(new Response("old"), 10, controller.signal)).rejects.toThrow();
   });
-  it("accepts only the exact opaque frame and current nonce escape message", () => {
-    const frame = {} as Window;
-    const message = { channel: "docbank-email", nonce: "fresh", action: "escape" };
-    expect(
-      validFrameEscape(
-        { source: frame, origin: "null", data: message } as MessageEvent,
-        frame,
-        "fresh",
-      ),
-    ).toBe(true);
-    for (const event of [
-      { source: {}, origin: "null", data: message },
-      { source: frame, origin: "https://sender.test", data: message },
-      { source: frame, origin: "null", data: { ...message, nonce: "old" } },
-      { source: frame, origin: "null", data: { ...message, extra: 1 } },
-    ]) {
-      expect(validFrameEscape(event as MessageEvent, frame, "fresh")).toBe(false);
-    }
-  });
+  it.each(["escape", "inspect"])(
+    "accepts only the exact opaque frame and current nonce %s message",
+    (action) => {
+      const frame = {} as Window;
+      const message = { channel: "docbank-email", nonce: "fresh", action };
+      expect(
+        validFrameAction(
+          { source: frame, origin: "null", data: message } as MessageEvent,
+          frame,
+          "fresh",
+        ),
+      ).toBe(true);
+      for (const event of [
+        { source: {}, origin: "null", data: message },
+        { source: frame, origin: "https://sender.test", data: message },
+        { source: frame, origin: "null", data: { ...message, nonce: "old" } },
+        { source: frame, origin: "null", data: { ...message, extra: 1 } },
+        { source: frame, origin: "null", data: { ...message, action: "unknown" } },
+      ]) {
+        expect(validFrameAction(event as MessageEvent, frame, "fresh")).toBe(false);
+      }
+    },
+  );
   it("rejects wrong version, generation, occurrence, role, hash, size and corrupt part bytes", async () => {
     const bytes = new TextEncoder().encode("verified body");
     const artifact = {

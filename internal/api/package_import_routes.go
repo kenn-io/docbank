@@ -39,7 +39,7 @@ func handlePackageImport(w http.ResponseWriter, r *http.Request, d Deps, g *gate
 		writeError(w, problem)
 		return
 	}
-	result, err := AdmitPackageImport(r.Context(), d, g, owner, request)
+	result, err := AdmitPackageImport(r.Context(), d, g, owner, request, importActionSurface(r))
 	if err != nil {
 		writePackageError(w, err)
 		return
@@ -48,7 +48,7 @@ func handlePackageImport(w http.ResponseWriter, r *http.Request, d Deps, g *gate
 }
 
 // AdmitPackageImport validates and durably admits one idempotent import job.
-func AdmitPackageImport(ctx context.Context, d Deps, g PackageMutationGate, owner string, request PackageImportRequest) (PackageImportJob, error) {
+func AdmitPackageImport(ctx context.Context, d Deps, g PackageMutationGate, owner string, request PackageImportRequest, surface string) (PackageImportJob, error) {
 	if parsed, err := uuid.Parse(request.OperationID); err != nil || parsed.Version() != 4 ||
 		request.PreflightID == "" || !validPackageName(request.Name) ||
 		utf8.RuneCountInString(request.Party) > 64 || !strings.HasPrefix(request.Into, "/") {
@@ -130,7 +130,7 @@ func AdmitPackageImport(ctx context.Context, d Deps, g PackageMutationGate, owne
 		admitted, beginErr = d.Store.AdmitPackageImport(ctx, run, pkg, store.PackageImportJobRequest{
 			ID: uuid.NewString(), Owner: owner, OperationID: request.OperationID,
 			RequestSHA256: requestHash, PreflightID: preview.PreflightID,
-			PackageID: pkg.PackageID, JobJSON: jobJSON,
+			PackageID: pkg.PackageID, JobJSON: jobJSON, ActionSurface: d.actionSurface(surface),
 		})
 		return beginErr
 	})

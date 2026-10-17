@@ -24,6 +24,7 @@ import (
 )
 
 type uploadRequest struct {
+	surface      string
 	name         string
 	filename     string
 	content      []byte
@@ -76,6 +77,7 @@ func sendUpload(
 	req, err := http.NewRequest(http.MethodPost, tsURL+route+"?"+query.Encode(), &body)
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set(api.ActionSurfaceHeader, in.surface)
 	req.Header.Set(api.BlobHashHeader, in.expectedHash)
 	req.Header.Set(api.BlobSizeHeader, strconv.FormatInt(in.expectedSize, 10))
 	resp, err := client.Do(req)

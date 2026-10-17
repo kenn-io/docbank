@@ -3,6 +3,7 @@ package api_test
 import (
 	"bytes"
 	"encoding/json/v2"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -356,4 +358,48 @@ func ingestAuthorityCounts(t *testing.T, s *testStore) (ingests, labels int) {
 		}
 	}
 	return ingests, labels
+}
+
+// Fail the progress connection after actual additions, before the terminal receipt.
+type failedIngestProgressWriter struct{ http.ResponseWriter }
+
+func (w failedIngestProgressWriter) Write(data []byte) (int, error) {
+	if bytes.Contains(data, []byte(`"added":2`)) {
+		return 0, io.ErrClosedPipe
+	}
+	return w.ResponseWriter.Write(data)
+}
+
+func TestIngestReportsCommittedAdditionsWhenProgressStreamFails(t *testing.T) {
+	t.Setenv("DOCBANK_TELEMETRY_ENABLED", "1")
+	t.Setenv("TELEMETRY_ENABLED", "1")
+	for _, surface := range []string{"", "cli"} {
+		t.Run("surface="+surface, func(t *testing.T) {
+			capture := newActionCollector(t)
+			server, catalog := newTestServer(t, func(d *api.Deps) { d.TelemetryCapture = capture.capture })
+			proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				server.Config.Handler.ServeHTTP(failedIngestProgressWriter{w}, r)
+			}))
+			defer proxy.Close()
+			root := t.TempDir()
+			paths := []string{filepath.Join(root, "first.txt"), filepath.Join(root, "second.txt")}
+			for _, path := range paths {
+				require.NoError(t, os.WriteFile(path, []byte(filepath.Base(path)), 0o600))
+			}
+			client := daemonconn.New(proxy.URL, testAPIKey)
+			report, err := client.IngestStream(daemonconn.WithActionSurface(t.Context(), surface), paths, "/inbox", daemonconn.IngestOptions{}, nil)
+			require.ErrorContains(t, err, "ended without a result")
+			require.Zero(t, report.Added)
+			for _, path := range paths {
+				_, err := catalog.NodeByPath(t.Context(), "/inbox/"+filepath.Base(path))
+				require.NoError(t, err)
+			}
+			if surface == "cli" {
+				capture.requireEvent(t, "document_added", map[string]any{"surface": "cli"})
+			} else {
+				require.NoError(t, capture.reporter.Close())
+				require.Empty(t, capture.events)
+			}
+		})
+	}
 }

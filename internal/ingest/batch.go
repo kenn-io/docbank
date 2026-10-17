@@ -84,6 +84,9 @@ func (files *filesystemIngest) flush(
 				added, resolution, err = files.recordPreparedFile(ctx, file.parent, file.sourcePath, file.content)
 			}
 		}
+		if err == nil && added && (file.replacement == nil || file.replacement.ID == 0) {
+			rep.Created++
+		}
 		if file.content.hash != "" {
 			err = mutationCleanupResult(err, files.ing.cleanupLoose(file.content.hash))
 			file.content.hash = ""

@@ -1961,15 +1961,28 @@ async function configureFirstTagHotkey(): Promise<void> {
   await fireEvent.click(screen.getByRole("button", { name: "Done" }));
 }
 
-it("navigates the displayed page, keeps checkbox selection independent, and activates a row once", async () => {
+it("navigates the displayed page, keeps selection independent, and reports deliberate inspections", async () => {
   prepareKeyboardApp();
   const backend = installKeyboardBackend();
   render(App);
 
   await screen.findByRole("cell", { name: "alpha.txt" });
   await screen.findByLabelText("Document authority for zeta.txt");
+  const opened = () =>
+    vi
+      .mocked(fetch)
+      .mock.calls.filter(
+        ([url, init]) =>
+          url === "/api/daemon/telemetry/events" &&
+          JSON.parse(String(init?.body)).event === "document_opened",
+      )
+      .map(([, init]) => JSON.parse(String(init?.body)));
+  expect(opened()).toEqual([]);
   const requestsAtBoundary = backend.getRootReads();
 
+  await fireEvent.keyDown(window, { key: "j" });
+  await waitFor(() => expect(opened()).toHaveLength(1));
+  expect(screen.getByLabelText("Document authority for zeta.txt")).toBeTruthy();
   await fireEvent.keyDown(window, { key: "k" });
   expect(screen.getByLabelText("Document authority for alpha.txt")).toBeTruthy();
   await fireEvent.keyDown(window, { key: " " });
@@ -2357,4 +2370,52 @@ it("refreshes open audit history when a pending tag change completes", async () 
   await screen.findByText("Added tax to zeta.txt.");
   await screen.findByText("1 recorded event");
   expect(screen.queryByText("No events on this page")).toBeNull();
+});
+
+it("counts a submitted tag filter when its results arrive, not when its lookup fails", async () => {
+  prepareSelectionApp();
+  const { fetchMock } = installSelectionBackend();
+  const backend = fetchMock.getMockImplementation()!;
+  const actions: unknown[] = [];
+  let failNext = true;
+  let release!: (response: Response) => void;
+  fetchMock.mockImplementation((input, init) => {
+    const url = String(input);
+    if (url === "/api/daemon/telemetry/events") {
+      const event = JSON.parse(String(init?.body));
+      if (event.event === "search_run") actions.push(event);
+      return Promise.resolve(new Response(null, { status: 202 }));
+    }
+    if (failNext && url.startsWith("/api/v1/tags/") && url.includes("/nodes?")) {
+      failNext = false;
+      return new Promise<Response>((resolve) => {
+        release = resolve;
+      });
+    }
+    return backend(input, init);
+  });
+  render(App);
+  await screen.findByRole("cell", { name: "Reports" });
+  await fireEvent.click(
+    screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
+  );
+  await fireEvent.click(screen.getByRole("option", { name: "tax (3)" }));
+  expect(actions).toEqual([]);
+  release(
+    new Response('{"detail":"Synthetic tag failure"}', {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+  await screen.findByText("Synthetic tag failure");
+  expect(actions).toEqual([]);
+  await fireEvent.click(
+    screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
+  );
+  await fireEvent.click(screen.getByRole("option", { name: "tax (3)" }));
+  await waitFor(() =>
+    expect(actions).toEqual([
+      { event: "search_run", properties: { surface: "web", search_type: "text" } },
+    ]),
+  );
 });

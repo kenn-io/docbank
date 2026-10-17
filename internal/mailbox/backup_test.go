@@ -24,7 +24,7 @@ func TestMailboxPortableBackupRetainsSourceChildrenAndTombstone(t *testing.T) {
 	require.NoError(t, f.UploadChunk(ctx, c.Owner, c.ID, 0, c.SHA256, c.Size, bytes.NewReader(raw)))
 	_, err = f.Seal(ctx, c.Owner, c.ID)
 	require.NoError(t, err)
-	_, err = f.Store.BeginMailboxJob(ctx, c.Owner, store.MailboxJobRequest{ID: "backup-job", ContainerID: c.ID, ContainerSHA256: c.SHA256, Settings: store.MailboxSettings{DestinationID: f.Store.RootID()}})
+	_, err = f.Store.BeginMailboxJob(ctx, c.Owner, store.MailboxJobRequest{ID: "backup-job", ContainerID: c.ID, ContainerSHA256: c.SHA256, Settings: store.MailboxSettings{DestinationID: f.Store.RootID()}}, "web")
 	require.NoError(t, err)
 	job, err := f.Store.ClaimMailboxJob(ctx)
 	require.NoError(t, err)
@@ -55,6 +55,13 @@ func TestMailboxPortableBackupRetainsSourceChildrenAndTombstone(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, bs.Close()) })
 	_, err = maintenance.GarbageCollect(ctx, restored, bs, maintenance.GCOptions{})
 	require.NoError(t, err)
+	// Local import claims stay with the original vault; the restored job reports nothing.
+	surface, err := restored.ConsumeImportClaim(ctx, store.MailboxImportOwner, job.ID)
+	require.NoError(t, err)
+	require.Empty(t, surface)
+	surface, err = f.Store.ConsumeImportClaim(ctx, store.MailboxImportOwner, job.ID)
+	require.NoError(t, err)
+	require.Equal(t, "web", surface)
 	service := Service{Store: restored, Blobs: bs, Spool: t.TempDir()}
 	sealed, err := restored.MailboxContainer(ctx, c.Owner, c.ID)
 	require.NoError(t, err)

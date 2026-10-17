@@ -83,26 +83,30 @@ func TestNewOptedOut(t *testing.T) {
 			for _, event := range []string{EventAppOpened, EventDaemonStarted, EventDaemonActive} {
 				assert.True(t, reporter.EventAllowed(event), event)
 			}
-			assert.False(t, reporter.EventAllowed("search_run"))
 			handler := CaptureHandler(reporter, dir)
 			rec := postEvent(t, handler, `{"event":"app_opened"}`)
 			assert.Equal(t, http.StatusAccepted, rec.Code)
 			assert.JSONEq(t, `{"status":"disabled"}`, rec.Body.String())
 			assert.JSONEq(t, `{"status":"disabled"}`, postEvent(t, handler, screenBody("browse", "web")).Body.String())
+			assert.JSONEq(t, `{"status":"disabled"}`, postEvent(t, handler, `{"event":"search_run","properties":{"surface":"cli","search_type":"text"}}`).Body.String())
+			require.NoError(t, handler.Capture(EventDocumentAdded, map[string]any{"surface": "cli"}))
+			require.ErrorIs(t, handler.Capture(EventDocumentAdded, map[string]any{"surface": "agent"}), posthog.ErrInvalidProperty)
+			require.ErrorIs(t, handler.Capture("unknown_action", nil), posthog.ErrUnsupportedEvent)
 			assert.NoFileExists(t, filepath.Join(dir, screenClaimsFile))
 			assert.Equal(t, http.StatusBadRequest, postEvent(t, handler, screenBody("unknown", "web")).Code)
-			assert.Equal(t, http.StatusBadRequest, postEvent(t, handler, `{"event":"search_run"}`).Code)
 			assert.NoFileExists(t, filepath.Join(dir, posthog.InstallFileName))
 		})
 	}
 }
 
+type postHogEvent struct {
+	Event      string         `json:"event"`
+	DistinctID string         `json:"distinct_id"`
+	Properties map[string]any `json:"properties"`
+}
+
 type postHogBatch struct {
-	Batch []struct {
-		Event      string         `json:"event"`
-		DistinctID string         `json:"distinct_id"`
-		Properties map[string]any `json:"properties"`
-	} `json:"batch"`
+	Batch []postHogEvent `json:"batch"`
 }
 
 func TestEnabledReporterSendsOnlyAllowlistedFields(t *testing.T) {
@@ -122,13 +126,12 @@ func TestEnabledReporterSendsOnlyAllowlistedFields(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	dir := t.TempDir()
-	r := New(Options{Dir: dir, Version: "test-version", Commit: "test-commit", Logger: discardLogger(), endpoint: srv.URL})
+	r := New(Options{Dir: dir, Version: "test-version", Commit: "test-commit", Logger: discardLogger(), Endpoint: srv.URL})
 	require.True(t, r.Enabled())
 	handler := CaptureHandler(r, dir)
 	rec := postEvent(t, handler, `{"event":"app_opened","properties":{"path":"/synthetic/report.pdf","query":"synthetic"}}`)
 	require.Equal(t, http.StatusAccepted, rec.Code)
 	assert.JSONEq(t, `{"status":"queued"}`, rec.Body.String())
-	assert.Equal(t, http.StatusBadRequest, postEvent(t, handler, `{"event":"search_run"}`).Code)
 	require.NoError(t, r.Capture(EventDaemonActive, nil))
 	require.NoError(t, r.Close())
 
@@ -177,7 +180,7 @@ func TestReporterUsesDaemonLogger(t *testing.T) {
 		http.Error(w, "synthetic ingest rejection", http.StatusUnauthorized)
 	}))
 	defer server.Close()
-	reporter := New(Options{Dir: t.TempDir(), Logger: logger, endpoint: server.URL})
+	reporter := New(Options{Dir: t.TempDir(), Logger: logger, Endpoint: server.URL})
 	require.True(t, reporter.Enabled())
 	require.NoError(t, reporter.Capture(EventDaemonActive, nil))
 	require.NoError(t, reporter.Close())

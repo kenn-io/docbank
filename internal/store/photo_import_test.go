@@ -447,11 +447,13 @@ func TestPhotoImportEditedSourceBecomesNewVersion(t *testing.T) {
 	}
 	first, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(raw, jpg("jpg-v1"), xmp("xmp-v1")))
 	require.NoError(t, err)
+	assert.True(t, first.Created)
 	sidecar := first.Nodes[2]
 
 	edited, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(raw, jpg("jpg-v1"), xmp("xmp-v2")))
 	require.NoError(t, err)
 	assert.True(t, edited.Added)
+	assert.False(t, edited.Created, "a replaced source version is not a new document")
 	_, err = s.IngestPhotoGroup(ctx, run, photoImportTestGroup(raw, jpg("jpg-v2"), xmp("xmp-v2")))
 	require.NoError(t, err)
 

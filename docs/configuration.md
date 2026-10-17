@@ -998,7 +998,7 @@ Secrets are resolved once per process; restart to rotate them.
 ## Anonymous usage telemetry
 
 The daemon reports anonymous usage events so the Docbank team can count
-active vaults, web app opens, and screens used in the browser and terminal UI.
+active vaults, app opens, screens, and deliberate document actions.
 Counts are per vault, not per person: one person with three vaults counts three
 times. The daemon sends events in HTTPS batches to PostHog's US ingest endpoint (PostHog
 project 434713). The browser never contacts PostHog: the web app posts its
@@ -1032,6 +1032,57 @@ event, that screen remains eligible for another attempt. Remote delivery is
 best effort.
 
 Allowed `screen` values are `browse`, `search`, `tags`, `snapshot`, `history`, `versions`, `provenance`, `jobs`, `audit_evidence`, `storage`, `backups`, `bates`, `export`, `saved_queries`, `collections`, `trash`, `tag_catalog`, `telemetry`, `term_reports`, `processing`, `rendition`, `upload`, `mailbox`, `load_file`, `snapshot_actions`, `help`, `document`, `packages`, `operations`.
+
+### Document actions
+
+Each action requires `surface` as `web`, `tui`, or `cli`. `search_run` also
+requires `search_type` as `text`, `semantic`, or `hybrid`. Other properties
+are dropped. Missing or unsupported required values return HTTP 400.
+The interface label comes from the reporting client and does not identify who used Docbank.
+Only the daemon reports `document_added`, after it commits an addition; the
+event route returns HTTP 400 when an interface submits it.
+
+`document_added` counts each user-started import once, after its first new
+document, including partial failures. Skipped files, replaced versions, preflight,
+agent calls and unattended ingestion stay silent. Browser uploads and Photos
+groups report from the daemon after commit, even if the drawer closes before
+its receipt arrives. Interactive one-shot CLI `push`, `photos import`, mailbox
+and load-file package imports report once after a confirmed new document; one
+`push` run counts once however many files it adds. `push --watch`, API-key
+host-folder `photos import` and status commands stay silent. CLI `add` reports
+confirmed additions from the daemon even when its progress stream fails. The
+browser Photos drawer uses upload groups.
+
+The vault stores which interface started a mailbox, load-file or host-folder
+Photos job. A job still reports after its drawer closes or the daemon restarts;
+retries and resumes keep its first interface and report at most once. Portable
+backups omit these local claims, so restored jobs stay silent. Opening a drawer
+onto an existing job stays silent.
+
+`search_run` counts deliberate searches once their results arrive, including
+superseded results, facets and Smart Sets, once per surface and search type each
+UTC day. A search that fails before Docbank chooses a mode stays silent.
+Names, tags and lexical searches use `text`; vector-only and similar searches use
+`semantic`; combined ranking uses `hybrid`. Search type follows the mode that ran:
+an automatic search the daemon answers lexically records `text`. Photos and
+snapshot searches use the mode of the query that ran. Hidden searches use the same type as Photos.
+Sorting, paging, reranking, refresh and restored state stay silent.
+
+`document_opened` counts deliberate inspections once per surface each UTC day.
+Interaction with an automatically selected file counts, including keyboard activation
+of a content tab. In the TUI, opening the selected file's detail counts; `j`/`k`
+scroll its content after the detail is open. Automatic selection and movement
+between selected rows stay silent. Single-document retrievals such as `get`
+and deliberate photo inspections with `photos assets inspect` count as inspections.
+Multi-document exports and reports stay silent.
+Search and open claims share the persisted daily screen-claim file, so daemon
+restarts preserve the day's counts.
+
+Interactive CLI imports send `X-Docbank-Surface: cli` to attribute their additions.
+Import requests authenticated with an API key alone have no user attribution and stay silent.
+
+CLI actions require terminal input and output and exclude `search --agent`.
+Piped or redirected input or output stays silent. Reporting has a 100 ms deadline and never changes command results.
 
 Each event carries these fields:
 

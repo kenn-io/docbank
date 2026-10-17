@@ -2,9 +2,12 @@ package ingest
 
 import (
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,6 +16,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/telemetry"
+	"go.kenn.io/kit/telemetry/posthog"
 )
 
 func TestPhotoImportGrouping(t *testing.T) {
@@ -287,6 +292,80 @@ func TestPhotoImportRunnerHonorsCancelAfterLastGroup(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, store.StorageOperationCancelled, finished.State)
 	assert.Equal(t, int64(1), finished.CompletedObjects)
+}
+
+func TestPhotoImportRunnerReportsFirstNewDocumentOnce(t *testing.T) {
+	t.Setenv("DOCBANK_TELEMETRY_ENABLED", "1")
+	t.Setenv("TELEMETRY_ENABLED", "1")
+	ing := newTestIngester(t)
+	root := t.TempDir()
+	for i := range 3 {
+		require.NoError(t, os.WriteFile(filepath.Join(root, fmt.Sprintf("IMG_%d.JPG", i)), []byte(fmt.Sprint("jpeg-", i)), 0o600))
+	}
+	request := fmt.Sprintf(`{"source_root":%q,"destination":"/photos"}`, root)
+	events := make(chan map[string]any, 8)
+	collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var batch struct {
+			Batch []map[string]any `json:"batch"`
+		}
+		if err := json.UnmarshalRead(r.Body, &batch); err != nil {
+			t.Error(err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		for _, event := range batch.Batch {
+			events <- event
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(collector.Close)
+	newCapture := func() (*telemetry.Capture, *telemetry.Reporter) {
+		reporter, err := posthog.NewReporter(posthog.Options{APIKey: "synthetic-key", Endpoint: collector.URL,
+			Application: "docbank", EnvPrefix: "DOCBANK", DistinctID: "synthetic-install"},
+			posthog.WithAllowedEvent(telemetry.EventDocumentAdded,
+				posthog.RequireProperty("surface", posthog.AllowStringValues("cli"))))
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, reporter.Close()) })
+		return telemetry.CaptureHandler(reporter, t.TempDir()), reporter
+	}
+	capture, reporter := newCapture()
+	runner := PhotoImportRunner{Ingester: ing, Telemetry: capture}
+
+	// The worker keeps reporting after the starting interface has gone away.
+	stopped, stop := context.WithCancel(t.Context())
+	shutdown := runner
+	calls := 0
+	shutdown.Options.Mutate = func(ctx context.Context, mutate func() error) error {
+		if err := mutate(); err != nil {
+			return err
+		}
+		if calls++; calls == 2 {
+			stop()
+			return ctx.Err()
+		}
+		return nil
+	}
+	first, err := ing.Store.CreatePhotoImport(t.Context(), request, "cli")
+	require.NoError(t, err)
+	require.ErrorIs(t, shutdown.Run(stopped, first.ID), context.Canceled)
+	require.NoError(t, reporter.Close())
+	require.Len(t, events, 1)
+	delivered := <-events
+	require.Equal(t, "document_added", delivered["event"])
+	require.Subset(t, delivered["properties"], map[string]any{"surface": "cli"})
+	runner.Telemetry, reporter = newCapture()
+	require.NoError(t, runner.Run(t.Context(), first.ID))
+
+	// A revised source becomes a new version, which is not an addition.
+	require.NoError(t, os.WriteFile(filepath.Join(root, "IMG_0.JPG"), []byte("revised jpeg"), 0o600))
+	revised, err := ing.Store.CreatePhotoImport(t.Context(), request, "cli")
+	require.NoError(t, err)
+	require.NoError(t, runner.Run(t.Context(), revised.ID))
+	completed, err := ing.Store.StorageOperation(t.Context(), revised.ID)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"added":1,"skipped":2,"changed":0,"failed":0,"ambiguous":0,"unsupported":0}`, completed.ReceiptJSON)
+	require.NoError(t, reporter.Close())
+	require.Empty(t, events, "resumed and duplicate imports add no event")
 }
 
 func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {

@@ -96,7 +96,7 @@ Output: JSON receipts; watch streams NDJSON, cancel prints no receipt.`,
 					Preview     any    `json:"preview"`
 				}{id, hash, sample})
 			}
-			job, err := c.BeginMailboxJob(cmd.Context(), store.MailboxJobRequest{ID: jobID, ContainerID: id, ContainerSHA256: hash, Settings: store.MailboxSettings{Dialect: dialect, DestinationID: dir.ID, LabelTags: labelTags}})
+			job, err := c.BeginMailboxJob(actionContext(cmd), store.MailboxJobRequest{ID: jobID, ContainerID: id, ContainerSHA256: hash, Settings: store.MailboxSettings{Dialect: dialect, DestinationID: dir.ID, LabelTags: labelTags}})
 			if err != nil {
 				return err
 			}

@@ -156,6 +156,20 @@ func handlePushUpload(w http.ResponseWriter, r *http.Request, d Deps, g *gate) {
 	httpStatus := http.StatusOK
 	if outcome == "added" {
 		httpStatus = http.StatusCreated
+		// One interactive push run reports its first addition; updates are not additions.
+		if surface := d.actionSurface(cliImportSurface(r.Context(), r.Header.Get(ActionSurfaceHeader))); surface != "" {
+			var claimed bool
+			err := g.MutateContext(r.Context(), func() error {
+				var claimErr error
+				claimed, claimErr = d.Store.ClaimPushRun(r.Context(), runID, surface)
+				return claimErr
+			})
+			if err != nil {
+				d.Logger.Warn("record push action claim", "run_id", runID, "error", err)
+			} else if claimed {
+				d.TelemetryCapture.DocumentAdded(surface)
+			}
+		}
 	}
 	writeJSON(w, httpStatus, PushUploadReceipt{
 		Status: outcome, Node: fromStoreNode(result.Node),

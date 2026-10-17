@@ -163,6 +163,7 @@ var versionsCatCmd = &cobra.Command{
 		if _, err := stream.CopyVerified(cmd.OutOrStdout()); err != nil {
 			return fmt.Errorf("streaming content version %s: %w", args[0], err)
 		}
+		reportOpened(cmd, c)
 		return nil
 	},
 }

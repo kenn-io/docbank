@@ -248,6 +248,8 @@ func handleWebUploadConnection(
 	}
 
 	var photoImport *webPhotoImport
+	var uploadImport string
+	uploadReported := false
 	for {
 		begin, err := readWebUploadControl(ctx, conn)
 		if err != nil {
@@ -291,6 +293,14 @@ func handleWebUploadConnection(
 			continue
 		}
 
+		key := ""
+		if begin.ImportID != "" {
+			key = "browser-upload:" + begin.ImportID
+		}
+		if key != uploadImport {
+			uploadImport = key
+			uploadReported = false
+		}
 		reader := &webUploadReader{
 			ctx: ctx, conn: conn, requestID: request.requestID,
 			inactivity: webUploadInactivity,
@@ -311,6 +321,10 @@ func handleWebUploadConnection(
 			result, err = executeWebUpload(ctx, d, request, reader)
 			return err
 		})
+		if uploadErr == nil && result.Added && uploadImport != "" && !uploadReported {
+			uploadReported = true
+			d.TelemetryCapture.DocumentAdded("web")
+		}
 		if uploadErr != nil {
 			problem := uploadError(uploadErr)
 			if errors.Is(uploadErr, errWebUploadCanceled) {
@@ -351,7 +365,7 @@ func isCanonicalHash(hash string) bool {
 }
 
 func validateWebUploadBegin(begin webUploadMessage) (webUploadRequest, *Error) {
-	if begin.Type != "begin" || begin.RequestID == "" || len(begin.RequestID) > 128 {
+	if begin.Type != "begin" || begin.RequestID == "" || len(begin.RequestID) > 128 || len(begin.ImportID) > 128 {
 		return webUploadRequest{}, NewError(http.StatusUnprocessableEntity, "validation",
 			"upload begin requires a bounded request identity")
 	}
@@ -645,6 +659,7 @@ func planWebPhotos(
 }
 
 type webPhotoImport struct {
+	reported    bool
 	id          string
 	files       []webPhotoFile
 	groups      [][]int
@@ -791,6 +806,10 @@ func handleWebPhotoGroup(
 			return err
 		})
 	})
+	if err == nil && result.Created && !photoImport.reported {
+		photoImport.reported = true
+		d.TelemetryCapture.DocumentAdded("web")
+	}
 	if err != nil {
 		problem := uploadError(err)
 		if errors.Is(err, errWebUploadCanceled) {

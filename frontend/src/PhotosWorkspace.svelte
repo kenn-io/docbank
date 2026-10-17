@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount, tick, untrack } from "svelte";
+  import { inspectionReporter } from "./action-events.js";
   import {
     Button,
     EmptyState,
@@ -105,6 +106,7 @@
   } = $props();
   const album = $derived(albums?.items.find((item) => item.id === albumID));
   const editor = $derived(photos.authored);
+  const inspect = inspectionReporter("document_opened", () => photos.session);
   let editing = $state(false);
   let loupeMetadata = $state(false);
   const selectionCount = $derived(photos.selectedIDs.size);
@@ -409,7 +411,11 @@
   function open(id: string, element: HTMLElement) {
     if (!editor.canChangeTarget()) return;
     captureReturn(element);
+    openInspected(id);
+  }
+  function openInspected(id: string) {
     onphotochange(id, "open");
+    inspect();
   }
   async function move(direction: -1 | 1) {
     if (!editor.canChangeTarget()) return;
@@ -845,12 +851,15 @@
               class="photo-search"
               onsubmit={(event) => {
                 event.preventDefault();
-                void photos.setQuery({
-                  ...photos.baseQuery,
-                  text: search,
-                  syntax,
-                  sort: photoSearchSort({ text: search, syntax }),
-                });
+                void photos.setQuery(
+                  {
+                    ...photos.baseQuery,
+                    text: search,
+                    syntax,
+                    sort: photoSearchSort({ text: search, syntax }),
+                  },
+                  Boolean(search.trim()),
+                );
               }}
             >
               <SelectDropdown
@@ -959,7 +968,7 @@
                   facets={photos.facets}
                   query={photos.baseQuery}
                   unit="photos"
-                  onchange={(value) => void photos.setQuery(value)}
+                  onchange={(value) => void photos.setQuery(value, true)}
                 />
               </div>
             {/if}

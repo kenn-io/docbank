@@ -12,6 +12,8 @@ import (
 	"image"
 	"io"
 	"mime"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -24,6 +26,8 @@ import (
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/loadfile"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/telemetry"
+	"go.kenn.io/kit/telemetry/posthog"
 	"golang.org/x/image/tiff"
 )
 
@@ -177,7 +181,7 @@ func newPackageImportTestEnvWithNativeFile(t *testing.T, count int, acceptPartia
 	require.NoError(t, err)
 	job := store.PackageImportJobRequest{ID: uuid.NewString(), Owner: owner, OperationID: operationID,
 		RequestSHA256: packageImportTestHash([]byte("synthetic request")), PreflightID: preflightID,
-		PackageID: packageID, JobJSON: jobJSON}
+		PackageID: packageID, JobJSON: jobJSON, ActionSurface: "web"}
 	_, err = catalog.AdmitPackageImport(ctx, run, request, job)
 	require.NoError(t, err)
 	return &packageImportTestEnv{Catalog: catalog, Blobs: blobs, Root: root,
@@ -263,16 +267,48 @@ func TestPackageRecordLabelsKeepReceivedAndAssignedProvenanceSeparate(t *testing
 	require.Equal(t, "CASE000002", assigned[1].Label)
 }
 
-func TestPackageImportWorkerResumesAfterCommittedRecord(t *testing.T) {
-	t.Parallel()
+// recordingCapture records serialized events delivered to a local PostHog collector.
+func recordingCapture(t *testing.T) (*telemetry.Capture, *telemetry.Reporter, chan map[string]any) {
+	t.Helper()
+	events := make(chan map[string]any, 8)
+	collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var batch struct {
+			Batch []map[string]any `json:"batch"`
+		}
+		if err := json.UnmarshalRead(r.Body, &batch); err != nil {
+			t.Error(err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		for _, event := range batch.Batch {
+			events <- event
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(collector.Close)
+	reporter, err := posthog.NewReporter(posthog.Options{APIKey: "synthetic-key", Endpoint: collector.URL,
+		Application: "docbank", EnvPrefix: "DOCBANK", DistinctID: "synthetic-install"},
+		posthog.WithAllowedEvent(telemetry.EventDocumentAdded,
+			posthog.RequireProperty("surface", posthog.AllowStringValues("web", "cli"))))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, reporter.Close()) })
+	return telemetry.CaptureHandler(reporter, t.TempDir()), reporter, events
+}
+
+func TestPackageImportWorkerReportsFirstAdditionOnceAcrossRetry(t *testing.T) {
+	t.Setenv("DOCBANK_TELEMETRY_ENABLED", "1")
+	t.Setenv("TELEMETRY_ENABLED", "1")
 	env := newPackageImportTestEnv(t, 2, false)
 	injected := errors.New("synthetic interruption before second record")
 	firstKey, err := store.PackageRecordKey("VOL001/DATA.DAT", 1, "DOC-A")
 	require.NoError(t, err)
-	var interrupted atomic.Bool
+	capture, reporter, events := recordingCapture(t)
+	var afterFirst atomic.Int32
 	config := env.config()
+	config.Telemetry = capture
 	config.Mutate = func(ctx context.Context, fn func() error) error {
-		if _, headErr := env.Catalog.PackageImportHead(ctx, env.PackageID, firstKey); headErr == nil && interrupted.CompareAndSwap(false, true) {
+		// Allow the first record's claim mutation, then interrupt the next record.
+		if _, headErr := env.Catalog.PackageImportHead(ctx, env.PackageID, firstKey); headErr == nil && afterFirst.Add(1) == 2 {
 			return injected
 		}
 		return fn()
@@ -284,12 +320,19 @@ func TestPackageImportWorkerResumesAfterCommittedRecord(t *testing.T) {
 	firstReceipt, err := env.Catalog.PackageImportHead(t.Context(), env.PackageID, firstKey)
 	require.NoError(t, err)
 	require.Equal(t, "committed", firstReceipt.State)
+	require.NoError(t, reporter.Close())
+	require.Len(t, events, 1)
+	delivered := <-events
+	require.Equal(t, "document_added", delivered["event"])
+	require.Subset(t, delivered["properties"], map[string]any{"surface": "web"})
 	secondKey, err := store.PackageRecordKey("VOL001/DATA.DAT", 2, "DOC-B")
 	require.NoError(t, err)
 	_, err = env.Catalog.PackageImportHead(t.Context(), env.PackageID, secondKey)
 	require.ErrorIs(t, err, store.ErrNotFound)
 
-	resumed, err := NewPackageImportWorker(env.config())
+	retry := env.config()
+	retry.Telemetry, reporter, events = recordingCapture(t)
+	resumed, err := NewPackageImportWorker(retry)
 	require.NoError(t, err)
 	_, err = resumed.ProcessOnce(t.Context())
 	require.NoError(t, err)
@@ -300,6 +343,8 @@ func TestPackageImportWorkerResumesAfterCommittedRecord(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "complete", pkg.State)
 	require.Equal(t, 2, pkg.MemberCount)
+	require.NoError(t, reporter.Close())
+	require.Empty(t, events, "the second record and retry add no event")
 }
 
 func TestPackageImportWorkerPersistsSuppliedTextGenerationInReceipt(t *testing.T) {

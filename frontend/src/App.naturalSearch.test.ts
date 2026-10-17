@@ -114,6 +114,7 @@ interface HarnessOptions {
   legacyFailureAfter?: number;
   legacyFailurePending?: boolean;
   basePending?: boolean;
+  abortPending?: boolean;
   legacyPending?: boolean;
   childrenPending?: boolean;
   rerankReport?: unknown;
@@ -253,7 +254,17 @@ function installHarness(options: HarnessOptions) {
         return json(options.rerankReport ?? options.baseReport);
       }
       baseCalls += 1;
-      if (options.basePending && baseCalls === 1) return basePending;
+      if (options.basePending && baseCalls === 1) {
+        if (!options.abortPending) return basePending;
+        return new Promise<Response>((resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("Aborted", "AbortError")),
+            { once: true },
+          );
+          void basePending.then(resolve);
+        });
+      }
       return json(options.baseReport);
     }
     if (url.startsWith("/api/v1/search?") && method === "GET") {
@@ -284,6 +295,14 @@ function installHarness(options: HarnessOptions) {
     resolveChildren: (response: Response) => childrenResolve?.(response),
     legacyCalls: () => legacyCalls,
   };
+}
+
+function searchTypes(harness: Pick<ReturnType<typeof installHarness>, "fetchMock">): string[] {
+  return harness.fetchMock.mock.calls
+    .filter(([input]) => String(input) === "/api/daemon/telemetry/events")
+    .map(([, init]) => JSON.parse(String(init?.body)))
+    .filter((body) => body.event === "search_run")
+    .map((body) => body.properties.search_type);
 }
 
 async function submitSearch(value: string): Promise<void> {
@@ -827,6 +846,7 @@ it("reports a Names and text GET failure without retrying it as a fallback", asy
   expect(
     fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?")).length,
   ).toBe(1);
+  expect(searchTypes({ fetchMock })).toEqual([]);
 });
 
 it("sends the selected tag filter in the resolver body", async () => {
@@ -912,6 +932,8 @@ it("keeps a non-401 processing failure on the legacy GET path", async () => {
     harness.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?"))
       .length,
   ).toBe(1);
+  expect(harness.postBodies[0]?.mode).toBe("hybrid");
+  expect(searchTypes(harness)).toEqual(["text"]);
 });
 
 it("does not fall back to GET after a processing 401", async () => {
@@ -938,37 +960,90 @@ it("does not fall back to GET after a processing 401", async () => {
     harness.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?"))
       .length,
   ).toBe(0);
+  expect(searchTypes(harness)).toEqual([]);
 });
 
-it("ignores an aborted natural search completion", async () => {
-  const file = node(2, "stale.txt", baseVersion);
+it.each([
+  ["submit", false],
+  ["rerank", false],
+  ["submit", true],
+  ["rerank", true],
+] as const)(
+  "ignores stale search completions after a new %s with abort=%s",
+  async (replacement, abortPending) => {
+    const file = node(2, "stale.txt", baseVersion);
+    const harness = installHarness({
+      profiles: [
+        {
+          name: "private",
+          fingerprint: "a".repeat(64),
+          rendition: true,
+          embedding_bindings: ["embed"],
+          reranking_available: true,
+        },
+      ],
+      files: [file],
+      baseReport: report("hybrid", [result(file, 1, "current excerpt")]),
+      basePending: true,
+      abortPending,
+    });
+    render(App);
+    await screen.findAllByText("stale.txt");
+    await submitSearch("old query");
+    await waitFor(() => expect(harness.postBodies).toHaveLength(1));
+    if (replacement === "rerank")
+      await fireEvent.click(screen.getByRole("checkbox", { name: "Rerank results" }));
+    else await submitSearch("new query");
+    await screen.findByText("current excerpt");
+    harness.resolveBase(json(report("hybrid", [result(file, 1, "stale excerpt")])));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByText("stale excerpt")).toBeNull();
+    expect(
+      harness.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?"))
+        .length,
+    ).toBe(0);
+    await waitFor(() =>
+      expect(searchTypes(harness)).toEqual(
+        replacement === "rerank" || abortPending ? ["hybrid"] : ["hybrid", "hybrid"],
+      ),
+    );
+  },
+);
+
+it("reports automatic searches that ran lexically as text even when stale", async () => {
+  const file = node(2, "lexical.txt", baseVersion);
+  const lexical = (excerpt: string) => ({
+    ...report("lexical", [result(file, 1, excerpt)]),
+    requested_mode: "auto",
+  });
   const harness = installHarness({
     profiles: [
       {
         name: "private",
         fingerprint: "a".repeat(64),
         rendition: true,
-        embedding_bindings: ["embed"],
+        embedding_bindings: [],
         reranking_available: false,
       },
     ],
     files: [file],
-    baseReport: report("hybrid", [result(file, 1, "current excerpt")]),
+    baseReport: lexical("current excerpt"),
     basePending: true,
   });
   render(App);
-  await screen.findAllByText("stale.txt");
+  await screen.findAllByText("lexical.txt");
+  await screen.findByRole("button", { name: "Process and retrieve" });
+  await fireEvent.click(screen.getByRole("combobox", { name: "Search mode: Names and text" }));
+  await fireEvent.click(screen.getByRole("option", { name: "Auto" }));
   await submitSearch("old query");
   await waitFor(() => expect(harness.postBodies).toHaveLength(1));
   await submitSearch("new query");
   await screen.findByText("current excerpt");
-  harness.resolveBase(json(report("hybrid", [result(file, 1, "stale excerpt")])));
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await waitFor(() => expect(searchTypes(harness)).toEqual(["text"]));
+  harness.resolveBase(json(lexical("stale excerpt")));
+  await waitFor(() => expect(searchTypes(harness)).toEqual(["text", "text"]));
   expect(screen.queryByText("stale excerpt")).toBeNull();
-  expect(
-    harness.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?"))
-      .length,
-  ).toBe(0);
+  expect(harness.postBodies.map((body) => body.mode)).toEqual(["auto", "auto"]);
 });
 
 it("shows why natural search controls could not load", async () => {
@@ -1020,7 +1095,7 @@ it.each([500, 401])(
   },
 );
 
-it("reruns the active query when the search mode or rerank toggle changes", async () => {
+it("reruns active searches and reports mode changes while keeping rerank silent", async () => {
   const file = node(2, "report.txt", baseVersion);
   const options: HarnessOptions = {
     profiles: [
@@ -1055,6 +1130,14 @@ it("reruns the active query when the search mode or rerank toggle changes", asyn
   await fireEvent.click(screen.getByRole("checkbox", { name: "Rerank results" }));
   await screen.findByText("lexical excerpt");
   expect(harness.postBodies.at(-1)?.rerank).toBeUndefined();
+  await submitSearch("annual report");
+  await waitFor(() => {
+    const events = harness.fetchMock.mock.calls
+      .filter(([url]) => String(url) === "/api/daemon/telemetry/events")
+      .map(([, init]) => JSON.parse(String(init?.body)))
+      .filter((body) => body.event === "search_run");
+    expect(events).toHaveLength(3);
+  });
 });
 
 it("preserves the chosen sort on a natural search refresh", async () => {

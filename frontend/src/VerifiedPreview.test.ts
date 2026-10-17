@@ -1,5 +1,9 @@
+import bridgeSource from "./email-frame-bridge.js?raw";
+import { pageDigest } from "./pages.js";
+import { emailTupleDigest } from "./email-viewer.js";
 import { createHash } from "node:crypto";
 import { afterEach, expect, it, vi } from "vite-plus/test";
+import userEvent from "@testing-library/user-event";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import VerifiedPreview from "./VerifiedPreview.svelte";
 import type { SelectedSource } from "./selectedSource.js";
@@ -8,6 +12,7 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 function source(content: Uint8Array, versionID: string, mimeType = "text/plain"): SelectedSource {
@@ -204,7 +209,7 @@ it.each([
   },
 );
 
-it("keeps unsupported content on the verified-download fallback without a preview request", async () => {
+it("keeps unsupported content on the download fallback", async () => {
   const selected = source(
     new TextEncoder().encode("<svg/>"),
     "44444444-4444-4444-8444-444444444444",
@@ -342,11 +347,15 @@ it("loads one exact rendition only while Text is active and keeps hostile markup
   expect(await screen.findByText(/<script>alert\('blocked'\)<\/script>/)).toBeTruthy();
   expect(document.querySelector("script")).toBeNull();
   expect(document.querySelectorAll("mark[data-source='query']")).toHaveLength(2);
-  expect(fetchMock).toHaveBeenCalledTimes(3);
+  expect(
+    fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/")),
+  ).toHaveLength(3);
 
   await view.rerender({ ...props, queryTerms: ["alpha", "blocked"] });
   await waitFor(() => expect(document.querySelectorAll("mark")).toHaveLength(3));
-  expect(fetchMock).toHaveBeenCalledTimes(3);
+  expect(
+    fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/")),
+  ).toHaveLength(3);
 });
 
 it.each([
@@ -415,3 +424,275 @@ it.each([0, 64 * 1024 * 1024 + 1])(
     expect(fetcher).not.toHaveBeenCalled();
   },
 );
+
+it("forwards inspection gestures and ignores unrelated keys and find controls", async () => {
+  const bytes = new TextEncoder().encode("Synthetic inspected text");
+  const selected = source(bytes, "55555555-5555-4555-8555-555555555555");
+  const events: unknown[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (String(input) === "/api/daemon/telemetry/events") {
+      events.push(JSON.parse(String(init?.body)));
+      return new Response(null, { status: 202 });
+    }
+    if (String(input) === "/api/v1/renditions/text")
+      return Response.json({
+        state: "unconfigured",
+        source: {
+          node_id: selected.nodeID,
+          revision: 3,
+          version_id: selected.versionID,
+          blob_hash: selected.blobHash,
+          size: selected.size,
+          media_type: selected.mimeType,
+        },
+        profile: { name: "", configuration: "unconfigured", fingerprint: "" },
+        generation_id: "",
+        attachment_id: "",
+        build_id: "",
+      });
+    if (init?.method === "POST") return ready(selected, "synthetic");
+    if (String(input).endsWith("ticket=synthetic")) return body(selected, bytes);
+    throw new Error(`Unexpected request ${String(input)}`);
+  });
+  render(VerifiedPreview, {
+    session: "visit-session",
+    source: selected,
+    authorizationRevision: 3,
+    activeTab: "text",
+    onauthfailure: vi.fn(),
+  });
+  await screen.findByText("Synthetic inspected text");
+  expect(events).toEqual([]);
+  await fireEvent.keyDown(screen.getByText("Synthetic inspected text"), { key: "Tab" });
+  await fireEvent.keyDown(screen.getByText("Synthetic inspected text"), { key: "a" });
+  expect(events).toEqual([]);
+  await fireEvent.keyDown(screen.getByRole("textbox", { name: "Find in verified text" }), {
+    key: "Enter",
+  });
+  expect(events).toEqual([]);
+  const opened = { event: "document_opened", properties: { surface: "web" } };
+  await fireEvent.wheel(screen.getByText("Synthetic inspected text"), { deltaY: 120 });
+  await waitFor(() => expect(events).toEqual([opened]));
+  for (const [index, key] of ["ArrowDown", "j", "k"].entries()) {
+    await fireEvent.keyDown(screen.getByText("Synthetic inspected text"), { key });
+    await waitFor(() => expect(events).toHaveLength(index + 2));
+  }
+  await fireEvent.pointerDown(screen.getByText("Synthetic inspected text"));
+  await waitFor(() => expect(events).toEqual([opened, opened, opened, opened, opened]));
+});
+
+it.each(["Text", "Email", "Render page 1"])(
+  "reports keyboard activation of %s for an automatically selected document",
+  async (tabName) => {
+    const selected = source(
+      new TextEncoder().encode("Subject: Synthetic\r\n\r\nBody"),
+      "11111111-1111-4111-8111-111111111111",
+      tabName === "Render page 1" ? "application/pdf" : "message/rfc822",
+    );
+    const events: unknown[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      if (String(input) === "/api/daemon/telemetry/events") {
+        events.push(JSON.parse(String(init?.body)));
+        return new Response(null, { status: 202 });
+      }
+      if (String(input) === "/api/v1/pages/inventory")
+        return Response.json({
+          runtime_available: true,
+          inventory: {
+            source: {
+              version_id: selected.versionID,
+              sha256: selected.blobHash,
+              size: selected.size,
+            },
+            page_count: 0,
+            frames: [],
+            images: [],
+            recipes: [],
+          },
+        });
+      if (String(input) === "/api/v1/pages/jobs")
+        return Response.json({ error: "Synthetic render failure" }, { status: 500 });
+      if (String(input) === "/api/v1/renditions/text")
+        return Response.json({
+          state: "unconfigured",
+          source: {
+            node_id: selected.nodeID,
+            revision: 8,
+            version_id: selected.versionID,
+            blob_hash: selected.blobHash,
+            size: selected.size,
+            media_type: selected.mimeType,
+          },
+          profile: { name: "", configuration: "unconfigured", fingerprint: "" },
+          generation_id: "",
+          attachment_id: "",
+          build_id: "",
+        });
+      return Response.json({ state: "pending" }, { status: 202 });
+    });
+    render(VerifiedPreview, {
+      session: "session",
+      source: selected,
+      authorizationRevision: 8,
+      onauthfailure: vi.fn(),
+    });
+    const tab = await screen.findByRole(tabName === "Render page 1" ? "button" : "tab", {
+      name: tabName,
+    });
+    const user = userEvent.setup();
+    for (let attempt = 0; attempt < 10 && document.activeElement !== tab; attempt++)
+      await user.tab();
+    expect(document.activeElement).toBe(tab);
+    expect(events).toEqual([]);
+    await user.keyboard("{Enter}");
+    if (tabName === "Render page 1") await screen.findByRole("button", { name: "Refresh pages" });
+    else expect(tab.getAttribute("aria-selected")).toBe("true");
+    const opened = { event: "document_opened", properties: { surface: "web" } };
+    await waitFor(() => expect(events).toContainEqual(opened));
+  },
+);
+
+it("reports sandboxed email inspection gestures and filters modified keys", async () => {
+  const selected = source(
+    new TextEncoder().encode("Synthetic email"),
+    "55555555-5555-4555-8555-555555555555",
+    "message/rfc822",
+  );
+  const html = new TextEncoder().encode("<p>Synthetic email body</p>");
+  const artifact = {
+    role: "body_utf8",
+    sha256: createHash("sha256").update(html).digest("hex"),
+    size: html.length,
+  };
+  const evidence = {
+    contract_version: "docbank-email/v1",
+    source: { sha256: selected.blobHash, size: selected.size, verification: "verified" },
+    recipe: {},
+    outcome: "decoded",
+    failure: null,
+    inventory: {
+      state: "complete",
+      root_path: "1",
+      diagnostics: [],
+      parts: [
+        {
+          path: "1",
+          parent_path: null,
+          message_path: "1",
+          media: { declared: "text/html", detected: null },
+          content_id: { value: null, state: "absent" },
+          decode_state: "decoded",
+          filename: { safe_name: "" },
+          disposition: null,
+          payload: null,
+          body_utf8: artifact,
+          header_block: null,
+          diagnostics: [],
+        },
+      ],
+      messages: [
+        {
+          path: "1",
+          selected_body_path: "1",
+          alternatives: [
+            { part_path: "1", kind: "html", display_state: "available", display: artifact },
+          ],
+          fields: {},
+          date: { state: "absent", civil: null, timezone_text: null, timezone_state: "absent" },
+          diagnostics: [],
+        },
+      ],
+    },
+  };
+  const checksum = pageDigest(evidence);
+  const recipe = pageDigest(evidence.recipe);
+  const generation = emailTupleDigest(
+    "docbank-email-generation/v1",
+    evidence.contract_version,
+    selected.blobHash,
+    String(selected.size),
+    recipe,
+    checksum,
+  );
+  const attachment = emailTupleDigest(
+    "docbank-email-attachment/v1",
+    selected.versionID,
+    generation,
+  );
+  const events: unknown[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === "/api/daemon/telemetry/events") {
+      events.push(JSON.parse(String(init?.body)));
+      return new Response(null, { status: 202 });
+    }
+    if (url.endsWith("/email"))
+      return new Response(
+        JSON.stringify({
+          version: {
+            id: selected.versionID,
+            node_id: selected.nodeID,
+            blob_hash: selected.blobHash,
+            size: selected.size,
+          },
+          evidence,
+          checksum,
+          recipe_fingerprint: recipe,
+          generation_id: generation,
+          attachment_id: attachment,
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    if (url === `/api/v1/nodes/${selected.nodeID}`)
+      return new Response(
+        JSON.stringify({ id: selected.nodeID, kind: "file", name: "synthetic.eml" }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    if (url.includes("/email/"))
+      return new Response(html, {
+        headers: {
+          "Content-Type": "application/octet-stream",
+          "X-Docbank-Content-Version": selected.versionID,
+          "X-Docbank-Email-Generation": generation,
+          "X-Docbank-Email-Attachment": attachment,
+          "X-Docbank-Email-Part-Path": "1",
+          "X-Docbank-Email-Part-Role": "body_utf8",
+          "X-Docbank-Blob-Hash": artifact.sha256,
+          "X-Docbank-Blob-Size": String(html.length),
+        },
+      });
+    throw new Error(`Unexpected request ${url}`);
+  });
+  render(VerifiedPreview, {
+    session: "visit-session",
+    source: selected,
+    authorizationRevision: 3,
+    activeTab: "email",
+    onauthfailure: vi.fn(),
+  });
+  const frame = (await screen.findByTitle(
+    `Email HTML body of ${selected.name}`,
+  )) as HTMLIFrameElement;
+  const frameDocument = frame.contentDocument!;
+  frameDocument.open();
+  frameDocument.write(frame.srcdoc);
+  frameDocument.close();
+  // jsdom does not load the sandbox's external script. Run that exact bridge
+  // against its document and forward the browser's opaque-origin envelope.
+  new Function("document", "parent", bridgeSource)(frameDocument, {
+    postMessage: (data: unknown) =>
+      window.dispatchEvent(
+        new MessageEvent("message", { data, source: frame.contentWindow, origin: "null" }),
+      ),
+  });
+  await fireEvent.keyDown(frameDocument.body, { key: "Escape" });
+  expect(document.activeElement).toBe(
+    screen.getByRole("button", { name: "Enter email body · Escape returns here" }),
+  );
+  expect(events).toEqual([]);
+  const opened = { event: "document_opened", properties: { surface: "web" } };
+  await fireEvent.keyDown(frameDocument.body, { key: "j", ctrlKey: true });
+  expect(events).toEqual([]);
+  await fireEvent.pointerDown(frameDocument.body);
+  expect(events).toEqual([opened]);
+});

@@ -1,11 +1,15 @@
 package main
 
 import (
+	"reflect"
+	"strings"
+
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/query"
+	"go.kenn.io/docbank/internal/telemetry"
 )
 
 func newPhotoTimelineCommand() *cobra.Command {
@@ -36,7 +40,14 @@ date, which are also counted in missing.`,
 			if err != nil {
 				return err
 			}
-			return writeCLIJSON(cmd.OutOrStdout(), timeline)
+			if err := writeCLIJSON(cmd.OutOrStdout(), timeline); err != nil {
+				return err
+			}
+			executed, err := query.Parse(timeline.Query)
+			if err == nil && (strings.TrimSpace(executed.Text) != "" || !reflect.DeepEqual(executed.Filters, query.Filters{})) {
+				reportAction(cmd, c, telemetry.EventSearchRun, executed.Mode)
+			}
+			return nil
 		},
 	}
 	command.Flags().StringVar(&raw, "query", "{}", "strict QueryV1 JSON selecting the photos to count")

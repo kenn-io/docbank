@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/loadfile"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/telemetry"
 )
 
 const (
@@ -36,6 +37,8 @@ type PackageImportConfig struct {
 	LeaseDuration time.Duration
 	IdleDelay     time.Duration
 	OpenContainer func(context.Context, string, string) (io.ReaderAt, int64, error)
+	// Telemetry reports a claimed job's first committed record; nil stays silent.
+	Telemetry *telemetry.Capture
 }
 
 type PackageImportWorker struct{ cfg PackageImportConfig }
@@ -891,6 +894,18 @@ func (w *PackageImportWorker) importRecord(ctx context.Context, job store.Packag
 	})
 	if err != nil {
 		return store.PackageImportReceipt{}, err
+	}
+	if committed.State == "committed" && w.cfg.Telemetry != nil {
+		// Reporting is best effort and never fails the import. The record is
+		// committed, so consume the claim even while the job stops.
+		reportCtx := context.WithoutCancel(ctx)
+		var surface string
+		_ = w.cfg.Mutate(reportCtx, func() error {
+			var consumeErr error
+			surface, consumeErr = w.cfg.Catalog.ConsumeImportClaim(reportCtx, store.PackageImportOwner, job.ID)
+			return consumeErr
+		})
+		w.cfg.Telemetry.DocumentAdded(surface)
 	}
 	return committed, nil
 }

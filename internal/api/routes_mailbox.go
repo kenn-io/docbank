@@ -216,7 +216,7 @@ func registerMailboxRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 		var j store.MailboxJob
 		err := g.mutate(func() error {
 			var err error
-			j, err = d.Store.BeginMailboxJob(r.Context(), mailboxOwner(d), request.storeRequest())
+			j, err = d.Store.BeginMailboxJob(r.Context(), mailboxOwner(d), request.storeRequest(), d.actionSurface(importActionSurface(r)))
 			return err
 		})
 		if err != nil {

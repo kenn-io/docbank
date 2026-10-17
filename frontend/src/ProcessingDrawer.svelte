@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { reportAction } from "./action-events.js";
   import * as generated from "./generated/docbank.js";
   import { onMount } from "svelte";
   import ActivityIcon from "@lucide/svelte/icons/activity";
@@ -243,6 +244,7 @@
         fence: { vault_uid: plan.vault_uid, content_version_ids: [node.current_version_id] },
         explain: true,
       });
+      reportAction(session, "search_run", nextReport.actual_mode);
       if (request !== generation) return;
       searchReport = nextReport;
     } catch (cause) {
@@ -268,6 +270,7 @@
         limit: 20,
         fence: { vault_uid: plan.vault_uid, content_version_ids: [...scopeVersionIDs] },
       });
+      reportAction(session, "search_run", "similar");
       if (request === generation && id === similarID) similarReport = report;
     } catch (cause) {
       if (request === generation && id === similarID) {

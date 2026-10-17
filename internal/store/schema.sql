@@ -2694,6 +2694,20 @@ CREATE TABLE IF NOT EXISTS mailbox_occurrences (
     PRIMARY KEY(job_id,ordinal)
 );
 
+-- The interface that started an import, kept for anonymous usage reporting.
+-- Each row has exactly one owner and is removed with it. Metadata backups omit
+-- this local table, so a restored job has no claim and reports nothing.
+CREATE TABLE IF NOT EXISTS import_action_claims (
+    mailbox_job_id TEXT UNIQUE REFERENCES mailbox_jobs(id) ON DELETE CASCADE,
+    package_job_id TEXT UNIQUE REFERENCES package_import_jobs(id) ON DELETE CASCADE,
+    operation_id TEXT UNIQUE REFERENCES storage_operations(operation_id) ON DELETE CASCADE,
+    ingest_id TEXT UNIQUE REFERENCES ingests(id) ON DELETE CASCADE,
+    surface TEXT NOT NULL,
+    consumed INTEGER NOT NULL DEFAULT 0,
+    CHECK ((mailbox_job_id IS NOT NULL) + (package_job_id IS NOT NULL) +
+           (operation_id IS NOT NULL) + (ingest_id IS NOT NULL) = 1)
+);
+
 -- Derived pixels rebuild locally and are omitted from metadata backups.
 -- Unavailable rows record previews whose verified bytes cannot be measured.
 -- Go validates state and score presence on every write and read.

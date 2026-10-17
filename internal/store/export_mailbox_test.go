@@ -22,7 +22,7 @@ func TestExportCompletedMailboxCollectionPinsImportedVersions(t *testing.T) {
 	require.NoError(t, s.PutMailboxChunk(t.Context(), c.Owner, c.ID, MailboxChunk{Index: 0, SHA256: c.SHA256, Size: c.Size}))
 	_, err = s.SealMailboxContainer(t.Context(), c.Owner, c.ID, c.SHA256, c.Size)
 	require.NoError(t, err)
-	_, err = s.BeginMailboxJob(t.Context(), c.Owner, MailboxJobRequest{ID: "job", ContainerID: c.ID, ContainerSHA256: c.SHA256, Settings: MailboxSettings{DestinationID: s.RootID()}})
+	_, err = s.BeginMailboxJob(t.Context(), c.Owner, MailboxJobRequest{ID: "job", ContainerID: c.ID, ContainerSHA256: c.SHA256, Settings: MailboxSettings{DestinationID: s.RootID()}}, "")
 	require.NoError(t, err)
 	j, err := s.ClaimMailboxJob(t.Context())
 	require.NoError(t, err)

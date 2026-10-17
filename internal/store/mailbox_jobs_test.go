@@ -18,7 +18,7 @@ func TestMailboxJobClaimCheckpointCancellationAndContinuation(t *testing.T) {
 	_, err = s.SealMailboxContainer(ctx, "one", "source", req.SHA256, 3)
 	require.NoError(t, err)
 	request := MailboxJobRequest{ID: "job", ContainerID: "source", ContainerSHA256: req.SHA256, Settings: MailboxSettings{Dialect: "mboxrd", DestinationID: s.RootID()}}
-	job, err := s.BeginMailboxJob(ctx, "one", request)
+	job, err := s.BeginMailboxJob(ctx, "one", request, "")
 	require.NoError(t, err)
 	claimed, err := s.ClaimMailboxJob(ctx)
 	require.NoError(t, err)
@@ -73,7 +73,7 @@ func TestMailboxCheckpointFailureRollsBackMessageAndReceipt(t *testing.T) {
 	require.NoError(t, s.PutMailboxChunk(ctx, c.Owner, c.ID, MailboxChunk{Index: 0, SHA256: c.SHA256, Size: c.Size}))
 	_, err = s.SealMailboxContainer(ctx, c.Owner, c.ID, c.SHA256, c.Size)
 	require.NoError(t, err)
-	_, err = s.BeginMailboxJob(ctx, c.Owner, MailboxJobRequest{ID: "job", ContainerID: c.ID, ContainerSHA256: c.SHA256, Settings: MailboxSettings{DestinationID: s.RootID()}})
+	_, err = s.BeginMailboxJob(ctx, c.Owner, MailboxJobRequest{ID: "job", ContainerID: c.ID, ContainerSHA256: c.SHA256, Settings: MailboxSettings{DestinationID: s.RootID()}}, "")
 	require.NoError(t, err)
 	j, err := s.ClaimMailboxJob(ctx)
 	require.NoError(t, err)
@@ -180,7 +180,7 @@ func TestMailboxLabelTagsRemainAvailableWhileJobIsActive(t *testing.T) {
 			request := MailboxJobRequest{ID: "job", ContainerID: c.ID, ContainerSHA256: c.SHA256, Settings: MailboxSettings{
 				DestinationID: s.RootID(), LabelTags: map[string]string{"Project": "00000000-0000-4000-8000-000000000001"},
 			}}
-			_, err = s.BeginMailboxJob(ctx, c.Owner, request)
+			_, err = s.BeginMailboxJob(ctx, c.Owner, request, "")
 			require.ErrorIs(t, err, ErrNotFound)
 			_, err = s.MailboxJob(ctx, c.Owner, request.ID)
 			require.ErrorIs(t, err, ErrNotFound)
@@ -188,7 +188,7 @@ func TestMailboxLabelTagsRemainAvailableWhileJobIsActive(t *testing.T) {
 			tag, err := s.CreateTag(ctx, "Project")
 			require.NoError(t, err)
 			request.Settings.LabelTags["Project"] = tag.ID
-			_, err = s.BeginMailboxJob(ctx, c.Owner, request)
+			_, err = s.BeginMailboxJob(ctx, c.Owner, request, "")
 			require.NoError(t, err)
 			_, err = s.DeleteTag(ctx, tag.ID, tag.Revision)
 			require.ErrorIs(t, err, ErrMailboxConflict)

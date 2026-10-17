@@ -116,9 +116,14 @@ func runRenditionWindow(
 		return fmt.Errorf("attachment does not belong to profile %q: %w", options.profile, store.ErrNotFound)
 	}
 	if options.asJSON {
-		return writeCLIJSON(cmd.OutOrStdout(), window)
+		err = writeCLIJSON(cmd.OutOrStdout(), window)
+	} else {
+		err = writeRenditionWindow(cmd.OutOrStdout(), options, window)
 	}
-	return writeRenditionWindow(cmd.OutOrStdout(), options, window)
+	if err == nil {
+		reportOpened(cmd, c)
+	}
+	return err
 }
 
 func windowProfileFingerprint(

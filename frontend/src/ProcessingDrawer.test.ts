@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import ProcessingDrawer from "./ProcessingDrawer.svelte";
 import * as processingAPI from "./receipts.js";
 import contract from "../../internal/daemonconn/testdata/processing_responses.json";
@@ -1075,6 +1075,7 @@ function renderProcessingResponse(response: Promise<Response>, profiles = ["priv
           fingerprint: processingJob.profile_fingerprint,
           rendition: false,
           embedding_bindings: ["semantic"],
+          query_embedding_bindings: ["semantic"],
         })),
       );
     if (path === "/api/v1/processing/plans")
@@ -1129,3 +1130,52 @@ function renderProcessingResponse(response: Promise<Response>, profiles = ["priv
     onauthfailure,
   };
 }
+
+it.each(["search", "similar"])(
+  "reports a %s result even after close but not a failed request",
+  async (kind) => {
+    let finish!: (report: unknown) => void;
+    const pending = new Promise<never>((resolve) => {
+      finish = resolve as (report: unknown) => void;
+    });
+    const failure = new Error("Synthetic search failure");
+    if (kind === "search")
+      vi.spyOn(processingAPI, "documentSearch")
+        .mockRejectedValueOnce(failure)
+        .mockReturnValueOnce(pending);
+    else
+      vi.spyOn(processingAPI, "documentSimilar")
+        .mockRejectedValueOnce(failure)
+        .mockReturnValueOnce(pending);
+    const view = renderProcessingResponse(Promise.resolve(completedProcessingResponse()));
+    await screen.findByRole("button", { name: "Run processing" });
+    await view.rerender({ scopeVersionIDs: [processingJob.content_version_id] });
+    const submit = async () => {
+      if (kind === "search") {
+        await fireEvent.input(
+          screen.getByRole("searchbox", { name: "Search this document version" }),
+          { target: { value: "synthetic query" } },
+        );
+        await fireEvent.click(screen.getByRole("button", { name: "Search this version" }));
+      } else await fireEvent.click(screen.getByRole("button", { name: "Find similar" }));
+    };
+    const events = () =>
+      view.fetchMock.mock.calls
+        .filter(([input]) => String(input) === "/api/daemon/telemetry/events")
+        .map(([, init]) => JSON.parse(String(init?.body)));
+    await submit();
+    expect(await screen.findByText("Synthetic search failure")).toBeTruthy();
+    expect(events()).toEqual([]);
+    await submit();
+    view.unmount();
+    await act(async () => {
+      finish(
+        kind === "search"
+          ? { ...contract.report, actual_mode: "lexical" }
+          : contract.similar_report,
+      );
+      await pending;
+    });
+    await waitFor(() => expect(events()).toMatchObject([{ event: "search_run" }]));
+  },
+);

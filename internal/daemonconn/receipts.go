@@ -2523,7 +2523,7 @@ func (c *Connection) IngestStream(
 	progress func(api.IngestProgress),
 ) (api.IngestReport, error) {
 	var apiResponseHTTP *http.Response
-	_, err := c.apiWithResponse(&apiResponseHTTP).StreamIngest(runtime.WithStreamingResponse(ctx), &apiclient.StreamIngestRequestOptions{Body: new(opts.requestBody(paths, dest))})
+	_, err := c.apiWithResponse(&apiResponseHTTP).StreamIngest(runtime.WithStreamingResponse(ctx), &apiclient.StreamIngestRequestOptions{Body: new(opts.requestBody(paths, dest))}, SendActionSurface)
 	if err != nil {
 		return api.IngestReport{}, err
 	}

@@ -13,6 +13,7 @@ import (
 
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/telemetry"
 )
 
 type Service struct {
@@ -23,6 +24,8 @@ type Service struct {
 	// Mutate coordinates background publication with maintenance. HTTP and
 	// embedded callers already hold their owner gate and leave this nil.
 	Mutate func(context.Context, func() error) error
+	// Telemetry reports a claimed job's first imported message; nil stays silent.
+	Telemetry *telemetry.Capture
 }
 
 func (s *Service) mutate(ctx context.Context, fn func() error) error {

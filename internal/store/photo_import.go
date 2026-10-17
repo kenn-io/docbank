@@ -59,6 +59,7 @@ type PhotoImportResult struct {
 	Asset     PhotoAsset
 	Nodes     []Node
 	Added     bool
+	Created   bool // a new file node; a replaced source version sets only Added
 	Skipped   bool
 	Ambiguity *PhotoImportAmbiguity
 }
@@ -369,6 +370,9 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 	}
 	var resolution IngestDirectoryResolution
 	defer func() {
+		if retErr != nil {
+			result.Created = false
+		}
 		if retErr == nil && group.DestinationPlan != nil {
 			*group.DestinationPlan = resolution.Rebase(*group.DestinationPlan)
 		}
@@ -444,6 +448,7 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 				}
 				node = receipt.Node
 				added = added || created
+				result.Created = result.Created || created
 			}
 			nodes[i], decided[i], claimed[node.ID] = node, true, true
 			var err error

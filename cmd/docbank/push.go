@@ -91,7 +91,12 @@ func readPushKey(keyFile string) (string, error) {
 // runPush prints each outcome and a final summary. An interrupt stops the run
 // cleanly: the summary still prints, and stopping a watch is not an error.
 func runPush(cmd *cobra.Command, connection *daemonconn.Connection, opts push.Options) error {
-	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+	parent := cmd.Context()
+	if !opts.Watch {
+		// The daemon reports the first addition of a one-shot interactive run.
+		parent = actionContext(cmd)
+	}
+	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	opts.Progress = func(ref, outcome string) error {
 		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", outcome, strconv.QuoteToASCII(ref)); err != nil {

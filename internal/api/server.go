@@ -28,6 +28,7 @@ import (
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/reporting"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/telemetry"
 	"go.kenn.io/docbank/internal/version"
 	"go.kenn.io/docbank/report"
 )
@@ -88,7 +89,7 @@ type Deps struct {
 	DocumentCursorNow func() time.Time
 	PageRuntime       *pagerender.Runtime // nil reports optional page rendering unavailable
 	Exports           *exporter.Worker
-	TelemetryCapture  http.Handler // nil leaves POST /api/daemon/telemetry/events unregistered
+	TelemetryCapture  *telemetry.Capture // nil leaves POST /api/daemon/telemetry/events unregistered
 }
 
 // Server is docbank's HTTP API: a huma-described /api/v1 surface plus a
@@ -267,7 +268,9 @@ func NewServer(d Deps) *Server {
 	registerWebSession(mux, d.Cfg.Web.Enabled, d.WebURL, s.webSessions)
 	registerWebSignIn(mux, s.webSessions)
 	registerWebSignInOpenAPI(humaAPI)
-	registerTelemetryEvents(mux, d.TelemetryCapture)
+	if d.TelemetryCapture != nil {
+		registerTelemetryEvents(mux, d.TelemetryCapture)
+	}
 	registerWebUpload(mux, d.Cfg.Web.Enabled, d.WebURL, d, g, s.webSessions)
 	registerWebDownload(mux, d.Cfg.Web.Enabled, d, s.webDownloads, s.webSessions, s.termReports)
 

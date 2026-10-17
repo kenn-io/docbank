@@ -81,6 +81,7 @@ describe("upload documents drawer", () => {
       hash,
       expect.any(AbortSignal),
       expect.any(Function),
+      expect.any(String),
     );
   });
 

@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/telemetry"
 )
 
 type PhotoImportCandidate struct {
@@ -39,6 +40,8 @@ type PhotoImportOptions struct {
 	Admit func(context.Context) (bool, error)
 	// Progress runs once with done=0 after discovery and after every group.
 	Progress func(ctx context.Context, done, total int, receipt store.PhotoImportReceipt) error
+	// Created runs after a group commits a new document; replacements don't count.
+	Created func()
 }
 
 // DefaultPhotoImportSettleInterval is how long every discovered file must stay
@@ -369,6 +372,10 @@ func (ing *Ingester) ImportPhotoDirectory(ctx context.Context, root, destination
 		result, groupErr := ing.importPhotoGroup(ctx, run, dest.ID, group, observations, observeErrors, mutate, func() error {
 			return check(true, false)
 		})
+		// A committed group counts even when later cleanup reports an error.
+		if result.Created && opts.Created != nil {
+			opts.Created()
+		}
 		switch {
 		case groupErr != nil && ctx.Err() != nil:
 			return report, ctx.Err()
@@ -461,6 +468,8 @@ func admitOutsideActivity(ctx context.Context, opts PhotoImportOptions) (bool, e
 type PhotoImportRunner struct {
 	Ingester *Ingester
 	Options  PhotoImportOptions
+	// Telemetry reports a claimed operation's first new document; nil stays silent.
+	Telemetry *telemetry.Capture
 	// admit replaces jobs.AdmitStorageOperation in tests that inject read failures.
 	admit func(ctx context.Context, metadata *store.Store, id string) (bool, error)
 }
@@ -470,6 +479,28 @@ func (r PhotoImportRunner) admitOperation(ctx context.Context, id string) (bool,
 		return r.admit(ctx, r.Ingester.Store, id)
 	}
 	return jobs.AdmitStorageOperation(ctx, r.Ingester.Store, id)
+}
+
+// reportImportAdded reports an operation's first new document, once, to the
+// interface that started it. Reporting is best effort.
+func (r PhotoImportRunner) reportImportAdded(ctx context.Context, operationID string) {
+	if r.Telemetry == nil {
+		return
+	}
+	// The document is committed, so consume the claim even while the job stops.
+	ctx = context.WithoutCancel(ctx)
+	var surface string
+	consume := func() error {
+		var err error
+		surface, err = r.Ingester.Store.ConsumeImportClaim(ctx, store.PhotoImportOwner, operationID)
+		return err
+	}
+	if r.Options.Mutate != nil {
+		_ = r.Options.Mutate(ctx, consume)
+	} else {
+		_ = consume()
+	}
+	r.Telemetry.DocumentAdded(surface)
 }
 
 func (r PhotoImportRunner) Start(supervisor *jobs.Supervisor, operationID string) error {
@@ -518,6 +549,7 @@ func (r PhotoImportRunner) Run(ctx context.Context, operationID string) error {
 		return finishErr
 	}
 	opts := r.Options
+	opts.Created = func() { r.reportImportAdded(ctx, operationID) }
 	opts.Admit = func(ctx context.Context) (bool, error) {
 		cancelled, err := r.admitOperation(ctx, operationID)
 		if err != nil {

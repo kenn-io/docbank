@@ -3,6 +3,7 @@ import { tick } from "svelte";
 import { createShortcutManager } from "@kenn-io/kit-ui";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import PhotosWorkspace from "./PhotosWorkspace.svelte";
+import * as actionEvents from "./action-events.js";
 import * as api from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
 import { Photos, photoQuery, mapPhotoLimit, type MapView } from "./photos.svelte.js";
@@ -27,6 +28,9 @@ const stubPhotoFetch = (fetcher: (url: string, init: RequestInit) => unknown) =>
   vi.stubGlobal(
     "fetch",
     (url: string, init: RequestInit) =>
+      (url === "/api/daemon/telemetry/events"
+        ? Promise.resolve(new Response(null, { status: 202 }))
+        : undefined) ??
       photoMetadataResponse(url, init) ??
       (url.endsWith("/photos/assets/query") && JSON.parse(String(init?.body ?? "{}")).facets?.length
         ? Promise.resolve(Response.json({ items: [], total: 0, facets: [] }))
@@ -216,7 +220,7 @@ it("disables search and filters until a delayed Hide finishes", async () => {
   await cache.dispose();
 });
 
-it("restores applied search after a facet click and keeps empty-library guidance when clearing filters", async () => {
+it("restores photo searches, guides empty libraries, and reports submissions and facets", async () => {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -260,7 +264,14 @@ it("restores applied search after a facet click and keeps empty-library guidance
   expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
   await fireEvent.click(screen.getByRole("button", { name: "Canon, 1 photos" }));
   await waitFor(() => expect(search.value).toBe(""));
-  expect(JSON.parse(fetcher.mock.calls[0][1].body).query.text).toBe("");
+  expect(
+    JSON.parse(
+      fetcher.mock.calls.find(([url]) => String(url).endsWith("/photos/assets/query"))![1].body,
+    ).query.text,
+  ).toBe("");
+  await waitFor(() => expect(photos.loading).toBe(false));
+  await fireEvent.input(search, { target: { value: "Nikon" } });
+  await fireEvent.submit(search.closest("form")!);
   await waitFor(() => expect(photos.loading).toBe(false));
   await fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
   await waitFor(() => expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull());
@@ -276,6 +287,11 @@ it("restores applied search after a facet click and keeps empty-library guidance
       /Choose a folder or files with Add photos\. Large camera cards on the daemon's own disk import faster with docbank photos import\./,
     ),
   ).toBeTruthy();
+  expect(
+    fetcher.mock.calls
+      .filter(([url]) => url === "/api/daemon/telemetry/events")
+      .map(([, init]) => JSON.parse(init.body)),
+  ).toMatchObject([{ event: "search_run" }, { event: "search_run" }]);
   photos.dispose();
   await cache.dispose();
 });
@@ -883,6 +899,8 @@ it.each([
 });
 
 it("opens on touch with empty selection and toggles membership on touch taps", async () => {
+  const inspect = vi.fn();
+  vi.spyOn(actionEvents, "inspectionReporter").mockReturnValue(inspect);
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -909,10 +927,12 @@ it("opens on touch with empty selection and toggles membership on touch taps", a
   const cell = await screen.findByRole("button", { name: "Select Photo 1.jpg" });
   await fireEvent.click(cell);
   expect(open).not.toHaveBeenCalled();
+  expect(inspect).not.toHaveBeenCalled();
   expect(photos.selection.selectedIDs.has("photo-1")).toBe(true);
   photos.clearSelection();
   await touchTap(cell, 1000, 1);
   expect(open).toHaveBeenCalledWith("photo-1", "open");
+  expect(inspect).toHaveBeenCalledOnce();
   expect(photos.selection.selectedIDs.size).toBe(0);
   await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
   vi.stubGlobal(

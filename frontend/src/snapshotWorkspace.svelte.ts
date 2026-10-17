@@ -6,7 +6,12 @@ import { ActionJournal, type PersistedAction } from "./actionJournal.js";
 import { prepareAction, decodeRecovery } from "./actionRecovery.js";
 import { readActionVaultID } from "./actionRunner.js";
 import { SnapshotSession, type SnapshotState } from "./snapshotState.js";
-import { captureSnapshotTargets, type SnapshotOptions, type SnapshotRow } from "./snapshots.js";
+import {
+  captureSnapshotTargets,
+  type SnapshotOptions,
+  type SnapshotPage,
+  type SnapshotRow,
+} from "./snapshots.js";
 import type { SnapshotReceiptOverlays } from "./snapshotOverlays.js";
 import type { SnapshotActionChoice } from "./SnapshotActions.svelte";
 import type { Query } from "./query.js";
@@ -46,9 +51,13 @@ export class SnapshotWorkspace {
     this.overlays = {};
   }
 
-  run(query: Query, options: SnapshotOptions): Promise<void> {
+  run(
+    query: Query,
+    options: SnapshotOptions,
+    onresult?: (page: SnapshotPage) => void,
+  ): Promise<void> {
     this.invalidateActions();
-    return this.snapshotSession().run(query, options);
+    return this.snapshotSession().run(query, options, onresult);
   }
 
   private invalidateActions(): void {

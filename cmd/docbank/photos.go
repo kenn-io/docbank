@@ -93,7 +93,7 @@ var photoInspectCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		return writeCLIJSON(cmd.OutOrStdout(), asset)
+		return writeOpenedJSON(cmd, c, asset)
 	},
 }
 

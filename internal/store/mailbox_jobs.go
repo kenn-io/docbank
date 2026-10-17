@@ -263,7 +263,10 @@ func mailboxJobQuota(ctx context.Context, tx *sql.Tx, owner string) error {
 	}
 	return nil
 }
-func (s *Store) BeginMailboxJob(ctx context.Context, owner string, r MailboxJobRequest) (MailboxJob, error) {
+
+// BeginMailboxJob queues a mailbox import, or returns the job an exact retry
+// names. A new job records surface, the interface that started it.
+func (s *Store) BeginMailboxJob(ctx context.Context, owner string, r MailboxJobRequest, surface string) (MailboxJob, error) {
 	var j MailboxJob
 	settings, err := normalizeMailboxSettings(r.Settings)
 	if err != nil {
@@ -306,7 +309,10 @@ func (s *Store) BeginMailboxJob(ctx context.Context, owner string, r MailboxJobR
 			return err
 		}
 		j = MailboxJob{MailboxJobRequest: r, Owner: owner, State: mailboxJobQueued, CollectionID: collection, StartedAt: nowRFC3339()}
-		return saveMailboxJob(ctx, tx, j, true)
+		if err = saveMailboxJob(ctx, tx, j, true); err != nil {
+			return err
+		}
+		return insertImportClaimTx(ctx, tx, MailboxImportOwner, j.ID, surface)
 	})
 	return j, err
 }

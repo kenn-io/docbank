@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { inspectionReporter } from "./action-events.js";
   import { tick } from "svelte";
   import { Button } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
@@ -21,6 +22,7 @@
   type HighlightChoice = { id: string; name: string; terms: HighlightTerm[] };
   let {
     session,
+    activation = 0,
     source,
     authorizationRevision,
     profileName = "",
@@ -39,6 +41,7 @@
     onauthfailure,
   }: {
     session: string;
+    activation?: number;
     source: SelectedSource;
     authorizationRevision: number;
     profileName?: string;
@@ -85,6 +88,47 @@
     return cancelNavigation;
   });
 
+  $effect(() => {
+    void displayedSource.key;
+    if (activation || duplicateSource || relatedSource) inspect();
+  });
+  const inspect = inspectionReporter("document_opened", () => session);
+
+  function inspectKey(event: KeyboardEvent): void {
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
+    const control = (event.target as Element).closest("button, input, select, textarea, a");
+    if (control && !control.matches('[role="tab"]') && !control.closest(".page-viewer")) return;
+    if (
+      [
+        "ArrowUp",
+        "ArrowDown",
+        "ArrowLeft",
+        "ArrowRight",
+        "PageUp",
+        "PageDown",
+        "Home",
+        "End",
+        "Enter",
+        " ",
+        "j",
+        "k",
+      ].includes(event.key)
+    )
+      inspect();
+  }
+
+  function inspection(element: HTMLElement) {
+    element.addEventListener("pointerdown", inspect);
+    element.addEventListener("keydown", inspectKey);
+    element.addEventListener("wheel", inspect, { passive: true });
+    return {
+      destroy() {
+        element.removeEventListener("pointerdown", inspect);
+        element.removeEventListener("keydown", inspectKey);
+        element.removeEventListener("wheel", inspect);
+      },
+    };
+  }
   function cancelNavigation(): void {
     ++navigationEpoch;
     navigationController?.abort();
@@ -92,6 +136,7 @@
     navigationPending = false;
   }
   function chooseTab(tab: typeof activeTab): void {
+    inspect();
     cancelNavigation();
     navigationError = "";
     activeTab = tab;
@@ -152,6 +197,7 @@
 </script>
 
 <section
+  use:inspection
   class="verified-preview"
   aria-label={`Verified content of ${displayedSource.name}`}
   data-source-version={displayedSource.versionID}
@@ -257,6 +303,7 @@
           source={displayedSource}
           authorizationRevision={displayedRevision}
           onattachments={() => chooseTab("attachments")}
+          oninspect={inspect}
           {onauthfailure}
         />
       {/key}

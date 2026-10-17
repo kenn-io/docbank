@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { reportAction } from "./action-events.js";
   import * as generated from "./generated/docbank.js";
   import { onMount, tick, untrack } from "svelte";
   import ActivityIcon from "@lucide/svelte/icons/activity";
@@ -688,6 +689,7 @@
     )
       return;
     clearPhotoNotice();
+    searchIntent = undefined;
     navOpen = false;
     if (photoMode && path === photoPath && path === location.pathname && !photoID) return;
     if (!photoMode || path !== photoPath) void invalidateLibrary(false);
@@ -762,6 +764,12 @@
   let inspectorGeneration = $state(0);
   let loading = $state(false);
   let searchPending = $state(false);
+  type SearchIntent = { reported: boolean };
+  let searchIntent: SearchIntent | undefined;
+  let deliberateSelection = $state<{ nodeID: number | undefined; activation: number }>({
+    nodeID: undefined,
+    activation: 0,
+  });
   let naturalProfiles = $state<ProcessingProfileSummary[]>([]);
   let naturalSearchMode = $state<NaturalSearchMode>("names");
   let naturalRerank = $state(false);
@@ -1251,7 +1259,7 @@
       shortcutNotice = "No rows are loaded.";
       return;
     }
-    if (move.id !== undefined && move.id !== selectedID) selectNode(move.id);
+    if (move.id !== undefined) selectNode(move.id, true);
     if (move.id !== undefined) await revealInspectedRow(move.id);
     if (move.boundary === "first") shortcutNotice = "First loaded row reached.";
     else if (move.boundary === "last") shortcutNotice = "Last loaded row reached.";
@@ -1482,6 +1490,7 @@
   }
 
   async function loadRoot(): Promise<void> {
+    searchIntent = undefined;
     invalidateTagHotkeyMutation();
     leaveSnapshotMode();
     clearBulkSelection();
@@ -1510,6 +1519,7 @@
     invalidateTagHotkeyMutation();
     leaveSnapshotMode();
     naturalProfileDefaultPending = null;
+    searchIntent = undefined;
     submittedSearchQuery = "";
     const refreshing = !remember && directory?.id === nodeID && !activeQuery && !activeTagID;
     const request = ++generation;
@@ -1612,6 +1622,16 @@
     }
   }
 
+  function consumeSearchIntent(
+    intent: SearchIntent | undefined,
+    session: string,
+    mode: string,
+  ): void {
+    if (!intent || intent.reported) return;
+    intent.reported = true;
+    reportAction(session, "search_run", mode);
+  }
+
   async function runSearch(
     preferredSelectedID = selectedID,
     queryOverride?: string,
@@ -1619,12 +1639,13 @@
     invalidateTagHotkeyMutation();
     leaveSnapshotMode();
     const query = (queryOverride ?? searchQuery).trim();
+    const intent = searchIntent;
     if (!query) {
       submittedSearchQuery = "";
       naturalSearchController?.abort();
       naturalSearchNote = "";
       naturalRerankPending = false;
-      if (tagFilterID) await loadTaggedNodes(tagFilterID);
+      if (tagFilterID) await loadTaggedNodes(tagFilterID, undefined, intent);
       else if (directory) await loadDirectory(directory.id, false);
       return;
     }
@@ -1654,6 +1675,7 @@
           refreshing,
           session,
           controller.signal,
+          intent,
         );
         return;
       }
@@ -1682,6 +1704,7 @@
         explain: true,
       };
       const baseReport = await documentSearch(session, baseRequest, controller.signal);
+      consumeSearchIntent(intent, session, baseReport.actual_mode);
       if (request !== generation || session !== webSession || controller.signal.aborted) return;
       const nodes = new Map<number, Node | undefined>();
       const baseRows = await hydrateProcessingRows(
@@ -1792,6 +1815,7 @@
             refreshing,
             session,
             controller.signal,
+            intent,
             note,
           );
         } catch (fallbackCause) {
@@ -1833,12 +1857,14 @@
     refreshing: boolean,
     session: string,
     signal: AbortSignal,
+    intent: SearchIntent | undefined,
     note = "",
   ): Promise<boolean> {
     const report = await generated.search(
       { q: query, limit: 1000, ...(requestedTagID ? { tag_id: requestedTagID } : {}) },
       { session, signal },
     );
+    consumeSearchIntent(intent, session, "text");
     if (request !== generation || session !== webSession || signal.aborted) return false;
     if ((report.tag_id ?? "") !== requestedTagID)
       throw new Error("Search results did not honor the selected tag filter.");
@@ -1932,13 +1958,19 @@
     return hydrated;
   }
 
-  async function loadTaggedNodes(tagID: string, preferredSelectedID?: number): Promise<void> {
+  async function loadTaggedNodes(
+    tagID: string,
+    preferredSelectedID?: number,
+    intent: SearchIntent | undefined = undefined,
+  ): Promise<void> {
     invalidateTagHotkeyMutation();
     leaveSnapshotMode();
     naturalProfileDefaultPending = null;
+    searchIntent = undefined;
     submittedSearchQuery = "";
     if (!directory) return;
     const request = ++generation;
+    const session = webSession;
     const refreshing = activeQuery === "" && activeTagID === tagID;
     const selectedToPreserve = preferredSelectedID ?? (refreshing ? selectedID : undefined);
     naturalSearchController?.abort();
@@ -1953,6 +1985,7 @@
         { limit: 1000, offset: 0, live_only: true },
         { session: webSession },
       );
+      consumeSearchIntent(intent, session, "text");
       if (request !== generation) return;
       const liveRows = page.items.map((item) => ({ node: item.node, path: item.path! }));
       replaceRows(liveRows, refreshing);
@@ -2025,9 +2058,11 @@
   function changeNaturalSearchMode(value: string): void {
     naturalProfileDefaultPending = null;
     naturalSearchMode = value as NaturalSearchMode;
+    searchIntent = { reported: false };
     if (naturalSearchMode === "names") naturalRerank = false;
     const query = searchPending ? submittedSearchQuery : activeQuery;
     if (query) void runSearch(selectedID, query);
+    else searchIntent = undefined;
   }
 
   function changeNaturalRerank(checked: boolean): void {
@@ -2039,19 +2074,27 @@
 
   function changeTagFilter(tagID: string): void {
     tagFilterID = tagID;
-    if (activeQuery || searchPending) void runSearch();
-    else if (tagID) void loadTaggedNodes(tagID);
+    if (activeQuery || searchPending) {
+      searchIntent = { reported: false };
+      void runSearch();
+    } else if (tagID) void loadTaggedNodes(tagID, undefined, { reported: false });
     else if (directory) void loadDirectory(directory.id, false);
   }
 
   function activate(row: Row): void {
-    selectNode(row.node.id);
+    selectNode(row.node.id, true);
     if (row.node.kind === "dir") {
       void loadDirectory(row.node.id, true);
     }
   }
 
-  function selectNode(nodeID: number | undefined): void {
+  function activateInspection(nodeID: number | undefined): void {
+    deliberateSelection = { nodeID, activation: deliberateSelection.activation + 1 };
+  }
+
+  function selectNode(nodeID: number | undefined, deliberate = false): void {
+    if (deliberate) activateInspection(nodeID);
+    else deliberateSelection = { nodeID: undefined, activation: deliberateSelection.activation };
     // Reclicking a live file keeps its resolved inspector and pending tag action.
     if (selectedID === nodeID && pendingTagHotkey) return;
     if (selectedID === nodeID && selectedSource?.kind === "live") {
@@ -2362,7 +2405,8 @@
     }
   }
 
-  function runSnapshot(query: Query, options: SnapshotOptions): void {
+  function runSnapshot(query: Query, options: SnapshotOptions, intent = true): void {
+    deliberateSelection = { nodeID: undefined, activation: deliberateSelection.activation };
     if (batchTagsContext === "snapshot") batchTagsTargets = null;
     invalidateTagHotkeyMutation();
     generation += 1;
@@ -2371,12 +2415,19 @@
     naturalRerankPending = false;
     naturalProfileDefaultPending = null;
     keepQueryDraft(query);
-    void snapshot.run(query, options);
+    const session = webSession;
+    void snapshot.run(
+      query,
+      options,
+      intent
+        ? (page) => reportAction(session, "search_run", page.query.text ? page.query.mode : "text")
+        : undefined,
+    );
   }
 
   function runSnapshotAgain(): void {
     if (!snapshot.state.query || !snapshot.state.options) return;
-    runSnapshot(snapshot.state.query, snapshot.state.options);
+    runSnapshot(snapshot.state.query, snapshot.state.options, false);
   }
 
   function changeSnapshotQuery(query: Query): void {
@@ -2395,7 +2446,11 @@
         : field === "name" || field === "path" || field === "media_type"
           ? "asc"
           : "desc";
-    changeSnapshotQuery(parseQuery(JSON.stringify({ ...query, sort: { field, direction } })));
+    runSnapshot(
+      parseQuery(JSON.stringify({ ...query, sort: { field, direction } })),
+      snapshot.state.options,
+      false,
+    );
   }
 
   function openSelectedReport(): void {
@@ -2794,6 +2849,7 @@
   });
 
   async function openPath(path: string): Promise<void> {
+    searchIntent = undefined;
     const request = ++generation;
     const session = webSession;
     try {
@@ -3112,6 +3168,7 @@
                 class="search"
                 onsubmit={(event) => {
                   event.preventDefault();
+                  searchIntent = { reported: false };
                   void runSearch();
                 }}
               >
@@ -3477,9 +3534,15 @@
                               tabindex="0"
                               data-snapshot-node={row.node_id}
                               aria-selected={row.node_id === snapshot.selectedID}
-                              onclick={() => (snapshot.selectedID = row.node_id)}
+                              onclick={() => {
+                                activateInspection(row.node_id);
+                                snapshot.selectedID = row.node_id;
+                              }}
                               onkeydown={(event) => {
-                                if (event.key === "Enter") snapshot.selectedID = row.node_id;
+                                if (event.key === "Enter") {
+                                  activateInspection(row.node_id);
+                                  snapshot.selectedID = row.node_id;
+                                }
                               }}
                             >
                               <td
@@ -3775,7 +3838,7 @@
                         tabindex="0"
                         aria-selected={row.node.id === selectedID}
                         ondblclick={() => activate(row)}
-                        onclick={() => selectNode(row.node.id)}
+                        onclick={() => selectNode(row.node.id, true)}
                         onkeydown={(event) => {
                           if (event.key === "Enter") {
                             event.preventDefault();
@@ -4047,6 +4110,9 @@
                       bind:activeTab={inspectorContentTab}
                       session={webSession}
                       source={selectedSource}
+                      activation={selectedSource.nodeID === deliberateSelection.nodeID
+                        ? deliberateSelection.activation
+                        : 0}
                       authorizationRevision={currentInspectorNode.revision}
                       profileName={snapshot.state.options?.profile ?? ""}
                       observed={selectedRenditionObservation}
@@ -4061,7 +4127,10 @@
                         selectedSnapshotPosition !== undefined &&
                         selectedSnapshotPosition + 1 < (snapshotPage?.total ?? 0)}
                       snapshotExpired={snapshot.state.status === "expired"}
-                      onnavigate={(direction) => snapshot.navigateDocument(direction)}
+                      onnavigate={async (direction) => {
+                        await snapshot.navigateDocument(direction);
+                        activateInspection(snapshot.selectedID);
+                      }}
                       onreturnfocus={() =>
                         document
                           .querySelector<HTMLElement>(
@@ -4258,6 +4327,9 @@
                           highlightSets={inspectorHighlightSets}
                           session={webSession}
                           source={selectedSource}
+                          activation={selectedSource.nodeID === deliberateSelection.nodeID
+                            ? deliberateSelection.activation
+                            : 0}
                           authorizationRevision={currentInspectorNode.revision}
                           onreturnfocus={() =>
                             document
@@ -4534,8 +4606,8 @@
             </p>
             <p>
               Reports go to PostHog with a random ID for this vault, the app version, operating
-              system, and install age. They never include document content, filenames, paths, tags,
-              or searches.
+              system, and install age, and whether you used Docbank in the web app or a terminal.
+              They never include document content, filenames, paths, tags, or search queries.
             </p>
             <p>
               To turn reporting off, set <code>DOCBANK_TELEMETRY_ENABLED=0</code> in the environment

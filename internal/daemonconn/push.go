@@ -193,7 +193,7 @@ func (c *Connection) PushUpload(
 		_, callErr := c.apiWithResponse(response).UploadPushFile(ctx, &apiclient.UploadPushFileRequestOptions{
 			Query:  query,
 			Header: &apiclient.UploadPushFileHeaders{XDocbankBlobHash: content.Hash, XDocbankBlobSize: content.Size},
-		}, editor)
+		}, editor, SendActionSurface)
 		return callErr
 	})
 	if err != nil {

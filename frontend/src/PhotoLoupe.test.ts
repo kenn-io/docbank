@@ -1,7 +1,9 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { tick } from "svelte";
+import userEvent from "@testing-library/user-event";
 import { APIError } from "./api-transport.js";
+import * as actionEvents from "./action-events.js";
 import PhotoLoupe from "./PhotoLoupe.svelte";
 import PhotoLoupeImage from "./PhotoLoupeImage.svelte";
 import { Photos } from "./photos.svelte.js";
@@ -12,6 +14,7 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 function setup() {
   vi.stubGlobal(
@@ -58,11 +61,18 @@ function setup() {
   };
   return { props, preview, get };
 }
-it("shows grid, fit and large and preserves zoom", async () => {
+it("shows preview quality and preserves zoom", async () => {
+  const inspect = vi.fn();
+  vi.spyOn(actionEvents, "inspectionReporter").mockImplementation((event, session) => {
+    expect(event).toBe("document_opened");
+    expect(session()).toBe("scoped");
+    return inspect;
+  });
   const { props, preview } = setup();
   const view = render(PhotoLoupe, props);
   await screen.findByText("Grid preview");
   await screen.findByText("Fit preview");
+  expect(inspect).not.toHaveBeenCalled();
   await view.rerender({ ...props, reloadRevision: 1 });
   await waitFor(() =>
     expect(
@@ -121,6 +131,74 @@ it("shows grid, fit and large and preserves zoom", async () => {
   expect(preview.mock.calls.filter(([, size]) => size === "large")).toHaveLength(largeRequests);
   expect(URL.revokeObjectURL).toHaveBeenCalled();
 });
+
+it.each(["wheel", "i", "pointerdown"])(
+  "reports %s inspection from a fresh viewer",
+  async (gesture) => {
+    const inspect = vi.fn();
+    vi.spyOn(actionEvents, "inspectionReporter").mockReturnValue(inspect);
+    const { props } = setup();
+    const view = render(PhotoLoupe, props);
+    await screen.findByText("Fit preview");
+    expect(inspect).not.toHaveBeenCalled();
+    const dialog = screen.getByRole("dialog");
+    const viewport = view.container.querySelector(".photo-viewport")!;
+    if (gesture === "wheel") await fireEvent.wheel(viewport, { deltaY: 100 });
+    else if (gesture === "i") await fireEvent.keyDown(dialog, { key: "i" });
+    else await fireEvent.pointerDown(viewport);
+    expect(inspect).toHaveBeenCalledOnce();
+  },
+);
+
+it("closes without reporting an inspection", async () => {
+  const inspect = vi.fn();
+  vi.spyOn(actionEvents, "inspectionReporter").mockReturnValue(inspect);
+  const { props } = setup();
+  render(PhotoLoupe, props);
+  await screen.findByText("Fit preview");
+  const close = screen.getByRole("button", { name: "Close photo viewer" });
+  await fireEvent.pointerDown(close);
+  await fireEvent.click(close);
+  expect(props.onclose).toHaveBeenCalledOnce();
+  expect(inspect).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["ArrowLeft", -1],
+  ["ArrowRight", 1],
+])("reports deliberate %s navigation after restoring a photo", async (key, direction) => {
+  const inspect = vi.fn();
+  vi.spyOn(actionEvents, "inspectionReporter").mockReturnValue(inspect);
+  const { props } = setup();
+  render(PhotoLoupe, props);
+  await screen.findByText("Fit preview");
+  expect(inspect).not.toHaveBeenCalled();
+  await fireEvent.keyDown(screen.getByRole("dialog"), { key });
+  expect(props.onmove).toHaveBeenCalledWith(direction);
+  expect(inspect).toHaveBeenCalledOnce();
+});
+
+it.each(["Show Photo 4.jpg", "View original", "Metadata"])(
+  "reports keyboard activation of %s after restoration",
+  async (action) => {
+    const inspect = vi.fn();
+    vi.spyOn(actionEvents, "inspectionReporter").mockReturnValue(inspect);
+    const { props } = setup();
+    const original = vi.spyOn(props.photos, "original").mockResolvedValue("blob:original");
+    render(PhotoLoupe, props);
+    await screen.findByText("Fit preview");
+    expect(inspect).not.toHaveBeenCalled();
+    const button = screen.getByRole("button", { name: action });
+    button.focus();
+    await userEvent.setup().keyboard("{Enter}");
+    if (action === "Show Photo 4.jpg") expect(props.onchoose).toHaveBeenCalledWith("photo-4");
+    else if (action === "View original") {
+      await screen.findByText("Original");
+      expect(original).toHaveBeenCalledOnce();
+    } else expect(screen.getByLabelText("Photo details")).toBeTruthy();
+    expect(inspect).toHaveBeenCalledOnce();
+  },
+);
 
 it("ignores late image bytes after navigation and retains fit on a failed upgrade", async () => {
   const { props, preview, get } = setup();

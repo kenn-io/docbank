@@ -22,7 +22,7 @@ func screenBody(screen, surface string) string {
 	return fmt.Sprintf(`{"event":"screen_viewed","properties":{"screen":%q,"surface":%q,"query":"private synthetic text"}}`, screen, surface)
 }
 
-func screenCollector(t *testing.T, mu *sync.Mutex, events *[]map[string]any) *httptest.Server {
+func screenCollector(t *testing.T, mu *sync.Mutex, events *[]postHogEvent) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
@@ -30,9 +30,7 @@ func screenCollector(t *testing.T, mu *sync.Mutex, events *[]map[string]any) *ht
 		var batch postHogBatch
 		assert.NoError(t, json.Unmarshal(body, &batch))
 		mu.Lock()
-		for _, event := range batch.Batch {
-			*events = append(*events, event.Properties)
-		}
+		*events = append(*events, batch.Batch...)
 		mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -41,11 +39,11 @@ func screenCollector(t *testing.T, mu *sync.Mutex, events *[]map[string]any) *ht
 func TestCaptureHandlerRejectsInvalidRequests(t *testing.T) {
 	enableTelemetryEnv(t)
 	var mu sync.Mutex
-	var events []map[string]any
+	var events []postHogEvent
 	collector := screenCollector(t, &mu, &events)
 	defer collector.Close()
 	dir := t.TempDir()
-	reporter := New(Options{Dir: dir, endpoint: collector.URL, Logger: discardLogger()})
+	reporter := New(Options{Dir: dir, Endpoint: collector.URL, Logger: discardLogger()})
 	handler := CaptureHandler(reporter, dir)
 	for _, tc := range []struct {
 		name, media, body string
@@ -58,7 +56,7 @@ func TestCaptureHandlerRejectsInvalidRequests(t *testing.T) {
 		{"event key in another case", "application/json", `{"Event":"app_opened"}`, http.StatusBadRequest},
 		{"duplicate event", "application/json", `{"event":"app_opened","event":"screen_viewed"}`, http.StatusBadRequest},
 		{"duplicate property", "application/json", `{"event":"screen_viewed","properties":{"screen":"browse","screen":"help","surface":"web"}}`, http.StatusBadRequest},
-		{"unknown event", "application/json", `{"event":"search_run"}`, http.StatusBadRequest},
+		{"unknown event", "application/json", `{"event":"unknown_action","properties":{"surface":"web","search_type":"text"}}`, http.StatusBadRequest},
 		{"blank event", "application/json", `{"event":" "}`, http.StatusBadRequest},
 		{"trailing data", "application/json", screenBody("browse", "web") + `{}`, http.StatusBadRequest},
 		{"truncated", "application/json", `{"event":"screen_viewed"`, http.StatusBadRequest},
@@ -73,6 +71,17 @@ func TestCaptureHandlerRejectsInvalidRequests(t *testing.T) {
 			assert.Equal(t, tc.status, response.Code, response.Body.String())
 		})
 	}
+	for _, event := range []string{"document_opened", "search_run"} {
+		for _, props := range []string{`{"search_type":"text"}`, `{"surface":"invalid","search_type":"text"}`, `{"surface":42,"search_type":"text"}`} {
+			require.Equal(t, 400, postEvent(t, handler, fmt.Sprintf(`{"event":%q,"properties":%s}`, event, props)).Code)
+		}
+	}
+	for _, props := range []string{`{"surface":"web"}`, `{"surface":"web","search_type":"auto"}`, `{"surface":"web","search_type":42}`} {
+		require.Equal(t, 400, postEvent(t, handler, `{"event":"search_run","properties":`+props+`}`).Code)
+	}
+	// Only the daemon confirms additions.
+	require.Equal(t, 400, postEvent(t, handler, `{"event":" document_added ","properties":{"surface":"web"}}`).Code)
+	require.ErrorIs(t, handler.Capture("document_added", map[string]any{"surface": "agent"}), posthog.ErrInvalidProperty)
 	require.NoError(t, reporter.Close())
 	require.NoFileExists(t, filepath.Join(dir, screenClaimsFile))
 	mu.Lock()
@@ -80,17 +89,16 @@ func TestCaptureHandlerRejectsInvalidRequests(t *testing.T) {
 	assert.Empty(t, events)
 }
 
-func TestScreenClaimsAcrossInterfacesRestartsAndDays(t *testing.T) {
+func TestCaptureClassifiesSearchesAndClaimsAcrossInterfacesRestartsAndDays(t *testing.T) {
 	enableTelemetryEnv(t)
 	var mu sync.Mutex
-	var events []map[string]any
+	var events []postHogEvent
 	collector := screenCollector(t, &mu, &events)
 	defer collector.Close()
 	dir := t.TempDir()
-	makeHandler := func() (*Reporter, *captureHandler) {
-		reporter := New(Options{Dir: dir, endpoint: collector.URL, Logger: discardLogger()})
-		handler, ok := CaptureHandler(reporter, dir).(*captureHandler)
-		require.True(t, ok)
+	makeHandler := func() (*Reporter, *Capture) {
+		reporter := New(Options{Dir: dir, Endpoint: collector.URL, Logger: discardLogger()})
+		handler := CaptureHandler(reporter, dir)
 		return reporter, handler
 	}
 	reporter, handler := makeHandler()
@@ -113,11 +121,37 @@ func TestScreenClaimsAcrossInterfacesRestartsAndDays(t *testing.T) {
 	}
 	wg.Wait()
 	require.Equal(t, 202, postEvent(t, handler, screenBody("search", "tui")).Code)
+	for _, surface := range []string{"web", "tui", "cli", ""} {
+		handler.DocumentAdded(surface)
+	}
+	for _, event := range []string{"document_opened", "search_run"} {
+		for _, surface := range []string{"web", "tui", "cli"} {
+			values := []struct{ mode, searchType string }{{"", ""}}
+			if event == "search_run" {
+				values = []struct{ mode, searchType string }{
+					{"text", "text"}, {"semantic", "semantic"}, {"hybrid", "hybrid"},
+					{"lexical", "text"}, {"similar", "semantic"},
+				}
+			}
+			for _, value := range values {
+				if event == "search_run" {
+					require.Equal(t, value.searchType, SearchType(value.mode))
+				}
+				body := fmt.Sprintf(`{"event":%q,"properties":{"surface":%q,"search_type":%q}}`, event, surface, value.searchType)
+				for range 2 {
+					require.Equal(t, 202, postEvent(t, handler, body).Code)
+				}
+			}
+		}
+	}
+	require.NoError(t, handler.Capture("document_opened", map[string]any{"surface": "web"}))
 	require.NoError(t, reporter.Close())
 	reporter, handler = makeHandler()
 	handler.now = func() time.Time { return now }
 	require.Equal(t, 202, postEvent(t, handler, screenBody("browse", "tui")).Code)
 	now = now.Add(time.Minute)
+	require.NoError(t, handler.Capture("search_run", map[string]any{"surface": "web", "search_type": "semantic"}))
+	require.NoError(t, handler.Capture("document_opened", map[string]any{"surface": "web"}))
 	require.Equal(t, 202, postEvent(t, handler, screenBody("browse", "tui")).Code)
 	require.NoError(t, reporter.Close())
 	require.NoError(t, os.Remove(filepath.Join(dir, posthog.InstallFileName)))
@@ -125,7 +159,7 @@ func TestScreenClaimsAcrossInterfacesRestartsAndDays(t *testing.T) {
 	handler.now = func() time.Time { return now }
 	require.Equal(t, 202, postEvent(t, handler, screenBody("browse", "web")).Code)
 	require.NoError(t, reporter.Close())
-	for i, directory := range []bool{false, true} {
+	for _, directory := range []bool{false, true} {
 		dir = t.TempDir()
 		reporter, handler = makeHandler()
 		path := filepath.Join(dir, screenClaimsFile)
@@ -138,19 +172,38 @@ func TestScreenClaimsAcrossInterfacesRestartsAndDays(t *testing.T) {
 		require.Equal(t, 202, postEvent(t, handler, screenBody("browse", "web")).Code)
 		require.NoError(t, reporter.Close())
 		mu.Lock()
-		assert.Len(t, events, 6+i)
-		assert.Equal(t, "browse", events[len(events)-1]["screen"])
-		assert.Equal(t, "web", events[len(events)-1]["surface"])
+		assert.Equal(t, "screen_viewed", events[len(events)-1].Event)
+		assert.Equal(t, "browse", events[len(events)-1].Properties["screen"])
+		assert.Equal(t, "web", events[len(events)-1].Properties["surface"])
 		mu.Unlock()
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	require.Len(t, events, 7)
-	assert.Equal(t, "browse", events[0]["screen"])
-	assert.Equal(t, "web", events[0]["surface"])
-	assert.Equal(t, "browse", events[1]["screen"])
-	assert.Equal(t, "tui", events[1]["surface"])
-	for _, props := range events {
+	counts := make(map[string]int)
+	for _, event := range events {
+		props := event.Properties
+		surface, ok := props["surface"].(string)
+		require.True(t, ok, "surface must be a string")
+		key := event.Event + "/" + surface
+		switch event.Event {
+		case "screen_viewed":
+			screen, ok := props["screen"].(string)
+			require.True(t, ok, "screen must be a string")
+			key += "/" + screen
+		case "search_run":
+			searchType, ok := props["search_type"].(string)
+			require.True(t, ok, "search_type must be a string")
+			key += "/" + searchType
+		}
+		counts[key]++
 		assert.NotContains(t, props, "query")
 	}
+	assert.Equal(t, map[string]int{
+		"screen_viewed/web/browse": 4, "screen_viewed/tui/browse": 2, "screen_viewed/tui/search": 1,
+		"document_added/web": 1, "document_added/tui": 1, "document_added/cli": 1,
+		"document_opened/web": 2, "document_opened/tui": 1, "document_opened/cli": 1,
+		"search_run/web/text": 1, "search_run/web/semantic": 2, "search_run/web/hybrid": 1,
+		"search_run/tui/text": 1, "search_run/tui/semantic": 1, "search_run/tui/hybrid": 1,
+		"search_run/cli/text": 1, "search_run/cli/semantic": 1, "search_run/cli/hybrid": 1,
+	}, counts)
 }

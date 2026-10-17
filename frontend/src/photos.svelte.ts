@@ -1,3 +1,4 @@
+import { reportAction } from "./action-events.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { photoSearchSort } from "./photoSearch.js";
@@ -217,7 +218,7 @@ export class Photos {
   }
   openSmartSet(saved: SavedQuery) {
     if (saved.kind !== "query" || this.disposed || this.hiding || this.trashing) return false;
-    const applied = this.setQuery({ ...saved.payload, sort: photoSearchSort(saved.payload) });
+    const applied = this.setQuery({ ...saved.payload, sort: photoSearchSort(saved.payload) }, true);
     if (!applied) return false;
     this.rememberSmartSet(saved);
     return true;
@@ -559,7 +560,7 @@ export class Photos {
 
   // setQuery replaces the search, filter, or album scope. It clears the selected
   // date and the timeline counts, which describe the previous scope.
-  setQuery(query: Query) {
+  setQuery(query: Query, intent = false) {
     if (this.disposed || this.hiding || this.trashing || !this.authored.canChangeTarget()) return;
     this.cancelPending();
     let next: Query;
@@ -589,7 +590,7 @@ export class Photos {
     this.scrollTop = 0;
     this.clearSelection();
     if (this.view === "timeline") void this.loadTimeline();
-    return this.loadMore();
+    return this.loadMore(undefined, intent);
   }
 
   setDensity(value: Density) {
@@ -601,7 +602,10 @@ export class Photos {
     }
   }
 
-  async loadMore(preserve?: () => (() => Promise<void>) | undefined): Promise<void> {
+  async loadMore(
+    preserve?: () => (() => Promise<void>) | undefined,
+    intent = false,
+  ): Promise<void> {
     if (this.disposed || this.hiding || this.loading || this.trashing || this.error) return;
     if (this.projection && this.replacement) {
       await this.retry(preserve);
@@ -619,7 +623,10 @@ export class Photos {
         signal = this.projection
           ? AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)])
           : controller.signal;
-        const page = await this.page(this.query, signal, this.cursor);
+        const query = this.query;
+        const page = await this.page(query, signal, this.cursor);
+        if (intent) reportAction(this.session, "search_run", query.text ? query.mode : "text");
+        intent = false;
         if (signal.aborted) throw signal.reason;
         if (!this.started) this.relevanceAvailable = page.relevance_available;
         pages++;

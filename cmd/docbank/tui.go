@@ -495,3 +495,10 @@ func (b *tuiDaemonBackend) ReportScreen(ctx context.Context, screen string) erro
 func init() {
 	rootCmd.AddCommand(tuiCmd)
 }
+
+func (b *tuiDaemonBackend) ReportAction(ctx context.Context, event, value string) error {
+	_, err := withTUIClient(ctx, b, func(c *daemonconn.Connection) (*apiclient.ReportTelemetryEventResponse, error) {
+		return c.ReportAction(ctx, event, "tui", value)
+	})
+	return err
+}

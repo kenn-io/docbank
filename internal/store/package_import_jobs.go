@@ -46,6 +46,9 @@ type PackageImportJobRequest struct {
 	PreflightID   string `json:"preflight_id"`
 	PackageID     string `json:"package_id"`
 	JobJSON       []byte `json:"job_json" format:"byte"`
+	// ActionSurface is the interface that started a new job. It is stored
+	// locally for usage reporting and never returned.
+	ActionSurface string `json:"-"`
 }
 
 type PackageImportJob struct {
@@ -202,6 +205,9 @@ func (s *Store) AdmitPackageImport(ctx context.Context, run IngestRun, pkg Packa
 		) VALUES(?,?,?,?,?,?,'queued',0,'',?,?,?)`, request.ID, request.Owner, request.OperationID,
 			request.RequestSHA256, request.PreflightID, pkg.PackageID, request.JobJSON, now, now)
 		if err != nil {
+			return err
+		}
+		if err = insertImportClaimTx(ctx, tx, PackageImportOwner, request.ID, request.ActionSurface); err != nil {
 			return err
 		}
 		result, err = loadPackageImportJobTx(ctx, tx, request.ID)
