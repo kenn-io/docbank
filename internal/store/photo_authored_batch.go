@@ -37,7 +37,7 @@ const maxPhotoKeywordEdits = 100
 
 var ErrPhotoEditFileLimit = errors.New("edit at most 1,000 files at once; RAW/JPEG pairs count as two files. Select fewer photos")
 var ErrPhotoStackFileLimit = fmt.Errorf("decide at most 2,000 files in one stack: %w", ErrInvalidPhotoAsset)
-var ErrPhotoEditReceiptLimit = errors.New("photo metadata receipt exceeds the 1 MiB limit")
+var ErrPhotoEditReceiptLimit = errors.New("photo metadata receipt exceeds the 2 MiB limit")
 
 type PhotoAuthoredTargetRevision struct {
 	AssetID       string `json:"asset_id" format:"uuid"`

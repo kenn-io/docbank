@@ -342,10 +342,6 @@ func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision
 			}
 			targets = append(targets, PhotoAuthoredTarget{FileID: target.FileID, Revision: target.Revision, Patch: PhotoAuthoredPatch{Flag: new(flag)}})
 		}
-		if len(targets) == 0 {
-			result = PhotoAuthoredReceipt{Before: []PhotoAuthoredSnapshot{}, After: []PhotoAuthoredSnapshot{}}
-			return nil
-		}
 		result, err = s.applyPhotoAuthoredValuesTx(ctx, tx, targets, photoAuthoredApply{persist: true})
 		return err
 	})
@@ -358,7 +354,7 @@ func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision
 // choosePhotoRepresentativeTx stores an explicit choice with the next rank.
 // Flags stay unchanged, so every frame keeps its picks and rejects.
 func (s *Store) choosePhotoRepresentativeTx(ctx context.Context, tx *sql.Tx, frame photoStackFrame, seed int64) (PhotoAuthoredReceipt, error) {
-	if _, err := tx.ExecContext(ctx, `INSERT INTO photo_library_settings(singleton,updated_at) VALUES(1,?) ON CONFLICT(singleton) DO NOTHING`, nowRFC3339()); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO photo_library_settings(singleton,updated_at) VALUES(1,'') ON CONFLICT(singleton) DO NOTHING`); err != nil {
 		return PhotoAuthoredReceipt{}, err
 	}
 	var rank int64

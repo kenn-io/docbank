@@ -267,7 +267,11 @@ func validatePhotoSettingsMetadataRecord(v metadataPhotoSettings) error {
 }
 
 func validatePhotoReceiptMetadataRecord(v metadataPhotoReceipt) error {
-	if v.Type != metadataPhotoReceiptType || validateUUIDv4(v.ReceiptID) != nil || v.BeforeRevision < 0 || v.AfterRevision < 0 || len(v.BeforeJSON)+len(v.AfterJSON) > maxBatchTagReceiptJSONBytes {
+	limit := maxBatchTagReceiptJSONBytes
+	if slices.Contains([]string{"authored", "authored_undo", "authored_sidecar"}, v.Operation) {
+		limit = maxPhotoAuthoredReceiptJSONBytes
+	}
+	if v.Type != metadataPhotoReceiptType || validateUUIDv4(v.ReceiptID) != nil || v.BeforeRevision < 0 || v.AfterRevision < 0 || len(v.BeforeJSON)+len(v.AfterJSON) > limit {
 		return errors.New("invalid photo receipt metadata")
 	}
 	if v.Operation == "face_decision" {

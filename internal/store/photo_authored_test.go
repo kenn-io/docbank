@@ -187,7 +187,7 @@ func TestPhotoAuthoredCompleteManyFileReceipt(t *testing.T) {
 		s := newTestStore(t)
 		ctx := t.Context()
 		targets := []PhotoAuthoredTarget{}
-		for i := range 40 {
+		for i := range 80 {
 			node, err := s.CreateFile(ctx, s.RootID(), fmt.Sprintf("photo-%d.jpg", i), fakeHash("b2"), 4, "image/jpeg")
 			require.NoError(t, err)
 			asset, err := s.PhotoAssetForNode(ctx, node.ID)
@@ -197,7 +197,7 @@ func TestPhotoAuthoredCompleteManyFileReceipt(t *testing.T) {
 		}
 		receipt, err := editPhotoAuthored(ctx, s, targets)
 		require.NoError(t, err)
-		require.Len(t, receipt.After, 40)
+		require.Len(t, receipt.After, 80)
 		stored, err := loadPhotoAuthoredReceipt(ctx, s.db, receipt.ReceiptID)
 		require.NoError(t, err)
 		assert.Equal(t, receipt, stored)
@@ -219,7 +219,7 @@ func TestPhotoAuthoredCompleteManyFileReceipt(t *testing.T) {
 		assert.Equal(t, int64(3), current.Revision)
 		stored, err = loadPhotoAuthoredReceipt(ctx, s.db, large.ReceiptID)
 		require.NoError(t, err)
-		assert.Len(t, stored.After, 40)
+		assert.Len(t, stored.After, 80)
 		var afterJSON string
 		require.NoError(t, s.db.QueryRow(`SELECT after_json FROM photo_change_receipts WHERE receipt_id=?`, large.ReceiptID).Scan(&afterJSON))
 		assert.NotContains(t, afterJSON, `"before"`)
