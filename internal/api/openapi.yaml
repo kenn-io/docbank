@@ -12423,17 +12423,7 @@ components:
           $ref: "#/components/schemas/PhotoCheckout"
         operation:
           $ref: "#/components/schemas/StorageOperation"
-        skipped_photo_count:
-          format: int64
-          type: integer
-        skipped_photos:
-          items:
-            $ref: "#/components/schemas/PhotoCheckoutSkip"
-          maxItems: 20
-          type: array
       required:
-        - skipped_photos
-        - skipped_photo_count
         - checkout
         - operation
       type: object

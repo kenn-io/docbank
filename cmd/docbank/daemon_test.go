@@ -567,6 +567,23 @@ func TestCheckoutBindingAdmissionCacheAndSnapshotChanges(t *testing.T) {
 	require.Contains(t, log.String(), destination)
 }
 
+func TestCheckoutBindingAdmissionRechecksDestinationSymlinkSwap(t *testing.T) {
+	t.Parallel()
+	catalog, _, _, destination := newCheckoutReservationFixture(t)
+	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+	binding := config.StoreBindingConfig{Kind: "filesystem", Path: t.TempDir()}
+	admit := newCheckoutBindingAdmission(catalog, slog.New(slog.DiscardHandler))
+	require.NoError(t, admit(t.Context(), binding))
+	require.NoError(t, os.Rename(destination, destination+"-moved"))
+	if err := os.Symlink(binding.Path, destination); err != nil {
+		t.Skipf("symbolic links unavailable: %v", err)
+	}
+	checkouts, err := catalog.ListPhotoCheckouts(t.Context())
+	require.NoError(t, err)
+	require.ErrorIs(t, validateCheckoutPathSnapshot(t.Context(), checkouts, binding.Path), errCheckoutPathOverlap)
+	require.ErrorIs(t, admit(t.Context(), binding), errCheckoutPathOverlap)
+}
+
 func TestCheckoutBindingAdmissionRechecksSnapshotChangedDuringWalk(t *testing.T) {
 	t.Parallel()
 	catalog, checkoutID, _, _ := newCheckoutReservationFixture(t)

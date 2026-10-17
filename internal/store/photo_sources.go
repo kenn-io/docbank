@@ -14,7 +14,6 @@ import (
 
 type photoSource struct {
 	identity, path, asset, target string
-	nameError                     string
 	eligible                      bool
 }
 
@@ -117,12 +116,12 @@ func photoSourcesTx(ctx context.Context, tx *sql.Tx, assets string, checkout boo
 		}
 	}
 	for target, files := range companions {
+		// Prefer matching observations, but recorded links also allow different names.
 		sort.Strings(files)
 		candidates := []photoSource{sources[target]}
 		for _, g := range byFile[target] {
 			candidates = append(candidates, g.refs[target])
 		}
-		resolved := false
 		for _, candidate := range candidates {
 			choices := map[string]photoSource{}
 			for _, file := range files {
@@ -143,14 +142,8 @@ func photoSourcesTx(ctx context.Context, tx *sql.Tx, assets string, checkout boo
 			if len(choices) == len(files) {
 				sources[target] = candidate
 				maps.Copy(sources, choices)
-				resolved = true
 				break
 			}
-		}
-		if !resolved {
-			source := sources[files[0]]
-			source.nameError = "incompatible source names for target " + target
-			sources[files[0]] = source
 		}
 	}
 	return sources, nil

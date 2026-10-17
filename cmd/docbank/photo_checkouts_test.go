@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json/v2"
 	"net/http"
 	"path/filepath"
@@ -13,6 +14,14 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
+func TestPhotoCheckoutHelpExplainsRetirement(t *testing.T) {
+	command := newPhotoCheckoutCmd()
+	var output bytes.Buffer
+	command.SetOut(&output)
+	require.NoError(t, command.Help())
+	require.Contains(t, output.String(), "Use retire to release source holds.")
+}
+
 func TestPhotoCheckoutCLICreateEstimateListRetireAndYears(t *testing.T) {
 	const checkoutID = "00000000-0000-4000-8000-000000000001"
 	const operationID = "00000000-0000-4000-8000-000000000002"
@@ -22,7 +31,7 @@ func TestPhotoCheckoutCLICreateEstimateListRetireAndYears(t *testing.T) {
 	checkout := store.PhotoCheckout{ID: checkoutID, OperationID: operationID, State: "queued", Selection: store.PhotoCheckoutSelection{AssetIDs: []string{checkoutID}, AlbumIDs: []string{operationID}}, Destination: absoluteDestination, ByteLimit: 100000}
 	skipped := []store.PhotoCheckoutSkip{{AssetID: operationID, FileID: checkoutID, Name: "duplicate.jpg", Reason: "duplicate filename"}}
 	checkout.SkippedPhotos, checkout.SkippedPhotoCount = skipped, 1
-	created := api.PhotoCheckoutCreateResult{SkippedPhotos: skipped, SkippedPhotoCount: 1, Checkout: checkout, Operation: api.StorageOperation{ID: operationID, Kind: "photo_checkout", State: "queued"}}
+	created := api.PhotoCheckoutCreateResult{Checkout: checkout, Operation: api.StorageOperation{ID: operationID, Kind: "photo_checkout", State: "queued"}}
 	listed := []store.PhotoCheckout{checkout}
 	retired := checkout
 	retired.State = "completed"

@@ -215,10 +215,6 @@ func (s *Store) checkoutEntriesTx(ctx context.Context, tx *sql.Tx, selection Pho
 		if len(date) >= 10 {
 			folder = strings.ReplaceAll(date[:10], "-", "/")
 		}
-		if source.nameError != "" {
-			skipped[entry.AssetID] = PhotoCheckoutSkip{entry.AssetID, entry.FileID, name, source.nameError}
-			continue
-		}
 		if err := validateCheckoutFilename(name); err != nil {
 			skipped[entry.AssetID] = PhotoCheckoutSkip{entry.AssetID, entry.FileID, name, err.Error()}
 			continue

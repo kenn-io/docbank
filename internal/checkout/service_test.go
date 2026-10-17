@@ -48,6 +48,46 @@ func checkoutPhoto(t *testing.T, s Service, name, content string) store.PhotoAss
 	return asset
 }
 
+func TestCheckoutExplicitSidecarWithDifferentName(t *testing.T) {
+	t.Parallel()
+	s := checkoutService(t)
+	source := t.TempDir()
+	run, err := s.Store.BeginIngest(t.Context(), "photo-import", source)
+	require.NoError(t, err)
+	var asset store.PhotoAsset
+	for _, file := range []struct{ name, content, mime, role string }{
+		{"IMG.ARW", "raw bytes", "image/x-sony-arw", store.PhotoRoleRAW},
+		{"annotations.XMP", "sidecar bytes", "application/rdf+xml", store.PhotoRoleSidecar},
+	} {
+		hash, size, err := s.Blobs.Write(strings.NewReader(file.content))
+		require.NoError(t, err)
+		node, err := s.Store.IngestFileExact(t.Context(), run, s.Store.RootID(), file.name, hash, size, file.mime, filepath.Join(source, file.name), "")
+		require.NoError(t, err)
+		if file.role == store.PhotoRoleRAW {
+			asset, err = s.Store.PhotoAssetForNode(t.Context(), node.ID)
+		} else {
+			asset, err = s.Store.AttachPhotoFile(t.Context(), asset.ID, asset.Revision, node.ID, file.role, &asset.Files[0].ID)
+		}
+		require.NoError(t, err)
+	}
+	selection := store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}
+	estimate, err := s.Store.EstimatePhotoCheckout(t.Context(), selection)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, estimate.Assets)
+	require.EqualValues(t, 2, estimate.Files)
+	require.Zero(t, estimate.SkippedPhotoCount)
+	destination := t.TempDir()
+	c, _, _, root, err := s.Prepare(t.Context(), selection, destination, 0)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, root.Close()) }()
+	require.NoError(t, s.Run(t.Context(), c, root))
+	for name, content := range map[string]string{"IMG.ARW": "raw bytes", "annotations.XMP": "sidecar bytes"} {
+		copied, err := os.ReadFile(filepath.Join(destination, "undated", asset.ID, name))
+		require.NoError(t, err)
+		require.Equal(t, content, string(copied))
+	}
+}
+
 func TestPrepareCancelledWhileWaitingForCreation(t *testing.T) {
 	require.NoError(t, creationMu.Acquire(t.Context(), 1))
 	defer creationMu.Release(1)

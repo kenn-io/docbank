@@ -912,10 +912,11 @@ func validateCheckoutPathSnapshot(ctx context.Context, checkouts []store.PhotoCh
 }
 
 // Successful binding checks survive refreshes until checkout reservations or
-// the binding's configuration or root identity changes. Failed checks retry.
+// the binding's configuration or any root identity changes. Failed checks retry.
 type checkoutBindingCheck struct {
 	snapshot []store.PhotoCheckout
 	root     os.FileInfo
+	paths    *ingest.PathProtection
 }
 
 type checkoutBindingAdmission struct {
@@ -953,11 +954,19 @@ func (a *checkoutBindingAdmission) admit(ctx context.Context, binding config.Sto
 		if err != nil {
 			return err
 		}
+		destinations := make([]string, 0, len(checkouts))
+		for _, checkout := range checkouts {
+			destinations = append(destinations, checkout.Destination)
+		}
 		a.mu.Lock()
 		prior, ok := a.checked[binding]
 		a.mu.Unlock()
-		if ok && sameCheckoutPaths(prior.snapshot, checkouts) && os.SameFile(prior.root, info) {
+		if ok && sameCheckoutPaths(prior.snapshot, checkouts) && os.SameFile(prior.root, info) && prior.paths.Check(destinations) == nil {
 			return nil
+		}
+		paths, err := ingest.CapturePathProtection(destinations)
+		if err != nil {
+			return err
 		}
 		if err := a.check(ctx, checkouts, binding.Path); err != nil {
 			if ctx.Err() != nil {
@@ -988,14 +997,14 @@ func (a *checkoutBindingAdmission) admit(ctx context.Context, binding config.Sto
 		}
 		// A checkout or root changed while the walk was in progress. Check
 		// the new snapshot before admitting or caching this binding.
-		if !sameCheckoutPaths(checkouts, current) || !os.SameFile(info, named) {
+		if !sameCheckoutPaths(checkouts, current) || !os.SameFile(info, named) || paths.Check(destinations) != nil {
 			continue
 		}
 		a.mu.Lock()
 		if a.checked == nil {
 			a.checked = make(map[config.StoreBindingConfig]checkoutBindingCheck)
 		}
-		a.checked[binding] = checkoutBindingCheck{snapshot: checkouts, root: info}
+		a.checked[binding] = checkoutBindingCheck{snapshot: checkouts, root: info, paths: paths}
 		delete(a.failures, binding)
 		a.mu.Unlock()
 		return nil

@@ -377,12 +377,12 @@ func TestPhotoCheckoutConflictsAndEntryPaths(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, sidecar, trashRole, captureDate string
-		multipleSidecars, skipConflict        bool
+		multipleSidecars                      bool
 		paths                                 map[string]string
 	}{
 		{name: "separate ingests", sidecar: "IMG.ARW.XMP", captureDate: "2024-06-15", paths: map[string]string{"raw": "2024/06/15/%s/IMG.ARW", "jpeg": "2024/06/15/%s/IMG.JPG", "sidecar": "2024/06/15/%s/IMG.ARW.XMP"}},
 		{name: "trashed target", sidecar: "IMG.ARW.XMP", trashRole: PhotoRoleRAW, paths: map[string]string{"jpeg": "undated/%s/IMG.JPG"}},
-		{name: "conflicting pair", sidecar: "unrelated.XMP", skipConflict: true},
+		{name: "explicit differently named sidecar", sidecar: "unrelated.XMP", paths: map[string]string{"raw": "undated/%s/IMG.ARW", "jpeg": "undated/%s/IMG.JPG", "sidecar": "undated/%s/unrelated.XMP"}},
 		{name: "trashed conflicting sidecar", sidecar: "unrelated.XMP", trashRole: PhotoRoleSidecar, paths: map[string]string{"raw": "undated/%s/IMG.ARW", "jpeg": "undated/%s/IMG.JPG"}},
 		{name: "multiple sidecars", multipleSidecars: true, paths: map[string]string{"raw": "undated/%s/RENAMED.ARW", "jpeg": "undated/%s/IMG.JPG", "first sidecar": "undated/%s/RENAMED.XMP", "second sidecar": "undated/%s/RENAMED.ARW.XMP"}},
 	} {
@@ -418,25 +418,6 @@ func TestPhotoCheckoutConflictsAndEntryPaths(t *testing.T) {
 				target := fileByRole(result.Asset.Files, PhotoRoleRAW).ID
 				result.Asset, err = s.AttachPhotoFile(ctx, result.Asset.ID, result.Asset.Revision, node.ID, PhotoRoleSidecar, &target)
 				require.NoError(t, err)
-				if tc.skipConflict {
-					good := albumAsset(t, s, "good.jpg")
-					selection := PhotoCheckoutSelection{All: true}
-					estimate, err := s.EstimatePhotoCheckout(ctx, selection)
-					require.NoError(t, err)
-					require.Equal(t, int64(1), estimate.Assets)
-					require.Equal(t, int64(1), estimate.Files)
-					require.Equal(t, int64(20), estimate.Bytes)
-					require.Equal(t, []PhotoCheckoutSkip{{AssetID: result.Asset.ID, FileID: fileByRole(result.Asset.Files, PhotoRoleSidecar).ID, Name: "unrelated.XMP", Reason: "incompatible source names for target " + target}}, estimate.SkippedPhotos)
-					require.Equal(t, int64(1), estimate.SkippedPhotoCount)
-					checkout, _, createdEstimate, err := s.CreatePhotoCheckout(ctx, selection, "checkout", 20)
-					require.NoError(t, err)
-					require.Equal(t, estimate, createdEstimate)
-					entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
-					require.NoError(t, err)
-					require.Len(t, entries, 1)
-					require.Equal(t, good.ID, entries[0].AssetID)
-					return
-				}
 				for i, file := range result.Asset.Files {
 					node, err := s.NodeByID(ctx, file.NodeID)
 					require.NoError(t, err)

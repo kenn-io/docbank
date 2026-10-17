@@ -41,7 +41,8 @@ func checkoutSelection(cmd *cobra.Command) (store.PhotoCheckoutSelection, error)
 
 func newPhotoCheckoutCmd() *cobra.Command {
 	command := &cobra.Command{Use: "checkout", Short: "Create writable photo copies", Long: `Estimate a selection, then create verified writable copies in an empty folder.
-The folder must be on the daemon's computer. List or inspect saved checkouts.`, Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
+The folder must be on the daemon's computer. List or inspect saved checkouts.
+Use retire to release source holds.`, Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
 	for _, create := range []bool{false, true} {
 		use, short, args := "estimate", "Estimate selected files and bytes", cobra.NoArgs
 		example := "  docbank photos checkout estimate --years 2024:2025"

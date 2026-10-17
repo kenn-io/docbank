@@ -5693,9 +5693,6 @@ export interface PhotoCheckoutCreateResult {
   readonly $schema?: string;
   checkout: PhotoCheckout;
   operation: StorageOperation;
-  skipped_photo_count: number;
-  /** @maxItems 20 */
-  skipped_photos: PhotoCheckoutSkip[];
 }
 
 export interface PhotoCheckoutEstimate {
