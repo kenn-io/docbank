@@ -11,6 +11,11 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
+// CheckoutPathMissing reports paths that cannot exist at their recorded location.
+func CheckoutPathMissing(err error) bool {
+	return errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)
+}
+
 // PathProtection fences a checked set of roots against replacement or new roots.
 type PathProtection struct {
 	paths      []string
@@ -23,7 +28,7 @@ func CapturePathProtection(paths []string) (*PathProtection, error) {
 	p := &PathProtection{paths: paths}
 	for _, path := range paths {
 		info, err := os.Stat(path)
-		if err != nil && !errors.Is(err, os.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR) {
+		if err != nil && !CheckoutPathMissing(err) {
 			return nil, err
 		}
 		p.identities = append(p.identities, info)
@@ -42,7 +47,7 @@ func (p *PathProtection) Check(paths []string) error {
 			return errors.New("protected roots changed during validation; retry")
 		}
 		current, err := os.Stat(path)
-		if err != nil && !errors.Is(err, os.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR) {
+		if err != nil && !CheckoutPathMissing(err) {
 			return err
 		}
 		prior := p.identities[i]
@@ -63,7 +68,7 @@ func PhotoCheckoutProtectsDestination(c store.PhotoCheckout) (bool, error) {
 	}
 	// A replacement file at the destination or an ancestor holds no copies.
 	info, err := os.Stat(c.Destination)
-	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+	if CheckoutPathMissing(err) {
 		return false, nil
 	}
 	if err != nil {
@@ -73,7 +78,7 @@ func PhotoCheckoutProtectsDestination(c store.PhotoCheckout) (bool, error) {
 		return false, nil
 	}
 	folder, err := os.Open(c.Destination)
-	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+	if CheckoutPathMissing(err) {
 		return false, nil
 	}
 	if err != nil {

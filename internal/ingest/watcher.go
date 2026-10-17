@@ -634,7 +634,7 @@ func PathsOverlapContext(ctx context.Context, left, right string) (bool, error) 
 	var missingErr error
 	for _, pair := range [][2]string{{left, right}, {right, left}} {
 		overlaps, err := existingAncestorMatchesContext(ctx, pair[0], pair[1])
-		if errors.Is(err, fs.ErrNotExist) {
+		if CheckoutPathMissing(err) {
 			if missingErr == nil {
 				missingErr = err
 			}
@@ -670,7 +670,7 @@ func resolveExistingPathPrefixContext(ctx context.Context, pathname string) (str
 			}
 			return filepath.Clean(resolved), nil
 		}
-		if !errors.Is(resolveErr, fs.ErrNotExist) {
+		if !CheckoutPathMissing(resolveErr) {
 			return "", resolveErr
 		}
 		parent := filepath.Dir(current)
@@ -699,7 +699,7 @@ func WatchBindingOverlapContext(ctx context.Context, watches []config.WatchConfi
 	}
 	for _, watch := range watches {
 		overlap, err := PathsOverlapContext(ctx, watch.Source, binding.Path)
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if err != nil && !CheckoutPathMissing(err) {
 			return watch.Name, false, err
 		}
 		if !overlap {
@@ -744,7 +744,7 @@ func existingDirectoryPrefix(ctx context.Context, pathname string) (fs.FileInfo,
 		if err == nil {
 			return info, info.IsDir(), nil
 		}
-		if !errors.Is(err, fs.ErrNotExist) {
+		if !CheckoutPathMissing(err) {
 			return nil, false, fmt.Errorf("checking path prefix %q: %w", current, err)
 		}
 		parent := filepath.Dir(current)
@@ -798,7 +798,7 @@ func existingAncestorMatchesContext(ctx context.Context, pathname, protected str
 		if statErr == nil && os.SameFile(info, protectedInfo) {
 			return true, nil
 		}
-		if statErr != nil && !errors.Is(statErr, fs.ErrNotExist) {
+		if statErr != nil && !CheckoutPathMissing(statErr) {
 			return false, fmt.Errorf("checking path ancestor %q: %w", current, statErr)
 		}
 		parent := filepath.Dir(current)

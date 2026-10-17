@@ -116,6 +116,41 @@ func TestCheckoutPathOverlapProtectsReservationsAndReleasedCopies(t *testing.T) 
 	})
 }
 
+func TestCheckoutPathOverlapWithReplacedAncestor(t *testing.T) {
+	ing := newTestIngester(t)
+	ctx := t.Context()
+	node, err := ing.Store.CreateFile(ctx, ing.Store.RootID(), "photo.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := ing.Store.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	parent := filepath.Join(t.TempDir(), "parent")
+	destination := filepath.Join(parent, "checkout")
+	require.NoError(t, os.MkdirAll(destination, 0o700))
+	checkout, op, _, err := ing.Store.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
+	require.NoError(t, err)
+	require.NoError(t, ing.Store.FinishPhotoCheckout(ctx, checkout.ID, op.ID, store.StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))
+	require.NoError(t, os.Remove(destination))
+	require.NoError(t, os.Remove(parent))
+	require.NoError(t, os.WriteFile(parent, []byte("replacement"), 0o600))
+	checkouts, err := ing.Store.ListPhotoCheckouts(ctx)
+	require.NoError(t, err)
+	require.False(t, checkouts[0].RetentionReleased)
+	for _, name := range []string{"watch", "storage binding"} {
+		t.Run(name, func(t *testing.T) {
+			id, overlap, err := CheckoutPathOverlap(ctx, checkouts, t.TempDir())
+			require.NoError(t, err)
+			require.False(t, overlap)
+			require.Empty(t, id)
+		})
+	}
+	for _, path := range []string{parent, destination, filepath.Join(destination, "nested")} {
+		id, overlap, err := CheckoutPathOverlap(ctx, checkouts, path)
+		require.NoError(t, err)
+		require.True(t, overlap)
+		require.Equal(t, checkout.ID, id)
+	}
+}
+
 // A folder reused after several retired checkouts releases every one of them,
 // and leaves unrelated checkouts recorded.
 func TestWatcherReleasesEveryRetiredCheckoutOfReusedFolder(t *testing.T) {

@@ -128,7 +128,7 @@ func checkoutDestinationsRelateToPath(ctx context.Context, checkouts []store.Pho
 		}
 		destination := checkout.Destination
 		overlap, err := PathsOverlapContext(ctx, pathname, destination)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err != nil && !CheckoutPathMissing(err) {
 			checks[i].err = err
 			continue
 		}
@@ -139,7 +139,7 @@ func checkoutDestinationsRelateToPath(ctx context.Context, checkouts []store.Pho
 					checks[i].err = fmt.Errorf("checking checkout destination: %w", err)
 					continue
 				}
-			} else if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+			} else if statErr != nil && !CheckoutPathMissing(statErr) {
 				checks[i].err = statErr
 				continue
 			}
@@ -163,7 +163,7 @@ func checkoutDestinationsRelateToPath(ctx context.Context, checkouts []store.Pho
 	}
 	candidate, statErr := os.Stat(pathname)
 	if statErr != nil || !candidate.IsDir() {
-		if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		if statErr != nil && !CheckoutPathMissing(statErr) {
 			for _, i := range remaining {
 				checks[i].err = statErr
 			}

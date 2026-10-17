@@ -4,13 +4,17 @@ import (
 	"context"
 	"encoding/json/v2"
 	"net/http"
+	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/blob"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -77,4 +81,45 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	response, body = do(t, ts, http.MethodGet, "/api/v1/photos/checkouts/00000000-0000-4000-8000-000000000001", nil, nil)
 	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
+}
+
+func TestPhotoCheckoutRoutesStartFailure(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	catalog, err := store.Open(filepath.Join(dir, "docbank.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(dir, "blobs"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
+	hash, size, err := blobs.Write(strings.NewReader("photo bytes"))
+	require.NoError(t, err)
+	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "photo.jpg", hash, size, "image/jpeg")
+	require.NoError(t, err)
+	_, err = catalog.PhotoAssetForNode(t.Context(), node.ID)
+	require.NoError(t, err)
+	supervisor := jobs.New(t.Context(), nil)
+	require.NoError(t, supervisor.Shutdown(context.Background()))
+	cfg := config.Default()
+	cfg.Server.APIKey = testAPIKey
+	server := api.NewServer(api.Deps{Store: catalog, Blobs: blobs, VaultRoot: dir, Cfg: cfg, Jobs: supervisor})
+	t.Cleanup(server.Close)
+	payload, err := json.Marshal(api.PhotoCheckoutCreateRequest{Selection: store.PhotoCheckoutSelection{All: true}, Destination: t.TempDir(), ByteLimit: 100})
+	require.NoError(t, err)
+	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/v1/photos/checkouts", strings.NewReader(string(payload)))
+	request.RemoteAddr = "127.0.0.1:12345"
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Api-Key", testAPIKey)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	require.Equal(t, http.StatusInternalServerError, response.Code, response.Body.String())
+	var problem api.Error
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &problem))
+	require.Equal(t, "internal", problem.Code)
+	checkouts, err := catalog.ListPhotoCheckouts(t.Context())
+	require.NoError(t, err)
+	require.Len(t, checkouts, 1)
+	_, operation, err := catalog.PhotoCheckoutOperation(t.Context(), checkouts[0].ID)
+	require.NoError(t, err)
+	require.Equal(t, store.StorageOperationFailed, operation.State)
 }

@@ -10,7 +10,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"syscall"
 	"time"
 
 	"golang.org/x/sync/semaphore"
@@ -179,7 +178,7 @@ func (s Service) validateDestination(ctx context.Context, root *os.Root, destina
 			continue
 		}
 		info, statErr := os.Stat(other)
-		if statErr != nil && !checkoutPathMissing(statErr) {
+		if statErr != nil && !ingest.CheckoutPathMissing(statErr) {
 			return statErr
 		}
 		var overlap bool
@@ -191,7 +190,7 @@ func (s Service) validateDestination(ctx context.Context, root *os.Root, destina
 		if overlap {
 			return fmt.Errorf("%w: destination overlaps a vault, storage root, watched folder, or checkout", store.ErrInvalidPhotoCheckout)
 		}
-		if err != nil && !checkoutPathMissing(err) {
+		if err != nil && !ingest.CheckoutPathMissing(err) {
 			return err
 		}
 	}
@@ -316,7 +315,7 @@ func (s Service) reconcile(ctx context.Context, c store.PhotoCheckout) error {
 			}
 		}
 	}
-	if invalidDestination || checkoutPathMissing(fsErr) {
+	if invalidDestination || ingest.CheckoutPathMissing(fsErr) {
 		if err := s.Store.ObservePhotoCheckout(ctx, c.ID, c.OperationID, nil); err != nil {
 			return err
 		}
@@ -345,7 +344,7 @@ func (s Service) reconcile(ctx context.Context, c store.PhotoCheckout) error {
 			if e.Published || e.FileID == operation.Cursor {
 				// A committed copy or install intent may already contain user edits.
 				_, err := root.Lstat(filepath.FromSlash(e.Path))
-				if !checkoutPathMissing(err) {
+				if !ingest.CheckoutPathMissing(err) {
 					if err != nil {
 						return jobs.DeferStorageAdmission(ctx, s.Store, c.OperationID, fmt.Errorf("file %s at %q: %w", e.FileID, e.Path, err))
 					}
@@ -390,14 +389,10 @@ func (s Service) reconcile(ctx context.Context, c store.PhotoCheckout) error {
 	return s.finish(ctx, c, state, failure)
 }
 
-func checkoutPathMissing(err error) bool {
-	return errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)
-}
-
 func observeCheckoutFile(ctx context.Context, root *os.Root, entry store.PhotoCheckoutEntry) (bool, error) {
 	name := filepath.FromSlash(entry.Path)
 	info, err := root.Lstat(name)
-	if checkoutPathMissing(err) {
+	if ingest.CheckoutPathMissing(err) {
 		return false, nil
 	}
 	if err != nil {

@@ -60,6 +60,7 @@ func registerPhotoCheckoutRoutes(api huma.API, d Deps, g *gate) {
 		}
 		if err := service.Start(d.Jobs, c, root); err != nil {
 			d.Logger.Error("start queued photo checkout", "operation_id", op.ID, "error", err)
+			return nil, FromStoreError(err)
 		}
 		c, op, err = d.Store.PhotoCheckoutOperation(ctx, c.ID)
 		if err != nil {
