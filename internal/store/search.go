@@ -224,16 +224,30 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 			} else {
 				candidate.EvidenceKind = "rendition_segment"
 			}
-			candidate.Path, err = pathOf(ctx, queryer, node.ID)
-			if err != nil {
-				return err
-			}
 			content = append(content, candidate)
 			if len(content) == remaining+1 {
 				break
 			}
 		}
-		return rows.Err()
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return err
+		}
+		if len(content) == 1 {
+			content[0].Path, err = pathOf(ctx, queryer, content[0].Node.ID)
+			return err
+		}
+		ids := make([]int64, len(content))
+		for i, candidate := range content {
+			ids[i] = candidate.Node.ID
+		}
+		paths, err := pathsOf(ctx, queryer, ids)
+		if err != nil {
+			return err
+		}
+		for i, path := range paths {
+			content[i].Path = path
+		}
+		return nil
 	}
 	err = s.withLexicalGenerationRead(ctx, func(queryer metadataQuerier, generation LexicalGeneration) error {
 		return queryContent(queryer, generation.ID)

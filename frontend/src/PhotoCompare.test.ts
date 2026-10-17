@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import PhotoCompare from "./PhotoCompare.svelte";
+import { APIError } from "./api-transport.js";
 import { Photos } from "./photos.svelte.js";
 import { photo } from "./photo-test-fixtures.js";
 import type { PhotoPreviewCache } from "./photoPreviewCache.js";
@@ -15,6 +16,44 @@ const names = (dialog: HTMLElement) =>
   within(dialog)
     .getAllByRole("heading")
     .map((heading) => heading.textContent);
+
+it.each([false, true])(
+  "shares closeup retry results with full frames (removed: %s)",
+  async (removed) => {
+    const { photos, dialog } = compare();
+    await within(dialog).findByText("Photo 1.jpg");
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Manual closeup" }));
+    const frame = within(dialog).getByRole("button", { name: "Position closeup on Photo 1.jpg" });
+    await fireEvent.click(frame);
+    const closeups = await within(dialog).findByLabelText("Matching closeups");
+    vi.mocked(photos.preview).mockRejectedValue(
+      new APIError("Photo replaced", 409, "photo_display_changed"),
+    );
+    const closeup = within(closeups).getByRole("region", { name: "Closeup of Photo 1.jpg" });
+    const retry = await within(closeup).findByRole("button", { name: "Retry preview" });
+    const lookup = vi.spyOn(photos, "lookup");
+    if (removed) lookup.mockRejectedValue(new APIError("Photo removed", 404, "not_found"));
+    else
+      lookup.mockResolvedValue({ ...photo(1), name: "Replacement.jpg", content_version_id: "v2" });
+    await fireEvent.click(retry);
+    await waitFor(() =>
+      expect(names(dialog)).toEqual(
+        removed
+          ? ["Photo 2.jpg", "Photo 2.jpg"]
+          : ["Replacement.jpg", "Photo 2.jpg", "Replacement.jpg", "Photo 2.jpg"],
+      ),
+    );
+    if (!removed) {
+      await waitFor(() =>
+        expect(
+          vi.mocked(photos.preview).mock.calls.filter(([row]) => row.content_version_id === "v2")
+            .length,
+        ).toBeGreaterThanOrEqual(2),
+      );
+    }
+    photos.dispose();
+  },
+);
 
 function compare(
   rows = [photo(1), photo(2), photo(3)],
@@ -174,5 +213,55 @@ it("keeps the last panes after a lookup failure and retries the selected group",
   await waitFor(() => expect(document.activeElement).toBe(dialog.querySelector(".photo-compare")));
   await fireEvent.keyDown(document.activeElement!, { key: "ArrowLeft" });
   await waitFor(() => expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]));
+  photos.dispose();
+});
+
+it("serializes Next activations until the destination lookup finishes", async () => {
+  const rows = [photo(1), photo(2), photo(3), photo(4)];
+  const { photos, dialog } = compare(rows);
+  await waitFor(() => expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]));
+  let resolve!: (rows: ReturnType<typeof photo>[]) => void;
+  vi.mocked(photos.lookupMany).mockImplementationOnce(
+    () => new Promise((done) => (resolve = done)),
+  );
+  const move = vi.spyOn(photos, "moveGroup");
+  const next = within(dialog).getByRole("button", { name: "Next" }) as HTMLButtonElement;
+  await fireEvent.click(next);
+  await waitFor(() => expect(photos.lookupMany).toHaveBeenCalledTimes(2));
+  expect(next.disabled).toBe(true);
+  await fireEvent.click(next);
+  await fireEvent.keyDown(dialog.querySelector(".photo-compare")!, { key: "ArrowRight" });
+  expect(move).toHaveBeenCalledOnce();
+  expect(photos.lookupMany).toHaveBeenCalledTimes(2);
+  expect(vi.mocked(photos.lookupMany).mock.calls[1]![0]).toEqual([
+    rows[1]!.asset_id,
+    rows[2]!.asset_id,
+  ]);
+  resolve(rows.slice(1, 3));
+  await waitFor(() => expect(names(dialog)).toEqual(["Photo 2.jpg", "Photo 3.jpg"]));
+  await waitFor(() => expect(next.disabled).toBe(false));
+  photos.dispose();
+});
+
+it("preserves the closeup when the destination lookup fails", async () => {
+  const { photos, dialog } = compare([photo(1), photo(2), photo(3), photo(4)]);
+  await waitFor(() => expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]));
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Manual closeup" }));
+  const frame = within(dialog).getByRole("button", { name: "Position closeup on Photo 1.jpg" });
+  await fireEvent.keyDown(frame, { key: "Enter" });
+  await fireEvent.click(frame);
+  const closeups = await within(dialog).findByLabelText("Matching closeups");
+  vi.mocked(photos.lookupMany).mockRejectedValueOnce(new Error("Lookup unavailable"));
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
+  await within(dialog).findByText("Lookup unavailable");
+  expect(within(dialog).getByLabelText("Matching closeups")).toBe(closeups);
+  expect(
+    within(closeups)
+      .getAllByRole("heading")
+      .map((heading) => heading.textContent),
+  ).toEqual(["Photo 1.jpg", "Photo 2.jpg"]);
+  await fireEvent.click(within(dialog).getByRole("button", { name: /^Retry$/ }));
+  await waitFor(() => expect(names(dialog)).toEqual(["Photo 2.jpg", "Photo 3.jpg"]));
+  expect(within(dialog).queryByLabelText("Matching closeups")).toBeNull();
   photos.dispose();
 });

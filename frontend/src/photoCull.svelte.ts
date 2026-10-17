@@ -1,6 +1,8 @@
 import { createSnapshot, captureSnapshotTargets } from "./snapshots.js";
 import type { Query } from "./query.js";
 import { randomUUID } from "./crypto.js";
+import { APIError } from "./api-transport.js";
+import { sameCheckpoint } from "./photoCullStorage.js";
 import type {
   CullCheckpoint,
   CullProgress,
@@ -51,7 +53,12 @@ export class PhotoCull {
   constructor(
     readonly session: string,
     private storage: CullStorage,
+    private onauthfailure?: (cause: unknown) => void,
   ) {}
+  private apiFailure(cause: unknown) {
+    if (cause instanceof APIError && cause.status === 401) this.onauthfailure?.(cause);
+    this.error = failure(cause);
+  }
   get currentID() {
     return this.run?.checkpoint.pass[this.run.checkpoint.position];
   }
@@ -166,10 +173,24 @@ export class PhotoCull {
     const next = group?.[group.indexOf(this.currentID!) + direction];
     if (next) this.choose(next);
   }
+  async verifyDecision() {
+    await this.writes;
+    if (!this.run || this.stale || this.busy) return false;
+    try {
+      const saved = await this.storage.saved();
+      if (!saved || !sameCheckpoint(saved, this.run.checkpoint))
+        throw new Error("Cull progress changed in another tab. Close and resume it.");
+      return true;
+    } catch (cause) {
+      this.stale = true;
+      this.error = `Progress could not be saved: ${failure(cause)}`;
+      return false;
+    }
+  }
   get complete() {
     return !!this.run && !this.currentID;
   }
-  async restore(quiet = false) {
+  async restore() {
     await this.writes;
     this.error = "";
     try {
@@ -216,7 +237,7 @@ export class PhotoCull {
       this.stale = false;
       return !!this.run;
     } catch (cause) {
-      if (!quiet) this.error = failure(cause);
+      this.error = failure(cause);
       return false;
     }
   }
@@ -284,7 +305,7 @@ export class PhotoCull {
       this.visit();
       return true;
     } catch (cause) {
-      if (!controller.signal.aborted) this.error = failure(cause);
+      if (!controller.signal.aborted) this.apiFailure(cause);
       return false;
     } finally {
       this.capturing = false;
@@ -292,11 +313,23 @@ export class PhotoCull {
     }
   }
   private async refreshFlags(signal: AbortSignal) {
-    const rows = await lookupPhotoRows(this.session, this.run!.ids, signal, (loaded, total) => {
+    const progress = (loaded: number, total: number) => {
       this.progress = `Checking ${loaded} of ${total} photos…`;
-    });
+    };
+    // Capture-time runs group frozen rows by folder and time, so keep full rows there.
+    const rows = this.run!.captureTimeOrder
+      ? await lookupPhotoRows(this.session, this.run!.ids, signal, progress, false)
+      : await lookupPhotoRows(
+          this.session,
+          this.run!.ids,
+          signal,
+          progress,
+          false,
+          undefined,
+          ({ asset_id, flag }) => ({ asset_id, flag }),
+        );
     signal.throwIfAborted();
-    this.rows = rows;
+    this.rows = this.run!.captureTimeOrder ? (rows as PhotoBrowseRow[]) : [];
     this.groupRows();
     return new Map(rows.map((row) => [row.asset_id, row.flag]));
   }
@@ -405,7 +438,7 @@ export class PhotoCull {
       );
       this.remainder = this.matches("unflagged", flags).length > 0;
     } catch (cause) {
-      if (!controller.signal.aborted) this.error = failure(cause);
+      if (!controller.signal.aborted) this.apiFailure(cause);
     } finally {
       this.finishFlagRead(controller);
     }
@@ -465,7 +498,7 @@ export class PhotoCull {
       this.remainder = false;
       changed = true;
     } catch (cause) {
-      if (!controller.signal.aborted) this.error = failure(cause);
+      if (!controller.signal.aborted) this.apiFailure(cause);
     } finally {
       this.changingPass = false;
       this.finishFlagRead(controller);

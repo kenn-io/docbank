@@ -160,7 +160,7 @@ func TestEvacuationCleanupIncludesPackAfterMappingsAreRevoked(t *testing.T) {
 	require.NoError(t, err)
 	tx, err := s.db.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = tx.Rollback() })
+	defer func() { require.NoError(t, tx.Rollback()) }()
 
 	refs, err := blobStoreObjectRefsTx(t.Context(), tx, secondary.ID)
 	require.NoError(t, err)

@@ -39,7 +39,7 @@ export interface CullStorage {
   checkpoint(value: CullProgress): Promise<void>;
 }
 
-const sameCheckpoint = (
+export const sameCheckpoint = (
   a: Pick<CullCheckpoint, "runID" | "passID" | "revision">,
   b: Pick<CullCheckpoint, "runID" | "passID" | "revision">,
 ) => a.runID === b.runID && a.passID === b.passID && a.revision === b.revision;

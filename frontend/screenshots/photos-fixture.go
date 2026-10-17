@@ -292,7 +292,7 @@ func seedRejects(ctx context.Context, s *store.Store) {
 func editTargets(prepared []store.PhotoPreparedTarget) []store.PhotoAuthoredEditTarget {
 	targets := make([]store.PhotoAuthoredEditTarget, len(prepared))
 	for i, target := range prepared {
-		targets[i] = target.PhotoAuthoredEditTarget
+		targets[i] = store.PhotoAuthoredEditTarget{PhotoAuthoredTargetRevision: target.PhotoAuthoredTargetRevision}
 	}
 	return targets
 }

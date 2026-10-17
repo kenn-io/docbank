@@ -1,6 +1,7 @@
 import { beforeEach, afterEach, expect, it, vi } from "vite-plus/test";
 import { snapshotEnvelope } from "./snapshot-test-fixtures.js";
 import { PhotoCull } from "./photoCull.svelte.js";
+import { APIError } from "./api-transport.js";
 import * as photoQueries from "./photos.svelte.js";
 import { photoCullStorage, type CullRun } from "./photoCullStorage.js";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
@@ -44,6 +45,24 @@ function browsePage(rows: api.PhotoBrowseRow[], request: api.PhotoBrowseRequest)
     relevance_available: false,
   };
 }
+
+it("retains only asset IDs and flags from a cull flag refresh", async () => {
+  const rows = [photo(1), { ...photo(2), flag: "pick" as const }];
+  vi.spyOn(api, "createWorkspaceQuery").mockImplementation(async () =>
+    Response.json(await snapshot(rows.map((row) => row.asset_id))),
+  );
+  vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) => browsePage(rows, request));
+  const lookup = vi.spyOn(photoQueries, "lookupPhotoRows");
+  const cull = new PhotoCull("session", storage());
+  await cull.start(query);
+  await cull.nextPass(false, () => true);
+  expect(cull.run?.checkpoint.pass).toEqual([rows[1]!.asset_id]);
+  expect(lookup).toHaveBeenCalledOnce();
+  expect(await lookup.mock.results[0]!.value).toEqual([
+    { asset_id: "00000000-0000-4000-8000-000000000001", flag: "" },
+    { asset_id: "00000000-0000-4000-8000-000000000002", flag: "pick" },
+  ]);
+});
 it("probes saved headers and replaces a run without loading its membership", async () => {
   const store = storage(),
     original = new PhotoCull("session", store);
@@ -330,13 +349,23 @@ it("keeps the previous durable run after cancellation, capture failure or failed
   const original = structuredClone(cull.run);
   expect(await cull.start(query, () => false)).toBe(false);
   expect(await store.load()).toEqual(original);
-  capture.mockImplementationOnce(async (_request, options) => {
-    cull.cancel();
-    options?.signal?.throwIfAborted();
-    throw new Error("unreachable");
-  });
-  expect(await cull.start(query, () => true)).toBe(false);
+  const replacement = new Response(JSON.stringify(await snapshot([photo(2).asset_id])));
+  let release!: () => void;
+  capture.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        release = () => resolve(replacement);
+      }),
+  );
+  const replacing = cull.start(query, () => true);
+  await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+  cull.cancel();
+  release();
+  expect(await replacing).toBe(false);
+  await cull.flush();
   expect(cull.run).toEqual(original);
+  expect(await store.load()).toEqual(original);
+  expect(cull.error).toBe("");
   capture.mockRejectedValueOnce(new Error("Snapshot expired"));
   expect(await cull.start(query, () => true)).toBe(false);
   expect(cull.error).toBe("Snapshot expired");
@@ -695,3 +724,30 @@ it("keeps filename-sorted cull passes flat and preserves their captured order", 
   expect(resumed.currentStack).toBeUndefined();
   expect(list).not.toHaveBeenCalled();
 });
+
+it.each(["capture", "next pass", "remainder"])(
+  "recovers the session after a 401 during %s",
+  async (site) => {
+    const store = storage();
+    const onauthfailure = vi.fn();
+    const cull = new PhotoCull("session", store, onauthfailure);
+    const cause = new APIError("Session expired", 401, "unauthorized");
+    const capture = vi
+      .spyOn(api, "createWorkspaceQuery")
+      .mockImplementation(async () => Response.json(await snapshot([photo(1).asset_id])));
+    if (site === "capture") {
+      capture.mockRejectedValueOnce(cause);
+      await cull.start(query);
+    } else {
+      await cull.start(query);
+      await cull.flush();
+      cull.move(1);
+      await cull.flush();
+      vi.spyOn(api, "listPhotoAssets").mockRejectedValueOnce(cause);
+      if (site === "next pass") await cull.nextPass();
+      else await cull.checkRemainder();
+    }
+    expect(onauthfailure).toHaveBeenCalledExactlyOnceWith(cause);
+    expect(cull.error).toBe("Session expired");
+  },
+);

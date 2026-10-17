@@ -1,10 +1,12 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount, untrack } from "svelte";
+  import { restorePhotoReviewFocus } from "./photoReview.js";
+  import "./photoReview.css";
   import { Button, Modal } from "@kenn-io/kit-ui";
   import type { Photos } from "./photos.svelte.js";
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import type { PhotoBrowseRow } from "./generated/docbank.js";
-  import { fittedPhotoView, toggleActualPhotoView, type PhotoView } from "./photoView.js";
+  import { fittedPhotoView, toggleActualPhotoView } from "./photoView.js";
   import PhotoStage from "./PhotoStage.svelte";
   let {
     ids,
@@ -12,14 +14,12 @@
     cache,
     onclose,
   }: { ids: string[]; photos: Photos; cache: PhotoPreviewCache; onclose: () => void } = $props();
-  let selected = $state<string[]>([]);
-  let target = $state<string[]>([]);
+  let selected = $state<string[]>(untrack(() => [...ids]));
+  let target = $state<string[]>(untrack(() => [...ids]));
   let rows = $state.raw<PhotoBrowseRow[]>([]);
   let unavailable = $state(0);
   let errors = $state.raw<string[]>([]);
-  let view = $state<PhotoView>({ ...fittedPhotoView });
   let regionMode = $state(false);
-  let crop = $state<PhotoView>();
   let moving = $state(false);
   let navigationError = $state("");
   let retryDirection = $state<-1 | 1>(1);
@@ -27,9 +27,6 @@
   let loading = $state(false);
   onMount(() => {
     void restoreFocus();
-  });
-  $effect(() => {
-    selected = target = [...ids];
   });
   $effect(() => {
     const members = target;
@@ -43,6 +40,14 @@
           selected = members;
           rows = values;
           unavailable = members.length - values.length;
+          if (
+            members.some((id, index) => id !== photos.compareIDs[index]) ||
+            members.length !== photos.compareIDs.length
+          ) {
+            photos.compareView = { ...fittedPhotoView };
+            photos.compareCrop = undefined;
+          }
+          photos.compareIDs = members;
           void restoreFocus();
         }
       })
@@ -51,7 +56,10 @@
           errors = [cause instanceof Error ? cause.message : String(cause)];
       })
       .finally(() => {
-        if (!controller.signal.aborted) loading = false;
+        if (!controller.signal.aborted) {
+          loading = false;
+          moving = false;
+        }
       });
     return () => controller.abort();
   });
@@ -60,15 +68,15 @@
     moving = true;
     navigationError = "";
     const result = await photos.moveGroup(selected, direction);
-    moving = false;
     if (result.status === "failed") {
       navigationError = result.error;
       retryDirection = direction;
     }
-    if (result.status !== "moved") return;
+    if (result.status !== "moved") {
+      moving = false;
+      return;
+    }
     target = result.ids;
-    view = { ...fittedPhotoView };
-    crop = undefined;
   }
   function key(event: KeyboardEvent) {
     if (event.ctrlKey || event.altKey || event.metaKey || event.isComposing || event.repeat) return;
@@ -80,11 +88,11 @@
       void move(event.key === "ArrowLeft" ? -1 : 1);
     } else if (event.key.toLowerCase() === "z") {
       event.preventDefault();
-      view = toggleActualPhotoView(view);
+      photos.compareView = toggleActualPhotoView(photos.compareView);
     }
   }
   function region(value: { x: number; y: number; width: number; height: number }) {
-    crop = {
+    photos.compareCrop = {
       scale: Math.min(32, Math.max(1, 1 / Math.max(value.width, value.height))),
       x: value.x,
       y: value.y,
@@ -95,10 +103,14 @@
   function cancelRegion() {
     regionMode = false;
   }
-  async function restoreFocus() {
-    await tick();
-    content?.focus({ preventScroll: true });
+  function reload(row: PhotoBrowseRow) {
+    rows = rows.map((item) => (item.asset_id === row.asset_id ? row : item));
   }
+  function remove(id: string, message: string) {
+    rows = rows.filter((item) => item.asset_id !== id);
+    errors = [...errors, message];
+  }
+  const restoreFocus = () => restorePhotoReviewFocus(() => content);
 </script>
 
 <svelte:document onkeydown={(event) => event.target === document.body && key(event)} />
@@ -114,7 +126,7 @@
     maxHeight="100svh"
   >
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="photo-compare" tabindex="-1" bind:this={content} onkeydown={key}>
+    <div class="photo-review photo-compare" tabindex="-1" bind:this={content} onkeydown={key}>
       <header>
         <Button size="sm" onclick={onclose}>Exit compare</Button><strong
           >Compare {rows.length} photos</strong
@@ -128,14 +140,19 @@
             photos.loading ||
             (!photos.cursor && selected.some((id) => id === photos.items.at(-1)?.asset_id))}
           onclick={() => void move(1)}>Next</Button
-        ><Button size="sm" onclick={() => (view = toggleActualPhotoView(view))}>1:1 (Z)</Button
+        ><Button
+          size="sm"
+          onclick={() => (photos.compareView = toggleActualPhotoView(photos.compareView))}
+          >1:1 (Z)</Button
         ><Button
           size="sm"
           onclick={() => {
             regionMode = !regionMode;
-            view = { ...fittedPhotoView };
+            photos.compareView = { ...fittedPhotoView };
           }}>Manual closeup</Button
-        >{#if crop}<Button size="sm" onclick={() => (crop = undefined)}>Clear closeup</Button>{/if}
+        >{#if photos.compareCrop}<Button size="sm" onclick={() => (photos.compareCrop = undefined)}
+            >Clear closeup</Button
+          >{/if}
       </header>
       {#if regionMode}<p role="status">
           Click or draw on a frame, or focus it and use arrow keys to position a closeup. Press
@@ -165,15 +182,11 @@
               {photo}
               {photos}
               {cache}
-              {view}
+              view={photos.compareView}
               onfocus={restoreFocus}
-              onreload={(row) =>
-                (rows = rows.map((item) => (item.asset_id === row.asset_id ? row : item)))}
-              onunavailable={(message) => {
-                rows = rows.filter((item) => item.asset_id !== photo.asset_id);
-                errors = [...errors, message];
-              }}
-              onview={(value) => (view = value)}
+              onreload={reload}
+              onunavailable={(message) => remove(photo.asset_id, message)}
+              onview={(value) => (photos.compareView = value)}
               onmove={move}
               {regionMode}
               onregion={region}
@@ -181,7 +194,7 @@
             />
           </section>{/each}
       </div>
-      {#if crop}<div
+      {#if photos.compareCrop}<div
           class="closeups"
           aria-label="Matching closeups"
           style={`--columns: ${Math.min(4, rows.length)}`}
@@ -192,9 +205,11 @@
                 {photo}
                 {photos}
                 {cache}
-                view={crop}
-                onview={(value) => (crop = value)}
+                view={photos.compareCrop}
+                onview={(value) => (photos.compareCrop = value)}
                 onfocus={restoreFocus}
+                onreload={reload}
+                onunavailable={(message) => remove(photo.asset_id, message)}
               />
             </section>{/each}
         </div>{/if}
@@ -203,23 +218,6 @@
 </div>
 
 <style>
-  .review-shell :global(.kit-modal-body) {
-    padding: 0;
-    overflow: hidden;
-  }
-  .review-shell :global(.kit-modal-panel) {
-    border: 0;
-    border-radius: 0;
-  }
-
-  .photo-compare {
-    height: 100svh;
-    width: 100%;
-    display: flex;
-    flex-direction: column;
-    background: var(--bg-surface);
-    color: var(--text-primary);
-  }
   header {
     display: flex;
     flex-wrap: wrap;

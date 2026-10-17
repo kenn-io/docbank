@@ -201,7 +201,7 @@ jobs:
       - name: Embedded modernc restore without FTS5 build tags
         env:
           CGO_ENABLED: "1"
-        run: go test -race -count=1 -run '^TestRepositoryRestoreAfterSourceLoss/modernc$' .
+        run: go test -race -count=1 -run '^TestRepositoryRestoreAfterSourceLoss/modernc$' ./docbank
 
       - name: Stop S3-compatible test service
         if: always()

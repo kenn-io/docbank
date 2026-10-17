@@ -1,5 +1,6 @@
 <script lang="ts">
   import { type PhotoBrowseRow } from "./photoRows.js";
+  import { fittedPhotoView } from "./photoView.js";
   import { onDestroy, onMount, tick, untrack } from "svelte";
   import {
     Button,
@@ -117,9 +118,8 @@
   } = $props();
   let cull = $state.raw<CullRun>();
   const culling = $derived(photos.culling);
-  let comparing = $state(false);
+  const comparing = $derived(photos.comparing);
   let enteringReview = false;
-  let compareIDs = $state<string[]>([]);
   let returnFocus: HTMLElement | undefined;
   $effect(() => {
     const owner = photos;
@@ -131,7 +131,7 @@
         owner.cullEditor?.dispose();
         owner.cullEditor = undefined;
         owner.culling = false;
-        owner.cull = new CullRun(owner.session, photoCullStorage(id));
+        owner.cull = new CullRun(owner.session, photoCullStorage(id), owner.onauthfailure);
         owner.cullVaultID = id;
       }
       if (!owner.culling) void owner.cull!.probe();
@@ -156,11 +156,17 @@
   function compare() {
     if (enteringReview || culling || comparing || !editor.canChangeTarget()) return;
     returnFocus = document.activeElement as HTMLElement;
-    compareIDs = [...photos.selectedIDs];
-    if (compareIDs.length >= 2 && compareIDs.length <= maxComparePhotos) comparing = true;
+    const ids = [...photos.selectedIDs];
+    if (ids.length >= 2 && ids.length <= maxComparePhotos) {
+      photos.compareIDs = ids;
+      photos.comparing = true;
+    }
   }
   async function closeReview() {
-    photos.culling = comparing = false;
+    photos.culling = photos.comparing = false;
+    photos.compareIDs = [];
+    photos.compareView = { ...fittedPhotoView };
+    photos.compareCrop = undefined;
     photos.cullEditor?.dispose();
     photos.cullEditor = undefined;
     await cull?.flush();
@@ -253,7 +259,7 @@
       return;
     }
     const scope = photoID ? { asset_ids: [photoID] } : photos.scope();
-    void editor.edit(scope, patch, photos.hidden, metadataRefresh, keywords, rotationDelta);
+    void editor.edit(scope, patch, photos.hidden, metadataRefresh, { keywords, rotationDelta });
   }
   function undoShortcut() {
     if (!editor.receiptID) return;
@@ -774,7 +780,7 @@
     onclose={() => void closeReview()}
   />{/if}
 {#if comparing}<PhotoCompare
-    ids={compareIDs}
+    ids={photos.compareIDs}
     {photos}
     {cache}
     onclose={() => void closeReview()}
@@ -890,6 +896,7 @@
                 <Button
                   size="sm"
                   disabled={actionDisabled || !cull || cull.capturing || !vaultID || !photos.total}
+                  title={vaultID ? undefined : "Vault identity unavailable. Reload to retry."}
                   onclick={() => void startCull()}>Cull</Button
                 >
                 {#if cull?.capturing}<Button size="sm" onclick={() => cull?.cancel()}

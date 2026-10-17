@@ -10,7 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	docbank "go.kenn.io/docbank"
+	docbank "go.kenn.io/docbank/docbank"
 	"go.kenn.io/docbank/sqlite"
 	"go.kenn.io/docbank/sqlite/modernc"
 )

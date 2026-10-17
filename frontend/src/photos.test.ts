@@ -3143,3 +3143,31 @@ it("refreshes stack representatives from the server after companion flags and Un
   }
   photos.dispose();
 });
+
+it("projects each lookup batch and returns projected rows in input order", async () => {
+  const rows = Array.from({ length: 65 }, (_, index) => photo(index + 1));
+  stubPhotoFetch(async (_url, init) => {
+    const request = JSON.parse(String(init.body));
+    expect(request.page_size).toBe(250);
+    expect(request.hidden).toBe(false);
+    return response(
+      rows.filter((row) => request.query.filters.asset_ids.includes(row.asset_id)).reverse(),
+    );
+  });
+  const projected = await lookupPhotoRows(
+    "session",
+    rows.map((row) => row.asset_id),
+    undefined,
+    undefined,
+    false,
+    undefined,
+    ({ asset_id, flag }) => ({ asset_id, flag }),
+  );
+  expect(projected).toHaveLength(65);
+  expect(projected[0]).toEqual({ asset_id: "photo-1", flag: "" });
+  expect(projected[64]).toEqual({ asset_id: "photo-65", flag: "" });
+  expect(projected.map((row) => row.asset_id)).toEqual(rows.map((row) => row.asset_id));
+  expect(projected.every((row) => Object.keys(row).sort().join(",") === "asset_id,flag")).toBe(
+    true,
+  );
+});

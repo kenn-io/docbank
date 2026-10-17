@@ -87,6 +87,29 @@ function jsonResponse(value: unknown): Response {
 afterEach(() => vi.restoreAllMocks());
 
 describe("snapshot transport and receipt validation", () => {
+  it("rejects a photo snapshot row without its flag", async () => {
+    const photoRow = { ...row(2, version2, blob2, 20), asset_id: tagID, flag: "" as const };
+    const fetcher = vi.spyOn(globalThis, "fetch");
+    fetcher.mockResolvedValueOnce(jsonResponse(await page({ rows: [photoRow], facets: [] })));
+    const accepted = await createSnapshot(
+      "session",
+      query,
+      { photos: true, page_size: 50 },
+      new AbortController().signal,
+    );
+    expect(accepted.rows[0]!.flag).toBe("");
+    const { flag: _flag, ...missingFlag } = photoRow;
+    fetcher.mockResolvedValueOnce(jsonResponse(await page({ rows: [missingFlag], facets: [] })));
+    await expect(
+      createSnapshot(
+        "session",
+        query,
+        { photos: true, page_size: 50 },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("rows[0].flag is invalid");
+  });
+
   it("accepts a person dependency", async () => {
     const dependencies = [{ kind: "person", id: tagID, revision: 4 }];
     const receipt = await page({ dependencies });

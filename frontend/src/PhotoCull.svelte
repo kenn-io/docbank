@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount, untrack, tick } from "svelte";
+  import { restorePhotoReviewFocus } from "./photoReview.js";
+  import "./photoReview.css";
   import { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
   import { Button, Modal, Notice } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
@@ -48,16 +50,17 @@
     reloadController.abort();
   });
   let container = $state<HTMLDivElement>();
-  const focus = () => container?.focus({ preventScroll: true });
+  const focus = () => restorePhotoReviewFocus(() => container);
   onMount(() => {
-    void tick().then(focus);
+    void focus();
   });
   let photo = $state<PhotoBrowseRow>();
   let error = $state("");
   let loading = $state(false);
   let lookupAttempt = $state(0);
   const reloadController = new AbortController();
-  const busy = $derived(editor.loading || editor.busy);
+  let checkingDecision = $state(false);
+  const busy = $derived(editor.loading || editor.busy || checkingDecision);
   let view = $state<PhotoView>({ ...fittedPhotoView });
   let info = $state(0);
   let help = $state(false);
@@ -70,11 +73,19 @@
   let railError = $state("");
   let railLoading = $state(false);
   const currentID = $derived(cull.currentID);
+  const complete = $derived(cull.complete);
+  const passID = $derived(checkpoint.passID);
   $effect(() => {
     const id = currentID;
     void lookupAttempt;
     const controller = new AbortController();
-    if (untrack(() => photo?.asset_id) !== id) photo = undefined;
+    untrack(() => {
+      const previous = photo;
+      if (previous?.asset_id === id) return;
+      if (previous)
+        neighbors = [...neighbors.filter((row) => row.asset_id !== previous.asset_id), previous];
+      photo = undefined;
+    });
     error = "";
     loading = !!id;
     view = { ...fittedPhotoView };
@@ -95,14 +106,15 @@
     return () => controller.abort();
   });
   $effect(() => {
-    const ids = rail;
+    const held = untrack(() => neighbors).filter((row) => rail.includes(row.asset_id));
+    const loaded = new Set(held.map((row) => row.asset_id));
+    const ids = rail.filter((id) => id !== currentID && !loaded.has(id));
     const controller = new AbortController();
     railError = "";
     railLoading = true;
-    void photos
-      .lookupMany(ids, controller.signal)
+    void (ids.length ? photos.lookupMany(ids, controller.signal) : Promise.resolve([]))
       .then((rows) => {
-        if (!controller.signal.aborted) neighbors = rows;
+        if (!controller.signal.aborted) neighbors = [...held, ...rows];
       })
       .catch((cause) => {
         if (!controller.signal.aborted)
@@ -114,8 +126,6 @@
     return () => controller.abort();
   });
   $effect(() => {
-    const complete = cull.complete;
-    const passID = checkpoint.passID;
     if (complete && passID) untrack(() => void cull.checkRemainder());
   });
   $effect(() =>
@@ -126,7 +136,7 @@
     ),
   );
   function canChangeTarget() {
-    return editor.canChangeTarget();
+    return !busy && editor.canChangeTarget();
   }
   async function nextPass(followUp = false) {
     if (canChangeTarget()) await cull.nextPass(followUp);
@@ -164,21 +174,22 @@
     await applyDecision(photo, patch);
   }
   async function applyDecision(selected: PhotoBrowseRow, patch: PhotoAuthoredPatch, retry = false) {
+    checkingDecision = true;
+    try {
+      if (!(await cull.verifyDecision())) return;
+    } finally {
+      checkingDecision = false;
+    }
     const id = selected.asset_id;
-    await editor.edit(
-      { asset_ids: [id] },
-      retry ? {} : patch,
-      false,
-      refresh,
-      undefined,
-      undefined,
-      retry
+    await editor.edit({ asset_ids: [id] }, retry ? {} : patch, false, refresh, {
+      beforeWrite: () => cull.verifyDecision(),
+      viewed: retry
         ? undefined
         : {
             file_id: selected.display_file_id,
             content_version_id: selected.content_version_id,
           },
-    );
+    });
     await tick();
     if (editor.error || editor.dirty || editor.conflict) return;
     reconcile(editor.targets);
@@ -186,6 +197,7 @@
       patch.flag !== undefined
         ? `${selected.name}: ${patch.flag || "flag cleared"}`
         : `${selected.name}: ${patch.rating} stars`;
+    if (editor.fileID) announcement += " (shown file only)";
     if (checkpoint.autoAdvance && cull.currentID === id) cull.move(1);
   }
   async function retryDecision() {
@@ -293,7 +305,7 @@
     maxHeight="100svh"
   >
     <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_static_element_interactions -->
-    <div class="photo-cull" tabindex="-1" bind:this={container} onkeydown={key}>
+    <div class="photo-review photo-cull" tabindex="-1" bind:this={container} onkeydown={key}>
       <header>
         <Button size="sm" disabled={busy} onclick={close}>Exit cull</Button>
         <strong>{photo?.name ?? (cull.complete ? "Pass complete" : "Cull photos")}</strong>
@@ -312,11 +324,16 @@
         >
         <Button size="sm" onclick={() => (help = !help)}>Keys (?)</Button>
       </header>
-      {#if cull.error || cull.stackError}<p role="alert">{cull.error || cull.stackError}</p>{/if}
+      {#if cull.error || cull.stackError || editor.error || editor.notice}<p role="alert">
+          {cull.error ||
+            cull.stackError ||
+            (editor.noticeTone === "warning" && editor.notice) ||
+            editor.error ||
+            editor.notice}
+        </p>{/if}
       {#if cull.stackError}<Button disabled={cull.stackLoading} onclick={() => void cull.regroup()}
           >Retry stacks</Button
         >{/if}
-      {#if editor.error || editor.notice}<p role="alert">{editor.error || editor.notice}</p>{/if}
       {#if cull.progress && !cull.complete}<p role="status">{cull.progress}</p>{/if}
       {#if editor.dirty || editor.conflict}<div class="controls">
           <Button disabled={busy} onclick={() => void retryDecision()}
@@ -455,7 +472,8 @@
         {#if railError}<p role="alert">{railError}</p>{/if}
         <nav class="filmstrip" aria-label="Cull pass">
           <fieldset disabled={busy} style="display: contents">
-            {#each rail as id, index}{@const row = neighbors.find((item) => item.asset_id === id)}
+            {#each rail as id, index}{@const row =
+                id === currentID ? photo : neighbors.find((item) => item.asset_id === id)}
               {#if cull.stacks.size && (index === 0 || cull.stacks.get(rail[index - 1]!) !== cull.stacks.get(id))}<span
                   class="stack-divider"
                   aria-label="Stack boundary"
@@ -495,23 +513,6 @@
 </div>
 
 <style>
-  .review-shell :global(.kit-modal-body) {
-    padding: 0;
-    overflow: hidden;
-  }
-  .review-shell :global(.kit-modal-panel) {
-    border: 0;
-    border-radius: 0;
-  }
-
-  .photo-cull {
-    height: 100svh;
-    width: 100%;
-    display: flex;
-    flex-direction: column;
-    background: var(--bg-surface);
-    color: var(--text-primary);
-  }
   header,
   .controls {
     display: flex;

@@ -252,10 +252,14 @@ func TestDuplicateReferencesAndCollectionsAreBounded(t *testing.T) {
 	ctx := t.Context()
 	hash := fakeHash("44")
 	nodes := make([]Node, 17)
+	otherNodes := make([]Node, 17)
 	for index := range nodes {
 		var err error
 		nodes[index], err = s.CreateFile(ctx, s.RootID(), fmt.Sprintf("copy-%02d.txt", index),
 			hash, 5, "text/plain")
+		require.NoError(t, err)
+		otherNodes[index], err = s.CreateFile(ctx, s.RootID(), fmt.Sprintf("other-%02d.bin", index),
+			fakeHash("55"), 9, "application/octet-stream")
 		require.NoError(t, err)
 	}
 
@@ -285,7 +289,7 @@ func TestDuplicateReferencesAndCollectionsAreBounded(t *testing.T) {
 
 	page, err := s.Duplicates(ctx, 10, 0)
 	require.NoError(t, err)
-	require.Len(t, page.Items, 1)
+	require.Len(t, page.Items, 2)
 	group := page.Items[0]
 	assert.Equal(t, 17, group.ReferenceCount)
 	assert.Len(t, group.References, 16)
@@ -295,6 +299,19 @@ func TestDuplicateReferencesAndCollectionsAreBounded(t *testing.T) {
 	assert.Equal(t, nodes[1].ID, group.References[1].Reference.Node.ID)
 	assert.Equal(t, nodes[3].ID, group.References[2].Reference.Node.ID,
 		"equal timestamps use node ID as the deterministic tie break")
+
+	other := page.Items[1]
+	assert.Equal(t, 17, other.ReferenceCount)
+	require.Len(t, other.References, 16)
+	assert.True(t, other.ReferencesTruncated)
+	assert.Equal(t, otherNodes[0].ID, other.RepresentativeNodeID)
+	for i, ref := range other.References {
+		assert.Equal(t, otherNodes[i], ref.Reference.Node)
+		assert.Equal(t, otherNodes[i].CurrentVersionID, ref.Reference.Version.ID)
+		assert.Equal(t, fakeHash("55"), ref.Reference.Version.BlobHash)
+		assert.Equal(t, int64(9), ref.Reference.Version.Size)
+		assert.Equal(t, "application/octet-stream", ref.Reference.Version.MimeType)
+	}
 
 	representative := group.References[0]
 	assert.Equal(t, 17, representative.CollectionCount)
@@ -308,11 +325,19 @@ func TestDuplicatesPagesGroupsByHashWithExactTotals(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
 	hashes := []string{fakeHash("c3"), fakeHash("a1"), fakeHash("b2")}
+	memberships := make(map[int64]DuplicateCollection)
 	for index, hash := range hashes {
+		label := new(fmt.Sprintf("Collection %d", index))
+		run, err := s.BeginIngestWithLabel(ctx, "cli", "Synthetic group", label)
+		require.NoError(t, err)
 		for copy := range index + 2 {
-			_, err := s.CreateFile(ctx, s.RootID(),
+			node, err := s.CreateFile(ctx, s.RootID(),
 				fmt.Sprintf("group-%d-copy-%d.txt", index, copy), hash, int64(index+1), "text/plain")
 			require.NoError(t, err)
+			if copy == 0 {
+				addCollectionMembership(t, s, run, node.ID, "/synthetic/source.txt", nil)
+				memberships[node.ID] = DuplicateCollection{ID: run.ID(), Label: label}
+			}
 		}
 	}
 	sort.Strings(hashes)
@@ -326,6 +351,16 @@ func TestDuplicatesPagesGroupsByHashWithExactTotals(t *testing.T) {
 	for index, group := range all.Items {
 		assert.Equal(t, hashes[index], group.Hash)
 		assert.Equal(t, counts[index], group.ReferenceCount)
+		require.Len(t, group.References, counts[index])
+		for _, ref := range group.References {
+			if want, ok := memberships[ref.Reference.Node.ID]; ok {
+				assert.Equal(t, []DuplicateCollection{want}, ref.Collections)
+				assert.Equal(t, 1, ref.CollectionCount)
+			} else {
+				assert.Empty(t, ref.Collections)
+				assert.Zero(t, ref.CollectionCount)
+			}
+		}
 	}
 
 	for offset, wantHash := range hashes {

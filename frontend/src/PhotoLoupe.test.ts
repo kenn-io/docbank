@@ -351,6 +351,25 @@ it.each([false, true])(
   },
 );
 
+it("requests zoom quality once per zoom gesture", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const onzoom = vi.fn();
+  const view = render(PhotoLoupeImage, {
+    url: "",
+    name: "Synthetic photo",
+    onzoom,
+    onmove: vi.fn(),
+  });
+  await fireEvent.doubleClick(view.container.querySelector(".photo-viewport")!);
+  expect(onzoom).toHaveBeenCalledOnce();
+});
+
 it("resets a touch swipe before requesting navigation when the current photo remains mounted", async () => {
   vi.stubGlobal(
     "ResizeObserver",

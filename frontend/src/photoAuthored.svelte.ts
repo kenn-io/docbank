@@ -9,7 +9,7 @@ export class PhotoUndoState {
 
 export class PhotoAuthoredEditor {
   asset = $state<api.PhotoAsset>();
-  targets = $state<api.PhotoPreparedTarget[]>([]);
+  targets = $state<(api.PhotoPreparedTarget & api.PhotoAuthoredEditTarget)[]>([]);
   tags = $state<api.Tag[]>([]);
   tagsError = $state("");
   tagsLoading = $state(false);
@@ -327,9 +327,17 @@ export class PhotoAuthoredEditor {
     patch: api.PhotoAuthoredPatch,
     hidden: boolean,
     refresh: (receipt: api.PhotoAuthoredReceipt, tags: api.Tag[]) => Promise<void>,
-    keywords?: api.PhotoKeywordEdit[],
-    rotationDelta?: api.PhotoAuthoredEditRequest["rotation_delta"],
-    viewed?: { file_id: string; content_version_id: string },
+    {
+      keywords,
+      rotationDelta,
+      viewed,
+      beforeWrite,
+    }: {
+      keywords?: api.PhotoKeywordEdit[];
+      rotationDelta?: api.PhotoAuthoredEditRequest["rotation_delta"];
+      viewed?: { file_id: string; content_version_id: string };
+      beforeWrite?: () => Promise<boolean>;
+    } = {},
   ) {
     if (this.conflict) {
       this.unavailable("Reload metadata before editing.");
@@ -357,6 +365,17 @@ export class PhotoAuthoredEditor {
           ? { ...target, content_version_id: viewed.content_version_id }
           : target,
       );
+      const displayed = this.targets.find((target) => target.file_id === viewed.file_id)!;
+      const fields = Object.keys(patch) as (keyof api.PhotoAuthoredPatch)[];
+      if (
+        this.targets.some((target) =>
+          fields.some(
+            (field) =>
+              patch[field] !== undefined && target.values[field] !== displayed.values[field],
+          ),
+        )
+      )
+        this.fileID = viewed.file_id;
     }
     this.stage(patch, keywords);
     if (rotationDelta !== undefined) {
@@ -375,6 +394,7 @@ export class PhotoAuthoredEditor {
         ...(this.rotationDelta !== undefined ? ["rotation"] : []),
         ...(this.keywords.length ? ["keywords"] : []),
       ];
+      if (beforeWrite && !(await beforeWrite())) return;
       const receipt = await this.request(() =>
         api.editPhotoAuthored(
           {

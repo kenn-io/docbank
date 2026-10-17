@@ -240,7 +240,7 @@ func preparedPhotoTargets(ctx context.Context, t *testing.T, s *Store, selection
 	require.NoError(t, err)
 	targets := make([]PhotoAuthoredEditTarget, len(prepared.Targets))
 	for i, target := range prepared.Targets {
-		targets[i] = target.PhotoAuthoredEditTarget
+		targets[i] = PhotoAuthoredEditTarget{PhotoAuthoredTargetRevision: target.PhotoAuthoredTargetRevision}
 	}
 	return targets
 }

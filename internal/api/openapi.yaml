@@ -12879,9 +12879,6 @@ components:
           format: int64
           minimum: 1
           type: integer
-        content_version_id:
-          format: uuid
-          type: string
         display_file_id:
           format: uuid
           type: string

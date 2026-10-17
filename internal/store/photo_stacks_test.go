@@ -95,14 +95,14 @@ func TestPhotoStackDecisionsAndUndo(t *testing.T) {
 			rows := burstPhotos(t, s, 3)
 			preparation, err := s.PreparePhotoAuthored(t.Context(), PhotoSetSelection{AssetIDs: []string{rows[0].AssetID}})
 			require.NoError(t, err)
-			_, err = s.EditPhotoAuthoredBatch(t.Context(), PhotoAuthoredBatch{Targets: []PhotoAuthoredEditTarget{preparation.Targets[0].PhotoAuthoredEditTarget}, Patch: PhotoAuthoredPatch{Flag: new(tc.seed)}})
+			_, err = s.EditPhotoAuthoredBatch(t.Context(), PhotoAuthoredBatch{Targets: []PhotoAuthoredEditTarget{PhotoAuthoredEditTarget{PhotoAuthoredTargetRevision: preparation.Targets[0].PhotoAuthoredTargetRevision}}, Patch: PhotoAuthoredPatch{Flag: new(tc.seed)}})
 			require.NoError(t, err)
 			ids := rowIDs(rows)
 			preparation, err = s.PreparePhotoAuthored(t.Context(), PhotoSetSelection{AssetIDs: ids})
 			require.NoError(t, err)
 			targets := make([]PhotoAuthoredEditTarget, len(preparation.Targets))
 			for i, target := range preparation.Targets {
-				targets[i] = target.PhotoAuthoredEditTarget
+				targets[i] = PhotoAuthoredEditTarget{PhotoAuthoredTargetRevision: target.PhotoAuthoredTargetRevision}
 			}
 			request := PhotoStackDecision{AssetIDs: ids, Targets: targets, Decision: tc.decision, CurrentID: ids[1], SelectedIDs: []string{ids[2]}}
 			receipt, err := s.DecidePhotoStack(t.Context(), request)
@@ -120,7 +120,7 @@ func TestPhotoStackDecisionsAndUndo(t *testing.T) {
 				fresh, err := s.PreparePhotoAuthored(t.Context(), PhotoSetSelection{AssetIDs: ids})
 				require.NoError(t, err)
 				for i, target := range fresh.Targets {
-					request.Targets[i] = target.PhotoAuthoredEditTarget
+					request.Targets[i] = PhotoAuthoredEditTarget{PhotoAuthoredTargetRevision: target.PhotoAuthoredTargetRevision}
 				}
 				noop, err := s.DecidePhotoStack(t.Context(), request)
 				require.NoError(t, err)
@@ -145,7 +145,7 @@ func TestPhotoStackRejectsStaleMembershipAndTargetsWithoutWrites(t *testing.T) {
 	require.NoError(t, err)
 	targets := make([]PhotoAuthoredEditTarget, len(preparation.Targets))
 	for i, target := range preparation.Targets {
-		targets[i] = target.PhotoAuthoredEditTarget
+		targets[i] = PhotoAuthoredEditTarget{PhotoAuthoredTargetRevision: target.PhotoAuthoredTargetRevision}
 	}
 	request := PhotoStackDecision{AssetIDs: ids[:2], Targets: targets, Decision: "current", CurrentID: ids[0]}
 	_, err = s.DecidePhotoStack(t.Context(), request)
@@ -238,7 +238,7 @@ func TestPhotoStackAuditsOneDecisionAndRollsBackTogether(t *testing.T) {
 	require.NoError(t, err)
 	targets := make([]PhotoAuthoredEditTarget, len(preparation.Targets))
 	for i, target := range preparation.Targets {
-		targets[i] = target.PhotoAuthoredEditTarget
+		targets[i] = PhotoAuthoredEditTarget{PhotoAuthoredTargetRevision: target.PhotoAuthoredTargetRevision}
 	}
 	request := PhotoStackDecision{AssetIDs: ids, Targets: targets, Decision: "current", CurrentID: ids[1]}
 	receipt, err := s.DecidePhotoStack(t.Context(), request)
@@ -254,7 +254,7 @@ func TestPhotoStackAuditsOneDecisionAndRollsBackTogether(t *testing.T) {
 	preparation, err = s.PreparePhotoAuthored(t.Context(), PhotoSetSelection{AssetIDs: ids})
 	require.NoError(t, err)
 	for i, target := range preparation.Targets {
-		request.Targets[i] = target.PhotoAuthoredEditTarget
+		request.Targets[i] = PhotoAuthoredEditTarget{PhotoAuthoredTargetRevision: target.PhotoAuthoredTargetRevision}
 	}
 	_, err = s.db.Exec(`CREATE TRIGGER reject_stack_audit BEFORE UPDATE ON audit_scopes BEGIN SELECT RAISE(ABORT,'forced stack audit failure'); END`)
 	require.NoError(t, err)
@@ -301,7 +301,7 @@ func TestPhotoStackAutomaticDecisionsPreserveCompanionFlags(t *testing.T) {
 			require.NoError(t, err)
 			targets := make([]PhotoAuthoredEditTarget, len(prepared.Targets))
 			for i, target := range prepared.Targets {
-				targets[i] = target.PhotoAuthoredEditTarget
+				targets[i] = PhotoAuthoredEditTarget{PhotoAuthoredTargetRevision: target.PhotoAuthoredTargetRevision}
 			}
 			operation := decision
 			if decision == "mixed" {
@@ -421,7 +421,7 @@ func TestPhotoBurstPushSourceNamespace(t *testing.T) {
 	require.NoError(t, err)
 	targets := make([]PhotoAuthoredEditTarget, len(prepared.Targets))
 	for i, target := range prepared.Targets {
-		targets[i] = target.PhotoAuthoredEditTarget
+		targets[i] = PhotoAuthoredEditTarget{PhotoAuthoredTargetRevision: target.PhotoAuthoredTargetRevision}
 	}
 	_, err = s.DecidePhotoStack(t.Context(), PhotoStackDecision{AssetIDs: ids[0], Targets: targets, CurrentID: ids[0][0], Decision: "current"})
 	require.NoError(t, err)
@@ -510,7 +510,7 @@ func TestPhotoStackHiddenScopeAndUndo(t *testing.T) {
 	require.NoError(t, err)
 	request := PhotoStackDecision{AssetIDs: ids, CurrentID: ids[0], Decision: "current"}
 	for _, target := range prepared.Targets {
-		request.Targets = append(request.Targets, target.PhotoAuthoredEditTarget)
+		request.Targets = append(request.Targets, PhotoAuthoredEditTarget{PhotoAuthoredTargetRevision: target.PhotoAuthoredTargetRevision})
 	}
 	_, err = s.DecidePhotoStack(ctx, request)
 	require.ErrorIs(t, err, ErrStalePhotoStack)
@@ -561,13 +561,13 @@ func TestPhotoBurstWatchNamespacesAndAmbiguousProvenance(t *testing.T) {
 	require.NoError(t, err)
 	targets := make([]PhotoAuthoredEditTarget, len(prepared.Targets))
 	for i, target := range prepared.Targets {
-		targets[i] = target.PhotoAuthoredEditTarget
+		targets[i] = PhotoAuthoredEditTarget{PhotoAuthoredTargetRevision: target.PhotoAuthoredTargetRevision}
 	}
 	_, err = s.DecidePhotoStack(ctx, PhotoStackDecision{AssetIDs: ids, Targets: targets, CurrentID: ids[0], Decision: "current"})
 	require.ErrorIs(t, err, ErrStalePhotoStack)
 	prepared, err = s.PreparePhotoAuthored(ctx, PhotoSetSelection{AssetIDs: ids[:1]})
 	require.NoError(t, err)
-	receipt, err := s.DecidePhotoStack(ctx, PhotoStackDecision{AssetIDs: ids[:1], Targets: []PhotoAuthoredEditTarget{prepared.Targets[0].PhotoAuthoredEditTarget}, CurrentID: ids[0], Decision: "current"})
+	receipt, err := s.DecidePhotoStack(ctx, PhotoStackDecision{AssetIDs: ids[:1], Targets: []PhotoAuthoredEditTarget{PhotoAuthoredEditTarget{PhotoAuthoredTargetRevision: prepared.Targets[0].PhotoAuthoredTargetRevision}}, CurrentID: ids[0], Decision: "current"})
 	require.NoError(t, err)
 	asset, err := s.PhotoAssetByID(ctx, ids[0])
 	require.NoError(t, err)

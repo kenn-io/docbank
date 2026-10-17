@@ -5268,7 +5268,6 @@ export interface PhotoPreparedTarget {
   asset_id: string;
   /** @minimum 1 */
   asset_revision: number;
-  content_version_id?: string;
   display_file_id: string;
   file_id: string;
   file_name: string;

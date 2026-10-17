@@ -4,6 +4,8 @@ import { createShortcutManager } from "@kenn-io/kit-ui";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import PhotosWorkspace from "./PhotosWorkspace.svelte";
 import { PhotoCull } from "./photoCull.svelte.js";
+import { photoCullStorage } from "./photoCullStorage.js";
+import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import * as api from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
 import { Photos, photoQuery, mapPhotoLimit, type MapView } from "./photos.svelte.js";
@@ -1782,8 +1784,7 @@ it.each([
     patch,
     false,
     expect.any(Function),
-    undefined,
-    undefined,
+    { keywords: undefined, rotationDelta: undefined },
   );
   photos.dispose();
 });
@@ -2574,6 +2575,8 @@ it("disables selected export when a metadata draft keeps an empty selection open
 it.each([false, true])(
   "reconciles grid selection after cull (one unavailable: %s)",
   async (oneUnavailable) => {
+    vi.stubGlobal("indexedDB", new IDBFactory());
+    vi.stubGlobal("IDBKeyRange", IDBKeyRange);
     vi.stubGlobal(
       "ResizeObserver",
       class {
@@ -2607,6 +2610,7 @@ it.each([false, true])(
           autoAdvance: true,
         },
       };
+      await photoCullStorage("vault").replace(this.run);
       return true;
     });
     vi.spyOn(photos, "lookup").mockImplementation(
@@ -2861,9 +2865,13 @@ it("uses the resolved vault identity when Cull mounted before audit status arriv
   const cache = { get: vi.fn() } as unknown as PhotoPreviewCache;
   const view = render(PhotosWorkspace, { photos, cache, vaultID: "" });
   expect((screen.getByRole("button", { name: "Cull" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.getByRole("button", { name: "Cull" }).title).toBe(
+    "Vault identity unavailable. Reload to retry.",
+  );
   await view.rerender({ photos, cache, vaultID: "11111111-1111-4111-8111-111111111111" });
   const cull = screen.getByRole("button", { name: "Cull" }) as HTMLButtonElement;
   expect(cull.disabled).toBe(false);
+  expect(cull.title).toBe("");
   await fireEvent.click(cull);
   await waitFor(() =>
     expect(screen.getByRole("alert").textContent).toBe("Synthetic storage reached"),

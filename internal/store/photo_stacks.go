@@ -195,9 +195,8 @@ func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision
 				if current != wanted.ContentVersionID || target.DisplayFileID != target.FileID {
 					return ErrStaleRevision
 				}
-				wanted.ContentVersionID = ""
 			}
-			if wanted != target.PhotoAuthoredEditTarget {
+			if wanted.PhotoAuthoredTargetRevision != target.PhotoAuthoredTargetRevision {
 				return ErrStaleRevision
 			}
 		}

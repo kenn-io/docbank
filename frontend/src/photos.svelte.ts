@@ -47,6 +47,7 @@ import { captureDateQuery, type CaptureDayFacet } from "./photoTimeline.js";
 import { PhotoAuthoredEditor, type PhotoUndoState } from "./photoAuthored.svelte.js";
 import type { HiddenAccess } from "./hiddenAccess.svelte.js";
 import type { PhotoCull } from "./photoCull.svelte.js";
+import { fittedPhotoView, type PhotoView } from "./photoView.js";
 
 export const maxComparePhotos = 8;
 export const photoQuery = parseQuery(
@@ -68,6 +69,15 @@ export function lookupPhotoRows<Row extends { asset_id: string }>(
   hidden: boolean,
   read: (batch: string[], signal: AbortSignal) => Promise<{ items: Row[] }>,
 ): Promise<Row[]>;
+export function lookupPhotoRows<Row extends { asset_id: string }>(
+  session: string,
+  ids: string[],
+  signal: AbortSignal | undefined,
+  onprogress: ((loaded: number, total: number) => void) | undefined,
+  hidden: boolean,
+  read: undefined,
+  project: (row: PhotoBrowseRow) => Row,
+): Promise<Row[]>;
 export async function lookupPhotoRows(
   session: string,
   ids: string[],
@@ -75,6 +85,7 @@ export async function lookupPhotoRows(
   onprogress?: (loaded: number, total: number) => void,
   hidden = false,
   read?: (batch: string[], signal: AbortSignal) => Promise<{ items: { asset_id: string }[] }>,
+  project?: (row: PhotoBrowseRow) => { asset_id: string },
 ): Promise<{ asset_id: string }[]> {
   const controller = new AbortController();
   signal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
@@ -87,18 +98,21 @@ export async function lookupPhotoRows(
         while (offset < ids.length) {
           signal?.throwIfAborted();
           const batch = ids.slice(offset, (offset += 64));
-          const page = read
-            ? await read(batch, signal!)
-            : await listPhotoAssets(
-                {
-                  query: { ...photoQuery, filters: { ...photoQuery.filters, asset_ids: batch } },
-                  page_size: 250,
-                  hidden,
-                },
-                { session, signal },
-              );
+          let items: { asset_id: string }[];
+          if (read) items = (await read(batch, signal!)).items;
+          else {
+            const page = await listPhotoAssets(
+              {
+                query: { ...photoQuery, filters: { ...photoQuery.filters, asset_ids: batch } },
+                page_size: 250,
+                hidden,
+              },
+              { session, signal },
+            );
+            items = project ? page.items.map(project) : page.items;
+          }
           signal?.throwIfAborted();
-          rows.push(...page.items);
+          rows.push(...items);
           loaded += batch.length;
           onprogress?.(loaded, ids.length);
         }
@@ -180,6 +194,10 @@ export class Photos {
   cull?: PhotoCull;
   cullVaultID = "";
   culling = $state(false);
+  comparing = $state(false);
+  compareIDs = $state.raw<string[]>([]);
+  compareView = $state<PhotoView>({ ...fittedPhotoView });
+  compareCrop = $state<PhotoView>();
   editScopeRevision = $state(0);
   private changeEditScope() {
     if (!this.authored.canChangeTarget()) return false;
@@ -526,20 +544,10 @@ export class Photos {
   }
 
   async lookup(assetID: string, signal: AbortSignal): Promise<PhotoBrowseRow> {
-    const query = photoQuery;
     try {
-      const page = await listPhotoAssets(
-        {
-          query: { ...query, filters: { ...query.filters, asset_ids: [assetID] } },
-          page_size: 1,
-          hidden: this.hidden,
-        },
-        { session: this.session, signal },
-      );
-      if (!page.items[0])
-        throw new APIError("This photo is no longer in this view.", 404, "not_found");
-      signal.throwIfAborted();
-      return page.items[0];
+      const [row] = await lookupPhotoRows(this.session, [assetID], signal, undefined, this.hidden);
+      if (!row) throw new APIError("This photo is no longer in this view.", 404, "not_found");
+      return row;
     } catch (cause) {
       if (!signal.aborted) this.authFailure(cause);
       throw cause;
