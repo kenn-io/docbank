@@ -694,8 +694,8 @@ Wrong-width, nonfinite, zero-norm cosine, and non-unit vectors are rejected.
 Reduced 512-, 256-, or 128-dimensional output requires an explicit custom
 serving contract that truncates and then L2-renormalizes both documents and
 queries, plus a new matching descriptor, compatibility identity and generation.
-The current adapter has no `request_dimensions` option. Put literal formatting
-in `model_input`; unsupported `embedder` affix keys are rejected at load time.
+Put literal formatting in `model_input`. Docbank rejects nonempty `embedder`
+affixes and `request_dimensions = true` when loading configuration.
 
 The native model recipe is verified against primary sources, and synthetic
 HTTP tests exercise configuration, literal formatting, identity and vector
