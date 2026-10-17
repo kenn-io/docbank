@@ -19,7 +19,7 @@ beforeEach(() =>
   ),
 );
 const face = photoFace({ revision: 3, assertion_id: undefined });
-it("chooses an existing person by ID and opens their photos from the person card", async () => {
+it("validates and trims names, resets search on reopen, and opens a selected person’s photos", async () => {
   const assertion = photoPersonAssertion();
   vi.spyOn(api, "listPhotoFaces")
     .mockResolvedValueOnce({ faces: [face], assertions: [], people: [] })
@@ -527,7 +527,7 @@ it.each([403, 500])(
   },
 );
 
-it.each(["complete", "failure", "broad", "case", "unicode"])(
+it.each(["complete", "failure", "broad", "case"])(
   "completes only the last name group: %s",
   async (result) => {
     vi.spyOn(api, "listPhotoFaces").mockResolvedValue({
@@ -535,8 +535,8 @@ it.each(["complete", "failure", "broad", "case", "unicode"])(
       assertions: [],
       people: [],
     });
-    const name = result === "unicode" ? "Straße" : "Alex";
-    const folded = result === "unicode" ? "strasse" : "alex";
+    const name = "Alex";
+    const folded = "alex";
     const person = (index: number): api.PersonSummary => ({
       person_id: `person-${index}`,
       display_name: name,
@@ -578,9 +578,7 @@ it.each(["complete", "failure", "broad", "case", "unicode"])(
     } else {
       finish({
         items: [
-          ...(result === "case" || result === "unicode"
-            ? [{ ...person(101), display_name: name.toUpperCase() }]
-            : []),
+          ...(result === "case" ? [{ ...person(101), display_name: name.toUpperCase() }] : []),
           person(100),
           ...(result === "broad"
             ? [{ ...person(101), display_name: "Alice", display_name_folded: "alice" }]

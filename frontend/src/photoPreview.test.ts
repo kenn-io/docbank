@@ -60,7 +60,7 @@ it.each(["fit", "large"] as const)(
 );
 
 it.each(["rejected", "missing"] as const)(
-  "keeps a successful large preview free of errors when the pending fit preview is %s",
+  "retries a %s fit preview while preserving the successful large preview",
   async (failure) => {
     const photos = new Photos("session", vi.fn());
     let rejectFit!: (cause: Error) => void, resolveFit!: (slot: PhotoPreviewSlot) => void;

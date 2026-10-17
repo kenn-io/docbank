@@ -994,7 +994,7 @@ func TestPhotoFaceDecisionKeepsPhotoMark(t *testing.T) {
 	}
 }
 
-func TestPhotoFaceDecisionOperationReplay(t *testing.T) {
+func TestPhotoFaceDecisionValidatesNamesAndReplaysOperations(t *testing.T) {
 	t.Parallel()
 	for _, newName := range []bool{false, true} {
 		s := newTestStore(t)

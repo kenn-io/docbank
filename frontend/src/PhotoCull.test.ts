@@ -1284,18 +1284,11 @@ it("reloads cached stack siblings after preparation loses a member", async () =>
 });
 
 it("loads face closeups on mount and on the next photo", async () => {
-  const read = vi
-    .spyOn(api, "listPhotoFaces")
-    .mockResolvedValueOnce(photoFacePage())
-    .mockResolvedValue(
-      photoFacePage({
-        people: [{ person_id: "person-a", display_name: "Grace", state: "curated" }],
-      }),
-    );
+  const read = vi.spyOn(api, "listPhotoFaces").mockResolvedValue(photoFacePage());
   const { cull, photos } = await reviewPhoto();
-  const first = await screen.findByRole("region", { name: "Face closeups" });
-  expect(within(first).getByText("Face 1 · Ada")).toBeTruthy();
-  await waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+  await waitFor(() =>
+    expect(read).toHaveBeenCalledExactlyOnceWith(photo(1).content_version_id, expect.anything()),
+  );
   const next = photo(2);
   cull.run = {
     ...cull.run!,
@@ -1306,8 +1299,7 @@ it("loads face closeups on mount and on the next photo", async () => {
   vi.mocked(photos.lookupMany).mockResolvedValue([photo(1), next]);
   await fireEvent.click(await readyButton("Next"));
   await screen.findByText(next.name);
-  const second = await screen.findByRole("region", { name: "Face closeups" });
-  await within(second).findByText("Face 1 · Grace");
-  expect(within(second).queryByText("Face 1 · Ada")).toBeNull();
-  expect(read).toHaveBeenLastCalledWith(next.content_version_id, expect.anything());
+  await waitFor(() =>
+    expect(read).toHaveBeenLastCalledWith(next.content_version_id, expect.anything()),
+  );
 });

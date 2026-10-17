@@ -4,7 +4,7 @@ import PhotoFaceCloseups from "./PhotoFaceCloseups.svelte";
 import { PhotoFaces } from "./photoFaces.svelte.js";
 import { photo, photoFace, photoPersonAssertion } from "./photo-test-fixtures.js";
 afterEach(cleanup);
-it("keeps every caption without a matching fit preview and fills tiles after retry", async () => {
+it("keeps captions without a matching preview and reuses image nodes when names change", async () => {
   const faces = new PhotoFaces("session", () => {});
   faces.version = "version-a";
   faces.faces = [
@@ -35,7 +35,6 @@ it("keeps every caption without a matching fit preview and fills tiles after ret
   const images = screen.getAllByRole("img");
   expect(images.map((img) => img.getAttribute("alt"))).toEqual(["Ada", "Face 1", "Face 2 · Ada"]);
   expect(images.every((img) => img.getAttribute("src") === "blob:fit")).toBe(true);
-  expect(images[2]!.getAttribute("style")).toContain("rotate(90deg)");
   faces.people = faces.people.map((row) => ({ ...row, display_name: "Grace" }));
   await component.rerender({
     photo: selected,

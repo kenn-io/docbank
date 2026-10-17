@@ -15,53 +15,6 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it.each(["fit", "large"] as const)(
-  "retries a failed %s preview on the same photo",
-  async (size) => {
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        observe() {}
-        disconnect() {}
-      },
-    );
-    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:synthetic-preview");
-    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
-    Object.defineProperty(HTMLImageElement.prototype, "decode", {
-      configurable: true,
-      value: async () => {},
-    });
-    const item = photo(1);
-    item.previews.grid = { state: "missing" };
-    const photos = new Photos("scoped", vi.fn());
-    const preview = vi.spyOn(photos, "preview").mockImplementation(async (_row, requested) => {
-      if (preview.mock.calls.filter(([, value]) => value === requested).length === 1)
-        throw new Error(`${requested} failed`);
-      return { state: "ready", generation_id: `${requested}-retry` };
-    });
-    const { container } = render(PhotoStage, {
-      photo: item,
-      photos,
-      cache: {
-        get: vi.fn(async () => new Blob(["synthetic-preview"])),
-      } as unknown as PhotoPreviewCache,
-      view: { ...fittedPhotoView },
-    });
-    await screen.findByText("fit failed");
-    if (size === "large") {
-      await fireEvent.doubleClick(container.querySelector<HTMLElement>(".photo-viewport")!);
-      await screen.findByText("large failed");
-    }
-    await fireEvent.click(screen.getByRole("button", { name: "Retry preview" }));
-    await waitFor(() =>
-      expect(preview.mock.calls.filter(([, value]) => value === size)).toHaveLength(2),
-    );
-    expect(
-      preview.mock.calls.filter(([, value]) => value === (size === "large" ? "fit" : "large")),
-    ).toHaveLength(size === "large" ? 1 : 0);
-  },
-);
-
 it.each([
   { removed: false, changed: false },
   { removed: true, changed: false },

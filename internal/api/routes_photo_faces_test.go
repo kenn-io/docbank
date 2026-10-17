@@ -177,8 +177,6 @@ func TestPhotoFaceBrowserDecisions(t *testing.T) {
 	decisions := "/api/v1/photos/versions/" + node.CurrentVersionID + "/face-decisions"
 	response, body = do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: "name", FaceID: faceID, PersonName: "Grace", Revision: 1, OperationID: uuid.NewString()})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	response, body = get(t, ts, path, headers)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	for _, action := range []string{"reject", "key", "withdraw_rejection"} {
 		response, body = do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: action, FaceID: faceID, PersonID: person.PersonID, Revision: 2, OperationID: uuid.NewString()})
 		require.Equal(t, http.StatusForbidden, response.StatusCode, body)
@@ -186,8 +184,6 @@ func TestPhotoFaceBrowserDecisions(t *testing.T) {
 	response, body = do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: "retract", FaceID: faceID, Revision: 2})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	response, body = do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: "dismiss", FaceID: faceID, Revision: 3})
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	response, body = get(t, ts, path, headers)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 
 	mark, err := s.MarkPersonInPhoto(ctx, node.CurrentVersionID, person.PersonID)

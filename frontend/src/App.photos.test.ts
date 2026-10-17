@@ -3588,100 +3588,84 @@ it.each([
   },
 );
 
-it.each([
-  ["next photo", "clear"],
-  ["workspace", "clear"],
-  ["inspector", "clear"],
-])("keeps a pending face write alive when navigating to %s during %s", async (target, action) => {
-  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
-  storage();
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
-  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
-  const rows = [photo(1), photo(2)];
-  const decision = vi.spyOn(api, "decidePhotoFace");
-  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({
-    faces: [photoFace({ content_version_id: rows[0]!.content_version_id })],
-    assertions: [photoPersonAssertion({ content_version_id: rows[0]!.content_version_id })],
-    people: [{ person_id: "person-a", display_name: "Ada", state: "curated" }],
-  });
-  let finish!: (response: Response) => void;
-  let signal!: AbortSignal;
-  stubPhotoFetch(async (url, init) => {
-    if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
-    if (url.endsWith("/photos/albums")) return Response.json([]);
-    if (url.endsWith("/photos/assets/query"))
-      return Response.json({ items: rows, total: 2, facets: [] });
-    if (url.endsWith("/face-decisions")) {
-      signal = init.signal!;
-      return new Promise<Response>((resolve) => {
-        finish = resolve;
-      });
-    }
-    return (
-      photoMetadataResponse(url, init) ??
-      Response.json({ items: [], nodes: [], tags: [], profiles: [] })
+it.each(["next photo", "workspace", "inspector"])(
+  "keeps a pending clear alive when navigating to %s",
+  async (target) => {
+    history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+    storage();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
     );
-  });
-  render(App);
-  const first = await screen.findByRole("button", { name: "Select Photo 1.jpg" });
-  if (target === "inspector") await fireEvent.click(first);
-  else await fireEvent.doubleClick(first);
-  const scope =
-    target === "inspector"
-      ? screen
-      : within(await screen.findByRole("dialog", { name: /^Photo viewer,/ }));
-  await fireEvent.click(scope.getByRole("button", { name: "Metadata" }));
-  await fireEvent.click(await scope.findByRole("button", { name: "Find or create a person: Ada" }));
-  if (action === "name")
-    await fireEvent.input(screen.getByRole("combobox", { name: "Find or create a person" }), {
-      target: { value: "Grace" },
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+    const rows = [photo(1), photo(2)];
+    vi.spyOn(api, "listPhotoFaces").mockResolvedValue({
+      faces: [photoFace({ content_version_id: rows[0]!.content_version_id })],
+      assertions: [photoPersonAssertion({ content_version_id: rows[0]!.content_version_id })],
+      people: [{ person_id: "person-a", display_name: "Ada", state: "curated" }],
     });
-  await fireEvent.mouseDown(
-    await screen.findByRole("option", {
-      name: action === "name" ? 'Create person "Grace"' : "Clear name",
-    }),
-  );
-  await waitFor(() => expect(finish).toBeTypeOf("function"));
-  const before = location.href;
-  const navigate = async () => {
-    if (target === "conceal") {
-      vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
-      await fireEvent(document, new Event("visibilitychange"));
-    } else if (target === "inspector") {
-      await act(() => screen.getByRole("button", { name: "Metadata" }).click());
-    } else
-      await fireEvent.click(
-        target === "workspace"
-          ? screen.getByRole("button", { name: "Documents" })
-          : scope.getAllByRole("button", { name: "Next photo" })[0]!,
+    let finish!: (response: Response) => void;
+    let signal!: AbortSignal;
+    stubPhotoFetch(async (url, init) => {
+      if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+      if (url.endsWith("/photos/albums")) return Response.json([]);
+      if (url.endsWith("/photos/assets/query"))
+        return Response.json({ items: rows, total: 2, facets: [] });
+      if (url.endsWith("/face-decisions")) {
+        signal = init.signal!;
+        return new Promise<Response>((resolve) => {
+          finish = resolve;
+        });
+      }
+      return (
+        photoMetadataResponse(url, init) ??
+        Response.json({ items: [], nodes: [], tags: [], profiles: [] })
       );
-  };
-  await navigate();
-  expect(location.href).toBe(before);
-  expect(signal.aborted).toBe(false);
-  if (target === "inspector") expect(screen.getByRole("region", { name: "People" })).toBeTruthy();
-  if (target === "conceal")
-    expect(screen.queryByRole("dialog", { name: /^Photo viewer,/ })).toBeNull();
-  finish(Response.json({ receipt_id: "receipt-a" }));
-  if (target === "conceal") {
-    await decision.mock.results[0]!.value;
+    });
+    render(App);
+    const first = await screen.findByRole("button", { name: "Select Photo 1.jpg" });
+    if (target === "inspector") await fireEvent.click(first);
+    else await fireEvent.doubleClick(first);
+    const scope =
+      target === "inspector"
+        ? screen
+        : within(await screen.findByRole("dialog", { name: /^Photo viewer,/ }));
+    await fireEvent.click(scope.getByRole("button", { name: "Metadata" }));
+    await fireEvent.click(
+      await scope.findByRole("button", { name: "Find or create a person: Ada" }),
+    );
+    await fireEvent.mouseDown(await screen.findByRole("option", { name: "Clear name" }));
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    const before = location.href;
+    const navigate = async () => {
+      if (target === "inspector") {
+        await act(() => screen.getByRole("button", { name: "Metadata" }).click());
+      } else
+        await fireEvent.click(
+          target === "workspace"
+            ? screen.getByRole("button", { name: "Documents" })
+            : scope.getAllByRole("button", { name: "Next photo" })[0]!,
+        );
+    };
+    await navigate();
+    expect(location.href).toBe(before);
     expect(signal.aborted).toBe(false);
-    return;
-  }
-  await waitFor(() =>
-    expect(
-      scope.getByRole("button", { name: "Find or create a person: Ada" }).hasAttribute("disabled"),
-    ).toBe(false),
-  );
-  await navigate();
-  if (target === "inspector")
-    await waitFor(() => expect(screen.queryByRole("region", { name: "People" })).toBeNull());
-  else await waitFor(() => expect(location.href).not.toBe(before));
-});
+    if (target === "inspector") expect(screen.getByRole("region", { name: "People" })).toBeTruthy();
+    finish(Response.json({ receipt_id: "receipt-a" }));
+    await waitFor(() =>
+      expect(
+        scope
+          .getByRole("button", { name: "Find or create a person: Ada" })
+          .hasAttribute("disabled"),
+      ).toBe(false),
+    );
+    await navigate();
+    if (target === "inspector")
+      await waitFor(() => expect(screen.queryByRole("region", { name: "People" })).toBeNull());
+    else await waitFor(() => expect(location.href).not.toBe(before));
+  },
+);

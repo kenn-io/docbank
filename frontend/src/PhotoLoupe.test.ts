@@ -64,33 +64,12 @@ function setup() {
   };
   return { props, preview, get };
 }
-it("shows the keyboard face target and saves the marked box", async () => {
+it("requires decode, cancels placement, and maps a keyboard face box through rotation", async () => {
   const { props } = setup();
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
   props.photo.rotation = 180;
   const add = vi.spyOn(props.faces, "add").mockResolvedValue(true);
-  render(PhotoLoupe, { ...props, items: [] });
-  await screen.findByText("Fit preview");
-  const image = screen.getByRole("img", { name: "Photo 5.jpg" });
-  Object.defineProperty(image, "naturalWidth", { value: 1000 });
-  Object.defineProperty(image, "naturalHeight", { value: 800 });
-  await fireEvent.load(image);
-  await fireEvent.click(screen.getByRole("button", { name: "Add face" }));
-  const position = screen.getByRole("button", { name: "Position face on Photo 5.jpg" });
-  await fireEvent.keyDown(position, { key: "ArrowLeft" });
-  await fireEvent.click(position, { detail: 1 });
-  expect(add).toHaveBeenCalledWith(
-    expect.objectContaining({
-      x: expect.closeTo(0.475, 8),
-      y: expect.closeTo(0.425, 8),
-    }),
-  );
-});
-
-it("requires a decoded preview and cancels placement from the toolbar", async () => {
-  const { props } = setup();
-  const add = vi.spyOn(props.faces, "add");
   render(PhotoLoupe, { ...props, items: [] });
   await screen.findByText("Fit preview");
   const button = screen.getByRole("button", { name: "Add face" }) as HTMLButtonElement;
@@ -108,6 +87,16 @@ it("requires a decoded preview and cancels placement from the toolbar", async ()
   expect(screen.queryByRole("button", { name: "Position face on Photo 5.jpg" })).toBeNull();
   expect(add).not.toHaveBeenCalled();
   expect(props.onclose).not.toHaveBeenCalled();
+  await fireEvent.click(button);
+  const position = screen.getByRole("button", { name: "Position face on Photo 5.jpg" });
+  await fireEvent.keyDown(position, { key: "ArrowLeft" });
+  await fireEvent.click(position, { detail: 1 });
+  expect(add).toHaveBeenCalledWith(
+    expect.objectContaining({
+      x: expect.closeTo(0.475, 8),
+      y: expect.closeTo(0.425, 8),
+    }),
+  );
 });
 
 it("shows grid, fit and large and preserves zoom", async () => {
@@ -699,58 +688,8 @@ it("shows the capture time and no file modified time for a photo placed by EXIF"
   expect(screen.queryByText("File modified")).toBeNull();
 });
 
-it("discards a drag when region mode is disabled before pointer release", async () => {
-  setup();
-  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
-  const onregion = vi.fn();
-  const component = render(PhotoLoupeImage, {
-    url: "blob:synthetic",
-    name: "Portrait",
-    view: { scale: 1, x: 0.5, y: 0.5, actual: false },
-    onzoom: vi.fn(),
-    onmove: vi.fn(),
-    regionMode: true,
-    minimumRegionDrag: true,
-    onregion,
-  });
-  const viewport = component.container.querySelector<HTMLElement>(".photo-viewport")!;
-  viewport.setPointerCapture = vi.fn();
-  vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue({
-    x: 0,
-    y: 0,
-    left: 0,
-    top: 0,
-    right: 1000,
-    bottom: 400,
-    width: 1000,
-    height: 400,
-    toJSON: vi.fn(),
-  });
-  const image = screen.getByRole("img", { name: "Portrait" });
-  Object.defineProperty(image, "naturalWidth", { value: 1000 });
-  Object.defineProperty(image, "naturalHeight", { value: 800 });
-  await fireEvent.load(image);
-  await fireEvent(
-    viewport,
-    new MouseEvent("pointerdown", { clientX: 500, clientY: 200, bubbles: true }),
-  );
-  await component.rerender({ regionMode: false });
-  await fireEvent(
-    viewport,
-    new MouseEvent("pointerup", { clientX: 600, clientY: 280, bubbles: true }),
-  );
-  expect(onregion).not.toHaveBeenCalled();
-  await component.rerender({ regionMode: true });
-  await fireEvent(
-    viewport,
-    new MouseEvent("pointerup", { clientX: 600, clientY: 280, bubbles: true }),
-  );
-  expect(onregion).not.toHaveBeenCalled();
-});
-
 it.each([true, false])(
-  "applies drag, keyboard-region and face-label rules at each zoom mode=%s",
+  "discards stale drags and maps regions, markers, and labels with minimum drag=%s",
   async (minimumRegionDrag) => {
     setup();
     vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
@@ -784,6 +723,23 @@ it.each([true, false])(
     Object.defineProperty(image, "naturalWidth", { value: 1000 });
     Object.defineProperty(image, "naturalHeight", { value: 800 });
     await fireEvent.load(image);
+    await fireEvent(
+      viewport,
+      new MouseEvent("pointerdown", { clientX: 500, clientY: 200, bubbles: true }),
+    );
+    await component.rerender({ regionMode: false });
+    await fireEvent(
+      viewport,
+      new MouseEvent("pointerup", { clientX: 600, clientY: 280, bubbles: true }),
+    );
+    expect(onregion).not.toHaveBeenCalled();
+    await component.rerender({ regionMode: true });
+    await fireEvent(
+      viewport,
+      new MouseEvent("pointerup", { clientX: 600, clientY: 280, bubbles: true }),
+    );
+    expect(onregion).not.toHaveBeenCalled();
+    onregion.mockClear();
     const position = screen.getByRole("button", { name: "Position closeup on Portrait" });
     for (const [type, x, y] of [
       ["pointerdown", 500, 200],
@@ -805,20 +761,21 @@ it.each([true, false])(
       width: expect.closeTo(0.2, 8),
       height: expect.closeTo(0.2, 8),
     });
-    if (!minimumRegionDrag) return;
     onregion.mockClear();
     await component.rerender({ view: { scale: 8, x: 0.5, y: 0.5, actual: false } });
-    for (const [type, x, y] of [
-      ["pointerdown", 500, 200],
-      ["pointerup", 520, 212],
-    ] as const)
-      await fireEvent(viewport, new MouseEvent(type, { clientX: x, clientY: y, bubbles: true }));
-    expect(onregion).toHaveBeenCalledWith({
-      x: 0.5025,
-      y: expect.closeTo(0.501875, 8),
-      width: expect.closeTo(0.005, 8),
-      height: expect.closeTo(0.00375, 8),
-    });
+    if (minimumRegionDrag) {
+      for (const [type, x, y] of [
+        ["pointerdown", 500, 200],
+        ["pointerup", 520, 212],
+      ] as const)
+        await fireEvent(viewport, new MouseEvent(type, { clientX: x, clientY: y, bubbles: true }));
+      expect(onregion).toHaveBeenCalledWith({
+        x: 0.5025,
+        y: expect.closeTo(0.501875, 8),
+        width: expect.closeTo(0.005, 8),
+        height: expect.closeTo(0.00375, 8),
+      });
+    }
     await component.rerender({ view: { scale: 1, x: 0.5, y: 0.5, actual: false } });
     await fireEvent.keyDown(position, { key: "ArrowLeft" });
     const marker = component.container.querySelector<HTMLElement>(".keyboard-region")!;

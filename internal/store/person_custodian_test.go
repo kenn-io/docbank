@@ -312,8 +312,6 @@ func TestPeopleByDisplayNameUsesFoldedStableCursor(t *testing.T) {
 	ctx := t.Context()
 	grace, err := s.CreatePerson(ctx, "Grace Hopper", "operator")
 	require.NoError(t, err)
-	ada, err := s.CreatePerson(ctx, "Ada Lovelace", "operator")
-	require.NoError(t, err)
 	secondGrace, err := s.CreatePerson(ctx, "GRACE Murray Hopper", "operator")
 	require.NoError(t, err)
 
@@ -325,66 +323,6 @@ func TestPeopleByDisplayNameUsesFoldedStableCursor(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, next, 1)
 	require.Equal(t, secondGrace.PersonID, next[0].PersonID)
-
-	hiddenNode := browsePhotoNode(t, s, "hidden-person.jpg", fakeHash("hidden-person"), "image/jpeg")
-	visibleNode := browsePhotoNode(t, s, "visible-person.jpg", fakeHash("visible-person"), "image/jpeg")
-	hidden, err := s.CreatePerson(ctx, "Hidden Ada", "operator")
-	require.NoError(t, err)
-	visible, err := s.CreatePerson(ctx, "Visible Lin", "operator")
-	require.NoError(t, err)
-	free, err := s.CreatePerson(ctx, "Free Grace", "operator")
-	require.NoError(t, err)
-	_, err = s.MarkPersonInPhoto(ctx, hiddenNode.CurrentVersionID, hidden.PersonID)
-	require.NoError(t, err)
-	hidden, _, err = s.PersonByID(ctx, hidden.PersonID)
-	require.NoError(t, err)
-	_, err = s.AddPersonIdentity(ctx, hidden.PersonID, hidden.Revision, PersonIdentity{
-		Kind: "email", ValueDisplay: "ada@example.test", Origin: "operator",
-		EvidenceKind: "operator_assertion", EvidenceID: "visible-derived-author", Confidence: "operator_asserted",
-	})
-	require.NoError(t, err)
-	derivedVersion := seedDocumentPeopleEvent(t, s, "visible-person-author.txt", "d9", nil)
-	derived := publishLifecycleDocumentPeople(t, s, derivedVersion.ID)
-	require.Equal(t, hidden.PersonID, derived.PersonID)
-	_, err = s.MarkPersonInPhoto(ctx, visibleNode.CurrentVersionID, visible.PersonID)
-	require.NoError(t, err)
-	asset, err := s.PhotoAssetForNode(ctx, hiddenNode.ID)
-	require.NoError(t, err)
-	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
-	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
-	require.NoError(t, err)
-	locked, err := s.PeopleByDisplayName(ctx, "", "", "", 100, true)
-	require.NoError(t, err)
-	personIDs := func(people []Person) []string {
-		ids := make([]string, 0, len(people))
-		for _, person := range people {
-			ids = append(ids, person.PersonID)
-		}
-		return ids
-	}
-	require.Equal(t, []string{ada.PersonID, free.PersonID, grace.PersonID, secondGrace.PersonID, hidden.PersonID, visible.PersonID}, personIDs(locked))
-	all, err := s.PeopleByDisplayName(ctx, "", "", "", 100, false)
-	require.NoError(t, err)
-	require.Equal(t, []string{ada.PersonID, free.PersonID, grace.PersonID, secondGrace.PersonID, hidden.PersonID, visible.PersonID}, personIDs(all))
-	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
-	require.NoError(t, err)
-	unlocked, err := s.PeopleByDisplayName(WithPhotoHiddenToken(ctx, token), "", "", "", 100, true)
-	require.NoError(t, err)
-	require.Equal(t, personIDs(all), personIDs(unlocked))
-	for _, action := range []string{"suppress", "withdrawn"} {
-		_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET action=?,photo_mark=0 WHERE person_id=?`, action, hidden.PersonID)
-		require.NoError(t, err)
-		visibleDerived, err := s.PeopleByDisplayName(ctx, "Hidden Ada", "", "", 10, true)
-		require.NoError(t, err)
-		require.Len(t, visibleDerived, 1)
-		require.Equal(t, hidden.PersonID, visibleDerived[0].PersonID)
-	}
-	_, err = s.db.ExecContext(ctx, `UPDATE document_people_heads SET node_revision=node_revision+1 WHERE content_version_id=?`, derivedVersion.ID)
-	require.NoError(t, err)
-	stale, err := s.PeopleByDisplayName(ctx, "Hidden Ada", "", "", 10, true)
-	require.NoError(t, err)
-	require.Len(t, stale, 1)
-	require.Equal(t, hidden.PersonID, stale[0].PersonID)
 }
 
 func TestResolveCustodianPreservesSenderClaimAndResolvesAlias(t *testing.T) {
@@ -537,8 +475,69 @@ func BenchmarkPeopleByDisplayNameHiddenCatalog(b *testing.B) {
 	}
 }
 
-func TestPeopleByDisplayNameKeepsNonHiddenRetainedEvidence(t *testing.T) {
+func TestPeopleByDisplayNameAvoidsOverFilteringRetainedEvidence(t *testing.T) {
 	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	hiddenNode := browsePhotoNode(t, s, "hidden-person.jpg", fakeHash("hidden-person"), "image/jpeg")
+	visibleNode := browsePhotoNode(t, s, "visible-person.jpg", fakeHash("visible-person"), "image/jpeg")
+	hidden, err := s.CreatePerson(ctx, "Hidden Ada", "operator")
+	require.NoError(t, err)
+	visible, err := s.CreatePerson(ctx, "Visible Lin", "operator")
+	require.NoError(t, err)
+	free, err := s.CreatePerson(ctx, "Free Grace", "operator")
+	require.NoError(t, err)
+	_, err = s.MarkPersonInPhoto(ctx, hiddenNode.CurrentVersionID, hidden.PersonID)
+	require.NoError(t, err)
+	hidden, _, err = s.PersonByID(ctx, hidden.PersonID)
+	require.NoError(t, err)
+	_, err = s.AddPersonIdentity(ctx, hidden.PersonID, hidden.Revision, PersonIdentity{
+		Kind: "email", ValueDisplay: "ada@example.test", Origin: "operator",
+		EvidenceKind: "operator_assertion", EvidenceID: "visible-derived-author", Confidence: "operator_asserted",
+	})
+	require.NoError(t, err)
+	derivedVersion := seedDocumentPeopleEvent(t, s, "visible-person-author.txt", "d9", nil)
+	derived := publishLifecycleDocumentPeople(t, s, derivedVersion.ID)
+	require.Equal(t, hidden.PersonID, derived.PersonID)
+	_, err = s.MarkPersonInPhoto(ctx, visibleNode.CurrentVersionID, visible.PersonID)
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, hiddenNode.ID)
+	require.NoError(t, err)
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	locked, err := s.PeopleByDisplayName(ctx, "", "", "", 100, true)
+	require.NoError(t, err)
+	personIDs := func(people []Person) []string {
+		ids := make([]string, 0, len(people))
+		for _, person := range people {
+			ids = append(ids, person.PersonID)
+		}
+		return ids
+	}
+	require.Equal(t, []string{free.PersonID, hidden.PersonID, visible.PersonID}, personIDs(locked))
+	all, err := s.PeopleByDisplayName(ctx, "", "", "", 100, false)
+	require.NoError(t, err)
+	require.Equal(t, []string{free.PersonID, hidden.PersonID, visible.PersonID}, personIDs(all))
+	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+	unlocked, err := s.PeopleByDisplayName(WithPhotoHiddenToken(ctx, token), "", "", "", 100, true)
+	require.NoError(t, err)
+	require.Equal(t, personIDs(all), personIDs(unlocked))
+	for _, action := range []string{"suppress", "withdrawn"} {
+		_, err = s.db.ExecContext(ctx, `UPDATE person_document_assertions SET action=?,photo_mark=0 WHERE person_id=?`, action, hidden.PersonID)
+		require.NoError(t, err)
+		visibleDerived, err := s.PeopleByDisplayName(ctx, "Hidden Ada", "", "", 10, true)
+		require.NoError(t, err)
+		require.Len(t, visibleDerived, 1)
+		require.Equal(t, hidden.PersonID, visibleDerived[0].PersonID)
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE document_people_heads SET node_revision=node_revision+1 WHERE content_version_id=?`, derivedVersion.ID)
+	require.NoError(t, err)
+	stale, err := s.PeopleByDisplayName(ctx, "Hidden Ada", "", "", 10, true)
+	require.NoError(t, err)
+	require.Len(t, stale, 1)
+	require.Equal(t, hidden.PersonID, stale[0].PersonID)
 	for _, state := range []string{"stale", "trashed"} {
 		t.Run(state, func(t *testing.T) {
 			s := newTestStore(t)

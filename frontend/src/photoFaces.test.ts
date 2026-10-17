@@ -116,10 +116,18 @@ it.each([
   expect(faces.error).toBe("Denied");
 });
 
-it.each([new Error("Response lost"), new APIError("Unavailable", 503, "unavailable")])(
-  "replays an uncertain box with its original ID: %s",
-  async (cause) => {
-    vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [], assertions: [], people: [] });
+it.each(["network", "server", "definitive", "version", "reconciled"] as const)(
+  "replays or clears a pending face create after %s",
+  async (reason) => {
+    const read = vi
+      .spyOn(api, "listPhotoFaces")
+      .mockResolvedValue({ faces: [], assertions: [], people: [] });
+    const cause =
+      reason === "definitive"
+        ? new APIError("Invalid", 400, "invalid")
+        : reason === "server"
+          ? new APIError("Unavailable", 503, "unavailable")
+          : new Error("Response lost");
     const create = vi
       .spyOn(api, "createPhotoFace")
       .mockRejectedValueOnce(cause)
@@ -128,52 +136,36 @@ it.each([new Error("Response lost"), new APIError("Unavailable", 503, "unavailab
     await faces.load("version-a");
     const box = { x: 0.2, y: 0.3, width: 0.1, height: 0.15 };
     expect(await faces.add(box)).toBe(false);
-    const request = create.mock.calls[0]!;
-    expect(create).toHaveBeenCalledWith(
-      "version-a",
-      { box, face_id: expect.any(String) },
-      expect.objectContaining({ session: "session" }),
-    );
-    expect(await faces.add({ ...box, x: 0.7 })).toBe(false);
-    expect(create).toHaveBeenCalledTimes(1);
-    expect(await faces.retryAdd()).toBe(true);
-    expect(create.mock.calls[1]!.slice(0, 2)).toEqual(request.slice(0, 2));
-    expect(request[1]!.box).toEqual(box);
-    expect(await faces.add(box)).toBe(true);
-    expect(create.mock.calls[2]![1]!.face_id).not.toBe(request[1]!.face_id);
+    if (reason === "network" || reason === "server") {
+      const request = create.mock.calls[0]!;
+      expect(create).toHaveBeenCalledWith(
+        "version-a",
+        { box, face_id: expect.any(String) },
+        expect.objectContaining({ session: "session" }),
+      );
+      expect(await faces.add({ ...box, x: 0.7 })).toBe(false);
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(await faces.retryAdd()).toBe(true);
+      expect(create.mock.calls[1]!.slice(0, 2)).toEqual(request.slice(0, 2));
+      expect(request[1]!.box).toEqual(box);
+      expect(await faces.add(box)).toBe(true);
+      expect(create.mock.calls[2]![1]!.face_id).not.toBe(request[1]!.face_id);
+    } else {
+      if (reason === "version") await faces.load("version-b");
+      if (reason === "reconciled") {
+        read.mockResolvedValue({
+          faces: [{ ...face, face_id: create.mock.calls[0]![1]!.face_id! }],
+          assertions: [],
+          people: [],
+        });
+        await faces.load("version-a");
+      }
+      expect(await faces.retryAdd()).toBe(false);
+      expect(create).toHaveBeenCalledTimes(1);
+    }
     faces.dispose();
   },
 );
-it("clears a pending create after refusal, navigation, or reconciliation", async () => {
-  for (const reason of ["definitive", "version", "reconciled"]) {
-    const read = vi
-      .spyOn(api, "listPhotoFaces")
-      .mockResolvedValue({ faces: [], assertions: [], people: [] });
-    const create = vi
-      .spyOn(api, "createPhotoFace")
-      .mockRejectedValue(
-        reason === "definitive"
-          ? new APIError("Invalid", 400, "invalid")
-          : new Error("Response lost"),
-      );
-    const faces = new PhotoFaces("session", vi.fn());
-    await faces.load("version-a");
-    await faces.add({ x: 0.2, y: 0.3, width: 0.1, height: 0.15 });
-    if (reason === "version") await faces.load("version-b");
-    if (reason === "reconciled") {
-      read.mockResolvedValue({
-        faces: [{ ...face, face_id: create.mock.calls[0]![1]!.face_id! }],
-        assertions: [],
-        people: [],
-      });
-      await faces.load("version-a");
-    }
-    expect(await faces.retryAdd()).toBe(false);
-    expect(create).toHaveBeenCalledTimes(1);
-    faces.dispose();
-    vi.restoreAllMocks();
-  }
-});
 
 it("numbers visible faces by creation time and ID, closing gaps after dismissal", () => {
   const faces = new PhotoFaces("session", vi.fn());
@@ -198,11 +190,6 @@ it("numbers visible faces by creation time and ID, closing gaps after dismissal"
   expect(faces.number(a)).toBe("Face 1");
   expect(faces.number(b)).toBe("Face 2");
   expect(faces.number(faces.ordered[2]!)).toBe("Face 3");
-  faces.dispose();
-});
-
-it("renumbers the remaining face before assigning the next new face's number", () => {
-  const faces = new PhotoFaces("session", vi.fn());
   const first = photoFace({ face_id: "a", dismissed: true });
   const remaining = photoFace({ face_id: "b", assertion_id: undefined });
   faces.faces = [first, remaining];
