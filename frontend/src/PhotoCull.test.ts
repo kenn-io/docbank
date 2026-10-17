@@ -893,6 +893,36 @@ it("refuses a stale tab decision before calling the edit API", async () => {
   expect(load).not.toHaveBeenCalled();
 });
 
+it("refuses a decision when another tab advances during preparation", async () => {
+  vi.stubGlobal("indexedDB", new IDBFactory());
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+  const store = photoCullStorage("synthetic-vault");
+  const { cull, photos } = await reviewPhoto(photo(1), true, store);
+  await store.replace(cull.run!);
+  const other = new PhotoCull("session", photoCullStorage("synthetic-vault"));
+  await other.restore();
+  const preparation = photoPreparation([preparedPhoto(1)]);
+  let finish!: (value: typeof preparation) => void;
+  vi.mocked(api.preparePhotoAuthored).mockReturnValueOnce(
+    new Promise((resolve) => (finish = resolve)),
+  );
+  const edit = vi
+    .spyOn(api, "editPhotoAuthored")
+    .mockResolvedValue({ receipt_id: "", before: [], after: [] });
+  await fireEvent.click(screen.getByRole("button", { name: "Pick (P)" }));
+  await waitFor(() => expect(api.preparePhotoAuthored).toHaveBeenCalledOnce());
+  other.move(1);
+  await other.flush();
+  await act(() => finish(preparation));
+  await waitFor(() => expect(photos.cullEditor!.loading).toBe(false));
+  expect(edit).not.toHaveBeenCalled();
+  await screen.findByText(
+    "Progress could not be saved: Cull progress changed in another tab. Close and resume it.",
+  );
+  expect(cull.stale).toBe(true);
+  expect(cull.currentID).toBe("photo-1");
+});
+
 it("shows the navigation blocker after a failed decision", async () => {
   vi.spyOn(api, "editPhotoAuthored").mockRejectedValue(new Error("Decision failed"));
   const { cull } = await reviewPhoto();

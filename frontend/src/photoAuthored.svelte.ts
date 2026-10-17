@@ -331,10 +331,12 @@ export class PhotoAuthoredEditor {
       keywords,
       rotationDelta,
       viewed,
+      beforeWrite,
     }: {
       keywords?: api.PhotoKeywordEdit[];
       rotationDelta?: api.PhotoAuthoredEditRequest["rotation_delta"];
       viewed?: { file_id: string; content_version_id: string };
+      beforeWrite?: () => Promise<boolean>;
     } = {},
   ) {
     if (this.conflict) {
@@ -392,6 +394,7 @@ export class PhotoAuthoredEditor {
         ...(this.rotationDelta !== undefined ? ["rotation"] : []),
         ...(this.keywords.length ? ["keywords"] : []),
       ];
+      if (beforeWrite && !(await beforeWrite())) return;
       const receipt = await this.request(() =>
         api.editPhotoAuthored(
           {

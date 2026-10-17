@@ -169,6 +169,7 @@
     }
     const id = selected.asset_id;
     await editor.edit({ asset_ids: [id] }, retry ? {} : patch, false, refresh, {
+      beforeWrite: () => cull.verifyDecision(),
       viewed: retry
         ? undefined
         : {
