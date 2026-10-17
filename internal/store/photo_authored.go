@@ -216,6 +216,8 @@ func (r PhotoAuthoredReceipt) afterState() photoAuthoredReceiptAfter {
 	return photoAuthoredReceiptAfter{r.ReceiptID, r.After, r.UndoOf, r.Sidecar, r.Keywords, r.KeywordNodes, r.Representatives}
 }
 
+const maxPhotoAuthoredReceiptJSONBytes = 2 << 20
+
 func checkPhotoAuthoredReceiptSize(r PhotoAuthoredReceipt) error {
 	before, after := slices.Clone(r.Before), slices.Clone(r.After)
 	for i := range before {
@@ -240,7 +242,7 @@ func checkPhotoAuthoredReceiptSize(r PhotoAuthoredReceipt) error {
 	if err != nil {
 		return err
 	}
-	if len(b)+len(a) > maxBatchTagReceiptJSONBytes {
+	if len(b)+len(a) > maxPhotoAuthoredReceiptJSONBytes {
 		return ErrPhotoEditReceiptLimit
 	}
 	return nil
@@ -248,7 +250,7 @@ func checkPhotoAuthoredReceiptSize(r PhotoAuthoredReceipt) error {
 
 func decodePhotoAuthoredReceipt(beforeJSON, afterJSON []byte, id string) (PhotoAuthoredReceipt, error) {
 	var r PhotoAuthoredReceipt
-	if len(beforeJSON)+len(afterJSON) > maxBatchTagReceiptJSONBytes {
+	if len(beforeJSON)+len(afterJSON) > maxPhotoAuthoredReceiptJSONBytes {
 		return r, ErrInvalidPhotoAsset
 	}
 	var after photoAuthoredReceiptAfter

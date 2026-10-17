@@ -675,6 +675,33 @@ it("captures interleaved bursts and moves between stacks and frames in pass orde
   expect(group).toHaveBeenCalledTimes(2);
 });
 
+it("keeps forward stack navigation at pass completion and returns to the last stack", async () => {
+  const ids = [1, 2, 3].map((id) => photo(id).asset_id);
+  vi.spyOn(api, "createWorkspaceQuery").mockResolvedValue(
+    Response.json(await snapshot(ids, captureQuery)),
+  );
+  vi.mocked(api.groupPhotoStacks).mockResolvedValue({
+    groups: [ids.slice(0, 2)],
+    unavailable_ids: [],
+    burst_gap_seconds: 2,
+  });
+  const cull = new PhotoCull("session", storage());
+  await cull.start(captureQuery);
+  cull.choose(ids[2]!);
+  cull.moveStack(1);
+  expect(cull.complete).toBe(true);
+  cull.moveStack(1);
+  expect(cull.complete).toBe(true);
+  expect(cull.currentID).toBeUndefined();
+  cull.moveStack(-1);
+  expect(cull.currentID).toBe(ids[2]);
+  cull.moveStack(-1);
+  expect(cull.currentID).toBe(ids[0]);
+  cull.moveStack(-1);
+  expect(cull.currentID).toBe(ids[0]);
+  await cull.flush();
+});
+
 it("regroups frozen IDs on resume and gap changes without resetting progress", async () => {
   const ids = [1, 2, 3, 4].map((id) => photo(id).asset_id);
   const store = storage();

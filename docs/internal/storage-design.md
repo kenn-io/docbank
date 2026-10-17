@@ -456,7 +456,7 @@ processing sources remain eligible. Automatic enrollment writes no human
 receipt. Existing graphs survive ordinary trash and restore; permanent node
 deletion removes memberships, repairs display pointers, advances each
 affected asset once, and retains an empty asset row.
-The unreleased authored receipt extension includes optional keyword deltas and node revision fences so fields and keywords undo together. Metadata JSONL advances to v2; restore still accepts v1 streams, while older readers refuse these unknown receipt members.
+The unreleased authored receipt extension includes optional keyword deltas and node revision fences so fields and keywords undo together. Authored receipts share a 2 MiB JSON limit across edits, stack decisions, Undo, and restore. Metadata JSONL advances to v2; restore still accepts v1 streams, while older readers refuse these unknown receipt members.
 
 Unaudited permanent deletion removes authored receipts that reference a deleted
 target or sidecar and their dependent undo receipts in the same transaction.

@@ -386,11 +386,26 @@ func TestPhotoStackFileLimit(t *testing.T) {
 		_, err = s.AttachPhotoFile(t.Context(), asset.ID, asset.Revision, node.ID, PhotoRoleRAW, nil)
 		require.NoError(t, err)
 		if i == 1999 {
+			for chunk := range slices.Chunk(stackTargets(t, s, ids), 1000) {
+				edits := make([]PhotoAuthoredTarget, len(chunk))
+				for j, target := range chunk {
+					edits[j] = PhotoAuthoredTarget{FileID: target.FileID, Revision: target.Revision, Patch: PhotoAuthoredPatch{Creator: new(strings.Repeat("c", 100)), Copyright: new(strings.Repeat("r", 100))}}
+				}
+				_, err = editPhotoAuthored(t.Context(), s, edits)
+				require.NoError(t, err)
+			}
 			targets = stackTargets(t, s, ids)
 			require.Len(t, targets, 2000)
 			receipt, err = s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: targets, CurrentID: ids[0], Decision: "all"})
 			require.NoError(t, err)
 			require.Len(t, receipt.After, 2000)
+			var size int
+			require.NoError(t, s.db.QueryRow(`SELECT length(before_json)+length(after_json) FROM photo_change_receipts WHERE receipt_id=?`, receipt.ReceiptID).Scan(&size))
+			t.Logf("2,000-file decision receipt with 100-byte creator and copyright: %d bytes", size)
+			var exported bytes.Buffer
+			require.NoError(t, s.ExportMetadata(t.Context(), &exported))
+			restored := newTestStore(t)
+			require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
 			_, err = s.UndoPhotoAuthored(t.Context(), receipt.ReceiptID)
 			require.NoError(t, err)
 		}
@@ -854,4 +869,19 @@ func TestPhotoRepresentativeReceiptRequiresAsset(t *testing.T) {
 	require.NoError(t, err)
 	var exported bytes.Buffer
 	require.ErrorContains(t, s.ExportMetadata(t.Context(), &exported), "representative receipts reference missing photo assets")
+}
+
+func TestPhotoRepresentativeKeepsDefaultSettingsTimestamp(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ids := burstPhotos(t, s, 2)
+	var count int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_library_settings`).Scan(&count))
+	require.Zero(t, count)
+	_, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: stackTargets(t, s, ids), CurrentID: ids[0], Decision: "representative"})
+	require.NoError(t, err)
+	settings, err := s.PhotoSettings(t.Context())
+	require.NoError(t, err)
+	require.Empty(t, settings.UpdatedAt)
+	require.Equal(t, int64(1), settings.Revision)
 }

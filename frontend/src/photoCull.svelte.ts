@@ -141,7 +141,9 @@ export class PhotoCull {
   moveStack(direction: -1 | 1) {
     if (!this.run || this.busy || this.stale) return;
     const groups = this.passStacks();
-    const index = groups.findIndex((group) => group.includes(this.currentID!));
+    const index = this.complete
+      ? groups.length
+      : groups.findIndex((group) => group.includes(this.currentID!));
     const next = groups[index + direction];
     if (next) this.choose(next[0]!);
     else if (direction === 1) this.update({ position: this.run.checkpoint.pass.length });
