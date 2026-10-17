@@ -84,7 +84,17 @@ func adjustPhotosForPurgedNodesTx(ctx context.Context, tx *sql.Tx, nodeIDs []int
 		if err != nil {
 			return fmt.Errorf("encoding purged photo nodes: %w", err)
 		}
+		// An XMP receipt naming a purged original or sidecar goes with it, and
+		// its original syncs again from no baseline.
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET xmp_receipt_id='',xmp_state='pending' WHERE file_id IN (
+ SELECT json_extract(after_json,'$.file_id') FROM photo_change_receipts WHERE operation='xmp_sync' AND (json_extract(after_json,'$.node_id') IN (SELECT value FROM json_each(?1))
+ OR json_extract(after_json,'$.sidecar.node_id') IN (SELECT value FROM json_each(?1))))`, string(encoded)); err != nil {
+			return fmt.Errorf("clearing XMP receipts for purged nodes: %w", err)
+		}
 		if _, err := tx.ExecContext(ctx, `WITH RECURSIVE nodes_to_purge(id) AS (SELECT value FROM json_each(?)), doomed(receipt_id) AS (
+ SELECT r.receipt_id FROM photo_change_receipts r WHERE r.operation='xmp_sync' AND (json_extract(r.after_json,'$.node_id') IN (SELECT id FROM nodes_to_purge)
+ OR json_extract(r.after_json,'$.sidecar.node_id') IN (SELECT id FROM nodes_to_purge))
+ UNION
  SELECT r.receipt_id FROM photo_change_receipts r
  WHERE r.operation IN ('authored','authored_undo','authored_sidecar') AND
  (EXISTS (SELECT 1 FROM json_each(r.after_json,'$.after') entry WHERE json_extract(entry.value,'$.node_id') IN (SELECT id FROM nodes_to_purge))

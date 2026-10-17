@@ -2213,6 +2213,10 @@ CREATE TABLE IF NOT EXISTS photo_files (
     copyright            TEXT NOT NULL DEFAULT '',
     rotation             INTEGER NOT NULL DEFAULT 0,
     confirmed_fields     INTEGER NOT NULL DEFAULT 0,
+    xmp_state            TEXT NOT NULL DEFAULT 'none',
+    xmp_detail           TEXT NOT NULL DEFAULT '',
+    xmp_receipt_id       TEXT NOT NULL DEFAULT '',
+    source_sha256        TEXT NOT NULL DEFAULT '',
     created_at           TEXT NOT NULL,
     FOREIGN KEY (sidecar_of_file_id) REFERENCES photo_files(file_id)
         ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED
@@ -2221,6 +2225,14 @@ CREATE TABLE IF NOT EXISTS photo_files (
 CREATE INDEX IF NOT EXISTS photo_files_asset ON photo_files(asset_id, role, file_id);
 CREATE INDEX IF NOT EXISTS photo_files_sidecar ON photo_files(sidecar_of_file_id);
 CREATE INDEX IF NOT EXISTS photo_files_sidecar_nodes ON photo_files(node_id) WHERE role='sidecar';
+-- XMP sync status of an original is rebuildable from its one xmp_sync receipt
+-- (xmp_receipt_id). The triggers below set Pending in the transaction that
+-- changes a sync input; the worker classifies Pending rows in Go. Waiting is
+-- Pending that needs the original's source metadata first. A sidecar row's
+-- source_sha256 is the last outside packet Docbank accepted for it.
+CREATE INDEX IF NOT EXISTS photo_files_xmp_pending ON photo_files(xmp_state, node_id) WHERE xmp_state IN ('pending','waiting');
+CREATE INDEX IF NOT EXISTS photo_files_xmp_outcome ON photo_files(xmp_state, node_id) WHERE xmp_state IN ('conflict','invalid');
+CREATE INDEX IF NOT EXISTS nodes_xmp_filename ON nodes(parent_id, lower(name)) WHERE trashed_at IS NULL;
 
 -- Where each non-sidecar photo file sits on the timeline: the displayed
 -- version's EXIF capture key and day when it has them, else the recorded
@@ -2358,14 +2370,80 @@ CREATE TRIGGER IF NOT EXISTS photo_authored_fts_delete AFTER DELETE ON photo_fil
     DELETE FROM photo_authored_fts WHERE rowid=old.node_id;
 END;
 
-CREATE TABLE IF NOT EXISTS photo_sidecar_considered (
-    sidecar_file_id      TEXT PRIMARY KEY REFERENCES photo_files(file_id) ON DELETE CASCADE,
-    asset_id             TEXT NOT NULL REFERENCES photo_assets(asset_id) ON DELETE CASCADE,
-    asset_revision       INTEGER NOT NULL,
-    member_revisions     TEXT NOT NULL,
-    version_id           TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
-    extractor_fingerprint TEXT NOT NULL
-);
+-- An original whose sync has no work stays None until its own decisions,
+-- keywords, node or sidecar change; broader changes skip None rows.
+CREATE TRIGGER IF NOT EXISTS photo_xmp_authored AFTER UPDATE OF rating,flag,label,caption,creator,copyright,rotation,confirmed_fields ON photo_files BEGIN
+    UPDATE photo_files SET xmp_state='pending' WHERE file_id=NEW.file_id AND role IN ('raw','image') AND xmp_state<>'pending';
+END;
+CREATE TRIGGER IF NOT EXISTS photo_xmp_member_insert AFTER INSERT ON photo_files BEGIN
+    UPDATE photo_files SET xmp_state='pending' WHERE asset_id=NEW.asset_id AND role IN ('raw','image') AND xmp_state NOT IN ('pending','none');
+    -- Restores and enrollment of an already tagged node carry decisions into a new row.
+    UPDATE photo_files SET xmp_state='pending' WHERE xmp_state<>'pending' AND file_id IN (NEW.sidecar_of_file_id,
+        CASE WHEN NEW.role IN ('raw','image') AND (NEW.confirmed_fields<>0 OR EXISTS(SELECT 1 FROM node_tags WHERE node_id=NEW.node_id)) THEN NEW.file_id END);
+END;
+CREATE TRIGGER IF NOT EXISTS photo_xmp_member_delete AFTER DELETE ON photo_files BEGIN
+    UPDATE photo_files SET xmp_state='pending' WHERE asset_id=OLD.asset_id AND role IN ('raw','image') AND xmp_state NOT IN ('pending','none');
+    UPDATE photo_files SET xmp_state='pending' WHERE file_id=OLD.sidecar_of_file_id AND xmp_state<>'pending';
+END;
+CREATE TRIGGER IF NOT EXISTS photo_xmp_member_update AFTER UPDATE OF asset_id,role,sidecar_of_file_id ON photo_files BEGIN
+    UPDATE photo_files SET xmp_state='pending' WHERE file_id IN (OLD.sidecar_of_file_id,NEW.sidecar_of_file_id) AND xmp_state<>'pending';
+    UPDATE photo_files SET xmp_state='pending' WHERE file_id=NEW.file_id AND role IN ('raw','image') AND xmp_state<>'pending'
+        AND (xmp_state<>'none' OR confirmed_fields<>0 OR EXISTS(SELECT 1 FROM node_tags WHERE node_id=NEW.node_id));
+    UPDATE photo_files SET xmp_state='pending' WHERE asset_id IN (OLD.asset_id,NEW.asset_id) AND role IN ('raw','image') AND xmp_state NOT IN ('pending','none');
+END;
+CREATE TRIGGER IF NOT EXISTS photo_xmp_node_update AFTER UPDATE OF name,parent_id,trashed_at,current_version_id ON nodes
+WHEN OLD.name IS NOT NEW.name OR OLD.parent_id IS NOT NEW.parent_id OR OLD.trashed_at IS NOT NEW.trashed_at OR OLD.current_version_id IS NOT NEW.current_version_id BEGIN
+    UPDATE photo_files SET xmp_state='pending' WHERE node_id=NEW.id AND role IN ('raw','image') AND xmp_state<>'pending';
+    UPDATE photo_files SET xmp_state='pending' WHERE file_id=(SELECT sidecar_of_file_id FROM photo_files WHERE node_id=NEW.id AND role='sidecar') AND xmp_state<>'pending';
+END;
+-- A node named after an original plus .xmp blocks creating its sidecar.
+CREATE TRIGGER IF NOT EXISTS photo_xmp_name_insert AFTER INSERT ON nodes WHEN lower(substr(NEW.name,-4))='.xmp' BEGIN
+    UPDATE photo_files SET xmp_state='pending' WHERE xmp_state NOT IN ('pending','none') AND node_id IN (SELECT id FROM nodes
+        WHERE parent_id IS NEW.parent_id AND lower(name)=lower(substr(NEW.name,1,length(NEW.name)-4)) AND trashed_at IS NULL);
+END;
+CREATE TRIGGER IF NOT EXISTS photo_xmp_name_update AFTER UPDATE OF name,parent_id,trashed_at ON nodes
+WHEN lower(substr(OLD.name,-4))='.xmp' OR lower(substr(NEW.name,-4))='.xmp' BEGIN
+    UPDATE photo_files SET xmp_state='pending' WHERE xmp_state NOT IN ('pending','none') AND node_id IN (SELECT id FROM nodes
+        WHERE parent_id IS OLD.parent_id AND lower(name)=lower(substr(OLD.name,1,length(OLD.name)-4)) AND trashed_at IS NULL
+        UNION SELECT id FROM nodes WHERE parent_id IS NEW.parent_id AND lower(name)=lower(substr(NEW.name,1,length(NEW.name)-4)) AND trashed_at IS NULL);
+END;
+-- Keywords are the member's own tag names, so a shared tag's revision does not count.
+CREATE TRIGGER IF NOT EXISTS photo_xmp_tag_insert AFTER INSERT ON node_tags BEGIN
+    UPDATE photo_files SET xmp_state='pending' WHERE node_id=NEW.node_id AND role IN ('raw','image') AND xmp_state<>'pending';
+END;
+CREATE TRIGGER IF NOT EXISTS photo_xmp_tag_delete AFTER DELETE ON node_tags BEGIN
+    UPDATE photo_files SET xmp_state='pending' WHERE node_id=OLD.node_id AND role IN ('raw','image') AND xmp_state<>'pending';
+END;
+CREATE TRIGGER IF NOT EXISTS photo_xmp_tag_rename AFTER UPDATE OF name ON tags WHEN OLD.name IS NOT NEW.name BEGIN
+    UPDATE photo_files SET xmp_state='pending' WHERE node_id IN (SELECT node_id FROM node_tags WHERE tag_id=NEW.id) AND role IN ('raw','image') AND xmp_state<>'pending';
+END;
+CREATE TRIGGER IF NOT EXISTS photo_xmp_audit_insert AFTER INSERT ON audit_memberships BEGIN
+    UPDATE photo_files SET xmp_state='pending' WHERE xmp_state NOT IN ('pending','none') AND file_id IN (SELECT file_id FROM photo_files WHERE node_id=NEW.node_id
+        UNION SELECT sidecar_of_file_id FROM photo_files WHERE node_id=NEW.node_id AND role='sidecar');
+END;
+CREATE TRIGGER IF NOT EXISTS photo_xmp_audit_delete AFTER DELETE ON audit_memberships BEGIN
+    UPDATE photo_files SET xmp_state='pending' WHERE xmp_state NOT IN ('pending','none') AND file_id IN (SELECT file_id FROM photo_files WHERE node_id=OLD.node_id
+        UNION SELECT sidecar_of_file_id FROM photo_files WHERE node_id=OLD.node_id AND role='sidecar');
+END;
+CREATE TRIGGER IF NOT EXISTS photo_xmp_audit_authority_insert AFTER INSERT ON audit_authority BEGIN
+    UPDATE photo_files SET xmp_state='pending' WHERE xmp_state NOT IN ('pending','none');
+END;
+CREATE TRIGGER IF NOT EXISTS photo_xmp_audit_authority_delete AFTER DELETE ON audit_authority BEGIN
+    UPDATE photo_files SET xmp_state='pending' WHERE xmp_state NOT IN ('pending','none');
+END;
+-- Extraction supplies the original's orientation; its source paths pair sidecars.
+CREATE TRIGGER IF NOT EXISTS photo_xmp_extracted AFTER INSERT ON source_metadata_heads BEGIN
+    UPDATE photo_files SET xmp_state='pending' WHERE xmp_state NOT IN ('pending','none') AND node_id IN (SELECT n.id FROM content_versions v
+        JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id WHERE v.blob_hash=NEW.source_sha256);
+END;
+CREATE TRIGGER IF NOT EXISTS photo_xmp_reextracted AFTER UPDATE OF generation_id ON source_metadata_heads BEGIN
+    UPDATE photo_files SET xmp_state='pending' WHERE xmp_state NOT IN ('pending','none') AND node_id IN (SELECT n.id FROM content_versions v
+        JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id WHERE v.blob_hash=NEW.source_sha256);
+END;
+CREATE TRIGGER IF NOT EXISTS photo_xmp_provenance AFTER INSERT ON provenance BEGIN
+    UPDATE photo_files SET xmp_state='pending' WHERE asset_id=(SELECT asset_id FROM photo_files WHERE node_id=NEW.node_id)
+        AND role IN ('raw','image') AND xmp_state NOT IN ('pending','none');
+END;
 
 CREATE TABLE IF NOT EXISTS photo_library_settings (
     singleton    INTEGER PRIMARY KEY,

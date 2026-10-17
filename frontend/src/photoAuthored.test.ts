@@ -3,7 +3,7 @@ import { cleanup, render, screen, fireEvent, within } from "@testing-library/sve
 import userEvent from "@testing-library/user-event";
 import * as api from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
-import { PhotoAuthoredEditor, PhotoUndoState } from "./photoAuthored.svelte.js";
+import { PhotoAuthoredEditor, PhotoUndoState, xmpPollDelay } from "./photoAuthored.svelte.js";
 import { preparedPhoto } from "./photo-test-fixtures.js";
 import PhotoInspector from "./PhotoInspector.svelte";
 import type { PhotoAsset, PhotoPreparedTarget, Tag } from "./generated/docbank.js";
@@ -734,5 +734,102 @@ it("keeps a later edit busy when an earlier refresh finishes during its write", 
   finishWrite(response({ receipt_id: "second", before: targets, after: targets }));
   await second;
   expect(editor.busy).toBe(false);
+  editor.dispose();
+});
+
+function withXMP(editor: PhotoAuthoredEditor, xmp: api.PhotoXMPState) {
+  editor.targets[0]!.xmp = xmp;
+  return editor;
+}
+const conflict: api.PhotoXMPState = {
+  state: "conflict",
+  conflict_id: "40000000-0000-4000-8000-000000000009",
+  rows: [{ field: "Rating", catalog: "4", sidecar: "1" }],
+};
+
+it("shows conflicting properties and resolves the recorded conflict", async () => {
+  const editor = withXMP(editorWithTargets(), structuredClone(conflict));
+  const receipt = { receipt_id: "import", before: [], after: [] };
+  const synced = { state: "synced", receipt } as api.PhotoXMPState;
+  const fetcher = vi.fn<typeof fetch>(async (url) =>
+    String(url).endsWith("/xmp")
+      ? response(synced)
+      : response({ assets: [asset], targets: editor.targets.map((t) => ({ ...t, xmp: synced })) }),
+  );
+  vi.stubGlobal("fetch", fetcher);
+  editor.onXMPChanged = vi.fn(async () => {});
+  ui(editor);
+  const panel = screen.getByRole("region", { name: "XMP for capture.raw" });
+  expect(within(panel).getByText("XMP: Conflict")).toBeTruthy();
+  expect(within(panel).getByText("1")).toBeTruthy();
+  await fireEvent.click(within(panel).getByRole("button", { name: "Use Sidecar" }));
+  await vi.waitFor(() => expect(editor.targets[0]!.xmp?.state).toBe("synced"));
+  expect(String(fetcher.mock.calls[0]![0])).toContain("/photos/authored/raw/xmp");
+  expect(JSON.parse(fetcher.mock.calls[0]![1]!.body as string)).toEqual({
+    conflict_id: conflict.conflict_id,
+    choice: "sidecar",
+  });
+  expect(editor.receiptID).toBe("import");
+  expect(editor.onXMPChanged).toHaveBeenCalledWith(receipt, []);
+  editor.dispose();
+});
+
+it("asks for a refresh when the conflict changed before the choice", async () => {
+  const editor = withXMP(editorWithTargets(), structuredClone(conflict));
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response({ detail: "stale" }, 412)));
+  await editor.resolveXMP("raw", "catalog");
+  expect(editor.xmpError).toBe("The photo or sidecar changed. Refresh XMP and choose again.");
+  editor.dispose();
+});
+
+it("polls a Pending original through busy refreshes, then asks for a manual refresh", async () => {
+  vi.useFakeTimers();
+  try {
+    const editor = withXMP(editorWithTargets(), { state: "pending" });
+    let prepares = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async () => {
+        prepares++;
+        return response({ assets: [asset], targets: editor.targets });
+      }),
+    );
+    await editor.refreshXMP();
+    expect(prepares).toBe(1);
+    editor.busy = true;
+    await vi.advanceTimersByTimeAsync(xmpPollDelay * 3);
+    expect(prepares).toBe(1);
+    editor.busy = false;
+    await vi.advanceTimersByTimeAsync(xmpPollDelay * 20);
+    expect(prepares).toBe(13);
+    expect(editor.xmpStalled).toBe(true);
+    ui(editor);
+    expect(
+      screen.getByText("XMP sync is still pending. Select Refresh XMP to check again."),
+    ).toBeTruthy();
+    await editor.refreshXMP();
+    expect(editor.xmpStalled).toBe(false);
+    editor.dispose();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("refreshes XMP without losing a draft and flags changed revisions", async () => {
+  const editor = withXMP(editorWithTargets(), { state: "pending" });
+  editor.stage({ caption: "Draft caption" });
+  const refreshed = { ...editor.targets[0]!, revision: 12, xmp: { state: "synced" } };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn<typeof fetch>(async () =>
+      response({ assets: [asset], targets: [refreshed, editor.targets[1]!] }),
+    ),
+  );
+  editor.onXMPChanged = vi.fn(async () => {});
+  await editor.refreshXMP();
+  expect(editor.targets[0]!.xmp?.state).toBe("synced");
+  expect(editor.patch).toEqual({ caption: "Draft caption" });
+  expect(editor.conflict).toBe(true);
+  expect(editor.onXMPChanged).toHaveBeenCalledWith();
   editor.dispose();
 });

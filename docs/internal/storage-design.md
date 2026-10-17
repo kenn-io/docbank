@@ -464,11 +464,11 @@ keep their revision and append no receipt.
 
 Hidden photos store nullable `photo_assets.hidden_at`. Revisioned hide/unhide writes use the existing asset receipts. Disable reads only hidden asset graphs and atomically clears their flags and authentication state. Reset preserves flags. Public Photos asset and preview reads require an active unlock for hidden assets; ordinary Documents reads retain access.
 
-Vault-wide hidden credentials use fixed Argon2id parameters. Failure timestamps and five-minute lockout persist through restart and restore. JSONL versions 1 and 2 back up hidden flags, credentials, failed attempts, lockout expiry and decision receipts. Sessions store SHA-256 token digests, expire after five minutes, clear on restart, and stay outside backup. Schema 38 uses the existing deterministic JSONL rebuild for supported released schemas and retains the source database. Schemas 30 through 33 and 35 through 37 remain unsupported, unreleased sources. Recreate development vaults from schemas 35 through 37 with this binary; opening them fails the schema check.
+Vault-wide hidden credentials use fixed Argon2id parameters. Failure timestamps and five-minute lockout persist through restart and restore. JSONL versions 1 and 2 back up hidden flags, credentials, failed attempts, lockout expiry and decision receipts. Sessions store SHA-256 token digests, expire after five minutes, clear on restart, and stay outside backup. Schema 39 uses the existing deterministic JSONL rebuild for supported released schemas and retains the source database. Schemas 30 through 33 and 35 through 38 remain unsupported, unreleased sources. Recreate development vaults from schemas 35 through 38 with this binary; opening them fails the schema check.
 
-The `confirmed_fields` bit mask records supplied rating (1), flag (2), label (4), caption (8), creator (16), copyright (32) and rotation (64), including empty clears. Sidecar initialization confirms only non-default values; undo, audit and backup retain the mask. A revision-1 file has no decisions, so restore refuses one with authored values or confirmation bits.
+The `confirmed_fields` bit mask records supplied rating (1), flag (2), label (4), caption (8), creator (16), copyright (32) and rotation (64), including empty clears. XMP sync confirms only non-default sidecar values; undo, audit and backup retain the mask. A revision-1 file has no decisions, so restore refuses one with authored values or confirmation bits.
 
-Schema version 38 exports assets, files, settings, albums, album members, saved-query runs, receipts, and faces in stable
+Schema version 39 exports assets, files, settings, albums, album members, saved-query runs, receipts, and faces in stable
 JSONL order. Restore requires a pristine target and validates node ownership,
 local pointers, sidecar targets, selected display state, enum-like text,
 revisions, complete non-null authored receipt snapshots, and the graph before commit.
@@ -477,6 +477,36 @@ Released photo files retain their graph and gain revision 1 with empty authored 
 `photo_sets` owns album UUID, name, star, revision, optional member cover, and timestamps. `photo_set_members` owns each asset's added date. Membership survives exclusion, trash, detach, and purge. Empty assets retain album choices and added dates; counts, browsing, and effective covers skip them until a file is attached again. Only explicit album operations change album revisions and receipts. Deleting an album clears membership and cover but retains its identity and deletion timestamp for receipt references. Album decisions use the existing logical transaction and audit refusal. Query selection reuses the photo browse compiler, coverage binding, and complete matching population inside that transaction. All changed IDs are recorded in chunks of 256 in `photo_change_receipts` with optional `set_id`; every chunk shares one revision transition. Restore validates structural references, member covers, and deleted-album emptiness. Older album receipts can omit `set_id`.
 
 Schema 38 adds `saved_query_runs.photos`, which distinguishes document-node runs from Library photo-asset runs. Predecessor comparisons stay within the same mode. Older JSONL run rows default to Documents; photo runs serialize `photos: true`.
+
+Schema 39 adds XMP sync state to `photo_files`. Each RAW or image row stores
+`xmp_state`, `xmp_detail` and `xmp_receipt_id`; each sidecar row stores
+`source_sha256`, the digest of the last outside packet its sync accepted.
+
+- Authority: the one `xmp_sync` receipt per original holds the successful
+  baseline (sidecar version, packet, catalog decisions and keywords, original
+  version and orientation) and the last accepted outside snapshot. A new
+  successful sync replaces it; conflicts and refusals write no receipt.
+  Metadata JSONL v2 carries the receipt and `source_sha256`.
+- Status: the state and detail columns are derived. Triggers set Pending in the
+  transaction that changes an original's decisions, own tags or tag names,
+  membership or sidecar attachment, original or sidecar node, extraction head,
+  source provenance, audit coverage or a same-folder `<name>.xmp` node. A tag
+  shared with other photos does not dirty them. Rows with no sync work stay
+  None for changes outside their own row, node, tags or sidecar.
+- Worker: the sidecar backfill lists Pending rows through a partial index and
+  classifies each in Go. Outcomes that need no packet bytes (None, Synced,
+  Unavailable, Invalid, and Waiting for extraction) are stored directly; the
+  rest read the packet, merge and publish. Publication reloads every input in
+  its write transaction and retries when one changed, then commits the
+  imported decisions, tags, sidecar version, receipt and state together.
+- Imports: a rescan whose sidecar bytes equal `source_sha256` keeps the current
+  Docbank version and binds provenance to a retained version with those bytes.
+  Changed outside bytes become a new version and replace the digest. The first
+  sync of a sidecar without a baseline records its current digest before any
+  write, which covers vaults rebuilt from schema 29.
+- Restore rebuilds the receipt pointers and marks every original with sync work
+  Pending in one statement. Purging an original or sidecar deletes the
+  receipt naming it and returns the original to Pending.
 
 Schema 38 also adds `photo_authored_fts`, which indexes captions, creator, and copyright from `photo_files` in separate columns so phrases stay within a field. It is derived, rebuilt on restore, and excluded from metadata backup.
 

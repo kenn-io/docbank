@@ -40,7 +40,7 @@ func (c queryCompiler) compilePhotoDecisionPredicate(predicate string, args ...a
 }
 
 func isPhotoScalarField(field string) bool {
-	return query.IsQualityField(field) || slices.Contains([]string{"rating", "rating_min", "rating_max", "flag", "label", "kind", "camera", "lens", "location", "iso", "iso_min", "iso_max", "capture_after", "capture_before", "gps", "asset", "set"}, field)
+	return query.IsQualityField(field) || slices.Contains([]string{"xmp", "rating", "rating_min", "rating_max", "flag", "label", "kind", "camera", "lens", "location", "iso", "iso_min", "iso_max", "capture_after", "capture_before", "gps", "asset", "set"}, field)
 }
 
 func (c queryCompiler) compilePhotoMetadataPredicate(predicate string, args ...any) compiledQueryFragment {
@@ -65,6 +65,19 @@ func (c queryCompiler) compilePhotoScalarPredicate(field, value string) (compile
 		return c.compilePhotoQualityPredicate(field, value)
 	}
 	switch field {
+	case "xmp":
+		if err := query.ValidateTextOperand(field, value); err != nil {
+			return compiledQueryFragment{}, err
+		}
+		// Each predicate repeats its partial index condition so SQLite can seek it.
+		state := `xf.xmp_state IN ('pending','waiting')`
+		if value == PhotoXMPStateConflict {
+			state = `xf.xmp_state IN ('conflict','invalid') AND xf.xmp_state='conflict'`
+		}
+		if c.photoDisplayMetadata {
+			return compiledQueryFragment{sql: `n.id IN (SELECT pf.node_id FROM photo_files xf JOIN photo_files pf ON pf.asset_id=xf.asset_id WHERE ` + state + `)`}, nil
+		}
+		return compiledQueryFragment{sql: `n.id IN (SELECT xf.node_id FROM photo_files xf WHERE ` + state + `)`}, nil
 	case "rating", "rating_min", "rating_max":
 		n, err := query.ParseSizeOperand(value)
 		if err != nil || n > 5 {

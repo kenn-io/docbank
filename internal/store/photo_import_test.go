@@ -175,64 +175,18 @@ func TestPhotoImportQualifiedSidecarTargets(t *testing.T) {
 				require.ErrorIs(t, err, ErrNotFound)
 				return
 			}
-			jpg := fileByRole(result.Asset.Files, PhotoRoleImage)
-			receipts := map[string]PhotoAuthoredReceipt{}
-			var rawSidecar, jpgSidecar PhotoFile
+			raw, jpg := fileByRole(result.Asset.Files, PhotoRoleRAW), fileByRole(result.Asset.Files, PhotoRoleImage)
 			for _, f := range result.Asset.Files {
 				if f.Role != PhotoRoleSidecar {
 					continue
 				}
 				node, err := s.NodeByID(ctx, f.NodeID)
 				require.NoError(t, err)
-				rating, caption, extension := int64(5), "", ""
-				if node.Name == "capture.ARW.xmp" {
-					rawSidecar = f
-				} else {
-					jpgSidecar = f
-					rating, caption = 3, "JPEG caption"
-					if mode == "missing extension claim" {
-						extension = "NEF"
-					} else {
-						require.Equal(t, &jpg.ID, f.SidecarOfID)
-					}
+				want := jpg.ID
+				if node.Name == "capture.ARW.xmp" || mode == "missing extension claim" && node.Name == "capture.xmp" {
+					want = raw.ID
 				}
-				canonical := photoCanonical(t,
-					photoMetadataField("image.xmp.packet_valid", "image.xmp", "packet", photoBoolean()),
-					photoMetadataField("image.xmp.rating", "image.xmp", "Rating", photoInteger(rating)),
-					photoMetadataField("image.xmp.caption", "image.xmp", "description", photoString(caption)),
-					photoMetadataField("image.xmp.sidecar_for_extension", "image.xmp", "SidecarForExtension", photoString(extension)),
-				)
-				_, err = s.PublishSourceMetadata(ctx, node.BlobHash, fakeHash("ee"), canonical)
-				require.NoError(t, err)
-			}
-			for {
-				targets, err := s.MissingPhotoSidecarsAfter(ctx, fakeHash("ee"), "", 1)
-				require.NoError(t, err)
-				if len(targets) == 0 {
-					break
-				}
-				receipt, err := s.InitializePhotoSidecar(ctx, targets[0])
-				require.NoError(t, err)
-				if len(receipt.After) > 0 {
-					receipts[receipt.After[0].FileID] = receipt
-				}
-			}
-			asset, err := s.PhotoAssetByID(ctx, result.Asset.ID)
-			require.NoError(t, err)
-			raw, jpg := fileByRole(asset.Files, PhotoRoleRAW), fileByRole(asset.Files, PhotoRoleImage)
-			assert.Equal(t, 5, raw.Rating)
-			assert.Equal(t, int64(2), raw.Revision)
-			require.NotNil(t, receipts[raw.ID].Sidecar)
-			assert.Equal(t, rawSidecar.ID, receipts[raw.ID].Sidecar.FileID)
-			if mode == "missing extension claim" {
-				assert.Zero(t, jpg.Rating)
-				assert.Equal(t, int64(1), jpg.Revision)
-			} else {
-				assert.Equal(t, 3, jpg.Rating)
-				assert.Equal(t, "JPEG caption", jpg.Caption)
-				assert.Equal(t, int64(2), jpg.Revision)
-				require.NotNil(t, receipts[jpg.ID].Sidecar)
-				assert.Equal(t, jpgSidecar.ID, receipts[jpg.ID].Sidecar.FileID)
+				assert.Equal(t, &want, f.SidecarOfID, node.Name)
 			}
 		})
 	}

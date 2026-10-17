@@ -54,10 +54,11 @@ type photoAuthoredLoaded struct {
 type PhotoPreparedTarget struct {
 	PhotoAuthoredEditTarget
 
-	FileName string        `json:"file_name"`
-	NodeID   int64         `json:"node_id"`
-	Values   PhotoAuthored `json:"values"`
-	Tags     []string      `json:"tags"`
+	XMP      *PhotoXMPState `json:"xmp,omitzero"`
+	FileName string         `json:"file_name"`
+	NodeID   int64          `json:"node_id"`
+	Values   PhotoAuthored  `json:"values"`
+	Tags     []string       `json:"tags"`
 }
 
 type PhotoAuthoredPreparation struct {
@@ -89,7 +90,7 @@ func (s *Store) PreparePhotoAuthored(ctx context.Context, selection PhotoSetSele
 				return err
 			}
 		}
-		return nil
+		return s.preparePhotoXMPTx(ctx, tx, result.Targets)
 	})
 	return result, err
 }
@@ -555,7 +556,7 @@ func queryInChunks[T any](ctx context.Context, q metadataQuerier, prefix string,
 }
 
 func validatePhotoKeywords(r PhotoAuthoredReceipt) error {
-	if len(r.Keywords) > maxBatchTagTargets*100 || len(r.KeywordNodes) > len(r.After) || r.Sidecar != nil && len(r.Keywords) != 0 {
+	if len(r.Keywords) > maxBatchTagTargets*100 || len(r.KeywordNodes) > len(r.After) {
 		return ErrInvalidPhotoAsset
 	}
 	nodes := map[int64]int{}

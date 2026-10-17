@@ -52,6 +52,8 @@ type metadataPhotoFile struct {
 	Role        string  `json:"role" db:"role"`
 	SidecarOfID *string `json:"sidecar_of_file_id" db:"sidecar_of_file_id"`
 	CreatedAt   string  `json:"created_at" db:"created_at"`
+	// SourceSHA256 is the last outside packet a sidecar's sync accepted.
+	SourceSHA256 string `json:"source_sha256" db:"source_sha256"`
 }
 
 type metadataPhotoFileBeforeAuthored struct {
@@ -226,6 +228,9 @@ func validatePhotoFileMetadataRecord(v metadataPhotoFile) error {
 	if v.Revision < 1 {
 		return errors.New("invalid photo file revision")
 	}
+	if v.SourceSHA256 != "" && validateCatalogSHA256(v.SourceSHA256, "sidecar source digest") != nil {
+		return errors.New("invalid photo sidecar source digest")
+	}
 	values := PhotoAuthored{Confirmed: v.Confirmed, Rating: v.Rating, Flag: v.Flag, Label: v.Label, Caption: v.Caption, Creator: v.Creator, Copyright: v.Copyright, Rotation: v.Rotation}
 	if err := ValidatePhotoAuthored(values); err != nil {
 		return err
@@ -250,6 +255,15 @@ func validatePhotoSettingsMetadataRecord(v metadataPhotoSettings) error {
 func validatePhotoReceiptMetadataRecord(v metadataPhotoReceipt) error {
 	if v.Type != metadataPhotoReceiptType || validateUUIDv4(v.ReceiptID) != nil || v.BeforeRevision < 0 || v.AfterRevision < 0 || len(v.BeforeJSON)+len(v.AfterJSON) > maxBatchTagReceiptJSONBytes {
 		return errors.New("invalid photo receipt metadata")
+	}
+	if v.Operation == "xmp_sync" {
+		if v.AssetID != nil || v.SettingsKey != nil || v.SetID != nil || v.BeforeRevision != 0 || v.AfterRevision != 1 || v.BeforeJSON != "null" {
+			return errors.New("invalid XMP receipt identity")
+		}
+		if _, err := decodePhotoXMPReceipt([]byte(v.AfterJSON)); err != nil {
+			return err
+		}
+		return validateMetadataTime("photo receipt created_at", v.CreatedAt)
 	}
 	if v.Operation == "face_decision" {
 		if v.AssetID == nil || validateUUIDv4(*v.AssetID) != nil || v.SettingsKey != nil || v.SetID != nil || v.BeforeRevision != 0 || v.AfterRevision != 1 {
@@ -372,6 +386,19 @@ func validatePhotoAuthoredReferences(ctx context.Context, q metadataQuerier) err
 	}
 	if invalid != 0 {
 		return errors.New("authored undo references an invalid receipt")
+	}
+	// Each original keeps one XMP receipt, naming its own node and its sidecar's.
+	if err := q.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM photo_change_receipts r
+ LEFT JOIN photo_files f ON f.file_id=json_extract(r.after_json,'$.file_id')
+ LEFT JOIN photo_files sf ON sf.file_id=json_extract(r.after_json,'$.sidecar.file_id')
+ WHERE r.operation='xmp_sync' AND (f.file_id IS NULL OR f.node_id<>json_extract(r.after_json,'$.node_id')
+ OR sf.file_id IS NULL OR sf.node_id<>json_extract(r.after_json,'$.sidecar.node_id')))
+ + (SELECT count(*) FROM (SELECT 1 FROM photo_change_receipts WHERE operation='xmp_sync'
+ GROUP BY json_extract(after_json,'$.file_id') HAVING count(*)>1))`).Scan(&invalid); err != nil {
+		return fmt.Errorf("checking XMP receipt references: %w", err)
+	}
+	if invalid != 0 {
+		return errors.New("XMP receipts reference missing or different nodes")
 	}
 	return nil
 }

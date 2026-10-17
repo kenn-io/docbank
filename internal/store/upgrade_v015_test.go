@@ -563,7 +563,7 @@ func normalizeReleasedUpgradeSnapshot(t *testing.T, data []byte) []map[string]an
 		var record map[string]any
 		require.NoError(t, json.Unmarshal(line, &record))
 		if record["type"] == "photo_file" {
-			defaults := map[string]any{"revision": float64(1), "rating": float64(0), "flag": "", "label": "", "caption": "", "creator": "", "copyright": "", "rotation": float64(0), "confirmed_fields": float64(0)}
+			defaults := map[string]any{"revision": float64(1), "rating": float64(0), "flag": "", "label": "", "caption": "", "creator": "", "copyright": "", "rotation": float64(0), "confirmed_fields": float64(0), "source_sha256": ""}
 			for key, value := range defaults {
 				if _, ok := record[key]; !ok {
 					record[key] = value
@@ -671,5 +671,50 @@ func seedReleasedMtime(t *testing.T, db *sql.DB, nodeID int64, mtime string) {
 	} {
 		_, err := db.Exec(statement.query, statement.args...)
 		require.NoError(t, err)
+	}
+}
+
+// A released vault has a paired sidecar but no XMP receipt. Its first sync
+// accepts the sidecar's bytes as outside before Docbank writes a new version.
+func TestReleasedSchema29SidecarFirstSync(t *testing.T) {
+	t.Parallel()
+	for _, driver := range v090UpgradeDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			ctx := t.Context()
+			path := filepath.Join(t.TempDir(), "vault.db")
+			db, legacy := newReleasedFixtureStore(t, path, driver.driver, schemaV0151SQL, 29)
+			original := createReleasedFixtureFile(t, legacy, "released.jpg", fakeHash("a1"), 4, "image/jpeg")
+			seedReleasedPhotoAsset(t, db, original.ID)
+			sidecar := createReleasedFixtureFile(t, legacy, "released.jpg.xmp", fakeHash("b2"), 4, "application/rdf+xml")
+			const fileID, sidecarID = "40000000-0000-4000-8000-000000000002", "40000000-0000-4000-8000-000000000004"
+			_, err := db.Exec(`INSERT INTO photo_files(file_id,asset_id,node_id,role,sidecar_of_file_id,created_at) VALUES(?,'40000000-0000-4000-8000-000000000001',?,'sidecar',?,?)`, sidecarID, sidecar.ID, fileID, nowRFC3339())
+			require.NoError(t, err)
+			require.NoError(t, db.Close())
+			s, err := Open(path, driver.driver)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, s.Close()) })
+
+			assert.Equal(t, PhotoXMPStatePending, xmpState(t, s, fileID).State)
+			publishXMPOrientation(t, s, original.ID, fakeHash("ee"))
+			targets, err := s.PhotoXMPTargetsAfter(ctx, "", 10)
+			require.NoError(t, err)
+			require.Equal(t, []PhotoSidecarTarget{{FileID: fileID, NodeID: original.ID}}, targets)
+			work, run, err := s.ClassifyPhotoXMP(ctx, fileID)
+			require.NoError(t, err)
+			require.True(t, run)
+			_, _, synced := work.Base()
+			require.False(t, synced, "no adapter or synthetic receipt precedes the first sync")
+			values := PhotoAuthored{Rating: 4, Confirmed: PhotoConfirmedRating}
+			packet := PhotoXMPPacket{Values: values, Keywords: []string{"Travel"}}
+			state, err := s.PublishPhotoXMP(ctx, PhotoXMPPlan{Work: work, Sidecar: packet, Packet: packet, Values: values, Keywords: packet.Keywords, Import: true, Write: true}, fakeHash("c3"), 4, BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 4, Created: true})
+			require.NoError(t, err)
+			assert.Equal(t, PhotoXMPStateSynced, state.State)
+			var accepted, current string
+			require.NoError(t, s.db.QueryRow(`SELECT f.source_sha256,v.blob_hash FROM photo_files f JOIN nodes n ON n.id=f.node_id
+ JOIN content_versions v ON v.version_id=n.current_version_id WHERE f.file_id=?`, sidecarID).Scan(&accepted, &current))
+			assert.Equal(t, sidecar.BlobHash, accepted)
+			assert.Equal(t, fakeHash("c3"), current)
+			require.NoError(t, s.ValidateMetadata(ctx))
+		})
 	}
 }

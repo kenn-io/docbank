@@ -12,6 +12,8 @@ import (
 func ValidateTextOperand(field, value string) error {
 	var valid bool
 	switch field {
+	case "xmp":
+		valid = oneOf(value, "pending", "conflict")
 	case "flag":
 		valid = ValidPhotoFlag(value)
 	case "label":

@@ -2569,3 +2569,60 @@ it("disables selected export when a metadata draft keeps an empty selection open
   expect(onexport).not.toHaveBeenCalled();
   photos.dispose();
 });
+
+it("refreshes the list and tags when Refresh XMP observes a background import", async () => {
+  const before = preparedPhoto(1, { file_id: "file-1" });
+  const raw = preparedPhoto(2, {
+    asset_id: before.asset_id,
+    file_id: "raw",
+    file_name: "Photo 1.ARW",
+  });
+  raw.xmp = { state: "pending" };
+  const photos = workspaceWithPreparedPhoto(before);
+  const asset = {
+    id: before.asset_id,
+    display_file_id: before.file_id,
+    files: [
+      { id: raw.file_id, role: "raw" },
+      { id: before.file_id, role: "image" },
+    ],
+  } as PhotoAsset;
+  photos.authored.targets = [raw, before];
+  photos.authored.asset = asset;
+  const receipt = {
+    receipt_id: "xmp-import",
+    before: [before],
+    after: [
+      { ...before, revision: 2, values: { ...before.values, rating: 4, rotation: 90 as const } },
+    ],
+    keywords: [{ node_id: before.node_id, tag_id: "travel", before: false, after: true }],
+  } as PhotoAuthoredReceipt;
+  const jpeg = {
+    ...before,
+    ...receipt.after[0]!,
+    tags: ["travel"],
+    xmp: { state: "synced" as const, receipt },
+  };
+  const travel = { id: "travel", name: "Travel", revision: 2, assignment_count: 1 } as api.Tag;
+  vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+    if (url.endsWith("/prepare"))
+      return Response.json({
+        assets: [asset],
+        targets: [{ ...raw, xmp: { state: "synced" } }, jpeg],
+      });
+    if (url.endsWith("/tags/travel")) return Response.json(travel);
+    if (url.endsWith("/photos/assets/query"))
+      return Response.json({ items: [{ ...photo(1), rotation: 90 }], total: 1, facets: [] });
+    const metadata = photoMetadataResponse(url, init);
+    if (metadata) return metadata;
+    throw new Error(`Unexpected request ${url}`);
+  });
+  render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
+  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+  const panel = screen.getByRole("region", { name: "XMP for Photo 1.ARW" });
+  expect(within(panel).getByText("XMP: Pending")).toBeTruthy();
+  await fireEvent.click(within(panel).getByRole("button", { name: "Refresh XMP" }));
+  await waitFor(() => expect(photos.items[0]?.rotation).toBe(90));
+  expect(photos.authored.tags).toEqual([travel]);
+  photos.dispose();
+});

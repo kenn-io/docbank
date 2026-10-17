@@ -990,6 +990,16 @@ func (s *Store) importMetadata(ctx context.Context, r io.Reader) error {
 		if err := refreshPhotoTechnicalMetadataTx(ctx, tx); err != nil {
 			return err
 		}
+		// XMP status is derived: point each original at its receipt and let the
+		// worker reclassify every original with sync work.
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET xmp_receipt_id=COALESCE(r.receipt_id,''),
+ xmp_state=CASE WHEN f.role IN ('raw','image') AND f.asset_id IS NOT NULL AND (r.receipt_id IS NOT NULL OR f.confirmed_fields<>0
+ OR EXISTS(SELECT 1 FROM node_tags WHERE node_id=f.node_id) OR EXISTS(SELECT 1 FROM photo_files s WHERE s.sidecar_of_file_id=f.file_id))
+ THEN 'pending' ELSE 'none' END,xmp_detail=''
+ FROM photo_files f LEFT JOIN (SELECT receipt_id,json_extract(after_json,'$.file_id') AS file_id FROM photo_change_receipts WHERE operation='xmp_sync') r ON r.file_id=f.file_id
+ WHERE photo_files.file_id=f.file_id`); err != nil {
+			return fmt.Errorf("restoring XMP sync status: %w", err)
+		}
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE vault_metadata SET vault_uid = ? WHERE singleton = 1`, header.VaultID,
 		); err != nil {

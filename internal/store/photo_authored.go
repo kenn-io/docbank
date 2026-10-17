@@ -305,20 +305,9 @@ type photoAuthoredApply struct {
 	// force keeps unchanged targets in the receipt and advances the revision of
 	// every target whose asset has another changed target.
 	force bool
-	// persist drops no-op receipts, checks the receipt size, and writes the receipt.
-	persist bool
 	// loaded supplies already-checked files and nodes. Files read from the
 	// database are added to it, and written node revisions are refreshed in it.
 	loaded map[string]photoAuthoredLoaded
-}
-
-// applyPhotoAuthoredTx applies targets and persists the receipt.
-func (s *Store) applyPhotoAuthoredTx(ctx context.Context, tx *sql.Tx, targets []PhotoAuthoredTarget, opts photoAuthoredApply) (PhotoAuthoredReceipt, error) {
-	if len(targets) > maxBatchTagTargets {
-		return PhotoAuthoredReceipt{}, ErrInvalidPhotoAsset
-	}
-	opts.persist = true
-	return s.applyPhotoAuthoredValuesTx(ctx, tx, targets, opts)
 }
 
 func (s *Store) applyPhotoAuthoredValuesTx(ctx context.Context, tx *sql.Tx, targets []PhotoAuthoredTarget, opts photoAuthoredApply) (PhotoAuthoredReceipt, error) {
@@ -330,7 +319,7 @@ func (s *Store) applyPhotoAuthoredValuesTx(ctx context.Context, tx *sql.Tx, targ
 	if err != nil {
 		return result, err
 	}
-	if len(result.After) == 0 || opts.persist && !photoAuthoredChanged(result) {
+	if len(result.After) == 0 {
 		return PhotoAuthoredReceipt{Before: []PhotoAuthoredSnapshot{}, After: []PhotoAuthoredSnapshot{}}, nil
 	}
 	id, err := newUUIDv4()
@@ -338,18 +327,7 @@ func (s *Store) applyPhotoAuthoredValuesTx(ctx context.Context, tx *sql.Tx, targ
 		return result, err
 	}
 	result.ReceiptID = id
-	if opts.persist {
-		if err := checkPhotoAuthoredReceiptSize(result); err != nil {
-			return result, err
-		}
-	}
-	if err := s.writePhotoAuthoredValuesTx(ctx, tx, result, nodes, opts.loaded); err != nil {
-		return result, err
-	}
-	if !opts.persist {
-		return result, nil
-	}
-	return result, persistPhotoAuthoredReceiptTx(ctx, tx, result)
+	return result, s.writePhotoAuthoredValuesTx(ctx, tx, result, nodes, opts.loaded)
 }
 
 // planPhotoAuthoredTx appends each target's before and after snapshot to result
@@ -605,4 +583,15 @@ func validatePhotoAuthoredReceipt(r PhotoAuthoredReceipt, id string) error {
 		}
 	}
 	return checkPhotoAuthoredReceiptSize(r)
+}
+
+// PhotoAuthoredNonDefault returns the fields that carry a non-default decision.
+func PhotoAuthoredNonDefault(v PhotoAuthored) PhotoAuthoredFields {
+	var mask PhotoAuthoredFields
+	for _, field := range photoAuthoredFields {
+		if field.nonDefault(&v) {
+			mask |= field.bit
+		}
+	}
+	return mask
 }

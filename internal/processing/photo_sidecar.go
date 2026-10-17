@@ -16,6 +16,11 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
+const sourceMetadataRightsField = "rights"
+
+const sourceMetadataDescriptionField = "description"
+const sourceMetadataSubjectField = "subject"
+
 const teststripXMPNamespace = "https://teststrip.app/xmp/1.0/"
 const photoshopXMPNamespace = "http://ns.adobe.com/photoshop/1.0/"
 
@@ -34,36 +39,7 @@ func photoXMPFlag(rating, pick string) (flag string, n int, valid bool) {
 	return strings.TrimSpace(pick), n, true
 }
 
-// photoXMPField names the authored XMP properties shared by sidecar import and export.
-func photoXMPField(n xml.Name) string {
-	switch n.Space {
-	case xmpBasicNamespace:
-		if n.Local == "Rating" || n.Local == "Label" {
-			return n.Local
-		}
-	case teststripXMPNamespace:
-		if n.Local == "Pick" || n.Local == "Rotation" {
-			return n.Local
-		}
-	case xmpDublinCoreNamespace:
-		if n.Local == "description" || n.Local == "creator" || n.Local == "rights" {
-			return n.Local
-		}
-	}
-	return ""
-}
-
-// ReadPhotoSidecar validates the complete packet before returning supported decisions.
-func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, error) {
-	packet, err := readPhotoSidecar(ctx, data)
-	return packet.PhotoAuthored, err
-}
-
-// boundedSidecarText buffers one property's text up to the authored text
-// limit. An oversized value reads as absent instead of as a truncated prefix,
-// so "3" followed by padding and other text cannot become a three-star rating.
-// It tracks non-whitespace text separately, so an oversized prefix still counts
-// as text beside a property's value.
+// boundedSidecarText records overflow so the reader refuses the whole packet.
 type boundedSidecarText struct {
 	builder  strings.Builder
 	overflow bool
@@ -95,23 +71,38 @@ func (t *boundedSidecarText) value() string {
 type photoSidecarPacket struct {
 	store.PhotoAuthored
 
+	Refusal             error
 	SidecarForExtension string
+	Keywords            []string
+	KeywordsIgnored     bool
+	LegacyReject        bool
+	RotationPresent     bool
+	Ignored             store.PhotoAuthoredFields
+	Orientation         int
 }
+
+var errPhotoSidecarPropertyLimit = errors.New("XMP property exceeds its text limit")
 
 func readPhotoSidecar(ctx context.Context, data []byte) (photoSidecarPacket, error) {
 	var result photoSidecarPacket
 	if len(data) > maxSourceMetadataOriginalBytes || !utf8.Valid(data) {
 		return result, errors.New("invalid photo sidecar bytes")
 	}
+	if len(data) > maxPhotoSidecarBytes {
+		result.Refusal = errors.New("photo sidecar exceeds sync limit")
+	}
 	decoder := newPhotoXMLDecoder(data)
 	stack := []xml.Name{}
 	rootCount := 0
+	rdfCount := 0
 	description := false
 	var subjectKind, subjectValue string
 	activeDescription := false
 	values := map[string]string{}
 	var field string
 	var fieldDepth int
+	var unsupported bool
+	ignored := map[string]bool{}
 	var child xml.Name
 	var text boundedSidecarText
 	var items []string
@@ -124,15 +115,20 @@ func readPhotoSidecar(ctx context.Context, data []byte) (photoSidecarPacket, err
 		if n == (xml.Name{Space: photoshopXMPNamespace, Local: "SidecarForExtension"}) {
 			return n.Local
 		}
-		return photoXMPField(n)
+		field := photoXMPPropertyFor(n).name
+		return field
 	}
 	save := func(key, value string) error {
+		if len(value) > store.MaxPhotoAuthoredTextBytes {
+			result.Refusal = errPhotoSidecarPropertyLimit
+			value = ""
+		}
 		if _, exists := values[key]; exists {
 			return fmt.Errorf("duplicate XMP property %s", key)
 		}
 		if strings.TrimSpace(value) == "" {
 			value = ""
-		} else if key != "description" && key != "creator" && key != "rights" {
+		} else if key != sourceMetadataDescriptionField && key != sourceMetadataCreatorField && key != sourceMetadataRightsField && key != sourceMetadataSubjectField {
 			value = strings.TrimSpace(value)
 		}
 		values[key] = value
@@ -167,6 +163,28 @@ func readPhotoSidecar(ctx context.Context, data []byte) (photoSidecarPacket, err
 			if len(stack) > 0 {
 				parent = stack[len(stack)-1]
 			}
+			if t.Name == (xml.Name{Space: rdfNamespace, Local: "RDF"}) {
+				rdfCount++
+				if rdfCount > 1 {
+					result.Refusal = errors.New("multiple XMP RDF roots")
+				}
+			}
+			subject := photoXMPSubject{}
+			if t.Name == (xml.Name{Space: rdfNamespace, Local: photoXMPRDFDescription}) {
+				var err error
+				subject, err = readPhotoXMPSubject(t.Attr)
+				if err != nil {
+					result.Refusal = err
+				}
+			}
+			if t.Name == (xml.Name{Space: "http://ns.adobe.com/xmp/note/", Local: "HasExtendedXMP"}) {
+				result.Refusal = errPhotoExtendedXMP
+			}
+			for _, attr := range t.Attr {
+				if attr.Name == (xml.Name{Space: "http://ns.adobe.com/xmp/note/", Local: "HasExtendedXMP"}) {
+					result.Refusal = errPhotoExtendedXMP
+				}
+			}
 			stack = append(stack, t.Name)
 			if field != "" && len(stack) > fieldDepth {
 				valid := t.Name.Space == rdfNamespace
@@ -176,28 +194,19 @@ func readPhotoSidecar(ctx context.Context, data []byte) (photoSidecarPacket, err
 					}
 					child = t.Name
 					text.reset()
-					valid = valid && (t.Name.Local == "value" || field == "creator" && t.Name.Local == "Seq" || (field == "description" || field == "rights") && t.Name.Local == "Alt")
+					valid = valid && (t.Name.Local == "value" || field == sourceMetadataSubjectField && t.Name.Local == "Bag" || field == sourceMetadataCreatorField && t.Name.Local == "Seq" || (field == sourceMetadataDescriptionField || field == sourceMetadataRightsField) && t.Name.Local == "Alt")
 				} else {
-					valid = valid && len(stack) == fieldDepth+2 && t.Name.Local == "li" && parent.Space == rdfNamespace && (parent.Local == "Alt" || parent.Local == "Seq")
+					valid = valid && len(stack) == fieldDepth+2 && t.Name.Local == "li" && parent.Space == rdfNamespace && (parent.Local == "Alt" || parent.Local == "Seq" || parent.Local == "Bag")
 				}
 				if !valid {
-					return result, errors.New("unsupported authored RDF value")
+					if field != sourceMetadataSubjectField {
+						return result, errors.New("unsupported authored RDF value")
+					}
+					unsupported = true
 				}
 			}
-			if len(stack) == 3 && t.Name.Space == rdfNamespace && t.Name.Local == "Description" && parent.Space == rdfNamespace && parent.Local == "RDF" {
-				kind, value := "about", ""
-				for _, attr := range t.Attr {
-					if attr.Name.Space == rdfNamespace {
-						switch attr.Name.Local {
-						case "about":
-							if kind == "about" {
-								value = attr.Value
-							}
-						case "ID", "nodeID":
-							kind, value = attr.Name.Local, attr.Value
-						}
-					}
-				}
+			if len(stack) == 3 && t.Name.Space == rdfNamespace && t.Name.Local == photoXMPRDFDescription && parent.Space == rdfNamespace && parent.Local == "RDF" {
+				kind, value := subject.kind, subject.value
 				if !description {
 					description = true
 					subjectKind, subjectValue = kind, value
@@ -211,18 +220,26 @@ func readPhotoSidecar(ctx context.Context, data []byte) (photoSidecarPacket, err
 					}
 				}
 			}
-			if activeDescription && len(stack) == 4 && parent.Space == rdfNamespace && parent.Local == "Description" {
+			if activeDescription && len(stack) == 4 && parent.Space == rdfNamespace && parent.Local == photoXMPRDFDescription {
 				if key := fieldFor(t.Name); key != "" {
 					if field != "" {
 						return result, errors.New("nested authored XMP property")
 					}
 					field = key
+					unsupported = false
 					fieldDepth = len(stack)
 					child = xml.Name{}
 					text.reset()
 					items = nil
 					hasDefault = false
 					defaultText = ""
+				}
+			}
+			if field != "" {
+				for _, attr := range t.Attr {
+					if attr.Name == (xml.Name{Space: rdfNamespace, Local: "resource"}) {
+						unsupported = true
+					}
 				}
 			}
 			if field != "" && t.Name.Space == rdfNamespace && t.Name.Local == "li" {
@@ -256,6 +273,9 @@ func readPhotoSidecar(ctx context.Context, data []byte) (photoSidecarPacket, err
 				}
 			}
 		case xml.EndElement:
+			if text.overflow || itemText.overflow {
+				result.Refusal = errPhotoSidecarPropertyLimit
+			}
 			if len(stack) == 3 {
 				activeDescription = false
 			}
@@ -271,10 +291,19 @@ func readPhotoSidecar(ctx context.Context, data []byte) (photoSidecarPacket, err
 				}
 				itemDepth = 0
 			}
+			if field != "" && fieldDepth == len(stack) && unsupported {
+				ignored[field] = true
+			}
 			if field != "" && fieldDepth == len(stack) {
 				value := text.value()
+				if field == sourceMetadataSubjectField {
+					result.Keywords = append(result.Keywords, items...)
+					if len(items) == 0 && value != "" {
+						result.Keywords = append(result.Keywords, value)
+					}
+				}
 				if len(items) > 0 {
-					if field == "creator" {
+					if field == sourceMetadataCreatorField {
 						value = items[0]
 					} else if hasDefault {
 						value = defaultText
@@ -296,34 +325,99 @@ func readPhotoSidecar(ctx context.Context, data []byte) (photoSidecarPacket, err
 		return result, errors.New("photo sidecar needs an RDF description")
 	}
 	result.SidecarForExtension = strings.ToLower(values["SidecarForExtension"])
+	if result.Keywords == nil && values[sourceMetadataSubjectField] != "" {
+		result.Keywords = []string{values[sourceMetadataSubjectField]}
+	}
+	if ignored[sourceMetadataSubjectField] {
+		result.Keywords = nil
+		delete(values, sourceMetadataSubjectField)
+	}
+	keywords := result.Keywords[:0]
+	for _, keyword := range result.Keywords {
+		if keyword == "" {
+			continue
+		}
+		normalized, err := store.NormalizeTagName(keyword)
+		if err != nil {
+			result.Refusal = err
+			continue
+		}
+		keywords = append(keywords, normalized)
+	}
+	result.Keywords = store.PhotoXMPKeywords(keywords)
+	if err := store.ValidatePhotoXMPKeywords(result.Keywords); err != nil {
+		result.Refusal = errors.New("XMP keywords exceed the metadata value limit")
+		result.Keywords = []string{}
+	}
+	result.KeywordsIgnored = ignored[sourceMetadataSubjectField]
+	if value := values["Orientation"]; value != "" {
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 1 || n > 8 {
+			result.Ignored |= store.PhotoConfirmedRotation
+			delete(values, "Orientation")
+		} else {
+			result.Orientation = n
+		}
+	}
 	result.Flag = values["Pick"]
 	if !query.ValidPhotoFlag(result.Flag) {
 		result.Flag = ""
+		result.Ignored |= store.PhotoConfirmedFlag
+		delete(values, "Pick")
 	}
 	result.Label = strings.ToLower(values["Label"])
 	if !query.ValidPhotoColorLabel(result.Label) {
 		result.Label = ""
+		result.Ignored |= store.PhotoConfirmedLabel
+		delete(values, "Label")
 	}
-	result.Caption = values["description"]
-	result.Creator = values["creator"]
-	result.Copyright = values["rights"]
-	for _, text := range []*string{&result.Caption, &result.Creator, &result.Copyright} {
-		if len(*text) > store.MaxPhotoAuthoredTextBytes {
-			*text = ""
-		}
-	}
-	if flag, n, valid := photoXMPFlag(values["Rating"], result.Flag); valid {
-		if n == -1 {
+	result.Caption = values[sourceMetadataDescriptionField]
+	result.Creator = values[sourceMetadataCreatorField]
+	result.Copyright = values[sourceMetadataRightsField]
+	if value, present := values["Rating"]; present {
+		flag, n, valid := photoXMPFlag(value, result.Flag)
+		if !valid {
+			result.Ignored |= store.PhotoConfirmedRating
+			delete(values, "Rating")
+		} else if n == -1 {
+			result.LegacyReject = true
 			result.Flag = flag
+			result.Confirmed |= store.PhotoConfirmedFlag
+			result.Ignored &^= store.PhotoConfirmedFlag
+			delete(ignored, "Pick")
+			delete(values, "Rating")
 		} else {
 			result.Rating = n
 		}
 	}
 	if value, ok := values["Rotation"]; ok {
 		n, err := strconv.Atoi(value)
-		if err == nil && (n == 0 || n == 90 || n == 180 || n == 270) {
+		if err != nil || (n != 0 && n != 90 && n != 180 && n != 270) {
+			result.Ignored |= store.PhotoConfirmedRotation
+			delete(values, "Rotation")
+		} else {
 			result.Rotation = n
 		}
+	}
+	_, result.RotationPresent = values["Rotation"]
+	for _, property := range &photoXMPProperties {
+		key, bit := property.name, property.bit
+		if bit == store.PhotoXMPKeywordsBit {
+			continue
+		}
+		if ignored[key] {
+			result.Ignored |= bit
+		}
+		if _, present := values[key]; present && !ignored[key] {
+			result.Confirmed |= bit
+		}
+	}
+	if result.RotationPresent {
+		result.Confirmed |= store.PhotoConfirmedRotation
+	}
+	result.Confirmed &= store.PhotoAuthoredNonDefault(result.PhotoAuthored)
+	if result.Orientation != 0 || result.RotationPresent {
+		result.Confirmed |= store.PhotoConfirmedRotation
 	}
 	if err := store.ValidatePhotoAuthoredValues(result.PhotoAuthored); err != nil {
 		return result, err

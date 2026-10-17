@@ -5324,39 +5324,6 @@ export interface PhotoAuthoredEditRequest {
   targets: PhotoAuthoredEditTarget[];
 }
 
-export interface PhotoPreparedTarget {
-  asset_id: string;
-  /** @minimum 1 */
-  asset_revision: number;
-  file_id: string;
-  file_name: string;
-  node_id: number;
-  /** @minimum 1 */
-  node_revision: number;
-  /** @minimum 1 */
-  revision: number;
-  tags: string[];
-  values: PhotoAuthored;
-}
-
-export interface PhotoAuthoredPreparation {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  assets: PhotoAsset[];
-  targets: PhotoPreparedTarget[];
-}
-
-export interface PhotoAuthoredPrepareRequest {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  /** @maxItems 1000 */
-  asset_ids?: string[];
-  coverage?: WorkspaceQueryCoverage;
-  hidden?: boolean;
-  query?: SavedQueryV1Schema;
-  skip_unavailable?: boolean;
-}
-
 export interface PhotoKeywordNode {
   after_revision: number;
   node_id: number;
@@ -5386,6 +5353,69 @@ export interface PhotoAuthoredReceipt {
   receipt_id: string;
   sidecar?: PhotoSidecarProvenance;
   undo_of?: string;
+}
+
+export interface PhotoXMPRow {
+  catalog: string;
+  field: string;
+  sidecar: string;
+}
+
+export type PhotoXMPStateState = typeof PhotoXMPStateState[keyof typeof PhotoXMPStateState];
+
+
+export const PhotoXMPStateState = {
+  none: 'none',
+  synced: 'synced',
+  pending: 'pending',
+  conflict: 'conflict',
+  unavailable: 'unavailable',
+  invalid: 'invalid',
+} as const;
+
+export interface PhotoXMPState {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  conflict_id?: string;
+  reason?: string;
+  /** The sidecar import that Undo can still reverse. */
+  receipt?: PhotoAuthoredReceipt;
+  rows?: PhotoXMPRow[];
+  state: PhotoXMPStateState;
+}
+
+export interface PhotoPreparedTarget {
+  asset_id: string;
+  /** @minimum 1 */
+  asset_revision: number;
+  file_id: string;
+  file_name: string;
+  node_id: number;
+  /** @minimum 1 */
+  node_revision: number;
+  /** @minimum 1 */
+  revision: number;
+  tags: string[];
+  values: PhotoAuthored;
+  xmp?: PhotoXMPState;
+}
+
+export interface PhotoAuthoredPreparation {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  assets: PhotoAsset[];
+  targets: PhotoPreparedTarget[];
+}
+
+export interface PhotoAuthoredPrepareRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxItems 1000 */
+  asset_ids?: string[];
+  coverage?: WorkspaceQueryCoverage;
+  hidden?: boolean;
+  query?: SavedQueryV1Schema;
+  skip_unavailable?: boolean;
 }
 
 export interface WorkspaceFacetValue {
@@ -5909,6 +5939,21 @@ export interface PhotoTimelineRequest {
   readonly $schema?: string;
   coverage?: WorkspaceQueryCoverage;
   query: SavedQueryV1Schema;
+}
+
+export type PhotoXMPResolveRequestChoice = typeof PhotoXMPResolveRequestChoice[keyof typeof PhotoXMPResolveRequestChoice];
+
+
+export const PhotoXMPResolveRequestChoice = {
+  catalog: 'catalog',
+  sidecar: 'sidecar',
+} as const;
+
+export interface PhotoXMPResolveRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  choice: PhotoXMPResolveRequestChoice;
+  conflict_id: string;
 }
 
 export interface RolePolicy {
@@ -16250,6 +16295,45 @@ return sessionJSON<PhotoAuthoredPreparation>(getPreparePhotoAuthoredUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(photoAuthoredPrepareRequest)
+  }
+);}
+
+
+
+export const getResolvePhotoXMPUrl = (fileId: string,) => {
+
+
+
+
+  return `/api/v1/photos/authored/${encodeURIComponent(String(fileId))}/xmp`
+}
+
+/**
+ * @summary Choose the catalog or sidecar copy of conflicting photo metadata
+ */
+export const resolvePhotoXMP = async (fileId: string,
+    photoXMPResolveRequest: NonReadonly<PhotoXMPResolveRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoXMPState> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoXMPState>(getResolvePhotoXMPUrl(fileId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(photoXMPResolveRequest)
   }
 );}
 
