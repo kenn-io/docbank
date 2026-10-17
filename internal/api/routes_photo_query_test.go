@@ -678,7 +678,7 @@ func TestLookupPhotoFlags(t *testing.T) {
 			require.NoError(t, err)
 		}
 	}
-	for _, size := range []int{3, 20000, 20001, 0, -1} {
+	for _, size := range []int{3, 20000, 20001, 0, -1, -2} {
 		t.Run(strconv.Itoa(size), func(t *testing.T) {
 			ids := []string{}
 			if size > 0 {
@@ -688,10 +688,15 @@ func TestLookupPhotoFlags(t *testing.T) {
 				ids[0], ids[1] = liveID, trashedID
 			} else if size == -1 {
 				ids = []string{"invalid"}
+			} else if size == -2 {
+				ids = []string{strings.ToUpper(liveID)}
 			}
 			response, body := do(t, ts, http.MethodPost, "/api/v1/photos/assets/flags", nil, api.LookupPhotoFlagsRequest{AssetIDs: ids})
 			if size <= 0 || size > 20000 {
 				require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+				if size < 0 {
+					require.Contains(t, body, ids[0])
+				}
 				return
 			}
 			require.Equal(t, http.StatusOK, response.StatusCode, body)

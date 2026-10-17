@@ -24,6 +24,11 @@ type PhotoFlagRow struct {
 
 // LookupPhotoFlags returns current display flags for live, visible assets in ID order.
 func (s *Store) LookupPhotoFlags(ctx context.Context, assetIDs []string) ([]PhotoFlagRow, error) {
+	for _, id := range assetIDs {
+		if err := validateUUIDv4(id); err != nil {
+			return nil, fmt.Errorf("%w: asset ID %q: %w", ErrInvalidPhotoAsset, id, err)
+		}
+	}
 	encoded, err := json.Marshal(assetIDs)
 	if err != nil {
 		return nil, err
