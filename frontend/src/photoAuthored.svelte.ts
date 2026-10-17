@@ -101,6 +101,7 @@ export class PhotoAuthoredEditor {
   private read = new AbortController();
   private stackRead = new AbortController();
   private stackKey = $state("");
+  stackError = $state("");
   private scope?: api.PhotoAuthoredPrepareRequest;
   constructor(
     private session: string,
@@ -146,6 +147,7 @@ export class PhotoAuthoredEditor {
     this.targets = [];
     this.stackTargets = [];
     this.stackKey = "";
+    this.stackError = "";
     this.stackLoading = false;
     this.asset = undefined;
     this.fileID = "";
@@ -233,6 +235,7 @@ export class PhotoAuthoredEditor {
     this.stackRead.abort();
     this.stackTargets = [];
     this.stackKey = "";
+    this.stackError = "";
     this.stackLoading = false;
     if (!this.targets.length) {
       this.conflict = false;
@@ -489,24 +492,29 @@ export class PhotoAuthoredEditor {
     return this.stackKey !== JSON.stringify([hidden, assetIDs]);
   }
   /** Prepare complete stack membership independently of the browser selection. */
-  async prepareStack(assetIDs: string[], hidden: boolean) {
+  async prepareStack(assetIDs: string[], hidden: boolean, retry = false) {
     const key = JSON.stringify([hidden, assetIDs]);
-    if (this.controller.signal.aborted || key === this.stackKey) return;
+    if (this.controller.signal.aborted || (key === this.stackKey && !retry)) return;
     this.stackKey = key;
     this.stackRead.abort();
     const controller = (this.stackRead = new AbortController());
     const signal = AbortSignal.any([controller.signal, this.controller.signal]);
     this.stackTargets = [];
     this.stackLoading = true;
+    this.stackError = "";
+    this.error = "";
     try {
       const prepared = await this.request(() =>
-        api.preparePhotoAuthored({ asset_ids: assetIDs, hidden }, this.options(signal)),
+        api.preparePhotoAuthored(
+          { asset_ids: assetIDs, hidden, stack: true },
+          this.options(signal),
+        ),
       );
       if (!signal.aborted) this.stackTargets = prepared.targets;
     } catch (cause) {
       if (!signal.aborted) {
-        this.stackKey = "";
-        this.error = this.failure(cause);
+        this.stackError = this.error = this.failure(cause);
+        this.conflict = cause instanceof APIError && [409, 412].includes(cause.status);
       }
     } finally {
       if (!signal.aborted) this.stackLoading = false;
@@ -526,7 +534,7 @@ export class PhotoAuthoredEditor {
     }: {
       observed: Pick<
         api.PhotoBrowseRow,
-        "asset_id" | "revision" | "display_file_id" | "content_version_id"
+        "asset_id" | "revision" | "display_file_id" | "content_version_id" | "flag" | "rating"
       >[];
       beforeWrite?: () => Promise<boolean>;
     },
@@ -558,7 +566,14 @@ export class PhotoAuthoredEditor {
       return (
         files.length > 0 &&
         (files.some((target) => target.asset_revision !== row.revision) ||
-          !files.some((target) => target.file_id === row.display_file_id))
+          !files.some(
+            (target) =>
+              target.file_id === row.display_file_id &&
+              target.display_file_id === row.display_file_id &&
+              target.current_content_version_id === row.content_version_id &&
+              target.values.flag === row.flag &&
+              target.values.rating === row.rating,
+          ))
       );
     });
     if (stale) {

@@ -570,6 +570,14 @@
     if (stack && !editor.busy && !editor.loading && !editor.conflict)
       untrack(() => void editor.prepareStack(stack.asset_ids, photos.hidden));
   });
+  async function reloadStack() {
+    await refresh();
+    if (photos.error) return;
+    await editor.reload();
+    await tick();
+    if (selectedStack) await editor.prepareStack(selectedStack.asset_ids, photos.hidden);
+  }
+
   async function decideStack(decision: "all" | "selected" | "representative") {
     if (!selectedStack || editor.busy || editor.loading || editor.stackLoading) return;
     const members = new Set(selectedStack.asset_ids);
@@ -1336,6 +1344,19 @@
                       onclick={() => void decideStack("representative")}
                       >Choose representative</Button
                     >{/if}
+                  {#if editor.conflict}<Button
+                      size="sm"
+                      disabled={photos.loading || editor.busy || editor.loading}
+                      onclick={() => void reloadStack()}>Reload stack</Button
+                    >
+                  {:else if editor.stackError}<Button
+                      size="sm"
+                      disabled={editor.stackLoading}
+                      onclick={() =>
+                        void editor.prepareStack(selectedStack!.asset_ids, photos.hidden, true)}
+                      >Retry</Button
+                    >{/if}
+                  {#if editor.error}<span role="alert">{editor.error}</span>{/if}
                 {/if}
                 <Button
                   size="sm"

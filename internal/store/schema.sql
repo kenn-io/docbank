@@ -2398,7 +2398,8 @@ CREATE TABLE IF NOT EXISTS photo_library_settings (
     preference   TEXT,
     revision     INTEGER NOT NULL DEFAULT 1,
     updated_at   TEXT NOT NULL,
-    burst_gap_seconds INTEGER
+    burst_gap_seconds INTEGER,
+    representative_sequence INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS photo_sets (

@@ -12021,6 +12021,9 @@ components:
           $ref: "#/components/schemas/SavedQueryV1Schema"
         skip_unavailable:
           type: boolean
+        stack:
+          description: Prepare up to 2,000 live files for a complete stack decision.
+          type: boolean
       type: object
       x-go-type: api.PhotoAuthoredPrepareRequest
       x-go-type-import:
@@ -12943,6 +12946,9 @@ components:
           format: int64
           minimum: 1
           type: integer
+        current_content_version_id:
+          format: uuid
+          type: string
         display_file_id:
           format: uuid
           type: string
@@ -13438,7 +13444,7 @@ components:
         targets:
           items:
             $ref: "#/components/schemas/PhotoAuthoredEditTarget"
-          maxItems: 1000
+          maxItems: 2000
           minItems: 1
           type: array
       required:

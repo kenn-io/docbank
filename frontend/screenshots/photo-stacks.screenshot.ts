@@ -1,10 +1,23 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { mkdir, mkdtemp } from "node:fs/promises";
 import path from "node:path";
 import { photoFixture, repository } from "./photo-fixture.js";
 
 const output = process.env.DOCBANK_STACKS_SCREENSHOT_DIR;
 test.skip(!output, "DOCBANK_STACKS_SCREENSHOT_DIR enables synthetic burst proof");
+
+async function captureThemes(page: Page, name: string) {
+  for (const theme of ["light", "dark"]) {
+    await page.evaluate(async (value) => {
+      document.documentElement.classList.toggle("dark", value === "dark");
+      await document.fonts.ready;
+    }, theme);
+    await page.screenshot({
+      path: path.join(output!, `${name}-${theme}.png`),
+      animations: "disabled",
+    });
+  }
+}
 
 test("collapses bursts, selects members, changes the gap and culls stacks", async ({ page }) => {
   test.setTimeout(300_000);
@@ -19,10 +32,40 @@ test("collapses bursts, selects members, changes the gap and culls stacks", asyn
     await page.goto(url.href);
     await expect(page.locator(".photo-cell")).toHaveCount(4);
     await expect(page.locator(".photo-cell img").first()).toBeVisible();
+    const preparation = page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/photos/authored/prepare") &&
+        response.request().postDataJSON().stack,
+    );
     await page.locator(".photo-image").first().click();
     await expect(page.getByText("3 selected photos", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Keep all", exact: true })).toBeVisible();
     await mkdir(output!, { recursive: true });
+    const prepared = await preparation;
+    const { targets } = await prepared.json();
+    const { asset_id, asset_revision, file_id, revision, node_revision } = targets[0];
+    const externalEdit = await page.request.post(
+      new URL("/api/v1/photos/authored/edit", url).href,
+      {
+        headers: {
+          "X-Docbank-Web-Session": prepared.request().headers()["x-docbank-web-session"]!,
+          Origin: url.origin,
+        },
+        data: {
+          targets: [{ asset_id, asset_revision, file_id, revision, node_revision }],
+          patch: { flag: "pick" },
+        },
+      },
+    );
+    expect(externalEdit.ok(), await externalEdit.text()).toBe(true);
+    await page.getByRole("button", { name: "Keep all", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Reload stack", exact: true })).toBeVisible();
+    await captureThemes(page, "web-photo-stack-conflict");
+    await page.getByRole("button", { name: "Reload stack", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Reload stack", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Keep all", exact: true })).toBeEnabled();
+    await expect(page.getByText("3 selected photos", { exact: true })).toBeVisible();
+    await captureThemes(page, "web-photo-stack-reloaded");
     await page.screenshot({
       path: path.join(output!, "web-photo-stacks.png"),
       animations: "disabled",
@@ -78,12 +121,21 @@ test("collapses bursts, selects members, changes the gap and culls stacks", asyn
       path: path.join(output!, "web-photo-stack-representative.png"),
       animations: "disabled",
     });
+    await page.route("**/photos/authored/prepare", async (route) => {
+      if (route.request().postDataJSON().stack) {
+        await route.abort("failed");
+        await page.unroute("**/photos/authored/prepare");
+      } else await route.continue();
+    });
     await page.getByRole("button", { name: "Cull", exact: true }).click();
     const cull = page.getByRole("dialog", { name: "Cull photos" });
     await expect(
       cull.getByRole("button", { name: "Keep current (Return)", exact: true }),
     ).toBeVisible();
     await expect(cull.locator(".photo-stage img")).toBeVisible();
+    await expect(cull.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+    await captureThemes(page, "web-photo-cull-preparation-retry");
+    await cull.getByRole("button", { name: "Retry", exact: true }).click();
     await expect(
       cull.getByRole("button", { name: "Keep current (Return)", exact: true }),
     ).toBeEnabled();
@@ -103,6 +155,7 @@ test("collapses bursts, selects members, changes the gap and culls stacks", asyn
       cull.getByRole("button", { name: "Keep current (Return)", exact: true }),
     ).toBeEnabled();
     await expect(cull.locator(".stack-divider").first()).toBeVisible();
+    await captureThemes(page, "web-photo-cull-prepared");
     await page.screenshot({
       path: path.join(output!, "web-photo-cull-stacks.png"),
       animations: "disabled",

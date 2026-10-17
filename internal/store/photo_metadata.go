@@ -371,6 +371,17 @@ func validatePhotoAuthoredReferences(ctx context.Context, q metadataQuerier) err
 	if invalid != 0 {
 		return errors.New("authored receipts reference missing or different file nodes")
 	}
+	err = q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_change_receipts r,
+ json_each(r.after_json,'$.representatives') entry
+ LEFT JOIN photo_assets a ON a.asset_id=json_extract(entry.value,'$.asset_id')
+ WHERE r.operation IN ('authored','authored_undo') AND a.asset_id IS NULL`).Scan(&invalid)
+	if err != nil {
+		return err
+	}
+	if invalid != 0 {
+		return errors.New("representative receipts reference missing photo assets")
+	}
+
 	err = q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_change_receipts r
  LEFT JOIN photo_files sidecar ON sidecar.file_id=json_extract(r.after_json,'$.sidecar.file_id')
  LEFT JOIN content_versions version ON version.version_id=json_extract(r.after_json,'$.sidecar.version_id')
@@ -441,7 +452,7 @@ func photoMetadataTablesForSchema(version int) []metadataRecordCodec {
 	}
 	tables = append([]metadataRecordCodec(nil), tables...)
 	for i, table := range tables {
-		if version < 38 && table.kind() == metadataPhotoSettingsType {
+		if version < photoBurstStorageSchemaVersion && table.kind() == metadataPhotoSettingsType {
 			tables[i] = photoSettingsBeforeBurstMetadata
 		}
 		if version < photoAuthoredStorageSchemaVersion && table.kind() == metadataPhotoFileType {

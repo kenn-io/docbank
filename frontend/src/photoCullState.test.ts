@@ -679,6 +679,7 @@ it("regroups frozen IDs on resume and gap changes without resetting progress", a
   const ids = [1, 2, 3, 4].map((id) => photo(id).asset_id);
   const store = storage();
   const run: CullRun = {
+    stackEligible: true,
     ids,
     checkpoint: {
       runID: "run",
@@ -722,6 +723,7 @@ it("keeps navigation and pending progress while regrouping", async () => {
   const ids = [1, 2, 3].map((id) => photo(id).asset_id);
   const store = storage();
   await store.replace({
+    stackEligible: true,
     ids,
     checkpoint: {
       runID: "run",
@@ -759,6 +761,7 @@ it("retries grouping failures and ignores groups for a replaced run", async () =
   const ids = [photo(1).asset_id, photo(2).asset_id];
   const store = storage();
   await store.replace({
+    stackEligible: true,
     ids,
     checkpoint: {
       runID: "run",
@@ -811,12 +814,14 @@ it.each(["capture", "next pass", "remainder", "settings", "grouping"])(
     const cause = new APIError("Session expired", 401, "unauthorized");
     const capture = vi
       .spyOn(api, "createWorkspaceQuery")
-      .mockImplementation(async () => Response.json(await snapshot([photo(1).asset_id])));
+      .mockImplementation(async () =>
+        Response.json(await snapshot([photo(1).asset_id], captureQuery)),
+      );
     if (site === "capture") {
       capture.mockRejectedValueOnce(cause);
-      await cull.start(query);
+      await cull.start(captureQuery);
     } else {
-      await cull.start(query);
+      await cull.start(captureQuery);
       await cull.flush();
       if (site === "settings") {
         vi.spyOn(api, "getPhotoSettings").mockRejectedValueOnce(cause);
@@ -880,6 +885,7 @@ it("allows another tab to regroup but detects its progress changes", async () =>
   const ids = [photo(1).asset_id, photo(2).asset_id];
   const store = storage();
   await store.replace({
+    stackEligible: true,
     ids,
     checkpoint: {
       runID: "run",
@@ -1028,4 +1034,59 @@ it("reuses pass navigation until the pass or grouping changes", async () => {
   cull.moveFrame(-1);
   expect(cull.currentID).toBe(ids[3]);
   await cull.flush();
+});
+
+it.each(["capture_time", "name", "import_time", "relevance", "older run"])(
+  "preserves stack eligibility through resume for %s",
+  async (sort) => {
+    const store = storage();
+    const ids = [photo(1).asset_id, photo(2).asset_id];
+    const frozen =
+      sort === "older run"
+        ? captureQuery
+        : parseQuery(JSON.stringify({ sort: { field: sort, direction: "asc" } }));
+    vi.spyOn(api, "createWorkspaceQuery").mockResolvedValue(
+      Response.json(await snapshot(ids, frozen)),
+    );
+    vi.mocked(api.groupPhotoStacks).mockResolvedValue({
+      groups: [ids],
+      unavailable_ids: [],
+      burst_gap_seconds: 2,
+    });
+    const cull = new PhotoCull("session", store);
+    await cull.start(frozen);
+    await cull.flush();
+    if (sort === "older run") {
+      const run = (await store.load())!;
+      delete run.stackEligible;
+      await store.replace(run, undefined, await store.saved());
+    }
+    vi.mocked(api.groupPhotoStacks).mockClear();
+    const resumed = new PhotoCull("session", store);
+    await resumed.restore();
+    await resumed.regroup();
+    expect(resumed.currentStack).toEqual(sort === "capture_time" ? ids : undefined);
+    expect(api.groupPhotoStacks).toHaveBeenCalledTimes(sort === "capture_time" ? 2 : 0);
+  },
+);
+
+it("cancels capture while regrouping without visiting or entering Cull", async () => {
+  const store = storage();
+  vi.spyOn(api, "createWorkspaceQuery").mockResolvedValue(
+    Response.json(await snapshot([photo(1).asset_id], captureQuery)),
+  );
+  let finish!: (value: api.GroupPhotoStacksResponse) => void;
+  vi.mocked(api.groupPhotoStacks).mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const cull = new PhotoCull("session", store);
+  const pending = cull.start(captureQuery);
+  await vi.waitFor(() => expect(api.groupPhotoStacks).toHaveBeenCalled());
+  cull.cancel();
+  finish({ groups: [], unavailable_ids: [], burst_gap_seconds: 2 });
+  expect(await pending).toBe(false);
+  expect(cull.run?.checkpoint.visited).toEqual([]);
 });

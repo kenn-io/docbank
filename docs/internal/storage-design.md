@@ -432,7 +432,12 @@ Photo tables index ordinary file nodes; they do not copy blob hashes, sizes,
 MIME data, or content versions. `photo_assets` owns asset kind, exclusion,
 revision, a nullable `representative_rank`, and selected or overridden display pointers.
 The highest representative rank within a burst records its latest explicit choice;
-a choice or its Undo advances the asset revision and leaves file flags unchanged.
+every explicit choice, including rechoosing the displayed frame, gets a fresh rank.
+A choice or its Undo advances the asset revision and leaves file flags unchanged.
+Schema 39 adds the internal `representative_sequence` on `photo_library_settings`. It never rewinds
+with Undo and leaves the public settings revision unchanged. JSONL v2 omits this schema-39 sequence;
+the first choice after restore seeds it from live ranks and retained receipts.
+Representative receipts must reference existing photo assets.
 `photo_library_settings` owns the vault-wide display preference, `burst_gap_seconds`
 (default 2, range 1–30), and their shared revision. One settings update can
 change both values; API callers use `reset_preference: true` to reset the
@@ -472,11 +477,11 @@ keep their revision and append no receipt.
 
 Hidden photos store nullable `photo_assets.hidden_at`. Revisioned hide/unhide writes use the existing asset receipts. Disable reads only hidden asset graphs and atomically clears their flags and authentication state. Reset preserves flags. Public Photos asset and preview reads require an active unlock for hidden assets; ordinary Documents reads retain access.
 
-Vault-wide hidden credentials use fixed Argon2id parameters. Failure timestamps and five-minute lockout persist through restart and restore. JSONL versions 1 and 2 back up hidden flags, credentials, failed attempts, lockout expiry and decision receipts. Sessions store SHA-256 token digests, expire after five minutes, clear on restart, and stay outside backup. Schema 38 uses the existing deterministic JSONL rebuild for supported released schemas and retains the source database. Schemas 30 through 33 and 35 through 37 remain unsupported, unreleased sources. Recreate development vaults from schemas 35 through 37 with this binary; opening them fails the schema check.
+Vault-wide hidden credentials use fixed Argon2id parameters. Failure timestamps and five-minute lockout persist through restart and restore. JSONL versions 1 and 2 back up hidden flags, credentials, failed attempts, lockout expiry and decision receipts. Sessions store SHA-256 token digests, expire after five minutes, clear on restart, and stay outside backup. Schema 39 uses the existing deterministic JSONL rebuild for supported released schemas and retains the source database. Schemas 30 through 38 remain unsupported, unreleased sources. Opening these development schemas fails the schema check. Export a development vault with its original binary, then import that JSONL into a fresh vault.
 
 The `confirmed_fields` bit mask records supplied rating (1), flag (2), label (4), caption (8), creator (16), copyright (32) and rotation (64), including empty clears. Sidecar initialization confirms only non-default values; undo, audit and backup retain the mask. A revision-1 file has no decisions, so restore refuses one with authored values or confirmation bits.
 
-Schema version 38 exports assets, files, settings, albums, album members, saved-query runs, receipts, and faces in stable
+Schema version 39 exports assets, files, settings, albums, album members, saved-query runs, receipts, and faces in stable
 JSONL order. Restore requires a pristine target and validates node ownership,
 local pointers, sidecar targets, selected display state, enum-like text,
 revisions, complete non-null authored receipt snapshots, and the graph before commit.

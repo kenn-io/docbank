@@ -936,9 +936,14 @@ it("decides the whole saved stack from a later pass and refuses a stale checkpoi
   const rows = [photo(1), { ...photo(2), flag: "pick" as const }, photo(3), photo(4)];
   const ids = rows.map((row) => row.asset_id),
     pass = [ids[0]!, ids[2]!, ids[3]!];
-  const decide = vi
-    .spyOn(api, "decidePhotoStack")
-    .mockResolvedValue({ receipt_id: "stack", before: [], after: [] });
+  const decide = vi.spyOn(api, "decidePhotoStack").mockResolvedValue({
+    receipt_id: "stack",
+    before: [preparedPhoto(1), preparedPhoto(3)],
+    after: [
+      { ...preparedPhoto(1), revision: 2, values: { ...preparedPhoto(1).values, flag: "pick" } },
+      { ...preparedPhoto(3), revision: 2, values: { ...preparedPhoto(3).values, flag: "reject" } },
+    ],
+  });
   const group = vi.spyOn(api, "groupPhotoStacks");
   vi.spyOn(api, "getPhotoSettings").mockResolvedValue({
     revision: 1,
@@ -1087,7 +1092,6 @@ it.each(["decision", "representative", "unchanged"])(
         after: [],
         representatives: [
           { asset_id: "photo-1", before_revision: 1, after_revision: 2, after: 10 },
-          { asset_id: "photo-2", before_revision: 1, after_revision: 2, before: 9 },
         ],
       });
     else if (first === "unchanged")
@@ -1113,7 +1117,7 @@ it.each(["decision", "representative", "unchanged"])(
       await waitFor(() => expect(decide).toHaveBeenCalledTimes(2));
       expect(
         Object.values(decide.mock.calls[1]![0].targets).map((target) => target.asset_revision),
-      ).toEqual([2, 2]);
+      ).toEqual([2, 1]);
     } else await fireEvent.click(await readyButton("Keep all"));
     await waitFor(() => expect(cull.currentID).toBe("photo-3"));
     await fireEvent.click(await readyButton("Keep all"));
@@ -1129,8 +1133,39 @@ it.each(["decision", "representative", "unchanged"])(
         .sort(),
     ).toEqual(["photo-3", "photo-4"]);
     expect(screen.queryByRole("button", { name: "Reload photo" })).toBeNull();
+    expect(document.querySelector(".photo-cull > span[aria-live='polite']")?.textContent).toBe(
+      "Stack kept",
+    );
   },
 );
+
+it.each(["Retry", "next stack"])("prepares after a stack failure through %s", async (action) => {
+  const { cull, photos, container } = await reviewPhoto();
+  const rows = [photo(1), photo(2), photo(3), photo(4)];
+  vi.mocked(photos.lookup).mockImplementation(
+    async (id) => rows.find((row) => row.asset_id === id)!,
+  );
+  vi.mocked(photos.lookupMany).mockImplementation(async (ids) =>
+    rows.filter((row) => ids.includes(row.asset_id)),
+  );
+  vi.mocked(api.preparePhotoAuthored).mockRejectedValueOnce(new Error("Preparation unavailable"));
+  await act(() => {
+    cull.run = {
+      ...cull.run!,
+      ids: rows.map((row) => row.asset_id),
+      groups: [
+        ["photo-1", "photo-2"],
+        ["photo-3", "photo-4"],
+      ],
+      checkpoint: { ...cull.run!.checkpoint, pass: rows.map((row) => row.asset_id) },
+    };
+  });
+  await screen.findByText("Preparation unavailable");
+  if (action === "Retry") await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  else await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key: "l" });
+  await readyButton("Keep all");
+  expect(screen.queryByText("Preparation unavailable")).toBeNull();
+});
 
 it("finishes a Cull decision while the affected Library stack refresh is held", async () => {
   const before = preparedPhoto(1);
