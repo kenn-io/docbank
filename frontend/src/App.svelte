@@ -741,7 +741,9 @@
     const stop = watchPhotoEvents(
       session,
       async (changes) => {
-        const source = changes.refetch ? await checkPhotoAccess?.(true) : undefined;
+        const source = changes.refetch
+          ? await checkPhotoAccess?.(typeof navigator.locks !== "undefined")
+          : undefined;
         // A Hidden recheck owns the open viewer until it confirms visibility. It handles its own
         // failure by concealing the library, so this refresh only waits for it to finish.
         await photoRecheckRun?.catch(() => {});

@@ -3489,6 +3489,21 @@ async function watcherFixture({
   };
 }
 
+it("rejects the first transient access failure during an event-driven refresh", async () => {
+  vi.stubGlobal("navigator", { locks: {} });
+  const fixture = await watcherFixture();
+  await waitFor(() => expect(fixture.workspaceProps.concealed).toBe(false));
+  const cause = new Error("Status temporarily unavailable");
+  const status = vi.spyOn(api, "getPhotoHiddenState").mockRejectedValueOnce(cause);
+  await act(async () => {
+    await expect(
+      fixture.refresh({ assets: new Map(), albums: new Map(), refetch: true }),
+    ).rejects.toBe(cause);
+  });
+  expect(status).toHaveBeenCalledOnce();
+  expect(fixture.workspaceProps.concealed).toBe(false);
+});
+
 it("reconnects the watcher when Hidden access expiry changes", async () => {
   const fixture = await watcherFixture({ configured: true });
   const { access, watch, stop } = fixture;
