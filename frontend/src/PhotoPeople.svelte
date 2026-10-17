@@ -244,8 +244,10 @@
     controller?.abort();
     const request = (controller = new AbortController());
     const previous = cursor ? people : [];
-    people = [];
-    nextCursor = undefined;
+    if (!cursor) {
+      people = [];
+      nextCursor = undefined;
+    }
     searching = true;
     error = "";
     if (new TextEncoder().encode(normalized).length > 200) {
@@ -349,7 +351,7 @@
                 ? { displayLabel: faces.personLabel(person!.person_id) }
                 : {}),
             })),
-          ...(activeFace === face.face_id && nextCursor && !searching && !error
+          ...(activeFace === face.face_id && nextCursor && !searching
             ? [{ name: "\0more", label: "Load more" }]
             : []),
         ]}

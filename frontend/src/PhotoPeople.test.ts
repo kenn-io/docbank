@@ -531,6 +531,58 @@ it("finds an exact existing person after 100 earlier matching names", async () =
   faces.dispose();
 });
 
+it("keeps loaded people and retries a failed later page", async () => {
+  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [face], assertions: [], people: [] });
+  const existing: api.PersonSummary = {
+    person_id: "person-exact",
+    display_name: "Alex",
+    display_name_folded: "alex",
+    state: "curated",
+    revision: 1,
+    created_at: "2026-01-01T00:00:00Z",
+  };
+  let attempts = 0;
+  vi.spyOn(api, "listPeople").mockImplementation(async ({ query, cursor } = {}) => {
+    if (!query) return { items: [] };
+    if (!cursor)
+      return {
+        items: [
+          {
+            ...existing,
+            person_id: "person-earlier",
+            display_name: "Aaron Alex",
+            display_name_folded: "aaron alex",
+          },
+        ],
+        next_cursor: "later-names",
+      };
+    expect(cursor).toBe("later-names");
+    if (++attempts === 1) throw new Error("People search unavailable");
+    return { items: [existing] };
+  });
+  const write = vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "receipt" });
+  const faces = new PhotoFaces("session", vi.fn());
+  await faces.load("version-a");
+  render(PhotoPeople, { faces, session: "session" });
+  await fireEvent.click(screen.getByRole("button", { name: "Find or create a person: Face 1" }));
+  await fireEvent.input(screen.getByRole("combobox"), { target: { value: "Alex" } });
+  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Load more" }));
+  await screen.findByText("People search unavailable");
+  expect(screen.getByRole("option", { name: "Aaron Alex" })).toBeTruthy();
+  expect(screen.queryByRole("option", { name: 'Create person "Alex"' })).toBeNull();
+  await fireEvent.mouseDown(screen.getByRole("option", { name: "Load more" }));
+  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Alex" }));
+  await waitFor(() =>
+    expect(write).toHaveBeenCalledWith(
+      "version-a",
+      expect.objectContaining({ person_id: "person-exact" }),
+      expect.anything(),
+    ),
+  );
+  expect(screen.queryByText("People search unavailable")).toBeNull();
+  faces.dispose();
+});
+
 it.each(["complete", "broad", "case"])("completes paginated name groups: %s", async (result) => {
   vi.spyOn(api, "listPhotoFaces").mockResolvedValue({
     faces: [face],
