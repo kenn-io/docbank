@@ -39,7 +39,7 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
         .locator(".photo-stage img")
         .evaluateAll((images) =>
           images.every((image) => (image as HTMLImageElement).naturalWidth > 512),
-        )
+        ),
     );
     await scopeConfirmation.getByRole("button", { name: "Cancel", exact: true }).click();
     await expect(scopeConfirmation).toHaveCount(0);
@@ -89,7 +89,7 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
         .locator(".photo-stage img")
         .evaluateAll((images) =>
           images.every((image) => (image as HTMLImageElement).naturalWidth > 512),
-        )
+        ),
     );
     await reload.click();
     await expect(reload).toHaveCount(0);

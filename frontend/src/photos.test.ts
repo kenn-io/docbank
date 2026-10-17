@@ -3236,7 +3236,6 @@ it.each(["unloaded", "singleton", "stack", "unknown", "representative", "represe
   },
 );
 
-
 it.each([false, true])(
   "refreshes person results in the decision's Hidden scope=%s, including first-page loads",
   async (hidden) => {
