@@ -342,14 +342,12 @@ func runIngest(
 	selection ingest.Selection,
 	surface string,
 ) (IngestReport, error) {
-	var out IngestReport
+	out, created := IngestReport{}, 0
 	err := g.mutate(func() error {
 		return d.Blobs.WithMutation(ctx, func() error {
 			ing := &ingest.Ingester{Store: d.Store, Blobs: d.Blobs}
 			rep, err := ing.AddPathsWithSelection(ctx, paths, dest, opts, selection)
-			if rep.Created > 0 && cliImportSurface(ctx, surface) != "" {
-				d.TelemetryCapture.DocumentAdded(surface)
-			}
+			created = rep.Created
 			if err != nil {
 				return FromStoreError(err)
 			}
@@ -358,13 +356,14 @@ func runIngest(
 				Skipped: rep.Skipped, Excluded: rep.Excluded,
 			}
 			for _, failure := range rep.Failed {
-				out.Failed = append(out.Failed, IngestFailure{
-					Path: failure.Path, Error: failure.Err.Error(),
-				})
+				out.Failed = append(out.Failed, IngestFailure{Path: failure.Path, Error: failure.Err.Error()})
 			}
 			return nil
 		})
 	})
+	if created > 0 && cliImportSurface(ctx, surface) != "" {
+		d.TelemetryCapture.DocumentAdded(surface)
+	}
 	return out, err
 }
 

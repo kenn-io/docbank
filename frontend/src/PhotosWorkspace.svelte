@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount, tick, untrack } from "svelte";
+  import { dailyAction } from "./action-events.js";
   import {
     Button,
     EmptyState,
@@ -105,6 +106,7 @@
   } = $props();
   const album = $derived(albums?.items.find((item) => item.id === albumID));
   const editor = $derived(photos.authored);
+  const inspect = dailyAction("document_opened", () => photos.session);
   let editing = $state(false);
   let loupeMetadata = $state(false);
   const selectionCount = $derived(photos.selectedIDs.size);
@@ -409,7 +411,11 @@
   function open(id: string, element: HTMLElement) {
     if (!editor.canChangeTarget()) return;
     captureReturn(element);
+    openInspected(id);
+  }
+  function openInspected(id: string) {
     onphotochange(id, "open");
+    inspect();
   }
   async function move(direction: -1 | 1) {
     if (!editor.canChangeTarget()) return;

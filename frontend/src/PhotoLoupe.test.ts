@@ -71,8 +71,7 @@ it("shows preview quality, preserves zoom and reports deliberate inspection", as
   const view = render(PhotoLoupe, props);
   await screen.findByText("Grid preview");
   await screen.findByText("Fit preview");
-  await waitFor(() => expect(inspect).toHaveBeenCalledTimes(1));
-  inspect.mockClear();
+  expect(inspect).not.toHaveBeenCalled();
   await fireEvent.wheel(screen.getByRole("dialog"), { deltaY: 100 });
   await fireEvent.keyDown(screen.getByRole("dialog"), { key: "i" });
   await fireEvent.pointerDown(screen.getByRole("dialog"));
@@ -134,6 +133,35 @@ it("shows preview quality, preserves zoom and reports deliberate inspection", as
   await tick();
   expect(preview.mock.calls.filter(([, size]) => size === "large")).toHaveLength(largeRequests);
   expect(URL.revokeObjectURL).toHaveBeenCalled();
+});
+
+it.each([
+  ["ArrowLeft", -1],
+  ["ArrowRight", 1],
+])("reports deliberate %s navigation after restoring a photo", async (key, direction) => {
+  const inspect = vi.fn();
+  vi.spyOn(actionEvents, "dailyAction").mockReturnValue(inspect);
+  const { props } = setup();
+  render(PhotoLoupe, props);
+  await screen.findByText("Fit preview");
+  expect(inspect).not.toHaveBeenCalled();
+  await fireEvent.keyDown(screen.getByRole("dialog"), { key });
+  expect(props.onmove).toHaveBeenCalledWith(direction);
+  expect(inspect).toHaveBeenCalledOnce();
+});
+
+it("reports keyboard activation of a filmstrip photo after restoration", async () => {
+  const inspect = vi.fn();
+  vi.spyOn(actionEvents, "dailyAction").mockReturnValue(inspect);
+  const { props } = setup();
+  render(PhotoLoupe, props);
+  await screen.findByText("Fit preview");
+  expect(inspect).not.toHaveBeenCalled();
+  const button = screen.getByRole("button", { name: "Show Photo 4.jpg" });
+  button.focus();
+  await fireEvent.click(button, { detail: 0 });
+  expect(props.onchoose).toHaveBeenCalledWith("photo-4");
+  expect(inspect).toHaveBeenCalledOnce();
 });
 
 it("ignores late image bytes after navigation and retains fit on a failed upgrade", async () => {

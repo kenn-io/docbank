@@ -3,6 +3,7 @@ import { tick } from "svelte";
 import { createShortcutManager } from "@kenn-io/kit-ui";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import PhotosWorkspace from "./PhotosWorkspace.svelte";
+import * as actionEvents from "./action-events.js";
 import * as api from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
 import { Photos, photoQuery, mapPhotoLimit, type MapView } from "./photos.svelte.js";
@@ -901,6 +902,8 @@ it.each([
 });
 
 it("opens on touch with empty selection and toggles membership on touch taps", async () => {
+  const inspect = vi.fn();
+  vi.spyOn(actionEvents, "dailyAction").mockReturnValue(inspect);
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -927,10 +930,12 @@ it("opens on touch with empty selection and toggles membership on touch taps", a
   const cell = await screen.findByRole("button", { name: "Select Photo 1.jpg" });
   await fireEvent.click(cell);
   expect(open).not.toHaveBeenCalled();
+  expect(inspect).not.toHaveBeenCalled();
   expect(photos.selection.selectedIDs.has("photo-1")).toBe(true);
   photos.clearSelection();
   await touchTap(cell, 1000, 1);
   expect(open).toHaveBeenCalledWith("photo-1", "open");
+  expect(inspect).toHaveBeenCalledOnce();
   expect(photos.selection.selectedIDs.size).toBe(0);
   await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
   vi.stubGlobal(

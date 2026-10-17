@@ -74,9 +74,6 @@
   let largeStarted = false;
   const identity = $derived(photo ? `${photo.asset_id}:${photo.content_version_id}` : "");
   const inspect = dailyAction("document_opened", () => photos.session);
-  $effect(() => {
-    if (photo?.asset_id) untrack(inspect);
-  });
   const index = $derived(items.findIndex((item) => item.asset_id === photo?.asset_id));
   const rail = $derived(index < 0 ? [] : items.slice(Math.max(0, index - 4), index + 5));
   const previous = $derived(index > 0);
@@ -332,6 +329,14 @@
     dialog?.focus({ preventScroll: true });
     onmove(direction);
   }
+  function navigate(direction: -1 | 1) {
+    inspect();
+    move(direction);
+  }
+  function choose(id: string) {
+    inspect();
+    onchoose(id);
+  }
   function key(event: KeyboardEvent) {
     if (
       event.altKey ||
@@ -350,10 +355,10 @@
       onclose();
     } else if (event.key === "ArrowLeft" && previous) {
       event.preventDefault();
-      move(-1);
+      navigate(-1);
     } else if (event.key === "ArrowRight" && next) {
       event.preventDefault();
-      move(1);
+      navigate(1);
     } else if (event.key.toLowerCase() === "i") {
       event.preventDefault();
       inspect();
@@ -382,9 +387,9 @@
         >{/if}
     </div>
     <div class="mobile-navigation">
-      <IconButton ariaLabel="Previous photo" disabled={!previous} onclick={() => move(-1)}
+      <IconButton ariaLabel="Previous photo" disabled={!previous} onclick={() => navigate(-1)}
         ><ChevronLeft size={18} /></IconButton
-      ><IconButton ariaLabel="Next photo" disabled={!next} onclick={() => move(1)}
+      ><IconButton ariaLabel="Next photo" disabled={!next} onclick={() => navigate(1)}
         ><ChevronRight size={18} /></IconButton
       >
     </div>
@@ -440,7 +445,7 @@
   <div class="loupe-body">
     <div class="stage">
       <div class="edge previous">
-        <IconButton ariaLabel="Previous photo" disabled={!previous} onclick={() => move(-1)}
+        <IconButton ariaLabel="Previous photo" disabled={!previous} onclick={() => navigate(-1)}
           ><ChevronLeft size={24} /></IconButton
         >
       </div>
@@ -451,10 +456,10 @@
           {unavailable}
           name={photo?.name ?? "Photo"}
           onzoom={zoom}
-          onmove={move}
+          onmove={navigate}
         />{/key}
       <div class="edge next">
-        <IconButton ariaLabel="Next photo" disabled={!next} onclick={() => move(1)}
+        <IconButton ariaLabel="Next photo" disabled={!next} onclick={() => navigate(1)}
           ><ChevronRight size={24} /></IconButton
         >
       </div>
@@ -480,7 +485,7 @@
             photo={item}
             {cache}
             selected={item.asset_id === photo?.asset_id}
-            onclick={() => onchoose(item.asset_id)}
+            onclick={() => choose(item.asset_id)}
           />
         </div>{/each}
     </nav>{/if}
