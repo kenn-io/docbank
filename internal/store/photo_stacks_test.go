@@ -968,6 +968,46 @@ func TestPhotoSettingsUpdates(t *testing.T) {
 	require.Equal(t, 2, receipts)
 }
 
+func TestPhotoMetadataRejectsBurstFieldsBeforeV3(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	burstPhotos(t, s, 1)
+	_, err := s.SetPhotoSettings(t.Context(), 1, PhotoSettingsUpdate{BurstGapSeconds: new(4)})
+	require.NoError(t, err)
+	var exported bytes.Buffer
+	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
+	legacy := strings.ReplaceAll(exported.String(), `,"burst_gap_seconds":4`, "")
+	legacy = strings.ReplaceAll(legacy, `"representative_sequence":null`, `"representative_sequence":1`)
+	for _, field := range []struct {
+		kind  string
+		name  string
+		value string
+	}{
+		{kind: "photo_asset", name: "representative_rank", value: "1"},
+		{kind: "photo_asset", name: "representative_rank", value: "null"},
+		{kind: "photo_library_settings", name: "burst_gap_seconds", value: "4"},
+		{kind: "photo_library_settings", name: "burst_gap_seconds", value: "null"},
+	} {
+		for _, version := range []int{1, 2, 3} {
+			t.Run(fmt.Sprintf("v%d/%s/%s", version, field.name, field.value), func(t *testing.T) {
+				stream := strings.ReplaceAll(legacy, `"version":3`, fmt.Sprintf(`"version":%d`, version))
+				kind := fmt.Sprintf(`"type":%q,`, field.kind)
+				stream = strings.ReplaceAll(stream, kind, kind+fmt.Sprintf(`%q:%s,`, field.name, field.value))
+				restored := newTestStore(t)
+				err := restored.ImportMetadata(t.Context(), strings.NewReader(stream))
+				if version == 3 {
+					require.NoError(t, err)
+					return
+				}
+				require.ErrorContains(t, err, field.name+" requires metadata version 3")
+				var assets int
+				require.NoError(t, restored.db.QueryRow(`SELECT count(*) FROM photo_assets`).Scan(&assets))
+				require.Zero(t, assets)
+			})
+		}
+	}
+}
+
 func TestPhotoSettingsBackupCompatibility(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -980,7 +1020,8 @@ func TestPhotoSettingsBackupCompatibility(t *testing.T) {
 	missingSequence := strings.ReplaceAll(exported.String(), `,"representative_sequence":null`, "")
 	require.NotContains(t, missingSequence, `"representative_sequence"`)
 	require.ErrorContains(t, newTestStore(t).ImportMetadata(t.Context(), strings.NewReader(missingSequence)), "representative_sequence")
-	v2 := strings.ReplaceAll(missingSequence, `"version":3`, `"version":2`)
+	legacySettings := strings.ReplaceAll(exported.String(), `,"burst_gap_seconds":4`, "")
+	v2 := strings.ReplaceAll(strings.ReplaceAll(legacySettings, `,"representative_sequence":null`, ""), `"version":3`, `"version":2`)
 	require.Contains(t, strings.SplitN(v2, "\n", 2)[0], `"version":2`)
 	restored := newTestStore(t)
 	require.NoError(t, restored.ImportMetadata(t.Context(), strings.NewReader(v2)))
@@ -990,7 +1031,7 @@ func TestPhotoSettingsBackupCompatibility(t *testing.T) {
 	settings, err := restored.PhotoSettings(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, new("image"), settings.Preference)
-	require.Equal(t, 4, settings.BurstGapSeconds)
+	require.Equal(t, 2, settings.BurstGapSeconds)
 	legacy := strings.ReplaceAll(strings.ReplaceAll(missingSequence, `,"burst_gap_seconds":4`, ""), `"version":3`, `"version":1`)
 	old := newTestStore(t)
 	require.NoError(t, old.ImportMetadata(t.Context(), strings.NewReader(legacy)))
@@ -1009,7 +1050,7 @@ func TestPhotoSettingsBackupCompatibility(t *testing.T) {
 			{name: "issued", wire: "7", want: new(int64(7))},
 		} {
 			t.Run(fmt.Sprintf("v%d/%s", version, sequence.name), func(t *testing.T) {
-				stream := strings.ReplaceAll(exported.String(), `"version":3`, fmt.Sprintf(`"version":%d`, version))
+				stream := strings.ReplaceAll(legacySettings, `"version":3`, fmt.Sprintf(`"version":%d`, version))
 				stream = strings.ReplaceAll(stream, `"representative_sequence":null`, `"representative_sequence":`+sequence.wire)
 				restored := newTestStore(t)
 				require.NoError(t, restored.ImportMetadata(t.Context(), strings.NewReader(stream)))
