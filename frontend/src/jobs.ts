@@ -7,6 +7,9 @@ export function laneTitle(lane: string): string {
   const titles: Record<string, string> = {
     photo_import: "Photo import",
     photo_checkout: "Photo checkout",
+    photo_checkout_commit: "Commit",
+    photo_checkout_scan: "Scan",
+    photo_checkout_rebind: "Rebind",
     place: "Storage placement",
     evacuate: "Storage evacuation",
     repair: "Storage repair",
@@ -20,7 +23,7 @@ export function laneTitle(lane: string): string {
 export function jobLanes(jobs: Job[], controls: LaneControl[] = []) {
   const groups = new Map<string, { lane: string; members: Job[] }>();
   for (const job of jobs) {
-    const lane = job.operation_id ? job.kind! : job.name;
+    const lane = job.lane;
     const group = groups.get(lane) ?? { lane, members: [] };
     group.members.push(job);
     groups.set(lane, group);

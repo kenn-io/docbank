@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
+	"go.kenn.io/docbank/internal/checkout"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
@@ -31,6 +32,8 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "photo.jpg", hash, size, "image/jpeg")
 	require.NoError(t, err)
 	_, err = catalog.PhotoAssetForNode(t.Context(), node.ID)
+	require.NoError(t, err)
+	_, err = catalog.CreateFile(t.Context(), catalog.RootID(), "second.jpg", hash, size, "image/jpeg")
 	require.NoError(t, err)
 	selection := store.PhotoCheckoutSelection{All: true}
 	expectedEstimate, err := catalog.EstimatePhotoCheckout(t.Context(), selection)
@@ -75,18 +78,46 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var status api.PhotoCheckoutStatus
 	require.NoError(t, json.Unmarshal([]byte(body), &status))
-	expectedStatus, err := catalog.PhotoCheckoutStatus(t.Context(), created.Checkout.ID)
+	expectedStatus, err := catalog.PhotoCheckoutStatus(t.Context(), created.Checkout.ID, "", 100)
 	require.NoError(t, err)
+	require.NotEmpty(t, expectedStatus.Checkout.DestinationIdentity)
+	require.Len(t, status.Entries, 2)
+	expectedStatus.Checkout.DestinationIdentity = ""
+	expectedStatus.Checkout.DestinationReserved = false
 	require.Equal(t, expectedStatus, status)
+	response, body = do(t, ts, http.MethodGet, "/api/v1/photos/checkouts/"+created.Checkout.ID+"?limit=1", nil, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var firstPage api.PhotoCheckoutStatus
+	require.NoError(t, json.Unmarshal([]byte(body), &firstPage))
+	require.Len(t, firstPage.Entries, 1)
+	response, body = do(t, ts, http.MethodGet, "/api/v1/photos/checkouts/"+created.Checkout.ID+"?limit=1&after="+firstPage.Entries[0].FileID, nil, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var lastPage api.PhotoCheckoutStatus
+	require.NoError(t, json.Unmarshal([]byte(body), &lastPage))
+	require.Len(t, lastPage.Entries, 1)
+	expected, err := catalog.PhotoCheckoutStatus(t.Context(), created.Checkout.ID, firstPage.Entries[0].FileID, 1)
+	require.NoError(t, err)
+	require.Len(t, expected.Entries, 1)
+	require.Equal(t, expected.Entries[0].FileID, lastPage.Entries[0].FileID, "the API must forward the page limit and cursor")
+	require.Equal(t, expected.Entries[0].Path, lastPage.Entries[0].Path)
+	for _, query := range []string{"?limit=251", "?limit=0", "?after=invalid"} {
+		response, body = do(t, ts, http.MethodGet, "/api/v1/photos/checkouts/"+created.Checkout.ID+query, nil, nil)
+		require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	}
 	response, body = do(t, ts, http.MethodGet, "/api/v1/photos/checkouts", nil, nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var list api.PhotoCheckoutList
 	require.NoError(t, json.Unmarshal([]byte(body), &list))
 	expectedList, err := catalog.ListPhotoCheckouts(t.Context())
 	require.NoError(t, err)
+	for i := range expectedList {
+		expectedList[i].DestinationIdentity = ""
+		expectedList[i].DestinationReserved = false
+	}
 	require.Equal(t, expectedList, list.Items)
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/checkouts/"+created.Checkout.ID+"/retire", nil, nil)
-	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.Contains(t, body, `"retirement_requested":true`)
 	require.NoError(t, supervisor.Shutdown(context.Background()))
 	require.NoError(t, catalog.FinishPhotoCheckout(t.Context(), created.Checkout.ID, created.Operation.ID, store.StorageOperationCancelled, "{}", "cancelled", time.Now().Add(time.Hour)))
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/checkouts/"+created.Checkout.ID+"/retire", nil, nil)
@@ -128,4 +159,116 @@ func TestPhotoCheckoutRoutesStartFailure(t *testing.T) {
 	var problem api.Error
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &problem))
 	require.Equal(t, "internal", problem.Code)
+}
+
+func TestPhotoCheckoutOperationRoutesStartFailure(t *testing.T) {
+	t.Parallel()
+	for _, action := range []string{"scan", "rebind", "commit"} {
+		t.Run(action, func(t *testing.T) {
+			supervisor := jobs.New(t.Context(), nil)
+			var service checkout.Service
+			ts, catalog := newTestServer(t, func(d *api.Deps) {
+				d.Jobs = supervisor
+				service = api.NewPhotoCheckoutService(*d)
+			})
+			require.NoError(t, supervisor.Shutdown(context.Background()))
+			hash, size, err := catalog.Blobs.Write(strings.NewReader("photo"))
+			require.NoError(t, err)
+			node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "photo.jpg", hash, size, "image/jpeg")
+			require.NoError(t, err)
+			asset, err := catalog.PhotoAssetForNode(t.Context(), node.ID)
+			require.NoError(t, err)
+			c, _, _, root, err := service.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, t.TempDir(), 100)
+			require.NoError(t, err)
+			require.NoError(t, service.Run(t.Context(), c, root))
+			require.NoError(t, root.Close())
+			var payload any
+			if action == "rebind" {
+				payload = api.PhotoCheckoutRebindRequest{Destination: c.Destination}
+			}
+			response, body := do(t, ts, http.MethodPost, "/api/v1/photos/checkouts/"+c.ID+"/"+action, nil, payload)
+			require.Equal(t, http.StatusInternalServerError, response.StatusCode, body)
+			var problem api.Error
+			require.NoError(t, json.Unmarshal([]byte(body), &problem))
+			require.Equal(t, "internal", problem.Code)
+			current, err := catalog.PhotoCheckout(t.Context(), c.ID)
+			require.NoError(t, err)
+			op, err := catalog.StorageOperation(t.Context(), current.ActiveOperationID())
+			require.NoError(t, err)
+			require.Equal(t, store.StorageOperationFailed, op.State)
+		})
+	}
+}
+
+func TestPhotoCheckoutJobsProjectLaneProgressResultsAndPausedCommit(t *testing.T) {
+	t.Parallel()
+	supervisor := jobs.New(t.Context(), nil)
+	defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
+	var service checkout.Service
+	ts, catalog := newTestServer(t, func(d *api.Deps) { d.Jobs = supervisor; service = api.NewPhotoCheckoutService(*d) })
+	hash, size, err := catalog.Blobs.Write(strings.NewReader("photo"))
+	require.NoError(t, err)
+	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "photo.jpg", hash, size, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := catalog.PhotoAssetForNode(t.Context(), node.ID)
+	require.NoError(t, err)
+	second, err := catalog.CreateFile(t.Context(), catalog.RootID(), "second.jpg", hash, size, "image/jpeg")
+	require.NoError(t, err)
+	secondAsset, err := catalog.PhotoAssetForNode(t.Context(), second.ID)
+	require.NoError(t, err)
+	c, _, _, root, err := service.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID, secondAsset.ID}}, t.TempDir(), 100)
+	require.NoError(t, err)
+	require.NoError(t, service.Run(t.Context(), c, root))
+	require.NoError(t, root.Close())
+	t.Run("missing destination", func(t *testing.T) {
+		moved := c.Destination + "-moved"
+		require.NoError(t, os.Rename(c.Destination, moved))
+		defer func() { require.NoError(t, os.Rename(moved, c.Destination)) }()
+		response, body := do(t, ts, http.MethodPost, "/api/v1/photos/checkouts/"+c.ID+"/scan", nil, nil)
+		require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+		require.Contains(t, body, "invalid_photo_checkout")
+	})
+	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/checkouts/"+c.ID+"/scan", nil, nil)
+	require.Equal(t, http.StatusAccepted, response.StatusCode, body)
+	var inspected api.PhotoCheckoutCreateResult
+	require.NoError(t, json.Unmarshal([]byte(body), &inspected))
+	require.Eventually(t, func() bool {
+		op, err := catalog.StorageOperation(t.Context(), inspected.Operation.ID)
+		return err == nil && op.State == store.StorageOperationCompleted
+	}, 30*time.Second, 20*time.Millisecond)
+	response, body = do(t, ts, http.MethodGet, "/api/v1/jobs", nil, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.Contains(t, body, `"processed_bytes":10`)
+	require.Contains(t, body, `"checkout_results":{"clean":2}`)
+	var inspectedJobs api.JobList
+	require.NoError(t, json.Unmarshal([]byte(body), &inspectedJobs))
+	for _, job := range inspectedJobs.Items {
+		require.Equal(t, "photo_checkout", job.Lane)
+	}
+	response, body = do(t, ts, http.MethodGet, "/api/v1/jobs/"+inspected.Operation.ID, nil, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.Contains(t, body, `"checkout_results":{"clean":2}`)
+	require.NotContains(t, body, `"entries":[`)
+
+	_, err = catalog.SetLaneControl(t.Context(), store.LaneControl{Lane: "photo_checkout", Paused: true, Concurrency: 1}, 1)
+	require.NoError(t, err)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/checkouts/"+c.ID+"/commit", nil, nil)
+	require.Equal(t, http.StatusAccepted, response.StatusCode, body)
+	var committed api.PhotoCheckoutCreateResult
+	require.NoError(t, json.Unmarshal([]byte(body), &committed))
+	response, body = do(t, ts, http.MethodGet, "/api/v1/jobs", nil, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var list api.JobList
+	require.NoError(t, json.Unmarshal([]byte(body), &list))
+	found := false
+	for _, job := range list.Items {
+		if job.OperationID == committed.Operation.ID {
+			found = true
+			require.Equal(t, "photo_checkout", job.Lane)
+			require.True(t, job.Controllable)
+			require.True(t, job.Paused)
+			require.Equal(t, "queued", job.Status)
+		}
+	}
+	require.True(t, found, "commit operation must appear in Jobs")
 }

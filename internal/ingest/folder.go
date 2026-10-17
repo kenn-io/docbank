@@ -44,16 +44,22 @@ type FolderFile struct {
 	Info fs.FileInfo
 	// Scan numbers the pass that admitted the file, starting at 1. Files from
 	// one pass share it, so a caller can group one pass's work.
-	Scan   uint64
-	check  func() error
-	digest *string
+	Progress func(int64) error
+	Scan     uint64
+	check    func() error
+	digest   *string
 }
 
 // Digest hashes the opened source and records the bytes observed by its scanner.
 // It leaves the file at EOF and rejects metadata changes during the read.
 func (file FolderFile) Digest(ctx context.Context) (string, error) {
 	hash := sha256.New()
-	n, err := io.Copy(hash, progressReader{ctx: ctx, Reader: file.File})
+	n, err := io.Copy(hash, progressReader{ctx: ctx, Reader: file.File, onBytes: func(n int) error {
+		if file.Progress != nil {
+			return file.Progress(int64(n))
+		}
+		return nil
+	}})
 	if err != nil {
 		if ctx.Err() != nil {
 			return "", err
@@ -101,8 +107,18 @@ func (source watchSource) digest(ctx context.Context, expected watchFingerprint)
 // FolderScanner shares watched-inbox traversal, literal exclusions, mount
 // boundaries and stability observations without opening a local vault.
 type FolderScanner struct {
-	watcher *Watcher
-	scans   uint64
+	// VerifyRoot checks the opened source root before traversal.
+	VerifyRoot func(*os.Root) error
+	// BeforeFile admits a regular file before opening or hashing it.
+	// Return filepath.SkipDir to skip that file.
+	BeforeFile func(context.Context, string) error
+	// SourceChanged optionally handles unstable files while ScanOnce continues siblings.
+	SourceChanged func(context.Context, string) error
+	// Excluded observes paths skipped by policy, symlinks or filesystem boundaries.
+	// Returning an error aborts the pass.
+	Excluded func(context.Context, string) error
+	watcher  *Watcher
+	scans    uint64
 }
 
 // NewFolderScanner creates a read-only client-side scanner. ScanOnce admits
@@ -133,6 +149,24 @@ func NewFolderScanner(
 	}
 	w := &Watcher{config: cfg, excludes: excludes, now: time.Now, logger: slog.Default(), observations: make(map[string]watchObservation), reject: reject}
 	scanner := &FolderScanner{watcher: w}
+	w.beforeFile = func(ctx context.Context, ref string) error {
+		if scanner.BeforeFile != nil {
+			return scanner.BeforeFile(ctx, ref)
+		}
+		return nil
+	}
+	w.sourceChanged = func(ctx context.Context, ref string) error {
+		if scanner.SourceChanged != nil {
+			return scanner.SourceChanged(ctx, ref)
+		}
+		return ErrSourceChanged
+	}
+	w.excluded = func(ctx context.Context, ref string) error {
+		if scanner.Excluded != nil {
+			return scanner.Excluded(ctx, ref)
+		}
+		return nil
+	}
 	w.process = func(ctx context.Context, ref string, observation *watchObservation, open localFileOpener) error {
 		expected := observation.fingerprint
 		f, err := open()
@@ -205,6 +239,11 @@ func (s *FolderScanner) openRoot() (*watchRoot, error) {
 	if err := pinned.verify(); err != nil {
 		return nil, err
 	}
+	if s.VerifyRoot != nil {
+		if err := s.VerifyRoot(root); err != nil {
+			return nil, err
+		}
+	}
 	s.watcher.sourceMount, err = watchMountForRoot(root)
 	if err != nil {
 		return nil, fmt.Errorf("identifying push filesystem: %w", err)
@@ -257,6 +296,9 @@ func (s *FolderScanner) ScanOnce(ctx context.Context, concurrency int) error {
 		admitted := *observation
 		workers.Go(func() {
 			err := process(ctx, ref, &admitted, open)
+			if errors.Is(err, ErrSourceChanged) {
+				err = s.watcher.sourceChanged(ctx, ref)
+			}
 			if access, ok := errors.AsType[*SourceAccessError](err); ok && !errors.Is(err, ErrSourceChanged) {
 				err = s.watcher.reject(ctx, ref, access.Err)
 			}

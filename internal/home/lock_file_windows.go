@@ -51,13 +51,20 @@ func directoryIdentity(info os.FileInfo, path string) (string, error) {
 	if !os.SameFile(info, held) {
 		return "", fmt.Errorf("target-tree ancestor %s changed while reading its identity", path)
 	}
-	var identity windows.ByHandleFileInformation
-	if err := windows.GetFileInformationByHandle(
-		windows.Handle(file.Fd()), &identity); err != nil {
+	identity, err := FileIdentity(file)
+	if err != nil {
 		return "", fmt.Errorf("reading target-tree identity for %s: %w", path, err)
 	}
-	return fmt.Sprintf("vol-%x-file-%x%08x",
-		identity.VolumeSerialNumber, identity.FileIndexHigh, identity.FileIndexLow), nil
+	return identity, nil
+}
+
+// FileIdentity returns the filesystem identity of an open file or directory.
+func FileIdentity(file *os.File) (string, error) {
+	var identity windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(windows.Handle(file.Fd()), &identity); err != nil {
+		return "", fmt.Errorf("reading file identity: %w", err)
+	}
+	return fmt.Sprintf("vol-%x-file-%x%08x", identity.VolumeSerialNumber, identity.FileIndexHigh, identity.FileIndexLow), nil
 }
 
 func targetLockRegistryBase() (string, error) {

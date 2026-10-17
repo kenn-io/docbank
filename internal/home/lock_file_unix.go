@@ -45,6 +45,15 @@ func unlockFile(file *os.File) error {
 	}
 }
 
+// FileIdentity returns the filesystem identity of an open file or directory.
+func FileIdentity(file *os.File) (string, error) {
+	info, err := file.Stat()
+	if err != nil {
+		return "", err
+	}
+	return directoryIdentity(info, file.Name())
+}
+
 func directoryIdentity(info os.FileInfo, path string) (string, error) {
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {

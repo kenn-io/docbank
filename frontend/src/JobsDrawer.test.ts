@@ -14,7 +14,7 @@ function jobsResponse(
   lanes = items
     .filter((item: any) => item.controllable)
     .map((item: any) => ({
-      lane: item.kind ?? item.name,
+      lane: item.lane,
       paused: item.paused,
       concurrency: item.concurrency,
       revision: item.control_revision,
@@ -66,6 +66,7 @@ describe("background jobs drawer", () => {
           {
             name: "storage:a",
             kind: "photo_import",
+            lane: "photo_import",
             operation_id: "a",
             status: "running",
             started_at: "2026-07-23T12:00:00Z",
@@ -107,6 +108,7 @@ describe("background jobs drawer", () => {
     const item = {
       name: "storage:a",
       kind: "photo_import",
+      lane: "photo_import",
       operation_id: "a",
       status: "queued",
       started_at: "2026-07-23T12:00:00Z",
@@ -164,11 +166,17 @@ describe("background jobs drawer", () => {
       {
         name: "storage:a",
         kind: "place",
+        lane: "place",
         operation_id: "a",
         status: "completed",
         started_at: "2026-07-23T12:00:00Z",
       },
-      { name: "extract:plain-text", status: "completed", started_at: "2026-07-23T12:00:00Z" },
+      {
+        name: "extract:plain-text",
+        lane: "extract:plain-text",
+        status: "completed",
+        started_at: "2026-07-23T12:00:00Z",
+      },
     ];
     const auth = vi.fn();
     const close = vi.fn();
@@ -252,6 +260,7 @@ describe("background jobs drawer", () => {
     });
     const worker = {
       name: "derive:visual-previews",
+      lane: "derive:visual-previews",
       status: "running",
       started_at: "2026-07-23T12:00:00Z",
       controllable: true,
@@ -291,11 +300,13 @@ describe("background jobs drawer", () => {
       jobsResponse([
         {
           name: "extract:plain-text",
+          lane: "extract:plain-text",
           status: "running",
           started_at: "2026-07-23T12:00:00Z",
         },
         {
           name: "watch:inbox",
+          lane: "watch:inbox",
           status: "failed",
           started_at: "2026-07-23T11:00:00Z",
           finished_at: "2026-07-23T11:02:00Z",
@@ -332,6 +343,7 @@ describe("background jobs drawer", () => {
         {
           name: `storage:${id}`,
           kind: "photo_import",
+          lane: "photo_import",
           operation_id: id,
           status: "running",
           started_at: "2026-07-23T12:00:00Z",
@@ -342,6 +354,7 @@ describe("background jobs drawer", () => {
         {
           name: "storage:b",
           kind: "photo_import",
+          lane: "photo_import",
           operation_id: "b",
           status: "queued",
           started_at: "2026-07-23T12:00:20Z",
@@ -351,6 +364,7 @@ describe("background jobs drawer", () => {
         {
           name: "storage:checkout",
           kind: "photo_checkout",
+          lane: "photo_checkout",
           operation_id: "checkout",
           status: "running",
           started_at: "2026-07-23T12:00:30Z",
@@ -360,6 +374,7 @@ describe("background jobs drawer", () => {
         {
           name: `storage:${placeId}`,
           kind: "place",
+          lane: "place",
           operation_id: placeId,
           status: "queued",
           started_at: "2026-07-23T12:01:00Z",
@@ -367,6 +382,7 @@ describe("background jobs drawer", () => {
         },
         {
           name: "watch:inbox",
+          lane: "watch:inbox",
           status: "running",
           started_at: "2026-07-23T11:00:00Z",
         },
@@ -405,6 +421,7 @@ describe("background jobs drawer", () => {
     try {
       const active = {
         name: "extract:plain-text",
+        lane: "extract:plain-text",
         status: "running",
         started_at: "2026-07-23T12:00:00Z",
       };
@@ -434,5 +451,44 @@ describe("background jobs drawer", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("shows checkout verification bytes and final entry results", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jobsResponse(
+        [
+          {
+            name: "storage:scan",
+            operation_id: "scan",
+            kind: "photo_checkout_scan",
+            lane: "photo_checkout",
+            status: "running",
+            started_at: "2026-01-01T00:00:00Z",
+            total_objects: 2,
+            completed_objects: 0,
+            processed_bytes: 1024,
+            total_bytes: 4096,
+          },
+          {
+            name: "storage:commit",
+            operation_id: "commit",
+            kind: "photo_checkout_commit",
+            lane: "photo_checkout",
+            status: "failed",
+            started_at: "2026-01-01T00:00:00Z",
+            checkout_results: { clean: 2, conflict: 1 },
+          },
+        ],
+        [],
+      ),
+    );
+    render(JobsDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
+    expect(await screen.findByText("Verified")).toBeTruthy();
+    expect(screen.getByText("Photo checkout")).toBeTruthy();
+    expect(screen.getByText("Scan")).toBeTruthy();
+    expect(screen.getByText("Commit")).toBeTruthy();
+    expect(screen.getByText("1.00 KiB of 4.00 KiB")).toBeTruthy();
+    expect(screen.getByText("Clean")).toBeTruthy();
+    expect(screen.getByText("Conflict")).toBeTruthy();
   });
 });

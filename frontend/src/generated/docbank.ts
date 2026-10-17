@@ -3340,6 +3340,8 @@ export interface IssueTermReportDownloadResponse {
   url: string;
 }
 
+export type JobCheckoutResults = {[key: string]: number};
+
 export type JobStatus = typeof JobStatus[keyof typeof JobStatus];
 
 
@@ -3355,6 +3357,7 @@ export interface Job {
   can_cancel?: boolean;
   can_set_concurrency: boolean;
   cancel_requested?: boolean;
+  checkout_results?: JobCheckoutResults;
   completed_objects?: number;
   concurrency?: number;
   control_revision?: number;
@@ -3362,11 +3365,14 @@ export interface Job {
   error?: string;
   finished_at?: string;
   kind?: string;
+  lane: string;
   name: string;
   operation_id?: string;
   paused: boolean;
+  processed_bytes?: number;
   started_at: string;
   status: JobStatus;
+  total_bytes?: number;
   total_objects?: number;
 }
 
@@ -5640,15 +5646,19 @@ export interface PhotoCheckoutSkip {
 export interface PhotoCheckout {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  active_operation_kind: string;
+  active_operation_state: string;
   byte_limit: number;
   created_at: string;
   destination: string;
   error: string;
   id: string;
+  last_operation_id: string;
   operation_id: string;
   retention_released: boolean;
   /** @nullable */
   retired_at: string | null;
+  retirement_requested: boolean;
   selection: PhotoCheckoutSelection;
   skipped_photo_count: number;
   /** @maxItems 20 */
@@ -5695,6 +5705,22 @@ export interface PhotoCheckoutCreateResult {
   operation: StorageOperation;
 }
 
+export interface PhotoCheckoutEntry {
+  asset_id: string;
+  checkout_id: string;
+  file_id: string;
+  hash: string;
+  observed_hash: string;
+  observed_size: number;
+  path: string;
+  published: boolean;
+  /** @nullable */
+  sidecar_of_file_id: string | null;
+  size: number;
+  version_id: string;
+  working_state: string;
+}
+
 export interface PhotoCheckoutEstimate {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -5712,12 +5738,24 @@ export interface PhotoCheckoutList {
   items: PhotoCheckout[];
 }
 
+export interface PhotoCheckoutRebindRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * @minLength 1
+     * @maxLength 4096
+     */
+  destination: string;
+}
+
 export interface PhotoCheckoutStatus {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   bytes: number;
   checkout: PhotoCheckout;
+  entries: PhotoCheckoutEntry[];
   files: number;
+  next_after?: string;
   published_bytes: number;
   published_files: number;
 }
@@ -8705,6 +8743,15 @@ export type TrashPhotoAssetHeaders = {
 
 export type UnhidePhotoAssetHeaders = {
 'If-Match': string;
+};
+
+export type GetPhotoCheckoutParams = {
+after?: string;
+/**
+ * @minimum 1
+ * @maximum 250
+ */
+limit?: number;
 };
 
 export type UndoPhotoFaceDecisionParams = {
@@ -16379,25 +16426,97 @@ return sessionJSON<PhotoCheckoutEstimate>(getEstimatePhotoCheckoutUrl(),
 
 
 
-export const getGetPhotoCheckoutUrl = (id: string,) => {
+export const getGetPhotoCheckoutUrl = (id: string,
+    params?: GetPhotoCheckoutParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/v1/photos/checkouts/${encodeURIComponent(String(id))}`
+  return stringifiedParams.length > 0 ? `/api/v1/photos/checkouts/${encodeURIComponent(String(id))}?${stringifiedParams}` : `/api/v1/photos/checkouts/${encodeURIComponent(String(id))}`
 }
 
 /**
  * @summary Inspect photo checkout progress
  */
-export const getPhotoCheckout = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoCheckoutStatus> => {
+export const getPhotoCheckout = async (id: string,
+    params?: GetPhotoCheckoutParams, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoCheckoutStatus> => {
 
-  return sessionJSON<PhotoCheckoutStatus>(getGetPhotoCheckoutUrl(id),
+  return sessionJSON<PhotoCheckoutStatus>(getGetPhotoCheckoutUrl(id,params),
   {
     ...options,
     method: 'GET'
 
 
+  }
+);}
+
+
+
+export const getCommitPhotoCheckoutUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/photos/checkouts/${encodeURIComponent(String(id))}/commit`
+}
+
+/**
+ * @summary Commit settled checkout edits as new versions
+ */
+export const commitPhotoCheckout = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoCheckoutCreateResult> => {
+
+  return sessionJSON<PhotoCheckoutCreateResult>(getCommitPhotoCheckoutUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+export const getRebindPhotoCheckoutUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/photos/checkouts/${encodeURIComponent(String(id))}/rebind`
+}
+
+/**
+ * @summary Verify a checkout folder
+ */
+export const rebindPhotoCheckout = async (id: string,
+    photoCheckoutRebindRequest: NonReadonly<PhotoCheckoutRebindRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoCheckoutCreateResult> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoCheckoutCreateResult>(getRebindPhotoCheckoutUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(photoCheckoutRebindRequest)
   }
 );}
 
@@ -16417,6 +16536,30 @@ export const getRetirePhotoCheckoutUrl = (id: string,) => {
 export const retirePhotoCheckout = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoCheckout> => {
 
   return sessionJSON<PhotoCheckout>(getRetirePhotoCheckoutUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+export const getScanPhotoCheckoutUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/photos/checkouts/${encodeURIComponent(String(id))}/scan`
+}
+
+/**
+ * @summary Inspect checkout edits
+ */
+export const scanPhotoCheckout = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoCheckoutCreateResult> => {
+
+  return sessionJSON<PhotoCheckoutCreateResult>(getScanPhotoCheckoutUrl(id),
   {
     ...options,
     method: 'POST'

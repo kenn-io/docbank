@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"net/http"
 	"slices"
@@ -16,7 +17,7 @@ import (
 
 func observableJob(snapshot jobs.Snapshot) Job {
 	job := Job{
-		Name: snapshot.Name, Status: string(snapshot.Status),
+		Name: snapshot.Name, Lane: snapshot.Name, Status: string(snapshot.Status),
 		StartedAt: snapshot.StartedAt.Format(time.RFC3339Nano), Error: snapshot.Error,
 	}
 	if snapshot.FinishedAt != nil {
@@ -88,17 +89,31 @@ func registerJobRoutes(api huma.API, d Deps) {
 					errorDetail = "storage operation failed; inspect with the Docbank CLI for details"
 				}
 				job := Job{
+					Lane: store.StorageOperationLane(operation.Kind),
 					Name: name, Status: string(operation.State),
-					StartedAt: operation.CreatedAt.Format(time.RFC3339Nano),
-					Error:     errorDetail, OperationID: operation.ID, Kind: operation.Kind,
+					StartedAt:  operation.CreatedAt.Format(time.RFC3339Nano),
+					FinishedAt: storageOperationAPI(operation).FinishedAt,
+					Error:      errorDetail, OperationID: operation.ID, Kind: operation.Kind,
 					CompletedObjects: operation.CompletedObjects,
 					TotalObjects:     operation.TotalObjects,
-					FinishedAt:       storageOperationAPI(operation).FinishedAt,
 					CancelRequested:  operation.CancelRequested,
+				}
+				var progress struct {
+					HashedBytes int64            `json:"hashed_bytes"`
+					TotalBytes  int64            `json:"total_bytes"`
+					Results     map[string]int64 `json:"checkout_results"`
+				}
+				if strings.HasPrefix(operation.Kind, "photo_checkout_") {
+					if err := json.Unmarshal([]byte(operation.ReceiptJSON), &progress); err == nil {
+						job.ProcessedBytes, job.TotalBytes = progress.HashedBytes, progress.TotalBytes
+						if operation.State != store.StorageOperationQueued && operation.State != store.StorageOperationRunning {
+							job.CheckoutResults = progress.Results
+						}
+					}
 				}
 				job.CanCancel = operation.State == store.StorageOperationQueued ||
 					operation.State == store.StorageOperationRunning
-				applyControl(&job, controls, operation.Kind, job.CanCancel)
+				applyControl(&job, controls, job.Lane, job.CanCancel)
 				out.Body.Items = append(out.Body.Items, job)
 			}
 		}
