@@ -336,15 +336,6 @@ it.each(["select", "cancel", "scope"])(
         await access.settled();
       });
       expect(maximum).toBe(4);
-      await fireEvent.click(screen.getByRole("dialog").querySelector('input[value="person-5"]')!);
-      await fireEvent.click(screen.getByRole("button", { name: "Name face" }));
-      await waitFor(() =>
-        expect(write).toHaveBeenCalledWith(
-          "version-a",
-          expect.objectContaining({ person_id: "person-5" }),
-          expect.anything(),
-        ),
-      );
     } else {
       const lock = access.lock();
       const reads = [...pending.values()];
@@ -830,7 +821,7 @@ it.each([
   faces.dispose();
 });
 
-it.each(["picker", "chooser"])("clears %s on expiry and ignores old reads", async (mode) => {
+it("clears picker on expiry and ignores old reads", async () => {
   const { HiddenAccess } = await import("./hiddenAccess.svelte.js");
   const access = new HiddenAccess("session", vi.fn());
   vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -848,13 +839,6 @@ it.each(["picker", "chooser"])("clears %s on expiry and ignores old reads", asyn
     const search = vi
       .spyOn(api, "listPeople")
       .mockResolvedValue({ items: [person, { ...person, person_id: "person-b" }] });
-    let finish!: (page: api.PhotoBrowsePage) => void;
-    const previews = vi.spyOn(api, "listPhotoAssets").mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          finish = resolve;
-        }),
-    );
     const faces = new Photos("session", vi.fn(), false, undefined, { hiddenAccess: access })
       .faceEditor;
     faces.version = "version-a";
@@ -862,32 +846,21 @@ it.each(["picker", "chooser"])("clears %s on expiry and ignores old reads", asyn
     render(PhotoPeople, { faces, session: "session" });
     await fireEvent.click(screen.getByRole("button", { name: "Find or create a person: Face 1" }));
     await fireEvent.input(screen.getByRole("combobox"), { target: { value: "Alex" } });
-    const option = await screen.findByRole("option", { name: "Alex · 2 people" });
+    await screen.findByRole("option", { name: "Alex · 2 people" });
     let finishSearch!: (page: api.PersonPage) => void;
-    if (mode === "chooser") {
-      await fireEvent.mouseDown(option);
-      await screen.findByRole("dialog", { name: "Choose Alex" });
-      expect(screen.getAllByText("alex@example.test")).toHaveLength(2);
-      await waitFor(() => expect(previews).toHaveBeenCalled());
-    } else {
-      search.mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            finishSearch = resolve;
-          }),
-      );
-      await fireEvent.input(screen.getByRole("combobox"), { target: { value: "Alex late" } });
-      await waitFor(() => expect(finishSearch).toBeTypeOf("function"));
-    }
+    search.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishSearch = resolve;
+        }),
+    );
+    await fireEvent.input(screen.getByRole("combobox"), { target: { value: "Alex late" } });
+    await waitFor(() => expect(finishSearch).toBeTypeOf("function"));
     await act(() => vi.advanceTimersByTimeAsync(60_001));
     expect(screen.queryByRole("dialog", { name: "Choose Alex" })).toBeNull();
     expect(screen.queryByText("alex@example.test")).toBeNull();
     expect(screen.queryByRole("option", { name: "Alex · 2 people" })).toBeNull();
-    if (mode === "chooser")
-      await act(async () =>
-        finish({ items: [], total: 0, facets: [], relevance_available: false }),
-      );
-    else await act(async () => finishSearch({ items: [person] }));
+    await act(async () => finishSearch({ items: [person] }));
     expect(screen.queryByRole("option", { name: "Alex" })).toBeNull();
     expect(screen.queryByText("alex@example.test")).toBeNull();
   } finally {

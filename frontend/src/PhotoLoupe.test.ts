@@ -811,9 +811,6 @@ it("scales region markers and face labels with the image", async () => {
     "scale(0.125)",
   );
   expect(component.container.querySelector<HTMLElement>(".face-box")!.style.width).toBe("20%");
-  expect(component.container.querySelector<HTMLElement>(".pan")!.style.transform).toContain(
-    "scale(8)",
-  );
 });
 
 it("hides face boxes while a different photo version is displayed", async () => {

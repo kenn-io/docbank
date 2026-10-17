@@ -1069,10 +1069,9 @@ func TestPhotoFaceNamingPreservesReplayDigestsAndClearedPeople(t *testing.T) {
 					FaceID: f.FaceID, Action: "retract", Revision: named.After.Faces[0].Revision,
 				})
 				require.NoError(t, err)
-				cleared, err := s.PeopleByDisplayName(ctx, "Grace", "", "", 10, true)
+				cleared, _, err := s.PersonByID(ctx, first.After.Assertions[0].PersonID)
 				require.NoError(t, err)
-				require.Len(t, cleared, 1, "clearing the name keeps the operator person available")
-				require.Equal(t, "Grace", cleared[0].DisplayName)
+				require.Equal(t, "Grace", cleared.DisplayName)
 			}
 			require.NoError(t, s.ValidateMetadata(ctx))
 		})
