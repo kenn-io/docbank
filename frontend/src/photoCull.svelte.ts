@@ -68,7 +68,7 @@ export class PhotoCull {
   get complete() {
     return !!this.run && !this.currentID;
   }
-  async restore(quiet = false) {
+  async restore() {
     await this.writes;
     this.error = "";
     try {
@@ -112,7 +112,7 @@ export class PhotoCull {
       this.stale = false;
       return !!this.run;
     } catch (cause) {
-      if (!quiet) this.error = failure(cause);
+      this.error = failure(cause);
       return false;
     }
   }
