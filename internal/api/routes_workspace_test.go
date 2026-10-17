@@ -425,9 +425,11 @@ func TestWorkspacePhotoSnapshotRejectsFacets(t *testing.T) {
 	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	headers := map[string]string{"X-Api-Key": testAPIKey}
-	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", headers, `{"photos":true,"query":{},"facets":["flag"]}`)
+	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", headers, `{"photos":true,"query":{},"facets":["tags"]}`)
 	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
-	assert.Equal(t, "validation", decodeProblem(t, body).Code)
+	problem := decodeProblem(t, body)
+	assert.Equal(t, "validation", problem.Code)
+	assert.Equal(t, "invalid snapshot request: photo snapshots do not support facets", problem.Detail)
 }
 
 func TestWorkspaceAdHocPhotoSnapshot(t *testing.T) {
