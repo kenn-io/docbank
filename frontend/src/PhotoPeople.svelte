@@ -69,8 +69,7 @@
     try {
       if (!value) return (saved = await faces.clear(face));
       let person = people.find((person) => key(person.person_id) === value);
-      if (!person && (value.startsWith("\0") || exact || value.trim() !== query.trim()))
-        return false;
+      if (!person && (value.startsWith("\0") || value.trim() !== query.trim())) return false;
       if (!person) {
         person = await createPerson(
           { display_name: value.trim() },
@@ -116,12 +115,8 @@
               label: candidate.display_name,
             })),
         ]}
-        allowCustom={activeFace === face.face_id &&
-          !!query.trim() &&
-          !exact &&
-          !searching &&
-          !error}
-        customLabel={'Create person "{query}"'}
+        allowCustom={activeFace === face.face_id && !!query.trim() && !searching && !error}
+        customLabel={exact ? 'Create another person named "{query}"' : 'Create person "{query}"'}
         loading={activeFace === face.face_id && searching}
         allowClear={!!person}
         clearLabel="Clear name"

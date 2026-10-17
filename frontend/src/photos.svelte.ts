@@ -1,7 +1,7 @@
 import { patchPhotoRows, photoRows, photoStacksChanged, type PhotoBrowseRow } from "./photoRows.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
-import { hasPersonFilter, photoSearchSort } from "./photoSearch.js";
+import { photoSearchSort } from "./photoSearch.js";
 import { getSavedQuery, type SavedQuery } from "./savedQueries.js";
 import {
   getPhotoSettings,
@@ -1662,11 +1662,7 @@ export async function refreshPersonPhotoViews(source: Photos, views: Iterable<Ph
     [...new Set(views)]
       .filter(
         (photos): photos is Photos =>
-          !!photos &&
-          photos !== source &&
-          photos.hidden === source.hidden &&
-          (photos.started || photos.loading) &&
-          hasPersonFilter(photos.query),
+          !!photos && photos !== source && photos.hidden === source.hidden && photos.started,
       )
       .map((photos) => photos.refresh()),
   );

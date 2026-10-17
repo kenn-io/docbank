@@ -8,7 +8,7 @@ import {
 } from "./photo-test-fixtures.js";
 import { createHash } from "node:crypto";
 import { afterEach, expect, it, vi } from "vite-plus/test";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import App from "./App.svelte";
 import { batchTagRequestDigest } from "./batch-tags.js";
 
@@ -2408,6 +2408,7 @@ it.each([true, false])(
     await fireEvent.click(within(loupe).getByRole("button", { name: "Metadata" }));
     const card = await within(loupe).findByRole("button", { name: "Ada" });
     vi.spyOn(PhotoAuthoredEditor.prototype, "canChangeTarget").mockReturnValue(true);
+    const setQuery = Photos.prototype.setQuery;
     const query = vi.spyOn(Photos.prototype, "setQuery");
     if (refused) query.mockReturnValue(undefined);
     const before = location.href;
@@ -2422,6 +2423,25 @@ it.each([true, false])(
     if (refused) {
       expect(location.href).toBe(before);
       expect(screen.getByRole("dialog", { name: /^Photo viewer,/ })).toBe(loupe);
+      query.mockImplementation(setQuery);
+      const accessReads = () =>
+        vi
+          .mocked(globalThis.fetch)
+          .mock.calls.filter(([url]) => String(url).endsWith("/photos/hidden")).length;
+      const previousReads = accessReads();
+      await act(async () => {
+        await fireEvent(document, new Event("visibilitychange"));
+      });
+      await waitFor(() => expect(accessReads()).toBeGreaterThan(previousReads));
+      expect(query).toHaveBeenCalledTimes(1);
+      expect(
+        (screen.getByRole("searchbox", { name: "Search photos" }) as HTMLInputElement).value,
+      ).toBe("stale search");
+      await fireEvent.click(card);
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog", { name: /^Photo viewer,/ })).toBeNull(),
+      );
+      expect(query).toHaveBeenCalledTimes(2);
     } else {
       expect(
         (screen.getByRole("searchbox", { name: "Search photos" }) as HTMLInputElement).value,

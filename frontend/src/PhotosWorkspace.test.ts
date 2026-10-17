@@ -3317,7 +3317,7 @@ it("keeps the selected row's face state when opening its loupe", async () => {
   expect(read).toHaveBeenCalledOnce();
 });
 
-it.each([false, true])("refreshes a face decision for a person ID filter=%s", async (filtered) => {
+it("refreshes a face decision for a person ID filter", async () => {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -3334,7 +3334,7 @@ it.each([false, true])("refreshes a face decision for a person ID filter=%s", as
   });
   const photos = new Photos("session", vi.fn(), false, {
     ...photoQuery,
-    filters: filtered ? { person_ids: ["person-a"] } : {},
+    filters: { person_ids: ["person-a"] },
   });
   photos.items = [photo(1)];
   photos.selectedIDs = new Set(["photo-1"]);
@@ -3349,7 +3349,7 @@ it.each([false, true])("refreshes a face decision for a person ID filter=%s", as
   await fireEvent.mouseDown(await screen.findByRole("option", { name: "Clear name" }));
   await waitFor(() => expect(decision).toHaveBeenCalledOnce());
   await screen.findByRole("button", { name: "Find or create a person: Ada" });
-  expect(requests).toHaveLength(filtered ? 1 : 0);
+  expect(requests).toHaveLength(1);
   photos.dispose();
   await cache.dispose();
 });

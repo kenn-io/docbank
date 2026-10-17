@@ -1,10 +1,5 @@
 import { expect, it } from "vite-plus/test";
-import {
-  photoRotationStyle,
-  drawnPhotoFace,
-  rotatePhotoBox,
-  photoFaceCrop,
-} from "./photoRotation.js";
+import { photoRotationStyle, rotatePhotoBox, photoFaceCrop } from "./photoRotation.js";
 
 it.each([
   [90, 200, 300],
@@ -21,16 +16,10 @@ it.each([
   [90, { x: 0.4, y: 0.1, width: 0.4, height: 0.3 }],
   [180, { x: 0.6, y: 0.4, width: 0.3, height: 0.4 }],
   [270, { x: 0.2, y: 0.6, width: 0.4, height: 0.3 }],
-])("rotates face corners and inverts a drawn region at %i degrees", (rotation, expected) => {
+])("rotates face corners at %i degrees", (rotation, expected) => {
   const displayed = rotatePhotoBox(box, rotation as number);
   for (const field of ["x", "y", "width", "height"] as const)
     expect(displayed[field]).toBeCloseTo(expected[field]);
-  const stored = drawnPhotoFace(
-    { ...displayed, x: displayed.x + displayed.width / 2, y: displayed.y + displayed.height / 2 },
-    rotation as number,
-  );
-  for (const field of ["x", "y", "width", "height"] as const)
-    expect(stored[field]).toBeCloseTo(box[field]);
 });
 
 it.each([

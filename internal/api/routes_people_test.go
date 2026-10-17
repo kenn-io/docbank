@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -53,6 +54,15 @@ func TestPeopleRoutesWorkflow(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(listedBody), &page))
 	require.Len(t, page.Items, 1)
 	require.Equal(t, created.PersonID, page.Items[0].PersonID)
+	require.False(t, page.ExactMatch)
+	for _, query := range []string{"Renamed Ada", "renamed ada", "Ｒｅｎａｍｅｄ Ａｄａ", " ReNaMeD AdA "} {
+		response, body := get(t, ts, "/api/v1/people?query="+url.QueryEscape(query), nil)
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		var match api.PersonPage
+		require.NoError(t, json.Unmarshal([]byte(body), &match))
+		require.True(t, match.ExactMatch, query)
+		require.Equal(t, created.PersonID, match.Items[0].PersonID)
+	}
 	identity, err := fixture.AddPersonIdentity(t.Context(), created.PersonID, renamed.Revision, store.PersonIdentity{
 		Kind: "name_alias", ValueDisplay: "Renamed Ada", Origin: "operator",
 		EvidenceKind: "operator_assertion", EvidenceID: "synthetic-workflow", Confidence: "operator_asserted",

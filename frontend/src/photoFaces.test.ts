@@ -33,6 +33,20 @@ it("names the face with its current revision and refreshes its active label", as
   );
   expect(faces.label(face)).toBe("Ada");
   expect(read).toHaveBeenCalledTimes(2);
+  write.mockRejectedValueOnce(new APIError("Changed", 412, "stale_revision"));
+  read.mockResolvedValue({
+    faces: [{ ...face, revision: 9 }],
+    assertions: [assertion],
+    people: [{ person_id: "person-a", display_name: "Ada" }],
+  });
+  expect(await faces.name(faces.faces[0]!, "person-a")).toBe(false);
+  expect(write).toHaveBeenLastCalledWith(
+    "version-a",
+    expect.objectContaining({ revision: 8 }),
+    expect.anything(),
+  );
+  expect(faces.faces[0]!.revision).toBe(9);
+  expect(read).toHaveBeenCalledTimes(3);
   faces.dispose();
 });
 it("clears rows on navigation and ignores a late old page", async () => {
@@ -60,23 +74,6 @@ it("clears rows on navigation and ignores a late old page", async () => {
   expect(read.mock.calls[1]![1]!.signal!.aborted).toBe(true);
   faces.dispose();
 });
-it("creates the manually drawn face on the loaded version", async () => {
-  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [], assertions: [], people: [] });
-  const write = vi.spyOn(api, "createPhotoFace").mockResolvedValue({ face });
-  const faces = new PhotoFaces("session", vi.fn());
-  await faces.load("version-a");
-  await faces.add({ x: 0.2, y: 0.3, width: 0.1, height: 0.1 });
-  expect(write).toHaveBeenCalledWith(
-    "version-a",
-    expect.objectContaining({
-      box: { x: 0.2, y: 0.3, width: 0.1, height: 0.1 },
-      face_id: expect.any(String),
-    }),
-    expect.objectContaining({ session: "session" }),
-  );
-  faces.dispose();
-});
-
 it("notifies a successful clear before reload even when the reload fails", async () => {
   const events: string[] = [];
   vi.spyOn(api, "listPhotoFaces")
@@ -96,26 +93,6 @@ it("notifies a successful clear before reload even when the reload fails", async
     expect.anything(),
   );
   expect(faces.error).toBe("Read failed");
-});
-it("reloads the current face revision after a conflicting write", async () => {
-  const read = vi
-    .spyOn(api, "listPhotoFaces")
-    .mockResolvedValueOnce({ faces: [face], assertions: [], people: [] })
-    .mockResolvedValue({
-      faces: [{ ...face, revision: 8 }],
-      assertions: [assertion],
-      people: [{ person_id: "person-a", display_name: "Ada" }],
-    });
-  vi.spyOn(api, "decidePhotoFace").mockRejectedValue(
-    new APIError("Changed", 412, "stale_revision"),
-  );
-  const notify = vi.fn(),
-    faces = new PhotoFaces("session", vi.fn(), false, notify);
-  await faces.load("version-a");
-  expect(await faces.name(face, "person-a")).toBe(false);
-  expect(faces.faces[0]!.revision).toBe(8);
-  expect(read).toHaveBeenCalledTimes(2);
-  expect(notify).not.toHaveBeenCalled();
 });
 it.each([
   [false, 401, true],
@@ -144,6 +121,11 @@ it.each([new Error("Response lost"), new APIError("Unavailable", 503, "unavailab
     const box = { x: 0.2, y: 0.3, width: 0.1, height: 0.15 };
     expect(await faces.add(box)).toBe(false);
     const request = create.mock.calls[0]!;
+    expect(create).toHaveBeenCalledWith(
+      "version-a",
+      { box, face_id: expect.any(String) },
+      expect.objectContaining({ session: "session" }),
+    );
     expect(await faces.add({ ...box, x: 0.7 })).toBe(false);
     expect(create).toHaveBeenCalledTimes(1);
     expect(await faces.retryAdd()).toBe(true);
@@ -154,9 +136,8 @@ it.each([new Error("Response lost"), new APIError("Unavailable", 503, "unavailab
     faces.dispose();
   },
 );
-it.each(["definitive", "version", "reconciled"])(
-  "clears a pending create after %s",
-  async (reason) => {
+it("clears a pending create after refusal, navigation, or reconciliation", async () => {
+  for (const reason of ["definitive", "version", "reconciled"]) {
     const read = vi
       .spyOn(api, "listPhotoFaces")
       .mockResolvedValue({ faces: [], assertions: [], people: [] });
@@ -182,5 +163,6 @@ it.each(["definitive", "version", "reconciled"])(
     expect(await faces.retryAdd()).toBe(false);
     expect(create).toHaveBeenCalledTimes(1);
     faces.dispose();
-  },
-);
+    vi.restoreAllMocks();
+  }
+});

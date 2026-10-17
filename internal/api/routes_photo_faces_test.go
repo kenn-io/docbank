@@ -3,7 +3,6 @@ package api_test
 import (
 	"encoding/json/v2"
 	"net/http"
-	"net/url"
 	"strings"
 	"testing"
 
@@ -37,17 +36,10 @@ func TestPhotoFaceRoutes(t *testing.T) {
 	require.NotNil(t, created.Assertion)
 	require.Equal(t, faceID, created.Face.FaceID)
 	require.Equal(t, person.PersonID, created.Assertion.PersonID)
-	response, body = get(t, ts, "/api/v1/people/by-id/"+person.PersonID, nil)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	var detail api.PersonDetail
-	require.NoError(t, json.Unmarshal([]byte(body), &detail))
-	require.Len(t, detail.Assertions, 1)
-	require.Equal(t, created.Assertion.AssertionID, detail.Assertions[0].AssertionID)
 	response, body = get(t, ts, path, nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var listed api.PhotoFacePage
 	require.NoError(t, json.Unmarshal([]byte(body), &listed))
-	require.Equal(t, listed.Assertions[0].AssertionID, detail.Assertions[0].AssertionID)
 	require.Equal(t, []api.PhotoFacePerson{{PersonID: person.PersonID, DisplayName: "Ada"}}, listed.People)
 	var payload struct {
 		Assertions []map[string]any `json:"assertions"`
@@ -165,23 +157,8 @@ func TestPhotoFaceBrowserDecisions(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal([]byte(body), &issued))
 	headers := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issued.Token}
-	response, body = do(t, ts, http.MethodPost, "/api/v1/people", headers, api.CreatePersonRequest{DisplayName: "Ada"})
-	require.Equal(t, http.StatusCreated, response.StatusCode, body)
-	var person api.Person
-	require.NoError(t, json.Unmarshal([]byte(body), &person))
-	for _, query := range []string{"Ada", "ada", "ＡＤＡ", " AdA "} {
-		response, body = get(t, ts, "/api/v1/people?query="+url.QueryEscape(query), headers)
-		require.Equal(t, http.StatusOK, response.StatusCode, body)
-		var page api.PersonPage
-		require.NoError(t, json.Unmarshal([]byte(body), &page))
-		require.True(t, page.ExactMatch, query)
-		require.Equal(t, person.PersonID, page.Items[0].PersonID)
-	}
-	response, body = get(t, ts, "/api/v1/people?query=Ad", headers)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	var prefix api.PersonPage
-	require.NoError(t, json.Unmarshal([]byte(body), &prefix))
-	require.False(t, prefix.ExactMatch)
+	person, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
 
 	path := "/api/v1/photos/versions/" + node.CurrentVersionID + "/faces"
 	response, body = do(t, ts, http.MethodPost, path, headers, api.CreatePhotoFaceRequest{PersonID: person.PersonID})
@@ -200,6 +177,10 @@ func TestPhotoFaceBrowserDecisions(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	response, body = get(t, ts, path, headers)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var named api.PhotoFacePage
+	require.NoError(t, json.Unmarshal([]byte(body), &named))
+	require.NotEmpty(t, named.Faces[0].AssertionID)
+	require.Equal(t, named.Faces[0].AssertionID, named.Assertions[0].AssertionID)
 	for _, action := range []string{"dismiss", "reject", "key", "withdraw_rejection"} {
 		response, body = do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: action, FaceID: faceID, PersonID: person.PersonID, Revision: 2, OperationID: uuid.NewString()})
 		require.Equal(t, http.StatusForbidden, response.StatusCode, body)

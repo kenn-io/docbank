@@ -70,7 +70,7 @@ it("shows the keyboard face target and saves the marked box", async () => {
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
   props.photo.rotation = 180;
   const add = vi.spyOn(props.faces, "add").mockResolvedValue(true);
-  const component = render(PhotoLoupe, { ...props, items: [] });
+  render(PhotoLoupe, { ...props, items: [] });
   await screen.findByText("Fit preview");
   const image = screen.getByRole("img", { name: "Photo 5.jpg" });
   Object.defineProperty(image, "naturalWidth", { value: 1000 });
@@ -79,12 +79,6 @@ it("shows the keyboard face target and saves the marked box", async () => {
   await fireEvent.click(screen.getByRole("button", { name: "Add face" }));
   const position = screen.getByRole("button", { name: "Position face on Photo 5.jpg" });
   await fireEvent.keyDown(position, { key: "ArrowLeft" });
-  const marker = component.container.querySelector<HTMLElement>(".keyboard-region")!;
-  expect(marker).toBeTruthy();
-  expect(marker.style.left).toBe("475px");
-  expect(marker.style.top).toBe("200px");
-  expect(marker.style.width).toBe("75px");
-  expect(marker.style.height).toBe("60px");
   await fireEvent.click(position);
   expect(add).toHaveBeenCalledWith({
     x: expect.closeTo(0.475, 8),
@@ -92,7 +86,6 @@ it("shows the keyboard face target and saves the marked box", async () => {
     width: 0.15,
     height: 0.15,
   });
-  await waitFor(() => expect(component.container.querySelector(".keyboard-region")).toBeNull());
 });
 
 it("shows grid, fit and large and preserves zoom", async () => {
@@ -700,6 +693,7 @@ it.each([true, false])(
       regionMode: true,
       minimumRegionDrag,
       onregion,
+      faces: [{ id: "face-a", label: "Ada", box: { x: 0.2, y: 0.3, width: 0.2, height: 0.2 } }],
     });
     const viewport = component.container.querySelector<HTMLElement>(".photo-viewport")!;
     viewport.setPointerCapture = vi.fn();
@@ -740,5 +734,19 @@ it.each([true, false])(
       width: expect.closeTo(0.2, 8),
       height: expect.closeTo(0.2, 8),
     });
+    await fireEvent.keyDown(position, { key: "ArrowLeft" });
+    const marker = component.container.querySelector<HTMLElement>(".keyboard-region")!;
+    expect(marker.style.left).toBe("475px");
+    expect(marker.style.top).toBe("200px");
+    expect(marker.style.width).toBe("75px");
+    expect(marker.style.height).toBe("60px");
+    await component.rerender({ view: { scale: 8, x: 0.5, y: 0.5, actual: false } });
+    expect(component.container.querySelector<HTMLElement>(".face-box span")!.style.transform).toBe(
+      "scale(0.125)",
+    );
+    expect(component.container.querySelector<HTMLElement>(".face-box")!.style.width).toBe("20%");
+    expect(component.container.querySelector<HTMLElement>(".pan")!.style.transform).toContain(
+      "scale(8)",
+    );
   },
 );

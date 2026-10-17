@@ -138,6 +138,30 @@ test("draws and names faces, opens person-filtered Library, and reads cull close
     await people.getByRole("combobox").fill("Ada");
     await people.getByRole("option", { name: 'Create person "Ada"' }).click();
     await expect(loupe.locator(".face-box")).toHaveText("Ada");
+    const label = loupe.locator(".face-box span");
+    const fittedLabel = (await label.boundingBox())!;
+    await viewport.evaluate(
+      (element, label) =>
+        element.dispatchEvent(
+          new WheelEvent("wheel", {
+            deltaY: -5000,
+            clientX: label.x + label.width / 2,
+            clientY: label.y + label.height / 2,
+            bubbles: true,
+            cancelable: true,
+          }),
+        ),
+      fittedLabel,
+    );
+    await expect(label).toHaveCSS("transform", "matrix(0.125, 0, 0, 0.125, 0, 0)");
+    const zoomedLabel = (await label.boundingBox())!;
+    expect(zoomedLabel.width).toBeCloseTo(fittedLabel.width, 0);
+    expect(zoomedLabel.height).toBeCloseTo(fittedLabel.height, 0);
+    await page.screenshot({
+      path: path.join(output!, "web-photo-faces-zoom8.png"),
+      animations: "disabled",
+    });
+    await loupe.getByRole("button", { name: "Reset zoom", exact: true }).click();
     await people.getByRole("button", { name: "Ada", exact: true }).click();
     await expect(loupe).toHaveCount(0);
     await expect(page.locator(".photo-cell")).toHaveCount(1);

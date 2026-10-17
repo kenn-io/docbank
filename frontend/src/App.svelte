@@ -697,8 +697,10 @@
         sort: photoSearchSort({ text: "", syntax: photoState.photos.query.syntax }),
         filters: { person_ids: [personID] },
       })
-    )
-      return;
+    ) {
+      pendingPerson = undefined;
+      return false;
+    }
     photoState.photos.personFilter = { id: personID, name };
     pendingPerson = undefined;
     return true;

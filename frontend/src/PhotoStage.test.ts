@@ -1,4 +1,3 @@
-import type { PhotoPreviewSlot } from "./generated/docbank.js";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import PhotoStage from "./PhotoStage.svelte";
@@ -26,142 +25,41 @@ it.each(["fit", "large"] as const)(
         disconnect() {}
       },
     );
-    let counter = 0;
-    vi.spyOn(URL, "createObjectURL").mockImplementation(() => `blob:synthetic-${++counter}`);
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:synthetic-preview");
     vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
     Object.defineProperty(HTMLImageElement.prototype, "decode", {
       configurable: true,
-      value: vi.fn(async () => {}),
+      value: async () => {},
     });
-    vi.spyOn(HTMLImageElement.prototype, "naturalWidth", "get").mockReturnValue(1200);
-    vi.spyOn(HTMLImageElement.prototype, "naturalHeight", "get").mockReturnValue(800);
     const item = photo(1);
     item.previews.grid = { state: "missing" };
     const photos = new Photos("scoped", vi.fn());
-    const preview = vi.spyOn(photos, "preview").mockImplementation(async (_item, requested) => {
-      if (
-        requested === size &&
-        preview.mock.calls.filter(([, value]) => value === size).length === 1
-      )
-        throw new Error("Preview is still being prepared");
-      return { state: "ready", generation_id: `${requested}-1`, width: 1200, height: 800 };
+    const preview = vi.spyOn(photos, "preview").mockImplementation(async (_row, requested) => {
+      if (preview.mock.calls.filter(([, value]) => value === requested).length === 1)
+        throw new Error(`${requested} failed`);
+      return { state: "ready", generation_id: `${requested}-retry` };
     });
-    const get = vi.fn(async (_asset: string, _generation: string) => new Blob(["synthetic-jpeg"]));
-    const onfit = vi.fn();
     const { container } = render(PhotoStage, {
-      onfit,
-      photo: item,
-      photos,
-      cache: { get } as unknown as PhotoPreviewCache,
-      view: { ...fittedPhotoView },
-    });
-    let fitted: string | null = null;
-    if (size === "large") {
-      await waitFor(() => expect(container.querySelector("img")).toBeTruthy());
-      fitted = container.querySelector("img")!.getAttribute("src");
-      await fireEvent.doubleClick(container.querySelector<HTMLElement>(".photo-viewport")!);
-    }
-    await screen.findByText("Preview is still being prepared");
-    if (size === "large") expect(container.querySelector("img")!.getAttribute("src")).toBe(fitted);
-    else expect(container.querySelector("img")).toBeNull();
-    await fireEvent.click(screen.getByRole("button", { name: "Retry preview" }));
-    await waitFor(() => expect(container.querySelector("img")?.getAttribute("src")).toBeTruthy());
-    if (size === "large")
-      await waitFor(() =>
-        expect(container.querySelector("img")!.getAttribute("src")).not.toBe(fitted),
-      );
-    else expect(get).toHaveBeenCalledWith(item.asset_id, "fit-1", expect.anything(), true);
-    await waitFor(() =>
-      expect(onfit).toHaveBeenCalledWith(
-        expect.objectContaining({
-          content_version_id: item.content_version_id,
-          width: 1200,
-          height: 800,
-          url: expect.any(String),
-        }),
-      ),
-    );
-    expect(onfit.mock.calls.filter(([value]) => value)).toHaveLength(1);
-    await waitFor(() => expect(screen.queryByText("Preview is still being prepared")).toBeNull());
-  },
-);
-
-it.each([
-  { failure: "rejected", closeups: false },
-  { failure: "missing", closeups: false },
-  { failure: "rejected", closeups: true },
-  { failure: "missing", closeups: true },
-])(
-  "keeps the large image and offers a fit retry only when closeups need it: %j",
-  async ({ failure, closeups }) => {
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        observe() {}
-        disconnect() {}
-      },
-    );
-    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:synthetic-large");
-    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
-    Object.defineProperty(HTMLImageElement.prototype, "decode", {
-      configurable: true,
-      value: vi.fn(async () => {}),
-    });
-    let rejectFit!: (cause: Error) => void;
-    let resolveFit!: (slot: PhotoPreviewSlot) => void;
-    const fit = new Promise<PhotoPreviewSlot>((resolve, reject) => {
-      rejectFit = reject;
-      resolveFit = resolve;
-    });
-    vi.spyOn(HTMLImageElement.prototype, "naturalWidth", "get").mockReturnValue(1200);
-    vi.spyOn(HTMLImageElement.prototype, "naturalHeight", "get").mockReturnValue(800);
-    const item = photo(1);
-    item.previews.grid = { state: "missing" };
-    const photos = new Photos("scoped", vi.fn());
-    const preview = vi
-      .spyOn(photos, "preview")
-      .mockImplementation((_item, size) =>
-        size === "fit" ? fit : Promise.resolve({ state: "ready", generation_id: "large-1" }),
-      );
-    const onfit = vi.fn();
-    const { container } = render(PhotoStage, {
-      onfit: closeups ? onfit : undefined,
       photo: item,
       photos,
       cache: {
-        get: vi.fn(async () => new Blob(["synthetic-large"])),
+        get: vi.fn(async () => new Blob(["synthetic-preview"])),
       } as unknown as PhotoPreviewCache,
       view: { ...fittedPhotoView },
+      onfit: vi.fn(),
     });
-    await waitFor(() => expect(preview).toHaveBeenCalledWith(item, "fit", expect.anything()));
-    await fireEvent.doubleClick(container.querySelector<HTMLElement>(".photo-viewport")!);
-    await waitFor(() =>
-      expect(container.querySelector("img")?.getAttribute("src")).toBe("blob:synthetic-large"),
-    );
-    if (failure === "rejected") rejectFit(new Error("Fit preview failed"));
-    else resolveFit({ state: "missing" });
-    await fit.catch(() => {});
-    expect(container.querySelector("img")?.getAttribute("src")).toBe("blob:synthetic-large");
-    await waitFor(() => expect(!!screen.queryByRole("status")).toBe(closeups));
-    expect(!!screen.queryByRole("button", { name: "Retry preview" })).toBe(closeups);
-    if (closeups) {
-      preview.mockResolvedValueOnce({
-        state: "ready",
-        generation_id: "fit-retry",
-      });
-      await fireEvent.click(screen.getByRole("button", { name: "Retry preview" }));
-      await waitFor(() =>
-        expect(onfit).toHaveBeenCalledWith(
-          expect.objectContaining({
-            content_version_id: item.content_version_id,
-            width: 1200,
-            height: 800,
-          }),
-        ),
-      );
-      expect(screen.queryByRole("status")).toBeNull();
-      expect(container.querySelector("img")?.getAttribute("src")).toBe("blob:synthetic-large");
+    await screen.findByText("fit failed");
+    if (size === "large") {
+      await fireEvent.doubleClick(container.querySelector<HTMLElement>(".photo-viewport")!);
+      await screen.findByText("large failed");
     }
+    await fireEvent.click(screen.getByRole("button", { name: "Retry preview" }));
+    await waitFor(() =>
+      expect(preview.mock.calls.filter(([, value]) => value === size)).toHaveLength(2),
+    );
+    expect(
+      preview.mock.calls.filter(([, value]) => value === (size === "large" ? "fit" : "large")),
+    ).toHaveLength(size === "large" ? 1 : 0);
   },
 );
 

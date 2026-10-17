@@ -20,7 +20,7 @@
   } from "@kenn-io/kit-ui";
   import StarIcon from "@lucide/svelte/icons/star";
   import ImageIcon from "@lucide/svelte/icons/image";
-  import { hasPersonFilter, photoSearchSort } from "./photoSearch.js";
+  import { photoSearchSort } from "./photoSearch.js";
   import {
     mapPhotoLimit,
     maxComparePhotos,
@@ -580,7 +580,7 @@
   let rejectsOpen = $state(false);
   const preserve = () => grid?.preservePosition();
   function faceDecision() {
-    if (hasPersonFilter(photos.query)) void refresh();
+    void refresh();
     onfacedecision?.(photos);
   }
   export function refresh() {

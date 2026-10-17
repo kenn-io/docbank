@@ -67,7 +67,7 @@
   async function retry() {
     if (failure?.action !== "reload") {
       const active = loader;
-      if (onfit && active.fitFailure?.action === "fit") await active.retryFit();
+      if (failure === active.fitFailure && failure?.action === "fit") await active.retryFit();
       else await active.retry();
       if (!active.active.signal.aborted && !active.failure) {
         await tick();

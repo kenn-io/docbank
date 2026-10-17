@@ -42,6 +42,7 @@
   let naturalHeight = $state(0);
   const dpr = $derived(devicePixelRatio.current || 1);
   let zoom: PanZoom | undefined;
+  let panScale = $state(1);
   const geometry = $derived(
     width && height && naturalWidth && naturalHeight
       ? photoViewGeometry(naturalWidth, naturalHeight, width, height, dpr, rotation)
@@ -63,6 +64,7 @@
       const pan = toPanView(view, geometry);
       zoom.setLimits({ minScale: Math.min(0.4, pan.scale), maxScale: Math.max(8, pan.scale) });
       zoom.setView(pan);
+      panScale = pan.scale;
     }
   });
   let origin: { x: number; y: number } | undefined;
@@ -153,6 +155,7 @@
     viewport = element;
     zoom = attachPanZoom(element, element.querySelector<HTMLElement>(".pan")!, {
       onChange: (value) => {
+        panScale = value.scale;
         if (geometry && onview) onview(fromPanView(value, geometry));
       },
       onSwipe: (direction) => {
@@ -236,7 +239,7 @@
             style:width={`${box.width * 100}%`}
             style:height={`${box.height * 100}%`}
           >
-            <span>{face.label}</span>
+            <span style:transform={`scale(${1 / panScale})`}>{face.label}</span>
           </div>
         {/each}
       </div>
@@ -258,6 +261,7 @@
     box-sizing: border-box;
   }
   .face-box span {
+    transform-origin: bottom left;
     position: absolute;
     bottom: 100%;
     left: -2px;
