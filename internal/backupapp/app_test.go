@@ -2676,10 +2676,11 @@ func (s legacyMetadataSnapshot) OpenMetadata(
 	if err := s.pinned.Export(ctx, &buffer); err != nil {
 		return nil, 0, err
 	}
-	metadata := bytes.Replace(buffer.Bytes(), []byte(`"version":2`), []byte(`"version":1`), 1)
+	metadata := bytes.Replace(buffer.Bytes(), []byte(`"version":3`), []byte(`"version":1`), 1)
 	if bytes.Equal(metadata, buffer.Bytes()) {
 		return nil, 0, errors.New("legacy metadata header version was not found")
 	}
+	metadata = bytes.ReplaceAll(metadata, []byte(`,"representative_sequence":null`), nil)
 	return io.NopCloser(bytes.NewReader(metadata)), int64(len(metadata)), nil
 }
 

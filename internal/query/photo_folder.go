@@ -14,7 +14,7 @@ import (
 // SQLite drivers call this function when they derive photo_timeline.folder_key.
 // Caller-supplied references stay opaque and cannot identify import folders.
 func PhotoFolderKey(sourceKind, sourceDesc, originalPath string) (string, bool) {
-	if originalPath == "" || strings.HasPrefix(sourceKind, "embedded:") {
+	if originalPath == "" || len(sourceKind) >= len("embedded:") && strings.EqualFold(sourceKind[:len("embedded:")], "embedded:") {
 		return "", false
 	}
 	portable := strings.ReplaceAll(originalPath, `\`, "/")

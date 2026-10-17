@@ -28,6 +28,8 @@ func TestPhotoFolderKey(t *testing.T) {
 		{"push", "camera", "upload.jpg", "", false},
 		{"watch", "camera", "./upload.jpg", "", false},
 		{"embedded:archive-a", "synthetic source", "/shared/frame-0.jpg", "", false},
+		{"Embedded:agent", "synthetic source", "/shared/frame-0.jpg", "", false},
+		{"EMBEDDED:agent", "synthetic source", `C:\shared\frame-0.jpg`, "", false},
 	} {
 		key, valid := PhotoFolderKey(tc.kind, tc.desc, tc.path)
 		require.Equal(t, tc.valid, valid, "%q", tc.path)

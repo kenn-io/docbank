@@ -243,6 +243,30 @@ func TestPhotoStackTimeRules(t *testing.T) {
 
 func TestPhotoStackFoldersFollowSourceProvenance(t *testing.T) {
 	t.Parallel()
+	t.Run("restored caller references stay opaque", func(t *testing.T) {
+		s := newTestStore(t)
+		run, err := s.BeginCallerSuppliedIngest(t.Context(), "agent", "synthetic source")
+		require.NoError(t, err)
+		ids := []string{
+			stackPhoto(t, s, run, "/shared/frame-0.jpg", "2024-06-10T12:00:00Z", document.SourceMetadataPrecisionSecond),
+			stackPhoto(t, s, run, "/shared/frame-1.jpg", "2024-06-10T12:00:01Z", document.SourceMetadataPrecisionSecond),
+		}
+		require.Empty(t, stackIndexes(t, s, ids))
+		var exported bytes.Buffer
+		require.NoError(t, s.ExportMetadata(t.Context(), &exported))
+		for _, kind := range []string{"Embedded:agent", "EMBEDDED:agent"} {
+			t.Run(kind, func(t *testing.T) {
+				restored := newTestStore(t)
+				metadata := strings.ReplaceAll(exported.String(), `"embedded:agent"`, `"`+kind+`"`)
+				require.NoError(t, restored.ImportMetadata(t.Context(), strings.NewReader(metadata)))
+				require.Empty(t, stackIndexes(t, restored, ids))
+				page, err := restored.ListPhotoAssets(t.Context(), captureRequest(t, "asc"), nil)
+				require.NoError(t, err)
+				require.Empty(t, page.Stacks)
+				require.Len(t, page.Items, 1)
+			})
+		}
+	})
 	t.Run("push and watch namespaces", func(t *testing.T) {
 		s := newTestStore(t)
 		var ids []string
