@@ -3060,6 +3060,54 @@ it.each(["Keep all", "Keep selected", "Choose representative"])(
   },
 );
 
+it.each([false, true])(
+  "allows a rejected Library representative only when all frames are rejected: %s",
+  async (allRejected) => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+    const rows = [photo(1), photo(2)];
+    rows[0]!.flag = "reject";
+    rows[1]!.flag = allRejected ? "reject" : "";
+    const stack = { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-2" };
+    vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue(
+      photoPreparation(
+        rows.map((row, i) => {
+          const target = preparedPhoto(i + 1);
+          return { ...target, values: { ...target.values, flag: row.flag } };
+        }),
+      ),
+    );
+    stubPhotoFetch(async () =>
+      Response.json({ items: rows, stacks: [stack], total: 2, facets: [] }),
+    );
+    const decide = vi.spyOn(api, "decidePhotoStack");
+    const photos = new Photos("scoped", vi.fn());
+    photos.items = rows.map((row) => ({ ...row, stack }));
+    photos.total = 2;
+    photos.started = true;
+    photos.expandedStacks = new Set(["photo-1"]);
+    photos.selection = { selectedIDs: new Set(["photo-1"]), anchorID: "photo-1" };
+    vi.spyOn(photos, "resume").mockResolvedValue();
+    render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
+    const keep = await screen.findByRole("button", { name: "Keep all" });
+    await waitFor(() => expect(keep.matches(":disabled")).toBe(false));
+    const choose = screen.getByRole("button", { name: "Choose representative" });
+    expect(choose.matches(":disabled")).toBe(!allRejected);
+    if (!allRejected) {
+      await fireEvent.click(choose);
+      expect(decide).not.toHaveBeenCalled();
+    }
+    photos.dispose();
+  },
+);
+
 it("reloads a stack conflict and keeps the selection", async () => {
   vi.stubGlobal(
     "ResizeObserver",

@@ -2267,15 +2267,16 @@ CREATE TRIGGER IF NOT EXISTS photo_timeline_refresh AFTER INSERT ON photo_timeli
         COALESCE(exif_day, substr(mtime, 1, 10)),
         CASE WHEN exif_key IS NULL THEN mtime END,
         CASE WHEN exif_key IS NOT NULL AND exif_clock IS NOT NULL THEN exif_clock || (
-            WITH RECURSIVE chain(identity) AS (
-                SELECT b.provenance_identity FROM content_versions cv
+            WITH RECURSIVE chain(observed_at, identity) AS (
+                SELECT b.observed_at, b.provenance_identity FROM content_versions cv
                 JOIN provenance_version_bindings b ON b.content_version_id = cv.version_id
                 WHERE cv.node_id = x.node_id AND cv.blob_hash = x.blob_hash
-                UNION SELECT p.identity FROM chain JOIN provenance p ON p.supersedes = chain.identity)
-            SELECT CASE WHEN COUNT(DISTINCT folder) = 1 THEN MIN(folder) END FROM (
-                SELECT docbank_photo_folder_v1(i.source_kind, i.source_desc, c.original_path) AS folder
-                FROM chain JOIN provenance c ON c.identity = chain.identity JOIN ingests i ON i.id = c.ingest_id
-                WHERE NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes = c.identity)))
+                UNION SELECT chain.observed_at, p.identity FROM chain JOIN provenance p ON p.supersedes = chain.identity)
+            SELECT docbank_photo_folder_v1(i.source_kind, i.source_desc, c.original_path)
+            FROM chain JOIN provenance c ON c.identity = chain.identity JOIN ingests i ON i.id = c.ingest_id
+            WHERE NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes = c.identity)
+              AND docbank_photo_folder_v1(i.source_kind, i.source_desc, c.original_path) IS NOT NULL
+            ORDER BY chain.observed_at ASC, c.identity ASC LIMIT 1)
         END
     FROM (
         SELECT f.file_id, f.node_id, v.blob_hash,

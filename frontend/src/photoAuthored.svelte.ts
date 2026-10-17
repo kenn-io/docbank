@@ -13,6 +13,19 @@ export class PhotoAuthoredEditor {
   /** Stack members outside targets, prepared so one stack decision checks every member. */
   stackTargets = $state<(api.PhotoPreparedTarget & api.PhotoAuthoredEditTarget)[]>([]);
   stackLoading = $state(false);
+  canChooseStackRepresentative(assetID: string) {
+    const rejected = new Set(
+      this.stackTargets
+        .filter((target) => target.values.flag === "reject")
+        .map((target) => target.asset_id),
+    );
+    for (const target of this.stackTargets)
+      if (target.values.flag === "pick") rejected.delete(target.asset_id);
+    return (
+      this.stackTargets.some((target) => target.asset_id === assetID) &&
+      (!rejected.has(assetID) || this.stackTargets.every((target) => rejected.has(target.asset_id)))
+    );
+  }
   tags = $state<api.Tag[]>([]);
   tagsError = $state("");
   tagsLoading = $state(false);
@@ -557,6 +570,11 @@ export class PhotoAuthoredEditor {
       return false;
     }
     const targets = this.stackTargets;
+    if (
+      request.decision === "representative" &&
+      !this.canChooseStackRepresentative(request.current_id)
+    )
+      return false;
     if (request.asset_ids.some((id) => !targets.some((target) => target.asset_id === id))) {
       this.unavailable();
       return false;

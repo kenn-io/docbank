@@ -1340,7 +1340,8 @@
                         editor.busy ||
                         editor.loading ||
                         editor.stackLoading ||
-                        editor.conflict}
+                        editor.conflict ||
+                        !editor.canChooseStackRepresentative([...photos.selectedIDs][0]!)}
                       onclick={() => void decideStack("representative")}
                       >Choose representative</Button
                     >{/if}

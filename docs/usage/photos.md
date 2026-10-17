@@ -704,7 +704,7 @@ Map uses album membership when opened from an album. Otherwise it inherits Libra
 With capture-time or relevance sorting, Library groups adjacent photos from one import folder with matching camera make and model into a stack: one tile with a frame count. Each step between frames must be within the vault's **Burst gap (seconds)**, initially 2 and adjustable from 1 to 30. A stack can last longer than the gap. Photos from other folders or with a different camera make or model don't split it.
 
 - A stack holds only photos in the current search and filters. Frames that the query excludes stay out of the tile and out of its decisions.
-- A photo joins a stack only when its displayed file has an EXIF capture time to the second or finer and its current import records name one folder. Photos with only a date or minute, photos placed by file time, photos whose folder is unknown or ambiguous, and videos stay separate. Push and watch sources keep their folders apart.
+- A photo joins a stack only when its displayed file has an EXIF capture time to the second or finer and an active import record names a folder. Re-importing keeps the earliest known active folder. Photos with only a date or minute, photos placed by file time, photos whose folder is unknown, and videos stay separate. Push and watch sources keep their folders apart.
 - Camera make and model comparisons ignore case. For each field, two missing values match; a missing value and a known value stay separate. Separate camera bodies with the same make and model can still join one stack.
 - Capture times with a zone or UTC offset compare as instants. Times without a zone compare only with each other.
 - A stack holds at most 500 frames. A connected run of more than 500 frames or 2,000 live non-sidecar files shows as individual photos.
@@ -714,13 +714,13 @@ Capture-time Library pages stay live. A page finishes its last stack, so it can 
 
 If a burst gains or loses matching frames across a page boundary, including after a camera metadata change, Library asks you to retry. Retry starts a fresh result so every matching frame stays with its stack.
 
-Selecting a collapsed tile selects all its frames. Click the count to expand or collapse it; expanded frames can be selected separately. The tile shows the stack's representative: the frame most recently chosen with **Choose representative**, else the only picked frame, else the first frame. A pick on a RAW or JPEG companion counts as a pick for its frame. When a wider gap joins stacks that each have a chosen representative, the most recent choice wins.
+Selecting a collapsed tile selects all its frames. Click the count to expand or collapse it; expanded frames can be selected separately. The tile shows the most recently chosen eligible representative, else the first picked frame, else the first non-rejected frame, else the first frame. A rejected frame is eligible only when every frame is rejected. A pick on a RAW or JPEG companion counts as a pick for its frame. When a wider gap joins stacks that each have a chosen representative, the most recent eligible choice wins.
 
 With a stack selected, the selection dock offers these decisions:
 
 - **Keep all** picks every file in the stack, including rejects.
 - **Keep selected** picks the selected frames and rejects other undecided frames.
-- **Choose representative**, with one expanded frame selected, shows that frame on the tile. It leaves every frame's pick and reject flags unchanged and stores the choice separately.
+- **Choose representative**, with one eligible expanded frame selected, shows that frame on the tile. It leaves every frame's pick and reject flags unchanged and stores the choice separately.
 
 A frame is undecided when none of its files has a flag. Automatic rejects leave flagged frames unchanged.
 
@@ -747,7 +747,7 @@ With auto-advance on, P, X, and U move to the next photo; 0-5 change the rating 
 | ? | Show the key map |
 | Esc | Leave cull mode |
 
-Cull freezes ordered photo IDs from any query sort and recomputes stacks on start, resume, and a gap change. Groups and their frames retain the captured request order. A stack holds only photos in the run, even when photos from other folders fall between its frames. **H** and **L** visit each stack's first frame in the current pass; **J** and **K** move between its frames in pass order. Lone photos count as stacks of one. Regrouping keeps the latest order and progress, even after the snapshot expires. Navigation stays available while groups load; decisions wait. If regrouping fails, choose **Retry stacks**. If preparing a stack fails, choose **Retry**. A refused stack decision reloads grouping for all frozen IDs. Cull offers **Keep current (Return)**, **Keep all**, and **Choose representative**. A decision covers the whole live stack, including frames outside the current pass.
+Cull freezes ordered photo IDs from any query sort. It uses the same import-folder, camera, and capture-time rules as Library and recomputes stacks on start, resume, and a gap change. Groups and their frames retain the captured request order. A stack holds only photos in the run, even when photos from other folders fall between its frames. **H** and **L** visit each stack's first frame in the current pass; **J** and **K** move between its frames in pass order. Lone photos count as stacks of one. Regrouping keeps the latest order and progress, even after the snapshot expires. Navigation stays available while groups load; decisions wait. If regrouping fails, choose **Retry stacks**. If preparing a stack fails, choose **Retry**. A refused stack decision reloads grouping for all frozen IDs. Cull offers **Keep current (Return)**, **Keep all**, and **Choose representative**. A decision covers the whole live stack, including frames outside the current pass.
 
 Use **Skip** to record a skipped photo. The decision toast offers **Undo**. Ctrl, Cmd, and Alt shortcuts pause during cull. Apply or clear pending metadata edits before entering, moving, or leaving.
 

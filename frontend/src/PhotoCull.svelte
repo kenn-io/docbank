@@ -542,7 +542,8 @@
                 cull.stackLoading ||
                 !!cull.stackError ||
                 editor.stackLoading ||
-                cull.stale}
+                cull.stale ||
+                !editor.canChooseStackRepresentative(currentID ?? "")}
               onclick={() => void decideStack("representative")}>Choose representative</Button
             >
           {/if}

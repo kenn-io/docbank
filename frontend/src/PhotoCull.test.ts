@@ -1057,6 +1057,38 @@ it("decides the whole saved stack from a later pass", async () => {
   expect(group).not.toHaveBeenCalled();
 });
 
+it.each([false, true])(
+  "allows a rejected Cull representative only when all frames are rejected: %s",
+  async (allRejected) => {
+    const rows = [photo(1), photo(2)];
+    rows[0]!.flag = "reject";
+    rows[1]!.flag = allRejected ? "reject" : "";
+    vi.mocked(api.preparePhotoAuthored).mockImplementation(async (scope) =>
+      photoPreparation(
+        (scope.asset_ids ?? []).map((id) => {
+          const target = preparedPhoto(Number(id.slice(6)));
+          return {
+            ...target,
+            values: { ...target.values, flag: rows.find((row) => row.asset_id === id)!.flag },
+          };
+        }),
+      ),
+    );
+    const decide = vi.spyOn(api, "decidePhotoStack");
+    const { cull } = await reviewPhoto(rows[0]);
+    await act(() => {
+      cull.run = { ...cull.run!, ids: ["photo-1", "photo-2"], groups: [["photo-1", "photo-2"]] };
+    });
+    await readyButton("Keep all");
+    const choose = await screen.findByRole("button", { name: "Choose representative" });
+    expect(choose.matches(":disabled")).toBe(!allRejected);
+    if (!allRejected) {
+      await fireEvent.click(choose);
+      expect(decide).not.toHaveBeenCalled();
+    }
+  },
+);
+
 it.each(["decision", "representative", "unchanged"])(
   "decides consecutive stacks after a successful %s",
   async (first) => {

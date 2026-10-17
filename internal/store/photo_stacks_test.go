@@ -308,12 +308,12 @@ func TestPhotoStackFoldersFollowSourceProvenance(t *testing.T) {
 		node = revertTo(t, s, node.ID, original)
 		require.Equal(t, browseHash("/A/two.jpg"), node.BlobHash)
 		require.Equal(t, [][]int{{0, 1}}, stackIndexes(t, s, ids))
-		// A second current claim from another folder makes the frame's folder ambiguous.
+		// A later current claim keeps the earliest known import folder.
 		node, err = s.NodeByID(t.Context(), node.ID)
 		require.NoError(t, err)
 		_, _, err = s.ReplaceContentForIngest(t.Context(), other, node.ID, node.Revision, node.BlobHash, 20, "image/jpeg", "/C/two.jpg", "")
 		require.NoError(t, err)
-		require.Equal(t, [][]int{}, stackIndexes(t, s, ids))
+		require.Equal(t, [][]int{{0, 1}}, stackIndexes(t, s, ids))
 	})
 }
 
@@ -797,13 +797,44 @@ func TestPhotoStackRepresentativeFallback(t *testing.T) {
 		{"explicit choice rejected", []photoStackFrame{{AssetID: "a", Rank: 2, Rejected: true}, {AssetID: "b", Picked: true}}, "b"},
 		{"earlier explicit choice", []photoStackFrame{{AssetID: "a", Rank: 1}, {AssetID: "b", Rank: 2, Rejected: true}, {AssetID: "c", Picked: true}}, "a"},
 		{"first non-rejected", []photoStackFrame{{AssetID: "a", Rejected: true}, {AssetID: "b"}}, "b"},
-		{"all rejected", []photoStackFrame{{AssetID: "a", Rejected: true}, {AssetID: "b", Rank: 1, Rejected: true}}, "a"},
+		{"all rejected with choice", []photoStackFrame{{AssetID: "a", Rank: 1, Rejected: true}, {AssetID: "b", Rank: 2, Rejected: true}}, "b"},
+		{"all rejected without choice", []photoStackFrame{{AssetID: "a", Rejected: true}, {AssetID: "b", Rejected: true}}, "a"},
 		{"choice restored after un-reject", []photoStackFrame{{AssetID: "a", Rank: 2}, {AssetID: "b", Picked: true}}, "a"},
 		{"picked companion keeps choice eligible", []photoStackFrame{{AssetID: "a", Rank: 2, Picked: true, Rejected: true}, {AssetID: "b", Picked: true}}, "a"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Equal(t, tc.want, newPhotoStack(tc.frames).RepresentativeID)
 		})
+	}
+}
+
+func TestPhotoStackRejectedRepresentativeEligibility(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ids := burstPhotos(t, s, 2)
+	reject := func(ids []string) {
+		_, err := s.EditPhotoAuthoredBatch(t.Context(), PhotoAuthoredBatch{Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets}), Patch: PhotoAuthoredPatch{Flag: new("reject")}})
+		require.NoError(t, err)
+	}
+	choose := func() (PhotoAuthoredReceipt, error) {
+		return s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets}), Decision: "representative", CurrentID: ids[1]})
+	}
+	reject(ids[1:])
+	var before, after bytes.Buffer
+	require.NoError(t, s.ExportMetadata(t.Context(), &before))
+	_, err := choose()
+	require.ErrorIs(t, err, ErrInvalidPhotoAsset)
+	require.NoError(t, s.ExportMetadata(t.Context(), &after))
+	require.Equal(t, before.String(), after.String(), "a refused choice must leave metadata unchanged")
+	reject(ids[:1])
+	receipt, err := choose()
+	require.NoError(t, err)
+	require.Len(t, receipt.Representatives, 1)
+	page, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Stacks: true, Query: captureRequest(t, "asc").Query}, nil)
+	require.NoError(t, err)
+	require.Equal(t, ids[1], page.Stacks[0].RepresentativeID)
+	for _, row := range page.Items {
+		require.Equal(t, "reject", row.Flag)
 	}
 }
 

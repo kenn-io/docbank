@@ -109,11 +109,13 @@ func eligiblePhotoStack(frames []photoStackFrame) bool {
 	return len(frames) >= 2 && len(frames) <= MaxPhotoStackFrames && files <= MaxPhotoStackTargets
 }
 
-// newPhotoStack chooses the latest non-rejected explicit choice, else the first
+// newPhotoStack chooses the latest eligible explicit choice, else the first
 // picked frame, else the first non-rejected frame, else the first frame.
+// Every frame is eligible when all frames are rejected.
 func newPhotoStack(group []photoStackFrame) PhotoStack {
 	stack := PhotoStack{AssetIDs: make([]string, len(group))}
 	var chosen, picked, available *photoStackFrame
+	allRejected := !slices.ContainsFunc(group, func(frame photoStackFrame) bool { return !frame.Rejected || frame.Picked })
 	for i := range group {
 		frame := &group[i]
 		stack.AssetIDs[i] = frame.AssetID
@@ -121,7 +123,7 @@ func newPhotoStack(group []photoStackFrame) PhotoStack {
 		if !rejected && available == nil {
 			available = frame
 		}
-		if frame.Rank > 0 && !rejected {
+		if frame.Rank > 0 && (!rejected || allRejected) {
 			if chosen == nil || frame.Rank > chosen.Rank {
 				chosen = frame
 			}
@@ -383,15 +385,24 @@ func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision
 				}
 			}
 		}
-		if request.Decision == "representative" {
-			result, err = s.choosePhotoRepresentativeTx(ctx, tx, found[request.CurrentID])
-			return err
-		}
-		flagged := map[string]bool{}
+		flagged, picked, rejected := map[string]bool{}, map[string]bool{}, map[string]bool{}
 		for _, target := range preparation.Targets {
 			if target.Values.Flag != "" {
 				flagged[target.AssetID] = true
 			}
+			if target.Values.Flag == "pick" {
+				picked[target.AssetID] = true
+			}
+			if target.Values.Flag == "reject" {
+				rejected[target.AssetID] = true
+			}
+		}
+		if request.Decision == "representative" {
+			if rejected[request.CurrentID] && !picked[request.CurrentID] && slices.ContainsFunc(request.AssetIDs, func(id string) bool { return !rejected[id] || picked[id] }) {
+				return fmt.Errorf("%w: a rejected frame cannot represent a stack with non-rejected frames", ErrInvalidPhotoAsset)
+			}
+			result, err = s.choosePhotoRepresentativeTx(ctx, tx, found[request.CurrentID])
+			return err
 		}
 		chosen := []string{request.CurrentID}
 		switch request.Decision {
@@ -412,7 +423,18 @@ func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision
 			}
 			targets = append(targets, PhotoAuthoredTarget{FileID: target.FileID, Revision: target.Revision, Patch: PhotoAuthoredPatch{Flag: new(flag)}})
 		}
-		result, err = s.applyPhotoAuthoredValuesTx(ctx, tx, targets, photoAuthoredApply{persist: true})
+		rows, err := loadPhotoAuthoredBatchRowsTx(ctx, tx, request.Targets)
+		if err != nil {
+			return err
+		}
+		// Membership, hidden access, and every revision were checked above.
+		loaded := make(map[string]photoAuthoredLoaded, len(rows.files))
+		for id, file := range rows.files {
+			if node, ok := rows.nodes[file.NodeID]; ok {
+				loaded[id] = photoAuthoredLoaded{file, node}
+			}
+		}
+		result, err = s.applyPhotoAuthoredValuesTx(ctx, tx, targets, photoAuthoredApply{persist: true, loaded: loaded})
 		return err
 	})
 	if err != nil {
