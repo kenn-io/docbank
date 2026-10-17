@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"github.com/stretchr/testify/require"
+	"strings"
 	"testing"
 	"time"
 )
@@ -162,9 +163,13 @@ func TestPhotoEventsPollCursors(t *testing.T) {
 	require.NoError(t, err)
 	cursor := func(viewer context.Context) string {
 		t.Helper()
+		state, err := s.PhotoHiddenState(viewer)
+		require.NoError(t, err)
 		value, err := s.PhotoChangeCursor(viewer)
 		require.NoError(t, err)
-		return value
+		require.Equal(t, value, state.ChangeCursor)
+		require.Equal(t, state.ExpiresAt != nil, strings.Contains(state.ChangeCursor, ":hidden:"))
+		return state.ChangeCursor
 	}
 	write := func() {
 		t.Helper()

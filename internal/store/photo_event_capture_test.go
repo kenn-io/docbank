@@ -144,3 +144,44 @@ func TestPhotoEventsSharedSourceOverflow(t *testing.T) {
 		})
 	}
 }
+
+// Every photo table must either invalidate a viewer or have an explicit reason
+// to stay quiet. Read installed triggers so a missing rule fails at the schema boundary.
+func TestPhotoEventsSchemaCoverage(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	_, stop := s.SubscribePhotoEvents()
+	defer stop()
+	quiet := map[string]string{
+		"photo_metadata_fts":             "derived technical metadata search index",
+		"photo_authored_fts":             "derived authored metadata search index",
+		"photo_technical_metadata_state": "worker attempts do not change published metadata",
+		"photo_timeline":                 "derived browse index",
+		"photo_timeline_pending":         "index work queue",
+		"photo_sidecar_considered":       "sidecar discovery bookkeeping",
+		"photo_change_receipts":          "write history rather than current photo state",
+		"photo_hidden_lockout":           "access polling owns lockout state",
+		"photo_hidden_failures":          "failed passcode attempts do not change photo state",
+	}
+	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, `SELECT name, EXISTS(SELECT 1 FROM temp.sqlite_schema capture WHERE capture.type='trigger' AND capture.tbl_name=main.name AND capture.name LIKE 'photo_events_%') FROM pragma_table_list main WHERE schema='main' AND type IN ('table','virtual') AND substr(name,1,6)='photo_'`)
+		if err != nil {
+			return err
+		}
+		defer func() { require.NoError(t, rows.Close()) }()
+		for rows.Next() {
+			var table string
+			var captured bool
+			require.NoError(t, rows.Scan(&table, &captured))
+			if reason, excluded := quiet[table]; excluded {
+				require.False(t, captured, "%s stays quiet: %s", table, reason)
+				delete(quiet, table)
+			} else {
+				require.True(t, captured, "%s needs photo change capture or an explicit quiet classification", table)
+			}
+		}
+		return rows.Err()
+	}))
+	require.Empty(t, quiet, "quiet classifications must refer to current schema tables")
+}

@@ -93,6 +93,7 @@
     return action("lock");
   }
   let workspaceVisible = $state(false);
+  let rechecking = $state(false);
   let concealment = 0;
   let passcode = $state("");
   let currentPasscode = $state("");
@@ -138,13 +139,13 @@
     else void checkAccess();
   }
   async function applyState(result: PhotoHiddenState, signal: AbortSignal, requestedAt: number) {
+    const membershipChanged = workspaceVisible && result.change_id !== hiddenState.change_id;
     onstate?.(result);
     if (
       workspace &&
       (result.configured !== hiddenState.configured || result.expires_at !== hiddenState.expires_at)
     )
       clear();
-    else if (workspace && result.change_id !== hiddenState.change_id) void conceal();
     readError = "";
     lockoutError = "";
     hiddenState = result;
@@ -180,6 +181,19 @@
       )
         return;
       workspaceVisible = true;
+    }
+    if (membershipChanged && workspaceVisible && photoWorkspace && workspace) {
+      const current = workspace;
+      const version = concealment;
+      rechecking = true;
+      try {
+        await current.cache.dispose();
+        if (signal.aborted || disposed || version !== concealment) return;
+        current.cache = new PhotoPreviewCache(access.session, authorizationLost, true);
+        if (!(await photoWorkspace.refresh({ assets: new Map(), refetch: true }))) await conceal();
+      } finally {
+        rechecking = false;
+      }
     }
   }
   async function checkAccess(live = false) {
@@ -398,6 +412,7 @@
         photos={current.photos}
         cache={current.cache}
         title="Hidden"
+        concealed={rechecking}
         {onexport}
         {photoID}
         {onphotochange}

@@ -137,6 +137,7 @@ func (s *Store) hiddenSession(ctx context.Context, q metadataQuerier) (time.Time
 
 func (s *Store) PhotoHiddenState(ctx context.Context) (PhotoHiddenState, error) {
 	var state PhotoHiddenState
+	var unlocked bool
 	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
 		if err := tx.QueryRowContext(ctx, `SELECT receipt_id FROM photo_change_receipts WHERE rowid IN (SELECT MAX(rowid) FROM photo_change_receipts WHERE operation='hide' UNION ALL SELECT MAX(rowid) FROM photo_change_receipts WHERE operation='unhide') ORDER BY rowid DESC LIMIT 1`).Scan(&state.ChangeID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
@@ -161,6 +162,7 @@ func (s *Store) PhotoHiddenState(ctx context.Context) (PhotoHiddenState, error) 
 		}
 		expiry, err := s.hiddenSession(ctx, tx)
 		if err == nil {
+			unlocked = true
 			state.ExpiresAt = new(expiry.Format(timestampLayout))
 			state.ExpiresIn = hiddenSecondsUntil(s.hiddenNow(), expiry)
 		} else if !errors.Is(err, ErrHiddenLocked) {
@@ -168,6 +170,9 @@ func (s *Store) PhotoHiddenState(ctx context.Context) (PhotoHiddenState, error) 
 		}
 		return nil
 	})
+	if err == nil {
+		state.ChangeCursor = s.photoChangeCursor(unlocked)
+	}
 	return state, err
 }
 

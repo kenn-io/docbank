@@ -784,39 +784,41 @@ it.each(["unchanged", "asset", "file", "node", "membership"])(
   },
 );
 
-it.each(["initial", "follow-up"])(
-  "reloads retained IDs after failed %s preparation",
-  async (failure) => {
-    const editor = new PhotoAuthoredEditor("session", vi.fn());
-    const scope = { asset_ids: ["asset"] };
-    const prepare = vi.spyOn(api, "preparePhotoAuthored");
-    let finish!: () => void;
-    if (failure === "follow-up")
-      prepare.mockImplementationOnce(async () => {
-        await new Promise<void>((resolve) => (finish = resolve));
-        return { assets: [asset], targets };
-      });
-    prepare
-      .mockRejectedValueOnce(new Error("Metadata unavailable"))
-      .mockResolvedValue({ assets: [asset], targets });
-    const pending = editor.prepare(scope);
-    if (failure === "follow-up") {
-      editor.changedElsewhere({ assets: new Map(), refetch: true });
-      const reconciled = editor.reconcile(scope);
-      finish();
-      await pending;
-      await reconciled;
-    } else await pending;
-    expect(editor.error).toBe("Metadata unavailable");
-    expect(editor.canReload).toBe(true);
-    ui(editor);
-    expect(
-      screen.getByRole<HTMLButtonElement>("button", { name: "Reload metadata" }).disabled,
-    ).toBe(false);
-    await fireEvent.click(screen.getByRole("button", { name: "Reload metadata" }));
-    expect(prepare.mock.calls.at(-1)![0]).toMatchObject(scope);
-    expect(editor.targets).toEqual(targets);
-    expect(editor.conflict).toBe(false);
-    editor.dispose();
-  },
-);
+it.each([
+  { failure: "initial", query: false },
+  { failure: "follow-up", query: false },
+  { failure: "initial", query: true },
+])("reloads retained scope after failed preparation, %j", async ({ failure, query }) => {
+  const editor = new PhotoAuthoredEditor("session", vi.fn());
+  const scope = query ? { query: { text: "photo" } } : { asset_ids: ["asset"] };
+  const prepare = vi.spyOn(api, "preparePhotoAuthored");
+  let finish!: () => void;
+  if (failure === "follow-up")
+    prepare.mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => (finish = resolve));
+      return { assets: [asset], targets };
+    });
+  prepare
+    .mockRejectedValueOnce(new Error("Metadata unavailable"))
+    .mockResolvedValue({ assets: [asset], targets });
+  const pending = editor.prepare(scope);
+  if (failure === "follow-up") {
+    editor.changedElsewhere({ assets: new Map(), refetch: true });
+    const reconciled = editor.reconcile(scope);
+    finish();
+    await pending;
+    await reconciled;
+  } else await pending;
+  expect(editor.error).toBe("Metadata unavailable");
+  expect(editor.canReload).toBe(true);
+  ui(editor);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Reload metadata" }).disabled).toBe(
+    false,
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Reload metadata" }));
+  expect(prepare.mock.calls.at(-1)![0]).toMatchObject(scope);
+  expect(editor.targets).toEqual(targets);
+  if (query) await fireEvent.click(screen.getByRole("button", { name: "Use reviewed members" }));
+  expect(editor.conflict).toBe(false);
+  editor.dispose();
+});

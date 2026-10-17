@@ -78,6 +78,10 @@ func (s *Store) PhotoChangeCursor(ctx context.Context) (string, error) {
 	if err != nil && !errors.Is(err, ErrHiddenLocked) && !errors.Is(err, ErrHiddenNotConfigured) {
 		return "", err
 	}
+	return s.photoChangeCursor(unlocked), nil
+}
+
+func (s *Store) photoChangeCursor(unlocked bool) string {
 	f := &s.photoEvents
 	f.Lock()
 	defer f.Unlock()
@@ -92,9 +96,9 @@ func (s *Store) PhotoChangeCursor(ctx context.Context) (string, error) {
 	}
 	f.pollUntil = now.Add(30 * time.Second)
 	if unlocked {
-		return fmt.Sprintf("%s:hidden:%d", f.cursorID, f.hiddenCursor), nil
+		return fmt.Sprintf("%s:hidden:%d", f.cursorID, f.hiddenCursor)
 	}
-	return fmt.Sprintf("%s:visible:%d", f.cursorID, f.visibleCursor), nil
+	return fmt.Sprintf("%s:visible:%d", f.cursorID, f.visibleCursor)
 }
 
 func (s *Store) hasActivePhotoHiddenSession() bool {

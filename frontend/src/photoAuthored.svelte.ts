@@ -426,7 +426,7 @@ export class PhotoAuthoredEditor {
         });
     } catch (cause) {
       if (!signal.aborted) {
-        if (compare || reload || followup || scope.asset_ids?.length) {
+        if (compare || reload || followup || scope.query || scope.asset_ids?.length) {
           this.conflict = true;
           this.failedComparison = change;
         }

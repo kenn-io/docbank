@@ -3494,9 +3494,14 @@ it("forwards the Hidden view access poll cursor", async () => {
   });
 });
 
-it.each([false, true])(
-  "conceals and clears an externally hidden open photo, map=%s",
-  async (mapMode) => {
+it.each([
+  { mapMode: false, hidden: false, unchanged: false },
+  { mapMode: true, hidden: false, unchanged: false },
+  { mapMode: false, hidden: true, unchanged: false },
+  { mapMode: false, hidden: true, unchanged: true },
+])(
+  "rechecks an open photo after membership changes, %j",
+  async ({ mapMode, hidden, unchanged }) => {
     // Vitest omits component styles; use the compiled CSS to check concealment.
     const style = document.createElement("style");
     style.dataset.photoWorkspace = "";
@@ -3507,7 +3512,7 @@ it.each([false, true])(
     history.replaceState(
       null,
       "",
-      `${mapMode ? "/photos/map" : "/photos"}#web_session=synthetic&web_upload_secret=proof${mapMode ? "" : "&photo=photo-1"}`,
+      `${hidden ? "/photos/hidden" : mapMode ? "/photos/map" : "/photos"}#web_session=synthetic&web_upload_secret=proof${mapMode ? "" : "&photo=photo-1"}`,
     );
     if (mapMode) {
       const meta = document.createElement("meta");
@@ -3551,16 +3556,22 @@ it.each([false, true])(
     item.camera_model = "Synthetic camera";
     item.previews.fit = { state: "ready", generation_id: "fit" };
     vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
-      if (changed && url.endsWith("/photos/authored/prepare"))
+      if (changed && !unchanged && url.endsWith("/photos/authored/prepare"))
         return Response.json({ detail: "Photo unavailable" }, { status: 404 });
       const metadata = photoMetadataResponse(url, init);
       if (metadata) return metadata;
       if (url.endsWith("/photos/hidden"))
-        return Response.json({ configured: true, change_id: changed ? "second" : "first" });
+        return Response.json({
+          configured: true,
+          change_id: changed ? "second" : "first",
+          ...(hidden ? { expires_at: "2099-01-01T00:00:00Z", expires_in: 300 } : {}),
+        });
       if (url.endsWith("/assets/query")) {
         const input = JSON.parse(String(init.body));
+        if (changed && unchanged && !finish && !input.facets?.length)
+          return new Promise<Response>((resolve) => (finish = resolve));
         if (input.query.filters.asset_ids) {
-          if (changed) {
+          if (changed && !unchanged) {
             if (input.page_size !== 1) return Response.json({ items: [], map_items: [], total: 0 });
             return new Promise<Response>((resolve) => {
               finish = resolve;
@@ -3569,7 +3580,7 @@ it.each([false, true])(
           return Response.json({ items: [item], total: 1 });
         }
         return Response.json({
-          items: changed ? [] : [item],
+          items: changed && !unchanged ? [] : [item],
           map_items: changed ? [] : [mapPhoto(1)],
           total: changed ? 0 : 1,
         });
@@ -3589,13 +3600,24 @@ it.each([false, true])(
     await fireEvent.click(screen.getByRole("button", { name: "View original" }));
     await screen.findByText("Original");
     const originalURL = screen.getByAltText("Photo 1.jpg").getAttribute("src");
-    await fireEvent.click(screen.getByRole("button", { name: "Metadata", exact: true }));
+    await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
     await screen.findByText("Synthetic camera");
+    const viewport = document.querySelector<HTMLElement>(".photo-viewport")!;
+    await fireEvent.doubleClick(viewport);
+    await waitFor(() => expect(viewport.dataset.zoomed).toBeDefined());
     changed = true;
     await fireEvent(document, new Event("visibilitychange"));
     await waitFor(() => expect(finish).toBeTypeOf("function"));
     expect(screen.queryByRole("dialog", { name: /Photo viewer/ })).toBeNull();
-    finish(Response.json({ items: [], total: 0 }));
+    finish(Response.json({ items: unchanged ? [item] : [], total: unchanged ? 1 : 0 }));
+    if (unchanged) {
+      await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+      expect(screen.getByText("Original")).toBeTruthy();
+      expect(document.querySelector(".photo-viewport")).toBe(viewport);
+      expect(viewport.dataset.zoomed).toBeDefined();
+      expect(revoke).not.toHaveBeenCalledWith(originalURL);
+      return;
+    }
     await waitFor(() => expect(revoke).toHaveBeenCalledWith(originalURL));
     await waitFor(() => expect(screen.queryByAltText("Photo 1.jpg")).toBeNull());
     expect(screen.queryByRole("dialog", { name: "Photo viewer, Photo 1.jpg" })).toBeNull();
