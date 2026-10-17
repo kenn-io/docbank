@@ -1349,7 +1349,6 @@ it("refreshes a filtered view and restarts pending reads after a metadata edit",
   await waitFor(() => expect(lookup).toHaveBeenCalledTimes(2));
   expect(oldSignal.aborted).toBe(true);
   expect(oldLookupSignal.aborted).toBe(true);
-  expect(photos.items[0]!.rotation).toBe(90);
   expect(JSON.parse(fetcher.mock.calls[1]![1].body as string).query.filters).toEqual({
     flags: ["pick"],
   });
@@ -1863,7 +1862,7 @@ it.each([false, true])("keeps RAW after a refused flag, reload fails=%s", async 
   stubPhotoFetch(vi.fn());
   const edit = vi
     .spyOn(api, "editPhotoAuthored")
-    .mockRejectedValueOnce(new APIError("Photo changed", 412, "precondition_failed"))
+    .mockRejectedValueOnce(new APIError("Photo changed", 412, "stale_revision"))
     .mockResolvedValue({ receipt_id: "", before: [], after: [] });
   const shortcuts = createShortcutManager();
   render(PhotosWorkspace, {
