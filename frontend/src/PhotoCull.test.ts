@@ -775,9 +775,11 @@ it("keeps a failed decision on screen and guards exit while its draft remains", 
   await fireEvent.click(screen.getByRole("button", { name: "Pick (P)" }));
   await screen.findByText("Decision failed");
   await fireEvent.keyDown(document.querySelector(".photo-cull")!, { key: "Escape" });
-  expect(screen.getByRole("alert").textContent).toContain(
-    "Apply or clear your metadata edits before changing photos.",
-  );
+  expect(
+    screen
+      .getByText("Apply or clear your metadata edits before changing photos.")
+      .getAttribute("role"),
+  ).toBe("alert");
   expect(cull.currentID).toBe("photo-1");
   await fireEvent.click(screen.getByRole("button", { name: "Exit cull" }));
   expect(onclose).not.toHaveBeenCalled();
