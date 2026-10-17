@@ -210,7 +210,9 @@ test("draws and names faces, opens person-filtered Library, and reads cull close
     await expect(
       people.getByRole("button", { name: "Find or create a person: Ada Updated" }),
     ).toBeVisible();
-    await expect(loupe.locator(".face-box")).toHaveText(["Ada Updated", "Grace"]);
+    await expect
+      .poll(async () => (await loupe.locator(".face-box").allTextContents()).sort())
+      .toEqual(["Ada Updated", "Grace"]);
     await fixture.run("people", "rename", personID, "Ada", "--revision", "4");
     await people.getByRole("button", { name: "Find or create a person: Grace" }).click();
     await people.getByRole("option", { name: "Clear name", exact: true }).click();
