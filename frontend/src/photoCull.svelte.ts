@@ -30,10 +30,9 @@ export class PhotoCull {
   async probe() {
     try {
       this.saved = !!(await this.storage.saved());
-      this.error = "";
     } catch (cause) {
       this.saved = false;
-      this.error = failure(cause);
+      if (cause instanceof CullFormatError) this.error = failure(cause);
     }
   }
   // nextPass snapshots the checkpoint revision, so no other update may bump it until the pass is saved.

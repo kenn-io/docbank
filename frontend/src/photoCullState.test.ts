@@ -3,7 +3,7 @@ import { snapshotEnvelope } from "./snapshot-test-fixtures.js";
 import { PhotoCull } from "./photoCull.svelte.js";
 import { APIError } from "./api-transport.js";
 import * as photoQueries from "./photos.svelte.js";
-import { photoCullStorage, type CullRun } from "./photoCullStorage.js";
+import { CullFormatError, photoCullStorage, type CullRun } from "./photoCullStorage.js";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import * as api from "./generated/docbank.js";
 import { parseQuery } from "./query.js";
@@ -500,6 +500,26 @@ it("keeps automatic storage probes quiet and reports explicit failures", async (
   expect(cull.error).toBe("");
   expect(await cull.restore()).toBe(false);
   expect(cull.error).toBe("Storage unavailable");
+  await cull.probe();
+  expect(cull.error).toBe("Storage unavailable");
+  vi.mocked(store.saved).mockResolvedValue(undefined);
+  await cull.probe();
+  expect(cull.error).toBe("Storage unavailable");
+  vi.mocked(store.saved).mockRejectedValue(
+    new CullFormatError({
+      runID: "saved-run",
+      revision: 0,
+      position: 0,
+      scope: "all",
+      autoAdvance: true,
+      formatVersion: 2,
+    }),
+  );
+  await cull.probe();
+  expect(cull.saved).toBe(false);
+  expect(cull.error).toBe(
+    "Saved cull progress uses an unsupported format. Update Docbank to resume it.",
+  );
 });
 
 it("keeps the newer remainder result when an older flag read finishes", async () => {
