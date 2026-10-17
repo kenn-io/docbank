@@ -88,24 +88,14 @@
     return cancelNavigation;
   });
 
-  let inspectionKey = "";
-  let inspectedDay = "";
   $effect(() => {
-    const key = `${session}:${displayedSource.key}`;
-    if (key !== inspectionKey) {
-      inspectionKey = key;
-      inspectedDay = "";
-    }
+    void displayedSource.key;
     if (deliberate || duplicateSource || relatedSource) inspect();
   });
-  function inspect(): void {
-    const day = new Date().toISOString().slice(0, 10);
-    if (inspectedDay === day) return;
-    inspectedDay = day;
-    reportAction(session, "document_opened");
-  }
+  const inspect = (): void => reportAction(session, "document_opened");
 
   function inspectKey(event: KeyboardEvent): void {
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
     if (
       [
         "ArrowUp",

@@ -689,6 +689,7 @@
     )
       return;
     clearPhotoNotice();
+    searchIntent = false;
     navOpen = false;
     if (photoMode && path === photoPath && path === location.pathname && !photoID) return;
     if (!photoMode || path !== photoPath) void invalidateLibrary(false);
@@ -1485,6 +1486,7 @@
   }
 
   async function loadRoot(): Promise<void> {
+    searchIntent = false;
     invalidateTagHotkeyMutation();
     leaveSnapshotMode();
     clearBulkSelection();
@@ -1513,6 +1515,7 @@
     invalidateTagHotkeyMutation();
     leaveSnapshotMode();
     naturalProfileDefaultPending = null;
+    searchIntent = false;
     submittedSearchQuery = "";
     const refreshing = !remember && directory?.id === nodeID && !activeQuery && !activeTagID;
     const request = ++generation;
@@ -1623,15 +1626,17 @@
     leaveSnapshotMode();
     const query = (queryOverride ?? searchQuery).trim();
     const intent = searchIntent;
-    searchIntent = false;
     if (!query) {
       submittedSearchQuery = "";
       naturalSearchController?.abort();
       naturalSearchNote = "";
       naturalRerankPending = false;
       if (tagFilterID) {
-        await loadTaggedNodes(tagFilterID);
-        if (intent && !error) reportAction(webSession, "search_run", "text");
+        const pending = loadTaggedNodes(tagFilterID),
+          request = generation;
+        await pending;
+        if (intent && !error && !photoMode && request === generation)
+          reportAction(webSession, "search_run", "text");
       } else if (directory) await loadDirectory(directory.id, false);
       return;
     }
@@ -1648,13 +1653,15 @@
     let accepted = false;
     const reportAccepted = (type: string) => {
       if (
-        intent &&
+        searchIntent &&
         accepted &&
         request === generation &&
         session === webSession &&
         !controller.signal.aborted
-      )
+      ) {
+        searchIntent = false;
         reportAction(session, "search_run", type);
+      }
     };
     searchPending = true;
     loading = true;
@@ -1827,6 +1834,7 @@
         naturalProfileDefaultPending.session === webSession;
       const acceptedQuery = accepted ? query : "";
       if (request === generation) {
+        searchIntent = false;
         searchPending = false;
         loading = false;
         naturalRerankPending = false;
@@ -1957,6 +1965,7 @@
     invalidateTagHotkeyMutation();
     leaveSnapshotMode();
     naturalProfileDefaultPending = null;
+    searchIntent = false;
     submittedSearchQuery = "";
     if (!directory) return;
     const request = ++generation;
@@ -2831,6 +2840,7 @@
   });
 
   async function openPath(path: string): Promise<void> {
+    searchIntent = false;
     const request = ++generation;
     const session = webSession;
     try {
@@ -4618,7 +4628,6 @@
       {/if}
       {#if panel.kind === "photoImport" && uploadChannel}
         <PhotoImportDrawer
-          session={webSession}
           channel={uploadChannel}
           disabledReason={uploadChannelError}
           onclose={closePanel(panel)}
@@ -4640,7 +4649,6 @@
       {/if}
       {#if panel.kind === "upload" && uploadChannel}
         <UploadDrawer
-          session={webSession}
           channel={uploadChannel}
           directory={panel.target}
           disabledReason={uploadChannelError}

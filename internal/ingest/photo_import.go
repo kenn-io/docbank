@@ -459,9 +459,8 @@ func admitOutsideActivity(ctx context.Context, opts PhotoImportOptions) (bool, e
 // PhotoImportRunner runs photo_import operations as supervised jobs, sharing
 // the storage operation lifecycle: claim, progress, cancel, finish, resume.
 type PhotoImportRunner struct {
-	ImportResult func(string, bool, bool)
-	Ingester     *Ingester
-	Options      PhotoImportOptions
+	Ingester *Ingester
+	Options  PhotoImportOptions
 	// admit replaces jobs.AdmitStorageOperation in tests that inject read failures.
 	admit func(ctx context.Context, metadata *store.Store, id string) (bool, error)
 }
@@ -516,9 +515,6 @@ func (r PhotoImportRunner) Run(ctx context.Context, operationID string) error {
 	if cancelled || operation.CancelRequested {
 		finishErr := metadata.FinishStorageOperation(context.WithoutCancel(ctx), operationID,
 			store.StorageOperationCancelled, operation.ReceiptJSON, "", time.Now().Add(photoImportRetention))
-		if finishErr == nil && r.ImportResult != nil {
-			r.ImportResult(operationID, false, true)
-		}
 		return finishErr
 	}
 	opts := r.Options
@@ -542,11 +538,7 @@ func (r PhotoImportRunner) Run(ctx context.Context, operationID string) error {
 		if err != nil {
 			return err
 		}
-		err = metadata.AdvanceStorageOperation(ctx, operationID, "", int64(done), 0, 0, string(encoded))
-		if err == nil && r.ImportResult != nil {
-			r.ImportResult(operationID, receipt.Added > 0, false)
-		}
-		return err
+		return metadata.AdvanceStorageOperation(ctx, operationID, "", int64(done), 0, 0, string(encoded))
 	}
 	var request store.PhotoImportRequest
 	var report PhotoImportReport
@@ -589,9 +581,6 @@ func (r PhotoImportRunner) Run(ctx context.Context, operationID string) error {
 	}
 	finishErr := metadata.FinishStorageOperation(context.WithoutCancel(ctx), operationID, state,
 		string(encoded), failure, time.Now().Add(photoImportRetention))
-	if finishErr == nil && r.ImportResult != nil {
-		r.ImportResult(operationID, report.Receipt.Added > 0, true)
-	}
 	return errors.Join(importErr, finishErr)
 }
 

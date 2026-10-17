@@ -382,7 +382,7 @@ func TestPushCancellationDoesNotReportSuccess(t *testing.T) {
 	assert.Zero(t, f.uploads.Load())
 }
 
-func TestPushWatchUploadsChangedFilesAndStopsOnCancellation(t *testing.T) {
+func TestPushWatchUploadsSettledChangesAndStopsOnCancellation(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	dir := t.TempDir()
@@ -466,7 +466,7 @@ func TestPushWatchUploadsEqualLengthEditsWithRestoredMtime(t *testing.T) {
 	node, err := f.store.NodeByPath(t.Context(), "/archive/notes.txt")
 	require.NoError(t, err)
 	assert.Equal(t, "other", readNode(t, f, node.ID))
-	assert.EqualValues(t, 2, f.uploads.Load())
+	assert.EqualValues(t, 3, f.uploads.Load())
 }
 
 func TestPushRefusesMalformedKnownSourceInsteadOfSkipping(t *testing.T) {

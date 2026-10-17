@@ -3,7 +3,6 @@ package telemetry
 import (
 	"context"
 	"sync"
-	"time"
 )
 
 // SearchType groups the executed search path without sending query text.
@@ -18,72 +17,81 @@ func SearchType(mode string) string {
 	}
 }
 
-// Imports keeps bounded, process-local attribution. Admission holds the lock
-// before publishing queued work so completion cannot overtake registration.
+// Imports keeps bounded, process-local attribution for browser imports.
 type Imports struct {
 	mu       sync.Mutex
 	entries  map[string]importAttribution
-	reporter *Reporter
+	reporter *Capture
 }
 
 type importAttribution struct {
 	surface  string
-	baseline int64
+	reported bool
 }
 
-func NewImports(reporter *Reporter) *Imports {
+func NewImports(reporter *Capture) *Imports {
 	return &Imports{entries: make(map[string]importAttribution), reporter: reporter}
 }
 
 // Admit always runs the action, including when attribution is at capacity.
 func (r *Imports) Admit(surface string, action func() (string, bool, error)) error {
-	return r.AdmitCount(surface, func() (string, int64, bool, error) {
-		key, fresh, err := action()
-		return key, 0, fresh, err
-	})
-}
-
-// AdmitCount saves the confirmed count before publishing resumed work.
-func (r *Imports) AdmitCount(surface string, action func() (string, int64, bool, error)) error {
 	if r == nil {
-		_, _, _, err := action()
+		_, _, err := action()
 		return err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	key, baseline, fresh, err := action()
-	if err == nil && fresh && surface != "" && len(r.entries) < 256 {
-		if _, exists := r.entries[key]; !exists {
-			r.entries[key] = importAttribution{surface: surface, baseline: baseline}
-		}
+	key, fresh, err := action()
+	_, exists := r.entries[key]
+	if err == nil && fresh && surface != "" && !exists && len(r.entries) < 256 {
+		r.entries[key] = importAttribution{surface: surface}
 	}
 	return err
 }
 
 // Result claims the first confirmed addition or retires a terminal no-add job.
 func (r *Imports) Result(key string, added, terminal bool) {
-	r.result(key, terminal, func(importAttribution) bool { return added })
-}
-
-// ResultCount compares cumulative job progress with its admission baseline.
-func (r *Imports) ResultCount(key string, count int64, terminal bool) {
-	r.result(key, terminal, func(entry importAttribution) bool { return count > entry.baseline })
-}
-
-func (r *Imports) result(key string, terminal bool, confirmed func(importAttribution) bool) {
 	if r == nil {
 		return
 	}
 	r.mu.Lock()
-	entry := r.entries[key]
-	added := confirmed(entry)
-	if added || terminal {
-		delete(r.entries, key)
-	}
+	deliver := r.claim(key, added, terminal)
 	r.mu.Unlock()
-	if added && entry.surface != "" {
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-		defer cancel()
-		_, _ = r.reporter.Report(ctx, EventDocumentAdded, map[string]any{"surface": entry.surface})
+	deliver()
+}
+
+// Observe claims stored progress under both locks, then delivers after release.
+func (r *Imports) Observe(ctx context.Context, key string, mutate func(context.Context, func() error) error, read func() (int64, bool, error)) error {
+	var deliver func()
+	err := mutate(ctx, func() error {
+		if r != nil {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+		}
+		count, terminal, err := read()
+		if err == nil && r != nil {
+			deliver = r.claim(key, count > 0, terminal)
+		}
+		return err
+	})
+	if err == nil && deliver != nil {
+		deliver()
+	}
+	return err
+}
+
+func (r *Imports) claim(key string, added, terminal bool) func() {
+	entry, exists := r.entries[key]
+	added = exists && added && !entry.reported
+	if terminal {
+		delete(r.entries, key)
+	} else if added {
+		entry.reported = true
+		r.entries[key] = entry
+	}
+	return func() {
+		if added && entry.surface != "" {
+			_ = r.reporter.Capture(EventDocumentAdded, map[string]any{"surface": entry.surface})
+		}
 	}
 }

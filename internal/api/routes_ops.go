@@ -348,7 +348,7 @@ func runIngest(
 				return FromStoreError(err)
 			}
 			out = IngestReport{
-				IngestID: rep.IngestID, Added: rep.Added,
+				IngestID: rep.IngestID, Added: rep.Added, Created: rep.Created,
 				Skipped: rep.Skipped, Excluded: rep.Excluded,
 			}
 			for _, failure := range rep.Failed {

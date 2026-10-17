@@ -58,11 +58,28 @@ function setup() {
   };
   return { props, preview, get };
 }
-it("shows grid, fit and large and preserves zoom", async () => {
+it("shows preview quality, preserves zoom and reports deliberate inspection", async () => {
+  const capture = vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValue(new Response(null, { status: 202 }));
   const { props, preview } = setup();
   const view = render(PhotoLoupe, props);
   await screen.findByText("Grid preview");
   await screen.findByText("Fit preview");
+  await waitFor(() => expect(capture).toHaveBeenCalledTimes(1));
+  capture.mockClear();
+  vi.setSystemTime(new Date("2026-10-18T00:01:00Z"));
+  await fireEvent.wheel(screen.getByRole("dialog"), { deltaY: 100 });
+  await fireEvent.keyDown(screen.getByRole("dialog"), { key: "i" });
+  await fireEvent.pointerDown(screen.getByRole("dialog"));
+  await waitFor(() => expect(capture).toHaveBeenCalledTimes(3));
+  for (const [url, init] of capture.mock.calls) {
+    expect(url).toBe("/api/daemon/telemetry/events");
+    expect(JSON.parse(String(init?.body))).toEqual({
+      event: "document_opened",
+      properties: { surface: "web" },
+    });
+  }
   await view.rerender({ ...props, reloadRevision: 1 });
   await waitFor(() =>
     expect(

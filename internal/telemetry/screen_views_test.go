@@ -87,10 +87,9 @@ func TestScreenClaimsAcrossInterfacesRestartsAndDays(t *testing.T) {
 	collector := screenCollector(t, &mu, &events)
 	defer collector.Close()
 	dir := t.TempDir()
-	makeHandler := func() (*Reporter, *captureHandler) {
+	makeHandler := func() (*Reporter, *Capture) {
 		reporter := New(Options{Dir: dir, endpoint: collector.URL, Logger: discardLogger()})
-		handler, ok := CaptureHandler(reporter, dir).(*captureHandler)
-		require.True(t, ok)
+		handler := CaptureHandler(reporter, dir)
 		return reporter, handler
 	}
 	reporter, handler := makeHandler()

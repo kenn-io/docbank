@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json/v2"
 	"errors"
@@ -214,23 +215,16 @@ func registerMailboxRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 			return
 		}
 		var j store.MailboxJob
-		err := d.Imports.Admit(browserActionSurface(r), func() (string, bool, error) {
-			_, existing := d.Store.MailboxJob(r.Context(), mailboxOwner(d), request.ID)
-			if existing != nil && !errors.Is(existing, store.ErrNotFound) {
-				return "", false, existing
-			}
-			err := g.mutate(func() error {
+		err := g.mutate(func() error {
+			return d.Imports.Admit(browserActionSurface(r), func() (string, bool, error) {
+				_, existing := d.Store.MailboxJob(r.Context(), mailboxOwner(d), request.ID)
+				if existing != nil && !errors.Is(existing, store.ErrNotFound) {
+					return "", false, existing
+				}
 				var err error
 				j, err = d.Store.BeginMailboxJob(r.Context(), mailboxOwner(d), request.storeRequest())
-				return err
+				return "mailbox:" + j.ID, errors.Is(existing, store.ErrNotFound) && j.Imported == 0, err
 			})
-			if err != nil {
-				return "", false, err
-			}
-			if existing == nil {
-				return "", false, nil
-			}
-			return "mailbox:" + j.ID, j.Imported == 0 && (j.State == "queued" || j.State == "running"), nil
 		})
 		if err != nil {
 			writeMailboxError(w, err)
@@ -280,20 +274,17 @@ func registerMailboxRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 		writeJSON(w, 200, out)
 	})
 	mux.HandleFunc("POST /api/v1/mailbox/jobs/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
-		var current store.MailboxJob
-		err := g.mutate(func() error {
-			var err error
-			current, err = d.Store.MailboxJob(r.Context(), mailboxOwner(d), r.PathValue("id"))
-			if err != nil {
-				return err
+		err := d.Imports.Observe(r.Context(), "mailbox:"+r.PathValue("id"), func(_ context.Context, fn func() error) error { return g.mutate(fn) }, func() (int64, bool, error) {
+			if err := d.Store.CancelMailboxJob(r.Context(), mailboxOwner(d), r.PathValue("id")); err != nil {
+				return 0, false, err
 			}
-			return d.Store.CancelMailboxJob(r.Context(), mailboxOwner(d), r.PathValue("id"))
+			current, err := d.Store.MailboxJob(r.Context(), mailboxOwner(d), r.PathValue("id"))
+			return current.Imported, current.ScannedTail, err
 		})
 		if err != nil {
 			writeMailboxError(w, err)
 			return
 		}
-		d.Imports.ResultCount("mailbox:"+current.ID, current.Imported, true)
 		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("POST /api/v1/mailbox/jobs/{id}/resume", func(w http.ResponseWriter, r *http.Request) {
@@ -306,18 +297,12 @@ func registerMailboxRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 			return
 		}
 		var j store.MailboxJob
-		err := d.Imports.AdmitCount(browserActionSurface(r), func() (string, int64, bool, error) {
-			fresh := false
-			err := g.mutate(func() error {
-				prior, err := d.Store.MailboxJob(r.Context(), mailboxOwner(d), input.Request.ID)
-				if err != nil {
-					return err
-				}
-				fresh = prior.State != "queued" && prior.State != "running"
+		err := g.mutate(func() error {
+			return d.Imports.Admit("", func() (string, bool, error) {
+				var err error
 				j, err = d.Store.ResumeMailboxJob(r.Context(), mailboxOwner(d), input.Request.storeRequest(), input.Continuation)
-				return err
+				return "", false, err
 			})
-			return "mailbox:" + j.ID, j.Imported, fresh, err
 		})
 		if err != nil {
 			writeMailboxError(w, err)

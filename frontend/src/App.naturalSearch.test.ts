@@ -940,7 +940,7 @@ it("does not fall back to GET after a processing 401", async () => {
   ).toBe(0);
 });
 
-it("ignores an aborted natural search completion", async () => {
+it("preserves submit intent when reranking replaces a pending search", async () => {
   const file = node(2, "stale.txt", baseVersion);
   const harness = installHarness({
     profiles: [
@@ -949,7 +949,7 @@ it("ignores an aborted natural search completion", async () => {
         fingerprint: "a".repeat(64),
         rendition: true,
         embedding_bindings: ["embed"],
-        reranking_available: false,
+        reranking_available: true,
       },
     ],
     files: [file],
@@ -960,8 +960,17 @@ it("ignores an aborted natural search completion", async () => {
   await screen.findAllByText("stale.txt");
   await submitSearch("old query");
   await waitFor(() => expect(harness.postBodies).toHaveLength(1));
-  await submitSearch("new query");
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Rerank results" }));
   await screen.findByText("current excerpt");
+  await waitFor(() => {
+    const events = harness.fetchMock.mock.calls
+      .filter(([url]) => String(url) === "/api/daemon/telemetry/events")
+      .map(([, init]) => JSON.parse(String(init?.body)))
+      .filter((event) => event.event === "search_run");
+    expect(events).toEqual([
+      { event: "search_run", properties: { search_type: "hybrid", surface: "web" } },
+    ]);
+  });
   harness.resolveBase(json(report("hybrid", [result(file, 1, "stale excerpt")])));
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(screen.queryByText("stale excerpt")).toBeNull();

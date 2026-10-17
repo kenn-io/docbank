@@ -41,7 +41,8 @@ type screenClaims struct {
 	Screens   map[string]bool `json:"screens"`
 }
 
-type captureHandler struct {
+// Capture shares validation and daily claims between daemon and HTTP callers.
+type Capture struct {
 	reporter *Reporter
 	dir      string
 	mu       sync.Mutex
@@ -49,50 +50,56 @@ type captureHandler struct {
 	claims   screenClaims
 }
 
-// CaptureHandler serves interface usage events through r. It sends each
-// screen_viewed screen and surface pair once per UTC day, remembering the day's
-// claims in dir so daemon restarts don't resend them.
-//
-// Responses: 202 {"status":"queued"} when the event is queued or was already
-// sent today; 202 {"status":"disabled"} when telemetry is off; 400 for a
-// malformed body, an event the allowlist omits, or a screen_viewed without an
-// allowed screen and surface; 413 for a body over 64 KiB; 415 for a content
-// type other than application/json; 500 when Capture fails.
-func CaptureHandler(r *Reporter, dir string) http.Handler {
-	return &captureHandler{reporter: r, dir: dir, now: time.Now}
+// CaptureHandler serves interface events with shared validation and claims.
+func CaptureHandler(r *Reporter, dir string) *Capture {
+	return &Capture{reporter: r, dir: dir, now: time.Now}
 }
 
-func (h *captureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (h *Capture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	request, ok := decodeCaptureRequest(w, r)
 	if !ok {
 		return
 	}
-	event := strings.TrimSpace(request.Event)
-	if !h.reporter.EventAllowed(event) {
-		http.Error(w, posthog.ErrUnsupportedEvent.Error(), http.StatusBadRequest)
+	if err := h.Capture(request.Event, request.Properties); err != nil {
+		if errors.Is(err, errInvalidCapture) || errors.Is(err, posthog.ErrUnsupportedEvent) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		} else {
+			http.Error(w, "capture telemetry event failed", http.StatusInternalServerError)
+		}
 		return
+	}
+	status := "queued"
+	if !h.reporter.Enabled() {
+		status = "disabled"
+	}
+	writeCaptureStatus(w, status)
+}
+
+var errInvalidCapture = errors.New("event requires allowed properties")
+
+// Capture validates and claims interface events for HTTP and daemon callers.
+func (h *Capture) Capture(event string, properties map[string]any) error {
+	event = strings.TrimSpace(event)
+	if !h.reporter.EventAllowed(event) {
+		return posthog.ErrUnsupportedEvent
 	}
 	if event == EventScreenViewed || event == EventSearchRun || event == EventDocumentOpened || event == EventDocumentAdded {
-		props, err := h.reporter.SanitizeProperties(event, request.Properties)
+		props, err := h.reporter.SanitizeProperties(event, properties)
 		if err != nil || props["surface"] == nil || event == EventSearchRun && props["search_type"] == nil || event == EventScreenViewed && props["screen"] == nil {
-			http.Error(w, "event requires allowed properties", http.StatusBadRequest)
-			return
+			return errInvalidCapture
 		}
+		properties = props
 		if event != EventDocumentAdded {
-			h.serveDaily(w, event, props)
-			return
+			return h.captureDaily(event, properties)
 		}
-		request.Properties = props
 	}
 	if !h.reporter.Enabled() {
-		writeCaptureStatus(w, "disabled")
-		return
+		return nil
 	}
-	if err := h.reporter.Capture(event, request.Properties); err != nil {
-		http.Error(w, "capture telemetry event failed", http.StatusInternalServerError)
-		return
+	if err := h.reporter.Capture(event, properties); err != nil {
+		return fmt.Errorf("capture telemetry event: %w", err)
 	}
-	writeCaptureStatus(w, "queued")
+	return nil
 }
 
 func decodeCaptureRequest(w http.ResponseWriter, r *http.Request) (captureRequest, bool) {
@@ -114,10 +121,9 @@ func decodeCaptureRequest(w http.ResponseWriter, r *http.Request) (captureReques
 	return request, true
 }
 
-func (h *captureHandler) serveDaily(w http.ResponseWriter, event string, properties map[string]any) {
+func (h *Capture) captureDaily(event string, properties map[string]any) error {
 	if !h.reporter.Enabled() {
-		writeCaptureStatus(w, "disabled")
-		return
+		return nil
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -132,27 +138,24 @@ func (h *captureHandler) serveDaily(w http.ResponseWriter, event string, propert
 		key += "|" + fmt.Sprint(properties["search_type"])
 	}
 	if h.claims.Screens[key] {
-		writeCaptureStatus(w, "queued")
-		return
+		return nil
 	}
 	if err := h.reporter.Capture(event, properties); err != nil {
-		http.Error(w, "capture telemetry event failed", http.StatusInternalServerError)
-		return
+		return fmt.Errorf("capture daily telemetry event: %w", err)
 	}
 	if !h.reporter.Enabled() {
-		writeCaptureStatus(w, "disabled")
-		return
+		return nil
 	}
 	h.claims.Screens[key] = true
 	if err := h.save(h.claims); err != nil {
 		slog.Warn("telemetry screen claims failed", "error", err)
 	}
-	writeCaptureStatus(w, "queued")
+	return nil
 }
 
 // load reads today's claims for the current install ID. The reporter is
 // enabled here, so New has already created the install file.
-func (h *captureHandler) load() screenClaims {
+func (h *Capture) load() screenClaims {
 	claims := screenClaims{Day: h.now().UTC().Format(time.DateOnly), Screens: map[string]bool{}}
 	inst, err := posthog.LoadOrCreateInstall(h.dir)
 	if err != nil {
@@ -186,7 +189,7 @@ func (h *captureHandler) load() screenClaims {
 	return claims
 }
 
-func (h *captureHandler) save(claims screenClaims) error {
+func (h *Capture) save(claims screenClaims) error {
 	data, err := json.Marshal(claims)
 	if err != nil {
 		return err

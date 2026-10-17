@@ -52,6 +52,9 @@ func TestTelemetryEventRoute(t *testing.T) {
 		{"no credentials", http.MethodPost, url, `{"event":"app_opened"}`, map[string]string{"X-Api-Key": ""}, http.StatusUnauthorized, ""},
 		{"browser session with query", http.MethodPost, url + "?x=1", `{"event":"app_opened"}`, browser, http.StatusForbidden, `"code":"web_session_read_only"`},
 		{"get", http.MethodGet, url, "", nil, http.StatusMethodNotAllowed, ""},
+		{"empty event", http.MethodPost, url, `{"event":""}`, browser, http.StatusBadRequest, ""},
+		{"non JSON", http.MethodPost, url, `invalid`, browser, http.StatusBadRequest, ""},
+		{"missing surface", http.MethodPost, url, `{"event":"search_run","properties":{"search_type":"text"}}`, browser, http.StatusBadRequest, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			status, body := postTelemetryEvent(t, ts.Client(), tc.method, tc.url, tc.body, tc.headers)
@@ -77,8 +80,10 @@ func TestScreenViewedTelemetryEventRoute(t *testing.T) {
 	ts, _ := newTestServer(t, func(d *api.Deps) { d.TelemetryCapture = telemetry.CaptureHandler(capture.reporter, t.TempDir()) })
 	session := issueWebSession(t, ts)
 	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: session}
-	status, body := postTelemetryEvent(t, ts.Client(), http.MethodPost, ts.URL+"/api/daemon/telemetry/events",
-		`{"event":"screen_viewed","properties":{"screen":"browse","surface":"web"}}`, browser)
-	require.Equal(t, http.StatusAccepted, status, body)
+	for range 2 {
+		status, body := postTelemetryEvent(t, ts.Client(), http.MethodPost, ts.URL+"/api/daemon/telemetry/events",
+			`{"event":"screen_viewed","properties":{"screen":"browse","surface":"web"}}`, browser)
+		require.Equal(t, http.StatusAccepted, status, body)
+	}
 	capture.requireEvent(t, "screen_viewed", map[string]any{"screen": "browse"})
 }

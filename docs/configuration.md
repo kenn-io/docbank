@@ -1044,14 +1044,14 @@ addition, including partial failures. Skipped files, replacements, preflight,
 agent calls and unattended ingestion stay silent. Browser uploads and Photos
 groups report from the daemon after commit, even if the drawer closes before
 its receipt arrives. Mailbox and load-file jobs retain the surface that started
-them after their drawer closes. An explicit browser mailbox resume saves its
-current imported count and reports only a subsequent increase. Opening a
+them after their drawer closes. Resuming a mailbox job preserves its original attribution and never reports
+a second addition for the same import. Opening a
 drawer onto an existing job stays silent. CLI push, Photos, mailbox and
 load-file imports and their status commands stay silent; synchronous CLI
 `add` counts a confirmed addition. The browser Photos drawer uses upload groups.
 The daemon keeps at most 256 active import attributions in memory. At capacity,
 imports proceed without attribution. Restarting the daemon can lose an
-in-flight count. Resumes without an eligible browser action stay silent.
+in-flight count. Resumes without original browser attribution stay silent.
 
 `search_run` counts successful submitted searches, including empty results,
 facets and Smart Sets, once per surface and search type each UTC day.

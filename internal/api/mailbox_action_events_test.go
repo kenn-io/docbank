@@ -18,9 +18,9 @@ import (
 func TestMailboxActionCancellationAndResume(t *testing.T) {
 	t.Setenv("DOCBANK_TELEMETRY_ENABLED", "1")
 	t.Setenv("TELEMETRY_ENABLED", "1")
-	for _, webResume := range []bool{false, true} {
+	for _, origin := range []string{"cli", "web", "observed"} {
 		for _, beforeAddition := range []bool{true, false} {
-			t.Run(fmt.Sprintf("web=%t/before=%t", webResume, beforeAddition), func(t *testing.T) {
+			t.Run(fmt.Sprintf("origin=%s/before=%t", origin, beforeAddition), func(t *testing.T) {
 				capture := newActionCollector(t)
 				gate := api.NewOperationGate()
 				server, catalog := newTestServer(t, func(d *api.Deps) { d.Imports = capture.imports; d.Gate = gate })
@@ -31,14 +31,20 @@ func TestMailboxActionCancellationAndResume(t *testing.T) {
 				container := store.MailboxContainerRequest{ID: "synthetic-source", Owner: owner, SHA256: hex.EncodeToString(digest[:]), Size: int64(len(raw)), Format: "mbox"}
 				_, err := catalog.BeginMailboxContainer(t.Context(), container)
 				require.NoError(t, err)
-				service := mailbox.Service{Store: catalog.Store, Blobs: catalog.Blobs, Spool: t.TempDir(), ImportResult: func(id string, count int64, terminal bool) {
-					capture.imports.ResultCount("mailbox:"+id, count, terminal)
+				service := mailbox.Service{Store: catalog.Store, Blobs: catalog.Blobs, Spool: t.TempDir(), ImportResult: func(id string) {
+					require.NoError(t, capture.imports.Observe(t.Context(), "mailbox:"+id, gate.MutateContext, func() (int64, bool, error) {
+						current, err := catalog.MailboxJob(t.Context(), owner, id)
+						return current.Imported, current.ScannedTail, err
+					}))
 				}}
 				require.NoError(t, service.UploadChunk(t.Context(), owner, container.ID, 0, container.SHA256, container.Size, bytes.NewReader(raw)))
 				_, err = service.Seal(t.Context(), owner, container.ID)
 				require.NoError(t, err)
 				request := api.MailboxJobInput{ID: "synthetic-job", ContainerID: container.ID, ContainerSHA256: container.SHA256, Settings: api.MailboxSettingsInput{DestinationID: catalog.RootID()}}
 				headers := map[string]string{"X-Docbank-Surface": "cli"}
+				if origin == "web" {
+					headers = map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, server)}
+				}
 				response, body := do(t, server, http.MethodPost, "/api/v1/mailbox/jobs", headers, request)
 				require.Equal(t, http.StatusCreated, response.StatusCode, body)
 				job, err := catalog.ClaimMailboxJob(t.Context())
@@ -67,25 +73,20 @@ func TestMailboxActionCancellationAndResume(t *testing.T) {
 					}
 					require.Error(t, service.RunJob(t.Context(), job))
 				}
-				if webResume {
+				if origin != "cli" {
 					headers = map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, server)}
-					response, body = do(t, server, http.MethodPost, "/api/v1/mailbox/jobs/synthetic-job/resume", headers, api.MailboxResumeInput{Request: request})
-					require.Equal(t, http.StatusOK, response.StatusCode, body)
-					// Cancel before the resumed action adds anything above its baseline.
-					cancel()
 				}
 				response, body = do(t, server, http.MethodPost, "/api/v1/mailbox/jobs/synthetic-job/resume", headers, api.MailboxResumeInput{Request: request})
 				require.Equal(t, http.StatusOK, response.StatusCode, body)
 				response, body = do(t, server, http.MethodPost, "/api/v1/mailbox/jobs/synthetic-job/resume", headers, api.MailboxResumeInput{Request: request})
 				require.Equal(t, http.StatusOK, response.StatusCode, body)
+				service.ImportResult(job.ID) // a delayed callback from the cancelled run sees the resumed job
 				job, err = catalog.ClaimMailboxJob(t.Context())
 				require.NoError(t, err)
 				require.NoError(t, service.RunJob(t.Context(), job))
-				if !webResume {
+				if origin != "web" {
 					require.NoError(t, capture.reporter.Close())
-					capture.mu.Lock()
 					require.Empty(t, capture.events)
-					capture.mu.Unlock()
 				} else {
 					capture.requireEvent(t, "document_added", map[string]any{"surface": "web"})
 				}

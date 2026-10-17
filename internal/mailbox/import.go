@@ -189,7 +189,7 @@ func (s *Service) importOccurrence(ctx context.Context, j store.MailboxJob, entr
 		request := store.MailboxTransferRequest{ArchiveID: "mailbox:" + j.CollectionID, Reference: fmt.Sprintf("%d:%d", entry.Index, m.Sequence), SHA256: m.EMLSHA256, Size: m.EMLSize, Settings: settings, DestinationID: j.Settings.DestinationID, Name: "message.eml"}
 		_, err := s.transferSource(ctx, j.Owner, j.IngestRun(), request, m.EML, &location, &occurrenceCommit{job: j, occurrence: o})
 		if err == nil && s.ImportResult != nil {
-			s.ImportResult(j.ID, j.Imported+1, false)
+			s.ImportResult(j.ID)
 		}
 		if !errors.Is(err, ErrRejected) {
 			return err
@@ -298,7 +298,7 @@ func (s *Service) runCancelableJob(ctx context.Context, j store.MailboxJob) erro
 func (s *Service) finishJob(ctx context.Context, j store.MailboxJob, state, reason string, tail bool) error {
 	err := s.mutate(ctx, func() error { return s.Store.FinishMailboxJob(ctx, j.ID, j.Claim, state, reason, tail) })
 	if err == nil && s.ImportResult != nil {
-		s.ImportResult(j.ID, 0, true)
+		s.ImportResult(j.ID)
 	}
 	return err
 }

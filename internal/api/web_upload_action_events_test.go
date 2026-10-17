@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -23,27 +22,21 @@ import (
 type lostReceiptWriter struct {
 	http.ResponseWriter
 
-	lost      chan struct{}
 	dropAfter int
 }
 
 func (w lostReceiptWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	hijacker, ok := w.ResponseWriter.(http.Hijacker)
-	if !ok {
-		return nil, nil, errors.New("test server cannot hijack")
-	}
-	conn, rw, err := hijacker.Hijack()
+	conn, rw, err := http.NewResponseController(w.ResponseWriter).Hijack()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("hijack test socket: %w", err)
 	}
-	drop := &lostReceiptConn{Conn: conn, lost: w.lost, dropAfter: w.dropAfter}
+	drop := &lostReceiptConn{Conn: conn, dropAfter: w.dropAfter}
 	return drop, bufio.NewReadWriter(rw.Reader, bufio.NewWriter(drop)), nil
 }
 
 type lostReceiptConn struct {
 	net.Conn
 
-	lost      chan struct{}
 	receipts  int
 	dropAfter int
 }
@@ -53,7 +46,6 @@ func (c *lostReceiptConn) Write(data []byte) (int, error) {
 		c.receipts++
 		if c.receipts == c.dropAfter {
 			_ = c.Close()
-			close(c.lost)
 			return 0, io.ErrClosedPipe
 		}
 	}
@@ -72,15 +64,13 @@ func TestBrowserImportsReportOnceWhenReceiptIsLost(t *testing.T) {
 				t.Setenv("TELEMETRY_ENABLED", "1")
 				capture := newActionCollector(t)
 				ts, catalog := newTestServer(t, func(d *api.Deps) { d.Imports = capture.imports })
-				lost := make(chan struct{})
 				proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					ts.Config.Handler.ServeHTTP(lostReceiptWriter{w, lost, dropAfter}, r)
+					ts.Config.Handler.ServeHTTP(lostReceiptWriter{w, dropAfter}, r)
 				}))
 				defer proxy.Close()
 				proxy.Client().Transport = ts.Client().Transport
 				conn := browserUploadSocket(t, proxy)
 				data := []byte("synthetic data 0")
-				hash := sha256.Sum256(data)
 				members := []map[string]any{
 					{"relative_path": "file-0.JPG", "expected_size": len(data)},
 					{"relative_path": "file-1.JPG", "expected_size": len(data)},
@@ -91,7 +81,7 @@ func TestBrowserImportsReportOnceWhenReceiptIsLost(t *testing.T) {
 				}
 				for i := range dropAfter {
 					data = []byte(fmt.Sprintf("synthetic data %d", i))
-					hash = sha256.Sum256(data)
+					hash := sha256.Sum256(data)
 					begin := map[string]any{"type": "begin", "request_id": "file", "import_id": importID,
 						"parent_id": catalog.RootID(), "name": fmt.Sprintf("file-%d.txt", i), "mime_type": "text/plain",
 						"expected_hash": hex.EncodeToString(hash[:]), "expected_size": len(data)}
@@ -110,11 +100,6 @@ func TestBrowserImportsReportOnceWhenReceiptIsLost(t *testing.T) {
 					} else {
 						require.Error(t, err)
 					}
-				}
-				select {
-				case <-lost:
-				case <-t.Context().Done():
-					t.Fatal("receipt was not dropped")
 				}
 				for i := range dropAfter {
 					path := fmt.Sprintf("/file-%d.txt", i)

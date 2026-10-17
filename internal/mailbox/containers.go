@@ -16,7 +16,7 @@ import (
 )
 
 type Service struct {
-	ImportResult func(string, int64, bool)
+	ImportResult func(string)
 	Store        *store.Store
 	Blobs        *blob.Store
 	Spool        string

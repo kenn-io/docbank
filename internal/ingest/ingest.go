@@ -73,6 +73,7 @@ func describeSources(sources []string) string {
 type Report struct {
 	IngestID string
 	Added    int
+	Created  int
 	Skipped  int
 	Excluded int
 	Failed   []FileError

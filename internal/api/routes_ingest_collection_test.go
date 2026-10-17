@@ -27,6 +27,7 @@ func TestIngestLabelReceiptNamesCommittedRun(t *testing.T) {
 		"paths": []string{source}, "dest": "/inbox", "collection_label": "Review set",
 	})
 	require.Equal(t, 1, report.Added)
+	require.Equal(t, 1, report.Created)
 	require.NotEmpty(t, report.IngestID)
 
 	collection, err := s.CollectionByID(t.Context(), report.IngestID)
@@ -50,6 +51,7 @@ func TestIngestReceiptRecordsRepeatedAndReplacementMembership(t *testing.T) {
 		"paths": []string{source}, "dest": "/inbox", "collection_label": "First pass",
 	})
 	require.NotEmpty(t, first.IngestID)
+	require.Equal(t, 1, first.Created)
 	before, err := s.NodeByPath(t.Context(), "/inbox/record.txt")
 	require.NoError(t, err)
 
@@ -59,6 +61,7 @@ func TestIngestReceiptRecordsRepeatedAndReplacementMembership(t *testing.T) {
 	assert.Zero(t, repeated.Added)
 	assert.Equal(t, 1, repeated.Skipped)
 	require.NotEmpty(t, repeated.IngestID)
+	assert.Zero(t, repeated.Created)
 	assert.NotEqual(t, first.IngestID, repeated.IngestID)
 	repeatedCollection, err := s.CollectionByID(t.Context(), repeated.IngestID)
 	require.NoError(t, err)
@@ -79,6 +82,7 @@ func TestIngestReceiptRecordsRepeatedAndReplacementMembership(t *testing.T) {
 	})
 	assert.Equal(t, 1, replacement.Added)
 	require.NotEmpty(t, replacement.IngestID)
+	assert.Zero(t, replacement.Created)
 	replacementCollection, err := s.CollectionByID(t.Context(), replacement.IngestID)
 	require.NoError(t, err)
 	require.NotNil(t, replacementCollection.Label)
@@ -100,6 +104,7 @@ func TestIngestRepeatedPathWithinRunKeepsOneObservation(t *testing.T) {
 		"collection_label": "One run",
 	})
 	assert.Equal(t, 1, report.Added)
+	assert.Equal(t, 1, report.Created)
 	assert.Equal(t, 1, report.Skipped)
 	require.NotEmpty(t, report.IngestID)
 	collection, err := s.CollectionByID(t.Context(), report.IngestID)
@@ -193,6 +198,7 @@ func TestIngestStreamTerminalReceiptNamesPartialCommittedRun(t *testing.T) {
 		"paths": []string{missing, valid}, "dest": "/inbox", "collection_label": "Stream set",
 	})
 	assert.Equal(t, 1, report.Added)
+	assert.Equal(t, 1, report.Created)
 	require.Len(t, report.Failed, 1)
 	require.NotEmpty(t, report.IngestID)
 	collection, err := s.CollectionByID(t.Context(), report.IngestID)

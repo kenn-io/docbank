@@ -11,14 +11,12 @@
   } from "./upload.js";
 
   let {
-    session,
     channel,
     disabledReason = "",
     onclose,
     oncomplete,
     onauthfailure,
   }: {
-    session: string;
     channel: PhotoImportTransport;
     disabledReason?: string;
     onclose: () => void;

@@ -7507,6 +7507,9 @@ components:
         added:
           format: int64
           type: integer
+        created:
+          format: int64
+          type: integer
         excluded:
           format: int64
           type: integer
@@ -7521,6 +7524,7 @@ components:
           type: integer
       required:
         - added
+        - created
         - skipped
         - excluded
       type: object

@@ -39,7 +39,7 @@ the same name is skipped. Other name collisions add a suffixed sibling unless
 Text search covers text/*, JSON and email bodies once indexed (seconds); other
 formats are stored and verified but need "docbank processing" for text.
 Output: progress on stderr; --json prints
-{ingest_id, added, skipped, excluded, failed}.
+{ingest_id, added, created, skipped, excluded, failed}.
 Exit 1 if any file failed (each failure is listed).`,
 	GroupID: groupDocuments,
 	Use:     "add <path>...",
@@ -106,7 +106,7 @@ Exit 1 if any file failed (each failure is listed).`,
 			defer renderer.finish()
 			rep, err = c.IngestStream(cmd.Context(), abs, addDest, opts, renderer.handle)
 		}
-		if rep.Added > 0 {
+		if rep.Created > 0 {
 			reportAction(cmd, c, telemetry.EventDocumentAdded, "add")
 		}
 		if err != nil {

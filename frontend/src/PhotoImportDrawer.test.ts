@@ -30,7 +30,6 @@ it("uses the plan, uploads groups in order, reports totals, and refreshes once",
   };
   const complete = vi.fn();
   render(PhotoImportDrawer, {
-    session: "import-session",
     channel,
     onclose: vi.fn(),
     oncomplete: complete,
@@ -79,7 +78,6 @@ it("stops after the current group when cancelled", async () => {
   };
   const complete = vi.fn();
   render(PhotoImportDrawer, {
-    session: "import-session",
     channel,
     onclose: vi.fn(),
     oncomplete: complete,
@@ -121,7 +119,6 @@ it("reports ambiguous and failed groups and uses the chosen destination", async 
   };
   const complete = vi.fn();
   render(PhotoImportDrawer, {
-    session: "import-session",
     channel,
     onclose: vi.fn(),
     oncomplete: complete,
@@ -179,7 +176,6 @@ it.each([
   const authfailure = vi.fn();
   const complete = vi.fn();
   render(PhotoImportDrawer, {
-    session: "import-session",
     channel,
     onclose: vi.fn(),
     oncomplete: complete,
@@ -215,7 +211,6 @@ it.each([3, 0])(
     };
     const complete = vi.fn();
     render(PhotoImportDrawer, {
-      session: "import-session",
       channel,
       onclose: vi.fn(),
       oncomplete: complete,
@@ -246,7 +241,6 @@ it.each([false, true])(
       uploadPhotoGroup: vi.fn(),
     };
     const view = render(PhotoImportDrawer, {
-      session: "import-session",
       channel,
       onclose: vi.fn(),
       oncomplete: vi.fn(),
@@ -316,7 +310,6 @@ it("cancels a group when the drawer closes before sending bytes", async () => {
     ),
   };
   const view = render(PhotoImportDrawer, {
-    session: "import-session",
     channel,
     onclose: vi.fn(),
     oncomplete: complete,
@@ -341,7 +334,6 @@ it("stops the queue when the channel closes after a server rejection", async () 
     uploadPhotoGroup: vi.fn(),
   };
   const view = render(PhotoImportDrawer, {
-    session: "import-session",
     channel,
     onclose: vi.fn(),
     oncomplete: vi.fn(),
@@ -369,7 +361,6 @@ it("shows a library refresh failure", async () => {
   };
   const authfailure = vi.fn();
   render(PhotoImportDrawer, {
-    session: "import-session",
     channel,
     onclose: vi.fn(),
     oncomplete: vi.fn().mockRejectedValue(new APIError("Session expired", 401, "unauthorized")),

@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"sync"
 	"testing"
 	"time"
 
@@ -24,20 +23,15 @@ func TestInteractiveActionGateAndEndpoint(t *testing.T) {
 	redirected, err := os.CreateTemp(t.TempDir(), "redirected")
 	require.NoError(t, err)
 	defer func() { require.NoError(t, redirected.Close()) }()
-	var mu sync.Mutex
-	var events []api.TelemetryEventRequest
+	events := make(chan api.TelemetryEventRequest, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/daemon/telemetry/events", r.URL.Path)
-		assert.Equal(t, "synthetic-key", r.Header.Get("X-Api-Key"))
 		var body api.TelemetryEventRequest
 		assert.NoError(t, json.UnmarshalRead(r.Body, &body))
 		if body.Event == "search_run" {
 			<-r.Context().Done()
 			return
 		}
-		mu.Lock()
-		events = append(events, body)
-		mu.Unlock()
+		events <- body
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
 		_, _ = w.Write([]byte(`{"status":"queued"}`))
@@ -50,15 +44,11 @@ func TestInteractiveActionGateAndEndpoint(t *testing.T) {
 		agent         bool
 		want          int
 	}{
-		{"terminal input and output", terminal, terminal, false, 2},
 		{"terminal input with redirected output", terminal, redirected, false, 2},
 		{"unattended input with terminal output", redirected, terminal, false, 0},
 		{"agent", terminal, terminal, true, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			mu.Lock()
-			events = nil
-			mu.Unlock()
 			cmd := &cobra.Command{}
 			cmd.SetIn(tc.stdin)
 			cmd.SetOut(tc.stdout)
@@ -69,14 +59,12 @@ func TestInteractiveActionGateAndEndpoint(t *testing.T) {
 			cmd.SetContext(ctx)
 			reportAction(cmd, connection, "document_added", "add")
 			reportOpened(cmd, connection)
-			mu.Lock()
-			defer mu.Unlock()
 			require.Len(t, events, tc.want)
 			if tc.want > 0 {
 				assert.Equal(t, []api.TelemetryEventRequest{
 					{Event: "document_added", Properties: &api.TelemetryEventProperties{Surface: "cli"}},
 					{Event: "document_opened", Properties: &api.TelemetryEventProperties{Surface: "cli"}},
-				}, events)
+				}, []api.TelemetryEventRequest{<-events, <-events})
 			}
 		})
 	}

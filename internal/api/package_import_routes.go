@@ -39,19 +39,7 @@ func handlePackageImport(w http.ResponseWriter, r *http.Request, d Deps, g *gate
 		writeError(w, problem)
 		return
 	}
-	var result PackageImportJob
-	err := d.Imports.Admit(browserActionSurface(r), func() (string, bool, error) {
-		_, existing := d.Store.PackageImportJob(r.Context(), owner, request.OperationID)
-		if existing != nil && !errors.Is(existing, store.ErrNotFound) {
-			return "", false, existing
-		}
-		var err error
-		result, err = AdmitPackageImport(r.Context(), d, g, owner, request)
-		if existing == nil || err != nil || result.Committed > 0 || result.State != "queued" && result.State != "running" {
-			return "", false, err
-		}
-		return "package:" + result.JobID, true, nil
-	})
+	result, err := AdmitPackageImport(r.Context(), d, g, owner, request, browserActionSurface(r))
 	if err != nil {
 		writePackageError(w, err)
 		return
@@ -60,7 +48,7 @@ func handlePackageImport(w http.ResponseWriter, r *http.Request, d Deps, g *gate
 }
 
 // AdmitPackageImport validates and durably admits one idempotent import job.
-func AdmitPackageImport(ctx context.Context, d Deps, g PackageMutationGate, owner string, request PackageImportRequest) (PackageImportJob, error) {
+func AdmitPackageImport(ctx context.Context, d Deps, g PackageMutationGate, owner string, request PackageImportRequest, surface string) (PackageImportJob, error) {
 	if parsed, err := uuid.Parse(request.OperationID); err != nil || parsed.Version() != 4 ||
 		request.PreflightID == "" || !validPackageName(request.Name) ||
 		utf8.RuneCountInString(request.Party) > 64 || !strings.HasPrefix(request.Into, "/") {
@@ -129,22 +117,28 @@ func AdmitPackageImport(ctx context.Context, d Deps, g PackageMutationGate, owne
 	}
 	var admitted store.PackageImportJob
 	err = g.MutateContext(ctx, func() error {
-		run, beginErr := d.Store.BeginIngest(ctx, "package:loadfile", preview.SourceRef)
-		if beginErr != nil {
-			return beginErr
-		}
-		pkg := store.PackageRequest{PackageID: uuid.NewString(), Direction: "received", State: "importing",
-			PackageName: request.Name, PartyLabel: request.Party, IngestID: run.ID(),
-			ProfileSHA256: preview.ProfileSHA256, ProfileJSON: preview.ProfileJSON,
-			MappingSHA256: preview.MappingSHA256, MappingJSON: preview.MappingJSON,
-			ManifestSHA256: preview.ManifestSHA256, ManifestBlobSHA256: preview.ManifestBlobSHA256,
-			Volumes: volumes}
-		admitted, beginErr = d.Store.AdmitPackageImport(ctx, run, pkg, store.PackageImportJobRequest{
-			ID: uuid.NewString(), Owner: owner, OperationID: request.OperationID,
-			RequestSHA256: requestHash, PreflightID: preview.PreflightID,
-			PackageID: pkg.PackageID, JobJSON: jobJSON,
+		return d.Imports.Admit(surface, func() (string, bool, error) {
+			run, beginErr := d.Store.BeginIngest(ctx, "package:loadfile", preview.SourceRef)
+			if beginErr != nil {
+				return "", false, beginErr
+			}
+			pkg := store.PackageRequest{PackageID: uuid.NewString(), Direction: "received", State: "importing",
+				PackageName: request.Name, PartyLabel: request.Party, IngestID: run.ID(),
+				ProfileSHA256: preview.ProfileSHA256, ProfileJSON: preview.ProfileJSON,
+				MappingSHA256: preview.MappingSHA256, MappingJSON: preview.MappingJSON,
+				ManifestSHA256: preview.ManifestSHA256, ManifestBlobSHA256: preview.ManifestBlobSHA256,
+				Volumes: volumes}
+			jobID := uuid.NewString()
+			admitted, beginErr = d.Store.AdmitPackageImport(ctx, run, pkg, store.PackageImportJobRequest{
+				ID: jobID, Owner: owner, OperationID: request.OperationID,
+				RequestSHA256: requestHash, PreflightID: preview.PreflightID,
+				PackageID: pkg.PackageID, JobJSON: jobJSON,
+			})
+			if beginErr != nil {
+				return "", false, beginErr
+			}
+			return "package:" + admitted.ID, admitted.ID == jobID, nil
 		})
-		return beginErr
 	})
 	if err != nil {
 		return PackageImportJob{}, err

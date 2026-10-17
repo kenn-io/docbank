@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -40,23 +41,30 @@ func TestActionEventsAndImportAttributionCapacity(t *testing.T) {
 	for _, props := range []string{`{"surface":"web"}`, `{"surface":"web","search_type":"auto"}`, `{"surface":"web","search_type":42}`} {
 		require.Equal(t, 400, postEvent(t, h, `{"event":"search_run","properties":`+props+`}`).Code)
 	}
+	require.NoError(t, h.Capture("document_opened", map[string]any{"surface": "web"}))
+	require.Error(t, h.Capture("search_run", map[string]any{"surface": "web"}))
+	h.now = func() time.Time { return time.Date(2026, 10, 19, 0, 0, 0, 0, time.UTC) }
+	require.NoError(t, h.Capture("search_run", map[string]any{"surface": "web", "search_type": "semantic"}))
+	require.NoError(t, h.Capture("document_opened", map[string]any{"surface": "web"}))
 	require.NoError(t, reporter.Close())
 	mu.Lock()
-	require.Len(t, events, 18) // six additions and twelve daily search/open claims
+	require.Len(t, events, 20) // six additions and fourteen daily search/open claims
 	events = nil
 	mu.Unlock()
 	reporter = New(Options{Dir: dir, endpoint: collector.URL})
-	imports := NewImports(reporter)
+	imports := NewImports(CaptureHandler(reporter, dir))
 	admission := func() (string, bool, error) { return "mailbox:synthetic", true, nil }
 	require.NoError(t, imports.Admit("web", admission))
 	imports.Result("mailbox:synthetic", false, false)
 	require.NoError(t, imports.Admit("cli", admission))
 	imports.Result("mailbox:synthetic", true, false)
 	imports.Result("mailbox:synthetic", true, true)
+	require.NoError(t, imports.Admit("web", func() (string, bool, error) { return "mailbox:second", true, nil }))
+	imports.Result("mailbox:second", true, true)
 	require.NoError(t, imports.Admit("web", func() (string, bool, error) { return "photos:lost", true, nil }))
-	NewImports(reporter).Result("photos:lost", true, true)
+	NewImports(CaptureHandler(reporter, dir)).Result("photos:lost", true, true)
 	t.Setenv(EnabledEnv, "0")
-	imports = NewImports(New(Options{Dir: t.TempDir()}))
+	imports = NewImports(CaptureHandler(New(Options{Dir: t.TempDir()}), t.TempDir()))
 	admitted := 0
 	for i := range 257 {
 		require.NoError(t, imports.Admit("cli", func() (string, bool, error) {
@@ -73,6 +81,6 @@ func TestActionEventsAndImportAttributionCapacity(t *testing.T) {
 	require.NoError(t, reporter.Close())
 	mu.Lock()
 	defer mu.Unlock()
-	require.Len(t, events, 1) // only the first attributed addition reports
+	require.Len(t, events, 2) // each import reports its first attributed addition
 	assert.Equal(t, "web", events[len(events)-1]["surface"])
 }

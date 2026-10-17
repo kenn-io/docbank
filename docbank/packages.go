@@ -196,7 +196,7 @@ func (v *Vault) ImportPackage(ctx context.Context, request PackageImportRequest)
 		return PackageImportJob{}, ErrClosed
 	}
 	return api.AdmitPackageImport(ctx, api.Deps{Store: v.metadata, Blobs: v.blobs, VaultRoot: v.vaultRoot},
-		embeddedMutationGate{vault: v}, v.packageOwner(), request)
+		embeddedMutationGate{vault: v}, v.packageOwner(), request, "")
 }
 
 // PackageImportStatus reports progress for one admitted operation.

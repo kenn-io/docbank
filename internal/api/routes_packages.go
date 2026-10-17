@@ -761,6 +761,10 @@ func packagePreflightFromRecord(record store.PackagePreflightRecord) (PackagePre
 }
 
 func writePackageError(w http.ResponseWriter, err error) {
+	if problem, ok := errors.AsType[*Error](err); ok {
+		writeError(w, problem)
+		return
+	}
 	mapped, ok := errors.AsType[*Error](FromStoreError(err))
 	if !ok {
 		mapped = NewError(http.StatusInternalServerError, "internal", err.Error())

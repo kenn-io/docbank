@@ -73,16 +73,9 @@
   let rank = -1;
   let largeStarted = false;
   const identity = $derived(photo ? `${photo.asset_id}:${photo.content_version_id}` : "");
-  let reportedAssetID = "";
+  const inspect = (): void => reportAction(photos.session, "document_opened");
   $effect(() => {
-    const id = photo?.asset_id;
-    if (id && id !== reportedAssetID) {
-      reportedAssetID = id;
-      reportAction(
-        untrack(() => photos.session),
-        "document_opened",
-      );
-    }
+    if (photo?.asset_id) untrack(inspect);
   });
   const index = $derived(items.findIndex((item) => item.asset_id === photo?.asset_id));
   const rail = $derived(index < 0 ? [] : items.slice(Math.max(0, index - 4), index + 5));
@@ -280,6 +273,7 @@
     }
   }
   function zoom() {
+    inspect();
     if (!photo || largeStarted || quality === "original") return;
     void load(photo, "large", controller);
   }
@@ -362,6 +356,7 @@
       move(1);
     } else if (event.key.toLowerCase() === "i") {
       event.preventDefault();
+      inspect();
       metadataOpen = !metadataOpen;
     }
   }
@@ -375,6 +370,8 @@
   aria-label={photo ? `Photo viewer, ${photo.name}` : "Photo viewer"}
   tabindex="-1"
   onkeydown={key}
+  onpointerdown={inspect}
+  onwheel={inspect}
   {@attach trapFocus}
 >
   <header class="loupe-toolbar">

@@ -3232,6 +3232,7 @@ export interface IngestReport {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   added: number;
+  created: number;
   excluded: number;
   failed?: IngestFailure[];
   ingest_id?: string;

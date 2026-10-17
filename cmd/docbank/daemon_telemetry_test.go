@@ -89,5 +89,7 @@ func TestServeAcceptsAppOpenedWhenTelemetryOptedOut(t *testing.T) {
 	status, body := d.do(t, http.MethodPost, "/api/daemon/telemetry/events", `{"event":"app_opened"}`)
 	require.Equal(t, http.StatusAccepted, status, body)
 	assert.JSONEq(t, `{"status":"disabled"}`, body)
+	status, body = d.do(t, http.MethodPost, "/api/daemon/telemetry/events", `{"event":"search_run"}`)
+	require.Equal(t, http.StatusBadRequest, status, body)
 	d.requireNoHeartbeatOrInstallFile(t)
 }

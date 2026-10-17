@@ -38,7 +38,6 @@
   }
 
   interface Props {
-    session: string;
     channel: UploadTransport;
     directory: Node;
     disabledReason?: string;
@@ -48,7 +47,6 @@
   }
 
   let {
-    session,
     channel,
     directory,
     disabledReason = "",

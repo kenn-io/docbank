@@ -619,7 +619,10 @@ func TestModelReportsSearchIntentAndReturnsToTree(t *testing.T) {
 	assert.Equal(t, "content", model.rows[0].match)
 
 	model, cmd = updateModel(t, model, runeKey('r'))
-	model = runModelCommand(t, model, cmd)
+	model, cmd = updateModel(t, model, cmd())
+	if cmd != nil {
+		model = runModelCommand(t, model, cmd)
+	}
 	require.Len(t, backend.actions, 1)
 
 	model, cmd = updateModel(t, model, key(tea.KeyEscape))

@@ -47,7 +47,6 @@ describe("upload documents drawer", () => {
     const complete = vi.fn();
 
     render(UploadDrawer, {
-      session: "import-session",
       channel,
       directory: {
         id: 3,
@@ -111,7 +110,6 @@ describe("upload documents drawer", () => {
     const complete = vi.fn();
 
     render(UploadDrawer, {
-      session: "import-session",
       channel,
       directory: {
         id: 3,
@@ -159,7 +157,6 @@ describe("upload documents drawer", () => {
     const complete = vi.fn();
 
     render(UploadDrawer, {
-      session: "import-session",
       channel,
       directory: {
         id: 3,
@@ -209,7 +206,6 @@ describe("upload documents drawer", () => {
     const complete = vi.fn();
 
     render(UploadDrawer, {
-      session: "import-session",
       channel,
       directory: {
         id: 3,

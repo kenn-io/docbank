@@ -4,7 +4,6 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
-	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -16,8 +15,7 @@ import (
 type actionCollector struct {
 	reporter *telemetry.Reporter
 	imports  *telemetry.Imports
-	mu       sync.Mutex
-	events   []map[string]any
+	events   chan map[string]any
 }
 
 func newActionCollector(t *testing.T) *actionCollector {
@@ -25,15 +23,15 @@ func newActionCollector(t *testing.T) *actionCollector {
 	if posthog.ProcessDisabled() {
 		t.Skip("built with kit_posthog_disabled")
 	}
-	c := new(actionCollector)
+	c := &actionCollector{events: make(chan map[string]any, 256)}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var batch struct {
 			Batch []map[string]any `json:"batch"`
 		}
 		assert.NoError(t, json.UnmarshalRead(r.Body, &batch))
-		c.mu.Lock()
-		c.events = append(c.events, batch.Batch...)
-		c.mu.Unlock()
+		for _, event := range batch.Batch {
+			c.events <- event
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	t.Cleanup(server.Close)
@@ -41,16 +39,15 @@ func newActionCollector(t *testing.T) *actionCollector {
 	c.reporter, err = posthog.NewReporter(posthog.Options{APIKey: "synthetic-key", Endpoint: server.URL, Application: "docbank", EnvPrefix: "DOCBANK", DistinctID: "synthetic-install"}, posthog.WithAllowedEvent("document_added", posthog.AllowProperty("surface", posthog.AllowStringValues("web", "cli"))), posthog.WithAllowedEvent("screen_viewed", posthog.AllowProperty("screen", posthog.AllowStringValues("browse")), posthog.AllowProperty("surface", posthog.AllowStringValues("web"))))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, c.reporter.Close()) })
-	c.imports = telemetry.NewImports(c.reporter)
+	c.imports = telemetry.NewImports(telemetry.CaptureHandler(c.reporter, t.TempDir()))
 	return c
 }
 
 func (c *actionCollector) requireEvent(t *testing.T, event string, properties map[string]any) {
 	t.Helper()
 	require.NoError(t, c.reporter.Close())
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	require.Len(t, c.events, 1)
-	require.Equal(t, event, c.events[0]["event"])
-	require.Subset(t, c.events[0]["properties"], properties)
+	delivered := <-c.events
+	require.Equal(t, event, delivered["event"])
+	require.Subset(t, delivered["properties"], properties)
 }
