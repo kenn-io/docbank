@@ -229,6 +229,24 @@ it("blocks decisions, navigation, scope changes and exit during checkpoint check
   expect(onclose).toHaveBeenCalledOnce();
 });
 
+it("retries a failed completion lookup and restores the unflagged remainder offer", async () => {
+  const lookup = vi
+    .spyOn(api, "listPhotoAssets")
+    .mockRejectedValueOnce(new APIError("Service unavailable", 503, "unavailable"))
+    .mockResolvedValue({ items: [photo(1)], total: 1, facets: [], relevance_available: false });
+  const { cull } = await reviewPhoto();
+  await fireEvent.click(await readyButton("Next"));
+  await screen.findByRole("heading", { name: "Pass complete" });
+  await screen.findByText("Service unavailable");
+  expect(screen.queryByRole("button", { name: "Review unflagged remainder" })).toBeNull();
+  await fireEvent.click(await readyButton(/^Retry$/));
+  await readyButton("Review unflagged remainder");
+  expect(lookup).toHaveBeenCalledTimes(2);
+  expect(screen.queryByText("Service unavailable")).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Retry$/ })).toBeNull();
+  expect(cull.complete).toBe(true);
+});
+
 it("retries a failed lookup without leaving the current photo", async () => {
   vi.stubGlobal(
     "ResizeObserver",

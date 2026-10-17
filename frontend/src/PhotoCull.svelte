@@ -348,6 +348,10 @@
               .unavailable.length} unavailable
           </p>
           {#if cull.progress}<p role="status">{cull.progress}</p>{/if}
+          {#if cull.error}<Button
+              disabled={cull.busy || cull.stale || busy}
+              onclick={() => void cull.checkRemainder()}>Retry</Button
+            >{/if}
           {#if cull.remainder}<Button
               disabled={cull.busy || cull.stale || busy}
               onclick={() => void nextPass(true)}>Review unflagged remainder</Button
