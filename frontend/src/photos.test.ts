@@ -17,6 +17,8 @@ import {
   savedSmartSet as savedSmartSetFixture,
 } from "./photo-test-fixtures.js";
 import type { Query } from "./query.js";
+import type { PhotoAuthoredReceipt } from "./generated/docbank.js";
+import * as api from "./generated/docbank.js";
 import * as snapshots from "./snapshots.js";
 import { parseQuery, queryFingerprint } from "./query.js";
 
@@ -55,6 +57,43 @@ const savedSmartSet = async (revision = 1, id = "00000000-0000-4000-8000-0000000
 };
 const savedSmartSetResponse = (saved: { revision: number }) =>
   Response.json(saved, { headers: { ETag: `"${saved.revision}"` } });
+
+it("restarts Library paging after a burst gap invalidates its cursor", async () => {
+  const fetcher = vi
+    .fn()
+    .mockResolvedValueOnce(Response.json({ code: "invalid_photo_cursor" }, { status: 422 }))
+    .mockResolvedValueOnce(response([photo(1), photo(2)], "fresh-next"))
+    .mockResolvedValueOnce(response([photo(3)], "fresh-tail"))
+    .mockResolvedValueOnce(response([photo(4)]));
+  stubPhotoFetch(fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1), photo(2)];
+  photos.total = 4;
+  photos.started = true;
+  photos.cursor = "old-gap";
+  photos.selectLoaded(["photo-2"]);
+  await photos.loadMore();
+  expect(photos.error).toBeTruthy();
+  expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-1", "photo-2"]);
+  await photos.retry();
+  expect(photos.error).toBe("");
+  expect(photos.cursor).toBe("fresh-tail");
+  await photos.loadMore();
+  expect(fetcher.mock.calls.map(([, init]) => JSON.parse(init.body).cursor)).toEqual([
+    "old-gap",
+    undefined,
+    "fresh-next",
+    "fresh-tail",
+  ]);
+  expect(photos.items.map((row) => row.asset_id)).toEqual([
+    "photo-1",
+    "photo-2",
+    "photo-3",
+    "photo-4",
+  ]);
+  expect([...photos.selectedIDs]).toEqual(["photo-2"]);
+  photos.dispose();
+});
 
 it("moves compare backward locally after its next page fails, then retries that page", async () => {
   const fetcher = vi
@@ -388,26 +427,6 @@ it.each(["refresh", "expiry"])(
     photos.dispose();
   },
 );
-
-it("retries the same Library page after an invalid cursor", async () => {
-  const fetcher = vi
-    .fn()
-    .mockResolvedValueOnce(response([photo(1)], "bad"))
-    .mockResolvedValueOnce(Response.json({ code: "invalid_photo_cursor" }, { status: 422 }))
-    .mockResolvedValueOnce(response([photo(2)]));
-  stubPhotoFetch(fetcher);
-  const photos = new Photos("scoped", vi.fn());
-  await photos.loadMore();
-  await photos.loadMore();
-  await photos.retry();
-  expect(fetcher.mock.calls.map(([, init]) => JSON.parse(init.body).cursor)).toEqual([
-    undefined,
-    "bad",
-    "bad",
-  ]);
-  expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-1", "photo-2"]);
-  photos.dispose();
-});
 
 it.each([undefined, "map"] as const)(
   "revalidates absent selection with the %s selection scope",
@@ -3044,3 +3063,174 @@ it("looks up and projects large captured sets in at most four concurrent 64-ID q
   expect(sizes).toEqual([64, 64, 64, 64, 64, 1]);
   expect(progress.at(-1)).toBe(321);
 });
+
+it("selects collapsed bursts and expanded frames, including range selection and deselection", () => {
+  const photos = new Photos("session", vi.fn());
+  const rows = [1, 2, 3, 4, 5, 6].map((id) => photo(id));
+  const ids = rows.map((row) => row.asset_id);
+  photos.items = rows.map((row, i) => ({
+    ...row,
+    stack: {
+      asset_ids: i < 3 ? ids.slice(0, 3) : ids.slice(3),
+      representative_id: i < 3 ? ids[1]! : ids[4]!,
+    },
+  }));
+  photos.select(ids[1]!, new MouseEvent("click", { button: 0 }), ids);
+  expect([...photos.selectedIDs]).toEqual(ids.slice(0, 3));
+  photos.check(ids[1]!, false, false, ids);
+  expect(photos.selectedIDs.size).toBe(0);
+  photos.toggleStack(ids[1]!);
+  photos.select(ids[1]!, new MouseEvent("click", { button: 0 }), ids);
+  expect([...photos.selectedIDs]).toEqual([ids[1]]);
+  photos.check(ids[2]!, true, false, ids);
+  expect([...photos.selectedIDs]).toEqual([ids[1], ids[2]]);
+  photos.toggleStack(ids[1]!);
+  photos.select(ids[4]!, new MouseEvent("click", { button: 0 }), ids);
+  photos.check(ids[1]!, true, true, ids);
+  expect([...photos.selectedIDs].sort()).toEqual([...ids].sort());
+  photos.check(ids[1]!, false, true, ids);
+  expect(photos.selectedIDs.size).toBe(0);
+});
+
+it("attaches server-described stacks and requests them for capture-time and relevance pages", async () => {
+  const rows = [photo(1), photo(2), photo(3)];
+  const stack = {
+    asset_ids: ["photo-1", "photo-2"],
+    representative_id: "photo-2",
+  };
+  const requests: { stacks?: boolean }[] = [];
+  stubPhotoFetch(async (_url, init) => {
+    requests.push(JSON.parse(String(init.body)));
+    return Response.json({
+      items: rows,
+      stacks: [stack],
+      total: 3,
+      facets: [],
+      relevance_available: false,
+    });
+  });
+  const photos = new Photos("session", vi.fn());
+  await photos.resume();
+  expect(photos.items.map((row) => "stack" in row && row.stack)).toEqual([stack, stack, undefined]);
+  photos.query = parseQuery('{"sort":{"field":"name","direction":"asc"}}');
+  await photos.refresh();
+  photos.query = parseQuery('{"text":"photo","sort":{"field":"relevance","direction":"desc"}}');
+  await photos.refresh();
+  expect(requests.map((request) => request.stacks)).toEqual([true, false, true]);
+  photos.dispose();
+});
+
+it("updates the burst gap through general settings and shows regrouped Library photos", async () => {
+  let gap = 2;
+  const updates: unknown[] = [];
+  stubPhotoFetch(async (url, init) => {
+    if (url.endsWith("/photos/settings")) {
+      if (init.method === "PUT") {
+        updates.push(JSON.parse(String(init.body)));
+        expect(new Headers(init.headers).get("If-Match")).toBe('"1"');
+        gap = 5;
+      }
+      return Response.json({
+        revision: gap === 2 ? 1 : 2,
+        preference: "image",
+        burst_gap_seconds: gap,
+      });
+    }
+    expect(url.endsWith("/photos/assets/query")).toBe(true);
+    return Response.json({
+      items: [photo(1), photo(2)],
+      total: 2,
+      facets: [],
+      relevance_available: false,
+      burst_gap_seconds: gap,
+      stacks:
+        gap === 5 ? [{ asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1" }] : [],
+    });
+  });
+  const photos = new Photos("session", vi.fn());
+  await photos.resume();
+  const get = vi.spyOn(api, "getPhotoSettings");
+  for (const gap of [Number(""), 1.5, 31]) {
+    await photos.setBurstGap(gap);
+    expect(photos.actionError).toBe("burst gap must be a whole number of seconds from 1 to 30");
+  }
+  expect(get).not.toHaveBeenCalled();
+  await photos.setBurstGap(5);
+  expect(updates).toEqual([{ burst_gap_seconds: 5 }]);
+  expect(photos.burstGapSeconds).toBe(5);
+  expect(photos.items.map((row) => "stack" in row && row.stack?.asset_ids)).toEqual([
+    ["photo-1", "photo-2"],
+    ["photo-1", "photo-2"],
+  ]);
+  photos.dispose();
+});
+
+it("refreshes relevance stacks when the shared burst gap changes", async () => {
+  const settings = vi.spyOn(api, "getPhotoSettings").mockResolvedValue({
+    revision: 2,
+    preference: null,
+    burst_gap_seconds: 5,
+  });
+  const photos = new Photos("session", vi.fn());
+  photos.query = parseQuery('{"text":"photo","sort":{"field":"relevance","direction":"desc"}}');
+  const refresh = vi.spyOn(photos, "refresh").mockResolvedValue(true);
+  await photos.checkBurstGap();
+  expect(settings).toHaveBeenCalledOnce();
+  expect(refresh).toHaveBeenCalledOnce();
+  photos.dispose();
+});
+
+it("recovers the session when checking the Library burst gap returns 401", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => Response.json({ detail: "Session expired" }, { status: 401 })),
+  );
+  const recover = vi.fn();
+  const photos = new Photos("session", recover);
+  await photos.checkBurstGap();
+  expect(recover).toHaveBeenCalledOnce();
+  photos.dispose();
+});
+
+it.each(["unloaded", "singleton", "stack", "unknown", "representative", "representative Undo"])(
+  "refreshes loaded stacks only when the edited frame belongs to a stack: %s",
+  (kind) => {
+    const photos = new Photos("session", vi.fn());
+    const stack = { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1" };
+    photos.items = [{ ...photo(1), stack }, { ...photo(2), stack }, photo(3)];
+    vi.spyOn(photos, "reloadCounts").mockReturnValue(undefined);
+    const target = preparedPhoto(
+      kind === "unloaded" || kind === "unknown" ? 4 : kind === "singleton" ? 3 : 2,
+    );
+    if (kind !== "unknown") photos.authored.targets = [target];
+    const before = {
+      file_id: target.file_id,
+      node_id: target.node_id,
+      revision: target.revision,
+      values: target.values,
+    };
+    const receipt: PhotoAuthoredReceipt = kind.startsWith("representative")
+      ? {
+          receipt_id: "representative",
+          before: [],
+          after: [],
+          representatives: [
+            {
+              asset_id: "photo-2",
+              before_revision: 1,
+              after_revision: 2,
+              ...(kind === "representative" ? { after: 7 } : { before: 7 }),
+            },
+          ],
+        }
+      : {
+          receipt_id: "pick",
+          before: [before],
+          after: [{ ...before, revision: 2, values: { ...before.values, flag: "pick" } }],
+        };
+    expect(photos.reloadsAfter(photos.metadataChanged(receipt))).toBe(
+      kind !== "singleton" && kind !== "unloaded",
+    );
+    photos.dispose();
+  },
+);

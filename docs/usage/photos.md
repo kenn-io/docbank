@@ -401,6 +401,7 @@ docbank photos settings show
 docbank photos settings set raw [--revision REV]
 docbank photos settings set image [--revision REV]
 docbank photos settings reset [--revision REV]
+docbank photos settings set --burst-gap-seconds 5 [--revision REV]
 ```
 
 Asset and settings commands emit bounded JSON. Exit code 4 means the revision is stale: the
@@ -606,7 +607,7 @@ from camera A. Saved expressions follow the same rule. Document metadata filters
 stay out.
 
 Sort by `relevance`, `capture_time`, `import_time`, `name`, `modified_at`, `size`, or
-`media_type`, with `asc` or `desc`. Set `filters.set_ids` to album UUIDs to browse their members. `added_time` requires exactly one album ID after normalization. Capture sorting converts recorded offsets
+`media_type`, with `asc` or `desc`. Set `filters.set_ids` to album UUIDs to browse their members. `added_time` requires exactly one album ID after normalization. Capture-time album queries can return burst stacks; added-time queries keep individual rows. Capture sorting converts recorded offsets
 to UTC. Omitted zones use civil calendar coordinates. A photo without a
 readable capture time sorts by its file's modified time when Docbank recorded
 one. Photos with neither sort last in both directions and do not match
@@ -698,6 +699,33 @@ Configure [photo map tiles](../configuration.md#photo-map-tiles) in `[web.map_ti
 
 Map uses album membership when opened from an album. Otherwise it inherits Library's text, filters and date. It sorts by capture date, then adds GPS eligibility. Each visit starts a fresh result and selection. Map fetches the newest 20,000 matching located photos by capture date in pages of 1,000, at most 20 requests. When more match, Map says how many it's showing. Narrow the search, filters or date to see older photos. Returning to the Map rechecks access and reloads only after a hide or unhide. Like Library, the Map picks up other clients' trash, imports or edits on refresh. Markers and the grid show each page as it arrives. Earlier results stay visible during a refresh or if it fails. Retry resumes the failed page. An expired cursor starts a fresh load. The viewer and arrow keys follow the Map query, while the viewport filters only the grid. Panning retains selection, and the trash confirmation discloses selections outside the grid.
 
+## Burst stacks
+
+With capture-time or relevance sorting, Library groups adjacent photos from one import folder with matching camera make and model into a stack: one tile with a frame count. Each step between frames must be within the vault's **Burst gap (seconds)**, initially 2 and adjustable from 1 to 30. A stack can last longer than the gap. Photos from other folders or with a different camera make or model don't split it.
+
+- A stack holds only photos in the current search and filters. Frames that the query excludes stay out of the tile and out of its decisions.
+- A photo joins a stack only when its displayed file has an EXIF capture time to the second or finer and an active import record names a folder. Re-importing keeps the earliest known active folder. Photos with only a date or minute, photos placed by file time, photos whose folder is unknown, and videos stay separate. Push and watch sources keep their folders apart.
+- Camera make and model comparisons ignore case. For each field, two missing values match; a missing value and a known value stay separate. Separate camera bodies with the same make and model can still join one stack.
+- Capture times with a zone or UTC offset compare as instants. Times without a zone compare only with each other.
+- A stack holds at most 500 frames. A connected run of more than 500 frames or 2,000 live non-sidecar files shows as individual photos.
+- Relevance groups only the returned matches. A stack occupies its highest-ranked member's position. Other sorts and Map keep individual tiles.
+
+Capture-time Library pages stay live. A page finishes its last stack, so it can hold up to 499 frames more than usual, and a stack never splits across pages. Photos imported between pages join later pages. Changing the gap starts a fresh page.
+
+If a burst gains or loses matching frames across a page boundary, including after a camera metadata change, Library asks you to retry. Retry starts a fresh result so every matching frame stays with its stack.
+
+Selecting a collapsed tile selects all its frames. Click the count to expand or collapse it; expanded frames can be selected separately. The tile shows the most recently chosen eligible representative, else the first picked frame, else the first non-rejected frame, else the first frame. A rejected frame is eligible only when every frame is rejected. A pick on a RAW or JPEG companion counts as a pick for its frame. When a wider gap joins stacks that each have a chosen representative, the most recent eligible choice wins.
+
+With a stack selected, the selection dock offers these decisions:
+
+- **Keep all** picks every file in the stack, including rejects.
+- **Keep selected** picks the selected frames and rejects other undecided frames.
+- **Choose representative**, with one eligible expanded frame selected, shows that frame on the tile. It leaves every frame's pick and reject flags unchanged and stores the choice separately.
+
+A frame is undecided when none of its files has a flag. Automatic rejects leave flagged frames unchanged.
+
+A stack decision checks the shown members, their capture-time chain and the observed gap, and every file revision in one transaction. It records one receipt with **Undo**. Gap and display-preference changes share a settings revision, so simultaneous writes can conflict. Undo restores an earlier representative only while that photo is unchanged since the choice. If a member changed, Docbank refuses the whole decision, keeps your selection, and offers **Reload stack** in Library or **Reload photo** in Cull. Newly adjacent frames stay undecided until the reloaded view includes them. Audited vaults record burst-gap changes, representative choices, and representative Undo in their audit history. A settings request that also changes the display preference is refused in an audited vault. Change the same vault gap from the CLI with `docbank photos settings set --burst-gap-seconds 5`.
+
 ## Cull and compare
 
 Choose **Cull** in Library or an album to review the whole current query full-screen. Docbank captures its order and membership before starting. A cull accepts up to 250,000 photos; narrow larger queries before starting. Flag or rating changes keep photos in the current pass; the next pass refreshes eligibility. Cull decisions are flags. A decision changes both files of a RAW and JPEG pair. When the pair's flags or ratings differ, it changes only the shown file and says so. Star ratings leave a photo unflagged. **S** cycles through unflagged, picks, rejects, and all, with confirmation before resetting an unfinished pass.
@@ -707,6 +735,9 @@ With auto-advance on, P, X, and U move to the next photo; 0-5 change the rating 
 | Key | Action |
 | --- | --- |
 | Arrow keys | Previous or next photo |
+| H / L | Previous or next stack |
+| J / K | Next or previous frame within the stack |
+| Return | Pick the current frame and reject undecided siblings |
 | P / X / U | Pick, reject, or clear the flag |
 | 0–5 | Clear or set the star rating |
 | A | Toggle auto-advance, initially on |
@@ -715,6 +746,8 @@ With auto-advance on, P, X, and U move to the next photo; 0-5 change the rating 
 | I | Cycle EXIF information |
 | ? | Show the key map |
 | Esc | Leave cull mode |
+
+Cull freezes ordered photo IDs from any query sort. It uses the same import-folder, camera, and capture-time rules as Library and recomputes stacks on start, resume, and a gap change. Groups and their frames retain the captured request order. A stack holds only photos in the run, even when photos from other folders fall between its frames. **H** and **L** visit each stack's first frame in the current pass; **J** and **K** move between its frames in pass order. Lone photos count as stacks of one. Regrouping keeps the latest order and progress, even after the snapshot expires. Navigation stays available while groups load; decisions wait. If regrouping fails, choose **Retry stacks**. If preparing a stack fails, choose **Retry**. A refused stack decision reloads grouping for all frozen IDs. Cull offers **Keep current (Return)**, **Keep all**, and **Choose representative**. A decision covers the whole live stack, including frames outside the current pass.
 
 Use **Skip** to record a skipped photo. The decision toast offers **Undo**. Ctrl, Cmd, and Alt shortcuts pause during cull. Apply or clear pending metadata edits before entering, moving, or leaving.
 

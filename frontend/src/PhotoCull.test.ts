@@ -18,6 +18,16 @@ async function readyButton(name: string | RegExp) {
   return button;
 }
 beforeEach(() => {
+  vi.spyOn(api, "getPhotoSettings").mockResolvedValue({
+    revision: 1,
+    preference: null,
+    burst_gap_seconds: 2,
+  });
+  vi.spyOn(api, "groupPhotoStacks").mockResolvedValue({
+    groups: [],
+    unavailable_ids: [],
+    burst_gap_seconds: 2,
+  });
   vi.spyOn(api, "preparePhotoAuthored").mockImplementation(async (scope) =>
     photoPreparation((scope.asset_ids ?? []).map((id) => preparedPhoto(Number(id.slice(6))))),
   );
@@ -35,6 +45,7 @@ it.each(
     { key: "4", patch: { rating: 4 }, announcement: "4 stars", next: "photo-1" },
     { key: "5", patch: { rating: 5 }, announcement: "5 stars", next: "photo-1" },
     { key: "p", patch: { flag: "pick" }, announcement: "pick", next: "photo-2" },
+    { key: "Enter", patch: { flag: "pick" }, announcement: "pick", next: "photo-2" },
     { key: "x", patch: { flag: "reject" }, announcement: "reject", next: "photo-2" },
     { key: "u", patch: { flag: "" }, announcement: "flag cleared", next: "photo-2" },
   ].flatMap((decision) =>
@@ -52,6 +63,13 @@ it.each(
     vi.mocked(photos.lookup).mockImplementation(
       async (id) => rows.find((row) => row.asset_id === id)!,
     );
+    const before = preparedPhoto(1);
+    const pickReceipt: PhotoAuthoredReceipt = {
+      receipt_id: "pick",
+      before: [before],
+      after: [{ ...before, revision: 2, values: { ...before.values, flag: "pick" } }],
+    };
+    if (key === "Enter") edit.mockResolvedValue(pickReceipt);
     await act(() => {
       cull.run = {
         ...cull.run!,
@@ -76,6 +94,25 @@ it.each(
     await screen.findByText(next === "photo-1" ? "Photo 1.jpg" : "Photo 2.jpg");
   },
 );
+
+it("announces regrouping while keyboard decisions wait", async () => {
+  const edit = vi.spyOn(api, "editPhotoAuthored");
+  const { cull, container } = await reviewPhoto();
+  let finish!: (result: Awaited<ReturnType<typeof api.groupPhotoStacks>>) => void;
+  vi.mocked(api.groupPhotoStacks).mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
+  let pending: Promise<void>;
+  await act(() => {
+    pending = cull.regroup();
+  });
+  expect((await screen.findByRole("status")).textContent).toBe("Grouping bursts...");
+  await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key: "Enter" });
+  expect(edit).not.toHaveBeenCalled();
+  await act(async () => {
+    finish({ groups: [], unavailable_ids: [], burst_gap_seconds: 2 });
+    await pending;
+  });
+  expect(screen.queryByText("Grouping bursts...")).toBeNull();
+});
 
 it("navigates with keyboard focus after activating Undo", async () => {
   const before = preparedPhoto(1);
@@ -167,6 +204,10 @@ it("blocks decisions, navigation, scope changes and exit during checkpoint check
       else expect(photos.cullEditor!.busy).toBe(true);
     });
     for (const key of [
+      "h",
+      "j",
+      "k",
+      "l",
       "ArrowLeft",
       "ArrowUp",
       "ArrowRight",
@@ -244,20 +285,49 @@ it("retries a failed completion lookup and restores the unflagged remainder offe
   expect(cull.complete).toBe(true);
 });
 
-it("retries a failed lookup without leaving the current photo", async () => {
-  const row = photo(1);
-  const { cull, photos } = await reviewPhoto(row, true, undefined, {
-    lookupError: new APIError("Temporarily unavailable", 503, "unavailable"),
-  });
-  const lookup = vi.mocked(photos.lookup);
-  await fireEvent.click(await screen.findByRole("button", { name: /^Retry$/ }));
-  await screen.findByText(row.name);
-  expect(lookup).toHaveBeenCalledTimes(2);
-  expect(lookup.mock.calls.map(([id]) => id)).toEqual([row.asset_id, row.asset_id]);
-  expect(cull.currentID).toBe(row.asset_id);
-  expect(cull.run!.checkpoint.position).toBe(0);
-  expect(screen.queryByRole("button", { name: /^Retry$/ })).toBeNull();
-});
+it.each([false, true])(
+  "retries a failed lookup without leaving the current photo, navigated=%s",
+  async (navigated) => {
+    const row = photo(navigated ? 2 : 1);
+    const cause = new APIError("Temporarily unavailable", 503, "unavailable");
+    const { cull, photos, container } = await reviewPhoto(
+      navigated ? photo(1) : row,
+      true,
+      undefined,
+      navigated ? {} : { lookupError: cause },
+    );
+    const edit = vi.spyOn(api, "editPhotoAuthored");
+    const lookup = vi.mocked(photos.lookup);
+    if (navigated) {
+      lookup.mockRejectedValueOnce(cause).mockResolvedValueOnce(row);
+      await act(() => {
+        cull.run = {
+          ...cull.run!,
+          ids: ["photo-1", "photo-2"],
+          checkpoint: { ...cull.run!.checkpoint, pass: ["photo-1", "photo-2"] },
+        };
+        cull.move(1);
+      });
+    }
+    const retry = await screen.findByRole("button", { name: /^Retry$/ });
+    expect(screen.queryByText("Photo 1.jpg")).toBeNull();
+    expect(screen.getByRole("button", { name: "Pick (P)" }).matches(":disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Reject (X)" }).matches(":disabled")).toBe(true);
+    await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key: "p" });
+    await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key: "x" });
+    expect(edit).not.toHaveBeenCalled();
+    expect(cull.currentID).toBe(row.asset_id);
+    await fireEvent.click(retry);
+    await screen.findByText(row.name);
+    await readyButton("Pick (P)");
+    expect(lookup.mock.calls.map(([id]) => id)).toEqual(
+      navigated ? ["photo-1", "photo-2", "photo-2"] : ["photo-1", "photo-1"],
+    );
+    expect(cull.currentID).toBe(row.asset_id);
+    expect(cull.run!.checkpoint.position).toBe(navigated ? 1 : 0);
+    expect(screen.queryByRole("button", { name: /^Retry$/ })).toBeNull();
+  },
+);
 
 async function reviewPhoto(
   row = photo(1),
@@ -283,6 +353,7 @@ async function reviewPhoto(
   );
   cull.run = {
     ids: [row.asset_id],
+    burstGapSeconds: 2,
     checkpoint: {
       runID: "run",
       revision: 0,
@@ -608,18 +679,63 @@ it("shows the restored rotation in the cull stage after Undo", async () => {
   expect(container.querySelector(".photo-stage img")!.getAttribute("src")).toBe(preview);
 });
 
-it.each(["before edit", "during preparation", "before Undo"])(
-  "refuses a stale tab decision %s",
-  async (timing) => {
-    vi.stubGlobal("indexedDB", new IDBFactory());
-    vi.stubGlobal("IDBKeyRange", IDBKeyRange);
-    const store = photoCullStorage("synthetic-vault");
-    const { cull, photos } = await reviewPhoto(photo(1), true, store);
+it.each([
+  "before edit",
+  "during preparation",
+  "before Undo",
+  "stack preparation",
+  "stack submission",
+])("refuses a stale tab decision %s", async (timing) => {
+  vi.stubGlobal("indexedDB", new IDBFactory());
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+  const store = photoCullStorage("synthetic-vault");
+  const stackTiming = timing.startsWith("stack ");
+  const { cull, photos, container } = await reviewPhoto(photo(stackTiming ? 2 : 1), true, store);
+  const edit = vi.spyOn(api, "editPhotoAuthored");
+  const undo = vi.spyOn(api, "undoPhotoAuthored");
+  const decide = vi.spyOn(api, "decidePhotoStack");
+  if (stackTiming) {
+    const rows = [photo(1), photo(2), photo(3), photo(4)];
+    vi.mocked(photos.lookup).mockImplementation(
+      async (id) => rows.find((row) => row.asset_id === id)!,
+    );
+    const run = {
+      ...cull.run!,
+      ids: rows.map((row) => row.asset_id),
+      groups: [["photo-1", "photo-2", "photo-3"]],
+      checkpoint: { ...cull.run!.checkpoint, pass: rows.map((row) => row.asset_id), position: 1 },
+    };
+    await store.replace(run);
+    const saved = vi.spyOn(store, "saved");
+    let finish!: (value: Awaited<ReturnType<typeof store.saved>>) => void;
+    const pending = new Promise<Awaited<ReturnType<typeof store.saved>>>(
+      (resolve) => (finish = resolve),
+    );
+    if (timing === "stack preparation") saved.mockReturnValueOnce(pending);
+    await act(() => {
+      cull.run = run;
+    });
+    if (timing === "stack submission") {
+      const keep = await readyButton("Keep all");
+      saved
+        .mockReturnValueOnce(pending)
+        .mockResolvedValueOnce({ ...cull.run!.checkpoint, revision: 99 });
+      await fireEvent.click(keep);
+    } else await waitFor(() => expect(saved).toHaveBeenCalledOnce());
+    for (const key of ["h", "j", "k", "l"])
+      await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key });
+    expect(cull.currentID).toBe("photo-2");
+    if (timing === "stack preparation") expect(api.preparePhotoAuthored).not.toHaveBeenCalled();
+    await act(() =>
+      finish({
+        ...cull.run!.checkpoint,
+        revision: timing === "stack preparation" ? 99 : cull.run!.checkpoint.revision,
+      }),
+    );
+  } else {
     await store.replace(cull.run!);
     const other = new PhotoCull("session", photoCullStorage("synthetic-vault"));
     await other.restore();
-    const edit = vi.spyOn(api, "editPhotoAuthored");
-    const undo = vi.spyOn(api, "undoPhotoAuthored");
     const preparation = photoPreparation([preparedPhoto(1)]);
     let finish!: (value: typeof preparation) => void;
     if (timing === "during preparation") {
@@ -639,12 +755,18 @@ it.each(["before edit", "during preparation", "before Undo"])(
       });
       await fireEvent.click(await readyButton(/^Undo$/));
     } else await fireEvent.click(screen.getByRole("button", { name: "Pick (P)" }));
-    await screen.findByText(
-      "Progress could not be saved: Cull progress changed in another tab. Close and resume it.",
-    );
-    expect(timing === "before Undo" ? undo : edit).not.toHaveBeenCalled();
-  },
-);
+  }
+  await screen.findByText(
+    "Progress could not be saved: Cull progress changed in another tab. Close and resume it.",
+  );
+  expect(edit).not.toHaveBeenCalled();
+  expect(undo).not.toHaveBeenCalled();
+  expect(decide).not.toHaveBeenCalled();
+  if (stackTiming) {
+    expect(cull.currentID).toBe("photo-2");
+    if (timing === "stack preparation") expect(api.preparePhotoAuthored).not.toHaveBeenCalled();
+  }
+});
 
 it("keeps a failed decision on screen and guards exit while its draft remains", async () => {
   vi.spyOn(api, "editPhotoAuthored").mockRejectedValue(new Error("Decision failed"));
@@ -886,3 +1008,301 @@ it.each(["rating only", "flag change", "unavailable mark and auto-advance toggle
     expect(flags).toHaveBeenCalledTimes(kind === "flag change" ? 2 : 1);
   },
 );
+
+it("decides the whole saved stack from a later pass", async () => {
+  const rows = [photo(1), { ...photo(2), flag: "pick" as const }, photo(3), photo(4)];
+  const ids = rows.map((row) => row.asset_id),
+    pass = [ids[0]!, ids[2]!, ids[3]!];
+  const decide = vi.spyOn(api, "decidePhotoStack").mockResolvedValue({
+    receipt_id: "stack",
+    before: [preparedPhoto(1), preparedPhoto(3)],
+    after: [
+      { ...preparedPhoto(1), revision: 2, values: { ...preparedPhoto(1).values, flag: "pick" } },
+      { ...preparedPhoto(3), revision: 2, values: { ...preparedPhoto(3).values, flag: "reject" } },
+    ],
+  });
+  const group = vi.spyOn(api, "groupPhotoStacks");
+  vi.spyOn(api, "getPhotoSettings").mockResolvedValue({
+    revision: 1,
+    preference: null,
+    burst_gap_seconds: 2,
+  });
+  const { cull, photos } = await reviewPhoto(rows[0], true);
+  vi.mocked(photos.lookup).mockImplementation(
+    async (id) => rows.find((row) => row.asset_id === id)!,
+  );
+  await act(() => {
+    cull.run = {
+      ...cull.run!,
+      ids,
+
+      groups: [ids.slice(0, 3)],
+      burstGapSeconds: 2,
+      checkpoint: { ...cull.run!.checkpoint, pass, scope: "unflagged" },
+    };
+  });
+  const keep = await readyButton("Keep current (Return)");
+  await fireEvent.click(keep);
+  await waitFor(() => expect(cull.currentID).toBe(ids[3]));
+  expect(decide.mock.calls[0]?.[0]).toMatchObject({
+    asset_ids: ids.slice(0, 3),
+    current_id: ids[0],
+    hidden: false,
+  });
+  expect(
+    Object.values(decide.mock.calls[0]![0].targets)
+      .map((target) => target.asset_id)
+      .sort(),
+  ).toEqual(ids.slice(0, 3));
+  expect(group).not.toHaveBeenCalled();
+});
+
+it.each([false, true])(
+  "allows a rejected Cull representative only when all frames are rejected: %s",
+  async (allRejected) => {
+    const rows = [photo(1), photo(2)];
+    rows[0]!.flag = "reject";
+    rows[1]!.flag = allRejected ? "reject" : "";
+    vi.mocked(api.preparePhotoAuthored).mockImplementation(async (scope) =>
+      photoPreparation(
+        (scope.asset_ids ?? []).map((id) => {
+          const target = preparedPhoto(Number(id.slice(6)));
+          return {
+            ...target,
+            values: { ...target.values, flag: rows.find((row) => row.asset_id === id)!.flag },
+          };
+        }),
+      ),
+    );
+    const { cull } = await reviewPhoto(rows[0]);
+    await act(() => {
+      cull.run = { ...cull.run!, ids: ["photo-1", "photo-2"], groups: [["photo-1", "photo-2"]] };
+    });
+    await readyButton("Keep all");
+    const choose = await screen.findByRole("button", { name: "Choose representative" });
+    expect(choose.matches(":disabled")).toBe(!allRejected);
+  },
+);
+
+it.each(["decision", "representative", "unchanged"])(
+  "decides consecutive stacks after a successful %s",
+  async (first) => {
+    const rows = [photo(1), photo(2), photo(3), photo(4)];
+    if (first === "unchanged") {
+      rows[0]!.flag = "pick";
+      rows[1]!.flag = "pick";
+      vi.mocked(api.preparePhotoAuthored).mockImplementation(async (scope) =>
+        photoPreparation(
+          (scope.asset_ids ?? []).map((id) => {
+            const target = preparedPhoto(Number(id.slice(6)));
+            return {
+              ...target,
+              values: { ...target.values, flag: rows.find((row) => row.asset_id === id)!.flag },
+            };
+          }),
+        ),
+      );
+    }
+    const { cull, photos } = await reviewPhoto(rows[0], true);
+    vi.mocked(photos.lookup).mockImplementation(
+      async (id) => rows.find((row) => row.asset_id === id)!,
+    );
+    vi.mocked(photos.lookupMany).mockImplementation(async (ids) =>
+      rows.filter((row) => ids.includes(row.asset_id)),
+    );
+    const decide = vi.spyOn(api, "decidePhotoStack").mockImplementation(async (request) => {
+      const before = Object.values(request.asset_ids).map((id) =>
+        preparedPhoto(Number(id.slice(6))),
+      );
+      return {
+        receipt_id: "stack",
+        before,
+        after: before.map((target) => ({
+          ...target,
+          revision: 2,
+          values: {
+            ...target.values,
+            flag:
+              request.decision === "all" || target.asset_id === request.current_id
+                ? ("pick" as const)
+                : ("reject" as const),
+          },
+        })),
+      };
+    });
+    if (first === "representative")
+      decide.mockResolvedValueOnce({
+        receipt_id: "representative",
+        before: [],
+        after: [],
+        representatives: [
+          { asset_id: "photo-1", before_revision: 1, after_revision: 2, after: 10 },
+        ],
+      });
+    else if (first === "unchanged")
+      decide.mockResolvedValueOnce({ receipt_id: "", before: [], after: [] });
+    await act(() => {
+      cull.run = {
+        ...cull.run!,
+        ids: rows.map((row) => row.asset_id),
+
+        groups: [
+          ["photo-1", "photo-2"],
+          ["photo-3", "photo-4"],
+        ],
+        checkpoint: { ...cull.run!.checkpoint, pass: rows.map((row) => row.asset_id) },
+      };
+    });
+    if (first === "representative") {
+      await screen.findByRole("button", { name: "Show Photo 2.jpg" });
+      await fireEvent.click(await readyButton("Choose representative"));
+      await waitFor(() => expect(decide).toHaveBeenCalledOnce());
+      await readyButton("Keep all");
+      await fireEvent.keyDown(document.querySelector(".photo-cull")!, { key: "Enter" });
+      await waitFor(() => expect(decide).toHaveBeenCalledTimes(2));
+      expect(
+        Object.values(decide.mock.calls[1]![0].targets).map((target) => target.asset_revision),
+      ).toEqual([2, 1]);
+    } else await fireEvent.click(await readyButton("Keep all"));
+    await waitFor(() => expect(cull.currentID).toBe("photo-3"));
+    await fireEvent.click(await readyButton("Keep all"));
+    await screen.findByRole("heading", { name: "Pass complete" });
+    expect(decide.mock.calls.at(-1)![0]).toMatchObject({
+      asset_ids: ["photo-3", "photo-4"],
+      current_id: "photo-3",
+      decision: "all",
+    });
+    expect(
+      Object.values(decide.mock.calls.at(-1)![0].targets)
+        .map((target) => target.asset_id)
+        .sort(),
+    ).toEqual(["photo-3", "photo-4"]);
+    expect(screen.queryByRole("button", { name: "Reload photo" })).toBeNull();
+    expect(document.querySelector(".photo-cull > span[aria-live='polite']")?.textContent).toBe(
+      "Stack kept",
+    );
+  },
+);
+
+it.each(["Retry", "next stack"])("prepares after a stack failure through %s", async (action) => {
+  const { cull, photos, container } = await reviewPhoto();
+  const rows = [photo(1), photo(2), photo(3), photo(4)];
+  vi.mocked(photos.lookup).mockImplementation(
+    async (id) => rows.find((row) => row.asset_id === id)!,
+  );
+  vi.mocked(photos.lookupMany).mockImplementation(async (ids) =>
+    rows.filter((row) => ids.includes(row.asset_id)),
+  );
+  vi.mocked(api.preparePhotoAuthored).mockRejectedValueOnce(new Error("Preparation unavailable"));
+  await act(() => {
+    cull.run = {
+      ...cull.run!,
+      ids: rows.map((row) => row.asset_id),
+      groups: [
+        ["photo-1", "photo-2"],
+        ["photo-3", "photo-4"],
+      ],
+      checkpoint: { ...cull.run!.checkpoint, pass: rows.map((row) => row.asset_id) },
+    };
+  });
+  await screen.findByText("Preparation unavailable");
+  if (action === "Retry") await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  else await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key: "l" });
+  await readyButton("Keep all");
+  expect(screen.queryByText("Preparation unavailable")).toBeNull();
+});
+
+it("finishes a Cull decision while the affected Library stack refresh is held", async () => {
+  const before = preparedPhoto(1);
+  vi.spyOn(api, "editPhotoAuthored").mockResolvedValue({
+    receipt_id: "picked",
+    before: [before],
+    after: [{ ...before, revision: 2, values: { ...before.values, flag: "pick" } }],
+  });
+  const rows = [photo(1), photo(2)];
+  const { cull, photos } = await reviewPhoto(rows[0], true);
+  vi.mocked(photos.lookup).mockImplementation(
+    async (id) => rows.find((row) => row.asset_id === id)!,
+  );
+  vi.spyOn(photos, "reloadCounts").mockReturnValue(undefined);
+  const stack = { asset_ids: ["photo-1", "photo-3"], representative_id: "photo-1" };
+  photos.items = [
+    { ...photo(1), stack },
+    { ...photo(3), stack },
+  ];
+  photos.started = true;
+  let release!: (value: boolean) => void;
+  const refresh = vi.spyOn(photos, "refresh").mockReturnValue(
+    new Promise((resolve) => {
+      release = resolve;
+    }),
+  );
+  await act(() => {
+    cull.run = {
+      ...cull.run!,
+      ids: rows.map((row) => row.asset_id),
+      checkpoint: { ...cull.run!.checkpoint, pass: rows.map((row) => row.asset_id) },
+    };
+  });
+  try {
+    await fireEvent.click(await readyButton("Pick (P)"));
+    await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+    await waitFor(() => expect(cull.currentID).toBe("photo-2"));
+    await readyButton("Pick (P)");
+  } finally {
+    await act(() => release(true));
+  }
+});
+
+it("reloads cached stack siblings after preparation loses a member", async () => {
+  const { cull, photos } = await reviewPhoto();
+  vi.mocked(api.groupPhotoStacks).mockResolvedValue({
+    groups: [["photo-1", "photo-2"]],
+    unavailable_ids: [],
+    burst_gap_seconds: 2,
+  });
+  const rows = [photo(1), photo(2)];
+  vi.mocked(photos.lookupMany).mockImplementation(async (ids) =>
+    rows.filter((row) => ids.includes(row.asset_id)),
+  );
+  vi.mocked(api.preparePhotoAuthored).mockRejectedValueOnce(
+    new APIError("Stack member gone", 404, "not_found"),
+  );
+  await act(() => {
+    cull.run = {
+      ...cull.run!,
+      ids: ["photo-1", "photo-2"],
+      groups: [["photo-1", "photo-2"]],
+      burstGapSeconds: 2,
+      checkpoint: { ...cull.run!.checkpoint, pass: ["photo-1", "photo-2"] },
+    };
+  });
+  await screen.findByText("Stack member gone");
+  await screen.findByRole("button", { name: "Show Photo 2.jpg" });
+  rows[1] = { ...photo(2), revision: 2, content_version_id: "replacement-version" };
+  vi.mocked(api.preparePhotoAuthored).mockImplementation(async (scope) =>
+    photoPreparation(
+      (scope.asset_ids ?? []).map((id) => ({
+        ...preparedPhoto(Number(id.slice(6))),
+        asset_revision: id === "photo-2" ? 2 : 1,
+        current_content_version_id:
+          id === "photo-2" ? "replacement-version" : photo(1).content_version_id,
+      })),
+    ),
+  );
+  const decide = vi
+    .spyOn(api, "decidePhotoStack")
+    .mockResolvedValue({ receipt_id: "", before: [], after: [] });
+  await fireEvent.click(await readyButton("Reload photo"));
+  await fireEvent.click(await readyButton("Keep all"));
+  await waitFor(() => expect(decide).toHaveBeenCalledOnce());
+  expect(decide.mock.calls[0]![0].targets).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        asset_id: "photo-2",
+        asset_revision: 2,
+        content_version_id: "replacement-version",
+      }),
+    ]),
+  );
+});

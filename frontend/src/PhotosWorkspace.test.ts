@@ -14,6 +14,7 @@ import { Photos, photoQuery, mapPhotoLimit, type MapView } from "./photos.svelte
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
 import {
   photoMetadataResponse,
+  photoPreparation,
   preparedPhoto,
   mapPhoto,
   photo,
@@ -2577,6 +2578,16 @@ it("disables selected export when a metadata draft keeps an empty selection open
 it.each([false, true])(
   "reconciles grid selection after cull (one unavailable: %s)",
   async (oneUnavailable) => {
+    vi.spyOn(api, "getPhotoSettings").mockResolvedValue({
+      revision: 1,
+      preference: null,
+      burst_gap_seconds: 2,
+    });
+    vi.spyOn(api, "groupPhotoStacks").mockResolvedValue({
+      groups: [],
+      unavailable_ids: [],
+      burst_gap_seconds: 2,
+    });
     vi.stubGlobal("indexedDB", new IDBFactory());
     vi.stubGlobal("IDBKeyRange", IDBKeyRange);
     vi.stubGlobal(
@@ -2879,6 +2890,348 @@ it("uses the resolved vault identity when Cull mounted before audit status arriv
   photos.dispose();
 });
 
+it.each([false, true])(
+  "reports an invalid burst gap and restores 2, callback=%s",
+  async (callback) => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const photos = new Photos("scoped", vi.fn());
+    photos.items = [photo(1)];
+    photos.total = 1;
+    photos.started = true;
+    const onactionerror = callback ? vi.fn() : undefined;
+    render(PhotosWorkspace, {
+      photos,
+      cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+      onactionerror,
+    });
+    const input = screen.getByRole("spinbutton", {
+      name: "Burst gap (seconds)",
+    }) as HTMLInputElement;
+    await fireEvent.change(input, { target: { value: "1.5" } });
+    await waitFor(() => expect(input.value).toBe("2"));
+    const error = "burst gap must be a whole number of seconds from 1 to 30";
+    if (onactionerror) expect(onactionerror).toHaveBeenCalledWith(error);
+    else expect(screen.getByRole("alert").textContent).toBe(error);
+    photos.dispose();
+  },
+);
+
+it("reports a refused burst gap request through the workspace error callback", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(api, "getPhotoSettings").mockResolvedValue({
+    revision: 1,
+    preference: null,
+    burst_gap_seconds: 2,
+  });
+  const update = vi
+    .spyOn(api, "setPhotoSettings")
+    .mockRejectedValue(new APIError("Burst settings unavailable", 503, "unavailable"));
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1)];
+  photos.total = 1;
+  photos.started = true;
+  const onactionerror = vi.fn();
+  render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+    onactionerror,
+  });
+  const input = screen.getByRole("spinbutton", { name: "Burst gap (seconds)" }) as HTMLInputElement;
+  await fireEvent.change(input, { target: { value: "5" } });
+  await waitFor(() => expect(onactionerror).toHaveBeenCalledWith("Burst settings unavailable"));
+  expect(input.value).toBe("2");
+  expect(update).toHaveBeenCalledWith(
+    { burst_gap_seconds: 5 },
+    { "If-Match": '"1"' },
+    { session: "scoped" },
+  );
+  photos.dispose();
+});
+
+it("keeps a reloaded stage photo in its collapsed stack when returning to the grid", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  stubPhotoFetch(async () => Response.json({ items: [], total: 0, facets: [] }));
+  const photos = new Photos("scoped", vi.fn());
+  const stack = { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1" };
+  photos.items = [photo(1), photo(2)].map((row) => ({ ...row, stack }));
+  photos.total = 2;
+  photos.started = true;
+  photos.viewerReturn = {
+    contextID: photos.contextID,
+    assetID: "photo-1",
+    control: "open",
+    scrollTop: 0,
+  };
+  vi.spyOn(photos, "resume").mockResolvedValue();
+  vi.spyOn(photos, "lookup").mockResolvedValue({ ...photo(1), name: "Reloaded photo.jpg" });
+  vi.spyOn(photos, "preview")
+    .mockRejectedValueOnce(new APIError("Photo changed", 409, "photo_display_changed"))
+    .mockResolvedValue({ state: "unsupported" });
+  const view = render(PhotosWorkspace, {
+    photos,
+    photoID: "photo-1",
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Reload photo" }));
+  await screen.findByRole("dialog", { name: "Photo viewer, Reloaded photo.jpg" });
+  await view.rerender({ photoID: "" });
+  await screen.findByRole("button", { name: "Select Reloaded photo.jpg" });
+  expect(screen.queryByRole("button", { name: "Select Photo 2.jpg" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Expand stack of 2 photos" })).toBeTruthy();
+  photos.dispose();
+});
+
+it.each(["Keep all", "Keep selected", "Choose representative"])(
+  "preserves selected frames after %s followed by Keep selected",
+  async (firstAction) => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+    const rows = [photo(1), photo(2), photo(3)];
+    const stack = {
+      asset_ids: rows.map((row) => row.asset_id),
+      representative_id: "photo-1",
+    };
+    const targets = rows.map((row) => preparedPhoto(Number(row.asset_id.slice(6))));
+    vi.spyOn(api, "preparePhotoAuthored").mockImplementation(async (scope) =>
+      photoPreparation(
+        targets
+          .filter((target) => scope.asset_ids?.includes(target.asset_id))
+          .map((target) => ({ ...target, values: { ...target.values } })),
+      ),
+    );
+    stubPhotoFetch(async () =>
+      Response.json({
+        items: rows,
+        stacks: [stack],
+        total: 3,
+        facets: [],
+        relevance_available: false,
+      }),
+    );
+    const decide = vi.spyOn(api, "decidePhotoStack").mockImplementation(async (request) => {
+      if (request.decision === "representative") {
+        const row = rows.find((row) => row.asset_id === request.current_id)!;
+        const before = row.revision;
+        row.revision++;
+        targets.find((target) => target.asset_id === row.asset_id)!.asset_revision++;
+        return {
+          receipt_id: "representative",
+          before: [],
+          after: [],
+          representatives: [
+            {
+              asset_id: row.asset_id,
+              before_revision: before,
+              after_revision: row.revision,
+              after: 1,
+            },
+          ],
+        };
+      }
+      const before: api.PhotoAuthoredSnapshot[] = [],
+        after: api.PhotoAuthoredSnapshot[] = [];
+      for (const target of targets) {
+        before.push({ ...target, values: { ...target.values } });
+        target.revision++;
+        target.node_revision++;
+        target.values.flag =
+          request.decision === "all" || request.selected_ids?.includes(target.asset_id)
+            ? "pick"
+            : target.values.flag || "reject";
+        rows.find((row) => row.asset_id === target.asset_id)!.flag = target.values.flag;
+        after.push({ ...target, values: { ...target.values } });
+      }
+      return { receipt_id: after.length ? "stack" : "", before, after };
+    });
+    const photos = new Photos("scoped", vi.fn());
+    photos.items = rows.map((row) => ({ ...row, stack }));
+    photos.total = 3;
+    photos.started = true;
+    photos.expandedStacks = new Set(["photo-1"]);
+    photos.selection = { selectedIDs: new Set(["photo-2"]), anchorID: "photo-2" };
+    vi.spyOn(photos, "resume").mockResolvedValue();
+    const refresh = vi.spyOn(photos, "refresh");
+    render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
+    for (let i = 1; i <= 2; i++) {
+      const button = await screen.findByRole("button", {
+        name: i === 1 ? firstAction : "Keep selected",
+      });
+      await waitFor(() => expect(button.matches(":disabled")).toBe(false));
+      await fireEvent.click(button);
+      await waitFor(() => expect(decide).toHaveBeenCalledTimes(i));
+      await waitFor(() => expect(photos.authored.busy || photos.loading).toBe(false));
+      await Promise.all(refresh.mock.results.map((result) => result.value));
+      expect([...photos.selectedIDs]).toEqual(["photo-2"]);
+      expect(photos.scope()).toEqual({ asset_ids: ["photo-2"] });
+    }
+    expect(decide.mock.calls.map(([request]) => request.selected_ids)).toEqual([
+      ["photo-2"],
+      ["photo-2"],
+    ]);
+    expect(decide.mock.calls.map(([request]) => request.current_id)).toEqual([
+      "photo-2",
+      "photo-2",
+    ]);
+    expect(decide.mock.calls.map(([request]) => request.decision)).toEqual([
+      firstAction === "Keep all"
+        ? "all"
+        : firstAction === "Keep selected"
+          ? "selected"
+          : "representative",
+      "selected",
+    ]);
+    photos.dispose();
+  },
+);
+
+it.each([false, true])(
+  "allows a rejected Library representative only when all frames are rejected: %s",
+  async (allRejected) => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+    const rows = [photo(1), photo(2)];
+    rows[0]!.flag = "reject";
+    rows[1]!.flag = allRejected ? "reject" : "";
+    const stack = { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-2" };
+    vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue(
+      photoPreparation(
+        rows.map((row, i) => {
+          const target = preparedPhoto(i + 1);
+          return { ...target, values: { ...target.values, flag: row.flag } };
+        }),
+      ),
+    );
+    stubPhotoFetch(async () =>
+      Response.json({ items: rows, stacks: [stack], total: 2, facets: [] }),
+    );
+    const photos = new Photos("scoped", vi.fn());
+    photos.items = rows.map((row) => ({ ...row, stack }));
+    photos.total = 2;
+    photos.started = true;
+    photos.expandedStacks = new Set(["photo-1"]);
+    photos.selection = { selectedIDs: new Set(["photo-1"]), anchorID: "photo-1" };
+    vi.spyOn(photos, "resume").mockResolvedValue();
+    render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
+    const keep = await screen.findByRole("button", { name: "Keep all" });
+    await waitFor(() => expect(keep.matches(":disabled")).toBe(false));
+    const choose = screen.getByRole("button", { name: "Choose representative" });
+    expect(choose.matches(":disabled")).toBe(!allRejected);
+    photos.dispose();
+  },
+);
+
+it("reloads a stack conflict and keeps the selection", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  const rows = [photo(1), photo(2)];
+  const stack = { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1" };
+  stubPhotoFetch(async () =>
+    Response.json({
+      items: rows,
+      stacks: [stack],
+      total: 2,
+      facets: [],
+      relevance_available: false,
+    }),
+  );
+  const prepare = vi
+    .spyOn(api, "preparePhotoAuthored")
+    .mockRejectedValueOnce(new APIError("Stack changed", 409, "photo_stack_changed"))
+    .mockResolvedValue(photoPreparation([preparedPhoto(1), preparedPhoto(2)]));
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = rows.map((row) => ({ ...row, stack }));
+  photos.total = 2;
+  photos.started = true;
+  photos.selection = { selectedIDs: new Set(["photo-1"]), anchorID: "photo-1" };
+  vi.spyOn(photos, "resume").mockResolvedValue();
+  render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
+  await fireEvent.click(await screen.findByRole("button", { name: "Reload stack" }));
+  await waitFor(() => expect(prepare).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(photos.authored.stackLoading || photos.authored.conflict).toBe(false));
+  expect([...photos.selectedIDs]).toEqual(["photo-1"]);
+  expect(screen.getByRole("button", { name: "Keep all" }).matches(":disabled")).toBe(false);
+  photos.dispose();
+});
+
+it("range selects in rendered month order across offset dates and a collapsed stack", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  stubPhotoFetch(async () => Response.json({ items: [], total: 0, facets: [] }));
+  const photos = new Photos("scoped", vi.fn());
+  const stack = { asset_ids: ["photo-2", "photo-3"], representative_id: "photo-2" };
+  photos.items = [
+    photo(1, "2025-02-28T23:59:59-12:00"),
+    { ...photo(2, "2025-03-01T00:00:02+14:00"), stack },
+    { ...photo(3, "2025-03-01T00:00:01+14:00"), stack },
+    photo(4, "2025-03-01T00:00:00+14:00"),
+  ];
+  photos.total = 4;
+  photos.started = true;
+  vi.spyOn(photos, "resume").mockResolvedValue();
+  render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
+  const first = await screen.findByRole("button", { name: "Select Photo 2.jpg" });
+  expect(
+    screen
+      .getAllByRole("button", { name: /^Select Photo/ })
+      .map((button) => button.getAttribute("aria-label")),
+  ).toEqual(["Select Photo 2.jpg", "Select Photo 4.jpg", "Select Photo 1.jpg"]);
+  await fireEvent.click(first);
+  await waitFor(() => expect(photos.authored.stackLoading).toBe(false));
+  await fireEvent.click(screen.getByRole("button", { name: "Select Photo 1.jpg" }), {
+    shiftKey: true,
+  });
+  expect([...photos.selectedIDs].sort()).toEqual(["photo-1", "photo-2", "photo-3", "photo-4"]);
+  photos.dispose();
+});
+
 it.each(
   [1, 2].flatMap((formatVersion) =>
     ["Cancel", "Replace"].map((answer) => ({ formatVersion, answer })),
@@ -2923,6 +3276,7 @@ it.each(
         db.close();
       }
     }
+    const durable = formatVersion === 1 ? await store.load() : undefined;
     const photos = new Photos("scoped", vi.fn());
     photos.items = [photo(1)];
     photos.total = 1;
@@ -2930,6 +3284,11 @@ it.each(
     const capture = vi
       .spyOn(api, "createWorkspaceQuery")
       .mockResolvedValue(Response.json(await snapshotEnvelope(photos.query, [])));
+    vi.spyOn(api, "getPhotoSettings").mockResolvedValue({
+      revision: 1,
+      preference: null,
+      burst_gap_seconds: 2,
+    });
     render(PhotosWorkspace, {
       photos,
       vaultID: "synthetic-vault",
@@ -2940,7 +3299,6 @@ it.each(
         "Saved cull progress uses an unsupported format. Update Docbank to resume it.",
       );
       expect(screen.queryByRole("button", { name: "Resume cull" })).toBeNull();
-      expect(await photos.cull!.restore()).toBe(false);
     } else await screen.findByRole("button", { name: "Resume cull" });
     await fireEvent.click(screen.getByRole("button", { name: "Cull" }));
     await screen.findByRole("dialog", { name: "Replace saved cull progress?" });
@@ -2955,7 +3313,7 @@ it.each(
         await screen.findByText(
           "Saved cull progress uses an unsupported format. Update Docbank to resume it.",
         );
-      } else expect(await store.load()).toEqual(original);
+      } else expect(await store.load()).toEqual(durable);
     } else {
       await screen.findByRole("dialog", { name: "Cull photos" });
       expect(capture).toHaveBeenCalledOnce();

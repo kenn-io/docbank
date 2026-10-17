@@ -2,6 +2,8 @@ package api_test
 
 import (
 	"encoding/json/v2"
+	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"testing"
@@ -54,6 +56,34 @@ func apiEditTargets(prepared []store.PhotoPreparedTarget) []store.PhotoAuthoredE
 		targets[i] = store.PhotoAuthoredEditTarget{PhotoAuthoredTargetRevision: target.PhotoAuthoredTargetRevision}
 	}
 	return targets
+}
+
+func TestPhotoStackDecisionBounds(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	ids := make([]string, 500)
+	targets := make([]store.PhotoAuthoredEditTarget, 2000)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("40000000-0000-4000-8000-%012d", i)
+	}
+	for i := range targets {
+		targets[i] = store.PhotoAuthoredEditTarget{AssetID: ids[i/4], AssetRevision: math.MaxInt64, FileID: fmt.Sprintf("50000000-0000-4000-8000-%012d", i), Revision: math.MaxInt64, NodeRevision: math.MaxInt64, ContentVersionID: fmt.Sprintf("60000000-0000-4000-8000-%012d", i)}
+	}
+	request := api.PhotoStackDecisionRequest{BurstGapSeconds: 30, Hidden: true, AssetIDs: ids, Targets: targets, Decision: "representative", CurrentID: ids[0], SelectedIDs: ids}
+	encoded, err := json.Marshal(request)
+	require.NoError(t, err)
+	// Hidden-lock refusal confirms decoding reached the store without creating
+	// 2,000 live targets; hidden access itself is covered by the store tests.
+	for _, tc := range []struct{ size, status int }{{(576 << 10) - 1, http.StatusForbidden}, {576 << 10, http.StatusRequestEntityTooLarge}} {
+		payload := string(encoded) + strings.Repeat(" ", tc.size-len(encoded))
+		req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/photos/authored/stack", strings.NewReader(payload))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		res, err := ts.Client().Do(req)
+		require.NoError(t, err)
+		require.Equal(t, tc.status, res.StatusCode)
+		require.NoError(t, res.Body.Close())
+	}
 }
 
 func TestPhotoAuthoredRouteRefusesStaleContentVersion(t *testing.T) {

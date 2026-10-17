@@ -26,6 +26,14 @@ func init() {
 		if err := conn.RegisterFunc("docbank_query_media_family_v1", query.ClassifyMedia, true); err != nil {
 			return fmt.Errorf("register query media function: %w", err)
 		}
+		if err := conn.RegisterFunc("docbank_photo_folder_v1", func(kind, desc, path string) any {
+			if key, ok := query.PhotoFolderKey(kind, desc, path); ok {
+				return key
+			}
+			return nil
+		}, true); err != nil {
+			return fmt.Errorf("register photo folder function: %w", err)
+		}
 		return nil
 	}})
 }

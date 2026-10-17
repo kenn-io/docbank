@@ -62,7 +62,7 @@ func TestPhotoCursor(t *testing.T) {
 		_, err := service.decodePhotoCursor(invalid)
 		require.ErrorIs(t, err, store.ErrInvalidPhotoCursor)
 	}
-	payload, err := json.Marshal(photoCursorPayload{Type: "photo-v2", IssuedAt: now.Unix(), Position: position})
+	payload, err := json.Marshal(photoCursorPayload{Type: "photo-v1", IssuedAt: now.Unix(), Position: position})
 	require.NoError(t, err)
 	_, err = service.decodePhotoCursor(service.signCursorEnvelope(payload))
 	require.ErrorIs(t, err, store.ErrInvalidPhotoCursor)

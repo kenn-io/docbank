@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
@@ -189,4 +191,114 @@ func TestTrashEmptyReportsPhotoHeldRoots(t *testing.T) {
 	var report api.TrashEmptyReport
 	require.NoError(t, json.Unmarshal([]byte(body), &report))
 	assert.Equal(t, api.TrashEmptyReport{HeldRoots: 1, Run: true}, report)
+}
+
+func TestPhotoStackGroupRouteBoundsExplicitIDs(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	ctx := t.Context()
+	run, err := s.BeginIngest(ctx, "cli", "synthetic burst")
+	require.NoError(t, err)
+	ids := make([]string, 2)
+	for i, source := range []string{"/roll/one.jpg", "/roll/two.jpg"} {
+		node, err := s.IngestFileExact(ctx, run, s.RootID(), strconv.Itoa(i)+".jpg", testHash(source), 10, "image/jpeg", source, "2024-01-01T00:00:00Z")
+		require.NoError(t, err)
+		stamp := "2024-06-10T12:00:0" + strconv.Itoa(i) + "Z"
+		canonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: []document.SourceMetadataFieldV1{{
+			Key: "created", Namespace: "image.exif", SourceField: "DateTimeOriginal",
+			Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataTimestamp, Timestamp: &document.SourceMetadataTimestampV1{
+				Raw: stamp, Normalized: stamp, Precision: document.SourceMetadataPrecisionSecond, Timezone: document.SourceMetadataTimezoneUTC,
+			}},
+		}}})
+		require.NoError(t, err)
+		_, err = s.PublishSourceMetadata(ctx, node.BlobHash, testHash("synthetic metadata"), canonical)
+		require.NoError(t, err)
+		asset, err := s.PhotoAssetForNode(ctx, node.ID)
+		require.NoError(t, err)
+		ids[i] = asset.ID
+	}
+	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
+	missing := "00000000-0000-4000-8000-000000000009"
+	res, body := do(t, ts, http.MethodPost, "/api/v1/photos/stacks/group", browser, map[string]any{"asset_ids": []string{ids[0], ids[1], missing}})
+	require.Equal(t, http.StatusOK, res.StatusCode, body)
+	var grouped api.GroupPhotoStacksResponse
+	require.NoError(t, json.Unmarshal([]byte(body), &grouped))
+	require.Equal(t, api.GroupPhotoStacksResponse{BurstGapSeconds: 2, Groups: [][]string{{ids[0], ids[1]}}, UnavailableIDs: []string{missing}}, grouped)
+
+	// A full Cull run fits the request bound, and so does its flat response.
+	run250k := make([]string, 250_000)
+	for i := range run250k {
+		run250k[i] = fmt.Sprintf("00000000-0000-4000-8000-%012d", i)
+	}
+	res, body = do(t, ts, http.MethodPost, "/api/v1/photos/stacks/group", browser, map[string]any{"asset_ids": run250k})
+	require.Equal(t, http.StatusOK, res.StatusCode)
+	require.Less(t, len(body), 16<<20)
+	grouped = api.GroupPhotoStacksResponse{}
+	require.NoError(t, json.Unmarshal([]byte(body), &grouped))
+	require.Empty(t, grouped.Groups)
+	require.Len(t, grouped.UnavailableIDs, 250_000)
+	// Repeats are rejected without echoing the run back once per repeat.
+	res, body = do(t, ts, http.MethodPost, "/api/v1/photos/stacks/group", browser, map[string]any{"asset_ids": []string{ids[0], ids[0]}})
+	require.Equal(t, http.StatusUnprocessableEntity, res.StatusCode)
+	require.Less(t, len(body), 64<<10)
+	require.Equal(t, "invalid_photo_asset", decodeProblem(t, body).Code)
+	res, body = do(t, ts, http.MethodPost, "/api/v1/photos/stacks/group", browser, map[string]any{"asset_ids": []string{"invalid"}})
+	require.Equal(t, http.StatusUnprocessableEntity, res.StatusCode, body)
+	require.Equal(t, "invalid_photo_asset", decodeProblem(t, body).Code)
+	require.Contains(t, decodeProblem(t, body).Detail, "asset_ids must contain UUIDv4 IDs")
+	res, _ = do(t, ts, http.MethodPost, "/api/v1/photos/stacks/group", browser, map[string]any{"asset_ids": []string{}, "padding": strings.Repeat("x", 16<<20)})
+	require.Equal(t, http.StatusRequestEntityTooLarge, res.StatusCode)
+}
+
+func TestPhotoSettingsAuditedPreferenceExplainsGapOnlyUpdate(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	plan, err := s.PreviewInitialAudit(t.Context(), s.RootID(), "api", nil)
+	require.NoError(t, err)
+	_, err = s.EnableInitialAudit(t.Context(), plan)
+	require.NoError(t, err)
+	headers := map[string]string{"If-Match": `"1"`}
+	res, body := do(t, ts, http.MethodPut, "/api/v1/photos/settings", headers, map[string]any{"preference": "raw", "burst_gap_seconds": 5})
+	require.Equal(t, http.StatusConflict, res.StatusCode, body)
+	require.Equal(t, "audit_mutation_unsupported", decodeProblem(t, body).Code)
+	require.Contains(t, decodeProblem(t, body).Detail, "display preference cannot be changed in an audited vault; set the burst gap without a preference")
+}
+
+func TestPhotoSettingsGapAndPreference(t *testing.T) {
+	t.Parallel()
+	for _, reset := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reset=%t", reset), func(t *testing.T) {
+			ts, s := newTestServer(t, nil)
+			_, err := s.SetPhotoSettings(t.Context(), 1, store.PhotoSettingsUpdate{Preference: new("image")})
+			require.NoError(t, err)
+			headers := map[string]string{"If-Match": `"2"`}
+			browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts), "If-Match": `"2"`}
+			update := map[string]any{"burst_gap_seconds": 5}
+			if reset {
+				res, body := do(t, ts, http.MethodPut, "/api/v1/photos/settings", headers, map[string]any{"preference": "raw", "reset_preference": true, "burst_gap_seconds": 5})
+				require.Equal(t, http.StatusUnprocessableEntity, res.StatusCode, body)
+				update["reset_preference"] = true
+				res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", browser, map[string]any{"preference": "raw", "burst_gap_seconds": 5})
+				require.Equal(t, http.StatusForbidden, res.StatusCode, body)
+				unchanged, err := s.PhotoSettings(t.Context())
+				require.NoError(t, err)
+				require.Equal(t, int64(2), unchanged.Revision)
+				require.Equal(t, new("image"), unchanged.Preference)
+				require.Equal(t, 2, unchanged.BurstGapSeconds)
+			} else {
+				headers = browser
+			}
+			res, body := do(t, ts, http.MethodPut, "/api/v1/photos/settings", headers, update)
+			require.Equal(t, http.StatusOK, res.StatusCode, body)
+			settings, err := s.PhotoSettings(t.Context())
+			require.NoError(t, err)
+			if reset {
+				require.Nil(t, settings.Preference)
+			} else {
+				require.Equal(t, new("image"), settings.Preference)
+			}
+			require.Equal(t, 5, settings.BurstGapSeconds)
+			require.Equal(t, int64(3), settings.Revision)
+		})
+	}
 }

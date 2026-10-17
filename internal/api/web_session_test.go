@@ -44,6 +44,10 @@ func TestWebSessionAllowsPhotoAlbumAndAuthoredRoutes(t *testing.T) {
 		{http.MethodPost, album + "/members/remove"},
 		{http.MethodPost, "/api/v1/photos/authored/prepare"},
 		{http.MethodPost, "/api/v1/photos/authored/edit"},
+		{http.MethodPost, "/api/v1/photos/authored/stack"},
+		{http.MethodGet, "/api/v1/photos/settings"},
+		{http.MethodPut, "/api/v1/photos/settings"},
+		{http.MethodPost, "/api/v1/photos/stacks/group"},
 		{http.MethodPost, "/api/v1/photos/authored/40000000-0000-4000-8000-000000000001/undo"},
 	} {
 		require.True(t, webSessionRequestAllowed(httptest.NewRequest(route.method, route.path, nil)), route.method+" "+route.path)

@@ -735,7 +735,7 @@ func TestPhotoImportMembershipStates(t *testing.T) {
 	groupAsset, err = s.SetPhotoDisplay(ctx, groupAsset.ID, groupAsset.Revision, &imageFile.ID)
 	require.NoError(t, err)
 	preference := "raw"
-	_, err = s.SetPhotoSettings(ctx, 1, &preference)
+	_, err = s.SetPhotoSettings(ctx, 1, PhotoSettingsUpdate{Preference: &preference})
 	require.NoError(t, err)
 	groupAsset, err = s.PhotoAssetByID(ctx, groupAsset.ID)
 	require.NoError(t, err)

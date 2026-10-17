@@ -19,6 +19,7 @@ const photoBrowseConfiguredCoverage = "configured"
 
 // PhotoBrowseRequest supplies query meaning and exact preview recipe identities.
 type PhotoBrowseRequest struct {
+	Stacks   bool
 	Hidden   bool
 	Query    query.Query
 	Coverage CoverageSelection
@@ -35,6 +36,7 @@ type PhotoBrowsePosition struct {
 	AssetID       string `json:"asset_id"`
 	QueryIdentity string `json:"query_identity"`
 	Total         int64  `json:"total"`
+	StackFrontier string `json:"stack_frontier,omitempty"`
 }
 
 type PhotoPreviewSlot struct {
@@ -64,6 +66,9 @@ type PhotoBrowseRow struct {
 	Previews         map[string]PhotoPreviewSlot
 	position         PhotoBrowsePosition
 	sourceHash       string
+	folderKey        string
+	cameraMake       string
+	cameraModel      string
 }
 
 type PhotoBrowsePage struct {
@@ -72,6 +77,9 @@ type PhotoBrowsePage struct {
 	Next               *PhotoBrowsePosition
 	Facets             []SnapshotFacet
 	RelevanceAvailable bool
+	BurstGapSeconds    int
+	// Stacks describes the bursts among Items when the request asked for them.
+	Stacks []PhotoStack
 }
 
 const (
@@ -112,7 +120,17 @@ func (s *Store) ListPhotoAssets(
 				break
 			}
 		}
+		settings, err := photoSettingsTx(ctx, q)
+		if err != nil {
+			return err
+		}
+		page.BurstGapSeconds = settings.BurstGapSeconds
 		sortField := compiled.Query.Sort.Field
+		stackSort := sortField == "capture_time" && request.Stacks
+		cursorGap := 0
+		if stackSort {
+			cursorGap = settings.BurstGapSeconds
+		}
 		if err := validatePhotoQuerySort(compiled.Query); err != nil {
 			return err
 		}
@@ -154,7 +172,9 @@ func (s *Store) ListPhotoAssets(
 			PageSize     int
 			Facets       []string
 			AssetIDs     []string `json:",omitzero"`
-		}{canonical, compiled.Dependencies, coverage, request.Hidden, request.PageSize, dimensions, request.assetIDs})
+			BurstGap     int
+			Stacks       bool
+		}{canonical, compiled.Dependencies, coverage, request.Hidden, request.PageSize, dimensions, request.assetIDs, cursorGap, request.Stacks})
 		if err != nil {
 			return err
 		}
@@ -190,76 +210,90 @@ func (s *Store) ListPhotoAssets(
 			if err != nil {
 				return err
 			}
+			if request.Stacks {
+				if err := groupRankedPhotoPage(ctx, q, &page, request.Hidden, settings.BurstGapSeconds); err != nil {
+					return err
+				}
+			}
 			return s.hydratePhotoPreviews(ctx, q, request, page.Items)
 		}
 		primary, comparison := "ASC", ">"
 		if compiled.Query.Sort.Direction == "desc" {
 			primary, comparison = "DESC", "<"
 		}
-		page.Items = make([]PhotoBrowseRow, 0, request.PageSize+1)
-		// Read known keys from their index, then missing keys in asset order.
-		// Keeping these separate avoids sorting the entire library to put NULLs last.
-		for _, missing := range []bool{false, true} {
-			if !missing && boundary != nil && boundary.Missing {
-				continue
-			}
-			pageFrom, key := from, sortKey
-			order := key + ` ` + primary + `,a.asset_id ASC`
-			where := key + `>''`
-			var args []any
-			if sortField == "added_time" {
-				where = `sm.set_id=? AND ` + where
-				args = append(args, compiled.Query.Filters.SetIDs[0])
-			}
-			if missing {
-				pageFrom = photoBrowseDisplayFrom
-				if sortField == "added_time" {
+		// readRaw returns up to limit rows after boundary. It reads known keys
+		// from their index, then missing keys in asset order; keeping these
+		// separate avoids sorting the entire library to put NULLs last.
+		readRaw := func(boundary *PhotoBrowsePosition, limit int) ([]PhotoBrowseRow, error) {
+			result := make([]PhotoBrowseRow, 0, limit)
+			for _, missing := range []bool{false, true} {
+				if !missing && boundary != nil && boundary.Missing {
 					continue
 				}
-				key = photoBrowseMissingKey(sortField)
-				where = key + `=''`
-				order = `a.asset_id ASC`
-				if boundary != nil && boundary.Missing {
-					where += ` AND a.asset_id>?`
-					args = append(args, boundary.AssetID)
+				pageFrom, key := from, sortKey
+				order := key + ` ` + primary + `,a.asset_id ASC`
+				where := key + `>''`
+				var args []any
+				if sortField == "added_time" {
+					where = `sm.set_id=? AND ` + where
+					args = append(args, compiled.Query.Filters.SetIDs[0])
 				}
-			} else if boundary != nil {
-				// The inclusive range gives SQLite a seek even when the tie-break
-				// below is an OR involving a joined asset.
-				where += ` AND ` + key + comparison + `=? AND (` + key + comparison +
-					`? OR (` + key + `=? AND a.asset_id>?))`
-				args = append(args, boundary.Key, boundary.Key, boundary.Key, boundary.AssetID)
+				if missing {
+					pageFrom = photoBrowseDisplayFrom
+					if sortField == "added_time" {
+						continue
+					}
+					key = photoBrowseMissingKey(sortField)
+					where = key + `=''`
+					order = `a.asset_id ASC`
+					if boundary != nil && boundary.Missing {
+						where += ` AND a.asset_id>?`
+						args = append(args, boundary.AssetID)
+					}
+				} else if boundary != nil {
+					// The inclusive range gives SQLite a seek even when the tie-break
+					// below is an OR involving a joined asset.
+					where += ` AND ` + key + comparison + `=? AND (` + key + comparison +
+						`? OR (` + key + `=? AND a.asset_id>?))`
+					args = append(args, boundary.Key, boundary.Key, boundary.Key, boundary.AssetID)
+				}
+				args = append(args, limit-len(result))
+				pageSQL, pageArgs, err := scope.bind(`SELECT `+photoBrowseSelect+`,`+key+` FROM `+pageFrom+` WHERE `+scope.where()+` AND `+where+
+					` ORDER BY `+order+` LIMIT ?`, args...)
+				if err != nil {
+					return nil, err
+				}
+				rows, err := q.QueryContext(ctx, pageSQL, pageArgs...)
+				if err != nil {
+					return nil, err
+				}
+				items, err := scanPhotoBrowseRows(rows, PhotoBrowsePosition{QueryIdentity: identity, Total: page.Total, Missing: missing})
+				if err != nil {
+					return nil, err
+				}
+				result = append(result, items...)
+				if len(result) >= limit {
+					break
+				}
 			}
-			args = append(args, request.PageSize+1-len(page.Items))
-			pageSQL, pageArgs, err := scope.bind(`SELECT `+photoBrowseSelect+`,`+key+` FROM `+pageFrom+` WHERE `+scope.where()+` AND `+where+
-				` ORDER BY `+order+` LIMIT ?`, args...)
-			if err != nil {
-				return err
-			}
-			rows, err := q.QueryContext(ctx, pageSQL, pageArgs...)
-			if err != nil {
-				return err
-			}
-			items, err := scanPhotoBrowseRows(rows, PhotoBrowsePosition{QueryIdentity: identity, Total: page.Total, Missing: missing})
-			if err != nil {
-				return err
-			}
-			page.Items = append(page.Items, items...)
+			return result, nil
+		}
+		if stackSort {
+			err = s.listPhotoStackPage(ctx, q, scope, settings.BurstGapSeconds, primary == "DESC", request.PageSize, boundary, identity, readRaw, &page)
+		} else {
+			page.Items, err = readRaw(boundary, request.PageSize+1)
 			if len(page.Items) > request.PageSize {
-				break
+				page.Items = page.Items[:request.PageSize]
+				position := page.Items[len(page.Items)-1].position
+				page.Next = &position
 			}
 		}
-		if len(page.Items) > request.PageSize {
-			page.Items = page.Items[:request.PageSize]
-			position := page.Items[len(page.Items)-1].position
-			page.Next = &position
+		if err != nil {
+			return err
 		}
 		return s.hydratePhotoPreviews(ctx, q, request, page.Items)
 	})
-	if err != nil {
-		return PhotoBrowsePage{}, err
-	}
-	return page, nil
+	return page, err
 }
 
 // Force the outer relation to be the indexed sort source. Every following join
@@ -482,14 +516,14 @@ func rankedPhotoRows(ctx context.Context, q metadataQuerier, compiled CompiledQu
 
 var photoBrowseSelect = `a.asset_id,a.kind,a.revision,f.file_id,n.id,v.version_id,n.name,COALESCE(v.mime_type,''),n.created_at,v.blob_hash,f.rotation,f.rating,f.flag,` +
 	// Set only when the file's mtime, not a capture date, placed the photo.
-	`pl.modified_time,` + photoTechnicalSelect
+	`pl.modified_time,CASE WHEN a.kind='photo' THEN COALESCE(pl.folder_key,'') ELSE '' END,` + photoStackCameraColumns + `,` + photoTechnicalSelect
 
 func scanPhotoBrowseRows(rows *sql.Rows, position PhotoBrowsePosition) ([]PhotoBrowseRow, error) {
 	defer func() { _ = rows.Close() }()
 	result := make([]PhotoBrowseRow, 0)
 	for rows.Next() {
 		row := PhotoBrowseRow{position: position}
-		dest := []any{&row.AssetID, &row.Kind, &row.Revision, &row.DisplayFileID, &row.NodeID, &row.ContentVersionID, &row.Name, &row.MediaType, &row.ImportTime, &row.sourceHash, &row.Rotation, &row.Rating, &row.Flag, &row.FileModifiedTime}
+		dest := []any{&row.AssetID, &row.Kind, &row.Revision, &row.DisplayFileID, &row.NodeID, &row.ContentVersionID, &row.Name, &row.MediaType, &row.ImportTime, &row.sourceHash, &row.Rotation, &row.Rating, &row.Flag, &row.FileModifiedTime, &row.folderKey, &row.cameraMake, &row.cameraModel}
 		dest = append(dest, row.Fields.columnPointers()...)
 		dest = append(dest, &row.position.Key)
 		if err := rows.Scan(dest...); err != nil {

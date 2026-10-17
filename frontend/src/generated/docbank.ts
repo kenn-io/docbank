@@ -3167,6 +3167,31 @@ export interface GcRequest {
   run: boolean;
 }
 
+export interface GroupPhotoStacksRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * Distinct photo asset IDs, such as a saved Cull run.
+     * @maxItems 250000
+     */
+  asset_ids: string[];
+  hidden?: boolean;
+}
+
+export interface GroupPhotoStacksResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * @minimum 1
+     * @maximum 30
+     */
+  burst_gap_seconds: number;
+  /** Bursts of two or more submitted photos, in request order; other available photos are single. */
+  groups: string[][];
+  /** Submitted photos that are no longer live in this library. */
+  unavailable_ids: string[];
+}
+
 export interface HighlightSetTermV1Schema {
   /** @pattern ^#[0-9a-f]{6}$ */
   color: string;
@@ -5268,6 +5293,8 @@ export interface PhotoPreparedTarget {
   asset_id: string;
   /** @minimum 1 */
   asset_revision: number;
+  current_content_version_id?: string;
+  display_file_id: string;
   file_id: string;
   file_name: string;
   node_id: number;
@@ -5295,6 +5322,8 @@ export interface PhotoAuthoredPrepareRequest {
   hidden?: boolean;
   query?: SavedQueryV1Schema;
   skip_unavailable?: boolean;
+  /** Prepare up to 2,000 live files for a complete stack decision. */
+  stack?: boolean;
 }
 
 export interface PhotoKeywordNode {
@@ -5307,6 +5336,24 @@ export interface PhotoKeywordDelta {
   before: boolean;
   node_id: number;
   tag_id: string;
+}
+
+export interface PhotoRepresentativeChange {
+  /**
+     * @minimum 1
+     * @nullable
+     */
+  after?: number | null;
+  /** @minimum 2 */
+  after_revision: number;
+  asset_id: string;
+  /**
+     * @minimum 1
+     * @nullable
+     */
+  before?: number | null;
+  /** @minimum 1 */
+  before_revision: number;
 }
 
 export interface PhotoSidecarProvenance {
@@ -5324,6 +5371,7 @@ export interface PhotoAuthoredReceipt {
   keywords?: PhotoKeywordDelta[];
   /** Empty for a no-op, with empty before and after arrays; no receipt is created. */
   receipt_id: string;
+  representatives?: PhotoRepresentativeChange[];
   sidecar?: PhotoSidecarProvenance;
   undo_of?: string;
 }
@@ -5570,14 +5618,31 @@ export interface PhotoMapRow {
   width_px: number | null;
 }
 
+export interface PhotoStack {
+  /**
+     * Members in ascending capture order.
+     * @minItems 2
+     * @maxItems 500
+     */
+  asset_ids: string[];
+  representative_id: string;
+}
+
 export interface PhotoBrowsePage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /**
+     * @minimum 1
+     * @maximum 30
+     */
+  burst_gap_seconds?: number;
   facets: PhotoBrowsePageFacetsItem[];
   items: PhotoBrowseRow[];
   map_items?: PhotoMapRow[];
   next_cursor?: string;
   relevance_available: boolean;
+  /** Bursts among items when stacks were requested; other items are single photos. */
+  stacks?: PhotoStack[];
   /** @minimum 0 */
   total: number;
 }
@@ -5620,6 +5685,8 @@ export interface PhotoBrowseRequest {
   page_size?: number;
   projection?: PhotoBrowseRequestProjection;
   query: SavedQueryV1Schema;
+  /** Group capture-time pages into whole bursts, extending page_size by up to 499 frames. Relevance groups only returned matches, placing each burst at its best-ranked member. Other sorts keep individual rows. */
+  stacks?: boolean;
 }
 
 export interface Sort {
@@ -5799,11 +5866,51 @@ export const PhotoSettingsPreference = {
 export interface PhotoSettings {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /**
+     * @minimum 1
+     * @maximum 30
+     */
+  burst_gap_seconds: number;
   /** @nullable */
   preference?: PhotoSettingsPreference;
   /** @minimum 1 */
   revision: number;
   updated_at?: string;
+}
+
+export type PhotoStackDecisionRequestDecision = typeof PhotoStackDecisionRequestDecision[keyof typeof PhotoStackDecisionRequestDecision];
+
+
+export const PhotoStackDecisionRequestDecision = {
+  current: 'current',
+  all: 'all',
+  selected: 'selected',
+  representative: 'representative',
+} as const;
+
+export interface PhotoStackDecisionRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * @minItems 2
+     * @maxItems 500
+     */
+  asset_ids: string[];
+  /**
+     * @minimum 1
+     * @maximum 30
+     */
+  burst_gap_seconds: number;
+  current_id: string;
+  decision: PhotoStackDecisionRequestDecision;
+  hidden?: boolean;
+  /** @maxItems 500 */
+  selected_ids?: string[];
+  /**
+     * @minItems 1
+     * @maxItems 2000
+     */
+  targets: PhotoAuthoredEditTarget[];
 }
 
 export type PhotoTimelineFacetsItemDimension = typeof PhotoTimelineFacetsItemDimension[keyof typeof PhotoTimelineFacetsItemDimension];
@@ -7091,6 +7198,7 @@ export interface SetPhotoExcludedRequest {
 }
 
 /**
+ * Omit to keep the display preference when changing the burst gap, or reset it otherwise.
  * @nullable
  */
 export type SetPhotoSettingsRequestPreference = typeof SetPhotoSettingsRequestPreference[keyof typeof SetPhotoSettingsRequestPreference] | null;
@@ -7104,8 +7212,20 @@ export const SetPhotoSettingsRequestPreference = {
 export interface SetPhotoSettingsRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
+  /**
+     * Omit to keep the burst gap.
+     * @minimum 1
+     * @maximum 30
+     * @nullable
+     */
+  burst_gap_seconds?: number | null;
+  /**
+     * Omit to keep the display preference when changing the burst gap, or reset it otherwise.
+     * @nullable
+     */
   preference?: SetPhotoSettingsRequestPreference;
+  /** Reset the display preference, including when changing the burst gap. Conflicts with preference. */
+  reset_preference?: boolean;
 }
 
 export interface SourceRequest {
@@ -16189,6 +16309,44 @@ return sessionJSON<PhotoAuthoredPreparation>(getPreparePhotoAuthoredUrl(),
 
 
 
+export const getDecidePhotoStackUrl = () => {
+
+
+
+
+  return `/api/v1/photos/authored/stack`
+}
+
+/**
+ * @summary Decide one observed stack atomically
+ */
+export const decidePhotoStack = async (photoStackDecisionRequest: NonReadonly<PhotoStackDecisionRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAuthoredReceipt> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoAuthoredReceipt>(getDecidePhotoStackUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(photoStackDecisionRequest)
+  }
+);}
+
+
+
 export const getUndoPhotoAuthoredUrl = (receiptId: string,) => {
 
 
@@ -16685,7 +16843,7 @@ export const getGetPhotoSettingsUrl = () => {
 }
 
 /**
- * @summary Inspect the photo display preference
+ * @summary Inspect photo settings
  */
 export const getPhotoSettings = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoSettings> => {
 
@@ -16709,7 +16867,7 @@ export const getSetPhotoSettingsUrl = () => {
 }
 
 /**
- * @summary Set or reset the photo display preference
+ * @summary Set photo settings
  */
 export const setPhotoSettings = async (setPhotoSettingsRequest: NonReadonly<SetPhotoSettingsRequest>,
     headers: SetPhotoSettingsHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoSettings> => {
@@ -16734,6 +16892,44 @@ return sessionJSON<PhotoSettings>(getSetPhotoSettingsUrl(),
     method: 'PUT',
     headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
     body: JSON.stringify(setPhotoSettingsRequest)
+  }
+);}
+
+
+
+export const getGroupPhotoStacksUrl = () => {
+
+
+
+
+  return `/api/v1/photos/stacks/group`
+}
+
+/**
+ * @summary Group explicit photos into bursts
+ */
+export const groupPhotoStacks = async (groupPhotoStacksRequest: NonReadonly<GroupPhotoStacksRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<GroupPhotoStacksResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<GroupPhotoStacksResponse>(getGroupPhotoStacksUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(groupPhotoStacksRequest)
   }
 );}
 

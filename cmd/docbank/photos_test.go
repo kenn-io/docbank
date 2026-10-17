@@ -230,3 +230,24 @@ func TestPhotoImportAmbiguitiesReachJobsShow(t *testing.T) {
 	assert.Equal(t, store.PhotoImportMultipleRAW, receipt.Ambiguities[0].Reason)
 	assert.Len(t, receipt.Ambiguities[0].Files, 3)
 }
+
+func TestPhotosCLIBurstGap(t *testing.T) {
+	_ = setupVaultHome(t)
+	output, err := runCLI(t, "photos", "settings", "set", "image", "--burst-gap-seconds", "5")
+	require.NoError(t, err)
+	var settings api.PhotoSettings
+	require.NoError(t, json.Unmarshal([]byte(output), &settings))
+	require.Equal(t, 5, settings.BurstGapSeconds)
+	require.NotNil(t, settings.Preference)
+	require.Equal(t, "image", *settings.Preference)
+	output, err = runCLI(t, "photos", "settings", "set", "--burst-gap-seconds", "1")
+	require.NoError(t, err)
+	var updatedSettings api.PhotoSettings
+	require.NoError(t, json.Unmarshal([]byte(output), &updatedSettings))
+	require.Equal(t, 1, updatedSettings.BurstGapSeconds)
+	require.Equal(t, new("image"), updatedSettings.Preference)
+	_, err = runCLI(t, "photos", "settings", "set", "--burst-gap-seconds", "31")
+	require.Error(t, err)
+	require.Equal(t, exitUsage, commandExitCode(err, true))
+	require.ErrorContains(t, err, "burst gap must be 1 to 30 seconds")
+}

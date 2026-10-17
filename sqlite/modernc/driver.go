@@ -27,6 +27,19 @@ func init() {
 			}
 			return query.ClassifyMedia(mediaType, filename), nil
 		})
+	modernsqlite.MustRegisterDeterministicScalarFunction("docbank_photo_folder_v1", 3,
+		func(_ *modernsqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+			kind, kindOK := args[0].(string)
+			desc, descOK := args[1].(string)
+			path, pathOK := args[2].(string)
+			if !kindOK || !descOK || !pathOK {
+				return nil, errors.New("photo folder requires text source kind, description, and path")
+			}
+			if key, ok := query.PhotoFolderKey(kind, desc, path); ok {
+				return key, nil
+			}
+			return nil, nil //nolint:nilnil // SQL NULL marks a photo with no folder.
+		})
 }
 
 const (

@@ -36,7 +36,8 @@ type photoKeywordState struct {
 const maxPhotoKeywordEdits = 100
 
 var ErrPhotoEditFileLimit = errors.New("edit at most 1,000 files at once; RAW/JPEG pairs count as two files. Select fewer photos")
-var ErrPhotoEditReceiptLimit = errors.New("photo metadata receipt exceeds the 1 MiB limit")
+var ErrPhotoStackFileLimit = fmt.Errorf("decide at most 2,000 files in one stack: %w", ErrInvalidPhotoAsset)
+var ErrPhotoEditReceiptLimit = errors.New("photo metadata receipt exceeds the 2 MiB limit")
 
 type PhotoAuthoredTargetRevision struct {
 	AssetID       string `json:"asset_id" format:"uuid"`
@@ -60,10 +61,12 @@ type photoAuthoredLoaded struct {
 type PhotoPreparedTarget struct {
 	PhotoAuthoredTargetRevision
 
-	FileName string        `json:"file_name"`
-	NodeID   int64         `json:"node_id"`
-	Values   PhotoAuthored `json:"values"`
-	Tags     []string      `json:"tags"`
+	CurrentContentVersionID string        `json:"current_content_version_id,omitempty" format:"uuid"`
+	DisplayFileID           string        `json:"display_file_id" format:"uuid"`
+	FileName                string        `json:"file_name"`
+	NodeID                  int64         `json:"node_id"`
+	Values                  PhotoAuthored `json:"values"`
+	Tags                    []string      `json:"tags"`
 }
 
 type PhotoAuthoredPreparation struct {
@@ -79,6 +82,9 @@ type PhotoAuthoredBatch struct {
 }
 
 func (s *Store) PreparePhotoAuthored(ctx context.Context, selection PhotoSetSelection) (PhotoAuthoredPreparation, error) {
+	if selection.Limit != MaxPhotoStackTargets {
+		selection.Limit = maxBatchTagTargets
+	}
 	result := PhotoAuthoredPreparation{Assets: []PhotoAsset{}, Targets: []PhotoPreparedTarget{}}
 	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
 		ids, err := s.photoAuthoredSelectionIDs(ctx, tx, selection)
@@ -89,7 +95,7 @@ func (s *Store) PreparePhotoAuthored(ctx context.Context, selection PhotoSetSele
 		if err != nil {
 			return err
 		}
-		preparer := photoAuthoredPreparer{tx: tx, hidden: selection.Hidden, single: len(ids) == 1, settings: settings, result: &result}
+		preparer := photoAuthoredPreparer{tx: tx, hidden: selection.Hidden, single: len(ids) == 1, settings: settings, result: &result, limit: selection.Limit}
 		for chunk := range slices.Chunk(ids, photoSelectionChunkSize) {
 			if err := preparer.prepare(ctx, chunk); err != nil {
 				return err
@@ -103,7 +109,6 @@ func (s *Store) PreparePhotoAuthored(ctx context.Context, selection PhotoSetSele
 // photoAuthoredSelectionIDs resolves a metadata-edit selection and maps album
 // selection errors to their photo-edit equivalents.
 func (s *Store) photoAuthoredSelectionIDs(ctx context.Context, tx *sql.Tx, selection PhotoSetSelection) ([]string, error) {
-	selection.Limit = maxBatchTagTargets
 	ids, err := s.photoSetSelectionIDs(ctx, tx, selection)
 	switch {
 	case errors.Is(err, errPhotoSetTooManyAssets):
@@ -128,6 +133,8 @@ type photoAuthoredPreparer struct {
 	single   bool
 	settings PhotoSettings
 	result   *PhotoAuthoredPreparation
+	limit    int
+	loaded   map[string]photoAuthoredLoaded
 }
 
 func (p photoAuthoredPreparer) prepare(ctx context.Context, ids []string) error {
@@ -140,7 +147,10 @@ func (p photoAuthoredPreparer) prepare(ctx context.Context, ids []string) error 
 	if err := p.tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_files f JOIN nodes n ON n.id=f.node_id WHERE f.role!='sidecar' AND n.trashed_at IS NULL AND f.asset_id IN (`+in+`)`, args...).Scan(&count); err != nil {
 		return err
 	}
-	if len(p.result.Targets)+count > maxBatchTagTargets {
+	if len(p.result.Targets)+count > p.limit {
+		if p.limit == MaxPhotoStackTargets {
+			return ErrPhotoStackFileLimit
+		}
 		return ErrPhotoEditFileLimit
 	}
 	err = queryRows(ctx, p.tx, `SELECT `+photoFileColumns+` FROM photo_files WHERE asset_id IN (`+in+`) ORDER BY file_id`, args, func(rows *sql.Rows) error {
@@ -151,6 +161,9 @@ func (p photoAuthoredPreparer) prepare(ctx context.Context, ids []string) error 
 		asset := assets[file.AssetID]
 		asset.Files = append(asset.Files, file)
 		assets[file.AssetID] = asset
+		if p.loaded != nil {
+			p.loaded[file.ID] = photoAuthoredLoaded{file: file}
+		}
 		return nil
 	})
 	if err != nil {
@@ -188,17 +201,31 @@ func (p photoAuthoredPreparer) loadAssets(ctx context.Context, in string, args [
 // loadTargets returns the live edit targets of the selected assets, keyed by file ID.
 func (p photoAuthoredPreparer) loadTargets(ctx context.Context, in string, args []any) (map[string]PhotoPreparedTarget, error) {
 	targets := map[string]PhotoPreparedTarget{}
-	err := queryRows(ctx, p.tx, `SELECT f.file_id, n.name, n.revision, nt.tag_id FROM photo_files f JOIN nodes n ON n.id=f.node_id LEFT JOIN node_tags nt ON nt.node_id=n.id WHERE n.trashed_at IS NULL AND f.asset_id IN (`+in+`) ORDER BY f.file_id, nt.tag_id`, args, func(rows *sql.Rows) error {
+	columns, from := `n.name,n.revision,COALESCE(n.current_version_id,''),f.file_id,nt.tag_id`, `nodes n`
+	if p.loaded != nil {
+		columns, from = nodeCols+`,f.file_id,nt.tag_id`, nodeFrom
+	}
+	err := queryRows(ctx, p.tx, `SELECT `+columns+` FROM `+from+` JOIN photo_files f ON f.node_id=n.id LEFT JOIN node_tags nt ON nt.node_id=n.id WHERE n.trashed_at IS NULL AND f.asset_id IN (`+in+`) ORDER BY f.file_id, nt.tag_id`, args, func(rows *sql.Rows) error {
 		var id string
-		var fileName string
-		var revision int64
+		var node Node
 		var tag sql.NullString
-		if err := rows.Scan(&id, &fileName, &revision, &tag); err != nil {
+		var err error
+		if p.loaded == nil {
+			err = rows.Scan(&node.Name, &node.Revision, &node.CurrentVersionID, &id, &tag)
+		} else {
+			node, err = scanNode(rows, &id, &tag)
+		}
+		if err != nil {
 			return err
+		}
+		if p.loaded != nil {
+			loaded := p.loaded[id]
+			loaded.node = node
+			p.loaded[id] = loaded
 		}
 		target, exists := targets[id]
 		if !exists {
-			target = PhotoPreparedTarget{FileName: fileName, NodeRevision: revision, Tags: []string{}}
+			target = PhotoPreparedTarget{FileName: node.Name, NodeRevision: node.Revision, CurrentContentVersionID: node.CurrentVersionID, Tags: []string{}}
 		}
 		if tag.Valid {
 			target.Tags = append(target.Tags, tag.String)
@@ -233,6 +260,7 @@ func (p photoAuthoredPreparer) appendAsset(id string, asset PhotoAsset, targets 
 		if !exists {
 			return ErrNotFound
 		}
+		target.DisplayFileID = *asset.DisplayFileID
 		target.AssetID, target.AssetRevision, target.FileID, target.Revision, target.NodeID, target.Values = id, asset.Revision, file.ID, file.Revision, file.NodeID, file.Authored()
 		p.result.Targets = append(p.result.Targets, target)
 	}
@@ -603,6 +631,9 @@ func validatePhotoKeywords(r PhotoAuthoredReceipt) error {
 }
 
 func photoAuthoredChanged(receipt PhotoAuthoredReceipt) bool {
+	if len(receipt.Representatives) > 0 {
+		return true
+	}
 	for i, after := range receipt.After {
 		if after.Revision != receipt.Before[i].Revision {
 			return true

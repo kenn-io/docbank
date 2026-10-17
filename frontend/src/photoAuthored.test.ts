@@ -14,6 +14,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   Reflect.deleteProperty(Element.prototype, "scrollIntoView");
 });
+
 const targets = [
   preparedPhoto(1, {
     asset_id: "asset",
@@ -781,6 +782,146 @@ it("keeps a later edit busy when an earlier refresh finishes during its write", 
   expect(editor.busy).toBe(false);
   editor.dispose();
 });
+
+it("caches preparation for the same stack", async () => {
+  const prepare = vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue({
+    assets: [],
+    targets: [preparedPhoto(1), preparedPhoto(2)],
+  });
+  const editor = new PhotoAuthoredEditor("session", vi.fn());
+  await editor.prepareStack(["photo-1", "photo-2"], false);
+  await editor.prepareStack(["photo-1", "photo-2"], false);
+  expect(prepare).toHaveBeenCalledExactlyOnceWith(
+    { asset_ids: ["photo-1", "photo-2"], hidden: false, stack: true },
+    expect.anything(),
+  );
+});
+
+it("reloads a hidden stack after a membership conflict", async () => {
+  const prepare = vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue({
+    assets: [],
+    targets: [preparedPhoto(1), preparedPhoto(2)],
+  });
+  const decide = vi
+    .spyOn(api, "decidePhotoStack")
+    .mockRejectedValue(new APIError("Stack changed", 409, "photo_stack_changed"));
+  const editor = new PhotoAuthoredEditor("session", vi.fn());
+  const asset_ids = ["photo-1", "photo-2"];
+  await editor.prepareStack(asset_ids, true);
+  expect(
+    await editor.decideStack(
+      { asset_ids, current_id: "photo-1", decision: "current", burst_gap_seconds: 2, hidden: true },
+      vi.fn(),
+      { observed: [] },
+    ),
+  ).toBe(false);
+  expect(decide.mock.calls[0]![0].hidden).toBe(true);
+  expect(editor.targets).toEqual([]);
+  expect(editor.conflict).toBe(true);
+  await editor.reload();
+  expect(editor.conflict).toBe(false);
+  await editor.prepareStack(asset_ids, true);
+  expect(prepare).toHaveBeenCalledTimes(2);
+});
+
+const stackScenarios = [
+  "current",
+  "stale-asset",
+  "replaced",
+  "stale-flag",
+  "stale-rating",
+  "stale-version",
+  "unchanged",
+  "checkpoint",
+];
+
+it.each(stackScenarios)(
+  "decides a stack against held revisions and the observed rows (%s)",
+  async (scenario) => {
+    const selected = preparedPhoto(1),
+      sibling = preparedPhoto(2),
+      companion = preparedPhoto(3, { asset_id: "photo-2", display_file_id: "file-2" });
+    const request = {
+      asset_ids: ["photo-1", "photo-2"],
+      current_id: "photo-1",
+      selected_ids: ["photo-1"],
+      decision: "selected" as const,
+      burst_gap_seconds: 2,
+      hidden: false,
+    };
+    if (scenario === "unchanged") {
+      selected.values.flag = "pick";
+      sibling.values.flag = companion.values.flag = "reject";
+    }
+    const receipt = {
+      receipt_id: scenario === "unchanged" ? "" : "stack-receipt",
+      before: scenario === "unchanged" ? [] : [selected, sibling, companion],
+      after:
+        scenario === "unchanged"
+          ? []
+          : [selected, sibling, companion].map((target) => ({
+              file_id: target.file_id,
+              node_id: target.node_id,
+              revision: 2,
+              values: {
+                ...target.values,
+                flag: target.asset_id === "photo-1" ? ("pick" as const) : ("reject" as const),
+              },
+            })),
+    };
+    vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue({
+      assets: [],
+      targets: [sibling, companion, selected],
+    });
+    const decide = vi.spyOn(api, "decidePhotoStack").mockResolvedValue(receipt);
+    const editor = new PhotoAuthoredEditor("session", vi.fn());
+    editor.targets = [selected];
+    await editor.prepareStack(request.asset_ids, request.hidden);
+    const observed = [
+      {
+        asset_id: "photo-1",
+        revision: scenario === "stale-asset" ? 2 : 1,
+        display_file_id: scenario === "replaced" ? "replacement" : "file-1",
+        content_version_id: scenario === "stale-version" ? "replacement" : "version-1",
+        flag: scenario === "stale-flag" ? ("pick" as const) : selected.values.flag,
+        rating: scenario === "stale-rating" ? 5 : 0,
+      },
+    ];
+    const refresh = vi.fn(async () => {});
+    const success = await editor.decideStack(request, refresh, {
+      observed,
+      beforeWrite: async () => scenario !== "checkpoint",
+    });
+    expect(editor.targets.map((target) => target.asset_id)).toEqual(["photo-1"]);
+    if (scenario.startsWith("stale-") || scenario === "replaced" || scenario === "checkpoint") {
+      expect(success).toBe(false);
+      expect(decide).not.toHaveBeenCalled();
+      expect(editor.conflict).toBe(scenario !== "checkpoint");
+      return;
+    }
+    expect(success).toBe(true);
+    expect(decide.mock.calls[0]![0].targets).toEqual([
+      { asset_id: "photo-2", asset_revision: 1, file_id: "file-2", revision: 1, node_revision: 1 },
+      { asset_id: "photo-2", asset_revision: 1, file_id: "file-3", revision: 1, node_revision: 1 },
+      {
+        asset_id: "photo-1",
+        asset_revision: 1,
+        file_id: "file-1",
+        revision: 1,
+        node_revision: 1,
+        content_version_id: "version-1",
+      },
+    ]);
+    if (scenario === "unchanged") {
+      expect(editor.notice).toBe("No changes to apply");
+      expect(refresh).not.toHaveBeenCalled();
+      return;
+    }
+    expect(editor.receiptID).toBe("stack-receipt");
+    expect(refresh).toHaveBeenCalledWith(receipt, []);
+    expect(editor.stackTargets.find((target) => target.file_id === "file-2")?.revision).toBe(2);
+  },
+);
 
 it.each([
   {

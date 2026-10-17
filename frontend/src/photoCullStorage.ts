@@ -16,6 +16,7 @@ export interface CullRun {
   ids: string[];
   checkpoint: CullCheckpoint;
 }
+type Membership = Omit<CullRun, "checkpoint"> & { pass: string[] };
 type MarkerKind = "visited" | "skipped" | "unavailable";
 type Header = Pick<CullCheckpoint, "runID" | "revision" | "position" | "scope" | "autoAdvance"> & {
   formatVersion?: number;
@@ -114,9 +115,7 @@ export function photoCullStorage(vaultID: string): CullStorage {
         const tx = db.transaction(stores, "readonly"),
           done = settled(tx);
         const [membership, saved, keys, values] = await Promise.all([
-          idbRequest<{ ids: string[]; pass: string[] } | undefined>(
-            tx.objectStore("members").get(vaultID),
-          ),
+          idbRequest<Membership | undefined>(tx.objectStore("members").get(vaultID)),
           idbRequest<StoredHeader | undefined>(tx.objectStore("checkpoints").get(vaultID)),
           idbRequest(tx.objectStore("markers").getAllKeys(markerRange())),
           idbRequest<string[]>(tx.objectStore("markers").getAll(markerRange())),
@@ -191,9 +190,7 @@ export function photoCullStorage(vaultID: string): CullStorage {
         }
         if (value.pass) {
           const members = tx.objectStore("members");
-          const membership = await idbRequest<{ ids: string[]; pass: string[] }>(
-            members.get(vaultID),
-          );
+          const membership = await idbRequest<Membership>(members.get(vaultID));
           members.put({ ...membership, pass: value.pass.pass }, vaultID);
           savePass(tx, { ...value.pass, revision: current.revision + 1 });
         } else {
