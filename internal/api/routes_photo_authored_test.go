@@ -3,6 +3,7 @@ package api_test
 import (
 	"encoding/json/v2"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"testing"
@@ -61,17 +62,21 @@ func TestPhotoStackDecisionBounds(t *testing.T) {
 	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	ids := make([]string, 500)
-	targets := make([]store.PhotoAuthoredEditTarget, 1000)
+	targets := make([]store.PhotoAuthoredEditTarget, 2000)
 	for i := range ids {
 		ids[i] = fmt.Sprintf("40000000-0000-4000-8000-%012d", i)
 	}
 	for i := range targets {
-		targets[i] = store.PhotoAuthoredEditTarget{AssetID: ids[i/2], AssetRevision: 1, FileID: fmt.Sprintf("50000000-0000-4000-8000-%012d", i), Revision: 1, NodeRevision: 1}
+		targets[i] = store.PhotoAuthoredEditTarget{AssetID: ids[i/4], AssetRevision: math.MaxInt64, FileID: fmt.Sprintf("50000000-0000-4000-8000-%012d", i), Revision: math.MaxInt64, NodeRevision: math.MaxInt64, ContentVersionID: fmt.Sprintf("60000000-0000-4000-8000-%012d", i)}
 	}
-	request := api.PhotoStackDecisionRequest{BurstGapSeconds: 2, AssetIDs: ids, Targets: targets, Decision: "selected", CurrentID: ids[0], SelectedIDs: ids}
+	request := api.PhotoStackDecisionRequest{BurstGapSeconds: 30, Hidden: true, AssetIDs: ids, Targets: targets, Decision: "representative", CurrentID: ids[0], SelectedIDs: ids}
+	encoded, err := json.Marshal(request)
+	require.NoError(t, err)
+	require.Greater(t, len(encoded), 512<<10)
+	require.LessOrEqual(t, len(encoded), 576<<10)
 	res, body := do(t, ts, http.MethodPost, "/api/v1/photos/authored/stack", nil, request)
-	require.Equal(t, http.StatusConflict, res.StatusCode, body)
-	require.Contains(t, body, "photo_stack_changed")
+	require.Equal(t, http.StatusForbidden, res.StatusCode, body)
+	require.Contains(t, body, "hidden_locked")
 	res, body = do(t, ts, http.MethodPost, "/api/v1/photos/authored/stack", nil, map[string]any{"padding": strings.Repeat("x", 1<<20)})
 	require.Equal(t, http.StatusRequestEntityTooLarge, res.StatusCode, body)
 }
