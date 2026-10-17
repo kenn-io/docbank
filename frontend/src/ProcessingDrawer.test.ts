@@ -1075,6 +1075,7 @@ function renderProcessingResponse(response: Promise<Response>, profiles = ["priv
           fingerprint: processingJob.profile_fingerprint,
           rendition: false,
           embedding_bindings: ["semantic"],
+          query_embedding_bindings: ["semantic"],
         })),
       );
     if (path === "/api/v1/processing/plans")

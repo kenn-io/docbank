@@ -472,9 +472,20 @@ func TestPhotoImportEditedSourceBecomesNewVersion(t *testing.T) {
 	require.NoError(t, err)
 	sidecar := first.Nodes[2]
 
-	edited, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(raw, jpg("jpg-v1"), xmp("xmp-v2")))
+	op, err := s.CreatePhotoImport(ctx, PhotoImportRequest{SourceRoot: root, Destination: "/"}, "cli")
+	require.NoError(t, err)
+	update := photoImportTestGroup(raw, jpg("jpg-v1"), xmp("xmp-v2"))
+	update.OperationID = op.ID
+	edited, err := s.IngestPhotoGroup(ctx, run, update)
 	require.NoError(t, err)
 	assert.True(t, edited.Added)
+	assert.False(t, edited.ReportAddition)
+	assert.Equal(t, sidecar.ID, edited.Nodes[2].ID)
+	addition := photoImportTestGroup(photoImportTestMember(filepath.Join(root, "NEW.JPG"), PhotoRoleImage, fakeHash("new-jpg"), "image/jpeg"))
+	addition.OperationID = op.ID
+	created, err := s.IngestPhotoGroup(ctx, run, addition)
+	require.NoError(t, err)
+	assert.True(t, created.ReportAddition)
 	_, err = s.IngestPhotoGroup(ctx, run, photoImportTestGroup(raw, jpg("jpg-v2"), xmp("xmp-v2")))
 	require.NoError(t, err)
 
@@ -486,7 +497,7 @@ func TestPhotoImportEditedSourceBecomesNewVersion(t *testing.T) {
 	assert.Equal(t, map[string]int{PhotoRoleRAW: 1, PhotoRoleImage: 1, PhotoRoleSidecar: 1}, roles)
 	var files int
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE kind='file'`).Scan(&files))
-	assert.Equal(t, 3, files)
+	assert.Equal(t, 4, files)
 	current, err := s.NodeByID(ctx, sidecar.ID)
 	require.NoError(t, err)
 	assert.Equal(t, fakeHash("xmp-v2"), current.BlobHash)

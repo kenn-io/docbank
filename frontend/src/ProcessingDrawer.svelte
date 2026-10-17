@@ -231,13 +231,7 @@
 
   async function searchVersion(): Promise<void> {
     if (!plan || !node.current_version_id || !query.trim()) return;
-    reportAction(
-      session,
-      "search_run",
-      profiles.find((item) => item.name === profileName)?.query_embedding_bindings?.length
-        ? "hybrid"
-        : "text",
-    );
+    reportAction(session, "search_run", "text");
     const request = generation;
     searching = true;
     error = "";

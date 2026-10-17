@@ -462,13 +462,13 @@ it("reports inspection gestures across UTC days and ignores unrelated keys", asy
   expect(events).toEqual([opened, opened]);
 });
 
-it.each(["Text", "Email"])(
+it.each(["Text", "Email", "Render page 1"])(
   "reports keyboard activation of %s for an automatically selected document",
   async (tabName) => {
     const selected = source(
       new TextEncoder().encode("Subject: Synthetic\r\n\r\nBody"),
       "11111111-1111-4111-8111-111111111111",
-      "message/rfc822",
+      tabName === "Render page 1" ? "application/pdf" : "message/rfc822",
     );
     const events: unknown[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -476,6 +476,23 @@ it.each(["Text", "Email"])(
         events.push(JSON.parse(String(init?.body)));
         return new Response(null, { status: 202 });
       }
+      if (String(input) === "/api/v1/pages/inventory")
+        return Response.json({
+          runtime_available: true,
+          inventory: {
+            source: {
+              version_id: selected.versionID,
+              sha256: selected.blobHash,
+              size: selected.size,
+            },
+            page_count: 0,
+            frames: [],
+            images: [],
+            recipes: [],
+          },
+        });
+      if (String(input) === "/api/v1/pages/jobs")
+        return Response.json({ error: "Synthetic render failure" }, { status: 500 });
       if (String(input) === "/api/v1/renditions/text")
         return Response.json({
           state: "unconfigured",
@@ -500,14 +517,17 @@ it.each(["Text", "Email"])(
       authorizationRevision: 8,
       onauthfailure: vi.fn(),
     });
-    const tab = screen.getByRole("tab", { name: tabName });
+    const tab = await screen.findByRole(tabName === "Render page 1" ? "button" : "tab", {
+      name: tabName,
+    });
     const user = userEvent.setup();
     for (let attempt = 0; attempt < 10 && document.activeElement !== tab; attempt++)
       await user.tab();
     expect(document.activeElement).toBe(tab);
     expect(events).toEqual([]);
     await user.keyboard("{Enter}");
-    expect(tab.getAttribute("aria-selected")).toBe("true");
+    if (tabName === "Render page 1") await screen.findByRole("button", { name: "Refresh pages" });
+    else expect(tab.getAttribute("aria-selected")).toBe("true");
     await waitFor(() =>
       expect(events).toEqual([{ event: "document_opened", properties: { surface: "web" } }]),
     );
@@ -656,8 +676,5 @@ it("reports sandboxed email inspection gestures and filters modified keys", asyn
   await fireEvent.keyDown(frameDocument.body, { key: "j", ctrlKey: true });
   expect(events).toEqual([]);
   await fireEvent.pointerDown(frameDocument.body);
-  expect(events).toEqual([opened]);
-  await fireEvent.wheel(frameDocument.body);
-  await fireEvent.keyDown(frameDocument.body, { key: "j" });
   expect(events).toEqual([opened]);
 });

@@ -1434,11 +1434,7 @@ func (m Model) updateProcessingKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.processingSearchErr = nil
 			m.processingSearchReport = nil
 			m.processingSearchID++
-			mode := "text"
-			if m.processingProfile < len(m.processingProfiles) && len(m.processingProfiles[m.processingProfile].QueryEmbeddingBindings) > 0 {
-				mode = "hybrid"
-			}
-			return m, tea.Batch(m.reportAction("search_run", mode), m.startSpinner(), m.loadProcessingSearch(m.processingRequestID, query))
+			return m, tea.Batch(m.reportAction("search_run", "text"), m.startSpinner(), m.loadProcessingSearch(m.processingRequestID, query))
 		default:
 			var cmd tea.Cmd
 			m.searchInput, cmd = m.searchInput.Update(msg)

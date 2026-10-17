@@ -295,6 +295,7 @@
   }
   async function original() {
     if (!photo || busy) return;
+    inspect();
     dialog?.focus({ preventScroll: true });
     const selected = photo,
       active = controller;
@@ -405,7 +406,10 @@
     <IconButton
       ariaLabel="Metadata"
       ariaPressed={metadataOpen}
-      onclick={() => (metadataOpen = !metadataOpen)}><Info size={18} /></IconButton
+      onclick={() => {
+        inspect();
+        metadataOpen = !metadataOpen;
+      }}><Info size={18} /></IconButton
     >
   </header>
   {#if (items.length || canLoadMore) && photos.error}<div class="loupe-error" role="alert">

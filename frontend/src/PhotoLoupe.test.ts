@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { tick } from "svelte";
+import userEvent from "@testing-library/user-event";
 import { APIError } from "./api-transport.js";
 import * as actionEvents from "./action-events.js";
 import PhotoLoupe from "./PhotoLoupe.svelte";
@@ -150,19 +151,27 @@ it.each([
   expect(inspect).toHaveBeenCalledOnce();
 });
 
-it("reports keyboard activation of a filmstrip photo after restoration", async () => {
-  const inspect = vi.fn();
-  vi.spyOn(actionEvents, "dailyAction").mockReturnValue(inspect);
-  const { props } = setup();
-  render(PhotoLoupe, props);
-  await screen.findByText("Fit preview");
-  expect(inspect).not.toHaveBeenCalled();
-  const button = screen.getByRole("button", { name: "Show Photo 4.jpg" });
-  button.focus();
-  await fireEvent.click(button, { detail: 0 });
-  expect(props.onchoose).toHaveBeenCalledWith("photo-4");
-  expect(inspect).toHaveBeenCalledOnce();
-});
+it.each(["Show Photo 4.jpg", "View original", "Metadata"])(
+  "reports keyboard activation of %s after restoration",
+  async (action) => {
+    const inspect = vi.fn();
+    vi.spyOn(actionEvents, "dailyAction").mockReturnValue(inspect);
+    const { props } = setup();
+    const original = vi.spyOn(props.photos, "original").mockResolvedValue("blob:original");
+    render(PhotoLoupe, props);
+    await screen.findByText("Fit preview");
+    expect(inspect).not.toHaveBeenCalled();
+    const button = screen.getByRole("button", { name: action });
+    button.focus();
+    await userEvent.setup().keyboard("{Enter}");
+    if (action === "Show Photo 4.jpg") expect(props.onchoose).toHaveBeenCalledWith("photo-4");
+    else if (action === "View original") {
+      await screen.findByText("Original");
+      expect(original).toHaveBeenCalledOnce();
+    } else expect(screen.getByLabelText("Photo details")).toBeTruthy();
+    expect(inspect).toHaveBeenCalledOnce();
+  },
+);
 
 it("ignores late image bytes after navigation and retains fit on a failed upgrade", async () => {
   const { props, preview, get } = setup();

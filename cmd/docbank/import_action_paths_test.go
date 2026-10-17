@@ -77,11 +77,6 @@ func newImportActionDaemon(t *testing.T) *importActionDaemon {
 }
 
 func TestPushCommandReportsOnlyNewDocumentsOnce(t *testing.T) {
-	f := newImportActionDaemon(t)
-	dir := t.TempDir()
-	for _, name := range []string{"first.txt", "second.txt"} {
-		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(name), 0o600))
-	}
 	for _, step := range []struct {
 		name string
 		want int
@@ -90,7 +85,19 @@ func TestPushCommandReportsOnlyNewDocumentsOnce(t *testing.T) {
 		{"update only", 0},
 	} {
 		t.Run(step.name, func(t *testing.T) {
+			f := newImportActionDaemon(t)
+			dir := t.TempDir()
+			for _, name := range []string{"first.txt", "second.txt"} {
+				require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(name), 0o600))
+			}
 			if step.name == "update only" {
+				seed := newPushCmd()
+				seed.SetIn(strings.NewReader(""))
+				seed.SetOut(io.Discard)
+				seed.SetErr(io.Discard)
+				seed.SetArgs([]string{dir, "--to", f.server.URL, "--name", "synthetic-source", "--dest", "/archive"})
+				require.NoError(t, seed.ExecuteContext(t.Context()))
+				require.Empty(t, f.requests)
 				require.NoError(t, os.WriteFile(filepath.Join(dir, "first.txt"), []byte("updated synthetic content"), 0o600))
 			}
 			cmd := newPushCmd()

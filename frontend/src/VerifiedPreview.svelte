@@ -106,6 +106,7 @@
         "PageDown",
         "Home",
         "End",
+        "Enter",
         " ",
         "j",
         "k",

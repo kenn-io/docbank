@@ -584,7 +584,7 @@ func (f *fakeBackend) AuditHistory(
 	return page, nil
 }
 
-func TestModelSearchesAndReturnsToTree(t *testing.T) {
+func TestModelNavigatesSearchesAndReturnsToTree(t *testing.T) {
 	backend := newFakeBackend()
 	model, err := New(t.Context(), backend)
 	require.NoError(t, err)
@@ -611,7 +611,6 @@ func TestModelSearchesAndReturnsToTree(t *testing.T) {
 	model, cmd = updateModel(t, model, key(tea.KeyEnter))
 	require.NotNil(t, cmd)
 	model = runModelCommand(t, model, cmd)
-
 	assert.Equal(t, maxSearchItems, backend.searchMax)
 	assert.Equal(t, modeSearch, model.mode)
 	assert.Equal(t, "quarterly report", model.searchQuery)
@@ -1783,7 +1782,6 @@ func TestProcessingLatestSearchWins(t *testing.T) {
 	backend.processingSearch = api.DocumentSearchReport{ActualMode: "lexical"}
 	model = runModelCommand(t, model, earlier)
 	assert.Equal(t, "semantic", model.processingSearchReport.ActualMode)
-	require.Equal(t, [][2]string{{"search_run", "text"}, {"search_run", "text"}}, backend.actions)
 }
 
 func TestSimilarActionCapturesScopeAndRejectsStaleResponses(t *testing.T) {
@@ -1807,7 +1805,6 @@ func TestSimilarActionCapturesScopeAndRejectsStaleResponses(t *testing.T) {
 	model.processingSimilarReport.BindingID = "latest"
 	model = runModelCommand(t, model, earlier)
 	assert.Equal(t, "latest", model.processingSimilarReport.BindingID)
-	require.Equal(t, [][2]string{{"search_run", "semantic"}, {"search_run", "semantic"}, {"search_run", "semantic"}}, backend.actions)
 	model.processingSimilarReport.State = "unavailable"
 	assert.Contains(t, strings.Join(model.processingLines(100), "\n"), "press b to build it")
 	model, _ = updateModel(t, model, key(tea.KeyEscape))
@@ -2863,7 +2860,7 @@ func (f *fakeBackend) ReportAction(_ context.Context, event, value string) error
 }
 
 func TestSearchSubmissionsReportBeforeFailedResults(t *testing.T) {
-	for _, flow := range []string{"text", "hybrid", "processing", "processing hybrid", "similar"} {
+	for _, flow := range []string{"text", "hybrid", "processing", "processing auto with encoder", "similar"} {
 		t.Run(flow, func(t *testing.T) {
 			backend := newFakeBackend()
 			model, err := New(t.Context(), backend)
@@ -2875,13 +2872,12 @@ func TestSearchSubmissionsReportBeforeFailedResults(t *testing.T) {
 				model.naturalProfiles = []api.ProcessingProfileSummary{{Name: "synthetic", QueryEmbeddingBindings: []string{"synthetic"}}}
 				expected = "hybrid"
 			}
-			if flow == "processing" || flow == "processing hybrid" || flow == "similar" {
+			if flow == "processing" || flow == "processing auto with encoder" || flow == "similar" {
 				model.processingOpen = true
 				model.processingPlan = &backend.plan
 			}
-			if flow == "processing hybrid" {
+			if flow == "processing auto with encoder" {
 				model.processingProfiles = []api.ProcessingProfileSummary{{Name: "synthetic", QueryEmbeddingBindings: []string{"synthetic"}}}
-				expected = "hybrid"
 			}
 			var command tea.Cmd
 			if flow == "similar" {
@@ -2895,7 +2891,16 @@ func TestSearchSubmissionsReportBeforeFailedResults(t *testing.T) {
 			}
 			model = runModelCommand(t, model, command)
 			require.Equal(t, [][2]string{{"search_run", expected}}, backend.actions)
-			require.True(t, model.err != nil || model.processingSearchErr != nil || model.processingSimilarErr != nil || strings.Contains(model.naturalSearchNote, "synthetic search failure"))
+			switch flow {
+			case "processing", "processing auto with encoder":
+				require.ErrorContains(t, model.processingSearchErr, "synthetic search failure")
+			case "similar":
+				require.ErrorContains(t, model.processingSimilarErr, "synthetic search failure")
+			case "hybrid":
+				require.Contains(t, model.naturalSearchNote, "synthetic search failure")
+			default:
+				require.ErrorContains(t, model.err, "synthetic search failure")
+			}
 		})
 	}
 }

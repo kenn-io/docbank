@@ -152,11 +152,7 @@ func TestDocumentSearchReportsSubmissionBeforeFailure(t *testing.T) {
 			assert.Equal(t, "search_run", events[0].Event)
 			require.NotNil(t, events[0].Properties)
 			assert.Equal(t, "cli", events[0].Properties.Surface)
-			submittedMode := options.Mode
-			if mode == "auto" {
-				submittedMode = "hybrid"
-			}
-			assert.Equal(t, telemetry.SearchType(submittedMode), events[0].Properties.SearchType)
+			assert.Equal(t, telemetry.SearchType(options.Mode), events[0].Properties.SearchType)
 		})
 	}
 }

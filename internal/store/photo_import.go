@@ -429,8 +429,9 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 		}
 	}()
 	retErr = s.withLogicalTx(ctx, func(tx *sql.Tx) (err error) {
+		createdDocument := false
 		defer func() {
-			if err == nil && result.Added && group.OperationID != "" {
+			if err == nil && createdDocument && group.OperationID != "" {
 				result.ReportAddition, err = claimPhotoImportAdditionTx(ctx, tx, group.OperationID)
 			}
 		}()
@@ -504,6 +505,7 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 				}
 				node = receipt.Node
 				added = added || created
+				createdDocument = createdDocument || created
 			}
 			nodes[i], decided[i], claimed[node.ID] = node, true, true
 			var err error

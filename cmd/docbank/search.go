@@ -389,11 +389,7 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 		return err
 	}
 	if options.Intent {
-		mode := options.Mode
-		if mode == "auto" && len(profile.QueryEmbeddingBindings) > 0 {
-			mode = "hybrid"
-		}
-		reportAction(cmd, c, "search_run", mode)
+		reportAction(cmd, c, "search_run", options.Mode)
 	}
 	report, err := c.SearchDocuments(cmd.Context(), api.DocumentSearchRequest{
 		Query: query, Mode: options.Mode, Limit: options.Limit, Profile: options.Profile,

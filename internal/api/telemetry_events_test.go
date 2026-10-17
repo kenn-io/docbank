@@ -65,8 +65,8 @@ func TestTelemetryEventRoute(t *testing.T) {
 
 func TestTelemetryEventRouteAbsentWithoutCapture(t *testing.T) {
 	t.Parallel()
-	ts, _ := newTestServer(t, func(d *api.Deps) { d.TelemetryCapture = nil })
-	status, body := postTelemetryEvent(t, ts.Client(), http.MethodPost, ts.URL+"/api/daemon/telemetry/events", `{"event":"document_opened","properties":{"surface":"web"}}`, nil)
+	ts, _ := newTestServer(t, nil)
+	status, body := postTelemetryEvent(t, ts.Client(), http.MethodPost, ts.URL+"/api/daemon/telemetry/events", `{"event":"app_opened"}`, nil)
 	assert.Equal(t, http.StatusNotFound, status, body)
 }
 
