@@ -38,9 +38,10 @@ func registerRedactionPreparationRoute(api huma.API, d Deps) {
 		result, err := d.Processing.PrepareNativePDF(ctx, request, d.PageRuntime)
 		if err != nil {
 			problem := redactionPreparationProblem(ctx, err)
-			if problem.Status == http.StatusInternalServerError {
+			switch problem.Status {
+			case http.StatusInternalServerError:
 				d.Logger.ErrorContext(ctx, "preparing native PDF", "error_code", problem.Code, "error", err)
-			} else if problem.Status == http.StatusServiceUnavailable {
+			case http.StatusServiceUnavailable:
 				d.Logger.InfoContext(ctx, "native PDF preparation refused", "error_code", problem.Code, "error", err)
 			}
 			return nil, problem
