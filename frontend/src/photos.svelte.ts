@@ -13,6 +13,7 @@ import {
   movePhotoRejects,
   type PhotoRejectsPreflight,
   type PhotoAuthoredPatch,
+  type PhotoAuthoredPrepareRequest,
   type PhotoAuthoredReceipt,
   type PhotoPreviewSlot,
   type PhotoBrowseRow,
@@ -767,7 +768,8 @@ export class Photos {
   markChanged(changes: PhotoEventBatch) {
     this.changedOffscreen = true;
     // Retained metadata reconciles when the refresh on return revalidates it.
-    if (this.authored.affectedBy(changes)) this.authored.changedElsewhere(changes);
+    if (this.authored.affectedBy(changes, this.dependsOnAlbums(changes.albums.keys())))
+      this.authored.changedElsewhere(changes);
   }
 
   /** Whether a membership change in these albums can change this view's results. */
@@ -949,6 +951,21 @@ export class Photos {
     return eligible;
   }
 
+  private authoredScope(eligible: Set<string>): PhotoAuthoredPrepareRequest {
+    const query = this.authored.preparingQuery ?? (this.allResults ? this.query : undefined);
+    return {
+      ...(this.authored.inspectedID
+        ? { asset_ids: [this.authored.inspectedID], skip_unavailable: true }
+        : query
+          ? { query: structuredClone(query) }
+          : {
+              asset_ids: [...this.selectedIDs].filter((id) => eligible.has(id)),
+              skip_unavailable: true,
+            }),
+      hidden: this.hidden,
+    };
+  }
+
   async revalidateAuthored(valid: () => boolean): Promise<boolean> {
     const controller = this.controller;
     this.authored.validating = true;
@@ -962,7 +979,7 @@ export class Photos {
           selectedIDs: new Set([...this.selection.selectedIDs].filter((id) => eligible.has(id))),
         };
       }
-      this.authored.revalidate(eligible);
+      this.authored.revalidate(eligible, this.authoredScope(eligible));
       return true;
     } catch (cause) {
       if (!controller.signal.aborted) this.authFailure(cause);
@@ -1153,7 +1170,7 @@ export class Photos {
       const restore = mode === "date" ? undefined : preserve?.();
       const captured = !this.authored.inspectedID && !!this.authored.targets.length;
       if (captured) this.captureSelection();
-      this.authored.revalidate(eligible);
+      this.authored.revalidate(eligible, this.authoredScope(eligible));
       membershipRevalidated = true;
       this.editScopeRevision++;
       this.items = [...candidate.values()];

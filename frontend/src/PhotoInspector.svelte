@@ -162,7 +162,9 @@
         tone="warning"
         message={editor.targets.length
           ? "Review the current photos before applying these edits."
-          : "No photos are available to review. Clear edits to discard this draft."}
+          : editor.canReload
+            ? "No photos are available to review."
+            : "No photos are available to review. Clear edits to discard this draft."}
       />{/if}
     {#if editor.membershipChanged && editor.targets.length}
       <Notice
@@ -175,7 +177,8 @@
       <Button disabled={editor.busy || editor.loading} onclick={() => editor.reviewMembers()}
         >Use reviewed members</Button
       >
-    {:else if editor.conflict && editor.targets.length}<Button
+    {/if}
+    {#if editor.conflict && editor.canReload}<Button
         disabled={editor.busy || editor.loading}
         onclick={() => void editor.reload()}>Reload metadata</Button
       >{/if}

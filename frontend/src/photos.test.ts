@@ -3082,3 +3082,56 @@ it("matches album changes against set filters and advanced field searches", () =
   expect(photos.dependsOnAlbums(["00000000-0000-4000-8000-0000000000a2"])).toBe(false);
   photos.dispose();
 });
+
+it.each(["query", "explicit", "loupe", "album"])(
+  "revalidates off-screen pending metadata through resume: %s",
+  async (kind) => {
+    for (const early of [false, true]) {
+      const photos = new Photos("scoped", vi.fn());
+      const album = "11111111-1111-4111-8111-111111111111";
+      if (kind === "album") photos.query = { ...photos.query, filters: { set_ids: [album] } };
+      let finish!: (response: Response) => void;
+      const scopes: unknown[] = [];
+      const current = preparedPhoto(1, { revision: 7 });
+      current.values.caption = "Current";
+      stubPhotoFetch(async (url, init) => {
+        if (!url.endsWith("/photos/authored/prepare")) return response([photo(1)]);
+        const scope = JSON.parse(init.body as string);
+        expect(scope.query && scope.skip_unavailable).toBeFalsy();
+        expect(scope.asset_ids).not.toEqual([]);
+        scopes.push(scope);
+        if (scopes.length === 1) return new Promise((resolve) => (finish = resolve));
+        return Response.json({ assets: [], targets: [current] });
+      });
+      await photos.resume();
+      const query = kind === "query" || kind === "album";
+      if (query) photos.selectAllResults();
+      else photos.selectLoaded();
+      if (kind === "loupe") photos.authored.inspectedID = "photo-1";
+      const initial = photos.authored.prepare(
+        query ? { query: structuredClone(photos.query) } : { asset_ids: ["photo-1"] },
+      );
+      photos.markChanged({
+        assets: new Map(kind === "album" ? [] : [["photo-1", 7]]),
+        albums: new Map(kind === "album" ? [[album, 2]] : []),
+        refetch: false,
+      });
+      if (early) {
+        finish(Response.json({ assets: [], targets: [preparedPhoto(1)] }));
+        await initial;
+      }
+      await photos.resume();
+      if (!early) finish(Response.json({ assets: [], targets: [preparedPhoto(1)] }));
+      await initial;
+      await vi.waitFor(() => expect(photos.authored.value("caption")).toBe("Current"));
+      expect(photos.authored.targets[0]!.revision).toBe(7);
+      expect(scopes).toHaveLength(2);
+      expect(scopes[1]).toEqual(
+        query
+          ? { query: photos.query, hidden: false }
+          : { asset_ids: ["photo-1"], skip_unavailable: true, hidden: false },
+      );
+      photos.dispose();
+    }
+  },
+);

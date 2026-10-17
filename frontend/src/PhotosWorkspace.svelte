@@ -599,16 +599,7 @@
       return false;
     }
     try {
-      if (refreshed && metadataAffected)
-        await editor.reconcile({
-          ...(photoID
-            ? { asset_ids: [photoID] }
-            : photos.allResults || editor.preparingQuery
-              ? { query: structuredClone(photos.query) }
-              : { asset_ids: [...photos.selection.selectedIDs] }),
-          hidden: photos.hidden,
-          skip_unavailable: true,
-        });
+      if (refreshed && metadataAffected) await editor.reconcile();
       if (photos.projection) await tick();
       if (replaced()) return false;
       if (id && photoID === id) {

@@ -168,7 +168,7 @@ export class PhotoAuthoredEditor {
     scope: api.PhotoAuthoredPrepareRequest;
     done: Promise<void>;
     finish: () => void;
-    followup: boolean;
+    followup?: Promise<void>;
     refreshedScope?: api.PhotoAuthoredPrepareRequest;
   };
   constructor(
@@ -211,7 +211,7 @@ export class PhotoAuthoredEditor {
   private failedComparison?: number;
   private reconciling?: { read: AbortController; done: Promise<void>; change: number };
   get preparingQuery() {
-    return !!this.preparing?.scope.query;
+    return this.preparing?.scope.query;
   }
   affectedBy(changes: PhotoEventBatch, albumsAffected = false) {
     const pending = this.preparing?.scope;
@@ -233,18 +233,21 @@ export class PhotoAuthoredEditor {
     const preparing = this.preparing;
     if (preparing) {
       // Only a successful list refresh supplies the current scope for this one follow-up.
-      if (!scope || preparing.followup) return;
-      preparing.refreshedScope = scope;
+      if (preparing.followup) return preparing.followup;
+      if (scope) preparing.refreshedScope = scope;
+      if (!preparing.refreshedScope) return;
       await preparing.done;
       if (
         this.preparing !== preparing ||
-        preparing.followup ||
-        this.read.signal.aborted ||
-        this.controller.signal.aborted
+        this.controller.signal.aborted ||
+        this.concealed ||
+        this.validating
       )
         return;
-      preparing.followup = true;
-      await this.prepare(preparing.refreshedScope, false, this.dirty, true);
+      if (!preparing.followup) {
+        preparing.followup = this.prepare(preparing.refreshedScope, false, this.dirty, true);
+      }
+      await preparing.followup;
       if (this.preparing === preparing) {
         this.preparing = undefined;
         if (this.read.signal.aborted) {
@@ -317,7 +320,7 @@ export class PhotoAuthoredEditor {
     this.concealed = true;
     this.validating = true;
   }
-  revalidate(eligible: Set<string>) {
+  revalidate(eligible: Set<string>, scope?: api.PhotoAuthoredPrepareRequest) {
     const targets = this.targets.filter((target) => eligible.has(target.asset_id));
     if (targets.length !== this.targets.length) {
       this.fileID = "";
@@ -332,7 +335,7 @@ export class PhotoAuthoredEditor {
     this.validating = false;
     this.concealed = false;
     // A list refresh conceals the editor and aborts its reads, including a pending reconcile.
-    void this.reconcile();
+    void this.reconcile(scope);
   }
   async prepare(
     scope: api.PhotoAuthoredPrepareRequest,
@@ -346,7 +349,8 @@ export class PhotoAuthoredEditor {
       if (!reload && !compare) {
         let finish!: () => void;
         const done = new Promise<void>((resolve) => (finish = resolve));
-        this.preparing = { scope, done, finish, followup: false };
+        this.scope = scope;
+        this.preparing = { scope, done, finish };
       }
     }
     const preparing = this.preparing;
@@ -360,9 +364,12 @@ export class PhotoAuthoredEditor {
     const previous = reload ? new Set(this.targets.map((target) => target.file_id)) : undefined;
     const change = this.remoteChanges;
     try {
-      const prepared = await this.request(() =>
-        api.preparePhotoAuthored(scope, this.options(AbortSignal.any([signal, deadline]))),
-      );
+      const prepared =
+        scope.asset_ids?.length === 0
+          ? { assets: [], targets: [] }
+          : await this.request(() =>
+              api.preparePhotoAuthored(scope, this.options(AbortSignal.any([signal, deadline]))),
+            );
       if (!Array.isArray(prepared.assets) || !Array.isArray(prepared.targets))
         throw new Error("Metadata response was incomplete. Reload metadata.");
       if (signal.aborted) return;
@@ -393,9 +400,10 @@ export class PhotoAuthoredEditor {
         this.membershipChanged = true;
         if (!prepared.targets.some((target) => target.file_id === this.fileID)) this.fileID = "";
       }
-      this.targets = previous
-        ? prepared.targets.filter((target) => previous.has(target.file_id))
-        : prepared.targets;
+      this.targets =
+        previous && !this.scope?.query
+          ? prepared.targets.filter((target) => previous.has(target.file_id))
+          : prepared.targets;
       const asset = prepared.assets.length === 1 ? prepared.assets[0] : undefined;
       this.asset = asset
         ? {
@@ -405,7 +413,6 @@ export class PhotoAuthoredEditor {
             ),
           }
         : undefined;
-      this.scope = scope;
       this.membershipConflict = false;
       if (change === this.remoteChanges) this.remoteChange = false;
       this.conflict = this.membershipChanged || this.remoteChange;
@@ -416,7 +423,7 @@ export class PhotoAuthoredEditor {
         });
     } catch (cause) {
       if (!signal.aborted) {
-        if (compare) {
+        if (compare || reload || followup) {
           this.conflict = true;
           this.failedComparison = change;
         }
@@ -427,8 +434,7 @@ export class PhotoAuthoredEditor {
     } finally {
       if (!followup && preparing) {
         preparing.finish();
-        if (this.preparing === preparing && (!this.remoteChange || signal.aborted))
-          this.preparing = undefined;
+        if (this.preparing === preparing && !this.remoteChange) this.preparing = undefined;
       }
       if (!signal.aborted) {
         this.loading = false;
@@ -436,9 +442,12 @@ export class PhotoAuthoredEditor {
       }
     }
   }
+  get canReload() {
+    return !!this.scope?.query || !!this.targets.length;
+  }
   async reload() {
-    if (this.busy || this.loading || !this.targets.length) return;
-    await this.prepare(this.reloadScope(), true);
+    if (this.busy || this.loading || !this.canReload) return;
+    await this.prepare(this.scope?.query ? this.scope : this.reloadScope(), true);
   }
   private reloadScope(): api.PhotoAuthoredPrepareRequest {
     return {
@@ -449,7 +458,7 @@ export class PhotoAuthoredEditor {
   }
   reviewMembers() {
     this.membershipChanged = false;
-    this.conflict = false;
+    this.conflict = this.remoteChange || this.membershipConflict;
   }
   private selectedFiles = $derived(
     this.targets.filter((target) => !this.fileID || target.file_id === this.fileID),

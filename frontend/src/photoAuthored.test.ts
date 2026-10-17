@@ -831,53 +831,22 @@ it.each([false, true])(
   },
 );
 
-it("uses the latest refreshed selection after a burst during initial preparation", async () => {
-  const editor = new PhotoAuthoredEditor("session", vi.fn());
-  let finish!: () => void;
-  const prepare = vi
-    .spyOn(api, "preparePhotoAuthored")
-    .mockImplementationOnce(async () => {
-      await new Promise<void>((resolve) => (finish = resolve));
-      return { assets: [asset], targets };
-    })
-    .mockResolvedValue({ assets: [], targets: [] });
-  const initial = editor.prepare({ asset_ids: ["asset"] });
-  editor.changedElsewhere();
-  const first = editor.reconcile({ asset_ids: ["asset"] });
-  editor.changedElsewhere();
-  const second = editor.reconcile({ asset_ids: [] });
-  finish();
-  await Promise.all([initial, first, second]);
-  expect(prepare).toHaveBeenCalledTimes(2);
-  expect(prepare.mock.calls[1]![0]).toEqual({ asset_ids: [] });
-  expect(editor.targets).toEqual([]);
-  editor.dispose();
-});
-
 it("retries an initial follow-up aborted while the editor is concealed", async () => {
   const editor = new PhotoAuthoredEditor("session", vi.fn());
-  let finishInitial!: () => void;
-  let finishFollowup!: () => void;
-  const prepare = vi
-    .spyOn(api, "preparePhotoAuthored")
-    .mockImplementationOnce(async () => {
-      await new Promise<void>((resolve) => (finishInitial = resolve));
-      return { assets: [asset], targets };
-    })
-    .mockImplementationOnce(async () => {
-      await new Promise<void>((resolve) => (finishFollowup = resolve));
-      return { assets: [asset], targets };
-    })
-    .mockResolvedValue({ assets: [asset], targets });
+  const replies: (() => void)[] = [];
+  const prepare = vi.spyOn(api, "preparePhotoAuthored").mockImplementation(async () => {
+    if (replies.length < 2) await new Promise<void>((resolve) => replies.push(resolve));
+    return { assets: [asset], targets };
+  });
   const initial = editor.prepare({ asset_ids: ["asset"] });
   editor.changedElsewhere();
   const refreshing = editor.reconcile({ asset_ids: ["asset"] });
-  finishInitial();
+  replies[0]!();
   await initial;
-  await vi.waitFor(() => expect(finishFollowup).toBeTypeOf("function"));
+  await vi.waitFor(() => expect(replies).toHaveLength(2));
   editor.conceal();
   editor.revalidate(new Set(["asset"]));
-  finishFollowup();
+  replies[1]!();
   await refreshing;
   expect(prepare).toHaveBeenCalledTimes(3);
   expect(editor.conflict).toBe(false);
@@ -1216,5 +1185,60 @@ it("retries a timed-out assigned keyword request", async () => {
     { id: "assigned", name: "Assigned", revision: 1, assignment_count: 1 },
   ]);
   expect(get).toHaveBeenCalledTimes(2);
+  editor.dispose();
+});
+
+it.each([false, true])(
+  "reloads query membership and preserves later conflicts, event=%s",
+  async (event) => {
+    const editor = new PhotoAuthoredEditor("session", vi.fn());
+    const query = { syntax: "simple" as const, text: "photos" };
+    const a = preparedPhoto(1),
+      b = preparedPhoto(2),
+      c = preparedPhoto(3, { revision: 7 });
+    let finish!: (response: Response) => void;
+    let calls = 0;
+    vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+      expect(JSON.parse(init.body as string)).toEqual({ query });
+      if (++calls === 1) return response({ assets: [], targets: [a, b] });
+      return new Promise<Response>((resolve) => (finish = resolve));
+    });
+    await editor.prepare({ query });
+    editor.stage({ caption: "Draft" });
+    editor.changedElsewhere();
+    const reload = editor.reload();
+    if (event) editor.changedElsewhere();
+    finish(response({ assets: [], targets: [b, c] }));
+    await reload;
+    expect(editor.targets).toEqual([b, c]);
+    expect(editor.patch).toEqual({ caption: "Draft" });
+    expect(editor.membershipChanged).toBe(true);
+    editor.reviewMembers();
+    expect(editor.conflict).toBe(event);
+    editor.dispose();
+  },
+);
+
+it("keeps query Reload available after all targets disappear and a zero-match error", async () => {
+  const editor = new PhotoAuthoredEditor("session", vi.fn());
+  const query = { syntax: "simple" as const, text: "photos" };
+  let calls = 0;
+  vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+    expect(JSON.parse(init.body as string)).toEqual({ query });
+    if (++calls === 2)
+      return response({ message: "No editable photos", code: "invalid_request" }, 400);
+    return response({ assets: [], targets: [preparedPhoto(1)] });
+  });
+  await editor.prepare({ query });
+  editor.stage({ caption: "Draft" });
+  editor.revalidate(new Set());
+  ui(editor);
+  const reload = screen.getByRole<HTMLButtonElement>("button", { name: "Reload metadata" });
+  expect(reload.disabled).toBe(false);
+  await editor.reload();
+  expect(editor.conflict).toBe(true);
+  expect(editor.patch.caption).toBe("Draft");
+  await editor.reload();
+  expect(editor.membershipChanged).toBe(true);
   editor.dispose();
 });

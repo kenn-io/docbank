@@ -1312,7 +1312,7 @@ it.each(["asset", "query", "album", "refetch", "removed", "failure", "burst", "f
     photos.authored.targets = [];
     const queryScope = ["query", "album", "early"].includes(scenario);
     const album = "11111111-1111-4111-8111-111111111111";
-    if (scenario === "album") photos.query.filters = { set_ids: [album] };
+    if (scenario === "album") photos.query = { ...photos.query, filters: { set_ids: [album] } };
     if (queryScope) photos.selectAllResults();
     else photos.selectLoaded();
     const before = preparedPhoto(1, { values: { ...preparedPhoto(1).values, caption: "Before" } });
@@ -1382,27 +1382,30 @@ it.each(["asset", "query", "album", "refetch", "removed", "failure", "burst", "f
     const retry =
       scenario === "failure" || scenario === "burst" ? view.component.refresh(changes) : undefined;
     if (!["failure", "early"].includes(scenario)) replies[0]!({ assets: [], targets: [before] });
+    if (scenario === "removed") {
+      await refreshing;
+      expect(prepare).toHaveBeenCalledOnce();
+      expect(photos.authored.targets).toEqual([]);
+      photos.dispose();
+      return;
+    }
     await waitFor(() => expect(prepare).toHaveBeenCalledTimes(2));
     expect(screen.getByRole<HTMLButtonElement>("button", { name: "Apply" }).disabled).toBe(true);
     const scope = prepare.mock.calls[1]![0];
     if (queryScope) {
       expect(scope.query).toEqual(photos.query);
       expect(scope.asset_ids).toBeUndefined();
-    } else expect(scope.asset_ids).toEqual(scenario === "removed" ? [] : ["photo-1"]);
-    if (scenario === "followup") await view.component.refresh(changes);
+      expect(scope.skip_unavailable).toBeUndefined();
+    } else expect(scope.asset_ids).toEqual(["photo-1"]);
+    const overlapping = scenario === "followup" ? view.component.refresh(changes) : undefined;
+    await tick();
     replies[1]!({
       assets: [],
-      targets:
-        scenario === "removed"
-          ? []
-          : scenario === "followup"
-            ? [before]
-            : queryScope
-              ? [current, unloaded]
-              : [current],
+      targets: scenario === "followup" ? [before] : queryScope ? [current, unloaded] : [current],
     });
     if (scenario !== "failure") await refreshing;
     await retry;
+    await overlapping;
     await tick();
     expect(prepare).toHaveBeenCalledTimes(2);
     expect(photos.authored.loading).toBe(false);
@@ -1411,8 +1414,7 @@ it.each(["asset", "query", "album", "refetch", "removed", "failure", "burst", "f
       expect(
         screen.getByRole<HTMLButtonElement>("button", { name: "Reload metadata" }).disabled,
       ).toBe(false);
-    } else if (scenario === "removed") expect(photos.authored.targets).toEqual([]);
-    else {
+    } else {
       expect(photos.authored.value("caption")).toBe(queryScope ? undefined : "After");
       await photos.authored.edit({}, { rating: 5 }, false, vi.fn());
       expect(edit).toHaveBeenCalledWith(
