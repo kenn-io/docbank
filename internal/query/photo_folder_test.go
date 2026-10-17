@@ -22,6 +22,7 @@ func TestPhotoFolderKey(t *testing.T) {
 		{"push", "camera", "/shots/a.jpg", "043d20f8124ffecbfe429e8d5bc753d4525262686a362ba160497eb228cb5e66", true},
 		{"cli", "", `/a\b/c.jpg`, "8d1b8c42a2fbb61243390107301e8059f9b6ad65883c103274a9e4d3051403c3", true},
 		{"cli", "", "/café/a.jpg", "a434c8fb44ab6b773c8921e9a11683a9139a2572c1cd1b2b65ab4eab3e2ffa5e", true},
+		{"cli", "", "/cafe\u0301/a.jpg", "f3a0e078b8fa84d23a138562f9d1a970d22bd0ec49794c506f5cbf1a38f85a83", true},
 		{"cli", "", "", "", false},
 	} {
 		key, valid := PhotoFolderKey(tc.kind, tc.desc, tc.path)

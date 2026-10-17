@@ -3117,29 +3117,6 @@ it("attaches server-described stacks and requests them only for capture-time pag
   photos.dispose();
 });
 
-it("refreshes loaded stacks after representative choice and Undo", () => {
-  const stack = { asset_ids: ["photo-1", "photo-2", "photo-3"], representative_id: "photo-1" };
-  const photos = new Photos("session", vi.fn());
-  photos.items = [photo(1), photo(2), photo(3)].map((row) => ({ ...row, stack }));
-  const receipts: PhotoAuthoredReceipt[] = [
-    {
-      receipt_id: "choose",
-      before: [],
-      after: [],
-      representatives: [{ asset_id: "photo-3", before_revision: 1, after_revision: 2, after: 7 }],
-    },
-    {
-      receipt_id: "undo",
-      before: [],
-      after: [],
-      representatives: [{ asset_id: "photo-3", before_revision: 2, after_revision: 3, before: 7 }],
-    },
-  ];
-  for (const receipt of receipts)
-    expect(photos.reloadsAfter(photos.metadataChanged(receipt))).toBe(true);
-  photos.dispose();
-});
-
 it("updates the burst gap through general settings and shows regrouped Library photos", async () => {
   let gap = 2;
   const updates: unknown[] = [];
@@ -3191,7 +3168,7 @@ it("recovers the session when checking the Library burst gap returns 401", async
   photos.dispose();
 });
 
-it.each(["unloaded", "singleton", "stack", "unknown"])(
+it.each(["unloaded", "singleton", "stack", "unknown", "representative", "representative Undo"])(
   "refreshes loaded stacks only when the edited frame belongs to a stack: %s",
   (kind) => {
     const photos = new Photos("session", vi.fn());
@@ -3208,12 +3185,28 @@ it.each(["unloaded", "singleton", "stack", "unknown"])(
       revision: target.revision,
       values: target.values,
     };
-    const changes = photos.metadataChanged({
-      receipt_id: "pick",
-      before: [before],
-      after: [{ ...before, revision: 2, values: { ...before.values, flag: "pick" } }],
-    });
-    expect(photos.reloadsAfter(changes)).toBe(kind === "stack" || kind === "unknown");
+    const receipt: PhotoAuthoredReceipt = kind.startsWith("representative")
+      ? {
+          receipt_id: "representative",
+          before: [],
+          after: [],
+          representatives: [
+            {
+              asset_id: "photo-2",
+              before_revision: 1,
+              after_revision: 2,
+              ...(kind === "representative" ? { after: 7 } : { before: 7 }),
+            },
+          ],
+        }
+      : {
+          receipt_id: "pick",
+          before: [before],
+          after: [{ ...before, revision: 2, values: { ...before.values, flag: "pick" } }],
+        };
+    expect(photos.reloadsAfter(photos.metadataChanged(receipt))).toBe(
+      kind !== "singleton" && kind !== "unloaded",
+    );
     photos.dispose();
   },
 );

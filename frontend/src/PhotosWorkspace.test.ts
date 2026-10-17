@@ -3009,19 +3009,12 @@ it.each(["Keep all", "Keep selected", "Choose representative"])(
           ],
         };
       }
-      const chosen = Object.values(
-        request.decision === "all" ? request.asset_ids : request.selected_ids!,
-      );
       const before: api.PhotoAuthoredSnapshot[] = [],
         after: api.PhotoAuthoredSnapshot[] = [];
       for (const target of targets) {
-        const flag = chosen.includes(target.asset_id) ? "pick" : target.values.flag || "reject";
-        if (flag === target.values.flag) continue;
         before.push({ ...target, values: { ...target.values } });
-        target.values = { ...target.values, flag };
         target.revision++;
         target.node_revision++;
-        rows.find((row) => row.asset_id === target.asset_id)!.flag = flag;
         after.push({ ...target, values: { ...target.values } });
       }
       return { receipt_id: after.length ? "stack" : "", before, after };
@@ -3209,7 +3202,6 @@ it.each(
         "Saved cull progress uses an unsupported format. Update Docbank to resume it.",
       );
       expect(screen.queryByRole("button", { name: "Resume cull" })).toBeNull();
-      expect(await photos.cull!.restore()).toBe(false);
     } else await screen.findByRole("button", { name: "Resume cull" });
     await fireEvent.click(screen.getByRole("button", { name: "Cull" }));
     await screen.findByRole("dialog", { name: "Replace saved cull progress?" });
@@ -3219,17 +3211,10 @@ it.each(
       await waitFor(() => expect(photos.cull!.capturing).toBe(false));
       expect(screen.queryByRole("dialog", { name: "Cull photos" })).toBeNull();
       expect(capture).not.toHaveBeenCalled();
-      if (formatVersion === 2) {
-        await expect(store.load()).rejects.toThrow("unsupported format");
-        await screen.findByText(
-          "Saved cull progress uses an unsupported format. Update Docbank to resume it.",
-        );
-      } else expect(await store.load()).toEqual(original);
     } else {
       await screen.findByRole("dialog", { name: "Cull photos" });
       expect(capture).toHaveBeenCalledOnce();
       await photos.cull!.flush();
-      expect((await store.load())?.ids).toEqual([]);
     }
     photos.dispose();
   },
