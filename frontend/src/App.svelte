@@ -3410,7 +3410,11 @@
           >
         </div>{/if}
       {#if photoMode}
-        {#if photoEventError}<p role="alert">{photoEventError}</p>{/if}
+        {#if photoEventError && !libraryWorkspace?.displaysDetailError(photoEventError)}<p
+            role="alert"
+          >
+            {photoEventError}
+          </p>{/if}
         {#if hiddenMode && hiddenAccess}<HiddenPhotos
             access={hiddenAccess}
             undoState={photoUndo}

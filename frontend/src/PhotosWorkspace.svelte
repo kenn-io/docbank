@@ -295,6 +295,9 @@
   let trashOpen = $state(false);
   let direct = $state<PhotoBrowseRow>();
   let detailError = $state("");
+  export function displaysDetailError(message: string) {
+    return !!photoID && !concealed && detailError === message;
+  }
   let detailLoading = $state(false);
   let reload = $state.raw<{ id: string; automatic?: boolean }>();
   let detailRequest: Promise<void> = Promise.resolve();

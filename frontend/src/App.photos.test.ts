@@ -3397,7 +3397,11 @@ async function watcherFixture({
   const mounts = vi.spyOn(photoWorkspace, "default");
   mounts.mockImplementation((_anchor, inputs) => {
     workspaceProps = inputs;
-    return { refresh: workspaceRefresh.bind(inputs.photos), captureReturn: vi.fn() };
+    return {
+      refresh: workspaceRefresh.bind(inputs.photos),
+      captureReturn: vi.fn(),
+      displaysDetailError: () => false,
+    };
   });
   render(App);
   await waitFor(() => expect(mounts).toHaveBeenCalledOnce());
@@ -3430,6 +3434,84 @@ async function watcherFixture({
     },
   };
 }
+
+it("shows a live Map detail timeout once while retaining reload and refresh retry", async () => {
+  history.replaceState(
+    null,
+    "",
+    "/photos/map#web_session=synthetic&web_upload_secret=proof&photo=photo-1",
+  );
+  storage();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const meta = document.createElement("meta");
+  meta.name = "docbank-map-tiles";
+  meta.content = JSON.stringify({ tile_url: "/tiles/{z}/{x}/{y}", host: "example.org" });
+  document.head.append(meta);
+  let refresh!: Parameters<typeof photoEvents.watchPhotoEvents>[1];
+  let fail!: Parameters<typeof photoEvents.watchPhotoEvents>[2];
+  let recovered!: NonNullable<Parameters<typeof photoEvents.watchPhotoEvents>[4]>;
+  vi.spyOn(photoEvents, "watchPhotoEvents").mockImplementation(
+    (_session, callback, onfailure, _onconnected, onrefreshed) => {
+      refresh = callback;
+      fail = onfailure;
+      recovered = onrefreshed!;
+      return () => {};
+    },
+  );
+  let stall = false;
+  let pending: AbortSignal | undefined;
+  stubPhotoFetch(async (url, init) => {
+    if (url.endsWith("/photos/hidden"))
+      return Response.json({ configured: false, change_id: "first", change_cursor: "initial" });
+    if (url.endsWith("/photos/albums")) return Response.json([]);
+    if (url.endsWith("/assets/query")) {
+      if (JSON.parse(String(init.body)).query.filters.asset_ids) {
+        if (stall) {
+          pending = init.signal!;
+          return new Promise<Response>((_resolve, reject) => {
+            pending!.addEventListener("abort", () => reject(pending!.reason), { once: true });
+          });
+        }
+        return Response.json({ items: [photo(1)], total: 1 });
+      }
+      return Response.json({ items: [], map_items: [mapPhoto(1)], total: 1 });
+    }
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  render(App);
+  await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+  const deadline = new AbortController();
+  const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+  stall = true;
+  const changes = { assets: new Map([["photo-1", 2]]), refetch: false };
+  const failed = refresh(changes).catch((error) => error);
+  await waitFor(() => expect(pending).toBeDefined());
+  deadline.abort(new DOMException("signal timed out", "TimeoutError"));
+  const error = await failed;
+  expect(error).toBeInstanceOf(Error);
+  await act(() => fail(error));
+  expect(screen.getAllByText("Loading the photo took too long.")).toHaveLength(1);
+  expect((screen.getByRole("button", { name: "Reload photo" }) as HTMLButtonElement).disabled).toBe(
+    false,
+  );
+  await act(() => fail(new Error("Live updates unavailable")));
+  await screen.findByText("Live updates unavailable");
+  timeout.mockRestore();
+  stall = false;
+  await act(async () => {
+    await refresh(changes);
+    recovered();
+  });
+  expect(screen.queryByText("Loading the photo took too long.")).toBeNull();
+  expect(screen.queryByText("Live updates unavailable")).toBeNull();
+  await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+});
 
 it("retains a failed metadata comparison through the same batch's access check", async () => {
   history.replaceState(
