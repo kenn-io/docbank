@@ -176,6 +176,26 @@ it("ignores a settings failure after restoring a run", async () => {
   expect(photos.cullEditor!.error).toBe("");
 });
 
+it("announces regrouping while keyboard decisions wait", async () => {
+  const edit = vi.spyOn(api, "editPhotoAuthored");
+  const { cull, container } = await reviewPhoto();
+  let finish!: (result: Awaited<ReturnType<typeof api.groupPhotoStacks>>) => void;
+  vi.mocked(api.groupPhotoStacks).mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
+  let pending: Promise<void>;
+  await act(() => {
+    cull.run = { ...cull.run!, stackEligible: true };
+    pending = cull.regroup();
+  });
+  expect((await screen.findByRole("status")).textContent).toBe("Grouping bursts...");
+  await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key: "Enter" });
+  expect(edit).not.toHaveBeenCalled();
+  await act(async () => {
+    finish({ groups: [], unavailable_ids: [], burst_gap_seconds: 2 });
+    await pending;
+  });
+  expect(screen.queryByText("Grouping bursts...")).toBeNull();
+});
+
 it("navigates with keyboard focus after activating Undo", async () => {
   const before = preparedPhoto(1);
   const picked = { ...before, revision: 2, values: { ...before.values, flag: "pick" as const } };

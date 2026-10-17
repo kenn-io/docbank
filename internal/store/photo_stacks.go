@@ -44,6 +44,7 @@ type photoStackFrame struct {
 	SortKey     string
 	Rank        int64
 	Picked      bool
+	Rejected    bool
 	Files       int
 }
 
@@ -108,30 +109,34 @@ func eligiblePhotoStack(frames []photoStackFrame) bool {
 	return len(frames) >= 2 && len(frames) <= MaxPhotoStackFrames && files <= MaxPhotoStackTargets
 }
 
-// newPhotoStack applies the representative rule: the latest explicit choice,
-// else the only picked frame, else the first frame.
+// newPhotoStack chooses the latest non-rejected explicit choice, else the first
+// picked frame, else the first non-rejected frame, else the first frame.
 func newPhotoStack(group []photoStackFrame) PhotoStack {
 	stack := PhotoStack{AssetIDs: make([]string, len(group))}
-	var chosen, picked *photoStackFrame
-	picks := 0
+	var chosen, picked, available *photoStackFrame
 	for i := range group {
 		frame := &group[i]
 		stack.AssetIDs[i] = frame.AssetID
-		if frame.Rank > 0 {
+		rejected := frame.Rejected && !frame.Picked
+		if !rejected && available == nil {
+			available = frame
+		}
+		if frame.Rank > 0 && !rejected {
 			if chosen == nil || frame.Rank > chosen.Rank {
 				chosen = frame
 			}
 		}
-		if frame.Picked {
+		if frame.Picked && picked == nil {
 			picked = frame
-			picks++
 		}
 	}
 	switch {
 	case chosen != nil:
 		stack.RepresentativeID = chosen.AssetID
-	case picks == 1:
+	case picked != nil:
 		stack.RepresentativeID = picked.AssetID
+	case available != nil:
+		stack.RepresentativeID = available.AssetID
 	default:
 		stack.RepresentativeID = group[0].AssetID
 	}
@@ -139,9 +144,10 @@ func newPhotoStack(group []photoStackFrame) PhotoStack {
 }
 
 // photoStackChoiceColumns are the representative inputs: the explicit rank and
-// whether any live non-sidecar file is picked.
+// whether any live non-sidecar file is picked or rejected.
 const photoStackChoiceColumns = `COALESCE(a.representative_rank,0),
- EXISTS(SELECT 1 FROM photo_files pick JOIN nodes pn ON pn.id=pick.node_id WHERE pick.asset_id=a.asset_id AND pick.role!='sidecar' AND pn.trashed_at IS NULL AND pick.flag='pick')`
+ EXISTS(SELECT 1 FROM photo_files pick JOIN nodes pn ON pn.id=pick.node_id WHERE pick.asset_id=a.asset_id AND pick.role!='sidecar' AND pn.trashed_at IS NULL AND pick.flag='pick'),
+ EXISTS(SELECT 1 FROM photo_files reject JOIN nodes rn ON rn.id=reject.node_id WHERE reject.asset_id=a.asset_id AND reject.role!='sidecar' AND rn.trashed_at IS NULL AND reject.flag='reject')`
 
 // The display file's timeline row decides grouping. Only photos join stacks.
 const photoStackFileCount = `(SELECT COUNT(*) FROM photo_files live JOIN nodes ln ON ln.id=live.node_id WHERE live.asset_id=a.asset_id AND live.role!='sidecar' AND ln.trashed_at IS NULL)`
@@ -169,12 +175,15 @@ func photoStackFrames(ctx context.Context, q metadataQuerier, ids []string, hidd
 // first member; IDs that are no longer live and visible are unavailable.
 func (s *Store) PhotoStackGroups(ctx context.Context, ids []string, hidden bool) (groups [][]string, unavailable []string, gap int, err error) {
 	if len(ids) > MaxPhotoStackGroupIDs {
-		return nil, nil, 0, ErrInvalidPhotoAsset
+		return nil, nil, 0, fmt.Errorf("%w: asset_ids must contain at most %d IDs", ErrInvalidPhotoAsset, MaxPhotoStackGroupIDs)
 	}
 	position := make(map[string]int, len(ids))
 	for i, id := range ids {
-		if _, duplicate := position[id]; duplicate || validateUUIDv4(id) != nil {
-			return nil, nil, 0, ErrInvalidPhotoAsset
+		if _, duplicate := position[id]; duplicate {
+			return nil, nil, 0, fmt.Errorf("%w: asset_ids must contain unique IDs", ErrInvalidPhotoAsset)
+		}
+		if validateUUIDv4(id) != nil {
+			return nil, nil, 0, fmt.Errorf("%w: asset_ids must contain UUIDv4 IDs", ErrInvalidPhotoAsset)
 		}
 		position[id] = i
 	}
@@ -234,21 +243,30 @@ type PhotoStackDecision struct {
 // transaction. The submitted members must still form one stack under the
 // stored folder and capture keys, and every file must keep its observed revision.
 func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision) (PhotoAuthoredReceipt, error) {
-	if len(request.AssetIDs) < 2 || len(request.AssetIDs) > MaxPhotoStackFrames || len(request.Targets) == 0 || len(request.Targets) > MaxPhotoStackTargets {
-		return PhotoAuthoredReceipt{}, ErrInvalidPhotoAsset
+	if len(request.AssetIDs) < 2 || len(request.AssetIDs) > MaxPhotoStackFrames {
+		return PhotoAuthoredReceipt{}, fmt.Errorf("%w: asset_ids must contain 2 to %d IDs", ErrInvalidPhotoAsset, MaxPhotoStackFrames)
 	}
-	if !slices.Contains([]string{"current", "all", "selected", "representative"}, request.Decision) || !slices.Contains(request.AssetIDs, request.CurrentID) || request.Decision == "selected" && len(request.SelectedIDs) == 0 {
-		return PhotoAuthoredReceipt{}, ErrInvalidPhotoAsset
+	if len(request.Targets) == 0 || len(request.Targets) > MaxPhotoStackTargets {
+		return PhotoAuthoredReceipt{}, fmt.Errorf("%w: targets must contain 1 to %d files", ErrInvalidPhotoAsset, MaxPhotoStackTargets)
+	}
+	if !slices.Contains([]string{"current", "all", "selected", "representative"}, request.Decision) {
+		return PhotoAuthoredReceipt{}, fmt.Errorf("%w: decision must be current, all, selected, or representative", ErrInvalidPhotoAsset)
+	}
+	if !slices.Contains(request.AssetIDs, request.CurrentID) {
+		return PhotoAuthoredReceipt{}, fmt.Errorf("%w: current_id must belong to asset_ids", ErrInvalidPhotoAsset)
+	}
+	if request.Decision == "selected" && len(request.SelectedIDs) == 0 {
+		return PhotoAuthoredReceipt{}, fmt.Errorf("%w: selected_ids must contain at least one ID for a selected decision", ErrInvalidPhotoAsset)
 	}
 	for _, id := range request.SelectedIDs {
 		if !slices.Contains(request.AssetIDs, id) {
-			return PhotoAuthoredReceipt{}, ErrInvalidPhotoAsset
+			return PhotoAuthoredReceipt{}, fmt.Errorf("%w: selected_ids must belong to asset_ids", ErrInvalidPhotoAsset)
 		}
 	}
 	unique := slices.Clone(request.AssetIDs)
 	slices.Sort(unique)
 	if len(slices.Compact(unique)) != len(request.AssetIDs) {
-		return PhotoAuthoredReceipt{}, ErrInvalidPhotoAsset
+		return PhotoAuthoredReceipt{}, fmt.Errorf("%w: asset_ids must contain unique IDs", ErrInvalidPhotoAsset)
 	}
 	var result PhotoAuthoredReceipt
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
@@ -292,7 +310,7 @@ func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision
 		expected := map[string]PhotoAuthoredEditTarget{}
 		for _, target := range request.Targets {
 			if _, duplicate := expected[target.FileID]; duplicate {
-				return ErrInvalidPhotoAsset
+				return fmt.Errorf("%w: targets must contain unique file_id values", ErrInvalidPhotoAsset)
 			}
 			expected[target.FileID] = target
 		}
@@ -679,7 +697,7 @@ func (p *photoStackPager) fill(ctx context.Context, page *PhotoBrowsePage, group
 	inputs := make(map[string]photoStackFrame, len(ids))
 	err := queryInChunks(ctx, p.q, `SELECT a.asset_id,`+photoStackChoiceColumns+` FROM photo_assets a WHERE a.asset_id IN (`, ids, func(rows *sql.Rows) error {
 		var frame photoStackFrame
-		if err := rows.Scan(&frame.AssetID, &frame.Rank, &frame.Picked); err != nil {
+		if err := rows.Scan(&frame.AssetID, &frame.Rank, &frame.Picked, &frame.Rejected); err != nil {
 			return err
 		}
 		inputs[frame.AssetID] = frame
@@ -718,7 +736,7 @@ func (p *photoStackPager) fill(ctx context.Context, page *PhotoBrowsePage, group
 			if !ok || !scannedOK {
 				return errors.New("photo stack members changed inside one read snapshot")
 			}
-			stack[i] = photoStackFrame{AssetID: frame.AssetID, Folder: frame.Folder, SortKey: frame.SortKey, Rank: input.Rank, Picked: input.Picked}
+			stack[i] = photoStackFrame{AssetID: frame.AssetID, Folder: frame.Folder, SortKey: frame.SortKey, Rank: input.Rank, Picked: input.Picked, Rejected: input.Rejected}
 		}
 		ordered := slices.Clone(group)
 		slices.SortFunc(ordered, p.compare)

@@ -2890,7 +2890,7 @@ it("uses the resolved vault identity when Cull mounted before audit status arriv
   photos.dispose();
 });
 
-it("restores invalid burst gaps and shows the range correction", async () => {
+it("restores invalid burst gaps and explains the whole-second requirement", async () => {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -2908,7 +2908,9 @@ it("restores invalid burst gaps and shows the range correction", async () => {
   for (const value of ["", "1.5", "31"]) {
     await fireEvent.change(input, { target: { value } });
     await waitFor(() => expect(input.value).toBe("2"));
-    expect(screen.getByRole("alert").textContent).toBe("burst gap must be 1 to 30 seconds");
+    expect(screen.getByRole("alert").textContent).toBe(
+      "burst gap must be a whole number of seconds from 1 to 30",
+    );
   }
   expect(get).not.toHaveBeenCalled();
   photos.dispose();

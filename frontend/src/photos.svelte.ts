@@ -1506,7 +1506,7 @@ export class Photos {
   }
   async setBurstGap(gap: number, preserve?: () => (() => Promise<void>) | undefined) {
     if (gap < 1 || gap > 30 || !Number.isInteger(gap)) {
-      this.actionError = "burst gap must be 1 to 30 seconds";
+      this.actionError = "burst gap must be a whole number of seconds from 1 to 30";
       return;
     }
     if (!this.authored.canChangeTarget()) return;

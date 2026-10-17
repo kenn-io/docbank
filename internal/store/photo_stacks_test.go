@@ -774,11 +774,63 @@ func TestPhotoStackAutomaticDecisionsPreserveCompanionFlags(t *testing.T) {
 	}
 }
 
+func TestPhotoStackRepresentativeFallback(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		frames []photoStackFrame
+		want   string
+	}{
+		{"multiple picks", []photoStackFrame{{AssetID: "a", Rejected: true}, {AssetID: "b", Picked: true}, {AssetID: "c", Picked: true}}, "b"},
+		{"explicit choice rejected", []photoStackFrame{{AssetID: "a", Rank: 2, Rejected: true}, {AssetID: "b", Picked: true}}, "b"},
+		{"earlier explicit choice", []photoStackFrame{{AssetID: "a", Rank: 1}, {AssetID: "b", Rank: 2, Rejected: true}, {AssetID: "c", Picked: true}}, "a"},
+		{"first non-rejected", []photoStackFrame{{AssetID: "a", Rejected: true}, {AssetID: "b"}}, "b"},
+		{"all rejected", []photoStackFrame{{AssetID: "a", Rejected: true}, {AssetID: "b", Rank: 1, Rejected: true}}, "a"},
+		{"choice restored after un-reject", []photoStackFrame{{AssetID: "a", Rank: 2}, {AssetID: "b", Picked: true}}, "a"},
+		{"picked companion keeps choice eligible", []photoStackFrame{{AssetID: "a", Rank: 2, Picked: true, Rejected: true}, {AssetID: "b", Picked: true}}, "a"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, newPhotoStack(tc.frames).RepresentativeID)
+		})
+	}
+}
+
+func TestPhotoStackReturnReplacesRejectedRepresentative(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ids := burstPhotos(t, s, 3)
+	choice, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: stackTargets(t, s, ids), Decision: "representative", CurrentID: ids[0]})
+	require.NoError(t, err)
+	require.Empty(t, choice.After)
+	require.Len(t, choice.Representatives, 1)
+	page, err := s.ListPhotoAssets(t.Context(), captureRequest(t, "asc"), nil)
+	require.NoError(t, err)
+	require.Equal(t, ids[0], page.Stacks[0].RepresentativeID)
+	for _, row := range page.Items {
+		require.Empty(t, row.Flag)
+	}
+	decision, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: stackTargets(t, s, ids), Decision: "current", CurrentID: ids[1]})
+	require.NoError(t, err)
+	require.Empty(t, decision.Representatives)
+	page, err = s.ListPhotoAssets(t.Context(), captureRequest(t, "asc"), nil)
+	require.NoError(t, err)
+	require.Equal(t, ids[1], page.Stacks[0].RepresentativeID)
+	require.Equal(t, []string{"reject", "pick", "reject"}, []string{page.Items[0].Flag, page.Items[1].Flag, page.Items[2].Flag})
+	// Clearing the rejection restores the retained choice without a new choice receipt.
+	_, err = s.EditPhotoAuthoredBatch(t.Context(), PhotoAuthoredBatch{Targets: stackTargets(t, s, ids[:1]), Patch: PhotoAuthoredPatch{Flag: new("")}})
+	require.NoError(t, err)
+	page, err = s.ListPhotoAssets(t.Context(), captureRequest(t, "asc"), nil)
+	require.NoError(t, err)
+	require.Equal(t, ids[0], page.Stacks[0].RepresentativeID)
+	_, err = s.UndoPhotoAuthored(t.Context(), choice.ReceiptID)
+	require.NoError(t, err)
+}
+
 func TestPhotoStackRepresentativePreservesFlagsAndUndoes(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ids := burstPhotos(t, s, 4)
-	// Two picks leave the first frame as the representative until someone chooses.
+	// Two picks use the first picked frame until someone chooses.
 	_, err := s.EditPhotoAuthoredBatch(t.Context(), PhotoAuthoredBatch{Targets: stackTargets(t, s, ids[1:3]), Patch: PhotoAuthoredPatch{Flag: new("pick")}})
 	require.NoError(t, err)
 	_, err = s.EditPhotoAuthoredBatch(t.Context(), PhotoAuthoredBatch{Targets: stackTargets(t, s, ids[3:]), Patch: PhotoAuthoredPatch{Flag: new("reject")}})
@@ -794,21 +846,21 @@ func TestPhotoStackRepresentativePreservesFlagsAndUndoes(t *testing.T) {
 		return page.Stacks[0].RepresentativeID, flags
 	}
 	chosen, flags := representative()
-	require.Equal(t, ids[0], chosen)
+	require.Equal(t, ids[1], chosen)
 	choose := func(id string) PhotoAuthoredReceipt {
 		receipt, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: stackTargets(t, s, ids), Decision: "representative", CurrentID: id})
 		require.NoError(t, err)
 		return receipt
 	}
-	receipt := choose(ids[3])
+	receipt := choose(ids[0])
 	require.Empty(t, receipt.After)
 	require.Len(t, receipt.Representatives, 1)
 	require.Equal(t, int64(1), receipt.Representatives[0].BeforeRevision)
 	chosen, after := representative()
-	require.Equal(t, ids[3], chosen)
+	require.Equal(t, ids[0], chosen)
 	require.Equal(t, flags, after)
 	require.Equal(t, []string{"", "pick", "pick", "reject"}, after)
-	rechosen := choose(ids[3])
+	rechosen := choose(ids[0])
 	require.NotEmpty(t, rechosen.ReceiptID)
 	require.Greater(t, *rechosen.Representatives[0].After, *receipt.Representatives[0].After)
 	receipt = rechosen
@@ -820,11 +872,11 @@ func TestPhotoStackRepresentativePreservesFlagsAndUndoes(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, undo.Representatives, 1)
 	chosen, _ = representative()
-	require.Equal(t, ids[3], chosen)
+	require.Equal(t, ids[0], chosen)
 	_, err = s.UndoPhotoAuthored(t.Context(), receipt.ReceiptID)
 	require.NoError(t, err)
 	chosen, _ = representative()
-	require.Equal(t, ids[3], chosen)
+	require.Equal(t, ids[0], chosen)
 	stale := choose(ids[2])
 	_, err = s.SetPhotoAssetExcluded(t.Context(), ids[2], stale.Representatives[0].AfterRevision, true)
 	require.NoError(t, err)

@@ -429,6 +429,7 @@
           >Retry stacks</Button
         >{/if}
       {#if cull.progress && !cull.complete}<p role="status">{cull.progress}</p>{/if}
+      {#if cull.stackLoading}<p role="status">Grouping bursts...</p>{/if}
       {#if editor.stackError && !editor.conflict && cull.currentStack}<Button
           disabled={busy}
           onclick={() => void prepareStack(cull.currentStack!, true)}>Retry</Button

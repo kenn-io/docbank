@@ -881,7 +881,7 @@ func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, update Pho
 			return err
 		}
 		if active && !equalPhotoString(current.Preference, next.Preference) {
-			return ErrAuditMutationUnsupported
+			return fmt.Errorf("%w: display preference cannot be changed in an audited vault; set the burst gap without a preference", ErrAuditMutationUnsupported)
 		}
 		priorBurst, err := photoBurstSettingsTx(ctx, tx)
 		if err != nil {
