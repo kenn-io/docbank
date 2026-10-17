@@ -358,6 +358,7 @@ export class PhotoAuthoredEditor {
       if (this.error) return;
     }
     if (this.conflict) return;
+    if (!this.targets.length) return;
     const staging = beforeStage?.(this.targets);
     if (staging?.error) {
       this.error = staging.error;
@@ -365,7 +366,6 @@ export class PhotoAuthoredEditor {
       return;
     }
     if (staging?.fileID) this.fileID = staging.fileID;
-    if (!this.targets.length) return;
     if (viewed) {
       this.targets = this.targets.map((target) => ({
         ...target,

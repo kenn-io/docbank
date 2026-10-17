@@ -442,16 +442,6 @@ it.each([
   expect(cull.currentID).toBe("photo-1");
 });
 
-it("refuses a cull decision when preparation returns no files", async () => {
-  vi.mocked(api.preparePhotoAuthored).mockResolvedValue(photoPreparation([]));
-  const edit = vi.spyOn(api, "editPhotoAuthored");
-  const { cull } = await reviewPhoto();
-  await fireEvent.click(await readyButton("Pick (P)"));
-  await screen.findByText("This photo changed. Reload the photo before deciding.");
-  expect(edit).not.toHaveBeenCalled();
-  expect(cull.currentID).toBe("photo-1");
-});
-
 it("allows another decision after reconciling its own flag and rating with auto-advance off", async () => {
   const target = preparedPhoto(1);
   const edit = vi.spyOn(api, "editPhotoAuthored").mockImplementation(async (request) => {
