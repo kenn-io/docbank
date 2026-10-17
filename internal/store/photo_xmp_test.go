@@ -389,9 +389,10 @@ func TestPhotoXMPPurgeRemovesSyncReceipts(t *testing.T) {
 			_, err := s.DetachPhotoFile(ctx, asset.ID, asset.Revision, raw.ID, PhotoDetachOptions{ClearDependentSidecars: true})
 			require.NoError(t, err)
 			nodes := []int64{raw.NodeID, sidecar.ID}
-			if mode == "original" {
+			switch mode {
+			case "original":
 				nodes = nodes[:1]
-			} else if mode == "sidecar" {
+			case "sidecar":
 				nodes = nodes[1:]
 			}
 			for _, id := range nodes {
