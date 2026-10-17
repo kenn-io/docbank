@@ -105,6 +105,7 @@ type GroupPhotoStacksRequest struct {
 }
 
 type GroupPhotoStacksResponse struct {
-	Groups         [][]string `json:"groups" doc:"Bursts of two or more submitted photos, in request order; other available photos are single."`
-	UnavailableIDs []string   `json:"unavailable_ids" doc:"Submitted photos that are no longer live in this library."`
+	BurstGapSeconds int        `json:"burst_gap_seconds" minimum:"1" maximum:"30"`
+	Groups          [][]string `json:"groups" doc:"Bursts of two or more submitted photos, in request order; other available photos are single."`
+	UnavailableIDs  []string   `json:"unavailable_ids" doc:"Submitted photos that are no longer live in this library."`
 }

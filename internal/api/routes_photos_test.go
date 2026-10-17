@@ -264,7 +264,7 @@ func TestPhotoStackGroupRouteBoundsExplicitIDs(t *testing.T) {
 	require.Equal(t, http.StatusOK, res.StatusCode, body)
 	var grouped api.GroupPhotoStacksResponse
 	require.NoError(t, json.Unmarshal([]byte(body), &grouped))
-	require.Equal(t, api.GroupPhotoStacksResponse{Groups: [][]string{{ids[1], ids[0]}}, UnavailableIDs: []string{missing}}, grouped)
+	require.Equal(t, api.GroupPhotoStacksResponse{BurstGapSeconds: 2, Groups: [][]string{{ids[1], ids[0]}}, UnavailableIDs: []string{missing}}, grouped)
 
 	// A full Cull run fits the request bound, and so does its flat response.
 	run250k := make([]string, 250_000)

@@ -31,7 +31,13 @@ it("prepares a Hidden stack's members once and re-prepares them after a conflict
     expect.anything(),
   );
   await editor.decideStack(
-    { asset_ids: ["photo-1"], current_id: "photo-1", decision: "current", hidden: true },
+    {
+      asset_ids: ["photo-1"],
+      current_id: "photo-1",
+      decision: "current",
+      hidden: true,
+      burst_gap_seconds: 2,
+    },
     vi.fn(),
     { observed: [] },
   );
@@ -821,6 +827,7 @@ it.each(["current", "stale-asset", "replaced", "unchanged", "checkpoint"])(
       current_id: "photo-1",
       selected_ids: ["photo-1"],
       decision: "selected" as const,
+      burst_gap_seconds: 2,
     };
     const receipt = {
       receipt_id: scenario === "unchanged" ? "" : "stack-receipt",
@@ -836,13 +843,13 @@ it.each(["current", "stale-asset", "replaced", "unchanged", "checkpoint"])(
     };
     const prepare = vi
       .spyOn(api, "preparePhotoAuthored")
-      .mockResolvedValue({ assets: [], targets: [sibling, companion] });
+      .mockResolvedValue({ assets: [], targets: [sibling, companion, selected] });
     const decide = vi.spyOn(api, "decidePhotoStack").mockResolvedValue(receipt);
     const editor = new PhotoAuthoredEditor("session", vi.fn());
     editor.targets = [selected];
     await editor.prepareStack(request.asset_ids, false);
     expect(prepare).toHaveBeenCalledExactlyOnceWith(
-      { asset_ids: ["photo-2"], hidden: false },
+      { asset_ids: ["photo-1", "photo-2"], hidden: false },
       expect.anything(),
     );
     const observed = [
@@ -854,17 +861,19 @@ it.each(["current", "stale-asset", "replaced", "unchanged", "checkpoint"])(
       },
     ];
     const refresh = vi.fn(async () => {});
-    await editor.decideStack(request, refresh, {
+    const success = await editor.decideStack(request, refresh, {
       observed,
       beforeWrite: async () => scenario !== "checkpoint",
     });
     expect(prepare).toHaveBeenCalledOnce();
     expect(editor.targets.map((target) => target.asset_id)).toEqual(["photo-1"]);
     if (scenario === "stale-asset" || scenario === "replaced" || scenario === "checkpoint") {
+      expect(success).toBe(false);
       expect(decide).not.toHaveBeenCalled();
       expect(editor.conflict).toBe(scenario !== "checkpoint");
       return;
     }
+    expect(success).toBe(true);
     expect(decide.mock.calls[0]![0].targets).toEqual([
       { asset_id: "photo-2", asset_revision: 1, file_id: "file-2", revision: 1, node_revision: 1 },
       { asset_id: "photo-2", asset_revision: 1, file_id: "file-3", revision: 1, node_revision: 1 },

@@ -68,7 +68,7 @@ func TestPhotoStackDecisionBounds(t *testing.T) {
 	for i := range targets {
 		targets[i] = store.PhotoAuthoredEditTarget{AssetID: ids[i/2], AssetRevision: 1, FileID: fmt.Sprintf("50000000-0000-4000-8000-%012d", i), Revision: 1, NodeRevision: 1}
 	}
-	request := api.PhotoStackDecisionRequest{AssetIDs: ids, Targets: targets, Decision: "selected", CurrentID: ids[0], SelectedIDs: ids}
+	request := api.PhotoStackDecisionRequest{BurstGapSeconds: 2, AssetIDs: ids, Targets: targets, Decision: "selected", CurrentID: ids[0], SelectedIDs: ids}
 	res, body := do(t, ts, http.MethodPost, "/api/v1/photos/authored/stack", nil, request)
 	require.Equal(t, http.StatusConflict, res.StatusCode, body)
 	require.Contains(t, body, "photo_stack_changed")

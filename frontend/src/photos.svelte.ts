@@ -937,22 +937,12 @@ export class Photos {
             : row,
         );
     } else {
-      // Editors hold every file of the photos they edited, so they know each asset's picks.
-      const targets = [this.authored, this.cullEditor].flatMap((editor) =>
-        editor ? [...editor.targets, ...editor.stackTargets] : [],
-      );
       const rows = this.items as PhotoBrowseRow[];
-      const known = new Set(targets.map((target) => target.file_id));
       stacksUnresolved =
         rows.some((row) => row.stack) &&
-        receipt.after.some(
-          (file) =>
-            !known.has(file.file_id) && before.get(file.file_id)?.values.flag !== file.values.flag,
-        );
-      this.items = patchPhotoRows(rows, receipt, (assetID) => {
-        const files = targets.filter((target) => target.asset_id === assetID);
-        return files.length ? files.some((target) => target.values.flag === "pick") : undefined;
-      });
+        (!!receipt.representatives?.length ||
+          receipt.after.some((file) => before.get(file.file_id)?.values.flag !== file.values.flag));
+      this.items = patchPhotoRows(rows, receipt);
     }
     if (
       !this.dependsOnAuthored &&

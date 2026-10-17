@@ -7241,6 +7241,11 @@ components:
           format: uri
           readOnly: true
           type: string
+        burst_gap_seconds:
+          format: int64
+          maximum: 30
+          minimum: 1
+          type: integer
         groups:
           description: Bursts of two or more submitted photos, in request order; other available photos are single.
           items:
@@ -7254,6 +7259,7 @@ components:
             type: string
           type: array
       required:
+        - burst_gap_seconds
         - groups
         - unavailable_ids
       type: object
@@ -13378,24 +13384,12 @@ components:
           maxItems: 500
           minItems: 2
           type: array
-        picked_ids:
-          description: Members with at least one picked file.
-          items:
-            type: string
-          type: array
         representative_id:
           format: uuid
           type: string
-        representative_ranks:
-          additionalProperties:
-            format: int64
-            type: integer
-          description: Explicit representative choices by asset ID; the highest rank is the latest.
-          type: object
       required:
         - asset_ids
         - representative_id
-        - picked_ids
       type: object
       x-go-type: api.PhotoStack
       x-go-type-import:
@@ -13415,9 +13409,14 @@ components:
           items:
             type: string
           maxItems: 500
-          minItems: 1
+          minItems: 2
           type: array
           uniqueItems: true
+        burst_gap_seconds:
+          format: int64
+          maximum: 30
+          minimum: 1
+          type: integer
         current_id:
           format: uuid
           type: string
@@ -13443,6 +13442,7 @@ components:
           minItems: 1
           type: array
       required:
+        - burst_gap_seconds
         - asset_ids
         - targets
         - decision
@@ -19284,10 +19284,6 @@ components:
           minimum: 0
           type: integer
         sort_key:
-          type: string
-        stack_id:
-          description: First frame of this member's burst in a capture-time photo snapshot; absent for a lone photo.
-          format: uuid
           type: string
         tags:
           items:

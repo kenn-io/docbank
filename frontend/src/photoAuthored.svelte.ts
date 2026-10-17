@@ -100,7 +100,7 @@ export class PhotoAuthoredEditor {
   private controller = new AbortController();
   private read = new AbortController();
   private stackRead = new AbortController();
-  private stackKey = "";
+  private stackKey = $state("");
   private scope?: api.PhotoAuthoredPrepareRequest;
   constructor(
     private session: string,
@@ -128,7 +128,7 @@ export class PhotoAuthoredEditor {
     if (write === this.writes) this.busy = false;
   }
   canChangeTarget() {
-    if (this.loading) {
+    if (this.loading || this.stackLoading) {
       this.unavailable();
       return false;
     }
@@ -145,6 +145,7 @@ export class PhotoAuthoredEditor {
     this.stackRead.abort();
     this.targets = [];
     this.stackTargets = [];
+    this.stackKey = "";
     this.stackLoading = false;
     this.asset = undefined;
     this.fileID = "";
@@ -231,6 +232,7 @@ export class PhotoAuthoredEditor {
     // Stack members prepare again once the stack is actionable.
     this.stackRead.abort();
     this.stackTargets = [];
+    this.stackKey = "";
     this.stackLoading = false;
     if (!this.targets.length) {
       this.conflict = false;
@@ -483,37 +485,29 @@ export class PhotoAuthoredEditor {
       this.endWrite(write);
     }
   }
-  /**
-   * Prepare the stack members this editor does not already hold, once the
-   * stack becomes actionable. Held targets keep the revisions the photographer saw.
-   */
+  needsStack(assetIDs: string[], hidden: boolean) {
+    return this.stackKey !== JSON.stringify([hidden, assetIDs]);
+  }
+  /** Prepare complete stack membership independently of the browser selection. */
   async prepareStack(assetIDs: string[], hidden: boolean) {
-    const held = new Set(this.targets.map((target) => target.asset_id));
-    const kept = this.stackTargets.filter(
-      (target) => assetIDs.includes(target.asset_id) && !held.has(target.asset_id),
-    );
-    if (kept.length !== this.stackTargets.length) this.stackTargets = kept;
-    for (const target of this.stackTargets) held.add(target.asset_id);
-    const missing = assetIDs.filter((id) => !held.has(id));
-    const key = missing.join("\n");
-    if (
-      !missing.length ||
-      this.controller.signal.aborted ||
-      (this.stackLoading && key === this.stackKey)
-    )
-      return;
+    const key = JSON.stringify([hidden, assetIDs]);
+    if (this.controller.signal.aborted || key === this.stackKey) return;
     this.stackKey = key;
     this.stackRead.abort();
     const controller = (this.stackRead = new AbortController());
     const signal = AbortSignal.any([controller.signal, this.controller.signal]);
+    this.stackTargets = [];
     this.stackLoading = true;
     try {
       const prepared = await this.request(() =>
-        api.preparePhotoAuthored({ asset_ids: missing, hidden }, this.options(signal)),
+        api.preparePhotoAuthored({ asset_ids: assetIDs, hidden }, this.options(signal)),
       );
-      if (!signal.aborted) this.stackTargets = [...this.stackTargets, ...prepared.targets];
+      if (!signal.aborted) this.stackTargets = prepared.targets;
     } catch (cause) {
-      if (!signal.aborted) this.error = this.failure(cause);
+      if (!signal.aborted) {
+        this.stackKey = "";
+        this.error = this.failure(cause);
+      }
     } finally {
       if (!signal.aborted) this.stackLoading = false;
     }
@@ -539,26 +533,25 @@ export class PhotoAuthoredEditor {
   ) {
     if (this.conflict) {
       this.unavailable("Reload metadata before editing.");
-      return;
+      return false;
     }
     if (this.busy || this.loading || this.stackLoading || this.concealed) {
       this.unavailable();
-      return;
+      return false;
     }
     if (this.dirty) {
       this.unavailable("Apply or clear your metadata edits before deciding a stack.");
-      return;
+      return false;
     }
-    if (this.controller.signal.aborted) return;
-    const byFile = new Map(
-      [...this.stackTargets, ...this.targets].map((target) => [target.file_id, target]),
-    );
-    const targets = [...byFile.values()].filter((target) =>
-      request.asset_ids.includes(target.asset_id),
-    );
+    if (this.controller.signal.aborted) return false;
+    if (this.stackKey !== JSON.stringify([request.hidden ?? false, request.asset_ids])) {
+      this.unavailable();
+      return false;
+    }
+    const targets = this.stackTargets;
     if (request.asset_ids.some((id) => !targets.some((target) => target.asset_id === id))) {
       this.unavailable();
-      return;
+      return false;
     }
     const stale = observed.some((row) => {
       const files = targets.filter((target) => target.asset_id === row.asset_id);
@@ -571,13 +564,13 @@ export class PhotoAuthoredEditor {
     if (stale) {
       this.error = "This photo changed. Reload the photo before deciding.";
       this.conflict = true;
-      return;
+      return false;
     }
     const write = this.beginWrite();
     this.error = "";
     this.notice = "";
     try {
-      if (beforeWrite && !(await beforeWrite())) return;
+      if (beforeWrite && !(await beforeWrite())) return false;
       const receipt = await this.request(() =>
         api.decidePhotoStack(
           {
@@ -602,12 +595,13 @@ export class PhotoAuthoredEditor {
       this.accept(receipt);
       if (!receipt.receipt_id) {
         this.notice = "No changes to apply";
-        return;
+        return true;
       }
       this.receiptID = receipt.receipt_id;
       this.undoState.summary = receipt.after.length ? "Stack updated" : "Representative chosen";
       this.endWrite(write);
       await refresh(receipt, []);
+      return true;
     } catch (cause) {
       if (!this.controller.signal.aborted) {
         this.error = this.failure(cause);
@@ -617,6 +611,7 @@ export class PhotoAuthoredEditor {
     } finally {
       this.endWrite(write);
     }
+    return false;
   }
   async undo(refresh: (receipt: api.PhotoAuthoredReceipt, tags: api.Tag[]) => Promise<void>) {
     if (this.busy || this.loading || this.concealed) {

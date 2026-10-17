@@ -571,12 +571,13 @@
       untrack(() => void editor.prepareStack(stack.asset_ids, photos.hidden));
   });
   async function decideStack(decision: "all" | "selected" | "representative") {
-    if (!selectedStack) return;
+    if (!selectedStack || editor.busy || editor.loading || editor.stackLoading) return;
     const members = new Set(selectedStack.asset_ids);
     await editor.decideStack(
       {
         hidden: photos.hidden,
         asset_ids: selectedStack.asset_ids,
+        burst_gap_seconds: photos.burstGapSeconds,
         decision,
         current_id: [...photos.selectedIDs][0]!,
         selected_ids: [...photos.selectedIDs],

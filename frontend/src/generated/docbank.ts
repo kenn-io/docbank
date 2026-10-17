@@ -3181,6 +3181,11 @@ export interface GroupPhotoStacksRequest {
 export interface GroupPhotoStacksResponse {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /**
+     * @minimum 1
+     * @maximum 30
+     */
+  burst_gap_seconds: number;
   /** Bursts of two or more submitted photos, in request order; other available photos are single. */
   groups: string[][];
   /** Submitted photos that are no longer live in this library. */
@@ -5610,11 +5615,6 @@ export interface PhotoMapRow {
   width_px: number | null;
 }
 
-/**
- * Explicit representative choices by asset ID; the highest rank is the latest.
- */
-export type PhotoStackRepresentativeRanks = {[key: string]: number};
-
 export interface PhotoStack {
   /**
      * Members in ascending capture order.
@@ -5622,11 +5622,7 @@ export interface PhotoStack {
      * @maxItems 500
      */
   asset_ids: string[];
-  /** Members with at least one picked file. */
-  picked_ids: string[];
   representative_id: string;
-  /** Explicit representative choices by asset ID; the highest rank is the latest. */
-  representative_ranks?: PhotoStackRepresentativeRanks;
 }
 
 export interface PhotoBrowsePage {
@@ -5893,10 +5889,15 @@ export interface PhotoStackDecisionRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   /**
-     * @minItems 1
+     * @minItems 2
      * @maxItems 500
      */
   asset_ids: string[];
+  /**
+     * @minimum 1
+     * @maximum 30
+     */
+  burst_gap_seconds: number;
   current_id: string;
   decision: PhotoStackDecisionRequestDecision;
   hidden?: boolean;
@@ -7071,8 +7072,6 @@ export interface WorkspaceQueryRow {
   /** @minimum 0 */
   size: number;
   sort_key: string;
-  /** First frame of this member's burst in a capture-time photo snapshot; absent for a lone photo. */
-  stack_id?: string;
   tags: WorkspaceQueryTag[];
 }
 

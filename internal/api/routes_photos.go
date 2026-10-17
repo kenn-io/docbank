@@ -246,10 +246,10 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 		OperationID: "groupPhotoStacks", Method: http.MethodPost, Path: "/api/v1/photos/stacks/group",
 		Summary: "Group explicit photos into bursts", MaxBodyBytes: 16 << 20,
 	}, func(ctx context.Context, in *struct{ Body GroupPhotoStacksRequest }) (*struct{ Body GroupPhotoStacksResponse }, error) {
-		groups, unavailable, err := d.Store.PhotoStackGroups(ctx, in.Body.AssetIDs, in.Body.Hidden)
+		groups, unavailable, gap, err := d.Store.PhotoStackGroups(ctx, in.Body.AssetIDs, in.Body.Hidden)
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		return &struct{ Body GroupPhotoStacksResponse }{GroupPhotoStacksResponse{Groups: groups, UnavailableIDs: unavailable}}, nil
+		return &struct{ Body GroupPhotoStacksResponse }{GroupPhotoStacksResponse{Groups: groups, UnavailableIDs: unavailable, BurstGapSeconds: gap}}, nil
 	})
 }

@@ -441,7 +441,7 @@ func photoMetadataTablesForSchema(version int) []metadataRecordCodec {
 	}
 	tables = append([]metadataRecordCodec(nil), tables...)
 	for i, table := range tables {
-		if version < 39 && table.kind() == metadataPhotoSettingsType {
+		if version < 38 && table.kind() == metadataPhotoSettingsType {
 			tables[i] = photoSettingsBeforeBurstMetadata
 		}
 		if version < photoAuthoredStorageSchemaVersion && table.kind() == metadataPhotoFileType {
