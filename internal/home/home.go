@@ -155,5 +155,12 @@ func (l Layout) Ensure() error {
 	if err := enforceMode(l.DBPath(), 0o600); err != nil {
 		return err
 	}
+	return l.SecureConfig()
+}
+
+// SecureConfig applies platform protection to an existing config file without
+// creating vault directories or opening the database. Clients use it before
+// configuration preflight so Windows retains startup's safe DACL repair.
+func (l Layout) SecureConfig() error {
 	return secureOptionalConfig(filepath.Join(l.Root, "config.toml"))
 }

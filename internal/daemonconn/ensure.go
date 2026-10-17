@@ -24,6 +24,7 @@ import (
 	"go.kenn.io/docbank/internal/apiclient"
 	kitdaemon "go.kenn.io/kit/daemon"
 
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemon"
 	"go.kenn.io/docbank/internal/daemonauth"
 	"go.kenn.io/docbank/internal/home"
@@ -293,12 +294,30 @@ func WithLaunchLock(ctx context.Context, root string, fn func() error) error {
 	}
 }
 
+// Only diagnostics are suppressed; every acquisition still parses the file.
+var warnedConfigRoots sync.Map
+
+type configWarningWriter struct{ root string }
+
+func (w configWarningWriter) Write(data []byte) (int, error) {
+	if _, warned := warnedConfigRoots.LoadOrStore(w.root, struct{}{}); warned {
+		return len(data), nil
+	}
+	return os.Stderr.Write(data)
+}
+
 // Ensure returns a client for a version- and protocol-matched daemon,
 // starting (and if needed, replacing an incompatible) one. CLI commands call
-// this.
+// this after checking global configuration parsing.
 func Ensure(ctx context.Context) (*Connection, error) {
 	layout, err := home.Resolve()
 	if err != nil {
+		return nil, err
+	}
+	if err := layout.SecureConfig(); err != nil {
+		return nil, err
+	}
+	if err := config.CheckClient(layout.Root, configWarningWriter{root: layout.Root}); err != nil {
 		return nil, err
 	}
 	res, err := EnsureDaemon(ctx, layout.Root)
@@ -457,6 +476,19 @@ func start(ctx context.Context, root string, requireVersion bool) (_ kitdaemon.R
 	root, err := home.CanonicalRoot(root)
 	if err != nil {
 		return kitdaemon.RuntimeRecord{}, err
+	}
+	// Check in the caller before spawning so a client receives the owning
+	// section's error without waiting for detached-daemon readiness. The child
+	// validates again in its own startup path before serving anything.
+	if err := (home.Layout{Root: root}).SecureConfig(); err != nil {
+		return kitdaemon.RuntimeRecord{}, fmt.Errorf("daemon config invalid: %w", err)
+	}
+	cfg, err := config.Load(root)
+	if err == nil {
+		err = cfg.Validate()
+	}
+	if err != nil {
+		return kitdaemon.RuntimeRecord{}, fmt.Errorf("daemon config invalid: %w", err)
 	}
 	exe, err := os.Executable()
 	if err != nil {
