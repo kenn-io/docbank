@@ -28,11 +28,10 @@ func CheckoutPathOverlap(ctx context.Context, checkouts []store.PhotoCheckout, p
 		if err := ctx.Err(); err != nil {
 			return "", false, err
 		}
-		protected, lexicalOnly := checkoutPathProtection(checkout, pathname)
-		if !protected {
+		if !checkoutPathProtection(checkout, pathname) {
 			continue
 		}
-		if lexicalOnly || !checkout.RetentionReleased && (pathContains(pathname, checkout.Destination) || pathContains(checkout.Destination, pathname)) {
+		if !checkout.RetentionReleased && (pathContains(pathname, checkout.Destination) || pathContains(checkout.Destination, pathname)) {
 			return checkout.ID, true, nil
 		}
 		candidates = append(candidates, checkout)
@@ -55,13 +54,13 @@ func CheckoutPathOverlap(ctx context.Context, checkouts []store.PhotoCheckout, p
 	return pendingID, false, errors.Join(pending, ctx.Err())
 }
 
-func checkoutPathProtection(checkout store.PhotoCheckout, pathname string) (protected, lexicalOnly bool) {
+func checkoutPathProtection(checkout store.PhotoCheckout, pathname string) bool {
 	protected, err := PhotoCheckoutProtectsDestination(checkout)
 	if err != nil {
-		slog.Warn("checkout destination cannot be inspected; using lexical path protection", "checkout", checkout.ID, "destination", checkout.Destination, "path", pathname, "error", err)
-		return pathContains(pathname, checkout.Destination) || pathContains(checkout.Destination, pathname), true
+		slog.Warn("checkout destination cannot be inspected; retaining path protection", "checkout", checkout.ID, "destination", checkout.Destination, "path", pathname, "error", err)
+		return true
 	}
-	return protected, false
+	return protected
 }
 
 // RelatedCheckouts returns the checkouts whose destination is pathname,

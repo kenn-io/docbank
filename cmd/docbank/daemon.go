@@ -900,6 +900,9 @@ func checkoutValidationPending(ctx context.Context, err error) bool {
 func validateCheckoutPathSnapshot(ctx context.Context, checkouts []store.PhotoCheckout, pathname string) error {
 	id, overlap, err := ingest.CheckoutPathOverlap(ctx, checkouts, pathname)
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("checking separation from checkout %s: %w", id, err)
+		}
 		return fmt.Errorf("checking configured path against checkout %s: %w", id, err)
 	}
 	if overlap {

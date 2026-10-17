@@ -439,6 +439,12 @@ func TestConfiguredCheckoutStartupDefersSlowBinding(t *testing.T) {
 
 func TestCheckoutValidationDefersInternalDeadline(t *testing.T) {
 	t.Parallel()
+	ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+	defer cancel()
+	err := validateCheckoutPathSnapshot(ctx, []store.PhotoCheckout{{ID: "checkout", Destination: t.TempDir()}}, t.TempDir())
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.ErrorContains(t, err, "checking separation from checkout")
+	require.True(t, checkoutValidationPending(t.Context(), err))
 	for _, tc := range []struct {
 		name    string
 		err     error
