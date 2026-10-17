@@ -224,7 +224,7 @@ var peopleByDisplayNameSQL = `SELECT person_id,display_name,display_name_folded,
 			WHERE dp.person_id=i.person_id AND dp.actor_key=i.kind || ':' || i.value_normalized
 			AND dp.sensitive=0 AND (?=0 OR ` + personVersionVisibleSQL("dp.content_version_id") + `)))
 		ORDER BY CASE i.kind WHEN 'email' THEN 0 WHEN 'phone' THEN 1 ELSE 2 END,i.value_normalized,i.identity_id LIMIT 1),'')
-	FROM persons WHERE state<>'retired' AND (display_name_folded LIKE ? ESCAPE '\' OR display_name_folded LIKE ? ESCAPE '\' OR display_name_folded LIKE ? ESCAPE '\' OR display_name_folded LIKE ? ESCAPE '\' OR display_name_folded LIKE ? ESCAPE '\')
+	FROM persons WHERE state<>'retired' AND docbank_person_name_has_word_prefix_v1(display_name_folded, ?)
 	AND (?=0 OR (origin='operator' AND NOT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=persons.person_id AND (a.action='assert' OR a.role<>'depicted'))
 		AND NOT EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=persons.person_id)) OR EXISTS(
 		SELECT 1 FROM person_document_assertions a WHERE a.person_id=persons.person_id
@@ -256,8 +256,8 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 			}
 			hideLocked = errors.Is(err, ErrHiddenLocked)
 		}
-		prefix := escapePersonLike(document.FoldPersonName(query))
-		rows, err := tx.QueryContext(ctx, peopleByDisplayNameSQL, visibleOnly, hideLocked, prefix+"%", "% "+prefix+"%", "%-"+prefix+"%", "%'"+prefix+"%", "%’"+prefix+"%", visibleOnly, hideLocked, hideLocked, afterName, afterName, afterName, afterID, limit)
+		prefix := document.FoldPersonName(query)
+		rows, err := tx.QueryContext(ctx, peopleByDisplayNameSQL, visibleOnly, hideLocked, prefix, visibleOnly, hideLocked, hideLocked, afterName, afterName, afterName, afterID, limit)
 		if err != nil {
 			return err
 		}
@@ -273,12 +273,6 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 		return rows.Err()
 	})
 	return people, err
-}
-
-func escapePersonLike(value string) string {
-	value = strings.ReplaceAll(value, `\`, `\\`)
-	value = strings.ReplaceAll(value, `%`, `\%`)
-	return strings.ReplaceAll(value, `_`, `\_`)
 }
 
 func (s *Store) AddPersonIdentity(ctx context.Context, personID string, revision int64, identity PersonIdentity) (PersonIdentity, error) {

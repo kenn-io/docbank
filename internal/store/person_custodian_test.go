@@ -586,6 +586,42 @@ func TestPeopleByDisplayNameSensitiveCandidateAcceptance(t *testing.T) {
 	require.Equal(t, decided.DecidedPersonID, browser[0].PersonID)
 }
 
+func TestPeopleByDisplayNameUnicodeWordPrefixes(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	for _, name := range []string{"John,Smith", "John—Smith", "John/Smith", "John_Smith", "John(Smith)", "John,Smith%", "John,Smith_", "李·明", "李明", "X\u0301Jane", "2Jane"} {
+		_, err := s.CreatePerson(ctx, name, "operator")
+		require.NoError(t, err)
+	}
+	for _, tc := range []struct {
+		query string
+		want  []string
+	}{
+		{"SMITH", []string{"John(Smith)", "John,Smith", "John,Smith%", "John,Smith_", "John/Smith", "John_Smith", "John—Smith"}},
+		{"Smith%", []string{"John,Smith%"}},
+		{"Smith_", []string{"John,Smith_"}},
+		{"明", []string{"李·明"}},
+		{"Jane", nil},
+	} {
+		var names []string
+		afterName, afterID := "", ""
+		for {
+			page, err := s.PeopleByDisplayName(ctx, tc.query, afterName, afterID, 2, true)
+			require.NoError(t, err)
+			if len(page) == 0 {
+				break
+			}
+			for _, person := range page {
+				names = append(names, person.DisplayName)
+			}
+			last := page[len(page)-1]
+			afterName, afterID = last.DisplayNameFolded, last.PersonID
+		}
+		require.Equal(t, tc.want, names, "query %q", tc.query)
+	}
+}
+
 func TestPeopleByDisplayNameMatchesWordPrefixes(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

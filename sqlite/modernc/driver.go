@@ -18,6 +18,18 @@ import (
 )
 
 func init() {
+	modernsqlite.MustRegisterDeterministicScalarFunction("docbank_person_name_has_word_prefix_v1", 2,
+		func(_ *modernsqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+			name, nameOK := args[0].(string)
+			prefix, prefixOK := args[1].(string)
+			if !nameOK || !prefixOK {
+				return nil, errors.New("person name prefix requires text name and prefix")
+			}
+			if query.PersonNameHasWordPrefix(name, prefix) {
+				return int64(1), nil
+			}
+			return int64(0), nil
+		})
 	modernsqlite.MustRegisterDeterministicScalarFunction("docbank_query_media_family_v1", 2,
 		func(_ *modernsqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
 			mediaType, mimeOK := args[0].(string)

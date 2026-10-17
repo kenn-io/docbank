@@ -26,6 +26,9 @@ func init() {
 		if err := conn.RegisterFunc("docbank_query_media_family_v1", query.ClassifyMedia, true); err != nil {
 			return fmt.Errorf("register query media function: %w", err)
 		}
+		if err := conn.RegisterFunc("docbank_person_name_has_word_prefix_v1", query.PersonNameHasWordPrefix, true); err != nil {
+			return fmt.Errorf("register person name prefix function: %w", err)
+		}
 		if err := conn.RegisterFunc("docbank_photo_folder_v1", func(kind, desc, path string) any {
 			if key, ok := query.PhotoFolderKey(kind, desc, path); ok {
 				return key
