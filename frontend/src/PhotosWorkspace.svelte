@@ -130,7 +130,7 @@
         owner.cullEditor?.dispose();
         owner.cullEditor = undefined;
         owner.culling = false;
-        owner.cull = new CullRun(owner.session, photoCullStorage(id));
+        owner.cull = new CullRun(owner.session, photoCullStorage(id), owner.onauthfailure);
         owner.cullVaultID = id;
       }
       if (!owner.culling) void owner.cull!.probe();

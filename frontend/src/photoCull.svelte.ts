@@ -1,6 +1,7 @@
 import { createSnapshot, captureSnapshotTargets } from "./snapshots.js";
 import type { Query } from "./query.js";
 import { randomUUID } from "./crypto.js";
+import { APIError } from "./api-transport.js";
 import type {
   CullCheckpoint,
   CullProgress,
@@ -40,7 +41,12 @@ export class PhotoCull {
   constructor(
     readonly session: string,
     private storage: CullStorage,
+    private onauthfailure?: (cause: unknown) => void,
   ) {}
+  private apiFailure(cause: unknown) {
+    if (cause instanceof APIError && cause.status === 401) this.onauthfailure?.(cause);
+    this.error = failure(cause);
+  }
   get currentID() {
     return this.run?.checkpoint.pass[this.run.checkpoint.position];
   }
@@ -157,7 +163,7 @@ export class PhotoCull {
       this.visit();
       return true;
     } catch (cause) {
-      if (!controller.signal.aborted) this.error = failure(cause);
+      if (!controller.signal.aborted) this.apiFailure(cause);
       return false;
     } finally {
       this.capturing = false;
@@ -293,7 +299,7 @@ export class PhotoCull {
       );
       this.remainder = this.matches("unflagged", flags).length > 0;
     } catch (cause) {
-      if (!controller.signal.aborted) this.error = failure(cause);
+      if (!controller.signal.aborted) this.apiFailure(cause);
     } finally {
       this.finishFlagRead(controller);
     }
@@ -353,7 +359,7 @@ export class PhotoCull {
       this.remainder = false;
       changed = true;
     } catch (cause) {
-      if (!controller.signal.aborted) this.error = failure(cause);
+      if (!controller.signal.aborted) this.apiFailure(cause);
     } finally {
       this.changingPass = false;
       this.finishFlagRead(controller);
