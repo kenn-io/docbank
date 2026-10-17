@@ -276,7 +276,10 @@ number of matching versions; metadata and path projection are limited to the pag
 
 `GET /api/v1/duplicates` groups live current documents once per page request.
 The exact group and reference totals and the selected page share that grouped
-relation. An empty or exhausted page still returns the population totals.
+relation. Each live current file contributes at most one row because the current
+version and blob joins use unique keys. Counts use that guarantee directly
+instead of deduplicating node IDs. An empty or exhausted page still returns
+the population totals.
 Reference paths and collection previews use the same read transaction as group
 selection, so concurrent replacements or trash operations cannot split the
 response across snapshots. One metadata query selects at most sixteen references

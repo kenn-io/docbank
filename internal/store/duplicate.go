@@ -85,11 +85,11 @@ func (s *Store) DuplicateGroupByHash(ctx context.Context, hash string, size int6
 	defer func() { _ = tx.Rollback() }()
 	group := DuplicateGroup{Hash: hash, Size: size, References: make([]DuplicateReference, 0)}
 	err = tx.QueryRowContext(ctx, `WITH `+CurrentContentMembershipCTE+`
-		SELECT COUNT(DISTINCT node_id),
+		SELECT COUNT(*),
 		       (SELECT node_id FROM current_content_members
 		        WHERE blob_hash=? AND size=? ORDER BY `+DuplicateRepresentativeOrder+` LIMIT 1)
 		FROM current_content_members WHERE blob_hash=? AND size=?
-		HAVING COUNT(DISTINCT node_id) >= 2`, hash, size, hash, size,
+		HAVING COUNT(*) >= 2`, hash, size, hash, size,
 	).Scan(&group.ReferenceCount, &group.RepresentativeNodeID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return DuplicateGroup{}, ErrNotFound
@@ -137,10 +137,10 @@ func (s *Store) Duplicates(
 	// A totals row remains even when the requested page is empty.
 	rows, err := tx.QueryContext(ctx, `WITH `+CurrentContentMembershipCTE+`,
 		duplicate_groups AS (
-			SELECT blob_hash, size, COUNT(DISTINCT node_id) AS reference_count
+			SELECT blob_hash, size, COUNT(*) AS reference_count
 			FROM current_content_members
 			GROUP BY blob_hash, size
-			HAVING COUNT(DISTINCT node_id) >= 2
+			HAVING COUNT(*) >= 2
 		), totals AS (
 			SELECT COUNT(*) AS groups, COALESCE(SUM(reference_count), 0) AS refs
 			FROM duplicate_groups
