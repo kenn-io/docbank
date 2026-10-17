@@ -6,7 +6,7 @@ description: Run one or more Docbank vaults inside a Go application, each with i
 
 # Embed in Go
 
-Use `go.kenn.io/docbank` to own a document vault inside your Go process.
+Use `go.kenn.io/docbank/docbank` to own a document vault inside your Go process.
 Your application can store, version, retrieve, and back up documents without
 starting or discovering a daemon. The embedded API uses the same tree, content
 checks, storage rules, and exclusive vault lock as standalone Docbank.
@@ -66,7 +66,7 @@ import (
     "context"
     "io"
 
-    "go.kenn.io/docbank"
+    "go.kenn.io/docbank/docbank"
 )
 
 func StoreSession(ctx context.Context, root string, sessionID string, jsonl []byte) error {
@@ -1022,7 +1022,7 @@ An application may select either adapter explicitly:
 
 ```go
 import (
-    "go.kenn.io/docbank"
+    "go.kenn.io/docbank/docbank"
     "go.kenn.io/docbank/sqlite/modernc"
 )
 

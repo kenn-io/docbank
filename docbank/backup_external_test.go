@@ -13,7 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	docbank "go.kenn.io/docbank"
+	docbank "go.kenn.io/docbank/docbank"
 )
 
 func TestEmbeddedBackupCapturesHostFilePreparedInsideFreeze(t *testing.T) {

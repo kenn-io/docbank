@@ -14,7 +14,7 @@ import (
 	"github.com/go-pdf/fpdf"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	docbank "go.kenn.io/docbank"
+	docbank "go.kenn.io/docbank/docbank"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/docling"
 	"go.kenn.io/docbank/document/voyage"

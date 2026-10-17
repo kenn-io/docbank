@@ -726,6 +726,52 @@ func TestSearchExplainedLexicalCandidatesIncludesNamePath(t *testing.T) {
 	assert.Equal(t, "/docs/alpha.pdf", candidates[0].Path)
 }
 
+func TestSearchExplainedContentPathsFollowRankAndMoves(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	folder, err := s.MkdirAll(ctx, "/資料/reports")
+	require.NoError(t, err)
+	for _, file := range []struct {
+		parent int64
+		name   string
+	}{
+		{s.RootID(), "zulu.txt"},
+		{folder.ID, "alpha.txt"},
+		{s.RootID(), "middle.txt"},
+	} {
+		_, err := s.CreateFile(ctx, file.parent, file.name, fakeHash("a1"), 1, "text/plain")
+		require.NoError(t, err)
+	}
+	require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{
+		BlobHash: fakeHash("a1"), Extractor: "plain-text", ExtractorVersion: 1,
+		Status: ExtractionOK, Text: "mercury notes",
+	}))
+	for _, generation := range []bool{false, true} {
+		if generation {
+			_, err := s.MigrateLegacyPlainText(ctx)
+			require.NoError(t, err)
+		}
+		for _, first := range []bool{false, true} {
+			hits, truncated, err := s.SearchExplainedLexicalCandidates(ctx, "mercury", 2, SearchOptions{}, first)
+			require.NoError(t, err)
+			require.True(t, truncated)
+			require.Len(t, hits, 2)
+			require.Equal(t, "/資料/reports/alpha.txt", hits[0].Path)
+			require.Equal(t, "/middle.txt", hits[1].Path)
+		}
+	}
+	_, _, err = s.Move(ctx, folder.ID, s.RootID(), "moved", UnconditionalRev)
+	require.NoError(t, err)
+	hits, truncated, err := s.SearchExplainedLexicalCandidates(ctx, "mercury", 3, SearchOptions{}, true)
+	require.NoError(t, err)
+	require.False(t, truncated)
+	require.Len(t, hits, 3)
+	require.Equal(t, "/moved/alpha.txt", hits[0].Path)
+	require.Equal(t, "/middle.txt", hits[1].Path)
+	require.Equal(t, "/zulu.txt", hits[2].Path)
+}
+
 func TestSearchPathsPreserveResultOrder(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
