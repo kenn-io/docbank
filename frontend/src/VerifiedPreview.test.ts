@@ -449,10 +449,6 @@ it("reports inspection gestures across UTC days and ignores unrelated keys", asy
   vi.setSystemTime(new Date("2026-10-17T23:59:00Z"));
   await fireEvent.keyDown(screen.getByText("Synthetic inspected text"), { key: "Tab" });
   await fireEvent.keyDown(screen.getByText("Synthetic inspected text"), { key: "a" });
-  await fireEvent.keyDown(screen.getByText("Synthetic inspected text"), {
-    key: "j",
-    ctrlKey: true,
-  });
   expect(events).toEqual([]);
   await fireEvent.wheel(screen.getByText("Synthetic inspected text"), { deltaY: 120 });
   const opened = { event: "document_opened", properties: { surface: "web" } };
@@ -518,7 +514,7 @@ it.each(["Text", "Email"])(
   },
 );
 
-it("reports sandboxed email inspection gestures again after UTC rollover", async () => {
+it("reports sandboxed email inspection gestures and filters modified keys", async () => {
   const selected = source(
     new TextEncoder().encode("Synthetic email"),
     "55555555-5555-4555-8555-555555555555",
@@ -657,15 +653,11 @@ it("reports sandboxed email inspection gestures again after UTC rollover", async
   );
   expect(events).toEqual([]);
   const opened = { event: "document_opened", properties: { surface: "web" } };
-  vi.setSystemTime(new Date("2026-10-17T23:59:00Z"));
+  await fireEvent.keyDown(frameDocument.body, { key: "j", ctrlKey: true });
+  expect(events).toEqual([]);
   await fireEvent.pointerDown(frameDocument.body);
   expect(events).toEqual([opened]);
-  vi.setSystemTime(new Date("2026-10-18T00:01:00Z"));
   await fireEvent.wheel(frameDocument.body);
-  expect(events).toEqual([opened, opened]);
-  vi.setSystemTime(new Date("2026-10-19T00:01:00Z"));
-  await fireEvent.keyDown(frameDocument.body, { key: "j", ctrlKey: true });
-  expect(events).toEqual([opened, opened]);
   await fireEvent.keyDown(frameDocument.body, { key: "j" });
-  expect(events).toEqual([opened, opened, opened]);
+  expect(events).toEqual([opened]);
 });

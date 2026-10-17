@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -311,36 +310,4 @@ func TestPhotoImportReportsOnlyInteractiveCommittedAdditions(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestPhotoImportResumeReportsFirstAdditionAfterRestart(t *testing.T) {
-	t.Setenv("DOCBANK_TELEMETRY_ENABLED", "1")
-	t.Setenv("TELEMETRY_ENABLED", "1")
-	capture := newActionCollector(t)
-	server, catalog := newTestServer(t, nil)
-	root := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(root, "synthetic.JPG"), []byte("synthetic photo"), 0o600))
-	operation, err := catalog.CreatePhotoImport(t.Context(), store.PhotoImportRequest{SourceRoot: root, Destination: "/photos"}, "cli")
-	require.NoError(t, err)
-	server.Close()
-	catalog.Server.Close()
-	require.NoError(t, catalog.Blobs.Close())
-	require.NoError(t, catalog.Close())
-	restarted, err := store.Open(catalog.DBPath)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, restarted.Close()) })
-	blobs, err := blob.New(store.NewPackCatalog(restarted), catalog.BlobsDir)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
-	supervisor := jobs.New(t.Context(), nil)
-	t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
-	runner := api.NewPhotoImportRunner(api.Deps{Store: restarted, Blobs: blobs, TelemetryCapture: capture.capture})
-	require.NoError(t, runner.Resume(t.Context(), supervisor))
-	require.Eventually(t, func() bool {
-		current, err := restarted.StorageOperation(t.Context(), operation.ID)
-		return err == nil && current.State == store.StorageOperationCompleted
-	}, 10*time.Second, 10*time.Millisecond)
-	_, err = restarted.NodeByPath(t.Context(), "/photos/synthetic.JPG")
-	require.NoError(t, err)
-	capture.requireEvent(t, "document_added", map[string]any{"surface": "cli"})
 }

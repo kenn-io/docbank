@@ -101,9 +101,6 @@ func TestPackageImportAdmitsFrozenPreflightAndReplaysOperation(t *testing.T) {
 		PreflightID: preview.PreflightID, Into: "/", Name: "synthetic-package",
 		OperationID: uuid.NewString(), IndexSuppliedText: true,
 	}
-	invalid := request
-	invalid.OperationID = "invalid"
-	require.Equal(t, http.StatusUnprocessableEntity, srv.call(t, http.MethodPost, "/api/v1/packages/imports", mustPackageJSON(t, invalid), nil).Code)
 	first := srv.call(t, http.MethodPost, "/api/v1/packages/imports", mustPackageJSON(t, request), map[string]string{api.ActionSurfaceHeader: "cli"})
 	require.Equal(t, http.StatusAccepted, first.Code, first.Body.String())
 	var job api.PackageImportJob

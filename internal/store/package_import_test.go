@@ -72,7 +72,7 @@ func seedReceivedPackage(t *testing.T, s *Store, name string) (Package, Node) {
 	return pkg, node
 }
 
-func TestCommitPackageRecordWithLeaseReplaysExactPayload(t *testing.T) {
+func TestCommitPackageRecordWithLeaseReplaysExactPayloadAndReportsOnceAcrossRestart(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "docbank.db")
 	s, err := Open(path)

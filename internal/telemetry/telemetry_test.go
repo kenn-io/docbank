@@ -96,12 +96,14 @@ func TestNewOptedOut(t *testing.T) {
 	}
 }
 
+type postHogEvent struct {
+	Event      string         `json:"event"`
+	DistinctID string         `json:"distinct_id"`
+	Properties map[string]any `json:"properties"`
+}
+
 type postHogBatch struct {
-	Batch []struct {
-		Event      string         `json:"event"`
-		DistinctID string         `json:"distinct_id"`
-		Properties map[string]any `json:"properties"`
-	} `json:"batch"`
+	Batch []postHogEvent `json:"batch"`
 }
 
 func TestEnabledReporterSendsOnlyAllowlistedFields(t *testing.T) {

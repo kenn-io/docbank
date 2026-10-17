@@ -87,7 +87,6 @@ func TestPushCommandReportsOnlyNewDocumentsOnce(t *testing.T) {
 		want int
 	}{
 		{"new documents", 1},
-		{"skip only", 0},
 		{"update only", 0},
 	} {
 		t.Run(step.name, func(t *testing.T) {

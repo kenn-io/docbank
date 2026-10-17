@@ -238,7 +238,7 @@ async function renderFrozenSnapshotWorkspace(expireNextPage = false) {
 }
 
 it("navigates frozen documents within their boundaries", async () => {
-  const { cursors, state } = await renderFrozenSnapshotWorkspace();
+  const { first, cursors, state } = await renderFrozenSnapshotWorkspace();
   await waitFor(() => expect(state.highlightRequests).toBe(1));
   await fireEvent.click(screen.getByRole("cell", { name: "/records/report-100.pdf" }));
   await screen.findByText("Document 100 of 101");
@@ -274,10 +274,15 @@ it("navigates frozen documents within their boundaries", async () => {
   await fireEvent.click(screen.getByRole("tab", { name: "Text" }));
   const choices = await screen.findByRole("combobox", { name: "Saved highlight set" });
   expect(within(choices).getByRole("option", { name: "Review terms" })).toBeTruthy();
+  first.snapshot_id = "1123456789abcdef0123456789abcdef";
+  await fireEvent.click(screen.getByRole("button", { name: "Edit query" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Run query" }));
+  await screen.findByText("Document 1 of 101");
+  await waitFor(() => expect(state.highlightRequests).toBe(2));
 });
 
 it("reports submitted frozen searches while keeping snapshot retries silent", async () => {
-  const { first, state } = await renderFrozenSnapshotWorkspace(true);
+  const { state } = await renderFrozenSnapshotWorkspace(true);
   expect(state.searches).toHaveLength(1);
   await fireEvent.click(screen.getByRole("button", { name: "Next page" }));
   await screen.findByText(
@@ -288,11 +293,9 @@ it("reports submitted frozen searches while keeping snapshot retries silent", as
   await screen.findByText("Document 1 of 101");
   expect(state.searches).toHaveLength(1);
 
-  first.snapshot_id = "1123456789abcdef0123456789abcdef";
   await fireEvent.click(screen.getByRole("button", { name: "Edit query" }));
   await fireEvent.click(screen.getByRole("button", { name: "Run query" }));
   await screen.findByText("Document 1 of 101");
-  await waitFor(() => expect(state.highlightRequests).toBe(2));
   await waitFor(() => expect(state.searches).toHaveLength(2));
   state.failRun = true;
   await fireEvent.click(screen.getByRole("button", { name: "pdf, 101 documents" }));

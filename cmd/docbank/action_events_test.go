@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/telemetry"
 	kitdaemon "go.kenn.io/kit/daemon"
 )
 
@@ -37,7 +38,7 @@ func TestPhotoInspectReportsInteractiveSuccess(t *testing.T) {
 	assert.Equal(t, api.TelemetryEventRequest{Event: "document_opened", Properties: &api.TelemetryEventProperties{Surface: "cli"}}, <-f.requests)
 }
 
-func TestInteractiveActionGateAndEndpoint(t *testing.T) {
+func TestInteractiveActionGateAndReportingDeadline(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		terminal := actionTerminal(t)
 		redirected, err := os.CreateTemp(t.TempDir(), "redirected")
@@ -147,17 +148,15 @@ func TestDocumentSearchReportsSubmissionBeforeFailure(t *testing.T) {
 				err = runDocumentSearch(cmd, connection, "synthetic query", options)
 			}
 			require.Error(t, err)
-			wantMode := mode
+			require.Len(t, events, 1)
+			assert.Equal(t, "search_run", events[0].Event)
+			require.NotNil(t, events[0].Properties)
+			assert.Equal(t, "cli", events[0].Properties.Surface)
+			submittedMode := options.Mode
 			if mode == "auto" {
-				wantMode = "hybrid"
+				submittedMode = "hybrid"
 			}
-			if mode == "similar" {
-				wantMode = "semantic"
-			}
-			if mode == "lexical" {
-				wantMode = "text"
-			}
-			require.Equal(t, []api.TelemetryEventRequest{{Event: "search_run", Properties: &api.TelemetryEventProperties{Surface: "cli", SearchType: wantMode}}}, events)
+			assert.Equal(t, telemetry.SearchType(submittedMode), events[0].Properties.SearchType)
 		})
 	}
 }
