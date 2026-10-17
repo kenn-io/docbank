@@ -75,12 +75,19 @@
   const complete = $derived(cull.complete);
   const pass = $derived(checkpoint.pass);
   let lastLookupAttempt = 0;
+  let lastPass: string[] | undefined;
   $effect(() => {
     const id = currentID;
+    const changedPass = pass !== lastPass;
+    lastPass = pass;
     const reload = lookupAttempt !== lastLookupAttempt;
     lastLookupAttempt = lookupAttempt;
     const controller = new AbortController();
     const held = untrack(() => {
+      if (changedPass) {
+        neighbors = [];
+        return;
+      }
       const previous = photo;
       if (previous)
         neighbors = [...neighbors.filter((row) => row.asset_id !== previous.asset_id), previous];

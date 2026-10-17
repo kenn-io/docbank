@@ -2,6 +2,7 @@ import { beforeEach, afterEach, expect, it, vi } from "vite-plus/test";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { APIError } from "./api-transport.js";
 import PhotoCullView from "./PhotoCull.svelte";
+import PhotoCullConfirmation from "./PhotoCullConfirmation.svelte";
 import { PhotoCull } from "./photoCull.svelte.js";
 import { Photos } from "./photos.svelte.js";
 import { photo, preparedPhoto, photoPreparation } from "./photo-test-fixtures.js";
@@ -331,6 +332,76 @@ async function reviewPhoto(
   return { cull, photos, onclose, ...view };
 }
 
+it("answers false when Escape dismisses a confirmation", async () => {
+  const { component } = render(PhotoCullConfirmation);
+  const answer = component.confirm("Reset this pass?", "Reset pass");
+  const dialog = await screen.findByRole("dialog", { name: "Reset this pass?" });
+  await fireEvent.keyDown(dialog, { key: "Escape" });
+  expect(await answer).toBe(false);
+  expect(dialog.isConnected).toBe(false);
+});
+
+it("Escape cancels only the scope confirmation and allows a later S", async () => {
+  const { cull, container, onclose } = await reviewPhoto();
+  const checkpoint = cull.run!.checkpoint;
+  const nextPass = vi.spyOn(cull, "nextPass");
+  const shell = container.querySelector(".photo-cull")!;
+  await fireEvent.keyDown(shell, { key: "s" });
+  const dialog = await screen.findByRole("dialog", {
+    name: "Change scope and reset this pass's progress?",
+  });
+  await fireEvent.keyDown(dialog, { key: "Escape" });
+  await waitFor(() => expect(dialog.isConnected).toBe(false));
+  await nextPass.mock.results[0]!.value;
+  expect(cull.run!.checkpoint).toBe(checkpoint);
+  expect(onclose).not.toHaveBeenCalled();
+  expect(screen.getByRole("dialog", { name: "Cull photos" })).toBeTruthy();
+  await fireEvent.keyDown(shell, { key: "s" });
+  await screen.findByRole("dialog", { name: "Change scope and reset this pass's progress?" });
+  await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await readyButton("Exit cull");
+});
+
+it("refreshes current and cached rows when a new pass starts on the same photo", async () => {
+  const { cull, photos } = await reviewPhoto();
+  const rows = [photo(1), photo(2)];
+  vi.mocked(photos.lookup).mockImplementation(
+    async (id) => rows.find((row) => row.asset_id === id)!,
+  );
+  vi.mocked(photos.lookupMany).mockImplementation(async (ids) =>
+    rows.filter((row) => ids.includes(row.asset_id)),
+  );
+  await act(() => {
+    cull.run = {
+      ids: rows.map((row) => row.asset_id),
+      checkpoint: {
+        ...cull.run!.checkpoint,
+        scope: "unflagged",
+        pass: rows.map((row) => row.asset_id),
+      },
+    };
+  });
+  await screen.findByRole("button", { name: "Show Photo 2.jpg" });
+  await screen.findByText("Unflagged · 0 stars");
+  rows[0] = { ...rows[0]!, flag: "pick" };
+  rows[1] = { ...rows[1]!, flag: "pick" };
+  vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
+    items: rows,
+    total: 2,
+    facets: [],
+    relevance_available: false,
+  });
+  await fireEvent.click(await readyButton("Scope: unflagged"));
+  await fireEvent.click(screen.getByRole("button", { name: "Reset pass" }));
+  await readyButton("Scope: picks");
+  expect(cull.currentID).toBe("photo-1");
+  expect(cull.run!.checkpoint.autoAdvance).toBe(false);
+  await screen.findByText("pick · 0 stars");
+  await fireEvent.click(await readyButton("Next"));
+  await screen.findByText("Photo 2.jpg");
+  await screen.findByText("pick · 0 stars");
+});
+
 it("shows prepared flag, rating and rotation after a no-op decision without replacing Undo", async () => {
   vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:synthetic-photo");
   vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
@@ -611,14 +682,15 @@ it("fetches only rail photos that are neither displayed nor already held", async
   });
   await screen.findByRole("button", { name: "Show Photo 5.jpg" });
   expect(screen.getByRole("button", { name: "Show Photo 1.jpg" })).toBeTruthy();
-  expect(photos.lookup).toHaveBeenCalledOnce();
+  expect(photos.lookup).toHaveBeenCalledTimes(2);
   expect(lookup.mock.calls.every(([ids]) => !ids.includes("photo-1"))).toBe(true);
   lookup.mockClear();
+  vi.mocked(photos.lookup).mockClear();
   await fireEvent.click(screen.getByRole("button", { name: /^Next$/ }));
   await screen.findByRole("button", { name: "Show Photo 6.jpg" });
   expect(lookup).toHaveBeenCalledExactlyOnceWith(["photo-6"], expect.any(AbortSignal));
   expect(screen.getByRole("button", { name: "Show Photo 1.jpg" })).toBeTruthy();
-  expect(photos.lookup).toHaveBeenCalledOnce();
+  expect(photos.lookup).not.toHaveBeenCalled();
 });
 
 it("keeps shown-file narrowing on retry and resets it for a fresh decision", async () => {
@@ -739,7 +811,9 @@ it.each(["held", "missing", "different version"])(
     const rows = [photo(1), photo(2)];
     const { cull, photos } = await reviewPhoto(rows[0]);
     vi.mocked(photos.lookupMany).mockResolvedValue(kind === "missing" ? [] : [rows[1]!]);
-    vi.mocked(photos.lookup).mockResolvedValue({ ...rows[1]!, name: "Looked up.jpg" });
+    vi.mocked(photos.lookup).mockImplementation(async (id) =>
+      id === "photo-1" ? rows[0]! : { ...rows[1]!, name: "Looked up.jpg" },
+    );
     await act(() => {
       cull.run = {
         ...cull.run!,
@@ -747,6 +821,7 @@ it.each(["held", "missing", "different version"])(
         checkpoint: { ...cull.run!.checkpoint, pass: rows.map((row) => row.asset_id) },
       };
     });
+    await readyButton("Next");
     if (kind !== "missing") await screen.findByRole("button", { name: "Show Photo 2.jpg" });
     if (kind === "different version") {
       await act(() => {
