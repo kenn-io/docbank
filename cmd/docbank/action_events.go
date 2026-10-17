@@ -7,7 +7,6 @@ import (
 
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
-	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/telemetry"
 )
@@ -26,13 +25,9 @@ func reportAction(cmd *cobra.Command, c *daemonconn.Connection, event, value str
 	if !interactiveAction(cmd) {
 		return
 	}
-	props := &apiclient.TelemetryEventProperties{Surface: "cli"}
-	if event == telemetry.EventSearchRun {
-		props.SearchType = telemetry.SearchType(value)
-	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(cmd.Context()), 100*time.Millisecond)
 	defer cancel()
-	_, _ = c.API().ReportTelemetryEvent(ctx, &apiclient.ReportTelemetryEventRequestOptions{Body: &apiclient.ReportTelemetryEventBody{Event: event, Properties: props}})
+	_, _ = c.ReportAction(ctx, event, "cli", value)
 }
 
 func reportOpened(cmd *cobra.Command, c *daemonconn.Connection) {

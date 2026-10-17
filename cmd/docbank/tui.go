@@ -500,11 +500,7 @@ func (b *tuiDaemonBackend) ReportAction(ctx context.Context, event, value string
 	ctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
 	defer cancel()
 	_, err := withTUIClient(ctx, b, func(c *daemonconn.Connection) (*apiclient.ReportTelemetryEventResponse, error) {
-		props := &apiclient.TelemetryEventProperties{Surface: "tui"}
-		if event == "search_run" {
-			props.SearchType = telemetry.SearchType(value)
-		}
-		return c.API().ReportTelemetryEvent(ctx, &apiclient.ReportTelemetryEventRequestOptions{Body: &apiclient.ReportTelemetryEventBody{Event: event, Properties: props}})
+		return c.ReportAction(ctx, event, "tui", value)
 	})
 	return err
 }
