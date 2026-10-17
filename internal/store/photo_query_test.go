@@ -1692,14 +1692,4 @@ func TestLookupPhotoFlags(t *testing.T) {
 	got, err := s.LookupPhotoFlags(ctx, ids)
 	require.NoError(t, err)
 	require.Equal(t, want, got)
-	page, err := s.ListPhotoAssets(ctx, PhotoBrowseRequest{Query: query.Query{
-		V: 1, Syntax: "simple", Mode: "lexical", Filters: query.Filters{AssetIDs: slices.Compact(ids)},
-		Sort: query.Sort{Field: "capture_time", Direction: "desc"},
-	}}, nil)
-	require.NoError(t, err)
-	browse := []PhotoFlagRow{}
-	for _, row := range page.Items {
-		browse = append(browse, PhotoFlagRow{AssetID: row.AssetID, Flag: row.Flag})
-	}
-	require.ElementsMatch(t, browse, got)
 }

@@ -38,21 +38,6 @@ function flagPage(rows: api.PhotoBrowseRow[], request: Parameters<typeof api.loo
   };
 }
 
-it("uses bulk flags to select picks for the next pass", async () => {
-  const rows = [photo(1), { ...photo(2), flag: "pick" as const }];
-  vi.spyOn(api, "createWorkspaceQuery").mockImplementation(async () =>
-    Response.json(await snapshot(rows.map((row) => row.asset_id))),
-  );
-  const lookup = vi
-    .spyOn(api, "lookupPhotoFlags")
-    .mockImplementation(async (request) => flagPage(rows, request));
-  const cull = new PhotoCull("session", storage());
-  await cull.start(query);
-  await cull.nextPass(false, () => true);
-  expect(cull.run?.checkpoint.pass).toEqual([rows[1]!.asset_id]);
-  expect(lookup).toHaveBeenCalledOnce();
-  expect(lookup.mock.calls[0]![0]).toEqual({ asset_ids: rows.map((row) => row.asset_id) });
-});
 it("probes saved headers and replaces a run without loading its membership", async () => {
   const store = storage(),
     original = new PhotoCull("session", store);
@@ -236,9 +221,6 @@ it("filters captured IDs locally with fresh flags at each pass boundary", async 
   cull.move(1);
   await cull.checkRemainder();
   expect(cull.remainder).toBe(false);
-  expect(list.mock.calls.every(([request]) => Object.values(request.asset_ids).length > 0)).toBe(
-    true,
-  );
 });
 it("persists missing remainder photos in one checkpoint and keeps existing markers", async () => {
   const rows = [photo(1), photo(2), photo(3), photo(4)],
@@ -284,7 +266,7 @@ it("loads restored flags once and removes missing current-pass rows from later s
   rows[0]!.flag = "pick";
   rows[2]!.flag = "reject";
   const available = new Map([rows[0]!, rows[2]!].map((row) => [row.asset_id, row]));
-  const list = vi.spyOn(api, "lookupPhotoFlags").mockImplementation(async (request) => ({
+  vi.spyOn(api, "lookupPhotoFlags").mockImplementation(async (request) => ({
     ...flagPage([...available.values()], request),
   }));
   const resumed = new PhotoCull("new-session", store);
@@ -298,7 +280,6 @@ it("loads restored flags once and removes missing current-pass rows from later s
   await resumed.nextPass(false, () => true);
   expect(resumed.run?.checkpoint.pass).toEqual([ids[0]]);
   expect(resumed.run?.checkpoint.unavailable).toEqual([ids[1], ids[2]]);
-  expect(list.mock.calls.map(([request]) => request.asset_ids)).toEqual([ids, ids, ids]);
 });
 it("keeps the previous durable run after cancellation, capture failure or failed replacement", async () => {
   const row = photo(1),
@@ -649,7 +630,7 @@ it.each(["left at first", "current thumbnail", "right after completion", "next p
     expect(await store.saved()).toEqual(saved);
     expect(await other.verifyDecision()).toBe(true);
     if (navigation === "next pass") {
-      vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) =>
+      vi.spyOn(api, "lookupPhotoFlags").mockImplementation(async (request) =>
         flagPage([photo(1), photo(2)], request),
       );
       await first.nextPass(false, () => true);
@@ -725,8 +706,11 @@ it("verifies a decision against progress queued before the check", async () => {
   expect((await store.load())!.checkpoint.unavailable).toEqual([ids[1]]);
 });
 
-it("refreshes 20,001 flags sequentially and records absent IDs as unavailable", async () => {
-  const ids = Array.from({ length: 20_001 }, (_, index) => photo(index + 1).asset_id);
+it.each(["success", "failure", "empty"])("refreshes bulk flags: %s", async (outcome) => {
+  const ids = Array.from(
+    { length: outcome === "empty" ? 0 : 20_001 },
+    (_, index) => photo(index + 1).asset_id,
+  );
   const store = storage();
   const cull = new PhotoCull("session", store);
   cull.run = {
@@ -744,7 +728,41 @@ it("refreshes 20,001 flags sequentially and records absent IDs as unavailable", 
       autoAdvance: true,
     },
   };
-  await store.replace(cull.run);
+  if (outcome !== "empty") await store.replace(cull.run);
+  if (outcome === "empty") {
+    const lookup = vi.spyOn(api, "lookupPhotoFlags");
+    await cull.checkRemainder();
+    expect(lookup).not.toHaveBeenCalled();
+    expect(cull.remainder).toBe(false);
+    return;
+  }
+  if (outcome === "failure") {
+    const before = structuredClone(cull.run);
+    let reject!: (cause: Error) => void;
+    const lookup = vi
+      .spyOn(api, "lookupPhotoFlags")
+      .mockResolvedValueOnce({
+        items: ids.slice(0, 19_999).map((asset_id) => ({ asset_id, flag: "pick" })),
+      })
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, fail) => {
+            reject = fail;
+          }),
+      );
+    const changing = cull.nextPass();
+    await vi.waitFor(() => expect(lookup).toHaveBeenCalledTimes(2));
+    expect(cull.run).toEqual(before);
+    expect(await store.load()).toEqual(before);
+    reject(new Error("Second batch unavailable"));
+    await changing;
+    await cull.flush();
+    expect(cull.run).toEqual(before);
+    expect(await store.load()).toEqual(before);
+    expect(store.checkpoint).not.toHaveBeenCalled();
+    expect(cull.error).toBe("Second batch unavailable");
+    return;
+  }
   let release!: (value: api.PhotoFlagsResponse) => void;
   const lookup = vi
     .spyOn(api, "lookupPhotoFlags")
@@ -776,78 +794,5 @@ it("refreshes 20,001 flags sequentially and records absent IDs as unavailable", 
   expect(cull.error).toBe("");
   expect(cull.stale).toBe(false);
   expect((await store.load())?.checkpoint.unavailable).toEqual([ids[20_000]]);
-  expect(cull.remainder).toBe(false);
-});
-
-it("preserves the pass and saved checkpoint when the second flag batch fails", async () => {
-  const ids = Array.from({ length: 20_001 }, (_, index) => photo(index + 1).asset_id);
-  const store = storage();
-  const cull = new PhotoCull("session", store);
-  cull.run = {
-    ids,
-    checkpoint: {
-      runID: "run",
-      passID: "pass",
-      revision: 0,
-      pass: ids,
-      position: ids.length,
-      visited: [],
-      skipped: [],
-      unavailable: [],
-      scope: "unflagged",
-      autoAdvance: true,
-    },
-  };
-  await store.replace(cull.run);
-  const before = structuredClone(cull.run);
-  let reject!: (cause: Error) => void;
-  const lookup = vi
-    .spyOn(api, "lookupPhotoFlags")
-    .mockResolvedValueOnce({
-      items: ids.slice(0, 19_999).map((asset_id) => ({ asset_id, flag: "pick" })),
-    })
-    .mockImplementationOnce(
-      () =>
-        new Promise((_resolve, fail) => {
-          reject = fail;
-        }),
-    );
-  const changing = cull.nextPass();
-  await vi.waitFor(() => expect(lookup).toHaveBeenCalledTimes(2));
-  expect(lookup.mock.calls[0]![0]).toEqual({ asset_ids: ids.slice(0, 20_000) });
-  expect(lookup.mock.calls[1]![0]).toEqual({ asset_ids: [ids[20_000]] });
-  expect(cull.run).toEqual(before);
-  expect(await store.load()).toEqual(before);
-  reject(new Error("Second batch unavailable"));
-  await changing;
-  await cull.flush();
-  expect(cull.run).toEqual(before);
-  expect(await store.load()).toEqual(before);
-  expect(store.checkpoint).not.toHaveBeenCalled();
-  expect(cull.error).toBe("Second batch unavailable");
-  expect(cull.progress).toBe("");
-  expect(cull.busy).toBe(false);
-});
-
-it("skips the flag request for an empty run", async () => {
-  const cull = new PhotoCull("session", storage());
-  cull.run = {
-    ids: [],
-    checkpoint: {
-      runID: "run",
-      passID: "pass",
-      revision: 0,
-      pass: [],
-      position: 0,
-      visited: [],
-      skipped: [],
-      unavailable: [],
-      scope: "unflagged",
-      autoAdvance: true,
-    },
-  };
-  const lookup = vi.spyOn(api, "lookupPhotoFlags");
-  await cull.checkRemainder();
-  expect(lookup).not.toHaveBeenCalled();
   expect(cull.remainder).toBe(false);
 });

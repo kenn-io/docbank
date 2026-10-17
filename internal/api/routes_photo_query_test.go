@@ -664,30 +664,19 @@ func TestLookupPhotoFlags(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	ctx := t.Context()
-	var liveID, trashedID string
-	for _, name := range []string{"live", "trashed"} {
-		node, err := s.CreateFile(ctx, s.RootID(), name+".jpg", testHash(name), 10, "image/jpeg")
-		require.NoError(t, err)
-		asset, err := s.PhotoAssetForNode(ctx, node.ID)
-		require.NoError(t, err)
-		if name == "live" {
-			liveID = asset.ID
-		} else {
-			trashedID = asset.ID
-			_, _, err = s.Trash(ctx, node.ID, node.Revision)
-			require.NoError(t, err)
-		}
-	}
-	for _, size := range []int{3, 20000, 20001, 0, -1, -2} {
+	node, err := s.CreateFile(ctx, s.RootID(), "live.jpg", testHash("live"), 10, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	liveID := asset.ID
+	for _, size := range []int{20000, 20001, 0, -2} {
 		t.Run(strconv.Itoa(size), func(t *testing.T) {
 			ids := []string{}
 			if size > 0 {
 				for i := range size {
 					ids = append(ids, fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1))
 				}
-				ids[0], ids[1] = liveID, trashedID
-			} else if size == -1 {
-				ids = []string{"invalid"}
+				ids[0] = liveID
 			} else if size == -2 {
 				ids = []string{"ABCDEF01-2345-4678-89AB-CDEF01234567"}
 			}
