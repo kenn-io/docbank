@@ -417,7 +417,7 @@ it("allows another decision after reconciling its own flag and rating with auto-
   const target = preparedPhoto(1);
   const edit = vi.spyOn(api, "editPhotoAuthored").mockImplementation(async (request) => {
     const before = { ...target, values: { ...target.values } };
-    target.values = { ...target.values, ...request.patch };
+    target.values = { ...target.values, ...request.patch } as api.PhotoAuthored;
     target.revision++;
     return { receipt_id: "decision", before: [before], after: [target] };
   });
@@ -719,10 +719,9 @@ it("keeps shown-file narrowing on retry and resets it for a fresh decision", asy
       "Photo 1.jpg: 4 stars",
     ),
   );
-  expect(edit.mock.calls[2]![0].targets.map((target) => target.file_id)).toEqual([
-    "raw-1",
-    "file-1",
-  ]);
+  expect(
+    (edit.mock.calls[2]![0].targets as api.PhotoAuthoredEditTarget[]).map((target) => target.file_id),
+  ).toEqual(["raw-1", "file-1"]);
 });
 
 it("checks saved progress before Undo when the saved run is unchanged", async () => {
