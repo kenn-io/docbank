@@ -452,7 +452,10 @@ var codeToTypedErr = map[string]error{
 
 func decodeError(resp *http.Response) error {
 	var e api.Error
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return &responseError{status: resp.StatusCode, err: fmt.Errorf("reading daemon error response: %w", err)}
+	}
 	if err := json.Unmarshal(body, &e); err != nil || e.Status == 0 {
 		return &responseError{status: resp.StatusCode,
 			err: fmt.Errorf("daemon returned %s: %s", resp.Status, string(body))}

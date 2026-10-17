@@ -325,6 +325,44 @@ func TestPhotoBackupRoundTrip(t *testing.T) {
 	restored, err := store.Open(filepath.Join(target, "docbank.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
+	token, _, err = restored.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+	ctx = store.WithPhotoHiddenToken(ctx, token)
+	restoredAsset, err := restored.PhotoAssetByID(ctx, asset.ID)
+	require.NoError(t, err)
+	assert.NotNil(t, restoredAsset.ExcludedAt)
+	assert.NotNil(t, restoredAsset.HiddenAt)
+	restoredNode, err := restored.NodeByID(ctx, node.ID)
+	require.NoError(t, err)
+	assert.NotNil(t, restoredNode.TrashedAt)
+	settings, err := restored.PhotoSettings(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, settings.Preference)
+	assert.Equal(t, "image", *settings.Preference)
+	restoredAlbum, err := restored.PhotoSet(ctx, album.ID, "")
+	require.NoError(t, err)
+	assert.Equal(t, "Recovered album", restoredAlbum.Name)
+	assert.Equal(t, int64(1), restoredAlbum.MemberCount)
+	restoredCheckout, err := restored.PhotoCheckout(ctx, checkout.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "unbound", restoredCheckout.State)
+	assert.Empty(t, restoredCheckout.Destination)
+	exported := string(exportMetadata(t, restored))
+	assert.Contains(t, exported, `"type":"photo_change_receipt"`)
+	var foundMember bool
+	for line := range strings.SplitSeq(exported, "\n") {
+		var member struct {
+			SetID   string `json:"set_id"`
+			AssetID string `json:"asset_id"`
+		}
+		if strings.Contains(line, `"type":"photo_set_member"`) {
+			require.NoError(t, json.Unmarshal([]byte(line), &member))
+			assert.Equal(t, album.ID, member.SetID)
+			assert.Equal(t, asset.ID, member.AssetID)
+			foundMember = true
+		}
+	}
+	assert.True(t, foundMember, "restored album contains the asset")
 }
 
 func TestJSONLLooseSnapshotVerifyAndRestore(t *testing.T) {
@@ -3070,6 +3108,14 @@ func TestSnapshotCoverageRestoreProofAndHistoricalManifest(t *testing.T) {
 	stats, err := backupapp.ParseStats(manifest.Stats)
 	require.NoError(t, err)
 	require.NotNil(t, stats.Coverage)
+	stats.Coverage.Excluded = []string{"historical_exclusion"}
+	manifest.Stats, err = json.Marshal(stats)
+	require.NoError(t, err)
+	recordedID, err := repo.WriteManifest(manifest)
+	require.NoError(t, err)
+	recorded, err := backupapp.Restore(t.Context(), repo, "coverage", backup.RestoreOptions{SnapshotID: recordedID, TargetDir: filepath.Join(t.TempDir(), "recorded")})
+	require.NoError(t, err)
+	assert.FileExists(t, recorded.DBPath)
 	stats.Coverage.Version = 2
 	manifest.Stats, err = json.Marshal(stats)
 	require.NoError(t, err)
@@ -3190,4 +3236,32 @@ func TestStatsCoverageV1EncodingGolden(t *testing.T) {
 func TestCheckManifestNamesUnsupportedCoverage(t *testing.T) {
 	manifest := &backup.Manifest{Stats: jsontext.Value(`{"coverage":{"version":2,"included":["future"]}}`)}
 	assert.Equal(t, []string{"backupapp: unsupported backup coverage version 2; upgrade Docbank to verify this snapshot"}, backupapp.New("test").CheckManifest(manifest))
+}
+
+func TestVerifyReportsUnsupportedCoverage(t *testing.T) {
+	fixture := newArchiveFixture(t)
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	manifest, err := backupapp.Create(t.Context(), repo, "coverage", fixture.metadata, fixture.blobs, backup.CreateOptions{})
+	require.NoError(t, err)
+	supportedID := manifest.SnapshotID
+	manifest.Stats = jsontext.Value(`{"coverage":{"version":2,"included":["future"]}}`)
+	futureID, err := repo.WriteManifest(manifest)
+	require.NoError(t, err)
+	for _, quick := range []bool{false, true} {
+		for _, all := range []bool{false, true} {
+			opts := backup.VerifyOptions{Quick: quick, All: all, Jobs: 1}
+			if !all {
+				opts.SnapshotID = futureID
+			}
+			result, err := backupapp.Verify(t.Context(), repo, "test", opts)
+			require.NoError(t, err)
+			if all {
+				assert.ElementsMatch(t, []string{supportedID, futureID}, result.Snapshots)
+			} else {
+				assert.Equal(t, []string{futureID}, result.Snapshots)
+			}
+			assert.Equal(t, []backup.Problem{{SnapshotID: futureID, Detail: "backupapp: unsupported backup coverage version 2; upgrade Docbank to verify this snapshot"}}, result.Problems)
+		}
+	}
 }

@@ -1,8 +1,12 @@
 package daemonconn
 
 import (
+	"bytes"
 	"context"
+	"encoding/json/v2"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -136,5 +140,23 @@ func TestRequestOutcomeClassifiesOnlyFailureBeforeResponseAsTransport(t *testing
 		require.Error(t, err)
 		assert.False(t, IsTransportError(err))
 		assert.True(t, IsResponseDecodeError(err))
+	})
+	t.Run("large backup cleanup report", func(t *testing.T) {
+		removed := make([]string, 22000)
+		for i := range removed {
+			removed[i] = fmt.Sprintf("%064x.pack", i)
+		}
+		report := api.BackupPruneReport{RemovedPacks: removed, BytesRemoved: 22000}
+		problem := api.NewError(http.StatusInternalServerError, "backup_failed", "synthetic cleanup interruption")
+		problem.BackupPrune = &report
+		body, err := json.Marshal(problem)
+		require.NoError(t, err)
+		require.Greater(t, len(body), 1<<20)
+		err = decodeError(&http.Response{StatusCode: http.StatusInternalServerError, Body: io.NopCloser(bytes.NewReader(body))})
+		var partial *BackupCleanupError
+		require.ErrorAs(t, err, &partial)
+		require.NotNil(t, partial.Prune)
+		assert.Equal(t, removed, partial.Prune.RemovedPacks)
+		assert.Equal(t, int64(22000), partial.Prune.BytesRemoved)
 	})
 }

@@ -42,14 +42,14 @@ var backupForgetCmd = &cobra.Command{
 			Repo: new(repo), SnapshotIds: args, DryRun: new(backupForgetDryRun), AllowEmpty: new(backupForgetAllowEmpty), ForceUnlock: new(backupForgetForceUnlock),
 		}})
 		if err != nil {
-			if partial, ok := errors.AsType[*daemonconn.BackupCleanupError](err); ok && partial.Forget != nil && partial.Forget.HasWork() {
-				if outputErr := writeBackupForgetReport(cmd.OutOrStdout(), *partial.Forget, backupForgetJSON); outputErr != nil {
+			if partial, ok := errors.AsType[*daemonconn.BackupCleanupError](err); ok && partial.Forget != nil {
+				if outputErr := writeBackupForgetReport(cmd.OutOrStdout(), *partial.Forget, backupForgetDryRun, backupForgetJSON); outputErr != nil {
 					return errors.Join(err, outputErr)
 				}
 			}
 			return err
 		}
-		return writeBackupForgetReport(cmd.OutOrStdout(), *report, backupForgetJSON)
+		return writeBackupForgetReport(cmd.OutOrStdout(), *report, backupForgetDryRun, backupForgetJSON)
 	},
 }
 
@@ -71,14 +71,14 @@ var backupPruneCmd = &cobra.Command{
 			Repo: new(repo), DryRun: new(backupPruneDryRun), ForceUnlock: new(backupPruneForceUnlock),
 		}})
 		if err != nil {
-			if partial, ok := errors.AsType[*daemonconn.BackupCleanupError](err); ok && partial.Prune != nil && partial.Prune.HasWork() {
-				if outputErr := writeBackupPruneReport(cmd.OutOrStdout(), *partial.Prune, backupPruneJSON); outputErr != nil {
+			if partial, ok := errors.AsType[*daemonconn.BackupCleanupError](err); ok && partial.Prune != nil {
+				if outputErr := writeBackupPruneReport(cmd.OutOrStdout(), *partial.Prune, backupPruneDryRun, backupPruneJSON); outputErr != nil {
 					return errors.Join(err, outputErr)
 				}
 			}
 			return err
 		}
-		return writeBackupPruneReport(cmd.OutOrStdout(), *report, backupPruneJSON)
+		return writeBackupPruneReport(cmd.OutOrStdout(), *report, backupPruneDryRun, backupPruneJSON)
 	},
 }
 
@@ -94,9 +94,14 @@ func init() {
 	backupPruneCmd.Flags().BoolVar(&backupPruneJSON, "json", false, "print JSON to stdout")
 }
 
-func writeBackupForgetReport(w io.Writer, report api.BackupForgetReport, asJSON bool) error {
+func writeBackupForgetReport(w io.Writer, report api.BackupForgetReport, dryRun, asJSON bool) error {
 	if asJSON {
 		return writeBackupJSON(w, report)
+	}
+	if dryRun {
+		if _, err := fmt.Fprintln(w, "dry run: nothing removed"); err != nil {
+			return fmt.Errorf("writing backup cleanup output: %w", err)
+		}
 	}
 	_, err := fmt.Fprintf(w, "selected %d snapshot(s); forgotten %d\nselected snapshots: %s\nforgotten snapshots: %s\n", len(report.Selected), len(report.Forgotten), strings.Join(report.Selected, ", "), strings.Join(report.Forgotten, ", "))
 	if err != nil {
@@ -105,9 +110,14 @@ func writeBackupForgetReport(w io.Writer, report api.BackupForgetReport, asJSON 
 	return nil
 }
 
-func writeBackupPruneReport(w io.Writer, report api.BackupPruneReport, asJSON bool) error {
+func writeBackupPruneReport(w io.Writer, report api.BackupPruneReport, dryRun, asJSON bool) error {
 	if asJSON {
 		return writeBackupJSON(w, report)
+	}
+	if dryRun {
+		if _, err := fmt.Fprintln(w, "dry run: nothing removed"); err != nil {
+			return fmt.Errorf("writing backup cleanup output: %w", err)
+		}
 	}
 	_, err := fmt.Fprintf(w, "planned %d pack removal(s), %d rewrite(s); removed %d pack(s), %d byte(s); wrote %d byte(s)\nplanned removal bytes: %d; live bytes to rewrite: %d\nplanned pack removals: %s\nplanned pack rewrites: %s\nremoved packs: %s\n", len(report.PacksToRemove), len(report.PacksToRepack), len(report.RemovedPacks), report.BytesRemoved, report.BytesWritten, report.BytesToRemove, report.LiveBytesToRewrite, strings.Join(report.PacksToRemove, ", "), strings.Join(report.PacksToRepack, ", "), strings.Join(report.RemovedPacks, ", "))
 	if err != nil {

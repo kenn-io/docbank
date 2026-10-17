@@ -259,7 +259,7 @@ func (r *BackupRepository) Verify(
 	if opts.All && opts.SnapshotID != "" {
 		return BackupVerifyReport{}, errors.New("docbank backup snapshot ID and all are mutually exclusive")
 	}
-	result, err := backup.Verify(ctx, r.repo, backupapp.New(version.Version), backup.VerifyOptions{
+	result, err := backupapp.Verify(ctx, r.repo, version.Version, backup.VerifyOptions{
 		SnapshotID: opts.SnapshotID, All: opts.All, Quick: opts.Quick, Jobs: opts.Jobs,
 		ForceUnlock: opts.ForceUnlock, Progress: backupProgressCallback(opts.Progress),
 	})

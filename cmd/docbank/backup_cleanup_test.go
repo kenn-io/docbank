@@ -108,3 +108,30 @@ func TestBackupCleanupCLIPreservesPartialErrorReports(t *testing.T) {
 		}
 	}
 }
+
+func TestBackupCleanupDryRunReports(t *testing.T) {
+	for _, asJSON := range []bool{false, true} {
+		forget := api.BackupForgetReport{Selected: []string{"snapshot-a"}, Forgotten: []string{}}
+		prune := api.BackupPruneReport{PacksToRemove: []string{"pack-a"}, PacksToRepack: []string{}, RemovedPacks: []string{}}
+		var out bytes.Buffer
+		require.NoError(t, writeBackupForgetReport(&out, forget, true, asJSON))
+		if asJSON {
+			var got api.BackupForgetReport
+			require.NoError(t, json.Unmarshal(out.Bytes(), &got))
+			assert.Equal(t, forget, got)
+		} else {
+			assert.True(t, strings.HasPrefix(out.String(), "dry run: nothing removed\n"), out.String())
+			assert.Contains(t, out.String(), "selected snapshots: snapshot-a\n")
+		}
+		out.Reset()
+		require.NoError(t, writeBackupPruneReport(&out, prune, true, asJSON))
+		if asJSON {
+			var got api.BackupPruneReport
+			require.NoError(t, json.Unmarshal(out.Bytes(), &got))
+			assert.Equal(t, prune, got)
+		} else {
+			assert.True(t, strings.HasPrefix(out.String(), "dry run: nothing removed\n"), out.String())
+			assert.Contains(t, out.String(), "planned pack removals: pack-a\n")
+		}
+	}
+}

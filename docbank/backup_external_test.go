@@ -246,6 +246,12 @@ func TestEmbeddedBackup(t *testing.T) {
 		require.Equal(t, snapshot.BlobBytes, snapshots[idx].BlobBytes)
 		require.Nil(t, snapshots[idx].Coverage)
 		require.Contains(t, snapshots[idx].CoverageWarning, "version 2")
+		for _, quick := range []bool{false, true} {
+			verified, err := repository.Verify(t.Context(), docbank.BackupVerifyOptions{SnapshotID: futureID, Quick: quick})
+			require.NoError(t, err)
+			require.Equal(t, []string{futureID}, verified.Snapshots)
+			require.Equal(t, []docbank.BackupVerifyProblem{{SnapshotID: futureID, Detail: "backupapp: unsupported backup coverage version 2; upgrade Docbank to verify this snapshot"}}, verified.Problems)
+		}
 	})
 }
 

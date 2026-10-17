@@ -116,7 +116,7 @@ format and parent snapshot ID.
 
 ## What each snapshot contains
 
-Create and list output include recorded coverage: photo assets and files, distinct verified photo bytes, albums and members, hidden and trashed photos, checkout definitions and entries, and retained change receipts. JSON summaries expose these under `coverage`, with `version: 1`, `included`, and `excluded`; top-level `blob_bytes` records all verified blob bytes. List shows one row per snapshot and one shared exclusions line. Older snapshots show `unrecorded` in the coverage columns and omit the JSON field. Snapshots with a newer coverage version show `unsupported` and an ID-specific warning; JSON includes `coverage_warning` and omits `coverage`. Their base statistics and IDs remain available for cleanup. Restore recounts version-1 coverage before publication and rejects unsupported versions with upgrade guidance. Verification checks manifest consistency and physical content, and reports unsupported coverage versions; it does not recount photo coverage.
+Create and list output include recorded coverage: photo assets and files, distinct verified photo bytes, albums and members, hidden and trashed photos, checkout definitions and entries, and retained change receipts. JSON summaries expose these under `coverage`, with `version: 1`, `included`, and `excluded`; top-level `blob_bytes` records all verified blob bytes. List shows one row per snapshot and one shared exclusions line. Older snapshots show `unrecorded` in the coverage columns and omit the JSON field. Snapshots with a newer coverage version show `unsupported` and an ID-specific warning; JSON includes `coverage_warning` and omits `coverage`. Their base statistics and IDs remain available for cleanup. Restore recounts version-1 coverage before publication, preserves the recorded exclusions, and rejects unsupported versions with upgrade guidance. Verification checks manifest consistency and physical content, and reports unsupported coverage versions; it does not recount photo coverage.
 
 Upgrade Docbank before restoring snapshots that record coverage version 1 with a binary predating that coverage format. Older binaries refuse publication with a statistics mismatch; the manifest’s physical reader version does not express this application requirement.
 
@@ -129,7 +129,7 @@ docbank backup forget SNAPSHOT [SNAPSHOT...] [--repo DIR] [--dry-run] [--allow-e
 docbank backup prune [--repo DIR] [--dry-run] [--force-unlock] [--json]
 ```
 
-Use exact IDs from `backup list`; unknown or misspelled IDs return 404. Forget refuses the last recovery point unless you pass `--allow-empty`, and refuses a parent required by a retained incremental snapshot. Forget removes manifests; prune separately removes unused packs and rewrites packs with less than half their encoded content still live. Dry runs take the same repository lock and report the planned work.
+Use exact IDs from `backup list`; unknown or misspelled IDs return 404. Forget refuses the last recovery point unless you pass `--allow-empty`, and refuses a parent required by a retained incremental snapshot. Forget removes manifests; prune separately removes unused packs and rewrites packs with less than half their encoded content still live. Dry runs take the same repository lock and report the planned work. Text output starts with `dry run: nothing removed`.
 
 These commands require the master daemon credential. Browser sessions cannot run them. Cleanup errors with selected, planned, or completed work include partial reports in the API problem's `backup_forget` or `backup_prune` field. The CLI prints the report in text or JSON before returning the cleanup error and exiting nonzero. Text lists selected and forgotten snapshot IDs, planned pack removals and rewrites, and removed pack names. Items absent from completed lists remain pending or unconfirmed; bytes written alone do not prove a rewrite completed. Planned bytes are not net savings, and cleanup does not securely erase content.
 
@@ -166,7 +166,7 @@ Content shared by several selected snapshots is read only once during one
 verification pass. Every finding is reported with the affected snapshot, and
 the command exits non-zero if any problems were found.
 
-`--quick` checks manifests, indexes, pack structure, metadata, and logical
+`--quick` checks manifest statistics and coverage versions, indexes, pack structure, metadata, and logical
 references without reading document content. Its `bytes_read` therefore still
 includes metadata bytes. It is useful after each capture, but it does not prove
 the storage medium still holds every content byte. Run full verification

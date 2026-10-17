@@ -369,7 +369,7 @@ func verifyBackupRepository(
 		return BackupVerifyReport{}, NewError(http.StatusUnprocessableEntity, "validation",
 			"snapshot_id and all are mutually exclusive")
 	}
-	result, err := backup.Verify(ctx, repo, backupapp.New(version.Version), backup.VerifyOptions{
+	result, err := backupapp.Verify(ctx, repo, version.Version, backup.VerifyOptions{
 		SnapshotID: in.SnapshotID, All: in.All, Quick: in.Quick, Jobs: in.Jobs,
 		ForceUnlock: in.ForceUnlock, Progress: progress,
 	})
