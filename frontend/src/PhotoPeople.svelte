@@ -225,6 +225,15 @@
       writer?.abort();
     };
   });
+  $effect(() => {
+    void faces.hiddenAccess?.scope;
+    controller?.abort();
+    people = [];
+    query = "";
+    error = "";
+    searching = false;
+    closeChooser();
+  });
   async function search(faceID: string, value: string) {
     activeFace = faceID;
     query = value;

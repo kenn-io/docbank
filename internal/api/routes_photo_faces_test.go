@@ -183,6 +183,12 @@ func TestPhotoFaceBrowserDecisions(t *testing.T) {
 	}
 	response, body = do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: "retract", FaceID: faceID, Revision: 2})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	response, body = get(t, ts, "/api/v1/people?query=Grace", headers)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var cleared api.PersonPage
+	require.NoError(t, json.Unmarshal([]byte(body), &cleared))
+	require.Len(t, cleared.Items, 1, "clearing the name keeps the operator person available")
+	require.Equal(t, "Grace", cleared.Items[0].DisplayName)
 	response, body = do(t, ts, http.MethodPost, decisions, headers, api.PhotoFaceDecisionRequest{Action: "dismiss", FaceID: faceID, Revision: 3})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 

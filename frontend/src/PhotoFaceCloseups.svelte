@@ -46,7 +46,7 @@
 {#if tiles.length || faces.error}<section aria-label="Face closeups" class="closeups">
     {#each tiles as tile (tile.id)}<figure>
         <div class="crop">
-          {#if source}<img src={source.url} alt={tile.label} style={style(tile.box)} />{:else}<span
+          {#if source}<img src={source.url} alt="" style={style(tile.box)} />{:else}<span
               >No preview</span
             >{/if}
         </div>

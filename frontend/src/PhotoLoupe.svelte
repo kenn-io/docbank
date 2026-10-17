@@ -306,7 +306,7 @@
           onready={(ready) => (imageReady = ready)}
           onview={(value) => (view = value)}
           rotation={photo?.rotation ?? 0}
-          faces={faces.ordered.map((face) => ({
+          faces={(faces.version === photo?.content_version_id ? faces.ordered : []).map((face) => ({
             id: face.face_id,
             box: face.box,
             label: faces.person(face)

@@ -378,7 +378,7 @@ func TestPeopleByDisplayNameFiltersAllHiddenEvidenceBeforePaging(t *testing.T) {
 			require.NoError(t, err)
 			people, err := s.PeopleByDisplayName(ctx, p.DisplayName, "", "", 10, true)
 			require.NoError(t, err)
-			if version == hidden.CurrentVersionID {
+			if version == hidden.CurrentVersionID && action == "assert" {
 				require.Empty(t, people)
 			} else {
 				require.Len(t, people, 1)
@@ -396,19 +396,13 @@ func TestPeopleByDisplayNameFiltersAllHiddenEvidenceBeforePaging(t *testing.T) {
 	require.NoError(t, err)
 	people, err := s.PeopleByDisplayName(ctx, "Alex Candidate", "", "", 10, true)
 	require.NoError(t, err)
-	require.Empty(t, people)
+	require.Len(t, people, 1)
 	free, err := s.CreatePerson(ctx, "Alex Free", "operator")
 	require.NoError(t, err)
-	page, err := s.PeopleByDisplayName(ctx, "Alex", "", "", 1, true)
+	page, err := s.PeopleByDisplayName(ctx, "Alex Free", "", "", 1, true)
 	require.NoError(t, err)
 	require.Len(t, page, 1)
 	require.Equal(t, free.PersonID, page[0].PersonID)
-	next, err := s.PeopleByDisplayName(ctx, "Alex", page[0].DisplayNameFolded, page[0].PersonID, 10, true)
-	require.NoError(t, err)
-	require.Len(t, next, 3)
-	for _, p := range next {
-		require.NotEqual(t, candidate.PersonID, p.PersonID)
-	}
 	hiddenNode, visibleNode := hidden, visible
 	retainedHidden, err := s.CreatePerson(ctx, "Hidden Ada", "operator")
 	require.NoError(t, err)
@@ -535,14 +529,70 @@ func TestPeopleByDisplayNameOmitsSensitiveOnlyActors(t *testing.T) {
 	}
 }
 
+func TestPeopleByDisplayNameRequiresPublishedEvidence(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	version := seedDocumentPeopleEvent(t, s, "pending.txt", "b1", []document.DocumentEventActorV1{{ActorKey: "email:pending@example.test", Address: "pending@example.test", DisplayName: "Pending Person", Claim: "Pending Person", Role: "author", Sensitive: true}})
+	input, err := s.PrepareDocumentPeopleInputs(ctx, version.ID)
+	require.NoError(t, err)
+	global, err := s.PeopleByDisplayName(ctx, "Pending", "", "", 10, false)
+	require.NoError(t, err)
+	require.Len(t, global, 1)
+	for _, stage := range []string{"pending", "failed"} {
+		if stage == "failed" {
+			require.NoError(t, s.MarkDocumentPeopleFailed(ctx, input, "derivation_failed"))
+		}
+		t.Run(stage, func(t *testing.T) {
+			browser, err := s.PeopleByDisplayName(ctx, "Pending", "", "", 10, true)
+			require.NoError(t, err)
+			require.Empty(t, browser, "derived people must wait for visible publication")
+		})
+	}
+}
+
+func TestPeopleByDisplayNameSensitiveCandidateAcceptance(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	version := seedDocumentPeopleEvent(t, s, "candidate.txt", "b2", []document.DocumentEventActorV1{{ActorKey: "name_alias:alex sensitive", DisplayName: "Alex Sensitive", Claim: "Alex Sensitive", Role: "author", Sensitive: true}})
+	_, err := s.PrepareDocumentPeopleInputs(ctx, version.ID)
+	require.NoError(t, err)
+	candidates, _, err := s.PersonCandidates(ctx, "open", 10, 0)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	decided, err := s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: candidates[0].CandidateID, Action: "new_person", ExpectedRevision: candidates[0].Revision})
+	require.NoError(t, err)
+	assertions, err := s.DocumentPersonAssertions(ctx, version.ID)
+	require.NoError(t, err)
+	require.Len(t, assertions, 1)
+	require.Equal(t, "author", assertions[0].Role)
+	browser, err := s.PeopleByDisplayName(ctx, "Alex Sensitive", "", "", 10, true)
+	require.NoError(t, err)
+	require.Empty(t, browser)
+	visible := browsePhotoNode(t, s, "visible.jpg", fakeHash("candidate-visible"), "image/jpeg")
+	_, err = s.MarkPersonInPhoto(ctx, visible.CurrentVersionID, decided.DecidedPersonID)
+	require.NoError(t, err)
+	browser, err = s.PeopleByDisplayName(ctx, "Alex Sensitive", "", "", 10, true)
+	require.NoError(t, err)
+	require.Len(t, browser, 1)
+	require.Equal(t, decided.DecidedPersonID, browser[0].PersonID)
+}
+
 func TestPeopleByDisplayNameMatchesWordPrefixes(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
-	for _, name := range []string{"John Smith", "Smith Jones", "Alice Smith", "Alice Blacksmith", "Alice Smith%", "Grace Hopper", "GRACE Murray Hopper", "Straße", "STRASSE"} {
+	for _, name := range []string{"John Smith", "Smith Jones", "Alice Smith", "Alice Blacksmith", "Alice Smith%", "Grace Hopper", "GRACE Murray Hopper", "Straße", "STRASSE", "Mary-Jane", "O'Brien", "Mary\tJane", "Mary\nJane", "Alice Mary-Jane", "John O'Brien"} {
 		_, err := s.CreatePerson(ctx, name, "operator")
 		require.NoError(t, err)
 	}
+	for query, count := range map[string]int{"Jane": 4, "Brien": 2, "Mary-J": 2, "O'Brien": 2} {
+		matches, err := s.PeopleByDisplayName(ctx, query, "", "", 10, true)
+		require.NoError(t, err)
+		require.Len(t, matches, count)
+	}
+
 	page, err := s.PeopleByDisplayName(ctx, "Smith", "", "", 1, false)
 	require.NoError(t, err)
 	require.Equal(t, "Alice Smith", page[0].DisplayName)

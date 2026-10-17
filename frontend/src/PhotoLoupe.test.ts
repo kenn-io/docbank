@@ -8,7 +8,7 @@ import PhotoLoupeImage from "./PhotoLoupeImage.svelte";
 import { Photos } from "./photos.svelte.js";
 import type { PhotoPreviewCache } from "./photoPreviewCache.js";
 import * as api from "./generated/docbank.js";
-import { photo, mapPhoto } from "./photo-test-fixtures.js";
+import { photo, mapPhoto, photoFace } from "./photo-test-fixtures.js";
 
 afterEach(() => {
   cleanup();
@@ -806,4 +806,20 @@ it("scales region markers and face labels with the image", async () => {
   expect(component.container.querySelector<HTMLElement>(".pan")!.style.transform).toContain(
     "scale(8)",
   );
+});
+
+it("hides face boxes while a different photo version is displayed", async () => {
+  const { props } = setup();
+  props.faces.faces = [photoFace()];
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  const view = render(PhotoLoupe, { ...props, items: [] });
+  await screen.findByText("Fit preview");
+  const image = await screen.findByRole("img", { name: "Photo 5.jpg" });
+  Object.defineProperty(image, "naturalWidth", { value: 1000 });
+  Object.defineProperty(image, "naturalHeight", { value: 800 });
+  await fireEvent.load(image);
+  await waitFor(() => expect(view.container.querySelectorAll(".face-box").length).toBe(1));
+  await view.rerender({ ...props, photo: { ...props.photo, content_version_id: "next-version" } });
+  expect(view.container.querySelectorAll(".face-box")).toHaveLength(0);
 });

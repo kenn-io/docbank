@@ -224,22 +224,19 @@ var peopleByDisplayNameSQL = `SELECT person_id,display_name,display_name_folded,
 			WHERE dp.person_id=i.person_id AND dp.actor_key=i.kind || ':' || i.value_normalized
 			AND dp.sensitive=0 AND (?=0 OR ` + personVersionVisibleSQL("dp.content_version_id") + `)))
 		ORDER BY CASE i.kind WHEN 'email' THEN 0 WHEN 'phone' THEN 1 ELSE 2 END,i.value_normalized,i.identity_id LIMIT 1),'')
-	FROM persons WHERE state<>'retired' AND (display_name_folded LIKE ? ESCAPE '\' OR display_name_folded LIKE ? ESCAPE '\')
-	AND (?=0 OR (NOT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=persons.person_id)
-		AND NOT EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=persons.person_id)
-		AND NOT EXISTS(SELECT 1 FROM person_match_candidates c JOIN person_candidate_faces e ON e.candidate_id=c.candidate_id WHERE c.suggested_person_id=persons.person_id)) OR EXISTS(
+	FROM persons WHERE state<>'retired' AND (display_name_folded LIKE ? ESCAPE '\' OR display_name_folded LIKE ? ESCAPE '\' OR display_name_folded LIKE ? ESCAPE '\' OR display_name_folded LIKE ? ESCAPE '\')
+	AND (?=0 OR (origin='operator' AND NOT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=persons.person_id AND (a.action='assert' OR a.role<>'depicted'))
+		AND NOT EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=persons.person_id)) OR EXISTS(
 		SELECT 1 FROM person_document_assertions a WHERE a.person_id=persons.person_id
-		AND (?=0 OR ` + personVersionVisibleSQL("a.content_version_id") + `)) OR EXISTS(
+		AND a.role='depicted' AND a.action='assert' AND (?=0 OR ` + personVersionVisibleSQL("a.content_version_id") + `)) OR EXISTS(
 		SELECT 1 FROM document_people p WHERE p.person_id=persons.person_id
-		AND p.sensitive=0 AND (?=0 OR ` + personVersionVisibleSQL("p.content_version_id") + `)) OR EXISTS(
-		SELECT 1 FROM person_match_candidates c WHERE c.suggested_person_id=persons.person_id
-		AND EXISTS(SELECT 1 FROM person_candidate_faces e WHERE e.candidate_id=c.candidate_id)
-		AND (?=0 OR NOT EXISTS(SELECT 1 FROM person_candidate_faces e WHERE e.candidate_id=c.candidate_id AND NOT (` + personVersionVisibleSQL("e.content_version_id") + `)))))
+		AND p.sensitive=0 AND (?=0 OR ` + personVersionVisibleSQL("p.content_version_id") + `)))
 	AND (?='' OR display_name_folded>? OR (display_name_folded=? AND person_id>?))
 	ORDER BY display_name_folded,person_id LIMIT ?`
 
 type PersonSearchResult struct {
 	Person
+
 	IdentityLabel string
 }
 
@@ -249,31 +246,33 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 		(afterName == "") != (afterID == "") {
 		return nil, ErrInvalidPerson
 	}
-	hideLocked := false
-	if visibleOnly {
-		state, err := s.PhotoHiddenState(ctx)
-		if err != nil {
-			return nil, err
-		}
-		hideLocked = state.ExpiresAt == nil
-	}
-	prefix := document.FoldPersonName(query)
-	rows, err := s.db.QueryContext(ctx, peopleByDisplayNameSQL, visibleOnly, hideLocked, escapePersonLike(prefix)+"%", "% "+escapePersonLike(prefix)+"%", visibleOnly, hideLocked, hideLocked, hideLocked,
-		afterName, afterName, afterName, afterID, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
 	people := []PersonSearchResult{}
-	for rows.Next() {
-		var person PersonSearchResult
-		if err := rows.Scan(&person.PersonID, &person.DisplayName, &person.DisplayNameFolded, &person.Origin,
-			&person.State, &person.Revision, &person.CreatedAt, &person.UpdatedAt, &person.IdentityLabel); err != nil {
-			return nil, err
+	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+		hideLocked := false
+		if visibleOnly {
+			_, err := s.hiddenSession(ctx, tx)
+			if err != nil && !errors.Is(err, ErrHiddenLocked) {
+				return err
+			}
+			hideLocked = errors.Is(err, ErrHiddenLocked)
 		}
-		people = append(people, person)
-	}
-	return people, rows.Err()
+		prefix := escapePersonLike(document.FoldPersonName(query))
+		rows, err := tx.QueryContext(ctx, peopleByDisplayNameSQL, visibleOnly, hideLocked, prefix+"%", "% "+prefix+"%", "%-"+prefix+"%", "%'"+prefix+"%", visibleOnly, hideLocked, hideLocked, afterName, afterName, afterName, afterID, limit)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var person PersonSearchResult
+			if err := rows.Scan(&person.PersonID, &person.DisplayName, &person.DisplayNameFolded, &person.Origin,
+				&person.State, &person.Revision, &person.CreatedAt, &person.UpdatedAt, &person.IdentityLabel); err != nil {
+				return err
+			}
+			people = append(people, person)
+		}
+		return rows.Err()
+	})
+	return people, err
 }
 
 func escapePersonLike(value string) string {

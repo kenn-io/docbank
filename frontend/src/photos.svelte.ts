@@ -431,13 +431,7 @@ export class Photos {
   ) {
     this.projection = projection;
     this.hiddenAccess = hiddenAccess;
-    this.faceEditor = new PhotoFaces(
-      session,
-      onauthfailure,
-      hidden,
-      undefined,
-      hidden ? hiddenAccess : undefined,
-    );
+    this.faceEditor = new PhotoFaces(session, onauthfailure, hidden, undefined, hiddenAccess);
     this.authored = new PhotoAuthoredEditor(
       session,
       (cause) => {
@@ -1670,20 +1664,4 @@ export class Photos {
     this.facetsController.abort();
     this.rejectsController.abort();
   }
-}
-
-// A dependent source workspace refreshes itself while preserving its scroll position.
-export async function refreshPersonPhotoViews(source: Photos, views: Iterable<Photos | undefined>) {
-  await Promise.all(
-    [...new Set(views)]
-      .filter(
-        (photos): photos is Photos =>
-          !!photos &&
-          photos !== source &&
-          photos.hidden === source.hidden &&
-          (photos.started || photos.loading) &&
-          photos.dependsOnPeople,
-      )
-      .map((photos) => photos.refresh()),
-  );
 }

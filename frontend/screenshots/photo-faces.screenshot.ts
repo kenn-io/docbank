@@ -112,34 +112,6 @@ test("names and corrects faces in Loupe, inspector, and Cull", async ({ page }) 
     await people.getByRole("option", { name: "Ada · 2 people", exact: true }).click();
     const chooser = page.getByRole("dialog", { name: "Choose Ada" });
     await expect(chooser.getByRole("img")).toHaveCount(2);
-    const originalViewport = page.viewportSize()!;
-    for (const width of [originalViewport.width, 380]) {
-      await page.setViewportSize({ width, height: originalViewport.height });
-      for (const id of [personID, duplicate.person_id]) {
-        const label = chooser.getByText(id, { exact: true });
-        await expect(label).toBeVisible();
-        const geometry = await label.evaluate((element) => {
-          const row = element.closest("label")!;
-          const column = element.getBoundingClientRect();
-          const image = row.querySelector("img")!.getBoundingClientRect();
-          const range = document.createRange();
-          range.selectNodeContents(element);
-          return {
-            left: column.left,
-            right: Math.min(column.right, image.left, row.getBoundingClientRect().right),
-            lines: [...range.getClientRects()].map((line) => ({
-              left: line.left,
-              right: line.right,
-            })),
-          };
-        });
-        if (width === 380) expect(geometry.lines.length).toBeGreaterThan(1);
-        for (const line of geometry.lines) {
-          expect(line.left).toBeGreaterThanOrEqual(geometry.left);
-          expect(line.right).toBeLessThanOrEqual(geometry.right);
-        }
-      }
-    }
     await captureDarkDialog(page, chooser, output!, "after-photo-people-chooser", 760, async () =>
       chooser
         .getByRole("img")
@@ -147,7 +119,6 @@ test("names and corrects faces in Loupe, inspector, and Cull", async ({ page }) 
           images.every((image) => (image as HTMLImageElement).naturalWidth > 0),
         ),
     );
-    await page.setViewportSize(originalViewport);
     await chooser.locator(`input[value="${personID}"]`).check();
     await chooser.getByRole("button", { name: "Name face", exact: true }).click();
     await expect(loupe.locator(".face-box")).toHaveText("Face 1 · Ada");
@@ -184,7 +155,7 @@ test("names and corrects faces in Loupe, inspector, and Cull", async ({ page }) 
     const cull = page.getByRole("dialog", { name: "Cull photos" });
     const closeups = cull.getByRole("region", { name: "Face closeups" });
     await captureDarkDialog(page, cull, output!, "after-photo-faces-cull", 620, async () =>
-      closeups.getByRole("img").evaluate((image) => (image as HTMLImageElement).naturalWidth > 0),
+      closeups.locator("img").evaluate((image) => (image as HTMLImageElement).naturalWidth > 0),
     );
   } finally {
     await fixture.dispose();

@@ -18,10 +18,7 @@ it("keeps captions without a matching preview and reuses image nodes when names 
     photoFace({ face_id: "dismissed", dismissed: true }),
   ];
   faces.people = [{ person_id: "person-a", display_name: "Ada", state: "curated" }];
-  faces.assertions = [
-    photoPersonAssertion(),
-    photoPersonAssertion({ assertion_id: "mark", photo_mark: true }),
-  ];
+  faces.assertions = [photoPersonAssertion({ photo_mark: true })];
   const selected = { ...photo(1), content_version_id: "version-a", rotation: 90 as const };
   const fit = { url: "blob:fit", content_version_id: "version-b", width: 1000, height: 800 };
   const component = render(PhotoFaceCloseups, { photo: selected, faces, fit });
@@ -32,15 +29,18 @@ it("keeps captions without a matching preview and reuses image nodes when names 
     faces,
     fit: { ...fit, content_version_id: "version-a" },
   });
-  const images = screen.getAllByRole("img");
-  expect(images.map((img) => img.getAttribute("alt"))).toEqual(["Ada", "Face 1", "Face 2 · Ada"]);
-  expect(images.every((img) => img.getAttribute("src") === "blob:fit")).toBe(true);
+  expect(
+    [...component.container.querySelectorAll("figcaption")].map((caption) => caption.textContent),
+  ).toEqual(["Ada", "Face 1", "Face 2 · Ada"]);
+  const images = component.container.querySelectorAll("img");
+  expect([...images].map((img) => img.getAttribute("alt"))).toEqual(["", "", ""]);
+  expect([...images].every((img) => img.getAttribute("src") === "blob:fit")).toBe(true);
   faces.people = faces.people.map((row) => ({ ...row, display_name: "Grace" }));
   await component.rerender({
     photo: selected,
     faces,
     fit: { ...fit, content_version_id: "version-a" },
   });
-  expect(screen.getAllByRole("img")[2]).toBe(images[2]);
-  expect(images[2]!.getAttribute("alt")).toBe("Face 2 · Grace");
+  expect(component.container.querySelectorAll("img")[2]).toBe(images[2]);
+  expect(screen.getByText("Face 2 · Grace")).toBeTruthy();
 });

@@ -1,6 +1,5 @@
 <script lang="ts">
   import { photoSearchSort } from "./photoSearch.js";
-  import { refreshPersonPhotoViews } from "./photos.svelte.js";
   import * as generated from "./generated/docbank.js";
   import { onMount, tick, untrack } from "svelte";
   import ActivityIcon from "@lucide/svelte/icons/activity";
@@ -313,6 +312,7 @@
     window.addEventListener("pageshow", resume);
     if (document.visibilityState === "hidden") untrack(leave);
     return () => {
+      access.dispose();
       document.removeEventListener("visibilitychange", visibility);
       window.removeEventListener("pagehide", pagehide);
       window.removeEventListener("pageshow", resume);
@@ -480,7 +480,8 @@
     state.cache = view.cache;
     return revalidated;
   }
-  async function acceptPhotoAccess(result: generated.PhotoHiddenState) {
+  async function acceptPhotoAccess(result: generated.PhotoHiddenState, requestedAt: number) {
+    hiddenAccess?.acceptState(result, requestedAt);
     const changed = result.change_id !== photoChangeID;
     // The refreshed workspace reports an open photo that is no longer listed, so the viewer stays.
     if (photoState && changed) await invalidateLibrary(false);
@@ -639,12 +640,13 @@
       pending = true;
       controller = new AbortController();
       try {
+        const requestedAt = Date.now();
         const result = await generated.getPhotoHiddenState({
           session,
           signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]),
         });
         failures = 0;
-        if (current && !controller.signal.aborted) await acceptPhotoAccess(result);
+        if (current && !controller.signal.aborted) await acceptPhotoAccess(result, requestedAt);
       } catch (cause) {
         if (!current || controller.signal.aborted) return;
         const denied = cause instanceof APIError && (cause.status === 401 || cause.status === 403);
@@ -2313,15 +2315,6 @@
     else void loadRoot();
   }
 
-  function handleFaceDecision(source: Photos): void {
-    void refreshPersonPhotoViews(source, [
-      photoState?.photos,
-      albumPhotos,
-      mapPhotos,
-      hiddenWorkspace?.activePhotos(),
-    ]);
-  }
-
   function handlePhotoMetadataChanged(
     receipt: import("./generated/docbank.js").PhotoAuthoredReceipt,
     tags: Tag[],
@@ -3267,15 +3260,14 @@
             onloadtags={loadTagCatalog}
             onloadmoretags={() => loadTagCatalog(true)}
             onmetadatachanged={handlePhotoMetadataChanged}
-            onfacedecision={handleFaceDecision}
             shortcuts={shortcutManager}
             bind:this={hiddenWorkspace}
             onexport={requestExport}
             {photoID}
             onphotochange={changePhoto}
             onconceal={clearPhoto}
-            onstate={(result) => {
-              void acceptPhotoAccess(result).catch((cause) => {
+            onstate={(result, requestedAt) => {
+              void acceptPhotoAccess(result, requestedAt).catch((cause) => {
                 void invalidateLibrary();
                 photoAccessError = cause instanceof Error ? cause.message : String(cause);
               });
@@ -3314,7 +3306,6 @@
                   onloadtags={loadTagCatalog}
                   onloadmoretags={() => loadTagCatalog(true)}
                   onmetadatachanged={handlePhotoMetadataChanged}
-                  onfacedecision={handleFaceDecision}
                   shortcuts={shortcutManager}
                   bind:this={libraryWorkspace}
                   onexport={requestExport}
@@ -3346,7 +3337,6 @@
                 onloadtags={loadTagCatalog}
                 onloadmoretags={() => loadTagCatalog(true)}
                 onmetadatachanged={handlePhotoMetadataChanged}
-                onfacedecision={handleFaceDecision}
                 shortcuts={shortcutManager}
                 {mapMode}
                 {tiles}
@@ -3363,7 +3353,6 @@
                   onloadtags={loadTagCatalog}
                   onloadmoretags={() => loadTagCatalog(true)}
                   onmetadatachanged={handlePhotoMetadataChanged}
-                  onfacedecision={handleFaceDecision}
                   shortcuts={shortcutManager}
                   {mapMode}
                   {tiles}
@@ -3391,7 +3380,6 @@
                 onloadtags={loadTagCatalog}
                 onloadmoretags={() => loadTagCatalog(true)}
                 onmetadatachanged={handlePhotoMetadataChanged}
-                onfacedecision={handleFaceDecision}
                 shortcuts={shortcutManager}
                 uploadChannelError={uploadChannelError ||
                   (!uploadChannel ? "The verified upload channel is unavailable." : "")}

@@ -77,7 +77,6 @@
     albumID = "",
     onnavigate = () => {},
     onperson,
-    onfacedecision,
     ontrashed,
     onhidden,
     onactionerror,
@@ -110,7 +109,6 @@
     albumID?: string;
     onnavigate?: (path: string) => void;
     onperson?: (id: string, name: string) => void;
-    onfacedecision?: (source: Photos) => void;
     ontrashed?: (source: Photos) => void;
     onhidden?: () => void | Promise<void>;
     onactionerror?: (error: string) => void;
@@ -189,7 +187,6 @@
   const editor = $derived(photos.authored);
   const inspectorFaces = untrack(() => {
     const owner = photos,
-      changed = onfacedecision,
       actionError = onactionerror;
     const faces = owner.faceEditor;
     faces.ondecision = (error = "", refresh = true) => {
@@ -197,7 +194,6 @@
       actionError?.(error);
       if (refresh) {
         if (owner.dependsOnPeople) void owner.refresh(alive ? preserve : undefined);
-        changed?.(owner);
       }
     };
     return faces;

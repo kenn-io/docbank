@@ -31,7 +31,6 @@
     onloadtags,
     onloadmoretags,
     onmetadatachanged,
-    onfacedecision,
     undoState,
     onhelp,
     shortcuts,
@@ -54,7 +53,6 @@
     tagsTotal?: number;
     onloadtags?: () => Promise<void>;
     onloadmoretags?: () => Promise<void>;
-    onfacedecision?: (source: Photos) => void;
     onmetadatachanged?: (
       receipt: import("./generated/docbank.js").PhotoAuthoredReceipt,
       tags: import("./generated/docbank.js").Tag[],
@@ -71,7 +69,7 @@
     ontrashed?: () => void;
     onunhidden?: () => void;
     onactionerror?: (error: string) => void;
-    onstate?: (state: PhotoHiddenState) => void;
+    onstate?: (state: PhotoHiddenState, requestedAt: number) => void;
     onaccessfailure?: () => void;
     onexport?: (input: ExportInput) => void;
   } = $props();
@@ -112,7 +110,7 @@
   const busy = $derived(actionPending);
   let remaining = $state(0);
   // Deadlines come from server-relative seconds so a skewed browser clock cannot distort them.
-  let deadline = 0;
+  const deadline = $derived(access.deadline);
   let lockDeadline = $state(0);
   const secondsUntil = (at: number) => Math.max(0, Math.ceil((at - Date.now()) / 1000));
   const lockoutDescription = $derived(lockDeadline || lockoutError ? "hidden-lockout" : undefined);
@@ -131,7 +129,6 @@
     workspace?.photos.dispose();
     workspace = undefined;
     remaining = 0;
-    deadline = 0;
   }
   function authorizationLost(cause: unknown) {
     clear();
@@ -140,7 +137,8 @@
     else void checkAccess();
   }
   async function applyState(result: PhotoHiddenState, signal: AbortSignal, requestedAt: number) {
-    onstate?.(result);
+    access.acceptState(result, requestedAt);
+    onstate?.(result, requestedAt);
     if (
       workspace &&
       (result.configured !== hiddenState.configured || result.expires_at !== hiddenState.expires_at)
@@ -152,7 +150,6 @@
     hiddenState = result;
     resolved = true;
     lockDeadline = result.locked_for ? requestedAt + result.locked_for * 1000 : 0;
-    deadline = result.expires_in ? requestedAt + result.expires_in * 1000 : 0;
     remaining = secondsUntil(deadline);
     if (!remaining || concealingAction || access.lockError) clear();
     else if (!workspace) {
@@ -343,7 +340,7 @@
         lockDeadline = 0;
         hiddenState.locked_until = undefined;
       }
-      if (!deadline) return;
+      if (!deadline && !remaining) return;
       remaining = secondsUntil(deadline);
       if (!remaining) {
         clear();
@@ -391,7 +388,6 @@
         {onloadtags}
         {onloadmoretags}
         {onmetadatachanged}
-        {onfacedecision}
         {tags}
         {tagsError}
         {tagsLoading}

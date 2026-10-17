@@ -23,7 +23,7 @@ requested person page.
 
 Namesakes share one chooser, including case variants such as `Alex` and `ALEX`. Each row shows up to three linked-photo previews and a visible email, phone, or scoped handle. When no identity is available, it shows the creation date. Identities backed only by sensitive material or a locked Hidden photo stay out of browser results.
 
-Browser name search omits people whose only evidence is sensitive document actors, even with Hidden unlocked. It also omits people whose only evidence is in locked Hidden photos. Unlock Hidden to select those people. People with visible, non-sensitive evidence or no linked evidence remain searchable. CLI search includes all active people. Typing a Hidden-only name while locked can create a duplicate; merge it after unlock.
+Browser name search omits people whose only evidence is sensitive document actors, even with Hidden unlocked. It also omits people whose only evidence is in locked Hidden photos. Unlock Hidden to select those people. Browser results require an active depicted-photo assertion on a visible photo, a published non-sensitive document link, or an operator-created person without active assertions or document links. Clearing a face name leaves that operator-created person searchable. Candidate suggestions and pending or failed document publication do not make derived people searchable. When Hidden locks or expires, open name results, identity labels, and namesake previews clear. CLI search includes all active people. Typing a Hidden-only name while locked can create a duplicate; merge it after unlock.
 
 ## Create and inspect
 

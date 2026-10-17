@@ -4,7 +4,6 @@ import { APIError } from "./api-transport.js";
 import * as download from "./download.js";
 import {
   Photos,
-  refreshPersonPhotoViews,
   lookupPhotoRows,
   loadDensity,
   photoQuery,
@@ -3233,103 +3232,5 @@ it.each(["unloaded", "singleton", "stack", "unknown", "representative", "represe
       kind !== "singleton" && kind !== "unloaded",
     );
     photos.dispose();
-  },
-);
-
-it.each([false, true])(
-  "refreshes person results in the decision's Hidden scope=%s, including first-page loads",
-  async (hidden) => {
-    const ada = "00000000-0000-4000-8000-000000000001",
-      grace = "00000000-0000-4000-8000-000000000002";
-    let assigned = ada;
-    let holdAda = false;
-    let finishInitial!: (response: Response) => void;
-    const requests: { hidden: boolean; query: Query }[] = [];
-    stubPhotoFetch(async (_url, init) => {
-      const request = JSON.parse(String(init.body));
-      requests.push(request);
-      const id =
-        request.query.filters.person_ids?.[0] ??
-        (request.query.text.startsWith("saved:")
-          ? grace
-          : request.query.text.slice("person:".length));
-      if (holdAda && id === ada) {
-        holdAda = false;
-        return new Promise<Response>((resolve) => (finishInitial = resolve));
-      }
-      const items = id === assigned ? [photo(1)] : [];
-      return Response.json({ items, total: items.length, facets: [] });
-    });
-    const source = new Photos("session", vi.fn(), hidden);
-    const oldPerson = new Photos("session", vi.fn(), hidden, {
-      ...photoQuery,
-      filters: { person_ids: [ada] },
-    });
-    const newPerson = new Photos("session", vi.fn(), hidden, {
-      ...photoQuery,
-      syntax: "advanced",
-      text: `saved:"Grace photos"`,
-    });
-    const otherScope = new Photos("session", vi.fn(), !hidden, {
-      ...photoQuery,
-      filters: { person_ids: [ada] },
-    });
-    const unopened = new Photos("session", vi.fn(), hidden, {
-      ...photoQuery,
-      filters: { person_ids: [ada] },
-    });
-    const unfiltered = new Photos("session", vi.fn(), hidden);
-    await Promise.all(
-      [source, oldPerson, newPerson, otherScope, unfiltered].map((view) => view.loadMore()),
-    );
-    expect([oldPerson.total, newPerson.total]).toEqual([1, 0]);
-    const loadingPerson = new Photos("session", vi.fn(), hidden, {
-      ...photoQuery,
-      filters: { person_ids: [ada] },
-    });
-    holdAda = true;
-    const initial = loadingPerson.loadMore();
-    await waitFor(() => expect(finishInitial).toBeTypeOf("function"));
-    requests.length = 0;
-    assigned = grace;
-    await refreshPersonPhotoViews(source, [
-      source,
-      oldPerson,
-      newPerson,
-      otherScope,
-      unopened,
-      unfiltered,
-      oldPerson,
-      loadingPerson,
-    ]);
-    expect([
-      oldPerson.items.length,
-      oldPerson.total,
-      newPerson.items.length,
-      newPerson.total,
-    ]).toEqual([0, 0, 1, 1]);
-    expect(loadingPerson.items).toEqual([]);
-    expect(loadingPerson.total).toBe(0);
-    expect(otherScope.total).toBe(1);
-    expect(requests).toHaveLength(3);
-    expect(
-      requests.filter((request) => !request.query.text && !request.query.filters.person_ids),
-    ).toHaveLength(0);
-    expect(unopened.started).toBe(false);
-    expect(requests.every((request) => request.hidden === hidden)).toBe(true);
-    finishInitial(Response.json({ items: [photo(2)], total: 1, facets: [] }));
-    await initial;
-    expect(loadingPerson.items).toEqual([]);
-    expect(loadingPerson.total).toBe(0);
-    for (const view of [
-      source,
-      oldPerson,
-      newPerson,
-      otherScope,
-      unopened,
-      unfiltered,
-      loadingPerson,
-    ])
-      view.dispose();
   },
 );
