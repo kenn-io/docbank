@@ -241,9 +241,10 @@ func TestPhotosCLIBurstGap(t *testing.T) {
 	require.Equal(t, "image", *settings.Preference)
 	output, err = runCLI(t, "photos", "settings", "set", "--burst-gap-seconds", "1")
 	require.NoError(t, err)
-	require.NoError(t, json.Unmarshal([]byte(output), &settings))
-	require.Equal(t, 1, settings.BurstGapSeconds)
-	require.Equal(t, "image", *settings.Preference)
+	var updatedSettings api.PhotoSettings
+	require.NoError(t, json.Unmarshal([]byte(output), &updatedSettings))
+	require.Equal(t, 1, updatedSettings.BurstGapSeconds)
+	require.Equal(t, "image", *updatedSettings.Preference)
 	_, err = runCLI(t, "photos", "settings", "set", "--burst-gap-seconds", "31")
 	require.Error(t, err)
 	require.Equal(t, exitUsage, commandExitCode(err, true))

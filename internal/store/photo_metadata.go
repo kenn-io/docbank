@@ -94,12 +94,13 @@ func normalizePhotoFileMetadata(raw jsontext.Value) (jsontext.Value, error) {
 
 // A missing burst gap restores as NULL, the 2-second default.
 type metadataPhotoSettings struct {
-	Type            string  `json:"type"`
-	Preference      *string `json:"preference" db:"preference"`
-	Revision        int64   `json:"revision" db:"revision"`
-	UpdatedAt       string  `json:"updated_at" db:"updated_at"`
-	BurstGapSeconds *int    `json:"burst_gap_seconds,omitempty" db:"burst_gap_seconds"`
-	Singleton       int     `json:"-" db:"singleton"`
+	Type                   string  `json:"type"`
+	Preference             *string `json:"preference" db:"preference"`
+	Revision               int64   `json:"revision" db:"revision"`
+	UpdatedAt              string  `json:"updated_at" db:"updated_at"`
+	BurstGapSeconds        *int    `json:"burst_gap_seconds,omitempty" db:"burst_gap_seconds"`
+	RepresentativeSequence *int64  `json:"representative_sequence" db:"representative_sequence"`
+	Singleton              int     `json:"-" db:"singleton"`
 }
 
 // Released settings tables predate the burst gap column.
@@ -108,7 +109,9 @@ type metadataPhotoSettingsBeforeBurst struct {
 	Preference *string `json:"preference" db:"preference"`
 	Revision   int64   `json:"revision" db:"revision"`
 	UpdatedAt  string  `json:"updated_at" db:"updated_at"`
-	Singleton  int     `json:"-" db:"singleton"`
+	// Released tables have no choices; their current-format export starts at 0.
+	RepresentativeSequence int64 `json:"representative_sequence"`
+	Singleton              int   `json:"-" db:"singleton"`
 }
 
 var photoSettingsBeforeBurstMetadata = newMetadataTable(metadataTable[metadataPhotoSettingsBeforeBurst]{
@@ -257,6 +260,9 @@ func validatePhotoFileMetadataRecord(v metadataPhotoFile) error {
 }
 
 func validatePhotoSettingsMetadataRecord(v metadataPhotoSettings) error {
+	if v.RepresentativeSequence != nil && *v.RepresentativeSequence < 0 {
+		return errors.New("invalid photo representative sequence")
+	}
 	if v.Type != metadataPhotoSettingsType || v.Revision < 1 || !photoPreferenceValid(v.Preference) || v.BurstGapSeconds != nil && (*v.BurstGapSeconds < 1 || *v.BurstGapSeconds > 30) {
 		return errors.New("invalid photo settings metadata")
 	}

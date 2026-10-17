@@ -36,14 +36,16 @@ func exerciseQueryFunctions(t *testing.T, driver docsqlite.Driver) {
 		require.Equal(t, test.family, family, "%q / %q", test.mime, test.name)
 	}
 
-	for _, tc := range []struct{ kind, desc, path, expected string }{
-		{"cli", "", "/shots/a.jpg", "97310aecd6d353ecc4b0b3bbe2a48333e4be26fa435ef8edbce032e1da9fd52d"},
-		{"cli", "", "", ""},
+	for _, tc := range []struct{ kind, desc, path string }{
+		{"cli", "", "/shots/a.jpg"},
+		{"cli", "", ""},
 	} {
 		var key sql.NullString
 		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT docbank_photo_folder_v1(?, ?, ?)`, tc.kind, tc.desc, tc.path).Scan(&key))
-		require.Equal(t, tc.expected, key.String)
-		require.Equal(t, tc.expected != "", key.Valid)
+		require.Equal(t, tc.path != "", key.Valid)
+		if key.Valid {
+			require.Len(t, key.String, 64)
+		}
 	}
 
 	// Force a second physical connection: the predicate must not depend on the

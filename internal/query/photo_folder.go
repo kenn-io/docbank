@@ -23,6 +23,9 @@ func PhotoFolderKey(sourceKind, sourceDesc, originalPath string) (string, bool) 
 	if drive || unc {
 		folder = "windows:" + path.Dir(portable)
 	}
+	if folder == "." {
+		return "", false
+	}
 	if sourceKind == "push" || sourceKind == "watch" {
 		folder = "source\x00" + sourceKind + "\x00" + sourceDesc + "\x00" + folder
 	}

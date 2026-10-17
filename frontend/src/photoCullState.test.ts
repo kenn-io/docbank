@@ -1046,3 +1046,28 @@ it("cancels capture while regrouping without visiting or entering Cull", async (
   expect(await pending).toBe(false);
   expect(cull.run?.checkpoint.visited).toEqual([]);
 });
+
+it.each(["start", "restore"])(
+  "clears pending grouping and its error on an ineligible %s",
+  async (method) => {
+    const store = storage();
+    vi.spyOn(api, "createWorkspaceQuery").mockImplementation(async () =>
+      Response.json(await snapshot([photo(1).asset_id])),
+    );
+    const cull = new PhotoCull("session", store);
+    await cull.start(query);
+    cull.run = { ...cull.run!, stackEligible: true };
+    let resolve!: (value: api.GroupPhotoStacksResponse) => void;
+    vi.mocked(api.groupPhotoStacks).mockReturnValue(new Promise((done) => (resolve = done)));
+    const pending = cull.regroup();
+    cull.stackError = "Previous grouping failed";
+    if (method === "start") await cull.start(query, () => true);
+    else await cull.restore();
+    expect(cull.stackLoading).toBe(false);
+    expect(cull.stackError).toBe("");
+    expect(await cull.verifyDecision()).toBe(true);
+    resolve({ groups: [[photo(1).asset_id]], unavailable_ids: [], burst_gap_seconds: 2 });
+    await pending;
+    expect(cull.run?.groups).toBeUndefined();
+  },
+);

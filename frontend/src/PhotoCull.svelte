@@ -257,8 +257,14 @@
     }
     editor.loading = true;
     try {
-      const row = await photos.lookup(photo.asset_id, reloadController.signal);
+      const ids = cull.currentStack ?? [photo.asset_id];
+      const rows = cull.currentStack
+        ? await photos.lookupMany(ids, reloadController.signal)
+        : [await photos.lookup(photo.asset_id, reloadController.signal)];
+      const row = rows.find((row) => row.asset_id === photo!.asset_id);
+      if (!row) throw new APIError("This photo is no longer in this view.", 404, "not_found");
       if (reloadController.signal.aborted) return;
+      neighbors = [...neighbors.filter((row) => !ids.includes(row.asset_id)), ...rows];
       photo = row;
       view = { ...fittedPhotoView };
       editor.reset();

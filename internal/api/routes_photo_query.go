@@ -271,7 +271,7 @@ type photoCursorPayload struct {
 }
 
 func (service *documentQueryService) encodePhotoCursor(position store.PhotoBrowsePosition) (string, error) {
-	payload, err := json.Marshal(photoCursorPayload{Type: "photo-v1", IssuedAt: service.now().Unix(), Position: position})
+	payload, err := json.Marshal(photoCursorPayload{Type: "photo-v2", IssuedAt: service.now().Unix(), Position: position})
 	if err != nil {
 		return "", fmt.Errorf("encode photo cursor: %w", err)
 	}
@@ -292,7 +292,7 @@ func (service *documentQueryService) decodePhotoCursor(raw string) (store.PhotoB
 		return store.PhotoBrowsePosition{}, store.ErrInvalidPhotoCursor
 	}
 	position := cursor.Position
-	if cursor.Type != "photo-v1" || query.ValidateTextOperand("asset", position.AssetID) != nil ||
+	if cursor.Type != "photo-v2" || query.ValidateTextOperand("asset", position.AssetID) != nil ||
 		len(position.Key) > store.MaxPhotoSortKeyBytes || len(position.QueryIdentity) != 64 ||
 		position.Missing && position.Key != "" || position.Total < 0 {
 		return store.PhotoBrowsePosition{}, store.ErrInvalidPhotoCursor

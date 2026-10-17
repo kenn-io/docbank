@@ -514,7 +514,7 @@ export class PhotoAuthoredEditor {
     } catch (cause) {
       if (!signal.aborted) {
         this.stackError = this.error = this.failure(cause);
-        this.conflict = cause instanceof APIError && [409, 412].includes(cause.status);
+        this.conflict = cause instanceof APIError && [404, 409, 412].includes(cause.status);
       }
     } finally {
       if (!signal.aborted) this.stackLoading = false;

@@ -3,8 +3,11 @@ package store
 import (
 	"cmp"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"maps"
 	"slices"
 	"strings"
@@ -236,19 +239,6 @@ func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision
 	if len(slices.Compact(unique)) != len(request.AssetIDs) {
 		return PhotoAuthoredReceipt{}, ErrInvalidPhotoAsset
 	}
-	var representativeSeed int64
-	if request.Decision == "representative" {
-		// Portable snapshots omit the sequence. Read retained ranks before
-		// acquiring the writer; a concurrent choice supplies its own sequence.
-		if err := s.db.QueryRowContext(ctx, `SELECT COALESCE((SELECT representative_sequence FROM photo_library_settings WHERE singleton=1),(
- SELECT COALESCE(MAX(rank),0) FROM (
- SELECT representative_rank AS rank FROM photo_assets
- UNION ALL SELECT json_extract(entry.value,'$.before') FROM photo_change_receipts r,json_each(r.after_json,'$.representatives') entry
- UNION ALL SELECT json_extract(entry.value,'$.after') FROM photo_change_receipts r,json_each(r.after_json,'$.representatives') entry
- )))`).Scan(&representativeSeed); err != nil {
-			return PhotoAuthoredReceipt{}, err
-		}
-	}
 	var result PhotoAuthoredReceipt
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		if request.Hidden {
@@ -304,17 +294,13 @@ func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision
 				return ErrStaleRevision
 			}
 			if wanted.ContentVersionID != "" {
-				var current string
-				if err := tx.QueryRowContext(ctx, `SELECT current_version_id FROM nodes WHERE id=?`, target.NodeID).Scan(&current); err != nil {
-					return err
-				}
-				if current != wanted.ContentVersionID || target.DisplayFileID != target.FileID {
+				if target.CurrentContentVersionID != wanted.ContentVersionID || target.DisplayFileID != target.FileID {
 					return ErrStaleRevision
 				}
 			}
 		}
 		if request.Decision == "representative" {
-			result, err = s.choosePhotoRepresentativeTx(ctx, tx, found[request.CurrentID], representativeSeed)
+			result, err = s.choosePhotoRepresentativeTx(ctx, tx, found[request.CurrentID])
 			return err
 		}
 		flagged := map[string]bool{}
@@ -353,12 +339,12 @@ func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision
 
 // choosePhotoRepresentativeTx stores an explicit choice with the next rank.
 // Flags stay unchanged, so every frame keeps its picks and rejects.
-func (s *Store) choosePhotoRepresentativeTx(ctx context.Context, tx *sql.Tx, frame photoStackFrame, seed int64) (PhotoAuthoredReceipt, error) {
+func (s *Store) choosePhotoRepresentativeTx(ctx context.Context, tx *sql.Tx, frame photoStackFrame) (PhotoAuthoredReceipt, error) {
 	if _, err := tx.ExecContext(ctx, `INSERT INTO photo_library_settings(singleton,updated_at) VALUES(1,'') ON CONFLICT(singleton) DO NOTHING`); err != nil {
 		return PhotoAuthoredReceipt{}, err
 	}
 	var rank int64
-	if err := tx.QueryRowContext(ctx, `UPDATE photo_library_settings SET representative_sequence=COALESCE(representative_sequence,?)+1 WHERE singleton=1 RETURNING representative_sequence`, seed).Scan(&rank); err != nil {
+	if err := tx.QueryRowContext(ctx, `UPDATE photo_library_settings SET representative_sequence=COALESCE(representative_sequence,0)+1 WHERE singleton=1 RETURNING representative_sequence`).Scan(&rank); err != nil {
 		return PhotoAuthoredReceipt{}, err
 	}
 	change, err := setPhotoRepresentativeTx(ctx, tx, frame.AssetID, -1, &rank)
@@ -729,6 +715,62 @@ func (p *photoStackPager) fill(ctx context.Context, page *PhotoBrowsePage, group
 	return nil
 }
 
+// frontier fingerprints eligible stacks that could gain members across an
+// issued cursor. Future-only stacks stay outside this live paging boundary.
+func (p *photoStackPager) frontier(ctx context.Context, boundary *PhotoBrowsePosition) (fingerprint string, err error) {
+	hash := sha256.New()
+	if !boundary.Missing {
+		low, _ := photoStackReach(boundary.Key, p.gap, false)
+		high, _ := photoStackReach(boundary.Key, p.gap, true)
+		from, _, _ := photoBrowseOrder("capture_time")
+		statement, args, err := p.scope.bind(`SELECT a.asset_id,pl.folder_key,pl.sort_key,`+photoStackFileCount+` FROM `+from+` WHERE `+p.scope.where()+` AND a.kind='photo' AND pl.folder_key IS NOT NULL AND pl.sort_key>=? AND pl.sort_key<=?`, low, high)
+		if err != nil {
+			return "", err
+		}
+		rows, err := p.q.QueryContext(ctx, statement, args...)
+		if err != nil {
+			return "", err
+		}
+		defer func() { err = errors.Join(err, rows.Close()) }()
+		var seeds, members []photoStackFrame
+		for rows.Next() {
+			var frame photoStackFrame
+			if err := rows.Scan(&frame.AssetID, &frame.Folder, &frame.SortKey, &frame.Files); err != nil {
+				return "", errors.Join(err, rows.Close())
+			}
+			seeds = append(seeds, frame)
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return "", err
+		}
+		seen := map[*photoStackComponent]bool{}
+		position := photoStackFrame{AssetID: boundary.AssetID, SortKey: boundary.Key}
+		for _, seed := range seeds {
+			component, err := p.component(ctx, seed)
+			if err != nil {
+				return "", err
+			}
+			if seen[component] || !eligiblePhotoStack(component.frames) {
+				continue
+			}
+			seen[component] = true
+			first := component.frames[0]
+			if p.descending {
+				first = component.frames[len(component.frames)-1]
+			}
+			comparison := comparePhotoStackFrames(first, position)
+			if !p.descending && comparison <= 0 || p.descending && comparison >= 0 {
+				members = append(members, component.frames...)
+			}
+		}
+		slices.SortFunc(members, comparePhotoStackFrames)
+		for _, frame := range members {
+			_, _ = fmt.Fprintf(hash, "%q %q %q %d\n", frame.Folder, frame.AssetID, frame.SortKey, frame.Files)
+		}
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
 // listPhotoStackPage fills a capture-time page with whole stacks. It keeps
 // reading the live keyset until the page has its requested frames, so the last
 // stack may extend it by up to 499. A stack is emitted at its first member in
@@ -746,6 +788,15 @@ func (s *Store) listPhotoStackPage(
 		return err
 	}
 	defer func() { err = errors.Join(err, pager.Close()) }()
+	if boundary != nil {
+		frontier, err := pager.frontier(ctx, boundary)
+		if err != nil {
+			return err
+		}
+		if frontier != boundary.StackFrontier {
+			return ErrInvalidPhotoCursor
+		}
+	}
 	var groups [][]photoStackFrame
 	scanned := map[string]PhotoBrowseRow{}
 	frames, limit, lookedAhead := 0, size+1, false
@@ -769,6 +820,10 @@ func (s *Store) listPhotoStackPage(
 			}
 			if len(group) > 0 && frames >= size {
 				page.Next = previous
+				page.Next.StackFrontier, err = pager.frontier(ctx, previous)
+				if err != nil {
+					return err
+				}
 				return pager.fill(ctx, page, groups, scanned, identity)
 			}
 			if len(group) > 0 {
