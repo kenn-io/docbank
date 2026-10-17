@@ -154,7 +154,7 @@
     if (!canChangeTarget()) return;
     checkingDecision = true;
     try {
-      await cull.nextPass(followUp, (message) => confirmation!.confirm(message));
+      await cull.nextPass(followUp, (message) => confirmation!.confirm(message, "Reset pass"));
     } finally {
       checkingDecision = false;
     }
@@ -277,8 +277,6 @@
 </script>
 
 <svelte:document onkeydown={(event) => event.target === document.body && key(event)} />
-
-<PhotoCullConfirmation bind:this={confirmation} />
 
 <div class="review-shell">
   <Modal
@@ -442,16 +440,23 @@
           </fieldset>
         </nav>
       {/if}
-      {#if editor.receiptID}<Notice
-          tone="success"
-          message={editor.undoState.summary}
-          actionLabel={cull.stale || busy || editor.dirty ? undefined : "Undo"}
-          onaction={() => void undo()}
-        />{/if}
+      {#if editor.receiptID}<fieldset
+          disabled={cull.stale || cull.busy || busy || editor.dirty}
+          style="display: contents"
+        >
+          <Notice
+            tone="success"
+            message={editor.undoState.summary}
+            actionLabel="Undo"
+            onaction={() => void undo()}
+          />
+        </fieldset>{/if}
       <span class="kit-sr-only" aria-live="polite">{announcement}</span>
     </div>
   </Modal>
 </div>
+
+<PhotoCullConfirmation bind:this={confirmation} />
 
 <style>
   header,

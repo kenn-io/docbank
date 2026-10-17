@@ -149,7 +149,9 @@
     try {
       const captured = resume
         ? await review.restore()
-        : await review.start(photos.query, (message) => cullConfirmation!.confirm(message));
+        : await review.start(photos.query, (message) =>
+            cullConfirmation!.confirm(message, "Replace"),
+          );
       if (captured && review === cull && !culling && !comparing && editor.canChangeTarget())
         photos.culling = true;
     } finally {

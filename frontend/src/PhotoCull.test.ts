@@ -78,7 +78,11 @@ it("decides once with P, advances, announces the decision and offers receipt Und
       },
     );
   vi.spyOn(photos, "metadataChanged").mockReturnValue(new Map());
-  const undo = vi.spyOn(PhotoAuthoredEditor.prototype, "undo").mockResolvedValue();
+  const undo = vi.spyOn(api, "undoPhotoAuthored").mockResolvedValue({
+    receipt_id: "undo",
+    before: [],
+    after: [],
+  });
   const close = vi.fn();
   render(PhotoCullView, {
     cull,
@@ -103,7 +107,7 @@ it("decides once with P, advances, announces the decision and offers receipt Und
     "Photo 1.jpg: pick",
   );
   await fireEvent.click(await readyButton(/^Undo$/));
-  expect(undo).toHaveBeenCalled();
+  await waitFor(() => expect(undo).toHaveBeenCalledWith("decision-receipt", expect.anything()));
   await screen.findByText("Photo 2.jpg");
   await fireEvent.keyDown(document.querySelector(".photo-cull")!, { key: "0" });
   await waitFor(() => expect(edit).toHaveBeenCalledTimes(2));
@@ -199,8 +203,8 @@ it("navigates with keyboard focus after activating Undo", async () => {
   button.focus();
   expect(document.activeElement).toBe(button);
   await fireEvent.click(button);
+  await waitFor(() => expect(undo).toHaveBeenCalledWith("pick", expect.anything()));
   await waitFor(() => expect(screen.queryByRole("button", { name: /^Undo$/ })).toBeNull());
-  expect(undo).toHaveBeenCalledWith("pick", expect.anything());
   await readyButton("Next");
   await fireEvent.keyDown(document.activeElement!, { key: "ArrowRight" });
   await waitFor(() => expect(cull.currentID).toBe("photo-3"));
@@ -830,7 +834,7 @@ it("includes the last photo picked after completion when S starts Picks", async 
   await waitFor(() => expect(screen.getByText("pick · 0 stars")).toBeTruthy());
   await readyButton("Scope: unflagged");
   await fireEvent.keyDown(document.activeElement!, { key: "s" });
-  await fireEvent.click(await screen.findByRole("button", { name: "Replace" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Reset pass" }));
   await screen.findByRole("button", { name: "Scope: picks" });
   expect(cull.run!.checkpoint.pass).toEqual([row.asset_id]);
   expect(screen.queryByRole("heading", { name: "Pass complete" })).toBeNull();
@@ -1092,10 +1096,10 @@ it.each(["advanced", "replaced", "unchanged"])(
         other.run!.checkpoint,
       );
     }
-    const undo = vi.spyOn(api, "undoPhotoAuthored").mockResolvedValue({
-      receipt_id: "undo",
-      before: [],
-      after: [],
+    let finishUndo!: () => void;
+    const undo = vi.spyOn(api, "undoPhotoAuthored").mockImplementation(async () => {
+      await new Promise<void>((resolve) => (finishUndo = resolve));
+      return { receipt_id: "undo", before: [], after: [] };
     });
     await act(() => {
       photos.cullEditor!.receiptID = "decision";
@@ -1109,6 +1113,7 @@ it.each(["advanced", "replaced", "unchanged"])(
     });
     await fireEvent.click(await readyButton(/^Undo$/));
     await waitFor(() => expect(release).toBeTypeOf("function"));
+    expect(screen.getByRole("button", { name: /^Undo$/ }).matches(":disabled")).toBe(true);
     expect(screen.getByRole("button", { name: "Exit cull" }).matches(":disabled")).toBe(true);
     expect(undo).not.toHaveBeenCalled();
     await act(() => release());
@@ -1116,6 +1121,9 @@ it.each(["advanced", "replaced", "unchanged"])(
       await waitFor(() =>
         expect(undo).toHaveBeenCalledExactlyOnceWith("decision", expect.anything()),
       );
+      expect(screen.getByRole("button", { name: /^Undo$/ }).matches(":disabled")).toBe(true);
+      await act(() => finishUndo());
+      await waitFor(() => expect(screen.queryByRole("button", { name: /^Undo$/ })).toBeNull());
       expect(cull.stale).toBe(false);
     } else {
       await screen.findByText(
@@ -1127,7 +1135,7 @@ it.each(["advanced", "replaced", "unchanged"])(
   },
 );
 
-it.each(["Cancel", "Replace"])(
+it.each(["Cancel", "Reset pass"])(
   "%s in the scope modal preserves or replaces the saved pass",
   async (answer) => {
     vi.stubGlobal("indexedDB", new IDBFactory());
