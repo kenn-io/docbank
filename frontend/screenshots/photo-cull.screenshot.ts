@@ -10,7 +10,7 @@ async function captureThemes(page: Page, name: string) {
   await expect
     .poll(() =>
       page
-        .locator(".photo-stage img")
+        .locator(".photo-stage img, .frames img, .closeups img")
         .evaluateAll((images) =>
           images.every((image) => (image as HTMLImageElement).naturalWidth > 512),
         ),
@@ -57,6 +57,7 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
     await expect(
       scopeConfirmation.getByRole("button", { name: "Reset pass", exact: true }),
     ).toBeVisible();
+    await captureThemes(page, "web-photo-cull-confirmation");
     await scopeConfirmation.getByRole("button", { name: "Cancel", exact: true }).click();
     await expect(scopeConfirmation).toHaveCount(0);
     await expect(cull.getByRole("button", { name: "Scope: unflagged", exact: true })).toBeVisible();
@@ -79,6 +80,24 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
     let resumedName = await cull.locator("header strong").innerText();
     await expect(cull.locator(".filmstrip img").first()).toBeVisible();
     await captureThemes(page, "web-photo-cull");
+    // Commit a competing edit after preparation so the original write uses stale revisions.
+    await page.route(
+      "**/api/v1/photos/authored/edit",
+      async (route) => {
+        const competing = await route.fetch({
+          postData: JSON.stringify({ ...route.request().postDataJSON(), patch: { rating: 3 } }),
+        });
+        expect(competing.ok()).toBe(true);
+        await route.continue();
+      },
+      { times: 1 },
+    );
+    await page.keyboard.press("p");
+    const reload = cull.getByRole("button", { name: "Reload photo", exact: true });
+    await expect(reload).toBeVisible();
+    await captureThemes(page, "web-photo-cull-conflict");
+    await reload.click();
+    await expect(reload).toHaveCount(0);
     let failLarge = true;
     await page.route("**/api/v1/photos/assets/*/preview", async (route) => {
       if (!failLarge || !route.request().postData()?.includes('"large"')) return route.fallback();
@@ -309,6 +328,12 @@ test("culls, resumes saved membership and compares manual closeups", async ({ pa
     await page.mouse.up();
     await expect(compare.getByRole("status")).toHaveCount(0);
     await captureThemes(page, "web-photo-compare-closeup");
+    await compare.getByRole("button", { name: "Exit compare", exact: true }).click();
+    for (let i = 2; i < 6; i++)
+      await page.locator(".photo-image").nth(i).click({ modifiers: ["Control"] });
+    await page.getByRole("button", { name: "Compare", exact: true }).click();
+    await expect(compare.locator(".frames img")).toHaveCount(6);
+    await captureThemes(page, "web-photo-compare-six");
     await compare.getByRole("button", { name: "Exit compare", exact: true }).click();
     await page
       .getByRole("searchbox", { name: "Search photos", exact: true })
