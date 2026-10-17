@@ -157,6 +157,27 @@ func TestPhotoStackTimeRules(t *testing.T) {
 
 func TestPhotoStackFoldersFollowSourceProvenance(t *testing.T) {
 	t.Parallel()
+	t.Run("opaque caller references", func(t *testing.T) {
+		s := newTestStore(t)
+		var ids []string
+		for i, kind := range []string{"archive-a", "archive-b"} {
+			run, err := s.BeginCallerSuppliedIngest(t.Context(), kind, "synthetic source")
+			require.NoError(t, err)
+			ids = append(ids, stackPhoto(t, s, run, fmt.Sprintf("/shared/frame-%d.jpg", i), fmt.Sprintf("2024-06-10T12:00:0%dZ", i), document.SourceMetadataPrecisionSecond))
+		}
+		pages, stacks := stackPages(t, s, captureRequest(t, "asc"))
+		require.Equal(t, [][]string{{ids[0]}, {ids[1]}}, pages)
+		require.Empty(t, stacks)
+		require.Empty(t, stackIndexes(t, s, ids))
+		_, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: stackTargets(t, s, ids), CurrentID: ids[0], Decision: "current"})
+		require.ErrorIs(t, err, ErrStalePhotoStack)
+		page, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{PageSize: 10, Query: captureRequest(t, "asc").Query}, nil)
+		require.NoError(t, err)
+		require.Len(t, page.Items, 2)
+		for _, row := range page.Items {
+			require.Empty(t, row.Flag)
+		}
+	})
 	t.Run("push and watch namespaces", func(t *testing.T) {
 		s := newTestStore(t)
 		var ids []string
