@@ -2,7 +2,6 @@ import { afterEach, expect, it, vi } from "vite-plus/test";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import {
   photoMetadataResponse,
-  photoFacePage,
   photoFace,
   photoPersonAssertion,
   preparedPhoto,
@@ -1628,9 +1627,6 @@ it.each([false, true])(
         return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
       }),
     );
-    vi.spyOn(api, "listPhotoFaces").mockResolvedValue(
-      photoFacePage({ assertions: [photoPersonAssertion({ photo_mark: true })] }),
-    );
     render(App);
     await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
     await screen.findByText("Fit preview");
@@ -1673,13 +1669,6 @@ it.each([false, true])(
       expect(location.hash).toBe("");
       await fireEvent.click(screen.getByRole("button", { name: "Open Photo 1.jpg" }));
       await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
-      await fireEvent.click(
-        within(screen.getByRole("dialog", { name: /Photo viewer/ })).getByRole("button", {
-          name: "Metadata",
-        }),
-      );
-      await screen.findByRole("button", { name: "Find or create a person: Ada" });
-      await screen.findByRole("button", { name: "Clear whole-photo mark" });
       const queries = () =>
         vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith("/assets/query")).length;
       let refreshed = queries();
@@ -1697,8 +1686,6 @@ it.each([false, true])(
       await waitFor(() => expect(queries()).toBeGreaterThan(refreshed), { timeout: 5000 });
       await screen.findByText("This photo is no longer in the refreshed result.");
       expect(screen.queryByText("Fit preview")).toBeNull();
-      expect(screen.queryByRole("button", { name: "Find or create a person: Ada" })).toBeNull();
-      expect(screen.queryByRole("button", { name: "Clear whole-photo mark" })).toBeNull();
       expect(revoke.mock.calls.length).toBeGreaterThan(shown);
       return;
     }

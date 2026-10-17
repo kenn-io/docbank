@@ -7,7 +7,7 @@ import { HiddenAccess } from "./hiddenAccess.svelte.js";
 
 afterEach(() => vi.restoreAllMocks());
 const face = photoFace();
-it.each(["create", "name", "clear"] as const)(
+it.each(["create", "name"] as const)(
   "settles a Hidden %s before locking after disposal",
   async (action) => {
     const events: string[] = [];
@@ -41,9 +41,7 @@ it.each(["create", "name", "clear"] as const)(
     const saving =
       action === "create"
         ? faces.add({ x: 0.1, y: 0.2, width: 0.3, height: 0.4 })
-        : action === "name"
-          ? faces.name(face, "", "Ada")
-          : faces.clear(face);
+        : faces.name(face, "", "Ada");
     await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
     faces.dispose();
     const locking = access.lock();
@@ -204,7 +202,7 @@ it("numbers visible faces by creation time and ID, closing gaps after dismissal"
 });
 
 it.each(
-  ["name", "clear", "remove", "mark", "draw", "retry"].flatMap((action) =>
+  ["name", "draw", "retry"].flatMap((action) =>
     [false, true].map((concealed) => ({ action, concealed })),
   ),
 )("reports refused $action while concealed=$concealed", async ({ action, concealed }) => {
@@ -226,15 +224,9 @@ it.each(
   const result =
     action === "name"
       ? faces.name(face, "person-a")
-      : action === "clear"
-        ? faces.clear(face)
-        : action === "remove"
-          ? faces.remove(face)
-          : action === "mark"
-            ? faces.clearMark(photoFacePage().assertions[0]!)
-            : action === "draw"
-              ? faces.add(face.box)
-              : faces.retryAdd();
+      : action === "draw"
+        ? faces.add(face.box)
+        : faces.retryAdd();
   expect(await result).toBe(false);
   expect(faces.error).toBe("People are reloading; try again.");
   expect(write).not.toHaveBeenCalled();

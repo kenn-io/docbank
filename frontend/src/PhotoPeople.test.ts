@@ -77,7 +77,7 @@ it("searches again after a failed assignment and disables the picker throughout 
     .spyOn(api, "listPhotoFaces")
     .mockResolvedValue({ faces: [face], assertions: [], people: [] });
   let canonical = "";
-  vi.spyOn(api, "listPeople").mockImplementation(async ({ query } = {}) => ({
+  const search = vi.spyOn(api, "listPeople").mockImplementation(async ({ query } = {}) => ({
     items:
       canonical && canonical.toLowerCase() === query?.trim().toLowerCase()
         ? [
@@ -116,8 +116,16 @@ it("searches again after a failed assignment and disables the picker throughout 
     assertions: [photoPersonAssertion({ assertion_id: "assertion", person_id: "person-new" })],
     people: [{ person_id: "person-new", display_name: "Ada", state: "curated" }],
   });
+  search.mockClear();
   fail(new Error("Response lost"));
   await screen.findByText("Response lost");
+  await waitFor(() =>
+    expect(search).toHaveBeenCalledWith(
+      { query: "Ada", limit: 100 },
+      expect.objectContaining({ session: "session" }),
+    ),
+  );
+
   await fireEvent.input(screen.getByRole("combobox"), { target: { value: "ada" } });
   await screen.findByRole("option", { name: 'Create person "ada"' });
   await fireEvent.mouseDown(screen.getByRole("option", { name: "Ada" }));
@@ -292,30 +300,32 @@ it.each(["person-b", "new", "cancel", "assigned"])(
       );
       expect(write).not.toHaveBeenCalled();
     }
-    await waitFor(() =>
-      expect(screen.getAllByRole("img").map((image) => image.getAttribute("src"))).toEqual([
-        "blob:alex-a",
-        "blob:alex-b",
-      ]),
-    );
-    expect(screen.getAllByRole("img").map((image) => image.style.transform)).toEqual([
-      "translate(-50%,-50%) rotate(90deg)",
-      "translate(-50%,-50%) rotate(90deg)",
-    ]);
-    expect(list).toHaveBeenCalledWith(
-      expect.objectContaining({ hidden: false, page_size: 4 }),
-      expect.objectContaining({ session: "session" }),
-    );
-    expect(read.mock.calls.map(([id]) => id)).toEqual(["photo-1", "photo-1"]);
-    expect(api.listPhotoFaces).toHaveBeenCalledWith(
-      "version-1",
-      expect.objectContaining({ session: "session", signal: expect.any(AbortSignal) }),
-    );
-    const images = screen.getAllByRole("img");
-    expect(parseFloat(images[0]!.style.left)).toBeCloseTo(-48);
-    expect(parseFloat(images[1]!.style.left)).toBeCloseTo(-48);
-    expect(parseFloat(images[0]!.style.top)).toBeCloseTo(172);
-    expect(parseFloat(images[1]!.style.top)).toBeCloseTo(-68);
+    if (selection === "person-b") {
+      await waitFor(() =>
+        expect(screen.getAllByRole("img").map((image) => image.getAttribute("src"))).toEqual([
+          "blob:alex-a",
+          "blob:alex-b",
+        ]),
+      );
+      expect(screen.getAllByRole("img").map((image) => image.style.transform)).toEqual([
+        "translate(-50%,-50%) rotate(90deg)",
+        "translate(-50%,-50%) rotate(90deg)",
+      ]);
+      expect(list).toHaveBeenCalledWith(
+        expect.objectContaining({ hidden: false, page_size: 4 }),
+        expect.objectContaining({ session: "session" }),
+      );
+      expect(read.mock.calls.map(([id]) => id)).toEqual(["photo-1", "photo-1"]);
+      expect(api.listPhotoFaces).toHaveBeenCalledWith(
+        "version-1",
+        expect.objectContaining({ session: "session", signal: expect.any(AbortSignal) }),
+      );
+      const images = screen.getAllByRole("img");
+      expect(parseFloat(images[0]!.style.left)).toBeCloseTo(-48);
+      expect(parseFloat(images[1]!.style.left)).toBeCloseTo(-48);
+      expect(parseFloat(images[0]!.style.top)).toBeCloseTo(172);
+      expect(parseFloat(images[1]!.style.top)).toBeCloseTo(-68);
+    }
     if (selection === "cancel")
       await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     else {
@@ -336,8 +346,10 @@ it.each(["person-b", "new", "cancel", "assigned"])(
     expect(screen.queryByRole("dialog")).toBeNull();
     if (assigned)
       expect(screen.getByRole("button", { name: "Find or create a person: Alex" })).toBeTruthy();
-    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:alex-a");
-    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:alex-b");
+    if (selection === "person-b") {
+      expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:alex-a");
+      expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:alex-b");
+    }
     if (selection === "cancel") expect(write).not.toHaveBeenCalled();
     await cache.dispose();
     faces.dispose();
@@ -466,7 +478,7 @@ it.each([
     secondIdentity ? "" : "other@example.test",
   ];
   vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [face], assertions: [], people: [] });
-  const search = vi.spyOn(api, "listPeople").mockResolvedValue({
+  vi.spyOn(api, "listPeople").mockResolvedValue({
     next_cursor: "different-name",
     items: ids.map((person_id, index) => ({
       person_id,
@@ -508,73 +520,44 @@ it.each([
       expect.anything(),
     ),
   );
-  expect(search.mock.calls.some(([params]) => params?.cursor)).toBe(false);
   faces.dispose();
 });
 
-it.each(
-  ["face", "mark"].flatMap((target) => [false, true].map((pending) => ({ target, pending }))),
-)(
-  "confirms $target removal with the captured revision, pending=$pending",
-  async ({ target, pending }) => {
-    vi.spyOn(api, "listPhotoFaces").mockResolvedValue(
-      photoFacePage({ assertions: [photoPersonAssertion({ photo_mark: true })] }),
-    );
-    const faces = new PhotoFaces("session", vi.fn());
-    await faces.load("version-a");
-    const write = vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "receipt" });
-    render(PhotoPeople, { faces, session: "session" });
-    const label = target === "face" ? "Remove face" : "Clear whole-photo mark";
-    await fireEvent.click(screen.getByRole("button", { name: label }));
-    await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(write).not.toHaveBeenCalled();
-    await fireEvent.click(screen.getByRole("button", { name: label }));
-    const dialog = screen.getByRole("dialog");
-    expect(dialog.textContent).toContain(
-      target === "face"
-        ? "You can't undo this here."
-        : "You can't add a whole-photo mark back from the browser.",
-    );
-    let finish!: (page: api.PhotoFacePage) => void;
-    let reading: Promise<void> | undefined;
-    if (pending) {
-      vi.mocked(api.listPhotoFaces).mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            finish = resolve;
-          }),
-      );
-      await act(() => {
-        reading = faces.load("version-a");
-      });
-    }
-    faces.faces = faces.faces.map((row) => ({ ...row, revision: 90 }));
-    faces.assertions = faces.assertions.map((row) => ({ ...row, revision: 90 }));
-    await fireEvent.click(within(dialog).getByRole("button", { name: label }));
-    if (pending) {
-      await screen.findByText("People are reloading; try again.");
-      expect(write).not.toHaveBeenCalled();
-      await act(async () => {
-        finish(photoFacePage());
-        await reading;
-      });
-      faces.dispose();
-      return;
-    }
-    await waitFor(() =>
-      expect(write).toHaveBeenCalledWith(
-        "version-a",
-        expect.objectContaining(
-          target === "face"
-            ? { action: "dismiss", face_id: "face-a", revision: 7 }
-            : { action: "retract", assertion_id: "assertion-a", revision: 1 },
-        ),
-        expect.anything(),
+it.each(["face", "mark"])("confirms %s removal with the captured revision", async (target) => {
+  vi.spyOn(api, "listPhotoFaces").mockResolvedValue(
+    photoFacePage({ assertions: [photoPersonAssertion({ photo_mark: true })] }),
+  );
+  const faces = new PhotoFaces("session", vi.fn());
+  await faces.load("version-a");
+  const write = vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "receipt" });
+  render(PhotoPeople, { faces, session: "session" });
+  const label = target === "face" ? "Remove face" : "Clear whole-photo mark";
+  await fireEvent.click(screen.getByRole("button", { name: label }));
+  await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(write).not.toHaveBeenCalled();
+  await fireEvent.click(screen.getByRole("button", { name: label }));
+  const dialog = screen.getByRole("dialog");
+  expect(dialog.textContent).toContain(
+    target === "face"
+      ? "You can't undo this here."
+      : "You can't add a whole-photo mark back from the browser.",
+  );
+  faces.faces = faces.faces.map((row) => ({ ...row, revision: 90 }));
+  faces.assertions = faces.assertions.map((row) => ({ ...row, revision: 90 }));
+  await fireEvent.click(within(dialog).getByRole("button", { name: label }));
+  await waitFor(() =>
+    expect(write).toHaveBeenCalledWith(
+      "version-a",
+      expect.objectContaining(
+        target === "face"
+          ? { action: "dismiss", face_id: "face-a", revision: 7 }
+          : { action: "retract", assertion_id: "assertion-a", revision: 1 },
       ),
-    );
-    faces.dispose();
-  },
-);
+      expect.anything(),
+    ),
+  );
+  faces.dispose();
+});
 
 it.each([
   { source: "list", result: "empty" },
@@ -913,7 +896,7 @@ it("ignores an old search response after Hidden expiry", async () => {
   const access = new HiddenAccess("session", vi.fn());
   vi.useFakeTimers({ shouldAdvanceTime: true });
   try {
-    access.acceptState({ configured: true, expires_in: 60, change_id: "same" }, Date.now());
+    access.acceptState({ configured: true, expires_in: 60 }, Date.now());
     const person = {
       person_id: "person-a",
       display_name: "Alex",

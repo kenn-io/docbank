@@ -68,7 +68,7 @@ it("guards rotated face placement before saving", async () => {
   const { props } = setup();
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
-  props.photo.rotation = 180;
+  props.photo.rotation = 90;
   const add = vi.spyOn(props.faces, "add").mockResolvedValue(true);
   render(PhotoLoupe, { ...props, items: [] });
   await screen.findByText("Fit preview");
@@ -100,10 +100,10 @@ it("guards rotated face placement before saving", async () => {
     new MouseEvent("pointerup", { clientX: 600, clientY: 280, bubbles: true }),
   );
   expect(add).toHaveBeenCalledWith({
-    x: expect.closeTo(0.3, 8),
-    y: expect.closeTo(0.3, 8),
+    x: expect.closeTo(0.5, 8),
+    y: expect.closeTo(0.1875, 8),
     width: expect.closeTo(0.2, 8),
-    height: expect.closeTo(0.2, 8),
+    height: expect.closeTo(0.3125, 8),
   });
 });
 
