@@ -2212,9 +2212,15 @@ it("keeps loupe shortcuts working while Map revalidates the open photo", async (
   const setup = openMapViewerSetup(shortcuts);
   const { photos, lookup } = setup;
   vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue(photoPreparation([preparedPhoto(1)]));
-  const edit = vi
-    .spyOn(api, "editPhotoAuthored")
-    .mockResolvedValue({ receipt_id: "", before: [], after: [] });
+  const edit = vi.spyOn(api, "editPhotoAuthored").mockImplementation(async () => {
+    const before = preparedPhoto(1);
+    return {
+      receipt_id: "pick",
+      before: [before],
+      after: [{ ...before, revision: 2, values: { ...before.values, rotation: 90 as const } }],
+    };
+  });
+  stubPhotoFetch(vi.fn(async () => Response.json({ error: "unavailable" }, { status: 503 })));
   await openMapViewer(setup);
   await waitFor(() => expect(lookup).toHaveBeenCalled());
   await vi.waitFor(() => expect(screen.queryByText("Loading photo")).toBeNull());
@@ -2227,6 +2233,8 @@ it("keeps loupe shortcuts working while Map revalidates the open photo", async (
   expect(Object.values(edit.mock.calls[0]![0].targets)).toMatchObject([
     { content_version_id: "version-1" },
   ]);
+  const pending = lookup.mock.calls[calls]![1] as AbortSignal;
+  await waitFor(() => expect(pending.aborted).toBe(true));
   photos.dispose();
 });
 
