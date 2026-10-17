@@ -744,6 +744,7 @@ it("refreshes 20,001 flags sequentially and records absent IDs as unavailable", 
       autoAdvance: true,
     },
   };
+  await store.replace(cull.run);
   let release!: (value: api.PhotoFlagsResponse) => void;
   const lookup = vi
     .spyOn(api, "lookupPhotoFlags")
@@ -770,6 +771,9 @@ it("refreshes 20,001 flags sequentially and records absent IDs as unavailable", 
   expect(lookup).toHaveBeenCalledTimes(2);
   expect(lookup.mock.calls[1]![0]).toEqual({ asset_ids: [ids[20_000]] });
   expect(cull.run.checkpoint.unavailable).toEqual([ids[20_000]]);
+  expect(cull.error).toBe("");
+  expect(cull.stale).toBe(false);
+  expect((await store.load())?.checkpoint.unavailable).toEqual([ids[20_000]]);
   expect(cull.remainder).toBe(false);
 });
 
