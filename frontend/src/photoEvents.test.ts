@@ -362,11 +362,6 @@ it("broadcasts one ID-free pulse from the holder's parsed change", async () => {
       close = close;
     },
   );
-  vi.stubGlobal("navigator", {
-    locks: {
-      request: vi.fn(async (_name, _options, run) => run({ name: "docbank-photo-events" })),
-    },
-  });
   vi.spyOn(globalThis, "fetch").mockResolvedValue(
     new Response(
       new ReadableStream({

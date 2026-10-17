@@ -48,7 +48,7 @@ it("routes live album changes to Hidden counts or membership", async () => {
   const view = render(HiddenPhotos, props());
   await waitFor(() => expect(view.component.activePhotos()).toBeDefined());
   const photos = view.component.activePhotos()!;
-  photos.query = { ...photos.query, filters: { ...photos.query.filters, set_ids: ["album-1"] } };
+  const depends = vi.spyOn(photos, "dependsOnAlbums").mockReturnValue(false);
   const counts = vi.spyOn(photos, "reloadCounts").mockResolvedValue();
   const unrelated = {
     assets: new Map<string, number>(),
@@ -56,10 +56,14 @@ it("routes live album changes to Hidden counts or membership", async () => {
     refetch: false,
   };
   await view.component.refresh(unrelated);
+  expect(depends).toHaveBeenCalledOnce();
+  expect([...depends.mock.calls[0]![0]]).toEqual(["album-2"]);
   expect(counts).toHaveBeenCalledExactlyOnceWith(true);
   expect(refresh).not.toHaveBeenCalled();
   const membership = { ...unrelated, albums: new Map([["album-1", 2]]) };
+  depends.mockReturnValue(true);
   await view.component.refresh(membership);
+  expect([...depends.mock.calls[1]![0]]).toEqual(["album-1"]);
   expect(refresh).toHaveBeenCalledExactlyOnceWith(membership);
 });
 

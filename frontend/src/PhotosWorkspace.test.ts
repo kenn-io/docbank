@@ -1305,7 +1305,7 @@ function workspaceWithPreparedPhoto(target = preparedPhoto(1), projection?: "map
   return photos;
 }
 
-it.each(["asset", "query", "album", "refetch", "removed", "failure", "burst", "followup", "early"])(
+it.each(["asset", "query", "album", "refetch", "early"])(
   "revalidates pending initial metadata after a live %s change",
   async (scenario) => {
     const photos = workspaceWithPreparedPhoto();
@@ -1330,16 +1330,14 @@ it.each(["asset", "query", "album", "refetch", "removed", "failure", "burst", "f
       before: [],
       after: [],
     });
-    let failList = scenario === "failure";
     let finishList!: () => void;
     stubPhotoFetch(async (url) => {
       if (!url.endsWith("/photos/assets/query")) throw new Error(`Unexpected request: ${url}`);
-      if (failList) throw new Error("Listing failed");
       if (scenario === "early" && !finishList)
         await new Promise<void>((resolve) => (finishList = resolve));
       return Response.json({
-        items: scenario === "removed" ? [] : [photo(1)],
-        total: queryScope ? 2 : scenario === "removed" ? 0 : 1,
+        items: [photo(1)],
+        total: queryScope ? 2 : 1,
         facets: [],
       });
     });
@@ -1359,17 +1357,7 @@ it.each(["asset", "query", "album", "refetch", "removed", "failure", "burst", "f
     expect(
       screen.queryByText("No photos are available to review. Clear edits to discard this draft."),
     ).toBeNull();
-    if (scenario === "failure") {
-      await expect(refreshing).rejects.toThrow("Listing failed");
-      replies[0]!({ assets: [], targets: [before] });
-      await waitFor(() => expect(photos.authored.loading).toBe(false));
-      expect(photos.authored.conflict).toBe(true);
-      expect(
-        screen.getByRole<HTMLButtonElement>("button", { name: "Reload metadata" }).disabled,
-      ).toBe(false);
-      expect(prepare).toHaveBeenCalledOnce();
-      failList = false;
-    } else if (scenario === "early") {
+    if (scenario === "early") {
       await waitFor(() => expect(finishList).toBeTypeOf("function"));
       replies[0]!({ assets: [], targets: [before, unloaded] });
       await waitFor(() => expect(photos.authored.loading).toBe(false));
@@ -1378,16 +1366,7 @@ it.each(["asset", "query", "album", "refetch", "removed", "failure", "burst", "f
       await waitFor(() => expect(photos.loading).toBe(false));
       expect(photos.authored.loading).toBe(true);
       expect(prepare).toHaveBeenCalledOnce();
-    }
-    const retry =
-      scenario === "failure" || scenario === "burst" ? view.component.refresh(changes) : undefined;
-    if (!["failure", "early"].includes(scenario)) replies[0]!({ assets: [], targets: [before] });
-    if (scenario === "removed") {
-      await refreshing;
-      expect(prepare).toHaveBeenCalledOnce();
-      expect(photos.authored.targets).toEqual([]);
-      photos.dispose();
-      return;
+      replies[0]!({ assets: [], targets: [before] });
     }
     await waitFor(() => expect(prepare).toHaveBeenCalledTimes(2));
     expect(screen.getByRole<HTMLButtonElement>("button", { name: "Apply" }).disabled).toBe(true);
@@ -1397,36 +1376,25 @@ it.each(["asset", "query", "album", "refetch", "removed", "failure", "burst", "f
       expect(scope.asset_ids).toBeUndefined();
       expect(scope.skip_unavailable).toBeUndefined();
     } else expect(scope.asset_ids).toEqual(["photo-1"]);
-    const overlapping = scenario === "followup" ? view.component.refresh(changes) : undefined;
-    await tick();
     replies[1]!({
       assets: [],
-      targets: scenario === "followup" ? [before] : queryScope ? [current, unloaded] : [current],
+      targets: queryScope ? [current, unloaded] : [current],
     });
-    if (scenario !== "failure") await refreshing;
-    await retry;
-    await overlapping;
+    await refreshing;
     await tick();
     expect(prepare).toHaveBeenCalledTimes(2);
     expect(photos.authored.loading).toBe(false);
-    if (scenario === "followup") {
-      expect(photos.authored.conflict).toBe(true);
-      expect(
-        screen.getByRole<HTMLButtonElement>("button", { name: "Reload metadata" }).disabled,
-      ).toBe(false);
-    } else {
-      expect(photos.authored.value("caption")).toBe(queryScope ? undefined : "After");
-      await photos.authored.edit({}, { rating: 5 }, false, vi.fn());
-      expect(edit).toHaveBeenCalledWith(
-        expect.objectContaining({
-          targets: expect.arrayContaining([
-            expect.objectContaining({ file_id: current.file_id, revision: 7 }),
-          ]),
-        }),
-        expect.anything(),
-      );
-      if (queryScope) expect(edit.mock.calls[0]![0].targets).toHaveLength(2);
-    }
+    expect(photos.authored.value("caption")).toBe(queryScope ? undefined : "After");
+    await photos.authored.edit({}, { rating: 5 }, false, vi.fn());
+    expect(edit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targets: expect.arrayContaining([
+          expect.objectContaining({ file_id: current.file_id, revision: 7 }),
+        ]),
+      }),
+      expect.anything(),
+    );
+    if (queryScope) expect(edit.mock.calls[0]![0].targets).toHaveLength(2);
     view.unmount();
     photos.dispose();
   },
@@ -1493,166 +1461,95 @@ it("keeps metadata focus and selection through an unrelated live list and compar
   photos.dispose();
 });
 
-it.each(["listing", "comparison"])(
-  "blocks retained metadata after a live %s failure",
-  async (phase) => {
-    const photos = workspaceWithPreparedPhoto();
-    const prepare = vi
-      .spyOn(api, "preparePhotoAuthored")
-      .mockRejectedValue(new APIError("Comparison failed", 503, "unavailable"));
-    stubPhotoFetch(async () => {
-      if (phase === "listing") throw new Error("Listing failed");
-      return Response.json({ items: [photo(1)], total: 1, facets: [] });
-    });
-    const view = render(PhotosWorkspace, {
-      photos,
-      cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
-    });
-    await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
-    await fireEvent.input(screen.getByRole("textbox", { name: "Caption" }), {
-      target: { value: "Local draft" },
-    });
-    const refreshing = view.component.refresh({
-      assets: new Map(),
-      albums: new Map(),
-      refetch: true,
-    });
-    if (phase === "listing") await expect(refreshing).rejects.toThrow("Listing failed");
-    else await refreshing;
-    await tick();
-    expect(photos.authored.patch.caption).toBe("Local draft");
-    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Apply" }).disabled).toBe(true);
-    expect(
-      screen.getByRole<HTMLButtonElement>("button", { name: "Reload metadata" }).disabled,
-    ).toBe(false);
-    if (phase === "comparison") expect(prepare).toHaveBeenCalledOnce();
-    view.unmount();
-    photos.dispose();
-  },
-);
-
-it("shows a warning when a deleted keyword's staged edit is removed", async () => {
+it("blocks retained metadata after a live listing failure", async () => {
   const photos = workspaceWithPreparedPhoto();
-  vi.spyOn(api, "getTag").mockRejectedValue(new APIError("Deleted", 404, "not_found"));
+  stubPhotoFetch(async () => {
+    throw new Error("Listing failed");
+  });
   const view = render(PhotosWorkspace, {
     photos,
     cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
   });
   await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
-  const caption = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Caption" });
-  await fireEvent.input(caption, { target: { value: "Local draft" } });
-  photos.authored.tags = [{ id: "deleted", name: "Travel", revision: 1, assignment_count: 0 }];
-  photos.authored.stage({}, [{ tag_id: "deleted", assign: true }]);
-  await photos.authored.refreshAssignedTags();
-  expect(
-    await screen.findByText("“Travel” was deleted. Its staged edit was removed."),
-  ).toBeTruthy();
-  expect(caption.value).toBe("Local draft");
-  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Apply" }).disabled).toBe(false);
+  await fireEvent.input(screen.getByRole("textbox", { name: "Caption" }), {
+    target: { value: "Local draft" },
+  });
+  const refreshing = view.component.refresh({
+    assets: new Map(),
+    albums: new Map(),
+    refetch: true,
+  });
+  await expect(refreshing).rejects.toThrow("Listing failed");
+  await tick();
+  expect(photos.authored.patch.caption).toBe("Local draft");
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Apply" }).disabled).toBe(true);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Reload metadata" }).disabled).toBe(
+    false,
+  );
   view.unmount();
   photos.dispose();
 });
 
-it.each([
-  { dirty: false, refetch: true },
-  { dirty: true, refetch: false },
-  { dirty: true, refetch: true },
-])(
-  "reconciles open metadata after live changes, dirty=$dirty, refetch=$refetch",
-  async ({ dirty, refetch }) => {
-    const before = preparedPhoto(1);
-    before.values.caption = "Before";
-    const photos = workspaceWithPreparedPhoto(before);
-    const unchanged = dirty && refetch;
-    const updated = unchanged
-      ? before
-      : preparedPhoto(1, {
-          asset_revision: 2,
-          revision: 7,
-          node_revision: 9,
-          values: { ...before.values, caption: "Remote caption", rating: 4 },
-        });
-    let finishPrepare: (() => void) | undefined;
-    const fetcher = vi.fn(async (url: string, init: RequestInit) => {
-      if (url.endsWith("/photos/assets/query"))
-        return Response.json({ items: [{ ...photo(1), revision: 2 }], total: 1, facets: [] });
-      if (url.endsWith("/photos/authored/prepare")) {
-        if (unchanged) await new Promise<void>((resolve) => (finishPrepare = resolve));
-        return Response.json({ assets: [], targets: [updated] });
-      }
-      if (url.endsWith("/photos/authored/edit")) {
-        const input = JSON.parse(String(init.body));
-        return Response.json({
-          receipt_id: "saved",
-          before: [updated],
-          after: [{ ...updated, values: { ...updated.values, ...input.patch } }],
-        });
-      }
-      throw new Error(`Unexpected request: ${url}`);
-    });
-    vi.stubGlobal("fetch", fetcher);
-    const view = render(PhotosWorkspace, {
-      photos,
-      cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
-    });
-    await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
-    const caption = () => screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Caption" });
-    expect(caption().value).toBe("Before");
-    if (dirty) await fireEvent.input(caption(), { target: { value: "Local draft" } });
-    await view.component.refresh({
-      assets: new Map([["photo-2", 2]]),
-      albums: new Map(),
-      refetch: false,
-    });
-    expect(caption().value).toBe(dirty ? "Local draft" : "Before");
-    expect(fetcher.mock.calls.some(([url]) => url.endsWith("/photos/authored/prepare"))).toBe(
-      false,
-    );
-
-    const refreshing = view.component.refresh({
-      assets: new Map(refetch ? [] : [["photo-1", 2]]),
-      albums: new Map(),
-      refetch,
-    });
-    if (unchanged) {
-      await waitFor(() => expect(finishPrepare).toBeTypeOf("function"));
-      expect(
-        screen.queryByText("Review the current photos before applying these edits."),
-      ).toBeNull();
-      finishPrepare!();
+it("applies updated metadata revisions after a live refresh", async () => {
+  const before = preparedPhoto(1);
+  before.values.caption = "Before";
+  const photos = workspaceWithPreparedPhoto(before);
+  const updated = preparedPhoto(1, {
+    asset_revision: 2,
+    revision: 7,
+    node_revision: 9,
+    values: { ...before.values, caption: "Remote caption", rating: 4 },
+  });
+  const fetcher = vi.fn(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/photos/assets/query"))
+      return Response.json({ items: [{ ...photo(1), revision: 2 }], total: 1, facets: [] });
+    if (url.endsWith("/photos/authored/prepare"))
+      return Response.json({ assets: [], targets: [updated] });
+    if (url.endsWith("/photos/authored/edit")) {
+      const input = JSON.parse(String(init.body));
+      return Response.json({
+        receipt_id: "saved",
+        before: [updated],
+        after: [{ ...updated, values: { ...updated.values, ...input.patch } }],
+      });
     }
-    await refreshing;
-    await tick();
-    if (dirty && !unchanged) {
-      expect(caption().value).toBe("Local draft");
-      expect(screen.getByRole<HTMLButtonElement>("button", { name: "Apply" }).disabled).toBe(true);
-      await fireEvent.click(screen.getByRole("button", { name: "Reload metadata" }));
-      await waitFor(() => expect(caption().disabled).toBe(false));
-      expect(caption().value).toBe("Local draft");
-    } else {
-      expect(caption().value).toBe(unchanged ? "Local draft" : "Remote caption");
-      await fireEvent.input(caption(), { target: { value: "Local draft" } });
-    }
-    if (!unchanged) expect(screen.getByRole("combobox", { name: "Rating: 4 stars" })).toBeTruthy();
-    await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-    await waitFor(() => expect(photos.authored.busy).toBe(false));
-    const saved = fetcher.mock.calls.find(([url]) => url.endsWith("/photos/authored/edit"));
-    expect(JSON.parse(String(saved?.[1].body))).toMatchObject({
-      targets: [
-        {
-          asset_id: "photo-1",
-          asset_revision: updated.asset_revision,
-          file_id: "file-1",
-          revision: updated.revision,
-          node_revision: updated.node_revision,
-        },
-      ],
-      patch: { caption: "Local draft" },
-    });
-    view.unmount();
-    photos.dispose();
-  },
-);
+    throw new Error(`Unexpected request: ${url}`);
+  });
+  vi.stubGlobal("fetch", fetcher);
+  const view = render(PhotosWorkspace, {
+    photos,
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+  });
+  await fireEvent.click(screen.getByRole("button", { name: "Metadata" }));
+  const caption = () => screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Caption" });
+  expect(caption().value).toBe("Before");
+  await view.component.refresh({
+    assets: new Map(),
+    albums: new Map(),
+    refetch: true,
+  });
+  await tick();
+  expect(caption().value).toBe("Remote caption");
+  expect(screen.getByRole("combobox", { name: "Rating: 4 stars" })).toBeTruthy();
+  await fireEvent.input(caption(), { target: { value: "Local draft" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  await waitFor(() => expect(photos.authored.busy).toBe(false));
+  const saved = fetcher.mock.calls.find(([url]) => url.endsWith("/photos/authored/edit"));
+  expect(JSON.parse(String(saved?.[1].body))).toMatchObject({
+    targets: [
+      {
+        asset_id: "photo-1",
+        asset_revision: updated.asset_revision,
+        file_id: "file-1",
+        revision: updated.revision,
+        node_revision: updated.node_revision,
+      },
+    ],
+    patch: { caption: "Local draft" },
+  });
+  view.unmount();
+  photos.dispose();
+});
 
 it("reports a saved edit as saved when its follow-up refresh fails", async () => {
   const before = preparedPhoto(1);

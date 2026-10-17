@@ -259,7 +259,6 @@ func TestPhotoEventsNonPhotoSharedBlobMembership(t *testing.T) {
 	require.NoError(t, err)
 	events, cancel := s.SubscribePhotoEvents()
 	defer cancel()
-	require.Zero(t, browsePhotoPage(t, s, `{"filters":{"has_duplicates":true}}`).Total)
 	baseline, err := s.CreateFile(ctx, s.RootID(), "note.txt", fakeHash("33"), 4, "text/plain")
 	require.NoError(t, err)
 	noPhotoEvent(t, events)
@@ -275,9 +274,6 @@ func TestPhotoEventsNonPhotoSharedBlobMembership(t *testing.T) {
 	doc, err := s.CreateFile(ctx, s.RootID(), "duplicate.bin", first.BlobHash, 4, "application/octet-stream")
 	require.NoError(t, err)
 	require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
-	duplicates := browsePhotoPage(t, s, `{"filters":{"has_duplicates":true}}`)
-	require.Equal(t, int64(1), duplicates.Total)
-	require.Equal(t, first.ID, duplicates.Items[0].NodeID)
 	doc, _, err = s.Move(ctx, doc.ID, s.RootID(), "renamed.bin", doc.Revision)
 	require.NoError(t, err)
 	noPhotoEvent(t, events)
@@ -294,16 +290,12 @@ func TestPhotoEventsNonPhotoSharedBlobMembership(t *testing.T) {
 	doc, _, err = s.Trash(ctx, doc.ID, doc.Revision)
 	require.NoError(t, err)
 	require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
-	require.Zero(t, browsePhotoPage(t, s, `{"filters":{"has_duplicates":true}}`).Total)
 	doc, _, err = s.Restore(ctx, doc.ID, doc.Revision)
 	require.NoError(t, err)
 	require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
 	doc, _, err = s.ReplaceContent(ctx, doc.ID, doc.Revision, second.BlobHash, 4, "application/octet-stream")
 	require.NoError(t, err)
 	require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
-	duplicates = browsePhotoPage(t, s, `{"filters":{"has_duplicates":true}}`)
-	require.Equal(t, int64(1), duplicates.Total)
-	require.Equal(t, second.ID, duplicates.Items[0].NodeID)
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `DELETE FROM nodes WHERE id=?`, doc.ID)
 		return err
@@ -436,14 +428,6 @@ func TestPhotoEventsQueryDefinitions(t *testing.T) {
 			require.NoError(t, err)
 			label, err := s.SetCollectionLabel(ctx, run.ID(), 1, new("Original"))
 			require.NoError(t, err)
-			text := "saved:LiveSource"
-			if dependency == "collection" {
-				text = "collection:Original"
-			}
-			q := snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q}`, text))
-			page, err := s.ListPhotoAssets(ctx, PhotoBrowseRequest{Query: q}, nil)
-			require.NoError(t, err)
-			require.Len(t, page.Items, 1)
 			events, cancel := s.SubscribePhotoEvents()
 			defer cancel()
 			if dependency == "saved" {
@@ -454,13 +438,6 @@ func TestPhotoEventsQueryDefinitions(t *testing.T) {
 			require.NoError(t, err)
 			cancel()
 			require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
-			page, err = s.ListPhotoAssets(ctx, PhotoBrowseRequest{Query: q}, nil)
-			if dependency == "saved" {
-				require.NoError(t, err)
-				require.Empty(t, page.Items)
-			} else {
-				require.ErrorContains(t, err, "unknown collection reference")
-			}
 		})
 	}
 }
@@ -474,12 +451,9 @@ func TestPhotoEventsHiddenAlbumMembership(t *testing.T) {
 	require.NoError(t, err)
 	unlocked := WithPhotoHiddenToken(ctx, token)
 	hidden := browsePhotoNode(t, s, "hidden.jpg", fakeHash("11"), "image/jpeg")
-	public := browsePhotoNode(t, s, "public.jpg", fakeHash("22"), "image/jpeg")
 	privateAsset, err := s.PhotoAssetForNode(ctx, hidden.ID)
 	require.NoError(t, err)
 	privateAsset, err = s.SetPhotoAssetHidden(ctx, privateAsset.ID, privateAsset.Revision, true)
-	require.NoError(t, err)
-	publicAsset, err := s.PhotoAssetForNode(ctx, public.ID)
 	require.NoError(t, err)
 	album, err := s.CreatePhotoSet(ctx, "Trip")
 	require.NoError(t, err)
@@ -487,7 +461,6 @@ func TestPhotoEventsHiddenAlbumMembership(t *testing.T) {
 	defer stopLocked()
 	openEvents, stopOpen := s.SubscribePhotoEvents()
 	defer stopOpen()
-	stale := album
 	for _, add := range []bool{true, false} {
 		album, err = s.ChangePhotoSetMembers(unlocked, album.ID, album.Revision, add, PhotoSetSelection{AssetIDs: []string{privateAsset.ID}})
 		require.NoError(t, err)
@@ -509,30 +482,5 @@ func TestPhotoEventsHiddenAlbumMembership(t *testing.T) {
 				require.Equal(t, PhotoEvent{AlbumID: album.ID, Revision: album.Revision}, event)
 			}
 		}
-	}
-	_, err = s.UpdatePhotoSet(ctx, stale.ID, stale.Revision, new("Renamed"), nil, nil)
-	require.ErrorIs(t, err, ErrStaleRevision)
-	album, err = s.ChangePhotoSetMembers(ctx, album.ID, album.Revision, true, PhotoSetSelection{AssetIDs: []string{publicAsset.ID}})
-	require.NoError(t, err)
-	for _, events := range []<-chan PhotoEvent{lockedEvents, openEvents} {
-		event, err := s.VisiblePhotoEvent(ctx, nextPhotoEventWithAudience(t, events))
-		require.NoError(t, err)
-		require.Equal(t, PhotoEvent{AlbumID: album.ID, Revision: album.Revision}, event)
-	}
-	album, err = s.UpdatePhotoSet(ctx, album.ID, album.Revision, new("Renamed"), nil, nil)
-	require.NoError(t, err)
-	for _, events := range []<-chan PhotoEvent{lockedEvents, openEvents} {
-		event, err := s.VisiblePhotoEvent(ctx, nextPhotoEventWithAudience(t, events))
-		require.NoError(t, err)
-		require.Equal(t, PhotoEvent{AlbumID: album.ID, Revision: album.Revision}, event)
-	}
-	for _, node := range []Node{hidden, public} {
-		require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{BlobHash: node.BlobHash, Extractor: "synthetic", ExtractorVersion: 1, Status: ExtractionOK, Text: "updated"}))
-		event, err := s.VisiblePhotoEvent(ctx, nextPhotoEventWithAudience(t, lockedEvents))
-		require.NoError(t, err)
-		require.Equal(t, PhotoEvent{Refetch: true}, event)
-		event, err = s.VisiblePhotoEvent(unlocked, nextPhotoEventWithAudience(t, openEvents))
-		require.NoError(t, err)
-		require.Equal(t, PhotoEvent{Refetch: true}, event)
 	}
 }

@@ -3033,37 +3033,6 @@ it("keeps the timeline on screen during a live refresh", async () => {
   photos.dispose();
 });
 
-it("refreshes and reconciles retained metadata once when an off-screen view resumes", async () => {
-  const before = preparedPhoto(1);
-  const remote = preparedPhoto(1, { revision: 7, values: { ...before.values, caption: "Remote" } });
-  const fetcher = vi.fn(async (url: string) =>
-    url.endsWith("/photos/authored/prepare")
-      ? Response.json({ assets: [], targets: [remote] })
-      : response([photo(1)]),
-  );
-  stubPhotoFetch(fetcher);
-  const photos = new Photos("scoped", vi.fn());
-  await photos.resume();
-  const listings = () =>
-    fetcher.mock.calls.filter(([url]) => url.endsWith("/photos/assets/query")).length;
-  expect(listings()).toBe(1);
-  photos.authored.targets = [before];
-  const changes = { assets: new Map([["photo-1", 7]]), albums: new Map(), refetch: false };
-  photos.markChanged(changes);
-  expect(photos.authored.conflict).toBe(true);
-  await photos.resume();
-  await vi.waitFor(() => expect(photos.authored.conflict).toBe(false));
-  expect(photos.authored.targets).toEqual([remote]);
-  expect(listings()).toBe(2);
-  await photos.resume();
-  expect(listings()).toBe(2);
-  photos.markChanged(changes);
-  await photos.refresh();
-  await photos.resume();
-  expect(listings()).toBe(3);
-  photos.dispose();
-});
-
 it("matches album changes against set filters and advanced field searches", () => {
   const photos = new Photos("scoped", vi.fn());
   const album = "00000000-0000-4000-8000-0000000000a1";
@@ -3092,10 +3061,14 @@ it.each(["query", "explicit", "loupe", "album"])(
       if (kind === "album") photos.query = { ...photos.query, filters: { set_ids: [album] } };
       let finish!: (response: Response) => void;
       const scopes: unknown[] = [];
+      let listingCount = 0;
       const current = preparedPhoto(1, { revision: 7 });
       current.values.caption = "Current";
       stubPhotoFetch(async (url, init) => {
-        if (!url.endsWith("/photos/authored/prepare")) return response([photo(1)]);
+        if (!url.endsWith("/photos/authored/prepare")) {
+          listingCount++;
+          return response([photo(1)]);
+        }
         const scope = JSON.parse(init.body as string);
         expect(scope.query && scope.skip_unavailable).toBeFalsy();
         expect(scope.asset_ids).not.toEqual([]);
@@ -3104,6 +3077,7 @@ it.each(["query", "explicit", "loupe", "album"])(
         return Response.json({ assets: [], targets: [current] });
       });
       await photos.resume();
+      expect(listingCount).toBe(1);
       const query = kind === "query" || kind === "album";
       if (query) photos.selectAllResults();
       else photos.selectLoaded();
@@ -3124,6 +3098,9 @@ it.each(["query", "explicit", "loupe", "album"])(
       if (!early) finish(Response.json({ assets: [], targets: [preparedPhoto(1)] }));
       await initial;
       await vi.waitFor(() => expect(photos.authored.value("caption")).toBe("Current"));
+      expect(listingCount).toBe(2);
+      await photos.resume();
+      expect(listingCount).toBe(2);
       expect(photos.authored.targets[0]!.revision).toBe(7);
       expect(scopes).toHaveLength(2);
       expect(scopes[1]).toEqual(

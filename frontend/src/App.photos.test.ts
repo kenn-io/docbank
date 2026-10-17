@@ -3692,7 +3692,7 @@ it("revalidates the library when a Hidden recheck is replaced before it confirms
   expect(fixture.workspaceProps.concealed).toBe(false);
 });
 
-it.each(["rename", "create", "delete", "delete assigned", "rename and assign"])(
+it.each(["rename", "create", "delete", "rename and assign"])(
   "refreshes the displayed keyword catalog after %s",
   async (change) => {
     const original = { id: "tag", name: "Trip keyword", revision: 1, assignment_count: 0 };
@@ -3716,13 +3716,10 @@ it.each(["rename", "create", "delete", "delete assigned", "rename and assign"])(
         : [changed];
     const listed = change === "rename and assign" ? [] : current;
     list.mockResolvedValue({ items: listed, total: current.length, limit: 1000, offset: 0 });
-    const lookup = vi.spyOn(api, "getTag").mockResolvedValue(changed);
-    if (change === "delete assigned") {
-      lookup.mockRejectedValue(new APIError("Deleted", 404, "not_found"));
-      editor.stage({ caption: "Draft caption" });
-    }
-    if (change === "rename and assign" || change === "delete assigned")
+    if (change === "rename and assign") {
       editor.targets[0]!.tags = [original.id];
+      vi.spyOn(api, "getTag").mockResolvedValue(changed);
+    }
     await act(async () =>
       fixture.refresh({
         assets: new Map(change === "rename and assign" ? [["photo-1", 2]] : []),

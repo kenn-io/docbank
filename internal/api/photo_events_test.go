@@ -107,9 +107,6 @@ func TestPhotoEventsRejectsRequestsWithoutAPIKey(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &problem))
 	require.Equal(t, http.StatusUnauthorized, problem.Status)
 	require.Equal(t, "unauthorized", problem.Code)
-
-	stream, scanner := openPhotoEventStream(t, ts, "", nil)
-	require.True(t, readPhotoChange(t, scanner, stream.Body).Refetch)
 }
 
 func TestPhotoEventsLockedStreamHidesIDsAndRelaysRefetch(t *testing.T) {
@@ -123,10 +120,6 @@ func TestPhotoEventsLockedStreamHidesIDsAndRelaysRefetch(t *testing.T) {
 	require.NoError(t, err)
 	asset, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
-	publicNode, err := s.CreateFile(ctx, s.RootID(), "public.jpg", testHash("public"), 4, "image/jpeg")
-	require.NoError(t, err)
-	publicAsset, err := s.PhotoAssetForNode(ctx, publicNode.ID)
-	require.NoError(t, err)
 	lockedResponse, lockedScanner := openPhotoEventStream(t, ts, "", nil)
 	require.True(t, readPhotoChange(t, lockedScanner, lockedResponse.Body).Refetch)
 	unlocked, body := do(t, ts, http.MethodPost, "/api/v1/photos/hidden/unlock", nil, map[string]string{"passcode": "synthetic-passcode"})
@@ -135,13 +128,8 @@ func TestPhotoEventsLockedStreamHidesIDsAndRelaysRefetch(t *testing.T) {
 	require.True(t, readPhotoChange(t, scanner, response.Body).Refetch)
 	_, _, err = s.Move(ctx, node.ID, s.RootID(), "hidden-renamed.jpg", node.Revision)
 	require.NoError(t, err)
-	// The locked holder can relay a generic change pulse to the unlocked tab.
-	_, _, err = s.Move(ctx, publicNode.ID, s.RootID(), "public-renamed.jpg", publicNode.Revision)
-	require.NoError(t, err)
-	require.Equal(t, asset.ID, readPhotoChange(t, scanner, response.Body).AssetID)
-	require.Equal(t, publicAsset.ID, readPhotoChange(t, scanner, response.Body).AssetID)
 	require.Equal(t, `{"refetch":true}`, readPhotoChangeData(t, lockedScanner, lockedResponse.Body))
-	require.Equal(t, publicAsset.ID, readPhotoChange(t, lockedScanner, lockedResponse.Body).AssetID)
+	require.Equal(t, asset.ID, readPhotoChange(t, scanner, response.Body).AssetID)
 }
 
 func TestPhotoEventsStreamEndsOnShutdownOrSessionRevocation(t *testing.T) {

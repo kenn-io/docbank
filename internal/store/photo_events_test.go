@@ -163,13 +163,13 @@ func TestPhotoEventsAudienceClassification(t *testing.T) {
 		require.NoError(t, err)
 		_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 		require.NoError(t, err)
-		public, err := s.CreateFile(ctx, s.RootID(), "public.jpg", hidden.BlobHash, 4, "image/jpeg")
+		_, err = s.CreateFile(ctx, s.RootID(), "public.jpg", hidden.BlobHash, 4, "image/jpeg")
 		require.NoError(t, err)
-		_ = public
 		events, cancel := s.SubscribePhotoEvents()
 		defer cancel()
 		require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{BlobHash: hidden.BlobHash, Extractor: "synthetic", ExtractorVersion: 1, Status: ExtractionOK, Text: "shared"}))
-		require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
+		summary := nextPhotoEventWithAudience(t, events)
+		require.Equal(t, PhotoEvent{Refetch: true, audience: photoPublic}, summary)
 		noPhotoEvent(t, events)
 	})
 	for _, tc := range []struct {
