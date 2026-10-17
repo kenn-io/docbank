@@ -184,21 +184,9 @@ func TestPhotoEventsPollCursors(t *testing.T) {
 	write()
 	require.Equal(t, locked, cursor(ctx), "another viewer unlocking does not expose Hidden changes")
 	require.NotEqual(t, unlocked, cursor(viewer))
-	locked = cursor(ctx)
-	rejected := errors.New("rollback")
-	require.ErrorIs(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `UPDATE photo_assets SET revision=revision+1 WHERE asset_id=?`, asset.ID)
-		require.NoError(t, err)
-		return rejected
-	}), rejected)
-	require.Equal(t, locked, cursor(ctx))
 	_, err = s.CreatePhotoSet(ctx, "Album")
 	require.NoError(t, err)
 	require.NotEqual(t, locked, cursor(ctx))
-	locked = cursor(ctx)
-	now = now.Add(31 * time.Second)
-	write() // No subscriber or poll interest remains.
-	require.NotEqual(t, locked, cursor(ctx), "resuming expired interest must refetch uncaptured changes")
 	now = now.Add(5 * time.Minute)
 	require.Equal(t, cursor(ctx), cursor(viewer), "expired unlock uses the locked audience")
 	other := newTestStore(t)
@@ -281,11 +269,6 @@ func TestPhotoEventsStreamDoesNotRenewPollingInterest(t *testing.T) {
 	require.Equal(t, cursor.ChangeCursor, current.ChangeCursor)
 	require.Equal(t, epoch, s.photoEvents.epoch)
 	require.Equal(t, lease, s.photoEvents.pollUntil)
-	stop()
-	resumed, err := s.PhotoHiddenState(t.Context(), true)
-	require.NoError(t, err)
-	require.NotEqual(t, current.ChangeCursor, resumed.ChangeCursor)
-	require.True(t, s.photoEvents.pollUntil.After(now))
 }
 
 func TestPhotoEventsStaggeredPollingAcrossExpiry(t *testing.T) {

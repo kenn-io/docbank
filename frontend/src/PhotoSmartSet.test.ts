@@ -4,7 +4,7 @@ import { tick } from "svelte";
 import PhotoSmartSet from "./PhotoSmartSet.svelte";
 import { Photos } from "./photos.svelte.js";
 import { PhotoAlbums } from "./photoAlbums.svelte.js";
-import { updateSavedQuery, definitionsChanged } from "./savedQueries.js";
+import { definitionsChanged } from "./savedQueries.js";
 import { parseQuery, queryFingerprint } from "./query.js";
 import { savedSmartSet as savedSmartSetFixture } from "./photo-test-fixtures.js";
 import * as generated from "./generated/docbank.js";
@@ -261,34 +261,6 @@ it.each(["server expiry", "a member leaves Library", "member hash mismatch"])(
     albums.dispose();
   },
 );
-
-it("refreshes a renamed definition through the subscription", async () => {
-  const id = "00000000-0000-4000-8000-000000000001";
-  const payload = parseQuery(
-    '{"text":"harbor","filters":{"kinds":["photo","video"]},"sort":{"field":"name","direction":"asc"}}',
-  );
-  const saved = savedSmartSetFixture(payload, await queryFingerprint(payload), {
-    id,
-    name: "Picks",
-  });
-  let current = saved;
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (url: string, init: RequestInit) => {
-      if (init?.method === "PATCH") current = { ...current, name: "Renamed", revision: 2 };
-      return Response.json(current, { headers: { ETag: `"${current.revision}"` }, status: 200 });
-    }),
-  );
-  const photos = new Photos("session", vi.fn());
-  photos.query = payload;
-  photos.smartSet = saved;
-  const albums = new PhotoAlbums("session", vi.fn());
-  render(PhotoSmartSet, { photos, albums, onnavigate: vi.fn() });
-  await updateSavedQuery("session", saved, { name: "Renamed" });
-  expect(await screen.findByText("Renamed")).toBeTruthy();
-  photos.dispose();
-  albums.dispose();
-});
 
 const freezeRecoveryCases = [
   {

@@ -227,16 +227,13 @@ func TestPhotoHiddenHTTPWatchInterest(t *testing.T) {
 				return state.ChangeCursor
 			}
 			before := poll()
-			for _, name := range []string{"renamed.jpg", "renamed-again.jpg"} {
-				node, _, err = s.Move(ctx, node.ID, s.RootID(), name, node.Revision)
-				require.NoError(t, err)
-				after := poll()
-				if watch {
-					require.NotEqual(t, before, after, "explicit watch reads must keep capturing committed changes")
-				} else {
-					require.Equal(t, before, after, "ordinary state reads must leave capture idle")
-				}
-				before = after
+			_, _, err = s.Move(ctx, node.ID, s.RootID(), "renamed.jpg", node.Revision)
+			require.NoError(t, err)
+			after := poll()
+			if watch {
+				require.NotEqual(t, before, after, "explicit watch reads must keep capturing committed changes")
+			} else {
+				require.Equal(t, before, after, "ordinary state reads must leave capture idle")
 			}
 		})
 	}

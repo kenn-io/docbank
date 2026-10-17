@@ -267,7 +267,16 @@ func TestPhotoEventsViewSources(t *testing.T) {
 			if source.refetch {
 				require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
 			} else {
-				require.Equal(t, asset.ID, nextPhotoEvent(t, events).AssetID)
+				event := nextPhotoEvent(t, events)
+				require.Equal(t, asset.ID, event.AssetID)
+				if source.table == "nodes" {
+					visible, err := s.VisiblePhotoEvents(ctx, []PhotoEvent{event})
+					require.NoError(t, err)
+					current, err := s.PhotoAssetForNode(ctx, photo.ID)
+					require.NoError(t, err)
+					// A rename can change query membership while its ID still scopes detail reconciliation.
+					require.Equal(t, []PhotoEvent{{AssetID: asset.ID, Revision: current.Revision, Refetch: true}}, visible)
+				}
 			}
 			noPhotoEvent(t, events)
 		})
