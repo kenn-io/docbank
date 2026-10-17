@@ -108,6 +108,52 @@ func rowIDs(rows []PhotoBrowseRow) []string {
 	return ids
 }
 
+func TestPhotoStackDescendingTimestampTies(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	run, err := s.BeginIngest(t.Context(), "cli", "synthetic tied captures")
+	require.NoError(t, err)
+	var ids []string
+	for i := range 5 {
+		ids = append(ids, stackPhoto(t, s, run, fmt.Sprintf("/shots/tie-%d.jpg", i), "2024-06-10T12:00:02Z", document.SourceMetadataPrecisionSecond))
+	}
+	slices.Sort(ids)
+	setCamera := func(id, stamp, model string) {
+		asset, err := s.PhotoAssetByID(t.Context(), id)
+		require.NoError(t, err)
+		node, err := s.NodeByID(t.Context(), asset.Files[0].NodeID)
+		require.NoError(t, err)
+		_, err = s.PublishSourceMetadata(t.Context(), node.BlobHash, browseHash(id+model), photoCanonical(t,
+			photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp(stamp, stamp, document.SourceMetadataPrecisionSecond, document.SourceMetadataTimezoneUTC, "")),
+			photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString(model))))
+		require.NoError(t, err)
+	}
+	for i, model := range []string{"A", "B", "C", "A", "C"} {
+		setCamera(ids[i], "2024-06-10T12:00:02Z", model)
+	}
+	older := stackPhoto(t, s, run, "/shots/older.jpg", "2024-06-10T12:00:01Z", document.SourceMetadataPrecisionSecond,
+		photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("A")))
+	request := captureRequest(t, "desc")
+	first, err := s.ListPhotoAssets(t.Context(), request, nil)
+	require.NoError(t, err)
+	require.NotNil(t, first.Next)
+	t.Run("display and pages", func(t *testing.T) {
+		require.Equal(t, []string{ids[0], ids[3], older}, rowIDs(first.Items))
+		require.Equal(t, []string{older, ids[0], ids[3]}, first.Stacks[0].AssetIDs)
+		pages, _ := stackPages(t, s, request)
+		require.Equal(t, [][]string{{ids[0], ids[3], older}, {ids[1]}, {ids[2], ids[4]}}, pages)
+	})
+	t.Run("frontier preserves future ties", func(t *testing.T) {
+		setCamera(ids[4], "2024-06-10T12:00:02Z", "D")
+		next, err := s.ListPhotoAssets(t.Context(), request, first.Next)
+		require.NoError(t, err, "a future-only stack change must leave the cursor valid")
+		require.Equal(t, []string{ids[1]}, rowIDs(next.Items))
+		setCamera(ids[0], "2024-06-10T12:00:02Z", "D")
+		_, err = s.ListPhotoAssets(t.Context(), request, first.Next)
+		require.ErrorIs(t, err, ErrInvalidPhotoCursor, "an emitted stack change must restart the cursor")
+	})
+}
+
 func TestPhotoStackCameraPartitions(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

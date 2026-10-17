@@ -532,7 +532,7 @@ SHA-256 folder key, normalizing Windows drive and UNC separators while
 preserving POSIX path bytes. Push and watch sources include their kind and
 description in the key. Missing source paths return SQL NULL. The timeline
 prefixes the capture-time zone lane and leaves the key NULL when a precise
-EXIF clock or a unique source folder is unavailable. SQL triggers keep it current as bindings, versions, and technical metadata change. It stays out of metadata JSONL and backups; restore refills it through those triggers.
+EXIF clock or a unique source folder is unavailable. SQL triggers keep it current as bindings, versions, and technical metadata change. It stays out of metadata JSONL and backups; restore refills it through those triggers. Schema 39 writes that fire `photo_timeline_refresh` require Docbank's [`sqlite/mattn`](../../sqlite/mattn/driver.go) or [`sqlite/modernc`](../../sqlite/modernc/driver.go) adapter, which registers `docbank_photo_folder_v1`; raw `sqlite3` reads work, but those writes fail without the function.
 
 Burst grouping partitions photos by the timeline `folder_key` and the displayed technical metadata's `camera_make_folded` and `camera_model_folded` before chaining capture times. Each camera field requires equal folded values; two missing values match, while a missing value and a known value stay separate. Interleaved camera streams keep separate chains. Stacked page cursors bind the gap and a fingerprint of relevant boundary membership, including the folded camera fields. A changed fingerprint requires a fresh page, so camera metadata changes at that boundary cannot silently omit frames.
 

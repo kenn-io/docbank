@@ -630,6 +630,15 @@ func (p *photoStackPager) prime(ctx context.Context, batch []PhotoBrowseRow, aft
 	return nil
 }
 
+// compare follows the browse order: capture direction, then UUID ascending.
+func (p *photoStackPager) compare(a, b photoStackFrame) int {
+	key := strings.Compare(a.SortKey, b.SortKey)
+	if p.descending {
+		key = -key
+	}
+	return cmp.Or(key, strings.Compare(a.AssetID, b.AssetID))
+}
+
 // classify returns the frames a raw row emits: the row alone, its whole stack
 // at the first member in scan order, or nothing for any other member.
 func (p *photoStackPager) classify(ctx context.Context, row PhotoBrowseRow) ([]photoStackFrame, error) {
@@ -644,10 +653,7 @@ func (p *photoStackPager) classify(ctx context.Context, row PhotoBrowseRow) ([]p
 	if component.oversized || len(component.frames) == 1 {
 		return []photoStackFrame{frame}, nil
 	}
-	first := component.frames[0]
-	if p.descending {
-		first = component.frames[len(component.frames)-1]
-	}
+	first := slices.MinFunc(component.frames, p.compare)
 	if first.AssetID != row.AssetID {
 		return nil, nil
 	}
@@ -708,19 +714,16 @@ func (p *photoStackPager) fill(ctx context.Context, page *PhotoBrowsePage, group
 		stack := make([]photoStackFrame, len(group))
 		for i, frame := range group {
 			input, ok := inputs[frame.AssetID]
-			row, scannedOK := scanned[frame.AssetID]
+			_, scannedOK := scanned[frame.AssetID]
 			if !ok || !scannedOK {
 				return errors.New("photo stack members changed inside one read snapshot")
 			}
 			stack[i] = photoStackFrame{AssetID: frame.AssetID, Folder: frame.Folder, SortKey: frame.SortKey, Rank: input.Rank, Picked: input.Picked}
-			if !p.descending {
-				page.Items = append(page.Items, row)
-			}
 		}
-		if p.descending {
-			for _, frame := range slices.Backward(group) {
-				page.Items = append(page.Items, scanned[frame.AssetID])
-			}
+		ordered := slices.Clone(group)
+		slices.SortFunc(ordered, p.compare)
+		for _, frame := range ordered {
+			page.Items = append(page.Items, scanned[frame.AssetID])
 		}
 		page.Stacks = append(page.Stacks, newPhotoStack(stack))
 	}
@@ -766,12 +769,8 @@ func (p *photoStackPager) frontier(ctx context.Context, boundary *PhotoBrowsePos
 				continue
 			}
 			seen[component] = true
-			first := component.frames[0]
-			if p.descending {
-				first = component.frames[len(component.frames)-1]
-			}
-			comparison := comparePhotoStackFrames(first, position)
-			if !p.descending && comparison <= 0 || p.descending && comparison >= 0 {
+			first := slices.MinFunc(component.frames, p.compare)
+			if p.compare(first, position) <= 0 {
 				members = append(members, component.frames...)
 			}
 		}
