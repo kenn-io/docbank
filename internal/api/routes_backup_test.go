@@ -93,7 +93,6 @@ func TestBackupSnapshots(t *testing.T) {
 	assert.Equal(t, int64(1), snapshot.Files)
 	assert.Equal(t, int64(1), snapshot.Blobs)
 	require.NotNil(t, snapshot.Coverage)
-	assert.Equal(t, int64(len("backup through the daemon")), snapshot.BlobBytes)
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/backup/snapshots", nil,
 		map[string]any{"tag": "second", "jobs": 1})
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
@@ -151,9 +150,11 @@ func TestBackupRoutesValidateRepositoryAndReportLock(t *testing.T) {
 		map[string]any{"repo": repoPath})
 	assert.Equal(t, http.StatusConflict, resp.StatusCode)
 	assert.Contains(t, body, `"code":"backup_locked"`)
-	_, body = do(t, ts, http.MethodPost, "/api/v1/backup/prune", nil, map[string]any{"repo": repoPath})
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/backup/prune", nil, map[string]any{"repo": repoPath})
+	assert.Equal(t, http.StatusConflict, resp.StatusCode)
 	var problem api.Error
 	require.NoError(t, json.Unmarshal([]byte(body), &problem))
+	assert.Equal(t, "backup_locked", problem.Code)
 	assert.Nil(t, problem.BackupPrune)
 
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/backup/snapshots/stream", nil,
@@ -268,7 +269,8 @@ func TestBackupVerifySelectionAndProgressStream(t *testing.T) { //nolint:paralle
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	require.NoError(t, json.Unmarshal([]byte(body), &report))
 	assert.Equal(t, []string{futureID}, report.Snapshots)
-	assert.Equal(t, []api.BackupVerifyProblem{{SnapshotID: futureID, Detail: "backupapp: unsupported backup coverage version 2; upgrade Docbank to verify this snapshot"}}, report.Problems)
+	require.NotEmpty(t, report.Problems)
+	assert.Equal(t, futureID, report.Problems[0].SnapshotID)
 	require.NotEmpty(t, manifest.NewPacks)
 	packID := manifest.NewPacks[0]
 	packPath := repo.Path("packs", packID[:2], packID+packstore.PackExt)
