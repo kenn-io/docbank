@@ -208,6 +208,9 @@ func (s *Store) ListPhotoAssets(
 			if err != nil {
 				return err
 			}
+			if err := hydratePhotoStackFolders(ctx, q, page.Items); err != nil {
+				return err
+			}
 			return s.hydratePhotoPreviews(ctx, q, request, page.Items)
 		}
 		primary, comparison := "ASC", ">"

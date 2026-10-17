@@ -378,6 +378,13 @@ func TestPhotoBurstRepresentativeUsesCompanionPick(t *testing.T) {
 	require.Empty(t, page.Items[1].Flag)
 	require.True(t, page.Items[1].Picked)
 	require.False(t, page.Items[0].Picked)
+	ranked, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: snapshotTestQuery(t, `{"text":"frame","sort":{"field":"relevance","direction":"desc"}}`)}, nil)
+	require.NoError(t, err)
+	require.Len(t, ranked.Items, 2)
+	for _, item := range ranked.Items {
+		require.Equal(t, page.Items[0].SourceFolderKey, item.SourceFolderKey)
+		require.Equal(t, item.AssetID == rows[1].AssetID, item.Picked)
+	}
 }
 
 func TestPhotoBurstPushSourceNamespace(t *testing.T) {
@@ -459,7 +466,6 @@ func TestPhotoBurstSharedTimeRules(t *testing.T) {
 		Gap  int
 		Rows []struct {
 			Time, Precision, Folder string
-			Repeat                  int
 		}
 		Groups []int
 	}
@@ -471,14 +477,12 @@ func TestPhotoBurstSharedTimeRules(t *testing.T) {
 			t.Parallel()
 			var rows []PhotoBrowseRow
 			for _, row := range fixture.Rows {
-				for range max(1, row.Repeat) {
-					rows = append(rows, PhotoBrowseRow{Kind: "photo", SourceFolderKey: row.Folder, Fields: PhotoTechnicalFields{CaptureTime: new(row.Time), CaptureTimePrecision: new(row.Precision)}})
-				}
+				rows = append(rows, PhotoBrowseRow{Kind: "photo", SourceFolderKey: row.Folder, Fields: PhotoTechnicalFields{CaptureTime: new(row.Time), CaptureTimePrecision: new(row.Precision)}})
 			}
 			var lengths []int
 			start := 0
 			for i := 1; i <= len(rows); i++ {
-				if i == len(rows) || i-start == 500 || !photoStackNeighbors(rows[i-1], rows[i], fixture.Gap) {
+				if i == len(rows) || !photoStackNeighbors(rows[i-1], rows[i], fixture.Gap) {
 					lengths = append(lengths, i-start)
 					start = i
 				}

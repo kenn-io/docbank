@@ -110,11 +110,7 @@ export function cullKey(event: KeyboardEvent): string | number | undefined {
   if (target instanceof Element && target.closest("input,textarea,select,[contenteditable=true]"))
     return;
   const key = event.key.toLowerCase();
-  if (
-    (key === "enter" || key === " ") &&
-    target instanceof Element &&
-    target.closest(NATIVE_KEYBOARD_TARGETS)
-  )
+  if (key === "enter" && target instanceof Element && target.closest(NATIVE_KEYBOARD_TARGETS))
     return;
   if (/^[0-5]$/.test(key)) return Number(key);
   return (

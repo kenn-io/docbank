@@ -650,6 +650,8 @@ it("groups frozen rows, projects interleaved passes and stops at frame edges", a
   settings.mockResolvedValue({ revision: 3, preference: "raw", burst_gap_seconds: 1 });
   await cull.checkSettings();
   expect(list).not.toHaveBeenCalled();
+  expect(cull.currentStack?.asset_ids).toEqual([ids[0]]);
+  expect(cull.stacks.get(ids[1]!)?.asset_ids).toEqual([ids[1]]);
   cull.moveStack(1);
   expect(cull.currentID).toBe(ids[2]);
   await cull.flush();

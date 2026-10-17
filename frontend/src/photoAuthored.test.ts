@@ -14,6 +14,30 @@ afterEach(() => {
   vi.restoreAllMocks();
   Reflect.deleteProperty(Element.prototype, "scrollIntoView");
 });
+
+it("reloads a conflicted Hidden stack within Hidden scope", async () => {
+  const prepare = vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue({
+    assets: [],
+    targets: [preparedPhoto(1)],
+  });
+  vi.spyOn(api, "decidePhotoStack").mockRejectedValue(
+    new APIError("Stack changed", 409, "photo_stack_stale"),
+  );
+  const editor = new PhotoAuthoredEditor("session", vi.fn());
+  await editor.decideStack(
+    { asset_ids: ["photo-1"], current_id: "photo-1", decision: "current", hidden: true },
+    vi.fn(),
+  );
+  expect(editor.conflict).toBe(true);
+  await editor.reload();
+  expect(prepare.mock.calls[1]?.[0]).toEqual({
+    asset_ids: ["photo-1"],
+    hidden: true,
+    skip_unavailable: true,
+  });
+  expect(editor.conflict).toBe(false);
+  expect(editor.targets.map((target) => target.asset_id)).toEqual(["photo-1"]);
+});
 const targets = [
   preparedPhoto(1, {
     asset_id: "asset",

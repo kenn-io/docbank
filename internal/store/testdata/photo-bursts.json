@@ -7,6 +7,5 @@
   {"name":"zoned and calendar clocks","gap":2,"rows":[{"time":"2024-01-01T12:00:00Z","precision":"second","folder":"A"},{"time":"2024-01-01T12:00:01","precision":"second","folder":"A"}],"groups":[1,1]},
   {"name":"minute and missing precision","gap":2,"rows":[{"time":"2024-01-01T12:00:00","precision":"minute","folder":"A"},{"time":"2024-01-01T12:00:01","precision":"","folder":"A"},{"time":"","precision":"second","folder":"A"}],"groups":[1,1,1]},
   {"name":"different and empty folders","gap":2,"rows":[{"time":"2024-01-01T12:00:00","precision":"second","folder":"A"},{"time":"2024-01-01T12:00:01","precision":"second","folder":"B"},{"time":"2024-01-01T12:00:02","precision":"second","folder":""},{"time":"2024-01-01T12:00:03","precision":"second","folder":""}],"groups":[1,1,1,1]},
-  {"name":"fraction truncated to nanoseconds","gap":2,"rows":[{"time":"2024-01-01T1:00:00.0000000001Z","precision":"fraction","folder":"A"},{"time":"2024-01-01T01:00:02.0000000009Z","precision":"fraction","folder":"A"}],"groups":[2]},
-  {"name":"500 frame cap","gap":2,"rows":[{"time":"2024-01-01T12:00:00Z","precision":"second","folder":"A","repeat":501}],"groups":[500,1]}
+  {"name":"fraction truncated to nanoseconds","gap":2,"rows":[{"time":"2024-01-01T1:00:00.0000000001Z","precision":"fraction","folder":"A"},{"time":"2024-01-01T01:00:02.0000000009Z","precision":"fraction","folder":"A"}],"groups":[2]}
 ]

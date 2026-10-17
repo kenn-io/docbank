@@ -405,7 +405,11 @@
       .then((photo) => {
         if (!signal.aborted) {
           if (!photos.projection)
-            photos.items = photos.items.map((item) => (item.asset_id === id ? photo : item));
+            photos.items = photos.items.map((item) =>
+              item.asset_id === id
+                ? { ...photo, ...("stack" in item ? { stack: item.stack } : {}) }
+                : item,
+            );
           direct = photo;
           detailError = "";
           if (explicit) {
@@ -609,7 +613,11 @@
       total: selected ? exportSelectionCount : photos.total,
     });
   }
-  const orderedIDs = $derived(shown.map((item) => item.asset_id));
+  const orderedIDs = $derived(
+    mapMode
+      ? shown.map((item) => item.asset_id)
+      : groups.flatMap((group) => group.items.map((item) => item.asset_id)),
+  );
   const dateLabel = $derived(photos.date?.length === 7 ? monthLabel(photos.date) : photos.date);
   const densityOptions = [
     { value: "compact", label: "Compact" },

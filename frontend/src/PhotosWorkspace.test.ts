@@ -2895,3 +2895,130 @@ it("restores invalid burst gaps and shows the range correction", async () => {
   expect(get).not.toHaveBeenCalled();
   photos.dispose();
 });
+
+it("keeps a reloaded stage photo in its collapsed stack when returning to the grid", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  stubPhotoFetch(async () => Response.json({ items: [], total: 0, facets: [] }));
+  const photos = new Photos("scoped", vi.fn());
+  const stack = { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1" };
+  photos.items = [photo(1), photo(2)].map((row) => ({ ...row, stack }));
+  photos.total = 2;
+  photos.started = true;
+  photos.viewerReturn = {
+    contextID: photos.contextID,
+    assetID: "photo-1",
+    control: "open",
+    scrollTop: 0,
+  };
+  vi.spyOn(photos, "resume").mockResolvedValue();
+  vi.spyOn(photos, "lookup").mockResolvedValue({ ...photo(1), name: "Reloaded photo.jpg" });
+  vi.spyOn(photos, "preview")
+    .mockRejectedValueOnce(new APIError("Photo changed", 409, "photo_display_changed"))
+    .mockResolvedValue({ state: "unsupported" });
+  const view = render(PhotosWorkspace, {
+    photos,
+    photoID: "photo-1",
+    cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+  });
+  await fireEvent.click(await screen.findByRole("button", { name: "Reload photo" }));
+  await screen.findByRole("dialog", { name: "Photo viewer, Reloaded photo.jpg" });
+  await view.rerender({ photoID: "" });
+  await screen.findByRole("button", { name: "Select Reloaded photo.jpg" });
+  expect(screen.queryByRole("button", { name: "Select Photo 2.jpg" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Expand stack of 2 photos" })).toBeTruthy();
+  photos.dispose();
+});
+
+it("keeps the same selected frames across repeated Keep selected decisions", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  const rows = [photo(1), photo(2), photo(3)];
+  const stack = { asset_ids: rows.map((row) => row.asset_id), representative_id: "photo-1" };
+  stubPhotoFetch(async () =>
+    Response.json({
+      items: rows.map((row) => ({ ...row, source_folder_key: "folder" })),
+      total: 3,
+      facets: [],
+      relevance_available: false,
+    }),
+  );
+  const decide = vi
+    .spyOn(api, "decidePhotoStack")
+    .mockResolvedValue({ receipt_id: "stack", before: [], after: [] });
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = rows.map((row) => ({ ...row, stack }));
+  photos.total = 3;
+  photos.started = true;
+  photos.expandedStacks = new Set(["photo-1"]);
+  photos.selection = { selectedIDs: new Set(["photo-1"]), anchorID: "photo-1" };
+  vi.spyOn(photos, "resume").mockResolvedValue();
+  render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
+  for (let i = 1; i <= 2; i++) {
+    const button = await screen.findByRole("button", { name: "Keep selected" });
+    await waitFor(() => expect(button.matches(":disabled")).toBe(false));
+    await fireEvent.click(button);
+    await waitFor(() => expect(decide).toHaveBeenCalledTimes(i));
+    await waitFor(() => expect(photos.authored.busy).toBe(false));
+    expect([...photos.selectedIDs]).toEqual(["photo-1"]);
+  }
+  expect(decide.mock.calls.map(([request]) => request.selected_ids)).toEqual([
+    ["photo-1"],
+    ["photo-1"],
+  ]);
+  expect(decide.mock.calls.map(([request]) => Object.values(request.targets).length)).toEqual([
+    3, 3,
+  ]);
+  photos.dispose();
+});
+
+it("range selects in rendered month order across offset dates and a collapsed stack", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  stubPhotoFetch(async () => Response.json({ items: [], total: 0, facets: [] }));
+  const photos = new Photos("scoped", vi.fn());
+  const stack = { asset_ids: ["photo-2", "photo-3"], representative_id: "photo-2" };
+  photos.items = [
+    photo(1, "2025-02-28T23:59:59-12:00"),
+    { ...photo(2, "2025-03-01T00:00:02+14:00"), stack },
+    { ...photo(3, "2025-03-01T00:00:01+14:00"), stack },
+    photo(4, "2025-03-01T00:00:00+14:00"),
+  ];
+  photos.total = 4;
+  photos.started = true;
+  vi.spyOn(photos, "resume").mockResolvedValue();
+  render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
+  const first = await screen.findByRole("button", { name: "Select Photo 2.jpg" });
+  expect(
+    screen
+      .getAllByRole("button", { name: /^Select Photo/ })
+      .map((button) => button.getAttribute("aria-label")),
+  ).toEqual(["Select Photo 2.jpg", "Select Photo 4.jpg", "Select Photo 1.jpg"]);
+  await fireEvent.click(first);
+  await fireEvent.click(screen.getByRole("button", { name: "Select Photo 1.jpg" }), {
+    shiftKey: true,
+  });
+  expect([...photos.selectedIDs].sort()).toEqual(["photo-1", "photo-2", "photo-3", "photo-4"]);
+  photos.dispose();
+});

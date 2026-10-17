@@ -817,7 +817,7 @@ it("keeps the full frozen stack in a later pass decision and advances past its g
     (row, i) => ({ ...row, source_folder_key: i < 3 ? "burst" : "next" }),
   );
   const ids = rows.map((row) => row.asset_id),
-    pass = [ids[0]!, ids[3]!, ids[2]!];
+    pass = [ids[0]!, ids[2]!, ids[3]!];
   vi.spyOn(api, "getPhotoSettings").mockResolvedValue({
     revision: 1,
     preference: null,
