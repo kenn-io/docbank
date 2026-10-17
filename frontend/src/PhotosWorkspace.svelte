@@ -558,8 +558,15 @@
     const ids = new Set(row.stack.asset_ids);
     return selected.every((item) => ids.has(item.asset_id)) ? row.stack : undefined;
   });
+  // Hold every member's revisions once a stack is selected, so its decision checks what was shown.
+  $effect(() => {
+    const stack = selectedStack;
+    if (stack && !editor.busy && !editor.loading && !editor.conflict)
+      untrack(() => void editor.prepareStack(stack.asset_ids, photos.hidden));
+  });
   async function decideStack(decision: "all" | "selected" | "representative") {
     if (!selectedStack) return;
+    const members = new Set(selectedStack.asset_ids);
     await editor.decideStack(
       {
         hidden: photos.hidden,
@@ -568,10 +575,11 @@
         current_id: [...photos.selectedIDs][0]!,
         selected_ids: [...photos.selectedIDs],
       },
-      async (receipt, tags) => {
-        photos.metadataChanged(receipt);
-        onmetadatachanged?.(receipt, tags);
-        await refresh();
+      metadataRefresh,
+      {
+        observed: shown.filter(
+          (row): row is PhotoBrowseRow => "display_file_id" in row && members.has(row.asset_id),
+        ),
       },
     );
   }
@@ -1294,17 +1302,29 @@
                 {#if selectedStack}
                   <Button
                     size="sm"
-                    disabled={photos.loading || editor.busy || editor.loading || editor.conflict}
+                    disabled={photos.loading ||
+                      editor.busy ||
+                      editor.loading ||
+                      editor.stackLoading ||
+                      editor.conflict}
                     onclick={() => void decideStack("all")}>Keep all</Button
                   >
                   <Button
                     size="sm"
-                    disabled={photos.loading || editor.busy || editor.loading || editor.conflict}
+                    disabled={photos.loading ||
+                      editor.busy ||
+                      editor.loading ||
+                      editor.stackLoading ||
+                      editor.conflict}
                     onclick={() => void decideStack("selected")}>Keep selected</Button
                   >
                   {#if photos.selectedIDs.size === 1}<Button
                       size="sm"
-                      disabled={photos.loading || editor.busy || editor.loading || editor.conflict}
+                      disabled={photos.loading ||
+                        editor.busy ||
+                        editor.loading ||
+                        editor.stackLoading ||
+                        editor.conflict}
                       onclick={() => void decideStack("representative")}
                       >Choose representative</Button
                     >{/if}

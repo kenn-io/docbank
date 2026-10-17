@@ -260,30 +260,16 @@ func (c *Connection) PhotoSettings(ctx context.Context) (api.PhotoSettings, erro
 	return *settings, nil
 }
 
-func (c *Connection) SetPhotoSettings(ctx context.Context, revision int64, preference *string) (api.PhotoSettings, error) {
-	if revision < 1 || preference != nil && *preference != "raw" && *preference != "image" {
-		return api.PhotoSettings{}, errors.New("invalid photo settings revision or preference")
+// SetPhotoSettings replaces the display preference; a nil gap keeps the burst gap.
+func (c *Connection) SetPhotoSettings(ctx context.Context, revision int64, preference *string, burstGapSeconds *int) (api.PhotoSettings, error) {
+	if revision < 1 || preference != nil && *preference != "raw" && *preference != "image" || burstGapSeconds != nil && (*burstGapSeconds < 1 || *burstGapSeconds > 30) {
+		return api.PhotoSettings{}, errors.New("invalid photo settings revision, preference, or burst gap")
 	}
 	var response *http.Response
 	settings, err := c.apiWithResponse(&response).SetPhotoSettings(ctx, &apiclient.SetPhotoSettingsRequestOptions{
 		Header: &apiclient.SetPhotoSettingsHeaders{IfMatch: revisionIfMatch(revision)},
-		Body:   &apiclient.SetPhotoSettingsBody{Preference: preference},
+		Body:   &apiclient.SetPhotoSettingsBody{Preference: preference, BurstGapSeconds: burstGapSeconds},
 	})
-	if err != nil {
-		return api.PhotoSettings{}, mutationRequestError(response, err)
-	}
-	if err := validatePhotoSettingsResponse(*settings, response.Header.Get("ETag")); err != nil {
-		return api.PhotoSettings{}, &responseDecodeError{err: err}
-	}
-	return *settings, nil
-}
-
-func (c *Connection) SetPhotoBurstGap(ctx context.Context, revision int64, seconds int) (api.PhotoSettings, error) {
-	if revision < 1 || seconds < 1 || seconds > 30 {
-		return api.PhotoSettings{}, errors.New("invalid photo settings revision or burst gap")
-	}
-	var response *http.Response
-	settings, err := c.apiWithResponse(&response).SetPhotoBurstGap(ctx, &apiclient.SetPhotoBurstGapRequestOptions{Header: &apiclient.SetPhotoBurstGapHeaders{IfMatch: revisionIfMatch(revision)}, Body: &apiclient.SetPhotoBurstGapBody{Seconds: seconds}})
 	if err != nil {
 		return api.PhotoSettings{}, mutationRequestError(response, err)
 	}

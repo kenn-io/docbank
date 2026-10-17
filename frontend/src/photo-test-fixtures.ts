@@ -98,8 +98,6 @@ export function storage() {
 
 export function photo(id: number, capture: string | null = "2025-06-01T12:00:00"): PhotoBrowseRow {
   return {
-    source_folder_key: "",
-    picked: false,
     rotation: 0,
     rating: 0,
     flag: "",

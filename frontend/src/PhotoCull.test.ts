@@ -57,6 +57,7 @@ it("decides once with P, advances, announces the decision and offers receipt Und
     saved: vi.fn(async () => cull.run?.checkpoint),
     load: async () => run,
     replace: vi.fn(),
+    regroup: vi.fn(async () => {}),
     checkpoint: vi.fn(),
   });
   await cull.restore();
@@ -175,6 +176,7 @@ it("blocks decisions, navigation, scope changes and exit during checkpoint check
     saved,
     load: vi.fn(),
     replace: vi.fn(),
+    regroup: vi.fn(async () => {}),
     checkpoint: vi.fn(),
   });
   vi.mocked(photos.lookupMany).mockImplementation(async (ids) =>
@@ -270,6 +272,7 @@ it("keeps a failed decision on screen and guards exit while its draft remains", 
     saved: vi.fn(async () => cull.run?.checkpoint),
     load: async () => undefined,
     replace: vi.fn(),
+    regroup: vi.fn(async () => {}),
     checkpoint: vi.fn(),
   });
   cull.run = {
@@ -358,6 +361,7 @@ it("refreshes the visible completion offer after Undo", async () => {
     saved: vi.fn(async () => cull.run?.checkpoint),
     load: async () => undefined,
     replace: vi.fn(),
+    regroup: vi.fn(async () => {}),
     checkpoint: vi.fn(),
   });
   cull.run = {
@@ -414,6 +418,7 @@ it("disables auto-advance changes while a decision is pending", async () => {
     }),
     load: async () => undefined,
     replace: vi.fn(),
+    regroup: vi.fn(async () => {}),
     checkpoint: vi.fn(),
   });
   cull.run = {
@@ -519,6 +524,7 @@ it("retries a failed lookup without leaving the current photo", async () => {
     saved: vi.fn(async () => cull.run?.checkpoint),
     load: vi.fn(),
     replace: vi.fn(),
+    regroup: vi.fn(async () => {}),
     checkpoint: vi.fn(),
   });
   cull.run = {
@@ -576,6 +582,7 @@ async function reviewPhoto(
       saved: vi.fn(async () => cull.run?.checkpoint),
       load: vi.fn(),
       replace: vi.fn(),
+      regroup: vi.fn(async () => {}),
       checkpoint: vi.fn(),
     },
   );
@@ -888,38 +895,32 @@ it("shows the restored rotation in the cull stage after Undo", async () => {
   expect(container.querySelector(".photo-stage img")!.getAttribute("src")).toBe(preview);
 });
 
-it("keeps the full frozen stack in a later pass decision and advances past its group", async () => {
-  const rows = [photo(1), { ...photo(2), flag: "pick" as const }, photo(3), photo(4)].map(
-    (row, i) => ({ ...row, source_folder_key: i < 3 ? "burst" : "next" }),
-  );
+it("decides the whole saved stack from a later pass and refuses a stale checkpoint", async () => {
+  const rows = [photo(1), { ...photo(2), flag: "pick" as const }, photo(3), photo(4)];
   const ids = rows.map((row) => row.asset_id),
     pass = [ids[0]!, ids[2]!, ids[3]!];
+  const decide = vi
+    .spyOn(api, "decidePhotoStack")
+    .mockResolvedValue({ receipt_id: "stack", before: [], after: [] });
+  const group = vi.spyOn(api, "groupPhotoStacks");
   vi.spyOn(api, "getPhotoSettings").mockResolvedValue({
     revision: 1,
     preference: null,
     burst_gap_seconds: 2,
   });
-  vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) => ({
-    items: rows.filter((row) => request.query.filters?.asset_ids?.includes(row.asset_id)),
-    total: 4,
-    facets: [],
-    relevance_available: false,
-  }));
-  const decide = vi
-    .spyOn(api, "decidePhotoStack")
-    .mockResolvedValue({ receipt_id: "stack", before: [], after: [] });
   const { cull, photos } = await reviewPhoto(rows[0], true);
   vi.mocked(photos.lookup).mockImplementation(
     async (id) => rows.find((row) => row.asset_id === id)!,
   );
-  await act(async () => {
+  await act(() => {
     cull.run = {
       ...cull.run!,
       ids,
       captureTimeOrder: "asc",
+      groups: [ids.slice(0, 3)],
+      burstGapSeconds: 2,
       checkpoint: { ...cull.run!.checkpoint, pass, scope: "unflagged" },
     };
-    await cull.regroup();
   });
   const keep = await readyButton("Keep current (Return)");
   // Enter activates a focused control; the dialog shortcut must leave it alone.
@@ -933,8 +934,19 @@ it("keeps the full frozen stack in a later pass decision and advances past its g
     hidden: false,
   });
   expect(
-    Object.values(decide.mock.calls[0]?.[0].targets ?? {}).map((target) => target.asset_id),
+    Object.values(decide.mock.calls[0]![0].targets)
+      .map((target) => target.asset_id)
+      .sort(),
   ).toEqual(ids.slice(0, 3));
+  expect(group).not.toHaveBeenCalled();
+  await act(() => cull.choose(ids[2]!));
+  const saved = vi.mocked(
+    (cull as unknown as { storage: { saved: () => Promise<unknown> } }).storage.saved,
+  );
+  saved.mockResolvedValueOnce({ ...cull.run!.checkpoint, revision: 99 });
+  await fireEvent.click(await readyButton("Keep all"));
+  await waitFor(() => expect(cull.stale).toBe(true));
+  expect(decide).toHaveBeenCalledOnce();
 });
 
 it("refuses a stale tab decision before calling the edit API", async () => {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -306,12 +307,12 @@ var photoSettingsSetCmd = &cobra.Command{
 			if !cmd.Flags().Changed("burst-gap-seconds") {
 				return usageError(errors.New("provide a preference or --burst-gap-seconds"))
 			}
-			return writePhotoSettings(cmd, nil)
+			return writePhotoSettings(cmd, nil, true)
 		}
 		if args[0] != "raw" && args[0] != "image" {
 			return usageError(errors.New("preference must be raw or image"))
 		}
-		return writePhotoSettings(cmd, &args[0])
+		return writePhotoSettings(cmd, &args[0], false)
 	},
 }
 
@@ -324,42 +325,47 @@ var photoSettingsResetCmd = &cobra.Command{
 		if err := checkPhotoRevisionFlag(cmd); err != nil {
 			return err
 		}
-		return writePhotoSettings(cmd, nil)
+		return writePhotoSettings(cmd, nil, false)
 	},
 }
 
-func writePhotoSettings(cmd *cobra.Command, preference *string) error {
+// writePhotoSettings sends one settings request. A gap-only change resends the
+// preference read at the same revision, so the server keeps it.
+func writePhotoSettings(cmd *cobra.Command, preference *string, keepPreference bool) error {
+	var gap *int
+	if cmd.Flags().Changed("burst-gap-seconds") {
+		value, _ := cmd.Flags().GetInt("burst-gap-seconds")
+		if value < 1 || value > 30 {
+			return usageError(errors.New("burst gap must be 1 to 30 seconds"))
+		}
+		gap = &value
+	}
 	c, err := daemonconn.Ensure(cmd.Context())
 	if err != nil {
 		return err
 	}
+	var observed *api.PhotoSettings
 	current := func() (*int64, error) {
 		settings, err := c.PhotoSettings(cmd.Context())
 		if err != nil {
 			return nil, err
 		}
+		observed = &settings
 		return &settings.Revision, nil
 	}
 	settings, err := withPhotoRevision(cmd, current, func(revision *int64) (api.PhotoSettings, error) {
-		var gap *int
-		if cmd.Flags().Changed("burst-gap-seconds") {
-			value, _ := cmd.Flags().GetInt("burst-gap-seconds")
-			if value < 1 || value > 30 {
-				return api.PhotoSettings{}, usageError(errors.New("burst gap must be 1 to 30 seconds"))
-			}
-			gap = &value
-			if preference != nil {
-				next, err := c.SetPhotoSettings(cmd.Context(), *revision, preference)
-				if err != nil {
+		if keepPreference {
+			if observed == nil {
+				if _, err := current(); err != nil {
 					return api.PhotoSettings{}, err
 				}
-				revision = &next.Revision
 			}
+			if observed.Revision != *revision {
+				return api.PhotoSettings{}, fmt.Errorf("photo settings at revision %d, expected %d: %w", observed.Revision, *revision, store.ErrStaleRevision)
+			}
+			preference = observed.Preference
 		}
-		if gap != nil {
-			return c.SetPhotoBurstGap(cmd.Context(), *revision, *gap)
-		}
-		return c.SetPhotoSettings(cmd.Context(), *revision, preference)
+		return c.SetPhotoSettings(cmd.Context(), *revision, preference, gap)
 	})
 	if err != nil {
 		return err

@@ -7206,6 +7206,61 @@ components:
       required:
         - run
       type: object
+    GroupPhotoStacksRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/GroupPhotoStacksRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        asset_ids:
+          description: Distinct photo asset IDs, such as a saved Cull run.
+          items:
+            type: string
+          maxItems: 250000
+          type: array
+        hidden:
+          type: boolean
+      required:
+        - asset_ids
+      type: object
+      x-go-type: api.GroupPhotoStacksRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    GroupPhotoStacksResponse:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/GroupPhotoStacksResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        groups:
+          description: Bursts of two or more submitted photos, in request order; other available photos are single.
+          items:
+            items:
+              type: string
+            type: array
+          type: array
+        unavailable_ids:
+          description: Submitted photos that are no longer live in this library.
+          items:
+            type: string
+          type: array
+      required:
+        - groups
+        - unavailable_ids
+      type: object
+      x-go-type: api.GroupPhotoStacksResponse
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     HighlightSetTermV1Schema:
       additionalProperties: false
       properties:
@@ -11994,6 +12049,10 @@ components:
         receipt_id:
           description: Empty for a no-op, with empty before and after arrays; no receipt is created.
           type: string
+        representatives:
+          items:
+            $ref: "#/components/schemas/PhotoRepresentativeChange"
+          type: array
         sidecar:
           $ref: "#/components/schemas/PhotoSidecarProvenance"
         undo_of:
@@ -12093,6 +12152,11 @@ components:
           type: string
         relevance_available:
           type: boolean
+        stacks:
+          description: Bursts among items when stacks were requested; other items are single photos.
+          items:
+            $ref: "#/components/schemas/PhotoStack"
+          type: array
         total:
           format: int64
           minimum: 0
@@ -12153,7 +12217,7 @@ components:
         query:
           $ref: "#/components/schemas/SavedQueryV1Schema"
         stacks:
-          description: Extend capture-time pages through the final burst, capped at 500 frames.
+          description: Group capture-time pages into whole bursts of matching photos. A page can exceed page_size by up to 499 frames to finish its last burst.
           type: boolean
       required:
         - query
@@ -12268,8 +12332,6 @@ components:
           type:
             - integer
             - "null"
-        picked:
-          type: boolean
         previews:
           $ref: "#/components/schemas/PhotoPreviewSlots"
         quality:
@@ -12306,16 +12368,12 @@ components:
             - 270
           format: int64
           type: integer
-        source_folder_key:
-          type: string
         width_px:
           format: int64
           type:
             - integer
             - "null"
       required:
-        - source_folder_key
-        - picked
         - rating
         - flag
         - asset_id
@@ -13219,6 +13277,41 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document/bundle
         name: bundle
+    PhotoRepresentativeChange:
+      additionalProperties: false
+      properties:
+        after:
+          format: int64
+          minimum: 1
+          type:
+            - integer
+            - "null"
+        after_revision:
+          format: int64
+          minimum: 2
+          type: integer
+        asset_id:
+          format: uuid
+          type: string
+        before:
+          format: int64
+          minimum: 1
+          type:
+            - integer
+            - "null"
+        before_revision:
+          format: int64
+          minimum: 1
+          type: integer
+      required:
+        - asset_id
+        - before_revision
+        - after_revision
+      type: object
+      x-go-type: store.PhotoRepresentativeChange
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
     PhotoSettings:
       additionalProperties: false
       properties:
@@ -13275,6 +13368,39 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/store
         name: store
+    PhotoStack:
+      additionalProperties: false
+      properties:
+        asset_ids:
+          description: Members in ascending capture order.
+          items:
+            type: string
+          maxItems: 500
+          minItems: 2
+          type: array
+        picked_ids:
+          description: Members with at least one picked file.
+          items:
+            type: string
+          type: array
+        representative_id:
+          format: uuid
+          type: string
+        representative_ranks:
+          additionalProperties:
+            format: int64
+            type: integer
+          description: Explicit representative choices by asset ID; the highest rank is the latest.
+          type: object
+      required:
+        - asset_ids
+        - representative_id
+        - picked_ids
+      type: object
+      x-go-type: api.PhotoStack
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     PhotoStackDecisionRequest:
       additionalProperties: false
       properties:
@@ -16653,7 +16779,16 @@ components:
           format: uri
           readOnly: true
           type: string
+        burst_gap_seconds:
+          description: Omit to keep the burst gap.
+          format: int64
+          maximum: 30
+          minimum: 1
+          type:
+            - integer
+            - "null"
         preference:
+          description: Omit to reset the display preference.
           enum:
             - raw
             - image
@@ -19171,6 +19306,10 @@ components:
           minimum: 0
           type: integer
         sort_key:
+          type: string
+        stack_id:
+          description: First frame of this member's burst in a capture-time photo snapshot; absent for a lone photo.
+          format: uuid
           type: string
         tags:
           items:
@@ -26129,6 +26268,29 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Change the burst gap
+  /api/v1/photos/stacks/group:
+    post:
+      operationId: groupPhotoStacks
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GroupPhotoStacksRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupPhotoStacksResponse"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Group explicit photos into bursts
   /api/v1/photos/versions/{content_version_id}/face-decisions:
     post:
       operationId: decidePhotoFace

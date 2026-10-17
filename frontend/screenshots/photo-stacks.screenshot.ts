@@ -52,12 +52,17 @@ test("collapses bursts, selects members, changes the gap and culls stacks", asyn
     await expect(page.locator(".photo-cell")).toHaveCount(6);
     await page.locator(".photo-image").nth(1).click();
     await expect(page.getByText("1 selected photo", { exact: true })).toBeVisible();
+    const chosen = await page.locator(".photo-cell img").nth(1).getAttribute("alt");
     const decided = page.waitForResponse((response) =>
       response.url().endsWith("/photos/authored/stack"),
     );
     await page.getByRole("button", { name: "Choose representative", exact: true }).click();
     const decision = await decided;
     expect(decision.ok(), await decision.text()).toBe(true);
+    // The choice is stored separately; no frame's flag changes.
+    const receipt = await decision.json();
+    expect(receipt.after).toEqual([]);
+    expect(receipt.representatives).toHaveLength(1);
     await expect(
       page.getByRole("button", { name: "Undo last photo edit", exact: true }),
     ).toBeVisible();
@@ -68,6 +73,11 @@ test("collapses bursts, selects members, changes the gap and culls stacks", asyn
     await gap.fill("2");
     await gap.dispatchEvent("change");
     await expect(page.locator(".photo-cell")).toHaveCount(4);
+    await expect(page.locator(".photo-cell img").first()).toHaveAttribute("alt", chosen!);
+    await page.screenshot({
+      path: path.join(output!, "web-photo-stack-representative.png"),
+      animations: "disabled",
+    });
     await page.getByRole("button", { name: "Cull", exact: true }).click();
     const cull = page.getByRole("dialog", { name: "Cull photos" });
     await expect(

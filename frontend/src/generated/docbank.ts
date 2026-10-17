@@ -3167,6 +3167,26 @@ export interface GcRequest {
   run: boolean;
 }
 
+export interface GroupPhotoStacksRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * Distinct photo asset IDs, such as a saved Cull run.
+     * @maxItems 250000
+     */
+  asset_ids: string[];
+  hidden?: boolean;
+}
+
+export interface GroupPhotoStacksResponse {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** Bursts of two or more submitted photos, in request order; other available photos are single. */
+  groups: string[][];
+  /** Submitted photos that are no longer live in this library. */
+  unavailable_ids: string[];
+}
+
 export interface HighlightSetTermV1Schema {
   /** @pattern ^#[0-9a-f]{6}$ */
   color: string;
@@ -5310,6 +5330,24 @@ export interface PhotoKeywordDelta {
   tag_id: string;
 }
 
+export interface PhotoRepresentativeChange {
+  /**
+     * @minimum 1
+     * @nullable
+     */
+  after?: number | null;
+  /** @minimum 2 */
+  after_revision: number;
+  asset_id: string;
+  /**
+     * @minimum 1
+     * @nullable
+     */
+  before?: number | null;
+  /** @minimum 1 */
+  before_revision: number;
+}
+
 export interface PhotoSidecarProvenance {
   file_id: string;
   node_id: number;
@@ -5325,6 +5363,7 @@ export interface PhotoAuthoredReceipt {
   keywords?: PhotoKeywordDelta[];
   /** Empty for a no-op, with empty before and after arrays; no receipt is created. */
   receipt_id: string;
+  representatives?: PhotoRepresentativeChange[];
   sidecar?: PhotoSidecarProvenance;
   undo_of?: string;
 }
@@ -5519,7 +5558,6 @@ export interface PhotoBrowseRow {
   node_id: number;
   /** @nullable */
   orientation: number | null;
-  picked: boolean;
   previews: PhotoPreviewSlots;
   quality?: PhotoBrowseRowQuality;
   /**
@@ -5530,7 +5568,6 @@ export interface PhotoBrowseRow {
   /** @minimum 1 */
   revision: number;
   rotation: PhotoBrowseRowRotation;
-  source_folder_key: string;
   /** @nullable */
   width_px: number | null;
 }
@@ -5573,6 +5610,25 @@ export interface PhotoMapRow {
   width_px: number | null;
 }
 
+/**
+ * Explicit representative choices by asset ID; the highest rank is the latest.
+ */
+export type PhotoStackRepresentativeRanks = {[key: string]: number};
+
+export interface PhotoStack {
+  /**
+     * Members in ascending capture order.
+     * @minItems 2
+     * @maxItems 500
+     */
+  asset_ids: string[];
+  /** Members with at least one picked file. */
+  picked_ids: string[];
+  representative_id: string;
+  /** Explicit representative choices by asset ID; the highest rank is the latest. */
+  representative_ranks?: PhotoStackRepresentativeRanks;
+}
+
 export interface PhotoBrowsePage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -5586,6 +5642,8 @@ export interface PhotoBrowsePage {
   map_items?: PhotoMapRow[];
   next_cursor?: string;
   relevance_available: boolean;
+  /** Bursts among items when stacks were requested; other items are single photos. */
+  stacks?: PhotoStack[];
   /** @minimum 0 */
   total: number;
 }
@@ -5628,7 +5686,7 @@ export interface PhotoBrowseRequest {
   page_size?: number;
   projection?: PhotoBrowseRequestProjection;
   query: SavedQueryV1Schema;
-  /** Extend capture-time pages through the final burst, capped at 500 frames. */
+  /** Group capture-time pages into whole bursts of matching photos. A page can exceed page_size by up to 499 frames to finish its last burst. */
   stacks?: boolean;
 }
 
@@ -7013,6 +7071,8 @@ export interface WorkspaceQueryRow {
   /** @minimum 0 */
   size: number;
   sort_key: string;
+  /** First frame of this member's burst in a capture-time photo snapshot; absent for a lone photo. */
+  stack_id?: string;
   tags: WorkspaceQueryTag[];
 }
 
@@ -7146,6 +7206,7 @@ export interface SetPhotoExcludedRequest {
 }
 
 /**
+ * Omit to reset the display preference.
  * @nullable
  */
 export type SetPhotoSettingsRequestPreference = typeof SetPhotoSettingsRequestPreference[keyof typeof SetPhotoSettingsRequestPreference] | null;
@@ -7159,7 +7220,17 @@ export const SetPhotoSettingsRequestPreference = {
 export interface SetPhotoSettingsRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
+  /**
+     * Omit to keep the burst gap.
+     * @minimum 1
+     * @maximum 30
+     * @nullable
+     */
+  burst_gap_seconds?: number | null;
+  /**
+     * Omit to reset the display preference.
+     * @nullable
+     */
   preference?: SetPhotoSettingsRequestPreference;
 }
 
@@ -16870,6 +16941,44 @@ return sessionJSON<PhotoSettings>(getSetPhotoBurstGapUrl(),
     method: 'PUT',
     headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
     body: JSON.stringify(setPhotoBurstGapRequest)
+  }
+);}
+
+
+
+export const getGroupPhotoStacksUrl = () => {
+
+
+
+
+  return `/api/v1/photos/stacks/group`
+}
+
+/**
+ * @summary Group explicit photos into bursts
+ */
+export const groupPhotoStacks = async (groupPhotoStacksRequest: NonReadonly<GroupPhotoStacksRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<GroupPhotoStacksResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<GroupPhotoStacksResponse>(getGroupPhotoStacksUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(groupPhotoStacksRequest)
   }
 );}
 

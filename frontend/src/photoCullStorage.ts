@@ -16,8 +16,12 @@ export interface CullCheckpoint {
 export interface CullRun {
   ids: string[];
   captureTimeOrder?: "asc" | "desc";
+  /** Bursts of two or more frozen IDs, each in frozen order, grouped with burstGapSeconds. */
+  groups?: string[][];
+  burstGapSeconds?: number;
   checkpoint: CullCheckpoint;
 }
+type Membership = Omit<CullRun, "checkpoint"> & { pass: string[] };
 type MarkerKind = "visited" | "skipped" | "unavailable";
 type Header = Pick<
   CullCheckpoint,
@@ -36,6 +40,8 @@ export interface CullStorage {
   saved(): Promise<Header | undefined>;
   load(): Promise<CullRun | undefined>;
   replace(run: CullRun, signal?: AbortSignal, expected?: Header): Promise<void>;
+  /** Replace the saved bursts without changing order or the checkpoint. */
+  regroup(groups: string[][], burstGapSeconds: number, expected: Header): Promise<void>;
   checkpoint(value: CullProgress): Promise<void>;
 }
 
@@ -101,9 +107,7 @@ export function photoCullStorage(vaultID: string): CullStorage {
         const tx = db.transaction(stores, "readonly"),
           done = transactionDone(tx);
         const [membership, saved, keys, values] = await Promise.all([
-          idbRequest<
-            { ids: string[]; pass: string[]; captureTimeOrder?: "asc" | "desc" } | undefined
-          >(tx.objectStore("members").get(vaultID)),
+          idbRequest<Membership | undefined>(tx.objectStore("members").get(vaultID)),
           idbRequest<Header | undefined>(tx.objectStore("checkpoints").get(vaultID)),
           idbRequest(tx.objectStore("markers").getAllKeys(markerRange())),
           idbRequest<string[]>(tx.objectStore("markers").getAll(markerRange())),
@@ -120,7 +124,8 @@ export function photoCullStorage(vaultID: string): CullStorage {
         keys.forEach((key, index) =>
           checkpoint[(key as [string, MarkerKind, number])[1]].push(values[index]!),
         );
-        return { ids: membership.ids, captureTimeOrder: membership.captureTimeOrder, checkpoint };
+        const { pass: _, ...run } = membership;
+        return { ...run, checkpoint };
       } finally {
         db.close();
       }
@@ -142,15 +147,34 @@ export function photoCullStorage(vaultID: string): CullStorage {
             await done.catch(() => {});
             throw new Error("Cull progress changed in another tab. Resume before replacing it.");
           }
-          tx.objectStore("members").put(
-            { ids: run.ids, pass: run.checkpoint.pass, captureTimeOrder: run.captureTimeOrder },
-            vaultID,
-          );
+          const { checkpoint: _, ...membership } = run;
+          tx.objectStore("members").put({ ...membership, pass: run.checkpoint.pass }, vaultID);
           savePass(tx, run.checkpoint);
           await done;
         } finally {
           signal?.removeEventListener("abort", cancel);
         }
+      } finally {
+        db.close();
+      }
+    },
+    async regroup(groups, burstGapSeconds, expected) {
+      const db = await open();
+      try {
+        const tx = db.transaction(["members", "checkpoints"], "readwrite"),
+          done = transactionDone(tx);
+        const current = await idbRequest<Header | undefined>(
+          tx.objectStore("checkpoints").get(vaultID),
+        );
+        if (!current || !sameCheckpoint(current, expected)) {
+          tx.abort();
+          await done.catch(() => {});
+          throw new Error("Cull progress changed in another tab. Close and resume it.");
+        }
+        const members = tx.objectStore("members");
+        const membership = await idbRequest<Membership>(members.get(vaultID));
+        members.put({ ...membership, groups, burstGapSeconds }, vaultID);
+        await done;
       } finally {
         db.close();
       }
@@ -169,11 +193,7 @@ export function photoCullStorage(vaultID: string): CullStorage {
         }
         if (value.pass) {
           const members = tx.objectStore("members");
-          const membership = await idbRequest<{
-            ids: string[];
-            pass: string[];
-            captureTimeOrder?: "asc" | "desc";
-          }>(members.get(vaultID));
+          const membership = await idbRequest<Membership>(members.get(vaultID));
           members.put({ ...membership, pass: value.pass.pass }, vaultID);
           savePass(tx, { ...value.pass, revision: current.revision + 1 });
         } else {

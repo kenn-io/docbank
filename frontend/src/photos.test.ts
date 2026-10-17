@@ -3058,6 +3058,7 @@ it("selects collapsed bursts and expanded frames, including range selection and 
     stack: {
       asset_ids: i < 3 ? ids.slice(0, 3) : ids.slice(3),
       representative_id: i < 3 ? ids[1]! : ids[4]!,
+      picked_ids: [],
     },
   }));
   photos.select(ids[1]!, new MouseEvent("click", { button: 0 }), ids);
@@ -3077,70 +3078,101 @@ it("selects collapsed bursts and expanded frames, including range selection and 
   expect(photos.selectedIDs.size).toBe(0);
 });
 
-it("groups capture-time rows and chooses the only picked frame", async () => {
-  const rows = [photo(1), photo(2)].map((row, i) => ({
-    ...row,
-    source_folder_key: "folder",
-    picked: i === 1,
-  }));
+it("attaches server-described stacks and requests them only for capture-time pages", async () => {
+  const rows = [photo(1), photo(2), photo(3)];
   const stack = {
-    asset_ids: rows.map((row) => row.asset_id),
-    representative_id: rows[1]!.asset_id,
+    asset_ids: ["photo-1", "photo-2"],
+    representative_id: "photo-2",
+    picked_ids: ["photo-2"],
   };
-  stubPhotoFetch(async () =>
-    Response.json({
+  const requests: { stacks?: boolean }[] = [];
+  stubPhotoFetch(async (_url, init) => {
+    requests.push(JSON.parse(String(init.body)));
+    return Response.json({
       items: rows,
-      total: 2,
+      stacks: [stack],
+      total: 3,
       facets: [],
       relevance_available: false,
-    }),
-  );
+    });
+  });
   const photos = new Photos("session", vi.fn());
   await photos.resume();
-  expect(photos.items.map((row) => "stack" in row && row.stack)).toEqual([stack, stack]);
+  expect(photos.items.map((row) => "stack" in row && row.stack)).toEqual([stack, stack, undefined]);
+  photos.query = parseQuery('{"sort":{"field":"name","direction":"asc"}}');
+  await photos.refresh();
+  expect(requests.map((request) => request.stacks)).toEqual([true, false]);
   photos.dispose();
 });
 
-it("refreshes stack representatives from the server after companion flags and Undo", async () => {
-  const photos = new Photos("session", vi.fn());
-  const rows = [photo(1), photo(2)].map((row) => ({ ...row, source_folder_key: "folder" }));
-  const fetch = vi.fn().mockResolvedValue(
+it("patches loaded stacks from receipts and reloads only for unknown companion flags", async () => {
+  const rows = [photo(1), photo(2), photo(3)];
+  stubPhotoFetch(async () =>
     Response.json({
       items: rows,
-      total: 2,
+      stacks: [
+        {
+          asset_ids: ["photo-1", "photo-2", "photo-3"],
+          representative_id: "photo-1",
+          picked_ids: [],
+        },
+      ],
+      total: 3,
       facets: [],
       relevance_available: false,
     }),
   );
-  vi.stubGlobal("fetch", fetch);
+  const photos = new Photos("session", vi.fn());
   await photos.resume();
   vi.spyOn(photos, "reloadCounts").mockReturnValue(undefined);
-  const before = { ...preparedPhoto(2), file_id: "raw-companion" };
-  const after = { ...before, revision: 2, values: { ...before.values, flag: "pick" as const } };
-  for (const [previous, next, representative] of [
-    [before, after, rows[1]!.asset_id],
-    [after, before, rows[0]!.asset_id],
-  ] as const) {
-    fetch.mockResolvedValue(
-      Response.json({
-        items: rows.map((row) => ({ ...row, picked: row.asset_id === representative })),
-        total: 2,
-        facets: [],
-        relevance_available: false,
-      }),
-    );
-    const changes = photos.metadataChanged({
-      receipt_id: "change",
-      before: [previous],
-      after: [next],
-    });
-    expect(photos.reloadsAfter(changes)).toBe(true);
-    await photos.refresh();
-    expect(photos.items.map((row) => "stack" in row && row.stack?.representative_id)).toEqual([
-      representative,
-      representative,
-    ]);
-  }
+  const representative = () =>
+    photos.items.map((row) => "stack" in row && row.stack?.representative_id);
+  // The editor holds both files of photo-2, so a pick on its companion RAW is known.
+  const jpeg = preparedPhoto(2),
+    raw = preparedPhoto(4, { asset_id: "photo-2", display_file_id: "file-2" });
+  photos.authored.targets = [
+    jpeg,
+    { ...raw, revision: 2, values: { ...raw.values, flag: "pick" } },
+  ];
+  let changes = photos.metadataChanged({
+    receipt_id: "pick",
+    before: [{ file_id: raw.file_id, node_id: 4, revision: 1, values: raw.values }],
+    after: [
+      { file_id: raw.file_id, node_id: 4, revision: 2, values: { ...raw.values, flag: "pick" } },
+    ],
+  });
+  expect(photos.reloadsAfter(changes)).toBe(false);
+  expect(representative()).toEqual(["photo-2", "photo-2", "photo-2"]);
+  changes = photos.metadataChanged({
+    receipt_id: "choose",
+    before: [],
+    after: [],
+    representatives: [{ asset_id: "photo-3", before_revision: 1, after_revision: 2, after: 7 }],
+  });
+  expect(photos.reloadsAfter(changes)).toBe(false);
+  expect(representative()).toEqual(["photo-3", "photo-3", "photo-3"]);
+  expect(photos.items[2]!.revision).toBe(2);
+  photos.metadataChanged({
+    receipt_id: "undo",
+    before: [],
+    after: [],
+    representatives: [{ asset_id: "photo-3", before_revision: 2, after_revision: 3, before: 7 }],
+  });
+  expect(representative()).toEqual(["photo-2", "photo-2", "photo-2"]);
+  photos.authored.targets = [];
+  changes = photos.metadataChanged({
+    receipt_id: "elsewhere",
+    before: [{ file_id: "unknown-raw", node_id: 9, revision: 1, values: raw.values }],
+    after: [
+      {
+        file_id: "unknown-raw",
+        node_id: 9,
+        revision: 2,
+        values: { ...raw.values, flag: "reject" },
+      },
+    ],
+  });
+  expect(photos.reloadsAfter(changes)).toBe(true);
   photos.dispose();
 });
 

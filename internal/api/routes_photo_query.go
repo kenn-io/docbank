@@ -39,7 +39,7 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 	huma.Register(api, huma.Operation{
 		OperationID: "listPhotoAssets", Method: http.MethodPost, Path: "/api/v1/photos/assets/query",
 		Summary:      "Browse matching photo assets",
-		MaxBodyBytes: query.MaxInputBytes,
+		MaxBodyBytes: query.MaxInputBytes + (64 << 10),
 	}, func(ctx context.Context, in *struct{ Body PhotoBrowseRequest }) (*struct{ Body PhotoBrowsePage }, error) {
 		if in.Body.Projection != "map" && in.Body.PageSize > store.MaxDocumentCatalogPageSize {
 			return nil, NewError(http.StatusUnprocessableEntity, "invalid_photo_query", fmt.Sprintf("page_size must be at most %d without projection map", store.MaxDocumentCatalogPageSize))
@@ -73,6 +73,9 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 			Items: make([]PhotoBrowseRow, len(page.Items)), Total: page.Total, BurstGapSeconds: page.BurstGapSeconds,
 			Facets: fromStoreFacets(page.Facets), RelevanceAvailable: page.RelevanceAvailable,
 		}
+		for _, stack := range page.Stacks {
+			wire.Stacks = append(wire.Stacks, PhotoStack{AssetIDs: stack.AssetIDs, RepresentativeID: stack.RepresentativeID, PickedIDs: append([]string{}, stack.PickedIDs...), RepresentativeRanks: stack.RepresentativeRanks})
+		}
 		if in.Body.Projection == "map" {
 			wire.Items = []PhotoBrowseRow{}
 			wire.MapItems = make([]PhotoMapRow, len(page.Items))
@@ -97,7 +100,7 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 			wire.Items[i] = PhotoBrowseRow{
 				AssetID: row.AssetID, Kind: row.Kind, Revision: row.Revision,
 				Rotation: row.Rotation,
-				Rating:   row.Rating, Flag: row.Flag, SourceFolderKey: row.SourceFolderKey, Picked: row.Picked,
+				Rating:   row.Rating, Flag: row.Flag,
 				DisplayFileID: row.DisplayFileID, NodeID: row.NodeID,
 				ContentVersionID: row.ContentVersionID, Name: row.Name, MediaType: row.MediaType,
 				ImportTime: row.ImportTime, CaptureTime: row.Fields.CaptureTime,

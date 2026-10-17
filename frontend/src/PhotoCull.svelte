@@ -43,7 +43,7 @@
       )),
   );
   onMount(() => {
-    void cull.regroup();
+    void cull.checkSettings();
   });
   onDestroy(() => {
     cull.cancel();
@@ -149,8 +149,6 @@
     const changes = photos.metadataChanged(receipt);
     if (photos.started && photos.reloadsAfter(changes)) await photos.refresh();
     reconcile(receipt.after);
-    if (cull.run?.captureTimeOrder)
-      await cull.refreshMembers([...new Set(editor.targets.map((target) => target.asset_id))]);
     if (cull.complete) await cull.checkRemainder();
   }
   function reconcile(targets: PhotoAuthoredSnapshot[]) {
@@ -213,7 +211,7 @@
       photo = row;
       view = { ...fittedPhotoView };
       editor.reset();
-      await cull.regroup();
+      if (cull.currentStack) await cull.regroup(cull.currentStack);
     } catch (cause) {
       if (!reloadController.signal.aborted)
         editor.error = cause instanceof Error ? cause.message : String(cause);
@@ -221,46 +219,37 @@
       editor.loading = false;
     }
   }
-  async function decideStack(decision: "current" | "all" | "representative") {
-    if (
-      !photo ||
-      !cull.run ||
-      !cull.currentStack ||
-      cull.stackLoading ||
-      cull.stackError ||
-      editor.conflict ||
-      loading ||
-      cull.busy ||
-      cull.stale ||
-      !editor.canChangeTarget()
-    )
-      return;
-    const selected = photo;
-    const id = selected.asset_id;
+  // Hold every member's revisions once a stack is current, so its decision checks what was shown.
+  $effect(() => {
     const stack = cull.currentStack;
+    if (
+      stack &&
+      photo &&
+      !editor.busy &&
+      !editor.loading &&
+      !editor.conflict &&
+      !editor.stackTargets.length
+    )
+      untrack(() => void editor.prepareStack(stack, photos.hidden));
+  });
+  async function decideStack(decision: "current" | "all" | "representative") {
+    const stack = cull.currentStack;
+    if (!photo || !stack || cull.stackLoading || loading || cull.busy || cull.stale || busy) return;
+    const id = photo.asset_id;
     await editor.decideStack(
-      {
-        hidden: photos.hidden,
-        asset_ids: stack.asset_ids,
-        current_id: id,
-        decision,
-      },
+      { hidden: photos.hidden, asset_ids: stack, current_id: id, decision },
       refresh,
-      selected.display_file_id,
-      async () => {
-        const current = await photos.lookup(id, new AbortController().signal);
-        return (
-          current.display_file_id === selected.display_file_id &&
-          current.content_version_id === selected.content_version_id
-        );
+      {
+        observed: [
+          photo,
+          ...neighbors.filter((row) => row.asset_id !== id && stack.includes(row.asset_id)),
+        ],
+        beforeWrite: () => cull.verifyDecision(),
       },
-      selected.content_version_id,
     );
-    if (editor.error || editor.conflict) {
-      if (editor.conflict) await cull.regroup();
-      return;
-    }
-    if (checkpoint.autoAdvance && cull.currentID === id) cull.moveStack(1);
+    if (editor.error || editor.conflict || editor.notice) return;
+    if (decision !== "representative" && checkpoint.autoAdvance && cull.currentID === id)
+      cull.moveStack(1);
   }
   function close() {
     if (canChangeTarget()) onclose();
@@ -344,7 +333,7 @@
             onclick={() => {
               editor.clearDraft();
               editor.reset();
-              void cull.regroup();
+              if (cull.currentStack) void cull.regroup(cull.currentStack);
             }}>Discard edit</Button
           >
         </div>{/if}
@@ -404,7 +393,7 @@
             </aside>{/if}
         </div>
         <div class="controls">
-          {#if cull.currentStack && cull.currentStack.asset_ids.length > 1}
+          {#if cull.currentStack}
             <Button
               size="sm"
               disabled={busy ||
@@ -412,7 +401,7 @@
                 loading ||
                 editor.conflict ||
                 cull.stackLoading ||
-                !!cull.stackError ||
+                editor.stackLoading ||
                 cull.stale}
               onclick={() => void decideStack("current")}>Keep current (Return)</Button
             >
@@ -423,7 +412,7 @@
                 loading ||
                 editor.conflict ||
                 cull.stackLoading ||
-                !!cull.stackError ||
+                editor.stackLoading ||
                 cull.stale}
               onclick={() => void decideStack("all")}>Keep all</Button
             >
@@ -434,7 +423,7 @@
                 loading ||
                 editor.conflict ||
                 cull.stackLoading ||
-                !!cull.stackError ||
+                editor.stackLoading ||
                 cull.stale}
               onclick={() => void decideStack("representative")}>Choose representative</Button
             >

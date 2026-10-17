@@ -12,7 +12,7 @@ import (
 
 // PhotoBrowseRequest carries strict QueryV1 JSON and live-page options.
 type PhotoBrowseRequest struct {
-	Stacks     bool                   `json:"stacks,omitempty" doc:"Extend capture-time pages through the final burst, capped at 500 frames."`
+	Stacks     bool                   `json:"stacks,omitempty" doc:"Group capture-time pages into whole bursts of matching photos. A page can exceed page_size by up to 499 frames to finish its last burst."`
 	Projection string                 `json:"projection,omitempty" enum:"map"`
 	Hidden     bool                   `json:"hidden,omitempty"`
 	Query      QueryPayload           `json:"query"`
@@ -50,8 +50,6 @@ type PhotoQuality struct {
 }
 
 type PhotoBrowseRow struct {
-	SourceFolderKey      string            `json:"source_folder_key"`
-	Picked               bool              `json:"picked"`
 	Rating               int               `json:"rating" minimum:"0" maximum:"5"`
 	Flag                 string            `json:"flag" enum:",pick,reject"`
 	Quality              *PhotoQuality     `json:"quality,omitempty"`
@@ -101,8 +99,17 @@ type PhotoMapRow struct {
 	} `json:"previews"`
 }
 
+// PhotoStack is one burst among a page's items.
+type PhotoStack struct {
+	AssetIDs            []string         `json:"asset_ids" minItems:"2" maxItems:"500" doc:"Members in ascending capture order."`
+	RepresentativeID    string           `json:"representative_id" format:"uuid"`
+	PickedIDs           []string         `json:"picked_ids" doc:"Members with at least one picked file."`
+	RepresentativeRanks map[string]int64 `json:"representative_ranks,omitempty" doc:"Explicit representative choices by asset ID; the highest rank is the latest."`
+}
+
 type PhotoBrowsePage struct {
 	BurstGapSeconds    int              `json:"burst_gap_seconds,omitempty" minimum:"1" maximum:"30"`
+	Stacks             []PhotoStack     `json:"stacks,omitempty" doc:"Bursts among items when stacks were requested; other items are single photos."`
 	MapItems           []PhotoMapRow    `json:"map_items,omitempty"`
 	Items              []PhotoBrowseRow `json:"items"`
 	Total              int64            `json:"total" minimum:"0"`

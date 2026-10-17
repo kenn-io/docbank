@@ -10514,6 +10514,53 @@ func (c *Client) SetPhotoBurstGap(ctx context.Context, options *SetPhotoBurstGap
 	return responseParser(ctx, resp)
 }
 
+// GroupPhotoStacks Group explicit photos into bursts
+func (c *Client) GroupPhotoStacks(ctx context.Context, options *GroupPhotoStacksRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GroupPhotoStacksResponseJSON, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/stacks/group",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GroupPhotoStacksResponseJSON, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GroupPhotoStacksResponseJSON)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GroupPhotoStacksResponseJSON", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GroupPhotoStacksErrorResponse](resp, "GroupPhotoStacksErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/stacks/group")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // DecidePhotoFace Name, retract, reject, dismiss, or choose a key face
 func (c *Client) DecidePhotoFace(ctx context.Context, options *DecidePhotoFaceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DecidePhotoFaceResponse, error) {
 	var err error
@@ -21362,6 +21409,34 @@ func (o *SetPhotoBurstGapRequestOptions) GetHeader() (map[string]string, error) 
 	return headers, err
 }
 
+// GroupPhotoStacksRequestOptions is the options needed to make a request to GroupPhotoStacks.
+type GroupPhotoStacksRequestOptions struct {
+	Body *GroupPhotoStacksBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GroupPhotoStacksRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *GroupPhotoStacksRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GroupPhotoStacksRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *GroupPhotoStacksRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // DecidePhotoFaceRequestOptions is the options needed to make a request to DecidePhotoFace.
 type DecidePhotoFaceRequestOptions struct {
 	PathParams *DecidePhotoFacePath
@@ -25014,6 +25089,8 @@ type SetPhotoSettingsBody = SetPhotoSettingsRequest
 
 type SetPhotoBurstGapBody = SetPhotoBurstGapRequest
 
+type GroupPhotoStacksBody = GroupPhotoStacksRequest
+
 type DecidePhotoFaceBody = PhotoFaceDecisionRequest
 
 type CreatePhotoFaceBody = CreatePhotoFaceRequest
@@ -26418,6 +26495,10 @@ type SetPhotoBurstGapResponse = api.PhotoSettings
 
 type SetPhotoBurstGapErrorResponse = Error
 
+type GroupPhotoStacksResponseJSON = api.GroupPhotoStacksResponse
+
+type GroupPhotoStacksErrorResponse = Error
+
 type DecidePhotoFaceResponse = api.PhotoFaceDecisionResult
 
 type DecidePhotoFaceErrorResponse = Error
@@ -27296,6 +27377,10 @@ type GcRequest struct {
 	Run    bool    `json:"run"`
 }
 
+type GroupPhotoStacksRequest = api.GroupPhotoStacksRequest
+
+type GroupPhotoStacksResponse = api.GroupPhotoStacksResponse
+
 type HighlightSetTermV1Schema struct {
 	Color string `json:"color"`
 	Text  string `json:"text"`
@@ -27681,9 +27766,13 @@ type PhotoRejectsRequest = api.PhotoRejectsRequest
 
 type PhotoRenderProfile = bundle.PhotoRenderProfile
 
+type PhotoRepresentativeChange = store.PhotoRepresentativeChange
+
 type PhotoSettings = api.PhotoSettings
 
 type PhotoSidecarProvenance = store.PhotoSidecarProvenance
+
+type PhotoStack = api.PhotoStack
 
 type PhotoStackDecisionRequest = api.PhotoStackDecisionRequest
 

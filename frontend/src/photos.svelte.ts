@@ -1,4 +1,4 @@
-import { photoRows, type PhotoBrowseRow } from "./photoRows.js";
+import { patchPhotoRows, photoRows, type PhotoBrowseRow } from "./photoRows.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { photoSearchSort } from "./photoSearch.js";
@@ -618,12 +618,7 @@ export class Photos {
       { session: this.session, signal },
     );
     if (page.burst_gap_seconds) this.burstGapSeconds = page.burst_gap_seconds;
-    return {
-      ...page,
-      items: this.projection
-        ? (page.map_items ?? [])
-        : photoRows(page, query.sort.field === "capture_time"),
-    };
+    return { ...page, items: this.projection ? (page.map_items ?? []) : photoRows(page) };
   }
 
   async preview(
@@ -925,7 +920,7 @@ export class Photos {
     string,
     PhotoAuthoredReceipt["after"][number]["values"]["rotation"]
   > & {
-    groupedFlagsChanged?: boolean;
+    stacksUnresolved?: boolean;
   } {
     const before = new Map(receipt.before.map((file) => [file.file_id, file]));
     const rotations = new Map(
@@ -933,15 +928,34 @@ export class Photos {
         .filter((file) => before.get(file.file_id)?.values.rotation !== file.values.rotation)
         .map((file) => [file.file_id, file.values.rotation]),
     );
-    const groupedFlagsChanged =
-      receipt.after.some((file) => before.get(file.file_id)?.values.flag !== file.values.flag) &&
-      this.items.some((row) => "stack" in row && row.stack);
-    if (rotations.size) {
-      this.items = this.items.map((row) =>
-        "display_file_id" in row && rotations.has(row.display_file_id)
-          ? { ...row, rotation: rotations.get(row.display_file_id)! }
-          : row,
+    let stacksUnresolved = false;
+    if (this.projection) {
+      if (rotations.size)
+        this.items = this.items.map((row) =>
+          "display_file_id" in row && rotations.has(row.display_file_id)
+            ? { ...row, rotation: rotations.get(row.display_file_id)! }
+            : row,
+        );
+    } else {
+      // Editors hold every file of the photos they edited, so they know each asset's picks.
+      const targets = [this.authored, this.cullEditor].flatMap((editor) =>
+        editor ? [...editor.targets, ...editor.stackTargets] : [],
       );
+      const rows = this.items as PhotoBrowseRow[];
+      const known = new Set([
+        ...targets.map((target) => target.file_id),
+        ...rows.map((row) => row.display_file_id),
+      ]);
+      stacksUnresolved =
+        rows.some((row) => row.stack) &&
+        receipt.after.some(
+          (file) =>
+            !known.has(file.file_id) && before.get(file.file_id)?.values.flag !== file.values.flag,
+        );
+      this.items = patchPhotoRows(rows, receipt, (assetID) => {
+        const files = targets.filter((target) => target.asset_id === assetID);
+        return files.length ? files.some((target) => target.values.flag === "pick") : undefined;
+      });
     }
     if (
       !this.dependsOnAuthored &&
@@ -956,7 +970,7 @@ export class Photos {
       })
     )
       void this.reloadCounts();
-    return Object.assign(rotations, { groupedFlagsChanged });
+    return Object.assign(rotations, { stacksUnresolved });
   }
 
   /** Whether a metadata edit can change which photos this view lists or how it orders them. */
@@ -974,9 +988,9 @@ export class Photos {
   }
 
   /** Whether this view must reload after an edit with these display-file rotations, because compact Map rows cannot be matched to rotated files. */
-  reloadsAfter(rotations: ReadonlyMap<string, number> & { groupedFlagsChanged?: boolean }) {
+  reloadsAfter(rotations: ReadonlyMap<string, number> & { stacksUnresolved?: boolean }) {
     return (
-      rotations.groupedFlagsChanged ||
+      rotations.stacksUnresolved ||
       this.dependsOnAuthored ||
       (this.projection === "map" && rotations.size > 0)
     );

@@ -942,7 +942,7 @@ func TestPhotoAuthoredExpressionBrowse(t *testing.T) {
 			require.NoError(t, err)
 		}
 		if stage == "image preference with sidecar" {
-			_, err = s.SetPhotoSettings(t.Context(), 1, new("image"))
+			_, err = s.SetPhotoSettings(t.Context(), 1, PhotoSettingsUpdate{Preference: new("image")})
 			require.NoError(t, err)
 		}
 		displayed := browsePhotoPage(t, s, `{}`).Items

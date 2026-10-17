@@ -20,6 +20,7 @@ type metadataPhotoAsset struct {
 	DisplayOverrideFileID *string `json:"display_override_file_id" db:"display_override_file_id"`
 	CreatedAt             string  `json:"created_at" db:"created_at"`
 	UpdatedAt             string  `json:"updated_at" db:"updated_at"`
+	RepresentativeRank    *int64  `json:"representative_rank,omitempty" db:"representative_rank"`
 }
 
 type metadataPhotoAssetBeforeHidden struct {
@@ -91,16 +92,17 @@ func normalizePhotoFileMetadata(raw jsontext.Value) (jsontext.Value, error) {
 	return json.Marshal(old.current(), json.Deterministic(true))
 }
 
+// A missing burst gap restores as NULL, the 2-second default.
 type metadataPhotoSettings struct {
-	BurstGapSeconds *int    `json:"burst_gap_seconds" db:"burst_gap_seconds"`
 	Type            string  `json:"type"`
 	Preference      *string `json:"preference" db:"preference"`
 	Revision        int64   `json:"revision" db:"revision"`
 	UpdatedAt       string  `json:"updated_at" db:"updated_at"`
+	BurstGapSeconds *int    `json:"burst_gap_seconds,omitempty" db:"burst_gap_seconds"`
 	Singleton       int     `json:"-" db:"singleton"`
 }
 
-// Released settings records predate the burst gap. Their missing value restores as 2.
+// Released settings tables predate the burst gap column.
 type metadataPhotoSettingsBeforeBurst struct {
 	Type       string  `json:"type"`
 	Preference *string `json:"preference" db:"preference"`
@@ -115,18 +117,6 @@ var photoSettingsBeforeBurstMetadata = newMetadataTable(metadataTable[metadataPh
 		return validatePhotoSettingsMetadataRecord(metadataPhotoSettings{Type: v.Type, Preference: v.Preference, Revision: v.Revision, UpdatedAt: v.UpdatedAt, Singleton: v.Singleton})
 	}, checkExport: true,
 })
-
-func normalizePhotoSettingsMetadata(raw jsontext.Value) (jsontext.Value, error) {
-	var fields map[string]jsontext.Value
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		return nil, err
-	}
-	if _, exists := fields["burst_gap_seconds"]; exists {
-		return raw, nil
-	}
-	fields["burst_gap_seconds"] = jsontext.Value("null")
-	return json.Marshal(fields, json.Deterministic(true))
-}
 
 type metadataPhotoSet struct {
 	Type         string  `json:"type"`
@@ -220,7 +210,7 @@ const photoHiddenStorageSchemaVersion = 30
 const photoAuthoredStorageSchemaVersion = 32
 
 func validatePhotoAssetMetadataRecord(v metadataPhotoAsset) error {
-	if v.Type != metadataPhotoAssetType || validateUUIDv4(v.AssetID) != nil || !photoKindValid(v.Kind) || v.Revision < 1 {
+	if v.Type != metadataPhotoAssetType || validateUUIDv4(v.AssetID) != nil || !photoKindValid(v.Kind) || v.Revision < 1 || v.RepresentativeRank != nil && *v.RepresentativeRank < 1 {
 		return errors.New("invalid photo asset metadata")
 	}
 	if v.HiddenAt != nil {

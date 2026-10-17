@@ -835,14 +835,26 @@ func photoFileByID(files []PhotoFile, id string) (PhotoFile, bool) {
 	return PhotoFile{}, false
 }
 
-// SetPhotoSettings changes the vault display preference and atomically fans
-// the inherited choice across every asset. A nil preference resets to default.
-func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, preference *string) (PhotoSettings, error) {
+// PhotoSettingsUpdate changes the display preference, the burst gap, or both.
+// A nil Preference resets the preference unless KeepPreference is set; a nil
+// BurstGapSeconds keeps the gap.
+type PhotoSettingsUpdate struct {
+	Preference      *string
+	KeepPreference  bool
+	BurstGapSeconds *int
+}
+
+// SetPhotoSettings applies one settings update with one revision and receipt.
+// A preference change atomically fans the inherited choice across every asset.
+func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, update PhotoSettingsUpdate) (PhotoSettings, error) {
 	if revision < 1 {
 		return PhotoSettings{}, fmt.Errorf("%w: revision must be positive", ErrStaleRevision)
 	}
-	if !photoPreferenceValid(preference) {
+	if !photoPreferenceValid(update.Preference) || update.KeepPreference && update.Preference != nil {
 		return PhotoSettings{}, fmt.Errorf("%w: invalid preference", ErrInvalidPhotoAsset)
+	}
+	if gap := update.BurstGapSeconds; gap != nil && (*gap < 1 || *gap > 30) {
+		return PhotoSettings{}, fmt.Errorf("%w: burst gap must be 1 to 30 seconds", ErrInvalidPhotoAsset)
 	}
 	var result PhotoSettings
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
@@ -853,16 +865,26 @@ func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, preference
 		if current.Revision != revision {
 			return fmt.Errorf("photo settings at revision %d, expected %d: %w", current.Revision, revision, ErrStaleRevision)
 		}
-		if equalPhotoString(current.Preference, preference) {
+		next := current
+		if !update.KeepPreference {
+			next.Preference = update.Preference
+		}
+		if update.BurstGapSeconds != nil {
+			next.BurstGapSeconds = *update.BurstGapSeconds
+		}
+		if next.BurstGapSeconds == current.BurstGapSeconds && equalPhotoString(current.Preference, next.Preference) {
 			result = current
 			return nil
 		}
-		assets, err := allPhotoAssetsTx(ctx, tx)
-		if err != nil {
-			return err
+		// Read assets before the new preference is visible; reads resolve the display choice.
+		var assets []PhotoAsset
+		if !equalPhotoString(current.Preference, next.Preference) {
+			if assets, err = allPhotoAssetsTx(ctx, tx); err != nil {
+				return err
+			}
 		}
-		next := PhotoSettings{BurstGapSeconds: current.BurstGapSeconds, Preference: preference, Revision: current.Revision + 1, UpdatedAt: nowRFC3339()}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO photo_library_settings(singleton,preference,revision,updated_at) VALUES(1,?,?,?) ON CONFLICT(singleton) DO UPDATE SET preference=excluded.preference, revision=excluded.revision, updated_at=excluded.updated_at`, nullablePhotoString(preference), next.Revision, next.UpdatedAt); err != nil {
+		next.Revision, next.UpdatedAt = current.Revision+1, nowRFC3339()
+		if _, err := tx.ExecContext(ctx, `INSERT INTO photo_library_settings(singleton,preference,revision,updated_at,burst_gap_seconds) VALUES(1,?,?,?,?) ON CONFLICT(singleton) DO UPDATE SET preference=excluded.preference,revision=excluded.revision,updated_at=excluded.updated_at,burst_gap_seconds=excluded.burst_gap_seconds`, nullablePhotoString(next.Preference), next.Revision, next.UpdatedAt, next.BurstGapSeconds); err != nil {
 			return err
 		}
 		if err := writePhotoReceiptTx(ctx, tx, photoReceipt{
@@ -872,8 +894,12 @@ func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, preference
 		}); err != nil {
 			return err
 		}
+		result = next
+		if assets == nil {
+			return nil
+		}
 		for _, asset := range assets {
-			choice := selectPhotoDisplay(asset.Files, preference, asset.DisplayOverrideFileID)
+			choice := selectPhotoDisplay(asset.Files, next.Preference, asset.DisplayOverrideFileID)
 			if equalPhotoString(asset.DisplayFileID, choice.FileID) {
 				continue
 			}
@@ -881,11 +907,7 @@ func (s *Store) SetPhotoSettings(ctx context.Context, revision int64, preference
 				return err
 			}
 		}
-		if err := validatePhotoGraph(ctx, tx); err != nil {
-			return err
-		}
-		result = next
-		return nil
+		return validatePhotoGraph(ctx, tx)
 	})
 	if err != nil {
 		return PhotoSettings{}, err
@@ -923,34 +945,4 @@ func allPhotoAssetsTx(ctx context.Context, tx *sql.Tx) ([]PhotoAsset, error) {
 		assets = append(assets, asset)
 	}
 	return assets, nil
-}
-
-// SetPhotoBurstGap changes grouping without recomputing display-file choices.
-func (s *Store) SetPhotoBurstGap(ctx context.Context, revision int64, seconds int) (PhotoSettings, error) {
-	if seconds < 1 || seconds > 30 {
-		return PhotoSettings{}, fmt.Errorf("%w: burst gap must be 1 to 30 seconds", ErrInvalidPhotoAsset)
-	}
-	var result PhotoSettings
-	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		current, err := photoSettingsTx(ctx, tx)
-		if err != nil {
-			return err
-		}
-		if revision < 1 || current.Revision != revision {
-			return ErrStaleRevision
-		}
-		if current.BurstGapSeconds == seconds {
-			result = current
-			return nil
-		}
-		result = current
-		result.BurstGapSeconds = seconds
-		result.Revision++
-		result.UpdatedAt = nowRFC3339()
-		if _, err := tx.ExecContext(ctx, `INSERT INTO photo_library_settings(singleton,preference,revision,updated_at,burst_gap_seconds) VALUES(1,?,?,?,?) ON CONFLICT(singleton) DO UPDATE SET revision=excluded.revision,updated_at=excluded.updated_at,burst_gap_seconds=excluded.burst_gap_seconds`, nullablePhotoString(current.Preference), result.Revision, result.UpdatedAt, seconds); err != nil {
-			return err
-		}
-		return writePhotoReceiptTx(ctx, tx, photoReceipt{Operation: "settings", SettingsKey: "library", BeforeRevision: current.Revision, AfterRevision: result.Revision, Before: photoSettingsState(current), After: photoSettingsState(result)})
-	})
-	return result, err
 }

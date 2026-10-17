@@ -24,6 +24,7 @@ export type SnapshotOptions = {
 export interface SnapshotRow {
   flag?: "" | "pick" | "reject";
   asset_id?: string;
+  stack_id?: string;
   node_id: number;
   content_version_id: string;
   blob_hash: string;
@@ -110,7 +111,14 @@ export interface WorkspaceQueryResponse {
 export type SnapshotPage = WorkspaceQueryResponse;
 export type SnapshotMember = Pick<
   SnapshotRow,
-  "flag" | "asset_id" | "node_id" | "content_version_id" | "blob_hash" | "size" | "revision"
+  | "flag"
+  | "asset_id"
+  | "stack_id"
+  | "node_id"
+  | "content_version_id"
+  | "blob_hash"
+  | "size"
+  | "revision"
 >;
 export type VerifiedSnapshotTargets = { snapshot: SnapshotPage; members: SnapshotMember[] };
 
@@ -306,6 +314,7 @@ function parseRow(value: unknown, index: number): SnapshotRow {
       "coverage_attachment_id",
       "excerpt",
       "asset_id",
+      "stack_id",
       "flag",
     ],
     `rows[${index}]`,
@@ -360,9 +369,13 @@ function parseRow(value: unknown, index: number): SnapshotRow {
     malformed(`rows[${index}].flag is invalid`);
   if (assetID === undefined && flag !== undefined)
     malformed(`rows[${index}].flag requires a photo identity`);
+  const stackID = optionalString(raw.stack_id, `rows[${index}].stack_id`);
+  if (stackID !== undefined && (assetID === undefined || !uuidV4.test(stackID)))
+    malformed(`rows[${index}].stack_id is invalid`);
   return {
     ...(flag === undefined ? {} : { flag: flag as SnapshotRow["flag"] }),
     ...(assetID === undefined ? {} : { asset_id: assetID }),
+    ...(stackID === undefined ? {} : { stack_id: stackID }),
     node_id: integer(raw.node_id, `rows[${index}].node_id`, 1),
     content_version_id: contentVersionID,
     blob_hash: blobHash,
@@ -912,6 +925,7 @@ export async function captureSnapshotTargets(
       members.push({
         ...(row.flag === undefined ? {} : { flag: row.flag }),
         ...(row.asset_id === undefined ? {} : { asset_id: row.asset_id }),
+        ...(row.stack_id === undefined ? {} : { stack_id: row.stack_id }),
         node_id: row.node_id,
         content_version_id: row.content_version_id,
         blob_hash: row.blob_hash,

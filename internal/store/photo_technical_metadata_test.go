@@ -513,7 +513,7 @@ func TestPhotoTechnicalMetadataMembershipIndependence(t *testing.T) {
 	assert.Equal(t, group.ID, attachedMembership.ID)
 
 	preference := "image"
-	settings, err := s.SetPhotoSettings(ctx, 1, &preference)
+	settings, err := s.SetPhotoSettings(ctx, 1, PhotoSettingsUpdate{Preference: &preference})
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), settings.Revision)
 	group, err = s.PhotoAssetByID(ctx, group.ID)

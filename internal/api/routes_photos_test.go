@@ -2,7 +2,9 @@ package api_test
 
 import (
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
@@ -229,4 +232,58 @@ func TestPhotoBurstGapRoutePreservesDisplayPreference(t *testing.T) {
 	after, err = s.PhotoAssetByID(ctx, asset.ID)
 	require.NoError(t, err)
 	require.NotEqual(t, before.DisplayFileID, after.DisplayFileID)
+}
+
+func TestPhotoStackGroupRouteBoundsExplicitIDs(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	ctx := t.Context()
+	run, err := s.BeginIngest(ctx, "cli", "synthetic burst")
+	require.NoError(t, err)
+	ids := make([]string, 3)
+	for i, source := range []string{"/roll/one.jpg", "/roll/two.jpg", "/other/three.jpg"} {
+		node, err := s.IngestFileExact(ctx, run, s.RootID(), strconv.Itoa(i)+".jpg", testHash(source), 10, "image/jpeg", source, "2024-01-01T00:00:00Z")
+		require.NoError(t, err)
+		stamp := "2024-06-10T12:00:0" + strconv.Itoa(i) + "Z"
+		canonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: []document.SourceMetadataFieldV1{{
+			Key: "created", Namespace: "image.exif", SourceField: "DateTimeOriginal",
+			Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataTimestamp, Timestamp: &document.SourceMetadataTimestampV1{
+				Raw: stamp, Normalized: stamp, Precision: document.SourceMetadataPrecisionSecond, Timezone: document.SourceMetadataTimezoneUTC,
+			}},
+		}}})
+		require.NoError(t, err)
+		_, err = s.PublishSourceMetadata(ctx, node.BlobHash, testHash("synthetic metadata"), canonical)
+		require.NoError(t, err)
+		asset, err := s.PhotoAssetForNode(ctx, node.ID)
+		require.NoError(t, err)
+		ids[i] = asset.ID
+	}
+	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
+	missing := "00000000-0000-4000-8000-000000000009"
+	res, body := do(t, ts, http.MethodPost, "/api/v1/photos/stacks/group", browser, map[string]any{"asset_ids": []string{ids[1], missing, ids[2], ids[0]}})
+	require.Equal(t, http.StatusOK, res.StatusCode, body)
+	var grouped api.GroupPhotoStacksResponse
+	require.NoError(t, json.Unmarshal([]byte(body), &grouped))
+	require.Equal(t, api.GroupPhotoStacksResponse{Groups: [][]string{{ids[1], ids[0]}}, UnavailableIDs: []string{missing}}, grouped)
+
+	// A full Cull run fits the request bound, and so does its flat response.
+	run250k := make([]string, 250_000)
+	for i := range run250k {
+		run250k[i] = fmt.Sprintf("00000000-0000-4000-8000-%012d", i)
+	}
+	res, body = do(t, ts, http.MethodPost, "/api/v1/photos/stacks/group", browser, map[string]any{"asset_ids": run250k})
+	require.Equal(t, http.StatusOK, res.StatusCode)
+	require.Less(t, len(body), 16<<20)
+	grouped = api.GroupPhotoStacksResponse{}
+	require.NoError(t, json.Unmarshal([]byte(body), &grouped))
+	require.Empty(t, grouped.Groups)
+	require.Len(t, grouped.UnavailableIDs, 250_000)
+	// Repeats are rejected without echoing the run back once per repeat.
+	res, body = do(t, ts, http.MethodPost, "/api/v1/photos/stacks/group", browser, map[string]any{"asset_ids": slices.Repeat([]string{ids[0]}, 250_000)})
+	require.Equal(t, http.StatusUnprocessableEntity, res.StatusCode)
+	require.Less(t, len(body), 64<<10)
+	res, _ = do(t, ts, http.MethodPost, "/api/v1/photos/stacks/group", browser, map[string]any{"asset_ids": slices.Concat(run250k, []string{missing})})
+	require.Equal(t, http.StatusUnprocessableEntity, res.StatusCode)
+	res, _ = do(t, ts, http.MethodPost, "/api/v1/photos/stacks/group", browser, map[string]any{"asset_ids": []string{}, "padding": strings.Repeat("x", 16<<20)})
+	require.Equal(t, http.StatusRequestEntityTooLarge, res.StatusCode)
 }

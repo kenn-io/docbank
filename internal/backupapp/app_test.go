@@ -294,7 +294,7 @@ func TestPhotoBackupRoundTrip(t *testing.T) {
 	asset, err = fixture.metadata.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
 	preference := "image"
-	_, err = fixture.metadata.SetPhotoSettings(ctx, 1, &preference)
+	_, err = fixture.metadata.SetPhotoSettings(ctx, 1, store.PhotoSettingsUpdate{Preference: &preference})
 	require.NoError(t, err)
 
 	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))

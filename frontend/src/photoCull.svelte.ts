@@ -13,19 +13,16 @@ import type {
 import { lookupPhotoRows } from "./photos.svelte.js";
 import {
   getPhotoSettings,
-  type PhotoBrowseRow,
+  groupPhotoStacks,
   type PhotoBrowseRowFlag,
 } from "./generated/docbank.js";
-import { groupBursts, type PhotoStack } from "./photoStacks.js";
 
 const scopes: CullScope[] = ["unflagged", "picks", "rejects", "all"];
 const failure = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause));
 
 export class PhotoCull {
   run = $state.raw<CullRun>();
-  stacks = $state.raw<ReadonlyMap<string, PhotoStack>>(new Map());
-  burstGapSeconds = $state(2);
-  private rows: PhotoBrowseRow[] = [];
+  private stackIndex = new WeakMap<string[][], ReadonlyMap<string, string[]>>();
   private stackRead?: AbortController;
   stackError = $state("");
   stackLoading = $state(false);
@@ -62,85 +59,72 @@ export class PhotoCull {
   get currentID() {
     return this.run?.checkpoint.pass[this.run.checkpoint.position];
   }
+  /** Each saved burst by member ID. */
+  get stacks(): ReadonlyMap<string, string[]> {
+    const groups = this.run?.groups;
+    if (!groups) return new Map();
+    let index = this.stackIndex.get(groups);
+    if (!index) {
+      index = new Map(groups.flatMap((group) => group.map((id) => [id, group])));
+      this.stackIndex.set(groups, index);
+    }
+    return index;
+  }
   get currentStack() {
     return this.currentID ? this.stacks.get(this.currentID) : undefined;
   }
+  /** Regroup after a burst gap change elsewhere; saved groups otherwise stay. */
   async checkSettings() {
     if (!this.run?.captureTimeOrder || this.stackLoading) return;
     try {
       const settings = await getPhotoSettings({ session: this.session });
-      if (settings.burst_gap_seconds !== this.burstGapSeconds) {
-        this.burstGapSeconds = settings.burst_gap_seconds;
-        this.groupRows();
-      }
+      if (settings.burst_gap_seconds !== this.run.burstGapSeconds) await this.regroup();
     } catch (cause) {
       this.stackError = failure(cause);
     }
   }
-  private groupRows() {
-    const stacks = new Map<string, PhotoStack>();
-    if (this.run?.captureTimeOrder)
-      for (const stack of groupBursts(this.rows, this.burstGapSeconds))
-        for (const id of stack.asset_ids) stacks.set(id, stack);
-    this.stacks = stacks;
-  }
-  async regroup() {
-    if (!this.run?.captureTimeOrder) {
-      this.stacks = new Map();
-      return;
-    }
+  /**
+   * Regroup the frozen IDs, or only ids when recovering one stale burst. Order
+   * and the checkpoint stay unchanged, and no ID outside the run can join.
+   */
+  async regroup(ids?: string[]) {
+    const run = this.run;
+    if (!run?.captureTimeOrder || this.stale) return;
     const controller = new AbortController();
     this.stackRead?.abort();
     this.stackRead = controller;
     this.stackLoading = true;
     this.stackError = "";
-    this.stacks = new Map();
     try {
       const settings = await getPhotoSettings({ session: this.session, signal: controller.signal });
-      this.burstGapSeconds = settings.burst_gap_seconds;
-      await this.refreshFlags(controller.signal);
+      const regrouped = await groupPhotoStacks(
+        { asset_ids: ids ?? run.ids },
+        { session: this.session, signal: controller.signal },
+      );
+      controller.signal.throwIfAborted();
+      let groups = regrouped.groups;
+      if (ids) {
+        const position = new Map(run.ids.map((id, index) => [id, index]));
+        const replaced = new Set(ids);
+        groups = [
+          ...(run.groups ?? []).filter((group) => !group.some((id) => replaced.has(id))),
+          ...groups,
+        ].sort((a, b) => position.get(a[0]!)! - position.get(b[0]!)!);
+      }
+      await this.storage.regroup(groups, settings.burst_gap_seconds, run.checkpoint);
+      if (this.run === run)
+        this.run = { ...run, groups, burstGapSeconds: settings.burst_gap_seconds };
     } catch (cause) {
       if (!controller.signal.aborted) this.stackError = failure(cause);
     } finally {
-      if (this.stackRead === controller) {
-        this.stackLoading = false;
-        this.progress = "";
-      }
-    }
-  }
-  async refreshMembers(ids: string[]) {
-    if (!this.run?.captureTimeOrder) return;
-    if (!ids.length) {
-      await this.regroup();
-      return;
-    }
-    this.stackLoading = true;
-    this.stackError = "";
-    try {
-      const rows = await lookupPhotoRows(this.session, ids);
-      const requested = new Set(ids),
-        updated = new Map(rows.map((row) => [row.asset_id, row]));
-      this.rows = this.rows.flatMap((row) =>
-        requested.has(row.asset_id)
-          ? updated.has(row.asset_id)
-            ? [updated.get(row.asset_id)!]
-            : []
-          : [row],
-      );
-      this.groupRows();
-    } catch (cause) {
-      this.stacks = new Map();
-      this.stackError = failure(cause);
-      throw cause;
-    } finally {
-      this.stackLoading = false;
+      if (this.stackRead === controller) this.stackLoading = false;
     }
   }
   private passStacks() {
     const groups: string[][] = [];
     const byKey = new Map<string, string[]>();
     for (const id of this.run?.checkpoint.pass ?? []) {
-      const key = this.stacks.get(id)?.asset_ids[0] ?? id;
+      const key = this.stacks.get(id)?.[0] ?? id;
       let group = byKey.get(key);
       if (!group) {
         group = [];
@@ -151,12 +135,9 @@ export class PhotoCull {
     }
     return groups;
   }
+  /** A lone frame is its own group, so H/L visits each group's first frame in the pass. */
   moveStack(direction: -1 | 1) {
     if (!this.run || this.busy || this.stale || this.stackLoading) return;
-    if (!this.currentStack) {
-      this.move(direction);
-      return;
-    }
     const groups = this.passStacks();
     const index = groups.findIndex((group) => group.includes(this.currentID!));
     const next = groups[index + direction];
@@ -224,7 +205,15 @@ export class PhotoCull {
         )
           throw new Error("Saved cull progress is invalid. Start a new cull.");
         const captured = new Set(run.ids);
-        if (!checkpoint.pass.every((id) => captured.has(id)))
+        if (
+          !checkpoint.pass.every((id) => captured.has(id)) ||
+          (run.groups !== undefined &&
+            (!Array.isArray(run.groups) ||
+              !run.groups.every(
+                (group) =>
+                  Array.isArray(group) && group.length > 1 && group.every((id) => captured.has(id)),
+              )))
+        )
           throw new Error("Saved cull progress is invalid. Start a new cull.");
       }
       this.run = run;
@@ -259,6 +248,10 @@ export class PhotoCull {
       const previous = await this.storage.saved();
       if (previous && !confirm("Replace saved cull progress?")) return false;
       this.progress = "Capturing photos…";
+      const grouped = query.sort.field === "capture_time";
+      const settings = grouped
+        ? await getPhotoSettings({ session: this.session, signal: controller.signal })
+        : undefined;
       const page = await createSnapshot(
         this.session,
         query,
@@ -279,9 +272,23 @@ export class PhotoCull {
         return member.asset_id;
       });
       const flags = new Map(captured.members.map((member) => [member.asset_id!, member.flag!]));
+      // The snapshot marks each burst member with its stack; groups keep frozen order.
+      const groups = new Map<string, string[]>();
+      for (const member of captured.members) {
+        if (!member.stack_id) continue;
+        const group = groups.get(member.stack_id) ?? [];
+        groups.set(member.stack_id, group);
+        group.push(member.asset_id!);
+      }
       const run: CullRun = {
         ids,
-        ...(query.sort.field === "capture_time" ? { captureTimeOrder: query.sort.direction } : {}),
+        ...(settings
+          ? {
+              captureTimeOrder: query.sort.direction,
+              groups: [...groups.values()],
+              burstGapSeconds: settings.burst_gap_seconds,
+            }
+          : {}),
         checkpoint: {
           runID: randomUUID(),
           passID: randomUUID(),
@@ -313,24 +320,18 @@ export class PhotoCull {
     }
   }
   private async refreshFlags(signal: AbortSignal) {
-    const progress = (loaded: number, total: number) => {
-      this.progress = `Checking ${loaded} of ${total} photos…`;
-    };
-    // Capture-time runs group frozen rows by folder and time, so keep full rows there.
-    const rows = this.run!.captureTimeOrder
-      ? await lookupPhotoRows(this.session, this.run!.ids, signal, progress, false)
-      : await lookupPhotoRows(
-          this.session,
-          this.run!.ids,
-          signal,
-          progress,
-          false,
-          undefined,
-          ({ asset_id, flag }) => ({ asset_id, flag }),
-        );
+    const rows = await lookupPhotoRows(
+      this.session,
+      this.run!.ids,
+      signal,
+      (loaded, total) => {
+        this.progress = `Checking ${loaded} of ${total} photos…`;
+      },
+      false,
+      undefined,
+      ({ asset_id, flag }) => ({ asset_id, flag }),
+    );
     signal.throwIfAborted();
-    this.rows = this.run!.captureTimeOrder ? (rows as PhotoBrowseRow[]) : [];
-    this.groupRows();
     return new Map(rows.map((row) => [row.asset_id, row.flag]));
   }
   private matches(scope: CullScope, flags: Map<string, PhotoBrowseRowFlag>) {

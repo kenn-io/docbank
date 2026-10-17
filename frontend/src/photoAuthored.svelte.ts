@@ -10,6 +10,9 @@ export class PhotoUndoState {
 export class PhotoAuthoredEditor {
   asset = $state<api.PhotoAsset>();
   targets = $state<(api.PhotoPreparedTarget & api.PhotoAuthoredEditTarget)[]>([]);
+  /** Stack members outside targets, prepared so one stack decision checks every member. */
+  stackTargets = $state<(api.PhotoPreparedTarget & api.PhotoAuthoredEditTarget)[]>([]);
+  stackLoading = $state(false);
   tags = $state<api.Tag[]>([]);
   tagsError = $state("");
   tagsLoading = $state(false);
@@ -96,6 +99,8 @@ export class PhotoAuthoredEditor {
   }
   private controller = new AbortController();
   private read = new AbortController();
+  private stackRead = new AbortController();
+  private stackKey = "";
   private scope?: api.PhotoAuthoredPrepareRequest;
   constructor(
     private session: string,
@@ -137,7 +142,10 @@ export class PhotoAuthoredEditor {
   }
   reset() {
     this.read.abort();
+    this.stackRead.abort();
     this.targets = [];
+    this.stackTargets = [];
+    this.stackLoading = false;
     this.asset = undefined;
     this.fileID = "";
     this.patch = {};
@@ -219,7 +227,16 @@ export class PhotoAuthoredEditor {
     }
   }
   async reload() {
-    if (this.busy || this.loading || !this.targets.length) return;
+    if (this.busy || this.loading) return;
+    // Stack members prepare again once the stack is actionable.
+    this.stackRead.abort();
+    this.stackTargets = [];
+    this.stackLoading = false;
+    if (!this.targets.length) {
+      this.conflict = false;
+      this.error = "";
+      return;
+    }
     await this.prepare(
       {
         asset_ids: [...new Set(this.targets.map((target) => target.asset_id))],
@@ -301,7 +318,15 @@ export class PhotoAuthoredEditor {
   }
   private accept(receipt: api.PhotoAuthoredReceipt) {
     this.noticeTone = "success";
-    this.targets = this.targets.map((target) => {
+    this.targets = this.accepted(this.targets, receipt);
+    this.stackTargets = this.accepted(this.stackTargets, receipt);
+  }
+  private accepted(targets: typeof this.targets, receipt: api.PhotoAuthoredReceipt) {
+    return targets.map((target) => {
+      const representative = receipt.representatives?.find(
+        (change) => change.asset_id === target.asset_id,
+      );
+      if (representative) target = { ...target, asset_revision: representative.after_revision };
       const after = receipt.after.find((file) => file.file_id === target.file_id);
       if (!after) return target;
       const tags = new Set(target.tags);
@@ -445,70 +470,131 @@ export class PhotoAuthoredEditor {
       this.endWrite(write);
     }
   }
+  /**
+   * Prepare the stack members this editor does not already hold, once the
+   * stack becomes actionable. Held targets keep the revisions the photographer saw.
+   */
+  async prepareStack(assetIDs: string[], hidden: boolean) {
+    const held = new Set(this.targets.map((target) => target.asset_id));
+    const kept = this.stackTargets.filter(
+      (target) => assetIDs.includes(target.asset_id) && !held.has(target.asset_id),
+    );
+    if (kept.length !== this.stackTargets.length) this.stackTargets = kept;
+    for (const target of this.stackTargets) held.add(target.asset_id);
+    const missing = assetIDs.filter((id) => !held.has(id));
+    const key = missing.join("\n");
+    if (
+      !missing.length ||
+      this.controller.signal.aborted ||
+      (this.stackLoading && key === this.stackKey)
+    )
+      return;
+    this.stackKey = key;
+    this.stackRead.abort();
+    const controller = (this.stackRead = new AbortController());
+    const signal = AbortSignal.any([controller.signal, this.controller.signal]);
+    this.stackLoading = true;
+    try {
+      const prepared = await this.request(() =>
+        api.preparePhotoAuthored({ asset_ids: missing, hidden }, this.options(signal)),
+      );
+      if (!signal.aborted) this.stackTargets = [...this.stackTargets, ...prepared.targets];
+    } catch (cause) {
+      if (!signal.aborted) this.error = this.failure(cause);
+    } finally {
+      if (!signal.aborted) this.stackLoading = false;
+    }
+  }
+  /**
+   * Decide one stack against the revisions this editor already holds. Each
+   * observed row's asset revision, display file, and content version must
+   * still match, so a stale view keeps its selection and offers Reload.
+   */
   async decideStack(
     request: Omit<api.PhotoStackDecisionRequest, "targets">,
     refresh: (receipt: api.PhotoAuthoredReceipt, tags: api.Tag[]) => Promise<void>,
-    expectedDisplayFileID?: string,
-    checkCurrent?: () => Promise<boolean>,
-    expectedContentVersionID?: string,
+    {
+      observed,
+      beforeWrite,
+    }: {
+      observed: Pick<
+        api.PhotoBrowseRow,
+        "asset_id" | "revision" | "display_file_id" | "content_version_id"
+      >[];
+      beforeWrite?: () => Promise<boolean>;
+    },
   ) {
     if (this.conflict) {
       this.unavailable("Reload metadata before editing.");
       return;
     }
-    if (!this.canChangeTarget() || this.concealed || this.controller.signal.aborted) return;
-    this.reset();
-    const write = this.beginWrite();
-    try {
-      const prepared = await this.request(() =>
-        api.preparePhotoAuthored(
-          { asset_ids: request.asset_ids, hidden: request.hidden },
-          this.options(),
-        ),
+    if (this.busy || this.loading || this.stackLoading || this.concealed) {
+      this.unavailable();
+      return;
+    }
+    if (this.dirty) {
+      this.unavailable("Apply or clear your metadata edits before deciding a stack.");
+      return;
+    }
+    if (this.controller.signal.aborted) return;
+    const byFile = new Map(
+      [...this.stackTargets, ...this.targets].map((target) => [target.file_id, target]),
+    );
+    const targets = [...byFile.values()].filter((target) =>
+      request.asset_ids.includes(target.asset_id),
+    );
+    if (request.asset_ids.some((id) => !targets.some((target) => target.asset_id === id))) {
+      this.unavailable();
+      return;
+    }
+    const stale = observed.some((row) => {
+      const files = targets.filter((target) => target.asset_id === row.asset_id);
+      return (
+        files.length > 0 &&
+        (files.some((target) => target.asset_revision !== row.revision) ||
+          !files.some((target) => target.file_id === row.display_file_id))
       );
-      if (
-        (expectedDisplayFileID &&
-          prepared.targets.find((target) => target.asset_id === request.current_id)
-            ?.display_file_id !== expectedDisplayFileID) ||
-        (checkCurrent && !(await checkCurrent()))
-      ) {
-        this.error = "This photo changed. Reload the photo before deciding.";
-        this.conflict = true;
-        return;
-      }
-      const selectedIDs = request.selected_ids ?? [request.current_id];
-      this.scope = { asset_ids: selectedIDs, hidden: request.hidden };
-      this.targets = prepared.targets.filter((target) => selectedIDs.includes(target.asset_id));
-      const decide = () =>
-        this.request(() =>
-          api.decidePhotoStack(
-            {
-              ...request,
-              targets: prepared.targets.map(
-                ({ asset_id, asset_revision, file_id, revision, node_revision }) => ({
+    });
+    if (stale) {
+      this.error = "This photo changed. Reload the photo before deciding.";
+      this.conflict = true;
+      return;
+    }
+    const write = this.beginWrite();
+    this.error = "";
+    this.notice = "";
+    try {
+      if (beforeWrite && !(await beforeWrite())) return;
+      const receipt = await this.request(() =>
+        api.decidePhotoStack(
+          {
+            ...request,
+            targets: targets.map(
+              ({ asset_id, asset_revision, file_id, revision, node_revision }) => {
+                const row = observed.find((item) => item.display_file_id === file_id);
+                return {
                   asset_id,
                   asset_revision,
                   file_id,
                   revision,
                   node_revision,
-                  ...(file_id === expectedDisplayFileID && expectedContentVersionID
-                    ? { content_version_id: expectedContentVersionID }
-                    : {}),
-                }),
-              ),
-            },
-            this.options(),
-          ),
-        );
-      const receipt = await decide();
+                  ...(row ? { content_version_id: row.content_version_id } : {}),
+                };
+              },
+            ),
+          },
+          this.options(),
+        ),
+      );
       this.accept(receipt);
-      if (receipt.receipt_id) {
-        this.receiptID = receipt.receipt_id;
-        this.undoState.summary = "Stack updated";
-        await refresh(receipt, []);
-      } else {
-        this.error = "These photos already have those flags.";
+      if (!receipt.receipt_id) {
+        this.notice = "No changes to apply";
+        return;
       }
+      this.receiptID = receipt.receipt_id;
+      this.undoState.summary = receipt.after.length ? "Stack updated" : "Representative chosen";
+      this.endWrite(write);
+      await refresh(receipt, []);
     } catch (cause) {
       if (!this.controller.signal.aborted) {
         this.error = this.failure(cause);
@@ -548,5 +634,6 @@ export class PhotoAuthoredEditor {
   dispose() {
     this.controller.abort();
     this.read.abort();
+    this.stackRead.abort();
   }
 }

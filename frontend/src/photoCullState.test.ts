@@ -81,11 +81,12 @@ it("probes saved headers and replaces a run without loading its membership", asy
   expect(await resumed.restore()).toBe(true);
   expect(store.load).toHaveBeenCalledOnce();
 });
-async function snapshot(ids: string[]) {
+async function snapshot(ids: string[], stacks: Record<string, string> = {}, frozen = query) {
   return snapshotEnvelope(
-    query,
+    frozen,
     ids.map((asset_id, index) => ({
       asset_id,
+      ...(stacks[asset_id] ? { stack_id: stacks[asset_id] } : {}),
       flag: "" as "" | "pick" | "reject",
       node_id: index + 1,
       content_version_id: "11111111-1111-4111-8111-111111111111",
@@ -622,93 +623,115 @@ it("reports a failed flag lookup and clears its progress", async () => {
   expect(cull.busy).toBe(false);
 });
 
-it("groups frozen rows around a missing member and stops at frame edges", async () => {
-  const frozen = [photo(1), photo(2), photo(3), photo(4)].map((row, i) => ({
-    ...row,
-    source_folder_key: i < 3 ? "burst" : "other",
-    capture_time: `2025-06-01T12:00:0${i}`,
-  }));
-  const rows = [frozen[0]!, frozen[2]!, frozen[3]!];
-  const ids = frozen.map((row) => row.asset_id);
+const captureQuery = parseQuery('{"sort":{"field":"capture_time","direction":"asc"}}');
+
+it("captures interleaved bursts and moves between stacks and frames in pass order", async () => {
+  // Two imports interleave by capture time: A1, B1, A2, B2, then a lone frame.
+  const [a1, b1, a2, b2, lone] = [1, 2, 3, 4, 5].map((id) => photo(id).asset_id);
+  vi.spyOn(api, "createWorkspaceQuery").mockImplementation(async () =>
+    Response.json(
+      await snapshot(
+        [a1!, b1!, a2!, b2!, lone!],
+        { [a1!]: a1!, [a2!]: a1!, [b1!]: b1!, [b2!]: b1! },
+        captureQuery,
+      ),
+    ),
+  );
+  vi.spyOn(api, "getPhotoSettings").mockResolvedValue({
+    revision: 1,
+    preference: null,
+    burst_gap_seconds: 2,
+  });
+  const group = vi.spyOn(api, "groupPhotoStacks");
   const store = storage();
-  await store.replace({
+  const cull = new PhotoCull("session", store);
+  expect(await cull.start(captureQuery, () => true)).toBe(true);
+  expect(cull.run?.checkpoint.pass).toEqual([a1, b1, a2, b2, lone]);
+  expect(cull.run?.groups).toEqual([
+    [a1, a2],
+    [b1, b2],
+  ]);
+  expect(cull.currentStack).toEqual([a1, a2]);
+  cull.moveFrame(1);
+  expect(cull.currentID).toBe(a2);
+  cull.moveFrame(1);
+  expect(cull.currentID).toBe(a2);
+  cull.moveStack(1);
+  expect(cull.currentID).toBe(b1);
+  cull.moveFrame(1);
+  expect(cull.currentID).toBe(b2);
+  cull.moveStack(1);
+  expect(cull.currentID).toBe(lone);
+  expect(cull.currentStack).toBeUndefined();
+  cull.moveStack(-1);
+  expect(cull.currentID).toBe(b1);
+  await cull.flush();
+  const resumed = new PhotoCull("session", store);
+  await resumed.restore();
+  expect(resumed.currentID).toBe(b1);
+  expect(resumed.currentStack).toEqual([b1, b2]);
+  expect(group).not.toHaveBeenCalled();
+});
+
+it("regroups saved IDs after a gap change and recovers only a stale stack", async () => {
+  const ids = [1, 2, 3, 4].map((id) => photo(id).asset_id);
+  const store = storage();
+  const run: CullRun = {
     ids,
     captureTimeOrder: "asc",
+    groups: [
+      [ids[0]!, ids[1]!],
+      [ids[2]!, ids[3]!],
+    ],
+    burstGapSeconds: 2,
     checkpoint: {
       runID: "run",
       passID: "pass",
       revision: 0,
       pass: ids,
-      position: 0,
+      position: 2,
       visited: [],
       skipped: [],
       unavailable: [],
       scope: "all",
       autoAdvance: true,
     },
-  });
-  const list = vi
-    .spyOn(api, "listPhotoAssets")
-    .mockImplementation(async (request) => browsePage(rows, request));
+  };
+  await store.replace(run);
   const settings = vi
     .spyOn(api, "getPhotoSettings")
     .mockResolvedValue({ revision: 1, preference: null, burst_gap_seconds: 2 });
+  const group = vi
+    .spyOn(api, "groupPhotoStacks")
+    .mockResolvedValue({ groups: [[ids[1]!, ids[2]!]], unavailable_ids: [] });
   const cull = new PhotoCull("session", store);
   await cull.restore();
-  await cull.regroup();
-  expect(cull.currentStack?.asset_ids).toEqual([ids[0], ids[2]]);
-  expect(cull.stacks.has(ids[1]!)).toBe(false);
-  cull.stackLoading = true;
-  cull.moveFrame(1);
-  cull.moveStack(1);
-  expect(cull.currentID).toBe(ids[0]);
-  cull.stackLoading = false;
-  cull.moveFrame(-1);
-  expect(cull.currentID).toBe(ids[0]);
-  cull.moveFrame(1);
-  expect(cull.currentID).toBe(ids[2]);
-  cull.moveFrame(1);
-  expect(cull.currentID).toBe(ids[2]);
-  cull.moveStack(1);
-  expect(cull.currentID).toBe(ids[1]);
-  expect(cull.currentStack).toBeUndefined();
-  cull.moveStack(-1);
-  expect(cull.currentID).toBe(ids[0]);
-  list.mockClear();
-  settings.mockResolvedValue({ revision: 2, preference: "raw", burst_gap_seconds: 2 });
   await cull.checkSettings();
-  expect(list).not.toHaveBeenCalled();
-  settings.mockResolvedValue({ revision: 3, preference: "raw", burst_gap_seconds: 1 });
+  expect(group).not.toHaveBeenCalled();
+  settings.mockResolvedValue({ revision: 2, preference: null, burst_gap_seconds: 5 });
   await cull.checkSettings();
-  expect(list).not.toHaveBeenCalled();
-  expect(cull.currentStack?.asset_ids).toEqual([ids[0]]);
-  expect(cull.stacks.get(ids[2]!)?.asset_ids).toEqual([ids[2]]);
-  cull.moveStack(1);
-  expect(cull.currentID).toBe(ids[1]);
-  cull.moveStack(1);
-  expect(cull.currentID).toBe(ids[2]);
-  cull.moveFrame(1);
-  expect(cull.currentID).toBe(ids[2]);
-  cull.moveStack(1);
-  expect(cull.currentID).toBe(ids[3]);
-  await cull.flush();
+  expect(group).toHaveBeenCalledExactlyOnceWith({ asset_ids: ids }, expect.anything());
+  expect(cull.run?.groups).toEqual([[ids[1], ids[2]]]);
+  expect(cull.currentStack).toEqual([ids[1], ids[2]]);
+  // Recovery submits only the affected stack and keeps the rest.
+  group.mockResolvedValue({ groups: [], unavailable_ids: [ids[2]!] });
+  await cull.regroup(cull.currentStack);
+  expect(group).toHaveBeenLastCalledWith({ asset_ids: [ids[1], ids[2]] }, expect.anything());
+  expect(cull.run?.groups).toEqual([]);
   const resumed = new PhotoCull("session", store);
   await resumed.restore();
-  expect(resumed.run?.captureTimeOrder).toBe("asc");
-  expect(resumed.run?.checkpoint.pass).toEqual(ids);
-  expect(resumed.currentID).toBe(ids[3]);
+  expect(resumed.run?.groups).toEqual([]);
+  expect(resumed.run?.burstGapSeconds).toBe(5);
+  expect(resumed.run?.checkpoint).toEqual(run.checkpoint);
 });
 
 it("keeps filename-sorted cull passes flat and preserves their captured order", async () => {
   const rows = [photo(3), photo(1), photo(2)];
   const store = storage();
-  const list = vi
-    .spyOn(api, "listPhotoAssets")
-    .mockImplementation(async (request) => browsePage(rows, request));
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => Response.json(await snapshot(rows.map((row) => row.asset_id)))),
+  vi.spyOn(api, "createWorkspaceQuery").mockImplementation(async () =>
+    Response.json(await snapshot(rows.map((row) => row.asset_id))),
   );
+  const group = vi.spyOn(api, "groupPhotoStacks");
   const cull = new PhotoCull("session", store);
   expect(await cull.start(query, () => true)).toBe(true);
   await cull.regroup();
@@ -717,12 +740,7 @@ it("keeps filename-sorted cull passes flat and preserves their captured order", 
   expect(cull.currentID).toBe(rows[1]!.asset_id);
   cull.moveFrame(1);
   expect(cull.currentID).toBe(rows[2]!.asset_id);
-  await cull.flush();
-  const resumed = new PhotoCull("new-session", store);
-  await resumed.restore();
-  await resumed.regroup();
-  expect(resumed.currentStack).toBeUndefined();
-  expect(list).not.toHaveBeenCalled();
+  expect(group).not.toHaveBeenCalled();
 });
 
 it.each(["capture", "next pass", "remainder"])(

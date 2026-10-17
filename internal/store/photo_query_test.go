@@ -738,7 +738,7 @@ func TestPhotoBrowseDisplayAuthorityAndRotation(t *testing.T) {
 	page := browsePhotoPage(t, s, `{}`)
 	require.Equal(t, raw.ID, page.Items[0].NodeID)
 	require.Equal(t, raw.CreatedAt, page.Items[0].ImportTime)
-	_, err = s.SetPhotoSettings(ctx, 1, new("image"))
+	_, err = s.SetPhotoSettings(ctx, 1, PhotoSettingsUpdate{Preference: new("image")})
 	require.NoError(t, err)
 	page = browsePhotoPage(t, s, `{}`)
 	require.Equal(t, jpeg.ID, page.Items[0].NodeID)
@@ -1072,7 +1072,7 @@ func TestPhotoRankingRetainedContentEvidence(t *testing.T) {
 	t.Run("sibling authored evidence outranks retained content and technical metadata", func(t *testing.T) {
 		s, _ := newRenditionCatalogFixture(t)
 		asset := authoredPair(t, s)
-		_, err := s.SetPhotoSettings(t.Context(), 1, new("image"))
+		_, err := s.SetPhotoSettings(t.Context(), 1, PhotoSettingsUpdate{Preference: new("image")})
 		require.NoError(t, err)
 		display := fileByRole(asset.Files, PhotoRoleImage)
 		_, err = editPhotoAuthored(t.Context(), s, []PhotoAuthoredTarget{{FileID: display.ID, Revision: display.Revision, Patch: PhotoAuthoredPatch{Caption: new("harbor")}}})

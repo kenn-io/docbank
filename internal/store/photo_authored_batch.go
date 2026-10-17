@@ -605,6 +605,9 @@ func validatePhotoKeywords(r PhotoAuthoredReceipt) error {
 }
 
 func photoAuthoredChanged(receipt PhotoAuthoredReceipt) bool {
+	if len(receipt.Representatives) > 0 {
+		return true
+	}
 	for i, after := range receipt.After {
 		if after.Revision != receipt.Before[i].Revision {
 			return true

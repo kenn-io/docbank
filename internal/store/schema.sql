@@ -2190,6 +2190,8 @@ CREATE TABLE IF NOT EXISTS photo_assets (
     display_override_file_id  TEXT,
     created_at                TEXT NOT NULL,
     updated_at                TEXT NOT NULL,
+    -- The most recent explicit burst representative choice has the highest rank.
+    representative_rank       INTEGER,
     FOREIGN KEY (display_file_id) REFERENCES photo_files(file_id)
         ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED,
     FOREIGN KEY (display_override_file_id) REFERENCES photo_files(file_id)
@@ -2219,6 +2221,7 @@ CREATE TABLE IF NOT EXISTS photo_files (
 );
 
 CREATE INDEX IF NOT EXISTS photo_files_asset ON photo_files(asset_id, role, file_id);
+CREATE INDEX IF NOT EXISTS photo_assets_representative ON photo_assets(representative_rank) WHERE representative_rank IS NOT NULL;
 CREATE INDEX IF NOT EXISTS photo_files_sidecar ON photo_files(sidecar_of_file_id);
 CREATE INDEX IF NOT EXISTS photo_files_sidecar_nodes ON photo_files(node_id) WHERE role='sidecar';
 
@@ -2232,6 +2235,11 @@ CREATE INDEX IF NOT EXISTS photo_files_sidecar_nodes ON photo_files(node_id) WHE
 -- loadBoundDocumentEventEvidence does (document_events_evidence.go).
 -- The mtime key pads the canonical UTC RFC3339Nano fraction to the fixed
 -- nine digits query.CaptureTimeKey produces, so EXIF and mtime keys sort together.
+-- folder_key bounds burst stacks. It is set only for an EXIF capture time with
+-- second or fraction precision whose current unsuperseded provenance claims for
+-- the same bytes name one import folder (docbank_photo_folder_v1). Its first
+-- character separates zoned (UTC or offset) keys from floating local keys,
+-- which never share a clock.
 -- Derived like photo_technical_metadata: absent from export, refilled by the
 -- triggers below when restore inserts the facts they watch. These triggers have
 -- no recipe marker, so changing them or the key format needs a schema bump.
@@ -2239,9 +2247,11 @@ CREATE TABLE IF NOT EXISTS photo_timeline (
     file_id       TEXT PRIMARY KEY REFERENCES photo_files(file_id) ON DELETE CASCADE,
     sort_key      TEXT NOT NULL,
     day           TEXT NOT NULL,
-    modified_time TEXT
+    modified_time TEXT,
+    folder_key    TEXT
 );
 CREATE INDEX IF NOT EXISTS photo_timeline_sort_key ON photo_timeline(sort_key);
+CREATE INDEX IF NOT EXISTS photo_timeline_folder ON photo_timeline(folder_key, sort_key) WHERE folder_key IS NOT NULL;
 
 -- Writers queue a node here; the trigger below recomputes its row once and
 -- empties the queue, so the recomputation is written in one place.
@@ -2249,21 +2259,36 @@ CREATE TABLE IF NOT EXISTS photo_timeline_pending (node_id INTEGER PRIMARY KEY);
 
 CREATE TRIGGER IF NOT EXISTS photo_timeline_refresh AFTER INSERT ON photo_timeline_pending BEGIN
     DELETE FROM photo_timeline WHERE file_id IN (SELECT file_id FROM photo_files WHERE node_id = NEW.node_id);
-    INSERT INTO photo_timeline(file_id, sort_key, day, modified_time)
+    INSERT INTO photo_timeline(file_id, sort_key, day, modified_time, folder_key)
     SELECT file_id,
         COALESCE(exif_key, substr(mtime, 1, 19) || '.' || substr(
             CASE WHEN substr(mtime, 20, 1) = '.' THEN substr(mtime, 21, length(mtime) - 21) ELSE '' END
             || '000000000', 1, 9)),
         COALESCE(exif_day, substr(mtime, 1, 10)),
-        CASE WHEN exif_key IS NULL THEN mtime END
+        CASE WHEN exif_key IS NULL THEN mtime END,
+        CASE WHEN exif_key IS NOT NULL AND exif_clock IS NOT NULL THEN exif_clock || (
+            WITH RECURSIVE chain(identity) AS (
+                SELECT b.provenance_identity FROM content_versions cv
+                JOIN provenance_version_bindings b ON b.content_version_id = cv.version_id
+                WHERE cv.node_id = x.node_id AND cv.blob_hash = x.blob_hash
+                UNION SELECT p.identity FROM chain JOIN provenance p ON p.supersedes = chain.identity)
+            SELECT CASE WHEN COUNT(DISTINCT folder) = 1 THEN MIN(folder) END FROM (
+                SELECT docbank_photo_folder_v1(i.source_kind, i.source_desc, c.original_path) AS folder
+                FROM chain JOIN provenance c ON c.identity = chain.identity JOIN ingests i ON i.id = c.ingest_id
+                WHERE NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes = c.identity)))
+        END
     FROM (
-        SELECT f.file_id,
+        SELECT f.file_id, f.node_id, v.blob_hash,
             (SELECT NULLIF(t.capture_sort_key, '') FROM source_metadata_heads h
                 JOIN photo_technical_metadata t ON t.generation_id = h.generation_id
                 WHERE h.source_sha256 = v.blob_hash) AS exif_key,
             (SELECT NULLIF(t.capture_date, '') FROM source_metadata_heads h
                 JOIN photo_technical_metadata t ON t.generation_id = h.generation_id
                 WHERE h.source_sha256 = v.blob_hash) AS exif_day,
+            (SELECT CASE WHEN t.capture_time_timezone IN ('utc', 'offset') THEN 'z' ELSE 'f' END
+                FROM source_metadata_heads h
+                JOIN photo_technical_metadata t ON t.generation_id = h.generation_id
+                WHERE h.source_sha256 = v.blob_hash AND t.capture_time_precision IN ('second', 'fraction')) AS exif_clock,
             -- The supersedes walk mirrors loadBoundDocumentEventEvidence (document_events_evidence.go).
             (WITH RECURSIVE chain(observed_at, identity) AS (
                 SELECT b.observed_at, b.provenance_identity FROM content_versions cv
@@ -2277,7 +2302,7 @@ CREATE TRIGGER IF NOT EXISTS photo_timeline_refresh AFTER INSERT ON photo_timeli
         FROM photo_files f
         JOIN nodes n ON n.id = f.node_id
         JOIN content_versions v ON v.version_id = n.current_version_id
-        WHERE f.node_id = NEW.node_id AND f.role <> 'sidecar')
+        WHERE f.node_id = NEW.node_id AND f.role <> 'sidecar') x
     WHERE exif_key IS NOT NULL OR mtime IS NOT NULL;
     DELETE FROM photo_timeline_pending WHERE node_id = NEW.node_id;
 END;
@@ -2367,12 +2392,13 @@ CREATE TABLE IF NOT EXISTS photo_sidecar_considered (
     extractor_fingerprint TEXT NOT NULL
 );
 
+-- A NULL burst gap is the 2-second default, including restored settings that predate it.
 CREATE TABLE IF NOT EXISTS photo_library_settings (
-    burst_gap_seconds INTEGER,
     singleton    INTEGER PRIMARY KEY,
     preference   TEXT,
     revision     INTEGER NOT NULL DEFAULT 1,
-    updated_at   TEXT NOT NULL
+    updated_at   TEXT NOT NULL,
+    burst_gap_seconds INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS photo_sets (

@@ -701,13 +701,27 @@ Map uses album membership when opened from an album. Otherwise it inherits Libra
 
 ## Burst stacks
 
-With capture-time sorting, adjacent photos from the same imported source folder collapse into a tile with a count. Each gap must be within the vault's **Burst gap (seconds)**, initially 2 and adjustable from 1 to 30. A chain can last longer than the gap. Each stack holds at most 500 frames; frame 501 starts another stack. Missing capture times, dates without seconds, videos, and unknown source folders stay separate. Other sorts and Map keep individual tiles.
+With capture-time sorting, Library groups adjacent photos from one import folder into a stack: one tile with a frame count. Each step between frames must be within the vault's **Burst gap (seconds)**, initially 2 and adjustable from 1 to 30. A stack can last longer than the gap. Photos from other folders captured between its frames don't split it.
 
-Filters group only matching photos. Selecting a collapsed tile selects all its matching frames. Click the count to expand or collapse it; expanded frames can be selected separately. One picked frame represents the stack, including a pick on its RAW or JPEG companion. With zero or several picks, the first frame in browse order represents it.
+- A stack holds only photos in the current search and filters. Frames that the query excludes stay out of the tile and out of its decisions.
+- A photo joins a stack only when its displayed file has an EXIF capture time to the second or finer and its current import records name one folder. Photos with only a date or minute, photos placed by file time, photos whose folder is unknown or ambiguous, and videos stay separate. Push and watch sources keep their folders apart.
+- Capture times with a zone or UTC offset compare as instants. Times without a zone compare only with each other.
+- A stack holds at most 500 frames. A connected run of more than 500 frames shows as individual photos.
+- Other sorts and Map keep individual tiles.
 
-The selection dock offers **Keep all** to pick every file in the stack, including rejects, **Keep selected** to pick selected frames and reject other undecided frames, and **Choose representative** for one selected frame. Choosing a representative picks its files and clears other file-level picks while preserving rejects. A frame is undecided when none of its files has a flag. Existing rejects survive automatic sibling decisions.
+Library pages stay live. A page finishes its last stack, so it can hold up to 499 frames more than usual, and a stack never splits across pages. Photos imported between pages join later pages. Changing the gap starts a fresh page.
 
-A stack decision checks the displayed members, every file revision, and their capture-time chain against the current gap in one transaction. It records one receipt with **Undo**. Changed members refuse the whole decision; refresh before retrying. Newly adjacent frames stay undecided until the refreshed view includes them. Change the same vault gap from the CLI with `docbank photos settings set --burst-gap-seconds 5`.
+Selecting a collapsed tile selects all its frames. Click the count to expand or collapse it; expanded frames can be selected separately. The tile shows the stack's representative: the frame most recently chosen with **Choose representative**, else the only picked frame, else the first frame. A pick on a RAW or JPEG companion counts as a pick for its frame. When a wider gap joins stacks that each have a chosen representative, the most recent choice wins.
+
+With a stack selected, the selection dock offers these decisions:
+
+- **Keep all** picks every file in the stack, including rejects.
+- **Keep selected** picks the selected frames and rejects other undecided frames.
+- **Choose representative**, with one expanded frame selected, shows that frame on the tile. It leaves every frame's pick and reject flags unchanged and stores the choice separately.
+
+A frame is undecided when none of its files has a flag. Automatic rejects leave flagged frames unchanged.
+
+A stack decision checks the shown members, their capture-time chain under the current gap, and every file revision in one transaction. It records one receipt with **Undo**. Undo restores an earlier representative only while that photo is unchanged since the choice. If a member changed, Docbank refuses the whole decision, keeps your selection, and offers a reload. Newly adjacent frames stay undecided until the reloaded view includes them. Change the same vault gap from the CLI with `docbank photos settings set --burst-gap-seconds 5`.
 
 ## Cull and compare
 
@@ -728,7 +742,7 @@ Choose **Cull** in Library or an album to review the whole current query full-sc
 | ? | Show the key map |
 | Esc | Leave cull mode |
 
-Capture-time cull runs group the frozen run IDs using the current gap, including siblings outside the current flag pass. Stack navigation follows each group’s first frame in the captured pass. Frame navigation stays within that group in pass order, even after capture-time metadata changes. Resuming regroups those IDs. Returning to the browser window checks the gap and regroups when it changes. **Keep all** and **Choose representative** are also available in Cull.
+Capture-time cull runs save their stacks when they start. A stack holds only photos in the run, even when photos from other folders fall between its frames. **H** and **L** visit each stack's first frame in the current pass; **J** and **K** move between its frames in pass order. Lone photos count as stacks of one. Resume and decisions use the saved stacks, so capture-time edits don't regroup a run. When the vault gap has changed, opening Cull or returning to its window regroups the run's photos under the new gap, even after its snapshot expires; order and progress stay unchanged. A refused decision reloads only the affected stack. Cull offers **Keep current (Return)**, **Keep all**, and **Choose representative**. A decision covers the whole live stack, including frames outside the current pass.
 
 Use **Skip** to record a skipped photo. The decision toast offers **Undo**. Ctrl, Cmd, and Alt shortcuts pause during cull. Apply or clear pending metadata edits before entering, moving, or leaving.
 

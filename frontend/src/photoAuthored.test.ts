@@ -15,29 +15,33 @@ afterEach(() => {
   Reflect.deleteProperty(Element.prototype, "scrollIntoView");
 });
 
-it("reloads a conflicted Hidden stack within Hidden scope", async () => {
+it("prepares a Hidden stack's members once and re-prepares them after a conflict", async () => {
   const prepare = vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue({
     assets: [],
     targets: [preparedPhoto(1)],
   });
   vi.spyOn(api, "decidePhotoStack").mockRejectedValue(
-    new APIError("Stack changed", 409, "photo_stack_stale"),
+    new APIError("Stack changed", 409, "photo_stack_changed"),
   );
   const editor = new PhotoAuthoredEditor("session", vi.fn());
+  await editor.prepareStack(["photo-1"], true);
+  await editor.prepareStack(["photo-1"], true);
+  expect(prepare).toHaveBeenCalledExactlyOnceWith(
+    { asset_ids: ["photo-1"], hidden: true },
+    expect.anything(),
+  );
   await editor.decideStack(
     { asset_ids: ["photo-1"], current_id: "photo-1", decision: "current", hidden: true },
     vi.fn(),
+    { observed: [] },
   );
   expect(editor.conflict).toBe(true);
   await editor.reload();
-  expect(prepare.mock.calls[1]?.[0]).toEqual({
-    asset_ids: ["photo-1"],
-    hidden: true,
-    skip_unavailable: true,
-  });
   expect(editor.conflict).toBe(false);
-  expect(editor.targets.map((target) => target.asset_id)).toEqual(["photo-1"]);
+  await editor.prepareStack(["photo-1"], true);
+  expect(prepare).toHaveBeenCalledTimes(2);
 });
+
 const targets = [
   preparedPhoto(1, {
     asset_id: "asset",
@@ -807,76 +811,81 @@ it("keeps a later edit busy when an earlier refresh finishes during its write", 
   editor.dispose();
 });
 
-it.each(["current", "replaced", "content-replaced", "unchanged"])(
-  "prepares one stack and checks its displayed file (%s)",
+it.each(["current", "stale-asset", "replaced", "unchanged", "checkpoint"])(
+  "decides a stack against held revisions and the observed rows (%s)",
   async (scenario) => {
-    const target = preparedPhoto(1);
+    const selected = preparedPhoto(1),
+      sibling = preparedPhoto(2),
+      companion = preparedPhoto(3, { asset_id: "photo-2", display_file_id: "file-2" });
     const request = {
-      asset_ids: [target.asset_id],
-      current_id: target.asset_id,
-      decision: "current" as const,
+      asset_ids: ["photo-1", "photo-2"],
+      current_id: "photo-1",
+      selected_ids: ["photo-1"],
+      decision: "selected" as const,
     };
     const receipt = {
       receipt_id: scenario === "unchanged" ? "" : "stack-receipt",
       before: [],
-      after: [],
+      after: [
+        {
+          file_id: "file-2",
+          node_id: 2,
+          revision: 2,
+          values: { ...sibling.values, flag: "reject" as const },
+        },
+      ],
     };
-    const calls: string[] = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: string, init: RequestInit) => {
-        calls.push(url);
-        if (url.endsWith("/prepare")) {
-          expect(JSON.parse(String(init.body))).toEqual({ asset_ids: [target.asset_id] });
-          return response({
-            assets: [],
-            targets: [
-              {
-                ...target,
-                display_file_id: scenario === "replaced" ? "replacement" : target.file_id,
-              },
-            ],
-          });
-        }
-        expect(url).toBe("/api/v1/photos/authored/stack");
-        expect(JSON.parse(String(init.body))).toEqual({
-          ...request,
-          targets: [
-            {
-              asset_id: target.asset_id,
-              asset_revision: target.asset_revision,
-              file_id: target.file_id,
-              revision: target.revision,
-              node_revision: target.node_revision,
-            },
-          ],
-        });
-        return response(receipt);
-      }),
-    );
+    const prepare = vi
+      .spyOn(api, "preparePhotoAuthored")
+      .mockResolvedValue({ assets: [], targets: [sibling, companion] });
+    const decide = vi.spyOn(api, "decidePhotoStack").mockResolvedValue(receipt);
     const editor = new PhotoAuthoredEditor("session", vi.fn());
-    const refresh = vi.fn(async () => {});
-    await editor.decideStack(
-      request,
-      refresh,
-      target.file_id,
-      async () => scenario !== "content-replaced",
+    editor.targets = [selected];
+    await editor.prepareStack(request.asset_ids, false);
+    expect(prepare).toHaveBeenCalledExactlyOnceWith(
+      { asset_ids: ["photo-2"], hidden: false },
+      expect.anything(),
     );
-    if (scenario === "replaced" || scenario === "content-replaced") {
-      expect(editor.error).toBe("This photo changed. Reload the photo before deciding.");
-      expect(editor.conflict).toBe(true);
-      expect(calls).toHaveLength(1);
+    const observed = [
+      {
+        asset_id: "photo-1",
+        revision: scenario === "stale-asset" ? 2 : 1,
+        display_file_id: scenario === "replaced" ? "replacement" : "file-1",
+        content_version_id: "version-1",
+      },
+    ];
+    const refresh = vi.fn(async () => {});
+    await editor.decideStack(request, refresh, {
+      observed,
+      beforeWrite: async () => scenario !== "checkpoint",
+    });
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(editor.targets.map((target) => target.asset_id)).toEqual(["photo-1"]);
+    if (scenario === "stale-asset" || scenario === "replaced" || scenario === "checkpoint") {
+      expect(decide).not.toHaveBeenCalled();
+      expect(editor.conflict).toBe(scenario !== "checkpoint");
       return;
     }
+    expect(decide.mock.calls[0]![0].targets).toEqual([
+      { asset_id: "photo-2", asset_revision: 1, file_id: "file-2", revision: 1, node_revision: 1 },
+      { asset_id: "photo-2", asset_revision: 1, file_id: "file-3", revision: 1, node_revision: 1 },
+      {
+        asset_id: "photo-1",
+        asset_revision: 1,
+        file_id: "file-1",
+        revision: 1,
+        node_revision: 1,
+        content_version_id: "version-1",
+      },
+    ]);
     if (scenario === "unchanged") {
-      expect(editor.error).toBe("These photos already have those flags.");
-      expect(editor.receiptID).toBe("");
+      expect(editor.notice).toBe("No changes to apply");
       expect(refresh).not.toHaveBeenCalled();
-    } else {
-      expect(editor.receiptID).toBe("stack-receipt");
-      expect(refresh).toHaveBeenCalledWith(receipt, []);
+      return;
     }
-    expect(calls).toHaveLength(2);
+    expect(editor.receiptID).toBe("stack-receipt");
+    expect(refresh).toHaveBeenCalledWith(receipt, []);
+    expect(editor.stackTargets.find((target) => target.file_id === "file-2")?.revision).toBe(2);
   },
 );
 

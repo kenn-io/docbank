@@ -2916,7 +2916,7 @@ it("keeps a reloaded stage photo in its collapsed stack when returning to the gr
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
   stubPhotoFetch(async () => Response.json({ items: [], total: 0, facets: [] }));
   const photos = new Photos("scoped", vi.fn());
-  const stack = { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1" };
+  const stack = { asset_ids: ["photo-1", "photo-2"], representative_id: "photo-1", picked_ids: [] };
   photos.items = [photo(1), photo(2)].map((row) => ({ ...row, stack }));
   photos.total = 2;
   photos.started = true;
@@ -2958,14 +2958,21 @@ it.each(["Keep all", "Keep selected", "Choose representative"])(
     vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
     vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
     const rows = [photo(1), photo(2), photo(3)];
-    const stack = { asset_ids: rows.map((row) => row.asset_id), representative_id: "photo-1" };
-    stubPhotoFetch(async () =>
-      Response.json({
-        items: rows.map((row) => ({ ...row, source_folder_key: "folder" })),
-        total: 3,
-        facets: [],
-        relevance_available: false,
-      }),
+    const stack = {
+      asset_ids: rows.map((row) => row.asset_id),
+      representative_id: "photo-1",
+      picked_ids: [],
+    };
+    stubPhotoFetch(
+      async (url, init) =>
+        photoMetadataResponse(url, init) ??
+        Response.json({
+          items: rows,
+          stacks: [stack],
+          total: 3,
+          facets: [],
+          relevance_available: false,
+        }),
     );
     const decide = vi
       .spyOn(api, "decidePhotoStack")
@@ -2988,7 +2995,13 @@ it.each(["Keep all", "Keep selected", "Choose representative"])(
       await waitFor(() => expect(photos.authored.busy).toBe(false));
       expect([...photos.selectedIDs]).toEqual(["photo-2"]);
       expect(photos.scope()).toEqual({ asset_ids: ["photo-2"] });
-      expect(photos.authored.targets.map((target) => target.asset_id)).toEqual(["photo-2"]);
+      // Stack members are held apart from the edit targets, which still follow the selection.
+      expect(photos.authored.targets).toEqual([]);
+      expect(photos.authored.stackTargets.map((target) => target.asset_id).sort()).toEqual([
+        "photo-1",
+        "photo-2",
+        "photo-3",
+      ]);
     }
     expect(decide.mock.calls.map(([request]) => request.selected_ids)).toEqual([
       ["photo-2"],
@@ -3025,7 +3038,7 @@ it("range selects in rendered month order across offset dates and a collapsed st
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
   stubPhotoFetch(async () => Response.json({ items: [], total: 0, facets: [] }));
   const photos = new Photos("scoped", vi.fn());
-  const stack = { asset_ids: ["photo-2", "photo-3"], representative_id: "photo-2" };
+  const stack = { asset_ids: ["photo-2", "photo-3"], representative_id: "photo-2", picked_ids: [] };
   photos.items = [
     photo(1, "2025-02-28T23:59:59-12:00"),
     { ...photo(2, "2025-03-01T00:00:02+14:00"), stack },

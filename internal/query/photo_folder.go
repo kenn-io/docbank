@@ -1,0 +1,35 @@
+package query
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"path"
+	"path/filepath"
+	"strings"
+
+	"golang.org/x/text/unicode/norm"
+)
+
+// PhotoFolderKey names the import folder that bounds a burst. Push and watch
+// sources keep their own namespaces, so equal paths from different sources do
+// not join. Provenance can come from a Windows backup: absolute drive and UNC
+// paths use portable separators, while other paths keep native rules. Both
+// SQLite drivers call this function when they derive photo_timeline.folder_key.
+func PhotoFolderKey(sourceKind, sourceDesc, originalPath string) (string, bool) {
+	if originalPath == "" {
+		return "", false
+	}
+	portable := strings.ReplaceAll(originalPath, `\`, "/")
+	drive := len(portable) >= 3 && (portable[0] >= 'A' && portable[0] <= 'Z' || portable[0] >= 'a' && portable[0] <= 'z') && portable[1:3] == ":/"
+	unc := strings.HasPrefix(originalPath, `\\`) && len(strings.Split(strings.TrimPrefix(portable, "//"), "/")) >= 3
+	folder := filepath.Dir(originalPath)
+	if drive || unc {
+		folder = "windows:" + path.Dir(portable)
+	}
+	folder = norm.NFC.String(folder)
+	if sourceKind == "push" || sourceKind == "watch" {
+		folder = "source\x00" + sourceKind + "\x00" + sourceDesc + "\x00" + folder
+	}
+	digest := sha256.Sum256([]byte(folder))
+	return hex.EncodeToString(digest[:]), true
+}

@@ -66,7 +66,8 @@ type SetPhotoExcludedRequest struct {
 }
 
 type SetPhotoSettingsRequest struct {
-	Preference *string `json:"preference,omitzero" enum:"raw,image"`
+	Preference      *string `json:"preference,omitzero" enum:"raw,image" doc:"Omit to reset the display preference."`
+	BurstGapSeconds *int    `json:"burst_gap_seconds,omitzero" minimum:"1" maximum:"30" doc:"Omit to keep the burst gap."`
 }
 
 type photoAssetOutput struct {
@@ -97,4 +98,17 @@ func fromStorePhotoSettings(settings store.PhotoSettings) PhotoSettings {
 
 type SetPhotoBurstGapRequest struct {
 	Seconds int `json:"seconds" minimum:"1" maximum:"30"`
+}
+
+// GroupPhotoStacksRequest names photos to regroup. The store rejects repeated
+// IDs: a schema uniqueItems check would echo the whole array once per repeat,
+// so 250,000 copies of one ID could not be answered.
+type GroupPhotoStacksRequest struct {
+	Hidden   bool     `json:"hidden,omitempty"`
+	AssetIDs []string `json:"asset_ids" maxItems:"250000" doc:"Distinct photo asset IDs, such as a saved Cull run."`
+}
+
+type GroupPhotoStacksResponse struct {
+	Groups         [][]string `json:"groups" doc:"Bursts of two or more submitted photos, in request order; other available photos are single."`
+	UnavailableIDs []string   `json:"unavailable_ids" doc:"Submitted photos that are no longer live in this library."`
 }

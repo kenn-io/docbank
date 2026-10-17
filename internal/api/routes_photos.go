@@ -227,7 +227,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 		}
 		var out *photoSettingsOutput
 		err = g.mutate(func() error {
-			settings, callErr := d.Store.SetPhotoSettings(ctx, revision, in.Body.Preference)
+			settings, callErr := d.Store.SetPhotoSettings(ctx, revision, store.PhotoSettingsUpdate{Preference: in.Body.Preference, BurstGapSeconds: in.Body.BurstGapSeconds})
 			if callErr != nil {
 				return FromStoreError(callErr)
 			}
@@ -246,7 +246,7 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 		}
 		var out *photoSettingsOutput
 		err = g.mutate(func() error {
-			settings, err := d.Store.SetPhotoBurstGap(ctx, revision, in.Body.Seconds)
+			settings, err := d.Store.SetPhotoSettings(ctx, revision, store.PhotoSettingsUpdate{KeepPreference: true, BurstGapSeconds: &in.Body.Seconds})
 			if err != nil {
 				return FromStoreError(err)
 			}
@@ -254,5 +254,17 @@ func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 			return nil
 		})
 		return out, err
+	})
+	// A Cull run can hold 250,000 photos. The body limit applies before
+	// parsing; the response stays below it because each submitted ID appears once.
+	huma.Register(api, huma.Operation{
+		OperationID: "groupPhotoStacks", Method: http.MethodPost, Path: "/api/v1/photos/stacks/group",
+		Summary: "Group explicit photos into bursts", MaxBodyBytes: 16 << 20,
+	}, func(ctx context.Context, in *struct{ Body GroupPhotoStacksRequest }) (*struct{ Body GroupPhotoStacksResponse }, error) {
+		groups, unavailable, err := d.Store.PhotoStackGroups(ctx, in.Body.AssetIDs, in.Body.Hidden)
+		if err != nil {
+			return nil, FromStoreError(err)
+		}
+		return &struct{ Body GroupPhotoStacksResponse }{GroupPhotoStacksResponse{Groups: groups, UnavailableIDs: unavailable}}, nil
 	})
 }
