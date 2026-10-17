@@ -262,7 +262,7 @@ func restoredContentPaths(ctx context.Context, db *sql.DB, allowPackedRestore bo
 
 func (a *App) RestoredStats(ctx context.Context, db *sql.DB) (jsontext.Value, error) {
 	scope := restoredStatsScope
-	scope.coverage = a.restoreStats == nil || a.restoreStats.Coverage != nil
+	scope.coverage = a.restoreStats.Coverage != nil
 	stats, err := computeStats(ctx, db, scope)
 	if err != nil {
 		return nil, err
