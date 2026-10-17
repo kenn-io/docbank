@@ -20,7 +20,7 @@ func applyEnvironment(c Config) (Config, error) {
 	if value := os.Getenv("DOCBANK_API_PORT"); value != "" {
 		port, err := strconv.Atoi(value)
 		if err != nil || port < 0 || port > 65535 {
-			return Config{}, errors.New("DOCBANK_API_PORT must be an integer from 0 through 65535")
+			return Config{}, errors.New("[server] DOCBANK_API_PORT must be an integer from 0 through 65535")
 		}
 		c.Server.APIPort = port
 	}
@@ -32,11 +32,15 @@ func applyEnvironment(c Config) (Config, error) {
 	}
 	key, selected, err := EnvironmentSecret("DOCBANK_API_KEY")
 	if err != nil {
-		return Config{}, err
+		return Config{}, fmt.Errorf("[server] %w", err)
 	}
 	if selected {
 		c.Server.APIKey = key
 	}
+	return applyMCPEnvironment(c), nil
+}
+
+func applyMCPEnvironment(c Config) Config {
 	if value := os.Getenv("DOCBANK_MCP_HTTP_ALLOWED_HOSTS"); value != "" {
 		c.MCP.HTTP.AllowedHosts = strings.Split(value, ",")
 		for i := range c.MCP.HTTP.AllowedHosts {
@@ -60,7 +64,7 @@ func applyEnvironment(c Config) (Config, error) {
 		c.MCP.HTTP.CredentialBinding = "credential:" + name
 		c.CredentialBindings[name] = CredentialBindingConfig{EnvironmentVariable: "DOCBANK_MCP_HTTP_TOKEN"}
 	}
-	return c, nil
+	return c
 }
 
 // EnvironmentSecret resolves NAME or NAME_FILE, rejecting conflicting nonempty

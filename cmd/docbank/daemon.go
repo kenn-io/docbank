@@ -151,10 +151,10 @@ func runServe(ctx context.Context) (retErr error) {
 	}
 	cfg, err := config.Load(layout.Root)
 	if err != nil {
-		return err
+		return fmt.Errorf("daemon config invalid: %w", err)
 	}
 	if err := cfg.Validate(); err != nil {
-		return err
+		return fmt.Errorf("daemon config invalid: %w", err)
 	}
 
 	background := os.Getenv(daemonconn.EnvBackgroundDaemon) == "1"

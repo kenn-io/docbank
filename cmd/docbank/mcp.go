@@ -129,14 +129,11 @@ func validateMCPCommandOptions(transport, listen string) error {
 	}
 }
 
-// loadMCPHTTPConfig loads the startup configuration and resolves the MCP
-// HTTP bearer from its named binding.
+// loadMCPHTTPConfig reads MCP HTTP policy and resolves the bearer from its
+// selected named binding, independently of daemon startup policy.
 func loadMCPHTTPConfig(root string) (config.Config, string, error) {
-	cfg, err := config.Load(root)
+	cfg, err := config.LoadMCPHTTP(root)
 	if err != nil {
-		return config.Config{}, "", err
-	}
-	if err := cfg.Validate(); err != nil {
 		return config.Config{}, "", err
 	}
 	reference := cfg.MCP.HTTP.CredentialBinding
