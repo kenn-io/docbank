@@ -113,7 +113,11 @@ func main() {
 			date = "2024-02-29T23:30:00"
 		}
 		camera, model, lens := "Canon", "Canon EOS R6", "RF 24-70mm F2.8"
-		if index%2 == 1 {
+		cameraIndex := index
+		if *bursts {
+			cameraIndex = index / 3
+		}
+		if cameraIndex%2 == 1 {
 			camera, model, lens = "Nikon", "Nikon Z6", "NIKKOR Z 35mm F1.8"
 		}
 		fields := []document.SourceMetadataFieldV1{
