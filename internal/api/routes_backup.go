@@ -167,6 +167,9 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 			if err != nil {
 				return nil, NewError(http.StatusInternalServerError, "backup_manifest", err.Error())
 			}
+			if browserSessionRequest(ctx) {
+				snapshot.Coverage = nil
+			}
 			out.Body.Items = append(out.Body.Items, snapshot)
 		}
 		return out, nil
