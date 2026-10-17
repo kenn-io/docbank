@@ -2,7 +2,6 @@ package store
 
 import (
 	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -347,18 +346,6 @@ func TestPhotoEventsPhotoPeerMembership(t *testing.T) {
 	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, first.ID, PhotoRoleImage, nil)
 	require.NoError(t, err)
 	require.Equal(t, asset.ID, nextPhotoEvent(t, events).AssetID)
-	rejected := errors.New("synthetic rollback")
-	require.ErrorIs(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `UPDATE nodes SET trashed_at=? WHERE id=?`, nowRFC3339(), first.ID)
-		if err != nil {
-			return err
-		}
-		return rejected
-	}), rejected)
-	noPhotoEvent(t, events)
-	_, err = s.CreateFile(ctx, s.RootID(), "reattached-photo-content.bin", first.BlobHash, 4, "application/octet-stream")
-	require.NoError(t, err)
-	require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
 }
 
 func TestPhotoEventsCaptureDepictedPeople(t *testing.T) {

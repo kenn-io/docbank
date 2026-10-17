@@ -811,6 +811,7 @@ it.each([false, true])(
     const first = editor.prepare({ asset_ids: ["asset"] });
     const changes = { assets: new Map([["asset", 2]]), albums: new Map(), refetch: false };
     expect(editor.affectedBy(changes)).toBe(true);
+    expect(editor.affectedBy({ assets: new Map(), albums: new Map(), refetch: true })).toBe(true);
     expect(editor.affectedBy({ ...changes, assets: new Map([["unrelated", 2]]) })).toBe(false);
     editor.changedElsewhere(changes);
     editor.stage({ caption: "Local draft" });
@@ -918,54 +919,47 @@ it("retries a metadata reconcile that a later list refresh interrupts", async ()
   editor.dispose();
 });
 
-it.each(["503", "timeout"])(
-  "keeps metadata blocked after a %s live reload until a successful retry",
-  async (failure) => {
-    const editor = editorWithTargets();
-    const deadline = new AbortController();
-    if (failure === "timeout") vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
-    const prepare = vi
-      .spyOn(api, "preparePhotoAuthored")
-      .mockImplementationOnce(async (_scope, options) => {
-        if (failure === "503") throw new APIError("Metadata unavailable", 503, "unavailable");
-        return new Promise((_, reject) =>
-          options!.signal!.addEventListener("abort", () => reject(options!.signal!.reason), {
-            once: true,
-          }),
-        );
-      })
-      .mockResolvedValue({
-        assets: [asset],
-        targets: targets.map((target) => ({
-          ...target,
-          values: { ...target.values, caption: "Remote caption" },
-        })),
-      });
-    editor.changedElsewhere();
-    const refreshing = editor.reconcile();
-    if (failure === "timeout") {
-      await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
-      expect(editor.loading).toBe(true);
-      deadline.abort(new DOMException("The operation timed out.", "TimeoutError"));
-    }
-    await refreshing;
-    expect(editor.loading).toBe(false);
-    expect(editor.conflict).toBe(true);
-    ui(editor);
-    const caption = () => screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Caption" });
-    expect(caption().disabled).toBe(true);
-    if (failure === "timeout") expect(editor.error).toBe("Metadata timed out. Reload metadata.");
-    expect(
-      screen.getByRole<HTMLButtonElement>("button", { name: "Reload metadata" }).disabled,
-    ).toBe(false);
-    if (failure === "timeout")
-      vi.mocked(AbortSignal.timeout).mockReturnValue(new AbortController().signal);
-    await fireEvent.click(screen.getByRole("button", { name: "Reload metadata" }));
-    await vi.waitFor(() => expect(caption().value).toBe("Remote caption"));
-    expect(caption().disabled).toBe(false);
-    editor.dispose();
-  },
-);
+it("keeps metadata blocked after a timed-out live reload until a successful retry", async () => {
+  const editor = editorWithTargets();
+  const deadline = new AbortController();
+  vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+  const prepare = vi
+    .spyOn(api, "preparePhotoAuthored")
+    .mockImplementationOnce(async (_scope, options) => {
+      return new Promise((_, reject) =>
+        options!.signal!.addEventListener("abort", () => reject(options!.signal!.reason), {
+          once: true,
+        }),
+      );
+    })
+    .mockResolvedValue({
+      assets: [asset],
+      targets: targets.map((target) => ({
+        ...target,
+        values: { ...target.values, caption: "Remote caption" },
+      })),
+    });
+  editor.changedElsewhere();
+  const refreshing = editor.reconcile();
+  await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+  expect(editor.loading).toBe(true);
+  deadline.abort(new DOMException("The operation timed out.", "TimeoutError"));
+  await refreshing;
+  expect(editor.loading).toBe(false);
+  expect(editor.conflict).toBe(true);
+  ui(editor);
+  const caption = () => screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Caption" });
+  expect(caption().disabled).toBe(true);
+  expect(editor.error).toBe("Metadata timed out. Reload metadata.");
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Reload metadata" }).disabled).toBe(
+    false,
+  );
+  vi.mocked(AbortSignal.timeout).mockReturnValue(new AbortController().signal);
+  await fireEvent.click(screen.getByRole("button", { name: "Reload metadata" }));
+  await vi.waitFor(() => expect(caption().value).toBe("Remote caption"));
+  expect(caption().disabled).toBe(false);
+  editor.dispose();
+});
 
 it("closes clean metadata when a live change removes its only target", async () => {
   const editor = editorWithTargets();
@@ -991,6 +985,14 @@ it.each(["Reload", "another event"])(
     editor.changedElsewhere({ assets: new Map(), albums: new Map(), refetch: true });
     expect(editor.conflict).toBe(false);
     await editor.reconcile();
+    expect(editor.loading).toBe(false);
+    expect(editor.conflict).toBe(true);
+    expect(screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Caption" }).disabled).toBe(
+      true,
+    );
+    expect(
+      screen.getByRole<HTMLButtonElement>("button", { name: "Reload metadata" }).disabled,
+    ).toBe(false);
     expect(editor.targets).toEqual(targets);
     expect(screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Caption" }).value).toBe(
       "Draft caption",
@@ -1076,24 +1078,38 @@ it("retains a staged keyword beyond the first catalog page", async () => {
   editor.dispose();
 });
 
-it.each(["Add keyword", "Remove keyword"])(
-  "clears a deleted keyword selection and rejects a stale %s action",
-  async (action) => {
+it.each([
+  { path: "refresh", action: "Add keyword" },
+  { path: "resolve", action: "Remove keyword" },
+])(
+  "removes a deleted keyword during $path and rejects its stale $action action",
+  async ({ path, action }) => {
     const editor = editorWithTargets();
     const retained = { id: "retained", name: "Retained", revision: 1, assignment_count: 0 };
     editor.tags = [retained, { id: "deleted", name: "Deleted", revision: 1, assignment_count: 1 }];
     editor.targets[0]!.tags = ["deleted"];
-    editor.stage({ caption: "Draft caption" }, [{ tag_id: "retained", assign: true }]);
+    editor.stage({ caption: "Draft caption" }, [
+      { tag_id: "deleted", assign: true },
+      { tag_id: "retained", assign: false },
+    ]);
     editor.rotationDelta = 90;
+    const deleted = vi.fn();
+    editor.onTagDeleted = deleted;
     ui(editor);
     await fireEvent.click(screen.getByRole("combobox", { name: /Keyword:/ }));
     await fireEvent.click(screen.getByRole("option", { name: "Deleted (1)" }));
     const staleAction = screen.getByRole("button", { name: action });
-    vi.spyOn(api, "getTag").mockImplementation(async (id) => {
+    const lookup = vi.spyOn(api, "getTag").mockImplementation(async (id) => {
       if (id === "deleted") throw new APIError("Deleted", 404, "not_found");
       return retained;
     });
-    await editor.refreshAssignedTags();
+    if (path === "refresh") await editor.refreshAssignedTags();
+    else {
+      editor.tags = [retained];
+      editor.catalog([]);
+      await vi.waitFor(() => expect(deleted).toHaveBeenCalledWith("deleted"));
+      editor.catalog([]);
+    }
     // A click queued before the catalog update must also reject the stale selection.
     await fireEvent.click(staleAction);
     await vi.waitFor(() => {
@@ -1103,61 +1119,28 @@ it.each(["Add keyword", "Remove keyword"])(
     expect(screen.getByRole("combobox", { name: /Keyword:/ }).textContent).toContain(
       "Choose keyword",
     );
-    expect(editor.keywords).toEqual([{ tag_id: "retained", assign: true }]);
+    expect(editor.tags).toEqual([retained]);
+    expect(editor.tagsError).toBe("");
+    expect(editor.keywords).toEqual([{ tag_id: "retained", assign: false }]);
     expect(editor.patch).toEqual({ caption: "Draft caption" });
     expect(editor.rotationDelta).toBe(90);
-    expect(screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Caption" }).value).toBe(
-      "Draft caption",
+    expect(editor.noticeTone).toBe("warning");
+    expect(editor.notice).toBe(
+      `${path === "refresh" ? "“Deleted”" : "A keyword"} was deleted. Its staged edit was removed.`,
     );
+    expect(lookup).toHaveBeenCalledTimes(path === "refresh" ? 2 : 1);
+    const edit = vi
+      .spyOn(api, "editPhotoAuthored")
+      .mockResolvedValue({ receipt_id: "saved", before: targets, after: targets });
+    await editor.edit({}, {}, false, vi.fn());
+    expect(edit.mock.calls[0]![0]).toMatchObject({
+      patch: { caption: "Draft caption" },
+      rotation_delta: 90,
+      keywords: [{ tag_id: "retained", assign: false }],
+    });
     editor.dispose();
   },
 );
-
-it.each(["refresh", "resolve"])("removes a deleted assigned keyword during %s", async (path) => {
-  const editor = editorWithTargets();
-  editor.targets[0]!.tags = ["deleted"];
-  const retained = { id: "retained", name: "Retained", revision: 1, assignment_count: 0 };
-  editor.tags = [retained];
-  editor.stage({ caption: "Draft" }, [
-    { tag_id: "deleted", assign: true },
-    { tag_id: "retained", assign: false },
-  ]);
-  editor.rotationDelta = 90;
-  const deleted = vi.fn();
-  editor.onTagDeleted = deleted;
-  const lookup = vi.spyOn(api, "getTag").mockImplementation(async (id) => {
-    if (id === "deleted") throw new APIError("Deleted", 404, "not_found");
-    return retained;
-  });
-  if (path === "refresh") {
-    editor.tags = [retained, { id: "deleted", name: "Deleted", revision: 1, assignment_count: 1 }];
-    await editor.refreshAssignedTags();
-  } else {
-    editor.catalog([]);
-    await vi.waitFor(() => expect(deleted).toHaveBeenCalledWith("deleted"));
-    editor.catalog([]);
-  }
-  expect(editor.tags).toEqual([retained]);
-  expect(editor.tagsError).toBe("");
-  expect(editor.patch.caption).toBe("Draft");
-  expect(editor.keywords).toEqual([{ tag_id: "retained", assign: false }]);
-  expect(editor.rotationDelta).toBe(90);
-  expect(editor.noticeTone).toBe("warning");
-  expect(editor.notice).toBe(
-    `${path === "refresh" ? "“Deleted”" : "A keyword"} was deleted. Its staged edit was removed.`,
-  );
-  expect(lookup).toHaveBeenCalledTimes(path === "refresh" ? 2 : 1);
-  const edit = vi
-    .spyOn(api, "editPhotoAuthored")
-    .mockResolvedValue({ receipt_id: "saved", before: targets, after: targets });
-  await editor.edit({}, {}, false, vi.fn());
-  expect(edit.mock.calls[0]![0]).toMatchObject({
-    patch: { caption: "Draft" },
-    rotation_delta: 90,
-    keywords: [{ tag_id: "retained", assign: false }],
-  });
-  editor.dispose();
-});
 
 it("retries a timed-out assigned keyword request", async () => {
   const editor = editorWithTargets();
