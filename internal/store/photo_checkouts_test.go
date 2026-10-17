@@ -580,6 +580,22 @@ func TestPhotoCheckoutConflictsAndEntryPaths(t *testing.T) {
 	}
 }
 
+func TestPhotoCheckoutPreservesNodeBasenameWithoutProvenance(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("node basename is incompatible with Windows filenames")
+	}
+	s := newTestStore(t)
+	ctx := t.Context()
+	asset := albumAsset(t, s, `C:\capture.jpg`)
+	checkout, _, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+	require.NoError(t, err)
+	entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, "undated/"+asset.ID+`/C:\capture.jpg`, entries[0].Path)
+}
+
 func TestPhotoCheckoutEntryRequiresFrozenEligibleSource(t *testing.T) {
 	t.Parallel()
 	for _, mutation := range []string{"trashed", "retargeted", "unpublished", "detached own file"} {

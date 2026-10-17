@@ -61,7 +61,9 @@ func photoSourcesTx(ctx context.Context, tx *sql.Tx, assets string, checkout boo
 		if err := rows.Scan(&source.asset, &file, &source.identity, &ingest, &source.path, &observed, &fixed, &source.target, &source.eligible); err != nil {
 			return nil, err
 		}
-		source.path = normalizePhotoSourcePath(source.path)
+		if source.identity != "" {
+			source.path = normalizePhotoSourcePath(source.path)
+		}
 		if _, exists := sources[file]; !exists || source.identity == fixed {
 			sources[file] = source
 		}
