@@ -97,6 +97,32 @@ func rowIDs(rows []PhotoBrowseRow) []string {
 	return ids
 }
 
+func TestPhotoStackAlbumSorts(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ids := burstPhotos(t, s, 3)
+	album, err := s.CreatePhotoSet(t.Context(), "Burst album")
+	require.NoError(t, err)
+	_, err = s.ChangePhotoSetMembers(t.Context(), album.ID, album.Revision, true, PhotoSetSelection{AssetIDs: ids[:2]})
+	require.NoError(t, err)
+	for _, sort := range []string{"capture_time", "added_time"} {
+		t.Run(sort, func(t *testing.T) {
+			query := snapshotTestQuery(t, fmt.Sprintf(`{"filters":{"set_ids":[%q]},"sort":{"field":%q,"direction":"asc"}}`, album.ID, sort))
+			pages, stacks := stackPages(t, s, PhotoBrowseRequest{Stacks: true, PageSize: 1, Query: query})
+			if sort == "capture_time" {
+				require.Equal(t, [][]string{ids[:2]}, pages)
+				require.Equal(t, [][]string{ids[:2]}, stacks)
+			} else {
+				require.Len(t, pages, 2)
+				require.Len(t, pages[0], 1)
+				require.Len(t, pages[1], 1)
+				require.ElementsMatch(t, ids[:2], slices.Concat(pages...))
+				require.Empty(t, stacks)
+			}
+		})
+	}
+}
+
 func TestPhotoStackRelevancePage(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -973,6 +999,26 @@ func TestPhotoSettingsBackupCompatibility(t *testing.T) {
 	settings, err = old.PhotoSettings(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, 2, settings.BurstGapSeconds)
+	for _, version := range []int{1, 2} {
+		for _, sequence := range []struct {
+			name string
+			wire string
+			want *int64
+		}{
+			{name: "null", wire: "null"},
+			{name: "issued", wire: "7", want: new(int64(7))},
+		} {
+			t.Run(fmt.Sprintf("v%d/%s", version, sequence.name), func(t *testing.T) {
+				stream := strings.ReplaceAll(exported.String(), `"version":3`, fmt.Sprintf(`"version":%d`, version))
+				stream = strings.ReplaceAll(stream, `"representative_sequence":null`, `"representative_sequence":`+sequence.wire)
+				restored := newTestStore(t)
+				require.NoError(t, restored.ImportMetadata(t.Context(), strings.NewReader(stream)))
+				var actual *int64
+				require.NoError(t, restored.db.QueryRow(`SELECT representative_sequence FROM photo_library_settings`).Scan(&actual))
+				require.Equal(t, sequence.want, actual)
+			})
+		}
+	}
 }
 
 func TestPhotoStackHiddenScopeAndUndo(t *testing.T) {

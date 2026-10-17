@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -180,6 +181,19 @@ var (
 		record: metadataPhotoSettings{Type: metadataPhotoSettingsType, Singleton: 1}, table: "photo_library_settings",
 		suffix: "WHERE singleton=1", validate: validatePhotoSettingsMetadataRecord, checkExport: true})
 )
+
+// importPhotoSettingsBeforeV3 defaults an absent sequence while preserving
+// explicit null and numeric values through the current typed codec.
+func importPhotoSettingsBeforeV3(ctx context.Context, tx *sql.Tx, raw jsontext.Value) error {
+	required, nullable := photoSettingsMetadata.fields()
+	required = slices.DeleteFunc(slices.Clone(required), func(field string) bool { return field == "representative_sequence" })
+	if err := requireMetadataFields(raw, required, nullable); err != nil {
+		return err
+	}
+	codec := *photoSettingsMetadata
+	codec.record.RepresentativeSequence = new(int64(0))
+	return codec.importRecord(ctx, tx, raw)
+}
 
 // photoMetadataTables exports the photo records in dependency order.
 var photoMetadataTables = []metadataRecordCodec{

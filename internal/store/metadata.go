@@ -1131,19 +1131,11 @@ func (s *Store) importMetadataLines(
 			return metadataHeader{}, fmt.Errorf("decoding metadata record %d type: %w", record, err)
 		}
 		if header.Version <= 2 && kind.Type == metadataPhotoSettingsType {
-			var settings map[string]jsontext.Value
-			if err := json.Unmarshal(raw, &settings); err != nil {
-				return metadataHeader{}, err
-			}
-			if _, present := settings["representative_sequence"]; !present {
-				settings["representative_sequence"] = jsontext.Value("0")
-			}
-			raw, err = json.Marshal(settings)
-			if err != nil {
-				return metadataHeader{}, err
-			}
+			err = importPhotoSettingsBeforeV3(ctx, tx, raw)
+		} else {
+			err = s.importMetadataRecord(ctx, tx, kind.Type, raw)
 		}
-		if err := s.importMetadataRecord(ctx, tx, kind.Type, raw); err != nil {
+		if err != nil {
 			return metadataHeader{}, fmt.Errorf("importing metadata record %d (%s): %w", record, kind.Type, err)
 		}
 	}

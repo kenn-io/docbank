@@ -134,6 +134,7 @@ type photoAuthoredPreparer struct {
 	settings PhotoSettings
 	result   *PhotoAuthoredPreparation
 	limit    int
+	loaded   map[string]photoAuthoredLoaded
 }
 
 func (p photoAuthoredPreparer) prepare(ctx context.Context, ids []string) error {
@@ -160,6 +161,9 @@ func (p photoAuthoredPreparer) prepare(ctx context.Context, ids []string) error 
 		asset := assets[file.AssetID]
 		asset.Files = append(asset.Files, file)
 		assets[file.AssetID] = asset
+		if p.loaded != nil {
+			p.loaded[file.ID] = photoAuthoredLoaded{file: file}
+		}
 		return nil
 	})
 	if err != nil {
@@ -197,17 +201,31 @@ func (p photoAuthoredPreparer) loadAssets(ctx context.Context, in string, args [
 // loadTargets returns the live edit targets of the selected assets, keyed by file ID.
 func (p photoAuthoredPreparer) loadTargets(ctx context.Context, in string, args []any) (map[string]PhotoPreparedTarget, error) {
 	targets := map[string]PhotoPreparedTarget{}
-	err := queryRows(ctx, p.tx, `SELECT f.file_id, n.name, n.revision, n.current_version_id, nt.tag_id FROM photo_files f JOIN nodes n ON n.id=f.node_id LEFT JOIN node_tags nt ON nt.node_id=n.id WHERE n.trashed_at IS NULL AND f.asset_id IN (`+in+`) ORDER BY f.file_id, nt.tag_id`, args, func(rows *sql.Rows) error {
+	columns, from := `n.name,n.revision,COALESCE(n.current_version_id,''),f.file_id,nt.tag_id`, `nodes n`
+	if p.loaded != nil {
+		columns, from = nodeCols+`,f.file_id,nt.tag_id`, nodeFrom
+	}
+	err := queryRows(ctx, p.tx, `SELECT `+columns+` FROM `+from+` JOIN photo_files f ON f.node_id=n.id LEFT JOIN node_tags nt ON nt.node_id=n.id WHERE n.trashed_at IS NULL AND f.asset_id IN (`+in+`) ORDER BY f.file_id, nt.tag_id`, args, func(rows *sql.Rows) error {
 		var id string
-		var fileName string
-		var revision int64
-		var tag, version sql.NullString
-		if err := rows.Scan(&id, &fileName, &revision, &version, &tag); err != nil {
+		var node Node
+		var tag sql.NullString
+		var err error
+		if p.loaded == nil {
+			err = rows.Scan(&node.Name, &node.Revision, &node.CurrentVersionID, &id, &tag)
+		} else {
+			node, err = scanNode(rows, &id, &tag)
+		}
+		if err != nil {
 			return err
+		}
+		if p.loaded != nil {
+			loaded := p.loaded[id]
+			loaded.node = node
+			p.loaded[id] = loaded
 		}
 		target, exists := targets[id]
 		if !exists {
-			target = PhotoPreparedTarget{FileName: fileName, NodeRevision: revision, CurrentContentVersionID: version.String, Tags: []string{}}
+			target = PhotoPreparedTarget{FileName: node.Name, NodeRevision: node.Revision, CurrentContentVersionID: node.CurrentVersionID, Tags: []string{}}
 		}
 		if tag.Valid {
 			target.Tags = append(target.Tags, tag.String)

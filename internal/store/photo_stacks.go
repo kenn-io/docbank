@@ -109,13 +109,21 @@ func eligiblePhotoStack(frames []photoStackFrame) bool {
 	return len(frames) >= 2 && len(frames) <= MaxPhotoStackFrames && files <= MaxPhotoStackTargets
 }
 
+func photoRepresentativeEligible(frame photoStackFrame, allRejected bool) bool {
+	return allRejected || !frame.Rejected || frame.Picked
+}
+
+func photoStackAllRejected(frames []photoStackFrame) bool {
+	return !slices.ContainsFunc(frames, func(frame photoStackFrame) bool { return photoRepresentativeEligible(frame, false) })
+}
+
 // newPhotoStack chooses the latest eligible explicit choice, else the first
 // picked frame, else the first non-rejected frame, else the first frame.
 // Every frame is eligible when all frames are rejected.
 func newPhotoStack(group []photoStackFrame) PhotoStack {
 	stack := PhotoStack{AssetIDs: make([]string, len(group))}
 	var chosen, picked, available *photoStackFrame
-	allRejected := !slices.ContainsFunc(group, func(frame photoStackFrame) bool { return !frame.Rejected || frame.Picked })
+	allRejected := photoStackAllRejected(group)
 	for i := range group {
 		frame := &group[i]
 		stack.AssetIDs[i] = frame.AssetID
@@ -123,7 +131,7 @@ func newPhotoStack(group []photoStackFrame) PhotoStack {
 		if !rejected && available == nil {
 			available = frame
 		}
-		if frame.Rank > 0 && (!rejected || allRejected) {
+		if frame.Rank > 0 && photoRepresentativeEligible(*frame, allRejected) {
 			if chosen == nil || frame.Rank > chosen.Rank {
 				chosen = frame
 			}
@@ -357,7 +365,8 @@ func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision
 		// Prepare every live source file inside the transaction, so a client
 		// cannot omit a sibling or one half of a RAW/JPEG pair.
 		preparation := PhotoAuthoredPreparation{}
-		preparer := photoAuthoredPreparer{tx: tx, hidden: request.Hidden, settings: settings, result: &preparation, limit: MaxPhotoStackTargets}
+		loaded := map[string]photoAuthoredLoaded{}
+		preparer := photoAuthoredPreparer{tx: tx, hidden: request.Hidden, settings: settings, result: &preparation, limit: MaxPhotoStackTargets, loaded: loaded}
 		if err := preparer.prepare(ctx, request.AssetIDs); err != nil {
 			return err
 		}
@@ -385,20 +394,21 @@ func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision
 				}
 			}
 		}
-		flagged, picked, rejected := map[string]bool{}, map[string]bool{}, map[string]bool{}
+		flagged := map[string]bool{}
 		for _, target := range preparation.Targets {
 			if target.Values.Flag != "" {
 				flagged[target.AssetID] = true
 			}
-			if target.Values.Flag == "pick" {
-				picked[target.AssetID] = true
-			}
-			if target.Values.Flag == "reject" {
-				rejected[target.AssetID] = true
-			}
+			frame := found[target.AssetID]
+			frame.Picked = frame.Picked || target.Values.Flag == "pick"
+			frame.Rejected = frame.Rejected || target.Values.Flag == "reject"
+			found[target.AssetID] = frame
 		}
 		if request.Decision == "representative" {
-			if rejected[request.CurrentID] && !picked[request.CurrentID] && slices.ContainsFunc(request.AssetIDs, func(id string) bool { return !rejected[id] || picked[id] }) {
+			for i := range frames {
+				frames[i] = found[frames[i].AssetID]
+			}
+			if !photoRepresentativeEligible(found[request.CurrentID], photoStackAllRejected(frames)) {
 				return fmt.Errorf("%w: a rejected frame cannot represent a stack with non-rejected frames", ErrInvalidPhotoAsset)
 			}
 			result, err = s.choosePhotoRepresentativeTx(ctx, tx, found[request.CurrentID])
@@ -422,17 +432,6 @@ func (s *Store) DecidePhotoStack(ctx context.Context, request PhotoStackDecision
 				flag = "reject"
 			}
 			targets = append(targets, PhotoAuthoredTarget{FileID: target.FileID, Revision: target.Revision, Patch: PhotoAuthoredPatch{Flag: new(flag)}})
-		}
-		rows, err := loadPhotoAuthoredBatchRowsTx(ctx, tx, request.Targets)
-		if err != nil {
-			return err
-		}
-		// Membership, hidden access, and every revision were checked above.
-		loaded := make(map[string]photoAuthoredLoaded, len(rows.files))
-		for id, file := range rows.files {
-			if node, ok := rows.nodes[file.NodeID]; ok {
-				loaded[id] = photoAuthoredLoaded{file, node}
-			}
 		}
 		result, err = s.applyPhotoAuthoredValuesTx(ctx, tx, targets, photoAuthoredApply{persist: true, loaded: loaded})
 		return err
