@@ -425,7 +425,7 @@ it.each([0, 64 * 1024 * 1024 + 1])(
   },
 );
 
-it("forwards inspection gestures across UTC days and ignores unrelated keys", async () => {
+it("forwards inspection gestures and ignores unrelated keys and find controls", async () => {
   const bytes = new TextEncoder().encode("Synthetic inspected text");
   const selected = source(bytes, "55555555-5555-4555-8555-555555555555");
   const events: unknown[] = [];
@@ -434,6 +434,22 @@ it("forwards inspection gestures across UTC days and ignores unrelated keys", as
       events.push(JSON.parse(String(init?.body)));
       return new Response(null, { status: 202 });
     }
+    if (String(input) === "/api/v1/renditions/text")
+      return Response.json({
+        state: "unconfigured",
+        source: {
+          node_id: selected.nodeID,
+          revision: 3,
+          version_id: selected.versionID,
+          blob_hash: selected.blobHash,
+          size: selected.size,
+          media_type: selected.mimeType,
+        },
+        profile: { name: "", configuration: "unconfigured", fingerprint: "" },
+        generation_id: "",
+        attachment_id: "",
+        build_id: "",
+      });
     if (init?.method === "POST") return ready(selected, "synthetic");
     if (String(input).endsWith("ticket=synthetic")) return body(selected, bytes);
     throw new Error(`Unexpected request ${String(input)}`);
@@ -442,51 +458,27 @@ it("forwards inspection gestures across UTC days and ignores unrelated keys", as
     session: "visit-session",
     source: selected,
     authorizationRevision: 3,
+    activeTab: "text",
     onauthfailure: vi.fn(),
   });
   await screen.findByText("Synthetic inspected text");
   expect(events).toEqual([]);
-  vi.setSystemTime(new Date("2026-10-17T23:59:00Z"));
   await fireEvent.keyDown(screen.getByText("Synthetic inspected text"), { key: "Tab" });
   await fireEvent.keyDown(screen.getByText("Synthetic inspected text"), { key: "a" });
   expect(events).toEqual([]);
-  await fireEvent.wheel(screen.getByText("Synthetic inspected text"), { deltaY: 120 });
-  const opened = { event: "document_opened", properties: { surface: "web" } };
-  await waitFor(() => expect(events).toEqual([opened]));
-  await fireEvent.wheel(screen.getByText("Synthetic inspected text"), { deltaY: 120 });
-  await waitFor(() => expect(events).toEqual([opened, opened]));
-  vi.setSystemTime(new Date("2026-10-18T00:01:00Z"));
-  await fireEvent.keyDown(screen.getByText("Synthetic inspected text"), { key: "ArrowDown" });
-  await waitFor(() => expect(events).toEqual([opened, opened, opened]));
-  await fireEvent.pointerDown(screen.getByText("Synthetic inspected text"));
-  await waitFor(() => expect(events).toEqual([opened, opened, opened, opened]));
-});
-
-it.each(["j", "k"])("reports %s inspection", async (gesture) => {
-  const bytes = new TextEncoder().encode("Synthetic inspected text");
-  const selected = source(bytes, "55555555-5555-4555-8555-555555555555");
-  const events: unknown[] = [];
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    if (String(input) === "/api/daemon/telemetry/events") {
-      events.push(JSON.parse(String(init?.body)));
-      return new Response(null, { status: 202 });
-    }
-    if (init?.method === "POST") return ready(selected, "synthetic");
-    if (String(input).endsWith("ticket=synthetic")) return body(selected, bytes);
-    throw new Error(`Unexpected request ${String(input)}`);
+  await fireEvent.keyDown(screen.getByRole("textbox", { name: "Find in verified text" }), {
+    key: "Enter",
   });
-  render(VerifiedPreview, {
-    session: `${gesture}-session`,
-    source: selected,
-    authorizationRevision: 3,
-    onauthfailure: vi.fn(),
-  });
-  const text = await screen.findByText("Synthetic inspected text");
   expect(events).toEqual([]);
-  await fireEvent.keyDown(text, { key: gesture });
-  await waitFor(() =>
-    expect(events).toEqual([{ event: "document_opened", properties: { surface: "web" } }]),
-  );
+  const opened = { event: "document_opened", properties: { surface: "web" } };
+  await fireEvent.wheel(screen.getByText("Synthetic inspected text"), { deltaY: 120 });
+  await waitFor(() => expect(events).toEqual([opened]));
+  for (const [index, key] of ["ArrowDown", "j", "k"].entries()) {
+    await fireEvent.keyDown(screen.getByText("Synthetic inspected text"), { key });
+    await waitFor(() => expect(events).toHaveLength(index + 2));
+  }
+  await fireEvent.pointerDown(screen.getByText("Synthetic inspected text"));
+  await waitFor(() => expect(events).toEqual([opened, opened, opened, opened, opened]));
 });
 
 it.each(["Text", "Email", "Render page 1"])(
@@ -703,47 +695,4 @@ it("reports sandboxed email inspection gestures and filters modified keys", asyn
   expect(events).toEqual([]);
   await fireEvent.pointerDown(frameDocument.body);
   expect(events).toEqual([opened]);
-});
-
-it("ignores keyboard input in the find toolbar", async () => {
-  const bytes = new TextEncoder().encode("Synthetic inspected text");
-  const selected = source(bytes, "55555555-5555-4555-8555-555555555555");
-  const events: unknown[] = [];
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    if (String(input) === "/api/daemon/telemetry/events") {
-      events.push(JSON.parse(String(init?.body)));
-      return new Response(null, { status: 202 });
-    }
-    if (String(input) === "/api/v1/renditions/text")
-      return Response.json({
-        state: "unconfigured",
-        source: {
-          node_id: selected.nodeID,
-          revision: 3,
-          version_id: selected.versionID,
-          blob_hash: selected.blobHash,
-          size: selected.size,
-          media_type: selected.mimeType,
-        },
-        profile: { name: "", configuration: "unconfigured", fingerprint: "" },
-        generation_id: "",
-        attachment_id: "",
-        build_id: "",
-      });
-    if (init?.method === "POST") return ready(selected, "synthetic");
-    if (String(input).endsWith("ticket=synthetic")) return body(selected, bytes);
-    throw new Error(`Unexpected request ${String(input)}`);
-  });
-  render(VerifiedPreview, {
-    session: "toolbar-session",
-    source: selected,
-    authorizationRevision: 3,
-    activeTab: "text",
-    onauthfailure: vi.fn(),
-  });
-  await screen.findByText("Synthetic inspected text");
-  await fireEvent.keyDown(screen.getByRole("textbox", { name: "Find in verified text" }), {
-    key: "Enter",
-  });
-  expect(events).toEqual([]);
 });

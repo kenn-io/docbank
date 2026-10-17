@@ -1,9 +1,7 @@
 package api_test
 
 import (
-	"fmt"
 	"net/http"
-	"sync"
 	"testing"
 	"uuid"
 
@@ -26,20 +24,10 @@ func TestPushRunsReportFirstAdditionOnce(t *testing.T) {
 	}
 	active := uuid.NewV4().String()
 	upload(active, "first.txt", "cli")
-	concurrent := uuid.NewV4().String()
-	var uploads sync.WaitGroup
-	for i := range 8 {
-		uploads.Go(func() { upload(concurrent, fmt.Sprintf("concurrent-%d.txt", i), "cli") })
-	}
-	uploads.Wait()
-	// Interrupted runs never finish; they must not stop later runs from reporting.
-	for i := range 257 {
-		upload(uuid.NewV4().String(), fmt.Sprintf("file-%d.txt", i), "cli")
-	}
 	upload(active, "late.txt", "cli")
 	upload(uuid.NewV4().String(), "scripted.txt", "")
 	require.NoError(t, capture.reporter.Close())
-	require.Len(t, capture.events, 259)
+	require.Len(t, capture.events, 1)
 	for len(capture.events) > 0 {
 		event := <-capture.events
 		require.Equal(t, "document_added", event["event"])

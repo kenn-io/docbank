@@ -4600,10 +4600,9 @@
         >
           <div class="telemetry-note">
             <p>
-              Docbank reports when the daemon runs, an interface opens, and you open a screen, add
-              documents, run a search, or inspect a document. Imports count once after an addition.
-              Searches and inspections count daily per interface; searches include text, semantic,
-              or hybrid type. Session lengths use rough buckets. Reporting is on by default.
+              Docbank reports when the daemon runs, the web app opens, and you open a screen so the
+              team can count vaults in use. It also reports how long a browser or terminal session
+              lasted, as a rough bucket. Reporting is on by default.
             </p>
             <p>
               Reports go to PostHog with a random ID for this vault, the app version, operating

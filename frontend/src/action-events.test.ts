@@ -24,5 +24,8 @@ it("forwards each inspection intent across viewers, including after a failed rep
   ]);
   reportAction("live-session", "search_run", "hybrid");
   reportAction("live-session", "search_run", "hybrid");
-  expect(fetcher).toHaveBeenCalledTimes(6);
+  expect(fetcher.mock.calls.slice(4).map(([, init]) => JSON.parse(init?.body as string))).toEqual([
+    { event: "search_run", properties: { surface: "web", search_type: "hybrid" } },
+    { event: "search_run", properties: { surface: "web", search_type: "hybrid" } },
+  ]);
 });

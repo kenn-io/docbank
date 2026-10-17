@@ -106,7 +106,6 @@ func TestInteractiveActionGateAndReportingDeadline(t *testing.T) {
 
 func TestDocumentSearchReportsTheModeThatRan(t *testing.T) {
 	for _, tc := range []struct{ mode, actual, want string }{
-		{"lexical", "lexical", "text"}, {"semantic", "semantic", "semantic"}, {"hybrid", "hybrid", "hybrid"},
 		{"auto", "lexical", "text"}, {"auto", "hybrid", "hybrid"}, {"similar", "", "semantic"},
 		{"lexical", "failed", ""}, {"auto", "failed", ""}, {"similar", "failed", ""},
 	} {

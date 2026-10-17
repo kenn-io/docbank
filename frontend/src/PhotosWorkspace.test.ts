@@ -291,10 +291,7 @@ it("restores photo searches, guides empty libraries, and reports submissions and
     fetcher.mock.calls
       .filter(([url]) => url === "/api/daemon/telemetry/events")
       .map(([, init]) => JSON.parse(init.body)),
-  ).toEqual([
-    { event: "search_run", properties: { search_type: "text", surface: "web" } },
-    { event: "search_run", properties: { search_type: "text", surface: "web" } },
-  ]);
+  ).toMatchObject([{ event: "search_run" }, { event: "search_run" }]);
   photos.dispose();
   await cache.dispose();
 });

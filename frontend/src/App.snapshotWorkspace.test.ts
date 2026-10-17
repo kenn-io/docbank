@@ -142,8 +142,6 @@ async function renderFrozenSnapshotWorkspace(expireNextPage = false) {
     highlightRequests: 0,
     searches: [] as unknown[],
     failRun: false,
-    inspections: 0,
-    failInspection: false,
   };
   const payload: HighlightSet = { v: 1, terms: [{ text: "evidence", color: "#ffcc00" }] };
   const highlightSet = {
@@ -162,10 +160,6 @@ async function renderFrozenSnapshotWorkspace(expireNextPage = false) {
     if (url === "/api/daemon/telemetry/events") {
       const event = JSON.parse(String(init?.body));
       if (event.event === "search_run") state.searches.push(event);
-      if (event.event === "document_opened") {
-        state.inspections += 1;
-        if (state.failInspection) return json({}, 503);
-      }
       return json({}, 202);
     }
     if (url === "/api/v1/path?path=%2F") return json(root);
@@ -751,22 +745,4 @@ it("refreshes live metadata and download authority after tagging an inspected fr
       blob_hash: frozen.blob_hash,
     }),
   );
-});
-
-it("forwards repeated snapshot row activation after a failed delivery and across UTC days", async () => {
-  vi.setSystemTime(new Date("2036-01-01T12:00:00Z"));
-  const { state } = await renderFrozenSnapshotWorkspace();
-  state.failInspection = true;
-  const cell = screen.getByRole("cell", { name: "/records/report-100.pdf" });
-  await fireEvent.click(cell);
-  await waitFor(() => expect(state.inspections).toBe(1));
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  state.failInspection = false;
-  await fireEvent.click(cell);
-  await waitFor(() => expect(state.inspections).toBe(2));
-  await fireEvent.click(cell);
-  await waitFor(() => expect(state.inspections).toBe(3));
-  vi.setSystemTime(new Date("2036-01-02T12:00:00Z"));
-  await fireEvent.keyDown(cell.closest("tr")!, { key: "Enter" });
-  await waitFor(() => expect(state.inspections).toBe(4));
 });

@@ -61,7 +61,7 @@ function setup() {
   };
   return { props, preview, get };
 }
-it("shows preview quality, preserves zoom and reports deliberate inspection", async () => {
+it("shows preview quality and preserves zoom", async () => {
   const inspect = vi.fn();
   vi.spyOn(actionEvents, "inspectionReporter").mockImplementation((event, session) => {
     expect(event).toBe("document_opened");

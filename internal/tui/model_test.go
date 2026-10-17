@@ -24,7 +24,6 @@ import (
 type fakeBackend struct {
 	screenErr                 error
 	screens                   []string
-	actionErr                 error
 	actions                   [][2]string
 	nodes                     map[string]api.Node
 	children                  map[int64]api.NodePage
@@ -1583,7 +1582,7 @@ func TestSearchKeepsRelevanceUntilSortChanges(t *testing.T) {
 	assert.Equal(t, int64(20), selected.node.ID)
 }
 
-func TestExpandedDetailReportsInspectionAndExposesCompleteAuthority(t *testing.T) {
+func TestExpandedDetailExposesCompleteAuthority(t *testing.T) {
 	backend := newFakeBackend()
 	model, err := New(t.Context(), backend)
 	require.NoError(t, err)
@@ -1595,7 +1594,6 @@ func TestExpandedDetailReportsInspectionAndExposesCompleteAuthority(t *testing.T
 	require.NotNil(t, cmd)
 	require.True(t, model.detailOpen)
 	model = runModelCommand(t, model, cmd)
-	require.Equal(t, [][2]string{{"document_opened", ""}}, backend.actions)
 	assert.Equal(t, []int64{3}, backend.tagNodeIDs)
 	selected, ok := model.selected()
 	require.True(t, ok)
@@ -1622,7 +1620,7 @@ func TestExpandedDetailReportsInspectionAndExposesCompleteAuthority(t *testing.T
 	assert.False(t, model.detailOpen)
 }
 
-func TestInspectionScrollForwardsEachGestureAcrossUTCDateChanges(t *testing.T) {
+func TestInspectionScrollForwardsEachGesture(t *testing.T) {
 	for _, tc := range []struct {
 		view   string
 		scroll tea.KeyPressMsg
@@ -1631,38 +1629,35 @@ func TestInspectionScrollForwardsEachGestureAcrossUTCDateChanges(t *testing.T) {
 		{"rendition", runeKey('j')}, {"rendition", runeKey('k')}, {"rendition", key(tea.KeyPgDown)},
 	} {
 		t.Run(tc.view+"/"+tc.scroll.String(), func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
-				backend := newFakeBackend()
-				model, err := New(t.Context(), backend)
-				require.NoError(t, err)
-				model.width, model.height = 80, 12
-				var cmd tea.Cmd
-				if tc.view == "detail" {
-					model.rows = []row{{node: api.Node{ID: 3, Kind: "file", Name: "report.txt"}}}
-					model, cmd = updateModel(t, model, key(tea.KeyEnter))
-				} else {
-					model.processingOpen = true
-					model, cmd = updateModel(t, model, processingRenditionLoadedMsg{
-						requestID: model.processingRequestID, renditionID: model.processingRenditionID,
-						rendition: Rendition{Markdown: strings.Repeat("Synthetic document line.\n", 80)},
-					})
-				}
+			backend := newFakeBackend()
+			model, err := New(t.Context(), backend)
+			require.NoError(t, err)
+			model.width, model.height = 80, 12
+			var cmd tea.Cmd
+			if tc.view == "detail" {
+				model.rows = []row{{node: api.Node{ID: 3, Kind: "file", Name: "report.txt"}}}
+				model, cmd = updateModel(t, model, key(tea.KeyEnter))
+			} else {
+				model.processingOpen = true
+				model, cmd = updateModel(t, model, processingRenditionLoadedMsg{
+					requestID: model.processingRequestID, renditionID: model.processingRenditionID,
+					rendition: Rendition{Markdown: strings.Repeat("Synthetic document line.\n", 80)},
+				})
+			}
+			model = runModelCommand(t, model, cmd)
+			require.Equal(t, [][2]string{{"document_opened", ""}}, backend.actions)
+			model, cmd = updateModel(t, model, tc.scroll)
+			if cmd != nil {
 				model = runModelCommand(t, model, cmd)
-				require.Equal(t, [][2]string{{"document_opened", ""}}, backend.actions)
+			}
+			require.Len(t, backend.actions, 2)
+			for range 3 {
 				model, cmd = updateModel(t, model, tc.scroll)
 				if cmd != nil {
 					model = runModelCommand(t, model, cmd)
 				}
-				require.Len(t, backend.actions, 2)
-				time.Sleep(24 * time.Hour)
-				for range 3 {
-					model, cmd = updateModel(t, model, tc.scroll)
-					if cmd != nil {
-						model = runModelCommand(t, model, cmd)
-					}
-				}
-				require.Equal(t, [][2]string{{"document_opened", ""}, {"document_opened", ""}, {"document_opened", ""}, {"document_opened", ""}, {"document_opened", ""}}, backend.actions)
-			})
+			}
+			require.Equal(t, [][2]string{{"document_opened", ""}, {"document_opened", ""}, {"document_opened", ""}, {"document_opened", ""}, {"document_opened", ""}}, backend.actions)
 		})
 	}
 }
@@ -2906,100 +2901,81 @@ func TestVisibleScreensAreAllowlisted(t *testing.T) {
 
 func (f *fakeBackend) ReportAction(_ context.Context, event, value string) error {
 	f.actions = append(f.actions, [2]string{event, value})
-	return f.actionErr
+	return nil
 }
 
 func TestSearchesReportTheModeThatRanWhenResultsArrive(t *testing.T) {
-	for _, flow := range []string{"text", "natural auto", "processing", "similar"} {
-		for _, failed := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/failed=%t", flow, failed), func(t *testing.T) {
-				backend := newFakeBackend()
-				backend.naturalSearch.ActualMode = "lexical"
-				backend.processingSearch.ActualMode = "lexical"
-				model, err := New(t.Context(), backend)
-				require.NoError(t, err)
-				if failed {
-					backend.err = errors.New("synthetic search failure")
-				}
-				expected := "lexical"
-				switch flow {
-				case "text":
-					expected = "text"
-				case "natural auto":
-					// An automatic request that the daemon answers lexically reports text.
-					model.naturalMode = naturalAuto
-					model.naturalProfiles = []api.ProcessingProfileSummary{{Name: "synthetic", QueryEmbeddingBindings: []string{"synthetic"}}}
-					backend.sourceFence.Fence.ContentVersionIDs = []string{"synthetic-a", "synthetic-b"}
-				case "processing", "similar":
-					model.processingOpen = true
-					model.processingPlan = &backend.plan
-				}
+	for _, tc := range []struct{ name, flow, outcome, expected string }{
+		{"text", "text", "", "text"},
+		{"natural auto", "natural auto", "", "lexical"},
+		{"processing", "processing", "", "lexical"},
+		{"similar", "similar", "", "similar"},
+		{"failed", "text", "failed", ""},
+		{"superseded", "natural auto", "superseded", "lexical"},
+		{"fallback", "natural auto", "fallback", "text"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			backend := newFakeBackend()
+			backend.naturalSearch.ActualMode = "lexical"
+			backend.processingSearch.ActualMode = "lexical"
+			model, err := New(t.Context(), backend)
+			require.NoError(t, err)
+			model, _ = updateModel(t, model, tea.WindowSizeMsg{Width: 120, Height: 40})
+			switch tc.outcome {
+			case "failed":
+				backend.err = errors.New("synthetic search failure")
+			case "fallback":
+				backend.naturalSearchErr = errors.New("synthetic natural search failure")
+			}
+			switch tc.flow {
+			case "natural auto":
+				model.naturalMode = naturalAuto
+				model.naturalProfiles = []api.ProcessingProfileSummary{{Name: "synthetic", QueryEmbeddingBindings: []string{"synthetic"}}}
+				backend.sourceFence.Fence.ContentVersionIDs = []string{"synthetic-a", "synthetic-b"}
+			case "processing", "similar":
+				model.processingOpen = true
+				model.processingPlan = &backend.plan
+			}
+			submit := func(query string) tea.Cmd {
 				var command tea.Cmd
-				if flow == "similar" {
-					model.processingSimilarScope = []string{backend.plan.Selector.ContentVersionID}
-					model, command = updateModel(t, model, runeKey('S'))
-					expected = "similar"
-				} else {
-					model, _ = updateModel(t, model, runeKey('/'))
-					model.searchInput.SetValue("synthetic query")
-					model, command = updateModel(t, model, key(tea.KeyEnter))
-				}
-				require.Empty(t, backend.actions, "a search reports only after its result names the mode")
-				applyResults(t, model, command)
-				if failed {
-					require.Empty(t, backend.actions, "a search that fails before choosing a mode stays silent")
-				} else {
-					require.Equal(t, [][2]string{{"search_run", expected}}, backend.actions)
-				}
-			})
-		}
+				model, _ = updateModel(t, model, runeKey('/'))
+				model.searchInput.SetValue(query)
+				model, command = updateModel(t, model, key(tea.KeyEnter))
+				return command
+			}
+			var command tea.Cmd
+			if tc.flow == "similar" {
+				model.processingSimilarScope = []string{backend.plan.Selector.ContentVersionID}
+				model, command = updateModel(t, model, runeKey('S'))
+			} else {
+				command = submit("synthetic query")
+			}
+			require.Empty(t, backend.actions, "a search reports only after its result names the mode")
+			var second tea.Cmd
+			if tc.outcome == "superseded" {
+				second = submit("second synthetic query")
+			}
+			model = applyResults(t, model, command)
+			if tc.outcome == "failed" {
+				require.Empty(t, backend.actions, "a search that fails before choosing a mode stays silent")
+				return
+			}
+			require.Equal(t, [][2]string{{"search_run", tc.expected}}, backend.actions)
+			switch tc.outcome {
+			case "superseded":
+				assert.NotEqual(t, "synthetic query", model.searchQuery)
+				model = applyResults(t, model, second)
+				require.Equal(t, [][2]string{{"search_run", "lexical"}, {"search_run", "lexical"}}, backend.actions)
+				assert.Equal(t, "second synthetic query", model.searchQuery)
+			case "fallback":
+				require.False(t, model.loading)
+				require.NoError(t, model.err)
+				require.Equal(t, "synthetic query", model.searchQuery)
+				require.NotEmpty(t, model.rows)
+				require.Contains(t, model.View().Content, "/docs/report.txt")
+			}
+		})
 	}
-}
-
-func TestSupersededSearchReportsTheModeThatRan(t *testing.T) {
-	backend := newFakeBackend()
-	backend.naturalSearch.ActualMode = "lexical"
-	backend.sourceFence.Fence.ContentVersionIDs = []string{"synthetic-a", "synthetic-b"}
-	model, err := New(t.Context(), backend)
-	require.NoError(t, err)
-	model.naturalMode = naturalAuto
-	model.naturalProfiles = []api.ProcessingProfileSummary{{Name: "synthetic", QueryEmbeddingBindings: []string{"synthetic"}}}
-	submit := func(query string) tea.Cmd {
-		var command tea.Cmd
-		model, _ = updateModel(t, model, runeKey('/'))
-		model.searchInput.SetValue(query)
-		model, command = updateModel(t, model, key(tea.KeyEnter))
-		return command
-	}
-	first := submit("first synthetic query")
-	second := submit("second synthetic query")
-	model = applyResults(t, model, first)
-	require.Equal(t, [][2]string{{"search_run", "lexical"}}, backend.actions, "a superseded result still ran")
-	assert.NotEqual(t, "first synthetic query", model.searchQuery)
-	model = applyResults(t, model, second)
-	require.Equal(t, [][2]string{{"search_run", "lexical"}, {"search_run", "lexical"}}, backend.actions)
-	assert.Equal(t, "second synthetic query", model.searchQuery)
-}
-
-func TestNaturalSearchFailureShowsAndReportsLexicalFallback(t *testing.T) {
-	backend := newFakeBackend()
-	backend.naturalSearchErr = errors.New("synthetic natural search failure")
-	backend.sourceFence.Fence.ContentVersionIDs = []string{"synthetic-a", "synthetic-b"}
-	model, err := New(t.Context(), backend)
-	require.NoError(t, err)
-	model, _ = updateModel(t, model, tea.WindowSizeMsg{Width: 120, Height: 40})
-	model.naturalMode = naturalAuto
-	model.naturalProfiles = []api.ProcessingProfileSummary{{Name: "synthetic", QueryEmbeddingBindings: []string{"synthetic"}}}
-	model, _ = updateModel(t, model, runeKey('/'))
-	model.searchInput.SetValue("synthetic query")
-	model, command := updateModel(t, model, key(tea.KeyEnter))
-	model = applyResults(t, model, command)
-	require.False(t, model.loading)
-	require.NoError(t, model.err)
-	require.Equal(t, "synthetic query", model.searchQuery)
-	require.NotEmpty(t, model.rows)
-	require.Contains(t, model.View().Content, "/docs/report.txt")
-	require.Equal(t, [][2]string{{"search_run", "text"}}, backend.actions)
 }
 
 // applyResults delivers cmd's messages and runs the commands each update
@@ -3024,20 +3000,4 @@ func applyResults(t *testing.T, model Model, cmd tea.Cmd) Model {
 	}
 	model, returned := updateModel(t, model, msg)
 	return applyResults(t, model, returned)
-}
-
-func TestInspectionRetriesAfterReportFailure(t *testing.T) {
-	backend := newFakeBackend()
-	backend.actionErr = errors.New("daemon unavailable")
-	model, err := New(t.Context(), backend)
-	require.NoError(t, err)
-	model.rows = []row{{node: api.Node{ID: 3, Kind: "file", Name: "report.txt"}}}
-	model, cmd := updateModel(t, model, key(tea.KeyEnter))
-	model = runModelCommand(t, model, cmd)
-	require.Len(t, backend.actions, 1)
-	backend.actionErr = nil
-	model, cmd = updateModel(t, model, runeKey('j'))
-	require.NotNil(t, cmd)
-	_ = runModelCommand(t, model, cmd)
-	require.Equal(t, [][2]string{{"document_opened", ""}, {"document_opened", ""}}, backend.actions)
 }

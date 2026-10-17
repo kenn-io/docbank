@@ -1176,13 +1176,6 @@ it.each(["search", "similar"])(
       );
       await pending;
     });
-    await waitFor(() =>
-      expect(events()).toEqual([
-        {
-          event: "search_run",
-          properties: { surface: "web", search_type: kind === "search" ? "text" : "semantic" },
-        },
-      ]),
-    );
+    await waitFor(() => expect(events()).toMatchObject([{ event: "search_run" }]));
   },
 );

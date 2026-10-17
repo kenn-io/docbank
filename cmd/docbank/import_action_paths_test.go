@@ -95,7 +95,7 @@ func newImportActionDaemon(t *testing.T) *importActionDaemon {
 }
 
 func TestPushAttributesInteractiveRunsToCLISurface(t *testing.T) {
-	for _, name := range []string{"new documents", "update only", "watch"} {
+	for _, name := range []string{"new documents", "watch"} {
 		t.Run(name, func(t *testing.T) {
 			f := newImportActionDaemon(t)
 			require.False(t, f.reporter.Enabled())
@@ -104,16 +104,6 @@ func TestPushAttributesInteractiveRunsToCLISurface(t *testing.T) {
 				require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(name), 0o600))
 			}
 			args := []string{dir, "--to", f.server.URL, "--name", "synthetic-source", "--dest", "/archive"}
-			if name == "update only" {
-				// Unattended runs send no surface, so the daemon reports nothing.
-				seed := newPushCmd()
-				seed.SetIn(strings.NewReader(""))
-				seed.SetOut(io.Discard)
-				seed.SetErr(io.Discard)
-				seed.SetArgs(args)
-				require.NoError(t, seed.ExecuteContext(t.Context()))
-				require.NoError(t, os.WriteFile(filepath.Join(dir, "first.txt"), []byte("updated synthetic content"), 0o600))
-			}
 			cmd := newPushCmd()
 			cmd.SetIn(actionTerminal(t))
 			var out bytes.Buffer

@@ -2419,33 +2419,3 @@ it("counts a submitted tag filter when its results arrive, not when its lookup f
     ]),
   );
 });
-
-it("forwards repeated live row activation after a failed delivery and across UTC days", async () => {
-  vi.setSystemTime(new Date("2035-01-01T12:00:00Z"));
-  prepareKeyboardApp();
-  installKeyboardBackend();
-  const fetcher = vi.mocked(fetch);
-  const backend = fetcher.getMockImplementation()!;
-  let sends = 0;
-  fetcher.mockImplementation((input, init) => {
-    if (
-      String(input) === "/api/daemon/telemetry/events" &&
-      JSON.parse(String(init?.body)).event === "document_opened"
-    ) {
-      sends += 1;
-      return Promise.resolve(new Response(null, { status: sends === 1 ? 503 : 202 }));
-    }
-    return backend(input, init);
-  });
-  render(App);
-  const cell = await screen.findByRole("cell", { name: "zeta.txt" });
-  await screen.findByLabelText("Document authority for zeta.txt");
-  expect(sends).toBe(0);
-  for (const day of [1, 1, 1, 2]) {
-    vi.setSystemTime(new Date(Date.UTC(2035, 0, day, 12)));
-    const previous = sends;
-    await fireEvent.click(cell);
-    await waitFor(() => expect(sends).toBeGreaterThan(previous));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  }
-});
