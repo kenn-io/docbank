@@ -286,6 +286,14 @@ function installHarness(options: HarnessOptions) {
   };
 }
 
+function searchTypes(harness: Pick<ReturnType<typeof installHarness>, "fetchMock">): string[] {
+  return harness.fetchMock.mock.calls
+    .filter(([input]) => String(input) === "/api/daemon/telemetry/events")
+    .map(([, init]) => JSON.parse(String(init?.body)))
+    .filter((body) => body.event === "search_run")
+    .map((body) => body.properties.search_type);
+}
+
 async function submitSearch(value: string): Promise<void> {
   const input = await screen.findByRole("searchbox", { name: "Search documents" });
   await fireEvent.input(input, { target: { value } });
@@ -827,6 +835,7 @@ it("reports a Names and text GET failure without retrying it as a fallback", asy
   expect(
     fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?")).length,
   ).toBe(1);
+  expect(searchTypes({ fetchMock })).toEqual([]);
 });
 
 it("sends the selected tag filter in the resolver body", async () => {
@@ -912,6 +921,8 @@ it("keeps a non-401 processing failure on the legacy GET path", async () => {
     harness.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?"))
       .length,
   ).toBe(1);
+  expect(harness.postBodies[0]?.mode).toBe("hybrid");
+  expect(searchTypes(harness)).toEqual(["text"]);
 });
 
 it("does not fall back to GET after a processing 401", async () => {
@@ -938,6 +949,7 @@ it("does not fall back to GET after a processing 401", async () => {
     harness.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?"))
       .length,
   ).toBe(0);
+  expect(searchTypes(harness)).toEqual([]);
 });
 
 it.each(["submit", "rerank"])(
@@ -973,8 +985,49 @@ it.each(["submit", "rerank"])(
       harness.fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/v1/search?"))
         .length,
     ).toBe(0);
+    await waitFor(() =>
+      expect(searchTypes(harness)).toEqual(
+        replacement === "rerank" ? ["hybrid"] : ["hybrid", "hybrid"],
+      ),
+    );
   },
 );
+
+it("reports automatic searches that ran lexically as text even when stale", async () => {
+  const file = node(2, "lexical.txt", baseVersion);
+  const lexical = (excerpt: string) => ({
+    ...report("lexical", [result(file, 1, excerpt)]),
+    requested_mode: "auto",
+  });
+  const harness = installHarness({
+    profiles: [
+      {
+        name: "private",
+        fingerprint: "a".repeat(64),
+        rendition: true,
+        embedding_bindings: [],
+        reranking_available: false,
+      },
+    ],
+    files: [file],
+    baseReport: lexical("current excerpt"),
+    basePending: true,
+  });
+  render(App);
+  await screen.findAllByText("lexical.txt");
+  await screen.findByRole("button", { name: "Process and retrieve" });
+  await fireEvent.click(screen.getByRole("combobox", { name: "Search mode: Names and text" }));
+  await fireEvent.click(screen.getByRole("option", { name: "Auto" }));
+  await submitSearch("old query");
+  await waitFor(() => expect(harness.postBodies).toHaveLength(1));
+  await submitSearch("new query");
+  await screen.findByText("current excerpt");
+  await waitFor(() => expect(searchTypes(harness)).toEqual(["text"]));
+  harness.resolveBase(json(lexical("stale excerpt")));
+  await waitFor(() => expect(searchTypes(harness)).toEqual(["text", "text"]));
+  expect(screen.queryByText("stale excerpt")).toBeNull();
+  expect(harness.postBodies.map((body) => body.mode)).toEqual(["auto", "auto"]);
+});
 
 it("shows why natural search controls could not load", async () => {
   installHarness({

@@ -1625,22 +1625,15 @@
     invalidateTagHotkeyMutation();
     leaveSnapshotMode();
     const query = (queryOverride ?? searchQuery).trim();
-    const intent = searchIntent;
+    let intent = searchIntent;
     searchIntent = false;
-    if (intent && (query || tagFilterID)) {
-      const mode = naturalProfile
-        ? naturalSearchRequest(naturalSearchMode, naturalProfile)?.mode
-        : undefined;
-      reportAction(webSession, "search_run", query ? (mode ?? "text") : "text");
-    }
     if (!query) {
       submittedSearchQuery = "";
       naturalSearchController?.abort();
       naturalSearchNote = "";
       naturalRerankPending = false;
-      if (tagFilterID) {
-        await loadTaggedNodes(tagFilterID);
-      } else if (directory) await loadDirectory(directory.id, false);
+      if (tagFilterID) await loadTaggedNodes(tagFilterID, undefined, intent);
+      else if (directory) await loadDirectory(directory.id, false);
       return;
     }
     const request = ++generation;
@@ -1669,6 +1662,7 @@
           refreshing,
           session,
           controller.signal,
+          intent,
         );
         return;
       }
@@ -1697,6 +1691,8 @@
         explain: true,
       };
       const baseReport = await documentSearch(session, baseRequest, controller.signal);
+      if (intent) reportAction(session, "search_run", baseReport.actual_mode);
+      intent = false;
       if (request !== generation || session !== webSession || controller.signal.aborted) return;
       const nodes = new Map<number, Node | undefined>();
       const baseRows = await hydrateProcessingRows(
@@ -1807,6 +1803,7 @@
             refreshing,
             session,
             controller.signal,
+            intent,
             note,
           );
         } catch (fallbackCause) {
@@ -1849,12 +1846,14 @@
     refreshing: boolean,
     session: string,
     signal: AbortSignal,
+    intent: boolean,
     note = "",
   ): Promise<boolean> {
     const report = await generated.search(
       { q: query, limit: 1000, ...(requestedTagID ? { tag_id: requestedTagID } : {}) },
       { session, signal },
     );
+    if (intent) reportAction(session, "search_run", "text");
     if (request !== generation || session !== webSession || signal.aborted) return false;
     if ((report.tag_id ?? "") !== requestedTagID)
       throw new Error("Search results did not honor the selected tag filter.");
@@ -1948,7 +1947,11 @@
     return hydrated;
   }
 
-  async function loadTaggedNodes(tagID: string, preferredSelectedID?: number): Promise<void> {
+  async function loadTaggedNodes(
+    tagID: string,
+    preferredSelectedID?: number,
+    intent = false,
+  ): Promise<void> {
     invalidateTagHotkeyMutation();
     leaveSnapshotMode();
     naturalProfileDefaultPending = null;
@@ -1956,6 +1959,7 @@
     submittedSearchQuery = "";
     if (!directory) return;
     const request = ++generation;
+    const session = webSession;
     const refreshing = activeQuery === "" && activeTagID === tagID;
     const selectedToPreserve = preferredSelectedID ?? (refreshing ? selectedID : undefined);
     naturalSearchController?.abort();
@@ -1970,6 +1974,7 @@
         { limit: 1000, offset: 0, live_only: true },
         { session: webSession },
       );
+      if (intent) reportAction(session, "search_run", "text");
       if (request !== generation) return;
       const liveRows = page.items.map((item) => ({ node: item.node, path: item.path! }));
       replaceRows(liveRows, refreshing);
@@ -2061,10 +2066,8 @@
     if (activeQuery || searchPending) {
       searchIntent = true;
       void runSearch();
-    } else if (tagID) {
-      reportAction(webSession, "search_run", "text");
-      void loadTaggedNodes(tagID);
-    } else if (directory) void loadDirectory(directory.id, false);
+    } else if (tagID) void loadTaggedNodes(tagID, undefined, true);
+    else if (directory) void loadDirectory(directory.id, false);
   }
 
   function activate(row: Row): void {
@@ -2396,8 +2399,14 @@
     naturalRerankPending = false;
     naturalProfileDefaultPending = null;
     keepQueryDraft(query);
-    if (intent) reportAction(webSession, "search_run", query.text ? query.mode : "text");
-    void snapshot.run(query, options);
+    const session = webSession;
+    void snapshot.run(
+      query,
+      options,
+      intent
+        ? (page) => reportAction(session, "search_run", page.query.text ? page.query.mode : "text")
+        : undefined,
+    );
   }
 
   function runSnapshotAgain(): void {

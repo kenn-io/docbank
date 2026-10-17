@@ -51,7 +51,7 @@ func TestNaturalSearchReproductionStaleAndRerankState(t *testing.T) {
 	model.naturalMode = naturalLexical
 	model.naturalRerank = true
 
-	message := model.loadNaturalSearch("solar maintenance", model.requestID)()
+	message := model.loadNaturalSearch("solar maintenance", model.requestID, false)()
 	baseMessage, ok := message.(naturalSearchBaseLoadedMsg)
 	require.True(t, ok)
 	base, rerank := model.applyNaturalSearchBase(baseMessage)
@@ -91,7 +91,7 @@ func TestNaturalSearchReproductionStaleAndRerankState(t *testing.T) {
 
 	readme.CurrentVersionID = report.CurrentVersionID
 	fake.nodes["/README.txt"] = readme
-	refreshed, ok := settledModel.loadNaturalSearch("new query", model.requestID)().(naturalSearchBaseLoadedMsg)
+	refreshed, ok := settledModel.loadNaturalSearch("new query", model.requestID, false)().(naturalSearchBaseLoadedMsg)
 	require.True(t, ok)
 	require.NoError(t, refreshed.err)
 	assert.Empty(t, refreshed.rows, "a new request fetches current versions instead of reusing earlier nodes")
@@ -341,7 +341,7 @@ func TestNaturalSearchSkipsUnavailableRows(t *testing.T) {
 			require.NoError(t, err)
 			model.naturalProfiles = fake.profiles
 			model.naturalMode = naturalLexical
-			message, ok := model.loadNaturalSearch("maintenance", model.requestID)().(naturalSearchBaseLoadedMsg)
+			message, ok := model.loadNaturalSearch("maintenance", model.requestID, false)().(naturalSearchBaseLoadedMsg)
 			require.True(t, ok)
 			if status == http.StatusUnauthorized || status == http.StatusForbidden {
 				require.Error(t, message.err)
@@ -804,7 +804,7 @@ func TestNaturalSearchEmptyFenceDoesNotScheduleRerank(t *testing.T) {
 	model.naturalMode = naturalLexical
 	model.naturalRerank = true
 
-	message := model.loadNaturalSearch("nothing", model.requestID)()
+	message := model.loadNaturalSearch("nothing", model.requestID, false)()
 	baseMessage, ok := message.(naturalSearchBaseLoadedMsg)
 	require.True(t, ok)
 	updated, rerank := model.applyNaturalSearchBase(baseMessage)

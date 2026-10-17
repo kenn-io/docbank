@@ -589,9 +589,8 @@ export class Photos {
     this.replacement = undefined;
     this.scrollTop = 0;
     this.clearSelection();
-    if (intent) reportAction(this.session, "search_run", "text");
     if (this.view === "timeline") void this.loadTimeline();
-    return this.loadMore();
+    return this.loadMore(undefined, intent);
   }
 
   setDensity(value: Density) {
@@ -603,7 +602,10 @@ export class Photos {
     }
   }
 
-  async loadMore(preserve?: () => (() => Promise<void>) | undefined): Promise<void> {
+  async loadMore(
+    preserve?: () => (() => Promise<void>) | undefined,
+    intent = false,
+  ): Promise<void> {
     if (this.disposed || this.hiding || this.loading || this.trashing || this.error) return;
     if (this.projection && this.replacement) {
       await this.retry(preserve);
@@ -621,7 +623,10 @@ export class Photos {
         signal = this.projection
           ? AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)])
           : controller.signal;
-        const page = await this.page(this.query, signal, this.cursor);
+        const query = this.query;
+        const page = await this.page(query, signal, this.cursor);
+        if (intent) reportAction(this.session, "search_run", query.text ? query.mode : "text");
+        intent = false;
         if (signal.aborted) throw signal.reason;
         if (!this.started) this.relevanceAvailable = page.relevance_available;
         pages++;

@@ -156,6 +156,11 @@ func handlePushUpload(w http.ResponseWriter, r *http.Request, d Deps, g *gate) {
 	httpStatus := http.StatusOK
 	if outcome == "added" {
 		httpStatus = http.StatusCreated
+		// One interactive push run reports its first addition; updates are not additions.
+		if surface := cliImportSurface(r.Context(), r.Header.Get(ActionSurfaceHeader)); surface != "" {
+			d.TelemetryCapture.TrackImport("push:"+runID, surface)
+			d.TelemetryCapture.ImportAdded("push:" + runID)
+		}
 	}
 	writeJSON(w, httpStatus, PushUploadReceipt{
 		Status: outcome, Node: fromStoreNode(result.Node),

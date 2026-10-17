@@ -3,7 +3,6 @@ package store
 import (
 	"encoding/json/v2"
 	"github.com/stretchr/testify/require"
-	"path/filepath"
 	"testing"
 )
 
@@ -19,14 +18,13 @@ func TestMailboxJobClaimCheckpointCancellationAndContinuation(t *testing.T) {
 	_, err = s.SealMailboxContainer(ctx, "one", "source", req.SHA256, 3)
 	require.NoError(t, err)
 	request := MailboxJobRequest{ID: "job", ContainerID: "source", ContainerSHA256: req.SHA256, Settings: MailboxSettings{Dialect: "mboxrd", DestinationID: s.RootID()}}
-	job, err := s.BeginMailboxJob(ctx, "one", request, "")
+	job, err := s.BeginMailboxJob(ctx, "one", request)
 	require.NoError(t, err)
 	claimed, err := s.ClaimMailboxJob(ctx)
 	require.NoError(t, err)
 	require.Equal(t, job.ID, claimed.ID)
 	occurrence := MailboxOccurrence{JobID: job.ID, Ordinal: 1, Outcome: "rejected", Reason: "synthetic malformed message", Location: MailboxLocation{ContainerID: "source", Entry: "source.mbox", EntrySHA256: req.SHA256, Sequence: 1, Start: 0, End: 3, Separator: "From synthetic", RawSHA256: req.SHA256, Labels: []string{}}}
-	_, commitErr := s.CommitMailboxOccurrence(ctx, claimed.ID, claimed.Claim, occurrence, nil)
-	require.NoError(t, commitErr)
+	require.NoError(t, s.CommitMailboxOccurrence(ctx, claimed.ID, claimed.Claim, occurrence, nil))
 	pending := occurrence
 	pending.Ordinal = 2
 	pending.Outcome = "pending"
@@ -41,8 +39,7 @@ func TestMailboxJobClaimCheckpointCancellationAndContinuation(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), canceled.Canceled)
 	occurrence.Ordinal = 2
-	_, commitErr = s.CommitMailboxOccurrence(ctx, claimed.ID, claimed.Claim, occurrence, nil)
-	require.Error(t, commitErr)
+	require.Error(t, s.CommitMailboxOccurrence(ctx, claimed.ID, claimed.Claim, occurrence, nil))
 	request.Settings.Dialect = "mboxo"
 	_, err = s.ResumeMailboxJob(ctx, "one", request, false)
 	require.Error(t, err)
@@ -53,8 +50,7 @@ func TestMailboxJobClaimCheckpointCancellationAndContinuation(t *testing.T) {
 	newClaim, err := s.ClaimMailboxJob(ctx)
 	require.NoError(t, err)
 	require.NotEqual(t, claimed.Claim, newClaim.Claim)
-	_, commitErr = s.CommitMailboxOccurrence(ctx, claimed.ID, claimed.Claim, occurrence, nil)
-	require.Error(t, commitErr)
+	require.Error(t, s.CommitMailboxOccurrence(ctx, claimed.ID, claimed.Claim, occurrence, nil))
 	require.NoError(t, s.FinishMailboxJob(ctx, newClaim.ID, newClaim.Claim, "partial", "segment limit", false))
 	_, err = s.ResumeMailboxJob(ctx, "one", request, false)
 	require.Error(t, err)
@@ -66,10 +62,7 @@ func TestMailboxJobClaimCheckpointCancellationAndContinuation(t *testing.T) {
 
 func TestMailboxCheckpointFailureRollsBackMessageAndReceipt(t *testing.T) {
 	t.Parallel()
-	path := filepath.Join(t.TempDir(), "docbank.db")
-	s, err := Open(path)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	s := newTestStore(t)
 	ctx := t.Context()
 	f := newEmailFixture(t, s, "seed.eml")
 	source, err := emailVersion(ctx, s.db, f.publication.ContentVersionID)
@@ -80,16 +73,8 @@ func TestMailboxCheckpointFailureRollsBackMessageAndReceipt(t *testing.T) {
 	require.NoError(t, s.PutMailboxChunk(ctx, c.Owner, c.ID, MailboxChunk{Index: 0, SHA256: c.SHA256, Size: c.Size}))
 	_, err = s.SealMailboxContainer(ctx, c.Owner, c.ID, c.SHA256, c.Size)
 	require.NoError(t, err)
-	_, err = s.BeginMailboxJob(ctx, c.Owner, MailboxJobRequest{ID: "job", ContainerID: c.ID, ContainerSHA256: c.SHA256, Settings: MailboxSettings{DestinationID: s.RootID()}}, "web")
+	_, err = s.BeginMailboxJob(ctx, c.Owner, MailboxJobRequest{ID: "job", ContainerID: c.ID, ContainerSHA256: c.SHA256, Settings: MailboxSettings{DestinationID: s.RootID()}})
 	require.NoError(t, err)
-	require.NoError(t, s.Close())
-	s, err = Open(path)
-	require.NoError(t, err)
-	admitted, err := s.MailboxJob(ctx, c.Owner, "job")
-	require.NoError(t, err)
-	replay, err := s.BeginMailboxJob(ctx, c.Owner, admitted.MailboxJobRequest, "cli")
-	require.NoError(t, err)
-	require.Equal(t, "web", replay.ActionSurface)
 	j, err := s.ClaimMailboxJob(ctx)
 	require.NoError(t, err)
 	require.NoError(t, s.RegisterMailboxArchive(ctx, MailboxArchive{ID: "mailbox:" + j.CollectionID, Owner: c.Owner, Description: "Synthetic"}))
@@ -103,9 +88,7 @@ func TestMailboxCheckpointFailureRollsBackMessageAndReceipt(t *testing.T) {
 	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM nodes`).Scan(&before))
 	_, err = s.db.Exec(`CREATE TRIGGER fail_mailbox_checkpoint BEFORE UPDATE ON mailbox_jobs BEGIN SELECT RAISE(ABORT,'synthetic checkpoint rollback'); END`)
 	require.NoError(t, err)
-	reported, commitErr := s.CommitMailboxOccurrence(ctx, j.ID, j.Claim, o, &p)
-	require.Error(t, commitErr)
-	require.False(t, reported)
+	require.Error(t, s.CommitMailboxOccurrence(ctx, j.ID, j.Claim, o, &p))
 	var after, receipts int
 	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM nodes`).Scan(&after))
 	require.Equal(t, before, after)
@@ -114,17 +97,10 @@ func TestMailboxCheckpointFailureRollsBackMessageAndReceipt(t *testing.T) {
 	unchanged, err := s.MailboxJob(ctx, c.Owner, j.ID)
 	require.NoError(t, err)
 	require.Zero(t, unchanged.Checkpoint)
-	require.Zero(t, unchanged.Imported)
 	require.Equal(t, int64(1), unchanged.Pending)
 	_, err = s.db.Exec(`DROP TRIGGER fail_mailbox_checkpoint`)
 	require.NoError(t, err)
-	reported, commitErr = s.CommitMailboxOccurrence(ctx, j.ID, j.Claim, o, &p)
-	require.NoError(t, commitErr)
-	require.True(t, reported)
-	stored, err := s.MailboxJob(ctx, c.Owner, j.ID)
-	require.NoError(t, err)
-	require.Equal(t, int64(1), stored.Imported)
-	require.Equal(t, "web", stored.ActionSurface)
+	require.NoError(t, s.CommitMailboxOccurrence(ctx, j.ID, j.Claim, o, &p))
 	require.NoError(t, s.ValidateMetadata(ctx))
 	var original []byte
 	require.NoError(t, s.db.QueryRow(`SELECT occurrence_json FROM mailbox_occurrences WHERE job_id=?`, j.ID).Scan(&original))
@@ -204,7 +180,7 @@ func TestMailboxLabelTagsRemainAvailableWhileJobIsActive(t *testing.T) {
 			request := MailboxJobRequest{ID: "job", ContainerID: c.ID, ContainerSHA256: c.SHA256, Settings: MailboxSettings{
 				DestinationID: s.RootID(), LabelTags: map[string]string{"Project": "00000000-0000-4000-8000-000000000001"},
 			}}
-			_, err = s.BeginMailboxJob(ctx, c.Owner, request, "")
+			_, err = s.BeginMailboxJob(ctx, c.Owner, request)
 			require.ErrorIs(t, err, ErrNotFound)
 			_, err = s.MailboxJob(ctx, c.Owner, request.ID)
 			require.ErrorIs(t, err, ErrNotFound)
@@ -212,7 +188,7 @@ func TestMailboxLabelTagsRemainAvailableWhileJobIsActive(t *testing.T) {
 			tag, err := s.CreateTag(ctx, "Project")
 			require.NoError(t, err)
 			request.Settings.LabelTags["Project"] = tag.ID
-			_, err = s.BeginMailboxJob(ctx, c.Owner, request, "")
+			_, err = s.BeginMailboxJob(ctx, c.Owner, request)
 			require.NoError(t, err)
 			_, err = s.DeleteTag(ctx, tag.ID, tag.Revision)
 			require.ErrorIs(t, err, ErrMailboxConflict)

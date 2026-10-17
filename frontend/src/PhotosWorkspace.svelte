@@ -968,9 +968,7 @@
                   facets={photos.facets}
                   query={photos.baseQuery}
                   unit="photos"
-                  onchange={(value) => {
-                    void photos.setQuery(value, true);
-                  }}
+                  onchange={(value) => void photos.setQuery(value, true)}
                 />
               </div>
             {/if}

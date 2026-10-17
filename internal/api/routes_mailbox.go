@@ -213,13 +213,22 @@ func registerMailboxRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 		if !readMailboxJSON(w, r, &request) {
 			return
 		}
+		// Track a new job before a worker can claim it; a replay keeps its original attribution.
+		_, lookupErr := d.Store.MailboxJob(r.Context(), mailboxOwner(d), request.ID)
+		admitting := errors.Is(lookupErr, store.ErrNotFound)
+		if admitting {
+			d.TelemetryCapture.TrackImport(request.ID, importActionSurface(r))
+		}
 		var j store.MailboxJob
 		err := g.mutate(func() error {
 			var err error
-			j, err = d.Store.BeginMailboxJob(r.Context(), mailboxOwner(d), request.storeRequest(), importActionSurface(r))
+			j, err = d.Store.BeginMailboxJob(r.Context(), mailboxOwner(d), request.storeRequest())
 			return err
 		})
 		if err != nil {
+			if admitting {
+				d.TelemetryCapture.ForgetImport(request.ID)
+			}
 			writeMailboxError(w, err)
 			return
 		}

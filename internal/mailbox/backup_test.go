@@ -13,10 +13,8 @@ import (
 	"testing"
 )
 
-func TestMailboxPortableBackupRetainsSourceChildrenTombstoneAndImportReportingState(t *testing.T) {
+func TestMailboxPortableBackupRetainsSourceChildrenAndTombstone(t *testing.T) {
 	f := mailboxFixture(t)
-	var surfaces []string
-	f.ImportResult = func(surface string) { surfaces = append(surfaces, surface) }
 	ctx := t.Context()
 	message := separator + "Subject: Synthetic attachment\nContent-Type: multipart/mixed; boundary=m\n\n--m\nContent-Type: text/plain\n\nSynthetic body.\n--m\nContent-Type: text/csv\nContent-Disposition: attachment; filename=table.csv\n\nname,count\nsynthetic,2\n--m--\n"
 	raw := syntheticZIP(t, "messages.mbox", 0600, message)
@@ -26,7 +24,7 @@ func TestMailboxPortableBackupRetainsSourceChildrenTombstoneAndImportReportingSt
 	require.NoError(t, f.UploadChunk(ctx, c.Owner, c.ID, 0, c.SHA256, c.Size, bytes.NewReader(raw)))
 	_, err = f.Seal(ctx, c.Owner, c.ID)
 	require.NoError(t, err)
-	_, err = f.Store.BeginMailboxJob(ctx, c.Owner, store.MailboxJobRequest{ID: "backup-job", ContainerID: c.ID, ContainerSHA256: c.SHA256, Settings: store.MailboxSettings{DestinationID: f.Store.RootID()}}, "web")
+	_, err = f.Store.BeginMailboxJob(ctx, c.Owner, store.MailboxJobRequest{ID: "backup-job", ContainerID: c.ID, ContainerSHA256: c.SHA256, Settings: store.MailboxSettings{DestinationID: f.Store.RootID()}})
 	require.NoError(t, err)
 	job, err := f.Store.ClaimMailboxJob(ctx)
 	require.NoError(t, err)
@@ -57,7 +55,7 @@ func TestMailboxPortableBackupRetainsSourceChildrenTombstoneAndImportReportingSt
 	t.Cleanup(func() { require.NoError(t, bs.Close()) })
 	_, err = maintenance.GarbageCollect(ctx, restored, bs, maintenance.GCOptions{})
 	require.NoError(t, err)
-	service := Service{Store: restored, Blobs: bs, Spool: t.TempDir(), ImportResult: f.ImportResult}
+	service := Service{Store: restored, Blobs: bs, Spool: t.TempDir()}
 	sealed, err := restored.MailboxContainer(ctx, c.Owner, c.ID)
 	require.NoError(t, err)
 	reader, err := service.ReaderAt(ctx, sealed)
@@ -69,7 +67,6 @@ func TestMailboxPortableBackupRetainsSourceChildrenTombstoneAndImportReportingSt
 	resumed, err := restored.ResumeMailboxJob(ctx, c.Owner, job.MailboxJobRequest, true)
 	require.NoError(t, err)
 	require.Equal(t, []string{hashBytes([]byte(message))}, resumed.EntryHashes)
-	require.Equal(t, "web", resumed.ActionSurface)
 	resumed, err = restored.ClaimMailboxJob(ctx)
 	require.NoError(t, err)
 	require.NoError(t, service.RunJob(ctx, resumed))
@@ -77,7 +74,6 @@ func TestMailboxPortableBackupRetainsSourceChildrenTombstoneAndImportReportingSt
 	require.NoError(t, err)
 	require.Equal(t, "complete", resumed.State)
 	require.Equal(t, int64(1), resumed.Imported)
-	require.Equal(t, []string{"web"}, surfaces)
 	for _, hash := range []string{receipt.Target.SHA256, children.Relations[0].Child.SHA256} {
 		stream, _, err := bs.OpenStreamContext(ctx, hash)
 		require.NoError(t, err)

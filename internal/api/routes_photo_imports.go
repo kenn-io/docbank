@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"os"
@@ -21,11 +22,9 @@ type photoImportStartOutput struct {
 // photo import operations.
 func NewPhotoImportRunner(d Deps) ingest.PhotoImportRunner {
 	runner := ingest.PhotoImportRunner{
-		Ingester: &ingest.Ingester{Store: d.Store, Blobs: d.Blobs},
-		Options:  ingest.PhotoImportOptions{SettleInterval: ingest.DefaultPhotoImportSettleInterval},
-	}
-	if d.TelemetryCapture != nil {
-		runner.ImportResult = d.TelemetryCapture.DocumentAdded
+		Ingester:  &ingest.Ingester{Store: d.Store, Blobs: d.Blobs},
+		Options:   ingest.PhotoImportOptions{SettleInterval: ingest.DefaultPhotoImportSettleInterval},
+		Telemetry: d.TelemetryCapture,
 	}
 	if d.Gate != nil {
 		runner.Options.Mutate = d.Gate.MutateContext
@@ -61,11 +60,15 @@ func registerPhotoImportRoutes(api huma.API, d Deps, g *gate) {
 		if d.Jobs == nil {
 			return nil, NewError(http.StatusServiceUnavailable, "photo_import_unavailable", "background job supervisor is unavailable")
 		}
-		surface := cliImportSurface(ctx, in.Surface)
-		operation, err := d.Store.CreatePhotoImport(ctx, store.PhotoImportRequest{SourceRoot: in.Body.SourceRoot, Destination: in.Body.Destination}, surface)
+		request, err := json.Marshal(store.PhotoImportRequest{SourceRoot: in.Body.SourceRoot, Destination: in.Body.Destination})
+		if err != nil {
+			return nil, err
+		}
+		operation, err := d.Store.CreateLocalOperation(ctx, store.StorageOperationKindPhotoImport, string(request))
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
+		d.TelemetryCapture.TrackImport(operation.ID, cliImportSurface(ctx, in.Surface))
 		runner := NewPhotoImportRunner(runnerDeps)
 		if err := runner.Start(d.Jobs, operation.ID); err != nil {
 			d.Logger.Error("start queued photo import", "operation_id", operation.ID, "error", err)

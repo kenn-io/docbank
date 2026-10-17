@@ -2859,48 +2859,107 @@ func (f *fakeBackend) ReportAction(_ context.Context, event, value string) error
 	return nil
 }
 
-func TestSearchSubmissionsReportBeforeFailedResults(t *testing.T) {
-	for _, flow := range []string{"text", "hybrid", "processing", "processing auto with encoder", "similar"} {
-		t.Run(flow, func(t *testing.T) {
-			backend := newFakeBackend()
-			model, err := New(t.Context(), backend)
-			require.NoError(t, err)
-			backend.err = errors.New("synthetic search failure")
-			expected := "text"
-			if flow == "hybrid" {
-				model.naturalMode = naturalHybrid
-				model.naturalProfiles = []api.ProcessingProfileSummary{{Name: "synthetic", QueryEmbeddingBindings: []string{"synthetic"}}}
-				expected = "hybrid"
-			}
-			if flow == "processing" || flow == "processing auto with encoder" || flow == "similar" {
-				model.processingOpen = true
-				model.processingPlan = &backend.plan
-			}
-			if flow == "processing auto with encoder" {
-				model.processingProfiles = []api.ProcessingProfileSummary{{Name: "synthetic", QueryEmbeddingBindings: []string{"synthetic"}}}
-			}
-			var command tea.Cmd
-			if flow == "similar" {
-				model.processingSimilarScope = []string{backend.plan.Selector.ContentVersionID}
-				model, command = updateModel(t, model, runeKey('S'))
-				expected = "semantic"
-			} else {
-				model, _ = updateModel(t, model, runeKey('/'))
-				model.searchInput.SetValue("synthetic query")
-				model, command = updateModel(t, model, key(tea.KeyEnter))
-			}
-			model = runModelCommand(t, model, command)
-			require.Equal(t, [][2]string{{"search_run", expected}}, backend.actions)
-			switch flow {
-			case "processing", "processing auto with encoder":
-				require.ErrorContains(t, model.processingSearchErr, "synthetic search failure")
-			case "similar":
-				require.ErrorContains(t, model.processingSimilarErr, "synthetic search failure")
-			case "hybrid":
-				require.Contains(t, model.naturalSearchNote, "synthetic search failure")
-			default:
-				require.ErrorContains(t, model.err, "synthetic search failure")
-			}
-		})
+func TestSearchesReportTheModeThatRanWhenResultsArrive(t *testing.T) {
+	for _, flow := range []string{"text", "natural auto", "processing", "similar"} {
+		for _, failed := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/failed=%t", flow, failed), func(t *testing.T) {
+				backend := newFakeBackend()
+				backend.naturalSearch.ActualMode = "lexical"
+				backend.processingSearch.ActualMode = "lexical"
+				model, err := New(t.Context(), backend)
+				require.NoError(t, err)
+				if failed {
+					backend.err = errors.New("synthetic search failure")
+				}
+				expected := "lexical"
+				switch flow {
+				case "text":
+					expected = "text"
+				case "natural auto":
+					// An automatic request that the daemon answers lexically reports text.
+					model.naturalMode = naturalAuto
+					model.naturalProfiles = []api.ProcessingProfileSummary{{Name: "synthetic", QueryEmbeddingBindings: []string{"synthetic"}}}
+					backend.sourceFence.Fence.ContentVersionIDs = []string{"synthetic-a", "synthetic-b"}
+				case "processing", "similar":
+					model.processingOpen = true
+					model.processingPlan = &backend.plan
+				}
+				var command tea.Cmd
+				if flow == "similar" {
+					model.processingSimilarScope = []string{backend.plan.Selector.ContentVersionID}
+					model, command = updateModel(t, model, runeKey('S'))
+					expected = "similar"
+				} else {
+					model, _ = updateModel(t, model, runeKey('/'))
+					model.searchInput.SetValue("synthetic query")
+					model, command = updateModel(t, model, key(tea.KeyEnter))
+				}
+				require.Empty(t, backend.actions, "a search reports only after its result names the mode")
+				applyResults(t, model, command)
+				if failed {
+					require.Empty(t, backend.actions, "a search that fails before choosing a mode stays silent")
+				} else {
+					require.Equal(t, [][2]string{{"search_run", expected}}, backend.actions)
+				}
+			})
+		}
 	}
+}
+
+func TestSupersededSearchReportsTheModeThatRan(t *testing.T) {
+	backend := newFakeBackend()
+	backend.naturalSearch.ActualMode = "lexical"
+	backend.sourceFence.Fence.ContentVersionIDs = []string{"synthetic-a", "synthetic-b"}
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.naturalMode = naturalAuto
+	model.naturalProfiles = []api.ProcessingProfileSummary{{Name: "synthetic", QueryEmbeddingBindings: []string{"synthetic"}}}
+	submit := func(query string) tea.Cmd {
+		var command tea.Cmd
+		model, _ = updateModel(t, model, runeKey('/'))
+		model.searchInput.SetValue(query)
+		model, command = updateModel(t, model, key(tea.KeyEnter))
+		return command
+	}
+	first := submit("first synthetic query")
+	second := submit("second synthetic query")
+	model = applyResults(t, model, first)
+	require.Equal(t, [][2]string{{"search_run", "lexical"}}, backend.actions, "a superseded result still ran")
+	assert.NotEqual(t, "first synthetic query", model.searchQuery)
+	model = applyResults(t, model, second)
+	require.Equal(t, [][2]string{{"search_run", "lexical"}, {"search_run", "lexical"}}, backend.actions)
+	assert.Equal(t, "second synthetic query", model.searchQuery)
+}
+
+// applyResults delivers cmd's messages and runs the commands each update
+// returns once, so result handlers' reports execute.
+func applyResults(t *testing.T, model Model, cmd tea.Cmd) Model {
+	t.Helper()
+	if cmd == nil {
+		return model
+	}
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		for _, command := range batch {
+			model = applyResults(t, model, command)
+		}
+		return model
+	}
+	if msg == nil {
+		return model
+	}
+	if _, ok := msg.(spinnerTickMsg); ok {
+		return model
+	}
+	model, returned := updateModel(t, model, msg)
+	if returned != nil {
+		if batch, ok := returned().(tea.BatchMsg); ok {
+			for _, command := range batch {
+				if command != nil {
+					command()
+				}
+			}
+		}
+	}
+	return model
 }

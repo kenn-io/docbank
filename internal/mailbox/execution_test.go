@@ -26,7 +26,7 @@ func queuedArchive(t *testing.T, f *Service, raw []byte, format string) store.Ma
 	_, err = f.Seal(ctx, c.Owner, c.ID)
 	require.NoError(t, err)
 	r := store.MailboxJobRequest{ID: "job", ContainerID: c.ID, ContainerSHA256: c.SHA256, Settings: store.MailboxSettings{DestinationID: f.Store.RootID()}}
-	_, err = f.Store.BeginMailboxJob(ctx, c.Owner, r, "")
+	_, err = f.Store.BeginMailboxJob(ctx, c.Owner, r)
 	require.NoError(t, err)
 	return r
 }

@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/telemetry"
 )
 
 type PhotoImportCandidate struct {
@@ -29,8 +30,6 @@ type PhotoImportGroup struct {
 }
 
 type PhotoImportOptions struct {
-	OperationID    string
-	ImportResult   func()
 	SettleInterval time.Duration
 	Mutate         func(context.Context, func() error) error
 	ActivityBegin  func()
@@ -41,6 +40,8 @@ type PhotoImportOptions struct {
 	Admit func(context.Context) (bool, error)
 	// Progress runs once with done=0 after discovery and after every group.
 	Progress func(ctx context.Context, done, total int, receipt store.PhotoImportReceipt) error
+	// Created runs after a group commits a new document; replacements don't count.
+	Created func()
 }
 
 // DefaultPhotoImportSettleInterval is how long every discovered file must stay
@@ -368,11 +369,12 @@ func (ing *Ingester) ImportPhotoDirectory(ctx context.Context, root, destination
 		if err := admit(); err != nil {
 			return report, err
 		}
-		result, groupErr := ing.importPhotoGroup(ctx, run, dest.ID, group, observations, observeErrors, mutate, opts.OperationID, func() error {
+		result, groupErr := ing.importPhotoGroup(ctx, run, dest.ID, group, observations, observeErrors, mutate, func() error {
 			return check(true, false)
 		})
-		if result.ReportAddition && opts.ImportResult != nil {
-			opts.ImportResult()
+		// A committed group counts even when later cleanup reports an error.
+		if result.Created && opts.Created != nil {
+			opts.Created()
 		}
 		switch {
 		case groupErr != nil && ctx.Err() != nil:
@@ -405,7 +407,7 @@ func (ing *Ingester) ImportPhotoDirectory(ctx context.Context, root, destination
 func (ing *Ingester) importPhotoGroup(
 	ctx context.Context, run store.IngestRun, destinationID int64, group PhotoImportGroup,
 	observations map[string]photoImportObservation, observeErrors map[string]error, mutate func(func() error) error,
-	operationID string, checkAdmission func() error,
+	checkAdmission func() error,
 ) (store.PhotoImportResult, error) {
 	for _, candidate := range group.Members {
 		if err := observeErrors[candidate.Path]; err != nil {
@@ -443,7 +445,7 @@ func (ing *Ingester) importPhotoGroup(
 			}
 			var err error
 			result, err = ing.Store.IngestPhotoGroup(ctx, run, store.PhotoImportGroup{
-				OperationID: operationID, DestinationID: destinationID, Members: members,
+				DestinationID: destinationID, Members: members,
 			})
 			return err
 		})
@@ -464,9 +466,10 @@ func admitOutsideActivity(ctx context.Context, opts PhotoImportOptions) (bool, e
 // PhotoImportRunner runs photo_import operations as supervised jobs, sharing
 // the storage operation lifecycle: claim, progress, cancel, finish, resume.
 type PhotoImportRunner struct {
-	ImportResult func(string)
-	Ingester     *Ingester
-	Options      PhotoImportOptions
+	Ingester *Ingester
+	Options  PhotoImportOptions
+	// Telemetry reports a tracked operation's first new document; nil stays silent.
+	Telemetry *telemetry.Capture
 	// admit replaces jobs.AdmitStorageOperation in tests that inject read failures.
 	admit func(ctx context.Context, metadata *store.Store, id string) (bool, error)
 }
@@ -519,21 +522,13 @@ func (r PhotoImportRunner) Run(ctx context.Context, operationID string) error {
 		return err
 	}
 	if cancelled || operation.CancelRequested {
+		r.Telemetry.ForgetImport(operationID)
 		finishErr := metadata.FinishStorageOperation(context.WithoutCancel(ctx), operationID,
 			store.StorageOperationCancelled, operation.ReceiptJSON, "", time.Now().Add(photoImportRetention))
 		return finishErr
 	}
-	var plan store.PhotoImportPlan
-	if err := json.Unmarshal([]byte(operation.PlanJSON), &plan, json.RejectUnknownMembers(true)); err != nil {
-		return err
-	}
 	opts := r.Options
-	opts.OperationID = operationID
-	opts.ImportResult = func() {
-		if r.ImportResult != nil {
-			r.ImportResult(plan.ActionSurface)
-		}
-	}
+	opts.Created = func() { r.Telemetry.ImportAdded(operationID) }
 	opts.Admit = func(ctx context.Context) (bool, error) {
 		cancelled, err := r.admitOperation(ctx, operationID)
 		if err != nil {
@@ -595,6 +590,7 @@ func (r PhotoImportRunner) Run(ctx context.Context, operationID string) error {
 	if err != nil {
 		return errors.Join(importErr, err)
 	}
+	r.Telemetry.ForgetImport(operationID)
 	finishErr := metadata.FinishStorageOperation(context.WithoutCancel(ctx), operationID, state,
 		string(encoded), failure, time.Now().Add(photoImportRetention))
 	return errors.Join(importErr, finishErr)

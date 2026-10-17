@@ -1,6 +1,7 @@
 package telemetry
 
 import (
+	"context"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -48,6 +49,9 @@ type Capture struct {
 	mu       sync.Mutex
 	now      func() time.Time
 	claims   screenClaims
+
+	importsMu sync.Mutex
+	imports   map[string]string // import ID to admitting surface; "" once claimed
 }
 
 // CaptureHandler serves interface events with shared validation and claims.
@@ -58,6 +62,11 @@ func CaptureHandler(r *Reporter, dir string) *Capture {
 func (h *Capture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	request, ok := decodeCaptureRequest(w, r)
 	if !ok {
+		return
+	}
+	// Only the daemon confirms additions, after it commits them.
+	if strings.TrimSpace(request.Event) == EventDocumentAdded {
+		http.Error(w, posthog.ErrUnsupportedEvent.Error(), http.StatusBadRequest)
 		return
 	}
 	if err := h.Capture(request.Event, request.Properties); err != nil {
@@ -78,18 +87,17 @@ func (h *Capture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // Capture validates and claims interface events for HTTP and daemon callers.
 func (h *Capture) Capture(event string, properties map[string]any) error {
 	event = strings.TrimSpace(event)
-	props, err := h.reporter.SanitizeProperties(event, properties)
-	if err != nil {
-		return fmt.Errorf("validate telemetry properties: %w", err)
-	}
-	properties = props
 	if event == EventScreenViewed || event == EventSearchRun || event == EventDocumentOpened {
-		return h.captureDaily(event, properties)
+		// Daily claims key on sanitized values.
+		props, err := h.reporter.SanitizeProperties(event, properties)
+		if err != nil {
+			return fmt.Errorf("validate telemetry properties: %w", err)
+		}
+		return h.captureDaily(event, props)
 	}
-	if !h.reporter.Enabled() {
-		return nil
-	}
-	if err := h.reporter.Capture(event, properties); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), posthog.ShutdownTimeout)
+	defer cancel()
+	if _, err := h.reporter.Report(ctx, event, properties); err != nil {
 		return fmt.Errorf("capture telemetry event: %w", err)
 	}
 	return nil

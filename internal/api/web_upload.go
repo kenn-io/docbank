@@ -806,7 +806,7 @@ func handleWebPhotoGroup(
 			return err
 		})
 	})
-	if err == nil && result.Added && !photoImport.reported {
+	if err == nil && result.Created && !photoImport.reported {
 		photoImport.reported = true
 		d.TelemetryCapture.DocumentAdded("web")
 	}

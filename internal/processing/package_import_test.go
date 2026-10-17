@@ -12,6 +12,8 @@ import (
 	"image"
 	"io"
 	"mime"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -24,6 +26,8 @@ import (
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/loadfile"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/telemetry"
+	"go.kenn.io/kit/telemetry/posthog"
 	"golang.org/x/image/tiff"
 )
 
@@ -178,7 +182,7 @@ func newPackageImportTestEnvWithNativeFile(t *testing.T, count int, acceptPartia
 	job := store.PackageImportJobRequest{ID: uuid.NewString(), Owner: owner, OperationID: operationID,
 		RequestSHA256: packageImportTestHash([]byte("synthetic request")), PreflightID: preflightID,
 		PackageID: packageID, JobJSON: jobJSON}
-	_, err = catalog.AdmitPackageImport(ctx, run, request, job, "web")
+	_, err = catalog.AdmitPackageImport(ctx, run, request, job)
 	require.NoError(t, err)
 	return &packageImportTestEnv{Catalog: catalog, Blobs: blobs, Root: root,
 		PackageID: packageID, Owner: owner, OperationID: operationID, Contents: contents}
@@ -263,16 +267,36 @@ func TestPackageRecordLabelsKeepReceivedAndAssignedProvenanceSeparate(t *testing
 	require.Equal(t, "CASE000002", assigned[1].Label)
 }
 
-func TestPackageImportWorkerReportsAdditionOnceAcrossResume(t *testing.T) {
+// recordingCapture records each document_added surface as the reporter validates it.
+func recordingCapture(t *testing.T) (*telemetry.Capture, *[]any) {
+	t.Helper()
+	collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	t.Cleanup(collector.Close)
+	var surfaces []any
+	reporter, err := posthog.NewReporter(posthog.Options{APIKey: "synthetic-key", Endpoint: collector.URL,
+		Application: "docbank", EnvPrefix: "DOCBANK", DistinctID: "synthetic-install"},
+		posthog.WithAllowedEvent(telemetry.EventDocumentAdded, posthog.RequireProperty("surface", func(value any) (any, bool) {
+			surfaces = append(surfaces, value)
+			return value, true
+		})))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, reporter.Close()) })
+	return telemetry.CaptureHandler(reporter, t.TempDir()), &surfaces
+}
+
+func TestPackageImportWorkerReportsFirstAdditionOnceAcrossRetry(t *testing.T) {
 	t.Parallel()
 	env := newPackageImportTestEnv(t, 2, false)
 	injected := errors.New("synthetic interruption before second record")
 	firstKey, err := store.PackageRecordKey("VOL001/DATA.DAT", 1, "DOC-A")
 	require.NoError(t, err)
+	job, err := env.Catalog.PackageImportJob(t.Context(), env.Owner, env.OperationID)
+	require.NoError(t, err)
+	capture, surfaces := recordingCapture(t)
+	capture.TrackImport(job.ID, "web")
 	var interrupted atomic.Bool
 	config := env.config()
-	var surfaces []string
-	config.ImportResult = func(surface string) { surfaces = append(surfaces, surface) }
+	config.Telemetry = capture
 	config.Mutate = func(ctx context.Context, fn func() error) error {
 		if _, headErr := env.Catalog.PackageImportHead(ctx, env.PackageID, firstKey); headErr == nil && interrupted.CompareAndSwap(false, true) {
 			return injected
@@ -286,15 +310,15 @@ func TestPackageImportWorkerReportsAdditionOnceAcrossResume(t *testing.T) {
 	firstReceipt, err := env.Catalog.PackageImportHead(t.Context(), env.PackageID, firstKey)
 	require.NoError(t, err)
 	require.Equal(t, "committed", firstReceipt.State)
-	require.Equal(t, []string{"web"}, surfaces)
+	require.Equal(t, []any{"web"}, *surfaces)
 	secondKey, err := store.PackageRecordKey("VOL001/DATA.DAT", 2, "DOC-B")
 	require.NoError(t, err)
 	_, err = env.Catalog.PackageImportHead(t.Context(), env.PackageID, secondKey)
 	require.ErrorIs(t, err, store.ErrNotFound)
 
-	resumedConfig := env.config()
-	resumedConfig.ImportResult = config.ImportResult
-	resumed, err := NewPackageImportWorker(resumedConfig)
+	retry := env.config()
+	retry.Telemetry = capture
+	resumed, err := NewPackageImportWorker(retry)
 	require.NoError(t, err)
 	_, err = resumed.ProcessOnce(t.Context())
 	require.NoError(t, err)
@@ -305,7 +329,11 @@ func TestPackageImportWorkerReportsAdditionOnceAcrossResume(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "complete", pkg.State)
 	require.Equal(t, 2, pkg.MemberCount)
-	require.Equal(t, []string{"web"}, surfaces)
+	require.Equal(t, []any{"web"}, *surfaces, "the second record and retry add no event")
+	// Completion releases the import, so tracking the same ID again starts fresh.
+	capture.TrackImport(job.ID, "cli")
+	capture.ImportAdded(job.ID)
+	require.Equal(t, []any{"web", "cli"}, *surfaces)
 }
 
 func TestPackageImportWorkerPersistsSuppliedTextGenerationInReceipt(t *testing.T) {

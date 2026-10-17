@@ -28,7 +28,7 @@ func TestMailboxActionCancellationAndResume(t *testing.T) {
 			container := store.MailboxContainerRequest{ID: "synthetic-source", Owner: owner, SHA256: hex.EncodeToString(digest[:]), Size: int64(len(raw)), Format: "mbox"}
 			_, err := catalog.BeginMailboxContainer(t.Context(), container)
 			require.NoError(t, err)
-			service := mailbox.Service{Store: catalog.Store, Blobs: catalog.Blobs, Spool: t.TempDir(), ImportResult: capture.capture.DocumentAdded}
+			service := mailbox.Service{Store: catalog.Store, Blobs: catalog.Blobs, Spool: t.TempDir(), Telemetry: capture.capture}
 			require.NoError(t, service.UploadChunk(t.Context(), owner, container.ID, 0, container.SHA256, container.Size, bytes.NewReader(raw)))
 			_, err = service.Seal(t.Context(), owner, container.ID)
 			require.NoError(t, err)

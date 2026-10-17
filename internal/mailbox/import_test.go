@@ -31,7 +31,7 @@ func TestMailboxImportCompleteDistinctOccurrencesAndContinuation(t *testing.T) {
 	for i := range 99 {
 		request.Settings.LabelTags[fmt.Sprintf("%03d-%s", i, strings.Repeat("x", 248))] = tag.ID
 	}
-	_, err = f.Store.BeginMailboxJob(ctx, "one", request, "")
+	_, err = f.Store.BeginMailboxJob(ctx, "one", request)
 	require.NoError(t, err)
 	job, err := f.Store.ClaimMailboxJob(ctx)
 	require.NoError(t, err)
@@ -115,7 +115,7 @@ func TestMailboxMalformedEntryReportsPartialCommittedWork(t *testing.T) {
 	require.NoError(t, f.UploadChunk(ctx, c.Owner, c.ID, 0, c.SHA256, c.Size, bytes.NewReader(raw.Bytes())))
 	_, err = f.Seal(ctx, c.Owner, c.ID)
 	require.NoError(t, err)
-	_, err = f.Store.BeginMailboxJob(ctx, c.Owner, store.MailboxJobRequest{ID: "partial-job", ContainerID: c.ID, ContainerSHA256: c.SHA256, Settings: store.MailboxSettings{DestinationID: f.Store.RootID()}}, "")
+	_, err = f.Store.BeginMailboxJob(ctx, c.Owner, store.MailboxJobRequest{ID: "partial-job", ContainerID: c.ID, ContainerSHA256: c.SHA256, Settings: store.MailboxSettings{DestinationID: f.Store.RootID()}})
 	require.NoError(t, err)
 	j, err := f.Store.ClaimMailboxJob(ctx)
 	require.NoError(t, err)

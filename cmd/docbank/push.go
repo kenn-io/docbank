@@ -15,7 +15,6 @@ import (
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/push"
-	"go.kenn.io/docbank/internal/telemetry"
 )
 
 func newPushCmd() *cobra.Command {
@@ -92,7 +91,12 @@ func readPushKey(keyFile string) (string, error) {
 // runPush prints each outcome and a final summary. An interrupt stops the run
 // cleanly: the summary still prints, and stopping a watch is not an error.
 func runPush(cmd *cobra.Command, connection *daemonconn.Connection, opts push.Options) error {
-	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+	parent := cmd.Context()
+	if !opts.Watch {
+		// The daemon reports the first addition of a one-shot interactive run.
+		parent = actionContext(cmd)
+	}
+	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	opts.Progress = func(ref, outcome string) error {
 		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", outcome, strconv.QuoteToASCII(ref)); err != nil {
@@ -114,22 +118,13 @@ func runPush(cmd *cobra.Command, connection *daemonconn.Connection, opts push.Op
 			runErr = fmt.Errorf("%w: %d failed", push.ErrFilesFailed, report.Failed)
 		}
 	}
-	return errors.Join(runErr, writePushSummary(cmd, connection, opts, report))
-}
-
-// writePushSummary prints the run's counts, then counts a one-shot run that
-// added documents; updates and unchanged files are not additions.
-func writePushSummary(cmd *cobra.Command, connection *daemonconn.Connection, opts push.Options, report push.Report) error {
-	_, err := fmt.Fprintf(cmd.OutOrStdout(),
+	_, outputErr := fmt.Fprintf(cmd.OutOrStdout(),
 		"added %d, updated %d, unchanged %d, failed %d\n",
 		report.Added, report.Updated, report.Skipped, report.Failed)
-	if !opts.Watch && report.Added > 0 {
-		reportAction(cmd, connection, telemetry.EventDocumentAdded, "")
+	if outputErr != nil {
+		outputErr = fmt.Errorf("writing push summary: %w", outputErr)
 	}
-	if err != nil {
-		return fmt.Errorf("writing push summary: %w", err)
-	}
-	return nil
+	return errors.Join(runErr, outputErr)
 }
 
 func init() { rootCmd.AddCommand(newPushCmd()) }

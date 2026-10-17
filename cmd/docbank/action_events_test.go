@@ -18,7 +18,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
-	"go.kenn.io/docbank/internal/telemetry"
 	kitdaemon "go.kenn.io/kit/daemon"
 )
 
@@ -49,7 +48,7 @@ func TestInteractiveActionGateAndReportingDeadline(t *testing.T) {
 		server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var body api.TelemetryEventRequest
 			assert.NoError(t, json.UnmarshalRead(r.Body, &body))
-			if body.Event == "search_run" {
+			if body.Properties != nil && body.Properties.SearchType == "hybrid" {
 				select {
 				case <-r.Context().Done():
 					timedOut <- true
@@ -86,12 +85,12 @@ func TestInteractiveActionGateAndReportingDeadline(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
 			cmd.SetContext(ctx)
-			reportAction(cmd, connection, "document_added", "add")
+			reportAction(cmd, connection, "search_run", "lexical")
 			reportOpened(cmd, connection)
 			require.Len(t, events, tc.want, tc.name)
 			if tc.want > 0 {
 				assert.Equal(t, []api.TelemetryEventRequest{
-					{Event: "document_added", Properties: &api.TelemetryEventProperties{Surface: "cli"}},
+					{Event: "search_run", Properties: &api.TelemetryEventProperties{Surface: "cli", SearchType: "text"}},
 					{Event: "document_opened", Properties: &api.TelemetryEventProperties{Surface: "cli"}},
 				}, []api.TelemetryEventRequest{<-events, <-events})
 			}
@@ -105,9 +104,14 @@ func TestInteractiveActionGateAndReportingDeadline(t *testing.T) {
 	})
 }
 
-func TestDocumentSearchReportsSubmissionBeforeFailure(t *testing.T) {
-	for _, mode := range []string{"lexical", "semantic", "hybrid", "auto", "similar"} {
-		t.Run(mode, func(t *testing.T) {
+func TestDocumentSearchReportsTheModeThatRan(t *testing.T) {
+	for _, tc := range []struct{ mode, actual, want string }{
+		{"lexical", "lexical", "text"}, {"semantic", "semantic", "semantic"}, {"hybrid", "hybrid", "hybrid"},
+		{"auto", "lexical", "text"}, {"auto", "hybrid", "hybrid"}, {"similar", "", "semantic"},
+		{"lexical", "failed", ""}, {"auto", "failed", ""}, {"similar", "failed", ""},
+	} {
+		t.Run(tc.mode+"/"+tc.actual, func(t *testing.T) {
+			mode := tc.mode
 			var events []api.TelemetryEventRequest
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
@@ -125,8 +129,17 @@ func TestDocumentSearchReportsSubmissionBeforeFailure(t *testing.T) {
 				case "/api/v1/nodes/42":
 					assert.NoError(t, json.MarshalWrite(w, api.Node{ID: 42, Kind: "file", CurrentVersionID: processingTestVersionID}))
 				case "/api/v1/search", "/api/v1/search/similar":
-					assert.Len(t, events, 1, "submission precedes the search request")
-					http.Error(w, `{"detail":"synthetic search failure"}`, http.StatusServiceUnavailable)
+					assert.Empty(t, events, "a search reports after its result")
+					if tc.actual == "failed" {
+						http.Error(w, `{"detail":"synthetic search failure"}`, http.StatusServiceUnavailable)
+						return
+					}
+					if r.URL.Path == "/api/v1/search/similar" {
+						assert.NoError(t, json.MarshalWrite(w, api.DocumentSimilarReport{State: "unavailable", Source: api.DocumentSimilarSource{NodeID: 42, ContentVersionID: processingTestVersionID}, BindingID: "synthetic",
+							MissingCoverage: &api.DocumentMissingCoverage{Kind: "embedding", BindingID: "synthetic", ProfileFingerprint: strings.Repeat("a", 64), ContentVersionID: processingTestVersionID}, Coverage: api.DocumentSearchCoverage{State: "unknown"}}))
+						return
+					}
+					assert.NoError(t, json.MarshalWrite(w, api.DocumentSearchReport{RequestedMode: mode, ActualMode: tc.actual, Coverage: api.DocumentSearchCoverage{State: "unknown"}, Results: []api.DocumentSearchResult{}, Degradations: []string{}, Trace: []api.DocumentSearchTrace{}}))
 				default:
 					http.NotFound(w, r)
 				}
@@ -147,12 +160,13 @@ func TestDocumentSearchReportsSubmissionBeforeFailure(t *testing.T) {
 			} else {
 				err = runDocumentSearch(cmd, connection, "synthetic query", options)
 			}
-			require.Error(t, err)
-			require.Len(t, events, 1)
-			assert.Equal(t, "search_run", events[0].Event)
-			require.NotNil(t, events[0].Properties)
-			assert.Equal(t, "cli", events[0].Properties.Surface)
-			assert.Equal(t, telemetry.SearchType(options.Mode), events[0].Properties.SearchType)
+			if tc.actual == "failed" {
+				require.Error(t, err)
+				require.Empty(t, events, "a search that fails before choosing a mode stays silent")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, []api.TelemetryEventRequest{{Event: "search_run", Properties: &api.TelemetryEventProperties{Surface: "cli", SearchType: tc.want}}}, events)
 		})
 	}
 }

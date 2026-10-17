@@ -116,6 +116,9 @@ func AdmitPackageImport(ctx context.Context, d Deps, g PackageMutationGate, owne
 		return PackageImportJob{}, err
 	}
 	var admitted store.PackageImportJob
+	// Track before the worker can see the job; an exact retry keeps its original job.
+	jobID := uuid.NewString()
+	d.TelemetryCapture.TrackImport(jobID, surface)
 	err = g.MutateContext(ctx, func() error {
 		run, beginErr := d.Store.BeginIngest(ctx, "package:loadfile", preview.SourceRef)
 		if beginErr != nil {
@@ -127,14 +130,16 @@ func AdmitPackageImport(ctx context.Context, d Deps, g PackageMutationGate, owne
 			MappingSHA256: preview.MappingSHA256, MappingJSON: preview.MappingJSON,
 			ManifestSHA256: preview.ManifestSHA256, ManifestBlobSHA256: preview.ManifestBlobSHA256,
 			Volumes: volumes}
-		jobID := uuid.NewString()
 		admitted, beginErr = d.Store.AdmitPackageImport(ctx, run, pkg, store.PackageImportJobRequest{
 			ID: jobID, Owner: owner, OperationID: request.OperationID,
 			RequestSHA256: requestHash, PreflightID: preview.PreflightID,
 			PackageID: pkg.PackageID, JobJSON: jobJSON,
-		}, surface)
+		})
 		return beginErr
 	})
+	if err != nil || admitted.ID != jobID {
+		d.TelemetryCapture.ForgetImport(jobID)
+	}
 	if err != nil {
 		return PackageImportJob{}, err
 	}

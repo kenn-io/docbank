@@ -52,7 +52,11 @@ export class SnapshotSession {
     this.publish(this.state);
   }
 
-  async run(query: Query, options: SnapshotOptions): Promise<void> {
+  async run(
+    query: Query,
+    options: SnapshotOptions,
+    onresult?: (page: SnapshotPage) => void,
+  ): Promise<void> {
     const started = this.begin(query, options);
     if (started === undefined) return;
     try {
@@ -62,6 +66,7 @@ export class SnapshotSession {
         started.options,
         started.signal,
       );
+      onresult?.(firstPage);
       if (!this.current(started.epoch)) return;
       this.emit({
         status: "ready",

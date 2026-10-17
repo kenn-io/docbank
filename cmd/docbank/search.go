@@ -193,30 +193,24 @@ See docs/usage/search.md.`,
 			underPath = directory.Path
 		}
 		query := strings.Join(args, " ")
-		submitted := false
-		submit := func(mode string) {
-			if !submitted {
-				reportAction(cmd, c, "search_run", mode)
-				submitted = true
-			}
-		}
 		var automatic automaticSearchOutcome
 		if !cmd.Flags().Changed("mode") {
-			automatic, err = tryAutomaticSearch(cmd.Context(), c, query, searchLimit, opts, submit)
+			automatic, err = tryAutomaticSearch(cmd.Context(), c, query, searchLimit, opts)
 			if err != nil {
 				return err
 			}
 		}
 		// Lexical search runs after query embedding, so folder hits added to a
 		// hybrid report are as current as its revalidated results.
-		submit("text")
 		rep, err := c.SearchWithOptions(cmd.Context(), query, searchLimit, opts)
 		if err != nil {
 			return err
 		}
 		if automatic.report != nil {
+			reportAction(cmd, c, "search_run", automatic.report.ActualMode)
 			return writeAutomaticSearch(cmd, query, *automatic.report, rep)
 		}
+		reportAction(cmd, c, "search_run", "text")
 		if err := writeSearchDegradation(cmd, automatic); err != nil {
 			return err
 		}
@@ -322,14 +316,14 @@ func runSimilarSearch(cmd *cobra.Command, c *daemonconn.Connection, selector nod
 	if err != nil {
 		return err
 	}
-	if options.Intent {
-		reportAction(cmd, c, "search_run", "semantic")
-	}
 	report, err := c.SimilarDocuments(cmd.Context(), api.DocumentSimilarRequest{
 		Selector: api.ProcessingSelector{NodeID: node.ID, ContentVersionID: version, Profile: options.Profile}, BindingID: binding, Limit: options.Limit,
 		Fence: api.DocumentSourceFence{VaultUID: info.VaultID, ContentVersionIDs: options.ContentVersionIDs}})
 	if err != nil {
 		return err
+	}
+	if options.Intent {
+		reportAction(cmd, c, "search_run", "similar")
 	}
 	if options.JSON {
 		return writeCLIJSON(cmd.OutOrStdout(), report)
@@ -388,9 +382,6 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 	if err != nil {
 		return err
 	}
-	if options.Intent {
-		reportAction(cmd, c, "search_run", options.Mode)
-	}
 	report, err := c.SearchDocuments(cmd.Context(), api.DocumentSearchRequest{
 		Query: query, Mode: options.Mode, Limit: options.Limit, Profile: options.Profile,
 		BindingID: bindingID, Explain: options.Explain, Rerank: options.Rerank,
@@ -398,6 +389,9 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 	})
 	if err != nil {
 		return err
+	}
+	if options.Intent {
+		reportAction(cmd, c, "search_run", report.ActualMode)
 	}
 	if options.JSON {
 		return writeCLIJSON(cmd.OutOrStdout(), report)

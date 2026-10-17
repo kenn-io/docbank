@@ -73,10 +73,6 @@ it("shows preview quality, preserves zoom and reports deliberate inspection", as
   await screen.findByText("Grid preview");
   await screen.findByText("Fit preview");
   expect(inspect).not.toHaveBeenCalled();
-  await fireEvent.wheel(screen.getByRole("dialog"), { deltaY: 100 });
-  await fireEvent.keyDown(screen.getByRole("dialog"), { key: "i" });
-  await fireEvent.pointerDown(screen.getByRole("dialog"));
-  expect(inspect).toHaveBeenCalledTimes(3);
   await view.rerender({ ...props, reloadRevision: 1 });
   await waitFor(() =>
     expect(
@@ -135,6 +131,23 @@ it("shows preview quality, preserves zoom and reports deliberate inspection", as
   expect(preview.mock.calls.filter(([, size]) => size === "large")).toHaveLength(largeRequests);
   expect(URL.revokeObjectURL).toHaveBeenCalled();
 });
+
+it.each(["wheel", "i", "pointerdown"])(
+  "reports %s inspection from a fresh viewer",
+  async (gesture) => {
+    const inspect = vi.fn();
+    vi.spyOn(actionEvents, "dailyAction").mockReturnValue(inspect);
+    const { props } = setup();
+    render(PhotoLoupe, props);
+    await screen.findByText("Fit preview");
+    expect(inspect).not.toHaveBeenCalled();
+    const dialog = screen.getByRole("dialog");
+    if (gesture === "wheel") await fireEvent.wheel(dialog, { deltaY: 100 });
+    else if (gesture === "i") await fireEvent.keyDown(dialog, { key: "i" });
+    else await fireEvent.pointerDown(dialog);
+    expect(inspect).toHaveBeenCalledOnce();
+  },
+);
 
 it.each([
   ["ArrowLeft", -1],

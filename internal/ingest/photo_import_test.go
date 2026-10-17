@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,6 +15,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/telemetry"
+	"go.kenn.io/kit/telemetry/posthog"
 )
 
 func TestPhotoImportGrouping(t *testing.T) {
@@ -289,16 +293,28 @@ func TestPhotoImportRunnerHonorsCancelAfterLastGroup(t *testing.T) {
 	assert.Equal(t, int64(1), finished.CompletedObjects)
 }
 
-func TestPhotoImportRunnerReportsAdditionOnceAcrossCancelAndResume(t *testing.T) {
+func TestPhotoImportRunnerReportsFirstNewDocumentOnce(t *testing.T) {
 	ing := newTestIngester(t)
 	root := t.TempDir()
 	for i := range 3 {
 		require.NoError(t, os.WriteFile(filepath.Join(root, fmt.Sprintf("IMG_%d.JPG", i)), []byte(fmt.Sprint("jpeg-", i)), 0o600))
 	}
 	request := fmt.Sprintf(`{"source_root":%q,"destination":"/photos"}`, root)
-	var surfaces []string
-	runner := PhotoImportRunner{Ingester: ing, ImportResult: func(surface string) { surfaces = append(surfaces, surface) }}
+	collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	t.Cleanup(collector.Close)
+	var surfaces []any
+	reporter, err := posthog.NewReporter(posthog.Options{APIKey: "synthetic-key", Endpoint: collector.URL,
+		Application: "docbank", EnvPrefix: "DOCBANK", DistinctID: "synthetic-install"},
+		posthog.WithAllowedEvent(telemetry.EventDocumentAdded, posthog.RequireProperty("surface", func(value any) (any, bool) {
+			surfaces = append(surfaces, value)
+			return value, true
+		})))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, reporter.Close()) })
+	capture := telemetry.CaptureHandler(reporter, t.TempDir())
+	runner := PhotoImportRunner{Ingester: ing, Telemetry: capture}
 
+	// The worker keeps reporting after the starting interface has gone away.
 	stopped, stop := context.WithCancel(t.Context())
 	shutdown := runner
 	calls := 0
@@ -306,17 +322,50 @@ func TestPhotoImportRunnerReportsAdditionOnceAcrossCancelAndResume(t *testing.T)
 		if err := mutate(); err != nil {
 			return err
 		}
-		calls++
-		if calls == 2 {
+		if calls++; calls == 2 {
 			stop()
 			return ctx.Err()
 		}
 		return nil
 	}
-	interrupted, err := ing.Store.CreatePhotoImport(t.Context(), store.PhotoImportRequest{SourceRoot: root, Destination: "/photos"}, "cli")
+	first, err := ing.Store.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport, request)
+	require.NoError(t, err)
+	capture.TrackImport(first.ID, "cli")
+	require.ErrorIs(t, shutdown.Run(stopped, first.ID), context.Canceled)
+	require.Equal(t, []any{"cli"}, surfaces)
+	require.NoError(t, runner.Run(t.Context(), first.ID))
+	require.Equal(t, []any{"cli"}, surfaces, "a retry in the same daemon run reports nothing more")
+
+	// A revised source becomes a new version, which is not an addition.
+	require.NoError(t, os.WriteFile(filepath.Join(root, "IMG_0.JPG"), []byte("revised jpeg"), 0o600))
+	revised, err := ing.Store.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport, request)
+	require.NoError(t, err)
+	capture.TrackImport(revised.ID, "cli")
+	require.NoError(t, runner.Run(t.Context(), revised.ID))
+	completed, err := ing.Store.StorageOperation(t.Context(), revised.ID)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"added":1,"skipped":2,"changed":0,"failed":0,"ambiguous":0,"unsupported":0}`, completed.ReceiptJSON)
+	require.Equal(t, []any{"cli"}, surfaces)
+}
+
+func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
+	ing := newTestIngester(t)
+	root := t.TempDir()
+	for i := range 3 {
+		require.NoError(t, os.WriteFile(filepath.Join(root, fmt.Sprintf("IMG_%d.JPG", i)), []byte(fmt.Sprint("jpeg-", i)), 0o600))
+	}
+	request := fmt.Sprintf(`{"source_root":%q,"destination":"/photos"}`, root)
+	runner := PhotoImportRunner{Ingester: ing}
+
+	stopped, stop := context.WithCancel(t.Context())
+	shutdown := runner
+	shutdown.Options.Mutate = func(ctx context.Context, _ func() error) error {
+		stop()
+		return ctx.Err()
+	}
+	interrupted, err := ing.Store.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport, request)
 	require.NoError(t, err)
 	require.ErrorIs(t, shutdown.Run(stopped, interrupted.ID), context.Canceled)
-	require.Equal(t, []string{"cli"}, surfaces)
 	resumable, err := ing.Store.ResumableStorageOperations(t.Context())
 	require.NoError(t, err)
 	require.Len(t, resumable, 1)
@@ -327,8 +376,7 @@ func TestPhotoImportRunnerReportsAdditionOnceAcrossCancelAndResume(t *testing.T)
 	assert.Equal(t, store.StorageOperationCompleted, completed.State)
 	assert.Equal(t, int64(3), completed.TotalObjects)
 	assert.Equal(t, int64(3), completed.CompletedObjects)
-	require.Equal(t, []string{"cli"}, surfaces)
-	assert.JSONEq(t, `{"added":2,"skipped":1,"changed":0,"failed":0,"ambiguous":0,"unsupported":0}`, completed.ReceiptJSON)
+	assert.JSONEq(t, `{"added":3,"skipped":0,"changed":0,"failed":0,"ambiguous":0,"unsupported":0}`, completed.ReceiptJSON)
 
 	cancelled, err := ing.Store.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport, request)
 	require.NoError(t, err)

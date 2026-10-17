@@ -155,6 +155,7 @@ type searchLoadedMsg struct {
 	query     string
 	report    api.SearchReport
 	err       error
+	intent    bool
 }
 
 type naturalProfilesLoadedMsg struct {
@@ -172,6 +173,7 @@ type naturalSearchBaseLoadedMsg struct {
 	report      api.DocumentSearchReport
 	rows        []row
 	err         error
+	intent      bool
 }
 
 type naturalSearchRerankLoadedMsg struct {
@@ -577,6 +579,10 @@ func (m Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case directoryLoadedMsg:
 		return m.applyDirectory(msg)
 	case searchLoadedMsg:
+		if msg.intent && msg.err == nil {
+			next, _ := m.applySearch(msg)
+			return next, m.reportAction("search_run", "text")
+		}
 		return m.applySearch(msg)
 	case naturalProfilesLoadedMsg:
 		if msg.requestID != m.naturalProfilesRequest {
@@ -597,7 +603,12 @@ func (m Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case naturalSearchBaseLoadedMsg:
-		return m.applyNaturalSearchBase(msg)
+		next, cmd := m.applyNaturalSearchBase(msg)
+		// A failed natural search falls back to text, which reports its own result.
+		if msg.intent && msg.err == nil && msg.report.ActualMode != "" {
+			cmd = tea.Batch(m.reportAction("search_run", msg.report.ActualMode), cmd)
+		}
+		return next, cmd
 	case naturalSearchRerankLoadedMsg:
 		return m.applyNaturalSearchRerank(msg)
 	case historyLoadedMsg:
@@ -737,14 +748,18 @@ func (m Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.loadProcessingCoverage(msg.plan, msg.requestID)
 	case processingSimilarLoadedMsg:
+		var reported tea.Cmd
+		if msg.err == nil {
+			reported = m.reportAction("search_run", "similar")
+		}
 		if !m.processingOpen || msg.requestID != m.processingRequestID || msg.similarID != m.processingSimilarID {
-			return m, nil
+			return m, reported
 		}
 		m.processingSimilarBusy, m.processingSimilarErr = false, msg.err
 		if msg.err == nil {
 			m.processingSimilarReport = &msg.report
 		}
-		return m, nil
+		return m, reported
 	case processingCoverageLoadedMsg:
 		if !m.processingOpen || msg.requestID != m.processingRequestID {
 			return m, nil
@@ -756,15 +771,19 @@ func (m Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case processingSearchLoadedMsg:
+		var reported tea.Cmd
+		if msg.err == nil {
+			reported = m.reportAction("search_run", msg.report.ActualMode)
+		}
 		if !m.processingOpen || msg.requestID != m.processingRequestID || msg.searchID != m.processingSearchID {
-			return m, nil
+			return m, reported
 		}
 		m.processingSearchBusy = false
 		m.processingSearchErr = msg.err
 		if msg.err == nil {
 			m.processingSearchReport = &msg.report
 		}
-		return m, nil
+		return m, reported
 	case processingStartedMsg:
 		if !m.processingOpen || msg.requestID != m.processingRequestID || msg.streamID != m.processingStreamID {
 			if msg.stream != nil {
@@ -1434,7 +1453,7 @@ func (m Model) updateProcessingKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.processingSearchErr = nil
 			m.processingSearchReport = nil
 			m.processingSearchID++
-			return m, tea.Batch(m.reportAction("search_run", "text"), m.startSpinner(), m.loadProcessingSearch(m.processingRequestID, query))
+			return m, tea.Batch(m.startSpinner(), m.loadProcessingSearch(m.processingRequestID, query))
 		default:
 			var cmd tea.Cmd
 			m.searchInput, cmd = m.searchInput.Update(msg)
@@ -1826,11 +1845,11 @@ func (m *Model) beginSimilar() tea.Cmd {
 	ctx, backend, plan := m.ctx, m.backend, *m.processingPlan
 	requestID, similarID := m.processingRequestID, m.processingSimilarID
 	scope := append([]string(nil), m.processingSimilarScope...)
-	return tea.Batch(m.reportAction("search_run", "semantic"), func() tea.Msg {
+	return func() tea.Msg {
 		report, err := backend.SimilarDocuments(ctx, api.DocumentSimilarRequest{Selector: plan.Selector, Limit: maxProcessingSearchItems,
 			Fence: api.DocumentSourceFence{VaultUID: plan.VaultUID, ContentVersionIDs: scope}})
 		return processingSimilarLoadedMsg{requestID: requestID, similarID: similarID, report: report, err: err}
-	})
+	}
 }
 
 func (m Model) loadProcessingProfiles(requestID uint64) tea.Cmd {
@@ -2059,14 +2078,7 @@ func (m Model) loadDirectory(
 }
 
 func (m Model) startSearch(query string) (tea.Model, tea.Cmd) {
-	var action tea.Cmd
-	if m.searchIntent {
-		mode, _, _ := naturalRequestMode(m.naturalMode, m.selectedNaturalProfile())
-		if mode != naturalSemantic && mode != naturalHybrid {
-			mode = "text"
-		}
-		action = m.reportAction("search_run", mode)
-	}
+	intent := m.searchIntent
 	m.searchIntent = false
 	m.loading = true
 	m.err = nil
@@ -2075,8 +2087,7 @@ func (m Model) startSearch(query string) (tea.Model, tea.Cmd) {
 	m.submittedSearchQuery, m.submittedSearchID = query, m.requestID
 	m.naturalRerankPending = false
 	m.naturalSearchNote = ""
-	load := m.loadSearch(query, m.requestID)
-	return m, tea.Batch(action, m.startSpinner(), load)
+	return m, tea.Batch(m.startSpinner(), m.loadSearch(query, m.requestID, intent))
 }
 
 func (m Model) activeSearchQuery() string {
@@ -2105,14 +2116,14 @@ func (m Model) updateNaturalSearchSetting(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) loadSearch(query string, requestID uint64) tea.Cmd {
+func (m Model) loadSearch(query string, requestID uint64, intent bool) tea.Cmd {
 	if m.naturalMode != naturalNames && m.selectedNaturalProfile() != nil {
-		return m.loadNaturalSearch(query, requestID)
+		return m.loadNaturalSearch(query, requestID, intent)
 	}
 	ctx, backend := m.ctx, m.backend
 	return func() tea.Msg {
 		report, err := backend.Search(ctx, query, maxSearchItems)
-		return searchLoadedMsg{requestID: requestID, query: query, report: report, err: err}
+		return searchLoadedMsg{requestID: requestID, query: query, report: report, err: err, intent: intent}
 	}
 }
 
@@ -2124,11 +2135,11 @@ func (m Model) loadNaturalProfiles(requestID uint64) tea.Cmd {
 	}
 }
 
-func (m Model) loadNaturalSearch(query string, requestID uint64) tea.Cmd {
+func (m Model) loadNaturalSearch(query string, requestID uint64, intent bool) tea.Cmd {
 	ctx, backend, mode := m.ctx, m.backend, m.naturalMode
 	profile := m.selectedNaturalProfile()
 	searchID := m.naturalSearchID
-	return func() tea.Msg {
+	search := func() naturalSearchBaseLoadedMsg {
 		if profile == nil {
 			return naturalSearchBaseLoadedMsg{requestID: requestID, searchID: searchID, query: query, naturalMode: mode,
 				err: errors.New("natural search profile is unavailable")}
@@ -2159,6 +2170,11 @@ func (m Model) loadNaturalSearch(query string, requestID uint64) tea.Cmd {
 		rows, err := hydrateNaturalRows(ctx, backend, report, mode, make(map[int64]api.Node))
 		return naturalSearchBaseLoadedMsg{requestID: requestID, searchID: searchID, query: query, naturalMode: mode,
 			request: request, report: report, rows: rows, err: err}
+	}
+	return func() tea.Msg {
+		msg := search()
+		msg.intent = intent
+		return msg
 	}
 }
 
@@ -2431,7 +2447,7 @@ func (m Model) applyNaturalSearchBase(msg naturalSearchBaseLoadedMsg) (tea.Model
 		m.naturalResultMode = ""
 		m.naturalSearchNote = "Natural-language search unavailable: " + msg.err.Error() + ". Showing Names and text."
 		m.loading = true
-		return m, m.loadSearch(msg.query, msg.requestID)
+		return m, m.loadSearch(msg.query, msg.requestID, msg.intent)
 	}
 	m.applyNaturalRows(msg.query, msg.rows, msg.report.Truncated)
 	m.naturalResultMode = msg.naturalMode

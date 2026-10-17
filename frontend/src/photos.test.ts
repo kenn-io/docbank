@@ -2902,3 +2902,49 @@ it.each([{ rating: 5 }, { flag: "pick" as const }, { label: "red" as const }])(
     photos.dispose();
   },
 );
+
+it("reports deliberate Photos searches when their first page arrives, not when they fail", async () => {
+  const events: unknown[] = [];
+  const pages: ((response: Response) => void)[] = [];
+  vi.stubGlobal("fetch", (url: string, init: RequestInit) => {
+    if (url === "/api/daemon/telemetry/events") {
+      events.push(JSON.parse(init.body as string));
+      return Promise.resolve(new Response(null, { status: 202 }));
+    }
+    if (url.endsWith("/photos/assets/query") && JSON.parse(init.body as string).facets?.length)
+      return Promise.resolve(new Response(JSON.stringify({ facets: [] })));
+    return new Promise<Response>((resolve) => pages.push(resolve));
+  });
+  const search = (search_type: string) => ({
+    event: "search_run",
+    properties: { surface: "web", search_type },
+  });
+  const photos = new Photos("scoped", vi.fn());
+  const failed = photos.setQuery({ ...photoQuery, text: "harbor" }, true);
+  pages.shift()!(Response.json({ detail: "Synthetic photo failure" }, { status: 500 }));
+  await failed;
+  expect(photos.error).toContain("Synthetic photo failure");
+  expect(events).toEqual([]);
+
+  const quiet = photos.setQuery({ ...photoQuery, text: "quiet" });
+  pages.shift()!(response([photo(1)]));
+  await quiet;
+  expect(events).toEqual([]);
+
+  const stale = photos.setQuery({ ...photoQuery, text: "old" }, true);
+  const current = photos.setQuery({ ...photoQuery, text: "river", mode: "semantic" }, true);
+  pages[1]!(response([photo(2)], "next"));
+  await current;
+  expect(events).toEqual([search("semantic")]);
+  pages[0]!(response([photo(3)]));
+  await stale;
+  expect(events).toEqual([search("semantic"), search("text")]);
+  expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-2"]);
+  pages.length = 0;
+  const more = photos.loadMore();
+  pages.shift()!(response([photo(4)]));
+  await more;
+  expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-2", "photo-4"]);
+  expect(events).toHaveLength(2);
+  photos.dispose();
+});

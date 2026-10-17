@@ -101,7 +101,7 @@ func TestPackageImportAdmitsFrozenPreflightAndReplaysOperation(t *testing.T) {
 		PreflightID: preview.PreflightID, Into: "/", Name: "synthetic-package",
 		OperationID: uuid.NewString(), IndexSuppliedText: true,
 	}
-	first := srv.call(t, http.MethodPost, "/api/v1/packages/imports", mustPackageJSON(t, request), map[string]string{api.ActionSurfaceHeader: "cli"})
+	first := srv.call(t, http.MethodPost, "/api/v1/packages/imports", mustPackageJSON(t, request), nil)
 	require.Equal(t, http.StatusAccepted, first.Code, first.Body.String())
 	var job api.PackageImportJob
 	require.NoError(t, json.Unmarshal(first.Body.Bytes(), &job))
@@ -113,7 +113,6 @@ func TestPackageImportAdmitsFrozenPreflightAndReplaysOperation(t *testing.T) {
 	stored, err := catalog.PackageImportJob(t.Context(), "vault:"+catalog.VaultID(), request.OperationID)
 	require.NoError(t, err)
 	require.Equal(t, job.JobID, stored.ID)
-	require.Equal(t, "cli", stored.ActionSurface)
 	read := srv.get(t, "/api/v1/packages/imports/"+request.OperationID)
 	require.Equal(t, http.StatusOK, read.Code, read.Body.String())
 	browserRead := srv.call(t, http.MethodGet, "/api/v1/packages/imports/"+request.OperationID, "",

@@ -26,10 +26,9 @@ var packageImportJobStates = []string{packageJobQueued, packageJobRunning,
 type packageImportJobRow struct {
 	PackageImportJobRequest
 
-	ActionSurface string `json:"action_surface,omitempty"`
-	State         string `json:"state"`
-	CreatedAt     string `json:"created_at"`
-	UpdatedAt     string `json:"updated_at"`
+	State     string `json:"state"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
 }
 
 type metadataPackageImportRow struct {
@@ -46,7 +45,7 @@ func writePackageImportMetadataRow(write metadataWrite, kind string, value any) 
 	return write(metadataPackageImportRow{Type: kind, CanonicalJSON: encoded, Checksum: checksum})
 }
 
-func exportPackageImportMetadata(ctx context.Context, q metadataQuerier, write metadataWrite, version int) error {
+func exportPackageImportMetadata(ctx context.Context, q metadataQuerier, write metadataWrite) error {
 	records, err := q.QueryContext(ctx, `SELECT package_id,row_id,load_file,row_ordinal,occurrence_id,
 		raw_json,raw_sha256,sensitive FROM package_records ORDER BY package_id,row_id`)
 	if err != nil {
@@ -126,12 +125,8 @@ func exportPackageImportMetadata(ctx context.Context, q metadataQuerier, write m
 	if err := receipts.Close(); err != nil {
 		return err
 	}
-	actionColumns := "action_surface"
-	if version < 39 {
-		actionColumns = "''"
-	}
 	jobs, err := q.QueryContext(ctx, `SELECT id,owner,operation_id,request_sha256,preflight_id,package_id,
-        job_json,state,created_at,updated_at,`+actionColumns+` FROM package_import_jobs ORDER BY id`)
+		job_json,state,created_at,updated_at FROM package_import_jobs ORDER BY id`)
 	if err != nil {
 		return err
 	}
@@ -139,7 +134,7 @@ func exportPackageImportMetadata(ctx context.Context, q metadataQuerier, write m
 	for jobs.Next() {
 		var job packageImportJobRow
 		if err := jobs.Scan(&job.ID, &job.Owner, &job.OperationID, &job.RequestSHA256, &job.PreflightID,
-			&job.PackageID, &job.JobJSON, &job.State, &job.CreatedAt, &job.UpdatedAt, &job.ActionSurface); err != nil {
+			&job.PackageID, &job.JobJSON, &job.State, &job.CreatedAt, &job.UpdatedAt); err != nil {
 			_ = jobs.Close()
 			return err
 		}
@@ -209,7 +204,7 @@ func importPackageImportMetadata(ctx context.Context, tx *sql.Tx, row metadataPa
 	case metadataPackageImportJobType:
 		job, err := canonical.Decode[packageImportJobRow](row.CanonicalJSON)
 		if err != nil || validatePackageImportJobRequest(job.PackageImportJobRequest) != nil ||
-			!validActionSurface(job.ActionSurface) || !slices.Contains(packageImportJobStates, job.State) || job.CreatedAt == "" || job.UpdatedAt == "" {
+			!slices.Contains(packageImportJobStates, job.State) || job.CreatedAt == "" || job.UpdatedAt == "" {
 			return fmt.Errorf("%w: package import job %s", ErrPackageConflict, job.ID)
 		}
 		// A restored worker has no lease. Interrupted work resumes from its
@@ -218,17 +213,17 @@ func importPackageImportMetadata(ctx context.Context, tx *sql.Tx, row metadataPa
 			job.State = packageJobQueued
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO package_import_jobs(id,owner,operation_id,request_sha256,
-			preflight_id,package_id,state,epoch,token,job_json,created_at,updated_at,action_surface)
-			VALUES(?,?,?,?,?,?,?,0,'',?,?,?,?)`, job.ID, job.Owner, job.OperationID, job.RequestSHA256,
-			job.PreflightID, job.PackageID, job.State, job.JobJSON, job.CreatedAt, job.UpdatedAt, job.ActionSurface)
+			preflight_id,package_id,state,epoch,token,job_json,created_at,updated_at)
+			VALUES(?,?,?,?,?,?,?,0,'',?,?,?)`, job.ID, job.Owner, job.OperationID, job.RequestSHA256,
+			job.PreflightID, job.PackageID, job.State, job.JobJSON, job.CreatedAt, job.UpdatedAt)
 		return err
 	default:
 		return errors.New("unknown package import authority record")
 	}
 }
 
-func validatePackageImportMetadataState(ctx context.Context, q metadataQuerier, version int) error {
-	if err := exportPackageImportMetadata(ctx, q, func(any) error { return nil }, version); err != nil {
+func validatePackageImportMetadataState(ctx context.Context, q metadataQuerier) error {
+	if err := exportPackageImportMetadata(ctx, q, func(any) error { return nil }); err != nil {
 		return err
 	}
 	var invalid bool

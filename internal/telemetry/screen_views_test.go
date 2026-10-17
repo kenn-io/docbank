@@ -79,6 +79,9 @@ func TestCaptureHandlerRejectsInvalidRequests(t *testing.T) {
 	for _, props := range []string{`{"surface":"web"}`, `{"surface":"web","search_type":"auto"}`, `{"surface":"web","search_type":42}`} {
 		require.Equal(t, 400, postEvent(t, handler, `{"event":"search_run","properties":`+props+`}`).Code)
 	}
+	// Only the daemon confirms additions.
+	require.Equal(t, 400, postEvent(t, handler, `{"event":" document_added ","properties":{"surface":"web"}}`).Code)
+	require.ErrorIs(t, handler.Capture("document_added", map[string]any{"surface": "agent"}), posthog.ErrInvalidProperty)
 	require.NoError(t, reporter.Close())
 	require.NoFileExists(t, filepath.Join(dir, screenClaimsFile))
 	mu.Lock()
@@ -118,7 +121,22 @@ func TestCaptureClassifiesSearchesAndClaimsAcrossInterfacesRestartsAndDays(t *te
 	}
 	wg.Wait()
 	require.Equal(t, 202, postEvent(t, handler, screenBody("search", "tui")).Code)
-	for _, event := range []string{"document_added", "document_opened", "search_run"} {
+	for _, surface := range []string{"web", "tui", "cli"} {
+		// Each import reports its first addition once; a replay keeps the first surface.
+		id := "synthetic-import-" + surface
+		handler.TrackImport(id, surface)
+		handler.TrackImport(id, "web")
+		handler.ImportAdded(id)
+		handler.ImportAdded(id)
+		handler.TrackImport(id, "web")
+		handler.ImportAdded(id)
+		handler.ForgetImport(id)
+	}
+	handler.TrackImport("synthetic-finished", "web")
+	handler.ForgetImport("synthetic-finished")
+	handler.ImportAdded("synthetic-finished")
+	handler.ImportAdded("synthetic-untracked")
+	for _, event := range []string{"document_opened", "search_run"} {
 		for _, surface := range []string{"web", "tui", "cli"} {
 			values := []struct{ mode, searchType string }{{"", ""}}
 			if event == "search_run" {
@@ -194,7 +212,7 @@ func TestCaptureClassifiesSearchesAndClaimsAcrossInterfacesRestartsAndDays(t *te
 	}
 	assert.Equal(t, map[string]int{
 		"screen_viewed/web/browse": 4, "screen_viewed/tui/browse": 2, "screen_viewed/tui/search": 1,
-		"document_added/web": 2, "document_added/tui": 2, "document_added/cli": 2,
+		"document_added/web": 1, "document_added/tui": 1, "document_added/cli": 1,
 		"document_opened/web": 2, "document_opened/tui": 1, "document_opened/cli": 1,
 		"search_run/web/text": 1, "search_run/web/semantic": 2, "search_run/web/hybrid": 1,
 		"search_run/tui/text": 1, "search_run/tui/semantic": 1, "search_run/tui/hybrid": 1,

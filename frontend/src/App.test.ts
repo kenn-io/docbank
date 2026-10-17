@@ -2372,11 +2372,12 @@ it("refreshes open audit history when a pending tag change completes", async () 
   expect(screen.queryByText("No events on this page")).toBeNull();
 });
 
-it("counts a submitted tag filter once even when its lookup fails", async () => {
+it("counts a submitted tag filter when its results arrive, not when its lookup fails", async () => {
   prepareSelectionApp();
   const { fetchMock } = installSelectionBackend();
   const backend = fetchMock.getMockImplementation()!;
   const actions: unknown[] = [];
+  let failNext = true;
   let release!: (response: Response) => void;
   fetchMock.mockImplementation((input, init) => {
     const url = String(input);
@@ -2385,10 +2386,12 @@ it("counts a submitted tag filter once even when its lookup fails", async () => 
       if (event.event === "search_run") actions.push(event);
       return Promise.resolve(new Response(null, { status: 202 }));
     }
-    if (url.startsWith("/api/v1/tags/") && url.includes("/nodes?"))
+    if (failNext && url.startsWith("/api/v1/tags/") && url.includes("/nodes?")) {
+      failNext = false;
       return new Promise<Response>((resolve) => {
         release = resolve;
       });
+    }
     return backend(input, init);
   });
   render(App);
@@ -2397,9 +2400,7 @@ it("counts a submitted tag filter once even when its lookup fails", async () => 
     screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
   );
   await fireEvent.click(screen.getByRole("option", { name: "tax (3)" }));
-  expect(actions).toEqual([
-    { event: "search_run", properties: { surface: "web", search_type: "text" } },
-  ]);
+  expect(actions).toEqual([]);
   release(
     new Response('{"detail":"Synthetic tag failure"}', {
       status: 500,
@@ -2407,5 +2408,14 @@ it("counts a submitted tag filter once even when its lookup fails", async () => 
     }),
   );
   await screen.findByText("Synthetic tag failure");
-  expect(actions).toHaveLength(1);
+  expect(actions).toEqual([]);
+  await fireEvent.click(
+    screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }),
+  );
+  await fireEvent.click(screen.getByRole("option", { name: "tax (3)" }));
+  await waitFor(() =>
+    expect(actions).toEqual([
+      { event: "search_run", properties: { surface: "web", search_type: "text" } },
+    ]),
+  );
 });

@@ -1132,41 +1132,57 @@ function renderProcessingResponse(response: Promise<Response>, profiles = ["priv
 }
 
 it.each(["search", "similar"])(
-  "reports submitted %s before failure or drawer close",
+  "reports a %s result even after close but not a failed request",
   async (kind) => {
-    let reject!: (error: Error) => void;
-    const pending = new Promise<never>((_resolve, fail) => {
-      reject = fail;
+    let finish!: (report: unknown) => void;
+    const pending = new Promise<never>((resolve) => {
+      finish = resolve as (report: unknown) => void;
     });
-    if (kind === "search") vi.spyOn(processingAPI, "documentSearch").mockReturnValue(pending);
-    else vi.spyOn(processingAPI, "documentSimilar").mockReturnValue(pending);
+    const failure = new Error("Synthetic search failure");
+    if (kind === "search")
+      vi.spyOn(processingAPI, "documentSearch")
+        .mockRejectedValueOnce(failure)
+        .mockReturnValueOnce(pending);
+    else
+      vi.spyOn(processingAPI, "documentSimilar")
+        .mockRejectedValueOnce(failure)
+        .mockReturnValueOnce(pending);
     const view = renderProcessingResponse(Promise.resolve(completedProcessingResponse()));
     await screen.findByRole("button", { name: "Run processing" });
     await view.rerender({ scopeVersionIDs: [processingJob.content_version_id] });
-    if (kind === "search") {
-      await fireEvent.input(
-        screen.getByRole("searchbox", { name: "Search this document version" }),
-        { target: { value: "synthetic query" } },
-      );
-      await fireEvent.click(screen.getByRole("button", { name: "Search this version" }));
-    } else await fireEvent.click(screen.getByRole("button", { name: "Find similar" }));
+    const submit = async () => {
+      if (kind === "search") {
+        await fireEvent.input(
+          screen.getByRole("searchbox", { name: "Search this document version" }),
+          { target: { value: "synthetic query" } },
+        );
+        await fireEvent.click(screen.getByRole("button", { name: "Search this version" }));
+      } else await fireEvent.click(screen.getByRole("button", { name: "Find similar" }));
+    };
     const events = () =>
       view.fetchMock.mock.calls
         .filter(([input]) => String(input) === "/api/daemon/telemetry/events")
         .map(([, init]) => JSON.parse(String(init?.body)));
-    const expected = [
-      {
-        event: "search_run",
-        properties: { surface: "web", search_type: kind === "search" ? "text" : "semantic" },
-      },
-    ];
-    await waitFor(() => expect(events()).toEqual(expected));
-    if (kind === "similar") view.unmount();
+    await submit();
+    expect(await screen.findByText("Synthetic search failure")).toBeTruthy();
+    expect(events()).toEqual([]);
+    await submit();
+    view.unmount();
     await act(async () => {
-      reject(new Error("Synthetic search failure"));
-      await pending.catch(() => {});
+      finish(
+        kind === "search"
+          ? { ...contract.report, actual_mode: "lexical" }
+          : contract.similar_report,
+      );
+      await pending;
     });
-    if (kind === "search") expect(await screen.findByText("Synthetic search failure")).toBeTruthy();
-    expect(events()).toEqual(expected);
+    await waitFor(() =>
+      expect(events()).toEqual([
+        {
+          event: "search_run",
+          properties: { surface: "web", search_type: kind === "search" ? "text" : "semantic" },
+        },
+      ]),
+    );
   },
 );

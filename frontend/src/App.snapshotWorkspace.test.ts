@@ -281,7 +281,7 @@ it("navigates frozen documents within their boundaries", async () => {
   await waitFor(() => expect(state.highlightRequests).toBe(2));
 });
 
-it("reports submitted frozen searches while keeping snapshot retries silent", async () => {
+it("reports frozen search results while keeping retries and failed runs silent", async () => {
   const { state } = await renderFrozenSnapshotWorkspace(true);
   expect(state.searches).toHaveLength(1);
   await fireEvent.click(screen.getByRole("button", { name: "Next page" }));
@@ -300,7 +300,7 @@ it("reports submitted frozen searches while keeping snapshot retries silent", as
   state.failRun = true;
   await fireEvent.click(screen.getByRole("button", { name: "pdf, 101 documents" }));
   await screen.findByText("Synthetic query unavailable");
-  expect(state.searches).toHaveLength(3);
+  expect(state.searches).toHaveLength(2);
 });
 
 it("keeps rapid runs bound to the accepted frozen snapshot while live observations load separately", async () => {

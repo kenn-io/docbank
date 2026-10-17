@@ -463,8 +463,7 @@ func runServe(ctx context.Context) (retErr error) {
 	packageMailbox := mailbox.Service{Store: s, Blobs: blobs}
 	packageWorker, err := processing.NewPackageImportWorker(processing.PackageImportConfig{
 		Catalog: s, Blobs: blobs, Mutate: operationGate.MutateContext,
-		ImportResult: capture.DocumentAdded,
-		Owner:        "daemon-package-import-worker", LeaseDuration: 5 * time.Minute,
+		Owner: "daemon-package-import-worker", LeaseDuration: 5 * time.Minute, Telemetry: capture,
 		IdleDelay: time.Second, OpenContainer: func(ctx context.Context, owner, id string) (io.ReaderAt, int64, error) {
 			container, err := s.MailboxContainer(ctx, owner, id)
 			if err != nil {

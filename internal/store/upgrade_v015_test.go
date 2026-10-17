@@ -501,7 +501,7 @@ func TestUpgradeReleasedV0150KeepsPackagePreflight(t *testing.T) {
 			upgraded, err := s.PackagePreflight(ctx, request.Owner, request.PreflightID)
 			require.NoError(t, err)
 			assert.Equal(t, released, upgraded)
-			job, err := s.AdmitPackageImport(ctx, run, pkg, request, "")
+			job, err := s.AdmitPackageImport(ctx, run, pkg, request)
 			require.NoError(t, err, "the preview admits its import without being rerun")
 			assert.Equal(t, request.PreflightID, job.PreflightID)
 		})
@@ -671,48 +671,5 @@ func seedReleasedMtime(t *testing.T, db *sql.DB, nodeID int64, mtime string) {
 	} {
 		_, err := db.Exec(statement.query, statement.args...)
 		require.NoError(t, err)
-	}
-}
-
-func TestUpgradeReleasedJobsStartWithoutActionAttribution(t *testing.T) {
-	t.Parallel()
-	for _, driver := range v090UpgradeDrivers() {
-		t.Run(driver.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "docbank.db")
-			db, legacy := newReleasedFixtureStore(t, path, driver.driver, schemaV0150SQL, 28)
-			pkg, _, _ := prepareReceivedPackage(t, legacy, "released-import")
-			_, err := legacy.CreatePackage(t.Context(), pkg)
-			require.NoError(t, err)
-			request := packageImportJobRequest(t, legacy, pkg)
-			at := nowRFC3339()
-			_, err = db.Exec(`INSERT INTO package_import_jobs(id,owner,operation_id,request_sha256,preflight_id,package_id,state,epoch,token,job_json,created_at,updated_at) VALUES(?,?,?,?,?,?,'queued',0,'',?,?,?)`, request.ID, request.Owner, request.OperationID, request.RequestSHA256, request.PreflightID, pkg.PackageID, request.JobJSON, at, at)
-			require.NoError(t, err)
-			// This record uses the released schema's exact job JSON, without action fields.
-			container := MailboxContainerRequest{ID: "released-source", Owner: "synthetic-owner", SHA256: fakeHash("ab"), Size: 1, Format: "mbox"}
-			_, err = legacy.BeginMailboxContainer(t.Context(), container)
-			require.NoError(t, err)
-			require.NoError(t, legacy.withStorageTx(t.Context(), func(tx *sql.Tx) error { return legacy.EnsureBlobTx(tx, container.SHA256, 1) }))
-			require.NoError(t, legacy.PutMailboxChunk(t.Context(), container.Owner, container.ID, MailboxChunk{Index: 0, SHA256: container.SHA256, Size: 1}))
-			_, err = legacy.SealMailboxContainer(t.Context(), container.Owner, container.ID, container.SHA256, 1)
-			require.NoError(t, err)
-			job := MailboxJob{ID: "released-job", ContainerID: container.ID, ContainerSHA256: container.SHA256, Settings: MailboxSettings{DestinationID: legacy.RootID()}, Owner: container.Owner, State: "queued", CollectionID: uuid.New().String(), StartedAt: at}
-			job.Settings, err = normalizeMailboxSettings(job.Settings)
-			require.NoError(t, err)
-			encoded, err := json.Marshal(job)
-			require.NoError(t, err)
-			_, err = db.Exec(`INSERT INTO mailbox_jobs(id,owner,container_id,state,claim,job_json) VALUES(?,?,?,'queued','',?)`, job.ID, job.Owner, job.ContainerID, encoded)
-			require.NoError(t, err)
-			require.NoError(t, db.Close())
-			upgraded, err := Open(path, driver.driver)
-			require.NoError(t, err)
-			defer func() { require.NoError(t, upgraded.Close()) }()
-			imported, err := upgraded.PackageImportJob(t.Context(), request.Owner, request.OperationID)
-			require.NoError(t, err)
-			require.Empty(t, imported.ActionSurface)
-			require.Equal(t, request.JobJSON, imported.JobJSON)
-			mailbox, err := upgraded.MailboxJob(t.Context(), job.Owner, job.ID)
-			require.NoError(t, err)
-			require.Empty(t, mailbox.ActionSurface)
-		})
 	}
 }

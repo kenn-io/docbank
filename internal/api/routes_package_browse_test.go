@@ -398,7 +398,7 @@ func seedBrowseReceivedPackage(t *testing.T, catalog *testStore, sensitive bool)
 		ID: uuid.NewString(), Owner: owner, OperationID: uuid.NewString(), RequestSHA256: testHash("synthetic import"),
 		PreflightID: preflightID, PackageID: request.PackageID,
 		JobJSON: []byte(`{"source_kind":"root","source_locator":"synthetic-root"}`),
-	}, "")
+	})
 	require.NoError(t, err)
 	pkg, err := catalog.Package(t.Context(), request.PackageID)
 	require.NoError(t, err)

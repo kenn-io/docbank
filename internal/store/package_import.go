@@ -45,7 +45,6 @@ type PackageLabelRow struct {
 }
 
 type PackageImportReceipt struct {
-	ReportAddition   bool   `json:"-"`
 	ReceiptID        string `json:"receipt_id"`
 	PackageID        string `json:"package_id"`
 	RecordKey        string `json:"record_key"`
@@ -309,13 +308,6 @@ func (s *Store) commitPackageRecord(ctx context.Context, record PackageRecordRow
 			nullableString(receipt.ContentVersionID), receipt.State, receipt.ReceiptJSON, receipt.RecordedAt)
 		if err != nil {
 			return err
-		}
-		if receipt.State == "committed" && job.ActionSurface != "" {
-			if err := tx.QueryRowContext(ctx, `SELECT NOT EXISTS(
-				SELECT 1 FROM package_import_receipts WHERE package_id=? AND state='committed' AND receipt_id<>?)`,
-				receipt.PackageID, receipt.ReceiptID).Scan(&receipt.ReportAddition); err != nil {
-				return err
-			}
 		}
 		result = receipt
 		return nil

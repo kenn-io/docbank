@@ -76,29 +76,6 @@ func photoImportTestGroup(members ...PhotoImportMember) PhotoImportGroup {
 	return PhotoImportGroup{Members: members, DestinationID: 1}
 }
 
-func TestPhotoImportAdditionRejectsUnknownPlanFields(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	const plan = `{"action_surface":"cli","future_policy":true}`
-	op, err := s.CreateStorageOperation(ctx, StorageOperationCreate{
-		Kind: StorageOperationKindPhotoImport, RequestDigest: fakeHash("future-plan"),
-		RequestJSON: `{}`, PlanJSON: plan,
-	})
-	require.NoError(t, err)
-	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
-	require.NoError(t, err)
-	group := photoImportTestGroup(photoImportTestMember("IMG.JPG", PhotoRoleImage, fakeHash("future-photo"), "image/jpeg"))
-	group.OperationID = op.ID
-	_, err = s.IngestPhotoGroup(ctx, run, group)
-	require.ErrorContains(t, err, "future_policy")
-	stored, err := s.StorageOperation(ctx, op.ID)
-	require.NoError(t, err)
-	assert.JSONEq(t, plan, stored.PlanJSON)
-	_, err = s.NodeByPath(ctx, "/IMG.JPG")
-	assert.ErrorIs(t, err, ErrNotFound)
-}
-
 func TestPhotoImportLateSidecarUpdatesLockedHiddenAsset(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -470,22 +447,13 @@ func TestPhotoImportEditedSourceBecomesNewVersion(t *testing.T) {
 	}
 	first, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(raw, jpg("jpg-v1"), xmp("xmp-v1")))
 	require.NoError(t, err)
+	assert.True(t, first.Created)
 	sidecar := first.Nodes[2]
 
-	op, err := s.CreatePhotoImport(ctx, PhotoImportRequest{SourceRoot: root, Destination: "/"}, "cli")
-	require.NoError(t, err)
-	update := photoImportTestGroup(raw, jpg("jpg-v1"), xmp("xmp-v2"))
-	update.OperationID = op.ID
-	edited, err := s.IngestPhotoGroup(ctx, run, update)
+	edited, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(raw, jpg("jpg-v1"), xmp("xmp-v2")))
 	require.NoError(t, err)
 	assert.True(t, edited.Added)
-	assert.False(t, edited.ReportAddition)
-	assert.Equal(t, sidecar.ID, edited.Nodes[2].ID)
-	addition := photoImportTestGroup(photoImportTestMember(filepath.Join(root, "NEW.JPG"), PhotoRoleImage, fakeHash("new-jpg"), "image/jpeg"))
-	addition.OperationID = op.ID
-	created, err := s.IngestPhotoGroup(ctx, run, addition)
-	require.NoError(t, err)
-	assert.True(t, created.ReportAddition)
+	assert.False(t, edited.Created, "a replaced source version is not a new document")
 	_, err = s.IngestPhotoGroup(ctx, run, photoImportTestGroup(raw, jpg("jpg-v2"), xmp("xmp-v2")))
 	require.NoError(t, err)
 
@@ -497,7 +465,7 @@ func TestPhotoImportEditedSourceBecomesNewVersion(t *testing.T) {
 	assert.Equal(t, map[string]int{PhotoRoleRAW: 1, PhotoRoleImage: 1, PhotoRoleSidecar: 1}, roles)
 	var files int
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE kind='file'`).Scan(&files))
-	assert.Equal(t, 4, files)
+	assert.Equal(t, 3, files)
 	current, err := s.NodeByID(ctx, sidecar.ID)
 	require.NoError(t, err)
 	assert.Equal(t, fakeHash("xmp-v2"), current.BlobHash)

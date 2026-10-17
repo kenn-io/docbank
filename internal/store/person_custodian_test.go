@@ -35,7 +35,7 @@ func TestCustodianPackageScopeKeepsDefaultAndRecordsSeparate(t *testing.T) {
 	otherRequest.PackageName = "other-custodian-package"
 	run, err := s.PackageIngestRun(ctx, pkg.PackageID)
 	require.NoError(t, err)
-	_, err = s.AdmitPackageImport(ctx, run, otherRequest, packageImportJobRequest(t, s, otherRequest), "")
+	_, err = s.AdmitPackageImport(ctx, run, otherRequest, packageImportJobRequest(t, s, otherRequest))
 	require.NoError(t, err)
 	otherPackage, err := s.Package(ctx, otherID)
 	require.NoError(t, err)

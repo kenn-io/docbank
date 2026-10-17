@@ -60,7 +60,7 @@ func TestMailboxClientReadsFullBoundedJobPage(t *testing.T) {
 	}
 	for i := range 80 {
 		id := fmt.Sprintf("job-%03d", i)
-		_, err = s.BeginMailboxJob(ctx, owner, store.MailboxJobRequest{ID: id, ContainerID: request.ID, ContainerSHA256: request.SHA256, Settings: store.MailboxSettings{DestinationID: s.RootID(), LabelTags: mapping}}, "")
+		_, err = s.BeginMailboxJob(ctx, owner, store.MailboxJobRequest{ID: id, ContainerID: request.ID, ContainerSHA256: request.SHA256, Settings: store.MailboxSettings{DestinationID: s.RootID(), LabelTags: mapping}})
 		require.NoError(t, err)
 		require.NoError(t, s.CancelMailboxJob(ctx, owner, id))
 	}

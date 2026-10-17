@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/loadfile"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/telemetry"
 )
 
 const (
@@ -29,7 +30,6 @@ const (
 
 // PackageImportConfig binds the background worker to one daemon-owned vault.
 type PackageImportConfig struct {
-	ImportResult  func(string)
 	Catalog       *store.Store
 	Blobs         *blob.Store
 	Mutate        func(context.Context, func() error) error
@@ -37,6 +37,8 @@ type PackageImportConfig struct {
 	LeaseDuration time.Duration
 	IdleDelay     time.Duration
 	OpenContainer func(context.Context, string, string) (io.ReaderAt, int64, error)
+	// Telemetry reports a tracked job's first committed record; nil stays silent.
+	Telemetry *telemetry.Capture
 }
 
 type PackageImportWorker struct{ cfg PackageImportConfig }
@@ -159,6 +161,9 @@ func (w *PackageImportWorker) ProcessOnce(ctx context.Context) (more bool, err e
 		if finishErr != nil && !errors.Is(finishErr, store.ErrPackageConflict) {
 			err = errors.Join(err, finishErr)
 		}
+	}
+	if err == nil || ctx.Err() == nil && terminalPackageImportError(err) {
+		w.cfg.Telemetry.ForgetImport(job.ID)
 	}
 	return true, err
 }
@@ -893,8 +898,8 @@ func (w *PackageImportWorker) importRecord(ctx context.Context, job store.Packag
 	if err != nil {
 		return store.PackageImportReceipt{}, err
 	}
-	if committed.ReportAddition && w.cfg.ImportResult != nil {
-		w.cfg.ImportResult(job.ActionSurface)
+	if committed.State == "committed" {
+		w.cfg.Telemetry.ImportAdded(job.ID)
 	}
 	return committed, nil
 }

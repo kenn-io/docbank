@@ -231,7 +231,6 @@
 
   async function searchVersion(): Promise<void> {
     if (!plan || !node.current_version_id || !query.trim()) return;
-    reportAction(session, "search_run", "text");
     const request = generation;
     searching = true;
     error = "";
@@ -245,6 +244,7 @@
         fence: { vault_uid: plan.vault_uid, content_version_ids: [node.current_version_id] },
         explain: true,
       });
+      reportAction(session, "search_run", nextReport.actual_mode);
       if (request !== generation) return;
       searchReport = nextReport;
     } catch (cause) {
@@ -258,7 +258,6 @@
     if (!plan || scopeVersionIDs.length === 0 || scopeVersionIDs.length > 4096) return;
     const binding = profiles.find((item) => item.name === profileName)?.embedding_bindings[0];
     if (!binding) return;
-    reportAction(session, "search_run", "semantic");
     const request = generation;
     const id = ++similarID;
     similarBusy = true;
@@ -271,9 +270,8 @@
         limit: 20,
         fence: { vault_uid: plan.vault_uid, content_version_ids: [...scopeVersionIDs] },
       });
-      if (request === generation && id === similarID) {
-        similarReport = report;
-      }
+      reportAction(session, "search_run", "similar");
+      if (request === generation && id === similarID) similarReport = report;
     } catch (cause) {
       if (request === generation && id === similarID) {
         if (cause instanceof APIError && cause.status === 401) handleFailure(cause);

@@ -25,7 +25,7 @@ func TestMailboxWorkerLogsJobFailureAndProcessesNextJob(t *testing.T) {
 	f := mailboxFixture(t)
 	r := queuedArchive(t, f, []byte("not a mailbox"), "mbox")
 	r.ID = "second-job"
-	_, err := f.Store.BeginMailboxJob(t.Context(), "one", r, "")
+	_, err := f.Store.BeginMailboxJob(t.Context(), "one", r)
 	require.NoError(t, err)
 	output, err := os.CreateTemp(t.TempDir(), "worker.log")
 	require.NoError(t, err)

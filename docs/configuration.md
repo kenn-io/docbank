@@ -1038,29 +1038,34 @@ Allowed `screen` values are `browse`, `search`, `tags`, `snapshot`, `history`, `
 Each action requires `surface` as `web`, `tui`, or `cli`. `search_run` also
 requires `search_type` as `text`, `semantic`, or `hybrid`. Other properties
 are dropped. Missing or unsupported required values return HTTP 400.
+Only the daemon reports `document_added`, after it commits an addition; the
+event route returns HTTP 400 when an interface submits it.
 
-`document_added` counts each tracked user-started import once, after its first confirmed
-addition, including partial failures. Skipped files, replacements, preflight,
+`document_added` counts each user-started import once, after its first new
+document, including partial failures. Skipped files, replaced versions, preflight,
 agent calls and unattended ingestion stay silent. Browser uploads and Photos
 groups report from the daemon after commit, even if the drawer closes before
-its receipt arrives. Mailbox, load-file and host-folder Photos jobs retain the surface that started
-them after their drawer closes or the daemon restarts. Resuming a mailbox job
-preserves its original attribution and reports one addition per import. Opening
-a drawer onto an existing job stays silent. Interactive CLI `push`, `photos import`,
-mailbox and load-file package imports report once after a confirmed new addition.
-`push --watch`, API-key host-folder `photos import` and status commands stay
-silent. CLI `add` reports confirmed additions from the daemon even when its
-progress stream fails. The browser Photos drawer uses upload groups.
-Mailbox and load-file backups preserve attribution and committed import progress.
-That progress identifies whether an import has already reported an addition. Jobs
-restored from older released vaults have no attribution and stay silent. Host-folder
-Photos jobs keep attribution and their first-addition claim across restart and resume.
+its receipt arrives. Interactive one-shot CLI `push`, `photos import`, mailbox
+and load-file package imports report once after a confirmed new document; one
+`push` run counts once however many files it adds. `push --watch`, API-key
+host-folder `photos import` and status commands stay silent. CLI `add` reports
+confirmed additions from the daemon even when its progress stream fails. The
+browser Photos drawer uses upload groups.
 
-`search_run` counts submitted searches, including failed or superseded requests,
-facets and Smart Sets, once per surface and search type each UTC day.
-Names, tags, lexical and Photos searches use `text`; vector-only and similar
-searches use `semantic`; combined ranking uses `hybrid`. Search type follows the
-submitted request; automatic mode records its chosen request path. Hidden searches use the same type as Photos.
+The daemon remembers which interface started a mailbox, load-file or
+host-folder Photos job only while it keeps running. A job therefore still
+reports after its drawer closes, and a retry or resume in the same run keeps
+its first interface and reports at most once. A daemon restart forgets that
+origin: a job that resumes after a restart, or comes back from a backup,
+reports nothing. Opening a drawer onto an existing job stays silent.
+
+`search_run` counts deliberate searches once their results arrive, including
+superseded results, facets and Smart Sets, once per surface and search type each
+UTC day. A search that fails before Docbank chooses a mode stays silent.
+Names, tags and lexical searches use `text`; vector-only and similar searches use
+`semantic`; combined ranking uses `hybrid`. Search type follows the mode that ran:
+an automatic search the daemon answers lexically records `text`. Photos and
+snapshot searches use the mode of the query that ran. Hidden searches use the same type as Photos.
 Sorting, paging, reranking, refresh and restored state stay silent.
 
 `document_opened` counts deliberate inspections once per surface each UTC day.

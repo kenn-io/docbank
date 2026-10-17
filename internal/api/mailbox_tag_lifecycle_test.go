@@ -28,7 +28,7 @@ func TestMailboxMappedTagDeletionReturnsConflict(t *testing.T) {
 	_, err = s.BeginMailboxJob(ctx, c.Owner, store.MailboxJobRequest{
 		ID: "synthetic-job", ContainerID: c.ID, ContainerSHA256: c.SHA256,
 		Settings: store.MailboxSettings{DestinationID: s.RootID(), LabelTags: map[string]string{"Project": tag.ID}},
-	}, "")
+	})
 	require.NoError(t, err)
 	response, body := do(t, ts, http.MethodDelete, "/api/v1/tags/"+tag.ID,
 		map[string]string{"If-Match": strconv.Quote(strconv.FormatInt(tag.Revision, 10))}, nil)

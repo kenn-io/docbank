@@ -153,7 +153,7 @@ func (s *Service) runJob(ctx context.Context, j store.MailboxJob, segmentMessage
 					return false, err
 				}
 				ordinal++
-				if err = s.importOccurrence(ctx, current, entry, m, ordinal, settings); err != nil {
+				if err = s.importOccurrence(ctx, j, entry, m, ordinal, settings); err != nil {
 					return false, err
 				}
 			}
@@ -193,7 +193,7 @@ func (s *Service) importOccurrence(ctx context.Context, j store.MailboxJob, entr
 		}
 		o.Reason = err.Error()
 	}
-	return s.mutate(ctx, func() error { _, err := s.Store.CommitMailboxOccurrence(ctx, j.ID, j.Claim, o, nil); return err })
+	return s.mutate(ctx, func() error { return s.Store.CommitMailboxOccurrence(ctx, j.ID, j.Claim, o, nil) })
 }
 
 func (s *Service) resumeCheckpoint(ctx context.Context, j store.MailboxJob, c store.MailboxContainer, entries []Entry) (store.MailboxLocation, error) {
@@ -242,6 +242,7 @@ func (s *Service) RunWorker(ctx context.Context) error {
 				}
 				logger.ErrorContext(ctx, "mailbox job failed", "job", j.ID, "error", err)
 			}
+			s.Telemetry.ForgetImport(j.ID)
 			continue
 		}
 		if !errors.Is(err, store.ErrNotFound) && !errors.Is(err, store.ErrMailboxLimit) && !s.Store.RenditionJobErrorRetryable(err) {

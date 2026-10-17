@@ -462,6 +462,34 @@ it("reports inspection gestures across UTC days and ignores unrelated keys", asy
   expect(events).toEqual([opened, opened]);
 });
 
+it.each(["wheel", "j", "k"])("reports %s inspection with a fresh daily claim", async (gesture) => {
+  const bytes = new TextEncoder().encode("Synthetic inspected text");
+  const selected = source(bytes, "55555555-5555-4555-8555-555555555555");
+  const events: unknown[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (String(input) === "/api/daemon/telemetry/events") {
+      events.push(JSON.parse(String(init?.body)));
+      return new Response(null, { status: 202 });
+    }
+    if (init?.method === "POST") return ready(selected, "synthetic");
+    if (String(input).endsWith("ticket=synthetic")) return body(selected, bytes);
+    throw new Error(`Unexpected request ${String(input)}`);
+  });
+  render(VerifiedPreview, {
+    session: `${gesture}-session`,
+    source: selected,
+    authorizationRevision: 3,
+    onauthfailure: vi.fn(),
+  });
+  const text = await screen.findByText("Synthetic inspected text");
+  expect(events).toEqual([]);
+  if (gesture === "wheel") await fireEvent.wheel(text, { deltaY: 120 });
+  else await fireEvent.keyDown(text, { key: gesture });
+  await waitFor(() =>
+    expect(events).toEqual([{ event: "document_opened", properties: { surface: "web" } }]),
+  );
+});
+
 it.each(["Text", "Email", "Render page 1"])(
   "reports keyboard activation of %s for an automatically selected document",
   async (tabName) => {
