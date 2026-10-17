@@ -790,3 +790,21 @@ it("shows the navigation blocker after a failed decision", async () => {
   );
   expect(cull.currentID).toBe("photo-1");
 });
+
+it("reuses the displayed photo in the filmstrip without fetching it again", async () => {
+  const { cull, photos } = await reviewPhoto();
+  vi.mocked(photos.lookupMany).mockResolvedValue([photo(2)]);
+  await act(() => {
+    cull.run = {
+      ...cull.run!,
+      checkpoint: { ...cull.run!.checkpoint, pass: ["photo-1", "photo-2"] },
+    };
+  });
+  await screen.findByRole("button", { name: "Show Photo 2.jpg" });
+  expect(screen.getByRole("button", { name: "Show Photo 1.jpg" })).toBeTruthy();
+  expect(photos.lookup).toHaveBeenCalledOnce();
+  expect(photos.lookupMany).toHaveBeenLastCalledWith(["photo-2"], expect.any(AbortSignal));
+  expect(vi.mocked(photos.lookupMany).mock.calls.every(([ids]) => !ids.includes("photo-1"))).toBe(
+    true,
+  );
+});

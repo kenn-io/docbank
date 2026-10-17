@@ -95,7 +95,7 @@
     return () => controller.abort();
   });
   $effect(() => {
-    const ids = rail;
+    const ids = rail.filter((id) => id !== currentID);
     const controller = new AbortController();
     railError = "";
     railLoading = true;
@@ -368,7 +368,8 @@
         {#if railError}<p role="alert">{railError}</p>{/if}
         <nav class="filmstrip" aria-label="Cull pass">
           <fieldset disabled={busy} style="display: contents">
-            {#each rail as id}{@const row = neighbors.find((item) => item.asset_id === id)}
+            {#each rail as id}{@const row =
+                id === currentID ? photo : neighbors.find((item) => item.asset_id === id)}
               <div class:current={id === cull.currentID} class="thumb">
                 {#if row}<PhotoCell
                     photo={row}
