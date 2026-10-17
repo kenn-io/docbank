@@ -393,118 +393,83 @@ it("broadcasts one ID-free pulse from the holder's parsed change", async () => {
   expect(close).toHaveBeenCalledOnce();
 });
 
-it("elects one HTTP stream, relays ID-free pulses, and hands off after release", async () => {
+it("refreshes a Web Locks follower through ID-free pulses without opening a stream", async () => {
   vi.useFakeTimers();
-  vi.stubGlobal("navigator", {});
-  let nextID = 1;
-  vi.stubGlobal("crypto", {
-    getRandomValues(bytes: Uint8Array) {
-      bytes.fill(nextID++);
-      return bytes;
+  let channel!: { onmessage?: (event: MessageEvent<unknown>) => void };
+  const close = vi.fn();
+  vi.stubGlobal(
+    "BroadcastChannel",
+    class {
+      onmessage?: (event: MessageEvent<unknown>) => void;
+      close = close;
+      constructor() {
+        channel = this;
+      }
+    },
+  );
+  vi.stubGlobal("navigator", {
+    locks: {
+      request: vi.fn(async (_name, options, run) => {
+        if (options.ifAvailable) return run(null);
+        await new Promise<void>((resolve) =>
+          options.signal.addEventListener("abort", () => resolve(), { once: true }),
+        );
+      }),
     },
   });
-  vi.spyOn(Math, "random").mockReturnValue(0);
-  const channels = new Set<{
-    name: string;
-    closed: boolean;
-    onmessage: ((event: MessageEvent<unknown>) => void) | null;
-  }>();
-  const messages: unknown[] = [];
-  class TestBroadcastChannel {
-    closed = false;
-    onmessage: ((event: MessageEvent<unknown>) => void) | null = null;
-
-    constructor(readonly name: string) {
-      channels.add(this);
-    }
-
-    postMessage(data: unknown) {
-      messages.push(data);
-      for (const target of channels) {
-        if (target === this || target.closed || target.name !== this.name) continue;
-        setTimeout(() => target.onmessage?.({ data } as MessageEvent<unknown>), 5);
-      }
-    }
-
-    close() {
-      this.closed = true;
-      channels.delete(this);
-    }
-  }
-  vi.stubGlobal("BroadcastChannel", TestBroadcastChannel);
-  const streams: {
-    session: string;
-    signal: AbortSignal;
-    writer: ReadableStreamDefaultController<Uint8Array>;
-  }[] = [];
-  vi.spyOn(globalThis, "fetch").mockImplementation((_, init) => {
-    const signal = init?.signal as AbortSignal;
-    return Promise.resolve(
-      new Response(
-        new ReadableStream<Uint8Array>({
-          start(writer) {
-            streams.push({
-              session: new Headers(init?.headers).get("X-Docbank-Web-Session") ?? "",
-              signal,
-              writer,
-            });
-          },
-        }),
-        { headers: { "Content-Type": "text/event-stream" } },
-      ),
-    );
-  });
-
-  const sessions = ["tab-a", "tab-b", "tab-c"];
-  const refreshes = sessions.map(() => vi.fn(async (_batch: PhotoEventBatch) => {}));
-  const stops = sessions.map((session, index) =>
-    watchPhotoEvents(session, refreshes[index]!, vi.fn()),
-  );
-  const activeStreams = () => streams.filter(({ signal }) => !signal.aborted);
-  await vi.advanceTimersByTimeAsync(1000);
-  expect(streams.length).toBeGreaterThan(1);
-  expect(activeStreams()).toHaveLength(1);
-  await vi.advanceTimersByTimeAsync(1500);
-  expect(activeStreams()).toHaveLength(1);
+  const fetch = vi.spyOn(globalThis, "fetch");
+  const refresh = vi.fn(async (_batch: PhotoEventBatch) => {});
+  const stop = watchPhotoEvents("follower", refresh, vi.fn());
   await vi.advanceTimersByTimeAsync(100);
-  const holder = activeStreams()[0]!;
-  const holderIndex = sessions.indexOf(holder.session);
-  expect(refreshes[holderIndex]).not.toHaveBeenCalled();
-  for (const [index, refresh] of refreshes.entries()) {
-    if (index === holderIndex) continue;
-    expect(refresh.mock.lastCall?.[0]).toEqual({
-      assets: new Map(),
-      albums: new Map(),
-      refetch: true,
-    });
-  }
-  refreshes.forEach((refresh) => refresh.mockClear());
-  holder.writer.enqueue(encoder.encode('data: {"asset_id":"private-photo","revision":7}\n\n'));
-  await vi.advanceTimersByTimeAsync(110);
-  expect(refreshes[holderIndex]!.mock.lastCall?.[0]).toEqual({
-    assets: new Map([["private-photo", 7]]),
+  expect(refresh).toHaveBeenCalledExactlyOnceWith({
+    assets: new Map(),
     albums: new Map(),
-    refetch: false,
+    refetch: true,
   });
-  for (const [index, refresh] of refreshes.entries()) {
-    if (index === holderIndex) continue;
-    expect(refresh.mock.lastCall?.[0]).toEqual({
+  channel.onmessage?.({ data: "refetch" } as MessageEvent<unknown>);
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(refresh).toHaveBeenCalledTimes(2);
+  expect(refresh.mock.lastCall?.[0]).toEqual({
+    assets: new Map(),
+    albums: new Map(),
+    refetch: true,
+  });
+  expect(fetch).not.toHaveBeenCalled();
+  stop();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(close).toHaveBeenCalledOnce();
+});
+
+it("refreshes six visible tabs without streams when Web Locks are unavailable", async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal("navigator", {});
+  const fetch = vi.spyOn(globalThis, "fetch");
+  let finish!: () => void;
+  const refreshes = Array.from({ length: 6 }, () => vi.fn(async () => {}));
+  refreshes[0]!.mockImplementationOnce(() => new Promise<void>((resolve) => (finish = resolve)));
+  const stops = refreshes.map((refresh, index) =>
+    watchPhotoEvents(`tab-${index}`, refresh, vi.fn()),
+  );
+  await vi.advanceTimersByTimeAsync(100);
+  for (const refresh of refreshes)
+    expect(refresh).toHaveBeenCalledExactlyOnceWith({
       assets: new Map(),
       albums: new Map(),
       refetch: true,
     });
-  }
-  for (const message of messages) {
-    expect(message).not.toHaveProperty("asset_id");
-    expect(message).not.toHaveProperty("revision");
-    if (typeof message === "string") expect(["probe", "refetch"]).toContain(message);
-    else expect(["lease", "release"]).toContain(Object.keys(message as object)[0]);
-  }
-
-  stops[holderIndex]!();
-  await vi.advanceTimersByTimeAsync(1000);
-  expect(activeStreams()).toHaveLength(1);
-  expect(activeStreams()[0]!.session).not.toBe(holder.session);
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(refreshes[0]).toHaveBeenCalledOnce();
+  for (const refresh of refreshes.slice(1)) expect(refresh).toHaveBeenCalledTimes(3);
+  finish();
+  await vi.advanceTimersByTimeAsync(999);
+  expect(refreshes[0]).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(refreshes[0]).toHaveBeenCalledTimes(2);
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+  document.dispatchEvent(new Event("visibilitychange"));
+  const counts = refreshes.map((refresh) => refresh.mock.calls.length);
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(refreshes.map((refresh) => refresh.mock.calls.length)).toEqual(counts);
+  expect(fetch).not.toHaveBeenCalled();
   for (const stop of stops) stop();
-  await vi.advanceTimersByTimeAsync(10);
 });

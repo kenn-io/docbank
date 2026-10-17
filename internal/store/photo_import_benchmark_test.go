@@ -103,7 +103,7 @@ func setupPhotoBenchmarkCapture(b *testing.B, s *Store, audience string) (contex
 	var events <-chan PhotoEvent
 	cancel := func() {}
 	if audience != "none" {
-		events, cancel = s.SubscribePhotoEvents(ctx)
+		events, cancel = s.SubscribePhotoEvents()
 	}
 	started := time.Now()
 	_, err := s.CreateTag(ctx, "Synthetic benchmark keyword "+audience)

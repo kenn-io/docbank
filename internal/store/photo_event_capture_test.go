@@ -20,7 +20,7 @@ func TestPhotoEventsCaptureAssetAlbumAndRefetchChanges(t *testing.T) {
 				s, run, docs, profile := collectionCoverageFixture(t, 1)
 				node, _, err := s.IngestFile(ctx, run, s.RootID(), "photo.jpg", fakeHash("11"), 4, "image/jpeg", "/synthetic/photo.jpg", "")
 				require.NoError(t, err)
-				events, cancel := s.SubscribePhotoEvents(ctx)
+				events, cancel := s.SubscribePhotoEvents()
 				t.Cleanup(cancel)
 				collectionCoveragePublish(t, s, docs[0], profile, "complete")
 				noPhotoEvent(t, events)
@@ -32,7 +32,7 @@ func TestPhotoEventsCaptureAssetAlbumAndRefetchChanges(t *testing.T) {
 			}
 			s := newTestStore(t)
 			if rule == "global settings and Hidden credentials refetch" {
-				events, cancel := s.SubscribePhotoEvents(ctx)
+				events, cancel := s.SubscribePhotoEvents()
 				t.Cleanup(cancel)
 				require.NoError(t, s.SetupPhotoHidden(t.Context(), "synthetic-passcode"))
 				require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
@@ -56,7 +56,7 @@ func TestPhotoEventsCaptureAssetAlbumAndRefetchChanges(t *testing.T) {
 			require.NoError(t, err)
 			tag, err := s.CreateTag(ctx, "trip")
 			require.NoError(t, err)
-			events, cancel := s.SubscribePhotoEvents(t.Context())
+			events, cancel := s.SubscribePhotoEvents()
 			t.Cleanup(cancel)
 
 			switch rule {
@@ -180,7 +180,7 @@ func TestPhotoEventsCaptureAssetAlbumAndRefetchChanges(t *testing.T) {
 func TestPhotoEventCaptureCoversPhotoSchemaTables(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	events, cancel := s.SubscribePhotoEvents(t.Context())
+	events, cancel := s.SubscribePhotoEvents()
 	defer cancel()
 	_, err := s.CreateTag(t.Context(), "capture schema check")
 	require.NoError(t, err)
@@ -210,24 +210,21 @@ func TestPhotoEventCaptureCoversPhotoSchemaTables(t *testing.T) {
 
 	quiet := map[string]string{
 		"photo_change_receipts":          "operation receipts are read by the action that created them",
-		"photo_authored_fts":             "FTS projection maintained by photo_files triggers",
-		"photo_authored_fts_config":      "FTS projection maintained by photo_files triggers",
-		"photo_authored_fts_content":     "FTS projection maintained by photo_files triggers",
-		"photo_authored_fts_data":        "FTS projection maintained by photo_files triggers",
-		"photo_authored_fts_docsize":     "FTS projection maintained by photo_files triggers",
-		"photo_authored_fts_idx":         "FTS projection maintained by photo_files triggers",
 		"photo_hidden_failures":          "authentication failure bookkeeping",
 		"photo_hidden_lockout":           "authentication lockout bookkeeping",
-		"photo_metadata_fts":             "FTS projection maintained by photo_technical_metadata triggers",
-		"photo_metadata_fts_config":      "FTS projection maintained by photo_technical_metadata triggers",
-		"photo_metadata_fts_content":     "FTS projection maintained by photo_technical_metadata triggers",
-		"photo_metadata_fts_data":        "FTS projection maintained by photo_technical_metadata triggers",
-		"photo_metadata_fts_docsize":     "FTS projection maintained by photo_technical_metadata triggers",
-		"photo_metadata_fts_idx":         "FTS projection maintained by photo_technical_metadata triggers",
 		"photo_sidecar_considered":       "import bookkeeping",
 		"photo_technical_metadata_state": "projection recipe bookkeeping",
 		"photo_timeline":                 "derived browse index maintained with its source writes",
 		"photo_timeline_pending":         "derived browse index bookkeeping",
+	}
+	for _, source := range []string{"photo_files", "photo_technical_metadata"} {
+		prefix := "photo_authored_fts"
+		if source == "photo_technical_metadata" {
+			prefix = "photo_metadata_fts"
+		}
+		for _, suffix := range []string{"", "_config", "_content", "_data", "_docsize", "_idx"} {
+			quiet[prefix+suffix] = "FTS projection maintained by " + source + " triggers"
+		}
 	}
 	tables, err := s.db.QueryContext(t.Context(), `SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE 'photo_%'`)
 	require.NoError(t, err)
@@ -260,7 +257,7 @@ func TestPhotoEventsNonPhotoSharedBlobMembership(t *testing.T) {
 	require.NoError(t, err)
 	tag, err := s.CreateTag(ctx, "synthetic")
 	require.NoError(t, err)
-	events, cancel := s.SubscribePhotoEvents(ctx)
+	events, cancel := s.SubscribePhotoEvents()
 	defer cancel()
 	require.Zero(t, browsePhotoPage(t, s, `{"filters":{"has_duplicates":true}}`).Total)
 	baseline, err := s.CreateFile(ctx, s.RootID(), "note.txt", fakeHash("33"), 4, "text/plain")
@@ -323,7 +320,7 @@ func TestPhotoEventsPhotoPeerMembership(t *testing.T) {
 	require.NoError(t, err)
 	asset, err := s.PhotoAssetForNode(ctx, first.ID)
 	require.NoError(t, err)
-	events, cancel := s.SubscribePhotoEvents(ctx)
+	events, cancel := s.SubscribePhotoEvents()
 	defer cancel()
 	oldHash := first.BlobHash
 	first, _, err = s.ReplaceContent(ctx, first.ID, first.Revision, fakeHash("55"), 4, "image/jpeg")
@@ -380,7 +377,7 @@ func TestPhotoEventsCaptureDepictedPeople(t *testing.T) {
 	require.NoError(t, err)
 	person, err := s.CreatePerson(ctx, "Person A", "operator")
 	require.NoError(t, err)
-	events, cancel := s.SubscribePhotoEvents(ctx)
+	events, cancel := s.SubscribePhotoEvents()
 	t.Cleanup(cancel)
 	assertion, err := s.MarkPersonInPhoto(ctx, node.CurrentVersionID, person.PersonID)
 	require.NoError(t, err)
@@ -405,7 +402,7 @@ func TestPhotoEventsRefetchWhenPersonSearchesResolveDifferently(t *testing.T) {
 	ctx := t.Context()
 	ada, err := s.CreatePerson(ctx, "Ada", "operator")
 	require.NoError(t, err)
-	events, cancel := s.SubscribePhotoEvents(ctx)
+	events, cancel := s.SubscribePhotoEvents()
 	t.Cleanup(cancel)
 	refetch := PhotoEvent{Refetch: true}
 	_, err = s.CreatePerson(ctx, "Grace", "operator")
@@ -447,7 +444,7 @@ func TestPhotoEventsQueryDefinitions(t *testing.T) {
 			page, err := s.ListPhotoAssets(ctx, PhotoBrowseRequest{Query: q}, nil)
 			require.NoError(t, err)
 			require.Len(t, page.Items, 1)
-			events, cancel := s.SubscribePhotoEvents(ctx)
+			events, cancel := s.SubscribePhotoEvents()
 			defer cancel()
 			if dependency == "saved" {
 				_, err = s.UpdateSavedQuery(ctx, saved.ID, saved.Revision, SavedQueryPatch{Payload: new([]byte(`{"text":"absent"}`))})
@@ -486,9 +483,9 @@ func TestPhotoEventsHiddenAlbumMembership(t *testing.T) {
 	require.NoError(t, err)
 	album, err := s.CreatePhotoSet(ctx, "Trip")
 	require.NoError(t, err)
-	lockedEvents, stopLocked := s.SubscribePhotoEvents(ctx)
+	lockedEvents, stopLocked := s.SubscribePhotoEvents()
 	defer stopLocked()
-	openEvents, stopOpen := s.SubscribePhotoEvents(unlocked)
+	openEvents, stopOpen := s.SubscribePhotoEvents()
 	defer stopOpen()
 	stale := album
 	for _, add := range []bool{true, false} {

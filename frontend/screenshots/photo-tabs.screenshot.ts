@@ -130,19 +130,74 @@ async function sixVisiblePhotoTabs(
         expect.objectContaining({ name: "Paris walks", included_count: 3, member_count: 3 }),
       ]);
     }
-    await expect.poll(() => streams.size).toBe(1);
+    await expect.poll(() => streams.size).toBe(insecureHTTP ? 0 : 1);
     const first = await tabs[0]!.page.locator("[data-asset]").first().getAttribute("data-asset");
-    await fixture.run("photos", "assets", "exclude", first!);
+    if (insecureHTTP) {
+      await fixture.run("photos", "assets", "exclude", first!);
+    } else {
+      const lockedHolder = holder!;
+      // Keep this tab's access checks locked while the follower acquires a shared cookie.
+      await lockedHolder.route("**/api/v1/photos/hidden", async (route) => {
+        const headers = route.request().headers();
+        headers.cookie = "";
+        const response = await fetch(route.request().url(), { headers });
+        const body = await response.text();
+        expect(JSON.parse(body).expires_at).toBeUndefined();
+        await route.fulfill({ status: response.status, contentType: "application/json", body });
+      });
+      const follower = tabs.find(({ page }) => page !== holder)!;
+      await follower.page.getByRole("button", { name: "Hidden", exact: true }).click();
+      await follower.page.getByLabel("Passcode", { exact: true }).fill("synthetic-passcode");
+      await follower.page.getByRole("button", { name: "Set passcode", exact: true }).click();
+      await expect(follower.page.getByText(/Locks in/)).toBeVisible();
+      await follower.page.getByRole("button", { name: "Library", exact: true }).click();
+      await follower.page
+        .locator(`[data-asset="${first}"]`)
+        .getByRole("button", { name: /^Select / })
+        .click({ button: "right" });
+      await follower.page.getByRole("menuitem", { name: "Hide", exact: true }).click();
+      await follower.page.getByRole("button", { name: "Hidden", exact: true }).click();
+      await expect(follower.page.locator(`[data-asset="${first}"]`)).toBeVisible();
+      expect(holder).toBe(lockedHolder);
+      expect(streams.size).toBe(1);
+      const status = await follower.page.evaluate(
+        async ({ id, session }) => {
+          const headers = { "X-Docbank-Web-Session": session };
+          const page = (await (
+            await fetch("/api/v1/photos/assets/query", {
+              method: "POST",
+              headers: { ...headers, "Content-Type": "application/json" },
+              body: JSON.stringify({
+                query: { syntax: "simple", text: "", filters: { asset_ids: [id] } },
+                page_size: 1,
+                hidden: true,
+              }),
+            })
+          ).json()) as { items: { revision: number }[] };
+          const asset = page.items[0]!;
+          return (
+            await fetch(`/api/v1/photos/assets/${id}/trash`, {
+              method: "POST",
+              headers: { ...headers, "If-Match": String(asset.revision) },
+            })
+          ).status;
+        },
+        { id: first!, session: follower.session },
+      );
+      expect(status).toBe(200);
+      await expect(follower.page.locator(`[data-asset="${first}"]`)).toHaveCount(0);
+      await follower.page.getByRole("button", { name: "Library", exact: true }).click();
+    }
     for (const { page } of tabs) {
       await expect(page.locator(`[data-asset="${first}"]`)).toHaveCount(0);
       await expect(page.locator("[data-asset]")).toHaveCount(5);
     }
-    expect(holder).toBeTruthy();
-    const departed = holder!;
+    if (!insecureHTTP) expect(holder).toBeTruthy();
+    const departed = holder ?? tabs[0]!.page;
     await departed.close();
     const remaining = tabs.filter(({ page }) => page !== departed);
-    await expect.poll(() => streams.size).toBe(1);
-    await expect.poll(() => holder !== departed).toBe(true);
+    await expect.poll(() => streams.size).toBe(insecureHTTP ? 0 : 1);
+    if (!insecureHTTP) await expect.poll(() => holder !== departed).toBe(true);
     const second = await remaining[0]!.page
       .locator("[data-asset]")
       .first()
@@ -161,7 +216,7 @@ async function sixVisiblePhotoTabs(
       });
     }
     console.log(
-      `Six distinct sessions: six visible ${insecureHTTP ? "insecure HTTP/1.1" : "HTTP/1.1"} tabs, six authenticated 200 responses, one active event stream`,
+      `Six distinct sessions: six visible ${insecureHTTP ? "insecure HTTP/1.1" : "HTTP/1.1"} tabs, six authenticated 200 responses, ${insecureHTTP ? "no event streams" : "one active event stream"}`,
     );
   } finally {
     await Promise.all(tabs.map(({ page }) => page.close()));
@@ -173,6 +228,6 @@ test("six visible tabs retain HTTP/1.1 request capacity", async ({ context }) =>
   await sixVisiblePhotoTabs(context, false);
 });
 
-test("six visible insecure HTTP tabs coordinate through a lease", async ({ context }) => {
+test("six visible insecure HTTP tabs refresh without event streams", async ({ context }) => {
   await sixVisiblePhotoTabs(context, true);
 });

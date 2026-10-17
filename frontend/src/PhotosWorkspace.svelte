@@ -610,12 +610,12 @@
         const listed = refreshed ? photos.items.find((photo) => photo.asset_id === id) : undefined;
         if (listed && "content_version_id" in listed) {
           direct = listed;
-          if (revision !== undefined && listed.revision >= revision) detailError = "";
+          if (listed.revision >= (revision ?? 0)) detailError = "";
         }
         if (
           !changes ||
-          changes.refetch ||
-          (revision !== undefined && (photos.projection || !listed || listed.revision < revision))
+          (affected &&
+            (!listed || !("content_version_id" in listed) || listed.revision < (revision ?? 0)))
         ) {
           const lookup = loadDetail(id);
           await (changes ? lookup : lookup.catch(() => {}));

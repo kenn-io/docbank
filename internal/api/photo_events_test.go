@@ -125,33 +125,8 @@ func TestPhotoEventsLockedStreamHidesIDsAndRelaysRefetch(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, asset.ID, readPhotoChange(t, scanner, response.Body).AssetID)
 	require.Equal(t, publicAsset.ID, readPhotoChange(t, scanner, response.Body).AssetID)
-	require.True(t, readPhotoChange(t, lockedScanner, lockedResponse.Body).Refetch)
+	require.Equal(t, `{"refetch":true}`, readPhotoChangeData(t, lockedScanner, lockedResponse.Body))
 	require.Equal(t, publicAsset.ID, readPhotoChange(t, lockedScanner, lockedResponse.Body).AssetID)
-}
-
-func TestPhotoEventsLockedHolderRelaysRefetchForUnlockedTab(t *testing.T) {
-	t.Parallel()
-	ts, s := newTestServer(t, nil)
-	ctx := t.Context()
-	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
-	node, err := s.CreateFile(ctx, s.RootID(), "hidden.jpg", testHash("hidden"), 4, "image/jpeg")
-	require.NoError(t, err)
-	asset, err := s.PhotoAssetForNode(ctx, node.ID)
-	require.NoError(t, err)
-	asset, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
-	require.NoError(t, err)
-	lockedResponse, lockedScanner := openPhotoEventStream(t, ts, "", nil)
-	require.True(t, readPhotoChange(t, lockedScanner, lockedResponse.Body).Refetch)
-
-	unlocked, body := do(t, ts, http.MethodPost, "/api/v1/photos/hidden/unlock", nil, map[string]string{"passcode": "synthetic-passcode"})
-	require.Equal(t, http.StatusOK, unlocked.StatusCode, body)
-	require.Len(t, unlocked.Cookies(), 1)
-	_, err = s.SetPhotoAssetHidden(store.WithPhotoHiddenToken(ctx, unlocked.Cookies()[0].Value), asset.ID, asset.Revision, false)
-	require.NoError(t, err)
-
-	data := readPhotoChangeData(t, lockedScanner, lockedResponse.Body)
-	require.Equal(t, `{"refetch":true}`, data)
-	require.NotContains(t, data, asset.ID)
 }
 
 func TestPhotoEventsStreamEndsOnShutdownOrSessionRevocation(t *testing.T) {

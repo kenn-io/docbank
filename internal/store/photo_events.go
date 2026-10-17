@@ -42,12 +42,11 @@ type photoEventFeed struct {
 	epoch           uint64
 	closed          bool
 	cleanupPending  bool
-	subscribers     map[chan PhotoEvent]string
+	subscribers     map[chan PhotoEvent]struct{}
 }
 
 // SubscribePhotoEvents creates a bounded feed; overflow replaces queued IDs with a refetch.
-func (s *Store) SubscribePhotoEvents(ctx context.Context) (<-chan PhotoEvent, func()) {
-	token, _ := ctx.Value(hiddenTokenKey{}).(string)
+func (s *Store) SubscribePhotoEvents() (<-chan PhotoEvent, func()) {
 	f := &s.photoEvents
 	f.Lock()
 	defer f.Unlock()
@@ -57,12 +56,12 @@ func (s *Store) SubscribePhotoEvents(ctx context.Context) (<-chan PhotoEvent, fu
 		return ch, func() {}
 	}
 	if f.subscribers == nil {
-		f.subscribers = make(map[chan PhotoEvent]string)
+		f.subscribers = make(map[chan PhotoEvent]struct{})
 	}
 	if len(f.subscribers) == 0 {
 		f.captureDegraded = false
 	}
-	f.subscribers[ch] = hiddenTokenDigest(token)
+	f.subscribers[ch] = struct{}{}
 	f.epoch++
 	var once sync.Once
 	return ch, func() {

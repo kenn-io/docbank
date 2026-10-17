@@ -3053,6 +3053,8 @@ it.each([
   "event refresh false",
   "event listing incomplete",
   "event listing refetch",
+  "event listing missing",
+  "event listing compact",
   "event listing count failure",
   "event listing failure",
 ])("reconciles refreshed Library rows with the open viewer: %s", async (scenario) => {
@@ -3107,8 +3109,15 @@ it.each([
     });
     await waitFor(() => expect(lookup).toHaveBeenCalledTimes(1));
   } else if (scenario === "event listing refetch") {
+    fixture.rows = [{ ...photo(1), revision: 3, name: "Refreshed row.jpg" }, photo(2)];
     await view.component.refresh({ assets: new Map(), albums: new Map(), refetch: true });
-    await waitFor(() => expect(lookup).toHaveBeenCalledTimes(1));
+    expect(fixture.loupe.photo).toEqual(fixture.rows[0]);
+    expect(fixture.loupe.error).toBe("");
+    expect(lookup).not.toHaveBeenCalled();
+  } else if (scenario === "event listing missing" || scenario === "event listing compact") {
+    fixture.rows = scenario.endsWith("missing") ? [photo(2)] : [mapPhoto(1), mapPhoto(2)];
+    await view.component.refresh({ assets: new Map(), albums: new Map(), refetch: true });
+    expect(lookup).toHaveBeenCalledOnce();
   } else if (scenario === "event listing count failure") {
     const cause = new Error("Counts unavailable");
     fixture.rows = [

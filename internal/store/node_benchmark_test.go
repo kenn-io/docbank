@@ -77,16 +77,6 @@ func benchmarkCreateFilePhotoSubscriber(b *testing.B, sharedBlob bool, photos in
 				b.Run("subscriber="+audience, func(b *testing.B) {
 					ctx, cancel, installed := setupPhotoBenchmarkCapture(b, s, audience)
 					b.Cleanup(cancel)
-					if audience != "none" {
-						var triggers, peers int
-						require.NoError(b, s.writeDB.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM temp.sqlite_schema WHERE name='photo_events_initial_content'),(SELECT count(*) FROM temp.docbank_photo_peers)`).Scan(&triggers, &peers))
-						require.Equal(b, 1, triggers)
-						want := photos
-						if sharedBlob {
-							want++
-						}
-						require.Equal(b, want, peers)
-					}
 					// Warm the measured write path in every case.
 					_, err = s.CreateFile(ctx, s.RootID(), "warmup-"+audience+".bin", hash(0), 4, "application/octet-stream")
 					require.NoError(b, err)

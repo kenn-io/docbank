@@ -37,7 +37,7 @@ func noPhotoEvent(t *testing.T, events <-chan PhotoEvent) {
 func TestPhotoEventsRollback(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	events, cancel := s.SubscribePhotoEvents(t.Context())
+	events, cancel := s.SubscribePhotoEvents()
 	defer cancel()
 	committed, err := s.CreatePhotoSet(t.Context(), "committed")
 	require.NoError(t, err)
@@ -135,7 +135,7 @@ func TestPhotoEventsAudienceClassification(t *testing.T) {
 		public, err := s.CreateFile(ctx, s.RootID(), "public.jpg", hidden.BlobHash, 4, "image/jpeg")
 		require.NoError(t, err)
 		_ = public
-		events, cancel := s.SubscribePhotoEvents(ctx)
+		events, cancel := s.SubscribePhotoEvents()
 		defer cancel()
 		require.NoError(t, s.RecordExtraction(ctx, ExtractionResult{BlobHash: hidden.BlobHash, Extractor: "synthetic", ExtractorVersion: 1, Status: ExtractionOK, Text: "shared"}))
 		require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
@@ -178,10 +178,9 @@ func TestPhotoEventsAudienceClassification(t *testing.T) {
 					require.NoError(t, err)
 				}
 			}
-			token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+			_, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
 			require.NoError(t, err)
-			unlocked := WithPhotoHiddenToken(ctx, token)
-			events, cancel := s.SubscribePhotoEvents(unlocked)
+			events, cancel := s.SubscribePhotoEvents()
 			defer cancel()
 			if tc.visibility != nil {
 				var hiddenAt any
@@ -224,7 +223,7 @@ func TestPhotoEventsSubscriberSummariesUnionBatchAndQueuedAudiences(t *testing.T
 	t.Parallel()
 	t.Run("queue overflow unions whole batch", func(t *testing.T) {
 		s := newTestStore(t)
-		events, cancel := s.SubscribePhotoEvents(t.Context())
+		events, cancel := s.SubscribePhotoEvents()
 		defer cancel()
 		var hidden []PhotoEvent
 		for i := range 64 {
@@ -245,7 +244,7 @@ func TestPhotoEventsSubscriberSummariesUnionBatchAndQueuedAudiences(t *testing.T
 	})
 	t.Run("queued summaries union audiences", func(t *testing.T) {
 		s := newTestStore(t)
-		events, cancel := s.SubscribePhotoEvents(t.Context())
+		events, cancel := s.SubscribePhotoEvents()
 		defer cancel()
 		s.publishPhotoChanges([]PhotoEvent{{Refetch: true, audience: photoHidden}})
 		s.publishPhotoChanges([]PhotoEvent{{Refetch: true, audience: photoPublic}})

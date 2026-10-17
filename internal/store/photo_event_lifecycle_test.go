@@ -24,8 +24,8 @@ func TestPhotoEventsCaptureInstallAndUninstall(t *testing.T) {
 	node, err := s.CreateFile(ctx, s.RootID(), "capture.jpg", fakeHash("11"), 4, "image/jpeg")
 	require.NoError(t, err)
 	require.Zero(t, photoCaptureObjects(t, s))
-	events, cancel := s.SubscribePhotoEvents(t.Context())
-	_, other := s.SubscribePhotoEvents(t.Context())
+	events, cancel := s.SubscribePhotoEvents()
+	_, other := s.SubscribePhotoEvents()
 	node, _, err = s.Move(ctx, node.ID, s.RootID(), "renamed.jpg", node.Revision)
 	require.NoError(t, err)
 	require.NotEmpty(t, nextPhotoEvent(t, events).AssetID)
@@ -37,7 +37,7 @@ func TestPhotoEventsCaptureInstallAndUninstall(t *testing.T) {
 	_, _, err = s.Move(ctx, node.ID, s.RootID(), "idle.jpg", node.Revision)
 	require.NoError(t, err)
 	require.Zero(t, photoCaptureObjects(t, s))
-	_, cancel = s.SubscribePhotoEvents(t.Context())
+	_, cancel = s.SubscribePhotoEvents()
 	require.NoError(t, s.withStorageTx(t.Context(), func(*sql.Tx) error { cancel(); return nil }))
 	require.Positive(t, photoCaptureObjects(t, s))
 	aborted := errors.New("synthetic write failure")
@@ -60,17 +60,13 @@ func TestPhotoEventsPartialInstallRollbackAndRetry(t *testing.T) {
 	s.writeDB.SetMaxIdleConns(1)
 	_, err := s.writeDB.ExecContext(ctx, `CREATE TEMP TRIGGER photo_events_nodes_INSERT AFTER INSERT ON main.nodes BEGIN SELECT 1; END`)
 	require.NoError(t, err)
-	events, cancel := s.SubscribePhotoEvents(t.Context())
+	events, cancel := s.SubscribePhotoEvents()
 	defer cancel()
 	node, err := s.CreateFile(ctx, s.RootID(), "capture.jpg", fakeHash("11"), 4, "image/jpeg")
 	require.NoError(t, err)
 	require.Equal(t, PhotoEvent{Refetch: true}, nextPhotoEvent(t, events))
 	_, err = s.writeDB.ExecContext(ctx, `DROP TRIGGER photo_events_nodes_INSERT`)
 	require.NoError(t, err)
-	var peers, changes int
-	require.NoError(t, s.writeDB.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM temp.sqlite_schema WHERE name='docbank_photo_peers'),(SELECT count(*) FROM temp.sqlite_schema WHERE name='docbank_photo_changes')`).Scan(&peers, &changes))
-	require.Equal(t, 1, peers)
-	require.Zero(t, changes)
 	asset, err := s.PhotoAssetForNode(ctx, node.ID)
 	require.NoError(t, err)
 	_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
@@ -96,7 +92,6 @@ func TestPhotoEventsSubscriptionRacesWithWrites(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
 			var assetID string
-			subscribeCtx := ctx
 			if mode == "hidden" {
 				require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
 				node, err := s.CreateFile(ctx, s.RootID(), "hidden.jpg", fakeHash("11"), 4, "image/jpeg")
@@ -106,14 +101,13 @@ func TestPhotoEventsSubscriptionRacesWithWrites(t *testing.T) {
 				_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 				require.NoError(t, err)
 				assetID = asset.ID
-				token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+				_, _, err = s.UnlockPhotoHidden(ctx, "synthetic-passcode")
 				require.NoError(t, err)
-				subscribeCtx = WithPhotoHiddenToken(ctx, token)
 			}
 			var prior <-chan PhotoEvent
 			var cancelPrior func()
 			if mode != "uncaptured" {
-				prior, cancelPrior = s.SubscribePhotoEvents(ctx)
+				prior, cancelPrior = s.SubscribePhotoEvents()
 				t.Cleanup(func() { cancelSubscription(cancelPrior) })
 				if mode == "resubscribe" {
 					require.NoError(t, s.withStorageTx(ctx, func(*sql.Tx) error { return nil }))
@@ -155,7 +149,7 @@ func TestPhotoEventsSubscriptionRacesWithWrites(t *testing.T) {
 			}
 			subscribed := make(chan subscription, 1)
 			go func() {
-				events, cancel := s.SubscribePhotoEvents(subscribeCtx)
+				events, cancel := s.SubscribePhotoEvents()
 				subscribed <- subscription{events, cancel}
 			}()
 			active := <-subscribed
@@ -189,8 +183,7 @@ func TestPhotoEventsSubscriptionRacesWithWrites(t *testing.T) {
 func TestPhotoEventsStoreShutdownClosesSubscriptions(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	ctx := t.Context()
-	shutdownEvents, shutdownCancel := s.SubscribePhotoEvents(ctx)
+	shutdownEvents, shutdownCancel := s.SubscribePhotoEvents()
 	defer shutdownCancel()
 	require.NoError(t, s.Close())
 	select {
@@ -199,7 +192,7 @@ func TestPhotoEventsStoreShutdownClosesSubscriptions(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("photo event subscription did not close on store shutdown")
 	}
-	later, unsubscribe := s.SubscribePhotoEvents(ctx)
+	later, unsubscribe := s.SubscribePhotoEvents()
 	defer unsubscribe()
 	select {
 	case _, ok := <-later:

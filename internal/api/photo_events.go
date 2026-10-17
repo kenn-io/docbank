@@ -35,7 +35,7 @@ func registerPhotoEvents(shutdown context.Context, mux *http.ServeMux, api huma.
 			writeError(w, NewError(http.StatusTooManyRequests, "photo_event_stream_limit", "Close another photo view and retry."))
 			return
 		}
-		events, unsubscribe := d.Store.SubscribePhotoEvents(r.Context())
+		events, unsubscribe := d.Store.SubscribePhotoEvents()
 		defer unsubscribe()
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-store")
