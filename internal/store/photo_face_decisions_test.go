@@ -1750,3 +1750,25 @@ func TestPhotoWholeMarkClearReceipt(t *testing.T) {
 		})
 	}
 }
+
+func TestPhotoFaceNameReceiptRejectsWholePhotoMarkChange(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	person, err := s.CreatePerson(t.Context(), "Ada", "operator")
+	require.NoError(t, err)
+	node, face := faceForDecisionTest(t, s, "")
+	_, err = s.MarkPersonInPhoto(t.Context(), node.CurrentVersionID, person.PersonID)
+	require.NoError(t, err)
+	receipt := decideFaceForTest(t, s, node, face.FaceID, person.PersonID, "name")
+	require.NoError(t, validateFaceDecisionReceipt(receipt, receipt.ReceiptID))
+	require.True(t, receipt.Before.Assertions[0].PhotoMark)
+	require.True(t, receipt.After.Assertions[0].PhotoMark)
+	require.NotEqual(t, receipt.Before.Faces[0].AssertionID, receipt.After.Faces[0].AssertionID)
+	receipt.After.Assertions[0].PhotoMark = false
+	before, err := json.Marshal(receipt.Before)
+	require.NoError(t, err)
+	after, err := json.Marshal(photoFaceReceiptAfter{RequestSHA256: receipt.RequestSHA256, ReceiptID: receipt.ReceiptID, After: receipt.After})
+	require.NoError(t, err)
+	_, err = decodeFaceDecisionReceipt(before, after, receipt.ReceiptID)
+	require.ErrorIs(t, err, ErrInvalidPhotoFace)
+}

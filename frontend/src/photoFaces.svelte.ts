@@ -39,14 +39,15 @@ export class PhotoFaces {
       (row) => row.assertion_id === face.assertion_id && row.action === "assert",
     );
   }
-  private numbered = $derived(
-    this.faces.toSorted(
-      (a, b) => a.created_at.localeCompare(b.created_at) || a.face_id.localeCompare(b.face_id),
-    ),
+  ordered = $derived(
+    this.faces
+      .filter((face) => !face.dismissed)
+      .sort(
+        (a, b) => a.created_at.localeCompare(b.created_at) || a.face_id.localeCompare(b.face_id),
+      ),
   );
-  ordered = $derived(this.numbered.filter((face) => !face.dismissed));
   number(face: PhotoFace) {
-    return `Face ${this.numbered.findIndex((row) => row.face_id === face.face_id) + 1}`;
+    return `Face ${this.ordered.findIndex((row) => row.face_id === face.face_id) + 1}`;
   }
   label(face: PhotoFace) {
     const person = this.person(face);

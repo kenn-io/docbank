@@ -2594,6 +2594,8 @@ CREATE TABLE IF NOT EXISTS person_match_candidates (
     created_at TEXT NOT NULL,
     decided_at TEXT
 );
+CREATE INDEX IF NOT EXISTS person_candidate_suggested_person
+    ON person_match_candidates(suggested_person_id) WHERE suggested_person_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS person_candidate_state
     ON person_match_candidates(state, created_at, candidate_id);
 CREATE UNIQUE INDEX IF NOT EXISTS person_candidate_identity

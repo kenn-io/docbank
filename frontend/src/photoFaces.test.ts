@@ -175,7 +175,7 @@ it("clears a pending create after refusal, navigation, or reconciliation", async
   }
 });
 
-it("numbers the same snapshot by creation time and ID, retaining numbers when a face is added", () => {
+it("numbers visible faces by creation time and ID, closing gaps after dismissal", () => {
   const faces = new PhotoFaces("session", vi.fn());
   const earlier = photoFace({
     face_id: "earlier",
@@ -195,6 +195,25 @@ it("numbers the same snapshot by creation time and ID, retaining numbers when a 
     face.face_id === "earlier" ? { ...face, dismissed: true } : face,
   );
   expect(faces.ordered.map((face) => face.face_id)).toEqual(["a", "b", "new"]);
-  expect(faces.number(b)).toBe("Face 3");
+  expect(faces.number(a)).toBe("Face 1");
+  expect(faces.number(b)).toBe("Face 2");
+  expect(faces.number(faces.ordered[2]!)).toBe("Face 3");
+  faces.dispose();
+});
+
+it("renumbers the remaining face before assigning the next new face's number", () => {
+  const faces = new PhotoFaces("session", vi.fn());
+  const first = photoFace({ face_id: "a", dismissed: true });
+  const remaining = photoFace({ face_id: "b", assertion_id: undefined });
+  faces.faces = [first, remaining];
+  expect(faces.label(remaining)).toBe("Face 1");
+  const added = photoFace({
+    face_id: "new",
+    created_at: "2026-02-01T00:00:00Z",
+    assertion_id: undefined,
+  });
+  faces.faces = [...faces.faces, added];
+  expect(faces.label(remaining)).toBe("Face 1");
+  expect(faces.label(added)).toBe("Face 2");
   faces.dispose();
 });

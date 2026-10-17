@@ -252,7 +252,10 @@
       }
       if (!request.signal.aborted) people = matches;
     } catch (cause) {
-      if (!request.signal.aborted) error = cause instanceof Error ? cause.message : String(cause);
+      if (!request.signal.aborted) {
+        previewFailure(cause);
+        error = cause instanceof Error ? cause.message : String(cause);
+      }
     } finally {
       if (!request.signal.aborted) searching = false;
     }

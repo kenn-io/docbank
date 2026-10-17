@@ -641,3 +641,43 @@ it("ignores an older continuation after a new search", async () => {
   expect(screen.getByRole("option", { name: "Bea" })).toBeTruthy();
   faces.dispose();
 });
+
+it.each([
+  ["initial", 401],
+  ["continuation", 401],
+  ["initial", 500],
+  ["continuation", 500],
+] as const)("recovers session failure during %s search with status %s", async (page, status) => {
+  const { APIError } = await import("./api-transport.js");
+  const cause = new APIError("Search rejected", status, "search_rejected");
+  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [face], assertions: [], people: [] });
+  vi.spyOn(api, "listPeople").mockImplementation(async ({ query, cursor } = {}) => {
+    if (!query) return { items: [] };
+    if (page === "continuation" && !cursor)
+      return {
+        items: [
+          {
+            person_id: "person-a",
+            display_name: "Alex",
+            display_name_folded: "alex",
+            state: "curated",
+            revision: 1,
+            created_at: "2026-01-01T00:00:00Z",
+          },
+        ],
+        next_cursor: "tail",
+      };
+    throw cause;
+  });
+  const lost = vi.fn();
+  const faces = new PhotoFaces("session", lost);
+  await faces.load("version-a");
+  render(PhotoPeople, { faces, session: "session" });
+  await fireEvent.click(screen.getByRole("button", { name: "Find or create a person: Face 1" }));
+  await fireEvent.input(screen.getByRole("combobox"), { target: { value: "Alex" } });
+  await screen.findByText("Search rejected");
+  if (status === 401) expect(lost).toHaveBeenCalledExactlyOnceWith(cause);
+  else expect(lost).not.toHaveBeenCalled();
+  expect(screen.queryByRole("option", { name: /Alex/ })).toBeNull();
+  faces.dispose();
+});

@@ -383,7 +383,8 @@ func TestPeopleByDisplayNameUsesFoldedStableCursor(t *testing.T) {
 	require.NoError(t, err)
 	stale, err := s.PeopleByDisplayName(ctx, "Hidden Ada", "", "", 10, true)
 	require.NoError(t, err)
-	require.Empty(t, stale)
+	require.Len(t, stale, 1)
+	require.Equal(t, hidden.PersonID, stale[0].PersonID)
 }
 
 func TestResolveCustodianPreservesSenderClaimAndResolvesAlias(t *testing.T) {
@@ -533,5 +534,33 @@ func BenchmarkPeopleByDisplayNameHiddenCatalog(b *testing.B) {
 		require.NoError(b, err)
 		require.Len(b, people, 100)
 		require.Equal(b, "Alex 10001", people[0].DisplayName)
+	}
+}
+
+func TestPeopleByDisplayNameKeepsNonHiddenRetainedEvidence(t *testing.T) {
+	t.Parallel()
+	for _, state := range []string{"stale", "trashed"} {
+		t.Run(state, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			version := seedDocumentPeopleEvent(t, s, "retained-person.txt", "d9", nil)
+			person := publishLifecycleDocumentPeople(t, s, version.ID)
+			if state == "stale" {
+				_, _, err := s.ReplaceContent(ctx, version.NodeID, UnconditionalRev, fakeHash("e9"), 1, "text/plain")
+				require.NoError(t, err)
+			} else {
+				_, _, err := s.Trash(ctx, version.NodeID, UnconditionalRev)
+				require.NoError(t, err)
+			}
+			var retained int
+			require.NoError(t, s.db.QueryRowContext(ctx, `SELECT count(*) FROM document_people WHERE person_id=?`, person.PersonID).Scan(&retained))
+			require.Positive(t, retained)
+			all, err := s.PeopleByDisplayName(ctx, person.DisplayName, "", "", 10, false)
+			require.NoError(t, err)
+			require.Len(t, all, 1)
+			visible, err := s.PeopleByDisplayName(ctx, person.DisplayName, "", "", 10, true)
+			require.NoError(t, err)
+			require.Equal(t, all, visible)
+		})
 	}
 }
