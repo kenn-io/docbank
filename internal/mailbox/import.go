@@ -293,8 +293,7 @@ func (s *Service) runCancelableJob(ctx context.Context, j store.MailboxJob) erro
 }
 
 func (s *Service) finishJob(ctx context.Context, j store.MailboxJob, state, reason string, tail bool) error {
-	err := s.mutate(ctx, func() error { return s.Store.FinishMailboxJob(ctx, j.ID, j.Claim, state, reason, tail) })
-	return err
+	return s.mutate(ctx, func() error { return s.Store.FinishMailboxJob(ctx, j.ID, j.Claim, state, reason, tail) })
 }
 
 func (s *Service) failJob(ctx context.Context, j store.MailboxJob, cause error) error {

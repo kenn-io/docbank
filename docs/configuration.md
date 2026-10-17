@@ -1049,8 +1049,8 @@ preserves its original attribution and reports one addition per import. Opening
 a drawer onto an existing job stays silent. Interactive CLI `push`, `photos import`,
 mailbox and load-file package imports report once after a confirmed new addition.
 `push --watch`, API-key host-folder `photos import` and status commands stay
-silent. Synchronous CLI `add` counts confirmed additions. The browser Photos
-drawer uses upload groups.
+silent. CLI `add` reports confirmed additions from the daemon even when its
+progress stream fails. The browser Photos drawer uses upload groups.
 Mailbox and load-file jobs store their original surface and first-addition claim
 with the job. Backups preserve both fields. Jobs restored from older released
 vaults have no attribution and stay silent. Host-folder Photos jobs retain their first-addition claim across daemon restarts.
@@ -1070,6 +1070,9 @@ and deliberate photo inspections with `photos assets inspect` count as inspectio
 Multi-document exports and reports stay silent.
 Search and open claims share the persisted daily screen-claim file, so daemon
 restarts preserve the day's counts.
+
+Interactive CLI imports send `X-Docbank-Surface: cli` to attribute their additions.
+Import requests authenticated with an API key alone have no user attribution and stay silent.
 
 CLI actions require terminal input and exclude `search --agent`. Piping output
 still counts; scripts that inherit terminal input may count. Reporting has a 100 ms deadline and never changes command results.

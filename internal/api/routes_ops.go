@@ -118,13 +118,14 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 		OperationID: "ingest", Method: http.MethodPost, Path: "/api/v1/ingest",
 		Summary: "Import server-side files or directory trees (loopback callers only)",
 	}, func(ctx context.Context, in *struct {
-		Body IngestRequest
+		Body    IngestRequest
+		Surface string `header:"X-Docbank-Surface" hidden:"true"`
 	}) (*ingestOutput, error) {
 		dest, opts, selection, err := ingestParams(in.Body)
 		if err != nil {
 			return nil, err
 		}
-		report, err := runIngest(ctx, d, g, in.Body.Paths, dest, opts, selection)
+		report, err := runIngest(ctx, d, g, in.Body.Paths, dest, opts, selection, in.Surface)
 		return &ingestOutput{Body: report}, err
 	})
 
@@ -144,7 +145,8 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 			},
 		},
 	}, func(_ context.Context, in *struct {
-		Body IngestRequest
+		Body    IngestRequest
+		Surface string `header:"X-Docbank-Surface" hidden:"true"`
 	}) (*huma.StreamResponse, error) {
 		dest, opts, selection, err := ingestParams(in.Body)
 		if err != nil {
@@ -183,7 +185,7 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 					Failed: event.Failed, Final: event.Final,
 				}})
 			}
-			report, ingestErr := runIngest(runCtx, d, g, in.Body.Paths, dest, opts, selection)
+			report, ingestErr := runIngest(runCtx, d, g, in.Body.Paths, dest, opts, selection, in.Surface)
 			if stream.err() != nil {
 				return
 			}
@@ -338,12 +340,16 @@ func runIngest(
 	dest string,
 	opts ingest.Options,
 	selection ingest.Selection,
+	surface string,
 ) (IngestReport, error) {
 	var out IngestReport
 	err := g.mutate(func() error {
 		return d.Blobs.WithMutation(ctx, func() error {
 			ing := &ingest.Ingester{Store: d.Store, Blobs: d.Blobs}
 			rep, err := ing.AddPathsWithSelection(ctx, paths, dest, opts, selection)
+			if rep.Created > 0 && surface == "cli" && !browserSessionRequest(ctx) {
+				d.TelemetryCapture.DocumentAdded(surface)
+			}
 			if err != nil {
 				return FromStoreError(err)
 			}

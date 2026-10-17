@@ -15,7 +15,6 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
-	"go.kenn.io/docbank/internal/telemetry"
 )
 
 var (
@@ -91,7 +90,7 @@ Exit 1 if any file failed (each failure is listed).`,
 		}
 		var rep api.IngestReport
 		if addJSON {
-			response, requestErr := c.API().Ingest(cmd.Context(), &apiclient.IngestRequestOptions{Body: &apiclient.IngestBody{Paths: abs, Dest: addDest, Include: opts.Include, Exclude: opts.Exclude, Replace: opts.Replace, CollectionLabel: opts.CollectionLabel}})
+			response, requestErr := c.API().Ingest(actionContext(cmd), &apiclient.IngestRequestOptions{Body: &apiclient.IngestBody{Paths: abs, Dest: addDest, Include: opts.Include, Exclude: opts.Exclude, Replace: opts.Replace, CollectionLabel: opts.CollectionLabel}}, daemonconn.SendActionSurface)
 			err = requestErr
 			if err == nil {
 				rep = *response
@@ -104,10 +103,7 @@ Exit 1 if any file failed (each failure is listed).`,
 			}
 			renderer := newIngestProgressRenderer(cmd.ErrOrStderr(), mode)
 			defer renderer.finish()
-			rep, err = c.IngestStream(cmd.Context(), abs, addDest, opts, renderer.handle)
-		}
-		if rep.Created > 0 {
-			reportAction(cmd, c, telemetry.EventDocumentAdded, "add")
+			rep, err = c.IngestStream(actionContext(cmd), abs, addDest, opts, renderer.handle)
 		}
 		if err != nil {
 			return err

@@ -133,10 +133,7 @@ func AdmitPackageImport(ctx context.Context, d Deps, g PackageMutationGate, owne
 			RequestSHA256: requestHash, PreflightID: preview.PreflightID,
 			PackageID: pkg.PackageID, JobJSON: jobJSON,
 		}, surface)
-		if beginErr != nil {
-			return beginErr
-		}
-		return nil
+		return beginErr
 	})
 	if err != nil {
 		return PackageImportJob{}, err
@@ -188,12 +185,7 @@ func handlePackageImportCancel(w http.ResponseWriter, r *http.Request, d Deps, g
 		writePackageError(w, err)
 		return
 	}
-	result, err := packageImportStatus(r.Context(), d.Store, job)
-	if err != nil {
-		writePackageError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, result)
+	writePackageImportStatus(r.Context(), w, d.Store, job, http.StatusOK)
 }
 
 func writePackageImportStatus(ctx context.Context, w http.ResponseWriter, catalog *store.Store, job store.PackageImportJob, status int) {

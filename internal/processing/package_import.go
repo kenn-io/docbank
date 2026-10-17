@@ -402,11 +402,10 @@ func (w *PackageImportWorker) processClaim(ctx context.Context, job store.Packag
 	if gaps > 0 {
 		state = "partial"
 	}
-	err = w.cfg.Mutate(ctx, func() error {
+	return w.cfg.Mutate(ctx, func() error {
 		_, finishErr := w.cfg.Catalog.FinishPackageImportJob(ctx, job.ID, job.Epoch, job.Token, state, snapshotID, spool)
 		return finishErr
 	})
-	return err
 }
 
 func (w *PackageImportWorker) loadManifest(ctx context.Context, pkg store.Package) (loadfile.Manifest, error) {
