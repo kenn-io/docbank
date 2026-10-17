@@ -455,8 +455,9 @@ list route searches active names by folded prefix. Single-person routes live
 under `/by-id/` so they do not overlap the document-people rebuild routes.
 Reads return one person snapshot with identities and external UIDs.
 
-Browser sessions can search and create people, read and create photo faces,
-and name or clear a face with its current revision. Face pages carry canonical
+Browser sessions can search people, read and create boxed photo faces,
+and name or clear a face with its current revision. Naming can create the
+person atomically. Face pages carry canonical
 names in a page-only `people` list. People search reports a folded `exact_match`
 so the picker can offer existing names. Other person management
 and face decisions remain daemon-only. Rename, retire,
