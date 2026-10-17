@@ -32,6 +32,9 @@ export class PhotoCull {
   stale = $state(false);
   progress = $state("");
   remainder = $state(false);
+  checkingRemainder = $state(false);
+  // The pass whose remainder was last read; flag edits clear it so the next completion reads again.
+  private remainderPass?: string[];
   private capture?: AbortController;
   private flagRead?: AbortController;
   saved = $state(false);
@@ -160,19 +163,26 @@ export class PhotoCull {
     const next = group?.[group.indexOf(this.currentID!) + direction];
     if (next) this.choose(next);
   }
+  // Runs in the write chain, so the saved revision matches every update queued before this check.
   async verifyDecision() {
-    await this.writes;
     if (!this.run || this.stale || this.busy) return false;
-    try {
-      const saved = await this.storage.saved();
-      if (!saved || !sameCheckpoint(saved, this.run.checkpoint))
-        throw new Error("Cull progress changed in another tab. Close and resume it.");
-      return true;
-    } catch (cause) {
-      this.stale = true;
-      this.error = `Progress could not be saved: ${failure(cause)}`;
-      return false;
-    }
+    const expected = this.run.checkpoint;
+    let verified = false;
+    const check = this.writes.then(async () => {
+      if (this.stale) return;
+      try {
+        const saved = await this.storage.saved();
+        if (!saved || !sameCheckpoint(saved, expected))
+          throw new Error("Cull progress changed in another tab. Close and resume it.");
+        verified = true;
+      } catch (cause) {
+        this.stale = true;
+        this.error = `Progress could not be saved: ${failure(cause)}`;
+      }
+    });
+    this.writes = check;
+    await check;
+    return verified && !this.stale && !this.busy;
   }
   get complete() {
     return !!this.run && !this.currentID;
@@ -407,12 +417,17 @@ export class PhotoCull {
     }
   }
   move(direction: -1 | 1) {
-    if (!this.run || this.busy || this.stale) return;
+    if (!this.run || (this.busy && !this.checkingRemainder) || this.stale) return;
     const position = Math.max(
       0,
       Math.min(this.run.checkpoint.pass.length, this.run.checkpoint.position + direction),
     );
     if (position === this.run.checkpoint.position) return;
+    // Leaving the completion screen abandons its remainder read.
+    if (this.flagRead) {
+      this.flagRead.abort();
+      this.finishFlagRead(this.flagRead);
+    }
     this.update({ position });
     this.visit();
   }
@@ -427,22 +442,30 @@ export class PhotoCull {
   toggleAutoAdvance() {
     if (this.run) this.update({ autoAdvance: !this.run.checkpoint.autoAdvance });
   }
-  private beginFlagRead() {
+  private beginFlagRead(remainder = false) {
     this.flagRead?.abort();
     this.busy = true;
+    this.checkingRemainder = remainder;
     return (this.flagRead = new AbortController());
   }
   private finishFlagRead(controller: AbortController) {
     if (this.flagRead !== controller) return;
     this.flagRead = undefined;
     this.busy = false;
+    this.checkingRemainder = false;
     this.progress = "";
+  }
+  flagsChanged() {
+    this.remainderPass = undefined;
   }
   async checkRemainder() {
     if (!this.run || !this.complete || this.stale) return;
-    const controller = this.beginFlagRead();
+    const pass = this.run.checkpoint.pass;
+    if (this.remainderPass === pass) return;
+    const controller = this.beginFlagRead(true);
     this.error = "";
     this.remainder = false;
+    this.remainderPass = undefined;
     try {
       const flags = await this.refreshFlags(controller.signal);
       controller.signal.throwIfAborted();
@@ -451,6 +474,7 @@ export class PhotoCull {
         this.run.ids.filter((id) => !flags.has(id)),
       );
       this.remainder = this.matches("unflagged", flags).length > 0;
+      this.remainderPass = pass;
     } catch (cause) {
       if (!controller.signal.aborted) this.apiFailure(cause);
     } finally {
