@@ -268,7 +268,10 @@
         <Button size="sm" onclick={() => (help = !help)}>Keys (?)</Button>
       </header>
       {#if cull.error || editor.error || editor.notice}<p role="alert">
-          {cull.error || editor.error || editor.notice}
+          {cull.error ||
+            (editor.noticeTone === "warning" && editor.notice) ||
+            editor.error ||
+            editor.notice}
         </p>{/if}
       {#if cull.progress && !cull.complete}<p role="status">{cull.progress}</p>{/if}
       {#if editor.dirty || editor.conflict}<div class="controls">

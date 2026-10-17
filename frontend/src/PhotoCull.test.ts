@@ -804,3 +804,15 @@ it("refuses a stale tab decision before calling the edit API", async () => {
   expect(cull.stale).toBe(true);
   expect(edit).not.toHaveBeenCalled();
 });
+
+it("shows the navigation blocker after a failed decision", async () => {
+  vi.spyOn(api, "editPhotoAuthored").mockRejectedValue(new Error("Decision failed"));
+  const { cull } = await reviewPhoto();
+  await fireEvent.click(screen.getByRole("button", { name: "Pick (P)" }));
+  await screen.findByText("Decision failed");
+  await fireEvent.keyDown(document.querySelector(".photo-cull")!, { key: "Escape" });
+  expect(screen.getByRole("alert").textContent).toContain(
+    "Apply or clear your metadata edits before changing photos.",
+  );
+  expect(cull.currentID).toBe("photo-1");
+});
