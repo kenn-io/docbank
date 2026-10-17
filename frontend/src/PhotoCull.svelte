@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount, untrack, tick } from "svelte";
+  import { restorePhotoReviewFocus } from "./photoReview.js";
+  import "./photoReview.css";
   import { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
   import { Button, Modal, Notice } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
@@ -45,9 +47,9 @@
     reloadController.abort();
   });
   let container = $state<HTMLDivElement>();
-  const focus = () => container?.focus({ preventScroll: true });
+  const focus = () => restorePhotoReviewFocus(() => container);
   onMount(() => {
-    void tick().then(focus);
+    void focus();
   });
   let photo = $state<PhotoBrowseRow>();
   let error = $state("");
@@ -239,7 +241,7 @@
     maxHeight="100svh"
   >
     <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_static_element_interactions -->
-    <div class="photo-cull" tabindex="-1" bind:this={container} onkeydown={key}>
+    <div class="photo-review photo-cull" tabindex="-1" bind:this={container} onkeydown={key}>
       <header>
         <Button size="sm" disabled={busy} onclick={close}>Exit cull</Button>
         <strong>{photo?.name ?? (cull.complete ? "Pass complete" : "Cull photos")}</strong>
@@ -398,23 +400,6 @@
 </div>
 
 <style>
-  .review-shell :global(.kit-modal-body) {
-    padding: 0;
-    overflow: hidden;
-  }
-  .review-shell :global(.kit-modal-panel) {
-    border: 0;
-    border-radius: 0;
-  }
-
-  .photo-cull {
-    height: 100svh;
-    width: 100%;
-    display: flex;
-    flex-direction: column;
-    background: var(--bg-surface);
-    color: var(--text-primary);
-  }
   header,
   .controls {
     display: flex;

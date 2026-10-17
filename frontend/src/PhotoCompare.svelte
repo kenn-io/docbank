@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount } from "svelte";
+  import { restorePhotoReviewFocus } from "./photoReview.js";
+  import "./photoReview.css";
   import { Button, Modal } from "@kenn-io/kit-ui";
   import type { Photos } from "./photos.svelte.js";
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
@@ -100,10 +102,7 @@
   function cancelRegion() {
     regionMode = false;
   }
-  async function restoreFocus() {
-    await tick();
-    content?.focus({ preventScroll: true });
-  }
+  const restoreFocus = () => restorePhotoReviewFocus(() => content);
 </script>
 
 <svelte:document onkeydown={(event) => event.target === document.body && key(event)} />
@@ -119,7 +118,7 @@
     maxHeight="100svh"
   >
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="photo-compare" tabindex="-1" bind:this={content} onkeydown={key}>
+    <div class="photo-review photo-compare" tabindex="-1" bind:this={content} onkeydown={key}>
       <header>
         <Button size="sm" onclick={onclose}>Exit compare</Button><strong
           >Compare {rows.length} photos</strong
@@ -208,23 +207,6 @@
 </div>
 
 <style>
-  .review-shell :global(.kit-modal-body) {
-    padding: 0;
-    overflow: hidden;
-  }
-  .review-shell :global(.kit-modal-panel) {
-    border: 0;
-    border-radius: 0;
-  }
-
-  .photo-compare {
-    height: 100svh;
-    width: 100%;
-    display: flex;
-    flex-direction: column;
-    background: var(--bg-surface);
-    color: var(--text-primary);
-  }
   header {
     display: flex;
     flex-wrap: wrap;

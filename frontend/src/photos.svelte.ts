@@ -522,20 +522,16 @@ export class Photos {
   }
 
   async lookup(assetID: string, signal: AbortSignal): Promise<PhotoBrowseRow> {
-    const query = photoQuery;
     try {
-      const page = await listPhotoAssets(
-        {
-          query: { ...query, filters: { ...query.filters, asset_ids: [assetID] } },
-          page_size: 1,
-          hidden: this.hidden,
-        },
-        { session: this.session, signal },
+      const [row] = await lookupPhotoRows(
+        this.session,
+        [assetID],
+        signal,
+        undefined,
+        this.hidden,
       );
-      if (!page.items[0])
-        throw new APIError("This photo is no longer in this view.", 404, "not_found");
-      signal.throwIfAborted();
-      return page.items[0];
+      if (!row) throw new APIError("This photo is no longer in this view.", 404, "not_found");
+      return row;
     } catch (cause) {
       if (!signal.aborted) this.authFailure(cause);
       throw cause;
