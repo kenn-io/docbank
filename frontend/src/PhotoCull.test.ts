@@ -196,10 +196,11 @@ it("blocks decisions, navigation, scope changes and exit during checkpoint check
   const nextPass = vi.spyOn(cull, "nextPass");
   const shell = container.querySelector(".photo-cull")!;
   await fireEvent.keyDown(shell, { key: "p" });
-  for (const phase of ["check", "prepare", "write"]) {
+  for (const phase of ["check", "prepare", "recheck", "write"]) {
     await waitFor(() => {
       if (phase === "check") expect(saved).toHaveBeenCalledOnce();
       else if (phase === "prepare") expect(photos.cullEditor!.loading).toBe(true);
+      else if (phase === "recheck") expect(saved).toHaveBeenCalledTimes(2);
       else expect(photos.cullEditor!.busy).toBe(true);
     });
     for (const key of [
@@ -237,14 +238,15 @@ it("blocks decisions, navigation, scope changes and exit during checkpoint check
     expect(skip).not.toHaveBeenCalled();
     expect(nextPass).not.toHaveBeenCalled();
     expect(onclose).not.toHaveBeenCalled();
-    expect(saved).toHaveBeenCalledOnce();
-    if (phase === "check") {
-      expect(api.preparePhotoAuthored).not.toHaveBeenCalled();
+    expect(saved).toHaveBeenCalledTimes(phase === "check" || phase === "prepare" ? 1 : 2);
+    if (phase === "check" || phase === "recheck") {
+      if (phase === "check") expect(api.preparePhotoAuthored).not.toHaveBeenCalled();
+      else expect(edit).not.toHaveBeenCalled();
       await act(() => finishCheck(cull.run!.checkpoint));
+      if (phase === "recheck") await waitFor(() => expect(edit).toHaveBeenCalledOnce());
     } else if (phase === "prepare") {
       expect(edit).not.toHaveBeenCalled();
       await act(() => finishPrepare(photoPreparation([preparedPhoto(2)])));
-      await waitFor(() => expect(edit).toHaveBeenCalledOnce());
     }
   }
   await act(() => finishWrite({ receipt_id: "", before: [], after: [] }));
@@ -951,6 +953,35 @@ it("reuses the displayed photo in the filmstrip without fetching it again", asyn
   expect(vi.mocked(photos.lookupMany).mock.calls.every(([ids]) => !ids.includes("photo-1"))).toBe(
     true,
   );
+});
+
+it("fetches only the new rail photo when moving one position", async () => {
+  const { cull, photos } = await reviewPhoto();
+  const rows = Array.from({ length: 12 }, (_, index) => photo(index + 1));
+  vi.mocked(photos.lookup).mockImplementation(
+    async (id) => rows.find((row) => row.asset_id === id)!,
+  );
+  const lookup = vi
+    .mocked(photos.lookupMany)
+    .mockImplementation(async (ids) => rows.filter((row) => ids.includes(row.asset_id)));
+  await act(() => {
+    cull.run = {
+      ...cull.run!,
+      ids: rows.map((row) => row.asset_id),
+      checkpoint: {
+        ...cull.run!.checkpoint,
+        pass: rows.map((row) => row.asset_id),
+        position: 4,
+      },
+    };
+  });
+  await screen.findByRole("button", { name: "Show Photo 9.jpg" });
+  await screen.findByText("Photo 5.jpg");
+  lookup.mockClear();
+  await fireEvent.click(screen.getByRole("button", { name: /^Next$/ }));
+  await screen.findByRole("button", { name: "Show Photo 10.jpg" });
+  expect(lookup).toHaveBeenCalledExactlyOnceWith(["photo-10"], expect.any(AbortSignal));
+  expect(screen.getByRole("button", { name: "Show Photo 5.jpg" })).toBeTruthy();
 });
 
 it("keeps shown-file narrowing on retry and resets it for a fresh decision", async () => {

@@ -76,6 +76,11 @@
     const id = currentID;
     void lookupAttempt;
     const controller = new AbortController();
+    untrack(() => {
+      const previous = photo;
+      if (previous)
+        neighbors = [...neighbors.filter((row) => row.asset_id !== previous.asset_id), previous];
+    });
     photo = undefined;
     error = "";
     loading = !!id;
@@ -97,14 +102,15 @@
     return () => controller.abort();
   });
   $effect(() => {
-    const ids = rail.filter((id) => id !== currentID);
+    const held = untrack(() => neighbors).filter((row) => rail.includes(row.asset_id));
+    const loaded = new Set(held.map((row) => row.asset_id));
+    const ids = rail.filter((id) => id !== currentID && !loaded.has(id));
     const controller = new AbortController();
     railError = "";
     railLoading = true;
-    void photos
-      .lookupMany(ids, controller.signal)
+    void (ids.length ? photos.lookupMany(ids, controller.signal) : Promise.resolve([]))
       .then((rows) => {
-        if (!controller.signal.aborted) neighbors = rows;
+        if (!controller.signal.aborted) neighbors = [...held, ...rows];
       })
       .catch((cause) => {
         if (!controller.signal.aborted)
