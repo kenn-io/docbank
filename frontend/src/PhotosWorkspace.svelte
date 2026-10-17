@@ -263,8 +263,34 @@
       unavailable();
       return;
     }
+    if (photoID && (!current || detailLoading)) {
+      editor.unavailable(
+        detailError
+          ? "Reload the photo before editing."
+          : "Photo is loading. Try again when it finishes.",
+      );
+      return;
+    }
     const scope = photoID ? { asset_ids: [photoID] } : photos.scope();
-    void editor.edit(scope, patch, photos.hidden, metadataRefresh, { keywords, rotationDelta });
+    const id = photoID;
+    void editor
+      .edit(scope, patch, photos.hidden, metadataRefresh, {
+        keywords,
+        rotationDelta,
+        viewed: current && {
+          content_version_id: current.content_version_id,
+        },
+      })
+      .then(() => {
+        if (!id || id !== photoID || !editor.conflict) return;
+        reload = { id };
+        if (!editor.dirty) {
+          const error = editor.error;
+          void editor.reload().then(() => {
+            if (!editor.error) editor.error = error;
+          });
+        }
+      });
   }
   function undoShortcut() {
     if (!editor.receiptID) return;
