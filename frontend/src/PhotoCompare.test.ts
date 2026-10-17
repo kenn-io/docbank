@@ -166,18 +166,6 @@ it("navigates with keyboard focus initially and after activating Clear closeup",
   }
 });
 
-it("keeps the last panes after a lookup failure and recovers with a second Next", async () => {
-  const { photos, dialog } = compare([photo(1), photo(2), photo(3), photo(4)]);
-  await waitFor(() => expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]));
-  vi.mocked(photos.lookupMany).mockRejectedValueOnce(new Error("Lookup unavailable"));
-  await fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
-  await within(dialog).findByText("Lookup unavailable");
-  expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]);
-  await fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
-  await waitFor(() => expect(names(dialog)).toEqual(["Photo 2.jpg", "Photo 3.jpg"]));
-  photos.dispose();
-});
-
 it("serializes Next activations until the destination lookup finishes", async () => {
   const rows = [photo(1), photo(2), photo(3), photo(4)];
   const { photos, dialog } = compare(rows);
@@ -231,5 +219,11 @@ it("preserves the closeup when the destination lookup fails", async () => {
   await waitFor(() => expect(document.activeElement).toBe(dialog.querySelector(".photo-compare")));
   await fireEvent.keyDown(document.activeElement!, { key: "ArrowLeft" });
   await waitFor(() => expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]));
+  vi.mocked(photos.lookupMany).mockRejectedValueOnce(new Error("Lookup unavailable"));
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
+  await within(dialog).findByText("Lookup unavailable");
+  expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]);
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
+  await waitFor(() => expect(names(dialog)).toEqual(["Photo 2.jpg", "Photo 3.jpg"]));
   photos.dispose();
 });

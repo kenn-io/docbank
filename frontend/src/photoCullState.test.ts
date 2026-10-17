@@ -254,29 +254,6 @@ it("filters captured IDs locally with fresh flags at each pass boundary", async 
     ),
   ).toBe(true);
 });
-it("saves newly unavailable photos when the follow-up remainder disappears", async () => {
-  const row = photo(1),
-    store = storage();
-  vi.spyOn(api, "createWorkspaceQuery").mockResolvedValue(
-    Response.json(await snapshot([row.asset_id])),
-  );
-  const list = vi
-    .spyOn(api, "listPhotoAssets")
-    .mockImplementation(async (request) => browsePage([row], request));
-  const cull = new PhotoCull("session", store);
-  await cull.start(query);
-  cull.move(1);
-  await cull.checkRemainder();
-  expect(cull.remainder).toBe(true);
-  list.mockImplementation(async (request) => browsePage([], request));
-  await cull.nextPass(true);
-  await cull.flush();
-  expect(cull.complete).toBe(true);
-  expect(cull.remainder).toBe(false);
-  expect(cull.run!.checkpoint.unavailable).toEqual([row.asset_id]);
-  expect((await store.load())!.checkpoint.unavailable).toEqual([row.asset_id]);
-});
-
 it("persists missing remainder photos in one checkpoint and keeps existing markers", async () => {
   const rows = [photo(1), photo(2), photo(3), photo(4)],
     ids = rows.map((row) => row.asset_id),
@@ -300,6 +277,12 @@ it("persists missing remainder photos in one checkpoint and keeps existing marke
   await cull.checkRemainder();
   await cull.flush();
   expect(store.checkpoint).toHaveBeenCalledOnce();
+  vi.mocked(api.listPhotoAssets).mockImplementation(async (request) => browsePage([], request));
+  await cull.nextPass(true);
+  await cull.flush();
+  expect(cull.complete).toBe(true);
+  expect(cull.remainder).toBe(false);
+  expect((await store.load())!.checkpoint.unavailable).toEqual(ids);
 });
 
 it("loads restored flags once and removes missing current-pass rows from later scopes", async () => {

@@ -441,6 +441,7 @@ export class PhotoCull {
   async checkRemainder() {
     if (!this.run || !this.complete || this.stale) return;
     const controller = this.beginFlagRead();
+    this.error = "";
     this.remainder = false;
     try {
       const flags = await this.refreshFlags(controller.signal);

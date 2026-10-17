@@ -239,6 +239,8 @@
         : {
             file_id: selected.display_file_id,
             content_version_id: selected.content_version_id,
+            flag: selected.flag,
+            rating: selected.rating,
           },
     });
     await tick();
@@ -423,6 +425,10 @@
               .unavailable.length} unavailable
           </p>
           {#if cull.progress}<p role="status">{cull.progress}</p>{/if}
+          {#if cull.error}<Button
+              disabled={cull.busy || cull.stale || busy}
+              onclick={() => void cull.checkRemainder()}>Retry</Button
+            >{/if}
           {#if cull.remainder}<Button
               disabled={cull.busy || cull.stale || busy}
               onclick={() => void nextPass(true)}>Review unflagged remainder</Button

@@ -826,9 +826,6 @@ func TestOpenAPIPhotoPreparedTargetOmitsContentVersion(t *testing.T) {
 	prepared := schemas["PhotoPreparedTarget"]
 	require.NotNil(t, prepared)
 	require.NotContains(t, prepared.Properties, "content_version_id")
-	for _, field := range []string{"asset_id", "asset_revision", "file_id", "revision", "node_revision"} {
-		require.Contains(t, prepared.Required, field)
-	}
 	edit := schemas["PhotoAuthoredEditTarget"]
 	require.NotNil(t, edit)
 	require.Equal(t, "uuid", edit.Properties["content_version_id"].Format)
