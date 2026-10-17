@@ -2599,7 +2599,6 @@ it.each([false, true])(
         ids,
         checkpoint: {
           runID: "run",
-          passID: "pass",
           revision: 0,
           pass: ids,
           position: 0,
@@ -2677,7 +2676,6 @@ it("reloads durable culls and retains their draft only for the same vault", asyn
         ids: [durableID],
         checkpoint: {
           runID: durableID,
-          passID: "pass",
           revision: 0,
           pass: [durableID],
           position: 0,
@@ -2748,7 +2746,6 @@ async function captureWorkspace() {
           ids,
           checkpoint: {
             runID: "run",
-            passID: "pass",
             revision: 0,
             pass: ids,
             position: 0,

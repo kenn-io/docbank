@@ -80,8 +80,6 @@ export class PhotoCull {
           !checkpoint ||
           typeof checkpoint.runID !== "string" ||
           !checkpoint.runID.trim() ||
-          typeof checkpoint.passID !== "string" ||
-          !checkpoint.passID.trim() ||
           !Number.isSafeInteger(checkpoint.revision) ||
           checkpoint.revision < 0 ||
           typeof checkpoint.autoAdvance !== "boolean" ||
@@ -157,7 +155,6 @@ export class PhotoCull {
         ids,
         checkpoint: {
           runID: randomUUID(),
-          passID: randomUUID(),
           revision: 0,
           pass: ids.filter((id) => flags.get(id) === ""),
           position: 0,
@@ -219,7 +216,6 @@ export class PhotoCull {
     this.run = { ...this.run, checkpoint };
     const progress: CullProgress = {
       runID: previous.runID,
-      passID: previous.passID,
       revision: previous.revision,
       position: patch.position,
       autoAdvance: patch.autoAdvance,
@@ -255,19 +251,19 @@ export class PhotoCull {
   choose(id: string) {
     if (this.busy || this.stale) return;
     const position = this.run?.checkpoint.pass.indexOf(id) ?? -1;
-    if (position >= 0) {
+    if (position >= 0 && position !== this.run?.checkpoint.position) {
       this.update({ position });
       this.visit();
     }
   }
   move(direction: -1 | 1) {
     if (!this.run || this.busy || this.stale) return;
-    this.update({
-      position: Math.max(
-        0,
-        Math.min(this.run.checkpoint.pass.length, this.run.checkpoint.position + direction),
-      ),
-    });
+    const position = Math.max(
+      0,
+      Math.min(this.run.checkpoint.pass.length, this.run.checkpoint.position + direction),
+    );
+    if (position === this.run.checkpoint.position) return;
+    this.update({ position });
     this.visit();
   }
   skip() {
@@ -341,7 +337,6 @@ export class PhotoCull {
       }
       const checkpoint: CullCheckpoint = {
         ...previous,
-        passID: randomUUID(),
         revision: previous.revision + 1,
         scope,
         pass,
@@ -353,7 +348,6 @@ export class PhotoCull {
       try {
         await this.storage.checkpoint({
           runID: previous.runID,
-          passID: previous.passID,
           revision: previous.revision,
           pass: checkpoint,
         });

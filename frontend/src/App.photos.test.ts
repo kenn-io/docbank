@@ -2701,7 +2701,6 @@ it("guards reload for a failed cull decision after vault identity arrives", asyn
       ids: ["photo-1", "photo-2"],
       checkpoint: {
         runID: "run",
-        passID: "pass",
         revision: 0,
         pass: ["photo-1", "photo-2"],
         position: 0,

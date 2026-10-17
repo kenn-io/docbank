@@ -14,7 +14,6 @@ function run(runID = "run"): CullRun {
     ids,
     checkpoint: {
       runID,
-      passID: "pass",
       revision: 0,
       pass: ids,
       position: 0,
@@ -40,7 +39,6 @@ it("checkpoints position, markers and a replacement pass", async () => {
   await store.replace(captured);
   await store.checkpoint({
     runID: "run",
-    passID: "pass",
     revision: 0,
     position: 3,
     autoAdvance: false,
@@ -54,14 +52,13 @@ it("checkpoints position, markers and a replacement pass", async () => {
   });
   const pass = {
     ...captured.checkpoint,
-    passID: "follow-up",
     pass: ["photo-4"],
     position: 0,
     visited: [],
     skipped: [],
     unavailable: [],
   };
-  await store.checkpoint({ runID: "run", passID: "pass", revision: 1, pass });
+  await store.checkpoint({ runID: "run", revision: 1, pass });
   expect(await store.load()).toEqual({ ids: captured.ids, checkpoint: { ...pass, revision: 2 } });
 });
 
@@ -72,9 +69,9 @@ it("refuses writes from a handle whose run was replaced", async () => {
   await old.replace(captured);
   const replacement = run("new-run");
   await newer.replace(replacement, undefined, captured.checkpoint);
-  await expect(
-    old.checkpoint({ runID: "run", passID: "pass", revision: 0, position: 2 }),
-  ).rejects.toThrow("changed in another tab");
+  await expect(old.checkpoint({ runID: "run", revision: 0, position: 2 })).rejects.toThrow(
+    "changed in another tab",
+  );
   await expect(old.replace(captured, undefined, captured.checkpoint)).rejects.toThrow(
     "changed in another tab",
   );
@@ -90,7 +87,6 @@ it("keeps separate vaults and reads only the saved header for the resume offer",
   const transaction = vi.spyOn(IDBDatabase.prototype, "transaction");
   expect(await a.saved()).toEqual({
     runID: "run",
-    passID: "pass",
     revision: 0,
     position: 0,
     scope: "unflagged",

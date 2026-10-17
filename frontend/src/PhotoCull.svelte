@@ -71,7 +71,7 @@
   let railLoading = $state(false);
   const currentID = $derived(cull.currentID);
   const complete = $derived(cull.complete);
-  const passID = $derived(checkpoint.passID);
+  const pass = $derived(checkpoint.pass);
   $effect(() => {
     const id = currentID;
     void lookupAttempt;
@@ -122,7 +122,7 @@
     return () => controller.abort();
   });
   $effect(() => {
-    if (complete && passID) untrack(() => void cull.checkRemainder());
+    if (complete && pass) untrack(() => void cull.checkRemainder());
   });
   $effect(() =>
     prefetchPreviews(

@@ -3,7 +3,6 @@ import { idbRequest, transactionDone } from "./indexedDB.js";
 export type CullScope = "unflagged" | "picks" | "rejects" | "all";
 export interface CullCheckpoint {
   runID: string;
-  passID: string;
   revision: number;
   pass: string[];
   position: number;
@@ -18,13 +17,9 @@ export interface CullRun {
   checkpoint: CullCheckpoint;
 }
 type MarkerKind = "visited" | "skipped" | "unavailable";
-type Header = Pick<
-  CullCheckpoint,
-  "runID" | "passID" | "revision" | "position" | "scope" | "autoAdvance"
->;
+type Header = Pick<CullCheckpoint, "runID" | "revision" | "position" | "scope" | "autoAdvance">;
 export interface CullProgress {
   runID: string;
-  passID: string;
   revision: number;
   position?: number;
   autoAdvance?: boolean;
@@ -39,22 +34,14 @@ export interface CullStorage {
 }
 
 export const sameCheckpoint = (
-  a: Pick<CullCheckpoint, "runID" | "passID" | "revision">,
-  b: Pick<CullCheckpoint, "runID" | "passID" | "revision">,
-) => a.runID === b.runID && a.passID === b.passID && a.revision === b.revision;
+  a: Pick<CullCheckpoint, "runID" | "revision">,
+  b: Pick<CullCheckpoint, "runID" | "revision">,
+) => a.runID === b.runID && a.revision === b.revision;
 
 const stores = ["members", "checkpoints", "markers"];
 const markerKinds: MarkerKind[] = ["visited", "skipped", "unavailable"];
-const header = ({
+const header = ({ runID, revision, position, scope, autoAdvance }: CullCheckpoint): Header => ({
   runID,
-  passID,
-  revision,
-  position,
-  scope,
-  autoAdvance,
-}: CullCheckpoint): Header => ({
-  runID,
-  passID,
   revision,
   position,
   scope,

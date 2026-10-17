@@ -42,7 +42,6 @@ it("decides once with P, advances, announces the decision and offers receipt Und
     ids: rows.map((row) => row.asset_id),
     checkpoint: {
       runID: "run",
-      passID: "pass",
       revision: 0,
       pass: rows.map((row) => row.asset_id),
       position: 0,
@@ -276,7 +275,6 @@ it("keeps a failed decision on screen and guards exit while its draft remains", 
     ids: [row.asset_id],
     checkpoint: {
       runID: "run",
-      passID: "pass",
       revision: 0,
       pass: [row.asset_id],
       position: 0,
@@ -364,7 +362,6 @@ it("refreshes the visible completion offer after Undo", async () => {
     ids: [row.asset_id],
     checkpoint: {
       runID: "run",
-      passID: "pass",
       revision: 0,
       pass: [row.asset_id],
       position: 0,
@@ -420,7 +417,6 @@ it("disables auto-advance changes while a decision is pending", async () => {
     ids: rows.map((row) => row.asset_id),
     checkpoint: {
       runID: "run",
-      passID: "pass",
       revision: 0,
       pass: rows.map((row) => row.asset_id),
       position: 0,
@@ -492,7 +488,6 @@ it("retries a failed lookup without leaving the current photo", async () => {
     ids: [row.asset_id],
     checkpoint: {
       runID: "run",
-      passID: "pass",
       revision: 0,
       pass: [row.asset_id],
       position: 0,
@@ -550,7 +545,6 @@ async function reviewPhoto(
     ids: [row.asset_id],
     checkpoint: {
       runID: "run",
-      passID: "pass",
       revision: 0,
       pass: [row.asset_id],
       position: 0,

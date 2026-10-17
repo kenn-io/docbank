@@ -102,8 +102,6 @@ it.each([
   { runID: "" },
   { runID: " " },
   { runID: 1 },
-  { passID: "" },
-  { passID: null },
   { revision: -1 },
   { revision: 0.5 },
   { revision: Number.MAX_SAFE_INTEGER + 1 },
@@ -123,7 +121,6 @@ it.each([
     ids: [id],
     checkpoint: {
       runID: "11111111-1111-4111-8111-111111111111",
-      passID: "22222222-2222-4222-8222-222222222222",
       revision: 0,
       pass: [id],
       position: 0,
@@ -420,7 +417,6 @@ it("keeps per-photo marker work independent of how many photos were already mark
     ids,
     checkpoint: {
       runID: "run",
-      passID: "pass",
       revision: 0,
       pass: ids,
       position: 0,
@@ -513,7 +509,6 @@ it("keeps the newer remainder result when an older flag read finishes", async ()
     ids: [row.asset_id],
     checkpoint: {
       runID: "run",
-      passID: "pass",
       revision: 0,
       pass: [row.asset_id],
       position: 1,
@@ -554,7 +549,6 @@ it.each([false, true])(
       ids: [row.asset_id],
       checkpoint: {
         runID: "run",
-        passID: "pass",
         revision: 0,
         pass: [row.asset_id],
         position: complete ? 1 : 0,
@@ -592,7 +586,6 @@ it("reports a failed flag lookup and clears its progress", async () => {
     ids: [id],
     checkpoint: {
       runID: "run",
-      passID: "pass",
       revision: 0,
       pass: [id],
       position: 1,
@@ -643,3 +636,53 @@ it.each(["capture", "next pass", "remainder"])(
     expect(cull.error).toBe("Session expired");
   },
 );
+
+it.each(["left at first", "current thumbnail", "right after completion"])(
+  "preserves another tab's checkpoint after %s",
+  async (navigation) => {
+    const store = storage();
+    vi.spyOn(api, "createWorkspaceQuery").mockResolvedValue(
+      Response.json(await snapshot([photo(1).asset_id, photo(2).asset_id])),
+    );
+    const first = new PhotoCull("session", store);
+    await first.start(query);
+    if (navigation === "right after completion") {
+      first.move(1);
+      first.move(1);
+    }
+    await first.flush();
+    const other = new PhotoCull("session", photoCullStorage("synthetic-vault"));
+    await other.restore();
+    const saved = await store.saved();
+    vi.mocked(store.checkpoint).mockClear();
+    if (navigation === "current thumbnail") first.choose(first.currentID!);
+    else first.move(navigation === "left at first" ? -1 : 1);
+    await first.flush();
+    expect(store.checkpoint).not.toHaveBeenCalled();
+    expect(await store.saved()).toEqual(saved);
+    expect(await other.verifyDecision()).toBe(true);
+    first.move(navigation === "right after completion" ? -1 : 1);
+    await first.flush();
+    expect(await other.verifyDecision()).toBe(false);
+    expect(other.error).toContain("Close and resume it.");
+  },
+);
+
+it("refuses decisions after another tab replaces the pass", async () => {
+  const store = storage();
+  vi.spyOn(api, "createWorkspaceQuery").mockResolvedValue(
+    Response.json(await snapshot([photo(1).asset_id])),
+  );
+  vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) =>
+    browsePage([photo(1)], request),
+  );
+  const first = new PhotoCull("session", store);
+  await first.start(query);
+  await first.flush();
+  const other = new PhotoCull("session", photoCullStorage("synthetic-vault"));
+  await other.restore();
+  await first.nextPass(false, () => true);
+  await first.flush();
+  expect(await other.verifyDecision()).toBe(false);
+  expect(other.error).toContain("Close and resume it.");
+});
