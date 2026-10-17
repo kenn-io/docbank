@@ -279,7 +279,9 @@ changed the same property differently. It never writes to the source folder.
 `xmp:pending` finds photos waiting for the worker, including photos waiting for
 source metadata extraction. `xmp:conflict` finds photos waiting for a choice.
 Metadata checks a Pending photo again every few seconds for about a minute,
-then asks you to select **Refresh XMP**.
+then asks you to select **Refresh XMP**. Missing sidecar content stays Pending
+with a reason. Restore its bytes to let background sync retry automatically;
+**Refresh XMP** checks progress and resumes polling.
 
 | Decision | XMP property |
 | --- | --- |

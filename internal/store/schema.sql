@@ -2385,7 +2385,7 @@ CREATE TRIGGER IF NOT EXISTS photo_xmp_member_delete AFTER DELETE ON photo_files
     UPDATE photo_files SET xmp_state='pending' WHERE asset_id=OLD.asset_id AND role IN ('raw','image') AND xmp_state NOT IN ('pending','none');
     UPDATE photo_files SET xmp_state='pending' WHERE file_id=OLD.sidecar_of_file_id AND xmp_state<>'pending';
 END;
-CREATE TRIGGER IF NOT EXISTS photo_xmp_member_update AFTER UPDATE OF asset_id,role,sidecar_of_file_id ON photo_files BEGIN
+CREATE TRIGGER IF NOT EXISTS photo_xmp_member_update AFTER UPDATE OF asset_id,role,sidecar_of_file_id,source_sha256 ON photo_files BEGIN
     UPDATE photo_files SET xmp_state='pending' WHERE file_id IN (OLD.sidecar_of_file_id,NEW.sidecar_of_file_id) AND xmp_state<>'pending';
     UPDATE photo_files SET xmp_state='pending' WHERE file_id=NEW.file_id AND role IN ('raw','image') AND xmp_state<>'pending'
         AND (xmp_state<>'none' OR confirmed_fields<>0 OR EXISTS(SELECT 1 FROM node_tags WHERE node_id=NEW.node_id));

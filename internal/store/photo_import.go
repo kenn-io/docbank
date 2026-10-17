@@ -244,7 +244,7 @@ func (s *Store) photoImportCurrentDuplicateTx(
 		return Node{}, false, nil
 	}
 	if takeover {
-		node, found, err = s.replacePhotoImportSourceTx(ctx, tx, run, node, member, role, "application/rdf+xml")
+		node, found, err = s.replacePhotoImportSourceTx(ctx, tx, run, node, member, "application/rdf+xml")
 		*changedSource = *changedSource || found
 		return node, found, err
 	}
@@ -286,8 +286,8 @@ func (s *Store) photoImportChangedSourceTx(
 		LEFT JOIN photo_files pf ON pf.node_id=n.id AND pf.asset_id IS NOT NULL
 		WHERE n.kind='file' AND n.trashed_at IS NULL AND `+photoFilter+` AND p.original_path=?
 		  -- A node shared with another source path keeps its bytes; the edit becomes its own file.
-		  AND NOT EXISTS (SELECT 1 FROM provenance other
-		    WHERE other.node_id=n.id AND other.original_path IS NOT ?
+		  AND NOT EXISTS (SELECT 1 FROM provenance other JOIN ingests i ON i.id=other.ingest_id
+		    WHERE other.node_id=n.id AND other.original_path IS NOT ? AND i.source_kind NOT LIKE 'embedded:%'
 		      AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=other.identity))
 		ORDER BY n.id`, append(roleArgs, member.OriginalPath, member.OriginalPath), func(rows *sql.Rows) error {
 		var id int64
@@ -306,19 +306,14 @@ func (s *Store) photoImportChangedSourceTx(
 	if err != nil {
 		return Node{}, false, err
 	}
-	return s.replacePhotoImportSourceTx(ctx, tx, run, prior, member, role, mediaType)
+	return s.replacePhotoImportSourceTx(ctx, tx, run, prior, member, mediaType)
 }
 
-func (s *Store) replacePhotoImportSourceTx(ctx context.Context, tx *sql.Tx, run IngestRun, prior Node, member PhotoImportMember, role, mediaType string) (Node, bool, error) {
+func (s *Store) replacePhotoImportSourceTx(ctx context.Context, tx *sql.Tx, run IngestRun, prior Node, member PhotoImportMember, mediaType string) (Node, bool, error) {
 	replaced, _, err := s.replaceContentTx(ctx, tx, prior, prior.Revision,
 		member.BlobHash, member.Size, mediaType, photoImportPhysical(member)...)
 	if err != nil {
 		return Node{}, false, fmt.Errorf("recording changed photo source %q: %w", member.OriginalPath, err)
-	}
-	if role == PhotoRoleSidecar {
-		if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET source_sha256=? WHERE node_id=? AND role='sidecar'`, member.BlobHash, replaced.ID); err != nil {
-			return Node{}, false, err
-		}
 	}
 	observed, err := s.observePhotoImportSourceTx(ctx, tx, run, replaced, member, replaced.CurrentVersionID)
 	if err != nil {
@@ -355,6 +350,9 @@ func (s *Store) observePhotoImportSourceTx(
 	fact.Identity, err = provenanceIdentity(fact)
 	if err != nil {
 		return Node{}, fmt.Errorf("identifying photo import observation: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET source_sha256=? WHERE node_id=? AND role='sidecar' AND source_sha256<>?`, member.BlobHash, node.ID, member.BlobHash); err != nil {
+		return Node{}, err
 	}
 	return s.observeOperationalIngestTx(ctx, tx, run, node, fact, inserted, versionID)
 }

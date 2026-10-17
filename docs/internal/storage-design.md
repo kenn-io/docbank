@@ -480,7 +480,7 @@ Schema 38 adds `saved_query_runs.photos`, which distinguishes document-node runs
 
 Schema 38 adds XMP sync state to `photo_files`. Each RAW or image row stores
 `xmp_state`, `xmp_detail` and `xmp_receipt_id`; each sidecar row stores
-`source_sha256`, the digest of the last outside packet its sync accepted.
+`source_sha256`, the digest of the last outside packet observed during import.
 
 - Authority: the one `xmp_sync` receipt per original holds the successful
   baseline (sidecar version, packet, catalog decisions and keywords, original
@@ -490,7 +490,7 @@ Schema 38 adds XMP sync state to `photo_files`. Each RAW or image row stores
 - Status: the state and detail columns are derived. Triggers set Pending in the
   transaction that changes an original's decisions, own tags or tag names,
   membership or sidecar attachment, original or sidecar node, extraction head,
-  source provenance, audit coverage or a same-folder `<name>.xmp` node. A tag
+  source provenance or digest, audit coverage or a same-folder `<name>.xmp` node. A tag
   shared with other photos does not dirty them. Rows with no sync work stay
   None for changes outside their own row, node, tags or sidecar.
 - Worker: the sidecar backfill lists Pending rows through a partial index and
@@ -498,14 +498,22 @@ Schema 38 adds XMP sync state to `photo_files`. Each RAW or image row stores
   Unavailable, Invalid, and Waiting for extraction) are stored directly; the
   rest read the packet, merge and publish. Publication reloads every input in
   its write transaction and retries when one changed, then commits the
-  imported decisions, tags, sidecar version, receipt and state together.
+  imported decisions, tags, sidecar version, receipt and state together. Missing
+  physical sidecar bytes leave the original Pending with a reason and return
+  the read error to the backfill retry policy. Restoring those bytes lets the
+  same background target recover without a catalog change.
 - Imports: an outside sidecar without earlier source-path provenance matches
   through its paired original and replaces the generated sidecar in place.
+  Generated provenance does not count as a competing outside path; a genuine
+  second outside path still keeps its own copy when the first changes.
   A rescan whose sidecar bytes equal `source_sha256` keeps the current
   Docbank version and binds provenance to a retained version with those bytes.
-  Changed outside bytes become a new version and replace the digest. The first
-  sync of a sidecar without a baseline records its current digest before any
-  write, which covers vaults rebuilt from schema 29.
+  Every observation records the digest, even when its bytes equal a generated
+  sidecar. A changed digest requeues the original; its next successful sync
+  records the outside snapshot separately from the latest sync baseline.
+  Changed outside bytes become a new version. The first sync of a sidecar
+  without a baseline records its current digest before any write, which covers
+  vaults rebuilt from schema 29.
 - Restore rebuilds the receipt pointers and marks every original with sync work
   Pending in one statement. Purging an original or sidecar deletes the
   receipt naming it and returns the original to Pending.

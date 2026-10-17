@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"encoding/json/v2"
 	"fmt"
 	"testing"
 
@@ -314,11 +315,16 @@ func TestPhotoXMPRestoreRebuildsStatus(t *testing.T) {
 	duplicated := backup.Bytes()
 	for line := range bytes.Lines(backup.Bytes()) {
 		if bytes.Contains(line, []byte(`"operation":"xmp_sync"`)) {
-			duplicated = append(duplicated, bytes.Replace(line, []byte(state.Receipt.ReceiptID), []byte("40000000-0000-4000-8000-0000000000aa"), 1)...)
+			var record metadataPhotoReceipt
+			require.NoError(t, json.Unmarshal(line, &record))
+			record.ReceiptID = "40000000-0000-4000-8000-0000000000aa"
+			encoded, err := json.Marshal(record)
+			require.NoError(t, err)
+			duplicated = append(duplicated, append(encoded, '\n')...)
 		}
 	}
 	err = newTestStore(t).ImportMetadata(ctx, bytes.NewReader(duplicated))
-	require.Error(t, err)
+	require.ErrorContains(t, err, "XMP receipts reference missing or different nodes")
 }
 
 func TestPhotoXMPReceiptDecoderIsStrict(t *testing.T) {

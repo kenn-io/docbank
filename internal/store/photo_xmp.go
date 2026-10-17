@@ -380,7 +380,7 @@ func (w PhotoXMPWork) classify() (string, string) {
 	case w.Sidecar == nil && w.occupied:
 		return PhotoXMPStateInvalid, "The sidecar name is already occupied. Rename or trash that file to resume sync."
 	case w.Sidecar != nil && catalogUnchanged && r.Sidecar.FileID == w.Sidecar.FileID && r.Sidecar.VersionID == w.Sidecar.Node.CurrentVersionID &&
-		r.OriginalVersionID == w.Node.CurrentVersionID && r.Orientation == w.Orientation && w.intended == w.Original.ID:
+		r.OriginalVersionID == w.Node.CurrentVersionID && r.Orientation == w.Orientation && w.intended == w.Original.ID && r.SourceSHA256 == w.Sidecar.SourceSHA256:
 		return PhotoXMPStateSynced, ""
 	}
 	return PhotoXMPStatePending, ""

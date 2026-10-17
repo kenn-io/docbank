@@ -1,9 +1,11 @@
 package processing
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -13,6 +15,7 @@ import (
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/kit/packstore"
 )
 
 const xmpRaw = "capture.ARW"
@@ -288,23 +291,27 @@ func TestPhotoXMPUnrelatedOutsideEditKeepsImportUndo(t *testing.T) {
 	assert.Nil(t, e.state(store.PhotoXMPStateSynced).Receipt)
 }
 
-func TestPhotoXMPMissingSidecarBecomesUnavailable(t *testing.T) {
+func TestPhotoXMPMissingSidecarRetriesAfterRestore(t *testing.T) {
 	t.Parallel()
 	e := newXMPEnv(t, xmpSidecar(` xmp:Rating="4"`, ""))
 	e.drain()
 	sidecar, data, _ := e.packet()
 	e.edit(store.PhotoAuthoredPatch{Rating: new(5)})
 	require.NoError(t, e.blobs.Remove(sidecar.BlobHash))
-	e.drain()
-	assert.Equal(t, "The sidecar content is missing. Restore its data, then refresh XMP.", e.state(store.PhotoXMPStateUnavailable).Reason)
-	assert.Equal(t, 5, e.raw().Rating)
-	_, err := e.blobs.WriteDetailedContext(t.Context(), strings.NewReader(data))
+	ing := &ingest.Ingester{Store: e.catalog, Blobs: e.blobs}
+	fileID := e.raw().ID
+	err := SyncPhotoXMPBackground(t.Context(), ing, fileID)
+	require.ErrorIs(t, err, packstore.ErrPhysicalMissing)
+	assert.Equal(t, "The sidecar content is missing. Restore its data; background sync will retry.", e.state(store.PhotoXMPStatePending).Reason)
+	targets, err := e.catalog.PhotoXMPTargetsAfter(t.Context(), "", 100)
 	require.NoError(t, err)
-	e.edit(store.PhotoAuthoredPatch{Rating: new(3)})
-	e.drain()
-	e.state(store.PhotoXMPStateSynced)
+	require.Equal(t, []store.PhotoSidecarTarget{{FileID: fileID, NodeID: e.raw().NodeID}}, targets)
+	_, err = e.blobs.WriteDetailedContext(t.Context(), strings.NewReader(data))
+	require.NoError(t, err)
+	require.NoError(t, SyncPhotoXMPBackground(t.Context(), ing, fileID))
+	assert.Empty(t, e.state(store.PhotoXMPStateSynced).Reason)
 	_, _, packet := e.packet()
-	assert.Equal(t, 3, packet.Rating)
+	assert.Equal(t, 5, packet.Rating)
 }
 
 func TestPhotoXMPReadPermissionFailureRetries(t *testing.T) {
@@ -464,4 +471,85 @@ func TestPhotoXMPOutsideImportReplacesGeneratedSidecar(t *testing.T) {
 	e.drain()
 	e.state(store.PhotoXMPStateSynced)
 	assert.Equal(t, 4, e.raw().Rating)
+	for _, rating := range []int{5, 2} {
+		outside = xmpSidecar(` xmp:Rating="`+strconv.Itoa(rating)+`"`, "")
+		result = e.importFiles(photoGroupFile{xmpRaw, store.PhotoRoleRAW, "image/x-sony-arw", "synthetic RAW"}, outside)
+		require.Equal(t, created.ID, result.Nodes[1].ID, "later outside edits keep the attachment")
+		e.drain()
+		e.state(store.PhotoXMPStateSynced)
+		current, _, packet := e.packet()
+		assert.Equal(t, created.ID, current.ID)
+		assert.Equal(t, rating, packet.Rating)
+		assert.Equal(t, packet.Rating, e.raw().Rating)
+	}
+	// A second outside path sharing these bytes keeps its copy when the first changes.
+	root := e.root
+	e.root = filepath.Join(root, "second-source")
+	shared := e.importFiles(photoGroupFile{xmpRaw, store.PhotoRoleRAW, "image/x-sony-arw", "synthetic RAW"}, outside)
+	require.Equal(t, created.ID, shared.Nodes[1].ID)
+	e.root = root
+	kept := e.node(created.ID)
+	outside = xmpSidecar(` xmp:Rating="1"`, "")
+	separate := e.importFiles(photoGroupFile{xmpRaw, store.PhotoRoleRAW, "image/x-sony-arw", "synthetic RAW"}, outside)
+	assert.NotEqual(t, created.ID, separate.Nodes[1].ID)
+	assert.Equal(t, kept.CurrentVersionID, e.node(created.ID).CurrentVersionID)
+	assert.Len(t, e.sidecars(), 2)
+}
+
+func TestPhotoXMPIdenticalFirstObservationSurvivesManagedWrite(t *testing.T) {
+	t.Parallel()
+	e := newXMPEnv(t)
+	e.edit(store.PhotoAuthoredPatch{Rating: new(3)})
+	e.drain()
+	created, data, _ := e.packet()
+	outside := photoGroupFile{created.Name, store.PhotoRoleSidecar, "application/rdf+xml", data}
+	raw := photoGroupFile{xmpRaw, store.PhotoRoleRAW, "image/x-sony-arw", "synthetic RAW"}
+	first := e.importFiles(raw, outside)
+	require.Equal(t, created.ID, first.Nodes[1].ID)
+	e.state(store.PhotoXMPStatePending)
+	e.drain()
+	e.state(store.PhotoXMPStateSynced)
+	e.edit(store.PhotoAuthoredPatch{Rating: new(5)})
+	e.drain()
+	managed, managedData, _ := e.packet()
+	for _, phase := range []string{"retained", "pruned", "restored"} {
+		t.Log(phase)
+		if phase == "pruned" {
+			_, err := e.catalog.PruneContentVersions(t.Context(), managed.ID, e.node(managed.ID).Revision, store.VersionPruneSelector{KeepNewest: 1}, true)
+			require.NoError(t, err)
+		}
+		if phase == "restored" {
+			var backup bytes.Buffer
+			require.NoError(t, e.catalog.ExportMetadata(t.Context(), &backup))
+			restored, err := store.Open(filepath.Join(e.root, "restored.db"))
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, restored.Close()) })
+			require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(backup.Bytes())))
+			blobs, err := blob.New(store.NewPackCatalog(restored), filepath.Join(e.root, "restored-blobs"))
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, blobs.Close()) })
+			for _, content := range []string{"synthetic RAW", data, managedData} {
+				_, err := blobs.WriteDetailedContext(t.Context(), strings.NewReader(content))
+				require.NoError(t, err)
+			}
+			e.catalog, e.blobs = restored, blobs
+		}
+		e.importFiles(raw, outside)
+		e.drain()
+		e.state(store.PhotoXMPStateSynced)
+		current, _, packet := e.packet()
+		assert.Equal(t, managed.CurrentVersionID, current.CurrentVersionID)
+		assert.Equal(t, 5, packet.Rating)
+		assert.Equal(t, 5, e.raw().Rating)
+		if phase == "retained" {
+			bindings, err := e.catalog.ProvenanceVersionBindings(t.Context(), created.CurrentVersionID)
+			require.NoError(t, err)
+			assert.Len(t, bindings, 3, "creation and two outside observations describe the original version")
+		}
+	}
+	outside.payload = strings.Replace(data, `>3</`, `>4</`, 1)
+	require.NotEqual(t, data, outside.payload)
+	e.importFiles(raw, outside)
+	e.drain()
+	assert.Equal(t, []store.PhotoXMPRow{{Field: "Rating", Catalog: "5", Sidecar: "4"}}, e.state(store.PhotoXMPStateConflict).Rows)
 }
