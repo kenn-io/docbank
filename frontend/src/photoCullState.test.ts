@@ -344,13 +344,23 @@ it("keeps the previous durable run after cancellation, capture failure or failed
   const original = structuredClone(cull.run);
   expect(await cull.start(query, () => false)).toBe(false);
   expect(await store.load()).toEqual(original);
-  capture.mockImplementationOnce(async (_request, options) => {
-    cull.cancel();
-    options?.signal?.throwIfAborted();
-    throw new Error("unreachable");
-  });
-  expect(await cull.start(query, () => true)).toBe(false);
+  const replacement = new Response(JSON.stringify(await snapshot([photo(2).asset_id])));
+  let release!: () => void;
+  capture.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        release = () => resolve(replacement);
+      }),
+  );
+  const replacing = cull.start(query, () => true);
+  await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+  cull.cancel();
+  release();
+  expect(await replacing).toBe(false);
+  await cull.flush();
   expect(cull.run).toEqual(original);
+  expect(await store.load()).toEqual(original);
+  expect(cull.error).toBe("");
   capture.mockRejectedValueOnce(new Error("Snapshot expired"));
   expect(await cull.start(query, () => true)).toBe(false);
   expect(cull.error).toBe("Snapshot expired");
