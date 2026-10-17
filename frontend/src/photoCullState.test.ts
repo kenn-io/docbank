@@ -717,7 +717,6 @@ it.each(["success", "failure", "empty"])("refreshes bulk flags: %s", async (outc
     ids,
     checkpoint: {
       runID: "run",
-      passID: "pass",
       revision: 0,
       pass: ids,
       position: ids.length,
