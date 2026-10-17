@@ -20,6 +20,17 @@ beforeEach(() =>
   ),
 );
 const face = photoFace({ revision: 3, assertion_id: undefined });
+it("explains that removed faces keep their place in the photo limit", async () => {
+  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [face], assertions: [], people: [] });
+  const faces = new PhotoFaces("session", vi.fn());
+  await faces.load("version-a");
+  render(PhotoPeople, { faces, session: "session" });
+  expect(screen.getByRole("button", { name: "Remove face" })).toBeTruthy();
+  expect(
+    screen.getByText("Removed faces still count toward this photo's 1,000-face limit."),
+  ).toBeTruthy();
+  faces.dispose();
+});
 it("validates and trims names, resets search on reopen, and opens a person’s photos", async () => {
   const assertion = photoPersonAssertion();
   vi.spyOn(api, "listPhotoFaces")

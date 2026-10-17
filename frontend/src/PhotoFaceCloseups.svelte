@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Button } from "@kenn-io/kit-ui";
   import type { PhotoFaces } from "./photoFaces.svelte.js";
   import type { PhotoBrowseRow, FaceBox } from "./generated/docbank.js";
   import { photoFaceCrop, photoRotationTransform, rotatedDimensions } from "./photoRotation.js";
@@ -52,7 +53,12 @@
         </div>
         <figcaption>{tile.label}</figcaption>
       </figure>{/each}
-    {#if faces.error}<span role="alert">{faces.error}</span>{/if}
+    {#if faces.error}<span role="alert">{faces.error}</span>
+      <Button
+        size="sm"
+        disabled={faces.loading || faces.busy}
+        onclick={() => faces.load(faces.version)}>Retry</Button
+      >{/if}
   </section>{/if}
 
 <style>

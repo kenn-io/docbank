@@ -60,7 +60,7 @@ func photoHiddenMiddleware(next http.Handler) http.Handler {
 		if cookie, err := r.Cookie(photoHiddenCookie(r.Host)); err == nil {
 			r = r.WithContext(store.WithPhotoHiddenToken(r.Context(), cookie.Value))
 		}
-		if len(r.URL.Path) >= len("/api/v1/photos/") && r.URL.Path[:len("/api/v1/photos/")] == "/api/v1/photos/" {
+		if r.URL.Path == "/api/v1/people" || (len(r.URL.Path) >= len("/api/v1/photos/") && r.URL.Path[:len("/api/v1/photos/")] == "/api/v1/photos/") {
 			w.Header().Set("Cache-Control", "no-store")
 			w.Header().Set("Vary", "X-Api-Key, Authorization, Cookie, "+WebSessionHeader)
 		}

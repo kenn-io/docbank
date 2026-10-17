@@ -1,9 +1,36 @@
-import { afterEach, expect, it } from "vite-plus/test";
-import { cleanup, render, screen } from "@testing-library/svelte";
+import { afterEach, expect, it, vi } from "vite-plus/test";
+import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import * as api from "./generated/docbank.js";
 import PhotoFaceCloseups from "./PhotoFaceCloseups.svelte";
 import { PhotoFaces } from "./photoFaces.svelte.js";
 import { photo, photoFace, photoPersonAssertion } from "./photo-test-fixtures.js";
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
+it("retries a failed face load for the current photo version", async () => {
+  const read = vi
+    .spyOn(api, "listPhotoFaces")
+    .mockRejectedValueOnce(new Error("Faces unavailable"))
+    .mockResolvedValue({
+      faces: [photoFace({ assertion_id: undefined })],
+      assertions: [],
+      people: [],
+    });
+  const faces = new PhotoFaces("session", () => {});
+  await faces.load("version-a");
+  render(PhotoFaceCloseups, { photo: { ...photo(1), content_version_id: "version-a" }, faces });
+  expect(screen.getByRole("alert").textContent).toBe("Faces unavailable");
+  await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(await screen.findByText("Face 1")).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(read).toHaveBeenLastCalledWith(
+    "version-a",
+    expect.objectContaining({ session: "session" }),
+  );
+  faces.dispose();
+});
 it("keeps captions without a matching preview and reuses image nodes when names change", async () => {
   const faces = new PhotoFaces("session", () => {});
   faces.version = "version-a";

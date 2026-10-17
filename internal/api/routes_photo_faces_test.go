@@ -234,4 +234,19 @@ func TestPhotoFaceBrowserPeopleHiddenScope(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &page))
 	require.Len(t, page.Items, 1)
 	require.Equal(t, visible.PersonID, page.Items[0].PersonID)
+	lockedHeaders := response.Header
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/hidden/unlock", headers, map[string]string{"passcode": "synthetic-passcode"})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.Len(t, response.Cookies(), 1)
+	headers["Cookie"] = response.Cookies()[0].String()
+	response, body = get(t, ts, "/api/v1/people", headers)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &page))
+	require.Len(t, page.Items, 2)
+	require.Equal(t, hidden.PersonID, page.Items[0].PersonID)
+	require.Equal(t, visible.PersonID, page.Items[1].PersonID)
+	for _, h := range []http.Header{lockedHeaders, response.Header} {
+		require.Equal(t, "no-store", h.Get("Cache-Control"))
+		require.Equal(t, "X-Api-Key, Authorization, Cookie, "+api.WebSessionHeader, h.Get("Vary"))
+	}
 }

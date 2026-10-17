@@ -366,6 +366,7 @@
       >
     </div>
   {/each}
+  <p>Removed faces still count toward this photo's 1,000-face limit.</p>
   {#each faces.assertions.filter((row) => row.photo_mark && row.action === "assert") as person (person.assertion_id)}
     <div class="person-row">
       {#if onperson && faces.personActive(person.person_id)}<Button

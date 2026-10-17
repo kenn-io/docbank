@@ -761,13 +761,13 @@ Once a photo preview appears, choose **Add face**. Drag a box around a face, or 
 
 In the inspector's **People** section, choose a name from the search results or choose **Create person**. Each face has its own name picker. Creating a person and naming the face save together; a revision conflict creates neither. After an uncertain response, the picker reloads the face before another choice.
 
-Created people remain after you clear their photo assignment or remove their face. Use `docbank people retire` to retire an unwanted person.
+Created people remain after you clear their photo assignment or remove their face. Removed faces still count toward the photo's 1,000-face limit. Use `docbank people retire` to retire an unwanted person.
 
 Names allow up to 200 UTF-8 bytes. Duplicate names are allowed; choose **Create person** for a different person with the same name, and merge people later if needed. Browser search omits people backed only by locked Hidden photos until unlock. Typing one of those names while locked can create a duplicate.
 
 Open a named face’s picker and choose **Clear name** to remove its name. Choose **Remove face** to dismiss a mistaken box and its closeup. Choose **Clear whole-photo mark** to clear a photo-wide mark while keeping any named faces. Removing an assigned face or clearing a whole-photo mark asks for confirmation and explains that the browser can't undo it. Removing an unnamed manual face is immediate because you can redraw it. The face-decision API retains undo receipts.
 
-Each face shares its number across the inspector, Loupe, and Cull closeup. Removing a face closes gaps in those numbers. Unnamed faces read **Face N**. The picker groups people with the same name. Choose a group to compare up to three linked photos per person in the current Hidden scope, excluding the photo you're naming. If a person has no photos you can see, the chooser shows their creation date. When same-name choices show identical details, their full person IDs distinguish the choices. You can select an existing person or **New person named …**.
+Each face shares its number across the inspector, Loupe, and Cull closeup. Removing a face closes gaps in those numbers. Unnamed faces read **Face N**. The picker groups people with the same name. Choose a group to compare up to three linked photos per person in the current Hidden scope, excluding the photo you're naming. If a person has no visible identity label, the chooser shows their creation date. When same-name choices show identical details, their full person IDs distinguish the choices. You can select an existing person or **New person named …**.
 
 Choose an active person's name beside the picker to open Library filtered to that person. This clears the text search and shows every match in capture-time order. Naming or clearing a face refreshes loaded views with person filters or search text in the same Hidden scope. Choose **Retry** after a People page error, including an empty first page. Retired names keep their labels and correction controls. Face labels follow the photo through rotation, zoom, and pan.
 

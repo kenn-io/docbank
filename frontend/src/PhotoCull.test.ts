@@ -18,6 +18,7 @@ async function readyButton(name: string | RegExp) {
   return button;
 }
 beforeEach(() => {
+  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [], assertions: [], people: [] });
   vi.spyOn(api, "getPhotoSettings").mockResolvedValue({
     revision: 1,
     preference: null,
