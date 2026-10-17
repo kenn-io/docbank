@@ -56,16 +56,14 @@ func (t *boundedSidecarText) write(data []byte) {
 	t.builder.Write(data)
 }
 
+// photoSidecarPacket is a parsed sidecar: the versioned packet plus the
+// parse-only refusal and pairing evidence that no receipt stores.
 type photoSidecarPacket struct {
-	store.PhotoAuthored
+	store.PhotoXMPPacket
 
 	Refusal             error
 	SidecarForExtension string
-	Keywords            []string
 	LegacyReject        bool
-	RotationPresent     bool
-	Ignored             store.PhotoAuthoredFields
-	Orientation         int
 }
 
 var errPhotoSidecarPropertyLimit = errors.New("XMP property exceeds its text limit")
@@ -345,35 +343,35 @@ func readPhotoSidecar(ctx context.Context, data []byte) (photoSidecarPacket, err
 			result.Orientation = n
 		}
 	}
-	result.Flag = values["Pick"]
-	if !query.ValidPhotoFlag(result.Flag) {
-		result.Flag = ""
+	result.Values.Flag = values["Pick"]
+	if !query.ValidPhotoFlag(result.Values.Flag) {
+		result.Values.Flag = ""
 		result.Ignored |= store.PhotoConfirmedFlag
 		delete(values, "Pick")
 	}
-	result.Label = strings.ToLower(values["Label"])
-	if !query.ValidPhotoColorLabel(result.Label) {
-		result.Label = ""
+	result.Values.Label = strings.ToLower(values["Label"])
+	if !query.ValidPhotoColorLabel(result.Values.Label) {
+		result.Values.Label = ""
 		result.Ignored |= store.PhotoConfirmedLabel
 		delete(values, "Label")
 	}
-	result.Caption = values[sourceMetadataDescriptionField]
-	result.Creator = values[sourceMetadataCreatorField]
-	result.Copyright = values[sourceMetadataRightsField]
+	result.Values.Caption = values[sourceMetadataDescriptionField]
+	result.Values.Creator = values[sourceMetadataCreatorField]
+	result.Values.Copyright = values[sourceMetadataRightsField]
 	if value, present := values["Rating"]; present {
-		flag, n, valid := photoXMPFlag(value, result.Flag)
+		flag, n, valid := photoXMPFlag(value, result.Values.Flag)
 		if !valid {
 			result.Ignored |= store.PhotoConfirmedRating
 			delete(values, "Rating")
 		} else if n == -1 {
 			result.LegacyReject = true
-			result.Flag = flag
-			result.Confirmed |= store.PhotoConfirmedFlag
+			result.Values.Flag = flag
+			result.Values.Confirmed |= store.PhotoConfirmedFlag
 			result.Ignored &^= store.PhotoConfirmedFlag
 			delete(ignored, "Pick")
 			delete(values, "Rating")
 		} else {
-			result.Rating = n
+			result.Values.Rating = n
 		}
 	}
 	if value, ok := values["Rotation"]; ok {
@@ -382,10 +380,9 @@ func readPhotoSidecar(ctx context.Context, data []byte) (photoSidecarPacket, err
 			result.Ignored |= store.PhotoConfirmedRotation
 			delete(values, "Rotation")
 		} else {
-			result.Rotation = n
+			result.Values.Rotation, result.Rotation = n, new(n)
 		}
 	}
-	_, result.RotationPresent = values["Rotation"]
 	for _, property := range &photoXMPProperties {
 		key, bit := property.name, property.bit
 		if bit == store.PhotoXMPKeywordsBit {
@@ -395,17 +392,17 @@ func readPhotoSidecar(ctx context.Context, data []byte) (photoSidecarPacket, err
 			result.Ignored |= bit
 		}
 		if _, present := values[key]; present && !ignored[key] {
-			result.Confirmed |= bit
+			result.Values.Confirmed |= bit
 		}
 	}
-	if result.RotationPresent {
-		result.Confirmed |= store.PhotoConfirmedRotation
+	if result.Rotation != nil {
+		result.Values.Confirmed |= store.PhotoConfirmedRotation
 	}
-	result.Confirmed &= store.PhotoAuthoredNonDefault(result.PhotoAuthored)
-	if result.Orientation != 0 || result.RotationPresent {
-		result.Confirmed |= store.PhotoConfirmedRotation
+	result.Values.Confirmed &= store.PhotoAuthoredNonDefault(result.Values)
+	if result.Orientation != 0 || result.Rotation != nil {
+		result.Values.Confirmed |= store.PhotoConfirmedRotation
 	}
-	if err := store.ValidatePhotoAuthoredValues(result.PhotoAuthored); err != nil {
+	if err := store.ValidatePhotoAuthoredValues(result.Values); err != nil {
 		return result, err
 	}
 	return result, nil

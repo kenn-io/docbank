@@ -563,7 +563,7 @@ func normalizeReleasedUpgradeSnapshot(t *testing.T, data []byte) []map[string]an
 		var record map[string]any
 		require.NoError(t, json.Unmarshal(line, &record))
 		if record["type"] == "photo_file" {
-			defaults := map[string]any{"revision": float64(1), "rating": float64(0), "flag": "", "label": "", "caption": "", "creator": "", "copyright": "", "rotation": float64(0), "confirmed_fields": float64(0), "source_sha256": ""}
+			defaults := map[string]any{"revision": float64(1), "rating": float64(0), "flag": "", "label": "", "caption": "", "creator": "", "copyright": "", "rotation": float64(0), "confirmed_fields": float64(0)}
 			for key, value := range defaults {
 				if _, ok := record[key]; !ok {
 					record[key] = value
@@ -674,8 +674,52 @@ func seedReleasedMtime(t *testing.T, db *sql.DB, nodeID int64, mtime string) {
 	}
 }
 
-// A released vault has a paired sidecar but no XMP receipt. Its first sync
-// accepts the sidecar's bytes as outside before Docbank writes a new version.
+// seedReleasedPhotoImport writes a released photo import: one ingest whose
+// provenance binds each member's version, the photo with the sidecar paired
+// with the RAW, and the import receipt that attached them.
+func seedReleasedPhotoImport(t *testing.T, db *sql.DB, nodes []Node, roles []string) (fileIDs []string) {
+	t.Helper()
+	const assetID, ingestID, createID, receiptID = "40000000-0000-4000-8000-000000000001", "40000000-0000-4000-8000-000000000010",
+		"40000000-0000-4000-8000-000000000011", "40000000-0000-4000-8000-000000000012"
+	const at = "2026-10-05T12:00:00.000000000Z"
+	tx, err := db.BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	_, err = tx.Exec(`PRAGMA defer_foreign_keys=ON`)
+	require.NoError(t, err)
+	_, err = tx.Exec(`INSERT INTO ingests(id,started_at,source_kind,source_desc) VALUES(?,?,'photo-import','/camera')`, ingestID, at)
+	require.NoError(t, err)
+	changes := []photoReceiptMemberChange{}
+	for i, node := range nodes {
+		fileIDs = append(fileIDs, fmt.Sprintf("40000000-0000-4000-8000-%012d", 20+i))
+		fact := metadataProvenance{Type: metadataProvenanceType, NodeID: node.ID, IngestID: ingestID, OriginalPath: "/camera/" + node.Name}
+		fact.Identity, err = provenanceIdentity(fact)
+		require.NoError(t, err)
+		_, err = tx.Exec(`INSERT INTO provenance(identity,node_id,ingest_id,original_path) VALUES(?,?,?,?)`, fact.Identity, node.ID, ingestID, fact.OriginalPath)
+		require.NoError(t, err)
+		_, err = tx.Exec(`INSERT INTO provenance_version_bindings(provenance_identity,content_version_id,observed_at,basis_ref) VALUES(?,?,?,?)`, fact.Identity, node.CurrentVersionID, at, provenanceVersionBindingBasis)
+		require.NoError(t, err)
+		var sidecarOf *string
+		if roles[i] == PhotoRoleSidecar {
+			sidecarOf = &fileIDs[0]
+		}
+		_, err = tx.Exec(`INSERT INTO photo_files(file_id,asset_id,node_id,role,sidecar_of_file_id,created_at) VALUES(?,?,?,?,?,?)`, fileIDs[i], assetID, node.ID, roles[i], sidecarOf, at)
+		require.NoError(t, err)
+		changes = append(changes, photoReceiptMemberChange{FileID: fileIDs[i], After: &photoReceiptMember{FileID: fileIDs[i], NodeID: node.ID, Role: roles[i], SidecarOfID: sidecarOf}})
+	}
+	after, err := json.Marshal(map[string]any{"member_changes": changes})
+	require.NoError(t, err)
+	_, err = tx.Exec(`INSERT INTO photo_assets(asset_id,kind,revision,display_file_id,created_at,updated_at) VALUES(?,'photo',2,?,?,?)`, assetID, fileIDs[0], at, at)
+	require.NoError(t, err)
+	_, err = tx.Exec(`INSERT INTO photo_change_receipts(receipt_id,operation,asset_id,before_revision,after_revision,before_json,after_json,created_at)
+ VALUES(?,'create',?,0,1,'{}','{}',?),(?,'import',?,1,2,'{}',?,?)`, createID, assetID, at, receiptID, assetID, string(after), at)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+	return fileIDs
+}
+
+// A sidecar imported by a released build has no XMP receipt. Its first sync
+// follows its claim to the JPEG, imports its decisions there, and accepts its
+// bytes as the outside packet without an adapter or synthetic receipt.
 func TestReleasedSchema29SidecarFirstSync(t *testing.T) {
 	t.Parallel()
 	for _, driver := range v090UpgradeDrivers() {
@@ -683,35 +727,79 @@ func TestReleasedSchema29SidecarFirstSync(t *testing.T) {
 			ctx := t.Context()
 			path := filepath.Join(t.TempDir(), "vault.db")
 			db, legacy := newReleasedFixtureStore(t, path, driver.driver, schemaV0151SQL, 29)
-			original := createReleasedFixtureFile(t, legacy, "released.jpg", fakeHash("a1"), 4, "image/jpeg")
-			seedReleasedPhotoAsset(t, db, original.ID)
-			sidecar := createReleasedFixtureFile(t, legacy, "released.jpg.xmp", fakeHash("b2"), 4, "application/rdf+xml")
-			const fileID, sidecarID = "40000000-0000-4000-8000-000000000002", "40000000-0000-4000-8000-000000000004"
-			_, err := db.Exec(`INSERT INTO photo_files(file_id,asset_id,node_id,role,sidecar_of_file_id,created_at) VALUES(?,'40000000-0000-4000-8000-000000000001',?,'sidecar',?,?)`, sidecarID, sidecar.ID, fileID, nowRFC3339())
-			require.NoError(t, err)
+			raw := createReleasedFixtureFile(t, legacy, "capture.ARW", fakeHash("a1"), 4, "image/x-sony-arw")
+			jpeg := createReleasedFixtureFile(t, legacy, "capture.JPG", fakeHash("a2"), 4, "image/jpeg")
+			sidecar := createReleasedFixtureFile(t, legacy, "capture.xmp", fakeHash("b2"), 4, "application/rdf+xml")
+			ids := seedReleasedPhotoImport(t, db, []Node{raw, jpeg, sidecar}, []string{PhotoRoleRAW, PhotoRoleImage, PhotoRoleSidecar})
+			rawID, jpegID := ids[0], ids[1]
 			require.NoError(t, db.Close())
 			s, err := Open(path, driver.driver)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, s.Close()) })
+			for _, n := range []Node{raw, jpeg} {
+				publishXMPOrientation(t, s, n.ID, fakeHash("ee"))
+			}
+			assert.Equal(t, PhotoXMPStatePending, xmpState(t, s, rawID).State)
 
-			assert.Equal(t, PhotoXMPStatePending, xmpState(t, s, fileID).State)
-			publishXMPOrientation(t, s, original.ID, fakeHash("ee"))
-			work, run, err := s.ClassifyPhotoXMP(ctx, fileID)
-			require.NoError(t, err)
-			require.True(t, run)
-			_, _, synced := work.Base()
-			require.False(t, synced, "no adapter or synthetic receipt precedes the first sync")
-			values := PhotoAuthored{Rating: 4, Confirmed: PhotoConfirmedRating}
+			values := PhotoAuthored{Rating: 2, Confirmed: PhotoConfirmedRating}
 			packet := PhotoXMPPacket{Values: values, Keywords: []string{"Travel"}}
-			err = s.PublishPhotoXMP(ctx, PhotoXMPPlan{Work: work, Sidecar: packet, Packet: packet, Values: values, Keywords: packet.Keywords, Import: true, Write: true}, fakeHash("c3"), 4, BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 4, Created: true})
+			plan := func(id string) PhotoXMPPlan {
+				work, run, err := s.ClassifyPhotoXMP(ctx, id)
+				require.NoError(t, err)
+				require.True(t, run)
+				_, _, synced := work.Base()
+				require.False(t, synced, "no adapter or synthetic receipt precedes the first sync")
+				return PhotoXMPPlan{Work: work, Extension: "jpg", Sidecar: packet, Packet: packet, Values: values, Keywords: packet.Keywords, Import: true, Write: true}
+			}
+			moved, err := s.PublishPhotoXMP(ctx, plan(rawID), fakeHash("c3"), 4, BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 4, Created: true})
 			require.NoError(t, err)
-			assert.Equal(t, PhotoXMPStateSynced, xmpState(t, s, fileID).State)
-			var accepted, current string
-			require.NoError(t, s.db.QueryRow(`SELECT f.source_sha256,v.blob_hash FROM photo_files f JOIN nodes n ON n.id=f.node_id
- JOIN content_versions v ON v.version_id=n.current_version_id WHERE f.file_id=?`, sidecarID).Scan(&accepted, &current))
-			assert.Equal(t, sidecar.BlobHash, accepted)
-			assert.Equal(t, fakeHash("c3"), current)
-			require.NoError(t, s.ValidateMetadata(ctx))
+			require.Equal(t, jpegID, moved)
+			_, err = s.PublishPhotoXMP(ctx, plan(jpegID), fakeHash("c3"), 4, BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 4, Created: true})
+			require.NoError(t, err)
+			_, run, err := s.ClassifyPhotoXMP(ctx, rawID)
+			require.NoError(t, err)
+			require.False(t, run)
+
+			check := func(t *testing.T, s *Store) {
+				t.Helper()
+				asset, err := s.PhotoAssetByID(ctx, "40000000-0000-4000-8000-000000000001")
+				require.NoError(t, err)
+				for _, f := range asset.Files {
+					switch f.ID {
+					case rawID:
+						assert.Zero(t, f.Authored())
+					case jpegID:
+						assert.Equal(t, values, f.Authored())
+					default:
+						assert.Equal(t, jpegID, *f.SidecarOfID, "the sidecar follows its claim")
+					}
+				}
+				assert.Equal(t, PhotoXMPStateNone, xmpState(t, s, rawID).State)
+				state := settleXMP(t, s, jpegID)
+				assert.Equal(t, PhotoXMPStateSynced, state.State)
+				assert.NotNil(t, state.Receipt, "the import stays undoable")
+				tags, _, err := s.NodeTags(ctx, jpeg.ID, 10, 0)
+				require.NoError(t, err)
+				require.Len(t, tags, 1)
+				assert.Equal(t, "Travel", tags[0].Name)
+				var source string
+				require.NoError(t, s.db.QueryRow(`SELECT json_extract(after_json,'$.sync.source_sha256') FROM photo_change_receipts
+ WHERE operation='xmp_sync' AND json_extract(after_json,'$.file_id')=? ORDER BY after_revision DESC LIMIT 1`, jpegID).Scan(&source))
+				assert.Equal(t, sidecar.BlobHash, source, "the released bytes are the outside packet")
+				require.NoError(t, s.ValidateMetadata(ctx))
+			}
+			check(t, s)
+			current, err := s.NodeByID(ctx, sidecar.ID)
+			require.NoError(t, err)
+			pruned, err := s.PruneContentVersions(ctx, sidecar.ID, current.Revision, VersionPruneSelector{KeepNewest: 1}, true)
+			require.NoError(t, err)
+			require.Equal(t, 1, pruned.DeletedVersions)
+			check(t, s)
+			var backup bytes.Buffer
+			require.NoError(t, s.ExportMetadata(ctx, &backup))
+			restored := newTestStore(t)
+			require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(backup.Bytes())))
+			check(t, restored)
 		})
 	}
 }

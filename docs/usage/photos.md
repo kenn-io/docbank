@@ -287,6 +287,10 @@ On first sync, a TIFF orientation that matches the photo's EXIF orientation
 leaves Teststrip's rotation as the authored turn. If the two encodings specify
 different authored turns, sync keeps the catalog's rotation.
 
+Docbank writes rating, label, pick, orientation and Teststrip rotation as
+attributes of the photo's `rdf:Description`, where Teststrip reads them, and
+keeps unrelated properties in place.
+
 | Decision | XMP property |
 | --- | --- |
 | Rating | `xmp:Rating`, whole numbers 0 through 5. A rating of -1 imports as reject and is never written. |
@@ -308,8 +312,10 @@ sidecar. Suppose an outside sidecar sets rating 3 and you then rate the photo 5
 in Docbank. A rescan of the unchanged file finds the remembered digest, keeps
 Docbank's newer version current, and changes no decision, even after the
 version holding those bytes is pruned. An edit made to that file elsewhere is
-compared with the packet it was edited from, so your rating 5 stays unless the
-other application also changed the rating.
+compared with the packet it was edited from, so the application's rating 4
+saved over the old rating 3 shows a conflict with your 5. A new version you put
+in the vault instead starts from Docbank's version, so changing its rating 5
+to 4 imports 4.
 
 The first sync of a sidecar that Docbank did not write, including one from a
 vault upgraded from v0.15.2, accepts its current bytes as the outside packet.
@@ -334,8 +340,12 @@ values settle, and different values need a choice.
 
 - A qualified filename such as `capture.JPG.xmp` selects that original. A
   basename-only packet can name an extension through
-  `photoshop:SidecarForExtension`. A claim that names another member stops
-  sync, and Metadata gives the commands that move the sidecar.
+  `photoshop:SidecarForExtension`. Import attaches `capture.xmp` to the RAW; if
+  its packet claims `JPG`, the first sync moves the sidecar to the JPEG and
+  imports its decisions there. The move is part of the import and needs no
+  choice. A claim that names another member after the first sync, a sidecar
+  you attached yourself, an ambiguous claim, or a JPEG that already has a
+  sidecar stops sync instead, and Metadata gives the commands that move it.
 - Trashing or detaching a synced sidecar stops Docbank from creating another
   one while the original's decisions and keywords stay unchanged, including
   after a rename or restore. A later edit creates a fresh sidecar.
@@ -343,10 +353,11 @@ values settle, and different values need a choice.
   sidecar, and it never creates a sidecar; other photos show Unavailable.
 - Hidden photos keep syncing in the background. Metadata for them still needs
   an unlock.
-- Each original keeps one sync receipt, from its last successful sync. Backup
-  and restore keep it and the remembered digest; after a restore every photo
+- Each sync outcome adds a receipt to the original, and each receipt keeps the
+  last successful sync and the remembered digest. A repeated identical outcome
+  adds none. Backup and restore keep the receipts; after a restore every photo
   with sync work is Pending until the worker checks it again. Purging the
-  original or its sidecar removes the receipt.
+  original or its sidecar removes the receipts naming it.
 
 Typed queries accept `rating_min`, `rating_max`, `flags`, and `labels`. In Photos,
 each decision filter reads the asset's display file. With the default RAW display
@@ -535,7 +546,7 @@ folder must exist when you start the import. Otherwise the command fails with
 exit code 2 and no import starts.
 
 Files with the same folder and name, such as `IMG_0001.ARW`, `IMG_0001.JPG`,
-and `IMG_0001.XMP`, become one photo. A qualified XMP filename attaches to its named original. Unqualified names attach to the RAW, or to the JPEG when there is no RAW; their packet extension claim selects the authored target when the sidecar syncs. An XMP with no same-name RAW or JPEG imports
+and `IMG_0001.XMP`, become one photo. A qualified XMP filename attaches to its named original. Unqualified names attach to the RAW, or to the JPEG when there is no RAW; their packet extension claim moves the sidecar to the claimed original when it first syncs. An XMP with no same-name RAW or JPEG imports
 as a plain file. A later full scan pairs companions when both source files
 are still present. Matching uses files in the scan and their current duplicate
 owners. A video always becomes its own photo. Each photo commits in one

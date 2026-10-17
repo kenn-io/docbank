@@ -29,16 +29,18 @@ type PhotoXMPPlan struct {
 }
 
 // PublishPhotoXMP commits a plan's catalog import, sidecar version, receipt
-// and status together, provided its inputs are still current.
-func (s *Store) PublishPhotoXMP(ctx context.Context, plan PhotoXMPPlan, hash string, size int64, physical BlobPhysical) (err error) {
+// and settled fence together, provided its inputs are still current. When the
+// first sync of an imported sidecar finds that its claim names another
+// member, it moves the sidecar there instead and returns that member's file ID.
+func (s *Store) PublishPhotoXMP(ctx context.Context, plan PhotoXMPPlan, hash string, size int64, physical BlobPhysical) (retargeted string, err error) {
 	w := plan.Work
 	var run IngestRun
 	if plan.Write && w.Sidecar == nil {
 		if run, err = s.BeginCallerSuppliedIngest(ctx, "photo-xmp", "Photo XMP sidecar"); err != nil {
-			return err
+			return "", err
 		}
 	}
-	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		current, err := loadPhotoXMPWorkTx(ctx, tx, w.Original.ID)
 		if err != nil {
 			return err
@@ -47,26 +49,33 @@ func (s *Store) PublishPhotoXMP(ctx context.Context, plan PhotoXMPPlan, hash str
 			if err := s.photoAuthoredAccessTx(ctx, tx, w.Original.AssetID); err != nil {
 				return err
 			}
-			if current.state != PhotoXMPStateConflict || current.detail.ConflictID != w.detail.ConflictID {
+			if w.receipt == nil {
 				return ErrStaleRevision
 			}
+			if err := current.conflict(w.receipt.ConflictID); err != nil {
+				return err
+			}
 		}
-		current.state, current.detail = w.state, w.detail
 		if !reflect.DeepEqual(current, w) {
 			return ErrStaleRevision
 		}
-		return s.publishPhotoXMPTx(ctx, tx, run, plan, hash, size, physical)
+		retargeted, err = s.publishPhotoXMPTx(ctx, tx, run, plan, hash, size, physical)
+		return err
 	})
+	return retargeted, err
 }
 
-func (s *Store) publishPhotoXMPTx(ctx context.Context, tx *sql.Tx, run IngestRun, plan PhotoXMPPlan, hash string, size int64, physical BlobPhysical) error {
+func (s *Store) publishPhotoXMPTx(ctx context.Context, tx *sql.Tx, run IngestRun, plan PhotoXMPPlan, hash string, size int64, physical BlobPhysical) (string, error) {
 	w, sc := plan.Work, plan.Work.Sidecar
 	if plan.Refusal == "" && plan.Rows == nil && sc != nil {
 		intended, err := w.pairing(ctx, tx, plan.Extension)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if intended != w.Original.ID {
+			if moved, err := s.retargetPhotoXMPSidecarTx(ctx, tx, w, intended); err != nil || moved {
+				return intended, err
+			}
 			plan.Refusal = "The sidecar does not uniquely match this photo. Check its attachment or filename."
 			if intended != "" {
 				plan.Refusal = fmt.Sprintf("The sidecar names member %s. Run docbank photos assets detach %s %s, then docbank photos assets attach %s id:%d --role sidecar --sidecar-of-file-id %s.", intended, w.Original.AssetID, sc.FileID, w.Original.AssetID, sc.Node.ID, intended)
@@ -74,29 +83,22 @@ func (s *Store) publishPhotoXMPTx(ctx context.Context, tx *sql.Tx, run IngestRun
 		}
 	}
 	if plan.Refusal != "" {
-		return setPhotoXMPStateTx(ctx, tx, w.Original.ID, cmp.Or(plan.RefusalState, PhotoXMPStateInvalid), photoXMPDetail{Reason: plan.Refusal})
+		return "", settlePhotoXMPTx(ctx, tx, w, photoXMPReceipt{State: cmp.Or(plan.RefusalState, PhotoXMPStateInvalid), Reason: plan.Refusal})
 	}
 	if plan.Rows != nil {
-		id, err := newUUIDv4()
-		if err != nil {
-			return err
-		}
-		return setPhotoXMPStateTx(ctx, tx, w.Original.ID, PhotoXMPStateConflict, photoXMPDetail{Reason: "Catalog and sidecar decisions differ.", Rows: plan.Rows, ConflictID: id})
+		return "", settlePhotoXMPTx(ctx, tx, w, photoXMPReceipt{State: PhotoXMPStateConflict, Reason: "Catalog and sidecar decisions differ.", Rows: plan.Rows})
 	}
-	r := photoXMPReceipt{Version: 1, FileID: w.Original.ID, NodeID: w.Node.ID, Extension: strings.ToLower(plan.Extension), OriginalVersionID: w.Node.CurrentVersionID, Orientation: w.Orientation}
+	r := photoXMPSync{Extension: strings.ToLower(plan.Extension), OriginalVersionID: w.Node.CurrentVersionID, Orientation: w.Orientation}
 	if sc != nil {
 		r.Sidecar = PhotoSidecarProvenance{NodeID: sc.Node.ID, VersionID: sc.Node.CurrentVersionID, FileID: sc.FileID}
-		if old := w.receipt; old != nil && old.Sidecar.FileID == sc.FileID {
+		if old := w.synced(); old != nil {
 			r.Source, r.SourceSHA256, r.ImportReceiptID = old.Source, old.SourceSHA256, old.ImportReceiptID
 		}
-		accepted := sc.SourceSHA256
-		if accepted == "" && r.Source == nil && (w.receipt == nil || w.receipt.Sidecar.FileID != sc.FileID) {
+		accepted := sc.Observed
+		if accepted == "" && w.synced() == nil {
 			// The first sync of a sidecar Docbank did not write accepts its bytes as outside,
 			// so a later rescan of the same bytes cannot undo Docbank's next version.
 			accepted = sc.Node.BlobHash
-			if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET source_sha256=? WHERE file_id=?`, accepted, sc.FileID); err != nil {
-				return err
-			}
 		}
 		if accepted == sc.Node.BlobHash && r.SourceSHA256 != sc.Node.BlobHash {
 			r.Source = &PhotoXMPSnapshot{Packet: plan.Sidecar, Catalog: plan.Values, Keywords: plan.Keywords}
@@ -106,31 +108,60 @@ func (s *Store) publishPhotoXMPTx(ctx context.Context, tx *sql.Tx, run IngestRun
 	if plan.Import {
 		receipt, err := s.importPhotoXMPTx(ctx, tx, w, plan.Values, plan.Keywords)
 		if err != nil {
-			return err
+			return "", err
 		}
 		r.ImportReceiptID = receipt.ReceiptID
 	}
 	if plan.Write {
 		published, err := s.writePhotoXMPSidecarTx(ctx, tx, run, w, hash, size, physical)
 		if err != nil {
-			return err
+			return "", err
 		}
 		r.Sidecar = published
 	}
 	r.Baseline = PhotoXMPSnapshot{Packet: plan.Packet, Catalog: plan.Values, Keywords: plan.Keywords}
-	// Only the latest successful sync is retained.
-	if _, err := tx.ExecContext(ctx, `DELETE FROM photo_change_receipts WHERE receipt_id=? AND operation='xmp_sync'`, w.receiptID); err != nil {
-		return err
+	return "", settlePhotoXMPTx(ctx, tx, w, photoXMPReceipt{State: PhotoXMPStateSynced, Sync: &r})
+}
+
+// retargetPhotoXMPSidecarTx moves a sidecar that import attached to the
+// member its claim names, before the sidecar's first sync. The move records an
+// import photo receipt, so it keeps import's authority over the attachment.
+// Neither original settles; both sync again.
+func (s *Store) retargetPhotoXMPSidecarTx(ctx context.Context, tx *sql.Tx, w PhotoXMPWork, intended string) (bool, error) {
+	sc := w.Sidecar
+	if intended == "" {
+		return false, nil
 	}
-	id, err := newUUIDv4()
+	var eligible bool
+	err := tx.QueryRowContext(ctx, `SELECT NOT EXISTS(SELECT 1 FROM photo_change_receipts INDEXED BY photo_change_receipts_xmp_sidecar
+ WHERE operation='xmp_sync' AND json_extract(after_json,'$.sync.sidecar.node_id')=?1 AND json_extract(after_json,'$.sync.sidecar.file_id')=?2)
+ AND COALESCE((SELECT operation='import' FROM photo_change_receipts r WHERE asset_id=?3
+ AND EXISTS(SELECT 1 FROM json_each(r.after_json,'$.member_changes') c WHERE json_extract(c.value,'$.file_id')=?2)
+ ORDER BY after_revision DESC LIMIT 1),0)
+ AND EXISTS(SELECT 1 FROM photo_files t JOIN nodes tn ON tn.id=t.node_id WHERE t.file_id=?4 AND t.asset_id=?3 AND t.role IN ('raw','image') AND tn.trashed_at IS NULL)
+ AND NOT EXISTS(SELECT 1 FROM photo_files o JOIN nodes onode ON onode.id=o.node_id WHERE o.sidecar_of_file_id=?4 AND onode.trashed_at IS NULL)`,
+		sc.Node.ID, sc.FileID, w.Original.AssetID, intended).Scan(&eligible)
+	if err != nil || !eligible {
+		return false, err
+	}
+	target, err := photoFileByIDQuery(ctx, tx, intended)
 	if err != nil {
-		return err
+		return false, err
 	}
-	if err := writePhotoReceiptTx(ctx, tx, photoReceipt{ReceiptID: id, Operation: "xmp_sync", AfterRevision: 1, After: r}); err != nil {
-		return err
+	for _, node := range []int64{sc.Node.ID, target.NodeID} {
+		if refused, err := auditRefusesAttachmentChangeTx(ctx, tx, node); err != nil || refused {
+			return false, err
+		}
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE photo_files SET xmp_state='synced',xmp_detail='',xmp_receipt_id=? WHERE file_id=?`, id, w.Original.ID)
-	return err
+	asset, err := photoAssetByIDQuery(ctx, tx, w.Original.AssetID)
+	if err != nil {
+		return false, err
+	}
+	_, err = s.mutatePhotoAssetTx(ctx, tx, asset.ID, asset.Revision, "import", func(tx *sql.Tx, _ *PhotoAsset) (bool, error) {
+		_, err := tx.ExecContext(ctx, `UPDATE photo_files SET sidecar_of_file_id=? WHERE file_id=?`, intended, sc.FileID)
+		return true, err
+	})
+	return err == nil, err
 }
 
 // importPhotoXMPTx applies imported decisions and keywords as one undoable

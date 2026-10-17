@@ -104,9 +104,9 @@ func TestReadPhotoSidecar(t *testing.T) {
 				require.Error(t, err)
 			} else {
 				require.NoError(t, err)
-				assert.Equal(t, c.confirmed, packet.Confirmed)
-				packet.Confirmed = 0
-				assert.Equal(t, c.want, packet.PhotoAuthored)
+				assert.Equal(t, c.confirmed, packet.Values.Confirmed)
+				packet.Values.Confirmed = 0
+				assert.Equal(t, c.want, packet.Values)
 				if c.keywords != nil {
 					assert.Equal(t, c.keywords, packet.Keywords)
 				}
@@ -204,6 +204,6 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 	if err == nil {
 		err = packet.Refusal
 	}
-	packet.Confirmed = 0
-	return packet.PhotoAuthored, err
+	packet.Values.Confirmed = 0
+	return packet.Values, err
 }

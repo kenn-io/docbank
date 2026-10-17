@@ -38,7 +38,7 @@ func importXMP(t *testing.T, s *Store, fileID string, values PhotoAuthored, keyw
 	require.NoError(t, err)
 	require.True(t, run)
 	packet := PhotoXMPPacket{Values: values, Keywords: PhotoXMPKeywords(keywords)}
-	err = s.PublishPhotoXMP(t.Context(), PhotoXMPPlan{Work: work, Sidecar: packet, Packet: packet, Values: values, Keywords: packet.Keywords, Import: true}, "", 0, BlobPhysical{})
+	_, err = s.PublishPhotoXMP(t.Context(), PhotoXMPPlan{Work: work, Sidecar: packet, Packet: packet, Values: values, Keywords: packet.Keywords, Import: true}, "", 0, BlobPhysical{})
 	require.NoError(t, err)
 	state := xmpState(t, s, fileID)
 	require.Equal(t, PhotoXMPStateSynced, state.State)
@@ -109,6 +109,29 @@ func TestPhotoXMPInvalidation(t *testing.T) {
 			_, err := f.s.RenameTag(t.Context(), f.tag.ID, f.tag.Revision, "Journey")
 			require.NoError(t, err)
 		}, true, PhotoXMPStatePending},
+		{"keyword removed", func(f fixture) {
+			t := f.t
+			_, err := f.s.UnassignTag(t.Context(), f.tag.ID, f.raw.NodeID, node(t, f.s, f.raw.NodeID).Revision)
+			require.NoError(t, err)
+		}, true, PhotoXMPStatePending},
+		{"keyword deleted", func(f fixture) {
+			t := f.t
+			_, err := f.s.DeleteTag(t.Context(), f.tag.ID, f.tag.Revision)
+			require.NoError(t, err)
+		}, true, PhotoXMPStatePending},
+		{"original restored", func(f fixture) {
+			t := f.t
+			trashed, _, err := f.s.Trash(t.Context(), f.raw.NodeID, node(t, f.s, f.raw.NodeID).Revision)
+			require.NoError(t, err)
+			_, _, err = f.s.ClassifyPhotoXMP(t.Context(), f.raw.ID)
+			require.NoError(t, err)
+			_, _, err = f.s.Restore(t.Context(), trashed.ID, trashed.Revision)
+			require.NoError(t, err)
+		}, true, PhotoXMPStateSynced},
+		{"audit enrollment", func(f fixture) {
+			t := f.t
+			seedInitialAuditAuthority(t, f.s, f.s.RootID())
+		}, true, PhotoXMPStateSynced},
 		{"shared keyword assigned elsewhere", func(f fixture) {
 			t := f.t
 			other, err := f.s.CreateFile(t.Context(), f.s.RootID(), "other.jpg", fakeHash("e5"), 4, "image/jpeg")
@@ -246,13 +269,25 @@ func TestPhotoXMPClassificationWaitsAndRetries(t *testing.T) {
 		asset := authoredPair(t, s)
 		raw := fileByRole(asset.Files, PhotoRoleRAW)
 		publishXMPOrientation(t, s, raw.NodeID, fakeHash("ee"))
-		blocker, err := s.CreateFile(ctx, s.RootID(), "capture.cr2.xmp", fakeHash("c3"), 4, "application/rdf+xml")
+		_, err := editPhotoAuthored(ctx, s, []PhotoAuthoredTarget{{FileID: raw.ID, Revision: 1, Patch: PhotoAuthoredPatch{Rating: new(3)}}})
 		require.NoError(t, err)
-		_, err = editPhotoAuthored(ctx, s, []PhotoAuthoredTarget{{FileID: raw.ID, Revision: 1, Patch: PhotoAuthoredPatch{Rating: new(3)}}})
-		require.NoError(t, err)
-		assert.Contains(t, settleXMP(t, s, raw.ID).Reason, "already occupied")
-		_, _, err = s.Move(ctx, blocker.ID, s.RootID(), "elsewhere.xmp", blocker.Revision)
-		require.NoError(t, err)
+		for _, release := range []string{"rename", "trash"} {
+			blocker, err := s.CreateFile(ctx, s.RootID(), "capture.cr2.xmp", fakeHash("c3"), 4, "application/rdf+xml")
+			require.NoError(t, err)
+			assert.Contains(t, settleXMP(t, s, raw.ID).Reason, "already occupied")
+			targets, err := s.PhotoXMPTargetsAfter(ctx, "", 10)
+			require.NoError(t, err)
+			assert.Empty(t, targets, "a blocked photo settles until the blocker changes")
+			if release == "rename" {
+				_, _, err = s.Move(ctx, blocker.ID, s.RootID(), "elsewhere.xmp", blocker.Revision)
+			} else {
+				_, _, err = s.Trash(ctx, blocker.ID, blocker.Revision)
+			}
+			require.NoError(t, err)
+			targets, err = s.PhotoXMPTargetsAfter(ctx, "", 10)
+			require.NoError(t, err)
+			assert.Equal(t, []PhotoSidecarTarget{{FileID: raw.ID, NodeID: raw.NodeID}}, targets, release)
+		}
 		_, run, err := s.ClassifyPhotoXMP(ctx, raw.ID)
 		require.NoError(t, err)
 		assert.True(t, run)
@@ -284,8 +319,6 @@ func TestPhotoXMPRestoreRebuildsStatus(t *testing.T) {
 	}
 	s, asset, raw, sidecar := xmpSidecarPhoto(t)
 	receipt := importXMP(t, s, raw.ID, PhotoAuthored{Rating: 4, Confirmed: PhotoConfirmedRating})
-	_, err := s.db.Exec(`UPDATE photo_files SET source_sha256=? WHERE file_id=?`, sidecar.BlobHash, receipt.Sidecar.FileID)
-	require.NoError(t, err)
 
 	restored := restore(t, s)
 	assert.Equal(t, PhotoXMPStatePending, xmpState(t, restored, raw.ID).State, "restored status waits for the worker")
@@ -294,11 +327,11 @@ func TestPhotoXMPRestoreRebuildsStatus(t *testing.T) {
 	require.NotNil(t, state.Receipt)
 	assert.Equal(t, receipt.ReceiptID, state.Receipt.ReceiptID)
 	var source string
-	require.NoError(t, restored.db.QueryRow(`SELECT source_sha256 FROM photo_files WHERE file_id=?`, receipt.Sidecar.FileID).Scan(&source))
-	assert.Equal(t, sidecar.BlobHash, source)
+	require.NoError(t, restored.db.QueryRow(`SELECT json_extract(after_json,'$.sync.source_sha256') FROM photo_change_receipts WHERE operation='xmp_sync'`).Scan(&source))
+	assert.Equal(t, sidecar.BlobHash, source, "the first sync accepted the sidecar's bytes as outside")
 
 	// A removed sidecar stays suppressed across restore until the catalog changes.
-	_, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, receipt.Sidecar.FileID, PhotoDetachOptions{})
+	_, err := s.DetachPhotoFile(ctx, asset.ID, asset.Revision, receipt.Sidecar.FileID, PhotoDetachOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, PhotoXMPStateNone, settleXMP(t, s, raw.ID).State)
 	restored = restore(t, s)
@@ -309,7 +342,7 @@ func TestPhotoXMPRestoreRebuildsStatus(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, run)
 
-	// A duplicated receipt is not one original's single baseline.
+	// A copied receipt under a new ID repeats its original's sync sequence.
 	var backup bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &backup))
 	duplicated := backup.Bytes()
@@ -321,10 +354,11 @@ func TestPhotoXMPRestoreRebuildsStatus(t *testing.T) {
 			encoded, err := json.Marshal(record)
 			require.NoError(t, err)
 			duplicated = append(duplicated, append(encoded, '\n')...)
+			break
 		}
 	}
 	err = newTestStore(t).ImportMetadata(ctx, bytes.NewReader(duplicated))
-	require.ErrorContains(t, err, "XMP receipts reference missing or different nodes")
+	require.ErrorContains(t, err, "XMP receipts repeat an original's sync sequence")
 }
 
 func TestPhotoXMPReceiptDecoderIsStrict(t *testing.T) {
@@ -345,11 +379,15 @@ func TestPhotoXMPReceiptDecoderIsStrict(t *testing.T) {
 	}
 	_, err = s.db.Exec(`UPDATE photo_change_receipts SET after_json=json_set(after_json,'$.version',2) WHERE operation='xmp_sync'`)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`UPDATE photo_files SET xmp_state='pending' WHERE file_id=?`, raw.ID)
+	_, err = s.db.Exec(`DELETE FROM photo_sidecar_considered WHERE sidecar_file_id=?`, raw.ID)
 	require.NoError(t, err)
-	state := settleXMP(t, s, raw.ID)
-	assert.Equal(t, PhotoXMPStateUnavailable, state.State)
-	assert.Contains(t, state.Reason, "could not be read")
+	for range 2 {
+		state := settleXMP(t, s, raw.ID)
+		assert.Equal(t, PhotoXMPStateUnavailable, state.State)
+		assert.Contains(t, state.Reason, "could not be read")
+		_, err = s.db.Exec(`DELETE FROM photo_sidecar_considered WHERE sidecar_file_id=?`, raw.ID)
+		require.NoError(t, err)
+	}
 }
 
 func TestPhotoXMPQueryFilters(t *testing.T) {
@@ -371,12 +409,23 @@ func TestPhotoXMPQueryFilters(t *testing.T) {
 	work, run, err := s.ClassifyPhotoXMP(ctx, raw.ID)
 	require.NoError(t, err)
 	require.True(t, run)
-	err = s.PublishPhotoXMP(ctx, PhotoXMPPlan{Work: work, Rows: []PhotoXMPRow{{Field: "Rating", Catalog: "", Sidecar: "4"}}}, "", 0, BlobPhysical{})
+	_, err = s.PublishPhotoXMP(ctx, PhotoXMPPlan{Work: work, Rows: []PhotoXMPRow{{Field: "Rating", Catalog: "", Sidecar: "4"}}}, "", 0, BlobPhysical{})
 	require.NoError(t, err)
 	assert.Equal(t, PhotoXMPStateConflict, xmpState(t, s, raw.ID).State)
 	assert.Equal(t, []string{asset.ID}, match("xmp:conflict"))
 	assert.Empty(t, match("xmp:pending"))
 	assert.Equal(t, []string{asset.ID}, match("NOT xmp:pending"))
+	conflict := xmpState(t, s, raw.ID).ConflictID
+	_, err = s.PhotoXMPConflict(ctx, raw.ID, conflict)
+	require.NoError(t, err)
+
+	// A catalog change after the conflict makes it stale until the worker reruns.
+	_, err = editPhotoAuthored(ctx, s, []PhotoAuthoredTarget{{FileID: raw.ID, Revision: raw.Revision, Patch: PhotoAuthoredPatch{Rating: new(2)}}})
+	require.NoError(t, err)
+	assert.Empty(t, match("xmp:conflict"))
+	assert.Equal(t, []string{asset.ID}, match("xmp:pending"))
+	_, err = s.PhotoXMPConflict(ctx, raw.ID, conflict)
+	require.ErrorIs(t, err, ErrStaleRevision)
 	_, err = s.ListPhotoAssets(ctx, PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Text: "xmp:synced", Sort: query.Sort{Field: "name", Direction: "asc"}}}, nil)
 	require.ErrorContains(t, err, "invalid xmp operand")
 }

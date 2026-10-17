@@ -464,7 +464,7 @@ keep their revision and append no receipt.
 
 Hidden photos store nullable `photo_assets.hidden_at`. Revisioned hide/unhide writes use the existing asset receipts. Disable reads only hidden asset graphs and atomically clears their flags and authentication state. Reset preserves flags. Public Photos asset and preview reads require an active unlock for hidden assets; ordinary Documents reads retain access.
 
-Vault-wide hidden credentials use fixed Argon2id parameters. Failure timestamps and five-minute lockout persist through restart and restore. JSONL versions 1 and 2 back up hidden flags, credentials, failed attempts, lockout expiry and decision receipts. Sessions store SHA-256 token digests, expire after five minutes, clear on restart, and stay outside backup. Schema 39 uses the existing deterministic JSONL rebuild for supported released schemas and retains the source database. Schemas 30 through 33 and 35 through 38 remain unsupported, unreleased sources. Recreate development vaults that use schema 38; this binary refuses them before checking the layout.
+Vault-wide hidden credentials use fixed Argon2id parameters. Failure timestamps and five-minute lockout persist through restart and restore. JSONL versions 1 and 2 back up hidden flags, credentials, failed attempts, lockout expiry and decision receipts. Sessions store SHA-256 token digests, expire after five minutes, clear on restart, and stay outside backup. Schema 38 uses the existing deterministic JSONL rebuild for supported released schemas and retains the source database. Schemas 30 through 33 and 35 through 37 remain unsupported, unreleased sources. Recreate development vaults from schemas 35 through 37 with this binary; opening them fails the schema check.
 
 The `confirmed_fields` bit mask records supplied rating (1), flag (2), label (4), caption (8), creator (16), copyright (32) and rotation (64), including empty clears. XMP sync confirms only non-default sidecar values; undo, audit and backup retain the mask. A revision-1 file has no decisions, so restore refuses one with authored values or confirmation bits.
 
@@ -478,47 +478,71 @@ Released photo files retain their graph and gain revision 1 with empty authored 
 
 Schema 38 adds `saved_query_runs.photos`, which distinguishes document-node runs from Library photo-asset runs. Predecessor comparisons stay within the same mode. Older JSONL run rows default to Documents; photo runs serialize `photos: true`.
 
-Schema 39 adds XMP sync state to `photo_files`. Each RAW or image row stores
-`xmp_state`, `xmp_detail` and `xmp_receipt_id`; each sidecar row stores
-`source_sha256`, the digest of the last outside packet observed during import.
+XMP sync adds no columns and keeps schema 38 and metadata format 2, neither
+of which has shipped in a release.
 
-- Authority: the one `xmp_sync` receipt per original holds the successful
-  baseline (sidecar version, packet, catalog decisions and keywords, original
-  version and orientation) and the last accepted outside snapshot. A new
-  successful sync replaces it; conflicts and refusals write no receipt.
-  Metadata JSONL v2 carries the receipt and `source_sha256`.
-- Status: the state and detail columns are derived. Triggers set Pending in the
-  transaction that changes an original's decisions, own tags or tag names,
-  membership or sidecar attachment, original or sidecar node, extraction head,
-  source provenance or digest, audit coverage or a same-folder `<name>.xmp` node. A tag
-  shared with other photos does not dirty them. Rows with no sync work stay
-  None for changes outside their own row, node, tags or sidecar.
-- Worker: the sidecar backfill lists Pending rows through a partial index and
-  classifies each in Go. Outcomes that need no packet bytes (None, Synced,
-  Unavailable, Invalid, and Waiting for extraction) are stored directly; the
-  rest read the packet, merge and publish. Publication reloads every input in
-  its write transaction and retries when one changed, then commits the
-  imported decisions, tags, sidecar version, receipt and state together. Missing
-  physical sidecar bytes leave the original Pending with a reason and return
-  the read error to the backfill retry policy. Restoring those bytes lets the
-  same background target recover without a catalog change.
-- Imports: an outside sidecar without earlier source-path provenance matches
-  through its paired original and replaces the generated sidecar in place.
-  Generated provenance does not count as a competing outside path; a genuine
-  second outside path still keeps its own copy when the first changes.
-  A rescan whose sidecar bytes equal `source_sha256` keeps the current
-  Docbank version and binds provenance to a retained version with those bytes.
-  Every observation records the digest, even when its bytes equal a generated
-  sidecar. A changed digest requeues the original; its next successful sync
-  records the outside snapshot separately from the latest sync baseline.
-  Changed outside bytes become a new version. The first sync of a sidecar
-  without a baseline records its current digest before any write, which covers
-  vaults rebuilt from schema 29.
-- Restore rebuilds the receipt pointers and marks every original with sync work
-  Pending in one statement. Purging an original or sidecar deletes the
-  receipt naming it and returns the original to Pending.
+- Authority: each sync attempt that reaches an outcome appends an immutable
+  `xmp_sync` receipt for the original. Its row's `after_revision` numbers the
+  original's receipts from 1; the latest one is the original's outcome. The
+  receipt records the state, its reason, and a conflict's rows and choice ID.
+  It also carries the last successful sync: the sidecar version, packet,
+  catalog decisions and keywords, original version and orientation, and the
+  last accepted outside snapshot with its digest. An outcome-only receipt
+  carries that sync forward. An outcome equal to the latest receipt appends
+  nothing, so idle rechecks and unchanged retries do not grow the history.
+  Metadata JSONL v2 carries the receipts; restore refuses one that names a
+  missing or different node or repeats an original's number.
+- Settled work: `photo_sidecar_considered` holds one row per settled original,
+  keyed by the original's file ID in its `sidecar_file_id` column. The row
+  records the photo revision; each member's node ID, revision and audit
+  coverage; whether a live node holds the exact `<original-name>.xmp` name;
+  whether audit authority is active; the original's current version; and the
+  extraction head of its bytes in `extractor_fingerprint`. Authored edits, tag
+  assignment, rename and deletion, renames, versions, trash, restore,
+  observations and prune advance a node revision; attachment advances the
+  photo revision. The row is current while every value matches, and it is
+  derived: restore leaves it empty.
+- Status: an original has sync work when it has decisions, tags, an attached
+  sidecar or an earlier receipt. Without work it is None. With a current row
+  it shows its latest receipt; otherwise it is Pending, with the latest
+  Pending reason or the extraction reason when its bytes are not extracted.
+  `xmp:pending` and `xmp:conflict` use the same expressions.
+- Worker: the sidecar backfill lists extracted originals with work and no
+  current row in node-ID order. Outcomes that need no packet bytes are
+  recorded and settled directly; the rest read the packet, merge and publish.
+  Publication reloads every input in its write transaction and retries when
+  one changed, then commits the imported decisions, tags, sidecar version,
+  receipt and settled row together, so Docbank's own write does not requeue
+  the photo. A sidecar that cannot be read records a Pending receipt once,
+  stays unsettled and returns the read error to the backfill retry policy.
+  Restoring the bytes lets the same target recover without a catalog change.
+- Pairing: on the first sync of a sidecar that import attached, a packet whose
+  `photoshop:SidecarForExtension` claim names one other RAW or image member
+  without a live sidecar moves the sidecar there through an `import` photo
+  receipt, when audit permits both attachments. Neither original settles; both
+  sync again, so the claimed member imports the packet. A manual attachment, an
+  ambiguous claim, a claim changed after the first sync or an occupied target
+  stays Invalid with the commands that move it.
+- Outside packets: a sidecar's outside digest is the bytes of the version bound
+  to its latest outside observation. When that version is pruned, the digest
+  the last sync accepted stands in. A new outside version merges against the
+  last accepted outside snapshot; a version put in the vault merges against
+  Docbank's last sync. An outside sidecar without earlier source-path
+  provenance matches through its paired original and replaces the generated
+  sidecar in place. Generated provenance does not count as a competing outside
+  path; a genuine second outside path keeps its own copy when the first
+  changes. A rescan whose bytes equal an accepted outside digest keeps the
+  current Docbank version and binds provenance to a retained version with
+  those bytes. The first sync of a sidecar without an earlier sync accepts its
+  current bytes as outside, which covers vaults rebuilt from schema 29 without
+  a synthetic receipt.
+- Purge: purging an original or sidecar deletes the receipts naming it.
 
-Schema 39 also adds `photo_authored_fts`, which indexes captions, creator, and copyright from `photo_files` in separate columns so phrases stay within a field. It is derived, rebuilt on restore, and excluded from metadata backup.
+Two partial expression indexes on `photo_change_receipts` find an original's
+latest receipt and the receipts naming a sidecar. Schema bootstrap creates them
+on open.
+
+Schema 38 also adds `photo_authored_fts`, which indexes captions, creator, and copyright from `photo_files` in separate columns so phrases stay within a field. It is derived, rebuilt on restore, and excluded from metadata backup.
 
 ### Photo technical projection
 

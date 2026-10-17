@@ -12,8 +12,8 @@ import (
 )
 
 // BenchmarkPhotoXMPStatus100k measures idle worker listing and 250-row
-// xmp:pending and xmp:conflict pages over 100,000 photos, of which 1,000 are
-// Pending and 1,000 conflict. Seeding runs outside the timer; run it with
+// xmp:pending and xmp:conflict pages over 100,000 photos with decisions, of
+// which 1,000 are Pending and 1,000 conflict. Seeding runs outside the timer; run it with
 // go test -tags fts5 -run '^$' -bench PhotoXMPStatus100k ./internal/store/.
 func BenchmarkPhotoXMPStatus100k(b *testing.B) {
 	const photos = 100_000
@@ -36,8 +36,28 @@ func BenchmarkPhotoXMPStatus100k(b *testing.B) {
 			return nil
 		}))
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE photo_files SET xmp_state=CASE WHEN node_id%100=0 THEN 'pending' WHEN node_id%100=1 THEN 'conflict' ELSE 'synced' END`)
-	require.NoError(b, err)
+	// Every extracted photo has a decision and a settled fence; 1,000
+	// conflicts are the latest outcome, and 1,000 photos changed since settling.
+	for _, statement := range []string{
+		`UPDATE photo_files SET confirmed_fields=1,rating=3`,
+		`INSERT INTO source_metadata_generations(generation_id,source_sha256,contract_version,extractor_fingerprint,canonical_json,checksum,created_at)
+ SELECT lower(hex(randomblob(16))),hash,'v1','` + fakeHash("ee") + `',x'7b7d','',created_at FROM blobs`,
+		`INSERT INTO source_metadata_heads(source_sha256,generation_id,published_at) SELECT source_sha256,generation_id,created_at FROM source_metadata_generations`,
+		`INSERT INTO photo_change_receipts(receipt_id,operation,before_revision,after_revision,before_json,after_json,created_at)
+ SELECT lower(hex(randomblob(16))),'xmp_sync',0,1,'null',json_object('version',1,'file_id',file_id,'node_id',node_id,'state','conflict'),'2026-10-01T00:00:00Z'
+ FROM photo_files WHERE node_id%100=1`,
+	} {
+		_, err = s.db.ExecContext(ctx, statement)
+		require.NoError(b, err)
+	}
+	settle := func(b *testing.B, where string) {
+		b.Helper()
+		_, err := s.db.ExecContext(ctx, `INSERT INTO photo_sidecar_considered(sidecar_file_id,asset_id,asset_revision,member_revisions,version_id,extractor_fingerprint)
+ SELECT f.file_id,f.asset_id,a.revision,`+photoXMPFenceTokenSQL+`,n.current_version_id,`+photoXMPExtractorSQL+`
+ FROM photo_files f JOIN photo_assets a ON a.asset_id=f.asset_id JOIN nodes n ON n.id=f.node_id WHERE `+where)
+		require.NoError(b, err)
+	}
+	settle(b, `f.node_id%100<>0`)
 	b.Logf("seeded %d photos in %s", photos, time.Since(started).Round(time.Millisecond))
 	page := func(b *testing.B, text string) {
 		b.Helper()
@@ -46,10 +66,12 @@ func BenchmarkPhotoXMPStatus100k(b *testing.B) {
 		require.Len(b, result.Items, 250)
 	}
 	b.Run("idle worker listing", func(b *testing.B) {
-		_, err := s.db.ExecContext(ctx, `UPDATE photo_files SET xmp_state='synced' WHERE xmp_state='pending'`)
+		targets, err := s.PhotoXMPTargetsAfter(ctx, "", 10)
 		require.NoError(b, err)
+		require.Len(b, targets, 10)
+		settle(b, `f.node_id%100=0`)
 		b.Cleanup(func() {
-			_, err := s.db.ExecContext(ctx, `UPDATE photo_files SET xmp_state='pending' WHERE node_id%100=0`)
+			_, err := s.db.ExecContext(ctx, `DELETE FROM photo_sidecar_considered WHERE sidecar_file_id IN (SELECT file_id FROM photo_files WHERE node_id%100=0)`)
 			require.NoError(b, err)
 		})
 		for b.Loop() {

@@ -640,10 +640,8 @@ func TestPhotoAuthoredPurgeRemovesReceipts(t *testing.T) {
 		_, err = loadPhotoAuthoredReceipt(ctx, s.db, receipt.ReceiptID)
 		require.ErrorIs(t, err, ErrNotFound)
 		var xmpReceipts int
-		var pointer string
-		require.NoError(t, s.db.QueryRow(`SELECT (SELECT count(*) FROM photo_change_receipts WHERE operation='xmp_sync'),xmp_receipt_id FROM photo_files WHERE file_id=?`, raw.ID).Scan(&xmpReceipts, &pointer))
+		require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM photo_change_receipts WHERE operation='xmp_sync'`).Scan(&xmpReceipts))
 		assert.Zero(t, xmpReceipts, "purging the sidecar removes the sync receipt naming it")
-		assert.Empty(t, pointer)
 		require.NoError(t, s.ValidateMetadata(ctx))
 		var backup bytes.Buffer
 		require.NoError(t, s.ExportMetadata(ctx, &backup))

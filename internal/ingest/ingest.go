@@ -43,18 +43,19 @@ type Ingester struct {
 }
 
 // PublishPhotoXMP stores a written packet's bytes, then publishes the plan.
-func (ing *Ingester) PublishPhotoXMP(ctx context.Context, plan store.PhotoXMPPlan, data []byte) (retErr error) {
+// It returns the member a first sync moved the sidecar to, if any.
+func (ing *Ingester) PublishPhotoXMP(ctx context.Context, plan store.PhotoXMPPlan, data []byte) (_ string, retErr error) {
 	if !plan.Write {
 		return ing.Store.PublishPhotoXMP(ctx, plan, "", 0, store.BlobPhysical{})
 	}
 	written, err := ing.Blobs.WriteDetailedContext(ctx, bytes.NewReader(data))
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer func() { retErr = mutationCleanupResult(retErr, ing.cleanupLoose(written.Hash)) }()
 	physical, err := physicalReceipt(written)
 	if err != nil {
-		return err
+		return "", err
 	}
 	return ing.Store.PublishPhotoXMP(ctx, plan, written.Hash, written.Size, physical)
 }

@@ -4,7 +4,17 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 )
+
+// photoSidecarMemberRevisionsSQL snapshots each member's node revision and
+// audit coverage. Enrolling a scope changes coverage without a revision, and an
+// audited vault only accepts decisions for covered originals.
+const photoSidecarMemberRevisionsSQL = `(SELECT group_concat(member_revision, ',') FROM
+ (SELECT n.id || ':' || n.revision ||
+ CASE WHEN EXISTS (SELECT 1 FROM audit_memberships m WHERE m.node_id=n.id) THEN ':audited' ELSE '' END AS member_revision
+ FROM photo_files f JOIN nodes n ON n.id=f.node_id
+ WHERE f.asset_id=a.asset_id ORDER BY n.id))`
 
 // photoSidecarIntendedTarget names the original that a sidecar's source path
 // and SidecarForExtension claim pair it with, or "" when that is ambiguous. A
@@ -33,4 +43,16 @@ func photoSidecarIntendedTarget(ctx context.Context, q metadataQuerier, sidecar 
 		return *sidecar.SidecarOfID, nil
 	}
 	return intended, nil
+}
+
+// auditRefusesAttachmentChangeTx reports whether an audited vault refuses
+// attachment changes to the node because no audit scope covers it.
+func auditRefusesAttachmentChangeTx(ctx context.Context, tx *sql.Tx, nodeID int64) (bool, error) {
+	var refused bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM audit_authority WHERE singleton=1)
+ AND NOT EXISTS(SELECT 1 FROM audit_memberships WHERE node_id=?)`, nodeID).Scan(&refused)
+	if err != nil {
+		return false, fmt.Errorf("checking audit coverage for photo node %d: %w", nodeID, err)
+	}
+	return refused, nil
 }

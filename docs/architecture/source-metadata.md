@@ -191,5 +191,8 @@ combine its properties; other subjects and nested resources don't contribute dec
 The source facts describe each sidecar version for search and detail views.
 XMP sync does not read them: the sidecar worker reads the packet bytes with the
 same strict reader and also needs the original's extraction head for its
-orientation. See [Sync XMP sidecars](../usage/photos.md#sync-xmp-sidecars) for
-the merge rules.
+orientation. `photo_sidecar_considered` records each original's settled sync
+work, keyed by the original's file ID; a new extraction head reopens it. See
+[Sync XMP sidecars](../usage/photos.md#sync-xmp-sidecars) for the merge rules
+and the [storage design](https://github.com/kenn-io/docbank/blob/main/docs/internal/storage-design.md#photo-asset-authority) for the settled-work
+record.

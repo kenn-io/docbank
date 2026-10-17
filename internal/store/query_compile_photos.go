@@ -69,15 +69,15 @@ func (c queryCompiler) compilePhotoScalarPredicate(field, value string) (compile
 		if err := query.ValidateTextOperand(field, value); err != nil {
 			return compiledQueryFragment{}, err
 		}
-		// Each predicate repeats its partial index condition so SQLite can seek it.
-		state := `xf.xmp_state IN ('pending','waiting')`
+		state := photoXMPSignalsSQL + ` AND NOT ` + photoXMPFenceCurrentSQL
 		if value == PhotoXMPStateConflict {
-			state = `xf.xmp_state='conflict'`
+			state = photoXMPLatestStateSQL + `='conflict' AND ` + photoXMPFenceCurrentSQL
 		}
+		originals := `SELECT f.node_id,f.asset_id FROM photo_files f JOIN photo_assets a ON a.asset_id=f.asset_id JOIN nodes n ON n.id=f.node_id WHERE f.role IN ('raw','image') AND ` + state
 		if c.photoDisplayMetadata {
-			return compiledQueryFragment{sql: `n.id IN (SELECT pf.node_id FROM photo_files xf JOIN photo_files pf ON pf.asset_id=xf.asset_id WHERE ` + state + `)`}, nil
+			return compiledQueryFragment{sql: `n.id IN (SELECT pf.node_id FROM (` + originals + `) xf JOIN photo_files pf ON pf.asset_id=xf.asset_id)`}, nil
 		}
-		return compiledQueryFragment{sql: `n.id IN (SELECT xf.node_id FROM photo_files xf WHERE ` + state + `)`}, nil
+		return compiledQueryFragment{sql: `n.id IN (SELECT node_id FROM (` + originals + `))`}, nil
 	case "rating", "rating_min", "rating_max":
 		n, err := query.ParseSizeOperand(value)
 		if err != nil || n > 5 {

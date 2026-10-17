@@ -26,14 +26,6 @@ func readPhotoXMPBytes(ctx context.Context, ing *ingest.Ingester, hash string) (
 	return data, err
 }
 
-func photoXMPSnapshot(packet photoSidecarPacket) store.PhotoXMPPacket {
-	p := store.PhotoXMPPacket{Values: packet.PhotoAuthored, Keywords: packet.Keywords, Ignored: packet.Ignored, Orientation: packet.Orientation}
-	if packet.RotationPresent {
-		p.Rotation = new(packet.Rotation)
-	}
-	return p
-}
-
 // SyncPhotoXMPBackground settles one Pending original for the sidecar worker,
 // including hidden photos.
 func SyncPhotoXMPBackground(ctx context.Context, ing *ingest.Ingester, fileID string) error {
@@ -42,6 +34,16 @@ func SyncPhotoXMPBackground(ctx context.Context, ing *ingest.Ingester, fileID st
 		return err
 	}
 	return syncPhotoXMP(ctx, ing, work, "")
+}
+
+// publishPhotoXMP publishes a plan. A first sync that moved the sidecar to the
+// member its packet claims then syncs both originals again.
+func publishPhotoXMP(ctx context.Context, ing *ingest.Ingester, plan store.PhotoXMPPlan, data []byte) error {
+	retargeted, err := ing.PublishPhotoXMP(ctx, plan, data)
+	if err != nil || retargeted == "" {
+		return err
+	}
+	return errors.Join(SyncPhotoXMPBackground(ctx, ing, retargeted), SyncPhotoXMPBackground(ctx, ing, plan.Work.Original.ID))
 }
 
 // ResolvePhotoXMP applies a person's choice to the recorded conflict.
@@ -68,7 +70,7 @@ func syncPhotoXMP(ctx context.Context, ing *ingest.Ingester, work store.PhotoXMP
 			if errors.Is(err, packstore.ErrPhysicalMissing) && !errors.Is(err, packstore.ErrStoreUnavailable) {
 				plan.Refusal = "The sidecar content is missing. Restore its data; background sync will retry."
 			}
-			return errors.Join(err, ing.PublishPhotoXMP(ctx, plan, nil))
+			return errors.Join(err, publishPhotoXMP(ctx, ing, plan, nil))
 		}
 		if err == nil {
 			packet, err = readPhotoSidecar(ctx, data)
@@ -78,26 +80,26 @@ func syncPhotoXMP(ctx context.Context, ing *ingest.Ingester, work store.PhotoXMP
 		}
 		if err != nil {
 			plan.Refusal = photoXMPMalformedReason
-			return ing.PublishPhotoXMP(ctx, plan, nil)
+			return publishPhotoXMP(ctx, ing, plan, nil)
 		}
 		plan.Extension = packet.SidecarForExtension
 	}
 	base, baseOrientation, synced := work.Base()
 	prior := store.PhotoXMPPacket{Values: base.Catalog, Keywords: base.Keywords}
 	catalog := store.PhotoXMPPacket{Values: work.Original.Authored(), Keywords: work.Keywords, Orientation: store.PhotoXMPOrientation(work.Orientation, work.Original.Authored().Rotation)}
-	sidecar := photoXMPSnapshot(packet)
+	sidecar := packet.PhotoXMPPacket
 	resolvePhotoXMPRotation(&sidecar, base.Packet, baseOrientation)
 	plan.Sidecar = sidecar
 	decision := planPhotoXMP(base.Packet, prior, catalog, sidecar, choice)
 	if decision.conflict != 0 {
 		plan.Rows = photoXMPConflictRows(catalog, effectivePhotoXMPSidecar(base.Packet, catalog, sidecar), decision.conflict)
-		return ing.PublishPhotoXMP(ctx, plan, nil)
+		return publishPhotoXMP(ctx, ing, plan, nil)
 	}
 	// A changed original orientation or an unreadable TIFF orientation rewrites
 	// the composed rotation even when the decision itself is unchanged.
 	rotation := decision.packet.Values.Confirmed&store.PhotoConfirmedRotation != 0
 	if synced && work.Orientation != baseOrientation && (sidecar.Ignored&store.PhotoConfirmedRotation == 0 && sidecar.Orientation != 0 || rotation && !photoXMPEqual(decision.packet, prior, store.PhotoConfirmedRotation)) ||
-		packet.RotationPresent && packet.Orientation == 0 && rotation {
+		packet.Rotation != nil && packet.Orientation == 0 && rotation {
 		decision.write |= store.PhotoConfirmedRotation
 	}
 	if packet.LegacyReject && decision.write != 0 {
@@ -113,15 +115,15 @@ func syncPhotoXMP(ctx context.Context, ing *ingest.Ingester, work store.PhotoXMP
 				return err
 			}
 			plan = store.PhotoXMPPlan{Work: work, Choice: choice, Refusal: "The preserved sidecar data exceeds the XMP limits."}
-			return ing.PublishPhotoXMP(ctx, plan, nil)
+			return publishPhotoXMP(ctx, ing, plan, nil)
 		}
 		data = merged
-		plan.Packet = photoXMPSnapshot(written)
+		plan.Packet = written.PhotoXMPPacket
 		resolvePhotoXMPRotation(&plan.Packet, store.PhotoXMPPacket{}, work.Orientation)
 		if decision.write&store.PhotoConfirmedRotation == 0 {
 			photoXMPCopy(&plan.Packet, sidecar, store.PhotoConfirmedRotation)
 		}
 		plan.Packet.Orientation = written.Orientation
 	}
-	return ing.PublishPhotoXMP(ctx, plan, data)
+	return publishPhotoXMP(ctx, ing, plan, data)
 }

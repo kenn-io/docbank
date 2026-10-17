@@ -162,15 +162,22 @@ func photoImportRoleFilter(role string) (string, []any) {
 	}
 }
 
-// photoImportSidecarCandidatesQuery finds sidecars by source path first: a
-// rescan can supply the outside bytes Docbank accepted before writing a newer
-// version, which no longer match the current content.
-const photoImportSidecarCandidatesQuery = `SELECT ` + nodeCols + `,p.original_path,COALESCE(pf.source_sha256,'')
+// photoImportAcceptedSQL names the member's bytes (?2) when an XMP sync of
+// sidecar node n accepted them as its outside packet. n.id+0 drops the
+// column affinity that would keep SQLite from seeking the json_extract index.
+const photoImportAcceptedSQL = `CASE WHEN EXISTS(SELECT 1 FROM photo_change_receipts xr INDEXED BY photo_change_receipts_xmp_sidecar
+ WHERE xr.operation='xmp_sync' AND json_extract(xr.after_json,'$.sync.sidecar.node_id')=n.id+0
+ AND json_extract(xr.after_json,'$.sync.source_sha256')=?2) THEN ?2 ELSE '' END`
+
+// photoImportSidecarCandidatesQuery finds sidecars by source path (?1) first:
+// a rescan can supply the outside bytes Docbank accepted before writing a
+// newer version, which no longer match the current content.
+const photoImportSidecarCandidatesQuery = `SELECT ` + nodeCols + `,p.original_path,` + photoImportAcceptedSQL + `
  FROM provenance p INDEXED BY provenance_source_path
  JOIN nodes n ON n.id=p.node_id
  LEFT JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=n.current_version_id
  LEFT JOIN photo_files pf ON pf.node_id=n.id AND pf.asset_id IS NOT NULL
- WHERE p.original_path=? AND n.trashed_at IS NULL AND (pf.node_id IS NULL OR pf.role='sidecar')
+ WHERE p.original_path=?1 AND n.trashed_at IS NULL AND (pf.node_id IS NULL OR pf.role='sidecar')
  AND NOT EXISTS(SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
  ORDER BY n.id,p.identity`
 
@@ -189,7 +196,7 @@ func (s *Store) photoImportCurrentDuplicateTx(
 		WHERE n.trashed_at IS NULL AND `+photoFilter+` AND cv.blob_hash=?
 		ORDER BY n.id, p.identity`, slices.Concat(roleArgs, []any{member.BlobHash})
 	if role == PhotoRoleSidecar {
-		query, args = photoImportSidecarCandidatesQuery, []any{member.OriginalPath}
+		query, args = photoImportSidecarCandidatesQuery, []any{member.OriginalPath, member.BlobHash}
 	}
 	if role == PhotoRoleSidecar && fallback && target != "" {
 		original, _, err := photoSidecarSourceTx(ctx, tx, target, member.OriginalPath, "", false)
@@ -197,12 +204,12 @@ func (s *Store) photoImportCurrentDuplicateTx(
 			return Node{}, false, err
 		}
 		// Exact paths take priority over content matches and a generated attachment.
-		query = `SELECT * FROM (` + query + `) UNION ALL SELECT ` + nodeCols + `, '',pf.source_sha256
- FROM ` + nodeFrom + ` JOIN photo_files pf ON pf.node_id=n.id AND pf.asset_id=? AND pf.role='sidecar'
- WHERE n.trashed_at IS NULL AND (cv.blob_hash=? OR pf.source_sha256=? OR
- (pf.sidecar_of_file_id=? AND NOT EXISTS(SELECT 1 FROM provenance p JOIN ingests i ON i.id=p.ingest_id
+		query = `SELECT * FROM (` + query + `) UNION ALL SELECT ` + nodeCols + `, '',` + photoImportAcceptedSQL + `
+ FROM ` + nodeFrom + ` JOIN photo_files pf ON pf.node_id=n.id AND pf.asset_id=?3 AND pf.role='sidecar'
+ WHERE n.trashed_at IS NULL AND (cv.blob_hash=?2 OR ` + photoImportAcceptedSQL + `<>'' OR
+ (pf.sidecar_of_file_id=?4 AND NOT EXISTS(SELECT 1 FROM provenance p JOIN ingests i ON i.id=p.ingest_id
  WHERE p.node_id=n.id AND i.source_kind NOT LIKE 'embedded:%')))`
-		args = append(args, target, member.BlobHash, member.BlobHash, original)
+		args = append(args, target, original)
 	}
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -350,9 +357,6 @@ func (s *Store) observePhotoImportSourceTx(
 	fact.Identity, err = provenanceIdentity(fact)
 	if err != nil {
 		return Node{}, fmt.Errorf("identifying photo import observation: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET source_sha256=? WHERE node_id=? AND role='sidecar' AND source_sha256<>?`, member.BlobHash, node.ID, member.BlobHash); err != nil {
-		return Node{}, err
 	}
 	return s.observeOperationalIngestTx(ctx, tx, run, node, fact, inserted, versionID)
 }

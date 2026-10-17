@@ -24,6 +24,14 @@
       (!!editor.error && !editor.targets.length),
   );
   const fields = ["caption", "creator", "copyright"] as const;
+  // Originals get an XMP section; Refresh XMP reloads them all at once.
+  const xmpTargets = $derived(
+    editor.files.filter((target) =>
+      editor.asset?.files.some(
+        (file) => file.id === target.file_id && (file.role === "raw" || file.role === "image"),
+      ),
+    ),
+  );
   const xmpLabels = {
     none: "No sidecar",
     synced: "Synced",
@@ -164,7 +172,7 @@
             {tag.name}{editor.keywordState(tag.id) === "mixed" ? " · Mixed" : ""}
           </li>{/each}
       </ul>{/if}
-    {#each editor.files.filter( (target) => editor.asset?.files.some((file) => file.id === target.file_id && (file.role === "raw" || file.role === "image")), ) as target}
+    {#each xmpTargets as target}
       {@const xmp = target.xmp}
       <section class="xmp-state" aria-label={`XMP for ${target.file_name}`}>
         <h3>{target.file_name}</h3>
@@ -198,17 +206,17 @@
             >
           </div>
         {/if}
-        <Button
-          size="sm"
-          disabled={editor.busy || editor.loading || actionDisabled}
-          onclick={() => void editor.refreshXMP()}>Refresh XMP</Button
-        >
       </section>
     {/each}
     {#if editor.xmpStalled}<Notice
         tone="warning"
         message="XMP sync is still pending. Select Refresh XMP to check again."
       />{/if}
+    {#if xmpTargets.length || editor.xmpStalled}<Button
+        size="sm"
+        disabled={editor.busy || editor.loading || actionDisabled}
+        onclick={() => void editor.refreshXMP()}>Refresh XMP</Button
+      >{/if}
     {#if editor.xmpError}<Notice tone="error" message={editor.xmpError} />{/if}
     {#if editor.conflict && (!editor.membershipChanged || !editor.targets.length)}<Notice
         tone="warning"
