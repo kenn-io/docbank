@@ -49,6 +49,17 @@ it("chooses an existing person by ID and opens their photos from the person card
     { query: "Ad", limit: 100 },
     expect.objectContaining({ session: "session" }),
   );
+  search.mockResolvedValue({ items: [] });
+  await fireEvent.click(screen.getByRole("button", { name: "Find or create a person: Ada" }));
+  await waitFor(() =>
+    expect(search).toHaveBeenLastCalledWith(
+      { query: "", limit: 100 },
+      expect.objectContaining({ session: "session" }),
+    ),
+  );
+  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Ada" }));
+  await waitFor(() => expect(screen.queryByRole("combobox")).toBeNull());
+  expect(name).toHaveBeenCalledTimes(1);
   faces.dispose();
 });
 it("searches again after a failed assignment and disables the picker throughout creation", async () => {
@@ -102,10 +113,8 @@ it("searches again after a failed assignment and disables the picker throughout 
   await fireEvent.input(screen.getByRole("combobox"), { target: { value: "ada" } });
   await screen.findByRole("option", { name: 'Create another person named "ada"' });
   await fireEvent.mouseDown(screen.getByRole("option", { name: "Ada" }));
-  await waitFor(() => expect(write).toHaveBeenCalledTimes(2));
-  expect(write.mock.calls[1]![1]).toMatchObject({ person_id: "person-new", revision: 4 });
-  expect(write.mock.calls[1]![1]).not.toHaveProperty("person_name");
   await waitFor(() => expect(screen.queryByRole("combobox")).toBeNull());
+  expect(write).toHaveBeenCalledTimes(1);
   canonical = "Grace";
   await fireEvent.click(screen.getByRole("button", { name: "Find or create a person: Ada" }));
   await fireEvent.input(screen.getByRole("combobox"), { target: { value: "Ada" } });
@@ -116,8 +125,8 @@ it("searches again after a failed assignment and disables the picker throughout 
   await fireEvent.mouseDown(
     await screen.findByRole("option", { name: 'Create another person named "ada"' }),
   );
-  await waitFor(() => expect(write).toHaveBeenCalledTimes(3));
-  expect(write.mock.calls[2]![1]).toMatchObject({ person_name: "ada", revision: 4 });
+  await waitFor(() => expect(write).toHaveBeenCalledTimes(2));
+  expect(write.mock.calls[1]![1]).toMatchObject({ person_name: "ada", revision: 4 });
   expect(write.mock.calls[0]![2]!.signal!.aborted).toBe(false);
   faces.dispose();
 });

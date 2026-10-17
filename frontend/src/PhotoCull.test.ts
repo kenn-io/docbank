@@ -1,11 +1,12 @@
 import { beforeEach, afterEach, expect, it, vi } from "vite-plus/test";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
+import { PhotoAuthoredEditor } from "./photoAuthored.svelte.js";
 import { APIError } from "./api-transport.js";
 import PhotoCullView from "./PhotoCull.svelte";
 import PhotoCullConfirmation from "./PhotoCullConfirmation.svelte";
 import { PhotoCull } from "./photoCull.svelte.js";
 import { Photos } from "./photos.svelte.js";
-import { photo, preparedPhoto, photoPreparation } from "./photo-test-fixtures.js";
+import { photo, preparedPhoto, photoPreparation, photoFacePage } from "./photo-test-fixtures.js";
 import type { PhotoPreviewCache } from "./photoPreviewCache.js";
 import { photoCullStorage, type CullRun } from "./photoCullStorage.js";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
@@ -1284,7 +1285,26 @@ it("reloads cached stack siblings after preparation loses a member", async () =>
 it("loads faces once when cull mounts", async () => {
   const read = vi
     .spyOn(api, "listPhotoFaces")
-    .mockResolvedValue({ faces: [], assertions: [], people: [] });
-  await reviewPhoto();
+    .mockResolvedValueOnce(photoFacePage())
+    .mockResolvedValue(
+      photoFacePage({ people: [{ person_id: "person-a", display_name: "Grace" }] }),
+    );
+  const { cull, photos } = await reviewPhoto();
+  const first = await screen.findByRole("region", { name: "Face closeups" });
+  expect(within(first).getByText("Ada")).toBeTruthy();
   await waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+  const next = photo(2);
+  cull.run = {
+    ...cull.run!,
+    ids: [photo(1).asset_id, next.asset_id],
+    checkpoint: { ...cull.run!.checkpoint, pass: [photo(1).asset_id, next.asset_id] },
+  };
+  vi.mocked(photos.lookup).mockResolvedValue(next);
+  vi.mocked(photos.lookupMany).mockResolvedValue([photo(1), next]);
+  await fireEvent.click(await readyButton("Next"));
+  await screen.findByText(next.name);
+  const second = await screen.findByRole("region", { name: "Face closeups" });
+  await within(second).findByText("Grace");
+  expect(within(second).queryByText("Ada")).toBeNull();
+  expect(read).toHaveBeenLastCalledWith(next.content_version_id, expect.anything());
 });

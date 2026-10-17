@@ -106,7 +106,8 @@
         clearLabel="Clear name"
         disabled={choosing || faces.busy || faces.loading}
         onquery={(value) => search(face.face_id, value)}
-        onselect={(value) => choose(face, value)}
+        onselect={(value) =>
+          person && value === key(person.person_id) ? true : choose(face, value)}
       />
       {#if person && onperson}<Button
           size="sm"

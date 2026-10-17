@@ -60,10 +60,10 @@
   });
   let photo = $state<PhotoBrowseRow>();
   const faces = untrack(() => new PhotoFaces(photos.session, photos.onauthfailure, photos.hidden));
+  onDestroy(() => faces.dispose());
   $effect(() => {
     const version = photo?.kind === "photo" ? photo.content_version_id : "";
     untrack(() => void faces.load(version));
-    return () => faces.dispose();
   });
   let fit = $state<{ url: string; content_version_id: string; width: number; height: number }>();
   let error = $state("");
