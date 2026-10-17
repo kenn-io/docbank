@@ -30,6 +30,7 @@ func check(err error) {
 }
 
 func main() {
+	namesakes := flag.Bool("namesakes", false, "Include people with the same name and distinct identities")
 	bursts := flag.Bool("bursts", false, "Include synthetic burst stacks")
 	mapGPS := flag.Bool("map", false, "Include synthetic GPS locations")
 	unavailable := flag.Bool("unavailable", false, "Include an undecodable photo")
@@ -57,6 +58,17 @@ func main() {
 	s, err := store.Open(layout.DBPath())
 	check(err)
 	defer func() { check(s.Close()) }()
+	if *namesakes {
+		for _, email := range []string{"alex-a@example.test", "alex-b@example.test"} {
+			person, err := s.CreatePerson(ctx, "Alex Smith", "operator")
+			check(err)
+			_, err = s.AddPersonIdentity(ctx, person.PersonID, person.Revision, store.PersonIdentity{
+				Kind: "email", ValueDisplay: email, Origin: "operator", EvidenceKind: "operator_assertion",
+				EvidenceID: "synthetic-chooser", Confidence: "operator_asserted",
+			})
+			check(err)
+		}
+	}
 	blobs, err := blob.New(store.NewPackCatalog(s), layout.BlobsDir())
 	check(err)
 	defer func() { check(blobs.Close()) }()

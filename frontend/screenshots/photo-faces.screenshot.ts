@@ -44,7 +44,7 @@ test("names and corrects faces in Loupe, inspector, and Cull", async ({ page }) 
     await mkdtemp(path.join(repository, ".superpowers", "faces-proof-")),
   );
   try {
-    await fixture.seed(3);
+    await fixture.seed(3, "--namesakes");
     await mkdir(output!, { recursive: true });
     const url = new URL(await fixture.run("web", "--no-browser"));
     const session = new URLSearchParams(url.hash.slice(1)).get("web_session")!;
@@ -133,6 +133,22 @@ test("names and corrects faces in Loupe, inspector, and Cull", async ({ page }) 
           .locator("img")
           .evaluate((image) => (image as HTMLImageElement).naturalWidth)) > 0,
     );
+    await people.getByRole("button", { name: "Find or create a person: Ada" }).click();
+    await people.getByRole("combobox").fill("Alex Smith");
+    await people.getByRole("option", { name: "Alex Smith · 2 people", exact: true }).click();
+    const identityChooser = page.getByRole("dialog", { name: "Choose Alex Smith" });
+    await expect(identityChooser.getByText("alex-a@example.test")).toBeVisible();
+    await expect(identityChooser.getByText("alex-b@example.test")).toBeVisible();
+    await expect(identityChooser.getByText("No photos you can see.")).toHaveCount(2);
+    await captureDarkDialog(
+      page,
+      identityChooser,
+      output!,
+      "after-photo-people-identities",
+      760,
+      async () => (await identityChooser.getByRole("img").count()) === 0,
+    );
+    await identityChooser.getByRole("button", { name: "Cancel", exact: true }).click();
     await loupe.getByRole("button", { name: "Close photo viewer" }).click();
     await page.setViewportSize({ width: 1440, height: 720 });
     await page.getByRole("button", { name: "Cull", exact: true }).click();

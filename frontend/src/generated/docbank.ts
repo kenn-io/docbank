@@ -4609,6 +4609,7 @@ export interface PersonSummary {
   created_at: string;
   display_name: string;
   display_name_folded: string;
+  identity_label?: string;
   person_id: string;
   revision: number;
   state: string;
@@ -4619,6 +4620,7 @@ export interface PersonPage {
   readonly $schema?: string;
   items: PersonSummary[];
   next_cursor?: string;
+  same_name_continues?: boolean;
 }
 
 export interface PersonSplitReceipt {

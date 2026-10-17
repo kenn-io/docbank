@@ -44,10 +44,16 @@
   const groups = $derived.by(() => {
     const grouped = new Map<string, PersonSummary[]>();
     for (const person of people)
-      grouped.set(person.display_name, [...(grouped.get(person.display_name) ?? []), person]);
+      grouped.set(person.display_name_folded, [
+        ...(grouped.get(person.display_name_folded) ?? []),
+        person,
+      ]);
     return [...grouped].map(([name, members]) => ({
       name: members.length > 1 ? groupKey(name) : key(members[0]!.person_id),
-      label: members.length > 1 ? `${name} · ${members.length} people` : name,
+      label:
+        members.length > 1
+          ? `${members[0]!.display_name} · ${members.length} people`
+          : members[0]!.display_name,
     }));
   });
   function closeChooser() {
@@ -69,8 +75,8 @@
   }
   async function openChooser(face: PhotoFace, name: string) {
     closeChooser();
-    const members = people.filter((person) => person.display_name === name);
-    duplicate = { face: { ...face }, name, people: members };
+    const members = people.filter((person) => person.display_name_folded === name);
+    duplicate = { face: { ...face }, name: members[0]!.display_name, people: members };
     selection =
       members.find((person) => person.person_id === faces.person(face)?.person_id)?.person_id ?? "";
     const request = (previewController = new AbortController());
@@ -244,7 +250,12 @@
       let page = await read();
       const matches = [...page.items];
       const tail = matches.at(-1)?.display_name_folded;
-      while (!request.signal.aborted && page.next_cursor && tail !== undefined) {
+      while (
+        !request.signal.aborted &&
+        page.next_cursor &&
+        page.same_name_continues &&
+        tail !== undefined
+      ) {
         page = await read(page.next_cursor);
         const boundary = page.items.findIndex((person) => person.display_name_folded !== tail);
         matches.push(...(boundary < 0 ? page.items : page.items.slice(0, boundary)));
@@ -266,7 +277,6 @@
       void openChooser(face, value.slice(7));
       return true;
     }
-    if (new TextEncoder().encode(value.trim()).length > 200) return false;
     choosing = true;
     error = "";
     const version = faces.version;
@@ -293,12 +303,15 @@
   {#if faces.loading}<span role="status">Loading people…</span>{/if}
   {#each faces.ordered as face (face.face_id)}
     {@const person = faces.person(face)}
+    {@const foldedName = people.find(
+      (match) => match.person_id === person?.person_id,
+    )?.display_name_folded}
     {@const sharedName =
       person &&
       activeFace === face.face_id &&
-      people.filter((candidate) => candidate.display_name === faces.personLabel(person.person_id))
-        .length > 1
-        ? faces.personLabel(person.person_id)
+      foldedName &&
+      people.filter((candidate) => candidate.display_name_folded === foldedName).length > 1
+        ? foldedName
         : ""}
     <div class="person-row">
       <span>{faces.number(face)}</span>
@@ -317,7 +330,7 @@
             .map((option) => ({
               ...option,
               ...(sharedName && option.name === groupKey(sharedName)
-                ? { displayLabel: sharedName }
+                ? { displayLabel: faces.personLabel(person!.person_id) }
                 : {}),
             })),
         ]}
@@ -370,7 +383,8 @@
       <label class="duplicate-person">
         <input type="radio" name="person" value={person.person_id} bind:group={selection} />
         <span
-          >{person.display_name}<small>{new Date(person.created_at).toLocaleDateString()}</small
+          >{person.display_name}<small
+            >{person.identity_label || new Date(person.created_at).toLocaleDateString()}</small
           ></span
         >
         {#each preview?.urls ?? [] as url}<img

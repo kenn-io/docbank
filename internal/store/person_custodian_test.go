@@ -430,7 +430,7 @@ func TestPeopleByDisplayNameFiltersAllHiddenEvidenceBeforePaging(t *testing.T) {
 	require.NoError(t, err)
 	locked, err := s.PeopleByDisplayName(ctx, "Hidden Ada", "", "", 100, true)
 	require.NoError(t, err)
-	personIDs := func(people []Person) []string {
+	personIDs := func(people []PersonSearchResult) []string {
 		ids := make([]string, 0, len(people))
 		for _, person := range people {
 			ids = append(ids, person.PersonID)
@@ -518,4 +518,84 @@ func TestPeopleByDisplayNameMatchesWordPrefixes(t *testing.T) {
 			require.ElementsMatch(t, []string{"Straße", "STRASSE"}, []string{first[0].DisplayName, second[0].DisplayName})
 		}
 	}
+}
+
+func TestPeopleSearchIdentityLabelsRespectEvidenceVisibility(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	visible := browsePhotoNode(t, s, "identity-visible.jpg", fakeHash("identity-visible"), "image/jpeg")
+	hidden := browsePhotoNode(t, s, "identity-hidden.jpg", fakeHash("identity-hidden"), "image/jpeg")
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	asset, err := s.PhotoAssetForNode(ctx, hidden.ID)
+	require.NoError(t, err)
+	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+	for _, test := range []struct {
+		name, kind, value, origin, scopeKind, scopeValue, expected string
+		sensitive, hidden                                          bool
+	}{
+		{name: "operator", kind: "email", value: "operator@example.test", origin: "operator", expected: "operator@example.test"},
+		{name: "visible", kind: "email", value: "visible@example.test", origin: "derived", expected: "visible@example.test"},
+		{name: "unsupported", kind: "email", value: "unsupported@example.test", origin: "derived"},
+		{name: "sensitive", kind: "email", value: "sensitive@example.test", origin: "derived", sensitive: true},
+		{name: "hidden", kind: "email", value: "hidden@example.test", origin: "derived", hidden: true},
+		{name: "phone", kind: "phone", value: "+12025550123", origin: "operator", expected: "+12025550123"},
+		{name: "handle", kind: "handle", value: "chat/user-a", origin: "operator", scopeKind: "workspace", scopeValue: "example", expected: "chat/user-a (workspace: example)"},
+		{name: "unscoped", kind: "handle", value: "chat/user-a", origin: "operator"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			person, err := s.CreatePerson(ctx, "Alex "+test.name, "operator")
+			require.NoError(t, err)
+			_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: visible.CurrentVersionID, PersonID: person.PersonID, Role: "depicted", Action: "assert", Revision: 1})
+			require.NoError(t, err)
+			person, _, err = s.PersonByID(ctx, person.PersonID)
+			require.NoError(t, err)
+			_, err = s.AddPersonIdentity(ctx, person.PersonID, person.Revision, PersonIdentity{
+				Kind: test.kind, ValueDisplay: test.value, Origin: test.origin, ScopeKind: test.scopeKind, ScopeValue: test.scopeValue,
+				EvidenceKind: "source_metadata", EvidenceID: "identity-source", Confidence: "exact_identifier",
+			})
+			require.NoError(t, err)
+			source := visible
+			if test.hidden {
+				source = hidden
+			}
+			if test.name != "unsupported" {
+				_, err = s.db.ExecContext(ctx, `INSERT INTO document_people(content_version_id,node_id,person_id,generation_id,role,actor_key,evidence_kind,evidence_id,confidence,basis,raw_label,claim_count,sensitive) VALUES(?,?,?,'synthetic','author',?,'source_metadata','identity-source','exact_identifier','identifier_match','Alex',1,?)`, source.CurrentVersionID, source.ID, person.PersonID, test.kind+":"+test.value, test.sensitive)
+				require.NoError(t, err)
+			}
+			if test.sensitive {
+				_, err = s.db.ExecContext(ctx, `INSERT INTO document_people(content_version_id,node_id,person_id,generation_id,role,actor_key,evidence_kind,evidence_id,confidence,basis,raw_label,claim_count,sensitive) VALUES(?,?,?,'synthetic','author','email:other@example.test','source_metadata','identity-source','exact_identifier','identifier_match','Alex',1,0)`, visible.CurrentVersionID, visible.ID, person.PersonID)
+				require.NoError(t, err)
+			}
+			page, err := s.PeopleByDisplayName(ctx, person.DisplayName, "", "", 10, true)
+			require.NoError(t, err)
+			require.Len(t, page, 1)
+			require.Equal(t, test.expected, page[0].IdentityLabel)
+			if test.hidden {
+				page, err = s.PeopleByDisplayName(WithPhotoHiddenToken(ctx, token), person.DisplayName, "", "", 10, true)
+				require.NoError(t, err)
+				require.Equal(t, test.value, page[0].IdentityLabel)
+			}
+		})
+	}
+}
+
+func TestPeopleSearchPrefersEmailThenNormalizedValue(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	person, err := s.CreatePerson(ctx, "Alex Smith", "operator")
+	require.NoError(t, err)
+	for _, value := range []struct{ kind, display string }{{"phone", "+12025550123"}, {"email", "z@example.test"}, {"email", "a@example.test"}} {
+		_, err = s.AddPersonIdentity(ctx, person.PersonID, person.Revision, PersonIdentity{Kind: value.kind, ValueDisplay: value.display, Origin: "operator", EvidenceKind: "operator_assertion", EvidenceID: "label-order", Confidence: "operator_asserted"})
+		require.NoError(t, err)
+		person.Revision++
+	}
+	page, err := s.PeopleByDisplayName(ctx, "Alex", "", "", 10, true)
+	require.NoError(t, err)
+	require.Len(t, page, 1)
+	require.Equal(t, "a@example.test", page[0].IdentityLabel)
 }

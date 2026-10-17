@@ -81,10 +81,11 @@ func registerPackageCustodianRoutes(mux *http.ServeMux, d Deps, g *gate) {
 		for index := range out.Items {
 			person := people[index]
 			out.Items[index] = PersonSummary{PersonID: person.PersonID, DisplayName: person.DisplayName, DisplayNameFolded: person.DisplayNameFolded,
-				State: person.State, Revision: person.Revision, CreatedAt: person.CreatedAt}
+				State: person.State, Revision: person.Revision, CreatedAt: person.CreatedAt, IdentityLabel: person.IdentityLabel}
 		}
 		if len(people) > limit {
 			last := people[limit-1]
+			out.SameNameContinues = last.DisplayNameFolded == people[limit].DisplayNameFolded
 			out.NextCursor = encodePeopleCursor(last.DisplayNameFolded, last.PersonID, query)
 		}
 		writeJSON(w, http.StatusOK, out)

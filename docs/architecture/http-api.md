@@ -1418,7 +1418,13 @@ query arguments.
 
 ## People search
 
-`GET /api/v1/people` and MCP `find_people` return `items` and an optional `next_cursor`. Browser search omits people whose only evidence is in locked Hidden photos until unlock, while keeping people with visible evidence or no assertions. CLI and MCP search remain global. Browser sessions may search people and create a person while naming a face; separate person creation, person details, and canonical person edits require the API key.
+`GET /api/v1/people` and MCP `find_people` search active people by the beginning of any word in the folded display name. For example, `Smith` finds `John Smith`. Results use folded-name and person-ID order, with a query-bound `next_cursor` when another page exists.
+
+Each item includes `person_id`, `display_name`, `state`, and `revision`. `display_name_folded` lets callers group case variants consistently across pages. `created_at` provides a date fallback when a namesake has no visible identity. The optional display-only `identity_label` prefers email, then phone, then a handle with its scope; ties use normalized value and identity ID. It identifies a chooser row and does not assert a new identity or change the selected person ID. Browser labels include operator-entered identities and identities supported by visible, non-sensitive document evidence. Locked Hidden photos cannot supply a label. CLI and MCP labels use global visibility.
+
+The optional `same_name_continues` is true when the final item's folded name also begins the next page. A chooser follows the cursor only while this flag is true and stops at the first different folded name. Other paginated callers can follow `next_cursor` regardless of the flag.
+
+Browser search omits people whose only evidence is in locked Hidden photos until unlock, while keeping people with visible evidence or no assertions. CLI and MCP search remain global. Browser sessions may search people and create a person while naming a face; separate person creation, person details, and canonical person edits require the API key.
 
 ## Photo faces
 

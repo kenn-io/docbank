@@ -11431,6 +11431,8 @@ components:
           type: array
         next_cursor:
           type: string
+        same_name_continues:
+          type: boolean
       required:
         - items
       type: object
@@ -11493,6 +11495,8 @@ components:
         display_name:
           type: string
         display_name_folded:
+          type: string
+        identity_label:
           type: string
         person_id:
           type: string

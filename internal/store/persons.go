@@ -216,7 +216,14 @@ func (s *Store) PersonByID(ctx context.Context, id string) (Person, string, erro
 	return personByIDTx(ctx, s.db, id)
 }
 
-var peopleByDisplayNameSQL = `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at
+var peopleByDisplayNameSQL = `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at,
+	COALESCE((SELECT CASE WHEN i.kind='handle' THEN i.value_display || ' (' || i.scope_kind || ': ' || i.scope_value || ')' ELSE i.value_display END
+		FROM person_identities i WHERE i.person_id=persons.person_id
+		AND (i.kind IN ('email','phone') OR (i.kind='handle' AND i.scope_kind<>'' AND i.scope_value<>''))
+		AND (?=0 OR i.origin='operator' OR EXISTS(SELECT 1 FROM document_people dp
+			WHERE dp.person_id=i.person_id AND dp.actor_key=i.kind || ':' || i.value_normalized
+			AND dp.sensitive=0 AND (?=0 OR ` + personVersionVisibleSQL("dp.content_version_id") + `)))
+		ORDER BY CASE i.kind WHEN 'email' THEN 0 WHEN 'phone' THEN 1 ELSE 2 END,i.value_normalized,i.identity_id LIMIT 1),'')
 	FROM persons WHERE state<>'retired' AND (display_name_folded LIKE ? ESCAPE '\' OR display_name_folded LIKE ? ESCAPE '\')
 	AND (?=0 OR (NOT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=persons.person_id)
 		AND NOT EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=persons.person_id)
@@ -231,8 +238,13 @@ var peopleByDisplayNameSQL = `SELECT person_id,display_name,display_name_folded,
 	AND (?='' OR display_name_folded>? OR (display_name_folded=? AND person_id>?))
 	ORDER BY display_name_folded,person_id LIMIT ?`
 
+type PersonSearchResult struct {
+	Person
+	IdentityLabel string
+}
+
 // PeopleByDisplayName returns active people in stable folded-name order.
-func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, afterID string, limit int, visibleOnly bool) ([]Person, error) {
+func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, afterID string, limit int, visibleOnly bool) ([]PersonSearchResult, error) {
 	if !utf8.ValidString(query) || len(query) > document.MaxPersonDisplayNameBytes || limit < 1 || limit > 251 ||
 		(afterName == "") != (afterID == "") {
 		return nil, ErrInvalidPerson
@@ -246,17 +258,17 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 		hideLocked = state.ExpiresAt == nil
 	}
 	prefix := document.FoldPersonName(query)
-	rows, err := s.db.QueryContext(ctx, peopleByDisplayNameSQL, escapePersonLike(prefix)+"%", "% "+escapePersonLike(prefix)+"%", hideLocked,
+	rows, err := s.db.QueryContext(ctx, peopleByDisplayNameSQL, visibleOnly, hideLocked, escapePersonLike(prefix)+"%", "% "+escapePersonLike(prefix)+"%", hideLocked,
 		afterName, afterName, afterName, afterID, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	people := []Person{}
+	people := []PersonSearchResult{}
 	for rows.Next() {
-		var person Person
+		var person PersonSearchResult
 		if err := rows.Scan(&person.PersonID, &person.DisplayName, &person.DisplayNameFolded, &person.Origin,
-			&person.State, &person.Revision, &person.CreatedAt, &person.UpdatedAt); err != nil {
+			&person.State, &person.Revision, &person.CreatedAt, &person.UpdatedAt, &person.IdentityLabel); err != nil {
 			return nil, err
 		}
 		people = append(people, person)

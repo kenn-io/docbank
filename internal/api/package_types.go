@@ -82,6 +82,7 @@ type PackageImportJob struct {
 }
 
 type PersonSummary struct {
+	IdentityLabel     string `json:"identity_label,omitzero"`
 	DisplayNameFolded string `json:"display_name_folded"`
 	CreatedAt         string `json:"created_at"`
 	PersonID          string `json:"person_id"`
@@ -91,8 +92,9 @@ type PersonSummary struct {
 }
 
 type PersonPage struct {
-	Items      []PersonSummary `json:"items"`
-	NextCursor string          `json:"next_cursor,omitzero"`
+	SameNameContinues bool            `json:"same_name_continues,omitzero"`
+	Items             []PersonSummary `json:"items"`
+	NextCursor        string          `json:"next_cursor,omitzero"`
 }
 
 type CustodianAssignment struct {

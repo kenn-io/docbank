@@ -334,6 +334,8 @@ it.each(["person-b", "new", "cancel", "assigned"])(
       expect(write.mock.calls[0]![1]).toMatchObject({ face_id: face.face_id, revision: 3 });
     }
     expect(screen.queryByRole("dialog")).toBeNull();
+    if (assigned)
+      expect(screen.getByRole("button", { name: "Find or create a person: Alex" })).toBeTruthy();
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:alex-a");
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:alex-b");
     if (selection === "cancel") expect(write).not.toHaveBeenCalled();
@@ -341,6 +343,48 @@ it.each(["person-b", "new", "cancel", "assigned"])(
     faces.dispose();
   },
 );
+
+it("distinguishes namesakes with the same date and no photos by identity", async () => {
+  vi.spyOn(api, "listPhotoFaces").mockResolvedValue({ faces: [face], assertions: [], people: [] });
+  const search = vi.spyOn(api, "listPeople").mockResolvedValue({
+    items: ["alex-a@example.test", "alex-b@example.test", ""].map((identity_label, index) => ({
+      person_id: `person-${index}`,
+      display_name: "Alex Smith",
+      display_name_folded: "alex smith",
+      created_at: "2026-01-01T00:00:00Z",
+      state: "curated",
+      revision: 1,
+      identity_label,
+    })),
+    next_cursor: "different-name",
+  });
+  vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
+    items: [],
+  } as unknown as api.PhotoBrowsePage);
+  const write = vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "receipt" });
+  const faces = new PhotoFaces("session", vi.fn());
+  await faces.load("version-a");
+  render(PhotoPeople, { faces, session: "session" });
+  await fireEvent.click(screen.getByRole("button", { name: "Find or create a person: Face 1" }));
+  await fireEvent.input(screen.getByRole("combobox"), { target: { value: "Alex" } });
+  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Alex Smith · 3 people" }));
+  const dialog = await screen.findByRole("dialog", { name: "Choose Alex Smith" });
+  expect(within(dialog).getByText("alex-a@example.test")).toBeTruthy();
+  expect(
+    within(dialog).getByText(new Date("2026-01-01T00:00:00Z").toLocaleDateString()),
+  ).toBeTruthy();
+  await fireEvent.click(within(dialog).getByLabelText(/alex-b@example.test/));
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Name face" }));
+  await waitFor(() =>
+    expect(write).toHaveBeenCalledWith(
+      "version-a",
+      expect.objectContaining({ person_id: "person-1" }),
+      expect.anything(),
+    ),
+  );
+  expect(search.mock.calls.some(([params]) => params?.cursor)).toBe(false);
+  faces.dispose();
+});
 
 it.each(["face", "mark"])("confirms %s removal with the captured revision", async (target) => {
   vi.spyOn(api, "listPhotoFaces").mockResolvedValue(
@@ -508,7 +552,11 @@ it.each(["complete", "broad", "case"])("completes only the last name group: %s",
   const search = vi.spyOn(api, "listPeople").mockImplementation(async ({ query, cursor } = {}) => {
     if (!query) return { items: [] };
     if (!cursor)
-      return { items: Array.from({ length: 100 }, (_, i) => person(i)), next_cursor: "tail" };
+      return {
+        items: Array.from({ length: 100 }, (_, i) => person(i)),
+        next_cursor: "tail",
+        same_name_continues: true,
+      };
     return new Promise((resolve) => {
       finish = resolve;
     });
@@ -535,7 +583,11 @@ it.each(["complete", "broad", "case"])("completes only the last name group: %s",
     ],
     next_cursor: result === "broad" ? "more" : undefined,
   });
-  await fireEvent.mouseDown(await screen.findByRole("option", { name: `${name} · 101 people` }));
+  await fireEvent.mouseDown(
+    await screen.findByRole("option", {
+      name: `${name} · ${result === "case" ? 102 : 101} people`,
+    }),
+  );
   const dialog = await screen.findByRole("dialog", { name: `Choose ${name}` });
   await fireEvent.click(dialog.querySelector('input[value="person-100"]')!);
   await fireEvent.click(screen.getByRole("button", { name: "Name face" }));
@@ -569,7 +621,7 @@ it("ignores an older continuation after a new search", async () => {
         finish = resolve;
       });
     return query === "Alex"
-      ? { items: [person], next_cursor: "tail" }
+      ? { items: [person], next_cursor: "tail", same_name_continues: true }
       : { items: [{ ...person, display_name: "Bea", display_name_folded: "bea" }] };
   });
   const faces = new PhotoFaces("session", vi.fn());
@@ -610,6 +662,7 @@ it.each([
           },
         ],
         next_cursor: "tail",
+        same_name_continues: true,
       };
     throw cause;
   });
