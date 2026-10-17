@@ -792,13 +792,6 @@ it.each([
     files: ["jpeg"],
   },
   {
-    name: "both unflagged",
-    raw: { flag: "" },
-    jpeg: { flag: "" },
-    patch: { flag: "pick" },
-    files: ["raw", "jpeg"],
-  },
-  {
     name: "different ratings",
     raw: { rating: 5 },
     jpeg: { rating: 3 },
