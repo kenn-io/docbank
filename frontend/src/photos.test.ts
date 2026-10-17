@@ -3018,7 +3018,7 @@ it.each([{ rating: 5 }, { flag: "pick" as const }, { label: "red" as const }])(
   },
 );
 
-it("looks up large captured sets in at most four concurrent 64-ID queries, preserving input order", async () => {
+it("looks up and projects large captured sets in at most four concurrent 64-ID queries, preserving input order", async () => {
   const ids = Array.from({ length: 321 }, (_, index) => `photo-${index + 1}`);
   let active = 0,
     peak = 0;
@@ -3026,7 +3026,10 @@ it("looks up large captured sets in at most four concurrent 64-ID queries, prese
     progress: number[] = [];
   const waiting: (() => void)[] = [];
   stubPhotoFetch(async (_url, init) => {
-    const batch: string[] = JSON.parse(String(init.body)).query.filters.asset_ids;
+    const request = JSON.parse(String(init.body));
+    expect(request.page_size).toBe(250);
+    expect(request.hidden).toBe(false);
+    const batch: string[] = request.query.filters.asset_ids;
     sizes.push(batch.length);
     peak = Math.max(peak, ++active);
     await new Promise<void>((resolve) => waiting.push(resolve));
@@ -3038,12 +3041,22 @@ it("looks up large captured sets in at most four concurrent 64-ID queries, prese
         .map((id) => ({ ...photo(1), asset_id: id })),
     );
   });
-  const result = lookupPhotoRows("session", ids, undefined, (count) => progress.push(count));
+  const result = lookupPhotoRows(
+    "session",
+    ids,
+    undefined,
+    (count) => progress.push(count),
+    false,
+    undefined,
+    ({ asset_id, flag }) => ({ asset_id, flag }),
+  );
   await waitFor(() => expect(waiting).toHaveLength(4));
   waiting.splice(0).forEach((resolve) => resolve());
   await waitFor(() => expect(waiting).toHaveLength(2));
   waiting.splice(0).forEach((resolve) => resolve());
-  expect((await result).map((row) => row.asset_id)).toEqual(ids);
+  const rows = await result;
+  expect(rows.map((row) => row.asset_id)).toEqual(ids);
+  expect(rows.every((row) => Object.keys(row).sort().join(",") === "asset_id,flag")).toBe(true);
   expect(peak).toBe(4);
   expect(sizes).toEqual([64, 64, 64, 64, 64, 1]);
   expect(progress.at(-1)).toBe(321);
@@ -3174,32 +3187,4 @@ it("patches loaded stacks from receipts and reloads only for unknown companion f
   });
   expect(photos.reloadsAfter(changes)).toBe(true);
   photos.dispose();
-});
-
-it("projects each lookup batch and returns projected rows in input order", async () => {
-  const rows = Array.from({ length: 65 }, (_, index) => photo(index + 1));
-  stubPhotoFetch(async (_url, init) => {
-    const request = JSON.parse(String(init.body));
-    expect(request.page_size).toBe(250);
-    expect(request.hidden).toBe(false);
-    return response(
-      rows.filter((row) => request.query.filters.asset_ids.includes(row.asset_id)).reverse(),
-    );
-  });
-  const projected = await lookupPhotoRows(
-    "session",
-    rows.map((row) => row.asset_id),
-    undefined,
-    undefined,
-    false,
-    undefined,
-    ({ asset_id, flag }) => ({ asset_id, flag }),
-  );
-  expect(projected).toHaveLength(65);
-  expect(projected[0]).toEqual({ asset_id: "photo-1", flag: "" });
-  expect(projected[64]).toEqual({ asset_id: "photo-65", flag: "" });
-  expect(projected.map((row) => row.asset_id)).toEqual(rows.map((row) => row.asset_id));
-  expect(projected.every((row) => Object.keys(row).sort().join(",") === "asset_id,flag")).toBe(
-    true,
-  );
 });

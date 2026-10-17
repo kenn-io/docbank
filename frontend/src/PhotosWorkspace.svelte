@@ -51,6 +51,7 @@
   import { PhotoCull as CullRun } from "./photoCull.svelte.js";
   import { photoCullStorage } from "./photoCullStorage.js";
   import PhotoCull from "./PhotoCull.svelte";
+  import PhotoCullConfirmation from "./PhotoCullConfirmation.svelte";
   import PhotoCompare from "./PhotoCompare.svelte";
   import PhotoRejectsModal from "./PhotoRejectsModal.svelte";
 
@@ -120,6 +121,7 @@
   const culling = $derived(photos.culling);
   const comparing = $derived(photos.comparing);
   let enteringReview = false;
+  let cullConfirmation = $state<PhotoCullConfirmation>();
   let returnFocus: HTMLElement | undefined;
   $effect(() => {
     const owner = photos;
@@ -146,7 +148,11 @@
     enteringReview = true;
     returnFocus = document.activeElement as HTMLElement;
     try {
-      const captured = resume ? await review.restore() : await review.start(photos.query);
+      const captured = resume
+        ? await review.restore()
+        : await review.start(photos.query, (message) =>
+            cullConfirmation!.confirm(message, "Replace"),
+          );
       if (captured && review === cull && !culling && !comparing && editor.canChangeTarget())
         photos.culling = true;
     } finally {
@@ -780,6 +786,7 @@
       event.stopPropagation();
   }}
 />
+<PhotoCullConfirmation bind:this={cullConfirmation} />
 {#if culling && cull}<PhotoCull
     {cull}
     {photos}

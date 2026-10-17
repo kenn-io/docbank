@@ -2,7 +2,7 @@ import { createSnapshot, captureSnapshotTargets } from "./snapshots.js";
 import type { Query } from "./query.js";
 import { randomUUID } from "./crypto.js";
 import { APIError } from "./api-transport.js";
-import { sameCheckpoint } from "./photoCullStorage.js";
+import { CullFormatError, sameCheckpoint } from "./photoCullStorage.js";
 import type {
   CullCheckpoint,
   CullProgress,
@@ -38,8 +38,9 @@ export class PhotoCull {
   async probe() {
     try {
       this.saved = !!(await this.storage.saved());
-    } catch {
+    } catch (cause) {
       this.saved = false;
+      if (cause instanceof CullFormatError) this.error = failure(cause);
     }
   }
   // nextPass snapshots the checkpoint revision, so no other update may bump it until the pass is saved.
@@ -186,8 +187,6 @@ export class PhotoCull {
             run.captureTimeOrder !== "desc") ||
           typeof checkpoint.runID !== "string" ||
           !checkpoint.runID.trim() ||
-          typeof checkpoint.passID !== "string" ||
-          !checkpoint.passID.trim() ||
           !Number.isSafeInteger(checkpoint.revision) ||
           checkpoint.revision < 0 ||
           typeof checkpoint.autoAdvance !== "boolean" ||
@@ -238,15 +237,24 @@ export class PhotoCull {
       this.finishFlagRead(this.flagRead);
     }
   }
-  async start(query: Query, confirm = (message: string) => window.confirm(message)) {
+  async start(
+    query: Query,
+    confirm: (message: string) => boolean | Promise<boolean> = () => false,
+  ) {
     if (this.capturing) return false;
     const controller = (this.capture = new AbortController());
     this.capturing = true;
     this.error = "";
     try {
       await this.writes;
-      const previous = await this.storage.saved();
-      if (previous && !confirm("Replace saved cull progress?")) return false;
+      const previous = await this.storage.saved().catch((cause) => {
+        if (cause instanceof CullFormatError) {
+          this.error = cause.message;
+          return cause.saved;
+        }
+        throw cause;
+      });
+      if (previous && !(await confirm("Replace saved cull progress?"))) return false;
       this.progress = "Capturing photos…";
       const grouped = query.sort.field === "capture_time";
       const settings = grouped
@@ -291,7 +299,6 @@ export class PhotoCull {
           : {}),
         checkpoint: {
           runID: randomUUID(),
-          passID: randomUUID(),
           revision: 0,
           pass: ids.filter((id) => flags.get(id) === ""),
           position: 0,
@@ -306,6 +313,7 @@ export class PhotoCull {
       await this.writes;
       controller.signal.throwIfAborted();
       await this.storage.replace(run, controller.signal, previous);
+      this.error = "";
       this.stale = false;
       this.run = run;
       this.saved = true;
@@ -353,7 +361,6 @@ export class PhotoCull {
     this.run = { ...this.run, checkpoint };
     const progress: CullProgress = {
       runID: previous.runID,
-      passID: previous.passID,
       revision: previous.revision,
       position: patch.position,
       autoAdvance: patch.autoAdvance,
@@ -389,19 +396,19 @@ export class PhotoCull {
   choose(id: string) {
     if (this.busy || this.stale) return;
     const position = this.run?.checkpoint.pass.indexOf(id) ?? -1;
-    if (position >= 0) {
+    if (position >= 0 && position !== this.run?.checkpoint.position) {
       this.update({ position });
       this.visit();
     }
   }
   move(direction: -1 | 1) {
     if (!this.run || this.busy || this.stale) return;
-    this.update({
-      position: Math.max(
-        0,
-        Math.min(this.run.checkpoint.pass.length, this.run.checkpoint.position + direction),
-      ),
-    });
+    const position = Math.max(
+      0,
+      Math.min(this.run.checkpoint.pass.length, this.run.checkpoint.position + direction),
+    );
+    if (position === this.run.checkpoint.position) return;
+    this.update({ position });
     this.visit();
   }
   skip() {
@@ -444,15 +451,22 @@ export class PhotoCull {
       this.finishFlagRead(controller);
     }
   }
-  async nextPass(followUp = false, confirm = (message: string) => window.confirm(message)) {
+  async nextPass(
+    followUp = false,
+    confirm: (message: string) => boolean | Promise<boolean> = () => false,
+  ) {
     if (!this.run || this.busy || this.stale) return;
-    if (!followUp && !this.complete && !confirm("Change scope and reset this pass's progress?"))
-      return;
     const controller = this.beginFlagRead();
     this.changingPass = true;
     let changed = false;
     this.error = "";
     try {
+      if (
+        !followUp &&
+        !this.complete &&
+        !(await confirm("Change scope and reset this pass's progress?"))
+      )
+        return;
       await this.writes;
       controller.signal.throwIfAborted();
       if (this.stale) return;
@@ -475,7 +489,6 @@ export class PhotoCull {
       }
       const checkpoint: CullCheckpoint = {
         ...previous,
-        passID: randomUUID(),
         revision: previous.revision + 1,
         scope,
         pass,
@@ -487,7 +500,6 @@ export class PhotoCull {
       try {
         await this.storage.checkpoint({
           runID: previous.runID,
-          passID: previous.passID,
           revision: previous.revision,
           pass: checkpoint,
         });

@@ -3,9 +3,11 @@ import { tick } from "svelte";
 import { createShortcutManager } from "@kenn-io/kit-ui";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import PhotosWorkspace from "./PhotosWorkspace.svelte";
+import { snapshotEnvelope } from "./snapshot-test-fixtures.js";
 import { PhotoCull } from "./photoCull.svelte.js";
 import { photoCullStorage } from "./photoCullStorage.js";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
+import { idbRequest, transactionDone } from "./indexedDB.js";
 import * as api from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
 import { Photos, photoQuery, mapPhotoLimit, type MapView } from "./photos.svelte.js";
@@ -2599,7 +2601,6 @@ it.each([false, true])(
         ids,
         checkpoint: {
           runID: "run",
-          passID: "pass",
           revision: 0,
           pass: ids,
           position: 0,
@@ -2677,7 +2678,6 @@ it("reloads durable culls and retains their draft only for the same vault", asyn
         ids: [durableID],
         checkpoint: {
           runID: durableID,
-          passID: "pass",
           revision: 0,
           pass: [durableID],
           position: 0,
@@ -2748,7 +2748,6 @@ async function captureWorkspace() {
           ids,
           checkpoint: {
             runID: "run",
-            passID: "pass",
             revision: 0,
             pass: ids,
             position: 0,
@@ -3062,3 +3061,95 @@ it("range selects in rendered month order across offset dates and a collapsed st
   expect([...photos.selectedIDs].sort()).toEqual(["photo-1", "photo-2", "photo-3", "photo-4"]);
   photos.dispose();
 });
+
+it.each(
+  [1, 2].flatMap((formatVersion) =>
+    ["Cancel", "Replace"].map((answer) => ({ formatVersion, answer })),
+  ),
+)(
+  "$answer in the capture modal preserves or replaces saved format $formatVersion",
+  async ({ answer, formatVersion }) => {
+    vi.stubGlobal("indexedDB", new IDBFactory());
+    vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const store = photoCullStorage("synthetic-vault");
+    const original = {
+      ids: ["photo-1"],
+      checkpoint: {
+        runID: "saved-run",
+        revision: 0,
+        pass: ["photo-1"],
+        position: 0,
+        visited: [],
+        skipped: [],
+        unavailable: [],
+        scope: "all" as const,
+        autoAdvance: true,
+      },
+    };
+    await store.replace(original);
+    if (formatVersion === 2) {
+      const saved = await store.saved();
+      const db = await idbRequest(indexedDB.open("docbank-photo-cull-v1", 1));
+      try {
+        const tx = db.transaction("checkpoints", "readwrite");
+        const done = transactionDone(tx);
+        tx.objectStore("checkpoints").put({ ...saved, formatVersion }, "synthetic-vault");
+        await done;
+      } finally {
+        db.close();
+      }
+    }
+    const photos = new Photos("scoped", vi.fn());
+    photos.items = [photo(1)];
+    photos.total = 1;
+    photos.started = true;
+    const capture = vi
+      .spyOn(api, "createWorkspaceQuery")
+      .mockResolvedValue(Response.json(await snapshotEnvelope(photos.query, [])));
+    vi.spyOn(api, "getPhotoSettings").mockResolvedValue({
+      revision: 1,
+      preference: null,
+      burst_gap_seconds: 2,
+    });
+    render(PhotosWorkspace, {
+      photos,
+      vaultID: "synthetic-vault",
+      cache: { get: vi.fn() } as unknown as PhotoPreviewCache,
+    });
+    if (formatVersion === 2) {
+      await screen.findByText(
+        "Saved cull progress uses an unsupported format. Update Docbank to resume it.",
+      );
+      expect(screen.queryByRole("button", { name: "Resume cull" })).toBeNull();
+      expect(await photos.cull!.restore()).toBe(false);
+    } else await screen.findByRole("button", { name: "Resume cull" });
+    await fireEvent.click(screen.getByRole("button", { name: "Cull" }));
+    await screen.findByRole("dialog", { name: "Replace saved cull progress?" });
+    expect(capture).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole("button", { name: answer }));
+    if (answer === "Cancel") {
+      await waitFor(() => expect(photos.cull!.capturing).toBe(false));
+      expect(screen.queryByRole("dialog", { name: "Cull photos" })).toBeNull();
+      expect(capture).not.toHaveBeenCalled();
+      if (formatVersion === 2) {
+        await expect(store.load()).rejects.toThrow("unsupported format");
+        await screen.findByText(
+          "Saved cull progress uses an unsupported format. Update Docbank to resume it.",
+        );
+      } else expect(await store.load()).toEqual(original);
+    } else {
+      await screen.findByRole("dialog", { name: "Cull photos" });
+      expect(capture).toHaveBeenCalledOnce();
+      await photos.cull!.flush();
+      expect((await store.load())?.ids).toEqual([]);
+    }
+    photos.dispose();
+  },
+);

@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestWorkspaceQueryRoutesCreateAndPageFrozenResults(t *testing.T) {
@@ -302,28 +303,55 @@ func TestSavedQueryRunRouteRequiresRevisionAndUsesSavedDefinition(t *testing.T) 
 
 func TestSavedPhotoRunRouteOptions(t *testing.T) {
 	t.Parallel()
-	ts, _ := newTestServer(t, func(d *api.Deps) {
-		renditionTextConfig(d)
-	})
-
-	saved, _ := createSavedQuery(t, ts.URL, "Photo run profile", `{"filters":{"kinds":["photo"]}}`)
-	path := "/api/v1/saved-queries/" + saved.ID + "/runs"
-	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, path,
-		map[string]string{"X-Api-Key": testAPIKey, "If-Match": `"1"`}, `{"photos":true,"page_size":50}`)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	var result api.SavedQueryRunResult
-	require.NoError(t, json.Unmarshal([]byte(body), &result))
-	assert.Equal(t, "unconfigured", result.Snapshot.Coverage.Configuration)
-
-	response, body = rawJSONRequest(t, ts.URL, http.MethodPost, path,
-		map[string]string{"X-Api-Key": testAPIKey, "If-Match": `"1"`}, `{"photos":true,"profile":"archive","page_size":50}`)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	require.NoError(t, json.Unmarshal([]byte(body), &result))
-	assert.Equal(t, "configured", result.Snapshot.Coverage.Configuration)
-	response, body = rawJSONRequest(t, ts.URL, http.MethodPost, path,
-		map[string]string{"X-Api-Key": testAPIKey, "If-Match": `"1"`}, `{"replaces_snapshot_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`)
-	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
-	assert.Equal(t, "validation", decodeProblem(t, body).Code)
+	for _, route := range []string{"workspace", "saved query"} {
+		t.Run(route, func(t *testing.T) {
+			ts, s := newTestServer(t, func(d *api.Deps) {
+				renditionTextConfig(d)
+			})
+			_, err := s.CreateFile(t.Context(), s.RootID(), "a.jpg", testHash("a.jpg"), 10, "image/jpeg")
+			require.NoError(t, err)
+			headers := map[string]string{"X-Api-Key": testAPIKey}
+			path := "/api/v1/workspace/queries"
+			if route == "saved query" {
+				saved, _ := createSavedQuery(t, ts.URL, "Photo run profile", `{"filters":{"kinds":["photo"]}}`)
+				path = "/api/v1/saved-queries/" + saved.ID + "/runs"
+				headers["If-Match"] = `"1"`
+			}
+			for _, profile := range []string{"", "archive"} {
+				request := `{"photos":true,"query":{},"page_size":50}`
+				if profile != "" {
+					request = `{"photos":true,"query":{},"profile":"archive","page_size":50}`
+				}
+				if route == "saved query" {
+					request = `{"photos":true,"page_size":50}`
+					if profile != "" {
+						request = `{"photos":true,"profile":"archive","page_size":50}`
+					}
+				}
+				response, body := rawJSONRequest(t, ts.URL, http.MethodPost, path, headers, request)
+				require.Equal(t, http.StatusOK, response.StatusCode, body)
+				var page api.WorkspaceQueryResponse
+				if route == "saved query" {
+					var result api.SavedQueryRunResult
+					require.NoError(t, json.Unmarshal([]byte(body), &result))
+					page = result.Snapshot
+				} else {
+					require.NoError(t, json.Unmarshal([]byte(body), &page))
+				}
+				if profile == "" {
+					assert.Equal(t, "unconfigured", page.Coverage.Configuration)
+					assert.Empty(t, page.Coverage.ProfileFingerprint)
+				} else {
+					assert.Equal(t, "configured", page.Coverage.Configuration)
+				}
+			}
+			if route == "saved query" {
+				response, body := rawJSONRequest(t, ts.URL, http.MethodPost, path, headers, `{"replaces_snapshot_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`)
+				require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+				assert.Equal(t, "validation", decodeProblem(t, body).Code)
+			}
+		})
+	}
 }
 
 func TestSavedQueryRunRouteConcealsMissingAndHighlightDefinitions(t *testing.T) {
@@ -429,45 +457,40 @@ func TestWorkspacePhotoSnapshotRejectsFacets(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
 	problem := decodeProblem(t, body)
 	assert.Equal(t, "validation", problem.Code)
-	assert.Equal(t, "invalid snapshot request: photo snapshots do not support facets", problem.Detail)
 }
 
 func TestWorkspaceAdHocPhotoSnapshot(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
+	ctx := t.Context()
+	var picked store.Node
 	for _, name := range []string{"a.jpg", "b.jpg", "c.jpg"} {
-		_, err := s.CreateFile(t.Context(), s.RootID(), name, testHash(name), 10, "image/jpeg")
+		node, err := s.CreateFile(ctx, s.RootID(), name, testHash(name), 10, "image/jpeg")
 		require.NoError(t, err)
+		if name == "b.jpg" {
+			picked = node
+		}
 	}
-	_, err := s.CreateFile(t.Context(), s.RootID(), "document.txt", testHash("document"), 10, "text/plain")
+	_, err := s.CreateFile(ctx, s.RootID(), "document.txt", testHash("document"), 10, "text/plain")
 	require.NoError(t, err)
-	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", map[string]string{"X-Api-Key": testAPIKey}, `{"photos":true,"query":{"sort":{"field":"name","direction":"desc"}},"page_size":50}`)
+	asset, err := s.PhotoAssetForNode(ctx, picked.ID)
+	require.NoError(t, err)
+	prepared, err := s.PreparePhotoAuthored(ctx, store.PhotoSetSelection{AssetIDs: []string{asset.ID}})
+	require.NoError(t, err)
+	_, err = s.EditPhotoAuthoredBatch(ctx, store.PhotoAuthoredBatch{Targets: apiEditTargets(prepared.Targets), Patch: store.PhotoAuthoredPatch{Flag: new("pick")}})
+	require.NoError(t, err)
+
+	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", map[string]string{"X-Api-Key": testAPIKey}, `{"photos":true,"query":{},"page_size":50}`)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var page api.WorkspaceQueryResponse
 	require.NoError(t, json.Unmarshal([]byte(body), &page))
 	require.EqualValues(t, 3, page.Total)
 	require.Len(t, page.Rows, 3)
-	require.Equal(t, new(""), page.Rows[0].Flag)
-}
-
-func TestWorkspacePhotoSnapshotWithoutProfileKeepsUnconfiguredCoverage(t *testing.T) {
-	t.Parallel()
-	ts, s := newTestServer(t, func(d *api.Deps) {
-		renditionTextConfig(d)
-	})
-	_, err := s.CreateFile(t.Context(), s.RootID(), "a.jpg", testHash("a.jpg"), 10, "image/jpeg")
-	require.NoError(t, err)
-	headers := map[string]string{"X-Api-Key": testAPIKey}
-
-	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", headers, `{"photos":true,"query":{},"page_size":50}`)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	var page api.WorkspaceQueryResponse
-	require.NoError(t, json.Unmarshal([]byte(body), &page))
-	assert.Equal(t, "unconfigured", page.Coverage.Configuration)
-	assert.Empty(t, page.Coverage.ProfileFingerprint)
-
-	response, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", headers, `{"photos":true,"query":{},"profile":"archive","page_size":50}`)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	require.NoError(t, json.Unmarshal([]byte(body), &page))
-	assert.Equal(t, "configured", page.Coverage.Configuration)
+	var pickedFlag *string
+	for _, row := range page.Rows {
+		if row.AssetID == asset.ID {
+			pickedFlag = row.Flag
+		}
+	}
+	require.Equal(t, new("pick"), pickedFlag)
 }

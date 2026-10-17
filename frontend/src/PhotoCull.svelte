@@ -18,6 +18,7 @@
   import { prefetchPreviews } from "./photoPreview.svelte.js";
   import PhotoStage from "./PhotoStage.svelte";
   import PhotoCell from "./PhotoCell.svelte";
+  import PhotoCullConfirmation from "./PhotoCullConfirmation.svelte";
   import { fittedPhotoView, toggleActualPhotoView, type PhotoView } from "./photoView.js";
   import { photoFacts } from "./photoFacts.js";
   import { cullKey } from "./shortcuts.js";
@@ -60,6 +61,7 @@
   let lookupAttempt = $state(0);
   const reloadController = new AbortController();
   let checkingDecision = $state(false);
+  let confirmation = $state<PhotoCullConfirmation>();
   const busy = $derived(editor.loading || editor.busy || checkingDecision);
   let view = $state<PhotoView>({ ...fittedPhotoView });
   let info = $state(0);
@@ -74,22 +76,43 @@
   let railLoading = $state(false);
   const currentID = $derived(cull.currentID);
   const complete = $derived(cull.complete);
-  const passID = $derived(checkpoint.passID);
+  const pass = $derived(checkpoint.pass);
+  let lastLookupAttempt = 0;
+  let lastPass: string[] | undefined;
   $effect(() => {
     const id = currentID;
-    void lookupAttempt;
+    const changedPass = pass !== lastPass;
+    lastPass = pass;
+    const reload = lookupAttempt !== lastLookupAttempt;
+    lastLookupAttempt = lookupAttempt;
     const controller = new AbortController();
-    untrack(() => {
+    const held = untrack(() => {
+      if (changedPass) {
+        neighbors = [];
+        return;
+      }
       const previous = photo;
       if (previous?.asset_id === id) return;
       if (previous)
         neighbors = [...neighbors.filter((row) => row.asset_id !== previous.asset_id), previous];
-      photo = undefined;
+      if (reload) return;
+      const row = neighbors.find((row) => row.asset_id === id);
+      const expected = editor.targets.find(
+        (target) => target.asset_id === id && target.content_version_id,
+      );
+      if (
+        row &&
+        (!expected?.content_version_id ||
+          (expected.file_id === row.display_file_id &&
+            expected.content_version_id === row.content_version_id))
+      )
+        return row;
     });
+    photo = held;
     error = "";
-    loading = !!id;
+    loading = !!id && !held;
     view = { ...fittedPhotoView };
-    if (id)
+    if (id && !held)
       void photos
         .lookup(id, controller.signal)
         .then((row) => {
@@ -126,7 +149,7 @@
     return () => controller.abort();
   });
   $effect(() => {
-    if (complete && passID) untrack(() => void cull.checkRemainder());
+    if (complete && pass) untrack(() => void cull.checkRemainder());
   });
   $effect(() =>
     prefetchPreviews(
@@ -139,7 +162,13 @@
     return !busy && editor.canChangeTarget();
   }
   async function nextPass(followUp = false) {
-    if (canChangeTarget()) await cull.nextPass(followUp);
+    if (!canChangeTarget()) return;
+    checkingDecision = true;
+    try {
+      await cull.nextPass(followUp, (message) => confirmation!.confirm(message, "Reset pass"));
+    } finally {
+      checkingDecision = false;
+    }
   }
   function move(direction: -1 | 1) {
     if (canChangeTarget()) cull.move(direction);
@@ -149,7 +178,14 @@
     const changes = photos.metadataChanged(receipt);
     if (photos.started && photos.reloadsAfter(changes)) await photos.refresh();
     reconcile(receipt.after);
-    if (cull.complete) await cull.checkRemainder();
+    if (
+      cull.complete &&
+      receipt.after.some((after) => {
+        const before = receipt.before.find((before) => before.file_id === after.file_id);
+        return before && before.values.flag !== after.values.flag;
+      })
+    )
+      await cull.checkRemainder();
   }
   function reconcile(targets: PhotoAuthoredSnapshot[]) {
     const updated = (row: PhotoBrowseRow) => {
@@ -170,6 +206,16 @@
     if (!photo || loading || cull.stale || cull.busy || !canChangeTarget()) return;
     editor.reset();
     await applyDecision(photo, patch);
+  }
+  async function undo() {
+    if (cull.stale || cull.busy || !canChangeTarget()) return;
+    checkingDecision = true;
+    try {
+      if (!(await cull.verifyDecision())) return;
+    } finally {
+      checkingDecision = false;
+    }
+    await editor.undo(refresh);
   }
   async function applyDecision(selected: PhotoBrowseRow, patch: PhotoAuthoredPatch, retry = false) {
     checkingDecision = true;
@@ -196,7 +242,7 @@
         ? `${selected.name}: ${patch.flag || "flag cleared"}`
         : `${selected.name}: ${patch.rating} stars`;
     if (editor.fileID) announcement += " (shown file only)";
-    if (checkpoint.autoAdvance && cull.currentID === id) cull.move(1);
+    if (patch.flag !== undefined && checkpoint.autoAdvance && cull.currentID === id) cull.move(1);
   }
   async function retryDecision() {
     if (!photo || busy || editor.loading) return;
@@ -225,16 +271,31 @@
     if (
       stack &&
       photo &&
-      !editor.busy &&
-      !editor.loading &&
+      !busy &&
+      !cull.stale &&
+      !editor.error &&
       !editor.conflict &&
       !editor.stackTargets.length
     )
-      untrack(() => void editor.prepareStack(stack, photos.hidden));
+      untrack(() => void prepareStack(stack));
   });
+  async function prepareStack(stack: string[]) {
+    checkingDecision = true;
+    try {
+      if (await cull.verifyDecision()) await editor.prepareStack(stack, photos.hidden);
+    } finally {
+      checkingDecision = false;
+    }
+  }
   async function decideStack(decision: "current" | "all" | "representative") {
     const stack = cull.currentStack;
     if (!photo || !stack || cull.stackLoading || loading || cull.busy || cull.stale || busy) return;
+    checkingDecision = true;
+    try {
+      if (!(await cull.verifyDecision())) return;
+    } finally {
+      checkingDecision = false;
+    }
     const id = photo.asset_id;
     await editor.decideStack(
       { hidden: photos.hidden, asset_ids: stack, current_id: id, decision },
@@ -261,10 +322,10 @@
     event.stopPropagation();
     if (action === "close") close();
     else if (action === "keep-current") void decideStack("current");
-    else if (action === "previous-stack" && editor.canChangeTarget()) cull.moveStack(-1);
-    else if (action === "next-stack" && editor.canChangeTarget()) cull.moveStack(1);
-    else if (action === "previous-frame" && editor.canChangeTarget()) cull.moveFrame(-1);
-    else if (action === "next-frame" && editor.canChangeTarget()) cull.moveFrame(1);
+    else if (action === "previous-stack" && canChangeTarget()) cull.moveStack(-1);
+    else if (action === "next-stack" && canChangeTarget()) cull.moveStack(1);
+    else if (action === "previous-frame" && canChangeTarget()) cull.moveFrame(-1);
+    else if (action === "next-frame" && canChangeTarget()) cull.moveFrame(1);
     else if (action === "previous") move(-1);
     else if (action === "next") move(1);
     else if (action === "auto") {
@@ -490,16 +551,23 @@
           </fieldset>
         </nav>
       {/if}
-      {#if editor.receiptID}<Notice
-          tone="success"
-          message={editor.undoState.summary}
-          actionLabel={cull.stale || busy || editor.dirty ? undefined : "Undo"}
-          onaction={() => void editor.undo(refresh)}
-        />{/if}
+      {#if editor.receiptID}<fieldset
+          disabled={cull.stale || cull.busy || busy || editor.dirty}
+          style="display: contents"
+        >
+          <Notice
+            tone="success"
+            message={editor.undoState.summary}
+            actionLabel="Undo"
+            onaction={() => void undo()}
+          />
+        </fieldset>{/if}
       <span class="kit-sr-only" aria-live="polite">{announcement}</span>
     </div>
   </Modal>
 </div>
+
+<PhotoCullConfirmation bind:this={confirmation} />
 
 <style>
   header,

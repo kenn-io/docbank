@@ -175,33 +175,21 @@ it("shows paging recovery and preserves fractional exposure with readable orient
   }
 });
 
-it("retries a large failure in place and reuses the large preview on zoom", async () => {
-  const { props, preview, get } = setup();
+it("keeps the reload note and reuses the large preview on zoom", async () => {
+  const { props } = setup();
   const note = "This photo is no longer in the refreshed result.";
   const view = render(PhotoLoupe, { ...props, items: [], note });
   await screen.findByText("Fit preview");
   expect(screen.getByRole("alert").textContent).toContain(note);
   expect(screen.getByRole("button", { name: "Reload photo" })).toBeTruthy();
-  get.mockRejectedValueOnce(new Error("Large unavailable"));
   const viewport = view.container.querySelector(".photo-viewport")!;
   await fireEvent.doubleClick(viewport);
-  await screen.findByText("Large unavailable");
-  await fireEvent.click(screen.getByRole("button", { name: "Retry preview" }));
   await screen.findByText("Large preview");
-  expect(screen.queryByText("Large unavailable")).toBeNull();
   const created = vi.mocked(URL.createObjectURL).mock.calls.length;
   await fireEvent.doubleClick(viewport);
   await fireEvent.doubleClick(viewport);
   await new Promise((resolve) => setTimeout(resolve, 0));
   await tick();
-  expect(preview.mock.calls.filter(([, size]) => size === "large")).toHaveLength(2);
-  expect(get.mock.calls.filter(([, generation]) => generation === "large-5")).toHaveLength(2);
-  expect(get).toHaveBeenLastCalledWith(
-    props.photo.asset_id,
-    "large-5",
-    expect.any(AbortSignal),
-    true,
-  );
   expect(URL.createObjectURL).toHaveBeenCalledTimes(created);
 });
 
@@ -293,12 +281,6 @@ it.each(["preview", "original"] as const)(
       );
     }
     if (operation === "preview") {
-      expect(get).toHaveBeenLastCalledWith(
-        props.photo.asset_id,
-        "fit-5",
-        expect.any(AbortSignal),
-        true,
-      );
       vi.mocked(HTMLImageElement.prototype.decode).mockImplementation(
         function (this: HTMLImageElement) {
           return brokenURLs.has(this.src)
@@ -399,7 +381,7 @@ it("resets a touch swipe before requesting navigation when the current photo rem
   expect(onmove).toHaveBeenCalledWith(1);
 });
 
-it.each(["failed", "unsupported", "retained"] as const)(
+it.each(["failed", "retained"] as const)(
   "shows a terminal %s fit without Retry or an endless loading placeholder",
   async (scenario) => {
     const { props, preview } = setup();

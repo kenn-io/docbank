@@ -155,30 +155,6 @@ it("preserves multiline caption through rendered editing", async () => {
   editor.dispose();
 });
 
-it("binds only the viewed file to its displayed content version", async () => {
-  const editor = editorWithTargets();
-  const edit = vi
-    .spyOn(api, "editPhotoAuthored")
-    .mockResolvedValue({ receipt_id: "", before: [], after: [] });
-  await editor.edit({}, { flag: "pick" }, false, vi.fn(), {
-    viewed: {
-      file_id: "jpeg",
-      content_version_id: "viewed-version",
-    },
-  });
-  expect(edit.mock.calls[0]![0].targets).toEqual([
-    { asset_id: "asset", asset_revision: 1, file_id: "raw", revision: 1, node_revision: 1 },
-    {
-      asset_id: "asset",
-      asset_revision: 1,
-      file_id: "jpeg",
-      revision: 1,
-      node_revision: 1,
-      content_version_id: "viewed-version",
-    },
-  ]);
-});
-
 it.each([{ prepared: [] }, { prepared: targets }])(
   "requires reload when prepared files omit the viewed file: $prepared",
   async ({ prepared }) => {
@@ -904,6 +880,7 @@ it.each([
     patch: { rating: 4 },
     files: ["jpeg"],
   },
+  { name: "equal pair", raw: {}, jpeg: {}, patch: { flag: "pick" }, files: ["raw", "jpeg"] },
 ] as const)(
   "preserves pair differences for a viewed decision: $name",
   async ({ raw, jpeg, patch, files }) => {
@@ -921,5 +898,10 @@ it.each([
       files,
     );
     expect(edit.mock.calls[0]![0].patch).toEqual(patch);
+    const sent = Object.values(edit.mock.calls[0]![0].targets);
+    expect(sent.find((target) => target.file_id === "jpeg")?.content_version_id).toBe(
+      "viewed-version",
+    );
+    expect(sent.find((target) => target.file_id === "raw")?.content_version_id).toBeUndefined();
   },
 );

@@ -3,7 +3,7 @@ import { snapshotEnvelope } from "./snapshot-test-fixtures.js";
 import { PhotoCull } from "./photoCull.svelte.js";
 import { APIError } from "./api-transport.js";
 import * as photoQueries from "./photos.svelte.js";
-import { photoCullStorage, type CullRun } from "./photoCullStorage.js";
+import { CullFormatError, photoCullStorage, type CullRun } from "./photoCullStorage.js";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import * as api from "./generated/docbank.js";
 import { parseQuery } from "./query.js";
@@ -108,8 +108,6 @@ it.each([
   { runID: "" },
   { runID: " " },
   { runID: 1 },
-  { passID: "" },
-  { passID: null },
   { revision: -1 },
   { revision: 0.5 },
   { revision: Number.MAX_SAFE_INTEGER + 1 },
@@ -129,7 +127,6 @@ it.each([
     ids: [id],
     checkpoint: {
       runID: "11111111-1111-4111-8111-111111111111",
-      passID: "22222222-2222-4222-8222-222222222222",
       revision: 0,
       pass: [id],
       position: 0,
@@ -426,7 +423,6 @@ it("keeps per-photo marker work independent of how many photos were already mark
     ids,
     checkpoint: {
       runID: "run",
-      passID: "pass",
       revision: 0,
       pass: ids,
       position: 0,
@@ -510,6 +506,26 @@ it("keeps automatic storage probes quiet and reports explicit failures", async (
   expect(cull.error).toBe("");
   expect(await cull.restore()).toBe(false);
   expect(cull.error).toBe("Storage unavailable");
+  await cull.probe();
+  expect(cull.error).toBe("Storage unavailable");
+  vi.mocked(store.saved).mockResolvedValue(undefined);
+  await cull.probe();
+  expect(cull.error).toBe("Storage unavailable");
+  vi.mocked(store.saved).mockRejectedValue(
+    new CullFormatError({
+      runID: "saved-run",
+      revision: 0,
+      position: 0,
+      scope: "all",
+      autoAdvance: true,
+      formatVersion: 2,
+    }),
+  );
+  await cull.probe();
+  expect(cull.saved).toBe(false);
+  expect(cull.error).toBe(
+    "Saved cull progress uses an unsupported format. Update Docbank to resume it.",
+  );
 });
 
 it("keeps the newer remainder result when an older flag read finishes", async () => {
@@ -519,7 +535,6 @@ it("keeps the newer remainder result when an older flag read finishes", async ()
     ids: [row.asset_id],
     checkpoint: {
       runID: "run",
-      passID: "pass",
       revision: 0,
       pass: [row.asset_id],
       position: 1,
@@ -560,7 +575,6 @@ it.each([false, true])(
       ids: [row.asset_id],
       checkpoint: {
         runID: "run",
-        passID: "pass",
         revision: 0,
         pass: [row.asset_id],
         position: complete ? 1 : 0,
@@ -598,7 +612,6 @@ it("reports a failed flag lookup and clears its progress", async () => {
     ids: [id],
     checkpoint: {
       runID: "run",
-      passID: "pass",
       revision: 0,
       pass: [id],
       position: 1,
@@ -686,7 +699,6 @@ it("regroups saved IDs after a gap change and recovers only a stale stack", asyn
     burstGapSeconds: 2,
     checkpoint: {
       runID: "run",
-      passID: "pass",
       revision: 0,
       pass: ids,
       position: 2,
@@ -767,5 +779,42 @@ it.each(["capture", "next pass", "remainder"])(
     }
     expect(onauthfailure).toHaveBeenCalledExactlyOnceWith(cause);
     expect(cull.error).toBe("Session expired");
+  },
+);
+
+it.each(["left at first", "current thumbnail", "right after completion", "next pass"])(
+  "preserves another tab's checkpoint after %s",
+  async (navigation) => {
+    const store = storage();
+    vi.spyOn(api, "createWorkspaceQuery").mockResolvedValue(
+      Response.json(await snapshot([photo(1).asset_id, photo(2).asset_id])),
+    );
+    const first = new PhotoCull("session", store);
+    await first.start(query);
+    if (navigation === "right after completion") {
+      first.move(1);
+      first.move(1);
+    }
+    await first.flush();
+    const other = new PhotoCull("session", photoCullStorage("synthetic-vault"));
+    await other.restore();
+    const saved = await store.saved();
+    vi.mocked(store.checkpoint).mockClear();
+    if (navigation === "current thumbnail" || navigation === "next pass")
+      first.choose(first.currentID!);
+    else first.move(navigation === "left at first" ? -1 : 1);
+    await first.flush();
+    expect(store.checkpoint).not.toHaveBeenCalled();
+    expect(await store.saved()).toEqual(saved);
+    expect(await other.verifyDecision()).toBe(true);
+    if (navigation === "next pass") {
+      vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) =>
+        browsePage([photo(1), photo(2)], request),
+      );
+      await first.nextPass(false, () => true);
+    } else first.move(navigation === "right after completion" ? -1 : 1);
+    await first.flush();
+    expect(await other.verifyDecision()).toBe(false);
+    expect(other.error).toContain("Close and resume it.");
   },
 );
