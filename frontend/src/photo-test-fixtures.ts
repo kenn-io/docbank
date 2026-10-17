@@ -6,6 +6,7 @@ import type {
   PhotoMapRow,
   PhotoAlbumSummary,
   PhotoPreparedTarget,
+  PhotoAuthoredPreparation,
 } from "./generated/docbank.js";
 import type { Query } from "./query.js";
 import type { SavedQuery } from "./savedQueries.js";
@@ -160,6 +161,32 @@ export function preparedPhoto(
   };
 }
 
+export function photoPreparation(targets: PhotoPreparedTarget[]): PhotoAuthoredPreparation {
+  return {
+    targets,
+    assets: [...new Set(targets.map((target) => target.asset_id))].map((id) => ({
+      id,
+      revision: 1,
+      kind: "photo",
+      agreement: {},
+      display_source: "default",
+      display_file_id: targets.find((target) => target.asset_id === id)!.file_id,
+      created_at: "2025-01-01T00:00:00Z",
+      updated_at: "2025-01-01T00:00:00Z",
+      files: targets
+        .filter((target) => target.asset_id === id)
+        .map((target) => ({
+          ...target.values,
+          id: target.file_id,
+          asset_id: id,
+          node_id: target.node_id,
+          revision: target.revision,
+          role: "image",
+          created_at: "2025-01-01T00:00:00Z",
+        })),
+    })),
+  };
+}
 export function photoMetadataResponse(
   url: string,
   init?: RequestInit,
@@ -168,23 +195,7 @@ export function photoMetadataResponse(
     const scope = JSON.parse(String(init?.body ?? "{}"));
     const ids: string[] = scope.asset_ids ?? [];
     const targets = ids.map((id) => preparedPhoto(Number(id.slice("photo-".length))));
-    return Promise.resolve(
-      Response.json({
-        assets: targets.map((target) => ({
-          id: target.asset_id,
-          display_file_id: target.file_id,
-          files: [
-            {
-              id: target.file_id,
-              node_id: target.node_id,
-              revision: target.revision,
-              role: "image",
-            },
-          ],
-        })),
-        targets,
-      }),
-    );
+    return Promise.resolve(Response.json(photoPreparation(targets)));
   }
 }
 

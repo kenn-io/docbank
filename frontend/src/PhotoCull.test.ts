@@ -5,39 +5,13 @@ import { APIError } from "./api-transport.js";
 import PhotoCullView from "./PhotoCull.svelte";
 import { PhotoCull } from "./photoCull.svelte.js";
 import { Photos } from "./photos.svelte.js";
-import { photo, preparedPhoto } from "./photo-test-fixtures.js";
+import { photo, preparedPhoto, photoPreparation } from "./photo-test-fixtures.js";
 import type { PhotoPreviewCache } from "./photoPreviewCache.js";
 import { photoCullStorage, type CullRun } from "./photoCullStorage.js";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import * as api from "./generated/docbank.js";
 import type { PhotoAuthoredReceipt } from "./generated/docbank.js";
 
-function preparation(targets: api.PhotoPreparedTarget[]): api.PhotoAuthoredPreparation {
-  return {
-    targets,
-    assets: [...new Set(targets.map((target) => target.asset_id))].map((id) => ({
-      id,
-      revision: 1,
-      kind: "photo",
-      agreement: {},
-      display_source: "default",
-      display_file_id: targets.find((target) => target.asset_id === id)!.file_id,
-      created_at: "2025-01-01T00:00:00Z",
-      updated_at: "2025-01-01T00:00:00Z",
-      files: targets
-        .filter((target) => target.asset_id === id)
-        .map((target) => ({
-          ...target.values,
-          id: target.file_id,
-          asset_id: id,
-          node_id: target.node_id,
-          revision: target.revision,
-          role: "image",
-          created_at: "2025-01-01T00:00:00Z",
-        })),
-    })),
-  };
-}
 async function readyButton(name: string | RegExp) {
   const button = await screen.findByRole("button", { name });
   await waitFor(() => expect(button.matches(":disabled")).toBe(false));
@@ -45,7 +19,7 @@ async function readyButton(name: string | RegExp) {
 }
 beforeEach(() => {
   vi.spyOn(api, "preparePhotoAuthored").mockImplementation(async (scope) =>
-    preparation((scope.asset_ids ?? []).map((id) => preparedPhoto(Number(id.slice(6))))),
+    photoPreparation((scope.asset_ids ?? []).map((id) => preparedPhoto(Number(id.slice(6))))),
   );
 });
 
@@ -200,7 +174,7 @@ it("blocks navigation during preparation and the write", async () => {
     expect(cull.currentID).toBe("photo-1");
     expect(screen.getByRole("button", { name: "Exit cull" }).matches(":disabled")).toBe(true);
     if (phase === "prepare") {
-      await act(() => finishPrepare(preparation([preparedPhoto(1)])));
+      await act(() => finishPrepare(photoPreparation([preparedPhoto(1)])));
       await waitFor(() => expect(edit).toHaveBeenCalledOnce());
     }
   }
@@ -283,7 +257,7 @@ it("refreshes the visible completion offer after Undo", async () => {
     values: { ...before.values, flag: "pick" },
   };
   const restored = { ...picked, revision: 3, values: { ...before.values } };
-  vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue(preparation([before]));
+  vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue(photoPreparation([before]));
   vi.spyOn(api, "editPhotoAuthored").mockImplementation(async () => {
     row.flag = "pick";
     return { receipt_id: "pick", before: [before], after: [picked] };
@@ -526,7 +500,7 @@ it("shows prepared flag, rating and rotation after a no-op decision without repl
   });
   const target = preparedPhoto(1);
   target.values = { ...target.values, flag: "pick", rating: 4, rotation: 90 };
-  vi.mocked(api.preparePhotoAuthored).mockResolvedValue(preparation([target]));
+  vi.mocked(api.preparePhotoAuthored).mockResolvedValue(photoPreparation([target]));
   const edit = vi.spyOn(api, "editPhotoAuthored").mockResolvedValue({
     receipt_id: "",
     before: [],
@@ -695,7 +669,7 @@ it("includes the last photo picked after completion when S starts Picks", async 
   const row = photo(1),
     before = preparedPhoto(1);
   vi.spyOn(window, "confirm").mockReturnValue(true);
-  vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue(preparation([before]));
+  vi.spyOn(api, "preparePhotoAuthored").mockResolvedValue(photoPreparation([before]));
   vi.spyOn(api, "editPhotoAuthored").mockImplementation(async () => {
     row.flag = "pick";
     return {
