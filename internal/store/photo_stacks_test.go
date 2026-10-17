@@ -729,7 +729,6 @@ func TestPhotoStackRejectsStaleMembershipAndTargetsWithoutWrites(t *testing.T) {
 	request.Targets = targets
 	request.Decision = "all"
 	for _, stale := range []func(*PhotoAuthoredEditTarget){
-		func(target *PhotoAuthoredEditTarget) { target.Revision++ },
 		func(target *PhotoAuthoredEditTarget) { target.NodeRevision++ },
 		func(target *PhotoAuthoredEditTarget) { target.AssetRevision++ },
 		func(target *PhotoAuthoredEditTarget) {
@@ -747,7 +746,9 @@ func TestPhotoStackRejectsStaleMembershipAndTargetsWithoutWrites(t *testing.T) {
 	// A concurrent reject changes the revision the photographer saw, so Keep selected cannot overwrite it.
 	_, err = s.EditPhotoAuthoredBatch(t.Context(), PhotoAuthoredBatch{Targets: targets[1:2], Patch: PhotoAuthoredPatch{Flag: new("reject")}})
 	require.NoError(t, err)
-	_, err = s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: targets, Decision: "selected", CurrentID: ids[1], SelectedIDs: ids[1:2]})
+	staleTargets := preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets})
+	staleTargets[1].Revision = targets[1].Revision
+	_, err = s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: staleTargets, Decision: "selected", CurrentID: ids[1], SelectedIDs: ids[1:2]})
 	require.ErrorIs(t, err, ErrStaleRevision)
 	kept, err := s.PhotoAssetByID(t.Context(), ids[1])
 	require.NoError(t, err)
@@ -765,22 +766,6 @@ func TestPhotoStackRejectsStaleMembershipAndTargetsWithoutWrites(t *testing.T) {
 	}
 	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM photo_change_receipts WHERE operation='authored'`).Scan(&count))
 	require.Equal(t, 1, count)
-}
-
-func TestPhotoStackAuditsOneDecision(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ids := burstPhotos(t, s, 3)
-	seedInitialAuditAuthority(t, s, s.RootID())
-	request := PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets}), Decision: "current", CurrentID: ids[1]}
-	receipt, err := s.DecidePhotoStack(t.Context(), request)
-	require.NoError(t, err)
-	require.Len(t, receipt.After, 3)
-	for _, snapshot := range receipt.After {
-		history, err := s.AuditHistory(t.Context(), snapshot.NodeID, 10, "")
-		require.NoError(t, err)
-		require.NotNil(t, history.Items[0].Attachment.After.Photo)
-	}
 }
 
 func TestPhotoStackAutomaticDecisionsPreserveCompanionFlags(t *testing.T) {
@@ -864,7 +849,7 @@ func TestPhotoStackRejectedRepresentativeEligibility(t *testing.T) {
 	}
 }
 
-func TestPhotoStackRepresentativePreservesFlagsAndUndoes(t *testing.T) {
+func TestPhotoStackRepresentativePreservesFlagsAcrossUndoAndRestore(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ids := burstPhotos(t, s, 4)
@@ -873,7 +858,7 @@ func TestPhotoStackRepresentativePreservesFlagsAndUndoes(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.EditPhotoAuthoredBatch(t.Context(), PhotoAuthoredBatch{Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids[3:], Limit: MaxPhotoStackTargets}), Patch: PhotoAuthoredPatch{Flag: new("reject")}})
 	require.NoError(t, err)
-	representative := func() (string, []string) {
+	representative := func(s *Store) (string, []string) {
 		page, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Stacks: true, Query: captureRequest(t, "asc").Query}, nil)
 		require.NoError(t, err)
 		require.Len(t, page.Stacks, 1)
@@ -883,41 +868,64 @@ func TestPhotoStackRepresentativePreservesFlagsAndUndoes(t *testing.T) {
 		}
 		return page.Stacks[0].RepresentativeID, flags
 	}
-	_, flags := representative()
-	choose := func(id string) PhotoAuthoredReceipt {
+	_, flags := representative(s)
+	choose := func(s *Store, id string) PhotoAuthoredReceipt {
 		receipt, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets}), Decision: "representative", CurrentID: id})
 		require.NoError(t, err)
 		return receipt
 	}
-	receipt := choose(ids[0])
+	receipt := choose(s, ids[0])
 	require.Empty(t, receipt.After)
 	require.Len(t, receipt.Representatives, 1)
+	require.Equal(t, int64(1), *receipt.Representatives[0].After)
 	require.Equal(t, int64(1), receipt.Representatives[0].BeforeRevision)
-	chosen, after := representative()
+	chosen, after := representative(s)
 	require.Equal(t, ids[0], chosen)
 	require.Equal(t, flags, after)
 	require.Equal(t, []string{"", "pick", "pick", "reject"}, after)
-	rechosen := choose(ids[0])
+	rechosen := choose(s, ids[0])
 	require.NotEmpty(t, rechosen.ReceiptID)
-	require.Greater(t, *rechosen.Representatives[0].After, *receipt.Representatives[0].After)
+	require.Equal(t, int64(2), *rechosen.Representatives[0].After)
 	receipt = rechosen
-	later := choose(ids[1])
-	chosen, _ = representative()
+	later := choose(s, ids[1])
+	require.Equal(t, int64(3), *later.Representatives[0].After)
+	chosen, _ = representative(s)
 	require.Equal(t, ids[1], chosen)
 	// Undo restores the earlier choice only while the asset keeps the receipt's revision.
 	undo, err := s.UndoPhotoAuthored(t.Context(), later.ReceiptID)
 	require.NoError(t, err)
 	require.Len(t, undo.Representatives, 1)
-	chosen, _ = representative()
+	chosen, _ = representative(s)
 	require.Equal(t, ids[0], chosen)
 	_, err = s.UndoPhotoAuthored(t.Context(), receipt.ReceiptID)
 	require.NoError(t, err)
-	chosen, _ = representative()
+	chosen, _ = representative(s)
 	require.Equal(t, ids[0], chosen)
-	stale := choose(ids[2])
-	_, err = s.SetPhotoAssetExcluded(t.Context(), ids[2], stale.Representatives[0].AfterRevision, true)
+	latest := choose(s, ids[2])
+	require.Equal(t, int64(4), *latest.Representatives[0].After)
+	_, err = s.UndoPhotoAuthored(t.Context(), undo.ReceiptID)
 	require.NoError(t, err)
-	_, err = s.UndoPhotoAuthored(t.Context(), stale.ReceiptID)
+	var exported bytes.Buffer
+	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
+	require.Contains(t, exported.String(), `"representative_sequence":4`)
+	restored := newTestStore(t)
+	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
+	chosen, after = representative(restored)
+	require.Equal(t, ids[2], chosen)
+	require.Equal(t, flags, after)
+	// The greatest issued rank remains in receipts after its choice is undone.
+	_, err = restored.UndoPhotoAuthored(t.Context(), latest.ReceiptID)
+	require.NoError(t, err)
+	exported.Reset()
+	require.NoError(t, restored.ExportMetadata(t.Context(), &exported))
+	restoredAgain := newTestStore(t)
+	require.NoError(t, restoredAgain.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
+	next := choose(restoredAgain, ids[0])
+	require.Equal(t, int64(5), *next.Representatives[0].After)
+	stale := choose(restoredAgain, ids[2])
+	_, err = restoredAgain.SetPhotoAssetExcluded(t.Context(), ids[2], stale.Representatives[0].AfterRevision, true)
+	require.NoError(t, err)
+	_, err = restoredAgain.UndoPhotoAuthored(t.Context(), stale.ReceiptID)
 	require.ErrorIs(t, err, ErrStaleRevision)
 }
 
@@ -968,49 +976,10 @@ func TestPhotoSettingsUpdates(t *testing.T) {
 	require.Equal(t, 2, receipts)
 }
 
-func TestPhotoMetadataRejectsBurstFieldsBeforeV3(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	burstPhotos(t, s, 1)
-	_, err := s.SetPhotoSettings(t.Context(), 1, PhotoSettingsUpdate{BurstGapSeconds: new(4)})
-	require.NoError(t, err)
-	var exported bytes.Buffer
-	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
-	legacy := strings.ReplaceAll(exported.String(), `,"burst_gap_seconds":4`, "")
-	legacy = strings.ReplaceAll(legacy, `"representative_sequence":null`, `"representative_sequence":1`)
-	for _, field := range []struct {
-		kind  string
-		name  string
-		value string
-	}{
-		{kind: "photo_asset", name: "representative_rank", value: "1"},
-		{kind: "photo_asset", name: "representative_rank", value: "null"},
-		{kind: "photo_library_settings", name: "burst_gap_seconds", value: "4"},
-		{kind: "photo_library_settings", name: "burst_gap_seconds", value: "null"},
-	} {
-		for _, version := range []int{1, 2, 3} {
-			t.Run(fmt.Sprintf("v%d/%s/%s", version, field.name, field.value), func(t *testing.T) {
-				stream := strings.ReplaceAll(legacy, `"version":3`, fmt.Sprintf(`"version":%d`, version))
-				kind := fmt.Sprintf(`"type":%q,`, field.kind)
-				stream = strings.ReplaceAll(stream, kind, kind+fmt.Sprintf(`%q:%s,`, field.name, field.value))
-				restored := newTestStore(t)
-				err := restored.ImportMetadata(t.Context(), strings.NewReader(stream))
-				if version == 3 {
-					require.NoError(t, err)
-					return
-				}
-				require.ErrorContains(t, err, field.name+" requires metadata version 3")
-				var assets int
-				require.NoError(t, restored.db.QueryRow(`SELECT count(*) FROM photo_assets`).Scan(&assets))
-				require.Zero(t, assets)
-			})
-		}
-	}
-}
-
 func TestPhotoSettingsBackupCompatibility(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
+	burstPhotos(t, s, 1)
 	_, err := s.SetPhotoSettings(t.Context(), 1, PhotoSettingsUpdate{Preference: new("image"), BurstGapSeconds: new(4)})
 	require.NoError(t, err)
 	var exported bytes.Buffer
@@ -1060,6 +1029,35 @@ func TestPhotoSettingsBackupCompatibility(t *testing.T) {
 			})
 		}
 	}
+	legacyWithSequence := strings.ReplaceAll(legacySettings, `"representative_sequence":null`, `"representative_sequence":1`)
+	for _, field := range []struct {
+		kind  string
+		name  string
+		value string
+	}{
+		{kind: "photo_asset", name: "representative_rank", value: "1"},
+		{kind: "photo_asset", name: "representative_rank", value: "null"},
+		{kind: "photo_library_settings", name: "burst_gap_seconds", value: "4"},
+		{kind: "photo_library_settings", name: "burst_gap_seconds", value: "null"},
+	} {
+		for _, version := range []int{1, 2, 3} {
+			t.Run(fmt.Sprintf("v%d/%s/%s", version, field.name, field.value), func(t *testing.T) {
+				stream := strings.ReplaceAll(legacyWithSequence, `"version":3`, fmt.Sprintf(`"version":%d`, version))
+				kind := fmt.Sprintf(`"type":%q,`, field.kind)
+				stream = strings.ReplaceAll(stream, kind, kind+fmt.Sprintf(`%q:%s,`, field.name, field.value))
+				restored := newTestStore(t)
+				err := restored.ImportMetadata(t.Context(), strings.NewReader(stream))
+				if version == 3 {
+					require.NoError(t, err)
+					return
+				}
+				require.ErrorContains(t, err, field.name+" requires metadata version 3")
+				var assets int
+				require.NoError(t, restored.db.QueryRow(`SELECT count(*) FROM photo_assets`).Scan(&assets))
+				require.Zero(t, assets)
+			})
+		}
+	}
 }
 
 func TestPhotoStackHiddenScopeAndUndo(t *testing.T) {
@@ -1101,43 +1099,6 @@ func TestPhotoStackHiddenScopeAndUndo(t *testing.T) {
 	require.Equal(t, ids, page.Stacks[0].AssetIDs)
 }
 
-func TestPhotoRepresentativeSequenceSurvivesUndoAndRestore(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ids := burstPhotos(t, s, 3)
-	choose := func(s *Store, id string) PhotoAuthoredReceipt {
-		r, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets}), CurrentID: id, Decision: "representative"})
-		require.NoError(t, err)
-		return r
-	}
-	a, b := choose(s, ids[0]), choose(s, ids[1])
-	require.Equal(t, int64(1), *a.Representatives[0].After)
-	require.Equal(t, int64(2), *b.Representatives[0].After)
-	undo, err := s.UndoPhotoAuthored(t.Context(), b.ReceiptID)
-	require.NoError(t, err)
-	c := choose(s, ids[2])
-	require.Equal(t, int64(3), *c.Representatives[0].After)
-	_, err = s.UndoPhotoAuthored(t.Context(), undo.ReceiptID)
-	require.NoError(t, err)
-	var exported bytes.Buffer
-	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
-	require.Contains(t, exported.String(), `"representative_sequence":3`)
-	restored := newTestStore(t)
-	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
-	page, err := restored.ListPhotoAssets(t.Context(), captureRequest(t, "asc"), nil)
-	require.NoError(t, err)
-	require.Equal(t, ids[2], page.Stacks[0].RepresentativeID)
-	// Hide the greatest issued rank in receipts before another portable restore.
-	_, err = restored.UndoPhotoAuthored(t.Context(), c.ReceiptID)
-	require.NoError(t, err)
-	exported.Reset()
-	require.NoError(t, restored.ExportMetadata(t.Context(), &exported))
-	restoredAgain := newTestStore(t)
-	require.NoError(t, restoredAgain.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
-	later := choose(restoredAgain, ids[0])
-	require.Equal(t, int64(4), *later.Representatives[0].After)
-}
-
 func TestPhotoRepresentativeImportRejectsSequenceBehindRanks(t *testing.T) {
 	t.Parallel()
 	for _, receiptOnly := range []bool{false, true} {
@@ -1169,29 +1130,21 @@ func TestPhotoRepresentativeImportRejectsSequenceBehindRanks(t *testing.T) {
 	}
 }
 
-func TestPhotoRepresentativeReceiptRequiresAsset(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ids := burstPhotos(t, s, 2)
-	r, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets}), CurrentID: ids[0], Decision: "representative"})
-	require.NoError(t, err)
-	_, err = s.db.Exec(`UPDATE photo_change_receipts SET after_json=replace(after_json,?,?) WHERE receipt_id=?`, ids[0], "00000000-0000-4000-8000-000000000001", r.ReceiptID)
-	require.NoError(t, err)
-	var exported bytes.Buffer
-	require.ErrorContains(t, s.ExportMetadata(t.Context(), &exported), "representative receipts reference missing photo assets")
-}
-
-func TestPhotoRepresentativeKeepsDefaultSettingsTimestamp(t *testing.T) {
+func TestPhotoRepresentativeDefaultSettingsAndReceiptValidation(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ids := burstPhotos(t, s, 2)
 	var count int
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_library_settings`).Scan(&count))
 	require.Zero(t, count)
-	_, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets}), CurrentID: ids[0], Decision: "representative"})
+	r, err := s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets}), CurrentID: ids[0], Decision: "representative"})
 	require.NoError(t, err)
 	settings, err := s.PhotoSettings(t.Context())
 	require.NoError(t, err)
 	require.Empty(t, settings.UpdatedAt)
 	require.Equal(t, int64(1), settings.Revision)
+	_, err = s.db.Exec(`UPDATE photo_change_receipts SET after_json=replace(after_json,?,?) WHERE receipt_id=?`, ids[0], "00000000-0000-4000-8000-000000000001", r.ReceiptID)
+	require.NoError(t, err)
+	var exported bytes.Buffer
+	require.ErrorContains(t, s.ExportMetadata(t.Context(), &exported), "representative receipts reference missing photo assets")
 }

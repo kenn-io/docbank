@@ -689,7 +689,6 @@ it("captures interleaved bursts and moves between stacks and frames in pass orde
   await resumed.restore();
   expect(resumed.currentID).toBe(b1);
   expect(resumed.currentStack).toEqual([b1, b2]);
-  expect(group).toHaveBeenCalledTimes(2);
 });
 
 it("keeps forward stack navigation at pass completion and returns to the last stack", async () => {

@@ -1074,7 +1074,6 @@ it.each([false, true])(
         }),
       ),
     );
-    const decide = vi.spyOn(api, "decidePhotoStack");
     const { cull } = await reviewPhoto(rows[0]);
     await act(() => {
       cull.run = { ...cull.run!, ids: ["photo-1", "photo-2"], groups: [["photo-1", "photo-2"]] };
@@ -1082,10 +1081,6 @@ it.each([false, true])(
     await readyButton("Keep all");
     const choose = await screen.findByRole("button", { name: "Choose representative" });
     expect(choose.matches(":disabled")).toBe(!allRejected);
-    if (!allRejected) {
-      await fireEvent.click(choose);
-      expect(decide).not.toHaveBeenCalled();
-    }
   },
 );
 

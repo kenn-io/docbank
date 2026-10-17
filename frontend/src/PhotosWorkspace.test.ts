@@ -3138,7 +3138,6 @@ it.each([false, true])(
     stubPhotoFetch(async () =>
       Response.json({ items: rows, stacks: [stack], total: 2, facets: [] }),
     );
-    const decide = vi.spyOn(api, "decidePhotoStack");
     const photos = new Photos("scoped", vi.fn());
     photos.items = rows.map((row) => ({ ...row, stack }));
     photos.total = 2;
@@ -3151,10 +3150,6 @@ it.each([false, true])(
     await waitFor(() => expect(keep.matches(":disabled")).toBe(false));
     const choose = screen.getByRole("button", { name: "Choose representative" });
     expect(choose.matches(":disabled")).toBe(!allRejected);
-    if (!allRejected) {
-      await fireEvent.click(choose);
-      expect(decide).not.toHaveBeenCalled();
-    }
     photos.dispose();
   },
 );

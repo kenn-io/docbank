@@ -139,6 +139,19 @@ func TestPhotoBurstAuditRollback(t *testing.T) {
 			}
 			require.NoError(t, s.ExportMetadata(ctx, &after))
 			require.Equal(t, before.String(), after.String(), "rank, sequence, settings, revisions, receipts and audit authority must roll back together")
+			if action == "decision" {
+				_, err = s.db.Exec(`DROP TRIGGER reject_stack_audit`)
+				require.NoError(t, err)
+				receipt, err = s.DecidePhotoStack(ctx, PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets}), Decision: "current", CurrentID: ids[1]})
+				require.NoError(t, err)
+				require.Len(t, receipt.After, 3)
+				for _, snapshot := range receipt.After {
+					history, err := s.AuditHistory(ctx, snapshot.NodeID, 10, "")
+					require.NoError(t, err)
+					require.Len(t, history.Items, 1)
+					require.NotNil(t, history.Items[0].Attachment.After.Photo)
+				}
+			}
 		})
 	}
 }

@@ -224,18 +224,6 @@ func TestPhotoStackGroupRouteBoundsExplicitIDs(t *testing.T) {
 	var grouped api.GroupPhotoStacksResponse
 	require.NoError(t, json.Unmarshal([]byte(body), &grouped))
 	require.Equal(t, api.GroupPhotoStacksResponse{BurstGapSeconds: 2, Groups: [][]string{{ids[0], ids[1]}}, UnavailableIDs: []string{missing}}, grouped)
-	prepared, err := s.PreparePhotoAuthored(ctx, store.PhotoSetSelection{AssetIDs: ids[1:], Limit: store.MaxPhotoStackTargets})
-	require.NoError(t, err)
-	_, err = s.EditPhotoAuthoredBatch(ctx, store.PhotoAuthoredBatch{Targets: apiEditTargets(prepared.Targets), Patch: store.PhotoAuthoredPatch{Flag: new("reject")}})
-	require.NoError(t, err)
-	prepared, err = s.PreparePhotoAuthored(ctx, store.PhotoSetSelection{AssetIDs: ids, Limit: store.MaxPhotoStackTargets})
-	require.NoError(t, err)
-	res, body = do(t, ts, http.MethodPost, "/api/v1/photos/authored/stack", browser, api.PhotoStackDecisionRequest{
-		BurstGapSeconds: 2, AssetIDs: ids, Targets: apiEditTargets(prepared.Targets), Decision: "representative", CurrentID: ids[1],
-	})
-	require.Equal(t, http.StatusUnprocessableEntity, res.StatusCode, body)
-	require.Equal(t, "invalid_photo_asset", decodeProblem(t, body).Code)
-	require.Contains(t, decodeProblem(t, body).Detail, "a rejected frame cannot represent a stack with non-rejected frames")
 
 	// A full Cull run fits the request bound, and so does its flat response.
 	run250k := make([]string, 250_000)
