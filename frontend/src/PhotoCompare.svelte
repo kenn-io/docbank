@@ -43,6 +43,8 @@
           selected = members;
           rows = values;
           unavailable = members.length - values.length;
+          view = { ...fittedPhotoView };
+          crop = undefined;
           void restoreFocus();
         }
       })
@@ -51,7 +53,10 @@
           errors = [cause instanceof Error ? cause.message : String(cause)];
       })
       .finally(() => {
-        if (!controller.signal.aborted) loading = false;
+        if (!controller.signal.aborted) {
+          loading = false;
+          moving = false;
+        }
       });
     return () => controller.abort();
   });
@@ -60,15 +65,15 @@
     moving = true;
     navigationError = "";
     const result = await photos.moveGroup(selected, direction);
-    moving = false;
     if (result.status === "failed") {
       navigationError = result.error;
       retryDirection = direction;
     }
-    if (result.status !== "moved") return;
+    if (result.status !== "moved") {
+      moving = false;
+      return;
+    }
     target = result.ids;
-    view = { ...fittedPhotoView };
-    crop = undefined;
   }
   function key(event: KeyboardEvent) {
     if (event.ctrlKey || event.altKey || event.metaKey || event.isComposing || event.repeat) return;
