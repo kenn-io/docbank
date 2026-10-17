@@ -2,7 +2,11 @@ import { test, expect, type Page, type Request } from "@playwright/test";
 import { createServer } from "node:net";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { getListPhotoAlbumsUrl } from "../src/generated/docbank.js";
+import {
+  getListPhotoAlbumsUrl,
+  listPhotoAssets,
+  trashPhotoAsset,
+} from "../src/generated/docbank.js";
 import { photoFixture, repository } from "./photo-fixture.js";
 
 test.use({ launchOptions: { args: ["--host-resolver-rules=MAP archive.example.test 127.0.0.1"] } });
@@ -160,31 +164,45 @@ async function sixVisiblePhotoTabs(
       await expect(follower.page.locator(`[data-asset="${first}"]`)).toBeVisible();
       expect(holder).toBe(lockedHolder);
       expect(streams.size).toBe(1);
-      const status = await follower.page.evaluate(
-        async ({ id, session }) => {
-          const headers = { "X-Docbank-Web-Session": session };
-          const page = (await (
-            await fetch("/api/v1/photos/assets/query", {
-              method: "POST",
-              headers: { ...headers, "Content-Type": "application/json" },
-              body: JSON.stringify({
-                query: { syntax: "simple", text: "", filters: { asset_ids: [id] } },
-                page_size: 1,
-                hidden: true,
-              }),
-            })
-          ).json()) as { items: { revision: number }[] };
-          const asset = page.items[0]!;
-          return (
-            await fetch(`/api/v1/photos/assets/${id}/trash`, {
-              method: "POST",
-              headers: { ...headers, "If-Match": String(asset.revision) },
-            })
-          ).status;
-        },
-        { id: first!, session: follower.session },
-      );
-      expect(status).toBe(200);
+      const originalFetch = globalThis.fetch;
+      let status = 0;
+      // Send generated requests from the follower so they retain its Hidden unlock cookie.
+      globalThis.fetch = async (input, init) => {
+        const response = await follower.page.evaluate(
+          async ({ url, request }) => {
+            const response = await fetch(url, request);
+            return { body: await response.text(), status: response.status };
+          },
+          {
+            url: String(input),
+            request: {
+              method: init?.method,
+              headers: Object.fromEntries(new Headers(init?.headers)),
+              body: init?.body as string | undefined,
+            },
+          },
+        );
+        status = response.status;
+        return new Response(response.body, { status });
+      };
+      try {
+        const page = await listPhotoAssets(
+          {
+            query: { syntax: "simple", text: "", filters: { asset_ids: [first!] } },
+            page_size: 1,
+            hidden: true,
+          },
+          { session: follower.session },
+        );
+        await trashPhotoAsset(
+          first!,
+          { "If-Match": String(page.items[0]!.revision) },
+          { session: follower.session },
+        );
+        expect(status).toBe(200);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
       await expect(follower.page.locator(`[data-asset="${first}"]`)).toHaveCount(0);
       await follower.page.getByRole("button", { name: "Library", exact: true }).click();
     }
