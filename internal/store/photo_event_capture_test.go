@@ -220,7 +220,7 @@ func TestPhotoEventsViewSources(t *testing.T) {
 		{"visual_preview_generations", `DELETE FROM visual_preview_generations`, false},
 		{"visual_preview_heads", `DELETE FROM visual_preview_heads`, false},
 		{"person_document_assertions", `UPDATE person_document_assertions SET note='Changed note',revision=revision+1`, false},
-		{"photo_set_members", `INSERT INTO photo_set_members SELECT set_id,asset_id,'2026-01-01T00:00:00Z' FROM photo_sets CROSS JOIN photo_assets`, true},
+		{"photo_set_members", `INSERT INTO photo_set_members SELECT set_id,asset_id,'2026-01-01T00:00:00Z' FROM photo_sets CROSS JOIN photo_assets`, false},
 		{"person_aliases", `INSERT INTO person_aliases SELECT person_id,NULL,'retired','2026-01-01T00:00:00Z' FROM persons`, true},
 		{"persons", `UPDATE persons SET display_name='Changed',display_name_folded='changed',revision=revision+1`, true},
 		{"photo_library_settings", `INSERT INTO photo_library_settings VALUES(1,NULL,1,'2026-01-01T00:00:00Z')`, true},

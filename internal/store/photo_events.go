@@ -70,8 +70,8 @@ func (s *Store) photoCaptureState() (bool, uint64) {
 	return len(f.subscribers) > 0 || s.hiddenNow().Before(f.pollUntil), f.epoch
 }
 
-// photoChangeCursor renews polling interest; expired interest invalidates both audiences.
-func (s *Store) photoChangeCursor(unlocked bool) string {
+// photoChangeCursor renews polling interest for watchers; expired interest invalidates both audiences.
+func (s *Store) photoChangeCursor(unlocked, watch bool) string {
 	f := &s.photoEvents
 	f.Lock()
 	defer f.Unlock()
@@ -79,7 +79,7 @@ func (s *Store) photoChangeCursor(unlocked bool) string {
 		f.cursorID = uuid.New()
 	}
 	now := s.hiddenNow()
-	if len(f.subscribers) == 0 {
+	if watch && len(f.subscribers) == 0 {
 		if !now.Before(f.pollUntil) {
 			f.epoch++
 			f.visibleCursor++
@@ -218,9 +218,6 @@ func (s *Store) VisiblePhotoEvents(ctx context.Context, events []PhotoEvent) ([]
 				continue
 			}
 			event.Revision = state.revision
-		}
-		if event.Refetch {
-			event = PhotoEvent{Refetch: true}
 		}
 		visible = append(visible, event)
 	}

@@ -8712,6 +8712,13 @@ export type UndoPhotoFaceDecisionParams = {
 operation_id?: string;
 };
 
+export type GetPhotoHiddenStateParams = {
+/**
+ * Renew photo change capture for a browser polling change_cursor
+ */
+watch?: boolean;
+};
+
 export type PromotePhotoNodeHeaders = {
 'If-Match'?: string;
 };
@@ -16351,20 +16358,27 @@ export const undoPhotoFaceDecision = async (receiptId: string,
 
 
 
-export const getGetPhotoHiddenStateUrl = () => {
+export const getGetPhotoHiddenStateUrl = (params?: GetPhotoHiddenStateParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/v1/photos/hidden`
+  return stringifiedParams.length > 0 ? `/api/v1/photos/hidden?${stringifiedParams}` : `/api/v1/photos/hidden`
 }
 
 /**
  * @summary Read hidden photos configuration and current unlock expiry
  */
-export const getPhotoHiddenState = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoHiddenState> => {
+export const getPhotoHiddenState = async (params?: GetPhotoHiddenStateParams, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoHiddenState> => {
 
-  return sessionJSON<PhotoHiddenState>(getGetPhotoHiddenStateUrl(),
+  return sessionJSON<PhotoHiddenState>(getGetPhotoHiddenStateUrl(params),
   {
     ...options,
     method: 'GET'

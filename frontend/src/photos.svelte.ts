@@ -45,6 +45,7 @@ import {
 import { captureDateQuery, type CaptureDayFacet } from "./photoTimeline.js";
 import { PhotoAuthoredEditor, type PhotoUndoState } from "./photoAuthored.svelte.js";
 import type { HiddenAccess } from "./hiddenAccess.svelte.js";
+import type { PhotoEventBatch } from "./photoEvents.js";
 
 export const photoQuery = parseQuery(
   '{"syntax":"simple","sort":{"field":"capture_time","direction":"desc"}}',
@@ -863,6 +864,39 @@ export class Photos {
       if (this.error || this.timelineError) throw new Error(this.error || this.timelineError);
       return result;
     })();
+  }
+
+  /** Refreshes for live changes. Preview-only changes replace their loaded rows without rerunning the whole query. */
+  refreshChanges(
+    changes?: PhotoEventBatch,
+    preserve?: () => (() => Promise<void>) | undefined,
+  ): Promise<boolean> {
+    // An in-flight replacement may predate the change, so it restarts instead.
+    if (!changes || changes.refetch || this.loading) return this.refresh(preserve, !!changes);
+    return this.refreshRows([...changes.assets.keys()], preserve);
+  }
+
+  private async refreshRows(
+    assetIDs: string[],
+    preserve?: () => (() => Promise<void>) | undefined,
+  ): Promise<boolean> {
+    const query = this.query;
+    const signal = this.controller.signal;
+    const ids = assetIDs.filter((id) => this.items.some((item) => item.asset_id === id));
+    if (this.disposed || !ids.length) return !this.disposed;
+    const page = await this.page(
+      { ...query, filters: { ...query.filters, asset_ids: ids } },
+      signal,
+    ).catch((cause) => {
+      if (!signal.aborted) this.authFailure(cause);
+      throw cause;
+    });
+    if (this.disposed || signal.aborted || this.query !== query) return false;
+    const rows = new Map(page.items.map((row) => [row.asset_id, row]));
+    // A row that no longer matches needs the whole query to restore order and totals.
+    if (ids.some((id) => !rows.has(id))) return this.refresh(preserve, true);
+    this.items = this.items.map((item) => rows.get(item.asset_id) ?? item);
+    return true;
   }
 
   setView(view: "grid" | "timeline") {

@@ -690,10 +690,8 @@
       pending = true;
       controller = new AbortController();
       try {
-        const result = await generated.getPhotoHiddenState({
-          session,
-          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]),
-        });
+        const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]);
+        const result = await generated.getPhotoHiddenState({ watch: true }, { session, signal });
         failures = 0;
         if (current && !controller.signal.aborted) {
           const source = await acceptPhotoAccess(result);
@@ -2780,7 +2778,7 @@
         )
         .map(async (photos) => {
           if (libraryWorkspace && photos === displayed) return libraryWorkspace.refresh(changes);
-          const refreshed = await photos.refresh(undefined, !!changes);
+          const refreshed = await photos.refreshChanges(changes);
           if (!refreshed) {
             if (changes && photos.error) throw new Error(photos.error);
             return;

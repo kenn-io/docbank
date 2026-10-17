@@ -92,7 +92,7 @@ func TestPhotoEventsSSEWireShape(t *testing.T) {
 	asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	fields := readFields()
-	require.Len(t, fields, 2)
+	require.Len(t, fields, 3)
 	require.Equal(t, asset.ID, fields["asset_id"])
 	require.IsType(t, float64(0), fields["revision"])
 }
@@ -128,7 +128,7 @@ func TestPhotoEventsUnlockedStreamReceivesHiddenEdit(t *testing.T) {
 	require.NoError(t, err)
 	asset, err = s.PhotoAssetForNode(store.WithPhotoHiddenToken(ctx, unlocked.Cookies()[0].Value), node.ID)
 	require.NoError(t, err)
-	require.Equal(t, store.PhotoEvent{AssetID: asset.ID, Revision: asset.Revision}, readPhotoChange(t, scanner, response.Body))
+	require.Equal(t, store.PhotoEvent{AssetID: asset.ID, Revision: asset.Revision, Refetch: true}, readPhotoChange(t, scanner, response.Body))
 }
 
 func TestPhotoEventsStreamEndsOnShutdownOrSessionRevocation(t *testing.T) {

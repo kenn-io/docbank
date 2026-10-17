@@ -365,10 +365,10 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	if packagesBrowserRequestAllowed(r) {
 		return true
 	}
+	if path == "/api/v1/photos/hidden" && (r.URL.RawQuery == "" || r.URL.RawQuery == "watch=true") {
+		return method == http.MethodGet
+	}
 	if r.URL.RawQuery == "" {
-		if path == "/api/v1/photos/hidden" {
-			return method == http.MethodGet
-		}
 		switch path {
 		case "/api/v1/photos/hidden/setup", "/api/v1/photos/hidden/change", "/api/v1/photos/hidden/disable", "/api/v1/photos/hidden/unlock", "/api/v1/photos/hidden/lock":
 			return method == http.MethodPost

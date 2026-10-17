@@ -92,11 +92,11 @@ func TestPhotoEventsArrivalUnlockAndPollDuringWrite(t *testing.T) {
 			}()
 			<-started
 			if interest == "poll" {
-				before, err := s.PhotoHiddenState(ctx)
+				before, err := s.PhotoHiddenState(ctx, true)
 				close(release)
 				require.NoError(t, err)
 				require.NoError(t, <-done)
-				after, err := s.PhotoHiddenState(ctx)
+				after, err := s.PhotoHiddenState(ctx, true)
 				require.NoError(t, err)
 				require.NotEqual(t, before.ChangeCursor, after.ChangeCursor)
 				return
@@ -143,7 +143,7 @@ func TestPhotoEventsOverflow(t *testing.T) {
 	noPhotoEvent(t, ch)
 	asset, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, false)
 	require.NoError(t, err)
-	require.Equal(t, PhotoEvent{AssetID: asset.ID}, nextPhotoEvent(t, ch))
+	require.Equal(t, PhotoEvent{AssetID: asset.ID, Refetch: true}, nextPhotoEvent(t, ch))
 	noPhotoEvent(t, ch)
 }
 
@@ -162,7 +162,7 @@ func TestPhotoEventsPollCursors(t *testing.T) {
 	require.NoError(t, err)
 	cursor := func(viewer context.Context) string {
 		t.Helper()
-		state, err := s.PhotoHiddenState(viewer)
+		state, err := s.PhotoHiddenState(viewer, true)
 		require.NoError(t, err)
 		return state.ChangeCursor
 	}
@@ -202,7 +202,7 @@ func TestPhotoEventsPollCursors(t *testing.T) {
 	now = now.Add(5 * time.Minute)
 	require.Equal(t, cursor(ctx), cursor(viewer), "expired unlock uses the locked audience")
 	other := newTestStore(t)
-	restarted, err := other.PhotoHiddenState(ctx)
+	restarted, err := other.PhotoHiddenState(ctx, true)
 	require.NoError(t, err)
 	require.NotEqual(t, cursor(ctx), restarted.ChangeCursor)
 }
@@ -246,7 +246,7 @@ func TestPhotoEventsKeepCommittedBatch(t *testing.T) {
 		require.NoError(t, err)
 		asset, err := s.PhotoAssetForNode(ctx, node.ID)
 		require.NoError(t, err)
-		want = append(want, PhotoEvent{AssetID: asset.ID})
+		want = append(want, PhotoEvent{AssetID: asset.ID, Refetch: true})
 	}
 	ch, stop := s.SubscribePhotoEvents()
 	defer stop()
@@ -268,22 +268,69 @@ func TestPhotoEventsStreamDoesNotRenewPollingInterest(t *testing.T) {
 	s := newTestStore(t)
 	now := time.Now().UTC()
 	s.photoHiddenNow = func() time.Time { return now }
-	_, err := s.PhotoHiddenState(t.Context())
+	_, err := s.PhotoHiddenState(t.Context(), true)
 	require.NoError(t, err)
 	_, stop := s.SubscribePhotoEvents()
 	defer stop()
-	cursor, err := s.PhotoHiddenState(t.Context())
+	cursor, err := s.PhotoHiddenState(t.Context(), true)
 	require.NoError(t, err)
 	epoch, lease := s.photoEvents.epoch, s.photoEvents.pollUntil
 	now = now.Add(time.Minute)
-	current, err := s.PhotoHiddenState(t.Context())
+	current, err := s.PhotoHiddenState(t.Context(), true)
 	require.NoError(t, err)
 	require.Equal(t, cursor.ChangeCursor, current.ChangeCursor)
 	require.Equal(t, epoch, s.photoEvents.epoch)
 	require.Equal(t, lease, s.photoEvents.pollUntil)
 	stop()
-	resumed, err := s.PhotoHiddenState(t.Context())
+	resumed, err := s.PhotoHiddenState(t.Context(), true)
 	require.NoError(t, err)
 	require.NotEqual(t, current.ChangeCursor, resumed.ChangeCursor)
 	require.True(t, s.photoEvents.pollUntil.After(now))
+}
+
+func TestPhotoEventsStaggeredPollingAcrossExpiry(t *testing.T) {
+	t.Parallel()
+	for _, order := range []string{"write before resuming", "write between polls"} {
+		t.Run(order, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			now := time.Now().UTC()
+			s.photoHiddenNow = func() time.Time { return now }
+			node, err := s.CreateFile(ctx, s.RootID(), "photo.jpg", fakeHash("11"), 4, "image/jpeg")
+			require.NoError(t, err)
+			asset, err := s.PhotoAssetForNode(ctx, node.ID)
+			require.NoError(t, err)
+			poll := func() string {
+				state, err := s.PhotoHiddenState(ctx, true)
+				require.NoError(t, err)
+				return state.ChangeCursor
+			}
+			clientA := poll()
+			now = now.Add(10 * time.Second)
+			clientB := poll()
+			require.Equal(t, clientA, clientB)
+			now = now.Add(31 * time.Second)
+			write := func() {
+				_, err := s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
+				require.NoError(t, err)
+			}
+			if order == "write before resuming" {
+				write()
+			}
+			resumedA := poll()
+			require.NotEqual(t, clientA, resumedA)
+			now = now.Add(time.Second)
+			if order == "write between polls" {
+				write()
+			}
+			resumedB := poll()
+			require.NotEqual(t, clientB, resumedB)
+			now = now.Add(time.Second)
+			currentA := poll()
+			require.Equal(t, resumedB, currentA)
+			if order == "write between polls" {
+				require.NotEqual(t, resumedA, currentA)
+			}
+		})
+	}
 }

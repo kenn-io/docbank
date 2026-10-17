@@ -29,7 +29,9 @@ func TestPhotoEventsRenditionRecovery(t *testing.T) {
 	reopened, _, err := s.EnqueueRenditionJob(ctx, request)
 	require.NoError(t, err)
 	require.Equal(t, RenditionJobQueued, reopened.State)
-	require.Equal(t, PhotoEvent{AssetID: asset.ID}, nextPhotoEvent(t, ch))
+	events, err := s.VisiblePhotoEvents(ctx, []PhotoEvent{nextPhotoEvent(t, ch)})
+	require.NoError(t, err)
+	require.Equal(t, []PhotoEvent{{AssetID: asset.ID, Revision: asset.Revision}}, events)
 }
 
 func TestPhotoEventsTagAssignmentDefinitions(t *testing.T) {
@@ -50,4 +52,53 @@ func TestPhotoEventsTagAssignmentDefinitions(t *testing.T) {
 			noPhotoEvent(t, ch)
 		})
 	}
+}
+
+func TestPhotoEventsQueryMembershipKeepsAffectedAsset(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	photo := browsePhotoNode(t, s, "before.jpg", browseHash("query-event"), "image/jpeg")
+	asset, err := s.PhotoAssetForNode(ctx, photo.ID)
+	require.NoError(t, err)
+	ch, stop := s.SubscribePhotoEvents()
+	defer stop()
+	_, _, err = s.Move(ctx, photo.ID, s.RootID(), "after.jpg", photo.Revision)
+	require.NoError(t, err)
+	batch := []PhotoEvent{nextPhotoEvent(t, ch)}
+	visible, err := s.VisiblePhotoEvents(ctx, batch)
+	require.NoError(t, err)
+	current, err := s.PhotoAssetForNode(ctx, photo.ID)
+	require.NoError(t, err)
+	// A rename can enter or leave a name query, but its ID still scopes detail reconciliation.
+	require.Equal(t, []PhotoEvent{{AssetID: asset.ID, Revision: current.Revision, Refetch: true}}, visible)
+}
+
+func TestPhotoEventsHiddenAlbumMembershipVisibility(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	asset := albumAsset(t, s, "hidden.jpg")
+	asset, err := s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	set, err := s.CreatePhotoSet(ctx, "Album")
+	require.NoError(t, err)
+	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+	unlocked := WithPhotoHiddenToken(ctx, token)
+	ch, stop := s.SubscribePhotoEvents()
+	defer stop()
+	_, err = s.ChangePhotoSetMembers(unlocked, set.ID, set.Revision, true, PhotoSetSelection{AssetIDs: []string{asset.ID}})
+	require.NoError(t, err)
+	batch := []PhotoEvent{nextPhotoEvent(t, ch)}
+	lockedEvents, err := s.VisiblePhotoEvents(ctx, batch)
+	require.NoError(t, err)
+	unlockedEvents, err := s.VisiblePhotoEvents(unlocked, batch)
+	require.NoError(t, err)
+	// Check both audiences even when the locked delivery is wrong.
+	if len(lockedEvents) != 0 {
+		t.Errorf("locked viewer received Hidden-only membership events: %+v", lockedEvents)
+	}
+	require.Equal(t, []PhotoEvent{{AssetID: asset.ID, Revision: asset.Revision, Refetch: true}}, unlockedEvents)
 }

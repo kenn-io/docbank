@@ -85,7 +85,7 @@ export async function readPhotoEvents(
   }
 }
 
-// One visible tab holds the stream and relays only ID-free refreshes to its followers.
+// One visible tab holds the stream and broadcasts an ID-free refetch for every event.
 const photoEventLock = "docbank-photo-events";
 type PhotoEventOptions = NonNullable<Parameters<typeof photoEvents>[0]> & { signal: AbortSignal };
 
@@ -186,15 +186,15 @@ export function watchPhotoEvents(
   };
   const hasPending = () => pending.refetch || pending.assets.size > 0;
   const schedule = (event?: PhotoEvent) => {
-    if (event && !pending.refetch) {
-      if (event.refetch || !event.asset_id) pending.refetch = true;
+    if (event && (!pending.refetch || pending.assets.size > 0)) {
+      if (event.refetch) pending.refetch = true;
       if (event.asset_id)
         pending.assets.set(
           event.asset_id,
           Math.max(event.revision ?? 0, pending.assets.get(event.asset_id) ?? 0),
         );
-      if (pending.assets.size > 64) pending.refetch = true;
-      if (pending.refetch) {
+      if (!event.asset_id || pending.assets.size > 64) {
+        pending.refetch = true;
         pending.assets.clear();
       }
     }

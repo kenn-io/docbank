@@ -333,11 +333,11 @@ func (s *Store) publishCommittedPhotoChanges(ctx context.Context, events []Photo
 		events = []PhotoEvent{{Refetch: true}}
 	}
 	for _, event := range s.resolvePhotoSources(ctx, sources) {
-		if event.Refetch {
+		if event.Refetch && event.AssetID == "" {
 			events = []PhotoEvent{event}
 			break
 		}
-		if !slices.ContainsFunc(events, func(existing PhotoEvent) bool { return existing.AssetID == event.AssetID }) {
+		if !slices.Contains(events, event) {
 			events = append(events, event)
 		}
 	}

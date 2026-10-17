@@ -196,6 +196,13 @@
       }
     }
   }
+  // The access poll is also the browser fallback for live photo changes, so it keeps capture interest.
+  function readState(signal: AbortSignal) {
+    return getPhotoHiddenState(
+      { watch: true },
+      { session: access.session, signal: AbortSignal.any([signal, AbortSignal.timeout(2000)]) },
+    );
+  }
   async function checkAccess(live = false) {
     if (document.visibilityState !== "visible") return;
     refreshController.abort();
@@ -205,19 +212,13 @@
     try {
       // Anchoring at send time can only end access early, never late.
       let requestedAt = Date.now();
-      let result = await getPhotoHiddenState({
-        session: access.session,
-        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]),
-      });
+      let result = await readState(controller.signal);
       if (controller.signal.aborted || disposed) return;
       if (!workspaceVisible && result.expires_in) {
         await access.settled();
         if (controller.signal.aborted || disposed) return;
         requestedAt = Date.now();
-        result = await getPhotoHiddenState({
-          session: access.session,
-          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]),
-        });
+        result = await readState(controller.signal);
       }
       if (controller.signal.aborted || disposed) return;
       await applyState(result, controller.signal, requestedAt);

@@ -2882,3 +2882,60 @@ it.each([false, true])("handles a Map detail deadline after navigation=%s", asyn
   }
   photos.dispose();
 });
+
+it.each([false, true])(
+  "refreshes only a preview row unless the event changes query membership, broad=%s",
+  async (broad) => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+    const photos = new Photos("scoped", vi.fn());
+    photos.items = [photo(1), photo(2)];
+    photos.started = true;
+    photos.total = 2;
+    const untouched = photos.items[1];
+    const changed = photo(1);
+    changed.previews.grid = { state: "unsupported" };
+    const wholeQueries = vi.fn();
+    stubPhotoFetch(async (url, init) => {
+      if (!url.endsWith("/photos/assets/query")) throw new Error(`Unexpected request: ${url}`);
+      const request = JSON.parse(String(init.body));
+      if (request.query.filters.asset_ids) {
+        expect(request.query.filters.asset_ids).toEqual(["photo-1"]);
+        return Response.json({ items: [changed], total: 1 });
+      }
+      wholeQueries(request);
+      return Response.json({
+        items: broad ? [changed, photo(2), photo(3)] : [changed, photo(2)],
+        total: broad ? 3 : 2,
+      });
+    });
+    const cache = new PhotoPreviewCache("scoped", vi.fn());
+    const view = render(PhotosWorkspace, { photos, cache });
+    try {
+      await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
+      // Rendition job changes deliver this asset/revision without a broad refetch.
+      // Query-affecting writes carry the same ID along with the broad flag.
+      await view.component.refresh({ assets: new Map([["photo-1", 1]]), refetch: broad });
+      expect(photos.items[0].previews.grid).toEqual({ state: "unsupported" });
+      if (broad) {
+        expect(wholeQueries).toHaveBeenCalledOnce();
+        expect(photos.items.map((row) => row.asset_id)).toEqual(["photo-1", "photo-2", "photo-3"]);
+        expect(photos.total).toBe(3);
+      } else {
+        expect(wholeQueries).not.toHaveBeenCalled();
+        expect(photos.items[1]).toBe(untouched);
+        expect(photos.total).toBe(2);
+      }
+    } finally {
+      cache.dispose();
+      photos.dispose();
+    }
+  },
+);

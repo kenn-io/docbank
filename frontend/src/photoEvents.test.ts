@@ -342,3 +342,77 @@ it("limits 1,000 events paced over one minute to 60 refresh batches", async () =
     stop();
   }
 });
+
+it("refreshes followers for every event without relaying asset IDs or revisions", async () => {
+  vi.useFakeTimers();
+  const broadcast = vi.fn();
+  class Channel {
+    static peers = new Set<Channel>();
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    constructor(_name: string) {
+      Channel.peers.add(this);
+    }
+    postMessage(data: unknown) {
+      broadcast(data);
+      for (const peer of Channel.peers)
+        if (peer !== this) peer.onmessage?.(new MessageEvent("message", { data }));
+    }
+    close() {
+      Channel.peers.delete(this);
+    }
+  }
+  vi.stubGlobal("BroadcastChannel", Channel);
+  let held = false;
+  vi.stubGlobal("navigator", {
+    locks: {
+      request: async (
+        _name: string,
+        options: { ifAvailable?: boolean; signal?: AbortSignal },
+        run: (lock: Lock | null) => unknown,
+      ) => {
+        if (options.ifAvailable) {
+          if (held) return run(null);
+          held = true;
+          return run({ name: "docbank-photo-events" } as Lock);
+        }
+        return new Promise<void>((resolve) =>
+          options.signal?.addEventListener("abort", () => resolve(), { once: true }),
+        );
+      },
+    },
+  });
+  let writer!: ReadableStreamDefaultController<Uint8Array>;
+  const fetcher = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          writer = controller;
+        },
+      }),
+      { headers: { "Content-Type": "text/event-stream" } },
+    ),
+  );
+  const leader = vi.fn().mockResolvedValue(undefined);
+  const follower = vi.fn().mockResolvedValue(undefined);
+  const stopLeader = watchPhotoEvents("synthetic", leader, vi.fn());
+  const stopFollower = watchPhotoEvents("synthetic", follower, vi.fn());
+  try {
+    await vi.advanceTimersByTimeAsync(100);
+    expect(follower).toHaveBeenCalledOnce();
+    follower.mockClear();
+    writer.enqueue(encoder.encode('data: {"asset_id":"photo-1","revision":2}\n\n'));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(leader).toHaveBeenCalledWith({ assets: new Map([["photo-1", 2]]), refetch: false });
+    expect(broadcast).toHaveBeenCalledExactlyOnceWith("refetch");
+    expect(follower).toHaveBeenCalledExactlyOnceWith({ assets: new Map(), refetch: true });
+    follower.mockClear();
+    writer.enqueue(encoder.encode('data: {"refetch":true}\n\n'));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(leader.mock.lastCall?.[0]).toEqual({ assets: new Map(), refetch: true });
+    expect(follower).toHaveBeenCalledExactlyOnceWith({ assets: new Map(), refetch: true });
+    expect(fetcher).toHaveBeenCalledOnce();
+  } finally {
+    stopFollower();
+    stopLeader();
+  }
+});

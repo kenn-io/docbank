@@ -499,7 +499,7 @@
   const preserve = () => grid?.preservePosition();
   export async function refresh(changes?: PhotoEventBatch) {
     const id = photoID;
-    const refreshed = await photos.refresh(preserve, !!changes);
+    const refreshed = await photos.refreshChanges(changes, preserve);
     if (!refreshed) {
       if (changes && photos.error) throw new Error(photos.error);
       return false;

@@ -135,7 +135,8 @@ func (s *Store) hiddenSession(ctx context.Context, q metadataQuerier) (time.Time
 	return until, nil
 }
 
-func (s *Store) PhotoHiddenState(ctx context.Context) (PhotoHiddenState, error) {
+// PhotoHiddenState reads Hidden access. Only watching reads renew photo change capture.
+func (s *Store) PhotoHiddenState(ctx context.Context, watch bool) (PhotoHiddenState, error) {
 	var state PhotoHiddenState
 	var unlocked bool
 	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
@@ -171,7 +172,7 @@ func (s *Store) PhotoHiddenState(ctx context.Context) (PhotoHiddenState, error) 
 		return nil
 	})
 	if err == nil {
-		state.ChangeCursor = s.photoChangeCursor(unlocked)
+		state.ChangeCursor = s.photoChangeCursor(unlocked, watch)
 	}
 	return state, err
 }

@@ -60,6 +60,8 @@ func (s *Store) preparePhotoChanges(ctx context.Context, conn *sql.Conn, active 
 const (
 	photoChangeRefetch        = "refetch"
 	photoChangeCurrentVersion = "current_version"
+	// Preview and rendition outputs replace a row's bytes without changing query membership.
+	photoChangePreview = "preview"
 )
 
 // Related keys survive deletion of the row that originally linked a worker result to a photo.
@@ -77,14 +79,14 @@ var photoEventCaptureRules = []photoEventCaptureRule{
 	{"photo_technical_metadata", "generation_id", "generation_id", "generation", ""},
 	{"photo_faces", "face_id", "content_version_id", photoChangeCurrentVersion, "content_version_id,x,y,width,height,revision,assertion_id"},
 	{"photo_quality_signals", metadataContentVersionIDField, metadataContentVersionIDField, photoChangeCurrentVersion, ""},
-	{"visual_preview_generations", metadataContentVersionIDField, metadataContentVersionIDField, photoChangeCurrentVersion, ""},
-	{"visual_preview_heads", metadataContentVersionIDField, metadataContentVersionIDField, photoChangeCurrentVersion, "generation_id"},
-	{"rendition_heads", metadataContentVersionIDField, metadataContentVersionIDField, photoChangeCurrentVersion, "attachment_id"},
-	{"rendition_job_waiters", "waiter_id", "content_version_id", photoChangeCurrentVersion, "job_id,content_version_id,profile_fingerprint,state"},
+	{"visual_preview_generations", metadataContentVersionIDField, metadataContentVersionIDField, photoChangePreview, ""},
+	{"visual_preview_heads", metadataContentVersionIDField, metadataContentVersionIDField, photoChangePreview, "generation_id"},
+	{"rendition_heads", metadataContentVersionIDField, metadataContentVersionIDField, photoChangePreview, "attachment_id"},
+	{"rendition_job_waiters", "waiter_id", "content_version_id", photoChangePreview, "job_id,content_version_id,profile_fingerprint,state"},
 	{"rendition_jobs", "job_id", "job_id", "job", "state,updated_at"},
 	{"person_document_assertions", metadataContentVersionIDField, metadataContentVersionIDField, photoChangeCurrentVersion, ""},
-	{"photo_sets", "set_id", "set_id", photoChangeRefetch, ""},
-	{"photo_set_members", "set_id", "asset_id", photoChangeRefetch, ""},
+	{"photo_sets", "set_id", "set_id", photoChangeRefetch, "name,starred,cover_asset_id,deleted_at"},
+	{"photo_set_members", "set_id", "asset_id", "asset", ""},
 	{"tags", "id", "id", photoChangeRefetch, "name,revision"},
 	{"saved_queries", "id", "id", photoChangeRefetch, ""},
 	{"collection_labels", "ingest_id", "ingest_id", photoChangeRefetch, ""},
@@ -98,6 +100,7 @@ var photoEventCaptureRules = []photoEventCaptureRule{
 var photoChangeFilters = map[string]string{
 	"node":                    "EXISTS(SELECT 1 FROM photo_files WHERE node_id=$ AND asset_id IS NOT NULL)",
 	photoChangeCurrentVersion: "EXISTS(SELECT 1 FROM nodes n JOIN photo_files f ON f.node_id=n.id AND f.asset_id IS NOT NULL WHERE n.current_version_id=$)",
+	photoChangePreview:        "EXISTS(SELECT 1 FROM nodes n JOIN photo_files f ON f.node_id=n.id AND f.asset_id IS NOT NULL WHERE n.current_version_id=$)",
 	"job":                     "EXISTS(SELECT 1 FROM rendition_job_waiters w JOIN content_versions v ON v.version_id=w.content_version_id JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id AND f.asset_id IS NOT NULL WHERE w.job_id=$)",
 }
 
@@ -177,6 +180,7 @@ var photoChangeSelections = map[string]string{
 	"asset":                   `SELECT value FROM json_each(?)`,
 	"node":                    `SELECT a.asset_id FROM photo_files f JOIN photo_assets a ON a.asset_id=f.asset_id WHERE f.node_id IN (SELECT value FROM json_each(?))`,
 	photoChangeCurrentVersion: `SELECT a.asset_id FROM content_versions v JOIN nodes n ON n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.version_id IN (SELECT value FROM json_each(?))`,
+	photoChangePreview:        `SELECT a.asset_id FROM content_versions v JOIN nodes n ON n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE v.version_id IN (SELECT value FROM json_each(?))`,
 	"job":                     `SELECT a.asset_id FROM rendition_job_waiters w JOIN content_versions v ON v.version_id=w.content_version_id JOIN nodes n ON n.id=v.node_id AND n.current_version_id=v.version_id JOIN photo_files f ON f.node_id=n.id JOIN photo_assets a ON a.asset_id=f.asset_id WHERE w.job_id IN (SELECT value FROM json_each(?))`,
 }
 
@@ -229,7 +233,7 @@ func (s *Store) readPhotoChanges(ctx context.Context, tx *sql.Tx, capture bool) 
 		return fallback, nil
 	}
 	var events []PhotoEvent
-	seen := map[string]bool{}
+	seen := map[PhotoEvent]bool{}
 	resolved := 0
 	for kind, values := range keys {
 		encoded, _ := json.Marshal(values)
@@ -240,7 +244,7 @@ func (s *Store) readPhotoChanges(ctx context.Context, tx *sql.Tx, capture bool) 
 		}
 		defer func() { _ = rows.Close() }()
 		for rows.Next() {
-			var event PhotoEvent
+			event := PhotoEvent{Refetch: kind != photoChangePreview && kind != "job"}
 			if err = rows.Scan(&event.AssetID); err != nil {
 				break
 			}
@@ -249,8 +253,8 @@ func (s *Store) readPhotoChanges(ctx context.Context, tx *sql.Tx, capture bool) 
 				_ = rows.Close()
 				return fallback, nil
 			}
-			if !seen[event.AssetID] {
-				seen[event.AssetID] = true
+			if !seen[event] {
+				seen[event] = true
 				events = append(events, event)
 			}
 		}
@@ -315,7 +319,7 @@ func (s *Store) resolvePhotoSources(ctx context.Context, sources []photoSourceCh
 		}
 		if !seen[asset.String] {
 			seen[asset.String] = true
-			events = append(events, PhotoEvent{AssetID: asset.String})
+			events = append(events, PhotoEvent{AssetID: asset.String, Refetch: true})
 		}
 	}
 	if err = errors.Join(err, rows.Err(), rows.Close()); err != nil {

@@ -25914,6 +25914,14 @@ paths:
   /api/v1/photos/hidden:
     get:
       operationId: getPhotoHiddenState
+      parameters:
+        - description: Renew photo change capture for a browser polling change_cursor
+          explode: false
+          in: query
+          name: watch
+          schema:
+            description: Renew photo change capture for a browser polling change_cursor
+            type: boolean
       responses:
         "200":
           content:

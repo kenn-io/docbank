@@ -9811,11 +9811,17 @@ func (c *Client) UndoPhotoFaceDecision(ctx context.Context, options *UndoPhotoFa
 }
 
 // GetPhotoHiddenState Read hidden photos configuration and current unlock expiry
-func (c *Client) GetPhotoHiddenState(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetPhotoHiddenStateResponse, error) {
+func (c *Client) GetPhotoHiddenState(ctx context.Context, options *GetPhotoHiddenStateRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPhotoHiddenStateResponse, error) {
 	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"watch": {Style: "form", Explode: &[]bool{false}[0]},
+	}
 	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/photos/hidden",
-		Method:     "GET",
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/photos/hidden",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
 	}
 
 	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
@@ -20935,6 +20941,37 @@ func (o *UndoPhotoFaceDecisionRequestOptions) GetHeader() (map[string]string, er
 	return nil, nil
 }
 
+// GetPhotoHiddenStateRequestOptions is the options needed to make a request to GetPhotoHiddenState.
+type GetPhotoHiddenStateRequestOptions struct {
+	Query *GetPhotoHiddenStateQuery
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetPhotoHiddenStateRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetPhotoHiddenStateRequestOptions) GetQuery() (map[string]any, error) {
+	encoded, err := json.Marshal(o.Query, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetPhotoHiddenStateRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetPhotoHiddenStateRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ChangePhotoHiddenRequestOptions is the options needed to make a request to ChangePhotoHidden.
 type ChangePhotoHiddenRequestOptions struct {
 	Body *ChangePhotoHiddenBody
@@ -25314,6 +25351,11 @@ type DetachPhotoFileQuery struct {
 
 type UndoPhotoFaceDecisionQuery struct {
 	OperationID *uuid.UUID `json:"operation_id,omitempty"`
+}
+
+type GetPhotoHiddenStateQuery struct {
+	// Watch Renew photo change capture for a browser polling change_cursor
+	Watch *bool `json:"watch,omitempty"`
 }
 
 type ListPushSourcesQuery struct {

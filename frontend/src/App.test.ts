@@ -2055,7 +2055,8 @@ it.each(["Albums", "Map"])("blocks Documents tag shortcuts on the Photos %s view
   const original = fetchMock.getMockImplementation()!;
   fetchMock.mockImplementation(async (input, init) => {
     const url = String(input);
-    if (url === "/api/v1/photos/hidden") return new Response(JSON.stringify({ configured: false }));
+    if (url === "/api/v1/photos/hidden?watch=true")
+      return new Response(JSON.stringify({ configured: false }));
     if (url === "/api/v1/photos/albums") return new Response("[]");
     if (url === "/api/v1/photos/assets/query")
       return new Response(JSON.stringify({ items: [], total: 0 }));
