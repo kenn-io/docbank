@@ -358,7 +358,7 @@ func (w *Watcher) waitForCheckoutSeparation(ctx context.Context, root string) ([
 					break
 				}
 			}
-			return fmt.Errorf("waiting for checkout %s folder %q; clear or move its copies from the released folder to start watch %q: %w", id, destination, w.config.Name, errors.Join(err, errWatchCheckoutOverlap))
+			return fmt.Errorf("waiting for checkout %s folder \"%s\"; clear or move its copies from the released folder to start watch %q: %w", id, destination, w.config.Name, errors.Join(err, errWatchCheckoutOverlap))
 		}
 		return nil
 	}, func(err error) {
@@ -755,7 +755,7 @@ func existingDirectoryPrefix(ctx context.Context, pathname string) (fs.FileInfo,
 			return info, info.IsDir(), nil
 		}
 		if !CheckoutPathMissing(err) {
-			return nil, false, fmt.Errorf("checking path prefix %q: %w", current, err)
+			return nil, false, fmt.Errorf("checking path prefix \"%s\": %w", current, err)
 		}
 		parent := filepath.Dir(current)
 		if parent == current {

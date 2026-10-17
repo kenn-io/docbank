@@ -907,7 +907,7 @@ func validateCheckoutPathSnapshot(ctx context.Context, checkouts []store.PhotoCh
 		return fmt.Errorf("checking configured path against checkout %s: %w", id, err)
 	}
 	if overlap {
-		return fmt.Errorf("%w: path %q, checkout %s", errCheckoutPathOverlap, pathname, id)
+		return fmt.Errorf("%w: path \"%s\", checkout %s", errCheckoutPathOverlap, pathname, id)
 	}
 	return nil
 }

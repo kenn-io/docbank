@@ -52,7 +52,7 @@ func (p *PathProtection) Check(paths []string) error {
 		}
 		prior := p.identities[i]
 		if (prior == nil) != (current == nil) || prior != nil && !os.SameFile(prior, current) {
-			return fmt.Errorf("protected root %q changed during validation; retry", path)
+			return fmt.Errorf("protected root \"%s\" changed during validation; retry", path)
 		}
 	}
 	return nil

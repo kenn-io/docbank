@@ -307,7 +307,7 @@ func (s Service) reconcile(ctx context.Context, c store.PhotoCheckout) error {
 	canonical, fsErr := filepath.EvalSymlinks(c.Destination)
 	invalidDestination := fsErr == nil && canonical != c.Destination
 	if invalidDestination {
-		fsErr = fmt.Errorf("destination now resolves to %q", canonical)
+		fsErr = fmt.Errorf("destination now resolves to \"%s\"", canonical)
 	}
 	var root *os.Root
 	if fsErr == nil {
@@ -353,7 +353,7 @@ func (s Service) reconcile(ctx context.Context, c store.PhotoCheckout) error {
 				_, err := root.Lstat(filepath.FromSlash(e.Path))
 				if !ingest.CheckoutPathMissing(err) {
 					if err != nil {
-						return jobs.DeferStorageAdmission(ctx, s.Store, c.OperationID, fmt.Errorf("file %s at %q: %w", e.FileID, e.Path, err))
+						return jobs.DeferStorageAdmission(ctx, s.Store, c.OperationID, fmt.Errorf("file %s at \"%s\": %w", e.FileID, e.Path, err))
 					}
 					observed = append(observed, e.FileID)
 				}
@@ -366,7 +366,7 @@ func (s Service) reconcile(ctx context.Context, c store.PhotoCheckout) error {
 			matches, err := observeCheckoutFile(ctx, root, e)
 			if err != nil {
 				// An unreadable unrecorded copy may still need its frozen source.
-				return jobs.DeferStorageAdmission(ctx, s.Store, c.OperationID, fmt.Errorf("file %s at %q: %w", e.FileID, e.Path, err))
+				return jobs.DeferStorageAdmission(ctx, s.Store, c.OperationID, fmt.Errorf("file %s at \"%s\": %w", e.FileID, e.Path, err))
 			}
 			if matches {
 				observed = append(observed, e.FileID)
@@ -547,7 +547,7 @@ func checkDestinationIdentity(root *os.Root, destination string) error {
 func (s Service) copy(ctx context.Context, root *os.Root, destination string, e store.PhotoCheckoutEntry) (installed bool, retErr error) {
 	defer func() {
 		if retErr != nil {
-			retErr = fmt.Errorf("file %s at %q: %w", e.FileID, e.Path, retErr)
+			retErr = fmt.Errorf("file %s at \"%s\": %w", e.FileID, e.Path, retErr)
 		}
 	}()
 	if err := s.Store.CheckPhotoCheckoutEntry(ctx, e); err != nil {
