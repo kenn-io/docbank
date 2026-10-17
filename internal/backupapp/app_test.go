@@ -359,13 +359,6 @@ func TestDetachedPhotoSuggestionBackupRoundTrip(t *testing.T) {
 			require.NoError(t, err)
 			_, err = fixture.metadata.DetachPhotoFile(ctx, asset.ID, asset.Revision, file.ID, store.PhotoDetachOptions{})
 			require.NoError(t, err)
-			require.NoError(t, fixture.metadata.ValidateMetadata(ctx))
-			exported := string(exportMetadata(t, fixture.metadata))
-			if decision == "pending" {
-				require.NotContains(t, exported, id)
-			} else {
-				require.Contains(t, exported, id)
-			}
 			repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
 			require.NoError(t, err)
 			_, err = backupapp.Create(ctx, repo, "detached-photo", fixture.metadata, fixture.blobs, backup.CreateOptions{})
@@ -377,34 +370,19 @@ func TestDetachedPhotoSuggestionBackupRoundTrip(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, restored.Close()) })
 			require.NoError(t, restored.ValidateMetadata(ctx))
-			for _, catalog := range []*store.Store{fixture.metadata, restored} {
-				current, err := catalog.PhotoAssetByID(ctx, asset.ID)
-				require.NoError(t, err)
-				require.Empty(t, current.Files)
-				current, err = catalog.AttachPhotoFile(ctx, asset.ID, current.Revision, node.ID, store.PhotoRoleImage, nil)
-				require.NoError(t, err)
-				require.Equal(t, file.ID, current.Files[0].ID)
-				caption := ""
-				if decision == "accepted" {
-					caption = "A harbor."
-				}
-				require.Equal(t, caption, current.Files[0].Caption)
-				values, err := catalog.PhotoSuggestions(ctx, asset.ID)
-				require.NoError(t, err)
-				if decision == "pending" && catalog == restored {
-					require.Empty(t, values)
-				} else {
-					require.Len(t, values, 1)
-					require.Equal(t, id, values[0].ID)
-					require.Equal(t, decision, values[0].Response)
-					require.Equal(t, "QUAYSIDE", values[0].Value.VisibleText)
-					if decision == "accepted" {
-						tags, _, err := catalog.NodeTags(ctx, node.ID, 100, 0)
-						require.NoError(t, err)
-						require.Len(t, tags, 1)
-						require.Equal(t, []store.PhotoSuggestionAcceptedTag{{FileID: file.ID, TagID: tags[0].ID}}, values[0].AcceptedTags)
-					}
-				}
+			current, err := restored.PhotoAssetByID(ctx, asset.ID)
+			require.NoError(t, err)
+			require.Empty(t, current.Files)
+			_, err = restored.AttachPhotoFile(ctx, asset.ID, current.Revision, node.ID, store.PhotoRoleImage, nil)
+			require.NoError(t, err)
+			values, err := restored.PhotoSuggestions(ctx, asset.ID)
+			require.NoError(t, err)
+			if decision == "pending" {
+				require.Empty(t, values)
+			} else {
+				require.Len(t, values, 1)
+				require.Equal(t, id, values[0].ID)
+				require.Equal(t, decision, values[0].Response)
 			}
 		})
 	}

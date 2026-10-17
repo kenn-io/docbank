@@ -32,7 +32,19 @@ func TestPhotoSuggestionRoutes(t *testing.T) {
 	defer func() { require.NoError(t, db.Close()) }()
 	id, err := phototest.SeedSuggestion(ctx, db, node.CurrentVersionID, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast"}, VisibleText: "QUAYSIDE"})
 	require.NoError(t, err)
-	response, body := get(t, ts, "/api/v1/photos/assets/"+asset.ID+"/suggestions", nil)
+	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, api.PhotoBrowseRequest{Query: api.QueryPayload(`{"text":"QUAYSIDE"}`), Projection: "map"})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var page struct {
+		MapItems []struct {
+			AssetID             string `json:"asset_id"`
+			MatchedAISuggestion bool   `json:"matched_ai_suggestion"`
+		} `json:"map_items"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &page))
+	require.Len(t, page.MapItems, 1)
+	require.Equal(t, asset.ID, page.MapItems[0].AssetID)
+	require.True(t, page.MapItems[0].MatchedAISuggestion)
+	response, body = get(t, ts, "/api/v1/photos/assets/"+asset.ID+"/suggestions", nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	require.Contains(t, body, "QUAYSIDE")
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/suggestions/"+id+"/response", nil, store.PhotoSuggestionResponse{Revision: 1, Response: "accepted", Caption: true})
@@ -54,43 +66,4 @@ func TestPhotoSuggestionRoutes(t *testing.T) {
 	var accepted map[string]any
 	require.NoError(t, json.Unmarshal([]byte(body), &accepted))
 	require.ElementsMatch(t, []string{"$schema", "suggestion_id", "content_version_id", "producer_fingerprint", "kind", "target", "value", "response", "revision", "receipt_id", "created_at", "authored_receipt_id", "authored_receipt"}, slices.Collect(maps.Keys(accepted)))
-}
-
-func TestPhotoSuggestionMatchSurvivesMapProjection(t *testing.T) {
-	t.Parallel()
-	ts, s := newTestServer(t, nil)
-	ctx := t.Context()
-	hash, size, err := s.Blobs.Write(strings.NewReader("synthetic JPEG"))
-	require.NoError(t, err)
-	node, err := s.CreateFile(ctx, s.RootID(), "synthetic.jpg", hash, size, "image/jpeg")
-	require.NoError(t, err)
-	asset, err := s.PhotoAssetForNode(ctx, node.ID)
-	require.NoError(t, err)
-	db, err := store.DefaultSQLiteDriver().Open(s.DBPath, sqlite.OpenOptions{Access: sqlite.ReadWriteExisting, TransactionMode: sqlite.Deferred})
-	require.NoError(t, err)
-	defer func() { require.NoError(t, db.Close()) }()
-	_, err = phototest.SeedSuggestion(ctx, db, node.CurrentVersionID, document.PhotoDescription{Caption: "A harbor.", Tags: []string{}, VisibleText: "QUAYSIDE"})
-	require.NoError(t, err)
-	for _, projection := range []string{"", "map"} {
-		response, body := do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, api.PhotoBrowseRequest{Query: api.QueryPayload(`{"text":"QUAYSIDE"}`), Projection: projection})
-		require.Equal(t, http.StatusOK, response.StatusCode, body)
-		var page struct {
-			Items []struct {
-				AssetID             string `json:"asset_id"`
-				MatchedAISuggestion bool   `json:"matched_ai_suggestion"`
-			} `json:"items"`
-			MapItems []struct {
-				AssetID             string `json:"asset_id"`
-				MatchedAISuggestion bool   `json:"matched_ai_suggestion"`
-			} `json:"map_items"`
-		}
-		require.NoError(t, json.Unmarshal([]byte(body), &page))
-		rows := page.Items
-		if projection == "map" {
-			rows = page.MapItems
-		}
-		require.Len(t, rows, 1)
-		require.Equal(t, asset.ID, rows[0].AssetID)
-		require.True(t, rows[0].MatchedAISuggestion, "projection %q must identify a suggestion-only match", projection)
-	}
 }

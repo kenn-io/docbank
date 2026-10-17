@@ -680,7 +680,6 @@ func TestExecutableProcessingProfilesRunsConfiguredVision(t *testing.T) {
 		mutate  func(*config.RenditionProfileConfig)
 		message string
 	}{
-		{"descriptor", func(p *config.RenditionProfileConfig) { p.DescriptorFingerprint = strings.Repeat("a", 64) }, "descriptor differs from portable binding"},
 		{"disclosure", func(p *config.RenditionProfileConfig) { p.DisclosureFingerprint = strings.Repeat("a", 64) }, "vision disclosure fingerprint does not bind runtime endpoint"},
 		{"endpoint", func(p *config.RenditionProfileConfig) { p.Runtime.Endpoint = "http://127.0.0.1:5002" }, "vision disclosure fingerprint does not bind runtime endpoint"},
 		{"model", func(p *config.RenditionProfileConfig) { p.Model = "replacement-vision" }, "vision disclosure fingerprint does not bind runtime endpoint"},

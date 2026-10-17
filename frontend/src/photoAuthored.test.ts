@@ -759,76 +759,6 @@ it.each(["authored", "suggestion"] as const)(
 );
 
 it.each([
-  ["tags", ["coast", "harbor"], false],
-  ["Dismiss", [], true],
-] as const)(
-  "responds to suggested metadata with %s and reloads its revision",
-  async (label, tags, dismiss) => {
-    const editor = editorWithTargets();
-    const suggestion: api.PhotoSuggestion = {
-      suggestion_id: "suggestion",
-      content_version_id: "version",
-      producer_fingerprint: "producer",
-      kind: "photo_description",
-      target: "jpeg",
-      value: { caption: "A harbor.", tags: ["coast", "harbor"], visible_text: "QUAYSIDE" },
-      response: "pending",
-      revision: 1,
-      created_at: "2026-01-01T00:00:00Z",
-    };
-    editor.suggestions = [suggestion];
-    const fetch = vi
-      .fn()
-      .mockResolvedValueOnce(
-        response({
-          ...suggestion,
-          response: dismiss ? "dismissed" : "accepted",
-          revision: 2,
-          authored_receipt_id: dismiss ? undefined : "authored-receipt",
-        }),
-      )
-      .mockResolvedValueOnce(
-        response({
-          assets: [asset],
-          targets,
-          suggestions: [
-            { ...suggestion, response: dismiss ? "dismissed" : "accepted", revision: 2 },
-          ],
-        }),
-      );
-    vi.stubGlobal("fetch", fetch);
-    const refresh = vi.fn();
-    ui(editor, vi.fn(), refresh);
-    for (const tag of tags) await fireEvent.click(screen.getByRole("checkbox", { name: tag }));
-    await fireEvent.click(
-      screen.getByRole("button", { name: dismiss ? "Dismiss" : "Accept selected" }),
-    );
-    await vi.waitFor(() => expect(editor.suggestions[0]?.revision).toBe(2));
-    expect(fetch.mock.calls[0]![0]).toBe("/api/v1/photos/suggestions/suggestion/response");
-    expect(JSON.parse(fetch.mock.calls[0]![1].body)).toEqual({
-      revision: 1,
-      response: dismiss ? "dismissed" : "accepted",
-      caption: false,
-      tags: [...tags],
-      ...(!dismiss
-        ? {
-            targets: targets.map((target) => ({
-              asset_id: target.asset_id,
-              asset_revision: target.asset_revision,
-              file_id: target.file_id,
-              revision: target.revision,
-              node_revision: target.node_revision,
-            })),
-          }
-        : {}),
-    });
-    await vi.waitFor(() => expect(refresh).toHaveBeenCalledOnce());
-    expect(editor.receiptID).toBe(dismiss ? "" : "authored-receipt");
-    editor.dispose();
-  },
-);
-
-it.each([
   "selection",
   "busy",
   "loading",
@@ -1155,7 +1085,8 @@ it.each(["accept", "dismiss"])(
         }),
       );
     vi.stubGlobal("fetch", fetch);
-    ui(editor);
+    const refresh = vi.fn();
+    ui(editor, vi.fn(), refresh);
     await fireEvent.click(screen.getByRole("checkbox", { name: "A harbor." }));
     await fireEvent.click(screen.getByRole("button", { name: "Accept selected" }));
     await vi.waitFor(() => expect(editor.suggestions[0]?.revision).toBe(2));
@@ -1170,9 +1101,25 @@ it.each(["accept", "dismiss"])(
     expect((screen.getByRole("textbox", { name: "Caption" }) as HTMLTextAreaElement).value).toBe(
       "A harbor.",
     );
-    expect(JSON.parse(fetch.mock.calls[2]![1].body).response).toBe(
-      action === "accept" ? "accepted" : "dismissed",
-    );
+    expect(fetch.mock.calls[2]![0]).toBe("/api/v1/photos/suggestions/suggestion/response");
+    expect(JSON.parse(fetch.mock.calls[2]![1].body)).toEqual({
+      revision: 2,
+      response: action === "accept" ? "accepted" : "dismissed",
+      caption: false,
+      tags: action === "accept" ? ["coast"] : [],
+      ...(action === "accept"
+        ? {
+            targets: [captionTargets[1]!].map((target) => ({
+              asset_id: target.asset_id,
+              asset_revision: target.asset_revision,
+              file_id: target.file_id,
+              revision: target.revision,
+              node_revision: target.node_revision,
+            })),
+          }
+        : {}),
+    });
+    await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(2));
     if (action === "dismiss")
       expect(screen.queryByRole("region", { name: "Suggested photo metadata" })).toBeNull();
     else {

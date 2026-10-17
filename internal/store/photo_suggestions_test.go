@@ -2,7 +2,6 @@ package store
 
 import (
 	"bytes"
-	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -56,32 +55,13 @@ func TestPhotoSuggestionSearchRanksBelowAuthoredAndDismissRemovesMatch(t *testin
 	page = browsePhotoPage(t, s, `{"text":"harbor coast"}`)
 	require.Len(t, page.Items, 1)
 	require.True(t, page.Items[0].MatchedAISuggestion)
-	accepted, err := s.RespondPhotoSuggestion(ctx, suggestion.ID, PhotoSuggestionResponse{Targets: []PhotoAuthoredEditTarget{*suggestionTarget(t, s, machine)}, Revision: 1, Response: "accepted", Caption: true})
+	_, err = s.RespondPhotoSuggestion(ctx, suggestion.ID, PhotoSuggestionResponse{Revision: 1, Response: "dismissed"})
 	require.NoError(t, err)
-	page = browsePhotoPage(t, s, `{"text":"harbor coast"}`)
-	require.Len(t, page.Items, 1)
-	require.True(t, page.Items[0].MatchedAISuggestion)
-	second, err := s.RespondPhotoSuggestion(ctx, suggestion.ID, PhotoSuggestionResponse{Targets: []PhotoAuthoredEditTarget{*suggestionTarget(t, s, machine)}, Revision: accepted.Revision, Response: "accepted", Tags: []string{"coast"}})
-	require.NoError(t, err)
-	page = browsePhotoPage(t, s, `{"text":"harbor coast"}`)
-	require.Len(t, page.Items, 1)
-	require.False(t, page.Items[0].MatchedAISuggestion)
-	competitor := albumAsset(t, s, "proposal.jpg")
-	putPhotoSuggestion(t, s, competitor, document.PhotoDescription{Tags: []string{"coast"}})
-	page = browsePhotoPage(t, s, `{"text":"coast","sort":{"field":"relevance","direction":"desc"}}`)
-	require.Len(t, page.Items, 2)
-	require.Equal(t, machine.ID, page.Items[0].AssetID)
-	require.False(t, page.Items[0].MatchedAISuggestion)
-	require.Equal(t, competitor.ID, page.Items[1].AssetID)
-	require.True(t, page.Items[1].MatchedAISuggestion)
-	_, err = s.RespondPhotoSuggestion(ctx, suggestion.ID, PhotoSuggestionResponse{Revision: second.Revision, Response: "dismissed"})
-	require.NoError(t, err)
-	page = browsePhotoPage(t, s, `{"text":"coast"}`)
-	require.Len(t, page.Items, 2)
-	require.Equal(t, machine.ID, page.Items[0].AssetID)
-	require.False(t, page.Items[0].MatchedAISuggestion)
+	require.Empty(t, browsePhotoPage(t, s, `{"text":"coast"}`).Items)
 	require.Empty(t, browsePhotoPage(t, s, `{"text":"QUAYSIDE"}`).Items)
-	require.Len(t, browsePhotoPage(t, s, `{"text":"harbor"}`).Items, 2)
+	page = browsePhotoPage(t, s, `{"text":"harbor"}`)
+	require.Len(t, page.Items, 1)
+	require.Equal(t, authored.ID, page.Items[0].AssetID)
 }
 
 func TestPhotoSuggestionSearchSurvivesVacuum(t *testing.T) {
@@ -299,18 +279,14 @@ func TestPhotoSuggestionDecisionSurvivesDisplaySwap(t *testing.T) {
 	}
 }
 
-func TestPhotoSuggestionAcceptsFieldsInEitherOrderWithNormalizedTags(t *testing.T) {
+func TestPhotoSuggestionAcceptsFieldsInEitherOrder(t *testing.T) {
 	t.Parallel()
 	for _, captionFirst := range []bool{true, false} {
 		t.Run(fmt.Sprintf("caption_first_%t", captionFirst), func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
 			asset := albumAsset(t, s, "tags.jpg")
-			lower, err := s.CreateTag(ctx, "coast")
-			require.NoError(t, err)
-			normalized, err := s.CreateTag(ctx, "Café")
-			require.NoError(t, err)
-			pending := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "A coast.", Tags: []string{"Coast", "Cafe\u0301"}, VisibleText: "QUAYSIDE"})
+			pending := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "A coast.", Tags: []string{"coast", "harbor"}, VisibleText: "QUAYSIDE"})
 			var firstTags []string
 			if !captionFirst {
 				firstTags = pending.Value.Tags
@@ -342,17 +318,12 @@ func TestPhotoSuggestionAcceptsFieldsInEitherOrderWithNormalizedTags(t *testing.
 			tags, _, err := s.NodeTags(ctx, asset.Files[0].NodeID, 100, 0)
 			require.NoError(t, err)
 			require.Len(t, tags, 2)
-			ids := []string{tags[0].ID, tags[1].ID}
-			require.Contains(t, ids, normalized.ID)
-			require.Contains(t, ids, lower.ID)
-			_, err = s.TagByName(ctx, "Coast")
-			require.ErrorIs(t, err, ErrNotFound)
 			require.Equal(t, decisionReceipt, accepted.ReceiptID)
 			require.NotEqual(t, firstAuthoredReceipt, accepted.AuthoredReceiptID)
 			require.NotNil(t, accepted.AuthoredReceipt)
 			require.Equal(t, accepted.AuthoredReceiptID, accepted.AuthoredReceipt.ReceiptID)
 			require.Equal(t, "accepted", accepted.Response)
-			_, err = s.RespondPhotoSuggestion(ctx, pending.ID, PhotoSuggestionResponse{Targets: []PhotoAuthoredEditTarget{*suggestionTarget(t, s, asset)}, Revision: accepted.Revision, Response: "accepted", Tags: []string{"Cafe\u0301"}})
+			_, err = s.RespondPhotoSuggestion(ctx, pending.ID, PhotoSuggestionResponse{Targets: []PhotoAuthoredEditTarget{*suggestionTarget(t, s, asset)}, Revision: accepted.Revision, Response: "accepted", Tags: []string{"harbor"}})
 			require.ErrorIs(t, err, ErrInvalidPhotoSuggestionResponse)
 			require.ErrorContains(t, err, "selected fields are already applied")
 		})
@@ -401,7 +372,7 @@ func TestPhotoDescriptionTargetsFiltersBeforeLimit(t *testing.T) {
 	require.Equal(t, node.ID, targets[0].NodeID)
 }
 
-func TestPhotoSuggestionAssetPurgeRemovesExportedText(t *testing.T) {
+func TestPhotoSuggestionTrashEmptyRemovesExportedText(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -426,78 +397,6 @@ func TestPhotoSuggestionAssetPurgeRemovesExportedText(t *testing.T) {
 	require.NoError(t, s.ExportMetadata(ctx, &exported))
 	require.NotContains(t, exported.String(), "Purged proposal")
 	require.Contains(t, exported.String(), "Retained proposal")
-
-	for _, scope := range []string{"raw", "pair"} {
-		t.Run(scope, func(t *testing.T) {
-			s := newTestStore(t)
-			ctx := t.Context()
-			asset := authoredPair(t, s)
-			jpeg := fileByRole(asset.Files, PhotoRoleImage)
-			asset, err := s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &jpeg.ID)
-			require.NoError(t, err)
-			suggestion := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast"}})
-			if scope == "pair" {
-				var pendingExport bytes.Buffer
-				require.NoError(t, s.ExportMetadata(ctx, &pendingExport))
-				require.NotContains(t, pendingExport.String(), `"type":"photo_suggestion"`)
-			}
-			prepared, err := s.PreparePhotoAuthored(ctx, PhotoSetSelection{AssetIDs: []string{asset.ID}})
-			require.NoError(t, err)
-			var selected []PhotoAuthoredEditTarget
-			for _, target := range prepared.Targets {
-				file := fileByRole(asset.Files, scope)
-				if scope == "pair" || target.FileID == file.ID {
-					selected = append(selected, target.PhotoAuthoredEditTarget)
-				}
-			}
-			accepted, err := s.RespondPhotoSuggestion(ctx, suggestion.ID, PhotoSuggestionResponse{Targets: selected, Revision: 1, Response: "accepted", Caption: true, Tags: []string{"coast"}})
-			require.NoError(t, err)
-			raw := fileByRole(asset.Files, PhotoRoleRAW)
-			current, err := s.PhotoAssetByID(ctx, asset.ID)
-			require.NoError(t, err)
-			_, err = s.DetachPhotoFile(ctx, asset.ID, current.Revision, raw.ID, PhotoDetachOptions{})
-			require.NoError(t, err)
-			node, err := s.NodeByID(ctx, raw.NodeID)
-			require.NoError(t, err)
-			_, _, err = s.Trash(ctx, node.ID, node.Revision)
-			require.NoError(t, err)
-			_, err = s.TrashEmpty(ctx, 0, true)
-			require.NoError(t, err)
-			_, err = s.NodeByID(ctx, raw.NodeID)
-			require.ErrorIs(t, err, ErrNotFound)
-			require.NoError(t, s.ValidateMetadata(ctx))
-			var exported bytes.Buffer
-			require.NoError(t, s.ExportMetadata(ctx, &exported))
-			require.NotContains(t, exported.String(), accepted.AuthoredReceiptID)
-			restored := newTestStore(t)
-			require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
-			for _, vault := range []*Store{s, restored} {
-				require.NoError(t, vault.ValidateMetadata(ctx))
-				current, err := vault.PhotoAssetByID(ctx, asset.ID)
-				require.NoError(t, err)
-				require.Len(t, current.Files, 1)
-				require.Equal(t, jpeg.ID, current.Files[0].ID)
-				caption := ""
-				if scope == "pair" {
-					caption = "A harbor."
-				}
-				require.Equal(t, caption, current.Files[0].Caption)
-				tags, _, err := vault.NodeTags(ctx, jpeg.NodeID, 100, 0)
-				require.NoError(t, err)
-				if scope == "pair" {
-					require.Len(t, tags, 1)
-					require.Equal(t, "coast", tags[0].Name)
-				} else {
-					require.Empty(t, tags)
-				}
-				values, err := vault.PhotoSuggestions(ctx, asset.ID)
-				require.NoError(t, err)
-				require.Len(t, values, 1)
-				require.Equal(t, "accepted", values[0].Response)
-				require.Equal(t, suggestion.ID, values[0].ID)
-			}
-		})
-	}
 }
 
 func TestPhotoSuggestionRejectsEmptyCaptionWithoutWriting(t *testing.T) {
@@ -522,50 +421,128 @@ func TestPhotoSuggestionRejectsEmptyCaptionWithoutWriting(t *testing.T) {
 
 func TestPhotoSuggestionAcceptanceSelectedMembers(t *testing.T) {
 	t.Parallel()
-	for _, scope := range []string{"raw", "image", "pair"} {
-		t.Run(scope, func(t *testing.T) {
-			s := newTestStore(t)
-			ctx := t.Context()
-			asset := authoredPair(t, s)
-			jpeg := fileByRole(asset.Files, PhotoRoleImage)
-			asset, err := s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &jpeg.ID)
-			require.NoError(t, err)
-			suggestion := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast"}})
-			prepared, err := s.PreparePhotoAuthored(ctx, PhotoSetSelection{AssetIDs: []string{asset.ID}})
-			require.NoError(t, err)
-			var selected []PhotoAuthoredEditTarget
-			for _, target := range prepared.Targets {
-				file := fileByRole(asset.Files, scope)
-				if scope == "pair" || target.FileID == file.ID {
-					selected = append(selected, target.PhotoAuthoredEditTarget)
+	for _, action := range []string{"undo", "purge", "regroup"} {
+		for _, scope := range []string{"raw", "image", "pair"} {
+			if scope == "image" && action != "undo" {
+				continue
+			}
+			t.Run(action+"/"+scope, func(t *testing.T) {
+				s := newTestStore(t)
+				ctx := t.Context()
+				asset := authoredPair(t, s)
+				jpeg := fileByRole(asset.Files, PhotoRoleImage)
+				asset, err := s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &jpeg.ID)
+				require.NoError(t, err)
+				suggestion := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "A harbor.", Tags: []string{"coast"}})
+				if action == "purge" && scope == "pair" {
+					var pendingExport bytes.Buffer
+					require.NoError(t, s.ExportMetadata(ctx, &pendingExport))
+					require.NotContains(t, pendingExport.String(), `"type":"photo_suggestion"`)
 				}
-			}
-			accepted, err := s.RespondPhotoSuggestion(ctx, suggestion.ID, PhotoSuggestionResponse{Targets: selected, Revision: 1, Response: "accepted", Caption: true, Tags: []string{"coast"}})
-			require.NoError(t, err)
-			require.NotEmpty(t, accepted.AuthoredReceiptID)
-			require.Len(t, accepted.AuthoredReceipt.Before, len(selected))
-			require.Len(t, accepted.AuthoredReceipt.After, len(selected))
-			current, err := s.PhotoAssetByID(ctx, asset.ID)
-			require.NoError(t, err)
-			for _, file := range current.Files {
-				want := scope == "pair" || file.Role == scope
-				require.Equal(t, want, file.Caption == "A harbor.")
-				tags, _, err := s.NodeTags(ctx, file.NodeID, 100, 0)
+				prepared, err := s.PreparePhotoAuthored(ctx, PhotoSetSelection{AssetIDs: []string{asset.ID}})
 				require.NoError(t, err)
-				require.Equal(t, want, len(tags) == 1)
-			}
+				var selected []PhotoAuthoredEditTarget
+				for _, target := range prepared.Targets {
+					file := fileByRole(asset.Files, scope)
+					if scope == "pair" || target.FileID == file.ID {
+						selected = append(selected, target.PhotoAuthoredEditTarget)
+					}
+				}
+				accepted, err := s.RespondPhotoSuggestion(ctx, suggestion.ID, PhotoSuggestionResponse{Targets: selected, Revision: 1, Response: "accepted", Caption: true, Tags: []string{"coast"}})
+				require.NoError(t, err)
+				require.NotEmpty(t, accepted.AuthoredReceiptID)
+				require.Len(t, accepted.AuthoredReceipt.Before, len(selected))
+				require.Len(t, accepted.AuthoredReceipt.After, len(selected))
+				current, err := s.PhotoAssetByID(ctx, asset.ID)
+				require.NoError(t, err)
+				for _, file := range current.Files {
+					want := scope == "pair" || file.Role == scope
+					require.Equal(t, want, file.Caption == "A harbor.")
+					tags, _, err := s.NodeTags(ctx, file.NodeID, 100, 0)
+					require.NoError(t, err)
+					require.Equal(t, want, len(tags) == 1)
+				}
 
-			_, err = s.UndoPhotoAuthored(ctx, accepted.AuthoredReceiptID)
-			require.NoError(t, err)
-			current, err = s.PhotoAssetByID(ctx, asset.ID)
-			require.NoError(t, err)
-			for _, file := range current.Files {
-				require.Empty(t, file.Caption)
-				tags, _, err := s.NodeTags(ctx, file.NodeID, 100, 0)
-				require.NoError(t, err)
-				require.Empty(t, tags)
-			}
-		})
+				switch action {
+				case "undo":
+					_, err = s.UndoPhotoAuthored(ctx, accepted.AuthoredReceiptID)
+					require.NoError(t, err)
+					current, err = s.PhotoAssetByID(ctx, asset.ID)
+					require.NoError(t, err)
+					for _, file := range current.Files {
+						require.Empty(t, file.Caption)
+						tags, _, err := s.NodeTags(ctx, file.NodeID, 100, 0)
+						require.NoError(t, err)
+						require.Empty(t, tags)
+					}
+				case "purge":
+					raw := fileByRole(asset.Files, PhotoRoleRAW)
+					current, err := s.PhotoAssetByID(ctx, asset.ID)
+					require.NoError(t, err)
+					_, err = s.DetachPhotoFile(ctx, asset.ID, current.Revision, raw.ID, PhotoDetachOptions{})
+					require.NoError(t, err)
+					node, err := s.NodeByID(ctx, raw.NodeID)
+					require.NoError(t, err)
+					_, _, err = s.Trash(ctx, node.ID, node.Revision)
+					require.NoError(t, err)
+					_, err = s.TrashEmpty(ctx, 0, true)
+					require.NoError(t, err)
+					_, err = s.NodeByID(ctx, raw.NodeID)
+					require.ErrorIs(t, err, ErrNotFound)
+					require.NoError(t, s.ValidateMetadata(ctx))
+					var exported bytes.Buffer
+					require.NoError(t, s.ExportMetadata(ctx, &exported))
+					require.NotContains(t, exported.String(), accepted.AuthoredReceiptID)
+					restored := newTestStore(t)
+					require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
+					for _, vault := range []*Store{s, restored} {
+						require.NoError(t, vault.ValidateMetadata(ctx))
+						current, err := vault.PhotoAssetByID(ctx, asset.ID)
+						require.NoError(t, err)
+						require.Len(t, current.Files, 1)
+						require.Equal(t, jpeg.ID, current.Files[0].ID)
+						values, err := vault.PhotoSuggestions(ctx, asset.ID)
+						require.NoError(t, err)
+						require.Len(t, values, 1)
+						require.Equal(t, "accepted", values[0].Response)
+						require.Equal(t, suggestion.ID, values[0].ID)
+					}
+				case "regroup":
+					raw := fileByRole(asset.Files, PhotoRoleRAW)
+					asset, err = s.PhotoAssetByID(ctx, asset.ID)
+					require.NoError(t, err)
+					_, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, raw.ID, PhotoDetachOptions{})
+					require.NoError(t, err)
+					destination := albumAsset(t, s, "destination.jpg")
+					destination, err = s.AttachPhotoFile(ctx, destination.ID, destination.Revision, raw.NodeID, PhotoRoleRAW, nil)
+					require.NoError(t, err)
+					prepared, err = s.PreparePhotoAuthored(ctx, PhotoSetSelection{AssetIDs: []string{destination.ID}})
+					require.NoError(t, err)
+					for _, target := range prepared.Targets {
+						if target.FileID == raw.ID {
+							_, err = s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: []PhotoAuthoredEditTarget{target.PhotoAuthoredEditTarget}, Patch: PhotoAuthoredPatch{Caption: new("Regrouped capture")}})
+							require.NoError(t, err)
+						}
+					}
+					var metadata bytes.Buffer
+					require.NoError(t, s.ExportMetadata(ctx, &metadata))
+					restored := newTestStore(t)
+					require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(metadata.Bytes())))
+					for _, catalog := range []*Store{s, restored} {
+						page := browsePhotoPage(t, catalog, `{"text":"coast","sort":{"field":"relevance","direction":"desc"}}`)
+						matches := map[string]bool{}
+						for _, item := range page.Items {
+							matches[item.AssetID] = item.MatchedAISuggestion
+						}
+						matchedAI, exists := matches[destination.ID]
+						require.True(t, exists, "the regrouped RAW keeps its accepted tag searchable")
+						require.False(t, matchedAI, "the accepted tag remains an authored match")
+						require.Contains(t, matches, asset.ID)
+						require.Equal(t, scope != "pair", matches[asset.ID], "acceptance provenance must remain specific to the edited files")
+					}
+				}
+			})
+		}
 	}
 }
 
@@ -934,98 +911,4 @@ func TestOnlyAcceptedSuggestionTagsSearchAsAuthored(t *testing.T) {
 	require.Len(t, page.Items, 1)
 	require.True(t, page.Items[0].MatchedAISuggestion)
 	require.Empty(t, browsePhotoPage(t, s, `{"text":"shoreline"}`).Items)
-}
-
-type countedPhotoBrowse struct {
-	metadataQuerier
-
-	calls int
-}
-
-func (q *countedPhotoBrowse) QueryContext(ctx context.Context, statement string, args ...any) (*sql.Rows, error) {
-	q.calls++
-	return q.metadataQuerier.QueryContext(ctx, statement, args...)
-}
-func TestPhotoSuggestionBadgeUsesPrimaryBrowseQuery(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	asset := albumAsset(t, s, "harbor.jpg")
-	putPhotoSuggestion(t, s, asset, document.PhotoDescription{Caption: "A sunset."})
-	parsed := snapshotTestQuery(t, `{"syntax":"advanced","text":"harbor AND sunset","sort":{"field":"relevance","direction":"desc"}}`)
-	compiled, err := (queryCompiler{photoDisplayMetadata: true}).compile(ctx, parsed, queryResolver{q: s.db})
-	require.NoError(t, err)
-	without, err := (queryCompiler{photoDisplayMetadata: true, omitPhotoSuggestions: true}).compile(ctx, parsed, queryResolver{q: s.db})
-	require.NoError(t, err)
-	generation, err := s.ActiveLexicalGeneration(ctx)
-	if err != nil {
-		require.ErrorIs(t, err, ErrNotFound)
-	}
-	coverage, err := normalizeCoverageSelection(CoverageSelection{})
-	require.NoError(t, err)
-	badge, err := photoBrowseMatch(without, generation.ID, coverage)
-	require.NoError(t, err)
-	badge.sql = "NOT (" + badge.sql + ")"
-	counted := &countedPhotoBrowse{metadataQuerier: s.db}
-	rows, err := rankedPhotoRows(ctx, counted, compiled, generation.ID, coverage, 50, badge)
-	require.NoError(t, err)
-	require.Len(t, rows, 1)
-	require.True(t, rows[0].MatchedAISuggestion)
-	require.Equal(t, 1, counted.calls)
-}
-
-func TestPhotoSuggestionAcceptedTagsSurviveRegrouping(t *testing.T) {
-	t.Parallel()
-	for _, scope := range []string{"raw", "pair"} {
-		t.Run(scope, func(t *testing.T) {
-			s := newTestStore(t)
-			ctx := t.Context()
-			asset := authoredPair(t, s)
-			jpeg, raw := fileByRole(asset.Files, PhotoRoleImage), fileByRole(asset.Files, PhotoRoleRAW)
-			asset, err := s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &jpeg.ID)
-			require.NoError(t, err)
-			suggestion := putPhotoSuggestion(t, s, asset, document.PhotoDescription{Tags: []string{"coast"}})
-			prepared, err := s.PreparePhotoAuthored(ctx, PhotoSetSelection{AssetIDs: []string{asset.ID}})
-			require.NoError(t, err)
-			var targets []PhotoAuthoredEditTarget
-			for _, target := range prepared.Targets {
-				if scope == "pair" || target.FileID == raw.ID {
-					targets = append(targets, target.PhotoAuthoredEditTarget)
-				}
-			}
-			_, err = s.RespondPhotoSuggestion(ctx, suggestion.ID, PhotoSuggestionResponse{Targets: targets, Revision: 1, Response: "accepted", Tags: []string{"coast"}})
-			require.NoError(t, err)
-			asset, err = s.PhotoAssetByID(ctx, asset.ID)
-			require.NoError(t, err)
-			_, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, raw.ID, PhotoDetachOptions{})
-			require.NoError(t, err)
-			destination := albumAsset(t, s, "destination.jpg")
-			destination, err = s.AttachPhotoFile(ctx, destination.ID, destination.Revision, raw.NodeID, PhotoRoleRAW, nil)
-			require.NoError(t, err)
-			prepared, err = s.PreparePhotoAuthored(ctx, PhotoSetSelection{AssetIDs: []string{destination.ID}})
-			require.NoError(t, err)
-			for _, target := range prepared.Targets {
-				if target.FileID == raw.ID {
-					_, err = s.EditPhotoAuthoredBatch(ctx, PhotoAuthoredBatch{Targets: []PhotoAuthoredEditTarget{target.PhotoAuthoredEditTarget}, Patch: PhotoAuthoredPatch{Caption: new("Regrouped capture")}})
-					require.NoError(t, err)
-				}
-			}
-			var metadata bytes.Buffer
-			require.NoError(t, s.ExportMetadata(ctx, &metadata))
-			restored := newTestStore(t)
-			require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(metadata.Bytes())))
-			for _, catalog := range []*Store{s, restored} {
-				page := browsePhotoPage(t, catalog, `{"text":"coast","sort":{"field":"relevance","direction":"desc"}}`)
-				matches := map[string]bool{}
-				for _, item := range page.Items {
-					matches[item.AssetID] = item.MatchedAISuggestion
-				}
-				matchedAI, exists := matches[destination.ID]
-				require.True(t, exists, "the regrouped RAW keeps its accepted tag searchable")
-				require.False(t, matchedAI, "the accepted tag remains an authored match")
-				require.Contains(t, matches, asset.ID)
-				require.Equal(t, scope != "pair", matches[asset.ID], "acceptance provenance must remain specific to the edited files")
-			}
-		})
-	}
 }

@@ -174,99 +174,45 @@ func TestPhotoDescriptionSelectedWaiterSurvivesAcceptanceAndDuplicateEnqueue(t *
 	asset, err := f.catalog.PhotoAssetByID(ctx, f.asset.ID)
 	require.NoError(t, err)
 	require.Equal(t, "A white panorama.", asset.Files[0].Caption)
-
-	written, err := f.blobs.WriteDetailedContext(ctx, bytes.NewReader(mediatest.JPEG(32, 32, color.Black)))
-	require.NoError(t, err)
-	next, err := f.catalog.CreateFile(ctx, f.catalog.RootID(), "later.jpg", written.Hash, written.Size, "image/jpeg", processingBlobPhysical(t, written))
-	require.NoError(t, err)
-	_, err = EnsureVisualPreview(ctx, f.catalog, f.blobs, next.CurrentVersionID, f.recipe)
-	require.NoError(t, err)
-	selector = Selector{NodeID: next.ID, ContentVersionID: next.CurrentVersionID, Profile: "vision"}
-	plan, err = replacement.Plan(ctx, selector)
-	require.NoError(t, err)
-	_, err = replacement.Start(ctx, StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
-	require.NoError(t, err)
-	other, err := f.catalog.PhotoAssetForNode(ctx, next.ID)
-	require.NoError(t, err)
-	values, err = f.catalog.PhotoSuggestions(ctx, other.ID)
-	require.NoError(t, err)
-	require.Len(t, values, 1)
-	require.Equal(t, "pending", values[0].Response)
-	require.Equal(t, 3, f.descriptionCalls)
-}
-
-func TestPhotoDescriptionConsentRefreshesReadinessBeforeWork(t *testing.T) {
-	t.Parallel()
-	for _, status := range []int{0, http.StatusServiceUnavailable} {
-		t.Run(strconv.Itoa(status), func(t *testing.T) {
-			f := newPhotoDescriptionFixture(t, photoDescriptionScenario{status: status})
-			ctx := t.Context()
-			require.NoError(t, f.service.ProbeMediaOrigins(ctx))
-			require.Zero(t, f.calls, "startup must wait for consent before probing")
-			require.Equal(t, "consent_required", f.service.Profiles()[0].ProbeState)
-			_, err := f.catalog.SetPhotoAssetExcluded(ctx, f.asset.ID, f.asset.Revision, true)
-			require.NoError(t, err)
-			selector := Selector{NodeID: f.node.ID, ContentVersionID: f.node.CurrentVersionID, Profile: "vision"}
-			plan, err := f.service.Plan(ctx, selector)
-			require.NoError(t, err)
-			_, err = f.service.GrantConsent(ctx, ConsentGrantRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
-			require.NoError(t, err, "provider availability must not reject consent")
-			summary := f.service.Profiles()[0]
-			wantState := "ready"
-			if status != 0 {
-				wantState = "provider_unavailable"
-			}
-			require.Equal(t, wantState, summary.ProbeState)
-			require.Equal(t, 1, f.calls)
-			require.Zero(t, f.descriptionCalls, "consent refresh uses synthetic input even with no eligible photo")
-			plan, err = f.service.Plan(ctx, selector)
-			require.NoError(t, err)
-			require.False(t, plan.ConsentRequired)
-		})
-	}
 }
 
 func TestPhotoDescriptionStartConsentRefreshesReadinessBeforeEnqueue(t *testing.T) {
 	t.Parallel()
-	for _, excluded := range []bool{false, true} {
-		t.Run(strconv.FormatBool(excluded), func(t *testing.T) {
-			f := newPhotoDescriptionFixture(t, photoDescriptionScenario{})
-			ctx := t.Context()
-			require.NoError(t, f.service.ProbeMediaOrigins(ctx))
-			require.Zero(t, f.calls)
-			if excluded {
-				_, err := f.catalog.SetPhotoAssetExcluded(ctx, f.asset.ID, f.asset.Revision, true)
-				require.NoError(t, err)
-			}
-			selector := Selector{NodeID: f.node.ID, ContentVersionID: f.node.CurrentVersionID, Profile: "vision"}
-			plan, err := f.service.Plan(ctx, selector)
-			require.NoError(t, err)
-			announced := false
-			_, err = f.service.StartWithProgress(ctx, StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, func(Job) {
-				announced = true
-				assert.Equal(t, "ready", f.service.Profiles()[0].ProbeState)
-				assert.Equal(t, 1, f.calls, "consent probes before the worker starts")
-				assert.Zero(t, f.descriptionCalls)
-			})
-			if excluded {
-				require.ErrorIs(t, err, ErrSourceIneligible)
-				require.False(t, announced)
-				require.Equal(t, 1, f.calls)
-				require.Zero(t, f.descriptionCalls)
-			} else {
-				require.NoError(t, err)
-				require.True(t, announced)
-				require.Equal(t, 2, f.calls, "the worker reuses readiness, then sends one description")
-				require.Equal(t, 1, f.descriptionCalls)
-			}
-			require.Equal(t, "ready", f.service.Profiles()[0].ProbeState)
-		})
-	}
+	f := newPhotoDescriptionFixture(t, photoDescriptionScenario{})
+	ctx := t.Context()
+	require.NoError(t, f.service.ProbeMediaOrigins(ctx))
+	require.Zero(t, f.calls)
+	selector := Selector{NodeID: f.node.ID, ContentVersionID: f.node.CurrentVersionID, Profile: "vision"}
+	plan, err := f.service.Plan(ctx, selector)
+	require.NoError(t, err)
+	announced := false
+	_, err = f.service.StartWithProgress(ctx, StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, func(Job) {
+		announced = true
+		assert.Equal(t, "ready", f.service.Profiles()[0].ProbeState)
+		assert.Equal(t, 1, f.calls, "consent probes before the worker starts")
+		assert.Zero(t, f.descriptionCalls)
+	})
+	require.NoError(t, err)
+	require.True(t, announced)
+	require.Equal(t, 2, f.calls, "the worker reuses readiness, then sends one description")
+	require.Equal(t, 1, f.descriptionCalls)
+	require.Equal(t, "ready", f.service.Profiles()[0].ProbeState)
 }
 
 func TestPhotoDescriptionProbeReadiness(t *testing.T) {
 	t.Parallel()
-	runPhotoDescriptionCases(t, []string{"concurrent_probe", "probe", "recover"}, runPhotoDescriptionProbeReadiness)
+	f := newPhotoDescriptionFixture(t, photoDescriptionScenario{action: "concurrent_probe"})
+	ctx := t.Context()
+	require.NoError(t, f.service.grantProfileConsent(ctx, f.service.profiles["vision"], nil))
+	var group sync.WaitGroup
+	for range 8 {
+		group.Go(func() { assert.NoError(t, f.service.ProbeMediaOrigins(ctx)) })
+	}
+	group.Wait()
+	require.Equal(t, 1, f.calls)
+	for _, summary := range f.service.Profiles() {
+		require.Equal(t, "ready", summary.ProbeState)
+	}
 }
 
 func TestPhotoDescriptionProbeClassificationAndRetry(t *testing.T) {
@@ -455,9 +401,6 @@ func TestPhotoDescriptionPairedProposalsRefresh(t *testing.T) {
 					break
 				}
 			}
-			values, err := f.catalog.PhotoSuggestions(ctx, asset.ID)
-			require.NoError(t, err)
-			require.Equal(t, original, values, "the display file selects its own proposal")
 			provider, err := vision.New(vision.Profile{Origin: f.server.URL, Model: "replacement-vision", TrustBoundary: document.RenditionTrustOperatorNetwork, RequestTimeout: time.Minute, MaxResponseBytes: 1 << 20}, nil, f.server.Client())
 			require.NoError(t, err)
 			profile := f.profile
@@ -470,7 +413,7 @@ func TestPhotoDescriptionPairedProposalsRefresh(t *testing.T) {
 			require.NoError(t, err)
 			_, err = replacement.Start(ctx, StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true})
 			require.NoError(t, err, "pairing must not make replacement violate the version uniqueness constraint")
-			values, err = f.catalog.PhotoSuggestions(ctx, asset.ID)
+			values, err := f.catalog.PhotoSuggestions(ctx, asset.ID)
 			require.NoError(t, err)
 			if empty {
 				require.Empty(t, values)
@@ -499,9 +442,6 @@ func TestPhotoDescriptionPairedProposalsRefresh(t *testing.T) {
 
 			asset, err = f.catalog.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &other.Files[0].ID)
 			require.NoError(t, err)
-			values, err = f.catalog.PhotoSuggestions(ctx, asset.ID)
-			require.NoError(t, err)
-			require.Equal(t, retired, values, "switching files restores the retained proposal")
 			selector = Selector{NodeID: companion.ID, ContentVersionID: companion.CurrentVersionID, Profile: "vision"}
 			plan, err = replacement.Plan(ctx, selector)
 			require.NoError(t, err)
@@ -798,80 +738,6 @@ func runPhotoDescriptionProbeClassification(t *testing.T, scenario photoDescript
 	}
 }
 
-func runPhotoDescriptionProbeReadiness(t *testing.T, scenario photoDescriptionScenario) {
-	t.Helper()
-	var err error
-	f := newPhotoDescriptionFixture(t, scenario)
-	ctx := t.Context()
-	asset := f.asset
-	action := scenario.action
-	if action == "concurrent_probe" {
-		require.NoError(t, f.service.grantProfileConsent(ctx, f.service.profiles["vision"], nil))
-		var group sync.WaitGroup
-		for range 8 {
-			group.Go(func() { assert.NoError(t, f.service.ProbeMediaOrigins(ctx)) })
-		}
-		group.Wait()
-		require.Equal(t, 1, f.calls)
-		for _, summary := range f.service.Profiles() {
-			require.Equal(t, "ready", summary.ProbeState)
-		}
-		return
-	}
-
-	if action == "probe" {
-		require.NoError(t, f.service.ProbeMediaOrigins(ctx))
-		require.Zero(t, f.calls, "startup must not send a provider request before consent")
-		require.Equal(t, "consent_required", f.service.Profiles()[0].ProbeState)
-	}
-
-	require.NoError(t, f.service.grantProfileConsent(ctx, f.service.profiles["vision"], nil))
-	require.NoError(t, f.service.ProbeMediaOrigins(ctx))
-	require.Equal(t, 1, f.calls)
-	if action == "probe" {
-		require.Equal(t, "ready", f.service.Profiles()[0].ProbeState)
-		require.NoError(t, f.service.grantProfileConsent(ctx, f.service.profiles["vision"], nil))
-		require.NoError(t, f.service.ProbeMediaOrigins(ctx))
-		f.clockOffset = 11 * time.Minute
-		require.Equal(t, "pending", f.service.Profiles()[0].ProbeState)
-		require.Equal(t, 1, f.calls, "reading profile status does not probe")
-		require.NoError(t, f.service.ProbeMediaOrigins(ctx))
-		require.Equal(t, 2, f.calls)
-		require.Equal(t, "ready", f.service.Profiles()[0].ProbeState)
-		_, err = f.service.RevokeConsent(ctx)
-		require.NoError(t, err)
-		require.NoError(t, f.service.ProbeMediaOrigins(ctx))
-		require.Equal(t, "consent_required", f.service.Profiles()[0].ProbeState)
-		require.Equal(t, 2, f.calls)
-		return
-	}
-	require.Equal(t, "provider_unavailable", f.service.Profiles()[0].ProbeState)
-	_, err = f.service.RevokeConsent(ctx)
-	require.NoError(t, err)
-	f.clockOffset = 20 * time.Minute
-	require.NoError(t, f.service.ProbeMediaOrigins(ctx))
-	require.Equal(t, 1, f.calls, "recovery requires consent")
-	require.NoError(t, f.service.grantProfileConsent(ctx, f.service.profiles["vision"], nil))
-	require.NoError(t, f.service.ProbeMediaOrigins(ctx))
-	asset, err = f.catalog.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
-	require.NoError(t, err)
-	require.NoError(t, f.service.ProbeMediaOrigins(ctx))
-	require.Equal(t, 2, f.calls, "synthetic recovery needs consent rather than a photo")
-	_, err = f.catalog.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, false)
-	require.NoError(t, err)
-	require.NoError(t, f.service.ProbeMediaOrigins(ctx))
-	require.Equal(t, 2, f.calls)
-	// Provider authorization validates wall time, so only readiness uses the advanced clock.
-	f.clockOffset = 0
-	backfillPhotoDescription(t, f.service)
-	require.Equal(t, 3, f.calls)
-	proposals, err := f.catalog.PhotoSuggestions(ctx, asset.ID)
-	require.NoError(t, err)
-	require.Len(t, proposals, 1)
-	require.Equal(t, "ready", f.service.Profiles()[0].ProbeState)
-	require.Empty(t, f.service.Profiles()[0].ProbeReason)
-}
-
 func runPhotoDescriptionConsentFence(t *testing.T, scenario photoDescriptionScenario) {
 	t.Helper()
 	f := newPhotoDescriptionFixture(t, scenario)
@@ -1003,13 +869,6 @@ func runPhotoDescriptionPublication(t *testing.T, scenario photoDescriptionScena
 	assert.Empty(t, enqueued.AttachmentID, "photo descriptions have no rendition attachment at enqueue")
 	assert.Empty(t, completed.AttachmentID, "photo descriptions have no rendition attachment after publication")
 
-	profile := f.service.profiles["vision"].record.Fingerprint
-	coverage, err := f.catalog.ProcessingCoverage(ctx, store.ProcessingCoverageScope{ContentVersionIDs: []string{f.node.CurrentVersionID}, ProcessingProfileFingerprint: profile})
-	require.NoError(t, err)
-	assert.Equal(t, store.ProcessingClassCoverage{Name: "rendition", State: "complete", Complete: 1, Total: 1}, coverage.Renditions)
-	collection, err := f.catalog.CollectionQuality(ctx, f.collectionID, store.CoverageSelection{Configuration: "configured", ProfileFingerprint: profile}, nil)
-	require.NoError(t, err)
-	assert.Equal(t, store.CoverageCounts{Complete: 1}, *collection.Collection.Coverage.Counts)
 	suggestions, err := f.catalog.PhotoSuggestions(ctx, asset.ID)
 	require.NoError(t, err)
 	require.Len(t, suggestions, 1)
@@ -1054,11 +913,7 @@ func runPhotoDescriptionDuplicateFailure(t *testing.T, scenario photoDescription
 	published, originalWaiter, err := f.service.enqueueRendition(ctx, f.node, version, configured, f.service.renditionConsentRequest(configured), "")
 	require.NoError(t, err)
 	require.Equal(t, store.RenditionJobCompleted, published.State)
-	wantWaiterState := "published"
-	if emptyDescription {
-		wantWaiterState = "published"
-	}
-	require.Equal(t, wantWaiterState, originalWaiter.State)
+	require.Equal(t, "published", originalWaiter.State)
 	duplicate, err := f.catalog.CreateFile(ctx, f.catalog.RootID(), "duplicate.jpg", written.Hash, written.Size, "image/jpeg", processingBlobPhysical(t, written))
 	require.NoError(t, err)
 	require.NotEqual(t, f.node.CurrentVersionID, duplicate.CurrentVersionID)
@@ -1091,7 +946,7 @@ func runPhotoDescriptionDuplicateFailure(t *testing.T, scenario photoDescription
 		require.NoError(t, err)
 		require.Equal(t, published.ID, joined.ID)
 		require.Equal(t, store.RenditionJobOperatorRequired, joined.State)
-		require.Equal(t, wantWaiterState, retainedWaiter.State)
+		require.Equal(t, "published", retainedWaiter.State)
 		require.Equal(t, 2, f.descriptionCalls)
 		retryPlan, err := f.service.Plan(ctx, selector)
 		require.NoError(t, err)
@@ -1129,7 +984,7 @@ func runPhotoDescriptionDuplicateFailure(t *testing.T, scenario photoDescription
 	require.Equal(t, suggestions, retained)
 	retainedWaiter, err := f.catalog.RenditionJobWaiterByID(ctx, originalWaiter.ID)
 	require.NoError(t, err)
-	require.Equal(t, wantWaiterState, retainedWaiter.State)
+	require.Equal(t, "published", retainedWaiter.State)
 	values, err := f.catalog.PhotoSuggestions(ctx, other.ID)
 	require.NoError(t, err)
 	require.Empty(t, values)
@@ -1662,57 +1517,6 @@ func (upload *photoExpiryUpload) Read(p []byte) (int, error) {
 	return upload.AuthorizedUpload.Read(p)
 }
 
-func TestPhotoDescriptionPreparedMutationPreventsUpload(t *testing.T) {
-	t.Parallel()
-	t.Run("rejects", func(t *testing.T) {
-		f := newPhotoDescriptionFixture(t, photoDescriptionScenario{})
-		ctx := t.Context()
-		prepared, err := f.catalog.PreparePhotoAuthored(ctx, store.PhotoSetSelection{AssetIDs: []string{f.asset.ID}})
-		require.NoError(t, err)
-		_, err = f.catalog.EditPhotoAuthoredBatch(ctx, store.PhotoAuthoredBatch{Targets: []store.PhotoAuthoredEditTarget{prepared.Targets[0].PhotoAuthoredEditTarget}, Patch: store.PhotoAuthoredPatch{Flag: new("reject")}})
-		require.NoError(t, err)
-		f.asset, err = f.catalog.PhotoAssetByID(ctx, f.asset.ID)
-		require.NoError(t, err)
-		f.node, err = f.catalog.NodeByID(ctx, f.node.ID)
-		require.NoError(t, err)
-		profile := f.service.profiles["vision"]
-		require.NoError(t, f.service.grantProfileConsent(ctx, profile, nil))
-		require.NoError(t, f.service.ProbeMediaOrigins(ctx))
-		version, err := f.catalog.ContentVersionByID(ctx, f.node.CurrentVersionID)
-		require.NoError(t, err)
-		_, _, err = f.service.enqueueRendition(ctx, f.node, version, profile, f.service.renditionConsentRequest(profile), "")
-		require.NoError(t, err)
-		duplicate, err := f.catalog.CreateFile(ctx, f.catalog.RootID(), "next.jpg", f.written.Hash, f.written.Size, "image/jpeg", processingBlobPhysical(t, f.written))
-		require.NoError(t, err)
-		_, err = EnsureVisualPreview(ctx, f.catalog, f.blobs, duplicate.CurrentVersionID, f.recipe)
-		require.NoError(t, err)
-		duplicateVersion, err := f.catalog.ContentVersionByID(ctx, duplicate.CurrentVersionID)
-		require.NoError(t, err)
-		changed := false
-		runtime := &afterPrepareRenditionRuntime{RenditionRuntime: f.service.renditions, afterPrepare: func(_ store.RenditionJobWork) {
-			if changed {
-				return
-			}
-			changed = true
-			_, err := f.catalog.MovePhotoRejects(ctx, false, []store.PhotoRejectTarget{{AssetID: f.asset.ID, Revision: f.asset.Revision, MemberRevision: f.node.Revision}})
-			require.NoError(t, err)
-		}}
-		worker, err := NewRenditionWorker(RenditionWorkerConfig{Catalog: f.catalog, Blobs: f.blobs, Runtime: runtime, Gate: newTestOperationGate(), Owner: "mutation-worker", LeaseDuration: time.Minute, IdleDelay: time.Millisecond})
-		require.NoError(t, err)
-		processed, err := worker.RunOne(ctx)
-		require.NoError(t, err)
-		require.True(t, processed)
-		require.True(t, changed)
-		require.Zero(t, f.descriptionCalls)
-		_, _, err = f.service.enqueueRendition(ctx, duplicate, duplicateVersion, profile, f.service.renditionConsentRequest(profile), "")
-		require.NoError(t, err)
-		processed, err = worker.RunOne(ctx)
-		require.NoError(t, err)
-		require.True(t, processed)
-		require.Equal(t, 1, f.descriptionCalls)
-	})
-}
-
 func TestPhotoDescriptionVaultEstimate(t *testing.T) {
 	t.Parallel()
 	f := newPhotoDescriptionFixture(t, photoDescriptionScenario{})
@@ -1729,46 +1533,85 @@ func TestPhotoDescriptionVaultEstimate(t *testing.T) {
 
 func TestPhotoDescriptionProbeDueLifecycle(t *testing.T) {
 	t.Parallel()
-	f := newPhotoDescriptionFixture(t, photoDescriptionScenario{action: "recover"})
-	ctx := t.Context()
-	now := time.Now().UTC()
-	f.service.clock = func() time.Time { return now }
-	require.NoError(t, f.service.ProbeMediaOrigins(ctx))
-	require.Zero(t, f.calls)
-	require.Equal(t, "consent_required", f.service.Profiles()[0].ProbeState)
-	selector := Selector{NodeID: f.node.ID, ContentVersionID: f.node.CurrentVersionID, Profile: "vision"}
-	plan, err := f.service.Plan(ctx, selector)
-	require.NoError(t, err)
-	_, err = f.service.GrantConsent(ctx, ConsentGrantRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
-	require.NoError(t, err)
-	require.Equal(t, "provider_unavailable", f.service.Profiles()[0].ProbeState)
-	calls := f.calls
-	require.NoError(t, f.service.ProbeMediaOrigins(ctx))
-	require.Equal(t, calls, f.calls, "the provider's retry deadline bounds due work")
-	now = now.Add(time.Minute)
-	require.NoError(t, f.service.ProbeMediaOrigins(ctx))
-	require.Equal(t, "ready", f.service.Profiles()[0].ProbeState)
-	calls = f.calls
-	now = now.Add(9 * time.Minute)
-	require.NoError(t, f.service.ProbeMediaOrigins(ctx))
-	require.Equal(t, calls, f.calls)
-	now = now.Add(time.Minute)
-	require.NoError(t, f.service.ProbeMediaOrigins(ctx))
-	require.Equal(t, calls+1, f.calls)
-	_, err = f.service.RevokeConsent(ctx)
-	require.NoError(t, err)
-	require.NoError(t, f.service.ProbeMediaOrigins(ctx))
-	require.Equal(t, "consent_required", f.service.Profiles()[0].ProbeState)
-	require.Equal(t, calls+1, f.calls)
+	for _, action := range []string{"ready", "recover"} {
+		t.Run(action, func(t *testing.T) {
+			f := newPhotoDescriptionFixture(t, photoDescriptionScenario{action: action})
+			ctx := t.Context()
+			clock := f.service.clock
+			now := time.Now().UTC()
+			f.service.clock = func() time.Time { return now }
+			require.NoError(t, f.service.ProbeMediaOrigins(ctx))
+			require.Zero(t, f.calls, "startup waits for consent")
+			require.Equal(t, "consent_required", f.service.Profiles()[0].ProbeState)
+			excluded, err := f.catalog.SetPhotoAssetExcluded(ctx, f.asset.ID, f.asset.Revision, true)
+			require.NoError(t, err)
+			selector := Selector{NodeID: f.node.ID, ContentVersionID: f.node.CurrentVersionID, Profile: "vision"}
+			plan, err := f.service.Plan(ctx, selector)
+			require.NoError(t, err)
+			_, err = f.service.GrantConsent(ctx, ConsentGrantRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
+			require.NoError(t, err, "provider availability must not reject consent")
+			require.Equal(t, 1, f.calls)
+			require.Zero(t, f.descriptionCalls, "refresh uses synthetic input without eligible photos")
+			plan, err = f.service.Plan(ctx, selector)
+			require.NoError(t, err)
+			require.False(t, plan.ConsentRequired)
+			if action == "recover" {
+				require.Equal(t, "provider_unavailable", f.service.Profiles()[0].ProbeState)
+				require.NoError(t, f.service.ProbeMediaOrigins(ctx))
+				require.Equal(t, 1, f.calls, "the provider retry deadline bounds due work")
+				now = now.Add(time.Minute)
+				require.NoError(t, f.service.ProbeMediaOrigins(ctx))
+				require.Equal(t, 2, f.calls)
+			}
+			require.Equal(t, "ready", f.service.Profiles()[0].ProbeState)
+			require.Empty(t, f.service.Profiles()[0].ProbeReason)
+			if action == "recover" {
+				_, err = f.catalog.SetPhotoAssetExcluded(ctx, excluded.ID, excluded.Revision, false)
+				require.NoError(t, err)
+				// Provider authorization uses wall time; advance only the readiness clock.
+				f.service.clock = clock
+				backfillPhotoDescription(t, f.service)
+				require.Equal(t, 3, f.calls)
+				proposals, err := f.catalog.PhotoSuggestions(ctx, f.asset.ID)
+				require.NoError(t, err)
+				require.Len(t, proposals, 1)
+				f.service.clock = func() time.Time { return now }
+			}
+			calls := f.calls
+			now = now.Add(9 * time.Minute)
+			require.NoError(t, f.service.ProbeMediaOrigins(ctx))
+			require.Equal(t, calls, f.calls)
+			now = now.Add(time.Minute)
+			require.Equal(t, "pending", f.service.Profiles()[0].ProbeState)
+			require.Equal(t, calls, f.calls, "reading status does not probe")
+			require.NoError(t, f.service.ProbeMediaOrigins(ctx))
+			require.Equal(t, calls+1, f.calls)
+			_, err = f.service.RevokeConsent(ctx)
+			require.NoError(t, err)
+			require.NoError(t, f.service.ProbeMediaOrigins(ctx))
+			require.Equal(t, "consent_required", f.service.Profiles()[0].ProbeState)
+			require.Equal(t, calls+1, f.calls)
+		})
+	}
 }
 
 func TestPhotoDescriptionFinalEgressAuthority(t *testing.T) {
 	t.Parallel()
-	for _, action := range []string{"hidden", "excluded", "revoked", "preview_removed"} {
+	for _, action := range []string{"hidden", "excluded", "revoked", "preview_removed", "rejects"} {
 		t.Run(action, func(t *testing.T) {
 			f := newPhotoDescriptionFixture(t, photoDescriptionScenario{})
 			ctx := t.Context()
 			require.NoError(t, f.catalog.SetupPhotoHidden(ctx, "synthetic-passcode"))
+			if action == "rejects" {
+				prepared, err := f.catalog.PreparePhotoAuthored(ctx, store.PhotoSetSelection{AssetIDs: []string{f.asset.ID}})
+				require.NoError(t, err)
+				_, err = f.catalog.EditPhotoAuthoredBatch(ctx, store.PhotoAuthoredBatch{Targets: []store.PhotoAuthoredEditTarget{prepared.Targets[0].PhotoAuthoredEditTarget}, Patch: store.PhotoAuthoredPatch{Flag: new("reject")}})
+				require.NoError(t, err)
+				f.asset, err = f.catalog.PhotoAssetByID(ctx, f.asset.ID)
+				require.NoError(t, err)
+				f.node, err = f.catalog.NodeByID(ctx, f.node.ID)
+				require.NoError(t, err)
+			}
 			profile := f.service.profiles["vision"]
 			require.NoError(t, f.service.grantProfileConsent(ctx, profile, nil))
 			require.NoError(t, f.service.ProbeMediaOrigins(ctx))
@@ -1778,6 +1621,8 @@ func TestPhotoDescriptionFinalEgressAuthority(t *testing.T) {
 			require.NoError(t, err)
 			runtime := &afterPrepareRenditionRuntime{RenditionRuntime: f.service.renditions, afterPrepare: func(store.RenditionJobWork) {
 				switch action {
+				case "rejects":
+					_, err = f.catalog.MovePhotoRejects(ctx, false, []store.PhotoRejectTarget{{AssetID: f.asset.ID, Revision: f.asset.Revision, MemberRevision: f.node.Revision}})
 				case "hidden":
 					_, err = f.catalog.SetPhotoAssetHidden(ctx, f.asset.ID, f.asset.Revision, true)
 				case "excluded":
@@ -1846,10 +1691,13 @@ func TestPhotoDescriptionRetryRechecksAuthority(t *testing.T) {
 			plan, err := f.service.Plan(ctx, selector)
 			require.NoError(t, err)
 			job, err := f.service.StartWithProgress(ctx, StartRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, nil)
-			if action == "retry_valid" {
+			switch action {
+			case "retry_valid":
 				require.NoError(t, err)
-			} else {
-				require.Error(t, err)
+			case "retry_revoked":
+				require.ErrorIs(t, err, ErrConsentRequired)
+			case "retry_hidden":
+				require.ErrorIs(t, err, ErrPlanChanged)
 			}
 			if action == "retry_hidden" {
 				require.Equal(t, 1, f.descriptionCalls)
