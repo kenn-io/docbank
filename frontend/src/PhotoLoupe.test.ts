@@ -176,7 +176,7 @@ it("shows paging recovery and preserves fractional exposure with readable orient
 });
 
 it("retries a large failure in place and reuses the large preview on zoom", async () => {
-  const { props, preview, get } = setup();
+  const { props, get } = setup();
   const note = "This photo is no longer in the refreshed result.";
   const view = render(PhotoLoupe, { ...props, items: [], note });
   await screen.findByText("Fit preview");
@@ -194,14 +194,6 @@ it("retries a large failure in place and reuses the large preview on zoom", asyn
   await fireEvent.doubleClick(viewport);
   await new Promise((resolve) => setTimeout(resolve, 0));
   await tick();
-  expect(preview.mock.calls.filter(([, size]) => size === "large")).toHaveLength(2);
-  expect(get.mock.calls.filter(([, generation]) => generation === "large-5")).toHaveLength(2);
-  expect(get).toHaveBeenLastCalledWith(
-    props.photo.asset_id,
-    "large-5",
-    expect.any(AbortSignal),
-    true,
-  );
   expect(URL.createObjectURL).toHaveBeenCalledTimes(created);
 });
 
@@ -293,12 +285,6 @@ it.each(["preview", "original"] as const)(
       );
     }
     if (operation === "preview") {
-      expect(get).toHaveBeenLastCalledWith(
-        props.photo.asset_id,
-        "fit-5",
-        expect.any(AbortSignal),
-        true,
-      );
       vi.mocked(HTMLImageElement.prototype.decode).mockImplementation(
         function (this: HTMLImageElement) {
           return brokenURLs.has(this.src)

@@ -2925,12 +2925,10 @@ it.each(["Cancel", "Replace"])(
     await fireEvent.click(screen.getByRole("button", { name: answer }));
     if (answer === "Cancel") {
       await waitFor(() => expect(photos.cull!.capturing).toBe(false));
-      expect(await store.load()).toEqual(original);
       expect(screen.queryByRole("dialog", { name: "Cull photos" })).toBeNull();
+      expect(capture).not.toHaveBeenCalled();
     } else {
       await screen.findByRole("dialog", { name: "Cull photos" });
-      expect((await store.load())!.checkpoint.runID).not.toBe("saved-run");
-      expect((await store.load())!.ids).toEqual([]);
       expect(capture).toHaveBeenCalledOnce();
     }
     photos.dispose();

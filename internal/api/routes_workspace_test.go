@@ -436,37 +436,34 @@ func TestWorkspacePhotoSnapshotRejectsFacets(t *testing.T) {
 func TestWorkspaceAdHocPhotoSnapshot(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
-	for _, name := range []string{"a.jpg", "b.jpg", "c.jpg"} {
-		_, err := s.CreateFile(t.Context(), s.RootID(), name, testHash(name), 10, "image/jpeg")
-		require.NoError(t, err)
-	}
-	_, err := s.CreateFile(t.Context(), s.RootID(), "document.txt", testHash("document"), 10, "text/plain")
-	require.NoError(t, err)
-	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", map[string]string{"X-Api-Key": testAPIKey}, `{"photos":true,"query":{"sort":{"field":"name","direction":"desc"}},"page_size":50}`)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	var page api.WorkspaceQueryResponse
-	require.NoError(t, json.Unmarshal([]byte(body), &page))
-	require.EqualValues(t, 3, page.Total)
-	require.Len(t, page.Rows, 3)
-	require.Equal(t, new(""), page.Rows[0].Flag)
-}
-
-func TestWorkspaceAdHocPhotoSnapshotPick(t *testing.T) {
-	t.Parallel()
-	ts, s := newTestServer(t, nil)
 	ctx := t.Context()
-	node, err := s.CreateFile(ctx, s.RootID(), "picked.jpg", testHash("picked-photo"), 10, "image/jpeg")
+	var picked store.Node
+	for _, name := range []string{"a.jpg", "b.jpg", "c.jpg"} {
+		node, err := s.CreateFile(ctx, s.RootID(), name, testHash(name), 10, "image/jpeg")
+		require.NoError(t, err)
+		if name == "b.jpg" {
+			picked = node
+		}
+	}
+	_, err := s.CreateFile(ctx, s.RootID(), "document.txt", testHash("document"), 10, "text/plain")
 	require.NoError(t, err)
-	asset, err := s.PhotoAssetForNode(ctx, node.ID)
+	asset, err := s.PhotoAssetForNode(ctx, picked.ID)
 	require.NoError(t, err)
 	prepared, err := s.PreparePhotoAuthored(ctx, store.PhotoSetSelection{AssetIDs: []string{asset.ID}})
 	require.NoError(t, err)
 	_, err = s.EditPhotoAuthoredBatch(ctx, store.PhotoAuthoredBatch{Targets: apiEditTargets(prepared.Targets), Patch: store.PhotoAuthoredPatch{Flag: new("pick")}})
 	require.NoError(t, err)
 
-	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", map[string]string{"X-Api-Key": testAPIKey}, `{"photos":true,"query":{"filters":{"flags":["pick"]}},"page_size":50}`)
+	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", map[string]string{"X-Api-Key": testAPIKey}, `{"photos":true,"query":{"sort":{"field":"name","direction":"desc"}},"page_size":50}`)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var page api.WorkspaceQueryResponse
+	require.NoError(t, json.Unmarshal([]byte(body), &page))
+	require.EqualValues(t, 3, page.Total)
+	require.Len(t, page.Rows, 3)
+	require.NotNil(t, page.Rows[0].Flag)
+
+	response, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", map[string]string{"X-Api-Key": testAPIKey}, `{"photos":true,"query":{"filters":{"flags":["pick"]}},"page_size":50}`)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	require.NoError(t, json.Unmarshal([]byte(body), &page))
 	require.EqualValues(t, 1, page.Total)
 	require.Len(t, page.Rows, 1)

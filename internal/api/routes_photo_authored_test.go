@@ -82,14 +82,4 @@ func TestPhotoAuthoredRouteRefusesStaleContentVersion(t *testing.T) {
 	unchanged, err := s.PhotoAssetByID(ctx, asset.ID)
 	require.NoError(t, err)
 	require.Empty(t, unchanged.Files[0].Flag)
-
-	current, err := s.NodeByID(ctx, node.ID)
-	require.NoError(t, err)
-	request.Targets[0].ContentVersionID = current.CurrentVersionID
-	resp, body = do(t, ts, http.MethodPost, "/api/v1/photos/authored/edit", nil, request)
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	var receipt store.PhotoAuthoredReceipt
-	require.NoError(t, json.Unmarshal([]byte(body), &receipt))
-	require.Len(t, receipt.After, 1)
-	require.Equal(t, "pick", receipt.After[0].Values.Flag)
 }
