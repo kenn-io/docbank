@@ -166,6 +166,7 @@ type progressReader struct {
 
 	ctx     context.Context
 	tracker *progressTracker
+	onBytes func(int) error
 }
 
 func (r progressReader) Read(buf []byte) (int, error) {
@@ -174,6 +175,11 @@ func (r progressReader) Read(buf []byte) (int, error) {
 	}
 	n, err := r.Reader.Read(buf)
 	r.tracker.addBytes(n)
+	if r.onBytes != nil && n > 0 {
+		if progressErr := r.onBytes(n); progressErr != nil {
+			return n, progressErr
+		}
+	}
 	if err == nil {
 		err = r.ctx.Err()
 	}
@@ -399,30 +405,36 @@ func (ing *Ingester) ReplaceContent(
 	if err := ing.Store.CheckContentReplacementTarget(ctx, nodeID, ifRev); err != nil {
 		return result, err
 	}
-	written, err := ing.Blobs.WriteDetailedContext(ctx, r)
-	if err != nil {
-		return result, err
-	}
+	written, err := ing.CommitVerifiedContent(ctx, r, expectedHash, expectedSize, func(physical store.BlobPhysical) error {
+		result.physical = physical
+		var err error
+		result.Node, result.Version, err = ing.Store.ReplaceContent(ctx, nodeID, ifRev, expectedHash, expectedSize, mimeType, physical)
+		return err
+	})
 	result.ComputedHash, result.ComputedSize = written.Hash, written.Size
-	defer func() {
-		retErr = mutationCleanupResult(retErr, ing.cleanupLoose(written.Hash))
-	}()
-	result.physical, err = physicalReceipt(written)
-	if err != nil {
-		return result, err
-	}
-	if result.ComputedSize != expectedSize {
-		return result, fmt.Errorf("declared %d bytes, received %d: %w",
-			expectedSize, result.ComputedSize, ErrUploadSizeMismatch)
-	}
-	if result.ComputedHash != expectedHash {
-		return result, fmt.Errorf("declared SHA-256 %s, computed %s: %w",
-			expectedHash, result.ComputedHash, ErrUploadDigestMismatch)
-	}
-	result.Node, result.Version, err = ing.Store.ReplaceContent(
-		ctx, nodeID, ifRev, result.ComputedHash, result.ComputedSize, mimeType, result.physical,
-	)
 	return result, err
+}
+
+// CommitVerifiedContent verifies a durable write, runs the authority transaction,
+// and removes loose duplicates of packed content after success or failure.
+func (ing *Ingester) CommitVerifiedContent(ctx context.Context, r io.Reader, expectedHash string, expectedSize int64, commit func(store.BlobPhysical) error) (written blob.WriteReceipt, retErr error) {
+	var err error
+	written, err = ing.Blobs.WriteDetailedContext(ctx, r)
+	if err != nil {
+		return written, err
+	}
+	defer func() { retErr = mutationCleanupResult(retErr, ing.cleanupLoose(written.Hash)) }()
+	physical, err := physicalReceipt(written)
+	if err != nil {
+		return written, err
+	}
+	if written.Size != expectedSize {
+		return written, fmt.Errorf("declared %d bytes, received %d: %w", expectedSize, written.Size, ErrUploadSizeMismatch)
+	}
+	if written.Hash != expectedHash {
+		return written, fmt.Errorf("declared SHA-256 %s, computed %s: %w", expectedHash, written.Hash, ErrUploadDigestMismatch)
+	}
+	return written, commit(physical)
 }
 
 // AddPaths ingests files and directory trees under the virtual destPath.

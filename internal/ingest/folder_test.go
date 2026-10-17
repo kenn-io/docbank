@@ -309,3 +309,41 @@ func failOnReject(t *testing.T) func(context.Context, string, error) error {
 		return nil
 	}
 }
+
+func TestFolderScannerScanOnceSourceChangePolicy(t *testing.T) {
+	t.Parallel()
+	for _, continueChanged := range []bool{false, true} {
+		name := "abort"
+		if continueChanged {
+			name = "continue"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("unstable"), 0o600))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "z.txt"), []byte("stable"), 0o600))
+			var processed []string
+			scanner, err := NewFolderScanner(config.WatchConfig{Name: "checkout-test", Source: dir, Destination: "/", SettleTime: config.Duration(time.Second), ScanInterval: config.Duration(time.Second)}, func(_ context.Context, file FolderFile) error {
+				if file.Ref == "a.txt" {
+					return ErrSourceChanged
+				}
+				processed = append(processed, file.Ref)
+				return nil
+			}, failOnReject(t))
+			require.NoError(t, err)
+			var changed []string
+			if continueChanged {
+				scanner.SourceChanged = func(_ context.Context, ref string) error { changed = append(changed, ref); return nil }
+			}
+			err = scanner.ScanOnce(t.Context(), 1)
+			if continueChanged {
+				require.NoError(t, err)
+				require.Equal(t, []string{"a.txt"}, changed)
+				require.Equal(t, []string{"z.txt"}, processed)
+			} else {
+				require.ErrorIs(t, err, ErrSourceChanged)
+				require.Empty(t, processed)
+			}
+		})
+	}
+}

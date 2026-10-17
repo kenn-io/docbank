@@ -255,6 +255,9 @@ func validatePhotoReceiptMetadataRecord(v metadataPhotoReceipt) error {
 	if v.Type != metadataPhotoReceiptType || validateUUIDv4(v.ReceiptID) != nil || v.BeforeRevision < 0 || v.AfterRevision < 0 || len(v.BeforeJSON)+len(v.AfterJSON) > maxBatchTagReceiptJSONBytes {
 		return errors.New("invalid photo receipt metadata")
 	}
+	if v.Operation == "checkout_commit" {
+		return validateCheckoutCommitReceipt(v)
+	}
 	if v.Operation == "face_decision" {
 		if v.AssetID == nil || validateUUIDv4(*v.AssetID) != nil || v.SettingsKey != nil || v.SetID != nil || v.BeforeRevision != 0 || v.AfterRevision != 1 {
 			return ErrInvalidPhotoFace

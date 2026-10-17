@@ -85,6 +85,12 @@ func timeoutExempt(method, path string) bool {
 		}
 	}
 	if method == http.MethodPost {
+		if rest, ok := strings.CutPrefix(path, "/api/v1/photos/checkouts/"); ok {
+			id, action, found := strings.Cut(rest, "/")
+			if found && (id == "{id}" || validPageJobPathID(id)) && (action == "scan" || action == "rebind" || action == "commit") {
+				return true
+			}
+		}
 		if path == "/api/v1/photos/rejects/trash" || path == "/api/v1/photos/rejects/preflight" {
 			return true
 		}
@@ -286,8 +292,8 @@ func loopbackMiddleware(next http.Handler) http.Handler {
 		r = r.WithContext(context.WithValue(r.Context(), remoteAddressContextKey{}, r.RemoteAddr))
 		if r.Method == http.MethodPost && isServerPathIngestRoute(r.URL.Path) && !isLoopbackRemote(r.RemoteAddr) {
 			message := "server-side path ingest is loopback-only; remote clients use POST /api/v1/uploads"
-			if r.URL.Path == "/api/v1/photos/checkouts" {
-				message = "photo checkout creation is loopback-only; run this command on the daemon's computer"
+			if r.URL.Path == "/api/v1/photos/checkouts" || strings.HasPrefix(r.URL.Path, "/api/v1/photos/checkouts/") && strings.HasSuffix(r.URL.Path, "/rebind") {
+				message = "photo checkout folder binding is loopback-only; run this command on the daemon's computer"
 			}
 			writeError(w, NewError(http.StatusForbidden, "loopback_only",
 				message))
@@ -299,7 +305,7 @@ func loopbackMiddleware(next http.Handler) http.Handler {
 
 func isServerPathIngestRoute(path string) bool {
 	return path == "/api/v1/ingest" || path == "/api/v1/ingest/stream" || path == "/api/v1/ingest/preflight" ||
-		path == "/api/v1/packages/preflights" || path == "/api/v1/photos/imports" || path == "/api/v1/photos/checkouts"
+		path == "/api/v1/packages/preflights" || path == "/api/v1/photos/imports" || path == "/api/v1/photos/checkouts" || strings.HasPrefix(path, "/api/v1/photos/checkouts/") && strings.HasSuffix(path, "/rebind")
 }
 
 func isLoopbackRemote(remoteAddr string) bool {

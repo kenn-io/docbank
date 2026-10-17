@@ -23,10 +23,12 @@ func TestPhotoCheckoutClients(t *testing.T) {
 	checkout := store.PhotoCheckout{ID: id, Selection: selection, ByteLimit: 100, Destination: filepath.Join(t.TempDir(), "destination"), OperationID: operationID, State: "queued"}
 	checkout.SkippedPhotos = []store.PhotoCheckoutSkip{{AssetID: id, FileID: operationID, Name: "duplicate.jpg", Reason: "duplicate filename"}}
 	checkout.SkippedPhotoCount = 1
-	expectedStatus := api.PhotoCheckoutStatus{Checkout: checkout, Files: 2, Bytes: 5, PublishedFiles: 1, PublishedBytes: 3}
+	entry := store.PhotoCheckoutEntry{CheckoutID: id, FileID: "00000000-0000-4000-8000-000000000031", AssetID: "00000000-0000-4000-8000-000000000021", VersionID: "00000000-0000-4000-8000-000000000041"}
+	expectedStatus := api.PhotoCheckoutStatus{Checkout: checkout, Files: 2, Bytes: 5, PublishedFiles: 1, PublishedBytes: 3, Entries: []store.PhotoCheckoutEntry{entry}, NextAfter: entry.FileID}
 	created := api.PhotoCheckoutCreateResult{Checkout: checkout, Operation: api.StorageOperation{ID: operationID, Kind: "photo_checkout", State: "queued"}}
 	request := api.PhotoCheckoutCreateRequest{Selection: selection, Destination: checkout.Destination, ByteLimit: 100}
 	var mu sync.Mutex
+	expectedAfter := ""
 	response := created
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
@@ -45,6 +47,8 @@ func TestPhotoCheckoutClients(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/photos/checkouts":
 			out = api.PhotoCheckoutList{Items: []store.PhotoCheckout{checkout}}
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/photos/checkouts/"+id:
+			assert.Equal(t, "1", r.URL.Query().Get("limit"))
+			assert.Equal(t, expectedAfter, r.URL.Query().Get("after"))
 			out = expectedStatus
 		default:
 			http.NotFound(w, r)
@@ -65,13 +69,53 @@ func TestPhotoCheckoutClients(t *testing.T) {
 	result, err := create(created)
 	require.NoError(t, err)
 	require.Equal(t, created, result)
-	status, err := client.PhotoCheckoutStatus(t.Context(), strings.ToUpper(id))
+	status, err := client.PhotoCheckoutStatus(t.Context(), strings.ToUpper(id), "", 1)
 	require.NoError(t, err)
 	require.Equal(t, expectedStatus, status)
 
 	listed, err := client.PhotoCheckouts(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, []store.PhotoCheckout{checkout}, listed)
+
+	mu.Lock()
+	expectedAfter = entry.FileID
+	expectedStatus.Entries = []store.PhotoCheckoutEntry{entry}
+	expectedStatus.Entries[0].FileID = "00000000-0000-4000-8000-000000000032"
+	expectedStatus.NextAfter = ""
+	mu.Unlock()
+	last, err := client.PhotoCheckoutStatus(t.Context(), id, entry.FileID, 1)
+	require.NoError(t, err)
+	require.Empty(t, last.NextAfter)
+	require.Equal(t, "00000000-0000-4000-8000-000000000032", last.Entries[0].FileID)
+
+	for _, invalid := range []string{"oversized", "file ID", "checkout ID", "sidecar ID", "cursor"} {
+		expectedError := "invalid photo checkout status entry IDs"
+		mu.Lock()
+		expectedAfter = ""
+		expectedStatus = status
+		expectedStatus.Entries = []store.PhotoCheckoutEntry{entry}
+		switch invalid {
+		case "oversized":
+			second := entry
+			second.FileID = "00000000-0000-4000-8000-000000000032"
+			expectedStatus.Entries = append(expectedStatus.Entries, second)
+			expectedStatus.NextAfter = ""
+			expectedError = "invalid photo checkout status page size"
+		case "file ID":
+			expectedStatus.Entries[0].FileID = "invalid"
+			expectedStatus.NextAfter = ""
+		case "checkout ID":
+			expectedStatus.Entries[0].CheckoutID = operationID
+		case "sidecar ID":
+			expectedStatus.Entries[0].SidecarOfID = new("invalid")
+		case "cursor":
+			expectedStatus.NextAfter = operationID
+			expectedError = "invalid photo checkout status cursor"
+		}
+		mu.Unlock()
+		_, err := client.PhotoCheckoutStatus(t.Context(), id, "", 1)
+		require.ErrorContains(t, err, expectedError, invalid)
+	}
 
 	mismatchedState := created
 	mismatchedState.Checkout.State = "running"
@@ -141,4 +185,27 @@ func TestValidatePhotoCheckoutResponseAcceptsReleasedTerminalEmptyDestination(t 
 	unreleased.State = "completed"
 	require.ErrorContains(t, validatePhotoCheckoutResponse(unreleased, id), "invalid local bindings",
 		"a completed checkout that has not released retention must still require a destination")
+}
+
+func TestValidateCheckoutOperationResponse(t *testing.T) {
+	t.Parallel()
+	const id = "00000000-0000-4000-8000-0000000000aa"
+	const operationID = "00000000-0000-4000-8000-000000000012"
+	for _, kind := range []string{store.StorageOperationKindPhotoCheckoutCommit, store.StorageOperationKindPhotoCheckoutScan, store.StorageOperationKindPhotoCheckoutRebind} {
+		out := api.PhotoCheckoutCreateResult{
+			Checkout:  store.PhotoCheckout{ID: id, OperationID: operationID, Selection: store.PhotoCheckoutSelection{All: true}, ByteLimit: 10, Destination: t.TempDir(), State: "completed", OperationState: "queued"},
+			Operation: api.StorageOperation{ID: operationID, Kind: kind, State: "queued"},
+		}
+		out.Checkout.LastOperationID, out.Checkout.OperationKind = operationID, kind
+		got, err := validateCheckoutOperationResponse(&out, nil, id, kind)
+		require.NoError(t, err, kind)
+		require.Equal(t, out, got)
+		out.Operation.ID = ""
+		_, err = validateCheckoutOperationResponse(&out, nil, id, kind)
+		require.ErrorContains(t, err, "invalid checkout operation", kind)
+		out.Operation.ID = operationID
+		out.Operation.State = "running"
+		_, err = validateCheckoutOperationResponse(&out, nil, id, kind)
+		require.ErrorContains(t, err, "invalid checkout operation", kind)
+	}
 }

@@ -7638,6 +7638,11 @@ components:
           type: boolean
         cancel_requested:
           type: boolean
+        checkout_results:
+          additionalProperties:
+            format: int64
+            type: integer
+          type: object
         completed_objects:
           format: int64
           type: integer
@@ -7655,6 +7660,8 @@ components:
           type: string
         kind:
           type: string
+        lane:
+          type: string
         name:
           type: string
         operation_id:
@@ -7662,6 +7669,9 @@ components:
           type: string
         paused:
           type: boolean
+        processed_bytes:
+          format: int64
+          type: integer
         started_at:
           type: string
         status:
@@ -7672,10 +7682,14 @@ components:
             - failed
             - cancelled
           type: string
+        total_bytes:
+          format: int64
+          type: integer
         total_objects:
           format: int64
           type: integer
       required:
+        - lane
         - controllable
         - paused
         - can_set_concurrency
@@ -12331,6 +12345,10 @@ components:
           format: uri
           readOnly: true
           type: string
+        active_operation_kind:
+          type: string
+        active_operation_state:
+          type: string
         byte_limit:
           format: int64
           type: integer
@@ -12342,6 +12360,8 @@ components:
           type: string
         id:
           type: string
+        last_operation_id:
+          type: string
         operation_id:
           type: string
         retention_released:
@@ -12350,6 +12370,8 @@ components:
           type:
             - string
             - "null"
+        retirement_requested:
+          type: boolean
         selection:
           $ref: "#/components/schemas/PhotoCheckoutSelection"
         skipped_photo_count:
@@ -12365,6 +12387,10 @@ components:
       required:
         - skipped_photos
         - skipped_photo_count
+        - active_operation_state
+        - last_operation_id
+        - active_operation_kind
+        - retirement_requested
         - retired_at
         - retention_released
         - id
@@ -12431,6 +12457,55 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    PhotoCheckoutEntry:
+      additionalProperties: false
+      properties:
+        asset_id:
+          type: string
+        checkout_id:
+          type: string
+        file_id:
+          type: string
+        hash:
+          type: string
+        observed_hash:
+          type: string
+        observed_size:
+          format: int64
+          type: integer
+        path:
+          type: string
+        published:
+          type: boolean
+        sidecar_of_file_id:
+          type:
+            - string
+            - "null"
+        size:
+          format: int64
+          type: integer
+        version_id:
+          type: string
+        working_state:
+          type: string
+      required:
+        - observed_hash
+        - observed_size
+        - working_state
+        - sidecar_of_file_id
+        - checkout_id
+        - file_id
+        - asset_id
+        - version_id
+        - hash
+        - size
+        - path
+        - published
+      type: object
+      x-go-type: store.PhotoCheckoutEntry
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
     PhotoCheckoutEstimate:
       additionalProperties: false
       properties:
@@ -12487,6 +12562,27 @@ components:
         - items
       type: object
       x-go-type: api.PhotoCheckoutList
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoCheckoutRebindRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoCheckoutRebindRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        destination:
+          maxLength: 4096
+          minLength: 1
+          type: string
+      required:
+        - destination
+      type: object
+      x-go-type: api.PhotoCheckoutRebindRequest
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -12555,9 +12651,15 @@ components:
           type: integer
         checkout:
           $ref: "#/components/schemas/PhotoCheckout"
+        entries:
+          items:
+            $ref: "#/components/schemas/PhotoCheckoutEntry"
+          type: array
         files:
           format: int64
           type: integer
+        next_after:
+          type: string
         published_bytes:
           format: int64
           type: integer
@@ -12565,6 +12667,7 @@ components:
           format: int64
           type: integer
       required:
+        - entries
         - checkout
         - files
         - bytes
@@ -25897,6 +26000,21 @@ paths:
           schema:
             format: uuid
             type: string
+        - explode: false
+          in: query
+          name: after
+          schema:
+            format: uuid
+            type: string
+        - explode: false
+          in: query
+          name: limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 250
+            minimum: 1
+            type: integer
       responses:
         "200":
           content:
@@ -25911,6 +26029,60 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Inspect photo checkout progress
+  /api/v1/photos/checkouts/{id}/commit:
+    post:
+      operationId: commitPhotoCheckout
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoCheckoutCreateResult"
+          description: Accepted
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Commit settled checkout edits as new versions
+  /api/v1/photos/checkouts/{id}/rebind:
+    post:
+      operationId: rebindPhotoCheckout
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoCheckoutRebindRequest"
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoCheckoutCreateResult"
+          description: Accepted
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Verify a checkout folder
   /api/v1/photos/checkouts/{id}/retire:
     post:
       operationId: retirePhotoCheckout
@@ -25935,6 +26107,30 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Release photo checkout holds and destination
+  /api/v1/photos/checkouts/{id}/scan:
+    post:
+      operationId: scanPhotoCheckout
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoCheckoutCreateResult"
+          description: Accepted
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Inspect checkout edits
   /api/v1/photos/face-decisions/{receipt_id}/undo:
     post:
       operationId: undoPhotoFaceDecision

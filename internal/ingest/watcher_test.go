@@ -574,7 +574,7 @@ func TestWatcherCheckoutAdmission(t *testing.T) {
 				require.NoError(t, err)
 				asset, err := ing.Store.PhotoAssetForNode(ctx, node.ID)
 				require.NoError(t, err)
-				checkout, op, _, err := ing.Store.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, 0)
+				checkout, op, _, err := ing.Store.CreatePhotoCheckout(ctx, store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, destination, "", 0)
 				require.NoError(t, err)
 				if tc.retired {
 					require.NoError(t, ing.Store.FinishPhotoCheckout(ctx, checkout.ID, op.ID, store.StorageOperationCompleted, "{}", "", time.Now().Add(time.Hour)))

@@ -35,17 +35,22 @@ type Service struct {
 	ActivityEnd   func()
 	syncParent    func(*filepublish.RootStage) error
 	admit         func(context.Context, *store.Store, string) (bool, error)
+	settleTime    time.Duration
 }
 
 func (s Service) admitOperation(ctx context.Context, id string) (bool, error) {
+	if s.admit != nil {
+		return s.admit(ctx, s.Store, id)
+	}
+	return s.waitOperation(ctx, id)
+}
+
+func (s Service) waitOperation(ctx context.Context, id string) (bool, error) {
 	if s.ActivityBegin != nil && s.ActivityEnd != nil {
 		s.ActivityEnd()
 		defer s.ActivityBegin()
 	}
 
-	if s.admit != nil {
-		return s.admit(ctx, s.Store, id)
-	}
 	return jobs.AdmitStorageOperation(ctx, s.Store, id)
 }
 
@@ -85,8 +90,11 @@ func (s Service) Prepare(ctx context.Context, selection store.PhotoCheckoutSelec
 		if err := s.recheckDestination(ctx, root, canonical, "", proof); err != nil {
 			return err
 		}
-		var err error
-		checkout, operation, estimate, err = s.Store.CreatePhotoCheckout(ctx, selection, canonical, byteLimit)
+		identity, err := rootIdentity(root)
+		if err != nil {
+			return err
+		}
+		checkout, operation, estimate, err = s.Store.CreatePhotoCheckout(ctx, selection, canonical, identity, byteLimit)
 		return err
 	})
 	if err != nil {
@@ -96,7 +104,7 @@ func (s Service) Prepare(ctx context.Context, selection store.PhotoCheckoutSelec
 	return checkout, operation, estimate, root, nil
 }
 
-func (s Service) protectedRoots(ctx context.Context, excludedID string) ([]string, error) {
+func (s Service) protectedRoots(ctx context.Context, destination, excludedID string) ([]string, error) {
 	layout := home.Layout{Root: s.VaultRoot}
 	roots := []string{s.VaultRoot, layout.BlobsDir(), layout.BlobTmpDir(), filepath.Join(s.VaultRoot, "web-launch"), filepath.Join(s.VaultRoot, "web-downloads")}
 	for _, b := range s.Config.StoreBindings {
@@ -115,11 +123,20 @@ func (s Service) protectedRoots(ctx context.Context, excludedID string) ([]strin
 		if c.ID == excludedID {
 			continue
 		}
-		protected, err := ingest.PhotoCheckoutProtectsDestination(c)
+		protects, err := ingest.PhotoCheckoutProtectsDestination(c)
 		if err != nil {
-			return nil, err
+			// Compare paths and root identities without walking an unreadable
+			// released folder, so unrelated checkout destinations stay usable.
+			overlap, overlapErr := ingest.PathsOverlapContext(ctx, c.Destination, destination)
+			if overlapErr != nil {
+				return nil, overlapErr
+			}
+			if overlap {
+				return nil, err
+			}
+			continue
 		}
-		if protected {
+		if protects {
 			roots = append(roots, c.Destination)
 		}
 	}
@@ -127,7 +144,14 @@ func (s Service) protectedRoots(ctx context.Context, excludedID string) ([]strin
 }
 
 func (s Service) checkDestination(ctx context.Context, root *os.Root, destination, excludedID string) (*ingest.PathProtection, error) {
-	paths, err := s.protectedRoots(ctx, excludedID)
+	if err := checkEmptyDestination(root, destination); err != nil {
+		return nil, err
+	}
+	return s.checkRootProtection(ctx, root, destination, excludedID)
+}
+
+func (s Service) checkRootProtection(ctx context.Context, root *os.Root, destination, excludedID string) (*ingest.PathProtection, error) {
+	paths, err := s.protectedRoots(ctx, destination, excludedID)
 	if err != nil {
 		return nil, err
 	}
@@ -136,21 +160,31 @@ func (s Service) checkDestination(ctx context.Context, root *os.Root, destinatio
 	if err != nil {
 		return nil, err
 	}
-	if err := s.validateDestination(ctx, root, destination, excludedID); err != nil {
+	if err := s.validateRootOverlap(ctx, destination, excludedID); err != nil {
+		return nil, err
+	}
+	if err := checkDestinationIdentity(root, destination); err != nil {
 		return nil, err
 	}
 	return proof, nil
 }
 
 func (s Service) recheckDestination(ctx context.Context, root *os.Root, destination, excludedID string, proof *ingest.PathProtection) error {
-	paths, err := s.protectedRoots(ctx, excludedID)
+	if err := s.recheckRootProtection(ctx, root, destination, excludedID, proof); err != nil {
+		return err
+	}
+	return checkEmptyDestination(root, destination)
+}
+
+func (s Service) recheckRootProtection(ctx context.Context, root *os.Root, destination, excludedID string, proof *ingest.PathProtection) error {
+	paths, err := s.protectedRoots(ctx, destination, excludedID)
 	if err != nil {
 		return err
 	}
 	if err := proof.Check(append(paths, destination)); err != nil {
 		return fmt.Errorf("%w: %w", store.ErrPhotoCheckoutConflict, err)
 	}
-	return checkEmptyDestination(root, destination)
+	return checkDestinationIdentity(root, destination)
 }
 
 func checkEmptyDestination(root *os.Root, destination string) error {
@@ -169,14 +203,10 @@ func checkEmptyDestination(root *os.Root, destination string) error {
 	return checkDestinationIdentity(root, destination)
 }
 
-// validateDestination uses ancestry checks for the vault and primary blobs roots
-// and walks other protected roots. Bind mounts of vault descendants outside
-// those protected roots are not detected.
-func (s Service) validateDestination(ctx context.Context, root *os.Root, destination, excludedID string) error {
-	if err := checkEmptyDestination(root, destination); err != nil {
-		return err
-	}
-	roots, err := s.protectedRoots(ctx, excludedID)
+// validateRootOverlap walks protected roots except the vault root. Bind mounts
+// of vault descendants outside those protected roots are not detected.
+func (s Service) validateRootOverlap(ctx context.Context, destination, excludedID string) error {
+	roots, err := s.protectedRoots(ctx, destination, excludedID)
 	if err != nil {
 		return err
 	}
@@ -255,7 +285,7 @@ func (s Service) Resume(ctx context.Context, supervisor *jobs.Supervisor) error 
 		return err
 	}
 	for _, op := range operations {
-		if op.Kind != store.StorageOperationKindPhotoCheckout {
+		if op.Kind != store.StorageOperationKindPhotoCheckout && op.Kind != store.StorageOperationKindPhotoCheckoutCommit && op.Kind != store.StorageOperationKindPhotoCheckoutScan && op.Kind != store.StorageOperationKindPhotoCheckoutRebind {
 			continue
 		}
 		var request struct {
@@ -267,6 +297,12 @@ func (s Service) Resume(ctx context.Context, supervisor *jobs.Supervisor) error 
 		c, err := s.Store.PhotoCheckout(ctx, request.CheckoutID)
 		if err != nil {
 			return err
+		}
+		if op.Kind != store.StorageOperationKindPhotoCheckout {
+			if err := s.StartOperation(supervisor, c); err != nil && !errors.Is(err, jobs.ErrDuplicate) {
+				return err
+			}
+			continue
 		}
 		started, err := s.Store.PhotoCheckoutStarted(ctx, c.ID)
 		if err != nil {
@@ -463,8 +499,11 @@ func (s Service) Run(ctx context.Context, c store.PhotoCheckout, root *os.Root) 
 		if prepared {
 			err = checkEmptyDestination(root, c.Destination)
 		} else {
+			err = verifyRootIdentity(root, c.DestinationIdentity)
 			var proof *ingest.PathProtection
-			proof, err = s.checkDestination(ctx, root, c.Destination, c.ID)
+			if err == nil {
+				proof, err = s.checkDestination(ctx, root, c.Destination, c.ID)
+			}
 			if err == nil {
 				err = s.mutate(ctx, func() error { return s.recheckDestination(ctx, root, c.Destination, c.ID, proof) })
 			}

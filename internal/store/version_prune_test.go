@@ -953,7 +953,7 @@ func TestRetainMediaAuthorityVersionsBatchesCheckoutHolds(t *testing.T) {
 			asset := albumAsset(t, s, "photo.jpg")
 			node, err := s.NodeByID(t.Context(), asset.Files[0].NodeID)
 			require.NoError(t, err)
-			_, _, _, err = s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+			_, _, _, err = s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", "", 0)
 			require.NoError(t, err)
 			candidates := map[string]bool{node.CurrentVersionID: true}
 			for i := range 12000 {

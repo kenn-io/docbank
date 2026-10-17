@@ -33,7 +33,7 @@ func AdmitStorageOperation(
 		}
 		paused, reason := false, ""
 		if !operation.CancelRequested {
-			control, err := metadata.LaneControl(ctx, operation.Kind)
+			control, err := metadata.LaneControl(ctx, store.StorageOperationLane(operation.Kind))
 			if errors.Is(err, store.ErrLaneControl) {
 				return false, err
 			}

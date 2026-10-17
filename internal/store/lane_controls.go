@@ -44,7 +44,23 @@ type laneControlSetting struct {
 	Unknown     jsontext.Value `json:"-"`
 }
 
-var controllableLanes = append([]string{VisualPreviewLane}, storageOperationKinds...)
+var controllableLanes = func() []string {
+	lanes := []string{VisualPreviewLane}
+	for _, kind := range storageOperationKinds {
+		if StorageOperationLane(kind) == kind {
+			lanes = append(lanes, kind)
+		}
+	}
+	return lanes
+}()
+
+// StorageOperationLane groups creation and commits under the checkout pause control.
+func StorageOperationLane(kind string) string {
+	if kind == StorageOperationKindPhotoCheckoutCommit || kind == StorageOperationKindPhotoCheckoutScan || kind == StorageOperationKindPhotoCheckoutRebind {
+		return StorageOperationKindPhotoCheckout
+	}
+	return kind
+}
 
 func ControllableLane(lane string) bool {
 	return slices.Contains(controllableLanes, lane)
