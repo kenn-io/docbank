@@ -40,20 +40,6 @@ func TestActionEventsEndpoint(t *testing.T) {
 	for _, props := range []string{`{"surface":"web"}`, `{"surface":"web","search_type":"auto"}`, `{"surface":"web","search_type":42}`} {
 		require.Equal(t, 400, postEvent(t, h, `{"event":"search_run","properties":`+props+`}`).Code)
 	}
-	require.NoError(t, reporter.Close())
-	mu.Lock()
-	defer mu.Unlock()
-	require.Len(t, events, 18) // six per-import additions and twelve daily search/open claims
-}
-
-func TestImportsRetireOncePreserveRetryAndLoseAttributionOnRestart(t *testing.T) {
-	enableTelemetryEnv(t)
-	var mu sync.Mutex
-	var events []map[string]any
-	collector := screenCollector(t, &mu, &events)
-	defer collector.Close()
-	reporter := New(Options{Dir: t.TempDir(), endpoint: collector.URL})
-	defer func() { require.NoError(t, reporter.Close()) }()
 	imports := NewImports(reporter)
 	admission := func() (string, bool, error) { return "mailbox:synthetic", true, nil }
 	require.NoError(t, imports.Admit("web", admission))
@@ -63,16 +49,8 @@ func TestImportsRetireOncePreserveRetryAndLoseAttributionOnRestart(t *testing.T)
 	imports.Result("mailbox:synthetic", true, true)
 	require.NoError(t, imports.Admit("web", func() (string, bool, error) { return "photos:lost", true, nil }))
 	NewImports(reporter).Result("photos:lost", true, true)
-	require.NoError(t, reporter.Close())
-	mu.Lock()
-	defer mu.Unlock()
-	require.Len(t, events, 1)
-	assert.Equal(t, "web", events[0]["surface"])
-}
-
-func TestImportCapacityStillAdmitsWork(t *testing.T) {
 	t.Setenv(EnabledEnv, "0")
-	imports := NewImports(New(Options{Dir: t.TempDir()}))
+	imports = NewImports(New(Options{Dir: t.TempDir()}))
 	admitted := 0
 	for i := range 257 {
 		require.NoError(t, imports.Admit("cli", func() (string, bool, error) {
@@ -86,4 +64,9 @@ func TestImportCapacityStillAdmitsWork(t *testing.T) {
 	require.NoError(t, imports.Admit("cli", func() (string, bool, error) { return "next", true, nil }))
 	assert.Len(t, imports.entries, 256)
 	assert.Contains(t, imports.entries, "next")
+	require.NoError(t, reporter.Close())
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, events, 19) // six additions, twelve daily claims, one attributed import
+	assert.Equal(t, "web", events[len(events)-1]["surface"])
 }

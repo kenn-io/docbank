@@ -83,7 +83,7 @@ func TestPhotoImportRoutes(t *testing.T) {
 	assert.Equal(t, int64(1), receipt.Added)
 	// Shutdown waits for the runner's terminal accounting callback too.
 	require.NoError(t, supervisor.Shutdown(pollCtx))
-	capture.requireAddition(t)
+	capture.requireEvent(t, "document_added", map[string]any{"surface": "cli"})
 
 	for _, test := range []struct{ source, message string }{
 		{"relative", "absolute daemon-host path"},

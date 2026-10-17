@@ -193,7 +193,7 @@ func TestPackageImportCancellationAroundSnapshotPublication(t *testing.T) {
 			require.NoError(t, err)
 			_, workerErr := worker.ProcessOnce(t.Context())
 			require.True(t, attempted.Load())
-			capture.requireAddition(t)
+			capture.requireEvent(t, "document_added", map[string]any{"surface": "cli"})
 			pkg, err := catalog.Package(t.Context(), admitted.PackageID)
 			require.NoError(t, err)
 			progress, err := catalog.PackageImportProgress(t.Context(), admitted.PackageID)

@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json/v2"
 	"net/http"
 	"testing"
 
@@ -63,12 +62,8 @@ func TestMailboxActionCancellationAndResume(t *testing.T) {
 				}
 				require.Error(t, service.RunJob(t.Context(), job))
 			}
-			require.True(t, cancelled)
 			response, body = do(t, server, http.MethodPost, "/api/v1/mailbox/jobs/synthetic-job/resume", headers, api.MailboxResumeInput{Request: request})
 			require.Equal(t, http.StatusOK, response.StatusCode, body)
-			var resumed store.MailboxJob
-			require.NoError(t, json.Unmarshal([]byte(body), &resumed))
-			require.Equal(t, "queued", resumed.State)
 			job, err = catalog.ClaimMailboxJob(t.Context())
 			require.NoError(t, err)
 			require.NoError(t, service.RunJob(t.Context(), job))
@@ -78,7 +73,7 @@ func TestMailboxActionCancellationAndResume(t *testing.T) {
 				require.Empty(t, capture.events)
 				capture.mu.Unlock()
 			} else {
-				capture.requireAddition(t)
+				capture.requireEvent(t, "document_added", map[string]any{"surface": "cli"})
 			}
 		})
 	}

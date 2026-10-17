@@ -5,7 +5,6 @@ package main
 import (
 	"context"
 	"encoding/json/v2"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -32,6 +31,10 @@ func TestInteractiveActionGateAndEndpoint(t *testing.T) {
 		assert.Equal(t, "synthetic-key", r.Header.Get("X-Api-Key"))
 		var body api.TelemetryEventRequest
 		assert.NoError(t, json.UnmarshalRead(r.Body, &body))
+		if body.Event == "search_run" {
+			<-r.Context().Done()
+			return
+		}
 		mu.Lock()
 		events = append(events, body)
 		mu.Unlock()
@@ -65,6 +68,12 @@ func TestInteractiveActionGateAndEndpoint(t *testing.T) {
 			reportOpened(cmd, connection)
 		})
 	}
+	cmd := &cobra.Command{}
+	cmd.SetOut(terminal)
+	cmd.SetContext(t.Context())
+	start := time.Now()
+	reportAction(cmd, connection, "search_run", "auto", 100*time.Millisecond)
+	assert.Less(t, time.Since(start), time.Second)
 	mu.Lock()
 	defer mu.Unlock()
 	require.Len(t, events, 2)
@@ -73,16 +82,4 @@ func TestInteractiveActionGateAndEndpoint(t *testing.T) {
 	for _, event := range events {
 		assert.Equal(t, &api.TelemetryEventProperties{Surface: "cli"}, event.Properties)
 	}
-}
-
-func TestInteractiveReportDeadline(t *testing.T) {
-	terminal := actionTerminal(t)
-	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { _, _ = io.Copy(io.Discard, r.Body); <-r.Context().Done() }))
-	defer server.Close()
-	cmd := &cobra.Command{}
-	cmd.SetOut(terminal)
-	cmd.SetContext(t.Context())
-	start := time.Now()
-	reportAction(cmd, daemonconn.New(server.URL, "synthetic-key"), "search_run", "auto", 100*time.Millisecond)
-	assert.Less(t, time.Since(start), time.Second)
 }

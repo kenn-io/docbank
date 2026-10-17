@@ -586,9 +586,10 @@ func (f *fakeBackend) AuditHistory(
 
 func TestModelNavigatesSearchesAndReturnsToTree(t *testing.T) {
 	backend := newFakeBackend()
+	backend.profiles = nil
 	model, err := New(t.Context(), backend)
 	require.NoError(t, err)
-	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model = runModelCommand(t, model, model.Init())
 	assert.Equal(t, maxBrowserItems, backend.childLimit)
 	assert.Equal(t, "/", model.directory.Path)
 	require.Len(t, model.rows, 2)
@@ -608,14 +609,28 @@ func TestModelNavigatesSearchesAndReturnsToTree(t *testing.T) {
 	model, _ = updateModel(t, model, runeKey('/'))
 	assert.True(t, model.searching)
 	model.searchInput.SetValue("quarterly report")
-	model, cmd = updateModel(t, model, key(tea.KeyEnter))
-	require.NotNil(t, cmd)
+	next, searchCmd := model.update(key(tea.KeyEnter))
+	var ok bool
+	model, ok = next.(Model)
+	require.True(t, ok)
+	result := searchCmd()
+	if batch, ok := result.(tea.BatchMsg); ok {
+		result = batch[1]()
+	}
+	model, cmd = updateModel(t, model, result)
 	model = runModelCommand(t, model, cmd)
+	require.Equal(t, [][2]string{{"search_run", "text"}}, backend.actions)
 	assert.Equal(t, maxSearchItems, backend.searchMax)
 	assert.Equal(t, modeSearch, model.mode)
 	assert.Equal(t, "quarterly report", model.searchQuery)
 	require.Len(t, model.rows, 1)
 	assert.Equal(t, "content", model.rows[0].match)
+
+	next, cmd = model.startSearch("quarterly report")
+	model, ok = next.(Model)
+	require.True(t, ok)
+	model = runModelCommand(t, model, cmd)
+	require.Len(t, backend.actions, 1)
 
 	model, cmd = updateModel(t, model, key(tea.KeyEscape))
 	requireBrowseReportOnly(t, backend, cmd)
@@ -1590,6 +1605,7 @@ func TestExpandedDetailExposesCompleteAuthority(t *testing.T) {
 	require.NotNil(t, cmd)
 	require.True(t, model.detailOpen)
 	model = runModelCommand(t, model, cmd)
+	require.Equal(t, [][2]string{{"document_opened", ""}}, backend.actions)
 	assert.Equal(t, []int64{3}, backend.tagNodeIDs)
 	selected, ok := model.selected()
 	require.True(t, ok)
@@ -2856,44 +2872,4 @@ func TestVisibleScreensAreAllowlisted(t *testing.T) {
 func (f *fakeBackend) ReportAction(_ context.Context, event, value string) error {
 	f.actions = append(f.actions, [2]string{event, value})
 	return nil
-}
-
-func TestActionSearchIntentAndSettledInspection(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		fake := newFakeBackend()
-		fake.profiles = nil
-		model, err := New(t.Context(), fake)
-		require.NoError(t, err)
-		model = runModelCommand(t, model, model.Init())
-		var cmd tea.Cmd
-		model, cmd = updateModel(t, model, runeKey('/'))
-		model = runModelCommand(t, model, cmd)
-		model.searchInput.SetValue("report")
-		entered, enterCmd := model.update(key(tea.KeyEnter))
-		var enterOK bool
-		model, enterOK = entered.(Model)
-		require.True(t, enterOK)
-		cmd = enterCmd
-		batchSearch, batchOK := cmd().(tea.BatchMsg)
-		require.True(t, batchOK)
-		model, cmd = updateModel(t, model, batchSearch[1]())
-		if cmd != nil {
-			model = runModelCommand(t, model, cmd)
-		}
-		require.Equal(t, [][2]string{{"search_run", "text"}}, fake.actions)
-		// Shared refresh does not create another user action.
-		raw, cmd := model.startSearch("report")
-		var ok bool
-		model, ok = raw.(Model)
-		require.True(t, ok)
-		model = runModelCommand(t, model, cmd)
-		require.Len(t, fake.actions, 1)
-		model.rows = []row{{node: fake.nodes["/README.txt"], path: "/README.txt"}}
-		model.cursor = 0
-		raw, cmd = model.openDetail()
-		model, ok = raw.(Model)
-		require.True(t, ok)
-		model = runModelCommand(t, model, cmd)
-		require.Equal(t, [][2]string{{"search_run", "text"}, {"document_opened", ""}}, fake.actions)
-	})
 }
