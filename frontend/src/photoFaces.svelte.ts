@@ -9,6 +9,7 @@ import {
 } from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
 import { randomUUID } from "./crypto.js";
+import type { HiddenAccess } from "./hiddenAccess.svelte.js";
 
 export class PhotoFaces {
   faces = $state.raw<PhotoFace[]>([]);
@@ -21,12 +22,17 @@ export class PhotoFaces {
   pending = $state.raw<{ version: string; box: FaceBox; face_id: string }>();
   private controller?: AbortController;
   private writer?: AbortController;
+  private disposed = false;
   constructor(
     private session: string,
     private onauthfailure: (cause: unknown) => void,
     private hidden = false,
     private ondecision: () => void = () => {},
+    private readonly hiddenAccess?: HiddenAccess,
   ) {}
+  private request<T>(request: () => Promise<T>) {
+    return this.hiddenAccess ? this.hiddenAccess.run(request) : request();
+  }
   person(face: PhotoFace) {
     return this.assertions.find(
       (row) => row.assertion_id === face.assertion_id && row.action === "assert",
@@ -40,6 +46,7 @@ export class PhotoFaces {
     return this.people.find((person) => person.person_id === id)?.display_name ?? "Unnamed person";
   }
   async load(version: string) {
+    if (this.disposed) return;
     this.controller?.abort();
     const changed = version !== this.version;
     if (changed) {
@@ -87,19 +94,20 @@ export class PhotoFaces {
     action: (version: string, signal: AbortSignal) => Promise<unknown>,
     decision = false,
   ) {
-    if (this.loading || this.busy || !this.version) return false;
+    if (this.disposed || this.loading || this.busy || !this.version) return false;
     const version = this.version,
       controller = (this.writer = new AbortController());
     this.busy = true;
     this.error = "";
     try {
-      await action(version, controller.signal);
+      await this.request(() => action(version, controller.signal));
       if (controller.signal.aborted) return false;
+      if (this.disposed) return true;
       if (decision) this.ondecision();
       if (this.version === version) await this.load(version);
       return true;
     } catch (cause) {
-      if (!controller.signal.aborted) {
+      if (!controller.signal.aborted && !this.disposed) {
         if (
           decision ||
           (cause instanceof APIError && (cause.status === 409 || cause.status === 412))
@@ -147,28 +155,32 @@ export class PhotoFaces {
     );
   }
   async add(box: FaceBox) {
-    if (this.pending || this.loading || this.busy || !this.version) return false;
+    if (this.disposed || this.pending || this.loading || this.busy || !this.version) return false;
     this.pending = { version: this.version, box: { ...box }, face_id: randomUUID() };
     return this.retryAdd();
   }
   async retryAdd() {
     const pending = this.pending;
-    if (!pending || this.loading || this.busy || pending.version !== this.version) return false;
+    if (this.disposed || !pending || this.loading || this.busy || pending.version !== this.version)
+      return false;
     const controller = (this.writer = new AbortController());
     this.busy = true;
     this.error = "";
     try {
-      await createPhotoFace(
-        pending.version,
-        { box: pending.box, face_id: pending.face_id },
-        { session: this.session, signal: controller.signal },
+      await this.request(() =>
+        createPhotoFace(
+          pending.version,
+          { box: pending.box, face_id: pending.face_id },
+          { session: this.session, signal: controller.signal },
+        ),
       );
       if (controller.signal.aborted) return false;
       this.pending = undefined;
+      if (this.disposed) return true;
       await this.load(pending.version);
       return !controller.signal.aborted;
     } catch (cause) {
-      if (controller.signal.aborted) return false;
+      if (controller.signal.aborted || this.disposed) return false;
       if (cause instanceof APIError && cause.status >= 400 && cause.status < 500)
         this.pending = undefined;
       await this.load(pending.version);
@@ -181,7 +193,8 @@ export class PhotoFaces {
     }
   }
   dispose() {
+    this.disposed = true;
     this.controller?.abort();
-    this.writer?.abort();
+    if (!this.hiddenAccess) this.writer?.abort();
   }
 }

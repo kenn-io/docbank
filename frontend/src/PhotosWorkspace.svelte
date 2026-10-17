@@ -189,7 +189,14 @@
   const album = $derived(albums?.items.find((item) => item.id === albumID));
   const editor = $derived(photos.authored);
   const inspectorFaces = untrack(
-    () => new PhotoFaces(photos.session, photos.onauthfailure, photos.hidden, faceDecision),
+    () =>
+      new PhotoFaces(
+        photos.session,
+        photos.onauthfailure,
+        photos.hidden,
+        faceDecision,
+        photos.hidden ? photos.hiddenAccess : undefined,
+      ),
   );
   $effect(() => {
     const filter = photos.personFilter;

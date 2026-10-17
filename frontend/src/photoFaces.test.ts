@@ -3,10 +3,57 @@ import { APIError } from "./api-transport.js";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { PhotoFaces } from "./photoFaces.svelte.js";
 import * as api from "./generated/docbank.js";
+import { HiddenAccess } from "./hiddenAccess.svelte.js";
 
 afterEach(() => vi.restoreAllMocks());
 const face = photoFace();
 const assertion = photoPersonAssertion();
+it.each(["create", "name", "clear"] as const)(
+  "settles a Hidden %s before locking after disposal",
+  async (action) => {
+    const events: string[] = [];
+    let finish!: () => void;
+    let signal!: AbortSignal;
+    vi.spyOn(api, "listPhotoFaces").mockResolvedValue(photoFacePage());
+    const held = async (_version: string, _body: unknown, options?: { signal?: AbortSignal | null }) => {
+      signal = options!.signal!;
+      await new Promise<void>((resolve) => (finish = resolve));
+      events.push("saved");
+    };
+    vi.spyOn(api, "createPhotoFace").mockImplementation(async (...args) => {
+      await held(...args);
+      return { face };
+    });
+    vi.spyOn(api, "decidePhotoFace").mockImplementation(async (...args) => {
+      await held(...args);
+      return { receipt_id: "receipt-a" };
+    });
+    vi.spyOn(api, "lockPhotoHidden").mockImplementation(async () => {
+      events.push("locked");
+      return { configured: true };
+    });
+    const access = new HiddenAccess("session", vi.fn());
+    const faces = new PhotoFaces("session", vi.fn(), true, vi.fn(), access);
+    await faces.load("version-a");
+    const saving =
+      action === "create"
+        ? faces.add({ x: 0.1, y: 0.2, width: 0.3, height: 0.4 })
+        : action === "name"
+          ? faces.name(face, "", "Ada")
+          : faces.clear(face);
+    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+    faces.dispose();
+    const locking = access.lock();
+    await Promise.resolve();
+    expect(signal.aborted).toBe(false);
+    expect(events).toEqual([]);
+    finish();
+    expect(await saving).toBe(true);
+    expect(await locking).toBe(true);
+    expect(events).toEqual(["saved", "locked"]);
+    expect(api.listPhotoFaces).toHaveBeenCalledTimes(1);
+  },
+);
 it("names the face with its current revision and refreshes its active label", async () => {
   const read = vi
     .spyOn(api, "listPhotoFaces")

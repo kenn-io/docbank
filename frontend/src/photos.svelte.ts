@@ -418,7 +418,7 @@ export class Photos {
   private readonly withoutCounts: boolean;
 
   readonly projection?: "map" | undefined;
-  private readonly hiddenAccess?: HiddenAccess | undefined;
+  readonly hiddenAccess?: HiddenAccess | undefined;
   constructor(
     readonly session: string,
     readonly onauthfailure: (cause: unknown) => void,
