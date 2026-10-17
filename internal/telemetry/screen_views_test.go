@@ -176,11 +176,18 @@ func TestCaptureClassifiesSearchesAndClaimsAcrossInterfacesRestartsAndDays(t *te
 	counts := make(map[string]int)
 	for _, event := range events {
 		props := event.Properties
-		key := event.Event + "/" + props["surface"].(string)
-		if event.Event == "screen_viewed" {
-			key += "/" + props["screen"].(string)
-		} else if event.Event == "search_run" {
-			key += "/" + props["search_type"].(string)
+		surface, ok := props["surface"].(string)
+		require.True(t, ok, "surface must be a string")
+		key := event.Event + "/" + surface
+		switch event.Event {
+		case "screen_viewed":
+			screen, ok := props["screen"].(string)
+			require.True(t, ok, "screen must be a string")
+			key += "/" + screen
+		case "search_run":
+			searchType, ok := props["search_type"].(string)
+			require.True(t, ok, "search_type must be a string")
+			key += "/" + searchType
 		}
 		counts[key]++
 		assert.NotContains(t, props, "query")

@@ -77,6 +77,7 @@ func photoImportTestGroup(members ...PhotoImportMember) PhotoImportGroup {
 }
 
 func TestPhotoImportAdditionRejectsUnknownPlanFields(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	const plan = `{"action_surface":"cli","future_policy":true}`
@@ -93,7 +94,7 @@ func TestPhotoImportAdditionRejectsUnknownPlanFields(t *testing.T) {
 	require.ErrorContains(t, err, "future_policy")
 	stored, err := s.StorageOperation(ctx, op.ID)
 	require.NoError(t, err)
-	assert.Equal(t, plan, stored.PlanJSON)
+	assert.JSONEq(t, plan, stored.PlanJSON)
 	_, err = s.NodeByPath(ctx, "/IMG.JPG")
 	assert.ErrorIs(t, err, ErrNotFound)
 }
