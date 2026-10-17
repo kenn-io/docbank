@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
@@ -73,10 +74,7 @@ func (s *Store) publishPhotoXMPTx(ctx context.Context, tx *sql.Tx, run IngestRun
 		}
 	}
 	if plan.Refusal != "" {
-		if plan.RefusalState == "" {
-			plan.RefusalState = PhotoXMPStateInvalid
-		}
-		return setPhotoXMPStateTx(ctx, tx, w.Original.ID, plan.RefusalState, photoXMPDetail{Reason: plan.Refusal})
+		return setPhotoXMPStateTx(ctx, tx, w.Original.ID, cmp.Or(plan.RefusalState, PhotoXMPStateInvalid), photoXMPDetail{Reason: plan.Refusal})
 	}
 	if plan.Rows != nil {
 		id, err := newUUIDv4()

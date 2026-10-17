@@ -195,9 +195,19 @@ func TestPhotoXMPOutsideEditsMergeAfterManagedWrite(t *testing.T) {
 	t.Parallel()
 	e := newXMPEnv(t, xmpSidecar(` xmp:Rating="3"`, ""))
 	e.drain()
+	outside, _, _ := e.packet()
 	e.edit(store.PhotoAuthoredPatch{Rating: new(5)})
 	e.drain()
 	managed, _, _ := e.packet()
+	e.importFiles(xmpSidecar(` xmp:Rating="3"`, ""))
+	e.drain()
+	bindings, err := e.catalog.ProvenanceVersionBindings(t.Context(), outside.CurrentVersionID)
+	require.NoError(t, err)
+	assert.Len(t, bindings, 2, "the rescan observes the retained outside version")
+	bindings, err = e.catalog.ProvenanceVersionBindings(t.Context(), managed.CurrentVersionID)
+	require.NoError(t, err)
+	assert.Empty(t, bindings, "outside bytes do not describe Docbank's newer version")
+	managed = e.node(managed.ID)
 
 	// A rescan of the unchanged outside file keeps Docbank's newer version,
 	// even after the version holding those bytes is pruned.
@@ -209,6 +219,9 @@ func TestPhotoXMPOutsideEditsMergeAfterManagedWrite(t *testing.T) {
 	rescanned, _, _ := e.packet()
 	assert.Equal(t, managed.CurrentVersionID, rescanned.CurrentVersionID)
 	assert.Equal(t, 5, e.raw().Rating)
+	bindings, err = e.catalog.ProvenanceVersionBindings(t.Context(), managed.CurrentVersionID)
+	require.NoError(t, err)
+	assert.Empty(t, bindings, "a pruned outside version does not fall back to the current version")
 
 	// An outside edit of those bytes merges by property against them.
 	e.importFiles(xmpSidecar(` xmp:Rating="3"`, `<dc:description>River</dc:description>`))
@@ -323,10 +336,10 @@ func TestPhotoXMPReadPermissionFailureRetries(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, os.Chmod(path, 0o600)) })
 	err := SyncPhotoXMPBackground(t.Context(), &ingest.Ingester{Store: e.catalog, Blobs: e.blobs}, e.raw().ID)
 	require.ErrorIs(t, err, os.ErrPermission)
-	e.state(store.PhotoXMPStatePending)
+	assert.Equal(t, "The sidecar could not be read. Background sync will retry.", e.state(store.PhotoXMPStatePending).Reason)
 	require.NoError(t, os.Chmod(path, 0o600))
 	e.drain()
-	e.state(store.PhotoXMPStateSynced)
+	assert.Empty(t, e.state(store.PhotoXMPStateSynced).Reason)
 	_, _, packet := e.packet()
 	assert.Equal(t, 5, packet.Rating)
 }

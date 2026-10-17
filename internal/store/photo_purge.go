@@ -7,6 +7,8 @@ import (
 	"fmt"
 )
 
+const photoXMPPurgeReceipts = `SELECT receipt_id FROM photo_change_receipts INDEXED BY photo_change_receipts_xmp_node WHERE operation='xmp_sync' AND json_extract(after_json,'$.node_id') IN (SELECT value FROM json_each(?1)) UNION SELECT receipt_id FROM photo_change_receipts INDEXED BY photo_change_receipts_xmp_sidecar WHERE operation='xmp_sync' AND json_extract(after_json,'$.sidecar.node_id') IN (SELECT value FROM json_each(?1))`
+
 // adjustPhotosForPurgedNodesTx removes memberships before a permanent node
 // deletion. Assets remain as empty, revisioned graph rows so receipts and later
 // restore/import validation retain their identity.
@@ -86,14 +88,10 @@ func adjustPhotosForPurgedNodesTx(ctx context.Context, tx *sql.Tx, nodeIDs []int
 		}
 		// An XMP receipt naming a purged original or sidecar goes with it, and
 		// its original syncs again from no baseline.
-		if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET xmp_receipt_id='',xmp_state='pending' WHERE file_id IN (
- SELECT json_extract(after_json,'$.file_id') FROM photo_change_receipts WHERE operation='xmp_sync' AND (json_extract(after_json,'$.node_id') IN (SELECT value FROM json_each(?1))
- OR json_extract(after_json,'$.sidecar.node_id') IN (SELECT value FROM json_each(?1))))`, string(encoded)); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET xmp_receipt_id='',xmp_state='pending' WHERE file_id IN (SELECT json_extract(after_json,'$.file_id') FROM photo_change_receipts WHERE receipt_id IN (`+photoXMPPurgeReceipts+`))`, string(encoded)); err != nil {
 			return fmt.Errorf("clearing XMP receipts for purged nodes: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, `WITH RECURSIVE nodes_to_purge(id) AS (SELECT value FROM json_each(?)), doomed(receipt_id) AS (
- SELECT r.receipt_id FROM photo_change_receipts r WHERE r.operation='xmp_sync' AND (json_extract(r.after_json,'$.node_id') IN (SELECT id FROM nodes_to_purge)
- OR json_extract(r.after_json,'$.sidecar.node_id') IN (SELECT id FROM nodes_to_purge))
+		if _, err := tx.ExecContext(ctx, `WITH RECURSIVE nodes_to_purge(id) AS (SELECT value FROM json_each(?)), doomed(receipt_id) AS (`+photoXMPPurgeReceipts+`
  UNION
  SELECT r.receipt_id FROM photo_change_receipts r
  WHERE r.operation IN ('authored','authored_undo','authored_sidecar') AND

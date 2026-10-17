@@ -67,11 +67,12 @@ func syncPhotoXMP(ctx context.Context, ing *ingest.Ingester, work store.PhotoXMP
 			return ctx.Err()
 		}
 		if err != nil && !errors.Is(err, bundle.ErrLimit) {
-			if !errors.Is(err, packstore.ErrPhysicalMissing) || errors.Is(err, packstore.ErrStoreUnavailable) {
-				return err
+			plan.Refusal, plan.RefusalState = "The sidecar could not be read. Background sync will retry.", store.PhotoXMPStatePending
+			if errors.Is(err, packstore.ErrPhysicalMissing) && !errors.Is(err, packstore.ErrStoreUnavailable) {
+				plan.Refusal, plan.RefusalState = "The sidecar content is missing. Restore its data, then refresh XMP.", store.PhotoXMPStateUnavailable
+				err = nil
 			}
-			plan.Refusal, plan.RefusalState = "The sidecar content is missing. Restore its data, then refresh XMP.", store.PhotoXMPStateUnavailable
-			return ing.PublishPhotoXMP(ctx, plan, nil)
+			return errors.Join(err, ing.PublishPhotoXMP(ctx, plan, nil))
 		}
 		if err == nil {
 			packet, err = readPhotoSidecar(ctx, data)

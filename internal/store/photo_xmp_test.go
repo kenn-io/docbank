@@ -2,7 +2,9 @@ package store
 
 import (
 	"bytes"
+	"database/sql"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -373,4 +375,40 @@ func TestPhotoXMPQueryFilters(t *testing.T) {
 	assert.Equal(t, []string{asset.ID}, match("NOT xmp:pending"))
 	_, err = s.ListPhotoAssets(ctx, PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Text: "xmp:synced"}}, nil)
 	require.Error(t, err)
+}
+
+func TestPhotoXMPPurgeUsesNodeIndexes(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	_, err := s.db.Exec(`WITH RECURSIVE seq(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM seq WHERE n<100000)
+ INSERT INTO photo_change_receipts(receipt_id,operation,before_revision,after_revision,before_json,after_json,created_at)
+ SELECT printf('receipt-%d',n),'xmp_sync',1,1,'{}',json_object('node_id',2*n,'sidecar',json_object('node_id',2*n+1)),'2026-01-01T00:00:00Z' FROM seq`)
+	require.NoError(t, err)
+	_, err = s.db.Exec(`ANALYZE`)
+	require.NoError(t, err)
+	var plan []string
+	require.NoError(t, queryRows(t.Context(), s.db, `EXPLAIN QUERY PLAN `+photoXMPPurgeReceipts, []any{"[3]"}, func(rows *sql.Rows) error {
+		var id, parent, unused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			return err
+		}
+		plan = append(plan, detail)
+		return nil
+	}))
+	t.Log(strings.Join(plan, "\n"))
+	require.Contains(t, strings.Join(plan, "\n"), "INDEX photo_change_receipts_xmp_node (<expr>=?)")
+	require.Contains(t, strings.Join(plan, "\n"), "INDEX photo_change_receipts_xmp_sidecar (<expr>=?)")
+	for _, nodes := range []string{"[2]", "[3]", "[2,3]"} {
+		var ids []string
+		require.NoError(t, queryRows(t.Context(), s.db, photoXMPPurgeReceipts, []any{nodes}, func(rows *sql.Rows) error {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				return err
+			}
+			ids = append(ids, id)
+			return nil
+		}))
+		require.Equal(t, []string{"receipt-1"}, ids)
+	}
 }

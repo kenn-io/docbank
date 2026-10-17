@@ -2489,6 +2489,8 @@ CREATE INDEX IF NOT EXISTS photo_change_receipts_asset
     ON photo_change_receipts(asset_id, receipt_id);
 CREATE INDEX IF NOT EXISTS photo_change_receipts_set ON photo_change_receipts(set_id,receipt_id);
 CREATE INDEX IF NOT EXISTS photo_change_receipts_operation ON photo_change_receipts(operation);
+CREATE INDEX IF NOT EXISTS photo_change_receipts_xmp_node ON photo_change_receipts(json_extract(after_json,'$.node_id')) WHERE operation='xmp_sync';
+CREATE INDEX IF NOT EXISTS photo_change_receipts_xmp_sidecar ON photo_change_receipts(json_extract(after_json,'$.sidecar.node_id')) WHERE operation='xmp_sync';
 CREATE INDEX IF NOT EXISTS photo_change_receipts_face_version
     ON photo_change_receipts(json_extract(before_json,'$.content_version_id'),receipt_id)
     WHERE operation='face_decision';
