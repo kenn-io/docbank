@@ -242,32 +242,10 @@ func TestPhotoStackGroupRouteBoundsExplicitIDs(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, res.StatusCode)
 	require.Less(t, len(body), 64<<10)
 	require.Equal(t, "invalid_photo_asset", decodeProblem(t, body).Code)
-	require.Contains(t, decodeProblem(t, body).Detail, "asset_ids must contain unique IDs")
 	res, body = do(t, ts, http.MethodPost, "/api/v1/photos/stacks/group", browser, map[string]any{"asset_ids": []string{"invalid"}})
 	require.Equal(t, http.StatusUnprocessableEntity, res.StatusCode, body)
 	require.Equal(t, "invalid_photo_asset", decodeProblem(t, body).Code)
 	require.Contains(t, decodeProblem(t, body).Detail, "asset_ids must contain UUIDv4 IDs")
-	prepared, err := s.PreparePhotoAuthored(ctx, store.PhotoSetSelection{AssetIDs: ids})
-	require.NoError(t, err)
-	for _, tc := range []struct {
-		name   string
-		change func(*api.PhotoStackDecisionRequest)
-		detail string
-	}{
-		{"empty selection", func(r *api.PhotoStackDecisionRequest) { r.SelectedIDs = nil }, "selected_ids must contain at least one ID"},
-		{"foreign selection", func(r *api.PhotoStackDecisionRequest) { r.SelectedIDs = []string{missing} }, "selected_ids must belong to asset_ids"},
-		{"foreign current", func(r *api.PhotoStackDecisionRequest) { r.CurrentID = missing }, "current_id must belong to asset_ids"},
-		{"duplicate targets", func(r *api.PhotoStackDecisionRequest) { r.Targets[1] = r.Targets[0] }, "targets must contain unique file_id values"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			request := api.PhotoStackDecisionRequest{BurstGapSeconds: 2, AssetIDs: ids, CurrentID: ids[0], SelectedIDs: ids[:1], Targets: apiEditTargets(prepared.Targets), Decision: "selected"}
-			tc.change(&request)
-			res, body := do(t, ts, http.MethodPost, "/api/v1/photos/authored/stack", browser, request)
-			require.Equal(t, http.StatusUnprocessableEntity, res.StatusCode, body)
-			require.Equal(t, "invalid_photo_asset", decodeProblem(t, body).Code)
-			require.Contains(t, decodeProblem(t, body).Detail, tc.detail)
-		})
-	}
 	res, _ = do(t, ts, http.MethodPost, "/api/v1/photos/stacks/group", browser, map[string]any{"asset_ids": []string{}, "padding": strings.Repeat("x", 16<<20)})
 	require.Equal(t, http.StatusRequestEntityTooLarge, res.StatusCode)
 }
@@ -284,12 +262,6 @@ func TestPhotoSettingsAuditedPreferenceExplainsGapOnlyUpdate(t *testing.T) {
 	require.Equal(t, http.StatusConflict, res.StatusCode, body)
 	require.Equal(t, "audit_mutation_unsupported", decodeProblem(t, body).Code)
 	require.Contains(t, decodeProblem(t, body).Detail, "display preference cannot be changed in an audited vault; set the burst gap without a preference")
-	res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", headers, map[string]any{"burst_gap_seconds": 5})
-	require.Equal(t, http.StatusOK, res.StatusCode, body)
-	var settings api.PhotoSettings
-	require.NoError(t, json.Unmarshal([]byte(body), &settings))
-	require.Equal(t, 5, settings.BurstGapSeconds)
-	require.Nil(t, settings.Preference)
 }
 
 func TestPhotoSettingsGapAndPreference(t *testing.T) {

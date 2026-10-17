@@ -3149,6 +3149,12 @@ it("updates the burst gap through general settings and shows regrouped Library p
   });
   const photos = new Photos("session", vi.fn());
   await photos.resume();
+  const get = vi.spyOn(api, "getPhotoSettings");
+  for (const gap of [Number(""), 1.5, 31]) {
+    await photos.setBurstGap(gap);
+    expect(photos.actionError).toBe("burst gap must be a whole number of seconds from 1 to 30");
+  }
+  expect(get).not.toHaveBeenCalled();
   await photos.setBurstGap(5);
   expect(updates).toEqual([{ burst_gap_seconds: 5 }]);
   expect(photos.burstGapSeconds).toBe(5);

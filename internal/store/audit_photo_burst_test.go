@@ -90,11 +90,15 @@ func TestPhotoBurstAuditEnrollmentAndRestore(t *testing.T) {
 
 func TestPhotoBurstAuditRollback(t *testing.T) {
 	t.Parallel()
-	for _, action := range []string{"choice", "undo", "gap"} {
+	for _, action := range []string{"choice", "undo", "gap", "decision"} {
 		t.Run(action, func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
-			ids := burstPhotos(t, s, 2)
+			count := 2
+			if action == "decision" {
+				count = 3
+			}
+			ids := burstPhotos(t, s, count)
 			seedInitialAuditAuthority(t, s, s.RootID())
 			choose := func() (PhotoAuthoredReceipt, error) {
 				return s.DecidePhotoStack(ctx, PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: preparedPhotoTargets(t.Context(), t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets}), CurrentID: ids[1], Decision: "representative"})
@@ -107,17 +111,32 @@ func TestPhotoBurstAuditRollback(t *testing.T) {
 			}
 			var before, after bytes.Buffer
 			require.NoError(t, s.ExportMetadata(ctx, &before))
-			_, err := s.db.Exec(`CREATE TRIGGER reject_burst_audit BEFORE INSERT ON audit_records BEGIN SELECT RAISE(ABORT,'forced burst audit failure'); END`)
+			trigger := `CREATE TRIGGER reject_burst_audit BEFORE INSERT ON audit_records BEGIN SELECT RAISE(ABORT,'forced burst audit failure'); END`
+			if action == "decision" {
+				trigger = `CREATE TRIGGER reject_stack_audit BEFORE UPDATE ON audit_scopes BEGIN SELECT RAISE(ABORT,'forced stack audit failure'); END`
+			}
+			_, err := s.db.Exec(trigger)
 			require.NoError(t, err)
 			switch action {
 			case "choice":
 				_, err = choose()
 			case "undo":
 				_, err = s.UndoPhotoAuthored(ctx, receipt.ReceiptID)
+			case "decision":
+				_, err = s.DecidePhotoStack(ctx, PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: preparedPhotoTargets(ctx, t, s, PhotoSetSelection{AssetIDs: ids, Limit: MaxPhotoStackTargets}), Decision: "current", CurrentID: ids[1]})
 			case "gap":
 				_, err = s.SetPhotoSettings(ctx, 1, PhotoSettingsUpdate{KeepPreference: true, BurstGapSeconds: new(5)})
 			}
-			require.ErrorContains(t, err, "forced burst audit failure")
+			if action == "decision" {
+				require.ErrorContains(t, err, "forced stack audit failure")
+				for _, id := range ids {
+					asset, err := s.PhotoAssetByID(ctx, id)
+					require.NoError(t, err)
+					require.Empty(t, asset.Files[0].Flag)
+				}
+			} else {
+				require.ErrorContains(t, err, "forced burst audit failure")
+			}
 			require.NoError(t, s.ExportMetadata(ctx, &after))
 			require.Equal(t, before.String(), after.String(), "rank, sequence, settings, revisions, receipts and audit authority must roll back together")
 		})

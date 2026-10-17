@@ -2890,7 +2890,7 @@ it("uses the resolved vault identity when Cull mounted before audit status arriv
   photos.dispose();
 });
 
-it("restores invalid burst gaps and explains the whole-second requirement", async () => {
+it("resets an invalid burst gap input to 2", async () => {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -2902,17 +2902,10 @@ it("restores invalid burst gaps and explains the whole-second requirement", asyn
   photos.items = [photo(1)];
   photos.total = 1;
   photos.started = true;
-  const get = vi.spyOn(api, "getPhotoSettings");
   render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
   const input = screen.getByRole("spinbutton", { name: "Burst gap (seconds)" }) as HTMLInputElement;
-  for (const value of ["", "1.5", "31"]) {
-    await fireEvent.change(input, { target: { value } });
-    await waitFor(() => expect(input.value).toBe("2"));
-    expect(screen.getByRole("alert").textContent).toBe(
-      "burst gap must be a whole number of seconds from 1 to 30",
-    );
-  }
-  expect(get).not.toHaveBeenCalled();
+  await fireEvent.change(input, { target: { value: "1.5" } });
+  await waitFor(() => expect(input.value).toBe("2"));
   photos.dispose();
 });
 

@@ -21,7 +21,7 @@ import (
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
-const metadataFormatVersion = 2
+const metadataFormatVersion = 3
 
 const (
 	metadataCreatedAtField        = "created_at"
@@ -1130,12 +1130,14 @@ func (s *Store) importMetadataLines(
 		if err := json.Unmarshal(raw, &kind); err != nil {
 			return metadataHeader{}, fmt.Errorf("decoding metadata record %d type: %w", record, err)
 		}
-		if header.Version == 1 && kind.Type == metadataPhotoSettingsType {
+		if header.Version <= 2 && kind.Type == metadataPhotoSettingsType {
 			var settings map[string]jsontext.Value
 			if err := json.Unmarshal(raw, &settings); err != nil {
 				return metadataHeader{}, err
 			}
-			settings["representative_sequence"] = jsontext.Value("0")
+			if _, present := settings["representative_sequence"]; !present {
+				settings["representative_sequence"] = jsontext.Value("0")
+			}
 			raw, err = json.Marshal(settings)
 			if err != nil {
 				return metadataHeader{}, err

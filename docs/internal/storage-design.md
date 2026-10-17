@@ -435,7 +435,7 @@ The highest representative rank within a burst records its latest explicit choic
 every explicit choice, including rechoosing the displayed frame, gets a fresh rank.
 A choice or its Undo advances the asset revision and leaves file flags unchanged.
 Schema 39 adds the internal `representative_sequence` on `photo_library_settings`. It never rewinds
-with Undo and leaves the public settings revision unchanged. JSONL v2 requires and preserves this sequence, including its empty NULL value. Released v1 backups initialize it to 0 on import. Pre-release v2 backups missing the field fail validation.
+with Undo and leaves the public settings revision unchanged. JSONL v3 requires and preserves this sequence, including its empty NULL value. Imports of v1 and v2 backups default it to 0 only when absent, preserving any present value and allowing older v2 backups to restore.
 Representative receipts must reference existing photo assets.
 `photo_library_settings` owns the vault-wide display preference, `burst_gap_seconds`
 (default 2, range 1–30), and their shared revision. One settings update can
@@ -453,7 +453,7 @@ processing sources remain eligible. Automatic enrollment writes no human
 receipt. Existing graphs survive ordinary trash and restore; permanent node
 deletion removes memberships, repairs display pointers, advances each
 affected asset once, and retains an empty asset row.
-The unreleased authored receipt extension includes optional keyword deltas and node revision fences so fields and keywords undo together. Authored receipts share a 2 MiB JSON limit across edits, stack decisions, Undo, and restore. Metadata JSONL advances to v2; restore still accepts v1 streams, while older readers refuse these unknown receipt members.
+The unreleased authored receipt extension includes optional keyword deltas and node revision fences so fields and keywords undo together. Authored receipts share a 2 MiB JSON limit across edits, stack decisions, Undo, and restore. Metadata JSONL advances to v3; restore still accepts v1 and v2 streams, while older readers refuse these unknown receipt members.
 
 Unaudited permanent deletion removes authored receipts that reference a deleted
 target or sidecar and their dependent undo receipts in the same transaction.
@@ -474,7 +474,7 @@ keep their revision and append no receipt.
 
 Hidden photos store nullable `photo_assets.hidden_at`. Revisioned hide/unhide writes use the existing asset receipts. Disable reads only hidden asset graphs and atomically clears their flags and authentication state. Reset preserves flags. Public Photos asset and preview reads require an active unlock for hidden assets; ordinary Documents reads retain access.
 
-Vault-wide hidden credentials use fixed Argon2id parameters. Failure timestamps and five-minute lockout persist through restart and restore. JSONL versions 1 and 2 back up hidden flags, credentials, failed attempts, lockout expiry and decision receipts. Sessions store SHA-256 token digests, expire after five minutes, clear on restart, and stay outside backup. Schema 39 uses the existing deterministic JSONL rebuild for supported released schemas and retains the source database. Schemas 30 through 38 are unreleased and have no supported migration. Keep using these vaults with their original binaries, or create a fresh vault and ingest the source files again.
+Vault-wide hidden credentials use fixed Argon2id parameters. Failure timestamps and five-minute lockout persist through restart and restore. JSONL versions 1 through 3 back up hidden flags, credentials, failed attempts, lockout expiry and decision receipts. Sessions store SHA-256 token digests, expire after five minutes, clear on restart, and stay outside backup. Schema 39 uses the existing deterministic JSONL rebuild for supported released schemas and retains the source database. Schemas 30 through 38 are unreleased and have no supported migration. Keep using these vaults with their original binaries, or create a fresh vault and ingest the source files again.
 
 The `confirmed_fields` bit mask records supplied rating (1), flag (2), label (4), caption (8), creator (16), copyright (32) and rotation (64), including empty clears. Sidecar initialization confirms only non-default values; undo, audit and backup retain the mask. A revision-1 file has no decisions, so restore refuses one with authored values or confirmation bits.
 

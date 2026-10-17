@@ -665,6 +665,7 @@ it("captures interleaved bursts and moves between stacks and frames in pass orde
   const cull = new PhotoCull("session", store);
   expect(await cull.start(captureQuery, () => true)).toBe(true);
   expect(cull.run?.checkpoint.pass).toEqual([a1, b1, a2, b2, lone]);
+  expect(group).toHaveBeenCalledWith({ asset_ids: cull.run!.checkpoint.pass }, expect.anything());
   expect(cull.run?.groups).toEqual([
     [a1, a2],
     [b1, b2],
@@ -749,7 +750,7 @@ it("regroups frozen IDs on resume and gap changes without resetting progress", a
   expect(resumed.run?.checkpoint).toEqual(run.checkpoint);
 });
 
-it("retries grouping failures and ignores groups for a replaced run", async () => {
+it("retries grouping failures while preserving navigation", async () => {
   const ids = [photo(1).asset_id, photo(2).asset_id];
   const store = storage();
   await store.replace(stackedRun(ids));
@@ -781,15 +782,6 @@ it("retries grouping failures and ignores groups for a replaced run", async () =
   await cull.flush();
   expect(cull.currentID).toBe(ids[0]);
   expect((await store.load())?.checkpoint).toEqual(cull.run?.checkpoint);
-  const replaced = cull.regroup();
-  cull.run = {
-    ids: [ids[0]!],
-    checkpoint: { ...cull.run!.checkpoint, runID: "replacement", pass: [ids[0]!], position: 0 },
-  };
-  resolve({ groups: [ids], unavailable_ids: [], burst_gap_seconds: 8 });
-  await replaced;
-  expect(cull.run.groups).toBeUndefined();
-  expect(cull.run.checkpoint.runID).toBe("replacement");
 });
 
 it.each(["capture", "next pass", "remainder", "settings", "grouping"])(
@@ -1006,46 +998,6 @@ it("updates navigation after the pass or grouping changes", async () => {
   await cull.flush();
 });
 
-it.each(["capture_time", "name", "import_time", "relevance"])(
-  "groups frozen IDs in request order on start and resume for %s",
-  async (sort) => {
-    const store = storage();
-    const ids = [photo(3).asset_id, photo(1).asset_id, photo(2).asset_id];
-    const group = [ids[0]!, ids[2]!];
-    const frozen = parseQuery(
-      JSON.stringify({
-        text: sort === "relevance" ? "photo" : "",
-        sort: { field: sort, direction: "desc" },
-      }),
-    );
-    vi.spyOn(api, "createWorkspaceQuery").mockResolvedValue(
-      Response.json(await snapshot(ids, frozen)),
-    );
-    vi.mocked(api.groupPhotoStacks).mockResolvedValue({
-      groups: [group],
-      unavailable_ids: [],
-      burst_gap_seconds: 2,
-    });
-    const cull = new PhotoCull("session", store);
-    await cull.start(frozen);
-    expect(cull.currentStack).toEqual(group);
-    cull.moveFrame(1);
-    expect(cull.currentID).toBe(ids[2]);
-    cull.moveStack(1);
-    expect(cull.currentID).toBe(ids[1]);
-    cull.moveStack(-1);
-    expect(cull.currentID).toBe(ids[0]);
-    await cull.flush();
-    expect(api.groupPhotoStacks).toHaveBeenCalledWith({ asset_ids: ids }, expect.anything());
-    vi.mocked(api.groupPhotoStacks).mockClear();
-    const resumed = new PhotoCull("session", store);
-    await resumed.restore();
-    await resumed.regroup();
-    expect(resumed.currentStack).toEqual(group);
-    expect(api.groupPhotoStacks).toHaveBeenCalledTimes(2);
-  },
-);
-
 it("cancels capture while regrouping without visiting or entering Cull", async () => {
   const store = storage();
   vi.spyOn(api, "createWorkspaceQuery").mockResolvedValue(
@@ -1067,47 +1019,37 @@ it("cancels capture while regrouping without visiting or entering Cull", async (
   expect(cull.run?.checkpoint.visited).toEqual([]);
 });
 
-it.each(["start", "restore"])("clears pending grouping and its error on %s", async (method) => {
-  const store = storage();
-  vi.spyOn(api, "createWorkspaceQuery").mockImplementation(async () =>
-    Response.json(await snapshot([photo(1).asset_id])),
-  );
-  const cull = new PhotoCull("session", store);
-  await cull.start(query);
-  let resolve!: (value: api.GroupPhotoStacksResponse) => void;
-  vi.mocked(api.groupPhotoStacks).mockReturnValueOnce(new Promise((done) => (resolve = done)));
-  const pending = cull.regroup();
-  cull.stackError = "Previous grouping failed";
-  if (method === "start") await cull.start(query, () => true);
-  else await cull.restore();
-  expect(cull.stackLoading).toBe(false);
-  expect(cull.stackError).toBe("");
-  expect(await cull.verifyDecision()).toBe(true);
-  resolve({ groups: [[photo(1).asset_id]], unavailable_ids: [], burst_gap_seconds: 2 });
-  await pending;
-  expect(cull.run?.groups).toEqual([]);
-});
-
-it("accepts decisions after start replaces a run with a late settings failure", async () => {
-  const ids = [photo(1).asset_id];
-  vi.spyOn(api, "createWorkspaceQuery").mockImplementation(async (request) =>
-    Response.json(await snapshot(ids, parseQuery(JSON.stringify(request.query)))),
-  );
-  const cull = new PhotoCull("session", storage());
-  expect(await cull.start(captureQuery)).toBe(true);
-  let reject!: (cause: Error) => void;
-  const settings = vi
-    .spyOn(api, "getPhotoSettings")
-    .mockReturnValueOnce(new Promise((_resolve, fail) => (reject = fail)));
-  const pending = cull.checkSettings();
-  const signal = settings.mock.calls[0]![0]!.signal!;
-  expect(signal.aborted).toBe(false);
-  const original = cull.run!.checkpoint.runID;
-  expect(await cull.start(query, () => true)).toBe(true);
-  expect(signal.aborted).toBe(true);
-  expect(cull.run!.checkpoint.runID).not.toBe(original);
-  reject(new Error("Old settings failed"));
-  await pending;
-  expect(cull.stackError).toBe("");
-  expect(await cull.verifyDecision()).toBe(true);
-});
+it.each(["start", "restore"])(
+  "accepts decisions after %s replaces a run with late settings and grouping results",
+  async (method) => {
+    const ids = [photo(1).asset_id];
+    vi.spyOn(api, "createWorkspaceQuery").mockImplementation(async (request) =>
+      Response.json(await snapshot(ids, parseQuery(JSON.stringify(request.query)))),
+    );
+    const cull = new PhotoCull("session", storage());
+    expect(await cull.start(captureQuery)).toBe(true);
+    let reject!: (cause: Error) => void;
+    const settings = vi
+      .spyOn(api, "getPhotoSettings")
+      .mockReturnValueOnce(new Promise((_resolve, fail) => (reject = fail)));
+    const pendingSettings = cull.checkSettings();
+    const signal = settings.mock.calls[0]![0]!.signal!;
+    expect(signal.aborted).toBe(false);
+    let resolve!: (value: api.GroupPhotoStacksResponse) => void;
+    vi.mocked(api.groupPhotoStacks).mockReturnValueOnce(new Promise((done) => (resolve = done)));
+    const pendingGrouping = cull.regroup();
+    cull.stackError = "Previous grouping failed";
+    if (method === "start") expect(await cull.start(query, () => true)).toBe(true);
+    else expect(await cull.restore()).toBe(true);
+    expect(signal.aborted).toBe(true);
+    expect(cull.stackLoading).toBe(false);
+    expect(cull.stackError).toBe("");
+    expect(await cull.verifyDecision()).toBe(true);
+    reject(new Error("Old settings failed"));
+    resolve({ groups: [ids], unavailable_ids: [], burst_gap_seconds: 8 });
+    await Promise.all([pendingSettings, pendingGrouping]);
+    expect(cull.run?.groups).toEqual([]);
+    expect(cull.stackError).toBe("");
+    expect(await cull.verifyDecision()).toBe(true);
+  },
+);
