@@ -863,6 +863,9 @@ func newAuditedHistoryReplay(
 		}
 		replay.versions[versionID] = version
 	}
+	if err := validatePhotoBurstGenesis(attachments); err != nil {
+		return nil, err
+	}
 	for _, attachment := range attachments {
 		key, err := attachedAuditKey(attachment)
 		if err != nil {

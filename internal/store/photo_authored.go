@@ -562,6 +562,10 @@ func (s *Store) UndoPhotoAuthored(ctx context.Context, id string) (PhotoAuthored
 				return err
 			}
 		}
+		priorBurst, err := photoBurstSettingsTx(ctx, tx)
+		if err != nil {
+			return err
+		}
 		// A representative choice returns only while its asset still has the revision the choice wrote.
 		for _, change := range receipt.Representatives {
 			if err := s.photoAuthoredAccessTx(ctx, tx, change.AssetID); err != nil {
@@ -572,6 +576,9 @@ func (s *Store) UndoPhotoAuthored(ctx context.Context, id string) (PhotoAuthored
 				return err
 			}
 			result.Representatives = append(result.Representatives, restored)
+		}
+		if err := s.auditPhotoBurstTx(ctx, tx, priorBurst, result.Representatives); err != nil {
+			return err
 		}
 		if result.ReceiptID == "" && len(result.Representatives) > 0 {
 			if result.ReceiptID, err = newUUIDv4(); err != nil {

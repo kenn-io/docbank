@@ -800,7 +800,7 @@ func (s *Store) PurgeDerivatives(
 		sort.Strings(report.RetainedLexicalGenerations)
 
 		if auditActive && len(suppressionChanges) != 0 {
-			if err := s.persistAuditedDerivativeSuppressionChanges(
+			if err := s.persistAuditedGlobalMetadataChanges(
 				ctx, tx, suppressionChanges); err != nil {
 				return err
 			}
