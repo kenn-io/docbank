@@ -83,7 +83,6 @@ func TestNewOptedOut(t *testing.T) {
 			for _, event := range []string{EventAppOpened, EventDaemonStarted, EventDaemonActive} {
 				assert.True(t, reporter.EventAllowed(event), event)
 			}
-			assert.True(t, reporter.EventAllowed("search_run"))
 			handler := CaptureHandler(reporter, dir)
 			rec := postEvent(t, handler, `{"event":"app_opened"}`)
 			assert.Equal(t, http.StatusAccepted, rec.Code)

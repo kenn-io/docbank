@@ -2596,11 +2596,11 @@ it("recovers smart sets without stale identities", async () => {
   localStorage.clear();
   const opened = await savedSmartSet(2, "00000000-0000-4000-8000-000000000002");
   let finishPending!: (response: Response) => void;
-  const selectionFetch = vi.fn((url: string) => {
-    return url.endsWith("/photos/assets/query")
+  const selectionFetch = vi.fn((url: string) =>
+    url.endsWith("/photos/assets/query")
       ? Promise.resolve(response([]))
-      : new Promise<Response>((resolve) => (finishPending = resolve));
-  });
+      : new Promise<Response>((resolve) => (finishPending = resolve)),
+  );
   stubPhotoFetch(selectionFetch);
   const selection = new Photos("session", vi.fn());
   selection.rememberSmartSet(old);

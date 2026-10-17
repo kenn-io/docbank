@@ -320,11 +320,11 @@ func TestTUIBackendReportsScreensAndActionsThroughGeneratedRoute(t *testing.T) {
 		return daemonconn.New(server.URL, "synthetic-key"), nil
 	}}
 	require.NoError(t, backend.ReportScreen(t.Context(), "help"))
-	require.NoError(t, backend.ReportAction(t.Context(), "search_run", "version"))
+	require.NoError(t, backend.ReportAction(t.Context(), "search_run", "hybrid"))
 	require.NoError(t, backend.ReportAction(t.Context(), "document_opened", "image"))
 	require.Equal(t, []api.TelemetryEventRequest{
 		{Event: "screen_viewed", Properties: &api.TelemetryEventProperties{Screen: "help", Surface: "tui"}},
-		{Event: "search_run", Properties: &api.TelemetryEventProperties{SearchType: "text", Surface: "tui"}},
+		{Event: "search_run", Properties: &api.TelemetryEventProperties{SearchType: "hybrid", Surface: "tui"}},
 		{Event: "document_opened", Properties: &api.TelemetryEventProperties{Surface: "tui"}},
 	}, events)
 }

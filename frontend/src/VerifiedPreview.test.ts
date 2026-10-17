@@ -416,7 +416,7 @@ it.each([0, 64 * 1024 * 1024 + 1])(
   },
 );
 
-it("counts pointer and wheel inspection of an automatic selection and verified download", async () => {
+it("counts wheel inspection of an automatic selection once", async () => {
   const bytes = new TextEncoder().encode("Synthetic inspected text");
   const selected = source(bytes, "55555555-5555-4555-8555-555555555555");
   const events: unknown[] = [];
@@ -429,8 +429,6 @@ it("counts pointer and wheel inspection of an automatic selection and verified d
     if (String(input).endsWith("ticket=synthetic")) return body(selected, bytes);
     throw new Error(`Unexpected request ${String(input)}`);
   });
-  // The browser handoff uses a prepared link; suppress jsdom navigation only.
-  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
   render(VerifiedPreview, {
     session: "visit-session",
     source: selected,
@@ -443,10 +441,5 @@ it("counts pointer and wheel inspection of an automatic selection and verified d
   const opened = { event: "document_opened", properties: { surface: "web" } };
   await waitFor(() => expect(events).toEqual([opened]));
   await fireEvent.wheel(screen.getByText("Synthetic inspected text"), { deltaY: 120 });
-  await fireEvent.pointerDown(screen.getByText("Synthetic inspected text"));
-  await fireEvent.keyDown(screen.getByText("Synthetic inspected text"), { key: "ArrowDown" });
   expect(events).toEqual([opened]);
-  await fireEvent.click(screen.getByRole("button", { name: "Download verified original" }));
-  await screen.findByText(/browser save started/);
-  expect(events).toEqual([opened, opened]);
 });

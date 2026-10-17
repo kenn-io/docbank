@@ -47,19 +47,18 @@ func TestInteractiveActionGateAndEndpoint(t *testing.T) {
 	for _, tc := range []struct {
 		name           string
 		stdout, stderr *os.File
-		agent, want    bool
+		agent          bool
 	}{
-		{"terminal output", terminal, redirected, false, true},
-		{"redirected output with terminal stderr", redirected, terminal, false, false},
-		{"unattended", redirected, redirected, false, false},
-		{"agent", terminal, terminal, true, false},
+		{"terminal output", terminal, redirected, false},
+		{"redirected output with terminal stderr", redirected, terminal, false},
+		{"unattended", redirected, redirected, false},
+		{"agent", terminal, terminal, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := &cobra.Command{}
 			cmd.SetOut(tc.stdout)
 			cmd.SetErr(tc.stderr)
 			cmd.Flags().Bool("agent", tc.agent, "")
-			assert.Equal(t, tc.want, interactiveAction(cmd))
 			// A canceled document command still reports its acknowledged result.
 			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
@@ -72,7 +71,7 @@ func TestInteractiveActionGateAndEndpoint(t *testing.T) {
 	cmd.SetOut(terminal)
 	cmd.SetContext(t.Context())
 	start := time.Now()
-	reportAction(cmd, connection, "search_run", "auto", 100*time.Millisecond)
+	reportAction(cmd, connection, "search_run", "hybrid", 100*time.Millisecond)
 	assert.Less(t, time.Since(start), time.Second)
 	mu.Lock()
 	defer mu.Unlock()

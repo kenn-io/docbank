@@ -584,12 +584,11 @@ func (f *fakeBackend) AuditHistory(
 	return page, nil
 }
 
-func TestModelNavigatesSearchesAndReturnsToTree(t *testing.T) {
+func TestModelReportsSearchIntentAndReturnsToTree(t *testing.T) {
 	backend := newFakeBackend()
-	backend.profiles = nil
 	model, err := New(t.Context(), backend)
 	require.NoError(t, err)
-	model = runModelCommand(t, model, model.Init())
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
 	assert.Equal(t, maxBrowserItems, backend.childLimit)
 	assert.Equal(t, "/", model.directory.Path)
 	require.Len(t, model.rows, 2)
@@ -609,15 +608,8 @@ func TestModelNavigatesSearchesAndReturnsToTree(t *testing.T) {
 	model, _ = updateModel(t, model, runeKey('/'))
 	assert.True(t, model.searching)
 	model.searchInput.SetValue("quarterly report")
-	next, searchCmd := model.update(key(tea.KeyEnter))
-	var ok bool
-	model, ok = next.(Model)
-	require.True(t, ok)
-	result := searchCmd()
-	if batch, ok := result.(tea.BatchMsg); ok {
-		result = batch[1]()
-	}
-	model, cmd = updateModel(t, model, result)
+	model, _ = updateModel(t, model, key(tea.KeyEnter))
+	model, cmd = updateModel(t, model, model.loadSearch("quarterly report", model.requestID)())
 	model = runModelCommand(t, model, cmd)
 	require.Equal(t, [][2]string{{"search_run", "text"}}, backend.actions)
 	assert.Equal(t, maxSearchItems, backend.searchMax)
@@ -626,9 +618,7 @@ func TestModelNavigatesSearchesAndReturnsToTree(t *testing.T) {
 	require.Len(t, model.rows, 1)
 	assert.Equal(t, "content", model.rows[0].match)
 
-	next, cmd = model.startSearch("quarterly report")
-	model, ok = next.(Model)
-	require.True(t, ok)
+	model, cmd = updateModel(t, model, runeKey('r'))
 	model = runModelCommand(t, model, cmd)
 	require.Len(t, backend.actions, 1)
 

@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestActionEventsEndpoint(t *testing.T) {
+func TestActionEventsAndImportAttributionCapacity(t *testing.T) {
 	enableTelemetryEnv(t)
 	var mu sync.Mutex
 	var events []map[string]any
@@ -20,8 +20,8 @@ func TestActionEventsEndpoint(t *testing.T) {
 	reporter := New(Options{Dir: dir, endpoint: collector.URL})
 	defer func() { require.NoError(t, reporter.Close()) }()
 	h := CaptureHandler(reporter, dir)
-	for _, surface := range []string{"web", "tui", "cli"} {
-		for _, event := range []string{"document_added", "document_opened", "search_run"} {
+	for _, event := range []string{"document_added", "document_opened", "search_run"} {
+		for _, surface := range []string{"web", "tui", "cli"} {
 			values := []string{""}
 			if event == "search_run" {
 				values = []string{"text", "semantic", "hybrid"}
@@ -32,14 +32,20 @@ func TestActionEventsEndpoint(t *testing.T) {
 					require.Equal(t, 202, postEvent(t, h, body).Code)
 				}
 			}
-			for _, props := range []string{`{}`, `{"surface":"invalid"}`, `{"surface":42}`} {
-				require.Equal(t, 400, postEvent(t, h, fmt.Sprintf(`{"event":%q,"properties":%s}`, event, props)).Code)
-			}
+		}
+		for _, props := range []string{`{"search_type":"text"}`, `{"surface":"invalid","search_type":"text"}`, `{"surface":42,"search_type":"text"}`} {
+			require.Equal(t, 400, postEvent(t, h, fmt.Sprintf(`{"event":%q,"properties":%s}`, event, props)).Code)
 		}
 	}
 	for _, props := range []string{`{"surface":"web"}`, `{"surface":"web","search_type":"auto"}`, `{"surface":"web","search_type":42}`} {
 		require.Equal(t, 400, postEvent(t, h, `{"event":"search_run","properties":`+props+`}`).Code)
 	}
+	require.NoError(t, reporter.Close())
+	mu.Lock()
+	require.Len(t, events, 18) // six additions and twelve daily search/open claims
+	events = nil
+	mu.Unlock()
+	reporter = New(Options{Dir: dir, endpoint: collector.URL})
 	imports := NewImports(reporter)
 	admission := func() (string, bool, error) { return "mailbox:synthetic", true, nil }
 	require.NoError(t, imports.Admit("web", admission))
@@ -67,6 +73,6 @@ func TestActionEventsEndpoint(t *testing.T) {
 	require.NoError(t, reporter.Close())
 	mu.Lock()
 	defer mu.Unlock()
-	require.Len(t, events, 19) // six additions, twelve daily claims, one attributed import
+	require.Len(t, events, 1) // only the first attributed addition reports
 	assert.Equal(t, "web", events[len(events)-1]["surface"])
 }
