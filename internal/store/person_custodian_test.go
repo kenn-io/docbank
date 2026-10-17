@@ -484,6 +484,57 @@ func TestPeopleByDisplayNameFiltersAllHiddenEvidenceBeforePaging(t *testing.T) {
 	}
 }
 
+func TestPeopleByDisplayNameOmitsSensitiveOnlyActors(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+	var sensitiveID, visibleID string
+	for _, sensitive := range []bool{true, false} {
+		address, name, seed := "visible@example.test", "Alex Visible", "d1"
+		if sensitive {
+			address, name, seed = "sensitive@example.test", "Alex Sensitive", "d2"
+		}
+		version := seedDocumentPeopleEvent(t, s, seed+".txt", seed, []document.DocumentEventActorV1{{
+			ActorKey: "email:" + address, Address: address, DisplayName: name,
+			Claim: name, Role: "author", Sensitive: sensitive,
+		}})
+		input, err := s.PrepareDocumentPeopleInputs(ctx, version.ID)
+		require.NoError(t, err)
+		require.Len(t, input.Actors, 1)
+		require.Equal(t, sensitive, input.Actors[0].Sensitive)
+		publication := documentPeoplePublicationForInput(t, input)
+		publication.People.Edges[0].Sensitive = input.Actors[0].Sensitive
+		_, err = s.PublishDocumentPeople(ctx, publication)
+		require.NoError(t, err)
+		if sensitive {
+			sensitiveID = publication.People.Edges[0].PersonID
+		} else {
+			visibleID = publication.People.Edges[0].PersonID
+		}
+	}
+	for _, unlocked := range []bool{false, true} {
+		t.Run(fmt.Sprintf("unlocked=%t", unlocked), func(t *testing.T) {
+			searchCtx := ctx
+			if unlocked {
+				searchCtx = WithPhotoHiddenToken(ctx, token)
+			}
+			global, err := s.PeopleByDisplayName(searchCtx, "Alex", "", "", 10, false)
+			require.NoError(t, err)
+			require.Len(t, global, 2)
+			require.Equal(t, sensitiveID, global[0].PersonID)
+			require.Equal(t, "Alex Sensitive", global[0].DisplayName)
+			require.Equal(t, visibleID, global[1].PersonID)
+			browser, err := s.PeopleByDisplayName(searchCtx, "Alex", "", "", 10, true)
+			require.NoError(t, err)
+			require.Len(t, browser, 1)
+			require.Equal(t, visibleID, browser[0].PersonID)
+		})
+	}
+}
+
 func TestPeopleByDisplayNameMatchesWordPrefixes(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

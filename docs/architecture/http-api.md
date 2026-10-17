@@ -1424,7 +1424,7 @@ Each item includes `person_id`, `display_name`, `state`, and `revision`. `displa
 
 The optional `same_name_continues` is true when the final item's folded name also begins the next page. A chooser follows the cursor only while this flag is true and stops at the first different folded name. Other paginated callers can follow `next_cursor` regardless of the flag.
 
-Browser search omits people whose only evidence is in locked Hidden photos until unlock, while keeping people with visible evidence or no assertions. CLI and MCP search remain global. Browser sessions may search people and create a person while naming a face; separate person creation, person details, and canonical person edits require the API key.
+Browser search omits people whose only evidence is sensitive document actors, even with Hidden unlocked. It also omits people whose only evidence is in locked Hidden photos until unlock, while keeping people with visible, non-sensitive evidence or no linked evidence. CLI and MCP search remain global. Browser sessions may search people and create a person while naming a face; separate person creation, person details, and canonical person edits require the API key.
 
 ## Photo faces
 

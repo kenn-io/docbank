@@ -229,12 +229,12 @@ var peopleByDisplayNameSQL = `SELECT person_id,display_name,display_name_folded,
 		AND NOT EXISTS(SELECT 1 FROM document_people p WHERE p.person_id=persons.person_id)
 		AND NOT EXISTS(SELECT 1 FROM person_match_candidates c JOIN person_candidate_faces e ON e.candidate_id=c.candidate_id WHERE c.suggested_person_id=persons.person_id)) OR EXISTS(
 		SELECT 1 FROM person_document_assertions a WHERE a.person_id=persons.person_id
-		AND ` + personVersionVisibleSQL("a.content_version_id") + `) OR EXISTS(
+		AND (?=0 OR ` + personVersionVisibleSQL("a.content_version_id") + `)) OR EXISTS(
 		SELECT 1 FROM document_people p WHERE p.person_id=persons.person_id
-		AND ` + personVersionVisibleSQL("p.content_version_id") + `) OR EXISTS(
+		AND p.sensitive=0 AND (?=0 OR ` + personVersionVisibleSQL("p.content_version_id") + `)) OR EXISTS(
 		SELECT 1 FROM person_match_candidates c WHERE c.suggested_person_id=persons.person_id
 		AND EXISTS(SELECT 1 FROM person_candidate_faces e WHERE e.candidate_id=c.candidate_id)
-		AND NOT EXISTS(SELECT 1 FROM person_candidate_faces e WHERE e.candidate_id=c.candidate_id AND NOT (` + personVersionVisibleSQL("e.content_version_id") + `))))
+		AND (?=0 OR NOT EXISTS(SELECT 1 FROM person_candidate_faces e WHERE e.candidate_id=c.candidate_id AND NOT (` + personVersionVisibleSQL("e.content_version_id") + `)))))
 	AND (?='' OR display_name_folded>? OR (display_name_folded=? AND person_id>?))
 	ORDER BY display_name_folded,person_id LIMIT ?`
 
@@ -258,7 +258,7 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 		hideLocked = state.ExpiresAt == nil
 	}
 	prefix := document.FoldPersonName(query)
-	rows, err := s.db.QueryContext(ctx, peopleByDisplayNameSQL, visibleOnly, hideLocked, escapePersonLike(prefix)+"%", "% "+escapePersonLike(prefix)+"%", hideLocked,
+	rows, err := s.db.QueryContext(ctx, peopleByDisplayNameSQL, visibleOnly, hideLocked, escapePersonLike(prefix)+"%", "% "+escapePersonLike(prefix)+"%", visibleOnly, hideLocked, hideLocked, hideLocked,
 		afterName, afterName, afterName, afterID, limit)
 	if err != nil {
 		return nil, err
