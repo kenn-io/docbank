@@ -18,6 +18,12 @@ export interface CullRun {
 }
 type MarkerKind = "visited" | "skipped" | "unavailable";
 type Header = Pick<CullCheckpoint, "runID" | "revision" | "position" | "scope" | "autoAdvance">;
+const formatVersion = 1;
+type StoredHeader = Header & { formatVersion: number };
+function checkFormat(saved: StoredHeader | undefined) {
+  if (saved && saved.formatVersion !== formatVersion)
+    throw new Error("Saved cull progress uses an unsupported format. Update Docbank to resume it.");
+}
 export interface CullProgress {
   runID: string;
   revision: number;
@@ -40,7 +46,14 @@ export const sameCheckpoint = (
 
 const stores = ["members", "checkpoints", "markers"];
 const markerKinds: MarkerKind[] = ["visited", "skipped", "unavailable"];
-const header = ({ runID, revision, position, scope, autoAdvance }: CullCheckpoint): Header => ({
+const header = ({
+  runID,
+  revision,
+  position,
+  scope,
+  autoAdvance,
+}: CullCheckpoint): StoredHeader => ({
+  formatVersion,
   runID,
   revision,
   position,
@@ -72,10 +85,11 @@ export function photoCullStorage(vaultID: string): CullStorage {
       try {
         const tx = db.transaction("checkpoints", "readonly"),
           done = transactionDone(tx);
-        const saved = await idbRequest<Header | undefined>(
+        const saved = await idbRequest<StoredHeader | undefined>(
           tx.objectStore("checkpoints").get(vaultID),
         );
         await done;
+        checkFormat(saved);
         return saved;
       } finally {
         db.close();
@@ -90,14 +104,16 @@ export function photoCullStorage(vaultID: string): CullStorage {
           idbRequest<{ ids: string[]; pass: string[] } | undefined>(
             tx.objectStore("members").get(vaultID),
           ),
-          idbRequest<Header | undefined>(tx.objectStore("checkpoints").get(vaultID)),
+          idbRequest<StoredHeader | undefined>(tx.objectStore("checkpoints").get(vaultID)),
           idbRequest(tx.objectStore("markers").getAllKeys(markerRange())),
           idbRequest<string[]>(tx.objectStore("markers").getAll(markerRange())),
         ]);
         await done;
+        checkFormat(saved);
         if (!membership || !saved) return;
+        const { formatVersion: _version, ...progress } = saved;
         const checkpoint: CullCheckpoint = {
-          ...saved,
+          ...progress,
           pass: membership.pass,
           visited: [],
           skipped: [],
@@ -120,10 +136,16 @@ export function photoCullStorage(vaultID: string): CullStorage {
         signal?.addEventListener("abort", cancel, { once: true });
         try {
           signal?.throwIfAborted();
-          const current = await idbRequest<Header | undefined>(
+          const current = await idbRequest<StoredHeader | undefined>(
             tx.objectStore("checkpoints").get(vaultID),
           );
-          if (current ? !expected || !sameCheckpoint(current, expected) : !!expected) {
+          if (
+            current
+              ? current.formatVersion !== formatVersion ||
+                !expected ||
+                !sameCheckpoint(current, expected)
+              : !!expected
+          ) {
             tx.abort();
             await done.catch(() => {});
             throw new Error("Cull progress changed in another tab. Resume before replacing it.");
@@ -144,8 +166,12 @@ export function photoCullStorage(vaultID: string): CullStorage {
         const tx = db.transaction(value.pass ? stores : ["checkpoints", "markers"], "readwrite"),
           done = transactionDone(tx);
         const store = tx.objectStore("checkpoints");
-        const current = await idbRequest<Header | undefined>(store.get(vaultID));
-        if (!current || !sameCheckpoint(current, value)) {
+        const current = await idbRequest<StoredHeader | undefined>(store.get(vaultID));
+        if (
+          !current ||
+          current.formatVersion !== formatVersion ||
+          !sameCheckpoint(current, value)
+        ) {
           tx.abort();
           await done.catch(() => {});
           throw new Error("Cull progress changed in another tab. Close and resume it.");
