@@ -17,7 +17,7 @@ import (
 
 // stackPhoto imports one synthetic frame from source. An empty stamp leaves
 // only the file's modified time.
-func stackPhoto(t *testing.T, s *Store, run IngestRun, source, stamp string, precision document.SourceMetadataTimestampPrecision) string {
+func stackPhoto(t *testing.T, s *Store, run IngestRun, source, stamp string, precision document.SourceMetadataTimestampPrecision, fields ...document.SourceMetadataFieldV1) string {
 	t.Helper()
 	name := browseHash(source)[:6] + "-" + path.Base(strings.ReplaceAll(source, `\`, "/"))
 	node, err := s.IngestFileExact(t.Context(), run, s.RootID(), name, browseHash(source), 20, "image/jpeg", source, "2024-01-01T00:00:00Z")
@@ -29,7 +29,8 @@ func stackPhoto(t *testing.T, s *Store, run IngestRun, source, stamp string, pre
 		} else if len(stamp) > 19 && (stamp[len(stamp)-6] == '+' || stamp[len(stamp)-6] == '-') {
 			zone, offset = document.SourceMetadataTimezoneOffset, stamp[len(stamp)-6:]
 		}
-		browsePhotoMetadata(t, s, node, source, photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp(stamp, stamp, precision, zone, offset)))
+		fields = append(fields, photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp(stamp, stamp, precision, zone, offset)))
+		browsePhotoMetadata(t, s, node, source, fields...)
 	}
 	asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
 	require.NoError(t, err)
@@ -105,6 +106,101 @@ func rowIDs(rows []PhotoBrowseRow) []string {
 		ids[i] = row.AssetID
 	}
 	return ids
+}
+
+func TestPhotoStackCameraPartitions(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name          string
+		makes, models [2]string
+		split         bool
+	}{
+		{"different models", [2]string{"Canon", "Canon"}, [2]string{"R5", "R6"}, true},
+		{"different makes", [2]string{"Canon", "Nikon"}, [2]string{"A", "A"}, true},
+		{"both missing", [2]string{}, [2]string{}, false},
+		{"both models missing", [2]string{"Canon", "Canon"}, [2]string{}, false},
+		{"one make missing", [2]string{"Canon", ""}, [2]string{"A", "A"}, true},
+		{"one model missing", [2]string{"Canon", "Canon"}, [2]string{"A", ""}, true},
+		{"folded equality", [2]string{"Canon", "CANON"}, [2]string{"R6", "r6"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestStore(t)
+			run, err := s.BeginIngest(t.Context(), "cli", "synthetic camera bursts")
+			require.NoError(t, err)
+			var ids []string
+			for i := range 4 {
+				var fields []document.SourceMetadataFieldV1
+				for _, field := range []struct{ key, source, value string }{{"camera_make", "Make", tc.makes[i%2]}, {"camera_model", "Model", tc.models[i%2]}} {
+					if field.value != "" {
+						fields = append(fields, photoMetadataField("image.exif."+field.key, "image.exif", field.source, photoString(field.value)))
+					}
+				}
+				ids = append(ids, stackPhoto(t, s, run, fmt.Sprintf("/shots/frame-%d.jpg", i), fmt.Sprintf("2024-06-10T12:00:0%dZ", i), document.SourceMetadataPrecisionSecond, fields...))
+			}
+			indexes := [][]int{{0, 1, 2, 3}}
+			groups := [][]string{ids}
+			if tc.split {
+				indexes, groups = [][]int{{0, 2}, {1, 3}}, [][]string{{ids[0], ids[2]}, {ids[1], ids[3]}}
+			}
+			require.Equal(t, indexes, stackIndexes(t, s, ids))
+			for _, direction := range []string{"asc", "desc"} {
+				for _, size := range []int{1, 100} {
+					request := captureRequest(t, direction)
+					request.PageSize = size
+					_, stacks := stackPages(t, s, request)
+					require.ElementsMatch(t, groups, stacks)
+				}
+			}
+			if tc.split {
+				_, err = s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: ids, Targets: stackTargets(t, s, ids), CurrentID: ids[0], Decision: "current"})
+				require.ErrorIs(t, err, ErrStalePhotoStack)
+			}
+			_, err = s.DecidePhotoStack(t.Context(), PhotoStackDecision{BurstGapSeconds: 2, AssetIDs: groups[0], Targets: stackTargets(t, s, groups[0]), CurrentID: ids[0], Decision: "current"})
+			require.NoError(t, err)
+			page, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{PageSize: 100, Query: captureRequest(t, "asc").Query}, nil)
+			require.NoError(t, err)
+			require.Len(t, page.Items, len(ids))
+			for _, row := range page.Items {
+				want := ""
+				if row.AssetID == ids[0] {
+					want = "pick"
+				} else if slices.Contains(groups[0], row.AssetID) {
+					want = "reject"
+				}
+				require.Equal(t, want, row.Flag)
+			}
+		})
+	}
+}
+
+func TestPhotoStackCameraEditRestartsCursor(t *testing.T) {
+	t.Parallel()
+	for _, direction := range []string{"asc", "desc"} {
+		t.Run(direction, func(t *testing.T) {
+			s := newTestStore(t)
+			ids := burstPhotos(t, s, 3)
+			run, err := s.BeginIngest(t.Context(), "cli", "synthetic cursor neighbors")
+			require.NoError(t, err)
+			for i, stamp := range []string{"2024-06-10T11:00:00Z", "2024-06-10T13:00:00Z"} {
+				stackPhoto(t, s, run, fmt.Sprintf("/other/frame-%d.jpg", i), stamp, document.SourceMetadataPrecisionSecond)
+			}
+			request := captureRequest(t, direction)
+			request.PageSize = 2
+			first, err := s.ListPhotoAssets(t.Context(), request, nil)
+			require.NoError(t, err)
+			require.NotNil(t, first.Next)
+			asset, err := s.PhotoAssetByID(t.Context(), ids[1])
+			require.NoError(t, err)
+			node, err := s.NodeByID(t.Context(), asset.Files[0].NodeID)
+			require.NoError(t, err)
+			_, err = s.PublishSourceMetadata(t.Context(), node.BlobHash, browseHash("camera-edit"), photoCanonical(t,
+				photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp("2024-06-10T12:00:01Z", "2024-06-10T12:00:01Z", document.SourceMetadataPrecisionSecond, document.SourceMetadataTimezoneUTC, "")),
+				photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("R6"))))
+			require.NoError(t, err)
+			_, err = s.ListPhotoAssets(t.Context(), request, first.Next)
+			require.ErrorIs(t, err, ErrInvalidPhotoCursor)
+		})
+	}
 }
 
 func TestPhotoStackTimeRules(t *testing.T) {
