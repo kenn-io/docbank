@@ -90,7 +90,7 @@ func (s *Store) PreparePhotoAuthored(ctx context.Context, selection PhotoSetSele
 				return err
 			}
 		}
-		return s.preparePhotoXMPTx(ctx, tx, result.Targets)
+		return nil
 	})
 	return result, err
 }
@@ -156,7 +156,7 @@ func (p photoAuthoredPreparer) prepare(ctx context.Context, ids []string) error 
 		return err
 	}
 	for _, id := range ids {
-		if err := p.appendAsset(id, assets[id], targets); err != nil {
+		if err := p.appendAsset(ctx, id, assets[id], targets); err != nil {
 			return err
 		}
 	}
@@ -204,7 +204,7 @@ func (p photoAuthoredPreparer) loadTargets(ctx context.Context, in string, args 
 	return targets, err
 }
 
-func (p photoAuthoredPreparer) appendAsset(id string, asset PhotoAsset, targets map[string]PhotoPreparedTarget) error {
+func (p photoAuthoredPreparer) appendAsset(ctx context.Context, id string, asset PhotoAsset, targets map[string]PhotoPreparedTarget) error {
 	asset, err := completePhotoAsset(asset, p.settings)
 	if err != nil {
 		return err
@@ -229,6 +229,13 @@ func (p photoAuthoredPreparer) appendAsset(id string, asset PhotoAsset, targets 
 			return ErrNotFound
 		}
 		target.AssetID, target.AssetRevision, target.FileID, target.Revision, target.NodeID, target.Values = id, asset.Revision, file.ID, file.Revision, file.NodeID, file.Authored()
+		if photoSidecarTargetRole(file.Role) {
+			state, err := photoXMPStateTx(ctx, p.tx, file)
+			if err != nil {
+				return err
+			}
+			target.XMP = &state
+		}
 		p.result.Targets = append(p.result.Targets, target)
 	}
 	return nil

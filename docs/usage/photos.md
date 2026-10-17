@@ -294,6 +294,9 @@ then asks you to select **Refresh XMP**.
 
 #### Outside edits and rescans
 
+When an outside sidecar first arrives for a photo whose sidecar Docbank created,
+the import updates that same sidecar as a new version and records its source path.
+
 Docbank remembers the digest of the last outside packet it accepted for each
 sidecar. Suppose an outside sidecar sets rating 3 and you then rate the photo 5
 in Docbank. A rescan of the unchanged file finds the remembered digest, keeps

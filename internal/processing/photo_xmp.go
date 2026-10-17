@@ -36,9 +36,6 @@ func readPhotoXMPBytes(ctx context.Context, ing *ingest.Ingester, hash string) (
 
 func photoXMPSnapshot(packet photoSidecarPacket) store.PhotoXMPPacket {
 	p := store.PhotoXMPPacket{Values: packet.PhotoAuthored, Keywords: packet.Keywords, Ignored: packet.Ignored, Orientation: packet.Orientation}
-	if packet.KeywordsIgnored {
-		p.Ignored |= store.PhotoXMPKeywordsBit
-	}
 	if packet.RotationPresent {
 		p.Rotation = new(packet.Rotation)
 	}
@@ -52,29 +49,28 @@ func SyncPhotoXMPBackground(ctx context.Context, ing *ingest.Ingester, fileID st
 	if err != nil || !run {
 		return err
 	}
-	_, err = syncPhotoXMP(ctx, ing, work, "")
-	return err
+	return syncPhotoXMP(ctx, ing, work, "")
 }
 
 // ResolvePhotoXMP applies a person's choice to the recorded conflict.
-func ResolvePhotoXMP(ctx context.Context, ing *ingest.Ingester, fileID, conflictID, choice string) (store.PhotoXMPState, error) {
+func ResolvePhotoXMP(ctx context.Context, ing *ingest.Ingester, fileID, conflictID, choice string) error {
 	if choice != "catalog" && choice != "sidecar" {
-		return store.PhotoXMPState{}, store.ErrInvalidPhotoAsset
+		return store.ErrInvalidPhotoAsset
 	}
 	work, err := ing.Store.PhotoXMPConflict(ctx, fileID, conflictID)
 	if err != nil {
-		return store.PhotoXMPState{}, err
+		return err
 	}
 	return syncPhotoXMP(ctx, ing, work, choice)
 }
 
-func syncPhotoXMP(ctx context.Context, ing *ingest.Ingester, work store.PhotoXMPWork, choice string) (store.PhotoXMPState, error) {
+func syncPhotoXMP(ctx context.Context, ing *ingest.Ingester, work store.PhotoXMPWork, choice string) error {
 	plan := store.PhotoXMPPlan{Work: work, Choice: choice}
 	var data []byte
 	var packet photoSidecarPacket
 	if work.Sidecar != nil {
 		var err error
-		data, err = readPhotoXMPBytes(ctx, ing, work.Sidecar.SHA256)
+		data, err = readPhotoXMPBytes(ctx, ing, work.Sidecar.Node.BlobHash)
 		if err == nil {
 			packet, err = readPhotoSidecar(ctx, data)
 		}
@@ -82,7 +78,7 @@ func syncPhotoXMP(ctx context.Context, ing *ingest.Ingester, work store.PhotoXMP
 			err = packet.Refusal
 		}
 		if errors.Is(err, ErrPhotoXMPSidecarRead) || ctx.Err() != nil {
-			return store.PhotoXMPState{}, err
+			return err
 		}
 		if err != nil {
 			plan.Refusal = photoXMPMalformedReason
@@ -92,10 +88,9 @@ func syncPhotoXMP(ctx context.Context, ing *ingest.Ingester, work store.PhotoXMP
 	}
 	base, baseOrientation, synced := work.Base()
 	prior := store.PhotoXMPPacket{Values: base.Catalog, Keywords: base.Keywords}
-	catalog := store.PhotoXMPPacket{Values: work.Catalog, Keywords: work.Keywords, Orientation: store.PhotoXMPOrientation(work.Orientation, work.Catalog.Rotation)}
+	catalog := store.PhotoXMPPacket{Values: work.Original.Authored(), Keywords: work.Keywords, Orientation: store.PhotoXMPOrientation(work.Orientation, work.Original.Authored().Rotation)}
 	sidecar := photoXMPSnapshot(packet)
 	resolvePhotoXMPRotation(&sidecar, base.Packet, baseOrientation)
-	sidecar.Values.Confirmed &= store.PhotoAuthoredNonDefault(sidecar.Values)
 	plan.Sidecar = sidecar
 	decision := planPhotoXMP(base.Packet, prior, catalog, sidecar, choice)
 	if decision.conflict != 0 {
@@ -119,7 +114,7 @@ func syncPhotoXMP(ctx context.Context, ing *ingest.Ingester, work store.PhotoXMP
 		merged, written, err := mergePhotoXMPSidecar(ctx, data, store.PhotoExportInput{Authored: plan.Values, Keywords: plan.Keywords}, work.Orientation, decision.write)
 		if err != nil {
 			if ctx.Err() != nil {
-				return store.PhotoXMPState{}, err
+				return err
 			}
 			plan = store.PhotoXMPPlan{Work: work, Choice: choice, Refusal: "The preserved sidecar data exceeds the XMP limits."}
 			return ing.PublishPhotoXMP(ctx, plan, nil)
@@ -132,9 +127,8 @@ func syncPhotoXMP(ctx context.Context, ing *ingest.Ingester, work store.PhotoXMP
 		}
 		plan.Packet.Orientation = written.Orientation
 	}
-	result, err := ing.PublishPhotoXMP(ctx, plan, data)
-	if err != nil {
-		return result, fmt.Errorf("syncing XMP sidecar: %w", err)
+	if err := ing.PublishPhotoXMP(ctx, plan, data); err != nil {
+		return fmt.Errorf("syncing XMP sidecar: %w", err)
 	}
-	return result, nil
+	return nil
 }

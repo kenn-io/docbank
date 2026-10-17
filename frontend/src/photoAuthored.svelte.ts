@@ -50,36 +50,30 @@ export class PhotoAuthoredEditor {
       this.endWrite(write);
     }
   }
-  private async refreshPreparedXMP() {
-    const previous = JSON.stringify(
-      this.targets.map((target) => [target.xmp?.state, target.asset_revision]),
-    );
+  private async refreshPreparedXMP(rememberImport = false) {
+    const snapshot = () =>
+      JSON.stringify(this.targets.map((target) => [target.xmp?.state, target.asset_revision]));
+    const previous = snapshot();
     const conflict = this.conflict,
       checks = this.draftRevisions();
     await this.prepareMembers();
     this.conflict ||= conflict || checks !== this.draftRevisions();
     this.recheckPendingXMP();
     if (this.error) throw new Error(this.error);
-    const receipts = new Map(
-      this.targets.flatMap((target) => {
-        const receipt = target.xmp?.receipt;
-        return receipt ? [[receipt.receipt_id, receipt] as const] : [];
-      }),
-    );
     let notified = false;
-    for (const receipt of receipts.values()) {
-      if (this.refreshedXMPReceipts.has(receipt.receipt_id)) continue;
+    for (const target of this.targets) {
+      const receipt = target.xmp?.receipt;
+      if (!receipt || this.refreshedXMPReceipts.has(receipt.receipt_id)) continue;
+      if (rememberImport) {
+        this.receiptID = receipt.receipt_id;
+        this.undoState.summary = "Sidecar metadata imported";
+      }
       const tags = await this.refreshKeywords(receipt);
       await this.onXMPChanged?.(receipt, tags);
       notified = true;
       this.refreshedXMPReceipts.add(receipt.receipt_id);
     }
-    if (
-      !notified &&
-      previous !==
-        JSON.stringify(this.targets.map((target) => [target.xmp?.state, target.asset_revision]))
-    )
-      await this.onXMPChanged?.();
+    if (!notified && previous !== snapshot()) await this.onXMPChanged?.();
   }
   async undoSidecarImport(fileID: string) {
     const receiptID = this.targets.find((target) => target.file_id === fileID)?.xmp?.receipt
@@ -97,21 +91,11 @@ export class PhotoAuthoredEditor {
     const write = this.beginWrite();
     this.xmpError = "";
     try {
-      const state = await this.request(() =>
+      await this.request(() =>
         api.resolvePhotoXMP(fileID, { conflict_id: expected.conflict_id!, choice }, this.options()),
       );
       if (this.controller.signal.aborted) return;
-      if (state.receipt?.receipt_id) {
-        this.accept(state.receipt);
-        this.receiptID = state.receipt.receipt_id;
-        this.undoState.summary = "Sidecar metadata imported";
-      }
-      const tags = state.receipt ? await this.refreshKeywords(state.receipt) : [];
-      this.endWrite(write);
-      await this.onXMPChanged?.(state.receipt, tags);
-      if (state.receipt) this.refreshedXMPReceipts.add(state.receipt.receipt_id);
-      await this.reload();
-      if (this.error) throw new Error(this.error);
+      await this.refreshPreparedXMP(true);
     } catch (cause) {
       if (!this.controller.signal.aborted) {
         this.xmpError =

@@ -706,9 +706,9 @@ func TestReleasedSchema29SidecarFirstSync(t *testing.T) {
 			require.False(t, synced, "no adapter or synthetic receipt precedes the first sync")
 			values := PhotoAuthored{Rating: 4, Confirmed: PhotoConfirmedRating}
 			packet := PhotoXMPPacket{Values: values, Keywords: []string{"Travel"}}
-			state, err := s.PublishPhotoXMP(ctx, PhotoXMPPlan{Work: work, Sidecar: packet, Packet: packet, Values: values, Keywords: packet.Keywords, Import: true, Write: true}, fakeHash("c3"), 4, BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 4, Created: true})
+			err = s.PublishPhotoXMP(ctx, PhotoXMPPlan{Work: work, Sidecar: packet, Packet: packet, Values: values, Keywords: packet.Keywords, Import: true, Write: true}, fakeHash("c3"), 4, BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 4, Created: true})
 			require.NoError(t, err)
-			assert.Equal(t, PhotoXMPStateSynced, state.State)
+			assert.Equal(t, PhotoXMPStateSynced, xmpState(t, s, fileID).State)
 			var accepted, current string
 			require.NoError(t, s.db.QueryRow(`SELECT f.source_sha256,v.blob_hash FROM photo_files f JOIN nodes n ON n.id=f.node_id
  JOIN content_versions v ON v.version_id=n.current_version_id WHERE f.file_id=?`, sidecarID).Scan(&accepted, &current))

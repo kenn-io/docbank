@@ -42,14 +42,11 @@ func registerPhotoAuthoredRoutes(api huma.API, d Deps, g *gate) {
 	huma.Register(api, huma.Operation{OperationID: "resolvePhotoXMP", Method: http.MethodPost, Path: "/api/v1/photos/authored/{file_id}/xmp", Summary: "Choose the catalog or sidecar copy of conflicting photo metadata"}, func(ctx context.Context, in *struct {
 		FileID string `path:"file_id" format:"uuid"`
 		Body   PhotoXMPResolveRequest
-	}) (*struct{ Body store.PhotoXMPState }, error) {
-		var state store.PhotoXMPState
+	}) (*struct{}, error) {
 		err := g.mutate(func() error {
-			var err error
-			state, err = processing.ResolvePhotoXMP(ctx, &ingest.Ingester{Store: d.Store, Blobs: d.Blobs}, in.FileID, in.Body.ConflictID, in.Body.Choice)
-			return FromStoreError(err)
+			return FromStoreError(processing.ResolvePhotoXMP(ctx, &ingest.Ingester{Store: d.Store, Blobs: d.Blobs}, in.FileID, in.Body.ConflictID, in.Body.Choice))
 		})
-		return &struct{ Body store.PhotoXMPState }{state}, err
+		return nil, err
 	})
 	huma.Register(api, huma.Operation{OperationID: "preparePhotoAuthored", Method: http.MethodPost, Path: "/api/v1/photos/authored/prepare", Summary: "Resolve a revision-bound metadata editing session"}, func(ctx context.Context, in *struct{ Body PhotoAuthoredPrepareRequest }) (*struct {
 		Body PhotoAuthoredPreparation

@@ -181,21 +181,6 @@ type PhotoXMPState struct {
 	Receipt    *PhotoAuthoredReceipt `json:"receipt,omitzero" doc:"The sidecar import that Undo can still reverse."`
 }
 
-func (s *Store) PhotoXMPState(ctx context.Context, id string) (state PhotoXMPState, err error) {
-	err = s.photoReadTx(ctx, func(tx *sql.Tx) error {
-		f, err := photoFileByIDQuery(ctx, tx, id)
-		if err != nil {
-			return err
-		}
-		if err := s.photoAuthoredAccessTx(ctx, tx, f.AssetID); err != nil {
-			return err
-		}
-		state, err = photoXMPStateTx(ctx, tx, f)
-		return err
-	})
-	return
-}
-
 func photoXMPStateTx(ctx context.Context, tx *sql.Tx, f PhotoFile) (PhotoXMPState, error) {
 	var r PhotoXMPState
 	var detail, receiptID string
@@ -242,30 +227,10 @@ func loadPhotoXMPReceiptTx(ctx context.Context, q metadataQuerier, id string) (p
 	return decodePhotoXMPReceipt(data)
 }
 
-func (s *Store) preparePhotoXMPTx(ctx context.Context, tx *sql.Tx, targets []PhotoPreparedTarget) error {
-	for i := range targets {
-		f, err := photoFileByIDQuery(ctx, tx, targets[i].FileID)
-		if err != nil {
-			return err
-		}
-		if !photoSidecarTargetRole(f.Role) {
-			continue
-		}
-		state, err := photoXMPStateTx(ctx, tx, f)
-		if err != nil {
-			return err
-		}
-		targets[i].XMP = &state
-	}
-	return nil
-}
-
 // PhotoXMPSidecar is the one live sidecar attached to an original.
 type PhotoXMPSidecar struct {
 	FileID       string
-	NodeID       int64
-	VersionID    string
-	SHA256       string
+	Node         Node
 	SourceSHA256 string
 	audited      bool
 }
@@ -273,18 +238,14 @@ type PhotoXMPSidecar struct {
 // PhotoXMPWork holds every input of one original's sync decision. Publication
 // reloads it in its own transaction and refuses a plan made from other inputs.
 type PhotoXMPWork struct {
-	FileID            string
-	AssetID           string
-	NodeID            int64
-	Catalog           PhotoAuthored
-	Keywords          []string
-	OriginalVersionID string
-	Orientation       int
-	Sidecar           *PhotoXMPSidecar
+	Original    PhotoFile
+	Node        Node
+	Keywords    []string
+	Orientation int
+	Sidecar     *PhotoXMPSidecar
 
-	role, name, receiptID  string
-	parentID               *int64
-	trashed, extracted     bool
+	receiptID              string
+	extracted              bool
 	keywordLimit, occupied bool
 	auditActive, audited   bool
 	members                int
@@ -303,15 +264,10 @@ func (w PhotoXMPWork) Base() (PhotoXMPSnapshot, int, bool) {
 	if r == nil || w.Sidecar == nil || r.Sidecar.FileID != w.Sidecar.FileID {
 		return PhotoXMPSnapshot{}, w.Orientation, false
 	}
-	if w.Sidecar.VersionID != r.Sidecar.VersionID && r.Source != nil && w.Sidecar.SHA256 == w.Sidecar.SourceSHA256 {
+	if w.Sidecar.Node.CurrentVersionID != r.Sidecar.VersionID && r.Source != nil && w.Sidecar.Node.BlobHash == w.Sidecar.SourceSHA256 {
 		return *r.Source, r.Orientation, true
 	}
 	return r.Baseline, r.Orientation, true
-}
-
-func (w PhotoXMPWork) inputs() PhotoXMPWork {
-	w.state, w.detail = "", photoXMPDetail{}
-	return w
 }
 
 func loadPhotoXMPWorkTx(ctx context.Context, tx *sql.Tx, id string) (PhotoXMPWork, error) {
@@ -323,8 +279,7 @@ func loadPhotoXMPWorkTx(ctx context.Context, tx *sql.Tx, id string) (PhotoXMPWor
 	if err != nil {
 		return PhotoXMPWork{}, err
 	}
-	w := PhotoXMPWork{FileID: f.ID, AssetID: f.AssetID, NodeID: n.ID, Catalog: f.Authored(), OriginalVersionID: n.CurrentVersionID,
-		role: f.Role, name: n.Name, parentID: n.ParentID, trashed: n.TrashedAt != nil}
+	w := PhotoXMPWork{Original: f, Node: n}
 	var detail string
 	err = tx.QueryRowContext(ctx, `SELECT f.xmp_state,f.xmp_detail,f.xmp_receipt_id,
  EXISTS(SELECT 1 FROM source_metadata_heads WHERE source_sha256=?),
@@ -345,17 +300,18 @@ func loadPhotoXMPWorkTx(ctx context.Context, tx *sql.Tx, id string) (PhotoXMPWor
 	if !photoSidecarTargetRole(f.Role) || f.AssetID == "" {
 		return w, nil
 	}
-	err = queryRows(ctx, tx, `SELECT sf.file_id,sn.id,sn.name,sn.current_version_id,v.blob_hash,sf.source_sha256,
- EXISTS(SELECT 1 FROM audit_memberships WHERE node_id=sn.id)
- FROM photo_files sf JOIN nodes sn ON sn.id=sf.node_id JOIN content_versions v ON v.version_id=sn.current_version_id
- WHERE sf.sidecar_of_file_id=? AND sf.asset_id=? AND sn.trashed_at IS NULL ORDER BY sn.name,sf.file_id`, []any{f.ID, f.AssetID}, func(rows *sql.Rows) error {
+	err = queryRows(ctx, tx, `SELECT `+nodeCols+`,sf.file_id,sf.source_sha256,
+ EXISTS(SELECT 1 FROM audit_memberships WHERE node_id=n.id)
+ FROM `+nodeFrom+` JOIN photo_files sf ON sf.node_id=n.id
+ WHERE sf.sidecar_of_file_id=? AND sf.asset_id=? AND n.trashed_at IS NULL ORDER BY n.name,sf.file_id`, []any{f.ID, f.AssetID}, func(rows *sql.Rows) error {
 		var sc PhotoXMPSidecar
-		var name string
-		if err := rows.Scan(&sc.FileID, &sc.NodeID, &name, &sc.VersionID, &sc.SHA256, &sc.SourceSHA256, &sc.audited); err != nil {
+		var err error
+		sc.Node, err = scanNode(rows, &sc.FileID, &sc.SourceSHA256, &sc.audited)
+		if err != nil {
 			return err
 		}
 		w.Sidecar = &sc
-		w.sidecarNames = append(w.sidecarNames, name)
+		w.sidecarNames = append(w.sidecarNames, sc.Node.Name)
 		return nil
 	})
 	if err != nil {
@@ -378,21 +334,13 @@ func loadPhotoXMPWorkTx(ctx context.Context, tx *sql.Tx, id string) (PhotoXMPWor
 	}
 	// Pairing evidence is an input: a synced sidecar must still name this original.
 	if w.Sidecar != nil && len(w.sidecarNames) == 1 && w.receipt != nil && w.receipt.Sidecar.FileID == w.Sidecar.FileID {
-		w.intended, err = photoXMPPairingTx(ctx, tx, w.Sidecar.FileID, w.receipt.Extension)
+		w.intended, err = w.pairing(ctx, tx, w.receipt.Extension)
 	}
 	return w, err
 }
 
-func photoXMPPairingTx(ctx context.Context, tx *sql.Tx, sidecarFileID, extension string) (string, error) {
-	sf, err := photoFileByIDQuery(ctx, tx, sidecarFileID)
-	if err != nil {
-		return "", err
-	}
-	sn, err := nodeByIDQuery(ctx, tx, sf.NodeID)
-	if err != nil {
-		return "", err
-	}
-	return photoSidecarIntendedTarget(ctx, tx, sf, sn, extension)
+func (w PhotoXMPWork) pairing(ctx context.Context, tx *sql.Tx, extension string) (string, error) {
+	return photoSidecarIntendedTarget(ctx, tx, PhotoFile{Role: PhotoRoleSidecar, AssetID: w.Original.AssetID, SidecarOfID: &w.Original.ID}, w.Sidecar.Node, extension)
 }
 
 const photoXMPExtractionReason = "Source metadata extraction is pending. Wait for Background jobs, then refresh XMP."
@@ -401,10 +349,10 @@ const photoXMPExtractionReason = "Source metadata extraction is pending. Wait fo
 // the worker must read and merge the packet.
 func (w PhotoXMPWork) classify() (string, string) {
 	r := w.receipt
-	catalogUnchanged := r != nil && w.Catalog == r.Baseline.Catalog && slices.Equal(w.Keywords, r.Baseline.Keywords)
+	catalogUnchanged := r != nil && w.Original.Authored() == r.Baseline.Catalog && slices.Equal(w.Keywords, r.Baseline.Keywords)
 	switch {
-	case !photoSidecarTargetRole(w.role) || w.AssetID == "" || w.trashed ||
-		w.Catalog.Confirmed == 0 && len(w.Keywords) == 0 && !w.keywordLimit && w.Sidecar == nil:
+	case !photoSidecarTargetRole(w.Original.Role) || w.Original.AssetID == "" || w.Node.TrashedAt != nil ||
+		w.Original.Authored().Confirmed == 0 && len(w.Keywords) == 0 && !w.keywordLimit && w.Sidecar == nil:
 		return PhotoXMPStateNone, ""
 	case w.Sidecar == nil && catalogUnchanged:
 		// The person removed the sidecar Docbank last synced; a later decision reopens sync.
@@ -431,8 +379,8 @@ func (w PhotoXMPWork) classify() (string, string) {
 		return PhotoXMPStateInvalid, "This photo has 256 members. Detach a member so sync can create a sidecar."
 	case w.Sidecar == nil && w.occupied:
 		return PhotoXMPStateInvalid, "The sidecar name is already occupied. Rename or trash that file to resume sync."
-	case w.Sidecar != nil && catalogUnchanged && r.Sidecar.FileID == w.Sidecar.FileID && r.Sidecar.VersionID == w.Sidecar.VersionID &&
-		r.OriginalVersionID == w.OriginalVersionID && r.Orientation == w.Orientation && w.intended == w.FileID:
+	case w.Sidecar != nil && catalogUnchanged && r.Sidecar.FileID == w.Sidecar.FileID && r.Sidecar.VersionID == w.Sidecar.Node.CurrentVersionID &&
+		r.OriginalVersionID == w.Node.CurrentVersionID && r.Orientation == w.Orientation && w.intended == w.Original.ID:
 		return PhotoXMPStateSynced, ""
 	}
 	return PhotoXMPStatePending, ""
@@ -462,7 +410,7 @@ func (s *Store) PhotoXMPConflict(ctx context.Context, id, conflictID string) (w 
 		if err != nil {
 			return err
 		}
-		if err := s.photoAuthoredAccessTx(ctx, tx, w.AssetID); err != nil {
+		if err := s.photoAuthoredAccessTx(ctx, tx, w.Original.AssetID); err != nil {
 			return err
 		}
 		if w.state != PhotoXMPStateConflict || w.detail.ConflictID != conflictID {

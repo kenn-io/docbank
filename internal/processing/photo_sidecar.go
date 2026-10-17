@@ -50,22 +50,10 @@ func (t *boundedSidecarText) write(data []byte) {
 	t.content = t.content || len(bytes.TrimSpace(data)) > 0
 	if t.overflow || t.builder.Len()+len(data) > store.MaxPhotoAuthoredTextBytes {
 		t.overflow = true
+		t.builder.Reset()
 		return
 	}
 	t.builder.Write(data)
-}
-
-func (t *boundedSidecarText) reset() {
-	t.builder.Reset()
-	t.overflow = false
-	t.content = false
-}
-
-func (t *boundedSidecarText) value() string {
-	if t.overflow {
-		return ""
-	}
-	return t.builder.String()
 }
 
 type photoSidecarPacket struct {
@@ -74,7 +62,6 @@ type photoSidecarPacket struct {
 	Refusal             error
 	SidecarForExtension string
 	Keywords            []string
-	KeywordsIgnored     bool
 	LegacyReject        bool
 	RotationPresent     bool
 	Ignored             store.PhotoAuthoredFields
@@ -115,8 +102,7 @@ func readPhotoSidecar(ctx context.Context, data []byte) (photoSidecarPacket, err
 		if n == (xml.Name{Space: photoshopXMPNamespace, Local: "SidecarForExtension"}) {
 			return n.Local
 		}
-		field := photoXMPPropertyFor(n).name
-		return field
+		return photoXMPPropertyFor(n).name
 	}
 	save := func(key, value string) error {
 		if len(value) > store.MaxPhotoAuthoredTextBytes {
@@ -193,7 +179,7 @@ func readPhotoSidecar(ctx context.Context, data []byte) (photoSidecarPacket, err
 						return result, errors.New("multiple authored RDF values")
 					}
 					child = t.Name
-					text.reset()
+					text = boundedSidecarText{}
 					valid = valid && (t.Name.Local == "value" || field == sourceMetadataSubjectField && t.Name.Local == "Bag" || field == sourceMetadataCreatorField && t.Name.Local == "Seq" || (field == sourceMetadataDescriptionField || field == sourceMetadataRightsField) && t.Name.Local == "Alt")
 				} else {
 					valid = valid && len(stack) == fieldDepth+2 && t.Name.Local == "li" && parent.Space == rdfNamespace && (parent.Local == "Alt" || parent.Local == "Seq" || parent.Local == "Bag")
@@ -229,7 +215,7 @@ func readPhotoSidecar(ctx context.Context, data []byte) (photoSidecarPacket, err
 					unsupported = false
 					fieldDepth = len(stack)
 					child = xml.Name{}
-					text.reset()
+					text = boundedSidecarText{}
 					items = nil
 					hasDefault = false
 					defaultText = ""
@@ -247,7 +233,7 @@ func readPhotoSidecar(ctx context.Context, data []byte) (photoSidecarPacket, err
 					return result, errors.New("nested RDF item")
 				}
 				itemDepth = len(stack)
-				itemText.reset()
+				itemText = boundedSidecarText{}
 				itemDefault = false
 				for _, a := range t.Attr {
 					if a.Name.Space == xmlNamespace && a.Name.Local == "lang" && a.Value == "x-default" {
@@ -280,7 +266,7 @@ func readPhotoSidecar(ctx context.Context, data []byte) (photoSidecarPacket, err
 				activeDescription = false
 			}
 			if itemDepth == len(stack) && itemDepth != 0 {
-				value := itemText.value()
+				value := itemText.builder.String()
 				items = append(items, value)
 				if itemDefault {
 					if hasDefault {
@@ -295,7 +281,7 @@ func readPhotoSidecar(ctx context.Context, data []byte) (photoSidecarPacket, err
 				ignored[field] = true
 			}
 			if field != "" && fieldDepth == len(stack) {
-				value := text.value()
+				value := text.builder.String()
 				if field == sourceMetadataSubjectField {
 					result.Keywords = append(result.Keywords, items...)
 					if len(items) == 0 && value != "" {
@@ -303,9 +289,7 @@ func readPhotoSidecar(ctx context.Context, data []byte) (photoSidecarPacket, err
 					}
 				}
 				if len(items) > 0 {
-					if field == sourceMetadataCreatorField {
-						value = items[0]
-					} else if hasDefault {
+					if field != sourceMetadataCreatorField && hasDefault {
 						value = defaultText
 					} else {
 						value = items[0]
@@ -349,7 +333,9 @@ func readPhotoSidecar(ctx context.Context, data []byte) (photoSidecarPacket, err
 		result.Refusal = errors.New("XMP keywords exceed the metadata value limit")
 		result.Keywords = []string{}
 	}
-	result.KeywordsIgnored = ignored[sourceMetadataSubjectField]
+	if ignored[sourceMetadataSubjectField] {
+		result.Ignored |= store.PhotoXMPKeywordsBit
+	}
 	if value := values["Orientation"]; value != "" {
 		n, err := strconv.Atoi(value)
 		if err != nil || n < 1 || n > 8 {

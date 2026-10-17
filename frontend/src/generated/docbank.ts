@@ -5374,8 +5374,6 @@ export const PhotoXMPStateState = {
 } as const;
 
 export interface PhotoXMPState {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
   conflict_id?: string;
   reason?: string;
   /** The sidecar import that Undo can still reverse. */
@@ -16312,7 +16310,7 @@ export const getResolvePhotoXMPUrl = (fileId: string,) => {
  * @summary Choose the catalog or sidecar copy of conflicting photo metadata
  */
 export const resolvePhotoXMP = async (fileId: string,
-    photoXMPResolveRequest: NonReadonly<PhotoXMPResolveRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoXMPState> => {
+    photoXMPResolveRequest: NonReadonly<PhotoXMPResolveRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -16328,7 +16326,7 @@ export const resolvePhotoXMP = async (fileId: string,
     }
     return headers;
   };
-return sessionJSON<PhotoXMPState>(getResolvePhotoXMPUrl(fileId),
+return sessionJSON<void>(getResolvePhotoXMPUrl(fileId),
   {
     ...options,
     method: 'POST',

@@ -37,8 +37,9 @@ func importXMP(t *testing.T, s *Store, fileID string, values PhotoAuthored, keyw
 	require.NoError(t, err)
 	require.True(t, run)
 	packet := PhotoXMPPacket{Values: values, Keywords: PhotoXMPKeywords(keywords)}
-	state, err := s.PublishPhotoXMP(t.Context(), PhotoXMPPlan{Work: work, Sidecar: packet, Packet: packet, Values: values, Keywords: packet.Keywords, Import: true}, "", 0, BlobPhysical{})
+	err = s.PublishPhotoXMP(t.Context(), PhotoXMPPlan{Work: work, Sidecar: packet, Packet: packet, Values: values, Keywords: packet.Keywords, Import: true}, "", 0, BlobPhysical{})
 	require.NoError(t, err)
+	state := xmpState(t, s, fileID)
 	require.Equal(t, PhotoXMPStateSynced, state.State)
 	require.NotNil(t, state.Receipt)
 	return *state.Receipt
@@ -46,9 +47,17 @@ func importXMP(t *testing.T, s *Store, fileID string, values PhotoAuthored, keyw
 
 func xmpState(t *testing.T, s *Store, fileID string) PhotoXMPState {
 	t.Helper()
-	state, err := s.PhotoXMPState(t.Context(), fileID)
+	f, err := photoFileByIDQuery(t.Context(), s.db, fileID)
 	require.NoError(t, err)
-	return state
+	prepared, err := s.PreparePhotoAuthored(t.Context(), PhotoSetSelection{AssetIDs: []string{f.AssetID}})
+	require.NoError(t, err)
+	for _, target := range prepared.Targets {
+		if target.FileID == fileID {
+			return *target.XMP
+		}
+	}
+	t.Fatal("original missing from authored preparation")
+	return PhotoXMPState{}
 }
 
 // settleXMP classifies a Pending original and reports its stored state, or
@@ -356,9 +365,9 @@ func TestPhotoXMPQueryFilters(t *testing.T) {
 	work, run, err := s.ClassifyPhotoXMP(ctx, raw.ID)
 	require.NoError(t, err)
 	require.True(t, run)
-	state, err := s.PublishPhotoXMP(ctx, PhotoXMPPlan{Work: work, Rows: []PhotoXMPRow{{Field: "Rating", Catalog: "", Sidecar: "4"}}}, "", 0, BlobPhysical{})
+	err = s.PublishPhotoXMP(ctx, PhotoXMPPlan{Work: work, Rows: []PhotoXMPRow{{Field: "Rating", Catalog: "", Sidecar: "4"}}}, "", 0, BlobPhysical{})
 	require.NoError(t, err)
-	assert.Equal(t, PhotoXMPStateConflict, state.State)
+	assert.Equal(t, PhotoXMPStateConflict, xmpState(t, s, raw.ID).State)
 	assert.Equal(t, []string{asset.ID}, match("xmp:conflict"))
 	assert.Empty(t, match("xmp:pending"))
 	assert.Equal(t, []string{asset.ID}, match("NOT xmp:pending"))

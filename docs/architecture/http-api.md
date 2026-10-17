@@ -1036,7 +1036,7 @@ export service.
 
 Photo plans refuse non-default `duplicate_policy` and any `volume_limits` before rendering.
 
-`POST /photos/authored/prepare` returns each RAW or image member's stored XMP status without reading sidecar bytes. `POST /photos/authored/{file_id}/xmp` accepts the conflict's `conflict_id` and a `choice` of `catalog` or `sidecar`. It refuses with `412` when the photo is no longer in that conflict, and returns the committed status, including the undoable import receipt when the choice changed catalog values. The ordinary authored Undo route undoes sidecar imports. Hidden photos need an unlock for both routes.
+`POST /photos/authored/prepare` returns each RAW or image member's stored XMP status without reading sidecar bytes. `POST /photos/authored/{file_id}/xmp` accepts the conflict's `conflict_id` and a `choice` of `catalog` or `sidecar`. It refuses with `412` when the photo is no longer in that conflict and returns `204` after a successful choice. Prepare again to read the committed status and any undoable import receipt. The ordinary authored Undo route undoes sidecar imports. Hidden photos need an unlock for both routes.
 
 `POST /exports/sources` accepts a `photos` selection of up to 16 display members. `POST /exports/plans` accepts the `photo_rendered` role with `photo_render` settings for JPEG or PNG, quality, long edge, image metadata and GPS removal. Existing Jobs and ZIP tickets deliver the reviewed artifacts. Image metadata settings control EXIF/XMP; the verified ZIP retains original filenames, vault paths and source hashes. See [Export photos](../usage/export-bundles.md#export-photos).
 

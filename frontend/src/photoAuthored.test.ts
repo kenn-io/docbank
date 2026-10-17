@@ -753,7 +753,7 @@ it("shows conflicting properties and resolves the recorded conflict", async () =
   const synced = { state: "synced", receipt } as api.PhotoXMPState;
   const fetcher = vi.fn<typeof fetch>(async (url) =>
     String(url).endsWith("/xmp")
-      ? response(synced)
+      ? new Response(null, { status: 204 })
       : response({ assets: [asset], targets: editor.targets.map((t) => ({ ...t, xmp: synced })) }),
   );
   vi.stubGlobal("fetch", fetcher);

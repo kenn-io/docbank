@@ -52,11 +52,8 @@ func photoXMPPresent(p store.PhotoXMPPacket, bit store.PhotoAuthoredFields) bool
 }
 func photoXMPEqual(a, b store.PhotoXMPPacket, bit store.PhotoAuthoredFields) bool {
 	ap, bp := photoXMPPresent(a, bit), photoXMPPresent(b, bit)
-	if ap != bp {
-		return false
-	}
-	if !ap {
-		return true
+	if ap != bp || !ap {
+		return ap == bp
 	}
 	if bit == store.PhotoXMPKeywordsBit {
 		return slices.Equal(a.Keywords, b.Keywords)
@@ -96,11 +93,11 @@ func planPhotoXMP(base, priorCatalog, catalog, sidecar store.PhotoXMPPacket, cho
 		sidecar.Keywords = raw.Keywords
 	}
 	result := photoXMPPlan{packet: catalog}
-	result.packet.Keywords = slices.Clone(catalog.Keywords)
 	result.packet.Ignored = sidecar.Ignored
 	for _, property := range &photoXMPProperties {
 		bit := property.bit
 		if bit == store.PhotoXMPKeywordsBit && priorCatalog.Keywords != nil && sidecar.Ignored&bit == 0 {
+			result.packet.Keywords = []string{}
 			for _, tag := range store.PhotoXMPKeywords(append(append(append(slices.Clone(base.Keywords), priorCatalog.Keywords...), catalog.Keywords...), sidecar.Keywords...)) {
 				b, p, c, x := slices.Contains(base.Keywords, tag), slices.Contains(priorCatalog.Keywords, tag), slices.Contains(catalog.Keywords, tag), slices.Contains(sidecar.Keywords, tag)
 				value := c
@@ -120,11 +117,8 @@ func planPhotoXMP(base, priorCatalog, catalog, sidecar store.PhotoXMPPacket, cho
 				}
 				if value {
 					result.packet.Keywords = append(result.packet.Keywords, tag)
-				} else {
-					result.packet.Keywords = slices.DeleteFunc(result.packet.Keywords, func(v string) bool { return v == tag })
 				}
 			}
-			result.packet.Keywords = store.PhotoXMPKeywords(result.packet.Keywords)
 			continue
 		}
 		equal := func(a, b store.PhotoXMPPacket) bool { return photoXMPEqual(a, b, bit) }

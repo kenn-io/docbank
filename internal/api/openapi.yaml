@@ -13551,13 +13551,6 @@ components:
     PhotoXMPState:
       additionalProperties: false
       properties:
-        $schema:
-          description: A URL to the JSON Schema for this object.
-          examples:
-            - https://example.com/schemas/PhotoXMPState.json
-          format: uri
-          readOnly: true
-          type: string
         conflict_id:
           type: string
         reason:
@@ -25938,12 +25931,8 @@ paths:
               $ref: "#/components/schemas/PhotoXMPResolveRequest"
         required: true
       responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PhotoXMPState"
-          description: OK
+        "204":
+          description: No Content
         default:
           content:
             application/problem+json:

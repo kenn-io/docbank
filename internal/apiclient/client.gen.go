@@ -9675,7 +9675,7 @@ func (c *Client) PreparePhotoAuthored(ctx context.Context, options *PreparePhoto
 }
 
 // ResolvePhotoXMP Choose the catalog or sidecar copy of conflicting photo metadata
-func (c *Client) ResolvePhotoXMP(ctx context.Context, options *ResolvePhotoXMPRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolvePhotoXMPResponse, error) {
+func (c *Client) ResolvePhotoXMP(ctx context.Context, options *ResolvePhotoXMPRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/authored/{file_id}/xmp",
@@ -9689,18 +9689,12 @@ func (c *Client) ResolvePhotoXMP(ctx context.Context, options *ResolvePhotoXMPRe
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(_ context.Context, resp *runtime.Response) (*ResolvePhotoXMPResponse, error) {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*struct{}, error) {
 		switch resp.StatusCode {
 
-		case 200:
+		case 204:
 
-			target := new(ResolvePhotoXMPResponse)
-			if err := json.Unmarshal(resp.Content, target); err != nil {
-				return nil, &runtime.ResponseDecodeError{
-					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
-					ContentLength: len(resp.Content), TargetType: "ResolvePhotoXMPResponse", Body: resp.Content, Err: err,
-				}
-			}
+			target := new(struct{})
 
 			return target, nil
 
@@ -9716,7 +9710,7 @@ func (c *Client) ResolvePhotoXMP(ctx context.Context, options *ResolvePhotoXMPRe
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
 	if resp.Streaming {
-		return nil, c.acceptStream(resp, 200)
+		return nil, c.acceptStream(resp, 204)
 	}
 	return responseParser(ctx, resp)
 }
@@ -26349,8 +26343,6 @@ type EditPhotoAuthoredErrorResponse = Error
 type PreparePhotoAuthoredResponse = api.PhotoAuthoredPreparation
 
 type PreparePhotoAuthoredErrorResponse = Error
-
-type ResolvePhotoXMPResponse = store.PhotoXMPState
 
 type ResolvePhotoXMPErrorResponse = Error
 

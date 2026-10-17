@@ -136,8 +136,14 @@ func (e *xmpEnv) packet() (store.Node, string, photoSidecarPacket) {
 
 func (e *xmpEnv) state(want string) store.PhotoXMPState {
 	e.t.Helper()
-	state, err := e.catalog.PhotoXMPState(e.t.Context(), e.raw().ID)
+	prepared, err := e.catalog.PreparePhotoAuthored(e.t.Context(), store.PhotoSetSelection{AssetIDs: []string{e.assetID}})
 	require.NoError(e.t, err)
+	var state store.PhotoXMPState
+	for _, target := range prepared.Targets {
+		if target.FileID == e.raw().ID {
+			state = *target.XMP
+		}
+	}
 	require.Equal(e.t, want, state.State, state.Reason)
 	return state
 }
@@ -217,11 +223,11 @@ func TestPhotoXMPOutsideEditsMergeAfterManagedWrite(t *testing.T) {
 	e.drain()
 	conflict := e.state(store.PhotoXMPStateConflict)
 	assert.Equal(t, []store.PhotoXMPRow{{Field: "Rating", Catalog: "2", Sidecar: "1"}}, conflict.Rows)
-	_, err = ResolvePhotoXMP(t.Context(), &ingest.Ingester{Store: e.catalog, Blobs: e.blobs}, e.raw().ID, "00000000-0000-4000-8000-000000000000", "sidecar")
+	err = ResolvePhotoXMP(t.Context(), &ingest.Ingester{Store: e.catalog, Blobs: e.blobs}, e.raw().ID, "00000000-0000-4000-8000-000000000000", "sidecar")
 	require.ErrorIs(t, err, store.ErrStaleRevision)
-	resolved, err := ResolvePhotoXMP(t.Context(), &ingest.Ingester{Store: e.catalog, Blobs: e.blobs}, e.raw().ID, conflict.ConflictID, "sidecar")
+	err = ResolvePhotoXMP(t.Context(), &ingest.Ingester{Store: e.catalog, Blobs: e.blobs}, e.raw().ID, conflict.ConflictID, "sidecar")
 	require.NoError(t, err)
-	assert.Equal(t, store.PhotoXMPStateSynced, resolved.State)
+	e.state(store.PhotoXMPStateSynced)
 	assert.Equal(t, 1, e.raw().Rating)
 	assert.Equal(t, "River", e.raw().Caption)
 }
@@ -321,10 +327,9 @@ func TestPhotoXMPExtensionClaimNamesAnotherMember(t *testing.T) {
 func TestPhotoXMPRotationComposesWithOrientation(t *testing.T) {
 	t.Parallel()
 	input := store.PhotoExportInput{Authored: store.PhotoAuthored{Rotation: 90, Confirmed: store.PhotoConfirmedRotation}}
-	data, written, err := mergePhotoXMPSidecar(t.Context(), nil, input, 6, store.PhotoConfirmedRotation)
+	_, written, err := mergePhotoXMPSidecar(t.Context(), nil, input, 6, store.PhotoConfirmedRotation)
 	require.NoError(t, err)
-	assert.Contains(t, string(data), `tiff:Orientation="3"`)
-	assert.Contains(t, string(data), `ts:Rotation="90"`)
+	assert.Equal(t, 90, written.Rotation)
 	assert.Equal(t, 3, written.Orientation)
 	// An editor that rotates only the TIFF orientation reads as a new rotation.
 	packet := photoXMPSnapshot(written)
@@ -351,4 +356,59 @@ func TestPhotoXMPRejectSentinelIsNeverWritten(t *testing.T) {
 	assert.Equal(t, "reject", packet.Flag)
 	assert.Equal(t, "Harbor", packet.Caption)
 	assert.Contains(t, data, "Pick")
+}
+
+func TestPhotoXMPRepeatedWritesStayBounded(t *testing.T) {
+	t.Parallel()
+	data := []byte(xmpSidecar(` xmp:Rating="1"`, "").payload)
+	var size int
+	for i := range 20 {
+		input := store.PhotoExportInput{Authored: store.PhotoAuthored{Rating: 3 + i%2, Confirmed: store.PhotoConfirmedRating}}
+		written, packet, err := mergePhotoXMPSidecar(t.Context(), data, input, 1, store.PhotoConfirmedRating)
+		require.NoError(t, err)
+		if i == 0 {
+			size = len(written)
+		}
+		assert.Len(t, written, size, "rewriting a property keeps the existing RDF description")
+		data = written
+		if i == 19 {
+			assert.Equal(t, 4, packet.Rating)
+			assert.Contains(t, string(data), `crs:Exposure="1.25"`)
+		}
+	}
+}
+
+func TestPhotoXMPOutsideImportReplacesGeneratedSidecar(t *testing.T) {
+	t.Parallel()
+	e := newXMPEnv(t)
+	e.edit(store.PhotoAuthoredPatch{Rating: new(3)})
+	e.drain()
+	created, _, _ := e.packet()
+	before, err := e.catalog.NodeProvenance(t.Context(), created.ID, 10, 0)
+	require.NoError(t, err)
+	require.Len(t, before.Items, 1)
+	require.Equal(t, "photo-xmp", before.Items[0].SourceKind)
+	outside := xmpSidecar(` xmp:Rating="4"`, "")
+	result := e.importFiles(photoGroupFile{xmpRaw, store.PhotoRoleRAW, "image/x-sony-arw", "synthetic RAW"}, outside)
+	require.True(t, result.Added)
+	require.Equal(t, created.ID, result.Nodes[1].ID)
+	require.NotEqual(t, created.CurrentVersionID, result.Nodes[1].CurrentVersionID)
+	require.Len(t, e.sidecars(), 1)
+	provenance, err := e.catalog.NodeProvenance(t.Context(), created.ID, 10, 0)
+	require.NoError(t, err)
+	found := false
+	for _, fact := range provenance.Items {
+		found = found || fact.SourceKind == "photo-import" && fact.OriginalPath == filepath.Join(e.root, "camera", outside.name)
+	}
+	require.True(t, found, "outside bytes retain their source path")
+	e.drain()
+	e.state(store.PhotoXMPStateSynced)
+	assert.Equal(t, 4, e.raw().Rating)
+	e.edit(store.PhotoAuthoredPatch{Rating: new(5)})
+	e.drain()
+	e.importFiles(photoGroupFile{xmpRaw, store.PhotoRoleRAW, "image/x-sony-arw", "synthetic RAW"}, outside)
+	e.drain()
+	current, _, packet := e.packet()
+	assert.Equal(t, created.ID, current.ID)
+	assert.Equal(t, 5, packet.Rating)
 }

@@ -464,11 +464,11 @@ keep their revision and append no receipt.
 
 Hidden photos store nullable `photo_assets.hidden_at`. Revisioned hide/unhide writes use the existing asset receipts. Disable reads only hidden asset graphs and atomically clears their flags and authentication state. Reset preserves flags. Public Photos asset and preview reads require an active unlock for hidden assets; ordinary Documents reads retain access.
 
-Vault-wide hidden credentials use fixed Argon2id parameters. Failure timestamps and five-minute lockout persist through restart and restore. JSONL versions 1 and 2 back up hidden flags, credentials, failed attempts, lockout expiry and decision receipts. Sessions store SHA-256 token digests, expire after five minutes, clear on restart, and stay outside backup. Schema 39 uses the existing deterministic JSONL rebuild for supported released schemas and retains the source database. Schemas 30 through 33 and 35 through 38 remain unsupported, unreleased sources. Recreate development vaults from schemas 35 through 38 with this binary; opening them fails the schema check.
+Vault-wide hidden credentials use fixed Argon2id parameters. Failure timestamps and five-minute lockout persist through restart and restore. JSONL versions 1 and 2 back up hidden flags, credentials, failed attempts, lockout expiry and decision receipts. Sessions store SHA-256 token digests, expire after five minutes, clear on restart, and stay outside backup. Schema 38 uses the existing deterministic JSONL rebuild for supported released schemas and retains the source database. Schemas 30 through 33 and 35 through 37 remain unsupported, unreleased sources. Recreate development vaults that use older schema-38 layouts; this binary refuses them during its schema check.
 
 The `confirmed_fields` bit mask records supplied rating (1), flag (2), label (4), caption (8), creator (16), copyright (32) and rotation (64), including empty clears. XMP sync confirms only non-default sidecar values; undo, audit and backup retain the mask. A revision-1 file has no decisions, so restore refuses one with authored values or confirmation bits.
 
-Schema version 39 exports assets, files, settings, albums, album members, saved-query runs, receipts, and faces in stable
+Schema version 38 exports assets, files, settings, albums, album members, saved-query runs, receipts, and faces in stable
 JSONL order. Restore requires a pristine target and validates node ownership,
 local pointers, sidecar targets, selected display state, enum-like text,
 revisions, complete non-null authored receipt snapshots, and the graph before commit.
@@ -478,7 +478,7 @@ Released photo files retain their graph and gain revision 1 with empty authored 
 
 Schema 38 adds `saved_query_runs.photos`, which distinguishes document-node runs from Library photo-asset runs. Predecessor comparisons stay within the same mode. Older JSONL run rows default to Documents; photo runs serialize `photos: true`.
 
-Schema 39 adds XMP sync state to `photo_files`. Each RAW or image row stores
+Schema 38 adds XMP sync state to `photo_files`. Each RAW or image row stores
 `xmp_state`, `xmp_detail` and `xmp_receipt_id`; each sidecar row stores
 `source_sha256`, the digest of the last outside packet its sync accepted.
 
@@ -499,7 +499,9 @@ Schema 39 adds XMP sync state to `photo_files`. Each RAW or image row stores
   rest read the packet, merge and publish. Publication reloads every input in
   its write transaction and retries when one changed, then commits the
   imported decisions, tags, sidecar version, receipt and state together.
-- Imports: a rescan whose sidecar bytes equal `source_sha256` keeps the current
+- Imports: an outside sidecar without earlier source-path provenance matches
+  through its paired original and replaces the generated sidecar in place.
+  A rescan whose sidecar bytes equal `source_sha256` keeps the current
   Docbank version and binds provenance to a retained version with those bytes.
   Changed outside bytes become a new version and replace the digest. The first
   sync of a sidecar without a baseline records its current digest before any

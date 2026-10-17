@@ -111,8 +111,8 @@ func TestReadPhotoSidecar(t *testing.T) {
 					assert.Equal(t, c.keywords, packet.Keywords)
 				}
 				if c.ignored != nil {
-					assert.Equal(t, *c.ignored, packet.Ignored)
-					assert.Equal(t, c.keywordsIgnored, packet.KeywordsIgnored)
+					assert.Equal(t, *c.ignored, packet.Ignored&^store.PhotoXMPKeywordsBit)
+					assert.Equal(t, c.keywordsIgnored, packet.Ignored&store.PhotoXMPKeywordsBit != 0)
 				}
 			}
 		})
