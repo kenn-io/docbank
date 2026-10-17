@@ -523,13 +523,7 @@ export class Photos {
 
   async lookup(assetID: string, signal: AbortSignal): Promise<PhotoBrowseRow> {
     try {
-      const [row] = await lookupPhotoRows(
-        this.session,
-        [assetID],
-        signal,
-        undefined,
-        this.hidden,
-      );
+      const [row] = await lookupPhotoRows(this.session, [assetID], signal, undefined, this.hidden);
       if (!row) throw new APIError("This photo is no longer in this view.", 404, "not_found");
       return row;
     } catch (cause) {

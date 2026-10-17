@@ -9,7 +9,7 @@ export class PhotoUndoState {
 
 export class PhotoAuthoredEditor {
   asset = $state<api.PhotoAsset>();
-  targets = $state<api.PhotoPreparedTarget[]>([]);
+  targets = $state<(api.PhotoPreparedTarget & api.PhotoAuthoredEditTarget)[]>([]);
   tags = $state<api.Tag[]>([]);
   tagsError = $state("");
   tagsLoading = $state(false);

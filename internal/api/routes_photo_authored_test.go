@@ -51,7 +51,7 @@ func TestPhotoAuthoredRoutes(t *testing.T) {
 func apiEditTargets(prepared []store.PhotoPreparedTarget) []store.PhotoAuthoredEditTarget {
 	targets := make([]store.PhotoAuthoredEditTarget, len(prepared))
 	for i, target := range prepared {
-		targets[i] = target.PhotoAuthoredEditTarget
+		targets[i] = store.PhotoAuthoredEditTarget{PhotoAuthoredTargetRevision: target.PhotoAuthoredTargetRevision}
 	}
 	return targets
 }

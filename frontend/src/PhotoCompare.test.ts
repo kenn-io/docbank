@@ -181,7 +181,7 @@ it("serializes Next activations until the destination lookup finishes", async ()
   const rows = [photo(1), photo(2), photo(3), photo(4)];
   const { photos, dialog } = compare(rows);
   await waitFor(() => expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]));
-  let resolve!: (rows: typeof photos.items) => void;
+  let resolve!: (rows: ReturnType<typeof photo>[]) => void;
   vi.mocked(photos.lookupMany).mockImplementationOnce(
     () => new Promise((done) => (resolve = done)),
   );
@@ -216,10 +216,11 @@ it("preserves the closeup when the destination lookup fails", async () => {
   await fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
   await within(dialog).findByText("Lookup unavailable");
   expect(within(dialog).getByLabelText("Matching closeups")).toBe(closeups);
-  expect(within(closeups).getAllByRole("heading").map((heading) => heading.textContent)).toEqual([
-    "Photo 1.jpg",
-    "Photo 2.jpg",
-  ]);
+  expect(
+    within(closeups)
+      .getAllByRole("heading")
+      .map((heading) => heading.textContent),
+  ).toEqual(["Photo 1.jpg", "Photo 2.jpg"]);
   await fireEvent.click(within(dialog).getByRole("button", { name: /^Retry$/ }));
   await waitFor(() => expect(names(dialog)).toEqual(["Photo 2.jpg", "Photo 3.jpg"]));
   expect(within(dialog).queryByLabelText("Matching closeups")).toBeNull();

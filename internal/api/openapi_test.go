@@ -819,3 +819,18 @@ func TestOpenAPIPushRequiresPortableIdentityAndVerifiedBytes(t *testing.T) {
 		"ordinary uploads keep their own outcomes")
 	assert.NotNil(t, doc.Paths["/api/v1/push/sources"].Get)
 }
+
+func TestOpenAPIPhotoPreparedTargetOmitsContentVersion(t *testing.T) {
+	t.Parallel()
+	schemas := api.NewOfflineServer().API().OpenAPI().Components.Schemas.Map()
+	prepared := schemas["PhotoPreparedTarget"]
+	require.NotNil(t, prepared)
+	require.NotContains(t, prepared.Properties, "content_version_id")
+	for _, field := range []string{"asset_id", "asset_revision", "file_id", "revision", "node_revision"} {
+		require.Contains(t, prepared.Required, field)
+	}
+	edit := schemas["PhotoAuthoredEditTarget"]
+	require.NotNil(t, edit)
+	require.Equal(t, "uuid", edit.Properties["content_version_id"].Format)
+	require.NotContains(t, edit.Required, "content_version_id")
+}

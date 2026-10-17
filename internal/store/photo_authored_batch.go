@@ -38,12 +38,17 @@ const maxPhotoKeywordEdits = 100
 var ErrPhotoEditFileLimit = errors.New("edit at most 1,000 files at once; RAW/JPEG pairs count as two files. Select fewer photos")
 var ErrPhotoEditReceiptLimit = errors.New("photo metadata receipt exceeds the 1 MiB limit")
 
+type PhotoAuthoredTargetRevision struct {
+	AssetID       string `json:"asset_id" format:"uuid"`
+	AssetRevision int64  `json:"asset_revision" minimum:"1"`
+	FileID        string `json:"file_id" format:"uuid"`
+	Revision      int64  `json:"revision" minimum:"1"`
+	NodeRevision  int64  `json:"node_revision" minimum:"1"`
+}
+
 type PhotoAuthoredEditTarget struct {
-	AssetID          string `json:"asset_id" format:"uuid"`
-	AssetRevision    int64  `json:"asset_revision" minimum:"1"`
-	FileID           string `json:"file_id" format:"uuid"`
-	Revision         int64  `json:"revision" minimum:"1"`
-	NodeRevision     int64  `json:"node_revision" minimum:"1"`
+	PhotoAuthoredTargetRevision
+
 	ContentVersionID string `json:"content_version_id,omitempty" format:"uuid"`
 }
 
@@ -53,7 +58,7 @@ type photoAuthoredLoaded struct {
 }
 
 type PhotoPreparedTarget struct {
-	PhotoAuthoredEditTarget
+	PhotoAuthoredTargetRevision
 
 	FileName string        `json:"file_name"`
 	NodeID   int64         `json:"node_id"`
