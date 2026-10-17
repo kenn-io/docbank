@@ -1886,6 +1886,11 @@ it.each([false, true])("keeps RAW after a refused flag, reload fails=%s", async 
     { file_id: "raw", content_version_id: "version-1" },
   ]);
   expect(photos.authored.fileID).toBe("raw");
+  if (!reloadFails) {
+    await waitFor(() => expect(prepare).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(photos.authored.loading).toBe(false));
+    expect(within(loupe).getByText("Photo changed")).toBeTruthy();
+  }
   finishLookup({ ...row, content_version_id: "replacement-version" });
   await waitFor(() =>
     expect(photos.items[0]).toMatchObject({ content_version_id: "replacement-version" }),
@@ -1925,6 +1930,9 @@ it("keeps the Metadata draft after a refused loupe edit until Reload metadata", 
   const photos = workspaceWithPreparedPhoto();
   const row = photo(1);
   const lookup = vi.spyOn(photos, "lookup").mockResolvedValue(row);
+  const prepare = vi
+    .spyOn(api, "preparePhotoAuthored")
+    .mockResolvedValue(photoPreparation([preparedPhoto(1)]));
   vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
   stubPhotoFetch(vi.fn());
   const edit = vi
@@ -1941,18 +1949,18 @@ it("keeps the Metadata draft after a refused loupe edit until Reload metadata", 
   const loupe = await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
   await fireEvent.click(within(loupe).getByRole("button", { name: "Metadata" }));
   await within(loupe).findByRole("list", { name: "Assigned keywords" });
+  prepare.mockClear();
   photos.authored.stage({ caption: "Draft caption" });
   shortcuts.handleKeydown(new KeyboardEvent("keydown", { key: "p", cancelable: true }));
   await within(loupe).findByText("Photo changed");
   await waitFor(() => expect(lookup).toHaveBeenCalledTimes(2));
-  expect(photos.authored.patch).toEqual({ caption: "Draft caption" });
-  expect(photos.authored.conflict).toBe(true);
+  expect(prepare).not.toHaveBeenCalled();
   shortcuts.handleKeydown(new KeyboardEvent("keydown", { key: "5", cancelable: true }));
   await within(loupe).findByText("Reload metadata before editing.");
   expect(edit).toHaveBeenCalledOnce();
   await fireEvent.click(within(loupe).getByRole("button", { name: "Reload metadata" }));
+  await waitFor(() => expect(prepare).toHaveBeenCalledOnce());
   await waitFor(() => expect(photos.authored.conflict).toBe(false));
-  expect(photos.authored.patch).toEqual({ caption: "Draft caption" });
   shortcuts.handleKeydown(new KeyboardEvent("keydown", { key: "5", cancelable: true }));
   await waitFor(() => expect(edit).toHaveBeenCalledTimes(2));
   expect(edit.mock.calls[1]![0].patch).toEqual({ caption: "Draft caption", rating: 5 });
