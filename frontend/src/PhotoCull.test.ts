@@ -787,9 +787,9 @@ it("includes the last photo picked after completion when S starts Picks", async 
   expect(screen.queryByRole("heading", { name: "Pass complete" })).toBeNull();
 });
 
-it("counts a captured photo lost before the completion refresh as unavailable", async () => {
+it("reads completion flags once despite unavailable marks and auto-advance toggles", async () => {
   const row = photo(1);
-  vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
+  const flags = vi.spyOn(api, "listPhotoAssets").mockResolvedValue({
     items: [row],
     total: 1,
     facets: [],
@@ -802,7 +802,15 @@ it("counts a captured photo lost before the completion refresh as unavailable", 
   await fireEvent.keyDown(document.activeElement!, { key: "ArrowRight" });
   await screen.findByRole("heading", { name: "Pass complete" });
   await screen.findByText(/1 unavailable/);
+  await waitFor(() => expect(cull.busy).toBe(false));
   expect(cull.run!.checkpoint.unavailable).toEqual([photo(2).asset_id]);
+  expect(flags).toHaveBeenCalledOnce();
+  await fireEvent.click(screen.getByRole("button", { name: "Auto-advance: off" }));
+  await waitFor(() => expect(cull.busy).toBe(false));
+  expect(flags).toHaveBeenCalledOnce();
+  await act(() => cull.unavailable(row.asset_id));
+  await waitFor(() => expect(cull.busy).toBe(false));
+  expect(flags).toHaveBeenCalledOnce();
 });
 
 it("shows the restored rotation in the cull stage after Undo", async () => {
