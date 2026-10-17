@@ -221,7 +221,6 @@ export class PhotoCull {
     }
     return flags;
   }
-
   private matches(scope: CullScope, flags: Map<string, PhotoBrowseRowFlag>) {
     const flag = scope === "picks" ? "pick" : scope === "rejects" ? "reject" : "";
     return this.run!.ids.filter(
