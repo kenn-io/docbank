@@ -11,6 +11,7 @@
   import { previewObjectURL, type PhotoPreviewCache } from "./photoPreviewCache.js";
   import { APIError } from "./api-transport.js";
   import PhotoCullConfirmation from "./PhotoCullConfirmation.svelte";
+  import { photoRotationStyle } from "./photoRotation.js";
   let {
     faces,
     session,
@@ -39,9 +40,16 @@
     person.identity_label || new Date(person.created_at).toLocaleDateString();
   const duplicateDetails = $derived(duplicate?.people.map(detail) ?? []);
   let selection = $state("");
-  let previews = $state.raw<Record<string, { urls: string[]; loading: boolean; failed: boolean }>>(
-    {},
-  );
+  let previews = $state.raw<
+    Record<
+      string,
+      {
+        images: { url: string; rotation: number }[];
+        loading: boolean;
+        failed: boolean;
+      }
+    >
+  >({});
   let previewController: AbortController | undefined;
   let releases: (() => void)[] = [];
   const groupKey = (name: string) => `\0group:${name}`;
@@ -85,29 +93,26 @@
       members.find((person) => person.person_id === faces.person(face)?.person_id)?.person_id ?? "";
     const request = (previewController = new AbortController());
     previews = Object.fromEntries(
-      members.map((person) => [person.person_id, { urls: [], loading: true, failed: false }]),
+      members.map((person) => [person.person_id, { images: [], loading: true, failed: false }]),
     );
-    for (const person of members) {
+    const load = async (person: PersonSummary) => {
       try {
-        const read = () => {
-          request.signal.throwIfAborted();
-          return listPhotoAssets(
-            {
-              query: {
-                text: "",
-                syntax: "simple",
-                filters: { person_ids: [person.person_id] },
-                sort: { field: "capture_time", direction: "desc" },
-              },
-              hidden: faces.hidden,
-              page_size: 4,
-              stacks: false,
-              facets: [],
+        request.signal.throwIfAborted();
+        const page = await listPhotoAssets(
+          {
+            query: {
+              text: "",
+              syntax: "simple",
+              filters: { person_ids: [person.person_id] },
+              sort: { field: "capture_time", direction: "desc" },
             },
-            { session, signal: request.signal },
-          );
-        };
-        const page = await (faces.hiddenAccess ? faces.hiddenAccess.run(read) : read());
+            hidden: faces.hidden,
+            page_size: 4,
+            stacks: false,
+            facets: [],
+          },
+          { session, signal: request.signal },
+        );
         if (request.signal.aborted) return;
         const rows = page.items
           .filter((row) => row.asset_id !== assetID && row.content_version_id !== faces.version)
@@ -115,7 +120,7 @@
         previews = {
           ...previews,
           [person.person_id]: {
-            urls: [],
+            images: [],
             loading: rows.length > 0 && !!cache,
             failed: rows.length > 0 && !cache,
           },
@@ -139,7 +144,11 @@
                 const state = previews[person.person_id]!;
                 previews = {
                   ...previews,
-                  [person.person_id]: { ...state, loading: false, urls: [...state.urls, url] },
+                  [person.person_id]: {
+                    ...state,
+                    loading: false,
+                    images: [...state.images, { url, rotation: row.rotation ?? 0 }],
+                  },
                 };
               },
               (cause) => {
@@ -166,10 +175,19 @@
         if (!request.signal.aborted)
           previews = {
             ...previews,
-            [person.person_id]: { urls: [], loading: false, failed: true },
+            [person.person_id]: { images: [], loading: false, failed: true },
           };
       }
-    }
+    };
+    const loadAll = async () => {
+      let next = 0;
+      await Promise.allSettled(
+        Array.from({ length: Math.min(4, members.length) }, async () => {
+          while (!request.signal.aborted && next < members.length) await load(members[next++]!);
+        }),
+      );
+    };
+    await (faces.hiddenAccess ? faces.hiddenAccess.run(loadAll) : loadAll());
   }
   async function assignSelection() {
     const selected = duplicate;
@@ -414,13 +432,16 @@
             <small>{person.person_id}</small>
           {/if}</span
         >
-        {#each preview?.urls ?? [] as url}<img
-            src={url}
-            alt={`Photos of ${person.display_name}`}
-          />{/each}
+        {#each preview?.images ?? [] as image}<span class="person-preview"
+            ><img
+              src={image.url}
+              alt={`Photos of ${person.display_name}`}
+              style={photoRotationStyle(image.rotation, 64, 64)}
+            /></span
+          >{/each}
         {#if preview?.loading}<span>Loading photos…</span>
         {:else if preview?.failed}<span>Preview unavailable</span>
-        {:else if !preview?.urls.length}<span>No photos you can see.</span>{/if}
+        {:else if !preview?.images.length}<span>No photos you can see.</span>{/if}
       </label>
     {/each}
     <label
@@ -447,9 +468,17 @@
   .duplicate-person > span:first-of-type {
     min-width: 0;
   }
-  .duplicate-person img {
+  .person-preview {
+    position: relative;
     width: 64px;
     height: 64px;
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+  .person-preview img {
+    position: absolute;
+    top: 50%;
+    left: 50%;
     object-fit: cover;
   }
   .people {

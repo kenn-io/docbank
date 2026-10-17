@@ -182,6 +182,7 @@ it.each(["person-b", "new", "cancel", "assigned"])(
     const list = vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) => {
       const id = request.query.filters!.person_ids![0] === "person-a" ? 1 : 2;
       const row = photo(id);
+      row.rotation = id === 1 ? 90 : 270;
       row.previews.grid = { state: "ready", generation_id: `grid-${id}` };
       return {
         items: [
@@ -235,6 +236,10 @@ it.each(["person-b", "new", "cancel", "assigned"])(
         "blob:alex-b",
       ]),
     );
+    expect(screen.getAllByRole("img").map((image) => image.style.transform)).toEqual([
+      "translate(-50%,-50%) rotate(90deg)",
+      "translate(-50%,-50%) rotate(270deg)",
+    ]);
     expect(list).toHaveBeenCalledWith(
       expect.objectContaining({ hidden: false, page_size: 4 }),
       expect.objectContaining({ session: "session" }),
@@ -264,6 +269,100 @@ it.each(["person-b", "new", "cancel", "assigned"])(
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:alex-b");
     if (selection === "cancel") expect(write).not.toHaveBeenCalled();
     await cache.dispose();
+    faces.dispose();
+  },
+);
+
+it.each(["select", "cancel", "scope"])(
+  "bounds namesake preview reads within Hidden access: %s",
+  async (mode) => {
+    const { HiddenAccess } = await import("./hiddenAccess.svelte.js");
+    const access = new HiddenAccess("session", vi.fn());
+    access.acceptState({ configured: true, expires_in: 60 }, Date.now());
+    vi.spyOn(api, "listPhotoFaces").mockResolvedValue({
+      faces: [face],
+      assertions: [],
+      people: [],
+    });
+    vi.spyOn(api, "listPeople").mockResolvedValue({
+      items: Array.from({ length: 6 }, (_, index) => ({
+        person_id: `person-${index}`,
+        display_name: "Alex",
+        display_name_folded: "alex",
+        state: "curated",
+        revision: 1,
+        created_at: "2026-01-01T00:00:00Z",
+      })),
+    });
+    let active = 0;
+    let maximum = 0;
+    const pending = new Map<string, { finish: (fail?: boolean) => void; signal: AbortSignal }>();
+    const list = vi.spyOn(api, "listPhotoAssets").mockImplementation((request, options) => {
+      const id = request.query.filters!.person_ids![0]!;
+      expect(request.hidden).toBe(true);
+      active++;
+      maximum = Math.max(maximum, active);
+      return new Promise((resolve, reject) => {
+        pending.set(id, {
+          signal: options!.signal!,
+          finish(fail) {
+            active--;
+            pending.delete(id);
+            if (fail) reject(new Error("Preview read failed"));
+            else resolve({ items: [] } as unknown as api.PhotoBrowsePage);
+          },
+        });
+      });
+    });
+    const lockRequest = vi.spyOn(api, "lockPhotoHidden").mockResolvedValue({ configured: true });
+    const write = vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "receipt" });
+    const faces = new PhotoFaces("session", vi.fn(), true, vi.fn(), access);
+    await faces.load("version-a");
+    render(PhotoPeople, { faces, session: "session" });
+    await fireEvent.click(screen.getByRole("button", { name: "Find or create a person: Face 1" }));
+    await fireEvent.input(screen.getByRole("combobox"), { target: { value: "Alex" } });
+    const group = await screen.findByRole("option", { name: "Alex · 6 people" });
+    await fireEvent.mouseDown(group);
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(4));
+    expect(maximum).toBe(4);
+    if (mode === "select") {
+      await act(() => pending.get("person-0")!.finish(true));
+      await screen.findByText("Preview unavailable");
+      await waitFor(() => expect(list).toHaveBeenCalledTimes(5));
+      await act(() => pending.get("person-1")!.finish());
+      await waitFor(() => expect(list).toHaveBeenCalledTimes(6));
+      await act(async () => {
+        for (const read of pending.values()) read.finish();
+        await access.settled();
+      });
+      expect(maximum).toBe(4);
+      await fireEvent.click(screen.getByRole("dialog").querySelector('input[value="person-5"]')!);
+      await fireEvent.click(screen.getByRole("button", { name: "Name face" }));
+      await waitFor(() =>
+        expect(write).toHaveBeenCalledWith(
+          "version-a",
+          expect.objectContaining({ person_id: "person-5" }),
+          expect.anything(),
+        ),
+      );
+    } else {
+      const lock = access.lock();
+      const reads = [...pending.values()];
+      if (mode === "cancel") await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      else await act(() => access.acceptState({ configured: true }, Date.now() + 1));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(reads.every((read) => read.signal.aborted)).toBe(true);
+      await act(() => reads[0]!.finish(true));
+      expect(lockRequest).not.toHaveBeenCalled();
+      await act(async () => {
+        for (const read of reads.slice(1)) read.finish();
+        await lock;
+      });
+      expect(lockRequest).toHaveBeenCalledOnce();
+      expect(list).toHaveBeenCalledTimes(4);
+      expect(write).not.toHaveBeenCalled();
+    }
+    access.dispose();
     faces.dispose();
   },
 );
