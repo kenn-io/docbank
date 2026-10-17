@@ -646,8 +646,8 @@ it("reads a pass remainder once until a flag change and lets Previous cancel the
     ids = rows.map((row) => row.asset_id);
   vi.spyOn(api, "createWorkspaceQuery").mockResolvedValue(Response.json(await snapshot(ids)));
   const list = vi
-    .spyOn(api, "listPhotoAssets")
-    .mockImplementation(async (request) => browsePage(rows, request));
+    .spyOn(api, "lookupPhotoFlags")
+    .mockImplementation(async (request) => flagPage(rows, request));
   const cull = new PhotoCull("session", storage());
   await cull.start(query);
   cull.move(1);
