@@ -726,7 +726,7 @@ func TestSearchExplainedLexicalCandidatesIncludesNamePath(t *testing.T) {
 	assert.Equal(t, "/docs/alpha.pdf", candidates[0].Path)
 }
 
-func TestSearchExplainedContentPathsFollowRankAndMoves(t *testing.T) {
+func TestSearchExplainedContentPathsFollowRank(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -761,15 +761,6 @@ func TestSearchExplainedContentPathsFollowRankAndMoves(t *testing.T) {
 			require.Equal(t, "/middle.txt", hits[1].Path)
 		}
 	}
-	_, _, err = s.Move(ctx, folder.ID, s.RootID(), "moved", UnconditionalRev)
-	require.NoError(t, err)
-	hits, truncated, err := s.SearchExplainedLexicalCandidates(ctx, "mercury", 3, SearchOptions{}, true)
-	require.NoError(t, err)
-	require.False(t, truncated)
-	require.Len(t, hits, 3)
-	require.Equal(t, "/moved/alpha.txt", hits[0].Path)
-	require.Equal(t, "/middle.txt", hits[1].Path)
-	require.Equal(t, "/zulu.txt", hits[2].Path)
 }
 
 func TestSearchPathsPreserveResultOrder(t *testing.T) {

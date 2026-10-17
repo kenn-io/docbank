@@ -194,31 +194,6 @@ func TestTrashEmptyReportsPhotoHeldRoots(t *testing.T) {
 	assert.Equal(t, api.TrashEmptyReport{HeldRoots: 1, Run: true}, report)
 }
 
-func TestPhotoSettingsGapOnlyPreservesDisplayPreference(t *testing.T) {
-	t.Parallel()
-	ts, _ := newTestServer(t, nil)
-	res, body := do(t, ts, http.MethodPut, "/api/v1/photos/settings", map[string]string{"If-Match": `"1"`}, map[string]any{"preference": "image"})
-	require.Equal(t, 200, res.StatusCode, body)
-	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts), "If-Match": `"2"`}
-	res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", browser, map[string]any{"burst_gap_seconds": 5})
-	require.Equal(t, 200, res.StatusCode, body)
-	var settings api.PhotoSettings
-	require.NoError(t, json.Unmarshal([]byte(body), &settings))
-	require.Equal(t, new("image"), settings.Preference)
-	require.Equal(t, 5, settings.BurstGapSeconds)
-	res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", map[string]string{"If-Match": `"3"`}, map[string]any{"burst_gap_seconds": 5})
-	require.Equal(t, 200, res.StatusCode, body)
-	require.Equal(t, `"3"`, res.Header.Get("ETag"))
-	browser["If-Match"] = `"3"`
-	res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", browser, map[string]any{"preference": "raw"})
-	require.Equal(t, http.StatusForbidden, res.StatusCode, body)
-	res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", map[string]string{"If-Match": `"3"`}, map[string]any{"preference": nil})
-	require.Equal(t, 200, res.StatusCode, body)
-	var reset api.PhotoSettings
-	require.NoError(t, json.Unmarshal([]byte(body), &reset))
-	require.Nil(t, reset.Preference)
-}
-
 func TestPhotoStackGroupRouteBoundsExplicitIDs(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
@@ -271,27 +246,41 @@ func TestPhotoStackGroupRouteBoundsExplicitIDs(t *testing.T) {
 	require.Equal(t, http.StatusRequestEntityTooLarge, res.StatusCode)
 }
 
-func TestPhotoSettingsAtomicResetAndGap(t *testing.T) {
+func TestPhotoSettingsGapAndPreference(t *testing.T) {
 	t.Parallel()
-	ts, s := newTestServer(t, nil)
-	_, err := s.SetPhotoSettings(t.Context(), 1, store.PhotoSettingsUpdate{Preference: new("image")})
-	require.NoError(t, err)
-	headers := map[string]string{"If-Match": `"2"`}
-	res, body := do(t, ts, http.MethodPut, "/api/v1/photos/settings", headers, map[string]any{"preference": "raw", "reset_preference": true, "burst_gap_seconds": 5})
-	require.Equal(t, http.StatusUnprocessableEntity, res.StatusCode, body)
-	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts), "If-Match": `"2"`}
-	res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", browser, map[string]any{"reset_preference": true, "burst_gap_seconds": 5})
-	require.Equal(t, http.StatusForbidden, res.StatusCode, body)
-	unchanged, err := s.PhotoSettings(t.Context())
-	require.NoError(t, err)
-	require.Equal(t, int64(2), unchanged.Revision)
-	require.Equal(t, new("image"), unchanged.Preference)
-	require.Equal(t, 2, unchanged.BurstGapSeconds)
-	res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", headers, map[string]any{"reset_preference": true, "burst_gap_seconds": 5})
-	require.Equal(t, http.StatusOK, res.StatusCode, body)
-	settings, err := s.PhotoSettings(t.Context())
-	require.NoError(t, err)
-	require.Nil(t, settings.Preference)
-	require.Equal(t, 5, settings.BurstGapSeconds)
-	require.Equal(t, int64(3), settings.Revision)
+	for _, reset := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reset=%t", reset), func(t *testing.T) {
+			ts, s := newTestServer(t, nil)
+			_, err := s.SetPhotoSettings(t.Context(), 1, store.PhotoSettingsUpdate{Preference: new("image")})
+			require.NoError(t, err)
+			headers := map[string]string{"If-Match": `"2"`}
+			browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts), "If-Match": `"2"`}
+			update := map[string]any{"burst_gap_seconds": 5}
+			if reset {
+				res, body := do(t, ts, http.MethodPut, "/api/v1/photos/settings", headers, map[string]any{"preference": "raw", "reset_preference": true, "burst_gap_seconds": 5})
+				require.Equal(t, http.StatusUnprocessableEntity, res.StatusCode, body)
+				update["reset_preference"] = true
+				res, body = do(t, ts, http.MethodPut, "/api/v1/photos/settings", browser, map[string]any{"preference": "raw", "burst_gap_seconds": 5})
+				require.Equal(t, http.StatusForbidden, res.StatusCode, body)
+				unchanged, err := s.PhotoSettings(t.Context())
+				require.NoError(t, err)
+				require.Equal(t, int64(2), unchanged.Revision)
+				require.Equal(t, new("image"), unchanged.Preference)
+				require.Equal(t, 2, unchanged.BurstGapSeconds)
+			} else {
+				headers = browser
+			}
+			res, body := do(t, ts, http.MethodPut, "/api/v1/photos/settings", headers, update)
+			require.Equal(t, http.StatusOK, res.StatusCode, body)
+			settings, err := s.PhotoSettings(t.Context())
+			require.NoError(t, err)
+			if reset {
+				require.Nil(t, settings.Preference)
+			} else {
+				require.Equal(t, new("image"), settings.Preference)
+			}
+			require.Equal(t, 5, settings.BurstGapSeconds)
+			require.Equal(t, int64(3), settings.Revision)
+		})
+	}
 }

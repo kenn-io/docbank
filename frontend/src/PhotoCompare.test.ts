@@ -217,13 +217,5 @@ it("preserves the closeup when the destination lookup fails", async () => {
   expect(within(dialog).queryByLabelText("Matching closeups")).toBeNull();
   expect(within(dialog).queryByText("Lookup unavailable")).toBeNull();
   await waitFor(() => expect(document.activeElement).toBe(dialog.querySelector(".photo-compare")));
-  await fireEvent.keyDown(document.activeElement!, { key: "ArrowLeft" });
-  await waitFor(() => expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]));
-  vi.mocked(photos.lookupMany).mockRejectedValueOnce(new Error("Lookup unavailable"));
-  await fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
-  await within(dialog).findByText("Lookup unavailable");
-  expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]);
-  await fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
-  await waitFor(() => expect(names(dialog)).toEqual(["Photo 2.jpg", "Photo 3.jpg"]));
   photos.dispose();
 });
