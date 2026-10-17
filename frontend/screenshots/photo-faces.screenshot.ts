@@ -102,12 +102,10 @@ test("draws and names faces, opens person-filtered Library, and reads cull close
     await viewport.evaluate(
       (element, label) =>
         element.dispatchEvent(
-          new WheelEvent("wheel", {
+          Object.assign(new Event("wheel", { bubbles: true, cancelable: true }), {
             deltaY: -5000,
             clientX: label.x + label.width / 2,
             clientY: label.y + label.height / 2,
-            bubbles: true,
-            cancelable: true,
           }),
         ),
       fittedLabel,
