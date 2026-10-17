@@ -254,6 +254,13 @@ func (s *Store) checkoutEntriesTx(ctx context.Context, tx *sql.Tx, selection Pho
 	}
 	estimate.Assets = int64(len(assets))
 	if len(kept) == 0 {
+		if estimate.SkippedPhotoCount > 0 {
+			details := make([]string, 0, len(estimate.SkippedPhotos))
+			for _, skip := range estimate.SkippedPhotos {
+				details = append(details, fmt.Sprintf("photo %s, file %s (%q): %s", skip.AssetID, skip.FileID, skip.Name, skip.Reason))
+			}
+			return nil, estimate, fmt.Errorf("%w: all selected photos were skipped (%d): %s", ErrInvalidPhotoCheckout, estimate.SkippedPhotoCount, strings.Join(details, "; "))
+		}
 		return nil, estimate, fmt.Errorf("%w: selection contains no files", ErrInvalidPhotoCheckout)
 	}
 	return kept, estimate, nil

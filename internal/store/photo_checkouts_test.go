@@ -1056,10 +1056,39 @@ func TestPhotoCheckoutSkipsDuplicateNamesWithBoundedDetails(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.Equal(t, good.ID, entries[0].AssetID)
-	selection = PhotoCheckoutSelection{AssetIDs: []string{estimate.SkippedPhotos[0].AssetID}}
-	_, err = s.EstimatePhotoCheckout(ctx, selection)
-	require.ErrorContains(t, err, "selection contains no files")
-	checkout, _, _, err = s.CreatePhotoCheckout(ctx, selection, "checkout", 0)
-	require.ErrorContains(t, err, "selection contains no files")
-	require.Empty(t, checkout.ID)
+	var duplicateIDs []string
+	for id := range duplicateAssets {
+		duplicateIDs = append(duplicateIDs, id)
+	}
+	for _, test := range []struct {
+		name      string
+		selection PhotoCheckoutSelection
+		skips     []PhotoCheckoutSkip
+	}{
+		{"one skipped photo", PhotoCheckoutSelection{AssetIDs: []string{estimate.SkippedPhotos[0].AssetID}}, estimate.SkippedPhotos[:1]},
+		{"all skipped photos", PhotoCheckoutSelection{AssetIDs: duplicateIDs}, estimate.SkippedPhotos},
+		{"no files", PhotoCheckoutSelection{Years: &PhotoCheckoutYears{From: 1900, To: 1900}}, nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, estimateErr := s.EstimatePhotoCheckout(ctx, test.selection)
+			checkout, _, _, createErr := s.CreatePhotoCheckout(ctx, test.selection, "checkout", 0)
+			require.Empty(t, checkout.ID)
+			for name, err := range map[string]error{"estimate": estimateErr, "create": createErr} {
+				t.Run(name, func(t *testing.T) {
+					require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
+					if len(test.skips) == 0 {
+						require.EqualError(t, err, "invalid photo checkout: selection contains no files")
+						return
+					}
+					require.Equal(t, len(test.skips), strings.Count(err.Error(), "has the same name"))
+					for _, skip := range test.skips {
+						require.ErrorContains(t, err, skip.AssetID)
+						require.ErrorContains(t, err, skip.FileID)
+						require.ErrorContains(t, err, "photo.jpg")
+						require.ErrorContains(t, err, skip.Reason)
+					}
+				})
+			}
+		})
+	}
 }
