@@ -371,3 +371,10 @@ func TestOperatorPackageCustodianDoesNotReplaceSenderPrimary(t *testing.T) {
 		Rank: "primary", Basis: "operator_assigned", SourceRef: "operator", IfMatchRevision: 1})
 	require.ErrorIs(t, err, ErrCustodianConflict)
 }
+
+func TestPeopleByDisplayNameUsesPersonAssertionIndex(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	plan := explainQueryPlan(t, s, peopleByDisplayNameSQL, "%", true, "", "", "", "", 101)
+	require.Equal(t, 2, strings.Count(plan, "SEARCH a USING COVERING INDEX person_document_assertions_person (person_id=? AND action=?)"), plan)
+}

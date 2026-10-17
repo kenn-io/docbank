@@ -1729,6 +1729,9 @@ func TestPhotoWholeMarkClearReceipt(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, receipt.ReceiptID, replay.ReceiptID)
 			require.Equal(t, receipt.After.Assertions, replay.After.Assertions)
+			request.OperationID = ""
+			_, err = s.DecidePhotoFace(ctx, node.CurrentVersionID, request)
+			require.ErrorIs(t, err, ErrStaleRevision)
 			require.False(t, receipt.After.Assertions[0].PhotoMark)
 			if named {
 				require.Equal(t, "assert", receipt.After.Assertions[0].Action)

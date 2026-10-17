@@ -961,6 +961,10 @@ export class Photos {
     return Object.assign(rotations, { stacksUnresolved });
   }
 
+  get dependsOnPeople() {
+    return !!this.query.filters.person_ids?.length || !!this.query.text.trim();
+  }
+
   /** Whether a metadata edit can change which photos this view lists or how it orders them. */
   get dependsOnAuthored() {
     const filters = this.query.filters ?? {};
@@ -1659,7 +1663,7 @@ export class Photos {
   }
 }
 
-// The source workspace refreshes itself while preserving its scroll position.
+// A dependent source workspace refreshes itself while preserving its scroll position.
 export async function refreshPersonPhotoViews(source: Photos, views: Iterable<Photos | undefined>) {
   await Promise.all(
     [...new Set(views)]
@@ -1669,7 +1673,7 @@ export async function refreshPersonPhotoViews(source: Photos, views: Iterable<Ph
           photos !== source &&
           photos.hidden === source.hidden &&
           (photos.started || photos.loading) &&
-          (!!photos.query.filters.person_ids?.length || !!photos.query.text.trim()),
+          photos.dependsOnPeople,
       )
       .map((photos) => photos.refresh()),
   );

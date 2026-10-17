@@ -200,7 +200,7 @@
         owner.actionError = error;
         actionError?.(error);
         if (refresh) {
-          void owner.refresh(alive ? preserve : undefined);
+          if (owner.dependsOnPeople) void owner.refresh(alive ? preserve : undefined);
           changed?.(owner);
         }
       },

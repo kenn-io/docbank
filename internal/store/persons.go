@@ -216,6 +216,14 @@ func (s *Store) PersonByID(ctx context.Context, id string) (Person, string, erro
 	return personByIDTx(ctx, s.db, id)
 }
 
+var peopleByDisplayNameSQL = `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at
+	FROM persons WHERE state<>'retired' AND display_name_folded LIKE ? ESCAPE '\'
+	AND (?=0 OR NOT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=persons.person_id AND a.action='assert') OR EXISTS(
+		SELECT 1 FROM person_document_assertions a WHERE a.person_id=persons.person_id AND a.action='assert'
+		AND ` + personVersionVisibleSQL("a.content_version_id") + `))
+	AND (?='' OR display_name_folded>? OR (display_name_folded=? AND person_id>?))
+	ORDER BY display_name_folded,person_id LIMIT ?`
+
 // PeopleByDisplayName returns active people in stable folded-name order.
 func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, afterID string, limit int, visibleOnly bool) ([]Person, error) {
 	if !utf8.ValidString(query) || len(query) > document.MaxPersonDisplayNameBytes || limit < 1 || limit > 251 ||
@@ -231,14 +239,7 @@ func (s *Store) PeopleByDisplayName(ctx context.Context, query, afterName, after
 		hideLocked = state.ExpiresAt == nil
 	}
 	prefix := document.FoldPersonName(query)
-	rows, err := s.db.QueryContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at
-		FROM persons WHERE state<>'retired' AND display_name_folded LIKE ? ESCAPE '\'
-		AND (?=0 OR NOT EXISTS(SELECT 1 FROM person_document_assertions a WHERE a.person_id=persons.person_id AND a.action='assert') OR EXISTS(
- SELECT 1 FROM person_document_assertions a JOIN content_versions cv ON cv.version_id=a.content_version_id
- LEFT JOIN photo_files f ON f.node_id=cv.node_id LEFT JOIN photo_assets asset ON asset.asset_id=f.asset_id
- WHERE a.person_id=persons.person_id AND a.action='assert' AND asset.hidden_at IS NULL))
-        AND (?='' OR display_name_folded>? OR (display_name_folded=? AND person_id>?))
-		ORDER BY display_name_folded,person_id LIMIT ?`, escapePersonLike(prefix)+"%", hideLocked, afterName, afterName, afterName, afterID, limit)
+	rows, err := s.db.QueryContext(ctx, peopleByDisplayNameSQL, escapePersonLike(prefix)+"%", hideLocked, afterName, afterName, afterName, afterID, limit)
 	if err != nil {
 		return nil, err
 	}

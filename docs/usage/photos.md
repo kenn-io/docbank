@@ -761,6 +761,8 @@ Once a photo preview appears, choose **Add face**. Drag a box around a face, or 
 
 In the inspector's **People** section, choose a name from the search results or choose **Create person**. Each face has its own name picker. Creating a person and naming the face save together; a revision conflict creates neither. After an uncertain response, the picker reloads the face before another choice.
 
+Created people remain after you clear their photo assignment or remove their face. Use `docbank people retire` to retire an unwanted person.
+
 Names allow up to 200 UTF-8 bytes. Duplicate names are allowed; choose **Create person** for a different person with the same name, and merge people later if needed. Browser search omits people backed only by locked Hidden photos until unlock. Typing one of those names while locked can create a duplicate.
 
 Open a named face’s picker and choose **Clear name** to remove its name. Choose **Remove face** to dismiss a mistaken box and its closeup. Choose **Clear whole-photo mark** to clear a photo-wide mark while keeping any named faces. Both decisions remain undoable through the face-decision API.

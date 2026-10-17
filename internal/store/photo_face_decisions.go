@@ -389,11 +389,11 @@ func (s *Store) decidePhotoFaceTx(ctx context.Context, tx *sql.Tx, versionID str
 		personIDs = append(personIDs, assigned.PersonID)
 	}
 	if request.AssertionID != "" {
-		if assigned.ContentVersionID != versionID || assigned.Role != "depicted" || !assigned.PhotoMark || assigned.Action != "assert" {
-			return PhotoFaceDecisionReceipt{}, ErrInvalidPhotoFace
-		}
 		if assigned.Revision != request.Revision {
 			return PhotoFaceDecisionReceipt{}, ErrStaleRevision
+		}
+		if assigned.ContentVersionID != versionID || assigned.Role != "depicted" || !assigned.PhotoMark || assigned.Action != "assert" {
+			return PhotoFaceDecisionReceipt{}, ErrInvalidPhotoFace
 		}
 	}
 	stateVersion := versionID
