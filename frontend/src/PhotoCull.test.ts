@@ -53,7 +53,7 @@ it("decides once with P, advances, announces the decision and offers receipt Und
       autoAdvance: true,
     },
   };
-  const cull = new PhotoCull("session", {
+  const cull: PhotoCull = new PhotoCull("session", {
     saved: vi.fn(async () => cull.run?.checkpoint),
     load: async () => run,
     replace: vi.fn(),
@@ -100,7 +100,9 @@ it("decides once with P, advances, announces the decision and offers receipt Und
     { flag: "pick" },
     false,
   ]);
-  expect(document.querySelector(".kit-sr-only")?.textContent).toContain("Photo 1.jpg: pick");
+  expect(document.querySelector(".photo-cull > span[aria-live='polite']")?.textContent).toContain(
+    "Photo 1.jpg: pick",
+  );
   await fireEvent.click(await readyButton(/^Undo$/));
   expect(undo).toHaveBeenCalled();
   await screen.findByText("Photo 2.jpg");
@@ -191,7 +193,7 @@ it("keeps a failed decision on screen and guards exit while its draft remains", 
     },
   );
   const row = photo(1);
-  const cull = new PhotoCull("session", {
+  const cull: PhotoCull = new PhotoCull("session", {
     saved: vi.fn(async () => cull.run?.checkpoint),
     load: async () => undefined,
     replace: vi.fn(),
@@ -279,7 +281,7 @@ it("refreshes the visible completion offer after Undo", async () => {
         ? [{ ...row }]
         : [],
   }));
-  const cull = new PhotoCull("session", {
+  const cull: PhotoCull = new PhotoCull("session", {
     saved: vi.fn(async () => cull.run?.checkpoint),
     load: async () => undefined,
     replace: vi.fn(),
@@ -330,8 +332,13 @@ it("disables auto-advance changes while a decision is pending", async () => {
     },
   );
   const rows = [photo(1), photo(2)];
-  const cull = new PhotoCull("session", {
-    saved: vi.fn(async () => cull.run?.checkpoint),
+  let checked!: () => void;
+  const checking = new Promise<void>((resolve) => (checked = resolve));
+  const cull: PhotoCull = new PhotoCull("session", {
+    saved: vi.fn(async () => {
+      await checking;
+      return cull.run?.checkpoint;
+    }),
     load: async () => undefined,
     replace: vi.fn(),
     checkpoint: vi.fn(),
@@ -369,6 +376,10 @@ it("disables auto-advance changes while a decision is pending", async () => {
   await screen.findByText("Photo 1.jpg");
   const shell = document.querySelector(".photo-cull")!;
   await fireEvent.keyDown(shell, { key: "p" });
+  await fireEvent.keyDown(shell, { key: "ArrowRight" });
+  expect(cull.currentID).toBe(rows[0]!.asset_id);
+  expect(edit).not.toHaveBeenCalled();
+  await act(() => checked());
   await waitFor(() => expect(edit).toHaveBeenCalledOnce());
   const toggle = screen.getByRole("button", { name: "Auto-advance: on" });
   expect(toggle.matches(":disabled")).toBe(true);
@@ -382,7 +393,9 @@ it("disables auto-advance changes while a decision is pending", async () => {
     await saving;
   });
   await screen.findByText("Photo 2.jpg");
-  expect(document.querySelector(".kit-sr-only")?.textContent).toContain("Photo 1.jpg: pick");
+  expect(document.querySelector(".photo-cull > span[aria-live='polite']")?.textContent).toContain(
+    "Photo 1.jpg: pick",
+  );
   expect(cull.currentID).toBe(rows[1]!.asset_id);
   await readyButton("Auto-advance: on");
 });
@@ -396,7 +409,7 @@ it("retries a failed lookup without leaving the current photo", async () => {
     },
   );
   const row = photo(1);
-  const cull = new PhotoCull("session", {
+  const cull: PhotoCull = new PhotoCull("session", {
     saved: vi.fn(async () => cull.run?.checkpoint),
     load: vi.fn(),
     replace: vi.fn(),
@@ -451,7 +464,7 @@ async function reviewPhoto(
       disconnect() {}
     },
   );
-  const cull = new PhotoCull(
+  const cull: PhotoCull = new PhotoCull(
     "session",
     store ?? {
       saved: vi.fn(async () => cull.run?.checkpoint),
@@ -764,19 +777,40 @@ it("refuses a stale tab decision before calling the edit API", async () => {
   vi.stubGlobal("indexedDB", new IDBFactory());
   vi.stubGlobal("IDBKeyRange", IDBKeyRange);
   const store = photoCullStorage("synthetic-vault");
-  const { cull } = await reviewPhoto(photo(1), false, store);
+  const { cull, photos, rerender } = await reviewPhoto(photo(1), true, store);
+  await act(() => {
+    cull.run = {
+      ...cull.run!,
+      ids: ["photo-1", "photo-2"],
+      checkpoint: { ...cull.run!.checkpoint, pass: ["photo-1", "photo-2"] },
+    };
+  });
+  vi.mocked(photos.lookup).mockImplementation(async (id) =>
+    id === "photo-1" ? photo(1) : photo(2),
+  );
   await store.replace(cull.run!);
+  await cull.restore();
+  const load = vi.spyOn(store, "load");
   const other = new PhotoCull("session", photoCullStorage("synthetic-vault"));
   await other.restore();
-  other.move(1);
+  const edit = vi
+    .spyOn(api, "editPhotoAuthored")
+    .mockResolvedValue({ receipt_id: "picked", before: [], after: [] });
+  await rerender({ cull: other });
+  await fireEvent.click(screen.getByRole("button", { name: "Pick (P)" }));
+  await waitFor(() => expect(other.currentID).toBe("photo-2"));
   await other.flush();
-  const edit = vi.spyOn(api, "editPhotoAuthored");
+  expect(edit.mock.calls[0]![0].patch).toEqual({ flag: "pick" });
+  edit.mockClear();
+  await rerender({ cull });
+  await screen.findByText("Photo 1.jpg");
   await fireEvent.click(screen.getByRole("button", { name: "Reject (X)" }));
   await screen.findByText(
     "Progress could not be saved: Cull progress changed in another tab. Close and resume it.",
   );
   expect(cull.stale).toBe(true);
   expect(edit).not.toHaveBeenCalled();
+  expect(load).not.toHaveBeenCalled();
 });
 
 it("shows the navigation blocker after a failed decision", async () => {
@@ -807,4 +841,45 @@ it("reuses the displayed photo in the filmstrip without fetching it again", asyn
   expect(vi.mocked(photos.lookupMany).mock.calls.every(([ids]) => !ids.includes("photo-1"))).toBe(
     true,
   );
+});
+
+it("keeps shown-file narrowing on retry and resets it for a fresh decision", async () => {
+  const jpeg = preparedPhoto(1);
+  const raw = preparedPhoto(2, {
+    asset_id: jpeg.asset_id,
+    file_id: "raw-1",
+    values: { ...jpeg.values, flag: "reject" },
+  });
+  vi.mocked(api.preparePhotoAuthored).mockResolvedValue(photoPreparation([raw, jpeg]));
+  const edit = vi
+    .spyOn(api, "editPhotoAuthored")
+    .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+    .mockResolvedValue({ receipt_id: "decision", before: [], after: [] });
+  const { photos, container } = await reviewPhoto();
+  await fireEvent.click(screen.getByRole("button", { name: "Pick (P)" }));
+  await screen.findByText("Failed to fetch");
+  expect(Object.values(edit.mock.calls[0]![0].targets).map((target) => target.file_id)).toEqual([
+    "file-1",
+  ]);
+  await fireEvent.click(await readyButton("Retry edit"));
+  await waitFor(() =>
+    expect(container.querySelector(".photo-cull > span[aria-live='polite']")?.textContent).toBe(
+      "Photo 1.jpg: pick (shown file only)",
+    ),
+  );
+  expect(edit.mock.calls[1]![0]).toEqual(edit.mock.calls[0]![0]);
+  expect(photos.cullEditor!.fileID).toBe("file-1");
+  await fireEvent.keyDown(container.querySelector(".photo-cull")!, { key: "4" });
+  await waitFor(() => expect(edit).toHaveBeenCalledTimes(3));
+  expect(Object.values(edit.mock.calls[2]![0].targets).map((target) => target.file_id)).toEqual([
+    "raw-1",
+    "file-1",
+  ]);
+  expect(edit.mock.calls[2]![0].patch).toEqual({ rating: 4 });
+  await waitFor(() =>
+    expect(container.querySelector(".photo-cull > span[aria-live='polite']")?.textContent).toBe(
+      "Photo 1.jpg: 4 stars",
+    ),
+  );
+  expect(photos.cullEditor!.fileID).toBe("");
 });

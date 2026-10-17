@@ -782,3 +782,45 @@ it("keeps a later edit busy when an earlier refresh finishes during its write", 
   expect(editor.busy).toBe(false);
   editor.dispose();
 });
+
+it.each([
+  {
+    name: "rejected RAW and unflagged JPEG",
+    raw: { flag: "reject" },
+    jpeg: { flag: "" },
+    patch: { flag: "pick" },
+    files: ["jpeg"],
+  },
+  {
+    name: "both unflagged",
+    raw: { flag: "" },
+    jpeg: { flag: "" },
+    patch: { flag: "pick" },
+    files: ["raw", "jpeg"],
+  },
+  {
+    name: "different ratings",
+    raw: { rating: 5 },
+    jpeg: { rating: 3 },
+    patch: { rating: 4 },
+    files: ["jpeg"],
+  },
+] as const)(
+  "preserves pair differences for a viewed decision: $name",
+  async ({ raw, jpeg, patch, files }) => {
+    const editor = editorWithTargets();
+    Object.assign(editor.targets[0]!.values, raw);
+    Object.assign(editor.targets[1]!.values, jpeg);
+    const edit = vi
+      .spyOn(api, "editPhotoAuthored")
+      .mockResolvedValue({ receipt_id: "", before: [], after: [] });
+    await editor.edit({}, patch, false, vi.fn(), {
+      viewed: { file_id: "jpeg", content_version_id: "viewed-version" },
+    });
+    expect(edit).toHaveBeenCalledOnce();
+    expect(Object.values(edit.mock.calls[0]![0].targets).map((target) => target.file_id)).toEqual(
+      files,
+    );
+    expect(edit.mock.calls[0]![0].patch).toEqual(patch);
+  },
+);

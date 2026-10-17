@@ -126,7 +126,7 @@
     ),
   );
   function canChangeTarget() {
-    return editor.canChangeTarget();
+    return !checkingDecision && editor.canChangeTarget();
   }
   async function nextPass(followUp = false) {
     if (canChangeTarget()) await cull.nextPass(followUp);
@@ -183,6 +183,7 @@
       patch.flag !== undefined
         ? `${selected.name}: ${patch.flag || "flag cleared"}`
         : `${selected.name}: ${patch.rating} stars`;
+    if (editor.fileID) announcement += " (shown file only)";
     if (checkpoint.autoAdvance && cull.currentID === id) cull.move(1);
   }
   async function retryDecision() {

@@ -363,6 +363,17 @@ export class PhotoAuthoredEditor {
           ? { ...target, content_version_id: viewed.content_version_id }
           : target,
       );
+      const displayed = this.targets.find((target) => target.file_id === viewed.file_id)!;
+      const fields = Object.keys(patch) as (keyof api.PhotoAuthoredPatch)[];
+      if (
+        this.targets.some((target) =>
+          fields.some(
+            (field) =>
+              patch[field] !== undefined && target.values[field] !== displayed.values[field],
+          ),
+        )
+      )
+        this.fileID = viewed.file_id;
     }
     this.stage(patch, keywords);
     if (rotationDelta !== undefined) {
