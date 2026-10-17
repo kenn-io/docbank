@@ -583,11 +583,11 @@ func TestPeopleByDisplayNameMatchesWordPrefixes(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
-	for _, name := range []string{"John Smith", "Smith Jones", "Alice Smith", "Alice Blacksmith", "Alice Smith%", "Grace Hopper", "GRACE Murray Hopper", "Straße", "STRASSE", "Mary-Jane", "O'Brien", "Mary\tJane", "Mary\nJane", "Alice Mary-Jane", "John O'Brien"} {
+	for _, name := range []string{"John Smith", "Smith Jones", "Alice Smith", "Alice Blacksmith", "Alice Smith%", "Grace Hopper", "GRACE Murray Hopper", "Straße", "STRASSE", "Mary-Jane", "O'Brien", "Mary\tJane", "Mary\nJane", "Alice Mary-Jane", "John O'Brien", "O’Brien"} {
 		_, err := s.CreatePerson(ctx, name, "operator")
 		require.NoError(t, err)
 	}
-	for query, count := range map[string]int{"Jane": 4, "Brien": 2, "Mary-J": 2, "O'Brien": 2} {
+	for query, count := range map[string]int{"Jane": 4, "Brien": 3, "Mary-J": 2, "O'Brien": 2} {
 		matches, err := s.PeopleByDisplayName(ctx, query, "", "", 10, true)
 		require.NoError(t, err)
 		require.Len(t, matches, count)
