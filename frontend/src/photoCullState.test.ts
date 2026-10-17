@@ -657,7 +657,7 @@ it.each(["capture", "next pass", "remainder"])(
   },
 );
 
-it.each(["left at first", "current thumbnail", "right after completion"])(
+it.each(["left at first", "current thumbnail", "right after completion", "next pass"])(
   "preserves another tab's checkpoint after %s",
   async (navigation) => {
     const store = storage();
@@ -675,34 +675,21 @@ it.each(["left at first", "current thumbnail", "right after completion"])(
     await other.restore();
     const saved = await store.saved();
     vi.mocked(store.checkpoint).mockClear();
-    if (navigation === "current thumbnail") first.choose(first.currentID!);
+    if (navigation === "current thumbnail" || navigation === "next pass")
+      first.choose(first.currentID!);
     else first.move(navigation === "left at first" ? -1 : 1);
     await first.flush();
     expect(store.checkpoint).not.toHaveBeenCalled();
     expect(await store.saved()).toEqual(saved);
     expect(await other.verifyDecision()).toBe(true);
-    first.move(navigation === "right after completion" ? -1 : 1);
+    if (navigation === "next pass") {
+      vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) =>
+        browsePage([photo(1), photo(2)], request),
+      );
+      await first.nextPass(false, () => true);
+    } else first.move(navigation === "right after completion" ? -1 : 1);
     await first.flush();
     expect(await other.verifyDecision()).toBe(false);
     expect(other.error).toContain("Close and resume it.");
   },
 );
-
-it("refuses decisions after another tab replaces the pass", async () => {
-  const store = storage();
-  vi.spyOn(api, "createWorkspaceQuery").mockResolvedValue(
-    Response.json(await snapshot([photo(1).asset_id])),
-  );
-  vi.spyOn(api, "listPhotoAssets").mockImplementation(async (request) =>
-    browsePage([photo(1)], request),
-  );
-  const first = new PhotoCull("session", store);
-  await first.start(query);
-  await first.flush();
-  const other = new PhotoCull("session", photoCullStorage("synthetic-vault"));
-  await other.restore();
-  await first.nextPass(false, () => true);
-  await first.flush();
-  expect(await other.verifyDecision()).toBe(false);
-  expect(other.error).toContain("Close and resume it.");
-});

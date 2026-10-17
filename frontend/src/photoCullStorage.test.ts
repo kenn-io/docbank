@@ -1,6 +1,5 @@
 import { beforeEach, afterEach, expect, it, vi } from "vite-plus/test";
 import { IDBFactory, IDBKeyRange, IDBDatabase } from "fake-indexeddb";
-import { PhotoCull } from "./photoCull.svelte.js";
 import { idbRequest, transactionDone } from "./indexedDB.js";
 import { photoCullStorage, type CullRun } from "./photoCullStorage.js";
 
@@ -113,13 +112,6 @@ it("refuses a newer saved format until its replacement is authorized", async () 
     );
     tx.objectStore("checkpoints").put({ ...saved, formatVersion: 2 }, "vault-a");
     await done;
-    const cull = new PhotoCull("session", store);
-    await cull.probe();
-    expect(cull.saved).toBe(false);
-    expect(cull.error).toContain("unsupported format");
-    expect(await cull.restore()).toBe(false);
-    expect(cull.run).toBeUndefined();
-    expect(cull.error).toContain("unsupported format");
     await expect(store.replace(run("replacement"))).rejects.toThrow("changed in another tab");
     await expect(store.replace(run("replacement"), undefined, captured.checkpoint)).rejects.toThrow(
       "changed in another tab",

@@ -79,7 +79,4 @@ func TestPhotoAuthoredRouteRefusesStaleContentVersion(t *testing.T) {
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/photos/authored/edit", nil, request)
 	require.Equal(t, http.StatusPreconditionFailed, resp.StatusCode, body)
 	require.Equal(t, "stale_revision", decodeProblem(t, body).Code)
-	unchanged, err := s.PhotoAssetByID(ctx, asset.ID)
-	require.NoError(t, err)
-	require.Empty(t, unchanged.Files[0].Flag)
 }

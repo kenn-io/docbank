@@ -125,34 +125,9 @@ it("offers directional retry after linked navigation fails and keeps the pair un
   photos.dispose();
 });
 
-it("creates a manual closeup from keyboard position and confirmation", async () => {
-  const { photos, dialog, onclose } = compare([photo(1), photo(2), photo(3), photo(4)]);
-  const shell = dialog.querySelector(".photo-compare")!;
-  await fireEvent.click(within(dialog).getByRole("button", { name: "Manual closeup" }));
-  const frame = within(dialog).getByRole("button", {
-    name: "Position closeup on Photo 1.jpg",
-  });
-  await fireEvent.keyDown(frame, { key: "ArrowRight" });
-  await fireEvent.keyDown(frame, { key: "Enter" });
-  await fireEvent.click(frame);
-  await waitFor(() => expect(document.activeElement).toBe(shell));
-  const closeups = within(dialog).getByLabelText("Matching closeups");
-  await waitFor(() => expect(within(closeups).getAllByRole("heading")).toHaveLength(2));
-  await fireEvent.keyDown(shell, { key: "ArrowRight" });
-  await waitFor(() => expect(names(dialog)).toEqual(["Photo 2.jpg", "Photo 3.jpg"]));
-  await fireEvent.click(within(dialog).getByRole("button", { name: "Manual closeup" }));
-  const nextFrame = within(dialog).getByRole("button", {
-    name: "Position closeup on Photo 2.jpg",
-  });
-  await fireEvent.keyDown(nextFrame, { key: "Escape" });
-  await waitFor(() => expect(document.activeElement).toBe(shell));
-  await fireEvent.keyDown(shell, { key: "Escape" });
-  expect(onclose).toHaveBeenCalledOnce();
-  photos.dispose();
-});
-
 it("navigates with keyboard focus initially and after activating Clear closeup", async () => {
-  const { photos, dialog } = compare();
+  const { photos, dialog, onclose } = compare();
+  const shell = dialog.querySelector(".photo-compare")!;
   try {
     await waitFor(() => expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]));
     await fireEvent.keyDown(document.activeElement!, { key: "ArrowRight" });
@@ -163,9 +138,11 @@ it("navigates with keyboard focus initially and after activating Clear closeup",
     const frame = within(dialog).getByRole("button", {
       name: "Position closeup on Photo 1.jpg",
     });
+    await fireEvent.keyDown(frame, { key: "ArrowRight" });
     await fireEvent.keyDown(frame, { key: "Enter" });
     await fireEvent.click(frame);
-    await within(dialog).findByLabelText("Matching closeups");
+    const closeups = await within(dialog).findByLabelText("Matching closeups");
+    await waitFor(() => expect(within(closeups).getAllByRole("heading")).toHaveLength(2));
     await waitFor(() =>
       expect(document.activeElement).toBe(dialog.querySelector(".photo-compare")),
     );
@@ -176,39 +153,30 @@ it("navigates with keyboard focus initially and after activating Clear closeup",
     await waitFor(() => expect(within(dialog).queryByLabelText("Matching closeups")).toBeNull());
     await fireEvent.keyDown(document.activeElement!, { key: "ArrowRight" });
     await waitFor(() => expect(names(dialog)).toEqual(["Photo 2.jpg", "Photo 3.jpg"]));
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Manual closeup" }));
+    const nextFrame = within(dialog).getByRole("button", {
+      name: "Position closeup on Photo 2.jpg",
+    });
+    await fireEvent.keyDown(nextFrame, { key: "Escape" });
+    await waitFor(() => expect(document.activeElement).toBe(shell));
+    await fireEvent.keyDown(shell, { key: "Escape" });
+    expect(onclose).toHaveBeenCalledOnce();
   } finally {
     photos.dispose();
   }
 });
 
-it.each(["second Next", "Retry button"])(
-  "keeps the last panes after a lookup failure and recovers with the %s",
-  async (recovery) => {
-    const rows = [photo(1), photo(2), photo(3), photo(4)];
-    const { photos, dialog } = compare(rows);
-    await waitFor(() => expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]));
-    vi.mocked(photos.lookupMany).mockRejectedValueOnce(new Error("Lookup unavailable"));
-    await fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
-    await within(dialog).findByText("Lookup unavailable");
-    expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]);
-    if (recovery === "second Next") {
-      await fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
-      await waitFor(() => expect(names(dialog)).toEqual(["Photo 2.jpg", "Photo 3.jpg"]));
-    } else {
-      const retry = within(dialog).getByRole("button", { name: /^Retry$/ });
-      retry.focus();
-      await fireEvent.click(retry);
-      await waitFor(() => expect(names(dialog)).toEqual(["Photo 2.jpg", "Photo 3.jpg"]));
-      expect(within(dialog).queryByText("Lookup unavailable")).toBeNull();
-      await waitFor(() =>
-        expect(document.activeElement).toBe(dialog.querySelector(".photo-compare")),
-      );
-      await fireEvent.keyDown(document.activeElement!, { key: "ArrowLeft" });
-      await waitFor(() => expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]));
-    }
-    photos.dispose();
-  },
-);
+it("keeps the last panes after a lookup failure and recovers with a second Next", async () => {
+  const { photos, dialog } = compare([photo(1), photo(2), photo(3), photo(4)]);
+  await waitFor(() => expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]));
+  vi.mocked(photos.lookupMany).mockRejectedValueOnce(new Error("Lookup unavailable"));
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
+  await within(dialog).findByText("Lookup unavailable");
+  expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]);
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
+  await waitFor(() => expect(names(dialog)).toEqual(["Photo 2.jpg", "Photo 3.jpg"]));
+  photos.dispose();
+});
 
 it("serializes Next activations until the destination lookup finishes", async () => {
   const rows = [photo(1), photo(2), photo(3), photo(4)];
@@ -254,8 +222,14 @@ it("preserves the closeup when the destination lookup fails", async () => {
       .getAllByRole("heading")
       .map((heading) => heading.textContent),
   ).toEqual(["Photo 1.jpg", "Photo 2.jpg"]);
-  await fireEvent.click(within(dialog).getByRole("button", { name: /^Retry$/ }));
+  const retry = within(dialog).getByRole("button", { name: /^Retry$/ });
+  retry.focus();
+  await fireEvent.click(retry);
   await waitFor(() => expect(names(dialog)).toEqual(["Photo 2.jpg", "Photo 3.jpg"]));
   expect(within(dialog).queryByLabelText("Matching closeups")).toBeNull();
+  expect(within(dialog).queryByText("Lookup unavailable")).toBeNull();
+  await waitFor(() => expect(document.activeElement).toBe(dialog.querySelector(".photo-compare")));
+  await fireEvent.keyDown(document.activeElement!, { key: "ArrowLeft" });
+  await waitFor(() => expect(names(dialog)).toEqual(["Photo 1.jpg", "Photo 2.jpg"]));
   photos.dispose();
 });
