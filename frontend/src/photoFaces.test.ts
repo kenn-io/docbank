@@ -15,7 +15,11 @@ it.each(["create", "name", "clear"] as const)(
     let finish!: () => void;
     let signal!: AbortSignal;
     vi.spyOn(api, "listPhotoFaces").mockResolvedValue(photoFacePage());
-    const held = async (_version: string, _body: unknown, options?: { signal?: AbortSignal | null }) => {
+    const held = async (
+      _version: string,
+      _body: unknown,
+      options?: { signal?: AbortSignal | null },
+    ) => {
       signal = options!.signal!;
       await new Promise<void>((resolve) => (finish = resolve));
       events.push("saved");
@@ -64,7 +68,8 @@ it("names the face with its current revision and refreshes its active label", as
       people: [{ person_id: "person-a", display_name: "Ada" }],
     });
   const write = vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "receipt-a" });
-  const faces = new PhotoFaces("session", vi.fn());
+  const ondecision = vi.fn();
+  const faces = new PhotoFaces("session", vi.fn(), false, ondecision);
   await faces.load("version-a");
   expect(faces.label(face)).toBe("Unnamed face");
   expect(await faces.name(face, "person-a")).toBe(true);
@@ -98,6 +103,12 @@ it("names the face with its current revision and refreshes its active label", as
   );
   expect(faces.faces[0]!.revision).toBe(9);
   expect(read).toHaveBeenCalledTimes(3);
+  expect(ondecision).toHaveBeenCalledTimes(2);
+  write.mockRejectedValueOnce(new APIError("Revision changed", 412, "precondition_failed"));
+  expect(await faces.clear(faces.faces[0]!)).toBe(false);
+  expect(read).toHaveBeenCalledTimes(4);
+  expect(ondecision).toHaveBeenCalledTimes(2);
+  expect(faces.error).toBe("Revision changed");
   faces.dispose();
 });
 it("clears rows on navigation and ignores a late old page", async () => {

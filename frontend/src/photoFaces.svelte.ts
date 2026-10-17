@@ -90,10 +90,7 @@ export class PhotoFaces {
     )
       this.onauthfailure(cause);
   }
-  private async write(
-    action: (version: string, signal: AbortSignal) => Promise<unknown>,
-    decision = false,
-  ) {
+  private async write(action: (version: string, signal: AbortSignal) => Promise<unknown>) {
     if (this.disposed || this.loading || this.busy || !this.version) return false;
     const version = this.version,
       controller = (this.writer = new AbortController());
@@ -103,16 +100,15 @@ export class PhotoFaces {
       await this.request(() => action(version, controller.signal));
       if (controller.signal.aborted) return false;
       if (this.disposed) return true;
-      if (decision) this.ondecision();
+      this.busy = false;
+      this.ondecision();
       if (this.version === version) await this.load(version);
       return true;
     } catch (cause) {
       if (!controller.signal.aborted && !this.disposed) {
-        if (
-          decision ||
-          (cause instanceof APIError && (cause.status === 409 || cause.status === 412))
-        )
-          await this.load(version);
+        this.busy = false;
+        if (!(cause instanceof APIError) || cause.status >= 500) this.ondecision();
+        await this.load(version);
         this.failed(cause);
       }
       return false;
@@ -122,36 +118,32 @@ export class PhotoFaces {
   }
   name(face: PhotoFace, personID: string, personName?: string) {
     const operationID = randomUUID();
-    return this.write(
-      (version, signal) =>
-        decidePhotoFace(
-          version,
-          {
-            action: "name",
-            face_id: face.face_id,
-            revision: face.revision,
-            ...(personName === undefined ? { person_id: personID } : { person_name: personName }),
-            operation_id: operationID,
-          },
-          { session: this.session, signal },
-        ),
-      true,
+    return this.write((version, signal) =>
+      decidePhotoFace(
+        version,
+        {
+          action: "name",
+          face_id: face.face_id,
+          revision: face.revision,
+          ...(personName === undefined ? { person_id: personID } : { person_name: personName }),
+          operation_id: operationID,
+        },
+        { session: this.session, signal },
+      ),
     );
   }
   clear(face: PhotoFace) {
-    return this.write(
-      (version, signal) =>
-        decidePhotoFace(
-          version,
-          {
-            action: "retract",
-            face_id: face.face_id,
-            revision: face.revision,
-            operation_id: randomUUID(),
-          },
-          { session: this.session, signal },
-        ),
-      true,
+    return this.write((version, signal) =>
+      decidePhotoFace(
+        version,
+        {
+          action: "retract",
+          face_id: face.face_id,
+          revision: face.revision,
+          operation_id: randomUUID(),
+        },
+        { session: this.session, signal },
+      ),
     );
   }
   async add(box: FaceBox) {

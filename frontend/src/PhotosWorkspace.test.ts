@@ -13,6 +13,8 @@ import { APIError } from "./api-transport.js";
 import { Photos, photoQuery, mapPhotoLimit, type MapView } from "./photos.svelte.js";
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
 import {
+  photoFace,
+  photoPersonAssertion,
   photoMetadataResponse,
   photoPreparation,
   photoFacePage,
@@ -3311,39 +3313,80 @@ it("keeps the selected row's face state when opening its loupe", async () => {
   expect(read).toHaveBeenCalledOnce();
 });
 
-it("refreshes a face decision for a person ID filter", async () => {
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
-  vi.spyOn(api, "listPhotoFaces").mockResolvedValue(photoFacePage());
-  const decision = vi.spyOn(api, "decidePhotoFace").mockResolvedValue({ receipt_id: "receipt" });
-  const requests: unknown[] = [];
-  stubPhotoFetch(async (url, init) => {
-    if (url.endsWith("/photos/assets/query")) requests.push(JSON.parse(String(init.body)));
-    return Response.json({ items: [photo(1)], total: 1, facets: [] });
-  });
-  const photos = new Photos("session", vi.fn(), false, {
-    ...photoQuery,
-    filters: { person_ids: ["person-a"] },
-  });
-  photos.items = [photo(1)];
-  photos.selectedIDs = new Set(["photo-1"]);
-  photos.total = 1;
-  photos.started = true;
-  const cache = new PhotoPreviewCache("session", vi.fn());
-  render(PhotosWorkspace, { photos, cache });
-  await fireEvent.click(await screen.findByRole("button", { name: "Metadata" }));
-  await fireEvent.click(
-    await screen.findByRole("button", { name: "Find or create a person: Ada" }),
-  );
-  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Clear name" }));
-  await waitFor(() => expect(decision).toHaveBeenCalledOnce());
-  await screen.findByRole("button", { name: "Find or create a person: Ada" });
-  expect(requests).toHaveLength(1);
-  photos.dispose();
-  await cache.dispose();
-});
+it.each(["name", "clear"])(
+  "refreshes person-filtered rows after a committed %s loses its response",
+  async (action) => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+    const row = photo(1);
+    let committed = false;
+    vi.spyOn(api, "listPhotoFaces").mockImplementation(async () =>
+      photoFacePage(
+        committed
+          ? action === "name"
+            ? {
+                assertions: [photoPersonAssertion({ person_id: "person-b" })],
+                people: [{ person_id: "person-b", display_name: "Grace" }],
+              }
+            : { faces: [photoFace({ assertion_id: undefined })], assertions: [], people: [] }
+          : {},
+      ),
+    );
+    vi.spyOn(api, "listPeople").mockResolvedValue({
+      items: [{ person_id: "person-b", display_name: "Grace", revision: 1, state: "curated" }],
+    });
+    vi.spyOn(api, "decidePhotoFace").mockImplementation(async (version, decision) => {
+      expect(version).toBe(row.content_version_id);
+      expect(decision.action).toBe(action === "name" ? "name" : "retract");
+      if (action === "name") expect(decision.person_id).toBe("person-b");
+      committed = true;
+      throw new Error("Response lost");
+    });
+    stubPhotoFetch(async (url, init) => {
+      if (!url.endsWith("/photos/assets/query")) return Response.json({ state: "unsupported" });
+      const query = JSON.parse(String(init.body ?? "{}")).query;
+      if (!query?.filters?.asset_ids) expect(query.filters.person_ids).toEqual(["person-a"]);
+      const rows = committed && !query?.filters?.asset_ids ? [] : [row];
+      return Response.json({ items: rows, total: rows.length, facets: [] });
+    });
+    const photos = new Photos("session", vi.fn(), false, {
+      ...photoQuery,
+      filters: { person_ids: ["person-a"] },
+    });
+    photos.items = [row];
+    photos.total = 1;
+    photos.started = true;
+    const cache = new PhotoPreviewCache("session", vi.fn());
+    const props = { photos, cache, photoID: row.asset_id, onphotochange: vi.fn() };
+    const view = render(PhotosWorkspace, props);
+    const loupe = await screen.findByRole("dialog", { name: /^Photo viewer,/ });
+    await fireEvent.click(within(loupe).getByRole("button", { name: "Metadata" }));
+    await fireEvent.click(
+      await within(loupe).findByRole("button", { name: "Find or create a person: Ada" }),
+    );
+    if (action === "name")
+      await fireEvent.input(screen.getByRole("combobox", { name: "Find or create a person" }), {
+        target: { value: "Grace" },
+      });
+    await fireEvent.mouseDown(
+      await screen.findByRole("option", { name: action === "name" ? "Grace" : "Clear name" }),
+    );
+    expect((await screen.findAllByText("Response lost")).length).toBeGreaterThan(0);
+    await waitFor(() => expect(photos.total).toBe(0));
+    expect(photos.items).toEqual([]);
+    expect(screen.getAllByText("Response lost").length).toBeGreaterThan(0);
+    await fireEvent.click(within(loupe).getByRole("button", { name: "Close photo viewer" }));
+    await view.rerender({ ...props, photoID: "" });
+    await screen.findByText("No matching photos");
+    expect(screen.getAllByText("0 photos").length).toBeGreaterThan(0);
+    photos.dispose();
+    await cache.dispose();
+  },
+);

@@ -3587,3 +3587,73 @@ it.each([
     expect(screen.queryByRole("dialog", { name: /^Photo viewer,/ })).toBeNull();
   },
 );
+
+it.each(["next photo", "workspace"])(
+  "keeps a pending face write alive when navigating to %s",
+  async (target) => {
+    history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+    storage();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+    const rows = [photo(1), photo(2)];
+    vi.spyOn(api, "listPhotoFaces").mockResolvedValue({
+      faces: [photoFace({ content_version_id: rows[0]!.content_version_id })],
+      assertions: [photoPersonAssertion({ content_version_id: rows[0]!.content_version_id })],
+      people: [{ person_id: "person-a", display_name: "Ada" }],
+    });
+    let finish!: (response: Response) => void;
+    let signal!: AbortSignal;
+    stubPhotoFetch(async (url, init) => {
+      if (url.endsWith("/photos/hidden")) return Response.json({ configured: false });
+      if (url.endsWith("/photos/albums")) return Response.json([]);
+      if (url.endsWith("/photos/assets/query"))
+        return Response.json({ items: rows, total: 2, facets: [] });
+      if (url.endsWith("/face-decisions")) {
+        signal = init.signal!;
+        return new Promise<Response>((resolve) => {
+          finish = resolve;
+        });
+      }
+      return (
+        photoMetadataResponse(url, init) ??
+        Response.json({ items: [], nodes: [], tags: [], profiles: [] })
+      );
+    });
+    render(App);
+    await fireEvent.doubleClick(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
+    const loupe = await screen.findByRole("dialog", { name: /^Photo viewer,/ });
+    await fireEvent.click(within(loupe).getByRole("button", { name: "Metadata" }));
+    await fireEvent.click(
+      await within(loupe).findByRole("button", { name: "Find or create a person: Ada" }),
+    );
+    await fireEvent.mouseDown(await screen.findByRole("option", { name: "Clear name" }));
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    const before = location.href;
+    const navigate = () =>
+      fireEvent.click(
+        target === "workspace"
+          ? screen.getByRole("button", { name: "Documents" })
+          : within(loupe).getAllByRole("button", { name: "Next photo" })[0]!,
+      );
+    await navigate();
+    expect(location.href).toBe(before);
+    expect(signal.aborted).toBe(false);
+    finish(Response.json({ receipt_id: "receipt-a" }));
+    await waitFor(() =>
+      expect(
+        within(loupe)
+          .getByRole("button", { name: "Find or create a person: Ada" })
+          .hasAttribute("disabled"),
+      ).toBe(false),
+    );
+    await navigate();
+    await waitFor(() => expect(location.href).not.toBe(before));
+  },
+);

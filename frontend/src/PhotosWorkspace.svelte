@@ -190,13 +190,13 @@
   const editor = $derived(photos.authored);
   const inspectorFaces = untrack(
     () =>
-      new PhotoFaces(
+      (photos.faceEditor = new PhotoFaces(
         photos.session,
         photos.onauthfailure,
         photos.hidden,
         faceDecision,
         photos.hidden ? photos.hiddenAccess : undefined,
-      ),
+      )),
   );
   $effect(() => {
     const filter = photos.personFilter;
@@ -236,7 +236,10 @@
     });
     return () => controller.abort();
   });
-  onDestroy(() => inspectorFaces.dispose());
+  onDestroy(() => {
+    inspectorFaces.dispose();
+    if (photos.faceEditor === inspectorFaces) photos.faceEditor = undefined;
+  });
   let editing = $state(false);
   let loupeMetadata = $state(false);
   const selectionCount = $derived(photos.selectedIDs.size);
